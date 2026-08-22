@@ -1,3 +1,4 @@
+import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import {
   isGatewayInjectedModelRef,
   normalizeModelRef,
@@ -52,11 +53,11 @@ export function resolveActiveTurnModel(
  * last visible row is Thinking or Tool rather than Content.
  */
 export function projectActiveTurnFooter(
-  turn: AssistantTurnTiming | null,
+  turn: AssistantTurnTiming | SessionRunTiming | null,
   now = Date.now(),
 ): ActiveTurnFooter | null {
   if (!turn) return null;
-  const running = turn.status === 'running';
+  const running = 'state' in turn ? turn.state === 'running' : turn.status === 'running';
   const completedAt = running ? null : (turn.endedAt ?? turn.startedAt);
   const durationEnd = running ? Math.max(now, turn.startedAt) : (completedAt ?? turn.startedAt);
   return {

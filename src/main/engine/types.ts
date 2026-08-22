@@ -115,11 +115,13 @@ export type CoworkStartOptions = {
   confirmationMode?: 'modal' | 'text';
   attachments?: CoworkAttachmentPayload[];
   agentId?: string;
+  clientTurnId?: string;
 };
 
 export type CoworkContinueOptions = {
   skillIds?: string[];
   attachments?: CoworkAttachmentPayload[];
+  clientTurnId?: string;
 };
 
 export type CoworkStopOptions = {
@@ -153,10 +155,7 @@ export interface CoworkRuntime {
    * @param options Local session context and timeout.
    * @returns Generated title, or fallback if generation fails
    */
-  generateTitle?(
-    userIntent: string | null,
-    options?: CoworkGenerateTitleOptions,
-  ): Promise<string>;
+  generateTitle?(userIntent: string | null, options?: CoworkGenerateTitleOptions): Promise<string>;
   /**
    * Patch the model for a session via OpenClaw gateway sessions.patch API.
    * Optional: only implemented by OpenClawRuntimeAdapter which has Gateway access.
@@ -207,6 +206,7 @@ export interface CoworkRuntime {
     mainRunning: boolean;
     subagentRunning: boolean;
     running: boolean;
+    rootRunId?: string;
   }>;
   getSessionRuntimeStatuses?(
     sessionIds: string[],
@@ -219,6 +219,7 @@ export interface CoworkRuntime {
         mainRunning: boolean;
         subagentRunning: boolean;
         running: boolean;
+        rootRunId?: string;
       }
     >
   >;

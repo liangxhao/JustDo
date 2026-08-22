@@ -117,7 +117,7 @@ Redux store (`src/renderer/store/index.ts`) mounts **6 slices**:
 Do not document/use unmounted slices as active state.
 
 SQLite core tables in `src/main/data/sqliteStore.ts`:
-`kv`, `cowork_sessions`, `cowork_messages`, `cowork_config`, `agents`,
+`kv`, `cowork_sessions`, `cowork_messages`, `cowork_session_runs`, `cowork_config`, `agents`,
 `mcp_servers`, `openclaw_hooks`, `session_groups`, `scheduled_task_run_receipts`,
 `scheduled_task_result_cleanup`.
 

@@ -1,4 +1,5 @@
 import type { CoworkAttachmentPayload } from '@shared/cowork/attachments';
+import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import type { CoworkInteractionKind } from '@shared/openclaw/extensions';
 
 export type { CoworkAttachmentPayload } from '@shared/cowork/attachments';
@@ -185,6 +186,8 @@ export interface CoworkStartOptions {
   agentId?: string;
   attachments?: CoworkAttachmentPayload[];
   permissionMode?: PermissionMode;
+  clientTurnId?: string;
+  startedAt?: number;
 }
 
 // Continue session options
@@ -194,6 +197,8 @@ export interface CoworkContinueOptions {
   activeSkillIds?: string[];
   attachments?: CoworkAttachmentPayload[];
 }
+
+export type { SessionRunTiming };
 
 // IPC result types
 export interface CoworkSessionResult {

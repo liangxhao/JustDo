@@ -7,6 +7,7 @@
  * This replaces the Redux → CoworkMessage → gateway conversion approach
  * with a direct gateway connection, identical to OpenClaw's webchat.
  */
+import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import {
   forwardRef,
   useEffect,
@@ -48,6 +49,7 @@ interface JustDoChatWrapperProps {
   processSummariesExpanded?: boolean;
   onSearchMatchCountChange?: (total: number, index: number) => void;
   onActivityChange?: (progress: GoalRunProgress | null) => void;
+  runTimings?: SessionRunTiming[];
 }
 
 export interface JustDoChatWrapperRef {
@@ -55,7 +57,11 @@ export interface JustDoChatWrapperRef {
     text: string,
     attachments?: CoworkAttachmentPayload[],
     gatewayMessage?: string,
-    options?: { propagateRequestFailure?: boolean },
+    options?: {
+      propagateRequestFailure?: boolean;
+      clientTurnId?: string;
+      onRunBound?: (runId: string) => void | Promise<void>;
+    },
   ) => Promise<void>;
   getExportSnapshot: () => {
     messages: unknown[];
@@ -81,6 +87,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       processSummariesExpanded,
       onSearchMatchCountChange,
       onActivityChange,
+      runTimings = [],
     },
     ref,
   ) => {
@@ -307,6 +314,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         searchNavigationDirection={searchNavigationDirection}
         processSummariesExpanded={processSummariesExpanded}
         onSearchMatchCountChange={onSearchMatchCountChange}
+        runTimings={runTimings}
       />
     );
   },

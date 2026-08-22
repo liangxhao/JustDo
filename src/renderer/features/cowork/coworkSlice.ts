@@ -1,4 +1,5 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
+import type { SessionRuntimeSnapshot, SessionRunTiming } from '@shared/cowork/sessionRun';
 import { DEFAULT_PERMISSION_MODE, type PermissionMode } from '@shared/openclaw/approvals';
 
 import {
@@ -36,6 +37,7 @@ interface CoworkState {
   isStreaming: boolean;
   sessionMainRuntimeActivity: Record<string, boolean>;
   sessionRuntimeActivity: Record<string, boolean>;
+  sessionRunTimings: Record<string, SessionRunTiming[]>;
   remoteManaged: boolean;
   pendingInteractions: CoworkInteractionRequest[];
   config: CoworkConfig;
@@ -58,6 +60,7 @@ const initialState: CoworkState = {
   isStreaming: false,
   sessionMainRuntimeActivity: {},
   sessionRuntimeActivity: {},
+  sessionRunTimings: {},
   remoteManaged: false,
   pendingInteractions: [],
   config: {
@@ -452,6 +455,61 @@ const coworkSlice = createSlice({
       }
     },
 
+    setSessionRuntimeSnapshot(
+      state,
+      action: PayloadAction<{ sessionId: string; snapshot: SessionRuntimeSnapshot }>,
+    ) {
+      const { sessionId, snapshot } = action.payload;
+      if (snapshot.mainRunning) state.sessionMainRuntimeActivity[sessionId] = true;
+      else delete state.sessionMainRuntimeActivity[sessionId];
+      if (snapshot.running) state.sessionRuntimeActivity[sessionId] = true;
+      else delete state.sessionRuntimeActivity[sessionId];
+      if (snapshot.timing) {
+        const timings = state.sessionRunTimings[sessionId] ?? [];
+        const index = timings.findIndex(timing => timing.id === snapshot.timing!.id);
+        if (index >= 0) timings[index] = snapshot.timing;
+        else timings.push(snapshot.timing);
+        state.sessionRunTimings[sessionId] = timings;
+      }
+      const status = snapshot.running
+        ? 'running'
+        : snapshot.timing?.state === 'failed'
+          ? 'error'
+          : 'idle';
+      const sessionIndex = state.sessions.findIndex(session => session.id === sessionId);
+      if (sessionIndex >= 0) state.sessions[sessionIndex].status = status;
+      if (state.currentSession?.id === sessionId) {
+        state.currentSession.status = status;
+        state.isStreaming = snapshot.mainRunning;
+      }
+    },
+
+    setSessionRunTimings(
+      state,
+      action: PayloadAction<{ sessionId: string; timings: SessionRunTiming[] }>,
+    ) {
+      const existing = state.sessionRunTimings[action.payload.sessionId] ?? [];
+      const merged = new Map(existing.map(timing => [timing.id, timing]));
+      for (const timing of action.payload.timings) merged.set(timing.id, timing);
+      state.sessionRunTimings[action.payload.sessionId] = [...merged.values()].sort(
+        (left, right) => left.startedAt - right.startedAt || left.id.localeCompare(right.id),
+      );
+    },
+
+    upsertSessionRunTiming(
+      state,
+      action: PayloadAction<{ sessionId: string; timing: SessionRunTiming }>,
+    ) {
+      const timings = state.sessionRunTimings[action.payload.sessionId] ?? [];
+      const index = timings.findIndex(timing => timing.id === action.payload.timing.id);
+      if (index >= 0) timings[index] = action.payload.timing;
+      else timings.push(action.payload.timing);
+      timings.sort(
+        (left, right) => left.startedAt - right.startedAt || left.id.localeCompare(right.id),
+      );
+      state.sessionRunTimings[action.payload.sessionId] = timings;
+    },
+
     updateCurrentSessionModelRef(
       state,
       action: PayloadAction<{ sessionId: string; modelRef: string }>,
@@ -578,6 +636,9 @@ export const {
   setCurrentSession,
   setSessionMainRuntimeActivity,
   setSessionRuntimeActivity,
+  setSessionRuntimeSnapshot,
+  setSessionRunTimings,
+  upsertSessionRunTiming,
   setSessionRuntimeActivities,
   setDraftPrompt,
   setDraftAttachments,

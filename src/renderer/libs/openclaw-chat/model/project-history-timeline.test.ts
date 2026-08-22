@@ -37,7 +37,7 @@ describe('projectPersistedTimeline', () => {
     );
   });
 
-  test('derives assistant duration from persisted user and assistant timestamps', () => {
+  test('does not infer run duration from message timestamps', () => {
     const result = projectPersistedTimeline([
       { role: 'user', content: 'first prompt', timestamp: 1_000 },
       { role: 'assistant', content: 'first answer', timestamp: 4_500 },
@@ -46,27 +46,81 @@ describe('projectPersistedTimeline', () => {
     ]);
 
     expect(
-      result
-        .filter(item => item.kind === 'history-message')
-        .map(item => item.durationMs ?? null),
-    ).toEqual([null, 3_500, null, 2_000]);
+      result.filter(item => item.kind === 'history-message').map(item => item.durationMs ?? null),
+    ).toEqual([null, null, null, null]);
   });
 
-  test('supports numeric string timestamps when deriving duration', () => {
-    const result = projectPersistedTimeline([
-      {
-        role: 'user',
-        content: 'prompt',
-        timestamp: '1720000000000' as unknown as number,
-      },
-      {
-        role: 'assistant',
-        content: 'answer',
-        timestamp: '1720000002500' as unknown as number,
-      },
-    ]);
+  test('uses a persisted run receipt and attaches it to the last visible announce', () => {
+    const result = projectPersistedTimeline(
+      [
+        {
+          role: 'user',
+          content: 'prompt',
+          runId: 'run-root',
+        },
+        {
+          role: 'assistant',
+          content: 'answer',
+          runId: 'run-root',
+        },
+        {
+          role: 'assistant',
+          content: 'subagent result',
+          runId: 'announce:v1:child',
+          provider: 'openclaw',
+          model: 'gateway-injected',
+        },
+      ],
+      [
+        {
+          id: 'timing-1',
+          sessionId: 'session-1',
+          clientTurnId: 'run-root',
+          rootRunId: 'run-root',
+          startedAt: 1_000,
+          endedAt: 6_000,
+          state: 'completed',
+        },
+      ],
+    );
 
-    expect(result[1]).toMatchObject({ kind: 'history-message', durationMs: 2_500 });
+    expect(result[1]).toEqual(expect.not.objectContaining({ durationMs: expect.any(Number) }));
+    expect(result[2]).toMatchObject({
+      kind: 'history-message',
+      durationMs: 5_000,
+      completedAt: 6_000,
+    });
+  });
+
+  test('matches a persisted receipt by user timestamp when history omits run ids', () => {
+    const result = projectPersistedTimeline(
+      [
+        { role: 'user', content: 'prompt', timestamp: 1_010 },
+        { role: 'assistant', content: 'answer', timestamp: 4_000 },
+        {
+          role: 'assistant',
+          content: 'subagent result',
+          timestamp: 5_000,
+          runId: 'announce:v1:child',
+          provider: 'openclaw',
+          model: 'gateway-injected',
+        },
+      ],
+      [
+        {
+          id: 'timing-1',
+          sessionId: 'session-1',
+          clientTurnId: 'client-turn-1',
+          rootRunId: 'gateway-run-1',
+          startedAt: 1_000,
+          endedAt: 6_000,
+          state: 'completed',
+        },
+      ],
+    );
+
+    expect(result[1]).toEqual(expect.not.objectContaining({ durationMs: expect.any(Number) }));
+    expect(result[2]).toMatchObject({ durationMs: 5_000, completedAt: 6_000 });
   });
 
   test('does not reuse an older prompt when a newer user timestamp is invalid', () => {

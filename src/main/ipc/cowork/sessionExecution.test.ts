@@ -165,4 +165,41 @@ describe('cowork session execution permissions', () => {
     await expect(pending).resolves.toMatchObject({ success: true });
     expect(createSession.mock.calls[0]?.[5]).toBe('ask');
   });
+
+  test('replays a start request without creating or starting a second session', async () => {
+    const existingSession = { ...session('ask'), status: 'running' as const };
+    const existingTiming = {
+      id: 'timing-1',
+      sessionId: existingSession.id,
+      clientTurnId: 'turn-1',
+      rootRunId: 'run-1',
+      startedAt: 1_000,
+      state: 'running' as const,
+    };
+    const createSession = vi.fn();
+    const startSession = vi.fn();
+    const ensureEngineRunning = vi.fn();
+    const store = {
+      getSessionRunByClientTurnId: vi.fn().mockReturnValue(existingTiming),
+      getSession: vi.fn().mockReturnValue(existingSession),
+      createSession,
+    } as unknown as CoworkStore;
+    registerCoworkSessionExecutionHandlers({
+      ensureEngineRunning,
+      getCoworkStore: () => store,
+      getCoworkEngineRouter: () => ({ startSession }) as unknown as CoworkEngineRouter,
+      waitForConfigUpdates: vi.fn().mockResolvedValue(undefined),
+      getEngineNotReadyResponse: vi.fn(),
+    });
+
+    await expect(
+      handlers.get('cowork:session:start')?.(
+        {},
+        { prompt: 'hello', clientTurnId: 'turn-1', startedAt: 1_000 },
+      ),
+    ).resolves.toEqual({ success: true, session: existingSession, timing: existingTiming });
+    expect(ensureEngineRunning).not.toHaveBeenCalled();
+    expect(createSession).not.toHaveBeenCalled();
+    expect(startSession).not.toHaveBeenCalled();
+  });
 });

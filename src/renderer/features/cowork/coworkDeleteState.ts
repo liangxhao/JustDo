@@ -10,6 +10,7 @@ type CoworkDeleteStateShape = {
   isStreaming: boolean;
   sessionMainRuntimeActivity?: Record<string, boolean>;
   sessionRuntimeActivity?: Record<string, boolean>;
+  sessionRunTimings?: Record<string, unknown[]>;
 };
 
 export const removeSessionFromState = (state: CoworkDeleteStateShape, sessionId: string): void => {
@@ -21,6 +22,7 @@ export const removeSessionFromState = (state: CoworkDeleteStateShape, sessionId:
   if (state.sessionRuntimeActivity) {
     delete state.sessionRuntimeActivity[sessionId];
   }
+  if (state.sessionRunTimings) delete state.sessionRunTimings[sessionId];
 
   if (state.currentSessionId === sessionId) {
     state.currentSessionId = null;
@@ -43,6 +45,7 @@ export const removeSessionsFromState = (
     if (state.sessionRuntimeActivity) {
       delete state.sessionRuntimeActivity[sessionId];
     }
+    if (state.sessionRunTimings) delete state.sessionRunTimings[sessionId];
   }
 
   if (state.currentSessionId && sessionIdSet.has(state.currentSessionId)) {

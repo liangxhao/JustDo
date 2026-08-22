@@ -155,6 +155,15 @@ erDiagram
 - `model_name`
 - `usage`
 
+`cowork_session_runs` 保存 JustDo 拥有的用户可见运行周期：一次用户提交只创建一条
+记录，Gateway 主 run、subagent 和 announce 都归属于该周期。`started_at` 正常在用户
+提交时写入，`ended_at` 只在会话聚合状态连续两次确认为 idle 后写入。应用重启时，
+尚未结束的记录会把 `started_at` 重置为本次进程启动时间，避免把软件离线时间计入
+运行时长。消息正文仍以 Gateway history 为权威；该表只负责计时、跨会话切换恢复和
+运行状态同步。
+
+修复前的历史消息没有对应记录，因此 UI 不使用消息时间戳反推运行时长。
+
 ## Store 层
 
 | 文件                                 | 作用                                               |

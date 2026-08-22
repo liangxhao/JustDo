@@ -219,6 +219,7 @@ type SessionRuntimeStatus = {
   mainRunning: boolean;
   subagentRunning: boolean;
   running: boolean;
+  rootRunId?: string;
 };
 
 type RuntimeSessionSnapshot = {
@@ -235,6 +236,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly activeTurns = new Map<string, SessionTurn>();
   private readonly sessionIdBySessionKey = new Map<string, string>();
   private readonly sessionIdByRunId = new Map<string, string>();
+  private readonly rootRunIdBySession = new Map<string, string>();
   private readonly pendingTurns = new Map<
     string,
     { resolve: () => void; reject: (error: Error) => void }
@@ -438,6 +440,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       attachments: options.attachments,
       agentId: options.agentId,
       workspaceRoot: options.workspaceRoot,
+      clientTurnId: options.clientTurnId,
     });
   }
 
@@ -450,6 +453,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       skipInitialUserMessage: false,
       skillIds: options.skillIds,
       attachments: options.attachments,
+      clientTurnId: options.clientTurnId,
     });
   }
 
@@ -947,6 +951,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       attachments?: CoworkAttachmentPayload[];
       agentId?: string;
       workspaceRoot?: string;
+      clientTurnId?: string;
     },
   ): Promise<void> {
     if (!prompt.trim()) {
@@ -1001,7 +1006,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       throw error;
     }
 
-    const runId = randomUUID();
+    const runId = options.clientTurnId?.trim() || randomUUID();
+    this.rootRunIdBySession.set(sessionId, runId);
     const turnToken = this.nextTurnToken(sessionId);
     const completionPromise = new Promise<void>((resolve, reject) => {
       this.pendingTurns.set(sessionId, { resolve, reject });
@@ -1041,7 +1047,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         ? options.attachments.map(toGatewayAttachment)
         : undefined;
       const commandSessionId = await ensureSlashCommandSession(client, sessionKey, prompt);
-      await client.request('chat.send', {
+      const result = await client.request<{ runId?: string }>('chat.send', {
         sessionKey,
         ...(commandSessionId ? { sessionId: commandSessionId } : {}),
         message: prompt.trim(),
@@ -1054,6 +1060,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         idempotencyKey: runId,
         ...(attachments ? { attachments } : {}),
       });
+      const rootRunId = result.runId?.trim() || runId;
+      this.rootRunIdBySession.set(sessionId, rootRunId);
+      this.sessionIdByRunId.set(rootRunId, sessionId);
+      const timing = options.clientTurnId
+        ? this.store.getSessionRunByClientTurnId(options.clientTurnId)
+        : undefined;
+      if (timing?.state === 'running') {
+        this.store.bindSessionRunRootRun(timing.id, rootRunId);
+      }
       if (!prompt.trimStart().startsWith('/')) {
         this.goalsAwaitingResumeInput.delete(sessionId);
       }
@@ -1548,6 +1563,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (admission === 'bind-provisional-run') {
       this.sessionIdByRunId.delete(turn.runId);
       turn.runId = runId;
+      this.rootRunIdBySession.set(sessionId, runId);
+      const timing = this.store.getLatestSessionRun(sessionId);
+      if (timing?.state === 'running') this.store.bindSessionRunRootRun(timing.id, runId);
     }
     if (!turn.gatewaySessionId && p.sessionId) turn.gatewaySessionId = p.sessionId;
     if (!turn.lifecycleGeneration && p.lifecycleGeneration) {
@@ -3699,6 +3717,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.stoppedSessions.delete(sessionId);
     this.cleanupSessionTurn(sessionId);
     this.confirmationModeBySession.delete(sessionId);
+    this.rootRunIdBySession.delete(sessionId);
     this.manuallyStoppedSessions.delete(sessionId);
     this.goalsAwaitingResumeInput.delete(sessionId);
     this.terminalLifecycleSessionIds.delete(sessionId);
@@ -3817,6 +3836,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     mainRunning: boolean;
     subagentRunning: boolean;
     running: boolean;
+    rootRunId?: string;
   }> {
     if (!sessionId) {
       return { known: true, mainRunning: false, subagentRunning: false, running: false };
@@ -3851,6 +3871,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           mainRunning: true,
           subagentRunning: false,
           running: true,
+          ...(this.rootRunIdBySession.get(sessionId)
+            ? { rootRunId: this.rootRunIdBySession.get(sessionId) }
+            : {}),
         };
       }
       return statuses;
@@ -3910,6 +3933,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         mainRunning,
         subagentRunning,
         running: mainRunning || subagentRunning,
+        ...(mainRunning || subagentRunning
+          ? (() => {
+              const rootRunId = this.rootRunIdBySession.get(sessionId);
+              return rootRunId ? { rootRunId } : {};
+            })()
+          : {}),
       };
     }
     return statuses;

@@ -1,3 +1,4 @@
+import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import { parseExecutionPlanUpdate } from '@shared/openclaw/executionPlan';
 
 import type { GatewayMessage } from '@/libs/openclaw-chat/types';
@@ -23,7 +24,13 @@ import {
 } from './tool-message-adapter';
 
 export type PersistedTimelineItem =
-  | { kind: 'history-message'; key: string; message: GatewayMessage; durationMs?: number }
+  | {
+      kind: 'history-message';
+      key: string;
+      message: GatewayMessage;
+      durationMs?: number;
+      completedAt?: number;
+    }
   | ProcessSummaryTimelineItem
   | PlanUpdateTimelineItem;
 
@@ -145,12 +152,26 @@ function withToolMessageContext(
   };
 }
 
-export function projectPersistedTimeline(messages: GatewayMessage[]): PersistedTimelineItem[] {
+export function projectPersistedTimeline(
+  messages: GatewayMessage[],
+  runTimings: readonly SessionRunTiming[] = [],
+): PersistedTimelineItem[] {
   const projected: PersistedTimelineItem[] = [];
   let archived: Array<ThinkingItem | ToolItem> = [];
   let segment = 0;
   const toolById = new Map<string, ToolItem>();
-  let latestUserTimestamp: number | null = null;
+  const timingByRootRunId = new Map(
+    runTimings
+      .filter(timing => timing.rootRunId && timing.endedAt !== undefined)
+      .map(timing => [timing.rootRunId!, timing] as const),
+  );
+  const completedTimings = runTimings
+    .filter(timing => timing.endedAt !== undefined)
+    .slice()
+    .sort((left, right) => left.startedAt - right.startedAt || left.id.localeCompare(right.id));
+  const claimedTimingIds = new Set<string>();
+  let activeTiming: SessionRunTiming | null = null;
+  let lastTimedMessage: Extract<PersistedTimelineItem, { kind: 'history-message' }> | null = null;
 
   const isPlanUpdate = (item: ThinkingItem | ToolItem): item is ToolItem =>
     item.type === 'tool' &&
@@ -195,15 +216,44 @@ export function projectPersistedTimeline(messages: GatewayMessage[]): PersistedT
     archived = [];
   };
 
-  const emitMessage = (message: GatewayMessage, key: string, durationMs?: number) => {
+  const emitMessage = (
+    message: GatewayMessage,
+    key: string,
+    durationMs?: number,
+    completedAt?: number,
+  ) => {
     flushSummary();
-    projected.push({
+    if (durationMs !== undefined && lastTimedMessage) {
+      delete lastTimedMessage.durationMs;
+      delete lastTimedMessage.completedAt;
+    }
+    const item: Extract<PersistedTimelineItem, { kind: 'history-message' }> = {
       kind: 'history-message',
       key,
       message,
       ...(durationMs !== undefined ? { durationMs } : {}),
-    });
+      ...(completedAt !== undefined ? { completedAt } : {}),
+    };
+    projected.push(item);
+    if (durationMs !== undefined) lastTimedMessage = item;
     segment += 1;
+  };
+
+  const claimTiming = (runId: string, timestamp: number): SessionRunTiming | null => {
+    const exact = timingByRootRunId.get(runId);
+    if (exact) {
+      claimedTimingIds.add(exact.id);
+      return exact;
+    }
+    if (timestamp <= 0) return null;
+    const candidate = completedTimings
+      .filter(timing => !claimedTimingIds.has(timing.id))
+      .map(timing => ({ timing, distance: Math.abs(timing.startedAt - timestamp) }))
+      .filter(entry => entry.distance <= 60_000)
+      .sort((left, right) => left.distance - right.distance)[0]?.timing;
+    if (!candidate) return null;
+    claimedTimingIds.add(candidate.id);
+    return candidate;
   };
 
   const applyToolCall = (
@@ -331,14 +381,22 @@ export function projectPersistedTimeline(messages: GatewayMessage[]): PersistedT
     const runId = runIdOf(outer, message, messageKey);
     const timestamp = timestampOf(outer, message);
     const role = roleOf(message);
-    if (role === 'user') latestUserTimestamp = timestamp > 0 ? timestamp : null;
+    const matchingTiming = timingByRootRunId.get(runId);
+    if (role === 'user') {
+      activeTiming = claimTiming(runId, timestamp);
+      lastTimedMessage = null;
+    } else if (matchingTiming) {
+      activeTiming = matchingTiming;
+      claimedTimingIds.add(matchingTiming.id);
+      lastTimedMessage = null;
+    }
     const durationMs =
       role === 'assistant' &&
-      !isGatewayInjectedAssistant(outer, message) &&
-      latestUserTimestamp !== null &&
-      timestamp >= latestUserTimestamp
-        ? timestamp - latestUserTimestamp
+      (!isGatewayInjectedAssistant(outer, message) || runId.startsWith('announce:v1:')) &&
+      activeTiming?.endedAt !== undefined
+        ? Math.max(0, activeTiming.endedAt - activeTiming.startedAt)
         : undefined;
+    const completedAt = durationMs === undefined ? undefined : activeTiming?.endedAt;
     const attachments = [
       ...attachedToolMessages(message),
       ...(message === outer ? [] : attachedToolMessages(outer)),
@@ -355,7 +413,7 @@ export function projectPersistedTimeline(messages: GatewayMessage[]): PersistedT
         attachments.length === 0 ||
         (typeof message.content === 'string' && message.content.trim().length > 0)
       ) {
-        emitMessage(outerMessage, messageKey, durationMs);
+        emitMessage(outerMessage, messageKey, durationMs, completedAt);
       }
       for (const [index, attached] of attachments.entries()) {
         applyToolOnlyMessage(
@@ -376,6 +434,7 @@ export function projectPersistedTimeline(messages: GatewayMessage[]): PersistedT
         visibleMessageWithContent(outerMessage, message, visibleBlocks),
         `${messageKey}:content:${segment}`,
         durationMs,
+        completedAt,
       );
       visibleBlocks = [];
     };

@@ -21,6 +21,7 @@ export const selectThinkingExpanded = (state: RootState) => state.cowork.thinkin
 export const selectToolExpanded = (state: RootState) => state.cowork.toolExpanded;
 export const selectSessionRuntimeActivity = (state: RootState) =>
   state.cowork.sessionRuntimeActivity;
+export const selectSessionRunTimings = (state: RootState) => state.cowork.sessionRunTimings;
 
 // Session Group selectors
 export const selectGroups = (state: RootState) => state.cowork.groups;

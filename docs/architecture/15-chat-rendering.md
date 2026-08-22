@@ -262,6 +262,14 @@ Token、port 等敏感连接信息通过 Main IPC 获取，不写死在 renderer
 
 Controller 是 Gateway event 到 Lit state 的协调层。它不应该知道 React Redux 的内部结构，也不应该直接操作 SQLite。
 
+用户可见的运行状态不由 Controller 的单个 `runId` 决定。Main 将主 run、可见
+announce、descendant subagent 和 compaction 聚合为一个 `SessionRuntimeSnapshot`；
+Redux 在一次 reducer 更新中同时刷新输入框“进行中”、会话列表呼吸灯和
+`SessionRunTiming`。Lit 只用该 timing 渲染计时，内部 announce 切换 `runId` 不会重置
+起点。结束时间取第二次 confirmed-idle 的观察时间，并与两个运行指示器同步生效；
+转为历史消息后，页脚时间和持续时间仍分别使用同一 timing 的 `endedAt` 和时间差，
+不会退回 Gateway 消息时间。应用重启后的未结束 timing 从本次启动重新计时。
+
 主要职责：
 
 - 维护当前 session 的 Gateway-backed persisted history 和 canonical active turn。

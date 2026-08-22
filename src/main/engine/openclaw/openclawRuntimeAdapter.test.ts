@@ -125,6 +125,54 @@ const createSessionTurn = (overrides: Partial<SessionTurn> = {}): SessionTurn =>
   ...overrides,
 });
 
+test('binds a new session receipt to the Gateway acknowledged root run', async () => {
+  const { store, session } = createEmptyStore();
+  const timing = {
+    id: 'timing-1',
+    sessionId: session.id,
+    clientTurnId: 'client-turn-1',
+    rootRunId: 'client-turn-1',
+    startedAt: 1_000,
+    state: 'running' as const,
+  };
+  const bindSessionRunRootRun = vi.fn().mockReturnValue({
+    ...timing,
+    rootRunId: 'gateway-run-1',
+  });
+  Object.assign(store, {
+    getSessionRunByClientTurnId: vi.fn().mockReturnValue(timing),
+    bindSessionRunRootRun,
+  });
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const request = vi.fn().mockResolvedValue({ runId: 'gateway-run-1' });
+  const internals = adapter as unknown as {
+    gatewayClient: GatewayClientLike | null;
+    ensureGatewayClientReady: () => Promise<void>;
+    syncAgentWorkspaceIfNeeded: () => Promise<void>;
+    runTurn: (
+      sessionId: string,
+      prompt: string,
+      options: { skipInitialUserMessage: boolean; clientTurnId: string },
+    ) => Promise<void>;
+    resolveTurn: (sessionId: string) => void;
+    cleanupSessionTurn: (sessionId: string) => void;
+  };
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  internals.syncAgentWorkspaceIfNeeded = vi.fn().mockResolvedValue(undefined);
+
+  const running = internals.runTurn(session.id, 'hello', {
+    skipInitialUserMessage: true,
+    clientTurnId: 'client-turn-1',
+  });
+  await vi.waitFor(() => {
+    expect(bindSessionRunRootRun).toHaveBeenCalledWith('timing-1', 'gateway-run-1');
+  });
+  internals.resolveTurn(session.id);
+  await running;
+  internals.cleanupSessionTurn(session.id);
+});
+
 test('recovers a managed session ID when the in-memory session-key mapping is missing', () => {
   const { store } = createEmptyStore();
   const getSession = vi.spyOn(store, 'getSession');

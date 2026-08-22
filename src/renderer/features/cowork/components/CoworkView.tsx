@@ -30,6 +30,7 @@ import {
   selectIsOpenClawEngine,
   selectIsStreaming,
   selectSessionRuntimeActivity,
+  selectSessionRunTimings,
 } from '@/features/cowork/coworkSelectors';
 import { coworkService } from '@/features/cowork/coworkService';
 import {
@@ -134,6 +135,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const isStreaming = useSelector(selectIsStreaming);
   const sessions = useSelector(selectCoworkSessions);
   const sessionRuntimeActivity = useSelector(selectSessionRuntimeActivity);
+  const sessionRunTimings = useSelector(selectSessionRunTimings);
   const config = useSelector(selectCoworkConfig);
   const isOpenClawEngine = useSelector(selectIsOpenClawEngine);
   const agentState = useSelector((state: RootState) => state.agent);
@@ -261,6 +263,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       const tempSessionId = `temp-${Date.now()}`;
       const fallbackTitle = prompt.split('\n')[0].slice(0, 50) || i18nService.t('coworkNewSession');
       const now = Date.now();
+      const clientTurnId = `justdo-${now}-${crypto.randomUUID()}`;
 
       // Capture active skill IDs before clearing them
       const sessionSkillIds = [...activeSkillIds];
@@ -322,6 +325,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         activeSkillIds: sessionSkillIds,
         agentId: currentAgentId,
         attachments,
+        clientTurnId,
+        startedAt: now,
       });
 
       if (!startedSession && startError) {
@@ -750,17 +755,29 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       gatewayPrompt?: string,
     ) => {
       const goalEdit = isGoalEditCommand(gatewayPrompt ?? prompt);
-      coworkService.markSessionInProgress(currentSession.id);
+      const startedAt = Date.now();
+      const clientTurnId = `justdo-${startedAt}-${crypto.randomUUID()}`;
+      let runTimingId: string | null = null;
       return submitCoworkMessage(
         async () => {
+          const timing = await coworkService.beginSessionRun({
+            sessionId: currentSession.id,
+            clientTurnId,
+            startedAt,
+            modelRef: currentSession.modelRef,
+          });
+          runTimingId = timing.id;
           const chatWrapper = chatWrapperRef.current;
           if (!chatWrapper) throw new Error('Chat controller is not ready');
           await chatWrapper.sendMessage(prompt, attachments, gatewayPrompt, {
             propagateRequestFailure: goalEdit,
+            clientTurnId,
+            onRunBound: runId => coworkService.bindSessionRun(timing.id, runId, currentSession.id),
           });
         },
         err => {
-          coworkService.clearSessionInProgress(currentSession.id);
+          if (runTimingId) void coworkService.failSessionRun(currentSession.id, runTimingId);
+          else coworkService.clearSessionInProgress(currentSession.id);
           if (goalEdit) return;
           const message = err instanceof Error ? err.message : String(err);
           window.dispatchEvent(
@@ -1008,6 +1025,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             processSummariesExpanded={areProcessSummariesExpanded}
             onSearchMatchCountChange={handleSessionSearchMatchCountChange}
             onActivityChange={setGoalRunProgress}
+            runTimings={sessionRunTimings[currentSession.id] ?? []}
           />
           {/* Input */}
           <div className="shrink-0 pb-4 pt-2">

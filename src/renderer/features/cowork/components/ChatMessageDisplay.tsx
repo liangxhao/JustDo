@@ -1,5 +1,6 @@
 import '@/libs/openclaw-chat/components/justdo-chat';
 
+import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import { useEffect, useMemo, useRef } from 'react';
 
 import type { CoworkMessage } from '@/features/cowork/coworkTypes';
@@ -23,6 +24,7 @@ interface ChatMessageDisplayProps {
   searchNavigationDirection?: 1 | -1;
   processSummariesExpanded?: boolean;
   onSearchMatchCountChange?: (total: number, index: number) => void;
+  runTimings?: SessionRunTiming[];
 }
 
 /**
@@ -45,6 +47,7 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
   searchNavigationDirection = 1,
   processSummariesExpanded = false,
   onSearchMatchCountChange,
+  runTimings = [],
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const chatRef = useRef<JustDoChatElement | null>(null);
@@ -102,6 +105,7 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
     chat.assistantName = assistantName ?? '';
     chat.workingDirectory = workingDirectory;
     chat.processSummariesExpanded = processSummariesExpanded;
+    chat.runTimings = runTimings;
   }, [
     assistantName,
     controller,
@@ -109,6 +113,7 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
     isStreaming,
     processSummariesExpanded,
     workingDirectory,
+    runTimings,
   ]);
 
   useEffect(() => {

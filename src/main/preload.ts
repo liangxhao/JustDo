@@ -298,6 +298,8 @@ contextBridge.exposeInMainWorld('electron', {
       agentId?: string;
       attachments?: CoworkAttachmentPayload[];
       permissionMode?: 'ask' | 'auto' | 'full';
+      clientTurnId?: string;
+      startedAt?: number;
     }) => ipcRenderer.invoke('cowork:session:start', options),
     continueSession: (options: {
       sessionId: string;
@@ -331,6 +333,18 @@ contextBridge.exposeInMainWorld('electron', {
       sessionIds: string[],
       options?: { includeSubagents?: boolean; forceRefresh?: boolean },
     ) => ipcRenderer.invoke('cowork:sessions:runtimeStatus', sessionIds, options),
+    beginSessionRun: (input: {
+      sessionId: string;
+      clientTurnId: string;
+      startedAt: number;
+      modelRef?: string;
+    }) => ipcRenderer.invoke('cowork:session:run:begin', input),
+    bindSessionRun: (input: { id: string; rootRunId: string }) =>
+      ipcRenderer.invoke('cowork:session:run:bind', input),
+    listSessionRuns: (sessionId: string) =>
+      ipcRenderer.invoke('cowork:session:run:list', sessionId),
+    failSessionRun: (input: { sessionId: string; id: string; endedAt: number }) =>
+      ipcRenderer.invoke('cowork:session:run:fail', input),
     patchSessionModel: (options: { sessionId: string; model: string; agentId?: string }) =>
       ipcRenderer.invoke('cowork:session:patchModel', options),
     getSessionModel: (options: { sessionId: string; agentId?: string }) =>

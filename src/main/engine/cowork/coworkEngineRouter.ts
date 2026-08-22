@@ -111,7 +111,10 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
     agentId?: string,
   ): ReturnType<NonNullable<CoworkRuntime['getSessionModel']>> {
     if (this.runtime.getSessionModel) return this.runtime.getSessionModel(sessionId, agentId);
-    return Promise.resolve({ ok: false, error: 'getSessionModel not supported by current runtime' });
+    return Promise.resolve({
+      ok: false,
+      error: 'getSessionModel not supported by current runtime',
+    });
   }
 
   async getSessionRuntimeStatus(
@@ -122,6 +125,7 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
     mainRunning: boolean;
     subagentRunning: boolean;
     running: boolean;
+    rootRunId?: string;
   }> {
     if (this.runtime.getSessionRuntimeStatus) {
       return this.runtime.getSessionRuntimeStatus(sessionId, options);
@@ -140,6 +144,7 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
         mainRunning: boolean;
         subagentRunning: boolean;
         running: boolean;
+        rootRunId?: string;
       }
     >
   > {

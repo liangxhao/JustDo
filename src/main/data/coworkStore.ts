@@ -3,6 +3,11 @@ import os from 'os';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 
+import type {
+  BeginSessionRunInput,
+  SessionRunState,
+  SessionRunTiming,
+} from '../../shared/cowork/sessionRun';
 import {
   type AgentRuntimeSettings,
   parseAgentRuntimeSettings,
@@ -203,11 +208,149 @@ interface CoworkMessageRow {
   usage: string | null;
 }
 
+interface SessionRunRow {
+  id: string;
+  session_id: string;
+  client_turn_id: string;
+  root_run_id: string | null;
+  model_ref: string | null;
+  state: SessionRunState;
+  started_at: number;
+  accepted_at: number | null;
+  ended_at: number | null;
+}
+
+const mapSessionRun = (row: SessionRunRow): SessionRunTiming => ({
+  id: row.id,
+  sessionId: row.session_id,
+  clientTurnId: row.client_turn_id,
+  ...(row.root_run_id ? { rootRunId: row.root_run_id } : {}),
+  ...(row.model_ref ? { modelRef: row.model_ref } : {}),
+  startedAt: row.started_at,
+  ...(row.accepted_at === null ? {} : { acceptedAt: row.accepted_at }),
+  ...(row.ended_at === null ? {} : { endedAt: row.ended_at }),
+  state: row.state,
+});
+
 export class CoworkStore {
   private db: Database.Database;
 
   constructor(db: Database.Database) {
     this.db = db;
+  }
+
+  beginSessionRun(input: BeginSessionRunInput): SessionRunTiming {
+    const existing = this.getSessionRunByClientTurnId(input.clientTurnId);
+    if (existing) {
+      if (existing.sessionId !== input.sessionId) {
+        throw new Error('This client turn already belongs to another session.');
+      }
+      return existing;
+    }
+
+    const open = this.getOne<SessionRunRow>(
+      'SELECT * FROM cowork_session_runs WHERE session_id = ? AND ended_at IS NULL',
+      [input.sessionId],
+    );
+    if (open) {
+      throw new Error('This session already has an active user run.');
+    }
+
+    const id = uuidv4();
+    const now = Date.now();
+    this.db
+      .prepare(
+        `INSERT INTO cowork_session_runs
+          (id, session_id, client_turn_id, root_run_id, model_ref, state, started_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?)`,
+      )
+      .run(
+        id,
+        input.sessionId,
+        input.clientTurnId,
+        input.clientTurnId,
+        input.modelRef?.trim() || null,
+        input.startedAt,
+        now,
+        now,
+      );
+    return this.getSessionRun(id)!;
+  }
+
+  getSessionRun(id: string): SessionRunTiming | undefined {
+    const row = this.getOne<SessionRunRow>('SELECT * FROM cowork_session_runs WHERE id = ?', [id]);
+    return row ? mapSessionRun(row) : undefined;
+  }
+
+  getSessionRunByClientTurnId(clientTurnId: string): SessionRunTiming | undefined {
+    const row = this.getOne<SessionRunRow>(
+      'SELECT * FROM cowork_session_runs WHERE client_turn_id = ?',
+      [clientTurnId],
+    );
+    return row ? mapSessionRun(row) : undefined;
+  }
+
+  getSessionRuns(sessionId: string): SessionRunTiming[] {
+    return this.getAll<SessionRunRow>(
+      'SELECT * FROM cowork_session_runs WHERE session_id = ? ORDER BY started_at, id',
+      [sessionId],
+    ).map(mapSessionRun);
+  }
+
+  getLatestSessionRun(sessionId: string): SessionRunTiming | undefined {
+    const row = this.getOne<SessionRunRow>(
+      'SELECT * FROM cowork_session_runs WHERE session_id = ? ORDER BY started_at DESC, id DESC LIMIT 1',
+      [sessionId],
+    );
+    return row ? mapSessionRun(row) : undefined;
+  }
+
+  bindSessionRunRootRun(id: string, rootRunId: string): SessionRunTiming | undefined {
+    const now = Date.now();
+    this.db
+      .prepare(
+        `UPDATE cowork_session_runs
+         SET root_run_id = ?, accepted_at = COALESCE(accepted_at, ?), updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(rootRunId, now, now, id);
+    return this.getSessionRun(id);
+  }
+
+  finishSessionRun(
+    id: string,
+    state: Exclude<SessionRunState, 'running'>,
+    endedAt: number,
+  ): SessionRunTiming | undefined {
+    this.db
+      .prepare(
+        `UPDATE cowork_session_runs
+         SET state = ?, ended_at = ?, updated_at = ?
+         WHERE id = ? AND ended_at IS NULL`,
+      )
+      .run(state, endedAt, endedAt, id);
+    return this.getSessionRun(id);
+  }
+
+  reopenSessionRun(id: string): SessionRunTiming | undefined {
+    this.db
+      .prepare(
+        `UPDATE cowork_session_runs
+         SET state = 'running', ended_at = NULL, updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(Date.now(), id);
+    return this.getSessionRun(id);
+  }
+
+  resetOpenSessionRuns(startedAt: number): void {
+    this.db
+      .prepare(
+        `UPDATE cowork_session_runs
+         SET state = 'running', started_at = ?, accepted_at = ?, updated_at = ?
+         WHERE ended_at IS NULL`,
+      )
+      .run(startedAt, startedAt, startedAt);
   }
 
   private getOne<T>(sql: string, params: (string | number | null)[] = []): T | undefined {

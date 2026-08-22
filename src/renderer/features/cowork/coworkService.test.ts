@@ -230,6 +230,75 @@ describe('cowork runtime activity reconciliation', () => {
     expect(store.getState().cowork.sessionRuntimeActivity[sessionId]).toBe(true);
   });
 
+  test('ignores an idle response that started before a new user run', async () => {
+    const sessionId = 'runtime-begin-race-session';
+    let resolveStatus:
+      | ((value: {
+          success: true;
+          revision: number;
+          known: true;
+          mainRunning: false;
+          subagentRunning: false;
+          running: false;
+        }) => void)
+      | undefined;
+    const getSessionRuntimeStatus = vi.fn(
+      () =>
+        new Promise(resolve => {
+          resolveStatus = resolve;
+        }),
+    );
+    const timing = {
+      id: 'timing-race-1',
+      sessionId,
+      clientTurnId: 'turn-race-1',
+      rootRunId: 'turn-race-1',
+      startedAt: 1_000,
+      state: 'running' as const,
+    };
+    vi.stubGlobal('window', {
+      electron: {
+        cowork: {
+          getSessionRuntimeStatus,
+          beginSessionRun: vi.fn().mockResolvedValue({
+            success: true,
+            timing,
+            snapshot: {
+              revision: 2,
+              known: true,
+              mainRunning: true,
+              subagentRunning: false,
+              running: true,
+              timing,
+            },
+          }),
+        },
+      },
+    });
+
+    const staleRefresh = coworkService.refreshSessionRuntimeActivity(sessionId, {
+      includeSubagents: true,
+    });
+    await Promise.resolve();
+    await coworkService.beginSessionRun({
+      sessionId,
+      clientTurnId: 'turn-race-1',
+      startedAt: 1_000,
+    });
+    resolveStatus?.({
+      success: true,
+      revision: 1,
+      known: true,
+      mainRunning: false,
+      subagentRunning: false,
+      running: false,
+    });
+    await staleRefresh;
+
+    expect(store.getState().cowork.sessionRuntimeActivity[sessionId]).toBe(true);
+    expect(store.getState().cowork.sessionRunTimings[sessionId]).toEqual([timing]);
+  });
+
   test('requires two known idle snapshots before clearing a running session', async () => {
     const sessionId = 'runtime-idle-session';
     store.dispatch(setSessionRuntimeActivity({ sessionId, running: true }));
@@ -286,18 +355,41 @@ describe('cowork runtime activity reconciliation', () => {
   });
 
   test('clears running state only after a confirmed session stop', async () => {
+    vi.useFakeTimers();
     const sessionId = 'confirmed-stop-session';
     store.dispatch(setSessionRuntimeActivity({ sessionId, running: true }));
     vi.stubGlobal('window', {
       electron: {
         cowork: {
           stopSession: vi.fn().mockResolvedValue({ success: true }),
+          getSessionRuntimeStatus: vi
+            .fn()
+            .mockResolvedValueOnce({
+              success: true,
+              revision: 1,
+              known: true,
+              mainRunning: false,
+              subagentRunning: false,
+              running: true,
+            })
+            .mockResolvedValue({
+              success: true,
+              revision: 2,
+              known: true,
+              mainRunning: false,
+              subagentRunning: false,
+              running: false,
+            }),
         },
       },
+      setTimeout,
+      clearTimeout,
     });
 
     await expect(coworkService.stopSession(sessionId)).resolves.toBe(true);
 
+    expect(store.getState().cowork.sessionRuntimeActivity[sessionId]).toBe(true);
+    await vi.advanceTimersByTimeAsync(750);
     expect(store.getState().cowork.sessionRuntimeActivity[sessionId]).toBeUndefined();
   });
 

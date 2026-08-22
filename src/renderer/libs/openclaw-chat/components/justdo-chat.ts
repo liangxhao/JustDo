@@ -6,6 +6,7 @@
  * 1. Directly via properties (messages, stream, etc.)
  * 2. Via a ChatController reference (controller property)
  */
+import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import katexStyles from 'katex/dist/katex.min.css?inline';
 import { css, html, LitElement, nothing, type TemplateResult, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
@@ -105,6 +106,9 @@ export class JustDoChatElement extends LitElement {
   @property({ type: Boolean, attribute: false })
   declare processSummariesExpanded: boolean;
 
+  @property({ type: Array, attribute: false })
+  declare runTimings: SessionRunTiming[];
+
   @state()
   declare private openProcessSummaryKey: string | null;
 
@@ -152,6 +156,7 @@ export class JustDoChatElement extends LitElement {
     this.searchQuery = '';
     this.searchCaseSensitive = false;
     this.processSummariesExpanded = false;
+    this.runTimings = [];
     this.openProcessSummaryKey = null;
     this.collapsedProcessSummaryKeys = new Set();
     this.currentMinimapKey = null;
@@ -2014,6 +2019,15 @@ export class JustDoChatElement extends LitElement {
             .map(item => item.text)
             .join('\n')}`
       : 'idle';
+    const currentRunTiming = this.runTimings[this.runTimings.length - 1] ?? null;
+    const persistedRunTimings = currentRunTiming
+      ? this.runTimings.filter(timing => timing.id !== currentRunTiming.id)
+      : this.runTimings;
+    const runTimingSignature = this.runTimings
+      .map(
+        timing => `${timing.id}:${timing.rootRunId ?? ''}:${timing.state}:${timing.endedAt ?? ''}`,
+      )
+      .join('|');
     const getHistoryTimeline = () =>
       this.persistedTimelineCache.get(
         {
@@ -2023,8 +2037,9 @@ export class JustDoChatElement extends LitElement {
           messages: persistedMessages,
           pendingMessage,
           projectionVariant: activeProjectionVariant,
+          runTimingSignature,
         },
-        () => projectPersistedTimeline(messages),
+        () => projectPersistedTimeline(messages, persistedRunTimings),
       );
 
     if (ctrl) {
@@ -2032,7 +2047,9 @@ export class JustDoChatElement extends LitElement {
       const activeTimeline = this.projectActiveTimeline();
       const livePlanKey =
         activeTurn?.status === 'running' ? latestPlanUpdateKey(activeTimeline) : undefined;
-      const activeTurnFooter = projectActiveTurnFooter(ctrl.getCurrentTurnTiming());
+      const activeTurnFooter = projectActiveTurnFooter(
+        currentRunTiming ?? ctrl.getCurrentTurnTiming(),
+      );
       const timelineView = projectIncrementalTimelineView({
         persisted: this.persistedTimelineRenderCache.get(historyTimeline),
         activeTimeline,
@@ -2325,7 +2342,9 @@ export class JustDoChatElement extends LitElement {
 
   private syncActiveTurnClock(): void {
     const isRunning =
-      this._controller?.getCurrentTurnTiming()?.status === 'running' ||
+      this.runTimings[this.runTimings.length - 1]?.state === 'running' ||
+      (this.runTimings.length === 0 &&
+        this._controller?.getCurrentTurnTiming()?.status === 'running') ||
       this._controller?.state.compactionInFlight === true;
     if (isRunning && this.activeTurnClockTimer === null) {
       this.activeTurnClockTimer = setInterval(() => this.requestUpdate(), 1_000);
@@ -2722,7 +2741,11 @@ export class JustDoChatElement extends LitElement {
         historyItem.kind === 'group' &&
         historyItem.role === 'assistant' &&
         item.durationMs !== undefined
-          ? { ...historyItem, durationMs: item.durationMs }
+          ? {
+              ...historyItem,
+              durationMs: item.durationMs,
+              ...(item.completedAt !== undefined ? { timestamp: item.completedAt } : {}),
+            }
           : historyItem,
       );
       return html`

@@ -28,6 +28,8 @@ interface StartSessionOptions {
   attachments?: CoworkAttachmentPayload[];
   agentId?: string;
   permissionMode?: unknown;
+  clientTurnId?: string;
+  startedAt?: number;
 }
 
 interface ContinueSessionOptions {
@@ -55,12 +57,21 @@ export const registerCoworkSessionExecutionHandlers = ({
   ipcMain.handle('cowork:session:start', async (_event, options: StartSessionOptions) => {
     try {
       await waitForConfigUpdates();
+      const store = getCoworkStore();
+      const existingTiming = options.clientTurnId
+        ? store.getSessionRunByClientTurnId(options.clientTurnId)
+        : undefined;
+      if (existingTiming) {
+        const existingSession = store.getSession(existingTiming.sessionId);
+        if (existingSession) {
+          return { success: true, session: existingSession, timing: existingTiming };
+        }
+      }
       const engineStatus = await ensureEngineRunning();
       if (engineStatus.phase !== 'running') {
         return getEngineNotReadyResponse(engineStatus);
       }
 
-      const store = getCoworkStore();
       const config = store.getConfig();
       const permissionMode = resolvePermissionMode(config.permissionMode);
       const selectedWorkspaceRoot = (options.cwd || config.workingDirectory || '').trim();
@@ -81,6 +92,15 @@ export const registerCoworkSessionExecutionHandlers = ({
         initialModelRef,
       );
       store.updateSession(session.id, { status: 'running' });
+      const timing =
+        options.clientTurnId && Number.isFinite(options.startedAt)
+          ? store.beginSessionRun({
+              sessionId: session.id,
+              clientTurnId: options.clientTurnId,
+              startedAt: options.startedAt!,
+              modelRef: initialModelRef,
+            })
+          : undefined;
 
       const messageMetadata: Record<string, unknown> = {};
       if (options.activeSkillIds?.length) messageMetadata.skillIds = options.activeSkillIds;
@@ -101,6 +121,7 @@ export const registerCoworkSessionExecutionHandlers = ({
           confirmationMode: 'modal',
           attachments: options.attachments,
           agentId: options.agentId,
+          clientTurnId: options.clientTurnId,
         })
         .catch(error => {
           console.error('[Cowork] session error:', error);
@@ -117,6 +138,7 @@ export const registerCoworkSessionExecutionHandlers = ({
       return {
         success: true,
         session: store.getSession(session.id) || { ...session, status: 'running' as const },
+        ...(timing ? { timing } : {}),
       };
     } catch (error) {
       return {

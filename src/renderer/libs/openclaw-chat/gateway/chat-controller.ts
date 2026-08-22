@@ -2892,7 +2892,11 @@ export class ChatController {
     message: string,
     attachments: CoworkAttachmentPayload[] = [],
     gatewayMessage = message,
-    options: { propagateRequestFailure?: boolean } = {},
+    options: {
+      propagateRequestFailure?: boolean;
+      clientTurnId?: string;
+      onRunBound?: (runId: string) => void | Promise<void>;
+    } = {},
   ): Promise<void> {
     const client = this.state.client;
     if (!client || !this.state.connected) throw new Error('not connected');
@@ -2935,7 +2939,9 @@ export class ChatController {
       throw sessionError;
     }
 
-    const runId = `justdo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const runId =
+      options.clientTurnId?.trim() ||
+      `justdo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     debugLog('[ChatCtrl] sendMessage:', displayMessage.slice(0, 60), {
       sessionKey,
       runId,
@@ -2991,6 +2997,11 @@ export class ChatController {
         idempotencyKey: runId,
         ...(gatewayAttachments.length > 0 ? { attachments: gatewayAttachments } : {}),
       });
+      try {
+        await options.onRunBound?.(ack?.runId ?? runId);
+      } catch (error) {
+        debugLog('[ChatCtrl] failed to persist root run binding', error);
+      }
 
       if (ack?.runId && this.state.sessionKey === sessionKey && this.state.chatRunId === runId) {
         this.state.chatRunId = ack.runId;

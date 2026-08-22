@@ -163,6 +163,30 @@ export class SqliteStore {
     `);
 
     this.db.exec(`
+      CREATE TABLE IF NOT EXISTS cowork_session_runs (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        client_turn_id TEXT NOT NULL UNIQUE,
+        root_run_id TEXT,
+        model_ref TEXT,
+        state TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        accepted_at INTEGER,
+        ended_at INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (session_id) REFERENCES cowork_sessions(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_cowork_session_runs_session_started
+        ON cowork_session_runs(session_id, started_at, id);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_cowork_session_runs_open
+        ON cowork_session_runs(session_id)
+        WHERE ended_at IS NULL;
+    `);
+    this.ensureColumn('cowork_session_runs', 'accepted_at', 'INTEGER');
+
+    this.db.exec(`
       CREATE TABLE IF NOT EXISTS cowork_config (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL,

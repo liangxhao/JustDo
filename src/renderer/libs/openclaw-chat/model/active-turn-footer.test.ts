@@ -74,9 +74,7 @@ describe('active turn footer', () => {
   });
 
   test('formats the latest time with seconds', () => {
-    expect(formatActiveTurnTimestamp(new Date(2026, 6, 29, 16, 5, 12))).toBe(
-      '2026-07-29 16:05:12',
-    );
+    expect(formatActiveTurnTimestamp(new Date(2026, 6, 29, 16, 5, 12))).toBe('2026-07-29 16:05:12');
   });
 
   test('formats duration as a clock value', () => {
@@ -93,6 +91,22 @@ describe('resolveActiveTurnModel', () => {
         'current-provider',
       ),
     ).toBe('current-provider/current-model');
+  });
+
+  test('uses the user-visible session run instead of an internal run id', () => {
+    expect(
+      projectActiveTurnFooter(
+        {
+          id: 'timing-1',
+          sessionId: 'session-1',
+          clientTurnId: 'root-run',
+          rootRunId: 'root-run',
+          startedAt: 1_000,
+          state: 'running',
+        },
+        301_000,
+      ),
+    ).toMatchObject({ running: true, durationMs: 300_000 });
   });
 
   test('skips gateway-injected assistant records when falling back to history', () => {
@@ -120,9 +134,7 @@ describe('resolveActiveTurnModel', () => {
 
   test('does not guess from assistant-only history without a current turn boundary', () => {
     expect(
-      resolveActiveTurnModel([
-        { role: 'assistant', provider: 'old-provider', model: 'old-model' },
-      ]),
+      resolveActiveTurnModel([{ role: 'assistant', provider: 'old-provider', model: 'old-model' }]),
     ).toBe('');
   });
 

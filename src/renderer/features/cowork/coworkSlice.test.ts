@@ -5,6 +5,8 @@ import coworkReducer, {
   clearCurrentSession,
   hydrateDraftImageAttachment,
   setConfig,
+  setSessionRuntimeSnapshot,
+  setSessionRunTimings,
   setSessions,
   updateSessionStatus,
   updateSessionTitle,
@@ -118,5 +120,142 @@ describe('cowork session recent activity', () => {
     );
 
     expect(updated.sessions[0]).toMatchObject({ title: 'Renamed', updatedAt: activityTime });
+  });
+});
+
+describe('cowork session runtime snapshot', () => {
+  test('freezes activity and timing in one reducer transition', () => {
+    const running = coworkReducer(
+      undefined,
+      setSessionRuntimeSnapshot({
+        sessionId: 'session-1',
+        snapshot: {
+          revision: 1,
+          known: true,
+          mainRunning: true,
+          subagentRunning: false,
+          running: true,
+          timing: {
+            id: 'timing-1',
+            sessionId: 'session-1',
+            clientTurnId: 'run-1',
+            startedAt: 1_000,
+            state: 'running',
+          },
+        },
+      }),
+    );
+    const completed = coworkReducer(
+      running,
+      setSessionRuntimeSnapshot({
+        sessionId: 'session-1',
+        snapshot: {
+          revision: 2,
+          known: true,
+          mainRunning: false,
+          subagentRunning: false,
+          running: false,
+          timing: {
+            id: 'timing-1',
+            sessionId: 'session-1',
+            clientTurnId: 'run-1',
+            startedAt: 1_000,
+            endedAt: 6_000,
+            state: 'completed',
+          },
+        },
+      }),
+    );
+
+    expect(completed.sessionRuntimeActivity['session-1']).toBeUndefined();
+    expect(completed.sessionMainRuntimeActivity['session-1']).toBeUndefined();
+    expect(completed.sessionRunTimings['session-1']).toEqual([
+      expect.objectContaining({ state: 'completed', endedAt: 6_000 }),
+    ]);
+  });
+
+  test('preserves a failed run as an error session', () => {
+    const loaded = coworkReducer(
+      undefined,
+      setSessions([
+        {
+          id: 'session-1',
+          title: 'Session',
+          status: 'running',
+          pinned: false,
+          createdAt: 1_000,
+          updatedAt: 1_000,
+        },
+      ]),
+    );
+    const state = coworkReducer(
+      loaded,
+      setSessionRuntimeSnapshot({
+        sessionId: 'session-1',
+        snapshot: {
+          revision: 1,
+          known: true,
+          mainRunning: false,
+          subagentRunning: false,
+          running: false,
+          timing: {
+            id: 'timing-1',
+            sessionId: 'session-1',
+            clientTurnId: 'run-1',
+            startedAt: 1_000,
+            endedAt: 2_000,
+            state: 'failed',
+          },
+        },
+      }),
+    );
+
+    expect(state.sessionRunTimings['session-1']?.[0]?.state).toBe('failed');
+    expect(state.sessionRuntimeActivity['session-1']).toBeUndefined();
+    expect(state.sessions[0]?.status).toBe('error');
+  });
+
+  test('does not drop a newly started timing when an older list response arrives', () => {
+    const running = coworkReducer(
+      undefined,
+      setSessionRuntimeSnapshot({
+        sessionId: 'session-1',
+        snapshot: {
+          revision: 2,
+          known: true,
+          mainRunning: true,
+          subagentRunning: false,
+          running: true,
+          timing: {
+            id: 'timing-new',
+            sessionId: 'session-1',
+            clientTurnId: 'run-new',
+            startedAt: 2_000,
+            state: 'running',
+          },
+        },
+      }),
+    );
+    const merged = coworkReducer(
+      running,
+      setSessionRunTimings({
+        sessionId: 'session-1',
+        timings: [
+          {
+            id: 'timing-old',
+            sessionId: 'session-1',
+            clientTurnId: 'run-old',
+            startedAt: 1_000,
+            endedAt: 1_500,
+            state: 'completed',
+          },
+        ],
+      }),
+    );
+
+    expect(merged.sessionRunTimings['session-1']?.map(timing => timing.id)).toEqual([
+      'timing-old',
+      'timing-new',
+    ]);
   });
 });

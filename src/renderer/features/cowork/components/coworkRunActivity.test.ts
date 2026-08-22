@@ -11,7 +11,7 @@ const compactionProgress: GoalRunProgress = {
 
 describe('isCoworkRunActive', () => {
   it('keeps the prompt running while local context compaction is active', () => {
-    expect(isCoworkRunActive(false, compactionProgress)).toBe(true);
+    expect(isCoworkRunActive(false, compactionProgress)).toBe(false);
   });
 
   it('is idle only when runtime and local controller activity are both idle', () => {

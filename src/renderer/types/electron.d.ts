@@ -1,4 +1,7 @@
 type CoworkAttachmentPayload = import('../../shared/cowork/attachments').CoworkAttachmentPayload;
+type BeginSessionRunInput = import('../../shared/cowork/sessionRun').BeginSessionRunInput;
+type SessionRunTiming = import('../../shared/cowork/sessionRun').SessionRunTiming;
+type SessionRuntimeSnapshot = import('../../shared/cowork/sessionRun').SessionRuntimeSnapshot;
 type GenerateSessionTitleRequest =
   import('../../shared/cowork/sessionTitle').GenerateSessionTitleRequest;
 type SaveTextFileOptions = import('../../shared/dialogIpc').SaveTextFileOptions;
@@ -621,12 +624,15 @@ interface IElectronAPI {
       agentId?: string;
       attachments?: CoworkAttachmentPayload[];
       permissionMode?: PermissionMode;
+      clientTurnId?: string;
+      startedAt?: number;
     }) => Promise<{
       success: boolean;
       session?: CoworkSession;
       error?: string;
       code?: string;
       engineStatus?: OpenClawEngineStatus;
+      timing?: SessionRunTiming;
     }>;
     continueSession: (options: {
       sessionId: string;
@@ -677,6 +683,8 @@ interface IElectronAPI {
       mainRunning: boolean;
       subagentRunning: boolean;
       running: boolean;
+      revision: number;
+      timing?: SessionRunTiming;
       error?: string;
     }>;
     getSessionRuntimeStatuses: (
@@ -684,15 +692,28 @@ interface IElectronAPI {
       options?: { includeSubagents?: boolean; forceRefresh?: boolean },
     ) => Promise<{
       success: boolean;
-      statuses: Record<
-        string,
-        {
-          known: boolean;
-          mainRunning: boolean;
-          subagentRunning: boolean;
-          running: boolean;
-        }
-      >;
+      statuses: Record<string, SessionRuntimeSnapshot>;
+      error?: string;
+    }>;
+    beginSessionRun: (input: BeginSessionRunInput) => Promise<{
+      success: boolean;
+      timing?: SessionRunTiming;
+      snapshot?: SessionRuntimeSnapshot;
+      error?: string;
+    }>;
+    bindSessionRun: (input: { id: string; rootRunId: string }) => Promise<{
+      success: boolean;
+      timing?: SessionRunTiming;
+      error?: string;
+    }>;
+    listSessionRuns: (sessionId: string) => Promise<{
+      success: boolean;
+      timings: SessionRunTiming[];
+      error?: string;
+    }>;
+    failSessionRun: (input: { sessionId: string; id: string; endedAt: number }) => Promise<{
+      success: boolean;
+      snapshot?: SessionRuntimeSnapshot;
       error?: string;
     }>;
     patchSessionModel: (options: {

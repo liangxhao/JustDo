@@ -10,6 +10,7 @@ vi.mock('electron', () => ({
   app: { getPath: () => os.tmpdir() },
 }));
 
+import { CoworkStore } from './coworkStore';
 import { SqliteStore } from './sqliteStore';
 
 const tempDirs: string[] = [];
@@ -75,6 +76,9 @@ test('deletes legacy schema database and creates a fresh database', () => {
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'scheduled_task_result_cleanup'",
     )
     .get();
+  const sessionRunsTable = migratedDb
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'cowork_session_runs'")
+    .get();
 
   expect(columns.map(column => column.name)).toEqual(
     expect.arrayContaining(['agent_id', 'group_id', 'pinned', 'active_skill_ids', 'model_ref']),
@@ -84,6 +88,7 @@ test('deletes legacy schema database and creates a fresh database', () => {
   expect(legacyRow).toBeUndefined();
   expect(resultTable).toEqual({ name: 'scheduled_task_run_receipts' });
   expect(cleanupTable).toEqual({ name: 'scheduled_task_result_cleanup' });
+  expect(sessionRunsTable).toEqual({ name: 'cowork_session_runs' });
 
   store.close();
 });
@@ -138,4 +143,74 @@ test('adds model_ref to a current database without deleting sessions', () => {
   expect(columns.map(column => column.name)).toContain('model_ref');
   expect(keptRow).toEqual({ id: 'kept-session' });
   store.close();
+});
+
+test('persists one idempotent user run and cascades it with the session', () => {
+  const dir = createTempDir();
+  const sqlite = SqliteStore.create(dir);
+  const db = sqlite.getDatabase();
+  db.prepare(
+    `INSERT INTO cowork_sessions
+      (id, title, status, cwd, agent_id, created_at, updated_at)
+     VALUES ('session-1', 'Session', 'idle', '/tmp', 'main', 1, 1)`,
+  ).run();
+  const store = new CoworkStore(db);
+
+  const first = store.beginSessionRun({
+    sessionId: 'session-1',
+    clientTurnId: 'turn-1',
+    startedAt: 1_000,
+    modelRef: 'openai/gpt-5',
+  });
+  const duplicate = store.beginSessionRun({
+    sessionId: 'session-1',
+    clientTurnId: 'turn-1',
+    startedAt: 9_000,
+  });
+  expect(duplicate).toEqual(first);
+  expect(first.rootRunId).toBe('turn-1');
+
+  expect(store.finishSessionRun(first.id, 'completed', 6_000)).toMatchObject({
+    startedAt: 1_000,
+    endedAt: 6_000,
+    state: 'completed',
+  });
+  db.prepare("DELETE FROM cowork_sessions WHERE id = 'session-1'").run();
+  expect(store.getSessionRuns('session-1')).toEqual([]);
+  sqlite.close();
+});
+
+test('rejects a client turn reused by another session and resets open clocks on startup', () => {
+  const dir = createTempDir();
+  const sqlite = SqliteStore.create(dir);
+  const db = sqlite.getDatabase();
+  for (const id of ['session-1', 'session-2']) {
+    db.prepare(
+      `INSERT INTO cowork_sessions
+        (id, title, status, cwd, agent_id, created_at, updated_at)
+       VALUES (?, 'Session', 'idle', '/tmp', 'main', 1, 1)`,
+    ).run(id);
+  }
+  const store = new CoworkStore(db);
+  const timing = store.beginSessionRun({
+    sessionId: 'session-1',
+    clientTurnId: 'turn-1',
+    startedAt: 1_000,
+  });
+
+  expect(() =>
+    store.beginSessionRun({
+      sessionId: 'session-2',
+      clientTurnId: 'turn-1',
+      startedAt: 2_000,
+    }),
+  ).toThrow('another session');
+
+  store.resetOpenSessionRuns(10_000);
+  expect(store.getSessionRun(timing.id)).toMatchObject({
+    startedAt: 10_000,
+    acceptedAt: 10_000,
+    state: 'running',
+  });
+  sqlite.close();
 });

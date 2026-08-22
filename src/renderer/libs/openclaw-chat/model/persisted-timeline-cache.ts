@@ -9,6 +9,7 @@ export interface PersistedTimelineCacheKey {
   messages: GatewayMessage[];
   pendingMessage: GatewayMessage | null;
   projectionVariant: string;
+  runTimingSignature?: string;
 }
 
 export class PersistedTimelineCache {
@@ -30,7 +31,8 @@ export class PersistedTimelineCache {
       this.key.historyGeneration === key.historyGeneration &&
       this.key.messages === key.messages &&
       this.key.pendingMessage === key.pendingMessage &&
-      this.key.projectionVariant === key.projectionVariant
+      this.key.projectionVariant === key.projectionVariant &&
+      (this.key.runTimingSignature ?? '') === (key.runTimingSignature ?? '')
     ) {
       return this.value;
     }

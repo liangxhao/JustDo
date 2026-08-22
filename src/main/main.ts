@@ -1103,6 +1103,9 @@ if (!gotTheLock) {
     registerLocalFileProtocol();
 
     store = await initStore();
+    // Open receipts belong to the previous app process. Restart their clocks
+    // only after SQLite is initialized so offline time is not counted.
+    getCoworkStore().resetOpenSessionRuns(Date.now());
     // Defensive recovery: app may be force-closed during execution and leave
     // stale running flags in DB. Normalize them on startup.
     const resetCount = getCoworkStore().resetRunningSessions();
