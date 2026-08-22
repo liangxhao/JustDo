@@ -21,7 +21,11 @@ import {
   type TurnItem,
   type TurnStatus,
 } from './chat-transcript-state';
-import { hasToolResultPayload, isSessionsYieldTool } from './tool-lifecycle';
+import {
+  hasToolResultPayload,
+  inferSessionsYieldInput,
+  isSessionsYieldTool,
+} from './tool-lifecycle';
 
 export type TranscriptReduceResult =
   'applied' | 'ignored-session' | 'ignored-run' | 'ignored-sequence' | 'ignored-stream';
@@ -183,6 +187,10 @@ function reduceTool(
   if (!toolCallId) return false;
   const existing = turn.toolById.get(toolCallId);
   const resolved = normalizeToolEvent(event.data, existing?.name ?? 'tool');
+  const resolvedInput =
+    resolved.input ??
+    existing?.input ??
+    inferSessionsYieldInput(resolved.name, resolved.output ?? existing?.output);
   const sessionsYieldHasPayload =
     hasToolResultPayload({
       output: resolved.output ?? undefined,
@@ -197,7 +205,7 @@ function reduceTool(
 
   if (existing) {
     existing.name = resolved.name;
-    if (resolved.input !== undefined && resolved.input !== null) existing.input = resolved.input;
+    if (resolvedInput !== undefined && resolvedInput !== null) existing.input = resolvedInput;
     if (resolved.output !== null && !outputlessSessionsYieldResult) {
       existing.output = boundOutput(resolved.output);
     }
@@ -225,10 +233,8 @@ function reduceTool(
     type: 'tool',
     status,
     toolCallId,
-    name: normalized.name,
-    ...(normalized.input !== undefined && normalized.input !== null
-      ? { input: normalized.input }
-      : {}),
+    name: resolved.name,
+    ...(resolvedInput !== undefined && resolvedInput !== null ? { input: resolvedInput } : {}),
     ...(normalized.output !== null && !outputlessSessionsYieldResult
       ? { output: boundOutput(normalized.output) }
       : {}),

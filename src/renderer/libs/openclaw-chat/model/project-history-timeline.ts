@@ -11,7 +11,11 @@ import {
 } from './chat-transcript-state';
 import { deterministicHistoryKey } from './history-reconciler';
 import type { PlanUpdateTimelineItem, ProcessSummaryTimelineItem } from './project-turn-items';
-import { hasToolResultPayload, isSessionsYieldTool } from './tool-lifecycle';
+import {
+  hasToolResultPayload,
+  inferSessionsYieldInput,
+  isSessionsYieldTool,
+} from './tool-lifecycle';
 import {
   asToolRecord,
   attachedToolMessages,
@@ -308,9 +312,11 @@ export function projectPersistedTimeline(
           candidate => candidate.name === sourceName && candidate.output === undefined,
         );
     const toolCallId = explicitToolCallId ?? tool?.toolCallId ?? fallbackId;
-    const input = readToolInput(source);
+    const sourceInput = readToolInput(source);
     const output = readToolOutput(source);
     const error = readToolError(source, output);
+    const effectiveName = sourceName === 'tool' ? (tool?.name ?? sourceName) : sourceName;
+    const input = sourceInput ?? tool?.input ?? inferSessionsYieldInput(effectiveName, output);
     if (!tool) {
       tool = {
         id: fallbackId,

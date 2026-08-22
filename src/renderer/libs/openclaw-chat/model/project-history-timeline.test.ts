@@ -365,6 +365,69 @@ describe('projectPersistedTimeline', () => {
     });
   });
 
+  test('recovers sessions_yield arguments from a standalone result before history patching', () => {
+    const output = JSON.stringify({
+      status: 'completed',
+      message: '等待 subagent 2（news_finance）完成调研后继续。',
+      pending: 0,
+      results: [{ status: 'ok' }],
+    });
+    const result = projectPersistedTimeline([
+      {
+        role: 'toolResult',
+        toolCallId: 'call-yield-1',
+        toolName: 'sessions_yield',
+        content: [{ type: 'text', text: output }],
+      },
+    ]);
+    const tools = result.flatMap(item =>
+      item.kind === 'process-summary' ? item.items.filter(entry => entry.type === 'tool') : [],
+    );
+
+    expect(tools).toHaveLength(1);
+    expect(tools[0]).toMatchObject({
+      toolCallId: 'call-yield-1',
+      status: 'completed',
+      input: { message: '等待 subagent 2（news_finance）完成调研后继续。' },
+      output,
+    });
+  });
+
+  test('does not replace persisted sessions_yield arguments with a result status message', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'toolCall',
+            id: 'call-yield-1',
+            name: 'sessions_yield',
+            arguments: { message: '等待 subagent 2 完成。' },
+          },
+        ],
+      },
+      {
+        role: 'toolResult',
+        toolCallId: 'call-yield-1',
+        toolName: 'sessions_yield',
+        content: [
+          {
+            type: 'text',
+            text: '{"status":"already_waiting","message":"A sessions_yield call is already waiting."}',
+          },
+        ],
+      },
+    ]);
+    const tool = result
+      .flatMap(item => (item.kind === 'process-summary' ? item.items : []))
+      .find(entry => entry.type === 'tool');
+
+    expect(tool).toMatchObject({
+      toolCallId: 'call-yield-1',
+      input: { message: '等待 subagent 2 完成。' },
+    });
+  });
+
   test('keeps an array-content OpenClaw Tool failure visible with updated summary state', () => {
     const result = projectPersistedTimeline([
       {

@@ -345,6 +345,38 @@ describe('agent event reducer', () => {
     });
   });
 
+  test('preserves sessions_yield input when the terminal event only carries the result', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    reduceAgentEvent(
+      state,
+      agent(1, 'tool', {
+        phase: 'start',
+        toolCallId: 'call-yield-1',
+        name: 'sessions_yield',
+        arguments: { message: '等待 subagent 2 完成。' },
+      }),
+      dependencies,
+    );
+    const original = state.activeTurn?.toolById.get('call-yield-1');
+    reduceAgentEvent(
+      state,
+      agent(2, 'tool', {
+        phase: 'result',
+        toolCallId: 'call-yield-1',
+        name: 'sessions_yield',
+        result: '{"status":"aborted","message":"Subagent join was stopped.","pending":0}',
+      }),
+      dependencies,
+    );
+
+    expect(state.activeTurn?.items).toHaveLength(1);
+    expect(state.activeTurn?.toolById.get('call-yield-1')).toBe(original);
+    expect(original).toMatchObject({
+      status: 'completed',
+      input: { message: '等待 subagent 2 完成。' },
+    });
+  });
+
   test('accepts legacy Tool id/input aliases and structured errors incrementally', () => {
     const state = createChatTranscriptState('session-1', 'sid-1');
 
