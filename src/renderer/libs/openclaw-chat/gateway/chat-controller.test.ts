@@ -2567,7 +2567,7 @@ test('keeps streamed assistant text as a truncated message when an aborted run h
   expect(controller.state.chatMessages).toHaveLength(1);
 });
 
-test('keeps an empty lifecycle abort visible until a richer chat.aborted message arrives', () => {
+test('keeps an empty lifecycle abort out of assistant messages until real output arrives', () => {
   const controller = new ChatController();
   controller.state.sessionKey = 'agent:main:justdo:session-1';
   controller.state.transcript.sessionKey = controller.state.sessionKey;
@@ -2594,14 +2594,7 @@ test('keeps an empty lifecycle abort visible until a richer chat.aborted message
       data: { phase: 'end', aborted: true },
     },
   });
-  expect(controller.state.chatMessages).toEqual([
-    expect.objectContaining({
-      role: 'assistant',
-      runId: 'run-late-abort',
-      interrupted: true,
-      __justdoOptimisticHistoryTail: true,
-    }),
-  ]);
+  expect(controller.state.chatMessages).toEqual([]);
 
   handleEvent({
     event: 'chat',
@@ -2622,7 +2615,7 @@ test('keeps an empty lifecycle abort visible until a richer chat.aborted message
   ]);
 });
 
-test('keeps a stopped prompt and interruption across a stale history refresh', async () => {
+test('keeps a stopped prompt without synthesizing an assistant bubble across stale history', async () => {
   let storedInterruptedMessages: string | null = null;
   vi.stubGlobal('localStorage', {
     getItem: vi.fn(() => storedInterruptedMessages),
@@ -2665,13 +2658,8 @@ test('keeps a stopped prompt and interruption across a stale history refresh', a
       content: 'Please start this work.',
       __justdoOptimisticHistoryTail: true,
     }),
-    expect.objectContaining({
-      role: 'assistant',
-      runId: 'run-stopped',
-      interrupted: true,
-    }),
   ]);
-  expect(storedInterruptedMessages).toContain('run-stopped');
+  expect(storedInterruptedMessages).toBeNull();
 });
 
 test('replaces a short lifecycle abort projection with a richer chat.aborted message', () => {

@@ -99,6 +99,33 @@ describe('active turn timeline', () => {
     expect(rendered).not.toContain('chat-avatar assistant');
   });
 
+  test('renders an interrupted run as the original terminal status row', () => {
+    const rendered = flatten(
+      renderTimelineItem({
+        kind: 'terminal',
+        key: 'terminal:aborted',
+        item: {
+          id: 'terminal:aborted',
+          runId: 'run-1',
+          firstSeq: 1,
+          lastSeq: 1,
+          startedAt: 1,
+          updatedAt: 1,
+          type: 'terminal',
+          status: 'aborted',
+          message: '运行已中断。',
+        },
+      }),
+    );
+
+    expect(rendered).toContain('chat-avatar assistant');
+    expect(rendered).toContain('process-terminal process-terminal--aborted');
+    expect(rendered).toContain('The run was interrupted.');
+    expect(rendered).not.toContain('运行已中断。');
+    expect(rendered).not.toContain('chat-bubble');
+    expect(rendered).not.toContain('active-turn__status');
+  });
+
   test('renders running Thinking as an independently streaming block', () => {
     const rendered = flatten(
       renderTimelineItem({

@@ -32,6 +32,7 @@ import {
   formatActiveTurnTimestamp,
   projectActiveTurnFooter,
   resolveActiveTurnModel,
+  shouldRenderInterruptedTerminalFallback,
 } from '@/libs/openclaw-chat/model/active-turn-footer';
 import {
   type ChatMinimapEntry,
@@ -1868,6 +1869,23 @@ export class JustDoChatElement extends LitElement {
         color: #b91c1c;
         font-size: 13px;
       }
+      .process-terminal--aborted {
+        width: fit-content;
+        max-width: 100%;
+        align-items: center;
+        box-sizing: border-box;
+        gap: 6px;
+        border-radius: 6px;
+        padding: 4px 8px;
+        background: rgba(254, 242, 242, 0.56);
+        color: #b45b5b;
+        font-size: 12px;
+        line-height: 1.4;
+      }
+      .process-terminal--aborted > [aria-hidden='true'] {
+        font-size: 11px;
+        opacity: 0.78;
+      }
       .new-messages-indicator {
         position: sticky;
         z-index: 12;
@@ -1948,6 +1966,10 @@ export class JustDoChatElement extends LitElement {
       :host(.dark) .process-terminal {
         background: rgba(127, 29, 29, 0.2);
         color: #fca5a5;
+      }
+      :host(.dark) .process-terminal--aborted {
+        background: rgba(127, 29, 29, 0.12);
+        color: #e8a3a3;
       }
       :host(.dark) .waiting-status--warning .waiting-status__message {
         color: var(--justdo-chat-warning, #f6c453);
@@ -2055,6 +2077,31 @@ export class JustDoChatElement extends LitElement {
         activeTimeline,
         suppressTrailingAssistantFooter: activeTurnFooter !== null || isStreaming,
       });
+      const hasVisibleInterruptedTerminal = [
+        ...timelineView.persistedRows,
+        ...(timelineView.seamRow ? [timelineView.seamRow] : []),
+        ...timelineView.activeRows,
+      ].some(row => row.item.kind === 'terminal' && row.item.item.status === 'aborted');
+      const interruptedTerminalFallback = shouldRenderInterruptedTerminalFallback(
+        activeTurnFooter,
+        hasVisibleInterruptedTerminal,
+      )
+        ? ({
+            kind: 'terminal',
+            key: `terminal:aborted:fallback:${currentRunTiming?.id ?? activeTurn?.runId ?? 'run'}`,
+            item: {
+              id: `terminal:aborted:fallback:${currentRunTiming?.id ?? activeTurn?.runId ?? 'run'}`,
+              runId: activeTurn?.runId ?? currentRunTiming?.rootRunId ?? 'run',
+              firstSeq: activeTurn?.lastAgentSeq ?? 0,
+              lastSeq: activeTurn?.lastAgentSeq ?? 0,
+              startedAt: activeTurnFooter?.completedAt ?? Date.now(),
+              updatedAt: activeTurnFooter?.completedAt ?? Date.now(),
+              type: 'terminal',
+              status: 'aborted',
+              message: i18nService.t('coworkRunInterruptedMessage'),
+            },
+          } satisfies ActiveTurnTimelineItem)
+        : null;
       this.resolveOpenProcessSummaryKey(
         [
           ...timelineView.persistedRows.map(row => row.item),
@@ -2107,6 +2154,11 @@ export class JustDoChatElement extends LitElement {
                   row.item.kind === 'plan-update' && row.item.key === livePlanKey,
                 ),
             )}
+            ${
+              interruptedTerminalFallback
+                ? renderTimelineItem(interruptedTerminalFallback)
+                : nothing
+            }
             ${
               activeTurnFooter
                 ? html`

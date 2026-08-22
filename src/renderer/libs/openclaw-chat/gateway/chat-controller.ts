@@ -2575,12 +2575,7 @@ export class ChatController {
       ? liveThinkingText
         ? withThinkingContent(payload.message, liveThinkingText)
         : payload.message
-      : buildInterruptedTurnMessage(
-          liveThinkingText,
-          liveContentText,
-          abortedRunId,
-          i18nService.t('coworkRunInterruptedMessage'),
-        );
+      : buildInterruptedTurnMessage(liveThinkingText, liveContentText, abortedRunId);
     const message =
       interruptedMessage && abortedRunId && typeof interruptedMessage === 'object'
         ? { ...(interruptedMessage as Record<string, unknown>), runId: abortedRunId }
@@ -3467,15 +3462,13 @@ function buildInterruptedTurnMessage(
   thinkingText: string | null,
   contentText: string | null,
   runId: string | null,
-  fallbackText = '',
-): unknown {
+): unknown | null {
+  if (!thinkingText && !contentText) return null;
   return {
     role: 'assistant',
     content: [
       ...(thinkingText ? [{ type: 'thinking', thinking: thinkingText }] : []),
-      ...(contentText || (!thinkingText && fallbackText)
-        ? [{ type: 'text', text: contentText || fallbackText, interrupted: true }]
-        : []),
+      ...(contentText ? [{ type: 'text', text: contentText, interrupted: true }] : []),
     ],
     timestamp: Date.now(),
     interrupted: true,

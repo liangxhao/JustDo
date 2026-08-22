@@ -382,11 +382,15 @@ ${toolResult(process)}</pre>
       },
     );
   }
+  const terminalMessage =
+    item.item.status === 'aborted'
+      ? i18nService.t('coworkRunInterruptedMessage')
+      : item.item.message;
   return renderAssistantTimelineRow(
     html`
       <div class="process-terminal process-terminal--${item.item.status}" role="status">
         <span aria-hidden="true">!</span>
-        <span>${item.item.message}</span>
+        <span>${terminalMessage}</span>
       </div>
     `,
     showAvatar,

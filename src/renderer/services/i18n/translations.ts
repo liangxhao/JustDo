@@ -517,7 +517,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkRunStateResponding: '正在回复',
     coworkRunStateDone: '已完成',
     coworkRunStateInterrupted: '已中断',
-    coworkRunInterruptedMessage: '运行已中断。',
+    coworkRunInterruptedMessage: 'The run was interrupted.',
     coworkJumpToLatest: '跳到最新消息',
     coworkMinimapLabel: '对话概览',
     coworkMinimapUserMessage: '用户消息',

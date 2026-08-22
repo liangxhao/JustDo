@@ -5,6 +5,7 @@ import {
   formatActiveTurnTimestamp,
   projectActiveTurnFooter,
   resolveActiveTurnModel,
+  shouldRenderInterruptedTerminalFallback,
 } from './active-turn-footer';
 import type { AssistantTurn, TurnItem } from './chat-transcript-state';
 
@@ -58,6 +59,7 @@ describe('active turn footer', () => {
       completedAt: null,
       durationMs: 3_000,
       running: true,
+      status: 'running',
     });
   });
 
@@ -66,11 +68,31 @@ describe('active turn footer', () => {
       completedAt: 2_000,
       durationMs: 1_000,
       running: false,
+      status: 'completed',
+    });
+  });
+
+  test('projects an aborted run as interruption status metadata', () => {
+    expect(projectActiveTurnFooter(turn('aborted'), 9_000)).toEqual({
+      completedAt: 2_000,
+      durationMs: 1_000,
+      running: false,
+      status: 'aborted',
     });
   });
 
   test('does not render without an active turn', () => {
     expect(projectActiveTurnFooter(null)).toBeNull();
+  });
+
+  test('requests the original terminal row when aborted timing has no visible terminal item', () => {
+    const footer = projectActiveTurnFooter(turn('aborted'), 9_000);
+
+    expect(shouldRenderInterruptedTerminalFallback(footer, false)).toBe(true);
+    expect(shouldRenderInterruptedTerminalFallback(footer, true)).toBe(false);
+    expect(
+      shouldRenderInterruptedTerminalFallback(projectActiveTurnFooter(turn('final')), false),
+    ).toBe(false);
   });
 
   test('formats the latest time with seconds', () => {

@@ -6,6 +6,7 @@ const FAILED_RUN_STORAGE_KEY = 'justdo-openclaw-failed-runs';
 const FAILED_RUN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const INTERRUPTED_MESSAGE_STORAGE_KEY = 'justdo-openclaw-interrupted-messages';
 const INTERRUPTED_MESSAGE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+const LEGACY_INTERRUPTED_STATUS_TEXTS = new Set(['运行已中断。', 'The run was interrupted.']);
 
 type FailedRunRecord = {
   sessionKey: string;
@@ -82,6 +83,16 @@ function messageText(content: unknown): string {
     .join('\n');
 }
 
+/** Remove status-only assistant bubbles created by older renderer builds. */
+function isLegacyInterruptedStatusMessage(message: unknown): boolean {
+  const record = asRecord(message);
+  return (
+    record?.role === 'assistant' &&
+    record.interrupted === true &&
+    LEGACY_INTERRUPTED_STATUS_TEXTS.has(messageText(record.content).trim())
+  );
+}
+
 function readInterruptedMessages(): InterruptedMessageRecord[] {
   if (typeof localStorage === 'undefined') return [];
   try {
@@ -95,7 +106,8 @@ function readInterruptedMessages(): InterruptedMessageRecord[] {
         (typeof item.runId === 'string' || item.runId === null) &&
         typeof item.timestamp === 'number' &&
         item.timestamp >= cutoff &&
-        Boolean(asRecord(item.message)),
+        Boolean(asRecord(item.message)) &&
+        !isLegacyInterruptedStatusMessage(item.message),
     );
   } catch {
     return [];
@@ -220,6 +232,7 @@ export function projectGatewayHistoryForDisplay(messages: unknown[]): unknown[] 
     .map(projectGoalFeedbackForDisplay)
     .map(stripAssistantSilentReplySuffix)
     .filter(message => !shouldHideMessage(message))
+    .filter(message => !isLegacyInterruptedStatusMessage(message))
     .filter(message => !asRecord(message)?.__openclawStreamFallback);
 }
 

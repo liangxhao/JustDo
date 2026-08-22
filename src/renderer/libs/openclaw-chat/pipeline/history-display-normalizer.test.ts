@@ -43,6 +43,29 @@ describe('projectGatewayHistoryForDisplay', () => {
       { role: 'assistant', content: 'NO' },
     ]);
   });
+
+  test('removes legacy status-only interruption bubbles', () => {
+    expect(
+      projectGatewayHistoryForDisplay([
+        {
+          role: 'assistant',
+          content: [{ type: 'text', text: '运行已中断。', interrupted: true }],
+          interrupted: true,
+        },
+        {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Partial model output', interrupted: true }],
+          interrupted: true,
+        },
+      ]),
+    ).toEqual([
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Partial model output', interrupted: true }],
+        interrupted: true,
+      },
+    ]);
+  });
 });
 
 describe('normalizeGatewayHistoryForDisplay', () => {

@@ -11,6 +11,7 @@ export interface ActiveTurnFooter {
   completedAt: number | null;
   durationMs: number;
   running: boolean;
+  status: 'running' | 'completed' | 'failed' | 'aborted';
   modelRef?: string;
 }
 
@@ -58,14 +59,30 @@ export function projectActiveTurnFooter(
 ): ActiveTurnFooter | null {
   if (!turn) return null;
   const running = 'state' in turn ? turn.state === 'running' : turn.status === 'running';
+  const status =
+    'state' in turn
+      ? turn.state
+      : turn.status === 'final'
+        ? 'completed'
+        : turn.status === 'error'
+          ? 'failed'
+          : turn.status;
   const completedAt = running ? null : (turn.endedAt ?? turn.startedAt);
   const durationEnd = running ? Math.max(now, turn.startedAt) : (completedAt ?? turn.startedAt);
   return {
     completedAt,
     durationMs: Math.max(0, durationEnd - turn.startedAt),
     running,
+    status,
     ...(turn.modelRef ? { modelRef: turn.modelRef } : {}),
   };
+}
+
+export function shouldRenderInterruptedTerminalFallback(
+  footer: ActiveTurnFooter | null,
+  hasVisibleInterruptedTerminal: boolean,
+): boolean {
+  return footer?.status === 'aborted' && !hasVisibleInterruptedTerminal;
 }
 
 export function formatActiveTurnTimestamp(date: Date): string {
