@@ -77,6 +77,7 @@ function debugLog(...args: unknown[]): void {
 
 export interface CoworkViewProps {
   onRequestAppSettings?: (options?: SettingsOpenOptions) => void;
+  isQuestionInputBlocked?: boolean;
   isSidebarCollapsed?: boolean;
   onToggleSidebar?: () => void;
   onNewChat?: () => void;
@@ -87,7 +88,13 @@ export interface CoworkViewHandle {
 }
 
 const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) => {
-  const { onRequestAppSettings, isSidebarCollapsed, onToggleSidebar, onNewChat } = props;
+  const {
+    onRequestAppSettings,
+    isQuestionInputBlocked = false,
+    isSidebarCollapsed,
+    onToggleSidebar,
+    onNewChat,
+  } = props;
   const dispatch = useDispatch();
   const isMac = window.electron.platform === 'darwin';
   const [isInitialized, setIsInitialized] = useState(false);
@@ -122,6 +129,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const startRequestIdRef = useRef(0);
   // Ref for CoworkPromptInput
   const promptInputRef = useRef<CoworkPromptInputRef>(null);
+  const sessionPromptInputRegionRef = useRef<HTMLDivElement>(null);
   // Ref for JustDoChatWrapper (to call sendMessage)
   const chatWrapperRef = useRef<JustDoChatWrapperRef>(null);
   // Buffer for pending user message when JustDoChatWrapper isn't mounted yet
@@ -153,6 +161,23 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   currentSessionRuntimeRunningRef.current = currentSessionRuntimeRunning;
   const sessionHasAssistantMessage =
     currentSession?.messages.some(message => message.type === 'assistant') ?? false;
+
+  useEffect(() => {
+    const inputRegion = sessionPromptInputRegionRef.current;
+    if (!inputRegion) return;
+
+    if (isQuestionInputBlocked) {
+      inputRegion.setAttribute('inert', '');
+      const activeElement = document.activeElement;
+      if (activeElement instanceof HTMLElement && inputRegion.contains(activeElement)) {
+        activeElement.blur();
+      }
+    } else {
+      inputRegion.removeAttribute('inert');
+    }
+
+    return () => inputRegion.removeAttribute('inert');
+  }, [isQuestionInputBlocked]);
   const initialGoalObjective = inferInitialGoalObjective(
     currentSession?.messages ?? [],
     currentSessionRuntimeRunning,
@@ -1030,22 +1055,35 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
           {/* Input */}
           <div className="shrink-0 pb-4 pt-2">
             <div className="cowork-content-width mx-auto min-w-0 space-y-1.5">
-              <div className="shadow-glow-accent rounded-2xl">
-                <CoworkPromptInput
-                  onSubmit={handleSendMessage}
-                  onStop={handleStopSession}
-                  isStreaming={currentSessionRuntimeRunning}
-                  disabled={!isEngineReady}
-                  placeholder={i18nService.t('coworkContinuePlaceholder')}
-                  size="large"
-                  showModelSelector={true}
-                  sessionId={currentSession.id}
-                  modelAgentId={currentSession.agentId}
-                  sessionModelRef={currentSession.modelRef}
-                  hasAssistantMessage={sessionHasAssistantMessage}
-                  initialGoalObjective={initialGoalObjective}
-                  goalRunProgress={goalRunProgress}
-                />
+              <div className="relative isolate rounded-2xl">
+                <div ref={sessionPromptInputRegionRef} className="shadow-glow-accent rounded-2xl">
+                  <CoworkPromptInput
+                    onSubmit={handleSendMessage}
+                    onStop={handleStopSession}
+                    isStreaming={currentSessionRuntimeRunning}
+                    disabled={!isEngineReady || isQuestionInputBlocked}
+                    placeholder={i18nService.t('coworkContinuePlaceholder')}
+                    size="large"
+                    showModelSelector={true}
+                    sessionId={currentSession.id}
+                    modelAgentId={currentSession.agentId}
+                    sessionModelRef={currentSession.modelRef}
+                    hasAssistantMessage={sessionHasAssistantMessage}
+                    initialGoalObjective={initialGoalObjective}
+                    goalRunProgress={goalRunProgress}
+                  />
+                </div>
+                {isQuestionInputBlocked && (
+                  <div
+                    className="absolute inset-0 z-[60] flex cursor-not-allowed items-center justify-center rounded-2xl bg-background/45 backdrop-blur-[1px]"
+                    role="status"
+                    aria-live="polite"
+                  >
+                    <span className="rounded-full border border-border bg-surface/95 px-3 py-1.5 text-xs font-medium text-secondary shadow-subtle">
+                      {i18nService.t('coworkQuestionInputBlocked')}
+                    </span>
+                  </div>
+                )}
               </div>
               <p className="px-1 text-center text-[11px] font-light leading-4 text-muted">
                 {i18nService.t('aiGeneratedDisclaimer')}

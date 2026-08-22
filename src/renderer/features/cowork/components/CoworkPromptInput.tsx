@@ -532,6 +532,18 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       setSlashMenuExpanded(false);
     }, []);
 
+    useEffect(() => {
+      if (!disabled) return;
+      resetSlashMenuState();
+      setShowFolderMenu(false);
+      setContextMenuPos(null);
+      setIsDraggingFiles(false);
+      dragDepthRef.current = 0;
+      setEndingGoalId(null);
+      slashCommandRefreshSeqRef.current += 1;
+      slashCommandRefreshPendingRef.current = false;
+    }, [disabled, resetSlashMenuState]);
+
     const updateSlashMenu = useCallback(
       (
         nextValue: string,
@@ -2281,6 +2293,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                       <ModelSelector
                         dropdownDirection="up"
                         value={effectiveSelectedModel}
+                        disabled={disabled}
                         loading={modelUpdatePending}
                         onChange={async nextModel => {
                           if (!nextModel) return;
@@ -2434,7 +2447,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                       >
                         <PaperClipIcon className="h-4 w-4" />
                       </button>
-                      <PermissionModeSelector />
+                      <PermissionModeSelector disabled={disabled} />
                       {showFolderSelector && (
                         <>
                           <div className="flex items-center">
@@ -2505,6 +2518,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                     <button
                       type="button"
                       onClick={handleStopClick}
+                      disabled={disabled}
                       className="p-2 rounded-xl bg-red-500 hover:bg-red-600 text-white transition-all shadow-subtle hover:shadow-card active:scale-95"
                       aria-label="Stop"
                     >
@@ -2562,7 +2576,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   >
                     <PaperClipIcon className="h-4 w-4" />
                   </button>
-                  <PermissionModeSelector />
+                  <PermissionModeSelector disabled={disabled} />
                   {contextUsageBadge}
                 </div>
               )}
@@ -2582,6 +2596,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 <button
                   type="button"
                   onClick={handleStopClick}
+                  disabled={disabled}
                   className="flex-shrink-0 p-2 rounded-lg bg-red-500 hover:bg-red-600 text-white transition-all shadow-subtle hover:shadow-card active:scale-95"
                   aria-label="Stop"
                 >

@@ -14,8 +14,12 @@ export const useDialogFocusTrap = (
   dialogRef: React.RefObject<HTMLDivElement | null>,
   initialFocusRef: React.RefObject<HTMLElement | null>,
   resetKey: string,
+  trapFocus = true,
+  active = true,
 ): void => {
   useEffect(() => {
+    if (!active) return;
+    const dialogElement = dialogRef.current;
     const previouslyFocused =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const focusFrame = window.requestAnimationFrame(() => {
@@ -48,13 +52,22 @@ export const useDialogFocusTrap = (
       focusable[nextIndex]?.focus();
     };
 
-    document.addEventListener('keydown', handleKeyDown, true);
+    if (trapFocus) {
+      document.addEventListener('keydown', handleKeyDown, true);
+    }
     return () => {
       window.cancelAnimationFrame(focusFrame);
-      document.removeEventListener('keydown', handleKeyDown, true);
+      if (trapFocus) {
+        document.removeEventListener('keydown', handleKeyDown, true);
+      }
       window.requestAnimationFrame(() => {
-        if (previouslyFocused?.isConnected) previouslyFocused.focus();
+        const activeElement = document.activeElement;
+        const shouldRestoreFocus =
+          trapFocus ||
+          activeElement === document.body ||
+          (activeElement instanceof Node && Boolean(dialogElement?.contains(activeElement)));
+        if (shouldRestoreFocus && previouslyFocused?.isConnected) previouslyFocused.focus();
       });
     };
-  }, [dialogRef, initialFocusRef, resetKey]);
+  }, [active, dialogRef, initialFocusRef, resetKey, trapFocus]);
 };

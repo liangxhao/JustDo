@@ -1,9 +1,13 @@
-import { CheckIcon,ChevronDownIcon } from '@heroicons/react/24/outline';
+import { CheckIcon, ChevronDownIcon } from '@heroicons/react/24/outline';
 import React from 'react';
-import { useDispatch,useSelector } from 'react-redux';
+import { useDispatch, useSelector } from 'react-redux';
 
 import type { Model } from '@/features/models/modelSlice';
-import { getModelIdentityKey,isSameModelIdentity, setSelectedModel } from '@/features/models/modelSlice';
+import {
+  getModelIdentityKey,
+  isSameModelIdentity,
+  setSelectedModel,
+} from '@/features/models/modelSlice';
 import { i18nService } from '@/services/i18n';
 import { RootState } from '@/store';
 
@@ -36,7 +40,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
 
   const controlled = onChange !== undefined;
   const globalSelectedModel = useSelector((state: RootState) => state.model.selectedModel);
-  const selectedModel = controlled ? value ?? null : globalSelectedModel;
+  const selectedModel = controlled ? (value ?? null) : globalSelectedModel;
   const availableModels = useSelector((state: RootState) => state.model.availableModels);
 
   // 点击外部区域关闭下拉框
@@ -55,6 +59,10 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, [isOpen]);
+
+  React.useEffect(() => {
+    if (disabled) setIsOpen(false);
+  }, [disabled]);
 
   const handleModelSelect = (model: Model | null) => {
     if (disabled) return;
@@ -75,9 +83,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
     );
   }
 
-  const dropdownPositionClass = dropdownDirection === 'up'
-    ? 'bottom-full mb-1'
-    : 'top-full mt-1';
+  const dropdownPositionClass = dropdownDirection === 'up' ? 'bottom-full mb-1' : 'top-full mt-1';
 
   const serverModels = availableModels.filter(m => m.isServerModel);
   const userModels = availableModels.filter(m => !m.isServerModel);
@@ -106,13 +112,9 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
             </span>
           )}
         </div>
-        {model.provider && (
-          <span className="text-xs text-secondary">{model.provider}</span>
-        )}
+        {model.provider && <span className="text-xs text-secondary">{model.provider}</span>}
       </div>
-      {isSelected(model) && (
-        <CheckIcon className="h-4 w-4 text-primary" />
-      )}
+      {isSelected(model) && <CheckIcon className="h-4 w-4 text-primary" />}
     </button>
   );
 
@@ -136,7 +138,9 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
       </button>
 
       {isOpen && (
-        <div className={`absolute ${dropdownPositionClass} w-60 bg-surface rounded-xl popover-enter shadow-popover z-50 border-border border overflow-hidden`}>
+        <div
+          className={`absolute ${dropdownPositionClass} w-60 bg-surface rounded-xl popover-enter shadow-popover z-50 border-border border overflow-hidden`}
+        >
           <div className="max-h-64 overflow-y-auto">
             {defaultLabel && (
               <button

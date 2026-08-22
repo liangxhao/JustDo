@@ -8,6 +8,7 @@ import { CoworkInteractionKind, parseAskUserQuestions } from '@shared/openclaw/e
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 import type {
+  CoworkInteractionPresentation,
   CoworkInteractionRequest,
   CoworkInteractionResult,
 } from '@/features/cowork/coworkTypes';
@@ -24,9 +25,16 @@ import { useDialogFocusTrap } from './useDialogFocusTrap';
 interface CoworkQuestionWizardProps {
   interaction: CoworkInteractionRequest;
   onRespond: (result: CoworkInteractionResult) => void;
+  presentation?: CoworkInteractionPresentation;
+  isActive?: boolean;
 }
 
-const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({ interaction, onRespond }) => {
+const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
+  interaction,
+  onRespond,
+  presentation = 'modal',
+  isActive = true,
+}) => {
   const toolInput = useMemo(() => interaction.toolInput ?? {}, [interaction.toolInput]);
 
   const questions = useMemo<AskUserQuestion[]>(() => {
@@ -45,7 +53,9 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({ interaction
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
-  useDialogFocusTrap(dialogRef, closeButtonRef, interaction.requestId);
+  const isFloating = presentation === 'floating';
+
+  useDialogFocusTrap(dialogRef, closeButtonRef, interaction.requestId, !isFloating, isActive);
 
   useEffect(() => {
     if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
@@ -294,17 +304,32 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({ interaction
   const allAnswered = questions.every(isQuestionComplete);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center modal-backdrop">
+    <div
+      className={
+        isFloating
+          ? 'flex max-h-[80vh] min-h-0 w-full flex-col'
+          : 'fixed inset-0 z-50 flex items-center justify-center modal-backdrop'
+      }
+    >
       <div
         ref={dialogRef}
-        className="modal-content w-full max-w-2xl mx-4 bg-surface rounded-2xl shadow-modal overflow-hidden"
+        className={
+          isFloating
+            ? 'flex max-h-[80vh] min-h-0 w-full flex-col overflow-hidden bg-surface'
+            : 'modal-content w-full max-w-2xl mx-4 bg-surface rounded-2xl shadow-modal overflow-hidden'
+        }
         role="dialog"
-        aria-modal="true"
+        aria-modal={isFloating ? undefined : true}
         aria-labelledby="cowork-question-wizard-title"
         tabIndex={-1}
       >
         {/* Header */}
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-border">
+        <div
+          className={`flex items-center gap-3 px-6 py-4 border-b border-border ${
+            isFloating ? 'cursor-move touch-none select-none' : ''
+          }`}
+          data-question-drag-handle={isFloating ? true : undefined}
+        >
           <div className="flex-1">
             <h2 id="cowork-question-wizard-title" className="text-lg font-semibold text-foreground">
               {i18nService.t('coworkQuestionWizardTitle')}
@@ -333,7 +358,11 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({ interaction
         </div>
 
         {/* Content */}
-        <div className="px-6 py-6 min-h-[300px] flex flex-col">
+        <div
+          className={`px-6 py-6 flex flex-col ${
+            isFloating ? 'min-h-0 flex-1 overflow-y-auto' : 'min-h-[300px]'
+          }`}
+        >
           <div className="flex-1">
             {/* Question header and navigation */}
             <div className="flex flex-col items-start gap-4 mb-4 sm:flex-row sm:justify-between">

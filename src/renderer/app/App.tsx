@@ -24,13 +24,15 @@ import {
 } from '@/features/cowork/approvalQueue';
 import { CoworkView, type CoworkViewHandle } from '@/features/cowork/components';
 import CoworkInteractionModal from '@/features/cowork/components/CoworkInteractionModal';
-import CoworkQuestionWizard from '@/features/cowork/components/CoworkQuestionWizard';
+import CoworkQuestionFloatingWindow, {
+  shouldShowCoworkQuestionWindow,
+} from '@/features/cowork/components/CoworkQuestionFloatingWindow';
 import EngineStartupStatusBar from '@/features/cowork/components/EngineStartupStatusBar';
 import ExecApprovalModal from '@/features/cowork/components/ExecApprovalModal';
 import { runGuardedFilePreviewNavigation } from '@/features/cowork/components/filePreviewNavigation';
 import {
   selectCurrentSessionId,
-  selectFirstPendingInteraction,
+  selectPendingInteractions,
 } from '@/features/cowork/coworkSelectors';
 import { coworkService } from '@/features/cowork/coworkService';
 import type { CoworkInteractionResult } from '@/features/cowork/coworkTypes';
@@ -74,7 +76,8 @@ const App: React.FC = () => {
   const dispatch = useDispatch();
   const selectedModel = useSelector((state: RootState) => state.model.selectedModel);
   const currentSessionId = useSelector(selectCurrentSessionId);
-  const pendingInteraction = useSelector(selectFirstPendingInteraction);
+  const pendingInteractions = useSelector(selectPendingInteractions);
+  const pendingInteraction = pendingInteractions[0] ?? null;
   const isWindows = window.electron.platform === 'win32';
 
   const dismissApproval = useCallback((approval: Pick<ApprovalRequest, 'id' | 'kind'>) => {
@@ -468,11 +471,10 @@ const App: React.FC = () => {
   }, []);
 
   const handleInteractionResponse = useCallback(
-    async (result: CoworkInteractionResult) => {
-      if (!pendingInteraction) return;
-      await coworkService.respondToInteraction(pendingInteraction.requestId, result);
+    async (requestId: string, result: CoworkInteractionResult) => {
+      await coworkService.respondToInteraction(requestId, result);
     },
-    [pendingInteraction],
+    [],
   );
 
   const handleCloseSettings = () => {
@@ -592,37 +594,51 @@ const App: React.FC = () => {
     return unsubscribe;
   }, [handleNewChat]);
 
+  const isStructuredQuestionInteraction =
+    pendingInteraction?.interactionKind === CoworkInteractionKind.STRUCTURED_QUESTION;
+  const structuredQuestionInteractions = useMemo(
+    () =>
+      pendingInteractions.filter(
+        interaction => interaction.interactionKind === CoworkInteractionKind.STRUCTURED_QUESTION,
+      ),
+    [pendingInteractions],
+  );
+  const activeQuestionInteraction = structuredQuestionInteractions.find(interaction =>
+    shouldShowCoworkQuestionWindow(
+      interaction.sessionId,
+      currentSessionId,
+      !showSettings && mainView === 'cowork',
+    ),
+  );
+  const activeQuestionRequestId = activeQuestionInteraction?.requestId ?? null;
+  const isQuestionWindowVisible = activeQuestionRequestId !== null;
+
+  const questionWindows = useMemo(() => {
+    return structuredQuestionInteractions.map(interaction => (
+      <CoworkQuestionFloatingWindow
+        key={interaction.requestId}
+        interaction={interaction}
+        isVisible={interaction.requestId === activeQuestionRequestId}
+        onRespond={result => handleInteractionResponse(interaction.requestId, result)}
+      />
+    ));
+  }, [structuredQuestionInteractions, activeQuestionRequestId, handleInteractionResponse]);
+
   const interactionModal = useMemo(() => {
     if (!pendingInteraction) return null;
-
-    const isQuestionTool =
-      pendingInteraction.interactionKind === CoworkInteractionKind.STRUCTURED_QUESTION;
-    if (isQuestionTool && pendingInteraction.toolInput) {
-      const rawQuestions = (pendingInteraction.toolInput as Record<string, unknown>).questions;
-      const hasMultipleQuestions = Array.isArray(rawQuestions) && rawQuestions.length > 1;
-
-      if (hasMultipleQuestions) {
-        return (
-          <CoworkQuestionWizard
-            key={pendingInteraction.requestId}
-            interaction={pendingInteraction}
-            onRespond={handleInteractionResponse}
-          />
-        );
-      }
-    }
+    if (isStructuredQuestionInteraction) return null;
 
     return (
       <CoworkInteractionModal
         key={pendingInteraction.requestId}
         interaction={pendingInteraction}
-        onRespond={handleInteractionResponse}
+        onRespond={result => handleInteractionResponse(pendingInteraction.requestId, result)}
       />
     );
-  }, [pendingInteraction, handleInteractionResponse]);
+  }, [pendingInteraction, isStructuredQuestionInteraction, handleInteractionResponse]);
 
   const activeApproval = pendingApprovals[0] ?? null;
-  const isOverlayActive = pendingInteraction !== null || activeApproval !== null;
+  const isOverlayActive = interactionModal !== null || activeApproval !== null;
 
   const resolveExecApproval = useCallback(
     async (decision: ApprovalDecision) => {
@@ -759,6 +775,7 @@ const App: React.FC = () => {
                   <CoworkView
                     ref={coworkViewRef}
                     onRequestAppSettings={handleShowSettings}
+                    isQuestionInputBlocked={isQuestionWindowVisible}
                     isSidebarCollapsed={isSidebarCollapsed}
                     onToggleSidebar={handleToggleSidebar}
                     onNewChat={handleNewChat}
@@ -769,6 +786,7 @@ const App: React.FC = () => {
           </>
         )}
       </div>
+      {questionWindows}
       {interactionModal}
       {activeApproval && (
         <ExecApprovalModal

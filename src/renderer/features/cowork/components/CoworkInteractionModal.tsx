@@ -8,6 +8,7 @@ import { CoworkInteractionKind, parseAskUserQuestions } from '@shared/openclaw/e
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 import type {
+  CoworkInteractionPresentation,
   CoworkInteractionRequest,
   CoworkInteractionResult,
 } from '@/features/cowork/coworkTypes';
@@ -25,6 +26,8 @@ import { useDialogFocusTrap } from './useDialogFocusTrap';
 interface CoworkInteractionModalProps {
   interaction: CoworkInteractionRequest;
   onRespond: (result: CoworkInteractionResult) => void;
+  presentation?: CoworkInteractionPresentation;
+  isActive?: boolean;
 }
 
 const resolveBinaryQuestionButtons = (
@@ -40,6 +43,8 @@ const resolveBinaryQuestionButtons = (
 const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
   interaction,
   onRespond,
+  presentation = 'modal',
+  isActive = true,
 }) => {
   const toolInput = useMemo(() => interaction.toolInput ?? {}, [interaction.toolInput]);
 
@@ -72,7 +77,9 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
-  useDialogFocusTrap(dialogRef, closeButtonRef, interaction.requestId);
+  const isFloating = presentation === 'floating';
+
+  useDialogFocusTrap(dialogRef, closeButtonRef, interaction.requestId, !isFloating, isActive);
 
   useEffect(() => {
     setAnswers({});
@@ -323,17 +330,32 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
   const canRespond = isComplete && canSubmit;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center modal-backdrop">
+    <div
+      className={
+        isFloating
+          ? 'flex max-h-[80vh] min-h-0 w-full flex-col'
+          : 'fixed inset-0 z-50 flex items-center justify-center modal-backdrop'
+      }
+    >
       <div
         ref={dialogRef}
-        className="modal-content w-full max-w-lg mx-4 bg-surface rounded-2xl shadow-modal overflow-hidden"
+        className={
+          isFloating
+            ? 'flex max-h-[80vh] min-h-0 w-full flex-col overflow-hidden bg-surface'
+            : 'modal-content w-full max-w-lg mx-4 bg-surface rounded-2xl shadow-modal overflow-hidden'
+        }
         role="dialog"
-        aria-modal="true"
+        aria-modal={isFloating ? undefined : true}
         aria-labelledby="cowork-interaction-modal-title"
         tabIndex={-1}
       >
         {/* Header */}
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-border">
+        <div
+          className={`flex items-center gap-3 px-6 py-4 border-b border-border ${
+            isFloating ? 'cursor-move touch-none select-none' : ''
+          }`}
+          data-question-drag-handle={isFloating ? true : undefined}
+        >
           <div className="p-2 rounded-full bg-blue-100 dark:bg-blue-900/30">
             <QuestionMarkCircleIcon className="h-6 w-6 text-blue-600 dark:text-blue-500" />
           </div>
@@ -363,7 +385,11 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
         </div>
 
         {/* Content */}
-        <div className="px-6 py-4 space-y-4 max-h-[60vh] overflow-y-auto">
+        <div
+          className={`px-6 py-4 space-y-4 overflow-y-auto ${
+            isFloating ? 'min-h-0 flex-1' : 'max-h-[60vh]'
+          }`}
+        >
           {isQuestionTool && (
             <AskUserWaitPolicyNotice questions={questions} toolInput={toolInput} />
           )}

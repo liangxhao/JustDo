@@ -146,6 +146,8 @@ export interface CoworkInteractionRequest {
   interactionKind?: CoworkInteractionKind;
 }
 
+export type CoworkInteractionPresentation = 'modal' | 'floating';
+
 export type CoworkInteractionResult =
   | {
       behavior: 'submit';

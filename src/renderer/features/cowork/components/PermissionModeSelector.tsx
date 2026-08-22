@@ -26,13 +26,19 @@ const MODE_ICONS: Record<
   [PermissionMode.Full]: ExclamationCircleIcon,
 };
 
-const PermissionModeSelector: React.FC = () => {
+interface PermissionModeSelectorProps {
+  disabled?: boolean;
+}
+
+const PermissionModeSelector: React.FC<PermissionModeSelectorProps> = ({ disabled = false }) => {
   const permissionMode = useSelector((state: RootState) => state.cowork.config.permissionMode);
   const [isOpen, setIsOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [confirmingFullAccess, setConfirmingFullAccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const disabledRef = useRef(disabled);
+  disabledRef.current = disabled;
 
   const options = [
     {
@@ -61,7 +67,14 @@ const PermissionModeSelector: React.FC = () => {
     return () => window.removeEventListener('pointerdown', handlePointerDown);
   }, [isOpen]);
 
+  useEffect(() => {
+    if (!disabled) return;
+    setIsOpen(false);
+    setConfirmingFullAccess(false);
+  }, [disabled]);
+
   const handleSelect = async (nextMode: PermissionModeValue): Promise<void> => {
+    if (disabled) return;
     if (nextMode === permissionMode) {
       setIsOpen(false);
       return;
@@ -79,12 +92,12 @@ const PermissionModeSelector: React.FC = () => {
       const result = await coworkService.updatePermissionMode(nextMode);
       if (!result.success) {
         setError(result.error || i18nService.t('permissionModeSaveFailed'));
-        setIsOpen(true);
+        if (!disabledRef.current) setIsOpen(true);
         return;
       }
     } catch {
       setError(i18nService.t('permissionModeSaveFailed'));
-      setIsOpen(true);
+      if (!disabledRef.current) setIsOpen(true);
     } finally {
       setIsSaving(false);
     }
@@ -98,7 +111,7 @@ const PermissionModeSelector: React.FC = () => {
     <div ref={containerRef} className="relative flex-shrink-0">
       <button
         type="button"
-        disabled={isSaving}
+        disabled={disabled || isSaving}
         onClick={() => {
           setError(null);
           setConfirmingFullAccess(false);
