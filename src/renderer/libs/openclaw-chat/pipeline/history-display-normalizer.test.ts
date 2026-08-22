@@ -2,6 +2,7 @@ import { buildGoalFollowUpPrompt } from '@shared/prompts/goalFollowUpPrompt';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import { projectPersistedTimeline } from '@/libs/openclaw-chat/model/project-history-timeline';
+import { prepareVisibleTimelineRows } from '@/libs/openclaw-chat/model/timeline-avatar-state';
 import { readTranscriptIdentity } from '@/libs/openclaw-chat/model/transcript-identity';
 import {
   normalizeGatewayHistoryForDisplay,
@@ -131,8 +132,50 @@ describe('normalizeGatewayHistoryForDisplay', () => {
         role: 'system',
         content: 'Model request failed',
         isError: true,
+        __justdoFailedRunMessage: true,
       },
     ]);
+  });
+
+  test('normalizes an enveloped pre-reply failure through footer projection', async () => {
+    const messages = await normalizeGatewayHistoryForDisplay(
+      [
+        {
+          type: 'message',
+          runId: 'run-1',
+          timestamp: 2_000,
+          message: {
+            role: 'assistant',
+            content: 'The agent run failed before producing a reply.',
+          },
+        },
+      ],
+      {
+        sessionKey: 'agent:main:cron:run-1',
+        lastError: 'API rate limit reached. Please try again later.',
+      },
+    );
+
+    expect(messages).toEqual([
+      {
+        type: 'message',
+        runId: 'run-1',
+        timestamp: 2_000,
+        message: {
+          role: 'system',
+          content: 'API rate limit reached. Please try again later.',
+          isError: true,
+          __justdoFailedRunMessage: true,
+        },
+      },
+    ]);
+
+    const timeline = projectPersistedTimeline(messages as GatewayMessage[]);
+    const rows = prepareVisibleTimelineRows(timeline, {
+      suppressTrailingAssistantFooter: true,
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.showFooter).toBe(false);
   });
 
   test('hydrates missing tool names and arguments before timeline projection', async () => {

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
+import { FAILED_RUN_MESSAGE_FLAG } from './failed-run-message';
 import type { VisibleTimelineItem } from './timeline-avatar-state';
 import { prepareVisibleTimelineRows } from './timeline-avatar-state';
 
@@ -76,5 +77,79 @@ describe('timeline avatar state', () => {
     );
 
     expect(rows.map(row => row.showFooter)).toEqual([true, true, true, false, false]);
+  });
+
+  test('hides a failed-run message footer when the run metadata footer follows', () => {
+    const failedRun: VisibleTimelineItem = {
+      kind: 'history-message',
+      key: 'failed-run',
+      message: {
+        role: 'system',
+        content: 'API rate limit reached. Please try again later.',
+        timestamp: 2_000,
+        isError: true,
+        [FAILED_RUN_MESSAGE_FLAG]: true,
+      },
+    };
+
+    const rows = prepareVisibleTimelineRows([history('user-1', 'user'), failedRun], {
+      suppressTrailingAssistantFooter: true,
+    });
+
+    expect(rows.map(row => row.showFooter)).toEqual([true, false]);
+  });
+
+  test('keeps ordinary system and tool error footers visible', () => {
+    const systemMessage: VisibleTimelineItem = {
+      kind: 'history-message',
+      key: 'system-message',
+      message: {
+        role: 'system',
+        content: 'A background operation failed',
+        timestamp: 2_000,
+        isError: true,
+      },
+    };
+    const toolMessage: VisibleTimelineItem = {
+      kind: 'history-message',
+      key: 'tool-message',
+      message: {
+        role: 'tool',
+        content: 'Process exited with code 1',
+        timestamp: 2_100,
+        isError: true,
+      },
+    };
+
+    const rows = prepareVisibleTimelineRows(
+      [history('user-1', 'user'), systemMessage, toolMessage],
+      { suppressTrailingAssistantFooter: true },
+    );
+
+    expect(rows.map(row => row.showFooter)).toEqual([true, true, true]);
+  });
+
+  test('recognizes a marked failed-run message inside a gateway envelope', () => {
+    const failedRun: VisibleTimelineItem = {
+      kind: 'history-message',
+      key: 'failed-run-envelope',
+      message: {
+        role: 'event',
+        content: '',
+        message: {
+          role: 'system',
+          content: 'API rate limit reached. Please try again later.',
+          timestamp: 2_000,
+          isError: true,
+          [FAILED_RUN_MESSAGE_FLAG]: true,
+        },
+      },
+    };
+
+    const rows = prepareVisibleTimelineRows([history('user-1', 'user'), failedRun], {
+      suppressTrailingAssistantFooter: true,
+    });
+
+    expect(rows.map(row => row.showFooter)).toEqual([true, false]);
   });
 });

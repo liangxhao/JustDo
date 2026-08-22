@@ -1,5 +1,7 @@
 import { extractGoalFollowUpRequest } from '@shared/prompts/goalFollowUpPrompt';
 
+import { FAILED_RUN_MESSAGE_FLAG } from '@/libs/openclaw-chat/model/failed-run-message';
+
 const SILENT_REPLY_PATTERN = /^\s*NO_REPLY\s*$/;
 const AGENT_RUN_FAILED_BEFORE_REPLY = 'The agent run failed before producing a reply.';
 const FAILED_RUN_STORAGE_KEY = 'justdo-openclaw-failed-runs';
@@ -291,9 +293,23 @@ export function persistFailedRun(record: FailedRunRecord): void {
   }
 }
 
-function findFailedRunError(message: Record<string, unknown>, sessionKey: string): string | null {
-  const runId = typeof message.runId === 'string' ? message.runId : null;
-  const timestamp = typeof message.timestamp === 'number' ? message.timestamp : null;
+function findFailedRunError(
+  outer: Record<string, unknown>,
+  message: Record<string, unknown>,
+  sessionKey: string,
+): string | null {
+  const runId =
+    typeof message.runId === 'string'
+      ? message.runId
+      : typeof outer.runId === 'string'
+        ? outer.runId
+        : null;
+  const timestamp =
+    typeof message.timestamp === 'number'
+      ? message.timestamp
+      : typeof outer.timestamp === 'number'
+        ? outer.timestamp
+        : null;
   const candidates = readFailedRuns().filter(item => item.sessionKey === sessionKey);
   const exact = runId ? candidates.find(item => item.runId === runId) : null;
   if (exact) return exact.error;
@@ -313,20 +329,25 @@ function normalizeFailedRunMessage(
   sessionKey: string,
   errorMessage: string | null,
 ): unknown {
-  const raw = asRecord(message);
+  const outer = asRecord(message);
+  const raw = asRecord(outer?.message) ?? outer;
   if (
     raw?.role !== 'assistant' ||
     messageText(raw.content).trim() !== AGENT_RUN_FAILED_BEFORE_REPLY
   ) {
     return message;
   }
-  return {
+  const normalized = {
     ...raw,
     role: 'system',
     content:
-      errorMessage?.trim() || findFailedRunError(raw, sessionKey) || AGENT_RUN_FAILED_BEFORE_REPLY,
+      errorMessage?.trim() ||
+      findFailedRunError(outer ?? raw, raw, sessionKey) ||
+      AGENT_RUN_FAILED_BEFORE_REPLY,
     isError: true,
+    [FAILED_RUN_MESSAGE_FLAG]: true,
   };
+  return raw === outer ? normalized : { ...outer, message: normalized };
 }
 
 function hasMeaningfulToolInput(value: unknown): boolean {

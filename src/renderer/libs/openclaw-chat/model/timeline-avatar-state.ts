@@ -1,3 +1,4 @@
+import { FAILED_RUN_MESSAGE_FLAG } from './failed-run-message';
 import type { PersistedTimelineItem } from './project-history-timeline';
 import type { ActiveTurnTimelineItem } from './project-turn-items';
 
@@ -21,6 +22,17 @@ function historyMessageRole(item: Extract<PersistedTimelineItem, { kind: 'histor
       ? (outer.message as Record<string, unknown>)
       : outer;
   return String(nested.role ?? outer.role ?? '').toLowerCase();
+}
+
+function isFailedRunMessage(
+  item: Extract<PersistedTimelineItem, { kind: 'history-message' }>,
+): boolean {
+  const outer = item.message as Record<string, unknown>;
+  const nested =
+    outer.message && typeof outer.message === 'object' && !Array.isArray(outer.message)
+      ? (outer.message as Record<string, unknown>)
+      : outer;
+  return nested[FAILED_RUN_MESSAGE_FLAG] === true || outer[FAILED_RUN_MESSAGE_FLAG] === true;
 }
 
 /**
@@ -72,7 +84,7 @@ export function prepareVisibleTimelineRows(
       if (row.item.kind !== 'history-message') continue;
       const role = historyMessageRole(row.item);
       if (role === 'user') break;
-      if (role === 'assistant') row.showFooter = false;
+      if (role === 'assistant' || isFailedRunMessage(row.item)) row.showFooter = false;
     }
   }
 
