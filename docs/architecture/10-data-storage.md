@@ -235,9 +235,11 @@ session 的年龄保留阈值为 `365d`，每个 session store 的 `maxEntries` 
 maintenance 触发后会清理超龄条目，并将普通条目压回数量阈值；受保护会话不受普通条目上限约束。
 JustDo SQLite 中的会话列表和消息缓存独立于该运行时保留策略。
 
-`model_ref` 保存最近一次由 Gateway `sessions.describe` 确认的会话模型，格式为
-`provider/model`。它用于恢复会话模型选择器和建立发送屏障；Agent 的 `model` 只作为新会话
-默认值。每条 assistant 消息的实际模型仍由 Gateway history 决定，并独立保存在
+`model_ref` 保存会话创建时继承的模型或最近一次成功的用户选择，格式为
+`provider/model`。它用于恢复会话模型选择器，并作为 Gateway 暂时不可用时的本地回退；
+运行态读取到的 auto fallback 不写回该字段，避免临时降级被固化为用户选择。Agent 的
+`model` 是后续新会话的默认值。每条 assistant 消息的实际模型仍由 Gateway history 决定，
+并独立保存在
 `cowork_messages.model_name`，后续切换会话模型不会改写历史消息。
 
 关键索引：

@@ -806,6 +806,7 @@ interface IElectronAPI {
     setDefaultModel: (options: {
       modelId: string;
       providerKey?: string;
+      modelRef?: string;
       agentId?: string;
     }) => Promise<{ success: boolean; error?: string }>;
     onStreamMessage: (

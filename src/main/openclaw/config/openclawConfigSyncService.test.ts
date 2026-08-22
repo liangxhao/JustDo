@@ -294,8 +294,23 @@ describe('OpenClawConfigSyncService', () => {
       changed: true,
     });
     expect(harness.engineManager.waitForGatewayConfigReload).toHaveBeenCalledWith(7);
+    expect(harness.configSync.sync).toHaveBeenCalledWith('test', {
+      allowManagedSessionStoreMutation: false,
+    });
     expect(harness.stopGateway).not.toHaveBeenCalled();
     expect(harness.startGateway).not.toHaveBeenCalled();
+  });
+
+  it('allows legacy managed-session migration only while the Gateway is stopped', async () => {
+    const harness = createHarness({ phase: 'ready' });
+
+    await expect(harness.service.syncConfig({ reason: 'startup' })).resolves.toMatchObject({
+      success: true,
+      configSynced: true,
+    });
+    expect(harness.configSync.sync).toHaveBeenCalledWith('startup', {
+      allowManagedSessionStoreMutation: true,
+    });
   });
 
   it('restarts login only when the running Gateway needs the newly added secret', async () => {

@@ -119,7 +119,6 @@ export class SessionRpc {
         try {
           const modelRef = await this.readCurrentModel(client, sessionId, agentId);
           if (modelRef) {
-            this.callbacks.store.updateSession(sessionId, { modelRef });
             return { ok: true, modelRef, appliesTo: 'next-turn', source: 'gateway' };
           }
         } catch {
@@ -182,7 +181,13 @@ export class SessionRpc {
         let currentModelRef: string | undefined;
         try {
           currentModelRef = (await this.readCurrentModel(client, sessionId, agentId)) ?? undefined;
-          if (currentModelRef) this.callbacks.store.updateSession(sessionId, { modelRef: currentModelRef });
+          // A read can report an automatic fallback. Only persist after an
+          // ambiguous failure when Gateway confirms the exact user-requested
+          // model, otherwise the local selection would turn temporary runtime
+          // fallback state into a permanent user choice.
+          if (currentModelRef === normalizedModel) {
+            this.callbacks.store.updateSession(sessionId, { modelRef: normalizedModel });
+          }
         } catch {
           // The patch failure is already actionable; do not hide it behind recovery errors.
         }

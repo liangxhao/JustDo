@@ -118,6 +118,43 @@ describe('SessionRpc model coordination', () => {
       modelRef: 'openai/gpt-5',
       source: 'gateway',
     });
+    expect(session.modelRef).toBe('openai/gpt-4o');
+  });
+
+  test('does not persist a runtime fallback reported by Gateway as the user selection', async () => {
+    const session = { id: 'session-1', agentId: 'main', modelRef: 'openai/gpt-5' };
+    const updateSession = vi.fn();
+    const request = vi.fn(async (method: string) =>
+      method === 'sessions.describe'
+        ? {
+            session: {
+              modelProvider: 'anthropic',
+              model: 'claude-sonnet-4',
+              providerOverride: 'anthropic',
+              modelOverride: 'claude-sonnet-4',
+              modelOverrideSource: 'auto',
+              modelOverrideFallbackOriginProvider: 'openai',
+              modelOverrideFallbackOriginModel: 'gpt-5',
+            },
+          }
+        : {},
+    );
+    const rpc = new SessionRpc({
+      getGatewayClient: () => ({ request } as unknown as GatewayClientLike),
+      store: {
+        getSession: () => session,
+        getAgent: () => ({ model: session.modelRef }),
+        updateSession,
+      } as unknown as CoworkStore,
+    });
+
+    await expect(rpc.getModel('session-1')).resolves.toMatchObject({
+      ok: true,
+      modelRef: 'anthropic/claude-sonnet-4',
+      source: 'gateway',
+    });
+    expect(updateSession).not.toHaveBeenCalled();
+    expect(session.modelRef).toBe('openai/gpt-5');
   });
 
   test('accepts a patch even when the immediate runtime read would be stale', async () => {
@@ -266,5 +303,40 @@ describe('SessionRpc model coordination', () => {
     });
     expect(gatewayModelRef).toBe('openai/gpt-5');
     expect(session.modelRef).toBe('openai/gpt-5');
+  });
+
+  test('does not replace the user selection when a failed patch reads another model', async () => {
+    const session = { id: 'session-1', agentId: 'main', modelRef: 'openai/gpt-4o' };
+    const updateSession = vi.fn();
+    const request = vi.fn(async (method: string) => {
+      if (method === 'sessions.patch') throw new Error('patch failed');
+      if (method === 'sessions.describe') {
+        return {
+          session: {
+            modelProvider: 'anthropic',
+            model: 'claude-sonnet-4',
+            providerOverride: 'anthropic',
+            modelOverride: 'claude-sonnet-4',
+            modelOverrideSource: 'auto',
+          },
+        };
+      }
+      return {};
+    });
+    const rpc = new SessionRpc({
+      getGatewayClient: () => ({ request } as unknown as GatewayClientLike),
+      store: {
+        getSession: () => session,
+        getAgent: () => ({ model: session.modelRef }),
+        updateSession,
+      } as unknown as CoworkStore,
+    });
+
+    await expect(rpc.patchModel('session-1', 'openai/gpt-5')).resolves.toMatchObject({
+      ok: false,
+      modelRef: 'anthropic/claude-sonnet-4',
+    });
+    expect(updateSession).not.toHaveBeenCalled();
+    expect(session.modelRef).toBe('openai/gpt-4o');
   });
 });

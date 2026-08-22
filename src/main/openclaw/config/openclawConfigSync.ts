@@ -1293,6 +1293,10 @@ export type OpenClawConfigSyncResult = {
   agentsMdWarning?: string;
 };
 
+export type OpenClawConfigSyncOptions = {
+  allowManagedSessionStoreMutation?: boolean;
+};
+
 const buildVerifiedConfigSyncResult = (
   configPath: string,
   expectedConfig: Record<string, unknown>,
@@ -1351,7 +1355,7 @@ export class OpenClawConfigSync {
     this.getBrowserMode = deps.getBrowserMode;
   }
 
-  sync(reason: string): OpenClawConfigSyncResult {
+  sync(reason: string, options: OpenClawConfigSyncOptions = {}): OpenClawConfigSyncResult {
     const configPath = this.engineManager.getConfigPath();
     const isAuthLifecycleSync =
       reason === BuiltinModelSyncReason.AuthLogin ||
@@ -1704,9 +1708,12 @@ export class OpenClawConfigSync {
       };
     }
 
-    const sessionStoreChanged = !isAuthLifecycleSync && providerSelection
-      ? this.syncManagedSessionStore(providerSelection, allProvidersMap)
-      : false;
+    const sessionStoreChanged =
+      !isAuthLifecycleSync &&
+      providerSelection &&
+      options.allowManagedSessionStoreMutation === true
+        ? this.syncManagedSessionStore(providerSelection, allProvidersMap)
+        : false;
 
     if (!isAuthLifecycleSync) {
       // Sync per-agent workspace files (SOUL.md, IDENTITY.md, AGENTS.md) for non-main agents
@@ -1828,7 +1835,7 @@ export class OpenClawConfigSync {
       if (!parsed) return modelRef;
       const displayName = displayNameMap[parsed.providerId];
       if (displayName) {
-        return `${displayName}/${parsed.modelId}`;
+        return `${displayName.toLowerCase()}/${parsed.modelId}`;
       }
       return modelRef;
     };

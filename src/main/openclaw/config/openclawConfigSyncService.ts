@@ -215,7 +215,13 @@ export class OpenClawConfigSyncService {
         );
       }
     }
-    const syncResult = this.getConfigSync().sync(options.reason);
+    const syncResult = this.getConfigSync().sync(options.reason, {
+      // The Gateway owns sessions.json while its process is active. Restrict
+      // legacy managed-session migrations to the fully stopped/ready phase so
+      // config reloads cannot overwrite concurrent token, fallback, or
+      // lifecycle updates from the Gateway session writer.
+      allowManagedSessionStoreMutation: statusBeforeSync.phase === 'ready',
+    });
     if (!syncResult.ok) {
       return this.failClosedConfigApplication({
         success: false,

@@ -142,7 +142,7 @@ UI 只能保留降级状态，不应使用 label、tool-call id 或 transcript �
 - `execution_mode`：当前只保留 local/sandbox/auto 语义，旧 container 会迁移到 local。
 - `active_skill_ids`：本次会话 UI 选择的 skill。
 - `agent_id`：绑定 Agent。
-- `model_ref`：Gateway 最近确认的 `provider/model` 会话模型，仅作为 UI 恢复缓存。
+- `model_ref`：创建时继承或用户最近成功选择的 `provider/model`，作为 UI 恢复与离线回退缓存。
 - `group_id`：会话分组。
 - `pinned`、`created_at`、`updated_at`：列表展示和排序；`updated_at` 仅表示最近对话活动，
   会话元数据和运行状态变化不推进该时间。
@@ -194,11 +194,17 @@ flowchart LR
 
 继续会话会复用本地 session id 和 Gateway session key。若 Gateway session key 缺失，应通过历史同步/repair 逻辑尽量恢复；恢复失败时要给用户明确错误，而不是静默创建无关联新会话。
 
-模型选择会先同步 Agent 默认模型和 `openclaw.json`，再按 session 串行执行
-Gateway `sessions.patch`；已有会话最终以 `sessions.describe` 返回的
-`modelProvider/model` 为权威，并把确认值缓存到 `cowork_sessions.model_ref`。发送新
-turn 必须等待该队列清空。运行中切换不会改变已经在途的推理，只影响当前任务后续尚未
-开始的主会话模型调用。
+已有会话切换模型时，会先按 session 串行执行 Gateway `sessions.patch`，再同步 Agent
+默认模型和 `openclaw.json`，供后续新会话继承。顺序不能颠倒：先更新默认值再 patch
+同一模型会让 Gateway 清除冗余 override，导致会话随后重新跟随默认值。已有显式 user
+override 的其他会话不受影响；没有显式 override、仍继承 Agent 默认值的会话会跟随默认值
+变化。`cowork_sessions.model_ref` 只保存初始或最近一次成功选择，Gateway 的运行态读取
+（包括 auto fallback）不得覆盖它。发送新 turn 必须等待会话模型队列清空。运行中切换
+不会改变已经在途的推理，只影响当前任务后续尚未开始的主会话模型调用。
+
+`sessions.json` 由 Gateway 进程拥有。JustDo 仅在 Gateway 处于已停止的 `ready` 阶段执行
+旧模型引用迁移；运行中配置同步不得直接改写该文件，避免覆盖 Gateway 并发写入的 token、
+fallback、live-switch 或生命周期字段。
 
 ### Stop Session
 

@@ -30,7 +30,10 @@ export const registerDefaultModelHandlers = ({
   // Set default model in app_config (used when no agent/session exists)
   ipcMain.handle(
     'config:setDefaultModel',
-    async (_event, options: { modelId: string; providerKey?: string; agentId?: string }) => {
+    async (
+      _event,
+      options: { modelId: string; providerKey?: string; modelRef?: string; agentId?: string },
+    ) => {
       try {
         const currentConfig = getStore().get<AppConfigWithModel>('app_config') || {};
         const agentId = options.agentId || 'main';
@@ -47,9 +50,9 @@ export const registerDefaultModelHandlers = ({
 
         // Keep the selected agent in sync so the newly-created session resolves
         // to the same model after the prompt input remounts.
-        const modelRef = options.providerKey
-          ? `${options.providerKey}/${options.modelId}`
-          : options.modelId;
+        const modelRef =
+          options.modelRef?.trim() ||
+          (options.providerKey ? `${options.providerKey}/${options.modelId}` : options.modelId);
         const shouldUpdateAgent = !!selectedAgent && selectedAgent.model !== modelRef;
         let applyError: string | null = null;
         try {

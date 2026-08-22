@@ -382,8 +382,12 @@ contextBridge.exposeInMainWorld('electron', {
     getAgentRuntimeSettings: () => ipcRenderer.invoke(AgentRuntimeSettingsIpc.Get),
     setAgentRuntimeSettings: (settings: AgentRuntimeSettings) =>
       ipcRenderer.invoke(AgentRuntimeSettingsIpc.Set, settings),
-    setDefaultModel: (options: { modelId: string; providerKey?: string; agentId?: string }) =>
-      ipcRenderer.invoke('config:setDefaultModel', options),
+    setDefaultModel: (options: {
+      modelId: string;
+      providerKey?: string;
+      modelRef?: string;
+      agentId?: string;
+    }) => ipcRenderer.invoke('config:setDefaultModel', options),
     // Stream event listeners
     onStreamMessage: (callback: (data: { sessionId: string; message: unknown }) => void) => {
       const handler = (

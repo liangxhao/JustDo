@@ -1090,6 +1090,7 @@ class CoworkService {
   async setDefaultModel(options: {
     modelId: string;
     providerKey?: string;
+    modelRef?: string;
     agentId?: string;
   }): Promise<{ success: boolean; error?: string }> {
     if (!window.electron?.cowork?.setDefaultModel) {

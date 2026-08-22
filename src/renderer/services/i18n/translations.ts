@@ -607,6 +607,8 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     noModelAvailableHint: '无模型可用',
     coworkModelApplying: '正在应用模型…',
     coworkModelApplyFailed: '模型切换失败：{error}',
+    coworkDefaultModelApplyFailedSessionUpdated:
+      '当前会话已切换模型，但新会话的默认模型更新失败：{error}',
 
     coworkNewSession: '新会话',
     coworkContinuePlaceholder: '继续对话...',
@@ -1814,6 +1816,8 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     noModelAvailableHint: 'No models available',
     coworkModelApplying: 'Applying model…',
     coworkModelApplyFailed: 'Failed to switch model: {error}',
+    coworkDefaultModelApplyFailedSessionUpdated:
+      'This session switched models, but the default model for new sessions could not be updated: {error}',
 
     coworkNewSession: 'New Session',
     coworkContinuePlaceholder: 'Continue the conversation...',
