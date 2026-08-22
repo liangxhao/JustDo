@@ -1,287 +1,222 @@
 # 系统架构
 
-JustDo 使用严格的 Electron 进程隔离架构：Renderer 只负责浏览器侧 UI，Preload 暴露受控 API，Main 进程负责本地能力、SQLite、IPC、OpenClaw Gateway 生命周期和插件服务。
+本文描述 `v2026.8.12` 的代码结构、依赖方向、启动/退出顺序和跨领域协作。事实来源是 `src/main/main.ts`、`src/main/preload.ts`、`src/main/**`、`src/renderer/**`、`src/shared/**` 与构建配置。
 
-## 分层图
+## 1. 架构目标
+
+系统采用 Electron 三层进程边界，加一个由 Main 托管的 OpenClaw Gateway：
+
+- Renderer 专注产品 UI 和显示状态，不持有系统权限。
+- Preload 是显式、最小、可审计的能力桥。
+- Main 组合领域服务，拥有 SQLite、文件、进程、系统网络和安全策略。
+- Gateway 拥有 Agent 执行、session/history、工具、Skill runtime 与 cron 语义。
+- Shared 只承载可序列化合约与纯函数，确保 Main/Renderer 对协议的理解一致。
+
+## 2. 分层与部署图
 
 ```mermaid
 flowchart TB
-  subgraph R["Renderer Process"]
-    App["React App Shell"]
-    Store["Redux Store\n6 slices"]
-    Chat["<justdo-chat>\nLit custom element"]
-    Features["Feature Services\ncowork/memory/plugins/settings/tasks"]
+  subgraph Electron
+    subgraph RendererProcess[Renderer process]
+      React[React shell/features]
+      Redux[Redux: six mounted slices]
+      Chat[Lit openclaw-chat]
+      React --> Redux
+      React --> Chat
+    end
+    Preload[Preload contextBridge]
+    subgraph MainProcess[Main process]
+      IPC[IPC handlers]
+      Domain[Domain services]
+      Policy[Permission/network/file policy]
+      Stores[SQLite stores]
+      Runtime[OpenClaw runtime manager/adapter]
+      IPC --> Domain
+      Domain --> Policy
+      Domain --> Stores
+      Domain --> Runtime
+    end
   end
-
-  subgraph P["Preload"]
-    Bridge["contextBridge\nwindow.electron"]
-  end
-
-  subgraph M["Main Process"]
-    IPC["IPC Handlers"]
-    SQLite["SQLite Stores\nkv/cowork/agents/mcp/hooks/groups"]
-    Engine["Cowork Engine Service\nRouter + Adapter"]
-    Runtime["OpenClaw Engine Manager"]
-    Plugins["Plugin Services\nSkills/MCP/Hooks/Extensions/Marketplace"]
-    Scheduler["CronJobService"]
-    CustomerSync["Customer Registration\nstartup + daily sync"]
-  end
-
-  subgraph G["OpenClaw Gateway"]
-    Exec["Chat Execution"]
-    History["chat.history"]
-    SkillRuntime["Skills Runtime"]
-    Cron["Cron Runtime"]
-    Slash["Slash Commands"]
-  end
-
-  App --> Store
-  App --> Features
-  App --> Chat
-  Features --> Bridge
-  Bridge --> IPC
-  IPC --> SQLite
-  IPC --> Engine
-  IPC --> Runtime
-  IPC --> Plugins
-  IPC --> Scheduler
-  CustomerSync --> LiteLLM["LiteLLM Customer API"]
-  Engine --> Runtime
-  Runtime --> G
-  Chat -. "WebSocket" .-> G
-  Scheduler --> G
-  Plugins --> G
-  G --> History
+  DB[(justdo.sqlite)]
+  FS[Managed filesystem]
+  Gateway[OpenClaw Gateway child process]
+  Models[Model providers]
+  RendererProcess --> Preload --> IPC
+  Chat <-->|loopback WS/HTTP| Gateway
+  Stores --> DB
+  Policy --> FS
+  Runtime <--> Gateway
+  Gateway --> Models
 ```
 
-## 核心边界
+开发时 Renderer 从 Vite `43127` 加载；生产时加载 `dist/`。Main/preload 产物位于 `dist-electron/`。Gateway 是独立子进程，不是 Electron Renderer 的一部分。
 
-| 层 | 路径 | 责任 |
-| --- | --- | --- |
-| Main | `src/main/` | Electron 生命周期、IPC、SQLite、Gateway、插件、定时任务 |
-| Preload | `src/main/preload.ts` | 暴露 `window.electron`，不放业务状态 |
-| Renderer | `src/renderer/` | React/Lit UI、Redux、用户交互 |
-| Shared | `src/shared/` | 跨进程类型、常量和纯函数 |
-| Resources | `resources/` | 内置 skills、tray 图标、runtime 辅助资源 |
-| Vendor | `vendor/openclaw-runtime/` | 下载并同步的 OpenClaw runtime |
+## 3. 源码目录职责
 
-## Renderer 结构
+### 3.1 `src/main/`
 
-```text
-src/renderer/
-  app/
-    App.tsx
-    shell/
-  features/
-    agents/
-    cowork/
-    models/
-    memory/
-    plugins/
-    scheduled-tasks/
-    settings/
-  libs/openclaw-chat/
-  services/
-  shared/
-  store/index.ts
+| 目录         | 职责                                                                | 代表入口                                                 |
+| ------------ | ------------------------------------------------------------------- | -------------------------------------------------------- |
+| `core/`      | app/window/tray/update/log、CSP、本地协议、代理、Python、受管目录   | `mainWindowFactory.ts`、`outboundHeaderProxy.ts`         |
+| `data/`      | SQLite schema 和面向领域的 store                                    | `sqliteStore.ts`、`coworkStore.ts`、`groupStore.ts`      |
+| `engine/`    | Cowork router、Gateway adapter、事件转发、命令安全                  | `coworkEngineRouter.ts`、`openclawRuntimeAdapter.ts`     |
+| `cowork/`    | provider 配置、内置模型、日志、模型 API/readiness                   | `providerApiConfig.ts`、`builtinModelLifecycle.ts`       |
+| `ipc/`       | 按 app/cowork/openclaw/scheduledTask 注册 handler                   | 各目录 `index.ts` 与 handler 文件                        |
+| `openclaw/`  | config sync、runtime、models、permissions、sessions、slash commands | `openclawEngineManager.ts`、config sync service          |
+| `plugins/`   | Marketplace、Skill/MCP/Hook/Extension 文件与配置                    | `pluginManager.ts`、各 service/store                     |
+| `scheduler/` | Gateway cron 映射、轮询、结果同步和本地 receipt                     | `cronJobService.ts`、`scheduledTaskResultSyncService.ts` |
+
+`src/main/main.ts` 仅是 composition root：创建单例、注入依赖、注册 handler、绑定事件和管理应用生命周期。新增领域逻辑不应继续堆入该文件。
+
+### 3.2 `src/renderer/`
+
+- `app/`：应用壳、路由/导航、全局布局和产品级组合。
+- `features/`：`agents`、`cowork`、`memory`、`models`、`plugins`、`scheduled-tasks`、`settings` 等领域 UI。
+- `libs/openclaw-chat/`：独立聊天显示栈，包括 Gateway client/controller、模型 reducer、history reconciliation、pipeline、Lit 组件和滚动调度。
+- `services/`：Renderer 配置适配、i18n、theme、shortcut 等浏览器侧服务。
+- `shared/components/`：跨 feature UI 原语。
+- `store/index.ts`：只挂载 `model`、`cowork`、`skill`、`mcp`、`scheduledTask`、`agent` 六个 slice。
+
+没有挂载到 store 的 slice 不能在文档中描述为运行态全局状态。
+
+### 3.3 `src/shared/`
+
+Shared 由两个进程共同编译，适合放：IPC channel 常量、可序列化 interface/type、验证/normalize 函数、稳定 discriminant。禁止放 Electron、Node 内置模块、DOM-only API、环境变量读取和有副作用的单例。
+
+## 4. 依赖规则
+
+```mermaid
+flowchart LR
+  Renderer --> Shared
+  Renderer --> PreloadContract[window.electron contract]
+  Renderer --> LocalGateway[centralized loopback Gateway client]
+  Preload --> Shared
+  Main --> Shared
+  Main --> NodeElectron[Node/Electron]
+  Main --> Gateway
 ```
 
-Redux store 当前挂载：
+允许与禁止：
 
-- `model`
-- `cowork`
-- `skill`
-- `mcp`
-- `scheduledTask`
-- `agent`
+| 调用方   | 可以依赖                                         | 禁止依赖                                    |
+| -------- | ------------------------------------------------ | ------------------------------------------- |
+| Renderer | Renderer feature、shared、浏览器库、preload 类型 | `electron`、`fs`、`path`、SQLite、Main 实现 |
+| Preload  | Electron IPC、shared types                       | 数据库/领域业务、任意通配 API               |
+| Main     | Node/Electron、shared、Main 领域                 | Renderer 组件/DOM                           |
+| Shared   | TypeScript 纯逻辑                                | Node/Electron/DOM/process state             |
 
-## Main 结构
+Electron/OS/SQLite 与产品命令统一走 `Renderer -> window.electron -> ipcRenderer -> ipcMain -> service`。聊天数据面是受控例外：`JustDoChatWrapper` 通过 preload 取得本地 port/token，集中式 `GatewayClient` 直连 loopback Gateway，处理订阅、history fallback 和 chat abort。Gateway token 不得进入普通 Renderer 业务、Redux、日志或持久化。
 
-```text
-src/main/
-  core/
-  cowork/
-  data/
-  engine/
-  ipc/
-  openclaw/
-  plugins/
-  scheduler/
-  main.ts
-  preload.ts
-```
+## 5. Main 的组合关系
 
-关键入口：
+Main 启动时延迟创建重型服务，主要对象关系如下：
 
-- `src/main/main.ts` 初始化应用、store、Gateway、IPC、窗口和托盘。
-- `src/main/openclaw/runtime/openclawEngineManager.ts` 管理 Gateway 下载、安装、启动、停止和状态。
-- `src/main/engine/cowork/coworkEngineService.ts` 和 `coworkEngineRouter.ts` 负责 Cowork 调度外观。
-- `src/main/plugins/index.ts` 汇总 skills、MCP、hooks、extensions 和 marketplace 服务。
-- `src/main/ipc/**` 注册 renderer 可调用的主进程 API。
+- `SqliteStore` 提供数据库连接和 KV；`CoworkStore`、`GroupStore` 复用该连接。
+- `CoworkEngineService` 持有当前 router/runtime adapter。
+- `OpenClawEngineManager` 管理 runtime 状态、端口、token、进程与网络环境。
+- `OpenClawConfigSyncService` 汇总 provider、agent、permission、MCP、Hook、Extension、browser 等配置并串行写入。
+- `SessionPermissionModeCoordinator` 串行会话权限切换和配置同步。
+- `OpenClawExtensionHostLifecycle` 管理 ask-user callback 与 extension MCP transports。
+- `ManagedDirectoryOperationCoordinator` 在插件目录变更前识别/停止相关进程，完成后恢复。
+- `CronJobService`、result store/sync service 共享 Gateway adapter 与 SQLite。
+- `OutboundHeaderProxy` 只向 Gateway 构造网络环境和 capability generation，不应成为 Renderer 的通用网络层。
 
-## 数据流
+依赖通过 getter 注入，以避免 app ready 前访问 SQLite、打破初始化次序或产生循环构造。
+
+## 6. 启动生命周期
 
 ```mermaid
 sequenceDiagram
-  actor User
-  participant UI as React Component
-  participant Service as Renderer Service
-  participant Preload as window.electron
-  participant IPC as Main IPC Handler
-  participant Domain as Main Store/Service
-  participant Gateway as OpenClaw Gateway
-  participant Redux as Redux/Lit UI
-
-  User->>UI: Action
-  UI->>Service: Call feature method
-  Service->>Preload: Invoke narrow API
-  Preload->>IPC: ipcRenderer.invoke/send
-  IPC->>Domain: Validate and dispatch
-  alt Local metadata/config
-    Domain-->>IPC: SQLite result
-  else Runtime execution
-    Domain->>Gateway: RPC/WebSocket/config sync
-    Gateway-->>Domain: Result or stream event
-  end
-  IPC-->>Preload: Result/event
-  Preload-->>Service: Typed payload
-  Service-->>Redux: Update state
-  Redux-->>UI: Render
+  participant E as Electron
+  participant M as Main
+  participant D as SQLite
+  participant X as Extension host
+  participant C as Config sync
+  participant G as Gateway
+  participant W as Window
+  E->>M: acquire single-instance lock
+  M->>E: app.whenReady
+  M->>M: start outbound-header proxy
+  M->>M: create default workspace/localfile protocol
+  M->>D: open DB, schema/migrations
+  M->>D: reset stale session/run state
+  M->>M: restore system proxy and built-in provider
+  M->>X: start host; obtain dynamic callback config
+  M->>C: sync OpenClaw config
+  C-->>M: verified config result
+  M->>G: start managed Gateway
+  M->>M: start cron polling
+  M->>M: verify Python runtime
+  M->>M: register CSP
+  M->>W: create BrowserWindow and tray
 ```
 
-## 设计约束
+关键顺序：
 
-- Renderer 不导入 Node.js、Electron 或 main-process-only 代码。
-- Shared 不导入 Node.js、Electron 或 DOM-only API。
-- IPC channel、状态值、判别字符串优先放在 shared constants。
-- 用户可见字符串必须进入 i18n map。
-- SQLite 只保存本地产品数据、配置和 UI cache；Gateway history 是执行事实来源。
+1. 在 module initialization 阶段设置 userData 路径、依赖管理器环境、日志和系统 CA。
+2. IPC handler 可以提前注册，但所有 store getter 在数据库 ready 前会抛错，防止静默使用空状态。
+3. DB 打开后重置上次强退遗留的 running session；open run 的计时从本次启动重新计算，离线时间不计入。
+4. 先恢复代理，再刷新 built-in provider，否则模型发现可能使用错误网络路径。
+5. 先启动 extension host，再同步 config，避免把上次进程的动态 callback 端口写给 Gateway。
+6. config sync 成功后才自动启动 Gateway 和 cron polling；失败被记录且新 Cowork admission 会 fail closed。
+7. 窗口创建晚于核心本地服务初始化，UI 不会在数据库不可用时假装 ready。
 
-## 详细模块设计
+## 7. Cowork 数据流
 
-### Renderer Layer
+一次 turn 涉及三个不同层次的状态：
 
-Renderer 是产品交互层，而不是系统能力层。它可以持有用户正在看的列表、选中的会话、弹窗状态、临时输入内容和渲染缓存，但不能直接持有文件系统、SQLite、Gateway process 或 shell 权限。
+1. SQLite session/run：产品索引、cwd/model/permission、goal execution snapshot、client turn 与 root run 绑定；Gateway session goal 仍是目标权威。
+2. Gateway：执行、工具、真实 transcript 和 session runtime。
+3. Renderer：当前页面的历史窗口、乐观 user message、active turn reducer 和派生 timeline。
 
-```text
-src/renderer/
-  app/
-    App.tsx                  应用根组件
-    shell/                   Sidebar、Toast、WindowTitleBar
-    constants/               renderer app constants
+Start/continue handler 先等待待处理配置更新并确保 Gateway 运行及权限 policy 可验证，然后建立 run receipt、调用 router/adapter。Main adapter 的事件经 forwarder 更新产品 session/Redux；Renderer chat controller 同时通过集中式 loopback Gateway client 接收聊天协议事件，并优先经 IPC、必要时经认证 REST fallback 加载历史。两条投影都必须按 domain/session/run/sequence/generation 收敛到同一 Gateway 事实。
 
-  features/
-    cowork/                  会话、输入、附件、权限、搜索、子任务 UI
-    agents/                  Agent 列表、类型和 service
-    models/                  模型选择和 OpenClaw model ref 解析
-    memory/                  记忆概览、语义搜索、时间线和 Markdown 预览
-    plugins/                 Skills、MCP、Hooks、Extensions UI
-    scheduled-tasks/         定时任务 CRUD、运行历史、会话跳转
-    settings/                应用设置、模型设置、快捷键
+## 8. 配置流
 
-  libs/openclaw-chat/        Lit chat renderer 和 Gateway websocket client
-  services/                  i18n、theme、config、store、shortcuts
-  shared/                    renderer-only UI 基础组件和图标
-  store/index.ts             Redux root store
-```
+配置来源不是单一 JSON：
 
-Renderer service 的职责是把 UI 事件变成 `window.electron` 调用，并把失败结果转换成 UI 可理解的错误状态。Renderer service 不应该绕过 preload 去 import main 文件，也不应该把 IPC channel 字符串散落在组件里。
+- `kv` 中的 `app_config` 保存语言、provider、proxy、browser 等应用设置。
+- `cowork_config` 保存 Cowork/runtime 相关键值。
+- `agents`、`mcp_servers`、`openclaw_hooks` 是结构化产品配置。
+- extension/skill 文件与 manifest 位于 OpenClaw state/受管目录。
 
-### Memory Management Flow
+`OpenClawConfigSyncService` 在 config mutation lock 内读取这些来源，生成/更新 Gateway 配置，必要时断开 adapter、重启 Gateway、重连并验证 active permission policy。UI 保存成功不等于 Gateway 已接受；Main 返回值必须表达 sync 失败。
 
-记忆页面以工作区 Markdown 为展示事实来源，以 OpenClaw memory CLI 为索引事实来源。Renderer 不读取文件或执行命令：`window.electron.openclaw.memory` 通过 Main IPC 扫描 `MEMORY.md`、`DREAMS.md` 和 `memory/**/*.md`，并使用 Engine Manager 构造的同一套 CLI 环境执行 `memory status/search/index`。这样能复用 JustDo 管理的 runtime、state dir 和 SecretRef 环境，同时避免依赖 OpenClaw 内部 SQLite schema。
+## 9. 退出生命周期
 
-```mermaid
-flowchart LR
-  View["MemoryView"] --> Bridge["preload memory API"]
-  Bridge --> Handler["Main memory IPC"]
-  Handler --> Files["Workspace Markdown"]
-  Handler --> Cli["OpenClaw memory CLI"]
-  Cli --> Index["Derived memory index"]
-```
+退出由统一 shutdown coordinator 保证只执行一次：
 
-文件预览仅接受工作区内的相对 Markdown 路径，拒绝绝对路径、路径逃逸和符号链接。强制重建在 Main 中串行化，UI 在运行期间禁用重复触发。
+1. 停止 customer registration、tray 和 cron polling，阻止新后台工作。
+2. 停止全部 Cowork session。
+3. 停止 Gateway，使其不再发起 extension/tool 调用。
+4. 停止 extension host 和其 stdio/client/callback server。
+5. 停止 outbound-header proxy。
+6. 关闭 SQLite，flush WAL 并释放锁。
+7. 自动更新安装也复用同一 cleanup，再交给 updater。
 
-### Preload Layer
+这个顺序不能随意反转；例如先关闭 proxy 或 extension host 可能让仍在运行的 Gateway 进入不完整失败状态。
 
-Preload 是安全门面。它暴露的是面向业务的窄 API，而不是 `ipcRenderer` 的完整能力。历史上保留的 `ipcRenderer.send/on` 只适合少数旧的事件型场景，新功能应优先添加明确 namespace。
+## 10. 故障恢复
 
-设计要求：
+- Renderer crash：仅对 crash/killed/OOM/launch/integrity 等原因节流 reload；普通 child-process-gone 默认不导致无限刷新。
+- 系统唤醒：`powerMonitor.resume` 通知 runtime adapter 重新建立 Gateway WebSocket。
+- Gateway 启动并发：manager 合并 in-flight start；调用方可重复 ensure-running。
+- 代理切换：应用最新 generation，断开旧 adapter，重启 Gateway 后重连；重连失败时停止 Gateway，避免假 running。
+- 强制退出恢复：启动时把遗留 running session 归一为 idle，并重置未结束 run receipt。
+- config sync 失败：记录 external engine error，拒绝依赖该配置的新 turn，而不是继续使用未知 policy。
 
-- 参数尽量使用对象，便于后续兼容扩展。
-- 事件 listener 必须返回 unsubscribe 函数。
-- 不在 preload 中保存复杂业务状态。
-- 不在 preload 中读取文件或执行网络请求，交给 Main process。
+## 11. 扩展架构的正确方式
 
-### Main Layer
+- 新 IPC：shared 常量/type -> Main handler -> preload 最小方法 -> Renderer declaration -> 测试。
+- 新 SQLite 数据：schema/兼容迁移 -> store API/index -> 行为测试 -> 数据文档。
+- 新 Gateway 能力：优先调用上游 API；缺失时先记录 capability gap，再评估版本化 patch，不能默认在 Renderer 模拟。
+- 新 UI feature：局部 state 优先；只有跨页面、可恢复的共享状态才考虑 Redux，并在真正 mount 后更新文档。
+- 新插件类型：先定义 owner、安装事务、配置同步、权限与卸载语义，再接 Marketplace 展示。
 
-Main process 是本地能力层，负责所有可能影响系统、文件、进程、网络、SQLite 和 Gateway 的操作。
+## 12. 相关文档
 
-```text
-src/main/
-  main.ts                    bootstrap 和依赖装配
-  preload.ts                 contextBridge API
-  core/                      桌面基础设施
-  data/                      SQLite store
-  ipc/                       IPC handler 分域注册
-  engine/                    Cowork engine facade
-  openclaw/                  Gateway runtime/config/session/model/slash commands
-  plugins/                   skills/mcp/hooks/extensions/marketplace
-  scheduler/                 CronJobService 和执行 prompt
-```
-
-Main 中的服务通常由 `main.ts` 通过 getter 懒加载注入，例如 `getCoworkStore()`、`getOpenClawEngineManager()`、`getMcpServices()`。这种方式避免启动时循环依赖，也让 IPC handler 可以在 app ready 后访问实际资源。
-
-## 依赖方向
-
-```mermaid
-flowchart LR
-  RF["Renderer Feature"] --> RS["Renderer Service"]
-  RS --> PL["Preload API"]
-  PL --> IPC["Main IPC"]
-  IPC --> MS["Main Service/Store"]
-  Shared["src/shared\nconstants/types/pure funcs"] --> RF
-  Shared --> IPC
-  Shared --> MS
-  MS --> Shared
-```
-
-禁止方向：
-
-```mermaid
-flowchart LR
-  Renderer["Renderer"] -. "forbidden" .-> Main["src/main/*"]
-  SharedBad["src/shared"] -. "forbidden" .-> Platform["electron/node/browser-only"]
-  MainBad["Main"] -. "forbidden" .-> RendererFiles["src/renderer/*"]
-```
-
-## 启动序列
-
-1. `main.ts` 根据 `package.json.productName` 设置专用 `userData` 目录。
-2. 初始化日志、Electron command line、异常处理。
-3. 注册 IPC handlers。
-4. `app.whenReady()` 后启动 outbound proxy，并异步向内置模型 URL 对应的 LiteLLM Customer API 上报一次用户与产品信息；`alias` 持久化 `${productName} ${version}`，同时保留完整 `metadata` 供服务端后续支持。此后每 24 小时更新一次，上报失败不阻塞应用启动。
-5. 初始化 SQLite，执行 schema 兼容和旧数据迁移。
-6. 初始化 Cowork store、provider config getter、内置模型 provider。
-7. 绑定 Cowork runtime event forwarder 和 Gateway 状态 forwarder。
-8. 同步 OpenClaw config。
-9. 启动 Gateway，并在 ready 后启动 scheduled task polling。
-10. 创建 BrowserWindow、tray，并把 engine status 推给 renderer。
-
-## 错误处理策略
-
-- Main process 捕获未处理异常并写日志，但不把内部 stack 原样暴露给用户。
-- IPC handler 返回 typed failure result，renderer 负责转成用户可见文案。
-- Gateway 未就绪时返回 `ENGINE_NOT_READY` 和当前 engine status。
-- SQLite migration/cleanup 失败应记录 warning，不应阻止可恢复启动。
-- Proxy/Gateway restart 是异步流程，UI 通过 status event 得知变化。
-
-## 可扩展点
-
-| 扩展点 | 推荐落点 | 注意事项 |
-| --- | --- | --- |
-| 新设置项 | renderer settings + `kv` / domain store | 增加 i18n 和迁移默认值 |
-| 新 IPC 功能 | `src/main/ipc/<domain>/` + preload namespace | 使用 shared constants |
-| 新 Gateway 能力 | `src/main/openclaw/<domain>/` 或 adapter | 不把 execution truth 放进 SQLite |
-| 新 plugin 类型 | `src/main/plugins/` + `src/renderer/features/plugins/` | Main owns transport |
-| 新 UI 缓存 | SQLite domain store | 明确 authority |
+- [进程模型与 IPC](03-process-model.md)
+- [Cowork 系统](04-cowork-system.md)
+- [Agent Engine](05-agent-engine.md)
+- [数据存储](10-data-storage.md)
+- [安全模型](11-security-model.md)

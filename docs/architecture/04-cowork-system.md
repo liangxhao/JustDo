@@ -1,302 +1,223 @@
 # Cowork 系统
 
-Cowork 是 JustDo 的 AI 工作会话系统。用户在 renderer 中创建或继续会话，Main 进程通过 OpenClaw Gateway 执行任务，并把流式消息、用户交互请求、完成状态和缓存更新转回 UI。
+本文按 `v2026.8.12` 的会话 handler、SQLite store、OpenClaw adapter、Renderer feature 和 shared 合约重写。Cowork 是产品会话层，不是另一套 Agent engine。
 
-## 关键文件
+## 1. 职责与边界
 
-| 文件                                                 | 作用                                     |
-| ---------------------------------------------------- | ---------------------------------------- |
-| `src/renderer/features/cowork/`                      | Cowork UI、Redux slice、service、组件    |
-| `src/main/ipc/cowork/`                               | Cowork IPC handlers                      |
-| `src/main/engine/cowork/coworkEngineService.ts`      | Cowork engine service                    |
-| `src/main/engine/cowork/coworkEngineRouter.ts`       | session routing facade                   |
-| `src/main/engine/openclaw/openclawRuntimeAdapter.ts` | Gateway adapter                          |
-| `src/main/engine/cowork/coworkRuntimeForwarder.ts`   | runtime events -> IPC events             |
-| `src/main/data/coworkStore.ts`                       | local session/message/agent persistence  |
-| `src/main/openclaw/sessions/`                        | Gateway session key/history/text helpers |
-| `src/main/engine/openclaw/subagentGateway.ts`        | subagent status/history bridge           |
+Cowork 负责把本地产品会话映射到 OpenClaw session/run：
 
-## 会话生命周期
+- 保存标题、cwd、agent、model、permission、active skills、group、pin，以及与 Gateway goal 分离的本地 execution snapshot；
+- 对 start/continue/stop/delete 建立安全 admission 和幂等语义；
+- 把 Gateway message/agent/tool/lifecycle 事件归一化并广播；
+- 在重连、强退和历史加载后恢复 UI；
+- 提供审批、ask-user、附件、subagent、goal、上下文用量和导出 UX。
+
+Gateway 仍是执行与 transcript 权威；`cowork_messages` 是本地产品缓存，不能覆盖 Gateway history。
+
+## 2. 主要实现
+
+| 层         | 入口                                                                | 职责                                                             |
+| ---------- | ------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Shared     | `src/shared/cowork/`、`sessionGoal.ts`、`openclaw/messageDomain.ts` | 附件、run、title、目标、事件分类                                 |
+| Main store | `src/main/data/coworkStore.ts`                                      | session/message/run/config/agent CRUD 与恢复                     |
+| Main IPC   | `src/main/ipc/cowork/`                                              | execution、session、runtime、config、interaction、subtask、group |
+| Router     | `src/main/engine/cowork/coworkEngineRouter.ts`                      | 仅转发到 OpenClaw runtime；不再多引擎路由                        |
+| Adapter    | `src/main/engine/openclaw/openclawRuntimeAdapter.ts`                | session mapping、Gateway RPC/事件、history reconciliation        |
+| Renderer   | `src/renderer/features/cowork/`                                     | 列表、输入、权限/审批、goal、subagent、文件预览                  |
+| Chat       | `src/renderer/libs/openclaw-chat/`                                  | history/live 状态与 timeline 渲染                                |
+
+## 3. 三种身份
+
+一次用户提交必须区分：
+
+| 标识                         | 生成方                      | 用途                                            |
+| ---------------------------- | --------------------------- | ----------------------------------------------- |
+| local `sessionId`            | `CoworkStore.createSession` | 产品导航和 SQLite foreign key                   |
+| Gateway `sessionKey`         | managed-key 规则/Gateway    | transcript、session RPC、审批与 subagent parent |
+| `clientTurnId` / `rootRunId` | Renderer/Main / Gateway     | 幂等提交和事件归属                              |
+
+`cowork_session_runs` 用唯一 `client_turn_id` 防止双击或 IPC 重试创建第二个 session；Gateway 接受后将真实 `root_run_id` 绑定到 receipt。事件优先按 run id 映射，必要时再按受管 session key 解析。任意远端 key 不得自动映射到本地 session。
+
+## 4. Session 数据模型
+
+本地 session 包含：`id`、`title`、`status`、`pinned`、`cwd`、`executionMode`、`permissionMode`、`activeSkillIds`、`agentId`、`modelRef`、`groupId` 和时间戳。当前 engine 固定为 OpenClaw，历史 `container` execution mode 会迁移为 `local`。
+
+状态字段是产品快照，不是判断运行中的唯一依据。实际 `running` 由 adapter memory、Gateway `sessions.list/describe`、root run 和 subagent 状态共同计算；启动时遗留的本地 running 会恢复为 idle。
+
+## 5. Start 流程
 
 ```mermaid
 sequenceDiagram
-  actor User
   participant UI as Cowork UI
-  participant IPC as Cowork IPC
-  participant Router as CoworkEngineRouter
-  participant Adapter as OpenClawRuntimeAdapter
-  participant Store as CoworkStore/SQLite
-  participant GW as OpenClaw Gateway
-
-  User->>UI: start/continue session
-  UI->>IPC: cowork.startSession/continueSession
-  IPC->>Router: ensure engine and route request
-  Router->>Store: create/update session cache
-  Router->>Adapter: send turn
-  Adapter->>GW: Gateway chat request
-  GW-->>Adapter: stream events
-  Adapter-->>Router: normalized runtime events
-  Router-->>IPC: forward stream
-  IPC-->>UI: message/thinking/interaction events
-  GW-->>Adapter: final status/history available
-  Adapter->>Store: reconcile history cache
-  Store-->>UI: sessions changed
-```
-
-## 数据边界
-
-| 数据           | 权威来源                            | JustDo 本地角色                |
-| -------------- | ----------------------------------- | ------------------------------ |
-| 执行历史       | OpenClaw Gateway `chat.history`     | 缓存、搜索、列表展示           |
-| 会话列表元数据 | JustDo SQLite + Gateway session key | UI 列表、标题、pin、group、cwd |
-| 用户交互请求   | extension host event                | 弹窗和用户响应                 |
-| Subagent 状态  | Gateway event/history               | UI 展示和跳转                  |
-| Agent 配置     | JustDo SQLite                       | Gateway 配置同步输入           |
-| Token 使用统计 | OpenClaw Gateway `usage.cost`       | 设置页按日柱状图展示           |
-
-## 使用统计
-
-设置页的“使用统计”选项卡通过受控 preload API 调用 Main 进程，Main 再向 Gateway 请求
-`usage.cost`。查询使用 `agentScope: all` 覆盖所有代理，并按本机 UTC offset 计算最近
-7、14 或 30 天的范围。柱状图使用 Gateway 返回的 `daily[].totalTokens`，其中总量口径与
-OpenClaw 一致，包括 input、output、cache read 和 cache write Token。
-
-Renderer 不扫描 SQLite 消息缓存自行计数；`cowork_messages.usage` 仅用于消息展示和历史缓存，
-无法保证覆盖子代理、归档 transcript 或所有 Gateway 会话。Gateway 未连接或统计请求失败时，
-页面显示可重试错误态，不用不完整的本地数据冒充完整统计。
-
-`usage.cost` 可能先返回旧缓存并用 `cacheStatus` 标记为 `refreshing`、`partial` 或 `stale`。
-JustDo 必须透传该状态并自动轮询；只有 `fresh`（或旧版 Gateway 未返回状态）才视为本轮加载完成，
-避免把后台扫描期间的部分日期展示成最终统计。
-
-## Renderer 状态
-
-`src/renderer/features/cowork/coworkSlice.ts` 保存 Cowork UI 需要的 session、message、streaming、ask-user 交互等状态。删除状态不再作为独立 Redux root slice 挂载，相关逻辑留在 cowork feature 内。
-
-## Attachments
-
-附件契约位于 `src/shared/cowork/attachments.ts`。Renderer 通过 dialog/shell API 选择和预览文件，Main 进程负责把附件 payload 安全传入 Cowork 执行链路。
-
-## 用户交互
-
-JustDo 通过 Main 进程桥接 host exec approvals 与文件工具 plugin approvals。Gateway 的
-`exec.approval.*`、`plugin.approval.*` 事件经受控 IPC 进入 renderer；决策由 Main 按请求类型
-调用对应 resolve API，renderer 不直接获得 Gateway token 或通用 request 能力。Gateway 重连后
-Main runtime adapter 会重新建立持久事件连接，并通过两类 list API 恢复仍然有效的请求；由配置
-同步或代理设置触发的受控 Gateway 重启也必须在启动成功后主动重连 adapter。重连结果作为权威
-快照替换 renderer 的审批队列，从而移除断线期间已解决或因 Gateway 重启而消失的旧弹窗。文件工具审批只提供
-仅本次允许或拒绝，避免展示未实现的持久文件授权。可信 JustDo ancestry 下的交互审批保持无限
-等待：审批记录不设过期定时器，等待期间暂停对应 run；用户真正批准或拒绝后再通过隐藏且不写入
-聊天历史的 follow-up 恢复。该兼容能力由 `022`–`025` 四个小型、职责分离的版本锁定 patch
-提供，cron/native channel 仍保留上游超时语义。用户显式停止仍通过公开 Gateway 中止与审批清理
-接口处理父会话及其运行中 subagent 的待处理请求。
-
-Extension host 的 ask-user 是另一套交互协议，继续通过 `cowork:stream:interaction` 和
-`cowork.respondToInteraction()` 桥接，不能与 exec approval 弹窗或 decision 混用。
-
-## 历史同步
-
-Gateway history 是权威。`historyReconciler` 和 `src/main/openclaw/sessions/openclawHistory.ts` 负责把 Gateway 历史整理为 UI 可展示/可缓存的本地消息。SQLite 损坏或过期不能改变 Gateway 的执行事实。
-
-## 约束
-
-- 新的 Cowork 行为优先通过 Gateway API 实现。
-- 不在 renderer 中重建 execution truth。
-- 不把 tool-call id、subagent label 或 SQLite message 当成 Gateway 的权威替代。
-- 用户可见错误必须 i18n。
-
-## 详细状态模型
-
-### Subagent identity
-
-Subagent 的展示和历史入口使用 Gateway 提供的稳定身份，而不是从标签或工具输出猜测：
-
-- `sessionKey` 用于 Gateway RPC、历史加载和运行状态查询；
-- `sessionId` 用于展示、复制和服务端请求关联；
-- `spawnedBy` / `parentSessionKey` 用于恢复父子关系，兼容旧 Gateway 字段；
-- 子会话抽屉复用 `ChatController` 和 `<justdo-chat>` 的历史渲染管线，但不把子会话写入普通
-  Cowork Redux/SQLite 执行状态。
-
-父级 session rotation 不会改变已经创建的子会话归属。无法取得稳定 child session identity 时，
-UI 只能保留降级状态，不应使用 label、tool-call id 或 transcript 文本作为替代主键。
-
-### Session Metadata
-
-本地 `cowork_sessions` 存的是 UI 和产品元数据：
-
-- `id`：JustDo UI session id。
-- `title`：本地显示标题，可由标题生成服务更新。标题服务通过当前选中模型的
-  OpenAI-compatible API 做一次无状态请求，不创建 OpenClaw/Gateway 会话；模型不可用、
-  请求失败或超时时回退为首条非空输入的截断文本。发送前会等待当前 Gateway 会话 ID，
-  并以 `metadata.session_id` 传给 OpenAI-compatible 服务，同时设置
-  `metadata.request_purpose=title_generation`；无法解析 ID 时不发送无法关联的标题请求。
-  请求的 `User-Agent` 与捆绑 OpenClaw 所用 OpenAI SDK 版本保持一致，并显式
-  发送 JSON `Accept` 与 UTF-8 `Content-Length`；不伪造其他仅属于 SDK 内部状态或链路
-  追踪实现的 Header。该 Main 进程请求可以遵循用户选择的系统/自定义代理，但不经过本地
-  MITM。
-  标题 URL 命中 Outbound Header 白名单时，该确定性调用点会显式注入配置 Header；Main
-  的其他请求不继承这一行为。注入日志使用 `[MainProcessOutboundHeaderPolicy]` 和
-  `source=session-title`，与 Gateway 本地代理的 `[OutboundHeaderProxy]` 日志区分。
-- `status`：UI 状态，例如 idle/running/error。
-- `cwd`：会话工作目录。
-- `execution_mode`：当前只保留 local/sandbox/auto 语义，旧 container 会迁移到 local。
-- `active_skill_ids`：本次会话 UI 选择的 skill。
-- `agent_id`：绑定 Agent。
-- `model_ref`：创建时继承或用户最近成功选择的 `provider/model`，作为 UI 恢复与离线回退缓存。
-- `group_id`：会话分组。
-- `pinned`、`created_at`、`updated_at`：列表展示和排序；`updated_at` 仅表示最近对话活动，
-  会话元数据和运行状态变化不推进该时间。
-
-这些字段可以驱动 UI，但不能替代 Gateway 的真实运行状态。运行中状态应优先从 Gateway runtime status 和 stream event 获取。
-
-### Runtime Status Polling
-
-Renderer 对当前会话每 3 秒查询一次聚合运行态，空闲时放宽到 10 秒；不可见的后台会话每 30 秒批量查询一次，窗口隐藏时统一放宽到 60 秒。查询经由 `cowork:sessions:runtimeStatus` 到 Main，Main 使用一个 2 秒 TTL 的 single-flight `sessions.list` 快照，同时计算主会话、announce 可见运行和整个 subagent 后代树的状态。
-
-运行态使用 `sessionRuntimeActivity` 作为 UI 的唯一聚合来源：消息输入区的 `In Progress...` 和会话列表蓝色呼吸灯必须读取同一个值。用户提交或收到新 user turn 时立即置为 running；Gateway 返回 running 时立即确认。只有连续两次可信的 idle 快照才清除运行态；超时、断连等未知结果保留上次状态，不能按 idle 处理。主 turn 的 `complete` 事件也不能直接清除聚合状态，因为此时 subagent 或 announce run 可能仍在执行。
-
-### Message Cache
-
-`cowork_messages` 是消息缓存，服务于：
-
-- 会话列表快速恢复。
-- 本地搜索。
-- Gateway history 暂不可用时的降级展示。
-- 旧 UI 组件兼容。
-
-字段 `thinking_content`、`model_name`、`usage` 用于展示增强信息。消息最终仍应以 Gateway history 为准。
-
-## 执行链路
-
-### Start Session
-
-```mermaid
-flowchart LR
-  Input["CoworkPromptInput submit"] --> Service["coworkService.startSession"]
-  Service --> Preload["window.electron.cowork.startSession"]
-  Preload --> Handler["registerCoworkSessionExecutionHandlers"]
-  Handler --> Ensure["ensureOpenClawRunningForCowork"]
-  Ensure --> Sync["sync OpenClaw config"]
-  Sync --> Router["CoworkEngineRouter.startSession"]
-  Router --> Adapter["OpenClawRuntimeAdapter"]
-  Adapter --> Gateway["Gateway chat request"]
-```
-
-关键行为：
-
-- Gateway 未启动时自动启动。
-- 启动前同步 provider/MCP/hooks/extension 配置。
-- 创建本地 session cache。
-- 把 cwd、agent、model、skills、attachments 传入 adapter。
-- 运行期间通过 event forwarder 更新 renderer。
-
-### Continue Session
-
-继续会话会复用本地 session id 和 Gateway session key。若 Gateway session key 缺失，应通过历史同步/repair 逻辑尽量恢复；恢复失败时要给用户明确错误，而不是静默创建无关联新会话。
-
-已有会话切换模型时，会先按 session 串行执行 Gateway `sessions.patch`，再同步 Agent
-默认模型和 `openclaw.json`，供后续新会话继承。顺序不能颠倒：先更新默认值再 patch
-同一模型会让 Gateway 清除冗余 override，导致会话随后重新跟随默认值。已有显式 user
-override 的其他会话不受影响；没有显式 override、仍继承 Agent 默认值的会话会跟随默认值
-变化。`cowork_sessions.model_ref` 只保存初始或最近一次成功选择，Gateway 的运行态读取
-（包括 auto fallback）不得覆盖它。发送新 turn 必须等待会话模型队列清空。运行中切换
-不会改变已经在途的推理，只影响当前任务后续尚未开始的主会话模型调用。
-
-`sessions.json` 由 Gateway 进程拥有。JustDo 仅在 Gateway 处于已停止的 `ready` 阶段执行
-旧模型引用迁移；运行中配置同步不得直接改写该文件，避免覆盖 Gateway 并发写入的 token、
-fallback、live-switch 或生命周期字段。
-
-### Stop Session
-
-Stop 只有在 Gateway 确认父会话及运行中 subagent 已中止、关联待处理审批已清理后才切回 idle；任一确认失败时保留本地运行状态并向调用方报告失败。
-
-## Stream Event 分类
-
-| Event                   | 用途                | UI 行为              |
-| ----------------------- | ------------------- | -------------------- |
-| `message`               | 新消息块            | 插入消息             |
-| `messageUpdate`         | 文本 delta          | 更新当前消息         |
-| `thinkingUpdate`        | reasoning delta     | 更新 thinking 区域   |
-| `messageMetadataUpdate` | usage/tool metadata | 更新附加信息         |
-| `messageDelete`         | runtime 删除消息    | 从 UI cache 移除     |
-| `interaction`           | ask-user 交互请求   | 打开用户交互弹窗     |
-| `interactionDismiss`    | 请求失效            | 关闭弹窗             |
-| `complete`              | turn 完成           | 刷新 session/history |
-| `error`                 | turn 失败           | 展示错误并标记状态   |
-
-## Ask-User Flow
-
-```mermaid
-sequenceDiagram
-  participant Tool as Extension
-  participant Main as Main Interaction Broker
-  participant UI as Ask-User Dialog
-  participant User
-
-  Tool->>Main: ask user request
-  Main->>Main: map requestId to sessionId
-  Main-->>UI: cowork:stream:interaction
-  UI->>User: show question dialog
-  User-->>UI: answer/deny
-  UI->>Main: cowork.respondToInteraction
-  Main-->>Tool: route decision
-  alt request expires
-    Tool-->>Main: dismiss
-    Main-->>UI: cowork:stream:interactionDismiss
+  participant IPC as Main IPC
+  participant DB as CoworkStore
+  participant RT as OpenClaw adapter
+  participant GW as Gateway
+  UI->>IPC: start(prompt,cwd,agent,skills,attachments,clientTurnId)
+  IPC->>IPC: wait queued config updates
+  IPC->>DB: lookup clientTurnId
+  alt duplicate receipt
+    IPC-->>UI: existing session + timing
+  else new turn
+    IPC->>IPC: ensure Gateway + active permission policy
+    IPC->>DB: create session, status=running, begin run
+    IPC->>DB: cache initial user message
+    IPC-->>UI: session + timing
+    IPC->>RT: startSession (async)
+    RT->>GW: chat.send
+    GW-->>RT: runId and stream
+    RT->>DB: bind rootRunId
   end
 ```
 
-用户交互弹窗要能处理过期请求。`interactionDismiss` 到达后，如果弹窗仍打开，应禁用确认动作并提示用户请求已失效。
+细节：
 
-## Subagent Flow
+- cwd 必须来自请求或 Cowork config，空值直接拒绝；真正任务目录由 `resolveTaskWorkingDirectory` 解析。
+- permission 使用 shared `resolvePermissionMode`；UI 传值不能越过已保存的应用 policy。
+- 初始 model 从所选 agent 读取并写入 session/run，保证统计和显示可追溯。
+- handler 不等待完整 Agent run；启动调用异步执行，错误经 stream 广播并落终态。
+- `skipInitialUserMessage` 避免 adapter 再写一份已经由 handler 保存的用户消息。
 
-Subagent 状态由 Gateway 提供，JustDo 只负责桥接和展示：
+## 6. Continue 与模型切换
 
-- `SubagentMenu` 展示当前会话的子任务入口。
-- `SubagentMessageDrawer` 展示子任务消息。
-- `cowork.getSubTaskStatus()` 查询 session 下子任务状态。
-- `cowork.getSubTaskSession(sessionKey)` 解析子任务会话。
-- Subagent 标题只使用 registry 的 `taskName`、显式 `label` 或 `task` 首行摘要，优先级依次递减；三者全空的损坏记录会被跳过并记录去重警告。实时状态继续使用 24 小时 `subagents` 窗口，永久历史由分页 `sessions.list` 投影同一份 registry 命名元数据，不读取 transcript 派生标题。
-- `sessions_spawn.taskName` 是保留原始大小写的稳定别名；寻址按大小写不敏感匹配，因此允许大写 ASCII 字母，同时继续限制为 1–64 个字母、数字、下划线或连字符并要求字母开头。`all`、`last` 及其大小写变体是控制目标保留字，不可作为别名。
+Continue 先确认本地 session 存在、等待 config queue、ensure engine，然后调用 adapter。Renderer 的 submit helper负责 optimistic user message、client turn timing 和串行队列；Main/Gateway history 最终负责对账。
 
-Subagent 执行受 Gateway 配置的两级硬约束控制：
+会话模型读写通过 `sessions.patch/get`：
 
-- `agents.defaults.subagents.maxConcurrent` 限制 native subagent lane 中实际运行的数量；超出的 accepted native run 留在 lane 队列中，不占用模型推理槽位。ACP 仅共享下面的每父会话 active-child 准入限制，其执行并发由 ACP backend（例如 `acp.maxConcurrentSessions`）管理。
-- `agents.defaults.subagents.maxChildrenPerAgent` 限制每个父会话的运行中与排队中 child 总数；超限的 `sessions_spawn` 返回 `forbidden`。
-- `sessions_spawn` 先完成无异步副作用的参数、runtime 与 policy 语义校验，再在第一次 `await` 前同步占用按父会话隔离的初始化 reservation；准入按“活动 child + 初始化 reservation”计算，因此同批 9 个合法调用在上限为 5 时严格得到 5 个 accepted、4 个 `forbidden`，不会因前一个 child 极快结束而让同批后续调用补位。校验失败不占活动名额；accepted reservation 在 child 登记成功或初始化失败后释放，由 registry 活动记录接管成功项；不同父会话互不阻塞。
-- 成功登记但尚未开始执行的 child 状态为 `pending`：native 通常是在等待 subagent lane 槽位，ACP 则是在等待其 backend 启动 run；两者都只在 Gateway 收到对应 lifecycle `start` 事件后切换为 `running`。
-- 准入阶段的 `forbidden` 或其他创建前错误不会登记 child session/run，因此不出现在 Subagent 列表，只作为父会话的 tool result 返回。若 backend 已启动后 registry 登记失败，Runtime 会尽力删除 provisional session 并返回明确错误；清理本身失败时可能保留一个真实的 provisional child，作为异常恢复对象显示。
-- 限制只基于 canonical 父会话、活动 child 与初始化 reservation，不使用 `taskName` 去重；不同 Tool Call 合法地运行同名任务。
+- 输入必须是 qualified `provider/model`；旧的裸 model id 在启动迁移时只在唯一匹配时补齐 provider。
+- 返回声明 `appliesTo` 是 next turn 或 subsequent calls，并标记来源是 gateway、local cache 或 agent default。
+- UI 不应在 Gateway patch 失败时永久保留乐观模型；需回退显示并提示。
 
-JustDo 当前同步的默认值分别为 3 和 5：整个 subagent lane 最多同时运行 3 个 child，每个父会话最多保留 5 个活动 child。无其他 lane 竞争且调度及时，通常表现为 3 个运行、2 个排队；存在其他父会话竞争时，同一父会话的 5 个 child 都可能处于 `pending`。排队任务不发起模型推理，但仍保留 session、run registry 和完成通知状态，所以总活动数不能无限增长。
+## 7. Stop、删除与终态
 
-JustDo 托管父链正常情况下不使用 completion announce 启动新的父模型回合。`sessions_spawn` 仍立即返回以支持并行派发；父模型填满 active-child 名额后调用 `sessions_yield`，Runtime 在该 Tool Call 的同步起始阶段把尚未消费 child 的 completion delivery 改为非必需，并在任意一个 child 的 terminal outcome 与冻结结果都准备完毕时立即返回这一时刻已完成的一批结果。Tool Result 包含每个已完成 child 的 `runId`、`sessionKey`、状态、结果或错误，以及仍在运行的数量；父模型可以马上补发同等数量的新任务，再次调用 `sessions_yield`，形成增量 Join，使慢任务不会阻塞已释放名额的复用。同一父会话的 Join 通过互斥队列串行执行；结果返回时先持久化 presented claim，Tool Result 追加到父 transcript 后标记 transcript committed，只有后续 assistant continuation 的无工具终态消息落盘后才提交 consumed marker。Tool Result 批次结束仍是 agent loop 的中间状态，不能提前提交 consumed。Gateway 重启时，任何已经开始 Join 但尚未完成 continuation commit 的记录都会恢复 completion delivery，在原 Session ID 上幂等唤醒父 Agent；这包括 Tool Result 已落盘但父推理尚未继续的崩溃窗口。对原始 `cleanup: "delete"` 的托管 child，Runtime 从 spawn 起临时按 `keep` 保留 registry 记录，continuation commit 后才执行原定删除，避免两阶段状态失去持久化载体。Tool 不触发 `onYield`，因此 embedded parent run 不会 abort，模型会在相同 run、相同 transcript 和相同 Gateway Session ID 中继续。合法 steer/restart 会持久化转移 waiting ownership，并按 child session 跟随新 generation；Join 被 abort、关键 registry 写入失败，或已准入 run 在等待期间真正消失时，只恢复当前 yield 批次的原生 completion delivery，不回滚先前已经 committed 的增量结果，并按恢复调用的真实返回值报告成功或等待 Gateway restart 重试。上述路径都不会触发 `onYield`，也不会无限空轮询。嵌套 subagent 通过 registry ancestry 继承这一语义；若模型从未调用 Join，原生 completion delivery 仍作为防丢失兜底；非 JustDo channel 与 cron 完全保留 OpenClaw 原生 announce/FIFO 行为。
+Stop 会发现主 session 与仍运行的 subagent key，逐一调用 `sessions.abort`，清除 pending approval/session grant、active turn、goal 控制 run 和缓存。`bestEffort` 仅允许在 Gateway confirmation 不可得时继续本地清理，不代表 abort 成功。
 
-托管会话的 Gateway Session ID 是逻辑会话身份：正常消息、subagent Join、compaction、超时恢复和 Gateway 重连必须复用 store 中已有 ID。Runtime 在 command resolver、`chat.send` reply-session 初始化、Gateway agent admission 和持久化前复核四处都让精确 `agent:*:justdo:*` key 优先使用已有 store ID；隐式 freshness、failed/missing transcript、terminal transcript 或过期 client ID 不得换号。Gateway RPC 的显式 reset/delete 在 agent resolver 前完成；reply-session 内的 `/new`、`/reset` 则通过 `resetTriggered` 明确绕过 identity pin，仍可建立新身份。Renderer 对没有这些显式 reason 的 `sessions.changed` ID 变化执行拒绝而不是切换 transcript。Gateway 的运行级 timeout 对托管 chat 关闭；JustDo watchdog 对仍存在的托管 active turn 只重新计时，不根据某一瞬间的 child 列表或查询失败制造 terminal 状态。显式 Stop、Gateway lifecycle terminal 事件与请求错误仍负责结束 turn。
+删除 session 的顺序包括停止活动、删除本地 row（级联 messages/runs）、通知 adapter 清映射，并递归删除受管 subagent transcript；不能删除通用 `:main` 或不属于本产品的 Gateway session。
 
-非 JustDo 托管会话的 Subagent completion 自动驱动父模型继续编排时，同一 canonical 父会话按完成事件到达顺序严格 FIFO。Registry 在 completion 进入 terminal 状态时分配并持久化单调 `queueSequence`；只有最早的未终结 delivery 可以尝试投递，队首失败后的 retry 保留原位置，Gateway 重启后也按持久化顺序恢复。每个事件先等待当前父回合完整结束，再从最新 canonical transcript 启动 direct agent turn；若 direct 调用只返回 non-terminal acknowledgement，Runtime 会等待该 requester run 结束并通过相同 idempotency key 取得 terminal result。OpenClaw 会把 prompt 执行期间落盘的 Tool Call、Tool Result 与 `sessions_yield` 暂存为 side branch；embedded run finalizer 之后，外层 completion delivery 仍可能追加 delivery mirror 和 `leaf` control，因此不能在 embedded finalizer 中提前提升。对于已通过 `sessions_yield` 结束的 embedded turn，可见 assistant 文本已经随原始消息落盘，CLI transcript gap-fill 必须跳过，避免在 Tool Result 和 yield marker 后追加内容相同的 `api: cli` 镜像消息。只有 outer delivery 完整提交并返回成功后，Runtime 才在 FIFO 锁内重新从磁盘打开 requester transcript、取得 session write lock，并把最新 side branch 提升为 canonical leaf；提升完成后才释放 FIFO，使下一项读取到上一项完整的 Tool Call/Result。提升失败会令本次 delivery 保持未完成，恢复流程通过相同 idempotency key 重试提交边界，不重新执行一个新的模型回合。cleanup bookkeeping 异常会重新调度已提交项以完成 registry 回收；若 delivery 已 terminal，也会立即唤醒此前被 gate 的后续事件。父回合繁忙、Gateway 关闭、abort 或调用失败时，事件保持未交付并由原生 announce 恢复机制重试，不会提升未完成分支，也不会回退到冻结 prompt 执行；abort 会立即结束本次等待而不占满 announce timeout。不同父会话仍可并行。
+业务终态来自明确 chat/lifecycle/runtime 证据。WebSocket disconnect 只触发连接恢复和必要的错误提示，不能自动将所有 run 标成 error。完成后启动 history reconciliation，以 Gateway final text、usage、thinking 和 tool 结果校正缓存。
 
-非托管会话中，`sessions_yield` 的等待条件不能只看 child 是否已经 `ended`。Runtime 同时检查活动 child 和尚未投递的 required completion；只要其中任一项能在未来唤醒父会话，就允许结束当前回合等待。正在执行当前模型回合的 completion 会按其 `announce:v1:<childSessionKey>:<runId>` 身份从未来唤醒源中排除，避免最后一条 completion 把自己误认为下一条事件而永久等待。只有活动 child 与其他待投递 completion 都不存在时，Tool 才返回兼容的 `no_active_subagents` 结果并要求模型继续当前回合。
+## 8. Event 模型
 
-Gateway `chat.history` 对 mixed assistant content 的投影保留原顺序的 thinking、text 和 Tool Call；commentary assistant 即使只有 Tool Call、没有附带文本也不能被提前过滤，配对 Tool Result 继续按 `toolCallId` 留在权威历史。运行中的 Tool Call 可能在 active turn 结束前就进入权威历史，Renderer 此时按 `toolCallId` 暂时隐藏已由 active timeline 表示的历史消息，待 turn 结束后再由权威历史接管，避免接管窗口短暂显示两份。Renderer 在权威历史到达后退役 live projection，保证消息界面、原始 transcript 和 Runtime admission 记录可按 Tool Call 对账，既不丢失也不重复显示。
+`CoworkRuntimeEvents` 包含：
 
-新增 subagent 功能时，优先要求 Gateway 提供稳定 child session id，而不是从 tool output 文本猜测。
+- `message`：创建 user/assistant/thinking/tool/system item；
+- `messageUpdate`：正文快照或合并后的 streaming text；
+- `thinkingUpdate`：thinking delta；
+- `messageMetadataUpdate`：tool/lifecycle/model/usage/plan 等元数据；
+- `messageDelete`：移除临时或被权威历史取代的 item；
+- `complete`：session 的明确终态；
+- `error`：可见错误，不一定等价 terminal；
+- `sessionStopped`：本地停止完成；
+- `cronChanged`：触发 scheduled task refresh/reconcile。
 
-## Attachment Flow
+共享 `messageDomain` 按 session/run 判定 current、related、foreign、stale 等 admission，并统一 tool terminal status。Main 与 Renderer 都应复用 shared normalize，避免协议分叉。
 
-附件进入 Cowork 前应满足：
+## 9. 历史与缓存
 
-- Renderer 通过用户操作选择文件或目录。
-- Main 进程负责读取必要 metadata 或 data URL。
-- Payload 使用 `src/shared/cowork/attachments.ts` 中的契约。
-- 大文件不应直接塞进 Redux；只传必要引用和预览信息。
+Main `HistoryReconciler` 在 final、detached run 或显式同步后调用 `chat.history`：
 
-## Failure Modes
+- 抽取稳定 message identity，合并当前 turn assistant text；
+- 按 occurrence 匹配 usage，不能只靠相同文本；
+- 恢复 thinking、tool 输入/结果、模型名、compaction 和 subagent completion；
+- 删除被权威历史证明为重复的临时项；
+- 对 history 边界丢失的文本只做安全 suffix/prefix merge。
 
-| 场景                 | 处理                                     |
-| -------------------- | ---------------------------------------- |
-| Gateway 未就绪       | 返回 `ENGINE_NOT_READY`，UI 显示启动状态 |
-| Gateway stream 中断  | 标记 session error，保留可恢复 cache     |
-| SQLite cache 损坏    | 重建 cache，优先从 Gateway history 恢复  |
-| Interaction 请求过期 | dismiss 弹窗，阻止继续响应               |
-| Provider config 无效 | 阻止执行并引导设置模型/API               |
+Renderer 另有分页 history window 和 persisted timeline cache，用于性能与切页恢复。两者是显示缓存，不改变 Gateway 权威。
+
+## 10. Goal 生命周期
+
+`SessionGoalStatus` 契约枚举包含 `active`、`paused`、`blocked`、`usage_limited`、`budget_limited`、`complete`；其中 `usage_limited` 和 `budget_limited` 是历史兼容输入，`normalizeSessionGoal` 会将二者统一转成 `blocked`，Coordinator 不把它们当作独立运行状态。`GoalExecutionPhase` 包含 `waiting`、`running`、`continuing`、`retrying`、`awaiting_input`、`awaiting_confirmation`、`stopped`。
+
+Goal continuation coordinator 监听 tool/lifecycle：
+
+- active goal 在普通 run 结束且无托管 subagent 未完成时，可发起继续；
+- control run 与 user-input run 单独登记，避免把 `/goal resume` 当普通任务；
+- blocked goal 的 resume 先通过 `sessions.describe` 验证相同 goal id；
+- completed goal 接收反馈时，先原子确认 goal 未变化，再 clear 并用 follow-up prompt 建立新目标上下文；
+- reconnect 会从本地 snapshot 与 Gateway goal/runtime 恢复，完整 `sessions.list` 优先于逐个 describe；
+- UI 的 continue/resume/feedback 操作使用 single-flight，避免重复控制。
+
+Renderer 的 GoalStatusCard 只按 snapshot 派生文案和按钮，不自行改服务端状态。
+
+## 11. Ask-user 与 Approval
+
+Ask-user extension 通过本地 callback host 产生 interaction。Main 将 request id 绑定到 session，广播问题；Renderer wizard 收集结构化答案，Main 校验 question id、选项和 required/timeout policy 后响应。重连/刷新可 replay pending interactions；dismiss 是 UI 生命周期，不代表拒绝或完成。
+
+Exec/plugin approval 走独立 Gateway approval API。session 级 exec grant 绑定 session key，结束/停止/删除时清除。权限 modal、文本确认模式和 scheduler 的无人值守模式不得共用含糊的 boolean `autoApprove`。
+
+## 12. Attachments 与文件预览
+
+附件先用 shared normalizer 验证类型、名称、路径/内容，再作为结构化 metadata 和 Gateway payload 发送。历史解析会提取实际发送路径用于展示。预览读取通过 Main；编辑必须先取得绑定目标的授权 token。会话导出会把 timeline 转成明确格式，不直接复制内部 Gateway JSON。
+
+## 13. Subagent
+
+Subagent 列表优先通过选择性的 Gateway tool/API，必要时从 persisted sessions 查询；状态统一为 pending/running/finished/failed 等。label 来源会区分 task name、metadata 和 fallback，避免把随机 session key 当用户标题。
+
+父会话运行状态包含 `mainRunning || subagentRunning`。stop 会递归发现活动子树；完成通知、工具卡和抽屉必须按 parent/session/run identity 归属，迟到 announce 不能写入另一 turn。
+
+## 14. Renderer 状态
+
+`coworkSlice` 保存 session 列表、选择、加载/错误等产品状态。大体量 transcript/live reducer 留在 chat component 内，避免 Redux 每个 delta 触发全应用 render。选择器、删除状态机、session presentation、latest serial queue、run activity、context usage refresh 都有独立纯函数和测试。
+
+## 15. 失败与排障
+
+| 现象              | 首查                                                               |
+| ----------------- | ------------------------------------------------------------------ |
+| 提交立即失败      | engine status、config sync、permission verification、cwd           |
+| UI 一直 running   | runtime status、open run receipt、Gateway sessions、subagent       |
+| 消息重复/缺失     | session/run identity、sequence、history reconciliation             |
+| stop 后审批仍出现 | session key grant/pending approval cleanup                         |
+| goal 不续跑       | goal snapshot、control run、managed subagent join、lifecycle patch |
+| 重启后状态错误    | startup reset、Gateway list/describe、channel session sync         |
+
+日志先看每日 main log 与 Gateway condensed log；需要完整 event sequence 时按 `[gateway] log file:` 查看 native JSON log并按时间、run id、session id 关联。
+
+## 16. 维护与测试
+
+变更至少覆盖：重复 client turn、start failure、异步 error broadcast、stop best-effort、run bind/terminal、session key 隔离、重连、history reconcile、goal single-flight、subagent parent、approval cleanup、附件 normalize 和长历史性能。对应测试集中在 cowork handler/store/adapter、shared message/goal 与 Renderer chat/cowork 目录。
+
+## 17. Session 与 Run 状态转换
+
+```mermaid
+stateDiagram-v2
+  [*] --> Idle
+  Idle --> Starting: start/continue accepted
+  Starting --> Running: Gateway run bound
+  Starting --> Idle: admission/start failure
+  Running --> Waiting: ask-user/approval/goal pause
+  Waiting --> Running: response/continue
+  Running --> Idle: terminal/stop
+  Running --> Idle: startup stale-state normalization
+  Idle --> [*]: delete
+```
+
+SQLite `session.status` 是产品快照，不是完整状态机权威。Gateway runtime、open root run、goal execution 和 managed subagent 共同决定 UI 是否展示 active。任何转换都要保持 terminal 幂等：重复 final、stop 后迟到 event、应用重启修复不能再次结算计时或生成第二条完成消息。
+
+## 18. 并发与幂等约束
+
+- `clientTurnId` 约束一次用户提交；同 id 重试同 session 可识别，跨 session 重用必须拒绝。
+- 每个 session 的 mutation 通过 serial queue/single-flight 控制，避免 continue、model patch、stop 交错覆盖。
+- root run begin/bind/fail 分阶段记录，Gateway 尚未返回 run id 时失败也可结算。
+- Goal continue 与用户反馈动作 single-flight；迟到结果必须检查当前 execution generation。
+- 删除前停止活动树并清理 session grants；批量删除逐目标隔离错误，不能误删未选 session。
+
+## 19. 数据恢复顺序
+
+重启后先把 SQLite 残留 `running` 归一，重置 open run clock；随后通过 Gateway session mapping/runtime status 判断是否存在可恢复远端工作，再加载 history。顺序不能反过来，否则离线时间会被计入 run、旧 boolean 会覆盖 Gateway 事实，或 UI 在 reconciliation 前短暂宣告完成。
+
+## 20. 代码证据地图
+
+| 行为                        | 实现/测试入口                                                   |
+| --------------------------- | --------------------------------------------------------------- |
+| Session CRUD 与 run receipt | `src/main/data/coworkStore.ts` 及同名测试                       |
+| IPC admission               | `src/main/ipc/cowork/` 及 handler tests                         |
+| 路由与 stop-all             | `src/main/engine/cowork/coworkEngineRouter.ts`                  |
+| OpenClaw 映射               | `src/main/engine/openclaw/openclawRuntimeAdapter.ts` 及测试     |
+| History merge               | Main `historyReconciler.ts` 与 Renderer reconciliation tests    |
+| Goal continuation           | `src/main/openclaw/goals/goalContinuationCoordinator.ts` 及测试 |
+| Permission/grants           | `src/main/openclaw/permissions/` 及测试                         |
+| UI session 状态             | `src/renderer/features/cowork/`、chat model tests               |
+
+## 21. 变更清单
+
+新增 session 字段时同步 DDL/compatibility、store mapping、IPC/shared、Renderer selector/form 和 config projection（若影响 Gateway）。新增 lifecycle event 时同步 adapter、domain admission、reducer、history counterpart 和 terminal cleanup。任何“仅修 UI running”的改动都要先证明 Gateway、run receipt 与 subagent 状态没有分歧。

@@ -1,303 +1,231 @@
-# Subagent 模型请求恢复与 Completion 上下文一致性整改方案
+# Subagent 模型恢复与 Completion 一致性
 
-## 背景
+> 本文按 JustDo `v2026.8.12`、OpenClaw `v2026.7.1-2` 重新核对。Completion canonical branch/FIFO 已由版本补丁实现；“当前模型请求无副作用时的同模型 retry”仍不是一项可宣称完整落地的通用能力。
 
-2026-08-14 的回归日志验证了现有双层并发限制和消息审计链路：
+## 1. 问题拆分
 
-- 同一父会话并行发起 9 次 `sessions_spawn` 时，严格得到 5 次
-  `accepted` 和 4 次 `forbidden`。
-- native subagent 峰值运行数为 3，其余 accepted child 保持 pending。
-- 消息界面的 Tool Call、父会话原始 transcript 和 Runtime 实际调用数量一致。
-- completion announce 已按父会话 FIFO 执行，不存在相互重叠的模型回合。
+历史故障包含两个独立问题：
 
-其中 canonical branch 提升时序已在当前改动中修复，后续新会话只需实现模型请求
-恢复部分：
+1. Child completion 已写入父 transcript，但下一次 completion prompt 仍从旧 canonical leaf 启动，导致看不到刚提交的 sibling spawn/result；
+2. Child 的某次模型流发生 timeout/terminated/不完整响应时，即便该次 request 没有产生工具副作用，也可能直接把整个 child 标为 failed。
 
-1. 已修复：completion announce 的 canonical branch 改为在 outer delivery 完整提交
-   后、FIFO 释放前提升。
-2. 待实现：subagent 在模型流发生 `timeout`、`terminated` 或不完整响应时，即使当前模型
-   请求没有产生 Tool Call，也会立即结束为 failed，缺少安全的同模型请求重试。
+第一项属于 durable delivery/canonical ordering；第二项属于 provider request recovery。不能用 taskName 去重掩盖任一问题：同名 task 在不同上下文中可以合法创建。
 
-本方案不按 `taskName` 去重。同名任务在新鲜上下文中仍然合法，所有一致性判断基于
-父会话、run、Tool Call、模型调用边界和 transcript 顺序。
+## 2. Subagent 执行事实
 
-## 事故证据
+OpenClaw 原生负责 `sessions_spawn`、child registry、并发调度、run timeout 和 completion delivery。JustDo 通过 patch 补齐目标版本的原子 admission、排队可见性、managed join、FIFO announce 与 branch promotion，并通过 Gateway projection 展示父子关系。
 
-### Completion 仍可能读取旧上下文
-
-回归中共发生 16 次 `sessions_spawn`：12 次 accepted、4 次 forbidden。12 个
-accepted child 中包含 9 个目标任务、2 个合理失败重试，以及 1 个多余的 PDF
-任务。
-
-第二批已在一个 announce 回合中 accepted：
-
-- docx retry
-- pdf
-- pptx
-- skill-creator
-- xlsx
-
-但紧随其后的 docx completion announce 的 pre-prompt 又退回到旧的 16 条消息，
-没有看到上述 Tool Call 和 Tool Result，于是再次 accepted 了一个 PDF child。
-
-父 transcript 中可见对应 leaf control 仍指向旧的 `sessions_yield` 锚点：
-
-```text
-targetId=5374be3f
-appendMode=side
+```mermaid
+flowchart TD
+  Spawn[sessions_spawn] --> Admit[atomic admission/reservation]
+  Admit --> Queue[accepted/queued/running]
+  Queue --> Child[child model/tool loop]
+  Child --> Result[durable child terminal result]
+  Result --> Join{managed join owns result?}
+  Join -->|yes| Consume[two-phase consume]
+  Join -->|no/fallback| FIFO[per-requester delivery FIFO]
+  FIFO --> Commit[outer delivery durable commit]
+  Commit --> Promote[canonical branch promotion]
 ```
 
-现有 `promotePromptReleasedSideBranch()` 在 embedded run finalizer 内执行。外层
-completion delivery 随后仍会写入 delivery mirror/leaf control，因此可能再次把
-canonical target 恢复到旧锚点。最终 JSONL 会在更晚的回合收敛，但下一次模型 prompt
-已经基于旧 leaf 启动。
+## 3. 已实现的 Completion 一致性
 
-### Subagent 模型异常被立即终态化
+### 3.1 原子 admission
 
-三个 child 均使用 `builtin_models/deepseek-v4-flash`，配置的 provider 请求超时为
-1800 秒，subagent run timeout 为 7200 秒，但实际在远早于配置截止时间时收到：
+补丁 `013` 在 native preflight 后、registry 注册前做 requester reservation，避免多个并行 spawn 都看到相同空余容量。canonical requester 的容量被原子占用，成功或失败均释放。`014` 将 accepted/queued/running 分开，真正 running 后才开始 run timeout。
 
-```text
-error=LLM request timed out.
-rawError=terminated
-decision=surface_error
-next=none
-```
+### 3.2 Managed join
 
-具体结果：
+`017`–`021` 识别可信 JustDo ancestry、批次 join、两阶段消费、消失 run 终止等待、失败回退和 announce fence。Join 一旦取得 ownership，原生 announce 不能同时发送；join 失败且结果尚未消费时恢复一条 native delivery。
 
-- data-analysis：已完成 `read`，下一次模型请求中断，未写文件，后续新建 child
-  重试成功。
-- docx：已完成 `read`，下一次模型请求中断，未写文件，后续新建 child 重试成功。
-- diagram-generator：已完成 `read`、`write`、`exec` 和产物验证，最终总结流异常
-  收尾，Runtime 仍标记 failed，但产物完整。
+### 3.3 Per-requester FIFO
 
-当前 OpenClaw 使用整个 attempt 的 `toolMetas` 和 `assistantTexts` 计算
-`canRestartForLiveSwitch`。只要 run 之前使用过任何工具，即使发生异常的当前模型请求
-没有产生新 Tool Call，也禁止同模型重试。当前只配置 primary model，没有 fallback，
-所以错误直接暴露为 child terminal failure。
+`016` 为 required completion 建立 durable sequence，同一 requester 串行投递，不同 requester 可并行。failed head 保留在队首，busy requester 等待，避免 completion steer 正在进行的父 run 或乱序进入 transcript。
 
-## 目标
+### 3.4 Commit 后提升 canonical leaf
 
-- 下一次 completion announce 必须在上一次 announce 的外层 delivery、Tool Call、
-  Tool Result、`sessions_yield` 和 leaf control 全部提交后，使用最新 canonical
-  transcript 构造 prompt。
-- 对可恢复的模型传输异常，优先重试当前模型请求，而不是创建新 child 或从原始任务
-  重新开始。
-- 已完成的历史 Tool Call/Result 不阻止当前模型请求重试。
-- 当前失败模型请求一旦产生或执行 Tool Call，不得简单重放；必须先对账并从最新
-  transcript continuation。
-- 不隐藏调用、不按名称去重、不放宽 021 admission 或 native lane 限制。
+`015` 只在 required `subagent_announce` 的外层 delivery 完整 durable commit 后，在 requester transcript write lock 内提升 side branch。顺序是 `016 → 015`：先获得 FIFO delivery 权，再提交消息，最后 promotion，之后才释放队列。
 
-## 方案一：将 Completion Branch Promotion 移到完整提交边界（已实现）
+普通 announce、accepted-only 和失败 delivery 不提升。不能在 embedded child finalizer 提前 promotion，因为外层 delivery mirror/leaf control 尚未提交，后续写入可能把 canonical target 恢复到旧锚点。
 
-### 行为要求
+### 3.5 身份固定
 
-同一父会话的 completion FIFO 锁必须覆盖完整事务：
+`036` 对持久 `agent:*:justdo:*` 会话固定 session id，覆盖 command resolver、chat.send 初始化、Gateway admission 和持久化复核；显式 `/new`、`/reset`、delete 仍按上游语义换号。这样恢复/announce 不会因为 freshness 或 transcript 短暂缺失进入新身份。
 
-```text
-等待前序 delivery 完成
-  -> 执行 direct agent turn
-  -> 提交 assistant/Tool Call/Tool Result
-  -> 提交 final 或 sessions_yield
-  -> 写入 delivery mirror/leaf control
-  -> 提升最新 side branch 为 canonical leaf
-  -> 标记 delivery 完成
-  -> 释放 FIFO，唤醒下一项
-```
+## 4. Completion 不变量
 
-branch promotion 不应继续放在 embedded run finalizer，因为该位置早于外层 delivery
-mirror/leaf control 的最终写入。
+- 同一 requester 的 required completion 不重叠；
+- FIFO 序号与 durable transcript 顺序一致；
+- delivery 未提交不得 promotion；
+- promotion 未完成不得释放下一条 completion；
+- join 与 native announce 对同一结果最多一个 owner；
+- 失败恢复只投递未消费结果；
+- 同名 task 不作为去重键；
+- canonical branch 必须包含前一条已经 committed 的 Tool Call/Result 和 completion。
 
-### 实现方向
+## 5. 模型请求恢复的正确边界
 
-- 继续扩展 `005-history-thinking-and-subagent-yield.cjs`，不新增职责重复的补丁。
-- 在 `deliverSubagentAnnouncement()` 获得 direct response 并完成外层 transcript
-  提交之后、持久化 delivery success 之前执行 canonical promotion。
-- promotion 必须位于现有 per-requester FIFO 锁内部。
-- 使用 canonical requester session key 重新打开或刷新 `SessionManager`，从磁盘读取
-  外层刚提交的最新 leaf/appendParent 状态。
-- promotion 应以最新 side-branch append parent 为目标，写入新的 active leaf control；
-  下一次 direct turn 重新打开 transcript 时据此构建最新 context。
-- 若 Gateway 关闭、delivery 未提交、模型回合失败或 transcript 持久化失败，不提升
-  branch，也不把 delivery 标记为成功；保留现有恢复重试语义。
-- 删除 embedded run finalizer 中过早的 promotion/rebuild，避免双重 leaf control。
+整个 child run 可能已经执行过工具，但当前失败的 provider request 可能尚无任何副作用。安全 retry 应以“当前 request attempt”而不是整个 run 的累计 `toolMetas` 判断。
 
-### 必须满足的不变量
+每个 attempt 至少需要记录：
 
-- FIFO 后一项启动前，前一项的 Tool Call/Result 必须出现在其 pre-prompt。
-- canonical message count 只能单调前进，不得从 19/37 等新状态退回旧的 16 条。
-- delivery mirror 不能在 promotion 后再次把 active target 指回旧锚点。
-- 不同父会话的 completion delivery 继续并行。
+- request/attempt id 与开始时间；
+- 本 attempt 新增的 visible assistant text；
+- 本 attempt 发出的 tool call、spawn、delivery 或 approval；
+- 是否已有异步工作接受/启动；
+- 原始错误分类：timeout、terminated、network、auth、context overflow、abort；
+- retry 次数与下一步决策。
 
-## 方案二：按“当前模型请求”安全重试
+只有明确可证明本 attempt 尚未提交任何可观察副作用时，才可能用相同 transcript 和同一模型重试。
 
-### 核心原则
+## 6. 允许与禁止 retry
 
-不要再使用“整个 run 是否调用过工具”决定能否重试。改为记录每一次模型请求的增量：
+候选安全路径：
 
-```ts
-type ModelRequestCheckpoint = {
-  toolCallCount: number;
-  completedToolResultCount: number;
-  outboundDeliveryCount: number;
-  transcriptRevision: string | number;
-};
-```
+- timeout、terminated 或流不完整；
+- 本 attempt 没有 tool call；
+- 没有 accepted spawn/async start；
+- 没有 approval request、delivery commit 或可见 assistant 内容；
+- 不是用户 abort；
+- 仍在有界 retry budget 内。
 
-模型请求开始前建立 checkpoint。请求异常后只检查该请求期间发生了什么。
+必须禁止：
 
-### 简单安全路径
+- 本 attempt 已经调用文件、shell、网络或其他可能有副作用工具；
+- 已接受 child spawn，即使结果未返回；
+- 已向外部 channel 或父 transcript 提交 delivery；
+- approval 已展示或消费；
+- 用户明确 stop/abort；
+- auth/missing-model 等重试不会自愈的配置错误；
+- 上下文 overflow 应走专用 compaction convergence，而不是盲目同请求 retry。
 
-当以下条件全部满足时，丢弃当前请求未完成的 assistant 流，并原模型重试一次：
+若证据不完整，默认 surface error，而不是冒险重复执行。
 
-1. 错误属于明确可恢复的传输异常：timeout、`terminated`、连接中断或不完整 stream。
-2. 当前模型请求没有产生 Tool Call。
-3. 当前没有 active tool execution。
-4. 当前请求没有完成 outbound delivery、审批提示或其他不可撤销输出。
-5. transcript 已成功持久化到请求开始前的 checkpoint。
-6. 同一模型请求尚未执行过自动恢复重试。
+## 7. 当前已有的相关恢复能力
 
-之前模型请求已经完成的 Tool Call 和 Tool Result 保留在 transcript 中，不影响该路径。
+这些能力与通用 provider retry 相邻，但不能混为一谈：
 
-伪代码：
+- `033`：工具报错后模型只输出 reasoning、无可见回答时，最多两次 request-only recovery instruction，并有 delivery/spawn/async/approval 围栏；
+- `035`/`037`：Codex-local compaction 与最多三次逐级收敛的 context-overflow 恢复；
+- `039`：timeout/overflow recovery compaction 的进度事件；
+- `040`：把最终失败正确归因为 timeout/auth/network/no-op/local safety，而非统一伪装成 overflow；
+- OpenClaw 原生 fallback/retry：继续按其现有错误分类与模型配置执行。
 
-```ts
-const checkpoint = captureModelRequestCheckpoint();
+上述补丁没有证明所有“普通模型流 timeout 且当前 attempt 无工具”都会自动同模型 retry。文档、UI 和测试报告不得扩大能力声明。
 
-try {
-  return await invokeCurrentModelRequest();
-} catch (error) {
-  const delta = inspectModelRequestDelta(checkpoint);
-  if (
-    isRetryableModelTransportError(error) &&
-    delta.toolCalls === 0 &&
-    delta.activeToolExecutions === 0 &&
-    delta.outboundDeliveries === 0 &&
-    retryCount === 0
-  ) {
-    discardIncompleteAssistantOutputSince(checkpoint);
-    return await invokeCurrentModelRequest({ retryCount: 1 });
-  }
-  throw error;
-}
-```
+## 8. 产物已完成但总结流失败
 
-### 当前请求已产生 Tool Call 时
+Child 可能已经创建并验证产物，最后总结 request 才 terminated。此时重放整个 run 非常危险。合理策略优先级是：
 
-不得原样重放请求。先等待所有已发出 Tool Call 收敛：
+1. 若 transcript 中已有结构化产物/工具结果，以只读方式构造可见 completion；
+2. 若可安全发起一个明确禁止工具的总结 request，可使用 request-only recovery；
+3. 无法证明安全时标记 failed，但保留产物与工具证据；
+4. 不自动 spawn 一个同 taskName child 作为“去重式重试”。
 
-- 每个 Tool Call 都有 terminal Tool Result：从最新 transcript 使用 continuation prompt
-  继续，不重复原始用户 prompt。
-- 存在 active/unknown Tool Call：等待或对账，超时后保持 failed，不能猜测结果。
-- Tool Result 持久化失败：保持失败并交给恢复机制，不执行新模型请求。
+Runtime 终态与产物存在是两件事，UI 应允许用户查看已生成 artifact，而不把 failed 强行改成 success。
 
-continuation prompt 应明确要求：
+## 9. 诊断元数据
 
-```text
-The previous model response ended because its transport stream was interrupted.
-Continue from the latest transcript. Do not repeat completed tool calls unless
-their recorded results explicitly show failure or missing output.
-```
+恢复日志应包含 session/run、attempt、error class、side-effect flags、retry ordinal 和 decision，不能包含 prompt、secret 或完整 provider payload。推荐 decision：
 
-### 最终文本异常收尾
+- `retry_same_model_no_side_effect`；
+- `use_configured_fallback`；
+- `recover_visible_response`；
+- `surface_error_side_effect_fence`；
+- `surface_error_budget_exhausted`；
+- `abort_user_requested`。
 
-像 diagram-generator 这样已经生成完整最终文本、没有新 Tool Call，但 stream 缺少正常
-结束标记的情况，首选策略仍是同模型重试一次。不要仅凭“文本看起来完整”直接改为 done，
-除非能够验证 provider stop reason、消息结构和 transcript terminal 状态；否则容易吞掉
-真正截断的回答。
+错误文本必须保留真实 reason。`040` 已修复 compaction 路径中 timeout/no-op 被错误归成 provider overflow 的问题。
 
-### 重试预算与诊断
+## 10. 测试矩阵
 
-- 同一模型请求最多自动重试 1 次。
-- 第二次仍失败时，按既有 fallback 流程处理；没有 fallback 才标记 failed。
-- 日志必须包含 runId、model-call ordinal、错误分类、是否产生 Tool Call、retry decision，
-  但不得记录 prompt、凭据或原始敏感内容。
-- 建议增加结构化原因：`same_model_request_retry`、
-  `retry_blocked_tool_call_delta`、`retry_exhausted`。
+### Completion/canonical
 
-## 更强的可选保障
+- 多个 sibling 同时完成，同 requester 严格 FIFO；
+- 不同 requester 可以并行；
+- outer commit 之前不 promotion；
+- promotion 后下一 prompt 看见刚提交 spawn/result；
+- failed head、busy requester、重启恢复；
+- managed join 与 in-flight announce 竞争只交付一次；
+- session identity 在隐式恢复中不换号，显式 reset 仍换号。
 
-当前模型请求无 Tool Call 时，上述简单路径已经不会重复工具副作用。若未来要允许传输层
-重放包含 Tool Call 的响应，则需要 Tool Call 执行账本：
+### Request recovery
 
-```text
-(sessionId, toolCallId) -> running | completed | failed + cached result
-```
+- timeout/terminated 且当前 attempt 零副作用时有界 retry；
+- 过去 attempt 用过工具但当前 attempt 没有，按当前 attempt 判断；
+- 当前 attempt 已 tool/spawn/delivery/approval 时禁止；
+- user abort 永不 retry；
+- auth/missing model 不做无意义同模型 retry；
+- context overflow 进入 035/037 而非普通 retry；
+- 最终总结失败时保留产物、不重放副作用；
+- budget 耗尽只产生一个 child terminal failure。
 
-相同 `toolCallId` 再次出现时返回缓存结果，不重复执行。此项不是本轮简单修复的前置条件，
-不要因此扩大实现范围。
+### 并发
 
-## Patch 职责
+- 同父 9 次 spawn 在默认限制下 admission 数与配置一致；
+- native running 峰值不超过 `maxConcurrent`；
+- queued child 的 run timeout 从 running 开始；
+- completion delivery 不新增意外 Tool Call。
 
-- `005-history-thinking-and-subagent-yield.cjs`
-  - completion FIFO
-  - history Tool Call 保留
-  - 外层 delivery 完成后的 canonical branch promotion
-- `006-sessions-yield-active-guard.cjs`
-  - `sessions_yield` 的活动 child 与待投递 completion 检查
-  - 排除当前正在消费的 completion，确保只等待未来唤醒源
-- 新的模型请求恢复逻辑优先并入与 embedded agent/failover 路径最贴近的现有补丁；若 005
-  会因此同时修改过多无关 chunk，可新增一个职责单一的 patch，并在 patch guide 说明移除
-  条件。不要把模型重试塞入 021 或 022。
-- `021-atomic-sessions-spawn-admission.cjs` 继续只负责 per-parent admission、reservation
-  和活动 child 上限。
-- `022-subagent-pending-status.cjs` 继续只负责 pending/running/terminal 状态投影。
+## 11. 验收状态
 
-## 测试计划
+| 能力                                    | 状态                          |
+| --------------------------------------- | ----------------------------- |
+| 原子 spawn admission                    | 已实现，patch 013             |
+| queued/running timeout 语义             | 已实现，patch 014             |
+| required completion FIFO                | 已实现，patch 016             |
+| commit 后 canonical promotion           | 已实现，patch 015             |
+| managed join/announce ownership         | 已实现，patch 017–021         |
+| managed session identity pin            | 已实现，patch 036             |
+| 工具错误后无可见回答恢复                | 已实现，patch 033 的受限形态  |
+| context overflow 收敛/归因              | 已实现，patch 035/037/039/040 |
+| 通用“当前 request 零副作用”同模型 retry | 尚不能声明完整实现            |
 
-### Completion canonical consistency
+## 12. 实施约束
 
-- 同一父会话同时收到多个 completion，确认严格 FIFO 且无模型回合重叠。
-- 第一个 announce 产生 `sessions_spawn` Tool Call/Result 并 `sessions_yield` 后，第二个
-  announce 的 prompt 必须包含这些新记录。
-- 模拟 outer delivery mirror 和 side leaf 在 embedded finalizer 之后写入，确认 promotion
-  发生在它们之后。
-- canonical message count 单调递增，不回退到旧 anchor。
-- 复现事故：第二批已派发 pdf 后，紧随其后的 completion 不得再次派发 pdf；测试不得
-  通过 taskName 去重实现。
-- delivery/persist 失败时不错误提升、不丢 FIFO 队首，恢复后仍按顺序执行。
+若继续实现通用 request retry，应优先在 OpenClaw attempt 边界做最小版本 patch，并满足：
 
-### Current model request retry
+1. 复用原生 outer model/fallback loop，而不是在 JustDo Adapter 重发整个 turn；
+2. side-effect evidence 属于当前 attempt；
+3. retry 次数有界且可诊断；
+4. 不叠加 033 reasoning recovery 或 037 overflow convergence；
+5. terminal lifecycle 只在所有安全恢复完成后发布一次；
+6. 为 patch 写 source/bundle 原子幂等测试和删除条件。
 
-- run 之前已经完成 `read`，下一次模型请求在零新 Tool Call 时 `terminated`：同模型请求
-  自动重试一次，child 最终 done，不创建新 session。
-- run 之前已经完成 `write`，最终总结请求在零新 Tool Call 时中断：重试不会再次执行
-  write。
-- 当前失败请求已经产生 Tool Call 且 Tool Result 已落盘：不原样重放，使用最新
-  transcript continuation。
-- 当前失败请求存在 active/unknown Tool Call：不启动重试。
-- 当前请求产生 partial assistant text 但无 Tool Call：清理未完成片段后重试，最终历史
-  不出现重复文本。
-- retryable error 只重试一次；第二次失败后走 fallback/failed。
-- schema、权限、billing、永久认证错误不进入该重试路径。
-- 主 Agent 与 subagent 使用相同模型请求恢复规则，避免两套分叉逻辑。
+## 13. 非目标
 
-### 完整验证
+- 按 taskName 自动去重；
+- 对有副作用工具进行透明 replay；
+- 把所有 Provider 错误无限重试；
+- 在 Renderer/Main Adapter 重建 OpenClaw model loop；
+- 将产物存在自动等同于 run success；
+- 为修复 completion 顺序而牺牲不同 requester 的并行性。
 
-- 扩展补丁 fixture 和真实 bundle 形状测试。
-- 对补丁执行 fresh apply、repeat apply、verify 和单锚点漂移测试。
-- `npm run openclaw:bundle`
-- `npm run openclaw:patches:verify`
-- `npm run lint && npm run build && npm test`
-- 手工并发派发 9 个任务，核对 UI Tool Call、raw transcript、Runtime admission 和
-  Subagent 列表；故意中断一个无 Tool Call 的模型流，确认同一 child 自动恢复且不新增
-  session。
+当前架构已经解决 completion 上下文陈旧的根因。剩余恢复工作必须继续以 request 级副作用证据为安全边界，不能用“通常没问题”的整体 run 重试替代。
 
-## 验收标准
+## 14. Failure Stage 分类
 
-- 9 个目标任务在没有业务失败时最终只创建 9 个 child；因 provider 异常进行模型请求
-  恢复时不新增 child。
-- 发生明确业务失败并由父 Agent新建 child 重试时，新增 session 必须有可见的新
-  `sessions_spawn` Tool Call。
-- completion prompt 永远基于前一 FIFO 项完整提交后的 canonical transcript。
-- 当前模型请求零 Tool Call 的可恢复传输异常不会直接把 subagent 标记 failed。
-- 所有模型请求重试、阻断和耗尽决定均可通过 runId/model-call ordinal 审计。
+| 阶段                     | 是否可自动重试           | 原因                               |
+| ------------------------ | ------------------------ | ---------------------------------- |
+| Provider请求发送前       | 通常可                   | 尚无远端/工具副作用                |
+| 请求建立但无任何可见输出 | 仅在错误分类明确时       | 服务端可能已接收，需幂等/证据      |
+| 已有assistant delta      | 默认不可透明重放整个turn | 会重复内容并改变上下文             |
+| 已执行tool               | 不可整体重放             | 文件/网络/命令副作用可能重复       |
+| Child产物已commit        | 不重跑child              | 应恢复completion announce/总结路径 |
+| Completion delivery失败  | 重试delivery/join        | canonical child事实已存在          |
 
-## 非目标
+## 15. 身份链
 
-- 不按 taskName、label、输出路径或自然语言任务内容去重。
-- 不改变 `maxConcurrent`、`maxChildrenPerAgent` 或 ACP backend 并发语义。
-- 不自动删除历史 child session。
-- 不在本轮新增设置页、IPC、Redux 或 SQLite 字段。
-- 不把任意 provider error 都吞掉并伪装成成功。
+Requester、child session、child run、spawn request、canonical leaf和completion announce必须保持可关联。Task name/label只用于展示，不能去重；重试delivery复用同一child结果identity，不能创建看似相同的新child再竞争canonical结果。
+
+## 16. FIFO 与并行边界
+
+Per-requester completion按提交/commit规则串行，保证同一父上下文不被后完成的旧child覆盖；不同requester仍可并行。原子admission在并发preflight时预留容量，queued timeout从真正running起算。改变其中一个队列必须验证不会破坏另一个层级的公平性。
+
+## 17. 诊断与测试证据
+
+诊断记录parent/child/run/request id、model/provider错误分类、是否已有delta/tool/commit、announce attempt和canonical promotion；不记录prompt/tool secret。Runtime patch 013/014及后续managed join/FIFO/canonical能力的准确编号与测试以当前patch README为准，Main `subagentGateway.test.ts` 和adapter/goal tests验证consumer侧映射。
+
+## 18. 完成定义
+
+任何新增retry必须有明确安全阶段、次数/backoff、取消、幂等和副作用测试；completion恢复必须证明只交付一次canonical结果、父上下文顺序正确、重连可恢复。文件名中的 `plan` 不代表可以实现“整体run无限重试”；该行为仍明确非目标。

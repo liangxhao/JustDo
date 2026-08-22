@@ -1,251 +1,223 @@
 # Plugin 系统
 
-JustDo 的 Plugins 页面统一管理 Extensions、Skills、MCP 和 Hooks。JustDo 负责桌面 UI、本地持久化、文件导入、配置编辑和权限边界；OpenClaw Gateway 负责能力发现、运行时加载和 Agent 执行语义。
+本文按 `v2026.8.12` 的 `src/main/plugins/`、plugin IPC/UI、shared contracts、OpenClaw config sync 和内置 manifest 重写。JustDo 中“Plugin”是产品聚合概念，包含 Skill、MCP、Hook、Extension 与 Marketplace；它们没有统一的数据权威或安装方式。
 
-Marketplace 是能力分发入口，不是第五种运行时能力。Extension 可以打包 Skill、MCP、Hook 或自定义工具，但这些能力在安装后仍按各自的状态权威和生命周期管理。
+## 1. 能力与所有权
 
-## 能力模型
+| 类型        | 运行时权威                        | JustDo 持久化/文件职责                            | 用户操作                            |
+| ----------- | --------------------------------- | ------------------------------------------------- | ----------------------------------- |
+| Skill       | Gateway `skills.status/update`    | bundled manifest；用户 Skill 目录导入/删除        | 查看、启停、导入、删除、安装依赖    |
+| MCP server  | OpenClaw config/runtime           | SQLite `mcp_servers`；extension-provided 只读发现 | CRUD、启停、probe、resource read    |
+| Hook        | OpenClaw config/runtime           | SQLite `openclaw_hooks` + 用户 Hook 文件          | 导入、启停、删除                    |
+| Extension   | OpenClaw plugin CLI/registry/host | OpenClaw managed plugin 目录与 config             | import、启停、配置、删除            |
+| Marketplace | provider adapter                  | 默认无 provider；不保存第三方响应秘密             | source/search/detail/install/update |
 
-| 类型        | 主要用途                                      | 状态权威                                         | 本地持久化                          | 用户管理入口                 |
-| ----------- | --------------------------------------------- | ------------------------------------------------ | ----------------------------------- | ---------------------------- |
-| Extension   | 打包并分发一个或多个运行时能力                | Extension manifest、OpenClaw 配置和本地 registry | Extension 安装目录、配置文件        | 导入、配置、启用、删除       |
-| Skill       | 向 Agent 提供指令、工作流和资源               | Gateway `skills.status`                          | bundled resources 或用户 Skill 目录 | 导入、市场安装、启用、删除   |
-| MCP         | 连接 stdio/HTTP MCP server                    | SQLite `mcp_servers`，同步到 Gateway 配置        | SQLite                              | 创建、编辑、探测、启用、删除 |
-| Hook        | 在命令、会话或 Gateway 生命周期事件触发自动化 | Hook 文件发现 + SQLite `openclaw_hooks`          | bundled/managed Hook 目录和 SQLite  | 导入、启用、删除             |
-| Marketplace | 搜索、详情和安装分发包                        | configured marketplace provider                  | 搜索结果仅为 UI 临时状态            | 搜索、查看、安装             |
+不能把 Skill file scanner 当元数据权威，也不能把 Marketplace item 当安装完成的证明。实际状态必须回到对应 runtime/store 查询。
 
-## 总体架构
+## 2. 架构
 
 ```mermaid
 flowchart LR
-  UI["Plugins UI\nExtensions / Skills / MCP / Hooks"]
-  Preload["Preload APIs"]
-  IPC["Main IPC handlers"]
-  Services["Plugin services"]
-  DB[("SQLite\nmcp_servers / openclaw_hooks")]
-  Files["Managed files\nextensions / skills / hooks"]
-  Market["Marketplace provider"]
-  Config["OpenClaw config sync"]
-  Gateway["OpenClaw Gateway"]
-
-  UI --> Preload --> IPC --> Services
-  Services --> DB
-  Services --> Files
-  Services --> Market
-  Services --> Config --> Gateway
-  Services <--> Gateway
+  UI[Plugins UI]
+  Preload[Preload namespaces]
+  IPC[Plugin IPC]
+  PM[PluginManager]
+  Market[Marketplace providers]
+  Install[PluginInstallationService]
+  Skill[Skill services]
+  MCP[MCP services/store]
+  Hook[Hook services/store]
+  Ext[Extension import/host]
+  Sync[OpenClaw config sync]
+  GW[Gateway]
+  FS[Managed directories]
+  DB[(SQLite)]
+  UI --> Preload --> IPC
+  IPC --> PM --> Market
+  Market --> Install
+  Install --> Skill
+  Install --> MCP
+  Install --> Hook
+  Install --> Ext
+  Skill --> GW
+  Skill --> FS
+  MCP --> DB
+  Hook --> DB
+  MCP --> Sync
+  Hook --> Sync
+  Ext --> Sync
+  Sync --> GW
 ```
 
-Renderer 只通过 preload bridge 发起操作，不读取插件文件、不访问 SQLite，也不执行第三方代码。Main process 校验 IPC 输入并调用 `src/main/plugins/` 下的领域服务。Gateway 是 Agent 实际可见和可运行能力的最终运行时权威。
+## 3. Shared 合约
 
-## 关键边界
+`src/shared/plugins/marketplace.ts` 定义：
 
-| 层                               | 职责                                                                |
-| -------------------------------- | ------------------------------------------------------------------- |
-| `src/renderer/features/plugins/` | 列表、分组、表单、确认弹窗和临时 UI 状态                            |
-| `src/main/preload.ts`            | 暴露窄化的 Extensions、Skills、MCP、Hooks API                       |
-| `src/main/ipc/openclaw/`         | 校验 payload、匹配当前状态并调用领域服务                            |
-| `src/main/plugins/extensions/`   | Extension 导入、registry、配置、host lifecycle 和交互路由           |
-| `src/main/plugins/skills/`       | Gateway Skill RPC 和用户 Skill 文件操作                             |
-| `src/main/plugins/mcp/`          | MCP SQLite store、probe、resource read 和配置同步                   |
-| `src/main/plugins/hooks/`        | Hook SQLite store、文件导入/删除和配置同步                          |
-| `src/main/plugins/marketplace/`  | provider-neutral marketplace facade 和 provider adapter             |
-| `src/main/plugins/installation/` | 自定义导入与 Marketplace 共用的安装/更新请求、结果和 installer 路由 |
+- `PluginKind`: `extension`、`skill`、`mcp`、`hook`；
+- 稳定 error code：invalid request/response、source not found、unsupported kind、provider/install failure 等；
+- source、summary、detail、query/cursor、install request/response；
+- install state `available`、`installed`、`unavailable` 和 operation `install`、`update`。
 
-跨进程 channel 和 payload 优先定义在 `src/shared/`。Renderer service 负责把 IPC 结果归一化为 UI 类型，不应成为运行时状态权威。
+`src/shared/plugins/skills.ts` 定义 Gateway skill source 及哪些 source 是用户拥有。删除权限必须以 `isUserOwnedSkillSource` 判断，不能凭 UI 分组或路径字符串猜测。
 
-## 所有权与操作权限
+## 4. 内置 Skills
 
-卡片上的启用和删除操作必须反映能力所有权，不应仅根据“是否内置”推断。
+`resources/builtin-skills.json` 是当前内置集合的权威：
 
-| 能力来源                         | 可启用/禁用  | 可在当前页面删除 | 说明                         |
-| -------------------------------- | ------------ | ---------------- | ---------------------------- |
-| bundled                          | 是           | 否               | 随应用或 runtime 提供        |
-| managed/imported                 | 是           | 是               | 用户显式导入或安装           |
-| workspace/project/personal Skill | 是           | 是               | 文件属于用户工作区或用户目录 |
-| extra-dir / plugin-owned         | 由所有者决定 | 否               | 应删除或禁用对应 Extension   |
-| unknown                          | 保守处理     | 否               | 未识别来源不得执行破坏性操作 |
+| ID                  | 默认状态 |
+| ------------------- | -------- |
+| `data-analysis`     | enabled  |
+| `diagram-generator` | enabled  |
+| `frontend-design`   | enabled  |
+| `docx`              | enabled  |
+| `pdf`               | enabled  |
+| `pptx`              | enabled  |
+| `skill-creator`     | enabled  |
+| `xlsx`              | enabled  |
 
-删除操作由 Main process 根据当前权威状态重新匹配目标。Renderer 不传递可直接删除的任意文件路径。
+manifest 的 `disableOpenClawDefaults: true` 表示只使用 JustDo 声明的 bundled defaults；不要在文档或 UI 中硬编码数量。打包同步测试验证 manifest 与实际 resources。
 
-## 托管目录事务
+## 5. Skill 系统
 
-`src/main/core/managedDirectoryOperations.ts` 是 Main process 中安装、更新和删除托管目录的公共模块。它提供：stage-copy、旧目录 backup、原子 publish、失败回滚、隔离删除、Windows ACL 修复、文件系统重试，以及结构化的 `locked` / `permission` / `filesystem` 失败原因。调用方只负责来源校验、能力清单校验和业务结果映射，不得各自再实现一套 rename/copy/rollback。
+### 5.1 状态查询与启用
 
-`ManagedDirectoryOperationCoordinator` 在 Skill 和 Extension 服务之间共享同一串行队列，并由每次调用明确决定是否管理 Gateway 生命周期。Skill 支持热加载，导入、覆盖和删除绝不停止或重启 Gateway；锁冲突会直接通过 Restart Manager 和系统句柄表返回占用程序名与 PID。面向用户的占用列表会过滤 Electron 主进程、renderer/utility 子进程和受管 Gateway，只保留用户能够关闭的外部程序；若诊断结果只有本软件进程，则显示内部占用与重启应用的建议，不暴露无意义的自身 PID。Extension 包变更需要重启 Gateway，因此其锁恢复可先停止 Gateway、重试目录事务，再恢复 Gateway。ACL、磁盘、路径、包格式等非锁错误保留原始分类。Extension 的实际 package stage/publish 仍由 OpenClaw CLI 执行；coordinator 会在调用 CLI 前预检目标目录占用：外部进程占用时不允许 CLI 开始修改并返回程序名和 PID，只有 Gateway 占用时才先停止 Gateway、执行操作并恢复运行。CLI 返回的无错误码 `Permission denied` / `Access denied` 也会进入同一锁诊断流程。
+`OpenClawSkillService` 通过 adapter 调用 `skills.status`，返回 workspace/managed dir 和每个 Skill 的 source、eligibility、disabled/allowlist、missing requirements、install options 与 config checks。启停用 `skills.update`，Gateway 返回值是最终成功依据。
 
-## Extensions
+Renderer 的 `skillSlice` 只是列表/loading/error 缓存。`skillGroups` 和 `skillRequirements` 负责展示分组与缺失项，不决定运行资格。
 
-Extension 是原生 OpenClaw 扩展包，manifest 为 `openclaw.plugin.json`。本地导入支持目录、ZIP、TAR、TAR.GZ 和 TGZ；导入服务负责解压、校验 manifest、准备 runtime、安装缺失依赖、写入配置并按需重启 Gateway。
+### 5.2 文件导入与删除
 
-Extension 可以声明配置字段和敏感字段。Renderer 只提交字符串值；Main process 限制字段数量、路径长度和值长度，并由 Extension service 写入配置。敏感值不得进入日志或 UI 明文回显。
+`OpenClawSkillFiles` 只处理用户文件：读取 Skill 目录/压缩包、验证结构、复制到 `<stateDir>/skills`、拒绝目标逃逸或覆盖受保护来源。`OpenClawSkillFileService` 把操作包在 `ManagedDirectoryOperationCoordinator` 中：
 
-Extension 的导入、更新、删除、启用和配置更新由 `OpenClawExtensionImportService` 统一处理。完整的 Extension 变更（包括 CLI、配置后置条件和 Gateway 重启）串行执行，并与 OpenClaw 全局配置同步共享配置写入队列。导入、更新和删除的 CLI 目录事务还接入公共 `ManagedDirectoryOperationCoordinator`，与 Skill 文件变更互斥，并复用 Gateway 句柄释放和外部锁诊断。由 Extension 提供的 Skill、MCP 或 Hook 不应在子能力页面直接删除，否则可能破坏 Extension 包完整性。
+1. 解析准确目标；
+2. 执行导入/删除；
+3. 遇 Windows lock 时识别锁定进程；
+4. 必要时只停止属于应用/Gateway 的进程；
+5. 重试并恢复先前 runtime 状态；
+6. 返回结构化 code/syscall/path 的本地化错误。
 
-配置同步会读取由 Extension 管理界面负责管理的 App state `extensions/`，把其中 manifest 有效的插件 ID 显式并入 `plugins.allow`。当配置已经存在 allowlist 时，JustDo 生成配置的 bundled Extension entries 也会显式并入，避免出现“entry 有配置但不在 allowlist”的启动告警。这既关闭 OpenClaw 的开放式自动发现告警，也让本地插件的信任决定持久化；已有用户 allow 条目继续保留，`plugins.bundledDiscovery="compat"` 保证该 allowlist 不会意外屏蔽 OpenClaw/JustDo 的 bundled plugins。缺失或损坏 manifest 的目录不会被自动信任。管理界面导入或重新启用插件时也会在 Gateway 重启前幂等写入 allowlist；关闭插件只修改 entry 的启用状态并保留信任，便于之后恢复；卸载则移除对应 allow 条目。
+它不负责列举所有 Skill 或修改运行态 metadata。
 
-内置 `ask-user-question` Extension 通过 Main process 的 loopback HTTP callback server 把结构化问题交给 renderer。Callback server 使用动态端口，因此必须先开始监听，再把当前 URL 和 secret placeholder 同步到 Gateway 配置。每次确保 Gateway 可用时都会先检查 callback host；如果端口变化而 Gateway 仍在运行，Gateway watcher 会热重载 Extension 配置，使它不再请求上一次进程留下的失效端口。只有 secret 环境变量或 Extension manifest 变化才需要 JustDo 硬重启 Gateway。Callback URL 只在 HTTP server 确实处于 listening 状态时对外发布。
+## 6. MCP
 
-每个问题和选项都必须声明请求内唯一的稳定 `id`，格式为 `^[A-Za-z][A-Za-z0-9_-]{0,63}$`，且不能使用 `Object.prototype` 保留属性名。问题选项可以声明 `input: { label, placeholder? }`；存在 `input` 时，renderer 仅在该选项被选中后显示必填补充字段。答案以 question id 为键，`selected` 和 `optionInputs` 保存 option id，并可带独立的 `other` 文本；整个链路不使用展示文本或分隔符关联答案。Main process 和 Extension 会在各自的运行时边界校验问题、ID 唯一性和答案完整性，非法响应按拒绝处理。
+用户 MCP 记录存在 `mcp_servers`：id、唯一 name、description、enabled、transport type、config JSON 和时间戳。`McpStore` 负责数据库，`McpConfigSyncService` 将 enabled 记录写进 OpenClaw config。
 
-Ask-user 工具通过顶层可选的 `timeoutEnabled` 布尔值声明等待语义。省略或设为 `false` 时会无限等待用户明确提交或取消，适用于只有用户能够决定或具有实际后果的确认；设为 `true` 时使用插件固定的 10 分钟限时，模型不能自行选择具体时长。如果每个问题都通过 `defaultOptionIds` 声明了合法默认项，且默认项不包含必填 `input`，超时后 Broker 会生成结构化默认答案；只要有问题未声明默认项，超时就会向模型返回明确的 timeout 工具结果，由模型根据上下文继续。插件会在发往桌面回调时将这个扁平工具参数转换为内部 `waitPolicy`，避免向模型暴露判别联合与跨对象约束。
+主要能力：
 
-超时计时由 Main process Broker 持有，不依赖 renderer 生命周期。Broker 在请求中记录 `expiresAt`，renderer 会展示等待策略和默认项；到期后 Broker 原子移除请求、清理 timer、通知 renderer 关闭弹框，再向 Extension 返回默认答案或 timeout 状态。用户响应、调用方中止运行或 HTTP 断开会清除对应 timer；应用/Extension host 关闭时则把全部待处理请求按 `deny` 结束。Broker 按 request id 保留原始问题和等待策略，Host 不信任 renderer 回传的问题定义；renderer 初始化或 reload 后通过 IPC 重放仍在等待的交互。Callback server 和 Host controller 的 start/stop 使用串行生命周期队列，避免重启期间旧 server 的关闭回调影响新实例。
+- create/update/delete/setEnabled 后触发串行 config sync；
+- `probe` 以真实 transport 检查连接和 tools/resources；
+- `readResource` 通过 Main/SDK 读取，Renderer 不直接连接 server；
+- `discoverExtensionMcpServers` 读取已启用 extension 提供的 server，作为只读来源，不能重复保存为用户 row。
 
-主要 preload API：
+stdio command、args、env 与 remote URL 都是高风险输入：UI 隐藏不是安全措施，Main 必须 validate；credential 不进入日志或 marketplace response。
 
-- `extensions.list()`
-- `extensions.importPath(request)`
-- `extensions.setEnabled(request)`
-- `extensions.updateConfiguration(request)`
-- `extensions.delete(request)`
-- `extensions.onImportProgress(callback)`
+## 7. Hooks
 
-## Skills
+Hook 元数据/启用状态在 `openclaw_hooks`，文件位于受管目录。一个本地 Hook 至少包含 `HOOK.md` 与 `handler.js`；支持 `.zip`、`.tar`、`.tar.gz`、`.tgz` 导入。
 
-### 状态与来源
+文件层规范化 hook id、拒绝路径逃逸、拒绝覆盖 built-in Hook；config sync service 只把 store 中已启用且可用的 hook 映射到 OpenClaw。删除顺序应保证文件与 store/config 不出现长期半状态，失败返回明确结果并可重试。
 
-Gateway `skills.status` 是 Skill 列表、来源、启用状态和依赖检查的权威。JustDo 本地文件服务只负责导入和删除文件，不能判断某个 Skill 是否已被 Gateway 加载。
+## 8. Extensions
 
-JustDo 在 OpenClaw 配置同步时将模型可见的 Skill 目录限制设为最多 200 个、40,000 字符。OpenClaw 仍会先按运行环境和启用状态过滤 Skill；超过预算时先省略 description，再按名称顺序截断。配置同步只覆盖这两个 prompt 限制，并保留用户设置的其他 `skills.limits` 字段。
+Extension 使用 `openclaw.plugin.json`，由 OpenClaw CLI/registry 进行最终 manifest 验证和安装。Import service 支持目录或压缩包，阶段性发送 progress：准备、解压/检查、安装、同步/完成或失败。
 
-OpenClaw precedence 为 `openclaw-extra` < `openclaw-bundled` < `openclaw-managed` < `agents-skills-personal` < `agents-skills-project` < `openclaw-workspace`。UI 按来源分组，并把更具体、优先级更高的来源显示在前。
+安全与事务约束：
 
-### 当前内置 Skills
+- archive 必须是支持类型，解压到临时目录；拒绝符号链接和目录逃逸；
+- 单根目录 archive 可自动下钻；manifest id 只作为结果标签，完整合法性由 OpenClaw installer 决定；
+- 命令 cwd/env 来自 manager，timeout 为 300 秒，输出最多保留 64K；
+- 所有 config mutation 进入 exclusive queue；目录锁处理复用 coordinator；
+- `action-approval` 是受保护 extension，不能被普通删除/禁用；
+- 成功不能只看 exit code，还需匹配 OpenClaw 明确 success 输出并重新列举 registry。
 
-`resources/builtin-skills.json` 当前声明 7 个 Skill，全部默认启用。`disableOpenClawDefaults` 为 `true`，表示 runtime 以 JustDo 声明的内置 Skill 清单为准。
+## 9. Extension host 与 ask-user
 
-内置 Skill 位于 `resources/skills/<id>/`。新增、删除或重命名内置 Skill 时必须同步 `resources/builtin-skills.json`、README、打包规则和相关测试。
+`OpenClawExtensionHostLifecycle` 管理本地 callback server、host controller 和 MCP transports。它必须在首次 config sync 前启动，因为 callback port 是动态值。
 
-技能启用状态由 Gateway 的 `skills.update` 写入 OpenClaw 配置。JustDo 启动时的配置同步会保留现有 `skills` 节点（包括 `entries.<id>.enabled` 和 `load.extraDirs`），避免用户选择在重启后被托管配置覆盖。
+Ask-user contract 最多 8 个问题；question id 满足 `[A-Za-z][A-Za-z0-9_-]{0,63}`。shared parser验证类型、选项、默认值、required 和 timeout，timeout 最大 24 小时。Broker 保存 pending request，interaction router 按 request/session 关联并支持重放；回答只接受原问题中的 id/选项。
 
-### 导入与删除
+Action approval extension 补充文件写/cron 等产品 policy，但不重复 Gateway 原生 exec approval。adapter diagnostics 不能被解释为“可信 policy 已激活”；真正 admission 仍要由 config sync 的 active policy verification 证明。
 
-用户可从目录或 ZIP、TAR、TAR.GZ、TGZ 导入 Skill。压缩包先解压到临时目录，校验 `SKILL.md`、拒绝符号链接，再复制到 Gateway state 的 managed Skill 目录。用户数据不应在应用升级时被覆盖。
+## 10. Marketplace Adapter
 
-Skill 导入、覆盖和删除通过公共托管目录事务模块执行。`OpenClawSkillFiles` 负责 Skill 校验和调用事务性 replace/remove；`OpenClawSkillFileService` 把结构化失败映射为 Skill IPC 结果。它与 Extension 共享 coordinator 以避免 UI、Marketplace 和不同插件类型的请求并发改写目录，但 Skill 操作不启用 coordinator 的 Gateway 生命周期管理。
+当前 `createPluginMarketplaceService` 传入空 provider 数组，因此生产默认没有公开 marketplace source。UI/API 存在不代表当前有商店内容；企业构建需显式注册 provider。
 
-Skill 卡片仅对 `openclaw-workspace`、`agents-skills-project`、`agents-skills-personal` 和 `openclaw-managed` 来源提供删除。删除请求携带 `id + source`，Main process 从最新 `skills.status` 精确匹配条目，并校验目标为包含 `SKILL.md` 的 `skills/<skill-id>/` 目录。`openclaw-bundled`、`openclaw-extra` 和 `unknown` 来源不可删除。
+Provider contract：source metadata、search、detail、prepareInstall。Service 的防御性规则包括：
 
-主要 preload API：
+- source id/name 非空且不超过 256，supportedKinds 必须有效，id 不可重复；
+- query limit 默认 20、范围 1..100；cursor 仅允许恰好一个 source；
+- item 的 kind、必填/可选字符串、tags、install state、readme（最大 1,000,000）和 requirements 均验证；
+- 跨 source 的同 kind/plugin id 不可重复；
+- provider 异常转换为稳定、脱敏的 `MarketplaceError`；
+- response 只投影公开字段，丢弃 token/internal URL 等多余属性。
 
-- `skills.list()`
-- `skills.setEnabled({ id, enabled })`
-- `skills.importPath(sourcePath)`
-- `skills.delete({ id, source })`
+安装流程：provider `prepareInstall` 返回匹配 kind 的 payload和可选 cleanup；`PluginInstallationService` 按 kind 找已注册 installer；无论安装成功或失败都尝试 cleanup 临时 payload，cleanup 错误不暴露内部路径/秘密。
 
-市场操作不属于 Skill 专用 API，统一通过 `marketplace.listSources/search/detail/install`。
+## 11. Renderer
 
-### Skill 数据流
+`PluginsView` 切换 Skill/MCP/Hook/Extension/Marketplace。Skill 与 MCP 有已挂载 Redux slice；Hook/Extension/Marketplace 主要由组件/service 局部状态管理。文档不能把未 mount 的状态描述为全局 store。
+
+UI 应显示 source、eligible/missing、install state 和操作结果；破坏性删除需要明确目标。安装进行中禁用重复提交，extension progress 允许刷新后重新列举实际状态。
+
+## 12. 安全模型
+
+- 只允许 Main 接触受管路径、archive、子进程、MCP transport 与 config 文件。
+- 所有 archive 防 traversal/symlink；所有 delete 验证 resolved target 位于确切 managed root。
+- 不自动安装任意 Skill 声明的 shell script；安装选项先展示来源和风险。
+- Marketplace provider 是不可信输入；响应 normalize 后才进 Renderer。
+- MCP env、Extension config、Skill API key 是 secret，不输出完整 config。
+- runtime 在目录操作期间被停止时必须在 finally 路径按原状态恢复。
+
+## 13. 变更与测试
+
+新增 plugin kind 或 provider 时同步 shared union、installer 注册、IPC/preload/declaration、UI、config owner、删除语义和测试。现有测试覆盖 marketplace validation/cleanup/redaction、安装器冲突、Skill/Hook archive/path/lock、extension import/registry/host、ask-user 和 MCP discovery/probe。运行时行为变化还要更新 capability matrix 与 patch tests。
+
+## 14. 各类型生命周期对照
+
+| Kind        | 发现/列表                    | 安装或导入                       | Enable           | 删除                   | Runtime 生效               |
+| ----------- | ---------------------------- | -------------------------------- | ---------------- | ---------------------- | -------------------------- |
+| Skill       | Gateway skill API            | 受管 skill 文件事务              | Gateway update   | 验证 user-owned 后移除 | Gateway skill refresh/API  |
+| MCP         | SQLite + extension discovery | 表单/配置记录                    | SQLite flag      | 删除 user-owned row    | config sync + probe        |
+| Hook        | SQLite/受管 hook             | archive/目录导入                 | SQLite flag      | path-safe 删除         | config sync/runtime reload |
+| Extension   | registry/CLI/host list       | archive/目录 import              | extension config | manager 删除           | host/config sync           |
+| Marketplace | provider 聚合                | prepare payload → kind installer | 由目标 kind 决定 | 由目标 kind 决定       | 安装后重新查询目标权威     |
+
+统一 UI 不代表统一生命周期；尤其不能实现一个“删除 plugin”通用 handler 接收任意 kind/path。
+
+## 15. 文件事务状态机
 
 ```mermaid
-sequenceDiagram
-  actor User
-  participant UI as SkillsManager
-  participant IPC as Skills IPC
-  participant Files as OpenClawSkillFileService
-  participant Service as OpenClawSkillService
-  participant Gateway
-
-  User->>UI: Import Skill
-  UI->>IPC: skills.importPath(sourcePath)
-  IPC->>Files: serialized extract / validate / copy
-  opt Windows directory lock
-    Files->>Files: identify locking process
-    Files-->>UI: process name / PID and retry guidance
-  end
-  Files-->>UI: import result
-  UI->>IPC: skills.list()
-  IPC->>Service: getStatus()
-  Service->>Gateway: skills.status
-  Gateway-->>UI: normalized Skill list
+stateDiagram-v2
+  [*] --> Validate
+  Validate --> Stage: source/archive valid
+  Validate --> Failed: invalid/traversal/unsupported
+  Stage --> Quiesce: target needs runtime stop
+  Quiesce --> Commit
+  Commit --> Refresh
+  Refresh --> Restore
+  Restore --> Done
+  Commit --> Rollback: write/install failed
+  Rollback --> Restore
+  Restore --> Failed: operation failed
 ```
 
-## MCP
+临时目录 cleanup 和 runtime 恢复放在 `finally` 语义中。目标 path 必须在解压后再次 canonicalize，拒绝 traversal、symlink escape 和不允许的根目录。已有同名项的 replace/冲突语义必须由具体 manager 明确，不能靠文件覆盖默认决定。
 
-MCP server 定义存放在 SQLite `mcp_servers`。`McpStore` 是用户配置的本地权威，支持 stdio/HTTP transport、启用状态和 transport config。创建、更新、删除或切换启用状态后，`McpConfigSyncService` 把已启用 server 写入 OpenClaw 配置。
+## 16. Secret 与配置投影
 
-MCP 的已安装视图同时展示“用户配置”和“扩展提供”两组。`mcp:list` 先独立返回 SQLite 用户配置，不等待扩展发现。扩展 MCP 由 Main process 通过 OpenClaw `plugins inspect --all --json` 读取已安装 Bundle 的 MCP 清单，再由独立 IPC 异步返回，不复制到 SQLite。Renderer 对这些条目只读展示，标注所属扩展及其启用状态；启停、更新和删除仍由 Extension 生命周期管理。扩展清单发现失败不影响用户配置展示。
+MCP env、Extension configuration、Skill credential 和 Marketplace provider 内部字段不得原样返回 UI/log。Renderer 需要的是是否配置、缺失字段名或稳定错误码，而不是 secret value。Config sync 只写 JustDo 管理区域并保持其他用户配置；probe 错误需脱敏后再进入 UI。
 
-MCP probe 和 resource read 在 Main process 执行。Renderer 不启动子进程、不直接请求 MCP endpoint，也不读取 server credential。配置同步通过 `mcp:config:syncStart` 和 `mcp:config:syncDone` 广播进度。
+## 17. 故障与恢复
 
-Windows 的 npm/npx stdio MCP 通过 Electron 的 Node mode 启动。Main process 生成的 `node`、`npm`、`npx` shim 包含已解析的 Electron 和 npm CLI 路径，因此即使 OpenClaw 按 MCP 安全边界收窄 child environment，也不依赖 `JUSTDO_ELECTRON_PATH` 或 `JUSTDO_NPM_BIN_DIR` 才能启动。
+| 故障                      | 恢复原则                                              |
+| ------------------------- | ----------------------------------------------------- |
+| Archive 验证失败          | 未进入 managed root，不改变 runtime                   |
+| Commit 中断               | 回滚 staging/目标，保留可诊断错误                     |
+| Runtime stop 后安装失败   | 恢复原运行状态，不能让 cleanup error 覆盖主错误       |
+| Config sync 失败          | 产品记录可保留为未生效/错误，UI 不宣告 runtime ready  |
+| Extension host 崩溃       | 重新 list/config/start，拒绝遗留 ask-user pending     |
+| Marketplace provider 异常 | 隔离 source、返回脱敏稳定错误，不污染其他 source 结果 |
 
-主要 preload API：
+## 18. Plugin Definition of Done
 
-- `mcp.list()`
-- `mcp.create(data)` / `mcp.update(id, data)` / `mcp.delete(id)`
-- `mcp.setEnabled({ id, enabled })`
-- `mcp.syncConfig()`
-- `mcp.probe(id)`
-- `mcp.readResource({ id, uri })`
-
-```mermaid
-sequenceDiagram
-  participant UI as McpManager
-  participant IPC as MCP IPC
-  participant Store as McpStore
-  participant Sync as McpConfigSyncService
-  participant Gateway
-
-  UI->>IPC: create / update / delete / setEnabled
-  IPC->>Store: persist change
-  IPC-->>UI: updated local list
-  IPC->>Sync: background sync
-  Sync->>Gateway: sync generated config
-```
-
-## Hooks
-
-Hook 是在特定生命周期事件运行的自动化脚本。列表由 bundled Hook 目录和 Gateway state 下的 managed Hook 目录共同发现；启用状态存放在 SQLite `openclaw_hooks`，再同步到 OpenClaw 配置。
-
-Hook 包根目录必须包含 `HOOK.md` 和 `handler.js`。本地导入支持目录、ZIP、TAR、TAR.GZ 和 TGZ。Main process 校验 frontmatter name、拒绝符号链接，并拒绝与 bundled Hook 同名的包。导入只安装文件，不自动启用。
-
-UI 按所有权分为自定义、内置、插件提供和其他 Hook。只有 `openclaw-managed` 自定义 Hook 可以删除；bundled 和 plugin-owned Hook 不提供独立删除入口。删除时先清理 SQLite 状态并同步配置，再删除经过 managed root 边界校验的真实 Hook 目录。
-
-主要 preload API：
-
-- `hooks.list()`
-- `hooks.importPath(sourcePath)`
-- `hooks.setEnabled({ id, enabled })`
-- `hooks.delete(id)`
-
-## Marketplace
-
-Renderer 不直接访问 marketplace endpoint。`PluginMarketplaceService` 根据 `PluginKind` 和 configured provider 执行 search/detail/install，并把 provider DTO 转为稳定的应用模型。四类 Marketplace 应复用相同 facade，而不是把 provider 协议泄漏到 renderer。
-
-搜索结果、详情和 installing ids 是临时 UI 状态，不写入 SQLite。Provider 的 `prepareInstall()` 只负责认证、下载和生成 provider-neutral 安装载荷：Extension、Skill、Hook 返回本地包路径，MCP 返回 server 配置；临时下载可通过 `cleanup()` 在安装结束后清理。
-
-自定义导入与市场安装最终都提交 `PluginInstallRequest` 到 `PluginInstallationService`。请求用 `kind + operation + origin + payload` 区分能力类型、安装/更新和来源，再路由到 Extension、Skill、MCP 或 Hook 的 owning installer。Provider 不直接写插件目录、SQLite 或 OpenClaw 配置，因此市场安装自然复用自定义导入已有的包校验、覆盖策略、配置同步和 Gateway restart 逻辑。
-
-Marketplace provider、错误降级、状态机和时序详见 [16-skill-marketplace-adapter.md](16-skill-marketplace-adapter.md)。
-
-## 配置同步
-
-MCP 和 Hook 先写本地 SQLite，再通过 `syncOpenClawConfig` 生成 Gateway 配置。同步服务会合并并发请求、广播开始/完成事件，并把错误返回 UI。Extension 配置和启用状态由 Extension service 管理；Skill 启用和安装通过 Gateway Skill RPC 管理。
-
-配置同步和 runtime restart 是不同动作。MCP、Hook 和 Extension 启用/配置变化由
-Gateway `hybrid` watcher 热更新；同步调用按 changed paths 等待对应 hot reload
-完成；restart 被 Gateway 接管后仍等待下一次 ready，再放行新会话。Extension 包文件
-或 manifest、Gateway child process secret 环境变化仍要求硬重启。只有当前能力的
-runtime 行为确实要求重启时，UI 才显示 restart required；不得用 renderer 本地状态
-假装 Gateway 已应用配置。
-
-## 安全边界
-
-- 安装、启用和删除必须由用户显式触发。
-- Renderer 不读取、解析或执行第三方代码。
-- 压缩包解压必须限制在临时目录内并拒绝符号链接；目录导入也必须校验入口和目标 root，不能信任 renderer 传入的路径。
-- 删除只能使用 Main process 从权威状态解析出的路径，并再次验证所属 root 或目录结构。
-- Extension 配置、MCP credential、token 和环境变量不得写入日志。
-- Marketplace README 和描述不得作为可信 HTML 直接渲染。
-- 插件运行时的工具权限与命令审批由 Gateway/OpenClaw 控制，JustDo 不重复实现执行语义。
-
-## 维护规则
-
-- 修改 Plugin 能力边界、导入/删除、配置同步或 UI 所有权时更新本文档。
-- 修改 SQLite `mcp_servers` 或 `openclaw_hooks` 时同步更新 `10-data-storage.md`。
-- 修改 marketplace provider 或安装状态机时同步更新 `16-skill-marketplace-adapter.md`。
-- 新增 IPC 时同时更新 main handler、preload、renderer 类型和行为测试。
-- 用户可见字符串必须同时添加中英文 i18n key。
-- Main process 日志使用模块前缀，禁止记录 secrets 或完整 credential object。
+新增能力必须证明 source ownership、manifest/schema validation、managed path、冲突/replace、enable 与 runtime apply、删除/rollback、secret redaction、IPC/preload/UI consumer 和打包资源。若 Marketplace 只是新增 provider adapter但没有 composition 注册，文档与 UI 必须继续显示“未配置”，不能写成已有目录内容。

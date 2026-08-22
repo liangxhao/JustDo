@@ -1,327 +1,228 @@
 # 进程模型与 IPC
 
-JustDo 使用 Electron 的 Main / Preload / Renderer 三层隔离。Renderer 只能通过 `src/main/preload.ts` 暴露的 `window.electron` API 访问本地能力。
-
-## 进程职责
-
-| 进程     | 路径                                | 能力                                                                     |
-| -------- | ----------------------------------- | ------------------------------------------------------------------------ |
-| Main     | `src/main/main.ts` 和 `src/main/**` | Electron API、SQLite、文件系统、OpenClaw Gateway、插件服务、IPC handlers |
-| Preload  | `src/main/preload.ts`               | `contextBridge.exposeInMainWorld('electron', ...)`                       |
-| Renderer | `src/renderer/**`                   | React、Redux、Lit、UI 状态、用户交互                                     |
-
-```mermaid
-flowchart TB
-  subgraph Main["Main Process: Node.js + Electron"]
-    Window["BrowserWindow/Tray"]
-    DB["SQLite"]
-    FS["Filesystem/Shell/Dialog"]
-    GW["OpenClaw Gateway Manager"]
-    Handlers["ipcMain.handle/on"]
-  end
-
-  subgraph Preload["Preload: Isolated Bridge"]
-    API["window.electron namespaces"]
-  end
-
-  subgraph Renderer["Renderer Process: Browser Sandbox"]
-    React["React UI"]
-    Redux["Redux"]
-    Lit["Lit Chat"]
-  end
-
-  React --> API
-  Redux --> API
-  Lit -. "Gateway websocket via provided port/token" .-> GW
-  API --> Handlers
-  Handlers --> DB
-  Handlers --> FS
-  Handlers --> GW
-  Handlers --> Window
-```
-
-## Preload API 分组
-
-`window.electron` 当前暴露的主要分组：
-
-| 分组               | 用途                                                    |
-| ------------------ | ------------------------------------------------------- |
-| `store`            | `kv` 配置读写                                           |
-| `skills`           | skill 列表、启停、安装、搜索、详情、本地导入、删除      |
-| `hooks`            | OpenClaw hooks 列表和启停                               |
-| `slashCommands`    | 从 Gateway/策略读取 slash command 列表                  |
-| `mcp`              | MCP server CRUD、配置同步、探测、resource 读取          |
-| `permissions`      | 系统权限，例如日历权限                                  |
-| `api`              | main-process 代理的普通 HTTP fetch                      |
-| `window`           | 窗口最小化、最大化、关闭、系统菜单、窗口状态            |
-| `openclaw.engine`  | Gateway 状态、端口、token、重启、打开终端、进度事件     |
-| `openclaw.history` | 工具输入和分页历史读取                                  |
-| `agents`           | Agent 列表                                              |
-| `cowork`           | session CRUD、执行、ask-user 响应、流式事件、子任务状态 |
-| `sessionGroup`     | 会话分组 CRUD、排序、移动会话                           |
-| `dialog`           | 文件/目录选择、文本保存、inline file、本地文件 data URL |
-| `shell`            | 打开路径、预览/编辑受支持文本文件、定位文件、外部链接   |
-| `autoLaunch`       | 开机启动                                                |
-| `preventSleep`     | 防休眠                                                  |
-| `developerConfig`  | 读取启动时加载的开发者功能可见性配置                    |
-| `appInfo`          | 应用版本、OpenClaw 版本、系统语言                       |
-| `appUpdate`        | Windows 更新状态、手动检查、重启安装和状态事件          |
-| `builtinModels`    | 刷新内置模型 provider                                   |
-| `log`              | 日志路径、打开日志目录、导出 zip、debug 日志            |
-| `scheduledTasks`   | 定时任务 CRUD、手动运行、运行历史、状态事件             |
-| `networkStatus`    | renderer 网络状态上报                                   |
-
-## IPC 注册位置
-
-| 领域                                                    | Main handler 路径             |
-| ------------------------------------------------------- | ----------------------------- |
-| app/window/dialog/shell/log/network/store               | `src/main/ipc/app/`           |
-| cowork sessions/config/ask-user/agents/subtasks/groups  | `src/main/ipc/cowork/`        |
-| OpenClaw engine/history/skills/mcp/hooks/slash commands | `src/main/ipc/openclaw/`      |
-| scheduled tasks                                         | `src/main/ipc/scheduledTask/` |
-
-## 事件流
-
-```text
-Renderer service
-  -> window.electron.<domain>.<method>()
-  -> ipcRenderer.invoke/send
-  -> main IPC handler
-  -> store/service/runtime adapter
-  -> return value or event
-```
-
-Streaming Cowork events use IPC event listeners such as:
-
-- `cowork:stream:message`
-- `cowork:stream:messageUpdate`
-- `cowork:stream:thinkingUpdate`
-- `cowork:stream:interaction`
-- `cowork:stream:complete`
-- `cowork:sessions:changed`
-
-Scheduled task events use constants from `src/shared/scheduledTask/constants.ts`.
-
-Windows 正式安装包的自动更新由 Main 中的更新服务独占。NSIS 安装完成后会在 resources
-目录写入安装标记；Main 同时检查 packaged、Windows、安装标记、构建配置标记和
-`app-update.yml`，避免 `win-unpacked`、复制版或未配置 feed 的本地验证包误启用更新。Renderer 只能读取带单调
-revision 的状态、请求检查或
-请求安装，不能指定 feed URL 和本地安装包。更新下载完成后，Main 先执行与正常退出相同的
-OpenClaw、扩展宿主、定时任务和 SQLite 清理，再启动 NSIS 安装器；开发环境和非 Windows
-平台返回 `unsupported`。如果安装器在清理完成后启动失败，Main 会重新启动当前应用，避免
-Renderer 停留在数据库和后台服务已关闭的半退出状态。应用启动并创建窗口后延迟 10 秒检查一次，
-但不进行后台周期检查；用户每次进入设置的“帮助”页时，Renderer 也请求 Main 检查一次，
-同时保留手动重试入口。如果多个触发同时到达，Main 复用同一个进行中的检查。更新下载完成后，Renderer 在
-主界面右下角显示不带遮罩、不抢占焦点的小型提示，用户可选择重启安装或关闭提示；应用不会自动重启。
-
-## Rules
-
-- Do not expose raw `ipcRenderer` for new app features unless a narrow API cannot cover the use case.
-- New IPC channels should use shared constants when they are referenced from both sides.
-- All handler inputs must be normalized in main process before touching filesystem, SQLite, Gateway, or marketplace services.
-- Renderer must treat every IPC result as fallible and show localized errors.
-
-## OpenClaw 出站 Header 代理边界
-
-Outbound Header Proxy 的代理数据面只属于 OpenClaw Gateway generation，不是 Electron
-Main 或 Renderer 的全局网络层。代理启动后，Main 为即将启动的 Gateway 构造一份新的环境
-快照，并仅通过 Gateway spawn 的 `env` 传入代理、CA 和 `NO_PROXY` 设置；不得改写 Main
-的 `process.env`，也不得替换 Main `fetch` 或注册 Renderer `webRequest` Header listener。
-Gateway 的 MITM CA bundle 使用独立文件，不能与普通运行时的基础信任 bundle 共用输出
-路径，避免后续基础证书刷新覆盖代理 CA。
-唯一例外是确定性的 Main 标题生成请求：该调用点按同一 URL 白名单匹配，命中后显式加入
-配置 Header，但仍使用 Main 自己的普通网络 transport，不经过本地 MITM 代理。
-
-```mermaid
-flowchart LR
-  Main[Electron Main] -->|ordinary fetch; no implicit headers| Remote[Remote services]
-  Main -->|title request only; whitelist match| Protected[Protected service]
-  Renderer[Renderer] -->|Electron session; no business headers| Remote
-  Main -->|immutable env snapshot| Gateway[OpenClaw Gateway generation]
-  Gateway --> Tool[Tool / skill / MCP child process]
-  Gateway --> Proxy[Loopback selective proxy]
-  Tool --> Proxy
-  Proxy -->|whitelist match: inject configured headers| Protected[Protected service]
-  Proxy -->|non-candidate CONNECT: raw tunnel| Remote
-```
-
-每个 Gateway generation 使用新的随机本地代理 capability。普通 HTTP 代理请求和 CONNECT
-必须先通过代理认证；认证信息在本地一跳消费，不能发送到目标或复用为上游代理认证。
-部分 Gateway HTTP 客户端也会用 CONNECT 承载明文 HTTP，因此代理在 CONNECT 建立后根据
-首个 tunnel 数据包区分 HTTP 与 TLS，再按对应协议的 origin 决定解析或 raw tunnel。命中的
-明文 HTTP tunnel 继承已验证的 CONNECT capability，并在解析后按完整 URL/path 决定是否
-注入；非候选 HTTPS origin 只建立原始 tunnel，不生成本地证书。普通 loopback 地址保留在
-`NO_PROXY` 中；当前 env-proxy 模式忽略 loopback 白名单，以免为了一个本地目标破坏全部
-本地服务访问。
-
-远程 Header 白名单与用户 `NO_PROXY` 属于不同代理层，不能把用户规则当作配置错误。
-Main 为 Gateway 构造环境快照时，第一跳 `NO_PROXY` 只保留 loopback 和 Gateway 自身端口，
-使当前白名单以及 generation 运行期间刷新的白名单都能到达本地代理；同时把未经修改的
-用户 `NO_PROXY` 保存为该 Gateway generation 的上游路由策略。本地代理完成选择性 Header
-注入后，命中原始用户 bypass 的请求仍然直连目标，不会转发给系统或自定义上游代理。由于
-`NO_PROXY` 不支持“域名后缀整体直连、其中一个 origin 先走本地代理”的反向例外，类似
-`*.huawei.com` 的远程 bypass 规则会让该后缀流量先经过本地 socket，但非白名单 HTTPS
-仍使用原始 raw tunnel，最终上游直连语义保持不变。启动时已知白名单发生重叠时，Main
-日志记录冲突的
-`NO_PROXY` 条目、涉及的 Header 名称、未禁用任何 Header 的处理结果，以及 Tool 在运行期
-重新设置冲突规则仍可能绕过注入的限制；日志不得包含 Header 值。
-
-关闭时先停止 Cowork 请求和 Gateway 进程树，最后关闭本地代理，避免仍在退出的 tool
-请求命中已经释放的代理端口。
-
-env-proxy 无法精确表达“同一 loopback 主机只有某个端口经过代理”。因此 loopback 白名单
-不会让应用启动失败，但会从 Gateway 代理策略中忽略并给出脱敏警告；普通 loopback 流量
-继续直连。确定性的 Main 标题请求不依赖 env proxy，仍可在调用点匹配这类 URL。
-
-### 内网运行默认值
-
-JustDo 生成的 OpenClaw 配置关闭启动版本检查、自动更新、远程模型价格目录、
-`web_search` 和 OTEL 导出。Gateway 环境同时设置 `OPENCLAW_OFFLINE=1`，避免缺少
-`fd`/`rg` 时从 GitHub 自动下载。`web_fetch` 与 browser 保持开启；`web_fetch` 使用
-JustDo 传给 Gateway 的受信任出口代理解析域名，并额外兼容 RFC 2544 的
-`198.18.0.0/15` Fake-IP 范围。browser 允许私网和特殊地址，以兼容 Clash/Surge 等
-代理的非标准 Fake-IP 地址池，并与本地命令、Python、MCP 和 skill 子进程已有的网络
-能力保持一致。这些应用层配置不是网络隔离边界；需要限制公网或内网访问的部署必须
-使用防火墙、出口网关或受控代理统一限制所有进程。
-
-## IPC API 详细说明
-
-### 调用型 IPC
-
-调用型 API 使用 `ipcRenderer.invoke()` / `ipcMain.handle()`。它适合 CRUD、查询、保存、启动一次动作等有明确返回值的操作。
-
-```mermaid
-sequenceDiagram
-  participant C as Renderer Component
-  participant S as Feature Service
-  participant W as window.electron
-  participant I as ipcMain Handler
-  participant D as Domain Service
-
-  C->>S: listSkills()
-  S->>W: skills.list()
-  W->>I: invoke('skills:list')
-  I->>I: validate input
-  I->>D: OpenClawSkillService.list()
-  D-->>I: skills/status
-  I-->>W: result
-  W-->>S: result
-  S-->>C: state update
-```
-
-调用型 handler 的返回值应该是稳定结构。推荐形态：
-
-```typescript
-type IpcSuccess<T> = { success: true; data: T };
-type IpcFailure = {
-  success: false;
-  code?: string;
-  error: string;
-  details?: unknown;
-};
-```
-
-现有代码仍有部分历史 API 直接返回数组或 domain object；新增 API 应优先使用 typed result，便于 renderer 做统一错误处理。
-
-### 事件型 IPC
-
-事件型 API 使用 `ipcRenderer.on()` / `webContents.send()`，适合 Gateway status、Cowork stream、scheduled task polling 等异步状态。
-
-```mermaid
-sequenceDiagram
-  participant G as Gateway/Runtime
-  participant F as Main Forwarder
-  participant W as BrowserWindow.webContents
-  participant P as Preload listener
-  participant R as Renderer UI
-
-  R->>P: subscribe(callback)
-  P->>P: register ipcRenderer.on
-  G-->>F: status/stream/run event
-  F->>W: send(channel, payload)
-  W-->>P: IPC event
-  P-->>R: callback(payload)
-  R->>P: unsubscribe on cleanup
-```
-
-所有事件 listener 都应在 preload 中返回 unsubscribe：
-
-```typescript
-onStatusUpdate: callback => {
-  const handler = (_event, data) => callback(data);
-  ipcRenderer.on(IpcChannel.StatusUpdate, handler);
-  return () => ipcRenderer.removeListener(IpcChannel.StatusUpdate, handler);
-};
-```
-
-Renderer component 必须在 `useEffect` cleanup 中调用 unsubscribe，避免切换会话或反复打开弹窗后重复监听。
-
-## Preload Namespace 设计
-
-### `cowork`
-
-`cowork` 是最大的一组 API，覆盖：
-
-- session create/continue/stop/delete/list/get
-- pin/rename/model patch
-- runtime status/context usage
-- ask-user interaction response
-- stream message/thinking/interaction/complete/error events
-- subtask status/session lookup
-
-设计重点是区分“用户请求”和“runtime event”。用户请求走 `invoke`，runtime event 走 listener。不要在 renderer 中根据 event 自行推断 Gateway truth；必要时通过 `getSessionRuntimeStatus()` 或 Gateway history 再查询一次。
-
-### `openclaw.engine`
-
-`openclaw.engine` 只暴露 runtime lifecycle 的必要控制：
-
-- 查询状态
-- 查询端口/token
-- 设置端口
-- 重启 Gateway
-- 打开 terminal
-- 订阅 progress
-
-Renderer 不知道 runtime 安装路径、patch 细节或 child process handle。
-
-### `mcp` / `hooks` / `skills`
-
-这三类 plugin API 都遵循同一个原则：
-
-```text
-Renderer UI -> Main local store/service -> OpenClaw config/RPC sync -> Gateway
-```
-
-Renderer 不直接读取 `openclaw.json`，不直接管理 stdio process，也不直接访问 marketplace。
-
-### `dialog` / `shell`
-
-`dialog` 用于显式用户选择文件/目录。`shell` 用于打开、定位、预览本地文件和外部 URL；侧边栏编辑器也通过该 namespace 写回既有的可预览文本文件。读取会返回内容版本和一个短期、路径及 Renderer 绑定的不透明编辑令牌，但该令牌初始没有写权限；用户切换到编辑模式时，Main 静默重新验证文件身份和版本并激活临时写权限。写入只携带令牌、期望版本和 UTF-8 内容，不允许 Renderer 指定目标路径或覆盖标记。Main 在落盘前重新验证文件身份和版本，外部修改由 Main 的系统对话框让用户选择覆盖、重新加载或取消；抽屉卸载时通过窄 IPC 撤销令牌。新增文件能力时优先放进这两个 namespace，避免组件直接构造本地路径访问。
-
-文件抽屉的草稿和脏状态只保存在 Renderer 内存。关闭抽屉、切换文件、切换会话、新建会话或离开 Cowork 主视图前，App/Sidebar 先调用抽屉的异步 transition guard，再执行导航；取消时保持当前视图和草稿。异步读取使用请求代次和来源会话双校验，过期请求不能覆盖较新的预览。
-
-## Main Handler 注册策略
-
-`src/main/main.ts` 负责组合依赖并注册 handler。handler 本身应保持薄：
-
-1. 校验输入。
-2. 调用 domain service/store。
-3. 处理异常并返回稳定结果。
-4. 必要时触发 event。
-
-复杂逻辑不要塞进 IPC 文件；放进 domain service，例如：
-
-- `OpenClawConfigSyncService`
-- `McpServices`
-- `OpenClawHookServices`
-- `OpenClawSkillService`
-- `CoworkEngineService`
-- `CronJobService`
-
-## 安全注意事项
-
-- `ipcRenderer` raw send/on 是历史兼容口，不作为新能力入口。
-- 不允许 renderer 传入任意 IPC channel 后由 main 动态执行。
-- 文件路径要在 main process 归一化，并结合用户选择或 workspace 语义判断。
-- URL 打开前应区分 local path、external URL 和 custom protocol。
-- 日志 API 不应泄漏 token/API key。
+本文按当前 `src/main/preload.ts`、`src/main/ipc/` 和 shared channel 合约重写。目标是说明跨进程能力面、调用/事件语义、验证责任和新增 IPC 的完整流程。
+
+## 1. 进程与信任边界
+
+| 参与者         | 权限                          | 主要职责                                                     |
+| -------------- | ----------------------------- | ------------------------------------------------------------ |
+| Renderer       | Chromium 页面权限             | UI、交互、Redux、聊天显示；不访问系统资源                    |
+| Preload        | 隔离上下文中的 Electron IPC   | 暴露固定 `window.electron` API，转换 listener 为 unsubscribe |
+| Main           | Node/Electron 完整权限        | 验证输入、SQLite、文件/网络/进程、Gateway 和系统集成         |
+| Gateway        | 独立受管子进程                | Agent、tool、session/history、cron、plugin runtime           |
+| Extension host | Main 管理的本地服务/transport | ask-user callback、extension MCP 等受管能力                  |
+
+BrowserWindow 必须维持 context isolation；即使某平台通过启动 switch 降低 Chromium sandbox，也不能因此扩大 Renderer API。
+
+## 2. IPC 形态
+
+### 2.1 调用型
+
+Renderer 调用 preload 方法，preload 使用 `ipcRenderer.invoke`，Main 通过 `ipcMain.handle` 返回可序列化结果。适合 CRUD、查询、命令和显式生命周期操作。
+
+约束：
+
+- handler 在边界验证 unknown payload，不能依赖 TypeScript 类型提供运行时安全；
+- 错误结果应保留稳定 `code` 和可显示 message，不能只返回日志文本；
+- 长操作应在 service 中支持并发合并、取消或互斥，而不是阻塞 handler；
+- 不返回 Node/Electron 对象、Error 实例、数据库 row handle 或 secret。
+
+### 2.2 IPC 事件型
+
+Main/Gateway 状态变化通过 `webContents.send` 到 preload listener。preload 每个 `onX` 方法注册包装 handler 并返回取消函数。适合 stream、engine progress、approval、session changed、cron/status/result 和 update state。
+
+事件消费者必须：
+
+- 在组件卸载或 session 切换时调用 unsubscribe；
+- 用 session id、run id、domain 和 sequence 做 admission，不能只看“当前 UI 有无运行”；
+- 把事件视为增量提示，重连后以权威查询/history 恢复；
+- 允许重复、乱序、终态后迟到以及订阅短暂中断。
+
+### 2.3 Renderer 到本地 Gateway 的聊天数据通道
+
+聊天是当前唯一明确的 Renderer→Gateway 直连通道。`JustDoChatWrapper` 通过 `openclaw.engine.getPort/getToken` 取得连接信息，`GatewayClient` 建立 loopback WebSocket；`ChatController` 订阅 session/message 事件、请求常规 history，并在 IPC paged history 不可用时使用带 Bearer token 的 loopback REST fallback。产品 session start/continue、权限、文件、配置、SQLite 与大部分 Gateway 领域命令仍经过 Main。
+
+这条通道意味着 Renderer 能接触 Gateway token 和原始聊天 wire event，必须由集中式 client/controller 处理，不能让各 React 组件各建连接或各写 parser。连接 generation、session key、run id 和 sequence 用于拒绝旧连接与迟到事件；token 只保存在控制器内存，不得进入 Redux、日志、导出或第三方请求。
+
+## 3. `window.electron` 能力面
+
+以下分组来自当前 preload；这里只列语义，不复制完整 TypeScript declaration。
+
+| Namespace                     | 能力                                                                     |
+| ----------------------------- | ------------------------------------------------------------------------ |
+| `store`                       | 通用 KV get/set/remove；写 `app_config` 会触发配置同步                   |
+| `marketplace`                 | source、search、detail、install                                          |
+| `skills`                      | Gateway skill list/enable 与用户 Skill import/delete                     |
+| `extensions`                  | list/import/progress/delete/enable/configuration                         |
+| `hooks`                       | list/import/delete/enable                                                |
+| `slashCommands`               | 合并 Gateway 命令与本地 policy 后列出                                    |
+| `mcp`                         | CRUD、enable、sync、probe、resource read、extension servers 与 sync 事件 |
+| `permissions`                 | macOS Calendar check/request                                             |
+| `browser`                     | mode/status、连接测试、remote debugging、扩展安装/配对诊断               |
+| `api`                         | Main 受控 fetch 与 request cancellation                                  |
+| `window`                      | 最小化/最大化/关闭/系统菜单与状态订阅                                    |
+| 顶层 config                   | provider config read/check/save、title generation、recent cwd            |
+| `openclaw.approvals`          | pending snapshot、resolve、requested/resolved events                     |
+| `openclaw.engine`             | status/restart/port/token、prompt replacement、terminal、progress        |
+| `openclaw.history`            | tool inputs、compaction detail、paged history                            |
+| `openclaw.memory`             | overview/document/search/rebuild index                                   |
+| `openclaw.usage`              | 7/14/30 日 token usage                                                   |
+| `agents`                      | agent list                                                               |
+| `cowork`                      | session/run/goal/config/model/interaction/subtask 与完整 stream          |
+| `sessionGroup`                | group CRUD、移动 session、排序                                           |
+| `dialog`                      | 选择/保存/读取用户明确选择的文件和目录                                   |
+| `shell`                       | open/reveal/external、上下文菜单、受控文件预览与编辑 token               |
+| `autoLaunch` / `preventSleep` | OS 级开机启动和阻止休眠                                                  |
+| `developerConfig` / `appInfo` | 只读开发配置、版本与 locale                                              |
+| `appUpdate`                   | 状态、检查、清理后安装、状态事件                                         |
+| `builtinModels`               | 手工刷新和生命周期变更事件                                               |
+| `log`                         | 路径、打开目录、导出 zip；debug 写入受 shared channel 控制               |
+| `scheduledTasks`              | job CRUD/run/history/session resolve/channel 与本地 result inbox         |
+| `networkStatus`               | online/offline 事件                                                      |
+
+`ipcRenderer` 兼容分组只允许白名单 channel，不能演化为任意 `send/invoke` 后门。
+
+## 4. Cowork IPC
+
+### 4.1 命令与查询
+
+主要调用包括：
+
+- `cowork:session:start|continue|stop|delete|deleteBatch`；
+- pin、rename、permission mode、model patch/get；
+- session get/list、Gateway session id、remote-managed、单个/批量 runtime status；
+- `cowork:session:run:begin|bind|list|fail` 管理 client turn 到 root run 的持久绑定；
+- goal get/continue/resume/restart-for-feedback 与 context usage；
+- message delete/deleteFrom；
+- interaction respond/replay；
+- config get/set、Agent runtime settings、default model；
+- subtask status 与 subagent session lookup。
+
+Start/continue handler 的 admission 次序是：校验输入 -> 等待排队的 config update -> ensure Gateway/config/permission ready -> 建立/绑定 run -> 调用 router。任何一步失败都要返回明确失败，而不是先让 Renderer进入 running。
+
+### 4.2 Stream
+
+Cowork stream 至少包含 message、messageUpdate、thinkingUpdate、metadataUpdate、messageDelete、interaction、interactionDismiss、complete、error、sessionsChanged、goal changed/execution changed。
+
+Main 的 runtime forwarder 负责把 Gateway 语义映射为产品事件；Renderer 的 `JustDoChatWrapper` 再把它们送入 chat model。消息正文、thinking、tool 生命周期和 run terminal 必须保持不同事件含义，不能把任意 error event 当作 session terminal。
+
+## 5. OpenClaw IPC
+
+### 5.1 Engine
+
+Engine status 是带 phase/message 等信息的快照，progress event 用于启动/停止/错误 UI。端口范围由 shared validator 限制在 1024..65535；49152..65535 会标记为临时端口范围并给出提示，但不会因此拒绝。setPort 还需探测占用、保存并安全重启。
+
+Gateway token 属于敏感能力。Preload 当前提供受控读取，Renderer chat controller 会用它建立 loopback WebSocket，并在 paged-history IPC 不可用时请求本地认证 REST。任何扩展使用都必须避免日志、Redux、持久化和向第三方页面暴露。
+
+### 5.2 History、Memory、Usage
+
+- History handler 读取 Gateway state/session，并按 session 范围返回工具输入、compaction detail 和分页 history。
+- Memory handler 通过 manager 定位受管 state，限制相对路径并返回结构化结果。
+- Usage 通过 runtime 请求并 normalize 每日数据和 cache 状态，Renderer 不解析任意 Gateway payload。
+
+### 5.3 Approvals
+
+审批分 exec 与 plugin kind；decision 包含单次、session、always 和 deny 等受支持集合。Main 保存 pending snapshot，并验证某请求是否允许 session 级授权。Renderer modal 的关闭不能伪造授权。
+
+## 6. Plugin IPC
+
+- Skill list/enable 委托 Gateway API；文件 import/delete 由 `OpenClawSkillFileService` 处理 user source。
+- MCP CRUD 先操作 store，再经 config sync；probe/resource read 使用 Gateway/SDK transport，而非 Renderer 网络。
+- Hook 配置由 SQLite store 管理并同步；导入和删除要进入受管目录事务。
+- Extension import 提供 progress event，enable/config/delete 经 extension service 与 config mutation exclusive path。
+- Marketplace 返回统一 item/source/detail/install contract，实际安装仍分派到对应 plugin owner。
+
+任何文件路径参数必须 canonicalize 并验证来源/目标；不能相信 UI 下拉框保证安全。
+
+## 7. Scheduled Task IPC
+
+Shared `IpcChannel` 定义 job list/get/create/update/delete/toggle/manual run、run list、session resolve、channel list，以及 status/run/refresh events。结果收件箱另外提供分页查询、单个/全部标记已读、删除、reconcile、result upsert 和 unread count event。
+
+Gateway job/run 是执行权威；SQLite receipt 是应用内阅读状态。IPC 返回对象把 Gateway `ok` 归一为产品 `success`，同时保留 delivery status/error。删除 result 还可能触发 session/transcript artifact cleanup，必须由 Main 执行。
+
+## 8. 文件与网络 IPC
+
+### 8.1 文件
+
+- Dialog API 代表用户显式选择；返回的路径仍需由每个 handler 验证用途。
+- `localfile://` 是只读展示协议，不能作为通用目录服务器。
+- preview read 解析相对 cwd；写入前由 `AuthorizeEdit` 生成绑定路径/内容约束的 token，写后/取消时撤销。
+- `openPath`、`showItemInFolder`、`openExternal` 分开，避免把 URL 当本地路径或反向处理。
+
+### 8.2 网络
+
+Renderer 的 provider 检测使用 `api.fetch` 进入 Main，支持 request id 取消。Main 应限制 method/header/body/redirect/response size，并通过系统/custom/direct proxy 策略发起请求。Gateway 的出站 Header 注入通过独立 proxy environment 管理，不应复用通用 fetch IPC。
+
+## 9. 注册与生命周期
+
+Handler 在获得 single-instance lock 后统一注册。它们使用 getter 延迟取得 store/runtime，因此注册早于 `app.whenReady` 不意味着可提前调用。窗口只在核心初始化后创建，正常情况下 Renderer 不会撞上未初始化服务；handler 仍要在异常情况下返回清晰错误。
+
+事件发送前必须检查 BrowserWindow/WebContents 未销毁。多窗口语义应明确：全局 engine/update/result 事件广播，窗口局部 UI 事件发送给拥有者；当前大部分实现面向单主窗口。
+
+## 10. 输入验证与返回契约
+
+跨 IPC 的最小规则：
+
+- string：trim、长度上限、空值语义、枚举/ID pattern；
+- number：finite、integer、范围；
+- path：resolve/canonicalize、允许根、符号链接/遍历、文件类型和大小；
+- URL：协议、loopback/remote 限制、credential 与 redirect；
+- record/array：拒绝非对象、限制项数和嵌套大小；
+- config：先 normalize，再持久化，再 sync/verify；失败不提交半状态；
+- event：只发送可序列化最小字段，不携带 secret 或原始异常对象。
+
+## 11. 新增 IPC 检查单
+
+1. 在 `src/shared/` 定义 channel 常量、request/result 和运行时 normalize（如需要）。
+2. 在 owning `src/main/ipc/<domain>/` 注册 handler，调用领域 service。
+3. 验证所有 renderer-controlled 输入并设计稳定错误码。
+4. 在 preload 暴露最小语义方法；订阅必须返回 unsubscribe。
+5. 更新 `src/renderer/types/electron.d.ts`，保持签名完全一致。
+6. 补 handler/normalize/consumer 测试，覆盖失败、重复、乱序、销毁和取消。
+7. 更新本文件或对应领域文档。
+
+## 12. 常见反模式
+
+- 暴露 `ipcRenderer.invoke(channel, ...args)` 给 Renderer。
+- 仅靠 TypeScript interface 当运行时验证。
+- 在 React 组件直接拼 channel 名或解析 Gateway wire payload。
+- 订阅未清理，session 切换后继续接收旧事件。
+- 用 transient disconnect 生成业务 terminal。
+- 把 token、API key 或完整 config 作为调试事件发送。
+- handler 同时做验证、数据库事务、Gateway orchestration 和 UI 文案，导致不可测试。
+
+## 13. 相关文档
+
+- [系统架构](02-architecture.md)
+- [Cowork 系统](04-cowork-system.md)
+- [安全模型](11-security-model.md)
+- [Chat 渲染](15-chat-rendering.md)
+
+## 14. 调用生命周期与销毁语义
+
+一次 `invoke` 的生命周期是 Renderer promise → preload 参数转发 → Main handler validation/service → structured result。窗口关闭不会自动取消已经进入 Main 的文件、网络或 Gateway 操作；需要取消的长任务必须使用 request id/AbortController 或领域 cancellation，且 handler 终态只能结算一次。
+
+事件订阅必须保存 preload 创建的包装 listener，并在 unsubscribe 时用同一引用移除。React effect 重建、session 切换和窗口 reload 都可能重复订阅；consumer 不能依赖 Main “只广播一次”来抵消 listener 泄漏。
+
+## 15. IPC 风险分级
+
+| 等级            | 示例                                      | 最低控制                                            |
+| --------------- | ----------------------------------------- | --------------------------------------------------- |
+| 只读产品查询    | list session、get theme                   | 类型、limit、稳定错误                               |
+| 本地状态写入    | rename/pin/group/read receipt             | 字段验证、SQLite 事务/幂等、失败回滚                |
+| Runtime 命令    | send/stop/restart/run cron                | readiness、session/run identity、single-flight      |
+| 文件/命令/网络  | preview edit、shell、fetch、plugin import | canonical path、allowlist、size/timeout、审批       |
+| Credential/权限 | token、provider config、approval          | 最小返回、脱敏日志、owner/session 绑定、fail closed |
+
+风险越高，越不能用通用 `store:set`、`api.fetch` 或任意 channel 代替专用领域接口。
+
+## 16. 测试证据与排障
+
+- Handler 注册测试应证明注册期间不会读取尚未初始化的 store，例如 Cowork session handler 的启动约束。
+- Shared contract tests覆盖枚举、limit、normalization；Main handler tests覆盖恶意/边界输入；preload/consumer tests覆盖调用参数和 unsubscribe。
+- 事件串线先检查 channel、session/run domain 和 listener 数量；调用悬挂检查 handler 是否等待 readiness/timeout；“空成功”检查 catch 是否吞掉 Gateway 未 ready。
+- 新 namespace 应在 `preload.ts` 与 `electron.d.ts` 做结构对照审查；目前没有自动生成，两处漂移是显式风险。
+
+## 17. IPC Definition of Done
+
+新增接口完成时必须有稳定 channel 常量、运行时输入验证、明确 result/error contract、最小 preload 方法、Renderer declaration、销毁/取消语义和至少一个失败测试。涉及 Gateway 的接口还要定义 starting/disconnected/reconnecting 时行为；涉及写入的接口要定义重复调用和部分失败。

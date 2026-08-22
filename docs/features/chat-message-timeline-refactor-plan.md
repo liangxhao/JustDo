@@ -1,1884 +1,253 @@
-# Chat Message Timeline and UI Refactor Plan
+# Chat Timeline 架构与演进说明
 
-## Status
+> 本文件沿用历史上的 `refactor-plan` 文件名，但核心重构已经落地。本文按 `v2026.8.12` 记录现状、设计约束、仍待演进项和验收基线，而不是保留已经过期的实施步骤。
 
-- Historical implementation baseline: the compatibility target below records the
-  2026-07-25 cutover. The current bundled runtime is OpenClaw `v2026.7.1-2`; use
-  `scripts/patches/v2026.7.1-2/README.md` for the current capability inventory.
-- Implementation status: production renderer cut over on 2026-07-25; automated
-  Electron visual proof remains pending because the implementation environment
-  exposed neither a controllable browser nor the Windows automation service.
-- The retired overlay arrays remain temporarily inside `ChatController` as a
-  non-authoritative compatibility/diagnostic adapter. The main transcript,
-  history projection, inline process disclosure, and scroll behavior no longer
-  read them.
-- Follow-up implementation on 2026-07-25 completed the Priority 1 correctness
-  and performance blockers and the scoped Priority 2 interaction/accessibility
-  work. The legacy grouped-render `N tools: Tool1、Tool2` timeline and its nested
-  Thinking/Tools cluster were removed. Module splitting and automated Electron
-  visual/performance evidence remain pending.
-- Scope owner: JustDo renderer chat surface and its Gateway event projection.
-- OpenClaw reference checkout: `../openclaw`.
-- OpenClaw reference commit at planning time: `e085fa1a3f`.
-- JustDo runtime compatibility target: OpenClaw `v2026.6.11` plus the patches in
-  `scripts/patches/v2026.6.11/`.
+## 1. 目标
 
-This document is the implementation handoff for a future coding session. It
-replaces the earlier idea of rendering nested Thinking/Tools/Content groups.
+Timeline 要把一次 Assistant 执行展示成可理解、可追溯、可恢复的过程，同时满足长会话和高频流式输出的性能要求。它不是简单的消息列表：同一 turn 中可能交替出现 reasoning、多个工具调用、中间回答、计划更新和终态。
 
-### Product decision correction
+当前设计坚持以下原则：
 
-The earlier side-drawer decision is superseded. A process summary is an inline
-chronological disclosure at its original timeline position:
+- Gateway 历史与事件是执行事实来源；
+- Renderer 保存规范化 transcript，而非复制 Gateway 内部对象；
+- reducer 负责状态机，模板只负责投影；
+- 实时与历史使用同一语义分类；
+- 终态必须明确，过程详情允许折叠；
+- 用户阅读历史时，流式更新不能抢夺滚动位置。
 
-- Collapsed: `Thinking × M · Tool × N`.
-- Expanded: archived Thinking and Tool items appear underneath in their
-  original order; surrounding Content remains at its original hard boundary.
-- Running Thinking and Tool items remain outside the summary while receiving
-  incremental updates and archive automatically only after completion.
-- This process summary is the only grouping layer. It must not contain or
-  recreate a secondary `N tools: Tool1、Tool2` group.
-- Tool input and large output are not eagerly inserted into the inline
-  transcript DOM.
+## 2. 分层结构
 
-Historical review text below may still mention the retired drawer when
-describing the pre-correction implementation.
-
-## Corrective Review and Next Implementation Step
-
-Review date: 2026-07-25.
-
-The previous cleanup exceeded the intended scope. The product requirement was
-to remove the old nested aggregate `N tools: Tool1、Tool2`, not to remove Tool
-visibility, Tool details, the ordinary message renderer, or useful existing
-behavior. The next implementation must correct that regression before any
-further refactor work.
-
-### Information architecture
-
-The UI may be redesigned, but every visible element must help the user inspect
-the chronological execution record. Do not add decorative or duplicative
-status information.
-
-The allowed visible information is:
-
-- Collapsed process summary: `Thinking × M · Tool × N`.
-- Expanded Thinking item: the `Thinking` label and its reasoning content.
-- Expanded Tool item: resolved Tool display name, current result state when the
-  Tool is still running or failed, execution parameters, and execution result.
-- Content item: assistant-visible response content.
-- Existing error/interruption information when it changes the meaning of the
-  execution record.
-
-The following information is explicitly not useful here and must not be shown:
-
-- Sequence numbers before expanded Thinking or Tool items.
-- Per-item elapsed time/count text after expanded Thinking or Tool labels.
-- The visual `Assistant · <state> · <elapsed>` header shown when a turn starts.
-- A second aggregate such as `N tools: Tool1、Tool2`.
-- Duplicate run-state labels already communicated by the visible running
-  Thinking or Tool item.
-
-The screen-reader-only live status may remain if it does not create visible
-content.
-
-### Findings
-
-1. Tool data has not disappeared from the canonical model.
-   `ToolItem` still carries `input`, `output`, and `error`, and
-   `agent-event-reducer.ts` updates them from Tool start, partial result, and
-   terminal result events.
-2. Tool UI disappeared because `message-render.ts` returns `nothing` for the
-   Tool role, `build-chat-items.ts` drops standalone Tool messages, and
-   `active-turn-timeline.ts` intentionally omits Tool input/output from an
-   expanded process summary.
-3. The sequence number and trailing elapsed value are generated by
-   `process-summary__item-index` and `formatElapsed(...)` in
-   `active-turn-timeline.ts`; neither belongs in the corrected design.
-4. Adjacent process summaries are possible because live and persisted
-   projection flush summaries independently, and the final history + active
-   composition has no adjacent-summary coalescing pass.
-5. The visible Assistant status row is the `active-turn__header` emitted by
-   `justdo-chat.ts`.
-6. The previous cleanup also removed the old individual Tool detail card and
-   its styles. That was broader than requested. Only the outer Tool aggregate
-   and Thinking/Tools nested cluster were obsolete.
-
-### Next implementation
-
-Implement the correction as a narrow presentation change over the canonical
-timeline:
-
-1. Restore Tool visibility without restoring the old aggregate:
-   - Render every running Tool immediately in chronological order.
-   - Archive a completed Tool into the same process summary as adjacent
-     completed Thinking/Tool items.
-   - When the summary is expanded, render every Tool as an individual detail
-     item.
-   - Never render `N tools: Tool1、Tool2` or a nested Thinking/Tools cluster.
-2. Provide Tool details from `ToolItem`:
-   - Show execution parameters from `input`.
-   - Show execution result from `output`, falling back to `error` or the
-     existing no-output/running copy where appropriate.
-   - Support object parameters/results with safe readable formatting.
-   - Preserve the existing output-size bound and do not duplicate Tool
-     input/output elsewhere in the main timeline.
-   - A Tool item may disclose its own parameters/result inside the already
-     expanded process summary; this is detail inspection, not another aggregate
-     Tool group.
-3. Simplify expanded Thinking and Tool rows:
-   - Remove the leading sequence number.
-   - Remove trailing per-item elapsed/count text.
-   - Keep only the label/name, meaningful state when necessary, and content or
-     details.
-4. Coalesce adjacent summaries after the complete visible timeline is composed:
-   - Merge two process summaries whenever no Content, user message, divider,
-     terminal item, or visible running/failed process item appears between
-     them.
-   - Preserve the original item order and aggregate counts.
-   - Use a stable key based on the first archived item so appending or merging
-     later items does not replace the existing DOM node.
-   - Apply the same rule at the persisted-history/active-turn seam.
-5. Remove the visible `active-turn__header` and its pulse/state/elapsed UI.
-   Keep execution state in the actual running Thinking/Tool row and retain only
-   non-visual accessibility announcements.
-6. Restore unrelated behavior changed by the over-broad cleanup:
-   - Ordinary persisted message grouping/rendering remains supported.
-   - Individual Tool detail presentation remains supported.
-   - Session export must continue to preserve Tool calls and Tool results.
-   - Existing Content, attachment, Canvas, Markdown, footer, code, Mermaid, and
-     compaction UI behavior and styling are out of scope.
-7. UI design may be refined, but do not add new fields unless they are one of
-   the allowed information items above. Prefer reusing existing design tokens
-   and the previous Tool detail visual language.
-
-### Acceptance tests
-
-- A `Thinking → Tool → Content` sequence displays the running Thinking and Tool,
-  then archives both into one expandable `Thinking × 1 · Tool × 1` summary
-  after completion.
-- Expanding the summary shows `Thinking`, its content, the Tool name, execution
-  parameters, and execution result in original chronological order.
-- Expanded rows contain no ordinal numbers and no trailing elapsed/count text.
-- Two adjacent process summaries coalesce into one, including across the
-  persisted-history/active-turn seam.
-- Content or another real timeline boundary prevents summary coalescing.
-- Starting a turn does not render an Assistant status header.
-- No production source emits `N tools: Tool1、Tool2`,
-  `tool-timeline__summary`, or `thinking-tools-cluster`.
-- Tool-only history, result-before-start, partial results, empty results,
-  failures, cancellations, and object input/output remain inspectable.
-- Session export still contains Tool calls and results.
-- Existing Content/attachment/Canvas/Markdown/footer snapshots do not change
-  except where required to place the corrected process summary.
-
-## Post-cutover Implementation Review
-
-Review date: 2026-07-25.
-
-Overall assessment: the production renderer has cut over to the flat timeline,
-but this plan is **not fully implemented** and must not yet be marked complete.
-The normalized event model, active-turn reducer, history projection, process
-summary/inline disclosure, render scheduler, and Lit-owned scroll controller exist and
-their focused tests pass. The remaining work below includes correctness,
-performance, accessibility, cleanup, and Electron acceptance blockers.
-
-### Priority 1: correctness and performance blockers
-
-1. Cache the persisted history projection.
-   `justdo-chat.ts` currently calls `projectPersistedTimeline(messages)` from
-   `render()`, so every scheduled stream paint rebuilds the persisted
-   projection. This violates the acceptance criterion that a stream event must
-   not rebuild persisted history. Cache or guard the projection by session,
-   history source/generation, and persisted transcript revision; active-turn
-   updates must only rebuild the live projection.
-2. Replace permissive session suffix matching.
-   `eventMatchesTranscriptSession()` currently accepts either string when one
-   merely `endsWith()` the other. This can admit an unrelated session whose key
-   happens to share a suffix and can bind a provisional run to the wrong event.
-   Normalize documented session aliases explicitly and compare the normalized
-   identity, including `sessionId` where available.
-3. Keep failed persisted Tools visibly diagnosable.
-   `projectPersistedTimeline()` currently archives Tool results into a process
-   summary even when `isError` marks the Tool as failed. A warm refresh or cold
-   history projection must retain a visible compact failed Tool row until the
-   user dismisses or inspects it, while still recording it in the appropriate
-   summary.
-4. Finish Tool partial scheduling.
-   Visual publishing is frame-batched, but Tool partial state is not synchronized
-   at the planned bounded cadence. Add the documented Tool partial throttle and
-   ensure terminal Tool updates flush immediately.
-
-### Priority 2: UX and accessibility blockers
-
-1. Add a direct `View details` action to failed/cancelled/interrupted Tool rows.
-   The current row only offers dismissal; the process drawer can otherwise be
-   opened only after the diagnostic has first been archived into a summary.
-2. Complete the process drawer interaction contract:
-   - Trap focus while open and restore it to the exact opener.
-   - Open failed detail by default.
-   - Preserve selection and disclosure state across live updates.
-   - Make the desktop drawer resizable.
-   - Render it as a bottom or full-screen sheet at the compact breakpoint.
-3. Complete transcript accessibility:
-   - Add `role="log"` to the transcript root.
-   - Use a small controlled polite status region for state transitions.
-   - Do not put the rapidly changing Thinking or Content tree itself in a live
-     region.
-   - Verify focus transfer when an active process row archives.
-4. Complete assistant-turn presentation:
-   - Add the stable footer with model, timestamp, and applicable actions.
-   - Distinguish Starting, Thinking, Tool, Responding, Done, and Interrupted.
-   - Render elapsed time for the turn and active process rows.
-   - Add summary duration where authoritative timing exists.
-5. Complete paused-scroll anchoring for asynchronous height changes. The current
-   anchor capture covers Lit renders, but image, Canvas, Mermaid, and other
-   intrinsic content changes still need explicit observation and tests.
-
-### Priority 3: cleanup and maintainability
-
-1. Remove the retired overlay arrays and their update heuristics after any
-   remaining diagnostic comparison is replaced with bounded development-only
-   instrumentation.
-2. Delete the old grouped Thinking/Tool rendering path, including
-   `splitThinkingToolsGroup`, `renderThinkingToolsContentGroup`, old Tool
-   timeline CSS, and obsolete tests.
-3. Split the remaining monoliths. At review time:
-   - `justdo-chat.ts` is approximately 2,472 lines.
-   - `chat-controller.ts` is approximately 3,414 lines.
-   - `grouped-render.ts` is approximately 1,257 lines.
-     This does not satisfy the thin-host maintainability criterion.
-4. Move the new timeline styling onto the semantic chat tokens specified below;
-   several new rules still use hard-coded light/dark colors.
-5. Gate Mermaid enhancement by completion and visibility, and avoid scheduling
-   transcript-wide search/Mermaid scans after unrelated stream paints.
-
-### Follow-up implementation evidence
-
-Completed after the review above:
-
-- The product-decision correction is now reflected in the production
-  presentation: expanded summaries show individual Tool parameters and bounded
-  results in chronological order, without ordinal numbers or per-item elapsed
-  text; the visible Assistant state header is removed.
-- Adjacent summaries are coalesced after persisted and active projections are
-  composed, including at their seam, while retaining the first summary key.
-- Legacy attached Tool results remain supported by session export.
-- Persisted history projection is cached by session identity, history
-  generation, source message identity, optimistic message identity, and the
-  terminal-deduplication variant. Live-only paints reuse the cached projection.
-- Managed session aliases are normalized only between `justdo:<id>` and
-  `agent:<agent-id>:justdo:<id>`; arbitrary suffix matches are rejected.
-- Failed persisted Tools remain as compact diagnostic rows and are also
-  retained in the nearest process summary.
-- Tool partial visual publishing is throttled to 80 ms; terminal Tool updates
-  cancel the pending throttle and flush immediately.
-- Failed/interrupted rows have a direct details action. Process detail now
-  expands inline at the stable summary position and preserves chronological
-  item order without introducing a modal focus context.
-- The transcript uses `role="log"` plus a separate polite transition status.
-  Rapid Thinking/Content trees are not live regions.
-- Active turns expose Starting, Thinking, Tool, Responding, Done, and
-  Interrupted states, elapsed time, process durations, and a stable
-  model/timestamp/copy footer.
-- Paused scrolling observes asynchronous transcript height changes and restores
-  the visible anchor. Search and Mermaid enhancement are revision-gated;
-  Mermaid work is also completion- and visibility-gated.
-
-Automated evidence:
-
-- Focused timeline/model/controller/shared tests: 34 tests passing.
-- Full Vitest suite: 113 files and 792 tests passing.
-- `npm run build`: passing.
-- `npm run lint`: the changed renderer files pass; the repository command still
-  fails on the pre-existing import-order error in `src/main/main.ts` and reports
-  the existing warning baseline.
-- Electron UI automation was attempted again, but the bundled Windows
-  automation runtime could not connect to its native pipe. No visual acceptance
-  claim is made from this environment.
-
-Current correction-session evidence:
-
-- Focused timeline/model/controller/shared/export tests: 14 files and 126 tests
-  passing.
-- Full Vitest suite: 114 files and 761 tests passing.
-- `npm run build` and `npm run compile:electron`: passing.
-- Changed renderer/shared files pass ESLint and `git diff --check`.
-- Repository-wide lint remains blocked by the pre-existing import-order error
-  in `src/main/main.ts`; repository-wide Prettier check also retains its
-  existing broad baseline.
-- Windows automation discovered the running JustDo window, but it exited before
-  state capture and could not be reacquired. No Electron visual acceptance
-  claim is made from this run.
-
-### Missing proof and tests
-
-The focused post-cutover suite executed during review passed 26 tests across
-the new normalizer, reducer, reconciler, projections, timeline renderer, render
-scheduler, and scroll controller. `npm run build` also passed, including
-TypeScript and renderer/main/preload builds.
-
-This is not sufficient final proof:
-
-- The reducer/history/component/scroll matrices in the Testing Plan remain only
-  partially covered.
-- There is no automated proof yet for stable DOM identity, drawer focus
-  trapping, asynchronous height anchoring, disposal cleanup, or the reference
-  stress replay.
-- Light/dark, responsive, display-scale, keyboard, touch, reduced-motion, and
-  Electron visual comparisons remain pending.
-- Phase 0 performance counters and regression budgets have not been recorded.
-- `npm run lint` currently fails on import ordering in the otherwise unrelated
-  `src/main/main.ts`; warnings also remain elsewhere. Re-run the full validation
-  suite after the repository lint baseline is clean.
-
-### Recommended next-session order
-
-1. Add failing tests for persisted-projection rebuild counts, session alias
-   isolation, and failed Tool history projection.
-2. Fix those three Priority 1 defects before additional visual work.
-3. Add direct diagnostic detail access and complete drawer focus behavior.
-4. Finish async scroll anchoring, assistant footer/status/duration, and semantic
-   accessibility.
-5. Remove the old overlays/grouped renderer and split the large host/controller.
-6. Run the full unit suite, lint, build, Electron stress replay, and visual
-   matrix. Record the evidence here before changing the status to complete.
-
-## Outcome
-
-Rebuild chat display around a flat, chronological timeline:
-
-1. Thinking, Tool, and Content appear exactly where they occur.
-2. Running Thinking and Tool items remain visible.
-3. Successfully completed Thinking and Tool items leave the main timeline and
-   are archived into the nearest process summary.
-4. Content is always a hard process-summary boundary.
-5. Failed, cancelled, or interrupted work remains visibly diagnosable.
-6. Live state, terminal messages, and refreshed history keep the same order and
-   stable DOM identity.
-7. Streaming updates do not rebuild the whole transcript or take control of
-   scrolling after the user scrolls away.
-
-The intended main-thread presentation is:
-
-```text
-Assistant · Working · 12s
-
-Thinking × 1 · Tool × 2
-Tool: run_tests                                      Running…
-
-The file is valid, but one test still fails because...
-
-Assistant · model · 2026-07-25 18:42 · Copy
+```mermaid
+flowchart TD
+  E[NormalizedAgentEvent] --> R[agent-event-reducer]
+  H[Gateway/SQLite history] --> HR[history-reconciler]
+  R --> S[ChatTranscriptState]
+  HR --> S
+  S --> PT[project-turn-items]
+  S --> PH[project-history-timeline]
+  PT --> UI[active-turn-timeline]
+  PH --> UI
+  UI --> C[justdo-chat]
+  SR[StreamRenderScheduler] --> C
+  SC[ChatScrollController] --> C
 ```
 
-When `run_tests` succeeds, its row disappears and the summary becomes:
+关键目录：
 
-```text
-Thinking × 1 · Tool × 3
-```
+- `model/`：状态、归约、历史协调和显示投影；
+- `components/active-turn-timeline.ts`：过程卡、计划卡和完成摘要；
+- `controllers/`：渲染节流、滚动、搜索和时间线导航；
+- `gateway/chat-controller.ts`：会话与 Gateway 操作编排；
+- `components/justdo-chat.ts`：Lit 外壳、事件订阅和组合渲染。
 
-## Non-goals
+## 3. 规范化 Transcript
 
-- Do not change Gateway tool semantics or OpenClaw agent execution behavior.
-- Do not create a second transcript persistence format.
-- Do not make SQLite the authority for the live chat display.
-- Do not expose raw tool arguments or large outputs eagerly in the DOM.
-- Do not retain the current nested Thinking/Tools cluster for compatibility.
-- Do not add a user-facing feature flag for the old renderer.
-- Do not redesign the prompt composer, session list, or Goal card except where
-  their layout directly interacts with transcript scrolling.
+`ChatTranscriptState` 包含：
 
-## Current Architecture
+| 字段                       | 含义                                         |
+| -------------------------- | -------------------------------------------- |
+| `sessionKey` / `sessionId` | 当前消息域身份                               |
+| `persistedMessages`        | 已确认或降级加载的历史消息                   |
+| `historySource`            | `gateway`、`sqlite-fallback` 或 `optimistic` |
+| `historyGeneration`        | 使旧的异步历史响应失效                       |
+| `activeTurn`               | 当前正在执行或刚刚收敛的 Assistant turn      |
+| `recentRuns`               | 短期终态去重集合                             |
+| `revision`                 | 驱动渲染与未读变更计算的单调版本             |
 
-The primary chat view uses:
+活动 turn 记录 `runId`、session、lifecycle generation、最后 sequence、起止时间、模型和 item 列表。`toolById` 只作为运行期索引，不替代有序 items。
 
-```text
-Gateway WebSocket
-  -> ChatController
-  -> <justdo-chat>
-  -> buildChatItems
-  -> grouped render helpers
-  -> Lit shadow DOM
-```
+## 4. Timeline Item 模型
 
-Primary files:
+### 4.1 Thinking
 
-- `src/renderer/libs/openclaw-chat/gateway/chat-controller.ts`
-- `src/renderer/libs/openclaw-chat/components/justdo-chat.ts`
-- `src/renderer/libs/openclaw-chat/pipeline/build-chat-items.ts`
-- `src/renderer/libs/openclaw-chat/components/grouped-render.ts`
-- `src/renderer/features/cowork/components/ChatMessageDisplay.tsx`
+Thinking 是独立过程块，状态可为 running/completed/failed/cancelled/interrupted。它不写入 Assistant 正文。实时 reasoning 来自 `thinkingUpdate`；历史 reasoning 由 OpenClaw 历史显示补丁投影后恢复。
 
-The current live display is distributed across:
+### 4.2 Tool
 
-- `chatMessages`
-- `chatThinkingMessages`
-- `chatToolMessages`
-- `chatStreamSegments`
-- `chatThinkingStream`
-- `chatStream`
+Tool item 用 `toolCallId` 关联开始、部分输出和结果。输入、输出和错误是不同字段；过程状态不会通过输出文本猜测。普通工具详情默认可折叠，超长实时输出限制为 120,000 字符。
 
-The renderer later reconstructs ordering and ownership from array indexes,
-timestamps, content shapes, and synthetic flags. This is the main source of
-transient mis-ordering and layout movement.
+`sessions_yield` 等没有结果正文的长等待工具仍显示为运行中卡片，不能因为 output 为空就误判完成。合法 `update_plan` 是特殊投影：始终显示有序计划卡；不合法输入回退为普通工具卡，以保留诊断信息。
 
-The main-process Cowork/SQLite message model is a separate projection. It
-continues to own durable JustDo session state and offline/fallback behavior, but
-it must not compete with `ChatController` as the primary live-display owner.
+### 4.3 Content
 
-## Evidence From OpenClaw
+Content item 表示 Assistant 可读回答，状态为 streaming/completed/interrupted，带 `delta`、`snapshot` 或 `replaceable` 来源模式。工具前后的回答可以形成多个内容项，保持实际时间顺序，而不是把全 turn 强行压成一段文字。
 
-The implementation should port or adapt the following current OpenClaw
-mechanisms instead of recreating weaker equivalents:
+### 4.4 Terminal
 
-### Agent event contract
+abort 和 run 级 error 生成 terminal item，确保没有自然回答的执行也有清晰结尾。正常 final 不额外制造噪声终端行。
 
-`../openclaw/src/infra/agent-events.ts` defines `AgentEventPayload` with:
+## 5. Reducer 规则
 
-- `runId`
-- `seq`
-- `stream`
-- `ts`
-- `sessionKey`
-- `agentId`
-- `data`
+事件归约必须满足：
 
-`seq` is the per-run ordering field. JustDo currently reads `payload.aseq` in
-the renderer. `aseq` may appear in condensed log output, but it is not the
-canonical event payload field.
+1. 先校验 session，再校验 run 与 lifecycle；
+2. sequence 重复或倒退时不重复应用；
+3. 工具事件按 `toolCallId` 更新同一 item；
+4. thinking、tool、content 按首次出现的顺序留在 timeline；
+5. terminal 关闭 turn 后不再接受普通增量；
+6. 每个可见变化增加 transcript `revision`；
+7. reducer 不访问 DOM、不请求网络，也不翻译文案。
 
-### Tool streaming
-
-`../openclaw/ui/src/ui/app-tool-stream.ts` provides useful behavior:
-
-- A Tool event only requires `toolCallId`; a missing name becomes `tool`.
-- Tool updates are synchronized at an 80 ms cadence.
-- Tool output is bounded.
-- The live Tool list is bounded.
-- A Content segment records the `toolCallId` that follows it.
-- Tool state is keyed by `toolCallId`.
-
-### Stream/history reconciliation
-
-`../openclaw/ui/src/ui/chat/stream-reconciliation.ts` demonstrates:
-
-- Materializing visible Content before clearing stream overlays.
-- Detecting which live Tool calls are already persisted.
-- Pruning only the persisted portion of live state.
-- Preserving a visible stream until history replaces it.
-- Inserting materialized Content before the Tool it preceded.
-
-`../openclaw/ui/src/ui/chat/tool-message-refs.ts` isolates Tool reference
-extraction from provider/transcript spelling differences.
-
-### Lifecycle
-
-`../openclaw/ui/src/ui/chat/run-lifecycle.ts` centralizes terminal state and
-protects local terminal state from stale session polling.
-
-### Rendering and scrolling
-
-`../openclaw/ui/src/ui/views/chat.ts` uses:
-
-- Session-scoped ChatItem caching.
-- Lit `guard`.
-- Keyed Lit `repeat`.
-
-`../openclaw/ui/src/ui/app-scroll.ts` and its tests provide a single-owner
-scroll-follow model that distinguishes user scrolling from programmatic
-scrolling.
-
-OpenClaw does not currently provide JustDo's complete live Thinking
-presentation. Its mechanisms are therefore a baseline, not a drop-in renderer.
-
-## Protocol and Feasibility Constraints
-
-The implementation must keep three ordering and identity domains separate:
-
-1. `GatewayEventFrame.seq` orders WebSocket frames for one connection. It is
-   useful for transport-gap diagnostics, but it resets with a new connection
-   and is not a run timeline ID.
-2. `AgentEventPayload.seq` orders Agent events within one run. This is the
-   canonical sequence for Thinking, Tool, assistant snapshot, item, compaction,
-   and lifecycle events.
-3. The `seq` carried by a `chat` payload belongs to the chat event contract.
-   `final`, `aborted`, and `error` are states of `event: "chat"`; they must not
-   be compared with an Agent event sequence.
-
-Gateway coalescing can legitimately create gaps in Agent sequence numbers.
-Missing numbers are not corruption. The reducer may reject a repeated or older
-Agent sequence for the same admitted run, but it must never require contiguity.
-
-`agent` and `session.tool` are alternate delivery routes for the same Agent
-payload. They are normally sent to disjoint recipient sets, but reconnect and
-subscription transitions must still be treated as at-least-once delivery.
-
-The payload fields `sessionId`, `lifecycleGeneration`, and `spawnedBy` are not
-all required for rendering, but they must survive normalization when present:
-
-- `sessionId` prevents a terminal event from a pre-reset run from mutating the
-  newly rotated session.
-- `lifecycleGeneration` distinguishes events across a Gateway lifecycle.
-- `spawnedBy` helps keep subagent/title/auxiliary runs out of the main thread.
-
-Phase 0 must also prove what the bundled Gateway history retains. In particular,
-live event order, archived Thinking segments, and transient Tool updates may not
-all survive a cold reload. This refactor must not invent a second persistence
-format. Therefore:
-
-- Live-to-final continuity must preserve exact observed order.
-- Warm history reconciliation must preserve stable IDs wherever transcript
-  metadata proves identity.
-- After a cold reload, the UI may only show the chronology and detail present
-  in authoritative Gateway history.
-- If history collapses multiple live process events, show a truthful degraded
-  summary; do not fabricate event-level order, duration, or counts.
-- Exact cross-restart process-detail parity is an acceptance criterion only if
-  Phase 0 fixtures prove the required metadata is persisted.
-
-## Problems to Remove
-
-### Correctness
-
-1. Tool ownership falls back to the previous assistant by timestamp and can
-   temporarily attach a current-turn Tool to the previous turn after final.
-2. Abort and error paths clear visible Thinking, Tool, and Content state.
-3. Tool updates missing `name` can be ignored.
-4. Event sequence is logged but not used as a monotonic reducer guard.
-5. Missing `chat.final` can leave stream presentation in an ambiguous state.
-6. History replacement depends too heavily on text and timestamp heuristics.
-7. Parallel Tools and multiple partial results do not map cleanly to
-   `streamSegments[i]` and `toolMessages[i]`.
-8. Thinking moves between a standalone row, a stream attachment, and a nested
-   cluster depending on which event arrives next.
-
-### Rendering performance
-
-1. Every stream notification directly requests a Lit update.
-2. A stream-only update rebuilds and regroups history.
-3. Every Lit update schedules Minimap work, search work, and Mermaid scanning.
-4. Live synthetic objects weaken WeakMap caching.
-5. Tool output and Markdown detail can be created even when not visible.
-6. The four core chat files are large mixed-responsibility modules.
-
-### Scrolling
-
-1. React observes shadow-DOM mutations and attempts to follow the bottom.
-2. Lit separately handles Thinking scroll and Minimap state.
-3. The near-bottom threshold can take control back after a deliberate user
-   scroll.
-4. Tool disclosure, images, and Mermaid can change height after the scroll
-   decision.
-5. The Minimap calculates destination from message index rather than actual DOM
-   anchors.
-
-### Visual hierarchy
-
-1. Thinking, Tool timelines, nested details, assistant bubbles, and group
-   clusters compete for hierarchy.
-2. Successful process detail occupies too much of the main transcript.
-3. The final answer does not consistently dominate the visual hierarchy.
-4. Tool input summaries can expose noisy raw JSON in the primary reading flow.
-5. Running, success, failure, cancellation, and interruption are not expressed
-   through one consistent status system.
-6. Completed Tool rows disappear or regroup in ways that cause layout jumps.
-7. Assistant Content uses inconsistent bubble geometry and available width.
-8. Mobile/focus/reduced-motion behavior is incomplete.
-
-## Final Product Decisions
-
-### Flat timeline
-
-There is no semantic or DOM nesting between Thinking, Tool, and Content.
-
-The chronological raw sequence:
-
-```text
-Thinking A
-Tool A
-Thinking B
-Tool B
-Content A
-Thinking C
-Tool C
-Content B
-```
-
-projects to:
-
-```text
-Process summary: Thinking × 2 · Tool × 2
-Content A
-
-Process summary: Thinking × 1 · Tool × 1
-Content B
-```
-
-### Hard summary boundaries
-
-A process summary never crosses:
-
-- Content
-- User message
-- System/divider message
-- Error or interrupted terminal row
-- Session/run boundary
-
-This preserves chronology. It is forbidden to combine all Thinking and Tools
-from an entire assistant turn into a summary positioned before multiple Content
-blocks.
-
-### Successful process auto-archive
-
-- Running Thinking remains visible.
-- Running Tool remains visible.
-- Successfully completed Thinking is archived.
-- Successfully completed Tool is archived.
-- Archived data remains available through the summary detail surface.
-- Archiving is a presentation projection, not data deletion.
-
-Use a short minimum-visible interval for very fast Tool calls so users can
-perceive that work occurred:
-
-- Default minimum visible time: 500 ms.
-- Fade duration: 120 ms.
-- Under `prefers-reduced-motion`, remove the fade and do not add an artificial
-  animation delay.
-
-The reducer must not depend on UI timers. Timers belong to the presentation
-scheduler and can only delay hiding; they cannot change canonical status.
-
-### Failure and interruption
-
-- A failed Tool remains as a visible compact error row.
-- A cancelled Tool remains visible until terminal reconciliation.
-- An active Thinking item at abort becomes `interrupted`.
-- Partial Content remains visible.
-- The process summary includes error/interruption counts.
-- The user may dismiss a visible error into its summary after reading it.
-- Error detail must not disappear merely because history refreshes late.
-
-### Summary detail
-
-Clicking a process summary expands the archived process inline at the summary's
-original timeline position:
-
-```text
-1. Thinking                                      2.1s
-2. Read src/app.ts                               0.3s
-3. Thinking                                      1.6s
-4. Run tests                                     7.8s
-5. Read test output                              0.6s
-```
-
-Tool input and large output are not created eagerly in the main transcript DOM.
-
-## Canonical Display Model
-
-Add a renderer-owned model under:
-
-```text
-src/renderer/libs/openclaw-chat/model/
-```
-
-Recommended types:
-
-```ts
-type TurnStatus = 'running' | 'final' | 'aborted' | 'error';
-type ProcessStatus = 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
-
-interface ChatTranscriptState {
-  sessionKey: string;
-  sessionId: string | null;
-  persistedMessages: TranscriptMessage[];
-  historySource: 'gateway' | 'sqlite-fallback' | 'optimistic';
-  historyGeneration: number;
-  activeTurn: AssistantTurn | null;
-  recentRuns: Map<string, RecentRunState>;
-  revision: number;
-}
-
-interface AssistantTurn {
-  id: string;
-  runId: string;
-  sessionId: string | null;
-  lifecycleGeneration: string | null;
-  sessionKey: string;
-  status: TurnStatus;
-  lastAgentSeq: number;
-  startedAt: number;
-  endedAt?: number;
-  items: TurnItem[];
-  toolById: Map<string, ToolItem>;
-}
-
-interface RecentRunState {
-  runId: string;
-  sessionId: string | null;
-  lifecycleGeneration: string | null;
-  lastAgentSeq: number;
-  terminalStatus: Exclude<TurnStatus, 'running'> | null;
-  expiresAt: number;
-}
-
-type TurnItem = ThinkingItem | ToolItem | ContentItem | TerminalItem;
-
-interface BaseTurnItem {
-  id: string;
-  runId: string;
-  firstSeq: number;
-  lastSeq: number;
-  startedAt: number;
-  updatedAt: number;
-}
-
-interface ThinkingItem extends BaseTurnItem {
-  type: 'thinking';
-  status: ProcessStatus;
-  text: string;
-}
-
-interface ToolItem extends BaseTurnItem {
-  type: 'tool';
-  status: ProcessStatus;
-  toolCallId: string;
-  name: string;
-  input?: unknown;
-  output?: string;
-  error?: string;
-}
-
-interface ContentItem extends BaseTurnItem {
-  type: 'content';
-  status: 'streaming' | 'completed' | 'interrupted';
-  text: string;
-  sourceMode: 'delta' | 'snapshot' | 'replaceable';
-}
-
-interface TerminalItem extends BaseTurnItem {
-  type: 'terminal';
-  status: 'aborted' | 'error';
-  message: string;
-}
-```
-
-Completed Thinking and Tool items remain in `AssistantTurn.items`. A selector
-projects them into summaries; the reducer does not replace them with counts.
-
-`recentRuns` is a small bounded run-admission/tombstone ledger, not transcript
-persistence. It prevents a late event from a completed or pre-reset run from
-reopening or terminating the current turn. Define explicit rules for:
-
-- Binding the temporary run ID used before `chat.send` acknowledgement to the
-  first valid Gateway run ID for the same session.
-- Rejecting an unrelated run while another main-thread run is active.
-- Admitting an operator attachment to an already-running session.
-- Ignoring late terminal and Agent events for a tombstoned run.
-- Clearing run admission, timers, and async work on session switch, session
-  reset, Gateway lifecycle change, and component disposal.
-- Bounding tombstones by count and time without allowing an evicted stale run
-  to mutate the active turn.
-
-`historySource` is required because Gateway history, SQLite fallback, and
-optimistic local messages do not have equal authority. Only a successful
-Gateway response for the current `historyGeneration` may prove persistence and
-prune live state. A cache or optimistic projection can improve first paint but
-cannot erase a newer Gateway-backed or live tail.
-
-## Normalized Event Contract
-
-Create shared pure normalizers that can be consumed by the renderer and main
-process without importing Electron, DOM, or process state. Do not force Agent,
-chat-terminal, and transport-frame sequences into one type.
-
-Recommended location:
-
-```text
-src/shared/openclaw/agentEvent.ts
-```
-
-```ts
-interface NormalizedAgentEvent {
-  runId: string;
-  sessionKey: string | null;
-  sessionId: string | null;
-  lifecycleGeneration: string | null;
-  agentId: string | null;
-  spawnedBy: string | null;
-  agentSeq: number;
-  frameSeq: number | null;
-  deliveryEvent: 'agent' | 'session.tool';
-  stream: string;
-  timestamp: number;
-  data: Record<string, unknown>;
-}
-
-interface NormalizedChatEvent {
-  runId: string | null;
-  sessionKey: string;
-  frameSeq: number | null;
-  state: 'delta' | 'final' | 'aborted' | 'error';
-  message?: unknown;
-  deltaText?: string;
-  replace: boolean;
-  errorMessage?: string;
-}
-```
-
-Rules:
-
-1. Read canonical `payload.seq` into `agentSeq`; record outer frame `seq`
-   separately as `frameSeq`.
-2. Allow `payload.aseq` only as a named compatibility fallback for the currently
-   bundled patched runtime if evidence shows that it reaches the client.
-3. Reject an Agent event with neither a valid run nor a valid Agent sequence from the
-   ordered reducer; it may still be logged as an unsequenced diagnostic event.
-4. Normalize session aliases before accepting an event.
-5. Do not accept a session-less event for a different active run.
-6. Never log raw Tool input, output, Thinking, or Content.
-7. Diagnostic logs may contain run ID prefixes, sequence, stream, status, and
-   content lengths.
-8. Validate finite safe-integer sequences and finite timestamps; malformed
-   fields must not poison reducer ordering.
-9. Normalize `event: "chat"` independently. Its terminal state is authoritative
-   only after run/session admission; its sequence is not an Agent sequence.
-10. Preserve unknown fields only at the normalization boundary when needed for
-    diagnostics. Canonical display state should contain an allowlisted shape.
-
-## Reducer Rules
-
-### Sequence handling
-
-- Maintain `lastAgentSeq` per admitted run, including bounded terminal
-  tombstones.
-- Allow gaps because Gateway text-event coalescing can skip intermediate Agent
-  sequence numbers.
-- Ignore exact duplicate delivery across `agent` and `session.tool`.
-- Ignore `agentSeq <= lastAgentSeq` for the same admitted run. If captured
-  fixtures ever prove distinct payloads can share one Agent sequence, change
-  the dedupe key to a documented upstream identity instead of guessing by
-  stream.
-- Keep Tool partial ordering by the same run sequence.
-- Never compare a chat event sequence or Gateway frame sequence to
-  `lastAgentSeq`.
-- Reset active sequence state only when a new run is admitted; retain the old
-  run tombstone long enough to reject delayed delivery.
-- Record frame-sequence gaps for diagnostics only. Reconnect must create a new
-  transport generation before frame ordering restarts.
-
-All reducer tests use an injected clock and deterministic IDs. Event timestamps
-are validated data; presentation elapsed time uses an injected monotonic clock
-so wall-clock adjustments cannot produce negative durations.
-
-### Thinking
-
-1. A Thinking event starts a Thinking item if the visible tail is not already
-   running Thinking.
-2. Consecutive Thinking snapshots update the same item.
-3. If a snapshot extends the previous text, update it.
-4. If a snapshot is replaceable, replace it.
-5. If it is a delta, append it.
-6. A transition to Tool or Content completes the active Thinking item.
-7. Thinking after Content creates a new Thinking item after that Content.
-8. Final completes Thinking; abort/error interrupts it.
-
-### Tool
-
-1. `toolCallId` is required.
-2. `name` is optional after normalization and defaults to the existing name or
-   `tool`.
-3. Start creates a Tool item at the current chronological position.
-4. Update/result mutates the same Tool item by `runId + toolCallId`.
-5. A result before a locally observed start creates a Tool item using the event
-   timestamp and placeholder name.
-6. Non-empty input replaces empty input; empty updates never erase known input.
-7. Final output replaces partial output.
-8. Explicit error flags take precedence over text-based error inference.
-9. Abort/error changes running Tools to cancelled/failed instead of removing
-   them.
-10. Tool output is bounded before it reaches display state.
-
-### Content
-
-1. Plain delta appends to the active Content item.
-2. Full snapshot updates the active Content item without duplicating a prefix.
-3. `replace=true` replaces the current replaceable Content.
-4. Tool start closes the current Content item before inserting the Tool.
-5. Content after Tool creates a new Content item.
-6. Empty reading state is a turn status, not an empty Content item.
-7. Silent reply and heartbeat filtering happens before timeline projection.
-
-### Terminal events
-
-- `event: "chat"` with `state: "final"` completes the admitted active turn.
-- `event: "chat"` with `state: "aborted"` preserves partial state and adds a
-  terminal row when useful.
-- `event: "chat"` with `state: "error"` preserves partial state and adds a
-  normalized error row.
-- A chat terminal for a different, tombstoned, pre-reset, or stale lifecycle
-  run cannot terminate the active turn.
-- Lifecycle end without chat terminal materializes visible state and schedules
-  history reconciliation.
-- Preserve the existing compaction invariant: lifecycle `end` cannot trigger
-  fallback finalization while `session.operation` or Agent `compaction` is in
-  flight. Compaction completion resumes the guarded terminal fallback.
-- A later authoritative history message replaces materialized fallback content
-  only after coverage is proven.
-
-The terminal fallback delay, post-final history retry policy, and retry ceiling
-must be constants with fake-timer tests. Every timer is keyed by session, run,
-session ID, and lifecycle generation and is cancelled on terminal delivery,
-session change/reset, reconnect generation change, compaction state change, or
-component disposal.
-
-## Timeline Projection and Process Compaction
-
-Create a pure selector:
-
-```text
-src/renderer/libs/openclaw-chat/model/project-turn-items.ts
-```
-
-Input:
-
-- Persisted transcript messages.
-- Active turn items.
-- Presentation archive timing state.
-
-Output:
-
-```ts
-type ChatTimelineItem =
-  | UserTimelineItem
-  | ContentTimelineItem
-  | ActiveThinkingTimelineItem
-  | ActiveToolTimelineItem
-  | ProcessSummaryTimelineItem
-  | TerminalTimelineItem
-  | DividerTimelineItem;
-```
-
-Compaction algorithm:
-
-```text
-currentSummary = null
-
-for item in chronological items:
-  if item is completed successful Thinking or Tool:
-    create currentSummary if absent
-    archive item into currentSummary
-    continue
-
-  if item is running Thinking or Tool:
-    emit currentSummary if it has archived items
-    emit active process item
-    continue
-
-  if item is failed/cancelled/interrupted process:
-    emit currentSummary if it has archived items
-    emit visible diagnostic item
-    continue
-
-  if item is Content/User/Divider/Terminal:
-    emit currentSummary if it has archived items
-    currentSummary = null
-    emit boundary item
-
-emit currentSummary if it has archived items
-```
-
-Every output item has a stable key derived from the source run/item IDs. Count
-changes update a summary node in place.
-
-Presentation archive timing stores `visibleSince` by stable item ID. A
-canonically completed Tool that has not met the minimum-visible interval is
-projected as a short-lived completed row, not changed back to `running`. When
-the interval expires, one scheduled projection update archives it. Reduced
-motion removes the fade but does not bypass the minimum-visible interval unless
-the product decision is explicitly changed.
-
-## History Reconciliation
-
-Add a dedicated reconciler rather than placing more history guards inside the
-controller.
-
-Recommended location:
-
-```text
-src/renderer/libs/openclaw-chat/model/history-reconciler.ts
-```
-
-Matching priority:
-
-1. Run ID and transcript metadata.
-2. Tool call ID.
-3. Gateway transcript sequence/entry ID.
-4. Stable message ID.
-5. Role, normalized text, and bounded timestamp tolerance as a final fallback.
-
-Required behavior:
-
-- Active live state wins while a run is active.
-- History can replace only the subset it proves persisted.
-- Persisted Tool IDs prune the corresponding live Tools.
-- Persisted Content replaces the corresponding materialized Content.
-- A stale shorter history response cannot erase a newer visible tail.
-- A final message must not briefly move a Tool to the previous turn.
-- Reconciliation must be idempotent.
-- Session switching invalidates pending async results using a request version.
-- SQLite fallback and optimistic messages never count as authoritative coverage
-  for pruning active items.
-- Only the newest successful Gateway history request for the current session,
-  session ID, and request generation may replace the Gateway-backed projection.
-- Session reset compares `sessionId`, not only the reusable `sessionKey`.
-- Reconnect and Gateway restart cannot let an old lifecycle generation
-  overwrite a newer active or terminal state.
-- A cold-history item receives a deterministic key from durable transcript
-  identity. If no durable identity exists, use a documented content-derived
-  fallback and do not claim DOM identity across reload.
-- Archived live detail may be pruned only when history proves equivalent
-  coverage. If history has less detail, retain the live detail for the current
-  mounted session and mark it as non-durable.
-
-Port the useful invariants from OpenClaw's `stream-reconciliation.ts` and
-`tool-message-refs.ts`, adapted to the flat Thinking-aware model.
-
-## Visual and Interaction Specification
-
-### Transcript layout
-
-- Use one centered reading column.
-- Recommended maximum readable Content width: 820 px.
-- Wide artifacts, tables, code, Canvas, and Tool detail may expand to 1040 px.
-- Desktop horizontal padding: 24 px.
-- Compact window padding: 12 px.
-- User messages remain visually distinct and right-aligned.
-- Assistant Content should read as document text, not as a stack of white cards.
-- Avoid changing assistant border radius depending on stream/group state.
-
-### Assistant turn identity
-
-Render assistant identity once per visible turn:
-
-```text
-Avatar  Assistant · Working · 12s
-        timeline items...
-        model · timestamp · actions
-```
-
-- Do not repeat the avatar for every Thinking/Tool/Content transition.
-- Footer remains in a stable location.
-- During a run, the header status may change from Starting to Thinking, Tool,
-  Responding, then Done/Interrupted.
-- Status text must be localized and not inferred from visible assistant text.
-
-### Process summary
-
-Default summary:
-
-```text
-Thinking × 2 · Tool × 3 · 12.4s
-```
-
-Variants:
-
-```text
-Thinking × 1 · Tool × 2 · 1 failed
-Tool × 4 · interrupted
-Thinking × 1
-```
-
-- One quiet, single-line row.
-- No card border by default.
-- Use a disclosure/inspect icon and a minimum 32 px click target.
-- Do not show raw input snippets in the main summary.
-- A count update must not recreate the summary element.
-- Clicking opens the process drawer.
-
-### Running Thinking
-
-- Show a Thinking label, activity indicator, elapsed time, and a short live tail.
-- Limit the primary preview to approximately six visual lines.
-- Use a bottom fade for overflow.
-- Do not create a nested auto-scrolling region.
-- Provide “View current thinking” to open the process drawer.
-- Do not italicize every line; this reduces readability for long reasoning.
-- On completion, archive it into the summary.
-
-### Running Tool
-
-Compact row:
-
-```text
-Run tests                         Running…  7.8s
-```
-
-- Tool-specific icon when available.
-- Human display title, not raw internal identifier.
-- A sanitized one-line detail may be shown for safe fields such as a file name.
-- Never show raw JSON arguments as the main-row subtitle.
-- Output partials do not continuously expand row height.
-- Successful completion archives the row.
-- Failure changes it to a visible error row.
-
-### Failed Tool
-
-```text
-Run tests                         Failed
-Process exited with code 1                       View details
-```
-
-- Remains in the main timeline until dismissed or the user opens its detail.
-- Error detail opens in the process drawer.
-- Copyable diagnostic text is provided where safe.
-- Summary records the failure even after dismissal.
-
-### Content
-
-- Content is the primary visual element.
-- Streaming Content keeps one stable node.
-- Use a readable 15 px desktop body size and approximately 1.6 line height.
-- Preserve Markdown block spacing without excessive vertical gaps.
-- Copy appears on hover/focus; touch layouts expose it through a visible action
-  button or overflow menu.
-- Code blocks retain language, copy action, horizontal scroll, and plain-text
-  fallback.
-- Tables scroll horizontally inside their own region.
-- Long unbroken text cannot widen the transcript.
-
-### Waiting and loading
-
-Differentiate:
-
-- Connecting to Gateway.
-- Loading history.
-- Prompt accepted, waiting for first event.
-- Thinking.
-- Running a Tool.
-- Responding.
-- Reconnecting.
-
-Do not use the same three-dot indicator for every state. The transcript should
-show a compact localized status row tied to the active assistant turn.
-
-Initial history loading should use a restrained skeleton only when no cached or
-optimistic content exists. Never replace an already visible transcript with a
-full loading screen during refresh.
-
-### Empty state
-
-The main Cowork view may own the product empty state. The message component
-should render either:
-
-- Nothing plus an accessible loading/status announcement, or
-- A small generic empty placeholder when used standalone.
-
-It must not flash “No messages” between session switch and history load.
-
-### Inline process detail
-
-- Disclosure stays at the process summary's original timeline position.
-- Items are chronological, not nested by assistant message.
-- Thinking text is selectable and copyable.
-- Tool input and large output remain absent from the main transcript DOM.
-- Disclosure state is keyed by the stable summary ID and survives live count
-  updates.
-
-### Scroll behavior
-
-Introduce one `ChatScrollController` owned by the Lit chat surface.
-
-State:
-
-```ts
-interface ChatScrollState {
-  mode: 'follow' | 'paused';
-  isProgrammatic: boolean;
-  newItemsBelow: number;
-  lastKnownBottomDistance: number;
-}
-```
-
-Rules:
-
-1. Start in follow mode on initial session load.
-2. While following, batch scroll-to-bottom after render.
-3. Any meaningful user scroll upward enters paused mode immediately.
-4. Paused mode is never cancelled by a near-bottom heuristic alone.
-5. Show “N new messages” or “Jump to latest” while paused.
-6. Clicking the button returns to follow mode.
-7. Programmatic scroll events cannot be mistaken for user intent.
-8. Preserve viewport anchor when archived process rows disappear.
-9. Image, Canvas, drawer, Tool detail, and Mermaid height changes must not move
-   a paused user's reading position.
-10. Reset scroll state on session change.
-
-Remove the React `MutationObserver` auto-scroll path from
-`ChatMessageDisplay.tsx`.
-
-### Minimap
-
-Retain the Minimap as a left-side turn navigation rail, but replace its old
-message-count positioning:
-
-- Create one entry for each user turn.
-- Show the user message as the bold first line in the preview and the associated
-  assistant response as subdued text below it.
-- Bind each entry to the real user-message `data-history-key` DOM anchor.
-- Resolve the active entry from anchor positions in the scroll viewport.
-- Update the current assistant preview during incremental Content without
-  creating a second entry.
-- Keep Tool and Thinking content out of the compact text preview.
-- Hide the rail on narrow viewports where it would overlap the transcript.
-
-This avoids the old proportional scroll estimate, remains stable when
-Tool/Thinking disclosure changes height, and coexists with the jump-to-latest
-affordance.
-
-### Search
-
-- Search indexing runs when transcript revision or query changes, not on every
-  stream paint.
-- Search results reference stable timeline item IDs.
-- Active Thinking may be searchable, but archived Thinking should be searched
-  through the process drawer rather than injecting hidden marks into the main
-  transcript.
-- Search navigation may temporarily pause auto-follow.
-
-### Mermaid and rich content
-
-- Render Mermaid only for completed Content.
-- Use `IntersectionObserver` or equivalent visibility gating.
-- Do not rescan every existing diagram after every stream update.
-- Theme changes may rerender visible diagrams only.
-- Errors remain local to the diagram block.
-- KaTeX, syntax highlight, and Mermaid must never block plain text display.
-
-### Motion
-
-Allowed motion:
-
-- Running status pulse.
-- 120 ms process-row archive fade.
-- Drawer transition.
-- New-message button entrance.
-
-Avoid:
-
-- Height animation for long Tool output.
-- Repeated whole-message fade-in.
-- Animating layout when Content grows.
-- Infinite animation when the run is no longer active.
-
-Implement `prefers-reduced-motion: reduce` for every animation and smooth scroll.
-
-### Accessibility
-
-- Transcript root uses `role="log"` with controlled live announcements.
-- Do not mark the entire rapidly changing Content tree as assertive live text.
-- Announce state transitions such as Tool failed or response completed through a
-  small polite status region.
-- Summary and drawer controls use buttons with explicit accessible names.
-- Every icon-only action has an accessible label.
-- Tool status is communicated by text, not color alone.
-- Focus remains stable when an active process row archives.
-- If the focused row is archived, move focus to its summary.
-- Drawer traps focus and restores it to the originating summary on close.
-- Minimum interactive target: 32 px desktop, 40 px touch layouts.
-- All foreground/status colors must pass the appropriate contrast threshold.
-
-### Responsive behavior
-
-Test at:
-
-- 320 px
-- 480 px
-- 760 px
-- 1024 px
-- 1440 px
-
-Rules:
-
-- No fixed `calc(100% - 44px)` assumptions tied to an avatar that may be hidden.
-- Avatar and turn body use a grid with a collapsible avatar column.
-- User bubbles max out at approximately 88% on narrow windows.
-- Assistant Content uses the full available reading width.
-- Process summary stays on one line when possible and truncates secondary
-  duration/status before counts.
-- Drawer becomes a bottom/full-screen sheet under the compact breakpoint.
-- Tool detail and tables cannot create page-level horizontal overflow.
-
-### Design tokens
-
-Move chat styling to semantic tokens rather than scattered hard-coded colors:
-
-```text
---chat-surface
---chat-surface-subtle
---chat-text
---chat-text-muted
---chat-border
---chat-accent
---chat-success
---chat-warning
---chat-danger
---chat-process-running
---chat-user-surface
---chat-code-surface
-```
-
-Use the existing app theme as the source of these variables. Dark mode should
-not require a second large set of component-specific overrides.
-
-## Component Structure
-
-Recommended split:
-
-```text
-src/renderer/libs/openclaw-chat/
-  components/
-    justdo-chat.ts
-    chat-thread.ts
-    assistant-turn.ts
-    user-turn.ts
-    process-summary.ts
-    active-thinking-row.ts
-    active-tool-row.ts
-    failed-tool-row.ts
-    content-block.ts
-    message-footer.ts
-    new-messages-indicator.ts
-    process-detail-drawer.ts
-  controllers/
-    chat-scroll-controller.ts
-    stream-render-scheduler.ts
-  model/
-    agent-event-reducer.ts
-    chat-transcript-state.ts
-    history-reconciler.ts
-    project-turn-items.ts
-    transcript-selectors.ts
-  styles/
-    thread-styles.ts
-    turn-styles.ts
-    process-styles.ts
-    content-styles.ts
-    drawer-styles.ts
-```
-
-`justdo-chat.ts` should eventually contain only:
-
-- Public properties.
-- Controller subscription.
-- Top-level state selection.
-- Top-level layout.
-- Event bridging.
-
-Do not move message parsing into React.
-
-## Rendering Performance Plan
-
-### Scheduling
-
-- Normalize every event immediately.
-- Apply reducer updates immediately.
-- Publish visual updates at most once per animation frame.
-- Tool partial output may use an 80 ms throttle.
-- Terminal, error, approval, and user-interaction events force a prompt flush.
-
-### Static versus live projection
-
-Maintain separate cached projections:
-
-```text
-persisted transcript projection
-active turn projection
-combined keyed timeline
-```
-
-A Thinking delta must not normalize or regroup persisted history.
-
-### Keyed DOM
-
-Use Lit `repeat` keyed by:
-
-- Persisted message ID.
-- Run ID plus Turn item ID.
-- Process summary segment ID.
-- Divider ID.
-
-Disclosure, focus, selection, and drawer state must be stored by stable IDs, not
-by element position.
-
-### Lazy detail
-
-- Tool input/output DOM is created on disclosure.
-- Archived Thinking detail is created when the drawer item is selected.
-- Canvas and media preview keep existing safety checks.
-- Mermaid rendering is viewport-gated.
-- Large code highlighting may be deferred until Content completes.
-
-### Bounds
-
-Initial reference bounds:
-
-- Live Tool entries: 50.
-- Tool output retained for immediate UI: 120,000 characters maximum.
-- Thinking and Content accumulation: define per-item and per-turn character
-  limits from Phase 0 measurements; truncation must be explicit and preserve a
-  useful tail or authoritative final message.
-- Recent run tombstones, replay diagnostics, cached projections, and pending
-  timers: define fixed count/time bounds and cleanup on session disposal.
-- Thinking preview: six visual lines.
-- Process summary title: one line.
-- History render window: retain current count/character budgeting, then measure
-  whether virtualization is necessary.
-
-Tool input/output and Thinking may contain secrets. Detail retrieval continues
-to use the existing narrow Main IPC boundary where applicable. Apply the
-existing sanitizer/CSP rules to rendered rich content, keep detail collapsed by
-default, redact known credential fields before display, and never place
-unbounded raw objects in attributes, logs, accessibility text, or hidden DOM.
-
-Do not add virtualization until keyed rendering, caching, and history-window
-expansion have been measured. Variable-height Markdown, Canvas, and drawers
-make premature virtualization risky.
-
-## Implementation Phases
-
-### Phase 0: Characterization and visual baseline
-
-No behavior changes.
-
-- Capture sanitized real Gateway event sequences from native logs.
-- Build deterministic event replay fixtures.
-- Capture both Gateway frame sequence and payload Agent sequence, delivery event
-  name, `sessionId`, lifecycle generation, reconnect boundary, and chat state
-  without capturing message/tool content.
-- Verify the bundled patched runtime payload rather than inferring the client
-  contract from condensed `aseq` log labels.
-- Record a history capability matrix for which run IDs, entry/message IDs, Tool
-  IDs, Thinking blocks, ordering metadata, and timestamps survive warm refresh
-  and cold app restart.
-- Record current Electron behavior for:
-  - Thinking -> Tool -> Content.
-  - Multiple Tool calls.
-  - Final/history delay.
-  - Abort and error.
-  - User scrolling during a long stream.
-- Capture light/dark screenshots at the responsive widths.
-- Add render counters and safe performance timing in development/test builds.
-- Record:
-  - Gateway events received.
-  - Reducer updates.
-  - Lit renders.
-  - long animation frames/tasks.
-  - unexpected scroll movement.
-- Measure a repeatable baseline and set explicit regression budgets for
-  persisted-projection rebuilds, visual publishes, retained DOM/heap growth,
-  and reference Electron input latency. Store environment details with the
-  result; do not use an undocumented claim that the replay merely “feels
-  responsive.”
-- Update `docs/architecture/15-chat-rendering.md` to describe the actual state
-  owners.
-
-Exit criteria:
-
-- Every reported issue has a replay fixture or a documented manual scenario.
-- Existing UI screenshots and recordings are available for comparison.
-- Run admission, reset/reconnect behavior, and cold-history degradation are
-  documented from evidence.
-- Any cross-restart acceptance claim unsupported by Gateway history is removed
-  or narrowed before implementation starts.
-
-### Phase 1: Protocol normalization
-
-- Add the separate shared normalized Agent and chat event types.
-- Switch canonical ordering from `aseq` to `seq`.
-- Add a narrow, tested compatibility fallback only if runtime evidence requires
-  it.
-- Normalize Tool phases and output shapes.
-- Add run/session/sessionId/lifecycle/sequence isolation tests.
-- Keep Gateway frame sequence for diagnostics without using it as Agent order.
-- Use the normalizer in Renderer and Main without merging their state owners.
-- Normalize compaction/session-operation events sufficiently to retain the
-  existing terminal-fallback gating behavior.
-
-No visual behavior change in this phase.
-
-### Phase 2: Flat active-turn reducer
-
-- Add the canonical `AssistantTurn` and `TurnItem` model.
-- Implement Thinking, Tool, Content, and terminal reducer rules.
-- Add `toolCallId` to explicit Content/Tool boundaries.
-- Preserve partial state on abort/error.
-- Allow missing Tool name.
-- Bound Tool output.
-- Add temporary-run binding, active-run admission, terminal tombstones, and
-  deterministic injected clock/ID dependencies.
-- Keep the old renderer active.
-- In development/tests, project both old and new state and compare order,
-  visible text, Tool IDs, and terminal status.
-
-Exit criteria:
-
-- The new reducer passes the event permutation suite.
-- No known fixture requires timestamp-only Tool ownership.
-
-### Phase 3: History reconciliation
-
-- Port/adapt OpenClaw stream reconciliation and Tool reference extraction.
-- Reconcile persisted subsets without clearing unmatched live state.
-- Materialize visible Content for missing terminal events.
-- Prevent stale/regressive history replacement.
-- Prove final Tool ownership by run/tool ID.
-- Make reconciliation idempotent.
-
-Exit criteria:
-
-- Live, final, and history projections are identical for every replay fixture.
-- A delayed history response cannot cause visible reordering or loss.
-
-### Phase 4: Flat timeline projection
-
-- Implement process-summary compaction selector.
-- Remove semantic Thinking/Tool/Content grouping.
-- Add stable keys for every flat timeline item.
-- Keep the existing production renderer intact while the new projection is
-  exercised in development/tests. The following removals occur only at the
-  Phase 5 cutover after replacement components and scroll anchoring are ready:
-  - `splitThinkingToolsGroup`
-  - `renderThinkingToolsContentGroup`
-  - `thinking-tools-cluster`
-  - assistant mixed/thinking/tool grouping logic
-  - live Thinking re-parenting between timeline and stream
-  - index-based segment/tool zipping
-
-Exit criteria:
-
-- The shadow-render/test DOM order directly matches the projected timeline.
-- Content is always a hard summary boundary.
-- Completed successful process items compact without data loss.
-
-### Phase 5: Message UI rebuild
-
-- Add assistant turn header/footer.
-- Add process summary.
-- Add running Thinking and Tool rows.
-- Add visible failure/interruption rows.
-- Add process detail drawer.
-- Rebuild Content styling and action placement.
-- Add localized strings to both `zh` and `en`.
-- Add responsive and accessibility behavior.
-- Add the Lit-owned scroll anchor primitive before enabling automatic process
-  row removal.
-- Cut over the new renderer as one reviewable change only after the old/new
-  replay comparison passes. Keep a development-only/internal rollback switch
-  through Electron validation; do not expose it as a user-facing feature flag.
-- Remove the old nested Tool timeline UI only after cutover proof is recorded.
-
-Exit criteria:
-
-- Visual screenshot review is approved in light/dark and compact/wide layouts.
-- All actions are keyboard accessible.
-- Disclosure state survives live updates.
-- The production path has one renderer owner, and reverting the cutover commit
-  restores the previous path without a data migration.
-
-### Phase 6: Scroll and rendering performance
-
-- Add one Lit-owned scroll controller.
-- Remove React mutation-based auto-scroll.
-- Add new-message/jump-to-latest affordance.
-- Replace the old Minimap with left-side, real-DOM-anchor turn navigation.
-- Add keyed `repeat` and `guard`.
-- Cache persisted transcript projection.
-- Batch stream rendering.
-- Defer Tool detail, search, Markdown enhancement, and Mermaid work.
-- Add reduced-motion handling.
-- Remove the internal rollback switch after Electron stress, accessibility, and
-  scroll proof passes; do not ship two permanent rendering paths.
-
-Exit criteria:
-
-- User scroll position is never stolen while paused.
-- Pure Thinking/Content updates do not rebuild persisted history.
-- Reference stress replay remains responsive.
-
-### Phase 7: Cleanup and documentation
-
-- Delete the old live arrays and heuristics after the new path is authoritative.
-- Delete dead CSS and renderer helpers.
-- Split monolithic styles/modules.
-- Update architecture and feature documentation.
-- Record the OpenClaw reference commit and ported invariants.
-- Run full validation.
-- Verify no timers, observers, subscriptions, cached drawer selections, or
-  pending async history/media results survive component or session disposal.
-
-## Testing Plan
-
-### Reducer tests
-
-Cover:
-
-- Thinking -> Content.
-- Thinking -> Tool -> Content.
-- Content -> Tool -> Content.
-- Thinking -> Tool -> Thinking -> Tool -> Content.
-- Multiple parallel Tools.
-- Tool result without name.
-- Tool result without a locally observed start.
-- Empty arguments followed by non-empty arguments.
-- Partial result followed by final result.
-- Explicit Tool error flags.
-- Duplicate sequence.
-- Older sequence arriving late.
-- Duplicate `agent` and `session.tool` delivery.
-- Agent sequence gaps caused by coalescing.
-- Gateway frame sequence reset after reconnect.
-- Chat payload sequence overlapping an Agent sequence.
-- Delta, snapshot, and replaceable Content.
-- Thinking snapshot reset versus extension.
-- Final with text only.
-- Final with mixed content blocks.
-- Abort during Thinking.
-- Abort during Tool.
-- Error during Content.
-- Lifecycle end without chat terminal.
-- Session switch followed by late events.
-- Session reset with the same `sessionKey` and a new `sessionId`.
-- Late terminal event from a previous lifecycle generation.
-- Temporary pre-ack run ID binding to the authoritative run ID.
-- Unrelated/subagent run while the main turn is active.
-- Gateway reconnect/restart.
-- Lifecycle end during compaction does not finalize until compaction completes.
-- Terminal and history timers are cancelled on session switch and disposal.
-
-### Projection tests
-
-Cover:
-
-- Consecutive completed process items merge into one summary.
-- Content closes the summary segment.
-- Process after Content creates a new summary.
-- Failed Tool remains visible.
-- Dismissing a failed Tool adds it to the correct summary.
-- Summary counts update without changing key.
-- Archived item order is retained for the drawer.
-- User/system/divider boundaries prevent merging.
-
-### History reconciliation tests
-
-Cover:
-
-- History contains none, some, or all current Tool IDs.
-- History contains Tool but not following Content.
-- History contains Content but not the terminal metadata.
-- History returns an older shorter tail.
-- History timestamp is slightly older than the optimistic terminal.
-- Final/history text differs only by a longer persisted suffix.
-- Materialized fallback is replaced exactly once.
-- Reconciliation is idempotent.
-- SQLite fallback cannot prune live state or replace newer Gateway history.
-- An older in-flight Gateway history request cannot win after a newer request,
-  session reset, or reconnect generation.
-- Cold history lacks live-only Thinking/Tool detail and degrades truthfully.
-- Non-durable live detail remains available until the mounted session is
-  disposed or equivalent history coverage is proven.
-
-### Component tests
-
-Verify:
-
-- DOM node identity survives stream updates.
-- Process summary disclosure state survives count updates.
-- Drawer selection survives Tool partial updates.
-- Focus moves safely when a row archives.
-- Failed Tool is keyboard accessible.
-- Copy buttons work on mouse, keyboard, and touch layouts.
-- Tool input/output is absent from DOM until opened.
-- Reduced-motion removes infinite and archive animations.
-- Live announcements contain state transitions, not every token.
-
-### Scroll tests
-
-Port/adapt relevant OpenClaw scroll cases:
-
-- Initial load follows bottom.
-- Stream follows while in follow mode.
-- User scroll-up enters paused mode.
-- Small deliberate scroll-up near the bottom remains paused.
-- Programmatic scroll does not trigger pause.
-- New items increment the below count.
-- Jump-to-latest restores follow.
-- Image/Canvas/Mermaid height changes preserve a paused anchor.
-- Process-row archiving preserves viewport position.
-- Session switch resets scroll state.
-- Search navigation pauses follow without losing the current result.
-
-### Visual tests
-
-Screenshot scenarios:
-
-- Empty/loading/connecting/reconnecting.
-- Waiting for first event.
-- Running Thinking.
-- Running Tool.
-- Process summary plus Content.
-- Multiple summary segments separated by Content.
-- Failed Tool.
-- Interrupted run with partial Content.
-- Long Thinking.
-- Long Tool output drawer.
-- Code, table, Mermaid, attachment, image, Canvas.
-- User and assistant multi-paragraph messages.
-- Light/dark.
-- 320/480/760/1024/1440 px.
-- 100/125/150 percent display scale where the Electron harness permits.
-
-### Performance tests
-
-Reference stress scenario:
-
-- 500 history messages.
-- 50 live Tool entries.
-- 120,000-character Tool output.
-- 20 stream updates per second.
-- Long Markdown Content.
-
-Measure:
-
-- Visual publishes per animation frame.
-- Persisted projection rebuild count.
-- Long frames/tasks.
-- Scroll handler calls and layout reads.
-- DOM node count with drawer closed.
-- Input responsiveness during streaming.
-- Heap/retained-object growth after repeated session switches and drawer opens.
-- Timer, observer, and subscription counts after component disposal.
-
-Avoid brittle machine-specific millisecond assertions in ordinary unit tests.
-Use invariant counters in CI and record frame timing in Electron performance
-proof.
-
-## Acceptance Criteria
-
-### Correctness
-
-- Thinking, Tool, and Content preserve one chronological order during live,
-  terminal, and history states.
-- A Tool never attaches to a previous turn when its run ID identifies the
-  current turn.
-- Older or duplicate sequence events cannot shorten visible state.
-- Abort/error preserves already visible process and partial Content.
-- Missing Tool name never drops its result.
-- Delayed history does not duplicate, erase, or reorder the visible tail.
-- Session switching cannot leak old-session events.
-- A stale run, rotated `sessionId`, or previous Gateway lifecycle cannot
-  terminate or reopen the current run.
-- Agent sequence gaps are accepted, while duplicate/older Agent events are
-  idempotent.
-- Cold reload never invents process chronology or detail absent from Gateway
-  history.
-
-### UX
-
-- There are no nested Thinking/Tool/Content groups in the main transcript.
-- Successful process items automatically compact into the correct summary.
-- Content always remains visible and is the primary hierarchy.
-- Failed/interrupted process remains diagnosable.
-- Opening details does not change main transcript height.
-- User disclosure choices survive streaming updates.
-- The UI never steals scroll position from a paused user.
-- The current run state is understandable without reading raw logs.
-- Touch, keyboard, dark mode, and reduced-motion are supported.
-
-### Performance
-
-- A stream event does not rebuild persisted history projection.
-- Visual publishing is bounded to one update per animation frame, except forced
-  terminal/interaction flushes.
-- Tool partial output is throttled.
-- Closed Tool/Thinking detail is not materialized in the DOM.
-- Existing Mermaid blocks are not rescanned on each token update.
-- The stress replay remains usable without sustained input lag or scrolling
-  stutter in the reference Electron environment.
-- Phase 0 regression budgets for projection rebuilds, visual publishes,
-  retained memory/DOM, and input latency are met and recorded with the Electron
-  test environment.
-
-### Maintainability
-
-- `justdo-chat.ts` is a thin host rather than a multi-thousand-line renderer.
-- Event normalization, reduction, projection, rendering, and scrolling are
-  separately testable.
-- The old grouping path and old live-state arrays are removed.
-- Architecture documentation matches actual runtime ownership.
-- Transport frame ordering, Agent run ordering, and chat terminal ordering are
-  modeled and tested as separate contracts.
-
-## Validation Commands
-
-During implementation, use focused tests continuously:
-
-```powershell
-npx vitest run src/renderer/libs/openclaw-chat/gateway/chat-controller.test.ts src/renderer/libs/openclaw-chat/pipeline/build-chat-items.test.ts src/renderer/libs/openclaw-chat/components/grouped-render.test.ts
-```
-
-Add focused commands for each new model/controller/component test file.
-
-Before a non-trivial push:
-
-```bash
-npm run lint
-npm run build
-npm run compile:electron
-npm test
-npm run format:check
-```
-
-For documentation-only planning changes:
-
-```bash
-git diff --check
-```
-
-Electron visual and performance proof is required before declaring the UI
-refactor complete. Vite-only rendering is insufficient for final acceptance.
-
-## Implementation Handoff Checklist
-
-A new implementation session should begin by:
-
-1. Read the repository `AGENTS.md`.
-2. Read this document completely.
-3. Start with the Post-cutover Implementation Review and its recommended order;
-   do not assume the cutover means the acceptance criteria are complete.
-4. Inspect the current versions of the five primary chat files and the new
-   `model/`, `controllers/`, and `active-turn-timeline.ts` modules.
-5. Inspect the pinned OpenClaw reference modules listed above.
-6. Confirm the OpenClaw checkout commit; note drift if it changed.
-7. Add failing regression tests before fixing the three Priority 1 defects.
-8. Complete the missing Phase 0 performance and Electron visual evidence before
-   declaring the refactor complete.
-9. Keep any old/new state comparison limited to development/tests.
-10. Do not preserve the old nested grouping as a permanent compatibility path.
-11. Update this document with completed items, commands, and recorded evidence
-    when an approved product decision or implementation status changes.
-
-## Original Planning Verification Notes
-
-The following notes describe the environment in which the original plan was
-written; they are historical context, not the current implementation status.
-
-- No implementation code was changed while producing this plan.
-- The JustDo working tree was clean before this document was added.
-- The local Vite service could start, but no controllable browser instance was
-  available in the planning environment, so Phase 0 must capture the real
-  Electron screenshots and interaction recordings.
-- A focused OpenClaw `pnpm test` invocation entered its project-level test
-  runner and exceeded the planning session's 60-second command window. The
-  referenced OpenClaw test files and source were inspected, but upstream tests
-  were not claimed as newly executed proof in this planning session.
+这使同一事件序列在测试、实时连接和历史重放中得到一致结果。
+
+## 6. 实时与历史投影
+
+实时投影入口是 `project-turn-items.ts`，历史投影入口是 `project-history-timeline.ts`。两者不是代码完全相同，因为输入结构不同，但必须共享这些语义：
+
+- thinking 始终独立；
+- 工具按调用身份显示；
+- 每次合法计划更新都是独立时间线项；
+- malformed plan 不消失；
+- 内容与前后工具的时序不被重排；
+- 超长内容采取明确截断而非无声丢弃。
+
+历史协调器使用 `historyGeneration` 解决请求竞态。历史窗口上限 750 条，并按 250 条扩展；缓存键包含 session 和 generation，避免把旧投影复用到新会话。
+
+## 7. 显示结构
+
+活动过程主要分为三层：
+
+1. 当前可见 timeline：waiting、thinking、运行工具、内容和计划；
+2. 过程摘要：执行结束后提供状态与关键步骤；
+3. 展开详情：按时间顺序列出 reasoning、工具输入输出和错误。
+
+归档详情在折叠时不应留在主 DOM 中，减少长会话节点数。外层过程详情和单个工具详情分别使用 disclosure 语义，键盘和辅助技术能识别展开状态。计划卡保持常显，因为它表达当前进度而非调试细节。
+
+流式内容中由 OpenClaw 注入的特定日志提示会被识别并移除，避免把运行时操作提示当回答；普通完成消息中的 `Logs` 标题不能被泛化过滤。
+
+## 8. 渲染性能
+
+### 8.1 发布调度
+
+`StreamRenderScheduler` 将多个 token 更新合并到一个 animation frame；非浏览器测试环境使用 microtask。工具 partial 以 80ms 为最短发布间隔，final/abort/error 通过 `flush` 越过等待。这减少 Lit 更新次数，同时不延迟终态。
+
+### 8.2 长内容边界
+
+- 实时工具输出上限：120,000 字符；
+- Markdown 路径具有独立的解析、缓存和文本上限，详见 `15-chat-rendering.md`；
+- 折叠详情延迟创建 DOM；
+- 持久历史按窗口载入，而不是一次加载无限消息。
+
+限制应在 model/projection 边界执行并显示截断标记，不能只用 CSS 隐藏已经构建的巨型 DOM。
+
+## 9. 滚动与导航
+
+`ChatScrollController` 的状态只有 `follow` 与 `paused`，但内部维护锚点、导航目标和未读 revision：
+
+- 位于底部时，新增内容自动跟随；
+- 用户向上阅读后转为 paused；
+- paused 渲染前记录多个可见锚点，渲染后选仍存在的锚点恢复偏移；
+- 展开详情前可显式保存交互锚点；
+- `ResizeObserver` 处理 Markdown、图片或 disclosure 改变高度；
+- 距顶部 160px 触发加载更旧历史；
+- 未读 revision 在“跳到最新”后清零；
+- 精确导航期间不会被普通锚点修正覆盖。
+
+底部判断容差为 0.5px，避免缩放与亚像素造成 follow/paused 抖动。
+
+## 10. 搜索和定位
+
+搜索与 timeline 导航属于显示投影，不修改 transcript。定位结果必须使用稳定 history/process key，而不是当前 DOM 序号；加载更早窗口后序号会变化。跳转时控制器进入 paused 并记录目标，等滚动完成后再恢复普通锚点管理。
+
+搜索实现应遵守以下边界：
+
+- 不把折叠详情永久展开；
+- 不因为流式 revision 到来丢失当前命中；
+- 命中已卸载窗口时先扩展历史，再导航；
+- 清除搜索不会改变消息或 run 状态。
+
+## 11. 国际化与无障碍
+
+所有状态、按钮、计划计数和终态文本来自 Renderer i18n，中文与英文键必须同步。Timeline 的图标不能成为唯一状态信号：文本或 `aria-label` 需要表达 running/completed/failed 等含义。
+
+Disclosure、停止按钮、跳到最新和计划区域应可键盘操作。动态更新不应把焦点强制移到最新 token；辅助技术的播报粒度应基于重要状态变化，而不是逐 token live region。
+
+## 12. 当前完成状态
+
+已经落地：
+
+- 规范化 transcript 与纯 reducer；
+- run/session/lifecycle/sequence 隔离；
+- thinking/tool/content/terminal 有序模型；
+- 实时和历史的独立投影；
+- 计划卡、过程摘要和折叠详情；
+- 历史 generation、防竞态和窗口加载；
+- RAF/microtask 渲染合并与工具节流；
+- follow/paused、锚点保持、未读和精确导航；
+- 关键组件、reducer、历史和控制器测试。
+
+仍适合继续演进：
+
+- 进一步拆分 `justdo-chat.ts` 的编排职责；
+- 增加 Gateway 重启、乱序和长时间离线的端到端故障测试；
+- 为超大工具产物提供更明确的文件/查看器入口；
+- 以性能基准约束超长会话的节点数、首次显示和流式帧耗时；
+- 审核更多 OpenClaw 新工具是否需要专用、但仍可回退的投影。
+
+这些演进不得新建第二套 transcript 或绕过 shared contract。
+
+## 13. 回归测试矩阵
+
+| 类别        | 必测行为                                               |
+| ----------- | ------------------------------------------------------ |
+| Reducer     | 顺序、重复 seq、错误 session/run、各终态、部分工具输出 |
+| Projection  | thinking 独立、多个内容段、计划合法/非法、历史实时一致 |
+| Component   | waiting、运行卡、摘要、折叠 DOM、终端行、i18n          |
+| Scroll      | follow、paused、锚点、resize、加载更早、跳转最新       |
+| Scheduler   | 单帧合并、80ms partial、flush、dispose                 |
+| History     | generation 过期、Gateway/SQLite 来源、活动 turn 接管   |
+| Performance | 120k 工具输出、长 Markdown、750 条窗口、快速 token 流  |
+
+主要测试与实现同目录放置。修改共享事件或 Adapter 时，还要运行 Main 的 OpenClaw adapter/history reconciler 测试，不能只验证 Lit 快照。
+
+## 14. 验收基线
+
+Timeline 变更只有同时满足以下条件才算完成：
+
+1. 同一 Gateway 事实在实时与历史视图含义一致；
+2. 会话切换、停止、重连和迟到事件不会串线；
+3. 用户上翻或展开详情时视口稳定；
+4. 高频输出不会逐 token 强制完整重渲染；
+5. 所有过程均能到达可理解终态；
+6. 特殊工具投影失败时仍保留普通工具信息；
+7. 新文案同时具备中英文翻译和无障碍名称。
+
+这套基线比具体 DOM 结构更稳定。未来可以更换卡片布局或拆分组件，但不能降低协议正确性、可恢复性和滚动控制。
+
+## 15. 当前模块拆分证据
+
+| 子问题            | 模块                                                                  |
+| ----------------- | --------------------------------------------------------------------- |
+| Transcript 聚合   | `model/chat-transcript-state.ts`                                      |
+| Live event 状态机 | `model/agent-event-reducer.ts`                                        |
+| History 分窗/分块 | `model/history-window.ts`、`chunked-message-history.ts`               |
+| History 合并      | `model/history-reconciler.ts`、`project-history-timeline.ts`          |
+| Optimistic turn   | `optimistic-user-message.ts`、`optimistic-history-tail.ts`            |
+| Process takeover  | `process-summary-takeover.ts`、`coalesce-process-summaries.ts`        |
+| Item 构建         | `pipeline/build-chat-items.ts`、`tool-cards.ts`                       |
+| 发布/滚动         | `controllers/stream-render-scheduler.ts`、`chat-scroll-controller.ts` |
+
+这说明“重构已完成”的含义是职责已从巨型组件抽出为可测试纯模型/控制器；并不表示未来不再拆 UI component，也不表示可以删除 wrapper 中仍需要的订阅和编排。
+
+## 16. Timeline 排序与 Takeover
+
+排序优先服从结构化 turn/item 顺序和 Gateway identity，而非仅按 timestamp。Realtime overlay 与 history item 相遇时，只有可证明同一 message/run/tool 的项才能 takeover；普通文本相等不去重。History 页插入顶部时维护 scroll anchor，active turn仍固定在尾部域。
+
+## 17. 状态清理表
+
+| 触发             | 必须清理                           | 必须保留                          |
+| ---------------- | ---------------------------------- | --------------------------------- |
+| Normal final     | running thinking/tool/live flags   | 已产生内容、完成过程项            |
+| Abort            | pending/running activity           | cancelled/interrupted证据         |
+| Error            | activity与等待计时                 | 已有文本、tool error、诊断提示    |
+| Session switch   | 当前 view订阅/selection overlay    | 各 session缓存的已确认 transcript |
+| History takeover | 已被持久项覆盖的 optimistic/live项 | 尚未进入 history 的 active tail   |
+| Delete session   | cache、grant、subscription         | 其他 session状态                  |
+
+## 18. 性能验收方法
+
+性能检查同时测首屏历史、持续 delta、长 tool output、Mermaid/KaTeX、向上分页和快速切会话。观察 commit 次数、DOM item 数、scroll jump 和 memory；不能以“scheduler 合帧存在”推断整个渲染已优化。限额变化需记录数据规模与设备条件。
+
+## 19. 演进完成条件
+
+新增 timeline 类型必须有 shared/adapter 来源、live reducer、history projection、stable identity、generic fallback、终态清理、搜索/导出和可访问交互。文件名保留 `plan` 是历史兼容；未列为已实现的交互编辑/持久任务能力仍不是当前功能。

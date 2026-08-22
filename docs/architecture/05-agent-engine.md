@@ -1,524 +1,214 @@
 # Agent Engine 与 OpenClaw 集成
 
-JustDo 当前只有一个 AI 执行引擎：OpenClaw Gateway `v2026.7.1-2`。Main 进程负责启动、停止、配置同步和状态展示，任务执行由 Gateway 完成。
+本文描述 JustDo 如何安装、配置、启动、连接和监督 OpenClaw `v2026.7.1-2`。当前唯一 Cowork engine 是 OpenClaw；`CoworkEngineRouter` 只是稳定接口层，不再提供多引擎选择。
 
-## 关键文件
+## 1. 组件分工
 
-| 文件                                                    | 作用                                  |
-| ------------------------------------------------------- | ------------------------------------- |
-| `src/main/openclaw/runtime/openclawEngineManager.ts`    | Gateway runtime 生命周期              |
-| `src/main/openclaw/config/openclawConfigSyncService.ts` | 配置同步服务                          |
-| `src/main/openclaw/config/openclawConfigSync.ts`        | provider/MCP/hooks/extension 配置生成 |
-| `src/main/engine/openclaw/openclawRuntimeAdapter.ts`    | Cowork 到 Gateway 的 adapter          |
-| `src/main/engine/gateway/sessionRpc.ts`                 | Gateway session RPC helper            |
-| `src/main/cowork/providerApiConfig.ts`                  | provider 配置解析                     |
-| `src/main/cowork/builtinModelProvider.ts`               | 内置模型 provider 同步                |
-| `src/main/cowork/builtinModelLifecycle.ts`              | 登录/退出模型与 OpenClaw 同步协调     |
-| `src/main/openclaw/models/openclawAgentModels.ts`       | Agent 模型引用解析                    |
-| `src/main/ipc/openclaw/engine.ts`                       | engine IPC handlers                   |
+| 组件                               | 职责                                                                                 |
+| ---------------------------------- | ------------------------------------------------------------------------------------ |
+| `OpenClawEngineManager`            | runtime/state 路径、端口/token、child process、状态机、stdout filter、CLI env        |
+| `OpenClawConfigSyncService`        | config mutation 串行化、写入/验证、restart/reconnect 决策                            |
+| `openclawConfigSync.ts`            | 把 provider/agent/permission/plugin/browser 等产品配置映射为 OpenClaw config         |
+| `OpenClawRuntimeAdapter`           | Gateway client、chat/session RPC、event normalize、approval、history、goal、subagent |
+| `CoworkEngineService`              | 延迟创建和访问 router/adapter                                                        |
+| `SessionPermissionModeCoordinator` | session permission 更新与同步 admission                                              |
+| `OpenClawChannelSessionSync`       | managed/channel/cron session key 与本地 session 映射                                 |
+| patch pipeline                     | 为固定上游版本补足 JustDo 需要而上游尚未提供的能力                                   |
 
-## Runtime 生命周期
+## 2. Runtime 来源与布局
 
-```mermaid
-stateDiagram-v2
-  [*] --> idle
-  idle --> downloading: runtime missing
-  downloading --> installing: package downloaded
-  installing --> ready: install complete
-  idle --> ready: runtime exists
-  ready --> starting: startGateway()
-  starting --> running: port/token ready
-  running --> stopping: stopGateway()
-  stopping --> ready: process exited
-  downloading --> error: download failed
-  installing --> error: install failed
-  starting --> error: process failed
-  running --> error: unexpected exit
-  error --> starting: restartGateway()
-  error --> downloading: force install
+`package.json.openclaw` 固定仓库和版本。平台脚本依次：安装目标 runtime、同步到 current、bundle Gateway、确保 plugins、同步 resources、预编译 extensions、prune。Windows 还准备 MinGit 和带 hashed requirements 的 Python runtime。
+
+开发可运行：
+
+```bash
+npm run electron:dev:openclaw
 ```
 
-Renderer 可以通过 `openclaw.engine.getStatus()` 和 `openclaw.engine.onProgress()` 展示状态。
+它先为 host 准备 runtime，再编译/启动 Electron。普通 `electron:dev` 假设 runtime 已存在。打包测试验证 runtime freeze、staging、prune、launcher、patch manifest 与平台资产，不能只凭目录存在判定可发布。
 
-## 启动流程
+## 3. Manager 状态机
 
-`src/main/main.ts` 中的主流程：
+Engine status 至少表达 stopped、starting、running、stopping/error 类 phase 及 message。Manager 的重要性质：
 
-1. 初始化 SQLite。
-2. 初始化 provider/config getter，并恢复保存的系统/自定义代理路由。
-3. 通过已恢复的代理路由，以显式 `enabled` 访问状态刷新内置模型 provider。
-4. 绑定 Cowork runtime forwarder。
-5. 同步 OpenClaw config。
-6. 启动 OpenClaw Gateway。
-7. Gateway ready 后启动定时任务 polling。
+- 并发 `startGateway()` 复用同一个 in-flight promise；
+- 生成/保存本地 token，不把它写日志；
+- 选择用户配置端口并监听变更，启动前验证可用性；
+- 构造仅供 Gateway child 的 proxy/header/runtime environment；
+- 从输出识别 ready、native log path 和 fatal startup；
+- 启停均发 status event，Main 广播 `openclaw:engine:onProgress`；
+- external config/policy error 可把 manager 标为不可 admission；
+- restart 是有序 stop/start，不允许旧 client 假连接到已退出进程。
 
-```mermaid
-sequenceDiagram
-  participant Main as main.ts
-  participant DB as SQLiteStore
-  participant Config as OpenClawConfigSyncService
-  participant Manager as OpenClawEngineManager
-  participant Adapter as OpenClawRuntimeAdapter
-  participant Cron as CronJobService
-  participant UI as Renderer
+默认 Gateway 端口常量为 `42871`。用户端口必须经过 shared validator；临时端口范围只产生提示，端口非法、占用或设置失败才返回相应稳定错误码。
 
-  Main->>DB: initStore()
-  Main->>Main: syncBuiltinModelProvider(enabled)
-  Main->>Adapter: bind runtime forwarder
-  Main->>Config: syncConfig(startup)
-  Main->>Manager: startGateway()
-  Manager-->>UI: engine progress events
-  Manager-->>Main: running(port/token)
-  Main->>Cron: startPolling()
-  Main-->>UI: ready status
+## 4. 启动前配置同步
+
+配置同步汇总多个权威源：
+
+- provider models、base URL、API format、auth 与 capability；
+- agents 的 identity、system prompt、qualified model 和 skills；
+- 全局/会话权限 policy 与审批模式；
+- Agent runtime/subagent settings；
+- MCP servers、Hooks、Extensions 与 ask-user 动态 callback；
+- browser mode；
+- system prompt replacement rules；
+- scheduler 隔离 agent 与其他 JustDo 管理项。
+
+同步在 exclusive queue 内执行，避免设置页、MCP/Hook/Extension、permission 同时覆盖文件。写入后必须验证 active Gateway permission policy。若 Gateway 正在运行且变化需要 restart，流程是断开 adapter -> restart -> reconnect；有 active workloads 时 service 应遵守安全策略，不盲目重启。
+
+## 5. Fail-closed admission
+
+`ensureOpenClawRunningForCowork` 的顺序：
+
+1. 确保 extension host 可用；其失败会记录，但后续 config/能力验证决定是否可继续。
+2. 执行 config sync；失败则设置 external engine error。
+3. 若 manager 已 running，仍验证 active permission policy。
+4. 否则调用可合并的 start；running 后再次验证 policy。
+5. 只有 phase 为 running 且验证成功，Cowork start/continue 才被接受。
+
+这防止“本地保存成功、Gateway 实际仍用旧权限”的危险窗口。
+
+## 6. Provider 与模型引用
+
+JustDo 支持内置和自定义 provider。provider registry 规范化 provider id、API format (`openai-completions`) 与 auth。模型发现读取 `/models` 和可选 model info，填充 context length、max tokens 和 image capability，并以保守默认值兜底。
+
+OpenClaw model ref 必须是 `provider/model-id`。启动迁移规则：
+
+- agent model 为空时从当前默认 model 回填；
+- 裸 model id 只有在 available providers 中唯一匹配时才补 provider；
+- 多 provider 同名时跳过并记录无 secret 的警告；
+- session 可保存自身 model，`sessions.patch` 只影响明确返回的后续调用范围。
+
+## 7. Built-in model 生命周期
+
+`BuiltinModelLifecycle` 与 `syncBuiltinModelProvider` 管理内置 provider。当前启动保持 access enabled，未来认证 login/logout 通过同一入口切换。刷新会获取可用模型、更新 `app_config.providers`、通知 Renderer，并触发 OpenClaw config sync。刷新失败不能删除上一次可用配置，也不能记录凭证。
+
+## 8. Gateway client 与连接恢复
+
+Adapter 延迟建立 Gateway client，并维护 generation 防止旧 socket 回调污染新连接。连接后订阅 sessions/event 能力、拉取 pending approvals，并安排 active goal recovery。
+
+- 系统 resume 显式触发 reconnect。
+- proxy 改变先 dispose client，再 restart Gateway；成功后创建新 client。
+- disconnect 不自动宣告业务终态；active turns 由 Gateway runtime/history 恢复或明确超时/abort。
+- subscription、ready promise、timer 和 caches 都绑定 generation，disconnect 时清理。
+
+## 9. Managed session key
+
+JustDo 使用稳定 managed key 编码 agent 与本地 session。Parser 只接受规定格式，避免把任意 channel/session key 归入产品 session。Channel sync 还能识别 main agent channel 与 cron key，为外部/定时运行创建或解析本地展示 session。
+
+删除只操作可证明归属的 managed tree；通用 main session 不递归删除。runtime status 批量查询采用单飞/TTL snapshot，避免会话列表轮询造成 N+1 RPC。
+
+## 10. Chat 与事件归一化
+
+Adapter 调用 `chat.send`，保存 requested run id，接收真实 run id 后重绑。它处理：
+
+- chat delta/final/aborted/error；
+- agent assistant/thinking/tool/lifecycle/item stream；
+- Webchat tool capability 与 legacy fallback；
+- stable message id、stream text overlap merge、final replacement；
+- model name、usage、execution plan 与 completion metadata；
+- foreign/detached/visible run 的不同展示；
+- completion 后 `chat.history` reconciliation。
+
+`FINAL_HISTORY_SYNC_LIMIT` 当前为 1000；Renderer 另有分页窗口。扩大限制前必须评估内存和二次投影成本。
+
+## 11. Slash commands
+
+命令列表来自 Gateway，再应用 JustDo policy 的 blacklist、category、tier、execution type 和 before-send hook。本地命令和 Gateway 命令分开：例如 goal 控制可能要求先确保 session entry。UI 不应把未知 `/...` 默认为本地执行，也不能绕开 policy 直接 RPC。
+
+## 12. Goal continuation
+
+Adapter 内的 coordinator 将 Gateway goal、tool、lifecycle 和 managed subagent join 组合成可恢复状态机。继续动作带控制 run id、退避/重试、等待用户输入/确认和 terminal latch。连接 generation 变化后扫描本地 session 与 Gateway goal/runtime；只有 goal id 和状态一致才恢复，避免旧 snapshot 续跑新目标。
+
+相关 OpenClaw patch 提供 silent goal clear、managed subagent join、progress、context budget/compaction 等能力。移除 patch 前必须证明新上游具有等价 wire contract。
+
+## 13. Agent runtime settings
+
+Shared contract对 delegation mode、subagent concurrency/children/depth/timeout/archive/model/thinking/announce timeout 等字段做默认值、范围和跨字段 normalize。Main IPC 保存后进入 config sync。配置通常影响新 spawn/turn；不能承诺正在运行的 subagent 热更新。
+
+受管字段（例如 scheduler agent 的权限、关键 extension/plugin 配置）不能被通用 settings UI 覆盖。
+
+## 14. 权限与审批
+
+权限模式是 ask、auto、full 三档产品语义，经 config mapper 转为 Gateway tool/approval policy。会话变更由 coordinator 串行，先写/同步/验证；失败回滚或返回明确错误。
+
+Exec 和 plugin approval API 分开，pending list 在连接后恢复。session grant 仅对满足 shared predicate 的 exec request 有效，并在 session terminal/stop/delete 清除。scheduler agent 使用固定无人值守 policy，不能弹 UI，也不能借 cron 修改升级普通交互会话。
+
+## 15. Runtime patches
+
+当前补丁目录为 `scripts/patches/v2026.7.1-2/`。能力涉及 approval lifecycle、atomic subagent admission、managed join、thinking/reasoning、session yield、compaction、completion delivery、selected tool search、Windows MCP/Python 等。详表以该目录 README、patch manifest 和 `tests/openclawV202671*.test.ts` 为准。
+
+补丁不是传统数据库 migration：每次 runtime 安装在目标上游 bundle 应用并验证；历史 `v2026.6.11` 只作追溯，不参与当前流水线。
+
+## 16. 网络环境
+
+Manager 通过 `OutboundHeaderProxy.buildGatewayEnvironment` 为 child 构造环境，并用 capability generation 避免旧规则继续工作。系统/custom/direct proxy 变化会更新 bypass，其中动态加入当前 Gateway loopback 端口，避免本地 RPC 被送到上游代理。内置 provider 若使用 loopback base URL可列为 forced URL。
+
+Main 通用 fetch、Electron session proxy 与 Gateway child environment 是不同作用域；修改一个不能假定其他两个自动同步。
+
+## 17. 日志与诊断
+
+优先顺序：
+
+1. `%APPDATA%/<productName>/logs/main-YYYY-MM-DD.log`；
+2. `%APPDATA%/<productName>/openclaw/logs/gateway.log`；
+3. `[gateway] log file:` 指向的 `%TEMP%/openclaw/openclaw-YYYY-MM-DD.log` 原生 JSON。
+
+Gateway stdout filter 会压缩 thinking/assistant/item 流，只保留段首尾及 80 字预览，并省略 plugin loading、schema walk、droppable delta、tick/health。因此 condensed log 中“没看到事件”不是事件不存在的证据。分享前检查敏感内容，禁止提交 raw native log。
+
+## 18. 升级与验证
+
+升级 OpenClaw 时：固定新版本 -> 安装 pristine runtime -> 重新验证 capability gaps -> port 当前 patch 而非复制旧目录 -> 更新 patch README/manifest/tests -> 运行 patch verify、runtime staging/freeze/prune 和相关 adapter测试 -> 更新本文件及 capability matrix。
+
+常用验证：
+
+```bash
+npm run openclaw:patches:verify
+npm run compile:electron
+npm test
 ```
 
-## 配置同步
+还需手工验证启动、proxy 切换、sleep/resume、start/stop、approval、goal continuation、subagent completion、cron 和退出清理。
 
-JustDo 本地配置包括：
+## 19. Manager 并发约束
 
-- provider/model 配置
-- Agent 默认模型和技能
-- MCP servers
-- OpenClaw hooks
-- Ask-user extension 配置
-- 本地 skill 文件状态
+Gateway start/restart/stop 不是三个互不相关的按钮。Manager 需要共享启动 promise、shutdown flag、child identity 和 readiness wait：并发 ensure 复用同一启动；restart 先使旧 client 失效；shutdown 让 readiness/retry loop 尽快退出；stop 有超时兜底，不能永久阻塞应用退出。
 
-这些配置通过 `OpenClawConfigSyncService` 写入 Gateway 可读取的配置位置。Gateway
-运行时使用 OpenClaw 默认的 `hybrid` reload 策略：模型、Agent、MCP、Hook 和插件
-启用配置优先原地热更新，Gateway 自身配置等不支持热更新的字段由 Gateway watcher
-触发 restart。
+`phase=running` 只表示受管进程/readiness 达标，不保证每个 adapter consumer 的 WebSocket 仍健康。代理重启路径因此会显式 disconnect 旧 client、restart Gateway、再让 Cowork service connect；最后一步失败时停止 Gateway，避免留下假健康状态。
 
-设置页写入 `app_config` 时，Main 在 SQLite 持久化完成后立即响应 Renderer，随后在
-Main 后台触发 `OpenClawConfigSyncService`。后台同步仍按服务队列串行执行，并在需要时
-等待热重载或重启 Gateway；这些运行时操作不占用设置页的“保存中”状态，关闭设置窗口
-也不会取消已经开始的同步。意外的后台同步异常记录到 Main 日志。
+## 20. 启动失败分层
 
-JustDo 管理的配置默认写入 `tools.experimental.planTool: true`，使支持结构化
-tool calling 的模型可以调用 OpenClaw 原生 `update_plan`。该能力仍由 Gateway
-定义协议和执行语义；JustDo 不注册同名 MCP tool、不增加 provider allowlist，也不
-通过 runtime patch 模拟计划更新。配置合并 `sandbox` 和 `loopDetection` 时必须保留
-`tools.experimental`、既有 deny 列表和 web 配置。
+| 阶段               | 失败示例                 | 处理                                                   |
+| ------------------ | ------------------------ | ------------------------------------------------------ |
+| Runtime resolution | bundle/Node/资源缺失     | manager 返回失败并记录解析路径，不尝试随机全局 runtime |
+| Config sync        | schema/write/reload 失败 | 不自动启动 Gateway；高风险 admission fail closed       |
+| Spawn              | child 无法启动/立即退出  | 收集 exit/stdout，进入 error phase                     |
+| Readiness          | port/token/health 超时   | 终止或清理 child，返回可重试错误                       |
+| Client connect     | WS/RPC handshake 失败    | adapter 保留断线状态，由 reconnect/显式 restart 恢复   |
+| Runtime request    | method error/timeout     | 绑定具体 command/run，不自动等同整个 session terminal  |
 
-JustDo 同时启用 OpenClaw 原生 `tools.toolSearch.mode: "directory"`，并通过
-`009-selective-tool-schema-catalog.cjs` 将其 catalog predicate 收窄到显式名单，目前为
-原生 `browser`、`cron`、`get_goal`、`create_goal`、`update_goal`、`memory_search`、
-`memory_get` 和 `skill_workshop` tool。其他授权工具仍直接暴露；普通请求只看到精简目录项
-和 Tool Search 控制工具，相关请求则由 Gateway 加载对应完整 schema。工具最终仍通过 Gateway 的正常
-权限、审批、Hook、日志与 telemetry 路径执行，JustDo 不实现绕过 schema 校验的代理
-tool。配置同步会移除旧版本曾管理的 `skill_workshop` deny 项，同时保留其他用户 deny 项；
-沙箱运行仍遵循 OpenClaw 原生限制。OpenClaw 提供受支持的 per-tool defer 名单后，应删除
-此版本级 patch 并改用原生配置。
+## 21. Credential 与网络边界
 
-JustDo 通过 `agents.defaults.compaction.justdoCodexLocal=true` 显式选择版本补丁提供的
-Codex-local 语义；不通过提示词内容猜测运行模式。自动压缩以有效 context window 的 90%
-为阈值，优先采用 provider usage；pre-turn 检查既有上下文，mid-turn 只在新增工具结果后、
-下一次模型采样前检查。`reserveTokens` 只作为摘要请求预算，不再提前移动自动阈值。
-压缩 safety timeout 显式配置为 30 分钟，与长上下文 provider 上限一致，避免 SSE 已成功
-建立后仍被 OpenClaw 的 180 秒默认值提前中止。
-内置 agent auto-compaction 仍由 safeguard guard 关闭，避免和外层 preflight/mid-turn 状态机
-重复触发。
+Gateway port/token 由 Main 管理；token 不应进入普通 Redux、日志或导出。Provider key 写入受管配置时必须避免 console 序列化完整对象。系统代理、Main fetch 代理、Gateway child environment 与 outbound-header proxy 是不同网络层；变更 `NO_PROXY` 或 header injection 时要验证 loopback Gateway 不被错误代理，同时远程 provider 仍遵守用户偏好。
 
-OpenClaw 的公开 compaction provider 可以替换摘要，但拿不到当前模型认证；公开
-`before_compaction` / `after_compaction` hook 又不能修改压缩结果。因此
-`029-retained-user-compaction-context.cjs` 只补足原生 hook 无法表达的一层：在
-`CompactionEntry.details.justdoRetainedUserMessages` 中维护版本化 retained-user archive，
-跨重复压缩合并、按 transcript identity 去重，并以 UTF-8 bytes/4 的 Codex 本地估算按约
-20,000 tokens 做 Unicode-safe 首尾裁剪；
-`buildSessionContext` 将每条原文恢复为独立 `user` message，再把 compaction summary 放在
-checkpoint 最后。标记为 Codex-local 的 checkpoint 不回放旧 assistant/tool recent tail；
-压缩后的新消息正常追加在 summary 之后。split-turn 同样扫描完整压缩范围，因此当前用户请求
-不会落在 archive 与 retained tail 的空隙中。旧 archive 可直接读取，并在下一次压缩时自然升级。
+## 22. Runtime Capability 证据
 
-`031-compaction-emergency-handoff.cjs` 的 deterministic handoff 只服务非 Codex 模式。
-Codex-local 摘要遇到缺模型、认证、超时或普通 provider 失败时不提交 checkpoint、不替换原
-历史；只有摘要请求自身发生 context overflow，才从最旧的完整 user turn 开始裁剪并重试。
-首次 compaction 仍完整采用上述 Codex-local 布局和 20k retained-user 策略。若模型在压缩后仍
-明确返回 context overflow，`037-context-overflow-convergence.cjs` 才进入最多三次的有界恢复：
-允许对没有新增 transcript 的最新 checkpoint 再压缩，并在后续 pass 将 checkpoint 目标依次
-收紧到窗口的 50%/25%（同时要求相对当前已安装上下文继续下降），逐级缩小 retained-user
-archive 和 summary。每次成功 checkpoint 后从当前 transcript 自动续跑；被取消但仍有剩余
-pass 的压缩也回到恢复状态机，而不是把 `prompt too large` 作为本轮终态；`ok: false` 的
-超时/provider 失败不会被误当作取消而连续重试。mid-turn/provider
-overflow 的临时 assistant error 不发布 terminal lifecycle，最终由成功的续跑 attempt 收口。
-只有三次收敛仍失败（例如 system prompt/tool schema 本身已超过真实模型窗口）才报告不可约
-overflow；显式取消仍保持 cancel，非 Codex 模式保持 OpenClaw 原行为。
+每项能力需要区分：upstream native、当前版本 patch、adapter projection 和 UI consumer。只有类型或 patch 文件不足以证明可用。证据至少包含 Gateway fixture/RPC 或 patch consumer test、adapter test，以及实际注册的 IPC/UI 路径；完整表见 capability matrix。
 
-`030-codex-continuation-compaction.cjs` 使用 Codex 本地 fallback 的标准 prompt 与 replay
-prefix；首次、重复和 split/mid-turn 使用同一提示。`035-codex-local-compaction-semantics.cjs`
-在显式模式下绕过 OpenClaw 固定章节、quality audit、identifier/suffix 拼接和 16k 字符后处理，
-并在 `details.justdoCompaction` 记录 generation、trigger、reason、phase 与压缩前后 token 估算。
-`026-parent-session-identity.cjs`、`027-agent-request-metadata.cjs` 与
-`028-request-purpose-metadata.cjs` 分别覆盖父会话稳定身份、普通 agent stream、safeguard 自己的分阶段摘要调用、
-OpenClaw 原生 `compact()` 回退，以及 `tools.exec.reviewer` 使用的 simple-completion 调用。补丁为关联到会话的
-`builtin_models` LiteLLM OpenAI Chat Completions 请求注入权威的 `metadata.session_id`，subagent 请求还会注入直接父级
-Gateway UUID `metadata.parent_session_id`，并用
-`metadata.request_purpose` 区分 `agent`、`context_compaction` 和 `exec_review`；真实用户
-直接发起的顶层 agent turn 只有第一次 provider 请求会带上
-`metadata.user_initiated=true`，系统 provenance 输入、自动续跑、同一 turn 的后续请求与
-子代理请求不会携带该标记；标题生成
-的直连请求由 JustDo 标记为 `title_generation`，模型设置页的连接测试请求标记为
-`connection_test`。safeguard 原生通过
-`generateSummary2()` 直连模型，不复用会话 stream，因此补丁会把当前 OpenClaw
-session UUID 和可选的直接父级 UUID 传入每个摘要 chunk。Exec reviewer 同样走独立
-simple-completion 链路，会从当前执行上下文取得相同的会话关联信息，但不会把 UUID 写入
-reviewer prompt。原生 `compact()` 会复用普通 agent stream；补丁会保留该 stream 的会话
-关联信息，并在进入压缩时再次包装，使最终 payload 权威覆盖为
-`request_purpose=context_compaction` 且移除 `user_initiated`。subagent 创建时会固化父级当时的 Gateway UUID，旧子会话则通过
-`spawnedBy` 解析并回填，因此父会话后续 rotation 不会改变已有子会话的归属。
-因此手动、threshold、overflow、mid-turn 压缩以及模型安全审查都能在 LiteLLM 中与
-原会话关联并按用途统计。
+## 23. 代码与测试地图
 
-timeout/overflow recovery 直接调用 `contextEngine.compact()`，不会经过上游常规
-`AgentSession` compaction subscriber。`039-recovery-compaction-progress.cjs` 因此在这两个
-入口发布 session-scoped `start/update/end/failed`；`028` 包装的摘要 EventStream 只观察
-`text_delta`，按节流后的累计文本更新 UI，不改变结果消费、请求 payload 或 reasoning 流。
-首个文本增量到达前，`039` 每五秒发布只包含经过时间的 `update` 心跳，使前端可区分仍在
-等待压缩模型的请求与已经失联的运行；心跳不冒充模型 token，也不延长任何 timeout。
+| 主题                     | 入口                                                       |
+| ------------------------ | ---------------------------------------------------------- |
+| 进程/端口/readiness      | `openclawEngineManager.ts`、`loopbackPort.ts` 及测试       |
+| 启动参数与 Node          | `gatewayLaunchArgs.ts`、`electronNodeRuntime.ts` 及测试    |
+| Config reload            | `gatewayConfigReloadMonitor.ts`、config sync service tests |
+| Adapter/session RPC      | `openclawRuntimeAdapter.test.ts`、`sessionRpc.test.ts`     |
+| History/usage matching   | `historyReconciler.test.ts`、`historyUsageMatcher.test.ts` |
+| Model refs/agent models  | shared modelRef 与 `openclawAgentModels` tests             |
+| Goals/subagents/approval | goals、subagent gateway、permissions tests                 |
+| 日志压缩                 | `gatewayLogFilter.test.ts`                                 |
 
-本地 precheck 的 `Context overflow ... (precheck)` 只用于进入恢复流程，不是 provider
-错误。`040-compaction-error-attribution.cjs` 记录最后一次压缩失败并在终态优先发布其真实
-reason；timeout、认证、网络、取消/no-op 均不得被原始 precheck 文案覆盖。压缩成功但本地
-估算仍无法降到安全预算时，终态明确说明是 local prompt safety budget。只有最后一次真实
-provider prompt 或 assistant error 被 OpenClaw 分类为 context overflow 时，才保留上游
-overflow 恢复提示；hook、compaction 等非 provider 来源保留自身原始错误。
+## 24. Engine 变更完成条件
 
-当前能力审计、删除理由、补丁与测试映射以
-`scripts/patches/v2026.7.1-2/README.md` 为准。旧 `v2026.6.11` 目录只作历史资料，loader
-不会为目标版本加载它；`../openclaw` 只用于源码比对，不参与 JustDo 打包。
-
-配置应用按所有权明确分为四类：
-
-| 变化                                                                         | 应用方式             | 生命周期所有者 |
-| ---------------------------------------------------------------------------- | -------------------- | -------------- |
-| `meta`、`tools`、`skills`、`session` 等动态读取字段                          | 无进程重启           | OpenClaw       |
-| models、Agent、Hook、cron、MCP、普通插件配置                                 | 原生热更新           | OpenClaw       |
-| `models.pricing`、`plugins.load`、`plugins.installs`、`gateway`、`discovery` | Gateway 内部 restart | OpenClaw       |
-| child process secret 环境或 Extension manifest/tool contract                 | stop/start 硬重启    | JustDo         |
-
-同步服务在写配置前记录 reload generation，并用 Gateway 日志中的 changed paths
-把 hot reload、restart acceptance 关联到正确代次。restart acceptance 只是中间状态，
-必须等 Gateway 再次 ready 才放行新会话；等待预算覆盖 OpenClaw 的 workload drain 和
-Gateway 启动时间。原生应用失败或超时才回退到 JustDo 硬重启。延迟硬重启同时绑定
-Gateway process generation；若等待期间用户已停止 Gateway 或其他路径已替换进程，
-旧 restart intent 会被丢弃，不会复活或重复重启 Gateway。仅 session store 变化不触发
-任何 Gateway restart。
-
-## 模型引用
-
-Agent 模型引用由 `resolveQualifiedAgentModelRef()` 规范化，避免同名模型在多个 provider 中歧义。Main 启动时会 backfill 空模型并迁移可确定的旧模型引用。
-
-## Runtime 资源
-
-相关 npm scripts：
-
-- `openclaw:runtime:host`
-- `openclaw:runtime:win-x64`
-- `openclaw:runtime:mac-arm64`
-- `openclaw:runtime:linux-x64`
-- `openclaw:bundle`
-- `openclaw:plugins`
-- `openclaw:resources`
-- `openclaw:precompile`
-- `openclaw:prune`
-
-`openclaw:bundle` 在新建 bundle 和命中缓存跳过重建两条路径中都会生成或修复
-`gateway-launcher.cjs`。构建脚本与 `OpenClawEngineManager` 共用同一个 launcher
-生成器，确保 Electron Builder 校验前以及应用运行时得到一致的 bundle-only 入口。
-缓存命中时会先验证 patch manifest；bundle 与 patch 集合均未变化时跳过完整 patch
-pass。`predist:win` 由 npm 在执行 `dist:win` 前自动调用，`dist:win` 本身不得再次调用。
-
-## 约束
-
-- 不引入第二个 Agent engine。
-- 不让 renderer 直接管理 Gateway process。
-- Runtime patch 必须小、可审计、可删除，并遵守 `scripts/patches/README.md`。
-- 完整 patch pass 会生成绑定 patch 集合与最终 Gateway bundle 哈希的
-  `runtime-patch-manifest.json`；Electron Builder 在打包前和复制产物后各校验一次，
-  校验失败时不得生成安装包。
-- OpenClaw 行为差异优先向上游修复，JustDo patch 只作为兼容层。
-
-## 组件分工
-
-### `OpenClawEngineManager`
-
-Engine manager 是 Gateway process 的唯一生命周期 owner。它负责：
-
-- 解析 runtime 路径。
-- 检查 runtime 是否可用。
-- 下载/安装/同步 runtime。
-- 启动 Gateway child process。
-- 缓存 port/token/status。
-- 停止或重启 Gateway。
-- 向 Main 进程发出 status event。
-
-Renderer 只能看到抽象状态，不能拿到 process handle。
-
-### `OpenClawConfigSyncService`
-
-Config sync service 把 JustDo 本地配置转换为 Gateway 可读配置。它的输入来自多个 store/service：
-
-- Cowork/Agent store。
-- Provider API config。
-- MCP store。
-- Hook store。
-- Extension ask-user config。
-- Gateway runtime manager。
-
-同步时要考虑 Gateway 是否正在运行：
-
-- 启动前同步：直接写配置。
-- 普通 `openclaw.json` 变化：等待 Gateway watcher 完成热更新或自主 restart；等待失败时才回退到硬重启。
-- 子进程 secret 环境变量或 Extension manifest 变化：由 JustDo 硬重启，因为运行中的
-  child process 和已加载 manifest 无法通过普通配置热更新替换。
-- 仅 managed session store 修复：不重启 Gateway。
-- 有活跃 workload：避免无提示打断正在执行的会话。
-
-Engine manager 从 Gateway reload 日志维护同步代次。会话执行在配置写入后等待对应代次
-完成，避免 watcher debounce 期间立即发起的新会话读到旧模型或旧插件配置。
-
-### `OpenClawRuntimeAdapter`
-
-Adapter 是 Cowork domain 与 Gateway domain 的边界。它负责把 JustDo 的 session、agent、attachment、stream 概念映射到 Gateway 请求和事件。
-
-Adapter 不应该变成大而全 service。新增 Gateway API 时优先：
-
-1. 放到 `src/main/openclaw/<domain>/` 的专用 helper/service。
-2. Adapter 只调用 helper。
-3. Renderer 通过已有 Cowork/OpenClaw IPC 获取结果。
-
-### Goal continuation coordinator
-
-`src/main/openclaw/goals/goalContinuationCoordinator.ts` 负责连续派发，不复制 OpenClaw
-Goal。OpenClaw session 中的 `goal` 仍是目标内容与生命周期的权威来源；coordinator 维护
-`waiting`、`running`、`continuing`、`retrying`、`awaiting_input`、
-`awaiting_confirmation`、`stopped` 执行快照，并由 adapter 转发顶层
-JustDo Session 的 lifecycle event、Gateway client
-和 renderer IPC。
-为防止 terminal tool mutation 被稍后的旧 session 写入覆盖，`awaiting_input`、
-`awaiting_confirmation` 和用户 `stopped` 快照会写入本地 SQLite；重连或应用重启恢复时，
-这些快照优先于同 Goal id 的瞬时 `active` metadata，其他运行态不持久化。
-
-一个顶层 run 成功结束后，coordinator 用 canonical session key 调用
-`sessions.describe`。只有 Goal 此时仍为 `active` 才通过 backend `agent` RPC 派发下一轮；
-subagent、cron、channel 和非 JustDo Session 不参与。请求复用原 Session、Agent 与模型
-选择，设置 `deliver: false` 和 `suppressPromptPersistence: true`，因此自动生成的
-continuation user prompt 不进入历史，而 assistant、thinking 和工具活动仍沿正常事件链
-可见。请求不设置 `sessionEffects: internal`，也不设置 token、轮数或时间预算。
-只要 Goal 仍为 `active`，每个顶层轮次结束后都会继续派发下一轮；纯文本轮次、没有工具
-活动或重复相同工具结果都不会触发本地熔断。生命周期错误、意外 abort 与 Gateway 请求
-失败进入 `retrying`，按 2、5、10、30、60 秒退避并在 60 秒封顶后无限重试。新手动
-消息、用户 Stop、Goal 进入等待状态或被清除会取消待执行重试。
-OpenClaw v2026.7.1-2 已在普通 `chat.send` 路径为 active Goal 注入最长 200 字符的
-per-turn context，并在排队准入后重新读取 Goal，普通用户轮次直接采用该原生能力。
-自动 continuation 刻意使用 backend `agent` RPC：`chat.send` 不接受 `extraSystemPrompt`
-或 `suppressPromptPersistence`，无法在不污染 user history 的同时保留 JustDo 的完成校验
-策略。因此隐藏 user prompt 每轮直接携带完整的权威 `goal.objective`；目标文本不提升为
-system instruction。附加 system prompt 要求先审计现有历史、产物和工具证据，避免重复
-已完成工作，并在完成时用 `update_goal` note 留下简短验证证据。blocked 判定与上游工具
-契约一致：同一阻碍至少连续三个 Goal turn 且已无其他可推进工作。后续只有当
-`chat.send` 提供等价的非持久化 system prompt 参数时，才重新评估合并两条路径。
-
-Goal 变为 `complete`、`blocked`、`paused` 或被清除时停止派发；其中 `complete` 等待用户
-确认后清除，`blocked` 等待用户补充信息，普通消息发送前会先原地恢复 Goal。JustDo 不创建
-`usage_limited` 或 `budget_limited`，仅在 Gateway 边界将意外收到的两个兼容状态归一化为
-`blocked`。Stop 路径必须先让
-coordinator 禁止续跑，再 abort 当前 run，避免终态竞态；如果 Gateway 未确认 abort，
-adapter 会恢复 stop 前的 execution 快照，避免仍在运行的任务被误报为已停止。幂等键由 Goal id、进程内续跑
-序号和随机 run id 构成，terminal lifecycle 按 run id 去重，同一 Session 的派发串行化。
-红色 Stop 按钮成功中断 active Goal 后保持 Goal metadata 为 `active`，但 execution 进入
-`stopped`，卡片显示“继续”；后续普通消息或 Goal 编辑不会隐式清除该停止状态，只有用户点击
-“继续”才通过 continuation IPC 恢复持续执行。若停止后创建了新的 active Goal，停止闩锁会
-更新到新 Goal 并继续显示“继续”，不会产生无入口的后台停滞。停止时已经流式
-收到的 Thinking 和正文会投影成 interrupted assistant 消息，并写入按 Session 隔离的本地历史
-overlay；后续 Gateway 历史刷新或应用重启仍会恢复该截断消息。Goal 卡片上的
-“暂停”则额外执行 `/goal pause`，形成可跨重连和应用重启保留的持久暂停。
-
-`complete` 是 OpenClaw 原生不可恢复终态。完成卡片因此同时提供“继续完善”和“确认完成”：
-确认仍执行 `/goal clear`；继续完善先进入本地反馈编辑模式，不立即改变 Goal，编辑标记与草稿
-按 Session 保留。进入编辑模式时同时保存原目标；用户提交反馈时，主进程先通过受管控制 run
-调用 `sessions.goal.clear`，直接清除 canonical Goal metadata；该窄 RPC 不创建聊天 run，也不会把
-`/goal clear` 写入模型可见历史。确认旧 Goal 消失后，Renderer 使用共享的英文 follow-up 模板创建
-新 Goal。模板使用带版本的 JSON envelope，把用户原话放在 `followUpRequest` 中并声明它是本轮
-唯一权威任务；旧 objective 位于 `previousGoalContext`，只用于理解“再来一个”等依赖上下文的请求。模板明确
-禁止改写、润色或重复既有成果，并要求 another/one more/additional/continued 类型请求只生成新增
-部分；用户明确要求完整重写时才允许从头执行。模板集中维护在
-`src/shared/prompts/goalFollowUpPrompt.ts`。由于 OpenClaw 只保留 `/goal` 命令首行并按空白重新分词，
-envelope 会把字符串空白可逆转义为单行，避免破坏多行目标或代码缩进；Goal 卡片和历史投影再从
-envelope 中解码并只显示用户原始 follow-up。附件随创建新 Goal 的第一轮发送。已保存的 objective 让“清理成功
-但连接中断”的重试保持幂等，消息发送失败时也不清空草稿或反馈状态。
-进入继续完善编辑模式后隐藏“确认完成”，避免清除 Goal 后遗留无法提交的反馈状态。
-blocked Goal 的内部 resume 使用同样的 pending-input marker，保证重连不会抢在用户补充消息前续跑。
-OpenClaw 原生 `/goal edit <objective>` 会保留 Goal id、创建时间、预算窗口和生命周期状态；
-JustDo 在非终态且没有运行、续跑或重试时通过 Goal 卡片行内编辑调用该命令。编辑不会重置
-卡片依据 `createdAt` 计算的运行时长，也不会引入本地 Goal 副本。
-自动派发会给上一轮 `chat.final`/history reconciliation 留出短暂收敛窗口，并在窗口后再次
-执行 `sessions.describe`；Goal 已变为非 active、用户已 Stop 或新手动 run 已开始时取消
-该次派发。若 Goal 被替换但新的权威 Goal 仍为 active，则重置本次应用运行中的续跑计数并
-继续新 Goal；派发锁短暂重叠只进入退避重试，不能静默丢失续跑。
-OpenClaw 的 session metadata read 在 run 收尾阶段可能短暂落后于同一 run 内刚完成的
-`update_goal` mutation。coordinator 因此还会关联 `update_goal` 的 start/result tool event；
-一旦当前顶层 run 的 `complete` 或 `blocked` 更新成功，coordinator 会立即发布
-`awaiting_confirmation` 或 `awaiting_input`；即使紧随其后的 `sessions.describe` 暂时仍返回
-`active`，该 run 也绝不派发下一轮。失败或取消的工具调用不具备这一终止语义。这个 latch
-只约束续跑资格，不复制或改写 OpenClaw Goal。
-
-这些状态需严格区分：Goal lifecycle 描述目标是否 active/paused/complete，Session runtime
-activity 描述 Session（含后代）是否存在工作负载，Goal execution snapshot 只描述本次
-应用进程内的持续执行。Gateway 断连或 runtime 代次变化会清空 execution snapshot；
-ready/reconnect 会按本地受管 Session 顺序扫描权威 Goal。仍为 `active` 且 Gateway 没有
-活动 run 的 Goal 自动恢复续跑；已有活动 run 的 Goal 只恢复 execution snapshot，避免重复
-派发。Gateway 重连本身也使用无次数上限的封顶退避，因此应用重启后会重新取得 active Goal
-的续跑资格。
-手动继续会依次检查 runtime 已知 key、当前 Agent key 和默认 Agent key，并使用真正持有
-active Goal 的 `sessions.describe` canonical key，避免历史或迁移 Session 查询与执行错位。
-
-## Gateway Connection
-
-Gateway connection info 包含 port 和 token。Main 持有 token，Renderer 需要连接 chat websocket 时通过受控 IPC 获取必要信息。
-
-```text
-OpenClawEngineManager
-  -> getGatewayPort()
-  -> getGatewayToken()
-  -> GatewayClient connects ws://127.0.0.1:{port}
-```
-
-代理策略会把 Gateway localhost 端口加入 bypass，避免系统代理影响本地 websocket/RPC。
-
-## Provider / Model Flow
-
-```mermaid
-flowchart LR
-  Settings["Settings UI"] --> Store["kv / provider config"]
-  Store --> Resolve["resolveAllEnabledProviderConfigs"]
-  Resolve --> Selection["buildProviderSelection"]
-  Selection --> AgentRefs["resolveQualifiedAgentModelRef"]
-  Selection --> Sync["OpenClawConfigSyncService"]
-  AgentRefs --> Sync
-  Sync --> GatewayConfig["Gateway config files/state"]
-  GatewayConfig --> Gateway["OpenClaw Gateway model registry"]
-```
-
-Agent model 绑定可能是：
-
-- 完整 provider-qualified ref。
-- 历史未带 provider 的 model id。
-- 空值，需要 backfill 默认模型。
-
-`openclawAgentModels.ts` 负责识别 ambiguous model。若同一个 model id 出现在多个 provider，应跳过自动迁移并写 warning，避免把用户 Agent 绑定到错误 provider。
-
-JustDo 生成的所有 `openai-completions` 模型条目都显式设置
-`compat.supportsUsageInStreaming: true`。OpenClaw 据此在流式请求中发送
-`stream_options.include_usage`，使支持该协议的模型提供商返回上下文与 token 使用统计。
-
-设置页为 provider 中的每个聊天模型保存独立的 `enabled` 选择；旧配置缺失该字段时
-视为已启用。未勾选模型仍保留在 provider 配置中，但不进入 Renderer 模型选择器、
-Main provider 解析或 OpenClaw 模型注册表。连接测试可以逐个验证所有配置模型，也可以
-从模型卡片只验证当前模型，单模型超时为 60 秒；失败模型会在当前设置草稿中自动取消勾选。红/绿状态仅表示当前设置
-窗口内的本次测试结果，不作为持久健康状态。
-
-内置模型同步会根据 `/model/info` 的 `model_info.mode` 区分聊天与 embedding
-模型。聊天模型进入应用的可选模型列表；embedding 模型按 ID 排序，并将第一个模型写入
-`agents.defaults.memorySearch`，复用同一个内置 provider 的 base URL 和 API key。若没有
-embedding 模型，则显式设置 `memorySearch.enabled: false`，避免 OpenClaw 回退到 OpenAI。
-
-自定义 provider 在设置页填写 Base URL 和 API Key 后，仅通过 OpenAI 兼容的 `/models`
-发现模型 ID 和名称，不自动探测或推测上下文窗口、最大输出、视觉输入及模型分类。发现结果
-按模型 ID 与当前草稿智能合并，保留未返回的手动模型、用户名称及已有能力配置。新模型的
-能力参数保持“未确认”状态：运行时回退到 200k 上下文、32k 最大输出和关闭视觉输入，设置
-列表不展示这些回退值，而是提示用户进入模型配置核对。默认数值只作为输入占位提示；用户
-修改能力字段并保存后，才持久化 `capabilitiesConfirmed` 及完整能力值。旧配置没有该标记时，
-明显偏离默认值的能力配置按已确认兼容处理。内置模型同步仍可使用受控服务提供的
-`/model/info` 区分聊天与 embedding 模型并读取能力元数据。
-
-登录/退出与内置模型、`openclaw.json`、Gateway 环境之间的接入契约独立记录在
-[`docs/features/authentication-builtin-model-lifecycle.md`](../features/authentication-builtin-model-lifecycle.md)，
-认证模块应只依赖其中定义的 Main 进程生命周期入口。
-
-## Agent Runtime Settings Flow
-
-设置页中的 Subagent 调度参数由应用拥有，不直接编辑 Gateway 配置文件：
-
-```mermaid
-flowchart LR
-  UI["Agent Runtime settings"] --> IPC["Validated IPC update queue"]
-  IPC --> DB["cowork_config\nagentRuntimeSettings:v1"]
-  DB --> Sync["OpenClawConfigSyncService"]
-  Sync --> Config["agents.defaults.subagents"]
-  Config --> Gateway["Gateway config reload"]
-  Sync -->|failure| Rollback["Restore previous SQLite value"]
-  Rollback --> Sync
-```
-
-第一版开放委派倾向、默认模型、默认 thinking、全局 Subagent 并发、每父 Agent child 上限、
-单 child 运行时限，以及高级区中的一层嵌套。完整配置和无模型的最小配置都从同一份版本化
-contract 生成。设置只影响后续创建的 child；已经运行或排队的 child 保留创建时快照。
-自动归档仍固定关闭，跨 Agent allowlist、工具策略和完成通知 timeout 暂不开放。
-
-## Startup And Recovery
-
-启动时的恢复动作包括：
-
-- 重置上次异常退出留下的 running session 标记。
-- backfill 空 agent model。
-- 迁移可确定的旧 model ref。
-- 同步 config。
-- 自动启动 Gateway。
-- Gateway ready 后启动 scheduled task polling。
-
-系统从 sleep/resume 恢复时，adapter 会处理 Gateway websocket reconnect。
-
-## Engine Status Model
-
-Engine status 至少应支持这些 UI 语义：
-
-- idle：未启动。
-- downloading/installing：runtime 准备中。
-- ready：runtime 可启动。
-- starting：Gateway process 启动中。
-- running：Gateway 可用。
-- error：启动或运行失败。
-
-UI 不应该根据日志文本推断状态；应使用 status object。
-
-## Patch Interaction
-
-Runtime patch 影响的是 Gateway runtime 行为，因此 engine install/bundle 流程必须能清楚记录 patch 是否应用。Adapter 层如果依赖 patch 行为，需要在对应 feature docs 写明，比如 thinking stream。
-
-Patch 失效时应表现为：
-
-- 构建/安装日志可见。
-- Gateway 启动日志可见。
-- Feature 降级路径可见。
-- 文档能指向具体 patch。
-
-## Final system prompt replacements
-
-JustDo exposes ordered, system-only regular-expression replacements through
-`window.electron.openclaw.engine.getSystemPromptReplacementRules()` and
-`setSystemPromptReplacementRules(rules)`. Rules are persisted under the
-OpenClaw state directory in `system-prompt-replacements.json`.
-
-The Gateway receives the file path through
-`JUSTDO_SYSTEM_PROMPT_REPLACEMENTS_PATH`. Runtime patch `010` reloads changed
-rules after OpenClaw prompt hooks have completed and before prompt-cache setup,
-overflow preflight, lifecycle observation, and model submission. It updates
-the active session system prompt, so subsequent tool-loop calls use the same
-transformed value. User, assistant, and tool-history messages are not
-transformed.
-
-Rules run sequentially and contain `id`, `pattern`, optional `flags`,
-`replacement`, and optional `enabled`. They are trusted local configuration:
-invalid rules are rejected by the JustDo API, while the Gateway skips malformed
-on-disk entries without logging prompt content. The 100-rule limit applies to
-custom rules; registered built-in rules do not consume user capacity.
-
-Built-in rules are registered centrally in
-`src/main/openclaw/runtime/systemPromptReplacementRegistry.ts`. They run first
-and remain authoritative by `id`; rules added through IPC are persisted after
-them. The built-in transforms also remove per-skill `<version>` lines from the
-final `<available_skills>` catalog and the accompanying version-refresh
-guidance because those hashes do not help model-side skill selection.
-Individual rule behavior is documented by co-located tests rather than
-duplicated in this architecture document.
+必须验证冷启动、并发 ensure、启动中 stop、异常 child exit、代理 restart、sleep/resume、优雅退出和打包 runtime path。Gateway method/schema 变化还要更新 shared contract、adapter、capability matrix 和 patch disposition；只让 TypeScript 编译通过不构成 runtime 兼容验证。

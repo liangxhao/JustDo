@@ -1,60 +1,69 @@
-# 技术栈
+# 技术栈、构建与发布
 
-本文档记录当前 `package.json` 和构建配置中的技术栈。
+本文按 `v2026.8.12` 的 `package.json`、TypeScript/Vite/Electron Builder 配置、runtime 脚本和 GitHub Actions 重写。依赖版本以 lockfile 为最终安装依据；下文列主版本与工程用途。
 
-## Runtime
+## 1. Runtime 基线
 
-| 项               | 当前值          |
-| ---------------- | --------------- |
-| Node.js          | `>=24.15.0 <25` |
-| Electron         | `^42.6.0`       |
-| OpenClaw Gateway | `v2026.7.1-2`   |
-| Package manager  | npm             |
-| Dev server port  | `43127`         |
+| 组件       | 当前版本/约束                     | 用途                                           |
+| ---------- | --------------------------------- | ---------------------------------------------- |
+| Node.js    | `24.15.0`，engine `>=24.15.0 <25` | 开发脚本、Main、OpenClaw tooling               |
+| Electron   | `^42.6.2`（42.6 系列）            | 桌面进程、窗口、IPC、系统集成                  |
+| OpenClaw   | `v2026.7.1-2`                     | Agent/Gateway/session/tool/cron/plugin runtime |
+| npm        | package dependency `^11.18.0`     | 安装与脚本                                     |
+| TypeScript | `^5.7.3`                          | Renderer/Main/shared 静态检查                  |
 
-## Frontend
+使用 `nvm use 24`。不要用 Node 22/25 生成或测试 native/runtime 产物；`better-sqlite3` ABI 与 Electron target 必须一致。
 
-| 技术                                         | 用途                           |
-| -------------------------------------------- | ------------------------------ |
-| React 18                                     | 应用 shell 和 feature UI       |
-| React DOM                                    | DOM 渲染                       |
-| Redux Toolkit                                | Renderer 状态                  |
-| React Redux                                  | Store binding                  |
-| Lit                                          | `<justdo-chat>` 自定义元素     |
-| Tailwind CSS                                 | 样式工具                       |
-| Monaco Editor                                | 编辑器能力                     |
-| markdown-it / KaTeX / Mermaid / highlight.js | Markdown、公式、图表、代码高亮 |
-| DOMPurify                                    | HTML sanitizer                 |
+## 2. Renderer
 
-## Main Process
+- React 18、React DOM、React Redux 9、Redux Toolkit 2。
+- Lit 3 用于 `<justdo-chat>` custom element，降低高频 stream 对 React tree 的影响。
+- Tailwind CSS 3、PostCSS/Autoprefixer 和自有 theme token/engine。
+- Markdown-it + task lists + texmath，KaTeX、Highlight.js、Mermaid core；DOMPurify负责 HTML 清洗。
+- Monaco Editor 用于文本/代码预览编辑，Vite plugin只打包 editor/TypeScript/JSON workers。
+- Heroicons 和自有 icon components；dnd-kit用于拖拽排序；cronstrue用于 schedule 描述。
 
-| 技术                                | 用途                   |
-| ----------------------------------- | ---------------------- |
-| better-sqlite3                      | 本地 SQLite            |
-| electron-log                        | 日志                   |
-| @modelcontextprotocol/sdk           | MCP                    |
-| http-mitm-proxy / proxy-agent       | 代理相关               |
-| js-yaml                             | 配置解析               |
-| tar / yazl / extract-zip / 7zip-bin | runtime 和资源打包处理 |
+Renderer 不运行 Node/Electron API。alias：`@/ -> src/renderer/`，`@shared/ -> src/shared/`。
 
-## Build Tooling
+## 3. Main
 
-| 工具                 | 用途                      |
-| -------------------- | ------------------------- |
-| TypeScript 5.7       | 类型检查                  |
-| Vite 8               | Renderer build/dev server |
-| vite-plugin-electron | Main/preload build        |
-| electron-builder 26  | 桌面打包                  |
-| ESLint 9             | lint                      |
-| Prettier 3           | format                    |
-| Vitest 4             | tests                     |
-| Husky + commitlint   | commit hook               |
+- Electron main APIs：BrowserWindow、contextBridge/IPC、session/net、tray、auto launch、power、updater。
+- `better-sqlite3 ^12.11.1`：同步 SQLite store，native binary必须重建。
+- `electron-log`：每日 Main 日志；`electron-updater`：Windows generic feed 更新。
+- `proxy-agent`、`http-mitm-proxy`：Main/system/Gateway 网络代理的不同路径。
+- `extract-zip`、`tar`、`yazl`、7zip-bin：plugin/runtime/log archive。
+- `json5`、`js-yaml`：OpenClaw/extension 配置与 manifest。
+- `@modelcontextprotocol/sdk`：MCP probe/resource transport。
 
-## Scripts
+OpenClaw runtime有自己的生产依赖；不要因为应用的 `package.json.dependencies` 很少就认为 Gateway只使用这些包。
 
-常用开发脚本：
+## 4. TypeScript 分层
+
+Renderer `tsconfig.json`：ES2020/ESNext、bundler resolution、DOM libs、strict、noEmit、React JSX，包含 renderer+shared。
+
+Main `electron-tsconfig.json`：ESNext target、CommonJS、Node resolution、输出 `dist-electron`，包含 main+shared并排除 tests。它启用 `noImplicitAny`，但与 Renderer strict flags不完全相同。
+
+Shared 必须同时满足两个 config；不得引用只在一个环境可用的全局。
+
+## 5. Vite 构建
+
+`vite.config.ts` 同时配置：
+
+1. HTML `%PRODUCT_NAME%` 安全转义替换；
+2. React renderer；
+3. Monaco workers；
+4. Electron Main entry `src/main/main.ts`；
+5. Preload entry `src/main/preload.ts`；
+6. renderer compatibility plugin。
+
+开发端口从 `JUSTDO_DEV_SERVER_PORT` 或 `package.json.devServer.port=43127` 读取，`strictPort:true`。生产 renderer输出 `dist`，Main/preload输出 `dist-electron`；生产关闭 sourcemap并用 esbuild minify。Mermaid alias指向无动态 import 的 core build。
+
+Main bundle externalize Electron、updater、better-sqlite3 和若干 optional/native/channel dependencies；产物保持 CJS且不 code-split。`.electron-ready` 用于启动脚本等待构建完成。
+
+## 6. 常用命令
 
 ```bash
+npm install
 npm run dev
 npm run electron:dev
 npm run electron:dev:openclaw
@@ -62,163 +71,198 @@ npm run lint
 npm run build
 npm run compile:electron
 npm test
+npm run format:check
 ```
 
-常用打包脚本：
+`npm test` 前置重建 better-sqlite3。`npm run build` 先验证 product metadata，再执行 `tsc && vite build`。`compile:electron` 的 pre-script会让 electron-builder安装 target deps并调用 native rebuild。
 
-```bash
-npm run pack
-npm run dist
-npm run dist:win
-npm run dist:mac
-npm run dist:linux
+非平凡提交建议 `npm run lint && npm run build && npm test`；docs-only 至少 `git diff --check`。
+
+## 7. OpenClaw runtime pipeline
+
+每个平台脚本依次：
+
+1. `install-openclaw-runtime.cjs <platform-arch>`；
+2. `sync-openclaw-runtime-current.cjs`；
+3. bundle Gateway；
+4. ensure plugins；
+5. sync runtime resources；
+6. precompile extensions；
+7. prune development/unneeded files。
+
+Host 开发使用 `openclaw-runtime-host.cjs`。`verify-openclaw-runtime-patches.cjs` 检查 patch 能在固定 upstream 上应用；`tests/openclawRuntime*.test.ts` 验证 staging/freeze/prune，patch manifest/tests验证能力标记。
+
+## 8. Windows 资源
+
+Windows distribution先 clean release并准备 win-x64 runtime；`dist:win` 还执行：
+
+- `setup-mingit.js --required`：准备固定 MinGit asset；
+- `setup-python-runtime.js`：准备便携 Python并把 `resources/python-requirements.txt` 的 hashed dependencies安装到 `Lib/bundled-site-packages`；
+- build/compile；
+- electron-builder NSIS x64。
+
+Windows runtime打成 `build-tar/win-resources.tar`，安装后由 `unpack-cfmind.cjs` 展开。测试覆盖 MinGit、Python、runtime tar、NSIS 和 update manifest。
+
+## 9. Electron Builder
+
+`electron-builder.config.cjs` 在基础 JSON上动态派生 productName/appId/protocol和 update feed。内部 scheme固定 `justdo`。主要 target：macOS DMG、Windows NSIS、Linux AppImage+deb。
+
+- asar启用，better-sqlite3 `.node` 解包。
+- 打包排除 source maps、declarations、tests、README/change logs和 native source。
+- macOS hardened runtime + entitlements，afterSign notarize；DMG配置自身 `sign:false`。
+- Windows NSIS非 one-click，可选安装目录，卸载删除 app data，requested level `asInvoker`。
+- Windows auto-update发布 generic feed，builder当前 `verifyUpdateCodeSignature:false`。
+- Linux runtime直接作为 `cfmind` extraResource；Windows使用 tar。
+
+## 10. Product metadata
+
+`package.json.name=justdo` 不变；`productName` 由 validator限制 `[A-Za-z]{1,64}`。Builder、HTML、app name、userData/default workspace统一通过 helper读取，不允许新增用户可见硬编码。`appId=com.<lowercase productName>.app`；归一化名字改变会形成新OS identity。
+
+## 11. CI
+
+`ci.yml` 用 path filter区分 renderer/main/skills/scripts/docs，Node 24运行相应检查。提交/PR的具体矩阵以 workflow当前内容为准，不能只在文档假设所有 job必跑。
+
+`build-platforms.yml` 支持手工选择平台或 tag构建：macOS/Windows/Linux分别安装 Node 24和依赖，生成 artifact；Windows额外准备 Python并验证 update artifacts。tag触发后汇总为 draft GitHub Release。
+
+当前 workflow使用 `npm install` 而非 `npm ci`，cache key只 hash `package.json`；这是可改进的 reproducibility点，不能在文档中宣称 CI完全 lockfile-reproducible。另有两个当前一致性缺口：`ci.yml` 的 skill job调用不存在的 `npm run build:skills`，而 `package-lock.json` 根版本仍是 `v2026.8.5`，未与 `package.json` 的 `v2026.8.12` 同步。它们需要在构建配置中修复，文档不能把相应路径写成已验证成功。
+
+## 12. Native 与跨平台风险
+
+- Electron升级后重建 `better-sqlite3`，不能复用 host Node binary。
+- Windows路径可能含中文/空格；相关脚本必须使用参数数组和 literal path，不能字符串拼 shell。
+- macOS需要签名/notarization secrets和 Calendar/Reminders/Apple Events entitlement文案。
+- Linux runner需 GTK/NSS/XSS/XTST/AT-SPI/secret等系统库。
+- optional channel依赖 externalize，不代表所有平台产物都应携带。
+
+## 13. 依赖升级检查
+
+升级前确认 Node/Electron ABI、Vite plugin兼容、DOMPurify/Markdown安全、Mermaid/Monaco bundle、OpenClaw patch适用和 builder hook。升级后运行 lint/build/compile/test、pack smoke test和目标平台安装；涉及 runtime必须跑 patch verify/staging/freeze/prune，涉及 Windows必须验证 exe/blockmap/latest.yml。
+
+## 14. 构建产物地图
+
+| 产物                        | 生成入口                                   | 运行时消费者                 | 关键注意事项                                          |
+| --------------------------- | ------------------------------------------ | ---------------------------- | ----------------------------------------------------- |
+| `dist/`                     | Vite Renderer build                        | BrowserWindow                | 不包含 Node 能力；HTML productName 替换需转义         |
+| `dist-electron/main.js`     | Electron Main bundle                       | Electron main process        | CJS、无 code split；native/optional 依赖 external     |
+| `dist-electron/preload.js`  | Preload bundle                             | BrowserWindow isolated world | API 面应与 renderer declaration 对齐                  |
+| OpenClaw platform runtime   | install/sync/bundle/patch/precompile/prune | `openclawEngineManager`      | 固定版本和 platform-arch，不能依赖开发机 node_modules |
+| Windows `win-resources.tar` | pack runtime tar                           | installer unpack hook        | archive 内容和路径有专门集成测试                      |
+| MinGit                      | `setup-mingit.js`                          | Windows tool/runtime flows   | 固定 asset，缺失时 `--required` 应失败                |
+| Portable Python             | `setup-python-runtime.js`                  | Python skills/tools          | hashed requirements 安装到 bundled site-packages      |
+| Installer/update files      | electron-builder                           | OS installer/updater         | Windows 需 exe、blockmap、latest.yml 一致性验证       |
+
+源码目录中存在一个文件并不表示它已进入最终包。新增 runtime asset 时必须同时检查 builder `files`/`extraResources`、平台条件、archive staging、prune allowlist 和安装后解析路径。
+
+## 15. 开发模式的三条路径
+
+### 15.1 `npm run dev`
+
+只启动 Vite Renderer。它适合纯 UI 开发，但没有真实 Electron preload/Main；依赖 `window.electron` 的能力必须由已有开发适配或测试覆盖，不能据此完成端到端验收。
+
+### 15.2 `npm run electron:dev`
+
+先准备 browser extension，再清理/编译 `dist-electron` 并通过开发启动脚本拉起 Electron。它使用当前已有 OpenClaw runtime，不负责从 host upstream 准备一套新的 runtime。
+
+### 15.3 `npm run electron:dev:openclaw`
+
+先运行 `openclaw:runtime:host` 准备 host platform runtime，再进入 Electron 开发流程。修改 patch、Gateway bundle 或 runtime resources 时应使用这条路径。
+
+三者不能互相替代。尤其不能因为 Vite 页面正常就认定 IPC/native/Gateway/packaged-resource 路径正常。
+
+## 16. TypeScript 与 bundle 边界
+
+Shared 同时被 Renderer 和 Main 编译，因此只允许纯数据结构、常量、验证/归一化函数：
+
+- 不导入 `electron`、Node built-in、DOM-only API 或进程环境。
+- 不在 module load 时读取 `process.env`、用户目录或文件。
+- discriminant/IPC name 使用常量，避免两侧字符串漂移。
+- runtime payload 先归一成 shared contract，不把第三方任意 shape 直接传给 UI。
+
+Main bundle externalize 的依赖必须在 Electron/package/runtime 环境真实可解析。把包 externalize 可以解决 bundler 问题，但不会自动把包放进安装产物；反之，把 native `.node` 打进 asar 会导致加载失败，因此 `better-sqlite3` 需要 unpack 和 ABI rebuild。
+
+## 17. Native ABI 生命周期
+
+`better-sqlite3` 同时涉及 host Node、Electron Node ABI 和目标平台架构：
+
+```mermaid
+flowchart LR
+  Install[npm install]
+  Rebuild[npm rebuild / electron-builder install-app-deps]
+  Binary[native .node for Electron target]
+  Pack[asar unpack + installer]
+  Smoke[open SQLite on target]
+
+  Install --> Rebuild --> Binary --> Pack --> Smoke
 ```
 
-OpenClaw runtime 脚本：
+- `npm test` 的 `pretest` 会重建 native module；这会改变当前工作区 binary，切换 host/Electron 流程时需要留意。
+- `compile:electron` 的 precompile 同样安装 app deps 并重建。
+- Electron version/arch 改变后必须重新生成，不能从缓存复制另一个 ABI 的 `.node`。
+- 打包成功不等于 native load 成功，目标平台 smoke test 应实际打开数据库。
 
-```bash
-npm run openclaw:runtime:host
-npm run openclaw:runtime:win-x64
-npm run openclaw:runtime:mac-arm64
-npm run openclaw:runtime:linux-x64
-```
+## 18. OpenClaw Runtime 供应链
 
-## CI
+Runtime pipeline 的每一步解决不同问题：
 
-`.github/workflows/ci.yml` 当前包含：
+1. **install**：取得固定 upstream/version 的平台内容。
+2. **sync current**：建立本次构建的 current source，而不是直接修改历史缓存。
+3. **bundle**：生成应用启动的 Gateway bundle。
+4. **plugins/resources**：放入 JustDo 所需 plugin 与运行资源。
+5. **precompile**：把需要的 extension 预编译，降低最终环境动态构建依赖。
+6. **prune**：删除开发、测试和非运行必需文件，同时受 allowlist/测试约束。
+7. **pack/platform include**：按 Linux/macOS 目录或 Windows tar 进入应用。
 
-- changed-files
-- lint changed TypeScript files
-- build renderer with `npm run build`
-- build main with `npm run compile:electron`
-- build skills stage when skills change
-- test with `npm test`
+Patch verify 证明补丁可应用于 pristine upstream；staging/freeze 测试证明构建输入稳定；prune 测试证明必要文件未误删；consumer/feature tests才证明 patched capability 被 JustDo 正确使用。四者不是同一种验证。
 
-注意：文档应跟随实际 package scripts 更新。新增或删除 CI 调用的 npm script 时，需要同时检查 `package.json` 与 workflow。
+## 19. Windows Python 与 MinGit
 
-## TypeScript 配置分层
+### Python
 
-项目有多个 TypeScript 配置，分别服务不同 runtime：
+`resources/python-requirements.txt` 使用 hash 锁定。setup 脚本把依赖安装到 portable runtime 的 `Lib/bundled-site-packages`，避免依赖用户全局 Python。修改 requirements 时要同时验证：目标 Python 版本 wheel 可用、所有行 hash 完整、离线/缓存行为、archive 大小以及 runtime path 注入。
 
-| 配置                     | 作用                                        |
-| ------------------------ | ------------------------------------------- |
-| `tsconfig.json`          | Renderer/Vite 侧严格类型检查，ESNext module |
-| `electron-tsconfig.json` | Main/preload 编译，CommonJS 目标            |
-| `tsconfig.node.json`     | Vite/config 侧 Node 类型                    |
-| `vitest.config.ts`       | Vitest alias 和 test environment            |
+### MinGit
 
-分层原因是 Main process、Renderer 和 build tooling 的 module system 不一致。Shared code 必须同时适配 Main 和 Renderer，因此不能依赖某一侧专有 API。
+MinGit 是 Windows 打包资源，不应在运行时静默回退到任意用户 Git 并改变可重复性或命令行为。`--required` 使发布构建在 asset 缺失时显式失败；路径包含空格/中文时必须通过参数数组调用。
 
-## Vite / Electron Build
+## 20. Electron 安全构建配置
 
-`vite.config.ts` 同时配置 renderer、main、preload：
+`src/main/core/mainWindowFactory.ts` 是 BrowserWindow webPreferences 的实现入口，preload path 由 composition root 注入。检查 Electron 升级时至少复核 context isolation、Node integration、navigation/window-open policy、CSP 注入和 custom protocol。
 
-- Renderer 输出到 `dist/`。
-- Main 和 preload 输出到 `dist-electron/`。
-- Dev server 端口来自 `package.json.devServer.port`。
-- `@` alias 指向 `src/renderer`。
-- `@shared` alias 指向 `src/shared`。
-- Mermaid 使用 core build，避免动态导入问题。
+当前 Linux/Windows Main 使用 `no-sandbox`，不是推荐的长期安全终点；它不能成为在 Renderer 暴露 Node 或通用 IPC 的理由。生产 sourcemap 关闭减少源码暴露，但不替代输入验证、HTML 清洗或 secret 管理。
 
-Main bundle 需要 external 部分 native/Electron/runtime 依赖，例如：
+## 21. CI 与本地命令对应关系
 
-- `electron`
-- `better-sqlite3`
-- OpenClaw/Lark 相关包
-- Discord/native optional 包
+| 变更                   | 最小本地验证                                | CI/发布额外关注                           |
+| ---------------------- | ------------------------------------------- | ----------------------------------------- |
+| Docs only              | Prettier、`git diff --check`、链接/路径审计 | docs path filter 是否触发预期 job         |
+| Renderer/shared        | lint、build、相关 Vitest                    | Vite/Monaco/Mermaid bundle                |
+| Main/IPC/SQLite        | lint、build、compile、test                  | native ABI、Electron verify               |
+| OpenClaw patch/runtime | patch verify + feature test                 | staging/freeze/prune、各 platform runtime |
+| Browser extension      | prepare + extension tests                   | resources 是否打包、Chrome smoke          |
+| Windows packaging      | `dist:win` 或等价验证                       | MinGit/Python、exe/blockmap/latest.yml    |
+| Builder metadata       | product metadata validation + pack          | appId/protocol/install/update 路径        |
 
-## Electron Builder
+Workflow 是实际 CI 权威。修改 script 名称、依赖顺序或 artifact path 时必须同步 `.github/workflows/` 和 `tests/packageScripts.test.ts`，不能只更新本文命令块。
 
-`electron-builder.json` 定义平台资源和过滤规则：
+## 22. 发布故障定位
 
-| 平台    | 输出         | 资源策略                                                                                 |
-| ------- | ------------ | ---------------------------------------------------------------------------------------- |
-| macOS   | DMG          | `vendor/openclaw-runtime/current` 作为 extraResources，内置 skills 随 runtime 提供       |
-| Windows | NSIS         | 使用 `build-tar/win-resources.tar` 和 unpack script，内置 skills 仅保留 runtime 内的一份 |
-| Linux   | AppImage/deb | runtime 作为 extraResources，内置 skills 随 runtime 提供                                 |
+| 现象                     | 优先检查                                                        |
+| ------------------------ | --------------------------------------------------------------- |
+| 开发正常、安装包白屏     | `dist`/preload 是否包含、生产 CSP、资源 base path               |
+| 安装包启动即崩溃         | Main log、native ABI、extraResource 解析、runtime unpack        |
+| Gateway 仅开发可用       | platform runtime 是否安装/打包、prune 是否误删、launcher path   |
+| Windows Python tool 缺包 | requirements hash、bundled-site-packages、portable sys.path     |
+| MCP 在 Windows 失败      | MinGit/runner、Windows MCP patch、命令参数 quoting              |
+| 更新下载后无法安装       | feed 元数据、exe/blockmap/latest.yml、优雅清理/installer switch |
+| macOS 分发被拒           | hardened runtime、entitlements、sign/notarize credentials       |
 
-生产构建关闭 source map 并启用压缩。打包过滤会排除 README、license、tests、map、d.ts
-以及 `compile:electron` 产生但运行时不使用的 `dist-electron/src`。新增 runtime 必需资产时要确认
-不会被过滤误删。Renderer 和已打入 main bundle 的依赖属于构建依赖，不应再次进入生产
-`node_modules`；生产依赖只保留 Electron 外置模块和离线运行时工具。
-OpenClaw 的构建目录仍保留 `gateway.asar` 供准备和校验阶段使用，但分发包不再携带它：
-Gateway 使用 `gateway-bundle.mjs`，CLI/client 回退使用已展开的 `openclaw.mjs` 和 `dist/`。
-每次 `beforePack` 都会按照 `resources/builtin-skills.json` 将 `resources/skills` 全量同步到
-runtime；Windows 升级安装会整目录替换 `cfmind`，避免旧版默认 skills 或已删除文件残留。
+## 23. 升级 Definition of Done
 
-Windows 的 CPython 3.12 x64 runtime 由 `scripts/setup-python-runtime.js` 准备。除解释器和 pip
-外，构建会按照 `resources/python-requirements.txt` 将精确锁定且带 wheel 哈希的 `requests`、
-`PyYAML`、`openpyxl`、`pypdf`、`beautifulsoup4` 及其传递依赖安装到独立的
-`Lib/bundled-site-packages`。用户后续通过 pip 安装的包保存在用户数据目录的
-`runtimes/python-user`，并通过
-`sitecustomize` 排在内置包之前，允许显式覆盖内置版本。Windows 主机构建完成后会导入五个顶层包；
-安装、哈希或导入检查失败会终止打包。
-嵌入式发行版保留 `python312._pth` 以固定基础搜索路径，因此 CPython 本身不会处理
-`PYTHONPATH`；`sitecustomize` 会显式读取该变量并将其中的目录置于 `sys.path` 前部，供 skill
-脚本加载自身或共享 Python 模块。路径按 Windows 的 `;` 分隔，重复项会被移除，空项按当前目录处理。
-安装后 Python 解释器仅保存在应用安装目录的 `resources/python-win`，运行时直接使用该目录；启动时会
-将用户自行安装的包保存在用户数据目录的 `runtimes/python-user`，并删除旧版本曾复制到
-`runtimes/python-win` 的冗余解释器。旧完整环境中的 `Lib/site-packages` 不迁移；之后通过 pip 安装的
-用户包会在应用升级时保留，且不会形成第二套 Python。
-
-Windows NSIS 使用 `electron-updater` 从 Generic HTTPS 静态目录更新。feed 固化在
-`scripts/windows-update-config.cjs`，打包过程不访问更新服务器，也不依赖环境变量；安装包
-进入可访问该地址的内网后自动启用更新。当前内网分发未配置 Authenticode 证书，因此
-`app-update.yml` 不写 publisher，下载的更新安装包不执行发布者签名匹配。
-`afterAllArtifactBuild` 根据最终 EXE 和
-`docs/releases/<package-version>.md` 重建 `latest.yml`，写入规范化版本、实际文件名、
-SHA-512、大小、发布时间和更新说明。部署时先上传 EXE 和 blockmap，最后原子
-替换短缓存或不缓存的 `latest.yml`。CI 会复算 manifest 的文件大小与 SHA-512 并检查
-blockmap、feed 配置和构建标记后才上传产物。
-
-## Native Modules
-
-`better-sqlite3` 是 native dependency。相关脚本：
-
-- `postinstall`: `electron-builder install-app-deps` + rebuild。
-- `pretest`: `npm rebuild better-sqlite3`。
-- `compile:electron`: 编译 main/preload。
-- `rebuild:electron-native`: Electron ABI rebuild。
-
-新增 native dependency 时要同步：
-
-- `vite.config.ts` external。
-- `electron-builder.json` asarUnpack 或资源策略。
-- CI 安装/测试流程。
-
-## Runtime Asset Pipeline
-
-OpenClaw runtime 脚本大致分层：
-
-```text
-install-openclaw-runtime.cjs
-  -> sync-openclaw-runtime-current.cjs
-  -> bundle-openclaw-gateway.cjs
-  -> ensure-openclaw-plugins.cjs
-  -> sync-openclaw-runtime-resources.cjs
-  -> precompile-openclaw-extensions.cjs
-  -> prune-openclaw-runtime.cjs
-```
-
-平台脚本把 runtime 准备到 `vendor/openclaw-runtime/current` 或对应平台目录，再由 electron-builder 打包。
-
-## Dependency Guidelines
-
-新增依赖前判断：
-
-- 是否只在 renderer 使用？避免进入 main bundle。
-- 是否只在 main 使用？加入 external/asar 策略。
-- 是否含 native module？确认 Electron ABI rebuild。
-- 是否会增大安装包？确认是否可按需加载。
-- 是否涉及安全面？检查 CSP、sanitize、权限和日志。
-
-## Upgrade Checklist
-
-升级核心版本时同步：
-
-- `package.json`
-- 根 README
-- `docs/README.md`
-- `docs/architecture/12-tech-stack.md`
-- runtime patch 目录和 patch guide
-- CI workflow 中 Node/npm/script 引用
+- `package.json`、lockfile、Node/Electron ABI 与 CI runner 一致。
+- Renderer/Main/preload/shared 均由各自 config 编译通过。
+- native module 在目标 Electron/arch 可加载。
+- OpenClaw pristine patch、staging、freeze、prune 和 consumer test 全部通过。
+- 目标平台 pack/install 能启动窗口、打开 SQLite、拉起 Gateway。
+- 新资源在 packaged path 可发现，不依赖源码 cwd 或开发机全局软件。
+- 更新/签名/notarization 产物按平台验证，失败路径可诊断。
+- 版本、命令、产物和已知风险同步回文档，而不是只更新 dependency range。

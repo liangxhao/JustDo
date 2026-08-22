@@ -1,237 +1,317 @@
-# OpenClaw Runtime Patch Guide
+# OpenClaw Runtime Patch 操作指南
 
-JustDo is an OpenClaw desktop frontend, not a long-term fork of OpenClaw Runtime. Runtime patches are compatibility shims and must stay small, documented, auditable, and removable.
+## 1. 定位
 
-## Current OpenClaw Version
+JustDo 是 OpenClaw 的桌面前端和运行时宿主，不是 OpenClaw 的长期 fork。Runtime patch 只用于当前锁定 npm 版本缺失、且无法在 JustDo Adapter/UI/config 层正确补齐的兼容能力。每个 patch 必须可审计、幂等、原子、可验证并有明确删除条件。
 
-`package.json` declares:
+当前版本来自 `package.json.openclaw.version`：
 
-```json
-{
-  "openclaw": {
-    "version": "v2026.7.1-2"
-  }
-}
+```text
+v2026.7.1-2
 ```
 
-## Current Patch Location
+当前 patch 目录：
 
 ```text
 scripts/patches/v2026.7.1-2/
 ```
 
-The authoritative current capability inventory, pristine-package evidence,
-per-patch behavior, inter-patch relationships, retention rationale, mapping,
-and removal conditions live in
-`scripts/patches/v2026.7.1-2/README.md`.
+该目录的 `README.md` 是能力、上游原始证据、依赖关系、测试和删除条件的唯一权威总账。本文只说明工程流程，不能维护另一份逐文件行为副本。
 
-## Historical v2026.6.11 Patch Set
+## 2. 当前锁定供应链
 
-| Patch                                            | Purpose                                                                                                                                                                                                                                                   |
-| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `001-thinking-stream.cjs`                        | Thinking stream compatibility and bounded diagnostic previews                                                                                                                                                                                             |
-| `002-agent-announce-reasoning-stream.cjs`        | Agent reasoning announcement stream                                                                                                                                                                                                                       |
-| `003-openai-content-reasoning-tags.cjs`          | OpenAI content reasoning tag handling                                                                                                                                                                                                                     |
-| `004-windows-mcp-package-runner.cjs`             | Windows MCP stdio/package runner compatibility                                                                                                                                                                                                            |
-| `005-history-thinking-and-subagent-yield.cjs`    | Preserve auditable thinking/tool-call history, promote announce side branches only after outer delivery commit, enforce a persistent per-requester completion delivery queue, and suppress redundant CLI transcript gap-fill after yielded embedded turns |
-| `006-sessions-yield-active-guard.cjs`            | Allow yield only when an active child or a future required completion delivery can wake the parent; exclude the completion currently being consumed                                                                                                       |
-| `007-allow-managed-pip-config-env.cjs`           | JustDo-managed pip config env passthrough                                                                                                                                                                                                                 |
-| `008-dedupe-visible-subagent-announces.cjs`      | Deduplicate sibling completion announces already visible in parent history                                                                                                                                                                                |
-| `009-reply-session-init-conflict-retry.cjs`      | Fresh writer snapshots, key-order-independent revisions, and bounded retry for reply initialization conflicts                                                                                                                                             |
-| `010-defer-selected-tool-schemas.cjs`            | Defer selected heavyweight native schemas through directory-mode Tool Search                                                                                                                                                                              |
-| `011-retain-user-messages-across-compaction.cjs` | Persist and replay original user text across repeated compactions with a rolling 20k-token budget                                                                                                                                                         |
-| `012-codex-compaction-template.cjs`              | Replace OpenClaw's compaction prompts, replay wrapper, and forced suffixes with Codex handoff semantics                                                                                                                                                   |
-| `013-default-cron-delivery-none.cjs`             | Normalize native-tool agent-turn cron add/update requests to in-app delivery when `delivery` is omitted or a targetless `announce` cannot resolve an external destination                                                                                 |
-| `014-live-context-budget-status.cjs`             | Publish the authoritative pre-prompt context estimate to session state during active runs                                                                                                                                                                 |
-| `015-final-system-prompt-replacements.cjs`       | Apply JustDo-managed ordered regex rules to the final system prompt                                                                                                                                                                                       |
-| `016-litellm-session-id.cjs`                     | Forward session, direct-parent session, request-purpose, and explicit human-user initiation metadata on agent, safeguard/native-compaction, and exec-review OpenAI-compatible model requests                                                              |
-| `017-tool-error-reasoning-recovery.cjs`          | Retry reasoning-only post-tool-error turns with bounded request-only user recovery messages                                                                                                                                                               |
-| `018-persistent-interactive-approvals.cjs`       | Keep interactive approvals pending until a decision, preserve timeout-free Gateway waits, suppress the suspended turn's duplicate reply, and resume webchat exec work with a hidden internal prompt only after a real decision                            |
-| `019-compaction-emergency-fallback.cjs`          | Commit a bounded local handoff when model-backed summarization cannot run, then use bounded retries and an aggressive recent-tail pass before reporting irreducible context                                                                               |
-| `020-run-progress-events.cjs`                    | Publish sanitized run progress events for long-running turns                                                                                                                                                                                              |
-| `021-atomic-sessions-spawn-admission.cjs`        | After each native/ACP synchronous preflight, reserve per-parent child capacity before the first initialization await and hold it through shared registry admission                                                                                        |
-| `022-subagent-pending-status.cjs`                | Project accepted native and ACP children without a lifecycle `start` as `pending`, then switch to `running` on `start`, including starts observed just before registry admission                                                                          |
-| `023-managed-subagent-join.cjs`                  | Incrementally join completed subagents inside the original JustDo parent run and pin managed logical sessions to their existing Gateway session id                                                                                                        |
-| `024-silent-goal-clear.cjs`                      | Expose a narrow operator-admin RPC for clearing canonical Goal metadata without writing an application lifecycle command into model-visible chat history                                                                                                  |
-| `025-subagent-session-title-metadata.cjs`        | Project durable subagent `taskName`, explicit `label`, and `task` metadata on Gateway `sessions.list` rows so retained history keeps authoritative titles                                                                                                 |
+目标是未经修改的 `openclaw@2026.7.1-2` npm 产物。目标目录 README 记录精确 npm integrity 与 tarball SHA-256。运行时要求 Node `24.15.0`，项目支持范围为 `>=24.15.0 <25`。
 
-Historical patches for `v2026.6.9` remain in `scripts/patches/v2026.6.9/` for reference only.
+Patch 工具拒绝：
 
-The historical numbers above describe only the archived `v2026.6.11` files.
-They are not current IDs and must not be used to infer current dependencies.
+- 未通过 pristine contracts 的源码；
+- npm integrity/tarball hash 不匹配的包；
+- 来源未知、部分修改或旧版本 bundle；
+- 已经部分应用、但没有完整证明的 runtime；
+- patch 顺序、helper、source lock 或 build recipe 改变后的陈旧 manifest。
 
-## Current Ordering Convention
+历史 `v2026.6.9` 与 `v2026.6.11` 目录仅供追溯。不能从其编号推断当前依赖，也不能复制旧 anchor 伪装成升级。
 
-The `v2026.7.1-2` directory contains exactly 38 capability patches named with a
-continuous three-digit prefix, `001` through `038`. The loader sorts filenames
-lexicographically, so the prefix is the actual application order:
+## 3. 001–040 能力族
 
-| Range       | Capability group                                                                                                          |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `001`–`004` | Managed environment, live Thinking, reasoning transport, history projection                                               |
-| `005`–`012` | Cron, Windows/Chrome MCP, Tool Search, prompt and session RPC projections                                                 |
-| `013`–`021` | Subagent admission, lifecycle, completion delivery and managed join                                                       |
-| `022`–`025` | Persistent interactive approval lifecycle                                                                                 |
-| `026`–`028` | Parent identity and LiteLLM request metadata                                                                              |
-| `029`–`031` | Retained user context, Codex-style continuation and compaction fallback                                                   |
-| `032`–`037` | Sanitized progress, bounded recovery, context budget, local compaction, managed session identity and overflow convergence |
-| `038`       | Case-preserving, case-insensitive subagent task-name aliases                                                              |
+当前恰有 40 个连续 patch，文件名前缀同时是词典序应用顺序：
 
-Within a dependency chain, producers precede consumers. In particular,
-`015` precedes `016`, `017`–`021` are the managed-join state machine, `036`
-pins its Gateway session identity across implicit recovery, `037` consumes
-`029` and `035` to converge provider-confirmed overflow,
-`038` aligns subagent task-name validation with the case-insensitive resolver,
-`022` precedes `023`–`025`, and `026` precedes provider metadata patches
-`027`–`028`. The authoritative per-file behavior, tests, removal conditions,
-and deleted-capability decisions remain in the target directory README.
+| 范围        | 能力族                                                                                     |
+| ----------- | ------------------------------------------------------------------------------------------ |
+| `001`–`004` | 托管 pip 环境、实时 thinking、think-tag、历史显示投影                                      |
+| `005`–`012` | Cron 默认投递、Windows/Chrome MCP、Tool Search、prompt/session/title 投影                  |
+| `013`–`021` | Subagent 原子 admission、排队、completion FIFO、managed join 与交付身份                    |
+| `022`–`025` | 持久交互审批 lifetime、run suspension、resume、stop/failure                                |
+| `026`–`028` | 父会话身份与 Agent/compaction/reviewer 请求元数据                                          |
+| `029`–`031` | 原始用户上下文保留、Codex continuation、紧急 handoff                                       |
+| `032`–`040` | 运行进度、工具错误恢复、context budget、本地 compaction、身份固定、overflow 收敛与错误归因 |
 
-## Required Patch Header
+重要顺序由总账定义。例如 `016` 的 FIFO delivery 在 `015` 的 commit 后 branch promotion 之前取得执行权；`017`–`021` 构成 managed join 状态机；`022` 是 023–025 的 approval 基础；`029/035` 被 037 的 overflow convergence 使用；039/040 建立在恢复路径之上。
 
-Every patch must follow the policy in `scripts/patches/README.md` and include:
+若新增能力，不要简单追加编号：先判断它在依赖图中的位置。需要插入时允许重编号，但必须更新全部哈希、README、测试和引用。
+
+## 4. 何时允许增加 Patch
+
+只有以下类型通常成立：
+
+- OpenClaw 当前版本缺少 JustDo 必需的 Gateway/API 语义；
+- 平台或打包 runtime 兼容缺口只能在上游生成物处修正；
+- 已证实的 upstream race 需要窄范围 guard；
+- 产品短期不能等待上游发布，但已有可删除条件。
+
+以下情况应改 JustDo，而非 patch runtime：
+
+- Renderer 显示或 i18n bug；
+- Preload/IPC/SQLite/Adapter 映射错误；
+- JustDo 自己的配置生成不正确；
+- 想在 Gateway 深处硬编码产品 UI policy；
+- 通过另一套 session/run/task 数据库弥补设计问题。
+
+提交 patch 前必须记录：复现、pristine 上游控制流、为什么公共 API 不足、最小修改点、安全围栏和 upstream/removal 路径。
+
+## 5. 必需文件头
+
+每个 `.cjs` 在前 16 行必须包含：
 
 ```js
-// Capability: The independently removable user-visible behavior.
-// Target: The exact pristine OpenClaw npm version and missing native behavior.
-// Scope: The request paths, sessions, platforms, or files affected.
-// Safety: The fail-closed boundaries and native behavior that must remain.
-// Remove when: The exact condition that makes this patch unnecessary.
+// Capability: Independently removable user-visible behavior.
+// Target: Exact pristine OpenClaw npm version and missing native behavior.
+// Scope: Files, request paths, sessions and platforms affected.
+// Safety: Fail-closed boundaries and native paths preserved.
+// Remove when: Concrete upstream condition that makes this unnecessary.
 ```
 
-## Maintenance Checklist
+`Remove when` 不能写“以后上游修复”。应指出可验证的 API/行为，例如“上游所有 context-engine recovery 入口都发布带 session id 的 start/update/end/failed 生命周期”。
 
-- Confirm the patch targets the currently declared OpenClaw version.
-- Keep patch names continuous, three-digit, ordered by dependency, and descriptive.
-- Prefer upstream OpenClaw issues or PRs over expanding local patch logic.
-- Do not make SQLite, tool-call ids, labels, or local state a second source of truth.
-- Make patch failure visible in build or startup logs.
-- Update this guide whenever a patch is added, removed, renamed, or made obsolete.
+## 6. Patch 模块契约
 
-## Removal Rule
+模块至少提供 `applyPatch(runtimeDir, options)` 与 `verifyPatch(runtimeDir, options)`。实现要求：
 
-When upstream OpenClaw includes equivalent behavior, remove the patch, update the patch list, and run the OpenClaw runtime install/bundle flow for the affected platform.
+1. 原始 anchor 唯一；0 个或多个都失败；
+2. 已完整 patch 时再次应用不改任何字节；
+3. 混合 pristine/patched 状态失败，不尝试猜测修复；
+4. 多文件能力先完成全部内存变换和验证，再写入；
+5. source pass 与 bundle pass 分别验证；
+6. 所有 runtime JavaScript 写入通过 `_patch-utils.js` 的 `writeIfChanged()`；
+7. `verifyPatch` 对最终行为 marker/控制流做只读验证，而不是只看注释；
+8. 不使用过宽 regex 只为让新上游版本“也能匹配”。
 
-## Patch Lifecycle
+当前 patch phase 使用原子快照建立文件/内容索引，同一文件只解码一次，搜索结果按写入增量更新。绕过 `writeIfChanged` 会让索引和实际文件分叉，因此禁止直接 `fs.writeFile` 修改 runtime JS。
 
-### 1. Identify
+## 7. Pristine 验证
 
-Before adding a patch, decide whether the issue is:
+`verify-openclaw-pristine-contracts.cjs` 在任何写入前运行。它需要同时证明：
 
-- Electron packaging compatibility.
-- Windows/macOS/Linux runtime compatibility.
-- Missing Gateway API needed by JustDo UI.
-- Temporary behavior difference awaiting upstream support.
-- A JustDo bug that should be fixed outside runtime.
+- npm 包确实是目标原始产物；
+- 已被上游吸收并从本地删除的能力仍存在；
+- 所有保留 patch 的 `verifyPatch` 在 pristine runtime 上失败；
+- 每个 anchor 与预期上游控制流一致。
 
-Only the first four categories may justify a runtime patch. If the bug is in JustDo adapter/UI/config sync, fix JustDo code instead.
+最后一点很重要：若 `verifyPatch` 在原始包上已经成功，说明 patch 可能已经上游化或验证过弱，应停止升级审计，而不是继续应用。
 
-### 2. Scope
+## 8. 原子应用与回滚
 
-A patch should touch the smallest runtime surface possible. It should avoid broad rewrites and should not introduce a second source of truth.
+`scripts/patch-openclaw-runtime.cjs`：
 
-Good patch shape:
+1. 验证 runtime provenance；
+2. 列出按编号排序的 patch；
+3. 创建所有 JS 目标的事务快照；
+4. 顺序运行 `applyPatch`；
+5. 对 source 与最终 bundle 运行每个 `verifyPatch`；
+6. 全部成功后才写 manifest format 2；
+7. 任一 apply/verify 失败时恢复整个快照。
 
-- Small compatibility wrapper.
-- Event field preservation.
-- Platform-specific path/process fix.
-- Guard around known runtime race.
+回滚不是“删除 marker”，而是 byte-for-byte 恢复。若回滚自身不完整，runtime 被视为不可用，必须从锁定 tarball 重建。
 
-Bad patch shape:
+## 9. Manifest Format 2
 
-- Reimplementing Gateway scheduling.
-- Replacing session storage.
-- Parsing UI labels to infer runtime truth.
-- Hardcoding JustDo-specific prompt semantics deep in Gateway.
+`runtime-patch-manifest.json` 是打包证明，不只是 patch 文件名列表。它绑定：
 
-### 3. Document
+- npm integrity 与 tarball hash；
+- platform/architecture；
+- 有序 patch 内容哈希；
+- patch helper 与 source-lock 哈希；
+- build recipe fingerprint；
+- package/dependency lock；
+- immutable runtime artifacts；
+- 最终 bundle/package/companion 文件字节。
 
-The required header is part of the patch contract. The `Remove when` line must be concrete enough that a future maintainer can delete the patch without archaeology.
+任何 patch 重排、helper 改动、bundle 重建、cache 污染或打包遗漏都会使 manifest 失效。Electron Builder 在打包前和 staged product 上再次验证；Windows 还验证 `win-resources.tar`，仅允许设计上单独省略的 asar。
 
-Examples:
+## 10. 常用命令
 
-```js
-// Remove when: OpenClaw >= v2026.7.x emits reasoning_delta in chat.history.
-// Remove when: upstream package runner supports Windows .cmd resolution for MCP stdio.
+为当前开发平台准备 runtime：
+
+```bash
+npm run openclaw:runtime:host
 ```
 
-### 4. Verify
+显式平台 runtime：
 
-After changing patches:
+```bash
+npm run openclaw:runtime:win-x64
+npm run openclaw:runtime:win-arm64
+npm run openclaw:runtime:mac-x64
+npm run openclaw:runtime:mac-arm64
+npm run openclaw:runtime:linux-x64
+npm run openclaw:runtime:linux-arm64
+```
 
-1. Reinstall/sync the target runtime.
-2. Run `npm run openclaw:patches:verify`.
-3. Confirm patch logs show applied/skipped status.
-4. Run a smoke test for the patched behavior.
-5. Run related Vitest tests if adapter behavior changed.
-6. Update this guide and any feature docs.
+只验证已准备 runtime：
 
-Every successful full patch pass writes manifest format 2 as
-`runtime-patch-manifest.json`, but only after every patch module's read-only
-`verifyPatch()` has checked the final runtime. The proof binds the npm integrity
-and tarball hash, target platform/architecture, ordered patch hashes, patch
-helper and source-lock hashes, build-recipe fingerprint, package/dependency
-lock, immutable runtime artifacts, and final bundle bytes. Patch application
-snapshots all JavaScript targets and rolls the entire pass back byte-for-byte if
-any apply or verification step fails. Electron Builder revalidates the proof
-before packaging and against the staged product; Windows validates the contents
-of `win-resources.tar` while allowing only the intentionally omitted standalone
-asar. A partial patch, stale cache, reordered patch, rebuilt bundle, or packaging
-omission therefore fails before an installer is emitted.
+```bash
+npm run openclaw:patches:verify
+```
 
-The current-version patch helper also uses that immutable transaction snapshot
-as a phase-local file/content index. Target discovery decodes each JavaScript
-file once, repeated identical searches are cached, and `writeIfChanged()`
-updates the affected content and cached query results before the next patch or
-verification runs. Current-version patches must therefore route runtime
-JavaScript writes through `writeIfChanged()`; direct writes would bypass the
-index and are not allowed. The index is discarded at the end of every success
-or rollback, so it does not weaken pristine-source, idempotence, or manifest
-validation.
+完整平台命令依次安装/同步 runtime、bundle Gateway、同步 plugins/resources、预编译 extensions 并 prune。不要把仅运行 patch 单元测试当作 platform runtime 已准备完成。
 
-### 5. Remove
+## 11. 变更验证
 
-Patch removal is a real change:
+Patch 修改至少执行：
 
-- Delete the patch file for the current version.
-- Remove references in this guide.
-- Remove downstream compatibility code if it only existed for that patch.
-- Test the exact scenario that originally required the patch.
+1. 对锁定 pristine runtime 的首次应用；
+2. 对已 patch runtime 的第二次应用，确认零字节变化；
+3. `npm run openclaw:patches:verify`；
+4. 对应 `tests/openclawV202671*.test.ts` focused tests；
+5. 受影响 Main Adapter/Renderer tests；
+6. 真实 runtime smoke；
+7. 若涉及平台兼容，至少目标平台的打包/启动 smoke；
+8. `git diff --check` 和文档同步。
 
-## Current Patch Rationale
+目标 README 的测试表是能力到 test 的权威映射。测试要同时覆盖 pristine failure、patched behavior、idempotence、source/bundle 原子性和安全负例。
 
-The authoritative, capability-level inventory for the current target is
-[`scripts/patches/v2026.7.1-2/README.md`](../../scripts/patches/v2026.7.1-2/README.md).
-It records every user-visible contract, pristine evidence, retained patch,
-deleted upstream capability, focused test, and removal condition. Do not copy a
-second file-level table here: it becomes stale as soon as a large historical
-patch is split.
+## 12. OpenClaw 升级流程
 
-### Historical v2026.6.11 compaction upgrade warning
+升级 `package.json.openclaw.version` 时：
 
-`011`, `012`, and `019` match exact text emitted by the OpenClaw `v2026.6.11`
-bundle. They intentionally fail loudly when those anchors change. On every OpenClaw
-upgrade:
+1. 获取新 npm tarball，记录 integrity/hash/schema/Node 要求；
+2. 在完全未修改产物上复现每个旧能力缺口；
+3. 标记“上游已吸收、仍缺失、语义变化、JustDo 已不需要”；
+4. 先删除已吸收 patch 及只为其存在的 Adapter 兼容；
+5. 新建 `scripts/patches/<new-version>/`，不要复制旧目录后逐个修到能跑；
+6. 为仍缺失能力重新定位唯一 anchor、重写 pristine evidence；
+7. 重新建立连续编号和依赖图；
+8. 更新 source lock、build recipe、manifest 验证与 focused tests；
+9. 运行全部目标平台 runtime/packaging 验证；
+10. 更新目标 README、本指南及相关 feature/architecture 文档。
 
-1. Do not copy these patches unchanged into the new version directory.
-2. Check whether upstream now persists/replays user originals and exposes full
-   replacement hooks for the compaction prompt, replay wrapper, and suffixes.
-3. If patches remain necessary, inspect the new generated bundle and rewrite
-   every exact anchor. Do not broaden matching merely to make the patch apply.
-4. Compare the prompt and replacement-history behavior with the current
-   `../codex` source; that checkout is reference-only and is not packaged.
-5. Exercise manual `/compact`, threshold and overflow auto-compaction,
-   mid-turn/split-turn recovery, and at least two consecutive compactions.
-   Confirm user-message deduplication, latest-assistant inclusion, bounded tool
-   results, emergency fallback after model/auth/summary failures, and patch
-   idempotence.
+Generated bundle 的变量名、顺序和文本随版本变化。Anchor 改变应被视为重新审计信号，禁止把 regex 放宽到“差不多匹配”。
 
-## Version Upgrade Process
+## 13. 删除 Patch
 
-When bumping `package.json.openclaw.version`:
+删除是一项完整迁移：
 
-1. Create a new `scripts/patches/<new-version>/` only if patches are still required.
-2. Re-evaluate each old patch against upstream runtime.
-3. Drop obsolete patches rather than blindly copying.
-4. Update `docs/patches/openclaw-patch-guide.md`.
-5. Update `docs/features/thinking-stream-implementation.md` if reasoning patches changed.
-6. Run platform runtime install scripts for at least the active development platform.
+- 用 pristine 新版本证明上游行为等价；
+- 删除当前版本 patch 或在新版本不再创建；
+- 删除依赖该 patch 的事件兼容、feature flag 或测试假设；
+- 更新依赖 patch 的编号/顺序；
+- 添加“上游承担能力”的 pristine test；
+- 重跑原故障场景，尤其是竞态、重启和负例；
+- 更新 README 的 upstream disposition。
+
+如果上游只覆盖 happy path，而缺失持久恢复、权限 fence 或错误归因，不能因为名称相似就删除。
+
+## 14. 能力族升级重点
+
+### Thinking/history
+
+核对实时 reasoning、think-tag 转换、redacted-thinking 和 history display projection 三条路径，不能只看 live delta。
+
+### Subagent
+
+核对 atomic admission、queued/running timeout、completion FIFO、commit 后 promotion、managed join ownership、restart recovery 和 identity pin。任何一个环节上游化都不代表整组可删除。
+
+### Approvals
+
+验证可信 ancestry、无限交互等待、run suspension、隐藏恢复、stop/failure 清理。普通 cron/native channel 的上游 timeout 必须保持。
+
+### Compaction
+
+验证 retained user originals、首次/重复/split compaction、90% trigger、provider overflow convergence、emergency handoff、进度 publication 和真实错误归因。至少连续压缩两次并测试 auth/timeout/no-op/abort。
+
+### Platform/MCP
+
+Windows `.cmd`/package runner、Chrome MCP 启动/空页恢复必须在实际 packaged runtime 验证，不能只测字符串 replacement。
+
+## 15. 禁止事项
+
+- 手工编辑已经安装的 runtime 作为最终修复；
+- 在历史版本目录上继续叠加当前能力；
+- 直接写 generated JS 绕过 patch transaction；
+- 用总 marker 代替各子修改验证；
+- 在 patch 中读取 SQLite/UI label 决定 Gateway 事实；
+- 打印 prompt、reasoning、凭证或原生日志敏感内容；
+- 为赶上游升级而接受部分 patch 状态；
+- 未更新目标 README 就合并 patch 变更。
+
+## 16. 故障处理
+
+Patch 失败时保留完整错误中的 patch label、target file、anchor count 与 phase，但分享日志前检查敏感内容。不要在未知 runtime 上继续试探性修改。正确恢复路径是删除/隔离该构建产物，从锁定 tarball 重新安装，再用修正后的 patch pass 完整应用。
+
+打包验证失败时区分：provenance、manifest stale、artifact hash、platform mismatch、patch verify 或 staged package omission。不要通过跳过 Electron Builder hook 生成安装包。
+
+## 17. 文档责任
+
+- `scripts/patches/v2026.7.1-2/README.md`：当前能力事实与逐 patch总账；
+- 本文：通用生命周期与操作规范；
+- `docs/architecture/openclaw-gateway-capability-matrix.md`：App 与 Gateway 能力边界；
+- feature docs：用户可见行为与维护约束；
+- `docs/patches/` 不保存旧 patch 清单副本。
+
+任何 patch 增删、编号、职责或删除条件变化，都必须在同一变更中同步这些受影响文档。
+
+## 18. 工具链代码地图
+
+| 阶段                  | 实现入口                                                       | 证明内容                                          |
+| --------------------- | -------------------------------------------------------------- | ------------------------------------------------- |
+| Pristine contract     | `scripts/verify-openclaw-pristine-contracts.cjs`               | provenance、上游已吸收能力、保留patch在原包未生效 |
+| Patch transaction     | `scripts/patch-openclaw-runtime.cjs`                           | 顺序、快照、apply/verify、失败回滚、manifest写入  |
+| Patch utilities       | `scripts/patches/v2026.7.1-2/_patch-utils.js`                  | 唯一anchor、write-if-changed、索引一致性          |
+| Runtime install/stage | `install-openclaw-runtime.cjs`、`openclaw-runtime-staging.cjs` | 固定source到目标platform staging                  |
+| Freeze                | `openclaw-runtime-freeze.cjs`                                  | 构建输入和immutable artifact指纹                  |
+| Package verify        | `verify-openclaw-runtime-patches.cjs`                          | prepared/staged runtime与manifest一致             |
+| Prune                 | `prune-openclaw-runtime.cjs`                                   | 删除非运行文件且保留allowlisted capability资源    |
+
+## 19. 失败分类与恢复
+
+| 失败                 | 含义                                 | 正确恢复                            |
+| -------------------- | ------------------------------------ | ----------------------------------- |
+| Provenance/hash不符  | 输入不是锁定pristine npm产物         | 丢弃构建目录，从锁定tarball重装     |
+| Anchor 0/multiple    | 上游控制流变化或匹配过宽             | 重新审计源码并重写唯一anchor        |
+| Verify在pristine成功 | 能力可能已上游化或验证器太弱         | 停止应用，确认upstream disposition  |
+| Apply中途失败        | transaction未完成                    | 自动字节回滚；回滚异常则重建runtime |
+| Idempotence改变字节  | patch检测/写入不稳定                 | 修复完整patched-state识别           |
+| Manifest stale       | patch/helper/recipe/artifact发生变化 | 从合法输入完整重建，不手改manifest  |
+| Staged package遗漏   | builder/prune/archive配置错误        | 修正pack pipeline并重新生成产物     |
+
+不要通过跳过verify、删除manifest或手工补generated bundle“救活”发布目录。这会让源码、bundle和证明永久分叉。
+
+## 20. 测试层级与不能互相替代的证据
+
+1. `openclawPristineContracts.test.ts`：证明目标原包与缺口。
+2. `openclawV202671*.test.ts`：证明单项能力、负例和补丁安全。
+3. `openclawPatchUtilsIndex.test.ts`：证明索引/写入工具约束。
+4. `openclawRuntimePatchManifest.test.ts`：证明manifest绑定与篡改检测。
+5. Runtime staging/freeze/prune tests：证明供应链与最终文件集。
+6. Main adapter/shared/Renderer tests：证明JustDo consumer理解patched wire contract。
+7. Packaged runtime smoke：证明目标OS、Node、bundle、child process和真实Gateway协作。
+
+前五层通过但consumer失败，能力仍不可用；mock consumer通过但packaged smoke失败，也不能发布。
+
+## 21. Patch Review 模板
+
+每个新增或重写patch的审查描述应回答：
+
+- 用户可见故障和最小复现是什么？
+- pristine目标文件、函数、控制流和唯一anchor证据是什么？
+- 为什么Gateway公共RPC/event/config或JustDo adapter无法承担？
+- 修改哪些source/bundle文件，跨文件写入是否原子？
+- 正常、重复应用、partial state、错误输入和竞态如何处理？
+- 是否改变权限、credential、prompt/history、文件/命令或外部投递边界？
+- consumer如何检测/使用能力，wire contract是什么？
+- upstream issue/等价能力与可删除条件是什么？
+- 需要更新哪些feature、architecture、matrix、manifest和platform测试？
+
+## 22. Patch 变更完成条件
+
+锁定输入可验证；pristine缺口可复现；首次应用成功且二次零字节变化；任一失败全量回滚；source/bundle verify均检查真实控制流；manifest format 2更新；focused、consumer、staging/freeze/prune与目标平台smoke通过；README记录能力/关系/删除条件；release构建没有使用历史或手工修改runtime。

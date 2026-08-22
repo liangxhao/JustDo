@@ -1,488 +1,288 @@
-# 浏览器设置设计
-
-> 本文同时记录当前实现与后续产品化方向。JustDo 已基于捆绑的 OpenClaw
-> `v2026.7.1-2` 提供 extension 模式、独立扩展资源、主进程配对信息生成、连接测试和
-> 设置页引导。Chrome Web Store 分发、自动安装与自动配对仍属于后续产品化范围。
-
-## 1. 目标与版本前提
-
-在“设置”中增加独立的“浏览器”选项卡，让用户选择 OpenClaw 浏览器运行方式，
-重点解决：
-
-1. 复用用户日常 Chrome 的登录态、Cookie、企业 SSO、扩展和网络代理。
-2. 用户离开电脑后，定时任务仍能使用已登录的 Chrome。
-3. 面向小白用户，正常流程不能要求输入命令、端口、路径或配对字符串。
-
-本文最初核对了旧 runtime 与 upstream 新方案；升级后又按当前捆绑产物复核：
-
-- 历史基线 OpenClaw `v2026.6.11` 删除了 Chrome Extension driver，只包含 managed
-  browser、Chrome MCP existing-session 和 CDP。
-- OpenClaw 官网当前跟随 `main` / `2026.7.x`。提交
-  `d6801f23d4`（2026-07-06）重新实现了
-  `driver: "extension"`，最早包含在 `v2026.7.1-beta.3`。
-- JustDo 当前捆绑 OpenClaw `v2026.7.1-2`，其 npm 产物包含 browser extension driver、
-  loopback relay、extension CLI 和相关配置 schema；打包 prune policy 也保留 `browser`
-  extension。
-- 官网的 Chrome Extension 是当前新方案，不是应当废弃的旧方案。
-
-参考：
+# 浏览器设置：当前实现与安全边界
 
-- 历史设计比对使用 `../openclaw` 的 `v2026.6.11` 和当时的 `origin/main`
-- 当前 runtime 基准为 npm `openclaw@2026.7.1-2`
-- [Browser control API](https://docs.openclaw.ai/tools/browser-control)
-- [Chrome Extension](https://docs.openclaw.ai/tools/chrome-extension)
+本文按 `v2026.8.12` 的 Browser shared contract、Main IPC、设置页、打包扩展和OpenClaw config mapper重写。原“设计方案”现已大部分落地；本文明确三种模式、实际诊断、扩展配对与仍存在的平台限制。
 
-runtime 前置已经满足。当前实现将 upstream browser extension 复制为 JustDo 独立维护的
-`resources/browser-extension/chrome-extension` 资源，不修改捆绑 runtime。构建时从
-`package.json.productName` 生成扩展名称并复制应用图标，安装后释放到
-`<process.resourcesPath>/browser-extension/chrome-extension`；设置页打开其上一级
-`<process.resourcesPath>/browser-extension`，方便用户在 Chrome 中选择扩展子目录。
-主进程继续复用 upstream 的密钥文件、原子写入和 relay 端口规则生成本机配对信息；
-配对字符串只写入系统剪贴板，不返回 Renderer。完整的 Web Store 发布、自动配对和发布渠道
-验证仍需后续完成。
+## 1. 三种模式
 
-## 2. 三种产品模式
+| 模式       | 值          | 数据/控制边界                              | 适用场景                         |
+| ---------- | ----------- | ------------------------------------------ | -------------------------------- |
+| 隔离浏览器 | `isolated`  | OpenClaw受管profile                        | 默认；不共享用户Chrome登录态     |
+| 用户浏览器 | `user`      | 已开启remote debugging的本机Chrome profile | 有人值守、用户接受浏览器调试     |
+| 浏览器扩展 | `extension` | 用户加入专用tab group的标签页              | 精细共享；当前命令级校验仍有缺口 |
 
-| 产品模式               | OpenClaw Profile | Driver             | 登录态                    | 是否需要人在场        |
-| ---------------------- | ---------------- | ------------------ | ------------------------- | --------------------- |
-| 内置浏览器             | `openclaw`       | `openclaw`         | OpenClaw 独立 Profile     | 否                    |
-| 用户浏览器（有人值守） | `user`           | `existing-session` | 整个当前 Chrome Profile   | 首次连接时确认        |
-| 用户浏览器（无人值守） | `chrome`         | `extension`        | 用户 Chrome，仅共享标签组 | 首次安装/配对后不需要 |
+`normalizeBrowserMode` 对未知值回退isolated。模式保存在 `app_config.browserMode`，SetMode写入后同步OpenClaw；sync失败返回 `config-sync-failed`，不能只更新UI。
 
-设置页当前提供三种模式：默认使用 `openclaw` 隔离浏览器；“允许连接你的浏览器”将默认
-Profile 切换为 `user` 并显示 Chrome 授权引导；“通过扩展连接 Chrome”将默认 Profile 切换为
-`chrome` 并显示扩展安装、配对、共享范围和连接测试引导。模式保存到
-`app_config.browserMode`，切换后通过配置同步服务安全应用，使后续会话使用新的默认 Profile。
+## 2. 设置页
 
-### 2.1 内置浏览器
+`BrowserSettingsTab` 读取status和当前app config，展示模式卡、说明、连接issue和对应动作。切换防重复提交；成功后刷新status/config。所有文案来自中英文i18n。
 
-OpenClaw 启动隔离 Chromium Profile。隔离性好，但不会复用日常浏览器登录态，
-并且 OpenClaw 默认给 managed Chrome 增加 `--no-proxy-server`。
+User模式提供：打开remote debugging设置、重新检测。Extension模式提供：打开扩展管理、显示扩展目录、复制配对信息、测试Gateway/扩展连接。
 
-### 2.2 用户浏览器（有人值守）
+## 3. User 模式诊断
 
-通过 Chrome DevTools MCP 自动连接日常 Chrome 会话：
+Main定位Chrome executable和默认user data dir：Windows Program Files/LocalAppData，macOS `/Applications/Google Chrome.app`，Linux google-chrome路径。读取profile的 `DevToolsActivePort` 第一行，要求1..65535。
 
-- 复用整个当前 Profile 的标签页、Cookie、代理、VPN、企业证书和扩展。
-- 需要 Chrome 144 或更高版本。在 `chrome://inspect/#remote-debugging` 开启
-  Remote Debugging，并在首次连接时批准 Chrome 的 Allow 对话框。
-- 不使用 `--remote-debugging-port`。Chrome 136 起会忽略针对默认用户数据目录的
-  调试端口参数；显式 CDP 只能配合独立的 `--user-data-dir`，不能复用日常 Profile。
-- OpenClaw 启动 Chrome MCP `existing-session` 子进程并传入 `--autoConnect`。
+状态字段：platform supported、Chrome found、remote debugging enabled、active port/file、port owner resolved/owner、endpoint reachable和issue。
 
-设置页提供“浏览器”选项卡，并通过主进程只读检测 Chrome 的准备状态：
+Issue分类：unsupported-platform、chrome-not-found、remote-debugging-disabled、port-occupied-by-other-process、chrome-restart-required、not-running。
 
-- 检查 Chrome 是否安装以及 `Local State` 中的 Remote Debugging 用户开关。
-- 读取默认用户目录的 `DevToolsActivePort`，并验证对应 loopback 端口是否监听。
-- 文件存在但端口未监听时显示“需要完全重启 Chrome”，不把残留文件误判为可连接。
-- 端口存在时解析监听进程；无人监听时明确说明它只是 Chrome 遗留记录，其他进程占用时
-  显示进程名和 PID，并且不把该端口误判为可用的 Chrome 调试端点。
-- 可复制 `chrome://inspect/#remote-debugging` 并聚焦 Chrome；由于 Chrome 可能丢弃外部
-  进程传入的 `chrome://` URL，用户需要在地址栏粘贴后回车。端口就绪后可通过“测试连接”
-  直接请求 `browser.request /tabs` 触发授权，无需手动重启 Gateway。
-- Windows 下 Chrome MCP 直接使用上游 stdio transport；运行时补丁会将其 `npx` 调用
-  映射到 JustDo 管理的 Electron Node 与 `npx-cli.js`，并从握手开始捕获 stderr。
-- Chrome 自动连接成功但尚未建立初始页面上下文时，上游 `list_pages` 会返回
-  `No page selected`；运行时会创建一个同 Profile 的空白页建立上下文，再返回标签页列表。
-- 设置页不会写 Chrome 配置、删除端口文件或使用 `--remote-debugging-port=9222` 启动 Chrome。
+端口owner：Windows用隐藏的 `netstat.exe` + `tasklist.exe`（2秒timeout）；Unix用 `lsof -nP -iTCP:<port> -sTCP:LISTEN -Fp -Fc`。无法查询owner与确认无人监听是不同状态，不能误报“安全”。
 
-### 2.3 用户浏览器（无人值守）
+Endpoint通过loopback DevTools JSON探测。若port被非Chrome进程占用，UI必须阻止连接；Chrome配置改变但旧进程仍在时提示重启。
 
-通过 OpenClaw MV3 Chrome Extension 的 `chrome.debugger` API：
+## 4. 打开 Chrome 设置
 
-- 不出现阻塞式远程调试 Allow 对话框。
-- Extension relay 只监听 loopback，并使用主机本地 token 双向认证。
-- Agent 只能访问以 `package.json.productName` 命名的标签组中的标签页，不是整个浏览器。
-- 用户把标签页移出该组、再次点击扩展按钮或关闭调试提示后可立即撤销。
-- Agent 新建的标签页自动进入该产品标签组。
-- 新标签页仍使用当前用户 Chrome Profile 的 Cookie、代理、VPN、证书和登录态。
+OpenRemoteDebugging把 `chrome://inspect/#remote-debugging` 复制到系统剪贴板，然后启动或聚焦Chrome。Chrome内部URL不能可靠经OS external protocol直接打开，因此当前实现不会代替用户导航；用户需要把剪贴板中的地址粘贴到Chrome地址栏。相关spawn使用固定参数数组和detached/unref，并在Windows隐藏子进程窗口；不拼接用户shell字符串。
 
-这才是本产品中“用户浏览器（无人值守）”的正确技术映射。
+用户仍需在Chrome中明确启用/确认remote debugging。应用不能无提示修改企业policy或profile配置。
 
-## 3. 小白用户约束与现实边界
+## 5. Extension 构建与分发
 
-上游文档的默认安装流程包括：
+源位于 `resources/browser-extension/chrome-extension/`；`npm run browser-extension:prepare` 复制到 `build/browser-extension/chrome-extension`，替换product name/version并准备icons。Electron dev启动和packaging都确保build产物存在；builder作为extraResource打包到 `browser-extension/chrome-extension`。
 
-1. 获取 unpacked extension 路径。
-2. 打开 `chrome://extensions`。
-3. 开启 Developer mode。
-4. 选择 Load unpacked。
-5. 获取 pairing string。
-6. 打开扩展 popup 并粘贴配对信息。
+Manifest V3，minimum Chrome 125，service worker为module。权限按当前manifest为准，核心使用storage、tabs/tabGroups、debugger、alarms等；host/connect范围不应扩张而不做安全评审。
 
-当前版本在设置页中引导并简化这个流程：用户不需要运行命令，扩展目录由应用打开，pairing
-string 由主进程生成并复制；但用户仍需在 Chrome 中开启 Developer mode、点击 Load unpacked、
-选择扩展目录，并把配对信息粘贴到扩展 popup。
+## 6. Relay 与配对
 
-另外，普通 Chrome 不允许桌面应用静默安装任意扩展：
+Main根据Gateway port计算extension relay：默认18799，或Gateway port+10的策略；真正端口/能力由Gateway browser relay支持。Secret文件为 `<stateDir>/credentials/browser-extension-relay.secret`：随机32 bytes hex、exclusive create、mode 0600；父目录创建为0700，并复用合法既有值。
 
-- Chrome Web Store 安装需要用户确认扩展权限。
-- Windows/macOS external install 仍会显示启用确认。
-- 真正零交互 force-install 只适用于企业管理员策略。
+CopyExtensionPairing把 `ws://127.0.0.1:<port>/extension#<token>` 写剪贴板，但Browser status/result不返回token。扩展解析后把relayUrl/token存 `chrome.storage.local`。
 
-因此“一键”应定义为：
+WebSocket token不放URL query，而作为subprotocol `openclaw-extension-token.<token>`，同时发送固定 `openclaw-extension-relay` protocol，减少URL日志泄漏。Relay仅应监听loopback。
 
-- 用户只完成一次清晰的浏览器安全确认。
-- JustDo 自动完成 extension 路径发现、relay 启动、token 生成、配对和健康检查。
-- 用户不接触 Developer mode、文件夹、命令、端口或 pairing string。
+## 7. Tab group 是同意边界
 
-如果连 Chrome 自己要求的安装/启用确认也不允许，则普通消费版 Chrome 无法满足；
-只能使用企业策略预装，或退回 JustDo/OpenClaw 专用浏览器 Profile。
+扩展创建以产品名命名的tab group；只有组内tab会报告给relay，`chrome.debugger.attach` 前也会校验membership。用户把tab移出组后，tab/group事件会触发同步并detach；点击Chrome debugger infobar Cancel也会移出组，防自动重连重新授权。
 
-## 4. 推荐的分发与配对方案
+Relay命令支持attach/detach、CDP、create/close/activate tab。Attach前再次确认tab仍在共享组；同tab并发attach合并，`Another debugger is already attached`在本扩展已记录状态时安全视为已连接。当前 `cdp`、`closeTab`、`activateTab` 分支没有再次校验目标tab的group membership；其中CDP通常还受debugger attachment约束，但close/activate可直接按Relay提供的tabId调用Chrome API。这是待修复的授权边界缺口，不能把“组外tab不可访问”写成已满足的不变量。
 
-### 4.1 企业环境：首选
+这比“共享整个profile”更细，但共享tab内的cookie/页面内容仍可能敏感；UI必须解释Chrome debugger提示。
 
-将 JustDo Chrome Extension 发布到 Chrome Web Store，并为企业管理员提供
-force-install policy 模板：
+## 8. Extension 生命周期
 
-- IT 管理员一次部署。
-- 最终用户无需安装操作。
-- JustDo 启动后自动发现扩展并完成本机配对。
-- 企业可用 allowlist 控制允许安装和升级的扩展 ID。
+Badge：off空、connecting省略号、on绿色ON、error红色感叹号。连接成功发hello（UA/browser/extension版本和共享tabs）；tabs/group变化150ms debounce同步。
 
-这是最符合“用户零配置”的方式。
+断线指数退避1/2/4/8/16/30秒上限。MV3 service worker可能被回收，因此每0.5分钟alarm唤醒并重连，startup/installed也连接。当前Unpair只删除url/token并关闭socket，不会遍历detach已附加tab，也不会清理共享group。Relay失去配对后无法继续下发命令，但Chrome debugger attachment仍可能保留到其他tab/group事件、扩展生命周期或Chrome自身清理；这是明确的撤销缺口。
 
-### 4.2 普通用户：一次 Chrome 确认
+## 9. Connection test
 
-需要先把扩展发布到 Chrome Web Store。JustDo 设置页的
-“安装并启用”按钮负责：
+`browser:testConnection` 用Gateway client请求对应profile的 `/tabs`，错误分gateway-unavailable、permission-timeout、connection-failed。Extension专用test使用 `chrome` profile，但当前Main handler只判断该RPC是否成功，不读取或验证返回的tab数量；因此测试成功只能证明Gateway browser入口可响应，不能证明已有共享tab或下一次Agent操作一定可控制页面。共享tab的实际存在需结合扩展状态、用户可见tab group和attach时的runtime检查判断；当前非attach命令的成员校验并不完整。
 
-1. 启动本地 extension relay。
-2. 创建或读取主机本地 pairing secret。
-3. 打开扩展商店安装页。
-4. 等待扩展安装并连接。
-5. 自动完成配对，不要求复制字符串。
-6. 检测到 Connected 后自动切换默认 Profile 为 `chrome`。
+测试结果是即时诊断，不保证下一次Agent操作时tab仍授权。当前attach会执行membership检查，但CDP、close和activate命令未做同等级检查。
 
-Chrome Web Store 的权限确认不能由 JustDo 代点。页面应把这一步解释成
-“Chrome 正在确认你允许 JustDo 控制共享标签页”，而不是技术设置。
+## 10. OpenClaw 配置映射
 
-### 4.3 自动配对机制
+Mode保存触发 `applyBrowserModeChange` -> 写app_config -> `syncOpenClawConfig`。Mapper负责生成OpenClaw browser配置/启用相应plugin/tool。Unknown mode回isolated；Extension依赖当前Gateway bundle与Chrome MCP/relay patch能力。
 
-上游 popup 要求手工粘贴 pairing string，不符合产品约束。JustDo 需要选择一种
-受控的自动配对机制：
+配置同步必须保留非JustDo受管字段；有活动workload时遵守restart策略。UI不能直接编辑openclaw.json。
 
-#### 方案 A：Native Messaging，推荐
+## 11. 安全要求
 
-- JustDo 安装器注册固定 Native Messaging Host。
-- Extension 首次运行向 Host 请求当前 Gateway endpoint 和一次性 pairing
-  material。
-- Main 校验 extension ID、浏览器和请求 nonce。
-- Extension 完成 relay 握手后，Main 立即使一次性 material 失效。
-- 长期 token 继续由 Extension 和 OpenClaw 按上游模型保管。
+- Relay loopback + secret；token文件权限和日志/IPC/URL泄漏检查。
+- Tab group作为可见授权；目标实现应在每个可控命令前验证membership，并在移组或unpair时立即detach。当前只有attach和移组事件路径覆盖了这条规则，命令级校验与unpair清理仍待补齐。
+- Port owner不明时不得宣称Chrome可信；非Chrome owner明确阻断。
+- Chrome/PowerShell/open命令参数固定，窗口隐藏，不用shell拼接。
+- Extension/relay message视为不可信，校验type、seq、tabId、URL/CDP参数与消息大小。
+- 不自动绕过Chrome首次debugger确认或企业policy。
+- Mode/config sync失败时保持可恢复，并阻止错误模式被宣告成功。
 
-优点是跨页面、无固定 HTTP 端口、身份边界清晰。缺点是 Windows/macOS/Linux
-都要处理 Native Messaging manifest 和安装器注册。
+## 12. 已知限制
 
-#### 方案 B：loopback onboarding page
+- 主要针对Google Chrome，Chromium/其他衍生浏览器的发现有限。
+- DevToolsActivePort与进程owner检查存在TOCTOU，真正连接仍需Gateway验证。
+- Pairing string进入系统剪贴板，其他应用可能读取；用户应完成后覆盖/系统应考虑短期token轮换。
+- MV3后台会暂停，依赖alarm和reconnect；短暂不可用是预期状态。
+- Chrome debugger会显示可见警告，无法也不应隐藏。
+- Extension relay能力依赖固定OpenClaw runtime和Windows/Chrome相关patch。
+- `cdp`、`closeTab`、`activateTab` 当前未重新校验共享组membership；不能将tab group视为完整命令级capability。
+- Unpair当前不主动detach既有debugger attachment，也不清理共享group；撤销语义尚未完全收敛。
 
-- JustDo 启动短生命周期 loopback HTTP 页面。
-- Extension 只允许从固定 loopback origin 接收一次性配对请求。
-- 完成后立即关闭 onboarding server。
+## 13. 测试
 
-实现较轻，但 origin、端口固定、CSRF、重放和本地恶意进程抢配对的防护更复杂。
-
-不要：
-
-- 把长期 pairing secret 写进安装 URL 查询参数。
-- 把 token 烘焙进通用 extension 包。
-- 让 Renderer 读取 Gateway token。
-- 在日志中打印 pairing string。
-
-## 5. 设置页设计
-
-在侧边栏中放在“通用”和“模型”之间，并新增独立
-`BrowserSettingsTab.tsx`。
-
-### 5.1 模式卡片
-
-#### 内置浏览器
-
-- 标签：默认、隔离。
-- 说明：独立浏览器，不读取日常 Chrome 数据。
-- 配置：显示窗口/无头、浏览器程序、网络。
-
-#### 用户浏览器（有人值守）
-
-- 标签：临时连接。
-- 说明：复用整个 Chrome Profile；连接时需要本人在电脑前点击允许。
-- 状态：Chrome 版本、远程调试状态、等待确认、已连接。
-- 网络只读说明：使用用户 Chrome 自身网络设置。
-
-#### 用户浏览器（无人值守）
-
-- 标签：推荐用于定时任务。
-- 说明：安装扩展后复用 Chrome 登录态；只控制产品标签组。
-- 主按钮状态机：
-  - 未安装：`安装并启用`
-  - 等待 Chrome：`请在 Chrome 中确认安装`
-  - 配对中：`正在安全连接`
-  - 已连接：`已启用`
-  - 断开：`重新连接`
-- 用户不看到 token、端口、路径或 Profile 名。
-- 网络只读说明：使用用户 Chrome 自身代理、VPN、证书和企业策略。
-
-### 5.2 共享范围
-
-无人值守模式必须把“标签组即授权边界”讲清楚：
-
-- `仅共享产品标签组中的网页`
-- `新任务打开的网页会自动进入该组`
-- `将网页移出该组即可立即停止访问`
-
-首次启用完成后，可自动打开一个普通欢迎页并放入产品标签组，用于确认
-连接。不能自动把用户已有标签页批量加入共享组。
-
-### 5.3 状态与诊断
-
-页面显示：
-
-- Extension：未安装 / 已安装。
-- Relay：未启动 / 正在连接 / Connected。
-- Profile：`chrome · extension`。
-- 共享标签页数量。
-- Gateway：已生效 / 等待重启 / 等待当前任务结束后重启。
-- 操作：
-  - 测试连接。
-  - 打开共享测试页。
-  - 暂停/恢复。
-  - 解除配对。
-
-连接测试只能读取 status 和 tabs，不读取页面正文、不截图。
-
-## 6. JustDo 配置模型
-
-在 `src/shared/browser.ts` 定义产品语义：
-
-```ts
-export const BrowserMode = {
-  MANAGED: 'managed',
-  USER_ATTENDED: 'user-attended',
-  USER_UNATTENDED: 'user-unattended',
-} as const;
-
-export type BrowserSettings = {
-  mode: (typeof BrowserMode)[keyof typeof BrowserMode];
-  managed: {
-    executablePath: string;
-    headless: boolean;
-    proxyMode: 'direct' | 'follow-app';
-  };
-  attended: {
-    userDataDir: string;
-  };
-  unattended: {
-    enabled: boolean;
-  };
-};
+现有Main测试覆盖active port/parser、Windows/Unix owner、secret创建复用、pairing不回token、路径发现和handler。Extension pure helper测试应覆盖pairing、subprotocol、backoff、color/tab normalize；集成需覆盖group授权/撤销、并发attach、MV3重启、0 tab、Chrome Cancel和mode config sync失败。
+
+手工跨平台验证：全新Chrome、Chrome已运行、debugging关闭/需重启、端口被其他进程占用、扩展load unpacked/packaged路径、配对/断线/重启、共享/移除多个窗口tab。
+
+## 14. 维护入口
+
+- Shared：`src/shared/browser.ts`
+- Main：`src/main/ipc/app/browser.ts`
+- UI：`src/renderer/features/settings/components/BrowserSettingsTab.tsx`
+- Extension：`resources/browser-extension/chrome-extension/`
+- Prepare：`scripts/prepare-browser-extension.cjs`
+- Config：`src/main/openclaw/config/openclawConfigSync.ts`
+
+## 15. Shared contract 逐项说明
+
+`src/shared/browser.ts` 是 Renderer 与 Main 的稳定边界：
+
+| 类型/常量                     | 当前值                            | 用途                                     |
+| ----------------------------- | --------------------------------- | ---------------------------------------- |
+| `BrowserMode`                 | isolated/user/extension           | 产品选择，不直接等同 OpenClaw profile 名 |
+| `BrowserConnectionIssue`      | 6 个稳定错误分类                  | User 模式设置向导                        |
+| `BrowserPortOwner`            | pid/processName/isChrome          | 只表示诊断结果，不是安全 capability      |
+| `BrowserConnectionStatus`     | 发现、配置、端口、owner、endpoint | 一次状态快照                             |
+| `BrowserConnectionTestResult` | success/error/errorCode           | Gateway `/tabs` 即时调用结果             |
+
+`normalizeBrowserMode` 只有 `user` 和 `extension` 原样通过，其他值全部回到 `isolated`。IPC SetMode 仍会严格拒绝未知值；normalize 用于读取旧配置时安全恢复，不能代替写入校验。
+
+## 16. Main handlers 明细
+
+| IPC                               | Main 行为                                    | 是否修改状态         |
+| --------------------------------- | -------------------------------------------- | -------------------- |
+| `browser:getStatus`               | 执行 Chrome/DevTools/owner/endpoint 诊断     | 否                   |
+| `browser:setMode`                 | 校验枚举，调用 config transaction            | 是                   |
+| `browser:openRemoteDebugging`     | 复制内部 URL并启动/聚焦 Chrome               | 只修改剪贴板         |
+| `browser:openExtensionManagement` | 复制 `chrome://extensions` 并聚焦 Chrome     | 只修改剪贴板         |
+| `browser:revealExtension`         | 定位打包或开发扩展目录并用 shell 打开        | 否                   |
+| `browser:copyExtensionPairing`    | 构建/复用 secret，复制 pairing string        | 可能创建 secret 文件 |
+| `browser:testConnection`          | user profile `/tabs`，并前景/再次聚焦 Chrome | 否                   |
+| `browser:testExtensionConnection` | chrome profile `/tabs`                       | 否                   |
+
+Handler 统一返回可序列化 `{success,...}`；路径、Gateway token、Relay token 不应出现在失败响应。RevealExtension 日志会记录扩展目录，这是受管应用路径而非用户秘密，但仍不应扩展为打印 manifest/config 内容。
+
+## 17. User 模式状态判定算法
+
+`getBrowserConnectionStatus()` 按以下证据顺序计算：
+
+1. 判断平台是否在支持集合；
+2. 定位 Chrome executable；
+3. 定位默认 user data dir，并读取 Preferences 中 remote debugging 开关；
+4. 检查 `DevToolsActivePort` 是否存在，解析第一行整数端口；
+5. 对该 loopback 端口做 TCP probe；
+6. 只有端口监听时才查询 owner；
+7. owner 已解析、进程名存在且不是 Chrome 时判定冲突；
+8. `endpointReachable = portListening && !occupiedByOtherProcess`；
+9. 按固定优先级选择单个 issue。
+
+Issue 优先级是 unsupported → chrome missing → debugging disabled → other-process owner → restart required → not running。一个状态可能同时有多个底层缺口，UI 只收到最高优先级 issue，但仍可读取其他布尔字段展示辅助信息。
+
+Owner 查询失败时 `activePortOwnerResolved=false`，不会被归类成明确的 other-process conflict。当前 `endpointReachable` 仍可能为 true，所以它只表示端口可连接，不是“已证明对端是 Chrome”。文档、安全评审和 UI 不应扩大这一字段含义。
+
+## 18. Browser mode 配置事务
+
+```mermaid
+sequenceDiagram
+  participant UI as BrowserSettingsTab
+  participant IPC as Main handler
+  participant A as app_config
+  participant O as OpenClaw config sync
+
+  UI->>IPC: setMode(next)
+  IPC->>A: read previous config
+  IPC->>A: write browserMode=next
+  IPC->>O: sync(browser-mode-change)
+  alt success
+    O-->>IPC: success
+    IPC-->>UI: success + mode
+  else failure
+    IPC->>A: restore previous config
+    IPC->>O: sync(browser-mode-rollback)
+    IPC-->>UI: config-sync-failed
+  end
 ```
 
-默认：
+Rollback sync 也可能失败；Main 记录错误但响应仍是原操作失败。此时持久 app_config 已恢复 previous，活动 Gateway 是否恢复要看第二次 sync 结果。UI 应重新读取配置/engine status，而不是仅把卡片切回旧选项就假设 runtime 已一致。
 
-```ts
-{
-  mode: 'managed',
-  managed: {
-    executablePath: '',
-    headless: false,
-    proxyMode: 'direct',
-  },
-  attended: {
-    userDataDir: '',
-  },
-  unattended: {
-    enabled: false,
-  },
-}
+## 19. Extension pairing 文件与端口
+
+Relay port 解析顺序：
+
+1. 若 `OPENCLAW_CONFIG_PATH` 指向的 config 中 `browser.profiles.chrome.cdpPort` 是 1..65535 整数，直接使用；
+2. 否则读取 `OPENCLAW_GATEWAY_PORT + 10`；
+3. 结果非法时回退 18799。
+
+Secret 创建：
+
+- 路径必须来自绝对 `OPENCLAW_STATE_DIR`；
+- 父目录 `credentials` 以 0700 创建；
+- token 是 `crypto.randomBytes(32).toString('hex')`，即 64 个小写 hex 字符；
+- 文件使用 `flag:'wx'` 和 mode 0600；
+- 并发创建发生 EEXIST 时重新读取胜者；
+- 已有内容只有匹配 `/^[0-9a-f]{64}$/` 才复用，否则失败。
+
+Pairing string 的 fragment 只避免 token 作为 WebSocket URL query 被常规服务器日志记录；扩展 popup 仍会解析并持久化 token，系统剪贴板也暂时包含明文。它不是一次性 token，当前轮换依赖用户重新配对或 runtime/secret 管理策略。
+
+## 20. Extension background 状态机
+
+Extension service worker 的核心状态包括 pairing config、WebSocket 状态、已共享 group/tab、debugger attachment 和重连 attempt。典型流程：
+
+```mermaid
+stateDiagram-v2
+  [*] --> Off: no pairing
+  Off --> Connecting: user pairs
+  Connecting --> On: WebSocket open + hello
+  Connecting --> Error: connect/auth failure
+  On --> Connecting: socket closes/alarm wakes
+  Error --> Connecting: backoff expires
+  On --> Off: unpair
 ```
 
-作为 `AppConfig.browser` 存入现有 `app_config`。Pairing secret、Gateway device
-token 和 relay credential 不进入 `app_config` 或 Renderer。
+Tab group 是授权可见面；目标不变量是在真正控制前检查tab存在、仍属于目标group、URL/command可接受且debugger attach成功。当前实现只在attach入口强制membership，后续CDP及close/activate没有统一的前置校验。Group/tab事件以150ms debounce汇总，避免拖动标签页时向Relay发送大量中间状态。
 
-## 7. OpenClaw 配置映射
+Chrome debugger attachment 与 WebSocket 是两个资源。移出group的事件路径会同步并detach，但当前Unpair只断WebSocket并删除storage，不处理attachment或group；因此扩展仍可能暂时拥有页面调试权限。修复后的回归测试不能只检查storage/token已删除，还必须观察debugger与group状态。
 
-### 7.1 内置浏览器
+## 21. 连接测试的准确语义
 
-```json5
-{
-  browser: {
-    enabled: true,
-    defaultProfile: 'openclaw',
-  },
-}
-```
-
-### 7.2 用户浏览器（有人值守）
-
-```json5
-{
-  browser: {
-    enabled: true,
-    defaultProfile: 'user',
-    profiles: {
-      user: {
-        driver: 'existing-session',
-        attachOnly: true,
-        color: '#00AA00',
-      },
-    },
-  },
-}
-```
-
-### 7.3 用户浏览器（无人值守）
-
-```json5
-{
-  browser: {
-    enabled: true,
-    defaultProfile: 'chrome',
-    profiles: {
-      chrome: {
-        driver: 'extension',
-        color: '#FF4500',
-      },
-    },
-  },
-}
-```
-
-`buildManagedOpenClawConnectivityConfig()` 目前固定覆盖整个 `browser` 节点。
-实施时新增纯函数：
-
-```ts
-buildManagedOpenClawBrowserConfig(browserSettings, proxySettings);
-```
-
-并由 `OpenClawConfigSync` 读取 JustDo 语义配置。Browser config 变化要求 Gateway
-restart；有活动任务时复用现有延迟重启机制。
-
-## 8. Main、IPC 与 Preload
-
-新增：
+`testBrowserConnection()` 调用：
 
 ```text
-src/shared/openclaw/browser.ts
-src/main/openclaw/browser/openclawBrowserService.ts
-src/main/openclaw/browser/browserExtensionOnboardingService.ts
-src/main/ipc/openclaw/browser.ts
-src/renderer/features/settings/components/BrowserSettingsTab.tsx
+browser.request
+  method: GET
+  path: /tabs
+  query.profile: user | chrome
+  timeoutMs: 45000
 ```
 
-窄 IPC：
+它不解析响应 body。因此：
 
-```ts
-const OpenClawBrowserIpc = {
-  GetStatus: 'openclaw:browser:getStatus',
-  TestConnection: 'openclaw:browser:testConnection',
-  BeginExtensionSetup: 'openclaw:browser:beginExtensionSetup',
-  CancelExtensionSetup: 'openclaw:browser:cancelExtensionSetup',
-  UnpairExtension: 'openclaw:browser:unpairExtension',
-} as const;
-```
+- success：Gateway client存在且请求 resolve；
+- gateway-unavailable：Main 当前没有 client；
+- permission-timeout：错误文本命中 timed out/timeout；
+- connection-failed：其他错误。
 
-Main 通过 Gateway `browser.request` 或对应 extension status API 获取状态。
-Renderer 不直接调用 relay，不读取 Gateway/extension credential。
+测试不能证明目标 tab 持续存在、tab group 仍授权、debugger attach 可通过或页面命令可执行。若未来产品需要“至少一个共享 tab”的强验证，必须读取 `/tabs` 响应、验证数组和 profile，并新增 shared response contract 与测试。
 
-状态归一化：
+## 22. 安全测试清单
 
-```ts
-type BrowserConnectionStatus = {
-  mode: 'managed' | 'user-attended' | 'user-unattended';
-  state:
-    | 'not-installed'
-    | 'waiting-for-browser-confirmation'
-    | 'pairing'
-    | 'connected'
-    | 'disconnected'
-    | 'error';
-  profile: 'openclaw' | 'user' | 'chrome';
-  driver: 'openclaw' | 'existing-session' | 'extension';
-  sharedTabCount?: number;
-  message?: string;
-};
-```
+### Main
 
-## 9. 无人值守行为
+- 恶意/损坏 `DevToolsActivePort`：空、负数、65536、额外文本；
+- owner tool timeout、命令不存在、输出多进程、PID 消失；
+- secret 父目录不存在、并发创建、非法旧 token、权限错误；
+- config path/state dir 缺失或相对路径；
+- mode sync 首次失败、rollback失败和活动 workload；
+- IPC 结果不包含 token。
 
-完成一次安装和配对后：
+### Extension
 
-- Gateway/JustDo 重启：relay 自动恢复，Extension 使用已保存身份重连。
-- Chrome 重启：Extension 自动恢复连接。
-- Agent 打开新页面：自动进入产品标签组，不需要用户点击。
-- 已有网页：只有用户曾加入产品标签组后才可访问。
-- 用户移出标签：立即撤销。
-- Chrome 显示可关闭的调试 banner，但它不是阻塞式确认。
+- pairing parser 拒绝空 token、错误协议和非 `/extension` path；
+- WebSocket protocols 不把 token放 URL；
+- 非组内 tab 的 attach/CDP/close/activate 全部拒绝；
+- tab 在检查与 attach 之间移出 group；
+- Chrome Cancel 后不会自动重新 attach；
+- service worker suspend/resume 后 attachment/storage/socket 收敛；
+- unpair 清 socket、timer、storage和attachment；
+- Relay 发送 malformed JSON、超大 payload、未知 command、错误 seq/tabId。
 
-定时任务启动前必须检查：
+## 23. 排障路径
 
-1. Extension connected。
-2. Gateway browser service ready。
-3. `chrome` Profile 可用。
+1. 先确认设置中的 mode 与 Main app_config 一致；
+2. User 模式记录 activePort、ownerResolved、owner和issue，不记录用户页面；
+3. Extension 模式确认打包目录、pairing已保存、badge、共享 group/tab 数；
+4. 用 TestConnection区分 Gateway入口失败与后续attach失败；
+5. 检查 Main daily log、Gateway log，再按原生 JSON log关联browser request；
+6. 若更新配置后异常，确认 Gateway generation 是否实际重载/重启；
+7. 不把 pairing token、Chrome cookie、CDP response或页面内容贴入 issue。
 
-检查失败时任务应明确失败并提示“打开 Chrome”或“重新连接”，不能静默回退到
-内置 Profile，避免在错误账号或未登录环境下执行。
+## 24. 完成交付标准
 
-## 10. 安全要求
+Browser 功能的完整验收不是三个模式能保存，而是：
 
-- Relay 只绑定 loopback。
-- Relay 两侧认证并校验 `chrome-extension://<expected-id>` origin。
-- Pairing material 高熵、短生命周期、单次使用。
-- 解除配对时旋转或删除 host-local secret。
-- 不记录 pairing string、Gateway token、Cookie、页面内容和完整 WebSocket URL。
-- Extension ID 必须固定并纳入 allowlist。
-- 只控制产品标签组，不能在 JustDo 中提供“共享全部已有标签页”开关。
-- 安装/升级包必须签名并来自可信发布渠道。
-- Extension 与 Gateway 版本不兼容时 fail closed。
-
-## 11. 实施顺序
-
-### Phase 0：Runtime 前置
-
-1. 以当前捆绑 `openclaw@2026.7.1-2` 为唯一 runtime 基准。
-2. 已完成版本升级及 `browser` extension 的打包保留；仍需补齐 packaged-runtime 契约验证。
-3. 在 Electron 内嵌 Node 下验证 `driver=extension`、extension CLI、relay、doctor 和
-   `browser.request`，失败时保持产品入口关闭。
-
-### Phase 1：设置与手工上游流程
-
-1. 增加三种模式及配置同步。
-2. 先接通上游 unpacked extension 手工流程，仅供开发验证。
-3. 完成 status、test、Gateway restart 和定时任务 fail-closed。
-
-此阶段不能面向小白用户正式发布。
-
-### Phase 2：可发布的一次确认流程
-
-1. 发布签名 Chrome Web Store Extension。
-2. 实现 Native Messaging 自动配对。
-3. 设置页提供“安装并启用”状态机。
-4. 增加企业 force-install policy 模板。
-5. 完成 Chrome/Edge、重启、升级、断线和凭据旋转验证。
-
-## 12. 测试清单
-
-- 三种模式生成正确 OpenClaw Profile。
-- `v2026.7.1-2` packaged runtime 的 extension driver、relay、CLI 与 schema 契约可验证；
-  在 JustDo 集成未完成或验证失败时不显示伪成功。
-- Extension 未安装、等待确认、配对、连接、断开的状态转换。
-- Pairing token 不进入 Renderer、日志、URL query 或 `app_config`。
-- Extension 只能控制产品标签组。
-- Agent 新建标签自动进入组。
-- 移出标签、关闭 banner、解除配对立即撤销控制。
-- Gateway/Chrome/JustDo 分别重启后自动恢复。
-- 定时任务在 extension 离线时 fail closed。
-- 企业系统代理、PAC、VPN、私有 CA 下使用用户 Chrome 网络栈。
-- 中英文 i18n 完整。
-
-## 13. 需要同步的文档
-
-实现时同步更新：
-
-- `docs/architecture/02-architecture.md`
-- `docs/architecture/05-agent-engine.md`
-- `docs/architecture/07-plugin-system.md`
-- `docs/architecture/10-data-storage.md`
-- `docs/architecture/11-security-model.md`
-- `docs/patches/openclaw-patch-guide.md`（若升级或回移 runtime）
+- isolated 不读取用户 Chrome profile；
+- user 模式在明确授权下连接，并能区分配置、进程和端口问题；
+- extension 的attach、CDP、close、activate都只接受用户可见共享组内tab，移组和unpair均立即detach；当前实现尚未满足此项，属于发布前安全修复项；
+- config sync失败不会让 UI 宣告错误模式成功；
+- token、页面、cookie和CDP payload不泄漏到 IPC/日志；
+- Windows、macOS、Linux 的实际 Chrome 安装路径与打包资源经过 smoke；
+- Gateway/OpenClaw升级后 `/tabs` profile、Relay protocol和Chrome MCP patch重新验证。
