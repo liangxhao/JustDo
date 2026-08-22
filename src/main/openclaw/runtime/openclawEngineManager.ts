@@ -27,6 +27,7 @@ import {
   resolvePackagedNpmBinDir,
 } from './electronNodeRuntime';
 import { GatewayConfigReloadMonitor } from './gatewayConfigReloadMonitor';
+import { buildGatewayLaunchArgs } from './gatewayLaunchArgs';
 import { GatewayStdoutLogFilter } from './gatewayLogFilter';
 import { findAvailableLoopbackPort, isLoopbackPortAvailable } from './loopbackPort';
 import { ensureOpenClawGatewayBundleLauncher } from './openclawGatewayBundleLauncher.cjs';
@@ -673,18 +674,13 @@ export class OpenClawEngineManager extends EventEmitter {
       isPackaged: app.isPackaged,
     });
 
-    const forkArgs = [
-      'gateway',
-      '--bind',
-      'loopback',
-      '--port',
-      String(port),
-      '--token',
+    const forkArgs = buildGatewayLaunchArgs({
+      port,
       token,
-      '--verbose',
-    ];
+      isPackaged: app.isPackaged,
+    });
     console.log(
-      `[OpenClaw] forking gateway: entry=${openclawEntry}, cwd=${runtime.root}, port=${port}, args=${JSON.stringify(forkArgs)}`,
+      `[OpenClaw] forking gateway: entry=${openclawEntry}, cwd=${runtime.root}, port=${port}, verbose=${forkArgs.includes('--verbose')}`,
     );
 
     // On Windows, use child_process.spawn with ELECTRON_RUN_AS_NODE=1 instead of

@@ -145,16 +145,24 @@ describe('GatewayStdoutLogFilter', () => {
     );
   });
 
-  it('discards chat deltas and periodic health broadcasts', () => {
+  it('discards droppable chat and task events and periodic health broadcasts', () => {
     const filter = new GatewayStdoutLogFilter();
 
     expect(
       filter.push(
         '[ws] → event chat seq=per-client dropIfSlow=true\n' +
+          '[ws] → event task seq=per-client clients=1 dropIfSlow=true\n' +
           '[ws] → event tick seq=broadcast clients=2\n' +
           '[ws] → event health seq=broadcast clients=2\n',
       ),
     ).toBe('');
+  });
+
+  it('keeps non-droppable task events', () => {
+    const filter = new GatewayStdoutLogFilter();
+    const task = '[ws] → event task seq=per-client clients=1\n';
+
+    expect(filter.push(task)).toBe(task);
   });
 
   it('keeps successful and failed polling responses for frequency diagnostics', () => {

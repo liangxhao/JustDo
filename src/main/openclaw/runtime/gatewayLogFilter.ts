@@ -43,6 +43,7 @@ const isDiscardedTransportEvent = (line: string): boolean =>
   line.includes('possibly sensitive key found:') ||
   line.includes('[plugins] loading ') ||
   (line.includes('[ws] → event chat ') && line.includes('dropIfSlow=true')) ||
+  (line.includes('[ws] → event task ') && line.includes('dropIfSlow=true')) ||
   line.includes('[ws] → event tick ') ||
   line.includes('[ws] → event health ');
 
