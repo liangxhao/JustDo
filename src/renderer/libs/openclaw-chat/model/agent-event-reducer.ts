@@ -21,6 +21,7 @@ import {
   type TurnItem,
   type TurnStatus,
 } from './chat-transcript-state';
+import { hasToolResultPayload, isSessionsYieldTool } from './tool-lifecycle';
 
 export type TranscriptReduceResult =
   'applied' | 'ignored-session' | 'ignored-run' | 'ignored-sequence' | 'ignored-stream';
@@ -182,14 +183,29 @@ function reduceTool(
   if (!toolCallId) return false;
   const existing = turn.toolById.get(toolCallId);
   const resolved = normalizeToolEvent(event.data, existing?.name ?? 'tool');
+  const sessionsYieldHasPayload =
+    hasToolResultPayload({
+      output: resolved.output ?? undefined,
+      error: resolved.error ?? undefined,
+    }) ||
+    (existing !== undefined && hasToolResultPayload(existing));
+  const outputlessSessionsYieldResult =
+    isSessionsYieldTool(resolved.name) &&
+    resolved.status === 'completed' &&
+    !sessionsYieldHasPayload;
+  const status = outputlessSessionsYieldResult ? 'running' : resolved.status;
 
   if (existing) {
     existing.name = resolved.name;
     if (resolved.input !== undefined && resolved.input !== null) existing.input = resolved.input;
-    if (resolved.output !== null) existing.output = boundOutput(resolved.output);
-    if (resolved.error !== null) existing.error = boundOutput(resolved.error);
-    if (existing.status === 'running' || resolved.status !== 'running') {
-      existing.status = resolved.status;
+    if (resolved.output !== null && !outputlessSessionsYieldResult) {
+      existing.output = boundOutput(resolved.output);
+    }
+    if (resolved.error !== null && !outputlessSessionsYieldResult) {
+      existing.error = boundOutput(resolved.error);
+    }
+    if (existing.status === 'running' || status !== 'running') {
+      existing.status = status;
     }
     existing.lastSeq = event.agentSeq;
     existing.updatedAt = event.timestamp;
@@ -207,14 +223,18 @@ function reduceTool(
   const item: ToolItem = {
     ...createBase(turn, event, dependencies, 'tool'),
     type: 'tool',
-    status: normalized.status,
+    status,
     toolCallId,
     name: normalized.name,
     ...(normalized.input !== undefined && normalized.input !== null
       ? { input: normalized.input }
       : {}),
-    ...(normalized.output !== null ? { output: boundOutput(normalized.output) } : {}),
-    ...(normalized.error !== null ? { error: boundOutput(normalized.error) } : {}),
+    ...(normalized.output !== null && !outputlessSessionsYieldResult
+      ? { output: boundOutput(normalized.output) }
+      : {}),
+    ...(normalized.error !== null && !outputlessSessionsYieldResult
+      ? { error: boundOutput(normalized.error) }
+      : {}),
   };
   turn.items.push(item);
   turn.toolById.set(toolCallId, item);
@@ -338,6 +358,9 @@ function finishTurnItems(turn: AssistantTurn, status: TurnStatus, now: number): 
       item.status = status === 'final' ? 'completed' : 'interrupted';
       item.updatedAt = now;
     } else if (item.type === 'tool' && item.status === 'running') {
+      if (status === 'final' && isSessionsYieldTool(item.name) && !hasToolResultPayload(item)) {
+        continue;
+      }
       item.status = status === 'error' ? 'failed' : status === 'final' ? 'completed' : 'cancelled';
       item.updatedAt = now;
     } else if (item.type === 'content' && item.status === 'streaming') {

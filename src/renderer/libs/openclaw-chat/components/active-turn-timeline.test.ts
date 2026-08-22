@@ -179,6 +179,34 @@ describe('active turn timeline', () => {
     expect(rendered).not.toContain('data-process-summary-key');
   });
 
+  test('renders an outputless sessions_yield as a blue running Tool without a result row', () => {
+    const rendered = flatten(
+      renderTimelineItem({
+        kind: 'live-process',
+        key: 'yield-live',
+        item: {
+          id: 'yield-live',
+          runId: 'run-1',
+          firstSeq: 1,
+          lastSeq: 1,
+          startedAt: 1,
+          updatedAt: 1,
+          type: 'tool',
+          status: 'running',
+          toolCallId: 'call-yield-1',
+          name: 'sessions_yield',
+          input: { message: '等待 subagent' },
+        },
+      }),
+    );
+
+    expect(rendered).toContain('process-summary__tool-status--running');
+    expect(rendered).toContain('Sessions yield');
+    expect(rendered).not.toContain(
+      `<div class="process-summary__detail-label">${i18nService.t('coworkToolResult')}</div>`,
+    );
+  });
+
   test('renders update_plan as an always-visible ordered plan card', () => {
     const plan = {
       kind: 'plan-update' as const,

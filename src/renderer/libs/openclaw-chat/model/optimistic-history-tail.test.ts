@@ -76,6 +76,41 @@ describe('optimistic history tail ownership', () => {
     expect(projectPersistedMessagesForActiveTurn([user, optimistic], turn)).toEqual([user]);
   });
 
+  test('hides a persisted Tool duplicate until a settled active turn is retired', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    const turn = beginAssistantTurn(state, { runId: 'run-1' }, dependencies);
+    turn.status = 'final';
+    const tool = {
+      id: 'tool-1',
+      runId: 'run-1',
+      firstSeq: 2,
+      lastSeq: 3,
+      startedAt: 2,
+      updatedAt: 3,
+      type: 'tool' as const,
+      status: 'completed' as const,
+      toolCallId: 'call-yield-1',
+      name: 'sessions_yield',
+      output: 'joined',
+    };
+    turn.items.push(tool);
+    turn.toolById.set(tool.toolCallId, tool);
+    const unrelated = { role: 'assistant', content: 'Earlier progress.' };
+    const persistedCall = {
+      role: 'assistant',
+      content: [{ type: 'toolCall', id: 'call-yield-1', name: 'sessions_yield' }],
+    };
+    const persistedResult = {
+      role: 'toolResult',
+      toolCallId: 'call-yield-1',
+      content: 'joined',
+    };
+
+    expect(
+      projectPersistedMessagesForActiveTurn([unrelated, persistedCall, persistedResult], turn),
+    ).toEqual([unrelated]);
+  });
+
   test('retires the completed active turn after authoritative history replaces the fallback', () => {
     const state = createChatTranscriptState('session-1', 'sid-1');
     const turn = beginAssistantTurn(state, { runId: 'run-1' }, dependencies);

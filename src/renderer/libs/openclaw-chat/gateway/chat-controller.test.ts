@@ -1621,6 +1621,144 @@ test('catches up subagent task history when its session.message event was droppe
   ]);
 });
 
+test('hydrates a live sessions_yield card from history without replacing the active turn', async () => {
+  const sessionKey = 'agent:main:justdo:session-1';
+  const toolCallId = 'call-yield-batch-2';
+  const toolOutput = JSON.stringify({
+    status: 'partial',
+    pending: 4,
+    results: [{ sessionKey: 'agent:main:subagent:child-1', status: 'ok' }],
+  });
+  const request = vi.fn().mockImplementation((method: string) => {
+    if (method === 'chat.history') {
+      return Promise.resolve({
+        messages: [
+          {
+            role: 'assistant',
+            content: [
+              {
+                type: 'toolCall',
+                id: toolCallId,
+                name: 'sessions_yield',
+                arguments: { message: '等待第二批 subagent。' },
+              },
+            ],
+          },
+          {
+            role: 'toolResult',
+            toolCallId,
+            toolName: 'sessions_yield',
+            content: [{ type: 'text', text: toolOutput }],
+          },
+        ],
+      });
+    }
+    return Promise.resolve({});
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 1,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+    },
+  });
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 2,
+      stream: 'tool',
+      data: { phase: 'start', toolCallId, name: 'sessions_yield' },
+    },
+  });
+  const liveTool = controller.state.transcript.activeTurn?.toolById.get(toolCallId);
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 3,
+      stream: 'tool',
+      data: { phase: 'result', toolCallId, name: 'sessions_yield' },
+    },
+  });
+
+  expect(controller.state.transcript.activeTurn?.items).toHaveLength(1);
+  expect(liveTool).toMatchObject({ toolCallId, status: 'running' });
+  expect(liveTool?.input).toBeUndefined();
+  expect(liveTool?.output).toBeUndefined();
+  await expect(controller.loadHistory()).resolves.toBe(false);
+
+  expect(controller.state.transcript.activeTurn?.toolById.get(toolCallId)).toBe(liveTool);
+  expect(liveTool).toMatchObject({
+    toolCallId,
+    status: 'completed',
+    input: { message: '等待第二批 subagent。' },
+    output: toolOutput,
+  });
+  expect(controller.state.chatMessages).toEqual([]);
+});
+
+test('settles a live sessions_yield from an explicit payloadless history failure', () => {
+  const controller = new ChatController();
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  const turn = beginAssistantTurn(
+    controller.state.transcript,
+    { runId: 'run-1' },
+    { now: () => 1, createId: prefix => `${prefix}-1` },
+  );
+  const tool = {
+    id: 'tool-1',
+    runId: 'run-1',
+    firstSeq: 1,
+    lastSeq: 1,
+    startedAt: 1,
+    updatedAt: 1,
+    type: 'tool' as const,
+    status: 'running' as const,
+    toolCallId: 'call-yield-1',
+    name: 'sessions_yield',
+  };
+  turn.items.push(tool);
+  turn.toolById.set(tool.toolCallId, tool);
+
+  const changed = (
+    controller as unknown as {
+      hydrateActiveToolItemsFromHistory(messages: unknown[]): boolean;
+    }
+  ).hydrateActiveToolItemsFromHistory([
+    {
+      role: 'assistant',
+      content: [{ type: 'toolCall', id: 'call-yield-1', name: 'sessions_yield' }],
+    },
+    {
+      role: 'toolResult',
+      toolCallId: 'call-yield-1',
+      toolName: 'sessions_yield',
+      isError: true,
+      content: [],
+    },
+  ]);
+
+  expect(changed).toBe(true);
+  expect(turn.toolById.get('call-yield-1')).toBe(tool);
+  expect(tool.status).toBe('failed');
+});
+
 test('cleans up a stale subscription that resolves after a newer session subscribe', async () => {
   let resolveFirstSubscribe: (() => void) | undefined;
   const request = vi.fn().mockImplementation((method: string, params: { key?: string }) => {

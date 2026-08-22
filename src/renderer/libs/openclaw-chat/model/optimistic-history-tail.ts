@@ -58,14 +58,15 @@ export function projectPersistedMessagesForActiveTurn<T>(
   activeTurn: AssistantTurn | null,
 ): T[] {
   if (!activeTurn) return messages;
-  if (activeTurn.status === 'running') {
-    if (activeTurn.toolById.size === 0) return messages;
+  let projected = messages;
+  if (activeTurn.toolById.size > 0) {
     const activeToolCallIds = new Set(activeTurn.toolById.keys());
-    return messages.filter(message => !referencesActiveToolCall(message, activeToolCallIds));
+    projected = projected.filter(message => !referencesActiveToolCall(message, activeToolCallIds));
   }
-  return isLocallyOptimisticHistoryTail(messages[messages.length - 1])
-    ? messages.slice(0, -1)
-    : messages;
+  if (activeTurn.status === 'running') return projected;
+  return isLocallyOptimisticHistoryTail(projected[projected.length - 1])
+    ? projected.slice(0, -1)
+    : projected;
 }
 
 /**

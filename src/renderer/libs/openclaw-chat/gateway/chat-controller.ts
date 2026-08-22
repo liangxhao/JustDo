@@ -65,6 +65,7 @@ import {
   markOptimisticHistoryTail,
 } from '@/libs/openclaw-chat/model/optimistic-history-tail';
 import { isPendingUserMessageMatch } from '@/libs/openclaw-chat/model/optimistic-user-message';
+import { projectPersistedTimeline } from '@/libs/openclaw-chat/model/project-history-timeline';
 import {
   normalizeRunRetryReason,
   RUN_PROBE_INTERVAL_MS,
@@ -72,6 +73,10 @@ import {
   type RunActivity,
   type RunProgressStage,
 } from '@/libs/openclaw-chat/model/run-activity';
+import {
+  hasToolResultPayload,
+  isSessionsYieldTool,
+} from '@/libs/openclaw-chat/model/tool-lifecycle';
 import { readTranscriptIdentity } from '@/libs/openclaw-chat/model/transcript-identity';
 import {
   hydrateGatewayHistoryForDisplay,
@@ -827,6 +832,59 @@ export class ChatController {
     );
     this.state.transcript.persistedMessages = messages;
     this.cacheSessionMessages(this.state.sessionKey);
+  }
+
+  /**
+   * A live run owns the visible timeline, so history reconciliation correctly
+   * refuses to replace it. Tool result events can still omit the full payload,
+   * though, while the transcript already contains it. Backfill only matching
+   * live Tool items by their stable call ID without admitting any history rows.
+   */
+  private hydrateActiveToolItemsFromHistory(messages: unknown[]): boolean {
+    const activeTurn = this.state.transcript.activeTurn;
+    if (!activeTurn || activeTurn.toolById.size === 0) return false;
+
+    const persistedTools = new Map(
+      projectPersistedTimeline(messages as GatewayMessage[])
+        .flatMap(item =>
+          item.kind === 'process-summary'
+            ? item.items.filter(process => process.type === 'tool')
+            : item.kind === 'plan-update'
+              ? [item.item]
+              : [],
+        )
+        .map(tool => [tool.toolCallId, tool] as const),
+    );
+    let changed = false;
+    for (const [toolCallId, liveTool] of activeTurn.toolById) {
+      const persistedTool = persistedTools.get(toolCallId);
+      if (!persistedTool) continue;
+      if (liveTool.input === undefined && persistedTool.input !== undefined) {
+        liveTool.input = persistedTool.input;
+        changed = true;
+      }
+      if (liveTool.output === undefined && persistedTool.output !== undefined) {
+        liveTool.output = persistedTool.output;
+        changed = true;
+      }
+      if (liveTool.error === undefined && persistedTool.error !== undefined) {
+        liveTool.error = persistedTool.error;
+        changed = true;
+      }
+      if (
+        liveTool.status === 'running' &&
+        isSessionsYieldTool(liveTool.name) &&
+        persistedTool.status !== 'running' &&
+        (hasToolResultPayload(persistedTool) ||
+          persistedTool.status === 'failed' ||
+          persistedTool.status === 'cancelled')
+      ) {
+        liveTool.status = persistedTool.status;
+        changed = true;
+      }
+    }
+    if (changed) this.state.transcript.revision += 1;
+    return changed;
   }
 
   private updateLocalCompactionMessage(
@@ -2697,6 +2755,12 @@ export class ChatController {
       if (catchesUpMissingInitialHistory) {
         messages = sliceActiveSubagentHistoryPrefix(messages);
       }
+
+      // Active-run history is not allowed to replace the live timeline, but it
+      // can safely hydrate the same Tool card by its stable call ID. This is
+      // especially important for long sessions_yield joins whose live result
+      // event may contain only a short summary or no renderable output.
+      this.hydrateActiveToolItemsFromHistory(messages);
 
       // Only clear pendingUserMessage if the user message is actually in the
       // loaded history.  For brand-new sessions the gateway may not have

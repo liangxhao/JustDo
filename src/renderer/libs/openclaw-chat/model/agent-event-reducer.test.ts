@@ -221,6 +221,130 @@ describe('agent event reducer', () => {
     });
   });
 
+  test('keeps an outputless sessions_yield result running on the original Tool item', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    reduceAgentEvent(
+      state,
+      agent(1, 'tool', {
+        phase: 'start',
+        toolCallId: 'call-yield-1',
+        name: 'sessions_yield',
+      }),
+      dependencies,
+    );
+    const original = state.activeTurn?.toolById.get('call-yield-1');
+
+    reduceAgentEvent(
+      state,
+      agent(2, 'tool', {
+        phase: 'result',
+        toolCallId: 'call-yield-1',
+        name: 'sessions_yield',
+      }),
+      dependencies,
+    );
+
+    expect(state.activeTurn?.items).toHaveLength(1);
+    expect(state.activeTurn?.toolById.get('call-yield-1')).toBe(original);
+    expect(original).toMatchObject({ status: 'running' });
+    expect(original?.output).toBeUndefined();
+  });
+
+  test('does not complete an outputless sessions_yield when chat.final arrives', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    reduceAgentEvent(
+      state,
+      agent(1, 'tool', {
+        phase: 'start',
+        toolCallId: 'call-yield-1',
+        name: 'sessions_yield',
+      }),
+      dependencies,
+    );
+    reduceChatEvent(state, chat('final'), dependencies);
+
+    expect(state.activeTurn?.toolById.get('call-yield-1')).toMatchObject({
+      status: 'running',
+    });
+  });
+
+  test('preserves distinct incremental sessions_yield calls instead of deduplicating by name', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    reduceAgentEvent(
+      state,
+      agent(1, 'tool', {
+        phase: 'start',
+        toolCallId: 'call-yield-1',
+        name: 'sessions_yield',
+      }),
+      dependencies,
+    );
+    reduceAgentEvent(
+      state,
+      agent(2, 'tool', {
+        phase: 'result',
+        toolCallId: 'call-yield-1',
+        name: 'sessions_yield',
+        result: '{"status":"partial","pending":1}',
+      }),
+      dependencies,
+    );
+    reduceAgentEvent(
+      state,
+      agent(3, 'tool', {
+        phase: 'start',
+        toolCallId: 'call-yield-2',
+        name: 'sessions_yield',
+      }),
+      dependencies,
+    );
+
+    expect(state.activeTurn?.items).toHaveLength(2);
+    expect([...state.activeTurn!.toolById.keys()]).toEqual(['call-yield-1', 'call-yield-2']);
+    expect(state.activeTurn?.toolById.get('call-yield-1')).toMatchObject({
+      status: 'completed',
+    });
+    expect(state.activeTurn?.toolById.get('call-yield-2')).toMatchObject({ status: 'running' });
+  });
+
+  test('completes sessions_yield when an empty terminal frame follows partial output', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    reduceAgentEvent(
+      state,
+      agent(1, 'tool', {
+        phase: 'start',
+        toolCallId: 'call-yield-1',
+        name: 'sessions_yield',
+      }),
+      dependencies,
+    );
+    reduceAgentEvent(
+      state,
+      agent(2, 'tool', {
+        phase: 'update',
+        toolCallId: 'call-yield-1',
+        name: 'sessions_yield',
+        partialResult: '{"status":"partial","pending":1}',
+      }),
+      dependencies,
+    );
+    reduceAgentEvent(
+      state,
+      agent(3, 'tool', {
+        phase: 'result',
+        toolCallId: 'call-yield-1',
+        name: 'sessions_yield',
+      }),
+      dependencies,
+    );
+
+    expect(state.activeTurn?.items).toHaveLength(1);
+    expect(state.activeTurn?.toolById.get('call-yield-1')).toMatchObject({
+      status: 'completed',
+      output: '{"status":"partial","pending":1}',
+    });
+  });
+
   test('accepts legacy Tool id/input aliases and structured errors incrementally', () => {
     const state = createChatTranscriptState('session-1', 'sid-1');
 

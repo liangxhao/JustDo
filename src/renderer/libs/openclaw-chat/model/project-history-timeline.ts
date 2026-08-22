@@ -1,5 +1,6 @@
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import { parseExecutionPlanUpdate } from '@shared/openclaw/executionPlan';
+import { normalizeToolTerminalStatus } from '@shared/openclaw/messageDomain';
 
 import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 
@@ -10,6 +11,7 @@ import {
 } from './chat-transcript-state';
 import { deterministicHistoryKey } from './history-reconciler';
 import type { PlanUpdateTimelineItem, ProcessSummaryTimelineItem } from './project-turn-items';
+import { hasToolResultPayload, isSessionsYieldTool } from './tool-lifecycle';
 import {
   asToolRecord,
   attachedToolMessages,
@@ -281,7 +283,7 @@ export function projectPersistedTimeline(
       startedAt: timestamp,
       updatedAt: timestamp,
       type: 'tool',
-      status: 'completed',
+      status: isSessionsYieldTool(readToolName(source)) ? 'running' : 'completed',
       toolCallId,
       name: readToolName(source),
       ...(input !== undefined && input !== null ? { input } : {}),
@@ -331,9 +333,24 @@ export function projectPersistedTimeline(
       tool.updatedAt = Math.max(tool.updatedAt, timestamp);
       tool.lastSeq = Math.max(tool.lastSeq, sequence);
     }
-    tool.status = error.failed ? 'failed' : 'completed';
-    if (output !== null) tool.output = boundedOutput(output);
-    if (error.message !== null) tool.error = boundedOutput(error.message);
+    const outputlessSessionsYieldResult =
+      isSessionsYieldTool(tool.name) &&
+      !hasToolResultPayload({
+        output: output ?? undefined,
+        error: error.message ?? undefined,
+      });
+    if (output !== null && !outputlessSessionsYieldResult) tool.output = boundedOutput(output);
+    if (error.message !== null && !outputlessSessionsYieldResult) {
+      tool.error = boundedOutput(error.message);
+    }
+    const terminalStatus = normalizeToolTerminalStatus(source.phase ?? source.status, error.failed);
+    tool.status = error.failed
+      ? 'failed'
+      : terminalStatus === 'cancelled'
+        ? 'cancelled'
+        : isSessionsYieldTool(tool.name) && !hasToolResultPayload(tool)
+          ? 'running'
+          : 'completed';
     return tool;
   };
 

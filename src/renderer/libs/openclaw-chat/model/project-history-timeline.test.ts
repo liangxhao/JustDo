@@ -289,6 +289,82 @@ describe('projectPersistedTimeline', () => {
     });
   });
 
+  test('keeps a persisted sessions_yield running until a non-empty result is available', () => {
+    const dangling = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'toolCall',
+            id: 'call-yield-1',
+            name: 'sessions_yield',
+            arguments: { message: 'wait' },
+          },
+        ],
+      },
+      {
+        role: 'toolResult',
+        toolCallId: 'call-yield-1',
+        toolName: 'sessions_yield',
+        content: [],
+      },
+    ]);
+    const waitingTool = dangling
+      .flatMap(item => (item.kind === 'process-summary' ? item.items : []))
+      .find(item => item.type === 'tool');
+
+    expect(waitingTool).toMatchObject({
+      toolCallId: 'call-yield-1',
+      status: 'running',
+    });
+    expect(waitingTool?.output).toBeUndefined();
+
+    const completed = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        content: [{ type: 'toolCall', id: 'call-yield-1', name: 'sessions_yield' }],
+      },
+      {
+        role: 'toolResult',
+        toolCallId: 'call-yield-1',
+        toolName: 'sessions_yield',
+        content: [{ type: 'text', text: '{"status":"partial","pending":4}' }],
+      },
+    ]);
+    const completedTools = completed.flatMap(item =>
+      item.kind === 'process-summary' ? item.items.filter(entry => entry.type === 'tool') : [],
+    );
+
+    expect(completedTools).toHaveLength(1);
+    expect(completedTools[0]).toMatchObject({
+      toolCallId: 'call-yield-1',
+      status: 'completed',
+      output: '{"status":"partial","pending":4}',
+    });
+
+    const cancelled = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        content: [{ type: 'toolCall', id: 'call-yield-1', name: 'sessions_yield' }],
+      },
+      {
+        role: 'toolResult',
+        toolCallId: 'call-yield-1',
+        toolName: 'sessions_yield',
+        status: 'cancelled',
+        content: [],
+      },
+    ]);
+    const cancelledTool = cancelled
+      .flatMap(item => (item.kind === 'process-summary' ? item.items : []))
+      .find(item => item.type === 'tool');
+
+    expect(cancelledTool).toMatchObject({
+      toolCallId: 'call-yield-1',
+      status: 'cancelled',
+    });
+  });
+
   test('keeps an array-content OpenClaw Tool failure visible with updated summary state', () => {
     const result = projectPersistedTimeline([
       {
