@@ -3,7 +3,7 @@
   "description": "JustDo built-in skills configuration for OpenClaw runtime",
   "skills": [
     { "id": "data-analysis", "enabled": true },
-    { "id": "diagram-generator", "enabled": true },
+    { "id": "diagram-design", "enabled": true },
     { "id": "frontend-design", "enabled": true },
     { "id": "docx", "enabled": true },
     { "id": "pdf", "enabled": true },
