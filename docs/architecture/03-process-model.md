@@ -51,6 +51,7 @@ Main/Gateway 状态变化通过 `webContents.send` 到 preload listener。preloa
 | Namespace                     | 能力                                                                     |
 | ----------------------------- | ------------------------------------------------------------------------ |
 | `store`                       | 通用 KV get/set/remove；写 `app_config` 会触发配置同步                   |
+| `multica`                     | 外部工具连接状态、注册启停、重新检测与 daemon 安全重启                   |
 | `marketplace`                 | source、search、detail、install                                          |
 | `skills`                      | Gateway skill list/enable 与用户 Skill import/delete                     |
 | `extensions`                  | list/import/progress/delete/enable/configuration                         |
@@ -81,6 +82,19 @@ Main/Gateway 状态变化通过 `webContents.send` 到 preload listener。preloa
 | `networkStatus`               | online/offline 事件                                                      |
 
 `ipcRenderer` 兼容分组只允许白名单 channel，不能演化为任意 `send/invoke` 后门。
+
+### 3.1 Multica CLI 桥接进程
+
+打包后的 JustDo 可执行文件同时实现 Multica 所需的 OpenClaw CLI 子集；开发模式则生成用户
+私有的 launcher，通过 Node Electron CLI 启动当前源码入口并附加内部 bridge 标记。匹配到受
+支持的 `--version`、`config`、`agents` 或 `agent --local --json` 参数时，辅助进程不申请
+Electron 单实例锁或创建窗口，而是通过用户私有的 named pipe/Unix socket 连接已运行的 Main。
+Main 校验随机令牌和命令白名单后，使用自身 OpenClaw 环境启动捆绑 runtime，并把 stdout、
+stderr、退出码及取消信号传回辅助进程。
+
+Relay 只接受 Multica 工作目录以及 `OPENCLAW_CONFIG_PATH`、`OPENCLAW_INCLUDE_ROOTS` 两个
+环境覆盖。模型凭据、Gateway token、runtime 和 state directory 均由 Main 控制；JustDo 完全
+退出时 CLI 快速失败，不会自动启动桌面应用。
 
 ## 4. Cowork IPC
 

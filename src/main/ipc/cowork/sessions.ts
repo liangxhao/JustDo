@@ -285,18 +285,24 @@ export const registerCoworkSessionHandlers = ({
 
   ipcMain.handle('cowork:session:delete', async (_event, sessionId: string) => {
     try {
-      await getCoworkEngineRouter().stopSession(sessionId, { bestEffort: true });
       const store = getCoworkStore();
+      const session = store.getSession(sessionId);
+      const isExternalReadOnly = session?.external?.readOnly === true;
+      if (!isExternalReadOnly) {
+        await getCoworkEngineRouter().stopSession(sessionId, { bestEffort: true });
+      }
       idleConfirmations.delete(sessionId);
       terminalOutcomes.delete(sessionId);
       finalizedOutcomes.delete(sessionId);
       revisions.delete(sessionId);
-      const agentId = store.getSession(sessionId)?.agentId || 'main';
+      const agentId = session?.agentId || 'main';
       store.deleteSession(sessionId);
-      try {
-        getCoworkEngineRouter().onSessionDeleted(sessionId, agentId);
-      } catch {
-        // The persisted deletion succeeded; cache cleanup is best effort.
+      if (!isExternalReadOnly) {
+        try {
+          getCoworkEngineRouter().onSessionDeleted(sessionId, agentId);
+        } catch {
+          // The persisted deletion succeeded; cache cleanup is best effort.
+        }
       }
       return { success: true };
     } catch (error) {
@@ -336,16 +342,20 @@ export const registerCoworkSessionHandlers = ({
     try {
       const router = getCoworkEngineRouter();
       const store = getCoworkStore();
-      const agentIds = new Map(
-        sessionIds.map(sessionId => [sessionId, store.getSession(sessionId)?.agentId || 'main']),
+      const sessions = new Map(
+        sessionIds.map(sessionId => [sessionId, store.getSession(sessionId)]),
       );
       await Promise.all(
-        sessionIds.map(sessionId => router.stopSession(sessionId, { bestEffort: true })),
+        sessionIds
+          .filter(sessionId => sessions.get(sessionId)?.external?.readOnly !== true)
+          .map(sessionId => router.stopSession(sessionId, { bestEffort: true })),
       );
       store.deleteSessions(sessionIds);
       sessionIds.forEach(sessionId => {
+        const session = sessions.get(sessionId);
+        if (session?.external?.readOnly) return;
         try {
-          router.onSessionDeleted(sessionId, agentIds.get(sessionId) || 'main');
+          router.onSessionDeleted(sessionId, session?.agentId || 'main');
         } catch {
           // The persisted deletion succeeded; cache cleanup is best effort.
         }

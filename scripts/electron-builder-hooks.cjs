@@ -26,6 +26,7 @@ const { syncOpenClawRuntimeResources } = require('./sync-openclaw-runtime-resour
 const { readBundledSkillConfig, syncBundledSkills } = require('./sync-bundled-skills.cjs');
 const { compressTarArchive, packMultipleSources } = require('./pack-openclaw-tar.cjs');
 const { readWindowsUpdateConfig } = require('./windows-update-config.cjs');
+const { createMulticaAgentLauncher } = require('./create-multica-agent-launcher.cjs');
 const {
   prepareBrowserExtension,
   readProductName,
@@ -832,6 +833,14 @@ async function afterPack(context) {
 
   if (isWindowsTarget(context)) {
     verifyPackagedWindowsNativeModules(context);
+    const productFilename = context.packager.appInfo.productFilename;
+    const productExecutablePath = path.join(context.appOutDir, `${productFilename}.exe`);
+    const agentExecutablePath = path.join(context.appOutDir, `${productFilename}-agent.exe`);
+    if (!existsSync(productExecutablePath)) {
+      throw new Error(`Packaged product executable not found: ${productExecutablePath}`);
+    }
+    createMulticaAgentLauncher(agentExecutablePath);
+    console.log(`[electron-builder-hooks] Created native Multica Agent: ${agentExecutablePath}`);
     const resourcesRoot = path.join(context.appOutDir, 'resources');
     const updateConfigPath = path.join(resourcesRoot, 'app-update.yml');
     const configuredMarkerPath = path.join(resourcesRoot, '.justdo-auto-update-configured');

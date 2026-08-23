@@ -96,6 +96,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     const currentSession = useSelector(selectCurrentSession) as CoworkSession | null;
     const currentSessionId = currentSession?.id;
     const currentSessionAgentId = currentSession?.agentId;
+    const currentSessionExternalKey = currentSession?.external?.sessionKey;
     const currentSessionMessages = currentSession?.messages;
     const initialSessionRef = useRef(currentSession);
     const controllerRef = useRef<ChatController | null>(null);
@@ -188,7 +189,8 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       const initialSession = initialSessionRef.current;
       if (initialSession) {
         const agentId = initialSession.agentId?.trim() || 'main';
-        const sessionKey = `agent:${agentId}:justdo:${initialSession.id}`;
+        const sessionKey =
+          initialSession.external?.sessionKey ?? `agent:${agentId}:justdo:${initialSession.id}`;
         controller.state.sessionKey = sessionKey;
         controller.admitFallbackHistory(
           sessionKey,
@@ -251,7 +253,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
 
       // Build the gateway session key (same format as openclawChannelSessionSync)
       const agentId = currentSessionAgentId?.trim() || 'main';
-      const sessionKey = `agent:${agentId}:justdo:${currentSessionId}`;
+      const sessionKey = currentSessionExternalKey ?? `agent:${agentId}:justdo:${currentSessionId}`;
 
       if (controller.state.sessionKey !== sessionKey) {
         controller.admitFallbackHistory(
@@ -283,7 +285,12 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
           coworkMessagesToGateway(currentSessionMessages),
         );
       }
-    }, [currentSessionAgentId, currentSessionId, currentSessionMessages]);
+    }, [
+      currentSessionAgentId,
+      currentSessionExternalKey,
+      currentSessionId,
+      currentSessionMessages,
+    ]);
 
     if (connectionError) {
       return (

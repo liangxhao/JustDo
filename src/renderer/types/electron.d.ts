@@ -32,6 +32,7 @@ type OpenClawSkillSource = import('../../shared/plugins/skills').OpenClawSkillSo
 type SystemPromptReplacementRule =
   import('../../shared/openclaw/systemPromptReplacements').SystemPromptReplacementRule;
 type PermissionMode = import('../../shared/openclaw/approvals').PermissionMode;
+type ExternalSessionMetadata = import('../../shared/multica').ExternalSessionMetadata;
 type ApprovalKind = import('../../shared/openclaw/approvals').ApprovalKind;
 type ApprovalRequest = import('../../shared/openclaw/approvals').ApprovalRequest;
 type ApprovalResolved = import('../../shared/openclaw/approvals').ApprovalResolved;
@@ -76,6 +77,7 @@ interface CoworkSession {
   permissionMode: PermissionMode;
   activeSkillIds: string[];
   agentId: string;
+  external?: ExternalSessionMetadata;
   messages: CoworkMessage[];
   createdAt: number;
   updatedAt: number;
@@ -129,6 +131,7 @@ interface CoworkSessionSummary {
   pinned: boolean;
   groupId?: string | null;
   agentId?: string;
+  external?: ExternalSessionMetadata;
   createdAt: number;
   updatedAt: number;
 }
@@ -331,6 +334,7 @@ interface HookEntryIPC {
   managedByPlugin: boolean;
 }
 
+import type { MulticaIntegrationResult, MulticaIntegrationStatus } from '@shared/multica';
 import type { GatewayPortSetErrorCode } from '@shared/openclaw/gatewayPort';
 import type {
   MemoryDocumentResult,
@@ -366,6 +370,12 @@ import type { Agent } from '@/features/agents/agentTypes';
 import type { McpServerFormData } from '@/features/plugins/types/mcp';
 
 interface IElectronAPI {
+  multica: {
+    getStatus: () => Promise<MulticaIntegrationStatus>;
+    enable: () => Promise<MulticaIntegrationResult>;
+    disable: () => Promise<MulticaIntegrationResult>;
+    refresh: () => Promise<MulticaIntegrationResult>;
+  };
   browser: {
     getStatus: () => Promise<BrowserStatusResult>;
     canSetMode: () => Promise<BrowserModeSwitchAvailabilityResult>;

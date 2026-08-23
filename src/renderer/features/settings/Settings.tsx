@@ -1,6 +1,7 @@
 import {
   ArrowLeftIcon,
   ArrowPathIcon,
+  ArrowsRightLeftIcon,
   BookOpenIcon,
   ChartBarIcon,
   CheckCircleIcon,
@@ -79,6 +80,7 @@ import ShortcutsSettings, {
   shortcutLabelMap,
   type ShortcutSettingsValue,
 } from '@/features/settings/components/ShortcutsSettings';
+import ToolIntegrationSettingsTab from '@/features/settings/components/ToolIntegrationSettingsTab';
 import UsageStatsTab from '@/features/settings/components/UsageStatsTab';
 import { hasConfirmedModelCapabilities } from '@/features/settings/modelCapabilityState';
 import {
@@ -105,6 +107,7 @@ type TabType =
   | 'usage'
   | 'model'
   | 'runtime'
+  | 'integrations'
   | 'browser'
   | 'memory'
   | 'im'
@@ -1897,6 +1900,11 @@ const Settings: React.FC<SettingsProps> = ({
       icon: <CpuChipIcon className="h-5 w-5" />,
     },
     {
+      key: 'integrations',
+      label: i18nService.t('toolIntegrationTab'),
+      icon: <ArrowsRightLeftIcon className="h-5 w-5" />,
+    },
+    {
       key: 'memory',
       label: i18nService.t('memoryTitle'),
       icon: <BookOpenIcon className="h-5 w-5" />,
@@ -1986,6 +1994,7 @@ const Settings: React.FC<SettingsProps> = ({
         return 'max-w-[1440px]';
       case 'usage':
       case 'runtime':
+      case 'integrations':
         return 'max-w-7xl';
       default:
         return 'max-w-4xl';
@@ -2670,6 +2679,9 @@ const Settings: React.FC<SettingsProps> = ({
             onMaxGoalContinuationTurnsChange={setMaxGoalContinuationTurns}
           />
         );
+
+      case 'integrations':
+        return <ToolIntegrationSettingsTab />;
 
       case 'browser':
         return <BrowserSettingsTab />;

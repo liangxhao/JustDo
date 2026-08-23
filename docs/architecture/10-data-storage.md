@@ -32,7 +32,7 @@ WAL 是持久设置。备份不能只在运行中复制主 `.sqlite` 而忽略 W
 
 ## 3. Schema 总表
 
-当前共有 11 张核心表：
+当前共有 12 张核心表：
 
 | 表                              | 用途                         | Owner                      |
 | ------------------------------- | ---------------------------- | -------------------------- |
@@ -40,6 +40,7 @@ WAL 是持久设置。备份不能只在运行中复制主 `.sqlite` 而忽略 W
 | `cowork_sessions`               | 产品会话索引/元数据          | `CoworkStore`              |
 | `cowork_messages`               | 本地消息显示缓存             | `CoworkStore`              |
 | `cowork_session_runs`           | client turn/root run receipt | `CoworkStore`              |
+| `cowork_external_sessions`      | 外部 session 映射与运行状态  | Multica integration        |
 | `cowork_config`                 | Cowork/runtime 设置          | `CoworkStore`              |
 | `agents`                        | Agent 产品定义               | `CoworkStore`              |
 | `mcp_servers`                   | 用户 MCP 配置                | `McpStore`                 |
@@ -108,6 +109,17 @@ WAL 是持久设置。备份不能只在运行中复制主 `.sqlite` 而忽略 W
 | `created_at`,`updated_at`             | receipt 时间                     |
 
 `idx_cowork_session_runs_session_started` 支持时间线；partial unique `idx_cowork_session_runs_open` 保证每个 session 最多一个 `ended_at IS NULL` 的 receipt。Start 先查 client turn 实现幂等，Adapter 收到真实 run id 后 bind；终态填 ended_at。启动 `interruptOpenSessionRuns(now)` 把上一应用进程遗留的开口 receipt 记为零时长 `aborted` checkpoint，避免恢复期间误报运行且不把离线时间算入耗时；若 Gateway 随后确认该 session 仍有 active work，runtime reconciliation 会重新打开该 checkpoint（root run id 暂缺时也原位恢复）并从当前进程重新计时。首次对账前若用户提交新 turn，main 进程会强制刷新该 checkpoint 的 Gateway 状态：active 时恢复旧 receipt 并拒绝新建，unknown 时 fail closed，只有 confirmed idle 才创建新 receipt。
+
+## 7.1 `cowork_external_sessions`
+
+该表保存外部工具 session 与本地 Cowork/OpenClaw session 的稳定映射。当前 `source` 为
+`multica`；记录首次外部 session key、OpenClaw runtime session id/key、本地 cowork session
+id、工作目录、运行状态和时间戳。`(source, external_session_key)` 是主键，runtime id 与 cowork
+session 均有唯一索引；cowork session 删除时通过 foreign key 级联删除映射。
+
+首次 `multica-*` session 会得到稳定的 `agent:<agent>:multica:<hash>` key，恢复运行可通过外部
+id 或 runtime id 复用同一映射。外部会话在 JustDo 中只读；删除本地映射和展示数据不会删除
+Multica 任务或 OpenClaw transcript，消息正文仍以 Gateway history 为权威。
 
 ## 8. `cowork_config`
 
