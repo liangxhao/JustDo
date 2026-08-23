@@ -20,7 +20,7 @@ test('shows both integration directions and opens external access by default', (
   expect(html).toContain('id="tool-integration-tab-inbound"');
   expect(html).toContain('aria-selected="true"');
   expect(html).toContain('Multica integration');
-  expect(html).toContain('Local-only management; no Multica server access');
+  expect(html).not.toContain('Network policy');
   expect(html).not.toContain('Safely restart daemon');
   expect(html).not.toContain('Connect Claude Code, Codex, and other tools');
 });

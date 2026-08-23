@@ -11,7 +11,7 @@ restart the Multica daemon. The only Multica CLI commands JustDo may execute are
 
 ## Lifecycle
 
-1. Keep JustDo running or in the tray and enable the integration from Settings → Tool integrations
+1. Keep JustDo running or in the tray and enable the integration from Settings → External connections
    → Accept external connections.
 2. JustDo detects the desktop-launched Multica profile when available and creates the launcher
    without modifying any Multica profile config or credentials. Launcher creation does not require

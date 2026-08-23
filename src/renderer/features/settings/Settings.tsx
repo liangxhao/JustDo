@@ -1900,11 +1900,6 @@ const Settings: React.FC<SettingsProps> = ({
       icon: <CpuChipIcon className="h-5 w-5" />,
     },
     {
-      key: 'integrations',
-      label: i18nService.t('toolIntegrationTab'),
-      icon: <ArrowsRightLeftIcon className="h-5 w-5" />,
-    },
-    {
       key: 'memory',
       label: i18nService.t('memoryTitle'),
       icon: <BookOpenIcon className="h-5 w-5" />,
@@ -1918,6 +1913,11 @@ const Settings: React.FC<SettingsProps> = ({
       key: 'usage',
       label: i18nService.t('usageStats'),
       icon: <ChartBarIcon className="h-5 w-5" />,
+    },
+    {
+      key: 'integrations',
+      label: i18nService.t('toolIntegrationTab'),
+      icon: <ArrowsRightLeftIcon className="h-5 w-5" />,
     },
     {
       key: 'im',
