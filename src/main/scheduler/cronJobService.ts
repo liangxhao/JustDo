@@ -465,7 +465,7 @@ export class CronJobService {
   private runningJobIds: Set<string> = new Set();
   private inAppDeliveryBackoffRepairs: Map<
     string,
-    { signature: string; promise: Promise<GatewayJob> }
+    { signature: string; promise: Promise<GatewayJob | null> }
   > = new Map();
   private repairedInAppDeliveryBackoffs: Map<string, string> = new Map();
   private taskMutationTails = new Map<string, Promise<void>>();
@@ -629,7 +629,7 @@ export class CronJobService {
     client: GatewayClientLike,
     jobs: GatewayJob[],
   ): Promise<GatewayJob[]> {
-    const repairedJobs = [...jobs];
+    const repairedJobs: Array<GatewayJob | null> = [...jobs];
     await Promise.all(
       jobs.map(async (job, index) => {
         if (!shouldRepairInAppOnlyDeliveryBackoff(job)) {
@@ -649,7 +649,8 @@ export class CronJobService {
               query: job.id,
               limit: 20,
             });
-            const latest = latestResult.jobs?.find(item => item.id === job.id) ?? job;
+            const latest = latestResult.jobs?.find(item => item.id === job.id) ?? null;
+            if (!latest) return null;
             if (!shouldRepairInAppOnlyDeliveryBackoff(latest)) return latest;
             return client.request<GatewayJob>('cron.update', {
               id: latest.id,
@@ -667,6 +668,11 @@ export class CronJobService {
 
         try {
           const repaired = await repairEntry.promise;
+          if (!repaired) {
+            repairedJobs[index] = null;
+            this.repairedInAppDeliveryBackoffs.delete(job.id);
+            return;
+          }
           // The repair runs under the same per-task mutation lock as user
           // updates and re-reads the task inside that lock, so this is the
           // newest complete snapshot.
@@ -676,6 +682,15 @@ export class CronJobService {
             `[CronJobService] Cleared external-delivery backoff for in-app task ${job.id}`,
           );
         } catch (error) {
+          try {
+            if (!(await this.findGatewayJob(client, job.id))) {
+              repairedJobs[index] = null;
+              this.repairedInAppDeliveryBackoffs.delete(job.id);
+              return;
+            }
+          } catch {
+            // Preserve the original repair error when the verification request also fails.
+          }
           console.warn(
             `[CronJobService] Failed to clear external-delivery backoff for task ${job.id}:`,
             error,
@@ -687,7 +702,7 @@ export class CronJobService {
         }
       }),
     );
-    return repairedJobs;
+    return repairedJobs.filter((job): job is GatewayJob => job !== null);
   }
 
   private async listAllGatewayJobs(client: GatewayClientLike): Promise<GatewayJob[]> {
@@ -731,13 +746,14 @@ export class CronJobService {
     client: GatewayClientLike,
     jobs: GatewayJob[],
   ): Promise<GatewayJob[]> {
-    return Promise.all(
+    const repairedJobs = await Promise.all(
       jobs.map(async job => {
         if (job.payload.kind !== PayloadKind.AgentTurn || job.agentId === ScheduledTaskAgentId) {
           return job;
         }
         return this.withTaskMutation(job.id, async () => {
-          const latest = (await this.findGatewayJob(client, job.id)) ?? job;
+          const latest = await this.findGatewayJob(client, job.id);
+          if (!latest) return null;
           if (
             latest.payload.kind !== PayloadKind.AgentTurn ||
             latest.agentId === ScheduledTaskAgentId
@@ -757,29 +773,48 @@ export class CronJobService {
             );
             return assigned;
           } catch (assignmentError) {
-            if (!latest.enabled) {
+            let currentAfterFailure: GatewayJob;
+            try {
+              const current = await this.findGatewayJob(client, job.id);
+              if (!current) return null;
+              if (
+                current.payload.kind !== PayloadKind.AgentTurn ||
+                current.agentId === ScheduledTaskAgentId
+              ) {
+                return current;
+              }
+              currentAfterFailure = current;
+            } catch {
+              currentAfterFailure = latest;
+            }
+            if (!currentAfterFailure.enabled) {
               console.warn(
-                `[CronJobService] Scheduler assignment remains pending for disabled task ${latest.id}:`,
+                `[CronJobService] Scheduler assignment remains pending for disabled task ${currentAfterFailure.id}:`,
                 assignmentError,
               );
-              return latest;
+              return currentAfterFailure;
             }
             try {
               const disabled = await client.request<GatewayJob>('cron.update', {
-                id: latest.id,
+                id: currentAfterFailure.id,
                 patch: { enabled: false },
               });
               if (disabled.enabled !== false) {
                 throw new Error('OpenClaw did not confirm that the task was disabled.');
               }
               console.error(
-                `[CronJobService] Disabled task ${latest.id} because scheduler assignment failed:`,
+                `[CronJobService] Disabled task ${currentAfterFailure.id} because scheduler assignment failed:`,
                 assignmentError,
               );
               return disabled;
             } catch (disableError) {
+              try {
+                if (!(await this.findGatewayJob(client, currentAfterFailure.id))) return null;
+              } catch {
+                // Preserve the disable error when the verification request also fails.
+              }
               throw new Error(
-                `Failed to assign or disable scheduled task ${latest.id}: ${
+                `Failed to assign or disable scheduled task ${currentAfterFailure.id}: ${
                   disableError instanceof Error ? disableError.message : String(disableError)
                 }`,
               );
@@ -788,6 +823,7 @@ export class CronJobService {
         });
       }),
     );
+    return repairedJobs.filter((job): job is GatewayJob => job !== null);
   }
 
   async addJob(input: ScheduledTaskInput): Promise<ScheduledTask> {
@@ -907,9 +943,13 @@ export class CronJobService {
 
   async removeJob(id: string): Promise<void> {
     const client = await this.client();
-    await client.request('cron.remove', { id });
-    this.lastKnownStates.delete(id);
-    this.lastKnownRunAtMs.delete(id);
+    await this.withTaskMutation(id, async () => {
+      await client.request('cron.remove', { id });
+      this.lastKnownStates.delete(id);
+      this.lastKnownRunAtMs.delete(id);
+      this.inAppDeliveryBackoffRepairs.delete(id);
+      this.repairedInAppDeliveryBackoffs.delete(id);
+    });
   }
 
   async listJobs(): Promise<ScheduledTask[]> {

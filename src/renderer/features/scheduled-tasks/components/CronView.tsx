@@ -621,11 +621,12 @@ function CreateEditDialog({ open, job, onClose, onSave }: DialogProps) {
   const isCustomRecurrence = scheduleForm.recurrence === 'custom';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/40 dark:bg-black/60" />
       <div
+        role="dialog"
+        aria-modal="true"
         className="relative w-full max-w-lg mx-4 max-h-[85vh] flex flex-col rounded-2xl shadow-2xl bg-background border border-border overflow-hidden"
-        onClick={e => e.stopPropagation()}
       >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle shrink-0">
