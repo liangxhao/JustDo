@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'vitest';
 
-import { BrowserMode, normalizeBrowserMode, parseDevToolsActivePort } from './browser';
+import {
+  BrowserMode,
+  hasConnectedBrowserTab,
+  normalizeBrowserMode,
+  parseDevToolsActivePort,
+} from './browser';
 
 describe('normalizeBrowserMode', () => {
   test('defaults missing and unknown values to the isolated browser', () => {
@@ -28,5 +33,28 @@ describe('parseDevToolsActivePort', () => {
 
   test.each(['', 'not-a-port', '0', '65536', '12.5'])('rejects invalid content %j', content => {
     expect(parseDevToolsActivePort(content)).toBeNull();
+  });
+});
+
+describe('hasConnectedBrowserTab', () => {
+  test('accepts a running browser response with a usable target', () => {
+    expect(
+      hasConnectedBrowserTab({
+        running: true,
+        tabs: [{ targetId: 'shared-tab', title: 'Shared tab', url: 'https://example.com' }],
+      }),
+    ).toBe(true);
+  });
+
+  test.each([
+    null,
+    {},
+    { running: false, tabs: [{ targetId: 'shared-tab' }] },
+    { running: true, tabs: [] },
+    { running: true, tabs: [null] },
+    { running: true, tabs: ['shared-tab'] },
+    { running: true, tabs: [{ targetId: '  ' }] },
+  ])('rejects a disconnected or malformed response %#', response => {
+    expect(hasConnectedBrowserTab(response)).toBe(false);
   });
 });

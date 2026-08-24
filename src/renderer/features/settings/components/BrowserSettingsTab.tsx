@@ -15,8 +15,13 @@ import {
   type BrowserMode as BrowserModeValue,
   normalizeBrowserMode,
 } from '@shared/browser';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { PRODUCT_NAME } from '@shared/productMetadata';
+import React, { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 
+import {
+  browserConnectionVerificationReducer,
+  initialBrowserConnectionVerificationState,
+} from '@/features/settings/browserConnectionVerification';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 
@@ -29,9 +34,17 @@ type StepProps = {
   title: string;
   description: string;
   action?: React.ReactNode;
+  feedback?: React.ReactNode;
 };
 
-const SetupStep: React.FC<StepProps> = ({ number, complete, title, description, action }) => (
+const SetupStep: React.FC<StepProps> = ({
+  number,
+  complete,
+  title,
+  description,
+  action,
+  feedback,
+}) => (
   <div className="flex gap-3 px-4 py-3">
     <div aria-hidden="true">
       {complete ? (
@@ -44,12 +57,15 @@ const SetupStep: React.FC<StepProps> = ({ number, complete, title, description, 
         </span>
       )}
     </div>
-    <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
-      <div className="min-w-0 flex-1">
-        <h4 className="text-[13px] font-semibold leading-5 text-foreground">{title}</h4>
-        <p className="text-[12px] leading-[18px] text-secondary">{description}</p>
+    <div className="min-w-0 flex-1">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <h4 className="text-[13px] font-semibold leading-5 text-foreground">{title}</h4>
+          <p className="text-[12px] leading-[18px] text-secondary">{description}</p>
+        </div>
+        {action ? <div className="min-w-0 max-w-[52%] shrink-0">{action}</div> : null}
       </div>
-      {action ? <div className="min-w-0 max-w-[52%] shrink-0">{action}</div> : null}
+      {feedback ? <div className="mt-1.5">{feedback}</div> : null}
     </div>
   </div>
 );
@@ -61,23 +77,30 @@ const BrowserSettingsTab: React.FC = () => {
   const [status, setStatus] = useState<BrowserConnectionStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [busyAction, setBusyAction] = useState<
-    'open' | 'test' | 'extension-page' | 'extension-folder' | 'pair' | 'extension-test' | null
+    'open' | 'test' | 'extension-page' | 'extension-folder' | 'pair' | null
   >(null);
   const [error, setError] = useState<string | null>(null);
   const [setupUrlCopied, setSetupUrlCopied] = useState(false);
-  const [connectionVerified, setConnectionVerified] = useState(false);
+  const [connectionVerification, dispatchConnectionVerification] = useReducer(
+    browserConnectionVerificationReducer,
+    initialBrowserConnectionVerificationState,
+  );
   const [extensionFolderRevealed, setExtensionFolderRevealed] = useState(false);
   const [extensionPairingCopied, setExtensionPairingCopied] = useState(false);
-  const [connectionTestError, setConnectionTestError] = useState<string | null>(null);
+  const [userConnectionTestError, setUserConnectionTestError] = useState<string | null>(null);
+  const [extensionConnectionTestError, setExtensionConnectionTestError] = useState<string | null>(
+    null,
+  );
+  const [extensionTesting, setExtensionTesting] = useState(false);
   const [savingMode, setSavingMode] = useState(false);
   const refreshRequestIdRef = useRef(0);
+  const extensionTestRequestIdRef = useRef(0);
   const statusRef = useRef<BrowserConnectionStatus | null>(null);
 
   const refresh = useCallback(async () => {
     const requestId = ++refreshRequestIdRef.current;
     setLoading(true);
     setError(null);
-    setConnectionTestError(null);
     try {
       const result = await window.electron.browser.getStatus();
       if (!result.success || !result.status) {
@@ -92,14 +115,14 @@ const BrowserSettingsTab: React.FC = () => {
         (typeof previousStatus?.activePort === 'number' &&
           previousStatus.activePort !== result.status.activePort)
       ) {
-        setConnectionVerified(false);
+        dispatchConnectionVerification({ type: 'set-user', verified: false });
       }
     } catch (refreshError) {
       if (requestId !== refreshRequestIdRef.current) return;
       statusRef.current = null;
       setStatus(null);
-      setConnectionVerified(false);
-      setConnectionTestError(null);
+      dispatchConnectionVerification({ type: 'set-user', verified: false });
+      setUserConnectionTestError(null);
       setError(
         refreshError instanceof Error ? refreshError.message : i18nService.t('browserStatusFailed'),
       );
@@ -112,8 +135,9 @@ const BrowserSettingsTab: React.FC = () => {
 
   useEffect(() => {
     setSetupUrlCopied(false);
-    setConnectionVerified(false);
-    setConnectionTestError(null);
+    dispatchConnectionVerification({ type: 'reset' });
+    setUserConnectionTestError(null);
+    setExtensionConnectionTestError(null);
     setExtensionFolderRevealed(false);
     setExtensionPairingCopied(false);
     if (browserMode === BrowserMode.User || browserMode === BrowserMode.Extension) {
@@ -123,7 +147,7 @@ const BrowserSettingsTab: React.FC = () => {
       statusRef.current = null;
       setLoading(false);
       setStatus(null);
-      setConnectionVerified(false);
+      dispatchConnectionVerification({ type: 'set-user', verified: false });
     }
     return () => {
       refreshRequestIdRef.current += 1;
@@ -152,7 +176,7 @@ const BrowserSettingsTab: React.FC = () => {
   const openRemoteDebugging = async () => {
     setBusyAction('open');
     setError(null);
-    setConnectionTestError(null);
+    setUserConnectionTestError(null);
     try {
       const result = await window.electron.browser.openRemoteDebugging();
       if (!result.success) throw new Error(i18nService.t('browserOpenSetupFailed'));
@@ -167,21 +191,21 @@ const BrowserSettingsTab: React.FC = () => {
   const testConnection = async () => {
     setBusyAction('test');
     setError(null);
-    setConnectionTestError(null);
-    setConnectionVerified(false);
+    setUserConnectionTestError(null);
+    dispatchConnectionVerification({ type: 'set-user', verified: false });
     try {
       const result = await window.electron.browser.testConnection();
       if (result.success) {
-        setConnectionVerified(true);
+        dispatchConnectionVerification({ type: 'set-user', verified: true });
       } else if (result.errorCode === 'permission-timeout') {
-        setConnectionTestError(i18nService.t('browserPermissionTimeout'));
+        setUserConnectionTestError(i18nService.t('browserPermissionTimeout'));
       } else if (result.errorCode === 'gateway-unavailable') {
-        setConnectionTestError(i18nService.t('browserGatewayUnavailable'));
+        setUserConnectionTestError(i18nService.t('browserGatewayUnavailable'));
       } else {
-        setConnectionTestError(i18nService.t('browserConnectionFailed'));
+        setUserConnectionTestError(i18nService.t('browserConnectionFailed'));
       }
     } catch {
-      setConnectionTestError(i18nService.t('browserConnectionFailed'));
+      setUserConnectionTestError(i18nService.t('browserConnectionFailed'));
     } finally {
       setBusyAction(null);
     }
@@ -229,26 +253,41 @@ const BrowserSettingsTab: React.FC = () => {
     }
   };
 
-  const testExtensionConnection = async () => {
-    setBusyAction('extension-test');
+  const testExtensionConnection = useCallback(async () => {
+    const requestId = ++extensionTestRequestIdRef.current;
+    setExtensionTesting(true);
     setError(null);
-    setConnectionTestError(null);
-    setConnectionVerified(false);
+    setExtensionConnectionTestError(null);
+    dispatchConnectionVerification({ type: 'set-extension', verified: false });
     try {
       const result = await window.electron.browser.testExtensionConnection();
+      if (requestId !== extensionTestRequestIdRef.current) return;
       if (result.success) {
-        setConnectionVerified(true);
-      } else if (result.errorCode === 'gateway-unavailable') {
-        setConnectionTestError(i18nService.t('browserGatewayUnavailable'));
+        dispatchConnectionVerification({ type: 'set-extension', verified: true });
       } else {
-        setConnectionTestError(i18nService.t('browserExtensionConnectionFailed'));
+        setExtensionConnectionTestError(i18nService.t('browserExtensionConnectionFailed'));
       }
     } catch {
-      setConnectionTestError(i18nService.t('browserExtensionConnectionFailed'));
+      if (requestId !== extensionTestRequestIdRef.current) return;
+      setExtensionConnectionTestError(i18nService.t('browserExtensionConnectionFailed'));
     } finally {
-      setBusyAction(null);
+      if (requestId === extensionTestRequestIdRef.current) {
+        setExtensionTesting(false);
+      }
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (browserMode !== BrowserMode.Extension) {
+      extensionTestRequestIdRef.current += 1;
+      setExtensionTesting(false);
+      return;
+    }
+    void testExtensionConnection();
+    return () => {
+      extensionTestRequestIdRef.current += 1;
+    };
+  }, [browserMode, testExtensionConnection]);
 
   const statusLabel = status?.endpointReachable
     ? i18nService.t('browserStatusReady')
@@ -320,7 +359,7 @@ const BrowserSettingsTab: React.FC = () => {
               onClick={() => void selectBrowserMode(option.mode)}
               className={`group relative overflow-hidden rounded-xl border px-3 py-2.5 text-left transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20 disabled:opacity-60 ${
                 selected
-                  ? 'border-primary/60 bg-primary/[0.045] shadow-sm'
+                  ? 'border-primary/55 bg-primary/[0.08] shadow-sm ring-1 ring-primary/10'
                   : 'border-border/70 bg-surface hover:-translate-y-px hover:border-primary/30 hover:shadow-sm'
               }`}
             >
@@ -334,7 +373,9 @@ const BrowserSettingsTab: React.FC = () => {
                 >
                   <Icon className="h-4 w-4" />
                 </span>
-                <span className="text-[13px] font-semibold leading-5 text-foreground">
+                <span
+                  className={`text-[13px] font-semibold leading-5 ${selected ? 'text-primary' : 'text-foreground'}`}
+                >
                   {option.title}
                 </span>
               </span>
@@ -352,7 +393,7 @@ const BrowserSettingsTab: React.FC = () => {
       </div>
 
       {error ? (
-        <div className="rounded-lg border border-danger/30 bg-danger/5 px-4 py-3 text-sm text-danger">
+        <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
           {error}
         </div>
       ) : null}
@@ -456,7 +497,7 @@ const BrowserSettingsTab: React.FC = () => {
             />
             <SetupStep
               number={4}
-              complete={connectionVerified}
+              complete={connectionVerification.user}
               title={i18nService.t('browserStepAuthorizeTitle')}
               description={i18nService.t('browserStepAuthorizeDescription')}
               action={
@@ -477,26 +518,24 @@ const BrowserSettingsTab: React.FC = () => {
                     />
                     {i18nService.t('browserTestConnection')}
                   </button>
-                  {connectionVerified ? (
+                  {connectionVerification.user ? (
                     <span className="inline-flex items-center gap-1.5 px-2 text-sm text-primary">
                       <CheckCircleIcon className="h-4 w-4" />
                       {i18nService.t('browserConnectionVerified')}
                     </span>
                   ) : null}
-                  {busyAction === 'test' ? (
-                    <p className="basis-full text-sm leading-6 text-foreground" role="status">
-                      {i18nService.t('browserAuthorizationWaiting')}
-                    </p>
-                  ) : null}
-                  {connectionTestError ? (
-                    <p
-                      className="basis-full rounded-lg border border-danger/30 bg-danger/5 px-3 py-2 text-sm leading-6 text-danger"
-                      role="alert"
-                    >
-                      {connectionTestError}
-                    </p>
-                  ) : null}
                 </div>
+              }
+              feedback={
+                busyAction === 'test' ? (
+                  <p className="text-xs leading-5 text-secondary" role="status">
+                    {i18nService.t('browserAuthorizationWaiting')}
+                  </p>
+                ) : userConnectionTestError ? (
+                  <p className="text-xs leading-5 text-destructive" role="alert">
+                    {userConnectionTestError}
+                  </p>
+                ) : null
               }
             />
           </div>
@@ -510,11 +549,6 @@ const BrowserSettingsTab: React.FC = () => {
             <p className="mt-1 max-w-2xl text-sm leading-5 text-secondary">
               {i18nService.t('browserExtensionDescription')}
             </p>
-          </div>
-
-          <div className="flex gap-2.5 rounded-xl border border-primary/20 bg-primary/[0.035] px-3.5 py-2.5 text-[13px] leading-5 text-foreground">
-            <PuzzlePieceIcon className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-            <span>{i18nService.t('browserExtensionScopeNotice')}</span>
           </div>
 
           <div className="divide-y divide-border/60 overflow-hidden rounded-2xl border border-border/70 bg-surface shadow-sm">
@@ -587,35 +621,38 @@ const BrowserSettingsTab: React.FC = () => {
             />
             <SetupStep
               number={4}
-              complete={connectionVerified}
+              complete={connectionVerification.extension}
               title={i18nService.t('browserExtensionStepVerifyTitle')}
-              description={i18nService.t('browserExtensionStepVerifyDescription')}
+              description={i18nService
+                .t('browserExtensionStepVerifyDescription')
+                .replace('{productName}', PRODUCT_NAME)}
               action={
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
                     onClick={() => void testExtensionConnection()}
-                    disabled={savingMode || busyAction !== null}
+                    disabled={savingMode || busyAction !== null || extensionTesting}
                     className={actionButtonClassName}
                   >
                     <ArrowPathIcon
-                      className={`h-3.5 w-3.5 ${busyAction === 'extension-test' ? 'animate-spin' : ''}`}
+                      className={`h-3.5 w-3.5 ${extensionTesting ? 'animate-spin' : ''}`}
                     />
                     {i18nService.t('browserExtensionTestConnection')}
                   </button>
-                  {connectionVerified ? (
+                  {connectionVerification.extension ? (
                     <span className="inline-flex items-center gap-1.5 px-2 text-sm text-primary">
                       <CheckCircleIcon className="h-4 w-4" />
                       {i18nService.t('browserConnectionVerified')}
                     </span>
                   ) : null}
-                  {connectionTestError ? (
-                    <p
-                      className="basis-full rounded-lg border border-danger/30 bg-danger/5 px-3 py-2 text-sm leading-6 text-danger"
+                  {extensionConnectionTestError ? (
+                    <span
+                      className="inline-flex items-center gap-1.5 px-2 text-sm text-destructive"
                       role="alert"
                     >
-                      {connectionTestError}
-                    </p>
+                      <ExclamationTriangleIcon className="h-4 w-4" />
+                      {extensionConnectionTestError}
+                    </span>
                   ) : null}
                 </div>
               }

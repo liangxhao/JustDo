@@ -62,7 +62,12 @@ describe('browser extension preparation', () => {
       const second = prepareBrowserExtension({ repoRoot });
       const manifest = JSON.parse(
         fs.readFileSync(path.join(second.outputDir, 'manifest.json'), 'utf8'),
-      ) as { action: { default_title: string }; description: string; name: string };
+      ) as {
+        action: { default_title: string };
+        description: string;
+        name: string;
+        version: string;
+      };
       const popup = fs.readFileSync(path.join(second.outputDir, 'popup.js'), 'utf8');
       const relayCore = fs.readFileSync(
         path.join(second.outputDir, 'modules', 'relay-core.js'),
@@ -73,6 +78,7 @@ describe('browser extension preparation', () => {
       expect(second.productName).toBe('ExampleApp');
       expect(manifest).toMatchObject({
         name: 'ExampleApp',
+        version: '1.0.0',
         action: { default_title: 'ExampleApp' },
       });
       expect(manifest.description).toContain('ExampleApp');

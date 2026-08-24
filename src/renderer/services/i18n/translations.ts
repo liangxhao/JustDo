@@ -216,9 +216,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserConnectionFailed: 'Chrome 连接测试失败',
     browserExtensionTitle: '通过扩展连接你的 Chrome',
     browserExtensionDescription:
-      '首次使用时，请手动加载并配对扩展。完成后扩展会自动重连，不再显示阻塞式远程调试授权窗口。',
-    browserExtensionScopeNotice:
-      '只有浏览器助手标签组中的网页会被共享。将网页移出该标签组，或关闭 Chrome 的调试提示，即可立即停止访问。',
+      '首次配对后会自动重连；只有浏览器助手标签组中的网页会被共享，移出标签组即可停止访问。',
     browserExtensionStepChromeTitle: '1. 安装并启动 Google Chrome',
     browserExtensionStepChromeDescription:
       '扩展模式要求 Chrome 125 或更高版本，不需要开启 Remote Debugging。',
@@ -238,10 +236,9 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserExtensionPairingFailed: '无法生成扩展配对信息',
     browserExtensionStepVerifyTitle: '4. 测试连接',
     browserExtensionStepVerifyDescription:
-      '确认扩展图标显示 ON。首次使用已有网页时，请点击扩展中的“共享此标签页”；Agent 新建的网页会自动加入共享组。',
+      '确认扩展状态为 ON，然后点击“Share this tab with {productName}”共享当前标签页，再测试连接。',
     browserExtensionTestConnection: '测试扩展连接',
-    browserExtensionConnectionFailed:
-      '扩展尚未连接。请确认 Gateway 正在运行、扩展显示 ON，并至少共享一个标签页。',
+    browserExtensionConnectionFailed: '扩展尚未连接。',
     shortcuts: '快捷键',
     help: '帮助',
     about: '关于',
@@ -1436,9 +1433,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserConnectionFailed: 'Chrome connection test failed',
     browserExtensionTitle: 'Connect your Chrome through the extension',
     browserExtensionDescription:
-      'When using it for the first time, load and pair the extension manually. It reconnects automatically afterward without the blocking remote-debugging prompt.',
-    browserExtensionScopeNotice:
-      'Only pages in the browser assistant tab group are shared. Move a page out of the group, or dismiss Chrome’s debugging notice, to revoke access immediately.',
+      'After the first pairing, the extension reconnects automatically. Only pages in the browser assistant tab group are shared; move a page out to stop access.',
     browserExtensionStepChromeTitle: '1. Install and start Google Chrome',
     browserExtensionStepChromeDescription:
       'Extension mode requires Chrome 125 or newer and does not require Remote Debugging.',
@@ -1459,10 +1454,9 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserExtensionPairingFailed: 'Unable to generate extension pairing information',
     browserExtensionStepVerifyTitle: '4. Test the connection',
     browserExtensionStepVerifyDescription:
-      'Confirm the extension badge shows ON. Share an existing page from the extension before first use; pages opened by the agent join the shared group automatically.',
+      'Set the extension to ON, then click “Share this tab with {productName}” to share the current tab before testing the connection.',
     browserExtensionTestConnection: 'Test extension connection',
-    browserExtensionConnectionFailed:
-      'The extension is not connected. Make sure Gateway is running, the extension shows ON, and at least one tab is shared.',
+    browserExtensionConnectionFailed: 'The extension is not connected.',
     shortcuts: 'Shortcuts',
     help: 'Help',
     about: 'About',
