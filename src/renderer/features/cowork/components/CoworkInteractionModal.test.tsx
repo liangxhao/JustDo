@@ -49,7 +49,7 @@ describe('CoworkInteractionModal structured questions', () => {
     expect(screen.getByRole('heading', { name: 'Design' })).toBeTruthy();
     expect(screen.getByText('Start Phase A and generate the signal interface list.')).toBeTruthy();
     expect(screen.getByText('Adjust the project name or pagination strategy.')).toBeTruthy();
-    expect(screen.queryByRole('radio', { name: /Other|其他/ })).toBeNull();
+    expect(screen.getByRole('radio', { name: /Other|其他/ })).toBeTruthy();
 
     const submit = screen.getByRole('button', { name: /Submit current selection|提交当前选择/ });
     expect((submit as HTMLButtonElement).disabled).toBe(true);
@@ -68,14 +68,9 @@ describe('CoworkInteractionModal structured questions', () => {
     );
   });
 
-  test('shows Other only when allowed and requires its text before submission', () => {
+  test('shows Other by default and requires its text before submission', () => {
     const onRespond = vi.fn();
-    render(
-      <CoworkInteractionModal
-        interaction={buildInteraction({ allowOther: true })}
-        onRespond={onRespond}
-      />,
-    );
+    render(<CoworkInteractionModal interaction={buildInteraction()} onRespond={onRespond} />);
 
     const other = screen.getByRole('radio', { name: /Other|其他/ });
     const submit = screen.getByRole('button', { name: /Submit current selection|提交当前选择/ });
@@ -97,6 +92,17 @@ describe('CoworkInteractionModal structured questions', () => {
         }),
       }),
     );
+  });
+
+  test('hides Other when it is explicitly disabled', () => {
+    render(
+      <CoworkInteractionModal
+        interaction={buildInteraction({ allowOther: false })}
+        onRespond={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole('radio', { name: /Other|其他/ })).toBeNull();
   });
 
   test('requires option input and keeps cancel separate from option selection', () => {

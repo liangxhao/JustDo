@@ -291,7 +291,7 @@ export const parseQuestions = (value: unknown): Question[] | null => {
       options,
       ...(typeof rawQuestion.header === 'string' ? { header: rawQuestion.header.trim() } : {}),
       ...(rawQuestion.multiSelect === true ? { multiSelect: true } : {}),
-      ...(rawQuestion.allowOther === true ? { allowOther: true } : {}),
+      allowOther: rawQuestion.allowOther !== false,
       ...(defaultOptionIds ? { defaultOptionIds } : {}),
     });
   }
@@ -348,7 +348,7 @@ const parseAnswers = (value: unknown, questions: Question[]): AskUserResponse['a
     const other = rawAnswer.other === undefined ? undefined : readRequiredString(rawAnswer.other);
     if (
       (rawAnswer.other !== undefined && !other) ||
-      (other && !question.allowOther) ||
+      (other && question.allowOther === false) ||
       (!question.multiSelect && selectedIds.length > 0 && other) ||
       (selectedIds.length === 0 && !other)
     )
@@ -426,8 +426,9 @@ const QuestionSchema = Type.Object({
   multiSelect: Type.Optional(Type.Boolean({ description: 'Allow multiple selections.' })),
   allowOther: Type.Optional(
     Type.Boolean({
+      default: true,
       description:
-        'Show a free-text Other choice. Omit unless predefined options cannot cover valid answers.',
+        'Show a free-text Other choice. Defaults to true; set false only when answers must be limited to the predefined options.',
     }),
   ),
   defaultOptionIds: Type.Optional(
@@ -583,7 +584,7 @@ const plugin = {
           description:
             'Ask the user to choose from 2-4 predefined options. ' +
             'When an option requires explanation, define its input instead of asking the user to provide details in a later message. Keep option descriptions consistent with the question details. ' +
-            'Set allowOther only when a valid answer may fall outside the predefined options. ' +
+            'The free-text Other choice is enabled by default; set allowOther to false only when answers must be limited to the predefined options. ' +
             'Omit timeoutEnabled when only the user can safely answer, including consequential confirmations. ' +
             'For non-critical preferences, set timeoutEnabled to true to use the user-configured wait time. To auto-select on timeout, set defaultOptionIds inside every question; otherwise the model resumes and decides from context. ' +
             'Prefer this tool whenever the user needs to choose, decide, confirm, or select and clear options can be provided.',

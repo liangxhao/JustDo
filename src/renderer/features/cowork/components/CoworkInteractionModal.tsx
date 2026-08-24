@@ -465,7 +465,7 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
                           </React.Fragment>
                         );
                       })}
-                      {question.allowOther && (
+                      {question.allowOther !== false && (
                         <>
                           <label
                             className={`block w-full cursor-pointer rounded-lg border px-3 py-2 text-left transition-colors focus-within:ring-2 focus-within:ring-primary/50 ${

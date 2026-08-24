@@ -136,7 +136,7 @@ Extension 使用 `openclaw.plugin.json`，由 OpenClaw CLI/registry 进行最终
 
 Ask-user contract 最多 8 个问题；question id 满足 `[A-Za-z][A-Za-z0-9_-]{0,63}`。shared parser 验证类型、选项、默认值、required 和 timeout，timeout 最大 24 小时。模型用顶层 `timeoutEnabled` 选择是否启用等待时限，实际分钟数来自“设置 → 配置”，默认 10 分钟，并通过插件 config 的 `timeoutMinutes` 下发。Broker 保存 pending request，interaction router 按 request/session 关联并支持重放；回答只接受原问题中的 id/选项。多问题请求允许用户用 `skipped: true` 明确跳过单题，renderer、Host 和 Extension 都会校验并把该状态明确返回模型。
 
-Renderer 对单题和双选项不做隐式确认按钮降级，所有问题统一展示完整的 option label、description 和可选 input，选择后再提交。单题 header 用作对话框标题。多题向导的单选题在无需补充输入时自动前进；非末题的多选题只有在当前答案完整后才显示“下一个”按钮，由用户确认选择完成后前进。自由文本“其他”只有在 question 显式声明 `allowOther: true` 时出现；未声明时 shared parser 与 Extension 都拒绝 `other` 回答。需要用户解释某个选择时应使用 option `input`，而不是依赖后续对话。
+Renderer 对单题和双选项不做隐式确认按钮降级，所有问题统一展示完整的 option label、description 和可选 input，选择后再提交。单题 header 用作对话框标题。多题向导的单选题在无需补充输入时自动前进；非末题的多选题只有在当前答案完整后才显示“下一个”按钮，由用户确认选择完成后前进。为兼容历史请求，自由文本“其他”默认显示；question 只有显式声明 `allowOther: false` 时才隐藏，shared parser 与 Extension 也只在该情况下拒绝 `other` 回答。需要用户解释某个选择时应使用 option `input`，而不是依赖后续对话。
 
 Action approval extension 补充文件写/cron 等产品 policy，但不重复 Gateway 原生 exec approval。adapter diagnostics 不能被解释为“可信 policy 已激活”；真正 admission 仍要由 config sync 的 active policy verification 证明。
 

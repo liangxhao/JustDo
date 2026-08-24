@@ -71,6 +71,9 @@ describe('ask-user-question plugin limits', () => {
     expect(AskUserQuestionSchema.properties.questions.items.properties.allowOther.type).toBe(
       'boolean',
     );
+    expect(AskUserQuestionSchema.properties.questions.items.properties.allowOther.default).toBe(
+      true,
+    );
   });
 
   test('exposes a flat timeout contract without a wait-policy union', () => {

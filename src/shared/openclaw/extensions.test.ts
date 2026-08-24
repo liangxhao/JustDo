@@ -95,7 +95,9 @@ describe('ask-user-question runtime validation', () => {
   });
 
   test('keeps other answers separate from selected option ids', () => {
-    const questions = parseAskUserQuestions([{ ...rawQuestions[0], allowOther: true }])!;
+    const questions = parseAskUserQuestions(rawQuestions)!;
+
+    expect(questions[0].allowOther).toBe(true);
 
     expect(parseAskUserAnswers({
       deployment: { selected: [], other: 'Ask me later' },
@@ -112,8 +114,8 @@ describe('ask-user-question runtime validation', () => {
     }])).toBeNull();
   });
 
-  test('rejects free-text answers unless the question explicitly allows them', () => {
-    const questions = parseAskUserQuestions(rawQuestions)!;
+  test('rejects free-text answers only when the question explicitly disables them', () => {
+    const questions = parseAskUserQuestions([{ ...rawQuestions[0], allowOther: false }])!;
 
     expect(parseAskUserAnswers({
       deployment: { selected: [], other: 'Ask me later' },

@@ -543,7 +543,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
                   </React.Fragment>
                 );
               })}
-              {currentQuestion.allowOther && (
+              {currentQuestion.allowOther !== false && (
                 <label
                   className={`block w-full cursor-pointer rounded-lg border px-4 py-3 text-left transition-all focus-within:ring-2 focus-within:ring-primary/50 ${
                     otherActive[currentQuestion.id]
@@ -601,7 +601,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
             </div>
 
             <div className="mt-4 flex items-start gap-3">
-              {currentQuestion.allowOther && otherActive[currentQuestion.id] && (
+              {currentQuestion.allowOther !== false && otherActive[currentQuestion.id] && (
                 <textarea
                   rows={3}
                   value={otherInputs[currentQuestion.id] || ''}

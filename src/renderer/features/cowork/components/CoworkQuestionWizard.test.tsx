@@ -96,12 +96,7 @@ describe('CoworkQuestionWizard multi-select navigation', () => {
   });
 
   test('requires allowed Other text and hides Next when Other is cleared', () => {
-    render(
-      <CoworkQuestionWizard
-        interaction={buildInteraction({ allowOther: true })}
-        onRespond={vi.fn()}
-      />,
-    );
+    render(<CoworkQuestionWizard interaction={buildInteraction()} onRespond={vi.fn()} />);
 
     const other = screen.getByRole('checkbox', { name: /Other|其他/ });
     fireEvent.click(other);

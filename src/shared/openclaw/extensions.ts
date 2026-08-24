@@ -197,7 +197,7 @@ export const parseAskUserQuestions = (value: unknown): AskUserQuestion[] | null 
         ? { header: rawQuestion.header.trim() }
         : {}),
       ...(rawQuestion.multiSelect === true ? { multiSelect: true } : {}),
-      ...(rawQuestion.allowOther === true ? { allowOther: true } : {}),
+      allowOther: rawQuestion.allowOther !== false,
       ...(defaultOptionIds ? { defaultOptionIds } : {}),
     });
   }
@@ -283,7 +283,7 @@ export const parseAskUserAnswers = (
       ? undefined
       : readRequiredString(rawAnswer.other);
     if (rawAnswer.other !== undefined && !other) return null;
-    if (other && !question.allowOther) return null;
+    if (other && question.allowOther === false) return null;
     if (!question.multiSelect && selectedIds.length > 0 && other) return null;
     if (selectedIds.length === 0 && !other) return null;
 
