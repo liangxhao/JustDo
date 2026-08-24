@@ -160,6 +160,17 @@ const mergeCapabilities = (
 export const normalizeModelProviderBaseUrl = (baseUrl: string): string =>
   baseUrl.trim().replace(/\/+$/, '');
 
+export const buildOpenAIChatCompletionsUrl = (baseUrl: string): string => {
+  const normalized = normalizeModelProviderBaseUrl(baseUrl);
+  if (!normalized) {
+    return '/chat/completions';
+  }
+  if (normalized.endsWith('/chat/completions')) {
+    return normalized;
+  }
+  return `${normalized}/chat/completions`;
+};
+
 export const buildProviderModelsUrl = (baseUrl: string): string =>
   `${normalizeModelProviderBaseUrl(baseUrl)}/models`;
 

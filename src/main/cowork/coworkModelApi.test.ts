@@ -12,7 +12,10 @@ describe('coworkModelApi', () => {
       'https://example.com/v1/chat/completions',
     );
     expect(buildOpenAIChatCompletionsUrl('https://example.com')).toBe(
-      'https://example.com/v1/chat/completions',
+      'https://example.com/chat/completions',
+    );
+    expect(buildOpenAIChatCompletionsUrl('https://example.com/custom/gateway/')).toBe(
+      'https://example.com/custom/gateway/chat/completions',
     );
     expect(buildOpenAIChatCompletionsUrl('https://example.com/v1/chat/completions')).toBe(
       'https://example.com/v1/chat/completions',

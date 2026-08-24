@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 
 import {
+  buildOpenAIChatCompletionsUrl,
   combineProviderModelDiscovery,
   mergeDiscoveredProviderModels,
   parseProviderModelInfoResponse,
@@ -8,6 +9,18 @@ import {
 } from './modelDiscovery';
 
 describe('modelDiscovery', () => {
+  test('builds the chat completions request url without inserting an API version', () => {
+    expect(buildOpenAIChatCompletionsUrl('https://example.com/')).toBe(
+      'https://example.com/chat/completions',
+    );
+    expect(buildOpenAIChatCompletionsUrl('https://example.com/v1')).toBe(
+      'https://example.com/v1/chat/completions',
+    );
+    expect(buildOpenAIChatCompletionsUrl('https://example.com/v1/chat/completions')).toBe(
+      'https://example.com/v1/chat/completions',
+    );
+  });
+
   test('parses and combines listed models with optional capability metadata', () => {
     const listed = parseProviderModelsResponse({
       data: [{ id: 'chat-model' }, { id: 'embedding-model' }, { id: 'chat-model' }],

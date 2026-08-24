@@ -7,6 +7,7 @@ import {
   SignalIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
+import { buildOpenAIChatCompletionsUrl } from '@shared/providers/modelDiscovery';
 import React, { useRef, useState } from 'react';
 
 import {
@@ -44,10 +45,13 @@ const formatContextLength = (tokens: number): string => {
 };
 
 const modelToolbarButtonClassName =
-  'inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-border bg-background px-2.5 text-xs font-medium text-secondary shadow-sm transition-all hover:border-primary/30 hover:bg-primary-muted/40 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-border disabled:hover:bg-background disabled:hover:text-secondary';
+  'inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-border-input !bg-white px-2.5 text-xs font-medium text-foreground shadow-sm transition-all hover:border-foreground/25 hover:!bg-surface-raised/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/15 disabled:cursor-not-allowed disabled:text-muted disabled:opacity-40 dark:!bg-surface dark:hover:!bg-surface-raised/60';
 
 const modelBulkActionButtonClassName =
   'inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-[10px] font-medium text-secondary transition-colors hover:bg-surface hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-secondary';
+
+const providerTransferButtonClassName =
+  'inline-flex h-7 items-center rounded-lg border border-border-input !bg-white px-2.5 text-xs font-medium text-foreground shadow-sm transition-all hover:border-foreground/25 hover:!bg-surface-raised/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/15 disabled:cursor-not-allowed disabled:text-muted disabled:opacity-40 dark:!bg-surface dark:hover:!bg-surface-raised/60';
 
 interface Props {
   activeProvider: ProviderType;
@@ -130,6 +134,9 @@ const ModelSettingsTab: React.FC<Props> = ({
     };
   const isReadOnly = isProviderReadOnly(activeProvider, activeConfig);
   const isBaseUrlLocked = false;
+  const chatCompletionsUrl = activeConfig.baseUrl.trim()
+    ? buildOpenAIChatCompletionsUrl(activeConfig.baseUrl)
+    : '';
   const hasModels = (activeConfig.models?.length ?? 0) > 0;
   const allModelsEnabled =
     hasModels && (activeConfig.models ?? []).every(model => model.enabled !== false);
@@ -231,7 +238,7 @@ const ModelSettingsTab: React.FC<Props> = ({
               type="button"
               onClick={() => importInputRef.current?.click()}
               disabled={isImporting || isExporting || isModelActionBusy}
-              className="inline-flex h-7 items-center rounded-lg px-2 text-xs font-medium text-secondary transition-colors hover:bg-background hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 active:scale-[0.98]"
+              className={providerTransferButtonClassName}
             >
               {i18nService.t('import')}
             </button>
@@ -239,7 +246,7 @@ const ModelSettingsTab: React.FC<Props> = ({
               type="button"
               onClick={handleExport}
               disabled={isImporting || isExporting || isModelActionBusy}
-              className="inline-flex h-7 items-center rounded-lg px-2 text-xs font-medium text-secondary transition-colors hover:bg-background hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 active:scale-[0.98]"
+              className={providerTransferButtonClassName}
             >
               {i18nService.t('export')}
             </button>
@@ -342,7 +349,7 @@ const ModelSettingsTab: React.FC<Props> = ({
       <div className="min-w-0 flex-1">
         <div className="flex flex-col gap-3">
           {!isBuiltinModelsProvider(activeProvider) && (
-            <div className="flex items-start gap-3">
+            <div className="mx-auto flex w-full max-w-md items-start gap-3">
               <label
                 htmlFor={`${activeProvider}-displayName`}
                 className="shrink-0 py-1.5 text-xs font-medium text-foreground"
@@ -377,7 +384,7 @@ const ModelSettingsTab: React.FC<Props> = ({
                       handleProviderConfigChange(activeProvider, 'displayName', value);
                     }
                   }}
-                  className={`block w-full rounded-xl bg-surface-raised border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-1.5 text-xs ${displayNameError ? 'border-red-500 focus:border-red-500' : ''}`}
+                  className={`block w-full rounded-xl border border-border-input bg-surface px-3 py-1.5 text-center text-xs text-foreground shadow-sm transition-colors hover:border-primary/40 focus:border-primary focus:ring-1 focus:ring-primary/30 ${displayNameError ? 'border-red-500 focus:border-red-500' : ''}`}
                   placeholder={getCustomProviderDefaultName(activeProvider)}
                 />
                 {displayNameError && (
@@ -414,7 +421,7 @@ const ModelSettingsTab: React.FC<Props> = ({
                       handleProviderConfigChange(activeProvider, 'baseUrl', e.target.value)
                     }
                     disabled={isBaseUrlLocked || isModelActionBusy}
-                    className={`block w-full rounded-xl bg-surface-raised border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-1.5 pr-8 text-xs ${isBaseUrlLocked || isModelActionBusy ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    className={`block w-full rounded-xl border border-border-input !bg-white px-3 py-1.5 pr-8 text-xs text-foreground shadow-sm transition-colors hover:border-primary/40 focus:border-primary focus:ring-1 focus:ring-primary/30 dark:!bg-surface ${isBaseUrlLocked || isModelActionBusy ? 'opacity-50 cursor-not-allowed' : ''}`}
                     placeholder={
                       getProviderDefaultBaseUrl(activeProvider) ||
                       defaultConfig.providers?.[activeProvider]?.baseUrl ||
@@ -422,6 +429,13 @@ const ModelSettingsTab: React.FC<Props> = ({
                     }
                     required={isCustomProvider(activeProvider)}
                   />
+                  <div
+                    className={`mt-1 min-h-[15px] truncate px-1 font-mono text-[10px] text-muted ${chatCompletionsUrl ? '' : 'invisible'}`}
+                    title={chatCompletionsUrl || undefined}
+                    aria-hidden={!chatCompletionsUrl}
+                  >
+                    {chatCompletionsUrl || '\u00a0'}
+                  </div>
                 </div>
 
                 {!isBuiltinModelsProvider(activeProvider) && (
@@ -441,7 +455,7 @@ const ModelSettingsTab: React.FC<Props> = ({
                         handleProviderConfigChange(activeProvider, 'apiKey', e.target.value)
                       }
                       disabled={isModelActionBusy}
-                      className="block w-full rounded-xl bg-surface-raised border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-50"
+                      className="block w-full rounded-xl border border-border-input !bg-white px-3 py-1.5 text-xs text-foreground shadow-sm transition-colors hover:border-primary/40 focus:border-primary focus:ring-1 focus:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-50 dark:!bg-surface"
                       placeholder={i18nService.t('apiKeyPlaceholder')}
                       required={isCustomProvider(activeProvider)}
                     />

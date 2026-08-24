@@ -1,23 +1,11 @@
 const API_ERROR_SNIPPET_MAX_CHARS = 240;
 
+export { buildOpenAIChatCompletionsUrl } from '../../shared/providers/modelDiscovery';
+
 const toRecord = (value: unknown): Record<string, unknown> | null =>
   value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
-
-export function buildOpenAIChatCompletionsUrl(baseUrl: string): string {
-  const normalized = baseUrl.trim().replace(/\/+$/, '');
-  if (!normalized) {
-    return '/v1/chat/completions';
-  }
-  if (normalized.endsWith('/chat/completions')) {
-    return normalized;
-  }
-  if (/\/v\d+$/.test(normalized)) {
-    return `${normalized}/chat/completions`;
-  }
-  return `${normalized}/v1/chat/completions`;
-}
 
 export function extractApiErrorSnippet(rawText: string): string {
   const trimmed = rawText.trim();
