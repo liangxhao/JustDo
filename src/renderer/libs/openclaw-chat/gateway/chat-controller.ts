@@ -849,9 +849,11 @@ export class ChatController {
         .flatMap(item =>
           item.kind === 'process-summary'
             ? item.items.filter(process => process.type === 'tool')
-            : item.kind === 'plan-update'
+            : item.kind === 'live-process' && item.item.type === 'tool'
               ? [item.item]
-              : [],
+              : item.kind === 'plan-update'
+                ? [item.item]
+                : [],
         )
         .map(tool => [tool.toolCallId, tool] as const),
     );

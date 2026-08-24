@@ -1759,6 +1759,61 @@ test('settles a live sessions_yield from an explicit payloadless history failure
   expect(tool.status).toBe('failed');
 });
 
+test('hydrates input for a waiting sessions_yield projected from history as a live Tool', () => {
+  const controller = new ChatController();
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  const turn = beginAssistantTurn(
+    controller.state.transcript,
+    { runId: 'run-1' },
+    { now: () => 1, createId: prefix => `${prefix}-1` },
+  );
+  const tool = {
+    id: 'tool-1',
+    runId: 'run-1',
+    firstSeq: 1,
+    lastSeq: 1,
+    startedAt: 1,
+    updatedAt: 1,
+    type: 'tool' as const,
+    status: 'running' as const,
+    toolCallId: 'call-yield-1',
+    name: 'sessions_yield',
+  };
+  turn.items.push(tool);
+  turn.toolById.set(tool.toolCallId, tool);
+
+  const changed = (
+    controller as unknown as {
+      hydrateActiveToolItemsFromHistory(messages: unknown[]): boolean;
+    }
+  ).hydrateActiveToolItemsFromHistory([
+    {
+      role: 'assistant',
+      content: [
+        {
+          type: 'toolCall',
+          id: 'call-yield-1',
+          name: 'sessions_yield',
+          arguments: { message: '等待 subagent 完成。' },
+        },
+      ],
+    },
+    {
+      role: 'toolResult',
+      toolCallId: 'call-yield-1',
+      toolName: 'sessions_yield',
+      content: [],
+    },
+  ]);
+
+  expect(changed).toBe(true);
+  expect(turn.toolById.get('call-yield-1')).toBe(tool);
+  expect(tool).toMatchObject({
+    status: 'running',
+    input: { message: '等待 subagent 完成。' },
+  });
+});
+
 test('cleans up a stale subscription that resolves after a newer session subscribe', async () => {
   let resolveFirstSubscribe: (() => void) | undefined;
   const request = vi.fn().mockImplementation((method: string, params: { key?: string }) => {

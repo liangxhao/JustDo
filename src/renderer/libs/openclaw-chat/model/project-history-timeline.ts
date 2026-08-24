@@ -10,7 +10,11 @@ import {
   type ToolItem,
 } from './chat-transcript-state';
 import { deterministicHistoryKey } from './history-reconciler';
-import type { PlanUpdateTimelineItem, ProcessSummaryTimelineItem } from './project-turn-items';
+import type {
+  LiveProcessTimelineItem,
+  PlanUpdateTimelineItem,
+  ProcessSummaryTimelineItem,
+} from './project-turn-items';
 import {
   hasToolResultPayload,
   inferSessionsYieldInput,
@@ -38,6 +42,7 @@ export type PersistedTimelineItem =
       completedAt?: number;
     }
   | ProcessSummaryTimelineItem
+  | LiveProcessTimelineItem
   | PlanUpdateTimelineItem;
 
 const THINKING_TYPES = new Set(['thinking', 'reasoning']);
@@ -287,7 +292,7 @@ export function projectPersistedTimeline(
       startedAt: timestamp,
       updatedAt: timestamp,
       type: 'tool',
-      status: isSessionsYieldTool(readToolName(source)) ? 'running' : 'completed',
+      status: 'running',
       toolCallId,
       name: readToolName(source),
       ...(input !== undefined && input !== null ? { input } : {}),
@@ -515,15 +520,48 @@ export function projectPersistedTimeline(
   });
   flushSummary();
 
-  // Tool results may update items after their summary was flushed.
-  for (const item of projected) {
-    if (item.kind !== 'process-summary') continue;
-    item.thinkingCount = item.items.filter(process => process.type === 'thinking').length;
-    item.toolCount = item.items.filter(process => process.type === 'tool').length;
-    item.errorCount = item.items.filter(process => process.status === 'failed').length;
-    item.interruptedCount = item.items.filter(
-      process => process.status === 'cancelled' || process.status === 'interrupted',
-    ).length;
-  }
-  return projected;
+  // A history refresh can expose an in-flight Tool before its result, notably
+  // when a subagent announce is persisted behind a long sessions_yield call.
+  // Keep the same invariant as the live projection: only settled Thinking and
+  // Tool items belong in a collapsible summary.
+  return projected.flatMap(item => {
+    if (item.kind !== 'process-summary') return [item];
+
+    const normalized: PersistedTimelineItem[] = [];
+    let settled: Array<ThinkingItem | ToolItem> = [];
+    let settledSegment = 0;
+    const flushSettled = () => {
+      if (settled.length === 0) return;
+      const first = settled[0];
+      normalized.push({
+        kind: 'process-summary',
+        key: settledSegment === 0 ? item.key : `${item.key}:settled:${settledSegment}:${first.id}`,
+        runId: first.runId,
+        items: settled,
+        thinkingCount: settled.filter(process => process.type === 'thinking').length,
+        toolCount: settled.filter(process => process.type === 'tool').length,
+        errorCount: settled.filter(process => process.status === 'failed').length,
+        interruptedCount: settled.filter(
+          process => process.status === 'cancelled' || process.status === 'interrupted',
+        ).length,
+      });
+      settled = [];
+      settledSegment += 1;
+    };
+
+    for (const process of item.items) {
+      if (process.status === 'running') {
+        flushSettled();
+        normalized.push({
+          kind: 'live-process',
+          key: `history-live:${process.id}`,
+          item: process,
+        });
+      } else {
+        settled.push(process);
+      }
+    }
+    flushSettled();
+    return normalized;
+  });
 }

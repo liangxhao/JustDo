@@ -189,7 +189,7 @@ describe('projectPersistedTimeline', () => {
     expect(result.map(item => item.kind)).toEqual([
       'process-summary',
       'plan-update',
-      'process-summary',
+      'live-process',
       'plan-update',
     ]);
     expect(result.filter(item => item.kind === 'plan-update')).toHaveLength(2);
@@ -309,11 +309,15 @@ describe('projectPersistedTimeline', () => {
         content: [],
       },
     ]);
-    const waitingTool = dangling
-      .flatMap(item => (item.kind === 'process-summary' ? item.items : []))
-      .find(item => item.type === 'tool');
+    const waitingItem = dangling.find(item => item.kind === 'live-process');
+    const waitingTool =
+      waitingItem?.kind === 'live-process' && waitingItem.item.type === 'tool'
+        ? waitingItem.item
+        : undefined;
 
+    expect(dangling.map(item => item.kind)).toEqual(['live-process']);
     expect(waitingTool).toMatchObject({
+      type: 'tool',
       toolCallId: 'call-yield-1',
       status: 'running',
     });
@@ -363,6 +367,133 @@ describe('projectPersistedTimeline', () => {
       toolCallId: 'call-yield-1',
       status: 'cancelled',
     });
+  });
+
+  test('does not fold a waiting sessions_yield when an announce message arrives behind it', () => {
+    const waitingMessages = [
+      {
+        role: 'assistant',
+        runId: 'parent-run',
+        content: [
+          { type: 'thinking', thinking: 'Waiting for the worker.' },
+          {
+            type: 'toolCall',
+            id: 'call-yield-1',
+            name: 'sessions_yield',
+            arguments: { message: '等待 subagent' },
+          },
+        ],
+      },
+      {
+        role: 'toolResult',
+        runId: 'parent-run',
+        toolCallId: 'call-yield-1',
+        toolName: 'sessions_yield',
+        content: [],
+      },
+      {
+        role: 'assistant',
+        runId: 'announce:v1:agent:main:subagent:child-run',
+        content: [{ type: 'text', text: 'Subagent progress arrived.' }],
+      },
+    ];
+    const result = projectPersistedTimeline(waitingMessages);
+
+    expect(result.map(item => item.kind)).toEqual([
+      'process-summary',
+      'live-process',
+      'history-message',
+    ]);
+    expect(result[0]).toMatchObject({
+      kind: 'process-summary',
+      thinkingCount: 1,
+      toolCount: 0,
+    });
+    expect(result[1]).toMatchObject({
+      kind: 'live-process',
+      item: {
+        type: 'tool',
+        name: 'sessions_yield',
+        status: 'running',
+      },
+    });
+
+    const continued = projectPersistedTimeline([
+      ...waitingMessages,
+      {
+        role: 'assistant',
+        runId: 'parent-run',
+        content: [
+          {
+            type: 'toolCall',
+            id: 'call-read-1',
+            name: 'read',
+            arguments: { path: 'result.txt' },
+          },
+        ],
+      },
+    ]);
+    const runningToolIds = continued.flatMap(item =>
+      item.kind === 'live-process' && item.item.type === 'tool' ? [item.item.toolCallId] : [],
+    );
+
+    expect(runningToolIds).toEqual(['call-yield-1', 'call-read-1']);
+
+    const completedResult = JSON.stringify({
+      status: 'completed',
+      pending: 0,
+      results: [{ status: 'ok' }],
+    });
+    const refreshed = projectPersistedTimeline([
+      waitingMessages[0],
+      {
+        role: 'toolResult',
+        runId: 'parent-run',
+        toolCallId: 'call-yield-1',
+        toolName: 'sessions_yield',
+        content: [{ type: 'text', text: completedResult }],
+      },
+      waitingMessages[2],
+      {
+        role: 'assistant',
+        runId: 'parent-run',
+        content: [
+          { type: 'thinking', thinking: 'Continue after the worker finished.' },
+          {
+            type: 'toolCall',
+            id: 'call-read-1',
+            name: 'read',
+            arguments: { path: 'result.txt' },
+          },
+        ],
+      },
+      {
+        role: 'toolResult',
+        runId: 'parent-run',
+        toolCallId: 'call-read-1',
+        toolName: 'read',
+        content: [{ type: 'text', text: 'worker result' }],
+      },
+    ]);
+    const refreshedTools = refreshed.flatMap(item =>
+      item.kind === 'process-summary' ? item.items.filter(process => process.type === 'tool') : [],
+    );
+
+    expect(refreshed.some(item => item.kind === 'live-process')).toBe(false);
+    expect(refreshedTools).toMatchObject([
+      {
+        toolCallId: 'call-yield-1',
+        name: 'sessions_yield',
+        status: 'completed',
+        output: completedResult,
+      },
+      {
+        toolCallId: 'call-read-1',
+        name: 'read',
+        status: 'completed',
+        output: 'worker result',
+      },
+    ]);
   });
 
   test('recovers sessions_yield arguments from a standalone result before history patching', () => {
@@ -542,14 +673,15 @@ describe('projectPersistedTimeline', () => {
       expect.objectContaining({
         kind: 'process-summary',
         runId: 'run-shared',
-        items: [
-          expect.objectContaining({ type: 'thinking', runId: 'run-shared' }),
-          expect.objectContaining({
-            type: 'tool',
-            runId: 'run-shared',
-            toolCallId: 'call-1',
-          }),
-        ],
+        items: [expect.objectContaining({ type: 'thinking', runId: 'run-shared' })],
+      }),
+      expect.objectContaining({
+        kind: 'live-process',
+        item: expect.objectContaining({
+          type: 'tool',
+          runId: 'run-shared',
+          toolCallId: 'call-1',
+        }),
       }),
     ]);
   });
