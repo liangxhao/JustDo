@@ -21,6 +21,7 @@ import {
   resolveAutomaticAgentModelRepair,
 } from '@/features/cowork/components/agentModelSelection';
 import AttachmentCard from '@/features/cowork/components/AttachmentCard';
+import ContextUsageIndicator from '@/features/cowork/components/ContextUsageIndicator';
 import {
   type ContextUsageRunState,
   type ContextUsageSnapshot,
@@ -1207,7 +1208,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       };
     }, [attachments, dispatch, draftKey, modelSupportsImage]);
 
-    const contextUsageText = useMemo(() => {
+    const contextUsageDisplay = useMemo(() => {
       if (!contextUsage) return null;
       const contextTokens =
         contextUsage.contextTokens || effectiveSelectedModel?.contextLength || 200_000;
@@ -1218,16 +1219,18 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       );
       const estimatePrefix = contextUsage.usageSource === 'estimate' ? '~' : '';
       const overflowSuffix = overflowed ? '+' : '';
-      return `${estimatePrefix}${formatContextLength(usedTokens)}${overflowSuffix} / ${formatContextLength(contextTokens)} · ${percentage}%`;
+      return {
+        percentage,
+        text: `${estimatePrefix}${formatContextLength(usedTokens)}${overflowSuffix} / ${formatContextLength(contextTokens)} · ${percentage}%`,
+      };
     }, [contextUsage, effectiveSelectedModel?.contextLength]);
-    const contextUsageStatusText = sessionId && contextUsageText ? contextUsageText : null;
-    const contextUsageBadge = contextUsageStatusText ? (
-      <span
-        className="inline-flex h-7 max-w-[190px] items-center rounded-md border border-border/60 bg-surface-raised/70 px-2 text-[11px] font-medium leading-none text-secondary tabular-nums select-none shadow-subtle"
-        title={i18nService.t('coworkContextUsageFullLabel')}
-      >
-        <span className="truncate">{contextUsageStatusText}</span>
-      </span>
+    const contextUsageStatus = sessionId && contextUsageDisplay ? contextUsageDisplay : null;
+    const contextUsageBadge = contextUsageStatus ? (
+      <ContextUsageIndicator
+        label={i18nService.t('coworkContextUsageFullLabel')}
+        detail={contextUsageStatus.text}
+        percentage={contextUsageStatus.percentage}
+      />
     ) : null;
 
     const addAttachment = useCallback(

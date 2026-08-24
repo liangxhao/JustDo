@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect,useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 interface TooltipProps {
   content: React.ReactNode;
@@ -8,6 +9,7 @@ interface TooltipProps {
   delay?: number;
   maxWidth?: string;
   disabled?: boolean;
+  renderInPortal?: boolean;
 }
 
 const Tooltip: React.FC<TooltipProps> = ({
@@ -18,27 +20,61 @@ const Tooltip: React.FC<TooltipProps> = ({
   delay = 300,
   maxWidth = '280px',
   disabled = false,
+  renderInPortal = false,
 }) => {
   const [isVisible, setIsVisible] = useState(false);
   const [tooltipStyle, setTooltipStyle] = useState<React.CSSProperties | null>(null);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
+  const isHoveredRef = useRef(false);
+  const isFocusedWithinRef = useRef(false);
 
   const showTooltip = useCallback(() => {
-    if (disabled) return;
+    if (disabled || isVisible || timeoutRef.current) return;
     timeoutRef.current = setTimeout(() => {
+      timeoutRef.current = null;
       setIsVisible(true);
     }, delay);
-  }, [delay, disabled]);
+  }, [delay, disabled, isVisible]);
 
-  const hideTooltip = useCallback(() => {
+  const hideTooltipIfInactive = useCallback(() => {
+    if (isHoveredRef.current || isFocusedWithinRef.current) return;
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
       timeoutRef.current = null;
     }
     setIsVisible(false);
   }, []);
+
+  const handleMouseEnter = useCallback(() => {
+    isHoveredRef.current = true;
+    showTooltip();
+  }, [showTooltip]);
+
+  const handleMouseLeave = useCallback(() => {
+    isHoveredRef.current = false;
+    hideTooltipIfInactive();
+  }, [hideTooltipIfInactive]);
+
+  const handleFocusCapture = useCallback(() => {
+    isFocusedWithinRef.current = true;
+    showTooltip();
+  }, [showTooltip]);
+
+  const handleBlurCapture = useCallback(
+    (event: React.FocusEvent<HTMLDivElement>) => {
+      if (
+        event.relatedTarget instanceof Node &&
+        wrapperRef.current?.contains(event.relatedTarget)
+      ) {
+        return;
+      }
+      isFocusedWithinRef.current = false;
+      hideTooltipIfInactive();
+    },
+    [hideTooltipIfInactive],
+  );
 
   const updatePosition = useCallback(() => {
     if (!wrapperRef.current || !tooltipRef.current) return;
@@ -93,11 +129,11 @@ const Tooltip: React.FC<TooltipProps> = ({
 
     const clampedLeft = Math.min(
       Math.max(chosen.left, margin),
-      viewportWidth - tooltipRect.width - margin
+      viewportWidth - tooltipRect.width - margin,
     );
     const clampedTop = Math.min(
       Math.max(chosen.top, margin),
-      viewportHeight - tooltipRect.height - margin
+      viewportHeight - tooltipRect.height - margin,
     );
 
     setTooltipStyle({
@@ -127,26 +163,32 @@ const Tooltip: React.FC<TooltipProps> = ({
     };
   }, [isVisible, updatePosition]);
 
+  const tooltipElement = isVisible && content && (
+    <div
+      ref={tooltipRef}
+      role="tooltip"
+      className={`absolute z-[100] px-3.5 py-2.5 text-[13px] leading-relaxed rounded-xl shadow-xl
+        bg-background
+        text-foreground
+        border-border border`}
+      style={tooltipStyle ?? { maxWidth }}
+    >
+      {content}
+    </div>
+  );
+
   return (
     <div
       ref={wrapperRef}
       className={`relative inline-block ${className}`}
-      onMouseEnter={showTooltip}
-      onMouseLeave={hideTooltip}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+      onFocusCapture={handleFocusCapture}
+      onBlurCapture={handleBlurCapture}
     >
       {children}
-      {isVisible && content && (
-        <div
-          ref={tooltipRef}
-          className={`absolute z-[100] px-3.5 py-2.5 text-[13px] leading-relaxed rounded-xl shadow-xl
-            bg-background
-            text-foreground
-            border-border border`}
-          style={tooltipStyle ?? { maxWidth }}
-        >
-          {content}
-        </div>
-      )}
+      {tooltipElement &&
+        (renderInPortal ? createPortal(tooltipElement, document.body) : tooltipElement)}
     </div>
   );
 };
