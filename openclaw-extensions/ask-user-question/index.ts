@@ -38,6 +38,7 @@ type Question = {
   header?: string;
   options: QuestionOption[];
   multiSelect?: boolean;
+  allowOther?: boolean;
   defaultOptionIds?: string[];
 };
 
@@ -77,6 +78,7 @@ type AskUserResponse = {
 const LOOPBACK_CALLBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
 const ASK_USER_ID_PATTERN = '^[A-Za-z][A-Za-z0-9_-]{0,63}$';
 export const MAX_ASK_USER_QUESTIONS = 8;
+export const MAX_ASK_USER_HEADER_LENGTH = 12;
 export const ASK_USER_TIMEOUT_MINUTES = 10;
 const MAX_ASK_USER_TIMEOUT_MINUTES = 24 * 60;
 const askUserIdRegex = new RegExp(ASK_USER_ID_PATTERN);
@@ -215,6 +217,9 @@ export const parseQuestions = (value: unknown): Question[] | null => {
       questionIds.has(id) ||
       (rawQuestion.header !== undefined && typeof rawQuestion.header !== 'string') ||
       (rawQuestion.multiSelect !== undefined && typeof rawQuestion.multiSelect !== 'boolean') ||
+      (rawQuestion.allowOther !== undefined && typeof rawQuestion.allowOther !== 'boolean') ||
+      (typeof rawQuestion.header === 'string' &&
+        rawQuestion.header.trim().length > MAX_ASK_USER_HEADER_LENGTH) ||
       !Array.isArray(rawQuestion.options) ||
       rawQuestion.options.length < 2 ||
       rawQuestion.options.length > 4
@@ -286,6 +291,7 @@ export const parseQuestions = (value: unknown): Question[] | null => {
       options,
       ...(typeof rawQuestion.header === 'string' ? { header: rawQuestion.header.trim() } : {}),
       ...(rawQuestion.multiSelect === true ? { multiSelect: true } : {}),
+      ...(rawQuestion.allowOther === true ? { allowOther: true } : {}),
       ...(defaultOptionIds ? { defaultOptionIds } : {}),
     });
   }
@@ -342,6 +348,7 @@ const parseAnswers = (value: unknown, questions: Question[]): AskUserResponse['a
     const other = rawAnswer.other === undefined ? undefined : readRequiredString(rawAnswer.other);
     if (
       (rawAnswer.other !== undefined && !other) ||
+      (other && !question.allowOther) ||
       (!question.multiSelect && selectedIds.length > 0 && other) ||
       (selectedIds.length === 0 && !other)
     )
@@ -405,13 +412,24 @@ const QuestionSchema = Type.Object({
     description: 'Stable question identifier, unique within this request.',
   }),
   question: Type.String({ description: 'Question shown to the user.' }),
-  header: Type.Optional(Type.String({ description: 'Short tag (max 12 characters).' })),
+  header: Type.Optional(
+    Type.String({
+      maxLength: MAX_ASK_USER_HEADER_LENGTH,
+      description: `Short tag (max ${MAX_ASK_USER_HEADER_LENGTH} characters).`,
+    }),
+  ),
   options: Type.Array(QuestionOptionSchema, {
     minItems: 2,
     maxItems: 4,
     description: 'Available choices (2-4 options).',
   }),
   multiSelect: Type.Optional(Type.Boolean({ description: 'Allow multiple selections.' })),
+  allowOther: Type.Optional(
+    Type.Boolean({
+      description:
+        'Show a free-text Other choice. Omit unless predefined options cannot cover valid answers.',
+    }),
+  ),
   defaultOptionIds: Type.Optional(
     Type.Array(
       Type.String({
@@ -564,7 +582,8 @@ const plugin = {
           label: 'Ask User Question',
           description:
             'Ask the user to choose from 2-4 predefined options. ' +
-            'Set an option input when selecting it requires additional information from the user. ' +
+            'When an option requires explanation, define its input instead of asking the user to provide details in a later message. Keep option descriptions consistent with the question details. ' +
+            'Set allowOther only when a valid answer may fall outside the predefined options. ' +
             'Omit timeoutEnabled when only the user can safely answer, including consequential confirmations. ' +
             'For non-critical preferences, set timeoutEnabled to true to use the user-configured wait time. To auto-select on timeout, set defaultOptionIds inside every question; otherwise the model resumes and decides from context. ' +
             'Prefer this tool whenever the user needs to choose, decide, confirm, or select and clear options can be provided.',

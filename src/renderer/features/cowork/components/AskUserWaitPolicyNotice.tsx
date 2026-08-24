@@ -56,9 +56,16 @@ const AskUserWaitPolicyNotice: React.FC<AskUserWaitPolicyNoticeProps> = ({
     waitPolicy.mode === AskUserWaitMode.TIMEOUT && expiresAt !== null
       ? formatAskUserCountdown(expiresAt, now)
       : null;
+  const isRequired = waitPolicy.mode === AskUserWaitMode.REQUIRED;
 
   return (
-    <div className="flex items-center justify-between gap-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-300">
+    <div
+      className={`flex items-center justify-between gap-3 rounded-lg px-3 py-2 text-xs ${
+        isRequired
+          ? 'bg-surface-raised text-secondary'
+          : 'border border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-300'
+      }`}
+    >
       <span>{message}</span>
       {countdown && (
         <span className="shrink-0 rounded-md bg-blue-100 px-2 py-1 font-mono font-semibold tabular-nums text-blue-900 dark:bg-blue-900/60 dark:text-blue-100">

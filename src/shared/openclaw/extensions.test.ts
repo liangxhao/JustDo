@@ -4,6 +4,7 @@ import {
   AskUserTimeoutBehavior,
   AskUserWaitMode,
   buildAskUserDefaultAnswers,
+  MAX_ASK_USER_HEADER_LENGTH,
   MAX_ASK_USER_QUESTIONS,
   parseAskUserAnswers,
   parseAskUserQuestions,
@@ -94,13 +95,30 @@ describe('ask-user-question runtime validation', () => {
   });
 
   test('keeps other answers separate from selected option ids', () => {
-    const questions = parseAskUserQuestions(rawQuestions)!;
+    const questions = parseAskUserQuestions([{ ...rawQuestions[0], allowOther: true }])!;
 
     expect(parseAskUserAnswers({
       deployment: { selected: [], other: 'Ask me later' },
     }, questions)).toEqual({
       deployment: { selected: [], other: 'Ask me later' },
     });
+  });
+
+  test('enforces the short question header limit', () => {
+    expect(parseAskUserQuestions([{ ...rawQuestions[0], header: 'Design check' }])).not.toBeNull();
+    expect(parseAskUserQuestions([{
+      ...rawQuestions[0],
+      header: 'x'.repeat(MAX_ASK_USER_HEADER_LENGTH + 1),
+    }])).toBeNull();
+  });
+
+  test('rejects free-text answers unless the question explicitly allows them', () => {
+    const questions = parseAskUserQuestions(rawQuestions)!;
+
+    expect(parseAskUserAnswers({
+      deployment: { selected: [], other: 'Ask me later' },
+    }, questions)).toBeNull();
+    expect(parseAskUserQuestions([{ ...rawQuestions[0], allowOther: 'yes' }])).toBeNull();
   });
 
   test('accepts an explicit skipped answer and rejects mixed skipped content', () => {

@@ -1,26 +1,13 @@
 import { describe, expect, test } from 'vitest';
 
 import {
-  buildOtherAnswers,
-  buildSingleOptionAnswers,
+  getQuestionDialogTitle,
   isQuestionAnswerComplete,
   resolveWizardAutoAdvanceStep,
   shouldShowQuestionHeader,
 } from './askUserInteractionAnswers';
 
 describe('ask-user interaction answer builders', () => {
-  test('keeps a binary option id in selected', () => {
-    expect(buildSingleOptionAnswers('confirm', 'allow')).toEqual({
-      confirm: { selected: ['allow'] },
-    });
-  });
-
-  test('keeps binary free text in other instead of selected', () => {
-    expect(buildOtherAnswers('confirm', 'Use the staging environment')).toEqual({
-      confirm: { selected: [], other: 'Use the staging environment' },
-    });
-  });
-
   test('does not auto-advance after the user has moved to another step', () => {
     expect(resolveWizardAutoAdvanceStep(2, 0, 4)).toBe(2);
     expect(resolveWizardAutoAdvanceStep(0, 0, 4)).toBe(1);
@@ -60,6 +47,28 @@ describe('ask-user interaction answer builders', () => {
 
     expect(isQuestionAnswerComplete(question, ['desktop'], undefined, true, '  ')).toBe(false);
     expect(isQuestionAnswerComplete(question, ['desktop'], undefined, true, 'Tablet')).toBe(true);
+  });
+});
+
+describe('getQuestionDialogTitle', () => {
+  const question = {
+    id: 'confirm',
+    question: 'Continue?',
+    header: 'Design review',
+    options: [
+      { id: 'yes', label: 'Yes' },
+      { id: 'no', label: 'No' },
+    ],
+  };
+
+  test('uses the header as the title for a single question', () => {
+    expect(getQuestionDialogTitle([question], 'Please choose')).toBe('Design review');
+  });
+
+  test('uses the generic title for multiple questions', () => {
+    expect(
+      getQuestionDialogTitle([question, { ...question, id: 'confirm_again' }], 'Please choose'),
+    ).toBe('Please choose');
   });
 });
 

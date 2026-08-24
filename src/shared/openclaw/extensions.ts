@@ -38,6 +38,7 @@ export type AskUserQuestion = {
   header?: string;
   options: AskUserQuestionOption[];
   multiSelect?: boolean;
+  allowOther?: boolean;
   defaultOptionIds?: string[];
 };
 
@@ -91,6 +92,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 export const ASK_USER_ID_PATTERN = '^[A-Za-z][A-Za-z0-9_-]{0,63}$';
 export const MAX_ASK_USER_QUESTIONS = 8;
+export const MAX_ASK_USER_HEADER_LENGTH = 12;
 const askUserIdRegex = new RegExp(ASK_USER_ID_PATTERN);
 
 export const REQUIRED_ASK_USER_WAIT_POLICY: AskUserWaitPolicy = {
@@ -119,9 +121,12 @@ export const parseAskUserQuestions = (value: unknown): AskUserQuestion[] | null 
     const question = readRequiredString(rawQuestion.question);
     if (!id || !isSafeAskUserId(id) || !question || questionIds.has(id)) return null;
     if ((rawQuestion.header !== undefined && typeof rawQuestion.header !== 'string')
-      || (rawQuestion.multiSelect !== undefined && typeof rawQuestion.multiSelect !== 'boolean')) {
+      || (rawQuestion.multiSelect !== undefined && typeof rawQuestion.multiSelect !== 'boolean')
+      || (rawQuestion.allowOther !== undefined && typeof rawQuestion.allowOther !== 'boolean')) {
       return null;
     }
+    if (typeof rawQuestion.header === 'string'
+      && rawQuestion.header.trim().length > MAX_ASK_USER_HEADER_LENGTH) return null;
     if (!Array.isArray(rawQuestion.options)
       || rawQuestion.options.length < 2
       || rawQuestion.options.length > 4) return null;
@@ -192,6 +197,7 @@ export const parseAskUserQuestions = (value: unknown): AskUserQuestion[] | null 
         ? { header: rawQuestion.header.trim() }
         : {}),
       ...(rawQuestion.multiSelect === true ? { multiSelect: true } : {}),
+      ...(rawQuestion.allowOther === true ? { allowOther: true } : {}),
       ...(defaultOptionIds ? { defaultOptionIds } : {}),
     });
   }
@@ -277,6 +283,7 @@ export const parseAskUserAnswers = (
       ? undefined
       : readRequiredString(rawAnswer.other);
     if (rawAnswer.other !== undefined && !other) return null;
+    if (other && !question.allowOther) return null;
     if (!question.multiSelect && selectedIds.length > 0 && other) return null;
     if (selectedIds.length === 0 && !other) return null;
 

@@ -15,8 +15,7 @@ import type {
 import { i18nService } from '@/services/i18n';
 
 import {
-  buildOtherAnswers,
-  buildSingleOptionAnswers,
+  getQuestionDialogTitle,
   isQuestionAnswerComplete,
   shouldShowQuestionHeader,
 } from './askUserInteractionAnswers';
@@ -29,16 +28,6 @@ interface CoworkInteractionModalProps {
   presentation?: CoworkInteractionPresentation;
   isActive?: boolean;
 }
-
-const resolveBinaryQuestionButtons = (
-  question: AskUserQuestion,
-): { primary: AskUserQuestionOption; secondary: AskUserQuestionOption } => {
-  const [firstOption, secondOption] = question.options;
-  if (!firstOption || !secondOption) {
-    throw new Error('Binary question requires exactly two options.');
-  }
-  return { primary: firstOption, secondary: secondOption };
-};
 
 const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
   interaction,
@@ -55,19 +44,6 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
   }, [interaction.interactionKind, toolInput]);
 
   const isQuestionTool = questions.length > 0;
-
-  // Render a single two-option question as a compact dialog.
-  const isBinaryQuestion =
-    isQuestionTool &&
-    questions.length === 1 &&
-    questions[0].options.length === 2 &&
-    !questions[0].multiSelect &&
-    questions[0].options.every(option => !option.input);
-
-  const binaryQuestionButtons = useMemo(() => {
-    if (!isBinaryQuestion) return null;
-    return resolveBinaryQuestionButtons(questions[0]);
-  }, [isBinaryQuestion, questions]);
 
   const [answers, setAnswers] = useState<Record<string, string[]>>({});
   const [optionInputs, setOptionInputs] = useState<Record<string, Record<string, string>>>({});
@@ -112,24 +88,6 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
     const command = (requestedToolInput as Record<string, unknown>).command;
     return typeof command === 'string' ? command.trim() : '';
   }, [toolInput]);
-
-  const buildQuestionAnswerResult = (question: string, answer: string): CoworkInteractionResult => {
-    return {
-      behavior: 'submit',
-      updatedInput: {
-        ...(toolInput && typeof toolInput === 'object' ? toolInput : {}),
-        answers: buildSingleOptionAnswers(question, answer),
-      },
-    };
-  };
-
-  const buildOtherAnswerResult = (questionId: string, other: string): CoworkInteractionResult => ({
-    behavior: 'submit',
-    updatedInput: {
-      ...(toolInput && typeof toolInput === 'object' ? toolInput : {}),
-      answers: buildOtherAnswers(questionId, other),
-    },
-  });
 
   const getSelectedValues = (question: AskUserQuestion): string[] => {
     return answers[question.id] ?? [];
@@ -270,36 +228,16 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
     );
   };
 
-  const isComplete =
-    isQuestionTool && !isBinaryQuestion ? questions.every(isQuestionComplete) : true;
+  const isComplete = isQuestionTool ? questions.every(isQuestionComplete) : true;
 
-  const cancelButtonLabel =
-    isQuestionTool && !isBinaryQuestion
-      ? i18nService.t('coworkCancelRequest')
-      : i18nService.t('coworkCancel');
-  const submitButtonLabel =
-    isQuestionTool && !isBinaryQuestion
-      ? i18nService.t('coworkSubmitSelection')
-      : i18nService.t('coworkSubmit');
-
-  const handleBinaryOptionSelect = (optionId: string) => {
-    if (!isBinaryQuestion) return;
-    onRespond(buildQuestionAnswerResult(questions[0].id, optionId));
-  };
+  const cancelButtonLabel = isQuestionTool
+    ? i18nService.t('coworkCancelRequest')
+    : i18nService.t('coworkCancel');
+  const submitButtonLabel = isQuestionTool
+    ? i18nService.t('coworkSubmitSelection')
+    : i18nService.t('coworkSubmit');
 
   const handleSubmit = () => {
-    if (isBinaryQuestion) {
-      const question = questions[0];
-      const otherValue = otherInputs[question.id]?.trim();
-      if (otherActive[question.id]) {
-        if (!otherValue) return;
-        onRespond(buildOtherAnswerResult(question.id, otherValue));
-        return;
-      }
-      handleBinaryOptionSelect(binaryQuestionButtons?.primary.id ?? questions[0].options[0].id);
-      return;
-    }
-
     if (isQuestionTool) {
       if (!isComplete) return;
       onRespond({
@@ -325,9 +263,11 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
     });
   };
 
-  const isBinaryOtherActive = isBinaryQuestion && Boolean(otherActive[questions[0].id]);
-  const canSubmit = !isBinaryOtherActive || Boolean(otherInputs[questions[0].id]?.trim());
-  const canRespond = isComplete && canSubmit;
+  const canRespond = isComplete;
+  const questionDialogTitle = getQuestionDialogTitle(
+    questions,
+    i18nService.t('coworkSelectionRequired'),
+  );
 
   return (
     <div
@@ -364,12 +304,10 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
               id="cowork-interaction-modal-title"
               className="text-lg font-semibold text-foreground"
             >
-              {isQuestionTool && !isBinaryQuestion
-                ? i18nService.t('coworkSelectionRequired')
-                : i18nService.t('coworkInteractionRequired')}
+              {isQuestionTool ? questionDialogTitle : i18nService.t('coworkInteractionRequired')}
             </h2>
             <p className="text-sm text-secondary">
-              {isQuestionTool && !isBinaryQuestion
+              {isQuestionTool
                 ? i18nService.t('coworkSelectionDescription')
                 : i18nService.t('coworkInteractionDescription')}
             </p>
@@ -393,61 +331,17 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
           {isQuestionTool && (
             <AskUserWaitPolicyNotice questions={questions} toolInput={toolInput} />
           )}
-          {isBinaryQuestion ? (
-            <div className="px-3 py-2 rounded-lg bg-background">
-              <p className="text-sm text-foreground whitespace-pre-wrap">
-                {questions[0].question}
-                <span className="ml-1.5 text-xs font-normal text-secondary">
-                  {i18nService.t('coworkQuestionSingleSelect')}
-                </span>
-              </p>
-              {requestedCommand && (
-                <div className="mt-3">
-                  <label className="block text-xs font-medium text-secondary uppercase tracking-wider mb-1">
-                    {i18nService.t('coworkToolInput')}
-                  </label>
-                  <div className="px-3 py-2 rounded-lg bg-surface max-h-40 overflow-y-auto">
-                    <pre className="text-xs text-foreground whitespace-pre-wrap break-words font-mono">
-                      {requestedCommand}
-                    </pre>
-                  </div>
-                </div>
-              )}
-              <div className="mt-3">
-                <button
-                  type="button"
-                  onClick={() => handleToggleOther(questions[0])}
-                  aria-pressed={Boolean(otherActive[questions[0].id])}
-                  className={`w-full text-left rounded-lg border px-3 py-2 transition-colors ${
-                    otherActive[questions[0].id]
-                      ? 'border-primary bg-primary/10 text-foreground'
-                      : 'border-border text-secondary hover:bg-surface-raised'
-                  }`}
-                >
-                  <div className="text-sm font-medium">
-                    {i18nService.t('coworkQuestionWizardOther')}
-                  </div>
-                </button>
-                {otherActive[questions[0].id] && (
-                  <textarea
-                    rows={3}
-                    value={otherInputs[questions[0].id] || ''}
-                    onChange={event => handleOtherInputChange(questions[0], event.target.value)}
-                    placeholder={i18nService.t('coworkQuestionWizardOtherPlaceholder')}
-                    className="mt-2 w-full min-h-20 max-h-40 resize-y px-3 py-2 rounded-lg border border-border bg-background text-foreground placeholder:text-secondary dark:placeholder:text-foregroundSecondary focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm"
-                    autoFocus
-                  />
-                )}
-              </div>
-            </div>
-          ) : isQuestionTool ? (
+          {isQuestionTool ? (
             <>
               {questions.map(question => {
                 const selectedValues = getSelectedValues(question);
                 return (
                   <div key={question.id} className="rounded-xl border border-border p-4 space-y-3">
                     {/* 问题 */}
-                    <div className="text-sm font-medium text-foreground">
+                    <div
+                      id={`ask-user-question-${question.id}`}
+                      className="text-sm font-medium text-foreground"
+                    >
                       {shouldShowQuestionHeader(questions.length) && question.header && (
                         <span className="inline-block text-[11px] uppercase tracking-wide px-2 py-0.5 mr-1.5 rounded-full bg-surface-raised text-secondary align-middle">
                           {question.header}
@@ -496,33 +390,63 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
                       </div>
                     )}
                     {/* 选项 */}
-                    <div className="space-y-2">
+                    <div
+                      className="space-y-2"
+                      role={question.multiSelect ? 'group' : 'radiogroup'}
+                      aria-labelledby={`ask-user-question-${question.id}`}
+                    >
                       {question.options.map(option => {
                         const isSelected = selectedValues.includes(option.id);
                         return (
                           <React.Fragment key={option.id}>
-                            <button
-                              type="button"
-                              onClick={() => handleSelectOption(question, option.id)}
-                              aria-pressed={isSelected}
-                              className={`w-full text-left rounded-lg border px-3 py-2 transition-colors ${
+                            <label
+                              className={`block w-full cursor-pointer rounded-lg border px-3 py-2 text-left transition-colors focus-within:ring-2 focus-within:ring-primary/50 ${
                                 isSelected
                                   ? 'border-primary bg-primary/10 text-foreground'
                                   : 'border-border text-secondary hover:bg-surface-raised'
                               }`}
                             >
-                              <div className="flex items-center gap-2 text-sm font-medium">
-                                <span>{option.label}</span>
-                                {question.defaultOptionIds?.includes(option.id) && (
-                                  <span className="rounded bg-surface-raised px-1.5 py-0.5 text-[10px] text-secondary">
-                                    {i18nService.t('coworkQuestionDefaultChoice')}
+                              <input
+                                type={question.multiSelect ? 'checkbox' : 'radio'}
+                                name={`ask-user-question-${question.id}`}
+                                value={option.id}
+                                checked={isSelected}
+                                onChange={() => handleSelectOption(question, option.id)}
+                                className="sr-only"
+                              />
+                              <div className="flex items-start gap-3">
+                                <span
+                                  aria-hidden="true"
+                                  className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center border-2 ${
+                                    question.multiSelect ? 'rounded' : 'rounded-full'
+                                  } ${isSelected ? 'border-primary' : 'border-border'} ${
+                                    question.multiSelect && isSelected ? 'bg-primary' : ''
+                                  }`}
+                                >
+                                  {isSelected &&
+                                    (question.multiSelect ? (
+                                      <span className="text-[10px] leading-none text-white">✓</span>
+                                    ) : (
+                                      <span className="h-2 w-2 rounded-full bg-primary" />
+                                    ))}
+                                </span>
+                                <span className="min-w-0 flex-1">
+                                  <span className="flex items-center gap-2 text-sm font-medium">
+                                    <span>{option.label}</span>
+                                    {question.defaultOptionIds?.includes(option.id) && (
+                                      <span className="rounded bg-surface-raised px-1.5 py-0.5 text-[10px] text-secondary">
+                                        {i18nService.t('coworkQuestionDefaultChoice')}
+                                      </span>
+                                    )}
                                   </span>
-                                )}
+                                  {option.description && (
+                                    <span className="mt-1 block text-xs opacity-80">
+                                      {option.description}
+                                    </span>
+                                  )}
+                                </span>
                               </div>
-                              {option.description && (
-                                <div className="text-xs mt-1 opacity-80">{option.description}</div>
-                              )}
-                            </button>
+                            </label>
                             {isSelected && option.input && (
                               <label className="block pl-3 text-xs font-medium text-secondary">
                                 {option.input.label}
@@ -541,29 +465,60 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
                           </React.Fragment>
                         );
                       })}
-                      <button
-                        type="button"
-                        onClick={() => handleToggleOther(question)}
-                        aria-pressed={Boolean(otherActive[question.id])}
-                        className={`w-full text-left rounded-lg border px-3 py-2 transition-colors ${
-                          otherActive[question.id]
-                            ? 'border-primary bg-primary/10 text-foreground'
-                            : 'border-border text-secondary hover:bg-surface-raised'
-                        }`}
-                      >
-                        <div className="text-sm font-medium">
-                          {i18nService.t('coworkQuestionWizardOther')}
-                        </div>
-                      </button>
-                      {otherActive[question.id] && (
-                        <textarea
-                          rows={3}
-                          value={otherInputs[question.id] || ''}
-                          onChange={event => handleOtherInputChange(question, event.target.value)}
-                          placeholder={i18nService.t('coworkQuestionWizardOtherPlaceholder')}
-                          className="w-full min-h-20 max-h-40 resize-y px-3 py-2 rounded-lg border border-border bg-background text-foreground placeholder:text-secondary dark:placeholder:text-foregroundSecondary focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm"
-                          autoFocus
-                        />
+                      {question.allowOther && (
+                        <>
+                          <label
+                            className={`block w-full cursor-pointer rounded-lg border px-3 py-2 text-left transition-colors focus-within:ring-2 focus-within:ring-primary/50 ${
+                              otherActive[question.id]
+                                ? 'border-primary bg-primary/10 text-foreground'
+                                : 'border-border text-secondary hover:bg-surface-raised'
+                            }`}
+                          >
+                            <input
+                              type={question.multiSelect ? 'checkbox' : 'radio'}
+                              name={`ask-user-question-${question.id}`}
+                              checked={Boolean(otherActive[question.id])}
+                              onChange={() => handleToggleOther(question)}
+                              className="sr-only"
+                            />
+                            <div className="flex items-center gap-3">
+                              <span
+                                aria-hidden="true"
+                                className={`flex h-4 w-4 shrink-0 items-center justify-center border-2 ${
+                                  question.multiSelect ? 'rounded' : 'rounded-full'
+                                } ${
+                                  otherActive[question.id] ? 'border-primary' : 'border-border'
+                                } ${
+                                  question.multiSelect && otherActive[question.id]
+                                    ? 'bg-primary'
+                                    : ''
+                                }`}
+                              >
+                                {otherActive[question.id] &&
+                                  (question.multiSelect ? (
+                                    <span className="text-[10px] leading-none text-white">✓</span>
+                                  ) : (
+                                    <span className="h-2 w-2 rounded-full bg-primary" />
+                                  ))}
+                              </span>
+                              <span className="text-sm font-medium">
+                                {i18nService.t('coworkQuestionWizardOther')}
+                              </span>
+                            </div>
+                          </label>
+                          {otherActive[question.id] && (
+                            <textarea
+                              rows={3}
+                              value={otherInputs[question.id] || ''}
+                              onChange={event =>
+                                handleOtherInputChange(question, event.target.value)
+                              }
+                              placeholder={i18nService.t('coworkQuestionWizardOtherPlaceholder')}
+                              className="w-full min-h-20 max-h-40 resize-y px-3 py-2 rounded-lg border border-border bg-background text-foreground placeholder:text-secondary dark:placeholder:text-foregroundSecondary focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm"
+                              autoFocus
+                            />
+                          )}
+                        </>
                       )}
                     </div>
                   </div>
@@ -600,20 +555,10 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
         {/* Footer */}
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-border">
           <button
-            onClick={
-              isBinaryQuestion && binaryQuestionButtons
-                ? () => handleBinaryOptionSelect(binaryQuestionButtons.secondary.id)
-                : handleCancel
-            }
+            onClick={handleCancel}
             className="px-4 py-2 text-sm font-medium rounded-lg text-secondary hover:bg-surface-raised transition-colors"
           >
-            {isBinaryQuestion && binaryQuestionButtons
-              ? `${binaryQuestionButtons.secondary.label}${
-                  questions[0].defaultOptionIds?.includes(binaryQuestionButtons.secondary.id)
-                    ? ` · ${i18nService.t('coworkQuestionDefaultChoice')}`
-                    : ''
-                }`
-              : cancelButtonLabel}
+            {cancelButtonLabel}
           </button>
           <button
             onClick={handleSubmit}
@@ -624,15 +569,7 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
                 : 'border-border bg-surface text-secondary cursor-not-allowed'
             }`}
           >
-            {isBinaryOtherActive
-              ? i18nService.t('coworkSubmitSelection')
-              : isBinaryQuestion && binaryQuestionButtons
-                ? `${binaryQuestionButtons.primary.label}${
-                    questions[0].defaultOptionIds?.includes(binaryQuestionButtons.primary.id)
-                      ? ` · ${i18nService.t('coworkQuestionDefaultChoice')}`
-                      : ''
-                  }`
-                : submitButtonLabel}
+            {submitButtonLabel}
           </button>
         </div>
       </div>

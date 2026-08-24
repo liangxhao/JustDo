@@ -9,6 +9,7 @@ import {
   AskUserQuestionSchema,
   buildWaitPolicy,
   formatAskUserToolResponse,
+  MAX_ASK_USER_HEADER_LENGTH,
   MAX_ASK_USER_QUESTIONS,
   parseQuestions,
 } from '../../../../openclaw-extensions/ask-user-question/index';
@@ -64,6 +65,12 @@ describe('ask-user-question plugin limits', () => {
     expect(AskUserQuestionSchema.properties.questions.maxItems).toBe(MAX_ASK_USER_QUESTIONS);
     expect(AskUserQuestionSchema.properties.questions.description).toBe('Questions to show (1-8).');
     expect(AskUserQuestionSchema.properties.timeoutEnabled.type).toBe('boolean');
+    expect(AskUserQuestionSchema.properties.questions.items.properties.header.maxLength).toBe(
+      MAX_ASK_USER_HEADER_LENGTH,
+    );
+    expect(AskUserQuestionSchema.properties.questions.items.properties.allowOther.type).toBe(
+      'boolean',
+    );
   });
 
   test('exposes a flat timeout contract without a wait-policy union', () => {

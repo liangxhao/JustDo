@@ -1,12 +1,4 @@
-import type { AskUserAnswers, AskUserQuestion } from '@shared/openclaw/extensions';
-
-export const buildSingleOptionAnswers = (questionId: string, optionId: string): AskUserAnswers => ({
-  [questionId]: { selected: [optionId] },
-});
-
-export const buildOtherAnswers = (questionId: string, other: string): AskUserAnswers => ({
-  [questionId]: { selected: [], other },
-});
+import type { AskUserQuestion } from '@shared/openclaw/extensions';
 
 export const isQuestionAnswerComplete = (
   question: AskUserQuestion,
@@ -36,3 +28,6 @@ export const resolveWizardAutoAdvanceStep = (
 };
 
 export const shouldShowQuestionHeader = (questionCount: number): boolean => questionCount > 1;
+
+export const getQuestionDialogTitle = (questions: AskUserQuestion[], fallback: string): string =>
+  questions.length === 1 ? questions[0].header?.trim() || fallback : fallback;

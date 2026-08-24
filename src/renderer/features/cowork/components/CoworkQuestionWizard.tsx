@@ -316,7 +316,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
         className={
           isFloating
             ? 'flex max-h-[80vh] min-h-0 w-full flex-col overflow-hidden bg-surface'
-            : 'modal-content w-full max-w-2xl mx-4 bg-surface rounded-2xl shadow-modal overflow-hidden'
+            : 'modal-content flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden mx-4 bg-surface rounded-2xl shadow-modal'
         }
         role="dialog"
         aria-modal={isFloating ? undefined : true}
@@ -360,7 +360,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
         {/* Content */}
         <div
           className={`px-6 py-6 flex flex-col ${
-            isFloating ? 'min-h-0 flex-1 overflow-y-auto' : 'min-h-[300px]'
+            isFloating ? 'min-h-0 flex-1 overflow-y-auto' : 'min-h-0 overflow-y-auto'
           }`}
         >
           <div className="flex-1">
@@ -373,7 +373,10 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
                   </span>
                 )}
                 {/* Question text */}
-                <h3 className="text-base font-medium text-foreground">
+                <h3
+                  id={`ask-user-question-${currentQuestion.id}`}
+                  className="text-base font-medium text-foreground"
+                >
                   {currentQuestion.question}
                   <span className="ml-1.5 text-sm font-normal text-secondary">
                     {i18nService.t(
@@ -438,7 +441,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
                 </div>
 
                 {/* Next button */}
-                {!isLastStep && (
+                {!isLastStep && !currentQuestion.multiSelect && (
                   <button
                     onClick={handleNext}
                     className="p-1.5 rounded-lg text-foreground hover:bg-surface-raised transition-colors"
@@ -451,21 +454,30 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
             </div>
 
             {/* Options */}
-            <div className="space-y-2">
+            <div
+              className="space-y-2"
+              role={currentQuestion.multiSelect ? 'group' : 'radiogroup'}
+              aria-labelledby={`ask-user-question-${currentQuestion.id}`}
+            >
               {currentQuestion.options.map(option => {
                 const isSelected = selectedValues.includes(option.id);
                 return (
                   <React.Fragment key={option.id}>
-                    <button
-                      type="button"
-                      onClick={() => handleSelectOption(currentQuestion, option.id)}
-                      aria-pressed={isSelected}
-                      className={`w-full text-left rounded-lg border px-4 py-3 transition-all ${
+                    <label
+                      className={`block w-full cursor-pointer rounded-lg border px-4 py-3 text-left transition-all focus-within:ring-2 focus-within:ring-primary/50 ${
                         isSelected
                           ? 'border-primary bg-primary/10 text-foreground shadow-sm'
                           : 'border-border text-secondary hover:bg-surface-raised hover:border-primary/50'
                       }`}
                     >
+                      <input
+                        type={currentQuestion.multiSelect ? 'checkbox' : 'radio'}
+                        name={`ask-user-question-${currentQuestion.id}`}
+                        value={option.id}
+                        checked={isSelected}
+                        onChange={() => handleSelectOption(currentQuestion, option.id)}
+                        className="sr-only"
+                      />
                       <div className="flex items-start gap-3">
                         {currentQuestion.multiSelect ? (
                           <div
@@ -514,7 +526,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
                           )}
                         </div>
                       </div>
-                    </button>
+                    </label>
                     {isSelected && option.input && (
                       <label className="block pl-3 text-xs font-medium text-secondary">
                         {option.input.label}
@@ -531,59 +543,65 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
                   </React.Fragment>
                 );
               })}
-              <button
-                type="button"
-                onClick={handleToggleOther}
-                aria-pressed={Boolean(otherActive[currentQuestion.id])}
-                className={`w-full text-left rounded-lg border px-4 py-3 transition-all ${
-                  otherActive[currentQuestion.id]
-                    ? 'border-primary bg-primary/10 text-foreground shadow-sm'
-                    : 'border-border text-secondary hover:bg-surface-raised hover:border-primary/50'
-                }`}
-              >
-                <div className="flex items-start gap-3">
-                  {currentQuestion.multiSelect ? (
-                    <div
-                      className={`mt-0.5 flex-shrink-0 w-4 h-4 rounded border-2 transition-colors ${
-                        otherActive[currentQuestion.id]
-                          ? 'bg-primary border-primary'
-                          : 'border-border'
-                      }`}
-                    >
-                      {otherActive[currentQuestion.id] && (
-                        <svg className="w-full h-full text-white" viewBox="0 0 16 16" fill="none">
-                          <path
-                            d="M13 4L6 11L3 8"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        </svg>
-                      )}
-                    </div>
-                  ) : (
-                    <div
-                      className={`mt-0.5 flex-shrink-0 w-4 h-4 rounded-full border-2 transition-colors ${
-                        otherActive[currentQuestion.id] ? 'border-primary' : 'border-border'
-                      }`}
-                    >
-                      {otherActive[currentQuestion.id] && (
-                        <div className="w-full h-full rounded-full bg-primary scale-50" />
-                      )}
-                    </div>
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium">
-                      {i18nService.t('coworkQuestionWizardOther')}
+              {currentQuestion.allowOther && (
+                <label
+                  className={`block w-full cursor-pointer rounded-lg border px-4 py-3 text-left transition-all focus-within:ring-2 focus-within:ring-primary/50 ${
+                    otherActive[currentQuestion.id]
+                      ? 'border-primary bg-primary/10 text-foreground shadow-sm'
+                      : 'border-border text-secondary hover:bg-surface-raised hover:border-primary/50'
+                  }`}
+                >
+                  <input
+                    type={currentQuestion.multiSelect ? 'checkbox' : 'radio'}
+                    name={`ask-user-question-${currentQuestion.id}`}
+                    checked={Boolean(otherActive[currentQuestion.id])}
+                    onChange={handleToggleOther}
+                    className="sr-only"
+                  />
+                  <div className="flex items-start gap-3">
+                    {currentQuestion.multiSelect ? (
+                      <div
+                        className={`mt-0.5 flex-shrink-0 w-4 h-4 rounded border-2 transition-colors ${
+                          otherActive[currentQuestion.id]
+                            ? 'bg-primary border-primary'
+                            : 'border-border'
+                        }`}
+                      >
+                        {otherActive[currentQuestion.id] && (
+                          <svg className="w-full h-full text-white" viewBox="0 0 16 16" fill="none">
+                            <path
+                              d="M13 4L6 11L3 8"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            />
+                          </svg>
+                        )}
+                      </div>
+                    ) : (
+                      <div
+                        className={`mt-0.5 flex-shrink-0 w-4 h-4 rounded-full border-2 transition-colors ${
+                          otherActive[currentQuestion.id] ? 'border-primary' : 'border-border'
+                        }`}
+                      >
+                        {otherActive[currentQuestion.id] && (
+                          <div className="w-full h-full rounded-full bg-primary scale-50" />
+                        )}
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium">
+                        {i18nService.t('coworkQuestionWizardOther')}
+                      </div>
                     </div>
                   </div>
-                </div>
-              </button>
+                </label>
+              )}
             </div>
 
             <div className="mt-4 flex items-start gap-3">
-              {otherActive[currentQuestion.id] && (
+              {currentQuestion.allowOther && otherActive[currentQuestion.id] && (
                 <textarea
                   rows={3}
                   value={otherInputs[currentQuestion.id] || ''}
@@ -611,6 +629,18 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
                   )}
                 </button>
               )}
+              {currentQuestion.multiSelect &&
+                !isLastStep &&
+                isQuestionAnswered(currentQuestion) && (
+                  <button
+                    type="button"
+                    onClick={handleNext}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-primary bg-primary px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-hover"
+                  >
+                    {i18nService.t('coworkQuestionWizardNext')}
+                    <ChevronRightIcon className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                )}
             </div>
           </div>
         </div>
