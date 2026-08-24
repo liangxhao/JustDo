@@ -11,6 +11,7 @@ import {
 } from '@heroicons/react/24/outline';
 import {
   type BrowserConnectionStatus,
+  type BrowserConnectionTestResult,
   BrowserMode,
   type BrowserMode as BrowserModeValue,
   normalizeBrowserMode,
@@ -26,6 +27,16 @@ import { i18nService } from '@/services/i18n';
 
 const actionButtonClassName =
   'inline-flex h-7 items-center gap-1 whitespace-nowrap rounded-md border border-border/70 bg-surface px-2.5 text-[11px] font-medium text-secondary transition-all duration-150 hover:border-primary/30 hover:bg-primary/5 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-border/70 disabled:hover:bg-surface disabled:hover:text-secondary';
+
+// The extension reconnects with exponential backoff capped at 30 seconds. Keep
+// the automatic readiness probe alive through that longest normal reconnect.
+const AUTO_EXTENSION_RETRY_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000, 16_000] as const;
+const waitForExtensionRetry = (delayMs: number): Promise<void> =>
+  new Promise(resolve => setTimeout(resolve, delayMs));
+
+const isTransientExtensionTestFailure = (result: BrowserConnectionTestResult): boolean =>
+  !result.success &&
+  (result.errorCode === 'gateway-unavailable' || result.errorCode === 'extension-not-connected');
 
 type StepProps = {
   number: number;
@@ -90,7 +101,7 @@ const BrowserSettingsTab: React.FC = () => {
   const [extensionConnectionTestError, setExtensionConnectionTestError] = useState<string | null>(
     null,
   );
-  const [extensionTesting, setExtensionTesting] = useState(false);
+  const [extensionTestKind, setExtensionTestKind] = useState<'automatic' | 'manual' | null>(null);
   const [savingMode, setSavingMode] = useState(false);
   const refreshRequestIdRef = useRef(0);
   const extensionTestRequestIdRef = useRef(0);
@@ -252,26 +263,35 @@ const BrowserSettingsTab: React.FC = () => {
     }
   };
 
-  const testExtensionConnection = useCallback(async () => {
+  const testExtensionConnection = useCallback(async (kind: 'automatic' | 'manual' = 'manual') => {
     const requestId = ++extensionTestRequestIdRef.current;
-    setExtensionTesting(true);
+    setExtensionTestKind(kind);
     setError(null);
     setExtensionConnectionTestError(null);
     dispatchConnectionVerification({ type: 'set-extension', verified: false });
     try {
-      const result = await window.electron.browser.testExtensionConnection();
-      if (requestId !== extensionTestRequestIdRef.current) return;
-      if (result.success) {
-        dispatchConnectionVerification({ type: 'set-extension', verified: true });
-      } else {
-        setExtensionConnectionTestError(i18nService.t('browserExtensionConnectionFailed'));
+      const retryDelays = kind === 'automatic' ? AUTO_EXTENSION_RETRY_DELAYS_MS : [];
+      for (let attempt = 0; ; attempt += 1) {
+        if (requestId !== extensionTestRequestIdRef.current) return;
+        const result = await window.electron.browser.testExtensionConnection();
+        if (requestId !== extensionTestRequestIdRef.current) return;
+        if (result.success) {
+          dispatchConnectionVerification({ type: 'set-extension', verified: true });
+          return;
+        }
+        const retryDelay = retryDelays[attempt];
+        if (retryDelay === undefined || !isTransientExtensionTestFailure(result)) {
+          setExtensionConnectionTestError(i18nService.t('browserExtensionConnectionFailed'));
+          return;
+        }
+        await waitForExtensionRetry(retryDelay);
       }
     } catch {
       if (requestId !== extensionTestRequestIdRef.current) return;
       setExtensionConnectionTestError(i18nService.t('browserExtensionConnectionFailed'));
     } finally {
       if (requestId === extensionTestRequestIdRef.current) {
-        setExtensionTesting(false);
+        setExtensionTestKind(null);
       }
     }
   }, []);
@@ -279,10 +299,10 @@ const BrowserSettingsTab: React.FC = () => {
   useEffect(() => {
     if (browserMode !== BrowserMode.Extension) {
       extensionTestRequestIdRef.current += 1;
-      setExtensionTesting(false);
+      setExtensionTestKind(null);
       return;
     }
-    void testExtensionConnection();
+    void testExtensionConnection('automatic');
     return () => {
       extensionTestRequestIdRef.current += 1;
     };
@@ -628,11 +648,11 @@ const BrowserSettingsTab: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => void testExtensionConnection()}
-                    disabled={savingMode || busyAction !== null || extensionTesting}
+                    disabled={savingMode || busyAction !== null || extensionTestKind === 'manual'}
                     className={actionButtonClassName}
                   >
                     <ArrowPathIcon
-                      className={`h-3.5 w-3.5 ${extensionTesting ? 'animate-spin' : ''}`}
+                      className={`h-3.5 w-3.5 ${extensionTestKind ? 'animate-spin' : ''}`}
                     />
                     {i18nService.t('browserExtensionTestConnection')}
                   </button>

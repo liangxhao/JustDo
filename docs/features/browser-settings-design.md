@@ -64,6 +64,8 @@ Badge：off空、connecting省略号、on绿色ON、error红色感叹号。连�
 
 断线指数退避1/2/4/8/16/30秒上限。MV3 service worker可能被回收，因此每0.5分钟alarm唤醒并重连，startup/installed也连接。当前Unpair只删除url/token并关闭socket，不会遍历detach已附加tab，也不会清理共享group。Relay失去配对后无法继续下发命令，但Chrome debugger attachment仍可能保留到其他tab/group事件、扩展生命周期或Chrome自身清理；这是明确的撤销缺口。
 
+Extension模式下JustDo启动Gateway时设置 `OPENCLAW_EAGER_BROWSER_CONTROL_SERVER=1`，使Extension Relay在首次 `browser.request` 前开始监听；其他浏览器模式不承担这项启动开销。设置页的首次自动检测还会对 `gateway-unavailable` 和 `extension-not-connected` 做有上限的短暂重试，以覆盖Gateway重启与扩展WebSocket重连之间的正常窗口；手动检测仍保持单次即时结果。
+
 ## 9. Connection test
 
 `browser:testConnection` 用 Gateway client 请求对应 profile 的 `/tabs`，错误分 gateway-unavailable、permission-timeout、extension-not-connected、connection-failed。User 模式只判断 RPC 是否成功，用于触发并确认 Remote Debugging 授权；Extension 专用测试使用 `chrome` profile，并只以响应的 `running === true` 判断扩展已连接。共享 tab 是独立授权状态，不参与连接判断。

@@ -27,7 +27,11 @@ import {
   resolvePackagedNpmBinDir,
 } from './electronNodeRuntime';
 import { GatewayConfigReloadMonitor } from './gatewayConfigReloadMonitor';
-import { buildGatewayLaunchArgs } from './gatewayLaunchArgs';
+import {
+  buildGatewayLaunchArgs,
+  buildGatewayLaunchEnvironment,
+  hasExtensionBrowserProfile,
+} from './gatewayLaunchArgs';
 import { GatewayStdoutLogFilter } from './gatewayLogFilter';
 import { findAvailableLoopbackPort, isLoopbackPortAvailable } from './loopbackPort';
 import { ensureOpenClawGatewayBundleLauncher } from './openclawGatewayBundleLauncher.cjs';
@@ -647,13 +651,11 @@ export class OpenClawEngineManager extends EventEmitter {
     const token = cliEnvironment.token;
     const port = cliEnvironment.port;
     const env = this.buildNetworkEnvironment(cliEnvironment.env);
-    const gatewayEnv = {
-      ...env,
-      // Keep Gateway stdout stable across terminals and developer machines.
-      // The log filter also strips control sequences as a defensive fallback.
-      NO_COLOR: '1',
-      FORCE_COLOR: '0',
-    };
+    // Keep Gateway stdout stable and start browser control early enough for a
+    // paired Chrome extension to reconnect before Renderer readiness probes.
+    const gatewayEnv = buildGatewayLaunchEnvironment(env, {
+      eagerBrowserControl: hasExtensionBrowserProfile(parseJsonFile<unknown>(this.configPath)),
+    });
     console.log(`[OpenClaw] startGateway: pre-fork setup done (${elapsed()})`);
 
     this.setStatus({
