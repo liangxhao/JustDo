@@ -89,10 +89,7 @@ export function registerScheduledTaskHandlers(deps: ScheduledTaskHandlerDeps): v
   ipcMain.handle(ScheduledTaskIpc.Create, async (_event, input: ScheduledTaskInput) => {
     try {
       const normalizedInput = { ...input };
-      console.debug('[ScheduledTask] create input:', JSON.stringify(normalizedInput, null, 2));
-
       const task = await getCronJobService().addJob(normalizedInput);
-      console.log('[IPC][scheduledTask:create] result task id:', task?.id, 'name:', task?.name);
       return { success: true, task };
     } catch (error) {
       return {
@@ -105,14 +102,7 @@ export function registerScheduledTaskHandlers(deps: ScheduledTaskHandlerDeps): v
   ipcMain.handle(ScheduledTaskIpc.Update, async (_event, id: string, input: Partial<ScheduledTaskInput>) => {
     try {
       const normalizedInput = { ...input };
-      console.debug(
-        '[ScheduledTask] update input id:',
-        id,
-        JSON.stringify(normalizedInput, null, 2),
-      );
-
       const task = await getCronJobService().updateJob(id, normalizedInput);
-      console.log('[IPC][scheduledTask:update] result task id:', task?.id, 'name:', task?.name);
       return { success: true, task };
     } catch (error) {
       return {

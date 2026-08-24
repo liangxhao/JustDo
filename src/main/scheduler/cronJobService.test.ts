@@ -3,6 +3,7 @@ import { describe, expect, test, vi } from 'vitest';
 import {
   DeliveryMode,
   GatewayStatus,
+  IpcChannel,
   ScheduledTaskAgentId,
   TaskStatus,
 } from '../../shared/scheduledTask/constants';
@@ -13,6 +14,12 @@ import {
   mapGatewayTaskState,
   shouldRepairInAppOnlyDeliveryBackoff,
 } from './cronJobService';
+
+const getAllWindowsMock = vi.hoisted(() => vi.fn(() => []));
+
+vi.mock('electron', () => ({
+  BrowserWindow: { getAllWindows: getAllWindowsMock },
+}));
 
 const missingChannelError =
   'Channel is required (no configured channels detected). Set delivery.channel explicitly.';
@@ -832,5 +839,108 @@ describe('isolated scheduler agent assignment', () => {
       id: current.id,
       patch: { agentId: 'main' },
     });
+  });
+
+  test('normalizes an update race when the task disappears before cron.update completes', async () => {
+    let listCount = 0;
+    const request = vi.fn(async (method: string) => {
+      if (method === 'cron.list') {
+        listCount += 1;
+        return { jobs: listCount === 1 ? [gatewayJob] : [] };
+      }
+      if (method === 'cron.update') {
+        throw new Error('invalid cron.update params: id not found');
+      }
+      throw new Error(`Unexpected method: ${method}`);
+    });
+    const service = new CronJobService({
+      getGatewayClient: () => ({ request }) as never,
+      ensureGatewayReady: vi.fn(),
+    });
+
+    await expect(service.updateJob(gatewayJob.id, { name: 'Updated' })).rejects.toThrow(
+      `Scheduled task not found: ${gatewayJob.id}`,
+    );
+  });
+
+  test('treats deleting an already removed task as success', async () => {
+    const request = vi.fn(async (method: string) => {
+      if (method === 'cron.list') return { jobs: [] };
+      throw new Error(`Unexpected method: ${method}`);
+    });
+    const service = new CronJobService({
+      getGatewayClient: () => ({ request }) as never,
+      ensureGatewayReady: vi.fn(),
+    });
+
+    await expect(service.removeJob(gatewayJob.id)).resolves.toBeUndefined();
+    expect(request.mock.calls.some(([method]) => method === 'cron.remove')).toBe(false);
+  });
+
+  test('treats a concurrent removal during cron.remove as success', async () => {
+    let listCount = 0;
+    const request = vi.fn(async (method: string) => {
+      if (method === 'cron.list') {
+        listCount += 1;
+        return { jobs: listCount === 1 ? [gatewayJob] : [] };
+      }
+      if (method === 'cron.remove') {
+        throw new Error('invalid cron.remove params: id not found');
+      }
+      throw new Error(`Unexpected method: ${method}`);
+    });
+    const service = new CronJobService({
+      getGatewayClient: () => ({ request }) as never,
+      ensureGatewayReady: vi.fn(),
+    });
+
+    await expect(service.removeJob(gatewayJob.id)).resolves.toBeUndefined();
+  });
+
+  test('notifies the renderer when polling observes a removed task', async () => {
+    const send = vi.fn();
+    getAllWindowsMock.mockReturnValue([
+      { isDestroyed: () => false, webContents: { send } } as never,
+    ]);
+    let jobs = [{ ...gatewayJob, agentId: ScheduledTaskAgentId }];
+    const request = vi.fn(async (method: string) => {
+      if (method === 'cron.list') return { jobs };
+      throw new Error(`Unexpected method: ${method}`);
+    });
+    const service = new CronJobService({
+      getGatewayClient: () => ({ request }) as never,
+      ensureGatewayReady: vi.fn(),
+    });
+
+    service.startPolling();
+    await vi.waitFor(() => expect(send).toHaveBeenCalledWith(IpcChannel.Refresh));
+    send.mockClear();
+    jobs = [];
+
+    await (service as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+
+    expect(send).toHaveBeenCalledWith(IpcChannel.Refresh);
+    service.stopPolling();
+    getAllWindowsMock.mockReturnValue([]);
+  });
+
+  test('notifies the renderer after reconciling a Gateway cron change', async () => {
+    const send = vi.fn();
+    getAllWindowsMock.mockReturnValue([
+      { isDestroyed: () => false, webContents: { send } } as never,
+    ]);
+    const request = vi.fn(async (method: string) => {
+      if (method === 'cron.list') return { jobs: [] };
+      throw new Error(`Unexpected method: ${method}`);
+    });
+    const service = new CronJobService({
+      getGatewayClient: () => ({ request }) as never,
+      ensureGatewayReady: vi.fn(),
+    });
+
+    await service.reconcileGatewayChange();
+
+    expect(send).toHaveBeenCalledWith(IpcChannel.Refresh);
+    getAllWindowsMock.mockReturnValue([]);
   });
 });

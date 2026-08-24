@@ -1127,7 +1127,7 @@ if (!gotTheLock) {
 
     bindCoworkRuntimeForwarder(getCoworkEngineRouter(), getCoworkStore);
     getCoworkEngineRouter().on('cronChanged', () => {
-      void getCronJobService().listJobs().catch(error => {
+      void getCronJobService().reconcileGatewayChange().catch(error => {
         console.warn('[CronJobService] Failed to reconcile scheduler agent assignment:', error);
       });
     });

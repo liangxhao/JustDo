@@ -49,7 +49,9 @@ const scheduledTaskSlice = createSlice({
       state.loading = false;
     },
     addTask(state, action: PayloadAction<ScheduledTask>) {
-      state.tasks.unshift(action.payload);
+      const index = state.tasks.findIndex(task => task.id === action.payload.id);
+      if (index === -1) state.tasks.unshift(action.payload);
+      else state.tasks[index] = action.payload;
     },
     updateTask(state, action: PayloadAction<ScheduledTask>) {
       const index = state.tasks.findIndex(t => t.id === action.payload.id);

@@ -1058,6 +1058,16 @@ export const CronView: React.FC<CronViewProps> = ({
     }
   }, [historyTaskId]);
 
+  useEffect(() => {
+    if (editingJob && !tasks.some(task => task.id === editingJob.id)) {
+      setEditingJob(undefined);
+      setShowDialog(false);
+    }
+    if (jobToDelete && !tasks.some(task => task.id === jobToDelete.id)) {
+      setJobToDelete(null);
+    }
+  }, [editingJob, jobToDelete, tasks]);
+
   const handleSave = useCallback(
     async (input: ScheduledTaskInput) => {
       if (editingJob) {

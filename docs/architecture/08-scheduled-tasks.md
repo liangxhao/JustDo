@@ -70,7 +70,7 @@ toggle enabled 与 manual run 也会再次确认 assignment。用户不能用普
 
 ## 7. Polling 与事件
 
-Gateway 启动成功后开始 polling，退出清理先停止 polling。轮询比较 job state 和 lastRunAt，发 `StatusUpdate`、`RunUpdate`/`Refresh`，并调用 result sync。Gateway `cronChanged` 也触发 list/reconcile。
+Gateway 启动成功后开始 polling，退出清理先停止 polling。轮询比较 job state 和 lastRunAt，发 `StatusUpdate`、`RunUpdate`/`Refresh`，并调用 result sync。任务 ID 集合发生增删时必须发 `Refresh`，避免一次性任务执行后 Renderer 留下已被 Gateway 删除的陈旧 job。Gateway `cronChanged` 也触发 list/reconcile，并在完成或失败后通知 Renderer 刷新。
 
 轮询失败记录 module-prefixed error并等待下轮；不能用空成功列表覆盖 UI，因为启动时事件可能早于 Renderer 订阅。`isCoworkBusy` 可用于降低后台竞争，但不是永远暂停调度的理由。
 

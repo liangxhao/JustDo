@@ -66,6 +66,7 @@ function checkTasksForAnomalies(tasks: ScheduledTask[]): void {
 export class ScheduledTaskService {
   private cleanupFns: (() => void)[] = [];
   private initialized = false;
+  private tasksRequestId = 0;
   private resultsRequestId = 0;
   private resultsRevision = 0;
 
@@ -130,17 +131,21 @@ export class ScheduledTaskService {
     const api = window.electron?.scheduledTasks;
     if (!api) return;
 
+    const requestId = ++this.tasksRequestId;
     store.dispatch(setLoading(true));
     try {
       const result = await api.list();
+      if (requestId !== this.tasksRequestId) return;
       if (result.success && result.tasks) {
         checkTasksForAnomalies(result.tasks);
         store.dispatch(setTasks(result.tasks));
+        store.dispatch(setError(null));
       }
     } catch (err: unknown) {
+      if (requestId !== this.tasksRequestId) return;
       store.dispatch(setError(err instanceof Error ? err.message : String(err)));
     } finally {
-      store.dispatch(setLoading(false));
+      if (requestId === this.tasksRequestId) store.dispatch(setLoading(false));
     }
   }
 
@@ -182,6 +187,7 @@ export class ScheduledTaskService {
       }
     } catch (err: unknown) {
       store.dispatch(setError(err instanceof Error ? err.message : String(err)));
+      await this.loadTasks();
       throw err;
     }
   }
@@ -194,9 +200,12 @@ export class ScheduledTaskService {
       const result = await api.delete(id);
       if (result.success) {
         store.dispatch(removeTask(id));
+      } else {
+        throw new Error(result.error || 'Failed to delete task');
       }
     } catch (err: unknown) {
       store.dispatch(setError(err instanceof Error ? err.message : String(err)));
+      await this.loadTasks();
       throw err;
     }
   }
