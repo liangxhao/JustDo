@@ -36,6 +36,9 @@ export const AGENT_RUNTIME_LIMITS = {
 
 export interface AgentRuntimeSettings {
   version: typeof AGENT_RUNTIME_SETTINGS_VERSION;
+  agent: {
+    thinking: AgentRuntimeThinkingLevelValue | null;
+  };
   askUserQuestion: {
     timeoutMinutes: number;
   };
@@ -52,6 +55,9 @@ export interface AgentRuntimeSettings {
 
 export const DEFAULT_AGENT_RUNTIME_SETTINGS: Readonly<AgentRuntimeSettings> = Object.freeze({
   version: AGENT_RUNTIME_SETTINGS_VERSION,
+  agent: Object.freeze({
+    thinking: null,
+  }),
   askUserQuestion: Object.freeze({
     timeoutMinutes: 10,
   }),
@@ -68,6 +74,7 @@ export const DEFAULT_AGENT_RUNTIME_SETTINGS: Readonly<AgentRuntimeSettings> = Ob
 
 export const createDefaultAgentRuntimeSettings = (): AgentRuntimeSettings => ({
   version: DEFAULT_AGENT_RUNTIME_SETTINGS.version,
+  agent: { ...DEFAULT_AGENT_RUNTIME_SETTINGS.agent },
   askUserQuestion: { ...DEFAULT_AGENT_RUNTIME_SETTINGS.askUserQuestion },
   subagents: { ...DEFAULT_AGENT_RUNTIME_SETTINGS.subagents },
 });
@@ -94,6 +101,18 @@ export const validateAgentRuntimeSettings = (
   }
   if (!isRecord(value.subagents)) {
     return { ok: false, error: 'Invalid Subagent settings.' };
+  }
+
+  // Version 1 predates main Agent thinking preferences. Preserve stored
+  // settings while filling the new preference with its managed default.
+  const agent = isRecord(value.agent) ? value.agent : DEFAULT_AGENT_RUNTIME_SETTINGS.agent;
+  const agentThinking = agent.thinking;
+  let validatedAgentThinking: AgentRuntimeThinkingLevelValue | null = null;
+  if (agentThinking !== null) {
+    if (!isThinkingLevel(agentThinking)) {
+      return { ok: false, error: 'Invalid Agent thinking level.' };
+    }
+    validatedAgentThinking = agentThinking;
   }
 
   // Version 1 predates AskUserQuestion preferences. Preserve stored Subagent
@@ -189,6 +208,9 @@ export const validateAgentRuntimeSettings = (
     ok: true,
     settings: {
       version: AGENT_RUNTIME_SETTINGS_VERSION,
+      agent: {
+        thinking: validatedAgentThinking,
+      },
       askUserQuestion: {
         timeoutMinutes: askUserQuestionTimeoutMinutes,
       },

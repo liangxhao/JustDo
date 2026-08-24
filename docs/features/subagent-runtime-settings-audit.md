@@ -4,7 +4,7 @@
 
 ## 1. 结论
 
-JustDo 设置页当前管理七个产品字段：默认模型、默认 thinking、委派倾向、全局并发、单父 child 上限、run timeout 和嵌套深度。它们持久化为版本化 `AgentRuntimeSettings`，再投影到 `agents.defaults.subagents`。
+JustDo 设置页当前管理主 Agent 的默认 thinking，以及 SubAgent 的默认模型、默认 thinking、委派倾向、全局并发、单父 child 上限、run timeout 和嵌套深度。它们持久化为版本化 `AgentRuntimeSettings`，再分别投影到 `agents.defaults.thinkingDefault` 与 `agents.defaults.subagents`。
 
 JustDo 另外固定写入 `archiveAfterMinutes: 0` 以保留完成的 Subagent 历史，但不把该字段暴露给用户。上游仍有 `allowAgents`、`announceTimeoutMs`、`requireAgentId` 等公开字段，当前使用 OpenClaw 默认或由托管 Agent 配置决定。
 
@@ -23,6 +23,7 @@ JustDo 另外固定写入 `archiveAfterMinutes: 0` 以保留完成的 Subagent �
 
 | 字段                  | 类型/范围                   | JustDo 默认      | UI       |
 | --------------------- | --------------------------- | ---------------- | -------- |
+| `agent.thinking`      | level 或 null               | null，模型默认   | Agent    |
 | `delegationMode`      | `suggest \| prefer`         | `suggest`        | 基础设置 |
 | `model`               | model ref 或 null，最长 256 | null，跟随调用者 | 基础设置 |
 | `thinking`            | level 或 null               | null，跟随调用者 | 基础设置 |
@@ -31,7 +32,7 @@ JustDo 另外固定写入 `archiveAfterMinutes: 0` 以保留完成的 Subagent �
 | `runTimeoutSeconds`   | 0 或 60–86400               | 7200             | 基础设置 |
 | `maxSpawnDepth`       | 1–2                         | 1                | 高级调度 |
 
-`version` 当前为 1。Parser 对整个对象严格验证，失败时回到完整 JustDo 默认，不接受半个损坏设置。model 会 trim；thinking 的可选值为 off、minimal、low、medium、high、xhigh、adaptive、max、ultra。
+`version` 当前为 1。Parser 对整个对象严格验证，失败时回到完整 JustDo 默认，不接受半个损坏设置；缺少后来加入的 `agent` 或 `askUserQuestion` 时会补入兼容默认值。model 会 trim；thinking 的可选值为 off、minimal、low、medium、high、xhigh、adaptive、max、ultra。
 
 `0` run timeout 表示无限，但 UI 必须明确区分“无限”与 0 秒。模型是否真正支持某 thinking level 由模型能力决定，保存 schema 合法并不保证 Provider 接受。
 
@@ -54,6 +55,8 @@ JustDo 另外固定写入 `archiveAfterMinutes: 0` 以保留完成的 Subagent �
 上游默认来自目标版本，升级时必须重新查 schema/源码。JustDo 的“恢复默认”恢复产品默认 3 并发、2 小时和不归档，而不是 OpenClaw 的 8 并发、无限和 60 分钟归档。
 
 ## 5. Config Sync 投影
+
+主 Agent 的 thinking 非 null 时由 `buildManagedOpenClawAgentThinkingConfig` 写入 `agents.defaults.thinkingDefault`；null 时不写该字段，继续使用所选模型的默认思考强度。
 
 `buildManagedOpenClawSubagentConfig` 写入：
 
@@ -79,7 +82,7 @@ null 表示跟随调用者。非 null 是 provider/model ref，设置页只允�
 
 ### 6.3 thinking
 
-null 跟随 caller。固定 level 会传给 child 默认；completion announce 的 reasoning 继承还依赖 patch 002 的 direct agent 修复。某些 Provider 不流式发布 reasoning，设置成功不等于 UI 一定看到 thinking token。
+主 Agent 的 null 表示使用模型默认值，固定 level 写入 `agents.defaults.thinkingDefault`。SubAgent 的 null 表示跟随 caller，固定 level 会传给 child 默认；completion announce 的 reasoning 继承还依赖 patch 002 的 direct agent 修复。某些 Provider 不流式发布 reasoning，设置成功不等于 UI 一定看到 thinking token。
 
 ### 6.4 maxConcurrent
 

@@ -11,6 +11,9 @@ describe('Agent runtime settings', () => {
   test('keeps the JustDo managed defaults stable', () => {
     expect(createDefaultAgentRuntimeSettings()).toEqual({
       version: 1,
+      agent: {
+        thinking: null,
+      },
       askUserQuestion: {
         timeoutMinutes: 10,
       },
@@ -70,6 +73,28 @@ describe('Agent runtime settings', () => {
       ...input,
       askUserQuestion: { timeoutMinutes: 10 },
     });
+  });
+
+  test('migrates version 1 settings saved before main Agent thinking preferences', () => {
+    const input = createDefaultAgentRuntimeSettings();
+    input.subagents.maxConcurrent = 7;
+    const { agent: _removed, ...legacyInput } = input;
+
+    expect(parseAgentRuntimeSettings(legacyInput)).toEqual({
+      ...input,
+      agent: { thinking: null },
+    });
+  });
+
+  test('accepts and validates the main Agent thinking preference', () => {
+    const input = createDefaultAgentRuntimeSettings();
+    input.agent.thinking = 'high';
+
+    expect(validateAgentRuntimeSettings(input)).toEqual({ ok: true, settings: input });
+
+    const invalid = createDefaultAgentRuntimeSettings();
+    invalid.agent.thinking = 'unbounded' as never;
+    expect(validateAgentRuntimeSettings(invalid).ok).toBe(false);
   });
 
   test.each([0, 1441, 1.5])('rejects invalid AskUserQuestion timeout %s', timeoutMinutes => {

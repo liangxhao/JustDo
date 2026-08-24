@@ -125,6 +125,8 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
   const [agentOpen, setAgentOpen] = useState(true);
   const [subagentOpen, setSubagentOpen] = useState(true);
   const subagents = settings.subagents;
+  const updateAgent = (update: Partial<AgentRuntimeSettings['agent']>) =>
+    onChange({ ...settings, agent: { ...settings.agent, ...update } });
   const updateAskUserQuestion = (update: Partial<AgentRuntimeSettings['askUserQuestion']>) =>
     onChange({
       ...settings,
@@ -157,8 +159,7 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
         ]
       : modelOptions;
 
-  const thinkingOptions = [
-    { value: '', label: i18nService.t('agentRuntimeInheritParentThinking') },
+  const thinkingLevelOptions = [
     { value: AgentRuntimeThinkingLevel.Off, label: i18nService.t('agentRuntimeThinkingOff') },
     {
       value: AgentRuntimeThinkingLevel.Minimal,
@@ -180,6 +181,14 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
     },
     { value: AgentRuntimeThinkingLevel.Max, label: i18nService.t('agentRuntimeThinkingMax') },
     { value: AgentRuntimeThinkingLevel.Ultra, label: i18nService.t('agentRuntimeThinkingUltra') },
+  ];
+  const agentThinkingOptions = [
+    { value: '', label: i18nService.t('agentRuntimeUseModelDefaultThinking') },
+    ...thinkingLevelOptions,
+  ];
+  const subagentThinkingOptions = [
+    { value: '', label: i18nService.t('agentRuntimeInheritParentThinking') },
+    ...thinkingLevelOptions,
   ];
   const timeoutOptions = [
     { value: '900', label: i18nService.t('agentRuntimeTimeout15m') },
@@ -237,6 +246,22 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
         open={agentOpen}
         onToggle={() => setAgentOpen(value => !value)}
       >
+        <SettingRow
+          label={i18nService.t('agentRuntimeDefaultThinking')}
+          description={i18nService.t('agentRuntimeAgentThinkingHint')}
+        >
+          <ThemedSelect
+            id="agent-runtime-agent-thinking"
+            value={settings.agent.thinking ?? ''}
+            onChange={value =>
+              updateAgent({
+                thinking: (value || null) as AgentRuntimeSettings['agent']['thinking'],
+              })
+            }
+            options={agentThinkingOptions}
+            className="py-2 text-xs"
+          />
+        </SettingRow>
         <SettingRow
           label={i18nService.t('agentRuntimeDelegationTitle')}
           description={i18nService.t('agentRuntimeDelegationDescription')}
@@ -328,7 +353,7 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
                 thinking: (value || null) as AgentRuntimeSettings['subagents']['thinking'],
               })
             }
-            options={thinkingOptions}
+            options={subagentThinkingOptions}
             className="py-2 text-xs"
           />
         </SettingRow>

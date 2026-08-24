@@ -117,6 +117,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     agentRuntimeUnavailableModel: '模型当前不可用',
     agentRuntimeUnavailableModelDescription: '保存时将安全回退为继承父 Agent 的模型。',
     agentRuntimeDefaultThinking: '默认思考强度',
+    agentRuntimeUseModelDefaultThinking: '不指定',
     agentRuntimeInheritParentThinking: '继承父 Agent 的思考强度',
     agentRuntimeThinkingOff: '关闭',
     agentRuntimeThinkingMinimal: '极简',
@@ -127,7 +128,10 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     agentRuntimeThinkingAdaptive: '自适应',
     agentRuntimeThinkingMax: '最大',
     agentRuntimeThinkingUltra: '极致',
-    agentRuntimeThinkingHint: '可用档位取决于所选模型；不确定时建议保持继承。',
+    agentRuntimeAgentThinkingHint:
+      '不指定时，使用当前模型的默认思考强度；不同思考强度是否受支持，取决于当前模型。',
+    agentRuntimeThinkingHint:
+      '继承时，沿用父 Agent 的思考强度；所选思考强度是否受支持，取决于 SubAgent 使用的模型。',
     agentRuntimeCapacityTitle: '容量与排队',
     agentRuntimeCapacityDescription: '并发上限是全局额度；每个父 Agent 的子任务上限独立计算。',
     agentRuntimeHighConcurrency: '高负载：请留意费用与速率限制',
@@ -1327,6 +1331,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     agentRuntimeUnavailableModelDescription:
       "Saving will safely fall back to the parent Agent's model.",
     agentRuntimeDefaultThinking: 'Default thinking effort',
+    agentRuntimeUseModelDefaultThinking: 'Not specified',
     agentRuntimeInheritParentThinking: "Inherit the parent Agent's thinking effort",
     agentRuntimeThinkingOff: 'Off',
     agentRuntimeThinkingMinimal: 'Minimal',
@@ -1337,8 +1342,10 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     agentRuntimeThinkingAdaptive: 'Adaptive',
     agentRuntimeThinkingMax: 'Maximum',
     agentRuntimeThinkingUltra: 'Ultra',
+    agentRuntimeAgentThinkingHint:
+      'When not specified, the current model uses its default thinking effort. Support for each level depends on the model.',
     agentRuntimeThinkingHint:
-      'Available levels depend on the selected model. Keep inherit when you are unsure.',
+      "When inherited, the SubAgent uses its parent Agent's thinking effort. Support for the selected level depends on the SubAgent's model.",
     agentRuntimeCapacityTitle: 'Capacity and queueing',
     agentRuntimeCapacityDescription:
       'The concurrency limit is global; each parent Agent has its own child-task limit.',

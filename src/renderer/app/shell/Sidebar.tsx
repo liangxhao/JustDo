@@ -294,7 +294,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             onClick={onNewChat}
             className={`relative w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
               activeView === 'cowork'
-                ? 'bg-primary-muted text-primary hover:bg-primary/15'
+                ? 'text-primary hover:bg-surface'
                 : 'text-secondary hover:text-foreground hover:bg-surface'
             }`}
           >
@@ -314,7 +314,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             }`}
             className={`w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
               activeView === 'scheduledTasks'
-                ? 'bg-primary-muted text-primary hover:bg-primary/15'
+                ? 'text-primary hover:bg-surface'
                 : 'text-secondary hover:text-foreground hover:bg-surface'
             }`}
           >
@@ -334,7 +334,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             }}
             className={`w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
               activeView === 'plugins'
-                ? 'bg-primary-muted text-primary hover:bg-primary/15'
+                ? 'text-primary hover:bg-surface'
                 : 'text-secondary hover:text-foreground hover:bg-surface'
             }`}
           >

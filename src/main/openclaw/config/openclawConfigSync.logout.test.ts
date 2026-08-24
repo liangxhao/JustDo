@@ -141,6 +141,7 @@ const writeMinimalConfig = (
   permissionMode: 'ask' | 'auto' | 'full' = 'ask',
   browserMode: BrowserModeValue = BrowserMode.Isolated,
   agents: Array<{ id: string; enabled: boolean }> = [],
+  runtimeSettings = createDefaultAgentRuntimeSettings(),
 ): OpenClawConfigSyncResult => {
   const sync = new OpenClawConfigSync({
     engineManager: {
@@ -155,6 +156,7 @@ const writeMinimalConfig = (
     }),
     getBrowserMode: () => browserMode,
     getAgents: () => agents,
+    getAgentRuntimeSettings: () => runtimeSettings,
   } as never);
   return (
     sync as unknown as {
@@ -224,6 +226,33 @@ describe('OpenClaw auth logout config sync', () => {
       },
     });
     expect(config.agents.defaults.compaction).not.toHaveProperty('keepRecentTokens');
+  });
+
+  test('updates and removes the main Agent thinking default in an existing minimal config', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-thinking-config-'));
+    temporaryDirectories.push(directory);
+    const configPath = path.join(directory, 'openclaw.json');
+    const configured = createDefaultAgentRuntimeSettings();
+    configured.agent.thinking = 'high';
+
+    expect(
+      writeMinimalConfig(
+        configPath,
+        BuiltinModelSyncReason.ManualRefresh,
+        'ask',
+        BrowserMode.Isolated,
+        [],
+        configured,
+      ).ok,
+    ).toBe(true);
+    expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).agents.defaults.thinkingDefault).toBe(
+      'high',
+    );
+
+    expect(writeMinimalConfig(configPath, BuiltinModelSyncReason.ManualRefresh).ok).toBe(true);
+    expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).agents.defaults).not.toHaveProperty(
+      'thinkingDefault',
+    );
   });
 
   test('minimal config enables the JustDo permission policy before model setup', () => {
@@ -807,6 +836,7 @@ describe('OpenClaw auth logout config sync', () => {
         agents: {
           defaults: {
             model: { primary: 'custom-provider/custom-model' },
+            thinkingDefault: 'high',
             compaction: {
               mode: 'safeguard',
               keepRecentTokens: 20_000,
@@ -872,6 +902,7 @@ describe('OpenClaw auth logout config sync', () => {
     });
     expect(config.models.pricing).toEqual({ enabled: true });
     expect(config.agents.defaults.model.primary).toBe('custom-provider/custom-model');
+    expect(config.agents.defaults).not.toHaveProperty('thinkingDefault');
     expect(config.agents.defaults.compaction.memoryFlush).toEqual({ enabled: false });
     expect(config.agents.defaults.compaction).not.toHaveProperty('keepRecentTokens');
     expect(config.gateway).toEqual({ mode: 'local', customSetting: 'keep-me' });

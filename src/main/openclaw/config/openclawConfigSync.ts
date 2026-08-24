@@ -441,6 +441,13 @@ const buildAuthScopedOpenClawConfig = (
     : {};
   const managedDefaults = isRecord(managedAgents.defaults) ? managedAgents.defaults : {};
   const defaults = { ...existingDefaults };
+  if (Object.prototype.hasOwnProperty.call(managedDefaults, 'thinkingDefault')) {
+    defaults.thinkingDefault = managedDefaults.thinkingDefault;
+  } else {
+    // Main Agent thinking is JustDo-managed. Absence means the user selected
+    // "Not specified", so an older explicit value must not survive the merge.
+    delete defaults.thinkingDefault;
+  }
   if (Object.prototype.hasOwnProperty.call(managedDefaults, 'compaction')) {
     // Compaction is JustDo-managed policy. Replace the whole object so removed
     // keys (notably the legacy explicit keepRecentTokens) do not survive an
@@ -752,6 +759,10 @@ export const buildManagedOpenClawSubagentConfig = (
   ...(settings.subagents.model ? { model: settings.subagents.model } : {}),
   ...(settings.subagents.thinking ? { thinking: settings.subagents.thinking } : {}),
 });
+
+export const buildManagedOpenClawAgentThinkingConfig = (
+  settings: AgentRuntimeSettings = createDefaultAgentRuntimeSettings(),
+) => (settings.agent.thinking ? { thinkingDefault: settings.agent.thinking } : {});
 
 export const buildManagedOpenClawHeartbeatConfig = () => ({
   every: '2h',
@@ -1566,6 +1577,7 @@ export class OpenClawConfigSync {
       agents: {
         defaults: {
           timeoutSeconds: OPENCLAW_AGENT_TIMEOUT_SECONDS,
+          ...buildManagedOpenClawAgentThinkingConfig(agentRuntimeSettings),
           model: {
             primary: primaryModel,
           },
@@ -2103,10 +2115,11 @@ export class OpenClawConfigSync {
     const connectivityConfig = buildManagedOpenClawConnectivityConfig(this.getBrowserMode?.());
     const connectivityTools: Record<string, unknown> = connectivityConfig.tools;
     const askUserHostConfig = this.getAskUserExtensionConfig?.() ?? null;
+    const agentRuntimeSettings = this.getAgentRuntimeSettings();
     const askUserConfig = askUserHostConfig
       ? {
           ...askUserHostConfig,
-          timeoutMinutes: this.getAgentRuntimeSettings().askUserQuestion.timeoutMinutes,
+          timeoutMinutes: agentRuntimeSettings.askUserQuestion.timeoutMinutes,
         }
       : null;
     const bundledExtensionEntries = {
@@ -2142,9 +2155,10 @@ export class OpenClawConfigSync {
       },
       agents: {
         defaults: {
+          ...buildManagedOpenClawAgentThinkingConfig(agentRuntimeSettings),
           heartbeat: buildDisabledOpenClawHeartbeatConfig(),
           compaction: buildManagedOpenClawCompactionConfig(),
-          subagents: buildManagedOpenClawSubagentConfig(this.getAgentRuntimeSettings()),
+          subagents: buildManagedOpenClawSubagentConfig(agentRuntimeSettings),
         },
       },
       session: buildManagedOpenClawSessionConfig(),
@@ -2232,6 +2246,16 @@ export class OpenClawConfigSync {
             const existingDefaults = isRecord(existingAgents.defaults)
               ? existingAgents.defaults
               : {};
+            const mergedDefaults: Record<string, unknown> = {
+              ...existingDefaults,
+              // Replace rather than deep-merge so stale managed keys are removed.
+              compaction: buildManagedOpenClawCompactionConfig(),
+            };
+            if (agentRuntimeSettings.agent.thinking) {
+              mergedDefaults.thinkingDefault = agentRuntimeSettings.agent.thinking;
+            } else {
+              delete mergedDefaults.thinkingDefault;
+            }
             const existingTools = removeRetiredManagedToolDenyEntries(
               isRecord(existing.tools) ? existing.tools : {},
             );
@@ -2258,11 +2282,7 @@ export class OpenClawConfigSync {
               },
               agents: {
                 ...existingAgents,
-                defaults: {
-                  ...existingDefaults,
-                  // Replace rather than deep-merge so stale managed keys are removed.
-                  compaction: buildManagedOpenClawCompactionConfig(),
-                },
+                defaults: mergedDefaults,
               },
               session: buildManagedOpenClawSessionConfig(),
               update: connectivityConfig.update,

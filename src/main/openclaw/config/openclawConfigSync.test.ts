@@ -16,6 +16,7 @@ import type { ProviderRawConfig } from '../../cowork/providerApiConfig';
 import {
   applyManagedOpenClawHeartbeatConfig,
   buildBuiltinMemorySearchConfig,
+  buildManagedOpenClawAgentThinkingConfig,
   buildManagedOpenClawCompactionConfig,
   buildManagedOpenClawConnectivityConfig,
   buildManagedOpenClawHeartbeatConfig,
@@ -441,6 +442,21 @@ describe('OpenClaw managed subagent config', () => {
       archiveAfterMinutes: 0,
       model: 'provider/worker-model',
       thinking: 'high',
+    });
+  });
+});
+
+describe('OpenClaw managed Agent thinking config', () => {
+  test('leaves the OpenClaw model default in effect until the user selects a level', () => {
+    expect(buildManagedOpenClawAgentThinkingConfig()).toEqual({});
+  });
+
+  test('maps the user-selected level to agents.defaults.thinkingDefault', () => {
+    const settings = createDefaultAgentRuntimeSettings();
+    settings.agent.thinking = 'high';
+
+    expect(buildManagedOpenClawAgentThinkingConfig(settings)).toEqual({
+      thinkingDefault: 'high',
     });
   });
 });
