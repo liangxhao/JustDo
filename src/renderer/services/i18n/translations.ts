@@ -240,7 +240,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserExtensionPairingFailed: '无法生成扩展配对信息',
     browserExtensionStepVerifyTitle: '4. 测试连接',
     browserExtensionStepVerifyDescription:
-      '确认扩展状态为 ON，然后点击“Share this tab with {productName}”共享当前标签页，再测试连接。',
+      '确认扩展状态显示 ON，然后点击下方按钮验证连接。需要 Agent 访问当前网页时，再通过扩展共享该标签页。',
     browserExtensionTestConnection: '测试扩展连接',
     browserExtensionConnectionFailed: '扩展尚未连接。',
     shortcuts: '快捷键',
@@ -1461,7 +1461,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserExtensionPairingFailed: 'Unable to generate extension pairing information',
     browserExtensionStepVerifyTitle: '4. Test the connection',
     browserExtensionStepVerifyDescription:
-      'Set the extension to ON, then click “Share this tab with {productName}” to share the current tab before testing the connection.',
+      'Confirm the extension shows ON, then verify the connection below. Share the current tab only when an Agent needs access to it.',
     browserExtensionTestConnection: 'Test extension connection',
     browserExtensionConnectionFailed: 'The extension is not connected.',
     shortcuts: 'Shortcuts',

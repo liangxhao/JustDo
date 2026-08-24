@@ -17,7 +17,7 @@ import {
   type BrowserMode as BrowserModeValue,
   type BrowserModeUpdateResult,
   type BrowserPortOwner,
-  hasConnectedBrowserTab,
+  isBrowserExtensionConnected,
   parseDevToolsActivePort,
 } from '../../../shared/browser';
 import type { GatewayClientLike } from '../../engine/gateway/types';
@@ -436,11 +436,11 @@ export const testBrowserConnection = async (
       query: { profile },
       timeoutMs: 45_000,
     });
-    if (profile === 'chrome' && !hasConnectedBrowserTab(response)) {
+    if (profile === 'chrome' && !isBrowserExtensionConnected(response)) {
       return {
         success: false,
         errorCode: 'extension-not-connected',
-        error: 'The browser extension is not connected or has no shared tabs.',
+        error: 'The browser extension is not connected.',
       };
     }
     return { success: true };

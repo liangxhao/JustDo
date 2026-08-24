@@ -103,16 +103,12 @@ describe('testBrowserConnection', () => {
     });
   });
 
-  test('reports an extension profile with no shared tabs as disconnected', async () => {
-    const request = vi.fn().mockResolvedValue({ tabs: [] });
+  test('reports a running extension profile with no shared tabs as connected', async () => {
+    const request = vi.fn().mockResolvedValue({ running: true, tabs: [] });
 
     const result = await testBrowserConnection({ request }, 'chrome');
 
-    expect(result).toEqual({
-      success: false,
-      errorCode: 'extension-not-connected',
-      error: 'The browser extension is not connected or has no shared tabs.',
-    });
+    expect(result).toEqual({ success: true });
     expect(request).toHaveBeenCalledWith('browser.request', {
       method: 'GET',
       path: '/tabs',
@@ -133,15 +129,14 @@ describe('testBrowserConnection', () => {
   test.each([
     {},
     { running: false, tabs: [{ targetId: 'shared-tab' }] },
-    { running: true, tabs: [null] },
-    { running: true, tabs: [{ targetId: '' }] },
-  ])('rejects a disconnected or malformed extension tab response %#', async response => {
+    { running: 'true', tabs: [] },
+  ])('rejects an extension response without the running signal %#', async response => {
     const request = vi.fn().mockResolvedValue(response);
 
     await expect(testBrowserConnection({ request }, 'chrome')).resolves.toEqual({
       success: false,
       errorCode: 'extension-not-connected',
-      error: 'The browser extension is not connected or has no shared tabs.',
+      error: 'The browser extension is not connected.',
     });
   });
 

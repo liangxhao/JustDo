@@ -402,7 +402,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           </div>
         </div>
       ) : (
-        <div className="mx-3 border-t border-border-subtle pb-3 pt-2 flex items-center justify-center gap-1">
+        <div className="mx-3 border-t border-border-subtle pb-3 pt-2 flex items-center justify-end gap-1">
           <button
             type="button"
             onClick={() => onShowSettings()}

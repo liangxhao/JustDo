@@ -67,34 +67,9 @@ export type BrowserConnectionTestResult = BrowserActionResult & {
     'gateway-unavailable' | 'permission-timeout' | 'extension-not-connected' | 'connection-failed';
 };
 
-export type BrowserTabSummary = {
-  suggestedTargetId?: string;
-  targetId: string;
-  tabId?: string;
-  label?: string;
-  title: string;
-  url: string;
-  wsUrl?: string;
-  type?: string;
-};
-
-export type BrowserTabsResponse = {
-  running: boolean;
-  tabs: BrowserTabSummary[];
-};
-
-export const hasConnectedBrowserTab = (value: unknown): boolean => {
+export const isBrowserExtensionConnected = (value: unknown): boolean => {
   if (!value || typeof value !== 'object') return false;
-  const response = value as { running?: unknown; tabs?: unknown };
-  return (
-    response.running === true &&
-    Array.isArray(response.tabs) &&
-    response.tabs.some(tab => {
-      if (!tab || typeof tab !== 'object') return false;
-      const targetId = (tab as { targetId?: unknown }).targetId;
-      return typeof targetId === 'string' && targetId.trim().length > 0;
-    })
-  );
+  return (value as { running?: unknown }).running === true;
 };
 
 export const parseDevToolsActivePort = (content: string): number | null => {

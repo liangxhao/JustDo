@@ -15,7 +15,6 @@ import {
   type BrowserMode as BrowserModeValue,
   normalizeBrowserMode,
 } from '@shared/browser';
-import { PRODUCT_NAME } from '@shared/productMetadata';
 import React, { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 
 import {
@@ -623,9 +622,7 @@ const BrowserSettingsTab: React.FC = () => {
               number={4}
               complete={connectionVerification.extension}
               title={i18nService.t('browserExtensionStepVerifyTitle')}
-              description={i18nService
-                .t('browserExtensionStepVerifyDescription')
-                .replace('{productName}', PRODUCT_NAME)}
+              description={i18nService.t('browserExtensionStepVerifyDescription')}
               action={
                 <div className="flex flex-wrap gap-2">
                   <button

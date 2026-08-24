@@ -66,7 +66,7 @@ Badge：off空、connecting省略号、on绿色ON、error红色感叹号。连�
 
 ## 9. Connection test
 
-`browser:testConnection` 用 Gateway client 请求对应 profile 的 `/tabs`，错误分 gateway-unavailable、permission-timeout、extension-not-connected、connection-failed。User 模式只判断 RPC 是否成功，用于触发并确认 Remote Debugging 授权；Extension 专用测试使用 `chrome` profile，并要求响应 `running === true` 且至少存在一个带非空 `targetId` 的共享 tab。测试成功只能证明当前时刻有可寻址的共享 tab，不能保证下一次 Agent 操作时该 tab 仍然存在或仍获授权。
+`browser:testConnection` 用 Gateway client 请求对应 profile 的 `/tabs`，错误分 gateway-unavailable、permission-timeout、extension-not-connected、connection-failed。User 模式只判断 RPC 是否成功，用于触发并确认 Remote Debugging 授权；Extension 专用测试使用 `chrome` profile，并只以响应的 `running === true` 判断扩展已连接。共享 tab 是独立授权状态，不参与连接判断。
 
 测试结果是即时诊断，不保证下一次Agent操作时tab仍授权。当前attach会执行membership检查，但CDP、close和activate命令未做同等级检查。
 
@@ -123,22 +123,21 @@ Mode保存触发 `applyBrowserModeChange` -> 写app_config -> `syncOpenClawConfi
 | `BrowserPortOwner`            | pid/processName/isChrome          | 只表示诊断结果，不是安全 capability      |
 | `BrowserConnectionStatus`     | 发现、配置、端口、owner、endpoint | 一次状态快照                             |
 | `BrowserConnectionTestResult` | success/error/errorCode           | Gateway `/tabs` 即时调用结果             |
-| `BrowserTabsResponse`         | running/tabs                      | Gateway `/tabs` 响应契约                 |
 
 `normalizeBrowserMode` 只有 `user` 和 `extension` 原样通过，其他值全部回到 `isolated`。IPC SetMode 仍会严格拒绝未知值；normalize 用于读取旧配置时安全恢复，不能代替写入校验。
 
 ## 16. Main handlers 明细
 
-| IPC                               | Main 行为                                      | 是否修改状态         |
-| --------------------------------- | ---------------------------------------------- | -------------------- |
-| `browser:getStatus`               | 执行 Chrome/DevTools/owner/endpoint 诊断       | 否                   |
-| `browser:setMode`                 | 校验枚举，调用 config transaction              | 是                   |
-| `browser:openRemoteDebugging`     | 复制内部 URL并启动/聚焦 Chrome                 | 只修改剪贴板         |
-| `browser:openExtensionManagement` | 复制 `chrome://extensions` 并聚焦 Chrome       | 只修改剪贴板         |
-| `browser:revealExtension`         | 定位打包或开发扩展目录并用 shell 打开          | 否                   |
-| `browser:copyExtensionPairing`    | 构建/复用 secret，复制 pairing string          | 可能创建 secret 文件 |
-| `browser:testConnection`          | user profile `/tabs`，并前景/再次聚焦 Chrome   | 否                   |
-| `browser:testExtensionConnection` | chrome profile `/tabs` 并验证 running/targetId | 否                   |
+| IPC                               | Main 行为                                     | 是否修改状态         |
+| --------------------------------- | --------------------------------------------- | -------------------- |
+| `browser:getStatus`               | 执行 Chrome/DevTools/owner/endpoint 诊断      | 否                   |
+| `browser:setMode`                 | 校验枚举，调用 config transaction             | 是                   |
+| `browser:openRemoteDebugging`     | 复制内部 URL并启动/聚焦 Chrome                | 只修改剪贴板         |
+| `browser:openExtensionManagement` | 复制 `chrome://extensions` 并聚焦 Chrome      | 只修改剪贴板         |
+| `browser:revealExtension`         | 定位打包或开发扩展目录并用 shell 打开         | 否                   |
+| `browser:copyExtensionPairing`    | 构建/复用 secret，复制 pairing string         | 可能创建 secret 文件 |
+| `browser:testConnection`          | user profile `/tabs`，并前景/再次聚焦 Chrome  | 否                   |
+| `browser:testExtensionConnection` | chrome profile `/tabs` 并验证扩展处于 running | 否                   |
 
 Handler 统一返回可序列化 `{success,...}`；路径、Gateway token、Relay token 不应出现在失败响应。RevealExtension 日志会记录扩展目录，这是受管应用路径而非用户秘密，但仍不应扩展为打印 manifest/config 内容。
 
@@ -235,15 +234,15 @@ browser.request
   timeoutMs: 45000
 ```
 
-普通 Remote Debugging 模式只要求请求 resolve，以便保留“触发 Chrome 授权”的探测语义。扩展模式还会读取响应 body，并要求 `running === true` 且 `tabs` 至少包含一个带非空 `targetId` 的对象。因此：
+普通 Remote Debugging 模式只要求请求 resolve，以便保留“触发 Chrome 授权”的探测语义。扩展模式还会读取响应 body，并只检查 `running === true`。因此：
 
-- success：Gateway client 存在且请求 resolve；扩展模式还必须存在至少一个可寻址的共享 tab；
+- success：Gateway client 存在且请求 resolve；扩展模式还必须确认 Relay 中的扩展处于运行状态，共享 tab 可以为空；
 - gateway-unavailable：Main 当前没有 client；
 - permission-timeout：错误文本命中 timed out/timeout；
-- extension-not-connected：扩展模式未运行，或返回空/非法的 `tabs`，表示扩展未连接或没有可用的共享 tab；
+- extension-not-connected：扩展模式未返回严格的 `running: true`；
 - connection-failed：其他错误。
 
-扩展连接测试现在能证明测试时刻至少有一个共享 tab，但不能证明目标 tab 持续存在、tab group 后续仍授权、debugger attach 可通过或页面命令可执行。
+扩展连接测试只证明测试时刻扩展与 Relay 已连接。共享 tab 是独立的用户授权状态；即使连接测试成功，也不能证明存在可控页面、tab group 后续仍授权、debugger attach 可通过或页面命令可执行。
 
 设置页在首次以扩展模式打开或从其他模式切换到扩展模式时会自动执行一次相同的连接测试；手动按钮用于配置完成后的即时重试。离开扩展模式时，尚未完成的探测结果会被丢弃，避免过期结果覆盖当前页面状态。
 

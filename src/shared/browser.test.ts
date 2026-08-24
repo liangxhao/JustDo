@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 
 import {
   BrowserMode,
-  hasConnectedBrowserTab,
+  isBrowserExtensionConnected,
   normalizeBrowserMode,
   parseDevToolsActivePort,
 } from './browser';
@@ -36,25 +36,18 @@ describe('parseDevToolsActivePort', () => {
   });
 });
 
-describe('hasConnectedBrowserTab', () => {
-  test('accepts a running browser response with a usable target', () => {
-    expect(
-      hasConnectedBrowserTab({
-        running: true,
-        tabs: [{ targetId: 'shared-tab', title: 'Shared tab', url: 'https://example.com' }],
-      }),
-    ).toBe(true);
-  });
+describe('isBrowserExtensionConnected', () => {
+  test.each([{ running: true }, { running: true, tabs: [] }, { running: true, tabs: [null] }])(
+    'accepts a running extension independently of shared tabs %#',
+    response => {
+      expect(isBrowserExtensionConnected(response)).toBe(true);
+    },
+  );
 
-  test.each([
-    null,
-    {},
-    { running: false, tabs: [{ targetId: 'shared-tab' }] },
-    { running: true, tabs: [] },
-    { running: true, tabs: [null] },
-    { running: true, tabs: ['shared-tab'] },
-    { running: true, tabs: [{ targetId: '  ' }] },
-  ])('rejects a disconnected or malformed response %#', response => {
-    expect(hasConnectedBrowserTab(response)).toBe(false);
-  });
+  test.each([null, {}, { running: false }, { running: 'true' }])(
+    'rejects a response without the running signal %#',
+    response => {
+      expect(isBrowserExtensionConnected(response)).toBe(false);
+    },
+  );
 });
