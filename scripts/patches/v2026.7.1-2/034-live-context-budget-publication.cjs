@@ -47,7 +47,7 @@ function transform(content, filePath) {
   let updated = replaceUniquePattern(
     content,
     /async function loadAttemptSessionEntryAfterQuotaMaintenance\(params\) \{/,
-    `${shouldPublishJustDoLiveContextBudgetStatus.toString()}\nasync function ${HELPER}(params) {\n\tif (!params.sessionKey || !params.status) return;\n\tconst storePath = resolveStorePath(params.config?.session?.store, { agentId: params.agentId });\n\ttry {\n\t\tawait updateSessionEntry({ storePath, sessionKey: params.sessionKey }, (entry) => {\n\t\t\tif (!shouldPublishJustDoLiveContextBudgetStatus(entry, params)) return null;\n\t\t\treturn { contextBudgetStatus: params.status };\n\t\t}, { skipMaintenance: true, takeCacheOwnership: true });\n\t} catch (error) {\n\t\tlog$2.debug(\`[justdo-context-budget] live publication failed: \${String(error)}\`);\n\t}\n}\nasync function loadAttemptSessionEntryAfterQuotaMaintenance(params) {`,
+    `${shouldPublishJustDoLiveContextBudgetStatus.toString()}\nasync function ${HELPER}(params) {\n\tif (!params.sessionKey || !params.status) return;\n\tconst storePath = resolveStorePath(params.config?.session?.store, { agentId: params.agentId });\n\ttry {\n\t\tawait updateSessionEntry({ storePath, sessionKey: params.sessionKey }, (entry) => {\n\t\t\tif (!shouldPublishJustDoLiveContextBudgetStatus(entry, params)) return null;\n\t\t\treturn { contextBudgetStatus: { ...params.status, justdoUsageBootstrap: true } };\n\t\t}, { skipMaintenance: true, takeCacheOwnership: true });\n\t} catch (error) {\n\t\tlog$2.debug(\`[justdo-context-budget] live publication failed: \${String(error)}\`);\n\t}\n}\nasync function loadAttemptSessionEntryAfterQuotaMaintenance(params) {`,
     `${filePath}: live context publisher`,
   );
   updated = replaceUniquePattern(
@@ -93,7 +93,7 @@ function verifyPatch(runtimeDir) {
   const combined = files.map(filePath => fs.readFileSync(filePath, 'utf8')).join('\n');
   for (const contract of [
     'onContextBudgetStatus?.(precheck, contextMessages.length)',
-    'contextBudgetStatus: params.status',
+    'contextBudgetStatus: { ...params.status, justdoUsageBootstrap: true }',
     'status: contextBudgetStatus',
     'inputProvenance: params.inputProvenance',
     'takeCacheOwnership: true',

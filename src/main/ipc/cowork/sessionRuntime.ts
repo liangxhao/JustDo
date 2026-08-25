@@ -30,22 +30,35 @@ export const readSessionGoal = (value: unknown): SessionGoal | undefined =>
   normalizeSessionGoal(value);
 
 export const readUsage = (session: Record<string, unknown>) => {
+  const budget =
+    session.contextBudgetStatus && typeof session.contextBudgetStatus === 'object'
+      ? (session.contextBudgetStatus as Record<string, unknown>)
+      : undefined;
   const reportedTotalTokens = nonNegativeNumber(session.totalTokens);
+  const estimatedPromptTokens = nonNegativeNumber(budget?.estimatedPromptTokens);
   const reportedTotalTokensFresh =
     typeof session.totalTokensFresh === 'boolean' ? session.totalTokensFresh : true;
   const hasActiveRun =
-    session.hasActiveRun === true || session.status === 'running' || session.runState === 'active'
-      ? true
-      : session.hasActiveRun === false
-        ? false
+    typeof session.hasActiveRun === 'boolean'
+      ? session.hasActiveRun
+      : session.status === 'running' || session.runState === 'active'
+        ? true
         : undefined;
-  // Match OpenClaw webchat: totalTokens is the context snapshot, while
-  // contextBudgetStatus.estimatedPromptTokens is a pre-dispatch planning
-  // estimate. The estimate can describe an announce/internal run, include
-  // content that is about to be compacted, and temporarily exceed the model
-  // window, so it must never replace the user-facing context snapshot.
-  const totalTokens = reportedTotalTokens ?? 0;
-  const usageUpdatedAt = nonNegativeNumber(session.updatedAt);
+  // Match OpenClaw webchat once a context snapshot exists. Before the first
+  // snapshot lands, an active user-facing run only has the live pre-prompt
+  // estimate published by JustDo's provenance-guarded runtime patch. Use it as
+  // an explicitly approximate bootstrap value, but never let it replace an
+  // existing Gateway totalTokens snapshot.
+  const useBootstrapEstimate =
+    session.hasActiveRun === true &&
+    reportedTotalTokens === undefined &&
+    budget?.justdoUsageBootstrap === true &&
+    estimatedPromptTokens !== undefined &&
+    estimatedPromptTokens > 0;
+  const totalTokens = useBootstrapEstimate ? estimatedPromptTokens : (reportedTotalTokens ?? 0);
+  const usageUpdatedAt = nonNegativeNumber(
+    useBootstrapEstimate ? budget?.updatedAt : session.updatedAt,
+  );
   const provider = nonEmptyString(session.modelProvider);
   const model = nonEmptyString(session.model);
   const gatewaySessionId = [session.sessionId, session.id]
@@ -64,14 +77,20 @@ export const readUsage = (session: Record<string, unknown>) => {
       nonNegativeNumber(session.maxContextTokens) ??
       nonNegativeNumber(session.totalContextTokens) ??
       0,
-    totalTokensFresh: reportedTotalTokensFresh,
-    usageSource: 'reported' as const,
+    totalTokensFresh: useBootstrapEstimate ? false : reportedTotalTokensFresh,
+    usageSource: useBootstrapEstimate ? ('estimate' as const) : ('reported' as const),
     ...(usageUpdatedAt !== undefined ? { usageUpdatedAt } : {}),
     ...(hasActiveRun !== undefined ? { hasActiveRun } : {}),
     compactionCount,
     ...(gatewaySessionId ? { gatewaySessionId } : {}),
     ...(model ? { modelRef: provider ? `${provider}/${model}` : model } : {}),
   };
+};
+
+export const readAvailableUsage = (session: Record<string, unknown>) => {
+  const usage = readUsage(session);
+  const hasReportedSnapshot = nonNegativeNumber(session.totalTokens) !== undefined;
+  return hasReportedSnapshot || usage.usageSource === 'estimate' ? usage : undefined;
 };
 
 export const readGatewaySessionId = (session: Record<string, unknown>): string | undefined => {
@@ -277,8 +296,8 @@ export const registerCoworkSessionRuntimeHandlers = ({
     try {
       const result = await findGatewaySession(sessionId);
       if (!result.session) return { success: false, error: result.error };
-      const usage = readUsage(result.session);
-      if (usage.totalTokens <= 0) {
+      const usage = readAvailableUsage(result.session);
+      if (!usage) {
         return {
           success: false,
           error: 'Context usage is not available from OpenClaw session state',

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createSingleFlightTtlLookup,
   queryGatewaySession,
+  readAvailableUsage,
   readGatewaySessionId,
   readSessionGoal,
   readUsage,
@@ -259,10 +260,11 @@ describe('readUsage', () => {
     });
   });
 
-  it('does not manufacture context usage from a budget estimate alone', () => {
+  it('does not manufacture idle context usage from a budget estimate alone', () => {
     expect(
       readUsage({
         contextBudgetStatus: {
+          justdoUsageBootstrap: true,
           estimatedPromptTokens: 211_701,
           contextTokenBudget: 180_000,
           provider: 'anthropic',
@@ -275,6 +277,109 @@ describe('readUsage', () => {
       totalTokensFresh: true,
       usageSource: 'reported',
       compactionCount: 0,
+    });
+  });
+
+  it('ignores active budget state that was not provenance-guarded by JustDo', () => {
+    expect(
+      readUsage({
+        hasActiveRun: true,
+        contextWindow: 200_000,
+        contextBudgetStatus: {
+          estimatedPromptTokens: 211_701,
+          updatedAt: 200,
+        },
+      }),
+    ).toMatchObject({
+      totalTokens: 0,
+      usageSource: 'reported',
+      hasActiveRun: true,
+    });
+  });
+
+  it('does not bootstrap from stale running status after Gateway reports the run idle', () => {
+    expect(
+      readUsage({
+        hasActiveRun: false,
+        status: 'running',
+        contextWindow: 200_000,
+        contextBudgetStatus: {
+          justdoUsageBootstrap: true,
+          estimatedPromptTokens: 18_500,
+          updatedAt: 200,
+        },
+      }),
+    ).toMatchObject({
+      totalTokens: 0,
+      usageSource: 'reported',
+      hasActiveRun: false,
+    });
+  });
+
+  it('does not bootstrap from inferred status when the active-run projection is unavailable', () => {
+    expect(
+      readUsage({
+        status: 'running',
+        contextWindow: 200_000,
+        contextBudgetStatus: {
+          justdoUsageBootstrap: true,
+          estimatedPromptTokens: 18_500,
+          updatedAt: 200,
+        },
+      }),
+    ).toMatchObject({
+      totalTokens: 0,
+      usageSource: 'reported',
+      hasActiveRun: true,
+    });
+  });
+
+  it('uses a live estimate only to bootstrap the first active context snapshot', () => {
+    expect(
+      readUsage({
+        sessionId: 'gateway-session-1',
+        hasActiveRun: true,
+        contextWindow: 200_000,
+        modelProvider: 'openai',
+        model: 'gpt-5',
+        contextBudgetStatus: {
+          justdoUsageBootstrap: true,
+          estimatedPromptTokens: 18_500,
+          updatedAt: 200,
+          provider: 'anthropic',
+          model: 'claude-sonnet-4',
+        },
+      }),
+    ).toEqual({
+      totalTokens: 18_500,
+      contextTokens: 200_000,
+      totalTokensFresh: false,
+      usageSource: 'estimate',
+      usageUpdatedAt: 200,
+      hasActiveRun: true,
+      compactionCount: 0,
+      gatewaySessionId: 'gateway-session-1',
+      modelRef: 'openai/gpt-5',
+    });
+  });
+
+  it('keeps a confirmed zero-token snapshot ahead of the prompt estimate', () => {
+    expect(
+      readUsage({
+        totalTokens: 0,
+        totalTokensFresh: true,
+        hasActiveRun: true,
+        contextWindow: 200_000,
+        contextBudgetStatus: {
+          justdoUsageBootstrap: true,
+          estimatedPromptTokens: 9_500,
+          updatedAt: 200,
+        },
+      }),
+    ).toMatchObject({
+      totalTokens: 0,
+      totalTokensFresh: true,
+      usageSource: 'reported',
     });
   });
 
@@ -330,7 +435,7 @@ describe('readUsage', () => {
     });
   });
 
-  it('treats an active status as authoritative without changing the usage source', () => {
+  it('keeps an explicit idle registry flag ahead of stale active status', () => {
     expect(
       readUsage({
         totalTokens: 21_000,
@@ -343,7 +448,7 @@ describe('readUsage', () => {
     ).toMatchObject({
       totalTokens: 21_000,
       usageSource: 'reported',
-      hasActiveRun: true,
+      hasActiveRun: false,
     });
   });
 
@@ -458,6 +563,22 @@ describe('readUsage', () => {
       ).toMatchObject({ status: 'blocked' });
     },
   );
+});
+
+describe('readAvailableUsage', () => {
+  it('keeps OpenClaw zero-token snapshots available to the UI', () => {
+    expect(
+      readAvailableUsage({ totalTokens: 0, totalTokensFresh: true, contextTokens: 200_000 }),
+    ).toMatchObject({
+      totalTokens: 0,
+      totalTokensFresh: true,
+      usageSource: 'reported',
+    });
+  });
+
+  it('distinguishes a missing snapshot from a reported zero', () => {
+    expect(readAvailableUsage({ contextTokens: 200_000 })).toBeUndefined();
+  });
 });
 
 describe('createSingleFlightTtlLookup', () => {
