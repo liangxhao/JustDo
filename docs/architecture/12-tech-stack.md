@@ -218,7 +218,7 @@ Patch verify 证明补丁可应用于 pristine upstream；staging/freeze 测试�
 
 ### Python
 
-`resources/python-requirements.txt` 使用 hash 锁定。setup 脚本把依赖安装到 portable runtime 的 `Lib/bundled-site-packages`，避免依赖用户全局 Python。修改 requirements 时要同时验证：目标 Python 版本 wheel 可用、所有行 hash 完整、离线/缓存行为、archive 大小以及 runtime path 注入。
+`resources/python-requirements.txt` 使用 hash 锁定。setup 脚本把内置依赖安装到 portable runtime 的 `Lib/bundled-site-packages`，避免依赖用户全局 Python。用户运行时通过 pip 新装的包使用 `<userData>/runtimes/python-user/Python312/site-packages`；App 将 `PYTHONUSERBASE` 传给受管终端，并连同 value-bound provenance 传给 Gateway。OpenClaw patch `001` 在保留原生 deny-list 的前提下只向 child tool 恢复这组受管值。修改 requirements 或 Python 环境注入时要同时验证：目标 Python 版本 wheel 可用、所有行 hash 完整、离线/缓存行为、archive 大小、runtime path 注入，以及 pip 安装后跨应用升级仍可导入。
 
 ### MinGit
 

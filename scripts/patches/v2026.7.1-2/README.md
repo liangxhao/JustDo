@@ -92,15 +92,18 @@ flowchart LR
 
 #### `001-managed-pip-config-environment.cjs`
 
-- **做什么**：让 child tool 收到 JustDo 实际安装并指定的 `PIP_CONFIG_FILE`，从而使用
-  App 管理的 pip index、证书或代理配置。
-- **关系与边界**：App 侧通过 `JUSTDO_MANAGED_PIP_CONFIG_FILE` 提供路径 provenance；
-  本补丁不依赖其他 runtime patch，也不从 OpenClaw deny-list 中全局放开该变量。
-- **当前保留原因**：原始版本会无条件过滤 `PIP_CONFIG_FILE`；直接删除会让受管 Python
-  环境与 child tool 的 pip 配置不一致。普通值、override、大小写伪造或 provenance
-  不匹配仍必须被拦截，这是安全补丁而不是通用环境变量放行。
-- **可删除条件**：OpenClaw 原生提供 path-bound、来源可信的 managed pip 配置机制，
-  并继续阻止任意宿主 `PIP_CONFIG_FILE` 注入。
+- **做什么**：让 child tool 收到 JustDo 实际指定的 `PIP_CONFIG_FILE` 和
+  `PYTHONUSERBASE`，既使用 App 管理的 pip index、证书或代理配置，也把用户新装的包
+  持久化到 `<userData>/runtimes/python-user`。
+- **关系与边界**：App 侧分别通过 `JUSTDO_MANAGED_PIP_CONFIG_FILE` 和
+  `JUSTDO_MANAGED_PYTHON_USER_BASE` 提供值 provenance；本补丁不依赖其他 runtime
+  patch，也不从 OpenClaw deny-list 中全局放开这两个变量。
+- **当前保留原因**：原始版本会无条件过滤 `PIP_CONFIG_FILE` 和 `PYTHONUSERBASE`；后者
+  被过滤时，pip 会退回 `%APPDATA%/Python`，与 `JUSTDO_PYTHON_USER_SITE` 指向的导入路径
+  不一致。普通值、override、大小写伪造或 provenance 不匹配仍必须被拦截，这是安全
+  补丁而不是通用环境变量放行。
+- **可删除条件**：OpenClaw 原生提供 value-bound、来源可信的 managed Python 环境机制，
+  并继续阻止任意宿主 `PIP_CONFIG_FILE` 或 `PYTHONUSERBASE` 注入。
 
 #### `002-live-thinking-stream.cjs`
 

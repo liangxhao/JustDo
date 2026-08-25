@@ -6,6 +6,7 @@ import path from 'path';
 
 import { SystemPromptReplacementIpc } from '../../../shared/openclaw/systemPromptReplacements';
 import { PRODUCT_NAME } from '../../../shared/productMetadata';
+import { JUSTDO_MANAGED_PYTHON_USER_BASE_ENV } from '../../core/pythonRuntime';
 import type {
   OpenClawEngineManager,
   OpenClawEngineStatus,
@@ -35,32 +36,44 @@ const escapeWindowsCmdValue = (value: string): string =>
 const interactiveShellCommand = (fallbackShell: string): string =>
   'exec ${SHELL:-' + fallbackShell + '}';
 
-const isOpenClawTerminalEnvKey = (key: string): boolean =>
-  key === 'SKILLS_ROOT' ||
-  key === 'JUSTDO_SKILLS_ROOT' ||
-  key === 'OPENCLAW_BUNDLED_SKILLS_DIR' ||
-  key === 'OPENCLAW_STATE_DIR' ||
-  key === 'OPENCLAW_CONFIG_PATH' ||
-  key === 'OPENCLAW_GATEWAY_TOKEN' ||
-  key === 'OPENCLAW_GATEWAY_PORT' ||
-  key === 'OPENCLAW_NO_RESPAWN' ||
-  key === 'OPENCLAW_ENGINE_VERSION' ||
-  key === 'OPENCLAW_BUNDLED_PLUGINS_DIR' ||
-  key === 'OPENCLAW_LOG_LEVEL' ||
-  key === 'NODE_COMPILE_CACHE' ||
-  key === 'NPM_CONFIG_USERCONFIG' ||
-  key === 'npm_config_userconfig' ||
-  key === 'PIP_CONFIG_FILE' ||
-  key === 'JUSTDO_ELECTRON_PATH' ||
-  key === 'JUSTDO_OPENCLAW_ENTRY' ||
-  key === 'JUSTDO_NPM_BIN_DIR' ||
-  key === 'PATH' ||
-  key === 'Path' ||
-  key === 'TZ' ||
-  key.startsWith('JUSTDO_');
+const isOpenClawTerminalEnvKey = (key: string): boolean => {
+  if (key.toUpperCase() === JUSTDO_MANAGED_PYTHON_USER_BASE_ENV) return false;
+  return (
+    key === 'SKILLS_ROOT' ||
+    key === 'JUSTDO_SKILLS_ROOT' ||
+    key === 'OPENCLAW_BUNDLED_SKILLS_DIR' ||
+    key === 'OPENCLAW_STATE_DIR' ||
+    key === 'OPENCLAW_CONFIG_PATH' ||
+    key === 'OPENCLAW_GATEWAY_TOKEN' ||
+    key === 'OPENCLAW_GATEWAY_PORT' ||
+    key === 'OPENCLAW_NO_RESPAWN' ||
+    key === 'OPENCLAW_ENGINE_VERSION' ||
+    key === 'OPENCLAW_BUNDLED_PLUGINS_DIR' ||
+    key === 'OPENCLAW_LOG_LEVEL' ||
+    key === 'NODE_COMPILE_CACHE' ||
+    key === 'NPM_CONFIG_USERCONFIG' ||
+    key === 'npm_config_userconfig' ||
+    key === 'PIP_CONFIG_FILE' ||
+    key === 'JUSTDO_ELECTRON_PATH' ||
+    key === 'JUSTDO_OPENCLAW_ENTRY' ||
+    key === 'JUSTDO_NPM_BIN_DIR' ||
+    key === 'PATH' ||
+    key === 'Path' ||
+    key === 'TZ' ||
+    key.startsWith('JUSTDO_')
+  );
+};
 
-const getOpenClawTerminalEnvKeys = (env: NodeJS.ProcessEnv): string[] => {
-  const keys = Object.keys(env).filter(isOpenClawTerminalEnvKey);
+export const getOpenClawTerminalEnvKeys = (env: NodeJS.ProcessEnv): string[] => {
+  const pythonUserBase = env.PYTHONUSERBASE;
+  const hasManagedPythonUserBase =
+    typeof pythonUserBase === 'string' &&
+    pythonUserBase.length > 0 &&
+    env[JUSTDO_MANAGED_PYTHON_USER_BASE_ENV] === pythonUserBase;
+  const keys = Object.keys(env).filter(
+    key =>
+      isOpenClawTerminalEnvKey(key) || (key === 'PYTHONUSERBASE' && hasManagedPythonUserBase),
+  );
   const orderedKeys = ['PATH', ...keys.filter(key => key !== 'PATH' && key !== 'Path').sort()];
   return Array.from(new Set(orderedKeys));
 };

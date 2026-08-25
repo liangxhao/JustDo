@@ -48,6 +48,9 @@ const managedPipPatch =
       resolveJustDoManagedPipConfigFile: (
         baseEnv: Record<string, string | undefined>,
       ) => string | undefined;
+      resolveJustDoManagedPythonUserBase: (
+        baseEnv: Record<string, string | undefined>,
+      ) => string | undefined;
     };
   };
 
@@ -97,13 +100,48 @@ describe('OpenClaw v2026.7.1-2 patch safety guards', () => {
     ).toBeUndefined();
   });
 
-  test('keeps the native pip deny-list and restores only app-proven base environment values', () => {
+  test('accepts only an exact non-empty app-managed Python user base', () => {
+    const resolveManagedUserBase =
+      managedPipPatch.__testing.resolveJustDoManagedPythonUserBase;
+
+    expect(
+      resolveManagedUserBase({
+        PYTHONUSERBASE: 'C:\\Users\\test\\AppData\\Roaming\\JustDo\\runtimes\\python-user',
+        JUSTDO_MANAGED_PYTHON_USER_BASE:
+          'C:\\Users\\test\\AppData\\Roaming\\JustDo\\runtimes\\python-user',
+      }),
+    ).toBe('C:\\Users\\test\\AppData\\Roaming\\JustDo\\runtimes\\python-user');
+    expect(
+      resolveManagedUserBase({ PYTHONUSERBASE: 'C:\\untrusted\\python-user' }),
+    ).toBeUndefined();
+    expect(
+      resolveManagedUserBase({
+        PYTHONUSERBASE: 'C:\\untrusted\\python-user',
+        JUSTDO_MANAGED_PYTHON_USER_BASE: 'C:\\JustDo\\python-user',
+      }),
+    ).toBeUndefined();
+    expect(
+      resolveManagedUserBase({
+        PYTHONUSERBASE: '',
+        JUSTDO_MANAGED_PYTHON_USER_BASE: '',
+      }),
+    ).toBeUndefined();
+    expect(
+      resolveManagedUserBase({
+        PYTHONUSERBASE: 'C:\\untrusted\\python-user',
+        justdo_managed_python_user_base: 'C:\\untrusted\\python-user',
+      }),
+    ).toBeUndefined();
+  });
+
+  test('keeps native Python deny-list entries and restores only app-proven base values', () => {
     const runtimeRoot = createRuntime();
     const target = path.join(runtimeRoot, 'dist', 'host-env-security.js');
     fs.writeFileSync(
       target,
       `const dangerousEnvironment = [
 \t\t"PIP_CONFIG_FILE",
+\t\t"PYTHONUSERBASE",
 ];
 function sanitizeHostExecEnvWithDiagnostics(params) {
 \tconst baseEnv = params?.baseEnv ?? process.env;
@@ -131,6 +169,7 @@ function sanitizeHostExecEnvWithDiagnostics(params) {
     managedPipPatch.verifyPatch(runtimeRoot);
     const once = fs.readFileSync(target, 'utf8');
     expect(once).toContain('"PIP_CONFIG_FILE",');
+    expect(once).toContain('"PYTHONUSERBASE",');
 
     const executeSanitizer = (
       baseEnv: Record<string, string>,
@@ -141,18 +180,21 @@ function sanitizeHostExecEnvWithDiagnostics(params) {
         process: { env: {} },
         listNormalizedEnvEntries: Object.entries,
         sanitizeHostInheritedEnvEntry: (key: string, value: string) =>
-          key === 'PIP_CONFIG_FILE' ? null : [key, value],
+          key === 'PIP_CONFIG_FILE' || key === 'PYTHONUSERBASE' ? null : [key, value],
         sanitizeHostEnvOverridesWithDiagnostics: ({
           overrides: candidateOverrides,
         }: {
           overrides?: Record<string, string>;
         }) => ({
           acceptedOverrides: Object.fromEntries(
-            Object.entries(candidateOverrides ?? {}).filter(([key]) => key !== 'PIP_CONFIG_FILE'),
+            Object.entries(candidateOverrides ?? {}).filter(
+              ([key]) => key !== 'PIP_CONFIG_FILE' && key !== 'PYTHONUSERBASE',
+            ),
           ),
-          rejectedOverrideBlockedKeys: candidateOverrides?.PIP_CONFIG_FILE
-            ? ['PIP_CONFIG_FILE']
-            : [],
+          rejectedOverrideBlockedKeys: [
+            ...(candidateOverrides?.PIP_CONFIG_FILE ? ['PIP_CONFIG_FILE'] : []),
+            ...(candidateOverrides?.PYTHONUSERBASE ? ['PYTHONUSERBASE'] : []),
+          ],
           rejectedOverrideInvalidKeys: [],
         }),
         markOpenClawExecEnv: (env: Record<string, string>) => env,
@@ -171,17 +213,38 @@ function sanitizeHostExecEnvWithDiagnostics(params) {
       executeSanitizer({
         PIP_CONFIG_FILE: 'C:\\managed\\pip.ini',
         JUSTDO_MANAGED_PIP_CONFIG_FILE: 'C:\\managed\\pip.ini',
+        PYTHONUSERBASE: 'C:\\managed\\python-user',
+        JUSTDO_MANAGED_PYTHON_USER_BASE: 'C:\\managed\\python-user',
       }).env,
-    ).toEqual({ PIP_CONFIG_FILE: 'C:\\managed\\pip.ini' });
+    ).toEqual({
+      PIP_CONFIG_FILE: 'C:\\managed\\pip.ini',
+      PYTHONUSERBASE: 'C:\\managed\\python-user',
+    });
+    expect(
+      executeSanitizer({
+        PYTHONUSERBASE: 'C:\\untrusted\\python-user',
+        JUSTDO_MANAGED_PYTHON_USER_BASE: 'C:\\managed\\python-user',
+      }).env,
+    ).toEqual({});
     expect(
       executeSanitizer(
         {},
         {
           PIP_CONFIG_FILE: 'C:\\override\\pip.ini',
+          PYTHONUSERBASE: 'C:\\override\\python-user',
           SAFE_VALUE: 'kept',
         },
       ).env,
     ).toEqual({ SAFE_VALUE: 'kept' });
+
+    const bundlePath = path.join(runtimeRoot, 'gateway-bundle.mjs');
+    fs.writeFileSync(bundlePath, once);
+    expect(() => managedPipPatch.verifyPatch(runtimeRoot)).not.toThrow();
+    fs.writeFileSync(bundlePath, once.replace('\t\t"PYTHONUSERBASE",\n', ''));
+    expect(() => managedPipPatch.verifyPatch(runtimeRoot)).toThrow(
+      /Bundled native PIP_CONFIG_FILE\/PYTHONUSERBASE deny-list entries must remain intact/,
+    );
+    fs.writeFileSync(bundlePath, once);
 
     expect(managedPipPatch.applyPatch(runtimeRoot)).toEqual([]);
     expect(fs.readFileSync(target, 'utf8')).toBe(once);

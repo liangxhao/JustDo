@@ -29,7 +29,7 @@
 
 | 编号    | 分组                   | 主要契约                                                                               |
 | ------- | ---------------------- | -------------------------------------------------------------------------------------- |
-| 001     | managed pip env        | 只允许App提供且path-bound的PIP config                                                  |
+| 001     | managed Python/pip env | 只恢复 App 提供且 value-bound 的 pip config 与 Python user base                        |
 | 002-004 | reasoning/history      | live thinking、think-tag、历史block投影                                                |
 | 005     | cron                   | targetless detached默认delivery none                                                   |
 | 006-008 | Windows/Chrome MCP     | safe runner、早期diagnostics、empty page恢复                                           |

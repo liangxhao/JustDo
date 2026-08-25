@@ -8,6 +8,8 @@ const PYTHON_USER_BASE_DIR_NAME = 'python-user';
 const PYTHON_USER_VERSION_DIR_NAME = 'Python312';
 const SITE_CUSTOMIZE_REL_PATH = path.join('Lib', 'site-packages', 'sitecustomize.py');
 
+export const JUSTDO_MANAGED_PYTHON_USER_BASE_ENV = 'JUSTDO_MANAGED_PYTHON_USER_BASE';
+
 const REQUIRED_FILES = ['python.exe', 'python3.exe', SITE_CUSTOMIZE_REL_PATH];
 const PIP_EXECUTABLE_CANDIDATES = [
   path.join('Scripts', 'pip.exe'),
@@ -184,6 +186,11 @@ function removeLegacyUserPythonRuntime(): void {
 export function appendPythonRuntimeToEnv(
   env: Record<string, string | undefined>,
 ): Record<string, string | undefined> {
+  // This function owns the provenance token. Never trust a value inherited from the host.
+  for (const key of Object.keys(env)) {
+    if (key.toUpperCase() === JUSTDO_MANAGED_PYTHON_USER_BASE_ENV) delete env[key];
+  }
+
   if (process.platform !== 'win32') {
     return env;
   }
@@ -202,6 +209,7 @@ export function appendPythonRuntimeToEnv(
     env.JUSTDO_PYTHON_ROOT = pathEntries[0];
     env.JUSTDO_PYTHON_USER_SITE = userPaths.sitePackages;
     env.PYTHONUSERBASE = userPaths.base;
+    env[JUSTDO_MANAGED_PYTHON_USER_BASE_ENV] = userPaths.base;
   }
 
   return env;
