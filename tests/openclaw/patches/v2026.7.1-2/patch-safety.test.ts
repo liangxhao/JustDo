@@ -31,7 +31,11 @@ const contextBudgetPatch =
     __testing: {
       shouldPublishJustDoLiveContextBudgetStatus: (
         entry: { sessionId?: string; contextBudgetStatus?: { updatedAt?: number } },
-        params: { sessionId?: string; status?: { updatedAt?: number } },
+        params: {
+          sessionId?: string;
+          status?: { updatedAt?: number };
+          inputProvenance?: { kind?: string; sourceTool?: string };
+        },
       ) => boolean;
     };
   };
@@ -388,6 +392,30 @@ function sanitizeHostExecEnvWithDiagnostics(params) {
       shouldPublish(current, {
         sessionId: 'session-current',
         status: { updatedAt: 201 },
+      }),
+    ).toBe(true);
+    for (const sourceTool of [
+      'agent_harness_task',
+      'image_generate',
+      'music_generate',
+      'video_generate',
+      'subagent_announce',
+      'subagent_interrupted_resume',
+    ]) {
+      expect(
+        shouldPublish(current, {
+          sessionId: 'session-current',
+          status: { updatedAt: 201 },
+          inputProvenance: { kind: 'inter_session', sourceTool },
+        }),
+        sourceTool,
+      ).toBe(false);
+    }
+    expect(
+      shouldPublish(current, {
+        sessionId: 'session-current',
+        status: { updatedAt: 201 },
+        inputProvenance: { kind: 'external_user', sourceTool: 'subagent_announce' },
       }),
     ).toBe(true);
   });

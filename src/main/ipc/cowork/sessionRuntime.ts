@@ -30,16 +30,7 @@ export const readSessionGoal = (value: unknown): SessionGoal | undefined =>
   normalizeSessionGoal(value);
 
 export const readUsage = (session: Record<string, unknown>) => {
-  const budget =
-    session.contextBudgetStatus && typeof session.contextBudgetStatus === 'object'
-      ? (session.contextBudgetStatus as Record<string, unknown>)
-      : undefined;
-  const reportedTotalTokens =
-    nonNegativeNumber(session.totalTokens) ??
-    nonNegativeNumber(session.usedTokens) ??
-    nonNegativeNumber(session.contextUsedTokens) ??
-    nonNegativeNumber(session.currentTokens);
-  const estimatedPromptTokens = nonNegativeNumber(budget?.estimatedPromptTokens);
+  const reportedTotalTokens = nonNegativeNumber(session.totalTokens);
   const reportedTotalTokensFresh =
     typeof session.totalTokensFresh === 'boolean' ? session.totalTokensFresh : true;
   const hasActiveRun =
@@ -48,17 +39,15 @@ export const readUsage = (session: Record<string, unknown>) => {
       : session.hasActiveRun === false
         ? false
         : undefined;
-  const useLiveEstimate =
-    estimatedPromptTokens !== undefined &&
-    (hasActiveRun || !reportedTotalTokensFresh || reportedTotalTokens === undefined);
-  const totalTokens = useLiveEstimate
-    ? estimatedPromptTokens
-    : (reportedTotalTokens ?? estimatedPromptTokens ?? 0);
-  const usageUpdatedAt = useLiveEstimate
-    ? nonNegativeNumber(budget?.updatedAt)
-    : nonNegativeNumber(session.updatedAt);
-  const provider = nonEmptyString(budget?.provider) ?? nonEmptyString(session.modelProvider);
-  const model = nonEmptyString(budget?.model) ?? nonEmptyString(session.model);
+  // Match OpenClaw webchat: totalTokens is the context snapshot, while
+  // contextBudgetStatus.estimatedPromptTokens is a pre-dispatch planning
+  // estimate. The estimate can describe an announce/internal run, include
+  // content that is about to be compacted, and temporarily exceed the model
+  // window, so it must never replace the user-facing context snapshot.
+  const totalTokens = reportedTotalTokens ?? 0;
+  const usageUpdatedAt = nonNegativeNumber(session.updatedAt);
+  const provider = nonEmptyString(session.modelProvider);
+  const model = nonEmptyString(session.model);
   const gatewaySessionId = [session.sessionId, session.id]
     .map(nonEmptyString)
     .find((value): value is string => value !== undefined);
@@ -74,10 +63,9 @@ export const readUsage = (session: Record<string, unknown>) => {
       nonNegativeNumber(session.contextLength) ??
       nonNegativeNumber(session.maxContextTokens) ??
       nonNegativeNumber(session.totalContextTokens) ??
-      nonNegativeNumber(budget?.contextTokenBudget) ??
       0,
-    totalTokensFresh: reportedTotalTokensFresh || estimatedPromptTokens !== undefined,
-    usageSource: useLiveEstimate ? ('estimate' as const) : ('reported' as const),
+    totalTokensFresh: reportedTotalTokensFresh,
+    usageSource: 'reported' as const,
     ...(usageUpdatedAt !== undefined ? { usageUpdatedAt } : {}),
     ...(hasActiveRun !== undefined ? { hasActiveRun } : {}),
     compactionCount,
@@ -290,7 +278,7 @@ export const registerCoworkSessionRuntimeHandlers = ({
       const result = await findGatewaySession(sessionId);
       if (!result.session) return { success: false, error: result.error };
       const usage = readUsage(result.session);
-      if (usage.totalTokens <= 0 || usage.contextTokens <= 0) {
+      if (usage.totalTokens <= 0) {
         return {
           success: false,
           error: 'Context usage is not available from OpenClaw session state',

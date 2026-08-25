@@ -239,7 +239,7 @@ describe('readSessionGoal', () => {
 });
 
 describe('readUsage', () => {
-  it('uses the live prompt estimate while the persisted total is stale', () => {
+  it('keeps the persisted context snapshot when a live prompt estimate is present', () => {
     expect(
       readUsage({
         totalTokens: 12_000,
@@ -251,10 +251,29 @@ describe('readUsage', () => {
         },
       }),
     ).toEqual({
-      totalTokens: 18_500,
+      totalTokens: 12_000,
       contextTokens: 200_000,
+      totalTokensFresh: false,
+      usageSource: 'reported',
+      compactionCount: 0,
+    });
+  });
+
+  it('does not manufacture context usage from a budget estimate alone', () => {
+    expect(
+      readUsage({
+        contextBudgetStatus: {
+          estimatedPromptTokens: 211_701,
+          contextTokenBudget: 180_000,
+          provider: 'anthropic',
+          model: 'claude-sonnet-4',
+        },
+      }),
+    ).toEqual({
+      totalTokens: 0,
+      contextTokens: 0,
       totalTokensFresh: true,
-      usageSource: 'estimate',
+      usageSource: 'reported',
       compactionCount: 0,
     });
   });
@@ -275,7 +294,7 @@ describe('readUsage', () => {
     });
   });
 
-  it('uses the live estimate during a run even when transcript fallback looks fresh', () => {
+  it('does not let an active run replace a confirmed context snapshot with an estimate', () => {
     expect(
       readUsage({
         totalTokens: 21_000,
@@ -287,8 +306,9 @@ describe('readUsage', () => {
         },
       }),
     ).toMatchObject({
-      totalTokens: 32_500,
+      totalTokens: 21_000,
       totalTokensFresh: true,
+      usageSource: 'reported',
       hasActiveRun: true,
     });
   });
@@ -310,7 +330,7 @@ describe('readUsage', () => {
     });
   });
 
-  it('treats an active status as authoritative over a contradictory idle flag', () => {
+  it('treats an active status as authoritative without changing the usage source', () => {
     expect(
       readUsage({
         totalTokens: 21_000,
@@ -321,9 +341,35 @@ describe('readUsage', () => {
         contextBudgetStatus: { estimatedPromptTokens: 32_500 },
       }),
     ).toMatchObject({
-      totalTokens: 32_500,
-      usageSource: 'estimate',
+      totalTokens: 21_000,
+      usageSource: 'reported',
       hasActiveRun: true,
+    });
+  });
+
+  it('ignores announce budget usage and model identity on the parent session', () => {
+    expect(
+      readUsage({
+        totalTokens: 90_362,
+        totalTokensFresh: true,
+        hasActiveRun: true,
+        updatedAt: 300,
+        contextWindow: 200_000,
+        modelProvider: 'openai',
+        model: 'gpt-5',
+        contextBudgetStatus: {
+          estimatedPromptTokens: 211_701,
+          updatedAt: 400,
+          provider: 'anthropic',
+          model: 'claude-sonnet-4',
+        },
+      }),
+    ).toMatchObject({
+      totalTokens: 90_362,
+      totalTokensFresh: true,
+      usageSource: 'reported',
+      usageUpdatedAt: 300,
+      modelRef: 'openai/gpt-5',
     });
   });
 
@@ -359,7 +405,7 @@ describe('readUsage', () => {
     });
   });
 
-  it('identifies and timestamps live estimates separately from final reported usage', () => {
+  it('uses the reported snapshot timestamp during both active and idle states', () => {
     expect(
       readUsage({
         totalTokens: 90_362,
@@ -373,9 +419,9 @@ describe('readUsage', () => {
         },
       }),
     ).toMatchObject({
-      totalTokens: 147_347,
-      usageSource: 'estimate',
-      usageUpdatedAt: 200,
+      totalTokens: 90_362,
+      usageSource: 'reported',
+      usageUpdatedAt: 300,
     });
 
     expect(

@@ -166,6 +166,8 @@ Minimap从timeline identity生成entry，追踪当前viewport并支持hover prev
 
 Goal card位于chat周边但状态来自Main snapshot。Compaction history detail通过专用IPC读取，timeline展示summary、tokens before/after和recovery progress；不把内部context markers显示给用户。
 
+输入区上下文圆环与OpenClaw webchat使用相同口径：只展示session `totalTokens` 快照，`totalTokensFresh: false` 时以 `~` 标记近似值；`contextBudgetStatus.estimatedPromptTokens` 是pre-prompt/mid-turn预算规划值，可能包含即将压缩或截断的内容，也可能来自复用父会话的announce/internal run，不能当作usage。运行结束后UI做有界收敛轮询；显示层将异常provider快照限制在窗口上限。live budget patch按input provenance排除announce等保留父会话状态的内部run，并按session generation、`updatedAt`拒绝乱序写入。
+
 长时间无输出提示由active turn clock派生，仅表示等待，不宣告失败。Failed run message必须区分abort、error、transport和tool failure；OpenClaw log hint仅从streaming active content的特定系统尾部移除，普通完成内容中的“Logs”标题保留。
 
 ## 18. 会话导出

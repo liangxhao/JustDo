@@ -3,7 +3,8 @@
 // Capability: publish authoritative contextBudgetStatus while an agent run is still active.
 // Target: pristine openclaw@2026.7.1-2, which projects/finalizes the field but lacks live writes.
 // Scope: publishes initial pre-prompt and mid-turn tool-result boundaries through native storage.
-// Safety: writes are best-effort, reject stale session IDs/status timestamps, and preserve updatedAt.
+// Safety: writes are best-effort, reject internal handoffs, stale session IDs/status timestamps,
+// and preserve updatedAt.
 // Remove when: sessions.list or a runtime API exposes native active-run context budget updates.
 
 const fs = require('fs');
@@ -14,6 +15,25 @@ const HELPER = 'publishJustDoLiveContextBudgetStatus';
 
 function shouldPublishJustDoLiveContextBudgetStatus(entry, params) {
   if (!entry || typeof entry !== 'object') return false;
+  const provenance = params.inputProvenance;
+  const sourceTool =
+    provenance &&
+    typeof provenance === 'object' &&
+    provenance.kind === 'inter_session' &&
+    typeof provenance.sourceTool === 'string'
+      ? provenance.sourceTool.trim().toLowerCase()
+      : '';
+  if (
+    [
+      'agent_harness_task',
+      'image_generate',
+      'music_generate',
+      'video_generate',
+      'subagent_announce',
+      'subagent_interrupted_resume',
+    ].includes(sourceTool)
+  )
+    return false;
   if (params.sessionId && entry.sessionId !== params.sessionId) return false;
   const nextUpdatedAt = Number(params.status?.updatedAt);
   if (!Number.isFinite(nextUpdatedAt)) return false;
@@ -39,13 +59,13 @@ function transform(content, filePath) {
   updated = replaceUniquePattern(
     updated,
     /(getPrePromptMessageCount: \(\) => prePromptMessageCount,\n\t\t\t\tonMidTurnPrecheck)(\n\t\t\t\} \} : \{\};)/,
-    `$1,\n\t\t\t\tonContextBudgetStatus: (result, messageCount) => {\n\t\t\t\t\tconst reserveTokens = settingsManager.getCompactionReserveTokens();\n\t\t\t\t\tvoid ${HELPER}({\n\t\t\t\t\t\tconfig: params.config,\n\t\t\t\t\t\tagentId: sessionAgentId,\n\t\t\t\t\t\tsessionKey: params.sessionKey,\n\t\t\t\t\t\tsessionId: params.sessionId,\n\t\t\t\t\t\tstatus: buildPrePromptContextBudgetStatus({ result, provider: params.provider, modelId: params.modelId, messageCount, contextTokenBudget: contextTokenBudgetForGuard, reserveTokens, ...params.sessionId ? { sessionId: params.sessionId } : {} })\n\t\t\t\t\t});\n\t\t\t\t}$2`,
+    `$1,\n\t\t\t\tonContextBudgetStatus: (result, messageCount) => {\n\t\t\t\t\tconst reserveTokens = settingsManager.getCompactionReserveTokens();\n\t\t\t\t\tvoid ${HELPER}({\n\t\t\t\t\t\tconfig: params.config,\n\t\t\t\t\t\tagentId: sessionAgentId,\n\t\t\t\t\t\tsessionKey: params.sessionKey,\n\t\t\t\t\t\tsessionId: params.sessionId,\n\t\t\t\t\t\tinputProvenance: params.inputProvenance,\n\t\t\t\t\t\tstatus: buildPrePromptContextBudgetStatus({ result, provider: params.provider, modelId: params.modelId, messageCount, contextTokenBudget: contextTokenBudgetForGuard, reserveTokens, ...params.sessionId ? { sessionId: params.sessionId } : {} })\n\t\t\t\t\t});\n\t\t\t\t}$2`,
     `${filePath}: mid-turn publisher callback`,
   );
   updated = replaceUniquePattern(
     updated,
     /(contextBudgetStatus = buildPrePromptContextBudgetStatus\(\{[\s\S]*?\n\t+\}\);)(\n\t+log\$2\.debug\(formatPrePromptPrecheckLog)/,
-    `$1\n\t\t\t\t\tvoid ${HELPER}({ config: params.config, agentId: sessionAgentId, sessionKey: params.sessionKey, sessionId: params.sessionId, status: contextBudgetStatus });$2`,
+    `$1\n\t\t\t\t\tvoid ${HELPER}({ config: params.config, agentId: sessionAgentId, sessionKey: params.sessionKey, sessionId: params.sessionId, inputProvenance: params.inputProvenance, status: contextBudgetStatus });$2`,
     `${filePath}: initial boundary publication`,
   );
   return updated;
@@ -75,6 +95,7 @@ function verifyPatch(runtimeDir) {
     'onContextBudgetStatus?.(precheck, contextMessages.length)',
     'contextBudgetStatus: params.status',
     'status: contextBudgetStatus',
+    'inputProvenance: params.inputProvenance',
     'takeCacheOwnership: true',
     'entry.sessionId !== params.sessionId',
     'currentUpdatedAt >= nextUpdatedAt',

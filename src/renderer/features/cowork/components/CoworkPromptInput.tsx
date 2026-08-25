@@ -1217,11 +1217,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         contextUsage.totalTokens,
         contextTokens,
       );
-      const estimatePrefix = contextUsage.usageSource === 'estimate' ? '~' : '';
+      const estimatePrefix = contextUsage.totalTokensFresh ? '' : '~';
       const overflowSuffix = overflowed ? '+' : '';
       return {
         percentage,
-        text: `${estimatePrefix}${formatContextLength(usedTokens)}${overflowSuffix} / ${formatContextLength(contextTokens)} · ${percentage}%`,
+        text: `${estimatePrefix}${formatContextLength(usedTokens)}${overflowSuffix} / ${formatContextLength(contextTokens)} · ${estimatePrefix}${percentage}%`,
       };
     }, [contextUsage, effectiveSelectedModel?.contextLength]);
     const contextUsageStatus = sessionId && contextUsageDisplay ? contextUsageDisplay : null;

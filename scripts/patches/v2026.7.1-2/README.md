@@ -498,7 +498,8 @@ flowchart LR
 - **做什么**：在 active run 的 pre-prompt 和 mid-turn tool-result 边界，把权威
   `contextBudgetStatus` best-effort 写入原生 session store，供 `sessions.list` 实时展示。
 - **关系与边界**：字段定义、list projection 和 turn 结束后的最终持久化全部由上游负责；本补丁
-  只补实时窗口，并用 session generation、status timestamp 防止旧 run 覆盖新状态。
+  只补实时窗口，并用 input provenance 排除 announce 等保留用户会话状态的内部 run，再以
+  session generation、status timestamp 防止旧 run 覆盖新状态。
 - **当前保留原因**：删除不会丢最终 budget 数据，但运行中的长 turn 一直显示旧值，UI 无法及时
   判断接近 compaction/overflow。这是实时可观测性能力，不是字段存储补丁。
 - **可删除条件**：上游 active-run API 或 `sessions.list` 原生发布实时 context budget，或 UI
