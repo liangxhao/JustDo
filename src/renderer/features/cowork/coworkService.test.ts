@@ -9,6 +9,51 @@ import {
 import type { CoworkSession } from '@/features/cowork/coworkTypes';
 import { store } from '@/store';
 
+describe('cowork session startup', () => {
+  afterEach(() => {
+    store.dispatch(clearCurrentSession());
+    vi.unstubAllGlobals();
+  });
+
+  test('registers session promotion before selecting the canonical session', async () => {
+    const session: CoworkSession = {
+      id: 'session-1',
+      title: 'New session',
+      status: 'running',
+      pinned: false,
+      cwd: '',
+      executionMode: 'local',
+      permissionMode: 'ask',
+      activeSkillIds: [],
+      agentId: 'main',
+      messages: [],
+      createdAt: 1_000,
+      updatedAt: 1_000,
+    };
+    vi.stubGlobal('window', {
+      electron: {
+        cowork: {
+          startSession: vi.fn().mockResolvedValue({ success: true, session }),
+        },
+      },
+    });
+    store.dispatch(clearCurrentSession());
+    let selectedSessionIdDuringHook: string | null | undefined;
+
+    await coworkService.startSession(
+      { prompt: 'start' },
+      {
+        beforeSessionSelected: () => {
+          selectedSessionIdDuringHook = store.getState().cowork.currentSessionId;
+        },
+      },
+    );
+
+    expect(selectedSessionIdDuringHook).toBeNull();
+    expect(store.getState().cowork.currentSessionId).toBe('session-1');
+  });
+});
+
 const setRuntimeStatusResponse = (response: {
   success: boolean;
   known: boolean;

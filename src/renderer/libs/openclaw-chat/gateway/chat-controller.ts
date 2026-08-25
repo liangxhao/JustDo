@@ -46,6 +46,7 @@ import {
   type AssistantTurn,
   type AssistantTurnTiming,
   beginAssistantTurn,
+  bindAssistantTurnRunId,
   type ChatTranscriptState,
   createChatTranscriptState,
   type HistorySource,
@@ -172,6 +173,26 @@ type LocalCompactionStatus = {
       tokensAfter?: number;
     };
   };
+};
+
+type SessionLiveState = Pick<
+  ChatState,
+  | 'currentSessionId'
+  | 'chatSending'
+  | 'compactionInFlight'
+  | 'chatRunId'
+  | 'lastError'
+  | 'runActivity'
+  | 'pendingUserMessage'
+  | 'transcript'
+> & {
+  terminalLifecycleSeen: boolean;
+  assistantSnapshotRunId: string | null;
+  ignoredDeltaAfterAssistantSnapshotCount: number;
+};
+
+type SwitchSessionOptions = {
+  promoteFromSessionKey?: string;
 };
 
 type OpenClawHistoryBridge = {
@@ -360,6 +381,7 @@ export class ChatController {
   private gatewayToken = '';
   private chatMessagesBySession = new Map<string, ChunkedMessageHistory>();
   private historySourceBySession = new Map<string, HistorySource>();
+  private liveStateBySession = new Map<string, SessionLiveState>();
   private turnTimingBySession = new Map<string, AssistantTurnTiming>();
   private currentMessageHistory = new ChunkedMessageHistory();
   private transcriptImageCache = new Map<string, Promise<string | null>>();
@@ -673,6 +695,238 @@ export class ChatController {
         this.historySourceBySession.delete(oldestKey);
       }
     }
+  }
+
+  private findLiveSessionState(
+    sessionKey: string | null | undefined,
+    sessionId?: string | null,
+  ): [string, SessionLiveState] | null {
+    if (sessionKey) {
+      const exact = this.liveStateBySession.get(sessionKey);
+      if (exact) return [sessionKey, exact];
+      const normalized = normalizeTranscriptSessionKey(sessionKey);
+      for (const entry of this.liveStateBySession) {
+        if (normalizeTranscriptSessionKey(entry[0]) === normalized) return entry;
+      }
+    }
+    if (sessionId) {
+      for (const entry of this.liveStateBySession) {
+        if (
+          entry[1].currentSessionId === sessionId ||
+          entry[1].transcript.sessionId === sessionId
+        ) {
+          return entry;
+        }
+      }
+    }
+    return null;
+  }
+
+  private cacheCurrentLiveState(sessionKey: string): void {
+    if (!sessionKey) return;
+    this.clearRunActivityTimer();
+    this.runProbeToken = null;
+    this.cacheCurrentTurnTiming();
+    this.state.transcript.historyGeneration += 1;
+    this.state.transcript.revision += 1;
+    const hasUnsettledTurn =
+      this.state.chatSending ||
+      this.state.pendingUserMessage !== null ||
+      this.state.transcript.activeTurn?.status === 'running';
+    if (!hasUnsettledTurn && this.state.transcript.activeTurn) {
+      this.state.transcript.activeTurn = null;
+      this.state.transcript.revision += 1;
+    }
+    this.liveStateBySession.delete(sessionKey);
+    this.liveStateBySession.set(sessionKey, {
+      currentSessionId: this.state.currentSessionId,
+      chatSending: this.state.chatSending,
+      compactionInFlight: this.state.compactionInFlight,
+      chatRunId: this.state.chatRunId,
+      lastError: this.state.lastError,
+      runActivity: this.state.runActivity,
+      pendingUserMessage: this.state.pendingUserMessage,
+      transcript: this.state.transcript,
+      terminalLifecycleSeen: this.terminalLifecycleSeen,
+      assistantSnapshotRunId: this.assistantSnapshotRunId,
+      ignoredDeltaAfterAssistantSnapshotCount: this.ignoredDeltaAfterAssistantSnapshotCount,
+    });
+    if (this.liveStateBySession.size > 20) {
+      const oldestSettledKey = [...this.liveStateBySession].find(
+        ([, live]) => !live.chatSending && live.transcript.activeTurn?.status !== 'running',
+      )?.[0];
+      if (oldestSettledKey) this.liveStateBySession.delete(oldestSettledKey);
+    }
+  }
+
+  private restoreLiveState(sessionKey: string): boolean {
+    const cachedEntry = this.findLiveSessionState(sessionKey);
+    if (!cachedEntry) {
+      this.state.currentSessionId = null;
+      this.state.chatSending = false;
+      this.state.compactionInFlight = false;
+      this.state.chatRunId = null;
+      this.state.lastError = null;
+      this.state.runActivity = null;
+      this.state.pendingUserMessage = null;
+      this.state.transcript = createChatTranscriptState(sessionKey, null);
+      this.terminalLifecycleSeen = false;
+      this.resetAssistantSnapshotSource();
+      return false;
+    }
+
+    const [cachedKey, cached] = cachedEntry;
+    if (cachedKey !== sessionKey) {
+      this.liveStateBySession.delete(cachedKey);
+      this.liveStateBySession.set(sessionKey, cached);
+    }
+    cached.transcript.sessionKey = sessionKey;
+    if (cached.transcript.activeTurn) cached.transcript.activeTurn.sessionKey = sessionKey;
+    this.state.currentSessionId = cached.currentSessionId;
+    this.state.chatSending = cached.chatSending;
+    this.state.compactionInFlight = cached.compactionInFlight;
+    this.state.chatRunId = cached.chatRunId;
+    this.state.lastError = cached.lastError;
+    this.state.runActivity = cached.runActivity;
+    this.state.pendingUserMessage = cached.pendingUserMessage;
+    this.state.transcript = cached.transcript;
+    this.terminalLifecycleSeen = cached.terminalLifecycleSeen;
+    this.assistantSnapshotRunId = cached.assistantSnapshotRunId;
+    this.ignoredDeltaAfterAssistantSnapshotCount = cached.ignoredDeltaAfterAssistantSnapshotCount;
+    if (this.state.chatSending && this.state.runActivity) this.scheduleRunActivityCheck();
+    if (this.terminalLifecycleSeen && this.state.chatSending && !this.state.compactionInFlight) {
+      this.scheduleChatLifecycleEndFallback();
+    }
+    return true;
+  }
+
+  private isSelectedSession(sessionKey: string): boolean {
+    return (
+      normalizeTranscriptSessionKey(sessionKey) ===
+      normalizeTranscriptSessionKey(this.state.sessionKey)
+    );
+  }
+
+  private promoteCachedSessionState(sourceSessionKey: string, targetSessionKey: string): void {
+    const sourceHistory = this.chatMessagesBySession.get(sourceSessionKey);
+    this.chatMessagesBySession.delete(sourceSessionKey);
+    if (sourceHistory) this.chatMessagesBySession.set(targetSessionKey, sourceHistory);
+
+    const sourceHistorySource = this.historySourceBySession.get(sourceSessionKey);
+    this.historySourceBySession.delete(sourceSessionKey);
+    if (sourceHistorySource) {
+      this.historySourceBySession.set(targetSessionKey, sourceHistorySource);
+    }
+
+    const sourceLiveEntry = this.findLiveSessionState(sourceSessionKey);
+    if (!sourceLiveEntry) return;
+    const [sourceLiveKey, sourceLiveState] = sourceLiveEntry;
+    this.liveStateBySession.delete(sourceLiveKey);
+    sourceLiveState.currentSessionId = null;
+    sourceLiveState.transcript.sessionKey = targetSessionKey;
+    sourceLiveState.transcript.sessionId = null;
+    sourceLiveState.transcript.historyGeneration += 1;
+    if (sourceLiveState.transcript.activeTurn) {
+      sourceLiveState.transcript.activeTurn.sessionKey = targetSessionKey;
+      sourceLiveState.transcript.activeTurn.sessionId = null;
+    }
+    sourceLiveState.transcript.revision += 1;
+    this.liveStateBySession.set(targetSessionKey, sourceLiveState);
+  }
+
+  private getSessionRunId(sessionKey: string): string | null {
+    if (this.isSelectedSession(sessionKey)) return this.state.chatRunId;
+    return this.findLiveSessionState(sessionKey)?.[1].chatRunId ?? null;
+  }
+
+  private bindAcknowledgedRun(
+    sessionKey: string,
+    provisionalRunId: string,
+    acknowledgedRunId: string,
+  ): void {
+    if (this.isSelectedSession(sessionKey)) {
+      if (this.state.chatRunId !== provisionalRunId) return;
+      this.state.chatRunId = acknowledgedRunId;
+      if (this.state.runActivity?.runId === provisionalRunId) {
+        this.state.runActivity.runId = acknowledgedRunId;
+      }
+      bindAssistantTurnRunId(
+        this.state.transcript,
+        provisionalRunId,
+        acknowledgedRunId,
+      );
+      return;
+    }
+
+    const cached = this.findLiveSessionState(sessionKey)?.[1];
+    if (!cached || cached.chatRunId !== provisionalRunId) return;
+    cached.chatRunId = acknowledgedRunId;
+    if (cached.runActivity?.runId === provisionalRunId) {
+      cached.runActivity.runId = acknowledgedRunId;
+    }
+    bindAssistantTurnRunId(cached.transcript, provisionalRunId, acknowledgedRunId);
+  }
+
+  private settleChatSend(
+    sessionKey: string,
+    runId: string,
+    state: 'final' | 'error',
+    errorMessage?: string,
+  ): void {
+    const sessionId = this.isSelectedSession(sessionKey)
+      ? this.state.currentSessionId
+      : (this.findLiveSessionState(sessionKey)?.[1].currentSessionId ?? null);
+    const terminalMessage =
+      state === 'error'
+        ? {
+            role: 'assistant',
+            content: `Error: ${errorMessage ?? 'Unknown error'}`,
+            timestamp: Date.now(),
+          }
+        : undefined;
+    const event: NormalizedChatEvent = {
+      runId,
+      sessionKey,
+      sessionId,
+      lifecycleGeneration: null,
+      frameSeq: null,
+      state,
+      replace: false,
+      ...(terminalMessage ? { message: terminalMessage } : {}),
+      ...(errorMessage ? { errorMessage } : {}),
+    };
+
+    if (!this.isSelectedSession(sessionKey)) {
+      this.applyBackgroundChatEvent(event);
+      return;
+    }
+    if (reduceChatEvent(this.state.transcript, event, this.transcriptDependencies) !== 'applied') {
+      return;
+    }
+    this.finishTurnTimingForSession(sessionKey, state, runId);
+    this.state.chatSending = false;
+    this.state.chatRunId = null;
+    this.clearRunActivity();
+    this.resetAssistantSnapshotSource();
+    if (state === 'error') {
+      this.state.lastError = errorMessage ?? 'Unknown error';
+      this.setCurrentSessionMessages([...this.state.chatMessages, terminalMessage]);
+    }
+    this.notify();
+  }
+
+  private settleCompactionRequest(sessionKey: string, errorMessage?: string): void {
+    if (this.isSelectedSession(sessionKey)) {
+      this.state.chatSending = false;
+      this.state.compactionInFlight = false;
+      if (errorMessage) this.state.lastError = errorMessage;
+      return;
+    }
+    const cached = this.findLiveSessionState(sessionKey)?.[1];
+    if (!cached) return;
+    cached.chatSending = false;
+    cached.compactionInFlight = false;
+    if (errorMessage) cached.lastError = errorMessage;
   }
 
   private cacheCurrentTurnTiming(): void {
@@ -1084,6 +1338,7 @@ export class ChatController {
       const existingSource = this.historySourceBySession.get(sessionKey) ?? 'optimistic';
       if (existingSource === 'gateway') return false;
       const existingHistory = this.chatMessagesBySession.get(sessionKey);
+      const cachedLiveState = this.findLiveSessionState(sessionKey)?.[1];
       const fallbackState = createChatTranscriptState(sessionKey, null);
       fallbackState.historySource = existingSource;
       fallbackState.persistedMessages = existingHistory?.recentMessages ?? [];
@@ -1097,6 +1352,9 @@ export class ChatController {
         messages: projectedMessages,
         requestStartMessages: fallbackState.persistedMessages,
         currentMessages: fallbackState.persistedMessages,
+        activeRun:
+          cachedLiveState?.chatSending === true ||
+          cachedLiveState?.transcript.activeTurn?.status === 'running',
         isVisibleMessage: message => !shouldHideMessage(message),
       });
       if (!reconciliation.accepted) return false;
@@ -1378,12 +1636,16 @@ export class ChatController {
     sessionKey = this.state.sessionKey,
     data: Record<string, unknown> = {},
   ): void {
-    const isCurrentSession = sessionKey === this.state.sessionKey;
+    const isCurrentSession = this.isSelectedSession(sessionKey);
     if (phase === 'start' || phase === 'update') {
       const status = this.beginLocalCompactionStatus(sessionKey);
       if (status.message.__openclaw.phase === 'completed') return;
       this.updateLocalCompactionSummary(sessionKey, status, data);
-      if (!isCurrentSession) return;
+      if (!isCurrentSession) {
+        const cached = this.findLiveSessionState(sessionKey)?.[1];
+        if (cached) cached.compactionInFlight = true;
+        return;
+      }
       this.state.compactionInFlight = true;
       this.clearLifecycleEndFallback();
       this.notifyStream();
@@ -1392,7 +1654,11 @@ export class ChatController {
     }
     if (phase === 'error' || phase === 'failed') {
       this.clearLocalCompactionStatus(sessionKey);
-      if (!isCurrentSession) return;
+      if (!isCurrentSession) {
+        const cached = this.findLiveSessionState(sessionKey)?.[1];
+        if (cached) cached.compactionInFlight = false;
+        return;
+      }
       this.state.compactionInFlight = false;
       if (this.terminalLifecycleSeen) this.scheduleChatLifecycleEndFallback();
       this.notifyStream();
@@ -1409,7 +1675,11 @@ export class ChatController {
       before: typeof data.tokensBefore === 'number' ? data.tokensBefore : undefined,
       after: typeof data.tokensAfter === 'number' ? data.tokensAfter : undefined,
     });
-    if (!isCurrentSession) return;
+    if (!isCurrentSession) {
+      const cached = this.findLiveSessionState(sessionKey)?.[1];
+      if (cached) cached.compactionInFlight = false;
+      return;
+    }
     this.state.compactionInFlight = false;
     if (this.terminalLifecycleSeen) this.scheduleChatLifecycleEndFallback();
     if (status && wasInProgress) {
@@ -1627,43 +1897,36 @@ export class ChatController {
   }
 
   /** Switch to a different session */
-  async switchSession(sessionKey: string): Promise<void> {
+  async switchSession(sessionKey: string, options: SwitchSessionOptions = {}): Promise<void> {
     const previousSessionKey = this.state.sessionKey;
-    const isTempSessionPromotion =
-      isTempJustDoSessionKey(previousSessionKey) && !isTempJustDoSessionKey(sessionKey);
+    const promotionSource = options.promoteFromSessionKey?.trim() || null;
+    const isTempSessionPromotion = Boolean(
+      promotionSource &&
+        isTempJustDoSessionKey(promotionSource) &&
+        !isTempJustDoSessionKey(sessionKey),
+    );
     debugLog('[ChatCtrl] switchSession:', sessionKey, {
       hadPendingUserMsg: !!this.state.pendingUserMessage,
       chatSending: this.state.chatSending,
       msgCount: this.state.chatMessages.length,
       previousSessionKey,
+      promotionSource,
       isTempSessionPromotion,
     });
+    this.clearLifecycleEndFallback();
+    if (!isTempSessionPromotion || previousSessionKey !== promotionSource) {
+      this.pendingAnnounceEvents.clear();
+    }
+    this.cacheCurrentLiveState(previousSessionKey);
+    if (isTempSessionPromotion && promotionSource) {
+      this.promoteCachedSessionState(promotionSource, sessionKey);
+    }
     this.state.sessionKey = sessionKey;
-    this.state.currentSessionId = null;
     this.state.initialHistoryReady = false;
     this.state.historyLoadingOlder = false;
     this.state.historyHasMore = false;
     this.state.historyNextCursor = null;
-    if (isTempSessionPromotion) {
-      this.state.transcript.sessionKey = sessionKey;
-      this.state.transcript.sessionId = null;
-      this.state.transcript.historyGeneration += 1;
-      if (this.state.transcript.activeTurn) {
-        this.state.transcript.activeTurn.sessionKey = sessionKey;
-        this.state.transcript.activeTurn.sessionId = null;
-      }
-      this.state.transcript.revision += 1;
-    } else {
-      this.resetTranscriptForSession(sessionKey, null);
-    }
-    // Only preserve the optimistic prompt while replacing the temporary UI
-    // session with the persisted JustDo session. For normal user-initiated
-    // switches, clear the active run state so the target session can load its
-    // own history even while another session is still running.
-    if (!isTempSessionPromotion) {
-      this.state.chatSending = false;
-      this.state.pendingUserMessage = null;
-    }
+    this.restoreLiveState(sessionKey);
     this.currentMessageHistory =
       this.chatMessagesBySession.get(sessionKey) ?? new ChunkedMessageHistory();
     this.state.chatMessages = this.currentMessageHistory.recentMessages;
@@ -1678,17 +1941,12 @@ export class ChatController {
     this.state.transcript.persistedMessages = this.state.chatMessages;
     this.state.transcript.historySource =
       this.historySourceBySession.get(sessionKey) ?? 'optimistic';
-    this.state.chatRunId = null;
-    if (!isTempSessionPromotion) this.clearRunActivity();
     this.suspendedRunId = null;
-    this.state.compactionInFlight = false;
-    this.terminalLifecycleSeen = false;
     this.state.chatLoading = true;
     this.pendingHistoryReload = false;
     this.clearPostFinalHistoryReload();
     this.clearDeferredHistoryReload();
     this.clearOlderHistoryContinuation();
-    this.resetAssistantSnapshotSource();
     this.notify();
 
     const client = this.state.client;
@@ -1838,6 +2096,134 @@ export class ChatController {
     }
   }
 
+  private applyBackgroundChatEvent(payload: NormalizedChatEvent): void {
+    const cachedEntry = this.findLiveSessionState(payload.sessionKey);
+    if (!cachedEntry) {
+      if (payload.state !== 'delta') {
+        this.finishTurnTimingForSession(payload.sessionKey, payload.state, payload.runId);
+      }
+      return;
+    }
+
+    const [sessionKey, cached] = cachedEntry;
+    if (
+      payload.state === 'delta' &&
+      cached.assistantSnapshotRunId &&
+      (!payload.runId || payload.runId === cached.assistantSnapshotRunId)
+    ) {
+      cached.ignoredDeltaAfterAssistantSnapshotCount += 1;
+      return;
+    }
+    const liveThinkingText = collectActiveThinkingText(cached.transcript.activeTurn);
+    const liveContentText = collectActiveContentText(cached.transcript.activeTurn);
+    const startedAt = cached.transcript.activeTurn?.startedAt ?? null;
+    const reduceResult = reduceChatEvent(cached.transcript, payload, this.transcriptDependencies);
+    if (reduceResult !== 'applied') return;
+    if (payload.state === 'delta') return;
+
+    this.finishTurnTimingForSession(sessionKey, payload.state, payload.runId);
+    let terminalMessage =
+      payload.state === 'final'
+        ? stripAssistantSilentReplySuffix(payload.message)
+        : payload.message;
+    if (payload.state === 'aborted' && !terminalMessage) {
+      terminalMessage = buildInterruptedTurnMessage(
+        liveThinkingText,
+        liveContentText,
+        payload.runId,
+      );
+    }
+    if (terminalMessage && !shouldHideMessage(terminalMessage)) {
+      const runScopedMessage =
+        payload.runId && typeof terminalMessage === 'object' && !Array.isArray(terminalMessage)
+          ? { ...(terminalMessage as Record<string, unknown>), runId: payload.runId }
+          : terminalMessage;
+      const projectedMessage = markOptimisticHistoryTail(
+        liveThinkingText
+          ? withThinkingContent(runScopedMessage, liveThinkingText)
+          : runScopedMessage,
+      );
+      const history = this.chatMessagesBySession.get(sessionKey) ?? new ChunkedMessageHistory();
+      history.replaceRecent(
+        appendTerminalMessage(history.recentMessages, projectedMessage, startedAt),
+      );
+      this.chatMessagesBySession.set(sessionKey, history);
+      cached.transcript.persistedMessages = history.recentMessages;
+    }
+    cached.chatSending = false;
+    cached.compactionInFlight = false;
+    cached.chatRunId = null;
+    cached.runActivity = null;
+    cached.terminalLifecycleSeen = false;
+    cached.assistantSnapshotRunId = null;
+    cached.ignoredDeltaAfterAssistantSnapshotCount = 0;
+    if (payload.state === 'error') {
+      cached.lastError = payload.errorMessage ?? 'Unknown error';
+    }
+  }
+
+  private applyBackgroundAgentEvent(event: NormalizedAgentEvent): void {
+    const cachedEntry = this.findLiveSessionState(event.sessionKey, event.sessionId);
+    if (!cachedEntry) return;
+    const [sessionKey, cached] = cachedEntry;
+    if (
+      event.stream === 'assistant' &&
+      typeof event.data.text === 'string' &&
+      isHiddenOrPendingControlReplyText(event.data.text)
+    ) {
+      return;
+    }
+    const reduceResult = reduceAgentEvent(cached.transcript, event, this.transcriptDependencies);
+    if (reduceResult !== 'applied') return;
+
+    if (
+      event.stream === 'thinking' ||
+      event.stream === 'assistant' ||
+      event.stream === 'tool' ||
+      (event.stream === 'lifecycle' && event.data.phase === 'start')
+    ) {
+      cached.chatSending = true;
+      cached.chatRunId = event.runId;
+    }
+    if (event.stream === 'assistant') {
+      cached.assistantSnapshotRunId = event.runId;
+      cached.ignoredDeltaAfterAssistantSnapshotCount = 0;
+    }
+    if (event.stream !== 'lifecycle') return;
+
+    const phase = typeof event.data.phase === 'string' ? event.data.phase : '';
+    if (phase === 'start') cached.terminalLifecycleSeen = false;
+    if (phase === 'end' && event.data.aborted === true) {
+      this.applyBackgroundChatEvent({
+        runId: event.runId,
+        sessionKey,
+        sessionId: event.sessionId,
+        lifecycleGeneration: event.lifecycleGeneration,
+        frameSeq: event.frameSeq,
+        state: 'aborted',
+        replace: false,
+      });
+      return;
+    }
+    if (phase === 'end') cached.terminalLifecycleSeen = true;
+    if (phase === 'error') {
+      const errorMessage =
+        typeof event.data.error === 'string' && event.data.error.trim()
+          ? event.data.error.trim()
+          : 'Unknown error';
+      this.applyBackgroundChatEvent({
+        runId: event.runId,
+        sessionKey,
+        sessionId: event.sessionId,
+        lifecycleGeneration: event.lifecycleGeneration,
+        frameSeq: event.frameSeq,
+        state: 'error',
+        replace: false,
+        errorMessage,
+      });
+    }
+  }
+
   private handleEvent(event: GatewayEventFrame): void {
     if (event.event === 'tick') return;
     if (event.event === 'chat') {
@@ -1847,8 +2233,8 @@ export class ChatController {
         const matchesSelectedSession =
           normalizeTranscriptSessionKey(payload.sessionKey) ===
           normalizeTranscriptSessionKey(this.state.sessionKey);
-        if (!matchesSelectedSession && payload.state !== 'delta') {
-          this.finishTurnTimingForSession(payload.sessionKey, payload.state, payload.runId);
+        if (!matchesSelectedSession) {
+          this.applyBackgroundChatEvent(payload);
           return;
         }
         if (
@@ -1943,6 +2329,20 @@ export class ChatController {
           reason: normalized.reason,
           frameSeq: event.seq ?? null,
         });
+        return;
+      }
+      const cachedEventSession = this.findLiveSessionState(
+        normalized.event.sessionKey,
+        normalized.event.sessionId,
+      );
+      const eventTargetsBackgroundSession = normalized.event.sessionKey
+        ? normalizeTranscriptSessionKey(normalized.event.sessionKey) !==
+          normalizeTranscriptSessionKey(this.state.sessionKey)
+        : cachedEventSession !== null &&
+          normalizeTranscriptSessionKey(cachedEventSession[0]) !==
+            normalizeTranscriptSessionKey(this.state.sessionKey);
+      if (eventTargetsBackgroundSession) {
+        this.applyBackgroundAgentEvent(normalized.event);
         return;
       }
       if (
@@ -3451,67 +3851,22 @@ export class ChatController {
         debugLog('[ChatCtrl] failed to persist root run binding', error);
       }
 
-      if (ack?.runId && this.state.sessionKey === sessionKey && this.state.chatRunId === runId) {
-        this.state.chatRunId = ack.runId;
-        if (this.state.runActivity?.runId === runId) this.state.runActivity.runId = ack.runId;
-      }
+      if (ack?.runId) this.bindAcknowledgedRun(sessionKey, runId, ack.runId);
 
       // If status is "ok", the run already completed
+      const acknowledgedRunId = ack?.runId ?? runId;
+      const activeRunId = this.getSessionRunId(sessionKey);
       const ackMatchesActiveRun =
-        this.state.chatRunId === runId ||
-        (typeof ack?.runId === 'string' && this.state.chatRunId === ack.runId);
-      if (ack?.status === 'ok' && this.state.sessionKey === sessionKey && ackMatchesActiveRun) {
-        reduceChatEvent(
-          this.state.transcript,
-          {
-            runId: ack.runId ?? runId,
-            sessionKey,
-            sessionId: this.state.currentSessionId,
-            lifecycleGeneration: null,
-            frameSeq: null,
-            state: 'final',
-            replace: false,
-          },
-          this.transcriptDependencies,
-        );
-        this.finishCurrentTurnTiming('final', ack.runId ?? runId);
-        this.state.chatSending = false;
-        this.state.chatRunId = null;
-        this.clearRunActivity();
-        this.resetAssistantSnapshotSource();
-        this.notify();
+        activeRunId === runId || activeRunId === acknowledgedRunId;
+      if (ack?.status === 'ok' && ackMatchesActiveRun) {
+        this.settleChatSend(sessionKey, acknowledgedRunId, 'final');
       }
     } catch (err) {
-      if (this.state.sessionKey !== sessionKey || this.state.chatRunId !== runId) {
+      if (this.getSessionRunId(sessionKey) !== runId) {
         if (options.propagateRequestFailure) throw err;
         return;
       }
-      reduceChatEvent(
-        this.state.transcript,
-        {
-          runId,
-          sessionKey,
-          sessionId: this.state.currentSessionId,
-          lifecycleGeneration: null,
-          frameSeq: null,
-          state: 'error',
-          replace: false,
-          errorMessage: (err as Error).message,
-        },
-        this.transcriptDependencies,
-      );
-      this.finishCurrentTurnTiming('error', runId);
-      this.state.chatSending = false;
-      this.state.chatRunId = null;
-      this.clearRunActivity();
-      this.resetAssistantSnapshotSource();
-      this.state.lastError = (err as Error).message;
-      // Add error as assistant message
-      this.setCurrentSessionMessages([
-        ...this.state.chatMessages,
-        { role: 'assistant', content: `Error: ${(err as Error).message}`, timestamp: Date.now() },
-      ]);
-      this.notify();
+      this.settleChatSend(sessionKey, runId, 'error', (err as Error).message);
       if (options.propagateRequestFailure) throw err;
     }
   }
@@ -3559,13 +3914,12 @@ export class ChatController {
       const after = result?.result?.tokensAfter;
       if (result?.compacted) {
         this.completeLocalCompactionStatus(sessionKey, { before, after });
-        if (this.state.sessionKey !== sessionKey) return;
-        this.state.chatSending = false;
-        this.state.compactionInFlight = false;
+        this.settleCompactionRequest(sessionKey);
+        if (!this.isSelectedSession(sessionKey)) return;
         this.notifyStream();
         this.notify();
         const historyLoaded = await this.loadHistory();
-        if (this.state.sessionKey !== sessionKey) return;
+        if (!this.isSelectedSession(sessionKey)) return;
         if (!historyLoaded) {
           this.localCompactionStatusBySession.delete(sessionKey);
           this.deferredHistoryReloadAttempts.delete(sessionKey);
@@ -3615,9 +3969,8 @@ export class ChatController {
         },
       };
       this.updateLocalCompactionMessage(sessionKey, statusId, skippedMessage);
-      if (this.state.sessionKey !== sessionKey) return;
-      this.state.chatSending = false;
-      this.state.compactionInFlight = false;
+      this.settleCompactionRequest(sessionKey);
+      if (!this.isSelectedSession(sessionKey)) return;
       this.notifyStream();
       this.notify();
     } catch (err) {
@@ -3629,10 +3982,8 @@ export class ChatController {
         content: formatI18n('coworkCompactFailed', { error: errorMessage }),
         timestamp: localStatus.message.timestamp,
       });
-      if (this.state.sessionKey !== sessionKey) return;
-      this.state.chatSending = false;
-      this.state.compactionInFlight = false;
-      this.state.lastError = errorMessage;
+      this.settleCompactionRequest(sessionKey, errorMessage);
+      if (!this.isSelectedSession(sessionKey)) return;
       this.notifyStream();
       this.notify();
     }

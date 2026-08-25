@@ -57,6 +57,10 @@ import type {
 import { i18nService } from '@/services/i18n';
 import { store } from '@/store';
 
+type StartSessionHooks = {
+  beforeSessionSelected?: (session: CoworkSession) => void;
+};
+
 const DEBUG_COWORK_SERVICE =
   typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEBUG_COWORK_SERVICE === 'true';
 
@@ -642,6 +646,7 @@ class CoworkService {
 
   async startSession(
     options: CoworkStartOptions,
+    hooks: StartSessionHooks = {},
   ): Promise<{ session: CoworkSession | null; error?: string }> {
     const cowork = window.electron?.cowork;
     if (!cowork) {
@@ -660,6 +665,7 @@ class CoworkService {
         ...result.session,
         status: isRunning ? 'running' : result.session.status,
       };
+      hooks.beforeSessionSelected?.(runningSession);
       store.dispatch(addSession(runningSession));
       if (isRunning) this.markSessionInProgress(runningSession.id);
       if (result.timing) {

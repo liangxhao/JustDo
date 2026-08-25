@@ -1063,12 +1063,64 @@ test('preserves optimistic prompt when promoting a temp session to a persisted s
   controller.state.sessionKey = 'agent:main:justdo:temp-123';
   controller.setPendingUserMessage('start this task');
 
-  await controller.switchSession('agent:main:justdo:persisted-session');
+  await controller.switchSession('agent:main:justdo:persisted-session', {
+    promoteFromSessionKey: 'agent:main:justdo:temp-123',
+  });
 
   expect(controller.state.sessionKey).toBe('agent:main:justdo:persisted-session');
   expect(controller.state.chatSending).toBe(true);
   expect(controller.state.pendingUserMessage?.content).toBe('start this task');
   expect(controller.state.chatLoading).toBe(true);
+});
+
+test('does not promote a temporary session during ordinary navigation', async () => {
+  const originalSession = 'agent:main:justdo:session-a';
+  const temporarySession = 'agent:main:justdo:temp-b';
+  const controller = new ChatController();
+  controller.state.sessionKey = originalSession;
+  controller.admitFallbackHistory(originalSession, [
+    { role: 'assistant', content: 'A-old', timestamp: 1_000 },
+  ]);
+
+  await controller.switchSession(temporarySession);
+  controller.admitFallbackHistory(temporarySession, [
+    { role: 'user', content: 'B-new', timestamp: 2_000 },
+  ]);
+  controller.setPendingUserMessage('B-new');
+  await controller.switchSession(originalSession);
+
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({ role: 'assistant', content: 'A-old' }),
+  ]);
+  expect(controller.state.pendingUserMessage).toBeNull();
+  expect(controller.state.chatSending).toBe(false);
+});
+
+test('promotes the registered temporary session after navigating away from it', async () => {
+  const originalSession = 'agent:main:justdo:session-a';
+  const temporarySession = 'agent:main:justdo:temp-b';
+  const persistedSession = 'agent:main:justdo:session-b';
+  const controller = new ChatController();
+  controller.state.sessionKey = originalSession;
+  controller.admitFallbackHistory(originalSession, [
+    { role: 'assistant', content: 'A-old', timestamp: 1_000 },
+  ]);
+
+  await controller.switchSession(temporarySession);
+  controller.admitFallbackHistory(temporarySession, [
+    { role: 'user', content: 'B-new', timestamp: 2_000 },
+  ]);
+  controller.setPendingUserMessage('B-new');
+  await controller.switchSession(originalSession);
+  await controller.switchSession(persistedSession, {
+    promoteFromSessionKey: temporarySession,
+  });
+
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({ role: 'user', content: 'B-new' }),
+  ]);
+  expect(controller.state.pendingUserMessage?.content).toBe('B-new');
+  expect(controller.state.chatSending).toBe(true);
 });
 
 test('moves the message subscription when switching connected sessions', async () => {
@@ -1943,6 +1995,213 @@ test('keeps optimistic messages in the per-session cache', async () => {
   ]);
 });
 
+test('settles the originating session when chat.send completes after switching away', async () => {
+  const runningSessionKey = 'agent:main:justdo:session-1';
+  const otherSessionKey = 'agent:main:justdo:session-2';
+  let resolveSend: ((value: { runId: string; status: string }) => void) | undefined;
+  const request = vi.fn().mockImplementation((method: string) => {
+    if (method === 'chat.send') {
+      return new Promise<{ runId: string; status: string }>(resolve => {
+        resolveSend = resolve;
+      });
+    }
+    if (method === 'chat.startup' || method === 'chat.history') {
+      return Promise.resolve({ messages: [] });
+    }
+    return Promise.resolve({});
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = runningSessionKey;
+
+  const sending = controller.sendMessage('hello', [], undefined, {
+    clientTurnId: 'justdo-client-turn-1',
+  });
+  await controller.switchSession(otherSessionKey);
+  resolveSend?.({ runId: 'gateway-run-1', status: 'ok' });
+  await sending;
+  await controller.switchSession(runningSessionKey);
+
+  expect(controller.state.chatSending).toBe(false);
+  expect(controller.state.chatRunId).toBeNull();
+  expect(controller.state.runActivity).toBeNull();
+  expect(controller.state.transcript.activeTurn?.status).toBe('final');
+});
+
+test('records the originating session error when chat.send rejects after switching away', async () => {
+  const runningSessionKey = 'agent:main:justdo:session-1';
+  const otherSessionKey = 'agent:main:justdo:session-2';
+  let rejectSend: ((error: Error) => void) | undefined;
+  const request = vi.fn().mockImplementation((method: string) => {
+    if (method === 'chat.send') {
+      return new Promise<never>((_resolve, reject) => {
+        rejectSend = reject;
+      });
+    }
+    if (method === 'chat.startup' || method === 'chat.history') {
+      return Promise.resolve({ messages: [] });
+    }
+    return Promise.resolve({});
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = runningSessionKey;
+
+  const sending = controller.sendMessage('hello', [], undefined, {
+    clientTurnId: 'justdo-client-turn-1',
+  });
+  await controller.switchSession(otherSessionKey);
+  rejectSend?.(new Error('chat.send failed'));
+  await sending;
+  await controller.switchSession(runningSessionKey);
+
+  expect(controller.state.chatSending).toBe(false);
+  expect(controller.state.chatRunId).toBeNull();
+  expect(controller.state.lastError).toBe('chat.send failed');
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({ role: 'user', content: 'hello' }),
+    expect.objectContaining({ role: 'assistant', content: 'Error: chat.send failed' }),
+  ]);
+});
+
+test('restores a pending first turn and its background stream after switching away', async () => {
+  const runningSessionKey = 'agent:main:justdo:running-session';
+  const otherSessionKey = 'agent:main:justdo:other-session';
+  const request = vi.fn().mockImplementation((method: string) => {
+    if (method === 'chat.startup' || method === 'chat.history') {
+      return Promise.resolve({ messages: [] });
+    }
+    return Promise.resolve({});
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = runningSessionKey;
+  controller.setPendingUserMessage('start the long task');
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: runningSessionKey,
+      runId: 'run-1',
+      seq: 1,
+      stream: 'assistant',
+      data: { text: 'before switching' },
+    },
+  });
+  await controller.switchSession(otherSessionKey);
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: runningSessionKey,
+      runId: 'run-1',
+      seq: 2,
+      stream: 'assistant',
+      data: { text: 'continued while hidden' },
+    },
+  });
+  await controller.switchSession(runningSessionKey);
+
+  expect(controller.state.pendingUserMessage).toMatchObject({
+    role: 'user',
+    content: 'start the long task',
+  });
+  expect(controller.state.chatSending).toBe(true);
+  expect(controller.state.transcript.activeTurn?.items).toEqual([
+    expect.objectContaining({ type: 'content', text: 'continued while hidden' }),
+  ]);
+
+  await controller.switchSession(otherSessionKey);
+  handleEvent({
+    event: 'chat',
+    payload: {
+      sessionKey: runningSessionKey,
+      runId: 'run-1',
+      state: 'final',
+      message: { role: 'assistant', content: 'completed while hidden' },
+    },
+  });
+  await controller.switchSession(runningSessionKey);
+
+  expect(controller.state.pendingUserMessage).toMatchObject({
+    role: 'user',
+    content: 'start the long task',
+  });
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({ role: 'assistant', content: 'completed while hidden' }),
+  ]);
+  expect(controller.state.chatSending).toBe(false);
+});
+
+test('keeps a follow-up turn visible when return history still lacks the active turn', async () => {
+  const runningSessionKey = 'agent:main:justdo:running-session';
+  const otherSessionKey = 'agent:main:justdo:other-session';
+  const persistedMessages = [
+    { id: 'user-1', role: 'user', content: 'earlier prompt', timestamp: 1_000 },
+    { id: 'assistant-1', role: 'assistant', content: 'earlier answer', timestamp: 2_000 },
+  ];
+  const request = vi.fn().mockImplementation((method: string, params?: { sessionKey?: string }) => {
+    if (method === 'chat.send') return Promise.resolve({ runId: 'run-2' });
+    if (method === 'chat.startup' || method === 'chat.history') {
+      return Promise.resolve({
+        messages: params?.sessionKey === runningSessionKey ? persistedMessages : [],
+      });
+    }
+    return Promise.resolve({});
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = runningSessionKey;
+  controller.admitFallbackHistory(runningSessionKey, persistedMessages);
+  await controller.loadHistory();
+  await controller.sendMessage('follow-up prompt');
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: runningSessionKey,
+      runId: 'run-2',
+      seq: 1,
+      stream: 'assistant',
+      data: { text: 'partial follow-up' },
+    },
+  });
+
+  await controller.switchSession(otherSessionKey);
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: runningSessionKey,
+      runId: 'run-2',
+      seq: 2,
+      stream: 'assistant',
+      data: { text: 'newer partial follow-up' },
+    },
+  });
+  await controller.switchSession(runningSessionKey);
+
+  expect(controller.state.chatMessages).toEqual([
+    ...persistedMessages,
+    expect.objectContaining({ role: 'user', content: 'follow-up prompt' }),
+  ]);
+  expect(controller.state.chatSending).toBe(true);
+  expect(controller.state.transcript.activeTurn?.items).toEqual([
+    expect.objectContaining({ type: 'content', text: 'newer partial follow-up' }),
+  ]);
+});
+
 test('compacts the current session instead of sending /compact as chat', async () => {
   const request = vi
     .fn()
@@ -2003,6 +2262,47 @@ test('compacts the current session instead of sending /compact as chat', async (
       },
     }),
   ]);
+});
+
+test('settles a manual compaction request after switching away', async () => {
+  const originalSession = 'agent:main:justdo:session-1';
+  const otherSession = 'agent:main:justdo:session-2';
+  let resolveCompact:
+    | ((value: {
+        compacted: boolean;
+        result: { tokensBefore: number; tokensAfter: number };
+      }) => void)
+    | undefined;
+  const request = vi.fn().mockImplementation((method: string) => {
+    if (method === 'sessions.compact') {
+      return new Promise(resolve => {
+        resolveCompact = resolve;
+      });
+    }
+    if (method === 'chat.startup' || method === 'chat.history') {
+      return Promise.resolve({ messages: [] });
+    }
+    if (method === 'sessions.compaction.list') {
+      return Promise.resolve({ checkpoints: [] });
+    }
+    return Promise.resolve({});
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = originalSession;
+
+  const compacting = controller.sendMessage('/compact');
+  await controller.switchSession(otherSession);
+  resolveCompact?.({
+    compacted: true,
+    result: { tokensBefore: 120_000, tokensAfter: 18_000 },
+  });
+  await compacting;
+  await controller.switchSession(originalSession);
+
+  expect(controller.state.chatSending).toBe(false);
+  expect(controller.state.compactionInFlight).toBe(false);
 });
 
 test('hydrates an automatic compaction summary when no checkpoint was persisted', async () => {
@@ -5069,6 +5369,7 @@ test('completes automatic compaction for a session while another session is sele
   });
   await controller.switchSession(originalSession);
 
+  expect(controller.state.compactionInFlight).toBe(false);
   expect(controller.state.chatMessages).toEqual([
     expect.objectContaining({
       __openclaw: expect.objectContaining({

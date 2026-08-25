@@ -326,33 +326,43 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       dispatch(setCurrentSession(tempSession));
       dispatch(setStreaming(true));
 
-      // Set the pending user message on the ChatController so it appears
-      // immediately in the Lit chat element, surviving session transitions.
-      // Buffer in ref first (survives across renders), then try immediate apply.
+      // Buffer the pending user message until the temporary session render has
+      // switched the ChatController. Applying it synchronously here can still
+      // target the previously selected, running session.
       pendingPromptRef.current = prompt;
       pendingAttachmentsRef.current = attachments ?? [];
-      const wrapperSet = chatWrapperRef.current;
       debugLog('[CoworkView] handleStartSession:', {
         prompt: prompt.slice(0, 60),
-        wrapperRefExists: !!wrapperSet,
+        wrapperRefExists: !!chatWrapperRef.current,
         tempSessionId: tempSessionId,
       });
-      wrapperSet?.setPendingUserMessage(prompt, attachments);
 
       // Clear active skills after starting so they don't persist to the next session.
       dispatch(clearActiveSkills());
 
       // Start the actual session immediately with fallback title
-      const { session: startedSession, error: startError } = await coworkService.startSession({
-        prompt,
-        title: fallbackTitle,
-        cwd: config.workingDirectory || undefined,
-        activeSkillIds: sessionSkillIds,
-        agentId: currentAgentId,
-        attachments,
-        clientTurnId,
-        startedAt: now,
-      });
+      const { session: startedSession, error: startError } = await coworkService.startSession(
+        {
+          prompt,
+          title: fallbackTitle,
+          cwd: config.workingDirectory || undefined,
+          activeSkillIds: sessionSkillIds,
+          agentId: currentAgentId,
+          attachments,
+          clientTurnId,
+          startedAt: now,
+        },
+        {
+          beforeSessionSelected: session => {
+            const sourceAgentId = currentAgentId?.trim() || 'main';
+            const targetAgentId = session.agentId?.trim() || sourceAgentId;
+            chatWrapperRef.current?.registerSessionPromotion(
+              `agent:${sourceAgentId}:justdo:${tempSessionId}`,
+              `agent:${targetAgentId}:justdo:${session.id}`,
+            );
+          },
+        },
+      );
 
       if (!startedSession && startError) {
         // Show the error as a system message in the temp session

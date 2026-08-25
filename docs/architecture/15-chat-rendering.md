@@ -1,6 +1,6 @@
 # Chat 渲染架构
 
-本文按 `v2026.8.12` 的 `src/renderer/libs/openclaw-chat/`、`JustDoChatWrapper`、Main history/adapter 和相关测试重写。Chat 渲染不是“把 messages map 成 DOM”；它是 history、optimistic tail、实时事件、工具生命周期与滚动窗口的确定性投影。
+本文按 `v2026.8.26` 的 `src/renderer/libs/openclaw-chat/`、`JustDoChatWrapper`、Main history/adapter 和相关测试重写。Chat 渲染不是“把 messages map 成 DOM”；它是 history、optimistic tail、实时事件、工具生命周期与滚动窗口的确定性投影。
 
 ## 1. 目标与不变量
 
@@ -63,7 +63,9 @@ flowchart LR
   REC --> PS --> PIPE --> WIN --> LIT
 ```
 
-Wrapper切换session时取消旧订阅、建立新generation、请求paged history/tool inputs/compaction detail，并设置chat element属性。Live事件先经过shared domain分类，再送controller/reducer；terminal触发Main/Gateway history同步。旧异步请求即使晚返回，也因generation/session identity被丢弃。
+Wrapper切换session时取消旧订阅、建立新generation、请求paged history/tool inputs/compaction detail，并设置chat element属性。Controller按session缓存未完成turn、pending user message、run activity和compaction状态；后台session的live/terminal事件及迟到的send/compact RPC结果写回所属缓存，重新选中时先恢复缓存再与history对账。
+
+临时session转为canonical session必须由创建流程显式登记准确的source/target key。普通的“临时session → 其他已有session”导航不能推断为promotion，也不能迁移消息或sending状态。Live事件先经过shared domain分类，再送controller/reducer；terminal触发Main/Gateway history同步。旧异步history请求即使晚返回，也因generation/session identity被丢弃。
 
 ## 5. Event admission
 

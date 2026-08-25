@@ -70,6 +70,8 @@ export interface JustDoChatWrapperRef {
   };
   /** Set an optimistic user message shown until gateway history loads */
   setPendingUserMessage: (text: string, attachments?: CoworkAttachmentPayload[]) => void;
+  /** Register the exact temporary/canonical pair created for a new session. */
+  registerSessionPromotion: (sourceSessionKey: string, targetSessionKey: string) => void;
   /** Clear sending state (e.g. when session start fails) */
   clearSending: () => void;
 }
@@ -107,6 +109,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       text: string;
       attachments: CoworkAttachmentPayload[];
     } | null>(null);
+    const promotionSourceByTargetRef = useRef(new Map<string, string>());
 
     useEffect(() => {
       onActivityChangeRef.current = onActivityChange;
@@ -143,6 +146,9 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
               text.slice(0, 60),
             );
           }
+        },
+        registerSessionPromotion: (sourceSessionKey: string, targetSessionKey: string) => {
+          promotionSourceByTargetRef.current.set(targetSessionKey, sourceSessionKey);
         },
         clearSending: () => {
           controllerRef.current?.clearSending();
@@ -255,14 +261,22 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       }
 
       if (connectedRef.current && controller.state.sessionKey !== sessionKey) {
-        void controller.switchSession(sessionKey);
+        const promoteFromSessionKey = promotionSourceByTargetRef.current.get(sessionKey);
+        promotionSourceByTargetRef.current.delete(sessionKey);
+        void controller.switchSession(sessionKey, { promoteFromSessionKey });
       } else if (!connectedRef.current && controller.state.sessionKey !== sessionKey) {
-        // Not yet connected — set sessionKey so connect() picks it up
-        controller.state.sessionKey = sessionKey;
-        controller.admitFallbackHistory(
-          sessionKey,
-          coworkMessagesToGateway(currentSessionMessages),
-        );
+        const promoteFromSessionKey = promotionSourceByTargetRef.current.get(sessionKey);
+        if (promoteFromSessionKey) {
+          promotionSourceByTargetRef.current.delete(sessionKey);
+          void controller.switchSession(sessionKey, { promoteFromSessionKey });
+        } else {
+          // Not yet connected — set sessionKey so connect() picks it up.
+          controller.state.sessionKey = sessionKey;
+          controller.admitFallbackHistory(
+            sessionKey,
+            coworkMessagesToGateway(currentSessionMessages),
+          );
+        }
       } else if (controller.state.transcript.historySource !== 'gateway') {
         controller.admitFallbackHistory(
           sessionKey,
