@@ -50,6 +50,26 @@ describe('projectPersistedTimeline', () => {
     ).toEqual([null, null, null, null]);
   });
 
+  test('uses the transcript record timestamp for a provider message without a timestamp', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        content: [{ type: 'toolCall', id: 'call-yield-1', name: 'sessions_yield' }],
+        __openclaw: { id: 'message-1', seq: 1, recordTimestampMs: 12_345 },
+      },
+    ]);
+
+    expect(result).toEqual([
+      expect.objectContaining({
+        kind: 'live-process',
+        item: expect.objectContaining({
+          toolCallId: 'call-yield-1',
+          startedAt: 12_345,
+        }),
+      }),
+    ]);
+  });
+
   test('uses a persisted run receipt and attaches it to the last visible announce', () => {
     const result = projectPersistedTimeline(
       [

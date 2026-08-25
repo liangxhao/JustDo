@@ -68,7 +68,24 @@ function boundedOutput(value: string): string {
 }
 
 function timestampOf(outer: Record<string, unknown>, message: Record<string, unknown>): number {
-  for (const value of [message.timestamp, message.ts, outer.timestamp, outer.ts]) {
+  const messageMarker =
+    message.__openclaw &&
+    typeof message.__openclaw === 'object' &&
+    !Array.isArray(message.__openclaw)
+      ? (message.__openclaw as Record<string, unknown>)
+      : null;
+  const outerMarker =
+    outer.__openclaw && typeof outer.__openclaw === 'object' && !Array.isArray(outer.__openclaw)
+      ? (outer.__openclaw as Record<string, unknown>)
+      : null;
+  for (const value of [
+    message.timestamp,
+    message.ts,
+    messageMarker?.recordTimestampMs,
+    outer.timestamp,
+    outer.ts,
+    outerMarker?.recordTimestampMs,
+  ]) {
     if (typeof value === 'number' && Number.isFinite(value)) return value;
     if (typeof value === 'string') {
       const trimmed = value.trim();

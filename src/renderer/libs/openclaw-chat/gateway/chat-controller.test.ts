@@ -3,6 +3,7 @@ import { afterEach, expect, test, vi } from 'vitest';
 
 import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
 import { beginAssistantTurn } from '@/libs/openclaw-chat/model/chat-transcript-state';
+import { projectTurnItems } from '@/libs/openclaw-chat/model/project-turn-items';
 import { projectWaitingStatus } from '@/libs/openclaw-chat/model/run-activity';
 
 afterEach(() => {
@@ -1763,6 +1764,617 @@ test('hydrates a live sessions_yield card from history without replacing the act
     output: toolOutput,
   });
   expect(controller.state.chatMessages).toEqual([]);
+});
+
+test('restores a missed sessions_yield start from session.message during repeated waits', () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(10_000);
+  const sessionKey = 'agent:main:justdo:session-1';
+  const controller = new ChatController();
+  const streamListener = vi.fn();
+  controller.onStream(streamListener);
+  controller.state.sessionKey = sessionKey;
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 1,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+    },
+  });
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 2,
+      stream: 'tool',
+      data: {
+        phase: 'start',
+        toolCallId: 'call-yield-1',
+        name: 'sessions_yield',
+      },
+    },
+  });
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 3,
+      stream: 'tool',
+      data: {
+        phase: 'result',
+        toolCallId: 'call-yield-1',
+        name: 'sessions_yield',
+        result: '{"status":"partial","pending":2}',
+      },
+    },
+  });
+
+  // The next Agent Tool frame is missed, but the same transcript append is
+  // delivered through session.message while the root run remains active.
+  streamListener.mockClear();
+  vi.setSystemTime(10_100);
+  handleEvent({
+    event: 'session.message',
+    payload: {
+      sessionKey,
+      message: {
+        role: 'assistant',
+        timestamp: 10_100,
+        content: [
+          {
+            type: 'toolCall',
+            id: 'call-yield-2',
+            name: 'sessions_yield',
+            arguments: { message: '继续等待第二批 subagent。' },
+          },
+        ],
+      },
+    },
+  });
+
+  const recovered = controller.state.transcript.activeTurn?.toolById.get('call-yield-2');
+  expect(recovered).toMatchObject({
+    type: 'tool',
+    status: 'running',
+    name: 'sessions_yield',
+    input: { message: '继续等待第二批 subagent。' },
+  });
+  expect(controller.state.transcript.activeTurn?.items).toHaveLength(2);
+  expect(
+    projectTurnItems(controller.state.transcript.activeTurn).find(
+      item => item.kind === 'live-process' && item.item === recovered,
+    ),
+  ).toBeDefined();
+  expect(streamListener).toHaveBeenCalledWith('terminal');
+
+  // A late canonical start updates the recovered card in place, and recovery
+  // must not advance Agent ordering or block later Tool calls in the same run.
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 4,
+      stream: 'tool',
+      data: {
+        phase: 'start',
+        toolCallId: 'call-yield-2',
+        name: 'sessions_yield',
+      },
+    },
+  });
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 5,
+      stream: 'tool',
+      data: {
+        phase: 'result',
+        toolCallId: 'call-yield-2',
+        name: 'sessions_yield',
+        result: '{"status":"partial","pending":1}',
+      },
+    },
+  });
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 6,
+      stream: 'tool',
+      data: {
+        phase: 'start',
+        toolCallId: 'call-yield-3',
+        name: 'sessions_yield',
+      },
+    },
+  });
+
+  expect(controller.state.transcript.activeTurn?.toolById.get('call-yield-2')).toBe(recovered);
+  expect(recovered).toMatchObject({ status: 'completed' });
+  expect([...controller.state.transcript.activeTurn!.toolById.keys()]).toEqual([
+    'call-yield-1',
+    'call-yield-2',
+    'call-yield-3',
+  ]);
+  expect(controller.state.transcript.activeTurn?.toolById.get('call-yield-3')).toMatchObject({
+    status: 'running',
+  });
+});
+
+test('does not restore an old Tool row into a newer active turn', () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(20_000);
+  const sessionKey = 'agent:main:justdo:session-1';
+  const controller = new ChatController();
+  controller.state.sessionKey = sessionKey;
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-current',
+      seq: 1,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+    },
+  });
+  handleEvent({
+    event: 'session.message',
+    payload: {
+      sessionKey,
+      message: {
+        role: 'assistant',
+        timestamp: 19_999,
+        content: [
+          {
+            type: 'toolCall',
+            id: 'call-old-yield',
+            name: 'sessions_yield',
+          },
+        ],
+      },
+    },
+  });
+
+  expect(controller.state.transcript.activeTurn?.toolById.has('call-old-yield')).toBe(false);
+});
+
+test('does not restore untimed, foreign-run, or non-yield Tool rows', () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(20_000);
+  const sessionKey = 'agent:main:justdo:session-1';
+  const controller = new ChatController();
+  controller.state.sessionKey = sessionKey;
+  controller.state.currentSessionId = 'session-current';
+  controller.state.transcript.sessionId = 'session-current';
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      sessionId: 'session-current',
+      runId: 'run-current',
+      seq: 1,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+    },
+  });
+
+  const toolMessage = (id: string, name: string, timestamp?: number) => ({
+    role: 'assistant',
+    ...(timestamp === undefined ? {} : { timestamp }),
+    content: [{ type: 'toolCall', id, name }],
+  });
+  handleEvent({
+    event: 'session.message',
+    payload: {
+      sessionKey,
+      sessionId: 'session-other',
+      activeRunIds: ['run-current'],
+      message: toolMessage('call-foreign-session', 'sessions_yield', 20_100),
+    },
+  });
+  handleEvent({
+    event: 'session.message',
+    payload: {
+      sessionKey,
+      sessionId: 'session-current',
+      activeRunIds: ['run-other'],
+      message: toolMessage('call-foreign-run', 'sessions_yield', 20_100),
+    },
+  });
+  handleEvent({
+    event: 'session.message',
+    payload: {
+      sessionKey,
+      sessionId: 'session-current',
+      activeRunIds: ['run-current'],
+      message: toolMessage('call-untimed', 'sessions_yield'),
+    },
+  });
+  handleEvent({
+    event: 'session.message',
+    payload: {
+      sessionKey,
+      sessionId: 'session-current',
+      activeRunIds: ['run-current'],
+      message: toolMessage('call-generic', 'exec', 20_100),
+    },
+  });
+  handleEvent({
+    event: 'session.message',
+    payload: {
+      sessionKey,
+      sessionId: 'session-current',
+      activeRunIds: ['run-current'],
+      message: {
+        ...toolMessage('call-metadata-run', 'sessions_yield', 20_100),
+        metadata: { runId: 'run-other' },
+      },
+    },
+  });
+
+  expect([...controller.state.transcript.activeTurn!.toolById.keys()]).toEqual([]);
+});
+
+test('catches up a missed sessions_yield after a later session.message reveals a sequence gap', async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(30_000);
+  const sessionKey = 'agent:main:justdo:session-1';
+  const baselineMessage = {
+    role: 'user',
+    content: 'Start the subagents.',
+    timestamp: 29_900,
+    __openclaw: { id: 'message-10', seq: 10 },
+  };
+  const missedYieldMessage = {
+    role: 'assistant',
+    timestamp: 30_100,
+    content: [
+      {
+        type: 'toolCall',
+        id: 'call-missed-yield',
+        name: 'sessions_yield',
+        arguments: { message: '等待后续 subagent。' },
+      },
+    ],
+    __openclaw: { id: 'message-11', seq: 11 },
+  };
+  const laterMessage = {
+    role: 'assistant',
+    content: 'A later append arrived.',
+    timestamp: 30_200,
+    metadata: { runId: 'announce:v1:child-run' },
+    __openclaw: { id: 'message-12', seq: 12 },
+  };
+  const request = vi.fn().mockImplementation((method: string) => {
+    if (method === 'chat.history') {
+      return Promise.resolve({
+        messages: [baselineMessage, missedYieldMessage, laterMessage],
+        sessionId: 'session-current',
+      });
+    }
+    return Promise.resolve({});
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+  controller.state.currentSessionId = 'session-current';
+  controller.state.transcript.sessionKey = sessionKey;
+  controller.state.transcript.sessionId = 'session-current';
+  controller.state.chatMessages = [baselineMessage];
+  controller.state.transcript.persistedMessages = [baselineMessage];
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      sessionId: 'session-current',
+      runId: 'run-current',
+      seq: 1,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+    },
+  });
+
+  // Both the canonical Tool start and its dropIfSlow session.message were
+  // missed. The next append exposes the transcript sequence gap.
+  handleEvent({
+    event: 'session.message',
+    payload: {
+      sessionKey,
+      sessionId: 'session-current',
+      activeRunIds: ['run-current'],
+      messageSeq: 12,
+      message: laterMessage,
+    },
+  });
+  expect(controller.state.transcript.activeTurn?.toolById.size).toBe(0);
+
+  await vi.advanceTimersByTimeAsync(200);
+  await vi.waitFor(() =>
+    expect(controller.state.transcript.activeTurn?.toolById.get('call-missed-yield')).toMatchObject(
+      {
+        status: 'running',
+        name: 'sessions_yield',
+        input: { message: '等待后续 subagent。' },
+      },
+    ),
+  );
+  expect(request).toHaveBeenCalledWith('chat.history', { sessionKey, limit: 1000 });
+  expect(controller.state.runActivity).toMatchObject({
+    runId: 'run-current',
+    stage: 'running-tool',
+    hasRunningTool: true,
+  });
+  expect(
+    projectWaitingStatus({
+      activity: controller.state.runActivity,
+      transportStatus: 'connected',
+      now: 50_000,
+    }),
+  ).toBeNull();
+
+  handleEvent({
+    event: 'session.message',
+    payload: {
+      sessionKey,
+      sessionId: 'session-current',
+      activeRunIds: ['run-current'],
+      messageSeq: 13,
+      message: {
+        role: 'assistant',
+        content: 'The cursor continues after catch-up.',
+        timestamp: 30_300,
+        __openclaw: { id: 'message-13', seq: 13 },
+      },
+    },
+  });
+  await vi.advanceTimersByTimeAsync(200);
+  expect(request).toHaveBeenCalledTimes(1);
+});
+
+test('does not catch up history for consecutive, duplicate, or out-of-order message sequences', async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(40_000);
+  const sessionKey = 'agent:main:justdo:session-1';
+  const baselineMessage = {
+    role: 'user',
+    content: 'Start.',
+    timestamp: 39_900,
+    __openclaw: { id: 'message-10', seq: 10 },
+  };
+  const request = vi.fn().mockResolvedValue({
+    messages: [baselineMessage],
+    sessionId: 'session-current',
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+  controller.state.currentSessionId = 'session-current';
+  controller.state.transcript.sessionKey = sessionKey;
+  controller.state.transcript.sessionId = 'session-current';
+  controller.state.chatMessages = [baselineMessage];
+  controller.state.transcript.persistedMessages = [baselineMessage];
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      sessionId: 'session-current',
+      runId: 'run-current',
+      seq: 1,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+    },
+  });
+
+  for (const messageSeq of [11, 12, 12, 11, 13]) {
+    handleEvent({
+      event: 'session.message',
+      payload: {
+        sessionKey,
+        sessionId: 'session-current',
+        activeRunIds: ['run-current'],
+        messageSeq,
+        message: {
+          role: 'assistant',
+          content: `Message ${messageSeq}`,
+          timestamp: 40_000 + messageSeq,
+          __openclaw: { id: `message-${messageSeq}`, seq: messageSeq },
+        },
+      },
+    });
+  }
+
+  await vi.advanceTimersByTimeAsync(200);
+  expect(request).not.toHaveBeenCalled();
+});
+
+test('retries an unresolved message sequence gap until history reaches its target', async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(50_000);
+  const sessionKey = 'agent:main:justdo:session-1';
+  const baselineMessage = {
+    role: 'user',
+    content: 'Start.',
+    timestamp: 49_900,
+    __openclaw: { id: 'message-10', seq: 10 },
+  };
+  const missedYieldMessage = {
+    role: 'assistant',
+    timestamp: 50_100,
+    content: [
+      {
+        type: 'toolCall',
+        id: 'call-retried-yield',
+        name: 'sessions_yield',
+        arguments: { message: '等待重试恢复。' },
+      },
+    ],
+    __openclaw: { id: 'message-11', seq: 11 },
+  };
+  const laterMessage = {
+    role: 'assistant',
+    content: 'A later announce exposed the gap.',
+    timestamp: 50_200,
+    metadata: { runId: 'announce:v1:child-run' },
+    __openclaw: { id: 'message-12', seq: 12 },
+  };
+  let historyRequestCount = 0;
+  const request = vi.fn().mockImplementation((method: string) => {
+    if (method === 'chat.history') {
+      historyRequestCount += 1;
+      return Promise.resolve({
+        messages:
+          historyRequestCount === 1
+            ? [baselineMessage]
+            : [baselineMessage, missedYieldMessage, laterMessage],
+        sessionId: 'session-current',
+      });
+    }
+    return Promise.resolve({});
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+  controller.state.currentSessionId = 'session-current';
+  controller.state.transcript.sessionKey = sessionKey;
+  controller.state.transcript.sessionId = 'session-current';
+  controller.state.chatMessages = [baselineMessage];
+  controller.state.transcript.persistedMessages = [baselineMessage];
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      sessionId: 'session-current',
+      runId: 'run-current',
+      seq: 1,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+    },
+  });
+  handleEvent({
+    event: 'session.message',
+    payload: {
+      sessionKey,
+      sessionId: 'session-current',
+      activeRunIds: ['run-current'],
+      messageSeq: 12,
+      message: laterMessage,
+    },
+  });
+
+  await vi.advanceTimersByTimeAsync(500);
+  await vi.waitFor(() =>
+    expect(
+      controller.state.transcript.activeTurn?.toolById.get('call-retried-yield'),
+    ).toMatchObject({ status: 'running', name: 'sessions_yield' }),
+  );
+  expect(historyRequestCount).toBe(2);
+});
+
+test('runs at most one unsequenced compatibility catch-up per active session identity', async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(60_000);
+  const sessionKey = 'agent:main:justdo:session-1';
+  const baselineMessage = {
+    role: 'user',
+    content: 'Start.',
+    timestamp: 59_900,
+  };
+  const request = vi.fn().mockResolvedValue({
+    messages: [baselineMessage],
+    sessionId: 'session-current',
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+  controller.state.currentSessionId = 'session-current';
+  controller.state.transcript.sessionKey = sessionKey;
+  controller.state.transcript.sessionId = 'session-current';
+  controller.state.chatMessages = [baselineMessage];
+  controller.state.transcript.persistedMessages = [baselineMessage];
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      sessionId: 'session-current',
+      runId: 'run-current',
+      seq: 1,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+    },
+  });
+  const sendUnsequencedMessage = (content: string) =>
+    handleEvent({
+      event: 'session.message',
+      payload: {
+        sessionKey,
+        sessionId: 'session-current',
+        activeRunIds: ['run-current'],
+        message: { role: 'assistant', content, timestamp: 60_100 },
+      },
+    });
+
+  sendUnsequencedMessage('First unsequenced append.');
+  await vi.advanceTimersByTimeAsync(200);
+  expect(request).toHaveBeenCalledTimes(1);
+
+  sendUnsequencedMessage('Second unsequenced append.');
+  await vi.advanceTimersByTimeAsync(200);
+  expect(request).toHaveBeenCalledTimes(1);
 });
 
 test('settles a live sessions_yield from an explicit payloadless history failure', () => {

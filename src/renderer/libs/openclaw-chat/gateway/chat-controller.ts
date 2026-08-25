@@ -52,6 +52,7 @@ import {
   type HistorySource,
   normalizeTranscriptSessionKey,
   resetChatTranscriptState,
+  type ToolItem,
   type TranscriptReducerDependencies,
 } from '@/libs/openclaw-chat/model/chat-transcript-state';
 import { ChunkedMessageHistory } from '@/libs/openclaw-chat/model/chunked-message-history';
@@ -249,7 +250,9 @@ const OPENCLAW_HISTORY_TRUNCATION_MARKER = '...(truncated)...';
 const SILENT_REPLY_PATTERN = /^\s*NO_REPLY\s*$/;
 const POST_FINAL_HISTORY_RELOAD_DELAY_MS = 1500;
 const DEFERRED_HISTORY_RELOAD_DELAY_MS = 1200;
+const ACTIVE_TOOL_HISTORY_CATCHUP_DELAY_MS = 150;
 const MAX_DEFERRED_HISTORY_CATCHUP_ATTEMPTS = 5;
+const MAX_ACTIVE_TOOL_HISTORY_CATCHUP_ATTEMPTS = 4;
 const DEFAULT_INITIAL_MESSAGE_SUBSCRIPTION_BARRIER_TIMEOUT_MS = 3000;
 const DEFAULT_INITIAL_HISTORY_RETRY_DELAYS_MS = [100, 300, 900] as const;
 const DEBUG_CHAT_CONTROLLER =
@@ -326,6 +329,56 @@ function readOpenClawMessageId(message: unknown): string | null {
   return typeof marker?.id === 'string' && marker.id.trim() ? marker.id.trim() : null;
 }
 
+function readPositiveSafeInteger(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) return null;
+  return value;
+}
+
+function readOpenClawMessageSeq(message: unknown): number | null {
+  const record = asRecord(message);
+  const marker = asRecord(record?.__openclaw);
+  return readPositiveSafeInteger(marker?.seq) ?? readPositiveSafeInteger(record?.seq);
+}
+
+function readLatestOpenClawMessageSeq(messages: readonly unknown[]): number | null {
+  let latest: number | null = null;
+  for (const message of messages) {
+    const seq = readOpenClawMessageSeq(message);
+    if (seq !== null && (latest === null || seq > latest)) latest = seq;
+  }
+  return latest;
+}
+
+function readStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap(item => {
+    const normalized = readNonBlankString(item);
+    return normalized ? [normalized] : [];
+  });
+}
+
+function readExplicitMessageRunId(value: unknown): string | undefined {
+  const outer = asRecord(value);
+  if (!outer) return undefined;
+  const message = asRecord(outer.message) ?? outer;
+  const messageMetadata = asRecord(message.metadata);
+  const outerMetadata = asRecord(outer.metadata);
+  for (const candidate of [
+    message.runId,
+    message.run_id,
+    messageMetadata?.runId,
+    messageMetadata?.run_id,
+    outer.runId,
+    outer.run_id,
+    outerMetadata?.runId,
+    outerMetadata?.run_id,
+  ]) {
+    const runId = readNonBlankString(candidate);
+    if (runId) return runId;
+  }
+  return undefined;
+}
+
 function retainOriginalOpenClawIdentity(fullMessage: unknown, originalMessage: unknown): unknown {
   const full = asRecord(fullMessage);
   const original = asRecord(originalMessage);
@@ -393,8 +446,20 @@ export class ChatController {
   private lifecycleEndFallbackTimer: ReturnType<typeof setTimeout> | null = null;
   private postFinalHistoryReloadTimer: ReturnType<typeof setTimeout> | null = null;
   private deferredHistoryReloadTimer: ReturnType<typeof setTimeout> | null = null;
+  private activeToolHistoryCatchUpTimer: ReturnType<typeof setTimeout> | null = null;
   private olderHistoryContinuationTimer: ReturnType<typeof setTimeout> | null = null;
   private deferredHistoryReloadAttempts = new Map<string, number>();
+  private observedSessionMessageSeqBySession = new Map<
+    string,
+    {
+      sessionId: string | null;
+      seq: number | null;
+      pendingCatchUp: boolean;
+      catchUpTargetSeq: number | null;
+      catchUpAttempts: number;
+      unsequencedCatchUpCompleted: boolean;
+    }
+  >();
   private localCompactionStatusBySession = new Map<string, LocalCompactionStatus>();
   private assistantSnapshotRunId: string | null = null;
   private ignoredDeltaAfterAssistantSnapshotCount = 0;
@@ -850,11 +915,7 @@ export class ChatController {
       if (this.state.runActivity?.runId === provisionalRunId) {
         this.state.runActivity.runId = acknowledgedRunId;
       }
-      bindAssistantTurnRunId(
-        this.state.transcript,
-        provisionalRunId,
-        acknowledgedRunId,
-      );
+      bindAssistantTurnRunId(this.state.transcript, provisionalRunId, acknowledgedRunId);
       return;
     }
 
@@ -962,6 +1023,9 @@ export class ChatController {
     preserveTiming = true,
   ): void {
     this.pendingAnnounceEvents.clear();
+    this.observedSessionMessageSeqBySession.delete(
+      normalizeTranscriptSessionKey(this.state.transcript.sessionKey || sessionKey),
+    );
     if (preserveTiming) {
       this.cacheCurrentTurnTiming();
     } else {
@@ -1090,16 +1154,24 @@ export class ChatController {
 
   /**
    * A live run owns the visible timeline, so history reconciliation correctly
-   * refuses to replace it. Tool result events can still omit the full payload,
-   * though, while the transcript already contains it. Backfill only matching
-   * live Tool items by their stable call ID without admitting any history rows.
+   * refuses to replace it. The transcript can still repair that timeline by a
+   * stable Tool call ID: hydrate known cards and, for a freshly appended
+   * session.message, restore a Tool whose Agent start frame was missed.
    */
-  private hydrateActiveToolItemsFromHistory(messages: unknown[]): boolean {
+  private hydrateActiveToolItemsFromHistory(
+    messages: unknown[],
+    options: { backfillMissingSessionsYield?: boolean } = {},
+  ): boolean {
     const activeTurn = this.state.transcript.activeTurn;
-    if (!activeTurn || activeTurn.toolById.size === 0) return false;
+    if (!activeTurn) return false;
 
-    const persistedTools = new Map(
-      projectPersistedTimeline(messages as GatewayMessage[])
+    const persistedTools = new Map<string, ToolItem>(
+      projectPersistedTimeline(
+        messages.filter(message => {
+          const explicitRunId = readExplicitMessageRunId(message);
+          return !explicitRunId || explicitRunId === activeTurn.runId;
+        }) as GatewayMessage[],
+      )
         .flatMap(item =>
           item.kind === 'process-summary'
             ? item.items.filter(process => process.type === 'tool')
@@ -1112,9 +1184,37 @@ export class ChatController {
         .map(tool => [tool.toolCallId, tool] as const),
     );
     let changed = false;
-    for (const [toolCallId, liveTool] of activeTurn.toolById) {
-      const persistedTool = persistedTools.get(toolCallId);
-      if (!persistedTool) continue;
+    for (const [toolCallId, persistedTool] of persistedTools) {
+      let liveTool = activeTurn.toolById.get(toolCallId);
+      if (!liveTool) {
+        const timestampMatchesActiveTurn =
+          persistedTool.startedAt > 0 && persistedTool.startedAt >= activeTurn.startedAt;
+        if (
+          options.backfillMissingSessionsYield !== true ||
+          !isSessionsYieldTool(persistedTool.name) ||
+          activeTurn.status !== 'running' ||
+          !this.state.chatSending ||
+          !timestampMatchesActiveTurn
+        ) {
+          continue;
+        }
+        const now = this.transcriptDependencies.now();
+        const startedAt = persistedTool.startedAt > 0 ? persistedTool.startedAt : now;
+        liveTool = {
+          ...persistedTool,
+          id: this.transcriptDependencies.createId('history-tool'),
+          runId: activeTurn.runId,
+          firstSeq: activeTurn.lastAgentSeq,
+          lastSeq: activeTurn.lastAgentSeq,
+          startedAt,
+          updatedAt: Math.max(startedAt, persistedTool.updatedAt || now),
+        };
+        const insertionIndex = activeTurn.items.findIndex(item => item.startedAt > startedAt);
+        if (insertionIndex < 0) activeTurn.items.push(liveTool);
+        else activeTurn.items.splice(insertionIndex, 0, liveTool);
+        activeTurn.toolById.set(toolCallId, liveTool);
+        changed = true;
+      }
       if (liveTool.input === undefined && persistedTool.input !== undefined) {
         liveTool.input = persistedTool.input;
         changed = true;
@@ -1141,6 +1241,18 @@ export class ChatController {
     }
     if (changed) this.state.transcript.revision += 1;
     return changed;
+  }
+
+  private publishActiveToolHistoryRepair(): void {
+    const activeTurn = this.state.transcript.activeTurn;
+    if (!activeTurn) return;
+    const hasRunningTool = [...activeTurn.toolById.values()].some(
+      tool => tool.status === 'running',
+    );
+    this.updateRunActivity(activeTurn.runId, hasRunningTool ? 'running-tool' : 'waiting-model');
+    // Tool starts and terminal history rows must bypass streaming throttling
+    // so the repaired card and its waiting status change appear together.
+    this.notifyStream('terminal');
   }
 
   private updateLocalCompactionMessage(
@@ -1701,6 +1813,173 @@ export class ChatController {
     this.deferredHistoryReloadTimer = null;
   }
 
+  private clearActiveToolHistoryCatchUp(): void {
+    if (!this.activeToolHistoryCatchUpTimer) return;
+    clearTimeout(this.activeToolHistoryCatchUpTimer);
+    this.activeToolHistoryCatchUpTimer = null;
+  }
+
+  private resetActiveToolHistoryCatchUpForRun(sessionKey: string): void {
+    this.clearActiveToolHistoryCatchUp();
+    const entry = this.observedSessionMessageSeqBySession.get(
+      normalizeTranscriptSessionKey(sessionKey),
+    );
+    if (!entry) return;
+    entry.pendingCatchUp = false;
+    entry.catchUpTargetSeq = null;
+    entry.catchUpAttempts = 0;
+    entry.unsequencedCatchUpCompleted = false;
+  }
+
+  private observeSessionMessageSeq(
+    sessionKey: string,
+    sessionId: string | null,
+    incomingSeq: number | null,
+    loadedSeq: number | null,
+  ): boolean {
+    const normalizedSessionKey = normalizeTranscriptSessionKey(sessionKey);
+    const stored = this.observedSessionMessageSeqBySession.get(normalizedSessionKey);
+    const previousMatchesSession =
+      !stored?.sessionId || !sessionId || stored.sessionId === sessionId;
+    const previous = previousMatchesSession ? stored : undefined;
+    const previousSeq = previous?.seq ?? null;
+    const baselineSeq =
+      previousSeq === null
+        ? loadedSeq
+        : loadedSeq === null
+          ? previousSeq
+          : Math.max(previousSeq, loadedSeq);
+    const gapDetected =
+      incomingSeq !== null && baselineSeq !== null && incomingSeq > baselineSeq + 1;
+    const cursorWasUninitialized = incomingSeq !== null && baselineSeq === null;
+    const needsUnsequencedFallback =
+      incomingSeq === null &&
+      baselineSeq === null &&
+      previous?.unsequencedCatchUpCompleted !== true;
+    const startsCatchUp = gapDetected || cursorWasUninitialized || needsUnsequencedFallback;
+    const incomingAdvancesCursor =
+      incomingSeq !== null && (previousSeq === null || incomingSeq > previousSeq);
+    const nextSeq =
+      incomingSeq === null
+        ? baselineSeq
+        : baselineSeq === null
+          ? incomingSeq
+          : Math.max(baselineSeq, incomingSeq);
+    const previousTarget = previous?.catchUpTargetSeq ?? null;
+    const catchUpTargetSeq =
+      gapDetected || cursorWasUninitialized
+        ? previousTarget === null
+          ? incomingSeq
+          : incomingSeq === null
+            ? previousTarget
+            : Math.max(previousTarget, incomingSeq)
+        : previousTarget;
+    const pendingCatchUp = previous?.pendingCatchUp === true || startsCatchUp;
+    this.observedSessionMessageSeqBySession.set(normalizedSessionKey, {
+      sessionId: sessionId ?? previous?.sessionId ?? null,
+      seq: nextSeq,
+      pendingCatchUp,
+      catchUpTargetSeq,
+      catchUpAttempts:
+        startsCatchUp || (pendingCatchUp && incomingAdvancesCursor)
+          ? 0
+          : (previous?.catchUpAttempts ?? 0),
+      unsequencedCatchUpCompleted: previous?.unsequencedCatchUpCompleted === true,
+    });
+    return pendingCatchUp;
+  }
+
+  private recordLoadedSessionMessageSeq(
+    sessionKey: string,
+    sessionId: string | null,
+    loadedSeq: number | null,
+    resolvePendingCatchUp: boolean,
+  ): void {
+    const normalizedSessionKey = normalizeTranscriptSessionKey(sessionKey);
+    const stored = this.observedSessionMessageSeqBySession.get(normalizedSessionKey);
+    const storedMatchesSession = !stored?.sessionId || !sessionId || stored.sessionId === sessionId;
+    const previous = storedMatchesSession ? stored : undefined;
+    const nextSeq =
+      previous?.seq === null || previous?.seq === undefined
+        ? loadedSeq
+        : loadedSeq === null
+          ? previous.seq
+          : Math.max(previous.seq, loadedSeq);
+    const targetSatisfied =
+      resolvePendingCatchUp &&
+      previous?.pendingCatchUp === true &&
+      (previous.catchUpTargetSeq === null ||
+        (loadedSeq !== null && loadedSeq >= previous.catchUpTargetSeq));
+    if (!previous && nextSeq === null) return;
+    this.observedSessionMessageSeqBySession.set(normalizedSessionKey, {
+      sessionId: sessionId ?? previous?.sessionId ?? null,
+      seq: nextSeq,
+      pendingCatchUp: targetSatisfied ? false : (previous?.pendingCatchUp ?? false),
+      catchUpTargetSeq: targetSatisfied ? null : (previous?.catchUpTargetSeq ?? null),
+      catchUpAttempts: targetSatisfied ? 0 : (previous?.catchUpAttempts ?? 0),
+      unsequencedCatchUpCompleted:
+        previous?.unsequencedCatchUpCompleted === true ||
+        (targetSatisfied && previous?.catchUpTargetSeq === null),
+    });
+  }
+
+  private claimActiveToolHistoryCatchUp(sessionKey: string, sessionId: string | null): boolean {
+    const entry = this.observedSessionMessageSeqBySession.get(
+      normalizeTranscriptSessionKey(sessionKey),
+    );
+    if (
+      !entry?.pendingCatchUp ||
+      (entry.sessionId && sessionId && entry.sessionId !== sessionId) ||
+      entry.catchUpAttempts >= MAX_ACTIVE_TOOL_HISTORY_CATCHUP_ATTEMPTS
+    ) {
+      return false;
+    }
+    entry.catchUpAttempts += 1;
+    return true;
+  }
+
+  private hasPendingActiveToolHistoryCatchUp(
+    sessionKey: string,
+    sessionId: string | null,
+  ): boolean {
+    const entry = this.observedSessionMessageSeqBySession.get(
+      normalizeTranscriptSessionKey(sessionKey),
+    );
+    return Boolean(
+      entry?.pendingCatchUp &&
+      (!entry.sessionId || !sessionId || entry.sessionId === sessionId) &&
+      entry.catchUpAttempts < MAX_ACTIVE_TOOL_HISTORY_CATCHUP_ATTEMPTS,
+    );
+  }
+
+  private scheduleActiveToolHistoryCatchUp(sessionKey: string, runId: string): void {
+    if (this.activeToolHistoryCatchUpTimer) return;
+    this.activeToolHistoryCatchUpTimer = setTimeout(() => {
+      this.activeToolHistoryCatchUpTimer = null;
+      const activeTurn = this.state.transcript.activeTurn;
+      if (
+        this.state.sessionKey !== sessionKey ||
+        !this.state.connected ||
+        !this.state.chatSending ||
+        activeTurn?.status !== 'running' ||
+        activeTurn.runId !== runId
+      ) {
+        return;
+      }
+      if (this.historyLoadsInFlight.has(sessionKey)) {
+        this.scheduleActiveToolHistoryCatchUp(sessionKey, runId);
+        return;
+      }
+      const sessionId = this.state.currentSessionId ?? this.state.transcript.sessionId;
+      if (!this.claimActiveToolHistoryCatchUp(sessionKey, sessionId)) return;
+      void this.loadHistory(false, { backfillActiveSessionsYield: true }).finally(() => {
+        if (this.hasPendingActiveToolHistoryCatchUp(sessionKey, sessionId)) {
+          this.scheduleActiveToolHistoryCatchUp(sessionKey, runId);
+        }
+      });
+    }, ACTIVE_TOOL_HISTORY_CATCHUP_DELAY_MS);
+  }
+
   private clearOlderHistoryContinuation(): void {
     if (this.olderHistoryContinuationTimer === null) return;
     clearTimeout(this.olderHistoryContinuationTimer);
@@ -1902,8 +2181,8 @@ export class ChatController {
     const promotionSource = options.promoteFromSessionKey?.trim() || null;
     const isTempSessionPromotion = Boolean(
       promotionSource &&
-        isTempJustDoSessionKey(promotionSource) &&
-        !isTempJustDoSessionKey(sessionKey),
+      isTempJustDoSessionKey(promotionSource) &&
+      !isTempJustDoSessionKey(sessionKey),
     );
     debugLog('[ChatCtrl] switchSession:', sessionKey, {
       hadPendingUserMsg: !!this.state.pendingUserMessage,
@@ -1944,8 +2223,10 @@ export class ChatController {
     this.suspendedRunId = null;
     this.state.chatLoading = true;
     this.pendingHistoryReload = false;
+    this.observedSessionMessageSeqBySession.clear();
     this.clearPostFinalHistoryReload();
     this.clearDeferredHistoryReload();
+    this.clearActiveToolHistoryCatchUp();
     this.clearOlderHistoryContinuation();
     this.notify();
 
@@ -1966,6 +2247,7 @@ export class ChatController {
     this.clearLifecycleEndFallback();
     this.clearPostFinalHistoryReload();
     this.clearDeferredHistoryReload();
+    this.clearActiveToolHistoryCatchUp();
     this.clearOlderHistoryContinuation();
     for (const sessionKey of [...this.localCompactionStatusBySession.keys()]) {
       this.clearLocalCompactionStatus(sessionKey);
@@ -1980,6 +2262,7 @@ export class ChatController {
     this.terminalLifecycleSeen = false;
     this.suspendedRunId = null;
     this.pendingAnnounceEvents.clear();
+    this.observedSessionMessageSeqBySession.clear();
     this.connectionInitializationSeq += 1;
     this.messageSubscriptionSeq += 1;
     this.subscribedMessageSessionKey = null;
@@ -2442,6 +2725,54 @@ export class ChatController {
         return;
       }
       if (this.admitSubagentTaskMessage(payload?.message)) return;
+      const sessionSnapshot = asRecord(payload?.session);
+      const eventSessionId = normalizeSessionId(payload?.sessionId ?? sessionSnapshot?.sessionId);
+      const activeTurn = this.state.transcript.activeTurn;
+      const activeSessionId =
+        this.state.currentSessionId ?? this.state.transcript.sessionId ?? activeTurn?.sessionId;
+      const sessionIdentityMatches =
+        !eventSessionId || !activeSessionId || eventSessionId === activeSessionId;
+      const activeRunIds = readStringList(payload?.activeRunIds ?? sessionSnapshot?.activeRunIds);
+      const expectedRunIds = new Set(
+        [activeTurn?.runId, this.state.chatRunId].filter(
+          (value): value is string => typeof value === 'string' && value.length > 0,
+        ),
+      );
+      const explicitMessageRunId = readExplicitMessageRunId(payload?.message);
+      const runIdentityMatches =
+        (explicitMessageRunId === undefined || expectedRunIds.has(explicitMessageRunId)) &&
+        (activeRunIds.length === 0 || activeRunIds.some(runId => expectedRunIds.has(runId))) &&
+        (payload?.hasActiveRun ?? sessionSnapshot?.hasActiveRun) !== false;
+      const repairedActiveTool =
+        payload?.message !== undefined &&
+        sessionIdentityMatches &&
+        runIdentityMatches &&
+        this.hydrateActiveToolItemsFromHistory([payload.message], {
+          backfillMissingSessionsYield: true,
+        });
+      if (repairedActiveTool) this.publishActiveToolHistoryRepair();
+      const messageSeq =
+        readPositiveSafeInteger(payload?.messageSeq) ?? readOpenClawMessageSeq(payload?.message);
+      const loadedMessageSeq = readLatestOpenClawMessageSeq(this.state.chatMessages);
+      const activeTailCatchUpPending =
+        sessionIdentityMatches &&
+        this.observeSessionMessageSeq(
+          this.state.sessionKey,
+          eventSessionId ?? activeSessionId ?? null,
+          messageSeq,
+          loadedMessageSeq,
+        );
+      if (
+        activeTurn?.status === 'running' &&
+        this.state.chatSending &&
+        sessionIdentityMatches &&
+        activeTailCatchUpPending
+      ) {
+        // session.message is dropIfSlow. A later append and its messageSeq can
+        // therefore be the first evidence that a Tool row was missed; fetch
+        // the active tail without allowing history to replace the live turn.
+        this.scheduleActiveToolHistoryCatchUp(this.state.sessionKey, activeTurn.runId);
+      }
       if (this.state.chatSending || this.pendingHistoryReload) {
         debugLog('[ChatCtrl] session.message DEFERRED:', this.state.sessionKey, {
           eventKeys: Object.keys((event.payload as Record<string, unknown> | undefined) ?? {}),
@@ -2927,7 +3258,11 @@ export class ChatController {
 
   async loadHistory(
     queueIfBusy = false,
-    options: { preferStartup?: boolean; reconcileSuspended?: boolean } = {},
+    options: {
+      preferStartup?: boolean;
+      reconcileSuspended?: boolean;
+      backfillActiveSessionsYield?: boolean;
+    } = {},
   ): Promise<boolean> {
     const client = this.state.client;
     if (!client || !this.state.connected) return false;
@@ -3051,6 +3386,18 @@ export class ChatController {
         return false;
       }
       let rawMessages = pagedHistory?.messages ?? result?.messages ?? [];
+      if (options.backfillActiveSessionsYield && pagedHistory && Array.isArray(result?.messages)) {
+        const pagedLatestSeq = readLatestOpenClawMessageSeq(pagedHistory.messages);
+        const rpcLatestSeq = readLatestOpenClawMessageSeq(result.messages);
+        if (rpcLatestSeq !== null && (pagedLatestSeq === null || rpcLatestSeq > pagedLatestSeq)) {
+          // The REST window and RPC snapshot are read independently. During a
+          // live catch-up, prefer whichever source has observed the newer
+          // transcript append so a stale paged response cannot consume the
+          // unresolved sequence gap.
+          rawMessages = result.messages;
+          pagedHistory = null;
+        }
+      }
       if (
         this.expectInitialHistory &&
         pagedHistory &&
@@ -3127,6 +3474,13 @@ export class ChatController {
         hydratedCount: hydratedMessages.length,
         normalizedSummary: summarizeHistoryForDebug(messages),
       });
+      const loadedMessageSeq = readLatestOpenClawMessageSeq(messages);
+      this.recordLoadedSessionMessageSeq(
+        sessionKey,
+        authoritativeSessionId,
+        loadedMessageSeq,
+        false,
+      );
 
       // During a live subagent run, history can already contain assistant/tool
       // artifacts from the same turn by the time its delayed first user turn
@@ -3162,7 +3516,20 @@ export class ChatController {
       // can safely hydrate the same Tool card by its stable call ID. This is
       // especially important for long sessions_yield joins whose live result
       // event may contain only a short summary or no renderable output.
-      this.hydrateActiveToolItemsFromHistory(messages);
+      const repairedActiveTool = this.hydrateActiveToolItemsFromHistory(messages, {
+        backfillMissingSessionsYield: options.backfillActiveSessionsYield,
+      });
+      if (repairedActiveTool) this.publishActiveToolHistoryRepair();
+      if (options.backfillActiveSessionsYield) {
+        // Resolve the transcript-level gap only after the same authoritative
+        // snapshot has passed the identity/time-limited Tool hydration step.
+        this.recordLoadedSessionMessageSeq(
+          sessionKey,
+          authoritativeSessionId,
+          loadedMessageSeq,
+          true,
+        );
+      }
 
       // Only clear pendingUserMessage if the user message is actually in the
       // loaded history.  For brand-new sessions the gateway may not have
@@ -3585,6 +3952,7 @@ export class ChatController {
       });
       if (phase === 'start') {
         const wasSending = this.state.chatSending;
+        if (!wasSending) this.resetActiveToolHistoryCatchUpForRun(this.state.sessionKey);
         this.terminalLifecycleSeen = false;
         this.clearLifecycleEndFallback();
         if (!this.state.chatSending) {
@@ -3796,6 +4164,7 @@ export class ChatController {
     });
     this.clearPostFinalHistoryReload();
     this.clearDeferredHistoryReload();
+    this.resetActiveToolHistoryCatchUpForRun(sessionKey);
     this.historyReloadRequested.delete(sessionKey);
     this.pendingHistoryReload = false;
 
@@ -3856,8 +4225,7 @@ export class ChatController {
       // If status is "ok", the run already completed
       const acknowledgedRunId = ack?.runId ?? runId;
       const activeRunId = this.getSessionRunId(sessionKey);
-      const ackMatchesActiveRun =
-        activeRunId === runId || activeRunId === acknowledgedRunId;
+      const ackMatchesActiveRun = activeRunId === runId || activeRunId === acknowledgedRunId;
       if (ack?.status === 'ok' && ackMatchesActiveRun) {
         this.settleChatSend(sessionKey, acknowledgedRunId, 'final');
       }

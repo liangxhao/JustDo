@@ -67,6 +67,8 @@ Wrapper切换session时取消旧订阅、建立新generation、请求paged histo
 
 临时session转为canonical session必须由创建流程显式登记准确的source/target key。普通的“临时session → 其他已有session”导航不能推断为promotion，也不能迁移消息或sending状态。Live事件先经过shared domain分类，再送controller/reducer；terminal触发Main/Gateway history同步。旧异步history请求即使晚返回，也因generation/session identity被丢弃。
 
+运行期间的 `session.message` 是transcript append的冗余权威通知。若对应Agent Tool start帧漏收，Controller可在session/run identity和active-turn时间边界均匹配时，用稳定toolCallId恢复缺失的 `sessions_yield`。若该通知本身也因背压丢失，后续append暴露的messageSeq缺口会登记unresolved target并触发有界active-tail history追赶；只有权威history追到target并经过安全Tool hydration后才清除，陈旧快照或请求失败会重试。揭示缺口的消息可以是announce，但direct message回填仍必须匹配root run。恢复不替换整个live timeline，也不推进Agent sequence，因此迟到的canonical start/result及后续Tool仍可正常进入reducer；旧、无timestamp或foreign消息不得直接回填到当前turn。
+
 ## 5. Event admission
 
 Reducer不只检查runId：
@@ -89,7 +91,7 @@ start/delta/snapshot创建或更新独立Thinking item；文本按delta或snapsh
 
 ### 6.2 Tool
 
-用toolCallId稳定更新单卡；input只在详情展示，partial output节流，terminal result/error结束。`sessions_yield` 无输出但仍可显示蓝色running tool，不伪造空result。`update_plan`解析成始终可见的有序plan card，状态仅接受 pending/in_progress/completed。
+用toolCallId稳定更新单卡；input只在详情展示，partial output节流，terminal result/error结束。`sessions_yield` 无输出但仍可显示蓝色running tool，不伪造空result。若其实时start漏收，可由身份受限的 `session.message` 或active-tail history按toolCallId恢复running卡片，并由后续实时事件原位完成；这种missing-item恢复不泛化到普通Tool。`update_plan`解析成始终可见的有序plan card，状态仅接受 pending/in_progress/completed。
 
 ### 6.3 Content
 
@@ -178,7 +180,7 @@ Goal card位于chat周边但状态来自Main snapshot。Compaction history detai
 
 ## 19. 测试矩阵
 
-现有测试覆盖 reducer sequence/terminal/tool/thinking、history identity/window/reconcile、optimistic tail、process summary、tool lifecycle/cards、active timeline、Markdown/KaTeX/Mermaid、stream scheduler、scroll、minimap、conversion和wrapper辅助逻辑。
+现有测试覆盖 reducer sequence/terminal/tool/thinking、history identity/window/reconcile、optimistic tail、process summary、tool lifecycle/cards、active timeline、漏收 `sessions_yield` start后的直接恢复、foreign announce揭示双漏帧messageSeq缺口、陈旧history重试、连续/重复/乱序cursor、foreign/旧/无timestamp拒绝及后续sequence连续性、Markdown/KaTeX/Mermaid、stream scheduler、scroll、minimap、conversion和wrapper辅助逻辑。
 
 变更还应覆盖：session快速切换、旧request晚返回、重连generation、foreign run、分页两端、超大Markdown/tool输出、XSS payload、展开锚点、search disclosure、RTL/CJK、无RAF/ResizeObserver、history takeover和导出一致性。
 
