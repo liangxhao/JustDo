@@ -44,14 +44,15 @@ export const readUsage = (session: Record<string, unknown>) => {
       : session.status === 'running' || session.runState === 'active'
         ? true
         : undefined;
-  // Match OpenClaw webchat once a context snapshot exists. Before the first
-  // snapshot lands, an active user-facing run only has the live pre-prompt
-  // estimate published by JustDo's provenance-guarded runtime patch. Use it as
-  // an explicitly approximate bootstrap value, but never let it replace an
-  // existing Gateway totalTokens snapshot.
+  // Match OpenClaw webchat once a usable context snapshot exists. A newly
+  // created active session can expose totalTokens: 0 with fresh: true while
+  // the live pre-prompt estimate is already available. Treat that zero as a
+  // bootstrap placeholder only when JustDo's provenance-guarded marker and
+  // the Gateway's explicit active-run projection both agree. Positive and
+  // idle Gateway snapshots always win.
   const useBootstrapEstimate =
     session.hasActiveRun === true &&
-    reportedTotalTokens === undefined &&
+    (reportedTotalTokens === undefined || reportedTotalTokens === 0) &&
     budget?.justdoUsageBootstrap === true &&
     estimatedPromptTokens !== undefined &&
     estimatedPromptTokens > 0;

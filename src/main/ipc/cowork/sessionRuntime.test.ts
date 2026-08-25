@@ -297,6 +297,26 @@ describe('readUsage', () => {
     });
   });
 
+  it('does not replace an active zero when the budget marker is missing', () => {
+    expect(
+      readUsage({
+        totalTokens: 0,
+        totalTokensFresh: true,
+        hasActiveRun: true,
+        contextWindow: 200_000,
+        contextBudgetStatus: {
+          estimatedPromptTokens: 18_500,
+          updatedAt: 200,
+        },
+      }),
+    ).toMatchObject({
+      totalTokens: 0,
+      totalTokensFresh: true,
+      usageSource: 'reported',
+      hasActiveRun: true,
+    });
+  });
+
   it('does not bootstrap from stale running status after Gateway reports the run idle', () => {
     expect(
       readUsage({
@@ -363,7 +383,7 @@ describe('readUsage', () => {
     });
   });
 
-  it('keeps a confirmed zero-token snapshot ahead of the prompt estimate', () => {
+  it('replaces an active bootstrap zero with the provenance-guarded prompt estimate', () => {
     expect(
       readUsage({
         totalTokens: 0,
@@ -377,9 +397,31 @@ describe('readUsage', () => {
         },
       }),
     ).toMatchObject({
+      totalTokens: 9_500,
+      totalTokensFresh: false,
+      usageSource: 'estimate',
+      usageUpdatedAt: 200,
+    });
+  });
+
+  it('keeps an idle zero-token snapshot ahead of a stale marked estimate', () => {
+    expect(
+      readUsage({
+        totalTokens: 0,
+        totalTokensFresh: true,
+        hasActiveRun: false,
+        contextWindow: 200_000,
+        contextBudgetStatus: {
+          justdoUsageBootstrap: true,
+          estimatedPromptTokens: 9_500,
+          updatedAt: 200,
+        },
+      }),
+    ).toMatchObject({
       totalTokens: 0,
       totalTokensFresh: true,
       usageSource: 'reported',
+      hasActiveRun: false,
     });
   });
 
@@ -407,6 +449,7 @@ describe('readUsage', () => {
         hasActiveRun: true,
         contextWindow: 200_000,
         contextBudgetStatus: {
+          justdoUsageBootstrap: true,
           estimatedPromptTokens: 32_500,
         },
       }),
