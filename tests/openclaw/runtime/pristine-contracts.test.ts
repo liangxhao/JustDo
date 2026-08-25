@@ -59,6 +59,8 @@ const EXPECTED_PATCH_FILES = [
   '038-case-insensitive-subagent-task-names.cjs',
   '039-recovery-compaction-progress.cjs',
   '040-compaction-error-attribution.cjs',
+  '041-managed-implicit-subagent-join.cjs',
+  '042-required-subagent-terminal-guard.cjs',
 ] as const;
 
 function createPristineFixture(): string {

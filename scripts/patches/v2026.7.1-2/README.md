@@ -61,6 +61,8 @@ flowchart LR
   Join --> Commit[019 两阶段提交]
   Commit --> Recovery[020 restart/failure recovery]
   Recovery --> Fence[021 delivery ownership/announce fence]
+  Fence --> ImplicitJoin[041 durable implicit join]
+  ImplicitJoin --> TerminalGuard[042 required-child terminal guard]
   Recovery --> Identity[036 managed Gateway identity pin]
   Recovery -->|未消费结果恢复原生投递| Queue[016 requester FIFO]
   Queue --> Promote[015 delivery commit 后提升 canonical branch]
@@ -82,6 +84,9 @@ flowchart LR
   `031` 只读取 `029` 的公开 details 字段，并兼容字段缺失的 legacy transcript；`039`
   复用 `028` 的压缩流边界，为 direct recovery 补可见 lifecycle、等待心跳和摘要增量；
   `040` 防止本地 precheck 文案覆盖真实的压缩终态错误。
+- Subagent 终止判定：`041`/`042` 在 `018`–`021` 的 durable join/ownership 状态机之上，
+  把模型的 terminal reply（包括 `NO_REPLY`）视为候选；仍有 required child 时先等待
+  一批结果并续跑父会话，显式 fire-and-forget、abort、timeout 和非 managed session 不变。
 
 ### 001–004：环境、Thinking 与历史
 
@@ -590,6 +595,44 @@ flowchart LR
 - **可删除条件**：上游将 precheck trigger 与 provider error 分型，并把最后一次 recovery
   failure 原样传播到最终 payload、lifecycle 和错误 metadata。
 
+#### `041-managed-implicit-subagent-join.cjs`
+
+- **做什么**：提供 managed 父会话的 durable implicit join 协议。它从 registry 选择仍要求
+  completion message、且 `requesterSessionKey` 精确属于当前父会话的 child，接管 delivery、等待首批成功或失败结果，并生成有界的内部
+  continuation payload 交给调用方。单批最多呈现 16 条并公平分配文本预算，超出的结果保持
+  waiting，由下一轮继续交付；只有实际序列化进 prompt 的记录才会进入 `implicit_presented`，
+  避免某个超长结果吞掉或误消费后续 sibling。
+- **关系与边界**：复用 `018`–`021` 的 waiting/presented、恢复、cleanup 和 announce fence，新增
+  `implicit_waiting` / `implicit_presented` 两个持久状态；后续 assistant stop 持久化后才消费结果。
+  它不伪造 `sessions_yield` tool call。`expectsCompletionMessage=false` 和非
+  `agent:*:justdo:*` ancestry 不会被选择；等待被中断或状态丢失时恢复 native FIFO completion
+  delivery。`042` 是该 bridge 的 terminal 调用方。
+- **当前保留原因**：目标版把无 tool/follow-up 的 assistant reply 直接当作 run terminal；阈值
+  compaction 和 intentional silence 都不会检查 registry 中尚未被父模型消费的 required child。
+  completion announce 又会在 requester run 活跃时等待，因此父模型可在最后一个 child 返回前先
+  以 `NO_REPLY` 结束，表现为任务突然停止。
+- **可删除条件**：上游原生区分 LLM turn completion 与 orchestration completion，在 terminal
+  commit 前 durable join required children，并为 abort/restart、steer replacement、cleanup 与
+  native completion fallback 提供等价的一次性交付语义。
+
+#### `042-required-subagent-terminal-guard.cjs`
+
+- **做什么**：把 terminal assistant reply（包括 `NO_REPLY` 和空可见文本）降级为终止候选；
+  在 candidate delivery 前调用 `041`，拿到 required child 结果后抑制本次 terminal delivery，
+  并在同一父 run 中继续执行。
+- **关系与边界**：在 optional `before_agent_finalize` hook 之前运行，但保留该 hook 的原语义。
+  implicit continuation 不占用 plugin 的三次 revision 预算，并能越过 intentional silence 的
+  outer guard。用户 abort、timeout、error、framework retry、已有 client tool call、显式 yield
+  和非 managed session 保持原行为。由 `subagent_announce` 启动、已经携带 completion 的投递
+  run 不会再次 join 同一 child；native announce 在等待 requester 结束后还会二次检查 durable
+  ownership。outer runner 的所有退出路径都会按 parent run 恢复尚未提交的 implicit 状态，
+  已成功消费的结果不受影响。
+- **当前保留原因**：仅有 durable join bridge 不会改变 embedded runner 的终止控制流；目标版
+  会在最后一个 required child 返回前接受模型的 `NO_REPLY`，使 completion FIFO 等待一个已经
+  结束的 requester run，表现为工作流突然停止。
+- **可删除条件**：上游在 terminal delivery 前原生调用等价的 required-child obligation guard，
+  并以不伪造 tool transcript、不重复副作用且不受普通 finalize-revision 次数限制的方式续跑。
+
 ## 已删除或由上游/App 承担的能力
 
 | 能力                                            | v2026.7.1-2 证据与决定                                                                                                                                                                                                                                                 |
@@ -643,13 +686,14 @@ flowchart LR
 
 | 测试                                                  | 主要覆盖                                                                                                                                  |
 | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `openclawPristineContracts.test.ts`                   | 锁定原始 npm 包、8 项上游能力证据、39 项保留缺口、头注释和大小约束。                                                                      |
+| `openclawPristineContracts.test.ts`                   | 锁定原始 npm 包、11 项上游能力证据、42 项保留缺口、头注释和大小约束。                                                                     |
 | `openclawV202671ReasoningStream.test.ts`              | `002` callback gate 的原始失败与改写后事件/回调行为。                                                                                     |
 | `openclawV202671PatchSafety.test.ts`                  | `001`、`004`、`007`、`034` 的安全边界和真实 fixture 幂等。                                                                                |
 | `openclawV202671CompletionDelivery.test.ts`           | H07 上游语义、managed yield 非对外交付、subagent `NO_REPLY` 非成功，以及 `015`、`016` 的 FIFO、硬期限和恢复边界。                         |
 | `openclawV202671AtomicSessionsSpawnAdmission.test.ts` | `013` native pristine 并发失败、post-preflight reservation、canonical requester、跨 requester 并行、ACP 不变及 source/bundle 原子幂等。   |
 | `openclawV202671SubagentCapabilityPatches.test.ts`    | `014`。                                                                                                                                   |
 | `openclawV202671ManagedSubagentJoin.test.ts`          | `017`–`021` 的分类、批次、两阶段提交、消失 run 终止等待、恢复与 announce fence。                                                          |
+| `openclawV202671ManagedImplicitSubagentJoin.test.ts`  | `041`/`042` required child 选择、失败结果、prompt 上限、silent terminal guard、无预算续跑及 commit 边界。                                 |
 | `openclawV202671ManagedSessionIdentity.test.ts`       | `036` command、reply、agent initial/persisted 四落点 identity pin（含 reply reset 绕过）、普通会话不变、幂等和多目标原子失败。            |
 | `openclawV202671ApprovalLifecycle.test.ts`            | `022`–`025` 的 lifetime、hidden resume、stop/failure 与文件头。                                                                           |
 | `openclawV202671RequestMetadata.test.ts`              | `026`–`028`，含 strict-compatible negative 与 nested parent。                                                                             |

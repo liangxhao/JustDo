@@ -11,7 +11,7 @@
 | tool execution                                       | 权威                            | permission/UI cards                     | selected schema、tool error recovery |
 | thinking/reasoning                                   | provider/run数据                | normalize/render/history                | 002-004                              |
 | goal                                                 | session状态/tool                | continuation coordinator/卡片           | 011及compaction/progress能力         |
-| subagent                                             | spawn/registry/delivery         | parent/status/抽屉/stop                 | 012-021、036、038等                  |
+| subagent                                             | spawn/registry/delivery         | parent/status/抽屉/stop                 | 012-021、036、038、041-042等         |
 | approvals                                            | exec/plugin API与run suspension | policy sync/modal/session grant         | 022-025                              |
 | cron                                                 | job/run scheduler权威           | mapping、isolated agent、result receipt | 005默认delivery等                    |
 | Skills                                               | status/update/runtime           | bundled manifest、用户文件              | 009 tool catalog相关                 |
@@ -27,19 +27,20 @@
 
 以patch目录README为最终逐文件说明：
 
-| 编号    | 分组                 | 主要契约                                                                               |
-| ------- | -------------------- | -------------------------------------------------------------------------------------- |
-| 001     | managed pip env      | 只允许App提供且path-bound的PIP config                                                  |
-| 002-004 | reasoning/history    | live thinking、think-tag、历史block投影                                                |
-| 005     | cron                 | targetless detached默认delivery none                                                   |
-| 006-008 | Windows/Chrome MCP   | safe runner、早期diagnostics、empty page恢复                                           |
-| 009-012 | tool/session         | selective schema、final prompt replacement、silent goal clear、task title              |
-| 013-021 | subagent核心         | 原子准入、pending、managed join、两阶段提交、恢复、delivery ownership                  |
-| 022-025 | approval             | lifetime、suspension、resume、stop/failure                                             |
-| 026-028 | request metadata     | parent/session/purpose，包括compaction/reviewer                                        |
-| 029-031 | compaction基础       | retained user replay、Codex template、emergency fallback                               |
-| 032-035 | progress/recovery    | safe run stages、tool error reasoning、live budget、Codex local compaction             |
-| 036-040 | identity/convergence | managed identity、bounded overflow、taskName case、recovery progress/error attribution |
+| 编号    | 分组                   | 主要契约                                                                               |
+| ------- | ---------------------- | -------------------------------------------------------------------------------------- |
+| 001     | managed pip env        | 只允许App提供且path-bound的PIP config                                                  |
+| 002-004 | reasoning/history      | live thinking、think-tag、历史block投影                                                |
+| 005     | cron                   | targetless detached默认delivery none                                                   |
+| 006-008 | Windows/Chrome MCP     | safe runner、早期diagnostics、empty page恢复                                           |
+| 009-012 | tool/session           | selective schema、final prompt replacement、silent goal clear、task title              |
+| 013-021 | subagent核心           | 原子准入、pending、managed join、两阶段提交、恢复、delivery ownership                  |
+| 022-025 | approval               | lifetime、suspension、resume、stop/failure                                             |
+| 026-028 | request metadata       | parent/session/purpose，包括compaction/reviewer                                        |
+| 029-031 | compaction基础         | retained user replay、Codex template、emergency fallback                               |
+| 032-035 | progress/recovery      | safe run stages、tool error reasoning、live budget、Codex local compaction             |
+| 036-040 | identity/convergence   | managed identity、bounded overflow、taskName case、recovery progress/error attribution |
+| 041-042 | terminal orchestration | required child 未消费时 durable implicit join 并续跑父会话                             |
 
 编号和内容只能从当前README/loader确认；旧 `v2026.6.11` 的25个文件不能作为当前证据。
 
@@ -114,13 +115,13 @@ Memory能力通过专用Main service/state调用；具体wire method应以实现
 
 Gateway 拥有工具 schema、选择、调用和结果；App 只做权限交互与显示。特殊投影必须有普通 Tool 回退：
 
-| 工具/事件          | App 专用投影               | 契约位置                               | 回退行为                           |
-| ------------------ | -------------------------- | -------------------------------------- | ---------------------------------- |
-| `update_plan`      | 常显步骤卡、完成数、解释   | `src/shared/openclaw/executionPlan.ts` | 输入不合法时显示普通工具调用       |
-| `sessions_spawn`   | Subagent 卡/菜单/父子关系  | Gateway registry + patch 012–021       | malformed child 不进入正常控制列表 |
-| `sessions_yield`   | 等待 child 的运行卡        | 原生工具/lifecycle                     | 无 output 仍保持 running           |
-| `update_goal`      | Goal 状态卡与 continuation | Session goal contract                  | usage/budget 兼容值归一 blocked    |
-| exec/file mutation | Approval modal             | exec/plugin approval contract          | 来源或策略不明时 fail closed       |
+| 工具/事件          | App 专用投影               | 契约位置                                 | 回退行为                           |
+| ------------------ | -------------------------- | ---------------------------------------- | ---------------------------------- |
+| `update_plan`      | 常显步骤卡、完成数、解释   | `src/shared/openclaw/executionPlan.ts`   | 输入不合法时显示普通工具调用       |
+| `sessions_spawn`   | Subagent 卡/菜单/父子关系  | Gateway registry + patch 012–021/041–042 | malformed child 不进入正常控制列表 |
+| `sessions_yield`   | 等待 child 的运行卡        | 原生工具/lifecycle                       | 无 output 仍保持 running           |
+| `update_goal`      | Goal 状态卡与 continuation | Session goal contract                    | usage/budget 兼容值归一 blocked    |
+| exec/file mutation | Approval modal             | exec/plugin approval contract            | 来源或策略不明时 fail closed       |
 
 Patch 009 的 selective schema catalog 只改变某些重型工具 schema 的发现时机；它不能改变工具实际权限和执行所有权。
 
@@ -137,7 +138,10 @@ flowchart LR
   P18 --> P19[019 two-phase commits]
   P19 --> P20[020 recovery]
   P20 --> P21[021 identity/delivery fence]
+  P21 --> P41[041 durable implicit join]
+  P41 --> P42[042 terminal guard]
   P21 --> P16[016 per-requester FIFO]
+  P42 -->|interrupted fallback| P16
   P16 --> P15[015 commit-after promotion]
   P21 --> P36[036 identity pin]
 ```
@@ -147,6 +151,7 @@ flowchart LR
 - admission 在第一次异步初始化前原子预留 requester child 容量；
 - accepted/queued 与 running 分开，run timeout 从真正 running 开始；
 - managed join 与 native announce 对同一结果只有一个 owner；
+- terminal assistant reply 只是候选；required child 未呈现时必须先 join 并续跑；
 - required completion 对同 requester 按 durable sequence FIFO；
 - outer delivery 完整提交后才提升 canonical branch；
 - 隐式恢复不更换 managed session id，显式 reset/delete 仍可换号；

@@ -32,9 +32,9 @@ Patch 工具拒绝：
 
 历史 `v2026.6.9` 与 `v2026.6.11` 目录仅供追溯。不能从其编号推断当前依赖，也不能复制旧 anchor 伪装成升级。
 
-## 3. 001–040 能力族
+## 3. 001–042 能力族
 
-当前恰有 40 个连续 patch，文件名前缀同时是词典序应用顺序：
+当前恰有 42 个连续 patch，文件名前缀同时是词典序应用顺序：
 
 | 范围        | 能力族                                                                                     |
 | ----------- | ------------------------------------------------------------------------------------------ |
@@ -45,8 +45,9 @@ Patch 工具拒绝：
 | `026`–`028` | 父会话身份与 Agent/compaction/reviewer 请求元数据                                          |
 | `029`–`031` | 原始用户上下文保留、Codex continuation、紧急 handoff                                       |
 | `032`–`040` | 运行进度、工具错误恢复、context budget、本地 compaction、身份固定、overflow 收敛与错误归因 |
+| `041`–`042` | required subagent 的 durable implicit join、terminal guard 与同 run continuation           |
 
-重要顺序由总账定义。例如 `016` 的 FIFO delivery 在 `015` 的 commit 后 branch promotion 之前取得执行权；`017`–`021` 构成 managed join 状态机；`022` 是 023–025 的 approval 基础；`029/035` 被 037 的 overflow convergence 使用；039/040 建立在恢复路径之上。
+重要顺序由总账定义。例如 `016` 的 FIFO delivery 在 `015` 的 commit 后 branch promotion 之前取得执行权；`017`–`021` 构成 managed join 状态机，`041` 扩展 durable implicit join，`042` 再拦截尚有 required child 的终止候选；`022` 是 023–025 的 approval 基础；`029/035` 被 037 的 overflow convergence 使用；039/040 建立在恢复路径之上。
 
 若新增能力，不要简单追加编号：先判断它在依赖图中的位置。需要插入时允许重编号，但必须更新全部哈希、README、测试和引用。
 
@@ -219,7 +220,7 @@ Generated bundle 的变量名、顺序和文本随版本变化。Anchor 改变�
 
 ### Subagent
 
-核对 atomic admission、queued/running timeout、completion FIFO、commit 后 promotion、managed join ownership、restart recovery 和 identity pin。任何一个环节上游化都不代表整组可删除。
+核对 atomic admission、queued/running timeout、completion FIFO、commit 后 promotion、managed join ownership、restart recovery、identity pin，以及 required child 未消费时 terminal reply（含 `NO_REPLY`）是否只能作为候选。任何一个环节上游化都不代表整组可删除。
 
 ### Approvals
 

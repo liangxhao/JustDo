@@ -64,7 +64,7 @@ SQLite有11表：kv、cowork_sessions、cowork_messages、cowork_session_runs、
 
 ## 4. 当前Runtime Patch
 
-`scripts/patches/v2026.7.1-2/` 有连续001-040能力补丁，覆盖managed pip、thinking/history、cron默认delivery、Windows/Chrome MCP、tool schema、prompt replacement、goal clear、subagent/approval/request metadata、compaction/progress/recovery/identity等。它们是当前版本capability patch，不是旧 `v2026.6.11` migration。
+`scripts/patches/v2026.7.1-2/` 有连续001-042能力补丁，覆盖managed pip、thinking/history、cron默认delivery、Windows/Chrome MCP、tool schema、prompt replacement、goal clear、subagent/approval/request metadata、compaction/progress/recovery/identity，以及 required subagent 的隐式 join 与终止守卫。它们是当前版本capability patch，不是旧 `v2026.6.11` migration。
 
 ## 5. 尚未完整交付/明确限制
 

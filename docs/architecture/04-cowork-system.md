@@ -96,6 +96,15 @@ Stop 会发现主 session 与仍运行的 subagent key，逐一调用 `sessions.
 
 业务终态来自明确 chat/lifecycle/runtime 证据。WebSocket disconnect 只触发连接恢复和必要的错误提示，不能自动将所有 run 标成 error。完成后启动 history reconciliation，以 Gateway final text、usage、thinking 和 tool 结果校正缓存。
 
+对 managed JustDo 会话，模型回合终止不等于编排任务终止。Gateway 在提交 terminal assistant
+reply（包括 `NO_REPLY`）前检查 durable subagent registry：若仍有要求 completion message 的
+child，就进入隐式 managed join，等待一批成功或失败结果并续跑同一父会话；只有 required
+children 均已呈现且后续 assistant continuation 成功提交，父 run 才能结束。显式
+`expectsCompletionMessage=false` 是 fire-and-forget，不形成该 obligation；用户 stop/abort 仍会
+立即中断等待并恢复原生 completion delivery。自动 obligation 只属于 child 的精确 requester；
+native announce 自身不会递归接管同一结果，并在等待 requester 结束后再次核对 durable
+delivery ownership，以关闭 announce 与 terminal guard 之间的竞态窗口。
+
 ## 8. Event 模型
 
 `CoworkRuntimeEvents` 包含：
@@ -153,7 +162,7 @@ Exec/plugin approval 走独立 Gateway approval API，并继续使用阻塞式 m
 
 Subagent 列表优先通过选择性的 Gateway tool/API，必要时从 persisted sessions 查询；状态统一为 pending/running/finished/failed 等。label 来源会区分 task name、metadata 和 fallback，避免把随机 session key 当用户标题。
 
-父会话运行状态包含 `mainRunning || subagentRunning`。stop 会递归发现活动子树；完成通知、工具卡和抽屉必须按 parent/session/run identity 归属，迟到 announce 不能写入另一 turn。
+父会话运行状态包含 `mainRunning || subagentRunning`。stop 会递归发现活动子树；完成通知、工具卡和抽屉必须按 parent/session/run identity 归属，迟到 announce 不能写入另一 turn。该 UI 聚合规则不替代 Gateway 的 terminal guard：前者决定展示 active，后者保证 required child 未被父模型处理时 run 本身不会静默结束。
 
 ## 14. Renderer 状态
 

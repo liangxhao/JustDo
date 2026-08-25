@@ -237,7 +237,7 @@ Config sync 的核心不是“把 JustDo 对象 stringify 到 `openclaw.json`”
 - 有 pristine preimage、patch application 和 consumer behavior 测试；
 - README/manifest 记录 upstream disposition 与删除条件。
 
-补丁编号是顺序依赖，不是功能优先级。`scripts/patches/v2026.7.1-2/README.md` 是当前 001–040 能力到文件的权威表；历史目录不能作为新版本补丁源。
+补丁编号是顺序依赖，不是功能优先级。`scripts/patches/v2026.7.1-2/README.md` 是当前 001–042 能力到文件的权威表；历史目录不能作为新版本补丁源。
 
 ## 19. 端到端审查示例
 
