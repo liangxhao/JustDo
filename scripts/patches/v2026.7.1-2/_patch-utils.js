@@ -191,6 +191,11 @@ function countOccurrences(content, value) {
   return content.split(value).length - 1;
 }
 
+function stableFunctionSource(value) {
+  if (typeof value !== 'function') throw new TypeError('Expected a function to serialize');
+  return Function.prototype.toString.call(value).replace(/\r\n?/g, '\n');
+}
+
 function replaceUnique(content, anchor, replacement, description) {
   const count = countOccurrences(content, anchor);
   if (count !== 1) {
@@ -327,5 +332,6 @@ module.exports = {
   replaceNamedFunction,
   readRuntimeTextFile,
   runtimeJavaScriptFiles,
+  stableFunctionSource,
   writeIfChanged,
 };

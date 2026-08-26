@@ -9,6 +9,7 @@ const patchUtils = require('../../../../scripts/patches/v2026.7.1-2/_patch-utils
   endRuntimePatchPhase: (runtimeDir: string) => void;
   findFilesContaining: (runtimeDir: string, needles: string | string[]) => string[];
   runtimeJavaScriptFiles: (runtimeDir: string, options?: { includeBundle?: boolean }) => string[];
+  stableFunctionSource: (value: (...args: unknown[]) => unknown) => string;
   writeIfChanged: (filePath: string, original: string, updated: string) => boolean;
 };
 
@@ -38,6 +39,14 @@ afterEach(() => {
 });
 
 describe('OpenClaw patch phase index', () => {
+  it('serializes function source with stable LF line endings', () => {
+    const crlfFunction = eval('(function sample() {\r\n  return true;\r\n})') as () => boolean;
+
+    expect(patchUtils.stableFunctionSource(crlfFunction)).toBe(
+      'function sample() {\n  return true;\n}',
+    );
+  });
+
   it('reuses the transaction snapshot and tracks atomic patch writes', () => {
     const { runtimeDir, sourcePath, bundlePath } = createRuntimeFixture();
     const snapshot = new Map([

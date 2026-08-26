@@ -1,7 +1,7 @@
 'use strict';
 
 const path = require('path');
-const { replaceUnique, replaceUniquePattern } = require('./_patch-utils.js');
+const { replaceUnique, replaceUniquePattern, stableFunctionSource } = require('./_patch-utils.js');
 
 const MARKER = 'JUSTDO_MANAGED_TERMINAL_HANDOFF_V2026_7_1_2';
 
@@ -155,7 +155,7 @@ function transformTools(content, filePath) {
     isBundle
       ? 'function selectJustDoImplicitJoinRuns(entries2, controllerSessionKey) {'
       : 'function selectJustDoImplicitJoinRuns(entries, controllerSessionKey) {',
-    `// ${MARKER}\n${isJustDoExplicitWaitingHandoff.toString()}\n${
+    `// ${MARKER}\n${stableFunctionSource(isJustDoExplicitWaitingHandoff)}\n${
       isBundle
         ? 'function selectJustDoImplicitJoinRuns(entries2, controllerSessionKey) {'
         : 'function selectJustDoImplicitJoinRuns(entries, controllerSessionKey) {'
@@ -187,7 +187,7 @@ function transformTools(content, filePath) {
     isBundle
       ? 'function mutateJustDoManagedJoinEntries(entries2, mutator) {\n  for (const candidate of entries2) {\n    const entry = subagentRuns.get(candidate.runId);\n    if (entry) mutator(entry);\n  }\n  persistSubagentRunsToDiskOrThrow(subagentRuns);\n}'
       : 'function mutateJustDoManagedJoinEntries(entries, mutator) {\n\tfor (const candidate of entries) {\n\t\tconst entry = subagentRuns.get(candidate.runId);\n\t\tif (entry) mutator(entry);\n\t}\n\tpersistSubagentRunsToDiskOrThrow(subagentRuns);\n}',
-    `${mutateJustDoManagedJoinEntriesAtomically.toString()}\n${restoreJustDoManagedJoinSnapshotsInPlace.toString()}\n${
+    `${stableFunctionSource(mutateJustDoManagedJoinEntriesAtomically)}\n${stableFunctionSource(restoreJustDoManagedJoinSnapshotsInPlace)}\n${
       isBundle
         ? 'function mutateJustDoManagedJoinEntries(entries2, mutator) {\n  return mutateJustDoManagedJoinEntriesAtomically(subagentRuns, entries2, mutator, persistSubagentRunsToDiskOrThrow);\n}'
         : 'function mutateJustDoManagedJoinEntries(entries, mutator) {\n\treturn mutateJustDoManagedJoinEntriesAtomically(subagentRuns, entries, mutator, persistSubagentRunsToDiskOrThrow);\n}'
@@ -227,7 +227,7 @@ function transformTools(content, filePath) {
   updated = replaceUnique(
     updated,
     'function resolveJustDoCompletionFollowupJoin(',
-    `${canCorrelateJustDoCompletionSourceEntry.toString()}\nfunction resolveJustDoCompletionFollowupJoin(`,
+    `${stableFunctionSource(canCorrelateJustDoCompletionSourceEntry)}\nfunction resolveJustDoCompletionFollowupJoin(`,
     `${filePath}: completion source handoff correlation helper`,
   );
   updated = replaceUnique(
@@ -293,7 +293,7 @@ function transformRegistry(content, filePath) {
     isBundle
       ? 'function markJustDoManagedJoinToolResultPersisted(controllerSessionKey, toolCallId) {\n  const changed = markJustDoManagedJoinToolResultInRuns(subagentRuns, controllerSessionKey, toolCallId, Date.now());\n  if (changed) persistSubagentRunsOrThrow();\n  return changed;\n}'
       : 'function markJustDoManagedJoinToolResultPersisted(controllerSessionKey, toolCallId) {\n\tconst changed = markJustDoManagedJoinToolResultInRuns(subagentRuns, controllerSessionKey, toolCallId, Date.now());\n\tif (changed) persistSubagentRunsOrThrow();\n\treturn changed;\n}',
-    `${mutateJustDoSubagentRegistryAtomically.toString()}\n${
+    `${stableFunctionSource(mutateJustDoSubagentRegistryAtomically)}\n${
       isBundle
         ? 'function markJustDoManagedJoinToolResultPersisted(controllerSessionKey, toolCallId) {\n  return mutateJustDoSubagentRegistryAtomically(subagentRuns, () => {\n    const changed = markJustDoManagedJoinToolResultInRuns(subagentRuns, controllerSessionKey, toolCallId, Date.now());\n    return { changed };\n  }, persistSubagentRunsOrThrow).changed;\n}'
         : 'function markJustDoManagedJoinToolResultPersisted(controllerSessionKey, toolCallId) {\n\treturn mutateJustDoSubagentRegistryAtomically(subagentRuns, () => {\n\t\tconst changed = markJustDoManagedJoinToolResultInRuns(subagentRuns, controllerSessionKey, toolCallId, Date.now());\n\t\treturn { changed };\n\t}, persistSubagentRunsOrThrow).changed;\n}'

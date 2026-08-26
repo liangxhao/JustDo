@@ -1,7 +1,7 @@
 'use strict';
 
 const path = require('path');
-const { replaceUnique, replaceUniquePattern } = require('./_patch-utils.js');
+const { replaceUnique, replaceUniquePattern, stableFunctionSource } = require('./_patch-utils.js');
 const {
   shouldAttemptJustDoCodexTerminalHandoff,
   resolveJustDoCodexTerminalHandoffOutcome,
@@ -12,8 +12,8 @@ const REVISION_PREFIX = '__JUSTDO_MANAGED_IMPLICIT_JOIN__\n';
 
 const CODEX_HELPERS = `const JUSTDO_MANAGED_CODEX_TERMINAL_HANDOFF_GLOBAL = Symbol.for("justdo.openclaw.managed-subagent-join.v2026.7.1-2"); // ${MARKER}
 const JUSTDO_MANAGED_CODEX_TERMINAL_HANDOFF_PREFIX = ${JSON.stringify(REVISION_PREFIX)};
-${shouldAttemptJustDoCodexTerminalHandoff.toString()}
-${resolveJustDoCodexTerminalHandoffOutcome.toString()}
+${stableFunctionSource(shouldAttemptJustDoCodexTerminalHandoff)}
+${stableFunctionSource(resolveJustDoCodexTerminalHandoffOutcome)}
 function resolveJustDoCodexCompletionSourceSessionKey(inputProvenance) {
 \tif (inputProvenance?.kind !== "inter_session" || inputProvenance?.sourceTool?.trim().toLowerCase() !== "subagent_announce") return void 0;
 \treturn typeof inputProvenance.sourceSessionKey === "string" ? inputProvenance.sourceSessionKey.trim() : "";
@@ -494,13 +494,13 @@ function replaceUnique(content, anchor, replacement, description) {
   if (count !== 1) throw new Error(\`\${description} anchor count is \${count}, expected 1\`);
   return content.replace(anchor, replacement);
 }
-${replaceUniquePattern.toString()}
-${shouldAttemptJustDoCodexTerminalHandoff.toString()}
-${resolveJustDoCodexTerminalHandoffOutcome.toString()}
-${transformCodexAttempt.toString()}
-${transformCodexMirror.toString()}
-${verifyJustDoCodexPluginTransforms.toString()}
-${patchJustDoOfficialCodexPlugin.toString()}
+${stableFunctionSource(replaceUniquePattern)}
+${stableFunctionSource(shouldAttemptJustDoCodexTerminalHandoff)}
+${stableFunctionSource(resolveJustDoCodexTerminalHandoffOutcome)}
+${stableFunctionSource(transformCodexAttempt)}
+${stableFunctionSource(transformCodexMirror)}
+${stableFunctionSource(verifyJustDoCodexPluginTransforms)}
+${stableFunctionSource(patchJustDoOfficialCodexPlugin)}
 `;
 }
 
@@ -599,9 +599,11 @@ function computeJustDoCodexTransformInputFingerprint() {
     .getBuiltinModule('node:crypto')
     .createHash('sha256')
     .update(
-      [CODEX_HELPERS, transformCodexAttempt.toString(), transformCodexMirror.toString()].join(
-        '\n---JUSTDO-CODEX-TRANSFORM-INPUT---\n',
-      ),
+      [
+        CODEX_HELPERS,
+        stableFunctionSource(transformCodexAttempt),
+        stableFunctionSource(transformCodexMirror),
+      ].join('\n---JUSTDO-CODEX-TRANSFORM-INPUT---\n'),
     )
     .digest('hex');
 }

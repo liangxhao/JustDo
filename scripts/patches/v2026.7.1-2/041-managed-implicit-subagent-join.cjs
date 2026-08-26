@@ -14,6 +14,7 @@ const {
   findFilesContaining,
   replaceUnique,
   replaceUniquePattern,
+  stableFunctionSource,
   writeIfChanged,
 } = require('./_patch-utils.js');
 
@@ -158,11 +159,11 @@ function isJustDoImplicitJoinCommitState(state) {
 }
 
 const TOOLS_HELPERS = `// ${MARKER}
-${buildJustDoImplicitJoinResult.toString()}
-${selectJustDoImplicitJoinRuns.toString()}
-${partitionJustDoImplicitJoinResults.toString()}
-${reconcileJustDoImplicitJoinRuns.toString()}
-${buildJustDoImplicitJoinPrompt.toString()}
+${stableFunctionSource(buildJustDoImplicitJoinResult)}
+${stableFunctionSource(selectJustDoImplicitJoinRuns)}
+${stableFunctionSource(partitionJustDoImplicitJoinResults)}
+${stableFunctionSource(reconcileJustDoImplicitJoinRuns)}
+${stableFunctionSource(buildJustDoImplicitJoinPrompt)}
 async function waitForJustDoRequiredSubagentsAtTerminalCore(params) {
 \tconst controllerSessionKey = typeof params?.controllerSessionKey === "string" ? params.controllerSessionKey.trim() : "";
 \tconst visibleRuns = selectJustDoImplicitJoinRuns(listControlledSubagentRuns(controllerSessionKey), controllerSessionKey);
@@ -315,7 +316,7 @@ function transformRegistry(content, filePath) {
   let updated = replaceUnique(
     content,
     'function commitJustDoManagedJoinContinuationInRuns(runs, controllerSessionKey, now) {',
-    `${isJustDoImplicitJoinCommitState.toString()}\nfunction commitJustDoManagedJoinContinuationInRuns(runs, controllerSessionKey, now) {`,
+    `${stableFunctionSource(isJustDoImplicitJoinCommitState)}\nfunction commitJustDoManagedJoinContinuationInRuns(runs, controllerSessionKey, now) {`,
     `${filePath}: implicit join commit state`,
   );
   updated = replaceUniquePattern(

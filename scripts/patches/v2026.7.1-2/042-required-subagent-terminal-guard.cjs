@@ -12,6 +12,7 @@ const {
   findFilesContaining,
   replaceUnique,
   replaceUniquePattern,
+  stableFunctionSource,
   writeIfChanged,
 } = require('./_patch-utils.js');
 
@@ -43,8 +44,8 @@ function shouldAttemptJustDoImplicitJoin(params) {
 
 const ATTEMPT_HELPERS = `const JUSTDO_MANAGED_IMPLICIT_JOIN_GLOBAL = Symbol.for("justdo.openclaw.managed-subagent-join.v2026.7.1-2"); // ${MARKER}
 const JUSTDO_MANAGED_IMPLICIT_JOIN_REVISION_PREFIX = ${JSON.stringify(REVISION_PREFIX)};
-${shouldAttemptJustDoImplicitJoin.toString()}
-${isJustDoSubagentCompletionDeliveryRun.toString()}
+${stableFunctionSource(shouldAttemptJustDoImplicitJoin)}
+${stableFunctionSource(isJustDoSubagentCompletionDeliveryRun)}
 `;
 
 function transformAttempt(content, filePath) {

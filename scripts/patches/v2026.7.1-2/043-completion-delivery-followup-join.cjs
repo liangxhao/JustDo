@@ -12,6 +12,7 @@ const {
   findFilesContaining,
   replaceUnique,
   replaceUniquePattern,
+  stableFunctionSource,
   writeIfChanged,
 } = require('./_patch-utils.js');
 
@@ -87,7 +88,7 @@ function transformTools(content, filePath) {
   let updated = replaceUnique(
     content,
     'async function waitForJustDoRequiredSubagentsAtTerminalCore(params) {',
-    `// ${MARKER}\n${resolveJustDoCompletionFollowupJoin.toString()}\nasync function waitForJustDoRequiredSubagentsAtTerminalCore(params) {`,
+    `// ${MARKER}\n${stableFunctionSource(resolveJustDoCompletionFollowupJoin)}\nasync function waitForJustDoRequiredSubagentsAtTerminalCore(params) {`,
     `${filePath}: completion-delivery source correlation helper`,
   );
   return replaceUniquePattern(
@@ -110,7 +111,7 @@ function transformAttempt(content, filePath) {
   let updated = replaceUniquePattern(
     content,
     /^(?<indent>[ \t]+)let beforeAgentFinalizeRevisionReason;$/m,
-    `$<indent>// ${MARKER}\n${resolveJustDoCompletionSourceSessionKey.toString()}\n$<indent>let beforeAgentFinalizeRevisionReason;`,
+    `$<indent>// ${MARKER}\n${stableFunctionSource(resolveJustDoCompletionSourceSessionKey)}\n$<indent>let beforeAgentFinalizeRevisionReason;`,
     `${filePath}: completion-delivery source resolver`,
   );
   updated = replaceUniquePattern(
