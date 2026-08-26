@@ -305,7 +305,6 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
   const deleteLabel = i18nService.t('deleteSession');
   const showRunningIndicator = isRuntimeRunning;
   const showUnreadIndicator = !showRunningIndicator && hasUnread;
-  const showStatusIndicator = showRunningIndicator || showUnreadIndicator;
   const batchLabel = i18nService.t('batchOperations');
   const moveToGroupLabel = i18nService.t('moveToGroup');
   const copySessionIdLabel = i18nService.t('copySessionId');
@@ -437,18 +436,41 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
             </div>
           )}
           <div className="flex-1 min-w-0">
-            <div className={`flex items-center ${showStatusIndicator ? 'gap-2' : 'gap-0'}`}>
+            <div className="flex items-center">
               {/* Status indicator */}
-              {showStatusIndicator && (
+              {showRunningIndicator ? (
                 <span
-                  className={`block w-2 h-2 rounded-full flex-shrink-0 ${
-                    showRunningIndicator
-                      ? 'bg-blue-500 shadow-[0_0_6px_rgba(59,130,246,0.5)] animate-pulse'
-                      : 'bg-primary'
-                  }`}
-                  title={showRunningIndicator ? i18nService.t(statusLabels.running) : undefined}
-                />
-              )}
+                  className="pointer-events-none absolute left-2 top-1/2 block h-3.5 w-3.5 -translate-y-1/2 text-secondary/80"
+                  title={i18nService.t(statusLabels.running)}
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    className="h-full w-full animate-spin motion-reduce:animate-none"
+                    aria-hidden="true"
+                  >
+                    <circle
+                      cx="12"
+                      cy="12"
+                      r="8.5"
+                      stroke="currentColor"
+                      strokeWidth="3"
+                      opacity="0.25"
+                    />
+                    <circle
+                      cx="12"
+                      cy="12"
+                      r="8.5"
+                      stroke="currentColor"
+                      strokeWidth="3"
+                      strokeLinecap="round"
+                      strokeDasharray="20 34"
+                    />
+                  </svg>
+                </span>
+              ) : showUnreadIndicator ? (
+                <span className="absolute left-3 top-1/2 block h-2 w-2 -translate-y-1/2 rounded-full bg-primary" />
+              ) : null}
               {isRenaming ? (
                 <input
                   ref={renameInputRef}
