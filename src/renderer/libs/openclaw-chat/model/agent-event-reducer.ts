@@ -39,8 +39,138 @@ function boundOutput(value: string): string {
   return `[output truncated]\n${value.slice(-MAX_LIVE_TOOL_OUTPUT_CHARS)}`;
 }
 
+function activeAgentTailIndex(turn: AssistantTurn): number {
+  const pendingToolIndex = turn.items.findIndex(
+    item => item.type === 'tool' && item.agentSequencePending === true,
+  );
+  return (pendingToolIndex < 0 ? turn.items.length : pendingToolIndex) - 1;
+}
+
+function pendingRecoveredTool(turn: AssistantTurn): ToolItem | undefined {
+  return turn.items.find(
+    (item): item is ToolItem => item.type === 'tool' && item.agentSequencePending === true,
+  );
+}
+
+function thinkingBeforeTool(turn: AssistantTurn, tool: ToolItem): ThinkingItem | undefined {
+  const toolIndex = turn.items.indexOf(tool);
+  if (toolIndex < 0) return undefined;
+  for (let index = toolIndex - 1; index >= 0; index -= 1) {
+    const item = turn.items[index];
+    if (item.type === 'tool') break;
+    if (item.type === 'thinking') return item;
+  }
+  return undefined;
+}
+
+function activeAgentTail(turn: AssistantTurn): TurnItem | undefined {
+  return turn.items[activeAgentTailIndex(turn)];
+}
+
+function appendAgentItem(turn: AssistantTurn, item: TurnItem): void {
+  const pendingToolIndex = turn.items.findIndex(
+    candidate => candidate.type === 'tool' && candidate.agentSequencePending === true,
+  );
+  if (pendingToolIndex < 0) turn.items.push(item);
+  else turn.items.splice(pendingToolIndex, 0, item);
+}
+
+function itemToolCallId(data: Record<string, unknown>): string | null {
+  for (const value of [
+    data.toolCallId,
+    data.tool_call_id,
+    data.toolUseId,
+    data.tool_use_id,
+    data.callId,
+  ]) {
+    const explicit = stringValue(value)?.trim();
+    if (explicit) return explicit;
+  }
+  const itemId = stringValue(data.itemId)?.trim() ?? '';
+  const match = /^(?:tool|command|patch):(.+)$/i.exec(itemId);
+  return match?.[1]?.trim() || null;
+}
+
+export function confirmRecoveredToolSequence(
+  turn: AssistantTurn,
+  tool: ToolItem,
+  seq: number,
+  timestamp: number,
+): boolean {
+  if (tool.agentSequencePending !== true) return false;
+  const toolIndex = turn.items.indexOf(tool);
+  const previous = toolIndex > 0 ? turn.items[toolIndex - 1] : undefined;
+  if (previous?.type === 'thinking' && previous.status === 'running') {
+    previous.status = 'completed';
+    previous.lastSeq = seq;
+    previous.updatedAt = timestamp;
+  } else if (previous?.type === 'content' && previous.status === 'streaming') {
+    previous.status = 'completed';
+    previous.followingToolCallId = tool.toolCallId;
+    previous.lastSeq = seq;
+    previous.updatedAt = timestamp;
+  }
+  tool.firstSeq = seq;
+  delete tool.agentSequencePending;
+  delete tool.recoveredPreToolThinkingText;
+  return true;
+}
+
+export function hydrateToolPrecedingThinking(
+  turn: AssistantTurn,
+  tool: ToolItem,
+  text: string | null,
+  authoritative: boolean,
+  seq: number,
+  timestamp: number,
+  dependencies: TranscriptReducerDependencies,
+): boolean {
+  if (!authoritative && tool.agentSequencePending !== true) return false;
+  const normalizedText = text?.trim() || null;
+  const authoritativeText = authoritative ? normalizedText : null;
+  if (authoritativeText && tool.agentSequencePending) {
+    tool.recoveredPreToolThinkingText = authoritativeText;
+  }
+  const existing = thinkingBeforeTool(turn, tool);
+  if (existing) {
+    let changed = false;
+    if (normalizedText && existing.text !== normalizedText) {
+      existing.text = authoritative
+        ? normalizedText
+        : updateSnapshot(existing.text, normalizedText, false);
+      changed = true;
+    }
+    if (existing.status === 'running') {
+      existing.status = 'completed';
+      changed = true;
+    }
+    existing.lastSeq = Math.max(existing.lastSeq, seq);
+    existing.updatedAt = Math.max(existing.updatedAt, timestamp);
+    return changed;
+  }
+  if (!normalizedText) return false;
+  const toolIndex = turn.items.indexOf(tool);
+  if (toolIndex < 0) return false;
+  let insertionIndex = toolIndex;
+  while (insertionIndex > 0 && turn.items[insertionIndex - 1].type !== 'tool') {
+    insertionIndex -= 1;
+  }
+  turn.items.splice(insertionIndex, 0, {
+    id: dependencies.createId('history-thinking'),
+    runId: turn.runId,
+    firstSeq: seq,
+    lastSeq: seq,
+    startedAt: Math.min(timestamp, tool.startedAt),
+    updatedAt: timestamp,
+    type: 'thinking',
+    status: 'completed',
+    text: normalizedText,
+  });
+  return true;
+}
+
 function completeRunningThinking(turn: AssistantTurn, seq: number, now: number): void {
-  const tail = turn.items[turn.items.length - 1];
+  const tail = activeAgentTail(turn);
   if (tail?.type === 'thinking' && tail.status === 'running') {
     tail.status = 'completed';
     tail.lastSeq = seq;
@@ -49,7 +179,7 @@ function completeRunningThinking(turn: AssistantTurn, seq: number, now: number):
 }
 
 function completeStreamingContent(turn: AssistantTurn, seq: number, now: number): void {
-  const tail = turn.items[turn.items.length - 1];
+  const tail = activeAgentTail(turn);
   if (tail?.type === 'content' && tail.status === 'streaming') {
     tail.status = 'completed';
     tail.lastSeq = seq;
@@ -105,7 +235,7 @@ function stripCompletedContentSegments(turn: AssistantTurn, snapshot: string): s
       text = trimmed.slice(committed.length).trimStart();
     }
   }
-  const tail = turn.items[turn.items.length - 1];
+  const tail = activeAgentTail(turn);
   if (tail?.type === 'content') {
     const rawDistance = snapshotDistanceFromCurrent(snapshot, tail.text);
     const strippedDistance = snapshotDistanceFromCurrent(text, tail.text);
@@ -121,8 +251,37 @@ function reduceThinking(
 ): void {
   const text = stringValue(event.data.text) ?? stringValue(event.data.delta);
   if (text === null) return;
+  const recoveredTool = pendingRecoveredTool(turn);
+  if (recoveredTool) {
+    const existing = thinkingBeforeTool(turn, recoveredTool);
+    if (existing) {
+      const authoritativeText = recoveredTool.recoveredPreToolThinkingText;
+      if (authoritativeText) {
+        existing.text = authoritativeText;
+      } else {
+        const isDelta = event.data.delta !== undefined && event.data.text === undefined;
+        existing.text = isDelta
+          ? `${existing.text}${text}`
+          : updateSnapshot(existing.text, text, event.data.replace === true);
+      }
+      existing.status = 'completed';
+      existing.lastSeq = event.agentSeq;
+      existing.updatedAt = event.timestamp;
+      return;
+    }
+    hydrateToolPrecedingThinking(
+      turn,
+      recoveredTool,
+      text,
+      false,
+      event.agentSeq,
+      event.timestamp,
+      dependencies,
+    );
+    return;
+  }
   completeStreamingContent(turn, event.agentSeq, event.timestamp);
-  const tail = turn.items[turn.items.length - 1];
+  const tail = activeAgentTail(turn);
   if (tail?.type === 'thinking' && tail.status === 'running') {
     const isDelta = event.data.delta !== undefined && event.data.text === undefined;
     tail.text = isDelta
@@ -138,7 +297,7 @@ function reduceThinking(
     status: 'running',
     text,
   };
-  turn.items.push(item);
+  appendAgentItem(turn, item);
 }
 
 function reduceContent(
@@ -153,7 +312,7 @@ function reduceContent(
   const text = snapshot ?? delta;
   if (text === null) return;
   completeRunningThinking(turn, event.agentSeq, event.timestamp);
-  const tail = turn.items[turn.items.length - 1];
+  const tail = activeAgentTail(turn);
   const replace = event.data.replace === true;
   if (tail?.type === 'content' && tail.status === 'streaming') {
     if (delta !== null && snapshot === null && !replace) {
@@ -174,7 +333,7 @@ function reduceContent(
     text,
     sourceMode: replace ? 'replaceable' : snapshot !== null ? 'snapshot' : 'delta',
   };
-  turn.items.push(item);
+  appendAgentItem(turn, item);
 }
 
 function reduceTool(
@@ -204,6 +363,7 @@ function reduceTool(
   const status = outputlessSessionsYieldResult ? 'running' : resolved.status;
 
   if (existing) {
+    confirmRecoveredToolSequence(turn, existing, event.agentSeq, event.timestamp);
     existing.name = resolved.name;
     if (resolvedInput !== undefined && resolvedInput !== null) existing.input = resolvedInput;
     if (resolved.output !== null && !outputlessSessionsYieldResult) {
@@ -221,7 +381,7 @@ function reduceTool(
   }
 
   completeRunningThinking(turn, event.agentSeq, event.timestamp);
-  const previous = turn.items[turn.items.length - 1];
+  const previous = activeAgentTail(turn);
   if (previous?.type === 'content' && previous.status === 'streaming') {
     previous.status = 'completed';
     previous.followingToolCallId = toolCallId;
@@ -242,7 +402,7 @@ function reduceTool(
       ? { error: boundOutput(normalized.error) }
       : {}),
   };
-  turn.items.push(item);
+  appendAgentItem(turn, item);
   turn.toolById.set(toolCallId, item);
   return true;
 }
@@ -332,6 +492,13 @@ export function reduceAgentEvent(
     event.stream === 'compaction'
   ) {
     // Ordering still advances for admitted non-display Agent events.
+    if (event.stream === 'item') {
+      const recoveredTool = turn.toolById.get(itemToolCallId(event.data) ?? '');
+      if (recoveredTool?.agentSequencePending === true) {
+        confirmRecoveredToolSequence(turn, recoveredTool, event.agentSeq, event.timestamp);
+        recoveredTool.lastSeq = Math.max(recoveredTool.lastSeq, event.agentSeq);
+      }
+    }
   } else {
     return 'ignored-stream';
   }
@@ -446,12 +613,12 @@ export function reduceChatEvent(
   const finalText = extractMessageText(event.message);
   if (finalText && event.state === 'final') {
     const currentSegmentText = stripCompletedContentSegments(turn, finalText);
-    const tail = turn.items[turn.items.length - 1];
+    const tail = activeAgentTail(turn);
     if (tail?.type === 'content' && currentSegmentText) {
       tail.text = updateSnapshot(tail.text, currentSegmentText, true);
       tail.updatedAt = now;
     } else if (currentSegmentText) {
-      turn.items.push({
+      appendAgentItem(turn, {
         id: dependencies.createId('content'),
         runId: turn.runId,
         firstSeq: turn.lastAgentSeq,

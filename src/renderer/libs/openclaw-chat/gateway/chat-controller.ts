@@ -41,7 +41,12 @@ import type {
   GatewayEventFrame,
   GatewayHelloOk,
 } from '@/libs/openclaw-chat/gateway/client';
-import { reduceAgentEvent, reduceChatEvent } from '@/libs/openclaw-chat/model/agent-event-reducer';
+import {
+  confirmRecoveredToolSequence,
+  hydrateToolPrecedingThinking,
+  reduceAgentEvent,
+  reduceChatEvent,
+} from '@/libs/openclaw-chat/model/agent-event-reducer';
 import {
   type AssistantTurn,
   type AssistantTurnTiming,
@@ -79,6 +84,13 @@ import {
   hasToolResultPayload,
   isSessionsYieldTool,
 } from '@/libs/openclaw-chat/model/tool-lifecycle';
+import {
+  asToolRecord,
+  isToolCallRecord,
+  isToolResultType,
+  readToolCallId,
+  unwrapToolMessage,
+} from '@/libs/openclaw-chat/model/tool-message-adapter';
 import { readTranscriptIdentity } from '@/libs/openclaw-chat/model/transcript-identity';
 import {
   hydrateGatewayHistoryForDisplay,
@@ -1160,7 +1172,10 @@ export class ChatController {
    */
   private hydrateActiveToolItemsFromHistory(
     messages: unknown[],
-    options: { backfillMissingSessionsYield?: boolean } = {},
+    options: {
+      backfillMissingSessionsYield?: boolean;
+      backfillMissingToolsFromAppend?: boolean;
+    } = {},
   ): boolean {
     const activeTurn = this.state.transcript.activeTurn;
     if (!activeTurn) return false;
@@ -1183,15 +1198,20 @@ export class ChatController {
         )
         .map(tool => [tool.toolCallId, tool] as const),
     );
+    const authoritativeThinkingByToolId = precedingThinkingByToolCallId(messages);
+    const authoritativeToolResultIds = toolResultCallIds(messages);
     let changed = false;
     for (const [toolCallId, persistedTool] of persistedTools) {
       let liveTool = activeTurn.toolById.get(toolCallId);
       if (!liveTool) {
         const timestampMatchesActiveTurn =
           persistedTool.startedAt > 0 && persistedTool.startedAt >= activeTurn.startedAt;
+        const canBackfillMissingTool =
+          options.backfillMissingToolsFromAppend === true ||
+          (options.backfillMissingSessionsYield === true &&
+            isSessionsYieldTool(persistedTool.name));
         if (
-          options.backfillMissingSessionsYield !== true ||
-          !isSessionsYieldTool(persistedTool.name) ||
+          !canBackfillMissingTool ||
           activeTurn.status !== 'running' ||
           !this.state.chatSending ||
           !timestampMatchesActiveTurn
@@ -1208,12 +1228,28 @@ export class ChatController {
           lastSeq: activeTurn.lastAgentSeq,
           startedAt,
           updatedAt: Math.max(startedAt, persistedTool.updatedAt || now),
+          agentSequencePending: true,
         };
-        const insertionIndex = activeTurn.items.findIndex(item => item.startedAt > startedAt);
-        if (insertionIndex < 0) activeTurn.items.push(liveTool);
-        else activeTurn.items.splice(insertionIndex, 0, liveTool);
+        // A transcript append can beat the corresponding Thinking and Tool
+        // Agent frames across their independent delivery paths. Every restored
+        // Tool starts as a live-tail boundary, even when the first observed row
+        // is already terminal; terminal evidence below releases it immediately.
+        activeTurn.items.push(liveTool);
         activeTurn.toolById.set(toolCallId, liveTool);
         changed = true;
+      }
+      const authoritativeThinkingText = authoritativeThinkingByToolId.get(toolCallId) ?? null;
+      if (authoritativeThinkingText) {
+        changed =
+          hydrateToolPrecedingThinking(
+            activeTurn,
+            liveTool,
+            authoritativeThinkingText,
+            true,
+            activeTurn.lastAgentSeq,
+            persistedTool.updatedAt || this.transcriptDependencies.now(),
+            this.transcriptDependencies,
+          ) || changed;
       }
       if (liveTool.input === undefined && persistedTool.input !== undefined) {
         liveTool.input = persistedTool.input;
@@ -1227,14 +1263,24 @@ export class ChatController {
         liveTool.error = persistedTool.error;
         changed = true;
       }
-      if (
-        liveTool.status === 'running' &&
-        isSessionsYieldTool(liveTool.name) &&
+      const canApplyPersistedTerminalStatus =
         persistedTool.status !== 'running' &&
-        (hasToolResultPayload(persistedTool) ||
-          persistedTool.status === 'failed' ||
-          persistedTool.status === 'cancelled')
+        (!isSessionsYieldTool(liveTool.name) ||
+          hasToolResultPayload(persistedTool) ||
+          persistedTool.status !== 'completed');
+      if (
+        liveTool.agentSequencePending === true &&
+        (authoritativeToolResultIds.has(toolCallId) || canApplyPersistedTerminalStatus)
       ) {
+        changed =
+          confirmRecoveredToolSequence(
+            activeTurn,
+            liveTool,
+            activeTurn.lastAgentSeq,
+            persistedTool.updatedAt || this.transcriptDependencies.now(),
+          ) || changed;
+      }
+      if (liveTool.status === 'running' && canApplyPersistedTerminalStatus) {
         liveTool.status = persistedTool.status;
         changed = true;
       }
@@ -2749,6 +2795,7 @@ export class ChatController {
         runIdentityMatches &&
         this.hydrateActiveToolItemsFromHistory([payload.message], {
           backfillMissingSessionsYield: true,
+          backfillMissingToolsFromAppend: true,
         });
       if (repairedActiveTool) this.publishActiveToolHistoryRepair();
       const messageSeq =
@@ -4563,6 +4610,54 @@ function thinkingLengthForDebug(message: unknown): number {
     const reasoning = typeof record?.reasoning === 'string' ? record.reasoning : '';
     return total + thinking.length + reasoning.length;
   }, 0);
+}
+
+function precedingThinkingByToolCallId(messages: unknown[]): Map<string, string> {
+  const result = new Map<string, string>();
+  for (const value of messages) {
+    const message = unwrapToolMessage(value);
+    if (!message || !Array.isArray(message.content)) continue;
+    const thinking: string[] = [];
+    for (const value of message.content) {
+      const block = asToolRecord(value);
+      if (!block) continue;
+      const type = typeof block.type === 'string' ? block.type.toLowerCase() : '';
+      if (type === 'thinking' || type === 'reasoning') {
+        const text = [block.thinking, block.text, block.reasoning].find(
+          candidate => typeof candidate === 'string' && candidate.trim(),
+        );
+        if (typeof text === 'string') thinking.push(text.trim());
+        continue;
+      }
+      if (isToolCallRecord(block)) {
+        const toolCallId = readToolCallId(block);
+        if (toolCallId && thinking.length > 0) result.set(toolCallId, thinking.join('\n'));
+        thinking.length = 0;
+      }
+    }
+  }
+  return result;
+}
+
+function toolResultCallIds(messages: unknown[]): Set<string> {
+  const result = new Set<string>();
+  for (const value of messages) {
+    const message = unwrapToolMessage(value);
+    if (!message) continue;
+    const role = typeof message.role === 'string' ? message.role.toLowerCase() : '';
+    if (role === 'tool' || role === 'toolresult' || role === 'tool_result' || role === 'function') {
+      const toolCallId = readToolCallId(message);
+      if (toolCallId) result.add(toolCallId);
+    }
+    if (!Array.isArray(message.content)) continue;
+    for (const value of message.content) {
+      const block = asToolRecord(value);
+      if (!block || !isToolResultType(block.type)) continue;
+      const toolCallId = readToolCallId(block);
+      if (toolCallId) result.add(toolCallId);
+    }
+  }
+  return result;
 }
 
 function toolBlockCountForDebug(message: unknown): number {

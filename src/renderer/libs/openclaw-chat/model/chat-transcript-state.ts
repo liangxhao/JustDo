@@ -25,6 +25,10 @@ export interface ToolItem extends BaseTurnItem {
   status: ProcessStatus;
   toolCallId: string;
   name: string;
+  /** History restored the card before its canonical Agent sequence arrived. */
+  agentSequencePending?: boolean;
+  /** Authoritative Thinking text from the assistant row that restored this Tool. */
+  recoveredPreToolThinkingText?: string;
   input?: unknown;
   output?: string;
   error?: string;

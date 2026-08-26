@@ -1916,6 +1916,592 @@ test('restores a missed sessions_yield start from session.message during repeate
   });
 });
 
+test('keeps late Thinking before a sessions_yield recovered from the same assistant append', () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(15_000);
+  const sessionKey = 'agent:main:justdo:session-1';
+  const controller = new ChatController();
+  controller.state.sessionKey = sessionKey;
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 1,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+    },
+  });
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 2,
+      stream: 'thinking',
+      data: { text: 'Batch 1 is partial' },
+    },
+  });
+
+  // Transcript notifications and Agent frames use independent delivery paths.
+  // The committed assistant row can therefore restore the full Thinking while
+  // its final Agent snapshot is still in flight.
+  handleEvent({
+    event: 'session.message',
+    payload: {
+      sessionKey,
+      activeRunIds: ['run-1'],
+      message: {
+        role: 'assistant',
+        timestamp: 15_100,
+        content: [
+          {
+            type: 'thinking',
+            thinking: 'Batch 1 is partial, so wait for the remaining agent.',
+          },
+          {
+            type: 'toolCall',
+            id: 'call-yield-late-thinking',
+            name: 'sessions_yield',
+            arguments: { message: '等待剩余 agent。' },
+          },
+        ],
+      },
+    },
+  });
+
+  const recovered = controller.state.transcript.activeTurn?.toolById.get(
+    'call-yield-late-thinking',
+  );
+  expect(recovered).toMatchObject({
+    status: 'running',
+    agentSequencePending: true,
+  });
+  expect(controller.state.transcript.activeTurn?.items[0]).toMatchObject({
+    type: 'thinking',
+    status: 'completed',
+    text: 'Batch 1 is partial, so wait for the remaining agent.',
+  });
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 3,
+      stream: 'thinking',
+      data: { text: 'remaining agent' },
+    },
+  });
+
+  expect(controller.state.transcript.activeTurn?.items.map(item => item.type)).toEqual([
+    'thinking',
+    'tool',
+  ]);
+  expect(controller.state.transcript.activeTurn?.items[0]).toMatchObject({
+    type: 'thinking',
+    status: 'completed',
+    text: 'Batch 1 is partial, so wait for the remaining agent.',
+  });
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 4,
+      stream: 'tool',
+      data: {
+        phase: 'start',
+        toolCallId: 'call-yield-late-thinking',
+        name: 'sessions_yield',
+      },
+    },
+  });
+
+  expect(controller.state.transcript.activeTurn?.items.map(item => item.type)).toEqual([
+    'thinking',
+    'tool',
+  ]);
+  expect(controller.state.transcript.activeTurn?.items[0]).toMatchObject({
+    type: 'thinking',
+    status: 'completed',
+  });
+  expect(controller.state.transcript.activeTurn?.items[1]).toBe(recovered);
+  expect(recovered).toMatchObject({ firstSeq: 4, lastSeq: 4 });
+  expect(recovered).not.toHaveProperty('agentSequencePending');
+});
+
+test('settles truncated Thinking before an update_plan restored from its assistant append', () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(15_500);
+  const sessionKey = 'agent:main:justdo:session-1';
+  const controller = new ChatController();
+  controller.state.sessionKey = sessionKey;
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 1,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+    },
+  });
+
+  // This is the ordering from the captured run: the durable assistant row is
+  // announced before its last Thinking snapshot and targeted Tool frame.
+  handleEvent({
+    event: 'session.message',
+    payload: {
+      sessionKey,
+      activeRunIds: ['run-1'],
+      message: {
+        role: 'assistant',
+        timestamp: 15_600,
+        content: [
+          {
+            type: 'thinking',
+            thinking: 'Batch 1 completed. Both agents done. Now spawn batch 2: 新能源、生物医药.',
+          },
+          {
+            type: 'toolCall',
+            id: 'call-plan-after-thinking',
+            name: 'update_plan',
+            arguments: {
+              plan: [
+                { step: '批次1', status: 'completed' },
+                { step: '批次2', status: 'in_progress' },
+              ],
+            },
+          },
+          {
+            type: 'toolCall',
+            id: 'call-spawn-after-plan',
+            name: 'sessions_spawn',
+            arguments: { task: '调研新能源' },
+          },
+        ],
+      },
+    },
+  });
+
+  const turn = controller.state.transcript.activeTurn!;
+  const planTool = turn.toolById.get('call-plan-after-thinking');
+  const spawnTool = turn.toolById.get('call-spawn-after-plan');
+  expect(turn.items).toMatchObject([
+    {
+      type: 'thinking',
+      status: 'completed',
+      text: 'Batch 1 completed. Both agents done. Now spawn batch 2: 新能源、生物医药.',
+    },
+    { type: 'tool', toolCallId: 'call-plan-after-thinking', agentSequencePending: true },
+    { type: 'tool', toolCallId: 'call-spawn-after-plan', agentSequencePending: true },
+  ]);
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 2,
+      stream: 'thinking',
+      data: { text: '新能源' },
+    },
+  });
+  expect(turn.items[0]).toMatchObject({
+    type: 'thinking',
+    status: 'completed',
+    text: 'Batch 1 completed. Both agents done. Now spawn batch 2: 新能源、生物医药.',
+  });
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 3,
+      stream: 'tool',
+      data: {
+        phase: 'start',
+        toolCallId: 'call-plan-after-thinking',
+        name: 'update_plan',
+      },
+    },
+  });
+  expect(planTool).not.toHaveProperty('agentSequencePending');
+
+  // The item at seq=4 belongs to the observed plan Tool at seq=3. It must not
+  // accidentally release the following recovered sessions_spawn boundary.
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 4,
+      stream: 'item',
+      data: {
+        kind: 'tool',
+        itemId: 'tool:call-plan-after-thinking',
+        toolCallId: 'call-plan-after-thinking',
+      },
+    },
+  });
+  expect(spawnTool).toHaveProperty('agentSequencePending', true);
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 5,
+      stream: 'tool',
+      data: {
+        phase: 'start',
+        toolCallId: 'call-spawn-after-plan',
+        name: 'sessions_spawn',
+      },
+    },
+  });
+  expect(spawnTool).not.toHaveProperty('agentSequencePending');
+  expect(turn.items.filter(item => item.type === 'thinking')).toHaveLength(1);
+});
+
+test('uses only the matching Tool item to release a recovered sessions_yield boundary', () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(16_000);
+  const sessionKey = 'agent:main:justdo:session-1';
+  const controller = new ChatController();
+  controller.state.sessionKey = sessionKey;
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 1,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+    },
+  });
+  handleEvent({
+    event: 'session.message',
+    payload: {
+      sessionKey,
+      activeRunIds: ['run-1'],
+      message: {
+        role: 'assistant',
+        timestamp: 16_100,
+        content: [
+          { type: 'thinking', thinking: 'Wait for the current batch.' },
+          {
+            type: 'toolCall',
+            id: 'call-yield-item-fallback',
+            name: 'sessions_yield',
+          },
+        ],
+      },
+    },
+  });
+
+  const recovered = controller.state.transcript.activeTurn?.toolById.get(
+    'call-yield-item-fallback',
+  );
+  expect(recovered).toMatchObject({
+    status: 'running',
+    agentSequencePending: true,
+    recoveredPreToolThinkingText: 'Wait for the current batch.',
+  });
+
+  // Status/commentary items are unrelated to the Tool and must not release its
+  // boundary even though they share the Agent item stream.
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 2,
+      stream: 'item',
+      data: { kind: 'status', itemId: 'fast-mode-auto:on' },
+    },
+  });
+  expect(recovered).toHaveProperty('agentSequencePending', true);
+
+  // The targeted Tool frame can be missed while its following per-client Tool
+  // item still arrives with a stable Tool call ID.
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 3,
+      stream: 'item',
+      data: {
+        kind: 'tool',
+        itemId: 'tool:call-yield-item-fallback',
+        toolCallId: 'call-yield-item-fallback',
+      },
+    },
+  });
+  expect(recovered).not.toHaveProperty('agentSequencePending');
+  expect(recovered).not.toHaveProperty('recoveredPreToolThinkingText');
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 4,
+      stream: 'thinking',
+      data: { text: 'Continue with the next batch.' },
+    },
+  });
+
+  expect(controller.state.transcript.activeTurn?.items).toMatchObject([
+    { type: 'thinking', status: 'completed', text: 'Wait for the current batch.' },
+    { type: 'tool', toolCallId: 'call-yield-item-fallback' },
+    { type: 'thinking', status: 'running', text: 'Continue with the next batch.' },
+  ]);
+});
+
+test('settles running Thinking when the first recovered Tool row is result-only', () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(16_500);
+  const sessionKey = 'agent:main:justdo:session-1';
+  const controller = new ChatController();
+  controller.state.sessionKey = sessionKey;
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 1,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+    },
+  });
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 2,
+      stream: 'thinking',
+      data: { text: 'A truncated pre-Tool snapshot' },
+    },
+  });
+
+  // Both the assistant Tool-call append and Agent Tool frames were missed.
+  // The first durable evidence is the result row itself.
+  handleEvent({
+    event: 'session.message',
+    payload: {
+      sessionKey,
+      activeRunIds: ['run-1'],
+      message: {
+        role: 'toolResult',
+        timestamp: 16_600,
+        toolCallId: 'call-result-only',
+        toolName: 'exec',
+        content: 'ok',
+      },
+    },
+  });
+
+  expect(controller.state.transcript.activeTurn?.items).toMatchObject([
+    { type: 'thinking', status: 'completed', text: 'A truncated pre-Tool snapshot' },
+    {
+      type: 'tool',
+      toolCallId: 'call-result-only',
+      status: 'completed',
+      output: 'ok',
+    },
+  ]);
+  const recovered = controller.state.transcript.activeTurn?.toolById.get('call-result-only');
+  expect(recovered).not.toHaveProperty('agentSequencePending');
+});
+
+test('releases result-only sessions_yield ordering without inventing a terminal payload', () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(16_750);
+  const sessionKey = 'agent:main:justdo:session-1';
+  const controller = new ChatController();
+  controller.state.sessionKey = sessionKey;
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 1,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+    },
+  });
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 2,
+      stream: 'thinking',
+      data: { text: 'Wait for the current batch.' },
+    },
+  });
+  handleEvent({
+    event: 'session.message',
+    payload: {
+      sessionKey,
+      activeRunIds: ['run-1'],
+      message: {
+        role: 'toolResult',
+        timestamp: 16_800,
+        toolCallId: 'call-yield-result-only',
+        toolName: 'sessions_yield',
+        content: '',
+      },
+    },
+  });
+
+  expect(controller.state.transcript.activeTurn?.items).toMatchObject([
+    { type: 'thinking', status: 'completed', text: 'Wait for the current batch.' },
+    {
+      type: 'tool',
+      toolCallId: 'call-yield-result-only',
+      status: 'running',
+    },
+  ]);
+  const recovered = controller.state.transcript.activeTurn?.toolById.get('call-yield-result-only');
+  expect(recovered).not.toHaveProperty('agentSequencePending');
+  expect(recovered?.output).toBeUndefined();
+});
+
+test('releases recovered Tool ordering when history supplies the missed terminal frame', () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(17_000);
+  const sessionKey = 'agent:main:justdo:session-1';
+  const controller = new ChatController();
+  controller.state.sessionKey = sessionKey;
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 1,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+    },
+  });
+  handleEvent({
+    event: 'session.message',
+    payload: {
+      sessionKey,
+      activeRunIds: ['run-1'],
+      message: {
+        role: 'assistant',
+        timestamp: 17_100,
+        content: [
+          {
+            type: 'toolCall',
+            id: 'call-yield-history-result',
+            name: 'sessions_yield',
+          },
+        ],
+      },
+    },
+  });
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 2,
+      stream: 'thinking',
+      data: { text: 'Wait for the last agent.' },
+    },
+  });
+
+  const recovered = controller.state.transcript.activeTurn?.toolById.get(
+    'call-yield-history-result',
+  );
+  expect(recovered).toMatchObject({ status: 'running', agentSequencePending: true });
+
+  // Both canonical Tool frames are absent. The committed result must settle
+  // the pre-Tool Thinking boundary before the next model continuation starts.
+  handleEvent({
+    event: 'session.message',
+    payload: {
+      sessionKey,
+      activeRunIds: ['run-1'],
+      message: {
+        role: 'toolResult',
+        timestamp: 17_200,
+        toolCallId: 'call-yield-history-result',
+        toolName: 'sessions_yield',
+        content: '{"status":"partial","pending":1}',
+      },
+    },
+  });
+
+  expect(recovered).toMatchObject({ status: 'completed' });
+  expect(recovered).not.toHaveProperty('agentSequencePending');
+  expect(controller.state.transcript.activeTurn?.items[0]).toMatchObject({
+    type: 'thinking',
+    status: 'completed',
+  });
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 3,
+      stream: 'thinking',
+      data: { text: 'Process the partial result and continue.' },
+    },
+  });
+
+  expect(controller.state.transcript.activeTurn?.items.map(item => item.type)).toEqual([
+    'thinking',
+    'tool',
+    'thinking',
+  ]);
+});
+
 test('does not restore an old Tool row into a newer active turn', () => {
   vi.useFakeTimers();
   vi.setSystemTime(20_000);
@@ -1959,7 +2545,7 @@ test('does not restore an old Tool row into a newer active turn', () => {
   expect(controller.state.transcript.activeTurn?.toolById.has('call-old-yield')).toBe(false);
 });
 
-test('does not restore untimed, foreign-run, or non-yield Tool rows', () => {
+test('does not restore untimed or foreign-run Tool rows', () => {
   vi.useFakeTimers();
   vi.setSystemTime(20_000);
   const sessionKey = 'agent:main:justdo:session-1';
@@ -2015,15 +2601,6 @@ test('does not restore untimed, foreign-run, or non-yield Tool rows', () => {
       sessionId: 'session-current',
       activeRunIds: ['run-current'],
       message: toolMessage('call-untimed', 'sessions_yield'),
-    },
-  });
-  handleEvent({
-    event: 'session.message',
-    payload: {
-      sessionKey,
-      sessionId: 'session-current',
-      activeRunIds: ['run-current'],
-      message: toolMessage('call-generic', 'exec', 20_100),
     },
   });
   handleEvent({
