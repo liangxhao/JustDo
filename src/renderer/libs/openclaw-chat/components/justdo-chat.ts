@@ -990,6 +990,28 @@ export class JustDoChatElement extends LitElement {
         margin: 0;
       }
 
+      .message-attachment-list-item {
+        display: flex;
+        align-items: flex-start;
+        gap: 6px;
+        max-width: 100%;
+      }
+
+      .message-attachment-list-item__marker {
+        display: inline-flex;
+        flex: 0 0 auto;
+        align-items: center;
+        justify-content: flex-end;
+        min-width: 1.25em;
+        height: 32px;
+      }
+
+      .message-attachment-list-item__content {
+        flex: 1 1 auto;
+        min-width: 0;
+        max-width: 100%;
+      }
+
       .message-attachment {
         display: flex;
         align-items: center;

@@ -399,6 +399,67 @@ describe('renderMessageBlock', () => {
     expect(rendered).not.toContain('message-attachment__detail');
   });
 
+  test('renders Markdown list MEDIA deliveries without dropping the following section', () => {
+    const content =
+      '5 个 subagent 已全部完成。\n\n## 生成文件（已核验存在）\n\n' +
+      '- MEDIA:C:\\project\\task1_fib.py\n' +
+      '- MEDIA:C:\\project\\task2_primes.py\n' +
+      '- MEDIA:C:\\project\\task3_wordfreq.py\n' +
+      '- MEDIA:C:\\project\\task4_sumsq.py\n' +
+      '- MEDIA:C:\\project\\task5_json.py\n\n' +
+      '## 过程备注\n\n' +
+      '- 5 个文件均生成、执行并验证通过。';
+    const rendered = stringifyTemplate(
+      renderMessageBlock({
+        kind: 'group',
+        key: 'assistant-list-media-group',
+        role: 'assistant',
+        messages: [
+          {
+            key: 'assistant-list-media-msg',
+            message: { role: 'assistant', content, timestamp: 1 },
+          },
+        ],
+        timestamp: 1,
+        isStreaming: false,
+      }),
+    );
+
+    expect(rendered.match(/class="message-attachment"/g)).toHaveLength(5);
+    expect(rendered.match(/class="message-attachment-list-item__marker"/g)).toHaveLength(5);
+    expect(rendered.match(/•/g)).toHaveLength(5);
+    expect(rendered).not.toContain('MEDIA:');
+    expect(rendered.indexOf('生成文件')).toBeLessThan(rendered.indexOf('task1_fib.py'));
+    expect(rendered.indexOf('task5_json.py')).toBeLessThan(rendered.indexOf('过程备注'));
+    expect(rendered).toContain('5 个文件均生成、执行并验证通过。');
+  });
+
+  test('preserves ordered list numbers for MEDIA deliveries', () => {
+    const rendered = stringifyTemplate(
+      renderMessageBlock({
+        kind: 'group',
+        key: 'assistant-numbered-media-group',
+        role: 'assistant',
+        messages: [
+          {
+            key: 'assistant-numbered-media-msg',
+            message: {
+              role: 'assistant',
+              content: '1. MEDIA:C:\\project\\first.py\n2. MEDIA:C:\\project\\second.py',
+              timestamp: 1,
+            },
+          },
+        ],
+        timestamp: 1,
+        isStreaming: false,
+      }),
+    );
+
+    expect(rendered.match(/class="message-attachment-list-item__marker"/g)).toHaveLength(2);
+    expect(rendered.indexOf('1.')).toBeLessThan(rendered.indexOf('first.py'));
+    expect(rendered.indexOf('2.')).toBeLessThan(rendered.indexOf('second.py'));
+  });
+
   test('renders user MEDIA content in text order inside the user bubble', () => {
     const rendered = stringifyTemplate(
       renderMessageBlock({

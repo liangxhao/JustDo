@@ -300,6 +300,22 @@ function renderMessageImages(
   `;
 }
 
+function renderListedAttachment(
+  attachment: RenderableAttachment,
+  content: TemplateResult | typeof nothing,
+): TemplateResult | typeof nothing {
+  const marker = attachment.listMarker;
+  if (!marker) return content;
+  return html`
+    <div class="message-attachment-list-item">
+      <span class="message-attachment-list-item__marker" aria-hidden="true"
+        >${marker === '-' ? '•' : marker}</span
+      >
+      <div class="message-attachment-list-item__content">${content}</div>
+    </div>
+  `;
+}
+
 export async function showImageContextMenu(event: Event, sourceUrl: string): Promise<void> {
   event.preventDefault();
   event.stopPropagation();
@@ -380,9 +396,15 @@ function renderOrderedBubble(
             `;
           }
           if (item.attachment.kind === 'image') {
-            return renderMessageImages([item.attachment], role === 'assistant', workingDirectory);
+            return renderListedAttachment(
+              item.attachment,
+              renderMessageImages([item.attachment], role === 'assistant', workingDirectory),
+            );
           }
-          return renderAssistantAttachments([item.attachment], workingDirectory);
+          return renderListedAttachment(
+            item.attachment,
+            renderAssistantAttachments([item.attachment], workingDirectory),
+          );
         })}
       </div>
     </div>

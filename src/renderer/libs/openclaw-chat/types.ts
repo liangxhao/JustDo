@@ -60,6 +60,7 @@ export type MessageContentItem =
         label: string;
         mimeType?: string;
         isVoiceNote?: boolean;
+        listMarker?: string;
       };
     }
   | {

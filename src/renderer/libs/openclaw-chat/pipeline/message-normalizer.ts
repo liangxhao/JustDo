@@ -346,6 +346,7 @@ function expandTextContent(text: string): {
           kind: inferred.kind,
           label: inferred.label,
           mimeType: inferred.mimeType,
+          ...(segment.listMarker ? { listMarker: segment.listMarker } : {}),
         },
       });
       continue;
@@ -484,6 +485,7 @@ function expandUserTextMediaContent(
         kind: inferred.kind,
         label: inferred.label,
         mimeType: inferred.mimeType,
+        ...(segment.listMarker ? { listMarker: segment.listMarker } : {}),
       },
     });
   }

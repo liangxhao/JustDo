@@ -91,7 +91,7 @@ export function resolveToolUseId(item: Record<string, unknown>): string | undefi
 
 export type ParsedMediaSegment =
   | { type: 'text'; text: string }
-  | { type: 'media'; url: string };
+  | { type: 'media'; url: string; listMarker?: string };
 
 export function splitMediaFromOutput(text: string): {
   text: string;
@@ -112,8 +112,9 @@ export function splitMediaFromOutput(text: string): {
   const segments: ParsedMediaSegment[] = [];
   const mediaUrls: string[] = [];
 
-  // Split on MEDIA: lines and media URL patterns
-  const mediaLineRe = /^MEDIA\s*:\s*(.+?)\s*$/gim;
+  // Split on bare MEDIA: lines and Markdown list items such as
+  // "- MEDIA:" or "1. MEDIA:".
+  const mediaLineRe = /^(?:(-|\d+\.)[\t ]+)?MEDIA\s*:\s*(.+?)\s*$/gim;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
@@ -122,9 +123,10 @@ export function splitMediaFromOutput(text: string): {
     if (before.trim()) {
       segments.push({ type: 'text', text: before.trim() });
     }
-    const url = match[1];
+    const listMarker = match[1];
+    const url = match[2];
     mediaUrls.push(url);
-    segments.push({ type: 'media', url });
+    segments.push({ type: 'media', url, ...(listMarker ? { listMarker } : {}) });
     lastIndex = match.index + match[0].length;
   }
 
