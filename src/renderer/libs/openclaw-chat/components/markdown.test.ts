@@ -3,7 +3,33 @@ import { describe, expect, test } from 'vitest';
 import {
   findStableStreamingMarkdownBoundary,
   md,
+  splitMarkdownFrontmatter,
+  stripMarkdownFrontmatter,
 } from '@/libs/openclaw-chat/components/markdown';
+
+describe('Markdown front matter', () => {
+  test('strips a YAML front matter block from document previews', () => {
+    const source = ['---', 'name: example', 'description: A test', '---', '', '# Content'].join(
+      '\n',
+    );
+
+    expect(stripMarkdownFrontmatter(source)).toBe('# Content');
+    expect(splitMarkdownFrontmatter(source)).toEqual({
+      frontmatter: 'name: example\ndescription: A test',
+      body: '# Content',
+    });
+  });
+
+  test('supports BOM-prefixed front matter and YAML document terminators', () => {
+    expect(stripMarkdownFrontmatter('\uFEFF---\nname: example\n...\n正文')).toBe('正文');
+  });
+
+  test('keeps Markdown without a complete front matter block unchanged', () => {
+    const source = '---\nThis is a horizontal rule, not front matter.';
+
+    expect(stripMarkdownFrontmatter(source)).toBe(source);
+  });
+});
 
 describe('Markdown autolinks', () => {
   test.each(['，', '。', '；', '！', '？', '、'])(

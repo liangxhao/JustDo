@@ -508,22 +508,53 @@ function toEscapedPlainTextHtml(value: string): string {
   return `<div class="markdown-plain-text-fallback">${escapeHtml(value.replace(/\r\n?/g, '\n'))}</div>`;
 }
 
+/** Remove a YAML front matter block when rendering a Markdown document preview. */
+export function splitMarkdownFrontmatter(text: string): { body: string; frontmatter: string | null } {
+  const lines = text.split('\n');
+  if (lines[0]?.replace(/^\uFEFF/, '') !== '---') return { body: text, frontmatter: null };
+
+  const closingLineIndex = lines.findIndex(
+    (line, index) => index > 0 && (line === '---' || line === '...'),
+  );
+  if (closingLineIndex < 0) return { body: text, frontmatter: null };
+
+  return {
+    body: lines.slice(closingLineIndex + 1).join('\n').trim(),
+    frontmatter: lines.slice(1, closingLineIndex).join('\n'),
+  };
+}
+
+export function stripMarkdownFrontmatter(text: string): string {
+  return splitMarkdownFrontmatter(text).body;
+}
+
 export interface MarkdownRenderOptions {
   parseLimit?: number;
+  stripFrontmatter?: boolean;
+  renderFrontmatter?: boolean;
 }
 
 export function toSanitizedMarkdownHtml(text: string, options: MarkdownRenderOptions = {}): string {
   if (!text) return '';
   installHooks();
 
-  const input = text.trim().replace(/\r\n?/g, '\n');
+  const normalizedInput = text.trim().replace(/\r\n?/g, '\n');
+  const frontmatterResult = options.renderFrontmatter || options.stripFrontmatter
+    ? splitMarkdownFrontmatter(normalizedInput)
+    : { body: normalizedInput, frontmatter: null };
+  const input = frontmatterResult.body;
   if (!input) return '';
   const parseLimit = Math.min(
     Math.max(options.parseLimit ?? MARKDOWN_PARSE_LIMIT, 1),
     MARKDOWN_CHAR_LIMIT,
   );
 
-  const cacheKey = `${MARKDOWN_RENDER_CACHE_VERSION}:${parseLimit}:${i18nService.getLanguage()}:${input}`;
+  const frontmatterMode = options.renderFrontmatter
+    ? 'frontmatter-rendered'
+    : options.stripFrontmatter
+      ? 'frontmatter-stripped'
+      : 'full-document';
+  const cacheKey = `${MARKDOWN_RENDER_CACHE_VERSION}:${parseLimit}:${frontmatterMode}:${i18nService.getLanguage()}:${normalizedInput}`;
   if (input.length <= MARKDOWN_CACHE_MAX_CHARS) {
     const cached = getCachedMarkdown(cacheKey);
     if (cached !== null) return cached;
@@ -546,6 +577,10 @@ export function toSanitizedMarkdownHtml(text: string, options: MarkdownRenderOpt
     rendered = md.render(`${truncated.text}${suffix}`);
   } catch {
     rendered = `<pre class="code-block">${escapeHtml(`${truncated.text}${suffix}`)}</pre>`;
+  }
+
+  if (options.renderFrontmatter && frontmatterResult.frontmatter !== null) {
+    rendered = `<pre class="markdown-frontmatter">${escapeHtml(frontmatterResult.frontmatter)}</pre>${rendered}`;
   }
 
   const sanitized = DOMPurify.sanitize(rendered, sanitizeOptions) as unknown as string;

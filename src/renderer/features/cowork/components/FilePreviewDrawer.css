@@ -683,6 +683,19 @@
   margin: 1rem 0;
 }
 
+.file-preview-markdown .markdown-frontmatter {
+  margin: 0 0 1.25rem;
+  padding: 0.8rem 1rem;
+  overflow-x: auto;
+  color: var(--justdo-text-secondary);
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace;
+  font-size: 0.82rem;
+  line-height: 1.55;
+  white-space: pre;
+  background: var(--justdo-surface-raised);
+  border-radius: 0.25rem;
+}
+
 .file-preview-markdown h1,
 .file-preview-markdown h2,
 .file-preview-markdown h3,

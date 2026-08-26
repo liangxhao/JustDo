@@ -126,7 +126,10 @@ const FilePreviewDrawer = forwardRef<FilePreviewDrawerHandle, FilePreviewDrawerP
       () =>
         isPreformatted
           ? ''
-          : toSanitizedMarkdownHtml(content, { parseLimit: MARKDOWN_DOCUMENT_PARSE_LIMIT }),
+          : toSanitizedMarkdownHtml(content, {
+              parseLimit: MARKDOWN_DOCUMENT_PARSE_LIMIT,
+              renderFrontmatter: true,
+            }),
       [content, isPreformatted],
     );
 
