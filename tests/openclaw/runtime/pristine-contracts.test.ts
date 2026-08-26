@@ -61,6 +61,7 @@ const EXPECTED_PATCH_FILES = [
   '040-compaction-error-attribution.cjs',
   '041-managed-implicit-subagent-join.cjs',
   '042-required-subagent-terminal-guard.cjs',
+  '043-completion-delivery-followup-join.cjs',
 ] as const;
 
 function createPristineFixture(): string {

@@ -63,6 +63,7 @@ flowchart LR
   Recovery --> Fence[021 delivery ownership/announce fence]
   Fence --> ImplicitJoin[041 durable implicit join]
   ImplicitJoin --> TerminalGuard[042 required-child terminal guard]
+  TerminalGuard --> CompletionFollowup[043 completion-run follow-up join]
   Recovery --> Identity[036 managed Gateway identity pin]
   Recovery -->|未消费结果恢复原生投递| Queue[016 requester FIFO]
   Queue --> Promote[015 delivery commit 后提升 canonical branch]
@@ -84,9 +85,11 @@ flowchart LR
   `031` 只读取 `029` 的公开 details 字段，并兼容字段缺失的 legacy transcript；`039`
   复用 `028` 的压缩流边界，为 direct recovery 补可见 lifecycle、等待心跳和摘要增量；
   `040` 防止本地 precheck 文案覆盖真实的压缩终态错误。
-- Subagent 终止判定：`041`/`042` 在 `018`–`021` 的 durable join/ownership 状态机之上，
+- Subagent 终止判定：`041`–`043` 在 `018`–`021` 的 durable join/ownership 状态机之上，
   把模型的 terminal reply（包括 `NO_REPLY`）视为候选；仍有 required child 时先等待
-  一批结果并续跑父会话，显式 fire-and-forget、abort、timeout 和非 managed session 不变。
+  一批结果并续跑父会话。completion announce 唤醒的父 run 只排除当前正在投递的 source
+  child，仍会 join 本轮新派发或其他未完成 child；显式 fire-and-forget、abort、timeout 和
+  非 managed session 不变。
 
 ### 001–004：环境、Thinking 与历史
 
@@ -639,6 +642,24 @@ flowchart LR
 - **可删除条件**：上游在 terminal delivery 前原生调用等价的 required-child obligation guard，
   并以不伪造 tool transcript、不重复副作用且不受普通 finalize-revision 次数限制的方式续跑。
 
+#### `043-completion-delivery-followup-join.cjs`
+
+- **做什么**：细化 `042` 对 `subagent_announce` completion delivery run 的防递归边界。
+  从 provenance 提取当前正在投递的 source child session key，只把该 child 排除在 implicit
+  join 外；同一父 run 新调用 `sessions_spawn` 创建的 follow-up child，以及其他尚未消费的
+  required sibling，仍由 `041` 等待并驱动父 agent 继续。
+- **关系与边界**：依赖 `041` 的 terminal join selector 和 `042` 的 terminal interception。
+  direct source 必须与当前父会话仍待 native delivery 的 exact child 匹配，才会只排除 source；
+  缺失、过期或无法关联的 completion provenance 继续 fail closed。descendant-settlement 的
+  self-source synthetic wake 只有在 registry 能证明 controller 是父级注册的 subagent 时才
+  不排除其 descendants。普通用户 run、显式 `sessions_yield`、fire-and-forget child、abort、
+  timeout 和非 managed session 不变。
+- **当前保留原因**：`042` 原先按整个 completion delivery run 跳过 implicit join。父 agent
+  收到上一批结果后若在这一轮派发下一批 child、但模型偶发漏调 `sessions_yield`，run 会直接
+  结束；新 child 完成后没有存活的父编排继续消费，表现为“subagent 已完成，主 agent 却停止”。
+- **可删除条件**：上游能区分正在投递的 source completion 与该 run 新产生的 required-child
+  obligation，并在接受 terminal reply 前只排除 source、可靠 join 其余 child。
+
 ## 已删除或由上游/App 承担的能力
 
 | 能力                                            | v2026.7.1-2 证据与决定                                                                                                                                                                                                                                                 |
@@ -692,7 +713,7 @@ flowchart LR
 
 | 测试                                                  | 主要覆盖                                                                                                                                  |
 | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `openclawPristineContracts.test.ts`                   | 锁定原始 npm 包、11 项上游能力证据、42 项保留缺口、头注释和大小约束。                                                                     |
+| `openclawPristineContracts.test.ts`                   | 锁定原始 npm 包、11 项上游能力证据、43 项保留缺口、头注释和大小约束。                                                                     |
 | `openclawV202671ReasoningStream.test.ts`              | `002` callback gate 的原始失败与改写后事件/回调行为。                                                                                     |
 | `openclawV202671PatchSafety.test.ts`                  | `001`、`004`、`007`、`034` 的安全边界和真实 fixture 幂等。                                                                                |
 | `openclawV202671CompletionDelivery.test.ts`           | H07 上游语义、managed yield 非对外交付、subagent `NO_REPLY` 非成功，以及 `015`、`016` 的 FIFO、硬期限和恢复边界。                         |
@@ -700,6 +721,7 @@ flowchart LR
 | `openclawV202671SubagentCapabilityPatches.test.ts`    | `014`。                                                                                                                                   |
 | `openclawV202671ManagedSubagentJoin.test.ts`          | `017`–`021` 的分类、批次、两阶段提交、消失 run 终止等待、恢复与 announce fence。                                                          |
 | `openclawV202671ManagedImplicitSubagentJoin.test.ts`  | `041`/`042` required child 选择、失败结果、prompt 上限、silent terminal guard、无预算续跑及 commit 边界。                                 |
+| `completion-delivery-followup-join.test.ts`           | `043` provenance/registry 关联、self-source wake、source-only 排除、follow-up join/commit/abort 状态链及 source/bundle 幂等。             |
 | `openclawV202671ManagedSessionIdentity.test.ts`       | `036` command、reply、agent initial/persisted 四落点 identity pin（含 reply reset 绕过）、普通会话不变、幂等和多目标原子失败。            |
 | `openclawV202671ApprovalLifecycle.test.ts`            | `022`–`025` 的 lifetime、hidden resume、stop/failure 与文件头。                                                                           |
 | `openclawV202671RequestMetadata.test.ts`              | `026`–`028`，含 strict-compatible negative 与 nested parent。                                                                             |
