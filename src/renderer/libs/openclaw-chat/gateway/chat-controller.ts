@@ -43,7 +43,8 @@ import type {
 } from '@/libs/openclaw-chat/gateway/client';
 import {
   confirmRecoveredToolSequence,
-  hydrateToolPrecedingThinking,
+  hydrateRecoveredContent,
+  hydrateToolPrecedingSegments,
   reduceAgentEvent,
   reduceChatEvent,
 } from '@/libs/openclaw-chat/model/agent-event-reducer';
@@ -86,6 +87,7 @@ import {
 } from '@/libs/openclaw-chat/model/tool-lifecycle';
 import {
   asToolRecord,
+  attachedToolMessages,
   isToolCallRecord,
   isToolResultType,
   readToolCallId,
@@ -1167,8 +1169,8 @@ export class ChatController {
   /**
    * A live run owns the visible timeline, so history reconciliation correctly
    * refuses to replace it. The transcript can still repair that timeline by a
-   * stable Tool call ID: hydrate known cards and, for a freshly appended
-   * session.message, restore a Tool whose Agent start frame was missed.
+   * stable Tool call ID: hydrate known cards plus their preceding Thinking and
+   * visible content, and restore a Tool whose Agent start frame was missed.
    */
   private hydrateActiveToolItemsFromHistory(
     messages: unknown[],
@@ -1180,13 +1182,12 @@ export class ChatController {
     const activeTurn = this.state.transcript.activeTurn;
     if (!activeTurn) return false;
 
+    const activeRunMessages = messages.filter(message => {
+      const explicitRunId = readExplicitMessageRunId(message);
+      return !explicitRunId || explicitRunId === activeTurn.runId;
+    });
     const persistedTools = new Map<string, ToolItem>(
-      projectPersistedTimeline(
-        messages.filter(message => {
-          const explicitRunId = readExplicitMessageRunId(message);
-          return !explicitRunId || explicitRunId === activeTurn.runId;
-        }) as GatewayMessage[],
-      )
+      projectPersistedTimeline(activeRunMessages as GatewayMessage[])
         .flatMap(item =>
           item.kind === 'process-summary'
             ? item.items.filter(process => process.type === 'tool')
@@ -1198,8 +1199,8 @@ export class ChatController {
         )
         .map(tool => [tool.toolCallId, tool] as const),
     );
-    const authoritativeThinkingByToolId = precedingThinkingByToolCallId(messages);
-    const authoritativeToolResultIds = toolResultCallIds(messages);
+    const authoritativeSegmentsByToolId = precedingSegmentsByToolCallId(activeRunMessages);
+    const authoritativeToolResultIds = toolResultCallIds(activeRunMessages);
     let changed = false;
     for (const [toolCallId, persistedTool] of persistedTools) {
       let liveTool = activeTurn.toolById.get(toolCallId);
@@ -1238,14 +1239,13 @@ export class ChatController {
         activeTurn.toolById.set(toolCallId, liveTool);
         changed = true;
       }
-      const authoritativeThinkingText = authoritativeThinkingByToolId.get(toolCallId) ?? null;
-      if (authoritativeThinkingText) {
+      const authoritativeSegments = authoritativeSegmentsByToolId.get(toolCallId);
+      if (authoritativeSegments) {
         changed =
-          hydrateToolPrecedingThinking(
+          hydrateToolPrecedingSegments(
             activeTurn,
             liveTool,
-            authoritativeThinkingText,
-            true,
+            authoritativeSegments,
             activeTurn.lastAgentSeq,
             persistedTool.updatedAt || this.transcriptDependencies.now(),
             this.transcriptDependencies,
@@ -1283,6 +1283,19 @@ export class ChatController {
       if (liveTool.status === 'running' && canApplyPersistedTerminalStatus) {
         liveTool.status = persistedTool.status;
         changed = true;
+      }
+    }
+    if (options.backfillMissingToolsFromAppend === true) {
+      for (const recovered of trailingAssistantContent(activeRunMessages)) {
+        changed =
+          hydrateRecoveredContent(
+            activeTurn,
+            recovered.text,
+            recovered.historyKey,
+            activeTurn.lastAgentSeq,
+            recovered.timestamp,
+            this.transcriptDependencies,
+          ) || changed;
       }
     }
     if (changed) this.state.transcript.revision += 1;
@@ -2789,7 +2802,7 @@ export class ChatController {
         (explicitMessageRunId === undefined || expectedRunIds.has(explicitMessageRunId)) &&
         (activeRunIds.length === 0 || activeRunIds.some(runId => expectedRunIds.has(runId))) &&
         (payload?.hasActiveRun ?? sessionSnapshot?.hasActiveRun) !== false;
-      const repairedActiveTool =
+      const repairedActiveTail =
         payload?.message !== undefined &&
         sessionIdentityMatches &&
         runIdentityMatches &&
@@ -2797,7 +2810,7 @@ export class ChatController {
           backfillMissingSessionsYield: true,
           backfillMissingToolsFromAppend: true,
         });
-      if (repairedActiveTool) this.publishActiveToolHistoryRepair();
+      if (repairedActiveTail) this.publishActiveToolHistoryRepair();
       const messageSeq =
         readPositiveSafeInteger(payload?.messageSeq) ?? readOpenClawMessageSeq(payload?.message);
       const loadedMessageSeq = readLatestOpenClawMessageSeq(this.state.chatMessages);
@@ -3560,13 +3573,13 @@ export class ChatController {
       }
 
       // Active-run history is not allowed to replace the live timeline, but it
-      // can safely hydrate the same Tool card by its stable call ID. This is
+      // can safely hydrate the same Tool boundary by its stable call ID. This is
       // especially important for long sessions_yield joins whose live result
       // event may contain only a short summary or no renderable output.
-      const repairedActiveTool = this.hydrateActiveToolItemsFromHistory(messages, {
+      const repairedActiveTail = this.hydrateActiveToolItemsFromHistory(messages, {
         backfillMissingSessionsYield: options.backfillActiveSessionsYield,
       });
-      if (repairedActiveTool) this.publishActiveToolHistoryRepair();
+      if (repairedActiveTail) this.publishActiveToolHistoryRepair();
       if (options.backfillActiveSessionsYield) {
         // Resolve the transcript-level gap only after the same authoritative
         // snapshot has passed the identity/time-limited Tool hydration step.
@@ -4612,29 +4625,125 @@ function thinkingLengthForDebug(message: unknown): number {
   }, 0);
 }
 
-function precedingThinkingByToolCallId(messages: unknown[]): Map<string, string> {
-  const result = new Map<string, string>();
+function precedingSegmentsByToolCallId(
+  messages: unknown[],
+): Map<string, Array<{ type: 'thinking' | 'content'; text: string }>> {
+  const result = new Map<string, Array<{ type: 'thinking' | 'content'; text: string }>>();
+  const append = (
+    segments: Array<{ type: 'thinking' | 'content'; text: string }>,
+    type: 'thinking' | 'content',
+    text: string,
+  ) => {
+    const normalized = text.trim();
+    if (!normalized) return;
+    const tail = segments[segments.length - 1];
+    if (tail?.type === type) {
+      tail.text += type === 'thinking' ? `\n${normalized}` : normalized;
+    } else {
+      segments.push({ type, text: normalized });
+    }
+  };
   for (const value of messages) {
     const message = unwrapToolMessage(value);
-    if (!message || !Array.isArray(message.content)) continue;
-    const thinking: string[] = [];
+    if (!message || String(message.role ?? '').toLowerCase() !== 'assistant') continue;
+    if (typeof message.content === 'string' && message.content.trim()) {
+      const toolCallId = firstAttachedToolCallId(value);
+      if (toolCallId) result.set(toolCallId, [{ type: 'content', text: message.content.trim() }]);
+      continue;
+    }
+    if (!Array.isArray(message.content)) continue;
+    const segments: Array<{ type: 'thinking' | 'content'; text: string }> = [];
     for (const value of message.content) {
+      if (typeof value === 'string') {
+        append(segments, 'content', value);
+        continue;
+      }
       const block = asToolRecord(value);
       if (!block) continue;
+      if (isToolCallRecord(block)) {
+        const toolCallId = readToolCallId(block);
+        if (toolCallId && segments.length > 0) {
+          result.set(
+            toolCallId,
+            segments.map(segment => ({ ...segment })),
+          );
+        }
+        segments.length = 0;
+        continue;
+      }
       const type = typeof block.type === 'string' ? block.type.toLowerCase() : '';
-      if (type === 'thinking' || type === 'reasoning') {
+      if (type === 'text' && typeof block.text === 'string' && block.text.trim()) {
+        append(segments, 'content', block.text);
+      } else if (type === 'thinking' || type === 'reasoning') {
         const text = [block.thinking, block.text, block.reasoning].find(
           candidate => typeof candidate === 'string' && candidate.trim(),
         );
-        if (typeof text === 'string') thinking.push(text.trim());
-        continue;
-      }
-      if (isToolCallRecord(block)) {
-        const toolCallId = readToolCallId(block);
-        if (toolCallId && thinking.length > 0) result.set(toolCallId, thinking.join('\n'));
-        thinking.length = 0;
+        if (typeof text === 'string') append(segments, 'thinking', text);
       }
     }
+  }
+  return result;
+}
+
+function firstAttachedToolCallId(value: unknown): string | null {
+  const outer = asToolRecord(value);
+  const message = unwrapToolMessage(value);
+  if (!outer || !message) return null;
+  const attachments = [
+    ...attachedToolMessages(message),
+    ...(message === outer ? [] : attachedToolMessages(outer)),
+  ];
+  for (const attachment of attachments) {
+    const source = unwrapToolMessage(attachment);
+    if (!source) continue;
+    if (isToolCallRecord(source)) return readToolCallId(source);
+    if (!Array.isArray(source.content)) continue;
+    for (const value of source.content) {
+      const block = asToolRecord(value);
+      if (block && isToolCallRecord(block)) return readToolCallId(block);
+    }
+  }
+  return null;
+}
+
+function trailingAssistantContent(
+  messages: unknown[],
+): Array<{ historyKey: string; text: string; timestamp: number }> {
+  const result: Array<{ historyKey: string; text: string; timestamp: number }> = [];
+  for (const [index, value] of messages.entries()) {
+    const message = unwrapToolMessage(value);
+    if (!message || String(message.role ?? '').toLowerCase() !== 'assistant') continue;
+    if (firstAttachedToolCallId(value)) continue;
+    let text = '';
+    if (typeof message.content === 'string') {
+      text = message.content.trim();
+    } else if (Array.isArray(message.content)) {
+      const trailing: string[] = [];
+      for (const value of message.content) {
+        if (typeof value === 'string') {
+          if (value.trim()) trailing.push(value);
+          continue;
+        }
+        const block = asToolRecord(value);
+        if (!block) continue;
+        if (isToolCallRecord(block)) {
+          trailing.length = 0;
+          continue;
+        }
+        const type = typeof block.type === 'string' ? block.type.toLowerCase() : '';
+        if (type === 'text' && typeof block.text === 'string' && block.text.trim()) {
+          trailing.push(block.text);
+        }
+      }
+      text = trailing.join('').trim();
+    }
+    if (!text) continue;
+    const identity = readTranscriptIdentity(value);
+    const timestamp = messageTimestampMs(value) ?? messageTimestampMs(message) ?? Date.now();
+    const historyKey = identity
+      ? `${identity.kind}:${identity.value}`
+      : `append:${readOpenClawMessageSeq(value) ?? 'none'}:${timestamp}:${index}:${hashTextForDebug(text)}`;
+    result.push({ historyKey, text, timestamp });
   }
   return result;
 }

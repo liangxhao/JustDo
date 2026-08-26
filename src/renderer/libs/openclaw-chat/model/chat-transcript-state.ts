@@ -18,6 +18,8 @@ export interface ThinkingItem extends BaseTurnItem {
   type: 'thinking';
   status: ProcessStatus;
   text: string;
+  /** Authoritative history text awaiting a matching delayed Agent snapshot. */
+  recoveredSnapshotText?: string;
 }
 
 export interface ToolItem extends BaseTurnItem {
@@ -27,8 +29,6 @@ export interface ToolItem extends BaseTurnItem {
   name: string;
   /** History restored the card before its canonical Agent sequence arrived. */
   agentSequencePending?: boolean;
-  /** Authoritative Thinking text from the assistant row that restored this Tool. */
-  recoveredPreToolThinkingText?: string;
   input?: unknown;
   output?: string;
   error?: string;
@@ -40,6 +40,10 @@ export interface ContentItem extends BaseTurnItem {
   text: string;
   sourceMode: 'delta' | 'snapshot' | 'replaceable';
   followingToolCallId?: string;
+  /** Authoritative history text awaiting a matching delayed Agent snapshot. */
+  recoveredSnapshotText?: string;
+  /** Stable append identity used to make active-run history repair idempotent. */
+  recoveredHistoryKey?: string;
 }
 
 export interface TerminalItem extends BaseTurnItem {

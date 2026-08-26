@@ -1916,6 +1916,477 @@ test('restores a missed sessions_yield start from session.message during repeate
   });
 });
 
+test('renders assistant text from session.message during repeated sessions_yield waits', () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(12_000);
+  const sessionKey = 'agent:main:justdo:session-1';
+  const controller = new ChatController();
+  const streamListener = vi.fn();
+  controller.onStream(streamListener);
+  controller.state.sessionKey = sessionKey;
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 1,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+    },
+  });
+
+  const firstUpdate = 'task1_fib 已完成，其余 4 个仍在执行。';
+  streamListener.mockClear();
+  handleEvent({
+    event: 'session.message',
+    payload: {
+      sessionKey,
+      activeRunIds: ['run-1'],
+      message: {
+        role: 'assistant',
+        timestamp: 12_100,
+        content: [
+          { type: 'thinking', thinking: 'Inspect the first completed subagent.' },
+          { type: 'text', text: firstUpdate },
+          {
+            type: 'toolCall',
+            id: 'call-yield-content-1',
+            name: 'sessions_yield',
+            arguments: { message: '继续等待。' },
+          },
+        ],
+      },
+    },
+  });
+
+  expect(controller.state.transcript.activeTurn?.items).toMatchObject([
+    { type: 'thinking', status: 'completed' },
+    {
+      type: 'content',
+      status: 'completed',
+      text: firstUpdate,
+      followingToolCallId: 'call-yield-content-1',
+    },
+    { type: 'tool', status: 'running', toolCallId: 'call-yield-content-1' },
+  ]);
+  expect(streamListener).toHaveBeenCalledWith('terminal');
+
+  // A late canonical assistant snapshot must update the restored segment in
+  // place instead of duplicating the already visible progress message.
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 2,
+      stream: 'assistant',
+      data: { text: firstUpdate },
+    },
+  });
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 3,
+      stream: 'tool',
+      data: {
+        phase: 'start',
+        toolCallId: 'call-yield-content-1',
+        name: 'sessions_yield',
+      },
+    },
+  });
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 4,
+      stream: 'tool',
+      data: {
+        phase: 'result',
+        toolCallId: 'call-yield-content-1',
+        name: 'sessions_yield',
+        result: '{"status":"partial","pending":3}',
+      },
+    },
+  });
+
+  const secondUpdate = 'task2_primes 也已完成，继续等待剩余 3 个。';
+  handleEvent({
+    event: 'session.message',
+    payload: {
+      sessionKey,
+      activeRunIds: ['run-1'],
+      message: {
+        role: 'assistant',
+        timestamp: 12_200,
+        content: [
+          { type: 'text', text: secondUpdate },
+          {
+            type: 'toolCall',
+            id: 'call-yield-content-2',
+            name: 'sessions_yield',
+            arguments: { message: '继续等待剩余任务。' },
+          },
+        ],
+      },
+    },
+  });
+
+  expect(
+    controller.state.transcript.activeTurn?.items
+      .filter(item => item.type === 'content')
+      .map(item => item.text),
+  ).toEqual([firstUpdate, secondUpdate]);
+  expect(controller.state.transcript.activeTurn?.items.map(item => item.type)).toEqual([
+    'thinking',
+    'content',
+    'tool',
+    'content',
+    'tool',
+  ]);
+});
+
+test('deduplicates a late assistant snapshot after history settles its recovered Tool', () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(13_000);
+  const sessionKey = 'agent:main:justdo:session-1';
+  const controller = new ChatController();
+  controller.state.sessionKey = sessionKey;
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 1,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+    },
+  });
+
+  const firstUpdate = 'task1 已完成，继续等待。';
+  handleEvent({
+    event: 'session.message',
+    payload: {
+      sessionKey,
+      activeRunIds: ['run-1'],
+      message: {
+        role: 'assistant',
+        timestamp: 13_100,
+        content: [
+          { type: 'text', text: firstUpdate },
+          { type: 'toolCall', id: 'call-yield-race-1', name: 'sessions_yield' },
+        ],
+      },
+    },
+  });
+
+  // Durable Tool completion can beat both canonical assistant and Tool Agent
+  // frames. It must not discard the replay fingerprint for the restored text.
+  handleEvent({
+    event: 'session.message',
+    payload: {
+      sessionKey,
+      activeRunIds: ['run-1'],
+      message: {
+        role: 'toolResult',
+        timestamp: 13_150,
+        toolCallId: 'call-yield-race-1',
+        toolName: 'sessions_yield',
+        content: '{"status":"partial","pending":2}',
+      },
+    },
+  });
+
+  const secondUpdate = 'task2 已完成，只剩最后一个。';
+  handleEvent({
+    event: 'session.message',
+    payload: {
+      sessionKey,
+      activeRunIds: ['run-1'],
+      message: {
+        role: 'assistant',
+        timestamp: 13_200,
+        content: [
+          { type: 'text', text: secondUpdate },
+          { type: 'toolCall', id: 'call-yield-race-2', name: 'sessions_yield' },
+        ],
+      },
+    },
+  });
+
+  // The old snapshot arrives while the next recovered Tool is pending. It
+  // belongs to the first segment and must not overwrite or duplicate either.
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 2,
+      stream: 'assistant',
+      data: { text: firstUpdate },
+    },
+  });
+
+  expect(
+    controller.state.transcript.activeTurn?.items
+      .filter(item => item.type === 'content')
+      .map(item => item.text),
+  ).toEqual([firstUpdate, secondUpdate]);
+  expect(controller.state.transcript.activeTurn?.items.map(item => item.type)).toEqual([
+    'content',
+    'tool',
+    'content',
+    'tool',
+  ]);
+  expect(controller.state.transcript.activeTurn?.toolById.get('call-yield-race-2')).toHaveProperty(
+    'agentSequencePending',
+    true,
+  );
+});
+
+test('renders and deduplicates an active-run assistant string append', () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(14_000);
+  const sessionKey = 'agent:main:justdo:session-1';
+  const controller = new ChatController();
+  const streamListener = vi.fn();
+  controller.onStream(streamListener);
+  controller.state.sessionKey = sessionKey;
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 1,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+    },
+  });
+
+  const message = {
+    role: 'assistant',
+    timestamp: 14_100,
+    content: '纯字符串进度也应立即显示。',
+  };
+  streamListener.mockClear();
+  handleEvent({
+    event: 'session.message',
+    payload: { sessionKey, activeRunIds: ['run-1'], message },
+  });
+  handleEvent({
+    event: 'session.message',
+    payload: { sessionKey, activeRunIds: ['run-1'], message },
+  });
+
+  expect(controller.state.transcript.activeTurn?.items).toMatchObject([
+    { type: 'content', status: 'completed', text: message.content },
+  ]);
+  expect(streamListener).toHaveBeenCalledWith('terminal');
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 2,
+      stream: 'assistant',
+      data: { text: message.content },
+    },
+  });
+  expect(controller.state.transcript.activeTurn?.items).toHaveLength(1);
+});
+
+test('places string content before an attached Tool during active-run repair', () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(14_500);
+  const sessionKey = 'agent:main:justdo:session-1';
+  const controller = new ChatController();
+  controller.state.sessionKey = sessionKey;
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 1,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+    },
+  });
+  handleEvent({
+    event: 'session.message',
+    payload: {
+      sessionKey,
+      activeRunIds: ['run-1'],
+      message: {
+        role: 'assistant',
+        timestamp: 14_600,
+        content: '附件形式的工具调用前正文。',
+        __justdoAttachedToolMessages: [
+          {
+            role: 'toolUse',
+            id: 'call-attached-yield',
+            name: 'sessions_yield',
+            input: { message: '继续等待。' },
+          },
+        ],
+      },
+    },
+  });
+
+  expect(controller.state.transcript.activeTurn?.items).toMatchObject([
+    {
+      type: 'content',
+      text: '附件形式的工具调用前正文。',
+      followingToolCallId: 'call-attached-yield',
+    },
+    { type: 'tool', toolCallId: 'call-attached-yield' },
+  ]);
+});
+
+test('preserves mixed text and Thinking block order before a recovered Tool', () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(14_800);
+  const sessionKey = 'agent:main:justdo:session-1';
+  const controller = new ChatController();
+  controller.state.sessionKey = sessionKey;
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 1,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+    },
+  });
+  handleEvent({
+    event: 'session.message',
+    payload: {
+      sessionKey,
+      activeRunIds: ['run-1'],
+      message: {
+        role: 'assistant',
+        timestamp: 14_900,
+        content: [
+          { type: 'text', text: '正文 A' },
+          { type: 'thinking', thinking: '推理 R' },
+          { type: 'text', text: '正文 B' },
+          { type: 'toolCall', id: 'call-mixed-order', name: 'sessions_yield' },
+        ],
+      },
+    },
+  });
+
+  expect(controller.state.transcript.activeTurn?.items).toMatchObject([
+    { type: 'content', text: '正文 A' },
+    { type: 'thinking', text: '推理 R' },
+    { type: 'content', text: '正文 B', followingToolCallId: 'call-mixed-order' },
+    { type: 'tool', toolCallId: 'call-mixed-order' },
+  ]);
+
+  // Replaying the canonical streams must consume each recovered segment in
+  // order without moving or duplicating any of them.
+  for (const [seq, stream, text] of [
+    [2, 'assistant', '正文 A'],
+    [3, 'thinking', '推理 R'],
+    [4, 'assistant', '正文 B'],
+  ] as const) {
+    handleEvent({
+      event: 'agent',
+      payload: { session: sessionKey, runId: 'run-1', seq, stream, data: { text } },
+    });
+  }
+  expect(controller.state.transcript.activeTurn?.items.map(item => item.type)).toEqual([
+    'content',
+    'thinking',
+    'content',
+    'tool',
+  ]);
+});
+
+test('restores nested multi-Tool assistant segments idempotently', () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(14_950);
+  const sessionKey = 'agent:main:justdo:session-1';
+  const controller = new ChatController();
+  controller.state.sessionKey = sessionKey;
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 1,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+    },
+  });
+  const message = {
+    type: 'message',
+    message: {
+      role: 'assistant',
+      timestamp: 14_960,
+      content: [
+        { type: 'text', text: '第一段' },
+        { type: 'toolCall', id: 'call-nested-1', name: 'sessions_yield' },
+        { type: 'text', text: '第二段' },
+        { type: 'toolCall', id: 'call-nested-2', name: 'sessions_yield' },
+      ],
+    },
+  };
+  for (let index = 0; index < 2; index += 1) {
+    handleEvent({
+      event: 'session.message',
+      payload: { sessionKey, activeRunIds: ['run-1'], message },
+    });
+  }
+
+  expect(controller.state.transcript.activeTurn?.items).toMatchObject([
+    { type: 'content', text: '第一段', followingToolCallId: 'call-nested-1' },
+    { type: 'tool', toolCallId: 'call-nested-1' },
+    { type: 'content', text: '第二段', followingToolCallId: 'call-nested-2' },
+    { type: 'tool', toolCallId: 'call-nested-2' },
+  ]);
+});
+
 test('keeps late Thinking before a sessions_yield recovered from the same assistant append', () => {
   vi.useFakeTimers();
   vi.setSystemTime(15_000);
@@ -2227,7 +2698,10 @@ test('uses only the matching Tool item to release a recovered sessions_yield bou
   expect(recovered).toMatchObject({
     status: 'running',
     agentSequencePending: true,
-    recoveredPreToolThinkingText: 'Wait for the current batch.',
+  });
+  expect(controller.state.transcript.activeTurn?.items[0]).toMatchObject({
+    type: 'thinking',
+    recoveredSnapshotText: 'Wait for the current batch.',
   });
 
   // Status/commentary items are unrelated to the Tool and must not release its
@@ -3053,6 +3527,59 @@ test('hydrates input for a waiting sessions_yield projected from history as a li
     status: 'running',
     input: { message: '等待 subagent 完成。' },
   });
+});
+
+test('ignores foreign-run text and results that reuse an active Tool call ID', () => {
+  const controller = new ChatController();
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  const turn = beginAssistantTurn(
+    controller.state.transcript,
+    { runId: 'run-current' },
+    { now: () => 100, createId: prefix => `${prefix}-1` },
+  );
+  const tool = {
+    id: 'tool-current',
+    runId: 'run-current',
+    firstSeq: 1,
+    lastSeq: 1,
+    startedAt: 100,
+    updatedAt: 100,
+    type: 'tool' as const,
+    status: 'running' as const,
+    toolCallId: 'call-collision',
+    name: 'sessions_yield',
+  };
+  turn.items.push(tool);
+  turn.toolById.set(tool.toolCallId, tool);
+
+  const changed = (
+    controller as unknown as {
+      hydrateActiveToolItemsFromHistory(messages: unknown[]): boolean;
+    }
+  ).hydrateActiveToolItemsFromHistory([
+    {
+      role: 'assistant',
+      runId: 'run-foreign',
+      timestamp: 110,
+      content: [
+        { type: 'text', text: 'foreign progress' },
+        { type: 'toolCall', id: 'call-collision', name: 'sessions_yield' },
+      ],
+    },
+    {
+      role: 'toolResult',
+      runId: 'run-foreign',
+      timestamp: 120,
+      toolCallId: 'call-collision',
+      toolName: 'sessions_yield',
+      content: 'foreign result',
+    },
+  ]);
+
+  expect(changed).toBe(false);
+  expect(turn.items).toEqual([tool]);
+  expect(tool).toMatchObject({ status: 'running' });
+  expect(tool).not.toHaveProperty('output');
 });
 
 test('cleans up a stale subscription that resolves after a newer session subscribe', async () => {

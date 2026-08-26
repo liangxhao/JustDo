@@ -30,6 +30,11 @@ import {
 export type TranscriptReduceResult =
   'applied' | 'ignored-session' | 'ignored-run' | 'ignored-sequence' | 'ignored-stream';
 
+export interface RecoveredPreToolSegment {
+  type: 'thinking' | 'content';
+  text: string;
+}
+
 function stringValue(value: unknown): string | null {
   return typeof value === 'string' ? value : null;
 }
@@ -59,6 +64,17 @@ function thinkingBeforeTool(turn: AssistantTurn, tool: ToolItem): ThinkingItem |
     const item = turn.items[index];
     if (item.type === 'tool') break;
     if (item.type === 'thinking') return item;
+  }
+  return undefined;
+}
+
+function contentBeforeTool(turn: AssistantTurn, tool: ToolItem): ContentItem | undefined {
+  const toolIndex = turn.items.indexOf(tool);
+  if (toolIndex < 0) return undefined;
+  for (let index = toolIndex - 1; index >= 0; index -= 1) {
+    const item = turn.items[index];
+    if (item.type === 'tool') break;
+    if (item.type === 'content') return item;
   }
   return undefined;
 }
@@ -112,7 +128,6 @@ export function confirmRecoveredToolSequence(
   }
   tool.firstSeq = seq;
   delete tool.agentSequencePending;
-  delete tool.recoveredPreToolThinkingText;
   return true;
 }
 
@@ -128,9 +143,6 @@ export function hydrateToolPrecedingThinking(
   if (!authoritative && tool.agentSequencePending !== true) return false;
   const normalizedText = text?.trim() || null;
   const authoritativeText = authoritative ? normalizedText : null;
-  if (authoritativeText && tool.agentSequencePending) {
-    tool.recoveredPreToolThinkingText = authoritativeText;
-  }
   const existing = thinkingBeforeTool(turn, tool);
   if (existing) {
     let changed = false;
@@ -139,6 +151,14 @@ export function hydrateToolPrecedingThinking(
         ? normalizedText
         : updateSnapshot(existing.text, normalizedText, false);
       changed = true;
+    }
+    if (
+      authoritativeText &&
+      existing.recoveredSnapshotText === undefined &&
+      existing.text === authoritativeText &&
+      changed
+    ) {
+      existing.recoveredSnapshotText = authoritativeText;
     }
     if (existing.status === 'running') {
       existing.status = 'completed';
@@ -165,6 +185,185 @@ export function hydrateToolPrecedingThinking(
     type: 'thinking',
     status: 'completed',
     text: normalizedText,
+    ...(authoritativeText ? { recoveredSnapshotText: authoritativeText } : {}),
+  });
+  return true;
+}
+
+export function hydrateToolPrecedingContent(
+  turn: AssistantTurn,
+  tool: ToolItem,
+  text: string | null,
+  authoritative: boolean,
+  seq: number,
+  timestamp: number,
+  dependencies: TranscriptReducerDependencies,
+): boolean {
+  if (!authoritative && tool.agentSequencePending !== true) return false;
+  const normalizedText = text?.trim() || null;
+  const authoritativeText = authoritative ? normalizedText : null;
+  const existing = contentBeforeTool(turn, tool);
+  if (existing) {
+    let changed = false;
+    if (normalizedText && existing.text !== normalizedText) {
+      existing.text = authoritative
+        ? normalizedText
+        : updateSnapshot(existing.text, normalizedText, false);
+      changed = true;
+    }
+    if (
+      authoritativeText &&
+      existing.recoveredSnapshotText === undefined &&
+      existing.text === authoritativeText &&
+      changed
+    ) {
+      existing.recoveredSnapshotText = authoritativeText;
+    }
+    if (existing.status === 'streaming') {
+      existing.status = 'completed';
+      changed = true;
+    }
+    if (existing.followingToolCallId !== tool.toolCallId) {
+      existing.followingToolCallId = tool.toolCallId;
+      changed = true;
+    }
+    existing.lastSeq = Math.max(existing.lastSeq, seq);
+    existing.updatedAt = Math.max(existing.updatedAt, timestamp);
+    return changed;
+  }
+  if (!normalizedText) return false;
+  const toolIndex = turn.items.indexOf(tool);
+  if (toolIndex < 0) return false;
+  turn.items.splice(toolIndex, 0, {
+    id: dependencies.createId('history-content'),
+    runId: turn.runId,
+    firstSeq: seq,
+    lastSeq: seq,
+    startedAt: Math.min(timestamp, tool.startedAt),
+    updatedAt: timestamp,
+    type: 'content',
+    status: 'completed',
+    text: normalizedText,
+    sourceMode: 'snapshot',
+    followingToolCallId: tool.toolCallId,
+    ...(authoritativeText ? { recoveredSnapshotText: authoritativeText } : {}),
+  });
+  return true;
+}
+
+export function hydrateToolPrecedingSegments(
+  turn: AssistantTurn,
+  tool: ToolItem,
+  segments: RecoveredPreToolSegment[],
+  seq: number,
+  timestamp: number,
+  dependencies: TranscriptReducerDependencies,
+): boolean {
+  const normalized = segments.flatMap(segment => {
+    const text = segment.text.trim();
+    return text ? [{ type: segment.type, text } as RecoveredPreToolSegment] : [];
+  });
+  if (normalized.length === 0) return false;
+  const toolIndex = turn.items.indexOf(tool);
+  if (toolIndex < 0) return false;
+  let startIndex = toolIndex;
+  while (startIndex > 0 && turn.items[startIndex - 1].type !== 'tool') startIndex -= 1;
+  const existing = turn.items.slice(startIndex, toolIndex);
+  const matches =
+    existing.length === normalized.length &&
+    existing.every(
+      (item, index) => item.type === normalized[index].type && item.text === normalized[index].text,
+    );
+
+  if (matches) {
+    let changed = false;
+    for (const [index, item] of existing.entries()) {
+      if (item.type !== 'thinking' && item.type !== 'content') continue;
+      if (item.status === 'running' || item.status === 'streaming') {
+        item.status = 'completed';
+        item.recoveredSnapshotText = normalized[index].text;
+        changed = true;
+      }
+      item.lastSeq = Math.max(item.lastSeq, seq);
+      item.updatedAt = Math.max(item.updatedAt, timestamp);
+      if (item.type === 'content') {
+        const followingToolCallId = index === existing.length - 1 ? tool.toolCallId : undefined;
+        if (item.followingToolCallId !== followingToolCallId) {
+          if (followingToolCallId) item.followingToolCallId = followingToolCallId;
+          else delete item.followingToolCallId;
+          changed = true;
+        }
+      }
+    }
+    return changed;
+  }
+
+  const recoveredItems: Array<ThinkingItem | ContentItem> = normalized.map((segment, index) => {
+    const base = {
+      id: dependencies.createId(`history-${segment.type}`),
+      runId: turn.runId,
+      firstSeq: seq,
+      lastSeq: seq,
+      startedAt: Math.min(timestamp, tool.startedAt),
+      updatedAt: timestamp,
+      status: 'completed' as const,
+      text: segment.text,
+      recoveredSnapshotText: segment.text,
+    };
+    if (segment.type === 'thinking') return { ...base, type: 'thinking' as const };
+    return {
+      ...base,
+      type: 'content' as const,
+      sourceMode: 'snapshot' as const,
+      ...(index === normalized.length - 1 ? { followingToolCallId: tool.toolCallId } : {}),
+    };
+  });
+  turn.items.splice(startIndex, existing.length, ...recoveredItems);
+  return true;
+}
+
+export function hydrateRecoveredContent(
+  turn: AssistantTurn,
+  text: string,
+  historyKey: string,
+  seq: number,
+  timestamp: number,
+  dependencies: TranscriptReducerDependencies,
+): boolean {
+  const normalizedText = text.trim();
+  if (!normalizedText) return false;
+  const existing = turn.items.find(
+    (item): item is ContentItem =>
+      item.type === 'content' && item.recoveredHistoryKey === historyKey,
+  );
+  if (existing) {
+    let changed = false;
+    if (existing.text !== normalizedText) {
+      existing.text = normalizedText;
+      existing.recoveredSnapshotText = normalizedText;
+      changed = true;
+    }
+    if (existing.status === 'streaming') {
+      existing.status = 'completed';
+      changed = true;
+    }
+    existing.lastSeq = Math.max(existing.lastSeq, seq);
+    existing.updatedAt = Math.max(existing.updatedAt, timestamp);
+    return changed;
+  }
+  turn.items.push({
+    id: dependencies.createId('history-content'),
+    runId: turn.runId,
+    firstSeq: seq,
+    lastSeq: seq,
+    startedAt: timestamp,
+    updatedAt: timestamp,
+    type: 'content',
+    status: 'completed',
+    text: normalizedText,
+    sourceMode: 'snapshot',
+    recoveredSnapshotText: normalizedText,
+    recoveredHistoryKey: historyKey,
   });
   return true;
 }
@@ -251,11 +450,28 @@ function reduceThinking(
 ): void {
   const text = stringValue(event.data.text) ?? stringValue(event.data.delta);
   if (text === null) return;
+  const normalizedText = text.trim();
+  if (normalizedText) {
+    const recovered = turn.items.find(
+      (item): item is ThinkingItem =>
+        item.type === 'thinking' &&
+        typeof item.recoveredSnapshotText === 'string' &&
+        item.recoveredSnapshotText.includes(normalizedText),
+    );
+    if (recovered) {
+      recovered.lastSeq = Math.max(recovered.lastSeq, event.agentSeq);
+      recovered.updatedAt = Math.max(recovered.updatedAt, event.timestamp);
+      if (recovered.recoveredSnapshotText === normalizedText) {
+        delete recovered.recoveredSnapshotText;
+      }
+      return;
+    }
+  }
   const recoveredTool = pendingRecoveredTool(turn);
   if (recoveredTool) {
     const existing = thinkingBeforeTool(turn, recoveredTool);
     if (existing) {
-      const authoritativeText = recoveredTool.recoveredPreToolThinkingText;
+      const authoritativeText = existing.recoveredSnapshotText;
       if (authoritativeText) {
         existing.text = authoritativeText;
       } else {
@@ -311,6 +527,53 @@ function reduceContent(
   // Only chat snapshots/finals can represent the cumulative visible turn.
   const text = snapshot ?? delta;
   if (text === null) return;
+  if (snapshot !== null && snapshot.trim()) {
+    const normalizedSnapshot = snapshot.trim();
+    const recovered = turn.items.find(
+      (item): item is ContentItem =>
+        item.type === 'content' &&
+        typeof item.recoveredSnapshotText === 'string' &&
+        item.recoveredSnapshotText.startsWith(normalizedSnapshot),
+    );
+    if (recovered) {
+      recovered.lastSeq = Math.max(recovered.lastSeq, event.agentSeq);
+      recovered.updatedAt = Math.max(recovered.updatedAt, event.timestamp);
+      if (recovered.recoveredSnapshotText === normalizedSnapshot) {
+        delete recovered.recoveredSnapshotText;
+      }
+      return;
+    }
+  }
+  const recoveredTool = pendingRecoveredTool(turn);
+  if (recoveredTool) {
+    const existing = contentBeforeTool(turn, recoveredTool);
+    if (existing) {
+      const authoritativeText = existing.recoveredSnapshotText;
+      if (authoritativeText) {
+        existing.text = authoritativeText;
+      } else {
+        const isDelta = delta !== null && snapshot === null;
+        existing.text = isDelta
+          ? `${existing.text}${text}`
+          : updateSnapshot(existing.text, text, event.data.replace === true);
+      }
+      existing.status = 'completed';
+      existing.followingToolCallId = recoveredTool.toolCallId;
+      existing.lastSeq = event.agentSeq;
+      existing.updatedAt = event.timestamp;
+      return;
+    }
+    hydrateToolPrecedingContent(
+      turn,
+      recoveredTool,
+      text,
+      false,
+      event.agentSeq,
+      event.timestamp,
+      dependencies,
+    );
+    return;
+  }
   completeRunningThinking(turn, event.agentSeq, event.timestamp);
   const tail = activeAgentTail(turn);
   const replace = event.data.replace === true;
