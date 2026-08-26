@@ -1,8 +1,4 @@
-import {
-  ArrowPathIcon,
-  ChatBubbleLeftRightIcon,
-  ExclamationTriangleIcon,
-} from '@heroicons/react/24/outline';
+import { ArrowPathIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import React, { useEffect, useState } from 'react';
 import { useSelector } from 'react-redux';
 
@@ -19,13 +15,10 @@ const EngineStartupStatusBar: React.FC = () => {
   useEffect(() => {
     if (!isOpenClawEngine) return;
 
-    coworkService.getOpenClawEngineStatus().then(s => {
-      if (s) setStatus(s);
-    });
-
     const unsubscribe = coworkService.onOpenClawEngineStatus(s => {
       setStatus(s);
     });
+    void coworkService.getOpenClawEngineStatus();
 
     return unsubscribe;
   }, [isOpenClawEngine]);
@@ -58,40 +51,32 @@ const EngineStartupStatusBar: React.FC = () => {
     }
   })();
 
-  const progressPercent =
-    typeof status.progressPercent === 'number'
-      ? Math.max(0, Math.min(100, Math.round(status.progressPercent)))
-      : null;
   const isError = status.phase === 'error';
+  const isStarting = status.phase === 'starting';
   const showRestartButton = status.canRetry || status.phase === 'ready';
-  const Icon = isError ? ExclamationTriangleIcon : ChatBubbleLeftRightIcon;
 
   return (
     <div className="fixed bottom-4 right-4 z-50 max-w-[min(520px,calc(100vw-2rem))]">
       <div
-        className={`flex h-9 items-center gap-2 rounded-lg border px-3 text-xs shadow-card backdrop-blur ${
+        role="status"
+        aria-live="polite"
+        className={`flex h-8 items-center gap-2 rounded-full border px-2.5 text-xs shadow-subtle ${
           isError
-            ? 'border-red-200 bg-red-50/95 text-red-700 dark:border-red-900/60 dark:bg-red-950/80 dark:text-red-300'
-            : 'border-border bg-surface/95 text-foreground'
+            ? 'border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950 dark:text-red-300'
+            : 'border-border/70 bg-surface text-secondary'
         }`}
       >
-        <Icon
-          className={`h-4 w-4 shrink-0 ${status.phase === 'starting' ? 'animate-pulse' : ''} ${
-            isError ? 'text-red-600 dark:text-red-300' : 'text-primary'
-          }`}
-        />
-        <span className="min-w-0 truncate">{statusText}</span>
-        {progressPercent !== null && (
-          <>
-            <div className="h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-primary/15">
-              <div
-                className="h-full rounded-full bg-primary transition-all"
-                style={{ width: `${progressPercent}%` }}
-              />
-            </div>
-            <span className="w-8 shrink-0 text-right text-secondary">{progressPercent}%</span>
-          </>
+        {isStarting ? (
+          <span
+            aria-hidden="true"
+            className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border border-secondary/30 border-t-secondary motion-reduce:animate-none"
+          />
+        ) : isError ? (
+          <ExclamationTriangleIcon className="h-4 w-4 shrink-0 text-red-600 dark:text-red-300" />
+        ) : (
+          <span className="h-2.5 w-2.5 shrink-0 rounded-full border border-secondary/60" />
         )}
+        <span className="min-w-0 truncate">{statusText}</span>
         {showRestartButton && (
           <button
             type="button"

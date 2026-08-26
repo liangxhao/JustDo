@@ -1,4 +1,4 @@
-import { type ChildProcess,spawn } from 'child_process';
+import { type ChildProcess, spawn } from 'child_process';
 import crypto from 'crypto';
 import { app, type UtilityProcess, utilityProcess } from 'electron';
 import { EventEmitter } from 'events';
@@ -33,6 +33,10 @@ import {
   hasExtensionBrowserProfile,
 } from './gatewayLaunchArgs';
 import { GatewayStdoutLogFilter } from './gatewayLogFilter';
+import {
+  lowerGatewayProcessPriority,
+  restoreGatewayProcessPriority,
+} from './gatewayProcessPriority';
 import { findAvailableLoopbackPort, isLoopbackPortAvailable } from './loopbackPort';
 import { ensureOpenClawGatewayBundleLauncher } from './openclawGatewayBundleLauncher.cjs';
 import { OPENCLAW_LAUNCHER_KEEP_ALIVE_SOURCE } from './openclawLauncher';
@@ -46,6 +50,7 @@ type GatewayExitListener = (code: number | null, signal: NodeJS.Signals | null) 
 
 const GATEWAY_PORT_SCAN_LIMIT = 80;
 const GATEWAY_BOOT_TIMEOUT_MS = 300 * 1000;
+const GATEWAY_HEALTH_POLL_INTERVAL_MS = 1_000;
 const GATEWAY_MAX_RESTART_ATTEMPTS = 5;
 const GATEWAY_RESTART_DELAYS = [3_000, 5_000, 10_000, 20_000, 30_000];
 const APP_PROCESS_STARTED_AT_MS = Date.now();
@@ -59,7 +64,6 @@ export type OpenClawEnginePhase =
 export interface OpenClawEngineStatus {
   phase: OpenClawEnginePhase;
   version: string | null;
-  progressPercent?: number;
   message?: string;
   canRetry: boolean;
 }
@@ -668,7 +672,6 @@ export class OpenClawEngineManager extends EventEmitter {
     this.setStatus({
       phase: 'starting',
       version: runtime.version,
-      progressPercent: 10,
       message: 'Starting OpenClaw gateway...',
       canRetry: false,
     });
@@ -722,7 +725,10 @@ export class OpenClawEngineManager extends EventEmitter {
 
     // Wait for the spawn event to confirm the process started (pid becomes available).
     child.once('spawn', () => {
-      console.log(`[OpenClaw] gateway process spawned (${elapsed()}), pid=${child.pid}`);
+      const usesStartupPriority = lowerGatewayProcessPriority(child.pid);
+      console.log(
+        `[OpenClaw] gateway process spawned (${elapsed()}), pid=${child.pid}, startupPriority=${usesStartupPriority}`,
+      );
     });
 
     const ready = await this.waitForGatewayReady(port, GATEWAY_BOOT_TIMEOUT_MS);
@@ -741,12 +747,17 @@ export class OpenClawEngineManager extends EventEmitter {
     }
 
     console.log(`[OpenClaw] startGateway: gateway is running, total startup time: ${elapsed()}`);
+    const restoredNormalPriority = restoreGatewayProcessPriority(child.pid);
+    if (process.platform === 'win32') {
+      console.log(
+        `[OpenClaw] gateway process startup priority restored, pid=${child.pid}, success=${restoredNormalPriority}`,
+      );
+    }
     // Reset restart counter on successful start — gateway is healthy
     this.gatewayRestartAttempt = 0;
     this.setStatus({
       phase: 'running',
       version: runtime.version,
-      progressPercent: 100,
       message: `OpenClaw gateway is running on loopback:${port}.`,
       canRetry: false,
     });
@@ -1466,7 +1477,7 @@ export class OpenClawEngineManager extends EventEmitter {
         pollCount += 1;
         const elapsedMs = Date.now() - startedAt;
 
-        // Log verbose probe details every 10 polls (~6s) to diagnose health check failures.
+        // Log verbose probe details every 10 polls to diagnose health check failures.
         const verboseProbe = pollCount % 10 === 0;
         const healthy = await this.isGatewayHealthy(port, verboseProbe);
         if (healthy) {
@@ -1485,25 +1496,15 @@ export class OpenClawEngineManager extends EventEmitter {
           return;
         }
 
-        // Update progress from 10% → 90% during the wait, so the UI shows meaningful feedback.
-        const progress = Math.min(90, 10 + Math.round((elapsedMs / timeoutMs) * 80));
-        this.setStatus({
-          phase: 'starting',
-          version: this.status.version,
-          progressPercent: progress,
-          message: `Starting OpenClaw gateway... (${Math.round(elapsedMs / 1000)}s)`,
-          canRetry: false,
-        });
-
         if (pollCount % 5 === 0) {
           console.log(
-            `[OpenClaw] waitForGatewayReady: poll #${pollCount}, elapsed=${elapsedMs}ms, progress=${progress}%`,
+            `[OpenClaw] waitForGatewayReady: poll #${pollCount}, elapsed=${elapsedMs}ms`,
           );
         }
 
         setTimeout(() => {
           void tick();
-        }, 600);
+        }, GATEWAY_HEALTH_POLL_INTERVAL_MS);
       };
 
       void tick();

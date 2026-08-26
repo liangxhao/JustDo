@@ -75,10 +75,11 @@ type SessionRuntimeStatus = SessionRuntimeSnapshot;
 const TERMINAL_IDLE_CONFIRM_DELAY_MS = 750;
 const TERMINAL_IDLE_CONFIRM_MAX_ATTEMPTS = 5;
 
-class CoworkService {
+export class CoworkService {
   private streamListenerCleanups: Array<() => void> = [];
   private initialized = false;
   private openClawStatus: OpenClawEngineStatus | null = null;
+  private openClawStatusRevision = 0;
   private openClawStatusListeners = new Set<(status: OpenClawEngineStatus) => void>();
   private openClawEngineListenerAttached = false;
   private latestLoadSessionsRequestId = 0;
@@ -354,6 +355,7 @@ class CoworkService {
 
   private notifyOpenClawStatus(status: OpenClawEngineStatus): void {
     this.openClawStatus = status;
+    this.openClawStatusRevision += 1;
     this.openClawStatusListeners.forEach(listener => {
       listener(status);
     });
@@ -636,8 +638,12 @@ class CoworkService {
     if (!engineApi?.getStatus) {
       return null;
     }
+    const statusRevision = this.openClawStatusRevision;
     const result = await engineApi.getStatus();
     if (result?.success && result.status) {
+      if (statusRevision !== this.openClawStatusRevision) {
+        return this.openClawStatus;
+      }
       this.notifyOpenClawStatus(result.status);
       return result.status;
     }

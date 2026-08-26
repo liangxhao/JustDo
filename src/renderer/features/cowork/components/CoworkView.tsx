@@ -98,7 +98,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const dispatch = useDispatch();
   const isMac = window.electron.platform === 'darwin';
   const [isInitialized, setIsInitialized] = useState(false);
-  const [openClawStatus, setOpenClawStatus] = useState<OpenClawEngineStatus | null>(null);
+  const openClawStatusRef = useRef<OpenClawEngineStatus | null>(null);
   const [selectedSubagent, setSelectedSubagent] = useState<Subagent | null>(null);
   const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
   const [goalRunProgress, setGoalRunProgress] = useState<GoalRunProgress | null>(null);
@@ -222,19 +222,33 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     return status.phase === 'running' || status.phase === 'ready';
   };
 
+  const ensureOpenClawReadyForSubmit = (): boolean => {
+    if (
+      !isOpenClawEngine ||
+      !openClawStatusRef.current ||
+      isOpenClawReadyForSession(openClawStatusRef.current)
+    ) {
+      return true;
+    }
+    window.dispatchEvent(
+      new CustomEvent('app:showToast', { detail: i18nService.t('coworkErrorEngineNotReady') }),
+    );
+    return false;
+  };
+
   useEffect(() => {
     const init = async () => {
       await coworkService.init();
       const initialEngineStatus = await coworkService.getOpenClawEngineStatus();
       if (initialEngineStatus) {
-        setOpenClawStatus(initialEngineStatus);
+        openClawStatusRef.current = initialEngineStatus;
       }
       setIsInitialized(true);
     };
     init();
 
     const unsubscribeOpenClawStatus = coworkService.onOpenClawEngineStatus(status => {
-      setOpenClawStatus(status);
+      openClawStatusRef.current = status;
     });
 
     return () => {
@@ -246,12 +260,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     prompt: string,
     attachments?: CoworkAttachmentPayload[],
   ): Promise<boolean | void> => {
-    if (isOpenClawEngine && openClawStatus && !isOpenClawReadyForSession(openClawStatus)) {
-      window.dispatchEvent(
-        new CustomEvent('app:showToast', { detail: i18nService.t('coworkErrorEngineNotReady') }),
-      );
-      return false;
-    }
+    if (!ensureOpenClawReadyForSubmit()) return false;
     // Prevent duplicate submissions
     if (isStartingRef.current) return;
     isStartingRef.current = true;
@@ -752,7 +761,9 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     );
   }
 
-  const isEngineReady = isOpenClawEngine ? isOpenClawReadyForSession(openClawStatus) : true;
+  // Gateway lifecycle changes intentionally stay out of React state so a restart
+  // cannot force the chat transcript and prompt tree to re-render.
+  const isEngineReady = true;
 
   const homeHeader = (
     <div className="draggable flex h-12 items-center justify-between px-4 border-b border-border shrink-0">
@@ -789,6 +800,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       attachments?: CoworkAttachmentPayload[],
       gatewayPrompt?: string,
     ) => {
+      if (!ensureOpenClawReadyForSubmit()) return false;
       const goalEdit = isGoalEditCommand(gatewayPrompt ?? prompt);
       const startedAt = Date.now();
       const clientTurnId = `justdo-${startedAt}-${crypto.randomUUID()}`;

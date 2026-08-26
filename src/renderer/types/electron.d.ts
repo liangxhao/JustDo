@@ -163,7 +163,6 @@ type OpenClawEnginePhase = 'ready' | 'starting' | 'running' | 'error';
 interface OpenClawEngineStatus {
   phase: OpenClawEnginePhase;
   version: string | null;
-  progressPercent?: number;
   message?: string;
   canRetry: boolean;
 }
