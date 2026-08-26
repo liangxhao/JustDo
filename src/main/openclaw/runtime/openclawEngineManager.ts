@@ -48,6 +48,7 @@ const GATEWAY_PORT_SCAN_LIMIT = 80;
 const GATEWAY_BOOT_TIMEOUT_MS = 300 * 1000;
 const GATEWAY_MAX_RESTART_ATTEMPTS = 5;
 const GATEWAY_RESTART_DELAYS = [3_000, 5_000, 10_000, 20_000, 30_000];
+const APP_PROCESS_STARTED_AT_MS = Date.now();
 
 export type OpenClawEnginePhase =
   | 'ready'
@@ -184,6 +185,7 @@ export class OpenClawEngineManager extends EventEmitter {
   private gatewayRestartTimer: NodeJS.Timeout | null = null;
   private gatewayRestartAttempt = 0;
   private shutdownRequested = false;
+  private readonly appStartedAtMs = APP_PROCESS_STARTED_AT_MS;
   private gatewayPort: number | null = null;
   private startGatewayPromise: Promise<OpenClawEngineStatus> | null = null;
   private gatewayProcessGeneration = 0;
@@ -352,6 +354,10 @@ export class OpenClawEngineManager extends EventEmitter {
 
   getGatewayProcessGeneration(): number {
     return this.gatewayProcessGeneration;
+  }
+
+  getAppStartedAtMs(): number {
+    return this.appStartedAtMs;
   }
 
   getGatewayProcessId(): number | null {
@@ -655,6 +661,7 @@ export class OpenClawEngineManager extends EventEmitter {
     // paired Chrome extension to reconnect before Renderer readiness probes.
     const gatewayEnv = buildGatewayLaunchEnvironment(env, {
       eagerBrowserControl: hasExtensionBrowserProfile(parseJsonFile<unknown>(this.configPath)),
+      appStartedAtMs: this.appStartedAtMs,
     });
     console.log(`[OpenClaw] startGateway: pre-fork setup done (${elapsed()})`);
 

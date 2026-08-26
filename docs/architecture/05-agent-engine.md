@@ -94,6 +94,12 @@ Adapter 延迟建立 Gateway client，并维护 generation 防止旧 socket 回�
 - proxy 改变先 dispose client，再 restart Gateway；成功后创建新 client。
 - disconnect 不自动宣告业务终态；active turns 由 Gateway runtime/history 恢复或明确超时/abort。
 - subscription、ready promise、timer 和 caches 都绑定 generation，disconnect 时清理。
+- Manager 在 Electron Main 模块加载时捕获一次稳定的 app-start 时间，并传给该软件进程启动的
+  每个 Gateway。OpenClaw 用它区分“软件重启”与“仅 Gateway 重启”：前者终止旧主会话和
+  subagent 且禁止旧完成结果回投，后者保留 runtime/history 自动恢复。
+- 主会话的旧进程判定使用持久化 `updatedAt`（缺失按旧数据处理），终止写入采用时间戳 CAS，
+  避免扫描与新 run 并发时覆盖当前工作。subagent 在 registry restore 的首个副作用前完成分类；
+  `subagent_ended` hook 仍可执行资源和 thread binding 清理。
 
 ## 9. Managed session key
 
@@ -122,6 +128,12 @@ Adapter 调用 `chat.send`，保存 requested run id，接收真实 run id 后�
 ## 12. Goal continuation
 
 Adapter 内的 coordinator 将 Gateway goal、tool、lifecycle 和 managed subagent join 组合成可恢复状态机。继续动作带控制 run id、退避/重试、等待用户输入/确认和 terminal latch。连接 generation 变化后扫描本地 session 与 Gateway goal/runtime；只有 goal id 和状态一致才恢复，避免旧 snapshot 续跑新目标。
+
+软件启动后的首次完整 Goal 扫描复用 Manager 的 app-start cutoff：早于 cutoff 或缺少
+`createdAt`、且没有当前 active run/用户 activation/精确 session+goal ownership 的 active Goal
+会恢复为 `stopped`，不会自动 continuation。扫描失败会携带同一 cutoff 重试；旧 generation
+不能清除首次扫描状态。首次扫描成功后，后续 Gateway-only reconnect 恢复当前软件进程内的
+active Goal。
 
 相关 OpenClaw patch 提供 silent goal clear、managed subagent join、progress、context budget/compaction 等能力。移除 patch 前必须证明新上游具有等价 wire contract。
 

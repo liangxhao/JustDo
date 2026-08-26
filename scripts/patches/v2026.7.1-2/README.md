@@ -690,6 +690,21 @@ flowchart LR
 - **可删除条件**：上游能在保留 visible assistant text 的同时可靠派发完整 advertised structured
   tool calls，并明确拒绝残缺/未知调用。
 
+#### `046-app-startup-task-recovery-boundary.cjs`
+
+- **做什么**：JustDo 为当前软件进程捕获稳定的启动时间，并向该进程启动的每个 Gateway 注入
+  `JUSTDO_APP_STARTED_AT_MS`。OpenClaw 将更早或缺少时间戳的 orphaned `running` 主会话原子
+  收敛为 `failed`，不发送恢复 prompt；同一软件进程内创建或更新的任务仍执行上游的
+  interrupted-turn 自动恢复。
+- **关系与边界**：主会话按 `updatedAt` 与 app-start cutoff 分类，并在持久化时校验原值，避免
+  recovery scan 覆盖并发启动的新 run。subagent registry 在任何 join/announce/orphan restore
+  副作用前，先给旧进程记录设置 `suppressCompletionDelivery`；未结束 run 按精确 `runId` 终止，
+  已结束 run 仍允许执行 `subagent_ended` 清理 hook，但不向旧 requester 回投结果。cron 和 ACP
+  session 继续沿用上游 skip 规则。JustDo Goal 使用同一 cutoff，并保护当前 active run、当前用户
+  activation 与精确的 session/goal ownership；首次完整扫描后，同进程 Gateway 重连恢复正常。
+- **可删除条件**：上游提供 host app lifecycle identity，并能原生区分宿主软件重启与 Gateway
+  重启，同时保留后者恢复且让前者安全终止为可手动继续的状态。
+
 ## 已删除或由上游/App 承担的能力
 
 | 能力                                            | v2026.7.1-2 证据与决定                                                                                                                                                                                                                                                 |
@@ -743,7 +758,7 @@ flowchart LR
 
 | 测试                                                  | 主要覆盖                                                                                                                                   |
 | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `openclawPristineContracts.test.ts`                   | 锁定原始 npm 包、11 项上游能力证据、45 项保留缺口、头注释和大小约束。                                                                      |
+| `openclawPristineContracts.test.ts`                   | 锁定原始 npm 包、11 项上游能力证据、46 项保留缺口、头注释和大小约束。                                                                      |
 | `openclawV202671ReasoningStream.test.ts`              | `002` callback gate 的原始失败与改写后事件/回调行为。                                                                                      |
 | `openclawV202671PatchSafety.test.ts`                  | `001`、`004`、`007`、`034` 的安全边界和真实 fixture 幂等。                                                                                 |
 | `openclawV202671CompletionDelivery.test.ts`           | H07 上游语义、managed yield 非对外交付、subagent `NO_REPLY` 非成功，以及 `015`、`016` 的 FIFO、硬期限和恢复边界。                          |
@@ -754,6 +769,7 @@ flowchart LR
 | `completion-delivery-followup-join.test.ts`           | `043` provenance/registry 关联、self-source wake、source-only 排除、follow-up join/commit/abort 状态链及 source/bundle 幂等。              |
 | `managed-terminal-handoff.test.ts`                    | `044` partial→terminal ownership、completion source、persist rollback、Codex companion loader gate、crash recovery 及 source/bundle 幂等。 |
 | `openai-stop-tool-call-compat.test.ts`                | `045` visible text + stop + structured call、严格 JSON/advertised gate、fresh bundle 顺序、verify 与幂等。                                 |
+| `app-startup-task-recovery-boundary.test.ts`          | `046` 首次软件启动终止 orphan、稳定 app-start cutoff、后续 Gateway 重启恢复、source/bundle verify 与幂等。                                 |
 | `openclawV202671ManagedSessionIdentity.test.ts`       | `036` command、reply、agent initial/persisted 四落点 identity pin（含 reply reset 绕过）、普通会话不变、幂等和多目标原子失败。             |
 | `openclawV202671ApprovalLifecycle.test.ts`            | `022`–`025` 的 lifetime、hidden resume、stop/failure 与文件头。                                                                            |
 | `openclawV202671RequestMetadata.test.ts`              | `026`–`028`，含 strict-compatible negative 与 nested parent。                                                                              |

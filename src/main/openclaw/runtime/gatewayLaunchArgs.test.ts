@@ -23,10 +23,11 @@ describe('buildGatewayLaunchEnvironment', () => {
       buildGatewayLaunchEnvironment({
         PATH: 'runtime-bin',
         OPENCLAW_EAGER_BROWSER_CONTROL_SERVER: '0',
-      }, { eagerBrowserControl: true }),
+      }, { eagerBrowserControl: true, appStartedAtMs: 1_800_000_000_000 }),
     ).toEqual({
       PATH: 'runtime-bin',
       OPENCLAW_EAGER_BROWSER_CONTROL_SERVER: '1',
+      JUSTDO_APP_STARTED_AT_MS: '1800000000000',
       NO_COLOR: '1',
       FORCE_COLOR: '0',
     });
@@ -34,9 +35,16 @@ describe('buildGatewayLaunchEnvironment', () => {
 
   it('does not opt other browser modes into eager control startup', () => {
     expect(
-      buildGatewayLaunchEnvironment({ PATH: 'runtime-bin' }, { eagerBrowserControl: false }),
+      buildGatewayLaunchEnvironment(
+        {
+          PATH: 'runtime-bin',
+          JUSTDO_APP_STARTED_AT_MS: '1',
+        },
+        { eagerBrowserControl: false, appStartedAtMs: 1_800_000_000_000 },
+      ),
     ).toEqual({
       PATH: 'runtime-bin',
+      JUSTDO_APP_STARTED_AT_MS: '1800000000000',
       NO_COLOR: '1',
       FORCE_COLOR: '0',
     });

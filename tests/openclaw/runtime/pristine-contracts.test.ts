@@ -64,6 +64,7 @@ const EXPECTED_PATCH_FILES = [
   '043-completion-delivery-followup-join.cjs',
   '044-managed-terminal-handoff.cjs',
   '045-openai-stop-tool-call-compat.cjs',
+  '046-app-startup-task-recovery-boundary.cjs',
 ] as const;
 
 function createPristineFixture(): string {

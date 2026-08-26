@@ -269,6 +269,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private gatewayReconnectAttempt = 0;
   private goalRecoveryGeneration: number | null = null;
   private goalRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly appStartedAtMs: number;
+  private initialGatewayGoalRecoveryPending = true;
+  private readonly goalIdsActivatedThisApp = new Set<string>();
+  private readonly goalSessionsActivatingThisApp = new Set<string>();
   private readonly goalReplacementPromises = new Map<
     string,
     Promise<GoalFeedbackPreparationResult>
@@ -330,6 +334,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     super();
     this.store = store;
     this.engineManager = engineManager;
+    const readAppStartedAtMs = (
+      engineManager as OpenClawEngineManager & { getAppStartedAtMs?: () => number }
+    ).getAppStartedAtMs;
+    this.appStartedAtMs =
+      typeof readAppStartedAtMs === 'function'
+        ? readAppStartedAtMs.call(engineManager)
+        : Date.now();
     this.goalContinuationCoordinator = new GoalContinuationCoordinator({
       getClient: () => this.gatewayClient,
       resolveSessionId: sessionKey => this.resolveSessionIdBySessionKey(sessionKey),
@@ -510,6 +521,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       buildManagedSessionKey(sessionId, DEFAULT_MANAGED_AGENT_ID),
     ];
     let sessionKey = '';
+    let goalId = '';
     for (const candidateKey of new Set(candidateKeys)) {
       const result = await client.request<{
         session?: { key?: string; goal?: unknown } | null;
@@ -518,11 +530,19 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       if (!described || !isRecord(described.goal)) continue;
       if (described.goal.status !== SessionGoalStatus.Active) continue;
       sessionKey = described.key?.trim() || candidateKey;
+      goalId = typeof described.goal.id === 'string' ? described.goal.id.trim() : '';
       this.rememberSessionKey(sessionId, sessionKey);
       break;
     }
     if (!sessionKey) throw new Error('The session does not have an active goal');
-    return this.goalContinuationCoordinator.continue(sessionId, sessionKey);
+    // Explicit user intent transfers this Goal to the current app lifecycle.
+    // Keep that ownership across Gateway reconnects, but not app restarts.
+    if (goalId) this.goalIdsActivatedThisApp.add(`${sessionId}:${goalId}`);
+    const continued = await this.goalContinuationCoordinator.continue(sessionId, sessionKey);
+    if (continued.goalId) {
+      this.goalIdsActivatedThisApp.add(`${sessionId}:${continued.goalId}`);
+    }
+    return continued;
   }
 
   private async persistTerminalGoalSnapshot(snapshot: GoalExecutionSnapshot): Promise<void> {
@@ -610,6 +630,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       break;
     }
     if (!sessionKey || !blockedGoalId) throw new Error('The session does not have a blocked goal');
+    this.goalIdsActivatedThisApp.add(`${sessionId}:${blockedGoalId}`);
 
     const runId = `justdo-goal-resume-input-${randomUUID()}`;
     this.rememberSessionKey(sessionId, sessionKey);
@@ -956,6 +977,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   ): Promise<void> {
     if (!prompt.trim()) {
       throw new Error('Prompt is required.');
+    }
+
+    // A user-initiated turn is current-app work even when it continues a Goal
+    // whose immutable createdAt predates this app process.
+    if (this.initialGatewayGoalRecoveryPending) {
+      this.goalSessionsActivatingThisApp.add(sessionId);
     }
 
     await this.sessionRpc.waitForModelUpdate(sessionId);
@@ -3353,10 +3380,17 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   private async handleGatewayReady(generation: number): Promise<void> {
     await this.subscribeGatewaySessions();
-    await this.recoverActiveGoals(generation);
+    await this.recoverActiveGoals(generation, {
+      stopGoalsCreatedBeforeMs: this.initialGatewayGoalRecoveryPending
+        ? this.appStartedAtMs
+        : undefined,
+    });
   }
 
-  private async recoverActiveGoals(generation: number): Promise<void> {
+  private async recoverActiveGoals(
+    generation: number,
+    options: { stopGoalsCreatedBeforeMs?: number } = {},
+  ): Promise<void> {
     if (generation !== this.gatewayClientGeneration || this.goalRecoveryGeneration === generation) {
       return;
     }
@@ -3370,7 +3404,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       if (generation !== this.gatewayClientGeneration || !this.gatewayClient) return;
       if (!runtimeSnapshot.known) {
         this.goalRecoveryGeneration = null;
-        this.scheduleGoalRecovery(generation);
+        this.scheduleGoalRecovery(generation, options);
         return;
       }
       let hadInspectionFailure = false;
@@ -3433,7 +3467,47 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             break;
           }
           if (this.goalsAwaitingResumeInput.get(session.id) === goalId) break;
+          const activeTurn = this.activeTurns.get(session.id);
+          if (activeTurn) {
+            this.goalIdsActivatedThisApp.add(`${session.id}:${goalId}`);
+            this.goalContinuationCoordinator.restoreRunning(
+              session.id,
+              goalId,
+              activeTurn.runId,
+            );
+            break;
+          }
           const runtimeRow = runtimeRowsByKey.get(sessionKey);
+          if (runtimeRow?.hasActiveRun === true) {
+            const runId = this.runtimeRowString(runtimeRow.runId);
+            this.goalIdsActivatedThisApp.add(`${session.id}:${goalId}`);
+            this.goalContinuationCoordinator.restoreRunning(
+              session.id,
+              goalId,
+              runId || undefined,
+            );
+            break;
+          }
+          // A user turn can pass readiness before chat.send has established
+          // activeTurns. Do not auto-continue an older Goal in that window.
+          if (this.goalSessionsActivatingThisApp.has(session.id)) break;
+          const goalCreatedAt = result.session.goal.createdAt;
+          const belongsToPriorApp =
+            options.stopGoalsCreatedBeforeMs !== undefined &&
+            !this.goalIdsActivatedThisApp.has(`${session.id}:${goalId}`) &&
+            (typeof goalCreatedAt !== 'number' ||
+              !Number.isFinite(goalCreatedAt) ||
+              goalCreatedAt < options.stopGoalsCreatedBeforeMs);
+          if (belongsToPriorApp) {
+            this.goalContinuationCoordinator.restoreSnapshot({
+              sessionId: session.id,
+              goalId,
+              phase: GoalExecutionPhase.Stopped,
+              continuationCount: persistedExecution?.continuationCount ?? 0,
+              updatedAt: Date.now(),
+            });
+            break;
+          }
           if (runtimeRow && this.isRuntimeSessionRowActive(runtimeRow)) {
             const runId = this.runtimeRowString(runtimeRow.runId);
             this.goalContinuationCoordinator.restoreRunning(
@@ -3447,14 +3521,18 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           break;
         }
       }
+      if (generation !== this.gatewayClientGeneration || !this.gatewayClient) return;
       if (hadInspectionFailure && generation === this.gatewayClientGeneration) {
         this.goalRecoveryGeneration = null;
-        this.scheduleGoalRecovery(generation);
+        this.scheduleGoalRecovery(generation, options);
+      } else if (options.stopGoalsCreatedBeforeMs !== undefined) {
+        this.initialGatewayGoalRecoveryPending = false;
+        this.goalSessionsActivatingThisApp.clear();
       }
     } catch (error) {
       if (generation === this.gatewayClientGeneration) {
         this.goalRecoveryGeneration = null;
-        this.scheduleGoalRecovery(generation);
+        this.scheduleGoalRecovery(generation, options);
         coworkLog('WARN', 'GoalContinuation', 'Failed to recover active goals after reconnect', {
           error: error instanceof Error ? error.message : String(error),
         });
@@ -3462,11 +3540,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
   }
 
-  private scheduleGoalRecovery(generation: number): void {
+  private scheduleGoalRecovery(
+    generation: number,
+    options: { stopGoalsCreatedBeforeMs?: number } = {},
+  ): void {
     if (this.goalRecoveryTimer || generation !== this.gatewayClientGeneration) return;
     this.goalRecoveryTimer = setTimeout(() => {
       this.goalRecoveryTimer = null;
-      void this.recoverActiveGoals(generation);
+      void this.recoverActiveGoals(generation, options);
     }, 2_000);
   }
 
