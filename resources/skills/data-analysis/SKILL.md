@@ -1,5 +1,5 @@
 ---
-name: Data Analysis
+name: data-analysis
 slug: data-analysis
 version: 1.0.2
 homepage: https://clawic.com/skills/data-analysis
@@ -158,8 +158,3 @@ Install with `clawhub install <slug>` if user confirms:
 - `dashboard` - implementation patterns for KPI visualization layers.
 - `report` - structured stakeholder-facing deliverables after analysis.
 - `business-intelligence` - KPI systems and operating cadence beyond one-off analysis.
-
-## Feedback
-
-- If useful: `clawhub star data-analysis`
-- Stay updated: `clawhub sync`
