@@ -499,6 +499,63 @@ describe('GoalContinuationCoordinator', () => {
     expect(agentParams.message).toContain('Ship the replacement release');
   });
 
+  it('keeps an explicit Stop latched when Continue cannot read the Goal', async () => {
+    const harness = createHarness();
+    harness.coordinator.restoreRunning(sessionId, 'goal-1', 'old-run');
+    harness.coordinator.stop(sessionId);
+    harness.coordinator.confirmStop(sessionId);
+    harness.request.mockRejectedValueOnce(new Error('gateway offline'));
+
+    await expect(harness.coordinator.continue(sessionId, sessionKey)).rejects.toThrow(
+      'gateway offline',
+    );
+    await harness.coordinator.handleLifecycle({
+      runId: 'manual-message',
+      sessionKey,
+      phase: 'start',
+    });
+    await harness.coordinator.handleLifecycle({
+      runId: 'manual-message',
+      sessionKey,
+      phase: 'end',
+    });
+
+    expect(harness.request).not.toHaveBeenCalledWith('agent', expect.anything());
+    expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({
+      phase: GoalExecutionPhase.Stopped,
+    });
+  });
+
+  it('does not let a concurrent Stop be cleared by an in-flight Continue', async () => {
+    const harness = createHarness();
+    let resolveGoalRead: (() => void) | undefined;
+    harness.request.mockImplementation(async (method: string) => {
+      if (method === 'sessions.describe') {
+        await new Promise<void>(resolve => {
+          resolveGoalRead = resolve;
+        });
+        return { session: { key: sessionKey, goal: goal() } };
+      }
+      if (method === 'agent') return { runId: 'accepted', status: 'accepted' };
+      throw new Error(`unexpected method ${method}`);
+    });
+    harness.coordinator.restoreRunning(sessionId, 'goal-1', 'old-run');
+    harness.coordinator.stop(sessionId);
+    harness.coordinator.confirmStop(sessionId);
+
+    const continuing = harness.coordinator.continue(sessionId, sessionKey);
+    await vi.waitFor(() => expect(resolveGoalRead).toBeTypeOf('function'));
+    harness.coordinator.stop(sessionId);
+    harness.coordinator.confirmStop(sessionId);
+    resolveGoalRead?.();
+
+    await expect(continuing).rejects.toThrow('Goal execution was stopped');
+    expect(harness.request).not.toHaveBeenCalledWith('agent', expect.anything());
+    expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({
+      phase: GoalExecutionPhase.Stopped,
+    });
+  });
+
   it('does not let a stopped terminal handler overwrite a concurrent Continue', async () => {
     const harness = createHarness();
     let resolveStoppedRead: (() => void) | undefined;

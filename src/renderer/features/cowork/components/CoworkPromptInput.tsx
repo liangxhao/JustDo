@@ -41,6 +41,7 @@ import {
   shouldDiscardGoalCompletionFeedback,
   submitGoalCompletionFeedback,
 } from '@/features/cowork/components/goalCompletionFeedback';
+import { pauseGoalRun } from '@/features/cowork/components/goalPause';
 import {
   resolveGoalClearFetch,
   resolvePendingGoalObjectiveOnSessionChange,
@@ -335,6 +336,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const [pendingGoalObjective, setPendingGoalObjective] = useState<string | null>(
       initialGoalObjective,
     );
+    const pendingGoalCancellationRef = useRef<{
+      sessionId: string | undefined;
+      objective: string;
+    } | null>(null);
     const goalStateSessionIdRef = useRef(sessionId);
     const initialGoalObjectiveRef = useRef(initialGoalObjective);
     initialGoalObjectiveRef.current = initialGoalObjective;
@@ -386,6 +391,19 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     useEffect(() => {
       const previousSessionId = goalStateSessionIdRef.current;
       goalStateSessionIdRef.current = sessionId;
+      const pendingCancellation = pendingGoalCancellationRef.current;
+      const carriesPendingCancellation =
+        !!pendingCancellation &&
+        (pendingCancellation.sessionId === sessionId ||
+          (pendingCancellation.sessionId === previousSessionId &&
+            !!previousSessionId?.startsWith('temp-') &&
+            !!sessionId &&
+            !sessionId.startsWith('temp-')));
+      if (carriesPendingCancellation) {
+        pendingCancellation.sessionId = sessionId;
+      } else {
+        pendingGoalCancellationRef.current = null;
+      }
       cancelGoalClear();
       modelSelectionContextRef.current += 1;
       modelSelectionQueueRef.current.invalidate();
@@ -423,6 +441,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           nextSessionId: sessionId,
           currentObjective: current,
           initialObjective: initialGoalObjectiveRef.current,
+          startupCancelled: carriesPendingCancellation,
         }),
       );
     }, [cancelGoalClear, sessionId, effectiveAgentId, updateCompletionFeedback]);
@@ -1135,9 +1154,35 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     };
 
     const handleStopClick = () => {
-      if (onStop) {
-        void onStop();
+      if (!onStop) return;
+      const pendingCancellation =
+        !sessionGoalRef.current && pendingGoalObjective
+          ? { sessionId, objective: pendingGoalObjective }
+          : null;
+      if (pendingCancellation) {
+        pendingGoalCancellationRef.current = pendingCancellation;
       }
+      void (async () => {
+        try {
+          const stopped = await onStop();
+          if (!pendingCancellation || pendingGoalCancellationRef.current !== pendingCancellation) {
+            return;
+          }
+          if (stopped === false) {
+            pendingGoalCancellationRef.current = null;
+            setPendingGoalObjective(pendingCancellation.objective);
+            return;
+          }
+          setPendingGoalObjective(null);
+        } catch {
+          if (pendingGoalCancellationRef.current === pendingCancellation) {
+            pendingGoalCancellationRef.current = null;
+            if (pendingCancellation) {
+              setPendingGoalObjective(pendingCancellation.objective);
+            }
+          }
+        }
+      })();
     };
 
     const containerClass = isLarge
@@ -1761,6 +1806,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           // convergence. Keep the optimistic card mounted until a canonical Goal replaces it;
           // submission failures and unrelated session changes clear the pending objective explicitly.
           if (nextGoal) {
+            pendingGoalCancellationRef.current = null;
             setPendingGoalObjective(null);
           }
         } catch {
@@ -1945,11 +1991,41 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const handleGoalPause = useCallback(async () => {
       if (disabled || !onStop) return;
       await runGoalAction(async () => {
-        const stopped = await onStop();
-        if (stopped === false) return;
-        await onSubmit('/goal pause');
+        const pendingCancellation = pendingGoalObjective
+          ? { sessionId, objective: pendingGoalObjective }
+          : null;
+        if (pendingCancellation) {
+          pendingGoalCancellationRef.current = pendingCancellation;
+        }
+        try {
+          const result = await pauseGoalRun({
+            sessionId,
+            goal: sessionGoalRef.current,
+            execution: goalExecution,
+            stop: onStop,
+            pause: async () => {
+              await onSubmit('/goal pause');
+            },
+          });
+          if (
+            result === 'stop_failed' &&
+            pendingCancellation &&
+            pendingGoalCancellationRef.current === pendingCancellation
+          ) {
+            pendingGoalCancellationRef.current = null;
+            setPendingGoalObjective(pendingCancellation.objective);
+          } else if (result === 'stopped') {
+            setPendingGoalObjective(null);
+          }
+        } catch (error) {
+          if (pendingCancellation && pendingGoalCancellationRef.current === pendingCancellation) {
+            pendingGoalCancellationRef.current = null;
+            setPendingGoalObjective(pendingCancellation.objective);
+          }
+          throw error;
+        }
       });
-    }, [disabled, onStop, onSubmit, runGoalAction]);
+    }, [disabled, goalExecution, onStop, onSubmit, pendingGoalObjective, runGoalAction, sessionId]);
 
     const handleGoalContinue = useCallback(async () => {
       if (

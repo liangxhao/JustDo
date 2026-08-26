@@ -56,6 +56,18 @@ describe('goal pending objective', () => {
     ).toBeNull();
   });
 
+  it('does not restore an optimistic Goal cancelled during temporary-session promotion', () => {
+    expect(
+      resolvePendingGoalObjectiveOnSessionChange({
+        previousSessionId: 'temp-123',
+        nextSessionId: 'session-123',
+        currentObjective: 'write two poems',
+        initialObjective: 'write two poems',
+        startupCancelled: true,
+      }),
+    ).toBeNull();
+  });
+
   it('ignores the cleared Goal but accepts a newer Goal generation', () => {
     expect(resolveGoalClearFetch('goal-1', 'goal-1')).toBe('ignore_old_goal');
     expect(resolveGoalClearFetch('goal-1', null)).toBe('cleared');

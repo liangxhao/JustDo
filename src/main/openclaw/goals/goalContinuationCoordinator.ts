@@ -111,6 +111,7 @@ export class GoalContinuationCoordinator {
   private readonly pendingGoalUpdates = new Map<string, TerminalGoalStatus>();
   private readonly terminalGoalRuns = new Map<string, TerminalGoalStatus>();
   private readonly snapshotsBeforeStop = new Map<string, GoalExecutionSnapshot | null>();
+  private readonly stopGenerations = new Map<string, number>();
   private readonly retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly retryAttempts = new Map<string, number>();
   private readonly now: () => number;
@@ -178,6 +179,7 @@ export class GoalContinuationCoordinator {
     this.pendingGoalUpdates.clear();
     this.terminalGoalRuns.clear();
     this.snapshotsBeforeStop.clear();
+    this.stopGenerations.clear();
     for (const snapshot of clearedSnapshots) {
       this.dependencies.onSnapshot({
         sessionId: snapshot.sessionId,
@@ -189,6 +191,7 @@ export class GoalContinuationCoordinator {
   }
 
   stop(sessionId: string): void {
+    this.stopGenerations.set(sessionId, (this.stopGenerations.get(sessionId) ?? 0) + 1);
     if (!this.stoppedSessionIds.has(sessionId)) {
       this.snapshotsBeforeStop.set(sessionId, this.snapshots.get(sessionId) ?? null);
     }
@@ -228,6 +231,7 @@ export class GoalContinuationCoordinator {
 
   async continue(sessionId: string, sessionKey: string): Promise<GoalExecutionSnapshot> {
     const generation = this.generation;
+    const stopGeneration = this.stopGenerations.get(sessionId) ?? 0;
     if (!isManagedGoalSessionKey(sessionKey)) {
       throw new Error('Goal continuation is only available for managed JustDo sessions');
     }
@@ -239,17 +243,19 @@ export class GoalContinuationCoordinator {
     ) {
       throw new Error('The session goal is already running');
     }
-    this.stoppedSessionIds.delete(sessionId);
-    this.snapshotsBeforeStop.delete(sessionId);
-    this.cancelRetry(sessionId, true);
     this.dispatchingSessionIds.add(sessionId);
     try {
       const goal = await this.readGoal(sessionKey);
       if (generation !== this.generation) throw new Error('OpenClaw Gateway connection changed');
-      if (this.stoppedSessionIds.has(sessionId)) throw new Error('Goal execution was stopped');
+      if ((this.stopGenerations.get(sessionId) ?? 0) !== stopGeneration) {
+        throw new Error('Goal execution was stopped');
+      }
       if (!goal || goal.status !== SessionGoalStatus.Active) {
         throw new Error('The session does not have an active goal');
       }
+      this.stoppedSessionIds.delete(sessionId);
+      this.snapshotsBeforeStop.delete(sessionId);
+      this.cancelRetry(sessionId, true);
       try {
         await this.dispatchContinuation(sessionId, sessionKey, goal, generation);
       } catch (error) {

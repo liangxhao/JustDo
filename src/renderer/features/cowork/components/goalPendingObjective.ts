@@ -16,12 +16,15 @@ export const resolvePendingGoalObjectiveOnSessionChange = ({
   nextSessionId,
   currentObjective,
   initialObjective,
+  startupCancelled = false,
 }: {
   previousSessionId?: string;
   nextSessionId?: string;
   currentObjective: string | null;
   initialObjective: string | null;
+  startupCancelled?: boolean;
 }): string | null => {
+  if (startupCancelled) return null;
   if (initialObjective) return initialObjective;
   const inheritsTemporarySessionGoal =
     !!previousSessionId?.startsWith('temp-') &&

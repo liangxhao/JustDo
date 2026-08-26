@@ -228,6 +228,15 @@ type RuntimeSessionSnapshot = {
   hasMore: boolean;
 };
 
+type PendingTurnStart = {
+  cancelled: boolean;
+  cancellationAbortError?: unknown;
+  phase: 'preparing' | 'sending' | 'settled';
+  settled: Promise<void>;
+  resolveSettled: () => void;
+  turn?: SessionTurn;
+};
+
 export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntime {
   private readonly store: CoworkStore;
   private readonly engineManager: OpenClawEngineManager;
@@ -241,6 +250,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     string,
     { resolve: () => void; reject: (error: Error) => void }
   >();
+  private readonly pendingTurnStarts = new Map<string, PendingTurnStart>();
+  private readonly stopSessionPromises = new Map<string, Promise<void>>();
   private readonly confirmationModeBySession = new Map<string, 'modal' | 'text'>();
   private readonly stoppedSessions = new Map<string, number>();
   private readonly manuallyStoppedSessions = new Set<string>();
@@ -469,26 +480,76 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   async stopSession(sessionId: string, options: CoworkStopOptions = {}): Promise<void> {
+    const existing = this.stopSessionPromises.get(sessionId);
+    if (existing) return existing;
+    const stopping = this.stopSessionInternal(sessionId, options, true);
+    this.stopSessionPromises.set(sessionId, stopping);
+    try {
+      await stopping;
+    } finally {
+      if (this.stopSessionPromises.get(sessionId) === stopping) {
+        this.stopSessionPromises.delete(sessionId);
+      }
+    }
+  }
+
+  private async stopSessionInternal(
+    sessionId: string,
+    options: CoworkStopOptions,
+    cancelPendingStart: boolean,
+  ): Promise<void> {
+    const pendingStart = cancelPendingStart ? this.pendingTurnStarts.get(sessionId) : undefined;
+    const pendingStartWasSending = pendingStart?.phase === 'sending';
+    if (pendingStart) pendingStart.cancelled = true;
     this.goalContinuationCoordinator.stop(sessionId);
     const turn = this.activeTurns.get(sessionId);
     if (turn) {
       turn.stopRequested = true;
     }
     this.manuallyStoppedSessions.add(sessionId);
+    const canCancelPreparationLocally =
+      pendingStart?.phase === 'preparing' && (!turn || pendingStart.turn === turn);
 
-    try {
-      await this.abortSessionAndSubagents(sessionId, turn);
-    } catch (error) {
+    if (!canCancelPreparationLocally) {
+      try {
+        await this.abortSessionAndSubagents(sessionId, turn);
+      } catch (error) {
+        if (pendingStartWasSending) {
+          coworkLog('WARN', 'OpenClawRuntime', 'Initial abort raced a pending chat.send', {
+            error: String(error),
+            sessionId,
+          });
+        } else {
+          if (turn && this.activeTurns.get(sessionId) === turn) {
+            turn.stopRequested = false;
+          }
+          this.manuallyStoppedSessions.delete(sessionId);
+          if (!options.bestEffort) {
+            this.goalContinuationCoordinator.rollbackStop(sessionId);
+            throw error;
+          }
+          coworkLog('WARN', 'OpenClawRuntime', 'Failed to confirm session stop', {
+            error: String(error),
+            sessionId,
+          });
+        }
+      }
+    }
+
+    if (pendingStartWasSending) {
+      await pendingStart.settled;
+    }
+    if (pendingStart?.cancellationAbortError) {
       if (turn && this.activeTurns.get(sessionId) === turn) {
         turn.stopRequested = false;
       }
       this.manuallyStoppedSessions.delete(sessionId);
       if (!options.bestEffort) {
         this.goalContinuationCoordinator.rollbackStop(sessionId);
-        throw error;
+        throw pendingStart.cancellationAbortError;
       }
-      coworkLog('WARN', 'OpenClawRuntime', 'Failed to confirm session stop', {
-        error: String(error),
+      coworkLog('WARN', 'OpenClawRuntime', 'Failed to confirm a cancelled turn start', {
+        error: String(pendingStart.cancellationAbortError),
         sessionId,
       });
     }
@@ -797,7 +858,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   async stopAllSessions(): Promise<void> {
-    const sessionIds = [...this.activeTurns.keys()];
+    const sessionIds = [...new Set([
+      ...this.activeTurns.keys(),
+      ...this.pendingTurnStarts.keys(),
+    ])];
     await Promise.all(
       sessionIds.map(sessionId => this.stopSession(sessionId, { bestEffort: true })),
     );
@@ -949,11 +1013,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   isSessionActive(sessionId: string): boolean {
-    return this.activeTurns.has(sessionId);
+    return this.activeTurns.has(sessionId) || this.pendingTurnStarts.has(sessionId);
   }
 
   hasActiveSessions(): boolean {
-    return this.activeTurns.size > 0;
+    return this.activeTurns.size > 0 || this.pendingTurnStarts.size > 0;
   }
 
   getSessionConfirmationMode(sessionId: string): 'modal' | 'text' | null {
@@ -979,133 +1043,200 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       throw new Error('Prompt is required.');
     }
 
-    // A user-initiated turn is current-app work even when it continues a Goal
-    // whose immutable createdAt predates this app process.
-    if (this.initialGatewayGoalRecoveryPending) {
-      this.goalSessionsActivatingThisApp.add(sessionId);
-    }
+    const previousStart = this.pendingTurnStarts.get(sessionId);
+    if (previousStart) previousStart.cancelled = true;
+    let resolveSettled!: () => void;
+    const pendingStart: PendingTurnStart = {
+      cancelled: false,
+      phase: 'preparing',
+      settled: new Promise<void>(resolve => {
+        resolveSettled = resolve;
+      }),
+      resolveSettled: () => resolveSettled(),
+    };
+    this.pendingTurnStarts.set(sessionId, pendingStart);
+    const isStartCancelled = () =>
+      pendingStart.cancelled || this.pendingTurnStarts.get(sessionId) !== pendingStart;
+    let completionPromise: Promise<void> | null = null;
+    let turn: SessionTurn | null = null;
 
-    await this.sessionRpc.waitForModelUpdate(sessionId);
+    try {
+      // A user-initiated turn is current-app work even when it continues a Goal
+      // whose immutable createdAt predates this app process.
+      if (this.initialGatewayGoalRecoveryPending) {
+        this.goalSessionsActivatingThisApp.add(sessionId);
+      }
 
-    this.stoppedSessions.delete(sessionId);
-    this.manuallyStoppedSessions.delete(sessionId);
-    // Resolve stale activeTurns
-    if (this.activeTurns.has(sessionId)) {
-      await this.resolveActiveTurnConflict(sessionId);
-    }
+      await this.sessionRpc.waitForModelUpdate(sessionId);
+      if (isStartCancelled()) return;
 
-    const session = this.store.getSession(sessionId);
-    if (!session) throw new Error(`Session ${sessionId} not found`);
+      this.stoppedSessions.delete(sessionId);
+      this.manuallyStoppedSessions.delete(sessionId);
+      // Resolve stale activeTurns
+      if (this.activeTurns.has(sessionId)) {
+        await this.resolveActiveTurnConflict(sessionId);
+        if (isStartCancelled()) return;
+      }
 
-    const confirmationMode =
-      options.confirmationMode ?? this.confirmationModeBySession.get(sessionId) ?? 'modal';
-    this.confirmationModeBySession.set(sessionId, confirmationMode);
+      const session = this.store.getSession(sessionId);
+      if (!session) throw new Error(`Session ${sessionId} not found`);
 
-    if (!options.skipInitialUserMessage) {
-      const metadata =
-        options.skillIds?.length || options.attachments?.length
-          ? {
-              ...(options.skillIds?.length ? { skillIds: options.skillIds } : {}),
-              ...(options.attachments?.length ? { attachments: options.attachments } : {}),
-            }
-          : undefined;
-      const userMessage = this.store.addMessage(sessionId, {
-        type: 'user',
-        content: prompt,
-        metadata,
+      const confirmationMode =
+        options.confirmationMode ?? this.confirmationModeBySession.get(sessionId) ?? 'modal';
+      this.confirmationModeBySession.set(sessionId, confirmationMode);
+
+      if (!options.skipInitialUserMessage) {
+        const metadata =
+          options.skillIds?.length || options.attachments?.length
+            ? {
+                ...(options.skillIds?.length ? { skillIds: options.skillIds } : {}),
+                ...(options.attachments?.length ? { attachments: options.attachments } : {}),
+              }
+            : undefined;
+        const userMessage = this.store.addMessage(sessionId, {
+          type: 'user',
+          content: prompt,
+          metadata,
+        });
+        this.emit('message', sessionId, userMessage);
+      }
+
+      const agentId = options.agentId || session.agentId || 'main';
+      const modelName = '';
+
+      const sessionKey = this.toSessionKey(sessionId, agentId);
+      this.rememberSessionKey(sessionId, sessionKey);
+      this.store.updateSession(sessionId, { status: 'running' });
+      await this.ensureGatewayClientReady();
+      if (isStartCancelled()) return;
+      try {
+        await this.syncAgentWorkspaceIfNeeded(agentId, options.workspaceRoot);
+      } catch (error) {
+        if (isStartCancelled()) return;
+        this.store.updateSession(sessionId, { status: 'error' });
+        const message = error instanceof Error ? error.message : String(error);
+        this.emit('error', sessionId, message);
+        throw error;
+      }
+      if (isStartCancelled()) return;
+
+      const runId = options.clientTurnId?.trim() || randomUUID();
+      this.rootRunIdBySession.set(sessionId, runId);
+      const turnToken = this.nextTurnToken(sessionId);
+      completionPromise = new Promise<void>((resolve, reject) => {
+        this.pendingTurns.set(sessionId, { resolve, reject });
       });
-      this.emit('message', sessionId, userMessage);
-    }
 
-    const agentId = options.agentId || session.agentId || 'main';
-    const modelName = '';
-
-    const sessionKey = this.toSessionKey(sessionId, agentId);
-    this.rememberSessionKey(sessionId, sessionKey);
-    this.store.updateSession(sessionId, { status: 'running' });
-    await this.ensureGatewayClientReady();
-    try {
-      await this.syncAgentWorkspaceIfNeeded(agentId, options.workspaceRoot);
-    } catch (error) {
-      this.store.updateSession(sessionId, { status: 'error' });
-      const message = error instanceof Error ? error.message : String(error);
-      this.emit('error', sessionId, message);
-      throw error;
-    }
-
-    const runId = options.clientTurnId?.trim() || randomUUID();
-    this.rootRunIdBySession.set(sessionId, runId);
-    const turnToken = this.nextTurnToken(sessionId);
-    const completionPromise = new Promise<void>((resolve, reject) => {
-      this.pendingTurns.set(sessionId, { resolve, reject });
-    });
-
-    // Create SessionTurn (replaces 22-field ActiveTurn)
-    this.activeTurns.set(sessionId, {
-      sessionId,
-      sessionKey,
-      runId,
-      gatewaySessionId: null,
-      lifecycleGeneration: null,
-      lastAgentSeq: -1,
-      status: 'running',
-      turnToken,
-      chatStream: '',
-      agentAssistantStreamSeen: false,
-      committedAssistantSegments: [],
-      toolStreamById: new Map(),
-      toolStreamOrder: [],
-      chatToolMessages: [],
-      chatStreamSegments: [],
-      thinkingContent: '',
-      thinkingMessageId: null,
-      stopRequested: false,
-      assistantMessageId: null,
-      modelName,
-      knownRunIds: new Set([runId]),
-    });
-    this.sessionIdByRunId.set(runId, sessionId);
-    this.startTurnTimeoutWatchdog(sessionId);
-    this.lastAgentActivityTimestamp = Date.now();
-
-    const client = this.requireGatewayClient();
-    try {
-      const attachments = options.attachments?.length
-        ? options.attachments.map(toGatewayAttachment)
-        : undefined;
-      const commandSessionId = await ensureSlashCommandSession(client, sessionKey, prompt);
-      const result = await client.request<{ runId?: string }>('chat.send', {
+      // Create SessionTurn (replaces 22-field ActiveTurn)
+      turn = {
+        sessionId,
         sessionKey,
-        ...(commandSessionId ? { sessionId: commandSessionId } : {}),
-        message: prompt.trim(),
-        deliver: false,
-        justdoUserInitiated: true,
-        // Gateway timeout 0 means timer-safe "no timeout". JustDo owns the
-        // user-turn watchdog below so it can suspend that deadline while
-        // managed subagents are still running in an in-place sessions_yield.
-        timeoutMs: 0,
-        idempotencyKey: runId,
-        ...(attachments ? { attachments } : {}),
-      });
-      const rootRunId = result.runId?.trim() || runId;
-      this.rootRunIdBySession.set(sessionId, rootRunId);
-      this.sessionIdByRunId.set(rootRunId, sessionId);
-      const timing = options.clientTurnId
-        ? this.store.getSessionRunByClientTurnId(options.clientTurnId)
-        : undefined;
-      if (timing?.state === 'running') {
-        this.store.bindSessionRunRootRun(timing.id, rootRunId);
-      }
-      if (!prompt.trimStart().startsWith('/')) {
-        this.goalsAwaitingResumeInput.delete(sessionId);
+        runId,
+        gatewaySessionId: null,
+        lifecycleGeneration: null,
+        lastAgentSeq: -1,
+        status: 'running',
+        turnToken,
+        chatStream: '',
+        agentAssistantStreamSeen: false,
+        committedAssistantSegments: [],
+        toolStreamById: new Map(),
+        toolStreamOrder: [],
+        chatToolMessages: [],
+        chatStreamSegments: [],
+        thinkingContent: '',
+        thinkingMessageId: null,
+        stopRequested: false,
+        assistantMessageId: null,
+        modelName,
+        knownRunIds: new Set([runId]),
+      };
+      pendingStart.turn = turn;
+      this.activeTurns.set(sessionId, turn);
+      this.sessionIdByRunId.set(runId, sessionId);
+      this.startTurnTimeoutWatchdog(sessionId);
+      this.lastAgentActivityTimestamp = Date.now();
+
+      const client = this.requireGatewayClient();
+      try {
+        const attachments = options.attachments?.length
+          ? options.attachments.map(toGatewayAttachment)
+          : undefined;
+        const commandSessionId = await ensureSlashCommandSession(client, sessionKey, prompt);
+        if (isStartCancelled()) return;
+        pendingStart.phase = 'sending';
+        const result = await client.request<{ runId?: string }>('chat.send', {
+          sessionKey,
+          ...(commandSessionId ? { sessionId: commandSessionId } : {}),
+          message: prompt.trim(),
+          deliver: false,
+          justdoUserInitiated: true,
+          // Gateway timeout 0 means timer-safe "no timeout". JustDo owns the
+          // user-turn watchdog below so it can suspend that deadline while
+          // managed subagents are still running in an in-place sessions_yield.
+          timeoutMs: 0,
+          idempotencyKey: runId,
+          ...(attachments ? { attachments } : {}),
+        });
+        const rootRunId = result.runId?.trim() || turn.runId || runId;
+        this.rootRunIdBySession.set(sessionId, rootRunId);
+        this.sessionIdByRunId.set(rootRunId, sessionId);
+        turn.knownRunIds.add(rootRunId);
+        turn.runId = rootRunId;
+        if (isStartCancelled()) {
+          try {
+            await this.abortSessionAndSubagents(sessionId, { ...turn, runId: rootRunId });
+          } catch (error) {
+            pendingStart.cancellationAbortError = error;
+          }
+          if (!pendingStart.cancellationAbortError) return;
+        } else {
+          const timing = options.clientTurnId
+            ? this.store.getSessionRunByClientTurnId(options.clientTurnId)
+            : undefined;
+          if (timing?.state === 'running') {
+            this.store.bindSessionRunRootRun(timing.id, rootRunId);
+          }
+          if (!prompt.trimStart().startsWith('/')) {
+            this.goalsAwaitingResumeInput.delete(sessionId);
+          }
+        }
+      } catch (error) {
+        if (isStartCancelled()) {
+          try {
+            await this.abortSessionAndSubagents(sessionId);
+          } catch (abortError) {
+            pendingStart.cancellationAbortError = abortError;
+          }
+          if (!pendingStart.cancellationAbortError) return;
+        } else {
+          this.cleanupSessionTurn(sessionId);
+          this.store.updateSession(sessionId, { status: 'error' });
+          const message = error instanceof Error ? error.message : String(error);
+          this.emit('error', sessionId, message);
+          this.rejectTurn(sessionId, new Error(message));
+          throw error;
+        }
       }
     } catch (error) {
-      this.cleanupSessionTurn(sessionId);
-      this.store.updateSession(sessionId, { status: 'error' });
-      const message = error instanceof Error ? error.message : String(error);
-      this.emit('error', sessionId, message);
-      this.rejectTurn(sessionId, new Error(message));
-      throw error;
+      if (!isStartCancelled()) throw error;
+      return;
+    } finally {
+      if (
+        isStartCancelled() &&
+        turn &&
+        this.activeTurns.get(sessionId) === turn &&
+        !pendingStart.cancellationAbortError
+      ) {
+        this.cleanupSessionTurn(sessionId);
+        this.store.updateSession(sessionId, { status: 'idle' });
+        this.resolveTurn(sessionId);
+      }
+      pendingStart.phase = 'settled';
+      pendingStart.resolveSettled();
+      if (this.pendingTurnStarts.get(sessionId) === pendingStart) {
+        this.pendingTurnStarts.delete(sessionId);
+      }
     }
 
     await completionPromise;
@@ -2980,7 +3111,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     await new Promise(resolve => setTimeout(resolve, RACE_RESOLUTION_MS));
     if (!this.activeTurns.has(sessionId)) return;
-    await this.stopSession(sessionId);
+    await this.stopSessionInternal(sessionId, {}, false);
   }
 
   private startTurnTimeoutWatchdog(sessionId: string): void {
