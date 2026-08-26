@@ -10,6 +10,7 @@ import {
   copyBrowserExtensionPairing,
   ensureBrowserExtensionRelayToken,
   findBundledBrowserExtensionPath,
+  getBrowserModeSwitchAvailability,
   openBrowserExtensionFolder,
   parseLsofPortOwner,
   parseWindowsNetstatListeningPid,
@@ -42,6 +43,43 @@ describe('applyBrowserModeChange', () => {
     expect(config).toEqual({ theme: 'light', browserMode: BrowserMode.User });
     expect(syncConfig).toHaveBeenCalledTimes(1);
     expect(syncConfig).toHaveBeenCalledWith('browser-mode-change');
+  });
+
+  test('rejects a mode change before writing config when a session is active', async () => {
+    const originalConfig = { browserMode: BrowserMode.Isolated };
+    const writeAppConfig = vi.fn();
+    const syncConfig = vi.fn();
+
+    const result = await applyBrowserModeChange(BrowserMode.User, {
+      readAppConfig: () => originalConfig,
+      writeAppConfig,
+      hasActiveSessions: () => true,
+      syncConfig,
+    });
+
+    expect(result).toEqual({
+      success: false,
+      mode: BrowserMode.Isolated,
+      errorCode: 'active-session',
+    });
+    expect(writeAppConfig).not.toHaveBeenCalled();
+    expect(syncConfig).not.toHaveBeenCalled();
+  });
+
+  test('allows selecting the current mode while a session is active', async () => {
+    const writeAppConfig = vi.fn();
+    const syncConfig = vi.fn();
+
+    const result = await applyBrowserModeChange(BrowserMode.User, {
+      readAppConfig: () => ({ browserMode: BrowserMode.User }),
+      writeAppConfig,
+      hasActiveSessions: () => true,
+      syncConfig,
+    });
+
+    expect(result).toEqual({ success: true, mode: BrowserMode.User });
+    expect(writeAppConfig).not.toHaveBeenCalled();
+    expect(syncConfig).not.toHaveBeenCalled();
   });
 
   test('restores app config and OpenClaw config when synchronization fails', async () => {
@@ -85,6 +123,28 @@ describe('applyBrowserModeChange', () => {
     expect(result).toEqual({ success: false, errorCode: 'config-sync-failed' });
     expect(config).toBe(originalConfig);
     expect(syncConfig).toHaveBeenNthCalledWith(2, 'browser-mode-rollback');
+  });
+});
+
+describe('getBrowserModeSwitchAvailability', () => {
+  test('allows switching only when no session is active', () => {
+    expect(getBrowserModeSwitchAvailability(() => false)).toEqual({
+      success: true,
+      canSwitch: true,
+    });
+    expect(getBrowserModeSwitchAvailability(() => true)).toEqual({
+      success: true,
+      canSwitch: false,
+      errorCode: 'active-session',
+    });
+  });
+
+  test('fails closed when the runtime state cannot be read', () => {
+    expect(
+      getBrowserModeSwitchAvailability(() => {
+        throw new Error('runtime unavailable');
+      }),
+    ).toEqual({ success: false, canSwitch: false, error: 'runtime unavailable' });
   });
 });
 

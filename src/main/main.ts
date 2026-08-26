@@ -796,11 +796,13 @@ if (!gotTheLock) {
   registerBrowserHandlers({
     getGatewayClient: () => getOpenClawRuntimeAdapter()?.getGatewayClient() ?? null,
     buildCliEnvironment: () => getOpenClawEngineManager().buildCliEnvironment(),
+    hasActiveSessions: () => getCoworkEngineService().hasActiveSessions(),
     setBrowserMode: mode => {
       const store = getStore();
       return applyBrowserModeChange(mode, {
         readAppConfig: () => store.get<Record<string, unknown>>('app_config') ?? {},
         writeAppConfig: config => store.set('app_config', config),
+        hasActiveSessions: () => getCoworkEngineService().hasActiveSessions(),
         syncConfig: reason => syncOpenClawConfig({ reason }),
         logError: (message, error) => console.error(`[BrowserSettings] ${message}`, error ?? ''),
       });
@@ -1127,9 +1129,11 @@ if (!gotTheLock) {
 
     bindCoworkRuntimeForwarder(getCoworkEngineRouter(), getCoworkStore);
     getCoworkEngineRouter().on('cronChanged', () => {
-      void getCronJobService().reconcileGatewayChange().catch(error => {
-        console.warn('[CronJobService] Failed to reconcile scheduler agent assignment:', error);
-      });
+      void getCronJobService()
+        .reconcileGatewayChange()
+        .catch(error => {
+          console.warn('[CronJobService] Failed to reconcile scheduler agent assignment:', error);
+        });
     });
     bindOpenClawStatusForwarder();
 

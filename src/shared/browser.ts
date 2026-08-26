@@ -1,5 +1,6 @@
 export const BrowserIpc = {
   GetStatus: 'browser:getStatus',
+  CanSetMode: 'browser:canSetMode',
   SetMode: 'browser:setMode',
   OpenRemoteDebugging: 'browser:openRemoteDebugging',
   TestConnection: 'browser:testConnection',
@@ -59,7 +60,12 @@ export type BrowserActionResult = {
 
 export type BrowserModeUpdateResult = BrowserActionResult & {
   mode?: BrowserMode;
-  errorCode?: 'invalid-mode' | 'config-sync-failed';
+  errorCode?: 'invalid-mode' | 'active-session' | 'config-sync-failed';
+};
+
+export type BrowserModeSwitchAvailabilityResult = BrowserActionResult & {
+  canSwitch: boolean;
+  errorCode?: 'active-session';
 };
 
 export type BrowserConnectionTestResult = BrowserActionResult & {

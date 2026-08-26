@@ -5,6 +5,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
+import type { OpenClawEngineStatus } from '@/features/cowork/coworkTypes';
+
 import BrowserSettingsTab from './BrowserSettingsTab';
 
 const mocks = vi.hoisted(() => ({
@@ -45,8 +47,10 @@ const deferred = <T,>() => {
 };
 
 const installElectronBrowserMock = (overrides: Record<string, unknown> = {}) => {
+  let engineProgressListener: ((status: OpenClawEngineStatus) => void) | null = null;
   const browser = {
     getStatus: vi.fn().mockResolvedValue({ success: true, status: disconnectedChromeStatus }),
+    canSetMode: vi.fn().mockResolvedValue({ success: true, canSwitch: true }),
     setMode: vi.fn().mockImplementation(async (mode: BrowserMode) => ({ success: true, mode })),
     openRemoteDebugging: vi.fn(),
     testConnection: vi.fn(),
@@ -54,11 +58,24 @@ const installElectronBrowserMock = (overrides: Record<string, unknown> = {}) => 
     revealExtension: vi.fn(),
     copyExtensionPairing: vi.fn(),
     testExtensionConnection: vi.fn(),
+    emitEngineProgress: (status: OpenClawEngineStatus) => engineProgressListener?.(status),
     ...overrides,
   };
   Object.defineProperty(window, 'electron', {
     configurable: true,
-    value: { browser },
+    value: {
+      browser,
+      openclaw: {
+        engine: {
+          onProgress: vi.fn((callback: (status: OpenClawEngineStatus) => void) => {
+            engineProgressListener = callback;
+            return () => {
+              engineProgressListener = null;
+            };
+          }),
+        },
+      },
+    },
   });
   return browser;
 };
@@ -143,6 +160,86 @@ describe('BrowserSettingsTab extension connection checks', () => {
     expect(screen.queryByText('browserConnectionVerified')).toBeNull();
     expect(browser.setMode).toHaveBeenNthCalledWith(1, BrowserMode.Isolated);
     expect(browser.setMode).toHaveBeenNthCalledWith(2, BrowserMode.Extension);
+  });
+
+  test('renders the selected mode immediately and reports Gateway restart with a compact spinner', async () => {
+    mocks.getConfig.mockReturnValue({ browserMode: BrowserMode.Isolated });
+    const modeChange = deferred<{ success: true; mode: typeof BrowserMode.User }>();
+    const browser = installElectronBrowserMock({
+      setMode: vi.fn(() => modeChange.promise),
+    });
+
+    render(<BrowserSettingsTab />);
+    fireEvent.click(screen.getByRole('radio', { name: /browserModeUserTitle/ }));
+
+    await waitFor(() => expect(browser.setMode).toHaveBeenCalledWith(BrowserMode.User));
+    expect(
+      screen.getByRole('radio', { name: /browserModeUserTitle/ }).getAttribute('aria-checked'),
+    ).toBe('true');
+    expect(screen.getByText('browserModeApplying')).toBeTruthy();
+
+    act(() => {
+      browser.emitEngineProgress({
+        phase: 'starting',
+        version: null,
+        progressPercent: 42,
+        canRetry: false,
+      });
+    });
+    expect(screen.getByText('browserModeGatewayRestarting')).toBeTruthy();
+    expect(screen.queryByText('42%')).toBeNull();
+    expect(
+      screen
+        .getByText('browserModeGatewayRestarting')
+        .closest('[role="status"]')
+        ?.querySelector('.animate-spin'),
+    ).toBeTruthy();
+
+    await act(async () => modeChange.resolve({ success: true, mode: BrowserMode.User }));
+    await waitFor(() => expect(screen.getByText('browserModeChangeComplete')).toBeTruthy());
+  });
+
+  test('keeps the current mode and warns when an active session blocks switching', async () => {
+    mocks.getConfig.mockReturnValue({ browserMode: BrowserMode.Isolated });
+    const browser = installElectronBrowserMock({
+      canSetMode: vi.fn().mockResolvedValue({
+        success: true,
+        canSwitch: false,
+        errorCode: 'active-session',
+      }),
+    });
+
+    render(<BrowserSettingsTab />);
+    fireEvent.click(screen.getByRole('radio', { name: /browserModeUserTitle/ }));
+
+    await waitFor(() => expect(screen.getByText('browserModeActiveSessionWarning')).toBeTruthy());
+    expect(
+      screen.getByRole('radio', { name: /browserModeIsolatedTitle/ }).getAttribute('aria-checked'),
+    ).toBe('true');
+    expect(screen.queryByText('browserModeApplying')).toBeNull();
+    expect(mocks.reloadFromStore).not.toHaveBeenCalled();
+    expect(browser.setMode).not.toHaveBeenCalled();
+  });
+
+  test('restores the current mode if a session starts after the availability check', async () => {
+    mocks.getConfig.mockReturnValue({ browserMode: BrowserMode.Isolated });
+    const browser = installElectronBrowserMock({
+      setMode: vi.fn().mockResolvedValue({
+        success: false,
+        mode: BrowserMode.Isolated,
+        errorCode: 'active-session',
+      }),
+    });
+
+    render(<BrowserSettingsTab />);
+    fireEvent.click(screen.getByRole('radio', { name: /browserModeUserTitle/ }));
+
+    await waitFor(() => expect(screen.getByText('browserModeActiveSessionWarning')).toBeTruthy());
+    expect(
+      screen.getByRole('radio', { name: /browserModeIsolatedTitle/ }).getAttribute('aria-checked'),
+    ).toBe('true');
+    expect(browser.canSetMode).toHaveBeenCalledOnce();
+    expect(browser.setMode).toHaveBeenCalledOnce();
   });
 
   test('retries a transient cold-start failure during the automatic connection check', async () => {

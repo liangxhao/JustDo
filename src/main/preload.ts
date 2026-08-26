@@ -6,6 +6,7 @@ import {
   type BrowserConnectionTestResult,
   BrowserIpc,
   type BrowserMode,
+  type BrowserModeSwitchAvailabilityResult,
   type BrowserModeUpdateResult,
   type BrowserStatusResult,
 } from '../shared/browser';
@@ -160,6 +161,8 @@ contextBridge.exposeInMainWorld('electron', {
   },
   browser: {
     getStatus: (): Promise<BrowserStatusResult> => ipcRenderer.invoke(BrowserIpc.GetStatus),
+    canSetMode: (): Promise<BrowserModeSwitchAvailabilityResult> =>
+      ipcRenderer.invoke(BrowserIpc.CanSetMode),
     setMode: (mode: BrowserMode): Promise<BrowserModeUpdateResult> =>
       ipcRenderer.invoke(BrowserIpc.SetMode, mode),
     openRemoteDebugging: (): Promise<BrowserActionResult> =>

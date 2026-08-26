@@ -15,9 +15,11 @@ import {
   BrowserIpc,
   BrowserMode,
   type BrowserMode as BrowserModeValue,
+  type BrowserModeSwitchAvailabilityResult,
   type BrowserModeUpdateResult,
   type BrowserPortOwner,
   isBrowserExtensionConnected,
+  normalizeBrowserMode,
   parseDevToolsActivePort,
 } from '../../../shared/browser';
 import type { GatewayClientLike } from '../../engine/gateway/types';
@@ -408,12 +410,14 @@ export const getBrowserConnectionStatus = async (): Promise<BrowserConnectionSta
 type BrowserHandlerDependencies = {
   getGatewayClient: () => GatewayClientLike | null;
   buildCliEnvironment: () => Promise<OpenClawCliEnvironment>;
+  hasActiveSessions: () => boolean;
   setBrowserMode: (mode: BrowserModeValue) => Promise<BrowserModeUpdateResult>;
 };
 
 type BrowserModeChangeDependencies = {
   readAppConfig: () => Record<string, unknown>;
   writeAppConfig: (config: Record<string, unknown>) => void;
+  hasActiveSessions?: () => boolean;
   syncConfig: (reason: string) => Promise<{ success: boolean; error?: string }>;
   logError?: (message: string, error?: string) => void;
 };
@@ -459,6 +463,12 @@ export const applyBrowserModeChange = async (
   dependencies: BrowserModeChangeDependencies,
 ): Promise<BrowserModeUpdateResult> => {
   const previousConfig = dependencies.readAppConfig();
+  const previousMode = normalizeBrowserMode(previousConfig.browserMode);
+  if (mode === previousMode) return { success: true, mode };
+  if (dependencies.hasActiveSessions?.()) {
+    return { success: false, mode: previousMode, errorCode: 'active-session' };
+  }
+
   dependencies.writeAppConfig({ ...previousConfig, browserMode: mode });
   const syncResult = await dependencies.syncConfig('browser-mode-change').catch(error => ({
     success: false,
@@ -481,9 +491,29 @@ export const applyBrowserModeChange = async (
   };
 };
 
+export const getBrowserModeSwitchAvailability = (
+  hasActiveSessions: () => boolean,
+): BrowserModeSwitchAvailabilityResult => {
+  try {
+    const canSwitch = !hasActiveSessions();
+    return {
+      success: true,
+      canSwitch,
+      ...(canSwitch ? {} : { errorCode: 'active-session' as const }),
+    };
+  } catch (error) {
+    return {
+      success: false,
+      canSwitch: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+};
+
 export const registerBrowserHandlers = ({
   getGatewayClient,
   buildCliEnvironment,
+  hasActiveSessions,
   setBrowserMode,
 }: BrowserHandlerDependencies): void => {
   ipcMain.handle(BrowserIpc.GetStatus, async () => {
@@ -493,6 +523,8 @@ export const registerBrowserHandlers = ({
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
   });
+
+  ipcMain.handle(BrowserIpc.CanSetMode, () => getBrowserModeSwitchAvailability(hasActiveSessions));
 
   ipcMain.handle(BrowserIpc.SetMode, async (_event, mode: unknown) => {
     if (

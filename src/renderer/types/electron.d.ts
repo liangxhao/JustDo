@@ -36,6 +36,8 @@ type AppUpdateState = import('../../shared/appUpdate').AppUpdateState;
 type BrowserActionResult = import('../../shared/browser').BrowserActionResult;
 type BrowserConnectionTestResult = import('../../shared/browser').BrowserConnectionTestResult;
 type BrowserMode = import('../../shared/browser').BrowserMode;
+type BrowserModeSwitchAvailabilityResult =
+  import('../../shared/browser').BrowserModeSwitchAvailabilityResult;
 type BrowserModeUpdateResult = import('../../shared/browser').BrowserModeUpdateResult;
 type BrowserStatusResult = import('../../shared/browser').BrowserStatusResult;
 type ApiFetchOptions = import('../../shared/network').ApiFetchOptions;
@@ -349,6 +351,7 @@ import type { McpServerFormData } from '@/features/plugins/types/mcp';
 interface IElectronAPI {
   browser: {
     getStatus: () => Promise<BrowserStatusResult>;
+    canSetMode: () => Promise<BrowserModeSwitchAvailabilityResult>;
     setMode: (mode: BrowserMode) => Promise<BrowserModeUpdateResult>;
     openRemoteDebugging: () => Promise<BrowserActionResult>;
     testConnection: () => Promise<BrowserConnectionTestResult>;

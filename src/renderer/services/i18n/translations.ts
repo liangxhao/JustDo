@@ -177,6 +177,11 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserModeExtensionDescription:
       '安装并配对浏览器助手扩展，只共享指定标签页，无需每次批准远程调试。',
     browserModeChangeFailed: '浏览器模式切换失败',
+    browserModeApplying: '正在应用浏览器设置，Gateway 可能会短暂重启…',
+    browserModeGatewayRestarting: '正在重启 Gateway，期间浏览器连接会短暂断开…',
+    browserModeChangeComplete: '浏览器模式已切换，Gateway 已就绪。',
+    browserModeActiveSessionWarning:
+      '有会话正在运行，暂时无法切换浏览器模式。请等待会话结束后重试，避免 Gateway 重启中断当前任务。',
     browserUserChromeTitle: '连接你的 Chrome',
     browserUserChromeDescription:
       '复用日常 Chrome 的登录状态、Cookie 和标签页。Chrome 会在首次连接时要求你明确授权。',
@@ -1409,6 +1414,12 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserModeExtensionDescription:
       'Install and pair the browser assistant extension to share selected tabs without approving remote debugging every time.',
     browserModeChangeFailed: 'Failed to change browser mode',
+    browserModeApplying: 'Applying browser settings; Gateway may restart briefly…',
+    browserModeGatewayRestarting:
+      'Restarting Gateway; the browser connection will disconnect briefly…',
+    browserModeChangeComplete: 'Browser mode changed and Gateway is ready.',
+    browserModeActiveSessionWarning:
+      'A conversation is still running, so the browser mode cannot be changed yet. Wait for it to finish to avoid interrupting the current task when Gateway restarts.',
     browserUserChromeDescription:
       'Reuse the sign-in state, cookies, and tabs from your everyday Chrome profile. Chrome requires explicit approval on the first connection.',
     browserStatusReady: 'Chrome is ready for an authorization request',

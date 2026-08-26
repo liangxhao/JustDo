@@ -47,6 +47,10 @@ type StepProps = {
   feedback?: React.ReactNode;
 };
 
+type BrowserModeApplyState = {
+  phase: 'applying' | 'restarting' | 'complete';
+};
+
 const SetupStep: React.FC<StepProps> = ({
   number,
   complete,
@@ -103,9 +107,35 @@ const BrowserSettingsTab: React.FC = () => {
   );
   const [extensionTestKind, setExtensionTestKind] = useState<'automatic' | 'manual' | null>(null);
   const [savingMode, setSavingMode] = useState(false);
+  const [modeApplyState, setModeApplyState] = useState<BrowserModeApplyState | null>(null);
+  const [modeSwitchWarning, setModeSwitchWarning] = useState<string | null>(null);
   const refreshRequestIdRef = useRef(0);
   const extensionTestRequestIdRef = useRef(0);
   const statusRef = useRef<BrowserConnectionStatus | null>(null);
+  const savingModeRef = useRef(false);
+  const modeApplyCompletionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const subscribe = window.electron.openclaw?.engine.onProgress;
+    if (typeof subscribe !== 'function') return;
+    return subscribe(engineStatus => {
+      if (!savingModeRef.current) return;
+      if (engineStatus.phase === 'starting' || engineStatus.phase === 'ready') {
+        setModeApplyState({
+          phase: 'restarting',
+        });
+      }
+    });
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (modeApplyCompletionTimerRef.current) {
+        clearTimeout(modeApplyCompletionTimerRef.current);
+      }
+    },
+    [],
+  );
 
   const refresh = useCallback(async () => {
     const requestId = ++refreshRequestIdRef.current;
@@ -166,19 +196,59 @@ const BrowserSettingsTab: React.FC = () => {
 
   const selectBrowserMode = async (mode: BrowserModeValue) => {
     if (mode === browserMode || savingMode || busyAction !== null) return;
+    const previousMode = browserMode;
+    if (modeApplyCompletionTimerRef.current) {
+      clearTimeout(modeApplyCompletionTimerRef.current);
+      modeApplyCompletionTimerRef.current = null;
+    }
     setSavingMode(true);
     setError(null);
+    setModeSwitchWarning(null);
     try {
-      const result = await window.electron.browser.setMode(mode);
-      if (!result.success || !result.mode)
+      const availability = await window.electron.browser.canSetMode();
+      if (!availability.success) {
         throw new Error(i18nService.t('browserModeChangeFailed'));
+      }
+      if (!availability.canSwitch) {
+        setModeSwitchWarning(i18nService.t('browserModeActiveSessionWarning'));
+        return;
+      }
+
+      savingModeRef.current = true;
+      setModeApplyState({ phase: 'applying' });
+      // Render the selected setup flow as soon as Main confirms there is no
+      // active session, while durable config and Gateway apply in background.
+      setBrowserMode(mode);
+      const result = await window.electron.browser.setMode(mode);
+      if (result.errorCode === 'active-session') {
+        setBrowserMode(result.mode ?? previousMode);
+        setModeApplyState(null);
+        setModeSwitchWarning(i18nService.t('browserModeActiveSessionWarning'));
+        return;
+      }
+      if (!result.success || !result.mode) {
+        throw new Error(i18nService.t('browserModeChangeFailed'));
+      }
       setBrowserMode(result.mode);
       await configService.reloadFromStore();
+      setModeApplyState({ phase: 'complete' });
+      modeApplyCompletionTimerRef.current = setTimeout(() => {
+        modeApplyCompletionTimerRef.current = null;
+        setModeApplyState(null);
+      }, 2_500);
     } catch (modeError) {
+      try {
+        await configService.reloadFromStore();
+        setBrowserMode(normalizeBrowserMode(configService.getConfig().browserMode));
+      } catch {
+        setBrowserMode(previousMode);
+      }
+      setModeApplyState(null);
       setError(
         modeError instanceof Error ? modeError.message : i18nService.t('browserModeChangeFailed'),
       );
     } finally {
+      savingModeRef.current = false;
       setSavingMode(false);
     }
   };
@@ -333,9 +403,36 @@ const BrowserSettingsTab: React.FC = () => {
   return (
     <div className="space-y-4">
       <div>
-        <h3 className="text-base font-semibold text-foreground">
-          {i18nService.t('browserModeTitle')}
-        </h3>
+        <div className="flex min-h-6 items-center gap-3">
+          <h3 className="shrink-0 text-base font-semibold text-foreground">
+            {i18nService.t('browserModeTitle')}
+          </h3>
+          <div
+            role={modeApplyState ? 'status' : undefined}
+            aria-live={modeApplyState ? 'polite' : undefined}
+            className="flex min-w-0 flex-1 items-center justify-end gap-1.5 text-right text-xs text-secondary"
+          >
+            {modeApplyState ? (
+              <>
+                {modeApplyState.phase === 'complete' ? (
+                  <CheckCircleIcon className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+                ) : (
+                  <span
+                    className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-primary/25 border-t-primary"
+                    aria-hidden="true"
+                  />
+                )}
+                <span className="min-w-0 truncate">
+                  {modeApplyState.phase === 'complete'
+                    ? i18nService.t('browserModeChangeComplete')
+                    : modeApplyState.phase === 'restarting'
+                      ? i18nService.t('browserModeGatewayRestarting')
+                      : i18nService.t('browserModeApplying')}
+                </span>
+              </>
+            ) : null}
+          </div>
+        </div>
         <p className="mt-1 max-w-2xl text-sm leading-5 text-secondary">
           {i18nService.t('browserModeDescription')}
         </p>
@@ -344,6 +441,7 @@ const BrowserSettingsTab: React.FC = () => {
       <div
         role="radiogroup"
         aria-label={i18nService.t('browserModeTitle')}
+        aria-busy={savingMode}
         className="grid gap-2 md:grid-cols-3"
       >
         {[
@@ -411,8 +509,21 @@ const BrowserSettingsTab: React.FC = () => {
         })}
       </div>
 
+      {modeSwitchWarning ? (
+        <div
+          role="alert"
+          className="flex items-start gap-2.5 rounded-lg border border-warning/30 bg-warning/5 px-4 py-3 text-sm leading-5 text-foreground"
+        >
+          <ExclamationTriangleIcon className="mt-0.5 h-4.5 w-4.5 shrink-0 text-warning" />
+          <span>{modeSwitchWarning}</span>
+        </div>
+      ) : null}
+
       {error ? (
-        <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+        <div
+          role="alert"
+          className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive"
+        >
           {error}
         </div>
       ) : null}

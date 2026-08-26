@@ -76,7 +76,9 @@ Extension模式下JustDo启动Gateway时设置 `OPENCLAW_EAGER_BROWSER_CONTROL_S
 
 Mode保存触发 `applyBrowserModeChange` -> 写app_config -> `syncOpenClawConfig`。Mapper负责生成OpenClaw browser配置/启用相应plugin/tool。Unknown mode回isolated；Extension依赖当前Gateway bundle与Chrome MCP/relay patch能力。
 
-配置同步必须保留非JustDo受管字段；有活动workload时遵守restart策略。UI不能直接编辑openclaw.json。
+配置同步必须保留非JustDo受管字段；UI不能直接编辑openclaw.json。当前OpenClaw只把`browser.profiles.*`列为hot reload，三种产品模式还会改变要求restart的`browser.defaultProfile`，因此不能只热更新profile并宣称模式已经完整生效。切换前Main用runtime adapter的活动会话状态做权威检查；存在运行中会话时，在写app_config之前返回`active-session`，不触发配置同步或Gateway重启。
+
+Renderer先通过轻量`browser:canSetMode`预检活动会话；Main确认空闲后，UI立即乐观渲染目标模式，再等待持久化和runtime应用完成。真正的`browser:setMode`在写配置前会再次检查，封住预检与写入之间新会话启动的竞态。等待期间复用OpenClaw engine progress事件展示应用中、Gateway重启中和进度百分比；成功后展示就绪状态，失败则reload持久化配置并回到权威模式。若未来OpenClaw支持`browser.defaultProfile`安全热更新，同一UI流程会直接从应用中进入完成态，不依赖重启事件。
 
 ## 11. 安全要求
 
@@ -167,20 +169,42 @@ Owner 查询失败时 `activePortOwnerResolved=false`，不会被归类成明确
 sequenceDiagram
   participant UI as BrowserSettingsTab
   participant IPC as Main handler
+  participant R as Cowork runtime
   participant A as app_config
   participant O as OpenClaw config sync
+  participant E as Engine status bridge
 
-  UI->>IPC: setMode(next)
-  IPC->>A: read previous config
-  IPC->>A: write browserMode=next
-  IPC->>O: sync(browser-mode-change)
-  alt success
-    O-->>IPC: success
-    IPC-->>UI: success + mode
-  else failure
-    IPC->>A: restore previous config
-    IPC->>O: sync(browser-mode-rollback)
-    IPC-->>UI: config-sync-failed
+  UI->>IPC: canSetMode()
+  IPC->>R: hasActiveSessions()
+  alt active session
+    IPC-->>UI: canSwitch=false
+    UI->>UI: keep previous mode + warning
+  else idle
+    IPC-->>UI: canSwitch=true
+    UI->>UI: render next mode + applying status
+    UI->>IPC: setMode(next)
+    IPC->>A: read previous config
+    IPC->>R: recheck active sessions
+    alt session started after preflight
+      IPC-->>UI: active-session + previous mode
+      UI->>UI: restore previous mode + warning
+    else still idle
+      IPC->>A: write browserMode=next
+      IPC->>O: sync(browser-mode-change)
+      O->>E: apply config / restart Gateway
+      E-->>UI: engine restart progress events
+      alt success
+        O-->>IPC: success
+        IPC-->>UI: success + mode
+        UI->>UI: show Gateway ready
+      else failure
+        IPC->>A: restore previous config
+        IPC->>O: sync(browser-mode-rollback)
+        IPC-->>UI: config-sync-failed
+        UI->>IPC: reload app config
+        IPC->>A: read persisted mode
+      end
+    end
   end
 ```
 
