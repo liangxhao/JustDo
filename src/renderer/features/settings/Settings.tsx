@@ -1286,7 +1286,6 @@ const Settings: React.FC<SettingsProps> = ({
       });
       dispatch(setAvailableModels(allModels));
 
-      handleCloseSettings();
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Failed to save settings');
     } finally {
