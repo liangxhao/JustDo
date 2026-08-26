@@ -1,5 +1,6 @@
 import { clipboard } from 'electron';
 import fs from 'fs';
+import http from 'http';
 import os from 'os';
 import path from 'path';
 import { describe, expect, test, vi } from 'vitest';
@@ -7,14 +8,17 @@ import { describe, expect, test, vi } from 'vitest';
 import { BrowserMode } from '../../../shared/browser';
 import {
   applyBrowserModeChange,
+  classifyBrowserExtensionRelayProbe,
   copyBrowserExtensionPairing,
   ensureBrowserExtensionRelayToken,
   findBundledBrowserExtensionPath,
   getBrowserModeSwitchAvailability,
+  isBrowserExtensionRelayResponse,
   openBrowserExtensionFolder,
   parseLsofPortOwner,
   parseWindowsNetstatListeningPid,
   parseWindowsTasklistProcessName,
+  probeBrowserExtensionRelay,
   resolveBrowserExtensionRelayPort,
   testBrowserConnection,
 } from './browser';
@@ -220,6 +224,93 @@ describe('testBrowserConnection', () => {
       errorCode: 'gateway-unavailable',
       error: 'OpenClaw Gateway is not connected.',
     });
+  });
+});
+
+describe('browser extension relay diagnostics', () => {
+  const baseProbe = {
+    relayPort: 42881,
+    portListening: true,
+    portOwner: { pid: 123, processName: 'JustDo.exe', isChrome: false },
+    reachable: true,
+    identified: true,
+    statusCode: 503,
+  };
+
+  test.each([
+    [
+      { portListening: false, reachable: false, identified: false, statusCode: null },
+      'extension-relay-unavailable',
+    ],
+    [{ reachable: false, identified: false, statusCode: null }, 'extension-relay-port-conflict'],
+    [{ identified: false, statusCode: 200 }, 'extension-relay-port-conflict'],
+    [{ statusCode: 401 }, 'extension-pairing-mismatch'],
+    [{ statusCode: 503 }, 'extension-not-connected'],
+    [{ statusCode: 200 }, 'extension-browser-service-failed'],
+    [{ statusCode: 404 }, 'extension-relay-port-conflict'],
+  ])('classifies relay probe %# as %s', (overrides, errorCode) => {
+    expect(classifyBrowserExtensionRelayProbe({ ...baseProbe, ...overrides })).toMatchObject({
+      success: false,
+      errorCode,
+      relayPort: 42881,
+      relayPortOwner: baseProbe.portOwner,
+    });
+  });
+
+  test('recognizes only authenticated extension relay response shapes', () => {
+    expect(
+      isBrowserExtensionRelayResponse(42881, 401, 'Basic realm="openclaw-extension-relay"', ''),
+    ).toBe(true);
+    expect(
+      isBrowserExtensionRelayResponse(
+        42881,
+        503,
+        undefined,
+        JSON.stringify({ error: 'OpenClaw Chrome extension is not connected. Install it.' }),
+      ),
+    ).toBe(true);
+    expect(
+      isBrowserExtensionRelayResponse(
+        42881,
+        200,
+        undefined,
+        JSON.stringify({ webSocketDebuggerUrl: 'ws://127.0.0.1:42881/cdp' }),
+      ),
+    ).toBe(true);
+  });
+
+  test.each([
+    [401, 'Basic realm="another-service"', ''],
+    [503, undefined, JSON.stringify({ error: 'Service unavailable' })],
+    [200, undefined, JSON.stringify({ webSocketDebuggerUrl: 'ws://127.0.0.1:42881/devtools' })],
+    [200, undefined, JSON.stringify({ webSocketDebuggerUrl: 'ws://127.0.0.1:9222/cdp' })],
+    [200, undefined, JSON.stringify({ Browser: 'Chrome/151' })],
+  ])('rejects a non-relay response %#', (statusCode, authenticateHeader, body) => {
+    expect(isBrowserExtensionRelayResponse(42881, statusCode, authenticateHeader, body)).toBe(
+      false,
+    );
+  });
+
+  test('settles when a local service aborts a partial HTTP response', async () => {
+    const server = http.createServer((_request, response) => {
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.flushHeaders();
+      response.write('{"webSocketDebuggerUrl":');
+      setImmediate(() => response.destroy());
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Test server did not bind.');
+
+    try {
+      await expect(probeBrowserExtensionRelay(address.port, 'a'.repeat(64), 500)).resolves.toEqual({
+        reachable: true,
+        identified: false,
+        statusCode: 200,
+      });
+    } finally {
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
   });
 });
 

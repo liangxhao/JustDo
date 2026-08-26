@@ -247,7 +247,13 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserExtensionStepVerifyDescription:
       '确认扩展状态显示 ON，然后点击下方按钮验证连接。需要 Agent 访问当前网页时，再通过扩展共享该标签页。',
     browserExtensionTestConnection: '测试扩展连接',
-    browserExtensionConnectionFailed: '扩展尚未连接。',
+    browserExtensionRelayUnavailable:
+      '本地连接服务未响应。请重启应用；仍无法连接时，请检查安全软件是否阻止本地连接。',
+    browserExtensionPairingMismatch: '配对信息无效，请重新配对。',
+    browserExtensionRelayPortConflict: '本地端口 {port} 被 {owner} 占用，请关闭占用程序后重试。',
+    browserExtensionBrowserServiceFailed:
+      'Chrome 扩展已连接，但无法建立浏览器控制通道。请在扩展管理页重新加载扩展后重试。',
+    browserExtensionNotConnected: 'Chrome 扩展尚未连接，请确认扩展已启用或重新配对。',
     shortcuts: '快捷键',
     help: '帮助',
     about: '关于',
@@ -1487,7 +1493,14 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserExtensionStepVerifyDescription:
       'Confirm the extension shows ON, then verify the connection below. Share the current tab only when an Agent needs access to it.',
     browserExtensionTestConnection: 'Test extension connection',
-    browserExtensionConnectionFailed: 'The extension is not connected.',
+    browserExtensionRelayUnavailable:
+      'The local connection service is not responding. Restart the app; if it still cannot connect, check whether security software blocks local connections.',
+    browserExtensionPairingMismatch: 'The pairing information is invalid. Pair again.',
+    browserExtensionRelayPortConflict:
+      'Local port {port} is in use by {owner}. Close that process and try again.',
+    browserExtensionBrowserServiceFailed:
+      'The Chrome extension is connected, but the browser control channel could not be established. Reload the extension from the extensions page and try again.',
+    browserExtensionNotConnected: 'The Chrome extension is not connected. Enable it or pair again.',
     shortcuts: 'Shortcuts',
     help: 'Help',
     about: 'About',

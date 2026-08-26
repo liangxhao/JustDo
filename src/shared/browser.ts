@@ -70,7 +70,16 @@ export type BrowserModeSwitchAvailabilityResult = BrowserActionResult & {
 
 export type BrowserConnectionTestResult = BrowserActionResult & {
   errorCode?:
-    'gateway-unavailable' | 'permission-timeout' | 'extension-not-connected' | 'connection-failed';
+    | 'gateway-unavailable'
+    | 'permission-timeout'
+    | 'extension-not-connected'
+    | 'extension-relay-unavailable'
+    | 'extension-pairing-mismatch'
+    | 'extension-relay-port-conflict'
+    | 'extension-browser-service-failed'
+    | 'connection-failed';
+  relayPort?: number;
+  relayPortOwner?: BrowserPortOwner | null;
 };
 
 export const isBrowserExtensionConnected = (value: unknown): boolean => {

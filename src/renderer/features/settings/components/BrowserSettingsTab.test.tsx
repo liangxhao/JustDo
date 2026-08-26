@@ -1,13 +1,17 @@
 // @vitest-environment jsdom
 
-import { type BrowserConnectionStatus, BrowserMode } from '@shared/browser';
+import {
+  type BrowserConnectionStatus,
+  type BrowserConnectionTestResult,
+  BrowserMode,
+} from '@shared/browser';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import type { OpenClawEngineStatus } from '@/features/cowork/coworkTypes';
 
-import BrowserSettingsTab from './BrowserSettingsTab';
+import BrowserSettingsTab, { extensionConnectionErrorMessage } from './BrowserSettingsTab';
 
 const mocks = vi.hoisted(() => ({
   getConfig: vi.fn(),
@@ -80,6 +84,35 @@ const installElectronBrowserMock = (overrides: Record<string, unknown> = {}) => 
   return browser;
 };
 
+describe('extension connection error messages', () => {
+  test.each([
+    ['gateway-unavailable', 'browserExtensionRelayUnavailable'],
+    ['extension-relay-unavailable', 'browserExtensionRelayUnavailable'],
+    ['extension-pairing-mismatch', 'browserExtensionPairingMismatch'],
+    ['extension-relay-port-conflict', 'browserExtensionRelayPortConflict'],
+    ['extension-browser-service-failed', 'browserExtensionBrowserServiceFailed'],
+    ['extension-not-connected', 'browserExtensionNotConnected'],
+    ['connection-failed', 'browserExtensionRelayUnavailable'],
+  ] as const)('maps %s to %s', (errorCode, expected) => {
+    expect(extensionConnectionErrorMessage({ success: false, errorCode })).toBe(expected);
+  });
+
+  test('formats relay port and owner details', () => {
+    mocks.translate.mockImplementation(key =>
+      key === 'browserExtensionRelayPortConflict' ? '{port} / {owner}' : key,
+    );
+    const result: BrowserConnectionTestResult = {
+      success: false,
+      errorCode: 'extension-relay-port-conflict',
+      relayPort: 42881,
+      relayPortOwner: { pid: 321, processName: 'other.exe', isChrome: false },
+    };
+
+    expect(extensionConnectionErrorMessage(result)).toBe('42881 / other.exe (PID 321)');
+    mocks.translate.mockImplementation((key: string) => key);
+  });
+});
+
 describe('BrowserSettingsTab extension connection checks', () => {
   beforeEach(() => {
     mocks.getConfig.mockReturnValue({ browserMode: BrowserMode.Extension });
@@ -103,6 +136,13 @@ describe('BrowserSettingsTab extension connection checks', () => {
     render(<BrowserSettingsTab />);
 
     await waitFor(() => expect(browser.testExtensionConnection).toHaveBeenCalledTimes(1));
+    expect(
+      (
+        screen.getByRole('button', {
+          name: 'browserExtensionTestConnection',
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
     expect(
       (screen.getByRole('radio', { name: /browserModeIsolatedTitle/ }) as HTMLButtonElement)
         .disabled,
@@ -311,10 +351,14 @@ describe('BrowserSettingsTab extension connection checks', () => {
     expect(screen.queryByText('browserConnectionVerified')).toBeNull();
   });
 
-  test('lets a manual test replace an automatic retry wait', async () => {
+  test('lets a manual test take over an automatic retry and wait for a delayed reconnect', async () => {
     vi.useFakeTimers();
     const testExtensionConnection = vi
       .fn()
+      .mockResolvedValueOnce({ success: false, errorCode: 'extension-not-connected' })
+      .mockResolvedValueOnce({ success: false, errorCode: 'extension-not-connected' })
+      .mockResolvedValueOnce({ success: false, errorCode: 'extension-not-connected' })
+      .mockResolvedValueOnce({ success: false, errorCode: 'extension-not-connected' })
       .mockResolvedValueOnce({ success: false, errorCode: 'extension-not-connected' })
       .mockResolvedValueOnce({ success: true });
     installElectronBrowserMock({ testExtensionConnection });
@@ -332,28 +376,44 @@ describe('BrowserSettingsTab extension connection checks', () => {
     });
 
     expect(testExtensionConnection).toHaveBeenCalledTimes(2);
+    expect(testButton.disabled).toBe(true);
+    expect(screen.queryByRole('alert')).toBeNull();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(7_500);
+    });
+    expect(testExtensionConnection).toHaveBeenCalledTimes(6);
     expect(screen.getByText('browserConnectionVerified')).toBeTruthy();
+    expect(testButton.disabled).toBe(false);
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  test('keeps retrying after a manual test takes over', async () => {
+    vi.useFakeTimers();
+    const testExtensionConnection = vi
+      .fn()
+      .mockResolvedValueOnce({ success: true })
+      .mockResolvedValueOnce({ success: false, errorCode: 'extension-not-connected' })
+      .mockResolvedValueOnce({ success: true });
+    installElectronBrowserMock({ testExtensionConnection });
+
+    render(<BrowserSettingsTab />);
+    await act(async () => {});
+    expect(screen.getByText('browserConnectionVerified')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'browserExtensionTestConnection' }));
+    await act(async () => {});
+
+    expect(testExtensionConnection).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole('alert')).toBeNull();
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(500);
     });
-    expect(testExtensionConnection).toHaveBeenCalledTimes(2);
-  });
 
-  test('keeps a manual extension connection test immediate', async () => {
-    const testExtensionConnection = vi
-      .fn()
-      .mockResolvedValueOnce({ success: true })
-      .mockResolvedValueOnce({ success: false, errorCode: 'extension-not-connected' });
-    installElectronBrowserMock({ testExtensionConnection });
-
-    render(<BrowserSettingsTab />);
-    await waitFor(() => expect(screen.getByText('browserConnectionVerified')).toBeTruthy());
-
-    fireEvent.click(screen.getByRole('button', { name: 'browserExtensionTestConnection' }));
-
-    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
-    expect(testExtensionConnection).toHaveBeenCalledTimes(2);
+    expect(testExtensionConnection).toHaveBeenCalledTimes(3);
+    expect(screen.getByText('browserConnectionVerified')).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 
   test('keeps the latest StrictMode result when the first effect resolves late', async () => {

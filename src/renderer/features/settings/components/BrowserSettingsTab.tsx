@@ -29,14 +29,36 @@ const actionButtonClassName =
   'inline-flex h-7 items-center gap-1 whitespace-nowrap rounded-md border border-border/70 bg-surface px-2.5 text-[11px] font-medium text-secondary transition-all duration-150 hover:border-primary/30 hover:bg-primary/5 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-border/70 disabled:hover:bg-surface disabled:hover:text-secondary';
 
 // The extension reconnects with exponential backoff capped at 30 seconds. Keep
-// the automatic readiness probe alive through that longest normal reconnect.
-const AUTO_EXTENSION_RETRY_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000, 16_000] as const;
+// both automatic and manual probes alive through that longest normal reconnect.
+const EXTENSION_RETRY_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000, 16_000] as const;
 const waitForExtensionRetry = (delayMs: number): Promise<void> =>
   new Promise(resolve => setTimeout(resolve, delayMs));
 
 const isTransientExtensionTestFailure = (result: BrowserConnectionTestResult): boolean =>
   !result.success &&
   (result.errorCode === 'gateway-unavailable' || result.errorCode === 'extension-not-connected');
+
+export const extensionConnectionErrorMessage = (result: BrowserConnectionTestResult): string => {
+  const port = typeof result.relayPort === 'number' ? String(result.relayPort) : '—';
+  const owner = result.relayPortOwner
+    ? `${result.relayPortOwner.processName || i18nService.t('browserUnknownProcess')} (PID ${result.relayPortOwner.pid})`
+    : i18nService.t('browserUnknownProcess');
+  const key =
+    result.errorCode === 'gateway-unavailable'
+      ? 'browserExtensionRelayUnavailable'
+      : result.errorCode === 'extension-relay-unavailable'
+        ? 'browserExtensionRelayUnavailable'
+        : result.errorCode === 'extension-pairing-mismatch'
+          ? 'browserExtensionPairingMismatch'
+          : result.errorCode === 'extension-relay-port-conflict'
+            ? 'browserExtensionRelayPortConflict'
+            : result.errorCode === 'extension-browser-service-failed'
+              ? 'browserExtensionBrowserServiceFailed'
+              : result.errorCode === 'extension-not-connected'
+                ? 'browserExtensionNotConnected'
+                : 'browserExtensionRelayUnavailable';
+  return i18nService.t(key).replace('{port}', port).replace('{owner}', owner);
+};
 
 type StepProps = {
   number: number;
@@ -106,6 +128,7 @@ const BrowserSettingsTab: React.FC = () => {
     null,
   );
   const [extensionTestKind, setExtensionTestKind] = useState<'automatic' | 'manual' | null>(null);
+  const [extensionProbeInFlight, setExtensionProbeInFlight] = useState(false);
   const [savingMode, setSavingMode] = useState(false);
   const [modeApplyState, setModeApplyState] = useState<BrowserModeApplyState | null>(null);
   const [modeSwitchWarning, setModeSwitchWarning] = useState<string | null>(null);
@@ -340,10 +363,21 @@ const BrowserSettingsTab: React.FC = () => {
     setExtensionConnectionTestError(null);
     dispatchConnectionVerification({ type: 'set-extension', verified: false });
     try {
-      const retryDelays = kind === 'automatic' ? AUTO_EXTENSION_RETRY_DELAYS_MS : [];
+      // A manual test takes over from the automatic probe, but it must keep
+      // waiting through Chrome's normal extension reconnect backoff instead
+      // of turning that handoff into an immediate false failure.
+      const retryDelays = EXTENSION_RETRY_DELAYS_MS;
       for (let attempt = 0; ; attempt += 1) {
         if (requestId !== extensionTestRequestIdRef.current) return;
-        const result = await window.electron.browser.testExtensionConnection();
+        setExtensionProbeInFlight(true);
+        let result: BrowserConnectionTestResult;
+        try {
+          result = await window.electron.browser.testExtensionConnection();
+        } finally {
+          if (requestId === extensionTestRequestIdRef.current) {
+            setExtensionProbeInFlight(false);
+          }
+        }
         if (requestId !== extensionTestRequestIdRef.current) return;
         if (result.success) {
           dispatchConnectionVerification({ type: 'set-extension', verified: true });
@@ -351,14 +385,14 @@ const BrowserSettingsTab: React.FC = () => {
         }
         const retryDelay = retryDelays[attempt];
         if (retryDelay === undefined || !isTransientExtensionTestFailure(result)) {
-          setExtensionConnectionTestError(i18nService.t('browserExtensionConnectionFailed'));
+          setExtensionConnectionTestError(extensionConnectionErrorMessage(result));
           return;
         }
         await waitForExtensionRetry(retryDelay);
       }
     } catch {
       if (requestId !== extensionTestRequestIdRef.current) return;
-      setExtensionConnectionTestError(i18nService.t('browserExtensionConnectionFailed'));
+      setExtensionConnectionTestError(i18nService.t('browserExtensionRelayUnavailable'));
     } finally {
       if (requestId === extensionTestRequestIdRef.current) {
         setExtensionTestKind(null);
@@ -370,6 +404,7 @@ const BrowserSettingsTab: React.FC = () => {
     if (browserMode !== BrowserMode.Extension) {
       extensionTestRequestIdRef.current += 1;
       setExtensionTestKind(null);
+      setExtensionProbeInFlight(false);
       return;
     }
     void testExtensionConnection('automatic');
@@ -759,7 +794,12 @@ const BrowserSettingsTab: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => void testExtensionConnection()}
-                    disabled={savingMode || busyAction !== null || extensionTestKind === 'manual'}
+                    disabled={
+                      savingMode ||
+                      busyAction !== null ||
+                      extensionTestKind === 'manual' ||
+                      extensionProbeInFlight
+                    }
                     className={actionButtonClassName}
                   >
                     <ArrowPathIcon
