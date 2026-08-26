@@ -141,6 +141,36 @@ function transformTools(content, filePath) {
   return updated;
 }
 
+function hasManagedJoinPersistenceContracts(content) {
+  const markStart = content.indexOf(
+    'function markJustDoManagedJoinToolResultPersisted(controllerSessionKey, toolCallId)',
+  );
+  const commitStart = content.indexOf(
+    'function commitJustDoManagedJoinContinuation(controllerSessionKey)',
+  );
+  if (markStart < 0 || commitStart <= markStart) return false;
+  const commitBodyStart = commitStart + 1;
+  const nextFunctionOffset = content.slice(commitBodyStart).search(/\n(?:async\s+)?function\s/);
+  const nextFunctionStart =
+    nextFunctionOffset < 0 ? content.length : commitBodyStart + nextFunctionOffset;
+  const markBlock = content.slice(markStart, commitStart);
+  const commitBlock = content.slice(
+    commitStart,
+    nextFunctionStart < 0 ? content.length : nextFunctionStart,
+  );
+  const direct =
+    markBlock.includes('if (changed) persistSubagentRunsOrThrow();') &&
+    commitBlock.includes('persistSubagentRunsOrThrow();');
+  const atomic =
+    markBlock.includes('mutateJustDoSubagentRegistryAtomically(') &&
+    markBlock.includes('markJustDoManagedJoinToolResultInRuns(') &&
+    markBlock.includes('persistSubagentRunsOrThrow).changed;') &&
+    commitBlock.includes('mutateJustDoSubagentRegistryAtomically(') &&
+    commitBlock.includes('commitJustDoManagedJoinContinuationInRuns(') &&
+    commitBlock.includes('persistSubagentRunsOrThrow);');
+  return direct || atomic;
+}
+
 const TRANSCRIPT_BRIDGE = `const JUSTDO_MANAGED_JOIN_TRANSCRIPT_GLOBAL = Symbol.for("justdo.openclaw.managed-subagent-join.v2026.7.1-2");
 function notifyJustDoManagedJoinToolResultCommitted(sessionKey, toolCallId) {
 \tif (toolCallId) globalThis[JUSTDO_MANAGED_JOIN_TRANSCRIPT_GLOBAL]?.markToolResult?.(sessionKey, toolCallId);
@@ -239,7 +269,12 @@ function locateTargets(runtimeDir) {
       'function mirrorCodexAppServerTranscript(',
       'function commitJustDoManagedJoinCodexMirror(',
     ]),
-  ]);
+  ]).filter(
+    filePath =>
+      !fs
+        .readFileSync(filePath, 'utf8')
+        .includes('function patchJustDoOfficialCodexPlugin(params)'),
+  );
   const hasBundle = fs.existsSync(path.join(runtimeDir, 'gateway-bundle.mjs'));
   const bundledExpected = hasBundle ? 2 : 1;
   const companionExpected = 1;
@@ -293,7 +328,6 @@ function verifyPatch(runtimeDir) {
         'function markJustDoManagedJoinToolResultInRuns(',
         'tool_result_committed',
         'consumed',
-        'persistSubagentRunsOrThrow();',
         'startSubagentAnnounceCleanupFlow(runId, entry);',
       ],
     ],
@@ -330,11 +364,21 @@ function verifyPatch(runtimeDir) {
           throw new Error(
             `managed join commit ${name} contract is missing from ${filePath}: ${contract}`,
           );
+      if (name === 'registry') {
+        if (!hasManagedJoinPersistenceContracts(content))
+          throw new Error(
+            `managed join commit registry persistence contract is missing from ${filePath}`,
+          );
+      }
     }
 }
 
 module.exports = {
   applyPatch,
   verifyPatch,
-  __testing: { markJustDoManagedJoinToolResultInRuns, commitJustDoManagedJoinContinuationInRuns },
+  __testing: {
+    markJustDoManagedJoinToolResultInRuns,
+    commitJustDoManagedJoinContinuationInRuns,
+    hasManagedJoinPersistenceContracts,
+  },
 };

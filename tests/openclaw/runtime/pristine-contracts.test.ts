@@ -62,6 +62,8 @@ const EXPECTED_PATCH_FILES = [
   '041-managed-implicit-subagent-join.cjs',
   '042-required-subagent-terminal-guard.cjs',
   '043-completion-delivery-followup-join.cjs',
+  '044-managed-terminal-handoff.cjs',
+  '045-openai-stop-tool-call-compat.cjs',
 ] as const;
 
 function createPristineFixture(): string {

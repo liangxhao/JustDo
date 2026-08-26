@@ -225,7 +225,12 @@ function locateTargets(runtimeDir) {
   const codex = findFilesContaining(runtimeDir, [
     'function commitJustDoManagedJoinCodexMirror(',
     'function mirrorCodexAppServerTranscript(',
-  ]);
+  ]).filter(
+    filePath =>
+      !fs
+        .readFileSync(filePath, 'utf8')
+        .includes('function patchJustDoOfficialCodexPlugin(params)'),
+  );
   const bundledExpected = fs.existsSync(path.join(runtimeDir, 'gateway-bundle.mjs')) ? 2 : 1;
   const companionExpected = 1;
   if (

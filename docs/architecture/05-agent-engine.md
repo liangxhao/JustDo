@@ -141,6 +141,11 @@ Exec 和 plugin approval API 分开，pending list 在连接后恢复。session 
 
 当前补丁目录为 `scripts/patches/v2026.7.1-2/`。能力涉及 approval lifecycle、atomic subagent admission、managed join、thinking/reasoning、session yield、compaction、completion delivery、selected tool search、Windows MCP/Python 等。详表以该目录 README、patch manifest 和 `tests/openclaw/patches/v2026.7.1-2/` 下的 focused tests 为准。
 
+Codex agent harness 是运行时安装的 official companion，不在 host gateway bundle 内。Host plugin
+loader 必须在 full registry 和 CLI metadata 两条 import 路径之前验证 companion identity/version、
+installed-record realpath 和 source hash，并原子补齐 managed join 合约；验证或 rollback 失败时拒绝
+import。plugin repair 会清除 loader cache，确保同进程替换后的 package 重新经过 gate。
+
 补丁不是传统数据库 migration：每次 runtime 安装在目标上游 bundle 应用并验证；历史 `v2026.6.11` 只作追溯，不参与当前流水线。
 
 ## 16. 网络环境

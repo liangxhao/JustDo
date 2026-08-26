@@ -260,6 +260,25 @@ function applyPatch(runtimeDir) {
   return changed;
 }
 
+function hasManagedJoinMutationPersistenceContract(content) {
+  const match = /function mutateJustDoManagedJoinEntries\([^)]*\) \{/.exec(content);
+  if (!match) return false;
+  const start = match.index;
+  const remainderStart = start + match[0].length;
+  const nextFunctionOffset = content.slice(remainderStart).search(/\n(?:async\s+)?function\s/);
+  const nextFunctionStart =
+    nextFunctionOffset < 0 ? content.length : remainderStart + nextFunctionOffset;
+  const block = content.slice(start, nextFunctionStart < 0 ? content.length : nextFunctionStart);
+  const direct =
+    block.includes('for (const candidate of ') &&
+    block.includes('subagentRuns.get(candidate.runId)') &&
+    block.includes('persistSubagentRunsToDiskOrThrow(subagentRuns);');
+  const atomic =
+    block.includes('return mutateJustDoManagedJoinEntriesAtomically(subagentRuns,') &&
+    block.includes('mutator, persistSubagentRunsToDiskOrThrow);');
+  return direct || atomic;
+}
+
 function verifyPatch(runtimeDir) {
   for (const filePath of locateTarget(runtimeDir)) {
     const content = fs.readFileSync(filePath, 'utf8');
@@ -275,11 +294,14 @@ function verifyPatch(runtimeDir) {
       'Managed subagent state disappeared while waiting; completion delivery was restored.',
       'state: "waiting"',
       'state: "presented"',
-      'persistSubagentRunsToDiskOrThrow(subagentRuns);',
       'await opts.onYield(',
     ])
       if (!content.includes(expected))
         throw new Error(`managed same-run join contract is missing from ${filePath}: ${expected}`);
+    if (!hasManagedJoinMutationPersistenceContract(content))
+      throw new Error(
+        `managed same-run join mutation persistence contract is missing from ${filePath}`,
+      );
   }
 }
 
@@ -291,5 +313,6 @@ module.exports = {
     partitionJustDoManagedJoinResults,
     selectJustDoManagedJoinVisibleRuns,
     reconcileJustDoManagedJoinRuns,
+    hasManagedJoinMutationPersistenceContract,
   },
 };

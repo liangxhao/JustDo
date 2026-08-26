@@ -55,6 +55,7 @@ const sameRunJoinPatch =
         replacements: Array<{ childSessionKey: string; previousRunId: string; runId: string }>;
         missingRunIds: string[];
       };
+      hasManagedJoinMutationPersistenceContract: (content: string) => boolean;
     };
   };
 const commitPatch = require('../../../../scripts/patches/v2026.7.1-2/019-managed-join-commits.cjs') as {
@@ -70,6 +71,7 @@ const commitPatch = require('../../../../scripts/patches/v2026.7.1-2/019-managed
       controllerSessionKey: string,
       now: number,
     ) => { changed: boolean; deleteRunIds: string[] };
+    hasManagedJoinPersistenceContracts: (content: string) => boolean;
   };
 };
 const recoveryPatch = require('../../../../scripts/patches/v2026.7.1-2/020-managed-join-recovery.cjs') as {
@@ -133,6 +135,40 @@ describe('managed-session-classification capability', () => {
 });
 
 describe('managed-same-run-join capability', () => {
+  test('requires persistence inside the managed join mutation function', () => {
+    const direct = `function mutateJustDoManagedJoinEntries(entries, mutator) {
+  for (const candidate of entries) {
+    const entry = subagentRuns.get(candidate.runId);
+    if (entry) mutator(entry);
+  }
+  persistSubagentRunsToDiskOrThrow(subagentRuns);
+}
+function next() {}`;
+    const atomic = `function mutateJustDoManagedJoinEntries(entries2, mutator) {
+  return mutateJustDoManagedJoinEntriesAtomically(subagentRuns, entries2, mutator, persistSubagentRunsToDiskOrThrow);
+}
+function next() {}`;
+    const adjacentOnly = `function mutateJustDoManagedJoinEntries(entries, mutator) {
+  for (const candidate of entries) {
+    const entry = subagentRuns.get(candidate.runId);
+    if (entry) mutator(entry);
+  }
+}
+async function waitForJustDoManagedSubagentsCore() {
+  persistSubagentRunsToDiskOrThrow(subagentRuns);
+}`;
+
+    expect(sameRunJoinPatch.__testing.hasManagedJoinMutationPersistenceContract(direct)).toBe(
+      true,
+    );
+    expect(sameRunJoinPatch.__testing.hasManagedJoinMutationPersistenceContract(atomic)).toBe(
+      true,
+    );
+    expect(
+      sameRunJoinPatch.__testing.hasManagedJoinMutationPersistenceContract(adjacentOnly),
+    ).toBe(false);
+  });
+
   test('returns only durably captured waiting results and keeps the rest pending', () => {
     const completed: RunEntry = {
       runId: 'run-complete',
@@ -213,6 +249,38 @@ describe('managed-same-run-join capability', () => {
 });
 
 describe('managed-join-commit capability', () => {
+  test('requires complete direct or atomic persistence pairs', () => {
+    const direct = `function markJustDoManagedJoinToolResultPersisted(controllerSessionKey, toolCallId) {
+  const changed = markJustDoManagedJoinToolResultInRuns();
+  if (changed) persistSubagentRunsOrThrow();
+}
+function commitJustDoManagedJoinContinuation(controllerSessionKey) {
+  const result = commitJustDoManagedJoinContinuationInRuns();
+  persistSubagentRunsOrThrow();
+}
+function next() {}`;
+    const atomic = `function markJustDoManagedJoinToolResultPersisted(controllerSessionKey, toolCallId) {
+  return mutateJustDoSubagentRegistryAtomically(subagentRuns, () => markJustDoManagedJoinToolResultInRuns(), persistSubagentRunsOrThrow).changed;
+}
+function commitJustDoManagedJoinContinuation(controllerSessionKey) {
+  return mutateJustDoSubagentRegistryAtomically(subagentRuns, () => commitJustDoManagedJoinContinuationInRuns(), persistSubagentRunsOrThrow);
+}
+function next() {}`;
+    const partial = `function markJustDoManagedJoinToolResultPersisted(controllerSessionKey, toolCallId) {
+  return mutateJustDoSubagentRegistryAtomically(subagentRuns, () => markJustDoManagedJoinToolResultInRuns(), persistSubagentRunsOrThrow).changed;
+}
+function commitJustDoManagedJoinContinuation(controllerSessionKey) {
+  const result = commitJustDoManagedJoinContinuationInRuns();
+}
+function restoreJustDoManagedJoinDelivery() {
+  return mutateJustDoSubagentRegistryAtomically(subagentRuns, restore, persistSubagentRunsOrThrow);
+}`;
+
+    expect(commitPatch.__testing.hasManagedJoinPersistenceContracts(direct)).toBe(true);
+    expect(commitPatch.__testing.hasManagedJoinPersistenceContracts(atomic)).toBe(true);
+    expect(commitPatch.__testing.hasManagedJoinPersistenceContracts(partial)).toBe(false);
+  });
+
   test('fences delete cleanup behind distinct tool-result and continuation commits', () => {
     const presented: RunEntry = {
       cleanup: 'keep',

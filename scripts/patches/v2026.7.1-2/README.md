@@ -64,6 +64,7 @@ flowchart LR
   Fence --> ImplicitJoin[041 durable implicit join]
   ImplicitJoin --> TerminalGuard[042 required-child terminal guard]
   TerminalGuard --> CompletionFollowup[043 completion-run follow-up join]
+  CompletionFollowup --> TerminalHandoff[044 unfinished explicit wait handoff]
   Recovery --> Identity[036 managed Gateway identity pin]
   Recovery -->|未消费结果恢复原生投递| Queue[016 requester FIFO]
   Queue --> Promote[015 delivery commit 后提升 canonical branch]
@@ -85,7 +86,7 @@ flowchart LR
   `031` 只读取 `029` 的公开 details 字段，并兼容字段缺失的 legacy transcript；`039`
   复用 `028` 的压缩流边界，为 direct recovery 补可见 lifecycle、等待心跳和摘要增量；
   `040` 防止本地 precheck 文案覆盖真实的压缩终态错误。
-- Subagent 终止判定：`041`–`043` 在 `018`–`021` 的 durable join/ownership 状态机之上，
+- Subagent 终止判定：`041`–`044` 在 `018`–`021` 的 durable join/ownership 状态机之上，
   把模型的 terminal reply（包括 `NO_REPLY`）视为候选；仍有 required child 时先等待
   一批结果并续跑父会话。completion announce 唤醒的父 run 只排除当前正在投递的 source
   child，仍会 join 本轮新派发或其他未完成 child；显式 fire-and-forget、abort、timeout 和
@@ -660,6 +661,35 @@ flowchart LR
 - **可删除条件**：上游能区分正在投递的 source completion 与该 run 新产生的 required-child
   obligation，并在接受 terminal reply 前只排除 source、可靠 join 其余 child。
 
+#### `044-managed-terminal-handoff.cjs`
+
+- **做什么**：当一次显式 `sessions_yield` 只返回部分 child，而模型随后输出 terminal reply 时，
+  把同一 controller 尚处于 `waiting` 的 sibling 原子转交给 `implicit_waiting`，等待完成后继续父
+  run。registry 写入失败会原地恢复已有对象，不会留下内存/SQLite 分歧或无限 continuation。
+- **关系与边界**：依赖 `018`–`021`、`041`–`043` 的 ownership 和 completion provenance。
+  embedded terminal guard 与 Codex app-server 都执行同一 durable handoff；completion-delivery run
+  允许 exact source 已进入 `presented`/`tool_result_committed`，但只排除该 source，不能放宽 stale
+  或 forged provenance。Codex 是运行时安装的 official companion，因此 loader 在 full registry 与
+  CLI metadata 的任何 plugin import 前，按锁定版本/hash 原子应用 companion 的 `019`、`020`、
+  `044` 合约；失败拒绝加载，repair 后清除 loader cache。
+- **安全边界**：只接管 exact requester/controller 的 unfinished explicit wait。多文件 companion
+  更新有跨进程锁、受约束的 crash artifact 恢复、root containment、symlink/hardlink 拒绝、
+  staged verify 和 rollback。abort/timeout 恢复 native ownership；持久化失败产生可见错误，不放行
+  terminal reply，也不进入无界 managed revision。
+- **可删除条件**：上游能在 embedded 与 Codex terminal commit 前原子接管 unfinished explicit
+  wait，并让动态 companion 安装/更新原生携带同等 exact-once、restart 和 durability 语义。
+
+#### `045-openai-stop-tool-call-compat.cjs`
+
+- **做什么**：兼容 OpenAI-compatible provider 同时返回可见 assistant text、完整 structured
+  `tool_calls` 与 `finish_reason=stop` 的响应。只有 tool id/name 非空、name 属于本次 advertised
+  tool set、arguments 是完整 JSON object 时，新增的 visible-text 路径才提升为 tool use。
+- **关系与边界**：同时覆盖 transport parser source 与最终 `gateway-bundle.mjs`；fresh-bundle
+  patch 在 prod dependency install 和 esbuild 之后重放，manifest 只锁最终 bundle。无正文时保留
+  上游既有 tool-use/error 自修复语义；visible-text 下的空、残缺、unknown 或 mixed call 不执行。
+- **可删除条件**：上游能在保留 visible assistant text 的同时可靠派发完整 advertised structured
+  tool calls，并明确拒绝残缺/未知调用。
+
 ## 已删除或由上游/App 承担的能力
 
 | 能力                                            | v2026.7.1-2 证据与决定                                                                                                                                                                                                                                                 |
@@ -711,30 +741,32 @@ flowchart LR
 
 ## 测试索引
 
-| 测试                                                  | 主要覆盖                                                                                                                                  |
-| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `openclawPristineContracts.test.ts`                   | 锁定原始 npm 包、11 项上游能力证据、43 项保留缺口、头注释和大小约束。                                                                     |
-| `openclawV202671ReasoningStream.test.ts`              | `002` callback gate 的原始失败与改写后事件/回调行为。                                                                                     |
-| `openclawV202671PatchSafety.test.ts`                  | `001`、`004`、`007`、`034` 的安全边界和真实 fixture 幂等。                                                                                |
-| `openclawV202671CompletionDelivery.test.ts`           | H07 上游语义、managed yield 非对外交付、subagent `NO_REPLY` 非成功，以及 `015`、`016` 的 FIFO、硬期限和恢复边界。                         |
-| `openclawV202671AtomicSessionsSpawnAdmission.test.ts` | `013` native pristine 并发失败、post-preflight reservation、canonical requester、跨 requester 并行、ACP 不变及 source/bundle 原子幂等。   |
-| `openclawV202671SubagentCapabilityPatches.test.ts`    | `014`。                                                                                                                                   |
-| `openclawV202671ManagedSubagentJoin.test.ts`          | `017`–`021` 的分类、批次、两阶段提交、消失 run 终止等待、恢复与 announce fence。                                                          |
-| `openclawV202671ManagedImplicitSubagentJoin.test.ts`  | `041`/`042` required child 选择、失败结果、prompt 上限、silent terminal guard、无预算续跑及 commit 边界。                                 |
-| `completion-delivery-followup-join.test.ts`           | `043` provenance/registry 关联、self-source wake、source-only 排除、follow-up join/commit/abort 状态链及 source/bundle 幂等。             |
-| `openclawV202671ManagedSessionIdentity.test.ts`       | `036` command、reply、agent initial/persisted 四落点 identity pin（含 reply reset 绕过）、普通会话不变、幂等和多目标原子失败。            |
-| `openclawV202671ApprovalLifecycle.test.ts`            | `022`–`025` 的 lifetime、hidden resume、stop/failure 与文件头。                                                                           |
-| `openclawV202671RequestMetadata.test.ts`              | `026`–`028`，含 strict-compatible negative 与 nested parent。                                                                             |
-| `openclawV202671CompactionMetadata.test.ts`           | `029` identity dedupe、逐条 user replay、summary 顺序、20k token、CJK/emoji 边界。                                                        |
-| `openclawV202671EmergencyCompaction.test.ts`          | `031` 非 Codex fallback、Codex fail-closed、abort、details、source/bundle 原子性。                                                        |
-| `openclawV202671CodexLocalCompaction.test.ts`         | `035` 显式配置、90% pre/mid-turn 阈值、结构绕过、metadata 与 overflow 单次恢复。                                                          |
-| `openclawV202671ContextOverflowConvergence.test.ts`   | `037` 三次有界收敛、无新增 transcript 再压缩、Unicode-safe archive、summary 上限和临时 lifecycle 围栏。                                   |
-| `openclawV202671SubagentTaskNameCase.test.ts`         | `038` 大小写保留、保留字大小写折叠、原有 identifier 边界、提示同步、source/bundle 幂等及歧义 anchor 拒绝。                                |
-| `openclawV202671RecoveryCompactionProgress.test.ts`   | `039` timeout/overflow direct compaction 的 lifecycle、等待心跳、摘要流、清理、幂等和歧义 anchor 拒绝。                                   |
-| `openclawV202671CompactionErrorAttribution.test.ts`   | `040` timeout/no-op/local precheck/provider overflow 的终态归因、metadata、幂等、partial 与歧义拒绝。                                     |
-| `openclawRunProgressEventsPatch.test.ts`              | `032` pristine callback gap、JustDo root/nested ancestry、native/cron/missing/conflict/cycle fail-closed、CLI/embedded allow-list event。 |
-| `openclawV202671CapabilityPatches.test.ts`            | `010`、`022`、`027`、`031`、`033` 及歧义 anchor 原子失败。                                                                                |
-| `openclawRuntimePatchManifest.test.ts`                | source lock、patch/build recipe fingerprint、cache、manifest/tamper fence。                                                               |
-| `openclawRuntimeStaging.test.ts`                      | runtime 目录原子替换、Windows `current` link 恢复和失败 rollback。                                                                        |
+| 测试                                                  | 主要覆盖                                                                                                                                   |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `openclawPristineContracts.test.ts`                   | 锁定原始 npm 包、11 项上游能力证据、45 项保留缺口、头注释和大小约束。                                                                      |
+| `openclawV202671ReasoningStream.test.ts`              | `002` callback gate 的原始失败与改写后事件/回调行为。                                                                                      |
+| `openclawV202671PatchSafety.test.ts`                  | `001`、`004`、`007`、`034` 的安全边界和真实 fixture 幂等。                                                                                 |
+| `openclawV202671CompletionDelivery.test.ts`           | H07 上游语义、managed yield 非对外交付、subagent `NO_REPLY` 非成功，以及 `015`、`016` 的 FIFO、硬期限和恢复边界。                          |
+| `openclawV202671AtomicSessionsSpawnAdmission.test.ts` | `013` native pristine 并发失败、post-preflight reservation、canonical requester、跨 requester 并行、ACP 不变及 source/bundle 原子幂等。    |
+| `openclawV202671SubagentCapabilityPatches.test.ts`    | `014`。                                                                                                                                    |
+| `openclawV202671ManagedSubagentJoin.test.ts`          | `017`–`021` 的分类、批次、两阶段提交、消失 run 终止等待、恢复与 announce fence。                                                           |
+| `openclawV202671ManagedImplicitSubagentJoin.test.ts`  | `041`/`042` required child 选择、失败结果、prompt 上限、silent terminal guard、无预算续跑及 commit 边界。                                  |
+| `completion-delivery-followup-join.test.ts`           | `043` provenance/registry 关联、self-source wake、source-only 排除、follow-up join/commit/abort 状态链及 source/bundle 幂等。              |
+| `managed-terminal-handoff.test.ts`                    | `044` partial→terminal ownership、completion source、persist rollback、Codex companion loader gate、crash recovery 及 source/bundle 幂等。 |
+| `openai-stop-tool-call-compat.test.ts`                | `045` visible text + stop + structured call、严格 JSON/advertised gate、fresh bundle 顺序、verify 与幂等。                                 |
+| `openclawV202671ManagedSessionIdentity.test.ts`       | `036` command、reply、agent initial/persisted 四落点 identity pin（含 reply reset 绕过）、普通会话不变、幂等和多目标原子失败。             |
+| `openclawV202671ApprovalLifecycle.test.ts`            | `022`–`025` 的 lifetime、hidden resume、stop/failure 与文件头。                                                                            |
+| `openclawV202671RequestMetadata.test.ts`              | `026`–`028`，含 strict-compatible negative 与 nested parent。                                                                              |
+| `openclawV202671CompactionMetadata.test.ts`           | `029` identity dedupe、逐条 user replay、summary 顺序、20k token、CJK/emoji 边界。                                                         |
+| `openclawV202671EmergencyCompaction.test.ts`          | `031` 非 Codex fallback、Codex fail-closed、abort、details、source/bundle 原子性。                                                         |
+| `openclawV202671CodexLocalCompaction.test.ts`         | `035` 显式配置、90% pre/mid-turn 阈值、结构绕过、metadata 与 overflow 单次恢复。                                                           |
+| `openclawV202671ContextOverflowConvergence.test.ts`   | `037` 三次有界收敛、无新增 transcript 再压缩、Unicode-safe archive、summary 上限和临时 lifecycle 围栏。                                    |
+| `openclawV202671SubagentTaskNameCase.test.ts`         | `038` 大小写保留、保留字大小写折叠、原有 identifier 边界、提示同步、source/bundle 幂等及歧义 anchor 拒绝。                                 |
+| `openclawV202671RecoveryCompactionProgress.test.ts`   | `039` timeout/overflow direct compaction 的 lifecycle、等待心跳、摘要流、清理、幂等和歧义 anchor 拒绝。                                    |
+| `openclawV202671CompactionErrorAttribution.test.ts`   | `040` timeout/no-op/local precheck/provider overflow 的终态归因、metadata、幂等、partial 与歧义拒绝。                                      |
+| `openclawRunProgressEventsPatch.test.ts`              | `032` pristine callback gap、JustDo root/nested ancestry、native/cron/missing/conflict/cycle fail-closed、CLI/embedded allow-list event。  |
+| `openclawV202671CapabilityPatches.test.ts`            | `010`、`022`、`027`、`031`、`033` 及歧义 anchor 原子失败。                                                                                 |
+| `openclawRuntimePatchManifest.test.ts`                | source lock、patch/build recipe fingerprint、cache、manifest/tamper fence。                                                                |
+| `openclawRuntimeStaging.test.ts`                      | runtime 目录原子替换、Windows `current` link 恢复和失败 rollback。                                                                         |
 
 历史 `v2026.6.11` 测试只能作为审计资料，不能作为本目录的目标版本证据。

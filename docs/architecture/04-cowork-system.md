@@ -105,6 +105,13 @@ children 均已呈现且后续 assistant continuation 成功提交，父 run 才
 native announce 自身不会递归接管同一结果，并在等待 requester 结束后再次核对 durable
 delivery ownership，以关闭 announce 与 terminal guard 之间的竞态窗口。
 
+显式 `sessions_yield` 可能只呈现已完成的一批 child；这不会解除仍在运行 sibling 的 obligation。
+若模型此时给出 terminal reply，Gateway 会把同一 controller 的剩余 `waiting` ownership 持久化
+转交给 implicit join，完成后再次呈现并续跑。该转换同时覆盖 embedded 与 Codex app-server；
+Codex companion 在任何 plugin import 前按锁定版本/hash补齐 managed commit/recovery/handoff 合约。
+转换持久化失败时 fail closed 并返回可见 runtime error；abort/timeout 则恢复 native completion，
+不能静默结束，也不能通过无界 revision 重试掩盖 durability failure。
+
 ## 8. Event 模型
 
 `CoworkRuntimeEvents` 包含：
