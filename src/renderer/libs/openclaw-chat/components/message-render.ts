@@ -612,7 +612,9 @@ function renderGroupFooter(
         duration
           ? html`
               <span>·</span>
-              <span>${i18nService.t('coworkRunDuration').replace('{duration}', duration)}</span>
+              <span
+                >${i18nService.t('coworkRunWorkedDuration').replace('{duration}', duration)}</span
+              >
             `
           : nothing
       }

@@ -169,7 +169,7 @@ describe('group footer helpers', () => {
     );
 
     expect(rendered).toContain(
-      i18nService.t('coworkRunDuration').replace('{duration}', '00:00:03'),
+      i18nService.t('coworkRunWorkedDuration').replace('{duration}', '3s'),
     );
   });
 });

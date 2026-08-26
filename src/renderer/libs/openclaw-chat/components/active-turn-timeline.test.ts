@@ -179,6 +179,94 @@ describe('active turn timeline', () => {
     expect(rendered).not.toContain('data-process-summary-key');
   });
 
+  test('renders Edit input as a diff for the live Tool card', () => {
+    const rendered = flatten(
+      renderTimelineItem({
+        kind: 'live-process',
+        key: 'edit-live',
+        item: {
+          id: 'edit-live',
+          runId: 'run-1',
+          firstSeq: 1,
+          lastSeq: 1,
+          startedAt: 1,
+          updatedAt: 1,
+          type: 'tool',
+          status: 'running',
+          toolCallId: 'call-edit',
+          name: 'Edit',
+          input: {
+            path: 'src/app.ts',
+            edits: [{ oldText: 'const value = 1;', newText: 'const value = 2;' }],
+          },
+        },
+      }),
+    );
+
+    expect(rendered).toContain('class="edit-diff"');
+    expect(rendered).toContain('src/app.ts');
+    expect(rendered).toContain('edit-diff__line--removed');
+    expect(rendered).toContain('const value = 1;');
+    expect(rendered).toContain('edit-diff__line--added');
+    expect(rendered).toContain('const value = 2;');
+    expect(rendered).toContain('process-live--edit');
+    expect(rendered).toContain(i18nService.t('coworkEditDiffUnifiedMode'));
+    expect(rendered).toContain(i18nService.t('coworkEditDiffSplitMode'));
+    expect(rendered).toContain('edit-diff__mode-button is-active');
+    expect(rendered).toContain('data-edit-diff-monaco');
+    expect(rendered).toContain('edit-diff__monaco-host--unified');
+    expect(rendered).not.toContain('edit-diff__split-header');
+    expect(rendered).toContain(i18nService.t('coworkEditDiffAddedLine'));
+    expect(rendered).toContain(i18nService.t('coworkEditDiffRemovedLine'));
+    expect(rendered).toContain(i18nService.t('coworkEditDiffAddedLines').replace('{count}', '1'));
+    expect(rendered).toContain(i18nService.t('coworkEditDiffRemovedLines').replace('{count}', '1'));
+    expect(rendered).not.toContain('oldText');
+    expect(rendered).not.toContain('newText');
+  });
+
+  test('renders Edit input in the selectable split view', () => {
+    const rendered = flatten(
+      renderTimelineItem(
+        {
+          kind: 'live-process',
+          key: 'edit-live',
+          item: {
+            id: 'edit-live',
+            runId: 'run-1',
+            firstSeq: 1,
+            lastSeq: 1,
+            startedAt: 1,
+            updatedAt: 1,
+            type: 'tool',
+            status: 'completed',
+            toolCallId: 'call-edit',
+            name: 'edit',
+            input: {
+              path: 'src/app.ts',
+              edits: [{ oldText: 'shared\nold line', newText: 'shared\nnew line' }],
+            },
+            output: 'ok',
+          },
+        },
+        Date.now(),
+        false,
+        true,
+        false,
+        new Map([['edit-live', 'split']]),
+        vi.fn(),
+      ),
+    );
+
+    expect(rendered).toContain('edit-diff__split-header');
+    expect(rendered).toContain(i18nService.t('coworkEditDiffBefore'));
+    expect(rendered).toContain(i18nService.t('coworkEditDiffAfter'));
+    expect(rendered).toContain('edit-diff__split-cell--before');
+    expect(rendered).toContain('edit-diff__split-cell--after');
+    expect(rendered).toContain('edit-diff__monaco-host--split');
+    expect(rendered).toContain('old line');
+    expect(rendered).toContain('new line');
+  });
+
   test('renders an outputless sessions_yield as a blue running Tool without a result row', () => {
     const rendered = flatten(
       renderTimelineItem({
@@ -382,6 +470,31 @@ describe('active turn timeline', () => {
     expect(rendered).not.toContain('process-drawer');
   });
 
+  test('renders an archived Edit tool as a diff when process details are expanded', () => {
+    const fixture = summary();
+    const tool = fixture.items[1];
+    if (tool.type !== 'tool') throw new Error('Expected Tool fixture');
+    fixture.items[1] = {
+      ...tool,
+      name: 'edit',
+      input: {
+        file_path: 'src/history.ts',
+        old_string: 'return false;',
+        new_string: 'return true;',
+      },
+      output: 'Successfully replaced 1 block.',
+    };
+
+    const rendered = flatten(renderTimelineItem(fixture, 100, true));
+
+    expect(rendered).toContain('class="edit-diff"');
+    expect(rendered).toContain('src/history.ts');
+    expect(rendered).toContain('return false;');
+    expect(rendered).toContain('return true;');
+    expect(rendered).toContain('Successfully replaced 1 block.');
+    expect(rendered).not.toContain('old_string');
+  });
+
   test('keeps archived details out of the DOM while the summary is collapsed', () => {
     const rendered = flatten(renderTimelineItem(summary(), 100, false));
 
@@ -398,7 +511,7 @@ describe('active turn timeline', () => {
     expect(collapsed).toContain('aria-expanded=');
     expect(collapsed).not.toContain('<details');
     expect(collapsed).not.toContain('<summary');
-    expect(expanded).toContain('<details class="process-summary__tool">');
+    expect(expanded).toContain('class=process-summary__tool');
     expect(expanded).toContain('<summary class="process-summary__tool-title">');
     expect(expanded).toContain('Request');
     expect(expanded).toContain('apiKey');

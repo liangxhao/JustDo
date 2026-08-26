@@ -12,8 +12,12 @@ import { css, html, LitElement, nothing, type TemplateResult, unsafeCSS } from '
 import { customElement, property, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import mermaid from 'mermaid';
+import monacoEditorStyles from 'monaco-editor/min/vs/editor/editor.main.css?inline';
 
-import { renderTimelineItem } from '@/libs/openclaw-chat/components/active-turn-timeline';
+import {
+  type EditDiffMode,
+  renderTimelineItem,
+} from '@/libs/openclaw-chat/components/active-turn-timeline';
 import {
   renderMessageBlock,
   renderMessageBlockWithTrailingStream,
@@ -66,6 +70,7 @@ import { buildChatItems } from '@/libs/openclaw-chat/pipeline/build-chat-items';
 import type { ChatItem, GatewayMessage, MessageGroup } from '@/libs/openclaw-chat/types';
 import { i18nService } from '@/services/i18n';
 
+import { EditDiffMonacoController } from './edit-diff-monaco';
 import { renderMermaidSvg } from './mermaidRenderer';
 
 const MERMAID_BUBBLE_MIN_WIDTH = 500;
@@ -122,6 +127,9 @@ export class JustDoChatElement extends LitElement {
   @state()
   declare private hoveredMinimapKey: string | null;
 
+  @state()
+  declare private editDiffModes: ReadonlyMap<string, EditDiffMode>;
+
   private readonly chatScrollController = new ChatScrollController(
     () => this.requestUpdate(),
     () => void this._controller?.showOlderHistory(),
@@ -132,6 +140,7 @@ export class JustDoChatElement extends LitElement {
   private readonly persistedTimelineRenderCache = new PersistedTimelineRenderCache();
   private readonly processSummaryTakeoverTracker = new ProcessSummaryTakeoverTracker();
   private readonly collapsedProcessSummaryTakeoverTracker = new ProcessSummaryTakeoverSetTracker();
+  private readonly editDiffMonacoController = new EditDiffMonacoController();
   private renderedOpenProcessSummaryKey: string | null = null;
   private renderedCollapsedProcessSummaryKeys: ReadonlySet<string> = new Set();
   private focusedProcessSummaryKeyBeforeRender: string | null = null;
@@ -144,6 +153,7 @@ export class JustDoChatElement extends LitElement {
   private minimapEntriesSignature = '';
   private minimapPreviewTop = 0;
   private mermaidScrollFrame: number | null = null;
+  private editDiffMonacoFrame: number | null = null;
   private activeTurnClockTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
@@ -162,6 +172,7 @@ export class JustDoChatElement extends LitElement {
     this.collapsedProcessSummaryKeys = new Set();
     this.currentMinimapKey = null;
     this.hoveredMinimapKey = null;
+    this.editDiffModes = new Map();
   }
 
   /** ChatController reference (preferred — connects directly to gateway) */
@@ -178,6 +189,7 @@ export class JustDoChatElement extends LitElement {
     if (this._controller === ctrl) return;
     this.unsubscribeController();
     this._controller = ctrl;
+    this.editDiffModes = new Map();
     if (ctrl) this.subscribeController(ctrl);
     this.requestUpdate();
   }
@@ -186,6 +198,7 @@ export class JustDoChatElement extends LitElement {
 
   static styles = [
     unsafeCSS(katexStyles),
+    unsafeCSS(monacoEditorStyles),
     css`
       :host {
         display: block;
@@ -1167,18 +1180,6 @@ export class JustDoChatElement extends LitElement {
         display: inline;
       }
 
-      /* JSON collapse */
-      .json-collapse {
-        margin: 4px 0;
-      }
-
-      .json-collapse > summary {
-        cursor: pointer;
-        font-size: 12px;
-        color: var(--justdo-chat-text-secondary, #9ca3af);
-        padding: 4px 0;
-      }
-
       /* ── highlight.js (GitHub theme) ────────────────────────────────── */
 
       .hljs {
@@ -1704,12 +1705,240 @@ export class JustDoChatElement extends LitElement {
         white-space: pre-wrap;
         overflow-wrap: anywhere;
       }
+      .process-summary__item--edit,
+      .process-summary__tool--edit {
+        width: 100%;
+        box-sizing: border-box;
+      }
+      .process-summary__tool--edit .process-summary__tool-detail {
+        width: calc(100% - 14px);
+        box-sizing: border-box;
+      }
+      .edit-diff {
+        --edit-diff-background: #272822;
+        --edit-diff-background-deep: #1e1f1c;
+        --edit-diff-background-muted: #34352f;
+        --edit-diff-border: #414339;
+        --edit-diff-foreground: #f8f8f2;
+        --edit-diff-muted: #90908a;
+        --edit-diff-added: #a6e22e;
+        --edit-diff-added-background: #4b661680;
+        --edit-diff-removed: #f92672;
+        --edit-diff-removed-background: #90274a70;
+        width: 100%;
+        max-height: 420px;
+        box-sizing: border-box;
+        overflow: auto;
+        border: 1px solid var(--edit-diff-border);
+        border-radius: 6px;
+        background: var(--edit-diff-background);
+        color: var(--edit-diff-foreground);
+        font:
+          14px/20px Consolas,
+          'Courier New',
+          monospace;
+        font-weight: 400;
+        font-variant-ligatures: none;
+        scrollbar-color: #75715e var(--edit-diff-background-deep);
+      }
+      .edit-diff__header {
+        position: sticky;
+        z-index: 1;
+        top: 0;
+        left: 0;
+        display: flex;
+        width: 100%;
+        box-sizing: border-box;
+        align-items: center;
+        gap: 10px;
+        border-bottom: 1px solid var(--edit-diff-border);
+        padding: 7px 9px;
+        background: var(--edit-diff-background-deep);
+      }
+      .edit-diff__path {
+        flex: 1 1 240px;
+        min-width: 80px;
+        overflow: hidden;
+        color: #ccccc7;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .edit-diff__path:empty {
+        display: none;
+      }
+      .edit-diff__stats {
+        display: inline-flex;
+        flex: 0 0 auto;
+        gap: 8px;
+        font-weight: 600;
+      }
+      .edit-diff__stat--added {
+        color: var(--edit-diff-added);
+      }
+      .edit-diff__stat--removed {
+        color: var(--edit-diff-removed);
+      }
+      .edit-diff__mode-switch {
+        display: inline-flex;
+        flex: 0 0 auto;
+        overflow: hidden;
+        border: 1px solid var(--edit-diff-border);
+        border-radius: 3px;
+        background: var(--edit-diff-background);
+      }
+      .edit-diff__mode-button {
+        border: 0;
+        padding: 2px 9px;
+        background: transparent;
+        color: #ccccc7;
+        font: inherit;
+        line-height: 1.55;
+        cursor: pointer;
+      }
+      .edit-diff__mode-button + .edit-diff__mode-button {
+        border-left: 1px solid var(--edit-diff-border);
+      }
+      .edit-diff__mode-button:hover {
+        background: #3e3d32;
+        color: var(--edit-diff-foreground);
+      }
+      .edit-diff__mode-button:focus-visible {
+        outline: 2px solid #99947c;
+        outline-offset: -2px;
+      }
+      .edit-diff__mode-button.is-active {
+        background: #75715e;
+        color: var(--edit-diff-foreground);
+      }
+      .edit-diff__hunk-header {
+        min-width: 100%;
+        width: max-content;
+        box-sizing: border-box;
+        padding: 3px 9px;
+        border-bottom: 1px solid var(--edit-diff-border);
+        background: var(--edit-diff-background-muted);
+        color: #75715e;
+      }
+      .edit-diff__edits-omitted {
+        min-width: 100%;
+        width: max-content;
+        box-sizing: border-box;
+        padding: 5px 9px;
+        background: var(--edit-diff-background-muted);
+        color: var(--edit-diff-muted);
+        font-style: italic;
+      }
+      .edit-diff__line {
+        display: grid;
+        grid-template-columns: 28px auto;
+        min-width: 100%;
+        width: max-content;
+        box-sizing: border-box;
+      }
+      .edit-diff__line--removed {
+        background: var(--edit-diff-removed-background);
+      }
+      .edit-diff__line--added {
+        background: var(--edit-diff-added-background);
+      }
+      .edit-diff__line--omitted {
+        background: var(--edit-diff-background-muted);
+        color: var(--edit-diff-muted);
+        font-style: italic;
+      }
+      .edit-diff__marker {
+        padding: 0 7px;
+        border-right: 1px solid #41433980;
+        background: #1e1f1c66;
+        color: var(--edit-diff-muted);
+        text-align: center;
+        user-select: none;
+      }
+      .edit-diff__line--removed .edit-diff__marker {
+        color: var(--edit-diff-removed);
+      }
+      .edit-diff__line--added .edit-diff__marker {
+        color: var(--edit-diff-added);
+      }
+      .edit-diff__line code,
+      .edit-diff__split-cell code {
+        padding-right: 10px;
+        color: inherit;
+        font: inherit;
+        white-space: pre;
+      }
+      .edit-diff__monaco-host {
+        position: relative;
+        min-width: 100%;
+        overflow: hidden;
+        background: var(--edit-diff-background);
+      }
+      .edit-diff__monaco-host--split {
+        min-width: 720px;
+      }
+      .edit-diff__monaco-fallback {
+        height: 100%;
+        overflow: hidden;
+      }
+      .edit-diff__monaco-host.is-ready .edit-diff__monaco-fallback {
+        visibility: hidden;
+      }
+      .edit-diff__monaco-editor {
+        position: absolute;
+        inset: 0;
+      }
+      .edit-diff--monaco-ready .edit-diff__split-header {
+        display: none;
+      }
+      .edit-diff__split-rows {
+        min-width: 720px;
+      }
+      .edit-diff__split-header {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        min-width: 720px;
+        border-bottom: 1px solid var(--edit-diff-border);
+        background: var(--edit-diff-background-muted);
+        color: #ccccc7;
+      }
+      .edit-diff__split-header span {
+        padding: 3px 9px;
+      }
+      .edit-diff__split-header span + span {
+        border-left: 1px solid var(--edit-diff-border);
+      }
+      .edit-diff__split-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      }
+      .edit-diff__split-cell {
+        display: grid;
+        grid-template-columns: 28px minmax(0, 1fr);
+        min-width: 0;
+        box-sizing: border-box;
+      }
+      .edit-diff__split-cell code {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+      .edit-diff__split-cell--after {
+        border-left: 1px solid var(--edit-diff-border);
+      }
+      .edit-diff__split-cell.is-empty {
+        min-height: 1.6em;
+        background: var(--edit-diff-background-deep);
+      }
       .process-live {
         width: min(100%, 680px);
         border-radius: 8px;
         padding: 8px 10px;
         background: var(--justdo-chat-process-bg, rgba(248, 250, 252, 0.58));
         font-size: 12px;
+      }
+      .process-live--edit {
+        width: 100%;
+        max-width: none;
+        box-sizing: border-box;
       }
       .process-live__tool > summary {
         list-style-position: outside;
@@ -2019,6 +2248,14 @@ export class JustDoChatElement extends LitElement {
         .process-summary__items {
           margin-left: 8px;
         }
+
+        .edit-diff__header {
+          flex-wrap: wrap;
+        }
+
+        .edit-diff__path {
+          flex-basis: 100%;
+        }
       }
       @media (prefers-reduced-motion: reduce) {
         .process-summary__thinking-marker--running,
@@ -2300,6 +2537,7 @@ export class JustDoChatElement extends LitElement {
     this.renderRoot?.addEventListener('click', this.handleMarkdownClick);
     this.renderRoot?.addEventListener('contextmenu', this.handleInlineImageContextMenu);
     this.renderRoot?.addEventListener('keydown', this.handleTimelineKeyDown);
+    this.renderRoot?.addEventListener('toggle', this.handleEditDiffToggle, true);
     this.addEventListener('scroll', this.handleMermaidVisibilityScroll, { passive: true });
     this.addEventListener('scroll', this.handleMinimapScroll, { passive: true });
   }
@@ -2318,10 +2556,14 @@ export class JustDoChatElement extends LitElement {
     this.renderRoot?.removeEventListener('click', this.handleMarkdownClick);
     this.renderRoot?.removeEventListener('contextmenu', this.handleInlineImageContextMenu);
     this.renderRoot?.removeEventListener('keydown', this.handleTimelineKeyDown);
+    this.renderRoot?.removeEventListener('toggle', this.handleEditDiffToggle, true);
     this.removeEventListener('scroll', this.handleMermaidVisibilityScroll);
     this.removeEventListener('scroll', this.handleMinimapScroll);
     if (this.mermaidScrollFrame !== null) cancelAnimationFrame(this.mermaidScrollFrame);
     this.mermaidScrollFrame = null;
+    if (this.editDiffMonacoFrame !== null) cancelAnimationFrame(this.editDiffMonacoFrame);
+    this.editDiffMonacoFrame = null;
+    this.editDiffMonacoController.dispose();
     this.stopActiveTurnClock();
     this.unsubscribeController();
   }
@@ -2374,6 +2616,7 @@ export class JustDoChatElement extends LitElement {
       this.messages.length + (this.stream?.length ?? 0);
     this.chatScrollController.afterRender(transcriptRevision);
     this.scrollStreamingThinkingToBottom();
+    this.scheduleEditDiffMonacoSync();
     if (changedProperties?.has('searchQuery') || changedProperties?.has('searchCaseSensitive')) {
       this.activeSearchIndex = -1;
       this.clearSearchMarks();
@@ -2535,6 +2778,25 @@ export class JustDoChatElement extends LitElement {
         ?.focus();
     });
   };
+
+  private readonly handleEditDiffModeChange = (toolId: string, mode: EditDiffMode): void => {
+    if (this.editDiffModes.get(toolId) === mode) return;
+    const nextModes = new Map(this.editDiffModes);
+    nextModes.set(toolId, mode);
+    this.editDiffModes = nextModes;
+  };
+
+  private readonly handleEditDiffToggle = (): void => {
+    this.scheduleEditDiffMonacoSync();
+  };
+
+  private scheduleEditDiffMonacoSync(): void {
+    if (this.editDiffMonacoFrame !== null) return;
+    this.editDiffMonacoFrame = requestAnimationFrame(() => {
+      this.editDiffMonacoFrame = null;
+      void this.editDiffMonacoController.sync(this.renderRoot);
+    });
+  }
 
   private readonly handleMermaidVisibilityScroll = (): void => {
     if (this.mermaidScrollFrame !== null) return;
@@ -2785,6 +3047,9 @@ export class JustDoChatElement extends LitElement {
       footer.modelRef ? undefined : activity?.provider,
     );
     const duration = formatActiveTurnDuration(footer.durationMs);
+    const durationLabel = i18nService
+      .t(footer.running ? 'coworkRunWorkingDuration' : 'coworkRunWorkedDuration')
+      .replace('{duration}', duration);
     const completedDate = footer.completedAt === null ? null : new Date(footer.completedAt);
     return html`
       ${model ? html`<span>${model}</span>` : nothing}
@@ -2799,7 +3064,7 @@ export class JustDoChatElement extends LitElement {
           : nothing
       }
       ${model || completedDate ? html`<span>·</span>` : nothing}
-      <span>${i18nService.t('coworkRunDuration').replace('{duration}', duration)}</span>
+      <span>${durationLabel}</span>
     `;
   }
 
@@ -2836,6 +3101,8 @@ export class JustDoChatElement extends LitElement {
           this.renderedOpenProcessSummaryKey === item.key),
       showAvatar,
       animatePlan,
+      this.editDiffModes,
+      this.handleEditDiffModeChange,
     );
   }
 

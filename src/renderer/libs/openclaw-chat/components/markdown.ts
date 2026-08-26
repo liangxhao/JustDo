@@ -42,7 +42,7 @@ const MARKDOWN_CHAR_LIMIT = 140_000;
 const MARKDOWN_PARSE_LIMIT = 40_000;
 const MARKDOWN_CACHE_LIMIT = 200;
 const MARKDOWN_CACHE_MAX_CHARS = 50_000;
-const MARKDOWN_RENDER_CACHE_VERSION = 'markdown-render-v11';
+const MARKDOWN_RENDER_CACHE_VERSION = 'markdown-render-v12';
 const CJK_URL_TRAILING_PUNCTUATION_RE = /[，。；！？、]/;
 const BOX_DRAWING_TOP_RE = /^[ \t]*[┌╔].*[┐╗][ \t]*$/u;
 const BOX_DRAWING_BOTTOM_RE = /^[ \t]*[└╚].*[┘╝][ \t]*$/u;
@@ -443,7 +443,7 @@ md.renderer.rules.image = (tokens, idx) => {
 md.renderer.rules.table_open = () => '<div class="markdown-table-scroll"><table>\n';
 md.renderer.rules.table_close = () => '</table></div>\n';
 
-// Override fenced code blocks with copy button + JSON collapse
+// Override fenced code blocks with syntax highlighting and a copy button.
 md.renderer.rules.fence = (tokens, idx, _options, env) => {
   const token = tokens[idx];
   const lang = token.info.trim().split(/\s+/)[0] || '';
@@ -472,16 +472,6 @@ md.renderer.rules.fence = (tokens, idx, _options, env) => {
   const copyBtn = `<button type="button" class="code-block-copy" data-code="${attrSafe}" aria-label="${copyAriaLabel}"><span class="code-block-copy__idle">${copyLabel}</span><span class="code-block-copy__done">${copiedLabel}</span></button>`;
   const header = `<div class="code-block-header">${langLabel}${copyBtn}</div>`;
 
-  const trimmed = text.trim();
-  const isJson = lang === 'json' || (!lang &&
-    ((trimmed.startsWith('{') && trimmed.endsWith('}')) ||
-     (trimmed.startsWith('[') && trimmed.endsWith(']'))));
-
-  if (isJson) {
-    const lineCount = text.split('\n').length;
-    const label = lineCount > 1 ? `JSON · ${lineCount} lines` : 'JSON';
-    return `<details class="json-collapse"><summary>${label}</summary><div class="code-block-wrapper">${header}${codeBlock}</div></details>`;
-  }
   const wrapperClass = isMarkdownCodeBlock
     ? 'code-block-wrapper code-block-wrapper--markdown'
     : 'code-block-wrapper';

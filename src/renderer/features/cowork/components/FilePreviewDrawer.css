@@ -927,20 +927,6 @@
   box-sizing: border-box;
 }
 
-.file-preview-markdown .json-collapse {
-  margin: 1.25rem 0;
-}
-
-.file-preview-markdown .json-collapse > summary {
-  color: var(--justdo-text-secondary);
-  font-size: 0.8rem;
-  cursor: pointer;
-}
-
-.file-preview-markdown .json-collapse > .code-block-wrapper {
-  margin-top: 0.5rem;
-}
-
 .file-preview-markdown .katex-display {
   margin: 1.5rem 0;
   overflow-x: auto;

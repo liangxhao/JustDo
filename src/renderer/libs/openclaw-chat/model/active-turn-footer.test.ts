@@ -99,8 +99,13 @@ describe('active turn footer', () => {
     expect(formatActiveTurnTimestamp(new Date(2026, 6, 29, 16, 5, 12))).toBe('2026-07-29 16:05:12');
   });
 
-  test('formats duration as a clock value', () => {
-    expect(formatActiveTurnDuration(7_338_999)).toBe('02:02:18');
+  test.each([
+    [1_287_999, '21m 27s'],
+    [7_338_999, '2h 2m 18s'],
+    [3_999, '3s'],
+    [0, '0s'],
+  ])('formats %i milliseconds as compact English units', (durationMs, expected) => {
+    expect(formatActiveTurnDuration(durationMs)).toBe(expected);
   });
 });
 

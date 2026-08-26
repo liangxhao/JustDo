@@ -100,5 +100,11 @@ export function formatActiveTurnDuration(durationMs: number): string {
   const hours = Math.floor(totalSeconds / 3_600);
   const minutes = Math.floor((totalSeconds % 3_600) / 60);
   const seconds = totalSeconds % 60;
-  return [hours, minutes, seconds].map(value => String(value).padStart(2, '0')).join(':');
+  return [
+    hours > 0 ? `${hours}h` : '',
+    minutes > 0 || hours > 0 ? `${minutes}m` : '',
+    `${seconds}s`,
+  ]
+    .filter(Boolean)
+    .join(' ');
 }

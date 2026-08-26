@@ -202,6 +202,18 @@ describe('Nested Markdown fences', () => {
 
 describe('Code fence syntax highlighting', () => {
   test.each([
+    ['an explicitly labelled JSON fence', '```json\n{"answer": 42}\n```'],
+    ['an unlabelled JSON-shaped fence', '```\n{"answer": 42}\n```'],
+  ])('renders %s expanded', (_description, source) => {
+    const html = md.render(source);
+
+    expect(html).toContain('class="code-block-wrapper"');
+    expect(html).toContain('<pre><code');
+    expect(html).not.toContain('<details');
+    expect(html).not.toContain('json-collapse');
+  });
+
+  test.each([
     ['python', 'def greet(name):', 'hljs-keyword'],
     ['typescript', 'const answer: number = 42;', 'hljs-keyword'],
     ['c++', 'std::vector<int> values;', 'hljs-type'],
