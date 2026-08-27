@@ -4,7 +4,6 @@ import path from 'path';
 import { defineConfig } from 'vite';
 import electron from 'vite-plugin-electron';
 import renderer from 'vite-plugin-electron-renderer';
-import monacoEditorPlugin from 'vite-plugin-monaco-editor';
 
 import packageJson from './package.json';
 
@@ -27,9 +26,6 @@ export default defineConfig({
       },
     },
     react(),
-    monacoEditorPlugin({
-      languageWorkers: ['editorWorkerService', 'typescript', 'json'],
-    }),
     electron([
       {
         // 主进程入口文件

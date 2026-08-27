@@ -44,7 +44,10 @@ const { verifyPackagedOpenClawRuntime } = require('../../../scripts/electron-bui
   verifyPackagedOpenClawRuntime: (context: {
     appOutDir: string;
     electronPlatformName: string;
-  }) => void;
+  }) => Promise<void>;
+};
+const { compressTarArchive } = require('../../../scripts/pack-openclaw-tar.cjs') as {
+  compressTarArchive: (sourceTar: string, outputArchive: string) => Promise<void>;
 };
 const { ensureOpenClawRuntimePatches, patchOpenClawRuntime } =
   require('../../../scripts/patch-openclaw-runtime.cjs') as {
@@ -625,7 +628,7 @@ module.exports = { applyPatch, verifyPatch };
     );
   });
 
-  test('verifies the patch proof copied into the packaged Windows runtime archive', () => {
+  test('verifies the patch proof copied into the packaged Windows runtime archive', async () => {
     const repositoryRoot = path.resolve(__dirname, '../../..');
     const sourceLock = readOpenClawSourceLock(repositoryRoot, 'v2026.7.1-2');
     const appOutDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-packaged-patch-test-'));
@@ -670,29 +673,32 @@ module.exports = { applyPatch, verifyPatch };
 
     const tar = require('tar') as {
       create: (
-        options: { cwd: string; file: string; gzip?: boolean; sync: boolean },
+        options: { cwd: string; file: string; sync: boolean },
         paths: string[],
       ) => void;
     };
+    const tarPath = path.join(resourcesRoot, 'win-resources.tar');
+    const archivePath = path.join(resourcesRoot, 'win-resources.tar.zst');
     tar.create(
       {
         cwd: archiveRoot,
-        file: path.join(resourcesRoot, 'win-resources.tar.gz'),
-        gzip: true,
+        file: tarPath,
         sync: true,
       },
       ['cfmind'],
     );
+    await compressTarArchive(tarPath, archivePath);
+    fs.rmSync(tarPath);
     fs.writeFileSync(
       path.join(resourcesRoot, 'win-resources-metadata.json'),
       '{"schemaVersion":1,"totalEntries":1}\n',
     );
 
-    expect(() =>
+    await expect(
       verifyPackagedOpenClawRuntime({
         appOutDir,
         electronPlatformName: 'win32',
       }),
-    ).not.toThrow();
+    ).resolves.toBeUndefined();
   });
 });

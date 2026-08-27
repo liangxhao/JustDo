@@ -137,7 +137,7 @@ Patch 工具拒绝：
 - immutable runtime artifacts；
 - 最终 bundle/package/companion 文件字节。
 
-任何 patch 重排、helper 改动、bundle 重建、cache 污染或打包遗漏都会使 manifest 失效。Electron Builder 在打包前和 staged product 上再次验证；Windows 还验证 `win-resources.tar.gz`，仅允许设计上单独省略的 asar。
+任何 patch 重排、helper 改动、bundle 重建、cache 污染或打包遗漏都会使 manifest 失效。Electron Builder 在打包前和 staged product 上再次验证；Windows 还会流式解码并验证 `win-resources.tar.zst`，仅允许设计上单独省略的 asar。
 
 ## 10. 常用命令
 

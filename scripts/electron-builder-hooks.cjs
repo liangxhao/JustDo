@@ -16,6 +16,8 @@ const {
 } = require('fs');
 const { spawnSync } = require('child_process');
 const { createHash } = require('crypto');
+const { pipeline } = require('stream/promises');
+const { createZstdDecompress } = require('zlib');
 const asar = require('@electron/asar');
 const yaml = require('js-yaml');
 const { ensurePortablePythonRuntime, checkRuntimeHealth } = require('./setup-python-runtime.js');
@@ -637,6 +639,14 @@ async function beforePack(context) {
   ensureBundledOpenClawRuntime(context);
 
   if (isWindowsTarget(context)) {
+    // electron-builder 26.15.x can let modern 7za choose BCJ2 for PE files,
+    // while the older Nsis7z decoder embedded in the installer can silently
+    // omit those blocks. Force the single-stream BCJ filter before the NSIS app
+    // archive is created; a successful 7za build alone does not prove the
+    // install-time decoder can read it.
+    process.env.ELECTRON_BUILDER_7Z_FILTER = 'BCJ';
+    console.log('[electron-builder-hooks] Forced NSIS-compatible 7z filter: BCJ');
+
     // ── Prepare runtime resources BEFORE tar packing ──
     // These must be ready before we build the combined tar, otherwise the
     // directories will be empty and the installed app will lack Python/Git.
@@ -667,7 +677,7 @@ async function beforePack(context) {
     mkdirSync(buildTarDir, { recursive: true });
 
     const outputTar = path.join(buildTarDir, 'win-resources.tar');
-    const outputArchive = path.join(buildTarDir, 'win-resources.tar.gz');
+    const outputArchive = path.join(buildTarDir, 'win-resources.tar.zst');
     const outputMetadata = path.join(buildTarDir, 'win-resources-metadata.json');
     const sources = [
       {
@@ -817,7 +827,7 @@ async function beforePack(context) {
 
 async function afterPack(context) {
   verifyPackagedNodeRuntime(context);
-  verifyPackagedOpenClawRuntime(context);
+  await verifyPackagedOpenClawRuntime(context);
   verifyPackagedBrowserExtension(context);
 
   if (isWindowsTarget(context)) {
@@ -1047,7 +1057,7 @@ async function afterAllArtifactBuild(context) {
   return [manifestPath];
 }
 
-function verifyPackagedOpenClawRuntime(context) {
+async function verifyPackagedOpenClawRuntime(context) {
   const resourcesRoot = isMacTarget(context)
     ? path.join(
         context.appOutDir,
@@ -1058,7 +1068,7 @@ function verifyPackagedOpenClawRuntime(context) {
     : path.join(context.appOutDir, 'resources');
 
   if (isWindowsTarget(context)) {
-    const tarPath = path.join(resourcesRoot, 'win-resources.tar.gz');
+    const tarPath = path.join(resourcesRoot, 'win-resources.tar.zst');
     const metadataPath = path.join(resourcesRoot, 'win-resources-metadata.json');
     if (!existsSync(tarPath)) {
       throw new Error(
@@ -1083,12 +1093,14 @@ function verifyPackagedOpenClawRuntime(context) {
         'cfmind/npm-shrinkwrap.json',
       ]);
       const tarModule = require(path.join(__dirname, '..', 'node_modules', 'tar'));
-      tarModule.extract({
-        cwd: temporaryRoot,
-        file: tarPath.replace(/\\/g, '/'),
-        sync: true,
-        filter: entryPath => requiredEntries.has(entryPath.replace(/^\.\//, '')),
-      });
+      await pipeline(
+        createReadStream(tarPath),
+        createZstdDecompress(),
+        tarModule.extract({
+          cwd: temporaryRoot,
+          filter: entryPath => requiredEntries.has(entryPath.replace(/^\.\//, '')),
+        }),
+      );
       verifyOpenClawPatchManifest(path.join(temporaryRoot, 'cfmind'), {
         expectedTarget: resolveOpenClawRuntimeTargetId(context),
         allowOmittedGatewayAsar: true,

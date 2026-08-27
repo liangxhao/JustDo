@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pipeline } from 'node:stream/promises';
+import { createZstdDecompress } from 'node:zlib';
 
 import { list as listTar } from 'tar';
 import { expect, test } from 'vitest';
@@ -20,10 +22,10 @@ const { compressTarArchive, packMultipleSources } =
   };
 
 test('pre-compresses a runtime tar without changing its entries', async () => {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-runtime-gzip-'));
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-runtime-zstd-'));
   const runtimeRoot = path.join(tempRoot, 'runtime');
   const tarPath = path.join(tempRoot, 'runtime.tar');
-  const archivePath = path.join(tempRoot, 'runtime.tar.gz');
+  const archivePath = path.join(tempRoot, 'runtime.tar.zst');
 
   try {
     fs.mkdirSync(runtimeRoot, { recursive: true });
@@ -33,11 +35,13 @@ test('pre-compresses a runtime tar without changing its entries', async () => {
     await compressTarArchive(tarPath, archivePath);
 
     const entries: string[] = [];
-    listTar({
-      file: archivePath,
-      sync: true,
-      onReadEntry: entry => entries.push(entry.path.replace(/\\/g, '/')),
-    });
+    await pipeline(
+      fs.createReadStream(archivePath),
+      createZstdDecompress(),
+      listTar({
+        onReadEntry: entry => entries.push(entry.path.replace(/\\/g, '/')),
+      }),
+    );
     expect(entries).toContain('cfmind/gateway-bundle.mjs');
     expect(fs.statSync(archivePath).size).toBeLessThan(fs.statSync(tarPath).size);
   } finally {

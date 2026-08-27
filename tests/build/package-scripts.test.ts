@@ -30,6 +30,17 @@ test('keeps Electron readiness probes quiet and bounded', () => {
   expect(devRunner).not.toContain('wait-on -v');
 });
 
+test('uses Vite native Monaco workers without emitting the legacy duplicate bundle', () => {
+  const viteConfig = fs.readFileSync(path.resolve(__dirname, '../../vite.config.ts'), 'utf8');
+  const packageJson = JSON.parse(
+    fs.readFileSync(path.resolve(__dirname, '../../package.json'), 'utf8'),
+  ) as { devDependencies: Record<string, string> };
+
+  expect(viteConfig).not.toContain('vite-plugin-monaco-editor');
+  expect(viteConfig).not.toContain('monacoEditorPlugin');
+  expect(packageJson.devDependencies).not.toHaveProperty('vite-plugin-monaco-editor');
+});
+
 test('uses supported npm target options for OpenClaw runtime dependencies', () => {
   const runtimeInstaller = fs.readFileSync(
     path.resolve(__dirname, '../../scripts/install-openclaw-runtime.cjs'),

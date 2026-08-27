@@ -2,6 +2,7 @@
   "directories": {
     "output": "release"
   },
+  "electronLanguages": ["en-US", "zh-CN"],
   "beforePack": "./scripts/electron-builder-hooks.cjs",
   "afterPack": "./scripts/electron-builder-hooks.cjs",
   "afterAllArtifactBuild": "./scripts/electron-builder-hooks.cjs",
@@ -116,8 +117,8 @@
     "requestedExecutionLevel": "asInvoker",
     "extraResources": [
       {
-        "from": "build-tar/win-resources.tar.gz",
-        "to": "win-resources.tar.gz"
+        "from": "build-tar/win-resources.tar.zst",
+        "to": "win-resources.tar.zst"
       },
       {
         "from": "build-tar/win-resources-metadata.json",
@@ -178,7 +179,7 @@
     "runAfterFinish": true,
     "deleteAppDataOnUninstall": true,
     "include": "scripts/nsis-installer.nsh",
-    "preCompressedFileExtensions": [".gz"]
+    "preCompressedFileExtensions": [".zst"]
   },
   "asarUnpack": ["node_modules/better-sqlite3/build/Release/*.node"],
   "asar": true

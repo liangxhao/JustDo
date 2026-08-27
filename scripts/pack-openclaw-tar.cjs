@@ -23,7 +23,9 @@ const fs = require('fs');
 const path = require('path');
 const { pipeline } = require('stream/promises');
 const tar = require('tar');
-const { createGzip } = require('zlib');
+const { constants: zlibConstants, createZstdCompress } = require('zlib');
+
+const WINDOWS_RUNTIME_ZSTD_LEVEL = 10;
 
 // ── File/dir exclusion rules (same as electron-builder.json filters) ─────────
 
@@ -247,14 +249,19 @@ function packMultipleSources(sources, outputTar) {
 }
 
 /**
- * Compress the staging tar before electron-builder embeds it. NSIS can store
- * this already-compressed extraResource without first expanding a large raw
- * tar to disk during installation.
+ * Compress the staging tar before electron-builder embeds it. Zstandard keeps
+ * the archive small while remaining fast to decode into Windows' native tar
+ * process during installation. NSIS stores this extraResource without trying
+ * to recompress it.
  */
 async function compressTarArchive(sourceTar, outputArchive) {
   await pipeline(
     fs.createReadStream(sourceTar),
-    createGzip({ level: 6 }),
+    createZstdCompress({
+      params: {
+        [zlibConstants.ZSTD_c_compressionLevel]: WINDOWS_RUNTIME_ZSTD_LEVEL,
+      },
+    }),
     fs.createWriteStream(outputArchive),
   );
 }
