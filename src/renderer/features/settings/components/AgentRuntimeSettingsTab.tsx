@@ -132,6 +132,7 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
   onMaxGoalContinuationTurnsChange,
 }) => {
   const [agentOpen, setAgentOpen] = useState(true);
+  const [mcpOpen, setMcpOpen] = useState(true);
   const [subagentOpen, setSubagentOpen] = useState(true);
   const subagents = settings.subagents;
   const updateAgent = (update: Partial<AgentRuntimeSettings['agent']>) =>
@@ -141,6 +142,8 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
       ...settings,
       askUserQuestion: { ...settings.askUserQuestion, ...update },
     });
+  const updateMcp = (update: Partial<AgentRuntimeSettings['mcp']>) =>
+    onChange({ ...settings, mcp: { ...settings.mcp, ...update } });
   const updateSubagents = (update: Partial<AgentRuntimeSettings['subagents']>) =>
     onChange({ ...settings, subagents: { ...subagents, ...update } });
 
@@ -273,6 +276,43 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
           />
         </SettingRow>
       </section>
+      <CollapsibleSection
+        title={i18nService.t('agentRuntimeMcpSectionTitle')}
+        description={i18nService.t('agentRuntimeMcpSectionDescription')}
+        open={mcpOpen}
+        onToggle={() => setMcpOpen(value => !value)}
+      >
+        <SettingRow
+          label={i18nService.t('agentRuntimeMcpRequestTimeoutTitle')}
+          description={i18nService.t('agentRuntimeMcpRequestTimeoutDescription')}
+        >
+          <label className="ml-auto flex h-9 w-32 items-center overflow-hidden rounded-lg border border-border bg-surface-inset">
+            <input
+              id="agent-runtime-mcp-request-timeout"
+              type="number"
+              min={AGENT_RUNTIME_LIMITS.mcpRequestTimeoutSeconds.min}
+              max={AGENT_RUNTIME_LIMITS.mcpRequestTimeoutSeconds.max}
+              step={1}
+              value={settings.mcp.requestTimeoutSeconds}
+              onChange={event => {
+                const seconds = Math.min(
+                  AGENT_RUNTIME_LIMITS.mcpRequestTimeoutSeconds.max,
+                  Math.max(
+                    AGENT_RUNTIME_LIMITS.mcpRequestTimeoutSeconds.min,
+                    Number(event.target.value) || AGENT_RUNTIME_LIMITS.mcpRequestTimeoutSeconds.min,
+                  ),
+                );
+                updateMcp({ requestTimeoutSeconds: Math.round(seconds) });
+              }}
+              className="h-full min-w-0 flex-1 bg-transparent px-2 text-right text-sm font-medium tabular-nums text-foreground outline-none"
+              aria-label={i18nService.t('agentRuntimeMcpRequestTimeoutTitle')}
+            />
+            <span className="border-l border-border px-2 text-[11px] text-secondary">
+              {i18nService.t('agentRuntimeSeconds')}
+            </span>
+          </label>
+        </SettingRow>
+      </CollapsibleSection>
       <CollapsibleSection
         title={i18nService.t('agentRuntimeAgentSectionTitle')}
         description={i18nService.t('agentRuntimeAgentSectionDescription')}

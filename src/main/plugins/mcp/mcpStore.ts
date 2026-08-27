@@ -1,6 +1,8 @@
 import Database from 'better-sqlite3';
 import crypto from 'crypto';
 
+import { isValidMcpRequestTimeoutSeconds } from '../../../shared/openclaw/mcp';
+
 export interface McpServerRecord {
   id: string;
   name: string;
@@ -12,6 +14,7 @@ export interface McpServerRecord {
   env?: Record<string, string>;
   url?: string;
   headers?: Record<string, string>;
+  requestTimeoutSeconds?: number;
   isBuiltIn: boolean;
   githubUrl?: string;
   registryId?: string;
@@ -28,6 +31,7 @@ export interface McpServerFormData {
   env?: Record<string, string>;
   url?: string;
   headers?: Record<string, string>;
+  requestTimeoutSeconds?: number | null;
   isBuiltIn?: boolean;
   githubUrl?: string;
   registryId?: string;
@@ -50,6 +54,7 @@ interface McpConfigJson {
   env?: Record<string, string>;
   url?: string;
   headers?: Record<string, string>;
+  requestTimeoutSeconds?: number;
   isBuiltIn?: boolean;
   githubUrl?: string;
   registryId?: string;
@@ -81,6 +86,9 @@ export class McpStore {
       env: config.env,
       url: config.url,
       headers: config.headers,
+      requestTimeoutSeconds: isValidMcpRequestTimeoutSeconds(config.requestTimeoutSeconds)
+        ? config.requestTimeoutSeconds
+        : undefined,
       isBuiltIn: config.isBuiltIn === true,
       githubUrl: config.githubUrl,
       registryId: config.registryId,
@@ -97,6 +105,12 @@ export class McpStore {
     if (data.url !== undefined) config.url = data.url;
     if (data.headers !== undefined && Object.keys(data.headers).length > 0)
       config.headers = data.headers;
+    if (data.requestTimeoutSeconds !== undefined && data.requestTimeoutSeconds !== null) {
+      if (!isValidMcpRequestTimeoutSeconds(data.requestTimeoutSeconds)) {
+        throw new Error('MCP request timeout must be an integer between 1 and 86400 seconds.');
+      }
+      config.requestTimeoutSeconds = data.requestTimeoutSeconds;
+    }
     if (data.isBuiltIn) config.isBuiltIn = true;
     if (data.githubUrl) config.githubUrl = data.githubUrl;
     if (data.registryId) config.registryId = data.registryId;
@@ -151,6 +165,10 @@ export class McpStore {
       env: data.env !== undefined ? data.env : existing.env,
       url: data.url !== undefined ? data.url : existing.url,
       headers: data.headers !== undefined ? data.headers : existing.headers,
+      requestTimeoutSeconds:
+        data.requestTimeoutSeconds !== undefined
+          ? (data.requestTimeoutSeconds ?? undefined)
+          : existing.requestTimeoutSeconds,
       isBuiltIn: data.isBuiltIn !== undefined ? data.isBuiltIn : existing.isBuiltIn,
       githubUrl: data.githubUrl !== undefined ? data.githubUrl : existing.githubUrl,
       registryId: data.registryId !== undefined ? data.registryId : existing.registryId,

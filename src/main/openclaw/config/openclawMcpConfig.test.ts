@@ -24,6 +24,7 @@ describe('buildOpenClawMcpServers', () => {
     ).toEqual({
       server: {
         enabled: true,
+        timeout: 60,
         command: 'npx',
         args: ['-y', 'example-mcp'],
         env: { TOKEN: 'secret' },
@@ -33,19 +34,28 @@ describe('buildOpenClawMcpServers', () => {
 
   it('maps remote transports to OpenClaw transport names', () => {
     expect(
-      buildOpenClawMcpServers([
-        record({ name: 'events', transportType: 'sse', url: 'https://example.com/sse' }),
-        record({
-          name: 'http',
-          transportType: 'http',
-          url: 'https://example.com/mcp',
-          headers: { Authorization: 'Bearer token' },
-        }),
-      ]),
+      buildOpenClawMcpServers(
+        [
+          record({
+            name: 'events',
+            transportType: 'sse',
+            url: 'https://example.com/sse',
+            requestTimeoutSeconds: 900,
+          }),
+          record({
+            name: 'http',
+            transportType: 'http',
+            url: 'https://example.com/mcp',
+            headers: { Authorization: 'Bearer token' },
+          }),
+        ],
+        300,
+      ),
     ).toEqual({
-      events: { enabled: true, url: 'https://example.com/sse', transport: 'sse' },
+      events: { enabled: true, timeout: 900, url: 'https://example.com/sse', transport: 'sse' },
       http: {
         enabled: true,
+        timeout: 300,
         url: 'https://example.com/mcp',
         transport: 'streamable-http',
         headers: { Authorization: 'Bearer token' },

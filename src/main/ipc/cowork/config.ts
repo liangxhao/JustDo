@@ -71,7 +71,7 @@ export const registerCoworkConfigHandlers = ({
     } catch (error) {
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to get Agent runtime settings',
+        error: error instanceof Error ? error.message : 'Failed to get runtime configuration',
       };
     }
   });
@@ -99,8 +99,8 @@ export const registerCoworkConfigHandlers = ({
           return {
             success: false,
             error: rollbackResult.success
-              ? `The Agent runtime preference was rolled back. ${syncError}`
-              : `The Agent runtime preference rollback could not be confirmed. ${
+              ? `The runtime configuration was rolled back. ${syncError}`
+              : `The runtime configuration rollback could not be confirmed. ${
                   rollbackResult.error || syncError
                 }`,
             engineStatus: getEngineManager().getStatus(),
@@ -108,7 +108,7 @@ export const registerCoworkConfigHandlers = ({
         } catch (error) {
           return {
             success: false,
-            error: `The Agent runtime preference rollback could not be confirmed. ${
+            error: `The runtime configuration rollback could not be confirmed. ${
               error instanceof Error ? error.message : syncError
             }`,
             engineStatus: getEngineManager().getStatus(),
@@ -121,7 +121,7 @@ export const registerCoworkConfigHandlers = ({
       } catch (error) {
         return {
           success: false,
-          error: error instanceof Error ? error.message : 'Failed to set Agent runtime settings',
+          error: error instanceof Error ? error.message : 'Failed to set runtime configuration',
         };
       }
 

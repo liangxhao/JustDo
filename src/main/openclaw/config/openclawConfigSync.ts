@@ -57,11 +57,13 @@ export type AskUserExtensionConfig = {
 
 export const buildOpenClawMcpServers = (
   servers: McpServerRecord[],
+  requestTimeoutSeconds = DEFAULT_AGENT_RUNTIME_SETTINGS.mcp.requestTimeoutSeconds,
 ): Record<string, Record<string, unknown>> => {
   return Object.fromEntries(
     servers.map(server => {
       const config: Record<string, unknown> = {
         enabled: server.enabled,
+        timeout: server.requestTimeoutSeconds ?? requestTimeoutSeconds,
       };
       if (server.transportType === 'stdio') {
         config.command = server.command;
@@ -1519,7 +1521,10 @@ export class OpenClawConfigSync {
         isBundledPluginAvailable,
       ),
     };
-    const mcpServers = buildOpenClawMcpServers(this.getMcpServers?.() ?? []);
+    const mcpServers = buildOpenClawMcpServers(
+      this.getMcpServers?.() ?? [],
+      agentRuntimeSettings.mcp.requestTimeoutSeconds,
+    );
     const trustedInstalledExtensionIds = listInstalledOpenClawExtensionIds(
       this.engineManager.getStateDir(),
     );
@@ -2116,6 +2121,10 @@ export class OpenClawConfigSync {
     const connectivityTools: Record<string, unknown> = connectivityConfig.tools;
     const askUserHostConfig = this.getAskUserExtensionConfig?.() ?? null;
     const agentRuntimeSettings = this.getAgentRuntimeSettings();
+    const mcpServers = buildOpenClawMcpServers(
+      this.getMcpServers?.() ?? [],
+      agentRuntimeSettings.mcp.requestTimeoutSeconds,
+    );
     const askUserConfig = askUserHostConfig
       ? {
           ...askUserHostConfig,
@@ -2162,6 +2171,9 @@ export class OpenClawConfigSync {
         },
       },
       session: buildManagedOpenClawSessionConfig(),
+      mcp: {
+        servers: mcpServers,
+      },
       ...connectivityConfig,
       ...hookConfig,
       tools: {
@@ -2285,6 +2297,9 @@ export class OpenClawConfigSync {
                 defaults: mergedDefaults,
               },
               session: buildManagedOpenClawSessionConfig(),
+              mcp: {
+                servers: mcpServers,
+              },
               update: connectivityConfig.update,
               browser: connectivityConfig.browser,
               ...hookConfig,

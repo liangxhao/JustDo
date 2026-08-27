@@ -228,6 +228,53 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.agents.defaults.compaction).not.toHaveProperty('keepRecentTokens');
   });
 
+  test('writes the configured MCP request timeout before model setup', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-mcp-config-'));
+    temporaryDirectories.push(directory);
+    const configPath = path.join(directory, 'openclaw.json');
+    const runtimeSettings = createDefaultAgentRuntimeSettings();
+    runtimeSettings.mcp.requestTimeoutSeconds = 300;
+    const sync = new OpenClawConfigSync({
+      engineManager: {
+        getDesiredVersion: () => '2026.6.11',
+        getStateDir: () => directory,
+      },
+      getCoworkConfig: () => ({
+        workingDirectory: '',
+        executionMode: 'local',
+        agentEngine: 'openclaw',
+        permissionMode: 'ask',
+      }),
+      getAgentRuntimeSettings: () => runtimeSettings,
+      getMcpServers: () => [
+        {
+          id: 'docs-id',
+          name: 'docs',
+          description: '',
+          enabled: true,
+          transportType: 'http',
+          url: 'https://example.com/mcp',
+          isBuiltIn: false,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+    } as never);
+
+    const result = (
+      sync as unknown as {
+        writeMinimalConfig: (path: string, reason: string) => OpenClawConfigSyncResult;
+      }
+    ).writeMinimalConfig(configPath, BuiltinModelSyncReason.ManualRefresh);
+
+    expect(result.ok).toBe(true);
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.mcp.servers.docs).toMatchObject({
+      timeout: 300,
+      url: 'https://example.com/mcp',
+    });
+  });
+
   test('updates and removes the main Agent thinking default in an existing minimal config', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-thinking-config-'));
     temporaryDirectories.push(directory);

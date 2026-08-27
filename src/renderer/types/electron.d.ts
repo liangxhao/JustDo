@@ -238,6 +238,7 @@ interface McpServerConfigIPC {
   env?: Record<string, string>;
   url?: string;
   headers?: Record<string, string>;
+  requestTimeoutSeconds?: number;
   isBuiltIn: boolean;
   githubUrl?: string;
   registryId?: string;

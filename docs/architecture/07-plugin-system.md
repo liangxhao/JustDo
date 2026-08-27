@@ -100,7 +100,9 @@ Renderer 的 `skillSlice` 只是列表/loading/error 缓存。`skillGroups` 和 
 
 ## 6. MCP
 
-用户 MCP 记录存在 `mcp_servers`：id、唯一 name、description、enabled、transport type、config JSON 和时间戳。`McpStore` 负责数据库，`McpConfigSyncService` 将 enabled 记录写进 OpenClaw config。
+用户 MCP 记录存在 `mcp_servers`：id、唯一 name、description、enabled、transport type、config JSON 和时间戳。`McpStore` 负责数据库，`McpConfigSyncService` 将记录写进 OpenClaw config，并保留 `enabled` 状态。
+
+“设置 → 配置”提供用户 MCP Server 的默认单请求 timeout，单位为秒，默认 60，范围 1–86400。该值保存在 `agentRuntimeSettings:v1`；“编辑 MCP 服务”在表单末尾显示当前 Server 的覆盖值，未配置覆盖时直接显示当前全局值。仅在用户改为不同值时写入该记录的 `config_json.requestTimeoutSeconds`，未修改则继续继承全局配置。配置同步按“单 Server 覆盖 → 全局默认”的优先级写入 `mcp.servers.<name>.timeout`；它控制已连接 Server 的请求等待，不等于连接建立超时。Extension 自带的只读 MCP Server 由 Extension 配置负责，不套用此用户 Server 默认值。
 
 主要能力：
 

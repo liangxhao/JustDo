@@ -111,9 +111,9 @@ WAL 是持久设置。备份不能只在运行中复制主 `.sqlite` 而忽略 W
 
 ## 8. `cowork_config`
 
-结构同 KV：key/value/updated_at，但 owner 是 Cowork/runtime domain。`CoworkStore.getConfig/setConfig` 对 execution mode、working directory、permission mode 等做默认与 normalize；版本化 Agent runtime settings 通过 `agentRuntimeSettings:v1` 保存。旧记录缺少 AskUserQuestion 配置时补入默认 10 分钟，损坏或越界值按 shared contract 回退。
+结构同 KV：key/value/updated_at，但 owner 是 Cowork/runtime domain。`CoworkStore.getConfig/setConfig` 对 execution mode、working directory、permission mode 等做默认与 normalize；版本化 runtime settings 通过 `agentRuntimeSettings:v1` 保存。旧记录缺少 AskUserQuestion 或 MCP 配置时分别补入默认 10 分钟与 60 秒，损坏或越界值按 shared contract 回退。
 
-修改配置的 IPC 使用 promise queue 串行，并在成功写入后同步 OpenClaw。Subagent 设置生成 `agents.defaults.subagents`；AskUserQuestion 等待时限生成 `plugins.entries.ask-user-question.config.timeoutMinutes`。同步失败会恢复上一份数据库值；数据库保存成功不自动证明 Gateway config active。
+修改配置的 IPC 使用 promise queue 串行，并在成功写入后同步 OpenClaw。Subagent 设置生成 `agents.defaults.subagents`；AskUserQuestion 等待时限生成 `plugins.entries.ask-user-question.config.timeoutMinutes`；全局 MCP 请求时限作为每个用户 `mcp.servers.<name>.timeout` 的默认值。同步失败会恢复上一份数据库值；数据库保存成功不自动证明 Gateway config active。
 
 ## 9. `agents`
 
@@ -123,7 +123,7 @@ WAL 是持久设置。备份不能只在运行中复制主 `.sqlite` 而忽略 W
 
 ## 10. `mcp_servers` 与 `openclaw_hooks`
 
-MCP：id PK、唯一 name、description、enabled、transport_type（默认 stdio）、config_json、created/updated。Hook：id PK、enabled（默认 false）、config_json、created/updated。
+MCP：id PK、唯一 name、description、enabled、transport_type（默认 stdio）、config_json、created/updated。`config_json.requestTimeoutSeconds` 是可选的单 Server 请求超时覆盖；缺失时继承全局默认。Hook：id PK、enabled（默认 false）、config_json、created/updated。
 
 两表保存产品配置，不等于 runtime 已应用。CRUD 后必须调用 config sync；sync 失败需向 UI 报告并允许恢复。config JSON可能含 environment/credential，禁止原样记录日志。
 

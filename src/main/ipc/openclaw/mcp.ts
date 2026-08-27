@@ -1,6 +1,9 @@
 import { ipcMain } from 'electron';
 
-import type { ExtensionProvidedMcpServer } from '../../../shared/openclaw/mcp';
+import {
+  type ExtensionProvidedMcpServer,
+  isValidMcpRequestTimeoutSeconds,
+} from '../../../shared/openclaw/mcp';
 import { MarketplaceInstallOperation, PluginKind } from '../../../shared/plugins/marketplace';
 import type { PluginInstallationService } from '../../plugins/installation';
 import { PluginInstallOrigin } from '../../plugins/installation';
@@ -39,6 +42,17 @@ export const registerMcpHandlers = ({
     install: async request => {
       if (request.payload.kind !== PluginKind.MCP) {
         return { success: false, error: 'Invalid MCP installation payload' };
+      }
+      const requestTimeoutSeconds = request.payload.config.requestTimeoutSeconds;
+      if (
+        requestTimeoutSeconds !== undefined &&
+        requestTimeoutSeconds !== null &&
+        !isValidMcpRequestTimeoutSeconds(requestTimeoutSeconds)
+      ) {
+        return {
+          success: false,
+          error: 'MCP request timeout must be an integer between 1 and 86400 seconds.',
+        };
       }
       const store = getStore();
       if (request.operation === MarketplaceInstallOperation.UPDATE) {

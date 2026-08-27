@@ -1,3 +1,8 @@
+import {
+  DEFAULT_MCP_REQUEST_TIMEOUT_SECONDS,
+  isValidMcpRequestTimeoutSeconds,
+  MCP_REQUEST_TIMEOUT_LIMITS,
+} from '@shared/openclaw/mcp';
 import React, { useEffect, useState } from 'react';
 
 import { McpRegistryEntry, McpServerConfig, McpServerFormData } from '@/features/plugins/types/mcp';
@@ -8,6 +13,7 @@ interface McpServerFormModalProps {
   isOpen: boolean;
   server?: McpServerConfig | null; // null = create mode, defined = edit mode
   registryEntry?: McpRegistryEntry | null; // install from registry mode
+  defaultRequestTimeoutSeconds?: number;
   existingNames: string[];
   onClose: () => void;
   onSave: (data: McpServerFormData) => void;
@@ -17,6 +23,7 @@ const McpServerFormModal: React.FC<McpServerFormModalProps> = ({
   isOpen,
   server,
   registryEntry,
+  defaultRequestTimeoutSeconds = DEFAULT_MCP_REQUEST_TIMEOUT_SECONDS,
   existingNames,
   onClose,
   onSave,
@@ -32,6 +39,7 @@ const McpServerFormModal: React.FC<McpServerFormModalProps> = ({
   const [envRows, setEnvRows] = useState<{ key: string; value: string; required?: boolean }[]>([]);
   const [url, setUrl] = useState('');
   const [headerRows, setHeaderRows] = useState<{ key: string; value: string }[]>([]);
+  const [requestTimeoutSeconds, setRequestTimeoutSeconds] = useState('');
   const [error, setError] = useState('');
   const [envErrors, setEnvErrors] = useState<Record<number, boolean>>({});
 
@@ -60,6 +68,9 @@ const McpServerFormModal: React.FC<McpServerFormModalProps> = ({
           ? Object.entries(server.headers).map(([key, value]) => ({ key, value }))
           : [],
       );
+      setRequestTimeoutSeconds(
+        String(server.requestTimeoutSeconds ?? defaultRequestTimeoutSeconds),
+      );
     } else if (registryEntry) {
       // Registry install mode — pre-fill from template
       setName(registryEntry.name);
@@ -87,6 +98,7 @@ const McpServerFormModal: React.FC<McpServerFormModalProps> = ({
       setEnvRows(envEntries);
       setUrl('');
       setHeaderRows([]);
+      setRequestTimeoutSeconds(String(defaultRequestTimeoutSeconds));
     } else {
       // Create mode
       setName('');
@@ -97,10 +109,11 @@ const McpServerFormModal: React.FC<McpServerFormModalProps> = ({
       setEnvRows([]);
       setUrl('');
       setHeaderRows([]);
+      setRequestTimeoutSeconds(String(defaultRequestTimeoutSeconds));
     }
     setError('');
     setEnvErrors({});
-  }, [isOpen, server, registryEntry]);
+  }, [defaultRequestTimeoutSeconds, isOpen, server, registryEntry]);
 
   const handleSave = () => {
     const trimmedName = name.trim();
@@ -123,6 +136,13 @@ const McpServerFormModal: React.FC<McpServerFormModalProps> = ({
 
     if ((transportType === 'sse' || transportType === 'http') && !url.trim()) {
       setError(i18nService.t('mcpUrlRequired'));
+      return;
+    }
+
+    const timeoutText = requestTimeoutSeconds.trim();
+    const timeoutOverride = timeoutText ? Number(timeoutText) : defaultRequestTimeoutSeconds;
+    if (!isValidMcpRequestTimeoutSeconds(timeoutOverride)) {
+      setError(i18nService.t('mcpRequestTimeoutInvalid'));
       return;
     }
 
@@ -160,6 +180,13 @@ const McpServerFormModal: React.FC<McpServerFormModalProps> = ({
       description: description.trim(),
       transportType,
     };
+
+    if (
+      server?.requestTimeoutSeconds !== undefined ||
+      timeoutOverride !== defaultRequestTimeoutSeconds
+    ) {
+      data.requestTimeoutSeconds = timeoutOverride;
+    }
 
     if (transportType === 'stdio') {
       data.command = command.trim();
@@ -458,6 +485,28 @@ const McpServerFormModal: React.FC<McpServerFormModalProps> = ({
             </div>
           </>
         )}
+
+        {/* Request timeout */}
+        <div className="space-y-1.5">
+          <label htmlFor="mcp-request-timeout" className={labelClass}>
+            {i18nService.t('mcpRequestTimeout')}
+          </label>
+          <div className="flex items-center overflow-hidden rounded-xl border border-border bg-background focus-within:ring-2 focus-within:ring-primary">
+            <input
+              id="mcp-request-timeout"
+              type="number"
+              min={MCP_REQUEST_TIMEOUT_LIMITS.min}
+              max={MCP_REQUEST_TIMEOUT_LIMITS.max}
+              step={1}
+              value={requestTimeoutSeconds}
+              onChange={e => setRequestTimeoutSeconds(e.target.value)}
+              className="min-w-0 flex-1 bg-transparent px-3 py-2 text-sm text-foreground focus:outline-none"
+            />
+            <span className="border-l border-border px-3 text-xs text-secondary">
+              {i18nService.t('agentRuntimeSeconds')}
+            </span>
+          </div>
+        </div>
 
         {error && <div className="text-xs text-red-500">{error}</div>}
 

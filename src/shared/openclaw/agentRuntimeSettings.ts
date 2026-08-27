@@ -1,3 +1,8 @@
+import {
+  DEFAULT_MCP_REQUEST_TIMEOUT_SECONDS,
+  MCP_REQUEST_TIMEOUT_LIMITS,
+} from './mcp';
+
 export const AGENT_RUNTIME_SETTINGS_VERSION = 1 as const;
 
 export const AgentRuntimeDelegationMode = {
@@ -27,6 +32,7 @@ export const AGENT_RUNTIME_THINKING_LEVELS = Object.values(AgentRuntimeThinkingL
 
 export const AGENT_RUNTIME_LIMITS = {
   askUserQuestionTimeoutMinutes: { min: 1, max: 24 * 60 },
+  mcpRequestTimeoutSeconds: MCP_REQUEST_TIMEOUT_LIMITS,
   maxConcurrent: { min: 1, max: 16 },
   maxChildrenPerAgent: { min: 1, max: 20 },
   maxSpawnDepth: { min: 1, max: 2 },
@@ -41,6 +47,9 @@ export interface AgentRuntimeSettings {
   };
   askUserQuestion: {
     timeoutMinutes: number;
+  };
+  mcp: {
+    requestTimeoutSeconds: number;
   };
   subagents: {
     delegationMode: AgentRuntimeDelegationModeValue;
@@ -61,6 +70,9 @@ export const DEFAULT_AGENT_RUNTIME_SETTINGS: Readonly<AgentRuntimeSettings> = Ob
   askUserQuestion: Object.freeze({
     timeoutMinutes: 10,
   }),
+  mcp: Object.freeze({
+    requestTimeoutSeconds: DEFAULT_MCP_REQUEST_TIMEOUT_SECONDS,
+  }),
   subagents: Object.freeze({
     delegationMode: AgentRuntimeDelegationMode.Suggest,
     model: null,
@@ -76,6 +88,7 @@ export const createDefaultAgentRuntimeSettings = (): AgentRuntimeSettings => ({
   version: DEFAULT_AGENT_RUNTIME_SETTINGS.version,
   agent: { ...DEFAULT_AGENT_RUNTIME_SETTINGS.agent },
   askUserQuestion: { ...DEFAULT_AGENT_RUNTIME_SETTINGS.askUserQuestion },
+  mcp: { ...DEFAULT_AGENT_RUNTIME_SETTINGS.mcp },
   subagents: { ...DEFAULT_AGENT_RUNTIME_SETTINGS.subagents },
 });
 
@@ -129,6 +142,20 @@ export const validateAgentRuntimeSettings = (
     )
   ) {
     return { ok: false, error: 'AskUserQuestion timeout is outside the supported range.' };
+  }
+
+  // Version 1 predates MCP runtime preferences. Keep older persisted settings
+  // valid while making OpenClaw's 60-second request default explicit.
+  const mcp = isRecord(value.mcp) ? value.mcp : DEFAULT_AGENT_RUNTIME_SETTINGS.mcp;
+  const mcpRequestTimeoutSeconds = mcp.requestTimeoutSeconds;
+  if (
+    !isIntegerInRange(
+      mcpRequestTimeoutSeconds,
+      AGENT_RUNTIME_LIMITS.mcpRequestTimeoutSeconds.min,
+      AGENT_RUNTIME_LIMITS.mcpRequestTimeoutSeconds.max,
+    )
+  ) {
+    return { ok: false, error: 'MCP request timeout is outside the supported range.' };
   }
 
   const subagents = value.subagents;
@@ -213,6 +240,9 @@ export const validateAgentRuntimeSettings = (
       },
       askUserQuestion: {
         timeoutMinutes: askUserQuestionTimeoutMinutes,
+      },
+      mcp: {
+        requestTimeoutSeconds: mcpRequestTimeoutSeconds,
       },
       subagents: {
         delegationMode,

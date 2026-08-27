@@ -1,3 +1,4 @@
+import { DEFAULT_MCP_REQUEST_TIMEOUT_SECONDS } from '@shared/openclaw/mcp';
 import { PluginKind } from '@shared/plugins/marketplace';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
@@ -137,6 +138,9 @@ const McpManager: React.FC = () => {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingServer, setEditingServer] = useState<McpServerConfig | null>(null);
   const [installingRegistry, setInstallingRegistry] = useState<McpRegistryEntry | null>(null);
+  const [defaultRequestTimeoutSeconds, setDefaultRequestTimeoutSeconds] = useState(
+    DEFAULT_MCP_REQUEST_TIMEOUT_SECONDS,
+  );
   const [probingServerIds, setProbingServerIds] = useState<Set<string>>(() => new Set());
   const [probeResults, setProbeResults] = useState<Record<string, McpProbeResult>>({});
   const [isBulkProbeOpen, setIsBulkProbeOpen] = useState(false);
@@ -286,7 +290,19 @@ const McpManager: React.FC = () => {
     setPendingDelete(null);
   };
 
-  const handleOpenEditForm = (server: McpServerConfig) => {
+  const refreshDefaultRequestTimeout = async (): Promise<void> => {
+    try {
+      const result = await window.electron.cowork.getAgentRuntimeSettings();
+      if (result.success && result.settings) {
+        setDefaultRequestTimeoutSeconds(result.settings.mcp.requestTimeoutSeconds);
+      }
+    } catch {
+      // Keep the last known default when runtime settings are unavailable.
+    }
+  };
+
+  const handleOpenEditForm = async (server: McpServerConfig) => {
+    await refreshDefaultRequestTimeout();
     setEditingServer(server);
     setInstallingRegistry(getRegistryEntryForServer(server) ?? null);
     setIsFormOpen(true);
@@ -322,7 +338,8 @@ const McpManager: React.FC = () => {
     handleCloseForm();
   };
 
-  const handleOpenCreateForm = () => {
+  const handleOpenCreateForm = async () => {
+    await refreshDefaultRequestTimeout();
     setEditingServer(null);
     setInstallingRegistry(null);
     setIsFormOpen(true);
@@ -658,7 +675,7 @@ const McpManager: React.FC = () => {
               </div>
               <button
                 type="button"
-                onClick={handleOpenCreateForm}
+                onClick={() => void handleOpenCreateForm()}
                 className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-border bg-surface px-3 py-2 text-sm text-secondary transition-colors hover:bg-surface-raised hover:text-foreground sm:ml-auto sm:w-auto"
               >
                 + {i18nService.t('addMcpServer')}
@@ -712,7 +729,7 @@ const McpManager: React.FC = () => {
                               <div className="flex items-center gap-1.5 flex-shrink-0">
                                 <button
                                   type="button"
-                                  onClick={() => handleOpenEditForm(server)}
+                                  onClick={() => void handleOpenEditForm(server)}
                                   className="p-1 rounded-lg text-secondary hover:text-primary dark:hover:text-primary transition-colors"
                                   title={i18nService.t('editMcpServer')}
                                 >
@@ -906,6 +923,7 @@ const McpManager: React.FC = () => {
         isOpen={isFormOpen}
         server={editingServer}
         registryEntry={installingRegistry}
+        defaultRequestTimeoutSeconds={defaultRequestTimeoutSeconds}
         existingNames={existingNames}
         onClose={handleCloseForm}
         onSave={handleSaveForm}

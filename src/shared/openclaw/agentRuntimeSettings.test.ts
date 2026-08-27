@@ -17,6 +17,9 @@ describe('Agent runtime settings', () => {
       askUserQuestion: {
         timeoutMinutes: 10,
       },
+      mcp: {
+        requestTimeoutSeconds: 60,
+      },
       subagents: {
         delegationMode: 'suggest',
         model: null,
@@ -86,6 +89,17 @@ describe('Agent runtime settings', () => {
     });
   });
 
+  test('migrates version 1 settings saved before MCP preferences', () => {
+    const input = createDefaultAgentRuntimeSettings();
+    input.subagents.maxConcurrent = 7;
+    const { mcp: _removed, ...legacyInput } = input;
+
+    expect(parseAgentRuntimeSettings(legacyInput)).toEqual({
+      ...input,
+      mcp: { requestTimeoutSeconds: 60 },
+    });
+  });
+
   test('accepts and validates the main Agent thinking preference', () => {
     const input = createDefaultAgentRuntimeSettings();
     input.agent.thinking = 'high';
@@ -100,6 +114,13 @@ describe('Agent runtime settings', () => {
   test.each([0, 1441, 1.5])('rejects invalid AskUserQuestion timeout %s', timeoutMinutes => {
     const input = createDefaultAgentRuntimeSettings();
     input.askUserQuestion.timeoutMinutes = timeoutMinutes;
+
+    expect(validateAgentRuntimeSettings(input).ok).toBe(false);
+  });
+
+  test.each([0, 86_401, 1.5])('rejects invalid MCP request timeout %s', timeoutSeconds => {
+    const input = createDefaultAgentRuntimeSettings();
+    input.mcp.requestTimeoutSeconds = timeoutSeconds;
 
     expect(validateAgentRuntimeSettings(input).ok).toBe(false);
   });

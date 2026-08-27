@@ -49,7 +49,7 @@ Engine status 至少表达 stopped、starting、running、stopping/error 类 pha
 - provider models、base URL、API format、auth 与 capability；
 - agents 的 identity、system prompt、qualified model 和 skills；
 - 全局/会话权限 policy 与审批模式；
-- Agent runtime settings，包括 AskUserQuestion 等待时限与 subagent 调度参数；
+- runtime settings，包括 AskUserQuestion 等待时限、MCP 请求超时与 subagent 调度参数；
 - MCP servers、Hooks、Extensions 与 ask-user 动态 callback；
 - browser mode；
 - system prompt replacement rules；
@@ -57,7 +57,7 @@ Engine status 至少表达 stopped、starting、running、stopping/error 类 pha
 
 同步在 exclusive queue 内执行，避免设置页、MCP/Hook/Extension、permission 同时覆盖文件。写入后必须验证 active Gateway permission policy。若 Gateway 正在运行且变化需要 restart，流程是断开 adapter -> restart -> reconnect；有 active workloads 时 service 应遵守安全策略，不盲目重启。
 
-版本化的 `agentRuntimeSettings:v1` 同时生成 `agents.defaults.subagents`，并把 AskUserQuestion 等待时限写入 `plugins.entries.ask-user-question.config.timeoutMinutes`。旧数据缺少该字段时使用 10 分钟默认值；配置同步失败会恢复上一份数据库值。
+版本化的 `agentRuntimeSettings:v1` 同时生成 `agents.defaults.subagents`，把 AskUserQuestion 等待时限写入 `plugins.entries.ask-user-question.config.timeoutMinutes`，并以全局 MCP 请求时限作为用户 MCP Server 的默认 `timeout`。`mcp_servers.config_json.requestTimeoutSeconds` 可覆盖单个 Server；旧数据缺少这些后来加入的字段时分别使用 10 分钟、60 秒或继承全局默认；配置同步失败会恢复上一份数据库值。
 
 ## 5. Fail-closed admission
 
@@ -139,7 +139,7 @@ active Goal。
 
 ## 13. Agent runtime settings
 
-Shared contract对 delegation mode、subagent concurrency/children/depth/timeout/archive/model/thinking/announce timeout 等字段做默认值、范围和跨字段 normalize。Main IPC 保存后进入 config sync。配置通常影响新 spawn/turn；不能承诺正在运行的 subagent 热更新。
+Shared contract 对 delegation mode、全局及单 Server MCP request timeout、subagent concurrency/children/depth/timeout/archive/model/thinking/announce timeout 等字段做默认值、范围和跨字段 normalize。Main IPC 保存后进入 config sync。MCP timeout 变化会重建托管 server 配置；subagent 配置通常影响新 spawn/turn，不能承诺正在运行的 subagent 热更新。
 
 受管字段（例如 scheduler agent 的权限、关键 extension/plugin 配置）不能被通用 settings UI 覆盖。
 

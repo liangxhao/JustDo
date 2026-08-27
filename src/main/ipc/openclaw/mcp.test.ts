@@ -145,3 +145,24 @@ test('marketplace MCP install rejects an existing catalog id', async () => {
   expect(result).toEqual({ success: false, error: 'MCP server is already installed' });
   expect(store.createServer).not.toHaveBeenCalled();
 });
+
+test('custom MCP install rejects an invalid per-server request timeout', async () => {
+  const store = createStore();
+  register(store);
+
+  const result = await handlers.get('mcp:create')?.(
+    {},
+    {
+      name: 'Docs MCP',
+      transportType: 'stdio',
+      command: 'npx',
+      requestTimeoutSeconds: 86_401,
+    },
+  );
+
+  expect(result).toEqual({
+    success: false,
+    error: 'MCP request timeout must be an integer between 1 and 86400 seconds.',
+  });
+  expect(store.createServer).not.toHaveBeenCalled();
+});
