@@ -222,7 +222,6 @@ describe('BrowserSettingsTab extension connection checks', () => {
       browser.emitEngineProgress({
         phase: 'starting',
         version: null,
-        progressPercent: 42,
         canRetry: false,
       });
     });
