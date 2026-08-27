@@ -1,5 +1,10 @@
-import { ArrowPathIcon, InformationCircleIcon, XMarkIcon } from '@heroicons/react/24/outline';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ArrowPathIcon,
+  DocumentDuplicateIcon,
+  InformationCircleIcon,
+  XMarkIcon,
+} from '@heroicons/react/24/outline';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import { coworkService } from '@/features/cowork/coworkService';
 import type {
@@ -54,6 +59,8 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
   onClose,
 }) => {
   const [session, setSession] = useState<CoworkSession | null>(null);
+  const [stats, setStats] = useState<SessionDetailStats | null>(null);
+  const [gatewaySessionId, setGatewaySessionId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
@@ -84,6 +91,8 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
             if (result.session) {
               hasLoadedRef.current = true;
               setSession(result.session);
+              setStats(result.stats ?? buildSessionDetailStats(result.session));
+              setGatewaySessionId(result.gatewaySessionId ?? null);
               setLoadFailed(false);
             } else if (isInitialLoad) {
               setLoadFailed(true);
@@ -156,10 +165,23 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
   }, [returnFocusRef]);
 
   const retry = useCallback(() => setReloadKey(value => value + 1), []);
-  const stats = useMemo<SessionDetailStats | null>(
-    () => (session ? buildSessionDetailStats(session) : null),
-    [session],
-  );
+  const copySessionId = useCallback(async () => {
+    if (!gatewaySessionId) return;
+    try {
+      await navigator.clipboard.writeText(gatewaySessionId);
+      window.dispatchEvent(
+        new CustomEvent('app:showToast', {
+          detail: i18nService.t('copySessionIdSuccess'),
+        }),
+      );
+    } catch {
+      window.dispatchEvent(
+        new CustomEvent('app:showToast', {
+          detail: i18nService.t('copySessionIdFailed'),
+        }),
+      );
+    }
+  }, [gatewaySessionId]);
   const displayedModels = stats?.models ?? [];
   const currentStatus: CoworkSessionStatus = isRuntimeRunning
     ? 'running'
@@ -175,7 +197,7 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
         [i18nService.t('sessionDetailsToolCalls'), stats.toolCallCount],
       ]
     : [];
-  const detailRows = session
+  const detailRows: Array<[string, string, boolean?]> = session
     ? [
         [i18nService.t('sessionDetailsCreatedAt'), formatDateTime(session.createdAt)],
         [i18nService.t('sessionDetailsUpdatedAt'), formatDateTime(session.updatedAt)],
@@ -186,7 +208,7 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
           i18nService.t(executionModeLabels[session.executionMode]),
         ],
         [i18nService.t('sessionDetailsAgent'), session.agentId || unavailable],
-        [i18nService.t('sessionDetailsSessionId'), session.id],
+        [i18nService.t('sessionDetailsSessionId'), gatewaySessionId ?? unavailable, true],
       ]
     : [];
 
@@ -242,8 +264,12 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
 
         <div className="max-h-[calc(84vh-73px)] overflow-y-auto px-5 py-5">
           {isLoading && (
-            <div className="flex min-h-52 items-center justify-center gap-2 text-sm text-secondary">
-              <ArrowPathIcon className="h-4 w-4 animate-spin" />
+            <div
+              className="flex min-h-52 items-center justify-center gap-2.5 text-sm text-secondary"
+              role="status"
+              aria-live="polite"
+            >
+              <ArrowPathIcon className="h-5 w-5 animate-spin" aria-hidden="true" />
               {i18nService.t('sessionDetailsLoading')}
             </div>
           )}
@@ -295,11 +321,24 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
               </section>
 
               <section>
-                <h3 className="mb-2 text-xs font-semibold text-secondary">
-                  {i18nService.t('sessionDetailsTokenUsage')}
-                </h3>
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <h3 className="shrink-0 text-xs font-semibold text-secondary">
+                    {i18nService.t('sessionDetailsTokenUsage')}
+                  </h3>
+                  <p className="whitespace-nowrap text-right text-[10px] leading-4 text-secondary">
+                    {i18nService.t('sessionDetailsTokenUsageScopeNote')}
+                  </p>
+                </div>
                 {stats.hasTokenUsage ? (
                   <div className="grid grid-cols-2 gap-x-5 gap-y-2 rounded-xl border border-border px-4 py-3 text-xs">
+                    <div className="col-span-2 flex items-center justify-between gap-3 border-b border-border pb-2">
+                      <span className="font-medium text-secondary">
+                        {i18nService.t('sessionDetailsTotalTokens')}
+                      </span>
+                      <span className="font-semibold tabular-nums text-foreground">
+                        {formatNumber(stats.totalTokens)}
+                      </span>
+                    </div>
                     {[
                       [i18nService.t('sessionDetailsInputTokens'), stats.tokenUsage.input],
                       [i18nService.t('sessionDetailsOutputTokens'), stats.tokenUsage.output],
@@ -326,7 +365,7 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
                   {i18nService.t('sessionDetailsEnvironment')}
                 </h3>
                 <dl className="overflow-hidden rounded-xl border border-border">
-                  {detailRows.map(([label, value], index) => (
+                  {detailRows.map(([label, value, copyable], index) => (
                     <div
                       key={label}
                       className={`grid grid-cols-[132px_minmax(0,1fr)] gap-3 px-4 py-2.5 text-xs ${
@@ -334,7 +373,21 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
                       }`}
                     >
                       <dt className="text-secondary">{label}</dt>
-                      <dd className="break-all text-foreground">{value}</dd>
+                      <dd className="flex min-w-0 items-start gap-2 text-foreground">
+                        <span className="min-w-0 flex-1 break-all">{value}</span>
+                        {copyable && (
+                          <button
+                            type="button"
+                            onClick={() => void copySessionId()}
+                            disabled={!gatewaySessionId}
+                            className="shrink-0 rounded-md p-1 text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                            title={i18nService.t('copySessionId')}
+                            aria-label={i18nService.t('copySessionId')}
+                          >
+                            <DocumentDuplicateIcon className="h-4 w-4" />
+                          </button>
+                        )}
+                      </dd>
                     </div>
                   ))}
                 </dl>

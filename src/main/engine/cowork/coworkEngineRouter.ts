@@ -183,7 +183,13 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
         messageId,
         metadata,
         extra?: {
-          usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
+          usage?: {
+            input?: number;
+            output?: number;
+            cacheRead?: number;
+            cacheWrite?: number;
+            total?: number;
+          };
         },
       ) => {
         this.emit('messageMetadataUpdate', sessionId, messageId, metadata, extra);

@@ -3,6 +3,7 @@ export type MatchedTokenUsage = {
   output?: number;
   cacheRead?: number;
   cacheWrite?: number;
+  total?: number;
 };
 
 export interface HistoryAssistantUsage {

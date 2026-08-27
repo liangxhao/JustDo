@@ -2,6 +2,10 @@ type CoworkAttachmentPayload = import('../../shared/cowork/attachments').CoworkA
 type BeginSessionRunInput = import('../../shared/cowork/sessionRun').BeginSessionRunInput;
 type SessionRunTiming = import('../../shared/cowork/sessionRun').SessionRunTiming;
 type SessionRuntimeSnapshot = import('../../shared/cowork/sessionRun').SessionRuntimeSnapshot;
+type CoworkSessionDetailsResult =
+  import('../../shared/cowork/sessionDetails').CoworkSessionDetailsResult<CoworkSession>;
+type CoworkSubagentDetailsResult =
+  import('../../shared/cowork/subagentDetails').CoworkSubagentDetailsResult;
 type GenerateSessionTitleRequest =
   import('../../shared/cowork/sessionTitle').GenerateSessionTitleRequest;
 type SaveTextFileOptions = import('../../shared/dialogIpc').SaveTextFileOptions;
@@ -92,6 +96,7 @@ interface TokenUsage {
   output?: number;
   cacheRead?: number;
   cacheWrite?: number;
+  total?: number;
 }
 
 interface DailyTokenUsage {
@@ -679,6 +684,7 @@ interface IElectronAPI {
     getSession: (
       sessionId: string,
     ) => Promise<{ success: boolean; session?: CoworkSession; error?: string }>;
+    getSessionDetails: (sessionId: string) => Promise<CoworkSessionDetailsResult>;
     getGatewaySessionId: (
       sessionId: string,
     ) => Promise<{ success: boolean; sessionId?: string; error?: string }>;
@@ -834,7 +840,13 @@ interface IElectronAPI {
         sessionId: string;
         messageId: string;
         metadata: Record<string, unknown>;
-        usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
+        usage?: {
+          input?: number;
+          output?: number;
+          cacheRead?: number;
+          cacheWrite?: number;
+          total?: number;
+        };
       }) => void,
     ) => () => void;
     onStreamMessageDelete: (
@@ -873,6 +885,7 @@ interface IElectronAPI {
         totalTokens?: number;
       }>;
     }>;
+    getSubTaskDetails: (sessionKey: string) => Promise<CoworkSubagentDetailsResult>;
     getSubTaskSession: (sessionKey: string) => Promise<{
       success: boolean;
       session?: CoworkSession | null;

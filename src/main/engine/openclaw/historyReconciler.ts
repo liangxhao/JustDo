@@ -12,6 +12,7 @@ import { BrowserWindow } from 'electron';
 import type { CoworkMessage, CoworkStore } from '../../data/coworkStore';
 import { isManagedSessionKey } from '../../openclaw/sessions/openclawChannelSessionSync';
 import { extractGatewayHistoryEntries } from '../../openclaw/sessions/openclawHistory';
+import { extractOpenClawTokenUsage } from '../../openclaw/sessions/openclawTokenUsage';
 import {
   extractMessageText,
   extractToolText,
@@ -27,39 +28,6 @@ import {
 // Callback interface
 
 type TokenUsage = MatchedTokenUsage;
-
-const readUsageNumber = (value: unknown): number | undefined =>
-  typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-
-const extractTokenUsage = (usage: unknown): TokenUsage | undefined => {
-  if (!isRecord(usage)) return undefined;
-  const input =
-    readUsageNumber(usage.input) ??
-    readUsageNumber(usage.input_tokens) ??
-    readUsageNumber(usage.prompt_tokens);
-  const output =
-    readUsageNumber(usage.output) ??
-    readUsageNumber(usage.output_tokens) ??
-    readUsageNumber(usage.completion_tokens);
-  const cacheRead =
-    readUsageNumber(usage.cacheRead) ??
-    readUsageNumber(usage.cache_read) ??
-    readUsageNumber(usage.cache_read_input_tokens);
-  const cacheWrite =
-    readUsageNumber(usage.cacheWrite) ??
-    readUsageNumber(usage.cache_write) ??
-    readUsageNumber(usage.cache_creation_input_tokens);
-
-  if (
-    input === undefined &&
-    output === undefined &&
-    cacheRead === undefined &&
-    cacheWrite === undefined
-  ) {
-    return undefined;
-  }
-  return { input, output, cacheRead, cacheWrite };
-};
 
 export interface HistoryReconcilerCallbacks {
   // CoworkStore delegates
@@ -489,7 +457,7 @@ export class HistoryReconciler {
       if (role !== 'assistant') continue;
       const text = extractMessageText(raw).trim();
       if (!text) continue;
-      const usage = extractTokenUsage(raw.usage);
+      const usage = extractOpenClawTokenUsage(raw.usage);
       historyUsage.push({ text, usage });
     }
 

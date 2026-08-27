@@ -5,6 +5,7 @@ import {
   buildSessionDetailStats,
   getSessionDateGroupKey,
   groupSessionsByDate,
+  sumSessionDetailTokenUsage,
 } from '@/features/cowork/sessionPresentation';
 
 const summary = (id: string, updatedAt: number, pinned = false): CoworkSessionSummary => ({
@@ -14,6 +15,19 @@ const summary = (id: string, updatedAt: number, pinned = false): CoworkSessionSu
   pinned,
   createdAt: updatedAt,
   updatedAt,
+});
+
+describe('sumSessionDetailTokenUsage', () => {
+  it('provides the fallback total when the provider does not report one', () => {
+    expect(
+      sumSessionDetailTokenUsage({
+        input: 20_307,
+        output: 2_424,
+        cacheRead: 161_664,
+        cacheWrite: 0,
+      }),
+    ).toBe(184_395);
+  });
 });
 
 describe('session date grouping', () => {
@@ -88,7 +102,7 @@ describe('session detail statistics', () => {
           content: 'Sure',
           timestamp: 2,
           metadata: { modelName: 'gpt-test' },
-          usage: { input: 10, output: 4, cacheRead: 3 },
+          usage: { input: 10, output: 4, cacheRead: 3, total: 25 },
         },
         {
           id: '3',
@@ -123,6 +137,7 @@ describe('session detail statistics', () => {
       toolCallCount: 1,
       models: ['gpt-test'],
       tokenUsage: { input: 12, output: 5, cacheRead: 3, cacheWrite: 5 },
+      totalTokens: 25,
       hasTokenUsage: true,
     });
   });
@@ -170,7 +185,7 @@ describe('session detail statistics', () => {
     expect(buildSessionDetailStats(session).hasTokenUsage).toBe(false);
   });
 
-  it('uses the first non-empty user message and ignores legacy duplicate usage', () => {
+  it('uses the first non-empty user message and counts identical requests separately', () => {
     const session: CoworkSession = {
       id: 'legacy-duplicates',
       title: 'Legacy duplicates',
@@ -208,7 +223,8 @@ describe('session detail statistics', () => {
       messageCount: 3,
       userMessageCount: 1,
       assistantMessageCount: 2,
-      tokenUsage: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0 },
+      tokenUsage: { input: 20, output: 4, cacheRead: 0, cacheWrite: 0 },
+      totalTokens: 24,
     });
   });
 });

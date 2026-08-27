@@ -150,7 +150,13 @@ export interface CoworkMessage {
   metadata?: CoworkMessageMetadata;
   thinkingContent?: string; // Accumulated thinking content during streaming
   modelName?: string; // Model that generated this message (for assistant messages)
-  usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }; // Token usage
+  usage?: {
+    input?: number;
+    output?: number;
+    cacheRead?: number;
+    cacheWrite?: number;
+    total?: number;
+  }; // Token usage
 }
 
 export interface CoworkSession {
@@ -902,7 +908,13 @@ export class CoworkStore {
       role: 'user' | 'assistant';
       text: string;
       modelName?: string;
-      usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
+      usage?: {
+        input?: number;
+        output?: number;
+        cacheRead?: number;
+        cacheWrite?: number;
+        total?: number;
+      };
     }>,
   ): void {
     const now = Date.now();
@@ -958,7 +970,13 @@ export class CoworkStore {
       metadata?: CoworkMessageMetadata;
       thinkingContent?: string;
       modelName?: string;
-      usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
+      usage?: {
+        input?: number;
+        output?: number;
+        cacheRead?: number;
+        cacheWrite?: number;
+        total?: number;
+      };
     },
   ): void {
     const setClauses: string[] = [];

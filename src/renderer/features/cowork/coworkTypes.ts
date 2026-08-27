@@ -76,6 +76,7 @@ export interface TokenUsage {
   output?: number;
   cacheRead?: number;
   cacheWrite?: number;
+  total?: number;
 }
 
 // Cowork message

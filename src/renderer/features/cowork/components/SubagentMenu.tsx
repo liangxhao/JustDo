@@ -1,13 +1,12 @@
 import { DocumentDuplicateIcon, InformationCircleIcon } from '@heroicons/react/24/outline';
+import type { SessionDetailStats } from '@shared/cowork/sessionDetails';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/common/Modal';
 
-import {
-  reconcileSubagentLabel,
-  type SubagentLabelSource,
-} from './subagentLabel';
+import { reconcileSubagentLabel, type SubagentLabelSource } from './subagentLabel';
+import SubagentTokenUsage from './SubagentTokenUsage';
 
 export const SUBAGENT_STATUSES = {
   PENDING: 'pending',
@@ -59,12 +58,15 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [subagents, setSubagents] = useState<Subagent[]>([]);
   const [detailSubagent, setDetailSubagent] = useState<Subagent | null>(null);
+  const [detailStats, setDetailStats] = useState<SessionDetailStats>();
+  const [isDetailStatsLoading, setIsDetailStatsLoading] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const subagentLabelsRef = useRef(
     new Map<string, { label: string; labelSource: SubagentLabelSource }>(),
   );
   const refreshInFlightRef = useRef(false);
   const hasLoadedRef = useRef(false);
+  const detailStatsSessionKeyRef = useRef<string>();
   const sessionIdRef = useRef(sessionId);
   sessionIdRef.current = sessionId;
 
@@ -115,6 +117,56 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({
   }, [onSubagentsChange, sessionId]);
 
   useEffect(() => {
+    const sessionKey = detailSubagent?.sessionKey;
+    if (!sessionKey) {
+      detailStatsSessionKeyRef.current = undefined;
+      setDetailStats(undefined);
+      setIsDetailStatsLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    let refreshInFlight = false;
+    let retryTimer: number | undefined;
+    const isNewSession = detailStatsSessionKeyRef.current !== sessionKey;
+    detailStatsSessionKeyRef.current = sessionKey;
+    if (isNewSession) {
+      setDetailStats(undefined);
+      setIsDetailStatsLoading(true);
+    }
+    const isActive =
+      detailSubagent?.status === SUBAGENT_STATUSES.PENDING ||
+      detailSubagent?.status === SUBAGENT_STATUSES.RUNNING;
+    const refreshDetails = async (attempt = 0): Promise<void> => {
+      if (refreshInFlight) return;
+      refreshInFlight = true;
+      let succeeded = false;
+      try {
+        const result = await window.electron.cowork.getSubTaskDetails(sessionKey);
+        if (!cancelled && result.success) {
+          succeeded = true;
+          setDetailStats(result.stats);
+        }
+      } catch {
+        // Preserve the last complete lifetime total until the next refresh.
+      } finally {
+        refreshInFlight = false;
+        if (!cancelled) setIsDetailStatsLoading(false);
+      }
+      if (!cancelled && !succeeded && !isActive && attempt < 2) {
+        retryTimer = window.setTimeout(() => void refreshDetails(attempt + 1), 1000);
+      }
+    };
+    void refreshDetails();
+    const timer = isActive ? window.setInterval(() => void refreshDetails(), 5000) : undefined;
+    return () => {
+      cancelled = true;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+      if (timer !== undefined) window.clearInterval(timer);
+    };
+  }, [detailSubagent?.sessionKey, detailSubagent?.status]);
+
+  useEffect(() => {
     if (!isOpen) return;
     void refresh();
     const timer = window.setInterval(() => void refresh(), 5000);
@@ -163,7 +215,7 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({
     }
   };
 
-  const detailRows: Array<[string, string | undefined, boolean?]> = detailSubagent
+  const detailRows: Array<[string, React.ReactNode, boolean?]> = detailSubagent
     ? [
         [i18nService.t('subagentInfoStatus'), detailSubagent.status],
         [i18nService.t('subagentInfoTask'), detailSubagent.task],
@@ -171,7 +223,14 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({
         [i18nService.t('subagentInfoRuntime'), formatRuntime(detailSubagent.runtimeMs)],
         [i18nService.t('subagentInfoStarted'), formatDateTime(detailSubagent.startedAt)],
         [i18nService.t('subagentInfoEnded'), formatDateTime(detailSubagent.endedAt)],
-        [i18nService.t('subagentInfoTokens'), detailSubagent.totalTokens?.toLocaleString()],
+        [
+          i18nService.t('subagentInfoTokens'),
+          <SubagentTokenUsage
+            key="token-usage"
+            stats={detailStats}
+            isLoading={isDetailStatsLoading}
+          />,
+        ],
         [i18nService.t('subagentInfoSession'), detailSubagent.sessionKey],
         [i18nService.t('subagentInfoSessionId'), detailSubagent.sessionId, true],
       ]
@@ -300,8 +359,12 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({
                         <span className="min-w-0 break-all">{value}</span>
                         <DocumentDuplicateIcon className="mt-0.5 h-4 w-4 shrink-0" />
                       </button>
-                    ) : (
+                    ) : value == null ? (
+                      i18nService.t('subagentInfoUnavailable')
+                    ) : typeof value === 'string' ? (
                       value || i18nService.t('subagentInfoUnavailable')
+                    ) : (
+                      value
                     )}
                   </dd>
                 </div>

@@ -700,6 +700,9 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     sessionDetailsAssistantMessages: '助手消息',
     sessionDetailsToolCalls: '工具调用',
     sessionDetailsTokenUsage: 'Token 用量',
+    sessionDetailsTokenUsageScopeNote:
+      '仅统计普通会话，不含上下文压缩、权限审批 Review 等其他模型请求。',
+    sessionDetailsTotalTokens: '总 Token',
     sessionDetailsInputTokens: '输入 Token',
     sessionDetailsOutputTokens: '输出 Token',
     sessionDetailsCacheRead: '缓存读取',
@@ -715,7 +718,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     sessionDetailsExecutionLocal: '本机',
     sessionDetailsExecutionSandbox: '沙盒',
     sessionDetailsAgent: 'Agent ID',
-    sessionDetailsSessionId: '会话 ID',
+    sessionDetailsSessionId: 'Session ID',
     sessionDetailsModels: '使用模型',
     sessionDetailsUnavailable: '暂无',
     deleteSession: '删除对话',
@@ -1975,6 +1978,9 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     sessionDetailsAssistantMessages: 'Assistant messages',
     sessionDetailsToolCalls: 'Tool calls',
     sessionDetailsTokenUsage: 'Token usage',
+    sessionDetailsTokenUsageScopeNote:
+      'Regular conversations only; excludes compaction, permission review, and other model requests.',
+    sessionDetailsTotalTokens: 'Total tokens',
     sessionDetailsInputTokens: 'Input tokens',
     sessionDetailsOutputTokens: 'Output tokens',
     sessionDetailsCacheRead: 'Cache read',

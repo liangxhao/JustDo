@@ -906,7 +906,9 @@ if (!gotTheLock) {
 
   registerSessionGroupHandlers(getGroupStore);
 
-  registerCoworkSubtaskHandlers(getOpenClawRuntimeAdapter);
+  registerCoworkSubtaskHandlers({
+    getRuntime: getOpenClawRuntimeAdapter,
+  });
 
   registerAgentHandlers({
     getStore: getCoworkStore,

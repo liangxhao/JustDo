@@ -78,7 +78,13 @@ export const bindCoworkRuntimeForwarder = (
       messageId: string,
       metadata: Partial<NonNullable<CoworkMessage['metadata']>>,
       extra?: {
-        usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
+        usage?: {
+          input?: number;
+          output?: number;
+          cacheRead?: number;
+          cacheWrite?: number;
+          total?: number;
+        };
       },
     ) => {
       broadcast('cowork:stream:messageMetadataUpdate', {

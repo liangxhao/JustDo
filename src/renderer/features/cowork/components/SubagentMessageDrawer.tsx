@@ -1,4 +1,5 @@
 import { DocumentDuplicateIcon, InformationCircleIcon } from '@heroicons/react/24/outline';
+import type { SessionDetailStats } from '@shared/cowork/sessionDetails';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import ChatMessageDisplay from '@/features/cowork/components/ChatMessageDisplay';
@@ -9,6 +10,7 @@ import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/common/Modal';
 
 import { reconcileSubagentLabel } from './subagentLabel';
+import SubagentTokenUsage from './SubagentTokenUsage';
 
 const DRAWER_DEFAULT_WIDTH = 672;
 const DRAWER_MIN_WIDTH = 360;
@@ -37,8 +39,12 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
   const [isEmpty, setIsEmpty] = useState(false);
   const [hasError, setHasError] = useState(false);
   const [isInfoOpen, setIsInfoOpen] = useState(false);
+  const [detailStats, setDetailStats] = useState<SessionDetailStats>();
+  const [isDetailStatsLoading, setIsDetailStatsLoading] = useState(false);
   const [drawerWidth, setDrawerWidth] = useState(DRAWER_DEFAULT_WIDTH);
   const drawerRef = useRef<HTMLElement>(null);
+  const detailStatsSessionKeyRef = useRef<string>();
+  const detailStatsRef = useRef<SessionDetailStats>();
   const subagentSessionKey = subagent?.sessionKey;
 
   useEffect(() => {
@@ -149,6 +155,61 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
   }, [parentSessionId, subagent]);
 
   useEffect(() => {
+    const sessionKey = displaySubagent?.sessionKey;
+    if (!sessionKey) {
+      detailStatsSessionKeyRef.current = undefined;
+      detailStatsRef.current = undefined;
+      setDetailStats(undefined);
+      setIsDetailStatsLoading(false);
+      return;
+    }
+    const isNewSession = detailStatsSessionKeyRef.current !== sessionKey;
+    if (isNewSession) {
+      detailStatsSessionKeyRef.current = sessionKey;
+      detailStatsRef.current = undefined;
+      setDetailStats(undefined);
+    }
+    if (!isInfoOpen) {
+      setIsDetailStatsLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    let refreshInFlight = false;
+    let retryTimer: number | undefined;
+    if (!detailStatsRef.current) setIsDetailStatsLoading(true);
+    const isActive = displaySubagent?.status === 'pending' || displaySubagent?.status === 'running';
+    const refreshDetails = async (attempt = 0): Promise<void> => {
+      if (refreshInFlight) return;
+      refreshInFlight = true;
+      let succeeded = false;
+      try {
+        const result = await window.electron.cowork.getSubTaskDetails(sessionKey);
+        if (!cancelled && result.success) {
+          succeeded = true;
+          detailStatsRef.current = result.stats;
+          setDetailStats(result.stats);
+        }
+      } catch {
+        // Preserve the last complete lifetime total until the next refresh.
+      } finally {
+        refreshInFlight = false;
+        if (!cancelled) setIsDetailStatsLoading(false);
+      }
+      if (!cancelled && !succeeded && !isActive && attempt < 2) {
+        retryTimer = window.setTimeout(() => void refreshDetails(attempt + 1), 1000);
+      }
+    };
+    void refreshDetails();
+    const timer = isActive ? window.setInterval(() => void refreshDetails(), 5000) : undefined;
+    return () => {
+      cancelled = true;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+      if (timer !== undefined) window.clearInterval(timer);
+    };
+  }, [displaySubagent?.sessionKey, displaySubagent?.status, isInfoOpen]);
+
+  useEffect(() => {
     const handleResize = () => {
       setDrawerWidth(width => clampDrawerWidth(width));
     };
@@ -211,14 +272,17 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
   };
 
   const subagentStatus = displaySubagent.status;
-  const detailRows: Array<[string, string | undefined, boolean?]> = [
+  const detailRows: Array<[string, React.ReactNode, boolean?]> = [
     [i18nService.t('subagentInfoStatus'), subagentStatus],
     [i18nService.t('subagentInfoTask'), displaySubagent.task],
     [i18nService.t('subagentInfoModel'), displaySubagent.model],
     [i18nService.t('subagentInfoRuntime'), formatRuntime(displaySubagent.runtimeMs)],
     [i18nService.t('subagentInfoStarted'), formatDateTime(displaySubagent.startedAt)],
     [i18nService.t('subagentInfoEnded'), formatDateTime(displaySubagent.endedAt)],
-    [i18nService.t('subagentInfoTokens'), displaySubagent.totalTokens?.toLocaleString()],
+    [
+      i18nService.t('subagentInfoTokens'),
+      <SubagentTokenUsage key="token-usage" stats={detailStats} isLoading={isDetailStatsLoading} />,
+    ],
     [i18nService.t('subagentInfoSession'), displaySubagent.sessionKey],
     [i18nService.t('subagentInfoSessionId'), displaySubagent.sessionId, true],
   ];
@@ -326,8 +390,12 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
                     <span className="min-w-0 break-all">{value}</span>
                     <DocumentDuplicateIcon className="mt-0.5 h-4 w-4 shrink-0" />
                   </button>
-                ) : (
+                ) : value == null ? (
+                  i18nService.t('subagentInfoUnavailable')
+                ) : typeof value === 'string' ? (
                   value || i18nService.t('subagentInfoUnavailable')
+                ) : (
+                  value
                 )}
               </dd>
             </div>

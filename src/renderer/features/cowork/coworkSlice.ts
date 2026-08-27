@@ -365,7 +365,13 @@ const coworkSlice = createSlice({
       action: PayloadAction<{
         sessionId: string;
         messageId: string;
-        usage: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
+        usage: {
+          input?: number;
+          output?: number;
+          cacheRead?: number;
+          cacheWrite?: number;
+          total?: number;
+        };
       }>,
     ) {
       const { sessionId, messageId, usage } = action.payload;

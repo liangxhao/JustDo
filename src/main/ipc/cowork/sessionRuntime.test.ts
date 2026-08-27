@@ -2,12 +2,129 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   createSingleFlightTtlLookup,
+  loadCoworkSessionDetails,
   queryGatewaySession,
   readAvailableUsage,
   readGatewaySessionId,
   readSessionGoal,
   readUsage,
 } from './sessionRuntime';
+
+describe('loadCoworkSessionDetails', () => {
+  const localSession = {
+    id: 'local-session-1',
+    title: 'Session',
+    status: 'completed' as const,
+    pinned: false,
+    cwd: 'E:\\workspace',
+    executionMode: 'local' as const,
+    permissionMode: 'full' as const,
+    activeSkillIds: [],
+    agentId: 'main',
+    messages: [
+      { id: 'local-user', type: 'user' as const, content: 'Local fallback', timestamp: 1 },
+    ],
+    createdAt: 1,
+    updatedAt: 2,
+  };
+
+  it('uses raw Gateway usage for statistics, tokens, models, and Session ID', async () => {
+    const getGatewaySessionUsage = vi.fn().mockResolvedValue({
+      input: 30,
+      output: 3,
+      cacheRead: 4,
+      cacheWrite: 0,
+      totalTokens: 41,
+      messageCounts: { total: 4, user: 2, assistant: 2, toolCalls: 1 },
+      modelUsage: [
+        { provider: 'openai', model: 'gpt-5', count: 1 },
+        { provider: 'anthropic', model: 'claude-sonnet-4', count: 1 },
+      ],
+    });
+    const result = await loadCoworkSessionDetails(
+      {
+        getCoworkStore: () =>
+          ({
+            getSession: () => localSession,
+            getSessionRuns: () => [],
+            getAgent: () => null,
+          }) as never,
+        getCoworkEngineRouter: () =>
+          ({
+            getSessionModel: vi.fn().mockResolvedValue({
+              ok: true,
+              modelRef: 'google/gemini-2.5-pro',
+              source: 'gateway',
+            }),
+          }) as never,
+        getRuntime: () => null,
+        getGatewaySessionUsage,
+        lookupGatewaySession: vi.fn().mockResolvedValue({
+          session: {
+            key: 'agent:main:justdo:local-session-1',
+            sessionId: 'gateway-session-1',
+            modelProvider: 'openai',
+            model: 'gpt-5',
+          },
+        }),
+      },
+      localSession.id,
+    );
+
+    expect(result).toMatchObject({
+      success: true,
+      gatewaySessionId: 'gateway-session-1',
+      stats: {
+        summary: 'Local fallback',
+        messageCount: 1,
+        userMessageCount: 1,
+        assistantMessageCount: 0,
+        toolCallCount: 0,
+        models: ['openai/gpt-5', 'anthropic/claude-sonnet-4'],
+        tokenUsage: { input: 30, output: 3, cacheRead: 4, cacheWrite: 0 },
+        totalTokens: 37,
+        hasTokenUsage: true,
+      },
+    });
+    expect(getGatewaySessionUsage).toHaveBeenCalledWith('agent:main:justdo:local-session-1');
+  });
+
+  it('falls back to complete local statistics when Gateway usage fails', async () => {
+    const result = await loadCoworkSessionDetails(
+      {
+        getCoworkStore: () =>
+          ({
+            getSession: () => localSession,
+            getSessionRuns: () => [],
+            getAgent: () => ({ model: 'fallback/model' }),
+          }) as never,
+        getCoworkEngineRouter: () =>
+          ({ getSessionModel: vi.fn().mockRejectedValue(new Error('offline')) }) as never,
+        getRuntime: () => null,
+        getGatewaySessionUsage: vi.fn().mockRejectedValue(new Error('offline')),
+        lookupGatewaySession: vi.fn().mockResolvedValue({
+          session: {
+            key: 'agent:main:justdo:local-session-1',
+            sessionId: 'gateway-session-1',
+          },
+        }),
+      },
+      localSession.id,
+    );
+
+    expect(result).toMatchObject({
+      success: true,
+      gatewaySessionId: 'gateway-session-1',
+      stats: {
+        summary: 'Local fallback',
+        messageCount: 1,
+        userMessageCount: 1,
+        models: ['fallback/model'],
+        totalTokens: 0,
+      },
+    });
+  });
+});
 
 describe('queryGatewaySession', () => {
   it('combines the exact session row with the active-run registry projection', async () => {
@@ -169,10 +286,8 @@ describe('readGatewaySessionId', () => {
     );
   });
 
-  it('falls back to id and rejects missing identifiers', () => {
-    expect(readGatewaySessionId({ sessionId: ' ', id: 'gateway-session-2' })).toBe(
-      'gateway-session-2',
-    );
+  it('does not mistake a generic row id for the Gateway Session ID', () => {
+    expect(readGatewaySessionId({ sessionId: ' ', id: 'gateway-session-2' })).toBeUndefined();
     expect(readGatewaySessionId({ sessionId: '  ' })).toBeUndefined();
   });
 });

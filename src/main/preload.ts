@@ -11,7 +11,9 @@ import {
   type BrowserStatusResult,
 } from '../shared/browser';
 import type { CoworkAttachmentPayload } from '../shared/cowork/attachments';
+import { CoworkSessionDetailsIpc } from '../shared/cowork/sessionDetails';
 import { type GenerateSessionTitleRequest, SessionTitleIpc } from '../shared/cowork/sessionTitle';
+import { CoworkSubagentDetailsIpc } from '../shared/cowork/subagentDetails';
 import { DeveloperConfigIpc } from '../shared/developerConfig';
 import { DialogIpc, type SaveTextFileOptions } from '../shared/dialogIpc';
 import {
@@ -324,6 +326,8 @@ contextBridge.exposeInMainWorld('electron', {
       permissionMode: 'ask' | 'auto' | 'full';
     }) => ipcRenderer.invoke('cowork:session:setPermissionMode', options),
     getSession: (sessionId: string) => ipcRenderer.invoke('cowork:session:get', sessionId),
+    getSessionDetails: (sessionId: string) =>
+      ipcRenderer.invoke(CoworkSessionDetailsIpc.Get, sessionId),
     getGatewaySessionId: (sessionId: string) =>
       ipcRenderer.invoke('cowork:session:gatewaySessionId', sessionId),
     remoteManaged: (sessionId: string) =>
@@ -493,6 +497,8 @@ contextBridge.exposeInMainWorld('electron', {
     },
     getSubTaskStatus: (sessionId?: string) =>
       ipcRenderer.invoke('cowork:subTask:status', sessionId),
+    getSubTaskDetails: (sessionKey: string) =>
+      ipcRenderer.invoke(CoworkSubagentDetailsIpc.Get, sessionKey),
     getSubTaskSession: (sessionKey: string) =>
       ipcRenderer.invoke('cowork:subTask:session', sessionKey),
   },

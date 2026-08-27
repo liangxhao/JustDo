@@ -1,21 +1,32 @@
 import { ipcMain } from 'electron';
 
 import {
+  buildLocalSessionDetailStats,
+  CoworkSessionDetailsIpc,
+  type CoworkSessionDetailsResult,
+} from '../../../shared/cowork/sessionDetails';
+import {
   GoalExecutionIpc,
   normalizeSessionGoal,
   type SessionGoal,
 } from '../../../shared/sessionGoal';
-import type { CoworkStore } from '../../data/coworkStore';
+import type { CoworkSession, CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter, OpenClawRuntimeAdapter } from '../../engine';
 import {
   buildManagedSessionKey,
   DEFAULT_MANAGED_AGENT_ID,
 } from '../../openclaw/sessions/openclawChannelSessionSync';
+import {
+  buildGatewaySessionDetailStats,
+  type GatewaySessionUsageLoader,
+  requestGatewaySessionUsage,
+} from '../../openclaw/sessions/openclawSessionDetails';
 
 interface Dependencies {
   getCoworkStore: () => CoworkStore;
   getCoworkEngineRouter: () => CoworkEngineRouter;
   getRuntime: () => OpenClawRuntimeAdapter | null;
+  getGatewaySessionUsage?: GatewaySessionUsageLoader;
 }
 
 const SESSION_LOOKUP_CACHE_TTL_MS = 750;
@@ -95,16 +106,15 @@ export const readAvailableUsage = (session: Record<string, unknown>) => {
 };
 
 export const readGatewaySessionId = (session: Record<string, unknown>): string | undefined => {
-  for (const value of [session.sessionId, session.id]) {
-    if (typeof value === 'string' && value.trim()) {
-      return value.trim();
-    }
-  }
-  return undefined;
+  return nonEmptyString(session.sessionId);
 };
 
 type GatewaySession = { key: string } & Record<string, unknown>;
 type GatewaySessionResult = { session?: GatewaySession; error?: string };
+
+type SessionDetailsDependencies = Dependencies & {
+  lookupGatewaySession?: (sessionId: string) => Promise<GatewaySessionResult>;
+};
 
 const resolveGatewaySessionWithActiveRunState = async (
   client: NonNullable<ReturnType<OpenClawRuntimeAdapter['getGatewayClient']>>,
@@ -196,16 +206,111 @@ export const createSingleFlightTtlLookup = <T>(
   };
 };
 
+const addModel = (models: Set<string>, value: unknown): void => {
+  const model = nonEmptyString(value);
+  if (model) models.add(model);
+};
+
+const readGatewayModelRef = (session: GatewaySession | undefined): string | undefined => {
+  if (!session) return undefined;
+  const provider = nonEmptyString(session.modelProvider);
+  const model = nonEmptyString(session.model);
+  return model ? (provider ? `${provider}/${model}` : model) : undefined;
+};
+
+export const loadCoworkSessionDetails = async (
+  dependencies: SessionDetailsDependencies,
+  sessionId: string,
+): Promise<CoworkSessionDetailsResult<CoworkSession>> => {
+  const store = dependencies.getCoworkStore();
+  const session = store.getSession(sessionId);
+  if (!session) return { success: false, error: 'Session not found' };
+
+  const localStats = buildLocalSessionDetailStats(session);
+  const lookupGatewaySession =
+    dependencies.lookupGatewaySession ?? ((id: string) => queryGatewaySession(dependencies, id));
+  const [gatewayResult, modelResult] = await Promise.all([
+    lookupGatewaySession(sessionId).catch((error): GatewaySessionResult => ({
+      error: error instanceof Error ? error.message : 'Failed to resolve Gateway session',
+    })),
+    dependencies
+      .getCoworkEngineRouter()
+      .getSessionModel(sessionId, session.agentId)
+      .catch((): null => null),
+  ]);
+
+  let stats = localStats;
+  const gatewaySessionId = readGatewaySessionId(gatewayResult.session);
+  if (gatewayResult.session) {
+    try {
+      const usageLoader =
+        dependencies.getGatewaySessionUsage ??
+        (async (sessionKey: string) => {
+          const client = dependencies.getRuntime()?.getGatewayClient();
+          if (!client) throw new Error('Gateway client not connected');
+          return requestGatewaySessionUsage(client, sessionKey);
+        });
+      const gatewayStats = buildGatewaySessionDetailStats(
+        await usageLoader(gatewayResult.session.key),
+        localStats.summary,
+        localStats,
+      );
+      if (gatewayStats) stats = gatewayStats;
+    } catch {
+      // Preserve the complete SQLite fallback if raw transcript usage is unavailable.
+    }
+  }
+
+  if (stats.models.length === 0) {
+    const models = new Set<string>();
+    for (const model of localStats.models) addModel(models, model);
+    for (const run of store.getSessionRuns(sessionId)) addModel(models, run.modelRef);
+    addModel(models, readGatewayModelRef(gatewayResult.session));
+    addModel(models, modelResult && 'modelRef' in modelResult ? modelResult.modelRef : undefined);
+    addModel(models, session.modelRef);
+    if (models.size === 0) addModel(models, store.getAgent(session.agentId)?.model);
+    stats = { ...stats, models: [...models] };
+  }
+
+  return {
+    success: true,
+    session,
+    stats,
+    ...(gatewaySessionId ? { gatewaySessionId } : {}),
+  };
+};
+
 export const registerCoworkSessionRuntimeHandlers = ({
   getCoworkStore,
   getCoworkEngineRouter,
   getRuntime,
+  getGatewaySessionUsage,
 }: Dependencies): void => {
   const sessionDependencies = { getCoworkStore, getRuntime };
   const findGatewaySession = createSingleFlightTtlLookup(
     sessionId => queryGatewaySession(sessionDependencies, sessionId),
     SESSION_LOOKUP_CACHE_TTL_MS,
   );
+
+  ipcMain.handle(CoworkSessionDetailsIpc.Get, async (_event, sessionId: string) => {
+    try {
+      return await loadCoworkSessionDetails(
+        {
+          getCoworkStore,
+          getCoworkEngineRouter,
+          getRuntime,
+          getGatewaySessionUsage,
+          lookupGatewaySession: findGatewaySession,
+        },
+        sessionId,
+      );
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to get session details',
+      };
+    }
+  });
 
   ipcMain.handle('cowork:session:gatewaySessionId', async (_event, sessionId: string) => {
     try {

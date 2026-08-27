@@ -1,3 +1,4 @@
+import type { SessionDetailStats } from '@shared/cowork/sessionDetails';
 import type {
   BeginSessionRunInput,
   SessionRuntimeSnapshot,
@@ -885,17 +886,24 @@ export class CoworkService {
     return false;
   }
 
-  async getSessionDetails(
-    sessionId: string,
-  ): Promise<{ session: CoworkSession | null; error?: string }> {
+  async getSessionDetails(sessionId: string): Promise<{
+    session: CoworkSession | null;
+    stats?: SessionDetailStats;
+    gatewaySessionId?: string;
+    error?: string;
+  }> {
     const cowork = window.electron?.cowork;
-    if (!cowork?.getSession) {
+    if (!cowork?.getSessionDetails) {
       return { session: null, error: 'Cowork API not available' };
     }
 
-    const result = await cowork.getSession(sessionId);
-    if (result.success && result.session) {
-      return { session: result.session };
+    const result = await cowork.getSessionDetails(sessionId);
+    if (result.success) {
+      return {
+        session: result.session,
+        stats: result.stats,
+        ...(result.gatewaySessionId ? { gatewaySessionId: result.gatewaySessionId } : {}),
+      };
     }
     return { session: null, error: result.error };
   }
