@@ -669,15 +669,23 @@ module.exports = { applyPatch, verifyPatch };
     fs.rmSync(path.join(runtimeRoot, 'gateway.asar'));
 
     const tar = require('tar') as {
-      create: (options: { cwd: string; file: string; sync: boolean }, paths: string[]) => void;
+      create: (
+        options: { cwd: string; file: string; gzip?: boolean; sync: boolean },
+        paths: string[],
+      ) => void;
     };
     tar.create(
       {
         cwd: archiveRoot,
-        file: path.join(resourcesRoot, 'win-resources.tar'),
+        file: path.join(resourcesRoot, 'win-resources.tar.gz'),
+        gzip: true,
         sync: true,
       },
       ['cfmind'],
+    );
+    fs.writeFileSync(
+      path.join(resourcesRoot, 'win-resources-metadata.json'),
+      '{"schemaVersion":1,"totalEntries":1}\n',
     );
 
     expect(() =>

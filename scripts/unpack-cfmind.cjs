@@ -9,16 +9,16 @@
  * 用法: JustDo.exe <本脚本路径> <tarPath> <destDir>
  *
  * 效果:
- *   输入: $INSTDIR/resources/win-resources.tar
+ *   输入: $INSTDIR/resources/win-resources.tar.gz
  *   输出: $INSTDIR/resources/cfmind/, python-win/, mingit/
- *   tar 文件由 NSIS 脚本在解压后删除
+ *   tar.gz 和进度 metadata 文件由 NSIS 脚本在解压后删除
  *
- * 依赖: 从 app.asar 内加载 tar npm 包 (Electron 内置 ASAR 透明读取支持)
+ * Windows 优先调用系统 tar.exe；缺失时从 app.asar 加载 tar npm 包回退。
  */
 
 const fs = require('fs');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 
 // ============================================================
 // 参数解析
@@ -27,11 +27,136 @@ const { spawnSync } = require('child_process');
 const tarPath = process.argv[2];
 const destDir = process.argv[3];
 const userDataDir = process.argv[4];
+const metadataPath = process.argv[5];
+const progressPath = process.argv[6];
+let progressWriteWarningShown = false;
+let lastProgressPercent = 0;
+
 function activity(text) {
   // nsExec reads redirected output using the active Windows code page while
   // Node writes UTF-8. Keep this stream ASCII-only to prevent mojibake. The
   // surrounding NSIS milestones remain fully localized Unicode strings.
   console.log(text);
+}
+
+function reportProgress(percent, text) {
+  if (!progressPath) return;
+
+  const normalizedPercent = Math.max(0, Math.min(100, Math.round(percent)));
+  lastProgressPercent = normalizedPercent;
+  const temporaryPath = `${progressPath}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(temporaryPath, `${normalizedPercent}\n${text}`, 'utf8');
+    fs.renameSync(temporaryPath, progressPath);
+  } catch (error) {
+    if (!progressWriteWarningShown) {
+      console.error(`[unpack-cfmind] Warning: unable to report progress: ${error.message}`);
+      progressWriteWarningShown = true;
+    }
+  }
+}
+
+function readArchiveMetadata() {
+  if (!metadataPath || !fs.existsSync(metadataPath)) return null;
+
+  try {
+    const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+    if (metadata.schemaVersion !== 1 || !Number.isInteger(metadata.totalEntries)) return null;
+    if (metadata.totalEntries <= 0) return null;
+    return metadata;
+  } catch (error) {
+    console.error(`[unpack-cfmind] Warning: unable to read archive metadata: ${error.message}`);
+    return null;
+  }
+}
+
+function createEntryProgressReporter(totalEntries) {
+  let extractedEntries = 0;
+  let lastReportedPercent = -1;
+
+  const onEntry = () => {
+    extractedEntries += 1;
+    const extractionPercent = totalEntries
+      ? Math.min(86, 12 + Math.floor((extractedEntries / totalEntries) * 74))
+      : Math.min(86, 12 + Math.floor(extractedEntries / 300));
+
+    if (extractionPercent !== lastReportedPercent || extractedEntries % 500 === 0) {
+      const totalSuffix = totalEntries ? ` of ${totalEntries.toLocaleString('en-US')}` : '';
+      reportProgress(
+        extractionPercent,
+        `Prepared ${extractedEntries.toLocaleString('en-US')}${totalSuffix} resource entries`,
+      );
+      lastReportedPercent = extractionPercent;
+    }
+    if (extractedEntries % 1000 === 0) {
+      activity(`Prepared ${extractedEntries.toLocaleString('en-US')} resource entries`);
+    }
+  };
+
+  return {
+    complete() {
+      if (totalEntries) extractedEntries = totalEntries;
+      reportProgress(86, `${extractedEntries.toLocaleString('en-US')} resource entries expanded`);
+    },
+    get count() {
+      return extractedEntries;
+    },
+    onEntry,
+  };
+}
+
+async function extractArchive(entryProgress) {
+  const windowsRoot = process.env.SystemRoot || process.env.WINDIR;
+  const nativeTarPath = windowsRoot ? path.join(windowsRoot, 'System32', 'tar.exe') : '';
+
+  if (process.platform === 'win32' && nativeTarPath && fs.existsSync(nativeTarPath)) {
+    activity('Using Windows native resource extraction...');
+    await new Promise((resolve, reject) => {
+      const archiveFlag = tarPath.toLowerCase().endsWith('.gz') ? '-xzf' : '-xf';
+      const child = spawn(nativeTarPath, [archiveFlag, tarPath, '-C', destDir], {
+        windowsHide: true,
+        stdio: ['ignore', 'ignore', 'pipe'],
+      });
+      let stderr = '';
+      const startedAt = Date.now();
+      const heartbeat = setInterval(() => {
+        const elapsedSeconds = Math.max(1, Math.floor((Date.now() - startedAt) / 1000));
+        reportProgress(50, `Expanding core resources - ${elapsedSeconds}s elapsed`);
+      }, 1000);
+      child.stderr.setEncoding('utf8');
+      child.stderr.on('data', chunk => {
+        if (stderr.length < 16_384) stderr += chunk;
+      });
+      child.once('error', error => {
+        clearInterval(heartbeat);
+        reject(error);
+      });
+      child.once('close', code => {
+        clearInterval(heartbeat);
+        if (code === 0) {
+          entryProgress.complete();
+          resolve();
+        } else {
+          const detail = stderr.trim();
+          reject(
+            new Error(
+              `Windows tar extraction failed with exit code ${code}${detail ? `: ${detail}` : ''}`,
+            ),
+          );
+        }
+      });
+    });
+    return;
+  }
+
+  activity('Windows native tar is unavailable; using the compatible extractor...');
+  const tar = loadTarModule();
+  await tar.extract({
+    file: tarPath,
+    cwd: destDir,
+    onentry: entryProgress.onEntry,
+  });
+  entryProgress.complete();
 }
 
 if (!tarPath || !destDir) {
@@ -89,270 +214,283 @@ function loadTarModule() {
 // 执行解压
 // ============================================================
 
-try {
-  activity('Reading resource package...');
-
-  const tar = loadTarModule();
-  const t0 = Date.now();
-  let extractedEntries = 0;
-
-  // Ensure destination directory exists
-  fs.mkdirSync(destDir, { recursive: true });
-
-  // Upgrades used to bundle PortableGit in this directory. Keep a same-volume
-  // backup until the replacements have been extracted and validated so a failed
-  // installation can restore the last working runtimes. Replace all three
-  // managed runtime trees so removed files cannot survive an upgrade.
-  const cfmindDir = path.join(destDir, 'cfmind');
-  const cfmindBackupDir = path.join(destDir, '.cfmind-upgrade-backup');
-  const minGitDir = path.join(destDir, 'mingit');
-  const minGitBackupDir = path.join(destDir, '.mingit-upgrade-backup');
-  const pythonDir = path.join(destDir, 'python-win');
-  const pythonBackupDir = path.join(destDir, '.python-win-upgrade-backup');
-  const managedRuntimes = [
-    {
-      name: 'OpenClaw',
-      dir: cfmindDir,
-      backupDir: cfmindBackupDir,
-    },
-    {
-      name: 'Git',
-      dir: minGitDir,
-      backupDir: minGitBackupDir,
-    },
-    {
-      name: 'Python',
-      dir: pythonDir,
-      backupDir: pythonBackupDir,
-    },
-  ];
-  const transactionStatePath = path.join(destDir, '.runtime-upgrade-in-progress.json');
-  const transactionStateTempPath = `${transactionStatePath}.tmp`;
-
-  if (fs.existsSync(transactionStatePath)) {
-    let interruptedOriginals;
-    try {
-      const interruptedState = JSON.parse(fs.readFileSync(transactionStatePath, 'utf8'));
-      if (!Array.isArray(interruptedState.hadOriginal)) throw new Error('missing hadOriginal');
-      interruptedOriginals = new Set(interruptedState.hadOriginal);
-    } catch {
-      // A marker is removed before a transaction is committed. If the marker
-      // itself was torn by a crash, conservatively restore every available
-      // healthy backup and retain unmatched current directories.
-      interruptedOriginals = new Set(managedRuntimes.map(runtime => runtime.name));
-    }
-    activity('Recovering runtimes from an interrupted installation...');
-    for (const runtime of [...managedRuntimes].reverse()) {
-      if (fs.existsSync(runtime.backupDir)) {
-        fs.rmSync(runtime.dir, { recursive: true, force: true });
-        fs.renameSync(runtime.backupDir, runtime.dir);
-      } else if (!interruptedOriginals.has(runtime.name)) {
-        fs.rmSync(runtime.dir, { recursive: true, force: true });
-      }
-    }
-    fs.rmSync(transactionStatePath, { force: true });
-  }
-  fs.rmSync(transactionStateTempPath, { force: true });
-
-  // Without an active transaction marker, a remaining backup belongs to a
-  // committed install whose best-effort backup cleanup was interrupted.
-  for (const runtime of managedRuntimes) {
-    if (!fs.existsSync(runtime.backupDir)) continue;
-    if (!fs.existsSync(runtime.dir)) {
-      activity(`Recovering the previous ${runtime.name} runtime backup...`);
-      fs.renameSync(runtime.backupDir, runtime.dir);
-      continue;
-    }
-    fs.rmSync(runtime.backupDir, { recursive: true, force: true });
-    if (fs.existsSync(runtime.backupDir)) {
-      throw new Error(`Unable to remove stale ${runtime.name} runtime backup.`);
-    }
-  }
-
-  const hadOriginal = new Set();
-  const backedUp = new Set();
-  for (const runtime of managedRuntimes) {
-    if (fs.existsSync(runtime.dir)) hadOriginal.add(runtime);
-  }
-  fs.writeFileSync(
-    transactionStateTempPath,
-    `${JSON.stringify({ hadOriginal: [...hadOriginal].map(runtime => runtime.name) })}\n`,
-    'utf8',
-  );
-  fs.renameSync(transactionStateTempPath, transactionStatePath);
-
+async function main() {
   try {
-    for (const runtime of managedRuntimes) {
-      if (!hadOriginal.has(runtime)) continue;
-      activity(`Backing up the previous ${runtime.name} runtime...`);
-      fs.renameSync(runtime.dir, runtime.backupDir);
-      backedUp.add(runtime);
-    }
+    activity('Reading resource package...');
+    reportProgress(2, 'Reading resource package');
 
-    // Extract tar using npm tar package (handles long paths, symlinks, etc.)
-    tar.extract({
-      file: tarPath,
-      cwd: destDir,
-      sync: true,
-      onentry: () => {
-        extractedEntries += 1;
-        if (extractedEntries % 750 === 0) {
-          activity(`Prepared ${extractedEntries.toLocaleString('en-US')} resource entries`);
-        }
+    const archiveMetadata = readArchiveMetadata();
+    const t0 = Date.now();
+    const entryProgress = createEntryProgressReporter(archiveMetadata?.totalEntries);
+
+    // Ensure destination directory exists
+    fs.mkdirSync(destDir, { recursive: true });
+
+    // Upgrades used to bundle PortableGit in this directory. Keep a same-volume
+    // backup until the replacements have been extracted and validated so a failed
+    // installation can restore the last working runtimes. Replace all three
+    // managed runtime trees so removed files cannot survive an upgrade.
+    const cfmindDir = path.join(destDir, 'cfmind');
+    const cfmindBackupDir = path.join(destDir, '.cfmind-upgrade-backup');
+    const minGitDir = path.join(destDir, 'mingit');
+    const minGitBackupDir = path.join(destDir, '.mingit-upgrade-backup');
+    const pythonDir = path.join(destDir, 'python-win');
+    const pythonBackupDir = path.join(destDir, '.python-win-upgrade-backup');
+    const managedRuntimes = [
+      {
+        name: 'OpenClaw',
+        dir: cfmindDir,
+        backupDir: cfmindBackupDir,
       },
-    });
-
-    const gitCandidates = [
-      path.join(minGitDir, 'cmd', 'git.exe'),
-      path.join(minGitDir, 'bin', 'git.exe'),
+      {
+        name: 'Git',
+        dir: minGitDir,
+        backupDir: minGitBackupDir,
+      },
+      {
+        name: 'Python',
+        dir: pythonDir,
+        backupDir: pythonBackupDir,
+      },
     ];
-    const installedGit = gitCandidates.find(candidate => {
-      try {
-        return fs.statSync(candidate).isFile() && fs.statSync(candidate).size > 0;
-      } catch {
-        return false;
-      }
-    });
-    if (!installedGit) {
-      throw new Error(`MinGit extraction is missing a non-empty git.exe in: ${minGitDir}`);
-    }
+    const transactionStatePath = path.join(destDir, '.runtime-upgrade-in-progress.json');
+    const transactionStateTempPath = `${transactionStatePath}.tmp`;
 
-    const requiredPythonFiles = [
-      'python.exe',
-      'python3.exe',
-      path.join('Lib', 'site-packages', 'sitecustomize.py'),
-    ];
-    for (const relativePath of requiredPythonFiles) {
-      const candidate = path.join(pythonDir, relativePath);
-      if (
-        !fs.existsSync(candidate) ||
-        !fs.statSync(candidate).isFile() ||
-        fs.statSync(candidate).size === 0
-      ) {
-        throw new Error(`Python extraction is missing required file: ${candidate}`);
-      }
-    }
-    const pthFile = fs.readdirSync(pythonDir).find(name => name.endsWith('._pth'));
-    if (!pthFile) {
-      throw new Error(`Python extraction is missing its embedded _pth file: ${pythonDir}`);
-    }
-    const pthContent = fs.readFileSync(path.join(pythonDir, pthFile), 'utf8').toLowerCase();
-    for (const requiredEntry of [
-      'lib\\site-packages',
-      'lib\\bundled-site-packages',
-      'import site',
-    ]) {
-      if (!pthContent.includes(requiredEntry)) {
-        throw new Error(`Python embedded path configuration is missing: ${requiredEntry}`);
-      }
-    }
-    const pipModulePath = path.join(pythonDir, 'Lib', 'site-packages', 'pip', '__main__.py');
-    const pipExecutableCandidates = [
-      path.join(pythonDir, 'Scripts', 'pip.exe'),
-      path.join(pythonDir, 'Scripts', 'pip3.exe'),
-      path.join(pythonDir, 'Scripts', 'pip.cmd'),
-      path.join(pythonDir, 'Scripts', 'pip3.cmd'),
-      path.join(pythonDir, 'Scripts', 'pip'),
-      path.join(pythonDir, 'Scripts', 'pip3'),
-    ];
-    if (!fs.existsSync(pipModulePath) || !pipExecutableCandidates.some(fs.existsSync)) {
-      throw new Error(`Python extraction is missing pip support: ${pythonDir}`);
-    }
-    for (const importName of ['requests', 'yaml', 'openpyxl', 'pypdf', 'bs4']) {
-      const importEntry = path.join(
-        pythonDir,
-        'Lib',
-        'bundled-site-packages',
-        importName,
-        '__init__.py',
-      );
-      if (!fs.existsSync(importEntry) || fs.statSync(importEntry).size === 0) {
-        throw new Error(`Python extraction is missing bundled package: ${importName}`);
-      }
-    }
-    if (process.env.JUSTDO_INSTALLER_PYTHON_IMPORT_CHECK === '1') {
-      const importCheck = spawnSync(
-        path.join(pythonDir, 'python.exe'),
-        ['-c', 'import pip, requests, yaml, openpyxl, pypdf, bs4'],
-        {
-          encoding: 'utf8',
-          stdio: 'pipe',
-          timeout: 60_000,
-        },
-      );
-      if (importCheck.status !== 0) {
-        const detail = (importCheck.stderr || importCheck.stdout || '').trim();
-        throw new Error(`Python import validation failed${detail ? `: ${detail}` : ''}`);
-      }
-    }
-
-    const runtimePackagePath = path.join(cfmindDir, 'package.json');
-    if (!fs.existsSync(runtimePackagePath) || fs.statSync(runtimePackagePath).size === 0) {
-      throw new Error(
-        `OpenClaw extraction is missing a non-empty package.json: ${runtimePackagePath}`,
-      );
-    }
-
-    migrateLegacyPythonRuntime();
-    fs.rmSync(transactionStatePath, { force: true });
     if (fs.existsSync(transactionStatePath)) {
-      throw new Error(`Unable to commit runtime upgrade transaction: ${transactionStatePath}`);
-    }
-  } catch (error) {
-    const rollbackErrors = [];
-    for (const runtime of [...managedRuntimes].reverse()) {
+      let interruptedOriginals;
       try {
-        if (backedUp.has(runtime) || !hadOriginal.has(runtime)) {
+        const interruptedState = JSON.parse(fs.readFileSync(transactionStatePath, 'utf8'));
+        if (!Array.isArray(interruptedState.hadOriginal)) throw new Error('missing hadOriginal');
+        interruptedOriginals = new Set(interruptedState.hadOriginal);
+      } catch {
+        // A marker is removed before a transaction is committed. If the marker
+        // itself was torn by a crash, conservatively restore every available
+        // healthy backup and retain unmatched current directories.
+        interruptedOriginals = new Set(managedRuntimes.map(runtime => runtime.name));
+      }
+      activity('Recovering runtimes from an interrupted installation...');
+      reportProgress(4, 'Recovering an interrupted installation');
+      for (const runtime of [...managedRuntimes].reverse()) {
+        if (fs.existsSync(runtime.backupDir)) {
+          fs.rmSync(runtime.dir, { recursive: true, force: true });
+          fs.renameSync(runtime.backupDir, runtime.dir);
+        } else if (!interruptedOriginals.has(runtime.name)) {
           fs.rmSync(runtime.dir, { recursive: true, force: true });
         }
-        if (backedUp.has(runtime) && fs.existsSync(runtime.backupDir)) {
-          fs.renameSync(runtime.backupDir, runtime.dir);
-          activity(`Restored the previous ${runtime.name} runtime after extraction failed.`);
-        }
-      } catch (rollbackError) {
-        rollbackErrors.push(`${runtime.name}: ${rollbackError.message}`);
       }
+      fs.rmSync(transactionStatePath, { force: true });
     }
-    if (rollbackErrors.length > 0) {
-      error.message += `; rollback errors: ${rollbackErrors.join('; ')}`;
-    } else {
-      try {
-        fs.rmSync(transactionStatePath, { force: true });
-        fs.rmSync(transactionStateTempPath, { force: true });
-      } catch (rollbackError) {
-        error.message += `; rollback marker cleanup: ${rollbackError.message}`;
-      }
-    }
-    throw error;
-  }
+    fs.rmSync(transactionStateTempPath, { force: true });
 
-  // Validation and migration have committed the new runtimes. Backup cleanup
-  // is best-effort: a cleanup failure must never roll back verified runtimes.
-  for (const runtime of managedRuntimes) {
-    try {
+    // Without an active transaction marker, a remaining backup belongs to a
+    // committed install whose best-effort backup cleanup was interrupted.
+    for (const runtime of managedRuntimes) {
+      if (!fs.existsSync(runtime.backupDir)) continue;
+      if (!fs.existsSync(runtime.dir)) {
+        activity(`Recovering the previous ${runtime.name} runtime backup...`);
+        fs.renameSync(runtime.backupDir, runtime.dir);
+        continue;
+      }
       fs.rmSync(runtime.backupDir, { recursive: true, force: true });
+      if (fs.existsSync(runtime.backupDir)) {
+        throw new Error(`Unable to remove stale ${runtime.name} runtime backup.`);
+      }
+    }
+    reportProgress(6, 'Previous runtime state checked');
+
+    const hadOriginal = new Set();
+    const backedUp = new Set();
+    for (const runtime of managedRuntimes) {
+      if (fs.existsSync(runtime.dir)) hadOriginal.add(runtime);
+    }
+    fs.writeFileSync(
+      transactionStateTempPath,
+      `${JSON.stringify({ hadOriginal: [...hadOriginal].map(runtime => runtime.name) })}\n`,
+      'utf8',
+    );
+    fs.renameSync(transactionStateTempPath, transactionStatePath);
+    reportProgress(8, 'Runtime upgrade transaction started');
+
+    try {
+      for (const runtime of managedRuntimes) {
+        if (!hadOriginal.has(runtime)) continue;
+        activity(`Backing up the previous ${runtime.name} runtime...`);
+        reportProgress(10, `Backing up the previous ${runtime.name} runtime`);
+        fs.renameSync(runtime.dir, runtime.backupDir);
+        backedUp.add(runtime);
+      }
+
+      // Windows ships a native bsdtar implementation that is substantially
+      // faster at creating thousands of files on NTFS. A lightweight heartbeat
+      // keeps the marquee active without slowing extraction with verbose output;
+      // npm tar remains the compatibility fallback with entry-based progress.
+      reportProgress(12, 'Expanding core resources');
+      await extractArchive(entryProgress);
+      reportProgress(88, 'Core resources expanded; validating runtimes');
+
+      const gitCandidates = [
+        path.join(minGitDir, 'cmd', 'git.exe'),
+        path.join(minGitDir, 'bin', 'git.exe'),
+      ];
+      const installedGit = gitCandidates.find(candidate => {
+        try {
+          return fs.statSync(candidate).isFile() && fs.statSync(candidate).size > 0;
+        } catch {
+          return false;
+        }
+      });
+      if (!installedGit) {
+        throw new Error(`MinGit extraction is missing a non-empty git.exe in: ${minGitDir}`);
+      }
+
+      const requiredPythonFiles = [
+        'python.exe',
+        'python3.exe',
+        path.join('Lib', 'site-packages', 'sitecustomize.py'),
+      ];
+      for (const relativePath of requiredPythonFiles) {
+        const candidate = path.join(pythonDir, relativePath);
+        if (
+          !fs.existsSync(candidate) ||
+          !fs.statSync(candidate).isFile() ||
+          fs.statSync(candidate).size === 0
+        ) {
+          throw new Error(`Python extraction is missing required file: ${candidate}`);
+        }
+      }
+      reportProgress(91, 'Git and Python runtime files verified');
+      const pthFile = fs.readdirSync(pythonDir).find(name => name.endsWith('._pth'));
+      if (!pthFile) {
+        throw new Error(`Python extraction is missing its embedded _pth file: ${pythonDir}`);
+      }
+      const pthContent = fs.readFileSync(path.join(pythonDir, pthFile), 'utf8').toLowerCase();
+      for (const requiredEntry of [
+        'lib\\site-packages',
+        'lib\\bundled-site-packages',
+        'import site',
+      ]) {
+        if (!pthContent.includes(requiredEntry)) {
+          throw new Error(`Python embedded path configuration is missing: ${requiredEntry}`);
+        }
+      }
+      const pipModulePath = path.join(pythonDir, 'Lib', 'site-packages', 'pip', '__main__.py');
+      const pipExecutableCandidates = [
+        path.join(pythonDir, 'Scripts', 'pip.exe'),
+        path.join(pythonDir, 'Scripts', 'pip3.exe'),
+        path.join(pythonDir, 'Scripts', 'pip.cmd'),
+        path.join(pythonDir, 'Scripts', 'pip3.cmd'),
+        path.join(pythonDir, 'Scripts', 'pip'),
+        path.join(pythonDir, 'Scripts', 'pip3'),
+      ];
+      if (!fs.existsSync(pipModulePath) || !pipExecutableCandidates.some(fs.existsSync)) {
+        throw new Error(`Python extraction is missing pip support: ${pythonDir}`);
+      }
+      for (const importName of ['requests', 'yaml', 'openpyxl', 'pypdf', 'bs4']) {
+        const importEntry = path.join(
+          pythonDir,
+          'Lib',
+          'bundled-site-packages',
+          importName,
+          '__init__.py',
+        );
+        if (!fs.existsSync(importEntry) || fs.statSync(importEntry).size === 0) {
+          throw new Error(`Python extraction is missing bundled package: ${importName}`);
+        }
+      }
+      if (process.env.JUSTDO_INSTALLER_PYTHON_IMPORT_CHECK === '1') {
+        const importCheck = spawnSync(
+          path.join(pythonDir, 'python.exe'),
+          ['-c', 'import pip, requests, yaml, openpyxl, pypdf, bs4'],
+          {
+            encoding: 'utf8',
+            stdio: 'pipe',
+            timeout: 60_000,
+          },
+        );
+        if (importCheck.status !== 0) {
+          const detail = (importCheck.stderr || importCheck.stdout || '').trim();
+          throw new Error(`Python import validation failed${detail ? `: ${detail}` : ''}`);
+        }
+      }
+      reportProgress(95, 'Python packages verified');
+
+      const runtimePackagePath = path.join(cfmindDir, 'package.json');
+      if (!fs.existsSync(runtimePackagePath) || fs.statSync(runtimePackagePath).size === 0) {
+        throw new Error(
+          `OpenClaw extraction is missing a non-empty package.json: ${runtimePackagePath}`,
+        );
+      }
+
+      migrateLegacyPythonRuntime();
+      reportProgress(97, 'OpenClaw runtime verified');
+      fs.rmSync(transactionStatePath, { force: true });
+      if (fs.existsSync(transactionStatePath)) {
+        throw new Error(`Unable to commit runtime upgrade transaction: ${transactionStatePath}`);
+      }
     } catch (error) {
-      console.error(
-        `[unpack-cfmind] Warning: unable to remove ${runtime.name} runtime backup: ${error.message}`,
-      );
+      const rollbackErrors = [];
+      for (const runtime of [...managedRuntimes].reverse()) {
+        try {
+          if (backedUp.has(runtime) || !hadOriginal.has(runtime)) {
+            fs.rmSync(runtime.dir, { recursive: true, force: true });
+          }
+          if (backedUp.has(runtime) && fs.existsSync(runtime.backupDir)) {
+            fs.renameSync(runtime.backupDir, runtime.dir);
+            activity(`Restored the previous ${runtime.name} runtime after extraction failed.`);
+          }
+        } catch (rollbackError) {
+          rollbackErrors.push(`${runtime.name}: ${rollbackError.message}`);
+        }
+      }
+      if (rollbackErrors.length > 0) {
+        error.message += `; rollback errors: ${rollbackErrors.join('; ')}`;
+      } else {
+        try {
+          fs.rmSync(transactionStatePath, { force: true });
+          fs.rmSync(transactionStateTempPath, { force: true });
+        } catch (rollbackError) {
+          error.message += `; rollback marker cleanup: ${rollbackError.message}`;
+        }
+      }
+      throw error;
     }
-  }
 
-  const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-  activity(`${extractedEntries.toLocaleString('en-US')} resource entries ready in ${elapsed}s`);
-
-  // Verify key directories exist
-  const expectedDirs = ['cfmind'];
-  for (const dir of expectedDirs) {
-    const dirPath = path.join(destDir, dir);
-    if (!fs.existsSync(dirPath)) {
-      console.error(`[unpack-cfmind] Warning: expected directory missing: ${dir}/`);
+    // Validation and migration have committed the new runtimes. Backup cleanup
+    // is best-effort: a cleanup failure must never roll back verified runtimes.
+    reportProgress(98, 'Removing temporary runtime backups');
+    for (const runtime of managedRuntimes) {
+      try {
+        fs.rmSync(runtime.backupDir, { recursive: true, force: true });
+      } catch (error) {
+        console.error(
+          `[unpack-cfmind] Warning: unable to remove ${runtime.name} runtime backup: ${error.message}`,
+        );
+      }
     }
-  }
+    reportProgress(99, 'Temporary runtime backups removed');
 
-  activity('Core resources verified');
-  process.exit(0);
-} catch (err) {
-  console.error(`[unpack-cfmind] Extraction failed: ${err.message}`);
-  process.exit(1);
+    const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+    activity(
+      `${entryProgress.count.toLocaleString('en-US')} resource entries ready in ${elapsed}s`,
+    );
+
+    // Verify key directories exist
+    const expectedDirs = ['cfmind'];
+    for (const dir of expectedDirs) {
+      const dirPath = path.join(destDir, dir);
+      if (!fs.existsSync(dirPath)) {
+        console.error(`[unpack-cfmind] Warning: expected directory missing: ${dir}/`);
+      }
+    }
+
+    activity('Core resources verified');
+    reportProgress(100, 'Core resources verified');
+    process.exit(0);
+  } catch (err) {
+    console.error(`[unpack-cfmind] Extraction failed: ${err.message}`);
+    reportProgress(lastProgressPercent, `Extraction failed: ${err.message}`);
+    process.exit(1);
+  }
 }
+
+void main();

@@ -21,7 +21,9 @@
 
 const fs = require('fs');
 const path = require('path');
+const { pipeline } = require('stream/promises');
 const tar = require('tar');
+const { createGzip } = require('zlib');
 
 // ── File/dir exclusion rules (same as electron-builder.json filters) ─────────
 
@@ -244,6 +246,19 @@ function packMultipleSources(sources, outputTar) {
   return { totalFiles, skipped: totalSkipped };
 }
 
+/**
+ * Compress the staging tar before electron-builder embeds it. NSIS can store
+ * this already-compressed extraResource without first expanding a large raw
+ * tar to disk during installation.
+ */
+async function compressTarArchive(sourceTar, outputArchive) {
+  await pipeline(
+    fs.createReadStream(sourceTar),
+    createGzip({ level: 6 }),
+    fs.createWriteStream(outputArchive),
+  );
+}
+
 // ── Main ────────────────────────────────────────────────────────────────────
 
 function main() {
@@ -312,4 +327,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { packSingleSource, packMultipleSources };
+module.exports = { compressTarArchive, packSingleSource, packMultipleSources };

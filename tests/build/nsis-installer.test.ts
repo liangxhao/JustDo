@@ -13,7 +13,11 @@ const builderHook = readFileSync(
 );
 const builderConfig = JSON.parse(
   readFileSync(path.resolve(__dirname, '../../electron-builder.json'), 'utf8'),
-) as { extraResources?: Array<{ from?: string; to?: string }> };
+) as {
+  extraResources?: Array<{ from?: string; to?: string }>;
+  nsis?: { preCompressedFileExtensions?: string[] };
+  win?: { extraResources?: Array<{ from?: string; to?: string }> };
+};
 const unpackScriptPath = path.resolve(__dirname, '../../scripts/unpack-cfmind.cjs');
 const unpackScript = readFileSync(unpackScriptPath, 'utf8');
 const processHelper = readFileSync(
@@ -109,7 +113,7 @@ describe('Windows installer process handling', () => {
 
   it('removes the previous Git runtime before extracting MinGit during upgrades', () => {
     const backupIndex = unpackScript.indexOf('fs.renameSync(runtime.dir, runtime.backupDir)');
-    const extractionIndex = unpackScript.indexOf('tar.extract({');
+    const extractionIndex = unpackScript.indexOf('await extractArchive(entryProgress)');
 
     expect(backupIndex).toBeGreaterThan(-1);
     expect(extractionIndex).toBeGreaterThan(backupIndex);
@@ -156,12 +160,29 @@ describe('Windows installer process handling', () => {
     expect(builderHook).not.toContain("label: 'Dependency manager config'");
   });
 
+  it('stores a pre-compressed runtime archive with progress metadata', () => {
+    expect(builderConfig.win?.extraResources).toEqual(
+      expect.arrayContaining([
+        { from: 'build-tar/win-resources.tar.gz', to: 'win-resources.tar.gz' },
+        {
+          from: 'build-tar/win-resources-metadata.json',
+          to: 'win-resources-metadata.json',
+        },
+      ]),
+    );
+    expect(builderConfig.nsis?.preCompressedFileExtensions).toContain('.gz');
+    expect(builderHook).toContain('compressTarArchive(outputTar, outputArchive)');
+    expect(builderHook).toContain('totalEntries: tarEntries.length');
+  });
+
   it('does not retain old Git files or OpenClaw skills in an upgraded installation', () => {
     const root = mkdtempSync(path.join(os.tmpdir(), 'justdo-mingit-upgrade-'));
     tempDirs.push(root);
     const archiveRoot = path.join(root, 'archive');
     const installResources = path.join(root, 'installed-resources');
-    const archivePath = path.join(root, 'win-resources.tar');
+    const archivePath = path.join(root, 'win-resources.tar.gz');
+    const metadataPath = path.join(root, 'win-resources-metadata.json');
+    const progressPath = path.join(root, 'install-progress.txt');
     const userDataRoot = path.join(root, 'user-data');
     const staleBashPath = path.join(installResources, 'mingit', 'bin', 'bash.exe');
     const staleSkillPath = path.join(
@@ -210,15 +231,23 @@ describe('Windows installer process handling', () => {
     writeFileSync(staleSkillPath, 'default');
     writeFileSync(stalePythonPackagePath, 'stale');
     writeFileSync(legacyUserPackagePath, 'user-package');
-    createTar({ cwd: archiveRoot, file: archivePath, sync: true }, [
+    createTar({ cwd: archiveRoot, file: archivePath, gzip: true, sync: true }, [
       'cfmind',
       'mingit',
       'python-win',
     ]);
+    writeFileSync(metadataPath, '{"schemaVersion":1,"totalEntries":32}\n');
 
     const result = spawnSync(
       process.execPath,
-      [unpackScriptPath, archivePath, installResources, userDataRoot],
+      [
+        unpackScriptPath,
+        archivePath,
+        installResources,
+        userDataRoot,
+        metadataPath,
+        progressPath,
+      ],
       { encoding: 'utf8' },
     );
 
@@ -234,6 +263,11 @@ describe('Windows installer process handling', () => {
     expect(existsSync(path.join(installResources, '.cfmind-upgrade-backup'))).toBe(false);
     expect(existsSync(path.join(installResources, '.mingit-upgrade-backup'))).toBe(false);
     expect(existsSync(path.join(installResources, '.python-win-upgrade-backup'))).toBe(false);
+    expect(readFileSync(progressPath, 'utf8')).toBe('100\nCore resources verified');
+    if (process.platform === 'win32') {
+      expect(result.stdout).toContain('Using Windows native resource extraction');
+      expect(result.stdout).not.toContain('0 resource entries ready');
+    }
   });
 
   it('restores PortableGit when the replacement archive is invalid', () => {
@@ -494,11 +528,25 @@ describe('Windows installer presentation', () => {
     );
   });
 
-  it('streams real resource activity into the scrolling install feed', () => {
-    expect(nsisScript).toContain('nsExec::ExecToLog');
+  it('keeps resource extraction responsive with heartbeat activity', () => {
+    expect(nsisScript).toContain('${StdUtils.ExecShellWaitEx}');
+    expect(nsisScript).toContain('${StdUtils.WaitForProcEx} $0 $R8');
+    expect(nsisScript).toContain('StrCpy $R9 $R8 6');
+    expect(nsisScript).toContain('StrCpy $R9 "0x$R9"');
+    expect(nsisScript).toContain('WaitForSingleObject(p $R9, i 0)');
+    expect(nsisScript).toContain('justdo-resource-progress.txt');
+    expect(nsisScript).toContain('Function JustDoPollResourceProgress');
+    expect(nsisScript).toContain('Call JustDoPollResourceProgress');
+    expect(nsisScript).not.toContain('GetExitCodeProcess');
+    expect(nsisScript).not.toContain('process-status-error');
     expect(nsisScript).toContain('JustDoAddInstallActivity');
-    expect(unpackScript).toContain('onentry: () =>');
-    expect(unpackScript).toContain('extractedEntries % 750 === 0');
+    expect(unpackScript).toContain("path.join(windowsRoot, 'System32', 'tar.exe')");
+    expect(unpackScript).toContain("endsWith('.gz') ? '-xzf' : '-xf'");
+    expect(unpackScript).toContain('Expanding core resources - ${elapsedSeconds}s elapsed');
+    expect(nsisScript).toContain('JUSTDO_PBM_SETMARQUEE');
+    expect(unpackScript).toContain('createEntryProgressReporter');
+    expect(unpackScript).toContain('reportProgress(');
+    expect(unpackScript).toContain('onentry: entryProgress.onEntry');
     expect(unpackScript).toContain('resource entries ready');
     expect(unpackScript).toContain('Keep this stream ASCII-only');
     expect(unpackScript).not.toContain("activity('●");

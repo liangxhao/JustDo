@@ -1,14 +1,16 @@
 !include "FileFunc.nsh"
 !include "LogicLib.nsh"
+!include "StdUtils.nsh"
 
 !define JUSTDO_POWERSHELL "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe"
 !define JUSTDO_INSTALLER_QUIT_SWITCH "--justdo-request-quit-for-update"
 
 !ifndef BUILD_UNINSTALLER
-!define JUSTDO_PROGRESS_STYLE 0x50000001
+!define JUSTDO_PROGRESS_STYLE 0x50000009
 !define JUSTDO_PBM_SETPOS 0x0402
 !define JUSTDO_PBM_SETRANGE32 0x0406
 !define JUSTDO_PBM_SETBARCOLOR 0x0409
+!define JUSTDO_PBM_SETMARQUEE 0x040A
 !define JUSTDO_PBM_SETBKCOLOR 0x2001
 !define JUSTDO_WM_SETTEXT 0x000C
 !define JUSTDO_LANG_TRADCHINESE 1028
@@ -20,6 +22,47 @@ Var JustDoStatusText
 Var JustDoNativeProgressBar
 Var JustDoInstallLog
 Var JustDoShowLogButton
+Var JustDoResourceProgressFile
+Var JustDoLastResourceActivity
+
+Function JustDoPollResourceProgress
+  Push $0
+  Push $1
+  Push $2
+
+  ${If} $JustDoResourceProgressFile != ""
+  ${AndIf} ${FileExists} "$JustDoResourceProgressFile"
+    ClearErrors
+    FileOpen $0 "$JustDoResourceProgressFile" r
+    ${IfNot} ${Errors}
+      FileRead $0 $1
+      FileRead $0 $2
+      FileClose $0
+
+      ${If} $JustDoStatusText != ""
+        ${If} $LANGUAGE == ${JUSTDO_LANG_SIMPCHINESE}
+        ${OrIf} $LANGUAGE == ${JUSTDO_LANG_TRADCHINESE}
+          StrCpy $1 "正在展开核心资源，请稍候…"
+        ${Else}
+          StrCpy $1 "Expanding core resources. Please wait…"
+        ${EndIf}
+        SendMessage $JustDoStatusText ${JUSTDO_WM_SETTEXT} 0 "STR:$1"
+      ${EndIf}
+
+      ${If} $2 != ""
+      ${AndIf} $2 != $JustDoLastResourceActivity
+        StrCpy $JustDoLastResourceActivity $2
+        SetDetailsPrint listonly
+        DetailPrint "$2"
+        SetDetailsPrint none
+      ${EndIf}
+    ${EndIf}
+  ${EndIf}
+
+  Pop $2
+  Pop $1
+  Pop $0
+FunctionEnd
 
 !macro JustDoAddInstallActivity _ZH_TEXT _EN_TEXT
   SetDetailsPrint listonly
@@ -386,10 +429,10 @@ FunctionEnd
     FileWrite $2 "pre-existing-cfmind-dir: missing$\r$\n"
   ${EndIf}
 
-  ; ─── Extract combined resource archive (win-resources.tar) ───
+  ; ─── Extract combined resource archive (win-resources.tar.gz) ───
   ; All large resource directories (cfmind/, skills/, python-win/) are packed
-  ; into a single tar file. NSIS 7z extracts one large file almost instantly;
-  ; we then unpack the tar here using Electron's Node runtime.
+  ; into one pre-compressed file. NSIS writes it without a second compression
+  ; pass; the Electron/Node wrapper streams it through Windows native tar.
 
   SetDetailsPrint none
 
@@ -409,7 +452,7 @@ FunctionEnd
   !insertmacro JustDoAddInstallActivity \
     "正在整理核心资源" \
     "Preparing core resources"
-  FileWrite $2 "tar-extract-command: $INSTDIR\${APP_EXECUTABLE_FILENAME} $INSTDIR\resources\unpack-cfmind.cjs $INSTDIR\resources\win-resources.tar $INSTDIR\resources $APPDATA\${PRODUCT_NAME}$\r$\n"
+  FileWrite $2 "tar-extract-command: $INSTDIR\${APP_EXECUTABLE_FILENAME} $INSTDIR\resources\unpack-cfmind.cjs $INSTDIR\resources\win-resources.tar.gz $INSTDIR\resources $APPDATA\${PRODUCT_NAME} $INSTDIR\resources\win-resources-metadata.json$\r$\n"
   ${If} ${FileExists} "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
     FileWrite $2 "app-exe: exists$\r$\n"
   ${Else}
@@ -420,19 +463,75 @@ FunctionEnd
   ${Else}
     FileWrite $2 "unpack-script: missing $INSTDIR\resources\unpack-cfmind.cjs$\r$\n"
   ${EndIf}
-  ${If} ${FileExists} "$INSTDIR\resources\win-resources.tar"
+  ${If} ${FileExists} "$INSTDIR\resources\win-resources.tar.gz"
     FileWrite $2 "resource-tar: exists$\r$\n"
   ${Else}
-    FileWrite $2 "resource-tar: missing $INSTDIR\resources\win-resources.tar$\r$\n"
+    FileWrite $2 "resource-tar: missing $INSTDIR\resources\win-resources.tar.gz$\r$\n"
+  ${EndIf}
+  ${If} ${FileExists} "$INSTDIR\resources\win-resources-metadata.json"
+    FileWrite $2 "resource-metadata: exists$\r$\n"
+  ${Else}
+    FileWrite $2 "resource-metadata: missing $INSTDIR\resources\win-resources-metadata.json$\r$\n"
   ${EndIf}
 
-  SetDetailsPrint listonly
-  nsExec::ExecToLog '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" "$INSTDIR\resources\unpack-cfmind.cjs" "$INSTDIR\resources\win-resources.tar" "$INSTDIR\resources" "$APPDATA\${PRODUCT_NAME}"'
-  Pop $0
-  SetDetailsPrint none
+  ; Launch the extractor asynchronously. Interactive installs poll the encoded
+  ; process handle and atomic progress file without blocking the NSIS window;
+  ; silent deployments use StdUtils' blocking wait because no UI is present.
+  StrCpy $JustDoResourceProgressFile "$PLUGINSDIR\justdo-resource-progress.txt"
+  StrCpy $JustDoLastResourceActivity ""
+  Delete "$JustDoResourceProgressFile"
+  ${If} $JustDoProgressBar != ""
+    SendMessage $JustDoProgressBar ${JUSTDO_PBM_SETMARQUEE} 1 35
+  ${EndIf}
+  ${StdUtils.ExecShellWaitEx} $R7 $R8 "$INSTDIR\${APP_EXECUTABLE_FILENAME}" "open" '"$INSTDIR\resources\unpack-cfmind.cjs" "$INSTDIR\resources\win-resources.tar.gz" "$INSTDIR\resources" "$APPDATA\${PRODUCT_NAME}" "$INSTDIR\resources\win-resources-metadata.json" "$JustDoResourceProgressFile"'
+  ${If} $R7 != "ok"
+    FileWrite $2 "tar-extract-launch-error: result=$R7 detail=$R8$\r$\n"
+    StrCpy $0 "launch-$R7-$R8"
+    Goto TarExtractFailed
+  ${EndIf}
+
+  ${If} ${Silent}
+    ${StdUtils.WaitForProcEx} $0 $R8
+  ${Else}
+    ; StdUtils serializes the native handle as hProc:XXXXXXXX. Parse the
+    ; plug-in token for non-blocking WaitForSingleObject polling,
+    ; then return the original token to WaitForProcEx once signaled so it owns
+    ; final exit-code retrieval and handle cleanup.
+    StrCpy $R9 $R8 6
+    ${If} $R9 == "hProc:"
+      StrCpy $R9 $R8 "" 6
+      StrCpy $R9 "0x$R9"
+      JustDoResourceWait:
+        Sleep 150
+        Call JustDoPollResourceProgress
+        System::Call 'kernel32::WaitForSingleObject(p $R9, i 0)i.r0'
+        ${If} $0 == 258
+          Goto JustDoResourceWait
+        ${ElseIf} $0 != 0
+          System::Call 'kernel32::GetLastError()i.r1'
+          FileWrite $2 "tar-extract-poll-error: wait=$0 win32=$1; using blocking fallback$\r$\n"
+        ${EndIf}
+    ${Else}
+      FileWrite $2 "tar-extract-handle-format: unexpected $R8; using blocking fallback$\r$\n"
+    ${EndIf}
+    ${StdUtils.WaitForProcEx} $0 $R8
+  ${EndIf}
+  Call JustDoPollResourceProgress
+
+  ${If} $JustDoProgressBar != ""
+    SendMessage $JustDoProgressBar ${JUSTDO_PBM_SETMARQUEE} 0 0
+  ${EndIf}
+  Delete "$JustDoResourceProgressFile"
+  StrCpy $JustDoResourceProgressFile ""
   FileWrite $2 "tar-extract-process-exit: $0$\r$\n"
 
   StrCmp $0 "0" TarExtractOK
+    TarExtractFailed:
+    ${If} $JustDoProgressBar != ""
+      SendMessage $JustDoProgressBar ${JUSTDO_PBM_SETMARQUEE} 0 0
+    ${EndIf}
+    Delete "$JustDoResourceProgressFile"
+    StrCpy $JustDoResourceProgressFile ""
     FileWrite $2 "tar-extract-error: exit=$0$\r$\n"
     ${If} $LANGUAGE == ${JUSTDO_LANG_SIMPCHINESE}
     ${OrIf} $LANGUAGE == ${JUSTDO_LANG_TRADCHINESE}
@@ -492,8 +591,9 @@ FunctionEnd
   FileWrite $2 "dependency-config-legacy: cleanup-complete$\r$\n"
 
   FileWrite $2 "delete-resource-tar: start$\r$\n"
-  Delete "$INSTDIR\resources\win-resources.tar"
-  ${If} ${FileExists} "$INSTDIR\resources\win-resources.tar"
+  Delete "$INSTDIR\resources\win-resources.tar.gz"
+  Delete "$INSTDIR\resources\win-resources-metadata.json"
+  ${If} ${FileExists} "$INSTDIR\resources\win-resources.tar.gz"
     FileWrite $2 "delete-resource-tar: still-exists$\r$\n"
   ${Else}
     FileWrite $2 "delete-resource-tar: removed$\r$\n"

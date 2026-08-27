@@ -116,8 +116,12 @@
     "requestedExecutionLevel": "asInvoker",
     "extraResources": [
       {
-        "from": "build-tar/win-resources.tar",
-        "to": "win-resources.tar"
+        "from": "build-tar/win-resources.tar.gz",
+        "to": "win-resources.tar.gz"
+      },
+      {
+        "from": "build-tar/win-resources-metadata.json",
+        "to": "win-resources-metadata.json"
       },
       {
         "from": "scripts/unpack-cfmind.cjs",
@@ -173,7 +177,8 @@
     "allowToChangeInstallationDirectory": true,
     "runAfterFinish": true,
     "deleteAppDataOnUninstall": true,
-    "include": "scripts/nsis-installer.nsh"
+    "include": "scripts/nsis-installer.nsh",
+    "preCompressedFileExtensions": [".gz"]
   },
   "asarUnpack": ["node_modules/better-sqlite3/build/Release/*.node"],
   "asar": true

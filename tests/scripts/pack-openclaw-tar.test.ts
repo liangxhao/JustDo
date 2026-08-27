@@ -5,17 +5,45 @@ import path from 'node:path';
 import { list as listTar } from 'tar';
 import { expect, test } from 'vitest';
 
-const { packMultipleSources } = require('../../scripts/pack-openclaw-tar.cjs') as {
-  packMultipleSources: (
-    sources: Array<{
-      dir: string;
-      prefix: string;
-      exclude?: string[];
-      preservePythonLicenses?: boolean;
-    }>,
-    outputTar: string,
-  ) => void;
-};
+const { compressTarArchive, packMultipleSources } =
+  require('../../scripts/pack-openclaw-tar.cjs') as {
+    compressTarArchive: (sourceTar: string, outputArchive: string) => Promise<void>;
+    packMultipleSources: (
+      sources: Array<{
+        dir: string;
+        prefix: string;
+        exclude?: string[];
+        preservePythonLicenses?: boolean;
+      }>,
+      outputTar: string,
+    ) => void;
+  };
+
+test('pre-compresses a runtime tar without changing its entries', async () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-runtime-gzip-'));
+  const runtimeRoot = path.join(tempRoot, 'runtime');
+  const tarPath = path.join(tempRoot, 'runtime.tar');
+  const archivePath = path.join(tempRoot, 'runtime.tar.gz');
+
+  try {
+    fs.mkdirSync(runtimeRoot, { recursive: true });
+    fs.writeFileSync(path.join(runtimeRoot, 'gateway-bundle.mjs'), 'bundle'.repeat(1000), 'utf8');
+    packMultipleSources([{ dir: runtimeRoot, prefix: 'cfmind' }], tarPath);
+
+    await compressTarArchive(tarPath, archivePath);
+
+    const entries: string[] = [];
+    listTar({
+      file: archivePath,
+      sync: true,
+      onReadEntry: entry => entries.push(entry.path.replace(/\\/g, '/')),
+    });
+    expect(entries).toContain('cfmind/gateway-bundle.mjs');
+    expect(fs.statSync(archivePath).size).toBeLessThan(fs.statSync(tarPath).size);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
 
 test('omits source-specific duplicate artifacts without removing runtime entries', () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-runtime-tar-'));

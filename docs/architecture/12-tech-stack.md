@@ -101,7 +101,7 @@ Windows distribution先 clean release并准备 win-x64 runtime；`dist:win` 还�
 - build/compile；
 - electron-builder NSIS x64。
 
-Windows runtime打成 `build-tar/win-resources.tar`，安装后由 `unpack-cfmind.cjs` 展开。测试覆盖 MinGit、Python、runtime tar、NSIS 和 update manifest。
+Windows runtime先打成 tar，再预压缩为 `build-tar/win-resources.tar.gz`，并生成包含 entry 总数的 `win-resources-metadata.json`。NSIS 将 `.gz` 作为已压缩资源直接写盘；安装后 `unpack-cfmind.cjs` 优先调用 Windows 原生 `tar.exe` 展开。为避免 `tar -v` 输出数万行拖慢落盘，原生路径以每秒 heartbeat 驱动安装界面的 marquee 和耗时动态；NSIS 将 StdUtils 的 `hProc:` token 解析为只用于非阻塞 `WaitForSingleObject` 的句柄，进程结束后仍交回 `WaitForProcEx` 获取退出码并关闭句柄。系统 tar 不可用时回退 npm `tar` 并按 entry 汇报进度。测试覆盖 MinGit、Python、runtime tar、NSIS 和 update manifest。
 
 ## 9. Electron Builder
 
@@ -140,16 +140,16 @@ Windows runtime打成 `build-tar/win-resources.tar`，安装后由 `unpack-cfmin
 
 ## 14. 构建产物地图
 
-| 产物                        | 生成入口                                   | 运行时消费者                 | 关键注意事项                                          |
-| --------------------------- | ------------------------------------------ | ---------------------------- | ----------------------------------------------------- |
-| `dist/`                     | Vite Renderer build                        | BrowserWindow                | 不包含 Node 能力；HTML productName 替换需转义         |
-| `dist-electron/main.js`     | Electron Main bundle                       | Electron main process        | CJS、无 code split；native/optional 依赖 external     |
-| `dist-electron/preload.js`  | Preload bundle                             | BrowserWindow isolated world | API 面应与 renderer declaration 对齐                  |
-| OpenClaw platform runtime   | install/sync/bundle/patch/precompile/prune | `openclawEngineManager`      | 固定版本和 platform-arch，不能依赖开发机 node_modules |
-| Windows `win-resources.tar` | pack runtime tar                           | installer unpack hook        | archive 内容和路径有专门集成测试                      |
-| MinGit                      | `setup-mingit.js`                          | Windows tool/runtime flows   | 固定 asset，缺失时 `--required` 应失败                |
-| Portable Python             | `setup-python-runtime.js`                  | Python skills/tools          | hashed requirements 安装到 bundled site-packages      |
-| Installer/update files      | electron-builder                           | OS installer/updater         | Windows 需 exe、blockmap、latest.yml 一致性验证       |
+| 产物                                      | 生成入口                                   | 运行时消费者                 | 关键注意事项                                          |
+| ----------------------------------------- | ------------------------------------------ | ---------------------------- | ----------------------------------------------------- |
+| `dist/`                                   | Vite Renderer build                        | BrowserWindow                | 不包含 Node 能力；HTML productName 替换需转义         |
+| `dist-electron/main.js`                   | Electron Main bundle                       | Electron main process        | CJS、无 code split；native/optional 依赖 external     |
+| `dist-electron/preload.js`                | Preload bundle                             | BrowserWindow isolated world | API 面应与 renderer declaration 对齐                  |
+| OpenClaw platform runtime                 | install/sync/bundle/patch/precompile/prune | `openclawEngineManager`      | 固定版本和 platform-arch，不能依赖开发机 node_modules |
+| Windows `win-resources.tar.gz` + metadata | pack、校验并预压缩 runtime tar             | native tar installer hook    | archive 内容、路径、回退和进度有专门集成测试          |
+| MinGit                                    | `setup-mingit.js`                          | Windows tool/runtime flows   | 固定 asset，缺失时 `--required` 应失败                |
+| Portable Python                           | `setup-python-runtime.js`                  | Python skills/tools          | hashed requirements 安装到 bundled site-packages      |
+| Installer/update files                    | electron-builder                           | OS installer/updater         | Windows 需 exe、blockmap、latest.yml 一致性验证       |
 
 源码目录中存在一个文件并不表示它已进入最终包。新增 runtime asset 时必须同时检查 builder `files`/`extraResources`、平台条件、archive staging、prune allowlist 和安装后解析路径。
 

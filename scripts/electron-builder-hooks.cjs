@@ -22,7 +22,7 @@ const { ensurePortablePythonRuntime, checkRuntimeHealth } = require('./setup-pyt
 const { ensurePortableGit } = require('./setup-mingit.js');
 const { syncOpenClawRuntimeResources } = require('./sync-openclaw-runtime-resources.cjs');
 const { readBundledSkillConfig, syncBundledSkills } = require('./sync-bundled-skills.cjs');
-const { packMultipleSources } = require('./pack-openclaw-tar.cjs');
+const { compressTarArchive, packMultipleSources } = require('./pack-openclaw-tar.cjs');
 const { readWindowsUpdateConfig } = require('./windows-update-config.cjs');
 const {
   prepareBrowserExtension,
@@ -659,14 +659,16 @@ async function beforePack(context) {
     const mingitRoot = path.join(__dirname, '..', 'resources', 'mingit');
 
     // ── Build combined tar for NSIS ──
-    // Pack all large resource directories into a single tar for faster NSIS
-    // installation.  NSIS extracts thousands of small files very slowly on NTFS;
-    // a single tar archive is extracted by 7z almost instantly, and we unpack
-    // it in the NSIS customInstall macro using Electron's Node runtime.
+    // Pack all large resource directories into one pre-compressed tarball.
+    // NSIS only writes that single file; the installer then streams it through
+    // Windows' native tar implementation instead of creating thousands of files
+    // through NSIS or JavaScript.
     const buildTarDir = path.join(__dirname, '..', 'build-tar');
     mkdirSync(buildTarDir, { recursive: true });
 
     const outputTar = path.join(buildTarDir, 'win-resources.tar');
+    const outputArchive = path.join(buildTarDir, 'win-resources.tar.gz');
+    const outputMetadata = path.join(buildTarDir, 'win-resources-metadata.json');
     const sources = [
       {
         label: 'OpenClaw runtime',
@@ -691,8 +693,10 @@ async function beforePack(context) {
 
     console.log(`[electron-builder-hooks] Packing combined Windows tar: ${outputTar}`);
 
-    // Remove old tar if exists
+    // Remove old outputs if they exist.
     if (existsSync(outputTar)) rmSync(outputTar);
+    if (existsSync(outputArchive)) rmSync(outputArchive);
+    if (existsSync(outputMetadata)) rmSync(outputMetadata);
 
     const t0 = Date.now();
     const { totalFiles, skipped } = packMultipleSources(sources, outputTar);
@@ -781,6 +785,32 @@ async function beforePack(context) {
 
     console.log(
       `[electron-builder-hooks] Tar validation passed. Prefixes: ${tarPrefixes.join(', ')}`,
+    );
+
+    writeFileSync(
+      outputMetadata,
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          totalEntries: tarEntries.length,
+          totalFiles,
+          uncompressedBytes: statSync(outputTar).size,
+        },
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    );
+
+    const compressionStartedAt = Date.now();
+    await compressTarArchive(outputTar, outputArchive);
+    rmSync(outputTar);
+    const compressedSizeMB = (statSync(outputArchive).size / (1024 * 1024)).toFixed(1);
+    console.log(
+      `[electron-builder-hooks] Compressed Windows runtime archive in ${(
+        (Date.now() - compressionStartedAt) /
+        1000
+      ).toFixed(1)}s: ${compressedSizeMB} MB`,
     );
   }
 }
@@ -1028,10 +1058,16 @@ function verifyPackagedOpenClawRuntime(context) {
     : path.join(context.appOutDir, 'resources');
 
   if (isWindowsTarget(context)) {
-    const tarPath = path.join(resourcesRoot, 'win-resources.tar');
+    const tarPath = path.join(resourcesRoot, 'win-resources.tar.gz');
+    const metadataPath = path.join(resourcesRoot, 'win-resources-metadata.json');
     if (!existsSync(tarPath)) {
       throw new Error(
         `[electron-builder-hooks] Packaged Windows runtime archive is missing: ${tarPath}`,
+      );
+    }
+    if (!existsSync(metadataPath)) {
+      throw new Error(
+        `[electron-builder-hooks] Packaged Windows runtime metadata is missing: ${metadataPath}`,
       );
     }
 
