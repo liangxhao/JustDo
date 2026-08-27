@@ -120,9 +120,9 @@ SQLite fallback只在Gateway history不可用时提供初始/错误恢复显示�
 
 ## 8. History 窗口
 
-默认只渲染最新750条，older/newer每次移动250。用户在最新窗口时新history继续锁定尾部；浏览旧窗口时用第一条可见stable identity在新数组中重新定位，identity不存在才用索引clamp。
+默认只渲染最新750条，older/newer每次移动250。用户在最新窗口时新history继续锁定尾部；浏览旧窗口时用第一条可见stable identity在新数组中重新定位，identity不存在才用索引clamp。窗口切换按滚动方向在距离边缘两个viewport时预取，避免反向误切和用户先撞到边界再等待刷新。
 
-窗口是DOM/投影优化，不限制Gateway分页存储。加载旧页时保留滚动锚点和搜索/minimap identity；不能用反复数组前插导致O(n²)组装。
+窗口是DOM/投影优化，不限制Gateway分页存储。加载旧页时保留滚动锚点和搜索/minimap identity；异步older返回前若用户转向newer/latest，只按prepend数量平移窗口，不反向覆盖用户意图。滚动期锚点/minimap更新按animation frame合并，并用有序节点的二分定位限制同步layout测量；不能用反复数组前插导致O(n²)组装。
 
 ## 9. 渲染管线
 
@@ -152,7 +152,7 @@ KaTeX由texmath生成且仍经过sanitizer。代码块提供copy按钮；复制�
 
 ScrollController只有follow/paused：在底部（0.5px容差）follow并随revision滚到底；用户上滚进入paused并累计unseen revisions。渲染前捕获最多3个可见DOM锚点及offset，渲染/resize后用存活锚恢复位置。
 
-距顶部160px触发older window；在窗口边界的near-bottom可移动newer但保持paused。搜索/minimap导航记录target并阻止render anchor干扰；“跳到最新”清unseen恢复follow。展开工具/summary前保存interaction anchor，避免高度变化跳屏。
+按滚动方向在距上下边缘两个viewport时预取older/newer window，窗口切换期间保持paused。搜索/minimap导航记录target并阻止render anchor和方向预取干扰；“跳到最新”清unseen恢复follow。展开工具/summary前保存interaction anchor，避免高度变化跳屏。
 
 ## 14. 渲染调度与性能
 

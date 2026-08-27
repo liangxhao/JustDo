@@ -4769,6 +4769,132 @@ test('loads the latest history page first and prepends older history on demand',
   expect(controller.state.historyHasMore).toBe(false);
 });
 
+test('preserves a newer window selected while an older page is loading', async () => {
+  const recent = Array.from({ length: 1_000 }, (_, index) => ({
+    role: index % 2 === 0 ? 'user' : 'assistant',
+    content: `recent-${index}`,
+    __openclaw: { id: `recent-${index}` },
+  }));
+  const older = Array.from({ length: 250 }, (_, index) => ({
+    role: index % 2 === 0 ? 'user' : 'assistant',
+    content: `older-${index}`,
+    __openclaw: { id: `older-${index}` },
+  }));
+  let resolveOlderPage:
+    ((value: { success: true; messages: typeof older; hasMore: false }) => void) | undefined;
+  const olderPage = new Promise<{
+    success: true;
+    messages: typeof older;
+    hasMore: false;
+  }>(resolve => {
+    resolveOlderPage = resolve;
+  });
+  const getPagedHistory = vi.fn().mockImplementation(({ cursor }: { cursor?: string }) =>
+    cursor
+      ? olderPage
+      : Promise.resolve({
+          success: true,
+          messages: recent,
+          hasMore: true,
+          nextCursor: 'older-page',
+        }),
+  );
+  vi.stubGlobal('electron', {
+    openclaw: {
+      history: { getPagedHistory },
+    },
+  });
+  const controller = new ChatController();
+  controller.state.client = {
+    request: vi.fn().mockResolvedValue({ messages: recent }),
+  } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+
+  await controller.loadHistory();
+  await expect(controller.showOlderHistory()).resolves.toBe(true);
+  expect(controller.state.historyWindowStart).toBe(0);
+  expect(controller.state.historyWindowEnd).toBe(750);
+
+  const olderLoad = controller.loadOlderHistory();
+  expect(controller.showNewerHistory()).toBe(true);
+  expect(controller.state.historyWindowStart).toBe(250);
+  expect(controller.state.historyWindowEnd).toBe(1_000);
+
+  resolveOlderPage?.({ success: true, messages: older, hasMore: false });
+  await expect(olderLoad).resolves.toBe(true);
+
+  expect(controller.state.historyWindowStart).toBe(500);
+  expect(controller.state.historyWindowEnd).toBe(1_250);
+  expect(controller.state.visibleChatMessages[0]).toMatchObject({ content: 'recent-250' });
+  expect(
+    controller.state.visibleChatMessages[controller.state.visibleChatMessages.length - 1],
+  ).toMatchObject({ content: 'recent-999' });
+});
+
+test.each(['newer', 'latest'] as const)(
+  'honors a no-op %s intent while an older page is loading',
+  async navigation => {
+    const recent = Array.from({ length: 750 }, (_, index) => ({
+      role: index % 2 === 0 ? 'user' : 'assistant',
+      content: `recent-${index}`,
+      __openclaw: { id: `recent-${index}` },
+    }));
+    const older = Array.from({ length: 250 }, (_, index) => ({
+      role: index % 2 === 0 ? 'user' : 'assistant',
+      content: `older-${index}`,
+      __openclaw: { id: `older-${index}` },
+    }));
+    let resolveOlderPage:
+      ((value: { success: true; messages: typeof older; hasMore: false }) => void) | undefined;
+    const olderPage = new Promise<{
+      success: true;
+      messages: typeof older;
+      hasMore: false;
+    }>(resolve => {
+      resolveOlderPage = resolve;
+    });
+    vi.stubGlobal('electron', {
+      openclaw: {
+        history: {
+          getPagedHistory: vi.fn().mockImplementation(({ cursor }: { cursor?: string }) =>
+            cursor
+              ? olderPage
+              : Promise.resolve({
+                  success: true,
+                  messages: recent,
+                  hasMore: true,
+                  nextCursor: 'older-page',
+                }),
+          ),
+        },
+      },
+    });
+    const controller = new ChatController();
+    controller.state.client = {
+      request: vi.fn().mockResolvedValue({ messages: recent }),
+    } as never;
+    controller.state.connected = true;
+    controller.state.sessionKey = 'agent:main:justdo:session-1';
+
+    await controller.loadHistory();
+    const olderLoad = controller.loadOlderHistory();
+    expect(
+      navigation === 'newer' ? controller.showNewerHistory() : controller.showLatestHistory(),
+    ).toBe(false);
+
+    resolveOlderPage?.({ success: true, messages: older, hasMore: false });
+    await expect(olderLoad).resolves.toBe(true);
+
+    expect(controller.state.historyWindowStart).toBe(250);
+    expect(controller.state.historyWindowEnd).toBe(1_000);
+    expect(controller.state.visibleChatMessages[0]).toMatchObject({ content: 'recent-0' });
+    expect(
+      controller.state.visibleChatMessages[controller.state.visibleChatMessages.length - 1],
+    ).toMatchObject({ content: 'recent-749' });
+  },
+);
+
 test('hydrates a truncated message while loading an older history page', async () => {
   const sessionKey = 'agent:main:justdo:session-1';
   const request = vi.fn().mockImplementation((method: string, params: unknown) => {

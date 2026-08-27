@@ -479,6 +479,7 @@ export class ChatController {
   private ignoredDeltaAfterAssistantSnapshotCount = 0;
   private pendingAnnounceEvents = new Map<string, NormalizedAgentEvent[]>();
   private historyLoadSeq = 0;
+  private newerHistoryNavigationRevision = 0;
   private connectionInitializationSeq = 0;
   private subscribedMessageSessionKey: string | null = null;
   private messageSubscriptionSeq = 0;
@@ -1463,6 +1464,7 @@ export class ChatController {
   }
 
   showNewerHistory(): boolean {
+    this.newerHistoryNavigationRevision += 1;
     return this.applyHistoryWindow(
       shiftHistoryWindowNewer(
         {
@@ -1475,6 +1477,7 @@ export class ChatController {
   }
 
   showLatestHistory(): boolean {
+    this.newerHistoryNavigationRevision += 1;
     return this.applyHistoryWindow(latestHistoryWindow(this.currentMessageHistory.length));
   }
 
@@ -3210,6 +3213,11 @@ export class ChatController {
 
     const historyGeneration = this.state.transcript.historyGeneration;
     const sessionId = this.state.transcript.sessionId;
+    const requestedWindow = {
+      start: this.state.historyWindowStart,
+      end: this.state.historyWindowEnd,
+    };
+    const requestedNewerNavigationRevision = this.newerHistoryNavigationRevision;
     const seenCursors = new Set<string>();
     let cursor: string | null = initialCursor;
     let emptyPageCount = 0;
@@ -3278,6 +3286,10 @@ export class ChatController {
         }
 
         this.state.loadedMessageCount = this.currentMessageHistory.length;
+        const shouldShiftRequestedWindowOlder =
+          this.state.historyWindowStart === requestedWindow.start &&
+          this.state.historyWindowEnd === requestedWindow.end &&
+          this.newerHistoryNavigationRevision === requestedNewerNavigationRevision;
         const preservedWindow = {
           start: this.state.historyWindowStart + addedCount,
           end: this.state.historyWindowEnd + addedCount,
@@ -3285,7 +3297,9 @@ export class ChatController {
         this.state.historyWindowStart = preservedWindow.start;
         this.state.historyWindowEnd = preservedWindow.end;
         this.applyHistoryWindow(
-          shiftHistoryWindowOlder(preservedWindow, this.currentMessageHistory.length),
+          shouldShiftRequestedWindowOlder
+            ? shiftHistoryWindowOlder(preservedWindow, this.currentMessageHistory.length)
+            : preservedWindow,
         );
         this.state.transcript.revision += 1;
         this.notify();

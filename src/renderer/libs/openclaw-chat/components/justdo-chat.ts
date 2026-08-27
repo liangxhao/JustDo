@@ -132,7 +132,7 @@ export class JustDoChatElement extends LitElement {
 
   private readonly chatScrollController = new ChatScrollController(
     () => this.requestUpdate(),
-    () => void this._controller?.showOlderHistory(),
+    () => this._controller?.showOlderHistory() ?? false,
     () => this._controller?.showNewerHistory() ?? false,
   );
   private readonly streamRenderScheduler = new StreamRenderScheduler(() => this.requestUpdate());
@@ -153,6 +153,7 @@ export class JustDoChatElement extends LitElement {
   private minimapEntriesSignature = '';
   private minimapPreviewTop = 0;
   private mermaidScrollFrame: number | null = null;
+  private minimapScrollFrame: number | null = null;
   private editDiffMonacoFrame: number | null = null;
   private activeTurnClockTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -2583,6 +2584,8 @@ export class JustDoChatElement extends LitElement {
     this.removeEventListener('scroll', this.handleMinimapScroll);
     if (this.mermaidScrollFrame !== null) cancelAnimationFrame(this.mermaidScrollFrame);
     this.mermaidScrollFrame = null;
+    if (this.minimapScrollFrame !== null) cancelAnimationFrame(this.minimapScrollFrame);
+    this.minimapScrollFrame = null;
     if (this.editDiffMonacoFrame !== null) cancelAnimationFrame(this.editDiffMonacoFrame);
     this.editDiffMonacoFrame = null;
     this.editDiffMonacoController.dispose();
@@ -2591,7 +2594,7 @@ export class JustDoChatElement extends LitElement {
   }
 
   protected firstUpdated(): void {
-    requestAnimationFrame(() => this.updateCurrentMinimapEntry());
+    this.scheduleMinimapSync();
     requestAnimationFrame(() => void this.renderMermaidDiagrams());
   }
 
@@ -2661,7 +2664,7 @@ export class JustDoChatElement extends LitElement {
     const minimapSyncKey = `${this.persistedTimelineCache.revision}:${this.persistedTimelineRenderCache.revision}:${this.minimapEntriesSignature}`;
     if (minimapSyncKey !== this.lastMinimapSyncKey) {
       this.lastMinimapSyncKey = minimapSyncKey;
-      requestAnimationFrame(() => this.updateCurrentMinimapEntry());
+      this.scheduleMinimapSync();
     }
   }
 
@@ -3243,8 +3246,16 @@ export class JustDoChatElement extends LitElement {
   }
 
   private readonly handleMinimapScroll = (): void => {
-    this.updateCurrentMinimapEntry();
+    this.scheduleMinimapSync();
   };
+
+  private scheduleMinimapSync(): void {
+    if (this.minimapScrollFrame !== null) return;
+    this.minimapScrollFrame = requestAnimationFrame(() => {
+      this.minimapScrollFrame = null;
+      this.updateCurrentMinimapEntry();
+    });
+  }
 
   private updateCurrentMinimapEntry(): void {
     const entryCount = this.minimapEntryCount();
@@ -3255,19 +3266,37 @@ export class JustDoChatElement extends LitElement {
 
     const hostRect = this.getBoundingClientRect();
     const activationTop = hostRect.top + Math.min(120, Math.max(48, this.clientHeight * 0.18));
-    let current = this.minimapEntryAt(0);
+    const keyedAnchors = new Map<string, HTMLElement>();
+    this.renderRoot
+      .querySelectorAll<HTMLElement>('[data-minimap-anchor]')
+      .forEach(anchor => keyedAnchors.set(anchor.dataset.minimapAnchor ?? '', anchor));
+    const fallbackAnchors = this.renderRoot.querySelectorAll<HTMLElement>(
+      '.chat-container .chat-group--user',
+    );
+    const resolvedEntries: Array<{ entry: ChatMinimapEntry; anchor: HTMLElement }> = [];
     for (let index = 0; index < entryCount; index += 1) {
       const entry = this.minimapEntryAt(index);
       if (!entry) continue;
-      const anchor = this.resolveMinimapAnchor(entry, index);
-      if (!anchor) continue;
-      if (anchor.getBoundingClientRect().top <= activationTop) current = entry;
-      else break;
+      const anchor = keyedAnchors.get(entry.anchorKey) ?? fallbackAnchors[index];
+      if (anchor) resolvedEntries.push({ entry, anchor });
     }
+    if (resolvedEntries.length === 0) return;
+
+    let low = 0;
+    let high = resolvedEntries.length;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (resolvedEntries[middle].anchor.getBoundingClientRect().top <= activationTop) {
+        low = middle + 1;
+      } else {
+        high = middle;
+      }
+    }
+    let current = resolvedEntries[Math.max(0, low - 1)].entry;
     if (this.scrollHeight - this.scrollTop - this.clientHeight <= 1) {
-      current = this.minimapEntryAt(entryCount - 1) ?? current;
+      current = resolvedEntries[resolvedEntries.length - 1].entry;
     }
-    const nextKey = current?.key ?? null;
+    const nextKey = current.key;
     if (nextKey !== this.currentMinimapKey) this.currentMinimapKey = nextKey;
   }
 

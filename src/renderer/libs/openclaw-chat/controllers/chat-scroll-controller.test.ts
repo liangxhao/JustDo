@@ -99,6 +99,9 @@ describe('ChatScrollController', () => {
     controller.navigateTo(240, 'smooth');
     target.scrollTop = 400;
     target.emitScrollEnd();
+
+    expect(loadOlder).not.toHaveBeenCalled();
+
     target.scrollTop = 120;
     target.emitScroll();
 
@@ -189,6 +192,147 @@ describe('ChatScrollController', () => {
     target.emitScroll();
 
     expect(loadOlder).toHaveBeenCalledOnce();
+  });
+
+  test('prefetches history before the edge and only in the active scroll direction', () => {
+    const target = host();
+    const loadOlder = vi.fn();
+    const showNewer = vi.fn().mockReturnValue(true);
+    const controller = new ChatScrollController(vi.fn(), loadOlder, showNewer);
+    controller.connect(target as unknown as HTMLElement);
+
+    target.scrollTop = 500;
+    target.emitScroll();
+
+    expect(loadOlder).toHaveBeenCalledOnce();
+    expect(showNewer).not.toHaveBeenCalled();
+
+    target.scrollTop = 540;
+    target.emitScroll();
+
+    expect(showNewer).toHaveBeenCalledOnce();
+  });
+
+  test.each([true, false])(
+    'rearms older history after an asynchronous request settles with %s',
+    async result => {
+      const target = host();
+      const loadOlder = vi.fn().mockResolvedValue(result);
+      const controller = new ChatScrollController(vi.fn(), loadOlder);
+      controller.connect(target as unknown as HTMLElement);
+
+      target.scrollTop = 500;
+      target.emitScroll();
+      target.scrollTop = 450;
+      target.emitScroll();
+
+      expect(loadOlder).toHaveBeenCalledOnce();
+
+      await Promise.resolve();
+      target.scrollTop = 400;
+      target.emitScroll();
+
+      expect(loadOlder).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  test('rearms older history after a rejected request', async () => {
+    const target = host();
+    const loadOlder = vi.fn().mockRejectedValue(new Error('temporary history failure'));
+    const controller = new ChatScrollController(vi.fn(), loadOlder);
+    controller.connect(target as unknown as HTMLElement);
+
+    target.scrollTop = 500;
+    target.emitScroll();
+    await Promise.resolve();
+    target.scrollTop = 450;
+    target.emitScroll();
+
+    expect(loadOlder).toHaveBeenCalledTimes(2);
+  });
+
+  test('rearms a short newer history shift after the render microtask', async () => {
+    const target = host();
+    target.scrollTop = 300;
+    const showNewer = vi.fn().mockReturnValue(true);
+    const controller = new ChatScrollController(vi.fn(), undefined, showNewer);
+    controller.connect(target as unknown as HTMLElement);
+
+    target.scrollTop = 350;
+    target.emitScroll();
+    target.scrollTop = 400;
+    target.emitScroll();
+
+    expect(showNewer).toHaveBeenCalledOnce();
+
+    await Promise.resolve();
+    target.scrollTop = 450;
+    target.emitScroll();
+
+    expect(showNewer).toHaveBeenCalledTimes(2);
+  });
+
+  test('does not treat completed auto navigation as user history traversal', () => {
+    const target = host();
+    const loadOlder = vi.fn();
+    const showNewer = vi.fn().mockReturnValue(true);
+    const controller = new ChatScrollController(vi.fn(), loadOlder, showNewer);
+    controller.connect(target as unknown as HTMLElement);
+
+    controller.navigateTo(120, 'auto');
+    target.emitScroll();
+
+    expect(loadOlder).not.toHaveBeenCalled();
+    expect(showNewer).not.toHaveBeenCalled();
+
+    target.scrollTop = 100;
+    target.emitScroll();
+
+    expect(loadOlder).toHaveBeenCalledOnce();
+  });
+
+  test('coalesces anchor refreshes and measures only nearby ordered rows', () => {
+    let scheduledCapture: FrameRequestCallback | null = null;
+    const requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
+      scheduledCapture = callback;
+      return 1;
+    });
+    const rect = vi.fn((index: number) => ({
+      top: (index - 1_000) * 20,
+      bottom: (index - 1_000) * 20 + 20,
+    }));
+    const anchors = Array.from({ length: 2_048 }, (_, index) => ({
+      isConnected: true,
+      getBoundingClientRect: () => rect(index),
+    }));
+    const target = host() as ReturnType<typeof host> & {
+      ownerDocument: {
+        defaultView: {
+          requestAnimationFrame: typeof requestAnimationFrame;
+          cancelAnimationFrame: ReturnType<typeof vi.fn>;
+        };
+      };
+      shadowRoot: { querySelectorAll: ReturnType<typeof vi.fn> };
+      getBoundingClientRect: () => { top: number };
+    };
+    target.ownerDocument = {
+      defaultView: { requestAnimationFrame, cancelAnimationFrame: vi.fn() },
+    };
+    target.shadowRoot = { querySelectorAll: vi.fn(() => anchors) };
+    target.getBoundingClientRect = () => ({ top: 0 });
+    const controller = new ChatScrollController(vi.fn());
+    controller.connect(target as unknown as HTMLElement);
+
+    target.scrollTop = 500;
+    target.emitScroll();
+    target.scrollTop = 450;
+    target.emitScroll();
+
+    expect(requestAnimationFrame).toHaveBeenCalledOnce();
+    const runScheduledCapture = scheduledCapture as FrameRequestCallback | null;
+    runScheduledCapture?.(0);
+    expect(target.shadowRoot.querySelectorAll).toHaveBeenCalledOnce();
+    expect(rect.mock.calls.length).toBeLessThan(20);
   });
 
   test('keeps paused mode while a logical newer window replaces the rendered bottom', () => {

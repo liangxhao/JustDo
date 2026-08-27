@@ -1,22 +1,28 @@
 export type ChatScrollMode = 'follow' | 'paused';
 
 export class ChatScrollController {
-  private static readonly LOAD_OLDER_THRESHOLD_PX = 160;
+  private static readonly MIN_HISTORY_SHIFT_THRESHOLD_PX = 160;
+  private static readonly HISTORY_SHIFT_THRESHOLD_VIEWPORTS = 2;
   private host: HTMLElement | null = null;
   private mode: ChatScrollMode = 'follow';
   private programmatic = false;
+  private lastScrollTop = 0;
   private previousScrollTop = 0;
   private previousRevision = -1;
   private unseenRevisions = 0;
   private resizeObserver: ResizeObserver | null = null;
   private observedContent: Element | null = null;
   private pausedAnchors: Array<{ element: HTMLElement; offset: number }> = [];
+  private anchorCaptureFrame: number | null = null;
+  private anchorCaptureWindow: Window | null = null;
+  private pendingOlderHistoryRequest: object | null = null;
+  private pendingNewerHistoryShift: object | null = null;
   private interactionAnchor: { element: HTMLElement; offset: number } | null = null;
   private navigationTargetTop: number | null = null;
 
   constructor(
     private readonly onStateChange: () => void,
-    private readonly onNearTop?: () => void,
+    private readonly onNearTop?: () => boolean | void | Promise<boolean>,
     private readonly onNearBottom?: () => boolean,
   ) {}
 
@@ -29,6 +35,8 @@ export class ChatScrollController {
     this.disconnect();
     this.host = host;
     this.mode = 'follow';
+    this.lastScrollTop = host.scrollTop;
+    this.clearPendingHistoryShifts();
     host.addEventListener('scroll', this.handleScroll, { passive: true });
     host.addEventListener('scrollend', this.handleScrollEnd, { passive: true });
     if (typeof ResizeObserver !== 'undefined') {
@@ -43,7 +51,7 @@ export class ChatScrollController {
     if (this.navigationTargetTop !== null) {
       this.pausedAnchors = [];
     } else if (!this.interactionAnchor) {
-      this.pausedAnchors = this.mode === 'paused' ? this.captureVisibleAnchors(this.host) : [];
+      this.pausedAnchors = this.mode === 'paused' ? this.captureVisibleAnchorsNow(this.host) : [];
     }
   }
 
@@ -75,13 +83,14 @@ export class ChatScrollController {
       this.unseenRevisions += 1;
       this.onStateChange();
     }
-    this.pausedAnchors = navigating ? [] : this.captureVisibleAnchors(host);
+    this.pausedAnchors = navigating ? [] : this.captureVisibleAnchorsNow(host);
     this.observeContent();
   }
 
   jumpToLatest(): void {
     this.mode = 'follow';
     this.unseenRevisions = 0;
+    this.clearPendingHistoryShifts();
     this.interactionAnchor = null;
     this.finishNavigation();
     this.scrollToBottom();
@@ -97,7 +106,10 @@ export class ChatScrollController {
     this.pausedAnchors = [];
     this.navigationTargetTop = Math.max(0, top);
     host.scrollTo({ top: this.navigationTargetTop, behavior });
-    if (this.isNavigationAtTarget(host)) this.finishNavigation();
+    if (this.isNavigationAtTarget(host)) {
+      this.finishNavigation();
+      this.lastScrollTop = host.scrollTop;
+    }
     if (modeChanged) this.onStateChange();
   }
 
@@ -110,7 +122,7 @@ export class ChatScrollController {
       element,
       offset: element.getBoundingClientRect().top,
     };
-    this.pausedAnchors = this.captureVisibleAnchors(this.host);
+    this.pausedAnchors = this.captureVisibleAnchorsNow(this.host);
     if (modeChanged) this.onStateChange();
   }
 
@@ -118,6 +130,7 @@ export class ChatScrollController {
     this.mode = 'follow';
     this.unseenRevisions = 0;
     this.previousRevision = -1;
+    this.clearPendingHistoryShifts();
     this.interactionAnchor = null;
     this.finishNavigation();
     this.onStateChange();
@@ -129,7 +142,9 @@ export class ChatScrollController {
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
     this.observedContent = null;
+    this.cancelScheduledAnchorCapture();
     this.host = null;
+    this.clearPendingHistoryShifts();
     this.interactionAnchor = null;
     this.navigationTargetTop = null;
   }
@@ -138,13 +153,30 @@ export class ChatScrollController {
     const host = this.host;
     if (!host || this.programmatic) return;
     if (this.navigationTargetTop !== null) {
-      if (!this.isNavigationAtTarget(host)) return;
+      if (!this.isNavigationAtTarget(host)) {
+        this.lastScrollTop = host.scrollTop;
+        return;
+      }
       this.finishNavigation();
+      this.lastScrollTop = host.scrollTop;
+      return;
     }
+    const scrollTop = host.scrollTop;
+    const scrollDelta = scrollTop - this.lastScrollTop;
+    this.lastScrollTop = scrollTop;
     const distance = host.scrollHeight - host.scrollTop - host.clientHeight;
-    if (distance <= ChatScrollController.LOAD_OLDER_THRESHOLD_PX && this.onNearBottom?.()) {
+    const historyShiftThreshold = Math.max(
+      ChatScrollController.MIN_HISTORY_SHIFT_THRESHOLD_PX,
+      host.clientHeight * ChatScrollController.HISTORY_SHIFT_THRESHOLD_VIEWPORTS,
+    );
+    if (
+      scrollDelta > 0 &&
+      distance <= historyShiftThreshold &&
+      this.pendingNewerHistoryShift === null &&
+      this.requestNewerHistory()
+    ) {
       this.mode = 'paused';
-      this.pausedAnchors = this.captureVisibleAnchors(host);
+      this.pausedAnchors = this.captureVisibleAnchorsNow(host);
       return;
     }
     const nextMode: ChatScrollMode = distance <= 0.5 ? 'follow' : 'paused';
@@ -153,16 +185,21 @@ export class ChatScrollController {
       if (nextMode === 'follow') this.unseenRevisions = 0;
       this.onStateChange();
     }
-    if (this.mode === 'paused') this.pausedAnchors = this.captureVisibleAnchors(host);
-    if (host.scrollTop <= ChatScrollController.LOAD_OLDER_THRESHOLD_PX) {
-      this.onNearTop?.();
+    if (this.mode === 'paused') this.scheduleVisibleAnchorCapture(host);
+    if (
+      scrollDelta < 0 &&
+      host.scrollTop <= historyShiftThreshold &&
+      this.pendingOlderHistoryRequest === null &&
+      this.onNearTop
+    ) {
+      this.requestOlderHistory();
     }
   };
 
   private readonly handleScrollEnd = (): void => {
     if (this.navigationTargetTop === null) return;
     this.finishNavigation();
-    this.handleScroll();
+    if (this.host) this.lastScrollTop = this.host.scrollTop;
   };
 
   private handleResize(): void {
@@ -178,13 +215,13 @@ export class ChatScrollController {
       const delta = survivingAnchor.element.getBoundingClientRect().top - survivingAnchor.offset;
       if (Math.abs(delta) > 0.5) this.setScrollTop(Math.max(0, host.scrollTop + delta));
     }
-    this.pausedAnchors = this.captureVisibleAnchors(host);
+    this.pausedAnchors = this.captureVisibleAnchorsNow(host);
   }
 
   private finishNavigation(): void {
     if (this.navigationTargetTop === null) return;
     this.navigationTargetTop = null;
-    this.pausedAnchors = this.host ? this.captureVisibleAnchors(this.host) : [];
+    this.pausedAnchors = this.host ? this.captureVisibleAnchorsNow(this.host) : [];
   }
 
   private isNavigationAtTarget(host: HTMLElement): boolean {
@@ -212,9 +249,91 @@ export class ChatScrollController {
     if (!host) return;
     this.programmatic = true;
     host.scrollTop = value;
+    this.lastScrollTop = host.scrollTop;
     queueMicrotask(() => {
       this.programmatic = false;
     });
+  }
+
+  private scheduleVisibleAnchorCapture(host: HTMLElement): void {
+    if (this.anchorCaptureFrame !== null) return;
+    const animationWindow = host.ownerDocument?.defaultView ?? null;
+    if (!animationWindow) {
+      this.pausedAnchors = this.captureVisibleAnchors(host);
+      return;
+    }
+    this.anchorCaptureWindow = animationWindow;
+    this.anchorCaptureFrame = animationWindow.requestAnimationFrame(() => {
+      this.anchorCaptureFrame = null;
+      this.anchorCaptureWindow = null;
+      if (this.host === host && this.mode === 'paused') {
+        this.pausedAnchors = this.captureVisibleAnchors(host);
+      }
+    });
+  }
+
+  private requestOlderHistory(): void {
+    const request = this.onNearTop;
+    if (!request) return;
+    const token = {};
+    this.pendingOlderHistoryRequest = token;
+    try {
+      const result = request();
+      void Promise.resolve(result).then(
+        () => this.releaseOlderHistoryRequest(token),
+        () => this.releaseOlderHistoryRequest(token),
+      );
+    } catch (error) {
+      this.releaseOlderHistoryRequest(token);
+      throw error;
+    }
+  }
+
+  private requestNewerHistory(): boolean {
+    const request = this.onNearBottom;
+    if (!request) return false;
+    const token = {};
+    this.pendingNewerHistoryShift = token;
+    try {
+      const shifted = request();
+      if (!shifted) {
+        this.releaseNewerHistoryShift(token);
+        return false;
+      }
+      queueMicrotask(() => this.releaseNewerHistoryShift(token));
+      return true;
+    } catch (error) {
+      this.releaseNewerHistoryShift(token);
+      throw error;
+    }
+  }
+
+  private releaseOlderHistoryRequest(token: object): void {
+    if (this.pendingOlderHistoryRequest === token) this.pendingOlderHistoryRequest = null;
+  }
+
+  private releaseNewerHistoryShift(token: object): void {
+    if (this.pendingNewerHistoryShift === token) this.pendingNewerHistoryShift = null;
+  }
+
+  private clearPendingHistoryShifts(): void {
+    this.pendingOlderHistoryRequest = null;
+    this.pendingNewerHistoryShift = null;
+  }
+
+  private captureVisibleAnchorsNow(
+    host: HTMLElement,
+  ): Array<{ element: HTMLElement; offset: number }> {
+    this.cancelScheduledAnchorCapture();
+    return this.captureVisibleAnchors(host);
+  }
+
+  private cancelScheduledAnchorCapture(): void {
+    if (this.anchorCaptureFrame !== null && this.anchorCaptureWindow) {
+      this.anchorCaptureWindow.cancelAnimationFrame(this.anchorCaptureFrame);
+    }
+    this.anchorCaptureFrame = null;
+    this.anchorCaptureWindow = null;
   }
 
   private captureVisibleAnchors(host: HTMLElement): Array<{
@@ -224,18 +343,23 @@ export class ChatScrollController {
     const root = host.shadowRoot;
     if (!root) return [];
     const viewportTop = host.getBoundingClientRect().top;
-    return [
+    const candidates = [
       ...root.querySelectorAll<HTMLElement>(
-        '.chat-container [data-history-key], .chat-container [data-process-id], .chat-container .timeline-content, .chat-container .chat-group, .chat-container > *',
+        '.chat-container > [data-history-key], .chat-container > [data-process-id], .chat-container > .timeline-content, .chat-container > .chat-group',
       ),
-    ]
-      .filter(element => element.getBoundingClientRect().bottom > viewportTop)
-      .sort(
-        (left, right) =>
-          Math.abs(left.getBoundingClientRect().top - viewportTop) -
-          Math.abs(right.getBoundingClientRect().top - viewportTop),
-      )
-      .slice(0, 3)
+    ];
+    let low = 0;
+    let high = candidates.length;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (candidates[middle].getBoundingClientRect().bottom > viewportTop) {
+        high = middle;
+      } else {
+        low = middle + 1;
+      }
+    }
+    return candidates
+      .slice(low, low + 3)
       .map(element => ({ element, offset: element.getBoundingClientRect().top }));
   }
 }
