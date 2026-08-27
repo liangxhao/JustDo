@@ -113,10 +113,18 @@ export interface CoworkConfig {
   executionMode: CoworkExecutionMode;
   agentEngine: CoworkAgentEngine;
   permissionMode: PermissionMode;
+  maxGoalContinuationTurns?: number;
 }
 
 export type CoworkConfigUpdate = Partial<
-  Pick<CoworkConfig, 'workingDirectory' | 'executionMode' | 'agentEngine' | 'permissionMode'>
+  Pick<
+    CoworkConfig,
+    | 'workingDirectory'
+    | 'executionMode'
+    | 'agentEngine'
+    | 'permissionMode'
+    | 'maxGoalContinuationTurns'
+  >
 >;
 
 export interface CoworkApiConfig {

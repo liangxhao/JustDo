@@ -5,6 +5,7 @@ import {
   validateAgentRuntimeSettings,
 } from '../../../shared/openclaw/agentRuntimeSettings';
 import { isPermissionMode, type PermissionMode } from '../../../shared/openclaw/approvals';
+import { normalizeMaxGoalContinuationTurns } from '../../../shared/sessionGoal';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkAgentEngine, CoworkEngineRouter } from '../../engine';
 import type {
@@ -157,6 +158,7 @@ export const registerCoworkConfigHandlers = ({
         executionMode?: 'auto' | 'local' | 'sandbox';
         agentEngine?: CoworkAgentEngine;
         permissionMode?: PermissionMode;
+        maxGoalContinuationTurns?: number;
       },
     ) =>
       enqueueCoworkConfigUpdate(async () => {
@@ -180,11 +182,16 @@ export const registerCoworkConfigHandlers = ({
           const permissionMode = isPermissionMode(config.permissionMode)
             ? config.permissionMode
             : undefined;
+          const maxGoalContinuationTurns =
+            config.maxGoalContinuationTurns === undefined
+              ? undefined
+              : normalizeMaxGoalContinuationTurns(config.maxGoalContinuationTurns);
           const normalized: Parameters<CoworkStore['setConfig']>[0] = {
             workingDirectory: config.workingDirectory,
             executionMode,
             agentEngine,
             permissionMode,
+            ...(maxGoalContinuationTurns === undefined ? {} : { maxGoalContinuationTurns }),
           };
           const store = getCoworkStore();
           const previous = store.getConfig();

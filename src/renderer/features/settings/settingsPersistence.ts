@@ -1,4 +1,5 @@
 interface SettingsPersistenceSteps {
+  saveCoworkConfig: () => Promise<void>;
   saveRuntimeSettings: () => Promise<void>;
   saveAppConfig: () => Promise<void>;
   onAppConfigCommitted: () => void;
@@ -11,11 +12,13 @@ interface SettingsPersistenceSteps {
  * restore values that no longer match disk.
  */
 export const persistSettingsInOrder = async ({
+  saveCoworkConfig,
   saveRuntimeSettings,
   saveAppConfig,
   onAppConfigCommitted,
 }: SettingsPersistenceSteps): Promise<void> => {
   await saveAppConfig();
   onAppConfigCommitted();
+  await saveCoworkConfig();
   await saveRuntimeSettings();
 };

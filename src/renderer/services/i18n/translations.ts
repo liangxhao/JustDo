@@ -929,6 +929,11 @@ export const translations: Record<LanguageType, Record<string, string>> = {
 
     // 通用设置
     autoLaunch: '开机自启动',
+    goalContinuationSettingsSectionTitle: 'Goal 模式',
+    goalContinuationSettingsSectionDescription: '配置 Goal 模式的运行参数。',
+    goalContinuationMaxTurnsTitle: '最大续跑轮数',
+    goalContinuationMaxTurnsDescription: '达到此轮数后将停止自动续跑，可手动继续。',
+    goalContinuationSettingsSaveFailed: '无法保存 Goal 模式续跑设置',
     permissionModeTitle: '执行权限',
     permissionModeDescription: '控制所有对话在本机执行命令时的全局审批方式。',
     permissionModeAsk: '请求批准',
@@ -2199,6 +2204,12 @@ export const translations: Record<LanguageType, Record<string, string>> = {
 
     // General Settings
     autoLaunch: 'Launch at Login',
+    goalContinuationSettingsSectionTitle: 'Goal mode',
+    goalContinuationSettingsSectionDescription: 'Configure Goal mode runtime options.',
+    goalContinuationMaxTurnsTitle: 'Maximum continuation turns',
+    goalContinuationMaxTurnsDescription:
+      'Automatic continuation stops after this many turns. You can continue manually.',
+    goalContinuationSettingsSaveFailed: 'Unable to save Goal continuation settings',
     permissionModeTitle: 'Execution permissions',
     permissionModeDescription: 'Controls host-command approval globally for all conversations.',
     permissionModeAsk: 'Ask for approval',

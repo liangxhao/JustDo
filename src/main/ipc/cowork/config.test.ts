@@ -23,6 +23,7 @@ const baseConfig: CoworkConfig = {
   executionMode: 'local',
   agentEngine: 'openclaw',
   permissionMode: 'full',
+  maxGoalContinuationTurns: 25,
 };
 
 describe('cowork config IPC', () => {

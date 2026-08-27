@@ -38,6 +38,10 @@ import {
   ProxyMode,
   ProxyProtocol,
 } from '@shared/proxy';
+import {
+  DEFAULT_MAX_GOAL_CONTINUATION_TURNS,
+  normalizeMaxGoalContinuationTurns,
+} from '@shared/sessionGoal';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch } from 'react-redux';
 
@@ -343,6 +347,9 @@ const Settings: React.FC<SettingsProps> = ({
   const [proxyMode, setProxyMode] = useState<ProxyMode>(ProxyMode.DIRECT);
   const [customProxy, setCustomProxy] = useState<CustomProxyConfig>(defaultCustomProxyConfig);
   const [developerMode, setDeveloperMode] = useState(false);
+  const [maxGoalContinuationTurns, setMaxGoalContinuationTurns] = useState(
+    DEFAULT_MAX_GOAL_CONTINUATION_TURNS,
+  );
   const [isUpdatingAutoLaunch, setIsUpdatingAutoLaunch] = useState(false);
   const [preventSleep, setPreventSleepState] = useState(false);
   const [isUpdatingPreventSleep, setIsUpdatingPreventSleep] = useState(false);
@@ -371,6 +378,7 @@ const Settings: React.FC<SettingsProps> = ({
   const initialThemeIdRef = useRef<string>(themeService.getThemeId());
   const initialAppearanceRef = useRef<AppearanceConfig>(appearance);
   const initialLanguageRef = useRef<LanguageType>(i18nService.getLanguage());
+  const initialMaxGoalContinuationTurnsRef = useRef(DEFAULT_MAX_GOAL_CONTINUATION_TURNS);
   const connectionTestRef = useRef({ generation: 0, requestId: null as string | null });
 
   const cancelConnectionTest = useCallback((updateState = true) => {
@@ -664,6 +672,14 @@ const Settings: React.FC<SettingsProps> = ({
         ...(config.proxy?.custom ?? {}),
       });
       setDeveloperMode(config.developerMode ?? false);
+
+      void window.electron.cowork.getConfig().then(result => {
+        if (result.success && result.config) {
+          const value = normalizeMaxGoalContinuationTurns(result.config.maxGoalContinuationTurns);
+          setMaxGoalContinuationTurns(value);
+          initialMaxGoalContinuationTurnsRef.current = value;
+        }
+      });
 
       // Load auto-launch setting
       window.electron.autoLaunch
@@ -1190,6 +1206,18 @@ const Settings: React.FC<SettingsProps> = ({
       };
 
       await persistSettingsInOrder({
+        saveCoworkConfig: async () => {
+          if (
+            maxGoalContinuationTurns === initialMaxGoalContinuationTurnsRef.current
+          ) {
+            return;
+          }
+          const result = await window.electron.cowork.setConfig({ maxGoalContinuationTurns });
+          if (!result.success) {
+            throw new Error(result.error || i18nService.t('goalContinuationSettingsSaveFailed'));
+          }
+          initialMaxGoalContinuationTurnsRef.current = maxGoalContinuationTurns;
+        },
         saveRuntimeSettings: async () => {
           if (!initialAgentRuntimeSettings) return;
 
@@ -2638,6 +2666,8 @@ const Settings: React.FC<SettingsProps> = ({
             loadError={agentRuntimeSettingsLoadError}
             onChange={setAgentRuntimeSettings}
             onRetry={() => void loadAgentRuntimeSettings()}
+            maxGoalContinuationTurns={maxGoalContinuationTurns}
+            onMaxGoalContinuationTurnsChange={setMaxGoalContinuationTurns}
           />
         );
 

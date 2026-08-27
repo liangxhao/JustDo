@@ -138,10 +138,18 @@ interface CoworkConfig {
   executionMode: 'auto' | 'local' | 'sandbox';
   agentEngine: 'openclaw';
   permissionMode: PermissionMode;
+  maxGoalContinuationTurns: number;
 }
 
 type CoworkConfigUpdate = Partial<
-  Pick<CoworkConfig, 'workingDirectory' | 'executionMode' | 'agentEngine' | 'permissionMode'>
+  Pick<
+    CoworkConfig,
+    | 'workingDirectory'
+    | 'executionMode'
+    | 'agentEngine'
+    | 'permissionMode'
+    | 'maxGoalContinuationTurns'
+  >
 >;
 
 interface CoworkInteractionRequest {

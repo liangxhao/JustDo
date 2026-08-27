@@ -9,6 +9,9 @@ describe('settings persistence order', () => {
 
     await expect(
       persistSettingsInOrder({
+        saveCoworkConfig: async () => {
+          calls.push('cowork');
+        },
         saveRuntimeSettings: async () => {
           calls.push('runtime');
           throw new Error('runtime failed');
@@ -23,7 +26,7 @@ describe('settings persistence order', () => {
       }),
     ).rejects.toThrow('runtime failed');
 
-    expect(calls).toEqual(['config', 'committed', 'runtime']);
+    expect(calls).toEqual(['config', 'committed', 'cowork', 'runtime']);
     expect(onAppConfigCommitted).toHaveBeenCalledOnce();
   });
 
@@ -31,6 +34,9 @@ describe('settings persistence order', () => {
     const calls: string[] = [];
 
     await persistSettingsInOrder({
+      saveCoworkConfig: async () => {
+        calls.push('cowork');
+      },
       saveRuntimeSettings: async () => {
         calls.push('runtime');
       },
@@ -42,7 +48,7 @@ describe('settings persistence order', () => {
       },
     });
 
-    expect(calls).toEqual(['config', 'committed', 'runtime']);
+    expect(calls).toEqual(['config', 'committed', 'cowork', 'runtime']);
   });
 
   test('does not mark the draft committed when app config persistence fails', async () => {
@@ -51,6 +57,7 @@ describe('settings persistence order', () => {
 
     await expect(
       persistSettingsInOrder({
+        saveCoworkConfig: async () => undefined,
         saveRuntimeSettings,
         saveAppConfig: async () => {
           throw new Error('config failed');

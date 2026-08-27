@@ -7,6 +7,20 @@ export const SessionGoalStatus = {
   Complete: 'complete',
 } as const;
 
+export const DEFAULT_MAX_GOAL_CONTINUATION_TURNS = 25;
+export const MIN_MAX_GOAL_CONTINUATION_TURNS = 0;
+export const MAX_MAX_GOAL_CONTINUATION_TURNS = 1000;
+
+export const normalizeMaxGoalContinuationTurns = (value: unknown): number => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return DEFAULT_MAX_GOAL_CONTINUATION_TURNS;
+  }
+  return Math.min(
+    MAX_MAX_GOAL_CONTINUATION_TURNS,
+    Math.max(MIN_MAX_GOAL_CONTINUATION_TURNS, Math.floor(value)),
+  );
+};
+
 export type SessionGoalStatus = (typeof SessionGoalStatus)[keyof typeof SessionGoalStatus];
 
 const SESSION_GOAL_STATUSES: ReadonlySet<string> = new Set(Object.values(SessionGoalStatus));

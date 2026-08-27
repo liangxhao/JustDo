@@ -1,6 +1,7 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import type { SessionRuntimeSnapshot, SessionRunTiming } from '@shared/cowork/sessionRun';
 import { DEFAULT_PERMISSION_MODE, type PermissionMode } from '@shared/openclaw/approvals';
+import { DEFAULT_MAX_GOAL_CONTINUATION_TURNS } from '@shared/sessionGoal';
 
 import {
   removeSessionFromState,
@@ -68,6 +69,7 @@ const initialState: CoworkState = {
     executionMode: 'local',
     agentEngine: 'openclaw',
     permissionMode: DEFAULT_PERMISSION_MODE,
+    maxGoalContinuationTurns: DEFAULT_MAX_GOAL_CONTINUATION_TURNS,
   },
   thinkingExpanded: false, // Default to collapsed (浅蓝色)
   toolExpanded: true, // Default to expanded (浅蓝色)

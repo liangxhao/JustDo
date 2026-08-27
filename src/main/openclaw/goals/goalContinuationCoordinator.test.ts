@@ -22,6 +22,7 @@ const goal = (status: string = SessionGoalStatus.Active) => ({
 const createHarness = (
   goalStatus: string = SessionGoalStatus.Active,
   waitBeforeAutomaticContinuation?: () => Promise<void>,
+  maxContinuationTurns = 20,
 ) => {
   let currentGoal: unknown = goal(goalStatus);
   const request = vi.fn(async (method: string) => {
@@ -37,6 +38,7 @@ const createHarness = (
     getClient: () => ({ request } as unknown as GatewayClientLike),
     resolveSessionId: key => (key === sessionKey ? sessionId : null),
     resolveAgentId: () => 'main',
+    getMaxContinuationTurns: () => maxContinuationTurns,
     onRunAccepted,
     onRunFailed,
     onSnapshot,
@@ -79,6 +81,18 @@ describe('GoalContinuationCoordinator', () => {
       goalId: 'goal-1',
       phase: GoalExecutionPhase.Running,
       continuationCount: 1,
+    });
+  });
+
+  it('stops automatic continuation after the configured maximum', async () => {
+    const harness = createHarness(SessionGoalStatus.Active, undefined, 0);
+
+    await harness.coordinator.handleLifecycle({ runId: 'run-1', sessionKey, phase: 'end' });
+
+    expect(harness.request.mock.calls.some(call => call[0] === 'agent')).toBe(false);
+    expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({
+      phase: GoalExecutionPhase.Stopped,
+      continuationCount: 0,
     });
   });
 

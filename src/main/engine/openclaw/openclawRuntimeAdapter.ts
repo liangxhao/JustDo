@@ -356,6 +356,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       getClient: () => this.gatewayClient,
       resolveSessionId: sessionKey => this.resolveSessionIdBySessionKey(sessionKey),
       resolveAgentId: sessionId => this.store.getSession(sessionId)?.agentId || 'main',
+      getMaxContinuationTurns: () => this.store.getConfig().maxGoalContinuationTurns,
       onRunAccepted: (sessionId, sessionKey, runId) => {
         if (this.terminalLifecycleSessionIds.has(sessionId)) {
           this.cleanupSessionTurn(sessionId);

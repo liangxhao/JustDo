@@ -11,6 +11,11 @@ import {
   type AgentRuntimeSettings,
   AgentRuntimeThinkingLevel,
 } from '@shared/openclaw/agentRuntimeSettings';
+import {
+  MAX_MAX_GOAL_CONTINUATION_TURNS,
+  MIN_MAX_GOAL_CONTINUATION_TURNS,
+  normalizeMaxGoalContinuationTurns,
+} from '@shared/sessionGoal';
 import React, { useMemo, useState } from 'react';
 
 import type { Model } from '@/features/models/modelSlice';
@@ -25,6 +30,8 @@ type Props = {
   loadError: string | null;
   onChange: (settings: AgentRuntimeSettings) => void;
   onRetry: () => void;
+  maxGoalContinuationTurns: number;
+  onMaxGoalContinuationTurnsChange: (value: number) => void;
 };
 
 const SettingRow: React.FC<{
@@ -121,6 +128,8 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
   loadError,
   onChange,
   onRetry,
+  maxGoalContinuationTurns,
+  onMaxGoalContinuationTurnsChange,
 }) => {
   const [agentOpen, setAgentOpen] = useState(true);
   const [subagentOpen, setSubagentOpen] = useState(true);
@@ -240,6 +249,30 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
 
   return (
     <div className="space-y-3 pb-1">
+      <section className="overflow-hidden rounded-xl border border-border bg-surface">
+        <div className="border-b border-border bg-surface-raised px-4 py-2.5">
+          <div className="text-sm font-semibold text-foreground">
+            {i18nService.t('goalContinuationSettingsSectionTitle')}
+          </div>
+          <div className="mt-0.5 text-[11px] leading-4 text-secondary">
+            {i18nService.t('goalContinuationSettingsSectionDescription')}
+          </div>
+        </div>
+        <SettingRow
+          label={i18nService.t('goalContinuationMaxTurnsTitle')}
+          description={i18nService.t('goalContinuationMaxTurnsDescription')}
+        >
+          <NumberControl
+            label={i18nService.t('goalContinuationMaxTurnsTitle')}
+            value={maxGoalContinuationTurns}
+            min={MIN_MAX_GOAL_CONTINUATION_TURNS}
+            max={MAX_MAX_GOAL_CONTINUATION_TURNS}
+            onChange={value =>
+              onMaxGoalContinuationTurnsChange(normalizeMaxGoalContinuationTurns(value))
+            }
+          />
+        </SettingRow>
+      </section>
       <CollapsibleSection
         title={i18nService.t('agentRuntimeAgentSectionTitle')}
         description={i18nService.t('agentRuntimeAgentSectionDescription')}

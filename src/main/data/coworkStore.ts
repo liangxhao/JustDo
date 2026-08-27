@@ -20,7 +20,11 @@ import {
   resolvePermissionMode,
 } from '../../shared/openclaw/approvals';
 import { DEFAULT_WORKSPACE_DIRECTORY_NAME } from '../../shared/productMetadata';
-import { GoalExecutionPhase, type GoalExecutionSnapshot } from '../../shared/sessionGoal';
+import {
+  GoalExecutionPhase,
+  type GoalExecutionSnapshot,
+  normalizeMaxGoalContinuationTurns,
+} from '../../shared/sessionGoal';
 
 // Default working directory for new users
 const getDefaultWorkingDirectory = (): string => {
@@ -190,10 +194,18 @@ export interface CoworkConfig {
   executionMode: CoworkExecutionMode;
   agentEngine: CoworkAgentEngine;
   permissionMode: PermissionMode;
+  maxGoalContinuationTurns: number;
 }
 
 export type CoworkConfigUpdate = Partial<
-  Pick<CoworkConfig, 'workingDirectory' | 'executionMode' | 'agentEngine' | 'permissionMode'>
+  Pick<
+    CoworkConfig,
+    | 'workingDirectory'
+    | 'executionMode'
+    | 'agentEngine'
+    | 'permissionMode'
+    | 'maxGoalContinuationTurns'
+  >
 >;
 
 interface CoworkMessageRow {
@@ -1053,6 +1065,7 @@ export class CoworkStore {
       'executionMode',
       'agentEngine',
       'permissionMode',
+      'maxGoalContinuationTurns',
     ] as const;
     const configRows = this.getAll<{ key: string; value: string }>(
       `SELECT key, value FROM cowork_config WHERE key IN (${configKeys.map(() => '?').join(', ')})`,
@@ -1065,6 +1078,9 @@ export class CoworkStore {
       executionMode: 'local' as CoworkExecutionMode,
       agentEngine: normalizeCoworkAgentEngineValue(cfg.get('agentEngine')),
       permissionMode: resolvePermissionMode(cfg.get('permissionMode')),
+      maxGoalContinuationTurns: normalizeMaxGoalContinuationTurns(
+        Number.parseInt(cfg.get('maxGoalContinuationTurns') || '', 10),
+      ),
     };
   }
 
@@ -1129,6 +1145,17 @@ export class CoworkStore {
       `,
         )
         .run(config.permissionMode, now);
+    }
+
+    if (config.maxGoalContinuationTurns !== undefined) {
+      const normalized = normalizeMaxGoalContinuationTurns(config.maxGoalContinuationTurns);
+      this.db
+        .prepare(
+          `INSERT INTO cowork_config (key, value, updated_at)
+           VALUES ('maxGoalContinuationTurns', ?, ?)
+           ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+        )
+        .run(String(normalized), now);
     }
   }
 

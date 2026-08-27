@@ -61,6 +61,7 @@ interface GoalContinuationCoordinatorDependencies {
   getClient: () => GatewayClientLike | null;
   resolveSessionId: (sessionKey: string) => string | null;
   resolveAgentId: (sessionId: string) => string;
+  getMaxContinuationTurns: () => number;
   onRunAccepted: (sessionId: string, sessionKey: string, runId: string) => void;
   onRunFailed: (sessionId: string, runId: string) => void;
   onSnapshot: (snapshot: GoalExecutionSnapshot) => void;
@@ -257,7 +258,7 @@ export class GoalContinuationCoordinator {
       this.snapshotsBeforeStop.delete(sessionId);
       this.cancelRetry(sessionId, true);
       try {
-        await this.dispatchContinuation(sessionId, sessionKey, goal, generation);
+        await this.dispatchContinuation(sessionId, sessionKey, goal, generation, false);
       } catch (error) {
         this.scheduleRetry(sessionId, sessionKey, goal.id, error);
       }
@@ -469,12 +470,25 @@ export class GoalContinuationCoordinator {
     sessionKey: string,
     goal: SessionGoal,
     generation: number,
+    enforceMaxContinuationTurns = true,
   ): Promise<void> {
     if (generation !== this.generation) throw new Error('OpenClaw Gateway connection changed');
     const client = this.dependencies.getClient();
     if (!client) throw new Error('OpenClaw Gateway is not connected');
     const current = this.snapshots.get(sessionId);
     const continuationCount = (current?.continuationCount ?? 0) + 1;
+    const maxContinuationTurns = Math.max(0, Math.floor(this.dependencies.getMaxContinuationTurns()));
+    if (enforceMaxContinuationTurns && continuationCount > maxContinuationTurns) {
+      this.publish({
+        sessionId,
+        goalId: goal.id,
+        phase: GoalExecutionPhase.Stopped,
+        continuationCount: current?.continuationCount ?? 0,
+        updatedAt: this.now(),
+        error: `Maximum automatic goal continuation turns reached (${maxContinuationTurns})`,
+      });
+      return;
+    }
     this.publish({
       sessionId,
       goalId: goal.id,
