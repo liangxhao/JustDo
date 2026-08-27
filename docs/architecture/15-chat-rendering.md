@@ -1,6 +1,6 @@
 # Chat 渲染架构
 
-本文按 `v2026.8.26` 的 `src/renderer/libs/openclaw-chat/`、`JustDoChatWrapper`、Main history/adapter 和相关测试重写。Chat 渲染不是“把 messages map 成 DOM”；它是 history、optimistic tail、实时事件、工具生命周期与滚动窗口的确定性投影。
+本文按 `v2026.8.27` 的 `src/renderer/libs/openclaw-chat/`、`JustDoChatWrapper`、Main history/adapter 和相关测试重写。Chat 渲染不是“把 messages map 成 DOM”；它是 history、optimistic tail、实时事件、工具生命周期与滚动窗口的确定性投影。
 
 ## 1. 目标与不变量
 
