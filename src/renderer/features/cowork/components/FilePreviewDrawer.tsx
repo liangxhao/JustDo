@@ -10,7 +10,7 @@ import {
   PencilSquareIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
-import Editor, { loader, type OnMount } from '@monaco-editor/react';
+import Editor, { type BeforeMount, type OnMount } from '@monaco-editor/react';
 import { getPreviewableFileExtension } from '@shared/filePreview';
 import mermaid from 'mermaid';
 import {
@@ -64,13 +64,77 @@ interface ConfirmationRequest {
 const DRAWER_DEFAULT_WIDTH = 820;
 const DRAWER_MIN_WIDTH = 420;
 const DRAWER_WINDOW_MARGIN = 24;
-const MARKDOWN_CONTENT_MAX_WIDTH = 920;
 const MARKDOWN_DOCUMENT_PARSE_LIMIT = 140_000;
+const FILE_PREVIEW_DARK_THEME = 'justdo-monokai';
+const FILE_PREVIEW_LIGHT_THEME = 'justdo-monokai-light';
 const COPY_FEEDBACK_DURATION_MS = 1600;
 const COPY_ICON =
   '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M15 9V6a2 2 0 0 0-2-2H6a2 2 0 0 0 2 2v7a2 2 0 0 0 2 2h3"/></svg>';
 const COPY_DONE_ICON =
   '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>';
+
+const configureFilePreviewThemes: BeforeMount = monaco => {
+  monaco.editor.defineTheme(FILE_PREVIEW_DARK_THEME, {
+    base: 'vs-dark',
+    inherit: false,
+    rules: [
+      { token: '', foreground: 'F8F8F2' },
+      { token: 'comment', foreground: '75715E', fontStyle: 'italic' },
+      { token: 'keyword', foreground: 'F92672' },
+      { token: 'string', foreground: 'E6DB74' },
+      { token: 'number', foreground: 'AE81FF' },
+      { token: 'type', foreground: '66D9EF' },
+      { token: 'type.identifier', foreground: 'A6E22E' },
+      { token: 'class', foreground: 'A6E22E' },
+      { token: 'function', foreground: 'A6E22E' },
+      { token: 'variable', foreground: 'F8F8F2' },
+      { token: 'constant', foreground: 'AE81FF' },
+      { token: 'delimiter', foreground: 'F8F8F2' },
+      { token: 'operator', foreground: 'F92672' },
+      { token: 'tag', foreground: 'F92672' },
+      { token: 'attribute.name', foreground: 'A6E22E' },
+    ],
+    colors: {
+      'editor.background': '#272822',
+      'editor.foreground': '#F8F8F2',
+      'editorLineNumber.foreground': '#75715E',
+      'editorLineNumber.activeForeground': '#F8F8F2',
+      'editor.selectionBackground': '#49483E',
+      'editor.lineHighlightBackground': '#00000000',
+      'editorCursor.foreground': '#F8F8F0',
+    },
+  });
+  monaco.editor.defineTheme(FILE_PREVIEW_LIGHT_THEME, {
+    base: 'vs',
+    inherit: false,
+    rules: [
+      { token: '', foreground: '24292E' },
+      { token: 'comment', foreground: '6A737D', fontStyle: 'italic' },
+      { token: 'keyword', foreground: 'C2185B' },
+      { token: 'string', foreground: '8A6D00' },
+      { token: 'number', foreground: '6F42C1' },
+      { token: 'type', foreground: '087EA4' },
+      { token: 'type.identifier', foreground: '287A3D' },
+      { token: 'class', foreground: '287A3D' },
+      { token: 'function', foreground: '287A3D' },
+      { token: 'variable', foreground: '24292E' },
+      { token: 'constant', foreground: '6F42C1' },
+      { token: 'delimiter', foreground: '24292E' },
+      { token: 'operator', foreground: 'C2185B' },
+      { token: 'tag', foreground: 'C2185B' },
+      { token: 'attribute.name', foreground: '287A3D' },
+    ],
+    colors: {
+      'editor.background': '#FFFFFE',
+      'editor.foreground': '#24292E',
+      'editorLineNumber.foreground': '#8A8F98',
+      'editorLineNumber.activeForeground': '#24292E',
+      'editor.selectionBackground': '#BBDFFF',
+      'editor.lineHighlightBackground': '#F6F8FA',
+      'editorCursor.foreground': '#24292E',
+    },
+  });
+};
 
 const clampDrawerWidth = (width: number): number => {
   const viewportMax = Math.max(DRAWER_MIN_WIDTH, window.innerWidth - DRAWER_WINDOW_MARGIN);
@@ -90,7 +154,6 @@ const FilePreviewDrawer = forwardRef<FilePreviewDrawerHandle, FilePreviewDrawerP
     const [isAuthorizing, setIsAuthorizing] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [isDark, setIsDark] = useState(() => document.documentElement.classList.contains('dark'));
-    const [highlightedContent, setHighlightedContent] = useState<string | null>(null);
     const [confirmation, setConfirmation] = useState<ConfirmationRequest | null>(null);
     const drawerRef = useRef<HTMLElement>(null);
     const markdownRef = useRef<HTMLElement>(null);
@@ -132,30 +195,6 @@ const FilePreviewDrawer = forwardRef<FilePreviewDrawerHandle, FilePreviewDrawerP
             }),
       [content, isPreformatted],
     );
-
-    useEffect(() => {
-      if (!isPreformatted || mode !== 'preview') {
-        setHighlightedContent(null);
-        return;
-      }
-
-      let cancelled = false;
-      setHighlightedContent(null);
-      void loader
-        .init()
-        .then(async monaco => {
-          monaco.editor.setTheme(isDark ? 'vs-dark' : 'vs');
-          const html = await monaco.editor.colorize(content, editorLanguage, { tabSize: 2 });
-          if (!cancelled) setHighlightedContent(html);
-        })
-        .catch(() => {
-          if (!cancelled) setHighlightedContent(null);
-        });
-
-      return () => {
-        cancelled = true;
-      };
-    }, [content, editorLanguage, isDark, isPreformatted, mode]);
 
     useEffect(() => {
       const previousEditToken = editTokenRef.current;
@@ -610,7 +649,8 @@ const FilePreviewDrawer = forwardRef<FilePreviewDrawerHandle, FilePreviewDrawerP
                       height="100%"
                       path={preview.filePath}
                       language={editorLanguage}
-                      theme={isDark ? 'vs-dark' : 'vs'}
+                      theme={isDark ? FILE_PREVIEW_DARK_THEME : FILE_PREVIEW_LIGHT_THEME}
+                      beforeMount={configureFilePreviewThemes}
                       value={draft}
                       onChange={value => {
                         const nextDraft = value ?? '';
@@ -651,18 +691,39 @@ const FilePreviewDrawer = forwardRef<FilePreviewDrawerHandle, FilePreviewDrawerP
               <div className="file-preview-preview-scroll">
                 <div
                   className={`file-preview-document ${isPreformatted ? 'is-preformatted' : ''}`}
-                  style={{ maxWidth: MARKDOWN_CONTENT_MAX_WIDTH }}
                 >
                   {isPreformatted ? (
-                    <pre
-                      className={`file-preview-plain-content monaco-editor ${isDark ? 'vs-dark' : 'vs'}`}
-                    >
-                      {highlightedContent === null ? (
-                        content
-                      ) : (
-                        <code dangerouslySetInnerHTML={{ __html: highlightedContent }} />
-                      )}
-                    </pre>
+                    <div className="file-preview-readonly-editor">
+                      <Editor
+                        height="max(320px, calc(100vh - 220px))"
+                        language={editorLanguage}
+                        theme={isDark ? FILE_PREVIEW_DARK_THEME : FILE_PREVIEW_LIGHT_THEME}
+                        beforeMount={configureFilePreviewThemes}
+                        value={content}
+                        loading={
+                          <div className="file-preview-editor-loading">
+                            <ArrowPathIcon className="animate-spin" />
+                            {i18nService.t('loading')}
+                          </div>
+                        }
+                        options={{
+                          automaticLayout: true,
+                          domReadOnly: true,
+                          fontFamily:
+                            "'SFMono-Regular', 'Cascadia Code', 'Fira Code', Consolas, monospace",
+                          fontLigatures: true,
+                          fontSize: 13.5,
+                          lineHeight: 22,
+                          minimap: { enabled: false },
+                          padding: { top: 30, bottom: 48 },
+                          readOnly: true,
+                          renderLineHighlight: 'none',
+                          scrollBeyondLastLine: false,
+                          smoothScrolling: true,
+                          wordWrap: 'off',
+                        }}
+                      />
+                    </div>
                   ) : (
                     <article
                       ref={markdownRef}

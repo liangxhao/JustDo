@@ -399,26 +399,9 @@
   background: color-mix(in srgb, var(--justdo-surface) 92%, var(--justdo-background));
 }
 
-.file-preview-plain-content {
-  position: static;
-  min-height: 560px;
-  margin: 0;
-  padding: 30px 34px 48px;
-  overflow: auto;
-  color: var(--justdo-foreground);
-  background: transparent;
-  font-family: 'SFMono-Regular', 'Cascadia Code', 'Fira Code', Consolas, monospace;
-  font-size: 13px;
-  line-height: 1.75;
-  tab-size: 2;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.file-preview-plain-content code {
-  display: block;
-  min-width: max-content;
-  font: inherit;
+.file-preview-readonly-editor {
+  width: 100%;
+  min-height: 320px;
 }
 
 .file-preview-editor-stage {
@@ -632,10 +615,6 @@
 
   .file-preview-document.is-preformatted {
     padding: 0;
-  }
-
-  .file-preview-plain-content {
-    padding: 22px 18px 36px;
   }
 
   .file-preview-editor-stage {
