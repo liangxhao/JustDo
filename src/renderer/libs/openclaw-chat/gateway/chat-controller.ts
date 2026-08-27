@@ -22,6 +22,7 @@ import {
   normalizeChatEvent,
   type NormalizedAgentEvent,
   type NormalizedChatEvent,
+  readTerminalGuardObservation,
 } from '@shared/openclaw/agentEvent';
 import type {
   OpenClawPagedHistoryParams,
@@ -43,7 +44,6 @@ import type {
 } from '@/libs/openclaw-chat/gateway/client';
 import {
   confirmRecoveredToolSequence,
-  hydrateRecoveredContent,
   hydrateToolPrecedingSegments,
   reduceAgentEvent,
   reduceChatEvent,
@@ -1285,19 +1285,6 @@ export class ChatController {
         changed = true;
       }
     }
-    if (options.backfillMissingToolsFromAppend === true) {
-      for (const recovered of trailingAssistantContent(activeRunMessages)) {
-        changed =
-          hydrateRecoveredContent(
-            activeTurn,
-            recovered.text,
-            recovered.historyKey,
-            activeTurn.lastAgentSeq,
-            recovered.timestamp,
-            this.transcriptDependencies,
-          ) || changed;
-      }
-    }
     if (changed) this.state.transcript.revision += 1;
     return changed;
   }
@@ -2517,6 +2504,15 @@ export class ChatController {
     }
     const reduceResult = reduceAgentEvent(cached.transcript, event, this.transcriptDependencies);
     if (reduceResult !== 'applied') return;
+
+    const terminalGuardObservation =
+      event.stream === 'assistant' ? readTerminalGuardObservation(event.data) : null;
+    if (terminalGuardObservation?.action === 'rollback') {
+      cached.assistantSnapshotRunId = null;
+      cached.ignoredDeltaAfterAssistantSnapshotCount = 0;
+      return;
+    }
+    if (terminalGuardObservation?.action === 'commit') return;
 
     if (
       event.stream === 'thinking' ||
@@ -3964,6 +3960,14 @@ export class ChatController {
     }
 
     if (stream === 'assistant') {
+      const terminalGuardObservation = readTerminalGuardObservation(data);
+      if (terminalGuardObservation?.action === 'rollback') {
+        this.resetAssistantSnapshotSource();
+        this.updateRunActivity(runId, 'waiting-model');
+        this.notifyStream('terminal');
+        return;
+      }
+      if (terminalGuardObservation?.action === 'commit') return;
       const text = typeof data.text === 'string' ? data.text : null;
       if (!text) return;
 
@@ -4704,48 +4708,6 @@ function firstAttachedToolCallId(value: unknown): string | null {
     }
   }
   return null;
-}
-
-function trailingAssistantContent(
-  messages: unknown[],
-): Array<{ historyKey: string; text: string; timestamp: number }> {
-  const result: Array<{ historyKey: string; text: string; timestamp: number }> = [];
-  for (const [index, value] of messages.entries()) {
-    const message = unwrapToolMessage(value);
-    if (!message || String(message.role ?? '').toLowerCase() !== 'assistant') continue;
-    if (firstAttachedToolCallId(value)) continue;
-    let text = '';
-    if (typeof message.content === 'string') {
-      text = message.content.trim();
-    } else if (Array.isArray(message.content)) {
-      const trailing: string[] = [];
-      for (const value of message.content) {
-        if (typeof value === 'string') {
-          if (value.trim()) trailing.push(value);
-          continue;
-        }
-        const block = asToolRecord(value);
-        if (!block) continue;
-        if (isToolCallRecord(block)) {
-          trailing.length = 0;
-          continue;
-        }
-        const type = typeof block.type === 'string' ? block.type.toLowerCase() : '';
-        if (type === 'text' && typeof block.text === 'string' && block.text.trim()) {
-          trailing.push(block.text);
-        }
-      }
-      text = trailing.join('').trim();
-    }
-    if (!text) continue;
-    const identity = readTranscriptIdentity(value);
-    const timestamp = messageTimestampMs(value) ?? messageTimestampMs(message) ?? Date.now();
-    const historyKey = identity
-      ? `${identity.kind}:${identity.value}`
-      : `append:${readOpenClawMessageSeq(value) ?? 'none'}:${timestamp}:${index}:${hashTextForDebug(text)}`;
-    result.push({ historyKey, text, timestamp });
-  }
-  return result;
 }
 
 function toolResultCallIds(messages: unknown[]): Set<string> {

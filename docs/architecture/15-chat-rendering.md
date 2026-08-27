@@ -97,6 +97,10 @@ start/delta/snapshot创建或更新独立Thinking item；文本按delta或snapsh
 
 Delta append、snapshot replace、replaceable允许权威final替换。文本merge处理suffix/prefix overlap，避免provider重复快照。final完成流；aborted/error把未完成内容标interrupted并增加terminal item。
 
+运行中的`session.message`只允许按稳定toolCallId恢复Tool及其之前的Content片段；无Tool锚点的普通assistant尾段不得抢先写入active Content，必须等待canonical assistant/chat stream，否则会把完整正文提前写入timeline并吞掉后续增量。
+
+Gateway的managed terminal guard必须区分应用内assistant observation和outbound partial/block delivery：前者带attempt token实时广播给active Content，后者才能为required-subagent join延迟到terminal候选确认。terminal接受时提交该token；候选被guard拒绝或compaction retry清空时回滚该token对应的Content，保留Thinking/Tool。不能因安装terminal callback而缓存应用内正文流，也不能泄漏被拒绝的候选正文。
+
 ### 6.4 Process summary
 
 已完成的Thinking/Tool按时间压缩为process summary，默认不把完整输入/输出塞进主DOM。展开summary后仍按原时序展示；每个Tool有自己的detail disclosure。运行中的Thinking/Tool保持独立可见，不被已归档summary吞并。

@@ -636,7 +636,10 @@ flowchart LR
   和非 managed session 保持原行为。由 `subagent_announce` 启动、已经携带 completion 的投递
   run 不会再次 join 同一 child；native announce 在等待 requester 结束后还会二次检查 durable
   ownership。outer runner 的所有退出路径都会按 parent run 恢复尚未提交的 implicit 状态，
-  已成功消费的结果不受影响。
+  已成功消费的结果不受影响。managed terminal guard 只延迟 outbound partial/block delivery；
+  Gateway 内部的 assistant observation 携带 attempt token 实时广播，避免正常主会话正文直到
+  terminal 才集中出现。terminal 接受时提交该 token，候选被拒绝或 compaction retry 清空时回滚
+  对应 Content，避免把未交付的候选正文留在 UI。
 - **当前保留原因**：仅有 durable join bridge 不会改变 embedded runner 的终止控制流；目标版
   会在最后一个 required child 返回前接受模型的 `NO_REPLY`，使 completion FIFO 等待一个已经
   结束的 requester run，表现为工作流突然停止。

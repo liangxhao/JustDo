@@ -72,6 +72,7 @@ const terminalGuardPatch =
       transformRunner: (content: string, filePath: string) => string;
       transformDelivery: (content: string, filePath: string) => string;
       transformAnnounce: (content: string, filePath: string) => string;
+      transformAssistantObservation: (content: string, filePath: string) => string;
     };
   };
 
@@ -348,6 +349,10 @@ describe('managed implicit subagent join capability', () => {
     beforeAgentFinalizeRevisionReason = outcome.reason;
     return { suppressTerminalDelivery: true };
   } : void 0;
+  const subscription = subscribeEmbeddedAgentSession(buildEmbeddedSubscriptionParams({
+    onBeforeTerminalDelivery,
+    blockReplyBreak: params.blockReplyBreak
+  }));
   let toolMetasForTerminal = [];
 }`;
 
@@ -363,9 +368,183 @@ describe('managed implicit subagent join capability', () => {
     expect(transformed).toContain(
       'JUSTDO_MANAGED_IMPLICIT_JOIN_REVISION_PREFIX + implicitJoin.prompt',
     );
+    expect(transformed).toContain(
+      'liveAssistantObservationDuringTerminalGuard: hasJustDoManagedTerminalGuard',
+    );
     expect(terminalGuardPatch.__testing.transformAttempt(transformed, 'attempt.js')).toBe(
       transformed,
     );
+  });
+
+  test('streams managed assistant observations while terminal delivery stays deferred', () => {
+    const fixture = `function createHarness(params, state, emitAgentEvent) {
+  const emitAssistantStreamDataSafely = (delivery) => {
+    const { data } = delivery;
+    emitAgentEvent({ runId: params.runId, stream: "assistant", data });
+    params.onAgentEvent?.({ stream: "assistant", data });
+    if (delivery.emitPartialReply && params.onPartialReply && state.shouldEmitPartialReplies) params.onPartialReply(data);
+  };
+  const emitAssistantStreamData = (data, options) => {
+    const delivery = { data, emitPartialReply: options?.emitPartialReply === true };
+    if (state.deferBlockReplyDelivery) {
+      state.deferredAssistantEvents.push(delivery);
+      return;
+    }
+    emitAssistantStreamDataSafely(delivery);
+  };
+  const flushDeferredAssistantEvents = () => {
+    if (state.deferredAssistantEvents.length === 0) return;
+    const deferred = state.deferredAssistantEvents.splice(0);
+    for (const delivery of deferred) emitAssistantStreamDataSafely(delivery);
+  };
+  const clearDeferredAssistantEvents = () => {
+    state.deferredAssistantEvents.length = 0;
+  };
+  const deferredToolMediaReplies = new WeakSet();
+  return { emitAssistantStreamData, flushDeferredAssistantEvents, clearDeferredAssistantEvents };
+}`;
+    const transformed = terminalGuardPatch.__testing.transformAssistantObservation(
+      fixture,
+      'stream.js',
+    );
+    const createHarness = new Function(`${transformed}; return createHarness;`)() as (
+      params: Record<string, unknown>,
+      state: Record<string, unknown>,
+      emitAgentEvent: (event: unknown) => void,
+    ) => {
+      emitAssistantStreamData: (data: unknown, options: { emitPartialReply: boolean }) => void;
+      flushDeferredAssistantEvents: () => void;
+      clearDeferredAssistantEvents: () => void;
+    };
+    const gatewayEvents: unknown[] = [];
+    const observerEvents: unknown[] = [];
+    const partialReplies: unknown[] = [];
+    const state = {
+      deferBlockReplyDelivery: true,
+      deferredAssistantEvents: [],
+      shouldEmitPartialReplies: true,
+    };
+    const harness = createHarness(
+      {
+        runId: 'run-1',
+        liveAssistantObservationDuringTerminalGuard: true,
+        onAgentEvent: (event: unknown) => observerEvents.push(event),
+        onPartialReply: (data: unknown) => partialReplies.push(data),
+      },
+      state,
+      event => gatewayEvents.push(event),
+    );
+
+    harness.emitAssistantStreamData({ text: 'live' }, { emitPartialReply: true });
+    expect(gatewayEvents).toHaveLength(1);
+    expect(observerEvents).toHaveLength(1);
+    expect(partialReplies).toHaveLength(0);
+    expect(state.deferredAssistantEvents).toHaveLength(1);
+    const observation = (
+      (gatewayEvents[0] as { data: Record<string, unknown> }).data
+        .justdoTerminalGuardObservation as { token: string; action: string }
+    );
+    expect(observation).toMatchObject({ action: 'update' });
+    expect(observation.token).toEqual(expect.any(String));
+
+    harness.flushDeferredAssistantEvents();
+    expect(gatewayEvents).toHaveLength(2);
+    expect(observerEvents).toHaveLength(2);
+    expect(gatewayEvents[1]).toMatchObject({
+      stream: 'assistant',
+      data: {
+        justdoTerminalGuardObservation: { token: observation.token, action: 'commit' },
+      },
+    });
+    expect(partialReplies).toEqual([{ text: 'live' }]);
+
+    const rollbackGatewayEvents: unknown[] = [];
+    const rollbackObserverEvents: unknown[] = [];
+    const rollbackState = {
+      deferBlockReplyDelivery: true,
+      deferredAssistantEvents: [],
+      shouldEmitPartialReplies: true,
+    };
+    const rollbackHarness = createHarness(
+      {
+        runId: 'run-rollback',
+        liveAssistantObservationDuringTerminalGuard: true,
+        onAgentEvent: (event: unknown) => rollbackObserverEvents.push(event),
+      },
+      rollbackState,
+      event => rollbackGatewayEvents.push(event),
+    );
+    rollbackHarness.emitAssistantStreamData(
+      { text: 'rejected candidate' },
+      { emitPartialReply: false },
+    );
+    const rollbackObservation = (
+      (rollbackGatewayEvents[0] as { data: Record<string, unknown> }).data
+        .justdoTerminalGuardObservation as { token: string; action: string }
+    );
+    rollbackHarness.clearDeferredAssistantEvents();
+    expect(rollbackGatewayEvents).toHaveLength(2);
+    expect(rollbackObserverEvents).toHaveLength(2);
+    expect(rollbackGatewayEvents[1]).toMatchObject({
+      stream: 'assistant',
+      data: {
+        justdoTerminalGuardObservation: {
+          token: rollbackObservation.token,
+          action: 'rollback',
+        },
+      },
+    });
+    expect(rollbackState.deferredAssistantEvents).toHaveLength(0);
+
+    const deferredGatewayEvents: unknown[] = [];
+    const deferredObserverEvents: unknown[] = [];
+    const deferredPartialReplies: unknown[] = [];
+    const deferredState = {
+      deferBlockReplyDelivery: true,
+      deferredAssistantEvents: [],
+      shouldEmitPartialReplies: true,
+    };
+    const deferredHarness = createHarness(
+      {
+        runId: 'run-2',
+        liveAssistantObservationDuringTerminalGuard: false,
+        onAgentEvent: (event: unknown) => deferredObserverEvents.push(event),
+        onPartialReply: (data: unknown) => deferredPartialReplies.push(data),
+      },
+      deferredState,
+      event => deferredGatewayEvents.push(event),
+    );
+    deferredHarness.emitAssistantStreamData({ text: 'guarded' }, { emitPartialReply: true });
+    expect(deferredGatewayEvents).toHaveLength(0);
+    expect(deferredObserverEvents).toHaveLength(0);
+    expect(deferredPartialReplies).toHaveLength(0);
+    deferredHarness.flushDeferredAssistantEvents();
+    expect(deferredGatewayEvents).toHaveLength(1);
+    expect(deferredObserverEvents).toHaveLength(1);
+    expect(deferredPartialReplies).toEqual([{ text: 'guarded' }]);
+
+    expect(
+      terminalGuardPatch.__testing.transformAssistantObservation(transformed, 'stream.js'),
+    ).toBe(transformed);
+    const bundledWithoutMarker = transformed.replace(
+      ' // JUSTDO_LIVE_ASSISTANT_OBSERVATION_DURING_TERMINAL_GUARD_V2026_7_1_2',
+      '',
+    );
+    const normalizedBundle = terminalGuardPatch.__testing.transformAssistantObservation(
+      bundledWithoutMarker,
+      'gateway-bundle.mjs',
+    );
+    expect(normalizedBundle).toBe(transformed);
+    expect(normalizedBundle.match(/const liveAssistantObservationToken =/g)).toHaveLength(1);
+    expect(() =>
+      terminalGuardPatch.__testing.transformAssistantObservation(
+        normalizedBundle.replace(
+          'const liveAssistantObservationToken =',
+          'const liveAssistantObservationToken = duplicate;\n  const liveAssistantObservationToken =',
+        ),
+        'duplicate-bundle.mjs',
+      ),
+    ).toThrow(/declaration counts are token=2/i);
   });
 
   test('continues a silent implicit join without spending the plugin revision budget', () => {

@@ -1,4 +1,9 @@
-import type { NormalizedAgentEvent, NormalizedChatEvent } from '@shared/openclaw/agentEvent';
+import {
+  type NormalizedAgentEvent,
+  type NormalizedChatEvent,
+  readTerminalGuardObservation,
+  type TerminalGuardObservation,
+} from '@shared/openclaw/agentEvent';
 import {
   classifyAgentEvent,
   classifyChatEvent,
@@ -322,52 +327,6 @@ export function hydrateToolPrecedingSegments(
   return true;
 }
 
-export function hydrateRecoveredContent(
-  turn: AssistantTurn,
-  text: string,
-  historyKey: string,
-  seq: number,
-  timestamp: number,
-  dependencies: TranscriptReducerDependencies,
-): boolean {
-  const normalizedText = text.trim();
-  if (!normalizedText) return false;
-  const existing = turn.items.find(
-    (item): item is ContentItem =>
-      item.type === 'content' && item.recoveredHistoryKey === historyKey,
-  );
-  if (existing) {
-    let changed = false;
-    if (existing.text !== normalizedText) {
-      existing.text = normalizedText;
-      existing.recoveredSnapshotText = normalizedText;
-      changed = true;
-    }
-    if (existing.status === 'streaming') {
-      existing.status = 'completed';
-      changed = true;
-    }
-    existing.lastSeq = Math.max(existing.lastSeq, seq);
-    existing.updatedAt = Math.max(existing.updatedAt, timestamp);
-    return changed;
-  }
-  turn.items.push({
-    id: dependencies.createId('history-content'),
-    runId: turn.runId,
-    firstSeq: seq,
-    lastSeq: seq,
-    startedAt: timestamp,
-    updatedAt: timestamp,
-    type: 'content',
-    status: 'completed',
-    text: normalizedText,
-    sourceMode: 'snapshot',
-    recoveredSnapshotText: normalizedText,
-    recoveredHistoryKey: historyKey,
-  });
-  return true;
-}
-
 function completeRunningThinking(turn: AssistantTurn, seq: number, now: number): void {
   const tail = activeAgentTail(turn);
   if (tail?.type === 'thinking' && tail.status === 'running') {
@@ -520,13 +479,13 @@ function reduceContent(
   turn: AssistantTurn,
   event: NormalizedAgentEvent,
   dependencies: TranscriptReducerDependencies,
-): void {
+): ContentItem | null {
   const snapshot = stringValue(event.data.text);
   const delta = stringValue(event.data.delta);
   // Native agent assistant snapshots are scoped to the current model message.
   // Only chat snapshots/finals can represent the cumulative visible turn.
   const text = snapshot ?? delta;
-  if (text === null) return;
+  if (text === null) return null;
   if (snapshot !== null && snapshot.trim()) {
     const normalizedSnapshot = snapshot.trim();
     const recovered = turn.items.find(
@@ -541,7 +500,7 @@ function reduceContent(
       if (recovered.recoveredSnapshotText === normalizedSnapshot) {
         delete recovered.recoveredSnapshotText;
       }
-      return;
+      return recovered;
     }
   }
   const recoveredTool = pendingRecoveredTool(turn);
@@ -561,9 +520,9 @@ function reduceContent(
       existing.followingToolCallId = recoveredTool.toolCallId;
       existing.lastSeq = event.agentSeq;
       existing.updatedAt = event.timestamp;
-      return;
+      return existing;
     }
-    hydrateToolPrecedingContent(
+    const hydrated = hydrateToolPrecedingContent(
       turn,
       recoveredTool,
       text,
@@ -572,7 +531,7 @@ function reduceContent(
       event.timestamp,
       dependencies,
     );
-    return;
+    return hydrated ? (contentBeforeTool(turn, recoveredTool) ?? null) : null;
   }
   completeRunningThinking(turn, event.agentSeq, event.timestamp);
   const tail = activeAgentTail(turn);
@@ -587,7 +546,7 @@ function reduceContent(
     }
     tail.lastSeq = event.agentSeq;
     tail.updatedAt = event.timestamp;
-    return;
+    return tail;
   }
   const item: ContentItem = {
     ...createBase(turn, event, dependencies, 'content'),
@@ -597,6 +556,22 @@ function reduceContent(
     sourceMode: replace ? 'replaceable' : snapshot !== null ? 'snapshot' : 'delta',
   };
   appendAgentItem(turn, item);
+  return item;
+}
+
+function applyTerminalGuardObservationDecision(
+  turn: AssistantTurn,
+  observation: TerminalGuardObservation,
+): void {
+  if (observation.action === 'update') return;
+  for (let index = turn.items.length - 1; index >= 0; index -= 1) {
+    const item = turn.items[index];
+    if (item.type !== 'content' || item.terminalGuardObservationToken !== observation.token) {
+      continue;
+    }
+    if (observation.action === 'rollback') turn.items.splice(index, 1);
+    else delete item.terminalGuardObservationToken;
+  }
 }
 
 function reduceTool(
@@ -746,7 +721,15 @@ export function reduceAgentEvent(
   if (event.stream === 'thinking') {
     reduceThinking(turn, event, dependencies);
   } else if (event.stream === 'assistant') {
-    reduceContent(turn, event, dependencies);
+    const observation = readTerminalGuardObservation(event.data);
+    if (observation?.action === 'commit' || observation?.action === 'rollback') {
+      applyTerminalGuardObservationDecision(turn, observation);
+    } else {
+      const content = reduceContent(turn, event, dependencies);
+      if (content && observation?.action === 'update') {
+        content.terminalGuardObservationToken = observation.token;
+      }
+    }
   } else if (event.stream === 'tool') {
     applied = reduceTool(turn, event, dependencies);
   } else if (

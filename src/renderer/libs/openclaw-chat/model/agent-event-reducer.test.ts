@@ -108,6 +108,71 @@ describe('agent event reducer', () => {
     ]);
   });
 
+  test('rolls back rejected managed-terminal content and commits the accepted revision', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    const observation = (token: string, action: 'update' | 'commit' | 'rollback') => ({
+      justdoTerminalGuardObservation: { token, action },
+    });
+
+    reduceAgentEvent(
+      state,
+      agent(1, 'assistant', {
+        text: 'Candidate before tool',
+        ...observation('candidate-1', 'update'),
+      }),
+      dependencies,
+    );
+    reduceAgentEvent(
+      state,
+      agent(2, 'tool', { phase: 'start', toolCallId: 'call-1', name: 'read' }),
+      dependencies,
+    );
+    reduceAgentEvent(
+      state,
+      agent(3, 'tool', { phase: 'result', toolCallId: 'call-1', result: 'ok' }),
+      dependencies,
+    );
+    reduceAgentEvent(
+      state,
+      agent(4, 'assistant', { text: 'Rejected final', ...observation('candidate-1', 'update') }),
+      dependencies,
+    );
+
+    expect(
+      state.activeTurn?.items
+        .filter(item => item.type === 'content')
+        .map(item => [item.text, item.terminalGuardObservationToken]),
+    ).toEqual([
+      ['Candidate before tool', 'candidate-1'],
+      ['Rejected final', 'candidate-1'],
+    ]);
+
+    reduceAgentEvent(
+      state,
+      agent(5, 'assistant', observation('candidate-1', 'rollback')),
+      dependencies,
+    );
+    expect(state.activeTurn?.items.map(item => item.type)).toEqual(['tool']);
+
+    reduceAgentEvent(
+      state,
+      agent(6, 'assistant', { text: 'Accepted revision', ...observation('candidate-2', 'update') }),
+      dependencies,
+    );
+    reduceAgentEvent(
+      state,
+      agent(7, 'assistant', observation('candidate-2', 'commit')),
+      dependencies,
+    );
+    expect(state.activeTurn?.items.slice(-1)[0]).toMatchObject({
+      type: 'content',
+      text: 'Accepted revision',
+    });
+    expect(
+      state.activeTurn?.items.find(item => item.type === 'content')?.terminalGuardObservationToken,
+    ).toBeUndefined();
+  });
+
   test('keeps cumulative chat snapshots from duplicating content across a tool boundary', () => {
     const state = createChatTranscriptState('session-1', 'sid-1');
 

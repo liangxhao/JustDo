@@ -42,8 +42,8 @@ export interface ContentItem extends BaseTurnItem {
   followingToolCallId?: string;
   /** Authoritative history text awaiting a matching delayed Agent snapshot. */
   recoveredSnapshotText?: string;
-  /** Stable append identity used to make active-run history repair idempotent. */
-  recoveredHistoryKey?: string;
+  /** Optimistic managed-terminal observation that can still be committed or rolled back. */
+  terminalGuardObservationToken?: string;
 }
 
 export interface TerminalItem extends BaseTurnItem {

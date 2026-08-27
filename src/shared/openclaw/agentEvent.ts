@@ -1,5 +1,12 @@
 export type AgentDeliveryEvent = 'agent' | 'session.tool';
 
+export const TERMINAL_GUARD_OBSERVATION_KEY = 'justdoTerminalGuardObservation';
+
+export interface TerminalGuardObservation {
+  token: string;
+  action: 'update' | 'commit' | 'rollback';
+}
+
 export interface NormalizedAgentEvent {
   runId: string;
   sessionKey: string | null;
@@ -38,6 +45,18 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+export function readTerminalGuardObservation(
+  data: Record<string, unknown>,
+): TerminalGuardObservation | null {
+  const value = asRecord(data[TERMINAL_GUARD_OBSERVATION_KEY]);
+  const token = nonEmptyString(value?.token);
+  const action = value?.action;
+  if (!token || (action !== 'update' && action !== 'commit' && action !== 'rollback')) {
+    return null;
+  }
+  return { token, action };
 }
 
 function nonEmptyString(value: unknown): string | null {

@@ -2,13 +2,16 @@
 
 // Capability: reject a managed parent terminal candidate while required child results remain unread.
 // Target: patched openclaw@2026.7.1-2 after patch 041's implicit required-child join bridge.
-// Scope: embedded terminal interception and same-run result-driven continuation.
-// Safety: aborts, errors, retries, client tools, explicit yield and non-managed sessions keep upstream behavior.
+// Scope: embedded terminal interception, same-run result-driven continuation, and rollbackable live
+// app-internal assistant observation while outbound terminal delivery remains guarded.
+// Safety: aborts, errors, retries, client tools, explicit yield and non-managed sessions keep upstream behavior;
+// optional finalize hooks outside managed sessions retain upstream assistant-event deferral.
 // Remove when: upstream distinguishes model-turn completion from orchestration completion before final delivery.
 
 const fs = require('fs');
 const path = require('path');
 const {
+  countOccurrences,
   findFilesContaining,
   replaceUnique,
   replaceUniquePattern,
@@ -17,6 +20,9 @@ const {
 } = require('./_patch-utils.js');
 
 const MARKER = 'JUSTDO_REQUIRED_SUBAGENT_TERMINAL_GUARD_V2026_7_1_2';
+const ASSISTANT_OBSERVATION_MARKER =
+  'JUSTDO_LIVE_ASSISTANT_OBSERVATION_DURING_TERMINAL_GUARD_V2026_7_1_2';
+const ASSISTANT_OBSERVATION_FIELD = 'justdoTerminalGuardObservation';
 const REVISION_PREFIX = '__JUSTDO_MANAGED_IMPLICIT_JOIN__\n';
 
 function isJustDoSubagentCompletionDeliveryRun(inputProvenance) {
@@ -48,8 +54,25 @@ ${stableFunctionSource(shouldAttemptJustDoImplicitJoin)}
 ${stableFunctionSource(isJustDoSubagentCompletionDeliveryRun)}
 `;
 
+function addLiveAssistantObservationFlag(content, filePath) {
+  if (
+    !content.includes('onBeforeTerminalDelivery,') ||
+    content.includes('liveAssistantObservationDuringTerminalGuard:')
+  ) {
+    return content;
+  }
+  return replaceUniquePattern(
+    content,
+    /^(?<indent>[ \t]+)onBeforeTerminalDelivery,\r?\n(?=\k<indent>blockReplyBreak:)/m,
+    '$<indent>onBeforeTerminalDelivery,\n$<indent>liveAssistantObservationDuringTerminalGuard: hasJustDoManagedTerminalGuard,\n',
+    `${filePath}: live managed assistant observation flag`,
+  );
+}
+
 function transformAttempt(content, filePath) {
-  if (content.includes('const JUSTDO_MANAGED_IMPLICIT_JOIN_GLOBAL =')) return content;
+  if (content.includes('const JUSTDO_MANAGED_IMPLICIT_JOIN_GLOBAL =')) {
+    return addLiveAssistantObservationFlag(content, filePath);
+  }
   let updated = replaceUniquePattern(
     content,
     /^(?<indent>[ \t]+)let beforeAgentFinalizeRevisionReason;$/m,
@@ -99,7 +122,152 @@ ${indent}\tif (!hasBeforeAgentFinalizeHook || beforeAgentFinalizeRevisionReason 
     '',
     `${filePath}: reuse terminal client-tool evidence`,
   );
-  return updated;
+  return addLiveAssistantObservationFlag(updated, filePath);
+}
+
+function transformAssistantObservation(content, filePath) {
+  const appliedContracts = [
+    'const liveAssistantObservationToken =',
+    'let liveAssistantObservationPending = false;',
+    `${ASSISTANT_OBSERVATION_FIELD}: { token:`,
+    'emitAssistantObservationDecision("commit")',
+    'emitAssistantObservationDecision("rollback")',
+  ];
+  const appliedCount = appliedContracts.filter(contract => content.includes(contract)).length;
+  if (appliedCount === appliedContracts.length) {
+    const tokenDeclarationCount = countOccurrences(
+      content,
+      'const liveAssistantObservationToken =',
+    );
+    const pendingDeclarationCount = countOccurrences(
+      content,
+      'let liveAssistantObservationPending = false;',
+    );
+    if (tokenDeclarationCount !== 1 || pendingDeclarationCount !== 1) {
+      throw new Error(
+        `${filePath}: live assistant observation declaration counts are token=${tokenDeclarationCount}, pending=${pendingDeclarationCount}; expected 1`,
+      );
+    }
+    if (content.includes(ASSISTANT_OBSERVATION_MARKER)) return content;
+    return replaceUniquePattern(
+      content,
+      /^(?<declaration>[ \t]+const emitAssistantStreamDataSafely = \(delivery\) => \{)$/m,
+      `$<declaration> // ${ASSISTANT_OBSERVATION_MARKER}`,
+      `${filePath}: bundled live assistant observation marker`,
+    );
+  }
+  if (appliedCount > 0) {
+    throw new Error(
+      `${filePath}: partial live assistant observation protocol detected (${appliedCount}/${appliedContracts.length})`,
+    );
+  }
+  const matches = [
+    ...content.matchAll(
+      /^(?<indent>[ \t]+)const emitAssistantStreamDataSafely = \(delivery\) => \{(?: \/\/ JUSTDO_LIVE_ASSISTANT_OBSERVATION_DURING_TERMINAL_GUARD_V2026_7_1_2)?$/gm,
+    ),
+  ];
+  if (matches.length !== 1) {
+    throw new Error(
+      `${filePath}: assistant stream delivery target count ${matches.length}, expected 1`,
+    );
+  }
+  const match = matches[0];
+  const start = match.index;
+  const indent = match.groups?.indent ?? '';
+  const endNeedle = `${indent}const deferredToolMediaReplies =`;
+  const end = content.indexOf(endNeedle, start);
+  if (start === undefined || end < 0) {
+    throw new Error(`${filePath}: assistant stream delivery block boundary is missing`);
+  }
+  const original = content.slice(start, end);
+  const state = original.match(/if \((state\d*)\.deferBlockReplyDelivery\)/)?.[1];
+  if (!state) throw new Error(`${filePath}: assistant stream deferral state is missing`);
+
+  const unit = indent.includes('\t') ? '\t' : '  ';
+  const line = (depth, value) => `${indent}${unit.repeat(depth)}${value}`;
+  const replacement = [
+    line(
+      0,
+      'const liveAssistantObservationToken = params.liveAssistantObservationDuringTerminalGuard === true ? `${params.runId}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2)}` : void 0;',
+    ),
+    line(0, 'let liveAssistantObservationPending = false;'),
+    line(
+      0,
+      `const emitAssistantStreamDataSafely = (delivery) => { // ${ASSISTANT_OBSERVATION_MARKER}`,
+    ),
+    line(1, 'const { data } = delivery;'),
+    line(1, 'if (delivery.observationEmitted !== true) {'),
+    line(2, 'emitAgentEvent({'),
+    line(3, 'runId: params.runId,'),
+    line(3, 'stream: "assistant",'),
+    line(3, 'data'),
+    line(2, '});'),
+    line(2, 'params.onAgentEvent?.({'),
+    line(3, 'stream: "assistant",'),
+    line(3, 'data'),
+    line(2, '});'),
+    line(1, '}'),
+    line(
+      1,
+      `if (delivery.emitPartialReply && params.onPartialReply && ${state}.shouldEmitPartialReplies) params.onPartialReply(data);`,
+    ),
+    line(0, '};'),
+    line(0, 'const emitAssistantObservationDecision = (action) => {'),
+    line(1, 'if (!liveAssistantObservationToken || !liveAssistantObservationPending) return;'),
+    line(1, 'liveAssistantObservationPending = false;'),
+    line(1, 'const data = {'),
+    line(2, `${ASSISTANT_OBSERVATION_FIELD}: { token: liveAssistantObservationToken, action }`),
+    line(1, '};'),
+    line(1, 'emitAgentEvent({'),
+    line(2, 'runId: params.runId,'),
+    line(2, 'stream: "assistant",'),
+    line(2, 'data'),
+    line(1, '});'),
+    line(1, 'params.onAgentEvent?.({'),
+    line(2, 'stream: "assistant",'),
+    line(2, 'data'),
+    line(1, '});'),
+    line(0, '};'),
+    line(0, 'const emitAssistantStreamData = (data, options) => {'),
+    line(1, 'const delivery = {'),
+    line(2, 'data,'),
+    line(2, 'emitPartialReply: options?.emitPartialReply === true'),
+    line(1, '};'),
+    line(1, `if (${state}.deferBlockReplyDelivery) {`),
+    line(2, 'if (params.liveAssistantObservationDuringTerminalGuard === true) {'),
+    line(3, 'liveAssistantObservationPending = true;'),
+    line(3, 'const observationData = {'),
+    line(4, '...delivery.data,'),
+    line(
+      4,
+      `${ASSISTANT_OBSERVATION_FIELD}: { token: liveAssistantObservationToken, action: "update" }`,
+    ),
+    line(3, '};'),
+    line(
+      3,
+      'emitAssistantStreamDataSafely({ ...delivery, data: observationData, emitPartialReply: false });',
+    ),
+    line(
+      3,
+      `if (delivery.emitPartialReply) ${state}.deferredAssistantEvents.push({ ...delivery, observationEmitted: true });`,
+    ),
+    line(2, `} else ${state}.deferredAssistantEvents.push(delivery);`),
+    line(2, 'return;'),
+    line(1, '}'),
+    line(1, 'emitAssistantStreamDataSafely(delivery);'),
+    line(0, '};'),
+    line(0, 'const flushDeferredAssistantEvents = () => {'),
+    line(1, `const deferred = ${state}.deferredAssistantEvents.splice(0);`),
+    line(1, 'emitAssistantObservationDecision("commit");'),
+    line(1, 'for (const delivery of deferred) emitAssistantStreamDataSafely(delivery);'),
+    line(0, '};'),
+    line(0, 'const clearDeferredAssistantEvents = () => {'),
+    line(1, `${state}.deferredAssistantEvents.length = 0;`),
+    line(1, 'emitAssistantObservationDecision("rollback");'),
+    line(0, '};'),
+    '',
+  ].join('\n');
+  return `${content.slice(0, start)}${replacement}${content.slice(end)}`;
 }
 
 function transformRunner(content, filePath) {
@@ -225,17 +393,26 @@ function locateTargets(runtimeDir) {
     ]),
     ...findFilesContaining(runtimeDir, ['delivery.reason === "managed_join_owned"']),
   ]);
+  const assistantObservation = unique([
+    ...findFilesContaining(runtimeDir, [
+      'const emitAssistantStreamDataSafely = (delivery) => {',
+      'deferredAssistantEvents',
+      'deferBlockReplyDelivery',
+    ]),
+    ...findFilesContaining(runtimeDir, [ASSISTANT_OBSERVATION_MARKER]),
+  ]);
   const expected = fs.existsSync(path.join(runtimeDir, 'gateway-bundle.mjs')) ? 2 : 1;
   if (
     attempt.length !== expected ||
     runner.length !== expected ||
     delivery.length !== expected ||
-    announce.length !== expected
+    announce.length !== expected ||
+    assistantObservation.length !== expected
   )
     throw new Error(
-      `required-child terminal guard target counts are attempt=${attempt.length}, runner=${runner.length}, delivery=${delivery.length}, announce=${announce.length}; expected ${expected}`,
+      `required-child terminal guard target counts are attempt=${attempt.length}, runner=${runner.length}, delivery=${delivery.length}, announce=${announce.length}, assistantObservation=${assistantObservation.length}; expected ${expected}`,
     );
-  return { attempt, runner, delivery, announce };
+  return { attempt, runner, delivery, announce, assistantObservation };
 }
 
 function applyPatch(runtimeDir) {
@@ -246,6 +423,7 @@ function applyPatch(runtimeDir) {
     ['runner', transformRunner],
     ['delivery', transformDelivery],
     ['announce', transformAnnounce],
+    ['assistantObservation', transformAssistantObservation],
   ]) {
     for (const filePath of targets[name])
       transforms.set(filePath, [...(transforms.get(filePath) ?? []), transform]);
@@ -275,6 +453,7 @@ function verifyPatch(runtimeDir) {
         'isManagedSession?.(params.sessionKey)',
         'waitForRequiredChildren?.({',
         'JUSTDO_MANAGED_IMPLICIT_JOIN_REVISION_PREFIX + implicitJoin.prompt',
+        'liveAssistantObservationDuringTerminalGuard: hasJustDoManagedTerminalGuard',
       ],
     ],
     [
@@ -300,6 +479,18 @@ function verifyPatch(runtimeDir) {
       targets.announce,
       ['delivery.reason === "managed_join_owned"', 'shouldDeleteChildSession = false;'],
     ],
+    [
+      'assistantObservation',
+      targets.assistantObservation,
+      [
+        ASSISTANT_OBSERVATION_MARKER,
+        'params.liveAssistantObservationDuringTerminalGuard === true',
+        'observationEmitted: true',
+        `${ASSISTANT_OBSERVATION_FIELD}: { token:`,
+        'emitAssistantObservationDecision("commit")',
+        'emitAssistantObservationDecision("rollback")',
+      ],
+    ],
   ]) {
     for (const filePath of files) {
       const content = fs.readFileSync(filePath, 'utf8');
@@ -308,6 +499,13 @@ function verifyPatch(runtimeDir) {
           throw new Error(
             `${filePath}: required-child terminal guard ${name} contract is missing ${contract}`,
           );
+      if (
+        name === 'assistantObservation' &&
+        (countOccurrences(content, 'const liveAssistantObservationToken =') !== 1 ||
+          countOccurrences(content, 'let liveAssistantObservationPending = false;') !== 1)
+      ) {
+        throw new Error(`${filePath}: duplicate live assistant observation declarations detected`);
+      }
     }
   }
 }
@@ -322,5 +520,6 @@ module.exports = {
     transformRunner,
     transformDelivery,
     transformAnnounce,
+    transformAssistantObservation,
   },
 };

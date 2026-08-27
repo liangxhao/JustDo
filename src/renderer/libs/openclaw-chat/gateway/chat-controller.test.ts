@@ -2159,7 +2159,7 @@ test('deduplicates a late assistant snapshot after history settles its recovered
   );
 });
 
-test('renders and deduplicates an active-run assistant string append', () => {
+test('keeps a plain active-run assistant append from bypassing canonical content streaming', () => {
   vi.useFakeTimers();
   vi.setSystemTime(14_000);
   const sessionKey = 'agent:main:justdo:session-1';
@@ -2187,7 +2187,7 @@ test('renders and deduplicates an active-run assistant string append', () => {
   const message = {
     role: 'assistant',
     timestamp: 14_100,
-    content: '纯字符串进度也应立即显示。',
+    content: '纯字符串最终正文必须等待正式流。',
   };
   streamListener.mockClear();
   handleEvent({
@@ -2199,10 +2199,8 @@ test('renders and deduplicates an active-run assistant string append', () => {
     payload: { sessionKey, activeRunIds: ['run-1'], message },
   });
 
-  expect(controller.state.transcript.activeTurn?.items).toMatchObject([
-    { type: 'content', status: 'completed', text: message.content },
-  ]);
-  expect(streamListener).toHaveBeenCalledWith('terminal');
+  expect(controller.state.transcript.activeTurn?.items).toEqual([]);
+  expect(streamListener).not.toHaveBeenCalled();
 
   handleEvent({
     event: 'agent',
@@ -2211,10 +2209,85 @@ test('renders and deduplicates an active-run assistant string append', () => {
       runId: 'run-1',
       seq: 2,
       stream: 'assistant',
+      data: { text: '纯字符串' },
+    },
+  });
+  expect(controller.state.transcript.activeTurn?.items).toMatchObject([
+    { type: 'content', status: 'streaming', text: '纯字符串' },
+  ]);
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 3,
+      stream: 'assistant',
       data: { text: message.content },
     },
   });
   expect(controller.state.transcript.activeTurn?.items).toHaveLength(1);
+  expect(controller.state.transcript.activeTurn?.items).toMatchObject([
+    { type: 'content', status: 'streaming', text: message.content },
+  ]);
+});
+
+test('removes a rejected managed-terminal candidate before the revision continues', () => {
+  const sessionKey = 'agent:main:justdo:session-1';
+  const controller = new ChatController();
+  const streamListener = vi.fn();
+  controller.onStream(streamListener);
+  controller.state.sessionKey = sessionKey;
+  const internal = controller as unknown as {
+    assistantSnapshotRunId: string | null;
+    handleEvent(event: { event: string; payload: unknown }): void;
+  };
+
+  internal.handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 1,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+    },
+  });
+  internal.handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 2,
+      stream: 'assistant',
+      data: {
+        text: 'Rejected candidate',
+        justdoTerminalGuardObservation: { token: 'candidate-1', action: 'update' },
+      },
+    },
+  });
+  expect(controller.state.transcript.activeTurn?.items).toMatchObject([
+    { type: 'content', text: 'Rejected candidate' },
+  ]);
+  expect(internal.assistantSnapshotRunId).toBe('run-1');
+
+  streamListener.mockClear();
+  internal.handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 3,
+      stream: 'assistant',
+      data: {
+        justdoTerminalGuardObservation: { token: 'candidate-1', action: 'rollback' },
+      },
+    },
+  });
+
+  expect(controller.state.transcript.activeTurn?.items).toEqual([]);
+  expect(internal.assistantSnapshotRunId).toBeNull();
+  expect(streamListener).toHaveBeenCalledWith('terminal');
 });
 
 test('places string content before an attached Tool during active-run repair', () => {
