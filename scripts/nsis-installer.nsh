@@ -366,6 +366,24 @@ Function JustDoStageManagedRuntimes
   !insertmacro JustDoLogInstallEvent "phase=runtime-staging result=$0 detail=$R9"
 FunctionEnd
 
+Function JustDoStopLegacyPythonProcesses
+  ; Older releases ran the managed Python interpreter from userData, outside
+  ; $INSTDIR and therefore outside the normal installed-process check. Stop
+  ; only executables rooted in that exact obsolete directory. This is cleanup:
+  ; access-denied and inspection failures are logged but never block setup.
+  System::Call 'Kernel32::GetCurrentProcessId()i.r0'
+  System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_INSTALL_ROOT", "$INSTDIR").r1'
+  System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_USER_DATA_ROOT", "$APPDATA\${PRODUCT_NAME}").r1'
+  System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_CALLER_PID", "$0").r1'
+  nsExec::ExecToStack /TIMEOUT=15000 '"${JUSTDO_POWERSHELL}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\justdo-process-helper.ps1" -Action StopLegacyPython'
+  Pop $0
+  Pop $R9
+  System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_INSTALL_ROOT", t "")i'
+  System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_USER_DATA_ROOT", t "")i'
+  System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_CALLER_PID", t "")i'
+  !insertmacro JustDoLogInstallEvent "phase=legacy-python-process-stop result=$0 detail=$R9"
+FunctionEnd
+
 Function JustDoRestoreManagedRuntimes
   ${IfNot} ${FileExists} "$PLUGINSDIR\justdo-process-helper.ps1"
     StrCpy $0 "helper-missing"
@@ -484,6 +502,7 @@ Function JustDoCheckAppRunning
       ${EndIf}
   ${EndIf}
   !insertmacro JustDoLogInstallEvent "phase=process-check-complete result=ready"
+  Call JustDoStopLegacyPythonProcesses
   Call JustDoStageManagedRuntimes
   ${If} $0 != "0"
     !insertmacro JustDoLogInstallEvent "phase=installer-abort reason=runtime-staging-failed result=$0"

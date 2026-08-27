@@ -1,6 +1,6 @@
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet('Find', 'Wait', 'Stop', 'StageRuntimes', 'RestoreRuntimes')]
+  [ValidateSet('Find', 'Wait', 'Stop', 'StopLegacyPython', 'StageRuntimes', 'RestoreRuntimes')]
   [string]$Action,
 
   [ValidateRange(1, 120)]
@@ -30,6 +30,87 @@ try {
             $installRoot,
             [StringComparison]::OrdinalIgnoreCase
           )
+        } catch {
+          $false
+        }
+      }
+    )
+  }
+
+  function Test-PathChainContainsReparsePoint {
+    param(
+      [Parameter(Mandatory = $true)]
+      [string]$RootPath,
+
+      [Parameter(Mandatory = $true)]
+      [string]$CandidatePath
+    )
+
+    try {
+      $normalizedRoot = [IO.Path]::GetFullPath($RootPath).TrimEnd(
+        [IO.Path]::DirectorySeparatorChar,
+        [IO.Path]::AltDirectorySeparatorChar
+      )
+      $rootPrefix = $normalizedRoot + [IO.Path]::DirectorySeparatorChar
+      $normalizedCandidate = [IO.Path]::GetFullPath($CandidatePath)
+      if (-not $normalizedCandidate.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        return $true
+      }
+
+      $currentPath = $normalizedRoot
+      $currentItem = Get-Item -LiteralPath $currentPath -Force -ErrorAction Stop
+      if (($currentItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        return $true
+      }
+
+      $relativePath = $normalizedCandidate.Substring($rootPrefix.Length)
+      $segments = @(
+        $relativePath -split '[\\/]' | Where-Object {
+          -not [string]::IsNullOrWhiteSpace($_)
+        }
+      )
+      foreach ($segment in $segments) {
+        $currentPath = Join-Path $currentPath $segment
+        $currentItem = Get-Item -LiteralPath $currentPath -Force -ErrorAction Stop
+        if (($currentItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+          return $true
+        }
+      }
+
+      return $false
+    } catch {
+      # Missing/inaccessible path components cannot be proven to remain inside
+      # the managed tree. Fail closed and leave optional cleanup to a later run.
+      return $true
+    }
+  }
+
+  function Get-LegacyPythonProcesses {
+    $userDataPath = [Environment]::GetEnvironmentVariable('JUSTDO_USER_DATA_ROOT', 'Process')
+    if ([string]::IsNullOrWhiteSpace($userDataPath)) { return @() }
+
+    $userDataRoot = [IO.Path]::GetFullPath($userDataPath).TrimEnd(
+      [IO.Path]::DirectorySeparatorChar,
+      [IO.Path]::AltDirectorySeparatorChar
+    )
+    $legacyPythonRoot =
+      [IO.Path]::GetFullPath((Join-Path $userDataRoot 'runtimes\python-win')).TrimEnd(
+        [IO.Path]::DirectorySeparatorChar,
+        [IO.Path]::AltDirectorySeparatorChar
+      ) + [IO.Path]::DirectorySeparatorChar
+
+    @(
+      Get-CimInstance Win32_Process | Where-Object {
+        try {
+          $executablePath = [IO.Path]::GetFullPath($_.ExecutablePath)
+          $_.ProcessId -ne $helperPid -and
+          $_.ProcessId -ne $callerPid -and
+          -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and
+          $executablePath.StartsWith(
+            $legacyPythonRoot,
+            [StringComparison]::OrdinalIgnoreCase
+          ) -and
+          -not (Test-PathChainContainsReparsePoint -RootPath $userDataRoot -CandidatePath $executablePath)
         } catch {
           $false
         }
@@ -101,6 +182,29 @@ try {
         if ((Get-InstalledProcesses).Count -eq 0) { exit 0 }
         Start-Sleep -Milliseconds 500
       }
+      exit 1
+    }
+    'StopLegacyPython' {
+      # This directory was managed by older releases and is no longer used by
+      # the installed application. Stop only executables inside that exact
+      # tree; never match every python.exe on the machine.
+      $matched = @(Get-LegacyPythonProcesses)
+      $matched | ForEach-Object {
+        Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+      }
+      for ($attempt = 0; $attempt -lt 20; $attempt++) {
+        $remaining = @(Get-LegacyPythonProcesses)
+        if ($remaining.Count -eq 0) {
+          Write-Output "matched=$($matched.Count) remaining=0"
+          exit 0
+        }
+        $remaining | ForEach-Object {
+          Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+        }
+        Start-Sleep -Milliseconds 250
+      }
+      $remaining = @(Get-LegacyPythonProcesses)
+      Write-Output "matched=$($matched.Count) remaining=$($remaining.Count)"
       exit 1
     }
     'StageRuntimes' {

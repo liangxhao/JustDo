@@ -366,7 +366,26 @@ function migrateLegacyPythonRuntime() {
   if (!fs.existsSync(legacyRoot)) return;
 
   activity('Removing legacy Python runtime...');
-  fs.rmSync(legacyRoot, { recursive: true, force: true });
+  try {
+    fs.rmSync(legacyRoot, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 250,
+    });
+  } catch (error) {
+    // The replacement runtime is already packaged under resources. A stale
+    // userData copy is unused, so antivirus/indexer locks or an unkillable old
+    // Python process must not roll back otherwise healthy extracted runtimes.
+    // Keep this warning in the diagnostic log only. Cleanup is optional, so it
+    // must not surface as an installer-window warning or activity message.
+    writeDiagnostic('warn', 'legacy-python-runtime-cleanup-skipped', {
+      message: 'unable to remove unused legacy Python runtime; leaving it in place',
+      error: error?.message || '',
+      code: error?.code || '',
+    });
+    return;
+  }
   try {
     fs.rmdirSync(path.dirname(legacyRoot));
   } catch {
@@ -659,7 +678,6 @@ async function main() {
         );
       }
 
-      migrateLegacyPythonRuntime();
       reportProgress(null, 'OpenClaw runtime verified');
       writeDiagnostic('info', 'runtime-validation-complete');
       fs.rmSync(transactionStatePath, { force: true });
@@ -708,6 +726,10 @@ async function main() {
       }
       throw error;
     }
+
+    // Legacy userData cleanup is intentionally outside the runtime upgrade
+    // transaction. Failure is non-fatal and will be retried on a later start.
+    migrateLegacyPythonRuntime();
 
     // Validation and migration have committed the new runtimes. Backup cleanup
     // is best-effort: a cleanup failure must never roll back verified runtimes.
