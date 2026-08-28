@@ -51,11 +51,10 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
   const [skippedQuestions, setSkippedQuestions] = useState<Record<string, boolean>>({});
   const advanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
-  const closeButtonRef = useRef<HTMLButtonElement>(null);
 
   const isFloating = presentation === 'floating';
 
-  useDialogFocusTrap(dialogRef, closeButtonRef, interaction.requestId, !isFloating, isActive);
+  useDialogFocusTrap(dialogRef, dialogRef, interaction.requestId, !isFloating, isActive);
 
   useEffect(() => {
     if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
@@ -315,8 +314,8 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
         ref={dialogRef}
         className={
           isFloating
-            ? 'flex max-h-[80vh] min-h-0 w-full flex-col overflow-hidden bg-surface'
-            : 'modal-content flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden mx-4 bg-surface rounded-2xl shadow-modal'
+            ? 'flex max-h-[80vh] min-h-0 w-full flex-col overflow-hidden bg-surface focus:outline-none'
+            : 'modal-content flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden mx-4 bg-surface rounded-2xl shadow-modal focus:outline-none'
         }
         role="dialog"
         aria-modal={isFloating ? undefined : true}
@@ -336,7 +335,6 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
             </h2>
           </div>
           <button
-            ref={closeButtonRef}
             onClick={handleCancel}
             className="p-2 rounded-lg hover:bg-surface-raised text-secondary transition-colors"
             aria-label={i18nService.t('close')}

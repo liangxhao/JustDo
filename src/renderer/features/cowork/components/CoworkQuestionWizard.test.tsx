@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { CoworkInteractionKind } from '@shared/openclaw/extensions';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import type { CoworkInteractionRequest } from '@/features/cowork/coworkTypes';
@@ -45,6 +45,20 @@ const buildInteraction = (
 afterEach(cleanup);
 
 describe('CoworkQuestionWizard multi-select navigation', () => {
+  test('focuses the dialog instead of highlighting the close button when opened', async () => {
+    render(
+      <CoworkQuestionWizard
+        interaction={buildInteraction()}
+        onRespond={vi.fn()}
+        presentation="floating"
+      />,
+    );
+
+    const dialog = screen.getByRole('dialog');
+    await waitFor(() => expect(document.activeElement).toBe(dialog));
+    expect(document.activeElement).not.toBe(screen.getByRole('button', { name: /Close|关闭/ }));
+  });
+
   test('shows Next only after the current multi-select answer is complete', () => {
     render(<CoworkQuestionWizard interaction={buildInteraction()} onRespond={vi.fn()} />);
 

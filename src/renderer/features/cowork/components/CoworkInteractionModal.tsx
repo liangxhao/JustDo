@@ -55,7 +55,13 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
 
   const isFloating = presentation === 'floating';
 
-  useDialogFocusTrap(dialogRef, closeButtonRef, interaction.requestId, !isFloating, isActive);
+  useDialogFocusTrap(
+    dialogRef,
+    isQuestionTool ? dialogRef : closeButtonRef,
+    interaction.requestId,
+    !isFloating,
+    isActive,
+  );
 
   useEffect(() => {
     setAnswers({});
@@ -281,8 +287,8 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
         ref={dialogRef}
         className={
           isFloating
-            ? 'flex max-h-[80vh] min-h-0 w-full flex-col overflow-hidden bg-surface'
-            : 'modal-content w-full max-w-lg mx-4 bg-surface rounded-2xl shadow-modal overflow-hidden'
+            ? 'flex max-h-[80vh] min-h-0 w-full flex-col overflow-hidden bg-surface focus:outline-none'
+            : 'modal-content w-full max-w-lg mx-4 bg-surface rounded-2xl shadow-modal overflow-hidden focus:outline-none'
         }
         role="dialog"
         aria-modal={isFloating ? undefined : true}
