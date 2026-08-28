@@ -84,6 +84,27 @@ export interface OpenClawCliEnvironment {
   token: string;
 }
 
+export const OpenClawCliNetworkMode = {
+  Inherit: 'inherit',
+  OutboundProxy: 'outbound-proxy',
+} as const;
+
+export type OpenClawCliNetworkMode =
+  (typeof OpenClawCliNetworkMode)[keyof typeof OpenClawCliNetworkMode];
+
+export type OpenClawCliEnvironmentOptions = {
+  networkMode?: OpenClawCliNetworkMode;
+};
+
+export const applyOpenClawCliNetworkMode = (
+  baseEnv: NodeJS.ProcessEnv,
+  networkMode: OpenClawCliNetworkMode,
+  buildNetworkEnvironment: (env: NodeJS.ProcessEnv) => NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv =>
+  networkMode === OpenClawCliNetworkMode.OutboundProxy
+    ? buildNetworkEnvironment(baseEnv)
+    : baseEnv;
+
 interface OpenClawEngineManagerEvents {
   status: (status: OpenClawEngineStatus) => void;
 }
@@ -470,7 +491,9 @@ export class OpenClawEngineManager extends EventEmitter {
     listener?.(this.gatewayPort ?? this.readGatewayPort());
   }
 
-  async buildCliEnvironment(): Promise<OpenClawCliEnvironment> {
+  async buildCliEnvironment(
+    options: OpenClawCliEnvironmentOptions = {},
+  ): Promise<OpenClawCliEnvironment> {
     const ensured = await this.ensureReady();
     if (ensured.phase !== 'ready' && ensured.phase !== 'running') {
       throw new Error(ensured.message || 'OpenClaw runtime is not ready');
@@ -583,8 +606,14 @@ export class OpenClawEngineManager extends EventEmitter {
       env.JUSTDO_NPM_BIN_DIR = npmBinDir || '';
     }
 
-    return {
+    const resolvedEnv = applyOpenClawCliNetworkMode(
       env,
+      options.networkMode ?? OpenClawCliNetworkMode.Inherit,
+      this.buildNetworkEnvironment,
+    );
+
+    return {
+      env: resolvedEnv,
       runtimeRoot: runtime.root,
       openclawEntry,
       port,

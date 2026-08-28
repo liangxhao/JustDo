@@ -1,10 +1,14 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import {
+  OpenClawCliNetworkMode,
+  type OpenClawEngineManager,
+} from '../../openclaw/runtime/openclawEngineManager';
+import {
+  buildMemoryCliEnvironment,
   normalizeMemoryIndexStatus,
   normalizeSearchHits,
   resolveMemoryWorkspace,
@@ -79,6 +83,25 @@ describe('resolveMemoryWorkspace', () => {
     } as OpenClawEngineManager;
 
     expect(resolveMemoryWorkspace(manager)).toBe(path.resolve(mainWorkspace));
+  });
+});
+
+describe('buildMemoryCliEnvironment', () => {
+  it('routes memory embedding commands through the outbound header proxy environment', async () => {
+    const cli = {
+      env: {},
+      runtimeRoot: 'runtime',
+      openclawEntry: 'openclaw.mjs',
+      port: 1234,
+      token: 'token',
+    };
+    const buildCliEnvironment = vi.fn().mockResolvedValue(cli);
+    const manager = { buildCliEnvironment } as unknown as OpenClawEngineManager;
+
+    await expect(buildMemoryCliEnvironment(manager)).resolves.toBe(cli);
+    expect(buildCliEnvironment).toHaveBeenCalledWith({
+      networkMode: OpenClawCliNetworkMode.OutboundProxy,
+    });
   });
 });
 

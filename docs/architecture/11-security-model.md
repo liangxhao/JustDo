@@ -93,7 +93,10 @@ Preview 只支持 shared allowlist extension，最大 2 MiB。读取流程用 `l
 
 Main `api.fetch` 使用 Electron session，取消键绑定 sender/request id；outbound header policy 只对 allowlisted origin/name匹配时注入，并拒绝不安全值。日志记录 source、origin、随机 request id 和注入数量，不记录值。
 
-Gateway child 通过 selective outbound header proxy 和独立 env；动态 bypass 当前本地 Gateway port，避免 loopback RPC 被系统代理。代理是本机网络边界，需防任意本地调用者、过宽 MITM 与全局 env 竞态；详见功能审计文档。
+Gateway child 与显式 opt-in 的 OpenClaw one-shot CLI 通过 selective outbound header proxy 和独立
+env；当前 memory search/index CLI 属于 opt-in consumer。动态 bypass 当前本地 Gateway port，避免
+loopback RPC 被系统代理。代理是本机网络边界，需防任意本地调用者、过宽 MITM 与全局 env 竞态；
+详见功能审计文档。
 
 ## 12. Token 与 Secrets
 

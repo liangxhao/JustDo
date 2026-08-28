@@ -4,7 +4,10 @@
 
 ## 1. 功能目的
 
-OpenClaw Gateway 及其支持的 tool 子进程访问指定远端 URL 时，JustDo 可以注入一组共享校验 Header。典型用途是让远端服务识别来自本地 Agent 环境的授权请求。
+OpenClaw Gateway、其支持的 tool 子进程，以及显式 opt-in 的 OpenClaw one-shot CLI 访问指定
+远端 URL 时，JustDo 可以注入一组共享校验 Header。当前 memory search/index CLI 会 opt-in，
+使查询和重建索引产生的 embedding 请求与 Gateway 请求使用同一 URL policy。典型用途是让远端
+服务识别来自本地 Agent 环境的授权请求。
 
 真正的授权必须由远端服务验证 Header 并拒绝缺失/无效值。本地代理只是注入机制，不是防火墙，也不能约束主动忽略代理环境的网络程序。
 
@@ -12,14 +15,14 @@ OpenClaw Gateway 及其支持的 tool 子进程访问指定远端 URL 时，Just
 
 - Electron Renderer 的普通网络请求；
 - Electron Main 的更新、配置同步等请求；
-- Gateway 进程树之外的其他程序；
+- Gateway 进程树及显式 opt-in CLI 之外的其他程序；
 - 不匹配 URL 白名单的请求 Header 注入。
 
 Main 中少量确需相同 Header 的确定性调用，应在调用点基于白名单显式注入，不得通过全局 `fetch` monkey patch。
 
 ## 2. 安全不变量
 
-1. 只有 Gateway generation 获得本地 proxy URL、CA 和 capability。
+1. 只有 Gateway generation 和显式 opt-in 的受管 CLI 获得本地 proxy URL、CA 和 capability。
 2. 未认证的 loopback 客户端不能使用代理。
 3. 未命中完整 URL 白名单时绝不注入业务 Header。
 4. `Proxy-Authorization` 只用于本地/上游代理，不转发给目标服务。
@@ -34,7 +37,7 @@ Main 中少量确需相同 Header 的确定性调用，应在调用点基于白�
 | ----------------- | --------------------------------------------------------------- | ------------------------------------------------ |
 | 配置解析          | `src/main/core/outboundHeaderPolicyConfig.ts`、`systemProxy.ts` | 白名单、Header 名、系统/自定义代理与 bypass      |
 | 本地代理          | `src/main/core/outboundHeaderProxy.ts`                          | 认证、CONNECT 判别、MITM/raw tunnel、注入        |
-| Gateway 环境      | `src/main/core/gatewayNetworkEnvironment.ts`                    | 仅为 child generation 生成 proxy/CA/NO_PROXY env |
+| OpenClaw 环境     | `src/main/core/gatewayNetworkEnvironment.ts`                    | 为 Gateway/opt-in CLI 生成 proxy/CA/NO_PROXY env |
 | Runtime lifecycle | `openclawEngineManager.ts` / `main.ts`                          | 先起代理、再 spawn Gateway；退出时反序停止       |
 | 用户值来源        | outbound header user-info 文件/cache                            | 只按允许的 headerNames 读取值                    |
 
@@ -60,7 +63,9 @@ sequenceDiagram
 
 策略未启用或白名单为空时 `start()` 返回 null。启用时代理绑定 loopback 随机端口，在用户数据目录创建 CA，并为当前 generation 生成 32 字节随机 base64url capability。Gateway proxy URL 使用 Basic auth 携带 capability。
 
-环境只传给 Gateway/后代，不写回 Main `process.env`。CA bundle 通过 Node、Python 等常见环境变量进入受支持客户端；客户端是否遵循这些变量仍需能力矩阵验证。
+环境只传给 Gateway/后代和显式 opt-in CLI，不写回 Main `process.env`。当前 memory search/index
+opt-in，memory status 保持普通继承环境。CA bundle 通过 Node、Python 等常见环境变量进入受支持
+客户端；客户端是否遵循这些变量仍需能力矩阵验证。
 
 ## 5. 请求处理
 
@@ -160,7 +165,7 @@ Gateway 到本地代理是第一跳；本地代理到目标或企业代理是第
 
 已实现：
 
-- Gateway-only 环境隔离；
+- Gateway generation 与显式 opt-in CLI 的环境隔离；
 - loopback capability；
 - candidate origin 的选择性 MITM；
 - 非候选 HTTPS raw tunnel；
@@ -188,7 +193,7 @@ Gateway 到本地代理是第一跳；本地代理到目标或企业代理是第
 - TLS：候选 MITM、非候选 raw tunnel、authority mismatch、CA trust；
 - concurrency：同 origin 首次 3/100 并发、不同 origin、慢请求与 stop；
 - upstream：direct、固定 HTTP/HTTPS proxy、NO_PROXY 冲突、代理失败；
-- scope：Main fetch 与 Renderer 不被注入，Gateway 子进程被注入；
+- scope：Main fetch 与 Renderer 不被注入，Gateway 子进程及 memory search/index CLI 被注入；
 - clients：Node fetch/https、curl、bundled Python、OpenClaw network tool；
 - secrets：日志和错误不含 Header 值、密码、capability。
 
@@ -196,7 +201,10 @@ Gateway 到本地代理是第一跳；本地代理到目标或企业代理是第
 
 ## 14. 维护结论
 
-当前实现已经把 Header 注入从全局 Electron 网络副作用收敛到 Gateway generation，并对非候选 HTTPS 保持 raw tunnel。最重要的剩余工作不是继续增加隐式兼容，而是维护受支持客户端/上游代理矩阵、为配置变化执行明确 generation restart，并在升级 `http-mitm-proxy` 时验证私有 hook 与并发证书行为。
+当前实现已经把 Header 注入从全局 Electron 网络副作用收敛到 Gateway generation 和显式 opt-in
+CLI，并对非候选 HTTPS 保持 raw tunnel。最重要的剩余工作不是继续增加隐式兼容，而是维护受支持
+客户端/上游代理矩阵、为配置变化执行明确 generation restart，并在升级 `http-mitm-proxy` 时验证
+私有 hook 与并发证书行为。
 
 ## 15. 请求判定矩阵
 

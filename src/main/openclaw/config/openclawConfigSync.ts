@@ -5,6 +5,7 @@ import path from 'path';
 
 import { BrowserMode, type BrowserMode as BrowserModeValue } from '../../../shared/browser';
 import { BuiltinModelSyncReason } from '../../../shared/builtinModels';
+import { OPENAI_REQUEST_USER_AGENT } from '../../../shared/cowork/modelRequestHeaders';
 import {
   type AgentRuntimeSettings,
   createDefaultAgentRuntimeSettings,
@@ -1226,9 +1227,18 @@ export const resolvePermissionPolicy = (mode: PermissionModeValue) => {
   }
 };
 
+type ManagedMemorySearchConfig =
+  | {
+      enabled: true;
+      provider: string;
+      model: string;
+      remote: { headers: Record<string, string> };
+    }
+  | { enabled: false };
+
 export const buildBuiltinMemorySearchConfig = (
   providers: ProviderRawConfig[],
-): { enabled: true; provider: string; model: string } | { enabled: false } => {
+): ManagedMemorySearchConfig => {
   const provider = providers.find(candidate => candidate.providerName === ProviderName.BuiltinModels);
   const model = provider?.embeddingModels
     .filter(candidate => candidate.id.trim())
@@ -1250,6 +1260,11 @@ export const buildBuiltinMemorySearchConfig = (
     enabled: true,
     provider: selection.providerId,
     model: selection.sessionModelId,
+    remote: {
+      headers: {
+        'User-Agent': OPENAI_REQUEST_USER_AGENT,
+      },
+    },
   };
 };
 
@@ -1418,9 +1433,7 @@ export class OpenClawConfigSync {
     let allProvidersMap: Record<string, OpenClawProviderSelection['providerConfig']> = {};
     let primaryModel = '';
     let providerSelection: OpenClawProviderSelection | null = null;
-    let memorySearchConfig:
-      | { enabled: true; provider: string; model: string }
-      | { enabled: false } = { enabled: false };
+    let memorySearchConfig: ManagedMemorySearchConfig = { enabled: false };
     if (apiResolution.config) {
       const { baseURL, apiKey, model, apiType } = apiResolution.config;
       const modelId = model.trim();

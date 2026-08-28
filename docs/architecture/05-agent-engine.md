@@ -162,9 +162,20 @@ import。plugin repair 会清除 loader cache，确保同进程替换后的 pack
 
 ## 16. 网络环境
 
-Manager 通过 `OutboundHeaderProxy.buildGatewayEnvironment` 为 child 构造环境，并用 capability generation 避免旧规则继续工作。系统/custom/direct proxy 变化会更新 bypass，其中动态加入当前 Gateway loopback 端口，避免本地 RPC 被送到上游代理。内置 provider 若使用 loopback base URL可列为 forced URL。
+Manager 通过 `OutboundHeaderProxy.buildGatewayEnvironment` 为 Gateway child 构造环境，并允许
+需要远端模型访问的 OpenClaw one-shot CLI 显式 opt-in 同一环境。当前 memory search/index CLI
+会 opt-in，使独立 CLI 发出的 embedding 请求也经过 URL 白名单和 Header 注入；status 等纯本地
+命令保持继承环境。CLI 复用当前 capability，不触发 Gateway capability rotation。系统/custom/direct
+proxy 变化会更新 bypass，其中动态加入当前 Gateway loopback 端口，避免本地 RPC 被送到上游代理。
+内置 provider 若使用 loopback base URL 可列为 forced URL。
 
-Main 通用 fetch、Electron session proxy 与 Gateway child environment 是不同作用域；修改一个不能假定其他两个自动同步。
+受管 memory search 配置只额外声明与标题模型请求一致的
+`User-Agent: OpenAI/JS 6.39.1`；`Authorization`、`Content-Type` 和动态 body length 仍由 OpenClaw
+embedding 请求层负责。OutboundHeader 的用户值继续只存在于代理 policy/cache，不写入
+`openclaw.json`。
+
+Main 通用 fetch、Electron session proxy 与受管 OpenClaw child environment 是不同作用域；修改一个
+不能假定其他两个自动同步。
 
 ## 17. 日志与诊断
 

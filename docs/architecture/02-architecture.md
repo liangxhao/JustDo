@@ -119,7 +119,9 @@ Main 启动时延迟创建重型服务，主要对象关系如下：
 - `OpenClawExtensionHostLifecycle` 管理 ask-user callback 与 extension MCP transports。
 - `ManagedDirectoryOperationCoordinator` 在插件目录变更前识别/停止相关进程，完成后恢复。
 - `CronJobService`、result store/sync service 共享 Gateway adapter 与 SQLite。
-- `OutboundHeaderProxy` 只向 Gateway 构造网络环境和 capability generation，不应成为 Renderer 的通用网络层。
+- `OutboundHeaderProxy` 向 Gateway generation 及显式 opt-in 的 OpenClaw one-shot CLI
+  构造网络环境；当前 memory search/index CLI 会复用该环境，但它不应成为 Renderer
+  的通用网络层。
 
 依赖通过 getter 注入，以避免 app ready 前访问 SQLite、打破初始化次序或产生循环构造。
 

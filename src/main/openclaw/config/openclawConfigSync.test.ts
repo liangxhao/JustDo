@@ -127,6 +127,11 @@ describe('OpenClaw provider config', () => {
       enabled: true,
       provider: OpenClawProviderId.BuiltinModels,
       model: 'embedding-a',
+      remote: {
+        headers: {
+          'User-Agent': 'OpenAI/JS 6.39.1',
+        },
+      },
     });
   });
 

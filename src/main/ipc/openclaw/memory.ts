@@ -17,9 +17,10 @@ import {
   type MemorySearchHit,
   type MemorySearchResult,
 } from '../../../shared/openclaw/memory';
-import type {
-  OpenClawCliEnvironment,
-  OpenClawEngineManager,
+import {
+  type OpenClawCliEnvironment,
+  OpenClawCliNetworkMode,
+  type OpenClawEngineManager,
 } from '../../openclaw/runtime/openclawEngineManager';
 
 const MEMORY_AGENT_ID = 'main';
@@ -331,6 +332,13 @@ const loadIndexStatus = async (
   }
 };
 
+export const buildMemoryCliEnvironment = (
+  manager: OpenClawEngineManager,
+): Promise<OpenClawCliEnvironment> =>
+  manager.buildCliEnvironment({
+    networkMode: OpenClawCliNetworkMode.OutboundProxy,
+  });
+
 const buildOverview = async (manager: OpenClawEngineManager): Promise<MemoryOverview> => {
   const workspaceDir = resolveMemoryWorkspace(manager);
   const documents = scanMemoryDocuments(workspaceDir);
@@ -437,7 +445,7 @@ export const registerOpenClawMemoryHandlers = ({
     try {
       const manager = getManager();
       const workspaceDir = resolveMemoryWorkspace(manager);
-      const cli = await manager.buildCliEnvironment();
+      const cli = await buildMemoryCliEnvironment(manager);
       const result = await runOpenClawCommand(
         cli,
         [
@@ -471,7 +479,7 @@ export const registerOpenClawMemoryHandlers = ({
       try {
         const manager = getManager();
         const workspaceDir = resolveMemoryWorkspace(manager);
-        const cli = await manager.buildCliEnvironment();
+        const cli = await buildMemoryCliEnvironment(manager);
         const result = await runOpenClawCommand(
           cli,
           ['memory', 'index', '--force', '--agent', MEMORY_AGENT_ID],
