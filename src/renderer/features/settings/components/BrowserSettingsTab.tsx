@@ -565,7 +565,10 @@ const BrowserSettingsTab: React.FC = () => {
 
       {browserMode === BrowserMode.Isolated ? (
         <div className="rounded-xl border border-primary/20 bg-primary/[0.035] px-4 py-3 text-[13px] leading-5 text-foreground">
-          {i18nService.t('browserModeIsolatedActive')}
+          <p>{i18nService.t('browserModeIsolatedActive')}</p>
+          <p className="mt-1 text-xs text-secondary">
+            {i18nService.t('browserModeIsolatedNetworkNotice')}
+          </p>
         </div>
       ) : browserMode === BrowserMode.User ? (
         <>

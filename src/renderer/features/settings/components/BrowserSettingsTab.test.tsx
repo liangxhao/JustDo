@@ -125,6 +125,19 @@ describe('BrowserSettingsTab extension connection checks', () => {
     vi.clearAllMocks();
   });
 
+  test('shows the network limitation only while the isolated browser is selected', async () => {
+    mocks.getConfig.mockReturnValue({ browserMode: BrowserMode.Isolated });
+    const browser = installElectronBrowserMock();
+
+    render(<BrowserSettingsTab />);
+
+    expect(screen.getByText('browserModeIsolatedNetworkNotice')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('radio', { name: /browserModeUserTitle/ }));
+    await waitFor(() => expect(browser.setMode).toHaveBeenCalledWith(BrowserMode.User));
+    expect(screen.queryByText('browserModeIsolatedNetworkNotice')).toBeNull();
+  });
+
   test('checks automatically without locking setup controls or losing success to Chrome status', async () => {
     const status = deferred<{ success: true; status: BrowserConnectionStatus }>();
     const extension = deferred<{ success: true }>();

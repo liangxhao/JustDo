@@ -176,6 +176,8 @@ export const translations: Record<LanguageType, Record<string, string>> = {
       '使用独立的浏览器资料，不读取日常 Chrome 的账号、Cookie 或标签页。',
     browserModeIsolatedActive:
       '当前使用隔离浏览器。它与日常 Chrome 完全分开，也是默认和更安全的选择。',
+    browserModeIsolatedNetworkNotice:
+      '提示：隔离浏览器仅支持访问公司内网，无法访问互联网。',
     browserModeUserTitle: '允许连接你的浏览器',
     browserModeUserDescription:
       '连接日常 Chrome，复用其中的登录状态、Cookie 和标签页，需要你主动授权。',
@@ -1462,6 +1464,8 @@ export const translations: Record<LanguageType, Record<string, string>> = {
       'Uses a separate browser profile without access to your everyday Chrome accounts, cookies, or tabs.',
     browserModeIsolatedActive:
       'The isolated browser is active. It stays separate from everyday Chrome and is the default, safer choice.',
+    browserModeIsolatedNetworkNotice:
+      'Note: The isolated browser can access only the company intranet, not the internet.',
     browserModeUserTitle: 'Allow access to your browser',
     browserModeUserDescription:
       'Connects to everyday Chrome and reuses its sign-in state, cookies, and tabs after you explicitly authorize it.',
