@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { CoworkSession, CoworkSessionSummary } from '@/features/cowork/coworkTypes';
 import {
   buildSessionDetailStats,
+  DEFAULT_COLLAPSED_SESSION_DATE_GROUP_KEYS,
   getSessionDateGroupKey,
   groupSessionsByDate,
   sumSessionDetailTokenUsage,
@@ -32,6 +33,14 @@ describe('sumSessionDetailTokenUsage', () => {
 
 describe('session date grouping', () => {
   const now = new Date(2026, 0, 31, 0, 15).getTime();
+
+  it('collapses every older date group by default', () => {
+    expect(DEFAULT_COLLAPSED_SESSION_DATE_GROUP_KEYS).toEqual([
+      'previous7Days',
+      'previous30Days',
+      'earlier',
+    ]);
+  });
 
   it('uses local calendar days across month boundaries', () => {
     expect(

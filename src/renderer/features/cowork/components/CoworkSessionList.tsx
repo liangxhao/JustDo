@@ -36,6 +36,7 @@ import type {
   UpdateGroupInput,
 } from '@/features/cowork/coworkTypes';
 import {
+  DEFAULT_COLLAPSED_SESSION_DATE_GROUP_KEYS,
   groupSessionsByDate,
   type SessionDateGroupKey,
 } from '@/features/cowork/sessionPresentation';
@@ -90,7 +91,7 @@ const UngroupedDroppableZone: React.FC<UngroupedDroppableZoneProps> = ({
 }) => {
   const { setNodeRef, isOver } = useDroppable({ id: 'ungrouped' });
   const [collapsedDateGroupKeys, setCollapsedDateGroupKeys] = useState<Set<SessionDateGroupKey>>(
-    new Set(['previous7Days', 'previous30Days']),
+    new Set(DEFAULT_COLLAPSED_SESSION_DATE_GROUP_KEYS),
   );
   const [calendarRefreshKey, setCalendarRefreshKey] = useState(() => Date.now());
 

@@ -12,6 +12,12 @@ export interface SessionDateGroup {
   sessions: CoworkSessionSummary[];
 }
 
+export const DEFAULT_COLLAPSED_SESSION_DATE_GROUP_KEYS: readonly SessionDateGroupKey[] = [
+  'previous7Days',
+  'previous30Days',
+  'earlier',
+];
+
 const DATE_GROUP_ORDER: SessionDateGroupKey[] = [
   'pinned',
   'today',
