@@ -87,6 +87,9 @@ describe('SessionTotalTokenUsageModal', () => {
     const progressbar = await screen.findByRole('progressbar', {
       name: '总体 Token 查询进度',
     });
+    const spinner = screen.getByRole('status').querySelector('.querying-spinner');
+    expect(spinner).toBeTruthy();
+    expect(spinner?.classList.contains('animate-spin')).toBe(false);
     await waitFor(() => expect(getSubTaskDetails).toHaveBeenCalledTimes(1));
     expect(screen.getByText('已完成 1 / 3 个会话')).toBeTruthy();
     expect(screen.getByText('正在统计 Subagent 1 / 2：第一个任务')).toBeTruthy();

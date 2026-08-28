@@ -268,6 +268,23 @@ select::-ms-expand {
   animation: session-token-progress-slide 1.25s ease-in-out infinite;
 }
 
+.querying-spinner {
+  transform-box: fill-box;
+  transform-origin: center;
+  backface-visibility: hidden;
+  will-change: transform;
+  animation: querying-spinner-rotate 0.85s linear infinite;
+}
+
+@keyframes querying-spinner-rotate {
+  from {
+    transform: translateZ(0) rotate(0deg);
+  }
+  to {
+    transform: translateZ(0) rotate(360deg);
+  }
+}
+
 @keyframes session-token-progress-slide {
   0% {
     transform: translateX(-110%);
@@ -323,6 +340,12 @@ select::-ms-expand {
 
   .session-token-progress-indeterminate {
     animation: none;
+  }
+
+  .querying-spinner {
+    animation: none;
+    transform: translateZ(0);
+    will-change: auto;
   }
 }
 

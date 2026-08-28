@@ -54,7 +54,8 @@ describe('SubagentMenu', () => {
 
     render(<SubagentMenu sessionId="parent-1" />);
     fireEvent.click(screen.getByRole('button', { name: 'Subagent' }));
-    fireEvent.click(await screen.findByRole('button', { name: '查看详情' }));
+    const detailTrigger = await screen.findByRole('button', { name: '查看详情' });
+    fireEvent.click(detailTrigger);
 
     await waitFor(() =>
       expect(getSubTaskDetails).toHaveBeenCalledWith('agent:main:subagent:child-1'),
@@ -72,6 +73,16 @@ describe('SubagentMenu', () => {
     expect(tokenScopeNote.className).toContain('text-right');
     expect(tokenScopeNote.className).toContain('text-[10px]');
     expect(screen.queryByText('999')).toBeNull();
+    expect(screen.getByRole('dialog', { name: 'Research' })).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: '关闭' }));
+
+    detailTrigger.focus();
+    fireEvent.keyDown(document, { key: 'Tab' });
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: '关闭' }));
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: 'Research' })).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(detailTrigger));
   });
 
   it('keeps the last complete usage when the final status refresh temporarily fails', async () => {

@@ -7,6 +7,7 @@ import Modal from '@/shared/components/common/Modal';
 
 import { reconcileSubagentLabel, type SubagentLabelSource } from './subagentLabel';
 import SubagentTokenUsage from './SubagentTokenUsage';
+import { useDraggableModal } from './useDraggableModal';
 
 export const SUBAGENT_STATUSES = {
   PENDING: 'pending',
@@ -61,6 +62,9 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({
   const [detailStats, setDetailStats] = useState<SessionDetailStats>();
   const [isDetailStatsLoading, setIsDetailStatsLoading] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const detailDialogRef = useRef<HTMLDivElement>(null);
+  const detailCloseButtonRef = useRef<HTMLButtonElement>(null);
+  const detailReturnFocusRef = useRef<HTMLButtonElement | null>(null);
   const subagentLabelsRef = useRef(
     new Map<string, { label: string; labelSource: SubagentLabelSource }>(),
   );
@@ -70,6 +74,14 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({
   const detailStatsRef = useRef<SessionDetailStats>();
   const sessionIdRef = useRef(sessionId);
   sessionIdRef.current = sessionId;
+  const {
+    dialogStyle: detailDialogStyle,
+    dragHandleProps: detailDragHandleProps,
+    isDragging: isDetailDragging,
+  } = useDraggableModal(detailDialogRef, detailSubagent?.sessionKey);
+  const detailSessionKey = detailSubagent?.sessionKey;
+
+  const closeDetails = useCallback(() => setDetailSubagent(null), []);
 
   const refresh = useCallback(async () => {
     if (refreshInFlightRef.current) return;
@@ -194,6 +206,55 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({
     return () => document.removeEventListener('mousedown', close);
   }, [isOpen]);
 
+  useEffect(() => {
+    if (!detailSessionKey) return;
+    detailCloseButtonRef.current?.focus();
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        closeDetails();
+        return;
+      }
+      if (event.key !== 'Tab' || !detailDialogRef.current) return;
+      const focusableElements = Array.from(
+        detailDialogRef.current.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter(element => !element.hasAttribute('hidden'));
+      if (!focusableElements.length) {
+        event.preventDefault();
+        detailDialogRef.current.focus();
+        return;
+      }
+      const firstElement = focusableElements[0];
+      const lastElement = focusableElements[focusableElements.length - 1];
+      const activeElement = document.activeElement;
+      if (
+        event.shiftKey &&
+        (activeElement === firstElement || !detailDialogRef.current.contains(activeElement))
+      ) {
+        event.preventDefault();
+        lastElement.focus();
+      } else if (
+        !event.shiftKey &&
+        (activeElement === lastElement || !detailDialogRef.current.contains(activeElement))
+      ) {
+        event.preventDefault();
+        firstElement.focus();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown, true);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown, true);
+      const returnFocusTarget = detailReturnFocusRef.current;
+      requestAnimationFrame(() => {
+        if (returnFocusTarget?.isConnected) returnFocusTarget.focus();
+      });
+    };
+  }, [closeDetails, detailSessionKey]);
+
   const formatDateTime = (value?: number): string =>
     value ? new Date(value).toLocaleString() : i18nService.t('subagentInfoUnavailable');
 
@@ -315,7 +376,10 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({
                   <button
                     type="button"
                     className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-secondary transition-colors hover:bg-surface hover:text-foreground"
-                    onClick={() => setDetailSubagent(subagent)}
+                    onClick={event => {
+                      detailReturnFocusRef.current = event.currentTarget;
+                      setDetailSubagent(subagent);
+                    }}
                     aria-label={i18nService.t('subagentShowInfo')}
                     title={i18nService.t('subagentShowInfo')}
                   >
@@ -331,19 +395,35 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({
 
       <Modal
         isOpen={detailSubagent !== null}
-        onClose={() => setDetailSubagent(null)}
+        onClose={closeDetails}
         className="w-[min(36rem,calc(100vw-2rem))] max-h-[80vh] overflow-hidden rounded-xl border border-border bg-surface shadow-2xl"
         overlayClassName="fixed inset-0 z-[100] flex items-center justify-center bg-black/50"
+        style={detailDialogStyle}
       >
         {detailSubagent && (
-          <>
-            <div className="flex items-center justify-between border-b border-border px-5 py-4">
-              <h2 className="min-w-0 truncate text-base font-semibold text-foreground">
+          <div
+            ref={detailDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="subagent-details-title"
+            tabIndex={-1}
+          >
+            <div
+              {...detailDragHandleProps}
+              className={`flex cursor-move select-none items-center justify-between border-b border-border px-5 py-4 ${
+                isDetailDragging ? 'cursor-grabbing' : ''
+              }`}
+            >
+              <h2
+                id="subagent-details-title"
+                className="min-w-0 truncate text-base font-semibold text-foreground"
+              >
                 {detailSubagent.label}
               </h2>
               <button
+                ref={detailCloseButtonRef}
                 type="button"
-                onClick={() => setDetailSubagent(null)}
+                onClick={closeDetails}
                 className="ml-4 rounded-lg px-2 py-1 text-secondary hover:bg-surface-raised"
                 aria-label={i18nService.t('close')}
               >
@@ -380,7 +460,7 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({
                 </div>
               ))}
             </dl>
-          </>
+          </div>
         )}
       </Modal>
     </div>

@@ -285,7 +285,7 @@ const SessionTotalTokenUsageModal: React.FC<SessionTotalTokenUsageModalProps> = 
           {(phase === 'discovering' || phase === 'aggregating') && (
             <div className="flex min-h-56 flex-col items-center justify-center" role="status">
               <div className="inline-flex items-center text-xl font-semibold" aria-hidden="true">
-                <ArrowPathIcon className="mr-2.5 h-6 w-6 animate-spin text-primary motion-reduce:animate-none" />
+                <ArrowPathIcon className="querying-spinner mr-2.5 h-6 w-6 shrink-0 text-primary" />
                 <span className="querying-indicator-text tracking-wider">
                   {i18nService.t('sessionTotalTokensAggregating')}
                 </span>

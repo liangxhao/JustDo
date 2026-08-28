@@ -23,6 +23,7 @@ import Modal from '@/shared/components/common/Modal';
 
 import QueryingIndicator from './QueryingIndicator';
 import SessionTotalTokenUsageModal from './SessionTotalTokenUsageModal';
+import { useDraggableModal } from './useDraggableModal';
 
 interface CoworkSessionDetailsModalProps {
   sessionSummary: CoworkSessionSummary;
@@ -76,6 +77,10 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
   const hasLoadedRef = useRef(false);
   const onCloseRef = useRef(onClose);
   isTotalTokenUsageOpenRef.current = isTotalTokenUsageOpen;
+  const { dialogStyle, dragHandleProps, isDragging } = useDraggableModal(
+    dialogRef,
+    sessionSummary.id,
+  );
 
   useEffect(() => {
     onCloseRef.current = onClose;
@@ -226,6 +231,7 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
       onClose={onClose}
       overlayClassName="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-5"
       className="w-full max-w-2xl max-h-[84vh] overflow-hidden rounded-2xl border border-border bg-surface shadow-modal"
+      style={dialogStyle}
     >
       <div
         ref={dialogRef}
@@ -234,7 +240,12 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
         aria-labelledby="session-details-title"
         tabIndex={-1}
       >
-        <div className="flex items-start gap-3 border-b border-border px-5 py-4">
+        <div
+          {...dragHandleProps}
+          className={`flex cursor-move select-none items-start gap-3 border-b border-border px-5 py-4 ${
+            isDragging ? 'cursor-grabbing' : ''
+          }`}
+        >
           <div className="mt-0.5 rounded-xl bg-primary/10 p-2 text-primary">
             <InformationCircleIcon className="h-5 w-5" />
           </div>

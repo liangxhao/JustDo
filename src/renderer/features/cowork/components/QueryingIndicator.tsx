@@ -45,7 +45,7 @@ const QueryingIndicator: React.FC<QueryingIndicatorProps> = ({ size = 'sm' }) =>
         <ArrowPathIcon
           className={`${
             size === 'md' ? 'mr-2.5 h-6 w-6' : 'mr-1.5 h-5 w-5'
-          } animate-spin text-primary motion-reduce:animate-none`}
+          } querying-spinner shrink-0 text-primary`}
         />
         <span className="querying-indicator-text tracking-wider">{label}</span>
         <span className="ml-0.5 inline-flex">

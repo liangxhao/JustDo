@@ -21,7 +21,7 @@ describe('SubagentTokenUsage', () => {
     const loadingStatus = screen.getByRole('status', { name: /查询中/ });
     expect(loadingStatus.textContent).toContain('查询中...');
     expect(loadingStatus.textContent).toContain('正在读取会话记录');
-    expect(loadingStatus.querySelector('.animate-spin')).toBeTruthy();
+    expect(loadingStatus.querySelector('.querying-spinner')).toBeTruthy();
     expect(loadingStatus.querySelector('.querying-indicator-text')).toBeTruthy();
     expect(loadingStatus.querySelectorAll('.querying-indicator-dot')).toHaveLength(3);
   });

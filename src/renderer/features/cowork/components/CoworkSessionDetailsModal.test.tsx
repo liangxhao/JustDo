@@ -36,7 +36,7 @@ describe('CoworkSessionDetailsModal', () => {
 
     const loadingStatus = screen.getByRole('status');
     expect(loadingStatus.textContent).toContain('查询中...');
-    expect(loadingStatus.querySelector('.animate-spin')).toBeTruthy();
+    expect(loadingStatus.querySelector('.querying-spinner')).toBeTruthy();
   });
 
   it('renders authoritative details and copies the Gateway Session ID', async () => {
