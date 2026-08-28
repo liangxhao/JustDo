@@ -1,8 +1,9 @@
 import type { SessionDetailStats } from '@shared/cowork/sessionDetails';
-import type {
-  BeginSessionRunInput,
-  SessionRuntimeSnapshot,
-  SessionRunTiming,
+import {
+  type BeginSessionRunInput,
+  SessionRunBeginErrorCode,
+  type SessionRuntimeSnapshot,
+  type SessionRunTiming,
 } from '@shared/cowork/sessionRun';
 import { isGatewayToolFailureNotice } from '@shared/cowork/toolFailureNotice';
 import type { PermissionMode } from '@shared/openclaw/approvals';
@@ -572,7 +573,22 @@ export class CoworkService {
     this.nextRuntimeStatusRequestVersion(input.sessionId);
     const result = await window.electron.cowork.beginSessionRun(input);
     if (!result.success || !result.timing) {
-      throw new Error(result.error || 'Failed to begin session run');
+      if (result.snapshot) {
+        this.nextRuntimeStatusRequestVersion(input.sessionId);
+        store.dispatch(
+          setSessionRuntimeSnapshot({
+            sessionId: input.sessionId,
+            snapshot: result.snapshot,
+          }),
+        );
+      }
+      const localizedError =
+        result.errorCode === SessionRunBeginErrorCode.RuntimeActive
+          ? i18nService.t('coworkSessionRuntimeActive')
+          : result.errorCode === SessionRunBeginErrorCode.RuntimeUnknown
+            ? i18nService.t('coworkSessionRuntimeUnknown')
+            : result.error;
+      throw new Error(localizedError || 'Failed to begin session run');
     }
     this.nextRuntimeStatusRequestVersion(input.sessionId);
     store.dispatch(

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
+import { SessionRunBeginErrorCode } from '../../../shared/cowork/sessionRun';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
 
@@ -263,6 +264,196 @@ test('reopens a completed receipt only when the active root run matches', async 
   });
   expect(reopenSessionRun).toHaveBeenCalledWith('timing-1');
   expect(beginSessionRun).not.toHaveBeenCalled();
+});
+
+test('reopens a restart checkpoint while an active Gateway run has no root id yet', async () => {
+  const checkpointTiming = {
+    id: 'timing-checkpoint',
+    sessionId: 'session-1',
+    clientTurnId: 'client-turn-1',
+    rootRunId: 'client-turn-1',
+    startedAt: 10_000,
+    acceptedAt: 10_000,
+    endedAt: 10_000,
+    state: 'aborted' as const,
+  };
+  const reopenedTiming = {
+    ...checkpointTiming,
+    endedAt: undefined,
+    state: 'running' as const,
+  };
+  const reopenSessionRun = vi.fn().mockReturnValue(reopenedTiming);
+  const beginSessionRun = vi.fn();
+  const store = {
+    getLatestSessionRun: vi.fn().mockReturnValue(checkpointTiming),
+    reopenSessionRun,
+    beginSessionRun,
+  } as unknown as CoworkStore;
+  const router = {
+    getSessionRuntimeStatus: vi.fn().mockResolvedValue({
+      known: true,
+      mainRunning: true,
+      subagentRunning: false,
+      running: true,
+    }),
+  } as unknown as CoworkEngineRouter;
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => store,
+    getCoworkEngineRouter: () => router,
+    setSessionPermissionMode: vi.fn(),
+  });
+  const handler = mocks.handle.mock.calls.find(
+    ([channel]) => channel === 'cowork:session:runtimeStatus',
+  )?.[1] as IpcHandler;
+
+  await expect(handler({}, 'session-1')).resolves.toMatchObject({
+    success: true,
+    running: true,
+    timing: reopenedTiming,
+  });
+  expect(reopenSessionRun).toHaveBeenCalledWith('timing-checkpoint');
+  expect(beginSessionRun).not.toHaveBeenCalled();
+});
+
+test('rejects a new run when startup reconciliation finds the checkpoint still active', async () => {
+  const checkpointTiming = {
+    id: 'timing-checkpoint',
+    sessionId: 'session-1',
+    clientTurnId: 'client-turn-1',
+    rootRunId: 'client-turn-1',
+    startedAt: 10_000,
+    acceptedAt: 10_000,
+    endedAt: 10_000,
+    state: 'aborted' as const,
+  };
+  const reopenedTiming = {
+    ...checkpointTiming,
+    endedAt: undefined,
+    state: 'running' as const,
+  };
+  const reopenSessionRun = vi.fn().mockReturnValue(reopenedTiming);
+  const beginSessionRun = vi.fn();
+  const store = {
+    getLatestSessionRun: vi.fn().mockReturnValue(checkpointTiming),
+    reopenSessionRun,
+    beginSessionRun,
+  } as unknown as CoworkStore;
+  const getSessionRuntimeStatus = vi.fn().mockResolvedValue({
+    known: true,
+    mainRunning: true,
+    subagentRunning: false,
+    running: true,
+  });
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => store,
+    getCoworkEngineRouter: () => ({ getSessionRuntimeStatus }) as unknown as CoworkEngineRouter,
+    setSessionPermissionMode: vi.fn(),
+  });
+  const handler = mocks.handle.mock.calls.find(
+    ([channel]) => channel === 'cowork:session:run:begin',
+  )?.[1] as IpcHandler;
+
+  await expect(
+    handler({}, { sessionId: 'session-1', clientTurnId: 'client-turn-2', startedAt: 11_000 }),
+  ).resolves.toMatchObject({
+    success: false,
+    errorCode: SessionRunBeginErrorCode.RuntimeActive,
+    snapshot: { running: true, timing: reopenedTiming },
+  });
+  expect(getSessionRuntimeStatus).toHaveBeenCalledWith('session-1', {
+    includeSubagents: true,
+    forceRefresh: true,
+  });
+  expect(reopenSessionRun).toHaveBeenCalledWith('timing-checkpoint');
+  expect(beginSessionRun).not.toHaveBeenCalled();
+});
+
+test('fails closed when a restart checkpoint cannot be confirmed idle', async () => {
+  const checkpointTiming = {
+    id: 'timing-checkpoint',
+    sessionId: 'session-1',
+    clientTurnId: 'client-turn-1',
+    rootRunId: 'client-turn-1',
+    startedAt: 10_000,
+    acceptedAt: 10_000,
+    endedAt: 10_000,
+    state: 'aborted' as const,
+  };
+  const beginSessionRun = vi.fn();
+  const store = {
+    getLatestSessionRun: vi.fn().mockReturnValue(checkpointTiming),
+    beginSessionRun,
+  } as unknown as CoworkStore;
+  const getSessionRuntimeStatus = vi.fn().mockResolvedValue({
+    known: false,
+    mainRunning: false,
+    subagentRunning: false,
+    running: false,
+  });
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => store,
+    getCoworkEngineRouter: () => ({ getSessionRuntimeStatus }) as unknown as CoworkEngineRouter,
+    setSessionPermissionMode: vi.fn(),
+  });
+  const handler = mocks.handle.mock.calls.find(
+    ([channel]) => channel === 'cowork:session:run:begin',
+  )?.[1] as IpcHandler;
+
+  await expect(
+    handler({}, { sessionId: 'session-1', clientTurnId: 'client-turn-2', startedAt: 11_000 }),
+  ).resolves.toEqual({
+    success: false,
+    errorCode: SessionRunBeginErrorCode.RuntimeUnknown,
+  });
+  expect(beginSessionRun).not.toHaveBeenCalled();
+});
+
+test('allows a new run after a restart checkpoint is confirmed idle', async () => {
+  const checkpointTiming = {
+    id: 'timing-checkpoint',
+    sessionId: 'session-1',
+    clientTurnId: 'client-turn-1',
+    rootRunId: 'client-turn-1',
+    startedAt: 10_000,
+    acceptedAt: 10_000,
+    endedAt: 10_000,
+    state: 'aborted' as const,
+  };
+  const newTiming = {
+    id: 'timing-new',
+    sessionId: 'session-1',
+    clientTurnId: 'client-turn-2',
+    rootRunId: 'client-turn-2',
+    startedAt: 11_000,
+    state: 'running' as const,
+  };
+  const beginSessionRun = vi.fn().mockReturnValue(newTiming);
+  const store = {
+    getLatestSessionRun: vi.fn().mockReturnValue(checkpointTiming),
+    beginSessionRun,
+  } as unknown as CoworkStore;
+  const getSessionRuntimeStatus = vi.fn().mockResolvedValue({
+    known: true,
+    mainRunning: false,
+    subagentRunning: false,
+    running: false,
+  });
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => store,
+    getCoworkEngineRouter: () => ({ getSessionRuntimeStatus }) as unknown as CoworkEngineRouter,
+    setSessionPermissionMode: vi.fn(),
+  });
+  const handler = mocks.handle.mock.calls.find(
+    ([channel]) => channel === 'cowork:session:run:begin',
+  )?.[1] as IpcHandler;
+  const input = { sessionId: 'session-1', clientTurnId: 'client-turn-2', startedAt: 11_000 };
+
+  await expect(handler({}, input)).resolves.toMatchObject({
+    success: true,
+    timing: newTiming,
+    snapshot: { running: true, timing: newTiming },
+  });
+  expect(beginSessionRun).toHaveBeenCalledWith(input);
 });
 
 test('starts a separate recovery clock for an unrelated active root run', async () => {

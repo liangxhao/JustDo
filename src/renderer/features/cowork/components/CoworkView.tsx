@@ -824,7 +824,12 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         },
         err => {
           if (runTimingId) void coworkService.failSessionRun(currentSession.id, runTimingId);
-          else coworkService.clearSessionInProgress(currentSession.id);
+          else {
+            void coworkService.refreshSessionRuntimeActivity(currentSession.id, {
+              includeSubagents: true,
+              forceRefresh: true,
+            });
+          }
           if (goalEdit) return;
           const message = err instanceof Error ? err.message : String(err);
           window.dispatchEvent(

@@ -154,6 +154,13 @@ function runIdOf(
   return fallback;
 }
 
+function clientTurnTimestampOf(timing: SessionRunTiming): number | null {
+  const match = /^justdo-(\d{10,16})-/.exec(timing.clientTurnId);
+  if (!match) return null;
+  const timestamp = Number(match[1]);
+  return Number.isSafeInteger(timestamp) && timestamp > 0 ? timestamp : null;
+}
+
 function visibleMessageWithContent(
   outer: GatewayMessage,
   message: Record<string, unknown>,
@@ -188,18 +195,27 @@ export function projectPersistedTimeline(
   let archived: Array<ThinkingItem | ToolItem> = [];
   let segment = 0;
   const toolById = new Map<string, ToolItem>();
-  const timingByRootRunId = new Map(
-    runTimings
-      .filter(timing => timing.rootRunId && timing.endedAt !== undefined)
-      .map(timing => [timing.rootRunId!, timing] as const),
-  );
-  const completedTimings = runTimings
-    .filter(timing => timing.endedAt !== undefined)
+  const claimableTimings = runTimings
     .slice()
     .sort((left, right) => left.startedAt - right.startedAt || left.id.localeCompare(right.id));
+  const timingByRootRunId = new Map(
+    claimableTimings
+      .filter(timing => timing.rootRunId)
+      .map(timing => [timing.rootRunId!, timing] as const),
+  );
   const claimedTimingIds = new Set<string>();
   let activeTiming: SessionRunTiming | null = null;
   let lastTimedMessage: Extract<PersistedTimelineItem, { kind: 'history-message' }> | null = null;
+  const terminalTimingByProcessId = new Map<string, SessionRunTiming>();
+
+  const rememberTerminalTiming = (process: ThinkingItem | ToolItem): void => {
+    if (!activeTiming) return;
+    if (activeTiming.endedAt !== undefined) {
+      terminalTimingByProcessId.set(process.id, activeTiming);
+    } else {
+      terminalTimingByProcessId.delete(process.id);
+    }
+  };
 
   const isPlanUpdate = (item: ThinkingItem | ToolItem): item is ToolItem =>
     item.type === 'tool' &&
@@ -274,9 +290,15 @@ export function projectPersistedTimeline(
       return exact;
     }
     if (timestamp <= 0) return null;
-    const candidate = completedTimings
+    const candidate = claimableTimings
       .filter(timing => !claimedTimingIds.has(timing.id))
-      .map(timing => ({ timing, distance: Math.abs(timing.startedAt - timestamp) }))
+      .map(timing => {
+        const clientTurnTimestamp = clientTurnTimestampOf(timing);
+        return {
+          timing,
+          distance: Math.abs((clientTurnTimestamp ?? timing.startedAt) - timestamp),
+        };
+      })
       .filter(entry => entry.distance <= 60_000)
       .sort((left, right) => left.distance - right.distance)[0]?.timing;
     if (!candidate) return null;
@@ -299,6 +321,7 @@ export function projectPersistedTimeline(
       if (input !== undefined && input !== null) existing.input = input;
       existing.updatedAt = Math.max(existing.updatedAt, timestamp);
       existing.lastSeq = Math.max(existing.lastSeq, sequence);
+      rememberTerminalTiming(existing);
       return existing;
     }
     const tool: ToolItem = {
@@ -316,6 +339,7 @@ export function projectPersistedTimeline(
     };
     archived.push(tool);
     toolById.set(toolCallId, tool);
+    rememberTerminalTiming(tool);
     return tool;
   };
 
@@ -379,6 +403,7 @@ export function projectPersistedTimeline(
         : isSessionsYieldTool(tool.name) && !hasToolResultPayload(tool)
           ? 'running'
           : 'completed';
+    rememberTerminalTiming(tool);
     return tool;
   };
 
@@ -568,6 +593,19 @@ export function projectPersistedTimeline(
 
     for (const process of item.items) {
       if (process.status === 'running') {
+        const latestRootTiming = timingByRootRunId.get(process.runId);
+        const terminalTiming =
+          latestRootTiming === undefined
+            ? terminalTimingByProcessId.get(process.id)
+            : latestRootTiming.endedAt !== undefined
+              ? latestRootTiming
+              : undefined;
+        if (terminalTiming) {
+          process.status = 'interrupted';
+          process.updatedAt = Math.max(process.updatedAt, terminalTiming.endedAt ?? 0);
+          settled.push(process);
+          continue;
+        }
         flushSettled();
         normalized.push({
           kind: 'live-process',

@@ -180,7 +180,7 @@ test('persists one idempotent user run and cascades it with the session', () => 
   sqlite.close();
 });
 
-test('rejects a client turn reused by another session and resets open clocks on startup', () => {
+test('rejects a client turn reused by another session and interrupts open runs on startup', () => {
   const dir = createTempDir();
   const sqlite = SqliteStore.create(dir);
   const db = sqlite.getDatabase();
@@ -206,11 +206,21 @@ test('rejects a client turn reused by another session and resets open clocks on 
     }),
   ).toThrow('another session');
 
-  store.resetOpenSessionRuns(10_000);
+  expect(store.interruptOpenSessionRuns(10_000)).toBe(1);
   expect(store.getSessionRun(timing.id)).toMatchObject({
+    startedAt: 10_000,
+    acceptedAt: 10_000,
+    endedAt: 10_000,
+    state: 'aborted',
+  });
+  expect(store.interruptOpenSessionRuns(11_000)).toBe(0);
+  expect(store.reopenSessionRun(timing.id)).toMatchObject({
     startedAt: 10_000,
     acceptedAt: 10_000,
     state: 'running',
   });
+  expect(store.getSessionRun(timing.id)).toEqual(
+    expect.not.objectContaining({ endedAt: expect.any(Number) }),
+  );
   sqlite.close();
 });

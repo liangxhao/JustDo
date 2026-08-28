@@ -112,6 +112,234 @@ describe('projectPersistedTimeline', () => {
     });
   });
 
+  test.each(['completed', 'failed', 'aborted'] as const)(
+    'settles a dangling Tool when its persisted run is %s',
+    state => {
+      const clientTurnStartedAt = 1_787_885_461_166;
+      const restartedAt = 1_787_886_368_411;
+      const terminalAt = 1_787_886_386_462;
+      const result = projectPersistedTimeline(
+        [
+          {
+            role: 'user',
+            content: 'prompt',
+            timestamp: clientTurnStartedAt + 20,
+          },
+          {
+            role: 'assistant',
+            timestamp: clientTurnStartedAt + 589,
+            content: [
+              {
+                type: 'toolCall',
+                id: 'call-question-1',
+                name: 'AskUserQuestion',
+              },
+            ],
+          },
+        ],
+        [
+          {
+            id: 'timing-1',
+            sessionId: 'session-1',
+            clientTurnId: `justdo-${clientTurnStartedAt}-turn-id`,
+            rootRunId: `justdo-${clientTurnStartedAt}-turn-id`,
+            startedAt: restartedAt,
+            endedAt: terminalAt,
+            state,
+          },
+        ],
+      );
+
+      expect(result).toEqual([
+        expect.objectContaining({ kind: 'history-message' }),
+        expect.objectContaining({
+          kind: 'process-summary',
+          interruptedCount: 1,
+          items: [
+            expect.objectContaining({
+              toolCallId: 'call-question-1',
+              status: 'interrupted',
+              updatedAt: terminalAt,
+            }),
+          ],
+        }),
+      ]);
+      expect(result.some(item => item.kind === 'live-process')).toBe(false);
+    },
+  );
+
+  test('does not associate a restarted receipt with a newer user turn', () => {
+    const originalTurnStartedAt = 1_787_885_461_166;
+    const restartedAt = 1_787_886_368_411;
+    const result = projectPersistedTimeline(
+      [
+        {
+          role: 'user',
+          content: 'new prompt',
+          timestamp: restartedAt + 20,
+        },
+        {
+          role: 'assistant',
+          timestamp: restartedAt + 589,
+          content: [{ type: 'toolCall', id: 'call-new-1', name: 'read' }],
+        },
+      ],
+      [
+        {
+          id: 'timing-old',
+          sessionId: 'session-1',
+          clientTurnId: `justdo-${originalTurnStartedAt}-turn-id`,
+          rootRunId: `justdo-${originalTurnStartedAt}-turn-id`,
+          startedAt: restartedAt,
+          endedAt: restartedAt,
+          state: 'aborted',
+        },
+      ],
+    );
+
+    expect(result).toEqual([
+      expect.objectContaining({ kind: 'history-message' }),
+      expect.objectContaining({
+        kind: 'live-process',
+        item: expect.objectContaining({ toolCallId: 'call-new-1', status: 'running' }),
+      }),
+    ]);
+  });
+
+  test('lets a nearby running receipt prevent an older turn from claiming its Tool', () => {
+    const oldTurnStartedAt = 1_787_885_461_166;
+    const activeTurnStartedAt = oldTurnStartedAt + 10_000;
+    const result = projectPersistedTimeline(
+      [
+        {
+          role: 'user',
+          content: 'active prompt',
+          timestamp: activeTurnStartedAt + 20,
+        },
+        {
+          role: 'assistant',
+          timestamp: activeTurnStartedAt + 589,
+          content: [{ type: 'toolCall', id: 'call-active-1', name: 'read' }],
+        },
+      ],
+      [
+        {
+          id: 'timing-old',
+          sessionId: 'session-1',
+          clientTurnId: `justdo-${oldTurnStartedAt}-old-id`,
+          rootRunId: `justdo-${oldTurnStartedAt}-old-id`,
+          startedAt: oldTurnStartedAt,
+          endedAt: oldTurnStartedAt + 5_000,
+          state: 'completed',
+        },
+        {
+          id: 'timing-active',
+          sessionId: 'session-1',
+          clientTurnId: `justdo-${activeTurnStartedAt}-active-id`,
+          rootRunId: `justdo-${activeTurnStartedAt}-active-id`,
+          startedAt: activeTurnStartedAt,
+          state: 'running',
+        },
+      ],
+    );
+
+    expect(result).toEqual([
+      expect.objectContaining({ kind: 'history-message' }),
+      expect.objectContaining({
+        kind: 'live-process',
+        item: expect.objectContaining({ toolCallId: 'call-active-1', status: 'running' }),
+      }),
+    ]);
+  });
+
+  test('does not let an older terminal receipt override a running receipt for the same root', () => {
+    const result = projectPersistedTimeline(
+      [
+        {
+          role: 'assistant',
+          runId: 'shared-root',
+          content: [{ type: 'toolCall', id: 'call-recovered-1', name: 'sessions_yield' }],
+        },
+      ],
+      [
+        {
+          id: 'timing-checkpoint',
+          sessionId: 'session-1',
+          clientTurnId: 'shared-root',
+          rootRunId: 'shared-root',
+          startedAt: 1_000,
+          endedAt: 1_000,
+          state: 'aborted',
+        },
+        {
+          id: 'timing-recovered',
+          sessionId: 'session-1',
+          clientTurnId: 'runtime-recovery-1',
+          rootRunId: 'shared-root',
+          startedAt: 2_000,
+          state: 'running',
+        },
+      ],
+    );
+
+    expect(result).toEqual([
+      expect.objectContaining({
+        kind: 'live-process',
+        item: expect.objectContaining({
+          toolCallId: 'call-recovered-1',
+          status: 'running',
+        }),
+      }),
+    ]);
+  });
+
+  test('clears a fallback terminal association when the same Tool joins an active run', () => {
+    const result = projectPersistedTimeline(
+      [
+        { role: 'user', content: 'old prompt', timestamp: 1_010 },
+        {
+          role: 'assistant',
+          content: [{ type: 'toolCall', id: 'call-recovered-1', name: 'sessions_yield' }],
+        },
+        {
+          role: 'assistant',
+          runId: 'active-root',
+          content: [{ type: 'toolCall', id: 'call-recovered-1', name: 'sessions_yield' }],
+        },
+      ],
+      [
+        {
+          id: 'timing-old',
+          sessionId: 'session-1',
+          clientTurnId: 'justdo-1000-old',
+          rootRunId: 'old-root',
+          startedAt: 1_000,
+          endedAt: 1_500,
+          state: 'aborted',
+        },
+        {
+          id: 'timing-active',
+          sessionId: 'session-1',
+          clientTurnId: 'runtime-recovery-1',
+          rootRunId: 'active-root',
+          startedAt: 2_000,
+          state: 'running',
+        },
+      ],
+    );
+
+    expect(result).toEqual([
+      expect.objectContaining({ kind: 'history-message' }),
+      expect.objectContaining({
+        kind: 'live-process',
+        item: expect.objectContaining({
+          toolCallId: 'call-recovered-1',
+          status: 'running',
+        }),
+      }),
+    ]);
+  });
+
   test('matches a persisted receipt by user timestamp when history omits run ids', () => {
     const result = projectPersistedTimeline(
       [

@@ -1,10 +1,12 @@
 import { randomUUID } from 'crypto';
 import { ipcMain } from 'electron';
 
-import type {
-  BeginSessionRunInput,
-  SessionRunState,
-  SessionRuntimeSnapshot,
+import {
+  type BeginSessionRunInput,
+  SessionRunBeginErrorCode,
+  type SessionRunState,
+  type SessionRuntimeSnapshot,
+  type SessionRunTiming,
 } from '../../../shared/cowork/sessionRun';
 import { isPermissionMode, type PermissionMode } from '../../../shared/openclaw/approvals';
 import type { CoworkStore } from '../../data/coworkStore';
@@ -19,6 +21,11 @@ interface SessionHandlerDependencies {
     permissionMode: PermissionMode,
   ) => Promise<PermissionModeOperationResult>;
 }
+
+const isRestartCheckpoint = (timing: SessionRunTiming | undefined): boolean =>
+  timing?.state === 'aborted' &&
+  timing.startedAt === timing.acceptedAt &&
+  timing.startedAt === timing.endedAt;
 
 export const registerCoworkSessionHandlers = ({
   getCoworkStore,
@@ -56,7 +63,7 @@ export const registerCoworkSessionHandlers = ({
         const sameRootRun =
           Boolean(timing && raw.rootRunId) &&
           (timing.rootRunId === raw.rootRunId || timing.clientTurnId === raw.rootRunId);
-        if (timing && sameRootRun) {
+        if (timing && (sameRootRun || (!raw.rootRunId && isRestartCheckpoint(timing)))) {
           const finalized = finalizedOutcomes.get(sessionId);
           if (finalized?.id === timing.id && finalized.state !== 'completed') {
             terminalOutcomes.set(sessionId, finalized.state);
@@ -165,12 +172,33 @@ export const registerCoworkSessionHandlers = ({
     }
   });
 
-  ipcMain.handle('cowork:session:run:begin', (_event, input: BeginSessionRunInput) => {
+  ipcMain.handle('cowork:session:run:begin', async (_event, input: BeginSessionRunInput) => {
     try {
+      const store = getCoworkStore();
+      if (isRestartCheckpoint(store.getLatestSessionRun(input.sessionId))) {
+        const raw = await getCoworkEngineRouter().getSessionRuntimeStatus(input.sessionId, {
+          includeSubagents: true,
+          forceRefresh: true,
+        });
+        if (!raw.known) {
+          return {
+            success: false,
+            errorCode: SessionRunBeginErrorCode.RuntimeUnknown,
+          };
+        }
+        const snapshot = reconcileRuntimeStatus(input.sessionId, raw);
+        if (snapshot.running) {
+          return {
+            success: false,
+            errorCode: SessionRunBeginErrorCode.RuntimeActive,
+            snapshot,
+          };
+        }
+      }
       idleConfirmations.delete(input.sessionId);
       terminalOutcomes.delete(input.sessionId);
       finalizedOutcomes.delete(input.sessionId);
-      const timing = getCoworkStore().beginSessionRun(input);
+      const timing = store.beginSessionRun(input);
       return {
         success: true,
         timing,

@@ -1,5 +1,6 @@
 type CoworkAttachmentPayload = import('../../shared/cowork/attachments').CoworkAttachmentPayload;
 type BeginSessionRunInput = import('../../shared/cowork/sessionRun').BeginSessionRunInput;
+type SessionRunBeginErrorCode = import('../../shared/cowork/sessionRun').SessionRunBeginErrorCode;
 type SessionRunTiming = import('../../shared/cowork/sessionRun').SessionRunTiming;
 type SessionRuntimeSnapshot = import('../../shared/cowork/sessionRun').SessionRuntimeSnapshot;
 type CoworkSessionDetailsResult =
@@ -718,6 +719,7 @@ interface IElectronAPI {
       success: boolean;
       timing?: SessionRunTiming;
       snapshot?: SessionRuntimeSnapshot;
+      errorCode?: SessionRunBeginErrorCode;
       error?: string;
     }>;
     bindSessionRun: (input: { id: string; rootRunId: string }) => Promise<{

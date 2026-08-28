@@ -1107,9 +1107,13 @@ if (!gotTheLock) {
     registerLocalFileProtocol();
 
     store = await initStore();
-    // Open receipts belong to the previous app process. Restart their clocks
-    // only after SQLite is initialized so offline time is not counted.
-    getCoworkStore().resetOpenSessionRuns(Date.now());
+    // Open receipts belong to the previous app process. Checkpoint them as
+    // interrupted so startup does not present stale work as running. Runtime
+    // reconciliation reopens a checkpoint if Gateway still reports active work.
+    const interruptedRunCount = getCoworkStore().interruptOpenSessionRuns(Date.now());
+    if (interruptedRunCount > 0) {
+      console.log(`[Main] Interrupted ${interruptedRunCount} stale cowork run receipt(s)`);
+    }
     // Defensive recovery: app may be force-closed during execution and leave
     // stale running flags in DB. Normalize them on startup.
     const resetCount = getCoworkStore().resetRunningSessions();

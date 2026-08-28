@@ -361,14 +361,15 @@ export class CoworkStore {
     return this.getSessionRun(id);
   }
 
-  resetOpenSessionRuns(startedAt: number): void {
-    this.db
+  interruptOpenSessionRuns(interruptedAt: number): number {
+    const result = this.db
       .prepare(
         `UPDATE cowork_session_runs
-         SET state = 'running', started_at = ?, accepted_at = ?, updated_at = ?
+         SET state = 'aborted', started_at = ?, accepted_at = ?, ended_at = ?, updated_at = ?
          WHERE ended_at IS NULL`,
       )
-      .run(startedAt, startedAt, startedAt);
+      .run(interruptedAt, interruptedAt, interruptedAt, interruptedAt);
+    return result.changes;
   }
 
   private getOne<T>(sql: string, params: (string | number | null)[] = []): T | undefined {

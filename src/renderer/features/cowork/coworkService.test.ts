@@ -1,3 +1,4 @@
+import { SessionRunBeginErrorCode } from '@shared/cowork/sessionRun';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import { coworkService } from '@/features/cowork/coworkService';
@@ -7,6 +8,7 @@ import {
   setSessionRuntimeActivity,
 } from '@/features/cowork/coworkSlice';
 import type { CoworkSession } from '@/features/cowork/coworkTypes';
+import { i18nService } from '@/services/i18n';
 import { store } from '@/store';
 
 describe('cowork session startup', () => {
@@ -339,6 +341,48 @@ describe('cowork runtime activity reconciliation', () => {
       running: false,
     });
     await staleRefresh;
+
+    expect(store.getState().cowork.sessionRuntimeActivity[sessionId]).toBe(true);
+    expect(store.getState().cowork.sessionRunTimings[sessionId]).toEqual([timing]);
+  });
+
+  test('applies an active recovery snapshot when beginning a new run is rejected', async () => {
+    const sessionId = 'runtime-rejected-begin-session';
+    const timing = {
+      id: 'timing-recovered-1',
+      sessionId,
+      clientTurnId: 'turn-old',
+      rootRunId: 'turn-old',
+      startedAt: 1_000,
+      acceptedAt: 1_100,
+      state: 'running' as const,
+    };
+    vi.stubGlobal('window', {
+      electron: {
+        cowork: {
+          beginSessionRun: vi.fn().mockResolvedValue({
+            success: false,
+            errorCode: SessionRunBeginErrorCode.RuntimeActive,
+            snapshot: {
+              revision: 2,
+              known: true,
+              mainRunning: true,
+              subagentRunning: false,
+              running: true,
+              timing,
+            },
+          }),
+        },
+      },
+    });
+
+    await expect(
+      coworkService.beginSessionRun({
+        sessionId,
+        clientTurnId: 'turn-new',
+        startedAt: 2_000,
+      }),
+    ).rejects.toThrow(i18nService.t('coworkSessionRuntimeActive'));
 
     expect(store.getState().cowork.sessionRuntimeActivity[sessionId]).toBe(true);
     expect(store.getState().cowork.sessionRunTimings[sessionId]).toEqual([timing]);

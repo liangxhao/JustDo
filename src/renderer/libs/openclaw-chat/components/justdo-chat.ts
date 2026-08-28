@@ -2323,9 +2323,7 @@ export class JustDoChatElement extends LitElement {
             .join('\n')}`
       : 'idle';
     const currentRunTiming = this.runTimings[this.runTimings.length - 1] ?? null;
-    const persistedRunTimings = currentRunTiming
-      ? this.runTimings.filter(timing => timing.id !== currentRunTiming.id)
-      : this.runTimings;
+    const persistedRunTimings = this.runTimings;
     const runTimingSignature = this.runTimings
       .map(
         timing => `${timing.id}:${timing.rootRunId ?? ''}:${timing.state}:${timing.endedAt ?? ''}`,

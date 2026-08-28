@@ -1,5 +1,13 @@
 export type SessionRunState = 'running' | 'completed' | 'failed' | 'aborted';
 
+export const SessionRunBeginErrorCode = {
+  RuntimeActive: 'runtime_active',
+  RuntimeUnknown: 'runtime_unknown',
+} as const;
+
+export type SessionRunBeginErrorCode =
+  (typeof SessionRunBeginErrorCode)[keyof typeof SessionRunBeginErrorCode];
+
 export interface SessionRunTiming {
   id: string;
   sessionId: string;
