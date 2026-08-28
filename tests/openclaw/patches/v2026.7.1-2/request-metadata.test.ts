@@ -15,7 +15,13 @@ const parentIdentityPatch =
 
 function agentMetadataWrapper(
   options: {
+    logError?: (...args: unknown[]) => unknown;
     loadSessionEntry?: (params: Record<string, unknown>) => unknown;
+    payloadMetadata?: Record<string, unknown>;
+    resolveSessionAgentIds?: (params: {
+      sessionKey?: string;
+      config?: unknown;
+    }) => { defaultAgentId: string; sessionAgentId: string };
     updateSessionEntry?: (...args: unknown[]) => unknown;
   } = {},
 ) {
@@ -27,6 +33,11 @@ function install(params) {
     authStorage: params.authStorage
   });
   const providerTextTransforms = [];
+  const nativeWebSearchPolicyContext = {};
+  applyExtraParamsToAgent(activeSession.agent, params.config, params.provider, params.modelId, {}, "high", "main", ".", params.model, ".", undefined, {
+    nativeWebSearchPolicyContext
+  });
+  if (codeModeControlsEnabledForRun) activeSession.agent.streamFn = createCodexNativeWebSearchWrapper(activeSession.agent.streamFn, {});
 }
 `,
     'agent-fixture.js',
@@ -45,12 +56,13 @@ function install(params) {
       _options: unknown,
       patchPayload: (payload: Record<string, unknown>) => void,
     ) => {
-      const payload = { metadata: { retained: true } };
+      const payload = { metadata: { retained: true, ...options.payloadMetadata } };
       patchPayload(payload);
       return payload;
     },
   );
   const factory = new Function(
+    'log$2',
     'streamWithPayloadPatch',
     'resolveSessionAgentIds',
     'resolveStorePath',
@@ -59,8 +71,10 @@ function install(params) {
     `${source}; return wrapJustDoAgentRequestMetadata;`,
   );
   return factory(
+    { error: options.logError ?? vi.fn() },
     streamWithPayloadPatch,
-    () => ({ agentId: 'main' }),
+    options.resolveSessionAgentIds ??
+      (() => ({ defaultAgentId: 'main', sessionAgentId: 'main' })),
     () => 'sessions.json',
     options.loadSessionEntry ?? (() => undefined),
     options.updateSessionEntry ?? (() => Promise.resolve()),
@@ -190,10 +204,10 @@ describe('OpenClaw v2026.7.1-2 request metadata isolation', () => {
     }
   });
 
-  test('agent metadata is LiteLLM-only and consumes rejected one-shot bookkeeping', () => {
+  test('agent metadata is limited to builtin_models openai-completions requests', () => {
     const wrap = agentMetadataWrapper();
     const original = vi.fn();
-    const userRuns = new Set(['custom-run']);
+    const userRuns = new Set(['custom-run', 'responses-run']);
     (globalThis as Record<PropertyKey, unknown>)[Symbol.for('justdo.litellm.user-runs')] = userRuns;
 
     const custom = wrap(original, {
@@ -202,9 +216,16 @@ describe('OpenClaw v2026.7.1-2 request metadata isolation', () => {
       modelApi: 'openai-completions',
       modelProvider: 'strict-compatible',
     });
+    const unsupportedApi = wrap(original, {
+      sessionId: 'session-responses',
+      runId: 'responses-run',
+      modelApi: 'openai-responses',
+      modelProvider: 'builtin_models',
+    });
 
     expect(custom).toBe(original);
-    expect(userRuns.has('custom-run')).toBe(false);
+    expect(unsupportedApi).toBe(original);
+    expect(userRuns).toEqual(new Set());
   });
 
   test('agent metadata keeps the stable session and marks only the first explicit request', () => {
@@ -233,14 +254,18 @@ describe('OpenClaw v2026.7.1-2 request metadata isolation', () => {
     );
   });
 
-  test('persisted direct parent wins and legacy lineage backfills without rewriting stable IDs', () => {
-    const updateSessionEntry = vi.fn(() => Promise.resolve());
+  test('uses only the persisted direct parent and never guesses from the current parent entry', () => {
+    const config = { session: { store: 'sessions.json' } };
+    const resolveSessionAgentIds = vi.fn(() => ({
+      defaultAgentId: 'main',
+      sessionAgentId: 'main',
+    }));
     const persisted = agentMetadataWrapper({
       loadSessionEntry: ({ sessionKey }) =>
         sessionKey === 'child'
           ? { sessionId: 'child-id', parentSessionId: 'persisted-parent' }
-          : { sessionId: 'legacy-parent' },
-      updateSessionEntry,
+          : { sessionId: 'new-parent-generation' },
+      resolveSessionAgentIds,
     });
     const persistedStream = persisted(vi.fn(), {
       sessionId: 'child-id',
@@ -249,21 +274,25 @@ describe('OpenClaw v2026.7.1-2 request metadata isolation', () => {
       runId: 'subagent-run',
       modelApi: 'openai-completions',
       modelProvider: 'builtin_models',
-      config: {},
+      config,
     });
 
     expect(persistedStream()).toMatchObject({
       metadata: { parent_session_id: 'persisted-parent' },
     });
-    expect(updateSessionEntry).not.toHaveBeenCalled();
+    expect(resolveSessionAgentIds.mock.calls).toEqual([[{ sessionKey: 'child', config }]]);
 
-    const backfill = vi.fn(() => Promise.resolve());
-    const legacy = agentMetadataWrapper({
-      loadSessionEntry: ({ sessionKey }) =>
-        sessionKey === 'child' ? { sessionId: 'child-id' } : { sessionId: 'legacy-parent' },
-      updateSessionEntry: backfill,
+    const logError = vi.fn(() => {
+      throw new Error('logger unavailable');
     });
-    legacy(vi.fn(), {
+    const missingSnapshot = agentMetadataWrapper({
+      logError,
+      loadSessionEntry: ({ sessionKey }) =>
+        sessionKey === 'child'
+          ? { sessionId: 'child-id' }
+          : { sessionId: 'new-parent-generation' },
+    });
+    const payload = missingSnapshot(vi.fn(), {
       sessionId: 'child-id',
       sessionKey: 'child',
       spawnedBy: 'parent',
@@ -271,14 +300,236 @@ describe('OpenClaw v2026.7.1-2 request metadata isolation', () => {
       modelApi: 'openai-completions',
       modelProvider: 'builtin_models',
       config: {},
+    })() as { metadata: Record<string, unknown> };
+
+    expect(payload.metadata).not.toHaveProperty('parent_session_id');
+    expect(logError).toHaveBeenCalledOnce();
+    expect(logError.mock.calls[0]?.[0]).toContain(
+      '[openclaw-agent-request-metadata] missing parent_session_id; continuing without parent metadata',
+    );
+    expect(logError.mock.calls[0]?.[0]).toContain('runId=legacy-run');
+    expect(logError.mock.calls[0]?.[0]).toContain('sessionKey=child');
+  });
+
+  test('subagent metadata replaces stale reserved values with exact child and direct-parent IDs', () => {
+    const parentSessionId = 'ee889a83-2407-48a7-bb5e-a15aef7ad0c1';
+    const childSessionId = '9f52dfaa-5ba5-4c04-9fb6-a37e196e2db9';
+    const parentRunId = 'justdo-parent-run';
+    const subagentRunId = 'subagent-run';
+    const userRuns = new Set([parentRunId]);
+    (globalThis as Record<PropertyKey, unknown>)[Symbol.for('justdo.litellm.user-runs')] = userRuns;
+    const wrap = agentMetadataWrapper({
+      loadSessionEntry: ({ sessionKey }) =>
+        sessionKey === 'child'
+          ? { sessionId: childSessionId, parentSessionId }
+          : { sessionId: parentSessionId },
+      payloadMetadata: {
+        session_id: 'stale-session',
+        parent_session_id: 'stale-parent',
+        request_purpose: 'stale-purpose',
+        user_initiated: true,
+      },
     });
 
-    expect(backfill).toHaveBeenCalledOnce();
-    const updater = backfill.mock.calls[0]?.[1] as (entry: Record<string, unknown>) => unknown;
-    expect(updater({ sessionId: 'child-id' })).toEqual({
-      parentSessionId: 'legacy-parent',
+    try {
+      expect(
+        wrap(vi.fn(), {
+          sessionId: childSessionId,
+          sessionKey: 'child',
+          spawnedBy: 'parent',
+          runId: subagentRunId,
+          modelApi: 'openai-completions',
+          modelProvider: 'builtin_models',
+          config: {},
+        })(),
+      ).toEqual({
+        metadata: {
+          retained: true,
+          session_id: childSessionId,
+          parent_session_id: parentSessionId,
+          request_purpose: 'agent',
+        },
+      });
+      expect(userRuns).toEqual(new Set([parentRunId]));
+    } finally {
+      delete (globalThis as Record<PropertyKey, unknown>)[Symbol.for('justdo.litellm.user-runs')];
+    }
+  });
+
+  test('subagent metadata never guesses a session ID and logs before continuing unmodified', () => {
+    const logError = vi.fn(() => {
+      throw new Error('logger unavailable');
     });
-    expect(updater({ sessionId: 'child-id', parentSessionId: 'already-stable' })).toBeNull();
+    const loadSessionEntry = vi.fn(() => {
+      throw new Error('store unavailable');
+    });
+    const storedOnly = agentMetadataWrapper({
+      logError,
+      loadSessionEntry,
+    });
+    const original = vi.fn(() => ({ retained: true }));
+
+    const stream = storedOnly(original, {
+      sessionKey: 'child',
+      spawnedBy: 'parent',
+      runId: 'subagent-run',
+      modelApi: 'openai-completions',
+      modelProvider: 'builtin_models',
+      config: {},
+    });
+
+    expect(stream).toBe(original);
+    expect(stream()).toEqual({ retained: true });
+    expect(logError).toHaveBeenCalledOnce();
+    expect(logError.mock.calls[0]?.[0]).toContain(
+      '[openclaw-agent-request-metadata] missing session_id; continuing without request metadata',
+    );
+    expect(logError.mock.calls[0]?.[0]).toContain('runId=subagent-run');
+    expect(logError.mock.calls[0]?.[0]).toContain('sessionKey=child');
+    expect(loadSessionEntry).not.toHaveBeenCalled();
+  });
+
+  test('subagent metadata never reads parent identity from a different child generation', () => {
+    const activeSessionId = 'active-child-session';
+    const wrap = agentMetadataWrapper({
+      loadSessionEntry: ({ sessionKey }) =>
+        sessionKey === 'child'
+          ? { sessionId: 'newer-child-session', parentSessionId: 'stale-parent-session' }
+          : { sessionId: 'live-parent-session' },
+    });
+
+    const payload = wrap(vi.fn(), {
+      sessionId: activeSessionId,
+      sessionKey: 'child',
+      spawnedBy: 'parent',
+      runId: 'active-run',
+      modelApi: 'openai-completions',
+      modelProvider: 'builtin_models',
+      config: {},
+    })() as { metadata: Record<string, unknown> };
+
+    expect(payload.metadata).toMatchObject({
+      session_id: activeSessionId,
+      request_purpose: 'agent',
+    });
+    expect(payload.metadata).not.toHaveProperty('parent_session_id');
+  });
+
+  test('keeps metadata isolated across a large concurrent subagent batch', async () => {
+    const identities = Array.from({ length: 128 }, (_, index) => ({
+      sessionKey: `child-${index}`,
+      sessionId: `child-session-${index}`,
+      parentSessionId: `parent-session-${Math.floor(index / 8)}`,
+    }));
+    const entries = new Map(
+      identities.map(identity => [
+        identity.sessionKey,
+        { sessionId: identity.sessionId, parentSessionId: identity.parentSessionId },
+      ]),
+    );
+    const wrap = agentMetadataWrapper({
+      loadSessionEntry: ({ sessionKey }) => entries.get(String(sessionKey)),
+    });
+
+    const payloads = await Promise.all(
+      identities.map(async identity =>
+        wrap(vi.fn(), {
+          sessionId: identity.sessionId,
+          sessionKey: identity.sessionKey,
+          spawnedBy: `parent-${identity.parentSessionId}`,
+          runId: `run-${identity.sessionId}`,
+          modelApi: 'openai-completions',
+          modelProvider: 'builtin_models',
+          config: {},
+        })(),
+      ),
+    );
+
+    payloads.forEach((payload, index) => {
+      expect(payload).toMatchObject({
+        metadata: {
+          session_id: identities[index]?.sessionId,
+          parent_session_id: identities[index]?.parentSessionId,
+          request_purpose: 'agent',
+        },
+      });
+    });
+  });
+
+  test('rejects a legacy metadata wrapper and requires a clean runtime rebuild', () => {
+    const legacySource = `const justDoLiteLLMMetadataApis = new Set(["openai-completions"]);
+const justDoLiteLLMProviderIds = new Set(["builtin_models"]);
+function wrapJustDoAgentRequestMetadata(streamFn, params) {
+  const userRuns = globalThis[Symbol.for("justdo.litellm.user-runs")];
+  if (!params.sessionId || !justDoLiteLLMProviderIds.has(params.modelProvider) || !justDoLiteLLMMetadataApis.has(params.modelApi)) {
+    userRuns?.delete(params.runId);
+    return streamFn;
+  }
+  const childAgentId = params.sessionKey ? resolveSessionAgentIds(params.sessionKey).agentId : void 0;
+  const childStorePath = childAgentId ? resolveStorePath(params.config?.session?.store, { agentId: childAgentId }) : void 0;
+  const childEntry = params.sessionKey && childStorePath ? loadSessionEntry({
+    storePath: childStorePath,
+    sessionKey: params.sessionKey
+  }) : void 0;
+  const parentAgentId = params.spawnedBy ? resolveSessionAgentIds(params.spawnedBy).agentId : void 0;
+  const parentStorePath = parentAgentId ? resolveStorePath(params.config?.session?.store, { agentId: parentAgentId }) : void 0;
+  const parentEntry = params.spawnedBy && parentStorePath ? loadSessionEntry({
+    storePath: parentStorePath,
+    sessionKey: params.spawnedBy
+  }) : void 0;
+  const persistedParentSessionId = typeof childEntry?.parentSessionId === "string"
+    ? childEntry.parentSessionId
+    : void 0;
+  const legacyParentSessionId = typeof parentEntry?.sessionId === "string"
+    ? parentEntry.sessionId
+    : void 0;
+  const parentSessionId = (persistedParentSessionId || legacyParentSessionId) !== params.sessionId
+    ? persistedParentSessionId || legacyParentSessionId
+    : void 0;
+  if (!persistedParentSessionId && parentSessionId && params.sessionKey && childStorePath) {
+    void updateSessionEntry({ storePath: childStorePath, sessionKey: params.sessionKey }, (entry) => {
+      if (entry.sessionId !== params.sessionId || entry.parentSessionId) return null;
+      return { parentSessionId };
+    }, { skipMaintenance: true, takeCacheOwnership: true });
+  }
+  let firstRequest = true;
+  return (model, context, options) => streamWithPayloadPatch(streamFn, model, context, options, (payload) => {
+    const existing = payload.metadata && typeof payload.metadata === "object" && !Array.isArray(payload.metadata)
+      ? payload.metadata
+      : {};
+    payload.metadata = {
+      ...existing,
+      session_id: params.sessionId,
+      request_purpose: "agent"
+    };
+    if (parentSessionId) payload.metadata.parent_session_id = parentSessionId;
+    if (firstRequest && userRuns?.delete(params.runId)) payload.metadata.user_initiated = true;
+    firstRequest = false;
+  });
+}
+function install(params) {
+  activeSession.agent.streamFn = wrapJustDoAgentRequestMetadata(activeSession.agent.streamFn, {
+    sessionId: params.sessionId,
+    runId: params.runId,
+    sessionKey: params.sessionKey,
+    spawnedBy: params.spawnedBy,
+    storePath: params.storePath,
+    config: params.config,
+    modelApi: params.model.api,
+    modelProvider: params.model.provider
+  });
+  const nativeWebSearchPolicyContext = {};
+  applyExtraParamsToAgent(activeSession.agent, params.config, params.provider, params.modelId, {}, "high", "main", ".", params.model, ".", undefined, {
+    nativeWebSearchPolicyContext
+  });
+  if (codeModeControlsEnabledForRun) activeSession.agent.streamFn = createCodexNativeWebSearchWrapper(activeSession.agent.streamFn, {});
+  return { modelProvider: params.model.provider };
+}
+`;
+
+    expect(() => agentPatch.patchAgentStream(legacySource, 'legacy-agent-metadata.js')).toThrow(
+      /legacy agent metadata wrapper requires a clean runtime rebuild/u,
+    );
   });
 
   test('spawn admission snapshots the direct parent UUID into both native child commits', () => {

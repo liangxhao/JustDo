@@ -24,6 +24,13 @@ Every patch under `scripts/patches/<openclaw-version>/` must start with metadata
 - Mark bug-fix and prompt-semantic patches as `Temporary: yes`.
 - Electron, Windows, or packaging compatibility patches may be temporary or
   permanent, but still need a removal condition.
+- Patch sets are always applied as one complete pass to a pristine OpenClaw
+  Runtime. When updating a patch, do not add migrations, rewrites, or other
+  compatibility logic for runtimes produced by older revisions of the patch
+  set.
+- Reject stale, partially applied, or previously patched runtime output with a
+  clear clean-rebuild requirement. Current patch-set application and
+  verification must remain idempotent.
 - Patch hit failure must be visible through build or startup logs.
 - Every patch module must export an idempotent, read-only `verifyPatch(runtimeDir)`
   that throws unless all of that patch's critical final replacements are present

@@ -12,6 +12,7 @@ const approvalPatch =
   };
 const metadataPatch = require('../../../../scripts/patches/v2026.7.1-2/027-agent-request-metadata.cjs') as {
   applyPatch: (runtimeRoot: string) => string[];
+  patchAgentStream: (content: string, filePath: string) => string;
   verifyPatch: (runtimeRoot: string) => void;
 };
 const emergencyCompactionPatch =
@@ -291,6 +292,11 @@ function install(params) {
     authStorage: params.authStorage
   });
   const providerTextTransforms = resolveProviderTextTransforms({});
+  const nativeWebSearchPolicyContext = {};
+  applyExtraParamsToAgent(activeSession.agent, params.config, params.provider, params.modelId, {}, "high", "main", ".", params.model, ".", undefined, {
+    nativeWebSearchPolicyContext
+  });
+  if (codeModeControlsEnabledForRun) activeSession.agent.streamFn = createCodexNativeWebSearchWrapper(activeSession.agent.streamFn, {});
 }
 `,
     );
@@ -307,17 +313,173 @@ function install(params) {
       'justdoUserInitiated: Type.Optional(Type.Boolean())',
     );
     expect(firstBytes[1].toString()).toContain('p.justdoUserInitiated === true');
-    expect(stream).toContain('session_id: params.sessionId');
+    expect(stream).toContain('session_id: sessionId');
     expect(stream).toContain('parent_session_id');
     expect(stream).toContain('request_purpose: "agent"');
     expect(stream).toContain('payload.metadata.user_initiated = true');
     expect(stream).toContain('childEntry?.parentSessionId');
-    expect(stream).toContain('return { parentSessionId }');
+    expect(stream).not.toContain('const parentEntry =');
+    expect(stream).toContain('sessionId: activeSession.sessionId || params.sessionId');
+    expect(stream.indexOf('applyExtraParamsToAgent(')).toBeLessThan(
+      stream.indexOf(
+        'activeSession.agent.streamFn = wrapJustDoAgentRequestMetadata(activeSession.agent.streamFn',
+      ),
+    );
 
     expect(metadataPatch.applyPatch(runtimeRoot)).toEqual([]);
     expect([schemaPath, chatPath, streamPath].map(filePath => fs.readFileSync(filePath))).toEqual(
       firstBytes,
     );
+
+    const legacyStream = stream.replaceAll(
+      'resolveSessionAgentIds({ sessionKey: params.sessionKey, config: params.config }).sessionAgentId',
+      'resolveSessionAgentIds(params.sessionKey).agentId',
+    );
+    fs.writeFileSync(streamPath, legacyStream);
+
+    expect(() => metadataPatch.applyPatch(runtimeRoot)).toThrow(
+      /partial agent metadata session scope/u,
+    );
+    expect(fs.readFileSync(streamPath, 'utf8')).toBe(legacyStream);
+  });
+
+  test('rejects a partial metadata wrapper in the frozen gateway bundle', () => {
+    const runtimeRoot = createRuntime();
+    const schemaPath = path.join(runtimeRoot, 'dist', 'schema.js');
+    const chatPath = path.join(runtimeRoot, 'dist', 'chat.js');
+    const streamPath = path.join(runtimeRoot, 'dist', 'selection.js');
+    fs.writeFileSync(
+      schemaPath,
+      `const ChatSendParamsSchema = Type.Object({
+  systemInputProvenance: Type.Optional(InputProvenanceSchema),
+  justdoUserInitiated: Type.Optional(Type.Boolean()),
+  systemProvenanceReceipt: Type.Optional(Type.String())
+});
+`,
+    );
+    fs.writeFileSync(
+      chatPath,
+      `const chatSendReceivedAtMs = performance.now();
+userRuns.add(clientRunId);
+`,
+    );
+    fs.writeFileSync(
+      path.join(runtimeRoot, 'dist', 'schema-consumer.js'),
+      'const activeSchema = ChatSendParamsSchema;\n',
+    );
+    const stream = metadataPatch.patchAgentStream(
+      `const streamWithPayloadPatch = () => {};
+async function loadAttemptSessionEntryAfterQuotaMaintenance(params) { return params; }
+function install(params) {
+  activeSession.agent.streamFn = resolveEmbeddedAgentStreamFn({
+    authStorage: params.authStorage
+  });
+  const providerTextTransforms = [];
+  const nativeWebSearchPolicyContext = {};
+  applyExtraParamsToAgent(activeSession.agent, params.config, params.provider, params.modelId, {}, "high", "main", ".", params.model, ".", undefined, {
+    nativeWebSearchPolicyContext
+  });
+  if (codeModeControlsEnabledForRun) activeSession.agent.streamFn = createCodexNativeWebSearchWrapper(activeSession.agent.streamFn, {});
+}
+`,
+      streamPath,
+    );
+    fs.writeFileSync(streamPath, stream);
+    const bundlePath = path.join(runtimeRoot, 'gateway-bundle.mjs');
+    fs.writeFileSync(
+      bundlePath,
+      [fs.readFileSync(schemaPath, 'utf8'), fs.readFileSync(chatPath, 'utf8'), stream].join('\n'),
+    );
+
+    expect(() => metadataPatch.verifyPatch(runtimeRoot)).not.toThrow();
+    fs.writeFileSync(
+      bundlePath,
+      fs
+        .readFileSync(bundlePath, 'utf8')
+        .replace(
+          'resolveSessionAgentIds({ sessionKey: params.sessionKey, config: params.config }).sessionAgentId',
+          'resolveSessionAgentIds({ sessionKey: params.sessionKey, config: params.config }).defaultAgentId',
+        ),
+    );
+
+    expect(() => metadataPatch.verifyPatch(runtimeRoot)).toThrow(
+      /gateway-bundle\.mjs: agent metadata field is missing/u,
+    );
+
+    fs.writeFileSync(
+      bundlePath,
+      [fs.readFileSync(schemaPath, 'utf8'), fs.readFileSync(chatPath, 'utf8'), stream]
+        .join('\n')
+        .replace(
+          'const childStorePath = childAgentId ? resolveStorePath(params.config?.session?.store, { agentId: childAgentId }) : void 0;',
+          'const childStorePath = undefined;',
+        ),
+    );
+    expect(() => metadataPatch.verifyPatch(runtimeRoot)).toThrow(
+      /gateway-bundle\.mjs: agent metadata child session store lookup is missing/u,
+    );
+
+    const completeBundle = [
+      fs.readFileSync(schemaPath, 'utf8'),
+      fs.readFileSync(chatPath, 'utf8'),
+      stream,
+    ].join('\n');
+    const esbuildFormattedBundle = completeBundle.replaceAll('catch {}', 'catch {\n    }');
+    expect(esbuildFormattedBundle).not.toBe(completeBundle);
+    fs.writeFileSync(bundlePath, esbuildFormattedBundle);
+    expect(() => metadataPatch.verifyPatch(runtimeRoot)).not.toThrow();
+
+    for (const [contract, corrupted] of [
+      ['new Set(["builtin_models"])', 'new Set([])'],
+      ['new Set(["openai-completions"])', 'new Set([])'],
+      [' || !justDoLiteLLMMetadataApis.has(params.modelApi)', ''],
+      [
+        'const sessionId = typeof params.sessionId === "string" ? params.sessionId.trim() : "";',
+        'const sessionId = storedSessionId;',
+      ],
+      [
+        'const storedSessionId = typeof childEntry?.sessionId === "string" ? childEntry.sessionId.trim() : "";',
+        'const storedSessionId = "";',
+      ],
+      [
+        'const childEntryMatchesSession = storedSessionId === sessionId;',
+        'const childEntryMatchesSession = true;',
+      ],
+      ['const isSubagentSession = Boolean(', 'const isSubagentSession = false; Boolean('],
+      [
+        '[openclaw-agent-request-metadata] missing session_id; continuing without request metadata',
+        '[openclaw-agent-request-metadata] missing session_id; silently continuing',
+      ],
+      [
+        '[openclaw-agent-request-metadata] missing parent_session_id; continuing without parent metadata',
+        '[openclaw-agent-request-metadata] missing parent_session_id; silently continuing',
+      ],
+      [
+        `const parentSessionId = persistedParentSessionId && persistedParentSessionId !== sessionId
+    ? persistedParentSessionId
+    : void 0;`,
+        'const parentSessionId = persistedParentSessionId;',
+      ],
+      [
+        'session_id: sessionId,',
+        'session_id: params.sessionId,',
+      ],
+      [
+        'if (parentSessionId) payload.metadata.parent_session_id = parentSessionId;',
+        'if (parentSessionId) payload.metadata.parent_session_id = "wrong-parent";',
+      ],
+      [
+        'sessionId: activeSession.sessionId || params.sessionId,',
+        'sessionId: params.sessionId,',
+      ],
+    ]) {
+      const corruptedBundle = completeBundle.replace(contract, corrupted);
+      expect(corruptedBundle).not.toBe(completeBundle);
+      fs.writeFileSync(bundlePath, corruptedBundle);
+      expect(() => metadataPatch.verifyPatch(runtimeRoot)).toThrow(
+        /gateway-bundle\.mjs: agent metadata/u,
+      );
+    }
   });
 
   test('fails atomically when a target anchor is ambiguous', () => {
