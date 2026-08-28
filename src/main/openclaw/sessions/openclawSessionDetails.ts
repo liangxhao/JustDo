@@ -1,4 +1,5 @@
 import {
+  isSessionDetailModelVisible,
   type SessionDetailStats,
   type SessionDetailTokenUsage,
   sumSessionDetailTokenUsage,
@@ -39,7 +40,8 @@ const readModelNames = (value: unknown): string[] => {
     const provider = nonEmptyString(item.provider);
     const model = nonEmptyString(item.model);
     if (!model) continue;
-    models.add(provider && !model.includes('/') ? `${provider}/${model}` : model);
+    const modelRef = provider && !model.includes('/') ? `${provider}/${model}` : model;
+    if (isSessionDetailModelVisible(modelRef)) models.add(modelRef);
   }
   return [...models];
 };

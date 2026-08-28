@@ -238,6 +238,94 @@ select::-ms-expand {
   animation: shimmer 1.5s infinite;
 }
 
+.querying-indicator-text {
+  color: transparent;
+  background: linear-gradient(
+    90deg,
+    var(--justdo-text-secondary) 0%,
+    var(--justdo-primary) 45%,
+    var(--justdo-text-secondary) 100%
+  );
+  background-size: 220% 100%;
+  background-clip: text;
+  filter: drop-shadow(0 0 5px var(--justdo-primary-muted));
+  animation: querying-text-shimmer 1.6s ease-in-out infinite;
+}
+
+.querying-indicator-dot {
+  display: inline-block;
+  color: var(--justdo-primary);
+  animation: querying-dot-wave 1.1s ease-in-out infinite;
+}
+
+.querying-indicator-stage {
+  color: var(--justdo-text-secondary);
+  letter-spacing: 0.02em;
+  animation: querying-stage-enter 240ms ease-out;
+}
+
+.session-token-progress-indeterminate {
+  animation: session-token-progress-slide 1.25s ease-in-out infinite;
+}
+
+@keyframes session-token-progress-slide {
+  0% {
+    transform: translateX(-110%);
+  }
+  50% {
+    transform: translateX(100%);
+  }
+  100% {
+    transform: translateX(310%);
+  }
+}
+
+@keyframes querying-text-shimmer {
+  0%,
+  100% {
+    background-position: 100% 50%;
+  }
+  50% {
+    background-position: 0% 50%;
+  }
+}
+
+@keyframes querying-dot-wave {
+  0%,
+  60%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+@keyframes querying-stage-enter {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .querying-indicator-text,
+  .querying-indicator-dot,
+  .querying-indicator-stage {
+    animation: none;
+  }
+
+  .session-token-progress-indeterminate {
+    animation: none;
+  }
+}
+
 /* Streaming activity bar */
 .streaming-bar {
   position: relative;

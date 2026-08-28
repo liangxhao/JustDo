@@ -24,6 +24,7 @@ describe('Gateway session detail statistics', () => {
           modelUsage: [
             { provider: 'openai', model: 'gpt-5', count: 2 },
             { provider: 'anthropic', model: 'claude-sonnet-4', count: 1 },
+            { provider: 'openclaw', model: 'gateway-injected', count: 1 },
           ],
         },
         'First question',

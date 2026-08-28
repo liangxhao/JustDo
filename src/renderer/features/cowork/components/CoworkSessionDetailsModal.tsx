@@ -21,6 +21,9 @@ import {
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/common/Modal';
 
+import QueryingIndicator from './QueryingIndicator';
+import SessionTotalTokenUsageModal from './SessionTotalTokenUsageModal';
+
 interface CoworkSessionDetailsModalProps {
   sessionSummary: CoworkSessionSummary;
   groups: SessionGroup[];
@@ -64,11 +67,15 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
   const [isLoading, setIsLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+  const [isTotalTokenUsageOpen, setIsTotalTokenUsageOpen] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const totalTokenButtonRef = useRef<HTMLButtonElement>(null);
+  const isTotalTokenUsageOpenRef = useRef(false);
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
   const hasLoadedRef = useRef(false);
   const onCloseRef = useRef(onClose);
+  isTotalTokenUsageOpenRef.current = isTotalTokenUsageOpen;
 
   useEffect(() => {
     onCloseRef.current = onClose;
@@ -124,9 +131,11 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
       if (event.key === 'Escape') {
         event.preventDefault();
         event.stopImmediatePropagation();
-        onCloseRef.current();
+        if (isTotalTokenUsageOpenRef.current) setIsTotalTokenUsageOpen(false);
+        else onCloseRef.current();
         return;
       }
+      if (isTotalTokenUsageOpenRef.current) return;
       if (event.key !== 'Tab' || !dialogRef.current) return;
 
       const focusableElements = Array.from(
@@ -264,13 +273,8 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
 
         <div className="max-h-[calc(84vh-73px)] overflow-y-auto px-5 py-5">
           {isLoading && (
-            <div
-              className="flex min-h-52 items-center justify-center gap-2.5 text-sm text-secondary"
-              role="status"
-              aria-live="polite"
-            >
-              <ArrowPathIcon className="h-5 w-5 animate-spin" aria-hidden="true" />
-              {i18nService.t('sessionDetailsLoading')}
+            <div className="flex min-h-52 items-center justify-center">
+              <QueryingIndicator size="md" />
             </div>
           )}
 
@@ -322,9 +326,20 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
 
               <section>
                 <div className="mb-2 flex items-center justify-between gap-3">
-                  <h3 className="shrink-0 text-xs font-semibold text-secondary">
-                    {i18nService.t('sessionDetailsTokenUsage')}
-                  </h3>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <h3 className="text-xs font-semibold text-secondary">
+                      {i18nService.t('sessionDetailsTokenUsage')}
+                    </h3>
+                    <button
+                      ref={totalTokenButtonRef}
+                      type="button"
+                      onClick={() => setIsTotalTokenUsageOpen(true)}
+                      className="rounded-md border border-primary/30 bg-primary/5 px-2 py-0.5 text-[10px] font-medium text-primary transition-colors hover:bg-primary/10"
+                      title={i18nService.t('sessionTotalTokensButtonTitle')}
+                    >
+                      {i18nService.t('sessionTotalTokensButton')}
+                    </button>
+                  </div>
                   <p className="whitespace-nowrap text-right text-[10px] leading-4 text-secondary">
                     {i18nService.t('sessionDetailsTokenUsageScopeNote')}
                   </p>
@@ -416,6 +431,14 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
           )}
         </div>
       </div>
+      {isTotalTokenUsageOpen && (
+        <SessionTotalTokenUsageModal
+          sessionId={sessionSummary.id}
+          gatewaySessionId={gatewaySessionId ?? undefined}
+          returnFocusRef={totalTokenButtonRef}
+          onClose={() => setIsTotalTokenUsageOpen(false)}
+        />
+      )}
     </Modal>
   );
 };

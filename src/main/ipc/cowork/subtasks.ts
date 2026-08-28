@@ -1,10 +1,12 @@
 import { ipcMain } from 'electron';
 
 import {
+  type CoworkSubagentDescendantsResult,
   CoworkSubagentDetailsIpc,
   type CoworkSubagentDetailsResult,
 } from '../../../shared/cowork/subagentDetails';
 import type { OpenClawRuntimeAdapter } from '../../engine';
+import { listGatewaySubagentDescendants } from '../../engine/openclaw/subagentGateway';
 import {
   buildGatewaySessionDetailStats,
   type GatewaySessionUsageLoader,
@@ -69,6 +71,33 @@ export const registerCoworkSubtaskHandlers = ({
           return requestGatewaySessionUsage(client, key);
         });
       return loadCoworkSubagentDetails(loadSessionUsage, sessionKey);
+    },
+  );
+
+  ipcMain.handle(
+    CoworkSubagentDetailsIpc.ListDescendants,
+    async (_event, sessionId: unknown): Promise<CoworkSubagentDescendantsResult> => {
+      const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+      if (!normalizedSessionId) return { success: false, error: 'Session ID is required' };
+      try {
+        const runtime = getRuntime();
+        const client = runtime?.getGatewayClient();
+        if (!runtime || !client) {
+          return { success: false, error: 'Gateway client not connected' };
+        }
+        return {
+          success: true,
+          subagents: await listGatewaySubagentDescendants(
+            client,
+            runtime.getSessionKeysForSession(normalizedSessionId),
+          ),
+        };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to list subagent descendants',
+        };
+      }
     },
   );
 

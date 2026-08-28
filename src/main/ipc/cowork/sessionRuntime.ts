@@ -4,6 +4,7 @@ import {
   buildLocalSessionDetailStats,
   CoworkSessionDetailsIpc,
   type CoworkSessionDetailsResult,
+  isSessionDetailModelVisible,
 } from '../../../shared/cowork/sessionDetails';
 import {
   GoalExecutionIpc,
@@ -208,7 +209,7 @@ export const createSingleFlightTtlLookup = <T>(
 
 const addModel = (models: Set<string>, value: unknown): void => {
   const model = nonEmptyString(value);
-  if (model) models.add(model);
+  if (model && isSessionDetailModelVisible(model)) models.add(model);
 };
 
 const readGatewayModelRef = (session: GatewaySession | undefined): string | undefined => {

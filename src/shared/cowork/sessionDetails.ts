@@ -5,6 +5,11 @@ export interface SessionDetailTokenUsage {
   cacheWrite: number;
 }
 
+const HIDDEN_SESSION_DETAIL_MODELS = new Set(['openclaw/gateway-injected']);
+
+export const isSessionDetailModelVisible = (value: string): boolean =>
+  !HIDDEN_SESSION_DETAIL_MODELS.has(value.trim().toLowerCase());
+
 /** Displayed total: the four visible token categories must add up exactly. */
 export const sumSessionDetailTokenUsage = (usage: SessionDetailTokenUsage): number =>
   usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
@@ -83,7 +88,7 @@ export const buildLocalSessionDetailStats = (session: SessionDetailSource): Sess
     const metadataModelName =
       typeof message.metadata?.modelName === 'string' ? message.metadata.modelName.trim() : '';
     const modelName = message.modelName?.trim() || metadataModelName;
-    if (modelName) models.add(modelName);
+    if (modelName && isSessionDetailModelVisible(modelName)) models.add(modelName);
 
     if (message.type === 'user' && message.content.trim()) userMessageIds.add(message.id);
     if (message.type === 'assistant' && message.content.trim()) assistantMessageIds.add(message.id);

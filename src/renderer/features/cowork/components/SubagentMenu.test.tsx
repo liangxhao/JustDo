@@ -9,6 +9,7 @@ import SubagentMenu from './SubagentMenu';
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -124,5 +125,65 @@ describe('SubagentMenu', () => {
     await act(async () => intervalCallbacks[0]?.());
     await waitFor(() => expect(getSubTaskDetails).toHaveBeenCalledTimes(2));
     expect(screen.getByText('154')).toBeTruthy();
+  });
+
+  it('keeps the query animation active while an incomplete detail request retries', async () => {
+    i18nService.setLanguage('zh', { persist: false });
+    vi.useFakeTimers();
+    const getSubTaskDetails = vi
+      .fn()
+      .mockResolvedValueOnce({ success: false, error: 'usage cache is refreshing' })
+      .mockResolvedValueOnce({
+        success: true,
+        stats: {
+          summary: null,
+          messageCount: 1,
+          userMessageCount: 0,
+          assistantMessageCount: 1,
+          toolCallCount: 0,
+          models: ['openai/gpt-5'],
+          tokenUsage: { input: 100, output: 20, cacheRead: 30, cacheWrite: 4 },
+          totalTokens: 154,
+          hasTokenUsage: true,
+        },
+      });
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        cowork: {
+          getSubTaskStatus: vi.fn().mockResolvedValue({
+            success: true,
+            subagents: [
+              {
+                id: 'child-1',
+                sessionKey: 'agent:main:subagent:child-1',
+                label: 'Research',
+                labelSource: 'taskName',
+                status: 'done',
+              },
+            ],
+          }),
+          getSubTaskDetails,
+        },
+      },
+    });
+
+    render(<SubagentMenu sessionId="parent-1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Subagent' }));
+    await act(async () => Promise.resolve());
+    fireEvent.click(screen.getByRole('button', { name: '查看详情' }));
+    await act(async () => Promise.resolve());
+
+    expect(getSubTaskDetails).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('status', { name: /查询中/ })).toBeTruthy();
+
+    await act(async () => {
+      vi.advanceTimersByTime(1_000);
+      await Promise.resolve();
+    });
+
+    expect(getSubTaskDetails).toHaveBeenCalledTimes(2);
+    expect(screen.getByText('154')).toBeTruthy();
+    expect(screen.queryByRole('status', { name: /查询中/ })).toBeNull();
   });
 });

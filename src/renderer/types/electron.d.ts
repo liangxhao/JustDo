@@ -6,6 +6,8 @@ type CoworkSessionDetailsResult =
   import('../../shared/cowork/sessionDetails').CoworkSessionDetailsResult<CoworkSession>;
 type CoworkSubagentDetailsResult =
   import('../../shared/cowork/subagentDetails').CoworkSubagentDetailsResult;
+type CoworkSubagentDescendantsResult =
+  import('../../shared/cowork/subagentDetails').CoworkSubagentDescendantsResult;
 type GenerateSessionTitleRequest =
   import('../../shared/cowork/sessionTitle').GenerateSessionTitleRequest;
 type SaveTextFileOptions = import('../../shared/dialogIpc').SaveTextFileOptions;
@@ -886,6 +888,7 @@ interface IElectronAPI {
       }>;
     }>;
     getSubTaskDetails: (sessionKey: string) => Promise<CoworkSubagentDetailsResult>;
+    listSubTaskDescendants: (sessionId: string) => Promise<CoworkSubagentDescendantsResult>;
     getSubTaskSession: (sessionKey: string) => Promise<{
       success: boolean;
       session?: CoworkSession | null;

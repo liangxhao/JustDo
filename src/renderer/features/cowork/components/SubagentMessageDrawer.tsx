@@ -194,7 +194,12 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
         // Preserve the last complete lifetime total until the next refresh.
       } finally {
         refreshInFlight = false;
-        if (!cancelled) setIsDetailStatsLoading(false);
+        const willRetry = !succeeded && !isActive && attempt < 2;
+        const waitingForActiveRefresh =
+          !succeeded && isActive && detailStatsRef.current === undefined;
+        if (!cancelled && !willRetry && !waitingForActiveRefresh) {
+          setIsDetailStatsLoading(false);
+        }
       }
       if (!cancelled && !succeeded && !isActive && attempt < 2) {
         retryTimer = window.setTimeout(() => void refreshDetails(attempt + 1), 1000);

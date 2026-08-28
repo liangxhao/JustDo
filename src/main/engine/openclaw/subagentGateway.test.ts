@@ -1,7 +1,68 @@
 import { expect, test, vi } from 'vitest';
 
 import type { GatewayClientLike } from '../gateway/types';
-import { listGatewaySubagents } from './subagentGateway';
+import { listGatewaySubagentDescendants, listGatewaySubagents } from './subagentGateway';
+
+test('lists every nested subagent descendant from the complete session projection', async () => {
+  const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+    if (method === 'sessions.list') {
+      return {
+        sessions: [
+          {
+            key: 'agent:main:subagent:child-1',
+            sessionId: 'child-session-id',
+            spawnedBy: 'agent:main:cowork:parent',
+            taskName: 'Child task',
+          },
+          {
+            key: 'agent:main:subagent:grandchild-1',
+            parentSessionKey: 'agent:main:subagent:child-1',
+            task: 'Grandchild task details',
+          },
+          {
+            key: 'agent:main:subagent:unrelated',
+            sessionId: 'unrelated-session-id',
+            spawnedBy: 'agent:main:cowork:other',
+          },
+        ],
+      };
+    }
+    if (method === 'sessions.describe') {
+      expect(params).toEqual({ key: 'agent:main:subagent:grandchild-1' });
+      return { session: { sessionId: 'grandchild-session-id' } };
+    }
+    return {};
+  });
+
+  await expect(
+    listGatewaySubagentDescendants(
+      { request } as unknown as GatewayClientLike,
+      ['agent:main:cowork:parent'],
+    ),
+  ).resolves.toEqual([
+    {
+      sessionKey: 'agent:main:subagent:child-1',
+      sessionId: 'child-session-id',
+      label: 'Child task',
+    },
+    {
+      sessionKey: 'agent:main:subagent:grandchild-1',
+      sessionId: 'grandchild-session-id',
+      label: 'Grandchild task details',
+    },
+  ]);
+});
+
+test('does not silently downgrade descendant enumeration when the complete scan fails', async () => {
+  const request = vi.fn().mockRejectedValue(new Error('session scan failed'));
+
+  await expect(
+    listGatewaySubagentDescendants(
+      { request } as unknown as GatewayClientLike,
+      ['agent:main:cowork:parent'],
+    ),
+  ).rejects.toThrow('session scan failed');
+});
 
 test('lists subagents from the registry-backed sessions projection', async () => {
   const request = vi.fn().mockImplementation(async (method: string) =>

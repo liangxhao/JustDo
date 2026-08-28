@@ -1,8 +1,9 @@
-import { ArrowPathIcon } from '@heroicons/react/24/outline';
 import type { SessionDetailStats } from '@shared/cowork/sessionDetails';
 import React from 'react';
 
 import { i18nService } from '@/services/i18n';
+
+import QueryingIndicator from './QueryingIndicator';
 
 interface SubagentTokenUsageProps {
   stats?: SessionDetailStats;
@@ -12,13 +13,8 @@ interface SubagentTokenUsageProps {
 const SubagentTokenUsage: React.FC<SubagentTokenUsageProps> = ({ stats, isLoading }) => {
   if (isLoading)
     return (
-      <span
-        className="inline-flex items-center justify-end gap-1.5 text-xs text-secondary"
-        role="status"
-        aria-live="polite"
-      >
-        <ArrowPathIcon className="h-4 w-4 animate-spin" aria-hidden="true" />
-        {i18nService.t('loading')}
+      <span className="inline-flex justify-end">
+        <QueryingIndicator />
       </span>
     );
   if (!stats) return <>{i18nService.t('subagentInfoUnavailable')}</>;

@@ -230,6 +230,69 @@ export const listPersistedGatewaySessions = async (
   return sessions;
 };
 
+export const listGatewaySubagentDescendants = async (
+  client: GatewayRequestClient,
+  rootKeys: string[],
+): Promise<Array<{ sessionKey: string; sessionId: string; label: string }>> => {
+  const rows = await listPersistedGatewaySessions(client);
+  const childrenByParent = new Map<string, Array<Record<string, unknown>>>();
+  for (const row of rows) {
+    const sessionKey = optionalString(row.key);
+    if (!sessionKey || !sessionKey.includes(':subagent:')) continue;
+    const parentKeys = new Set(
+      [optionalString(row.spawnedBy), optionalString(row.parentSessionKey)].filter(
+        (value): value is string => value !== undefined,
+      ),
+    );
+    for (const parentKey of parentKeys) {
+      const children = childrenByParent.get(parentKey) ?? [];
+      children.push(row);
+      childrenByParent.set(parentKey, children);
+    }
+  }
+
+  const visited = new Set(rootKeys);
+  const queue = [...rootKeys];
+  const descendants: Array<Record<string, unknown>> = [];
+  while (queue.length > 0) {
+    const parentKey = queue.shift()!;
+    for (const row of childrenByParent.get(parentKey) ?? []) {
+      const sessionKey = optionalString(row.key);
+      if (!sessionKey || visited.has(sessionKey)) continue;
+      visited.add(sessionKey);
+      queue.push(sessionKey);
+      descendants.push(row);
+    }
+  }
+
+  const resolved: Array<{ sessionKey: string; sessionId: string; label: string }> = [];
+  const concurrency = 8;
+  for (let offset = 0; offset < descendants.length; offset += concurrency) {
+    const batch = descendants.slice(offset, offset + concurrency);
+    resolved.push(
+      ...(await Promise.all(
+        batch.map(async row => {
+          const sessionKey = optionalString(row.key)!;
+          let sessionId = optionalString(row.sessionId);
+          if (!sessionId) {
+            const described = await client.request<{
+              session?: Record<string, unknown> | null;
+            }>('sessions.describe', { key: sessionKey });
+            sessionId = optionalString(described.session?.sessionId);
+          }
+          if (!sessionId) throw new Error(`Gateway Session ID unavailable for ${sessionKey}`);
+          return {
+            sessionKey,
+            sessionId,
+            label: resolveSubagentTitle(row)?.label ?? sessionKey.split(':').pop() ?? sessionKey,
+          };
+        }),
+      )),
+    );
+  }
+  return resolved;
+};
+
 /**
  * Invokes OpenClaw's structured `subagents` tool through the public Gateway API.
  * The session projection supplements completed runs older than the tool's

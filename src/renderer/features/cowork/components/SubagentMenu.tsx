@@ -67,6 +67,7 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({
   const refreshInFlightRef = useRef(false);
   const hasLoadedRef = useRef(false);
   const detailStatsSessionKeyRef = useRef<string>();
+  const detailStatsRef = useRef<SessionDetailStats>();
   const sessionIdRef = useRef(sessionId);
   sessionIdRef.current = sessionId;
 
@@ -120,6 +121,7 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({
     const sessionKey = detailSubagent?.sessionKey;
     if (!sessionKey) {
       detailStatsSessionKeyRef.current = undefined;
+      detailStatsRef.current = undefined;
       setDetailStats(undefined);
       setIsDetailStatsLoading(false);
       return;
@@ -131,9 +133,11 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({
     const isNewSession = detailStatsSessionKeyRef.current !== sessionKey;
     detailStatsSessionKeyRef.current = sessionKey;
     if (isNewSession) {
+      detailStatsRef.current = undefined;
       setDetailStats(undefined);
       setIsDetailStatsLoading(true);
     }
+    let hasCompleteStats = detailStatsRef.current !== undefined;
     const isActive =
       detailSubagent?.status === SUBAGENT_STATUSES.PENDING ||
       detailSubagent?.status === SUBAGENT_STATUSES.RUNNING;
@@ -145,13 +149,19 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({
         const result = await window.electron.cowork.getSubTaskDetails(sessionKey);
         if (!cancelled && result.success) {
           succeeded = true;
+          hasCompleteStats = true;
+          detailStatsRef.current = result.stats;
           setDetailStats(result.stats);
         }
       } catch {
         // Preserve the last complete lifetime total until the next refresh.
       } finally {
         refreshInFlight = false;
-        if (!cancelled) setIsDetailStatsLoading(false);
+        const willRetry = !succeeded && !isActive && attempt < 2;
+        const waitingForActiveRefresh = !succeeded && isActive && !hasCompleteStats;
+        if (!cancelled && !willRetry && !waitingForActiveRefresh) {
+          setIsDetailStatsLoading(false);
+        }
       }
       if (!cancelled && !succeeded && !isActive && attempt < 2) {
         retryTimer = window.setTimeout(() => void refreshDetails(attempt + 1), 1000);

@@ -35,7 +35,7 @@ describe('CoworkSessionDetailsModal', () => {
     );
 
     const loadingStatus = screen.getByRole('status');
-    expect(loadingStatus.textContent).toContain('正在加载会话详情');
+    expect(loadingStatus.textContent).toContain('查询中...');
     expect(loadingStatus.querySelector('.animate-spin')).toBeTruthy();
   });
 
@@ -96,6 +96,11 @@ describe('CoworkSessionDetailsModal', () => {
     expect(screen.getByText('Session ID')).toBeTruthy();
     expect(screen.getByText('openai/gpt-5')).toBeTruthy();
     expect(screen.getByText('总 Token')).toBeTruthy();
+    const aggregateTokensButton = screen.getByRole('button', { name: '汇总 Token' });
+    expect(aggregateTokensButton).toBeTruthy();
+    expect(aggregateTokensButton.getAttribute('title')).toBe(
+      '统计主会话与所有 Subagent 的 Token 总量',
+    );
     expect(screen.getByText('154')).toBeTruthy();
     expect(screen.getByText('100')).toBeTruthy();
     const tokenScopeNote = screen.getByText(
