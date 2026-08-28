@@ -164,6 +164,7 @@ const resolveBaseUrl = (provider: ProviderType, baseUrl: string): string => {
 };
 const CONNECTIVITY_TEST_TOKEN_BUDGET = 64;
 const MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
+const SAVE_SUCCESS_FEEDBACK_DURATION_MS = 1_800;
 const APPEARANCE_PREVIEW_CARD_CLASS_NAME =
   'flex flex-col items-center rounded-xl border-2 p-2 transition-colors cursor-pointer';
 const APPEARANCE_PREVIEW_CLASS_NAME = 'mb-1.5 h-auto w-full overflow-hidden rounded-md';
@@ -354,6 +355,7 @@ const Settings: React.FC<SettingsProps> = ({
   const [preventSleep, setPreventSleepState] = useState(false);
   const [isUpdatingPreventSleep, setIsUpdatingPreventSleep] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [saveSucceeded, setSaveSucceeded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isMac = window.electron.platform === 'darwin';
   const buildNoticeMessage = useCallback((): string | null => {
@@ -409,6 +411,16 @@ const Settings: React.FC<SettingsProps> = ({
     },
     [cancelConnectionTest],
   );
+
+  useEffect(() => {
+    if (!saveSucceeded) return;
+
+    const timer = window.setTimeout(
+      () => setSaveSucceeded(false),
+      SAVE_SUCCESS_FEEDBACK_DURATION_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [saveSucceeded]);
 
   useEffect(() => {
     if (activeTab === 'help') {
@@ -1109,6 +1121,7 @@ const Settings: React.FC<SettingsProps> = ({
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    setSaveSucceeded(false);
 
     const incompleteCustomProvider = Object.entries(providers).find(
       ([providerKey, providerConfig]) =>
@@ -1313,9 +1326,9 @@ const Settings: React.FC<SettingsProps> = ({
         }
       });
       dispatch(setAvailableModels(allModels));
-
+      setSaveSucceeded(true);
     } catch (error) {
-      setError(error instanceof Error ? error.message : 'Failed to save settings');
+      setError(error instanceof Error ? error.message : i18nService.t('settingsSaveFailed'));
     } finally {
       setIsSaving(false);
     }
@@ -2870,14 +2883,39 @@ const Settings: React.FC<SettingsProps> = ({
                 </button>
                 <button
                   type="submit"
+                  aria-busy={isSaving}
                   disabled={
                     isSaving ||
                     (activeTab === 'runtime' &&
                       (agentRuntimeSettingsLoading || !initialAgentRuntimeSettings))
                   }
-                  className="h-9 rounded-xl bg-primary px-5 text-sm font-medium text-white shadow-sm transition-all hover:bg-primary-hover hover:shadow-card disabled:cursor-not-allowed disabled:opacity-50 active:scale-[0.98]"
+                  className={`inline-flex h-9 min-w-[88px] items-center justify-center gap-1.5 rounded-xl px-5 text-sm font-medium text-white shadow-sm transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 ${
+                    saveSucceeded
+                      ? 'bg-green-600 hover:bg-green-600'
+                      : 'bg-primary hover:bg-primary-hover hover:shadow-card'
+                  }`}
                 >
-                  {isSaving ? i18nService.t('saving') : i18nService.t('save')}
+                  <span className="inline-flex items-center gap-1.5" aria-live="polite">
+                    {isSaving ? (
+                      <>
+                        <ArrowPathIcon
+                          className="h-4 w-4 animate-spin motion-reduce:animate-none"
+                          aria-hidden="true"
+                        />
+                        {i18nService.t('saving')}
+                      </>
+                    ) : saveSucceeded ? (
+                      <>
+                        <CheckCircleIcon
+                          className="h-4 w-4 animate-scale-in motion-reduce:animate-none"
+                          aria-hidden="true"
+                        />
+                        {i18nService.t('settingsSaved')}
+                      </>
+                    ) : (
+                      i18nService.t('save')
+                    )}
+                  </span>
                 </button>
               </div>
             </form>
