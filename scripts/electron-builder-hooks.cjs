@@ -639,7 +639,7 @@ async function beforePack(context) {
   ensureBundledOpenClawRuntime(context);
 
   if (isWindowsTarget(context)) {
-    // electron-builder 26.15.x can let modern 7za choose BCJ2 for PE files,
+    // The locked electron-builder 26.15.3 can let modern 7za choose BCJ2 for PE files,
     // while the older Nsis7z decoder embedded in the installer can silently
     // omit those blocks. Force the single-stream BCJ filter before the NSIS app
     // archive is created; a successful 7za build alone does not prove the
@@ -998,13 +998,7 @@ function sha512File(filePath) {
   });
 }
 
-async function buildWindowsUpdateManifest({
-  artifactPaths,
-  outDir,
-  packageVersion,
-  releaseNotesPath,
-  releaseDate = new Date().toISOString(),
-}) {
+function findSingleWindowsInstaller(artifactPaths) {
   const installerPaths = artifactPaths.filter(
     artifactPath => artifactPath.toLowerCase().endsWith('.exe') && existsSync(artifactPath),
   );
@@ -1013,8 +1007,138 @@ async function buildWindowsUpdateManifest({
       `[electron-builder-hooks] Expected exactly one Windows EXE artifact, found ${installerPaths.length}.`,
     );
   }
+  return installerPaths[0];
+}
 
-  const installerPath = installerPaths[0];
+function verifyWindowsInstallerArchiveListing(listing, productFilename) {
+  if (!/^Type = 7z$/m.test(listing)) {
+    throw new Error(
+      '[electron-builder-hooks] Windows installer does not contain a readable embedded 7z application archive.',
+    );
+  }
+
+  // The Nsis7z decoder shipped with the locked electron-builder 26.15.3 understands
+  // plain LZMA2/Copy and the single-stream BCJ converter only. Modern 7za can
+  // silently choose BCJ2 (x64) or another CPU filter, after which Nsis7z omits
+  // the affected executable blocks without reporting an extraction error.
+  const methods = listing
+    .split(/\r?\n/)
+    .filter(line => line.startsWith('Method = '))
+    .map(line => line.slice('Method = '.length).trim())
+    .filter(Boolean);
+  if (methods.length === 0) {
+    throw new Error(
+      '[electron-builder-hooks] Windows installer archive listing contains no compression methods.',
+    );
+  }
+  const unsupportedMethods = [
+    ...new Set(
+      methods.filter(method =>
+        method
+          .split(/\s+/)
+          .some(token => !/^LZMA2(?::[^\s]+)?$/.test(token) && token !== 'BCJ' && token !== 'Copy'),
+      ),
+    ),
+  ];
+  if (unsupportedMethods.length > 0) {
+    throw new Error(
+      '[electron-builder-hooks] Windows installer uses application archive methods that the ' +
+        `install-time Nsis7z decoder cannot safely read: ${unsupportedMethods.join(', ')}.`,
+    );
+  }
+
+  const archivedPaths = new Set(
+    listing
+      .split(/\r?\n/)
+      .filter(line => line.startsWith('Path = '))
+      .map(line => line.slice('Path = '.length).trim().replace(/\\/g, '/').toLowerCase()),
+  );
+  const requiredPaths = [
+    `${productFilename}.exe`,
+    'chrome_100_percent.pak',
+    'icudtl.dat',
+    'libEGL.dll',
+    'libGLESv2.dll',
+    'locales/en-US.pak',
+    'locales/zh-CN.pak',
+    'resources.pak',
+    'resources/app.asar',
+    'resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release/better_sqlite3.node',
+    'resources/unpack-cfmind.cjs',
+    'resources/win-resources-metadata.json',
+  ];
+  const missingPaths = requiredPaths.filter(entry => !archivedPaths.has(entry.toLowerCase()));
+  if (missingPaths.length > 0) {
+    throw new Error(
+      `[electron-builder-hooks] Windows installer application archive is missing: ${missingPaths.join(', ')}.`,
+    );
+  }
+}
+
+function verifyWindowsInstallerArchive(installerPath, productFilename, options = {}) {
+  const sevenZipExecutable = options.sevenZipExecutable || require('7zip-bin').path7za;
+  const run = options.spawnSync || spawnSync;
+  const listingResult = run(sevenZipExecutable, ['l', '-slt', installerPath], {
+    encoding: 'utf8',
+    maxBuffer: 16 * 1024 * 1024,
+    windowsHide: true,
+  });
+  if (listingResult.status !== 0) {
+    const detail = String(
+      listingResult.stderr || listingResult.stdout || listingResult.error || '',
+    ).trim();
+    throw new Error(
+      '[electron-builder-hooks] Could not inspect the final Windows installer archive' +
+        (detail ? `: ${detail}` : '.'),
+    );
+  }
+  verifyWindowsInstallerArchiveListing(String(listingResult.stdout || ''), productFilename);
+
+  // Listing only reads archive headers. Test every compressed stream and CRC so
+  // a truncated/corrupt data block cannot pass solely because paths survived.
+  const testResult = run(sevenZipExecutable, ['t', installerPath], {
+    encoding: 'utf8',
+    maxBuffer: 16 * 1024 * 1024,
+    windowsHide: true,
+  });
+  if (testResult.status !== 0) {
+    const detail = String(testResult.stderr || testResult.stdout || testResult.error || '').trim();
+    throw new Error(
+      '[electron-builder-hooks] Could not decompress and CRC-test the final Windows installer archive' +
+        (detail ? `: ${detail}` : '.'),
+    );
+  }
+  console.log(
+    `[electron-builder-hooks] Verified install-time-decodable, CRC-valid application archive in ${installerPath}.`,
+  );
+}
+
+function artifactBuildCompleted(context) {
+  const targetName = String(context?.target?.name || '').toLowerCase();
+  const platformName = context?.packager?.platform?.nodeName;
+  if (
+    platformName !== 'win32' ||
+    !targetName.startsWith('nsis') ||
+    !String(context?.file || '')
+      .toLowerCase()
+      .endsWith('.exe')
+  ) {
+    return;
+  }
+
+  // This hook runs after signing but before artifactCreated schedules publish.
+  // Reject an unreadable installer before any publisher can observe the EXE.
+  verifyWindowsInstallerArchive(context.file, context.packager.appInfo.productFilename);
+}
+
+async function buildWindowsUpdateManifest({
+  artifactPaths,
+  outDir,
+  packageVersion,
+  releaseNotesPath,
+  releaseDate = new Date().toISOString(),
+}) {
+  const installerPath = findSingleWindowsInstaller(artifactPaths);
   const installerName = path.basename(installerPath);
   const version = normalizeUpdateVersion(packageVersion);
   const releaseNotes = readReleaseNotes(releaseNotesPath);
@@ -1120,10 +1244,14 @@ async function verifyPackagedOpenClawRuntime(context) {
 module.exports = {
   beforePack,
   afterPack,
+  artifactBuildCompleted,
   afterAllArtifactBuild,
   buildWindowsUpdateManifest,
+  findSingleWindowsInstaller,
   normalizeUpdateVersion,
   readReleaseNotes,
+  verifyWindowsInstallerArchive,
+  verifyWindowsInstallerArchiveListing,
   verifyPackagedNodeRuntime,
   verifyPackagedWindowsNativeModules,
   verifyPackagedOpenClawRuntime,

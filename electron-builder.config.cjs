@@ -1,5 +1,12 @@
 'use strict';
 
+// The locked electron-builder 26.15.3 creates NSIS application archives with a modern
+// 7za, but extracts them at install time with an older Nsis7z decoder. Pin the
+// compatible single-stream filter as soon as the build config is loaded. The
+// beforePack hook reasserts this for normal builds; this early assignment also
+// protects --prepackaged builds, which skip beforePack entirely.
+process.env.ELECTRON_BUILDER_7Z_FILTER = 'BCJ';
+
 const baseConfig = require('./electron-builder.json');
 const packageJson = require('./package.json');
 const {

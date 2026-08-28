@@ -5,6 +5,7 @@
   "electronLanguages": ["en-US", "zh-CN"],
   "beforePack": "./scripts/electron-builder-hooks.cjs",
   "afterPack": "./scripts/electron-builder-hooks.cjs",
+  "artifactBuildCompleted": "./scripts/electron-builder-hooks.cjs",
   "afterAllArtifactBuild": "./scripts/electron-builder-hooks.cjs",
   "files": [
     "package.json",

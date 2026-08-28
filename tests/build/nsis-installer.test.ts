@@ -21,9 +21,14 @@ const builderHook = readFileSync(
   path.resolve(__dirname, '../../scripts/electron-builder-hooks.cjs'),
   'utf8',
 );
+const executableBuilderConfig = readFileSync(
+  path.resolve(__dirname, '../../electron-builder.config.cjs'),
+  'utf8',
+);
 const builderConfig = JSON.parse(
   readFileSync(path.resolve(__dirname, '../../electron-builder.json'), 'utf8'),
 ) as {
+  artifactBuildCompleted?: string;
   electronLanguages?: string[];
   extraResources?: Array<{ from?: string; to?: string }>;
   nsis?: { preCompressedFileExtensions?: string[] };
@@ -437,6 +442,10 @@ describe('Windows installer process handling', () => {
     expect(builderHook).toContain('compressTarArchive(outputTar, outputArchive)');
     expect(builderHook).toContain('totalEntries: tarEntries.length');
     expect(builderHook).toContain("process.env.ELECTRON_BUILDER_7Z_FILTER = 'BCJ'");
+    expect(executableBuilderConfig).toContain(
+      "process.env.ELECTRON_BUILDER_7Z_FILTER = 'BCJ'",
+    );
+    expect(builderConfig.artifactBuildCompleted).toBe('./scripts/electron-builder-hooks.cjs');
   });
 
   it('does not retain old Git files or OpenClaw skills in an upgraded installation', async () => {
@@ -998,8 +1007,14 @@ describe('Windows installer presentation', () => {
     expect(nsisScript).toContain("kernel32::GetTickCount()i.r1");
     expect(nsisScript).toContain('phase=process-check-start');
     expect(nsisScript).toContain('phase=electron-builder-core-start');
-    expect(nsisScript).toContain('phase=electron-builder-core-complete duration-ms=$1');
+    expect(nsisScript).toContain('phase=electron-builder-core-returned duration-ms=$1');
+    expect(nsisScript).toContain('phase=electron-builder-core-validation-complete result=passed');
     expect(nsisScript).toContain('phase=installer-failed status=terminated-before-success');
+    expect(nsisScript).toContain('Function .onInstSuccess');
+    expect(nsisScript).toContain('Function .onGUIEnd');
+    expect(nsisScript).toContain('!define MUI_CUSTOMFUNCTION_ABORT JustDoInstallerUserAbort');
+    expect(nsisScript).toContain('phase=installer-success status=completed');
+    expect(nsisScript).toContain('phase=installer-session-end terminal-state=');
     expect(nsisScript).toContain('=== installer-session-start ===');
     expect(nsisScript).not.toContain('Delete "$JustDoResourceLogPath"');
     expect(nsisScript).toContain('install-resource.log');
@@ -1010,6 +1025,68 @@ describe('Windows installer presentation', () => {
     expect(unpackScript).toContain("'resource-install-start'");
     expect(unpackScript).toContain("'runtime-upgrade-failed'");
     expect(unpackScript).toContain("'resource-install-failed'");
+  });
+
+  it('selects one mandatory log directory before multi-user initialization', () => {
+    const preInit = nsisScript.slice(
+      nsisScript.indexOf('!macro preInit'),
+      nsisScript.indexOf('!macroend', nsisScript.indexOf('!macro preInit')),
+    );
+    const selector = nsisScript.slice(
+      nsisScript.indexOf('Function JustDoSelectInstallLogDirectory'),
+      nsisScript.indexOf(
+        'FunctionEnd',
+        nsisScript.indexOf('Function JustDoSelectInstallLogDirectory'),
+      ),
+    );
+
+    expect(preInit).toContain('StrCpy $JustDoCurrentUserAppData "$APPDATA"');
+    expect(preInit).toContain('StrCpy $JustDoCurrentUserLocalAppData "$LOCALAPPDATA"');
+    expect(preInit).toContain('Call JustDoSelectInstallLogDirectory');
+    expect(preInit).toContain('diagnostic logs, so installation will not continue');
+    expect(selector.indexOf('$JustDoCurrentUserAppData')).toBeLessThan(
+      selector.indexOf('$JustDoCurrentUserLocalAppData'),
+    );
+    expect(selector.indexOf('$JustDoCurrentUserLocalAppData')).toBeLessThan(
+      selector.indexOf('$JustDoCurrentTemp'),
+    );
+    expect(selector.indexOf('$JustDoCurrentTemp')).toBeLessThan(
+      selector.indexOf('$JustDoInstallerDirectory'),
+    );
+    expect(nsisScript).not.toContain('FileOpen $2 "NUL"');
+    expect(nsisScript).toContain('phase=install-log-relocated');
+  });
+
+  it('runs process preparation for UAC inner instances only', () => {
+    const customInit = nsisScript.slice(
+      nsisScript.indexOf('!macro customInit'),
+      nsisScript.indexOf('!macroend', nsisScript.indexOf('!macro customInit')),
+    );
+
+    expect(customInit).toMatch(
+      /\$\{If\} \$\{UAC_IsInnerInstance\}[\s\S]*Call JustDoCheckAppRunning/,
+    );
+    expect(customInit).not.toMatch(/\$\{If\} \$\{Silent\}[\s\S]*Call JustDoCheckAppRunning/);
+  });
+
+  it('reports a missing main executable before starting resource extraction', () => {
+    const customInstall = nsisScript.slice(
+      nsisScript.indexOf('!macro customInstall'),
+      nsisScript.indexOf('!macroend', nsisScript.indexOf('!macro customInstall')),
+    );
+    const executableCheck = customInstall.indexOf(
+      '${IfNot} ${FileExists} "$INSTDIR\\${APP_EXECUTABLE_FILENAME}"',
+    );
+    const resourceLaunch = customInstall.indexOf('${StdUtils.ExecShellWaitEx}');
+
+    expect(executableCheck).toBeGreaterThan(-1);
+    expect(resourceLaunch).toBeGreaterThan(executableCheck);
+    expect(customInstall).toContain('reason=core-payload-missing component=$R6');
+    expect(customInstall).toContain('resource-unpack-script');
+    expect(customInstall).toContain('resource-archive');
+    expect(customInstall).toContain('resource-metadata');
+    expect(customInstall).toContain('better-sqlite3-native-module');
+    expect(customInstall).toContain('文件被安全软件拦截');
   });
 
   it('reassures users while native archive extraction is busy', () => {

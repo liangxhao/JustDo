@@ -7,6 +7,7 @@
 !define JUSTDO_INSTALLER_QUIT_SWITCH "--justdo-request-quit-for-update"
 
 !ifndef BUILD_UNINSTALLER
+!define MUI_CUSTOMFUNCTION_ABORT JustDoInstallerUserAbort
 !define JUSTDO_PROGRESS_STYLE 0x50000009
 !define JUSTDO_PBM_SETPOS 0x0402
 !define JUSTDO_PBM_SETRANGE32 0x0406
@@ -33,6 +34,57 @@ Var JustDoResourceLogPath
 Var JustDoInstallStartedTick
 Var JustDoCoreInstallStartedTick
 Var JustDoProcessCheckComplete
+Var JustDoInstallTerminalState
+Var JustDoInstallerPid
+Var JustDoInstallerSessionId
+Var JustDoLastInstallEvent
+Var JustDoInstallMode
+Var JustDoInstallLogDirectory
+Var JustDoCurrentUserAppData
+Var JustDoCurrentUserLocalAppData
+Var JustDoCurrentTemp
+Var JustDoInstallerDirectory
+
+!macro JustDoTryInstallLogDirectory _BASE _DIRECTORY_NAME
+  ${If} $JustDoInstallLogDirectory == ""
+  ${AndIf} ${_BASE} != ""
+    StrCpy $1 "${_BASE}\${_DIRECTORY_NAME}"
+    CreateDirectory "$1"
+    StrCpy $JustDoInstallLogPath "$1\install-timing.log"
+    StrCpy $JustDoResourceLogPath "$1\install-resource.log"
+    ClearErrors
+    FileOpen $0 "$JustDoInstallLogPath" a
+    ${IfNot} ${Errors}
+      FileClose $0
+      ClearErrors
+      FileOpen $0 "$JustDoResourceLogPath" a
+      ${IfNot} ${Errors}
+        FileClose $0
+        StrCpy $JustDoInstallLogDirectory "$1"
+      ${EndIf}
+    ${EndIf}
+    ${If} $JustDoInstallLogDirectory == ""
+      StrCpy $JustDoInstallLogPath ""
+      StrCpy $JustDoResourceLogPath ""
+      ClearErrors
+    ${EndIf}
+  ${EndIf}
+!macroend
+
+Function JustDoSelectInstallLogDirectory
+  Push $0
+  Push $1
+  StrCpy $JustDoInstallLogDirectory ""
+  StrCpy $JustDoInstallLogPath ""
+  StrCpy $JustDoResourceLogPath ""
+  !insertmacro JustDoTryInstallLogDirectory "$JustDoCurrentUserAppData" "${PRODUCT_NAME}"
+  !insertmacro JustDoTryInstallLogDirectory "$JustDoCurrentUserLocalAppData" "${PRODUCT_NAME}"
+  !insertmacro JustDoTryInstallLogDirectory "$JustDoCurrentTemp" "${APP_FILENAME}-installer-logs"
+  !insertmacro JustDoTryInstallLogDirectory "$JustDoInstallerDirectory" "${APP_FILENAME}-installer-logs"
+  ClearErrors
+  Pop $1
+  Pop $0
+FunctionEnd
 
 Function JustDoWriteInstallEvent
   Exch $0
@@ -45,22 +97,41 @@ Function JustDoWriteInstallEvent
   Push $7
   Push $8
   Push $9
+  Push $R0
 
+  StrCpy $JustDoLastInstallEvent "$0"
   System::Call 'kernel32::GetTickCount()i.r1'
   IntOp $1 $1 - $JustDoInstallStartedTick
   ${GetTime} "" "L" $2 $3 $4 $5 $6 $7 $8
+  StrCpy $R0 "$JustDoInstallLogPath"
   ${If} $JustDoInstallLogPath != ""
     ClearErrors
     FileOpen $9 "$JustDoInstallLogPath" a
-    ${IfNot} ${Errors}
-      FileWrite $9 "$4-$3-$2 $6:$7:$8 elapsed-ms=$1 $0$\r$\n"
-      FileClose $9
+  ${Else}
+    SetErrors
+  ${EndIf}
+  ${If} ${Errors}
+    ; Re-select a directory where both lifecycle and resource logs are writable
+    ; so diagnostics never silently split across unrelated locations.
+    Call JustDoSelectInstallLogDirectory
+    ClearErrors
+    FileOpen $9 "$JustDoInstallLogPath" a
+  ${EndIf}
+  ${IfNot} ${Errors}
+    ${If} $R0 != ""
+    ${AndIf} $R0 != $JustDoInstallLogPath
+      FileWrite $9 "$4-$3-$2 $6:$7:$8 elapsed-ms=$1 pid=$JustDoInstallerPid session=$JustDoInstallerSessionId phase=install-log-relocated previous=$R0 current=$JustDoInstallLogPath$\r$\n"
     ${EndIf}
+    FileWrite $9 "$4-$3-$2 $6:$7:$8 elapsed-ms=$1 pid=$JustDoInstallerPid session=$JustDoInstallerSessionId $0$\r$\n"
+    FileClose $9
+  ${Else}
+    StrCpy $JustDoInstallLogPath ""
   ${EndIf}
   ; Diagnostics are best-effort and must never leak their error flag into the
   ; installer flow, where later IfErrors checks control rollback behavior.
   ClearErrors
 
+  Pop $R0
   Pop $9
   Pop $8
   Pop $7
@@ -78,9 +149,32 @@ FunctionEnd
   Call JustDoWriteInstallEvent
 !macroend
 
+Function JustDoInstallerUserAbort
+  StrCpy $JustDoInstallTerminalState "user-cancelled"
+  !insertmacro JustDoLogInstallEvent "phase=installer-cancel reason=wizard-user-abort"
+FunctionEnd
+
+Function .onInstSuccess
+  StrCpy $JustDoInstallTerminalState "success"
+  !insertmacro JustDoLogInstallEvent "phase=installer-success status=completed version=${VERSION} install-mode=$JustDoInstallMode install-dir=$INSTDIR core-validation=passed"
+FunctionEnd
+
 Function .onInstFailed
-  !insertmacro JustDoLogInstallEvent "phase=installer-failed status=terminated-before-success"
+  StrCpy $JustDoInstallTerminalState "failed"
+  GetErrorLevel $1
+  System::Call 'kernel32::GetLastError()i.r0'
+  !insertmacro JustDoLogInstallEvent "phase=installer-failed status=terminated-before-success error-level=$1 win32-last-error=$0"
   Call JustDoRestoreManagedRuntimes
+  !insertmacro JustDoLogInstallEvent "phase=installer-failed-cleanup-complete runtime-restore-result=$0"
+FunctionEnd
+
+Function .onGUIEnd
+  ${If} $JustDoInstallTerminalState == ""
+    StrCpy $JustDoInstallTerminalState "ended-before-pre-init"
+  ${ElseIf} $JustDoInstallTerminalState == "running"
+    StrCpy $JustDoInstallTerminalState "closed-without-success-callback"
+  ${EndIf}
+  !insertmacro JustDoLogInstallEvent "phase=installer-session-end terminal-state=$JustDoInstallTerminalState last-event=$JustDoLastInstallEvent"
 FunctionEnd
 
 Function JustDoPollResourceProgress
@@ -387,6 +481,7 @@ FunctionEnd
 Function JustDoRestoreManagedRuntimes
   ${IfNot} ${FileExists} "$PLUGINSDIR\justdo-process-helper.ps1"
     StrCpy $0 "helper-missing"
+    !insertmacro JustDoLogInstallEvent "phase=runtime-restore result=$0 detail=process-helper-not-extracted"
     Return
   ${EndIf}
   System::Call 'Kernel32::GetCurrentProcessId()i.r0'
@@ -452,6 +547,7 @@ Function JustDoCheckAppRunning
           StrCpy $1 "${PRODUCT_NAME} is running.$\r$\n$\r$\nYes: close the old version automatically and continue. Unsaved work may be lost.$\r$\nNo: I quit it manually from the system tray; check again.$\r$\nCancel: exit setup."
         ${EndIf}
         MessageBox MB_YESNOCANCEL|MB_ICONEXCLAMATION "$1" IDYES JustDoInstallAutoClose IDNO JustDoInstallProcessRetry
+        StrCpy $JustDoInstallTerminalState "user-cancelled"
         !insertmacro JustDoLogInstallEvent "phase=installer-cancel reason=user-cancelled-running-app-dialog"
         Quit
 
@@ -497,6 +593,7 @@ Function JustDoCheckAppRunning
             StrCpy $1 "Setup could not verify whether ${PRODUCT_NAME} has closed. Click Retry to check again, or Cancel to exit setup."
           ${EndIf}
           MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$1" IDRETRY JustDoInstallProcessRetry
+          StrCpy $JustDoInstallTerminalState "user-cancelled"
           !insertmacro JustDoLogInstallEvent "phase=installer-cancel reason=process-inspection-failed"
           Quit
       ${EndIf}
@@ -532,54 +629,51 @@ FunctionEnd
 !macroend
 !endif
 
-!macro customInit
-  CreateDirectory "$APPDATA\${PRODUCT_NAME}"
-  StrCpy $JustDoInstallLogPath "$APPDATA\${PRODUCT_NAME}\install-timing.log"
-  StrCpy $JustDoResourceLogPath "$APPDATA\${PRODUCT_NAME}\install-resource.log"
+!ifndef BUILD_UNINSTALLER
+!macro preInit
+  ; Capture per-user shell paths before initMultiUser can switch all-users
+  ; installs to the machine shell context. All later log relocation uses these
+  ; fixed values, keeping outer and elevated-inner sessions discoverable.
+  StrCpy $JustDoCurrentUserAppData "$APPDATA"
+  StrCpy $JustDoCurrentUserLocalAppData "$LOCALAPPDATA"
+  StrCpy $JustDoCurrentTemp "$TEMP"
+  StrCpy $JustDoInstallerDirectory "$EXEDIR"
   System::Call 'kernel32::GetTickCount()i.r0'
   StrCpy $JustDoInstallStartedTick $0
   StrCpy $JustDoCoreInstallStartedTick 0
   StrCpy $JustDoProcessCheckComplete "0"
+  StrCpy $JustDoInstallTerminalState "running"
+  System::Call 'kernel32::GetCurrentProcessId()i.r0'
+  StrCpy $JustDoInstallerPid $0
+  StrCpy $JustDoInstallerSessionId "$JustDoInstallerPid-$JustDoInstallStartedTick"
+  StrCpy $JustDoLastInstallEvent "pre-init-not-yet-logged"
 
-  ; Keep prior sessions in the same append-only files: retries and the outer/
-  ; elevated inner UAC instances must not erase the evidence from one another.
-  ; Probe the resource log now and fall back to TEMP if APPDATA is unavailable.
-  ClearErrors
-  FileOpen $2 "$JustDoResourceLogPath" a
-  ${If} ${Errors}
-    StrCpy $JustDoResourceLogPath "$TEMP\${APP_FILENAME}-install-resource.log"
-    ClearErrors
-    FileOpen $2 "$JustDoResourceLogPath" a
-  ${EndIf}
-  ${IfNot} ${Errors}
-    FileClose $2
-  ${Else}
-    StrCpy $JustDoResourceLogPath ""
+  ; Keep prior sessions in append-only files: retries and normal same-account
+  ; UAC outer/inner instances must not erase the evidence from one another.
+  ; Start diagnostics before architecture, mutex and multi-user checks because
+  ; each of those electron-builder template paths can terminate setup early.
+  Call JustDoSelectInstallLogDirectory
+  ${If} $JustDoInstallLogDirectory == ""
+    StrCpy $JustDoInstallTerminalState "logging-unavailable"
+    MessageBox MB_OK|MB_ICONSTOP "安装程序无法创建必需的诊断日志，因此不会继续安装。请检查 APPDATA、LOCALAPPDATA、TEMP 或安装包所在目录的写入权限。$\r$\n$\r$\nSetup cannot create its required diagnostic logs, so installation will not continue. Check write access to APPDATA, LOCALAPPDATA, TEMP, or the setup file directory." /SD IDOK
+    SetErrorLevel 2
+    Quit
   ${EndIf}
 
-  ClearErrors
   ClearErrors
   FileOpen $2 "$JustDoInstallLogPath" a
   ${If} ${Errors}
-    ClearErrors
-    FileOpen $2 "NUL" w
-  ${EndIf}
-  ${If} ${Errors}
-    StrCpy $JustDoInstallLogPath "$TEMP\${APP_FILENAME}-install-timing.log"
-    ClearErrors
-    FileOpen $2 "$JustDoInstallLogPath" a
-  ${EndIf}
-  ${If} ${Errors}
-    ; Keep all later FileWrite calls harmless even when both diagnostic
-    ; locations are unavailable.
-    StrCpy $JustDoInstallLogPath ""
-    ClearErrors
-    FileOpen $2 "NUL" w
+    StrCpy $JustDoInstallTerminalState "logging-unavailable"
+    MessageBox MB_OK|MB_ICONSTOP "安装程序无法重新打开必需的诊断日志，因此不会继续安装。$\r$\n$JustDoInstallLogPath$\r$\n$\r$\nSetup cannot reopen its required diagnostic log, so installation will not continue.$\r$\n$JustDoInstallLogPath" /SD IDOK
+    SetErrorLevel 2
+    Quit
   ${EndIf}
   ${GetTime} "" "L" $3 $4 $5 $6 $7 $8 $9
   FileWrite $2 "$\r$\n=== installer-session-start ===$\r$\n"
-  FileWrite $2 "init-start: $5-$4-$3 $7:$8:$9$\r$\n"
-  FileWrite $2 "log-format-version: 2$\r$\n"
+  FileWrite $2 "pre-init-start: $5-$4-$3 $7:$8:$9$\r$\n"
+  FileWrite $2 "log-format-version: 3$\r$\n"
+  FileWrite $2 "installer-pid: $JustDoInstallerPid$\r$\n"
+  FileWrite $2 "installer-session-id: $JustDoInstallerSessionId$\r$\n"
   FileWrite $2 "product: ${PRODUCT_NAME} ${VERSION}$\r$\n"
   FileWrite $2 "app-filename: ${APP_FILENAME}$\r$\n"
   FileWrite $2 "app-executable: ${APP_EXECUTABLE_FILENAME}$\r$\n"
@@ -595,9 +689,10 @@ FunctionEnd
   ${EndIf}
   FileWrite $2 "command-line: omitted-for-privacy$\r$\n"
   FileWrite $2 "initial-instdir: $INSTDIR$\r$\n"
-  FileWrite $2 "appdata: $APPDATA$\r$\n"
-  FileWrite $2 "localappdata: $LOCALAPPDATA$\r$\n"
-  FileWrite $2 "temp: $TEMP$\r$\n"
+  FileWrite $2 "captured-current-user-appdata: $JustDoCurrentUserAppData$\r$\n"
+  FileWrite $2 "captured-current-user-localappdata: $JustDoCurrentUserLocalAppData$\r$\n"
+  FileWrite $2 "captured-temp: $JustDoCurrentTemp$\r$\n"
+  FileWrite $2 "install-log-directory: $JustDoInstallLogDirectory$\r$\n"
   ${If} ${RunningX64}
     FileWrite $2 "running-x64: yes$\r$\n"
   ${Else}
@@ -613,10 +708,39 @@ FunctionEnd
   ${Else}
     FileWrite $2 "uac-admin: no$\r$\n"
   ${EndIf}
+  ${If} ${UAC_IsInnerInstance}
+    FileWrite $2 "uac-inner-instance: yes$\r$\n"
+  ${Else}
+    FileWrite $2 "uac-inner-instance: no$\r$\n"
+  ${EndIf}
+  FileWrite $2 "resource-detail-log: $JustDoResourceLogPath$\r$\n"
+  FileClose $2
+  ClearErrors
+  !insertmacro JustDoLogInstallEvent "phase=installer-pre-init-complete"
+!macroend
+!endif
+
+!macro customInit
+  ; Multi-user state is only valid after electron-builder's initMultiUser macro.
+  ; Append it to the session started by preInit instead of truncating early logs.
+  ClearErrors
+  FileOpen $2 "$JustDoInstallLogPath" a
+  ${If} ${Errors}
+    !insertmacro JustDoLogInstallEvent "phase=install-log-recovery trigger=custom-init-reopen"
+    ClearErrors
+    FileOpen $2 "$JustDoInstallLogPath" a
+  ${EndIf}
+  ${If} ${Errors}
+    StrCpy $JustDoInstallTerminalState "logging-unavailable"
+    MessageBox MB_OK|MB_ICONSTOP "安装程序无法写入必需的诊断日志，因此不会继续安装。$\r$\n$JustDoInstallLogPath$\r$\n$\r$\nSetup cannot write its required diagnostic log, so installation will not continue.$\r$\n$JustDoInstallLogPath" /SD IDOK
+    SetErrorLevel 2
+    Quit
+  ${EndIf}
   FileWrite $2 "detected-per-user-installation: $hasPerUserInstallation$\r$\n"
   FileWrite $2 "detected-per-machine-installation: $hasPerMachineInstallation$\r$\n"
   FileWrite $2 "installer-language-id: $LANGUAGE$\r$\n"
-  FileWrite $2 "resource-detail-log: $JustDoResourceLogPath$\r$\n"
+  FileWrite $2 "post-multiuser-instdir: $INSTDIR$\r$\n"
+  StrCpy $JustDoInstallMode "$installMode"
   ReadRegStr $0 HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation
   FileWrite $2 "registry-hkcu-install-location: $0$\r$\n"
   ReadRegStr $0 HKLM "${INSTALL_REGISTRY_KEY}" InstallLocation
@@ -624,10 +748,12 @@ FunctionEnd
   FileClose $2
   ClearErrors
   !insertmacro JustDoLogInstallEvent "phase=installer-init-complete"
-  ${If} ${Silent}
-    ; Silent elevated inner instances skip electron-builder's CHECK_APP_RUNNING;
-    ; perform the same bounded safety check here so no path can overwrite a
-    ; running installation.
+  ${If} ${UAC_IsInnerInstance}
+    ; electron-builder skips CHECK_APP_RUNNING for every elevated inner
+    ; instance. Run it here after initMultiUser has restored the selected mode
+    ; and path, otherwise interactive all-users installs reach customInstall
+    ; without the helper/runtime staging and abort with helper-missing.
+    !insertmacro JustDoLogInstallEvent "phase=inner-instance-process-check-start"
     Call JustDoCheckAppRunning
   ${EndIf}
 !macroend
@@ -635,7 +761,7 @@ FunctionEnd
 !macro customInstall
   ; ─── Install Timing Log ───
   ; Write timestamps to help diagnose slow installation phases.
-  ; Log file: %APPDATA%\${PRODUCT_NAME}\install-timing.log
+  ; Log directory was selected and verified by preInit.
 
   CreateDirectory "$APPDATA\${PRODUCT_NAME}"
   ; The old uninstaller has now removed the previous app shell. Restore the
@@ -654,11 +780,89 @@ FunctionEnd
   System::Call 'kernel32::GetTickCount()i.r0'
   ${If} $JustDoCoreInstallStartedTick != 0
     IntOp $1 $0 - $JustDoCoreInstallStartedTick
-    !insertmacro JustDoLogInstallEvent "phase=electron-builder-core-complete duration-ms=$1"
+    !insertmacro JustDoLogInstallEvent "phase=electron-builder-core-returned duration-ms=$1"
   ${Else}
-    !insertmacro JustDoLogInstallEvent "phase=electron-builder-core-complete duration-ms=unavailable"
+    !insertmacro JustDoLogInstallEvent "phase=electron-builder-core-returned duration-ms=unavailable"
   ${EndIf}
+
+  ; Nsis7z historically reports success even when it cannot decode a filter in
+  ; the embedded application archive. Verify critical Electron payloads before
+  ; the runtime extractor turns selective omissions into unrelated errors. This
+  ; also catches endpoint security quarantining files during installation.
+  StrCpy $R6 ""
+  StrCpy $R7 ""
+  ${IfNot} ${FileExists} "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
+    StrCpy $R6 "main-executable"
+    StrCpy $R7 "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
+  ${ElseIfNot} ${FileExists} "$INSTDIR\resources\app.asar"
+    StrCpy $R6 "app-asar"
+    StrCpy $R7 "$INSTDIR\resources\app.asar"
+  ${ElseIfNot} ${FileExists} "$INSTDIR\resources\unpack-cfmind.cjs"
+    StrCpy $R6 "resource-unpack-script"
+    StrCpy $R7 "$INSTDIR\resources\unpack-cfmind.cjs"
+  ${ElseIfNot} ${FileExists} "$INSTDIR\resources\win-resources.tar.zst"
+    StrCpy $R6 "resource-archive"
+    StrCpy $R7 "$INSTDIR\resources\win-resources.tar.zst"
+  ${ElseIfNot} ${FileExists} "$INSTDIR\resources\win-resources-metadata.json"
+    StrCpy $R6 "resource-metadata"
+    StrCpy $R7 "$INSTDIR\resources\win-resources-metadata.json"
+  ${ElseIfNot} ${FileExists} "$INSTDIR\resources\app.asar.unpacked\node_modules\better-sqlite3\build\Release\better_sqlite3.node"
+    StrCpy $R6 "better-sqlite3-native-module"
+    StrCpy $R7 "$INSTDIR\resources\app.asar.unpacked\node_modules\better-sqlite3\build\Release\better_sqlite3.node"
+  ${EndIf}
+  ${If} $R6 != ""
+    !insertmacro JustDoLogInstallEvent "phase=installer-abort reason=core-payload-missing component=$R6 path=$R7"
+    ${If} $LANGUAGE == ${JUSTDO_LANG_SIMPCHINESE}
+    ${OrIf} $LANGUAGE == ${JUSTDO_LANG_TRADCHINESE}
+      StrCpy $1 "必需的应用文件未能写入安装目录（$R6）。安装包可能损坏，或文件被安全软件拦截。请重新下载安装包并重试。诊断日志可能包含本机文件路径，请确认后再提供给技术支持。"
+    ${Else}
+      StrCpy $1 "A required application file could not be written ($R6). The installer may be damaged, or security software may have blocked the file. Download setup again and retry. Diagnostic logs can contain local file paths; review them before sharing with support."
+    ${EndIf}
+    ${If} $JustDoInstallLogPath != ""
+    ${AndIf} ${FileExists} "$JustDoInstallLogPath"
+      StrCpy $1 "$1$\r$\n$\r$\n$JustDoInstallLogPath"
+    ${EndIf}
+    MessageBox MB_OK|MB_ICONSTOP "$1" /SD IDOK
+    Abort "Core application extraction failed: required payload missing."
+  ${EndIf}
+  !insertmacro JustDoLogInstallEvent "phase=electron-builder-core-validation-complete result=passed"
+
+  ; Re-probe both logs together before the long resource phase. If either path
+  ; became unavailable, relocate the pair and continue only after both reopen.
+  StrCpy $R5 "0"
+  StrCpy $R4 "$JustDoInstallLogPath"
+  ClearErrors
+  FileOpen $0 "$JustDoInstallLogPath" a
+  ${If} ${Errors}
+    StrCpy $R5 "1"
+  ${Else}
+    FileClose $0
+  ${EndIf}
+  ClearErrors
+  FileOpen $0 "$JustDoResourceLogPath" a
+  ${If} ${Errors}
+    StrCpy $R5 "1"
+  ${Else}
+    FileClose $0
+  ${EndIf}
+  ${If} $R5 == "1"
+    Call JustDoSelectInstallLogDirectory
+  ${EndIf}
+  ${If} $JustDoInstallLogDirectory == ""
+    StrCpy $JustDoInstallTerminalState "logging-unavailable"
+    MessageBox MB_OK|MB_ICONSTOP "安装程序无法写入必需的诊断日志，因此安装已停止。$\r$\n$R4$\r$\n$\r$\nSetup cannot write its required diagnostic logs, so installation has stopped.$\r$\n$R4" /SD IDOK
+    Abort "Required installer logs are unavailable."
+  ${EndIf}
+  ${If} $R5 == "1"
+    !insertmacro JustDoLogInstallEvent "phase=install-log-relocated trigger=custom-install-probe previous=$R4 current=$JustDoInstallLogPath"
+  ${EndIf}
+  ClearErrors
   FileOpen $2 "$JustDoInstallLogPath" a
+  ${If} ${Errors}
+    StrCpy $JustDoInstallTerminalState "logging-unavailable"
+    MessageBox MB_OK|MB_ICONSTOP "安装程序无法重新打开必需的诊断日志，因此安装已停止。$\r$\n$JustDoInstallLogPath$\r$\n$\r$\nSetup cannot reopen its required diagnostic log, so installation has stopped.$\r$\n$JustDoInstallLogPath" /SD IDOK
+    Abort "Required installer log is unavailable."
+  ${EndIf}
 
   ${GetTime} "" "L" $3 $4 $5 $6 $7 $8 $9
   FileWrite $2 "custom-install-start: $5-$4-$3 $7:$8:$9$\r$\n"
@@ -832,7 +1036,7 @@ FunctionEnd
     ${AndIf} ${FileExists} "$JustDoResourceLogPath"
       StrCpy $1 "$1$\r$\n$JustDoResourceLogPath"
     ${EndIf}
-    MessageBox MB_OK|MB_ICONEXCLAMATION "$1"
+    MessageBox MB_OK|MB_ICONEXCLAMATION "$1" /SD IDOK
     System::Call 'Kernel32::SetEnvironmentVariable(t "ELECTRON_RUN_AS_NODE", t "")i'
     System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_INSTALLER_PYTHON_IMPORT_CHECK", t "")i'
     SetDetailsPrint both
@@ -901,10 +1105,22 @@ FunctionEnd
 
   ; Marks installations completed by NSIS. Packaged-but-uninstalled win-unpacked
   ; directories do not contain this file and must not enable auto-update.
+  StrCpy $R5 "0"
+  ClearErrors
   FileOpen $0 "$INSTDIR\resources\.justdo-nsis-installed" w
-  FileWrite $0 "${VERSION}$\r$\n"
-  FileClose $0
-  FileWrite $2 "nsis-install-marker: written$\r$\n"
+  ${IfNot} ${Errors}
+    StrCpy $R5 "1"
+    FileWrite $0 "${VERSION}$\r$\n"
+  ${EndIf}
+  ${If} ${Errors}
+    ${If} $R5 == "1"
+      FileClose $0
+    ${EndIf}
+    FileWrite $2 "nsis-install-marker: write-failed path=$INSTDIR\resources\.justdo-nsis-installed$\r$\n"
+  ${Else}
+    FileClose $0
+    FileWrite $2 "nsis-install-marker: written$\r$\n"
+  ${EndIf}
   !insertmacro JustDoSetInstallStatus \
     "正在进行最后检查（安装程序仍在运行）…" \
     "Running final checks; setup is still working…"
