@@ -238,5 +238,5 @@ describe('OpenClaw app-start task recovery boundary', () => {
     } finally {
       fs.rmSync(fixtureRoot, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 });

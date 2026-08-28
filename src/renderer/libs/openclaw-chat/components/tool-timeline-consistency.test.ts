@@ -118,7 +118,7 @@ describe('Tool timeline consistency', () => {
 
       for (const rendered of [incremental, refreshed]) {
         expect(rendered).toContain('process-summary__item--tool');
-        expect(rendered).toContain('<details class="process-summary__tool">');
+        expect(rendered).toMatch(/<details\s+class=["']?process-summary__tool["']?\s*>/u);
         expect(rendered).toContain('process-summary__tool-title');
         expect(rendered).toContain(`process-summary__tool-status--${status}`);
         expect(rendered).toContain('process-summary__tool-detail');

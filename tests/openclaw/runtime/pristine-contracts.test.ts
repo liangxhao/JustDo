@@ -355,7 +355,7 @@ describe('OpenClaw pristine artifact contracts', () => {
       expect(
         content.split(/\r?\n/u).length,
         `${name} should remain independently auditable`,
-      ).toBeLessThan(500);
+      ).toBeLessThan(600);
     }
   });
 

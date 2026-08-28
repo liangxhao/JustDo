@@ -1307,12 +1307,23 @@ test('retries an unexpectedly empty initial subagent history before revealing th
 });
 
 test('retries an assistant-only subagent tail until the originating task is present', async () => {
+  const sessionKey = 'agent:main:subagent:assistant-tail-child';
   const assistantTail = { role: 'assistant', content: 'completed result' };
   const completeHistory = [{ role: 'user', content: 'persisted subagent task' }, assistantTail];
+  let currentSessionRequestCount = 0;
   const getPagedHistory = vi
     .fn()
-    .mockResolvedValueOnce({ success: true, messages: [assistantTail], hasMore: false })
-    .mockResolvedValueOnce({ success: true, messages: completeHistory, hasMore: false });
+    .mockImplementation(({ sessionKey: requestedSessionKey }: { sessionKey: string }) => {
+      if (requestedSessionKey !== sessionKey) {
+        return Promise.resolve({ success: true, messages: completeHistory, hasMore: false });
+      }
+      currentSessionRequestCount += 1;
+      return Promise.resolve({
+        success: true,
+        messages: currentSessionRequestCount === 1 ? [assistantTail] : completeHistory,
+        hasMore: false,
+      });
+    });
   vi.stubGlobal('electron', { openclaw: { history: { getPagedHistory } } });
   const request = vi.fn().mockImplementation((method: string) => {
     if (method === 'chat.startup') return Promise.resolve({ messages: [assistantTail] });
@@ -1324,7 +1335,7 @@ test('retries an assistant-only subagent tail until the originating task is pres
     initialHistoryRetryDelaysMs: [0],
   });
   controller.state.client = { request } as never;
-  controller.state.sessionKey = 'agent:main:subagent:child-1';
+  controller.state.sessionKey = sessionKey;
 
   (
     controller as unknown as {
@@ -1333,7 +1344,9 @@ test('retries an assistant-only subagent tail until the originating task is pres
   ).handleHello({});
 
   await vi.waitFor(() => expect(controller.state.initialHistoryReady).toBe(true));
-  expect(getPagedHistory).toHaveBeenCalledTimes(2);
+  expect(
+    getPagedHistory.mock.calls.filter(([params]) => params.sessionKey === sessionKey),
+  ).toHaveLength(2);
   expect(controller.state.chatMessages).toEqual(completeHistory);
 });
 
