@@ -65,6 +65,8 @@ const EXPECTED_PATCH_FILES = [
   '044-managed-terminal-handoff.cjs',
   '045-openai-stop-tool-call-compat.cjs',
   '046-app-startup-task-recovery-boundary.cjs',
+  '047-openai-compatible-embedding-env-proxy.cjs',
+  '048-memory-force-reembed-opt-in.cjs',
 ] as const;
 
 function createPristineFixture(): string {

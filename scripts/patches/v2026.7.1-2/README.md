@@ -91,6 +91,10 @@ flowchart LR
   一批结果并续跑父会话。completion announce 唤醒的父 run 只排除当前正在投递的 source
   child，仍会 join 本轮新派发或其他未完成 child；显式 fire-and-forget、abort、timeout 和
   非 managed session 不变。
+- Embedding 网络：JustDo 只给 memory search/index CLI 注入受管代理环境；`047` 让
+  OpenClaw 的 generic OpenAI-compatible embedding guarded fetch 显式使用该环境。`048` 只在
+  JustDo 的手动重建入口显式要求重新计算向量，避免旧 embedding cache 使整次重建没有网络请求。
+  URL 是否注入业务 Header 仍由本地 OutboundHeader policy 决定，runtime patch 不读取用户 Header。
 
 ### 001–004：环境、Thinking 与历史
 
@@ -708,6 +712,35 @@ flowchart LR
 - **可删除条件**：上游提供 host app lifecycle identity，并能原生区分宿主软件重启与 Gateway
   重启，同时保留后者恢复且让前者安全终止为可手动继续的状态。
 
+#### `047-openai-compatible-embedding-env-proxy.cjs`
+
+- **做什么**：让 generic OpenAI-compatible embedding provider 的 `/embeddings` guarded fetch
+  使用 `useEnvProxyForEligibleUrls`。memory search/index CLI 已从 JustDo 获得隔离的
+  `HTTP(S)_PROXY`、`NO_PROXY` 与 CA 环境，因此重建索引请求会实际到达 OutboundHeader 代理。
+- **关系与边界**：只修改该 provider 的单个 POST 调用，同时覆盖 source 与最终
+  `gateway-bundle.mjs`。未配置代理或命中 `NO_PROXY` 时仍直连；SSRF policy 保持生效。代理收到
+  请求后仍按完整 URL 白名单决定是否注入 Header，未命中请求透明转发，runtime 不读取或复制
+  `X-User-Account`、`X-Cookie` 等用户值。
+- **当前保留原因**：目标版另一路 memory remote helper 已能自动选择 env proxy，但 Gateway
+  实际使用的 generic embedding provider 只调用 strict `fetchWithSsrFGuard`。未设置
+  `OPENCLAW_PROXY_ACTIVE=1` 时它会绕过 CLI 的 `HTTP(S)_PROXY`，表现为 `User-Agent` 到达而
+  OutboundHeader 未注入。
+- **可删除条件**：上游 generic embedding transport 原生按 eligible URL 使用受信任 env proxy，
+  并继续保留 `NO_PROXY` 与 SSRF 边界。
+
+#### `048-memory-force-reembed-opt-in.cjs`
+
+- **做什么**：为 OpenClaw memory shadow reindex 增加精确的 host opt-in；当且仅当 CLI 环境包含
+  `JUSTDO_MEMORY_REINDEX_NO_CACHE=1` 时，不把旧数据库的 embedding cache 复制进临时索引库，迫使
+  有效记忆分块重新请求 embedding。JustDo 仅在设置页“重建索引”入口设置该值。
+- **关系与边界**：`047` 负责让真实请求使用 eligible env proxy，`048` 负责保证用户主动重建时
+  不被旧向量缓存短路。普通 memory search、后台增量索引及用户直接运行的 OpenClaw CLI 仍保留
+  原生缓存语义；原数据库不会预先删除，只有 shadow reindex 全部成功后才按上游流程原子发布。
+- **当前保留原因**：目标版 `memory index --force` 会重建索引表，但先 seed 旧 embedding cache；
+  文档内容未变化时可在没有任何模型请求的情况下成功结束，无法满足 JustDo 按钮“重新计算向量”
+  的产品语义，也无法通过该入口验证 OutboundHeader 请求链路。
+- **可删除条件**：上游 `memory index` 提供等价的 `--no-cache`/`--reembed` 选项，JustDo 可直接调用。
+
 ## 已删除或由上游/App 承担的能力
 
 | 能力                                            | v2026.7.1-2 证据与决定                                                                                                                                                                                                                                                 |
@@ -761,7 +794,7 @@ flowchart LR
 
 | 测试                                                  | 主要覆盖                                                                                                                                   |
 | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `openclawPristineContracts.test.ts`                   | 锁定原始 npm 包、11 项上游能力证据、46 项保留缺口、头注释和大小约束。                                                                      |
+| `openclawPristineContracts.test.ts`                   | 锁定原始 npm 包、11 项上游能力证据、48 项保留缺口、头注释和大小约束。                                                                      |
 | `openclawV202671ReasoningStream.test.ts`              | `002` callback gate 的原始失败与改写后事件/回调行为。                                                                                      |
 | `openclawV202671PatchSafety.test.ts`                  | `001`、`004`、`007`、`034` 的安全边界和真实 fixture 幂等。                                                                                 |
 | `openclawV202671CompletionDelivery.test.ts`           | H07 上游语义、managed yield 非对外交付、subagent `NO_REPLY` 非成功，以及 `015`、`016` 的 FIFO、硬期限和恢复边界。                          |
@@ -773,6 +806,8 @@ flowchart LR
 | `managed-terminal-handoff.test.ts`                    | `044` partial→terminal ownership、completion source、persist rollback、Codex companion loader gate、crash recovery 及 source/bundle 幂等。 |
 | `openai-stop-tool-call-compat.test.ts`                | `045` visible text + stop + structured call、严格 JSON/advertised gate、fresh bundle 顺序、verify 与幂等。                                 |
 | `app-startup-task-recovery-boundary.test.ts`          | `046` 首次软件启动终止 orphan、稳定 app-start cutoff、后续 Gateway 重启恢复、source/bundle verify 与幂等。                                 |
+| `openai-compatible-embedding-env-proxy.test.ts`       | `047` generic embedding 的 eligible env proxy、真实 HTTP proxy 路由、source/bundle verify、幂等与歧义拒绝。                                |
+| `memory-force-reembed-opt-in.test.ts`                 | `048` 精确 host opt-in、默认缓存不变、source verify、幂等、部分状态与歧义拒绝。                                                            |
 | `openclawV202671ManagedSessionIdentity.test.ts`       | `036` command、reply、agent initial/persisted 四落点 identity pin（含 reply reset 绕过）、普通会话不变、幂等和多目标原子失败。             |
 | `openclawV202671ApprovalLifecycle.test.ts`            | `022`–`025` 的 lifetime、hidden resume、stop/failure 与文件头。                                                                            |
 | `openclawV202671RequestMetadata.test.ts`              | `026`–`028`，含 strict-compatible negative 与 nested parent。                                                                              |

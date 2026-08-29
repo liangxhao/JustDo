@@ -31,6 +31,7 @@ const MAX_COMMAND_OUTPUT_CHARS = 2 * 1024 * 1024;
 const STATUS_TIMEOUT_MS = 30_000;
 const SEARCH_TIMEOUT_MS = 60_000;
 const REBUILD_TIMEOUT_MS = 15 * 60_000;
+const MEMORY_REINDEX_NO_CACHE_ENV = 'JUSTDO_MEMORY_REINDEX_NO_CACHE';
 
 interface MemoryHandlerDependencies {
   getManager: () => OpenClawEngineManager;
@@ -339,6 +340,19 @@ export const buildMemoryCliEnvironment = (
     networkMode: OpenClawCliNetworkMode.OutboundProxy,
   });
 
+export const buildMemoryRebuildCliEnvironment = async (
+  manager: OpenClawEngineManager,
+): Promise<OpenClawCliEnvironment> => {
+  const cli = await buildMemoryCliEnvironment(manager);
+  return {
+    ...cli,
+    env: {
+      ...cli.env,
+      [MEMORY_REINDEX_NO_CACHE_ENV]: '1',
+    },
+  };
+};
+
 const buildOverview = async (manager: OpenClawEngineManager): Promise<MemoryOverview> => {
   const workspaceDir = resolveMemoryWorkspace(manager);
   const documents = scanMemoryDocuments(workspaceDir);
@@ -479,7 +493,7 @@ export const registerOpenClawMemoryHandlers = ({
       try {
         const manager = getManager();
         const workspaceDir = resolveMemoryWorkspace(manager);
-        const cli = await buildMemoryCliEnvironment(manager);
+        const cli = await buildMemoryRebuildCliEnvironment(manager);
         const result = await runOpenClawCommand(
           cli,
           ['memory', 'index', '--force', '--agent', MEMORY_AGENT_ID],

@@ -9,6 +9,7 @@ import {
 } from '../../openclaw/runtime/openclawEngineManager';
 import {
   buildMemoryCliEnvironment,
+  buildMemoryRebuildCliEnvironment,
   normalizeMemoryIndexStatus,
   normalizeSearchHits,
   resolveMemoryWorkspace,
@@ -99,6 +100,29 @@ describe('buildMemoryCliEnvironment', () => {
     const manager = { buildCliEnvironment } as unknown as OpenClawEngineManager;
 
     await expect(buildMemoryCliEnvironment(manager)).resolves.toBe(cli);
+    expect(buildCliEnvironment).toHaveBeenCalledWith({
+      networkMode: OpenClawCliNetworkMode.OutboundProxy,
+    });
+  });
+
+  it('opts only a rebuild CLI into recomputing cached embeddings', async () => {
+    const cli = {
+      env: { EXISTING_VALUE: 'kept' },
+      runtimeRoot: 'runtime',
+      openclawEntry: 'openclaw.mjs',
+      port: 1234,
+      token: 'token',
+    };
+    const buildCliEnvironment = vi.fn().mockResolvedValue(cli);
+    const manager = { buildCliEnvironment } as unknown as OpenClawEngineManager;
+
+    await expect(buildMemoryRebuildCliEnvironment(manager)).resolves.toMatchObject({
+      env: {
+        EXISTING_VALUE: 'kept',
+        JUSTDO_MEMORY_REINDEX_NO_CACHE: '1',
+      },
+    });
+    expect(cli.env).toEqual({ EXISTING_VALUE: 'kept' });
     expect(buildCliEnvironment).toHaveBeenCalledWith({
       networkMode: OpenClawCliNetworkMode.OutboundProxy,
     });

@@ -169,6 +169,17 @@ Manager 通过 `OutboundHeaderProxy.buildGatewayEnvironment` 为 Gateway child �
 proxy 变化会更新 bypass，其中动态加入当前 Gateway loopback 端口，避免本地 RPC 被送到上游代理。
 内置 provider 若使用 loopback base URL 可列为 forced URL。
 
+仅提供 CLI 环境并不足以让 OpenClaw 的 guarded fetch 使用代理。runtime patch `047` 只为 generic
+OpenAI-compatible `/embeddings` 请求启用 eligible env proxy；没有 `HTTP(S)_PROXY` 或命中
+`NO_PROXY` 时保持原路径，SSRF policy 继续生效。请求到达本地代理后仍由完整 URL 白名单决定是否
+注入业务 Header，未命中请求不会获得自定义 Header。
+
+OpenClaw 原生 `memory index --force` 会重建索引表，但仍把旧 embedding cache 复制到 shadow
+database；内容未变化时因此不会发出模型请求。设置页“重建索引”会额外注入
+`JUSTDO_MEMORY_REINDEX_NO_CACHE=1`，runtime patch `048` 只对这个明确 opt-in 跳过旧 cache seed，
+使现有记忆分块重新计算向量。普通搜索、后台增量索引和 OpenClaw 自身 CLI 的缓存行为不变；失败时
+继续由上游 shadow reindex 保留原数据库。
+
 受管 memory search 配置只额外声明与标题模型请求一致的
 `User-Agent: OpenAI/JS 6.39.1`；`Authorization`、`Content-Type` 和动态 body length 仍由 OpenClaw
 embedding 请求层负责。OutboundHeader 的用户值继续只存在于代理 policy/cache，不写入

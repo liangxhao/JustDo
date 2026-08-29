@@ -33,13 +33,15 @@ Main 中少量确需相同 Header 的确定性调用，应在调用点基于白�
 
 ## 3. 当前组件
 
-| 组件              | 代码                                                            | 职责                                             |
-| ----------------- | --------------------------------------------------------------- | ------------------------------------------------ |
-| 配置解析          | `src/main/core/outboundHeaderPolicyConfig.ts`、`systemProxy.ts` | 白名单、Header 名、系统/自定义代理与 bypass      |
-| 本地代理          | `src/main/core/outboundHeaderProxy.ts`                          | 认证、CONNECT 判别、MITM/raw tunnel、注入        |
-| OpenClaw 环境     | `src/main/core/gatewayNetworkEnvironment.ts`                    | 为 Gateway/opt-in CLI 生成 proxy/CA/NO_PROXY env |
-| Runtime lifecycle | `openclawEngineManager.ts` / `main.ts`                          | 先起代理、再 spawn Gateway；退出时反序停止       |
-| 用户值来源        | outbound header user-info 文件/cache                            | 只按允许的 headerNames 读取值                    |
+| 组件                | 代码                                                            | 职责                                              |
+| ------------------- | --------------------------------------------------------------- | ------------------------------------------------- |
+| 配置解析            | `src/main/core/outboundHeaderPolicyConfig.ts`、`systemProxy.ts` | 白名单、Header 名、系统/自定义代理与 bypass       |
+| 本地代理            | `src/main/core/outboundHeaderProxy.ts`                          | 认证、CONNECT 判别、MITM/raw tunnel、注入         |
+| OpenClaw 环境       | `src/main/core/gatewayNetworkEnvironment.ts`                    | 为 Gateway/opt-in CLI 生成 proxy/CA/NO_PROXY env  |
+| Embedding transport | runtime patch `047`                                             | 让 generic guarded fetch 使用 eligible env proxy  |
+| Manual reindex      | runtime patch `048` + rebuild-only env opt-in                   | 跳过旧向量 cache，确保按钮触发真实 embedding 请求 |
+| Runtime lifecycle   | `openclawEngineManager.ts` / `main.ts`                          | 先起代理、再 spawn Gateway；退出时反序停止        |
+| 用户值来源          | outbound header user-info 文件/cache                            | 只按允许的 headerNames 读取值                     |
 
 `OutboundHeaderProxy` 使用 `http-mitm-proxy`，并针对库的连接错误和内部行为做有限适配。依赖私有 hook 是维护风险，升级库时必须跑真实 TLS 集成测试。
 
@@ -65,7 +67,13 @@ sequenceDiagram
 
 环境只传给 Gateway/后代和显式 opt-in CLI，不写回 Main `process.env`。当前 memory search/index
 opt-in，memory status 保持普通继承环境。CA bundle 通过 Node、Python 等常见环境变量进入受支持
-客户端；客户端是否遵循这些变量仍需能力矩阵验证。
+客户端；OpenClaw generic embedding provider 由 runtime patch `047` 让 guarded fetch 使用 eligible
+env proxy。未配置代理、命中 `NO_PROXY` 或未命中 Header URL 白名单时，分别保持直连、bypass 或
+不注入业务 Header。
+
+手动“重建索引”还会设置 rebuild-only 的 `JUSTDO_MEMORY_REINDEX_NO_CACHE=1`。runtime patch `048`
+据此不向 shadow database 复制旧 embedding cache，避免未变化文档被缓存完全短路；其他索引和搜索
+流程不设置该值。
 
 ## 5. 请求处理
 
