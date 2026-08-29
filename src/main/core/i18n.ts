@@ -25,6 +25,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     attachmentMenuOpenWithSystem: '使用系统工具打开',
     attachmentMenuShowInFolder: '打开所在的文件夹',
     imageMenuSaveAs: '图片另存为…',
+    imagePreviewWindowTitle: '图片预览',
     filePreviewConflictTitle: '文件已在外部修改',
     filePreviewConflictMessage: 'Agent 或其他程序在你编辑期间修改了此文件。',
     filePreviewConflictOverwrite: '覆盖文件',
@@ -60,6 +61,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     attachmentMenuOpenWithSystem: 'Open with System Tool',
     attachmentMenuShowInFolder: 'Show in Folder',
     imageMenuSaveAs: 'Save Image As…',
+    imagePreviewWindowTitle: 'Image preview',
     filePreviewConflictTitle: 'File changed externally',
     filePreviewConflictMessage:
       'An agent or another program changed this file while you were editing.',

@@ -436,7 +436,8 @@ md.renderer.rules.image = (tokens, idx) => {
   const src = token.attrGet('src')?.trim() ?? '';
   const alt = token.content?.trim() || 'image';
   if (!INLINE_DATA_IMAGE_RE.test(src)) return escapeHtml(alt);
-  return `<img class="markdown-inline-image" src="${escapeHtml(src)}" alt="${escapeHtml(alt)}">`;
+  const previewHint = escapeHtml(i18nService.t('coworkImageOpenPreviewHint'));
+  return `<img class="markdown-inline-image" src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" title="${previewHint}">`;
 };
 
 // Keep wide tables readable without expanding or compressing the message bubble.

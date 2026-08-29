@@ -17,7 +17,7 @@ export const registerContentSecurityPolicy = ({
         ? `script-src 'self' 'unsafe-inline' http://localhost:${devPort} ws://localhost:${devPort}`
         : "script-src 'self'",
       "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data: https: http: localfile:",
+      "img-src 'self' blob: data: https: http: localfile:",
       // 允许连接到所有域名，不做限制
       'connect-src *',
       "font-src 'self' data:",

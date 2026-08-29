@@ -1,0 +1,47 @@
+:root {
+  color-scheme: dark;
+  background: #090909;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: #090909;
+}
+
+.image-preview {
+  position: relative;
+  display: flex;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at center, rgba(255, 255, 255, 0.035), transparent 55%), #090909;
+  overscroll-behavior: contain;
+  touch-action: none;
+}
+
+.image-preview__image {
+  display: block;
+  max-width: calc(100% - 72px);
+  max-height: calc(100% - 72px);
+  cursor: grab;
+  object-fit: contain;
+  user-select: none;
+  will-change: transform;
+}
+
+.image-preview--dragging .image-preview__image {
+  cursor: grabbing;
+}

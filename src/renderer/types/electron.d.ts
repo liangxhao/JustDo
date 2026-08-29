@@ -963,6 +963,11 @@ interface IElectronAPI {
     ) => Promise<{ success: boolean; error?: string; notFound?: boolean }>;
     openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
   };
+  imagePreview: {
+    open: (
+      request: import('../../shared/imagePreview').ImagePreviewOpenRequest,
+    ) => Promise<import('../../shared/imagePreview').ImagePreviewOpenResult>;
+  };
   autoLaunch: {
     get: () => Promise<{ enabled: boolean }>;
     set: (enabled: boolean) => Promise<{ success: boolean; error?: string }>;

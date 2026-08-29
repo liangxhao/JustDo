@@ -63,6 +63,15 @@ describe('Markdown tables', () => {
   });
 });
 
+describe('Markdown images', () => {
+  test('marks inline images as enlargeable and shows the localized interaction hint', () => {
+    const html = md.render('![detail](data:image/png;base64,AA==)');
+
+    expect(html).toContain('class="markdown-inline-image"');
+    expect(html).toContain('title="双击放大查看"');
+  });
+});
+
 describe('Box-drawing diagrams', () => {
   test('renders unfenced multiline diagrams in a literal text container', () => {
     const source = [

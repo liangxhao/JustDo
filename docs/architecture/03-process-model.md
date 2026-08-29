@@ -7,6 +7,7 @@
 | 参与者         | 权限                          | 主要职责                                                     |
 | -------------- | ----------------------------- | ------------------------------------------------------------ |
 | Renderer       | Chromium 页面权限             | UI、交互、Redux、聊天显示；不访问系统资源                    |
+| Image preview  | 独立沙箱化 Chromium 页面      | 在原生独立窗口中显示图片并处理缩放/拖动                      |
 | Preload        | 隔离上下文中的 Electron IPC   | 暴露固定 `window.electron` API，转换 listener 为 unsubscribe |
 | Main           | Node/Electron 完整权限        | 验证输入、SQLite、文件/网络/进程、Gateway 和系统集成         |
 | Gateway        | 独立受管子进程                | Agent、tool、session/history、cron、plugin runtime           |
@@ -72,6 +73,7 @@ Main/Gateway 状态变化通过 `webContents.send` 到 preload listener。preloa
 | `sessionGroup`                | group CRUD、移动 session、排序                                           |
 | `dialog`                      | 选择/保存/读取用户明确选择的文件和目录                                   |
 | `shell`                       | open/reveal/external、上下文菜单、受控文件预览与编辑 token               |
+| `imagePreview`                | 校验图片 URL 后创建或复用独立原生查看窗口                                |
 | `autoLaunch` / `preventSleep` | OS 级开机启动和阻止休眠                                                  |
 | `developerConfig` / `appInfo` | 只读开发配置、版本与 locale                                              |
 | `appUpdate`                   | 状态、检查、清理后安装、状态事件                                         |
@@ -157,7 +159,7 @@ Renderer 的 provider 检测使用 `api.fetch` 进入 Main，支持 request id �
 
 Handler 在获得 single-instance lock 后统一注册。它们使用 getter 延迟取得 store/runtime，因此注册早于 `app.whenReady` 不意味着可提前调用。窗口只在核心初始化后创建，正常情况下 Renderer 不会撞上未初始化服务；handler 仍要在异常情况下返回清晰错误。
 
-事件发送前必须检查 BrowserWindow/WebContents 未销毁。多窗口语义应明确：全局 engine/update/result 事件广播，窗口局部 UI 事件发送给拥有者；当前大部分实现面向单主窗口。
+事件发送前必须检查 BrowserWindow/WebContents 未销毁。多窗口语义应明确：全局 engine/update/result 事件广播，窗口局部 UI 事件发送给拥有者。图片查看器是无 parent 的独立 `BrowserWindow`，使用单独 HTML 入口和最小权限 preload；Main 只向该窗口返回经过协议、类型和长度校验的当前图片文档，不向其暴露完整 `window.electron` 能力面。
 
 ## 10. 输入验证与返回契约
 

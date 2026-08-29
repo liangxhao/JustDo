@@ -358,6 +358,8 @@ describe('renderMessageBlock', () => {
     expect(rendered).toContain('chat-bubble__images--assistant');
     expect(rendered).toContain('class="chat-bubble__image"');
     expect(rendered).toContain('https://container/generated/image.png');
+    expect(rendered).toContain('双击放大查看');
+    expect(rendered).toContain('draggable="false"');
     expect(rendered).toContain('@contextmenu=');
     expect(rendered).not.toContain('message-attachment');
     expect(rendered).not.toContain('MEDIA:');

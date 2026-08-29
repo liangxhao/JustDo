@@ -89,6 +89,23 @@ export default defineConfig({
         },
         onstart() {},
       },
+      {
+        // 独立图片查看窗口的最小权限预加载脚本
+        entry: 'src/main/imagePreviewPreload.ts',
+        vite: {
+          build: {
+            sourcemap: !isProductionBuild,
+            outDir: 'dist-electron',
+            minify: isProductionBuild ? 'esbuild' : false,
+            rollupOptions: {
+              checks: {
+                pluginTimings: false,
+              },
+            },
+          },
+        },
+        onstart() {},
+      },
     ]),
     renderer(),
   ],
@@ -108,6 +125,10 @@ export default defineConfig({
     minify: isProductionBuild ? 'esbuild' : false,
     cssMinify: isProductionBuild ? 'esbuild' : false,
     rollupOptions: {
+      input: {
+        main: path.resolve(__dirname, 'index.html'),
+        imagePreview: path.resolve(__dirname, 'image-preview.html'),
+      },
       checks: {
         pluginTimings: false,
       },

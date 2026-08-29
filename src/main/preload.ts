@@ -23,6 +23,11 @@ import {
   type FilePreviewWriteRequest,
   type FilePreviewWriteResult,
 } from '../shared/filePreview';
+import {
+  ImagePreviewIpc,
+  type ImagePreviewOpenRequest,
+  type ImagePreviewOpenResult,
+} from '../shared/imagePreview';
 import { LogIpc } from '../shared/logIpc';
 import { type ApiFetchOptions, NetworkIpc } from '../shared/network';
 import {
@@ -557,6 +562,10 @@ contextBridge.exposeInMainWorld('electron', {
     showItemInFolder: (filePath: string, workingDirectory?: string) =>
       ipcRenderer.invoke('shell:showItemInFolder', filePath, workingDirectory),
     openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
+  },
+  imagePreview: {
+    open: (request: ImagePreviewOpenRequest): Promise<ImagePreviewOpenResult> =>
+      ipcRenderer.invoke(ImagePreviewIpc.Open, request),
   },
   autoLaunch: {
     get: () => ipcRenderer.invoke('app:getAutoLaunch'),

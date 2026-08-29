@@ -291,7 +291,8 @@ function renderMessageImages(
             class="chat-bubble__image"
             src=${sourceUrl}
             alt=${image.label}
-            title=${image.label}
+            title=${`${image.label} · ${i18nService.t('coworkImageOpenPreviewHint')}`}
+            draggable="false"
             @contextmenu=${(event: Event) => void showImageContextMenu(event, sourceUrl)}
           />
         `;

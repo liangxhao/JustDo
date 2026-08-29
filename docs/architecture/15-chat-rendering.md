@@ -168,7 +168,7 @@ Minimap从timeline identity生成entry，追踪当前viewport并支持hover prev
 
 ## 16. Attachments 与路径
 
-附件转换为Gateway content blocks，历史媒体从结构化message提取。Markdown本地路径链接经专门utility转成应用操作；图片保存/打开由Main shell IPC执行。Renderer不能直接读 `file://`；`localfile://` 使用需遵守安全文档中的限制。
+附件转换为Gateway content blocks，历史媒体从结构化message提取。Markdown本地路径链接经专门utility转成应用操作；图片保存由Main shell IPC执行。双击消息图片通过专用IPC打开无 parent 的独立原生查看窗口，查看器使用单独的沙箱Renderer和最小权限preload，并在自身窗口内处理滚轮缩放、拖动与双击复位；最大化/还原由操作系统窗口框架负责，不受聊天主窗口尺寸限制。Renderer不能直接读 `file://`；`localfile://` 使用需遵守安全文档中的限制。
 
 ## 17. Goal、Compaction 与错误
 

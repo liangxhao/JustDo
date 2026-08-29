@@ -677,6 +677,8 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkOpenAttachment: '打开附件',
     coworkAttachmentNotFound: '文件不存在：{filepath}',
     coworkSaveImageFailed: '保存图片失败，请稍后重试',
+    coworkImageOpenPreviewHint: '双击放大查看',
+    coworkImagePreviewOpenFailed: '无法打开图片预览，请稍后重试',
     // Context menu
     contextMenuCut: '剪切',
     contextMenuCopy: '复制',
@@ -1984,6 +1986,8 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkOpenAttachment: 'Open attachment',
     coworkAttachmentNotFound: 'File does not exist: {filepath}',
     coworkSaveImageFailed: 'Failed to save the image. Please try again.',
+    coworkImageOpenPreviewHint: 'Double-click to enlarge',
+    coworkImagePreviewOpenFailed: 'Unable to open the image preview. Please try again.',
     // Context menu
     contextMenuCut: 'Cut',
     contextMenuCopy: 'Copy',

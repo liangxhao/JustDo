@@ -59,6 +59,7 @@ import {
   registerBrowserHandlers,
   registerCalendarPermissionHandlers,
   registerDialogHandlers,
+  registerImagePreviewHandlers,
   registerLocalFileHandlers,
   registerLogHandlers,
   registerNetworkHandlers,
@@ -652,6 +653,9 @@ const readMcpResource = (id: string, uri: string) => {
 const PRELOAD_PATH = app.isPackaged
   ? path.join(__dirname, 'preload.js')
   : path.join(__dirname, '../dist-electron/preload.js');
+const IMAGE_PREVIEW_PRELOAD_PATH = app.isPackaged
+  ? path.join(__dirname, 'imagePreviewPreload.js')
+  : path.join(__dirname, '../dist-electron/imagePreviewPreload.js');
 
 // 获取应用图标路径（Windows 使用 .ico，其他平台使用 .png）
 const getAppIconPath = (): string | undefined => {
@@ -820,6 +824,12 @@ if (!gotTheLock) {
   registerWindowHandlers({
     getMainWindow: () => mainWindow,
     showSystemMenu,
+  });
+  registerImagePreviewHandlers({
+    devServerUrl: DEV_SERVER_URL,
+    getIconPath: getAppIconPath,
+    isDev,
+    preloadPath: IMAGE_PREVIEW_PRELOAD_PATH,
   });
 
   registerOpenClawHistoryHandlers(

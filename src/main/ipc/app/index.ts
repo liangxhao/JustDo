@@ -3,6 +3,7 @@ export { registerAutoUpdateHandlers } from './autoUpdate';
 export { applyBrowserModeChange, registerBrowserHandlers } from './browser';
 export { registerCalendarPermissionHandlers } from './calendarPermissions';
 export { registerDialogHandlers } from './dialog';
+export { registerImagePreviewHandlers } from './imagePreview';
 export { registerLocalFileHandlers } from './localFiles';
 export { registerLogHandlers } from './log';
 export { registerNetworkHandlers } from './network';
