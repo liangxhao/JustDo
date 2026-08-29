@@ -265,6 +265,12 @@ describe('BrowserSettingsTab extension connection checks', () => {
     fireEvent.click(screen.getByRole('radio', { name: /browserModeUserTitle/ }));
 
     await waitFor(() => expect(screen.getByText('browserModeActiveSessionWarning')).toBeTruthy());
+    const warning = screen.getByRole('alert');
+    expect(warning.querySelector('svg')?.classList.contains('h-5')).toBe(true);
+    expect(warning.querySelector('svg')?.classList.contains('w-5')).toBe(true);
+    expect(
+      screen.getByText('browserModeActiveSessionWarning').classList.contains('flex-1'),
+    ).toBe(true);
     expect(
       screen.getByRole('radio', { name: /browserModeIsolatedTitle/ }).getAttribute('aria-checked'),
     ).toBe('true');

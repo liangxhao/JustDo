@@ -535,7 +535,7 @@ const BrowserSettingsTab: React.FC = () => {
                 {option.description}
               </span>
               {selected ? (
-                <span className="absolute right-2.5 top-2.5 flex h-4.5 w-4.5 items-center justify-center rounded-full bg-primary text-white">
+                <span className="absolute right-2.5 top-2.5 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-white">
                   <CheckCircleIcon className="h-3 w-3" />
                 </span>
               ) : null}
@@ -549,8 +549,8 @@ const BrowserSettingsTab: React.FC = () => {
           role="alert"
           className="flex items-start gap-2.5 rounded-lg border border-warning/30 bg-warning/5 px-4 py-3 text-sm leading-5 text-foreground"
         >
-          <ExclamationTriangleIcon className="mt-0.5 h-4.5 w-4.5 shrink-0 text-warning" />
-          <span>{modeSwitchWarning}</span>
+          <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0 text-warning" />
+          <span className="min-w-0 flex-1">{modeSwitchWarning}</span>
         </div>
       ) : null}
 
