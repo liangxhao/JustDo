@@ -82,7 +82,7 @@ const ExtensionToggle: React.FC<ExtensionToggleProps> = ({
           onToggle();
         }}
         disabled={busy}
-        className={`relative flex h-5 w-9 items-center overflow-hidden rounded-full transition-[background-color,box-shadow,opacity] duration-300 ease-smooth motion-reduce:transition-none ${
+        className={`relative flex h-5 w-9 items-center overflow-hidden rounded-full transition-[background-color,box-shadow,opacity] duration-300 ease-smooth ${
           displayedEnabled ? 'bg-primary' : 'bg-border'
         } ${
           pending
@@ -96,23 +96,23 @@ const ExtensionToggle: React.FC<ExtensionToggleProps> = ({
           <>
             <span
               aria-hidden="true"
-              className="pointer-events-none absolute inset-0 animate-pulse rounded-full bg-white/10 motion-reduce:animate-none"
+              className="pointer-events-none absolute inset-0 animate-pulse rounded-full bg-white/10"
             />
             <span
               aria-hidden="true"
-              className="pointer-events-none absolute inset-0 animate-shimmer bg-gradient-to-r from-transparent via-white/45 to-transparent motion-reduce:hidden"
+              className="pointer-events-none absolute inset-0 animate-shimmer bg-gradient-to-r from-transparent via-white/45 to-transparent"
             />
           </>
         )}
         <span
-          className={`relative z-10 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-white transition-[transform,box-shadow] duration-300 ease-smooth motion-reduce:transition-none ${
+          className={`relative z-10 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-white transition-[transform,box-shadow] duration-300 ease-smooth ${
             displayedEnabled ? 'translate-x-[18px]' : 'translate-x-[3px]'
           } ${pending ? 'shadow-lg' : 'shadow-md'}`}
         >
           {pending && (
             <span
               aria-hidden="true"
-              className="h-2 w-2 animate-spin rounded-full border border-primary/25 border-t-primary motion-reduce:animate-none"
+              className="h-2 w-2 animate-spin rounded-full border border-primary/25 border-t-primary"
             />
           )}
         </span>
