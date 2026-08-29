@@ -67,6 +67,10 @@ const DRAWER_WINDOW_MARGIN = 24;
 const MARKDOWN_DOCUMENT_PARSE_LIMIT = 140_000;
 const FILE_PREVIEW_DARK_THEME = 'justdo-monokai';
 const FILE_PREVIEW_LIGHT_THEME = 'justdo-monokai-light';
+const FILE_PREVIEW_UNICODE_HIGHLIGHT = {
+  allowedLocales: { 'zh-hans': true, 'zh-hant': true },
+  invisibleCharacters: true,
+} as const;
 const COPY_FEEDBACK_DURATION_MS = 1600;
 const COPY_ICON =
   '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M15 9V6a2 2 0 0 0-2-2H6a2 2 0 0 0 2 2v7a2 2 0 0 0 2 2h3"/></svg>';
@@ -678,6 +682,7 @@ const FilePreviewDrawer = forwardRef<FilePreviewDrawerHandle, FilePreviewDrawerP
                         roundedSelection: true,
                         scrollBeyondLastLine: false,
                         smoothScrolling: true,
+                        unicodeHighlight: FILE_PREVIEW_UNICODE_HIGHLIGHT,
                         wordWrap:
                           editorLanguage === 'plaintext' || editorLanguage === 'markdown'
                             ? 'on'
@@ -720,6 +725,7 @@ const FilePreviewDrawer = forwardRef<FilePreviewDrawerHandle, FilePreviewDrawerP
                           renderLineHighlight: 'none',
                           scrollBeyondLastLine: false,
                           smoothScrolling: true,
+                          unicodeHighlight: FILE_PREVIEW_UNICODE_HIGHLIGHT,
                           wordWrap: 'off',
                         }}
                       />
