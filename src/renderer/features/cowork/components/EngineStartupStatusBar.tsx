@@ -69,7 +69,7 @@ const EngineStartupStatusBar: React.FC = () => {
         {isStarting ? (
           <span
             aria-hidden="true"
-            className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border border-secondary/30 border-t-secondary motion-reduce:animate-none"
+            className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-secondary/25 border-t-secondary will-change-transform"
           />
         ) : isError ? (
           <ExclamationTriangleIcon className="h-4 w-4 shrink-0 text-red-600 dark:text-red-300" />

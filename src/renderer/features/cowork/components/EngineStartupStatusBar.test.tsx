@@ -58,11 +58,14 @@ describe('EngineStartupStatusBar', () => {
     cleanup();
   });
 
-  it('shows a quiet indeterminate ring without a percentage', async () => {
+  it('shows a visible indeterminate ring that keeps rotating without a percentage', async () => {
     const { container } = render(<EngineStartupStatusBar />);
 
     expect(await screen.findByText('coworkOpenClawStarting')).toBeTruthy();
-    expect(container.querySelector('[aria-hidden="true"].animate-spin')).toBeTruthy();
+    const spinner = container.querySelector('[aria-hidden="true"].animate-spin');
+    expect(spinner).toBeTruthy();
+    expect(spinner?.classList.contains('border-2')).toBe(true);
+    expect(spinner?.classList.contains('motion-reduce:animate-none')).toBe(false);
     expect(screen.queryByRole('progressbar')).toBeNull();
     expect(container.textContent).not.toContain('%');
     expect(container.querySelector('[style*="width"]')).toBeNull();

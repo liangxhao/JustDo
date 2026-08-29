@@ -10,4 +10,12 @@ describe('user-facing translations', () => {
       }
     }
   });
+
+  test('do not expose gateway jargon', () => {
+    for (const languageTranslations of Object.values(translations)) {
+      for (const value of Object.values(languageTranslations)) {
+        expect(value).not.toMatch(/gateway|网关/i);
+      }
+    }
+  });
 });
