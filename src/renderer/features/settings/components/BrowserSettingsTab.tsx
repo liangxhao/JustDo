@@ -64,7 +64,7 @@ type StepProps = {
   number: number;
   complete: boolean;
   title: string;
-  description: string;
+  description: React.ReactNode;
   action?: React.ReactNode;
   feedback?: React.ReactNode;
 };
@@ -97,7 +97,9 @@ const SetupStep: React.FC<StepProps> = ({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <h4 className="text-[13px] font-semibold leading-5 text-foreground">{title}</h4>
-          <p className="text-[12px] leading-[18px] text-secondary">{description}</p>
+          <p className="whitespace-pre-line text-left text-[12px] leading-[18px] text-secondary">
+            {description}
+          </p>
         </div>
         {action ? <div className="min-w-0 max-w-[52%] shrink-0">{action}</div> : null}
       </div>
@@ -105,6 +107,27 @@ const SetupStep: React.FC<StepProps> = ({
     </div>
   </div>
 );
+
+const EXTENSIONS_BUTTON_PLACEHOLDER = '{extensionsButton}';
+
+const ExtensionPairingDescription: React.FC = () => {
+  const description = i18nService.t('browserExtensionStepPairDescription');
+  const placeholderIndex = description.indexOf(EXTENSIONS_BUTTON_PLACEHOLDER);
+  if (placeholderIndex < 0) return description;
+
+  const before = description.slice(0, placeholderIndex);
+  const after = description.slice(placeholderIndex + EXTENSIONS_BUTTON_PLACEHOLDER.length);
+  return (
+    <>
+      {before}
+      <span className="inline-flex items-center gap-0.5 whitespace-nowrap align-middle">
+        <PuzzlePieceIcon aria-hidden="true" className="h-3.5 w-3.5" />
+        {i18nService.t('browserExtensionToolbarExtensions')}
+      </span>
+      {after}
+    </>
+  );
+};
 
 const BrowserSettingsTab: React.FC = () => {
   const [browserMode, setBrowserMode] = useState<BrowserModeValue>(() =>
@@ -766,7 +789,7 @@ const BrowserSettingsTab: React.FC = () => {
               number={3}
               complete={extensionPairingCopied}
               title={i18nService.t('browserExtensionStepPairTitle')}
-              description={i18nService.t('browserExtensionStepPairDescription')}
+              description={<ExtensionPairingDescription />}
               action={
                 <div className="flex flex-wrap items-center gap-2">
                   <button

@@ -206,7 +206,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserStatusFailed: '无法检测 Chrome 状态',
     browserOpenSetupFailed: '无法打开 Chrome 远程调试设置页',
     browserStepChromeTitle: '1. 安装并正常启动 Google Chrome',
-    browserStepChromeDescription: '请使用日常 Chrome 快捷方式启动，不要添加任何调试端口参数。',
+    browserStepChromeDescription: '请使用日常 Chrome 快捷方式启动。',
     browserStepDebuggingTitle: '2. 开启 Chrome Remote Debugging',
     browserStepDebuggingDescription:
       '在 Chrome 专用设置页开启 Remote Debugging。这个开关由 Chrome 管理，应用不能代替你开启。',
@@ -235,11 +235,10 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserExtensionDescription:
       '首次配对后会自动重连；只有浏览器助手标签组中的网页会被共享，移出标签组即可停止访问。',
     browserExtensionStepChromeTitle: '1. 安装并启动 Google Chrome',
-    browserExtensionStepChromeDescription:
-      '扩展模式要求 Chrome 125 或更高版本，不需要开启 Remote Debugging。',
+    browserExtensionStepChromeDescription: '扩展模式要求 Chrome 125 或更高版本。',
     browserExtensionStepInstallTitle: '2. 加载浏览器助手扩展',
     browserExtensionStepInstallDescription:
-      '打开 Chrome 扩展管理页，开启“开发者模式”，点击“加载已解压的扩展程序”，然后选择应用为你打开的扩展文件夹。',
+      '（1）打开 Chrome 扩展管理页，开启“开发者模式”。\n（2）点击“加载已解压的扩展程序”，选择应用打开目录中的“chrome-extension”文件夹。',
     browserExtensionOpenPage: '打开扩展管理页',
     browserExtensionRevealFolder: '打开扩展文件夹',
     browserExtensionPageCopied: '管理页地址已复制，请粘贴到 Chrome 地址栏并回车：',
@@ -247,13 +246,13 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserExtensionRevealFailed: '无法找到或打开内置浏览器扩展',
     browserExtensionStepPairTitle: '3. 配对扩展',
     browserExtensionStepPairDescription:
-      '点击下方按钮复制本机配对信息；然后点击 Chrome 工具栏中的浏览器助手图标，粘贴并确认。配对信息仅用于本机连接，请勿分享。',
+      '（1）点击右侧“复制配对信息”按钮。\n（2）点击 Chrome 工具栏中的“浏览器助手”图标，粘贴配对信息并确认。如果图标未显示，请在 {extensionsButton} 菜单中找到它。',
+    browserExtensionToolbarExtensions: '“扩展程序”',
     browserExtensionCopyPairing: '复制配对信息',
     browserExtensionPairingCopied: '已复制，请粘贴到扩展中',
     browserExtensionPairingFailed: '无法生成扩展配对信息',
     browserExtensionStepVerifyTitle: '4. 测试连接',
-    browserExtensionStepVerifyDescription:
-      '确认扩展状态显示 ON，然后点击下方按钮验证连接。需要 Agent 访问当前网页时，再通过扩展共享该标签页。',
+    browserExtensionStepVerifyDescription: '确认扩展状态显示 ON，然后点击右侧按钮验证连接。',
     browserExtensionTestConnection: '测试扩展连接',
     browserExtensionRelayUnavailable:
       '本地连接服务未响应。请重启应用；仍无法连接时，请检查安全软件是否阻止本地连接。',
@@ -1496,8 +1495,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserStatusFailed: 'Unable to detect Chrome status',
     browserOpenSetupFailed: 'Unable to open Chrome remote debugging settings',
     browserStepChromeTitle: '1. Install and start Google Chrome normally',
-    browserStepChromeDescription:
-      'Start your everyday Chrome shortcut without adding any remote debugging port arguments.',
+    browserStepChromeDescription: 'Start Chrome using your everyday shortcut.',
     browserStepDebuggingTitle: '2. Enable Chrome Remote Debugging',
     browserStepDebuggingDescription:
       'Enable Remote Debugging on Chrome’s dedicated settings page. Chrome owns this switch, so the app cannot enable it for you.',
@@ -1527,11 +1525,10 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserExtensionDescription:
       'After the first pairing, the extension reconnects automatically. Only pages in the browser assistant tab group are shared; move a page out to stop access.',
     browserExtensionStepChromeTitle: '1. Install and start Google Chrome',
-    browserExtensionStepChromeDescription:
-      'Extension mode requires Chrome 125 or newer and does not require Remote Debugging.',
+    browserExtensionStepChromeDescription: 'Extension mode requires Chrome 125 or newer.',
     browserExtensionStepInstallTitle: '2. Load the browser assistant extension',
     browserExtensionStepInstallDescription:
-      'Open Chrome’s extension management page, enable Developer mode, choose Load unpacked, then select the extension folder opened by the app.',
+      '(1) Open Chrome’s extension management page and enable Developer mode.\n(2) Choose Load unpacked, then select the chrome-extension folder inside the directory opened by the app.',
     browserExtensionOpenPage: 'Open extensions page',
     browserExtensionRevealFolder: 'Open extension folder',
     browserExtensionPageCopied:
@@ -1540,13 +1537,14 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserExtensionRevealFailed: 'Unable to find or open the bundled browser extension',
     browserExtensionStepPairTitle: '3. Pair the extension',
     browserExtensionStepPairDescription:
-      'Copy the host-local pairing information below, then open the browser assistant toolbar popup in Chrome, paste it, and confirm. Use it only for this local connection and do not share it.',
+      '(1) Select Copy pairing information on the right.\n(2) Open the browser assistant from the Chrome toolbar, paste the pairing information, and confirm. If its icon is hidden, find it in the {extensionsButton} menu.',
+    browserExtensionToolbarExtensions: '“Extensions”',
     browserExtensionCopyPairing: 'Copy pairing information',
     browserExtensionPairingCopied: 'Copied; paste it into the extension',
     browserExtensionPairingFailed: 'Unable to generate extension pairing information',
     browserExtensionStepVerifyTitle: '4. Test the connection',
     browserExtensionStepVerifyDescription:
-      'Confirm the extension shows ON, then verify the connection below. Share the current tab only when an Agent needs access to it.',
+      'Confirm the extension shows ON, then use the button on the right to verify the connection.',
     browserExtensionTestConnection: 'Test extension connection',
     browserExtensionRelayUnavailable:
       'The local connection service is not responding. Restart the app; if it still cannot connect, check whether security software blocks local connections.',
