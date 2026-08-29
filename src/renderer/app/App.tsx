@@ -446,6 +446,32 @@ const App: React.FC = () => {
     }, 2200);
   }, []);
 
+  const handleDownloadAppUpdate = useCallback(async () => {
+    try {
+      const result = await window.electron.appUpdate.download();
+      if (!result.success) {
+        setUpdateToast(current =>
+          current ? { ...current, state: result.state, installError: false } : current,
+        );
+      }
+    } catch {
+      setUpdateToast(current =>
+        current
+          ? {
+              ...current,
+              state: {
+                ...current.state,
+                revision: current.state.revision + 1,
+                phase: 'error',
+                errorCode: 'DOWNLOAD_FAILED',
+              },
+              installError: false,
+            }
+          : current,
+      );
+    }
+  }, []);
+
   const handleInstallAppUpdate = useCallback(async () => {
     setUpdateToast(current =>
       current ? { ...current, installing: true, installError: false } : current,
@@ -725,9 +751,10 @@ const App: React.FC = () => {
         <EngineStartupStatusBar />
         {updateToast && (
           <AppUpdateToast
-            availableVersion={updateToast.state.availableVersion}
+            state={updateToast.state}
             installing={updateToast.installing}
             installError={updateToast.installError}
+            onDownload={() => void handleDownloadAppUpdate()}
             onInstall={() => void handleInstallAppUpdate()}
             onDismiss={handleDismissAppUpdate}
           />

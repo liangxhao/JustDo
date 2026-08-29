@@ -987,7 +987,12 @@ interface IElectronAPI {
   appUpdate: {
     getState: () => Promise<AppUpdateState>;
     check: () => Promise<AppUpdateState>;
+    download: () => Promise<AppUpdateActionResult>;
     quitAndInstall: () => Promise<AppUpdateActionResult>;
+    getPreferences: () => Promise<import('../../shared/appUpdate').AppUpdatePreferences>;
+    setCheckFrequency: (
+      frequency: import('../../shared/appUpdate').AppUpdateCheckFrequency,
+    ) => Promise<import('../../shared/appUpdate').AppUpdatePreferences>;
     onStateChanged: (callback: (state: AppUpdateState) => void) => () => void;
   };
   builtinModels: {

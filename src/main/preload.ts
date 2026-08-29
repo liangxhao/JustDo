@@ -1,6 +1,11 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
-import { AppUpdateIpc, type AppUpdateState } from '../shared/appUpdate';
+import {
+  type AppUpdateCheckFrequency,
+  AppUpdateIpc,
+  type AppUpdatePreferences,
+  type AppUpdateState,
+} from '../shared/appUpdate';
 import {
   type BrowserActionResult,
   type BrowserConnectionTestResult,
@@ -586,7 +591,12 @@ contextBridge.exposeInMainWorld('electron', {
   appUpdate: {
     getState: (): Promise<AppUpdateState> => ipcRenderer.invoke(AppUpdateIpc.GetState),
     check: (): Promise<AppUpdateState> => ipcRenderer.invoke(AppUpdateIpc.Check),
+    download: () => ipcRenderer.invoke(AppUpdateIpc.Download),
     quitAndInstall: () => ipcRenderer.invoke(AppUpdateIpc.QuitAndInstall),
+    getPreferences: (): Promise<AppUpdatePreferences> =>
+      ipcRenderer.invoke(AppUpdateIpc.GetPreferences),
+    setCheckFrequency: (frequency: AppUpdateCheckFrequency): Promise<AppUpdatePreferences> =>
+      ipcRenderer.invoke(AppUpdateIpc.SetCheckFrequency, frequency),
     onStateChanged: (callback: (state: AppUpdateState) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, state: AppUpdateState) => callback(state);
       ipcRenderer.on(AppUpdateIpc.StateChanged, handler);

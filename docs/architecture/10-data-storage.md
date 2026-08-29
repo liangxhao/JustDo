@@ -60,7 +60,7 @@ WAL 是持久设置。备份不能只在运行中复制主 `.sqlite` 而忽略 W
 
 `SqliteStore.get/set/delete` 解析/序列化 JSON，set 使用 upsert，并通过进程内 EventEmitter 触发 `onDidChange(key)`。事件不是跨进程数据库监听；只覆盖同一 Main 实例通过该 Store 写入的变化。
 
-主要内容包括 `app_config`、自动启动/防休眠标记，以及 scheduled result baseline/task watermark/catch-up。领域 prefix 是兼容接口，改名需迁移。
+主要内容包括 `app_config`、自动启动/防休眠标记、自动更新检查频率与上次自动检查时间，以及 scheduled result baseline/task watermark/catch-up。自动更新使用 `app_update_check_frequency` 和 `app_update_last_automatic_check_at`；领域 prefix 是兼容接口，改名需迁移。
 
 ## 5. `cowork_sessions`
 

@@ -3,13 +3,20 @@ import { type AppUpdater, autoUpdater, type ProgressInfo, type UpdateInfo } from
 
 import type {
   AppUpdateActionResult,
+  AppUpdateCheckFrequency,
   AppUpdateErrorCode,
+  AppUpdatePreferences,
   AppUpdateState,
 } from '../../shared/appUpdate';
-import { AppUpdateIpc } from '../../shared/appUpdate';
+import {
+  AppUpdateCheckFrequency as CheckFrequency,
+  AppUpdateIpc,
+  DEFAULT_APP_UPDATE_CHECK_FREQUENCY,
+} from '../../shared/appUpdate';
 import { log } from './logger';
 
 const STARTUP_CHECK_DELAY_MS = 10_000;
+const SCHEDULED_CHECK_HOUR = 10;
 
 type AutoUpdateServiceOptions = {
   currentVersion: string;
@@ -17,7 +24,53 @@ type AutoUpdateServiceOptions = {
   getWindows: () => BrowserWindow[];
   installAfterCleanup: (install: () => void) => void;
   recoverAfterInstallFailure: () => void;
+  getCheckFrequency: () => unknown;
+  setCheckFrequency: (frequency: AppUpdateCheckFrequency) => void;
+  getLastAutomaticCheckAt: () => unknown;
+  setLastAutomaticCheckAt: (checkedAt: number) => void;
   updater?: AppUpdater;
+};
+
+export const normalizeAppUpdateCheckFrequency = (value: unknown): AppUpdateCheckFrequency =>
+  value === CheckFrequency.Never || value === CheckFrequency.Weekly
+    ? value
+    : DEFAULT_APP_UPDATE_CHECK_FREQUENCY;
+
+export const resolveNextAutomaticUpdateCheckAt = ({
+  frequency,
+  lastCheckAt,
+  now,
+}: {
+  frequency: AppUpdateCheckFrequency;
+  lastCheckAt: unknown;
+  now: number;
+}): number | undefined => {
+  if (frequency === CheckFrequency.Never) return undefined;
+
+  const mostRecentCheckTime = new Date(now);
+  mostRecentCheckTime.setHours(SCHEDULED_CHECK_HOUR, 0, 0, 0);
+  const intervalDays = frequency === CheckFrequency.Weekly ? 7 : 1;
+
+  if (frequency === CheckFrequency.Weekly) {
+    const daysSinceMonday = (mostRecentCheckTime.getDay() + 6) % 7;
+    mostRecentCheckTime.setDate(mostRecentCheckTime.getDate() - daysSinceMonday);
+  }
+  if (mostRecentCheckTime.getTime() > now) {
+    mostRecentCheckTime.setDate(mostRecentCheckTime.getDate() - intervalDays);
+  }
+
+  const normalizedLastCheckAt =
+    typeof lastCheckAt === 'number' && Number.isFinite(lastCheckAt) ? lastCheckAt : undefined;
+  if (
+    normalizedLastCheckAt === undefined ||
+    normalizedLastCheckAt < mostRecentCheckTime.getTime()
+  ) {
+    return now + STARTUP_CHECK_DELAY_MS;
+  }
+
+  const nextCheckTime = new Date(mostRecentCheckTime);
+  nextCheckTime.setDate(nextCheckTime.getDate() + intervalDays);
+  return nextCheckTime.getTime();
 };
 
 const normalizeReleaseNotes = (releaseNotes: UpdateInfo['releaseNotes']): string | undefined => {
@@ -38,7 +91,11 @@ export class AutoUpdateService {
   private readonly updater!: AppUpdater;
   private state: AppUpdateState;
   private checkPromise: Promise<AppUpdateState> | null = null;
+  private downloadPromise: Promise<AppUpdateActionResult> | null = null;
   private installRequested = false;
+  private automaticCheckTimer: NodeJS.Timeout | null = null;
+  private nextAutomaticCheckAt: number | undefined;
+  private lastAutomaticCheckAt: number | undefined;
 
   constructor(private readonly options: AutoUpdateServiceOptions) {
     this.state = {
@@ -50,7 +107,7 @@ export class AutoUpdateService {
     if (!options.enabled) return;
 
     this.updater = options.updater ?? autoUpdater;
-    this.updater.autoDownload = true;
+    this.updater.autoDownload = false;
     this.updater.autoInstallOnAppQuit = false;
     this.updater.allowDowngrade = false;
     this.updater.allowPrerelease = false;
@@ -62,12 +119,58 @@ export class AutoUpdateService {
     return { ...this.state };
   }
 
-  scheduleStartupCheck(): void {
+  getPreferences(): AppUpdatePreferences {
+    return {
+      supported: this.options.enabled,
+      checkFrequency: normalizeAppUpdateCheckFrequency(this.options.getCheckFrequency()),
+      ...(this.nextAutomaticCheckAt !== undefined
+        ? { nextCheckAt: this.nextAutomaticCheckAt }
+        : {}),
+    };
+  }
+
+  setCheckFrequency(value: unknown): AppUpdatePreferences {
+    const frequency = normalizeAppUpdateCheckFrequency(value);
+    this.options.setCheckFrequency(frequency);
+    this.scheduleAutomaticChecks();
+    return this.getPreferences();
+  }
+
+  scheduleAutomaticChecks(): void {
+    if (this.automaticCheckTimer) {
+      clearTimeout(this.automaticCheckTimer);
+      this.automaticCheckTimer = null;
+    }
+    this.nextAutomaticCheckAt = undefined;
     if (!this.options.enabled) return;
-    const timer = setTimeout(() => {
-      void this.checkForUpdates();
-    }, STARTUP_CHECK_DELAY_MS);
-    timer.unref();
+
+    const frequency = normalizeAppUpdateCheckFrequency(this.options.getCheckFrequency());
+    const now = Date.now();
+    const nextCheckAt = resolveNextAutomaticUpdateCheckAt({
+      frequency,
+      lastCheckAt: this.readLastAutomaticCheckAt(),
+      now,
+    });
+    if (nextCheckAt === undefined) return;
+
+    this.nextAutomaticCheckAt = nextCheckAt;
+    this.automaticCheckTimer = setTimeout(
+      () => {
+        this.automaticCheckTimer = null;
+        this.nextAutomaticCheckAt = undefined;
+        const checkedAt = Date.now();
+        this.lastAutomaticCheckAt = checkedAt;
+        try {
+          this.options.setLastAutomaticCheckAt(checkedAt);
+        } catch (error) {
+          console.error('[AutoUpdate] Failed to persist automatic update check time:', error);
+        }
+        this.scheduleAutomaticChecks();
+        void this.checkForUpdates();
+      },
+      Math.max(0, nextCheckAt - now),
+    );
+    this.automaticCheckTimer.unref();
   }
 
   checkForUpdates(): Promise<AppUpdateState> {
@@ -77,7 +180,11 @@ export class AutoUpdateService {
     if (this.checkPromise) {
       return this.checkPromise;
     }
-    if (this.state.phase === 'downloading' || this.state.phase === 'downloaded') {
+    if (
+      this.state.phase === 'available' ||
+      this.state.phase === 'downloading' ||
+      this.state.phase === 'downloaded'
+    ) {
       return Promise.resolve(this.getState());
     }
 
@@ -89,20 +196,7 @@ export class AutoUpdateService {
 
     this.checkPromise = this.updater
       .checkForUpdates()
-      .then(result => {
-        const downloadPromise = result?.downloadPromise;
-        if (downloadPromise) {
-          void downloadPromise.catch(error => {
-            // electron-updater normally emits `error` before rejecting this
-            // promise. Consume the rejection and only provide a fallback when
-            // an updater implementation rejects without emitting the event.
-            if (this.state.phase !== 'error') {
-              this.handleError('CHECK_FAILED', error);
-            }
-          });
-        }
-        return this.getState();
-      })
+      .then(() => this.getState())
       .catch(error => {
         this.handleError('CHECK_FAILED', error);
         return this.getState();
@@ -111,6 +205,79 @@ export class AutoUpdateService {
         this.checkPromise = null;
       });
     return this.checkPromise;
+  }
+
+  downloadUpdate(): Promise<AppUpdateActionResult> {
+    if (!this.options.enabled) {
+      return Promise.resolve({
+        success: false,
+        state: this.getState(),
+        errorCode: 'DOWNLOAD_FAILED',
+      });
+    }
+    if (this.downloadPromise) return this.downloadPromise;
+
+    const canDownload =
+      this.state.phase === 'available' ||
+      (this.state.phase === 'error' &&
+        this.state.errorCode === 'DOWNLOAD_FAILED' &&
+        Boolean(this.state.availableVersion));
+    if (!canDownload) {
+      return Promise.resolve({
+        success: false,
+        state: this.getState(),
+        errorCode: 'DOWNLOAD_FAILED',
+      });
+    }
+
+    console.log('[AutoUpdate] Update download requested by the user.');
+    this.setState({
+      ...this.state,
+      phase: 'downloading',
+      downloadPercent: 0,
+      errorCode: undefined,
+    });
+
+    let downloadTask: Promise<string[]>;
+    try {
+      downloadTask = this.updater.downloadUpdate();
+    } catch (error) {
+      this.handleError('DOWNLOAD_FAILED', error);
+      return Promise.resolve({
+        success: false,
+        state: this.getState(),
+        errorCode: 'DOWNLOAD_FAILED',
+      });
+    }
+
+    this.downloadPromise = downloadTask
+      .then(() => {
+        if (this.state.phase === 'downloading') {
+          this.setState({
+            ...this.state,
+            phase: 'downloaded',
+            downloadPercent: undefined,
+          });
+        }
+        const state = this.getState();
+        return state.phase === 'downloaded'
+          ? { success: true, state }
+          : { success: false, state, errorCode: 'DOWNLOAD_FAILED' as const };
+      })
+      .catch(error => {
+        if (this.state.phase !== 'error' || this.state.errorCode !== 'DOWNLOAD_FAILED') {
+          this.handleError('DOWNLOAD_FAILED', error);
+        }
+        return {
+          success: false,
+          state: this.getState(),
+          errorCode: 'DOWNLOAD_FAILED' as const,
+        };
+      })
+      .finally(() => {
+        this.downloadPromise = null;
+      });
+    return this.downloadPromise;
   }
 
   quitAndInstall(): AppUpdateActionResult {
@@ -162,8 +329,30 @@ export class AutoUpdateService {
         this.handleInstallFailure(error);
         return;
       }
-      this.handleError('CHECK_FAILED', error);
+      this.handleError(
+        this.downloadPromise || this.state.phase === 'downloading'
+          ? 'DOWNLOAD_FAILED'
+          : 'CHECK_FAILED',
+        error,
+      );
     });
+  }
+
+  private readLastAutomaticCheckAt(): unknown {
+    try {
+      const storedValue = this.options.getLastAutomaticCheckAt();
+      if (
+        typeof storedValue === 'number' &&
+        Number.isFinite(storedValue) &&
+        (this.lastAutomaticCheckAt === undefined || storedValue > this.lastAutomaticCheckAt)
+      ) {
+        this.lastAutomaticCheckAt = storedValue;
+      }
+      return this.lastAutomaticCheckAt ?? storedValue;
+    } catch (error) {
+      console.error('[AutoUpdate] Failed to read automatic update check time:', error);
+      return this.lastAutomaticCheckAt;
+    }
   }
 
   private handleInstallFailure(error: unknown): void {

@@ -42,6 +42,7 @@ interface ThemedSelectProps {
   className?: string;
   label?: string;
   ariaLabel?: string;
+  disabled?: boolean;
 }
 
 const ThemedSelect: React.FC<ThemedSelectProps> = ({
@@ -52,6 +53,7 @@ const ThemedSelect: React.FC<ThemedSelectProps> = ({
   className = '',
   label,
   ariaLabel,
+  disabled = false,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
@@ -65,7 +67,7 @@ const ThemedSelect: React.FC<ThemedSelectProps> = ({
   const selectedIndex = options.findIndex(option => option.value === value);
 
   const openDropdown = () => {
-    if (options.length === 0) return;
+    if (disabled || options.length === 0) return;
     setActiveIndex(selectedIndex >= 0 ? selectedIndex : 0);
     setIsOpen(true);
   };
@@ -159,6 +161,7 @@ const ThemedSelect: React.FC<ThemedSelectProps> = ({
   };
 
   const handleButtonKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (disabled) return;
     if (!isOpen) {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();
@@ -205,11 +208,11 @@ const ThemedSelect: React.FC<ThemedSelectProps> = ({
             id={id}
             type="button"
             role="combobox"
-            disabled={options.length === 0}
+            disabled={disabled || options.length === 0}
             onClick={() => (isOpen ? closeDropdown() : openDropdown())}
             onKeyDown={handleButtonKeyDown}
             onBlur={() => closeDropdown()}
-            className={`flex items-center justify-between w-full rounded-lg bg-surface border-border border focus:border-primary focus:ring-1 focus:ring-primary/40 text-foreground px-4 py-2.5 text-sm ${className}`}
+            className={`flex items-center justify-between w-full rounded-lg bg-surface border-border border focus:border-primary focus:ring-1 focus:ring-primary/40 text-foreground px-4 py-2.5 text-sm disabled:cursor-not-allowed disabled:opacity-50 ${className}`}
             aria-haspopup="listbox"
             aria-label={ariaLabel}
             aria-expanded={isOpen}

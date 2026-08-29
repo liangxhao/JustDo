@@ -76,7 +76,7 @@ const AppUpdateSection: React.FC = () => {
       if (active) setState(current => selectNewerAppUpdateState(current, nextState));
     });
     void window.electron.appUpdate
-      .check()
+      .getState()
       .then(nextState => {
         if (active) setState(current => selectNewerAppUpdateState(current, nextState));
       })
@@ -96,13 +96,30 @@ const AppUpdateSection: React.FC = () => {
     [state.releaseNotes],
   );
   const isChecking = state.phase === 'checking';
-  const canCheck = ['idle', 'up-to-date', 'error'].includes(state.phase);
+  const canCheck =
+    state.phase === 'idle' ||
+    state.phase === 'up-to-date' ||
+    (state.phase === 'error' && state.errorCode === 'CHECK_FAILED');
+  const canDownload =
+    state.phase === 'available' ||
+    (state.phase === 'error' && state.errorCode === 'DOWNLOAD_FAILED');
 
   const handleCheck = async () => {
     try {
       await window.electron.appUpdate.check();
     } catch {
       setState(current => ({ ...current, phase: 'error', errorCode: 'CHECK_FAILED' }));
+    }
+  };
+
+  const handleDownload = async () => {
+    try {
+      const result = await window.electron.appUpdate.download();
+      if (!result.success) {
+        setState(current => selectNewerAppUpdateState(current, result.state));
+      }
+    } catch {
+      setState(current => ({ ...current, phase: 'error', errorCode: 'DOWNLOAD_FAILED' }));
     }
   };
 
@@ -117,10 +134,12 @@ const AppUpdateSection: React.FC = () => {
     }
   };
 
-  const statusKey =
-    state.phase === 'error' && state.errorCode === 'INSTALL_FAILED'
-      ? 'appUpdateStatusInstallError'
-      : statusKeyByPhase[state.phase];
+  const statusKey = (() => {
+    if (state.phase !== 'error') return statusKeyByPhase[state.phase];
+    if (state.errorCode === 'INSTALL_FAILED') return 'appUpdateStatusInstallError';
+    if (state.errorCode === 'DOWNLOAD_FAILED') return 'appUpdateStatusDownloadError';
+    return statusKeyByPhase.error;
+  })();
   const statusText =
     state.phase === 'downloading' && typeof state.downloadPercent === 'number'
       ? `${i18nService.t(statusKey)} ${state.downloadPercent.toFixed(0)}%`
@@ -179,6 +198,16 @@ const AppUpdateSection: React.FC = () => {
             >
               <ArrowPathIcon className="h-4 w-4 animate-spin" aria-hidden="true" />
               {i18nService.t('appUpdateChecking')}
+            </button>
+          )}
+          {canDownload && (
+            <button
+              type="button"
+              onClick={() => void handleDownload()}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
+            >
+              <ArrowDownTrayIcon className="h-4 w-4" aria-hidden="true" />
+              {i18nService.t('appUpdateDownload')}
             </button>
           )}
           {state.phase === 'downloaded' && (

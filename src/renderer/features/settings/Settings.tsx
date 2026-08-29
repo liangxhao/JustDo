@@ -72,6 +72,7 @@ import { setAvailableModels } from '@/features/models/modelSlice';
 import { toOpenClawModelRef } from '@/features/models/openclawModelRef';
 import AgentRuntimeSettingsTab from '@/features/settings/components/AgentRuntimeSettingsTab';
 import AppearanceSettingsTab from '@/features/settings/components/AppearanceSettingsTab';
+import AppUpdateFrequencySetting from '@/features/settings/components/AppUpdateFrequencySetting';
 import AppUpdateSection from '@/features/settings/components/AppUpdateSection';
 import BrowserSettingsTab from '@/features/settings/components/BrowserSettingsTab';
 import ModelSettingsTab from '@/features/settings/components/ModelSettingsTab';
@@ -1220,9 +1221,7 @@ const Settings: React.FC<SettingsProps> = ({
 
       await persistSettingsInOrder({
         saveCoworkConfig: async () => {
-          if (
-            maxGoalContinuationTurns === initialMaxGoalContinuationTurnsRef.current
-          ) {
+          if (maxGoalContinuationTurns === initialMaxGoalContinuationTurnsRef.current) {
             return;
           }
           const result = await window.electron.cowork.setConfig({ maxGoalContinuationTurns });
@@ -2119,6 +2118,8 @@ const Settings: React.FC<SettingsProps> = ({
                 </button>
               </label>
             </div>
+
+            <AppUpdateFrequencySetting />
 
             {/* Developer Mode Section */}
             {developerModeAvailable && (

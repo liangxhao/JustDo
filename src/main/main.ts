@@ -673,6 +673,8 @@ let mainWindow: BrowserWindow | null = null;
 
 let lastReloadAt = 0;
 const MIN_RELOAD_INTERVAL_MS = 5000;
+const APP_UPDATE_CHECK_FREQUENCY_KEY = 'app_update_check_frequency';
+const APP_UPDATE_LAST_AUTOMATIC_CHECK_AT_KEY = 'app_update_last_automatic_check_at';
 type AppConfigSettings = {
   theme?: string;
   language?: string;
@@ -1083,6 +1085,11 @@ if (!gotTheLock) {
       app.relaunch();
       app.exit(1);
     },
+    getCheckFrequency: () => getStore().get(APP_UPDATE_CHECK_FREQUENCY_KEY),
+    setCheckFrequency: frequency => getStore().set(APP_UPDATE_CHECK_FREQUENCY_KEY, frequency),
+    getLastAutomaticCheckAt: () => getStore().get(APP_UPDATE_LAST_AUTOMATIC_CHECK_AT_KEY),
+    setLastAutomaticCheckAt: checkedAt =>
+      getStore().set(APP_UPDATE_LAST_AUTOMATIC_CHECK_AT_KEY, checkedAt),
   });
   registerAutoUpdateHandlers(autoUpdateService);
 
@@ -1208,7 +1215,7 @@ if (!gotTheLock) {
 
     // 创建窗口
     createWindow();
-    autoUpdateService.scheduleStartupCheck();
+    autoUpdateService.scheduleAutomaticChecks();
 
     // Reconnect OpenClaw gateway WS after system wake from sleep/suspend
     powerMonitor.on('resume', () => {
