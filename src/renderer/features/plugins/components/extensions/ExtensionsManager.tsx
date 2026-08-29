@@ -49,6 +49,78 @@ const getImportStageLabel = (stage: ExtensionImportStage): string => {
   }
 };
 
+type ExtensionToggleProps = {
+  extension: InstalledOpenClawExtension;
+  pending: boolean;
+  busy: boolean;
+  onToggle: () => void;
+};
+
+const ExtensionToggle: React.FC<ExtensionToggleProps> = ({
+  extension,
+  pending,
+  busy,
+  onToggle,
+}) => {
+  const displayedEnabled = pending ? !extension.enabled : extension.enabled;
+  const label = pending
+    ? `${i18nService.t(
+        displayedEnabled ? 'extensionEnable' : 'extensionDisable',
+      )} · ${i18nService.t('extensionImportStageRestartingGateway')}`
+    : i18nService.t(extension.enabled ? 'extensionDisable' : 'extensionEnable');
+
+  return (
+    <Tooltip content={label} position="bottom">
+      <button
+        type="button"
+        role="switch"
+        aria-checked={displayedEnabled}
+        aria-busy={pending || undefined}
+        aria-label={label}
+        onClick={event => {
+          event.stopPropagation();
+          onToggle();
+        }}
+        disabled={busy}
+        className={`relative flex h-5 w-9 items-center overflow-hidden rounded-full transition-[background-color,box-shadow,opacity] duration-300 ease-smooth motion-reduce:transition-none ${
+          displayedEnabled ? 'bg-primary' : 'bg-border'
+        } ${
+          pending
+            ? 'cursor-wait ring-2 ring-primary/25'
+            : busy
+              ? 'cursor-not-allowed opacity-50'
+              : ''
+        }`}
+      >
+        {pending && (
+          <>
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 animate-pulse rounded-full bg-white/10 motion-reduce:animate-none"
+            />
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 animate-shimmer bg-gradient-to-r from-transparent via-white/45 to-transparent motion-reduce:hidden"
+            />
+          </>
+        )}
+        <span
+          className={`relative z-10 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-white transition-[transform,box-shadow] duration-300 ease-smooth motion-reduce:transition-none ${
+            displayedEnabled ? 'translate-x-[18px]' : 'translate-x-[3px]'
+          } ${pending ? 'shadow-lg' : 'shadow-md'}`}
+        >
+          {pending && (
+            <span
+              aria-hidden="true"
+              className="h-2 w-2 animate-spin rounded-full border border-primary/25 border-t-primary motion-reduce:animate-none"
+            />
+          )}
+        </span>
+      </button>
+    </Tooltip>
+  );
+};
+
 const ExtensionsManager: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ExtensionTab>('installed');
   const [searchQuery, setSearchQuery] = useState('');
@@ -467,35 +539,12 @@ const ExtensionsManager: React.FC = () => {
                       </h3>
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">
-                      <Tooltip
-                        content={i18nService.t(
-                          extension.enabled ? 'extensionDisable' : 'extensionEnable',
-                        )}
-                        position="bottom"
-                      >
-                        <button
-                          type="button"
-                          role="switch"
-                          aria-checked={extension.enabled}
-                          aria-label={i18nService.t(
-                            extension.enabled ? 'extensionDisable' : 'extensionEnable',
-                          )}
-                          onClick={event => {
-                            event.stopPropagation();
-                            void handleToggleExtension(extension);
-                          }}
-                          disabled={extensionActionBusy}
-                          className={`flex h-5 w-9 items-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                            extension.enabled ? 'bg-primary' : 'bg-border'
-                          }`}
-                        >
-                          <span
-                            className={`h-3.5 w-3.5 rounded-full bg-white shadow-md transition-transform ${
-                              extension.enabled ? 'translate-x-[18px]' : 'translate-x-[3px]'
-                            }`}
-                          />
-                        </button>
-                      </Tooltip>
+                      <ExtensionToggle
+                        extension={extension}
+                        pending={togglingExtensionId === extension.id}
+                        busy={extensionActionBusy}
+                        onToggle={() => void handleToggleExtension(extension)}
+                      />
                       <Tooltip content={i18nService.t('extensionDelete')} position="bottom">
                         <button
                           type="button"
