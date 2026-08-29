@@ -1,4 +1,9 @@
-import { ArrowPathIcon, CheckCircleIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import {
+  ArrowPathIcon,
+  CheckCircleIcon,
+  ExclamationTriangleIcon,
+  XMarkIcon,
+} from '@heroicons/react/24/outline';
 import React from 'react';
 
 import { i18nService } from '@/services/i18n';
@@ -19,54 +24,54 @@ const AppUpdateToast: React.FC<AppUpdateToastProps> = ({
   onInstall,
 }) => {
   return (
-    <div
-      className="fixed bottom-4 right-4 z-[80] w-[min(340px,calc(100vw-2rem))] rounded-xl border border-border bg-surface/95 p-3.5 text-foreground shadow-xl backdrop-blur-md"
-      role="status"
-      aria-live="polite"
-    >
-      <div className="flex items-start gap-3">
-        <div className="mt-0.5 shrink-0 rounded-full bg-green-500/10 p-1.5 text-green-600 dark:text-green-400">
-          <CheckCircleIcon className="h-4 w-4" aria-hidden="true" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium">{i18nService.t('appUpdateToastTitle')}</p>
-          <p className="mt-1 text-xs leading-5 text-secondary">
-            {i18nService.t('appUpdateToastDescription')}
-            {availableVersion ? ` (${availableVersion})` : ''}
-          </p>
-          {installError && (
-            <p className="mt-1 text-xs text-danger" role="alert">
-              {i18nService.t('appUpdateStatusInstallError')}
-            </p>
+    <div className="pointer-events-auto max-w-full">
+      <div
+        className={`flex h-8 items-center gap-2 rounded-full border px-2.5 text-xs shadow-subtle ${
+          installError
+            ? 'border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950 dark:text-red-300'
+            : 'border-border/70 bg-surface text-secondary'
+        }`}
+        role="status"
+        aria-live="polite"
+        aria-busy={installing}
+      >
+        {installError ? (
+          <ExclamationTriangleIcon
+            className="h-4 w-4 shrink-0 text-red-600 dark:text-red-300"
+            aria-hidden="true"
+          />
+        ) : (
+          <CheckCircleIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+        )}
+        <span className="min-w-0 truncate">
+          {installError
+            ? i18nService.t('appUpdateStatusInstallError')
+            : i18nService.t('appUpdateToastTitle')}
+          {availableVersion ? ` (${availableVersion})` : ''}
+        </span>
+        <button
+          type="button"
+          onClick={onInstall}
+          disabled={installing}
+          className={`ml-1 inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-2 font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+            installError
+              ? 'bg-red-600 text-white hover:bg-red-700 dark:bg-red-700 dark:hover:bg-red-600'
+              : 'bg-primary text-white hover:bg-primary-hover'
+          }`}
+        >
+          {installing && (
+            <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
           )}
-          <div className="mt-2.5 flex items-center gap-2">
-            <button
-              type="button"
-              onClick={onInstall}
-              disabled={installing}
-              className="inline-flex h-7 items-center gap-1.5 rounded-md bg-primary px-2.5 text-xs font-medium text-white transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {installing && (
-                <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-              )}
-              {i18nService.t('appUpdateRestartAndInstall')}
-            </button>
-            <button
-              type="button"
-              onClick={onDismiss}
-              className="h-7 rounded-md px-2.5 text-xs font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
-            >
-              {i18nService.t('appUpdateLater')}
-            </button>
-          </div>
-        </div>
+          {i18nService.t('appUpdateRestartAndInstall')}
+        </button>
         <button
           type="button"
           onClick={onDismiss}
-          className="shrink-0 rounded-md p-1 text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
-          aria-label={i18nService.t('close')}
+          disabled={installing}
+          className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+          aria-label={i18nService.t('appUpdateLater')}
         >
-          <XMarkIcon className="h-4 w-4" aria-hidden="true" />
+          <XMarkIcon className="h-3.5 w-3.5" aria-hidden="true" />
         </button>
       </div>
     </div>

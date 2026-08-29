@@ -11,6 +11,7 @@ import { useDispatch, useSelector } from 'react-redux';
 
 import { applyAppearanceConfig } from '@/app/appearance';
 import { defaultConfig, getProviderDisplayName } from '@/app/config';
+import BottomRightStatusStack from '@/app/shell/BottomRightStatusStack';
 import Sidebar from '@/app/shell/Sidebar';
 import Toast from '@/app/shell/Toast';
 import WindowTitleBar from '@/app/shell/window/WindowTitleBar';
@@ -720,17 +721,19 @@ const App: React.FC = () => {
 
   return (
     <div className="h-screen overflow-hidden flex flex-col bg-surface-raised">
-      <EngineStartupStatusBar />
+      <BottomRightStatusStack>
+        <EngineStartupStatusBar />
+        {updateToast && (
+          <AppUpdateToast
+            availableVersion={updateToast.state.availableVersion}
+            installing={updateToast.installing}
+            installError={updateToast.installError}
+            onInstall={() => void handleInstallAppUpdate()}
+            onDismiss={handleDismissAppUpdate}
+          />
+        )}
+      </BottomRightStatusStack>
       {toastMessage && <Toast message={toastMessage} onClose={() => setToastMessage(null)} />}
-      {updateToast && (
-        <AppUpdateToast
-          availableVersion={updateToast.state.availableVersion}
-          installing={updateToast.installing}
-          installError={updateToast.installError}
-          onInstall={() => void handleInstallAppUpdate()}
-          onDismiss={handleDismissAppUpdate}
-        />
-      )}
       <div className="flex flex-1 min-h-0 overflow-hidden">
         {showSettings ? (
           <div className="flex-1 min-w-0 p-1.5">

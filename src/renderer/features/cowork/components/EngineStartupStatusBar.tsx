@@ -56,7 +56,7 @@ const EngineStartupStatusBar: React.FC = () => {
   const showRestartButton = status.canRetry || status.phase === 'ready';
 
   return (
-    <div className="fixed bottom-4 right-4 z-50 max-w-[min(520px,calc(100vw-2rem))]">
+    <div className="pointer-events-auto max-w-full">
       <div
         role="status"
         aria-live="polite"
