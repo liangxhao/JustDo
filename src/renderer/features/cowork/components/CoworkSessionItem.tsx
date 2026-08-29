@@ -446,7 +446,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
                   <svg
                     viewBox="0 0 24 24"
                     fill="none"
-                    className="h-full w-full animate-spin motion-reduce:animate-none"
+                    className="h-full w-full animate-spin"
                     aria-hidden="true"
                   >
                     <circle

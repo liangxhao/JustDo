@@ -2898,18 +2898,12 @@ const Settings: React.FC<SettingsProps> = ({
                   <span className="inline-flex items-center gap-1.5" aria-live="polite">
                     {isSaving ? (
                       <>
-                        <ArrowPathIcon
-                          className="h-4 w-4 animate-spin motion-reduce:animate-none"
-                          aria-hidden="true"
-                        />
+                        <ArrowPathIcon className="h-4 w-4 animate-spin" aria-hidden="true" />
                         {i18nService.t('saving')}
                       </>
                     ) : saveSucceeded ? (
                       <>
-                        <CheckCircleIcon
-                          className="h-4 w-4 animate-scale-in motion-reduce:animate-none"
-                          aria-hidden="true"
-                        />
+                        <CheckCircleIcon className="h-4 w-4 animate-scale-in" aria-hidden="true" />
                         {i18nService.t('settingsSaved')}
                       </>
                     ) : (

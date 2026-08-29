@@ -35,6 +35,31 @@ afterEach(() => {
 });
 
 describe('SessionTotalTokenUsageModal', () => {
+  it('keeps aggregation feedback animated while discovering subagents', () => {
+    i18nService.setLanguage('zh', { persist: false });
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        cowork: {
+          listSubTaskDescendants: vi.fn().mockReturnValue(new Promise(() => undefined)),
+          getSubTaskDetails: vi.fn(),
+        },
+      },
+    });
+    vi.spyOn(coworkService, 'getSessionDetails').mockReturnValue(new Promise(() => undefined));
+
+    render(<SessionTotalTokenUsageModal sessionId="parent-1" onClose={vi.fn()} />);
+
+    const loadingStatus = screen.getByRole('status');
+    const progressbar = screen.getByRole('progressbar', { name: '总体 Token 查询进度' });
+    expect(loadingStatus.querySelector('.querying-spinner')).toBeTruthy();
+    expect(loadingStatus.querySelector('.querying-indicator-text')).toBeTruthy();
+    expect(loadingStatus.querySelectorAll('.querying-indicator-dot')).toHaveLength(3);
+    expect(
+      progressbar.firstElementChild?.classList.contains('session-token-progress-indeterminate'),
+    ).toBe(true);
+  });
+
   it('shows real per-session progress and aggregates the main session with all subagents', async () => {
     i18nService.setLanguage('zh', { persist: false });
     const firstDetails =

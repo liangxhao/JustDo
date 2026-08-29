@@ -637,12 +637,6 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .file-preview-shell {
-    animation: none;
-  }
-}
-
 .file-preview-markdown {
   --preview-code-bg: var(--justdo-surface-raised);
   --preview-code-header-bg: color-mix(

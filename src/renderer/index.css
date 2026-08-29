@@ -331,24 +331,6 @@ select::-ms-expand {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .querying-indicator-text,
-  .querying-indicator-dot,
-  .querying-indicator-stage {
-    animation: none;
-  }
-
-  .session-token-progress-indeterminate {
-    animation: none;
-  }
-
-  .querying-spinner {
-    animation: none;
-    transform: translateZ(0);
-    will-change: auto;
-  }
-}
-
 /* Streaming activity bar */
 .streaming-bar {
   position: relative;

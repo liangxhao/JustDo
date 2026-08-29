@@ -229,7 +229,7 @@ const InProgressBadge = () => (
     className="mr-1.5 inline-flex flex-shrink-0 items-center gap-2 whitespace-nowrap rounded-full border border-primary/20 bg-primary/5 px-2.5 py-1 text-xs font-medium text-primary/90 shadow-subtle"
   >
     <span className="relative flex h-2 w-2" aria-hidden="true">
-      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/30 motion-reduce:animate-none" />
+      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/30" />
       <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
     </span>
     {i18nService.t('coworkInProgress')}

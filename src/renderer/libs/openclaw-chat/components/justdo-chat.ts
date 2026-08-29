@@ -2280,21 +2280,6 @@ export class JustDoChatElement extends LitElement {
           flex-basis: 100%;
         }
       }
-      @media (prefers-reduced-motion: reduce) {
-        .process-summary__thinking-marker--running,
-        .process-summary__tool-status--running,
-        .execution-plan-update--live
-          .execution-plan-update__step--in_progress
-          .execution-plan-update__marker {
-          animation: none;
-        }
-        .new-messages-indicator {
-          transition: none;
-        }
-        .waiting-status__indicator {
-          animation: none;
-        }
-      }
     `,
   ];
 
@@ -3239,8 +3224,7 @@ export class JustDoChatElement extends LitElement {
     const targetTop = target.getBoundingClientRect().top;
     const nextScrollTop = Math.max(0, this.scrollTop + targetTop - hostTop - 16);
     this.currentMinimapKey = entry.key;
-    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
-    this.chatScrollController.navigateTo(nextScrollTop, reduceMotion ? 'auto' : 'smooth');
+    this.chatScrollController.navigateTo(nextScrollTop, 'smooth');
   }
 
   private readonly handleMinimapScroll = (): void => {

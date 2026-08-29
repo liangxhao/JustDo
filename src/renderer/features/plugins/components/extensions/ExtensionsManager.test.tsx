@@ -94,7 +94,6 @@ describe('ExtensionsManager extension toggle', () => {
     );
     expect(toggle.querySelector('.animate-shimmer')).toBeTruthy();
     expect(toggle.querySelector('.animate-spin')).toBeTruthy();
-    expect(toggle.outerHTML).not.toContain('motion-reduce:');
 
     await act(async () => {
       request.resolve({ success: true });

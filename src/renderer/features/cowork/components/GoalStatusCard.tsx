@@ -372,9 +372,7 @@ const GoalStatusCard: React.FC<GoalStatusCardProps> = ({
           <div
             className={`relative flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full ${tone.badge}`}
           >
-            {live && (
-              <span className="absolute inset-0 animate-ping rounded-full bg-primary/15 motion-reduce:animate-none" />
-            )}
+            {live && <span className="absolute inset-0 animate-ping rounded-full bg-primary/15" />}
             <span className="relative block">
               <GoalStatusIcon status={effectiveStatus} />
             </span>
@@ -402,7 +400,7 @@ const GoalStatusCard: React.FC<GoalStatusCardProps> = ({
           {goal && <GoalElapsed createdAt={goal.createdAt} />}
           {live ? (
             <span className="flex min-w-0 items-center gap-1.5 text-[10px] text-secondary">
-              <ArrowPathIcon className="h-3 w-3 flex-shrink-0 animate-spin text-primary motion-reduce:animate-none" />
+              <ArrowPathIcon className="h-3 w-3 flex-shrink-0 animate-spin text-primary" />
               <span className="truncate">
                 {retrying
                   ? i18nService.t('coworkGoalRetryingHint')
