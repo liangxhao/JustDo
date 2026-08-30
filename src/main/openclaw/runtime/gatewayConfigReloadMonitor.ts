@@ -62,6 +62,7 @@ const RELOAD_RULES: ReloadRule[] = [
 ];
 
 const GATEWAY_RESTART_COMPLETION_TIMEOUT_MS = 10 * 60_000;
+const GATEWAY_READY_LINE_PATTERN = /^(?:\S+\s+)?\[gateway\] ready\s*$/;
 
 const matchesPrefix = (configPath: string, prefix: string): boolean =>
   configPath === prefix || configPath.startsWith(`${prefix}.`);
@@ -100,11 +101,23 @@ const parseCompletionPaths = (line: string): string[] => {
 
 export class GatewayConfigReloadMonitor {
   private generation = 0;
+  private gatewayLifecycleGeneration = 0;
+  private lastGatewayReadyGeneration = 0;
+  private lastGatewayExitGeneration = 0;
   private readonly records: ReloadRecord[] = [];
   private readonly listeners = new Set<() => void>();
 
   getGeneration(): number {
     return this.generation;
+  }
+
+  getGatewayLifecycleGeneration(): number {
+    return this.gatewayLifecycleGeneration;
+  }
+
+  observeGatewayExit(): void {
+    this.lastGatewayExitGeneration = ++this.gatewayLifecycleGeneration;
+    this.notify();
   }
 
   observeLine(line: string): void {
@@ -145,17 +158,14 @@ export class GatewayConfigReloadMonitor {
       return;
     }
 
-    if (line.includes('[gateway] ready')) {
-      let completed = false;
+    if (GATEWAY_READY_LINE_PATTERN.test(line)) {
+      this.lastGatewayReadyGeneration = ++this.gatewayLifecycleGeneration;
       for (const record of this.records) {
         if (!record.outcome && record.restartAccepted) {
           record.outcome = 'applied';
-          completed = true;
         }
       }
-      if (completed) {
-        this.notify();
-      }
+      this.notify();
       return;
     }
 
@@ -219,6 +229,44 @@ export class GatewayConfigReloadMonitor {
         }
       };
       armTimer(timeoutMs);
+      this.listeners.add(onChange);
+      onChange();
+    });
+  }
+
+  waitForGatewayReadyAfter(generation: number, timeoutMs = 30_000): Promise<boolean> {
+    const resolveCurrent = (): boolean | null => {
+      const latestGeneration = Math.max(
+        this.lastGatewayReadyGeneration,
+        this.lastGatewayExitGeneration,
+      );
+      if (latestGeneration <= generation) return null;
+      if (this.lastGatewayReadyGeneration === latestGeneration) return true;
+      if (this.lastGatewayExitGeneration === latestGeneration) return false;
+      return null;
+    };
+
+    const current = resolveCurrent();
+    if (current !== null) {
+      return Promise.resolve(current);
+    }
+
+    return new Promise(resolve => {
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout>;
+      const finish = (result: boolean) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        this.listeners.delete(onChange);
+        resolve(result);
+      };
+      const onChange = () => {
+        const result = resolveCurrent();
+        if (result !== null) finish(result);
+      };
+      timer = setTimeout(() => finish(false), timeoutMs);
+      timer.unref?.();
       this.listeners.add(onChange);
       onChange();
     });

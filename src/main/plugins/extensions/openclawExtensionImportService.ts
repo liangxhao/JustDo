@@ -37,7 +37,9 @@ const isPathWithinDirectory = (rootDirectory: string, candidatePath: string): bo
   const relativePath = path.relative(path.resolve(rootDirectory), path.resolve(candidatePath));
   return (
     relativePath === '' ||
-    (!relativePath.startsWith(`..${path.sep}`) && relativePath !== '..' && !path.isAbsolute(relativePath))
+    (!relativePath.startsWith(`..${path.sep}`) &&
+      relativePath !== '..' &&
+      !path.isAbsolute(relativePath))
   );
 };
 
@@ -673,9 +675,7 @@ export class OpenClawExtensionImportService {
     extensionId: string,
     values: Record<string, string>,
   ): Promise<{ success: boolean; error?: string }> {
-    return this.runMutationExclusive(() =>
-      this.updateConfigurationExclusive(extensionId, values),
-    );
+    return this.runMutationExclusive(() => this.updateConfigurationExclusive(extensionId, values));
   }
 
   private async updateConfigurationExclusive(
@@ -724,7 +724,7 @@ export class OpenClawExtensionImportService {
       fs.renameSync(temporaryPath, configPath);
 
       if (wasRuntimeActive) {
-        const status = await manager.restartGateway();
+        const status = await manager.restartGateway({ afterCurrent: true });
         if (status.phase !== 'running') {
           return {
             success: false,
@@ -809,7 +809,7 @@ export class OpenClawExtensionImportService {
       }
 
       if (wasRuntimeActive && !command.runtimeRestarted) {
-        const status = await manager.restartGateway();
+        const status = await manager.restartGateway({ afterCurrent: true });
         if (status.phase !== 'running') {
           return {
             success: false,
@@ -893,7 +893,7 @@ export class OpenClawExtensionImportService {
       }
 
       if (wasRuntimeActive) {
-        const status = await manager.restartGateway();
+        const status = await manager.restartGateway({ afterCurrent: true });
         if (status.phase !== 'running') {
           return {
             success: false,
@@ -1004,7 +1004,9 @@ export class OpenClawExtensionImportService {
       const installedPath = extensionId
         ? findInstalledExtensionPath(extensionsRoot, extensionId)
         : undefined;
-      const defaultTargetPath = extensionId ? path.join(extensionsRoot, extensionId) : extensionsRoot;
+      const defaultTargetPath = extensionId
+        ? path.join(extensionsRoot, extensionId)
+        : extensionsRoot;
       const targetPath =
         installedPath && isPathWithinDirectory(extensionsRoot, installedPath)
           ? installedPath
@@ -1062,7 +1064,7 @@ export class OpenClawExtensionImportService {
 
       if (wasRuntimeActive && !command.runtimeRestarted) {
         reportProgress('restarting_gateway', 90);
-        const status = await manager.restartGateway();
+        const status = await manager.restartGateway({ afterCurrent: true });
         if (status.phase !== 'running') {
           return {
             success: false,

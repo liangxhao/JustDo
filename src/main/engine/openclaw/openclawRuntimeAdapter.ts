@@ -3286,8 +3286,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   async reconnectGateway(): Promise<void> {
     this.stopGatewayClient();
-    await this.ensureGatewayClientReady();
-    void this.discoverChannelSessions();
+    try {
+      await this.ensureGatewayClientReady();
+      this.gatewayReconnectAttempt = 0;
+      void this.discoverChannelSessions();
+    } catch (error) {
+      this.scheduleGatewayReconnect();
+      throw error;
+    }
   }
 
   disconnectGatewayClient(): void {
@@ -3793,6 +3799,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   private scheduleGatewayReconnect(): void {
+    if (this.gatewayReconnectTimer) return;
     const delays = GATEWAY_RECONNECT_DELAYS;
     const delay = delays[Math.min(this.gatewayReconnectAttempt, delays.length - 1)];
     this.gatewayReconnectAttempt++;

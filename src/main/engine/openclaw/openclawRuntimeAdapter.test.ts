@@ -1658,6 +1658,65 @@ test('an intentionally stopped gateway client cannot reclaim the active connecti
   expect(stop).toHaveBeenCalledTimes(2);
 });
 
+test('reconnectGateway preserves the retry loop when the immediate handshake fails', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const reconnectError = new Error('handshake failed');
+  const internals = adapter as unknown as {
+    stopGatewayClient: () => void;
+    ensureGatewayClientReady: () => Promise<void>;
+    scheduleGatewayReconnect: () => void;
+  };
+  internals.stopGatewayClient = vi.fn();
+  internals.ensureGatewayClientReady = vi.fn().mockRejectedValue(reconnectError);
+  internals.scheduleGatewayReconnect = vi.fn();
+
+  await expect(adapter.reconnectGateway()).rejects.toBe(reconnectError);
+
+  expect(internals.stopGatewayClient).toHaveBeenCalledOnce();
+  expect(internals.scheduleGatewayReconnect).toHaveBeenCalledOnce();
+});
+
+test('reconnectGateway resets reconnect backoff after a successful handshake', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const internals = adapter as unknown as {
+    gatewayReconnectAttempt: number;
+    stopGatewayClient: () => void;
+    ensureGatewayClientReady: () => Promise<void>;
+  };
+  internals.gatewayReconnectAttempt = 4;
+  internals.stopGatewayClient = vi.fn();
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+
+  await adapter.reconnectGateway();
+
+  expect(internals.gatewayReconnectAttempt).toBe(0);
+});
+
+test('Gateway reconnect scheduling keeps only one cancellable timer', () => {
+  vi.useFakeTimers();
+  try {
+    const { store } = createEmptyStore();
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const internals = adapter as unknown as {
+      gatewayReconnectAttempt: number;
+      scheduleGatewayReconnect: () => void;
+    };
+
+    internals.scheduleGatewayReconnect();
+    internals.scheduleGatewayReconnect();
+
+    expect(internals.gatewayReconnectAttempt).toBe(1);
+    expect(vi.getTimerCount()).toBe(1);
+
+    adapter.disconnectGatewayClient();
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 test('getSessionKeysForSession prefers channel keys before managed fallback', () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});

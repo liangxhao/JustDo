@@ -214,7 +214,9 @@ npm test
 
 ## 19. Manager 并发约束
 
-Gateway start/restart/stop 不是三个互不相关的按钮。Manager 需要共享启动 promise、shutdown flag、child identity 和 readiness wait：并发 ensure 复用同一启动；restart 先使旧 client 失效；shutdown 让 readiness/retry loop 尽快退出；stop 有超时兜底，不能永久阻塞应用退出。
+Gateway start/restart/stop 不是三个互不相关的按钮。Manager 需要共享启动与完整重启 promise、shutdown flag、child identity 和 readiness wait：并发 ensure 复用同一启动；无新状态的并发 hard restart 复用同一 stop/start，避免重复替换进程；若当前 start/restart 的启动快照之后又发生 secrets、代理或扩展等启动输入变化，则排队执行一次 trailing restart，确保新输入不会被 single-flight 吞掉。shutdown 让 readiness/retry loop 尽快退出；stop 有超时兜底，不能永久阻塞应用退出。
+
+设置页的手动 restart 优先请求 Gateway 的 `gateway.restart.request`，并以当前受管进程日志中的下一次 `[gateway] ready` 作为完成边界。受管 Gateway 设置 `OPENCLAW_NO_RESPAWN=1`，因此该请求复用当前 Node 进程和已加载模块，避免重新解析 runtime bundle。若 RPC 不可用、进程退出、ready 超时或 Gateway 因 cooldown 给出较长延迟，Main 回退到有序 stop/start。端口属于 launch argument；配置端口与当前监听端口不同时必须直接走完整重启。Secrets 等启动环境有尚未应用的变更时同样必须完整重启，避免进程内 restart 继续使用旧环境。
 
 `phase=running` 只表示受管进程/readiness 达标，不保证每个 adapter consumer 的 WebSocket 仍健康。代理重启路径因此会显式 disconnect 旧 client、restart Gateway、再让 Cowork service connect；最后一步失败时停止 Gateway，避免留下假健康状态。
 

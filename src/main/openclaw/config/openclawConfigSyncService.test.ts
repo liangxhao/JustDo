@@ -156,6 +156,10 @@ describe('OpenClawConfigSyncService', () => {
     const stopGateway = vi.fn(async () => {
       phase = 'ready';
     });
+    const restartGateway = vi.fn(async () => {
+      await stopGateway();
+      return startGateway();
+    });
     const engineManager = {
       getStatus,
       getGatewayConfigReloadGeneration: vi.fn(() => 7),
@@ -166,6 +170,7 @@ describe('OpenClawConfigSyncService', () => {
       getDesiredVersion: vi.fn(() => 'v2026.6.11'),
       startGateway,
       stopGateway,
+      restartGateway,
       setExternalError: vi.fn((message: string) => {
         phase = 'error';
         return { ...runningStatus, phase, message };

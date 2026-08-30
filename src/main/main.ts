@@ -878,6 +878,9 @@ if (!gotTheLock) {
 
   registerOpenClawEngineHandlers({
     getManager: getOpenClawEngineManager,
+    requestGateway: <T>(method: string, params?: unknown) =>
+      getCoworkEngineService().requestGateway<T>(method, params),
+    reconnectGatewayClient: () => getCoworkEngineService().reconnectGatewayClient(),
   });
 
   registerMcpHandlers({
@@ -1260,13 +1263,15 @@ if (!gotTheLock) {
       if (currentProxyPreference !== previousProxyPreference) {
         void applySystemProxyPreference(newConfig).then(isLatest => {
           if (!isLatest) return;
-          if (getOpenClawEngineManager().getStatus().phase === 'running') {
+          const manager = getOpenClawEngineManager();
+          const phase = manager.getStatus().phase;
+          if (phase === 'running' || phase === 'starting') {
             // Dispose the adapter's client before restarting the Gateway. Otherwise the
             // old socket closes asynchronously and leaves gatewayReadyPromise rejected,
             // so requests made during the restart can observe a permanently stale client.
             getOpenClawRuntimeAdapter()?.disconnectGatewayClient();
-            void getOpenClawEngineManager()
-              .restartGateway()
+            void manager
+              .restartGateway({ afterCurrent: true })
               .then(status => {
                 if (status.phase !== 'running') return;
                 return getCoworkEngineService().connectGatewayClient();

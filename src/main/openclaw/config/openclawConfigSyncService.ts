@@ -562,8 +562,7 @@ export class OpenClawConfigSyncService {
     );
     this.deps.disconnectGatewayClient();
 
-    await engineManager.stopGateway();
-    const restarted = await engineManager.startGateway();
+    const restarted = await engineManager.restartGateway({ afterCurrent: true });
     if (restarted.phase !== 'running') {
       return {
         success: false,
@@ -649,8 +648,7 @@ export class OpenClawConfigSyncService {
       `[OpenClaw] executeDeferredGatewayRestart: performing deferred restart (reason: ${reason})`,
     );
     this.deps.disconnectGatewayClient();
-    await engineManager.stopGateway();
-    const status = await engineManager.startGateway();
+    const status = await engineManager.restartGateway({ afterCurrent: true });
     if (status.phase !== 'running') {
       console.error(
         `[OpenClaw] executeDeferredGatewayRestart: gateway restart failed (reason: ${reason}): ${status.message || status.phase}`,

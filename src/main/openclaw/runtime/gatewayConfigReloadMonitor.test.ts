@@ -125,6 +125,69 @@ describe('GatewayConfigReloadMonitor', () => {
     await expect(result).resolves.toBe(true);
   });
 
+  it('tracks Gateway ready independently from config reload records', async () => {
+    const monitor = new GatewayConfigReloadMonitor();
+    const generation = monitor.getGatewayLifecycleGeneration();
+    const result = monitor.waitForGatewayReadyAfter(generation);
+
+    monitor.observeLine('2026-08-30T14:55:15.430+08:00 [gateway] ready');
+
+    await expect(result).resolves.toBe(true);
+    expect(monitor.getGatewayLifecycleGeneration()).toBeGreaterThan(generation);
+  });
+
+  it('ignores Gateway ready text embedded in unrelated log content', async () => {
+    vi.useFakeTimers();
+    const monitor = new GatewayConfigReloadMonitor();
+    const result = monitor.waitForGatewayReadyAfter(
+      monitor.getGatewayLifecycleGeneration(),
+      100,
+    );
+
+    monitor.observeLine('[ws] event preview="[gateway] ready"');
+    await vi.advanceTimersByTimeAsync(100);
+
+    await expect(result).resolves.toBe(false);
+  });
+
+  it('fails a Gateway ready waiter immediately when the managed process exits', async () => {
+    const monitor = new GatewayConfigReloadMonitor();
+    const generation = monitor.getGatewayLifecycleGeneration();
+    const result = monitor.waitForGatewayReadyAfter(generation);
+
+    monitor.observeGatewayExit();
+
+    await expect(result).resolves.toBe(false);
+  });
+
+  it('uses the latest lifecycle event when ready and exit occur before waiting', async () => {
+    const monitor = new GatewayConfigReloadMonitor();
+    const beforeExit = monitor.getGatewayLifecycleGeneration();
+    monitor.observeLine('[gateway] ready');
+    monitor.observeGatewayExit();
+
+    await expect(monitor.waitForGatewayReadyAfter(beforeExit)).resolves.toBe(false);
+
+    const beforeReady = monitor.getGatewayLifecycleGeneration();
+    monitor.observeGatewayExit();
+    monitor.observeLine('[gateway] ready');
+
+    await expect(monitor.waitForGatewayReadyAfter(beforeReady)).resolves.toBe(true);
+  });
+
+  it('times out while waiting for a new Gateway ready lifecycle', async () => {
+    vi.useFakeTimers();
+    const monitor = new GatewayConfigReloadMonitor();
+    const result = monitor.waitForGatewayReadyAfter(
+      monitor.getGatewayLifecycleGeneration(),
+      100,
+    );
+
+    await vi.advanceTimersByTimeAsync(100);
+
+    await expect(result).resolves.toBe(false);
+  });
+
   it('falls back when hot-only mode ignores a restart-required change', async () => {
     const monitor = new GatewayConfigReloadMonitor();
     const generation = monitor.getGeneration();

@@ -14,7 +14,128 @@ import type {
 
 interface OpenClawEngineHandlerDependencies {
   getManager: () => OpenClawEngineManager;
+  requestGateway: <T>(method: string, params?: unknown) => Promise<T>;
+  reconnectGatewayClient: () => Promise<void>;
 }
+
+const GATEWAY_RESTART_REQUEST_METHOD = 'gateway.restart.request';
+const GATEWAY_IN_PROCESS_RESTART_TIMEOUT_MS = 30_000;
+const GATEWAY_IN_PROCESS_RESTART_MAX_DELAY_MS = 1_000;
+
+const GatewayRestartRequestStatus = {
+  Scheduled: 'scheduled',
+  Deferred: 'deferred',
+  Coalesced: 'coalesced',
+} as const;
+
+type GatewayRestartRequestResult = {
+  ok?: boolean;
+  status?: (typeof GatewayRestartRequestStatus)[keyof typeof GatewayRestartRequestStatus];
+  restart?: {
+    delayMs?: number;
+  };
+};
+
+const isAcceptedGatewayRestartRequest = (result: GatewayRestartRequestResult): boolean =>
+  result.ok === true &&
+  (result.status === GatewayRestartRequestStatus.Scheduled ||
+    result.status === GatewayRestartRequestStatus.Deferred ||
+    result.status === GatewayRestartRequestStatus.Coalesced);
+
+const reconnectGatewayClientAfterRestart = (
+  reconnectGatewayClient: () => Promise<void>,
+): void => {
+  try {
+    void reconnectGatewayClient().catch(error => {
+      // The adapter keeps its normal reconnect loop. A transient bridge failure
+      // must not turn a healthy Gateway restart into a false engine failure.
+      console.warn(
+        `[OpenClawEngine] Gateway restarted, but the runtime adapter did not reconnect immediately: ${String(error)}`,
+      );
+    });
+  } catch (error) {
+    console.warn(
+      `[OpenClawEngine] Gateway restarted, but the runtime adapter did not reconnect immediately: ${String(error)}`,
+    );
+  }
+};
+
+export const restartOpenClawGatewayForUser = async ({
+  getManager,
+  requestGateway,
+  reconnectGatewayClient,
+}: OpenClawEngineHandlerDependencies): Promise<OpenClawEngineStatus> => {
+  const manager = getManager();
+  const status = manager.getStatus();
+  const requiresLaunchArgumentRefresh =
+    status.phase === 'running' &&
+    manager.getGatewayPort() !== manager.getConfiguredGatewayPort();
+  const requiresLaunchEnvironmentRefresh =
+    status.phase === 'running' && manager.hasPendingGatewayLaunchEnvironmentChanges();
+
+  if (
+    status.phase === 'running' &&
+    !requiresLaunchArgumentRefresh &&
+    !requiresLaunchEnvironmentRefresh
+  ) {
+    const lifecycleGeneration = manager.getGatewayLifecycleGeneration();
+    try {
+      const result = await requestGateway<GatewayRestartRequestResult>(
+        GATEWAY_RESTART_REQUEST_METHOD,
+        {
+          reason: 'justdo-manual-restart',
+          // Preserve the existing manual-restart behavior: the explicit user
+          // action is not held for the automatic workload deferral window.
+          skipDeferral: true,
+        },
+      );
+      if (!isAcceptedGatewayRestartRequest(result)) {
+        throw new Error('Gateway rejected the in-process restart request.');
+      }
+      const scheduledDelayMs = result.restart?.delayMs;
+      if (
+        typeof scheduledDelayMs === 'number' &&
+        scheduledDelayMs > GATEWAY_IN_PROCESS_RESTART_MAX_DELAY_MS
+      ) {
+        throw new Error(
+          `Gateway delayed the in-process restart by ${scheduledDelayMs}ms.`,
+        );
+      }
+
+      const ready = await manager.waitForGatewayReadyAfter(
+        lifecycleGeneration,
+        GATEWAY_IN_PROCESS_RESTART_TIMEOUT_MS,
+      );
+      if (!ready || manager.getStatus().phase !== 'running') {
+        throw new Error('Gateway did not become ready after the in-process restart.');
+      }
+
+      console.log('[OpenClawEngine] Gateway in-process restart completed.');
+      reconnectGatewayClientAfterRestart(reconnectGatewayClient);
+      return manager.getStatus();
+    } catch (error) {
+      console.warn(
+        `[OpenClawEngine] In-process Gateway restart unavailable; falling back to a full restart: ${String(error)}`,
+      );
+    }
+  } else if (requiresLaunchArgumentRefresh) {
+    console.log(
+      '[OpenClawEngine] Gateway port changed; using a full restart to refresh launch arguments.',
+    );
+  } else if (requiresLaunchEnvironmentRefresh) {
+    console.log(
+      '[OpenClawEngine] Gateway launch environment changed; using a full restart to apply it.',
+    );
+  }
+
+  const restarted = await manager.restartGateway({
+    afterCurrent: status.phase === 'starting',
+  });
+  if (restarted.phase === 'running') {
+    reconnectGatewayClientAfterRestart(reconnectGatewayClient);
+  }
+  return restarted;
+};
 
 const isAvailable = (status: OpenClawEngineStatus): boolean =>
   status.phase === 'running' || status.phase === 'ready';
@@ -213,6 +334,8 @@ const launchTerminal = (options: {
 
 export const registerOpenClawEngineHandlers = ({
   getManager,
+  requestGateway,
+  reconnectGatewayClient,
 }: OpenClawEngineHandlerDependencies): void => {
   let restartGatewayPromise: Promise<OpenClawEngineStatus> | null = null;
 
@@ -262,13 +385,16 @@ export const registerOpenClawEngineHandlers = ({
   });
 
   ipcMain.handle('openclaw:engine:restartGateway', async () => {
-    if (restartGatewayPromise) {
-      const status = await restartGatewayPromise;
-      return { success: isAvailable(status), status };
-    }
+    const restart =
+      restartGatewayPromise ??
+      restartOpenClawGatewayForUser({
+        getManager,
+        requestGateway,
+        reconnectGatewayClient,
+      });
+    restartGatewayPromise = restart;
     try {
-      restartGatewayPromise = getManager().restartGateway();
-      const status = await restartGatewayPromise;
+      const status = await restart;
       return { success: isAvailable(status), status };
     } catch (error) {
       return {
@@ -277,7 +403,9 @@ export const registerOpenClawEngineHandlers = ({
         error: error instanceof Error ? error.message : 'Failed to restart OpenClaw gateway',
       };
     } finally {
-      restartGatewayPromise = null;
+      if (restartGatewayPromise === restart) {
+        restartGatewayPromise = null;
+      }
     }
   });
 

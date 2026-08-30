@@ -114,6 +114,10 @@ export type OpenClawEngineManagerOptions = {
   buildNetworkEnvironment?: (baseEnv: NodeJS.ProcessEnv) => NodeJS.ProcessEnv;
 };
 
+export type OpenClawGatewayRestartOptions = {
+  afterCurrent?: boolean;
+};
+
 type RuntimeMetadata = {
   root: string | null;
   version: string | null;
@@ -213,8 +217,11 @@ export class OpenClawEngineManager extends EventEmitter {
   private readonly appStartedAtMs = APP_PROCESS_STARTED_AT_MS;
   private gatewayPort: number | null = null;
   private startGatewayPromise: Promise<OpenClawEngineStatus> | null = null;
+  private restartGatewayPromise: Promise<OpenClawEngineStatus> | null = null;
   private gatewayProcessGeneration = 0;
   private secretEnvVars: Record<string, string> = {};
+  private gatewayLaunchEnvironmentGeneration = 0;
+  private launchedGatewayEnvironmentGeneration = -1;
   private gatewayPortListener: ((port: number | null) => void) | null = null;
   private readonly gatewayConfigReloadMonitor = new GatewayConfigReloadMonitor();
   private readonly buildNetworkEnvironment: (
@@ -278,12 +285,27 @@ export class OpenClawEngineManager extends EventEmitter {
    * These contain the plaintext values for `${VAR}` placeholders in openclaw.json.
    */
   setSecretEnvVars(vars: Record<string, string>): void {
-    this.secretEnvVars = vars;
+    const currentKeys = Object.keys(this.secretEnvVars);
+    const nextKeys = Object.keys(vars);
+    const unchanged =
+      currentKeys.length === nextKeys.length &&
+      nextKeys.every(key => this.secretEnvVars[key] === vars[key]);
+    if (unchanged) return;
+
+    this.secretEnvVars = { ...vars };
+    this.gatewayLaunchEnvironmentGeneration += 1;
   }
 
   /** Return the current secret env vars snapshot (for change detection). */
   getSecretEnvVars(): Record<string, string> {
-    return this.secretEnvVars;
+    return { ...this.secretEnvVars };
+  }
+
+  hasPendingGatewayLaunchEnvironmentChanges(): boolean {
+    return (
+      this.gatewayLaunchEnvironmentGeneration !==
+      this.launchedGatewayEnvironmentGeneration
+    );
   }
 
   /**
@@ -375,6 +397,14 @@ export class OpenClawEngineManager extends EventEmitter {
 
   waitForGatewayConfigReload(generation: number, timeoutMs?: number): Promise<boolean> {
     return this.gatewayConfigReloadMonitor.waitForReloadAfter(generation, timeoutMs);
+  }
+
+  getGatewayLifecycleGeneration(): number {
+    return this.gatewayConfigReloadMonitor.getGatewayLifecycleGeneration();
+  }
+
+  waitForGatewayReadyAfter(generation: number, timeoutMs?: number): Promise<boolean> {
+    return this.gatewayConfigReloadMonitor.waitForGatewayReadyAfter(generation, timeoutMs);
   }
 
   getGatewayProcessGeneration(): number {
@@ -682,6 +712,7 @@ export class OpenClawEngineManager extends EventEmitter {
 
     this.beginNetworkGeneration();
     const cliEnvironment = await this.buildCliEnvironment();
+    const launchEnvironmentGeneration = this.gatewayLaunchEnvironmentGeneration;
     console.log(`[OpenClaw] buildCliEnvironment done (${elapsed()})`);
     const openclawEntry = cliEnvironment.openclawEntry;
     console.log(
@@ -749,6 +780,7 @@ export class OpenClawEngineManager extends EventEmitter {
 
     this.gatewayProcess = child;
     this.gatewayProcessGeneration += 1;
+    this.launchedGatewayEnvironmentGeneration = launchEnvironmentGeneration;
     this.attachGatewayProcessLogs(child);
     this.attachGatewayExitHandlers(child);
 
@@ -825,7 +857,53 @@ export class OpenClawEngineManager extends EventEmitter {
     this.gatewayPortListener?.(null);
   }
 
-  async restartGateway(): Promise<OpenClawEngineStatus> {
+  async restartGateway(
+    options: OpenClawGatewayRestartOptions = {},
+  ): Promise<OpenClawEngineStatus> {
+    if (this.restartGatewayPromise) {
+      if (!options.afterCurrent) {
+        console.log(
+          '[OpenClaw] restartGateway: already in progress, reusing existing promise',
+        );
+        return this.restartGatewayPromise;
+      }
+      console.log(
+        '[OpenClaw] restartGateway: queuing one restart after the current operation',
+      );
+      const activeRestart = this.restartGatewayPromise;
+      const trailingRestart = activeRestart.then(
+        () => this.performGatewayRestart(),
+        () => this.performGatewayRestart(),
+      );
+      return this.trackGatewayRestart(trailingRestart);
+    }
+    if (options.afterCurrent && this.startGatewayPromise) {
+      console.log(
+        '[OpenClaw] restartGateway: queuing one restart after the current start',
+      );
+      const activeStart = this.startGatewayPromise;
+      const trailingRestart = activeStart.then(
+        () => this.performGatewayRestart(),
+        () => this.performGatewayRestart(),
+      );
+      return this.trackGatewayRestart(trailingRestart);
+    }
+    return this.trackGatewayRestart(this.performGatewayRestart());
+  }
+
+  private trackGatewayRestart(
+    operation: Promise<OpenClawEngineStatus>,
+  ): Promise<OpenClawEngineStatus> {
+    const tracked = operation.finally(() => {
+      if (this.restartGatewayPromise === tracked) {
+        this.restartGatewayPromise = null;
+      }
+    });
+    this.restartGatewayPromise = tracked;
+    return tracked;
+  }
+
+  private async performGatewayRestart(): Promise<OpenClawEngineStatus> {
     console.log('[OpenClaw] restartGateway: stopping existing gateway...');
     await this.stopGateway();
     // Reset restart counter on manual restart so user can always retry
@@ -1617,7 +1695,7 @@ export class OpenClawEngineManager extends EventEmitter {
     const emitLines = (text: string, stream: 'stdout' | 'stderr') => {
       for (const line of text.split(/\r?\n/)) {
         if (!line) continue;
-        this.gatewayConfigReloadMonitor.observeLine(line);
+        this.observeGatewayProcessLine(child, line);
         appendLog(`${line}\n`, stream);
         const renderedLine = OpenClawEngineManager.rewriteUtcTimestamps(line);
         if (stream === 'stdout') {
@@ -1676,6 +1754,7 @@ export class OpenClawEngineManager extends EventEmitter {
       // follows and handles cleanup. Deleting here would cause 'exit' to miss
       // the expected-exit guard, triggering a spurious restart.
       if (this.expectedGatewayExits.has(child)) return;
+      if (this.gatewayProcess !== child) return;
       if (this.shutdownRequested) return;
       this.setStatus({
         phase: 'error',
@@ -1687,13 +1766,16 @@ export class OpenClawEngineManager extends EventEmitter {
 
     const onExit: GatewayExitListener = (code, signal) => {
       console.log(`[OpenClaw] gateway process exited with code=${code}, signal=${signal ?? 'null'}`);
-      if (this.gatewayProcess === child) {
+      const isCurrentProcess = this.gatewayProcess === child;
+      if (isCurrentProcess) {
+        this.gatewayConfigReloadMonitor.observeGatewayExit();
         this.gatewayProcess = null;
       }
       if (this.expectedGatewayExits.has(child)) {
         this.expectedGatewayExits.delete(child);
         return;
       }
+      if (!isCurrentProcess) return;
       if (this.shutdownRequested) return;
 
       this.setStatus({
@@ -1705,6 +1787,11 @@ export class OpenClawEngineManager extends EventEmitter {
       this.scheduleGatewayRestart();
     };
     (child as ChildProcess).once('exit', onExit);
+  }
+
+  private observeGatewayProcessLine(child: GatewayProcess, line: string): void {
+    if (this.gatewayProcess !== child) return;
+    this.gatewayConfigReloadMonitor.observeLine(line);
   }
 
   private scheduleGatewayRestart(): void {

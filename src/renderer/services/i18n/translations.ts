@@ -533,7 +533,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     openclawGatewayPortSaved: 'AI 引擎端口已保存。',
     openclawGatewayPortSavedRestartRequired: 'AI 引擎端口已保存，重启 AI 引擎后生效。',
     openclawGatewayPortRestartRequired: 'AI 引擎仍在使用原端口，请重新启动以应用新端口。',
-    openclawGatewayRestartHint: '停止并重新启动本地 AI 引擎',
+    openclawGatewayRestartHint: '快速重新加载本地 AI 引擎；启动配置变更或失败时执行完整重启',
     openclawGatewayRestarting: '正在重启...',
     openclawGatewayRestarted: 'AI 引擎已重新启动',
     openclawGatewayRestartFailed: 'AI 引擎重启失败',
@@ -1854,7 +1854,8 @@ export const translations: Record<LanguageType, Record<string, string>> = {
       'AI engine port saved. Restart the AI engine to apply it.',
     openclawGatewayPortRestartRequired:
       'The AI engine is still using the previous port. Restart it to apply the new port.',
-    openclawGatewayRestartHint: 'Stop and restart the local AI engine',
+    openclawGatewayRestartHint:
+      'Reload the local AI engine in place; launch configuration changes or failures use a full restart',
     openclawGatewayRestarting: 'Restarting...',
     openclawGatewayRestarted: 'AI engine restarted',
     openclawGatewayRestartFailed: 'Failed to restart the AI engine',
