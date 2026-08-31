@@ -540,6 +540,10 @@ export class CoworkService {
     void this.refreshSessionRuntimeActivity(sessionId, {
       includeSubagents: true,
       forceRefresh: true,
+      // A truncated first page can prove that the main run ended, but cannot
+      // prove that no descendant is still active. Terminal reconciliation must
+      // cover the complete parent/child graph before closing the open receipt.
+      fullScan: true,
     })
       .catch((): SessionRuntimeStatus => ({
         revision: 0,

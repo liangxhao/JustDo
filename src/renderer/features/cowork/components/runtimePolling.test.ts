@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   resolveBackgroundRuntimeDiscoverySessionIds,
   resolveBackgroundRuntimeSessionIds,
+  shouldContinueFullRuntimeScan,
 } from './runtimePolling';
 
 describe('resolveBackgroundRuntimeSessionIds', () => {
@@ -35,5 +36,51 @@ describe('resolveBackgroundRuntimeSessionIds', () => {
       'idle-background',
       'running-background',
     ]);
+  });
+});
+
+describe('shouldContinueFullRuntimeScan', () => {
+  it('keeps scanning while the paginated runtime state is unknown', () => {
+    expect(
+      shouldContinueFullRuntimeScan({
+        known: false,
+        mainRunning: false,
+        subagentRunning: false,
+        running: false,
+      }),
+    ).toBe(true);
+  });
+
+  it('keeps scanning while an open run receipt awaits a second known-idle snapshot', () => {
+    expect(
+      shouldContinueFullRuntimeScan({
+        known: true,
+        mainRunning: false,
+        subagentRunning: false,
+        running: true,
+      }),
+    ).toBe(true);
+  });
+
+  it('returns to lightweight polling while Gateway reports active work', () => {
+    expect(
+      shouldContinueFullRuntimeScan({
+        known: true,
+        mainRunning: true,
+        subagentRunning: false,
+        running: true,
+      }),
+    ).toBe(false);
+  });
+
+  it('stops scanning after terminal state is confirmed', () => {
+    expect(
+      shouldContinueFullRuntimeScan({
+        known: true,
+        mainRunning: false,
+        subagentRunning: false,
+        running: false,
+      }),
+    ).toBe(false);
   });
 });

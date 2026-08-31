@@ -1,3 +1,5 @@
+import type { SessionRuntimeSnapshot } from '@shared/cowork/sessionRun';
+
 import type { CoworkSession } from '@/features/cowork/coworkTypes';
 
 type RuntimePollingSession = Pick<CoworkSession, 'id' | 'status'>;
@@ -23,3 +25,7 @@ export const resolveBackgroundRuntimeDiscoverySessionIds = (
   sessions
     .filter(session => session.id !== currentSessionId && !session.id.startsWith('temp-'))
     .map(session => session.id);
+
+export const shouldContinueFullRuntimeScan = (
+  status: Pick<SessionRuntimeSnapshot, 'known' | 'mainRunning' | 'subagentRunning' | 'running'>,
+): boolean => !status.known || (status.running && !status.mainRunning && !status.subagentRunning);

@@ -24,6 +24,7 @@ import JustDoChatWrapper, {
 import {
   resolveBackgroundRuntimeDiscoverySessionIds,
   resolveBackgroundRuntimeSessionIds,
+  shouldContinueFullRuntimeScan,
 } from '@/features/cowork/components/runtimePolling';
 import SubagentMenu, { type Subagent } from '@/features/cowork/components/SubagentMenu';
 import SubagentMessageDrawer from '@/features/cowork/components/SubagentMessageDrawer';
@@ -500,7 +501,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
           fullScan: requiresFullScan,
         })
         .then(status => {
-          if (status) requiresFullScan = !status.known;
+          if (status) requiresFullScan = shouldContinueFullRuntimeScan(status);
         })
         .finally(() => {
           refreshInFlight = false;
@@ -882,6 +883,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             void coworkService.refreshSessionRuntimeActivity(currentSession.id, {
               includeSubagents: true,
               forceRefresh: true,
+              fullScan: true,
             });
           }
           if (goalEdit) return;

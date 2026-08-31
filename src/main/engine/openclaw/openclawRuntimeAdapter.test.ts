@@ -2096,12 +2096,12 @@ test('does not require descendant coverage once a truncated snapshot proves the 
   expect(request).toHaveBeenCalledTimes(1);
 });
 
-test('requires complete descendant coverage before reporting a truncated parent idle', async () => {
+test('scans beyond an inferred 500-row boundary before reporting a parent idle', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
   adapter.rememberSessionKey('session-1', 'agent:main:justdo:session-1');
   const request = vi.fn(async (_method: string, params?: Record<string, unknown>) => {
-    if (params?.offset === 1) {
+    if (params?.offset === 500) {
       return {
         sessions: [
           {
@@ -2110,8 +2110,11 @@ test('requires complete descendant coverage before reporting a truncated parent 
             hasActiveRun: true,
             status: 'running',
           },
+          ...Array.from({ length: 18 }, (_, index) => ({
+            key: `agent:main:subagent:second-page-filler-${index}`,
+            status: 'completed',
+          })),
         ],
-        hasMore: false,
       };
     }
     return {
@@ -2121,8 +2124,11 @@ test('requires complete descendant coverage before reporting a truncated parent 
           hasActiveRun: false,
           status: 'completed',
         },
+        ...Array.from({ length: 499 }, (_, index) => ({
+          key: `agent:main:subagent:first-page-filler-${index}`,
+          status: 'completed',
+        })),
       ],
-      hasMore: true,
     };
   });
   (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
@@ -2144,7 +2150,7 @@ test('requires complete descendant coverage before reporting a truncated parent 
     subagentRunning: true,
     running: true,
   });
-  expect(request).toHaveBeenCalledWith('sessions.list', { limit: 500, offset: 1 });
+  expect(request).toHaveBeenCalledWith('sessions.list', { limit: 500, offset: 500 });
 });
 
 test('sessions.changed invalidates the cached runtime snapshot', async () => {

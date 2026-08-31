@@ -116,7 +116,9 @@ export const registerCoworkSessionHandlers = ({
     }
 
     if (!raw.known) {
-      idleConfirmations.delete(sessionId);
+      // Unknown is absence of evidence, not evidence that the previous known-idle
+      // observation became invalid. A later active snapshot or a new run clears
+      // the confirmation; preserving it lets paginated discovery converge.
       return {
         ...raw,
         running: timing?.state === 'running',
@@ -179,6 +181,7 @@ export const registerCoworkSessionHandlers = ({
         const raw = await getCoworkEngineRouter().getSessionRuntimeStatus(input.sessionId, {
           includeSubagents: true,
           forceRefresh: true,
+          fullScan: true,
         });
         if (!raw.known) {
           return {
@@ -252,6 +255,7 @@ export const registerCoworkSessionHandlers = ({
         const raw = await getCoworkEngineRouter().getSessionRuntimeStatus(input.sessionId, {
           includeSubagents: true,
           forceRefresh: true,
+          fullScan: true,
         });
         if (!raw.known || raw.running) {
           return {

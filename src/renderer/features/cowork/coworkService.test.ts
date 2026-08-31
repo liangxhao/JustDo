@@ -529,6 +529,7 @@ describe('cowork runtime activity reconciliation', () => {
     expect(getSessionRuntimeStatus).toHaveBeenLastCalledWith(sessionId, {
       includeSubagents: true,
       forceRefresh: true,
+      fullScan: true,
     });
 
     await vi.advanceTimersByTimeAsync(750);

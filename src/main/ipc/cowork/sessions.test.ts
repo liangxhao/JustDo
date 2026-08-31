@@ -177,6 +177,146 @@ test('freezes the persisted timer on the same second confirmed-idle snapshot', a
   expect(finishSessionRun).toHaveBeenCalledOnce();
 });
 
+test('preserves a known-idle confirmation across a truncated unknown snapshot', async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(10_000);
+  const runningTiming = {
+    id: 'timing-paginated',
+    sessionId: 'session-1',
+    clientTurnId: 'run-paginated',
+    rootRunId: 'run-paginated',
+    startedAt: 1_000,
+    acceptedAt: 1_100,
+    state: 'running' as const,
+  };
+  const finishSessionRun = vi.fn((_id, _state, endedAt: number) => ({
+    ...runningTiming,
+    state: 'completed' as const,
+    endedAt,
+  }));
+  const store = {
+    getLatestSessionRun: vi.fn().mockReturnValue(runningTiming),
+    getSession: vi.fn().mockReturnValue({ status: 'idle' }),
+    finishSessionRun,
+  } as unknown as CoworkStore;
+  const getSessionRuntimeStatus = vi
+    .fn()
+    .mockResolvedValueOnce({
+      known: true,
+      mainRunning: false,
+      subagentRunning: false,
+      running: false,
+    })
+    .mockResolvedValueOnce({
+      known: false,
+      mainRunning: false,
+      subagentRunning: false,
+      running: false,
+    })
+    .mockResolvedValueOnce({
+      known: true,
+      mainRunning: false,
+      subagentRunning: false,
+      running: false,
+    });
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => store,
+    getCoworkEngineRouter: () => ({ getSessionRuntimeStatus }) as unknown as CoworkEngineRouter,
+    setSessionPermissionMode: vi.fn(),
+  });
+  const handler = mocks.handle.mock.calls.find(
+    ([channel]) => channel === 'cowork:session:runtimeStatus',
+  )?.[1] as IpcHandler;
+
+  await expect(handler({}, 'session-1')).resolves.toMatchObject({
+    success: true,
+    known: true,
+    running: true,
+  });
+  await vi.advanceTimersByTimeAsync(750);
+  await expect(handler({}, 'session-1')).resolves.toMatchObject({
+    success: true,
+    known: false,
+    running: true,
+  });
+  await expect(handler({}, 'session-1')).resolves.toMatchObject({
+    success: true,
+    known: true,
+    running: false,
+    timing: { state: 'completed' },
+  });
+  expect(finishSessionRun).toHaveBeenCalledOnce();
+});
+
+test('resets idle confirmation when aggregate runtime becomes active again', async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(10_000);
+  const runningTiming = {
+    id: 'timing-resumed',
+    sessionId: 'session-1',
+    clientTurnId: 'run-resumed',
+    rootRunId: 'run-resumed',
+    startedAt: 1_000,
+    acceptedAt: 1_100,
+    state: 'running' as const,
+  };
+  const finishSessionRun = vi.fn((_id, _state, endedAt: number) => ({
+    ...runningTiming,
+    state: 'completed' as const,
+    endedAt,
+  }));
+  const store = {
+    getLatestSessionRun: vi.fn().mockReturnValue(runningTiming),
+    getSession: vi.fn().mockReturnValue({ status: 'idle' }),
+    finishSessionRun,
+  } as unknown as CoworkStore;
+  const getSessionRuntimeStatus = vi
+    .fn()
+    .mockResolvedValueOnce({
+      known: true,
+      mainRunning: false,
+      subagentRunning: false,
+      running: false,
+    })
+    .mockResolvedValueOnce({
+      known: true,
+      mainRunning: false,
+      subagentRunning: true,
+      running: true,
+    })
+    .mockResolvedValue({
+      known: true,
+      mainRunning: false,
+      subagentRunning: false,
+      running: false,
+    });
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => store,
+    getCoworkEngineRouter: () => ({ getSessionRuntimeStatus }) as unknown as CoworkEngineRouter,
+    setSessionPermissionMode: vi.fn(),
+  });
+  const handler = mocks.handle.mock.calls.find(
+    ([channel]) => channel === 'cowork:session:runtimeStatus',
+  )?.[1] as IpcHandler;
+
+  await expect(handler({}, 'session-1')).resolves.toMatchObject({ running: true });
+  await vi.advanceTimersByTimeAsync(750);
+  await expect(handler({}, 'session-1')).resolves.toMatchObject({
+    mainRunning: false,
+    subagentRunning: true,
+    running: true,
+  });
+  await expect(handler({}, 'session-1')).resolves.toMatchObject({ running: true });
+  expect(finishSessionRun).not.toHaveBeenCalled();
+
+  await vi.advanceTimersByTimeAsync(750);
+  await expect(handler({}, 'session-1')).resolves.toMatchObject({
+    running: false,
+    timing: { state: 'completed' },
+  });
+  expect(finishSessionRun).toHaveBeenCalledOnce();
+});
+
 test('does not finalize a submitted run before Gateway acceptance is observed', async () => {
   const submittedTiming = {
     id: 'timing-pending',
@@ -363,6 +503,7 @@ test('rejects a new run when startup reconciliation finds the checkpoint still a
   expect(getSessionRuntimeStatus).toHaveBeenCalledWith('session-1', {
     includeSubagents: true,
     forceRefresh: true,
+    fullScan: true,
   });
   expect(reopenSessionRun).toHaveBeenCalledWith('timing-checkpoint');
   expect(beginSessionRun).not.toHaveBeenCalled();
@@ -404,6 +545,11 @@ test('fails closed when a restart checkpoint cannot be confirmed idle', async ()
   ).resolves.toEqual({
     success: false,
     errorCode: SessionRunBeginErrorCode.RuntimeUnknown,
+  });
+  expect(getSessionRuntimeStatus).toHaveBeenCalledWith('session-1', {
+    includeSubagents: true,
+    forceRefresh: true,
+    fullScan: true,
   });
   expect(beginSessionRun).not.toHaveBeenCalled();
 });
@@ -452,6 +598,11 @@ test('allows a new run after a restart checkpoint is confirmed idle', async () =
     success: true,
     timing: newTiming,
     snapshot: { running: true, timing: newTiming },
+  });
+  expect(getSessionRuntimeStatus).toHaveBeenCalledWith('session-1', {
+    includeSubagents: true,
+    forceRefresh: true,
+    fullScan: true,
   });
   expect(beginSessionRun).toHaveBeenCalledWith(input);
 });
@@ -553,5 +704,91 @@ test('does not fail a receipt while the aggregate runtime is still active', asyn
   await expect(
     handler({}, { sessionId: 'session-1', id: 'timing-1', endedAt: 5_000 }),
   ).resolves.toMatchObject({ success: true, snapshot: { running: true } });
+  expect(router.getSessionRuntimeStatus).toHaveBeenCalledWith('session-1', {
+    includeSubagents: true,
+    forceRefresh: true,
+    fullScan: true,
+  });
+  expect(finishSessionRun).not.toHaveBeenCalled();
+});
+
+test('fails a receipt after a full scan confirms aggregate idle', async () => {
+  const failedTiming = {
+    id: 'timing-1',
+    sessionId: 'session-1',
+    clientTurnId: 'client-turn-1',
+    rootRunId: 'gateway-run-1',
+    startedAt: 1_000,
+    acceptedAt: 1_100,
+    endedAt: 5_000,
+    state: 'failed' as const,
+  };
+  const finishSessionRun = vi.fn().mockReturnValue(failedTiming);
+  const store = { finishSessionRun } as unknown as CoworkStore;
+  const getSessionRuntimeStatus = vi.fn().mockResolvedValue({
+    known: true,
+    mainRunning: false,
+    subagentRunning: false,
+    running: false,
+  });
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => store,
+    getCoworkEngineRouter: () => ({ getSessionRuntimeStatus }) as unknown as CoworkEngineRouter,
+    setSessionPermissionMode: vi.fn(),
+  });
+  const handler = mocks.handle.mock.calls.find(
+    ([channel]) => channel === 'cowork:session:run:fail',
+  )?.[1] as IpcHandler;
+
+  await expect(
+    handler({}, { sessionId: 'session-1', id: 'timing-1', endedAt: 5_000 }),
+  ).resolves.toMatchObject({
+    success: true,
+    snapshot: { known: true, running: false, timing: failedTiming },
+  });
+  expect(getSessionRuntimeStatus).toHaveBeenCalledWith('session-1', {
+    includeSubagents: true,
+    forceRefresh: true,
+    fullScan: true,
+  });
+  expect(finishSessionRun).toHaveBeenCalledWith('timing-1', 'failed', 5_000);
+});
+
+test('keeps a failed receipt open when the full scan is unknown', async () => {
+  const runningTiming = {
+    id: 'timing-1',
+    sessionId: 'session-1',
+    clientTurnId: 'client-turn-1',
+    rootRunId: 'gateway-run-1',
+    startedAt: 1_000,
+    acceptedAt: 1_100,
+    state: 'running' as const,
+  };
+  const finishSessionRun = vi.fn();
+  const store = {
+    getLatestSessionRun: vi.fn().mockReturnValue(runningTiming),
+    finishSessionRun,
+  } as unknown as CoworkStore;
+  const getSessionRuntimeStatus = vi.fn().mockResolvedValue({
+    known: false,
+    mainRunning: false,
+    subagentRunning: false,
+    running: false,
+  });
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => store,
+    getCoworkEngineRouter: () => ({ getSessionRuntimeStatus }) as unknown as CoworkEngineRouter,
+    setSessionPermissionMode: vi.fn(),
+  });
+  const handler = mocks.handle.mock.calls.find(
+    ([channel]) => channel === 'cowork:session:run:fail',
+  )?.[1] as IpcHandler;
+
+  await expect(
+    handler({}, { sessionId: 'session-1', id: 'timing-1', endedAt: 5_000 }),
+  ).resolves.toMatchObject({
+    success: true,
+    snapshot: { known: false, running: true, timing: runningTiming },
+  });
   expect(finishSessionRun).not.toHaveBeenCalled();
 });
