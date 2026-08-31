@@ -4,6 +4,7 @@ import { LatestSerialTaskQueue } from '@/features/cowork/components/latestSerial
 import {
   applyModelSelectionUpdate,
   DefaultModelApplyError,
+  resolvePersistedSessionModelRefAfterApplyError,
   SessionModelApplyError,
 } from '@/features/cowork/components/modelSelectionUpdate';
 import type { Model } from '@/features/models/modelSlice';
@@ -13,6 +14,32 @@ const model: Model = {
   name: 'GPT-5',
   providerKey: 'openai',
 };
+
+describe('resolvePersistedSessionModelRefAfterApplyError', () => {
+  test('keeps a session model when only the default update failed', () => {
+    const error = new DefaultModelApplyError('sync failed', 'openai/gpt-5');
+
+    expect(resolvePersistedSessionModelRefAfterApplyError(error, model)).toBe('openai/gpt-5');
+  });
+
+  test('keeps an ambiguous session result when it matches the requested model', () => {
+    const error = new SessionModelApplyError('gateway unavailable', 'openai/gpt-5');
+
+    expect(resolvePersistedSessionModelRefAfterApplyError(error, model)).toBe('openai/gpt-5');
+  });
+
+  test('ignores a case variant that the main process does not persist', () => {
+    const error = new SessionModelApplyError('gateway unavailable', 'OPENAI/gpt-5');
+
+    expect(resolvePersistedSessionModelRefAfterApplyError(error, model)).toBeUndefined();
+  });
+
+  test('ignores a runtime fallback that differs from the requested model', () => {
+    const error = new SessionModelApplyError('gateway unavailable', 'openai/gpt-4o');
+
+    expect(resolvePersistedSessionModelRefAfterApplyError(error, model)).toBeUndefined();
+  });
+});
 
 describe('applyModelSelectionUpdate', () => {
   test('locks the existing-session model before updating the default', async () => {
@@ -162,14 +189,13 @@ describe('applyModelSelectionUpdate', () => {
     let defaultModelRef = 'openai/gpt-4o';
     const sessionOverrides = new Map<string, string>();
     const services = {
-      patchSessionModel: vi.fn(async ({ sessionId, model: modelRef }: {
-        sessionId: string;
-        model: string;
-      }) => {
-        if (modelRef === defaultModelRef) sessionOverrides.delete(sessionId);
-        else sessionOverrides.set(sessionId, modelRef);
-        return { success: true, modelRef };
-      }),
+      patchSessionModel: vi.fn(
+        async ({ sessionId, model: modelRef }: { sessionId: string; model: string }) => {
+          if (modelRef === defaultModelRef) sessionOverrides.delete(sessionId);
+          else sessionOverrides.set(sessionId, modelRef);
+          return { success: true, modelRef };
+        },
+      ),
       setDefaultModel: vi.fn(async ({ modelRef }: { modelRef?: string }) => {
         if (modelRef) defaultModelRef = modelRef;
         return { success: true };

@@ -1,9 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
-import {
-  resolveAgentModelSelection,
-  resolveAutomaticAgentModelRepair,
-} from '@/features/cowork/components/agentModelSelection';
+import { resolveAgentModelSelection } from '@/features/cowork/components/agentModelSelection';
 import type { Model } from '@/features/models/modelSlice';
 
 const models: Model[] = [
@@ -100,23 +97,5 @@ describe('resolveAgentModelSelection', () => {
     expect(result.selectedModel).toBeNull();
     expect(result.usesFallback).toBe(true);
     expect(result.hasInvalidExplicitModel).toBe(true);
-  });
-});
-
-describe('resolveAutomaticAgentModelRepair', () => {
-  test('repairs any unavailable explicit binding with the selected available model', () => {
-    const customModel: Model = {
-      id: 'custom-chat',
-      name: 'Custom Chat',
-      providerKey: 'custom_0',
-    };
-
-    expect(resolveAutomaticAgentModelRepair('deleted_provider/removed-model', customModel)).toBe(
-      customModel,
-    );
-  });
-
-  test('does not repair when no model is available', () => {
-    expect(resolveAutomaticAgentModelRepair('custom_0/deleted-model', null)).toBeNull();
   });
 });

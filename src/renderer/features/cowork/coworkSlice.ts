@@ -16,6 +16,7 @@ import type {
   CoworkSessionSummary,
   SessionGroup,
 } from '@/features/cowork/coworkTypes';
+import type { Model } from '@/features/models/modelSlice';
 
 export interface DraftAttachment {
   path: string;
@@ -39,6 +40,10 @@ interface CoworkState {
   sessionMainRuntimeActivity: Record<string, boolean>;
   sessionRuntimeActivity: Record<string, boolean>;
   sessionRunTimings: Record<string, SessionRunTiming[]>;
+  manualModelSelections: Record<string, Model | null>;
+  confirmedModelSelections: Record<string, Model | null>;
+  pendingModelSelectionTaskIds: Record<string, number>;
+  userConfirmedSessionModelRefs: Record<string, string>;
   remoteManaged: boolean;
   pendingInteractions: CoworkInteractionRequest[];
   config: CoworkConfig;
@@ -62,6 +67,10 @@ const initialState: CoworkState = {
   sessionMainRuntimeActivity: {},
   sessionRuntimeActivity: {},
   sessionRunTimings: {},
+  manualModelSelections: {},
+  confirmedModelSelections: {},
+  pendingModelSelectionTaskIds: {},
+  userConfirmedSessionModelRefs: {},
   remoteManaged: false,
   pendingInteractions: [],
   config: {
@@ -84,6 +93,17 @@ const markSessionUnread = (state: CoworkState, sessionId: string) => {
   if (state.currentSessionId === sessionId) return;
   if (state.unreadSessionIds.includes(sessionId)) return;
   state.unreadSessionIds.push(sessionId);
+};
+
+const clearSessionModelSelectionState = (state: CoworkState, sessionId: string) => {
+  const contextPrefix = `${sessionId}\0`;
+  for (const contextKey of Object.keys(state.manualModelSelections)) {
+    if (!contextKey.startsWith(contextPrefix)) continue;
+    delete state.manualModelSelections[contextKey];
+    delete state.confirmedModelSelections[contextKey];
+    delete state.pendingModelSelectionTaskIds[contextKey];
+  }
+  delete state.userConfirmedSessionModelRefs[sessionId];
 };
 
 const coworkSlice = createSlice({
@@ -156,11 +176,24 @@ const coworkSlice = createSlice({
     },
 
     setCurrentSession(state, action: PayloadAction<CoworkSession | null>) {
-      state.currentSession = action.payload;
-      if (action.payload) {
-        state.currentSessionId = action.payload.id;
-        if (!action.payload.id.startsWith('temp-')) {
-          const { id, title, status, pinned, createdAt, updatedAt } = action.payload;
+      const incomingSession = action.payload;
+      const userConfirmedModelRef = incomingSession
+        ? state.userConfirmedSessionModelRefs[incomingSession.id]
+        : undefined;
+      const preservedModelRef =
+        userConfirmedModelRef ??
+        (incomingSession && state.currentSession?.id === incomingSession.id
+          ? state.currentSession.modelRef
+          : undefined);
+      const nextSession =
+        incomingSession && preservedModelRef
+          ? { ...incomingSession, modelRef: preservedModelRef }
+          : incomingSession;
+      state.currentSession = nextSession;
+      if (nextSession) {
+        state.currentSessionId = nextSession.id;
+        if (!nextSession.id.startsWith('temp-')) {
+          const { id, title, status, pinned, createdAt, updatedAt } = nextSession;
           const summary: CoworkSessionSummary = {
             id,
             title,
@@ -179,7 +212,7 @@ const coworkSlice = createSlice({
             state.sessions.unshift(summary);
           }
         }
-        markSessionRead(state, action.payload.id);
+        markSessionRead(state, nextSession.id);
       }
     },
 
@@ -227,10 +260,14 @@ const coworkSlice = createSlice({
 
     deleteSession(state, action: PayloadAction<string>) {
       removeSessionFromState(state, action.payload);
+      clearSessionModelSelectionState(state, action.payload);
     },
 
     deleteSessions(state, action: PayloadAction<string[]>) {
       removeSessionsFromState(state, action.payload);
+      for (const sessionId of action.payload) {
+        clearSessionModelSelectionState(state, sessionId);
+      }
     },
 
     addMessage(state, action: PayloadAction<{ sessionId: string; message: CoworkMessage }>) {
@@ -518,10 +555,70 @@ const coworkSlice = createSlice({
       state.sessionRunTimings[action.payload.sessionId] = timings;
     },
 
-    updateCurrentSessionModelRef(
+    beginManualModelSelection(
+      state,
+      action: PayloadAction<{
+        contextKey: string;
+        taskId: number;
+        model: Model;
+        previousModel: Model | null;
+      }>,
+    ) {
+      const { contextKey, taskId, model, previousModel } = action.payload;
+      if (!Object.prototype.hasOwnProperty.call(state.confirmedModelSelections, contextKey)) {
+        state.confirmedModelSelections[contextKey] = previousModel;
+      }
+      state.manualModelSelections[contextKey] = model;
+      state.pendingModelSelectionTaskIds[contextKey] = taskId;
+    },
+
+    confirmManualModelSelection(
+      state,
+      action: PayloadAction<{ contextKey: string; taskId: number; model: Model }>,
+    ) {
+      const { contextKey, taskId, model } = action.payload;
+      state.confirmedModelSelections[contextKey] = model;
+      if (state.pendingModelSelectionTaskIds[contextKey] === taskId) {
+        state.manualModelSelections[contextKey] = model;
+      }
+    },
+
+    confirmDefaultModelSelection(
+      state,
+      action: PayloadAction<{ contextKey: string; model: Model }>,
+    ) {
+      const { contextKey, model } = action.payload;
+      state.confirmedModelSelections[contextKey] = model;
+      if (state.pendingModelSelectionTaskIds[contextKey] === undefined) {
+        state.manualModelSelections[contextKey] = model;
+      }
+    },
+
+    completeManualModelSelection(
+      state,
+      action: PayloadAction<{ contextKey: string; taskId: number }>,
+    ) {
+      const { contextKey, taskId } = action.payload;
+      if (state.pendingModelSelectionTaskIds[contextKey] === taskId) {
+        delete state.pendingModelSelectionTaskIds[contextKey];
+      }
+    },
+
+    rollbackManualModelSelection(
+      state,
+      action: PayloadAction<{ contextKey: string; taskId: number }>,
+    ) {
+      const { contextKey, taskId } = action.payload;
+      if (state.pendingModelSelectionTaskIds[contextKey] !== taskId) return;
+      state.manualModelSelections[contextKey] = state.confirmedModelSelections[contextKey] ?? null;
+      delete state.pendingModelSelectionTaskIds[contextKey];
+    },
+
+    confirmCurrentSessionModelSelection(
       state,
       action: PayloadAction<{ sessionId: string; modelRef: string }>,
     ) {
+      state.userConfirmedSessionModelRefs[action.payload.sessionId] = action.payload.modelRef;
       if (state.currentSession?.id === action.payload.sessionId) {
         state.currentSession.modelRef = action.payload.modelRef;
       }
@@ -669,7 +766,12 @@ export const {
   updateSessionPinned,
   updateSessionTitle,
   updateCurrentSessionPermissionMode,
-  updateCurrentSessionModelRef,
+  beginManualModelSelection,
+  confirmManualModelSelection,
+  confirmDefaultModelSelection,
+  completeManualModelSelection,
+  rollbackManualModelSelection,
+  confirmCurrentSessionModelSelection,
   enqueuePendingInteraction,
   dequeuePendingInteraction,
   clearPendingInteractions,

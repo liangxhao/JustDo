@@ -46,6 +46,21 @@ export class DefaultModelApplyError extends Error {
   }
 }
 
+export const resolvePersistedSessionModelRefAfterApplyError = (
+  error: unknown,
+  requestedModel: Model,
+): string | undefined => {
+  if (error instanceof DefaultModelApplyError) return error.sessionModelRef;
+  if (
+    error instanceof SessionModelApplyError &&
+    error.currentModelRef &&
+    error.currentModelRef === toOpenClawModelRef(requestedModel)
+  ) {
+    return error.currentModelRef;
+  }
+  return undefined;
+};
+
 export const applyModelSelectionUpdate = async (
   options: ApplyModelSelectionUpdateOptions,
   services: ModelSelectionUpdateServices,

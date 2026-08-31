@@ -34,11 +34,3 @@ export function resolveAgentModelSelection({
 
   return { selectedModel: resolvedFallback, usesFallback: true, hasInvalidExplicitModel: false };
 }
-
-export function resolveAutomaticAgentModelRepair(
-  agentModel: string,
-  fallbackModel: Model | null,
-): Model | null {
-  if (!agentModel.trim() || !fallbackModel?.id) return null;
-  return fallbackModel;
-}

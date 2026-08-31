@@ -33,7 +33,6 @@ import {
   setSessionRunTimings,
   setSessions,
   setStreaming,
-  updateCurrentSessionModelRef,
   updateGroup,
   updateMessageContent,
   updateMessageMetadata,
@@ -279,14 +278,6 @@ export class CoworkService {
         this.confirmTerminalSessionIdle(sessionId);
       }
       store.dispatch(updateSessionStatus({ sessionId, status }));
-      void cowork
-        .getSessionModel({ sessionId })
-        .then(result => {
-          if (result.success && result.modelRef) {
-            store.dispatch(updateCurrentSessionModelRef({ sessionId, modelRef: result.modelRef }));
-          }
-        })
-        .catch(() => {});
     });
     this.streamListenerCleanups.push(completeCleanup);
 

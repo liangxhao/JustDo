@@ -2,15 +2,38 @@ import { describe, expect, test } from 'vitest';
 
 import coworkReducer, {
   addDraftAttachment,
+  beginManualModelSelection,
   clearCurrentSession,
+  completeManualModelSelection,
+  confirmCurrentSessionModelSelection,
+  confirmDefaultModelSelection,
+  confirmManualModelSelection,
   hydrateDraftImageAttachment,
+  rollbackManualModelSelection,
   setConfig,
+  setCurrentSession,
   setSessionRuntimeSnapshot,
   setSessionRunTimings,
   setSessions,
   updateSessionStatus,
   updateSessionTitle,
 } from './coworkSlice';
+
+const createSession = (id: string, modelRef?: string) => ({
+  id,
+  title: 'Session',
+  status: 'idle' as const,
+  pinned: false,
+  cwd: 'C:\\workspace',
+  executionMode: 'local' as const,
+  permissionMode: 'full' as const,
+  activeSkillIds: [],
+  agentId: 'main',
+  messages: [],
+  createdAt: 1,
+  updatedAt: 2,
+  modelRef,
+});
 
 describe('cowork session permissions', () => {
   test('uses full access for a new session draft', () => {
@@ -27,6 +50,137 @@ describe('cowork session permissions', () => {
     const newSession = coworkReducer(restricted, clearCurrentSession());
 
     expect(newSession.config.permissionMode).toBe('full');
+  });
+});
+
+describe('cowork session model ownership', () => {
+  const modelA = { id: 'model-a', name: 'Model A', providerKey: 'provider-a' };
+  const modelB = { id: 'model-b', name: 'Model B', providerKey: 'provider-b' };
+  const modelC = { id: 'model-c', name: 'Model C', providerKey: 'provider-c' };
+
+  test('preserves the selected model when the same session is reloaded', () => {
+    const selected = coworkReducer(undefined, setCurrentSession(createSession('session-1', 'b')));
+
+    const reloaded = coworkReducer(selected, setCurrentSession(createSession('session-1', 'a')));
+
+    expect(reloaded.currentSession?.modelRef).toBe('b');
+  });
+
+  test('initializes the model when opening another session', () => {
+    const selected = coworkReducer(undefined, setCurrentSession(createSession('session-1', 'b')));
+
+    const opened = coworkReducer(selected, setCurrentSession(createSession('session-2', 'a')));
+
+    expect(opened.currentSession?.modelRef).toBe('a');
+  });
+
+  test('applies a user-confirmed model when its session opens after completion', () => {
+    const confirmed = coworkReducer(
+      undefined,
+      confirmCurrentSessionModelSelection({ sessionId: 'session-1', modelRef: 'b' }),
+    );
+
+    const opened = coworkReducer(confirmed, setCurrentSession(createSession('session-1', 'a')));
+
+    expect(opened.currentSession?.modelRef).toBe('b');
+  });
+
+  test('keeps the latest optimistic selection while an older task confirms', () => {
+    const firstPending = coworkReducer(
+      undefined,
+      beginManualModelSelection({
+        contextKey: 'session-1\0main',
+        taskId: 1,
+        model: modelB,
+        previousModel: modelA,
+      }),
+    );
+    const secondPending = coworkReducer(
+      firstPending,
+      beginManualModelSelection({
+        contextKey: 'session-1\0main',
+        taskId: 2,
+        model: modelC,
+        previousModel: modelB,
+      }),
+    );
+
+    const firstConfirmed = coworkReducer(
+      secondPending,
+      confirmManualModelSelection({
+        contextKey: 'session-1\0main',
+        taskId: 1,
+        model: modelB,
+      }),
+    );
+    const firstCompleted = coworkReducer(
+      firstConfirmed,
+      completeManualModelSelection({ contextKey: 'session-1\0main', taskId: 1 }),
+    );
+
+    expect(firstCompleted.manualModelSelections['session-1\0main']).toBe(modelC);
+    expect(firstCompleted.pendingModelSelectionTaskIds['session-1\0main']).toBe(2);
+  });
+
+  test('rolls the latest failed selection back to the preceding confirmation', () => {
+    const firstPending = coworkReducer(
+      undefined,
+      beginManualModelSelection({
+        contextKey: 'session-1\0main',
+        taskId: 1,
+        model: modelB,
+        previousModel: modelA,
+      }),
+    );
+    const firstConfirmed = coworkReducer(
+      firstPending,
+      confirmManualModelSelection({
+        contextKey: 'session-1\0main',
+        taskId: 1,
+        model: modelB,
+      }),
+    );
+    const secondPending = coworkReducer(
+      firstConfirmed,
+      beginManualModelSelection({
+        contextKey: 'session-1\0main',
+        taskId: 2,
+        model: modelC,
+        previousModel: modelB,
+      }),
+    );
+
+    const rolledBack = coworkReducer(
+      secondPending,
+      rollbackManualModelSelection({ contextKey: 'session-1\0main', taskId: 2 }),
+    );
+
+    expect(rolledBack.manualModelSelections['session-1\0main']).toBe(modelB);
+    expect(rolledBack.pendingModelSelectionTaskIds['session-1\0main']).toBeUndefined();
+  });
+
+  test('updates the next-session default without replacing a newer pending home selection', () => {
+    const homePending = coworkReducer(
+      undefined,
+      beginManualModelSelection({
+        contextKey: '__home__\0main',
+        taskId: 2,
+        model: modelC,
+        previousModel: modelA,
+      }),
+    );
+
+    const sessionDefaultConfirmed = coworkReducer(
+      homePending,
+      confirmDefaultModelSelection({ contextKey: '__home__\0main', model: modelB }),
+    );
+    const rolledBack = coworkReducer(
+      sessionDefaultConfirmed,
+      rollbackManualModelSelection({ contextKey: '__home__\0main', taskId: 2 }),
+    );
+
+    expect(sessionDefaultConfirmed.manualModelSelections['__home__\0main']).toBe(modelC);
+    expect(rolledBack.manualModelSelections['__home__\0main']).toBe(modelB);
   });
 });
 
