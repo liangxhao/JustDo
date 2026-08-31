@@ -760,7 +760,8 @@ flowchart LR
   action 为 `list`；`subagents` 的 kill/steer 等动作以及 exec、文件和插件工具仍保留 loop detection。
   本补丁不修改模型执行期间构建的 agent tools。运维调用仍受认证、tool visibility、plugin policy、
   approval mode 与参数 schema 约束。049 只接受 pristine target 或本次 patch pass 已正确应用的
-  幂等状态；不识别、不迁移任何旧版 049 结果，补丁变更必须重新构建 runtime。
+  幂等状态；source 行尾 marker 被 esbuild 确定性移到下一行时，bundle pass 只把该同次构建产物
+  规范化回 canonical 形式。不识别、不迁移任何旧版 049 结果，补丁变更必须重新构建 runtime。
 - **当前保留原因**：目标版 `invokeGatewayTool` 使用父 `sessionKey` 调用 `runBeforeToolCallHook`，并传入
   普通 agent loop config；RPC 没有 agent `runId`，因此菜单/抽屉轮询会被错误累计为代理重复调用，
   产生 increasing repeat count 和 critical loop warning。

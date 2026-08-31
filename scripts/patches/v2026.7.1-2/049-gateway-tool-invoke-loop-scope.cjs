@@ -24,6 +24,11 @@ const ORIGINAL_LOOP_DETECTION_PATTERN =
 const PATCHED_LOOP_DETECTION_ANCHOR =
   'loopDetection: gatewayTool.name === "subagents" && (params.input.args?.action ?? action) === "list" ? { enabled: false } : resolveToolLoopDetectionConfig({ cfg: params.cfg, agentId })';
 const PATCHED_LOOP_DETECTION = `${PATCHED_LOOP_DETECTION_ANCHOR} // ${MARKER}`;
+const escapeRegExp = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const BUNDLED_ESBUILD_PATCHED_PATTERN = new RegExp(
+  `^([ \\t]*)${escapeRegExp(PATCHED_LOOP_DETECTION_ANCHOR)}\\r?\\n\\1// ${MARKER}$`,
+  'm',
+);
 
 function countPattern(content, pattern) {
   return [...content.matchAll(new RegExp(pattern.source, pattern.flags.replace('g', '') + 'g'))]
@@ -35,6 +40,7 @@ function transformGatewayToolInvoke(content, filePath) {
   const originalCount = countPattern(content, ORIGINAL_LOOP_DETECTION_PATTERN);
   const patchedAnchorCount = countOccurrences(content, PATCHED_LOOP_DETECTION_ANCHOR);
   const patchedCount = countOccurrences(content, PATCHED_LOOP_DETECTION);
+  const bundledEsbuildPatchedCount = countPattern(content, BUNDLED_ESBUILD_PATCHED_PATTERN);
   const markerCount = countOccurrences(content, MARKER);
   if (signatureCount === 1 && originalCount === 0 && patchedCount === 1 && markerCount === 1) {
     return content;
@@ -45,6 +51,23 @@ function transformGatewayToolInvoke(content, filePath) {
     originalCount === 0 &&
     patchedAnchorCount === 1 &&
     patchedCount === 0 &&
+    bundledEsbuildPatchedCount === 1 &&
+    markerCount === 1
+  ) {
+    return replaceUniquePattern(
+      content,
+      BUNDLED_ESBUILD_PATCHED_PATTERN,
+      `$1${PATCHED_LOOP_DETECTION}`,
+      `${filePath}: esbuild-relocated Gateway tool invoke loop-detection marker`,
+    );
+  }
+  if (
+    path.basename(filePath) === 'gateway-bundle.mjs' &&
+    signatureCount === 1 &&
+    originalCount === 0 &&
+    patchedAnchorCount === 1 &&
+    patchedCount === 0 &&
+    bundledEsbuildPatchedCount === 0 &&
     markerCount === 0
   ) {
     return replaceUnique(
@@ -58,7 +81,7 @@ function transformGatewayToolInvoke(content, filePath) {
     throw new Error(
       `${filePath}: partial Gateway tool invoke loop-scope patch detected ` +
         `(signature=${signatureCount}, original=${originalCount}, anchor=${patchedAnchorCount}, ` +
-        `patched=${patchedCount}, marker=${markerCount})`,
+        `patched=${patchedCount}, bundled=${bundledEsbuildPatchedCount}, marker=${markerCount})`,
     );
   }
   if (signatureCount !== 1 || originalCount !== 1) {

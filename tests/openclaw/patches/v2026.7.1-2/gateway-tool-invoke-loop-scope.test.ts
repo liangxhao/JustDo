@@ -39,19 +39,20 @@ function findGatewayToolInvokeSource(): string {
 const sourcePath = findGatewayToolInvokeSource();
 const bundlePath = path.join(runtimeRoot, 'gateway-bundle.mjs');
 
-function normalizeTargetToPristine(content: string): string {
+function normalizeTargetToPristine(content: string, filePath: string): string {
   if (!content.includes(patch.__testing.MARKER)) return content;
-  const patchedIndex = content.indexOf(patch.__testing.PATCHED_LOOP_DETECTION);
+  const canonical = patch.__testing.transformGatewayToolInvoke(content, filePath);
+  const patchedIndex = canonical.indexOf(patch.__testing.PATCHED_LOOP_DETECTION);
   if (patchedIndex < 0) throw new Error('Patched Gateway tool invoke line was not found');
-  const lineStart = content.lastIndexOf('\n', patchedIndex) + 1;
-  const indent = content.slice(lineStart, patchedIndex);
+  const lineStart = canonical.lastIndexOf('\n', patchedIndex) + 1;
+  const indent = canonical.slice(lineStart, patchedIndex);
   const pristineLoopDetection = [
     'loopDetection: resolveToolLoopDetectionConfig({',
     `${indent}  cfg: params.cfg,`,
     `${indent}  agentId`,
     `${indent}})`,
   ].join('\n');
-  return content.replace(patch.__testing.PATCHED_LOOP_DETECTION, pristineLoopDetection);
+  return canonical.replace(patch.__testing.PATCHED_LOOP_DETECTION, pristineLoopDetection);
 }
 
 describe('Gateway tool invoke loop-scope patch', () => {
@@ -140,7 +141,10 @@ async function invokeGatewayTool(params) {
   });
 
   test('preserves the locked handler authorization, policy, approval, and execution chain', () => {
-    const originalSource = normalizeTargetToPristine(fs.readFileSync(sourcePath, 'utf8'));
+    const originalSource = normalizeTargetToPristine(
+      fs.readFileSync(sourcePath, 'utf8'),
+      sourcePath,
+    );
     const transformedSource = patch.__testing.transformGatewayToolInvoke(
       originalSource,
       sourcePath,
@@ -157,7 +161,10 @@ async function invokeGatewayTool(params) {
     expect(handler).toContain(patch.__testing.PATCHED_LOOP_DETECTION);
     expect(handler).toContain('resolveToolLoopDetectionConfig({ cfg: params.cfg, agentId })');
 
-    const originalBundle = normalizeTargetToPristine(fs.readFileSync(bundlePath, 'utf8'));
+    const originalBundle = normalizeTargetToPristine(
+      fs.readFileSync(bundlePath, 'utf8'),
+      bundlePath,
+    );
     const transformedBundle = patch.__testing.transformGatewayToolInvoke(
       originalBundle,
       bundlePath,
@@ -168,7 +175,7 @@ async function invokeGatewayTool(params) {
   });
 
   test('transforms the locked source idempotently and rejects partial state', () => {
-    const original = normalizeTargetToPristine(fs.readFileSync(sourcePath, 'utf8'));
+    const original = normalizeTargetToPristine(fs.readFileSync(sourcePath, 'utf8'), sourcePath);
     const transformed = patch.__testing.transformGatewayToolInvoke(original, sourcePath);
 
     expect(transformed).toContain(patch.__testing.PATCHED_LOOP_DETECTION);
@@ -180,6 +187,19 @@ async function invokeGatewayTool(params) {
         path.join(runtimeRoot, 'gateway-bundle.mjs'),
       ),
     ).toContain(patch.__testing.PATCHED_LOOP_DETECTION);
+    const patchedIndex = transformed.indexOf(patch.__testing.PATCHED_LOOP_DETECTION);
+    const lineStart = transformed.lastIndexOf('\n', patchedIndex) + 1;
+    const indent = transformed.slice(lineStart, patchedIndex);
+    const bundledWithRelocatedMarker = transformed.replace(
+      ` // ${patch.__testing.MARKER}`,
+      `\n${indent}// ${patch.__testing.MARKER}`,
+    );
+    expect(
+      patch.__testing.transformGatewayToolInvoke(
+        bundledWithRelocatedMarker,
+        path.join(runtimeRoot, 'gateway-bundle.mjs'),
+      ),
+    ).toBe(transformed);
     expect(() =>
       patch.__testing.transformGatewayToolInvoke(
         transformed.replace(patch.__testing.MARKER, 'PARTIAL_MARKER'),
@@ -197,7 +217,10 @@ async function invokeGatewayTool(params) {
   test('applies and verifies both source and bundle targets atomically', () => {
     const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-tool-loop-scope-patch-'));
     const fixtureDist = path.join(fixtureRoot, 'dist');
-    const pristineFixture = normalizeTargetToPristine(fs.readFileSync(sourcePath, 'utf8'));
+    const pristineFixture = normalizeTargetToPristine(
+      fs.readFileSync(sourcePath, 'utf8'),
+      sourcePath,
+    );
     fs.mkdirSync(fixtureDist, { recursive: true });
     fs.writeFileSync(path.join(fixtureDist, path.basename(sourcePath)), pristineFixture);
     // The source and bundle share this handler contract. Reusing the compact
@@ -227,7 +250,7 @@ async function invokeGatewayTool(params) {
   test('rejects duplicate source targets before writing', () => {
     const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-tool-loop-scope-atomic-'));
     const fixtureDist = path.join(fixtureRoot, 'dist');
-    const original = normalizeTargetToPristine(fs.readFileSync(sourcePath, 'utf8'));
+    const original = normalizeTargetToPristine(fs.readFileSync(sourcePath, 'utf8'), sourcePath);
     fs.mkdirSync(fixtureDist, { recursive: true });
     fs.writeFileSync(path.join(fixtureDist, 'tools-a.js'), original);
     fs.writeFileSync(path.join(fixtureDist, 'tools-b.js'), original);
