@@ -26,6 +26,7 @@
 | `pipeline/build-chat-items.ts`           | 原始message -> group/timeline display items                   |
 | `components/justdo-chat.ts`              | Lit组件、搜索、minimap、timeline、滚动、Mermaid后处理         |
 | `components/markdown.ts`                 | Markdown-it、highlight、KaTeX、DOMPurify、stream边界/cache    |
+| `controllers/assistant-stream-pacer.ts`  | 保留assistant快照边界并按frame平滑揭示                        |
 | `controllers/stream-render-scheduler.ts` | frame合批和tool partial节流                                   |
 | `controllers/chat-scroll-controller.ts`  | follow/paused、锚点、unseen revision、加载旧窗口              |
 
@@ -156,7 +157,9 @@ ScrollController只有follow/paused：在底部（0.5px容差）follow并随revi
 
 ## 14. 渲染调度与性能
 
-Stream scheduler将普通更新合并到`requestAnimationFrame`，无RAF时用microtask；tool partial有独立最小间隔，terminal调用flush。Dispose清timer/frame。
+Canonical transcript始终立即接收完整assistant snapshot；显示层以canonical文本游标和snapshot结束位置按`requestAnimationFrame`依次揭示，避免provider在同一browser task内突发多个delta时直接跳出整段文本。正常流保留provider边界，边界对象上限240；积压以45 frame为追赶目标，但每frame硬限制24个grapheme，极大snapshot宁可延长追平也不会在尾帧整段跳出。非prefix权威修订、terminal guard rollback和Tool边界不会继续播放已撤销或越界的旧文本；会话切换返回已有live turn时直接seed当前可见正文，不重播历史。
+
+Stream scheduler负责驱动上述显示节奏；无RAF时在一个microtask内直接收敛，tool partial有独立最小间隔，terminal立即发布当前frame但允许剩余合法正文继续有界追平。Dispose清timer/frame和显示状态。Final追平期间仍按streaming Markdown渲染不完整前缀；若authoritative history先到，component保留该terminal投影直到游标排空，再无缝交给history。该节奏器只改变active Content投影，不修改reducer、history或导出所读的canonical文本；流式期间DOM搜索、复制与`aria-busy`保持和当前可见进度一致，完成态Mermaid增强会等待对应Content追平后再运行。
 
 性能边界包括：有界history DOM、Markdown cache/limit、live tool output cap、collapsed detail不入DOM、persisted timeline/render cache、minimap最少2项才显示。任何新投影应避免每个token重新扫描全部history或JSON stringify大对象作为key。
 
@@ -209,7 +212,7 @@ Terminal event 关闭 active reducer 的本次 run，但 persisted history 何�
 | 内容            | 控制                             | 降级                             |
 | --------------- | -------------------------------- | -------------------------------- |
 | History         | 750/250 有界窗口及分块           | 保留锚点，按需加载旧页           |
-| Streaming delta | render scheduler 合帧            | terminal 时强制 flush            |
+| Streaming delta | snapshot边界游标、24字素/frame   | 修订/回滚/Tool边界立即收敛       |
 | Markdown        | normalize/cache/内容限额         | plain text 或截断提示            |
 | Mermaid         | source hash/cache/尺寸与错误边界 | 显示源码/错误卡，不执行任意 HTML |
 | Highlight/KaTeX | 按块处理与 cache                 | 未识别语言/公式显示安全文本      |
