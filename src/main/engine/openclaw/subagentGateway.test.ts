@@ -1,7 +1,57 @@
 import { expect, test, vi } from 'vitest';
 
 import type { GatewayClientLike } from '../gateway/types';
-import { listGatewaySubagentDescendants, listGatewaySubagents } from './subagentGateway';
+import {
+  listGatewaySubagentDescendants,
+  listGatewaySubagents,
+  mergeGatewaySubagentSnapshots,
+} from './subagentGateway';
+
+test('merges current lifecycle state without losing retained history or stronger titles', () => {
+  const retained = [
+    {
+      id: 'old-child',
+      sessionKey: 'agent:main:subagent:old-child',
+      label: 'Old retained task',
+      labelSource: 'task' as const,
+      status: 'done' as const,
+      endedAt: 100,
+    },
+    {
+      id: 'active-child',
+      sessionKey: 'agent:main:subagent:active-child',
+      sessionId: 'active-session-id',
+      label: 'stable_task_name',
+      labelSource: 'taskName' as const,
+      status: 'running' as const,
+      startedAt: 200,
+      runtimeMs: 50,
+    },
+  ];
+  const current = [
+    {
+      id: 'active-child',
+      sessionKey: 'agent:main:subagent:active-child',
+      label: 'Changing session label',
+      labelSource: 'label' as const,
+      status: 'done' as const,
+      endedAt: 300,
+      runtimeMs: 100,
+      totalTokens: 42,
+    },
+  ];
+
+  expect(mergeGatewaySubagentSnapshots(retained, current)).toEqual([
+    retained[0],
+    {
+      ...retained[1],
+      status: 'done',
+      endedAt: 300,
+      runtimeMs: 100,
+      totalTokens: 42,
+    },
+  ]);
+});
 
 test('lists every nested subagent descendant from the complete session projection', async () => {
   const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {

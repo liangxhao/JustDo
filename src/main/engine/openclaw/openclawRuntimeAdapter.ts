@@ -105,6 +105,7 @@ import { HistoryReconciler } from './historyReconciler';
 import {
   type GatewaySubagent,
   listGatewaySubagents,
+  mergeGatewaySubagentSnapshots,
   SUBAGENT_STATUSES,
   type SubagentLabelSource,
   type SubagentStatus,
@@ -129,6 +130,7 @@ const CLIENT_TIMEOUT_GRACE_MS = 30_000;
 const GATEWAY_RECONNECT_DELAYS = [2_000, 5_000, 10_000, 15_000, 30_000];
 const GATEWAY_CONNECT_RETRY_DELAYS = [500, 1_500, 3_000];
 const SUBAGENT_STATUS_CACHE_TTL_MS = 8_000;
+const SUBAGENT_HISTORY_CACHE_TTL_MS = 60_000;
 const RUNTIME_SESSION_SNAPSHOT_TTL_MS = 2_000;
 const TITLE_SESSION_ID_RESOLUTION_TIMEOUT_MS = 30_000;
 const TITLE_SESSION_ID_POLL_INTERVAL_MS = 100;
@@ -339,6 +341,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       subagents: GatewaySubagent[];
     }
   >();
+  private readonly subagentHistoryCache = new Map<
+    string,
+    {
+      expiresAt: number;
+      subagents: GatewaySubagent[];
+    }
+  >();
+  private readonly subagentStatusRefreshes = new Map<string, Promise<GatewaySubagent[]>>();
   private runtimeSessionSnapshot: (RuntimeSessionSnapshot & { expiresAt: number }) | null = null;
   private runtimeSessionSnapshotPromise: Promise<RuntimeSessionSnapshot> | null = null;
   private runtimeSessionSnapshotGeneration = 0;
@@ -938,6 +948,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (subagentDiscoveryError) throw subagentDiscoveryError;
     if (approvalCleanupError) throw approvalCleanupError;
     this.subagentStatusCache.delete(sessionId);
+    this.subagentHistoryCache.delete(sessionId);
   }
 
   private async denyPendingApprovalsForSessionKeys(
@@ -3998,6 +4009,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.goalsAwaitingResumeInput.delete(sessionId);
     this.terminalLifecycleSessionIds.delete(sessionId);
     this.terminalLifecycleErrorSessionIds.delete(sessionId);
+    this.subagentStatusCache.delete(sessionId);
+    this.subagentHistoryCache.delete(sessionId);
+    this.subagentStatusRefreshes.delete(sessionId);
     this.channelSessionSync?.onSessionDeleted(sessionId);
 
     // Delete remote sessions
@@ -4089,19 +4103,65 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       return { subagents: cached.subagents };
     }
 
-    await this.ensureGatewayClientReady();
-    if (!this.gatewayClient) return { subagents: [] };
-    const subagents = await listGatewaySubagents({
-      client: this.gatewayClient,
-      parentKeys: this.getSessionKeysForSession(sessionId),
-    });
-    this.subagentStatusCache.set(sessionId, {
-      expiresAt: Date.now() + SUBAGENT_STATUS_CACHE_TTL_MS,
-      subagents,
-    });
+    let refresh = this.subagentStatusRefreshes.get(sessionId);
+    if (!refresh) {
+      refresh = this.refreshSubagentStatuses(sessionId);
+      this.subagentStatusRefreshes.set(sessionId, refresh);
+      const clearRefresh = () => {
+        if (this.subagentStatusRefreshes.get(sessionId) === refresh) {
+          this.subagentStatusRefreshes.delete(sessionId);
+        }
+      };
+      void refresh.then(clearRefresh, clearRefresh);
+    }
+    const subagents = await refresh;
     return {
       subagents,
     };
+  }
+
+  private async refreshSubagentStatuses(sessionId: string): Promise<GatewaySubagent[]> {
+    await this.ensureGatewayClientReady();
+    if (!this.gatewayClient) return [];
+
+    const now = Date.now();
+    const retained = this.subagentHistoryCache.get(sessionId);
+    let refreshPersistedHistory = !retained || retained.expiresAt <= now;
+    let current = await listGatewaySubagents({
+      client: this.gatewayClient,
+      parentKeys: this.getSessionKeysForSession(sessionId),
+      includePersistedHistory: refreshPersistedHistory,
+    });
+    const currentKeys = new Set(current.map(subagent => subagent.sessionKey));
+    const retainedActiveMissing = retained?.subagents.some(
+      subagent =>
+        (subagent.status === SUBAGENT_STATUSES.PENDING ||
+          subagent.status === SUBAGENT_STATUSES.RUNNING) &&
+        !currentKeys.has(subagent.sessionKey),
+    );
+    if (!refreshPersistedHistory && retainedActiveMissing) {
+      const persisted = await listGatewaySubagents({
+        client: this.gatewayClient,
+        parentKeys: this.getSessionKeysForSession(sessionId),
+        includeStructuredTool: false,
+      });
+      current = mergeGatewaySubagentSnapshots(persisted, current);
+      refreshPersistedHistory = true;
+    }
+    const subagents = refreshPersistedHistory
+      ? current
+      : mergeGatewaySubagentSnapshots(retained.subagents, current);
+    this.subagentHistoryCache.set(sessionId, {
+      expiresAt: refreshPersistedHistory
+        ? now + SUBAGENT_HISTORY_CACHE_TTL_MS
+        : retained.expiresAt,
+      subagents,
+    });
+    this.subagentStatusCache.set(sessionId, {
+      expiresAt: now + SUBAGENT_STATUS_CACHE_TTL_MS,
+      subagents,
+    });
+    return subagents;
   }
 
   async getSessionRuntimeStatus(

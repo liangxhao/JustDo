@@ -95,6 +95,9 @@ flowchart LR
   OpenClaw 的 generic OpenAI-compatible embedding guarded fetch 显式使用该环境。`048` 只在
   JustDo 的手动重建入口显式要求重新计算向量，避免旧 embedding cache 使整次重建没有网络请求。
   URL 是否注入业务 Header 仍由本地 OutboundHeader policy 决定，runtime patch 不读取用户 Header。
+- Gateway 工具调用：`049` 只把认证后的运维侧 `tools.invoke` RPC 排除出 agent tool-loop
+  accounting；`before_tool_call` hook、授权、交互审批和实际执行不变。Agent run 内通过模型发起的
+  工具调用仍使用原生循环检测。
 
 ### 001–004：环境、Thinking 与历史
 
@@ -741,6 +744,20 @@ flowchart LR
   的产品语义，也无法通过该入口验证 OutboundHeader 请求链路。
 - **可删除条件**：上游 `memory index` 提供等价的 `--no-cache`/`--reembed` 选项，JustDo 可直接调用。
 
+#### `049-gateway-tool-invoke-loop-scope.cjs`
+
+- **做什么**：让认证后的 Gateway `tools.invoke` RPC 继续经过 `before_tool_call` hook、授权和审批，
+  但给该 out-of-band 调用传入 `{ enabled: false }` 的 loop-detection context。JustDo 可继续把结构化
+  `subagents` 工具作为当前状态权威，而不会因为 UI 状态刷新污染父会话的代理工具调用历史。
+- **关系与边界**：本补丁作用于 Gateway RPC 入口，不修改模型执行期间构建的 agent tools，也不按
+  工具名特判 `subagents`。Loop detection 是单个 agent run 的失控保护，不是 Gateway API 的限流器；
+  运维调用仍受认证、tool visibility、plugin policy、approval mode 与参数 schema 约束。
+- **当前保留原因**：目标版 `invokeGatewayTool` 使用父 `sessionKey` 调用 `runBeforeToolCallHook`，并传入
+  普通 agent loop config；RPC 没有 agent `runId`，因此菜单/抽屉轮询会被错误累计为代理重复调用，
+  产生 increasing repeat count 和 critical loop warning。
+- **可删除条件**：上游原生把 loop detection 限定到 agent-run tool calls，或提供不经过工具执行的
+  结构化 subagent list RPC，同时继续保留 Gateway 工具授权与审批边界。
+
 ## 已删除或由上游/App 承担的能力
 
 | 能力                                            | v2026.7.1-2 证据与决定                                                                                                                                                                                                                                                 |
@@ -794,7 +811,7 @@ flowchart LR
 
 | 测试                                                  | 主要覆盖                                                                                                                                   |
 | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `openclawPristineContracts.test.ts`                   | 锁定原始 npm 包、11 项上游能力证据、48 项保留缺口、头注释和大小约束。                                                                      |
+| `openclawPristineContracts.test.ts`                   | 锁定原始 npm 包、11 项上游能力证据、49 项保留缺口、头注释和大小约束。                                                                      |
 | `openclawV202671ReasoningStream.test.ts`              | `002` callback gate 的原始失败与改写后事件/回调行为。                                                                                      |
 | `openclawV202671PatchSafety.test.ts`                  | `001`、`004`、`007`、`034` 的安全边界和真实 fixture 幂等。                                                                                 |
 | `openclawV202671CompletionDelivery.test.ts`           | H07 上游语义、managed yield 非对外交付、subagent `NO_REPLY` 非成功，以及 `015`、`016` 的 FIFO、硬期限和恢复边界。                          |
@@ -808,6 +825,7 @@ flowchart LR
 | `app-startup-task-recovery-boundary.test.ts`          | `046` 首次软件启动终止 orphan、稳定 app-start cutoff、后续 Gateway 重启恢复、source/bundle verify 与幂等。                                 |
 | `openai-compatible-embedding-env-proxy.test.ts`       | `047` generic embedding 的 eligible env proxy、真实 HTTP proxy 路由、source/bundle verify、幂等与歧义拒绝。                                |
 | `memory-force-reembed-opt-in.test.ts`                 | `048` 精确 host opt-in、默认缓存不变、source verify、幂等、部分状态与歧义拒绝。                                                            |
+| `gateway-tool-invoke-loop-scope.test.ts`              | `049` 运维 RPC loop scope、hook/审批保留、source/bundle verify、幂等、部分状态与歧义拒绝。                                                 |
 | `openclawV202671ManagedSessionIdentity.test.ts`       | `036` command、reply、agent initial/persisted 四落点 identity pin（含 reply reset 绕过）、普通会话不变、幂等和多目标原子失败。             |
 | `openclawV202671ApprovalLifecycle.test.ts`            | `022`–`025` 的 lifetime、hidden resume、stop/failure 与文件头。                                                                            |
 | `openclawV202671RequestMetadata.test.ts`              | `026`–`028`，含 strict-compatible negative 与 nested parent。                                                                              |

@@ -208,6 +208,39 @@ const addToolSubagents = (
   }
 };
 
+export const mergeGatewaySubagentSnapshots = (
+  retained: GatewaySubagent[],
+  current: GatewaySubagent[],
+): GatewaySubagent[] => {
+  const bySessionKey = new Map(retained.map(subagent => [subagent.sessionKey, { ...subagent }]));
+  for (const subagent of current) {
+    const previous = bySessionKey.get(subagent.sessionKey);
+    if (!previous) {
+      bySessionKey.set(subagent.sessionKey, { ...subagent });
+      continue;
+    }
+    const preferCurrentLabel =
+      SUBAGENT_LABEL_SOURCE_PRIORITY[subagent.labelSource] <=
+      SUBAGENT_LABEL_SOURCE_PRIORITY[previous.labelSource];
+    bySessionKey.set(subagent.sessionKey, {
+      ...previous,
+      id: subagent.id,
+      sessionKey: subagent.sessionKey,
+      sessionId: subagent.sessionId ?? previous.sessionId,
+      label: preferCurrentLabel ? subagent.label : previous.label,
+      labelSource: preferCurrentLabel ? subagent.labelSource : previous.labelSource,
+      status: subagent.status,
+      task: subagent.task ?? previous.task,
+      model: subagent.model ?? previous.model,
+      startedAt: subagent.startedAt ?? previous.startedAt,
+      endedAt: subagent.endedAt ?? previous.endedAt,
+      runtimeMs: subagent.runtimeMs ?? previous.runtimeMs,
+      totalTokens: subagent.totalTokens ?? previous.totalTokens,
+    });
+  }
+  return [...bySessionKey.values()];
+};
+
 export const listPersistedGatewaySessions = async (
   client: GatewayRequestClient,
 ): Promise<Array<Record<string, unknown>>> => {
@@ -297,7 +330,8 @@ export const listGatewaySubagentDescendants = async (
  * Invokes OpenClaw's structured `subagents` tool through the public Gateway API.
  * The session projection supplements completed runs older than the tool's
  * 24-hour maximum recent window. Lightweight runtime polling can opt out of the
- * structured tool to avoid touching the parent session's tool-loop counters.
+ * persisted history scan when a retained snapshot is already available. The
+ * structured tool remains the authority for current lifecycle state.
  */
 export function listGatewaySubagents(
   options: ListGatewaySubagentsOptions & { includeMalformedForRuntimeControl: true },

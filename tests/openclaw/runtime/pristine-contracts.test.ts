@@ -67,6 +67,7 @@ const EXPECTED_PATCH_FILES = [
   '046-app-startup-task-recovery-boundary.cjs',
   '047-openai-compatible-embedding-env-proxy.cjs',
   '048-memory-force-reembed-opt-in.cjs',
+  '049-gateway-tool-invoke-loop-scope.cjs',
 ] as const;
 
 function createPristineFixture(): string {

@@ -1004,6 +1004,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             </button>
             <SubagentMenu
               sessionId={currentSession.id}
+              parentRunning={currentSessionRuntimeRunning}
               onOpenSubagent={setSelectedSubagent}
               onSubagentsChange={handleSubagentsChange}
             />

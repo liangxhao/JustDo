@@ -10,6 +10,7 @@ import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/common/Modal';
 
 import { reconcileSubagentLabel } from './subagentLabel';
+import { ACTIVE_SUBAGENT_POLL_INTERVAL_MS, isActiveSubagentStatus } from './subagentPolling';
 import SubagentTokenUsage from './SubagentTokenUsage';
 
 const DRAWER_DEFAULT_WIDTH = 672;
@@ -45,7 +46,10 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
   const drawerRef = useRef<HTMLElement>(null);
   const detailStatsSessionKeyRef = useRef<string>();
   const detailStatsRef = useRef<SessionDetailStats>();
+  const subagentRef = useRef(subagent);
+  subagentRef.current = subagent;
   const subagentSessionKey = subagent?.sessionKey;
+  const shouldPollStatus = isActiveSubagentStatus(displaySubagent?.status);
 
   useEffect(() => {
     setDisplaySubagent(subagent);
@@ -120,17 +124,18 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
   }, [subagentSessionKey]);
 
   useEffect(() => {
-    if (!parentSessionId || !subagent?.sessionKey) return;
+    if (!parentSessionId || !subagentSessionKey) return;
     let cancelled = false;
 
     const refreshStatus = async () => {
       try {
         const result = await window.electron.cowork.getSubTaskStatus(parentSessionId);
         if (cancelled || !result.success) return;
-        const latest = result.subagents?.find(item => item.sessionKey === subagent.sessionKey);
+        const latest = result.subagents?.find(item => item.sessionKey === subagentSessionKey);
         if (latest) {
           setDisplaySubagent(current => {
-            const previous = current ?? subagent;
+            const previous = current ?? subagentRef.current;
+            if (!previous) return current;
             return {
               ...previous,
               ...latest,
@@ -147,12 +152,14 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
     };
 
     void refreshStatus();
-    const timer = window.setInterval(() => void refreshStatus(), 5000);
+    const timer = shouldPollStatus
+      ? window.setInterval(() => void refreshStatus(), ACTIVE_SUBAGENT_POLL_INTERVAL_MS)
+      : undefined;
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      if (timer !== undefined) window.clearInterval(timer);
     };
-  }, [parentSessionId, subagent]);
+  }, [parentSessionId, shouldPollStatus, subagentSessionKey]);
 
   useEffect(() => {
     const sessionKey = displaySubagent?.sessionKey;

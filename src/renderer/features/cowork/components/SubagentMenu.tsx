@@ -6,6 +6,7 @@ import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/common/Modal';
 
 import { reconcileSubagentLabel, type SubagentLabelSource } from './subagentLabel';
+import { resolveSubagentPollInterval } from './subagentPolling';
 import SubagentTokenUsage from './SubagentTokenUsage';
 import { useDraggableModal } from './useDraggableModal';
 
@@ -46,12 +47,14 @@ export const subagentStatusStyles: Record<SubagentStatus, string> = {
 
 interface SubagentMenuProps {
   sessionId: string;
+  parentRunning?: boolean;
   onOpenSubagent?: (subagent: Subagent) => void;
   onSubagentsChange?: (subagents: Subagent[]) => void;
 }
 
 const SubagentMenu: React.FC<SubagentMenuProps> = ({
   sessionId,
+  parentRunning = false,
   onOpenSubagent,
   onSubagentsChange,
 }) => {
@@ -80,6 +83,10 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({
     isDragging: isDetailDragging,
   } = useDraggableModal(detailDialogRef, detailSubagent?.sessionKey);
   const detailSessionKey = detailSubagent?.sessionKey;
+  const statusPollInterval = resolveSubagentPollInterval(
+    parentRunning,
+    subagents.map(subagent => subagent.status),
+  );
 
   const closeDetails = useCallback(() => setDetailSubagent(null), []);
 
@@ -191,9 +198,13 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({
   useEffect(() => {
     if (!isOpen) return;
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 5000);
-    return () => window.clearInterval(timer);
   }, [isOpen, refresh]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const timer = window.setInterval(() => void refresh(), statusPollInterval);
+    return () => window.clearInterval(timer);
+  }, [isOpen, refresh, statusPollInterval]);
 
   useEffect(() => {
     if (!isOpen) return;

@@ -4233,3 +4233,235 @@ test('patchSessionModel applies immediately to subsequent calls while session is
     'subsequent-calls',
   );
 });
+
+test('keeps structured subagent status authoritative while scanning retained history less often', async () => {
+  const { store, session } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const parentKey = 'agent:main:cowork:parent';
+  let toolInvocation = 0;
+  const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+    if (method === 'tools.invoke') {
+      toolInvocation += 1;
+      return {
+        ok: true,
+        output: {
+          details: {
+            status: 'ok',
+            active:
+              toolInvocation === 1
+                ? [
+                    {
+                      sessionKey: 'agent:main:subagent:active-child',
+                      taskName: 'active_task',
+                      status: 'running',
+                    },
+                  ]
+                : [],
+            recent:
+              toolInvocation === 1
+                ? []
+                : [
+                    {
+                      sessionKey: 'agent:main:subagent:active-child',
+                      taskName: 'active_task',
+                      status: 'done',
+                      endedAt: 109_000,
+                    },
+                  ],
+          },
+        },
+      };
+    }
+    if (method === 'sessions.list' && params?.spawnedBy) return { sessions: [] };
+    if (method === 'sessions.list') {
+      return {
+        sessions: [
+          {
+            key: 'agent:main:subagent:old-child',
+            spawnedBy: parentKey,
+            task: 'Old retained task',
+            status: 'done',
+            endedAt: 1,
+          },
+        ],
+      };
+    }
+    return {};
+  });
+  const internals = adapter as unknown as {
+    gatewayClient: GatewayClientLike | null;
+    ensureGatewayClientReady: () => Promise<void>;
+  };
+  internals.gatewayClient = { request } as unknown as GatewayClientLike;
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  vi.spyOn(adapter, 'getSessionKeysForSession').mockReturnValue([parentKey]);
+  const now = vi.spyOn(Date, 'now').mockReturnValue(100_000);
+
+  try {
+    const first = await adapter.getSubagentStatuses(session.id);
+    now.mockReturnValue(109_000);
+    const second = await adapter.getSubagentStatuses(session.id);
+
+    expect(first.subagents).toMatchObject([
+      { sessionKey: 'agent:main:subagent:active-child', status: 'running' },
+      { sessionKey: 'agent:main:subagent:old-child', status: 'done' },
+    ]);
+    expect(second.subagents).toMatchObject([
+      {
+        sessionKey: 'agent:main:subagent:active-child',
+        label: 'active_task',
+        labelSource: 'taskName',
+        status: 'done',
+        endedAt: 109_000,
+      },
+      { sessionKey: 'agent:main:subagent:old-child', status: 'done' },
+    ]);
+    expect(request.mock.calls.filter(([method]) => method === 'tools.invoke')).toHaveLength(2);
+    expect(
+      request.mock.calls.filter(
+        ([method, params]) => method === 'sessions.list' && !params?.spawnedBy,
+      ),
+    ).toHaveLength(1);
+  } finally {
+    now.mockRestore();
+  }
+});
+
+test('refreshes persisted history when a previously active child disappears from live projections', async () => {
+  const { store, session } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const parentKey = 'agent:main:cowork:parent';
+  let toolInvocation = 0;
+  const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+    if (method === 'tools.invoke') {
+      toolInvocation += 1;
+      if (toolInvocation > 1) throw new Error('temporary structured tool failure');
+      return {
+        ok: true,
+        output: {
+          details: {
+            status: 'ok',
+            active: [
+              {
+                sessionKey: 'agent:main:subagent:active-child',
+                taskName: 'active_task',
+                status: 'running',
+              },
+            ],
+            recent: [],
+          },
+        },
+      };
+    }
+    if (method === 'sessions.list' && params?.spawnedBy) return { sessions: [] };
+    if (method === 'sessions.list') {
+      return {
+        sessions: [
+          {
+            key: 'agent:main:subagent:active-child',
+            spawnedBy: parentKey,
+            taskName: 'active_task',
+            status: toolInvocation > 1 ? 'done' : 'running',
+            endedAt: toolInvocation > 1 ? 109_000 : undefined,
+          },
+        ],
+      };
+    }
+    return {};
+  });
+  const internals = adapter as unknown as {
+    gatewayClient: GatewayClientLike | null;
+    ensureGatewayClientReady: () => Promise<void>;
+  };
+  internals.gatewayClient = { request } as unknown as GatewayClientLike;
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  vi.spyOn(adapter, 'getSessionKeysForSession').mockReturnValue([parentKey]);
+  const now = vi.spyOn(Date, 'now').mockReturnValue(100_000);
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+  try {
+    await expect(adapter.getSubagentStatuses(session.id)).resolves.toMatchObject({
+      subagents: [{ status: 'running' }],
+    });
+    now.mockReturnValue(109_000);
+    await expect(adapter.getSubagentStatuses(session.id)).resolves.toMatchObject({
+      subagents: [{ status: 'done', endedAt: 109_000 }],
+    });
+    expect(
+      request.mock.calls.filter(
+        ([method, params]) => method === 'sessions.list' && !params?.spawnedBy,
+      ),
+    ).toHaveLength(2);
+  } finally {
+    warn.mockRestore();
+    now.mockRestore();
+  }
+});
+
+test('coalesces concurrent subagent status refreshes for the same parent session', async () => {
+  const { store, session } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  let releaseTool!: () => void;
+  const toolGate = new Promise<void>(resolve => {
+    releaseTool = resolve;
+  });
+  const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+    if (method === 'tools.invoke') {
+      await toolGate;
+      return {
+        ok: true,
+        output: {
+          details: {
+            status: 'ok',
+            active: [
+              {
+                sessionKey: 'agent:main:subagent:active-child',
+                taskName: 'active_task',
+                status: 'running',
+              },
+            ],
+            recent: [],
+          },
+        },
+      };
+    }
+    if (method === 'sessions.list' && params?.spawnedBy) return { sessions: [] };
+    if (method === 'sessions.list') return { sessions: [] };
+    return {};
+  });
+  const internals = adapter as unknown as {
+    gatewayClient: GatewayClientLike | null;
+    ensureGatewayClientReady: () => Promise<void>;
+  };
+  internals.gatewayClient = { request } as unknown as GatewayClientLike;
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  vi.spyOn(adapter, 'getSessionKeysForSession').mockReturnValue([
+    'agent:main:cowork:parent',
+  ]);
+
+  const first = adapter.getSubagentStatuses(session.id);
+  const second = adapter.getSubagentStatuses(session.id);
+  await vi.waitFor(() => {
+    expect(request.mock.calls.filter(([method]) => method === 'tools.invoke')).toHaveLength(1);
+  });
+  releaseTool();
+
+  await expect(Promise.all([first, second])).resolves.toEqual([
+    {
+      subagents: [
+        expect.objectContaining({
+          sessionKey: 'agent:main:subagent:active-child',
+          status: 'running',
+        }),
+      ],
+    },
+    {
+      subagents: [
+        expect.objectContaining({
+          sessionKey: 'agent:main:subagent:active-child',
+          status: 'running',
+        }),
+      ],
+    },
+  ]);
+});
