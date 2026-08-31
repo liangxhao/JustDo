@@ -42,13 +42,24 @@ const MARKDOWN_CHAR_LIMIT = 140_000;
 const MARKDOWN_PARSE_LIMIT = 40_000;
 const MARKDOWN_CACHE_LIMIT = 200;
 const MARKDOWN_CACHE_MAX_CHARS = 50_000;
-const MARKDOWN_RENDER_CACHE_VERSION = 'markdown-render-v12';
+const MARKDOWN_RENDER_CACHE_VERSION = 'markdown-render-v13';
 const CJK_URL_TRAILING_PUNCTUATION_RE = /[，。；！？、]/;
+const CJK_SCRIPT_START_RE = /^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
 const BOX_DRAWING_TOP_RE = /^[ \t]*[┌╔].*[┐╗][ \t]*$/u;
 const BOX_DRAWING_BOTTOM_RE = /^[ \t]*[└╚].*[┘╝][ \t]*$/u;
 const INLINE_DATA_IMAGE_RE = /^data:image\/[a-z0-9.+-]+;base64,/i;
 const FENCE_OPEN_RE = /^[ \t]{0,3}(`{3,}|~{3,})/;
 const FENCE_CONTAINER_PREFIX_RE = /^[ \t]{0,3}(?:(?:>\s?)|(?:(?:[-+*]|\d{1,9}[.)])[ \t]+))/;
+const STRONG_QUOTE_PAIRS: Readonly<Record<string, string>> = {
+  '"': '"',
+  "'": "'",
+  '“': '”',
+  '‘': '’',
+  '「': '」',
+  '『': '』',
+  '«': '»',
+  '‹': '›',
+};
 
 const allowedTags = [
   'a', 'b', 'blockquote', 'br', 'button', 'code', 'del', 'details', 'div',
@@ -210,6 +221,48 @@ function hasCompleteBoxDrawingFrame(text: string): boolean {
   return false;
 }
 
+function findQuotedStrongClosingMarker(
+  source: string,
+  searchStart: number,
+  closingQuote: string,
+): number {
+  const closingMarker = `${closingQuote}**`;
+  let position = searchStart;
+
+  while (position < source.length) {
+    if (source[position] === '\\') {
+      position += 2;
+      continue;
+    }
+
+    if (source[position] === '`') {
+      const openerStart = position;
+      while (position < source.length && source[position] === '`') position += 1;
+      const openerLength = position - openerStart;
+      let runStart = source.indexOf('`', position);
+
+      while (runStart !== -1) {
+        let runEnd = runStart + 1;
+        while (runEnd < source.length && source[runEnd] === '`') runEnd += 1;
+        if (runEnd - runStart === openerLength) {
+          position = runEnd;
+          break;
+        }
+        runStart = source.indexOf('`', runEnd);
+      }
+
+      if (runStart !== -1) continue;
+      position = openerStart + openerLength;
+      continue;
+    }
+
+    if (source.startsWith(closingMarker, position)) return position;
+    position += 1;
+  }
+
+  return -1;
+}
+
 // ── DOMPurify hooks ─────────────────────────────────────────────────────────
 
 let hooksInstalled = false;
@@ -341,6 +394,57 @@ export const md = new MarkdownIt({
   html: true, // Enable HTML recognition so overrides can escape it
   breaks: true,
   linkify: true,
+});
+
+// CommonMark does not treat the trailing ** as a closing delimiter when the
+// emphasized text ends in punctuation and is immediately followed by CJK text.
+// Handle quote-wrapped strong text explicitly while leaving code spans and all
+// other emphasis syntax to markdown-it's standard rules.
+let parsingQuotedStrongContent = false;
+md.inline.ruler.before('emphasis', 'quoted_strong', (state, silent) => {
+  if (silent || parsingQuotedStrongContent) return false;
+
+  const start = state.pos;
+  if (state.src.slice(start, start + 2) !== '**') return false;
+  if (!state.scanDelims(start, false).can_open) return false;
+
+  const openingQuote = state.src[start + 2];
+  const closingQuote = STRONG_QUOTE_PAIRS[openingQuote];
+  if (!closingQuote) return false;
+
+  const quoteEnd = findQuotedStrongClosingMarker(state.src, start + 3, closingQuote);
+  if (quoteEnd === -1) return false;
+
+  const end = quoteEnd + closingQuote.length + 2;
+  if (state.src[end] === '*') return false;
+  if (!CJK_SCRIPT_START_RE.test(state.src.slice(end))) return false;
+
+  const openingToken = state.push('strong_open', 'strong', 1);
+  openingToken.markup = '**';
+
+  const innerTokens: typeof state.tokens = [];
+  parsingQuotedStrongContent = true;
+  try {
+    state.md.inline.parse(
+      state.src.slice(start + 2, quoteEnd + 1),
+      state.md,
+      state.env,
+      innerTokens,
+    );
+  } finally {
+    parsingQuotedStrongContent = false;
+  }
+  for (const token of innerTokens) {
+    token.level += state.level;
+    state.tokens.push(token);
+    state.tokens_meta.push(null);
+  }
+
+  const closingToken = state.push('strong_close', 'strong', -1);
+  closingToken.markup = '**';
+
+  state.pos = end;
+  return true;
 });
 
 md.enable('strikethrough');

@@ -54,6 +54,52 @@ describe('Markdown autolinks', () => {
   });
 });
 
+describe('Markdown emphasis', () => {
+  test.each([
+    ['ASCII double quotes', '**"xxxx"**这种', '&quot;xxxx&quot;'],
+    ['curly double quotes', '**“xxxx”**这种', '“xxxx”'],
+  ])('renders strong text wrapped in %s next to CJK text', (_description, source, text) => {
+    const html = md.render(source);
+
+    expect(html).toContain(`<strong>${text}</strong>这种`);
+  });
+
+  test('preserves inline Markdown inside quote-wrapped strong text', () => {
+    const html = md.render('**"use `code`"**这种');
+
+    expect(html).toContain('<strong>&quot;use <code>code</code>&quot;</strong>这种');
+  });
+
+  test('ignores apparent closing markers inside code spans', () => {
+    const html = md.render('**"use `"**` now"**这种');
+
+    expect(html).toContain(
+      '<strong>&quot;use <code>&quot;**</code> now&quot;</strong>这种',
+    );
+  });
+
+  test('does not parse quote-wrapped strong syntax inside code spans', () => {
+    const html = md.render('`**"xxxx"**这种`');
+
+    expect(html).toContain('<code>**&quot;xxxx&quot;**这种</code>');
+    expect(html).not.toContain('<strong>');
+  });
+
+  test('does not hide closing brackets while scanning Markdown link labels', () => {
+    const html = md.render('[**"x]y"**这种](https://e.test)');
+
+    expect(html).not.toContain('<a href="https://e.test"><strong>');
+    expect(html).toContain('[<strong>&quot;x]y&quot;</strong>这种](');
+  });
+
+  test('keeps standard CommonMark behavior when the following text is not CJK', () => {
+    const html = md.render('**"xxxx"**bar');
+
+    expect(html).not.toContain('<strong>');
+    expect(html).toContain('**&quot;xxxx&quot;**bar');
+  });
+});
+
 describe('Markdown tables', () => {
   test('wraps a table in a horizontal scroll container', () => {
     const html = md.render('| A | B | C |\n| --- | --- | --- |\n| 1 | 2 | 3 |');
