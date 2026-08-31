@@ -456,7 +456,7 @@ export const registerCoworkSessionHandlers = ({
     async (
       _event,
       sessionId: string,
-      options?: { includeSubagents?: boolean; forceRefresh?: boolean },
+      options?: { includeSubagents?: boolean; forceRefresh?: boolean; fullScan?: boolean },
     ) => {
       try {
         return {
@@ -484,7 +484,7 @@ export const registerCoworkSessionHandlers = ({
     async (
       _event,
       sessionIds: string[],
-      options?: { includeSubagents?: boolean; forceRefresh?: boolean },
+      options?: { includeSubagents?: boolean; forceRefresh?: boolean; fullScan?: boolean },
     ) => {
       try {
         return {

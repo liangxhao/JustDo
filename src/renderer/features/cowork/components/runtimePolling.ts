@@ -15,3 +15,11 @@ export const resolveBackgroundRuntimeSessionIds = (
         (session.status === 'running' || runtimeActivity[session.id] === true),
     )
     .map(session => session.id);
+
+export const resolveBackgroundRuntimeDiscoverySessionIds = (
+  sessions: readonly RuntimePollingSession[],
+  currentSessionId: string | null,
+): string[] =>
+  sessions
+    .filter(session => session.id !== currentSessionId && !session.id.startsWith('temp-'))
+    .map(session => session.id);

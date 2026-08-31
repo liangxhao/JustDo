@@ -119,7 +119,7 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
 
   async getSessionRuntimeStatus(
     sessionId: string,
-    options?: { includeSubagents?: boolean; forceRefresh?: boolean },
+    options?: { includeSubagents?: boolean; forceRefresh?: boolean; fullScan?: boolean },
   ): Promise<{
     known: boolean;
     mainRunning: boolean;
@@ -135,7 +135,7 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
 
   async getSessionRuntimeStatuses(
     sessionIds: string[],
-    options?: { includeSubagents?: boolean; forceRefresh?: boolean },
+    options?: { includeSubagents?: boolean; forceRefresh?: boolean; fullScan?: boolean },
   ): Promise<
     Record<
       string,

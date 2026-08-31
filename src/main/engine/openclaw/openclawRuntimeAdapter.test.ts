@@ -129,6 +129,7 @@ const createSessionTurn = (overrides: Partial<SessionTurn> = {}): SessionTurn =>
 type WorkspaceSyncInternals = {
   gatewayClient: GatewayClientLike | null;
   gatewayClientGeneration: number;
+  runWithAgentTurnAdmission: <T>(agentId: string, operation: () => Promise<T>) => Promise<T>;
   syncAgentWorkspaceIfNeeded: (agentId: string, workspaceRoot?: string) => Promise<void>;
 };
 
@@ -174,6 +175,55 @@ test('updates the agent config when the workspace changed', async () => {
     agentId: 'main',
     workspace,
   });
+});
+
+test('does not case-fold unresolved workspace paths that may be distinct', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const upperWorkspace = path.resolve('case-sensitive-workspace', 'Foo');
+  const lowerWorkspace = path.resolve('case-sensitive-workspace', 'foo');
+  const request = vi.fn((method: string) => {
+    if (method === 'agents.list') {
+      return Promise.resolve({ agents: [{ id: 'main', workspace: upperWorkspace }] });
+    }
+    return Promise.resolve({ ok: true });
+  });
+  const internals = getWorkspaceSyncInternals(adapter);
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+
+  await internals.syncAgentWorkspaceIfNeeded('main', lowerWorkspace);
+
+  expect(request).toHaveBeenNthCalledWith(2, 'agents.update', {
+    agentId: 'main',
+    workspace: lowerWorkspace,
+  });
+});
+
+test('holds same-agent admission until the accepted send operation finishes', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const internals = getWorkspaceSyncInternals(adapter);
+  const order: string[] = [];
+  let releaseFirst: (() => void) | undefined;
+  const firstGate = new Promise<void>(resolve => {
+    releaseFirst = resolve;
+  });
+
+  const first = internals.runWithAgentTurnAdmission('main', async () => {
+    order.push('workspace-a');
+    await firstGate;
+    order.push('send-a');
+  });
+  const second = internals.runWithAgentTurnAdmission('MAIN', async () => {
+    order.push('workspace-b');
+    order.push('send-b');
+  });
+
+  await vi.waitFor(() => expect(order).toEqual(['workspace-a']));
+  releaseFirst?.();
+  await Promise.all([first, second]);
+
+  expect(order).toEqual(['workspace-a', 'send-a', 'workspace-b', 'send-b']);
 });
 
 test('serializes concurrent workspace syncs for the same agent', async () => {
@@ -2016,6 +2066,85 @@ test('getSessionRuntimeStatus remains authoritative for rows present in a trunca
     subagentRunning: false,
     running: false,
   });
+});
+
+test('does not require descendant coverage once a truncated snapshot proves the parent is active', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.rememberSessionKey('session-1', 'agent:main:justdo:session-1');
+  const request = vi.fn().mockResolvedValue({
+    sessions: [
+      {
+        key: 'agent:main:justdo:session-1',
+        hasActiveRun: true,
+        status: 'running',
+      },
+    ],
+    hasMore: true,
+  });
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
+    request,
+  } as unknown as GatewayClientLike;
+
+  await expect(
+    adapter.getSessionRuntimeStatus('session-1', { includeSubagents: true }),
+  ).resolves.toMatchObject({
+    known: true,
+    mainRunning: true,
+    running: true,
+  });
+  expect(request).toHaveBeenCalledTimes(1);
+});
+
+test('requires complete descendant coverage before reporting a truncated parent idle', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.rememberSessionKey('session-1', 'agent:main:justdo:session-1');
+  const request = vi.fn(async (_method: string, params?: Record<string, unknown>) => {
+    if (params?.offset === 1) {
+      return {
+        sessions: [
+          {
+            key: 'agent:main:subagent:child',
+            spawnedBy: 'agent:main:justdo:session-1',
+            hasActiveRun: true,
+            status: 'running',
+          },
+        ],
+        hasMore: false,
+      };
+    }
+    return {
+      sessions: [
+        {
+          key: 'agent:main:justdo:session-1',
+          hasActiveRun: false,
+          status: 'completed',
+        },
+      ],
+      hasMore: true,
+    };
+  });
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
+    request,
+  } as unknown as GatewayClientLike;
+
+  await expect(
+    adapter.getSessionRuntimeStatus('session-1', { includeSubagents: true }),
+  ).resolves.toMatchObject({ known: false, running: false });
+  await expect(
+    adapter.getSessionRuntimeStatus('session-1', {
+      includeSubagents: true,
+      forceRefresh: true,
+      fullScan: true,
+    }),
+  ).resolves.toMatchObject({
+    known: true,
+    mainRunning: false,
+    subagentRunning: true,
+    running: true,
+  });
+  expect(request).toHaveBeenCalledWith('sessions.list', { limit: 500, offset: 1 });
 });
 
 test('sessions.changed invalidates the cached runtime snapshot', async () => {
@@ -4396,6 +4525,93 @@ test('refreshes persisted history when a previously active child disappears from
     warn.mockRestore();
     now.mockRestore();
   }
+});
+
+test('retains history and retries promptly when a persisted history page fails', async () => {
+  const { store, session } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const parentKey = 'agent:main:cowork:parent';
+  let persistedScan = 0;
+  const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+    if (method === 'tools.invoke') {
+      return { ok: true, output: { details: { status: 'ok', active: [], recent: [] } } };
+    }
+    if (params?.spawnedBy) return { sessions: [] };
+    persistedScan += 1;
+    if (persistedScan === 2) throw new Error('temporary persisted scan failure');
+    return {
+      sessions: [
+        {
+          key: 'agent:main:subagent:old-child',
+          spawnedBy: parentKey,
+          taskName: 'old_child',
+          status: 'done',
+        },
+      ],
+    };
+  });
+  const internals = adapter as unknown as {
+    gatewayClient: GatewayClientLike | null;
+    ensureGatewayClientReady: () => Promise<void>;
+  };
+  internals.gatewayClient = { request } as unknown as GatewayClientLike;
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  vi.spyOn(adapter, 'getSessionKeysForSession').mockReturnValue([parentKey]);
+  const now = vi.spyOn(Date, 'now').mockReturnValue(100_000);
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+  try {
+    await expect(adapter.getSubagentStatuses(session.id)).resolves.toMatchObject({
+      subagents: [{ sessionKey: 'agent:main:subagent:old-child' }],
+    });
+    now.mockReturnValue(169_000);
+    await expect(adapter.getSubagentStatuses(session.id)).resolves.toMatchObject({
+      subagents: [{ sessionKey: 'agent:main:subagent:old-child' }],
+    });
+    now.mockReturnValue(178_000);
+    await expect(adapter.getSubagentStatuses(session.id)).resolves.toMatchObject({
+      subagents: [{ sessionKey: 'agent:main:subagent:old-child' }],
+    });
+    expect(persistedScan).toBe(3);
+  } finally {
+    warn.mockRestore();
+    now.mockRestore();
+  }
+});
+
+test('does not repopulate subagent caches after a parent session is deleted', async () => {
+  const { store, session } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  let releaseTool!: () => void;
+  const toolGate = new Promise<void>(resolve => {
+    releaseTool = resolve;
+  });
+  const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+    if (method === 'tools.invoke') {
+      await toolGate;
+      return { ok: true, output: { details: { status: 'ok', active: [], recent: [] } } };
+    }
+    if (params?.spawnedBy) return { sessions: [] };
+    return { sessions: [] };
+  });
+  const internals = adapter as unknown as {
+    gatewayClient: GatewayClientLike | null;
+    ensureGatewayClientReady: () => Promise<void>;
+    subagentStatusCache: Map<string, unknown>;
+    subagentHistoryCache: Map<string, unknown>;
+  };
+  internals.gatewayClient = { request } as unknown as GatewayClientLike;
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+
+  const refresh = adapter.getSubagentStatuses(session.id);
+  await vi.waitFor(() => expect(request).toHaveBeenCalledWith('tools.invoke', expect.anything()));
+  store.getSession = () => null;
+  adapter.onSessionDeleted(session.id);
+  releaseTool();
+  await refresh;
+
+  expect(internals.subagentStatusCache.has(session.id)).toBe(false);
+  expect(internals.subagentHistoryCache.has(session.id)).toBe(false);
 });
 
 test('coalesces concurrent subagent status refreshes for the same parent session', async () => {

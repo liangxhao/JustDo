@@ -21,7 +21,10 @@ import type { GoalRunProgress } from '@/features/cowork/components/goalRunProgre
 import JustDoChatWrapper, {
   type JustDoChatWrapperRef,
 } from '@/features/cowork/components/JustDoChatWrapper';
-import { resolveBackgroundRuntimeSessionIds } from '@/features/cowork/components/runtimePolling';
+import {
+  resolveBackgroundRuntimeDiscoverySessionIds,
+  resolveBackgroundRuntimeSessionIds,
+} from '@/features/cowork/components/runtimePolling';
 import SubagentMenu, { type Subagent } from '@/features/cowork/components/SubagentMenu';
 import SubagentMessageDrawer from '@/features/cowork/components/SubagentMessageDrawer';
 import {
@@ -68,6 +71,8 @@ const DEBUG_COWORK_VIEW =
 const CURRENT_SESSION_RUNNING_POLL_MS = 3_000;
 const CURRENT_SESSION_IDLE_POLL_MS = 10_000;
 const BACKGROUND_SESSION_POLL_MS = 30_000;
+const BACKGROUND_DISCOVERY_POLL_MS = 60_000;
+const HIDDEN_DISCOVERY_POLL_MS = 120_000;
 const HIDDEN_WINDOW_POLL_MS = 60_000;
 
 function debugLog(...args: unknown[]): void {
@@ -187,6 +192,10 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     sessions,
     currentSessionId,
     sessionRuntimeActivity,
+  ).join('\n');
+  const backgroundDiscoverySessionIdsKey = resolveBackgroundRuntimeDiscoverySessionIds(
+    sessions,
+    currentSessionId,
   ).join('\n');
   const currentSessionAgent = currentSession
     ? (agentState.agents.find(agent => agent.id === currentSession.agentId) ?? null)
@@ -471,6 +480,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     let isCancelled = false;
     let timeoutId: number | null = null;
     let refreshInFlight = false;
+    let requiresFullScan = true;
     const getNextDelay = () => {
       if (document.hidden) return HIDDEN_WINDOW_POLL_MS;
       return currentSessionRuntimeRunningRef.current
@@ -487,6 +497,10 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       void coworkService
         .refreshSessionRuntimeActivity(currentSessionId, {
           includeSubagents: true,
+          fullScan: requiresFullScan,
+        })
+        .then(status => {
+          if (status) requiresFullScan = !status.known;
         })
         .finally(() => {
           refreshInFlight = false;
@@ -544,6 +558,44 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       if (timeoutId !== null) window.clearTimeout(timeoutId);
     };
   }, [backgroundSessionIdsKey]);
+
+  useEffect(() => {
+    const sessionIds = backgroundDiscoverySessionIdsKey
+      ? backgroundDiscoverySessionIdsKey.split('\n')
+      : [];
+    if (sessionIds.length === 0) return;
+    let isCancelled = false;
+    let timeoutId: number | null = null;
+    let refreshInFlight = false;
+    const refresh = () => {
+      if (isCancelled || refreshInFlight) return;
+      refreshInFlight = true;
+      void coworkService
+        .refreshSessionRuntimeActivities(sessionIds, { fullScan: true })
+        .finally(() => {
+          refreshInFlight = false;
+          if (isCancelled) return;
+          timeoutId = window.setTimeout(
+            refresh,
+            document.hidden ? HIDDEN_DISCOVERY_POLL_MS : BACKGROUND_DISCOVERY_POLL_MS,
+          );
+        });
+    };
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        if (timeoutId !== null) window.clearTimeout(timeoutId);
+        timeoutId = null;
+        refresh();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    refresh();
+    return () => {
+      isCancelled = true;
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+    };
+  }, [backgroundDiscoverySessionIdsKey]);
 
   useEffect(() => {
     setSelectedSubagent(null);

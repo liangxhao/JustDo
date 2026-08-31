@@ -36,6 +36,12 @@ function findMemoryManagerSource(): string {
 
 const sourcePath = findMemoryManagerSource();
 
+function normalizeTargetToPristine(content: string): string {
+  return content.includes(patch.__testing.PATCHED_CACHE_SEED)
+    ? content.replace(patch.__testing.PATCHED_CACHE_SEED, patch.__testing.CACHE_SEED)
+    : content;
+}
+
 describe('memory force-reembed opt-in patch', () => {
   test('skips the copied embedding cache only for the exact host opt-in', async () => {
     const pristineMethod = `
@@ -71,7 +77,7 @@ async runInPlaceReindex(params) {
   });
 
   test('transforms the locked source idempotently and rejects partial state', () => {
-    const original = fs.readFileSync(sourcePath, 'utf8');
+    const original = normalizeTargetToPristine(fs.readFileSync(sourcePath, 'utf8'));
     const transformed = patch.__testing.transformMemoryManager(original, sourcePath);
 
     expect(transformed).toContain(patch.__testing.PATCHED_CACHE_SEED);
@@ -97,7 +103,10 @@ async runInPlaceReindex(params) {
     const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-memory-reembed-patch-'));
     const fixtureDist = path.join(fixtureRoot, 'dist');
     fs.mkdirSync(fixtureDist, { recursive: true });
-    fs.copyFileSync(sourcePath, path.join(fixtureDist, path.basename(sourcePath)));
+    fs.writeFileSync(
+      path.join(fixtureDist, path.basename(sourcePath)),
+      normalizeTargetToPristine(fs.readFileSync(sourcePath, 'utf8')),
+    );
 
     try {
       expect(patch.applyPatch(fixtureRoot)).toHaveLength(1);

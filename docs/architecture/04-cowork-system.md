@@ -171,7 +171,7 @@ Exec/plugin approval 走独立 Gateway approval API，并继续使用阻塞式 m
 
 Subagent 列表优先通过选择性的 Gateway tool/API，必要时从 persisted sessions 查询；状态统一为 pending/running/finished/failed 等。label 来源会区分 task name、metadata 和 fallback，避免把随机 session key 当用户标题。
 
-当前状态仍以结构化 `subagents` 工具输出为权威，`sessions.list` 只补 projection 与超过 24 小时的持久历史。Main 对一次状态刷新做 single-flight 和 8 秒结果缓存；全量 persisted-session 分页扫描使用独立的 60 秒历史快照，期间把实时工具结果合并回历史，不能为了减少请求而退回仅依赖 session projection。菜单在父会话或任一 child 活动时每 5 秒刷新，全部终态后退避到 30 秒；抽屉只在所选 child 活动时持续刷新，终态只做一次确认。Gateway runtime patch `049` 将这种认证后的 out-of-band `tools.invoke` 排除出 agent tool-loop accounting，但保留 hook、授权与审批。
+当前状态仍以结构化 `subagents` 工具输出为权威，`sessions.list` 只补 projection 与超过 24 小时的持久历史。Main 对一次状态刷新做 single-flight 和 8 秒结果缓存；全量 persisted-session 分页扫描使用独立的 60 秒历史快照，期间把实时工具结果合并回历史，扫描失败时保留上一次完整快照且不推进 TTL。运行状态的低频 discovery sweep 会分页覆盖全部 session，不能把截断的第一页当成完整父子树。菜单在父会话或任一 child 活动时每 5 秒刷新，全部终态后退避到 30 秒；抽屉只在所选 child 活动时持续刷新，终态只做一次确认。Gateway runtime patch `049` 仅将认证后的 out-of-band `subagents list` 查询排除出 agent tool-loop accounting，其他工具/动作仍保留循环检测，hook、授权与审批不变。
 
 Subagent 详情的 Token 用量不使用 `sessions.list.totalTokens`，因为该字段是上下文快照而非生命周期消耗。详情打开时通过专用 `cowork:subTask:details` IPC 读取该 subagent 的 `sessions.usage` 原始 transcript 聚合，按每个 assistant 模型请求实际返回的 `usage` 累计输入、输出、缓存读取和缓存写入；“总 Token”严格等于这四项之和。tool-only 与控制类 assistant 轮次会计入；当前 transcript 不持久化上下文压缩和 exec review 请求的 `usage`，因此这两类请求尚不在详情累计中。读取失败时保留上一次完整结果，不展示部分累计值。
 

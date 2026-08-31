@@ -4,6 +4,12 @@
 目录仅作为历史资料；这里没有复制旧 anchor/replacement，没有 V2/V3/V13
 升级分支，也不兼容旧补丁、部分补丁或来源未知的 bundle。
 
+补丁安装以锁定 npm tarball 为唯一输入：需要更新 runtime 或补丁集合时，流程会重新
+解包、构建并从 pristine 产物应用完整 patch pass，绝不在上一次已打补丁的 runtime
+上做增量升级。因此补丁代码不得包含旧 marker、旧 replacement 或旧补丁状态的迁移/
+兼容分支；缓存只允许复用 manifest 与全部输入指纹完全一致的冻结快照，任何不一致都
+必须触发重新构建或直接失败。
+
 锁定产物：
 
 - npm integrity：`sha512-ycF3yPcbjN6bUPeaUx6Mh6vze1hQWoD3CT/wWcmD7a8xaHHHRUaAlaq+lFxMHf1ssEgODVAwjlzYqp2twkYZ7g==`
@@ -26,7 +32,8 @@
 5. manifest format 2 绑定 source lock、目标平台、补丁顺序与哈希、patch helper、
    build recipe、package lock、asar/package/companion 文件及最终 bundle 哈希。
    已安装的开发 runtime 是冻结快照，只有 `OPENCLAW_FORCE_INSTALL=1` 才从原始
-   npm 包重建并重新 patch；严格校验仍会拒绝把与当前输入不匹配的旧 runtime 打包。
+   npm 包重建并重新 patch；严格校验仍会拒绝把与当前输入不匹配的旧 runtime 打包，
+   不允许 patch 自己尝试迁移这个旧 runtime。
 
 ## 保留能力清单
 
@@ -95,9 +102,9 @@ flowchart LR
   OpenClaw 的 generic OpenAI-compatible embedding guarded fetch 显式使用该环境。`048` 只在
   JustDo 的手动重建入口显式要求重新计算向量，避免旧 embedding cache 使整次重建没有网络请求。
   URL 是否注入业务 Header 仍由本地 OutboundHeader policy 决定，runtime patch 不读取用户 Header。
-- Gateway 工具调用：`049` 只把认证后的运维侧 `tools.invoke` RPC 排除出 agent tool-loop
-  accounting；`before_tool_call` hook、授权、交互审批和实际执行不变。Agent run 内通过模型发起的
-  工具调用仍使用原生循环检测。
+- Gateway 工具调用：`049` 只把认证后的运维侧 `subagents list` 状态查询排除出 agent tool-loop
+  accounting；其他 `tools.invoke` 工具/动作和 Agent run 内模型调用仍使用原生循环检测，
+  `before_tool_call` hook、授权、交互审批和实际执行不变。
 
 ### 001–004：环境、Thinking 与历史
 
@@ -746,12 +753,14 @@ flowchart LR
 
 #### `049-gateway-tool-invoke-loop-scope.cjs`
 
-- **做什么**：让认证后的 Gateway `tools.invoke` RPC 继续经过 `before_tool_call` hook、授权和审批，
-  但给该 out-of-band 调用传入 `{ enabled: false }` 的 loop-detection context。JustDo 可继续把结构化
-  `subagents` 工具作为当前状态权威，而不会因为 UI 状态刷新污染父会话的代理工具调用历史。
-- **关系与边界**：本补丁作用于 Gateway RPC 入口，不修改模型执行期间构建的 agent tools，也不按
-  工具名特判 `subagents`。Loop detection 是单个 agent run 的失控保护，不是 Gateway API 的限流器；
-  运维调用仍受认证、tool visibility、plugin policy、approval mode 与参数 schema 约束。
+- **做什么**：让认证后的 Gateway `subagents list` 查询继续经过 `before_tool_call` hook、授权和审批，
+  但只给该只读 out-of-band 状态查询传入 `{ enabled: false }` 的 loop-detection context。JustDo 可继续
+  把结构化 `subagents` 工具作为当前状态权威，而不会因为 UI 状态刷新污染父会话的代理工具调用历史。
+- **关系与边界**：本补丁作用于 Gateway RPC/HTTP 共用入口，但精确限定为工具名 `subagents` 且
+  action 为 `list`；`subagents` 的 kill/steer 等动作以及 exec、文件和插件工具仍保留 loop detection。
+  本补丁不修改模型执行期间构建的 agent tools。运维调用仍受认证、tool visibility、plugin policy、
+  approval mode 与参数 schema 约束。049 只接受 pristine target 或本次 patch pass 已正确应用的
+  幂等状态；不识别、不迁移任何旧版 049 结果，补丁变更必须重新构建 runtime。
 - **当前保留原因**：目标版 `invokeGatewayTool` 使用父 `sessionKey` 调用 `runBeforeToolCallHook`，并传入
   普通 agent loop config；RPC 没有 agent `runId`，因此菜单/抽屉轮询会被错误累计为代理重复调用，
   产生 increasing repeat count 和 critical loop warning。

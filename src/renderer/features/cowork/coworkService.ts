@@ -387,7 +387,7 @@ export class CoworkService {
 
   async getSessionRuntimeStatus(
     sessionId: string,
-    options?: { includeSubagents?: boolean; forceRefresh?: boolean },
+    options?: { includeSubagents?: boolean; forceRefresh?: boolean; fullScan?: boolean },
   ): Promise<SessionRuntimeStatus> {
     const cowork = window.electron?.cowork;
     if (!cowork?.getSessionRuntimeStatus) {
@@ -421,17 +421,21 @@ export class CoworkService {
 
   async refreshSessionRuntimeActivity(
     sessionId: string,
-    options?: { includeSubagents?: boolean; forceRefresh?: boolean },
+    options?: { includeSubagents?: boolean; forceRefresh?: boolean; fullScan?: boolean },
   ): Promise<SessionRuntimeStatus | null> {
     const requestVersion = this.nextRuntimeStatusRequestVersion(sessionId);
     const status = await this.getSessionRuntimeStatus(sessionId, {
       includeSubagents: options?.includeSubagents === true,
       forceRefresh: options?.forceRefresh === true,
+      ...(options?.fullScan ? { fullScan: true } : {}),
     });
     return this.applyRuntimeStatus(sessionId, status, requestVersion) ? status : null;
   }
 
-  async refreshSessionRuntimeActivities(sessionIds: string[]): Promise<void> {
+  async refreshSessionRuntimeActivities(
+    sessionIds: string[],
+    options?: { fullScan?: boolean },
+  ): Promise<void> {
     const uniqueSessionIds = [...new Set(sessionIds.filter(id => !id.startsWith('temp-')))];
     if (uniqueSessionIds.length === 0) return;
     const requestVersions = new Map(
@@ -444,7 +448,10 @@ export class CoworkService {
     if (!cowork?.getSessionRuntimeStatuses) {
       await Promise.all(
         uniqueSessionIds.map(sessionId =>
-          this.getSessionRuntimeStatus(sessionId, { includeSubagents: true }).then(status => {
+          this.getSessionRuntimeStatus(sessionId, {
+            includeSubagents: true,
+            ...(options?.fullScan ? { fullScan: true } : {}),
+          }).then(status => {
             this.applyRuntimeStatus(sessionId, status, requestVersions.get(sessionId));
           }),
         ),
@@ -453,6 +460,7 @@ export class CoworkService {
     }
     const result = await cowork.getSessionRuntimeStatuses(uniqueSessionIds, {
       includeSubagents: true,
+      ...(options?.fullScan ? { fullScan: true } : {}),
     });
     if (!result.success) return;
     for (const sessionId of uniqueSessionIds) {

@@ -43,6 +43,12 @@ type GatewaySubagentProjection = Omit<GatewaySubagent, 'label' | 'labelSource'> 
   labelSource?: SubagentLabelSource;
 };
 
+export type GatewaySubagentListMetadata = {
+  subagents: GatewaySubagent[];
+  persistedHistoryComplete: boolean;
+  structuredToolComplete: boolean;
+};
+
 type ListGatewaySubagentsOptions = {
   client: GatewayClientLike;
   parentKeys: string[];
@@ -165,9 +171,15 @@ const rowBelongsToParent = (row: Record<string, unknown>, parentKeys: Set<string
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-const resolveToolStatus = (value: unknown): SubagentStatus => {
+const resolveToolStatus = (row: Record<string, unknown>): SubagentStatus => {
+  const pendingDescendants = optionalNumber(row.pendingDescendants) ?? 0;
+  if (pendingDescendants > 0) return SUBAGENT_STATUSES.RUNNING;
+
+  const value = optionalString(row.status)?.toLowerCase();
   if (value === 'pending') return SUBAGENT_STATUSES.PENDING;
-  if (value === 'running' || value === 'active') return SUBAGENT_STATUSES.RUNNING;
+  if (value === 'running' || value === 'active' || value?.startsWith('active (')) {
+    return SUBAGENT_STATUSES.RUNNING;
+  }
   if (isSubagentStatus(value)) return value;
   if (value === 'error') return SUBAGENT_STATUSES.FAILED;
   return SUBAGENT_STATUSES.DONE;
@@ -197,7 +209,7 @@ const addToolSubagents = (
       sessionKey,
       sessionId: optionalString(value.sessionId),
       ...(title ?? {}),
-      status: resolveToolStatus(value.status),
+      status: resolveToolStatus(value),
       task: optionalString(value.task),
       model: optionalString(value.model),
       startedAt: optionalNumber(value.startedAt),
@@ -333,16 +345,16 @@ export const listGatewaySubagentDescendants = async (
  * persisted history scan when a retained snapshot is already available. The
  * structured tool remains the authority for current lifecycle state.
  */
-export function listGatewaySubagents(
-  options: ListGatewaySubagentsOptions & { includeMalformedForRuntimeControl: true },
-): Promise<GatewaySubagentProjection[]>;
-export function listGatewaySubagents(
+const collectGatewaySubagents = async (
   options: ListGatewaySubagentsOptions,
-): Promise<GatewaySubagent[]>;
-export async function listGatewaySubagents(
-  options: ListGatewaySubagentsOptions,
-): Promise<GatewaySubagentProjection[]> {
+): Promise<{
+  subagents: GatewaySubagentProjection[];
+  persistedHistoryComplete: boolean;
+  structuredToolComplete: boolean;
+}> => {
   const bySessionKey = new Map<string, GatewaySubagentProjection>();
+  let persistedHistoryComplete = true;
+  let structuredToolComplete = true;
 
   for (const parentKey of options.parentKeys) {
     if (options.includeStructuredTool !== false) {
@@ -358,6 +370,7 @@ export async function listGatewaySubagents(
         const details = extractToolDetails(toolResult);
         if (details) addToolSubagents(bySessionKey, details);
       } catch (error) {
+        structuredToolComplete = false;
         console.warn('[SubagentGateway] Failed to invoke structured subagent list', {
           parentKey,
           error: error instanceof Error ? error.message : String(error),
@@ -422,6 +435,7 @@ export async function listGatewaySubagents(
         });
       }
     } catch (error) {
+      persistedHistoryComplete = false;
       console.warn('[SubagentGateway] Failed to list persisted subagent sessions', {
         error: error instanceof Error ? error.message : String(error),
       });
@@ -434,9 +448,38 @@ export async function listGatewaySubagents(
       warnMalformedSubagentOnce(subagent.sessionKey);
     }
   }
-  if (options.includeMalformedForRuntimeControl) return subagents;
-  return subagents.filter(
+  return { subagents, persistedHistoryComplete, structuredToolComplete };
+};
+
+const filterWellFormedSubagents = (
+  subagents: GatewaySubagentProjection[],
+): GatewaySubagent[] =>
+  subagents.filter(
     (subagent): subagent is GatewaySubagent =>
       typeof subagent.label === 'string' && subagent.labelSource !== undefined,
   );
+
+export const listGatewaySubagentsWithMetadata = async (
+  options: ListGatewaySubagentsOptions,
+): Promise<GatewaySubagentListMetadata> => {
+  const result = await collectGatewaySubagents(options);
+  return {
+    ...result,
+    subagents: filterWellFormedSubagents(result.subagents),
+  };
+};
+
+export function listGatewaySubagents(
+  options: ListGatewaySubagentsOptions & { includeMalformedForRuntimeControl: true },
+): Promise<GatewaySubagentProjection[]>;
+export function listGatewaySubagents(
+  options: ListGatewaySubagentsOptions,
+): Promise<GatewaySubagent[]>;
+export async function listGatewaySubagents(
+  options: ListGatewaySubagentsOptions,
+): Promise<GatewaySubagentProjection[]> {
+  const result = await collectGatewaySubagents(options);
+  return options.includeMalformedForRuntimeControl
+    ? result.subagents
+    : filterWellFormedSubagents(result.subagents);
 }

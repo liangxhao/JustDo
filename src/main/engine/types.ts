@@ -206,7 +206,7 @@ export interface CoworkRuntime {
   >;
   getSessionRuntimeStatus?(
     sessionId: string,
-    options?: { includeSubagents?: boolean; forceRefresh?: boolean },
+    options?: { includeSubagents?: boolean; forceRefresh?: boolean; fullScan?: boolean },
   ): Promise<{
     known: boolean;
     mainRunning: boolean;
@@ -216,7 +216,7 @@ export interface CoworkRuntime {
   }>;
   getSessionRuntimeStatuses?(
     sessionIds: string[],
-    options?: { includeSubagents?: boolean; forceRefresh?: boolean },
+    options?: { includeSubagents?: boolean; forceRefresh?: boolean; fullScan?: boolean },
   ): Promise<
     Record<
       string,

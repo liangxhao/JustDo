@@ -344,11 +344,11 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('cowork:session:remoteManaged', sessionId),
     getSessionRuntimeStatus: (
       sessionId: string,
-      options?: { includeSubagents?: boolean; forceRefresh?: boolean },
+      options?: { includeSubagents?: boolean; forceRefresh?: boolean; fullScan?: boolean },
     ) => ipcRenderer.invoke('cowork:session:runtimeStatus', sessionId, options),
     getSessionRuntimeStatuses: (
       sessionIds: string[],
-      options?: { includeSubagents?: boolean; forceRefresh?: boolean },
+      options?: { includeSubagents?: boolean; forceRefresh?: boolean; fullScan?: boolean },
     ) => ipcRenderer.invoke('cowork:sessions:runtimeStatus', sessionIds, options),
     beginSessionRun: (input: {
       sessionId: string;

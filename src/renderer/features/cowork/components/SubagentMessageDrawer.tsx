@@ -126,8 +126,11 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
   useEffect(() => {
     if (!parentSessionId || !subagentSessionKey) return;
     let cancelled = false;
+    let refreshInFlight = false;
 
     const refreshStatus = async () => {
+      if (refreshInFlight) return;
+      refreshInFlight = true;
       try {
         const result = await window.electron.cowork.getSubTaskStatus(parentSessionId);
         if (cancelled || !result.success) return;
@@ -148,6 +151,8 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
         }
       } catch {
         // Preserve the last known drawer status and retry on the next interval.
+      } finally {
+        refreshInFlight = false;
       }
     };
 

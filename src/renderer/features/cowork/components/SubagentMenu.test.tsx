@@ -197,4 +197,66 @@ describe('SubagentMenu', () => {
     expect(screen.getByText('154')).toBeTruthy();
     expect(screen.queryByRole('status', { name: /查询中/ })).toBeNull();
   });
+
+  it('starts the new session refresh without waiting for the previous session request', async () => {
+    i18nService.setLanguage('en', { persist: false });
+    let resolveOldRequest:
+      | ((value: { success: true; subagents: Array<Record<string, unknown>> }) => void)
+      | undefined;
+    const oldRequest = new Promise<{
+      success: true;
+      subagents: Array<Record<string, unknown>>;
+    }>(resolve => {
+      resolveOldRequest = resolve;
+    });
+    const getSubTaskStatus = vi.fn((sessionId: string) => {
+      if (sessionId === 'parent-1') return oldRequest;
+      return Promise.resolve({
+        success: true,
+        subagents: [
+          {
+            id: 'child-2',
+            sessionKey: 'agent:main:subagent:child-2',
+            label: 'New session child',
+            labelSource: 'taskName',
+            status: 'done',
+          },
+        ],
+      });
+    });
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        cowork: {
+          getSubTaskStatus,
+          getSubTaskDetails: vi.fn(),
+        },
+      },
+    });
+
+    const { rerender } = render(<SubagentMenu sessionId="parent-1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Subagents' }));
+    await waitFor(() => expect(getSubTaskStatus).toHaveBeenCalledWith('parent-1'));
+
+    rerender(<SubagentMenu sessionId="parent-2" />);
+    expect(await screen.findByText('New session child')).toBeTruthy();
+    expect(getSubTaskStatus).toHaveBeenCalledWith('parent-2');
+
+    resolveOldRequest?.({
+      success: true,
+      subagents: [
+        {
+          id: 'child-1',
+          sessionKey: 'agent:main:subagent:child-1',
+          label: 'Old session child',
+          labelSource: 'taskName',
+          status: 'done',
+        },
+      ],
+    });
+    await act(async () => Promise.resolve());
+
+    expect(screen.queryByText('Old session child')).toBeNull();
+    expect(screen.getByText('New session child')).toBeTruthy();
+  });
 });

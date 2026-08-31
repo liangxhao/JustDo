@@ -4,6 +4,7 @@ import type { GatewayClientLike } from '../gateway/types';
 import {
   listGatewaySubagentDescendants,
   listGatewaySubagents,
+  listGatewaySubagentsWithMetadata,
   mergeGatewaySubagentSnapshots,
 } from './subagentGateway';
 
@@ -212,6 +213,80 @@ test('lists subagents from the registry-backed sessions projection', async () =>
       totalTokens: 42,
     },
   ]);
+});
+
+test('keeps structured ancestors active while they wait on descendants', async () => {
+  const request = vi.fn(async (method: string) => {
+    if (method === 'tools.invoke') {
+      return {
+        ok: true,
+        output: {
+          details: {
+            status: 'ok',
+            active: [
+              {
+                sessionKey: 'agent:main:subagent:parent-worker',
+                taskName: 'parent_worker',
+                status: 'active (waiting on 1 child)',
+                pendingDescendants: 1,
+              },
+            ],
+            recent: [],
+          },
+        },
+      };
+    }
+    return { sessions: [] };
+  });
+
+  await expect(
+    listGatewaySubagents({
+      client: { request } as unknown as GatewayClientLike,
+      parentKeys: ['agent:main:cowork:parent'],
+      includePersistedHistory: false,
+    }),
+  ).resolves.toEqual([
+    expect.objectContaining({
+      sessionKey: 'agent:main:subagent:parent-worker',
+      status: 'running',
+    }),
+  ]);
+});
+
+test('reports an incomplete persisted history scan without discarding live results', async () => {
+  const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+    if (method === 'tools.invoke') {
+      return { ok: true, output: { details: { status: 'ok', active: [], recent: [] } } };
+    }
+    if (params?.spawnedBy) {
+      return {
+        sessions: [
+          {
+            key: 'agent:main:subagent:live-child',
+            taskName: 'live_child',
+            status: 'running',
+          },
+        ],
+      };
+    }
+    throw new Error('persisted page unavailable');
+  });
+
+  await expect(
+    listGatewaySubagentsWithMetadata({
+      client: { request } as unknown as GatewayClientLike,
+      parentKeys: ['agent:main:cowork:parent'],
+    }),
+  ).resolves.toMatchObject({
+    persistedHistoryComplete: false,
+    structuredToolComplete: true,
+    subagents: [
+      expect.objectContaining({
+        sessionKey: 'agent:main:subagent:live-child',
+        status: 'running',
+      }),
+    ],
+  });
 });
 
 test('uses persisted taskName instead of a transcript-derived title', async () => {

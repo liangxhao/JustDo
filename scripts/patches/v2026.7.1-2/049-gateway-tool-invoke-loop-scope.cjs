@@ -1,9 +1,9 @@
 'use strict';
 
-// Capability: keep operator-invoked Gateway tools out of agent tool-loop accounting.
+// Capability: keep structured subagent-list polling out of agent tool-loop accounting.
 // Target: openclaw@2026.7.1-2 shared Gateway tools.invoke implementation.
 // Scope: loop-detection context only; hooks, approvals, authorization, and execution stay intact.
-// Safety: disables runaway-loop accounting only for authenticated out-of-band Gateway RPC calls.
+// Safety: every tool/action except authenticated out-of-band `subagents list` keeps loop accounting.
 // Remove when: upstream scopes loop detection to agent-run tool calls or exposes a native subagent list RPC.
 
 const fs = require('fs');
@@ -21,8 +21,9 @@ const FUNCTION_SIGNATURE = 'async function invokeGatewayTool(params) {';
 const LOOP_DETECTION_ANCHOR = 'loopDetection: resolveToolLoopDetectionConfig({';
 const ORIGINAL_LOOP_DETECTION_PATTERN =
   /^([ \t]*)loopDetection: resolveToolLoopDetectionConfig\(\{\r?\n[ \t]*cfg: params\.cfg,\r?\n[ \t]*agentId\r?\n[ \t]*\}\)$/m;
-const PATCHED_LOOP_DETECTION_ANCHOR = 'loopDetection: { enabled: false }';
-const PATCHED_LOOP_DETECTION = `loopDetection: { enabled: false } // ${MARKER}`;
+const PATCHED_LOOP_DETECTION_ANCHOR =
+  'loopDetection: gatewayTool.name === "subagents" && (params.input.args?.action ?? action) === "list" ? { enabled: false } : resolveToolLoopDetectionConfig({ cfg: params.cfg, agentId })';
+const PATCHED_LOOP_DETECTION = `${PATCHED_LOOP_DETECTION_ANCHOR} // ${MARKER}`;
 
 function countPattern(content, pattern) {
   return [...content.matchAll(new RegExp(pattern.source, pattern.flags.replace('g', '') + 'g'))]
@@ -88,7 +89,6 @@ function locateTargets(runtimeDir) {
   ])) {
     targets.add(filePath);
   }
-
   const sourceTargets = [...targets].filter(
     filePath => path.basename(filePath) !== 'gateway-bundle.mjs',
   );

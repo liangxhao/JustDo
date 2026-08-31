@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveBackgroundRuntimeSessionIds } from './runtimePolling';
+import {
+  resolveBackgroundRuntimeDiscoverySessionIds,
+  resolveBackgroundRuntimeSessionIds,
+} from './runtimePolling';
 
 describe('resolveBackgroundRuntimeSessionIds', () => {
   it('polls only non-current sessions that may still be running', () => {
@@ -18,5 +21,19 @@ describe('resolveBackgroundRuntimeSessionIds', () => {
         idle: false,
       }),
     ).toEqual(['persisted-running', 'runtime-running']);
+  });
+
+  it('keeps idle background sessions in the low-frequency discovery sweep', () => {
+    const sessions = [
+      { id: 'current', status: 'idle' as const },
+      { id: 'idle-background', status: 'idle' as const },
+      { id: 'running-background', status: 'running' as const },
+      { id: 'temp-new', status: 'running' as const },
+    ];
+
+    expect(resolveBackgroundRuntimeDiscoverySessionIds(sessions, 'current')).toEqual([
+      'idle-background',
+      'running-background',
+    ]);
   });
 });

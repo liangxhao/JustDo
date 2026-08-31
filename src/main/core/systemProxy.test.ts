@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
-import { BUILTIN_MODEL_PROVIDER_CONFIG } from '../cowork/builtinModelProviderConfig';
 import {
   applySystemProxyEnv,
   configureForcedProxyRouting,
@@ -10,6 +9,8 @@ import {
   setProcessProxyRouting,
   shouldBypassProxyForUrl,
 } from './systemProxy';
+
+const LOCAL_PROVIDER_BASE_URL = 'http://127.0.0.1:9108/v1';
 
 vi.mock('electron', () => ({
   app: {
@@ -61,7 +62,7 @@ describe('process proxy bypass', () => {
   test('proxies the configured local provider while preserving other loopback bypasses', () => {
     setProcessProxyRouting({
       bypassEntries: ['127.0.0.1:6006'],
-      forcedBaseUrls: [BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl],
+      forcedBaseUrls: [LOCAL_PROVIDER_BASE_URL],
     });
     const proxyUrl = 'http://127.0.0.1:9000';
     applySystemProxyEnv(proxyUrl);
@@ -87,13 +88,13 @@ describe('process proxy bypass', () => {
   test('reapplies an active proxy when the Gateway port changes', () => {
     setProcessProxyRouting({
       bypassEntries: ['127.0.0.1:6006'],
-      forcedBaseUrls: [BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl],
+      forcedBaseUrls: [LOCAL_PROVIDER_BASE_URL],
     });
     const proxyUrl = 'http://127.0.0.1:9000';
     applySystemProxyEnv(proxyUrl);
     setProcessProxyRouting({
       bypassEntries: ['127.0.0.1:7007'],
-      forcedBaseUrls: [BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl],
+      forcedBaseUrls: [LOCAL_PROVIDER_BASE_URL],
     });
 
     expect(process.env.NO_PROXY?.split(',')).toContain('127.0.0.1:7007');
@@ -106,7 +107,7 @@ describe('process proxy bypass', () => {
     applySystemProxyEnv(null);
     setProcessProxyRouting({
       bypassEntries: ['127.0.0.1:7007'],
-      forcedBaseUrls: [BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl],
+      forcedBaseUrls: [LOCAL_PROVIDER_BASE_URL],
     });
 
     expect(process.env.HTTP_PROXY).toBe(originalEnv.HTTP_PROXY);
@@ -116,7 +117,7 @@ describe('process proxy bypass', () => {
   test('uses the same provider and Gateway routing for system proxy mode', () => {
     setProcessProxyRouting({
       bypassEntries: ['127.0.0.1:6006'],
-      forcedBaseUrls: [BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl],
+      forcedBaseUrls: [LOCAL_PROVIDER_BASE_URL],
     });
     applySystemProxyEnv('http://system-proxy:8080');
 
@@ -127,7 +128,7 @@ describe('process proxy bypass', () => {
 
     setProcessProxyRouting({
       bypassEntries: ['127.0.0.1:7007'],
-      forcedBaseUrls: [BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl],
+      forcedBaseUrls: [LOCAL_PROVIDER_BASE_URL],
     });
     expect(process.env.NO_PROXY?.split(',')).toContain('127.0.0.1:7007');
     expect(process.env.NO_PROXY?.split(',')).not.toContain('127.0.0.1:6006');

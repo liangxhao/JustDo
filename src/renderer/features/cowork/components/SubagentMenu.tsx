@@ -71,7 +71,8 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({
   const subagentLabelsRef = useRef(
     new Map<string, { label: string; labelSource: SubagentLabelSource }>(),
   );
-  const refreshInFlightRef = useRef(false);
+  const refreshInFlightRef = useRef<{ sessionId: string; generation: number } | null>(null);
+  const refreshGenerationRef = useRef(0);
   const hasLoadedRef = useRef(false);
   const detailStatsSessionKeyRef = useRef<string>();
   const detailStatsRef = useRef<SessionDetailStats>();
@@ -91,12 +92,17 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({
   const closeDetails = useCallback(() => setDetailSubagent(null), []);
 
   const refresh = useCallback(async () => {
-    if (refreshInFlightRef.current) return;
-    refreshInFlightRef.current = true;
+    if (refreshInFlightRef.current?.sessionId === sessionId) return;
+    const refreshToken = { sessionId, generation: ++refreshGenerationRef.current };
+    refreshInFlightRef.current = refreshToken;
     if (!hasLoadedRef.current) setIsLoading(true);
     try {
       const result = await window.electron.cowork.getSubTaskStatus(sessionId);
-      if (result.success && sessionIdRef.current === sessionId) {
+      if (
+        result.success &&
+        sessionIdRef.current === sessionId &&
+        refreshInFlightRef.current === refreshToken
+      ) {
         const nextSubagents = (result.subagents as Subagent[] | undefined) ?? [];
         const normalizedSubagents = nextSubagents.map(subagent => {
           const resolved = reconcileSubagentLabel(subagentLabelsRef.current.get(subagent.id), {
@@ -123,8 +129,10 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({
     } catch {
       // Preserve the last successful snapshot and retry on the next interval.
     } finally {
-      refreshInFlightRef.current = false;
-      if (sessionIdRef.current === sessionId) setIsLoading(false);
+      if (refreshInFlightRef.current === refreshToken) {
+        refreshInFlightRef.current = null;
+        if (sessionIdRef.current === sessionId) setIsLoading(false);
+      }
     }
   }, [onSubagentsChange, sessionId]);
 
