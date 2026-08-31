@@ -164,6 +164,13 @@
   white-space: nowrap;
 }
 
+.file-preview-title-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+}
+
 .file-preview-icon-button {
   display: inline-flex;
   flex: 0 0 auto;

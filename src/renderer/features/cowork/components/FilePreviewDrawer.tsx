@@ -7,6 +7,7 @@ import {
   DocumentTextIcon,
   ExclamationTriangleIcon,
   EyeIcon,
+  FolderOpenIcon,
   PencilSquareIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
@@ -157,6 +158,7 @@ const FilePreviewDrawer = forwardRef<FilePreviewDrawerHandle, FilePreviewDrawerP
     const [draft, setDraft] = useState(preview.content);
     const [isAuthorizing, setIsAuthorizing] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
+    const [isShowingInFolder, setIsShowingInFolder] = useState(false);
     const [isDark, setIsDark] = useState(() => document.documentElement.classList.contains('dark'));
     const [confirmation, setConfirmation] = useState<ConfirmationRequest | null>(null);
     const drawerRef = useRef<HTMLElement>(null);
@@ -313,6 +315,20 @@ const FilePreviewDrawer = forwardRef<FilePreviewDrawerHandle, FilePreviewDrawerP
       confirmationRef.current = null;
       setConfirmation(null);
     }, []);
+
+    const showInFolder = useCallback(async (): Promise<void> => {
+      try {
+        setIsShowingInFolder(true);
+        const result = await window.electron.shell.showItemInFolder(preview.filePath);
+        if (!result.success) {
+          showToast(result.error || i18nService.t('coworkFilePreviewShowInFolderFailed'));
+        }
+      } catch {
+        showToast(i18nService.t('coworkFilePreviewShowInFolderFailed'));
+      } finally {
+        if (mountedRef.current) setIsShowingInFolder(false);
+      }
+    }, [preview.filePath]);
 
     const reloadFromDisk = useCallback(async (): Promise<boolean> => {
       try {
@@ -569,20 +585,36 @@ const FilePreviewDrawer = forwardRef<FilePreviewDrawerHandle, FilePreviewDrawerP
                 </div>
                 <p title={preview.filePath}>{preview.filePath}</p>
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  void requestTransition().then(canClose => {
-                    if (canClose) onClose();
-                  });
-                }}
-                disabled={isSaving}
-                className="file-preview-icon-button"
-                aria-label={i18nService.t('close')}
-                title={i18nService.t('close')}
-              >
-                <XMarkIcon />
-              </button>
+              <div className="file-preview-title-actions">
+                <button
+                  type="button"
+                  onClick={() => void showInFolder()}
+                  disabled={isShowingInFolder}
+                  className="file-preview-icon-button"
+                  aria-label={i18nService.t('coworkFilePreviewShowInFolder')}
+                  title={i18nService.t('coworkFilePreviewShowInFolder')}
+                >
+                  {isShowingInFolder ? (
+                    <ArrowPathIcon className="animate-spin" />
+                  ) : (
+                    <FolderOpenIcon />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void requestTransition().then(canClose => {
+                      if (canClose) onClose();
+                    });
+                  }}
+                  disabled={isSaving}
+                  className="file-preview-icon-button"
+                  aria-label={i18nService.t('close')}
+                  title={i18nService.t('close')}
+                >
+                  <XMarkIcon />
+                </button>
+              </div>
             </div>
 
             <div className="file-preview-toolbar">
