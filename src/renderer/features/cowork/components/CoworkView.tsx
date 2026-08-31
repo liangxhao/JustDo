@@ -21,6 +21,7 @@ import type { GoalRunProgress } from '@/features/cowork/components/goalRunProgre
 import JustDoChatWrapper, {
   type JustDoChatWrapperRef,
 } from '@/features/cowork/components/JustDoChatWrapper';
+import { resolveBackgroundRuntimeSessionIds } from '@/features/cowork/components/runtimePolling';
 import SubagentMenu, { type Subagent } from '@/features/cowork/components/SubagentMenu';
 import SubagentMessageDrawer from '@/features/cowork/components/SubagentMessageDrawer';
 import {
@@ -182,10 +183,11 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     currentSession?.messages ?? [],
     currentSessionRuntimeRunning,
   );
-  const backgroundSessionIdsKey = sessions
-    .map(session => session.id)
-    .filter(sessionId => sessionId !== currentSessionId && !sessionId.startsWith('temp-'))
-    .join('\n');
+  const backgroundSessionIdsKey = resolveBackgroundRuntimeSessionIds(
+    sessions,
+    currentSessionId,
+    sessionRuntimeActivity,
+  ).join('\n');
   const currentSessionAgent = currentSession
     ? (agentState.agents.find(agent => agent.id === currentSession.agentId) ?? null)
     : null;

@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { app, BrowserWindow } from 'electron';
 import { EventEmitter } from 'events';
+import path from 'path';
 
 import { type CoworkAttachmentPayload, toGatewayAttachment } from '../../../shared/cowork/attachments';
 import {
@@ -237,6 +238,18 @@ type PendingTurnStart = {
   turn?: SessionTurn;
 };
 
+type GatewayAgentsListResult = {
+  agents?: unknown[];
+};
+
+const normalizeWorkspacePath = (workspace: string): string => {
+  const normalized = path.normalize(path.resolve(workspace));
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+};
+
+const areWorkspacePathsEquivalent = (left: string, right: string): boolean =>
+  normalizeWorkspacePath(left) === normalizeWorkspacePath(right);
+
 export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntime {
   private readonly store: CoworkStore;
   private readonly engineManager: OpenClawEngineManager;
@@ -278,6 +291,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private gatewayStoppingIntentionally = false;
   private gatewayReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private gatewayReconnectAttempt = 0;
+  private readonly agentWorkspaceSyncPromises = new Map<string, Promise<void>>();
   private goalRecoveryGeneration: number | null = null;
   private goalRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly appStartedAtMs: number;
@@ -327,6 +341,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   >();
   private runtimeSessionSnapshot: (RuntimeSessionSnapshot & { expiresAt: number }) | null = null;
   private runtimeSessionSnapshotPromise: Promise<RuntimeSessionSnapshot> | null = null;
+  private runtimeSessionSnapshotGeneration = 0;
   private lastRuntimeStatusWarningAt = 0;
 
   // Collaborators
@@ -1246,8 +1261,44 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private async syncAgentWorkspaceIfNeeded(agentId: string, workspaceRoot?: string): Promise<void> {
     const workspace = workspaceRoot?.trim();
     if (!workspace) return;
+
+    const normalizedAgentId = agentId.trim().toLowerCase() || DEFAULT_MANAGED_AGENT_ID;
+    const previousSync = this.agentWorkspaceSyncPromises.get(normalizedAgentId);
+    const syncPromise = (previousSync?.catch((): undefined => undefined) ?? Promise.resolve()).then(() =>
+      this.syncAgentWorkspace(normalizedAgentId, workspace),
+    );
+    this.agentWorkspaceSyncPromises.set(normalizedAgentId, syncPromise);
+
+    try {
+      await syncPromise;
+    } finally {
+      if (this.agentWorkspaceSyncPromises.get(normalizedAgentId) === syncPromise) {
+        this.agentWorkspaceSyncPromises.delete(normalizedAgentId);
+      }
+    }
+  }
+
+  private async syncAgentWorkspace(agentId: string, workspace: string): Promise<void> {
     const client = this.requireGatewayClient();
     try {
+      let currentWorkspace: string | undefined;
+      try {
+        const result = await client.request<GatewayAgentsListResult>('agents.list', {});
+        const currentAgent = result.agents?.find(
+          candidate =>
+            isRecord(candidate) &&
+            typeof candidate.id === 'string' &&
+            candidate.id.trim().toLowerCase() === agentId,
+        );
+        if (isRecord(currentAgent) && typeof currentAgent.workspace === 'string') {
+          currentWorkspace = currentAgent.workspace.trim();
+        }
+      } catch {
+        // Preserve the previous write-first behavior when the read-only lookup is unavailable.
+      }
+
+      if (currentWorkspace && areWorkspacePathsEquivalent(currentWorkspace, workspace)) return;
+
       await client.request('agents.update', {
         agentId,
         workspace,
@@ -2226,6 +2277,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   private handleSessionsChangedEvent(payload: unknown): void {
     if (!isRecord(payload)) return;
+    this.invalidateRuntimeSessionSnapshot();
     const source = isRecord(payload.session) ? payload.session : payload;
     const sessionKey =
       (typeof source.key === 'string' && source.key.trim()) ||
@@ -3301,6 +3353,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   private async ensureGatewayClientReady(): Promise<void> {
+    if (this.gatewayClient) return;
+
     if (this.gatewayClientInitLock) {
       await this.gatewayClientInitLock;
       return;
@@ -3491,6 +3545,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.gatewayClientVersion = null;
     this.gatewayClientEntryPath = null;
     this.gatewayReadyPromise = null;
+    this.invalidateRuntimeSessionSnapshot();
     this.channelSessionSync?.clearCache();
     this.knownChannelSessionIds.clear();
     this.heartbeatSessionKeys.clear();
@@ -3709,6 +3764,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.gatewayClientVersion = null;
     this.gatewayClientEntryPath = null;
     this.gatewayReadyPromise = null;
+    this.invalidateRuntimeSessionSnapshot();
     this.channelSessionSync?.clearCache();
     this.knownChannelSessionIds.clear();
     this.heartbeatSessionKeys.clear();
@@ -4120,6 +4176,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }
 
       const sessionKeys = new Set(this.getSessionKeysForSession(sessionId));
+      const hasMainSessionRow = snapshot.sessions.some(row =>
+        sessionKeys.has(this.runtimeRowString(row.key)),
+      );
       const mainRunning =
         localRunning ||
         snapshot.sessions.some(row => {
@@ -4148,8 +4207,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           );
         }
       }
+      const known =
+        localRunning ||
+        (snapshot.known && (!snapshot.hasMore || hasMainSessionRow || subagentRunning));
       statuses[sessionId] = {
-        known: true,
+        known,
         mainRunning,
         subagentRunning,
         running: mainRunning || subagentRunning,
@@ -4180,6 +4242,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     );
   }
 
+  private invalidateRuntimeSessionSnapshot(): void {
+    this.runtimeSessionSnapshot = null;
+    this.runtimeSessionSnapshotGeneration += 1;
+  }
+
   private async getRuntimeSessionSnapshot(forceRefresh = false): Promise<RuntimeSessionSnapshot> {
     const now = Date.now();
     if (
@@ -4195,6 +4262,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
     const client = this.gatewayClient;
     if (!client) return { known: false, sessions: [], hasMore: false };
+    const snapshotGeneration = this.runtimeSessionSnapshotGeneration;
 
     this.runtimeSessionSnapshotPromise = client
       .request<{ sessions?: Array<Record<string, unknown>>; hasMore?: boolean }>('sessions.list', {
@@ -4219,6 +4287,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         return { known: false, sessions: [], hasMore: false };
       })
       .then(snapshot => {
+        if (snapshotGeneration !== this.runtimeSessionSnapshotGeneration) {
+          return { known: false, sessions: [], hasMore: false };
+        }
+
         this.runtimeSessionSnapshot = {
           ...snapshot,
           expiresAt: Date.now() + RUNTIME_SESSION_SNAPSHOT_TTL_MS,

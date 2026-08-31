@@ -37,6 +37,7 @@ type SyncOpenClawConfigResult = {
   success: boolean;
   changed: boolean;
   configSynced: boolean;
+  permissionVerified?: boolean;
   status?: OpenClawEngineStatus;
   error?: string;
 };
@@ -187,6 +188,7 @@ export class OpenClawConfigSyncService {
     const statusBeforeSync = engineManager.getStatus();
     const reloadGeneration = engineManager.getGatewayConfigReloadGeneration();
     const expectedPermissionMode = this.deps.getCoworkStore().getConfig().permissionMode;
+    let restrictedExecPolicyVerified = false;
     if (statusBeforeSync.phase === 'running' && expectedPermissionMode !== 'full') {
       try {
         const restrictedPolicyApplied = await this.applyExecApprovalPolicy(expectedPermissionMode);
@@ -201,6 +203,7 @@ export class OpenClawConfigSyncService {
             'The restricted host execution policy could not be applied before reloading OpenClaw configuration.',
           );
         }
+        restrictedExecPolicyVerified = true;
       } catch (error) {
         return this.failClosedConfigApplication(
           {
@@ -265,11 +268,14 @@ export class OpenClawConfigSyncService {
         });
 
     if (applyMode === 'none') {
-      return this.verifySuccessfulConfigApplication({
-        success: true,
-        changed: syncResult.changed,
-        configSynced: true,
-      });
+      return this.verifySuccessfulConfigApplication(
+        {
+          success: true,
+          changed: syncResult.changed,
+          configSynced: true,
+        },
+        { execPolicyAlreadyVerified: restrictedExecPolicyVerified },
+      );
     }
 
     if (applyMode === 'native-reload') {
@@ -339,15 +345,22 @@ export class OpenClawConfigSyncService {
 
   private async verifySuccessfulConfigApplication(
     result: SyncOpenClawConfigResult,
+    options: { execPolicyAlreadyVerified?: boolean } = {},
   ): Promise<SyncOpenClawConfigResult> {
     const engineManager = this.deps.getOpenClawEngineManager();
     if (engineManager.getStatus().phase !== 'running') return result;
 
     try {
       const expectedMode = this.deps.getCoworkStore().getConfig().permissionMode;
-      const runtimeConfigApplied = await this.verifyRuntimePermissionConfig(expectedMode);
-      const execPolicyApplied = await this.applyExecApprovalPolicy(expectedMode);
-      if (runtimeConfigApplied && execPolicyApplied) return result;
+      const [runtimeConfigApplied, execPolicyApplied] = await Promise.all([
+        this.verifyRuntimePermissionConfig(expectedMode),
+        options.execPolicyAlreadyVerified
+          ? Promise.resolve(true)
+          : this.applyExecApprovalPolicy(expectedMode),
+      ]);
+      if (runtimeConfigApplied && execPolicyApplied) {
+        return { ...result, permissionVerified: true };
+      }
 
       const error = 'The OpenClaw host execution policy could not be verified.';
       return this.failClosedConfigApplication(result, error);
@@ -388,6 +401,14 @@ export class OpenClawConfigSyncService {
   private async applyExecApprovalPolicy(mode: PermissionMode): Promise<boolean> {
     const current =
       await this.deps.requestGateway<ExecApprovalsSnapshot>('exec.approvals.get');
+    if (
+      typeof current.hash === 'string' &&
+      current.hash.length > 0 &&
+      this.isExecApprovalPolicyApplied(current.file, mode)
+    ) {
+      return true;
+    }
+
     const file: ExecApprovalsFile = {
       ...(current.file ?? {}),
       version: 1,
@@ -415,10 +436,27 @@ export class OpenClawConfigSyncService {
     });
     const applied =
       await this.deps.requestGateway<ExecApprovalsSnapshot>('exec.approvals.get');
+    return (
+      typeof submitted.hash === 'string' &&
+      submitted.hash.length > 0 &&
+      applied.hash === submitted.hash &&
+      this.isExecApprovalPolicyApplied(applied.file, mode)
+    );
+  }
+
+  private isExecApprovalPolicyApplied(
+    file: ExecApprovalsFile | undefined,
+    mode: PermissionMode,
+  ): boolean {
+    if (file?.version !== 1) return false;
+
     const expected = resolveExecApprovalFields(mode);
-    const defaults = applied.file?.defaults;
-    const agentsMatch = Object.keys(file.agents ?? {}).every(agentId => {
-      const agent = applied.file?.agents?.[agentId];
+    const schedulerPolicy = resolveExecApprovalFields('full');
+    const defaults = file.defaults;
+    const agents = file.agents ?? {};
+    if (!Object.prototype.hasOwnProperty.call(agents, ScheduledTaskAgentId)) return false;
+
+    const agentsMatch = Object.entries(agents).every(([agentId, agent]) => {
       const expectedAgentPolicy =
         agentId === ScheduledTaskAgentId ? schedulerPolicy : expected;
       return (
@@ -427,17 +465,13 @@ export class OpenClawConfigSyncService {
         agent.askFallback === expectedAgentPolicy.askFallback
       );
     });
-    const hostApplied = (
-      typeof submitted.hash === 'string' &&
-      submitted.hash.length > 0 &&
-      applied.hash === submitted.hash &&
+    return (
       defaults?.security === expected.security &&
       defaults.ask === expected.ask &&
       defaults.askFallback === expected.askFallback &&
       agentsMatch &&
-      !this.hasPersistentApprovalGrants(applied.file)
+      !this.hasPersistentApprovalGrants(file)
     );
-    return hostApplied;
   }
 
   private hasPersistentApprovalGrants(file: ExecApprovalsFile | undefined): boolean {

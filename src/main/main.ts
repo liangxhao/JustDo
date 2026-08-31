@@ -476,6 +476,8 @@ const ensureOpenClawRunningForCowork = async () => {
 
   const status = manager.getStatus();
   if (status.phase === 'running') {
+    if (syncResult.permissionVerified) return status;
+
     const verification = await getOpenClawConfigSyncService().verifyActivePermissionPolicy();
     return verification.success
       ? status

@@ -60,12 +60,16 @@ describe('cowork session execution permissions', () => {
 
     const result = await handlers.get('cowork:session:start')?.(
       {},
-      { prompt: 'hello', cwd: 'C:\\workspace', permissionMode: 'ask' },
+      { prompt: 'hello', permissionMode: 'ask' },
     );
     expect(result).toMatchObject({ success: true });
     expect(createSession.mock.calls[0]?.[5]).toBe('full');
     expect(createSession.mock.calls[0]?.[6]).toBe('openai/gpt-5');
-    expect(startSession).toHaveBeenCalledOnce();
+    expect(startSession).toHaveBeenCalledWith(
+      'session-1',
+      'hello',
+      expect.objectContaining({ workspaceRoot: 'C:\\workspace' }),
+    );
   });
 
   test('continues an existing session without reapplying its historical permission snapshot', async () => {

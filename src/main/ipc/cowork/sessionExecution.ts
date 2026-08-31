@@ -82,9 +82,10 @@ export const registerCoworkSessionExecutionHandlers = ({
       const fallbackTitle = options.prompt.split('\n')[0].slice(0, 50) || 'New Session';
       const agentId = options.agentId || 'main';
       const initialModelRef = store.getAgent(agentId)?.model.trim() || undefined;
+      const resolvedWorkspaceRoot = resolveTaskWorkingDirectory(selectedWorkspaceRoot);
       const session = store.createSession(
         options.title?.trim() || fallbackTitle,
-        resolveTaskWorkingDirectory(selectedWorkspaceRoot),
+        resolvedWorkspaceRoot,
         config.executionMode || 'local',
         options.activeSkillIds || [],
         agentId,
@@ -117,7 +118,7 @@ export const registerCoworkSessionExecutionHandlers = ({
         .startSession(session.id, options.prompt, {
           skipInitialUserMessage: true,
           skillIds: options.activeSkillIds,
-          workspaceRoot: selectedWorkspaceRoot,
+          workspaceRoot: resolvedWorkspaceRoot,
           confirmationMode: 'modal',
           attachments: options.attachments,
           agentId: options.agentId,

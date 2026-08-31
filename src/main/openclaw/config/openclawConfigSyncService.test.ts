@@ -139,6 +139,7 @@ describe('OpenClawConfigSyncService', () => {
     permissionPolicyLoaded?: boolean;
     reportedPolicyMode?: 'ask' | 'auto' | 'full';
     reportedFullAgentIds?: string[];
+    configChanged?: boolean;
     syncError?: string;
   } = {}) => {
     let phase = options.phase ?? 'running';
@@ -258,8 +259,8 @@ describe('OpenClawConfigSyncService', () => {
           ? { ok: false, error: options.syncError }
           : {
               ok: true,
-              changed: true,
-              configChanged: true,
+              changed: options.configChanged ?? true,
+              configChanged: options.configChanged ?? true,
               requiresGatewayRestart: false,
               configPath: options.configPath ?? 'openclaw.json',
             },
@@ -309,10 +310,13 @@ describe('OpenClawConfigSyncService', () => {
   it('allows legacy managed-session migration only while the Gateway is stopped', async () => {
     const harness = createHarness({ phase: 'ready' });
 
-    await expect(harness.service.syncConfig({ reason: 'startup' })).resolves.toMatchObject({
+    const result = await harness.service.syncConfig({ reason: 'startup' });
+
+    expect(result).toMatchObject({
       success: true,
       configSynced: true,
     });
+    expect(result).not.toHaveProperty('permissionVerified');
     expect(harness.configSync.sync).toHaveBeenCalledWith('startup', {
       allowManagedSessionStoreMutation: true,
     });
@@ -449,6 +453,7 @@ describe('OpenClawConfigSyncService', () => {
     await expect(harness.service.syncConfig({ reason: 'test' })).resolves.toMatchObject({
       success: true,
       configSynced: true,
+      permissionVerified: true,
     });
     expect(harness.requestGateway).toHaveBeenCalledWith('exec.approvals.get');
     expect(harness.requestGateway).toHaveBeenCalledWith(
@@ -458,6 +463,40 @@ describe('OpenClawConfigSyncService', () => {
     expect(harness.requestGateway).toHaveBeenCalledWith('config.get');
     expect(harness.requestGateway).toHaveBeenCalledWith('actionApproval.info');
     expect(harness.stopGateway).not.toHaveBeenCalled();
+  });
+
+  it('does not rewrite an already verified approval policy', async () => {
+    const harness = createHarness({ waitForReload: true });
+    await harness.service.syncConfig({ reason: 'test' });
+    harness.requestGateway.mockClear();
+
+    await expect(harness.service.verifyActivePermissionPolicy()).resolves.toMatchObject({
+      success: true,
+      permissionVerified: true,
+    });
+
+    expect(harness.requestGateway.mock.calls.map(([method]) => method)).toEqual([
+      'config.get',
+      'actionApproval.info',
+      'exec.approvals.get',
+    ]);
+  });
+
+  it('reuses the restricted approval verification when config remains unchanged', async () => {
+    const harness = createHarness({ configChanged: false });
+    await harness.service.syncConfig({ reason: 'first' });
+    harness.requestGateway.mockClear();
+
+    await expect(harness.service.syncConfig({ reason: 'second' })).resolves.toMatchObject({
+      success: true,
+      permissionVerified: true,
+    });
+
+    expect(harness.requestGateway.mock.calls.map(([method]) => method)).toEqual([
+      'exec.approvals.get',
+      'config.get',
+      'actionApproval.info',
+    ]);
   });
 
   it('applies a restricted host policy before writing and reloading restricted config', async () => {

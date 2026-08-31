@@ -1,3 +1,4 @@
+import path from 'path';
 import { expect, test, vi } from 'vitest';
 
 const { sendToRenderer } = vi.hoisted(() => ({ sendToRenderer: vi.fn() }));
@@ -123,6 +124,133 @@ const createSessionTurn = (overrides: Partial<SessionTurn> = {}): SessionTurn =>
   modelName: 'test-model',
   knownRunIds: new Set(['run-1']),
   ...overrides,
+});
+
+type WorkspaceSyncInternals = {
+  gatewayClient: GatewayClientLike | null;
+  gatewayClientGeneration: number;
+  syncAgentWorkspaceIfNeeded: (agentId: string, workspaceRoot?: string) => Promise<void>;
+};
+
+const getWorkspaceSyncInternals = (
+  adapter: OpenClawRuntimeAdapter,
+): WorkspaceSyncInternals => adapter as unknown as WorkspaceSyncInternals;
+
+test('skips the agent config write when the resolved workspace already matches', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const workspace = process.cwd();
+  const request = vi.fn().mockResolvedValue({
+    agents: [{ id: 'main', workspace: `${workspace}${path.sep}` }],
+  });
+  const internals = getWorkspaceSyncInternals(adapter);
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+
+  await internals.syncAgentWorkspaceIfNeeded('main', workspace);
+
+  expect(request).toHaveBeenCalledOnce();
+  expect(request).toHaveBeenCalledWith('agents.list', {});
+});
+
+test('updates the agent config when the workspace changed', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const workspace = path.resolve('new-workspace');
+  const request = vi.fn((method: string) => {
+    if (method === 'agents.list') {
+      return Promise.resolve({
+        agents: [{ id: 'main', workspace: path.resolve('old-workspace') }],
+      });
+    }
+    return Promise.resolve({ ok: true });
+  });
+  const internals = getWorkspaceSyncInternals(adapter);
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+
+  await internals.syncAgentWorkspaceIfNeeded('main', workspace);
+
+  expect(request).toHaveBeenNthCalledWith(1, 'agents.list', {});
+  expect(request).toHaveBeenNthCalledWith(2, 'agents.update', {
+    agentId: 'main',
+    workspace,
+  });
+});
+
+test('serializes concurrent workspace syncs for the same agent', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const workspace = path.resolve('shared-workspace');
+  let currentWorkspace = path.resolve('old-workspace');
+  const request = vi.fn((method: string, params?: unknown) => {
+    if (method === 'agents.list') {
+      return Promise.resolve({ agents: [{ id: 'main', workspace: currentWorkspace }] });
+    }
+    if (method === 'agents.update') {
+      currentWorkspace = (params as { workspace: string }).workspace;
+    }
+    return Promise.resolve({ ok: true });
+  });
+  const internals = getWorkspaceSyncInternals(adapter);
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+
+  await Promise.all([
+    internals.syncAgentWorkspaceIfNeeded('main', workspace),
+    internals.syncAgentWorkspaceIfNeeded('main', workspace),
+  ]);
+
+  expect(request.mock.calls.filter(([method]) => method === 'agents.list')).toHaveLength(2);
+  expect(request.mock.calls.filter(([method]) => method === 'agents.update')).toHaveLength(1);
+});
+
+test('rechecks the workspace after the Gateway client reconnects', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const workspace = path.resolve('selected-workspace');
+  const firstRequest = vi.fn().mockResolvedValue({
+    agents: [{ id: 'main', workspace }],
+  });
+  const secondRequest = vi.fn((method: string) => {
+    if (method === 'agents.list') {
+      return Promise.resolve({
+        agents: [{ id: 'main', workspace: path.resolve('gateway-default-workspace') }],
+      });
+    }
+    return Promise.resolve({ ok: true });
+  });
+  const internals = getWorkspaceSyncInternals(adapter);
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request: firstRequest };
+
+  await internals.syncAgentWorkspaceIfNeeded('main', workspace);
+  internals.gatewayClientGeneration++;
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request: secondRequest };
+  await internals.syncAgentWorkspaceIfNeeded('main', workspace);
+
+  expect(firstRequest).toHaveBeenCalledOnce();
+  expect(secondRequest).toHaveBeenNthCalledWith(1, 'agents.list', {});
+  expect(secondRequest).toHaveBeenNthCalledWith(2, 'agents.update', {
+    agentId: 'main',
+    workspace,
+  });
+});
+
+test('falls back to the existing workspace update when listing agents fails', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const workspace = path.resolve('selected-workspace');
+  const request = vi.fn((method: string) => {
+    if (method === 'agents.list') return Promise.reject(new Error('unsupported'));
+    return Promise.resolve({ ok: true });
+  });
+  const internals = getWorkspaceSyncInternals(adapter);
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+
+  await internals.syncAgentWorkspaceIfNeeded('main', workspace);
+
+  expect(request).toHaveBeenNthCalledWith(1, 'agents.list', {});
+  expect(request).toHaveBeenNthCalledWith(2, 'agents.update', {
+    agentId: 'main',
+    workspace,
+  });
 });
 
 test('binds a new session receipt to the Gateway acknowledged root run', async () => {
@@ -1733,6 +1861,21 @@ test('getSessionKeysForSession prefers channel keys before managed fallback', ()
   ]);
 });
 
+test('ensureGatewayClientReady reuses an already connected Gateway client', async () => {
+  const { store } = createEmptyStore();
+  const startGateway = vi.fn();
+  const adapter = new OpenClawRuntimeAdapter(store, { startGateway } as never);
+  const internals = adapter as unknown as {
+    gatewayClient: GatewayClientLike | null;
+    ensureGatewayClientReady: () => Promise<void>;
+  };
+  internals.gatewayClient = { request: vi.fn() } as unknown as GatewayClientLike;
+
+  await internals.ensureGatewayClientReady();
+
+  expect(startGateway).not.toHaveBeenCalled();
+});
+
 test('getSessionRuntimeStatus only treats the main session as running', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
@@ -1831,6 +1974,144 @@ test('getSessionRuntimeStatuses shares one Gateway snapshot across concurrent ca
     { known: true, mainRunning: false, subagentRunning: false, running: false },
     { known: true, mainRunning: false, subagentRunning: false, running: false },
   ]);
+});
+
+test('getSessionRuntimeStatus stays unknown when a truncated snapshot omits the session', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const request = vi.fn().mockResolvedValue({ sessions: [], hasMore: true });
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
+    request,
+  } as unknown as GatewayClientLike;
+
+  await expect(adapter.getSessionRuntimeStatus('session-1')).resolves.toEqual({
+    known: false,
+    mainRunning: false,
+    subagentRunning: false,
+    running: false,
+  });
+});
+
+test('getSessionRuntimeStatus remains authoritative for rows present in a truncated snapshot', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.rememberSessionKey('session-1', 'agent:main:justdo:session-1');
+  const request = vi.fn().mockResolvedValue({
+    sessions: [
+      {
+        key: 'agent:main:justdo:session-1',
+        hasActiveRun: false,
+        status: 'completed',
+      },
+    ],
+    hasMore: true,
+  });
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
+    request,
+  } as unknown as GatewayClientLike;
+
+  await expect(adapter.getSessionRuntimeStatus('session-1')).resolves.toEqual({
+    known: true,
+    mainRunning: false,
+    subagentRunning: false,
+    running: false,
+  });
+});
+
+test('sessions.changed invalidates the cached runtime snapshot', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.rememberSessionKey('session-1', 'agent:main:justdo:session-1');
+  const request = vi
+    .fn()
+    .mockResolvedValueOnce({
+      sessions: [
+        {
+          key: 'agent:main:justdo:session-1',
+          hasActiveRun: true,
+          status: 'running',
+        },
+      ],
+    })
+    .mockResolvedValueOnce({
+      sessions: [
+        {
+          key: 'agent:main:justdo:session-1',
+          hasActiveRun: false,
+          status: 'completed',
+        },
+      ],
+    });
+  const internals = adapter as unknown as {
+    gatewayClient: GatewayClientLike | null;
+    handleSessionsChangedEvent: (payload: unknown) => void;
+  };
+  internals.gatewayClient = { request } as unknown as GatewayClientLike;
+
+  await expect(adapter.getSessionRuntimeStatus('session-1')).resolves.toMatchObject({
+    running: true,
+  });
+  internals.handleSessionsChangedEvent({
+    key: 'agent:main:justdo:session-1',
+    hasActiveRun: false,
+    status: 'completed',
+  });
+
+  await expect(adapter.getSessionRuntimeStatus('session-1')).resolves.toMatchObject({
+    running: false,
+  });
+  expect(request).toHaveBeenCalledTimes(2);
+});
+
+test('sessions.changed prevents an in-flight runtime snapshot from becoming authoritative', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.rememberSessionKey('session-1', 'agent:main:justdo:session-1');
+  let resolveFirstRequest:
+    | ((value: { sessions: Array<Record<string, unknown>> }) => void)
+    | undefined;
+  const request = vi
+    .fn()
+    .mockImplementationOnce(
+      () =>
+        new Promise<{ sessions: Array<Record<string, unknown>> }>(resolve => {
+          resolveFirstRequest = resolve;
+        }),
+    )
+    .mockResolvedValueOnce({
+      sessions: [
+        {
+          key: 'agent:main:justdo:session-1',
+          hasActiveRun: false,
+          status: 'completed',
+        },
+      ],
+    });
+  const internals = adapter as unknown as {
+    gatewayClient: GatewayClientLike | null;
+    handleSessionsChangedEvent: (payload: unknown) => void;
+  };
+  internals.gatewayClient = { request } as unknown as GatewayClientLike;
+
+  const staleStatus = adapter.getSessionRuntimeStatus('session-1');
+  await vi.waitFor(() => expect(request).toHaveBeenCalledOnce());
+  internals.handleSessionsChangedEvent({ key: 'agent:main:justdo:session-1' });
+  resolveFirstRequest?.({
+    sessions: [
+      {
+        key: 'agent:main:justdo:session-1',
+        hasActiveRun: true,
+        status: 'running',
+      },
+    ],
+  });
+
+  await expect(staleStatus).resolves.toMatchObject({ known: false });
+  await expect(adapter.getSessionRuntimeStatus('session-1')).resolves.toMatchObject({
+    known: true,
+    running: false,
+  });
+  expect(request).toHaveBeenCalledTimes(2);
 });
 
 test('getSessionRuntimeStatus can bypass a cached running snapshot after completion', async () => {
