@@ -7,6 +7,7 @@ import {
   createChatTranscriptState,
   type TranscriptReducerDependencies,
 } from './chat-transcript-state';
+import { projectTurnItems } from './project-turn-items';
 
 let now = 100;
 let id = 0;
@@ -105,6 +106,145 @@ describe('agent event reducer', () => {
       'thinking:completed',
       'tool:completed',
       'content:streaming',
+    ]);
+  });
+
+  test('does not split streamed Content when an empty Thinking snapshot arrives', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+
+    reduceAgentEvent(state, agent(1, 'thinking', { text: '先分析问题' }), dependencies);
+    reduceAgentEvent(state, agent(2, 'assistant', { delta: '我可以' }), dependencies);
+    reduceAgentEvent(state, agent(3, 'thinking', { text: '' }), dependencies);
+    reduceAgentEvent(
+      state,
+      agent(4, 'assistant', { delta: '尝试直接启动 Chrome 浏览器。' }),
+      dependencies,
+    );
+
+    expect(state.activeTurn?.items).toMatchObject([
+      { type: 'thinking', status: 'completed', text: '先分析问题' },
+      {
+        type: 'content',
+        status: 'streaming',
+        text: '我可以尝试直接启动 Chrome 浏览器。',
+      },
+    ]);
+  });
+
+  test('does not split cumulative Content snapshots on an empty Thinking frame', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+
+    reduceAgentEvent(state, agent(1, 'thinking', { text: '先分析问题' }), dependencies);
+    reduceAgentEvent(state, agent(2, 'assistant', { text: '我可以' }), dependencies);
+    reduceAgentEvent(state, agent(3, 'thinking', { text: '', replace: true }), dependencies);
+    reduceAgentEvent(
+      state,
+      agent(4, 'assistant', { text: '我可以尝试直接启动 Chrome 浏览器。' }),
+      dependencies,
+    );
+
+    expect(state.activeTurn?.items.map(item => item.type)).toEqual(['thinking', 'content']);
+    expect(state.activeTurn?.items[1]).toMatchObject({
+      type: 'content',
+      text: '我可以尝试直接启动 Chrome 浏览器。',
+    });
+  });
+
+  test('preserves whitespace deltas only inside an existing visible stream', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+
+    reduceAgentEvent(state, agent(1, 'thinking', { delta: '' }), dependencies);
+    reduceAgentEvent(state, agent(2, 'thinking', { delta: 'Reasoning' }), dependencies);
+    reduceAgentEvent(state, agent(3, 'thinking', { delta: ' ' }), dependencies);
+    reduceAgentEvent(state, agent(4, 'thinking', { delta: 'continues' }), dependencies);
+    reduceAgentEvent(state, agent(5, 'assistant', { delta: '' }), dependencies);
+
+    expect(state.activeTurn?.items).toMatchObject([
+      { type: 'thinking', status: 'running', text: 'Reasoning continues' },
+    ]);
+  });
+
+  test('uses the authoritative cumulative Thinking snapshot across an empty Content frame', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    const thinking = 'I should describe what the screenshot shows clearly';
+
+    reduceAgentEvent(
+      state,
+      agent(1, 'thinking', {
+        text: thinking,
+        delta: thinking,
+        isReasoningSnapshot: true,
+      }),
+      dependencies,
+    );
+    reduceAgentEvent(state, agent(2, 'assistant', { text: '', delta: '' }), dependencies);
+    reduceAgentEvent(
+      state,
+      agent(3, 'thinking', {
+        text: `${thinking}.`,
+        delta: '.',
+        isReasoningSnapshot: true,
+      }),
+      dependencies,
+    );
+    reduceChatEvent(state, chat('final'), dependencies);
+
+    expect(state.activeTurn?.items).toMatchObject([
+      { type: 'thinking', status: 'completed', text: `${thinking}.` },
+    ]);
+    expect(projectTurnItems(state.activeTurn)).toMatchObject([
+      {
+        kind: 'process-summary',
+        thinkingCount: 1,
+        items: [{ type: 'thinking', text: `${thinking}.` }],
+      },
+    ]);
+  });
+
+  test('uses a non-empty delta when an OpenClaw commentary snapshot is blank', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+
+    reduceAgentEvent(
+      state,
+      agent(1, 'assistant', { text: '', delta: 'commentary chunk', phase: 'commentary' }),
+      dependencies,
+    );
+    reduceAgentEvent(
+      state,
+      agent(2, 'assistant', { text: '', delta: ' continues', phase: 'commentary' }),
+      dependencies,
+    );
+
+    expect(state.activeTurn?.items).toMatchObject([
+      {
+        type: 'content',
+        status: 'streaming',
+        text: 'commentary chunk continues',
+        sourceMode: 'delta',
+      },
+    ]);
+  });
+
+  test('treats a non-prefix Thinking snapshot as an authoritative revision', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+
+    reduceAgentEvent(
+      state,
+      agent(1, 'thinking', {
+        text: 'rough draft',
+        delta: 'rough draft',
+        isReasoningSnapshot: true,
+      }),
+      dependencies,
+    );
+    reduceAgentEvent(
+      state,
+      agent(2, 'thinking', { text: '.', delta: '.', isReasoningSnapshot: true }),
+      dependencies,
+    );
+
+    expect(state.activeTurn?.items).toMatchObject([
+      { type: 'thinking', status: 'running', text: '.' },
     ]);
   });
 

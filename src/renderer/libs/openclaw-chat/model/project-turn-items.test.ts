@@ -97,6 +97,23 @@ describe('projectTurnItems', () => {
     expect(result[0]).toMatchObject({ thinkingCount: 1, toolCount: 1 });
   });
 
+  test('ignores an empty Content control item between two distinct Thinking items', () => {
+    const result = projectTurnItems(
+      turn([
+        item('think-1', 'thinking', 'completed', { text: 'First distinct thought.' }),
+        item('content-empty', 'content', 'completed', { text: '' }),
+        item('think-2', 'thinking', 'completed', { text: 'Second distinct thought.' }),
+      ]),
+    );
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      kind: 'process-summary',
+      thinkingCount: 2,
+      items: [{ id: 'think-1' }, { id: 'think-2' }],
+    });
+  });
+
   test('keeps a running Tool visible, then folds it into the previous summary', () => {
     const running = projectTurnItems(
       turn([item('tool-completed', 'tool', 'completed'), item('tool-running', 'tool', 'running')]),
@@ -219,5 +236,41 @@ describe('projectTurnItems', () => {
     );
 
     expect(result.map(entry => entry.kind)).toEqual(['content', 'terminal']);
+  });
+
+  test('keeps an unrelated terminal error after a failed Tool', () => {
+    const result = projectTurnItems(
+      turn([
+        item('tool-1', 'tool', 'failed', { error: 'command failed' }),
+        item('content-1', 'content', 'interrupted'),
+        item('terminal-1', 'terminal', 'error', { message: 'provider unavailable' }),
+      ]),
+    );
+
+    expect(result.map(entry => entry.kind)).toEqual(['process-summary', 'content', 'terminal']);
+  });
+
+  test('does not suppress an unrelated short terminal error substring', () => {
+    const result = projectTurnItems(
+      turn([
+        item('tool-1', 'tool', 'failed', { error: 'fail' }),
+        item('terminal-1', 'terminal', 'error', { message: 'provider failover unavailable' }),
+      ]),
+    );
+
+    expect(result.map(entry => entry.kind)).toEqual(['process-summary', 'terminal']);
+  });
+
+  test('does not use arbitrary failed Tool output for terminal substring deduplication', () => {
+    const result = projectTurnItems(
+      turn([
+        item('tool-1', 'tool', 'failed', {
+          output: 'retry log: provider unavailable; switching endpoints',
+        }),
+        item('terminal-1', 'terminal', 'error', { message: 'provider unavailable' }),
+      ]),
+    );
+
+    expect(result.map(entry => entry.kind)).toEqual(['process-summary', 'terminal']);
   });
 });

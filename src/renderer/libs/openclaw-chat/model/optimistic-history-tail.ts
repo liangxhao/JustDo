@@ -49,6 +49,20 @@ function referencesActiveToolCall(message: unknown, activeToolCallIds: Set<strin
   });
 }
 
+function messageRole(message: unknown): string {
+  const record = asRecord(message);
+  const nested = asRecord(record?.message);
+  const role = nested?.role ?? record?.role;
+  return typeof role === 'string' ? role.toLowerCase() : '';
+}
+
+function messageRunId(message: unknown): string | null {
+  const record = asRecord(message);
+  const nested = asRecord(record?.message);
+  const runId = nested?.runId ?? record?.runId;
+  return typeof runId === 'string' && runId.trim() ? runId.trim() : null;
+}
+
 /**
  * A completed active turn owns the live projection until Gateway history
  * replaces its optimistic fallback. Never render both sources at once.
@@ -56,12 +70,26 @@ function referencesActiveToolCall(message: unknown, activeToolCallIds: Set<strin
 export function projectPersistedMessagesForActiveTurn<T>(
   messages: T[],
   activeTurn: AssistantTurn | null,
+  pendingUserMessage: unknown = null,
 ): T[] {
   if (!activeTurn) return messages;
   let projected = messages;
   if (activeTurn.toolById.size > 0) {
     const activeToolCallIds = new Set(activeTurn.toolById.keys());
-    projected = projected.filter(message => !referencesActiveToolCall(message, activeToolCallIds));
+    let lastUserIndex = -1;
+    projected.forEach((message, index) => {
+      if (messageRole(message) === 'user') lastUserIndex = index;
+    });
+    projected = projected.filter((message, index) => {
+      if (index <= lastUserIndex || !referencesActiveToolCall(message, activeToolCallIds)) {
+        return true;
+      }
+      const persistedRunId = messageRunId(message);
+      if (persistedRunId !== null) return persistedRunId !== activeTurn.runId;
+      // Until the optimistic user prompt appears in chat.history, no
+      // unscoped persisted Tool can be proven to belong to the active turn.
+      return pendingUserMessage !== null;
+    });
   }
   if (activeTurn.status === 'running') return projected;
   return isLocallyOptimisticHistoryTail(projected[projected.length - 1])

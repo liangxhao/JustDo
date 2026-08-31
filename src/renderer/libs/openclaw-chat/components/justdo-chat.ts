@@ -2294,11 +2294,15 @@ export class JustDoChatElement extends LitElement {
       ? (ctrl.state.visibleChatMessages as GatewayMessage[])
       : this.messages;
     const activeTurn = ctrl?.state.transcript.activeTurn ?? null;
-    let messages = projectPersistedMessagesForActiveTurn(persistedMessages, activeTurn);
+    const pendingMessage = (ctrl?.state.pendingUserMessage as GatewayMessage | null) ?? null;
+    let messages = projectPersistedMessagesForActiveTurn(
+      persistedMessages,
+      activeTurn,
+      pendingMessage,
+    );
     const isStreaming = ctrl ? ctrl.state.chatSending : this.isStreaming;
 
     // Merge the optimistic prompt in turn order during session transitions.
-    const pendingMessage = (ctrl?.state.pendingUserMessage as GatewayMessage | null) ?? null;
     messages = mergePendingUserMessageForDisplay(messages, pendingMessage);
 
     const activeProjectionVariant = activeTurn

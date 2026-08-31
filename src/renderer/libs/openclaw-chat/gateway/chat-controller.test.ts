@@ -69,6 +69,35 @@ test('shows a stalled-run status at 20 seconds and clears it on model activity',
   ).toBeNull();
 });
 
+test('renders an OpenClaw commentary delta when its snapshot field is blank', () => {
+  const sessionKey = 'agent:main:justdo:session-1';
+  const controller = new ChatController();
+  const streamListener = vi.fn();
+  controller.onStream(streamListener);
+  controller.state.sessionKey = sessionKey;
+
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 1,
+      stream: 'assistant',
+      data: { text: '', delta: 'commentary chunk', phase: 'commentary' },
+    },
+  });
+
+  expect(controller.state.transcript.activeTurn?.items).toMatchObject([
+    { type: 'content', text: 'commentary chunk', sourceMode: 'delta' },
+  ]);
+  expect(controller.state.chatSending).toBe(true);
+  expect(streamListener).toHaveBeenCalledWith('stream');
+});
+
 test('keeps the confirmed run model in the footer timing after final clears activity', async () => {
   const sessionKey = 'agent:main:justdo:session-1';
   const request = vi.fn().mockResolvedValue({ runId: 'run-1', status: 'started' });
@@ -6078,6 +6107,24 @@ test('does not retain NO_REPLY assistant streams for later lifecycle renders', (
       session: 'justdo:session-1',
       runId: 'run-1',
       seq: 2,
+      stream: 'assistant',
+      data: { text: '', delta: 'NO_REPLY' },
+    },
+  });
+
+  expect(controller.state.transcript.activeTurn).toBeNull();
+  expect(streamListener).not.toHaveBeenCalled();
+
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload?: unknown }): void;
+    }
+  ).handleEvent({
+    event: 'agent',
+    payload: {
+      session: 'justdo:session-1',
+      runId: 'run-1',
+      seq: 3,
       stream: 'lifecycle',
       data: { phase: 'finishing' },
     },

@@ -63,6 +63,105 @@ describe('optimistic history tail ownership', () => {
     expect(projectPersistedMessagesForActiveTurn([unrelated], turn)).toEqual([unrelated]);
   });
 
+  test('keeps an older Tool when the active turn reuses its call id', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    const turn = beginAssistantTurn(state, { runId: 'run-current' }, dependencies);
+    const activeTool = {
+      id: 'tool-current',
+      runId: 'run-current',
+      firstSeq: 2,
+      lastSeq: 2,
+      startedAt: 2,
+      updatedAt: 2,
+      type: 'tool' as const,
+      status: 'running' as const,
+      toolCallId: 'call-reused',
+      name: 'read',
+    };
+    turn.items.push(activeTool);
+    turn.toolById.set(activeTool.toolCallId, activeTool);
+    const olderCall = {
+      role: 'assistant',
+      content: [{ type: 'toolCall', id: 'call-reused', name: 'read' }],
+    };
+    const olderResult = {
+      role: 'toolResult',
+      toolCallId: 'call-reused',
+      content: 'old output',
+    };
+    const user = { role: 'user', content: 'new turn' };
+
+    expect(projectPersistedMessagesForActiveTurn([olderCall, olderResult, user], turn)).toEqual([
+      olderCall,
+      olderResult,
+      user,
+    ]);
+  });
+
+  test('keeps an unscoped older Tool while the current user prompt is still pending', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    const turn = beginAssistantTurn(state, { runId: 'run-current' }, dependencies);
+    const activeTool = {
+      id: 'tool-current',
+      runId: 'run-current',
+      firstSeq: 2,
+      lastSeq: 2,
+      startedAt: 2,
+      updatedAt: 2,
+      type: 'tool' as const,
+      status: 'running' as const,
+      toolCallId: 'call-reused',
+      name: 'read',
+    };
+    turn.items.push(activeTool);
+    turn.toolById.set(activeTool.toolCallId, activeTool);
+    const oldUser = { role: 'user', content: 'old turn' };
+    const olderCall = {
+      role: 'assistant',
+      content: [{ type: 'toolCall', id: 'call-reused', name: 'read' }],
+    };
+    const olderResult = {
+      role: 'toolResult',
+      toolCallId: 'call-reused',
+      content: 'old output',
+    };
+    const pendingUser = { role: 'user', content: 'new turn' };
+
+    expect(
+      projectPersistedMessagesForActiveTurn([oldUser, olderCall, olderResult], turn, pendingUser),
+    ).toEqual([oldUser, olderCall, olderResult]);
+  });
+
+  test('keeps a tail Tool duplicate whose explicit run id belongs to another run', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    const turn = beginAssistantTurn(state, { runId: 'run-current' }, dependencies);
+    const activeTool = {
+      id: 'tool-current',
+      runId: 'run-current',
+      firstSeq: 2,
+      lastSeq: 2,
+      startedAt: 2,
+      updatedAt: 2,
+      type: 'tool' as const,
+      status: 'running' as const,
+      toolCallId: 'call-reused',
+      name: 'read',
+    };
+    turn.items.push(activeTool);
+    turn.toolById.set(activeTool.toolCallId, activeTool);
+    const user = { role: 'user', content: 'new turn' };
+    const foreignCall = {
+      role: 'assistant',
+      runId: 'run-foreign',
+      content: [{ type: 'toolCall', id: 'call-reused', name: 'read' }],
+    };
+
+    expect(projectPersistedMessagesForActiveTurn([user, foreignCall], turn)).toEqual([
+      user,
+      foreignCall,
+    ]);
+  });
+
   test('shows a completed active turn instead of its optimistic history fallback', () => {
     const state = createChatTranscriptState('session-1', 'sid-1');
     const turn = beginAssistantTurn(state, { runId: 'run-1' }, dependencies);

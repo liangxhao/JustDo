@@ -72,6 +72,26 @@ export function latestPlanUpdateKey(items: readonly ActiveTurnTimelineItem[]): s
   return undefined;
 }
 
+function normalFailureText(value: string | undefined): string {
+  return value?.trim().replace(/\s+/g, ' ').toLowerCase() ?? '';
+}
+
+function duplicatesFailedTool(terminal: TerminalItem, failedTools: readonly ToolItem[]): boolean {
+  const message = normalFailureText(terminal.message);
+  if (!message) return failedTools.length > 0;
+  return failedTools.some(tool => {
+    const error = normalFailureText(tool.error);
+    const output = normalFailureText(tool.output);
+    if (error === message || output === message) return true;
+    if (!error) return false;
+    const shorter = error.length < message.length ? error : message;
+    const longer = error.length < message.length ? message : error;
+    return (
+      shorter.length >= 12 && shorter.length / longer.length >= 0.5 && longer.includes(shorter)
+    );
+  });
+}
+
 export function projectTurnItems(
   turn: AssistantTurn | null,
   isAwaitingTurn = false,
@@ -103,9 +123,9 @@ export function projectTurnItems(
     }
     return pending;
   }
-  const hasFailedTool = turn.items.some(item => item.type === 'tool' && item.status === 'failed');
   const projected: ActiveTurnTimelineItem[] = [];
   let archived: Array<ThinkingItem | ToolItem> = [];
+  const failedTools: ToolItem[] = [];
   let summarySegment = 0;
 
   const isPlanUpdate = (item: ThinkingItem | ToolItem): item is ToolItem =>
@@ -133,7 +153,9 @@ export function projectTurnItems(
   };
 
   for (const item of turn.items) {
+    if (item.type === 'content' && !item.text.trim()) continue;
     if (item.type === 'thinking' || item.type === 'tool') {
+      if (item.type === 'tool' && item.status === 'failed') failedTools.push(item);
       if (isPlanUpdate(item)) {
         flushSummary();
         projected.push({ kind: 'plan-update', key: `plan:${item.id}`, item });
@@ -156,9 +178,9 @@ export function projectTurnItems(
       summarySegment += 1;
     } else {
       // A failed Tool already has a red status indicator and expandable error
-      // details. Do not repeat the same failure as a terminal banner after the
-      // assistant message.
-      if (item.status === 'error' && hasFailedTool) continue;
+      // details. Suppress only the same failure; a later provider/run error is
+      // a separate diagnostic and must remain visible.
+      if (item.status === 'error' && duplicatesFailedTool(item, failedTools)) continue;
       projected.push({ kind: 'terminal', key: item.id, item });
       summarySegment += 1;
     }

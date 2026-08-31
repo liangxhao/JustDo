@@ -2,6 +2,7 @@ import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import { parseExecutionPlanUpdate } from '@shared/openclaw/executionPlan';
 import { normalizeToolTerminalStatus } from '@shared/openclaw/messageDomain';
 
+import { getTranscriptMedia } from '@/libs/openclaw-chat/attachments';
 import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 
 import {
@@ -194,7 +195,11 @@ export function projectPersistedTimeline(
   const projected: PersistedTimelineItem[] = [];
   let archived: Array<ThinkingItem | ToolItem> = [];
   let segment = 0;
-  const toolById = new Map<string, ToolItem>();
+  const toolsByCallId = new Map<string, ToolItem[]>();
+  const allTools: ToolItem[] = [];
+  const syntheticRunIds = new Set<string>();
+  const toolEpochByItem = new WeakMap<ToolItem, number>();
+  let toolEpoch = 0;
   const claimableTimings = runTimings
     .slice()
     .sort((left, right) => left.startedAt - right.startedAt || left.id.localeCompare(right.id));
@@ -215,6 +220,94 @@ export function projectPersistedTimeline(
     } else {
       terminalTimingByProcessId.delete(process.id);
     }
+  };
+
+  const registerTool = (tool: ToolItem): void => {
+    const candidates = toolsByCallId.get(tool.toolCallId) ?? [];
+    candidates.push(tool);
+    toolsByCallId.set(tool.toolCallId, candidates);
+    allTools.push(tool);
+    toolEpochByItem.set(tool, toolEpoch);
+  };
+
+  const isCurrentToolEpoch = (tool: ToolItem): boolean => toolEpochByItem.get(tool) === toolEpoch;
+
+  const findToolByCallId = (toolCallId: string, runId: string): ToolItem | undefined => {
+    const candidates = toolsByCallId.get(toolCallId) ?? [];
+    for (let index = candidates.length - 1; index >= 0; index -= 1) {
+      const candidate = candidates[index];
+      if (candidate.runId === runId && candidate.status === 'running') return candidate;
+    }
+    const incomingIsFallback = syntheticRunIds.has(runId);
+    if (!incomingIsFallback) {
+      for (let index = candidates.length - 1; index >= 0; index -= 1) {
+        const candidate = candidates[index];
+        if (
+          syntheticRunIds.has(candidate.runId) &&
+          candidate.status === 'running' &&
+          isCurrentToolEpoch(candidate)
+        ) {
+          candidate.runId = runId;
+          return candidate;
+        }
+      }
+      return undefined;
+    }
+    // Persisted Tool result messages often omit their run id. Match only an
+    // unresolved call: falling back to a completed Tool would overwrite an
+    // earlier invocation when a call id is reused.
+    for (const candidate of candidates) {
+      if (candidate.status === 'running' && isCurrentToolEpoch(candidate)) return candidate;
+    }
+    return undefined;
+  };
+
+  const findToolForCall = (toolCallId: string, runId: string): ToolItem | undefined => {
+    const candidates = toolsByCallId.get(toolCallId) ?? [];
+    for (let index = candidates.length - 1; index >= 0; index -= 1) {
+      const candidate = candidates[index];
+      if (candidate.runId === runId && candidate.status === 'running') return candidate;
+    }
+    for (let index = candidates.length - 1; index >= 0; index -= 1) {
+      const candidate = candidates[index];
+      const candidateIsFallback = syntheticRunIds.has(candidate.runId);
+      const incomingIsFallback = syntheticRunIds.has(runId);
+      if (
+        candidateIsFallback &&
+        !incomingIsFallback &&
+        candidate.status === 'running' &&
+        isCurrentToolEpoch(candidate)
+      ) {
+        candidate.runId = runId;
+        return candidate;
+      }
+      if (incomingIsFallback && candidate.status === 'running' && isCurrentToolEpoch(candidate)) {
+        return candidate;
+      }
+    }
+    return undefined;
+  };
+
+  const findUnresolvedToolByName = (name: string, runId: string): ToolItem | undefined => {
+    for (const candidate of allTools) {
+      if (candidate.runId === runId && candidate.name === name && candidate.status === 'running') {
+        return candidate;
+      }
+    }
+    const incomingIsFallback = syntheticRunIds.has(runId);
+    for (const candidate of allTools) {
+      if (
+        candidate.name !== name ||
+        candidate.status !== 'running' ||
+        !isCurrentToolEpoch(candidate)
+      ) {
+        continue;
+      }
+      if (!incomingIsFallback && !syntheticRunIds.has(candidate.runId)) continue;
+      if (!incomingIsFallback) candidate.runId = runId;
+      return candidate;
+    }
+    return undefined;
   };
 
   const isPlanUpdate = (item: ThinkingItem | ToolItem): item is ToolItem =>
@@ -314,7 +407,7 @@ export function projectPersistedTimeline(
     timestamp: number,
   ): ToolItem => {
     const toolCallId = readToolCallId(source, fallbackId) ?? fallbackId;
-    const existing = toolById.get(toolCallId);
+    const existing = findToolForCall(toolCallId, runId);
     const input = readToolInput(source);
     if (existing) {
       existing.name = readToolName(source, existing.name);
@@ -338,7 +431,7 @@ export function projectPersistedTimeline(
       ...(input !== undefined && input !== null ? { input } : {}),
     };
     archived.push(tool);
-    toolById.set(toolCallId, tool);
+    registerTool(tool);
     rememberTerminalTiming(tool);
     return tool;
   };
@@ -353,10 +446,8 @@ export function projectPersistedTimeline(
     const explicitToolCallId = readToolCallId(source);
     const sourceName = readToolName(source);
     let tool = explicitToolCallId
-      ? toolById.get(explicitToolCallId)
-      : [...toolById.values()].find(
-          candidate => candidate.name === sourceName && candidate.output === undefined,
-        );
+      ? findToolByCallId(explicitToolCallId, runId)
+      : findUnresolvedToolByName(sourceName, runId);
     const toolCallId = explicitToolCallId ?? tool?.toolCallId ?? fallbackId;
     const sourceInput = readToolInput(source);
     const output = readToolOutput(source);
@@ -378,7 +469,7 @@ export function projectPersistedTimeline(
         ...(input !== undefined && input !== null ? { input } : {}),
       };
       archived.push(tool);
-      toolById.set(toolCallId, tool);
+      registerTool(tool);
     } else {
       tool.name = readToolName(source, tool.name);
       if (input !== undefined && input !== null) tool.input = input;
@@ -449,10 +540,12 @@ export function projectPersistedTimeline(
     if (!message) return;
     const messageKey = deterministicHistoryKey(outerMessage, messageIndex);
     const runId = runIdOf(outer, message, messageKey);
+    if (runId === messageKey) syntheticRunIds.add(runId);
     const timestamp = timestampOf(outer, message);
     const role = roleOf(message);
     const matchingTiming = timingByRootRunId.get(runId);
     if (role === 'user') {
+      toolEpoch += 1;
       activeTiming = claimTiming(runId, timestamp);
       lastTimedMessage = null;
     } else if (matchingTiming) {
@@ -479,8 +572,32 @@ export function projectPersistedTimeline(
 
     const content = Array.isArray(message.content) ? message.content : null;
     if (!content) {
+      const marker =
+        message.__openclaw &&
+        typeof message.__openclaw === 'object' &&
+        !Array.isArray(message.__openclaw)
+          ? (message.__openclaw as Record<string, unknown>)
+          : outer.__openclaw &&
+              typeof outer.__openclaw === 'object' &&
+              !Array.isArray(outer.__openclaw)
+            ? (outer.__openclaw as Record<string, unknown>)
+            : null;
+      const senderLabel = message.senderLabel ?? outer.senderLabel;
+      const fallbackText = message.text ?? (message === outer ? undefined : outer.text);
+      const hasTranscriptMedia =
+        getTranscriptMedia(message).length > 0 ||
+        (message !== outer && getTranscriptMedia(outer).length > 0);
+      const hasBlankAssistantControlContent =
+        role === 'assistant' &&
+        (message.content === null ||
+          message.content === undefined ||
+          (typeof message.content === 'string' && !message.content.trim())) &&
+        !(typeof fallbackText === 'string' && fallbackText.trim()) &&
+        !(typeof senderLabel === 'string' && senderLabel.trim()) &&
+        !(typeof marker?.kind === 'string' && marker.kind.trim()) &&
+        !hasTranscriptMedia;
       if (
-        attachments.length === 0 ||
+        (attachments.length === 0 && !hasBlankAssistantControlContent) ||
         (typeof message.content === 'string' && message.content.trim().length > 0)
       ) {
         emitMessage(outerMessage, messageKey, durationMs, completedAt);
@@ -519,6 +636,8 @@ export function projectPersistedTimeline(
       const type = typeof block.type === 'string' ? block.type.toLowerCase() : '';
       const toolSource = withToolMessageContext(message, block);
       if (THINKING_TYPES.has(type)) {
+        const text = blockText(block, 'thinking', 'text', 'reasoning');
+        if (!text.trim()) return;
         flushVisibleBlocks();
         archived.push({
           id: itemId,
@@ -529,7 +648,7 @@ export function projectPersistedTimeline(
           updatedAt: timestamp,
           type: 'thinking',
           status: 'completed',
-          text: blockText(block, 'thinking', 'text', 'reasoning'),
+          text,
         });
         return;
       }
@@ -545,6 +664,7 @@ export function projectPersistedTimeline(
       }
 
       // Text and rich visible blocks are hard Content boundaries.
+      if (type === 'text' && !blockText(block, 'text').trim()) return;
       flushSummary();
       visibleBlocks.push(rawBlock);
     });

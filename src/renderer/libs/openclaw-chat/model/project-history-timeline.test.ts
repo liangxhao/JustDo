@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'vitest';
 
+import type { GatewayMessage } from '@/libs/openclaw-chat/types';
+
 import { projectPersistedTimeline } from './project-history-timeline';
 
 describe('projectPersistedTimeline', () => {
@@ -28,6 +30,295 @@ describe('projectPersistedTimeline', () => {
       'history-message',
     ]);
     expect(result[1]).toMatchObject({ thinkingCount: 1, toolCount: 1 });
+  });
+
+  test('ignores empty Thinking and text control blocks without creating fold boundaries', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        runId: 'run-1',
+        content: [
+          { type: 'thinking', thinking: 'plan' },
+          { type: 'text', text: '' },
+          { type: 'thinking', thinking: '   ' },
+          { type: 'toolcall', toolCallId: 'call-1', name: 'read' },
+          { type: 'toolresult', toolCallId: 'call-1', text: 'ok' },
+        ],
+      },
+    ]);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      kind: 'process-summary',
+      thinkingCount: 1,
+      toolCount: 1,
+      items: [
+        { type: 'thinking', text: 'plan' },
+        { type: 'tool', toolCallId: 'call-1', output: 'ok' },
+      ],
+    });
+  });
+
+  test('folds punctuation-only Thinking across a blank assistant control message without loss', () => {
+    const thinking = 'I should describe what the screenshot shows clearly';
+    const result = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        runId: 'run-1',
+        content: [{ type: 'thinking', thinking }],
+      },
+      { role: 'assistant', runId: 'run-1', content: '' },
+      {
+        role: 'assistant',
+        runId: 'run-1',
+        content: [{ type: 'thinking', thinking: '.' }],
+      },
+    ]);
+
+    expect(result).toMatchObject([
+      {
+        kind: 'process-summary',
+        thinkingCount: 2,
+        items: [
+          { type: 'thinking', text: thinking },
+          { type: 'thinking', text: '.' },
+        ],
+      },
+    ]);
+  });
+
+  test('folds two distinct Thinking blocks across a blank control message as Thinking x 2', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        runId: 'run-1',
+        content: [{ type: 'thinking', thinking: 'First distinct thought.' }],
+      },
+      { role: 'assistant', runId: 'run-1', content: '   ' },
+      {
+        role: 'assistant',
+        runId: 'run-1',
+        content: [{ type: 'thinking', thinking: 'Second distinct thought.' }],
+      },
+    ]);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      kind: 'process-summary',
+      thinkingCount: 2,
+      items: [
+        { type: 'thinking', text: 'First distinct thought.' },
+        { type: 'thinking', text: 'Second distinct thought.' },
+      ],
+    });
+  });
+
+  test('preserves blank system messages whose metadata renders a compaction divider', () => {
+    const message = {
+      role: 'system',
+      content: '',
+      __openclaw: {
+        kind: 'compaction',
+        id: 'compact-1',
+        tokensBefore: 12_000,
+        tokensAfter: 4_000,
+      },
+    };
+
+    expect(projectPersistedTimeline([message])).toMatchObject([
+      { kind: 'history-message', message },
+    ]);
+  });
+
+  test('preserves a blank assistant message that carries transcript media', () => {
+    const message = {
+      role: 'assistant',
+      content: '',
+      MediaPaths: ['C:\\openclaw\\media\\result.png'],
+      MediaTypes: ['image/png'],
+    };
+
+    expect(projectPersistedTimeline([message])).toMatchObject([
+      { kind: 'history-message', message },
+    ]);
+  });
+
+  test('keeps reused Tool call ids isolated by run', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        runId: 'run-1',
+        content: [
+          { type: 'toolcall', toolCallId: 'call-1', name: 'read', input: { path: 'one' } },
+          { type: 'toolresult', toolCallId: 'call-1', text: 'first' },
+          { type: 'text', text: 'first answer' },
+        ],
+      },
+      {
+        role: 'assistant',
+        runId: 'run-2',
+        content: [
+          { type: 'toolcall', toolCallId: 'call-1', name: 'read', input: { path: 'two' } },
+          { type: 'toolresult', toolCallId: 'call-1', text: 'second' },
+          { type: 'text', text: 'second answer' },
+        ],
+      },
+    ]);
+    const tools = result.flatMap(item =>
+      item.kind === 'process-summary' ? item.items.filter(entry => entry.type === 'tool') : [],
+    );
+
+    expect(tools).toMatchObject([
+      { runId: 'run-1', toolCallId: 'call-1', input: { path: 'one' }, output: 'first' },
+      { runId: 'run-2', toolCallId: 'call-1', input: { path: 'two' }, output: 'second' },
+    ]);
+  });
+
+  test('keeps result-only Tool records with reused ids isolated by run', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'toolResult',
+        runId: 'run-1',
+        toolCallId: 'call-1',
+        toolName: 'inspect',
+        content: [{ type: 'text', text: 'first' }],
+      },
+      {
+        role: 'toolResult',
+        runId: 'run-2',
+        toolCallId: 'call-1',
+        toolName: 'inspect',
+        content: [{ type: 'text', text: 'second' }],
+      },
+    ]);
+    const tools = result.flatMap(item =>
+      item.kind === 'process-summary' ? item.items.filter(entry => entry.type === 'tool') : [],
+    );
+
+    expect(tools).toMatchObject([
+      { runId: 'run-1', toolCallId: 'call-1', output: 'first' },
+      { runId: 'run-2', toolCallId: 'call-1', output: 'second' },
+    ]);
+  });
+
+  test('keeps result-only Tool records with reused ids isolated when run ids are omitted', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'toolResult',
+        toolCallId: 'call-1',
+        toolName: 'inspect',
+        content: [{ type: 'text', text: 'first' }],
+      },
+      { role: 'user', content: 'continue' },
+      {
+        role: 'toolResult',
+        toolCallId: 'call-1',
+        toolName: 'inspect',
+        content: [{ type: 'text', text: 'second' }],
+      },
+    ]);
+    const tools = result.flatMap(item =>
+      item.kind === 'process-summary' ? item.items.filter(entry => entry.type === 'tool') : [],
+    );
+
+    expect(tools).toMatchObject([
+      { toolCallId: 'call-1', output: 'first' },
+      { toolCallId: 'call-1', output: 'second' },
+    ]);
+  });
+
+  test('keeps reused Tool call ids paired when call and result messages omit run ids', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        content: [{ type: 'toolcall', toolCallId: 'call-1', name: 'read', input: { path: 'one' } }],
+      },
+      { role: 'toolResult', toolCallId: 'call-1', toolName: 'read', content: 'first' },
+      { role: 'user', content: 'continue' },
+      {
+        role: 'assistant',
+        content: [{ type: 'toolcall', toolCallId: 'call-1', name: 'read', input: { path: 'two' } }],
+      },
+      { role: 'toolResult', toolCallId: 'call-1', toolName: 'read', content: 'second' },
+    ]);
+    const tools = result.flatMap(item =>
+      item.kind === 'process-summary' ? item.items.filter(entry => entry.type === 'tool') : [],
+    );
+
+    expect(tools).toMatchObject([
+      { toolCallId: 'call-1', input: { path: 'one' }, output: 'first' },
+      { toolCallId: 'call-1', input: { path: 'two' }, output: 'second' },
+    ]);
+  });
+
+  test('does not overwrite an outputless terminal Tool when its id is reused without run ids', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'toolResult',
+        toolCallId: 'call-1',
+        toolName: 'inspect',
+        status: 'cancelled',
+        content: [],
+      },
+      { role: 'user', content: 'continue' },
+      {
+        role: 'toolResult',
+        toolCallId: 'call-1',
+        toolName: 'inspect',
+        status: 'completed',
+        content: [],
+      },
+    ]);
+    const tools = result.flatMap(item =>
+      item.kind === 'process-summary' ? item.items.filter(entry => entry.type === 'tool') : [],
+    );
+
+    expect(tools).toMatchObject([
+      { toolCallId: 'call-1', status: 'cancelled' },
+      { toolCallId: 'call-1', status: 'completed' },
+    ]);
+  });
+
+  test('does not reuse a still-running Tool call id across a user turn boundary', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        content: [{ type: 'toolcall', toolCallId: 'call-1', name: 'sessions_yield' }],
+      },
+      {
+        role: 'toolResult',
+        toolCallId: 'call-1',
+        toolName: 'sessions_yield',
+        status: 'completed',
+        content: [],
+      },
+      { role: 'user', content: 'start another task' },
+      {
+        role: 'assistant',
+        content: [{ type: 'toolcall', toolCallId: 'call-1', name: 'read', input: { path: 'new' } }],
+      },
+      {
+        role: 'toolResult',
+        toolCallId: 'call-1',
+        toolName: 'read',
+        content: 'new output',
+      },
+    ]);
+    const tools = result.flatMap(item => {
+      if (item.kind === 'process-summary') return item.items.filter(entry => entry.type === 'tool');
+      return item.kind === 'live-process' && item.item.type === 'tool' ? [item.item] : [];
+    });
+
+    expect(tools).toMatchObject([
+      { toolCallId: 'call-1', name: 'sessions_yield', status: 'running' },
+      {
+        toolCallId: 'call-1',
+        name: 'read',
+        input: { path: 'new' },
+        output: 'new output',
+        status: 'completed',
+      },
+    ]);
   });
 
   test('uses deterministic keys for cold history', () => {
@@ -1010,5 +1301,91 @@ describe('projectPersistedTimeline', () => {
         },
       ],
     });
+  });
+
+  test('matches id-less same-name results to unresolved Tools in FIFO order', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'toolCall',
+            id: 'call-1',
+            name: 'Read',
+            arguments: { file_path: 'a.md' },
+          },
+          {
+            type: 'toolCall',
+            id: 'call-2',
+            name: 'Read',
+            arguments: { file_path: 'b.md' },
+          },
+          { type: 'toolResult', name: 'Read', text: 'contents-a' },
+          { type: 'toolResult', name: 'Read', text: 'contents-b' },
+        ],
+      },
+    ]);
+
+    expect(result).toMatchObject([
+      {
+        kind: 'process-summary',
+        toolCount: 2,
+        items: [
+          { toolCallId: 'call-1', input: { file_path: 'a.md' }, output: 'contents-a' },
+          { toolCallId: 'call-2', input: { file_path: 'b.md' }, output: 'contents-b' },
+        ],
+      },
+    ]);
+  });
+
+  test('does not leave a hidden boundary for an empty assistant message without content', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        runId: 'run-1',
+        content: [{ type: 'thinking', thinking: 'first' }],
+      },
+      { role: 'assistant', runId: 'run-1' },
+      {
+        role: 'assistant',
+        runId: 'run-1',
+        content: [{ type: 'thinking', thinking: 'second' }],
+      },
+    ]);
+
+    expect(result).toMatchObject([
+      {
+        kind: 'process-summary',
+        thinkingCount: 2,
+        items: [
+          { type: 'thinking', text: 'first' },
+          { type: 'thinking', text: 'second' },
+        ],
+      },
+    ]);
+  });
+
+  test('preserves assistant fallback text when content is missing or null', () => {
+    const nullContentMessage = {
+      role: 'assistant',
+      content: null,
+      text: 'visible null-content fallback',
+    } as unknown as GatewayMessage;
+
+    expect(
+      projectPersistedTimeline([
+        { role: 'assistant', text: 'visible missing-content fallback' },
+        nullContentMessage,
+      ]),
+    ).toMatchObject([
+      {
+        kind: 'history-message',
+        message: { text: 'visible missing-content fallback' },
+      },
+      {
+        kind: 'history-message',
+        message: { text: 'visible null-content fallback' },
+      },
+    ]);
   });
 });

@@ -407,24 +407,36 @@ function reduceThinking(
   event: NormalizedAgentEvent,
   dependencies: TranscriptReducerDependencies,
 ): void {
-  const text = stringValue(event.data.text) ?? stringValue(event.data.delta);
+  const snapshot = stringValue(event.data.text);
+  const delta = stringValue(event.data.delta);
+  const isDelta = delta !== null && (snapshot === null || !snapshot.trim());
+  const text = isDelta ? delta : (snapshot ?? delta);
   if (text === null) return;
-  const normalizedText = text.trim();
-  if (normalizedText) {
-    const recovered = turn.items.find(
-      (item): item is ThinkingItem =>
-        item.type === 'thinking' &&
-        typeof item.recoveredSnapshotText === 'string' &&
-        item.recoveredSnapshotText.includes(normalizedText),
-    );
-    if (recovered) {
-      recovered.lastSeq = Math.max(recovered.lastSeq, event.agentSeq);
-      recovered.updatedAt = Math.max(recovered.updatedAt, event.timestamp);
-      if (recovered.recoveredSnapshotText === normalizedText) {
-        delete recovered.recoveredSnapshotText;
-      }
-      return;
+  if (!text.trim()) {
+    const tail = activeAgentTail(turn);
+    // Empty snapshots are transport/control frames, not process boundaries. A
+    // whitespace-only delta can still be meaningful inside an existing stream.
+    if (isDelta && tail?.type === 'thinking' && tail.status === 'running' && tail.text) {
+      tail.text += text;
+      tail.lastSeq = event.agentSeq;
+      tail.updatedAt = event.timestamp;
     }
+    return;
+  }
+  const normalizedText = text.trim();
+  const recovered = turn.items.find(
+    (item): item is ThinkingItem =>
+      item.type === 'thinking' &&
+      typeof item.recoveredSnapshotText === 'string' &&
+      item.recoveredSnapshotText.includes(normalizedText),
+  );
+  if (recovered) {
+    recovered.lastSeq = Math.max(recovered.lastSeq, event.agentSeq);
+    recovered.updatedAt = Math.max(recovered.updatedAt, event.timestamp);
+    if (recovered.recoveredSnapshotText === normalizedText) {
+      delete recovered.recoveredSnapshotText;
+    }
+    return;
   }
   const recoveredTool = pendingRecoveredTool(turn);
   if (recoveredTool) {
@@ -434,7 +446,6 @@ function reduceThinking(
       if (authoritativeText) {
         existing.text = authoritativeText;
       } else {
-        const isDelta = event.data.delta !== undefined && event.data.text === undefined;
         existing.text = isDelta
           ? `${existing.text}${text}`
           : updateSnapshot(existing.text, text, event.data.replace === true);
@@ -458,7 +469,6 @@ function reduceThinking(
   completeStreamingContent(turn, event.agentSeq, event.timestamp);
   const tail = activeAgentTail(turn);
   if (tail?.type === 'thinking' && tail.status === 'running') {
-    const isDelta = event.data.delta !== undefined && event.data.text === undefined;
     tail.text = isDelta
       ? `${tail.text}${text}`
       : updateSnapshot(tail.text, text, event.data.replace === true);
@@ -484,8 +494,20 @@ function reduceContent(
   const delta = stringValue(event.data.delta);
   // Native agent assistant snapshots are scoped to the current model message.
   // Only chat snapshots/finals can represent the cumulative visible turn.
-  const text = snapshot ?? delta;
+  const isDelta = delta !== null && (snapshot === null || !snapshot.trim());
+  const text = isDelta ? delta : (snapshot ?? delta);
   if (text === null) return null;
+  if (!text.trim()) {
+    const tail = activeAgentTail(turn);
+    if (isDelta && tail?.type === 'content' && tail.status === 'streaming' && tail.text) {
+      tail.text += text;
+      tail.sourceMode = 'delta';
+      tail.lastSeq = event.agentSeq;
+      tail.updatedAt = event.timestamp;
+      return tail;
+    }
+    return null;
+  }
   if (snapshot !== null && snapshot.trim()) {
     const normalizedSnapshot = snapshot.trim();
     const recovered = turn.items.find(
@@ -511,7 +533,6 @@ function reduceContent(
       if (authoritativeText) {
         existing.text = authoritativeText;
       } else {
-        const isDelta = delta !== null && snapshot === null;
         existing.text = isDelta
           ? `${existing.text}${text}`
           : updateSnapshot(existing.text, text, event.data.replace === true);
@@ -537,8 +558,8 @@ function reduceContent(
   const tail = activeAgentTail(turn);
   const replace = event.data.replace === true;
   if (tail?.type === 'content' && tail.status === 'streaming') {
-    if (delta !== null && snapshot === null && !replace) {
-      tail.text += delta;
+    if (isDelta && !replace) {
+      tail.text += text;
       tail.sourceMode = 'delta';
     } else {
       tail.text = updateSnapshot(tail.text, text, replace);
@@ -553,7 +574,7 @@ function reduceContent(
     type: 'content',
     status: 'streaming',
     text,
-    sourceMode: replace ? 'replaceable' : snapshot !== null ? 'snapshot' : 'delta',
+    sourceMode: replace ? 'replaceable' : isDelta ? 'delta' : 'snapshot',
   };
   appendAgentItem(turn, item);
   return item;

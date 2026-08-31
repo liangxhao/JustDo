@@ -2498,10 +2498,11 @@ export class ChatController {
     const cachedEntry = this.findLiveSessionState(event.sessionKey, event.sessionId);
     if (!cachedEntry) return;
     const [sessionKey, cached] = cachedEntry;
+    const backgroundAssistantText = assistantEventText(event.data);
     if (
       event.stream === 'assistant' &&
-      typeof event.data.text === 'string' &&
-      isHiddenOrPendingControlReplyText(event.data.text)
+      backgroundAssistantText !== null &&
+      isHiddenOrPendingControlReplyText(backgroundAssistantText)
     ) {
       return;
     }
@@ -2686,14 +2687,15 @@ export class ChatController {
         this.applyBackgroundAgentEvent(normalized.event);
         return;
       }
+      const normalizedAssistantText = assistantEventText(normalized.event.data);
       if (
         normalized.event.stream === 'assistant' &&
-        typeof normalized.event.data.text === 'string' &&
-        isHiddenOrPendingControlReplyText(normalized.event.data.text)
+        normalizedAssistantText !== null &&
+        isHiddenOrPendingControlReplyText(normalizedAssistantText)
       ) {
         if (
           isDormantAnnounceRun(normalized.event.runId, this.state.transcript.activeTurn) &&
-          SILENT_REPLY_PATTERN.test(normalized.event.data.text.trim())
+          SILENT_REPLY_PATTERN.test(normalizedAssistantText.trim())
         ) {
           this.pendingAnnounceEvents.delete(normalized.event.runId);
         }
@@ -3982,7 +3984,7 @@ export class ChatController {
         return;
       }
       if (terminalGuardObservation?.action === 'commit') return;
-      const text = typeof data.text === 'string' ? data.text : null;
+      const text = assistantEventText(data);
       if (!text) return;
 
       const wasSending = this.state.chatSending;
@@ -4910,6 +4912,13 @@ function isHiddenOrPendingControlReplyText(text: string): boolean {
     (upper.length > 0 && 'NO_REPLY'.startsWith(upper)) ||
     trimmed.includes('HEARTBEAT_OK')
   );
+}
+
+function assistantEventText(data: Record<string, unknown>): string | null {
+  const snapshot = typeof data.text === 'string' ? data.text : null;
+  if (snapshot?.trim()) return snapshot;
+  const delta = typeof data.delta === 'string' ? data.delta : null;
+  return delta?.trim() ? delta : null;
 }
 
 function isDormantAnnounceControlEvent(
