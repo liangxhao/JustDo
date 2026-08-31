@@ -76,6 +76,17 @@ const terminalGuardPatch =
     };
   };
 
+test('leaves a terminal-guard revision without the live-observation flag untouched', () => {
+  const stale = `const JUSTDO_MANAGED_IMPLICIT_JOIN_GLOBAL = Symbol.for("justdo.openclaw.managed-subagent-join.v2026.7.1-2");
+const onBeforeTerminalDelivery = async () => {};
+const options = {
+  onBeforeTerminalDelivery,
+  blockReplyBreak: false
+};`;
+
+  expect(terminalGuardPatch.__testing.transformAttempt(stale, 'attempt.js')).toBe(stale);
+});
+
 describe('managed implicit subagent join capability', () => {
   test('selects only required undelivered children and resumes owned implicit waiters', () => {
     const required: RunEntry = {

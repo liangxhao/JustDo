@@ -46,10 +46,7 @@ function transformStrictSummaryPipeline(content, filePath) {
 
 function transformStrictSafeguardFailures(content) {
   if (content.includes('Codex-local compaction summarization exhausted safe staged retries')) {
-    return content.replace(
-      'tokensBefore: preparation.tokensBefore,\n                tokensAfter: justDoCodexTokensAfter',
-      'tokensBefore: justDoComparableTokensBefore,\n                tokensAfter: justDoCodexTokensAfter',
-    );
+    return content;
   }
   let out = content.replace(
     /return compactionSafeguardDeps\.summarizeInStages\(\{\s*(?:messages|messages:\s*params\.messages),([\s\S]*?justDoCompactionSessionId: params\.justDoCompactionSessionId\s*)\}\);/,

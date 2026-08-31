@@ -74,7 +74,7 @@ function transformOrigin(content, filePath) {
   const hasDeliveryQueue =
     content.includes('withSubagentCompletionDeliveryLock(key, commit)') &&
     content.includes('completion direct announce terminal confirmation');
-  if (hasDeliveryQueue) return addGatewayContextReadiness(content, filePath);
+  if (hasDeliveryQueue) return content;
   if (!content.includes('promoteDeliveredSubagentCompletionBranch'))
     throw new Error(`${filePath}: patch 015 promotion contract is missing`);
   let updated = replaceUnique(
@@ -196,16 +196,7 @@ function transformRegistry(content, filePath) {
     'isCompletionDeliveryHardExpired',
     'completion-hard-expired',
   ];
-  if (patchMarkers.every(marker => content.includes(marker))) {
-    const scopedHardExpiryCall = '\tif (isCompletionDeliveryHardExpired(entry)) {';
-    if (!content.includes(scopedHardExpiryCall)) return content;
-    return replaceUnique(
-      content,
-      scopedHardExpiryCall,
-      '\tif (entry.pauseReason !== "sessions_yield" && entry.expectsCompletionMessage === true && typeof entry.endedAt === "number" && Date.now() - entry.endedAt > ANNOUNCE_COMPLETION_HARD_EXPIRY_MS) {',
-      filePath + ': restart hard-expiry scope',
-    );
-  }
+  if (patchMarkers.every(marker => content.includes(marker))) return content;
   if (patchMarkers.some(marker => content.includes(marker)))
     throw new Error(
       `${filePath}: partial completion delivery queue patch detected; rebuild pristine runtime`,

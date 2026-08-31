@@ -587,6 +587,50 @@ async function spawn() {
     });
   });
 
+  test('leaves older broad metadata allowlists untouched instead of narrowing them', () => {
+    const currentNative = purposePatch.patchNativeCompaction(
+      `import { i as streamSimple } from "./stream-fixture.js";
+/** Converts agent-core Result values back to the legacy session compaction API shape. */
+function unwrapCompactionResult(result) { return result; }
+async function generateSummary(currentMessages, model, reserveTokens, apiKey, headers, signal, customInstructions, previousSummary, thinkingLevel, streamFn) {
+\treturn unwrapCompactionResult(await generateSummary$1(currentMessages, model, reserveTokens, apiKey, headers, signal, customInstructions, previousSummary, thinkingLevel, streamFn, openClawAgentCoreRuntime));
+}
+var AgentSession = class {
+  async compact(preparation, auth, options) {
+    let compactionResult;
+    compactionResult ??= unwrapCoreResult(await compact$1(preparation, this.model, auth.apiKey, auth.headers, options.customInstructions, options.signal, this.thinkingLevel, this.agent.streamFn));
+  }
+};`,
+      'native-fixture.js',
+    );
+    const staleNative = currentNative
+      .replace('["builtin_models"]', '["builtin_models", "justdo"]')
+      .replace(
+        '["openai-completions"]',
+        '["openai-completions", "openai-responses", "azure-openai-responses"]',
+      );
+
+    expect(purposePatch.patchNativeCompaction(staleNative, 'native-fixture.js')).toBe(staleNative);
+
+    const currentSimple = purposePatch.patchSimpleCompletion(
+      `async function completeWithPreparedSimpleCompletionModel(params) {
+\tconst completionModel = prepareModelForSimpleCompletion({
+\t\tmodel: params.model,
+\t\tcfg: params.cfg
+\t});
+  return completionModel;
+}
+function ensureCustomApiRegistered() {}`,
+      'simple-fixture.js',
+    );
+    const staleSimple = currentSimple.replace(
+      '["builtin_models"]',
+      '["builtin_models", "justdo"]',
+    );
+
+    expect(purposePatch.patchSimpleCompletion(staleSimple, 'simple-fixture.js')).toBe(staleSimple);
+  });
+
   test('exec-review metadata leaves strict-compatible models untouched', () => {
     const { helper, registered } = simpleCompletionMetadataHelper();
     const custom = { provider: 'custom', api: 'openai-completions', id: 'strict' };

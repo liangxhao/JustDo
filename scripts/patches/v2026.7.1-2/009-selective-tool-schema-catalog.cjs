@@ -20,14 +20,10 @@ const DEFERRED_TOOL_NAMES = [
   'skill_workshop',
   'update_goal',
 ];
-const PREVIOUS_DEFERRED_TOOL_NAMES = DEFERRED_TOOL_NAMES.filter(name => name !== 'skill_workshop');
 const NATIVE_POLICY = `isVisibleControlTool: (tool) => TOOL_SCHEMA_DIRECTORY_CONTROL_TOOL_NAMES.has(tool.name),
     isVisibleCatalogTool: (tool) => hydrateToolNames.has(tool.name) && uniqueCatalogToolNames.has(tool.name)`;
 const SELECTIVE_POLICY = `isVisibleControlTool: (tool) => TOOL_SCHEMA_DIRECTORY_CONTROL_TOOL_NAMES.has(tool.name),
     shouldCatalogTool: (tool) => ${JSON.stringify(DEFERRED_TOOL_NAMES)}.includes(tool.name),
-    isVisibleCatalogTool: (tool) => hydrateToolNames.has(tool.name) && uniqueCatalogToolNames.has(tool.name)`;
-const PREVIOUS_SELECTIVE_POLICY = `isVisibleControlTool: (tool) => TOOL_SCHEMA_DIRECTORY_CONTROL_TOOL_NAMES.has(tool.name),
-    shouldCatalogTool: (tool) => ${JSON.stringify(PREVIOUS_DEFERRED_TOOL_NAMES)}.includes(tool.name),
     isVisibleCatalogTool: (tool) => hydrateToolNames.has(tool.name) && uniqueCatalogToolNames.has(tool.name)`;
 
 function applyPatch(runtimeDir) {
@@ -36,12 +32,7 @@ function applyPatch(runtimeDir) {
   const original = fs.readFileSync(filePath, 'utf8');
   const updated = original.includes(SELECTIVE_POLICY)
     ? original
-    : replaceUnique(
-        original,
-        original.includes(PREVIOUS_SELECTIVE_POLICY) ? PREVIOUS_SELECTIVE_POLICY : NATIVE_POLICY,
-        SELECTIVE_POLICY,
-        'selective Tool Search catalog',
-      );
+    : replaceUnique(original, NATIVE_POLICY, SELECTIVE_POLICY, 'selective Tool Search catalog');
   return writeIfChanged(filePath, original, updated) ? ['gateway-bundle.mjs'] : [];
 }
 
@@ -50,13 +41,11 @@ function verifyPatch(runtimeDir) {
   if (!content.includes(SELECTIVE_POLICY))
     throw new Error('selective Tool Search catalog contract is missing');
   if (content.includes(NATIVE_POLICY)) throw new Error('native all-direct catalog policy remains');
-  if (content.includes(PREVIOUS_SELECTIVE_POLICY))
-    throw new Error('previous selective Tool Search catalog policy remains');
 }
 
 module.exports = {
   applyPatch,
   verifyPatch,
   DEFERRED_TOOL_NAMES,
-  __testing: { NATIVE_POLICY, PREVIOUS_SELECTIVE_POLICY, SELECTIVE_POLICY },
+  __testing: { NATIVE_POLICY, SELECTIVE_POLICY },
 };

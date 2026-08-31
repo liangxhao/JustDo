@@ -16,12 +16,6 @@ const SIMPLE_HELPER = 'prepareJustDoMetadataSimpleCompletionModel';
 const PROVIDERS = '["builtin_models"]';
 const APIS = '["openai-completions"]';
 
-function narrowMetadataAllowlist(content) {
-  return content
-    .replaceAll('["openai-completions", "openai-responses", "azure-openai-responses"]', APIS)
-    .replaceAll('["builtin_models", "justdo"]', PROVIDERS);
-}
-
 function replaceExactCount(content, pattern, replacement, expected, label) {
   const matches = [...content.matchAll(pattern)];
   if (matches.length !== expected) {
@@ -42,7 +36,7 @@ function patchNativeCompaction(content, filePath) {
         throw new Error(`${filePath}: partial native compaction metadata patch (${contract})`);
       }
     }
-    return narrowMetadataAllowlist(content);
+    return content;
   }
   let updated = replaceUniquePattern(
     content,
@@ -187,7 +181,7 @@ function patchSimpleCompletion(content, filePath) {
         throw new Error(`${filePath}: partial exec-review simple completion patch (${contract})`);
       }
     }
-    return narrowMetadataAllowlist(content);
+    return content;
   }
   let updated = replaceUniquePattern(
     content,

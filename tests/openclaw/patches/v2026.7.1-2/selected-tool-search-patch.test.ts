@@ -61,23 +61,18 @@ test('fails when the upstream selective catalog patch point changes', () => {
   }
 });
 
-test('updates a bundle patched before skill_workshop was deferred', () => {
-  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-selected-tool-search-upgrade-'));
+test('rejects a bundle patched before skill_workshop was deferred', () => {
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-selected-tool-search-stale-'));
   try {
     const bundlePath = path.join(runtimeDir, 'gateway-bundle.mjs');
-    fs.writeFileSync(
-      bundlePath,
-      BUNDLE_FIXTURE.replace(
-        'isVisibleCatalogTool: (tool) => hydrateToolNames.has(tool.name)',
-        'shouldCatalogTool: (tool) => ["browser","create_goal","cron","get_goal","memory_get","memory_search","update_goal"].includes(tool.name),\n    isVisibleCatalogTool: (tool) => hydrateToolNames.has(tool.name)',
-      ),
-      'utf8',
+    const stale = BUNDLE_FIXTURE.replace(
+      'isVisibleCatalogTool: (tool) => hydrateToolNames.has(tool.name)',
+      'shouldCatalogTool: (tool) => ["browser","create_goal","cron","get_goal","memory_get","memory_search","update_goal"].includes(tool.name),\n    isVisibleCatalogTool: (tool) => hydrateToolNames.has(tool.name)',
     );
+    fs.writeFileSync(bundlePath, stale, 'utf8');
 
-    expect(applyPatch(runtimeDir)).toEqual(['gateway-bundle.mjs']);
-    expect(fs.readFileSync(bundlePath, 'utf8')).toContain(
-      '["browser","create_goal","cron","get_goal","memory_get","memory_search","skill_workshop","update_goal"].includes(tool.name)',
-    );
+    expect(() => applyPatch(runtimeDir)).toThrow(/anchor count is 0/u);
+    expect(fs.readFileSync(bundlePath, 'utf8')).toBe(stale);
   } finally {
     fs.rmSync(runtimeDir, { recursive: true, force: true });
   }

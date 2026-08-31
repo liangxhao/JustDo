@@ -287,39 +287,31 @@ async function persistCliTurnTranscript(params) {
     ).toThrow('partial completion delivery queue patch detected');
   });
 
-  test('keeps restart hard-expiry checks independent of lifecycle-controller scope', () => {
-    const upgraded = queuePatch.transformRegistry(
-      [
-        'hasEarlierPendingCompletionDelivery(runId, entry)',
-        'delivery.queueSequence = next',
-        'isCompletionDeliveryHardExpired',
-        'completion-hard-expired',
-        '\tif (isCompletionDeliveryHardExpired(entry)) {',
-      ].join('\n'),
-      'subagent-registry.js',
-    );
+  test('leaves an older restart hard-expiry form untouched instead of upgrading it', () => {
+    const stale = [
+      'hasEarlierPendingCompletionDelivery(runId, entry)',
+      'delivery.queueSequence = next',
+      'isCompletionDeliveryHardExpired',
+      'completion-hard-expired',
+      '\tif (isCompletionDeliveryHardExpired(entry)) {',
+    ].join('\n');
 
-    expect(upgraded).not.toContain('\tif (isCompletionDeliveryHardExpired(entry))');
-    expect(upgraded).toContain('Date.now() - entry.endedAt > ANNOUNCE_COMPLETION_HARD_EXPIRY_MS');
+    expect(queuePatch.transformRegistry(stale, 'subagent-registry.js')).toBe(stale);
   });
 
-  test('waits for the Gateway request context before a recovered completion dispatch', () => {
-    const runtimeSource = `import { i as dispatchGatewayMethodInProcess } from "./server-plugins-XoQmHCe9.js";
+  test('leaves an older delivery queue untouched instead of adding Gateway context readiness', () => {
+    const stale =
+      [
+        `import { i as dispatchGatewayMethodInProcess } from "./server-plugins-XoQmHCe9.js";
 async function runAnnounceAgentCall(params) {
   return await subagentAnnounceDeliveryDeps.dispatchGatewayMethodInProcess("agent", params.agentParams);
 }
 async function previouslyPatchedDelivery() {
   await withSubagentCompletionDeliveryLock(key, commit);
   return "completion direct announce terminal confirmation";
-}`;
-    const patched = queuePatch.transformOrigin(runtimeSource, 'subagent-announce-origin.js');
+}`,
+      ].join('\n');
 
-    expect(patched).toContain(
-      'i as dispatchGatewayMethodInProcess, s as hasInProcessGatewayContext',
-    );
-    expect(patched).toContain('while (!hasInProcessGatewayContext())');
-    expect(patched.indexOf('waitForSubagentAnnounceGatewayContext(params.timeoutMs)')).toBeLessThan(
-      patched.indexOf('subagentAnnounceDeliveryDeps.dispatchGatewayMethodInProcess("agent"'),
-    );
+    expect(queuePatch.transformOrigin(stale, 'subagent-announce-origin.js')).toBe(stale);
   });
 });

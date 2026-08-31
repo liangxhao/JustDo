@@ -108,6 +108,14 @@ const summary = await summarizeViaLLM({
     expect(transformed).toContain('codexLocal: justDoCodexLocal');
   });
 
+  test('leaves an older staged-retry result untouched instead of upgrading it', () => {
+    const stale = `Codex-local compaction summarization exhausted safe staged retries
+tokensBefore: preparation.tokensBefore,
+                tokensAfter: justDoCodexTokensAfter`;
+
+    expect(patch.transformStrictSafeguardFailures(stale)).toBe(stale);
+  });
+
   test('retries only context overflow after dropping the oldest legal message group', async () => {
     const transformed = patch.transformStrictSafeguardFailures(
       `async function summarizeViaLLM(params) {

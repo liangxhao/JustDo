@@ -71,7 +71,7 @@ function addLiveAssistantObservationFlag(content, filePath) {
 
 function transformAttempt(content, filePath) {
   if (content.includes('const JUSTDO_MANAGED_IMPLICIT_JOIN_GLOBAL =')) {
-    return addLiveAssistantObservationFlag(content, filePath);
+    return content;
   }
   let updated = replaceUniquePattern(
     content,
