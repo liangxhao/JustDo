@@ -7,6 +7,7 @@ import {
 } from '@shared/cowork/sessionRun';
 import { isGatewayToolFailureNotice } from '@shared/cowork/toolFailureNotice';
 import type { PermissionMode } from '@shared/openclaw/approvals';
+import { isInternalManagedSubagentHandoffError } from '@shared/openclaw/internalRunError';
 import { flushSync } from 'react-dom';
 
 import {
@@ -286,7 +287,7 @@ export class CoworkService {
       // A failed tool call is already represented by its tool_result and does
       // not mean the overall run failed. OpenClaw can forward this synthetic
       // notice after a successfully completed turn.
-      if (isGatewayToolFailureNotice(error)) {
+      if (isGatewayToolFailureNotice(error) || isInternalManagedSubagentHandoffError(error)) {
         return;
       }
       this.confirmTerminalSessionIdle(sessionId);

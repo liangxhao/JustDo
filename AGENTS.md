@@ -129,6 +129,13 @@ new-version capability patches, not migrations of the historical
 `scripts/patches/v2026.6.11/` files. The target directory README is the
 authoritative capability-to-patch and upstream-disposition inventory.
 
+Do **not** add compatibility, migration, or in-place upgrade logic for a local
+runtime that already contains an older revision of a JustDo patch. Patch
+transformers may be idempotent only for their current exact patch shape; when
+they detect historical or partially applied patch markers, they must fail
+clearly. Rebuild the runtime from the locked pristine OpenClaw package and
+apply the current patch set instead.
+
 `docs/res/` was removed because no docs referenced its old image asset.
 
 ## Runtime Log Triage

@@ -22,6 +22,7 @@ import {
   type PluginApprovalRequest,
 } from '../../../shared/openclaw/approvals';
 import { OpenClawExtensionId } from '../../../shared/openclaw/extensions';
+import { isInternalManagedSubagentHandoffError } from '../../../shared/openclaw/internalRunError';
 import {
   classifyAgentEvent,
   classifyChatEvent,
@@ -1683,6 +1684,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }
       reconcileTerminalRun('idle');
     } else if (state === 'error') {
+      if (isInternalManagedSubagentHandoffError(p.errorMessage)) {
+        coworkLog('WARN', 'OpenClawRuntime', 'Suppressed internal managed handoff run error', {
+          sessionId,
+          runId,
+        });
+        reconcileTerminalRun('idle');
+        return;
+      }
       reconcileTerminalRun('error');
       this.emit('error', sessionId, p.errorMessage ?? 'chat error');
     }
@@ -1925,11 +1934,17 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     // Lifecycle events
     if (stream === 'lifecycle') {
       const phase = typeof data.phase === 'string' ? data.phase : '';
+      const internalManagedHandoffError =
+        phase === 'error' && isInternalManagedSubagentHandoffError(data.error);
       if (phase === 'end' || phase === 'error') {
         this.terminalLifecycleSessionIds.add(sessionId);
       }
       if (phase === 'error') {
-        this.terminalLifecycleErrorSessionIds.add(sessionId);
+        if (internalManagedHandoffError) {
+          this.terminalLifecycleErrorSessionIds.delete(sessionId);
+        } else {
+          this.terminalLifecycleErrorSessionIds.add(sessionId);
+        }
         this.scheduleLifecycleEndFallback(sessionId, turn);
       } else if (phase === 'end') {
         this.terminalLifecycleErrorSessionIds.delete(sessionId);

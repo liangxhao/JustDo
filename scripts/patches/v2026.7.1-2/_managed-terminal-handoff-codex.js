@@ -29,6 +29,8 @@ function transformCodexAttempt(content, filePath) {
     'suppressManagedJoinContinuationCommit: Boolean(justDoManagedCodexHandoffClaimed || justDoManagedCodexDurabilityError)',
     'resolveJustDoCodexTerminalHandoffOutcome(',
     'handoffOutcome.status === "durability_error"',
+    'event: "terminal_handoff_failed"',
+    'recovery: implicitJoin.deliveryRestored === true ? "native_delivery_restored" : "native_delivery_not_restored"',
     'justDoManagedCodexHandoffClaimed = implicitJoin?.status === "joined"',
     'let justDoManagedCodexHandoffClaimed = false;\n\t\teffectiveTimedOut = timedOut && !recoveredTurnWatchTimeout',
     'result.agentHarnessResultClassification === void 0 || toolBridge.telemetry.didDeliverSourceReplyViaMessageTool',
@@ -81,6 +83,14 @@ function transformCodexAttempt(content, filePath) {
 \t\t\t\t\texcludedChildSessionKey: justDoManagedCodexCompletionSource,
 \t\t\t\t\tabortSignal: runAbortController.signal
 \t\t\t\t});
+\t\t\t\tif (implicitJoin?.status === "error") console.warn("[JustDoManagedTerminalHandoff] " + JSON.stringify({
+\t\t\t\t\tevent: "terminal_handoff_failed",
+\t\t\t\t\tsessionId: params.sessionId,
+\t\t\t\t\trunId: params.runId,
+\t\t\t\t\treason: typeof implicitJoin.error === "string" && implicitJoin.error ? implicitJoin.error : "unknown",
+\t\t\t\t\tdeliveryRestored: implicitJoin.deliveryRestored === true,
+\t\t\t\t\trecovery: implicitJoin.deliveryRestored === true ? "native_delivery_restored" : "native_delivery_not_restored"
+\t\t\t\t}));
 \t\t\t\tjustDoManagedCodexHandoffClaimed = implicitJoin?.status === "joined";
 \t\t\t\teffectiveTimedOut = timedOut && !recoveredTurnWatchTimeout;
 \t\t\t\teffectiveTurnCompletionIdleTimedOut = turnCompletionIdleTimedOut && !recoveredTurnWatchTimeout;
@@ -184,7 +194,7 @@ const CODEX_PLUGIN_PRISTINE_HASHES = Object.freeze({
   provider: '91856aa88de1da64db6f2344f2cddc3c0fcb677c0d06bb1be25302b4e4d319e4',
 });
 const CODEX_PLUGIN_PATCHED_HASHES = Object.freeze({
-  attempt: '0bae897295606d5c2aed261fb3e0f4132b5d93b96bb37b0778ed0c97df03a45d',
+  attempt: '5294f238011ebe25a3c98bb8a6e860d829c4904e2e6e2141f69ffd5e505b919d',
   provider: 'aaf89d75be7f7383c2799c36ca4509e207022c7a5db9de817ab679932d947d12',
 });
 const CODEX_PLUGIN_PROVIDER_INTERMEDIATE_HASHES = Object.freeze([
@@ -609,7 +619,7 @@ function computeJustDoCodexTransformInputFingerprint() {
 }
 
 const CODEX_PLUGIN_TRANSFORM_INPUT_SHA256 =
-  'ae7422548835f9c62452f89bca426efd02ba9e67e3c79c90cbe1c0f60b1f3c39';
+  'ec4480389f7b7dbdb52b75831a4808697bfb70ac96c66f26cd9d9c797092ab0c';
 
 module.exports = {
   transformCodexAttempt,

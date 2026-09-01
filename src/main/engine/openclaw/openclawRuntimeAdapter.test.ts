@@ -4182,6 +4182,35 @@ test('lifecycle error converges the session to error after compaction fails', ()
   }
 });
 
+test('settles an internal managed handoff chat error without forwarding it', () => {
+  const { session, store } = createEmptyStore();
+  session.status = 'running';
+  store.updateSession = (_sessionId: string, updates: Record<string, unknown>) => {
+    Object.assign(session, updates);
+  };
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const complete = vi.fn();
+  const error = vi.fn();
+  adapter.on('complete', complete);
+  adapter.on('error', error);
+  adapter.rememberSessionKey('session-1', 'agent:main:justdo:session-1');
+  adapter.ensureActiveTurn('session-1', 'agent:main:justdo:session-1', 'run-1');
+
+  adapter.handleGatewayEvent({
+    event: 'chat',
+    payload: {
+      runId: 'run-1',
+      sessionKey: 'agent:main:justdo:session-1',
+      state: 'error',
+      errorMessage: 'Managed subagent terminal handoff could not be persisted.',
+    },
+  });
+
+  expect(session.status).toBe('idle');
+  expect(complete).toHaveBeenCalledWith('session-1', 'idle');
+  expect(error).not.toHaveBeenCalled();
+});
+
 test('compaction timeout resumes the lifecycle end fallback when its end event is lost', () => {
   vi.useFakeTimers();
   try {

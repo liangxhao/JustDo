@@ -691,8 +691,9 @@ flowchart LR
   `044` 合约；失败拒绝加载，repair 后清除 loader cache。
 - **安全边界**：只接管 exact requester/controller 的 unfinished explicit wait。多文件 companion
   更新有跨进程锁、受约束的 crash artifact 恢复、root containment、symlink/hardlink 拒绝、
-  staged verify 和 rollback。abort/timeout 恢复 native ownership；持久化失败产生可见错误，不放行
-  terminal reply，也不进入无界 managed revision。
+  staged verify 和 rollback。abort/timeout 恢复 native ownership；handoff 失败会记录结构化诊断，
+  包含失败原因、run/session 标识、delivery 是否恢复及恢复结果。未恢复时不放行 terminal reply，
+  也不进入无界 managed revision；JustDo UI 不展示这条内部 durability 错误。
 - **可删除条件**：上游能在 embedded 与 Codex terminal commit 前原子接管 unfinished explicit
   wait，并让动态 companion 安装/更新原生携带同等 exact-once、restart 和 durability 语义。
 

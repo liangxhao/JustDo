@@ -438,6 +438,14 @@ describe('managed terminal handoff capability', () => {
         );
       }
       if (name === 'selection-JInn13lc.js') {
+        expect(transformed).toContain('event: "terminal_handoff_failed"');
+        expect(transformed).toContain(
+          'reason: typeof implicitJoin.error === "string" && implicitJoin.error ? implicitJoin.error : "unknown"',
+        );
+        expect(transformed).toContain('deliveryRestored: implicitJoin.deliveryRestored === true');
+        expect(transformed).toContain(
+          'recovery: implicitJoin.deliveryRestored === true ? "native_delivery_restored" : "native_delivery_not_restored"',
+        );
         expect(transformed).toContain(
           'promptError = new Error("Managed subagent terminal handoff could not be persisted.")',
         );
@@ -447,6 +455,9 @@ describe('managed terminal handoff capability', () => {
         );
       }
       if (name === 'run-attempt-CXZNKJ6y.js') {
+        expect(transformed).toContain('event: "terminal_handoff_failed"');
+        expect(transformed).toContain('sessionId: params.sessionId');
+        expect(transformed).toContain('runId: params.runId');
         expect(transformed).toContain(
           'result.agentHarnessResultClassification === void 0 || toolBridge.telemetry.didDeliverSourceReplyViaMessageTool',
         );
@@ -505,7 +516,18 @@ describe('managed terminal handoff capability', () => {
         transformedEmbedded.replace('promptErrorSource = "prompt"', 'promptErrorSource = null'),
         embeddedPath,
       ),
-    ).toThrow(/partial managed terminal handoff embedded patch/);
+    ).toThrow(/legacy managed terminal handoff embedded patch is unsupported/);
+
+    const legacyEmbedded =
+      'if (implicitJoin?.status === "joined" && typeof implicitJoin.prompt === "string" && implicitJoin.prompt) {\n' +
+      '\t\t\t\t\t\tbeforeAgentFinalizeRevisionReason = JUSTDO_MANAGED_IMPLICIT_JOIN_REVISION_PREFIX + implicitJoin.prompt;\n' +
+      '\t\t\t\t\t\treturn { suppressTerminalDelivery: true };\n' +
+      '\t\t\t\t\t}\n' +
+      '\t\t\t\t\tpromptError = new Error("Managed subagent terminal handoff could not be persisted.");\n' +
+      '\t\t\t\t\tpromptErrorSource = "prompt";';
+    expect(() =>
+      patch.__testing.transformEmbeddedAttempt(legacyEmbedded, embeddedPath),
+    ).toThrow(/legacy managed terminal handoff embedded patch is unsupported/);
 
     const loaderPath = path.join(root, 'loader-D8d2EvVh.js');
     const transformedLoader = patch.__testing.transformPluginLoader(

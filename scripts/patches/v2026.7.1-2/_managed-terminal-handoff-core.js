@@ -257,12 +257,24 @@ function transformTools(content, filePath) {
 
 function transformEmbeddedAttempt(content, filePath) {
   const isBundle = path.basename(filePath) === 'gateway-bundle.mjs';
-  const contract =
+  const promptErrorContract =
     'promptError = new Error("Managed subagent terminal handoff could not be persisted.");' +
-    (isBundle ? '\n            ' : '\n\t\t\t\t\t\t') +
+    (isBundle ? '\n              ' : '\n\t\t\t\t\t\t\t') +
     'promptErrorSource = "prompt";';
-  if (content.includes(contract)) return content;
-  if (content.includes('Managed subagent terminal handoff could not be persisted.'))
+  const contracts = [
+    'event: "terminal_handoff_failed"',
+    'recovery: implicitJoin.deliveryRestored === true ? "native_delivery_restored" : "native_delivery_not_restored"',
+    promptErrorContract,
+  ];
+  const appliedCount = contracts.filter(contract => content.includes(contract)).length;
+  if (appliedCount === contracts.length) return content;
+  if (
+    content.includes(
+      'promptError = new Error("Managed subagent terminal handoff could not be persisted.");',
+    )
+  )
+    throw new Error(`${filePath}: legacy managed terminal handoff embedded patch is unsupported`);
+  if (appliedCount > 0)
     throw new Error(`${filePath}: partial managed terminal handoff embedded patch detected`);
   return replaceUnique(
     content,
@@ -270,8 +282,8 @@ function transformEmbeddedAttempt(content, filePath) {
       ? 'if (implicitJoin?.status === "joined" && typeof implicitJoin.prompt === "string" && implicitJoin.prompt) {\n            beforeAgentFinalizeRevisionReason = JUSTDO_MANAGED_IMPLICIT_JOIN_REVISION_PREFIX + implicitJoin.prompt;\n            return { suppressTerminalDelivery: true };\n          }'
       : 'if (implicitJoin?.status === "joined" && typeof implicitJoin.prompt === "string" && implicitJoin.prompt) {\n\t\t\t\t\t\tbeforeAgentFinalizeRevisionReason = JUSTDO_MANAGED_IMPLICIT_JOIN_REVISION_PREFIX + implicitJoin.prompt;\n\t\t\t\t\t\treturn { suppressTerminalDelivery: true };\n\t\t\t\t\t}',
     isBundle
-      ? 'if (implicitJoin?.status === "joined" && typeof implicitJoin.prompt === "string" && implicitJoin.prompt) {\n            beforeAgentFinalizeRevisionReason = JUSTDO_MANAGED_IMPLICIT_JOIN_REVISION_PREFIX + implicitJoin.prompt;\n            return { suppressTerminalDelivery: true };\n          }\n          if (implicitJoin?.status === "error" && implicitJoin.deliveryRestored !== true) {\n            promptError = new Error("Managed subagent terminal handoff could not be persisted.");\n            promptErrorSource = "prompt";\n            return { suppressTerminalDelivery: true };\n          }'
-      : 'if (implicitJoin?.status === "joined" && typeof implicitJoin.prompt === "string" && implicitJoin.prompt) {\n\t\t\t\t\t\tbeforeAgentFinalizeRevisionReason = JUSTDO_MANAGED_IMPLICIT_JOIN_REVISION_PREFIX + implicitJoin.prompt;\n\t\t\t\t\t\treturn { suppressTerminalDelivery: true };\n\t\t\t\t\t}\n\t\t\t\t\tif (implicitJoin?.status === "error" && implicitJoin.deliveryRestored !== true) {\n\t\t\t\t\t\tpromptError = new Error("Managed subagent terminal handoff could not be persisted.");\n\t\t\t\t\t\tpromptErrorSource = "prompt";\n\t\t\t\t\t\treturn { suppressTerminalDelivery: true };\n\t\t\t\t\t}',
+      ? 'if (implicitJoin?.status === "joined" && typeof implicitJoin.prompt === "string" && implicitJoin.prompt) {\n            beforeAgentFinalizeRevisionReason = JUSTDO_MANAGED_IMPLICIT_JOIN_REVISION_PREFIX + implicitJoin.prompt;\n            return { suppressTerminalDelivery: true };\n          }\n          if (implicitJoin?.status === "error") {\n            console.warn("[JustDoManagedTerminalHandoff] " + JSON.stringify({\n              event: "terminal_handoff_failed",\n              sessionId: params?.sessionId,\n              runId: params?.runId,\n              reason: typeof implicitJoin.error === "string" && implicitJoin.error ? implicitJoin.error : "unknown",\n              deliveryRestored: implicitJoin.deliveryRestored === true,\n              recovery: implicitJoin.deliveryRestored === true ? "native_delivery_restored" : "native_delivery_not_restored"\n            }));\n            if (implicitJoin.deliveryRestored !== true) {\n              promptError = new Error("Managed subagent terminal handoff could not be persisted.");\n              promptErrorSource = "prompt";\n              return { suppressTerminalDelivery: true };\n            }\n          }'
+      : 'if (implicitJoin?.status === "joined" && typeof implicitJoin.prompt === "string" && implicitJoin.prompt) {\n\t\t\t\t\t\tbeforeAgentFinalizeRevisionReason = JUSTDO_MANAGED_IMPLICIT_JOIN_REVISION_PREFIX + implicitJoin.prompt;\n\t\t\t\t\t\treturn { suppressTerminalDelivery: true };\n\t\t\t\t\t}\n\t\t\t\t\tif (implicitJoin?.status === "error") {\n\t\t\t\t\t\tconsole.warn("[JustDoManagedTerminalHandoff] " + JSON.stringify({\n\t\t\t\t\t\t\tevent: "terminal_handoff_failed",\n\t\t\t\t\t\t\tsessionId: params?.sessionId,\n\t\t\t\t\t\t\trunId: params?.runId,\n\t\t\t\t\t\t\treason: typeof implicitJoin.error === "string" && implicitJoin.error ? implicitJoin.error : "unknown",\n\t\t\t\t\t\t\tdeliveryRestored: implicitJoin.deliveryRestored === true,\n\t\t\t\t\t\t\trecovery: implicitJoin.deliveryRestored === true ? "native_delivery_restored" : "native_delivery_not_restored"\n\t\t\t\t\t\t}));\n\t\t\t\t\t\tif (implicitJoin.deliveryRestored !== true) {\n\t\t\t\t\t\t\tpromptError = new Error("Managed subagent terminal handoff could not be persisted.");\n\t\t\t\t\t\t\tpromptErrorSource = "prompt";\n\t\t\t\t\t\t\treturn { suppressTerminalDelivery: true };\n\t\t\t\t\t\t}\n\t\t\t\t\t}',
     `${filePath}: fail-safe terminal handoff error`,
   );
 }

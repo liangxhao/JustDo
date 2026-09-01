@@ -6,6 +6,7 @@ import { prepareVisibleTimelineRows } from '@/libs/openclaw-chat/model/timeline-
 import { readTranscriptIdentity } from '@/libs/openclaw-chat/model/transcript-identity';
 import {
   normalizeGatewayHistoryForDisplay,
+  persistFailedRun,
   persistInterruptedMessage,
   projectGatewayHistoryForDisplay,
 } from '@/libs/openclaw-chat/pipeline/history-display-normalizer';
@@ -131,6 +132,82 @@ describe('normalizeGatewayHistoryForDisplay', () => {
       {
         role: 'system',
         content: 'Model request failed',
+        isError: true,
+        __justdoFailedRunMessage: true,
+      },
+    ]);
+  });
+
+  test('hides the internal managed handoff failure placeholder', async () => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+    });
+    persistFailedRun({
+      sessionKey: 'agent:main:justdo:session-1',
+      runId: 'run-1',
+      error: 'Managed subagent terminal handoff could not be persisted.',
+      timestamp: Date.now(),
+    });
+    const messages = await normalizeGatewayHistoryForDisplay(
+      [
+        {
+          role: 'assistant',
+          runId: 'run-1',
+          content: 'The agent run failed before producing a reply.',
+        },
+      ],
+      {
+        sessionKey: 'agent:main:justdo:session-1',
+      },
+    );
+
+    expect(messages).toEqual([]);
+  });
+
+  test('keeps unrelated failure placeholders when only one run has an internal handoff error', async () => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+    });
+    persistFailedRun({
+      sessionKey: 'agent:main:justdo:session-1',
+      runId: 'run-older',
+      error: 'Older model request failed.',
+      timestamp: Date.now() - 120_000,
+    });
+    persistFailedRun({
+      sessionKey: 'agent:main:justdo:session-1',
+      runId: 'run-internal',
+      error: 'Managed subagent terminal handoff could not be persisted.',
+      timestamp: Date.now(),
+    });
+    const messages = await normalizeGatewayHistoryForDisplay(
+      [
+        {
+          role: 'assistant',
+          runId: 'run-older',
+          content: 'The agent run failed before producing a reply.',
+        },
+        {
+          role: 'assistant',
+          runId: 'run-internal',
+          content: 'The agent run failed before producing a reply.',
+        },
+      ],
+      {
+        sessionKey: 'agent:main:justdo:session-1',
+        lastError: 'Managed subagent terminal handoff could not be persisted.',
+      },
+    );
+
+    expect(messages).toEqual([
+      {
+        role: 'system',
+        runId: 'run-older',
+        content: 'Older model request failed.',
         isError: true,
         __justdoFailedRunMessage: true,
       },

@@ -28,6 +28,7 @@ import type {
   OpenClawPagedHistoryParams,
   OpenClawPagedHistoryResult,
 } from '@shared/openclaw/historyIpc';
+import { isInternalManagedSubagentHandoffError } from '@shared/openclaw/internalRunError';
 import { normalizeModelRef } from '@shared/openclaw/modelRef';
 import { extractGoalFollowUpRequest } from '@shared/prompts/goalFollowUpPrompt';
 import {
@@ -2553,6 +2554,24 @@ export class ChatController {
         typeof event.data.error === 'string' && event.data.error.trim()
           ? event.data.error.trim()
           : 'Unknown error';
+      if (isInternalManagedSubagentHandoffError(errorMessage)) {
+        persistFailedRun({
+          sessionKey,
+          runId: event.runId,
+          error: errorMessage,
+          timestamp: Date.now(),
+        });
+        this.applyBackgroundChatEvent({
+          runId: event.runId,
+          sessionKey,
+          sessionId: event.sessionId,
+          lifecycleGeneration: event.lifecycleGeneration,
+          frameSeq: event.frameSeq,
+          state: 'final',
+          replace: false,
+        });
+        return;
+      }
       this.applyBackgroundChatEvent({
         runId: event.runId,
         sessionKey,
@@ -2569,8 +2588,33 @@ export class ChatController {
   private handleEvent(event: GatewayEventFrame): void {
     if (event.event === 'tick') return;
     if (event.event === 'chat') {
-      const payload = normalizeChatEvent({ payload: event.payload, frameSeq: event.seq });
-      if (payload) {
+      const normalizedPayload = normalizeChatEvent({ payload: event.payload, frameSeq: event.seq });
+      if (normalizedPayload) {
+        let payload = normalizedPayload;
+        if (
+          normalizedPayload.state === 'error' &&
+          isInternalManagedSubagentHandoffError(normalizedPayload.errorMessage)
+        ) {
+          persistFailedRun({
+            sessionKey: normalizedPayload.sessionKey,
+            runId: normalizedPayload.runId,
+            error: normalizedPayload.errorMessage ?? '',
+            timestamp: Date.now(),
+          });
+          payload = {
+            runId: normalizedPayload.runId,
+            sessionKey: normalizedPayload.sessionKey,
+            sessionId: normalizedPayload.sessionId,
+            lifecycleGeneration: normalizedPayload.lifecycleGeneration,
+            frameSeq: normalizedPayload.frameSeq,
+            state: 'final',
+            replace: false,
+          };
+          debugLog('[ChatCtrl] suppressed internal managed handoff run error', {
+            runId: payload.runId,
+            sessionKey: payload.sessionKey,
+          });
+        }
         this.ensureTranscriptSessionIdentity();
         const matchesSelectedSession =
           normalizeTranscriptSessionKey(payload.sessionKey) ===
@@ -4118,6 +4162,26 @@ export class ChatController {
       if (phase === 'error') {
         const errorMessage =
           typeof data.error === 'string' && data.error.trim() ? data.error.trim() : 'Unknown error';
+        if (isInternalManagedSubagentHandoffError(errorMessage)) {
+          persistFailedRun({
+            sessionKey: this.state.sessionKey,
+            runId,
+            error: errorMessage,
+            timestamp: Date.now(),
+          });
+          const finalEvent: NormalizedChatEvent = {
+            runId,
+            sessionKey: this.state.sessionKey,
+            sessionId: payload.sessionId,
+            lifecycleGeneration: payload.lifecycleGeneration,
+            frameSeq: payload.frameSeq,
+            state: 'final',
+            replace: false,
+          };
+          reduceChatEvent(this.state.transcript, finalEvent, this.transcriptDependencies);
+          this.handleFinal(finalEvent);
+          return;
+        }
         this.clearLifecycleEndFallback();
         this.state.lastError = errorMessage;
         persistFailedRun({

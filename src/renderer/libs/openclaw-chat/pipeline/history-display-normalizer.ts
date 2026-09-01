@@ -1,3 +1,4 @@
+import { isInternalManagedSubagentHandoffError } from '@shared/openclaw/internalRunError';
 import { extractGoalFollowUpRequest } from '@shared/prompts/goalFollowUpPrompt';
 
 import { FAILED_RUN_MESSAGE_FLAG } from '@/libs/openclaw-chat/model/failed-run-message';
@@ -293,11 +294,11 @@ export function persistFailedRun(record: FailedRunRecord): void {
   }
 }
 
-function findFailedRunError(
+function findFailedRun(
   outer: Record<string, unknown>,
   message: Record<string, unknown>,
   sessionKey: string,
-): string | null {
+): { record: FailedRunRecord | null; exactRunMatch: boolean } {
   const runId =
     typeof message.runId === 'string'
       ? message.runId
@@ -312,16 +313,14 @@ function findFailedRunError(
         : null;
   const candidates = readFailedRuns().filter(item => item.sessionKey === sessionKey);
   const exact = runId ? candidates.find(item => item.runId === runId) : null;
-  if (exact) return exact.error;
-  if (timestamp === null) return candidates[candidates.length - 1]?.error ?? null;
-  return (
-    candidates
-      .filter(item => Math.abs(item.timestamp - timestamp) < 60_000)
-      .sort(
-        (left, right) =>
-          Math.abs(left.timestamp - timestamp) - Math.abs(right.timestamp - timestamp),
-      )[0]?.error ?? null
-  );
+  if (exact) return { record: exact, exactRunMatch: true };
+  if (timestamp === null) return { record: null, exactRunMatch: false };
+  const record = candidates
+    .filter(item => Math.abs(item.timestamp - timestamp) < 60_000)
+    .sort(
+      (left, right) => Math.abs(left.timestamp - timestamp) - Math.abs(right.timestamp - timestamp),
+    )[0];
+  return { record: record ?? null, exactRunMatch: false };
 }
 
 function normalizeFailedRunMessage(
@@ -337,13 +336,16 @@ function normalizeFailedRunMessage(
   ) {
     return message;
   }
+  const persistedFailure = findFailedRun(outer ?? raw, raw, sessionKey);
+  const persistedError = persistedFailure.record?.error ?? null;
+  if (persistedFailure.exactRunMatch && isInternalManagedSubagentHandoffError(persistedError)) {
+    return null;
+  }
+  const resolvedError = persistedError || errorMessage?.trim() || AGENT_RUN_FAILED_BEFORE_REPLY;
   const normalized = {
     ...raw,
     role: 'system',
-    content:
-      errorMessage?.trim() ||
-      findFailedRunError(outer ?? raw, raw, sessionKey) ||
-      AGENT_RUN_FAILED_BEFORE_REPLY,
+    content: resolvedError,
     isError: true,
     [FAILED_RUN_MESSAGE_FLAG]: true,
   };
@@ -489,9 +491,11 @@ export async function hydrateGatewayHistoryForDisplay(
     options.sessionKey,
     withLocalCompactionDetails,
   );
-  return withToolInputs.map(message =>
-    normalizeFailedRunMessage(message, options.sessionKey, options.lastError ?? null),
-  );
+  return withToolInputs
+    .map(message =>
+      normalizeFailedRunMessage(message, options.sessionKey, options.lastError ?? null),
+    )
+    .filter(message => message !== null);
 }
 
 export async function normalizeGatewayHistoryForDisplay(

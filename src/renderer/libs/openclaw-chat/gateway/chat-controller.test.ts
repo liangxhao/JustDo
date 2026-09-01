@@ -7038,6 +7038,57 @@ test('captures the gateway detail when a lifecycle run fails', () => {
   );
 });
 
+test('settles an internal managed handoff failure without exposing it to the user', () => {
+  const controller = new ChatController();
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.transcript.sessionKey = controller.state.sessionKey;
+  controller.state.chatSending = true;
+  controller.state.chatRunId = 'run-1';
+  beginAssistantTurn(
+    controller.state.transcript,
+    { runId: 'run-1', startedAt: 500 },
+    { now: () => Date.now(), createId: prefix => `${prefix}-1` },
+  );
+
+  (
+    controller as unknown as {
+      handleAgentEvent(payload: Record<string, unknown>): void;
+    }
+  ).handleAgentEvent({
+    runId: 'run-1',
+    stream: 'lifecycle',
+    session: controller.state.sessionKey,
+    data: {
+      phase: 'error',
+      error: 'Managed subagent terminal handoff could not be persisted.',
+    },
+  });
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent({
+    event: 'chat',
+    payload: {
+      runId: 'run-1',
+      sessionKey: controller.state.sessionKey,
+      state: 'error',
+      errorMessage: 'Managed subagent terminal handoff could not be persisted.',
+    },
+  });
+
+  expect(controller.state.chatSending).toBe(false);
+  expect(controller.state.chatRunId).toBeNull();
+  expect(controller.state.lastError).toBeNull();
+  expect(controller.state.chatMessages).toEqual([]);
+  expect(controller.state.transcript.activeTurn).toMatchObject({
+    runId: 'run-1',
+    status: 'final',
+    items: [],
+  });
+  expect(controller.state.transcript.recentRuns.get('run-1')?.terminalStatus).toBe('final');
+});
+
 test('stores final timing when lifecycle end uses the compatibility fallback', async () => {
   vi.useFakeTimers();
   vi.setSystemTime(1_000);
