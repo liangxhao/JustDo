@@ -26,6 +26,9 @@ const { syncOpenClawRuntimeResources } = require('./sync-openclaw-runtime-resour
 const { readBundledSkillConfig, syncBundledSkills } = require('./sync-bundled-skills.cjs');
 const { compressTarArchive, packMultipleSources } = require('./pack-openclaw-tar.cjs');
 const { readWindowsUpdateConfig } = require('./windows-update-config.cjs');
+const {
+  getRuntimeCompanionPathsReferencedByBundle: getRuntimeCompanionPathsFromContent,
+} = require('./openclaw-runtime-companions.cjs');
 const { releaseHistory: releaseHistoryLimits } = require('../src/shared/appUpdateConfig.json');
 const {
   prepareBrowserExtension,
@@ -197,38 +200,13 @@ function verifyRequiredPathSet(rootDir, relativePaths, label, buildHint) {
   }
 }
 
-const OPENCLAW_RUNTIME_COMPANION_CHECKS = [
-  {
-    marker: 'subagent-registry.runtime',
-    path: 'dist/subagent-registry.runtime.js',
-  },
-  {
-    marker: 'model-provider-auth.worker.js',
-    path: 'dist/agents/model-provider-auth.worker.js',
-  },
-  {
-    marker: 'compaction-planning.worker.js',
-    path: 'dist/agents/compaction-planning.worker.js',
-  },
-  {
-    marker: 'code-mode.worker.js',
-    path: 'dist/agents/code-mode.worker.js',
-  },
-  {
-    marker: 'audit-event-writer.worker.js',
-    path: 'dist/audit/audit-event-writer.worker.js',
-  },
-];
-
 function getRuntimeCompanionPathsReferencedByBundle(gatewayBundlePath) {
   if (!existsSync(gatewayBundlePath)) {
     return [];
   }
 
   const bundle = readFileSync(gatewayBundlePath, 'utf8');
-  return OPENCLAW_RUNTIME_COMPANION_CHECKS.filter(({ marker }) => bundle.includes(marker)).map(
-    ({ path: relativePath }) => relativePath,
-  );
+  return getRuntimeCompanionPathsFromContent(bundle);
 }
 
 function verifyRuntimeCompanionFilesFromBundle(runtimeRoot, gatewayBundlePath, buildHint) {

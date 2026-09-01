@@ -18,6 +18,11 @@ const path = require('path');
 const { patchOpenClawRuntime } = require('./patch-openclaw-runtime.cjs');
 const { decideRuntimeBundle } = require('./openclaw-runtime-freeze.cjs');
 const {
+  getRuntimeCompanionPathsReferencedByBundle,
+  hasStaleRuntimeWorkerImportMetaUrl,
+  rewriteRuntimeWorkerImportMetaUrls,
+} = require('./openclaw-runtime-companions.cjs');
+const {
   INITIAL_BUNDLE_PENDING_FILENAME,
   verifyFrozenOpenClawRuntime,
   verifyOpenClawPatchManifest,
@@ -215,6 +220,7 @@ function createRuntimeImportMetaUrlPlugin(openclawRuntimeDir) {
         const replacement = `new URL(${JSON.stringify(runtimeRelativePath)}, import.meta.url).href`;
         let contents = source;
 
+        contents = rewriteRuntimeWorkerImportMetaUrls(contents, replacement);
         contents = contents.replace(
           /importRuntimeModule\(\s*import\.meta\.url\s*,\s*SUBAGENT_REGISTRY_RUNTIME_SPEC\s*\)/g,
           `importRuntimeModule(${replacement}, SUBAGENT_REGISTRY_RUNTIME_SPEC)`,
@@ -249,29 +255,6 @@ function createRuntimeImportMetaUrlPlugin(openclawRuntimeDir) {
   };
 }
 
-const RUNTIME_COMPANION_CHECKS = [
-  {
-    marker: 'subagent-registry.runtime',
-    path: 'dist/subagent-registry.runtime.js',
-  },
-  {
-    marker: 'model-provider-auth.worker.js',
-    path: 'dist/agents/model-provider-auth.worker.js',
-  },
-  {
-    marker: 'compaction-planning.worker.js',
-    path: 'dist/agents/compaction-planning.worker.js',
-  },
-  {
-    marker: 'code-mode.worker.js',
-    path: 'dist/agents/code-mode.worker.js',
-  },
-  {
-    marker: 'audit-event-writer.worker.js',
-    path: 'dist/audit/audit-event-writer.worker.js',
-  },
-];
-
 const STALE_RUNTIME_IMPORT_META_PATTERNS = [
   /importRuntimeModule\(\s*import\.meta\.url\s*,\s*SUBAGENT_REGISTRY_RUNTIME_SPEC\s*\)/,
   /resolveProviderAuthWarmWorkerUrl\(\s*import\.meta\.url\s*\)/,
@@ -280,24 +263,18 @@ const STALE_RUNTIME_IMPORT_META_PATTERNS = [
   /resolveAuditEventWriterUrl\(\s*currentModuleUrl\s*=\s*import\.meta\.url\s*\)/,
 ];
 
-function listBundleReferencedRuntimeCompanions(bundle) {
-  return RUNTIME_COMPANION_CHECKS.filter(({ marker }) => bundle.includes(marker)).map(
-    ({ path: relativePath }) => relativePath,
-  );
-}
-
 function verifyBundledRuntimeCompanions(openclawRuntimeDir, bundledPath) {
   const bundle = fs.readFileSync(bundledPath, 'utf8');
   const stalePatterns = STALE_RUNTIME_IMPORT_META_PATTERNS.filter(pattern => pattern.test(bundle));
 
-  if (stalePatterns.length > 0) {
+  if (stalePatterns.length > 0 || hasStaleRuntimeWorkerImportMetaUrl(bundle)) {
     throw new Error(
       'Bundled gateway still contains runtime-relative import.meta.url call sites. ' +
         'Update createRuntimeImportMetaUrlPlugin() before shipping this bundle.',
     );
   }
 
-  const referencedCompanions = listBundleReferencedRuntimeCompanions(bundle);
+  const referencedCompanions = getRuntimeCompanionPathsReferencedByBundle(bundle);
   if (referencedCompanions.length === 0) {
     console.log(
       '[bundle-openclaw-gateway] No known runtime companion references found in bundle; ' +

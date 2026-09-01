@@ -93,10 +93,14 @@ test('rewrites and packages the OpenClaw audit writer companion', () => {
     path.resolve(__dirname, '../../scripts/electron-builder-hooks.cjs'),
     'utf8',
   );
+  const runtimeCompanions = fs.readFileSync(
+    path.resolve(__dirname, '../../scripts/openclaw-runtime-companions.cjs'),
+    'utf8',
+  );
 
   expect(bundleScript).toContain('resolveAuditEventWriterUrl');
-  expect(bundleScript).toContain('dist/audit/audit-event-writer.worker.js');
-  expect(builderHooks).toContain('dist/audit/audit-event-writer.worker.js');
+  expect(runtimeCompanions).toContain('dist/audit/audit-event-writer.worker.js');
+  expect(builderHooks).toContain('getRuntimeCompanionPathsFromContent');
 });
 
 test('uses a target-aware and runtime-verified Electron-native rebuild', () => {

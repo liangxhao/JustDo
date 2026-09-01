@@ -17,6 +17,7 @@ const BUILD_RECIPE_FILES = [
   'scripts/electron-builder-hooks.cjs',
   'scripts/install-openclaw-runtime.cjs',
   'scripts/openclaw-runtime-freeze.cjs',
+  'scripts/openclaw-runtime-companions.cjs',
   'scripts/openclaw-runtime-staging.cjs',
   'scripts/patch-openclaw-runtime.cjs',
   'scripts/verify-openclaw-pristine-contracts.cjs',
