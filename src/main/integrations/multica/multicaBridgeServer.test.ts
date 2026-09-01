@@ -17,6 +17,7 @@ import {
 } from './multicaBridgeProtocol';
 import {
   classifyMulticaRunStatus,
+  createMulticaWorkspaceConfig,
   MulticaBridgeServer,
   normalizeMulticaVersionProbeOutput,
 } from './multicaBridgeServer';
@@ -101,6 +102,45 @@ describe('MulticaBridgeServer', () => {
         resolved: false,
       }),
     ).toBe('error');
+    expect(
+      classifyMulticaRunStatus({
+        code: 0,
+        signal: null,
+        timedOut: false,
+        stderr: 'config timeoutSeconds=180; request completed',
+        resolved: true,
+      }),
+    ).toBe('completed');
+  });
+
+  test('creates an isolated evaluation config pinned to the Skill-Up workspace', () => {
+    const userDataPath = createDirectory();
+    const workspace = path.join(userDataPath, 'skill-up workspace');
+    fs.mkdirSync(workspace);
+    const sourceConfigPath = path.join(userDataPath, 'source.json');
+    fs.writeFileSync(
+      sourceConfigPath,
+      JSON.stringify({
+        agents: {
+          defaults: { model: { primary: 'litellm/test-model' } },
+          list: [{ id: 'main', default: true, model: { primary: 'litellm/test-model' } }],
+        },
+      }),
+    );
+
+    const generated = createMulticaWorkspaceConfig({
+      sourceConfigPath,
+      cwd: workspace,
+      argv: ['agent', '--agent', 'main', '--local'],
+      userDataPath,
+    });
+    expect(generated).not.toBeNull();
+    const config = JSON.parse(fs.readFileSync(generated!.configPath, 'utf8'));
+    expect(config.agents.defaults.workspace).toBe(workspace);
+    expect(config.agents.list[0].workspace).toBe(workspace);
+    expect(config.agents.defaults.model.primary).toBe('litellm/test-model');
+    generated!.dispose();
+    expect(fs.existsSync(generated!.configPath)).toBe(false);
   });
 
   test('authenticates the pipe and preserves streamed output and exit codes', async () => {

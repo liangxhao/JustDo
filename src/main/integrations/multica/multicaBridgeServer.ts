@@ -66,7 +66,11 @@ export const classifyMulticaRunStatus = (input: {
   stderr: string;
   resolved: boolean;
 }): ExternalSessionStatus => {
-  if (input.timedOut || /(?:timed?\s*out|timeout)/i.test(input.stderr)) return 'timeout';
+  const terminalTimeout =
+    /(?:\b(?:agent|request|operation|command)\s+timed out\b|\btimed out after\b|context deadline exceeded)/i.test(
+      input.stderr,
+    );
+  if (input.timedOut || terminalTimeout) return 'timeout';
   if (input.signal) return 'cancelled';
   return input.code === 0 && input.resolved ? 'completed' : 'error';
 };
@@ -78,6 +82,55 @@ const readTimeoutMs = (argv: readonly string[]): number | null => {
   if (!Number.isFinite(seconds) || seconds <= 0) return null;
   return Math.min(seconds * 1_000 + OPENCLAW_TIMEOUT_GRACE_MS, 2_147_483_647);
 };
+
+interface MulticaWorkspaceConfig {
+  configPath: string;
+  dispose: () => void;
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+export function createMulticaWorkspaceConfig(input: {
+  sourceConfigPath: string | undefined;
+  cwd: string;
+  argv: readonly string[];
+  userDataPath: string;
+}): MulticaWorkspaceConfig | null {
+  const sourceConfigPath = input.sourceConfigPath?.trim();
+  if (!sourceConfigPath) return null;
+  const source = JSON.parse(fs.readFileSync(sourceConfigPath, 'utf8')) as unknown;
+  if (!isRecord(source)) throw new Error('The evaluation OpenClaw config must be an object.');
+
+  const config = structuredClone(source);
+  const agents = isRecord(config.agents) ? config.agents : {};
+  config.agents = agents;
+  const defaults = isRecord(agents.defaults) ? agents.defaults : {};
+  agents.defaults = { ...defaults, workspace: input.cwd };
+
+  const agentIndex = input.argv.indexOf('--agent');
+  const selectedAgent = agentIndex >= 0 ? input.argv[agentIndex + 1]?.trim() : '';
+  if (selectedAgent && Array.isArray(agents.list)) {
+    agents.list = agents.list.map(value =>
+      isRecord(value) && value.id === selectedAgent ? { ...value, workspace: input.cwd } : value,
+    );
+  }
+
+  const bridgeDirectory = path.join(input.userDataPath, 'multica');
+  fs.mkdirSync(bridgeDirectory, { recursive: true, mode: 0o700 });
+  const directory = fs.mkdtempSync(path.join(bridgeDirectory, 'evaluation-config-'));
+  const configPath = path.join(directory, 'openclaw.json');
+  fs.writeFileSync(configPath, JSON.stringify(config), { encoding: 'utf8', mode: 0o600 });
+  let disposed = false;
+  return {
+    configPath,
+    dispose: () => {
+      if (disposed) return;
+      disposed = true;
+      fs.rmSync(directory, { force: true, recursive: true });
+    },
+  };
+}
 
 export interface MulticaBridgeServerOptions {
   userDataPath: string;
@@ -250,6 +303,7 @@ export class MulticaBridgeServer {
       return null;
     }
 
+    let workspaceConfig: MulticaWorkspaceConfig | null = null;
     try {
       const requestSummary = describeBridgeArgv(request.argv);
       console.info(`${LOG_PREFIX} Request accepted.`, requestSummary);
@@ -293,11 +347,29 @@ export class MulticaBridgeServer {
         }
       }
 
+      const requestEnvironment = sanitizeMulticaBridgeEnvironment(request.env || {});
       const env: NodeJS.ProcessEnv = {
         ...cli.env,
-        ...sanitizeMulticaBridgeEnvironment(request.env || {}),
+        ...requestEnvironment,
         ELECTRON_RUN_AS_NODE: '1',
       };
+      if (argv[0] === 'agent') {
+        workspaceConfig = createMulticaWorkspaceConfig({
+          sourceConfigPath: requestEnvironment.OPENCLAW_CONFIG_PATH,
+          cwd,
+          argv,
+          userDataPath: this.options.userDataPath,
+        });
+        if (workspaceConfig) env.OPENCLAW_CONFIG_PATH = workspaceConfig.configPath;
+        const includeRoots = new Set(
+          (env.OPENCLAW_INCLUDE_ROOTS || '')
+            .split(path.delimiter)
+            .map(value => value.trim())
+            .filter(Boolean),
+        );
+        includeRoots.add(cwd);
+        env.OPENCLAW_INCLUDE_ROOTS = [...includeRoots].join(path.delimiter);
+      }
       const executable = env.JUSTDO_ELECTRON_PATH || process.execPath;
       const runtimeArgv = modelDiscoveryKind ? [...MULTICA_MODEL_CATALOG_ARGV] : argv;
       const child = spawn(executable, [cli.openclawEntry, ...runtimeArgv], {
@@ -347,6 +419,7 @@ export class MulticaBridgeServer {
         }
       });
       child.once('error', error => {
+        workspaceConfig?.dispose();
         console.warn(`${LOG_PREFIX} Runtime process failed to start.`, {
           command: requestSummary.command,
           category: error.name,
@@ -354,6 +427,7 @@ export class MulticaBridgeServer {
         writeResponse(socket, { type: 'error', message: error.message });
       });
       child.once('exit', (code, signal) => {
+        workspaceConfig?.dispose();
         if (timeoutTimer) clearTimeout(timeoutTimer);
         this.children.delete(child);
         let responseCode = typeof code === 'number' ? code : signal ? 130 : 1;
@@ -428,6 +502,7 @@ export class MulticaBridgeServer {
       });
       return child;
     } catch (error) {
+      workspaceConfig?.dispose();
       console.warn(`${LOG_PREFIX} Request failed before runtime completion.`, {
         category: error instanceof Error ? error.name : 'UNKNOWN_ERROR',
       });

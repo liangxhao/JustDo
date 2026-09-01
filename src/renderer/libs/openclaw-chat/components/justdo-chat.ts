@@ -12,7 +12,9 @@ import { css, html, LitElement, nothing, type TemplateResult, unsafeCSS } from '
 import { customElement, property, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import mermaid from 'mermaid';
-import monacoEditorStyles from 'monaco-editor/min/vs/editor/editor.main.css?inline';
+// Monaco 0.56's export map redirects deep package imports to JavaScript modules.
+// Resolve its packaged stylesheet directly so Vite can inline it in the shadow DOM.
+import monacoEditorStyles from '../../../../../node_modules/monaco-editor/min/vs/editor/editor.main.css?inline';
 
 import {
   type EditDiffMode,
