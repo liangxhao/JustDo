@@ -56,4 +56,47 @@ describe('appearance config persistence', () => {
     });
     expect(storeMocks.setItem).toHaveBeenCalledOnce();
   });
+
+  test('keeps the in-memory config unchanged when main rejects the update', async () => {
+    storeMocks.getItem.mockResolvedValue(null);
+    const service = new ConfigService();
+    await service.init();
+    const previousTheme = service.getConfig().theme;
+    storeMocks.setItem.mockRejectedValue(new Error('OpenClaw config rejected'));
+
+    await expect(
+      service.updateConfig({ theme: previousTheme === 'dark' ? 'light' : 'dark' }),
+    ).rejects.toThrow('OpenClaw config rejected');
+
+    expect(service.getConfig().theme).toBe(previousTheme);
+    expect(window.dispatchEvent).not.toHaveBeenCalled();
+  });
+
+  test('serializes partial updates and merges each one onto the latest committed config', async () => {
+    storeMocks.getItem.mockResolvedValue(null);
+    const service = new ConfigService();
+    await service.init();
+    let resolveFirst: (() => void) | undefined;
+    storeMocks.setItem
+      .mockReturnValueOnce(
+        new Promise<void>(resolve => {
+          resolveFirst = resolve;
+        }),
+      )
+      .mockResolvedValueOnce(undefined);
+
+    const first = service.updateConfig({ theme: 'dark' });
+    const second = service.updateConfig({ language: 'en' });
+    await Promise.resolve();
+    expect(storeMocks.setItem).toHaveBeenCalledTimes(1);
+
+    resolveFirst?.();
+    await first;
+    await second;
+    expect(storeMocks.setItem.mock.calls[1]?.[1]).toMatchObject({
+      theme: 'dark',
+      language: 'en',
+    });
+    expect(service.getConfig()).toMatchObject({ theme: 'dark', language: 'en' });
+  });
 });

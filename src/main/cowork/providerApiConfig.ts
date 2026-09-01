@@ -1,3 +1,9 @@
+import {
+  getEffectiveCustomProviderDisplayName,
+  isJustDoCustomProviderKey,
+  normalizeOpenClawProviderId,
+  validateCustomProviderDisplayName,
+} from '../../shared/providers';
 import type { SqliteStore } from '../data/sqliteStore';
 import type { CoworkApiConfig } from './coworkConfigStore';
 
@@ -17,7 +23,7 @@ type ProviderConfig = {
   apiFormat?: 'openai';
   models?: ProviderModel[];
   embeddingModels?: ProviderModel[];
-  displayName?: string;
+  displayName?: unknown;
 };
 
 type AppConfig = {
@@ -45,6 +51,9 @@ let storeGetter: (() => SqliteStore | null) | null = null;
 let lastLoggedProviderSignature: string | null = null;
 
 const isProviderModelEnabled = (model: ProviderModel): boolean => model.enabled !== false;
+
+const trimOptionalString = (value: unknown): string | undefined =>
+  typeof value === 'string' && value.trim() ? value.trim() : undefined;
 
 export function setStoreGetter(getter: () => SqliteStore | null): void {
   storeGetter = getter;
@@ -194,7 +203,7 @@ export function resolveCurrentApiConfig(): ApiConfigResolution {
       providerName: matched.providerName,
       supportsImage: matched.supportsImage,
       modelName: matched.modelName,
-      displayName: matched.providerConfig.displayName?.trim(),
+      displayName: trimOptionalString(matched.providerConfig.displayName),
       contextLength: matched.contextLength,
       maxTokens: matched.maxTokens,
     },
@@ -250,7 +259,7 @@ export function resolveRawApiConfig(): ApiConfigResolution {
       providerName: matched.providerName,
       supportsImage: matched.supportsImage,
       modelName: matched.modelName,
-      displayName: matched.providerConfig.displayName?.trim(),
+      displayName: trimOptionalString(matched.providerConfig.displayName),
       contextLength: matched.contextLength,
       maxTokens: matched.maxTokens,
     },
@@ -285,6 +294,66 @@ export type ProviderRawConfig = {
   displayName?: string;
 };
 
+export type ConfiguredOpenClawProviderNameValidation =
+  | { ok: true }
+  | {
+      ok: false;
+      providerKey: string;
+      displayName: string;
+      reason: 'reserved' | 'format' | 'duplicate';
+    };
+
+export function validateConfiguredOpenClawProviderNames(): ConfiguredOpenClawProviderNameValidation {
+  const sqliteStore = getStore();
+  if (!sqliteStore) return { ok: true };
+  const appConfig = sqliteStore.get<AppConfig>('app_config');
+  const providers = appConfig?.providers ?? {};
+  const seenProviderIds = new Set<string>();
+
+  for (const [providerKey, providerConfig] of Object.entries(providers)) {
+    if (!providerConfig?.enabled || !isJustDoCustomProviderKey(providerKey)) continue;
+
+    if (
+      providerConfig.displayName !== undefined &&
+      typeof providerConfig.displayName !== 'string'
+    ) {
+      return {
+        ok: false,
+        providerKey,
+        displayName: getEffectiveCustomProviderDisplayName(providerKey),
+        reason: 'format',
+      };
+    }
+
+    const displayName = getEffectiveCustomProviderDisplayName(
+      providerKey,
+      providerConfig.displayName,
+    );
+    const validation = validateCustomProviderDisplayName(displayName);
+    if (validation.valid === false) {
+      return {
+        ok: false,
+        providerKey,
+        displayName,
+        reason: validation.reason,
+      };
+    }
+
+    const providerId = normalizeOpenClawProviderId(displayName);
+    if (seenProviderIds.has(providerId)) {
+      return {
+        ok: false,
+        providerKey,
+        displayName,
+        reason: 'duplicate',
+      };
+    }
+    seenProviderIds.add(providerId);
+  }
+
+  return { ok: true };
+}
+
 export function resolveAllEnabledProviderConfigs(): ProviderRawConfig[] {
   const sqliteStore = getStore();
   if (!sqliteStore) return [];
@@ -317,7 +386,7 @@ export function resolveAllEnabledProviderConfigs(): ProviderRawConfig[] {
       apiType: 'openai',
       models,
       embeddingModels,
-      displayName: providerConfig.displayName?.trim(),
+      displayName: trimOptionalString(providerConfig.displayName),
     });
   }
 
@@ -325,19 +394,20 @@ export function resolveAllEnabledProviderConfigs(): ProviderRawConfig[] {
 }
 
 export function getProviderDisplayNameMap(): Record<string, string> {
-  const result: Record<string, string> = {};
   const sqliteStore = getStore();
-  if (!sqliteStore) return result;
+  if (!sqliteStore) return {};
   const appConfig = sqliteStore.get<AppConfig>('app_config');
   const providers = appConfig?.providers ?? {};
 
-  for (const [providerName, providerConfig] of Object.entries(providers)) {
-    if (!providerName.startsWith('custom_')) continue;
-    const displayName = providerConfig.displayName?.trim();
-    if (displayName) {
-      result[providerName] = displayName;
-    }
-  }
-
-  return result;
+  return Object.fromEntries(
+    Object.entries(providers)
+      .filter(
+        ([providerKey, providerConfig]) =>
+          providerConfig?.enabled && isJustDoCustomProviderKey(providerKey),
+      )
+      .map(([providerKey, providerConfig]) => [
+        providerKey,
+        getEffectiveCustomProviderDisplayName(providerKey, providerConfig.displayName),
+      ]),
+  );
 }

@@ -13,7 +13,7 @@ import {
   DEFAULT_WORKSPACE_DIRECTORY_NAME,
   USER_DATA_DIRECTORY_NAME,
 } from '../shared/productMetadata';
-import { ProviderName } from '../shared/providers';
+import { buildCustomProviderRenameAliases, ProviderName } from '../shared/providers';
 import type { ProxySettings } from '../shared/proxy';
 import { APP_NAME, INSTALLER_QUIT_SWITCH } from './core/appConstants';
 import { registerAppShutdown } from './core/appShutdown';
@@ -47,6 +47,7 @@ import {
   resolveAllEnabledProviderConfigs,
   resolveRawApiConfig,
   setStoreGetter,
+  validateConfiguredOpenClawProviderNames,
 } from './cowork/providerApiConfig';
 import { CoworkStore } from './data/coworkStore';
 import { GroupStore } from './data/groupStore';
@@ -140,6 +141,9 @@ app.setName(APP_NAME);
 const ENGINE_NOT_READY_CODE = 'ENGINE_NOT_READY';
 
 const resolveDefaultAgentModelRef = (): string => {
+  if (!validateConfiguredOpenClawProviderNames().ok) {
+    return '';
+  }
   const apiResolution = resolveRawApiConfig();
   const config = apiResolution.config;
   if (!config?.model?.trim()) {
@@ -154,11 +158,15 @@ const resolveDefaultAgentModelRef = (): string => {
     providerName: apiResolution.providerMetadata?.providerName,
     supportsImage: apiResolution.providerMetadata?.supportsImage,
     modelName: apiResolution.providerMetadata?.modelName,
+    displayName: apiResolution.providerMetadata?.displayName,
   }).primaryModel;
 };
 
 const buildAvailableOpenClawProviders = (): Record<string, { models: Array<{ id: string }> }> => {
   const providerMap: Record<string, { models: Array<{ id: string }> }> = {};
+  if (!validateConfiguredOpenClawProviderNames().ok) {
+    return providerMap;
+  }
 
   for (const provider of resolveAllEnabledProviderConfigs()) {
     for (const model of provider.models) {
@@ -170,6 +178,7 @@ const buildAvailableOpenClawProviders = (): Record<string, { models: Array<{ id:
         providerName: provider.providerName,
         supportsImage: model.supportsImage,
         modelName: model.name,
+        displayName: provider.displayName,
       });
 
       if (!providerMap[selection.providerId]) {
@@ -679,10 +688,24 @@ const MIN_RELOAD_INTERVAL_MS = 5000;
 const APP_UPDATE_CHECK_FREQUENCY_KEY = 'app_update_check_frequency';
 const APP_UPDATE_LAST_AUTOMATIC_CHECK_AT_KEY = 'app_update_last_automatic_check_at';
 type AppConfigSettings = {
+  api?: unknown;
+  browserMode?: unknown;
+  model?: unknown;
   theme?: string;
   language?: string;
   useSystemProxy?: boolean;
   proxy?: Partial<ProxySettings>;
+  providers?: unknown;
+};
+
+const getOpenClawAppConfigSignature = (config: unknown): string => {
+  const appConfig = (config ?? {}) as AppConfigSettings;
+  return JSON.stringify({
+    api: appConfig.api,
+    browserMode: appConfig.browserMode,
+    model: appConfig.model,
+    providers: appConfig.providers,
+  });
 };
 
 const resolveThemeFromConfig = (config?: AppConfigSettings): 'light' | 'dark' => {
@@ -775,7 +798,12 @@ if (!gotTheLock) {
 } else {
   registerStoreHandlers({
     getStore,
-    onAppConfigChanged: async () => {
+    onAppConfigChanged: async (nextConfig, previousConfig) => {
+      if (
+        getOpenClawAppConfigSignature(nextConfig) === getOpenClawAppConfigSignature(previousConfig)
+      ) {
+        return;
+      }
       const syncResult = await syncOpenClawConfig({
         reason: 'app-config-change',
       });
@@ -784,6 +812,7 @@ if (!gotTheLock) {
           '[OpenClaw] Failed to sync config after app_config update:',
           syncResult.error,
         );
+        throw new Error(syncResult.error || 'Failed to apply OpenClaw configuration.');
       }
     },
     refreshBuiltinModels: async () => {
@@ -1252,6 +1281,18 @@ if (!gotTheLock) {
     );
     getStore().onDidChange<AppConfigSettings>('app_config', (newConfig, oldConfig) => {
       updateTitleBarOverlay();
+
+      const providerRenameAliases = buildCustomProviderRenameAliases(
+        oldConfig?.providers,
+        newConfig?.providers,
+      );
+      if (Object.keys(providerRenameAliases).length > 0) {
+        const renamed = getCoworkStore().renameCurrentModelProviderRefs(providerRenameAliases);
+        console.info(
+          `[OpenClaw] Updated current model refs after provider rename: agents=${renamed.agents}, sessions=${renamed.sessions}, runtimeSettings=${renamed.runtimeSettings}`,
+        );
+      }
+
       // 仅在语言变更时刷新托盘菜单文本
       const currentLanguage = newConfig?.language;
       if (currentLanguage !== lastLanguage) {

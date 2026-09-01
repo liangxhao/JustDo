@@ -27,7 +27,7 @@ describe('provider transfer format', () => {
     const payload = createProvidersExportPayload([
       {
         key: 'custom_7',
-        config: { ...providerConfig, displayName: 'DeepSeek' },
+        config: { ...providerConfig, displayName: 'AcmeProxy' },
         apiKey: encryptedApiKey,
       },
     ]);
@@ -39,7 +39,7 @@ describe('provider transfer format', () => {
         {
           ...providerConfig,
           apiKey: encryptedApiKey,
-          displayName: 'DeepSeek',
+          displayName: 'AcmeProxy',
         },
       ],
     });
@@ -51,12 +51,12 @@ describe('provider transfer format', () => {
       type: EXPORT_FORMAT_TYPE,
       version: 2,
       providers: {
-        custom_0: { ...providerConfig, apiKey: encryptedApiKey, displayName: 'DeepSeek' },
+        custom_0: { ...providerConfig, apiKey: encryptedApiKey, displayName: 'AcmeProxy' },
       },
     });
 
     expect(providers).toEqual([
-      { ...providerConfig, apiKey: encryptedApiKey, displayName: 'DeepSeek' },
+      { ...providerConfig, apiKey: encryptedApiKey, displayName: 'AcmeProxy' },
     ]);
   });
 
@@ -78,11 +78,23 @@ describe('provider transfer format', () => {
         type: EXPORT_FORMAT_TYPE,
         version: PROVIDERS_EXPORT_VERSION,
         providers: [
-          { ...providerConfig, apiKey: encryptedApiKey, displayName: 'DeepSeek' },
-          { ...providerConfig, apiKey: encryptedApiKey, displayName: 'deepseek' },
+          { ...providerConfig, apiKey: encryptedApiKey, displayName: 'AcmeProxy' },
+          { ...providerConfig, apiKey: encryptedApiKey, displayName: 'acmeproxy' },
         ],
       }),
     ).toThrow('Duplicate provider display name');
+  });
+
+  test('rejects an OpenClaw-reserved provider name during import', () => {
+    expect(() =>
+      parseProvidersImportPayload({
+        type: EXPORT_FORMAT_TYPE,
+        version: PROVIDERS_EXPORT_VERSION,
+        providers: [
+          { ...providerConfig, apiKey: encryptedApiKey, displayName: 'OpenCode' },
+        ],
+      }),
+    ).toThrow('Invalid provider display name');
   });
 });
 
@@ -90,11 +102,11 @@ describe('mergeImportedProviders', () => {
   test('updates an existing custom provider with the same display name', () => {
     const existing = {
       builtin_models: { ...providerConfig, readonly: true },
-      custom_3: { ...providerConfig, displayName: 'DeepSeek', baseUrl: 'https://old.example.com' },
+      custom_3: { ...providerConfig, displayName: 'AcmeProxy', baseUrl: 'https://old.example.com' },
     };
 
     const merged = mergeImportedProviders(existing, [
-      { ...providerConfig, displayName: 'deepseek', baseUrl: 'https://new.example.com' },
+      { ...providerConfig, displayName: 'acmeproxy', baseUrl: 'https://new.example.com' },
     ]);
 
     expect(merged.custom_3.baseUrl).toBe('https://new.example.com');
@@ -108,10 +120,10 @@ describe('mergeImportedProviders', () => {
     };
 
     const merged = mergeImportedProviders(existing, [
-      { ...providerConfig, displayName: 'DeepSeek' },
+      { ...providerConfig, displayName: 'AcmeProxy' },
     ]);
 
-    expect(merged.custom_1.displayName).toBe('DeepSeek');
+    expect(merged.custom_1.displayName).toBe('AcmeProxy');
     expect(merged.custom_0.displayName).toBe('Existing');
   });
 });

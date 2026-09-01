@@ -7,6 +7,7 @@ import {
   SignalIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
+import { normalizeOpenClawProviderId } from '@shared/providers';
 import { buildOpenAIChatCompletionsUrl } from '@shared/providers/modelDiscovery';
 import React, { useRef, useState } from 'react';
 
@@ -16,8 +17,8 @@ import {
   getCustomProviderDefaultName,
   getProviderDisplayName,
   isBuiltinModelsProvider,
-  isBuiltinProviderDisplayName,
   isCustomProvider,
+  isReservedProviderDisplayName,
   validateDisplayName,
 } from '@/app/config';
 import { APP_NAME, EXPORT_PASSWORD } from '@/app/constants/app';
@@ -219,10 +220,7 @@ const ModelSettingsTab: React.FC<Props> = ({
 
   return (
     <div className="flex max-w-[980px] items-start gap-5">
-      <div
-        className="shrink-0 space-y-1.5 overflow-y-auto"
-        style={{ width: 240 }}
-      >
+      <div className="shrink-0 space-y-1.5 overflow-y-auto" style={{ width: 240 }}>
         {/* Heading with import/export */}
         <div className="mb-2 flex h-8 items-center justify-between px-1">
           <h3 className="text-sm font-medium text-foreground">{i18nService.t('modelProviders')}</h3>
@@ -368,12 +366,12 @@ const ModelSettingsTab: React.FC<Props> = ({
                       ([providerKey, providerConfig]) =>
                         providerKey !== activeProvider &&
                         isCustomProvider(providerKey) &&
-                        getProviderDisplayName(providerKey, providerConfig)
-                          .trim()
-                          .toLocaleLowerCase() === value.trim().toLocaleLowerCase(),
+                        normalizeOpenClawProviderId(
+                          getProviderDisplayName(providerKey, providerConfig),
+                        ) === normalizeOpenClawProviderId(value),
                     );
-                    const nameError = isBuiltinProviderDisplayName(value)
-                      ? i18nService.t('providerNameConflictsBuiltin')
+                    const nameError = isReservedProviderDisplayName(value)
+                      ? i18nService.t('providerNameReserved')
                       : duplicateName
                         ? i18nService.t('providerNameExists')
                         : validation.valid

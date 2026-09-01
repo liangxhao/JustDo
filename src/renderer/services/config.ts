@@ -93,6 +93,7 @@ const migrateCustomProviders = (config: AppConfig): AppConfig => {
 
 export class ConfigService {
   private config: AppConfig = defaultConfig;
+  private updateConfigQueue: Promise<void> = Promise.resolve();
 
   async init() {
     try {
@@ -198,20 +199,25 @@ export class ConfigService {
   }
 
   async updateConfig(newConfig: Partial<AppConfig>) {
-    const normalizedProviders = normalizeProvidersConfig(
-      newConfig.providers as AppConfig['providers'] | undefined,
-    );
-    this.config = {
-      ...this.config,
-      ...newConfig,
-      ...(newConfig.proxy ? { proxy: normalizeProxyConfig(newConfig.proxy) } : {}),
-      ...(newConfig.appearance
-        ? { appearance: normalizeAppearanceConfig(newConfig.appearance) }
-        : {}),
-      ...(normalizedProviders ? { providers: normalizedProviders } : {}),
-    };
-    await localStore.setItem(CONFIG_KEYS.APP_CONFIG, this.config);
-    window.dispatchEvent(new CustomEvent('config-updated'));
+    const update = this.updateConfigQueue.then(async () => {
+      const normalizedProviders = normalizeProvidersConfig(
+        newConfig.providers as AppConfig['providers'] | undefined,
+      );
+      const nextConfig = {
+        ...this.config,
+        ...newConfig,
+        ...(newConfig.proxy ? { proxy: normalizeProxyConfig(newConfig.proxy) } : {}),
+        ...(newConfig.appearance
+          ? { appearance: normalizeAppearanceConfig(newConfig.appearance) }
+          : {}),
+        ...(normalizedProviders ? { providers: normalizedProviders } : {}),
+      };
+      await localStore.setItem(CONFIG_KEYS.APP_CONFIG, nextConfig);
+      this.config = nextConfig;
+      window.dispatchEvent(new CustomEvent('config-updated'));
+    });
+    this.updateConfigQueue = update.catch((): void => undefined);
+    return update;
   }
 
   getApiConfig() {

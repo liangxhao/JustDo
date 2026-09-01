@@ -1,6 +1,35 @@
 import { describe, expect, test, vi } from 'vitest';
 
-import { persistSettingsInOrder } from '@/features/settings/settingsPersistence';
+import {
+  persistSettingsInOrder,
+  resolveSubagentModelAfterProviderChange,
+} from '@/features/settings/settingsPersistence';
+
+describe('subagent model persistence', () => {
+  test('keeps the main-process rename when the renderer draft still has the previous ref', () => {
+    const available = new Set(['newproxy/model-a']);
+
+    expect(
+      resolveSubagentModelAfterProviderChange('acmeproxy/model-a', 'newproxy/model-a', available),
+    ).toBe('newproxy/model-a');
+  });
+
+  test('clears a model whose provider was removed', () => {
+    expect(
+      resolveSubagentModelAfterProviderChange('acmeproxy/model-a', 'acmeproxy/model-a', new Set()),
+    ).toBeNull();
+  });
+
+  test('preserves an explicit choice to inherit the parent model', () => {
+    expect(
+      resolveSubagentModelAfterProviderChange(
+        null,
+        'newproxy/model-a',
+        new Set(['newproxy/model-a']),
+      ),
+    ).toBeNull();
+  });
+});
 
 describe('settings persistence order', () => {
   test('keeps committed app config when runtime settings fail', async () => {

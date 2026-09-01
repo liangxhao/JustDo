@@ -152,15 +152,18 @@ describe('OpenClaw provider config', () => {
     ).toEqual({ enabled: false });
   });
 
-  test('enables streaming usage metadata for every generated model', () => {
+  test('uses the validated custom provider display name in generated model references', () => {
     const selection = buildProviderSelection({
       apiKey: 'sk-test',
       baseURL: 'https://api.example.com/v1',
       modelId: 'usage-aware-model',
       apiType: 'openai',
       providerName: 'custom_0',
+      displayName: 'AcmeProxy',
     });
 
+    expect(selection.providerId).toBe('acmeproxy');
+    expect(selection.primaryModel).toBe('acmeproxy/usage-aware-model');
     expect(selection.providerConfig.models).toHaveLength(1);
     expect(selection.providerConfig.models[0]?.compat).toEqual({
       supportsUsageInStreaming: true,
@@ -179,7 +182,6 @@ describe('OpenClaw provider config', () => {
     expect(selection.providerConfig.timeoutSeconds).toBe(OPENCLAW_MODEL_PROVIDER_TIMEOUT_SECONDS);
     expect(selection.providerConfig.timeoutSeconds).toBeGreaterThan(120);
   });
-
 });
 
 describe('OpenClaw managed config metadata', () => {

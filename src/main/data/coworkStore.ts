@@ -20,6 +20,7 @@ import {
   resolvePermissionMode,
 } from '../../shared/openclaw/approvals';
 import { DEFAULT_WORKSPACE_DIRECTORY_NAME } from '../../shared/productMetadata';
+import { rewriteOpenClawModelProviderId } from '../../shared/providers';
 import {
   GoalExecutionPhase,
   type GoalExecutionSnapshot,
@@ -118,6 +119,12 @@ export interface UpdateAgentRequest {
   icon?: string;
   skillIds?: string[];
   enabled?: boolean;
+}
+
+export interface ModelProviderRefRenameResult {
+  agents: number;
+  sessions: number;
+  runtimeSettings: number;
 }
 
 const COWORK_AGENT_ENGINE = 'openclaw';
@@ -1193,6 +1200,14 @@ export class CoworkStore {
     }
   }
 
+  getSessionModelRef(id: string): string | null {
+    const row = this.getOne<{ model_ref: string | null }>(
+      'SELECT model_ref FROM cowork_sessions WHERE id = ?',
+      [id],
+    );
+    return row?.model_ref?.trim() || null;
+  }
+
   setAgentRuntimeSettings(settings: AgentRuntimeSettings): void {
     const validation = validateAgentRuntimeSettings(settings);
     if (validation.ok === false) {
@@ -1210,6 +1225,67 @@ export class CoworkStore {
       `,
       )
       .run(AGENT_RUNTIME_SETTINGS_CONFIG_KEY, JSON.stringify(validation.settings), Date.now());
+  }
+
+  renameCurrentModelProviderRefs(
+    aliases: Readonly<Record<string, string>>,
+  ): ModelProviderRefRenameResult {
+    if (Object.keys(aliases).length === 0) {
+      return { agents: 0, sessions: 0, runtimeSettings: 0 };
+    }
+
+    return this.db.transaction(() => {
+      let agentChanges = 0;
+      let sessionChanges = 0;
+      let runtimeSettingsChanges = 0;
+      const now = Date.now();
+
+      const agents = this.getAll<{ id: string; model: string }>(
+        "SELECT id, model FROM agents WHERE TRIM(COALESCE(model, '')) <> ''",
+      );
+      const updateAgentModel = this.db.prepare(
+        'UPDATE agents SET model = ?, updated_at = ? WHERE id = ?',
+      );
+      for (const agent of agents) {
+        const nextModel = rewriteOpenClawModelProviderId(agent.model, aliases);
+        if (nextModel === agent.model) continue;
+        agentChanges += updateAgentModel.run(nextModel, now, agent.id).changes;
+      }
+
+      const sessions = this.getAll<{ id: string; model_ref: string }>(
+        "SELECT id, model_ref FROM cowork_sessions WHERE TRIM(COALESCE(model_ref, '')) <> ''",
+      );
+      const updateSessionModel = this.db.prepare(
+        'UPDATE cowork_sessions SET model_ref = ? WHERE id = ?',
+      );
+      for (const session of sessions) {
+        const nextModelRef = rewriteOpenClawModelProviderId(session.model_ref, aliases);
+        if (nextModelRef === session.model_ref) continue;
+        sessionChanges += updateSessionModel.run(nextModelRef, session.id).changes;
+      }
+
+      const runtimeSettings = this.getAgentRuntimeSettings();
+      const currentSubagentModel = runtimeSettings.subagents.model;
+      if (currentSubagentModel) {
+        const nextSubagentModel = rewriteOpenClawModelProviderId(currentSubagentModel, aliases);
+        if (nextSubagentModel !== currentSubagentModel) {
+          this.setAgentRuntimeSettings({
+            ...runtimeSettings,
+            subagents: {
+              ...runtimeSettings.subagents,
+              model: nextSubagentModel,
+            },
+          });
+          runtimeSettingsChanges = 1;
+        }
+      }
+
+      return {
+        agents: agentChanges,
+        sessions: sessionChanges,
+        runtimeSettings: runtimeSettingsChanges,
+      };
+    })();
   }
 
   getAppLanguage(): 'zh' | 'en' {

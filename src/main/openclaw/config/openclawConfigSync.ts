@@ -14,6 +14,9 @@ import {
 import { PermissionMode, type PermissionMode as PermissionModeValue } from '../../../shared/openclaw/approvals';
 import { OpenClawExtensionId } from '../../../shared/openclaw/extensions';
 import {
+  getEffectiveCustomProviderDisplayName,
+  isJustDoCustomProviderKey,
+  normalizeOpenClawProviderId,
   OpenClawApi as OpenClawApiConst,
   OpenClawProviderId,
   ProviderName,
@@ -25,6 +28,7 @@ import {
   resolveAllEnabledProviderConfigs,
   resolveAllProviderApiKeys,
   resolveRawApiConfig,
+  validateConfiguredOpenClawProviderNames,
 } from '../../cowork/providerApiConfig';
 import type { Agent, CoworkConfig, CoworkExecutionMode } from '../../data/coworkStore';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
@@ -559,6 +563,23 @@ const constrainAgentEntryToAvailableModels = (
   };
 };
 
+const rewriteProviderAliasInModel = (
+  model: unknown,
+  providerAliases: ReadonlyMap<string, string>,
+): unknown => {
+  if (!isRecord(model) || typeof model.primary !== 'string') return model;
+  const primary = model.primary.trim();
+  const separator = primary.indexOf('/');
+  if (separator <= 0 || separator === primary.length - 1) return model;
+  const providerId = primary.slice(0, separator);
+  const canonicalProviderId = providerAliases.get(providerId.toLowerCase());
+  if (!canonicalProviderId) return model;
+  return {
+    ...model,
+    primary: `${canonicalProviderId}/${primary.slice(separator + 1)}`,
+  };
+};
+
 const buildAuthScopedOpenClawConfig = (
   existingConfig: Record<string, unknown>,
   managedConfig: Record<string, unknown>,
@@ -582,6 +603,29 @@ const buildAuthScopedOpenClawConfig = (
   );
   const providers = { ...existingProviders };
   delete providers[OpenClawProviderId.BuiltinModels];
+  const providerAliases = new Map<string, string>();
+  const managedCustomProviders = Object.entries(managedProviders).filter(
+    ([providerId]) => providerId !== OpenClawProviderId.BuiltinModels,
+  );
+  for (const [existingProviderId, existingProvider] of Object.entries(existingProviders)) {
+    if (existingProviderId === OpenClawProviderId.BuiltinModels || !isRecord(existingProvider)) {
+      continue;
+    }
+    const existingApiKey =
+      typeof existingProvider.apiKey === 'string' ? existingProvider.apiKey : '';
+    const managedMatch = managedCustomProviders.find(([, managedProvider]) => {
+      if (!isRecord(managedProvider) || typeof managedProvider.apiKey !== 'string') return false;
+      return managedProvider.apiKey === existingApiKey;
+    });
+    if (!managedMatch) continue;
+    const [canonicalProviderId] = managedMatch;
+    if (canonicalProviderId === existingProviderId) continue;
+    delete providers[existingProviderId];
+    providerAliases.set(existingProviderId.toLowerCase(), canonicalProviderId);
+  }
+  for (const [providerId, provider] of managedCustomProviders) {
+    providers[providerId] = provider;
+  }
   if (isLogin && hasManagedBuiltinProvider) {
     providers[OpenClawProviderId.BuiltinModels] =
       managedProviders[OpenClawProviderId.BuiltinModels];
@@ -602,7 +646,12 @@ const buildAuthScopedOpenClawConfig = (
     ? existingAgents.defaults
     : {};
   const managedDefaults = isRecord(managedAgents.defaults) ? managedAgents.defaults : {};
-  const defaults = { ...existingDefaults };
+  const defaults: Record<string, unknown> = {
+    ...existingDefaults,
+    ...(Object.prototype.hasOwnProperty.call(existingDefaults, 'model')
+      ? { model: rewriteProviderAliasInModel(existingDefaults.model, providerAliases) }
+      : {}),
+  };
   if (Object.prototype.hasOwnProperty.call(managedDefaults, 'thinkingDefault')) {
     defaults.thinkingDefault = managedDefaults.thinkingDefault;
   } else {
@@ -670,6 +719,13 @@ const buildAuthScopedOpenClawConfig = (
       }
       agentEntries[id] = nextEntry;
     }
+  }
+  for (const [id, entry] of Object.entries(agentEntries)) {
+    if (!isRecord(entry) || !Object.prototype.hasOwnProperty.call(entry, 'model')) continue;
+    agentEntries[id] = {
+      ...entry,
+      model: rewriteProviderAliasInModel(entry.model, providerAliases),
+    };
   }
 
   const existingMemory = isRecord(canonicalExistingConfig.memory)
@@ -1246,20 +1302,17 @@ export const buildProviderSelection = (options: {
   providerName?: string;
   supportsImage?: boolean;
   modelName?: string;
-  displayName?: string; // 用于 OpenClaw 配置中的 providerId（仅对 custom provider 有效）
+  displayName?: string;
   contextLength?: number; // 用户配置的上下文窗口长度
   maxTokens?: number; // 用户配置的最大输出 token 数量
 }): OpenClawProviderSelection => {
   const providerName = options.providerName ?? '';
-  const displayName = options.displayName?.trim();
   const descriptor = resolveDescriptor(providerName);
-
-  // 对于非注册 provider（不在 PROVIDER_REGISTRY 中），如果提供了 displayName，使用它作为 providerId
-  // Gateway 的 normalizeProviderId 会将 provider 转为小写进行匹配
-  // 因此 providerId 需要使用小写版本以确保 catalog lookup 成功
-  const isRegisteredProvider = providerName in PROVIDER_REGISTRY;
-  const effectiveProviderId =
-    !isRegisteredProvider && displayName ? displayName.toLowerCase() : descriptor.providerId;
+  const effectiveProviderId = isJustDoCustomProviderKey(providerName)
+    ? normalizeOpenClawProviderId(
+        getEffectiveCustomProviderDisplayName(providerName, options.displayName),
+      )
+    : normalizeOpenClawProviderId(descriptor.providerId);
 
   let baseUrl =
     descriptor.resolveRuntimeBaseUrl?.() ?? descriptor.normalizeBaseUrl(options.baseURL);
@@ -1517,6 +1570,23 @@ export class OpenClawConfigSync {
       currentContent = '';
     }
     const coworkConfig = this.getCoworkConfig();
+    const providerNameValidation = validateConfiguredOpenClawProviderNames();
+    if (providerNameValidation.ok === false) {
+      const reason =
+        providerNameValidation.reason === 'reserved'
+          ? 'is reserved by OpenClaw'
+          : providerNameValidation.reason === 'duplicate'
+            ? 'duplicates another enabled provider name'
+            : 'has an invalid format';
+      return {
+        ok: false,
+        changed: false,
+        configChanged: false,
+        requiresGatewayRestart: false,
+        configPath,
+        error: `OpenClaw config sync failed: custom provider name "${providerNameValidation.displayName}" ${reason}. Rename it in Settings before starting the engine.`,
+      };
+    }
     const apiResolution = resolveRawApiConfig();
 
     if (!apiResolution.config) {
@@ -1561,7 +1631,7 @@ export class OpenClawConfigSync {
         providerName,
         supportsImage: apiResolution.providerMetadata?.supportsImage,
         modelName: apiResolution.providerMetadata?.modelName,
-        displayName: apiResolution.providerMetadata?.displayName, // 传递 displayName
+        displayName: apiResolution.providerMetadata?.displayName,
         contextLength: apiResolution.providerMetadata?.contextLength,
         maxTokens: apiResolution.providerMetadata?.maxTokens,
       });
@@ -1579,7 +1649,7 @@ export class OpenClawConfigSync {
             providerName: p.providerName,
             supportsImage: m.supportsImage,
             modelName: m.name,
-            displayName: p.displayName, // 传递 displayName
+            displayName: p.displayName,
             contextLength: m.contextLength,
             maxTokens: m.maxTokens,
           });

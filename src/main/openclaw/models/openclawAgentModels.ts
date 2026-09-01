@@ -161,17 +161,10 @@ export function buildAgentEntry(
     const providerName = primaryModel.slice(0, slashIndex);
     const modelId = primaryModel.slice(slashIndex + 1);
 
-    // If provider uses custom_* format, replace with displayName first
-    let normalizedProvider = providerName;
-    if (displayNameMap && providerName.startsWith('custom_')) {
-      const displayName = displayNameMap[providerName];
-      if (displayName) {
-        normalizedProvider = displayName;
-      }
-    }
-
-    // Always lowercase the provider (Gateway normalizes all providers to lowercase)
-    primaryModel = `${normalizedProvider.toLowerCase()}/${modelId}`;
+    const displayName = providerName.startsWith('custom_')
+      ? displayNameMap?.[providerName]
+      : undefined;
+    primaryModel = `${(displayName || providerName).toLowerCase()}/${modelId}`;
   }
 
   return {

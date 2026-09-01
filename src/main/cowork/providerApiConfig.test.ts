@@ -2,14 +2,103 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SqliteStore } from '../data/sqliteStore';
 import {
+  getProviderDisplayNameMap,
   resolveAllEnabledProviderConfigs,
   resolveRawApiConfig,
   setStoreGetter,
+  validateConfiguredOpenClawProviderNames,
 } from './providerApiConfig';
 
 afterEach(() => {
   setStoreGetter(() => null);
   vi.restoreAllMocks();
+});
+
+describe('OpenClaw custom provider names', () => {
+  it('rejects an official provider id before config sync', () => {
+    setStoreGetter(
+      () =>
+        ({
+          get: () => ({
+            providers: {
+              custom_0: {
+                enabled: true,
+                apiKey: 'secret-key',
+                baseUrl: 'https://example.test/v1',
+                displayName: 'OpenCode',
+              },
+            },
+          }),
+        }) as unknown as SqliteStore,
+    );
+
+    expect(validateConfiguredOpenClawProviderNames()).toEqual({
+      ok: false,
+      providerKey: 'custom_0',
+      displayName: 'OpenCode',
+      reason: 'reserved',
+    });
+  });
+
+  it('rejects duplicate wire ids case-insensitively', () => {
+    setStoreGetter(
+      () =>
+        ({
+          get: () => ({
+            providers: {
+              custom_0: { enabled: true, displayName: 'AcmeProxy' },
+              custom_1: { enabled: true, displayName: 'ACMEPROXY' },
+            },
+          }),
+        }) as unknown as SqliteStore,
+    );
+
+    expect(validateConfiguredOpenClawProviderNames()).toMatchObject({
+      ok: false,
+      providerKey: 'custom_1',
+      reason: 'duplicate',
+    });
+  });
+
+  it('rejects a malformed persisted display name without throwing', () => {
+    setStoreGetter(
+      () =>
+        ({
+          get: () => ({
+            providers: {
+              custom_0: { enabled: true, displayName: 42 },
+            },
+          }),
+        }) as unknown as SqliteStore,
+    );
+
+    expect(validateConfiguredOpenClawProviderNames()).toEqual({
+      ok: false,
+      providerKey: 'custom_0',
+      displayName: 'Custom0',
+      reason: 'format',
+    });
+  });
+
+  it('uses the effective display name for custom provider routes', () => {
+    setStoreGetter(
+      () =>
+        ({
+          get: () => ({
+            providers: {
+              custom_0: { enabled: true, displayName: 'AcmeProxy' },
+              custom_1: { enabled: true, displayName: '' },
+            },
+          }),
+        }) as unknown as SqliteStore,
+    );
+
+    expect(validateConfiguredOpenClawProviderNames()).toEqual({ ok: true });
+    expect(getProviderDisplayNameMap()).toEqual({
+      custom_0: 'AcmeProxy',
+      custom_1: 'Custom1',
+    });
+  });
 });
 
 describe('resolveRawApiConfig logging', () => {

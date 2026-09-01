@@ -86,13 +86,28 @@ test('validateDisplayName: empty string is valid (fallback to custom_0)', () => 
   expect(validateDisplayName('')).toEqual({ valid: true });
 });
 
-test.each(['builtin_models', 'BUILTIN_MODELS'])(
-  'validateDisplayName: reserved built-in provider name %s is invalid',
+test.each([
+  'builtin_models',
+  'BUILTIN_MODELS',
+  'OpenCode',
+  'OPENAI',
+  'Anthropic',
+  'LMStudio',
+  'custom_12',
+])(
+  'validateDisplayName: reserved OpenClaw provider name %s is invalid',
   name => {
     expect(validateDisplayName(name)).toEqual({
       valid: false,
-      error: 'Cannot use built-in provider name',
+      error: 'Cannot use reserved OpenClaw provider name',
     });
+  },
+);
+
+test.each(['OpenCodeProxy', 'MyOpenAI', 'Local LM Studio'])(
+  'validateDisplayName: non-conflicting provider name %s is valid',
+  name => {
+    expect(validateDisplayName(name)).toEqual({ valid: true });
   },
 );
 
@@ -101,7 +116,7 @@ test('validateDisplayName: single letter is valid', () => {
 });
 
 test('validateDisplayName: letters only is valid', () => {
-  expect(validateDisplayName('LMStudio')).toEqual({ valid: true });
+  expect(validateDisplayName('LocalStudio')).toEqual({ valid: true });
 });
 
 test('validateDisplayName: letters with numbers is valid', () => {

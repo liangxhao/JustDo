@@ -25,6 +25,7 @@ import {
   GatewayPortValidationCode,
   parseGatewayPortInput,
 } from '@shared/openclaw/gatewayPort';
+import { normalizeOpenClawProviderId } from '@shared/providers';
 import {
   buildProviderModelsUrl,
   DEFAULT_MODEL_CONTEXT_LENGTH,
@@ -57,8 +58,8 @@ import {
   getProviderDisplayName,
   getVisibleProviders,
   isBuiltinModelsProvider,
-  isBuiltinProviderDisplayName,
   isCustomProvider,
+  isReservedProviderDisplayName,
   validateDisplayName,
 } from '@/app/config';
 import { APP_NAME } from '@/app/constants/app';
@@ -90,7 +91,10 @@ import {
 } from '@/features/settings/modelConnectionTest';
 import { validateModelForm } from '@/features/settings/modelFormValidation';
 import { mergeRefreshedBuiltinProvider } from '@/features/settings/modelSettingsRefresh';
-import { persistSettingsInOrder } from '@/features/settings/settingsPersistence';
+import {
+  persistSettingsInOrder,
+  resolveSubagentModelAfterProviderChange,
+} from '@/features/settings/settingsPersistence';
 import { createSettingsPreviewRestore } from '@/features/settings/settingsPreviewRestore';
 import { configService } from '@/services/config';
 import { i18nService, LanguageType } from '@/services/i18n';
@@ -1146,12 +1150,12 @@ const Settings: React.FC<SettingsProps> = ({
           ] as const,
       );
     const reservedNameProvider = customProviderNames.find(([, name]) =>
-      isBuiltinProviderDisplayName(name),
+      isReservedProviderDisplayName(name),
     );
     if (reservedNameProvider) {
       setActiveTab('model');
       setActiveProvider(reservedNameProvider[0]);
-      setError(i18nService.t('providerNameConflictsBuiltin'));
+      setError(i18nService.t('providerNameReserved'));
       return;
     }
 
@@ -1167,7 +1171,7 @@ const Settings: React.FC<SettingsProps> = ({
 
     const seenProviderNames = new Set<string>();
     const duplicateNameProvider = customProviderNames.find(([, name]) => {
-      const normalizedName = name.toLocaleLowerCase();
+      const normalizedName = normalizeOpenClawProviderId(name);
       if (seenProviderNames.has(normalizedName)) return true;
       seenProviderNames.add(normalizedName);
       return false;
@@ -1236,15 +1240,19 @@ const Settings: React.FC<SettingsProps> = ({
           const availableRuntimeModelRefs = new Set(
             getEnabledProviderModels(normalizedProviders).map(toOpenClawModelRef),
           );
+          const persistedRuntimeResult = await window.electron.cowork.getAgentRuntimeSettings();
+          const persistedSubagentModel = persistedRuntimeResult.success
+            ? persistedRuntimeResult.settings?.subagents.model
+            : undefined;
           const runtimeSettingsToSave: AgentRuntimeSettings = {
             ...agentRuntimeSettings,
             subagents: {
               ...agentRuntimeSettings.subagents,
-              model:
-                agentRuntimeSettings.subagents.model &&
-                availableRuntimeModelRefs.has(agentRuntimeSettings.subagents.model)
-                  ? agentRuntimeSettings.subagents.model
-                  : null,
+              model: resolveSubagentModelAfterProviderChange(
+                agentRuntimeSettings.subagents.model,
+                persistedSubagentModel,
+                availableRuntimeModelRefs,
+              ),
             },
           };
           if (

@@ -1,8 +1,7 @@
 import { OpenClawProviderId, ProviderRegistry } from '@shared/providers/constants';
 
-import { getCustomProviderDefaultName,getProviderDisplayName, isCustomProvider } from '@/app/config';
+import { getCustomProviderDefaultName, isCustomProvider } from '@/app/config';
 import type { Model } from '@/features/models/modelSlice';
-import { configService } from '@/services/config';
 
 /**
  * Normalize provider name to lowercase for OpenClaw Gateway compatibility.
@@ -22,23 +21,12 @@ export function toOpenClawModelRef(
 
   const providerKey = model.providerKey ?? '';
 
-  // For custom providers, use the provider field (displayName) directly if available
-  // This avoids calling configService.getConfig() which may not be initialized yet
+  // Custom display names are validated against OpenClaw's reserved provider
+  // inventory before saving, so the user-visible identity can also be the
+  // wire-level provider ID shown to the model.
   if (isCustomProvider(providerKey)) {
-    // model.provider is already the displayName (set in App.tsx)
-    const displayName = model.provider?.trim() || '';
-    if (displayName) {
-      return `${normalizeProviderForGateway(displayName)}/${model.id}`;
-    }
-
-    // Fallback: get displayName from config (only if model.provider is not set)
-    const appConfig = configService.getConfig();
-    const providerConfig = appConfig.providers?.[providerKey];
-    const configDisplayName = getProviderDisplayName(
-      providerKey,
-      providerConfig as Record<string, unknown>,
-    );
-    return `${normalizeProviderForGateway(configDisplayName)}/${model.id}`;
+    const displayName = model.provider?.trim() || getCustomProviderDefaultName(providerKey);
+    return `${normalizeProviderForGateway(displayName)}/${model.id}`;
   }
 
   // Get OpenClaw provider ID and normalize to lowercase
@@ -80,7 +68,8 @@ function buildAllPossibleModelRefs(
   const modelId = model.id;
   const providerDisplayName = model.provider?.trim() || '';
 
-  // Always include the current displayName-based ref (from model.provider)
+  // New writes use the validated display name. Stable-key refs written by an
+  // earlier JustDo build remain readable so they can be rewritten on save.
   refs.push(toOpenClawModelRef(model));
   // Built-in discovery ids can themselves contain a Gateway provider prefix
   // (for example `hdp/Glm-5.1`). Keep the raw id as a compatibility alias for
@@ -103,7 +92,7 @@ function buildAllPossibleModelRefs(
     const defaultDisplayName = getCustomProviderDefaultName(providerKey);
     refs.push(`${normalizeProviderForGateway(defaultDisplayName)}/${modelId}`);
 
-    // Raw providerKey (e.g., "custom_0" -> "custom0")
+    // Raw providerKey (for example "custom_0")
     refs.push(`${normalizeProviderForGateway(providerKey)}/${modelId}`);
   } else {
     // For built-in providers, also try the providerKey directly

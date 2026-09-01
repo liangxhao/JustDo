@@ -15,14 +15,14 @@ class I18nService {
           this.currentLanguage = config.language;
         } else {
           this.currentLanguage = 'en';
-          configService.updateConfig({ ...config, language: 'en' });
+          await configService.updateConfig({ language: 'en' });
         }
         return;
       }
 
       if (config.language && config.language !== 'zh') {
         this.currentLanguage = config.language;
-        configService.updateConfig({ ...config, language_initialized: true });
+        await configService.updateConfig({ language_initialized: true });
         return;
       }
 
@@ -30,16 +30,14 @@ class I18nService {
         const systemLocale = await window.electron.appInfo.getSystemLocale();
         const language = systemLocale === 'zh-CN' ? 'zh' : 'en';
         this.currentLanguage = language;
-        configService.updateConfig({
-          ...config,
+        await configService.updateConfig({
           language,
           language_initialized: true,
         });
       } catch (error) {
         console.error('Failed to get system locale:', error);
         this.currentLanguage = 'en';
-        configService.updateConfig({
-          ...config,
+        await configService.updateConfig({
           language: 'en',
           language_initialized: true,
         });
@@ -60,12 +58,9 @@ class I18nService {
 
     if (options.persist === false) return;
 
-    try {
-      const config = configService.getConfig();
-      configService.updateConfig({ ...config, language });
-    } catch (error) {
-      console.error('Failed to save language setting:', error);
-    }
+    void configService
+      .updateConfig({ language })
+      .catch(error => console.error('Failed to save language setting:', error));
   }
 
   getLanguage(): LanguageType {

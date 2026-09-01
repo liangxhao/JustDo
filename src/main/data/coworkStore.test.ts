@@ -328,3 +328,30 @@ test('persists versioned Agent runtime settings and recovers from corrupt data',
   );
   expect(store.getAgentRuntimeSettings()).toEqual(defaults);
 });
+
+test('renames current provider refs across agents, sessions, and runtime settings', () => {
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO agents
+      (id, name, model, created_at, updated_at)
+     VALUES ('main', 'Main', 'acmeproxy/model-a', ?, ?)`,
+  ).run(now, now);
+  insertSession('session-rename', now);
+  db.prepare('UPDATE cowork_sessions SET model_ref = ? WHERE id = ?').run(
+    'AcmeProxy/model-b',
+    'session-rename',
+  );
+  const runtimeSettings = createDefaultAgentRuntimeSettings();
+  runtimeSettings.subagents.model = 'acmeproxy/model-c';
+  store.setAgentRuntimeSettings(runtimeSettings);
+
+  expect(store.renameCurrentModelProviderRefs({ acmeproxy: 'newproxy' })).toEqual({
+    agents: 1,
+    sessions: 1,
+    runtimeSettings: 1,
+  });
+  expect(store.getAgent('main')?.model).toBe('newproxy/model-a');
+  expect(store.getSessionModelRef('session-rename')).toBe('newproxy/model-b');
+  expect(store.getSession('session-rename')?.modelRef).toBe('newproxy/model-b');
+  expect(store.getAgentRuntimeSettings().subagents.model).toBe('newproxy/model-c');
+});

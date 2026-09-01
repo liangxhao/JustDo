@@ -1,5 +1,10 @@
 import { BrowserMode, type BrowserMode as BrowserModeValue } from '@shared/browser';
-import { ProviderRegistry } from '@shared/providers';
+import {
+  getDefaultCustomProviderDisplayName,
+  isReservedOpenClawProviderId,
+  ProviderRegistry,
+  validateCustomProviderDisplayName,
+} from '@shared/providers';
 import { defaultProxySettings, type ProxySettings } from '@shared/proxy';
 
 import { type AppearanceConfig, defaultAppearanceConfig } from '@/app/appearance';
@@ -171,10 +176,7 @@ export const isCustomProvider = (key: string): boolean => key.startsWith('custom
 /**
  * 从 custom_N key 中提取默认显示名称（如 custom_0 → "Custom0"）
  */
-export const getCustomProviderDefaultName = (key: string): string => {
-  const suffix = key.replace('custom_', '');
-  return `Custom${suffix}`;
-};
+export const getCustomProviderDefaultName = getDefaultCustomProviderDisplayName;
 
 /**
  * 获取 provider 的显示名称，自定义 provider 优先使用 displayName，
@@ -189,7 +191,7 @@ export const getProviderDisplayName = (
       providerConfig && typeof providerConfig.displayName === 'string'
         ? providerConfig.displayName
         : '';
-    return name || getCustomProviderDefaultName(providerKey);
+    return name || getDefaultCustomProviderDisplayName(providerKey);
   }
   if (isBuiltinModelsProvider(providerKey)) {
     const name =
@@ -201,34 +203,24 @@ export const getProviderDisplayName = (
   return providerKey.charAt(0).toUpperCase() + providerKey.slice(1);
 };
 
-/**
- * 内置 provider 名称列表（禁止作为 displayName 使用）
- */
-const BUILTIN_PROVIDER_NAMES = [BUILTIN_MODELS_PROVIDER_KEY];
-
-export const isBuiltinProviderDisplayName = (name: string): boolean =>
-  BUILTIN_PROVIDER_NAMES.includes(name.trim().toLowerCase());
-
-/**
- * displayName 校验正则（允许字母、数字、下划线、中划线、空格）
- */
-const VALID_DISPLAY_NAME_REGEX = /^[A-Za-z][A-Za-z0-9_ -]{0,31}$/;
+export const isReservedProviderDisplayName = isReservedOpenClawProviderId;
 
 /**
  * 校验 displayName 是否合法
  * - 首字符必须是字母
  * - 允许字母、数字、下划线、中划线、空格
  * - 长度限制：1-32 字符
- * - 不能与内置 provider 名称冲突
+ * - 不能与 OpenClaw v2026.8.1 的保留 provider ID 冲突
  * - displayName 为空时允许，会回退到对应的 CustomN 默认名称
  */
 export const validateDisplayName = (name: string): { valid: boolean; error?: string } => {
   const trimmed = name.trim();
   if (!trimmed) return { valid: true }; // 空 name 允许，回退到 custom_0
-  if (isBuiltinProviderDisplayName(trimmed)) {
-    return { valid: false, error: 'Cannot use built-in provider name' };
+  const validation = validateCustomProviderDisplayName(trimmed);
+  if (!validation.valid && validation.reason === 'reserved') {
+    return { valid: false, error: 'Cannot use reserved OpenClaw provider name' };
   }
-  if (!VALID_DISPLAY_NAME_REGEX.test(trimmed)) {
+  if (!validation.valid) {
     return {
       valid: false,
       error: 'Must start with letter, only letters/numbers/_/-/space allowed',

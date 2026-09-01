@@ -413,7 +413,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     customDisplayName: '供应商名称',
     customProviderRequiredFields: 'API Base URL 和 API Key 不能为空',
     providerNameExists: 'Provider name already exists. Use a different name',
-    providerNameConflictsBuiltin: 'Provider name cannot be builtin_models',
+    providerNameReserved: '此 Provider 名称已被 AI 引擎保留，请更换名称。',
     providerNameInvalid:
       'Provider name must start with a letter, contain 1–32 characters, and use only letters, numbers, spaces, underscores (_), and hyphens (-)',
     deleteCustomProvider: '删除',
@@ -1744,7 +1744,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     customDisplayName: 'Provider Name',
     customProviderRequiredFields: 'API Base URL and API Key are required',
     providerNameExists: 'Provider name already exists. Use a different name',
-    providerNameConflictsBuiltin: 'Provider name cannot be builtin_models',
+    providerNameReserved: 'This provider name is reserved by the AI engine. Choose another name.',
     providerNameInvalid:
       'Provider name must start with a letter, contain 1–32 characters, and use only letters, numbers, spaces, underscores (_), and hyphens (-)',
     deleteCustomProvider: 'Delete',

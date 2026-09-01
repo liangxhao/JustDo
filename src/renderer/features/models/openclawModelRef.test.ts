@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from 'vitest';
+import { describe, expect, test } from 'vitest';
 
 import type { Model } from '@/features/models/modelSlice';
 import {
@@ -7,36 +7,21 @@ import {
   toOpenClawModelRef,
 } from '@/features/models/openclawModelRef';
 
-// Mock configService (fallback only, prefer model.provider)
-vi.mock('@/services/config', () => ({
-  configService: {
-    getConfig: () => ({
-      providers: {
-        custom_0: {
-          enabled: true,
-          displayName: 'Anthropic',
-          models: [{ id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', supportsImage: true }],
-        },
-      },
-    }),
-  },
-}));
-
 describe('openclawModelRef', () => {
   describe('toOpenClawModelRef', () => {
-    test('generates lowercase provider ref from model.provider field', () => {
+    test('uses the custom provider display name as the model-visible provider id', () => {
       const model: Model = {
         id: 'claude-sonnet-4-6',
         name: 'Claude Sonnet 4.6',
         providerKey: 'custom_0',
-        provider: 'Anthropic', // displayName from App.tsx
+        provider: 'AcmeProxy',
       };
 
       const ref = toOpenClawModelRef(model);
-      expect(ref).toBe('anthropic/claude-sonnet-4-6');
+      expect(ref).toBe('acmeproxy/claude-sonnet-4-6');
     });
 
-    test('generates lowercase provider ref when provider field is empty', () => {
+    test('uses the non-reserved default display name when the display name is empty', () => {
       const model: Model = {
         id: 'claude-sonnet-4-6',
         name: 'Claude Sonnet 4.6',
@@ -45,7 +30,7 @@ describe('openclawModelRef', () => {
       };
 
       const ref = toOpenClawModelRef(model);
-      expect(ref).toBe('anthropic/claude-sonnet-4-6');
+      expect(ref).toBe('custom0/claude-sonnet-4-6');
     });
 
     test('generates justdo ref for server models', () => {
@@ -77,7 +62,7 @@ describe('openclawModelRef', () => {
         id: 'claude-sonnet-4-6',
         name: 'Claude Sonnet 4.6',
         providerKey: 'custom_0',
-        provider: 'Anthropic',
+        provider: 'AcmeProxy',
       },
       {
         id: 'gpt-4o',
@@ -89,15 +74,12 @@ describe('openclawModelRef', () => {
     ];
 
     test('matches model ref with displayName-based provider', () => {
-      // Agent model stored as "anthropic/claude-sonnet-4-6"
-      // model.provider is "Anthropic"
-      const result = resolveOpenClawModelRef('anthropic/claude-sonnet-4-6', customModels);
+      const result = resolveOpenClawModelRef('acmeproxy/claude-sonnet-4-6', customModels);
       expect(result?.id).toBe('claude-sonnet-4-6');
     });
 
     test('matches model ref with case-insensitive displayName', () => {
-      // Agent model stored as "Anthropic/claude-sonnet-4-6" (uppercase)
-      const result = resolveOpenClawModelRef('Anthropic/claude-sonnet-4-6', customModels);
+      const result = resolveOpenClawModelRef('AcmeProxy/claude-sonnet-4-6', customModels);
       expect(result?.id).toBe('claude-sonnet-4-6');
     });
 
@@ -131,12 +113,13 @@ describe('openclawModelRef', () => {
         id: 'claude-sonnet-4-6',
         name: 'Claude Sonnet 4.6',
         providerKey: 'custom_0',
-        provider: 'Anthropic',
+        provider: 'AcmeProxy',
       };
 
-      expect(matchesOpenClawModelRef('Anthropic/claude-sonnet-4-6', model)).toBe(true);
-      expect(matchesOpenClawModelRef('anthropic/claude-sonnet-4-6', model)).toBe(true);
+      expect(matchesOpenClawModelRef('AcmeProxy/claude-sonnet-4-6', model)).toBe(true);
+      expect(matchesOpenClawModelRef('acmeproxy/claude-sonnet-4-6', model)).toBe(true);
       expect(matchesOpenClawModelRef('custom0/claude-sonnet-4-6', model)).toBe(true);
+      expect(matchesOpenClawModelRef('custom_0/claude-sonnet-4-6', model)).toBe(true);
     });
   });
 });

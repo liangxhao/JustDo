@@ -748,7 +748,7 @@ describe('OpenClaw auth logout config sync', () => {
     );
   });
 
-  test('syncs the full logout config with a custom provider and stale built-in Agent model', () => {
+  test('rejects a plugin-colliding display-name provider without changing config', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-full-auth-logout-'));
     temporaryDirectories.push(directory);
     const stateDir = path.join(directory, 'state');
@@ -770,7 +770,7 @@ describe('OpenClaw auth logout config sync', () => {
               apiKey: '${JUSTDO_APIKEY_BUILTIN_MODELS}',
               models: [{ id: 'chat-model' }],
             },
-            'custom-provider': {
+            opencode: {
               apiKey: '${JUSTDO_APIKEY_CUSTOM_1}',
               models: [{ id: 'custom-model' }],
             },
@@ -802,7 +802,7 @@ describe('OpenClaw auth logout config sync', () => {
           apiKey: 'custom-secret',
           baseUrl: 'https://custom.example/v1',
           apiFormat: 'openai' as const,
-          displayName: 'Custom-Provider',
+          displayName: 'OpenCode',
           models: [{ id: 'custom-model', name: 'Custom Model' }],
         },
       },
@@ -844,22 +844,21 @@ describe('OpenClaw auth logout config sync', () => {
 
     const result = sync.sync(BuiltinModelSyncReason.AuthLogout);
 
-    expect(result.ok).toBe(true);
-    expect(result.configChanged).toBe(true);
+    expect(result.ok).toBe(false);
+    expect(result.configChanged).toBe(false);
+    expect(result.error).toContain('custom provider name "OpenCode" is reserved by OpenClaw');
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    expect(config.models).not.toHaveProperty('pricing');
-    expect(config.models.providers.builtin_models).toBeUndefined();
-    expect(config.models.providers['custom-provider']).toBeDefined();
-    expect(config.agents.defaults.model.primary).toBe('custom-provider/custom-model');
-    expect(config.agents.entries.main.model.primary).toBe('custom-provider/custom-model');
+    expect(config.models).toHaveProperty('pricing');
+    expect(config.models.providers.builtin_models).toBeDefined();
+    expect(config.models.providers.opencode).toBeDefined();
+    expect(config.agents.defaults.model.primary).toBe('builtin_models/chat-model');
     expect(config.customFeature).toEqual({
       enabled: true,
       nested: { value: 'preserve-me' },
     });
-    expect(verifyLoggedOutOpenClawConfig(configPath)).toEqual({ ok: true });
   });
 
-  test('login adds only the built-in provider and preserves unrelated config', () => {
+  test('login adds the built-in provider and preserves validated custom provider ids', () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-auth-login-sync-'));
     temporaryDirectories.push(stateDir);
     const configPath = path.join(stateDir, 'openclaw.json');
@@ -941,10 +940,10 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.models.providers.builtin_models.apiKey).toBe(
       '${JUSTDO_APIKEY_BUILTIN_MODELS}',
     );
-    expect(config.models.providers['custom-provider']).toEqual({
-      apiKey: '${JUSTDO_APIKEY_CUSTOM_1}',
-      models: [{ id: 'custom-model' }],
-    });
+    expect(config.models.providers['custom-provider'].apiKey).toBe(
+      '${JUSTDO_APIKEY_CUSTOM_1}',
+    );
+    expect(config.models.providers.custom_1).toBeUndefined();
     expect(config.models).not.toHaveProperty('pricing');
     expect(config.agents.defaults.model.primary).toBe('custom-provider/custom-model');
     expect(config.agents.defaults).not.toHaveProperty('thinkingDefault');

@@ -115,6 +115,60 @@ describe('resolveDeferredGatewayRestartAction', () => {
   });
 });
 
+describe('managed session model synchronization', () => {
+  it('preserves an available session-specific model instead of replacing it with the agent model', async () => {
+    const requestGateway = vi.fn(async (method: string) => {
+      if (method === 'sessions.list') {
+        return {
+          sessions: [
+            {
+              key: 'agent:main:justdo:session-1',
+              modelProvider: 'newproxy',
+              model: 'agent-model',
+            },
+          ],
+          hasMore: false,
+        };
+      }
+      if (method === 'sessions.patch') return { ok: true };
+      throw new Error(`Unexpected Gateway method: ${method}`);
+    });
+    const service = new OpenClawConfigSyncService({
+      getCoworkStore: () => ({
+        getSessionModelRef: (id: string) =>
+          id === 'session-1' ? 'newproxy/session-model' : null,
+      }),
+      requestGateway,
+    } as never);
+    const syncManagedSessionModelsViaGateway = (
+      service as unknown as {
+        syncManagedSessionModelsViaGateway: (snapshot: unknown) => Promise<void>;
+      }
+    ).syncManagedSessionModelsViaGateway.bind(service);
+
+    await syncManagedSessionModelsViaGateway({
+      config: {
+        models: {
+          providers: {
+            newproxy: {
+              models: [{ id: 'agent-model' }, { id: 'session-model' }],
+            },
+          },
+        },
+        agents: {
+          defaults: { model: { primary: 'newproxy/agent-model' } },
+          list: [{ id: 'main', model: { primary: 'newproxy/agent-model' } }],
+        },
+      },
+    });
+
+    expect(requestGateway).toHaveBeenCalledWith('sessions.patch', {
+      key: 'agent:main:justdo:session-1',
+      model: 'newproxy/session-model',
+    });
+  });
+});
+
 describe('OpenClawConfigSyncService', () => {
   afterEach(() => {
     vi.useRealTimers();

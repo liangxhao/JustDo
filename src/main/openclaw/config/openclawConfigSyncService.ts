@@ -67,6 +67,14 @@ const resolveExecApprovalFields = (mode: PermissionMode) => {
 
 type ConfigSnapshot = {
   config?: {
+    models?: {
+      providers?: Record<
+        string,
+        {
+          models?: Array<{ id?: unknown }>;
+        }
+      >;
+    };
     agents?: {
       defaults?: {
         model?: unknown;
@@ -416,6 +424,16 @@ export class OpenClawConfigSyncService {
     if (defaults) targets.set('main', targets.get('main') ?? defaults);
     if (targets.size === 0) return;
 
+    const availableModelRefs = new Set<string>();
+    for (const [providerId, provider] of Object.entries(
+      snapshot.config?.models?.providers ?? {},
+    )) {
+      for (const model of provider.models ?? []) {
+        if (typeof model.id !== 'string' || !model.id.trim()) continue;
+        availableModelRefs.add(`${providerId}/${model.id.trim()}`);
+      }
+    }
+
     const limit = 200;
     let offset = 0;
     const seenOffsets = new Set<number>();
@@ -425,9 +443,15 @@ export class OpenClawConfigSyncService {
         await this.deps.requestGateway('sessions.list', { limit, offset }),
       );
       for (const session of page.sessions) {
-        const match = /^agent:([^:]+):justdo:/.exec(session.key);
+        const match = /^agent:([^:]+):justdo:(.+)$/.exec(session.key);
         if (!match) continue;
-        const target = targets.get(match[1]);
+        const persistedTarget = parseModelReferenceV2026_8_1(
+          this.deps.getCoworkStore().getSessionModelRef(match[2]),
+        );
+        const target =
+          persistedTarget && availableModelRefs.has(persistedTarget.reference)
+            ? persistedTarget
+            : targets.get(match[1]);
         if (!target) continue;
         if (session.modelProvider === target.provider && session.model === target.model) continue;
         await this.deps.requestGateway('sessions.patch', {

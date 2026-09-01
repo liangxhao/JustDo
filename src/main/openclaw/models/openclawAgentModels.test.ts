@@ -59,6 +59,32 @@ describe('buildAgentEntry', () => {
       model: { primary: 'anthropic/claude-sonnet-4' },
     });
   });
+
+  test('rewrites a legacy custom provider key to its validated display name', () => {
+    const result = buildAgentEntry(
+      {
+        id: 'main',
+        name: 'main',
+        description: '',
+        systemPrompt: '',
+        identity: '',
+        model: 'custom_0/mimo-v2.5',
+        icon: '',
+        skillIds: [],
+        enabled: true,
+        isDefault: true,
+        createdAt: 0,
+        updatedAt: 0,
+      },
+      'anthropic/claude-sonnet-4',
+      { custom_0: 'AcmeProxy' },
+    );
+
+    expect(result).toMatchObject({
+      id: 'main',
+      model: { primary: 'acmeproxy/mimo-v2.5' },
+    });
+  });
 });
 
 describe('buildManagedAgentEntries', () => {

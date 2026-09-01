@@ -57,7 +57,7 @@ Engine status 至少表达 stopped、starting、running、stopping/error 类 pha
 
 同步在 exclusive queue 内执行，避免设置页、MCP/Hook/Extension、permission 同时覆盖文件。写入后必须验证 active Gateway permission policy。若 Gateway 正在运行且变化需要 restart，流程是断开 adapter -> restart -> reconnect；有 active workloads 时 service 应遵守安全策略，不盲目重启。
 
-v2026.8.1 配置只生成 keyed `agents.entries` roster，并以 `agents.ownership: explicit` 标记多 Agent 所有权；`main` 与隔离的 `justdo-scheduler` 在无模型的最小配置中也必须存在。记忆检索写入顶层 `memory.search`，计划工具开关写入 `tools.updatePlan`。同步会定向清理 JustDo 历史写入但已被该版本删除的 metadata、diagnostics、pricing、heartbeat 与 experimental tool 字段，避免把旧生成结果重新喂给严格 schema。
+v2026.8.1 配置只生成 keyed `agents.entries` roster，并以 `agents.ownership: explicit` 标记多 Agent 所有权；`main` 与隔离的 `justdo-scheduler` 在无模型的最小配置中也必须存在。自定义 provider 的展示名同时是 Gateway 模型引用中的 provider ID，使 OpenClaw 注入的当前模型身份保持用户可读；设置页与主进程同步入口都会拒绝 v2026.8.1 内置 provider、官方外置 provider/别名以及 JustDo 内部命名空间，避免触发错误的 provider 或插件路由。记忆检索写入顶层 `memory.search`，计划工具开关写入 `tools.updatePlan`。同步会定向清理 JustDo 历史写入但已被该版本删除的 metadata、diagnostics、pricing、heartbeat 与 experimental tool 字段，避免把旧生成结果重新喂给严格 schema。
 
 版本化的 `agentRuntimeSettings:v1` 同时生成 `agents.defaults.subagents`，把 AskUserQuestion 等待时限写入 `plugins.entries.ask-user-question.config.timeoutMinutes`，并以全局 MCP 请求时限作为用户 MCP Server 的默认 `timeout`。`mcp_servers.config_json.requestTimeoutSeconds` 可覆盖单个 Server；旧数据缺少这些后来加入的字段时分别使用 10 分钟、60 秒或继承全局默认；配置同步失败会恢复上一份数据库值。
 
@@ -86,6 +86,8 @@ OpenClaw model ref 必须是 `provider/model-id`。启动迁移规则：
 - 裸 model id 只有在 available providers 中唯一匹配时才补 provider；
 - 多 provider 同名时跳过并记录无 secret 的警告；
 - session 可保存自身 model，`sessions.patch` 只影响明确返回的后续调用范围。
+
+当用户在当前版本中修改自定义 provider 展示名时，Main 以稳定的 `custom_N` 配置 key 识别同一 provider，并在生成 Gateway 配置前事务性更新当前 Agent、session 与 subagent 默认模型中的 wire ref。Renderer 的 `app_config` 写入会等待相关 OpenClaw 配置实际应用；失败时回滚配置与这些引用，不向用户报告伪成功。主题、语言等与 OpenClaw 无关的更改不等待 Gateway 同步。
 
 ## 7. Built-in model 生命周期
 
