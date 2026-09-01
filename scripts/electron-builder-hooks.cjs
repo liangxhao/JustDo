@@ -26,6 +26,7 @@ const { syncOpenClawRuntimeResources } = require('./sync-openclaw-runtime-resour
 const { readBundledSkillConfig, syncBundledSkills } = require('./sync-bundled-skills.cjs');
 const { compressTarArchive, packMultipleSources } = require('./pack-openclaw-tar.cjs');
 const { readWindowsUpdateConfig } = require('./windows-update-config.cjs');
+const { releaseHistory: releaseHistoryLimits } = require('../src/shared/appUpdateConfig.json');
 const {
   prepareBrowserExtension,
   readProductName,
@@ -1163,6 +1164,81 @@ async function buildWindowsUpdateManifest({
   return manifestPath;
 }
 
+function releaseDateFromVersion(version) {
+  const match = /^(\d{4})\.(\d{1,2})\.(\d{1,2})$/.exec(version);
+  if (!match) {
+    throw new Error(
+      `[electron-builder-hooks] Release history requires a date-based version: ${version}`,
+    );
+  }
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    throw new Error(`[electron-builder-hooks] Invalid date-based release version: ${version}`);
+  }
+  return date.toISOString();
+}
+
+function buildReleaseHistory({
+  releaseNotesDir,
+  outDir,
+  packageVersion,
+  releaseDate = new Date().toISOString(),
+}) {
+  const latestVersion = normalizeUpdateVersion(packageVersion);
+  const releases = readdirSync(releaseNotesDir)
+    .filter(fileName => /^v?\d+\.\d+\.\d+\.md$/i.test(fileName))
+    .map(fileName => {
+      const version = normalizeUpdateVersion(fileName.replace(/\.md$/i, ''));
+      return {
+        version,
+        releaseDate: version === latestVersion ? releaseDate : releaseDateFromVersion(version),
+        releaseNotes: readReleaseNotes(path.join(releaseNotesDir, fileName)),
+      };
+    })
+    .sort((left, right) => Date.parse(right.releaseDate) - Date.parse(left.releaseDate));
+
+  if (releases.length > releaseHistoryLimits.maxEntries) {
+    throw new Error(
+      `[electron-builder-hooks] Release history contains ${releases.length} entries; ` +
+        `the maximum is ${releaseHistoryLimits.maxEntries}.`,
+    );
+  }
+  const oversizedRelease = releases.find(
+    release => release.releaseNotes.length > releaseHistoryLimits.maxReleaseNotesLength,
+  );
+  if (oversizedRelease) {
+    throw new Error(
+      `[electron-builder-hooks] Release notes for ${oversizedRelease.version} exceed ` +
+        `${releaseHistoryLimits.maxReleaseNotesLength} characters.`,
+    );
+  }
+  if (releases.length === 0 || releases[0].version !== latestVersion) {
+    throw new Error(
+      `[electron-builder-hooks] Release history is missing the latest version: ${latestVersion}`,
+    );
+  }
+
+  const historyPath = path.join(outDir, 'release-history.json');
+  const historyContent = `${JSON.stringify({ schemaVersion: 1, latestVersion, releases }, null, 2)}\n`;
+  const historyBytes = Buffer.byteLength(historyContent, 'utf8');
+  if (historyBytes > releaseHistoryLimits.maxBytes) {
+    throw new Error(
+      `[electron-builder-hooks] Release history is ${historyBytes} bytes; ` +
+        `the maximum is ${releaseHistoryLimits.maxBytes}.`,
+    );
+  }
+  writeFileSync(historyPath, historyContent, 'utf8');
+  console.log(`[electron-builder-hooks] Generated release history: ${historyPath}`);
+  return historyPath;
+}
+
 async function afterAllArtifactBuild(context) {
   const buildsWindows = Array.from(context?.platformToTargets?.keys?.() || []).some(
     platform => platform?.nodeName === 'win32',
@@ -1171,14 +1247,23 @@ async function afterAllArtifactBuild(context) {
 
   const repoRoot = path.join(__dirname, '..');
   const packageMetadata = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
-  const releaseNotesPath = path.join(repoRoot, 'docs', 'releases', `${packageMetadata.version}.md`);
+  const releaseNotesDir = path.join(repoRoot, 'docs', 'releases');
+  const releaseNotesPath = path.join(releaseNotesDir, `${packageMetadata.version}.md`);
+  const releaseDate = new Date().toISOString();
   const manifestPath = await buildWindowsUpdateManifest({
     artifactPaths: context.artifactPaths,
     outDir: context.outDir,
     packageVersion: packageMetadata.version,
     releaseNotesPath,
+    releaseDate,
   });
-  return [manifestPath];
+  const historyPath = buildReleaseHistory({
+    releaseNotesDir,
+    outDir: context.outDir,
+    packageVersion: packageMetadata.version,
+    releaseDate,
+  });
+  return [manifestPath, historyPath];
 }
 
 async function verifyPackagedOpenClawRuntime(context) {
@@ -1246,6 +1331,7 @@ module.exports = {
   afterPack,
   artifactBuildCompleted,
   afterAllArtifactBuild,
+  buildReleaseHistory,
   buildWindowsUpdateManifest,
   findSingleWindowsInstaller,
   normalizeUpdateVersion,

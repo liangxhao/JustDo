@@ -40,7 +40,7 @@ jobs:
           path: ~/.npm
           key: npm-${{ runner.os }}-${{ hashFiles('package.json') }}
           restore-keys: npm-${{ runner.os }}-
-      
+
       - run: npm install
 
       # 设置 OpenClaw runtime (如果需要)
@@ -51,7 +51,7 @@ jobs:
           else
             echo "⚠ OpenClaw runtime not found, build may fail"
           fi
-      
+
       - name: Build macOS
         run: npm run dist:mac
         env:
@@ -61,7 +61,7 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      
+
       - uses: actions/upload-artifact@v4
         with:
           name: macos-build
@@ -82,7 +82,7 @@ jobs:
           path: ~\AppData\Local\npm-cache
           key: npm-${{ runner.os }}-${{ hashFiles('package.json') }}
           restore-keys: npm-${{ runner.os }}-
-      
+
       - run: npm install
 
       # Windows 需要 Python 运行时
@@ -90,7 +90,7 @@ jobs:
         run: npm run setup:python-runtime
         env:
           JUSTDO_PORTABLE_PYTHON_ARCHIVE: ${{ secrets.WINDOWS_PYTHON_ARCHIVE }}
-      
+
       - name: Build Windows
         run: npm run dist:win
         env:
@@ -99,7 +99,7 @@ jobs:
 
       - name: Verify Windows update artifacts
         run: npm run verify:windows-update-artifacts
-      
+
       - uses: actions/upload-artifact@v4
         with:
           name: windows-build
@@ -107,6 +107,7 @@ jobs:
             release/*.exe
             release/*.exe.blockmap
             release/latest.yml
+            release/release-history.json
           if-no-files-found: error
           retention-days: 7
 
@@ -124,17 +125,17 @@ jobs:
           path: ~/.npm
           key: npm-${{ runner.os }}-${{ hashFiles('package.json') }}
           restore-keys: npm-${{ runner.os }}-
-      
+
       - name: Install Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 xdg-utils libatspi2.0-0 libuuid1 libsecret-1-0
-      
+
       - run: npm install
-      
+
       - name: Build Linux
         run: npm run dist:linux
-      
+
       - uses: actions/upload-artifact@v4
         with:
           name: linux-build
@@ -150,12 +151,12 @@ jobs:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Download All Artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-      
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:

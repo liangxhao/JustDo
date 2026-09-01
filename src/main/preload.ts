@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 import {
+  type AppReleaseHistoryResult,
   type AppUpdateCheckFrequency,
   AppUpdateIpc,
   type AppUpdatePreferences,
@@ -597,6 +598,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(AppUpdateIpc.GetPreferences),
     setCheckFrequency: (frequency: AppUpdateCheckFrequency): Promise<AppUpdatePreferences> =>
       ipcRenderer.invoke(AppUpdateIpc.SetCheckFrequency, frequency),
+    getReleaseHistory: (): Promise<AppReleaseHistoryResult> =>
+      ipcRenderer.invoke(AppUpdateIpc.GetReleaseHistory),
     onStateChanged: (callback: (state: AppUpdateState) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, state: AppUpdateState) => callback(state);
       ipcRenderer.on(AppUpdateIpc.StateChanged, handler);

@@ -12,8 +12,18 @@ The Windows packaging hook copies the trimmed Markdown body into
 `latest.yml` as `releaseNotes`. HTML comments are ignored, so a file containing
 only an instructional comment produces `releaseNotes: ''`.
 
-Upload the versioned installer and its blockmap to the Generic
-update server before atomically replacing `latest.yml`.
+The same hook also generates `release-history.json` from all versioned Markdown
+files in this directory. Its first entry and `latestVersion` must match the
+version, date, and release notes in `latest.yml`. Existing clients continue to
+use only `latest.yml`; newer clients fetch the JSON history only when the user
+opens release history.
+
+Generation fails if the history exceeds the client limits defined in
+`src/shared/appUpdateConfig.json`, preventing a package that clients cannot
+display.
+
+Upload the versioned installer, its blockmap, and `release-history.json` to the
+Generic update server before atomically replacing `latest.yml`.
 
 The Windows Generic feed is checked into
 `scripts/windows-update-config.cjs`. Packaging does not need to reach the feed

@@ -1,0 +1,9 @@
+{
+  "feedUrl": "https://xxx.com/electron-app-update",
+  "releaseHistory": {
+    "maxBytes": 1048576,
+    "maxEntries": 200,
+    "maxReleaseDateLength": 64,
+    "maxReleaseNotesLength": 100000
+  }
+}

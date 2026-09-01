@@ -5,6 +5,7 @@ export const AppUpdateIpc = {
   QuitAndInstall: 'appUpdate:quitAndInstall',
   GetPreferences: 'appUpdate:getPreferences',
   SetCheckFrequency: 'appUpdate:setCheckFrequency',
+  GetReleaseHistory: 'appUpdate:getReleaseHistory',
   StateChanged: 'appUpdate:stateChanged',
 } as const;
 
@@ -52,4 +53,21 @@ export interface AppUpdatePreferences {
   supported: boolean;
   checkFrequency: AppUpdateCheckFrequency;
   nextCheckAt?: number;
+}
+
+export interface AppReleaseHistoryEntry {
+  version: string;
+  releaseDate: string;
+  releaseNotes: string;
+}
+
+export interface AppReleaseHistory {
+  schemaVersion: 1;
+  latestVersion: string;
+  releases: AppReleaseHistoryEntry[];
+}
+
+export interface AppReleaseHistoryResult {
+  success: boolean;
+  history?: AppReleaseHistory;
 }

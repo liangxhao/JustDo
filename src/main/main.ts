@@ -5,6 +5,7 @@ import os from 'os';
 import path from 'path';
 
 import packageJson from '../../package.json';
+import appUpdateConfig from '../shared/appUpdateConfig.json';
 import { normalizeBrowserMode } from '../shared/browser';
 import { BuiltinModelIpc } from '../shared/builtinModels';
 import type { DeveloperConfig } from '../shared/developerConfig';
@@ -26,7 +27,7 @@ import { setLanguage } from './core/i18n';
 import { isNsisInstalledApp } from './core/installedApp';
 import { registerLocalFileProtocol } from './core/localFileProtocol';
 import { initLogger } from './core/logger';
-import { mainProcessTitleFetch } from './core/mainProcessFetch';
+import { mainProcessFetch, mainProcessTitleFetch } from './core/mainProcessFetch';
 import { createMainWindow } from './core/mainWindowFactory';
 import { ManagedDirectoryOperationCoordinator } from './core/managedDirectoryOperations';
 import { resolveOutboundHeaderUserInfoPath } from './core/outboundHeaderPolicyConfig';
@@ -1095,6 +1096,14 @@ if (!gotTheLock) {
     getLastAutomaticCheckAt: () => getStore().get(APP_UPDATE_LAST_AUTOMATIC_CHECK_AT_KEY),
     setLastAutomaticCheckAt: checkedAt =>
       getStore().set(APP_UPDATE_LAST_AUTOMATIC_CHECK_AT_KEY, checkedAt),
+    releaseHistoryUrl: new URL(
+      'release-history.json',
+      `${appUpdateConfig.feedUrl.replace(/\/+$/, '')}/`,
+    ).toString(),
+    fetchReleaseHistory: (requestUrl, init) =>
+      mainProcessFetch(requestUrl, init, {
+        maxResponseBytes: appUpdateConfig.releaseHistory.maxBytes,
+      }),
   });
   registerAutoUpdateHandlers(autoUpdateService);
 

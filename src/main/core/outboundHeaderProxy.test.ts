@@ -96,6 +96,33 @@ test('sends Main requests through the configured transport without outbound head
   }
 });
 
+test('stops buffering a proxied Main response after the configured size limit', async () => {
+  const proxyServer = http.createServer((_request, response) => {
+    response.end('response is too large');
+  });
+  await new Promise<void>((resolve, reject) => {
+    proxyServer.once('error', reject);
+    proxyServer.listen(0, '127.0.0.1', resolve);
+  });
+
+  try {
+    const address = proxyServer.address();
+    if (!address || typeof address === 'string') throw new Error('Proxy server did not start.');
+    const { setFixedProxyUrl } = await import('./systemProxy');
+    setFixedProxyUrl(`http://127.0.0.1:${address.port}`);
+
+    await expect(
+      mainProcessFetch('http://updates.example/release-history.json', undefined, {
+        maxResponseBytes: 4,
+      }),
+    ).rejects.toThrow('Response exceeded the configured size limit');
+  } finally {
+    const { setFixedProxyUrl } = await import('./systemProxy');
+    setFixedProxyUrl(null);
+    await new Promise<void>(resolve => proxyServer.close(() => resolve()));
+  }
+});
+
 const writePolicyConfig = (content: object): string => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-header-policy-'));
   temporaryDirectories.push(directory);

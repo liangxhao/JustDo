@@ -993,6 +993,7 @@ interface IElectronAPI {
     setCheckFrequency: (
       frequency: import('../../shared/appUpdate').AppUpdateCheckFrequency,
     ) => Promise<import('../../shared/appUpdate').AppUpdatePreferences>;
+    getReleaseHistory: () => Promise<import('../../shared/appUpdate').AppReleaseHistoryResult>;
     onStateChanged: (callback: (state: AppUpdateState) => void) => () => void;
   };
   builtinModels: {

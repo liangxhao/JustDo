@@ -33,6 +33,7 @@ export type MainProcessOutboundHeaderSource =
 export const mainProcessFetch = async (
   requestUrl: string,
   init?: RequestInit,
+  options?: { maxResponseBytes?: number },
 ): Promise<Response> => {
   const proxyUrl = await resolveConfiguredProxy(requestUrl);
   if (!proxyUrl) return globalThis.fetch(requestUrl, init);
@@ -64,11 +65,26 @@ export const mainProcessFetch = async (
       },
       response => {
         const chunks: Buffer[] = [];
-        response.on('data', chunk =>
-          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)),
-        );
-        response.once('error', reject);
+        let responseBytes = 0;
+        let settled = false;
+        response.on('data', chunk => {
+          if (settled) return;
+          const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+          responseBytes += buffer.length;
+          if (options?.maxResponseBytes !== undefined && responseBytes > options.maxResponseBytes) {
+            settled = true;
+            response.destroy();
+            reject(new Error('Response exceeded the configured size limit.'));
+            return;
+          }
+          chunks.push(buffer);
+        });
+        response.once('error', error => {
+          if (!settled) reject(error);
+        });
         response.once('end', () => {
+          if (settled) return;
+          settled = true;
           const headers = new Headers();
           for (const [name, value] of Object.entries(response.headers)) {
             if (Array.isArray(value)) value.forEach(item => headers.append(name, item));

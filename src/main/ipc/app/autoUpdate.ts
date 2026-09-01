@@ -12,4 +12,5 @@ export const registerAutoUpdateHandlers = (service: AutoUpdateService): void => 
   ipcMain.handle(AppUpdateIpc.SetCheckFrequency, (_event, frequency) =>
     service.setCheckFrequency(frequency),
   );
+  ipcMain.handle(AppUpdateIpc.GetReleaseHistory, () => service.getReleaseHistory());
 };

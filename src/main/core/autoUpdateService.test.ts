@@ -4,7 +4,11 @@ import { EventEmitter } from 'events';
 import { describe, expect, test, vi } from 'vitest';
 
 import { AppUpdateCheckFrequency } from '../../shared/appUpdate';
-import { AutoUpdateService, resolveNextAutomaticUpdateCheckAt } from './autoUpdateService';
+import {
+  AutoUpdateService,
+  parseReleaseHistory,
+  resolveNextAutomaticUpdateCheckAt,
+} from './autoUpdateService';
 
 class FakeUpdater extends EventEmitter {
   autoDownload = false;
@@ -21,6 +25,10 @@ const makeService = (
   updater: FakeUpdater,
   enabled = true,
   stored: { frequency?: unknown; lastAutomaticCheckAt?: unknown } = {},
+  historyOptions: {
+    releaseHistoryUrl?: string;
+    fetchReleaseHistory?: (requestUrl: string, init?: RequestInit) => Promise<Response>;
+  } = {},
 ) => {
   const installAfterCleanup = vi.fn<(install: () => void) => void>(install => install());
   const recoverAfterInstallFailure = vi.fn();
@@ -41,6 +49,7 @@ const makeService = (
     getLastAutomaticCheckAt: () => stored.lastAutomaticCheckAt,
     setLastAutomaticCheckAt,
     updater: updater as unknown as AppUpdater,
+    ...historyOptions,
   });
   return {
     installAfterCleanup,
@@ -296,6 +305,115 @@ describe('AutoUpdateService', () => {
 
     expect(service.getState()).toMatchObject({ phase: 'error', errorCode: 'INSTALL_FAILED' });
     expect(recoverAfterInstallFailure).toHaveBeenCalledOnce();
+  });
+
+  test('loads and revalidates release history independently from update checks', async () => {
+    const updater = new FakeUpdater();
+    const fetchReleaseHistory = vi.fn().mockImplementation(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            schemaVersion: 1,
+            latestVersion: '2026.8.27',
+            releases: [
+              {
+                version: '2026.8.27',
+                releaseDate: '2026-08-27T00:00:00.000Z',
+                releaseNotes: '# Changes',
+              },
+            ],
+          }),
+        ),
+      ),
+    );
+    const { service } = makeService(
+      updater,
+      true,
+      {},
+      {
+        releaseHistoryUrl: 'https://updates.example/release-history.json',
+        fetchReleaseHistory,
+      },
+    );
+
+    await expect(service.getReleaseHistory()).resolves.toMatchObject({
+      success: true,
+      history: { latestVersion: '2026.8.27' },
+    });
+    await expect(service.getReleaseHistory()).resolves.toMatchObject({ success: true });
+    expect(fetchReleaseHistory).toHaveBeenCalledTimes(2);
+    expect(updater.checkForUpdates).not.toHaveBeenCalled();
+  });
+
+  test('rejects inconsistent release history without affecting updater state', async () => {
+    const updater = new FakeUpdater();
+    const { service } = makeService(
+      updater,
+      true,
+      {},
+      {
+        releaseHistoryUrl: 'https://updates.example/release-history.json',
+        fetchReleaseHistory: vi.fn().mockResolvedValue(
+          new Response(
+            JSON.stringify({
+              schemaVersion: 1,
+              latestVersion: '2026.8.27',
+              releases: [
+                {
+                  version: '2026.8.12',
+                  releaseDate: '2026-08-12T00:00:00.000Z',
+                  releaseNotes: 'Old changes',
+                },
+              ],
+            }),
+          ),
+        ),
+      },
+    );
+
+    await expect(service.getReleaseHistory()).resolves.toEqual({ success: false });
+    expect(service.getState().phase).toBe('idle');
+  });
+
+  test('rejects release history whose declared response size exceeds the limit', async () => {
+    const updater = new FakeUpdater();
+    const { service } = makeService(
+      updater,
+      true,
+      {},
+      {
+        releaseHistoryUrl: 'https://updates.example/release-history.json',
+        fetchReleaseHistory: vi
+          .fn()
+          .mockResolvedValue(
+            new Response('{}', { headers: { 'content-length': String(1024 * 1024 + 1) } }),
+          ),
+      },
+    );
+
+    await expect(service.getReleaseHistory()).resolves.toEqual({ success: false });
+  });
+});
+
+describe('parseReleaseHistory', () => {
+  test('accepts the supported schema and rejects an unknown schema', () => {
+    const history = {
+      schemaVersion: 1,
+      latestVersion: '2026.8.27',
+      releases: [
+        {
+          version: '2026.8.27',
+          releaseDate: '2026-08-27T00:00:00.000Z',
+          releaseNotes: 'Changes',
+        },
+      ],
+    };
+
+    expect(parseReleaseHistory(history)).toEqual(history);
+    expect(parseReleaseHistory({ ...history, schemaVersion: 2 })).toBeUndefined();
+    expect(
+      parseReleaseHistory({ ...history, releases: [...history.releases, ...history.releases] }),
+    ).toBeUndefined();
   });
 });
 

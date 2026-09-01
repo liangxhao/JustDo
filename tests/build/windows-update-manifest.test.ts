@@ -5,6 +5,7 @@ import { afterEach, describe, expect, test } from 'vitest';
 
 const {
   buildWindowsUpdateManifest,
+  buildReleaseHistory,
   normalizeUpdateVersion,
   readReleaseNotes,
   verifyWindowsInstallerArchive,
@@ -17,6 +18,12 @@ const {
     releaseNotesPath: string;
     releaseDate?: string;
   }) => Promise<string>;
+  buildReleaseHistory: (options: {
+    releaseNotesDir: string;
+    outDir: string;
+    packageVersion: string;
+    releaseDate?: string;
+  }) => string;
   normalizeUpdateVersion: (version: string) => string;
   readReleaseNotes: (filePath: string) => string;
   verifyWindowsInstallerArchive: (
@@ -28,6 +35,10 @@ const {
     },
   ) => void;
   verifyWindowsInstallerArchiveListing: (listing: string, productFilename: string) => void;
+};
+
+const { validateReleaseHistory } = require('../../scripts/verify-windows-update-artifacts.cjs') as {
+  validateReleaseHistory: (history: unknown, manifest: Record<string, unknown>) => boolean;
 };
 
 const temporaryDirectories: string[] = [];
@@ -75,6 +86,44 @@ describe('Windows Generic update manifest', () => {
     expect(readReleaseNotes(notesPath)).toBe('## Changes\n\n- Fixed updates');
   });
 
+  test('writes release history with the same latest version and notes as latest.yml', async () => {
+    const directory = makeTemporaryDirectory();
+    const notesDirectory = path.join(directory, 'notes');
+    const installerPath = path.join(directory, 'JustDo Setup 2026.8.12.exe');
+    require('fs').mkdirSync(notesDirectory);
+    writeFileSync(installerPath, 'installer payload');
+    writeFileSync(path.join(notesDirectory, 'v2026.8.11.md'), '# Older\n\n- Previous change');
+    writeFileSync(path.join(notesDirectory, 'v2026.8.12.md'), '# Latest\n\n- New change');
+    const releaseDate = '2026-08-12T08:00:00.000Z';
+
+    const manifestPath = await buildWindowsUpdateManifest({
+      artifactPaths: [installerPath],
+      outDir: directory,
+      packageVersion: 'v2026.8.12',
+      releaseNotesPath: path.join(notesDirectory, 'v2026.8.12.md'),
+      releaseDate,
+    });
+    const historyPath = buildReleaseHistory({
+      releaseNotesDir: notesDirectory,
+      outDir: directory,
+      packageVersion: 'v2026.8.12',
+      releaseDate,
+    });
+
+    const manifest = require('js-yaml').load(readFileSync(manifestPath, 'utf8'));
+    const history = JSON.parse(readFileSync(historyPath, 'utf8'));
+    expect(history.latestVersion).toBe(manifest.version);
+    expect(history.releases[0]).toMatchObject({
+      version: manifest.version,
+      releaseDate: manifest.releaseDate,
+      releaseNotes: manifest.releaseNotes,
+    });
+    expect(history.releases.map((release: { version: string }) => release.version)).toEqual([
+      '2026.8.12',
+      '2026.8.11',
+    ]);
+  });
+
   test('rejects missing release notes and ambiguous installers', async () => {
     const directory = makeTemporaryDirectory();
     expect(() => readReleaseNotes(path.join(directory, 'missing.md'))).toThrow(
@@ -93,6 +142,70 @@ describe('Windows Generic update manifest', () => {
         releaseNotesPath: notesPath,
       }),
     ).rejects.toThrow('Expected exactly one Windows EXE artifact');
+  });
+
+  test('rejects malformed, duplicate, or incorrectly ordered history entries', () => {
+    const manifest = {
+      version: '2026.8.12',
+      releaseDate: '2026-08-12T08:00:00.000Z',
+      releaseNotes: 'Latest notes',
+    };
+    const latest = {
+      version: manifest.version,
+      releaseDate: manifest.releaseDate,
+      releaseNotes: manifest.releaseNotes,
+    };
+    const older = {
+      version: '2026.8.11',
+      releaseDate: '2026-08-11T00:00:00.000Z',
+      releaseNotes: 'Older notes',
+    };
+    const makeHistory = (releases: unknown[]) => ({
+      schemaVersion: 1,
+      latestVersion: manifest.version,
+      releases,
+    });
+
+    expect(validateReleaseHistory(makeHistory([latest, older]), manifest)).toBe(true);
+    expect(validateReleaseHistory(makeHistory([latest, { ...older, releaseNotes: 42 }]), manifest))
+      .toBe(false);
+    expect(validateReleaseHistory(makeHistory([latest, latest]), manifest)).toBe(false);
+    expect(
+      validateReleaseHistory(
+        makeHistory(Array.from({ length: 201 }, (_, index) => ({ ...latest, index }))),
+        manifest,
+      ),
+    ).toBe(false);
+    expect(
+      validateReleaseHistory(
+        makeHistory([latest, { ...older, releaseNotes: 'x'.repeat(100_001) }]),
+        manifest,
+      ),
+    ).toBe(false);
+    expect(
+      validateReleaseHistory(
+        makeHistory([
+          latest,
+          { ...older, version: '2026.8.13', releaseDate: '2026-08-13T00:00:00.000Z' },
+        ]),
+        manifest,
+      ),
+    ).toBe(false);
+  });
+
+  test('fails packaging when one release note exceeds the client limit', () => {
+    const directory = makeTemporaryDirectory();
+    const notesDirectory = path.join(directory, 'notes');
+    require('fs').mkdirSync(notesDirectory);
+    writeFileSync(path.join(notesDirectory, 'v2026.8.12.md'), 'x'.repeat(100_001));
+
+    expect(() =>
+      buildReleaseHistory({
+        releaseNotesDir: notesDirectory,
+        outDir: directory,
+        packageVersion: 'v2026.8.12',
+      }),
+    ).toThrow('exceed 100000 characters');
   });
 });
 

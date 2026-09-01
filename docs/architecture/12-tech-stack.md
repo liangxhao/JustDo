@@ -116,7 +116,7 @@ Windows runtime先打成 tar，再以 zstd level 10预压缩为 `build-tar/win-r
 - 打包排除 source maps、declarations、tests、README/change logs和 native source。
 - macOS hardened runtime + entitlements，afterSign notarize；DMG配置自身 `sign:false`。
 - Windows NSIS非 one-click，可选安装目录，卸载删除 app data，requested level `asInvoker`。
-- Windows auto-update发布 generic feed，builder当前 `verifyUpdateCodeSignature:false`。客户端默认每天本地时间 10:00 检查，用户可改为每周一 10:00或从不；错过计划时间会在下次启动后补查。检查阶段只读取版本元数据，发现新版本后必须由用户点击才开始下载，下载完成后再由用户确认重启安装。
+- Windows auto-update发布 generic feed，builder当前 `verifyUpdateCodeSignature:false`。兼容更新协议继续使用 `latest.yml`，打包时另行生成 `release-history.json`；新版客户端仅在用户展开历史变更时按需读取后者，读取失败不影响检查、下载或安装。客户端默认每天本地时间 10:00 检查，用户可改为每周一 10:00或从不；错过计划时间会在下次启动后补查。检查阶段只读取版本元数据，发现新版本后必须由用户点击才开始下载，下载完成后再由用户确认重启安装。
 - Linux runtime直接作为 `cfmind` extraResource；Windows使用 tar。
 
 ## 10. Product metadata

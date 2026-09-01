@@ -2,6 +2,8 @@ import type { BrowserWindow } from 'electron';
 import { type AppUpdater, autoUpdater, type ProgressInfo, type UpdateInfo } from 'electron-updater';
 
 import type {
+  AppReleaseHistory,
+  AppReleaseHistoryResult,
   AppUpdateActionResult,
   AppUpdateCheckFrequency,
   AppUpdateErrorCode,
@@ -13,6 +15,7 @@ import {
   AppUpdateIpc,
   DEFAULT_APP_UPDATE_CHECK_FREQUENCY,
 } from '../../shared/appUpdate';
+import appUpdateConfig from '../../shared/appUpdateConfig.json';
 import { log } from './logger';
 
 const STARTUP_CHECK_DELAY_MS = 10_000;
@@ -28,7 +31,102 @@ type AutoUpdateServiceOptions = {
   setCheckFrequency: (frequency: AppUpdateCheckFrequency) => void;
   getLastAutomaticCheckAt: () => unknown;
   setLastAutomaticCheckAt: (checkedAt: number) => void;
+  releaseHistoryUrl?: string;
+  fetchReleaseHistory?: (requestUrl: string, init?: RequestInit) => Promise<Response>;
   updater?: AppUpdater;
+};
+
+const RELEASE_HISTORY_TIMEOUT_MS = 10_000;
+const {
+  maxBytes: MAX_RELEASE_HISTORY_BYTES,
+  maxEntries: MAX_RELEASE_HISTORY_ENTRIES,
+  maxReleaseDateLength: MAX_RELEASE_DATE_LENGTH,
+  maxReleaseNotesLength: MAX_RELEASE_NOTES_LENGTH,
+} = appUpdateConfig.releaseHistory;
+const UPDATE_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+
+const isObjectRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+export const parseReleaseHistory = (value: unknown): AppReleaseHistory | undefined => {
+  if (!isObjectRecord(value) || value.schemaVersion !== 1) return undefined;
+  if (
+    typeof value.latestVersion !== 'string' ||
+    !UPDATE_VERSION_PATTERN.test(value.latestVersion) ||
+    !Array.isArray(value.releases) ||
+    value.releases.length === 0 ||
+    value.releases.length > MAX_RELEASE_HISTORY_ENTRIES
+  ) {
+    return undefined;
+  }
+
+  const releases = value.releases.map(entry => {
+    if (
+      !isObjectRecord(entry) ||
+      typeof entry.version !== 'string' ||
+      !UPDATE_VERSION_PATTERN.test(entry.version) ||
+      typeof entry.releaseDate !== 'string' ||
+      entry.releaseDate.length > MAX_RELEASE_DATE_LENGTH ||
+      !Number.isFinite(Date.parse(entry.releaseDate)) ||
+      typeof entry.releaseNotes !== 'string' ||
+      entry.releaseNotes.length > MAX_RELEASE_NOTES_LENGTH
+    ) {
+      return undefined;
+    }
+    return {
+      version: entry.version,
+      releaseDate: entry.releaseDate,
+      releaseNotes: entry.releaseNotes,
+    };
+  });
+  if (releases.some(entry => entry === undefined)) return undefined;
+
+  const validatedReleases = releases as AppReleaseHistory['releases'];
+  if (validatedReleases[0].version !== value.latestVersion) return undefined;
+  const versions = new Set<string>();
+  for (let index = 0; index < validatedReleases.length; index += 1) {
+    const release = validatedReleases[index];
+    if (versions.has(release.version)) return undefined;
+    versions.add(release.version);
+    if (
+      index > 0 &&
+      Date.parse(validatedReleases[index - 1].releaseDate) < Date.parse(release.releaseDate)
+    ) {
+      return undefined;
+    }
+  }
+  return {
+    schemaVersion: 1,
+    latestVersion: value.latestVersion,
+    releases: validatedReleases,
+  };
+};
+
+const readResponseTextWithLimit = async (
+  response: Response,
+  maxBytes: number,
+): Promise<string | undefined> => {
+  const declaredLength = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) return undefined;
+  if (!response.body) {
+    const body = await response.text();
+    return Buffer.byteLength(body, 'utf8') <= maxBytes ? body : undefined;
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    totalBytes += value.byteLength;
+    if (totalBytes > maxBytes) {
+      await reader.cancel();
+      return undefined;
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks, totalBytes).toString('utf8');
 };
 
 export const normalizeAppUpdateCheckFrequency = (value: unknown): AppUpdateCheckFrequency =>
@@ -96,6 +194,7 @@ export class AutoUpdateService {
   private automaticCheckTimer: NodeJS.Timeout | null = null;
   private nextAutomaticCheckAt: number | undefined;
   private lastAutomaticCheckAt: number | undefined;
+  private releaseHistoryPromise: Promise<AppReleaseHistoryResult> | null = null;
 
   constructor(private readonly options: AutoUpdateServiceOptions) {
     this.state = {
@@ -134,6 +233,36 @@ export class AutoUpdateService {
     this.options.setCheckFrequency(frequency);
     this.scheduleAutomaticChecks();
     return this.getPreferences();
+  }
+
+  getReleaseHistory(): Promise<AppReleaseHistoryResult> {
+    if (this.releaseHistoryPromise) return this.releaseHistoryPromise;
+    if (!this.options.enabled || !this.options.releaseHistoryUrl) {
+      return Promise.resolve({ success: false });
+    }
+
+    const fetchReleaseHistory = this.options.fetchReleaseHistory ?? globalThis.fetch;
+    this.releaseHistoryPromise = fetchReleaseHistory(this.options.releaseHistoryUrl, {
+      headers: { Accept: 'application/json' },
+      cache: 'no-store',
+      signal: AbortSignal.timeout(RELEASE_HISTORY_TIMEOUT_MS),
+    })
+      .then(async response => {
+        if (!response.ok) return { success: false };
+        const body = await readResponseTextWithLimit(response, MAX_RELEASE_HISTORY_BYTES);
+        if (body === undefined) return { success: false };
+        const history = parseReleaseHistory(JSON.parse(body));
+        if (!history) return { success: false };
+        return { success: true, history };
+      })
+      .catch(error => {
+        console.error('[AutoUpdate] Failed to load release history:', error);
+        return { success: false };
+      })
+      .finally(() => {
+        this.releaseHistoryPromise = null;
+      });
+    return this.releaseHistoryPromise;
   }
 
   scheduleAutomaticChecks(): void {
