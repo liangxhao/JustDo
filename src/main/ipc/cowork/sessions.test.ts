@@ -87,6 +87,34 @@ test('reports failure when the runtime cannot confirm a session stop', async () 
   });
 });
 
+test('deletes a read-only external session without stopping or deleting its runtime transcript', async () => {
+  const stopSession = vi.fn();
+  const onSessionDeleted = vi.fn();
+  const deleteSession = vi.fn();
+  const store = {
+    getSession: vi.fn().mockReturnValue({
+      id: 'external-1',
+      agentId: 'main',
+      external: { origin: 'multica', readOnly: true, sessionKey: 'agent:main:multica:key' },
+    }),
+    deleteSession,
+  } as unknown as CoworkStore;
+  const router = { stopSession, onSessionDeleted } as unknown as CoworkEngineRouter;
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => store,
+    getCoworkEngineRouter: () => router,
+    setSessionPermissionMode: vi.fn(),
+  });
+  const handler = mocks.handle.mock.calls.find(
+    ([channel]) => channel === 'cowork:session:delete',
+  )?.[1] as IpcHandler;
+
+  await expect(handler({}, 'external-1')).resolves.toEqual({ success: true });
+  expect(deleteSession).toHaveBeenCalledWith('external-1');
+  expect(stopSession).not.toHaveBeenCalled();
+  expect(onSessionDeleted).not.toHaveBeenCalled();
+});
+
 test('persists a valid permission mode for an existing session', async () => {
   const setSessionPermissionMode = vi.fn().mockResolvedValue({ success: true });
   registerCoworkSessionHandlers({

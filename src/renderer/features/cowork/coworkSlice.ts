@@ -160,12 +160,15 @@ const coworkSlice = createSlice({
       if (action.payload) {
         state.currentSessionId = action.payload.id;
         if (!action.payload.id.startsWith('temp-')) {
-          const { id, title, status, pinned, createdAt, updatedAt } = action.payload;
+          const { id, title, status, pinned, agentId, external, createdAt, updatedAt } =
+            action.payload;
           const summary: CoworkSessionSummary = {
             id,
             title,
             status,
             pinned: pinned ?? false,
+            agentId,
+            external,
             createdAt,
             updatedAt,
           };
@@ -198,6 +201,8 @@ const coworkSlice = createSlice({
         title: action.payload.title,
         status: action.payload.status,
         pinned: action.payload.pinned ?? false,
+        agentId: action.payload.agentId,
+        external: action.payload.external,
         createdAt: action.payload.createdAt,
         updatedAt: action.payload.updatedAt,
       };

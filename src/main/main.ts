@@ -52,6 +52,17 @@ import { GroupStore } from './data/groupStore';
 import { SqliteStore } from './data/sqliteStore';
 import { CoworkEngineService } from './engine';
 import { bindCoworkRuntimeForwarder } from './engine/cowork/coworkRuntimeForwarder';
+import { runMulticaBridgeClient } from './integrations/multica/multicaBridgeClient';
+import {
+  MULTICA_DEV_BRIDGE_SWITCH,
+  parseMulticaBridgeArgv,
+} from './integrations/multica/multicaBridgeProtocol';
+import { MulticaBridgeServer } from './integrations/multica/multicaBridgeServer';
+import {
+  resolveMulticaDevAgentExecutable,
+  resolvePackagedMulticaAgentExecutable,
+} from './integrations/multica/multicaDevAgent';
+import { MulticaIntegrationService } from './integrations/multica/multicaIntegrationService';
 import {
   applyBrowserModeChange,
   registerAppHandlers,
@@ -81,6 +92,7 @@ import {
   registerSessionGroupHandlers,
   waitForCoworkConfigUpdates,
 } from './ipc/cowork';
+import { registerMulticaIntegrationHandlers } from './ipc/multica';
 import {
   registerExtensionHandlers,
   registerHookHandlers,
@@ -127,7 +139,11 @@ import {
   PluginManager,
 } from './plugins';
 
-const outboundHeaderProxy = new OutboundHeaderProxy();
+let outboundHeaderProxy: OutboundHeaderProxy | null = null;
+const getOutboundHeaderProxy = (): OutboundHeaderProxy => {
+  outboundHeaderProxy ??= new OutboundHeaderProxy();
+  return outboundHeaderProxy;
+};
 const builtinModelForcedProxyBaseUrls =
   BUILTIN_MODEL_PROVIDER_CONFIG.enabled && isLoopbackBaseUrl(BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl)
     ? [BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl]
@@ -234,11 +250,23 @@ const configureUserDataPath = (): void => {
 };
 
 configureUserDataPath();
-applyDependencyManagerConfigEnv(process.env);
-initLogger();
-enableSystemCaForCurrentProcess();
+const multicaBridgeArgv = parseMulticaBridgeArgv(process.argv, app.isPackaged);
+if (multicaBridgeArgv) {
+  // The executable is a transparent CLI shim in this process. Main-process
+  // diagnostics must never be mixed into OpenClaw's stdout or stderr streams.
+  console.log = () => undefined;
+  console.info = () => undefined;
+  console.warn = () => undefined;
+  console.error = () => undefined;
+} else {
+  applyDependencyManagerConfigEnv(process.env);
+  initLogger();
+  enableSystemCaForCurrentProcess();
+}
 
-const developerConfig: DeveloperConfig = loadDeveloperConfig(app.getPath('userData'));
+const developerConfig: DeveloperConfig = multicaBridgeArgv
+  ? { showDeveloperMode: false }
+  : loadDeveloperConfig(app.getPath('userData'));
 
 const isDev = process.env.NODE_ENV === 'development';
 const isLinux = process.platform === 'linux';
@@ -353,6 +381,8 @@ let openClawDirectoryOperations: ManagedDirectoryOperationCoordinator | null = n
 let openClawStatusForwarderBound = false;
 let openClawGatewayPortProxyBypassBound = false;
 let preventSleepBlockerId: number | null = null;
+let multicaBridgeServer: MulticaBridgeServer | null = null;
+let multicaIntegrationService: MulticaIntegrationService | null = null;
 
 const initStore = async (): Promise<SqliteStore> => {
   if (!storeInitPromise) {
@@ -371,11 +401,32 @@ const getStore = (): SqliteStore => {
   return store;
 };
 
+const getMulticaIntegrationService = (): MulticaIntegrationService => {
+  if (!multicaIntegrationService) {
+    multicaIntegrationService = new MulticaIntegrationService({
+      getStore,
+      getEngineManager: getOpenClawEngineManager,
+      isBridgeRunning: () => multicaBridgeServer?.running === true,
+      getLauncherPath: () =>
+        process.platform !== 'win32'
+          ? process.execPath
+          : app.isPackaged
+            ? resolvePackagedMulticaAgentExecutable(process.execPath)
+            : resolveMulticaDevAgentExecutable(app.getAppPath(), app.getPath('userData')),
+      getLauncherArguments: () =>
+        app.isPackaged || process.platform === 'win32'
+          ? []
+          : [app.getAppPath(), MULTICA_DEV_BRIDGE_SWITCH],
+    });
+  }
+  return multicaIntegrationService;
+};
+
 const getOpenClawEngineManager = (): OpenClawEngineManager => {
   if (!openClawEngineManager) {
     openClawEngineManager = new OpenClawEngineManager({
-      beginNetworkGeneration: () => outboundHeaderProxy.rotateGatewayCapability(),
-      buildNetworkEnvironment: baseEnv => outboundHeaderProxy.buildGatewayEnvironment(baseEnv),
+      beginNetworkGeneration: () => getOutboundHeaderProxy().rotateGatewayCapability(),
+      buildNetworkEnvironment: baseEnv => getOutboundHeaderProxy().buildGatewayEnvironment(baseEnv),
     });
   }
   return openClawEngineManager;
@@ -434,14 +485,14 @@ const bindOpenClawGatewayPortProxyBypass = (): void => {
         bypassEntries,
         forcedBaseUrls: builtinModelForcedProxyBaseUrls,
       });
-      outboundHeaderProxy.setProxyBypassEntries(bypassEntries);
+      getOutboundHeaderProxy().setProxyBypassEntries(bypassEntries);
       return;
     }
     setProcessProxyRouting({
       bypassEntries: [],
       forcedBaseUrls: builtinModelForcedProxyBaseUrls,
     });
-    outboundHeaderProxy.setProxyBypassEntries([]);
+    getOutboundHeaderProxy().setProxyBypassEntries([]);
   });
   openClawGatewayPortProxyBypassBound = true;
 };
@@ -766,10 +817,14 @@ const scheduleReload = (reason: string, webContents?: WebContents) => {
   target.reloadIgnoringCache();
 };
 
-// 确保应用程序只有一个实例
-const gotTheLock = app.requestSingleInstanceLock();
-
-if (!gotTheLock) {
+// CLI relay processes do not participate in Electron's single-instance lock.
+const gotTheLock = multicaBridgeArgv ? true : app.requestSingleInstanceLock();
+if (multicaBridgeArgv) {
+  void runMulticaBridgeClient(app.getPath('userData'), multicaBridgeArgv).then(code => {
+    process.exitCode = code;
+    setImmediate(() => app.exit(code));
+  });
+} else if (!gotTheLock) {
   app.quit();
 } else {
   registerStoreHandlers({
@@ -801,6 +856,7 @@ if (!gotTheLock) {
 
   registerNetworkHandlers();
   registerLogHandlers();
+  registerMulticaIntegrationHandlers(getMulticaIntegrationService);
   registerBrowserHandlers({
     getGatewayClient: () => getOpenClawRuntimeAdapter()?.getGatewayClient() ?? null,
     buildCliEnvironment: () => getOpenClawEngineManager().buildCliEnvironment(),
@@ -1033,6 +1089,12 @@ if (!gotTheLock) {
     console.log('[Main] App is quitting, starting cleanup...');
     customerRegistrationService?.stop();
     destroyTray();
+    if (multicaBridgeServer) {
+      await multicaBridgeServer.stop().catch(error => {
+        console.error('[MulticaBridge] Failed to stop relay:', error);
+      });
+      multicaBridgeServer = null;
+    }
     // Prevent scheduled work from starting while dependent runtimes are draining.
     try {
       getCronJobService().stopPolling();
@@ -1057,7 +1119,7 @@ if (!gotTheLock) {
     // tool calls, and before closing application storage.
     await stopExtensionHost();
 
-    outboundHeaderProxy.stop();
+    outboundHeaderProxy?.stop();
 
     // Close the SQLite database to flush the WAL and release the file lock.
     try {
@@ -1102,7 +1164,7 @@ if (!gotTheLock) {
   const initApp = async () => {
     await app.whenReady();
 
-    await outboundHeaderProxy.start();
+    await getOutboundHeaderProxy().start();
 
     if (BUILTIN_MODEL_PROVIDER_CONFIG.enabled) {
       customerRegistrationService = new CustomerRegistrationService({
@@ -1188,6 +1250,21 @@ if (!gotTheLock) {
     if (!startupSync.success) {
       console.error('[OpenClaw] Startup config sync failed:', startupSync.error);
     }
+
+    multicaBridgeServer = new MulticaBridgeServer({
+      userDataPath: app.getPath('userData'),
+      getEngineManager: getOpenClawEngineManager,
+      getCoworkStore,
+      getDatabase: () => getStore().getDatabase(),
+      onSessionsChanged: () => {
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (!window.isDestroyed()) window.webContents.send('cowork:sessions:changed');
+        }
+      },
+    });
+    await multicaBridgeServer.start().catch(error => {
+      console.error('[MulticaBridge] Failed to start relay:', error);
+    });
 
     if (startupSync.success) {
       void ensureOpenClawRunningForCowork()

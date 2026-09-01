@@ -180,6 +180,40 @@ test('persists one idempotent user run and cascades it with the session', () => 
   sqlite.close();
 });
 
+test('persists and projects read-only Multica session bindings', () => {
+  const dir = createTempDir();
+  const sqlite = SqliteStore.create(dir);
+  const db = sqlite.getDatabase();
+  const cowork = new CoworkStore(db);
+  const session = cowork.createSession('[Multica] workspace', '/tmp/workspace');
+  db.prepare(
+    `INSERT INTO cowork_external_sessions
+      (source, external_session_key, cowork_session_id, openclaw_session_id,
+       openclaw_session_key, cwd, status, created_at, updated_at)
+     VALUES ('multica', 'multica-1', ?, 'runtime-1',
+       'agent:main:multica:hash', '/tmp/workspace', 'completed', 1, 2)`,
+  ).run(session.id);
+
+  expect(cowork.getSession(session.id)?.external).toEqual({
+    origin: 'multica',
+    readOnly: true,
+    sessionKey: 'agent:main:multica:hash',
+    status: 'completed',
+  });
+  expect(cowork.listSessions()[0]?.external).toEqual({
+    origin: 'multica',
+    readOnly: true,
+    sessionKey: 'agent:main:multica:hash',
+    status: 'completed',
+  });
+
+  cowork.deleteSession(session.id);
+  expect(
+    db.prepare("SELECT 1 FROM cowork_external_sessions WHERE source = 'multica'").get(),
+  ).toBeUndefined();
+  sqlite.close();
+});
+
 test('rejects a client turn reused by another session and interrupts open runs on startup', () => {
   const dir = createTempDir();
   const sqlite = SqliteStore.create(dir);
