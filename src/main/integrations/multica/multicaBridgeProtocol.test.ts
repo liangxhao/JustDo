@@ -7,6 +7,26 @@ import {
 } from './multicaBridgeProtocol';
 
 describe('Multica bridge protocol', () => {
+  test('accepts the Multica v0.4.36 OpenClaw argv emitted by agent_eval_multca_skillup', () => {
+    const prompt = '第一行：执行评测\nsecond line with spaces\n第三行：保持原始字节';
+    const argv = [
+      'JustDo-agent.exe',
+      'agent',
+      '--local',
+      '--json',
+      '--session-id',
+      'multica-1788224400000000000',
+      '--timeout',
+      '1800',
+      '--agent',
+      'main',
+      '--message',
+      prompt,
+    ];
+
+    expect(parseMulticaBridgeArgv(argv, true)).toEqual(argv.slice(1));
+  });
+
   test('accepts only the OpenClaw command shapes Multica uses', () => {
     expect(parseMulticaBridgeArgv(['JustDo.exe', '--version'], true)).toEqual(['--version']);
     expect(parseMulticaBridgeArgv(['JustDo.exe', 'config', 'file'], true)).toEqual([

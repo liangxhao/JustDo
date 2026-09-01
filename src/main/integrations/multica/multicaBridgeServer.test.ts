@@ -174,22 +174,17 @@ describe('MulticaBridgeServer', () => {
 
   test('returns only the bundled runtime version for version probes', async () => {
     const userDataPath = createDirectory();
-    const cliScript = path.join(userDataPath, 'version.js');
-    fs.writeFileSync(
-      cliScript,
-      [
-        "process.stderr.write('[openclaw-launcher] compile-cache dir=.compile-cache/v24.18.1-x64\\n');",
-        "process.stdout.write('OpenClaw 2026.7.1-2\\n');",
-      ].join('\n'),
-    );
+    const buildCliEnvironment = vi.fn();
     const server = new MulticaBridgeServer({
       userDataPath,
       getEngineManager: () =>
         ({
-          buildCliEnvironment: async () => ({
-            openclawEntry: cliScript,
-            env: { ...process.env, JUSTDO_ELECTRON_PATH: process.execPath },
+          getStatus: () => ({
+            phase: 'ready',
+            version: 'v2026.7.1-2',
+            canRetry: false,
           }),
+          buildCliEnvironment,
         }) as unknown as OpenClawEngineManager,
       getCoworkStore: () => {
         throw new Error('not used');
@@ -222,6 +217,7 @@ describe('MulticaBridgeServer', () => {
       expect(stdout).toBe(`${PRODUCT_NAME} 2026.7.1-2\n`);
       expect(responses.some(response => response.type === 'stderr')).toBe(false);
       expect(responses.at(-1)).toEqual({ type: 'exit', code: 0 });
+      expect(buildCliEnvironment).not.toHaveBeenCalled();
     } finally {
       await server.stop();
     }

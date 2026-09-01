@@ -30,6 +30,16 @@ test('keeps Electron readiness probes quiet and bounded', () => {
   expect(devRunner).not.toContain('wait-on -v');
 });
 
+test('builds the Multica development launcher without coupling it to the renderer build', () => {
+  const packageJson = JSON.parse(
+    fs.readFileSync(path.resolve(__dirname, '../..', 'package.json'), 'utf8'),
+  ) as { scripts: Record<string, string> };
+
+  expect(packageJson.scripts['multica:dev-agent']).toBe(
+    'node scripts/create-multica-dev-agent.cjs',
+  );
+});
+
 test('uses Vite native Monaco workers without emitting the legacy duplicate bundle', () => {
   const viteConfig = fs.readFileSync(path.resolve(__dirname, '../../vite.config.ts'), 'utf8');
   const packageJson = JSON.parse(

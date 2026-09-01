@@ -48,22 +48,22 @@ generated task config. Internal desktop agents (including the managed scheduler)
 to Multica, while provider credentials and other model-provider configuration stay in the desktop
 process.
 
-Multica v0.4.32's local `runtime profile set-path` escape hatch is not usable for a normal Windows
+Multica v0.4.36's local `runtime profile set-path` escape hatch is not usable for a normal Windows
 `.exe`: its daemon checks Unix executable permission bits (`0o111`), which Windows `os.Stat` does not
 set for ordinary executable files. The integration therefore shows a native absolute command for
 the custom runtime instead of relying on that local override.
 
 ### Development workflow
 
-Run `npm run multica:dev-agent` after changing the bridge client or native launcher, then run
-`npm run electron:dev:openclaw` and keep that JustDo process open. The status card shows the native
+Run `npm run multica:dev-agent` after changing the native launcher, then run
+`npm run electron:dev:openclaw` to compile the bridge client and keep that JustDo process open. The status card shows the native
 development Agent executable to enter as Multica's command. The launcher writes redacted lifecycle
 diagnostics to `%APPDATA%/<productName>/multica/agent-launcher.log`; it records only command class,
 argument count, PID, and exit code. Server-side bridge changes take effect when the Electron
 development process restarts. Packaged/unpacked validation remains required before release because
 runtime resource paths differ from development.
 
-Multica v0.4.32 may omit `launched_by` from `daemon status --output json`. JustDo still limits
+Multica v0.4.36 may omit `launched_by` from `daemon status --output json`. JustDo still limits
 detection to Desktop-owned profiles: it accepts the explicit `launched_by: desktop` signal, or the
 Desktop profile naming convention together with Multica Desktop's `.desktop-user-id` sidecar.
 
@@ -76,3 +76,55 @@ Desktop profile naming convention together with Multica Desktop's `.desktop-user
 - Multica tasks use local mode, so the task workspace remains the Multica worktree.
 - Each external session maps to one local Cowork session. It is visible in JustDo with a Multica badge
   and uses the authoritative Gateway history, but it is always read-only.
+
+## Direct Skill-Up evaluation
+
+`agent_eval_multca_skillup` imports Multica v0.4.36's open-source Agent backend directly and does
+not run Multica Server or a Multica daemon. This mode uses the same launcher and local bridge. Keep
+JustDo running or in the tray, enable external connections once, and pass the launcher as the
+evaluator's `--agent-executable`.
+
+For Multica's `openclaw` backend, the evaluator's `--model` value is an OpenClaw agent ID rather
+than a provider model name. Use `main` to evaluate JustDo's configured main agent. The backend emits
+`agent --local --json --session-id ... --timeout ... --agent main --message ...`; the bridge keeps
+the Skill-Up workspace as the child process working directory, so a staged `skills/<skill>/SKILL.md`
+is discovered by the bundled OpenClaw runtime.
+
+Windows development build:
+
+```powershell
+npm run multica:dev-agent
+npm run electron:dev:openclaw
+
+Set-Location D:\AI_FOR_WORLD\14_AI_workspace\common_tools\agent_eval_multca_skillup
+.\.runtime\windows\python\Scripts\agent-eval.exe run `
+  --skill .\skills\example-marker `
+  --agent openclaw `
+  --model main `
+  --agent-executable "$env:APPDATA\JustDo\multica\development\JustDo-agent.exe" `
+  --case .\skills\example-marker\evals\cases\marker.yaml `
+  --parallelism 1 `
+  --iterations 1 `
+  --benchmark
+```
+
+Linux development build:
+
+```sh
+npm run electron:dev:openclaw
+# Enable external connections in JustDo once; the UI creates ~/.local/bin/JustDo-agent.
+
+cd /path/to/agent_eval_multca_skillup
+./.runtime/linux/python/bin/agent-eval run \
+  --skill ./skills/example-marker \
+  --agent openclaw \
+  --model main \
+  --agent-executable "$HOME/.local/bin/JustDo-agent" \
+  --case ./skills/example-marker/evals/cases/marker.yaml \
+  --parallelism 1 \
+  --iterations 1 \
+  --benchmark
+```
+
+Start cross-platform validation with `--parallelism 1`. Increase it only after verifying that two
+simultaneous cases receive distinct external session IDs, Cowork sessions, and working directories.

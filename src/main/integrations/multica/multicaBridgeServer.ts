@@ -91,6 +91,24 @@ const writeResponse = (socket: net.Socket, response: MulticaBridgeResponse): voi
   if (!socket.destroyed) socket.write(encodeBridgeMessage(response));
 };
 
+const terminateProcessTree = (child: ChildProcess): void => {
+  if (!child.pid || child.exitCode !== null || child.signalCode !== null) return;
+  if (process.platform === 'win32') {
+    const killer = spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
+      windowsHide: true,
+      stdio: 'ignore',
+    });
+    killer.once('error', () => child.kill());
+    killer.unref();
+    return;
+  }
+  try {
+    process.kill(-child.pid, 'SIGTERM');
+  } catch {
+    child.kill('SIGTERM');
+  }
+};
+
 export class MulticaBridgeServer {
   private server: net.Server | null = null;
   private readonly children = new Set<ChildProcess>();
@@ -158,7 +176,7 @@ export class MulticaBridgeServer {
   async stop(): Promise<void> {
     const server = this.server;
     this.server = null;
-    for (const child of this.children) child.kill();
+    for (const child of this.children) terminateProcessTree(child);
     this.children.clear();
     if (server) {
       await new Promise<void>(resolve => server.close(() => resolve()));
@@ -197,7 +215,9 @@ export class MulticaBridgeServer {
         child = value;
       });
     });
-    socket.once('close', () => child?.kill());
+    socket.once('close', () => {
+      if (child) terminateProcessTree(child);
+    });
   }
 
   private async runRequest(
@@ -237,9 +257,25 @@ export class MulticaBridgeServer {
       if (!fs.statSync(cwd).isDirectory())
         throw new Error('The requested working directory is invalid.');
       const engineManager = this.options.getEngineManager();
-      const cli = await engineManager.buildCliEnvironment();
       let argv = [...request.argv];
       const versionProbe = argv.length === 1 && argv[0] === '--version';
+      const runtimeVersion = versionProbe ? engineManager.getStatus().version : null;
+      if (runtimeVersion) {
+        writeResponse(socket, {
+          type: 'stdout',
+          data: Buffer.from(
+            `${PRODUCT_NAME} ${runtimeVersion.replace(/^v/, '')}\n`,
+            'utf8',
+          ).toString('base64'),
+        });
+        writeResponse(socket, { type: 'exit', code: 0 });
+        socket.end();
+        console.info(`${LOG_PREFIX} Version probe answered without starting the runtime.`, {
+          command: requestSummary.command,
+        });
+        return null;
+      }
+      const cli = await engineManager.buildCliEnvironment();
       const modelDiscoveryKind = getMulticaModelDiscoveryKind(argv);
       const bufferedProbe = versionProbe || Boolean(modelDiscoveryKind);
       let binding: MulticaExternalSessionBinding | null = null;
@@ -267,6 +303,7 @@ export class MulticaBridgeServer {
       const child = spawn(executable, [cli.openclawEntry, ...runtimeArgv], {
         cwd,
         env,
+        detached: process.platform !== 'win32',
         windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
@@ -275,8 +312,8 @@ export class MulticaBridgeServer {
         pid: child.pid ?? null,
       });
       this.children.add(child);
-      if (socket.destroyed) child.kill();
-      else socket.once('close', () => child.kill());
+      if (socket.destroyed) terminateProcessTree(child);
+      else socket.once('close', () => terminateProcessTree(child));
       let stdoutCapture = Buffer.alloc(0);
       let stderrCapture = Buffer.alloc(0);
       let timedOut = false;
@@ -284,7 +321,7 @@ export class MulticaBridgeServer {
       const timeoutTimer = timeoutMs
         ? setTimeout(() => {
             timedOut = true;
-            child.kill();
+            terminateProcessTree(child);
           }, timeoutMs)
         : null;
       child.stdout?.on('data', (chunk: Buffer) => {

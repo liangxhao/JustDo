@@ -78,4 +78,59 @@ describe('Multica command launcher', () => {
       }),
     ).toThrow('path to contain no spaces');
   });
+
+  test.runIf(process.platform !== 'win32')(
+    'creates and removes a quoted user-owned POSIX launcher',
+    () => {
+      const homeDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'multica-posix-home-'));
+      tempDirectories.push(homeDirectory);
+      const binDirectory = path.join(homeDirectory, '.local', 'bin');
+      const targetDirectory = path.join(homeDirectory, 'Product runtime');
+      const targetPath = path.join(targetDirectory, "product's runtime");
+      fs.mkdirSync(binDirectory, { recursive: true });
+      fs.mkdirSync(targetDirectory, { recursive: true });
+      fs.writeFileSync(targetPath, 'placeholder');
+
+      const launcher = ensureMulticaCommandLauncher({
+        targetPath,
+        targetArgs: ['/opt/JustDo App', '--justdo-multica-bridge'],
+        platform: 'linux',
+        pathValue: binDirectory,
+        homeDirectory,
+      });
+      const content = fs.readFileSync(launcher.path, 'utf8');
+      const quotedTargetPath = `'${targetPath.replaceAll("'", `'"'"'`)}'`;
+
+      expect(launcher.commandLine).toBe('JustDo-agent');
+      expect(content).toContain(quotedTargetPath);
+      expect(content).toContain("'/opt/JustDo App' '--justdo-multica-bridge' \"$@\"");
+      expect(fs.statSync(launcher.path).mode & 0o111).not.toBe(0);
+
+      removeMulticaCommandLauncher(launcher.path, targetPath, 'linux', [
+        '/opt/JustDo App',
+        '--justdo-multica-bridge',
+      ]);
+      expect(fs.existsSync(launcher.path)).toBe(false);
+    },
+  );
+
+  test.runIf(process.platform !== 'win32')(
+    'forwards a long UTF-8 argument through the POSIX launcher',
+    () => {
+      const homeDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'multica-posix-exec-'));
+      tempDirectories.push(homeDirectory);
+      const binDirectory = path.join(homeDirectory, '.local', 'bin');
+      fs.mkdirSync(binDirectory, { recursive: true });
+      const launcher = ensureMulticaCommandLauncher({
+        targetPath: process.execPath,
+        targetArgs: ['-e', 'process.stdout.write(String(process.argv[1].length))'],
+        platform: process.platform,
+        pathValue: binDirectory,
+        homeDirectory,
+      });
+      const argument = '测'.repeat(12_000);
+
+      expect(execFileSync(launcher.path, [argument], { encoding: 'utf8' })).toBe('12000');
+    },
+  );
 });
