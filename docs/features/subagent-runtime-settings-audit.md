@@ -11,7 +11,7 @@ JustDo 另外固定写入 `archiveAfterMinutes: 0` 以保留完成的 Subagent �
 ## 2. 四个参数层级
 
 1. `agents.defaults.subagents`：Gateway 全局默认；
-2. `agents.list[].subagents`：特定 Agent 覆盖；
+2. `agents.entries.<id>.subagents`：特定 Agent 覆盖；
 3. `sessions_spawn`：单次 tool call 参数；
 4. JustDo/OpenClaw 内部常量与 patch 状态：不属于用户配置。
 

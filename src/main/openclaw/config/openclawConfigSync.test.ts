@@ -33,13 +33,12 @@ import {
   OPENCLAW_MODEL_PROVIDER_TIMEOUT_SECONDS,
   OPENCLAW_SESSION_MAX_ENTRIES,
   OPENCLAW_SESSION_PRUNE_AFTER,
-  OPENCLAW_STUCK_SESSION_ABORT_MS,
-  OPENCLAW_STUCK_SESSION_WARN_MS,
   OPENCLAW_SUBAGENT_MAX_CHILDREN_PER_AGENT,
   OPENCLAW_SUBAGENT_MAX_CONCURRENT,
   removeUnavailableOpenClawPluginRegistrations,
   resolveFileToolsWorkspaceOnly,
   resolvePermissionPolicy,
+  sanitizeOpenClawV2026_8_1Config,
 } from './openclawConfigSync';
 
 const providerApiKeyEnvVar = (providerName: string): string => {
@@ -181,44 +180,33 @@ describe('OpenClaw provider config', () => {
     expect(selection.providerConfig.timeoutSeconds).toBeGreaterThan(120);
   });
 
-  test('keeps stalled-session recovery slower than long model calls', () => {
-    expect(OPENCLAW_STUCK_SESSION_WARN_MS).toBeGreaterThanOrEqual(10 * 60 * 1000);
-    expect(OPENCLAW_STUCK_SESSION_ABORT_MS).toBeGreaterThan(
-      OPENCLAW_MODEL_PROVIDER_TIMEOUT_SECONDS * 1000,
-    );
-  });
 });
 
 describe('OpenClaw managed config metadata', () => {
-  test('stamps metadata so gateway config recovery accepts JustDo writes', () => {
-    const meta = buildOpenClawConfigMeta(
-      '2026.6.11',
-      new Date('2026-07-13T03:27:00.677Z'),
-    );
+  test('writes only metadata accepted by OpenClaw v2026.8.1', () => {
+    const meta = buildOpenClawConfigMeta('2026.8.1');
 
     expect(meta).toEqual({
-      lastTouchedVersion: '2026.6.11',
-      lastTouchedAt: '2026-07-13T03:27:00.677Z',
+      lastTouchedVersion: '2026.8.1',
     });
   });
 
-  test('does not treat a refreshed metadata timestamp as a config change', () => {
+  test('treats a retired metadata timestamp as a change so sync removes it', () => {
     const currentContent = JSON.stringify({
       gateway: { mode: 'local' },
       meta: {
-        lastTouchedVersion: '2026.6.11',
+        lastTouchedVersion: '2026.8.1',
         lastTouchedAt: '2026-07-13T03:27:00.677Z',
       },
     });
     const nextConfig = {
       meta: {
-        lastTouchedAt: '2026-07-23T07:37:34.681Z',
-        lastTouchedVersion: '2026.6.11',
+        lastTouchedVersion: '2026.8.1',
       },
       gateway: { mode: 'local' },
     };
 
-    expect(hasOpenClawConfigChanged(currentContent, nextConfig)).toBe(false);
+    expect(hasOpenClawConfigChanged(currentContent, nextConfig)).toBe(true);
   });
 
   test('detects substantive config and version changes', () => {
@@ -226,7 +214,6 @@ describe('OpenClaw managed config metadata', () => {
       gateway: { mode: 'local' },
       meta: {
         lastTouchedVersion: '2026.6.11',
-        lastTouchedAt: '2026-07-13T03:27:00.677Z',
       },
     });
 
@@ -235,7 +222,6 @@ describe('OpenClaw managed config metadata', () => {
         gateway: { mode: 'remote' },
         meta: {
           lastTouchedVersion: '2026.6.11',
-          lastTouchedAt: '2026-07-23T07:37:34.681Z',
         },
       }),
     ).toBe(true);
@@ -244,10 +230,74 @@ describe('OpenClaw managed config metadata', () => {
         gateway: { mode: 'local' },
         meta: {
           lastTouchedVersion: '2026.7.1',
-          lastTouchedAt: '2026-07-23T07:37:34.681Z',
         },
       }),
     ).toBe(true);
+  });
+});
+
+describe('OpenClaw v2026.8.1 config sanitization', () => {
+  test('removes retired fields and converts legacy managed surfaces', () => {
+    const config = sanitizeOpenClawV2026_8_1Config({
+      meta: {
+        lastTouchedVersion: '2026.8.1',
+        lastTouchedAt: '2026-09-01T00:00:00.000Z',
+      },
+      diagnostics: {
+        stuckSessionWarnMs: 600_000,
+        stuckSessionAbortMs: 2_400_000,
+        otel: { enabled: false },
+      },
+      models: {
+        pricing: { enabled: false },
+        mode: 'replace',
+      },
+      tools: {
+        experimental: { planTool: true },
+      },
+      agents: {
+        defaults: {
+          memorySearch: { enabled: false },
+          heartbeat: {
+            every: '0m',
+            includeSystemPromptSection: false,
+          },
+        },
+        list: [
+          {
+            id: 'Main',
+            default: true,
+            heartbeat: {
+              every: '2h',
+              includeSystemPromptSection: false,
+            },
+          },
+          { id: 'justdo-scheduler' },
+        ],
+      },
+    });
+
+    expect(config).toMatchObject({
+      meta: { lastTouchedVersion: '2026.8.1' },
+      diagnostics: { otel: { enabled: false } },
+      models: { mode: 'replace' },
+      tools: { updatePlan: true },
+      memory: { search: { enabled: false } },
+      agents: {
+        ownership: 'explicit',
+        defaults: { heartbeat: { every: '0m' } },
+        entries: {
+          main: { heartbeat: { every: '2h' } },
+          'justdo-scheduler': {},
+        },
+      },
+    });
+    expect(config.meta).not.toHaveProperty('lastTouchedAt');
+    expect(config.diagnostics).not.toHaveProperty('stuckSessionWarnMs');
+    expect(config.models).not.toHaveProperty('pricing');
+    expect(config.tools).not.toHaveProperty('experimental');
+    expect(config.agents).not.toHaveProperty('list');
+    expect(sanitizeOpenClawV2026_8_1Config(config)).toEqual(config);
   });
 });
 
@@ -272,7 +322,6 @@ describe('OpenClaw managed heartbeat config', () => {
   test('enables heartbeat wake-ups without injecting heartbeat instructions', () => {
     expect(buildManagedOpenClawHeartbeatConfig()).toEqual({
       every: '2h',
-      includeSystemPromptSection: false,
     });
   });
 
@@ -282,7 +331,6 @@ describe('OpenClaw managed heartbeat config', () => {
       default: true,
       heartbeat: {
         every: '2h',
-        includeSystemPromptSection: false,
       },
     });
     expect(applyManagedOpenClawHeartbeatConfig({ id: 'researcher' })).toEqual({
@@ -324,9 +372,7 @@ describe('OpenClaw managed connectivity config', () => {
         },
       },
       tools: {
-        experimental: {
-          planTool: true,
-        },
+        updatePlan: true,
       toolSearch: {
         enabled: true,
         mode: 'directory',

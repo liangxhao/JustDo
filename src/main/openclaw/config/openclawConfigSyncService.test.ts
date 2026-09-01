@@ -724,8 +724,8 @@ describe('OpenClawConfigSyncService', () => {
     fs.writeFileSync(
       configPath,
       JSON.stringify({
-        models: { pricing: { enabled: false } },
-        agents: { defaults: { memorySearch: { enabled: false } } },
+        models: {},
+        memory: { search: { enabled: false } },
       }),
       'utf8',
     );
@@ -756,8 +756,8 @@ describe('OpenClawConfigSyncService', () => {
     fs.writeFileSync(
       configPath,
       JSON.stringify({
-        models: { pricing: { enabled: false } },
-        agents: { defaults: { memorySearch: { enabled: false } } },
+        models: {},
+        memory: { search: { enabled: false } },
       }),
       'utf8',
     );

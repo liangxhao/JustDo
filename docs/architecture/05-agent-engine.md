@@ -57,6 +57,8 @@ Engine status 至少表达 stopped、starting、running、stopping/error 类 pha
 
 同步在 exclusive queue 内执行，避免设置页、MCP/Hook/Extension、permission 同时覆盖文件。写入后必须验证 active Gateway permission policy。若 Gateway 正在运行且变化需要 restart，流程是断开 adapter -> restart -> reconnect；有 active workloads 时 service 应遵守安全策略，不盲目重启。
 
+v2026.8.1 配置只生成 keyed `agents.entries` roster，并以 `agents.ownership: explicit` 标记多 Agent 所有权；`main` 与隔离的 `justdo-scheduler` 在无模型的最小配置中也必须存在。记忆检索写入顶层 `memory.search`，计划工具开关写入 `tools.updatePlan`。同步会定向清理 JustDo 历史写入但已被该版本删除的 metadata、diagnostics、pricing、heartbeat 与 experimental tool 字段，避免把旧生成结果重新喂给严格 schema。
+
 版本化的 `agentRuntimeSettings:v1` 同时生成 `agents.defaults.subagents`，把 AskUserQuestion 等待时限写入 `plugins.entries.ask-user-question.config.timeoutMinutes`，并以全局 MCP 请求时限作为用户 MCP Server 的默认 `timeout`。`mcp_servers.config_json.requestTimeoutSeconds` 可覆盖单个 Server；旧数据缺少这些后来加入的字段时分别使用 10 分钟、60 秒或继承全局默认；配置同步失败会恢复上一份数据库值。
 
 ## 5. Fail-closed admission

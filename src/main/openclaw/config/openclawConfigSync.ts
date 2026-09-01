@@ -140,8 +140,10 @@ const listKnownOpenClawWorkspaceDirs = ({
   };
   agents.forEach(agent => addDefaultAgentWorkspace(agent.id));
 
-  const existingAgentList = Array.isArray(existingAgents.list) ? existingAgents.list : [];
-  for (const entry of existingAgentList) {
+  const existingAgentEntries = isRecord(existingAgents.entries)
+    ? Object.entries(existingAgents.entries)
+    : [];
+  for (const [agentId, entry] of existingAgentEntries) {
     if (!isRecord(entry)) continue;
     const configuredWorkspace =
       typeof entry.workspace === 'string' ? entry.workspace.trim() : '';
@@ -149,7 +151,21 @@ const listKnownOpenClawWorkspaceDirs = ({
       workspaceDirs.add(resolveConfiguredPluginPath(configuredWorkspace));
       continue;
     }
-    if (typeof entry.id === 'string') addDefaultAgentWorkspace(entry.id.trim());
+    addDefaultAgentWorkspace(agentId);
+  }
+
+  // Inventory a legacy roster only for locating user-installed extensions
+  // before the next config sync rewrites it to v2026.8.1's keyed entries.
+  const legacyAgentList = Array.isArray(existingAgents.list) ? existingAgents.list : [];
+  for (const entry of legacyAgentList) {
+    if (!isRecord(entry)) continue;
+    const configuredWorkspace =
+      typeof entry.workspace === 'string' ? entry.workspace.trim() : '';
+    if (configuredWorkspace) {
+      workspaceDirs.add(resolveConfiguredPluginPath(configuredWorkspace));
+    } else if (typeof entry.id === 'string') {
+      addDefaultAgentWorkspace(entry.id.trim());
+    }
   }
   return [...workspaceDirs];
 };
@@ -312,6 +328,140 @@ const containsBuiltinModelRef = (value: unknown): boolean => {
   return isRecord(value) && Object.values(value).some(containsBuiltinModelRef);
 };
 
+const BUILTIN_MODELS_API_KEY_PLACEHOLDER = '${JUSTDO_APIKEY_BUILTIN_MODELS}';
+
+const containsBuiltinMemorySearchRef = (value: unknown): boolean =>
+  containsBuiltinModelRef(value) ||
+  (typeof value === 'string'
+    ? value.includes(BUILTIN_MODELS_API_KEY_PLACEHOLDER)
+    : Array.isArray(value)
+      ? value.some(containsBuiltinMemorySearchRef)
+      : isRecord(value) && Object.values(value).some(containsBuiltinMemorySearchRef));
+
+const withoutRetiredHeartbeatFields = (value: unknown): unknown => {
+  if (!isRecord(value)) return value;
+  const heartbeat = { ...value };
+  delete heartbeat.includeSystemPromptSection;
+  return heartbeat;
+};
+
+const canonicalizeAgentEntry = (value: Record<string, unknown>): Record<string, unknown> => {
+  const entry = { ...value };
+  delete entry.id;
+  delete entry.default;
+
+  if (Object.prototype.hasOwnProperty.call(entry, 'heartbeat')) {
+    entry.heartbeat = withoutRetiredHeartbeatFields(entry.heartbeat);
+  }
+
+  const legacyMemorySearch = isRecord(entry.memorySearch) ? entry.memorySearch : undefined;
+  delete entry.memorySearch;
+  if (legacyMemorySearch) {
+    const memory = isRecord(entry.memory) ? entry.memory : {};
+    entry.memory = {
+      ...memory,
+      ...(isRecord(memory.search) ? {} : { search: legacyMemorySearch }),
+    };
+  }
+  return entry;
+};
+
+const collectCanonicalAgentEntries = (
+  agents: Record<string, unknown>,
+): Record<string, Record<string, unknown>> => {
+  const entries: Record<string, Record<string, unknown>> = Object.create(null) as Record<
+    string,
+    Record<string, unknown>
+  >;
+  if (Array.isArray(agents.list)) {
+    for (const value of agents.list) {
+      if (!isRecord(value) || typeof value.id !== 'string' || !value.id.trim()) continue;
+      entries[normalizeOpenClawAgentId(value.id)] = canonicalizeAgentEntry(value);
+    }
+  }
+  if (isRecord(agents.entries)) {
+    for (const [agentId, value] of Object.entries(agents.entries)) {
+      if (!isRecord(value)) continue;
+      entries[normalizeOpenClawAgentId(agentId)] = canonicalizeAgentEntry(value);
+    }
+  }
+  return entries;
+};
+
+/**
+ * Remove JustDo-owned fields retired by OpenClaw v2026.8.1 and translate the
+ * two renamed config surfaces. This is deliberately narrow: unrelated
+ * operator-owned config remains untouched and is still validated by Gateway.
+ */
+export const sanitizeOpenClawV2026_8_1Config = (
+  config: Record<string, unknown>,
+): Record<string, unknown> => {
+  const next = { ...config };
+
+  if (isRecord(config.meta)) {
+    const meta = { ...config.meta };
+    delete meta.lastTouchedAt;
+    next.meta = meta;
+  }
+
+  if (isRecord(config.diagnostics)) {
+    const diagnostics = { ...config.diagnostics };
+    delete diagnostics.stuckSessionWarnMs;
+    delete diagnostics.stuckSessionAbortMs;
+    next.diagnostics = diagnostics;
+  }
+
+  if (isRecord(config.models)) {
+    const models = { ...config.models };
+    delete models.pricing;
+    next.models = models;
+  }
+
+  if (isRecord(config.tools)) {
+    const tools = { ...config.tools };
+    const experimental = isRecord(tools.experimental) ? tools.experimental : undefined;
+    if (
+      typeof experimental?.planTool === 'boolean' &&
+      !Object.prototype.hasOwnProperty.call(tools, 'updatePlan')
+    ) {
+      tools.updatePlan = experimental.planTool;
+    }
+    delete tools.experimental;
+    next.tools = tools;
+  }
+
+  if (isRecord(config.agents)) {
+    const agents = { ...config.agents };
+    const defaults = isRecord(agents.defaults) ? { ...agents.defaults } : {};
+    const legacyMemorySearch = isRecord(defaults.memorySearch)
+      ? defaults.memorySearch
+      : undefined;
+    delete defaults.memorySearch;
+    if (Object.prototype.hasOwnProperty.call(defaults, 'heartbeat')) {
+      defaults.heartbeat = withoutRetiredHeartbeatFields(defaults.heartbeat);
+    }
+
+    const entries = collectCanonicalAgentEntries(agents);
+    delete agents.list;
+    agents.defaults = defaults;
+    if (Object.keys(entries).length > 0) {
+      agents.ownership = 'explicit';
+      agents.entries = entries;
+    }
+    next.agents = agents;
+
+    if (legacyMemorySearch) {
+      const memory = isRecord(next.memory) ? next.memory : {};
+      next.memory = {
+        ...memory,
+        ...(isRecord(memory.search) ? {} : { search: legacyMemorySearch }),
+      };
+    }
+  }
+
+  return next;
+};
+
 export const verifyLoggedOutOpenClawConfig = (
   configPath: string,
 ): OpenClawConfigVerification => {
@@ -327,7 +477,7 @@ export const verifyLoggedOutOpenClawConfig = (
     };
   }
 
-  if (content.includes('${JUSTDO_APIKEY_BUILTIN_MODELS}')) {
+  if (content.includes(BUILTIN_MODELS_API_KEY_PLACEHOLDER)) {
     return {
       ok: false,
       error: `OpenClaw logout config verification failed at ${configPath}: built-in API key placeholder remains.`,
@@ -363,10 +513,11 @@ export const verifyLoggedOutOpenClawConfig = (
 
   const agents = isRecord(config.agents) ? config.agents : {};
   const defaults = isRecord(agents.defaults) ? agents.defaults : {};
-  const defaultMemorySearch = isRecord(defaults.memorySearch) ? defaults.memorySearch : {};
+  const memory = isRecord(config.memory) ? config.memory : {};
+  const defaultMemorySearch = isRecord(memory.search) ? memory.search : {};
   if (
     containsBuiltinModelRef(defaults.model) ||
-    defaultMemorySearch.provider === OpenClawProviderId.BuiltinModels
+    containsBuiltinMemorySearchRef(defaultMemorySearch)
   ) {
     return {
       ok: false,
@@ -375,8 +526,10 @@ export const verifyLoggedOutOpenClawConfig = (
   }
 
   if (
-    Array.isArray(agents.list) &&
-    agents.list.some(agent => isRecord(agent) && containsBuiltinModelRef(agent.model))
+    isRecord(agents.entries) &&
+    Object.values(agents.entries).some(
+      agent => isRecord(agent) && containsBuiltinModelRef(agent.model),
+    )
   ) {
     return {
       ok: false,
@@ -411,8 +564,11 @@ const buildAuthScopedOpenClawConfig = (
   managedConfig: Record<string, unknown>,
   reason: string,
 ): Record<string, unknown> => {
+  const canonicalExistingConfig = sanitizeOpenClawV2026_8_1Config(existingConfig);
   const isLogin = reason === BuiltinModelSyncReason.AuthLogin;
-  const existingModels = isRecord(existingConfig.models) ? existingConfig.models : {};
+  const existingModels = isRecord(canonicalExistingConfig.models)
+    ? canonicalExistingConfig.models
+    : {};
   const managedModels = isRecord(managedConfig.models) ? managedConfig.models : {};
   const existingProviders = isRecord(existingModels.providers)
     ? existingModels.providers
@@ -431,11 +587,17 @@ const buildAuthScopedOpenClawConfig = (
       managedProviders[OpenClawProviderId.BuiltinModels];
   }
 
-  const existingAgents = isRecord(existingConfig.agents) ? existingConfig.agents : {};
+  const existingAgents = isRecord(canonicalExistingConfig.agents)
+    ? canonicalExistingConfig.agents
+    : {};
   const managedAgents = isRecord(managedConfig.agents) ? managedConfig.agents : {};
-  const existingSession = isRecord(existingConfig.session) ? existingConfig.session : {};
+  const existingSession = isRecord(canonicalExistingConfig.session)
+    ? canonicalExistingConfig.session
+    : {};
   const managedSession = isRecord(managedConfig.session) ? managedConfig.session : {};
-  const existingTools = isRecord(existingConfig.tools) ? existingConfig.tools : null;
+  const existingTools = isRecord(canonicalExistingConfig.tools)
+    ? canonicalExistingConfig.tools
+    : null;
   const existingDefaults = isRecord(existingAgents.defaults)
     ? existingAgents.defaults
     : {};
@@ -472,12 +634,6 @@ const buildAuthScopedOpenClawConfig = (
     ) {
       defaults.model = managedDefaultModel;
     }
-    const managedMemorySearch = isRecord(managedDefaults.memorySearch)
-      ? managedDefaults.memorySearch
-      : undefined;
-    if (managedMemorySearch?.provider === OpenClawProviderId.BuiltinModels) {
-      defaults.memorySearch = managedMemorySearch;
-    }
   } else {
     if (containsBuiltinModelRef(defaults.model)) {
       if (managedDefaultPrimary && !containsBuiltinModelRef(managedDefaultModel)) {
@@ -486,28 +642,20 @@ const buildAuthScopedOpenClawConfig = (
         delete defaults.model;
       }
     }
-    const memorySearch = isRecord(defaults.memorySearch) ? defaults.memorySearch : undefined;
-    if (
-      memorySearch?.provider === OpenClawProviderId.BuiltinModels ||
-      Object.keys(providers).length === 0
-    ) {
-      defaults.memorySearch = { enabled: false };
-    }
   }
 
-  let agentList = existingAgents.list;
-  if (shouldRemoveBuiltinRefs && Array.isArray(existingAgents.list)) {
-    const managedList = Array.isArray(managedAgents.list) ? managedAgents.list : [];
-    agentList = existingAgents.list.map(entry => {
-      if (!isRecord(entry) || !containsBuiltinModelRef(entry.model)) {
-        return entry;
-      }
-      const id = typeof entry.id === 'string' ? entry.id : '';
-      const managedEntry = managedList.find(
-        candidate => isRecord(candidate) && candidate.id === id,
-      );
+  const existingEntries = isRecord(existingAgents.entries) ? existingAgents.entries : {};
+  const managedEntries = isRecord(managedAgents.entries) ? managedAgents.entries : {};
+  const agentEntries: Record<string, unknown> = {
+    ...managedEntries,
+    ...existingEntries,
+  };
+  if (shouldRemoveBuiltinRefs) {
+    for (const [id, entry] of Object.entries(agentEntries)) {
+      if (!isRecord(entry) || !containsBuiltinModelRef(entry.model)) continue;
+      const managedEntry = isRecord(managedEntries[id]) ? managedEntries[id] : undefined;
       const fallbackModel =
-        isRecord(managedEntry) &&
+        managedEntry &&
         isRecord(managedEntry.model) &&
         !containsBuiltinModelRef(managedEntry.model)
           ? managedEntry.model
@@ -520,8 +668,28 @@ const buildAuthScopedOpenClawConfig = (
       } else {
         delete nextEntry.model;
       }
-      return nextEntry;
-    });
+      agentEntries[id] = nextEntry;
+    }
+  }
+
+  const existingMemory = isRecord(canonicalExistingConfig.memory)
+    ? canonicalExistingConfig.memory
+    : {};
+  const managedMemory = isRecord(managedConfig.memory) ? managedConfig.memory : {};
+  const existingMemorySearch = isRecord(existingMemory.search)
+    ? existingMemory.search
+    : undefined;
+  const managedMemorySearch = isRecord(managedMemory.search)
+    ? managedMemory.search
+    : undefined;
+  const memory = { ...existingMemory };
+  if (!shouldRemoveBuiltinRefs && managedMemorySearch) {
+    memory.search = managedMemorySearch;
+  } else if (
+    containsBuiltinMemorySearchRef(existingMemorySearch) ||
+    Object.keys(providers).length === 0
+  ) {
+    memory.search = { enabled: false };
   }
 
   const models: Record<string, unknown> = {
@@ -535,20 +703,23 @@ const buildAuthScopedOpenClawConfig = (
     delete models.providers;
   }
 
-  return {
-    ...existingConfig,
+  return sanitizeOpenClawV2026_8_1Config({
+    ...canonicalExistingConfig,
     models,
     agents: {
       ...existingAgents,
+      ownership: 'explicit',
       defaults,
-      ...(agentList === undefined ? {} : { list: agentList }),
+      entries: agentEntries,
     },
+    memory,
     session: {
       ...existingSession,
       ...managedSession,
     },
     ...(existingTools ? { tools: removeRetiredManagedToolDenyEntries(existingTools) } : {}),
-  };
+    ...(isRecord(managedConfig.meta) ? { meta: managedConfig.meta } : {}),
+  });
 };
 
 const RESERVED_PLUGIN_SLOT_VALUES = new Set(['legacy', 'none']);
@@ -715,8 +886,6 @@ export const OPENCLAW_MODEL_PROVIDER_TIMEOUT_SECONDS = 30 * 60;
 // the provider ceiling so a healthy long-context SSE response is not aborted
 // by the much shorter upstream default (180s).
 export const OPENCLAW_COMPACTION_TIMEOUT_SECONDS = OPENCLAW_MODEL_PROVIDER_TIMEOUT_SECONDS;
-export const OPENCLAW_STUCK_SESSION_WARN_MS = 10 * 60 * 1000;
-export const OPENCLAW_STUCK_SESSION_ABORT_MS = 40 * 60 * 1000;
 // OpenClaw treats zero as "never archive" for completed run-mode subagents.
 export const OPENCLAW_SUBAGENT_ARCHIVE_AFTER_MINUTES = 0;
 // Keep model execution bounded while allowing a small per-parent backlog.
@@ -766,12 +935,10 @@ export const buildManagedOpenClawAgentThinkingConfig = (
 
 export const buildManagedOpenClawHeartbeatConfig = () => ({
   every: '2h',
-  includeSystemPromptSection: false,
 });
 
 const buildDisabledOpenClawHeartbeatConfig = () => ({
   every: '0m',
-  includeSystemPromptSection: false,
 });
 
 export const applyManagedOpenClawHeartbeatConfig = (
@@ -806,9 +973,7 @@ export const buildManagedOpenClawConnectivityConfig = (
     },
   },
   tools: {
-    experimental: {
-      planTool: true,
-    },
+    updatePlan: true,
     // OpenClaw v2026.8.1 owns native tool-directory discovery and hydration.
     toolSearch: {
       enabled: true,
@@ -884,10 +1049,8 @@ export const buildManagedOpenClawConnectivityConfig = (
 
 export const buildOpenClawConfigMeta = (
   version: string | null | undefined,
-  now = new Date(),
 ): Record<string, string> => ({
   lastTouchedVersion: version || 'unknown',
-  lastTouchedAt: now.toISOString(),
 });
 
 const sortJsonValue = (value: unknown): unknown => {
@@ -904,18 +1067,6 @@ const sortJsonValue = (value: unknown): unknown => {
   );
 };
 
-const omitVolatileConfigMetadata = (config: Record<string, unknown>): Record<string, unknown> => {
-  if (!isRecord(config.meta)) {
-    return config;
-  }
-  const meta = { ...config.meta };
-  delete meta.lastTouchedAt;
-  return {
-    ...config,
-    meta,
-  };
-};
-
 export const hasOpenClawConfigChanged = (
   currentContent: string,
   nextConfig: Record<string, unknown>,
@@ -926,8 +1077,7 @@ export const hasOpenClawConfigChanged = (
       return true;
     }
     return (
-      JSON.stringify(sortJsonValue(omitVolatileConfigMetadata(currentConfig))) !==
-      JSON.stringify(sortJsonValue(omitVolatileConfigMetadata(nextConfig)))
+      JSON.stringify(sortJsonValue(currentConfig)) !== JSON.stringify(sortJsonValue(nextConfig))
     );
   } catch {
     return true;
@@ -1233,19 +1383,16 @@ export const buildBuiltinMemorySearchConfig = (
   };
 };
 
-const withDisabledMemorySearch = (
+const withMemorySearch = (
   config: Record<string, unknown>,
+  search: ManagedMemorySearchConfig,
 ): Record<string, unknown> => {
-  const agents = isRecord(config.agents) ? config.agents : {};
-  const defaults = isRecord(agents.defaults) ? agents.defaults : {};
+  const memory = isRecord(config.memory) ? config.memory : {};
   return {
     ...config,
-    agents: {
-      ...agents,
-      defaults: {
-        ...defaults,
-        memorySearch: { enabled: false },
-      },
+    memory: {
+      ...memory,
+      search,
     },
   };
 };
@@ -1354,7 +1501,6 @@ export class OpenClawConfigSync {
     let existingConfig: Record<string, unknown> | null = null;
     let existingPlugins: Record<string, unknown> = {};
     let existingSkills: Record<string, unknown> = {};
-    let existingModels: Record<string, unknown> = {};
     try {
       currentContent = fs.readFileSync(configPath, 'utf8');
       const parsedConfig = JSON.parse(currentContent) as unknown;
@@ -1365,9 +1511,6 @@ export class OpenClawConfigSync {
         }
         if (isRecord(parsedConfig.skills)) {
           existingSkills = parsedConfig.skills;
-        }
-        if (isRecord(parsedConfig.models)) {
-          existingModels = parsedConfig.models;
         }
       }
     } catch {
@@ -1518,18 +1661,8 @@ export class OpenClawConfigSync {
 
     const managedModels: Record<string, unknown> = {
       mode: 'replace',
-      pricing: {
-        enabled: false,
-      },
       providers: allProvidersMap,
     };
-    if (reason === BuiltinModelSyncReason.AuthLogout) {
-      if (Object.prototype.hasOwnProperty.call(existingModels, 'pricing')) {
-        managedModels.pricing = existingModels.pricing;
-      } else {
-        delete managedModels.pricing;
-      }
-    }
     const availableModelRefs = new Set(
       Object.entries(allProvidersMap).flatMap(([providerId, provider]) =>
         provider.models.map(model => `${providerId}/${model.id}`),
@@ -1547,11 +1680,12 @@ export class OpenClawConfigSync {
       },
       models: managedModels,
       diagnostics: {
-        stuckSessionWarnMs: OPENCLAW_STUCK_SESSION_WARN_MS,
-        stuckSessionAbortMs: OPENCLAW_STUCK_SESSION_ABORT_MS,
         otel: {
           enabled: false,
         },
+      },
+      memory: {
+        search: memorySearchConfig,
       },
       agents: {
         defaults: {
@@ -1560,7 +1694,6 @@ export class OpenClawConfigSync {
           model: {
             primary: primaryModel,
           },
-          memorySearch: memorySearchConfig,
           sandbox: {
             mode: sandboxMode,
           },
@@ -1569,7 +1702,7 @@ export class OpenClawConfigSync {
           workspace: resolvedWorkspaceDir,
           subagents: buildManagedOpenClawSubagentConfig(agentRuntimeSettings),
         },
-        ...this.buildAgentsList(primaryModel, availableModelRefs, resolvedWorkspaceDir),
+        ...this.buildAgentsEntries(primaryModel, availableModelRefs, resolvedWorkspaceDir),
       },
       session: buildManagedOpenClawSessionConfig(),
       commands: {
@@ -1815,7 +1948,7 @@ export class OpenClawConfigSync {
   }
 
   /**
-   * Build the `agents.list` config array for openclaw.json.
+   * Build the canonical `agents.entries` roster for openclaw.json.
    *
    * The main agent uses the user's configured workspace directory through
    * `agents.defaults.workspace`. Non-main agents omit `workspace`, so current
@@ -1824,16 +1957,16 @@ export class OpenClawConfigSync {
    * Per-agent `identity` (name, emoji) is set from the agent database so
    * OpenClaw picks it up natively.
    */
-  private buildAgentsList(
+  private buildAgentsEntries(
     defaultPrimaryModel: string,
     availableModelRefs: ReadonlySet<string>,
     mainWorkspaceDir: string,
-  ): { list?: Array<Record<string, unknown>> } {
+  ): { ownership: 'explicit'; entries: Record<string, Record<string, unknown>> } {
     const agents = (this.getAgents?.() ?? []).filter(agent => agent.id !== ScheduledTaskAgentId);
     const mainAgent = agents.find(agent => agent.id === 'main');
     const displayNameMap = getProviderDisplayNameMap();
 
-    const list: Array<Record<string, unknown>> = [
+    const list = [
       mainAgent
         ? buildAgentEntry(mainAgent, defaultPrimaryModel, displayNameMap)
         : {
@@ -1870,7 +2003,14 @@ export class OpenClawConfigSync {
       return applyManagedOpenClawHeartbeatConfig(constrainedEntry);
     });
 
-    return list.length > 0 ? { list } : {};
+    const entries = Object.fromEntries(
+      list.map(entry => {
+        const agentId = normalizeOpenClawAgentId(String(entry.id || 'main'));
+        return [agentId, canonicalizeAgentEntry(entry)];
+      }),
+    );
+
+    return { ownership: 'explicit', entries };
   }
 
   /**
@@ -1958,7 +2098,7 @@ export class OpenClawConfigSync {
     const trustedInstalledExtensionIds = listInstalledOpenClawExtensionIds(
       this.engineManager.getStateDir(),
     );
-    const minimalConfig: Record<string, unknown> = withDisabledMemorySearch({
+    const minimalConfig: Record<string, unknown> = withMemorySearch({
       gateway: {
         mode: 'local',
         controlUi: {
@@ -1966,22 +2106,33 @@ export class OpenClawConfigSync {
           allowedOrigins: ['*'],
         },
       },
-      models: {
-        pricing: {
-          enabled: false,
-        },
-      },
+      models: {},
       diagnostics: {
         otel: {
           enabled: false,
         },
       },
       agents: {
+        ownership: 'explicit',
         defaults: {
           ...buildManagedOpenClawAgentThinkingConfig(agentRuntimeSettings),
           heartbeat: buildDisabledOpenClawHeartbeatConfig(),
           compaction: buildManagedOpenClawCompactionConfig(),
           subagents: buildManagedOpenClawSubagentConfig(agentRuntimeSettings),
+          workspace: resolvedWorkspaceDir,
+        },
+        entries: {
+          main: {
+            reasoningDefault: 'stream',
+            heartbeat: buildManagedOpenClawHeartbeatConfig(),
+          },
+          [ScheduledTaskAgentId]: {
+            workspace: resolvedWorkspaceDir,
+            tools: {
+              fs: { workspaceOnly: false },
+              exec: { host: 'gateway', mode: PermissionMode.Full },
+            },
+          },
         },
       },
       session: buildManagedOpenClawSessionConfig(),
@@ -2010,7 +2161,7 @@ export class OpenClawConfigSync {
       meta: buildOpenClawConfigMeta(this.engineManager.getDesiredVersion()),
       // The managed permission extension is part of Gateway readiness even
       // before a model is configured. Runtime extensions are precompiled.
-    });
+    }, { enabled: false });
 
     const nextContent = `${JSON.stringify(minimalConfig, null, 2)}\n`;
     let currentContent = '';
@@ -2059,18 +2210,26 @@ export class OpenClawConfigSync {
       try {
         const existing = JSON.parse(currentContent);
         if (isRecord(existing)) {
+          const canonicalExisting = sanitizeOpenClawV2026_8_1Config(existing);
           const hasHookConfig = Object.keys(hookConfig).length > 0;
           const hasSubstantiveConfig =
-            Boolean(isRecord(existing.models) && existing.models.providers) ||
-            Boolean(isRecord(existing.plugins) && existing.plugins.entries) ||
-            Boolean(isRecord(existing.gateway) && existing.gateway.mode);
+            Boolean(isRecord(canonicalExisting.models) && canonicalExisting.models.providers) ||
+            Boolean(isRecord(canonicalExisting.plugins) && canonicalExisting.plugins.entries) ||
+            Boolean(isRecord(canonicalExisting.gateway) && canonicalExisting.gateway.mode);
           if (hasHookConfig || hasSubstantiveConfig) {
-            const existingDiagnostics = isRecord(existing.diagnostics)
-              ? existing.diagnostics
+            const existingDiagnostics = isRecord(canonicalExisting.diagnostics)
+              ? canonicalExisting.diagnostics
               : {};
-            const existingAgents = isRecord(existing.agents) ? existing.agents : {};
+            const existingAgents = isRecord(canonicalExisting.agents)
+              ? canonicalExisting.agents
+              : {};
             const existingDefaults = isRecord(existingAgents.defaults)
               ? existingAgents.defaults
+              : {};
+            const minimalAgents = isRecord(minimalConfig.agents) ? minimalConfig.agents : {};
+            const minimalEntries = isRecord(minimalAgents.entries) ? minimalAgents.entries : {};
+            const existingEntries = isRecord(existingAgents.entries)
+              ? existingAgents.entries
               : {};
             const mergedDefaults: Record<string, unknown> = {
               ...existingDefaults,
@@ -2083,11 +2242,13 @@ export class OpenClawConfigSync {
               delete mergedDefaults.thinkingDefault;
             }
             const existingTools = removeRetiredManagedToolDenyEntries(
-              isRecord(existing.tools) ? existing.tools : {},
+              isRecord(canonicalExisting.tools) ? canonicalExisting.tools : {},
             );
             const existingFileTools = isRecord(existingTools.fs) ? existingTools.fs : {};
             const existingExecTools = isRecord(existingTools.exec) ? existingTools.exec : {};
-            const existingPlugins = isRecord(existing.plugins) ? existing.plugins : {};
+            const existingPlugins = isRecord(canonicalExisting.plugins)
+              ? canonicalExisting.plugins
+              : {};
             const availableExtensionIds = listAvailableOpenClawExtensionIds(
               this.engineManager.getStateDir(),
               existingPlugins,
@@ -2095,11 +2256,11 @@ export class OpenClawConfigSync {
                 stateDir: this.engineManager.getStateDir(),
                 mainWorkspaceDir: resolvedWorkspaceDir,
                 agents: this.getAgents?.() ?? [],
-                existingConfig: existing,
+                existingConfig: canonicalExisting,
               }),
             );
-            const mergedConfig = withDisabledMemorySearch({
-              ...existing,
+            const mergedConfig = sanitizeOpenClawV2026_8_1Config(withMemorySearch({
+              ...canonicalExisting,
               diagnostics: {
                 ...existingDiagnostics,
                 otel: {
@@ -2108,7 +2269,12 @@ export class OpenClawConfigSync {
               },
               agents: {
                 ...existingAgents,
+                ownership: 'explicit',
                 defaults: mergedDefaults,
+                entries: {
+                  ...minimalEntries,
+                  ...existingEntries,
+                },
               },
               session: buildManagedOpenClawSessionConfig(),
               mcp: {
@@ -2136,7 +2302,7 @@ export class OpenClawConfigSync {
                 availableExtensionIds,
               ),
               meta: minimalConfig.meta,
-            });
+            }, { enabled: false }));
             const mergedContent = `${JSON.stringify(mergedConfig, null, 2)}\n`;
             if (hasOpenClawConfigChanged(currentContent, mergedConfig)) {
               ensureDir(path.dirname(configPath));

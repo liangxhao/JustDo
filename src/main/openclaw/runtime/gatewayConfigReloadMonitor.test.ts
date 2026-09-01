@@ -14,13 +14,14 @@ describe('GatewayConfigReloadMonitor', () => {
   it('parses changed paths from Gateway reload logs', () => {
     expect(
       parseGatewayConfigReloadPaths(
-        '[reload] config change detected; evaluating reload (agents.list, meta.lastTouchedAt)',
+        '[reload] config change detected; evaluating reload (agents.entries, meta.lastTouchedVersion)',
       ),
-    ).toEqual(['agents.list', 'meta.lastTouchedAt']);
+    ).toEqual(['agents.entries', 'meta.lastTouchedVersion']);
   });
 
   it('uses OpenClaw first-match ordering for overlapping config prefixes', () => {
-    expect(classifyGatewayConfigReloadPath('models.pricing.enabled')).toBe('restart');
+    expect(classifyGatewayConfigReloadPath('mcp.apps.port')).toBe('restart');
+    expect(classifyGatewayConfigReloadPath('mcp.servers.local')).toBe('hot');
     expect(classifyGatewayConfigReloadPath('models.providers.builtin_models')).toBe('hot');
     expect(classifyGatewayConfigReloadPath('plugins.load.paths')).toBe('restart');
     expect(classifyGatewayConfigReloadPath('plugins.entries.ask-user.enabled')).toBe('hot');
@@ -36,7 +37,7 @@ describe('GatewayConfigReloadMonitor', () => {
     const generation = monitor.getGeneration();
 
     monitor.observeLine(
-      '[reload] config change detected; evaluating reload (agents.defaults.sandbox.mode)',
+      '[reload] config change detected; evaluating reload (meta.lastTouchedVersion)',
     );
 
     await expect(monitor.waitForReloadAfter(generation)).resolves.toBe(true);
@@ -75,9 +76,9 @@ describe('GatewayConfigReloadMonitor', () => {
     const second = monitor.waitForReloadAfter(generation);
 
     monitor.observeLine(
-      '[reload] config change detected; evaluating reload (agents.list)',
+      '[reload] config change detected; evaluating reload (agents.entries)',
     );
-    monitor.observeLine('[reload] config hot reload applied (agents.list)');
+    monitor.observeLine('[reload] config hot reload applied (agents.entries)');
 
     await expect(Promise.all([first, second])).resolves.toEqual([true, true]);
   });
@@ -91,12 +92,12 @@ describe('GatewayConfigReloadMonitor', () => {
     );
     const beforeHot = monitor.getGeneration();
     monitor.observeLine(
-      '[reload] config change detected; evaluating reload (agents.list)',
+      '[reload] config change detected; evaluating reload (agents.entries)',
     );
     const restartResult = monitor.waitForReloadAfter(beforeRestart, 100);
     const hotResult = monitor.waitForReloadAfter(beforeHot, 100);
 
-    monitor.observeLine('[reload] config hot reload applied (agents.list)');
+    monitor.observeLine('[reload] config hot reload applied (agents.entries)');
     await expect(hotResult).resolves.toBe(true);
 
     await vi.advanceTimersByTimeAsync(100);

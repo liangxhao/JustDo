@@ -576,18 +576,15 @@ describe('OpenClaw auth logout config sync', () => {
     expect(content).not.toContain('JUSTDO_APIKEY_BUILTIN_MODELS');
     const config = JSON.parse(content);
     expect(config.models.providers).toBeUndefined();
-    expect(config.models.pricing).toEqual({ enabled: true });
+    expect(config.models).not.toHaveProperty('pricing');
     expect(config.agents.defaults.model).toBeUndefined();
-    expect(config.agents.defaults.memorySearch).toEqual({ enabled: false });
+    expect(config.agents.defaults).not.toHaveProperty('memorySearch');
+    expect(config.memory.search).toEqual({ enabled: false });
     expect(config.agents.defaults.timeoutSeconds).toBe(120);
     expect(config.agents.defaults.compaction).not.toHaveProperty('keepRecentTokens');
-    expect(config.agents.list).toEqual([
-      {
-        id: 'main',
-        default: true,
-        reasoningDefault: 'stream',
-      },
-    ]);
+    expect(config.agents.ownership).toBe('explicit');
+    expect(config.agents.entries.main).toEqual({ reasoningDefault: 'stream' });
+    expect(config.agents.entries).toHaveProperty('justdo-scheduler');
     expect(config.plugins.entries.custom_plugin).toEqual({
       enabled: true,
       config: { mode: 'keep-me' },
@@ -641,11 +638,11 @@ describe('OpenClaw auth logout config sync', () => {
         models: [{ id: 'custom-model' }],
       },
     });
-    expect(config.models.pricing).toEqual({ enabled: true });
+    expect(config.models).not.toHaveProperty('pricing');
     expect(config.agents.defaults.model.primary).toBe('custom-provider/custom-model');
     expect(config.agents.defaults.timeoutSeconds).toBe(120);
-    expect(config.agents.list[0].model.primary).toBe('custom-provider/custom-model');
-    expect(config.agents.list[1].model.primary).toBe('custom-provider/custom-model');
+    expect(config.agents.entries.main.model.primary).toBe('custom-provider/custom-model');
+    expect(config.agents.entries.worker.model.primary).toBe('custom-provider/custom-model');
     expect(config.gateway).toEqual({ mode: 'local', customSetting: 'keep-me' });
     expect(config.customFeature).toEqual({ enabled: true });
     expect(verifyLoggedOutOpenClawConfig(configPath)).toEqual({ ok: true });
@@ -667,10 +664,10 @@ describe('OpenClaw auth logout config sync', () => {
         models: [{ id: 'custom-model' }],
       },
     });
-    expect(config.models.pricing).toEqual({ enabled: true });
+    expect(config.models).not.toHaveProperty('pricing');
     expect(config.agents.defaults.model).toBeUndefined();
-    expect(config.agents.list[0].model.primary).toBe('custom-provider/custom-model');
-    expect(config.agents.list[1].model).toBeUndefined();
+    expect(config.agents.entries.main.model.primary).toBe('custom-provider/custom-model');
+    expect(config.agents.entries.worker.model).toBeUndefined();
     expect(config.gateway).toEqual({ mode: 'local', customSetting: 'keep-me' });
     expect(config.customFeature).toEqual({ enabled: true });
   });
@@ -696,7 +693,7 @@ describe('OpenClaw auth logout config sync', () => {
     });
   });
 
-  test('builds the Agent list with a custom fallback after the built-in provider is removed', () => {
+  test('builds canonical Agent entries with a custom fallback', () => {
     const sync = new OpenClawConfigSync({
       engineManager: {
         getDesiredVersion: () => '2026.6.11',
@@ -722,27 +719,26 @@ describe('OpenClaw auth logout config sync', () => {
 
     const result = (
       sync as unknown as {
-        buildAgentsList: (
+        buildAgentsEntries: (
           fallback: string,
           available: ReadonlySet<string>,
           workspace: string,
-        ) => { list?: Array<Record<string, unknown>> };
+        ) => { ownership: 'explicit'; entries: Record<string, Record<string, unknown>> };
       }
-    ).buildAgentsList(
+    ).buildAgentsEntries(
       'custom-provider/custom-model',
       new Set(['custom-provider/custom-model']),
       'E:/workspace/project',
     );
 
-    expect(result.list?.[0]).toMatchObject({
-      id: 'main',
+    expect(result.ownership).toBe('explicit');
+    expect(result.entries.main).toMatchObject({
       model: {
         primary: 'custom-provider/custom-model',
       },
     });
-    expect(result.list).toContainEqual(
+    expect(result.entries['justdo-scheduler']).toEqual(
       expect.objectContaining({
-        id: 'justdo-scheduler',
         workspace: 'E:/workspace/project',
         tools: {
           fs: { workspaceOnly: false },
@@ -851,11 +847,11 @@ describe('OpenClaw auth logout config sync', () => {
     expect(result.ok).toBe(true);
     expect(result.configChanged).toBe(true);
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    expect(config.models.pricing).toEqual({ enabled: true });
+    expect(config.models).not.toHaveProperty('pricing');
     expect(config.models.providers.builtin_models).toBeUndefined();
     expect(config.models.providers['custom-provider']).toBeDefined();
     expect(config.agents.defaults.model.primary).toBe('custom-provider/custom-model');
-    expect(config.agents.list[0].model.primary).toBe('custom-provider/custom-model');
+    expect(config.agents.entries.main.model.primary).toBe('custom-provider/custom-model');
     expect(config.customFeature).toEqual({
       enabled: true,
       nested: { value: 'preserve-me' },
@@ -949,7 +945,7 @@ describe('OpenClaw auth logout config sync', () => {
       apiKey: '${JUSTDO_APIKEY_CUSTOM_1}',
       models: [{ id: 'custom-model' }],
     });
-    expect(config.models.pricing).toEqual({ enabled: true });
+    expect(config.models).not.toHaveProperty('pricing');
     expect(config.agents.defaults.model.primary).toBe('custom-provider/custom-model');
     expect(config.agents.defaults).not.toHaveProperty('thinkingDefault');
     expect(config.agents.defaults.compaction.memoryFlush).toEqual({ enabled: false });
