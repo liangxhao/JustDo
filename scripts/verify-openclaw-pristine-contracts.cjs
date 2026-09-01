@@ -6,9 +6,9 @@ const {
   beginRuntimePatchPhase,
   endRuntimePatchPhase,
   readRuntimeTextFile,
-} = require('./patches/v2026.7.1-2/_patch-utils.js');
+} = require('./patches/v2026.8.1/_patch-utils.js');
 
-const TARGET_VERSION = '2026.7.1-2';
+const TARGET_VERSION = '2026.8.1';
 
 function walkJavaScriptFiles(dir, output = []) {
   if (!fs.existsSync(dir)) return output;
@@ -30,44 +30,6 @@ function findFileWithAll(files, fragments, label) {
   });
   if (matches.length === 0) {
     throw new Error(`Pristine OpenClaw contract is missing: ${label}`);
-  }
-  return matches.map(filePath => path.basename(filePath));
-}
-
-function findFunctionWithControlFlow(files, signature, required, forbidden, label) {
-  const matches = files.filter(filePath => {
-    const content = readRuntimeTextFile(filePath).replace(/\r\n/g, '\n');
-    const start = content.indexOf(signature);
-    if (start < 0) return false;
-    const end = content.indexOf('\n}\n', start);
-    if (end < 0) return false;
-    const functionSource = content.slice(start, end + 2);
-    return (
-      required.every(fragment => functionSource.includes(fragment)) &&
-      forbidden.every(fragment => !functionSource.includes(fragment))
-    );
-  });
-  if (matches.length === 0) {
-    throw new Error(`Pristine OpenClaw control-flow contract is missing: ${label}`);
-  }
-  return matches.map(filePath => path.basename(filePath));
-}
-
-function findBlockBetween(files, startSignature, endSignature, required, forbidden, label) {
-  const matches = files.filter(filePath => {
-    const content = readRuntimeTextFile(filePath).replace(/\r\n/g, '\n');
-    const start = content.indexOf(startSignature);
-    if (start < 0) return false;
-    const end = content.indexOf(endSignature, start + startSignature.length);
-    if (end < 0) return false;
-    const blockSource = content.slice(start, end);
-    return (
-      required.every(fragment => blockSource.includes(fragment)) &&
-      forbidden.every(fragment => !blockSource.includes(fragment))
-    );
-  });
-  if (matches.length === 0) {
-    throw new Error(`Pristine OpenClaw bounded-block contract is missing: ${label}`);
   }
   return matches.map(filePath => path.basename(filePath));
 }
@@ -131,299 +93,123 @@ function verifyPristineOpenClawContracts(runtimeDir, options = {}) {
   beginRuntimePatchPhase(runtimeDir, snapshot);
   try {
     const upstream = {
-      '009-reply-conflict-retry': findFileWithAll(
+      'live-thinking-stream': findFileWithAll(
         files,
         [
-          'REPLY_SESSION_INIT_CONFLICT_MESSAGE_RE',
-          'TELEGRAM_PLUGIN_CALLBACK_SUBMIT_RETRY_DELAYS_MS',
-          'sleepWithAbort(retryDelayMs',
+          'evtType === "thinking_start"',
+          'evtType === "thinking_delta"',
+          'ctx.emitReasoningStream(partialThinking || thinkingContent || thinkingDelta)',
         ],
-        'reply session initialization conflict normalization and bounded retry',
+        'incremental thinking deltas are published through the reasoning stream',
       ),
-      '014-context-budget-native-state': [
-        ...findFileWithAll(
+      'history-display-projection': uniqueEvidence(
+        findFileWithAll(
           files,
-          ['buildPrePromptContextBudgetStatus({', 'contextBudgetStatus,'],
-          'native pre-prompt context budget calculation',
-        ),
-        ...findFileWithAll(
-          files,
-          ['lastContextBudgetStatus', 'contextBudgetStatus: lastContextBudgetStatus'],
-          'native final context budget persistence',
-        ),
-        ...findFileWithAll(
-          files,
-          ['contextBudgetStatus: entry?.contextBudgetStatus'],
-          'native context budget session projection',
-        ),
-      ],
-      '020-active-run-native-state': [
-        ...findFileWithAll(
-          files,
-          [
-            'function hasTrackedActiveSessionRun(params)',
-            'return resolveVisibleActiveSessionRunState',
-          ],
-          'native active-run tracker',
-        ),
-        ...findFileWithAll(
-          files,
-          ['hasActiveRun: activeRunState.active'],
-          'native active-run response projection',
-        ),
-      ],
-      '021-native-active-goal-context': uniqueEvidence(
-        findFunctionWithControlFlow(
-          files,
-          'function formatActiveGoalContext(sessionEntry)',
-          [
-            'goal?.status !== "active"',
-            'objective.replace(/\\s+/g, " ").trim()',
-            'MAX_ACTIVE_GOAL_OBJECTIVE_CHARS',
-            'ACTIVE_GOAL_CONTEXT_PREFIX',
-            'ACTIVE_GOAL_CONTEXT_SUFFIX',
-          ],
-          [],
-          'active Goal context is normalized, bounded and restricted to active goals',
+          ['delete entry.thinkingSignature', 'delete entry.openclawReasoningReplay'],
+          'chat history removes private provider thinking material',
         ),
         findFileWithAll(
           files,
-          ['MAX_ACTIVE_GOAL_OBJECTIVE_CHARS = 200', 'ACTIVE_GOAL_CONTEXT_PREFIX = "Active goal: "'],
-          'active Goal context uses the upstream bounded prompt contract',
+          ['type === "thinking" || type === "reasoning" || type === "redacted_thinking"'],
+          'chat history recognizes native reasoning blocks',
+        ),
+      ),
+      'native-tool-directory': uniqueEvidence(
+        findFileWithAll(
+          files,
+          ['toolSearchConfig.mode === "directory"', 'applyToolSchemaDirectoryCatalog'],
+          'native Tool Search directory mode',
         ),
         findFileWithAll(
           files,
-          [
-            'refreshInboundContextAfterAdmissionWait',
-            'activeGoalContext = formatActiveGoalContext(inboundContextSessionEntry)',
-          ],
-          'active Goal context is refreshed after queue admission',
+          ['createToolSearchTools', 'catalogRef: options?.toolSearchCatalogRef'],
+          'native deferred catalog controls',
         ),
       ),
-      '022-native-goal-objective-edit': uniqueEvidence(
-        findFunctionWithControlFlow(
+      'native-session-goals': uniqueEvidence(
+        findFileWithAll(
           files,
-          'async function updateSessionGoalObjective(options)',
-          [
-            'const accounted = accountGoalUsage(entry, now);',
-            'TERMINAL_GOAL_STATUSES.has(accounted.status)',
-            '...accounted,',
-            'objective,',
-            'updatedAt: now',
-          ],
-          [],
-          'Goal edit preserves the accounted Goal identity, lifecycle and budget fields',
+          ['ACTIVE_GOAL_CONTEXT_PREFIX = "Active goal: "', 'goal?.status !== "active"'],
+          'active session Goal prompt context',
         ),
         findFileWithAll(
           files,
-          ['case "edit":', 'updateSessionGoalObjective({', 'Goal updated: ${goal.objective}'],
-          '/goal edit dispatches to the native objective update operation',
+          ['create_goal', 'update_goal', 'get_goal'],
+          'native Goal tool surface',
         ),
       ),
-      '023-chat-send-agent-continuation-gap': findBlockBetween(
+      'native-task-rpc-and-events': uniqueEvidence(
+        findFileWithAll(
+          files,
+          ['"tasks.list":', 'validateTasksListParams', 'nextCursor'],
+          'paginated tasks.list RPC',
+        ),
+        findFileWithAll(
+          files,
+          ['"tasks.get":', 'validateTasksGetParams', 'getTaskById'],
+          'tasks.get RPC',
+        ),
+        findFileWithAll(
+          files,
+          ['kind: "upserted"', 'cloneTaskRecord(task)'],
+          'native task upsert events',
+        ),
+      ),
+      'subagent-queue-and-wait': uniqueEvidence(
+        findFileWithAll(
+          files,
+          ['setCommandLaneConcurrency("subagent", concurrency.subagent)'],
+          'subagent command lane uses configured queue concurrency',
+        ),
+        findFileWithAll(
+          files,
+          ['lane: AGENT_LANE_SUBAGENT', 'status: "accepted"'],
+          'accepted subagent work is dispatched through the queued subagent lane',
+        ),
+        findFileWithAll(
+          files,
+          ['name: "agents_wait"', 'state.completed.length > 0', 'state.pending.length === 0'],
+          'parent agents can wait for collector children to settle',
+        ),
+        findFileWithAll(
+          files,
+          ['queueTaskSystemEvent(latest, sessionEventText)', '"session_queued"'],
+          'terminal child results resume the requester session through durable delivery',
+        ),
+      ),
+      'persistent-approval-lifecycle': uniqueEvidence(
+        findFileWithAll(
+          files,
+          ['function observeAgentRunApprovalWait', 'pausedMs', 'state.onChange'],
+          'pending approvals suspend the agent run budget',
+        ),
+        findFileWithAll(
+          files,
+          ['resolveExecApprovalWaitOutcome', 'approvalId', 'resolveTimedOut'],
+          'approval resolution and expiry share the native wait lifecycle',
+        ),
+      ),
+      'compaction-and-context-budget': uniqueEvidence(
+        findFileWithAll(
+          files,
+          ['shouldPreemptivelyCompactBeforePrompt', 'buildPrePromptContextBudgetStatus'],
+          'native pre-prompt context budget and overflow precheck',
+        ),
+        findFileWithAll(
+          files,
+          ['compactionSafeguardDeps.summarizeInStages', 'previousSummary'],
+          'native safeguard compaction with staged summaries',
+        ),
+      ),
+      'openai-visible-stop-tool-safety': findFileWithAll(
         files,
-        'ChatSendParamsSchema =',
-        'ChatAbortParamsSchema =',
-        ['message:', 'idempotencyKey:', 'additionalProperties: false'],
-        ['extraSystemPrompt:', 'suppressPromptPersistence:'],
-        'chat.send cannot carry the non-persistent system policy used by direct agent continuations',
-      ),
-      '024-codex-goal-result-success': findFunctionWithControlFlow(
-        files,
-        'function isCodexToolResultError',
         [
-          'status !== "created"',
-          'status !== "updated"',
-          'status !== "found"',
-          'status !== "missing"',
+          'allowSilentToolCallPromotion',
+          'Provider returned an incomplete or malformed tool call',
+          'stopReason=`toolUse`',
+          'stopReason=`error`',
         ],
-        [],
-        'Codex classifies successful Goal reads and writes as successful dynamic tool calls',
-      ),
-      '005-visible-stop-usage-independent': uniqueEvidence(
-        findFunctionWithControlFlow(
-          files,
-          'function isEmptyResponseAssistantTurn(params)',
-          [
-            'if (params.payloadCount !== 0) return false;',
-            'if (joinAssistantTexts(params.attempt.assistantTexts).length > 0) return false;',
-            'const assistant = params.attempt.currentAttemptAssistant ?? params.attempt.lastAssistant;',
-          ],
-          ['message.usage', 'hasPositiveOutputTokenUsage'],
-          'visible assistant payload/text excludes empty-response retry independent of usage',
-        ),
-        findFunctionWithControlFlow(
-          files,
-          'function resolveEmptyResponseRetryInstruction(params)',
-          [
-            'if (!isEmptyResponseAssistantTurn({',
-            'payloadCount: params.payloadCount,',
-            'attempt: params.attempt',
-            'return EMPTY_RESPONSE_RETRY_INSTRUCTION;',
-          ],
-          [],
-          'empty-response retry is gated by the non-visible-turn classifier',
-        ),
-        findFileWithAll(
-          files,
-          [
-            'const nextEmptyResponseRetryInstruction = emptyAssistantReplyIsSilent ? null : resolveEmptyResponseRetryInstruction({',
-            'if (!nextReasoningOnlyRetryInstruction && nextEmptyResponseRetryInstruction && emptyResponseRetryAttempts < maxEmptyResponseRetryAttempts)',
-            'emptyResponseRetryInstruction = nextEmptyResponseRetryInstruction;',
-          ],
-          'run loop retries only when the empty-response classifier returns an instruction',
-        ),
-      ),
-      '006-sessions-yield-active-or-pending': uniqueEvidence(
-        findFunctionWithControlFlow(
-          files,
-          'function createSessionsYieldTool(opts)',
-          [
-            'if (!opts?.sessionId) return jsonResult({',
-            'if (!opts?.onYield) return jsonResult({',
-            'await opts.onYield(message);',
-            'status: "yielded"',
-          ],
-          ['listControlledSubagentRuns', 'delivery?.status', 'No active subagents'],
-          'sessions_yield invokes the yield callback without rejecting active or pending-delivery children',
-        ),
-        findFileWithAll(
-          files,
-          [
-            'onYield: (message) => {',
-            'yieldDetected = true;',
-            'queueYieldInterruptForSession?.();',
-            'runAbortController.abort("sessions_yield");',
-            'abortSessionForYield?.();',
-          ],
-          'embedded run accepts sessions_yield and transitions the turn to paused/yielded',
-        ),
-      ),
-      '011-compaction-summary-input': uniqueEvidence(
-        findFunctionWithControlFlow(
-          files,
-          'async function summarizeViaLLM(params)',
-          [
-            'const messages = prependPreviousSummaryForRedistill({',
-            'previousSummary: params.previousSummary',
-            'return compactionSafeguardDeps.summarizeInStages({',
-            'previousSummary: void 0',
-          ],
-          [],
-          'previous summary is prepended and redistilled exactly once in LLM summary input',
-        ),
-        findFunctionWithControlFlow(
-          files,
-          'function splitPreservedRecentTurns(params)',
-          [
-            'if (role === "user" || role === "assistant")',
-            'if (message.role !== "assistant") continue;',
-            'return role === "user" || role === "assistant" || role === "toolResult";',
-            'repairToolUseResultPairing(',
-          ],
-          [],
-          'recent assistant turns and paired tool results are preserved outside the history summary',
-        ),
-        findFunctionWithControlFlow(
-          files,
-          'function formatContextMessages(messages)',
-          [
-            'if (message.role === "assistant") roleLabel = "Assistant";',
-            'else if (message.role === "toolResult")',
-            'rendered.length > MAX_RECENT_TURN_TEXT_CHARS',
-            'truncateUtf16Safe(rendered, MAX_RECENT_TURN_TEXT_CHARS)',
-          ],
-          [],
-          'recent assistant and tool-result suffix text is bounded before inclusion',
-        ),
-        findFunctionWithControlFlow(
-          files,
-          'function sanitizeCompactionMessages(messages)',
-          ['return stripToolResultDetails(stripRuntimeContextCustomMessages(messages));'],
-          [],
-          'summarization removes non-model tool-result details before token planning and dispatch',
-        ),
-        findFunctionWithControlFlow(
-          files,
-          'function buildSummaryChunks(params)',
-          [
-            'chunkMessagesByMaxTokens(',
-            'sanitizeCompactionMessages(params.messages)',
-            'params.maxChunkTokens',
-          ],
-          [],
-          'sanitized history is split by the configured maximum summary chunk budget',
-        ),
-        findFunctionWithControlFlow(
-          files,
-          'function buildOversizedFallbackPlan(params)',
-          [
-            'const oversizedThreshold = params.contextWindow * .5;',
-            'if (tokens * 1.2 > oversizedThreshold)',
-            'omitted from summary]',
-            'else smallMessages.push(msg);',
-          ],
-          [],
-          'oversized tool or conversation messages are omitted with bounded placeholder notes',
-        ),
-        findFileWithAll(
-          files,
-          [
-            'let baseMessagesToSummarize = stripRuntimeContextCustomMessages(preparation.messagesToSummarize);',
-            'const turnPrefixMessages = baseTurnPrefixMessages;',
-            'splitPreservedRecentTurns({',
-            'const effectivePreviousSummary = droppedSummary ?? preparation.previousSummary;',
-            'if (preparation.isSplitTurn && turnPrefixMessages.length > 0)',
-            'messages: turnPrefixMessages,',
-            'previousSummary: effectivePreviousSummary',
-          ],
-          'compaction flow orders history, retained recent turns, previous summary and split-turn prefix',
-        ),
-      ),
-      '025-subagent-task-name-persistence': uniqueEvidence(
-        findFileWithAll(
-          files,
-          [
-            'const registerSubagentRun = (registerParams) => {',
-            'taskName: registerParams.taskName,',
-            'params.runs.set(runId, entry);',
-            'params.persistOrThrow();',
-          ],
-          'subagent registration stores taskName before durable registry persistence',
-        ),
-        findFunctionWithControlFlow(
-          files,
-          'function subagentRunRecordToSqliteInsert(entry)',
-          [
-            'const normalized = normalizeSubagentRunState(structuredClone(entry));',
-            'task_name: normalized.taskName ?? null,',
-            'payload_json: JSON.stringify(normalized)',
-          ],
-          [],
-          'taskName is serialized to the typed SQLite column and registry payload',
-        ),
-        findFunctionWithControlFlow(
-          files,
-          'function rowToSubagentRunRecord(row)',
-          [
-            'const payload = parseJson(row.payload_json) ?? {};',
-            '...row.task_name ? { taskName: row.task_name } : {},',
-            'const record = normalizeSubagentRunState({',
-          ],
-          [],
-          'taskName is restored from persisted SQLite state',
-        ),
-        findFunctionWithControlFlow(
-          files,
-          'function saveSubagentRegistryToSqlite(runs)',
-          [
-            'const values = subagentRunRecordToSqliteInsert(entry);',
-            'insertInto("subagent_runs").values(values)',
-            'doUpdateSet(subagentRunRecordToSqliteUpdate(values))',
-          ],
-          [],
-          'subagent registry persistence writes and updates serialized taskName rows',
-        ),
+        'OpenAI-compatible stop/tool-call promotion is silent-only and rejects malformed calls',
       ),
     };
 
@@ -438,8 +224,9 @@ function verifyPristineOpenClawContracts(runtimeDir, options = {}) {
 
 if (require.main === module) {
   const runtimeDir = process.argv[2];
-  if (!runtimeDir)
+  if (!runtimeDir) {
     throw new Error('Usage: node scripts/verify-openclaw-pristine-contracts.cjs <runtime-dir>');
+  }
   const result = verifyPristineOpenClawContracts(path.resolve(runtimeDir));
   console.log(
     `[verify-openclaw-pristine-contracts] ${result.version}: ` +

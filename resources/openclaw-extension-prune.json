@@ -1,6 +1,6 @@
 {
-  "version": 2,
-  "openclawVersion": "2026.7.1-2",
+  "version": 3,
+  "openclawVersion": "2026.8.1",
   "runtimeExtensionsPath": "vendor/openclaw-runtime/{platform}/dist/extensions",
   "description": "Version-scoped allowlist for OpenClaw-managed bundled extensions. Every upstream extension must be declared in keep or remove; unknown extensions fail pruning for review. JustDo-owned custom extensions are protected separately.",
   "keep": [
@@ -8,7 +8,6 @@
     "active-memory",
     "admin-http-rpc",
     "browser",
-    "codex-supervisor",
     "document-extract",
     "file-transfer",
     "llm-task",
@@ -16,7 +15,6 @@
     "memory-core",
     "memory-wiki",
     "oc-path",
-    "open-prose",
     "openai",
     "policy",
     "web-readability",
@@ -25,61 +23,57 @@
   "remove": [
     {
       "category": "retired-justdo-extensions",
-      "reason": "Former JustDo extension ids retained only so upgraded runtime staging can remove stale directories after a rename.",
+      "reason": "Former JustDo extension ids retained only so rebuilt runtime staging can remove stale directories after a rename.",
       "extensions": ["file-permission-policy"]
     },
     {
-      "category": "unused-remote-channels",
-      "reason": "External IM/channel integrations. Remove when JustDo does not use remote-control messaging channels.",
+      "category": "unused-remote-and-device-integrations",
+      "reason": "External messaging, device, node and remote-control integrations are not part of the JustDo desktop runtime.",
       "extensions": [
+        "a2a",
+        "beam",
         "bonjour",
         "canvas",
+        "crabbox",
+        "cua-computer",
         "device-pair",
-        "imessage",
-        "phone-control",
+        "geolocation",
+        "imap",
+        "linux-node",
+        "onepassword",
+        "reef",
         "telegram",
-        "thread-ownership",
+        "vault",
         "webhooks"
       ]
     },
     {
       "category": "migration-tools",
-      "reason": "One-time import/migration helpers; not required for normal JustDo startup.",
+      "reason": "One-time third-party import helpers are not required for normal JustDo startup or the native session SQLite migration.",
       "extensions": ["migrate-claude", "migrate-hermes"]
     },
     {
       "category": "optional-speech-and-media",
-      "reason": "Speech, media understanding, image generation, and video generation providers. Remove when voice/media generation features are not enabled.",
+      "reason": "Speech, media, image and video providers are not enabled in the default desktop runtime.",
       "extensions": [
         "alibaba",
         "azure-speech",
-        "comfy",
         "deepgram",
         "elevenlabs",
         "fal",
         "image-generation-core",
-        "media-understanding-core",
         "microsoft",
         "runway",
         "senseaudio",
         "talk-voice",
-        "tts-local-cli",
-        "video-generation-core",
-        "vydra"
+        "tts-local-cli"
       ]
     },
     {
-      "category": "optional-search-providers",
-      "reason": "Standalone web-search providers. Remove when search is handled by MCP or another retained provider.",
-      "extensions": ["duckduckgo"]
-    },
-    {
       "category": "unused-model-providers",
-      "reason": "Model providers not kept in the default slim runtime. Move an extension from here to keep if the app is configured to use it.",
+      "reason": "Model providers not kept in the default slim runtime. Move an extension to keep only when the app owns its configuration path.",
       "extensions": [
-        "byteplus",
         "clawrouter",
-        "cohere",
         "copilot-proxy",
         "github-copilot",
         "google",
@@ -87,23 +81,15 @@
         "litellm",
         "lmstudio",
         "microsoft-foundry",
-        "meta",
         "minimax",
-        "mistral",
-        "novita",
         "nvidia",
         "ollama",
-        "opencode",
         "opencode-go",
         "openrouter",
         "sglang",
-        "synthetic",
         "together",
         "vllm",
-        "volcengine",
-        "voyage",
-        "xai",
-        "xiaomi"
+        "xai"
       ]
     }
   ]

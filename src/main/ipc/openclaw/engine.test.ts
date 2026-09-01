@@ -43,6 +43,7 @@ const createRestartHarness = (options: {
     getGatewayLifecycleGeneration: vi.fn().mockReturnValue(7),
     waitForGatewayReadyAfter: vi.fn().mockResolvedValue(options.ready ?? true),
     restartGateway: vi.fn().mockResolvedValue(restartStatus),
+    onSessionMigrationProgress: vi.fn().mockReturnValue(() => undefined),
   };
   const requestGateway = options.requestError
     ? vi.fn().mockRejectedValue(options.requestError)

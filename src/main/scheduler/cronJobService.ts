@@ -283,8 +283,8 @@ function toGatewayPayload(payload: ScheduledTaskPayload): GatewayPayload {
   };
 }
 
-function toGatewayDelivery(delivery?: ScheduledTaskDelivery): GatewayDelivery | undefined {
-  if (!delivery) return undefined;
+function toGatewayDelivery(delivery?: ScheduledTaskDelivery): GatewayDelivery {
+  if (!delivery) return { mode: DeliveryMode.None };
   if (delivery.mode === DeliveryMode.None) {
     // Preserve channel/to even with mode='none' so IM notification target round-trips
     // through the gateway for the edit form to display.
@@ -840,7 +840,7 @@ export class CronJobService {
       sessionTarget: input.sessionTarget,
       wakeMode: input.wakeMode,
       payload: toGatewayPayload(input.payload),
-      ...(gatewayDelivery ? { delivery: gatewayDelivery } : {}),
+      delivery: gatewayDelivery,
       ...(input.payload.kind === PayloadKind.AgentTurn
         ? { agentId: ScheduledTaskAgentId }
         : {}),
@@ -887,7 +887,7 @@ export class CronJobService {
       if (input.wakeMode !== undefined) patch.wakeMode = input.wakeMode;
       if (input.payload !== undefined) patch.payload = nextPayload;
       if (input.delivery !== undefined) {
-        patch.delivery = toGatewayDelivery(input.delivery) ?? { mode: DeliveryMode.None };
+        patch.delivery = toGatewayDelivery(input.delivery);
       }
       if (nextPayload.kind === PayloadKind.AgentTurn) {
         patch.agentId = ScheduledTaskAgentId;

@@ -6,6 +6,7 @@ import {
   createDefaultAgentRuntimeSettings,
 } from '../../../shared/openclaw/agentRuntimeSettings';
 import { PermissionMode } from '../../../shared/openclaw/approvals';
+import { OpenClawExtensionId } from '../../../shared/openclaw/extensions';
 import {
   OpenClawApi,
   OpenClawProviderId,
@@ -125,9 +126,11 @@ describe('OpenClaw provider config', () => {
 
     expect(buildBuiltinMemorySearchConfig(providers)).toEqual({
       enabled: true,
-      provider: OpenClawProviderId.BuiltinModels,
+      provider: OpenClawExtensionId.JUSTDO_RUNTIME_BRIDGE,
       model: 'embedding-a',
       remote: {
+        baseUrl: 'http://127.0.0.1:4000/v1',
+        apiKey: '${JUSTDO_APIKEY_BUILTIN_MODELS}',
         headers: {
           'User-Agent': 'OpenAI/JS 6.39.1',
         },
@@ -249,34 +252,19 @@ describe('OpenClaw managed config metadata', () => {
 });
 
 describe('OpenClaw managed compaction config', () => {
-  test('uses the safeguard hook with Codex-style handoff retention', () => {
+  test('keeps only the JustDo safeguards on top of native compaction defaults', () => {
     const compaction = buildManagedOpenClawCompactionConfig();
 
-    expect(compaction).toMatchObject({
+    expect(compaction).toEqual({
       mode: 'safeguard',
-      justdoCodexLocal: true,
       timeoutSeconds: 30 * 60,
-      recentTurnsPreserve: 0,
-      identifierPolicy: 'off',
       memoryFlush: {
         enabled: false,
-      },
-      qualityGuard: {
-        enabled: false,
-        maxRetries: 2,
       },
       midTurnPrecheck: {
         enabled: true,
       },
     });
-    expect(compaction.reserveTokens).toBe(24_000);
-    expect(compaction.reserveTokensFloor).toBe(0);
-    expect(compaction).not.toHaveProperty('keepRecentTokens');
-    expect(compaction.customInstructions).toContain(
-      'You are performing a CONTEXT CHECKPOINT COMPACTION.',
-    );
-    expect(compaction.customInstructions).not.toContain('## Goal');
-    expect(compaction.customInstructions.length).toBeLessThanOrEqual(800);
   });
 });
 
@@ -339,9 +327,10 @@ describe('OpenClaw managed connectivity config', () => {
         experimental: {
           planTool: true,
         },
-        toolSearch: {
-          mode: 'directory',
-        },
+      toolSearch: {
+        enabled: true,
+        mode: 'directory',
+      },
         deny: [
           'web_search',
           'tts',
@@ -471,7 +460,7 @@ describe('OpenClaw managed session retention', () => {
     expect(buildManagedOpenClawSessionConfig()).toEqual({
       dmScope: 'per-account-channel-peer',
       reset: {
-        mode: 'idle',
+        mode: 'none',
       },
       maintenance: {
         mode: 'enforce',

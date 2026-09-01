@@ -97,14 +97,11 @@ Stop 会发现主 session 与仍运行的 subagent key，逐一调用 `sessions.
 
 业务终态来自明确 chat/lifecycle/runtime 证据。WebSocket disconnect 只触发连接恢复和必要的错误提示，不能自动将所有 run 标成 error。完成后启动 history reconciliation，以 Gateway final text、usage、thinking 和 tool 结果校正缓存。
 
-对 managed JustDo 会话，模型回合终止不等于编排任务终止。Gateway 在提交 terminal assistant
-reply（包括 `NO_REPLY`）前检查 durable subagent registry：若仍有要求 completion message 的
-child，就进入隐式 managed join，等待一批成功或失败结果并续跑同一父会话；只有 required
-children 均已呈现且后续 assistant continuation 成功提交，父 run 才能结束。显式
-`expectsCompletionMessage=false` 是 fire-and-forget，不形成该 obligation；用户 stop/abort 仍会
-立即中断等待并恢复原生 completion delivery。自动 obligation 只属于 child 的精确 requester；
-native announce 自身不会递归接管同一结果，并在等待 requester 结束后再次核对 durable
-delivery ownership，以关闭 announce 与 terminal guard 之间的竞态窗口。
+对 managed JustDo 会话，模型回合终止不等于编排任务终止。OpenClaw v2026.8.1 原生 task
+ledger 与 required-child join 在提交 terminal assistant reply 前等待 required children 终态并续跑
+同一父会话；只有结果已被父 agent 消费且 continuation 成功提交，父 run 才能结束。显式
+fire-and-forget 不形成该 obligation，用户 stop/abort 会中断等待。JustDo 只消费 task RPC/event
+并投影 UI，不再用本地补丁复制 join、FIFO、announce ownership 或 terminal guard 状态机。
 
 显式 `sessions_yield` 可能只呈现已完成的一批 child；这不会解除仍在运行 sibling 的 obligation。
 若模型此时给出 terminal reply，Gateway 会把同一 controller 的剩余 `waiting` ownership 持久化
@@ -170,9 +167,9 @@ Exec/plugin approval 走独立 Gateway approval API，并继续使用阻塞式 m
 
 ## 13. Subagent
 
-Subagent 列表优先通过选择性的 Gateway tool/API，必要时从 persisted sessions 查询；状态统一为 pending/running/finished/failed 等。label 来源会区分 task name、metadata 和 fallback，避免把随机 session key 当用户标题。
+Subagent 列表以原生 `tasks.list/get` 与 `task` event 为权威；状态稳定化为 `pending/running/done/failed/killed/timeout`。`taskName` 是机器标识，`label` 是展示标题，不能把随机 session key 当用户标题。
 
-当前状态仍以结构化 `subagents` 工具输出为权威，`sessions.list` 只补 projection 与超过 24 小时的持久历史。Main 对一次状态刷新做 single-flight 和 8 秒结果缓存；全量 persisted-session 分页扫描使用独立的 60 秒历史快照，期间把实时工具结果合并回历史，扫描失败时保留上一次完整快照且不推进 TTL。运行状态的低频 discovery sweep，以及会话结算、失败结算和重启 checkpoint 后的新轮次准入等必须证明 aggregate idle 的检查，都会分页覆盖全部 session，不能把截断的第一页当成完整父子树。菜单在父会话或任一 child 活动时每 5 秒刷新，全部终态后退避到 30 秒；抽屉只在所选 child 活动时持续刷新，终态只做一次确认。Gateway runtime patch `049` 仅将认证后的 out-of-band `subagents list` 查询排除出 agent tool-loop accounting，其他工具/动作仍保留循环检测，hook、授权与审批不变。
+Main 对 task 查询做 single-flight 和短时缓存，并用版本化 wire validator 检查分页、cursor、状态和 terminal projection；实时 `task` event 合并进同一 ledger。菜单在父会话或任一 child 活动时每 5 秒刷新，全部终态后退避到 30 秒；抽屉只在所选 child 活动时持续刷新，终态只做一次确认。查询不再调用 agent 的 `subagents list` 工具，因此不需要旧 patch 049，也不会计入 agent tool-loop。
 
 Subagent 详情的 Token 用量不使用 `sessions.list.totalTokens`，因为该字段是上下文快照而非生命周期消耗。详情打开时通过专用 `cowork:subTask:details` IPC 读取该 subagent 的 `sessions.usage` 原始 transcript 聚合，按每个 assistant 模型请求实际返回的 `usage` 累计输入、输出、缓存读取和缓存写入；“总 Token”严格等于这四项之和。tool-only 与控制类 assistant 轮次会计入；当前 transcript 不持久化上下文压缩和 exec review 请求的 `usage`，因此这两类请求尚不在详情累计中。读取失败时保留上一次完整结果，不展示部分累计值。
 
@@ -190,7 +187,7 @@ Subagent 详情的 Token 用量不使用 `sessions.list.totalTokens`，因为该
 | UI 一直 running   | runtime status、open run receipt、Gateway sessions、subagent       |
 | 消息重复/缺失     | session/run identity、sequence、history reconciliation             |
 | stop 后审批仍出现 | session key grant/pending approval cleanup                         |
-| goal 不续跑       | goal snapshot、control run、managed subagent join、lifecycle patch |
+| goal 不续跑       | goal snapshot、control run、原生 required-child task join、lifecycle |
 | 重启后状态错误    | startup reset、Gateway list/describe、channel session sync         |
 
 日志先看每日 main log 与 Gateway condensed log；需要完整 event sequence 时按 `[gateway] log file:` 查看 native JSON log并按时间、run id、session id 关联。

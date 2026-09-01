@@ -100,7 +100,7 @@ Delta append、snapshot replace、replaceable允许权威final替换。文本mer
 
 运行中的`session.message`只允许按稳定toolCallId恢复Tool及其之前的Content片段；无Tool锚点的普通assistant尾段不得抢先写入active Content，必须等待canonical assistant/chat stream，否则会把完整正文提前写入timeline并吞掉后续增量。
 
-Gateway的managed terminal guard必须区分应用内assistant observation和outbound partial/block delivery：前者带attempt token实时广播给active Content，后者才能为required-subagent join延迟到terminal候选确认。terminal接受时提交该token；候选被guard拒绝或compaction retry清空时回滚该token对应的Content，保留Thinking/Tool。不能因安装terminal callback而缓存应用内正文流，也不能泄漏被拒绝的候选正文。
+Gateway v2026.8.1 原生 required-task join 必须在所有 required child terminal 后才允许父 turn 收敛。Renderer 只消费已获准的 assistant stream 与原生 task terminal event；被 Gateway 延迟或拒绝的 terminal 候选不能作为正文泄漏到 timeline。
 
 ### 6.4 Process summary
 
@@ -117,7 +117,7 @@ Stable transcript identity优先读取Gateway message id/记录标识，再用�
 5. 保留合法active tail，删除已被history覆盖的重复项；
 6. 增加historyGeneration/revision。
 
-SQLite fallback只在Gateway history不可用时提供初始/错误恢复显示；一旦Gateway结果到达必须takeover。Tool input lookup严格限定请求session，不能跨transcript搜相同call id。
+SQLite fallback只在Gateway history不可用时提供初始/错误恢复显示；一旦Gateway结果到达必须takeover。Tool input lookup先使用原生 `chat.history` display projection，再通过 `justdoRuntimeBridge.historyDetails` 的 `operator.read` RPC 按 session 和 call id 有界补齐，不能跨 transcript 搜相同 call id，也不能直接读取 `sessions.json`。
 
 ## 8. History 窗口
 
@@ -177,7 +177,7 @@ Minimap从timeline identity生成entry，追踪当前viewport并支持hover prev
 
 Goal card位于chat周边但状态来自Main snapshot。Compaction history detail通过专用IPC读取，timeline展示summary、tokens before/after和recovery progress；不把内部context markers显示给用户。
 
-输入区上下文圆环在session已有 `totalTokens` 后与OpenClaw webchat使用相同口径：展示该快照，`totalTokensFresh: false` 时以 `~` 标记近似值。首个快照尚未产生且Gateway明确报告 `hasActiveRun: true` 时，UI可以经过 `~` 标记的 `contextBudgetStatus.estimatedPromptTokens` 作为启动值；它必须带有live patch在provenance校验后写入的 `justdoUsageBootstrap` 标记，且永远不得覆盖已有 `totalTokens`。live budget patch按input provenance排除announce等保留父会话状态的内部run，再按session generation、`updatedAt`拒绝乱序写入；因此announce运行期只保留父会话已有快照，或在首轮保留announce开始前由主run发布的启动估算。运行结束后UI做有界收敛轮询；显示层将异常provider值限制在窗口上限。
+输入区上下文圆环在 session 已有 `totalTokens` 后与 OpenClaw webchat 使用相同口径：展示原生 snapshot，`totalTokensFresh: false` 时以 `~` 标记近似值。首个 snapshot 尚未产生且 Gateway 明确报告 active run 时，UI 可使用 v2026.8.1 原生 context budget estimate 作为启动值，但永远不得覆盖较新的 `totalTokens`。运行结束后 UI 做有界收敛轮询，并按 generation/`updatedAt` 拒绝乱序 snapshot；显示层将异常 provider 值限制在窗口上限。
 
 长时间无输出提示由active turn clock派生，仅表示等待，不宣告失败。Failed run message必须区分abort、error、transport和tool failure；OpenClaw log hint仅从streaming active content的特定系统尾部移除，普通完成内容中的“Logs”标题保留。
 

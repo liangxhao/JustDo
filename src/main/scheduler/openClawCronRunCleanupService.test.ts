@@ -173,10 +173,14 @@ test('deletes persisted descendants discovered on later session pages before the
           sessions: Array.from({ length: 500 }, (_, index) => ({
             key: `unrelated-${index}`,
           })),
+          hasMore: true,
+          nextOffset: 500,
         };
       }
       return {
         sessions: [{ key: childKey, parentSessionKey: rootKey }],
+        hasMore: false,
+        nextOffset: null,
       };
     }
     deletedKeys.push(input.key ?? '');

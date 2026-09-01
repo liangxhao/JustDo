@@ -60,6 +60,11 @@ import { OpenClawHistoryIpc, type OpenClawPagedHistoryParams } from '../shared/o
 import { HookIpc } from '../shared/openclaw/hooks';
 import { MemoryIpc } from '../shared/openclaw/memory';
 import {
+  type OpenClawSessionMigrationConfirmRequest,
+  OpenClawSessionMigrationIpc,
+  type OpenClawSessionMigrationProgress,
+} from '../shared/openclaw/sessionMigration';
+import {
   SystemPromptReplacementIpc,
   type SystemPromptReplacementRule,
 } from '../shared/openclaw/systemPromptReplacements';
@@ -276,6 +281,19 @@ contextBridge.exposeInMainWorld('electron', {
         const handler = (_event: Electron.IpcRendererEvent, status: unknown) => callback(status);
         ipcRenderer.on('openclaw:engine:onProgress', handler);
         return () => ipcRenderer.removeListener('openclaw:engine:onProgress', handler);
+      },
+      migration: {
+        plan: () => ipcRenderer.invoke(OpenClawSessionMigrationIpc.Plan),
+        confirm: (request: OpenClawSessionMigrationConfirmRequest) =>
+          ipcRenderer.invoke(OpenClawSessionMigrationIpc.Confirm, request),
+        onProgress: (callback: (progress: OpenClawSessionMigrationProgress) => void) => {
+          const handler = (
+            _event: Electron.IpcRendererEvent,
+            progress: OpenClawSessionMigrationProgress,
+          ) => callback(progress);
+          ipcRenderer.on(OpenClawSessionMigrationIpc.Progress, handler);
+          return () => ipcRenderer.removeListener(OpenClawSessionMigrationIpc.Progress, handler);
+        },
       },
     },
     history: {

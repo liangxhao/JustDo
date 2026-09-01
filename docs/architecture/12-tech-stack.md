@@ -8,7 +8,7 @@
 | ---------- | --------------------------------- | ---------------------------------------------- |
 | Node.js    | `24.15.0`，engine `>=24.15.0 <25` | 开发脚本、Main、OpenClaw tooling               |
 | Electron   | `^42.6.2`（42.6 系列）            | 桌面进程、窗口、IPC、系统集成                  |
-| OpenClaw   | `v2026.7.1-2`                     | Agent/Gateway/session/tool/cron/plugin runtime |
+| OpenClaw   | `v2026.8.1`                       | Agent/Gateway/session/tool/cron/plugin runtime |
 | npm        | package dependency `^11.18.0`     | 安装与脚本                                     |
 | TypeScript | `^5.7.3`                          | Renderer/Main/shared 静态检查                  |
 

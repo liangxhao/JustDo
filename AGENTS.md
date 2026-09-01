@@ -10,7 +10,7 @@ tasks through OpenClaw Gateway, with durable state in SQLite and bundled skills.
 
 - App: `v2026.8.27`
 - Electron: `42.6.0`
-- OpenClaw: `v2026.7.1-2`
+- OpenClaw: `v2026.8.1`
 - Node: `>=24.15.0 <25` (`.nvmrc`)
 - Package manager: npm
 - Dev server port: `43127`
@@ -124,7 +124,7 @@ SQLite core tables in `src/main/data/sqliteStore.ts`:
 Built-in skills are declared in `resources/builtin-skills.json`: **15 skills**,
 **14 enabled** by default, `agent-browser` disabled.
 
-OpenClaw runtime patches live in `scripts/patches/v2026.7.1-2/`. They are
+OpenClaw runtime patches live in `scripts/patches/v2026.8.1/`. They are
 new-version capability patches, not migrations of the historical
 `scripts/patches/v2026.6.11/` files. The target directory README is the
 authoritative capability-to-patch and upstream-disposition inventory.

@@ -44,6 +44,10 @@ export const bundledOpenClawExtensions: readonly OpenClawExtensionDescriptor[] =
       config: { mode: permissionMode, fullAgentIds: [ScheduledTaskAgentId] },
     }),
   },
+  {
+    id: OpenClawExtensionId.JUSTDO_RUNTIME_BRIDGE,
+    buildEntry: () => ({ enabled: true }),
+  },
 ] as const;
 
 export const listRetiredBundledOpenClawExtensionIds = (): string[] => [

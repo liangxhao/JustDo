@@ -300,14 +300,12 @@ describe('OpenClawConfigSyncService', () => {
       changed: true,
     });
     expect(harness.engineManager.waitForGatewayConfigReload).toHaveBeenCalledWith(7);
-    expect(harness.configSync.sync).toHaveBeenCalledWith('test', {
-      allowManagedSessionStoreMutation: false,
-    });
+    expect(harness.configSync.sync).toHaveBeenCalledWith('test');
     expect(harness.stopGateway).not.toHaveBeenCalled();
     expect(harness.startGateway).not.toHaveBeenCalled();
   });
 
-  it('allows legacy managed-session migration only while the Gateway is stopped', async () => {
+  it('never asks config sync to mutate the legacy session store', async () => {
     const harness = createHarness({ phase: 'ready' });
 
     const result = await harness.service.syncConfig({ reason: 'startup' });
@@ -317,9 +315,7 @@ describe('OpenClawConfigSyncService', () => {
       configSynced: true,
     });
     expect(result).not.toHaveProperty('permissionVerified');
-    expect(harness.configSync.sync).toHaveBeenCalledWith('startup', {
-      allowManagedSessionStoreMutation: true,
-    });
+    expect(harness.configSync.sync).toHaveBeenCalledWith('startup');
   });
 
   it('restarts login only when the running Gateway needs the newly added secret', async () => {

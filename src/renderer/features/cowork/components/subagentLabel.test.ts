@@ -9,13 +9,13 @@ describe('reconcileSubagentLabel', () => {
     ).toEqual({ label: 'Task summary', labelSource: 'task' });
   });
 
-  test('upgrades a label to a task name', () => {
+  test('upgrades a machine task name to a display label', () => {
     expect(
       reconcileSubagentLabel(
+        { label: 'task_machine_1', labelSource: 'taskName' },
         { label: 'Friendly label', labelSource: 'label' },
-        { label: 'stable-task-name', labelSource: 'taskName' },
       ),
-    ).toEqual({ label: 'stable-task-name', labelSource: 'taskName' });
+    ).toEqual({ label: 'Friendly label', labelSource: 'label' });
   });
 
   test('upgrades a task summary to an explicit label', () => {
@@ -27,15 +27,15 @@ describe('reconcileSubagentLabel', () => {
     ).toEqual({ label: 'Friendly label', labelSource: 'label' });
   });
 
-  test('does not downgrade a task name to a label or task summary', () => {
-    const taskName = { label: 'stable-task-name', labelSource: 'taskName' as const };
+  test('does not downgrade an explicit label to a task summary or machine id', () => {
+    const label = { label: 'Friendly label', labelSource: 'label' as const };
 
+    expect(reconcileSubagentLabel(label, { label: 'Task summary', labelSource: 'task' })).toEqual(
+      label,
+    );
     expect(
-      reconcileSubagentLabel(taskName, { label: 'Friendly label', labelSource: 'label' }),
-    ).toEqual(taskName);
-    expect(
-      reconcileSubagentLabel(taskName, { label: 'Task summary', labelSource: 'task' }),
-    ).toEqual(taskName);
+      reconcileSubagentLabel(label, { label: 'task_machine_1', labelSource: 'taskName' }),
+    ).toEqual(label);
   });
 
   test('accepts updates from the same source', () => {

@@ -1,4 +1,11 @@
 import type { GatewayClientLike } from '../gateway/types';
+import {
+  type OpenClawTaskStatusV2026_8_1,
+  type OpenClawTaskSummaryV2026_8_1,
+  parseSessionsListResultV2026_8_1,
+  parseTasksGetResultV2026_8_1,
+  parseTasksListResultV2026_8_1,
+} from './wire/v2026_8_1';
 
 export type GatewayRequestClient = Pick<GatewayClientLike, 'request'>;
 
@@ -25,6 +32,7 @@ export type SubagentLabelSource =
 
 export type GatewaySubagent = {
   id: string;
+  taskName: string;
   sessionKey: string;
   sessionId?: string;
   label: string;
@@ -45,45 +53,25 @@ type GatewaySubagentProjection = Omit<GatewaySubagent, 'label' | 'labelSource'> 
 
 export type GatewaySubagentListMetadata = {
   subagents: GatewaySubagent[];
-  persistedHistoryComplete: boolean;
-  structuredToolComplete: boolean;
+  taskLedgerComplete: boolean;
 };
 
 type ListGatewaySubagentsOptions = {
   client: GatewayClientLike;
   parentKeys: string[];
-  includePersistedHistory?: boolean;
-  includeStructuredTool?: boolean;
+  hydrateDetails?: boolean;
   includeMalformedForRuntimeControl?: boolean;
 };
 
-const SUBAGENT_RECENT_MINUTES = 24 * 60;
-const PERSISTED_SESSION_PAGE_SIZE = 500;
-const SUBAGENT_TASK_TITLE_MAX_CHARS = 48;
-const warnedMalformedSubagentKeys = new Set<string>();
-const SUBAGENT_LABEL_SOURCE_PRIORITY: Record<SubagentLabelSource, number> = {
-  [SUBAGENT_LABEL_SOURCES.TASK_NAME]: 0,
-  [SUBAGENT_LABEL_SOURCES.LABEL]: 1,
-  [SUBAGENT_LABEL_SOURCES.TASK]: 2,
-};
-
-const isSubagentStatus = (value: unknown): value is SubagentStatus =>
-  Object.values(SUBAGENT_STATUSES).includes(value as SubagentStatus);
-
-const resolveStatus = (row: Record<string, unknown>): SubagentStatus => {
-  if (row.status === 'pending' || row.subagentRunState === 'pending') {
-    return SUBAGENT_STATUSES.PENDING;
-  }
-  if (
-    row.hasActiveRun === true ||
-    row.hasActiveSubagentRun === true ||
-    row.subagentRunState === 'active'
-  ) {
-    return SUBAGENT_STATUSES.RUNNING;
-  }
-  if (isSubagentStatus(row.status)) return row.status;
-  if (row.subagentRunState === 'interrupted') return SUBAGENT_STATUSES.FAILED;
-  return SUBAGENT_STATUSES.DONE;
+const TASK_PAGE_SIZE = 500;
+const SESSION_PAGE_SIZE = 500;
+const TASK_DETAIL_CONCURRENCY = 8;
+const TASK_TITLE_MAX_CHARS = 48;
+const warnedMalformedTaskIds = new Set<string>();
+const LABEL_PRIORITY: Record<SubagentLabelSource, number> = {
+  [SUBAGENT_LABEL_SOURCES.LABEL]: 0,
+  [SUBAGENT_LABEL_SOURCES.TASK]: 1,
+  [SUBAGENT_LABEL_SOURCES.TASK_NAME]: 2,
 };
 
 const optionalString = (value: unknown): string | undefined =>
@@ -91,6 +79,13 @@ const optionalString = (value: unknown): string | undefined =>
 
 const optionalNumber = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+
+const toTimestamp = (value: string | number | undefined): number | undefined => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value !== 'string') return undefined;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : undefined;
+};
 
 const summarizeTask = (value: unknown): string | undefined => {
   if (typeof value !== 'string') return undefined;
@@ -101,147 +96,142 @@ const summarizeTask = (value: unknown): string | undefined => {
   if (!firstLine) return undefined;
   const normalized = firstLine.replace(/\s+/gu, ' ');
   const characters = Array.from(normalized);
-  if (characters.length <= SUBAGENT_TASK_TITLE_MAX_CHARS) return normalized;
-  return `${characters.slice(0, SUBAGENT_TASK_TITLE_MAX_CHARS).join('')}…`;
+  return characters.length <= TASK_TITLE_MAX_CHARS
+    ? normalized
+    : `${characters.slice(0, TASK_TITLE_MAX_CHARS).join('')}…`;
 };
 
-const resolveSubagentTitle = (
-  row: Record<string, unknown>,
-): { label: string; labelSource: SubagentLabelSource } | null => {
-  const taskName = optionalString(row.taskName);
-  if (taskName) {
-    return { label: taskName, labelSource: SUBAGENT_LABEL_SOURCES.TASK_NAME };
+const mapTaskStatus = (status: OpenClawTaskStatusV2026_8_1): SubagentStatus => {
+  switch (status) {
+    case 'queued':
+      return SUBAGENT_STATUSES.PENDING;
+    case 'running':
+      return SUBAGENT_STATUSES.RUNNING;
+    case 'completed':
+      return SUBAGENT_STATUSES.DONE;
+    case 'cancelled':
+      return SUBAGENT_STATUSES.KILLED;
+    case 'timed_out':
+      return SUBAGENT_STATUSES.TIMEOUT;
+    case 'failed':
+      return SUBAGENT_STATUSES.FAILED;
   }
-  const label = optionalString(row.label);
-  if (label) {
-    return { label, labelSource: SUBAGENT_LABEL_SOURCES.LABEL };
-  }
-  const task = summarizeTask(row.task);
-  if (task) {
-    return { label: task, labelSource: SUBAGENT_LABEL_SOURCES.TASK };
-  }
-  return null;
 };
 
-const warnMalformedSubagentOnce = (sessionKey: string): void => {
-  if (warnedMalformedSubagentKeys.has(sessionKey)) return;
-  warnedMalformedSubagentKeys.add(sessionKey);
-  console.warn('[SubagentGateway] Skipping subagent without taskName, label, or task', {
+const resolveTaskTitle = (
+  task: OpenClawTaskSummaryV2026_8_1,
+): { label: string; labelSource: SubagentLabelSource } => {
+  const label = optionalString(task.title);
+  if (label) return { label, labelSource: SUBAGENT_LABEL_SOURCES.LABEL };
+  const prompt = summarizeTask(task.prompt);
+  if (prompt) return { label: prompt, labelSource: SUBAGENT_LABEL_SOURCES.TASK };
+  return { label: task.id, labelSource: SUBAGENT_LABEL_SOURCES.TASK_NAME };
+};
+
+const isSubagentTask = (task: OpenClawTaskSummaryV2026_8_1): boolean =>
+  task.runtime === 'subagent' || task.kind === 'subagent';
+
+const toGatewaySubagent = (
+  task: OpenClawTaskSummaryV2026_8_1,
+): GatewaySubagentProjection | null => {
+  const sessionKey = optionalString(task.childSessionKey);
+  if (!sessionKey) {
+    if (!warnedMalformedTaskIds.has(task.id)) {
+      warnedMalformedTaskIds.add(task.id);
+      console.warn('[SubagentGateway] Skipping native subagent task without childSessionKey', {
+        taskId: task.id,
+      });
+    }
+    return null;
+  }
+  const startedAt = toTimestamp(task.startedAt) ?? toTimestamp(task.createdAt);
+  const endedAt = toTimestamp(task.endedAt);
+  return {
+    id: task.id,
+    taskName: task.id,
     sessionKey,
-  });
+    ...resolveTaskTitle(task),
+    status: mapTaskStatus(task.status),
+    task: optionalString(task.prompt),
+    startedAt,
+    endedAt,
+    ...(startedAt !== undefined && endedAt !== undefined
+      ? { runtimeMs: Math.max(0, endedAt - startedAt) }
+      : {}),
+  };
 };
 
-const mergeSessionProjection = (
-  target: Map<string, GatewaySubagentProjection>,
+const listTaskPages = async (
+  client: GatewayRequestClient,
   sessionKey: string,
-  row: Record<string, unknown>,
-): boolean => {
-  const existing = target.get(sessionKey);
-  if (!existing) return false;
+): Promise<OpenClawTaskSummaryV2026_8_1[]> => {
+  const tasks: OpenClawTaskSummaryV2026_8_1[] = [];
+  let cursor: string | undefined;
+  const seenCursors = new Set<string>();
+  do {
+    if (cursor && seenCursors.has(cursor)) {
+      throw new Error('OpenClaw tasks.list returned a repeated cursor');
+    }
+    if (cursor) seenCursors.add(cursor);
+    const page = parseTasksListResultV2026_8_1(
+      await client.request('tasks.list', {
+        sessionKey,
+        limit: TASK_PAGE_SIZE,
+        ...(cursor ? { cursor } : {}),
+      }),
+    );
+    tasks.push(...page.tasks.filter(isSubagentTask));
+    cursor = page.nextCursor;
+  } while (cursor);
+  return tasks;
+};
 
-  const title = resolveSubagentTitle(row);
-  if (
-    title &&
-    (existing.labelSource === undefined ||
-      SUBAGENT_LABEL_SOURCE_PRIORITY[title.labelSource] <=
-        SUBAGENT_LABEL_SOURCE_PRIORITY[existing.labelSource])
-  ) {
-    existing.label = title.label;
-    existing.labelSource = title.labelSource;
+const hydrateTaskDetails = async (
+  client: GatewayRequestClient,
+  tasks: OpenClawTaskSummaryV2026_8_1[],
+): Promise<OpenClawTaskSummaryV2026_8_1[]> => {
+  const hydrated: OpenClawTaskSummaryV2026_8_1[] = [];
+  for (let offset = 0; offset < tasks.length; offset += TASK_DETAIL_CONCURRENCY) {
+    hydrated.push(
+      ...(await Promise.all(
+        tasks.slice(offset, offset + TASK_DETAIL_CONCURRENCY).map(async task => {
+          try {
+            return parseTasksGetResultV2026_8_1(
+              await client.request('tasks.get', { taskId: task.id }),
+            ).task;
+          } catch (error) {
+            console.warn('[SubagentGateway] Failed to load native task details', {
+              taskId: task.id,
+              error: error instanceof Error ? error.message : String(error),
+            });
+            return task;
+          }
+        }),
+      )),
+    );
   }
-  existing.model ??= optionalString(row.model);
-  existing.sessionId ??= optionalString(row.sessionId);
-  existing.startedAt ??= optionalNumber(row.startedAt);
-  existing.endedAt ??= optionalNumber(row.endedAt);
-  existing.runtimeMs ??= optionalNumber(row.runtimeMs);
-  existing.totalTokens ??= optionalNumber(row.totalTokens);
-  existing.task ??= optionalString(row.task);
-  return true;
-};
-
-const rowBelongsToParent = (row: Record<string, unknown>, parentKeys: Set<string>): boolean => {
-  const spawnedBy = optionalString(row.spawnedBy);
-  const parentSessionKey = optionalString(row.parentSessionKey);
-  return (
-    (spawnedBy !== undefined && parentKeys.has(spawnedBy)) ||
-    (parentSessionKey !== undefined && parentKeys.has(parentSessionKey))
-  );
-};
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
-const resolveToolStatus = (row: Record<string, unknown>): SubagentStatus => {
-  const pendingDescendants = optionalNumber(row.pendingDescendants) ?? 0;
-  if (pendingDescendants > 0) return SUBAGENT_STATUSES.RUNNING;
-
-  const value = optionalString(row.status)?.toLowerCase();
-  if (value === 'pending') return SUBAGENT_STATUSES.PENDING;
-  if (value === 'running' || value === 'active' || value?.startsWith('active (')) {
-    return SUBAGENT_STATUSES.RUNNING;
-  }
-  if (isSubagentStatus(value)) return value;
-  if (value === 'error') return SUBAGENT_STATUSES.FAILED;
-  return SUBAGENT_STATUSES.DONE;
-};
-
-const extractToolDetails = (result: unknown): Record<string, unknown> | null => {
-  if (!isRecord(result) || result.ok !== true || !isRecord(result.output)) return null;
-  if (isRecord(result.output.details)) return result.output.details;
-  return result.output.status === 'ok' ? result.output : null;
-};
-
-const addToolSubagents = (
-  target: Map<string, GatewaySubagentProjection>,
-  details: Record<string, unknown>,
-): void => {
-  const rows = [
-    ...(Array.isArray(details.active) ? details.active : []),
-    ...(Array.isArray(details.recent) ? details.recent : []),
-  ];
-  for (const value of rows) {
-    if (!isRecord(value)) continue;
-    const sessionKey = optionalString(value.sessionKey);
-    if (!sessionKey) continue;
-    const title = resolveSubagentTitle(value);
-    target.set(sessionKey, {
-      id: sessionKey,
-      sessionKey,
-      sessionId: optionalString(value.sessionId),
-      ...(title ?? {}),
-      status: resolveToolStatus(value),
-      task: optionalString(value.task),
-      model: optionalString(value.model),
-      startedAt: optionalNumber(value.startedAt),
-      endedAt: optionalNumber(value.endedAt),
-      runtimeMs: optionalNumber(value.runtimeMs),
-      totalTokens: optionalNumber(value.totalTokens),
-    });
-  }
+  return hydrated;
 };
 
 export const mergeGatewaySubagentSnapshots = (
   retained: GatewaySubagent[],
   current: GatewaySubagent[],
 ): GatewaySubagent[] => {
-  const bySessionKey = new Map(retained.map(subagent => [subagent.sessionKey, { ...subagent }]));
+  const byId = new Map(retained.map(subagent => [subagent.id, { ...subagent }]));
   for (const subagent of current) {
-    const previous = bySessionKey.get(subagent.sessionKey);
+    const previous = byId.get(subagent.id);
     if (!previous) {
-      bySessionKey.set(subagent.sessionKey, { ...subagent });
+      byId.set(subagent.id, { ...subagent });
       continue;
     }
     const preferCurrentLabel =
-      SUBAGENT_LABEL_SOURCE_PRIORITY[subagent.labelSource] <=
-      SUBAGENT_LABEL_SOURCE_PRIORITY[previous.labelSource];
-    bySessionKey.set(subagent.sessionKey, {
+      LABEL_PRIORITY[subagent.labelSource] <= LABEL_PRIORITY[previous.labelSource];
+    byId.set(subagent.id, {
       ...previous,
-      id: subagent.id,
-      sessionKey: subagent.sessionKey,
-      sessionId: subagent.sessionId ?? previous.sessionId,
+      ...subagent,
       label: preferCurrentLabel ? subagent.label : previous.label,
       labelSource: preferCurrentLabel ? subagent.labelSource : previous.labelSource,
-      status: subagent.status,
+      sessionId: subagent.sessionId ?? previous.sessionId,
       task: subagent.task ?? previous.task,
       model: subagent.model ?? previous.model,
       startedAt: subagent.startedAt ?? previous.startedAt,
@@ -250,7 +240,7 @@ export const mergeGatewaySubagentSnapshots = (
       totalTokens: subagent.totalTokens ?? previous.totalTokens,
     });
   }
-  return [...bySessionKey.values()];
+  return [...byId.values()];
 };
 
 export const listPersistedGatewaySessions = async (
@@ -258,20 +248,17 @@ export const listPersistedGatewaySessions = async (
 ): Promise<Array<Record<string, unknown>>> => {
   const sessions: Array<Record<string, unknown>> = [];
   let offset = 0;
-
-  while (true) {
-    const result = await client.request<{
-      sessions?: Array<Record<string, unknown>>;
-    }>('sessions.list', {
-      limit: PERSISTED_SESSION_PAGE_SIZE,
-      offset,
-    });
-    const page = result.sessions ?? [];
-    sessions.push(...page);
-    if (page.length < PERSISTED_SESSION_PAGE_SIZE) break;
-    offset += PERSISTED_SESSION_PAGE_SIZE;
+  const seenOffsets = new Set<number>();
+  while (!seenOffsets.has(offset)) {
+    seenOffsets.add(offset);
+    const page = parseSessionsListResultV2026_8_1(
+      await client.request('sessions.list', { limit: SESSION_PAGE_SIZE, offset }),
+    );
+    sessions.push(...page.sessions);
+    if (!page.hasMore || page.nextOffset === null || page.nextOffset === undefined) break;
+    if (page.nextOffset <= offset) throw new Error('OpenClaw sessions.list cursor did not advance');
+    offset = page.nextOffset;
   }
-
   return sessions;
 };
 
@@ -279,176 +266,92 @@ export const listGatewaySubagentDescendants = async (
   client: GatewayRequestClient,
   rootKeys: string[],
 ): Promise<Array<{ sessionKey: string; sessionId: string; label: string }>> => {
-  const rows = await listPersistedGatewaySessions(client);
-  const childrenByParent = new Map<string, Array<Record<string, unknown>>>();
-  for (const row of rows) {
-    const sessionKey = optionalString(row.key);
-    if (!sessionKey || !sessionKey.includes(':subagent:')) continue;
-    const parentKeys = new Set(
-      [optionalString(row.spawnedBy), optionalString(row.parentSessionKey)].filter(
-        (value): value is string => value !== undefined,
-      ),
-    );
-    for (const parentKey of parentKeys) {
-      const children = childrenByParent.get(parentKey) ?? [];
-      children.push(row);
-      childrenByParent.set(parentKey, children);
-    }
-  }
-
   const visited = new Set(rootKeys);
   const queue = [...rootKeys];
-  const descendants: Array<Record<string, unknown>> = [];
+  const descendants: Array<{ sessionKey: string; label: string }> = [];
   while (queue.length > 0) {
     const parentKey = queue.shift()!;
-    for (const row of childrenByParent.get(parentKey) ?? []) {
-      const sessionKey = optionalString(row.key);
+    for (const task of await listTaskPages(client, parentKey)) {
+      const sessionKey = optionalString(task.childSessionKey);
       if (!sessionKey || visited.has(sessionKey)) continue;
       visited.add(sessionKey);
       queue.push(sessionKey);
-      descendants.push(row);
+      descendants.push({ sessionKey, label: resolveTaskTitle(task).label });
     }
   }
 
-  const resolved: Array<{ sessionKey: string; sessionId: string; label: string }> = [];
-  const concurrency = 8;
-  for (let offset = 0; offset < descendants.length; offset += concurrency) {
-    const batch = descendants.slice(offset, offset + concurrency);
-    resolved.push(
+  const result: Array<{ sessionKey: string; sessionId: string; label: string }> = [];
+  for (let offset = 0; offset < descendants.length; offset += TASK_DETAIL_CONCURRENCY) {
+    result.push(
       ...(await Promise.all(
-        batch.map(async row => {
-          const sessionKey = optionalString(row.key)!;
-          let sessionId = optionalString(row.sessionId);
+        descendants.slice(offset, offset + TASK_DETAIL_CONCURRENCY).map(async descendant => {
+          const described = await client.request<{
+            session?: Record<string, unknown> | null;
+          }>('sessions.describe', { key: descendant.sessionKey });
+          const sessionId = optionalString(described.session?.sessionId);
           if (!sessionId) {
-            const described = await client.request<{
-              session?: Record<string, unknown> | null;
-            }>('sessions.describe', { key: sessionKey });
-            sessionId = optionalString(described.session?.sessionId);
+            throw new Error(`Gateway Session ID unavailable for ${descendant.sessionKey}`);
           }
-          if (!sessionId) throw new Error(`Gateway Session ID unavailable for ${sessionKey}`);
-          return {
-            sessionKey,
-            sessionId,
-            label: resolveSubagentTitle(row)?.label ?? sessionKey.split(':').pop() ?? sessionKey,
-          };
+          return { ...descendant, sessionId };
         }),
       )),
     );
   }
-  return resolved;
+  return result;
 };
 
-/**
- * Invokes OpenClaw's structured `subagents` tool through the public Gateway API.
- * The session projection supplements completed runs older than the tool's
- * 24-hour maximum recent window. Lightweight runtime polling can opt out of the
- * persisted history scan when a retained snapshot is already available. The
- * structured tool remains the authority for current lifecycle state.
- */
 const collectGatewaySubagents = async (
   options: ListGatewaySubagentsOptions,
 ): Promise<{
   subagents: GatewaySubagentProjection[];
-  persistedHistoryComplete: boolean;
-  structuredToolComplete: boolean;
+  taskLedgerComplete: boolean;
 }> => {
-  const bySessionKey = new Map<string, GatewaySubagentProjection>();
-  let persistedHistoryComplete = true;
-  let structuredToolComplete = true;
-
+  const tasksById = new Map<string, OpenClawTaskSummaryV2026_8_1>();
+  let complete = true;
   for (const parentKey of options.parentKeys) {
-    if (options.includeStructuredTool !== false) {
-      try {
-        const toolResult = await options.client.request<unknown>('tools.invoke', {
-          name: 'subagents',
-          args: {
-            action: 'list',
-            recentMinutes: SUBAGENT_RECENT_MINUTES,
-          },
-          sessionKey: parentKey,
-        });
-        const details = extractToolDetails(toolResult);
-        if (details) addToolSubagents(bySessionKey, details);
-      } catch (error) {
-        structuredToolComplete = false;
-        console.warn('[SubagentGateway] Failed to invoke structured subagent list', {
-          parentKey,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
-
-    // The tool intentionally caps completed runs at 24 hours. Keep the
-    // registry-backed session projection as a fallback for permanent history.
-    const result = await options.client.request<{
-      sessions?: Array<Record<string, unknown>>;
-    }>('sessions.list', {
-      spawnedBy: parentKey,
-      limit: 100,
-    });
-
-    for (const row of result.sessions ?? []) {
-      const sessionKey = typeof row.key === 'string' ? row.key.trim() : '';
-      if (!sessionKey || !sessionKey.includes(':subagent:')) continue;
-      if (mergeSessionProjection(bySessionKey, sessionKey, row)) continue;
-      const title = resolveSubagentTitle(row);
-      bySessionKey.set(sessionKey, {
-        id: sessionKey,
-        sessionKey,
-        sessionId: optionalString(row.sessionId),
-        ...(title ?? {}),
-        status: resolveStatus(row),
-        model: optionalString(row.model),
-        startedAt: optionalNumber(row.startedAt),
-        endedAt: optionalNumber(row.endedAt),
-        runtimeMs: optionalNumber(row.runtimeMs),
-        totalTokens: optionalNumber(row.totalTokens),
-      });
-    }
-  }
-
-  if (options.includePersistedHistory !== false) {
-    // `sessions.list({ spawnedBy })` follows OpenClaw's live child-link policy,
-    // so completed children can age out of that projection. List persisted
-    // sessions broadly and filter locally to keep long-retained subagent history
-    // visible when archiveAfterMinutes is configured as 0.
-    const parentKeySet = new Set(options.parentKeys);
     try {
-      for (const row of await listPersistedGatewaySessions(options.client)) {
-        const sessionKey = typeof row.key === 'string' ? row.key.trim() : '';
-        if (!sessionKey || !sessionKey.includes(':subagent:')) continue;
-        if (!rowBelongsToParent(row, parentKeySet)) continue;
-        if (mergeSessionProjection(bySessionKey, sessionKey, row)) continue;
-        const title = resolveSubagentTitle(row);
-        bySessionKey.set(sessionKey, {
-          id: sessionKey,
-          sessionKey,
-          sessionId: optionalString(row.sessionId),
-          ...(title ?? {}),
-          status: resolveStatus(row),
-          task: optionalString(row.task),
-          model: optionalString(row.model),
-          startedAt: optionalNumber(row.startedAt),
-          endedAt: optionalNumber(row.endedAt),
-          runtimeMs: optionalNumber(row.runtimeMs),
-          totalTokens: optionalNumber(row.totalTokens),
-        });
+      let tasks = await listTaskPages(options.client, parentKey);
+      if (options.hydrateDetails !== false) {
+        tasks = await hydrateTaskDetails(options.client, tasks);
       }
+      for (const task of tasks) tasksById.set(task.id, task);
     } catch (error) {
-      persistedHistoryComplete = false;
-      console.warn('[SubagentGateway] Failed to list persisted subagent sessions', {
+      complete = false;
+      console.warn('[SubagentGateway] Failed to list native subagent tasks', {
+        parentKey,
         error: error instanceof Error ? error.message : String(error),
       });
     }
   }
-
-  const subagents = [...bySessionKey.values()];
-  for (const subagent of subagents) {
-    if (subagent.label === undefined || subagent.labelSource === undefined) {
-      warnMalformedSubagentOnce(subagent.sessionKey);
+  let subagents = [...tasksById.values()].flatMap(task => {
+      const subagent = toGatewaySubagent(task);
+      return subagent ? [subagent] : [];
+    });
+  if (options.hydrateDetails !== false && subagents.length > 0) {
+    try {
+      const sessions = new Map(
+        (await listPersistedGatewaySessions(options.client)).map(session => [
+          optionalString(session.key),
+          session,
+        ]),
+      );
+      subagents = subagents.map(subagent => {
+        const session = sessions.get(subagent.sessionKey);
+        if (!session) return subagent;
+        return {
+          ...subagent,
+          sessionId: optionalString(session.sessionId) ?? subagent.sessionId,
+          model: optionalString(session.model) ?? subagent.model,
+          totalTokens: optionalNumber(session.totalTokens) ?? subagent.totalTokens,
+        };
+      });
+    } catch (error) {
+      console.warn('[SubagentGateway] Failed to hydrate native session details', {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
-  return { subagents, persistedHistoryComplete, structuredToolComplete };
+  return { subagents, taskLedgerComplete: complete };
 };
 
 const filterWellFormedSubagents = (
@@ -463,10 +366,7 @@ export const listGatewaySubagentsWithMetadata = async (
   options: ListGatewaySubagentsOptions,
 ): Promise<GatewaySubagentListMetadata> => {
   const result = await collectGatewaySubagents(options);
-  return {
-    ...result,
-    subagents: filterWellFormedSubagents(result.subagents),
-  };
+  return { ...result, subagents: filterWellFormedSubagents(result.subagents) };
 };
 
 export function listGatewaySubagents(

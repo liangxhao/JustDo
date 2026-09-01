@@ -6,9 +6,9 @@ type SubagentLabelSnapshot = {
 };
 
 const LABEL_SOURCE_PRIORITY: Record<SubagentLabelSource, number> = {
-  taskName: 0,
-  label: 1,
-  task: 2,
+  label: 0,
+  task: 1,
+  taskName: 2,
 };
 
 export const reconcileSubagentLabel = (

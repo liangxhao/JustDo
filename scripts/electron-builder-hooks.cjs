@@ -1239,11 +1239,22 @@ function buildReleaseHistory({
   return historyPath;
 }
 
+function hasWindowsInstallerTarget(platformToTargets) {
+  for (const [platform, targets] of platformToTargets?.entries?.() || []) {
+    if (platform?.nodeName !== 'win32') continue;
+    for (const targetName of targets?.keys?.() || []) {
+      if (String(targetName).toLowerCase().startsWith('nsis')) return true;
+    }
+  }
+  return false;
+}
+
 async function afterAllArtifactBuild(context) {
-  const buildsWindows = Array.from(context?.platformToTargets?.keys?.() || []).some(
-    platform => platform?.nodeName === 'win32',
-  );
-  if (!buildsWindows) return [];
+  // `electron-builder --dir` reports a Windows target but intentionally creates
+  // no installer artifact. Update manifests belong only to NSIS builds; actual
+  // NSIS builds still fail closed in findSingleWindowsInstaller when the EXE is
+  // missing or ambiguous.
+  if (!hasWindowsInstallerTarget(context?.platformToTargets)) return [];
 
   const repoRoot = path.join(__dirname, '..');
   const packageMetadata = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
@@ -1334,6 +1345,7 @@ module.exports = {
   buildReleaseHistory,
   buildWindowsUpdateManifest,
   findSingleWindowsInstaller,
+  hasWindowsInstallerTarget,
   normalizeUpdateVersion,
   readReleaseNotes,
   verifyWindowsInstallerArchive,

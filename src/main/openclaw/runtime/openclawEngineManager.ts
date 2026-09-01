@@ -11,6 +11,11 @@ import {
   GatewayPortSetErrorCode,
   validateGatewayPortNumber,
 } from '../../../shared/openclaw/gatewayPort';
+import type {
+  OpenClawSessionMigrationPlan,
+  OpenClawSessionMigrationProgress,
+  OpenClawSessionMigrationResult,
+} from '../../../shared/openclaw/sessionMigration';
 import type { SystemPromptReplacementRule } from '../../../shared/openclaw/systemPromptReplacements';
 import { applyDependencyManagerConfigEnv } from '../../core/dependencyManagerConfig';
 import { applyPortableGitRuntimeEnv } from '../../core/portableGitRuntime';
@@ -40,6 +45,7 @@ import {
 import { findAvailableLoopbackPort, isLoopbackPortAvailable } from './loopbackPort';
 import { ensureOpenClawGatewayBundleLauncher } from './openclawGatewayBundleLauncher.cjs';
 import { OPENCLAW_LAUNCHER_KEEP_ALIVE_SOURCE } from './openclawLauncher';
+import { SessionStoreMigrationCoordinator } from './sessionStoreMigration';
 import {
   mergeRegisteredSystemPromptReplacementRules,
   normalizePersistedSystemPromptReplacementRules,
@@ -206,6 +212,7 @@ export class OpenClawEngineManager extends EventEmitter {
   private readonly gatewayLogPath: string;
   private readonly configPath: string;
   private readonly systemPromptReplacementRulesPath: string;
+  private readonly sessionStoreMigration: SessionStoreMigrationCoordinator;
 
   private desiredVersion: string | null;
   private status: OpenClawEngineStatus;
@@ -249,6 +256,13 @@ export class OpenClawEngineManager extends EventEmitter {
       this.stateDir,
       'system-prompt-replacements.json',
     );
+
+    this.sessionStoreMigration = new SessionStoreMigrationCoordinator({
+      stateDir: this.stateDir,
+      baseDir: this.baseDir,
+      runtimeVersion: () => this.desiredVersion,
+      runCli: args => this.runMigrationCli(args),
+    });
 
     ensureDir(this.baseDir);
     ensureDir(this.logsDir);
@@ -446,6 +460,24 @@ export class OpenClawEngineManager extends EventEmitter {
 
   getConfigPath(): string {
     return this.configPath;
+  }
+
+  getSessionMigrationPlan(): Promise<OpenClawSessionMigrationPlan> {
+    return this.sessionStoreMigration.plan();
+  }
+
+  confirmSessionMigration(
+    planId: string,
+    approved: boolean,
+  ): Promise<OpenClawSessionMigrationResult> {
+    return this.sessionStoreMigration.confirm(planId, approved);
+  }
+
+  onSessionMigrationProgress(
+    listener: (progress: OpenClawSessionMigrationProgress) => void,
+  ): () => void {
+    this.sessionStoreMigration.on('progress', listener);
+    return () => this.sessionStoreMigration.off('progress', listener);
   }
 
   getGatewayConnectionInfo(): OpenClawGatewayConnectionInfo {
@@ -651,6 +683,47 @@ export class OpenClawEngineManager extends EventEmitter {
     };
   }
 
+  private async runMigrationCli(args: string[]): Promise<{ stdout: string; stderr: string }> {
+    const cli = await this.buildCliEnvironment();
+    const maxOutputBytes = 4 * 1024 * 1024;
+    return new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, [cli.openclawEntry, ...args], {
+        cwd: cli.runtimeRoot,
+        env: {
+          ...cli.env,
+          ELECTRON_RUN_AS_NODE: '1',
+          OPENCLAW_NO_RESPAWN: '1',
+        },
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      let stderr = '';
+      let outputBytes = 0;
+      const append = (target: 'stdout' | 'stderr', chunk: Buffer): void => {
+        outputBytes += chunk.byteLength;
+        if (outputBytes > maxOutputBytes) {
+          child.kill();
+          reject(new Error('OpenClaw migration command produced too much output.'));
+          return;
+        }
+        if (target === 'stdout') stdout += chunk.toString('utf8');
+        else stderr += chunk.toString('utf8');
+      };
+      child.stdout?.on('data', (chunk: Buffer) => append('stdout', chunk));
+      child.stderr?.on('data', (chunk: Buffer) => append('stderr', chunk));
+      child.once('error', error => reject(error));
+      child.once('exit', code => {
+        if (code === 0) {
+          resolve({ stdout, stderr });
+          return;
+        }
+        const diagnostic = stderr.trim() || stdout.trim() || `exit code ${String(code)}`;
+        reject(new Error(`OpenClaw migration command failed: ${diagnostic.slice(0, 500)}`));
+      });
+    });
+  }
+
   private async doStartGateway(): Promise<OpenClawEngineStatus> {
     this.shutdownRequested = false;
     const t0 = Date.now();
@@ -706,6 +779,20 @@ export class OpenClawEngineManager extends EventEmitter {
         version: null,
         message: `OpenClaw runtime version metadata is missing or invalid: ${runtime.root}`,
         canRetry: true,
+      });
+      return this.getStatus();
+    }
+
+    const migrationPlan = await this.sessionStoreMigration.plan();
+    if (migrationPlan.required) {
+      const message = migrationPlan.error
+        ? `Legacy OpenClaw session migration could not be prepared: ${migrationPlan.error}`
+        : 'Legacy OpenClaw sessions require review and confirmation before Gateway startup.';
+      this.setStatus({
+        phase: 'error',
+        version: runtime.version,
+        message,
+        canRetry: false,
       });
       return this.getStatus();
     }

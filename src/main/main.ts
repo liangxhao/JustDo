@@ -837,17 +837,10 @@ if (!gotTheLock) {
     preloadPath: IMAGE_PREVIEW_PRELOAD_PATH,
   });
 
-  registerOpenClawHistoryHandlers(
-    () => getOpenClawEngineManager().getStateDir(),
-    () => {
-      const manager = getOpenClawEngineManager();
-      const connectionInfo = manager.getGatewayConnectionInfo();
-      return {
-        port: manager.getGatewayPort(),
-        token: manager.getGatewayToken() ?? connectionInfo.token,
-      };
-    },
-  );
+  registerOpenClawHistoryHandlers({
+    requestGateway: <T>(method: string, params?: unknown) =>
+      getCoworkEngineService().requestGateway<T>(method, params),
+  });
   registerOpenClawUsageHandlers({ getRuntime: getOpenClawRuntimeAdapter });
   registerOpenClawApprovalHandlers({ getRuntime: getOpenClawRuntimeAdapter });
   registerOpenClawMemoryHandlers({ getManager: getOpenClawEngineManager });

@@ -58,6 +58,8 @@ Create 映射 schedule/payload/delivery；Agent-turn 强制 `agentId = justdo-sc
 - delivery 显式设 none 时发 `{mode:'none'}`，不是遗漏字段；
 - mutation 按 task id 串行，避免 toggle/update/run 互相覆盖。
 
+新建 job 即使调用方省略 delivery，也必须显式发送 `delivery: {mode:'none'}`。这样应用内结果不会因 OpenClaw 默认 delivery 改变而意外 announce；只有用户明确选择外发模式时才发送 channel/webhook 字段。
+
 ## 5. Scheduler agent 隔离
 
 `justdo-scheduler` 是受管 agent，Agent-turn job 必须由它执行。list 会修复历史 job 的错误 assignment：成功则返回修复后 job；失败且 job enabled 时尝试禁用，避免以普通交互 agent/错误权限继续无人值守执行；连禁用都失败则整次 list 报错。

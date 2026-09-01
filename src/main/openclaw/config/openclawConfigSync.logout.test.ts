@@ -216,13 +216,12 @@ describe('OpenClaw auth logout config sync', () => {
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     expect(config.agents.defaults.compaction).toMatchObject({
       mode: 'safeguard',
-      recentTurnsPreserve: 0,
+      timeoutSeconds: 30 * 60,
       memoryFlush: {
         enabled: false,
       },
-      qualityGuard: {
-        enabled: false,
-        maxRetries: 2,
+      midTurnPrecheck: {
+        enabled: true,
       },
     });
     expect(config.agents.defaults.compaction).not.toHaveProperty('keepRecentTokens');
@@ -320,7 +319,7 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.tools.exec.mode).toBe('ask');
     expect(config.session).toEqual({
       dmScope: 'per-account-channel-peer',
-      reset: { mode: 'idle' },
+      reset: { mode: 'none' },
       maintenance: {
         mode: 'enforce',
         pruneAfter: '365d',
@@ -353,6 +352,7 @@ describe('OpenClaw auth logout config sync', () => {
       'browser',
       'ask-user-question',
       'action-approval',
+      'justdo-runtime-bridge',
     ]);
     expect(config.plugins.deny).toBeUndefined();
     expect(config.plugins.entries['action-approval']).toEqual({
@@ -443,6 +443,7 @@ describe('OpenClaw auth logout config sync', () => {
       'browser',
       'ask-user-question',
       'action-approval',
+      'justdo-runtime-bridge',
     ]);
     expect(config.plugins.deny).toBeUndefined();
   });
@@ -559,6 +560,7 @@ describe('OpenClaw auth logout config sync', () => {
       'browser',
       'ask-user-question',
       'action-approval',
+      'justdo-runtime-bridge',
     ]);
     expect(config.plugins.entries.browser).toEqual({ enabled: true });
     expect(config.plugins.bundledDiscovery).toBe('compat');

@@ -1,0 +1,13 @@
+{
+  "id": "justdo-runtime-bridge",
+  "name": "JustDo Runtime Bridge",
+  "description": "Bounded runtime progress, history detail, and embedding integration for JustDo.",
+  "contracts": {
+    "embeddingProviders": ["justdo-runtime-bridge"]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

@@ -142,6 +142,14 @@ Renderer 对单题和双选项不做隐式确认按钮降级，所有问题统�
 
 Action approval extension 补充文件写/cron 等产品 policy，但不重复 Gateway 原生 exec approval。adapter diagnostics 不能被解释为“可信 policy 已激活”；真正 admission 仍要由 config sync 的 active policy verification 证明。
 
+`justdo-runtime-bridge` 是随产品安装并受保护的内置 OpenClaw extension。它只使用 v2026.8.1 支持的 plugin API，承担三项不应继续做 runtime patch 的集成：
+
+- 从 agent hooks 发布 `preparing`、`waiting_model`、`retrying` 有界进度事件；
+- 注册 `justdo-runtime-bridge` remote embedding provider，保留 SSRF policy 与 eligible env proxy；
+- 注册 `justdoRuntimeBridge.historyDetails` 的 `operator.read` RPC，只按最多 250 个请求 id 从原生 transcript 投影 tool input 和 compaction detail。
+
+该 RPC 不是通用文件读取器，不返回 transcript 路径，也不接受任意 session 文件路径。Adapter 先用 `chat.history` 获取原生 display projection，仅对缺失 detail 做补充查询。
+
 ## 10. Marketplace Adapter
 
 当前 `createPluginMarketplaceService` 传入空 provider 数组，因此生产默认没有公开 marketplace source。UI/API 存在不代表当前有商店内容；企业构建需显式注册 provider。

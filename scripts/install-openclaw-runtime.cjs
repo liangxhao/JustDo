@@ -253,7 +253,12 @@ fs.mkdirSync(extractDir, { recursive: true });
     // 9. Install production dependencies
     // ---------------------------------------------------------------------------
     console.log(`[install-openclaw-runtime] [7/8] Installing production dependencies...`);
-    installProdDeps(stagingOutDir, npmTargetPlatform, targetArch);
+    installProdDeps(
+      stagingOutDir,
+      npmTargetPlatform,
+      targetArch,
+      path.join(tmpDir, 'install-state'),
+    );
 
     // ---------------------------------------------------------------------------
     // 10. Pack gateway.asar
@@ -358,7 +363,8 @@ function patchFacadeRuntime(runtimeDir) {
     ) &&
     !content.includes('createRequire(import.meta.url)') &&
     !content.includes('FACADE_ACTIVATION_CHECK_RUNTIME_CANDIDATES') &&
-    !content.includes('facadeActivationCheckRuntimeModule ??=');
+    !content.includes('getFacadeActivationCheckRuntimeModule') &&
+    !content.includes('getCachedPluginSourceModuleLoader');
   if (isFullyPatched) {
     console.log('[install-openclaw-runtime] facade-runtime static loader already verified.');
     return;
@@ -383,16 +389,21 @@ function patchFacadeRuntime(runtimeDir) {
     content = content.replace(pattern, replacement);
   };
 
-  // 1. Remove unused imports.
+  // 1. Remove imports that only support the runtime source-loader fallback.
   replaceRequired(
     /import\s*\{\s*createRequire\s*\}\s*from\s*"node:module";\s*\n?/,
     '',
     'facade createRequire import',
   );
   replaceRequired(
-    /import\s*\{\s*r\s+as\s+getCachedPluginSourceModuleLoader\s*\}\s*from\s*"[^"]*plugin-module-loader-cache[^"]*";\s*\n?/g,
+    /import\s*\{\s*[A-Za-z_$][\w$]*\s+as\s+getCachedPluginSourceModuleLoader\s*\}\s*from\s*"[^"]*plugin-module-loader-cache[^"]*";\s*\n?/g,
     '',
     'facade plugin source loader import',
+  );
+  replaceRequired(
+    /import\s*\{\s*([A-Za-z_$][\w$]*\s+as\s+getPluginCacheRoot),\s*[A-Za-z_$][\w$]*\s+as\s+getPluginCacheSource\s*\}\s*from\s*("[^"]*plugin-cache[^"]*");/,
+    'import { $1 } from $2;',
+    'facade plugin cache import',
   );
 
   // 2. Add static import after the last existing import statement.
@@ -415,18 +426,16 @@ function patchFacadeRuntime(runtimeDir) {
     'facade runtime candidates',
   );
 
-  // Remove: let facadeActivationCheckRuntimeModule;
+  // Remove the v2026.8.1 plugin-cache accessors used only by the dynamic loader.
   replaceRequired(
-    /let\s+facadeActivationCheckRuntimeModule;\s*\n?/,
+    /function\s+getFacadeActivationCheckRuntimeModule\(\)\s*\{[\s\S]*?\n\}\n/,
     '',
-    'facade dynamic module cache',
+    'facade dynamic module getter',
   );
-
-  // Remove: const facadeActivationCheckRuntimeLoaders = /* @__PURE__ */ new Map();
   replaceRequired(
-    /const\s+facadeActivationCheckRuntimeLoaders\s*=\s*\/\*\s*@__PURE__\s*\*\/\s*new\s+Map\(\);\s*\n?/g,
+    /function\s+setFacadeActivationCheckRuntimeModule\([^)]*\)\s*\{[\s\S]*?\n\}\n/,
     '',
-    'facade dynamic loader cache',
+    'facade dynamic module setter',
   );
 
   // Remove: getFacadeActivationCheckRuntimeSourceLoader function
@@ -474,7 +483,8 @@ function patchFacadeRuntime(runtimeDir) {
     !content.includes(staticImport) ||
     content.includes('createRequire(import.meta.url)') ||
     content.includes('FACADE_ACTIVATION_CHECK_RUNTIME_CANDIDATES') ||
-    content.includes('facadeActivationCheckRuntimeModule ??=')
+    content.includes('getFacadeActivationCheckRuntimeModule') ||
+    content.includes('getCachedPluginSourceModuleLoader')
   ) {
     throw new Error('facade-runtime static-loader verification failed before commit');
   }
@@ -555,12 +565,16 @@ function processSkills(electronRoot, runtimeRoot) {
 // Install production dependencies
 // ===========================================================================
 
-function installProdDeps(runtimeDir, npmPlatform, npmArch) {
-  // Remove existing node_modules and lockfile.
+function installProdDeps(runtimeDir, npmPlatform, npmArch, isolatedStateDir) {
+  // Remove existing node_modules and both npm lockfile forms. The v2026.8.1
+  // package no longer ships npm-shrinkwrap.json, so the runtime build owns the
+  // production dependency snapshot it later verifies and packages.
   const nmDir = path.join(runtimeDir, 'node_modules');
-  const lockFile = path.join(runtimeDir, 'package-lock.json');
   if (fs.existsSync(nmDir)) fs.rmSync(nmDir, { recursive: true, force: true });
-  if (fs.existsSync(lockFile)) fs.rmSync(lockFile, { force: true });
+  for (const lockName of ['package-lock.json', RUNTIME_DEPENDENCY_LOCK_FILENAME]) {
+    fs.rmSync(path.join(runtimeDir, lockName), { force: true });
+  }
+  fs.mkdirSync(isolatedStateDir, { recursive: true });
 
   // Remove devDependencies from package.json.
   const pkgPath = path.join(runtimeDir, 'package.json');
@@ -594,8 +608,27 @@ function installProdDeps(runtimeDir, npmPlatform, npmArch) {
       cwd: runtimeDir,
       stdio: 'inherit',
       timeout: 10 * 60 * 1000,
+      env: {
+        OPENCLAW_STATE_DIR: isolatedStateDir,
+        OPENCLAW_CONFIG_PATH: path.join(isolatedStateDir, 'openclaw.json'),
+      },
     },
   );
+
+  // Keep the historical runtime artifact name, but generate it from the exact
+  // production install instead of relying on a lockfile bundled upstream.
+  runNpm(['shrinkwrap'], {
+    cwd: runtimeDir,
+    stdio: 'inherit',
+    timeout: 2 * 60 * 1000,
+    env: {
+      OPENCLAW_STATE_DIR: isolatedStateDir,
+      OPENCLAW_CONFIG_PATH: path.join(isolatedStateDir, 'openclaw.json'),
+    },
+  });
+  if (!fs.existsSync(path.join(runtimeDir, RUNTIME_DEPENDENCY_LOCK_FILENAME))) {
+    fail('npm shrinkwrap did not produce the runtime dependency lock.');
+  }
 }
 
 // ===========================================================================

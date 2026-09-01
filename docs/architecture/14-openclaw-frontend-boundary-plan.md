@@ -27,7 +27,7 @@ OpenClaw拥有可跨客户端复用的 Agent runtime事实；JustDo拥有 Electr
 
 - `chat.send/history` 和 agent/chat/tool/lifecycle event；
 - `sessions.list/get/describe/resolve/patch/abort/delete/subscribe`；
-- session goal、runtime状态、subagent parent/children；
+- session goal、runtime 状态、`tasks.list/get` 与 task events；
 - `cron.*` job和runs；
 - `skills.status/update`；
 - exec/plugin approvals；
@@ -78,9 +78,9 @@ UI/Agent调用native cron -> Gateway保存/调度 -> Main轮询runs -> SQLite up
 
 ## 7. Patch 边界
 
-Patch适用于：必须在Gateway内部原子实现、需要完整上下文/生命周期、无法由客户端可靠推断的语义，如 managed subagent join、approval lifecycle、compaction、reasoning stream、completion delivery。
+Patch 只适用于必须在 Gateway 内看到完整上下文或需要 host/runtime 联合语义、且 v2026.8.1 没有等价公开能力的缺口。当前例子包括 managed Python 环境、Windows MCP runner、最终 system-prompt replacement、请求 metadata、app-start task epoch 和手动 reindex no-cache。
 
-Patch不适用于：主题、分组、未读、窗口布局、产品标题等纯产品能力。每个patch必须绑定 `v2026.7.1-2`，有manifest/README/test；上游等价实现后应删除而非永久叠加。
+Patch 不适用于主题、分组、未读、窗口布局、产品标题等纯产品能力，也不应重做 v2026.8.1 已原生提供的 thinking/history、tool directory、task queue/join、approval 或 compaction。每个 patch 必须绑定 `v2026.8.1`，有 manifest、README 和测试；上游等价实现后应删除。
 
 ## 8. Execution truth
 
@@ -97,7 +97,7 @@ Patch不适用于：主题、分组、未读、窗口布局、产品标题等纯
 
 ## 9. Config ownership
 
-Gateway运行时拥有其活动 `sessions.json` 等文件；运行时活跃时JustDo不能直接重写这些动态文件。JustDo可生成受管 `openclaw.json`区域，但必须保留非受管用户配置，并仅清理自己历史写入的字段。
+Gateway 拥有活动 session SQLite store；JustDo 不直接读写 runtime session 文件。模型更新使用 `sessions.patch`，历史使用 `chat.history`，受限 detail 使用 runtime bridge RPC。检测到 legacy `sessions.json` 时必须先完成可确认、可回滚且有 receipt 的原生迁移，Gateway 才能启动。JustDo 可生成受管 `openclaw.json` 区域，但必须保留非受管用户配置，并仅清理自己历史写入的字段。
 
 Config sync使用exclusive mutation、last-touched metadata和reload monitor。某字段支持hot reload不代表所有字段支持；restart决策由monitor/service证据决定。
 
@@ -237,7 +237,7 @@ Config sync 的核心不是“把 JustDo 对象 stringify 到 `openclaw.json`”
 - 有 pristine preimage、patch application 和 consumer behavior 测试；
 - README/manifest 记录 upstream disposition 与删除条件。
 
-补丁编号是顺序依赖，不是功能优先级。`scripts/patches/v2026.7.1-2/README.md` 是当前 001–042 能力到文件的权威表；历史目录不能作为新版本补丁源。
+补丁编号是构建顺序，不是功能优先级。`scripts/patches/v2026.8.1/README.md` 是当前九个补丁的权威表；历史目录不能作为新版本补丁源，也不能把旧 marker 当作兼容输入。
 
 ## 19. 端到端审查示例
 

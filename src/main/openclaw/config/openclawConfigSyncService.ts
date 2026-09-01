@@ -3,6 +3,10 @@ import { BuiltinModelSyncReason } from '../../../shared/builtinModels';
 import type { PermissionMode } from '../../../shared/openclaw/approvals';
 import { ScheduledTaskAgentId } from '../../../shared/scheduledTask/constants';
 import type { CoworkStore } from '../../data/coworkStore';
+import {
+  parseModelReferenceV2026_8_1,
+  parseSessionsListResultV2026_8_1,
+} from '../../engine/openclaw/wire/v2026_8_1';
 import type {
   OpenClawEngineManager,
   OpenClawEngineStatus,
@@ -64,8 +68,12 @@ const resolveExecApprovalFields = (mode: PermissionMode) => {
 type ConfigSnapshot = {
   config?: {
     agents?: {
+      defaults?: {
+        model?: unknown;
+      };
       list?: Array<{
         id?: unknown;
+        model?: unknown;
         tools?: {
           exec?: { host?: unknown; mode?: unknown };
           fs?: { workspaceOnly?: unknown };
@@ -218,13 +226,7 @@ export class OpenClawConfigSyncService {
         );
       }
     }
-    const syncResult = this.getConfigSync().sync(options.reason, {
-      // The Gateway owns sessions.json while its process is active. Restrict
-      // legacy managed-session migrations to the fully stopped/ready phase so
-      // config reloads cannot overwrite concurrent token, fallback, or
-      // lifecycle updates from the Gateway session writer.
-      allowManagedSessionStoreMutation: statusBeforeSync.phase === 'ready',
-    });
+    const syncResult = this.getConfigSync().sync(options.reason);
     if (!syncResult.ok) {
       return this.failClosedConfigApplication({
         success: false,
@@ -352,13 +354,14 @@ export class OpenClawConfigSyncService {
 
     try {
       const expectedMode = this.deps.getCoworkStore().getConfig().permissionMode;
-      const [runtimeConfigApplied, execPolicyApplied] = await Promise.all([
+      const [runtimeConfigResult, execPolicyApplied] = await Promise.all([
         this.verifyRuntimePermissionConfig(expectedMode),
         options.execPolicyAlreadyVerified
           ? Promise.resolve(true)
           : this.applyExecApprovalPolicy(expectedMode),
       ]);
-      if (runtimeConfigApplied && execPolicyApplied) {
+      if (runtimeConfigResult.verified && execPolicyApplied) {
+        await this.syncManagedSessionModelsViaGateway(runtimeConfigResult.snapshot);
         return { ...result, permissionVerified: true };
       }
 
@@ -372,7 +375,9 @@ export class OpenClawConfigSyncService {
     }
   }
 
-  private async verifyRuntimePermissionConfig(mode: PermissionMode): Promise<boolean> {
+  private async verifyRuntimePermissionConfig(
+    mode: PermissionMode,
+  ): Promise<{ verified: boolean; snapshot: ConfigSnapshot }> {
     const [snapshot, pluginInfo] = await Promise.all([
       this.deps.requestGateway<ConfigSnapshot>('config.get'),
       this.deps.requestGateway<ActionApprovalInfo>('actionApproval.info'),
@@ -384,7 +389,9 @@ export class OpenClawConfigSyncService {
     const fullAgentIds = Array.isArray(pluginInfo.fullAgentIds)
       ? pluginInfo.fullAgentIds.filter((agentId): agentId is string => typeof agentId === 'string')
       : [];
-    return (
+    return {
+      snapshot,
+      verified:
       snapshot.config?.tools?.exec?.host === 'gateway' &&
       snapshot.config.tools.exec.mode === mode &&
       snapshot.config?.tools?.fs?.workspaceOnly === expectedWorkspaceOnly &&
@@ -394,8 +401,46 @@ export class OpenClawConfigSyncService {
       pluginInfo.loaded === true &&
       pluginInfo.adapterVersion === 2 &&
       pluginInfo.configuredMode === mode &&
-      fullAgentIds.includes(ScheduledTaskAgentId)
-    );
+      fullAgentIds.includes(ScheduledTaskAgentId),
+    };
+  }
+
+  private async syncManagedSessionModelsViaGateway(snapshot: ConfigSnapshot): Promise<void> {
+    const defaults = parseModelReferenceV2026_8_1(snapshot.config?.agents?.defaults?.model);
+    const targets = new Map<string, NonNullable<typeof defaults>>();
+    for (const agent of snapshot.config?.agents?.list ?? []) {
+      if (typeof agent.id !== 'string') continue;
+      const target = parseModelReferenceV2026_8_1(agent.model) ?? defaults;
+      if (target) targets.set(agent.id, target);
+    }
+    if (defaults) targets.set('main', targets.get('main') ?? defaults);
+    if (targets.size === 0) return;
+
+    const limit = 200;
+    let offset = 0;
+    const seenOffsets = new Set<number>();
+    while (!seenOffsets.has(offset)) {
+      seenOffsets.add(offset);
+      const page = parseSessionsListResultV2026_8_1(
+        await this.deps.requestGateway('sessions.list', { limit, offset }),
+      );
+      for (const session of page.sessions) {
+        const match = /^agent:([^:]+):justdo:/.exec(session.key);
+        if (!match) continue;
+        const target = targets.get(match[1]);
+        if (!target) continue;
+        if (session.modelProvider === target.provider && session.model === target.model) continue;
+        await this.deps.requestGateway('sessions.patch', {
+          key: session.key,
+          model: target.reference,
+        });
+      }
+      if (!page.hasMore || page.nextOffset === null || page.nextOffset === undefined) break;
+      if (page.nextOffset <= offset) {
+        throw new Error('OpenClaw sessions.list returned a non-advancing pagination cursor');
+      }
+      offset = page.nextOffset;
+    }
   }
 
   private async applyExecApprovalPolicy(mode: PermissionMode): Promise<boolean> {

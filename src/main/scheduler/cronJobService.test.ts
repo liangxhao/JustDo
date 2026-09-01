@@ -410,7 +410,10 @@ describe('isolated scheduler agent assignment', () => {
 
     expect(request).toHaveBeenCalledWith(
       'cron.add',
-      expect.objectContaining({ agentId: ScheduledTaskAgentId }),
+      expect.objectContaining({
+        agentId: ScheduledTaskAgentId,
+        delivery: { mode: DeliveryMode.None },
+      }),
     );
     expect(task.agentId).toBe(ScheduledTaskAgentId);
   });

@@ -38,6 +38,14 @@ type ApprovalResolved = import('../../shared/openclaw/approvals').ApprovalResolv
 type ApprovalDecision = import('../../shared/openclaw/approvals').ApprovalDecision;
 type AgentRuntimeSettings =
   import('../../shared/openclaw/agentRuntimeSettings').AgentRuntimeSettings;
+type OpenClawSessionMigrationPlan =
+  import('../../shared/openclaw/sessionMigration').OpenClawSessionMigrationPlan;
+type OpenClawSessionMigrationProgress =
+  import('../../shared/openclaw/sessionMigration').OpenClawSessionMigrationProgress;
+type OpenClawSessionMigrationConfirmRequest =
+  import('../../shared/openclaw/sessionMigration').OpenClawSessionMigrationConfirmRequest;
+type OpenClawSessionMigrationResult =
+  import('../../shared/openclaw/sessionMigration').OpenClawSessionMigrationResult;
 type AppUpdateActionResult = import('../../shared/appUpdate').AppUpdateActionResult;
 type AppUpdateState = import('../../shared/appUpdate').AppUpdateState;
 type BrowserActionResult = import('../../shared/browser').BrowserActionResult;
@@ -575,6 +583,17 @@ interface IElectronAPI {
         status?: OpenClawEngineStatus;
       }>;
       onProgress: (callback: (status: OpenClawEngineStatus) => void) => () => void;
+      migration: {
+        plan: () => Promise<{
+          success: boolean;
+          plan?: OpenClawSessionMigrationPlan;
+          error?: string;
+        }>;
+        confirm: (
+          request: OpenClawSessionMigrationConfirmRequest,
+        ) => Promise<OpenClawSessionMigrationResult & { status?: OpenClawEngineStatus }>;
+        onProgress: (callback: (progress: OpenClawSessionMigrationProgress) => void) => () => void;
+      };
     };
     history: {
       getToolInputs: (params: { sessionKey: string; toolCallIds: string[] }) => Promise<{
@@ -876,6 +895,7 @@ interface IElectronAPI {
       success: boolean;
       subagents?: Array<{
         id: string;
+        taskName: string;
         sessionKey: string;
         sessionId?: string;
         label: string;

@@ -94,6 +94,10 @@ WAL 是持久设置。备份不能只在运行中复制主 `.sqlite` 而忽略 W
 
 这是 UI cache：Gateway history 是 transcript 权威。metadata 可包含 tool、plan、attachments、identity 等结构，读取时必须容忍旧/坏 JSON。启动会删除 foreign-key 引入前遗留的 orphan message。
 
+OpenClaw v2026.8.1 对接不再由 JustDo 直接读写 agent `sessions.json`。Gateway history、session model 与 task state 分别通过 `chat.history`、`sessions.patch`、`tasks.list/get` 获取；受限 history detail 由内置 runtime bridge RPC 投影。
+
+若升级时检测到 legacy OpenClaw `sessions.json`，Gateway 启动会被 migration coordinator 阻止。migration receipt、manifest 和不含 workspace 的已验证备份保存在 OpenClaw state 的受管迁移目录，不进入 `justdo.sqlite` schema；只有原生 import、validate、inspect 和 integrity 全部成功才写完成 receipt。取消或失败不删除 legacy store，也不启动空 Gateway。
+
 ## 7. `cowork_session_runs`
 
 | 列                                    | 语义                             |

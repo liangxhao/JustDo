@@ -1337,19 +1337,33 @@ test('stops a recovered active descendant through an idle child session', async 
   const childKey = `${parentKey}:subagent:child`;
   const grandchildKey = `${childKey}:subagent:grandchild`;
   const request = vi.fn((method: string, params?: unknown) => {
-    const input = params as { spawnedBy?: string };
-    if (method === 'sessions.list') {
-      if (input.spawnedBy === parentKey) {
+    const input = params as { sessionKey?: string };
+    if (method === 'tasks.list') {
+      if (input.sessionKey === parentKey) {
         return Promise.resolve({
-          sessions: [{ key: childKey, status: 'done', hasActiveRun: false }],
+          tasks: [
+            {
+              id: 'child-task',
+              runtime: 'subagent',
+              status: 'completed',
+              childSessionKey: childKey,
+            },
+          ],
         });
       }
-      if (input.spawnedBy === childKey) {
+      if (input.sessionKey === childKey) {
         return Promise.resolve({
-          sessions: [{ key: grandchildKey, status: 'done', hasActiveRun: true }],
+          tasks: [
+            {
+              id: 'grandchild-task',
+              runtime: 'subagent',
+              status: 'running',
+              childSessionKey: grandchildKey,
+            },
+          ],
         });
       }
-      return Promise.resolve({ sessions: [] });
+      return Promise.resolve({ tasks: [] });
     }
     if (method === 'sessions.abort') {
       return Promise.resolve({ ok: true, status: 'aborted', abortedRunId: 'remote-run' });
@@ -4398,56 +4412,53 @@ test('patchSessionModel applies immediately to subsequent calls while session is
   );
 });
 
-test('keeps structured subagent status authoritative while scanning retained history less often', async () => {
+test('keeps native task status authoritative while hydrating retained details less often', async () => {
   const { store, session } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
   const parentKey = 'agent:main:cowork:parent';
-  let toolInvocation = 0;
+  let taskListInvocation = 0;
   const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
-    if (method === 'tools.invoke') {
-      toolInvocation += 1;
+    if (method === 'tasks.list') {
+      taskListInvocation += 1;
       return {
-        ok: true,
-        output: {
-          details: {
-            status: 'ok',
-            active:
-              toolInvocation === 1
-                ? [
-                    {
-                      sessionKey: 'agent:main:subagent:active-child',
-                      taskName: 'active_task',
-                      status: 'running',
-                    },
-                  ]
-                : [],
-            recent:
-              toolInvocation === 1
-                ? []
-                : [
-                    {
-                      sessionKey: 'agent:main:subagent:active-child',
-                      taskName: 'active_task',
-                      status: 'done',
-                      endedAt: 109_000,
-                    },
-                  ],
-          },
-        },
-      };
-    }
-    if (method === 'sessions.list' && params?.spawnedBy) return { sessions: [] };
-    if (method === 'sessions.list') {
-      return {
-        sessions: [
+        tasks: [
           {
-            key: 'agent:main:subagent:old-child',
-            spawnedBy: parentKey,
-            task: 'Old retained task',
-            status: 'done',
+            id: 'active_task',
+            runtime: 'subagent',
+            status: taskListInvocation === 1 ? 'running' : 'completed',
+            childSessionKey: 'agent:main:subagent:active-child',
+            endedAt: taskListInvocation === 1 ? undefined : 109_000,
+          },
+          {
+            id: 'old_child',
+            runtime: 'subagent',
+            status: 'completed',
+            childSessionKey: 'agent:main:subagent:old-child',
+            prompt: 'Old retained task',
             endedAt: 1,
           },
         ],
+      };
+    }
+    if (method === 'tasks.get') {
+      const taskId = String(params?.taskId);
+      return {
+        task:
+          taskId === 'active_task'
+            ? {
+                id: taskId,
+                runtime: 'subagent',
+                status: 'running',
+                childSessionKey: 'agent:main:subagent:active-child',
+              }
+            : {
+                id: taskId,
+                runtime: 'subagent',
+                status: 'completed',
+                childSessionKey: 'agent:main:subagent:old-child',
+                prompt: 'Old retained task',
+                endedAt: 1,
+              },
       };
     }
     return {};
@@ -4480,12 +4491,8 @@ test('keeps structured subagent status authoritative while scanning retained his
       },
       { sessionKey: 'agent:main:subagent:old-child', status: 'done' },
     ]);
-    expect(request.mock.calls.filter(([method]) => method === 'tools.invoke')).toHaveLength(2);
-    expect(
-      request.mock.calls.filter(
-        ([method, params]) => method === 'sessions.list' && !params?.spawnedBy,
-      ),
-    ).toHaveLength(1);
+    expect(request.mock.calls.filter(([method]) => method === 'tasks.list')).toHaveLength(2);
+    expect(request.mock.calls.filter(([method]) => method === 'tasks.get')).toHaveLength(2);
   } finally {
     now.mockRestore();
   }
@@ -4495,40 +4502,34 @@ test('refreshes persisted history when a previously active child disappears from
   const { store, session } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
   const parentKey = 'agent:main:cowork:parent';
-  let toolInvocation = 0;
+  let taskListInvocation = 0;
   const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
-    if (method === 'tools.invoke') {
-      toolInvocation += 1;
-      if (toolInvocation > 1) throw new Error('temporary structured tool failure');
+    if (method === 'tasks.list') {
+      taskListInvocation += 1;
       return {
-        ok: true,
-        output: {
-          details: {
-            status: 'ok',
-            active: [
-              {
-                sessionKey: 'agent:main:subagent:active-child',
-                taskName: 'active_task',
-                status: 'running',
-              },
-            ],
-            recent: [],
-          },
-        },
+        tasks:
+          taskListInvocation === 2
+            ? []
+            : [
+                {
+                  id: 'active_task',
+                  runtime: 'subagent',
+                  status: taskListInvocation > 2 ? 'completed' : 'running',
+                  childSessionKey: 'agent:main:subagent:active-child',
+                  endedAt: taskListInvocation > 2 ? 109_000 : undefined,
+                },
+              ],
       };
     }
-    if (method === 'sessions.list' && params?.spawnedBy) return { sessions: [] };
-    if (method === 'sessions.list') {
+    if (method === 'tasks.get') {
       return {
-        sessions: [
-          {
-            key: 'agent:main:subagent:active-child',
-            spawnedBy: parentKey,
-            taskName: 'active_task',
-            status: toolInvocation > 1 ? 'done' : 'running',
-            endedAt: toolInvocation > 1 ? 109_000 : undefined,
-          },
-        ],
+        task: {
+          id: String(params?.taskId),
+          runtime: 'subagent',
+          status: taskListInvocation > 2 ? 'completed' : 'running',
+          childSessionKey: 'agent:main:subagent:active-child',
+          endedAt: taskListInvocation > 2 ? 109_000 : undefined,
+        },
       };
     }
     return {};
@@ -4551,11 +4552,7 @@ test('refreshes persisted history when a previously active child disappears from
     await expect(adapter.getSubagentStatuses(session.id)).resolves.toMatchObject({
       subagents: [{ status: 'done', endedAt: 109_000 }],
     });
-    expect(
-      request.mock.calls.filter(
-        ([method, params]) => method === 'sessions.list' && !params?.spawnedBy,
-      ),
-    ).toHaveLength(2);
+    expect(request.mock.calls.filter(([method]) => method === 'tasks.list')).toHaveLength(3);
   } finally {
     warn.mockRestore();
     now.mockRestore();
@@ -4568,22 +4565,31 @@ test('retains history and retries promptly when a persisted history page fails',
   const parentKey = 'agent:main:cowork:parent';
   let persistedScan = 0;
   const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
-    if (method === 'tools.invoke') {
-      return { ok: true, output: { details: { status: 'ok', active: [], recent: [] } } };
+    if (method === 'tasks.list') {
+      persistedScan += 1;
+      if (persistedScan === 2) throw new Error('temporary persisted scan failure');
+      return {
+        tasks: [
+          {
+            id: 'old_child',
+            runtime: 'subagent',
+            status: 'completed',
+            childSessionKey: 'agent:main:subagent:old-child',
+          },
+        ],
+      };
     }
-    if (params?.spawnedBy) return { sessions: [] };
-    persistedScan += 1;
-    if (persistedScan === 2) throw new Error('temporary persisted scan failure');
-    return {
-      sessions: [
-        {
-          key: 'agent:main:subagent:old-child',
-          spawnedBy: parentKey,
-          taskName: 'old_child',
-          status: 'done',
+    if (method === 'tasks.get') {
+      return {
+        task: {
+          id: String(params?.taskId),
+          runtime: 'subagent',
+          status: 'completed',
+          childSessionKey: 'agent:main:subagent:old-child',
         },
-      ],
-    };
+      };
+    }
+    return {};
   });
   const internals = adapter as unknown as {
     gatewayClient: GatewayClientLike | null;
@@ -4617,67 +4623,68 @@ test('retains history and retries promptly when a persisted history page fails',
 test('does not repopulate subagent caches after a parent session is deleted', async () => {
   const { store, session } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
-  let releaseTool!: () => void;
-  const toolGate = new Promise<void>(resolve => {
-    releaseTool = resolve;
+  let releaseTaskList!: () => void;
+  const taskListGate = new Promise<void>(resolve => {
+    releaseTaskList = resolve;
   });
-  const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
-    if (method === 'tools.invoke') {
-      await toolGate;
-      return { ok: true, output: { details: { status: 'ok', active: [], recent: [] } } };
+  const request = vi.fn(async (method: string) => {
+    if (method === 'tasks.list') {
+      await taskListGate;
+      return { tasks: [] };
     }
-    if (params?.spawnedBy) return { sessions: [] };
-    return { sessions: [] };
+    return {};
   });
   const internals = adapter as unknown as {
     gatewayClient: GatewayClientLike | null;
     ensureGatewayClientReady: () => Promise<void>;
     subagentStatusCache: Map<string, unknown>;
-    subagentHistoryCache: Map<string, unknown>;
+    subagentDetailCache: Map<string, unknown>;
   };
   internals.gatewayClient = { request } as unknown as GatewayClientLike;
   internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
 
   const refresh = adapter.getSubagentStatuses(session.id);
-  await vi.waitFor(() => expect(request).toHaveBeenCalledWith('tools.invoke', expect.anything()));
+  await vi.waitFor(() => expect(request).toHaveBeenCalledWith('tasks.list', expect.anything()));
   store.getSession = () => null;
   adapter.onSessionDeleted(session.id);
-  releaseTool();
+  releaseTaskList();
   await refresh;
 
   expect(internals.subagentStatusCache.has(session.id)).toBe(false);
-  expect(internals.subagentHistoryCache.has(session.id)).toBe(false);
+  expect(internals.subagentDetailCache.has(session.id)).toBe(false);
 });
 
 test('coalesces concurrent subagent status refreshes for the same parent session', async () => {
   const { store, session } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
-  let releaseTool!: () => void;
-  const toolGate = new Promise<void>(resolve => {
-    releaseTool = resolve;
+  let releaseTaskList!: () => void;
+  const taskListGate = new Promise<void>(resolve => {
+    releaseTaskList = resolve;
   });
   const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
-    if (method === 'tools.invoke') {
-      await toolGate;
+    if (method === 'tasks.list') {
+      await taskListGate;
       return {
-        ok: true,
-        output: {
-          details: {
-            status: 'ok',
-            active: [
-              {
-                sessionKey: 'agent:main:subagent:active-child',
-                taskName: 'active_task',
-                status: 'running',
-              },
-            ],
-            recent: [],
+        tasks: [
+          {
+            id: 'active_task',
+            runtime: 'subagent',
+            status: 'running',
+            childSessionKey: 'agent:main:subagent:active-child',
           },
+        ],
+      };
+    }
+    if (method === 'tasks.get') {
+      return {
+        task: {
+          id: String(params?.taskId),
+          runtime: 'subagent',
+          status: 'running',
+          childSessionKey: 'agent:main:subagent:active-child',
         },
       };
     }
-    if (method === 'sessions.list' && params?.spawnedBy) return { sessions: [] };
-    if (method === 'sessions.list') return { sessions: [] };
     return {};
   });
   const internals = adapter as unknown as {
@@ -4693,9 +4700,9 @@ test('coalesces concurrent subagent status refreshes for the same parent session
   const first = adapter.getSubagentStatuses(session.id);
   const second = adapter.getSubagentStatuses(session.id);
   await vi.waitFor(() => {
-    expect(request.mock.calls.filter(([method]) => method === 'tools.invoke')).toHaveLength(1);
+    expect(request.mock.calls.filter(([method]) => method === 'tasks.list')).toHaveLength(1);
   });
-  releaseTool();
+  releaseTaskList();
 
   await expect(Promise.all([first, second])).resolves.toEqual([
     {

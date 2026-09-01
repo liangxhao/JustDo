@@ -1,6 +1,6 @@
 # Subagent Runtime 设置审计
 
-> 审计基线：JustDo `v2026.8.12`、OpenClaw `v2026.7.1-2`。本文按当前共享契约、Config Sync 与设置页重新核对；上游字段需要在升级 OpenClaw 时再次验证。
+> 审计基线：JustDo `v2026.8.27`、OpenClaw `v2026.8.1`。本文按当前共享契约、Config Sync、原生 task ledger 与设置页重新核对。
 
 ## 1. 结论
 
@@ -82,15 +82,15 @@ null 表示跟随调用者。非 null 是 provider/model ref，设置页只允�
 
 ### 6.3 thinking
 
-主 Agent 的 null 表示使用模型默认值，固定 level 写入 `agents.defaults.thinkingDefault`。SubAgent 的 null 表示跟随 caller，固定 level 会传给 child 默认；completion announce 的 reasoning 继承还依赖 patch 002 的 direct agent 修复。某些 Provider 不流式发布 reasoning，设置成功不等于 UI 一定看到 thinking token。
+主 Agent 的 null 表示使用模型默认值，固定 level 写入 `agents.defaults.thinkingDefault`。SubAgent 的 null 表示跟随 caller，固定 level 会传给 child 默认；completion reasoning 使用 v2026.8.1 原生 agent stream。某些 Provider 不流式发布 reasoning，设置成功不等于 UI 一定看到 thinking token。
 
 ### 6.4 maxConcurrent
 
-限制全局原生 Subagent 同时 running 数，JustDo 默认 3。它不等于 accepted spawn 数；超过 running 容量的 accepted child 可以 queued。补丁 014 从真正 running 才开始 timeout。
+限制全局原生 Subagent 同时 running 数，JustDo 默认 3。它不等于 accepted spawn 数；超过 running 容量的 accepted child 由 v2026.8.1 原生 task scheduler 排队。run timeout 从真正 running 才开始。
 
 ### 6.5 maxChildrenPerAgent
 
-限制一个 requester 的活动 child admission，默认 5。补丁 013 使用原子 reservation，避免并行 preflight 超卖。该值不是历史 child 数，也不应因为 completed child 保留在 UI 就拒绝新 spawn。
+限制一个 requester 的活动 child admission，默认 5。v2026.8.1 原生 admission 使用原子 reservation，避免并行 preflight 超卖。该值不是历史 child 数，也不应因为 completed child 保留在 UI 就拒绝新 spawn。
 
 ### 6.6 runTimeoutSeconds
 
@@ -108,7 +108,7 @@ JustDo UI 只开放 1 或 2，尽管上游 schema 可能支持更深。深度 2 
 
 `allowAgents` 与 `requireAgentId` 涉及跨 Agent 委派安全边界，需要列出可用 Agent、处理删除/重命名和 per-agent 覆盖后再开放。不能用任意字符串输入框。
 
-`announceTimeoutMs` 主要影响 native completion delivery 的等待/恢复，不是 child run timeout。JustDo managed join、FIFO 与 recovery patches 又改变了部分交付路径，因此把它作为普通用户滑块会非常误导。
+`announceTimeoutMs` 主要影响 native completion delivery 的等待/恢复，不是 child run timeout。它与原生 required-child join 的内部交付协议相关，因此把它作为普通用户滑块会非常误导。
 
 内部 admission reservation、FIFO retry、join poll、UI cache TTL、context compaction 次数等也不是 OpenClaw 用户配置，不应混入设置页。
 
@@ -151,7 +151,7 @@ Full 模式下并发 child 可并行修改文件，用户应理解冲突风险�
 - IPC：get/set、Main 复验、持久化失败、同步失败；
 - UI：默认恢复、custom timeout、无效模型、thinking 列表、深度警告；
 - Runtime：原子 admission、queued/running、timeout 起点、深度限制；
-- Upgrade：上游 11 字段、默认值、schema 和 patch 013/014 仍兼容。
+- Upgrade：上游 11 字段、默认值、schema、原生 admission/queue/timeout 与 `tasks.list/get` wire 仍兼容。
 
 ## 12. 维护结论
 

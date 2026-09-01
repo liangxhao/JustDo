@@ -34,6 +34,9 @@ describe('openclawExtensionRegistry', () => {
         enabled: true,
         config: { mode: 'ask', fullAgentIds: ['justdo-scheduler'] },
       },
+      [OpenClawExtensionId.JUSTDO_RUNTIME_BRIDGE]: {
+        enabled: true,
+      },
     });
   });
 

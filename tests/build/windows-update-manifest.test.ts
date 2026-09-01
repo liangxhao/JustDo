@@ -8,6 +8,7 @@ const {
   buildReleaseHistory,
   normalizeUpdateVersion,
   readReleaseNotes,
+  hasWindowsInstallerTarget,
   verifyWindowsInstallerArchive,
   verifyWindowsInstallerArchiveListing,
 } = require('../../scripts/electron-builder-hooks.cjs') as {
@@ -26,6 +27,7 @@ const {
   }) => string;
   normalizeUpdateVersion: (version: string) => string;
   readReleaseNotes: (filePath: string) => string;
+  hasWindowsInstallerTarget: (targets: Map<{ nodeName: string }, Map<string, unknown>>) => boolean;
   verifyWindowsInstallerArchive: (
     installerPath: string,
     productFilename: string,
@@ -56,6 +58,13 @@ afterEach(() => {
 });
 
 describe('Windows Generic update manifest', () => {
+  test('distinguishes unpacked directory builds from NSIS installer builds', () => {
+    const windows = { nodeName: 'win32' };
+
+    expect(hasWindowsInstallerTarget(new Map([[windows, new Map([['dir', {}]])]]))).toBe(false);
+    expect(hasWindowsInstallerTarget(new Map([[windows, new Map([['nsis', {}]])]]))).toBe(true);
+  });
+
   test('normalizes the package version and writes installer metadata', async () => {
     const directory = makeTemporaryDirectory();
     const installerPath = path.join(directory, 'JustDo Setup 2026.7.23.exe');

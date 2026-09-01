@@ -16,7 +16,10 @@ import path from 'node:path';
 import { create as createTar } from 'tar';
 import { afterEach, describe, expect, it } from 'vitest';
 
-const nsisScript = readFileSync(path.resolve(__dirname, '../../scripts/nsis-installer.nsh'), 'utf8');
+const nsisScript = readFileSync(
+  path.resolve(__dirname, '../../scripts/nsis-installer.nsh'),
+  'utf8',
+).replaceAll('\r\n', '\n');
 const builderHook = readFileSync(
   path.resolve(__dirname, '../../scripts/electron-builder-hooks.cjs'),
   'utf8',

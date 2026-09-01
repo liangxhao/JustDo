@@ -117,6 +117,7 @@ import {
   resetWebchatToolStream,
   syncWebchatToolStreamMessages,
 } from './webchatToolStream';
+import { parseTaskEventV2026_8_1 } from './wire/v2026_8_1';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -133,7 +134,7 @@ const CLIENT_TIMEOUT_GRACE_MS = 30_000;
 const GATEWAY_RECONNECT_DELAYS = [2_000, 5_000, 10_000, 15_000, 30_000];
 const GATEWAY_CONNECT_RETRY_DELAYS = [500, 1_500, 3_000];
 const SUBAGENT_STATUS_CACHE_TTL_MS = 8_000;
-const SUBAGENT_HISTORY_CACHE_TTL_MS = 60_000;
+const SUBAGENT_DETAIL_CACHE_TTL_MS = 60_000;
 const RUNTIME_SESSION_SNAPSHOT_TTL_MS = 2_000;
 const TITLE_SESSION_ID_RESOLUTION_TIMEOUT_MS = 30_000;
 const TITLE_SESSION_ID_POLL_INTERVAL_MS = 100;
@@ -353,7 +354,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       subagents: GatewaySubagent[];
     }
   >();
-  private readonly subagentHistoryCache = new Map<
+  private readonly subagentDetailCache = new Map<
     string,
     {
       expiresAt: number;
@@ -1030,8 +1031,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       const subagents = await listGatewaySubagents({
         client,
         parentKeys: [parentKey],
-        includePersistedHistory: false,
-        includeStructuredTool: false,
+        hydrateDetails: false,
         includeMalformedForRuntimeControl: true,
       });
       for (const subagent of subagents) {
@@ -1414,6 +1414,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       return;
     }
 
+    if (event.event === 'task') {
+      this.handleTaskEvent(event.payload);
+      return;
+    }
+
     if (event.event === 'session.operation') {
       this.handleSessionOperationEvent(event.payload);
       return;
@@ -1422,6 +1427,31 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (event.event === 'sessions.changed') {
       this.handleSessionsChangedEvent(event.payload);
       return;
+    }
+  }
+
+  private handleTaskEvent(payload: unknown): void {
+    try {
+      const event = parseTaskEventV2026_8_1(payload);
+      if (event.action === 'upserted' && event.task.sessionKey) {
+        const sessionId = this.resolveSessionIdBySessionKey(event.task.sessionKey);
+        if (sessionId) {
+          this.invalidateSubagentStatus(sessionId);
+          return;
+        }
+      }
+      // Deleted events intentionally expose only taskId, while a restored ledger can affect
+      // every requester. Invalidate all known parent snapshots for both event shapes.
+      for (const sessionId of new Set([
+        ...this.subagentStatusCache.keys(),
+        ...this.subagentDetailCache.keys(),
+      ])) {
+        this.invalidateSubagentStatus(sessionId);
+      }
+    } catch (error) {
+      coworkLog('WARN', 'OpenClawRuntime', 'Ignored malformed v2026.8.1 task event', {
+        error: String(error),
+      });
     }
   }
 
@@ -4129,6 +4159,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   async getSubagentStatuses(sessionId?: string): Promise<{
     subagents: Array<{
       id: string;
+      taskName: string;
       sessionKey: string;
       sessionId?: string;
       label: string;
@@ -4171,16 +4202,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     const now = Date.now();
     const refreshGeneration = this.subagentStatusGenerations.get(sessionId) ?? 0;
-    const retained = this.subagentHistoryCache.get(sessionId);
-    let persistedHistoryRequested = !retained || retained.expiresAt <= now;
+    const retained = this.subagentDetailCache.get(sessionId);
+    let detailHydrationRequested = !retained || retained.expiresAt <= now;
     const listing = await listGatewaySubagentsWithMetadata({
       client: this.gatewayClient,
       parentKeys: this.getSessionKeysForSession(sessionId),
-      includePersistedHistory: persistedHistoryRequested,
+      hydrateDetails: detailHydrationRequested,
     });
     let current = listing.subagents;
-    let persistedHistoryComplete =
-      !persistedHistoryRequested || listing.persistedHistoryComplete;
+    let taskLedgerComplete = !detailHydrationRequested || listing.taskLedgerComplete;
     const currentKeys = new Set(current.map(subagent => subagent.sessionKey));
     const retainedActiveMissing = retained?.subagents.some(
       subagent =>
@@ -4188,20 +4218,27 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           subagent.status === SUBAGENT_STATUSES.RUNNING) &&
         !currentKeys.has(subagent.sessionKey),
     );
-    if (!persistedHistoryRequested && retainedActiveMissing) {
-      const persisted = await listGatewaySubagentsWithMetadata({
+    if (!detailHydrationRequested && retainedActiveMissing) {
+      const hydrated = await listGatewaySubagentsWithMetadata({
         client: this.gatewayClient,
         parentKeys: this.getSessionKeysForSession(sessionId),
-        includeStructuredTool: false,
       });
-      current = mergeGatewaySubagentSnapshots(persisted.subagents, current);
-      persistedHistoryRequested = true;
-      persistedHistoryComplete = persisted.persistedHistoryComplete;
+      current = mergeGatewaySubagentSnapshots(hydrated.subagents, current);
+      detailHydrationRequested = true;
+      taskLedgerComplete = hydrated.taskLedgerComplete;
     }
-    const replaceRetainedHistory = persistedHistoryRequested && persistedHistoryComplete;
+    const replaceRetainedDetails = detailHydrationRequested && taskLedgerComplete;
+    const currentWithRetainedDetails = retained
+      ? current.map(subagent => {
+          const previous = retained.subagents.find(candidate => candidate.id === subagent.id);
+          return previous
+            ? mergeGatewaySubagentSnapshots([previous], [subagent])[0] ?? subagent
+            : subagent;
+        })
+      : current;
     const subagents =
-      replaceRetainedHistory || !retained
-        ? current
+      replaceRetainedDetails || !retained
+        ? currentWithRetainedDetails
         : mergeGatewaySubagentSnapshots(retained.subagents, current);
     if (
       (this.subagentStatusGenerations.get(sessionId) ?? 0) !== refreshGeneration ||
@@ -4209,9 +4246,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     ) {
       return subagents;
     }
-    this.subagentHistoryCache.set(sessionId, {
-      expiresAt: replaceRetainedHistory
-        ? now + SUBAGENT_HISTORY_CACHE_TTL_MS
+    this.subagentDetailCache.set(sessionId, {
+      expiresAt: replaceRetainedDetails
+        ? now + SUBAGENT_DETAIL_CACHE_TTL_MS
         : (retained?.expiresAt ?? now),
       subagents,
     });
@@ -4224,7 +4261,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   private invalidateSubagentStatus(sessionId: string): void {
     this.subagentStatusCache.delete(sessionId);
-    this.subagentHistoryCache.delete(sessionId);
+    this.subagentDetailCache.delete(sessionId);
     this.subagentStatusGenerations.set(
       sessionId,
       (this.subagentStatusGenerations.get(sessionId) ?? 0) + 1,

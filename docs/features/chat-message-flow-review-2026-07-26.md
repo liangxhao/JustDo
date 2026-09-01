@@ -193,7 +193,7 @@ final 事件关闭活动 turn，补齐结束时间并完成仍在运行的适用
 - paused 滚动、加载更早历史和跳到最新；
 - 高频流更新合并与终态立即刷新。
 
-对应测试主要位于 `src/renderer/libs/openclaw-chat/**/*.test.ts`、`src/main/engine/openclaw/*.test.ts` 和 `src/shared/openclaw/*.test.ts`。涉及 Gateway 行为时还要核对 `scripts/patches/v2026.7.1-2/` 的能力清单。
+对应测试主要位于 `src/renderer/libs/openclaw-chat/**/*.test.ts`、`src/main/engine/openclaw/*.test.ts` 和 `src/shared/openclaw/*.test.ts`。涉及 Gateway 行为时还要核对当前版本补丁目录的能力清单；本文写作时使用的旧版补丁已经移入 Git 历史。
 
 ## 12. 审计结论
 

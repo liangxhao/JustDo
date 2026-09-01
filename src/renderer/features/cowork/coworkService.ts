@@ -1164,6 +1164,7 @@ export class CoworkService {
   async getSubTaskStatus(sessionId?: string): Promise<{
     subagents?: Array<{
       id: string;
+      taskName: string;
       sessionKey: string;
       sessionId?: string;
       label: string;

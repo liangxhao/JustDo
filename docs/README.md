@@ -7,7 +7,7 @@
 - “权威”指某类数据或行为最终由哪个组件决定，而不是哪个界面暂时持有副本。
 - 文件路径均相对仓库根目录。代码移动后，应同步修正文档中的入口和数据流，而不是只修链接。
 - `package.json.name` 的 `justdo` 是稳定内部标识；用户可见产品名来自 `package.json.productName`，由 `src/shared/productMetadata.ts` 和 `electron-builder.config.cjs` 读取。
-- OpenClaw Gateway 版本由 `package.json.openclaw.version` 固定为 `v2026.7.1-2`。运行时补丁位于 `scripts/patches/v2026.7.1-2/`，补丁目录 README 是补丁清单的最终依据。
+- OpenClaw Gateway 版本由 `package.json.openclaw.version` 固定为 `v2026.8.1`。运行时补丁位于 `scripts/patches/v2026.8.1/`，补丁目录 README 是补丁清单的最终依据。
 - 设计/计划类文件也以当前代码状态为基线，明确区分“已实现”“保留约束”和“尚未实现”，不能把历史提案写成现状。
 
 ## 当前系统事实
@@ -16,7 +16,7 @@
 | ------------- | ---------------------------------- | ---------------------------------------- |
 | 应用版本      | `v2026.8.12`                       | `package.json.version`                   |
 | Electron      | `^42.6.2`（42.6 系列）             | `package.json`、lockfile                 |
-| OpenClaw      | `v2026.7.1-2`                      | `package.json.openclaw`                  |
+| OpenClaw      | `v2026.8.1`                        | `package.json.openclaw`                  |
 | Node.js       | `>=24.15.0 <25`                    | `package.json.engines`、`.nvmrc`         |
 | 包管理器      | npm                                | `package-lock.json`、scripts             |
 | Vite 开发端口 | `43127`                            | `package.json.devServer.port`            |
@@ -77,7 +77,7 @@
 
 ## Runtime Patch 文档
 
-[OpenClaw Runtime Patch Guide](patches/openclaw-patch-guide.md) 说明补丁来源、顺序、验证、升级和故障定位。具体能力对应哪个补丁，必须以 `scripts/patches/v2026.7.1-2/README.md` 与 manifest/测试为准，历史 `v2026.6.11` 目录仅用于追溯。
+[OpenClaw Runtime Patch Guide](patches/openclaw-patch-guide.md) 说明补丁来源、顺序、验证、升级和故障定位。具体能力对应哪个补丁，必须以 `scripts/patches/v2026.8.1/README.md` 与 manifest/测试为准，旧版本目录仅用于追溯。
 
 ## 文档维护契约
 

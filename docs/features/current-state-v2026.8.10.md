@@ -1,10 +1,10 @@
-# JustDo v2026.8.12 当前实现状态
+# JustDo v2026.8.27 当前实现状态
 
-文件名保留 `v2026.8.10` 仅为历史链接兼容；本文内容已于 2026-08-22 按 `package.json.version=v2026.8.12` 和当前代码重写，不再描述旧版快照。
+文件名保留 `v2026.8.10` 仅为历史链接兼容；本文按 `package.json.version=v2026.8.27`、OpenClaw `v2026.8.1` 和当前代码维护，不再描述旧版快照。
 
 ## 1. 产品边界
 
-JustDo是Electron桌面产品层：UI、SQLite产品数据、权限、安全文件/网络入口、打包与OpenClaw生命周期。OpenClaw `v2026.7.1-2` 是唯一Agent engine，拥有run、session/history、tools、skills runtime和cron。Renderer是薄客户端，不实现第二套runtime。
+JustDo 是 Electron 桌面产品层：UI、SQLite 产品数据、权限、安全文件/网络入口、打包与 OpenClaw 生命周期。OpenClaw `v2026.8.1` 是唯一 Agent engine，拥有 run、SQLite session/history、tasks、tools、skills runtime 和 cron。Renderer 是薄客户端，不实现第二套 runtime。
 
 ## 2. 当前主要能力
 
@@ -18,7 +18,7 @@ JustDo是Electron桌面产品层：UI、SQLite产品数据、权限、安全文�
 
 ### 2.2 持续目标
 
-Session goal当前实际呈现active/paused/blocked/complete；共享契约仍接受历史兼容值usage-limited/budget-limited，但读取时统一归一为blocked，不作为独立运行状态继续处理。Execution snapshot支持running/continuing/retrying/等待输入/确认。Main coordinator处理tool/lifecycle、managed subagent join、控制run、resume、完成反馈和重连恢复；UI提供状态卡和single-flight动作。
+Session goal 当前实际呈现 active/paused/blocked/complete；共享契约仍接受历史兼容值 usage-limited/budget-limited，但读取时统一归一为 blocked。Execution snapshot 支持 running/continuing/retrying/等待输入/确认。OpenClaw 原生 required-child task join 负责父子等待，Main coordinator 处理 tool/lifecycle、控制 run、resume、完成反馈和重连恢复；UI 提供状态卡和 single-flight 动作。
 
 ### 2.3 Chat
 
@@ -32,13 +32,13 @@ Ask/auto/full产品语义通过config sync映射并验证Gateway active policy�
 
 ### 2.5 Scheduled Tasks
 
-原生 `cron.*` job/run，at/every/cron、agentTurn/systemEvent、none/announce/webhook、main/isolated和channel/account。Agent-turn强制 `justdo-scheduler`，错误assignment会修复或禁用。
+原生 `cron.*` job/run，at/every/cron、agentTurn/systemEvent、none/announce/webhook、main/isolated 和 channel/account。Agent-turn 强制 `justdo-scheduler`，错误 assignment 会修复或禁用；JustDo 创建 job 时默认显式发送 `delivery: { mode: 'none' }`。
 
 应用内Result Inbox已实现SQLite receipts、未读、分页、baseline、durable catch-up、reconcile、完整session查看和artifact清理后删除。
 
 ### 2.6 Plugins
 
-Skill/MCP/Hook/Extension/Marketplace统一页面。8个内置Skill全部默认启用并禁用OpenClaw defaults。Skill状态来自Gateway；MCP/Hook有SQLite配置；Extension支持archive/目录import、progress、enable/config/delete和ask-user host。
+Skill/MCP/Hook/Extension/Marketplace 统一页面。当前声明 15 个内置 Skill，其中 14 个默认启用，`agent-browser` 默认关闭。Skill 状态来自 Gateway；MCP/Hook 有 SQLite 配置；Extension 支持 archive/目录 import、progress、enable/config/delete 和 ask-user host。
 
 Marketplace adapter支持四种kind、provider validation、聚合/detail/install事务，但默认没有注册provider，页面正确显示未配置。
 
@@ -50,7 +50,7 @@ isolated/user/extension三模式已实现。User模式有Chrome/remote debugging
 
 自定义provider、模型发现/capability/default、qualified model ref和session patch。内置模型启动/手工refresh已实现；login/logout lifecycle已有但完整认证handler/UI尚未接入。
 
-Memory支持overview/document/search/rebuild；Usage支持7/14/30日Gateway聚合/cache状态。设置还包括Agent runtime、proxy、system prompt replacement、外观/主题、快捷键、自动启动、防休眠、更新和日志导出。
+Memory 支持 overview/document/search/rebuild；内置 `justdo-runtime-bridge` 提供 embedding provider，手动 rebuild 以一次性 no-cache 语义重新计算向量。Usage 支持 7/14/30 日 Gateway 聚合/cache 状态。设置还包括 Agent runtime、proxy、system prompt replacement、外观/主题、快捷键、自动启动、防休眠、更新和日志导出。
 
 ### 2.9 Packaging
 
@@ -64,7 +64,7 @@ SQLite有11表：kv、cowork_sessions、cowork_messages、cowork_session_runs、
 
 ## 4. 当前Runtime Patch
 
-`scripts/patches/v2026.7.1-2/` 有连续001-042能力补丁，覆盖managed pip、thinking/history、cron默认delivery、Windows/Chrome MCP、tool schema、prompt replacement、goal clear、subagent/approval/request metadata、compaction/progress/recovery/identity，以及 required subagent 的隐式 join 与终止守卫。它们是当前版本capability patch，不是旧 `v2026.6.11` migration。
+`scripts/patches/v2026.8.1/` 只保留九个产品缺口：managed Python、Windows 通用 MCP runner、Chrome Windows runner/早期 stderr、Chrome 空页面恢复、最终 system prompt replacement、agent request metadata、compaction/reviewer purpose metadata、app-start task recovery boundary 和手动 memory reindex no-cache。Thinking/history、tool directory、goal、task queue/join、approval、compaction/context budget 都使用 v2026.8.1 原生能力；progress、embedding 和受限 history detail 迁入 `justdo-runtime-bridge`。
 
 ## 5. 尚未完整交付/明确限制
 
@@ -90,7 +90,7 @@ SQLite有11表：kv、cowork_sessions、cowork_messages、cowork_session_runs、
 | Plugins     | `src/main/plugins/`、plugins UI                         |
 | Cron        | `src/main/scheduler/`、scheduled-task IPC/UI            |
 | Browser     | Browser shared/Main/settings/extension                  |
-| Patch       | `scripts/patches/v2026.7.1-2/README.md`                 |
+| Patch       | `scripts/patches/v2026.8.1/README.md`                   |
 
 ## 7. 验证基线
 
@@ -304,7 +304,7 @@ sequenceDiagram
 | Scheduled result reconcile | `src/main/scheduler/scheduledTaskResultSyncService.ts`                      | 同名测试和 result store 测试                |
 | Chat reconciliation        | `src/renderer/libs/openclaw-chat/`                                          | reducer/history/renderer 相邻测试           |
 | Browser modes              | `src/main/ipc/app/browser.ts`、`resources/browser-extension/`               | Main browser 与 extension test scripts      |
-| Runtime patch 完整性       | `scripts/patches/v2026.7.1-2/`                                              | `npm run openclaw:patches:verify`           |
+| Runtime patch 完整性       | `scripts/patches/v2026.8.1/`                                                | `npm run openclaw:patches:verify`           |
 | 产品元数据                 | `src/shared/productMetadata.ts`、builder config                             | `npm run validate:product-metadata`         |
 
 ## 17. 变更影响检查表

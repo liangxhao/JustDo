@@ -44,9 +44,6 @@ import type { McpServerRecord } from '../../plugins/mcp';
 import {
   buildAgentEntry,
   buildManagedAgentEntries,
-  parsePrimaryModelRef,
-  resolveManagedSessionModelTarget,
-  resolveQualifiedAgentModelRef,
 } from '../models/openclawAgentModels';
 import { repairOpenClawWorkspaceState } from './workspaceStateRepair';
 
@@ -95,7 +92,7 @@ const resolveConfiguredPluginPath = (value: string): string => {
   return path.resolve(expanded);
 };
 
-// Version-locked to OpenClaw v2026.7.1-2 routing/session-key normalizeAgentId.
+// Version-locked to OpenClaw v2026.8.1 routing/session-key normalizeAgentId.
 const normalizeOpenClawAgentId = (value: string): string => {
   const trimmed = value.trim();
   if (!trimmed) return 'main';
@@ -741,7 +738,7 @@ export const OPENCLAW_SESSION_MAX_ENTRIES = 500;
 export const buildManagedOpenClawSessionConfig = () => ({
   dmScope: 'per-account-channel-peer',
   reset: {
-    mode: 'idle',
+    mode: 'none',
   },
   maintenance: {
     mode: 'enforce',
@@ -787,51 +784,16 @@ export const applyManagedOpenClawHeartbeatConfig = (
       }
     : agent;
 
-/**
- * Keep compaction useful as a continuation handoff instead of reducing the
- * session to a lossy synopsis. Safeguard mode is OpenClaw's existing
- * session_before_compact hook, so this stays on the supported config surface.
- *
- * Do not explicitly set keepRecentTokens. OpenClaw v2026.6.11 treats the mere
- * presence of that property as a request for manual /compact to preserve the
- * recent tail, which defeats an explicit checkpoint. Automatic compaction
- * still inherits OpenClaw's safe recent-tail default.
- */
+/** Keep JustDo's bounded safeguards while inheriting OpenClaw's native defaults. */
 export const buildManagedOpenClawCompactionConfig = () => ({
   mode: 'safeguard',
   timeoutSeconds: OPENCLAW_COMPACTION_TIMEOUT_SECONDS,
-  // Versioned runtime patches use this explicit switch for Codex-local
-  // checkpoint layout and trigger semantics. Do not infer the mode from the
-  // prompt text: custom instructions are user-facing data, not a capability
-  // discriminator.
-  justdoCodexLocal: true,
-  reserveTokens: 24_000,
-  // In Codex-local mode the runtime derives the automatic threshold from the
-  // effective context window (90%). The reserve remains summarization budget
-  // only and must not move the trigger earlier.
-  reserveTokensFloor: 0,
-  // Memory flush is an internal best-effort turn, but OpenClaw currently
-  // surfaces its file-tool failures as the user turn result. Keep it disabled
-  // so an attempted memory write cannot block the user's actual operation.
   memoryFlush: {
     enabled: false,
-  },
-  maxHistoryShare: 0.65,
-  recentTurnsPreserve: 0,
-  // The Codex prompt asks for critical references itself. Avoid injecting
-  // OpenClaw's separate identifier-preservation prompt into the LLM request.
-  identifierPolicy: 'off',
-  qualityGuard: {
-    // OpenClaw's quality guard requires its own ##-section contract. The
-    // versioned runtime patch uses Codex's free-form handoff prompt instead.
-    enabled: false,
-    maxRetries: 2,
   },
   midTurnPrecheck: {
     enabled: true,
   },
-  customInstructions:
-    'You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for another LLM that will resume the task.\n\nInclude:\n- Current progress and key decisions made\n- Important context, constraints, or user preferences\n- What remains to be done (clear next steps)\n- Any critical data, examples, or references needed to continue\n\nBe concise, structured, and focused on helping the next LLM seamlessly continue the work.',
 });
 
 export const buildManagedOpenClawConnectivityConfig = (
@@ -847,12 +809,9 @@ export const buildManagedOpenClawConnectivityConfig = (
     experimental: {
       planTool: true,
     },
-    // A version-scoped runtime patch catalogs selected heavyweight native tools
-    // (currently browser, cron, goal lifecycle, and memory retrieval tools) in
-    // directory mode. Their full schemas are hydrated for relevant requests or
-    // remain available through Tool Search, while all other authorized tools
-    // stay directly exposed.
+    // OpenClaw v2026.8.1 owns native tool-directory discovery and hydration.
     toolSearch: {
+      enabled: true,
       mode: 'directory',
     },
     deny: [
@@ -1232,7 +1191,11 @@ type ManagedMemorySearchConfig =
       enabled: true;
       provider: string;
       model: string;
-      remote: { headers: Record<string, string> };
+      remote: {
+        baseUrl: string;
+        apiKey: string;
+        headers: Record<string, string>;
+      };
     }
   | { enabled: false };
 
@@ -1258,9 +1221,11 @@ export const buildBuiltinMemorySearchConfig = (
   });
   return {
     enabled: true,
-    provider: selection.providerId,
+    provider: OpenClawExtensionId.JUSTDO_RUNTIME_BRIDGE,
     model: selection.sessionModelId,
     remote: {
+      baseUrl: selection.providerConfig.baseUrl,
+      apiKey: selection.providerConfig.apiKey,
       headers: {
         'User-Agent': OPENAI_REQUEST_USER_AGENT,
       },
@@ -1322,10 +1287,6 @@ export type OpenClawConfigSyncResult = {
   agentsMdWarning?: string;
 };
 
-export type OpenClawConfigSyncOptions = {
-  allowManagedSessionStoreMutation?: boolean;
-};
-
 const buildVerifiedConfigSyncResult = (
   configPath: string,
   expectedConfig: Record<string, unknown>,
@@ -1384,7 +1345,7 @@ export class OpenClawConfigSync {
     this.getBrowserMode = deps.getBrowserMode;
   }
 
-  sync(reason: string, options: OpenClawConfigSyncOptions = {}): OpenClawConfigSyncResult {
+  sync(reason: string): OpenClawConfigSyncResult {
     const configPath = this.engineManager.getConfigPath();
     const isAuthLifecycleSync =
       reason === BuiltinModelSyncReason.AuthLogin ||
@@ -1662,7 +1623,6 @@ export class OpenClawConfigSync {
       }),
       cron: {
         enabled: true,
-        maxConcurrentRuns: 3,
         sessionRetention: '7d',
       },
       ...(() => {
@@ -1746,13 +1706,6 @@ export class OpenClawConfigSync {
       };
     }
 
-    const sessionStoreChanged =
-      !isAuthLifecycleSync &&
-      providerSelection &&
-      options.allowManagedSessionStoreMutation === true
-        ? this.syncManagedSessionStore(providerSelection, allProvidersMap)
-        : false;
-
     if (!isAuthLifecycleSync) {
       // Sync per-agent workspace files (SOUL.md, IDENTITY.md, AGENTS.md) for non-main agents
       this.syncPerAgentWorkspaces(resolvedWorkspaceDir, coworkConfig);
@@ -1760,7 +1713,7 @@ export class OpenClawConfigSync {
 
     return {
       ok: true,
-      changed: configChanged || sessionStoreChanged || extensionContractsChanged,
+      changed: configChanged || extensionContractsChanged,
       configChanged,
       requiresGatewayRestart: extensionContractsChanged,
       configPath,
@@ -1859,158 +1812,6 @@ export class OpenClawConfigSync {
     // IM channel secrets removed — channels disabled pending future adaptation
 
     return env;
-  }
-
-  private syncManagedSessionStore(
-    selection: OpenClawProviderSelection,
-    availableProviders: Record<string, OpenClawProviderSelection['providerConfig']>,
-  ): boolean {
-    const displayNameMap = getProviderDisplayNameMap();
-
-    // Helper to replace custom_* provider references in agentModel with displayName
-    const replaceCustomProviderRef = (modelRef: string): string => {
-      const parsed = parsePrimaryModelRef(modelRef);
-      if (!parsed) return modelRef;
-      const displayName = displayNameMap[parsed.providerId];
-      if (displayName) {
-        return `${displayName.toLowerCase()}/${parsed.modelId}`;
-      }
-      return modelRef;
-    };
-
-    const shouldMigrateManagedModelRefs = !(
-      selection.providerId === 'justdo' && selection.sessionModelId === selection.legacyModelId
-    );
-    const fallbackTarget = parsePrimaryModelRef(selection.primaryModel) ?? {
-      providerId: selection.providerId,
-      modelId: selection.sessionModelId,
-      primaryModel: selection.primaryModel,
-    };
-
-    const configuredAgents = this.getAgents?.() ?? [];
-    const agentById = new Map(configuredAgents.map(agent => [agent.id, agent]));
-    if (!agentById.has('main')) {
-      agentById.set('main', {
-        id: 'main',
-        name: 'main',
-        description: '',
-        systemPrompt: '',
-        identity: '',
-        model: '',
-        icon: '',
-        skillIds: [],
-        enabled: true,
-        isDefault: true,
-        createdAt: 0,
-        updatedAt: 0,
-      });
-    }
-
-    let anyChanged = false;
-    for (const [agentId, agent] of agentById.entries()) {
-      const qualification = resolveQualifiedAgentModelRef({
-        agentModel: agent.model,
-        availableProviders,
-      });
-      if (qualification.status === 'ambiguous') {
-        console.warn(
-          `[OpenClawConfigSync] Skipped ambiguous managed session model sync for "${agent.id}" because "${qualification.modelId}" matches multiple providers: ${qualification.providerIds.join(', ')}`,
-        );
-      }
-
-      const sessionStorePath = path.join(
-        this.engineManager.getStateDir(),
-        'agents',
-        agentId,
-        'sessions',
-        'sessions.json',
-      );
-
-      let storeContent = '';
-      try {
-        storeContent = fs.readFileSync(sessionStorePath, 'utf8');
-      } catch {
-        continue;
-      }
-
-      let sessionStore: Record<string, unknown>;
-      try {
-        sessionStore = JSON.parse(storeContent) as Record<string, unknown>;
-      } catch {
-        continue;
-      }
-
-      let changed = false;
-      for (const [sessionKey, rawEntry] of Object.entries(sessionStore)) {
-        if (!rawEntry || typeof rawEntry !== 'object') {
-          continue;
-        }
-
-        const entry = rawEntry as Record<string, unknown>;
-        if (!/^agent:[^:]+:justdo:/.test(sessionKey)) {
-          continue;
-        }
-
-        const entryProvider =
-          typeof entry.modelProvider === 'string' ? entry.modelProvider.trim() : '';
-        if (qualification.status === 'ambiguous') {
-          continue;
-        }
-
-        // Replace custom_* in agentModel with displayName before resolving
-        const rawAgentModel =
-          qualification.status === 'qualified' ? qualification.primaryModel : agent.model;
-        const effectiveAgentModel = replaceCustomProviderRef(rawAgentModel);
-
-        const target = resolveManagedSessionModelTarget({
-          agentModel: effectiveAgentModel,
-          fallbackPrimaryModel: fallbackTarget.primaryModel,
-          availableProviders,
-          currentProviderId: entryProvider,
-        });
-
-        if (shouldMigrateManagedModelRefs) {
-          const entryModel = typeof entry.model === 'string' ? entry.model.trim() : '';
-          if (entryProvider !== target.providerId || entryModel !== target.modelId) {
-            entry.modelProvider = target.providerId;
-            entry.model = target.modelId;
-            changed = true;
-          }
-
-          const systemPromptReport = entry.systemPromptReport;
-          if (systemPromptReport && typeof systemPromptReport === 'object') {
-            const report = systemPromptReport as Record<string, unknown>;
-            const reportProvider =
-              typeof report.provider === 'string' ? report.provider.trim() : '';
-            const reportModel = typeof report.model === 'string' ? report.model.trim() : '';
-            if (reportProvider !== target.providerId) {
-              report.provider = target.providerId;
-              changed = true;
-            }
-            if (reportModel !== target.modelId) {
-              report.model = target.modelId;
-              changed = true;
-            }
-          }
-        }
-      }
-
-      if (!changed) {
-        continue;
-      }
-
-      try {
-        this.atomicWriteFile(sessionStorePath, `${JSON.stringify(sessionStore, null, 2)}\n`);
-        anyChanged = true;
-      } catch (error) {
-        console.warn(
-          '[OpenClawConfigSync] Failed to update managed session store:',
-          error instanceof Error ? error.message : String(error),
-        );
-      }
-    }
-
-    return anyChanged;
   }
 
   /**

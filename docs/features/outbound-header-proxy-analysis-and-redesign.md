@@ -1,6 +1,6 @@
 # Outbound Header Proxy 架构、实现与风险
 
-> 本文按 `v2026.8.12` 当前代码重新审计。历史上的作用域隔离、CONNECT 选择性拦截、本地 capability、上游代理和关闭顺序问题已大体完成整改；PAC 多候选、SOCKS、任意客户端强制代理与完整热重载仍不是现有能力。
+> 本文按 JustDo `v2026.8.27`、OpenClaw `v2026.8.1` 当前代码重新审计。历史上的作用域隔离、CONNECT 选择性拦截、本地 capability、上游代理和关闭顺序问题已大体完成整改；PAC 多候选、SOCKS、任意客户端强制代理与完整热重载仍不是现有能力。
 
 ## 1. 功能目的
 
@@ -38,8 +38,8 @@ Main 中少量确需相同 Header 的确定性调用，应在调用点基于白�
 | 配置解析            | `src/main/core/outboundHeaderPolicyConfig.ts`、`systemProxy.ts` | 白名单、Header 名、系统/自定义代理与 bypass       |
 | 本地代理            | `src/main/core/outboundHeaderProxy.ts`                          | 认证、CONNECT 判别、MITM/raw tunnel、注入         |
 | OpenClaw 环境       | `src/main/core/gatewayNetworkEnvironment.ts`                    | 为 Gateway/opt-in CLI 生成 proxy/CA/NO_PROXY env  |
-| Embedding transport | runtime patch `047`                                             | 让 generic guarded fetch 使用 eligible env proxy  |
-| Manual reindex      | runtime patch `048` + rebuild-only env opt-in                   | 跳过旧向量 cache，确保按钮触发真实 embedding 请求 |
+| Embedding transport | `justdo-runtime-bridge` extension                               | 让 guarded fetch 使用 eligible env proxy          |
+| Manual reindex      | runtime patch `009` + rebuild-only env opt-in                   | 跳过旧向量 cache，确保按钮触发真实 embedding 请求 |
 | Runtime lifecycle   | `openclawEngineManager.ts` / `main.ts`                          | 先起代理、再 spawn Gateway；退出时反序停止        |
 | 用户值来源          | outbound header user-info 文件/cache                            | 只按允许的 headerNames 读取值                     |
 
@@ -67,11 +67,11 @@ sequenceDiagram
 
 环境只传给 Gateway/后代和显式 opt-in CLI，不写回 Main `process.env`。当前 memory search/index
 opt-in，memory status 保持普通继承环境。CA bundle 通过 Node、Python 等常见环境变量进入受支持
-客户端；OpenClaw generic embedding provider 由 runtime patch `047` 让 guarded fetch 使用 eligible
+客户端；OpenClaw embedding provider 由 `justdo-runtime-bridge` 让 guarded fetch 使用 eligible
 env proxy。未配置代理、命中 `NO_PROXY` 或未命中 Header URL 白名单时，分别保持直连、bypass 或
 不注入业务 Header。
 
-手动“重建索引”还会设置 rebuild-only 的 `JUSTDO_MEMORY_REINDEX_NO_CACHE=1`。runtime patch `048`
+手动“重建索引”还会设置 rebuild-only 的 `JUSTDO_MEMORY_REINDEX_NO_CACHE=1`。runtime patch `009`
 据此不向 shadow database 复制旧 embedding cache，避免未变化文档被缓存完全短路；其他索引和搜索
 流程不设置该值。
 
