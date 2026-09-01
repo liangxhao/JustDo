@@ -111,11 +111,13 @@ describe('Multica bridge protocol', () => {
       sanitizeMulticaBridgeEnvironment({
         OPENCLAW_CONFIG_PATH: 'C:\\配置 目录\\openclaw.json',
         OPENCLAW_INCLUDE_ROOTS: 'C:\\one;C:\\two',
+        LITELLM_API_KEY: 'virtual-key',
         OPENCLAW_GATEWAY_TOKEN: 'must-not-cross',
       }),
     ).toEqual({
       OPENCLAW_CONFIG_PATH: 'C:\\配置 目录\\openclaw.json',
       OPENCLAW_INCLUDE_ROOTS: 'C:\\one;C:\\two',
+      LITELLM_API_KEY: 'virtual-key',
     });
   });
 

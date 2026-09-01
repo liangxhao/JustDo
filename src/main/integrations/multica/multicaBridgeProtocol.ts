@@ -75,7 +75,11 @@ export function parseMulticaBridgeArgv(
 
 export function sanitizeMulticaBridgeEnvironment(env: NodeJS.ProcessEnv): Record<string, string> {
   const result: Record<string, string> = {};
-  for (const name of ['OPENCLAW_CONFIG_PATH', 'OPENCLAW_INCLUDE_ROOTS'] as const) {
+  for (const name of [
+    'OPENCLAW_CONFIG_PATH',
+    'OPENCLAW_INCLUDE_ROOTS',
+    'LITELLM_API_KEY',
+  ] as const) {
     const value = env[name]?.trim();
     if (value && !hasLineBreak(value)) result[name] = value;
   }
