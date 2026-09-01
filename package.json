@@ -99,7 +99,7 @@
   },
   "devDependencies": {
     "@commitlint/cli": "^20.5.0",
-    "@commitlint/config-conventional": "^20.5.0",
+    "@commitlint/config-conventional": "^21.2.0",
     "@dnd-kit/core": "^6.3.1",
     "@heroicons/react": "^2.1.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
