@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 
 import {
   buildScheduledReminderSystemMessage,
@@ -163,6 +163,72 @@ describe('openclawHistory', () => {
         },
       },
     ]);
+  });
+
+  test('expands native nested-tool custom messages into tool history entries', () => {
+    const entries = extractGatewayHistoryEntries([
+      {
+        role: 'custom',
+        customType: 'openclaw.nested-tool.v1',
+        display: true,
+        excludeFromContext: true,
+        content: [
+          {
+            type: 'toolCall',
+            id: 'nested-call-1',
+            name: 'read',
+            arguments: { path: 'nested.txt' },
+            parentToolCallId: 'parent-call-1',
+          },
+          {
+            type: 'toolResult',
+            toolCallId: 'nested-call-1',
+            toolName: 'read',
+            content: [{ type: 'text', text: 'nested contents' }],
+            isError: false,
+          },
+        ],
+      },
+    ]);
+
+    expect(entries).toEqual([
+      {
+        role: 'tool_use',
+        text: '{"path":"nested.txt"}',
+        metadata: {
+          toolName: 'read',
+          toolInput: { path: 'nested.txt' },
+          toolUseId: 'nested-call-1',
+        },
+      },
+      {
+        role: 'tool_result',
+        text: 'nested contents',
+        metadata: {
+          toolUseId: 'nested-call-1',
+          isError: false,
+          toolResult: 'nested contents',
+          toolName: 'read',
+          toolInput: { path: 'nested.txt' },
+        },
+      },
+    ]);
+  });
+
+  test('recognizes unsupported native custom messages without treating them as unknown roles', () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    expect(
+      extractGatewayHistoryEntry({
+        role: 'custom',
+        customType: 'example.private-state',
+        display: false,
+        content: 'private state',
+      }),
+    ).toBeNull();
+    expect(log).not.toHaveBeenCalled();
+
+    log.mockRestore();
   });
 
   test('keeps system messages', () => {

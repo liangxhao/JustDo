@@ -157,7 +157,9 @@ describe('managed session model synchronization', () => {
         },
         agents: {
           defaults: { model: { primary: 'newproxy/agent-model' } },
-          list: [{ id: 'main', model: { primary: 'newproxy/agent-model' } }],
+          entries: {
+            main: { model: { primary: 'newproxy/agent-model' } },
+          },
         },
       },
     });
@@ -263,9 +265,8 @@ describe('OpenClawConfigSyncService', () => {
         return {
           config: {
             agents: {
-              list: [
-                {
-                  id: 'justdo-scheduler',
+              entries: {
+                'justdo-scheduler': {
                   tools: {
                     exec: {
                       host: 'gateway',
@@ -274,7 +275,7 @@ describe('OpenClawConfigSyncService', () => {
                     fs: { workspaceOnly: (options.reportedSchedulerMode ?? 'full') !== 'full' },
                   },
                 },
-              ],
+              },
             },
             tools: {
               exec: { host: 'gateway', mode: permissionMode },

@@ -49,7 +49,6 @@ import {
   buildAgentEntry,
   buildManagedAgentEntries,
 } from '../models/openclawAgentModels';
-import { repairOpenClawWorkspaceState } from './workspaceStateRepair';
 
 export type AskUserExtensionConfig = {
   askUserCallbackUrl: string;
@@ -580,6 +579,26 @@ const rewriteProviderAliasInModel = (
   };
 };
 
+const mergeAgentEntriesWithManagedMainWorkspace = (
+  managedEntries: Record<string, unknown>,
+  existingEntries: Record<string, unknown>,
+): Record<string, unknown> => {
+  const entries: Record<string, unknown> = {
+    ...managedEntries,
+    ...existingEntries,
+  };
+  const managedMain = isRecord(managedEntries.main) ? managedEntries.main : undefined;
+  const managedMainWorkspace =
+    typeof managedMain?.workspace === 'string' ? managedMain.workspace.trim() : '';
+  if (managedMainWorkspace) {
+    entries.main = {
+      ...(isRecord(entries.main) ? entries.main : {}),
+      workspace: managedMainWorkspace,
+    };
+  }
+  return entries;
+};
+
 const buildAuthScopedOpenClawConfig = (
   existingConfig: Record<string, unknown>,
   managedConfig: Record<string, unknown>,
@@ -665,6 +684,13 @@ const buildAuthScopedOpenClawConfig = (
     // auth-only config sync.
     defaults.compaction = managedDefaults.compaction;
   }
+  if (Object.prototype.hasOwnProperty.call(managedDefaults, 'systemAgent')) {
+    // OpenClaw v2026.8.1 requires an explicit ambient owner when more than one
+    // Agent exists. Keep native maintenance work (for example memory dreaming)
+    // bound to the main Agent; JustDo user-created scheduled tasks set their
+    // isolated scheduler Agent explicitly.
+    defaults.systemAgent = managedDefaults.systemAgent;
+  }
   const managedDefaultModel = isRecord(managedDefaults.model)
     ? managedDefaults.model
     : undefined;
@@ -695,10 +721,10 @@ const buildAuthScopedOpenClawConfig = (
 
   const existingEntries = isRecord(existingAgents.entries) ? existingAgents.entries : {};
   const managedEntries = isRecord(managedAgents.entries) ? managedAgents.entries : {};
-  const agentEntries: Record<string, unknown> = {
-    ...managedEntries,
-    ...existingEntries,
-  };
+  const agentEntries = mergeAgentEntriesWithManagedMainWorkspace(
+    managedEntries,
+    existingEntries,
+  );
   if (shouldRemoveBuiltinRefs) {
     for (const [id, entry] of Object.entries(agentEntries)) {
       if (!isRecord(entry) || !containsBuiltinModelRef(entry.model)) continue;
@@ -1597,10 +1623,7 @@ export class OpenClawConfigSync {
       const workspaceDir = (coworkConfig.workingDirectory || '').trim();
       const defaultWorkspaceDir = path.join(this.engineManager.getStateDir(), 'workspace');
       const resolvedWorkspaceDir = workspaceDir || defaultWorkspaceDir;
-      if (!isAuthLifecycleSync) {
-        this.repairWorkspaceState(resolvedWorkspaceDir);
-        this.syncPerAgentWorkspaces(resolvedWorkspaceDir, coworkConfig);
-      }
+      if (!isAuthLifecycleSync) this.syncPerAgentWorkspaces(resolvedWorkspaceDir, coworkConfig);
       return result;
     }
 
@@ -1683,10 +1706,6 @@ export class OpenClawConfigSync {
     // Default workspace to stateDir/workspace so skills are found in stateDir/skills
     const defaultWorkspaceDir = path.join(this.engineManager.getStateDir(), 'workspace');
     const resolvedWorkspaceDir = workspaceDir ? path.resolve(workspaceDir) : defaultWorkspaceDir;
-    if (!isAuthLifecycleSync) {
-      this.repairWorkspaceState(resolvedWorkspaceDir);
-    }
-
     const preinstalledPluginIds = readPreinstalledPluginIds().filter(id =>
       isBundledPluginAvailable(id),
     );
@@ -1744,7 +1763,6 @@ export class OpenClawConfigSync {
         mode: 'local',
         bind: 'loopback',
         controlUi: {
-          dangerouslyDisableDeviceAuth: true,
           allowedOrigins: ['*'],
         },
       },
@@ -1761,6 +1779,7 @@ export class OpenClawConfigSync {
         defaults: {
           timeoutSeconds: OPENCLAW_AGENT_TIMEOUT_SECONDS,
           ...buildManagedOpenClawAgentThinkingConfig(agentRuntimeSettings),
+          systemAgent: { agentId: 'main' },
           model: {
             primary: primaryModel,
           },
@@ -2020,9 +2039,10 @@ export class OpenClawConfigSync {
   /**
    * Build the canonical `agents.entries` roster for openclaw.json.
    *
-   * The main agent uses the user's configured workspace directory through
-   * `agents.defaults.workspace`. Non-main agents omit `workspace`, so current
-   * OpenClaw resolves them under `<defaults.workspace>/<normalizedAgentId>`.
+   * With an explicit v2026.8.1 roster every entry without `workspace`, including
+   * `main`, resolves under `<defaults.workspace>/<normalizedAgentId>`. Pin the
+   * main entry to the user's configured directory; non-main agents keep the
+   * native nested workspace behavior.
    *
    * Per-agent `identity` (name, emoji) is set from the agent database so
    * OpenClaw picks it up natively.
@@ -2064,19 +2084,25 @@ export class OpenClawConfigSync {
           exec: { host: 'gateway', mode: PermissionMode.Full },
         },
       },
-    ].map(entry => {
-      const constrainedEntry = constrainAgentEntryToAvailableModels(
-        entry,
-        defaultPrimaryModel,
-        availableModelRefs,
-      );
-      return applyManagedOpenClawHeartbeatConfig(constrainedEntry);
-    });
+    ];
 
     const entries = Object.fromEntries(
       list.map(entry => {
         const agentId = normalizeOpenClawAgentId(String(entry.id || 'main'));
-        return [agentId, canonicalizeAgentEntry(entry)];
+        const normalizedEntry = {
+          ...entry,
+          id: agentId,
+          ...(agentId === 'main' ? { workspace: mainWorkspaceDir } : {}),
+        };
+        const constrainedEntry = constrainAgentEntryToAvailableModels(
+          normalizedEntry,
+          defaultPrimaryModel,
+          availableModelRefs,
+        );
+        return [
+          agentId,
+          canonicalizeAgentEntry(applyManagedOpenClawHeartbeatConfig(constrainedEntry)),
+        ];
       }),
     );
 
@@ -2089,19 +2115,6 @@ export class OpenClawConfigSync {
    */
   private syncPerAgentWorkspaces(_mainWorkspaceDir: string, _coworkConfig: CoworkConfig): void {
     // 空实现：让 OpenClaw 自己管理 agent workspace
-  }
-
-  private repairWorkspaceState(workspaceDir: string): void {
-    const result = repairOpenClawWorkspaceState(workspaceDir, this.engineManager.getStateDir());
-    if (result === 'state-repaired') {
-      console.warn(
-        `[OpenClawConfigSync] Repaired missing workspace state for intact workspace: ${workspaceDir}`,
-      );
-    } else if (result === 'reset-attestation-removed') {
-      console.warn(
-        `[OpenClawConfigSync] Removed workspace attestation after user reset: ${workspaceDir}`,
-      );
-    }
   }
 
   /** Write a file only if its content has changed. */
@@ -2172,7 +2185,6 @@ export class OpenClawConfigSync {
       gateway: {
         mode: 'local',
         controlUi: {
-          dangerouslyDisableDeviceAuth: true,
           allowedOrigins: ['*'],
         },
       },
@@ -2186,6 +2198,7 @@ export class OpenClawConfigSync {
         ownership: 'explicit',
         defaults: {
           ...buildManagedOpenClawAgentThinkingConfig(agentRuntimeSettings),
+          systemAgent: { agentId: 'main' },
           heartbeat: buildDisabledOpenClawHeartbeatConfig(),
           compaction: buildManagedOpenClawCompactionConfig(),
           subagents: buildManagedOpenClawSubagentConfig(agentRuntimeSettings),
@@ -2195,6 +2208,7 @@ export class OpenClawConfigSync {
           main: {
             reasoningDefault: 'stream',
             heartbeat: buildManagedOpenClawHeartbeatConfig(),
+            workspace: resolvedWorkspaceDir,
           },
           [ScheduledTaskAgentId]: {
             workspace: resolvedWorkspaceDir,
@@ -2303,6 +2317,7 @@ export class OpenClawConfigSync {
               : {};
             const mergedDefaults: Record<string, unknown> = {
               ...existingDefaults,
+              systemAgent: { agentId: 'main' },
               // Replace rather than deep-merge so stale managed keys are removed.
               compaction: buildManagedOpenClawCompactionConfig(),
             };
@@ -2341,10 +2356,10 @@ export class OpenClawConfigSync {
                 ...existingAgents,
                 ownership: 'explicit',
                 defaults: mergedDefaults,
-                entries: {
-                  ...minimalEntries,
-                  ...existingEntries,
-                },
+                entries: mergeAgentEntriesWithManagedMainWorkspace(
+                  minimalEntries,
+                  existingEntries,
+                ),
               },
               session: buildManagedOpenClawSessionConfig(),
               mcp: {

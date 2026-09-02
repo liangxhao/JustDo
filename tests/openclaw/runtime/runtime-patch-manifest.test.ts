@@ -118,6 +118,7 @@ function createFixture() {
     'electron-builder-hooks.cjs',
     'install-openclaw-runtime.cjs',
     'openclaw-runtime-companions.cjs',
+    'openclaw-runtime-dev-lease.cjs',
     'openclaw-runtime-freeze.cjs',
     'openclaw-runtime-staging.cjs',
     'patch-openclaw-runtime.cjs',

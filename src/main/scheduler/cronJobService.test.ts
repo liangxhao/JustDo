@@ -418,7 +418,7 @@ describe('isolated scheduler agent assignment', () => {
     expect(task.agentId).toBe(ScheduledTaskAgentId);
   });
 
-  test('repairs existing and native agent-turn tasks while leaving system events alone', async () => {
+  test('repairs unmanaged agent-turn tasks while leaving system events alone', async () => {
     const systemJob = {
       ...gatewayJob,
       id: 'system-job',
@@ -451,6 +451,29 @@ describe('isolated scheduler agent assignment', () => {
       [gatewayJob.id, ScheduledTaskAgentId],
       [systemJob.id, 'main'],
     ]);
+  });
+
+  test('does not take ownership of OpenClaw-declared agent-turn jobs', async () => {
+    const declaredJob = {
+      ...gatewayJob,
+      id: 'memory-dreaming',
+      declarationKey: 'memory-core:memory-dreaming-promotion',
+      agentId: null,
+    };
+    const request = vi.fn(async (method: string) => {
+      if (method === 'cron.list') return { jobs: [declaredJob] };
+      throw new Error(`Unexpected method: ${method}`);
+    });
+    const service = new CronJobService({
+      getGatewayClient: () => ({ request }) as never,
+      ensureGatewayReady: vi.fn(),
+    });
+
+    const tasks = await service.listJobs();
+
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]).toMatchObject({ id: declaredJob.id, agentId: null });
+    expect(request.mock.calls.filter(([method]) => method === 'cron.update')).toHaveLength(0);
   });
 
   test('skips scheduler assignment when the task disappears after the initial list', async () => {

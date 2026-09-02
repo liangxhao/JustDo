@@ -4,8 +4,15 @@ const {
   devServer: { port },
 } = require('../package.json');
 const { findFreePort } = require('./find-free-port.cjs');
+const {
+  acquireRuntimeDevLease,
+  resolveRuntimeDevLeaseDir,
+} = require('./openclaw-runtime-dev-lease.cjs');
 
 const start = async () => {
+  const rootDir = path.resolve(__dirname, '..');
+  const releaseRuntimeLease = acquireRuntimeDevLease(resolveRuntimeDevLeaseDir(rootDir));
+  process.once('exit', releaseRuntimeLease);
   const devServerPort = await findFreePort(port);
   const env = { ...process.env, JUSTDO_DEV_SERVER_PORT: String(devServerPort) };
   console.log(`[Electron Dev] Using development server port ${devServerPort}.`);
@@ -34,16 +41,18 @@ const start = async () => {
   });
 
   child.on('error', error => {
+    releaseRuntimeLease();
     console.error('[Electron Dev] Failed to start development processes:', error);
     process.exit(1);
   });
 
   child.on('close', code => {
+    releaseRuntimeLease();
     process.exit(code ?? 1);
   });
 };
 
 start().catch(error => {
-  console.error('[Electron Dev] Failed to select a development server port:', error);
+  console.error('[Electron Dev] Failed to start development processes:', error);
   process.exit(1);
 });

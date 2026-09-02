@@ -79,14 +79,16 @@ type ConfigSnapshot = {
       defaults?: {
         model?: unknown;
       };
-      list?: Array<{
-        id?: unknown;
-        model?: unknown;
-        tools?: {
-          exec?: { host?: unknown; mode?: unknown };
-          fs?: { workspaceOnly?: unknown };
-        };
-      }>;
+      entries?: Record<
+        string,
+        {
+          model?: unknown;
+          tools?: {
+            exec?: { host?: unknown; mode?: unknown };
+            fs?: { workspaceOnly?: unknown };
+          };
+        }
+      >;
     };
     tools?: {
       exec?: { host?: unknown; mode?: unknown };
@@ -391,9 +393,7 @@ export class OpenClawConfigSyncService {
       this.deps.requestGateway<ActionApprovalInfo>('actionApproval.info'),
     ]);
     const expectedWorkspaceOnly = mode !== 'full';
-    const schedulerAgent = snapshot.config?.agents?.list?.find(
-      agent => agent.id === ScheduledTaskAgentId,
-    );
+    const schedulerAgent = snapshot.config?.agents?.entries?.[ScheduledTaskAgentId];
     const fullAgentIds = Array.isArray(pluginInfo.fullAgentIds)
       ? pluginInfo.fullAgentIds.filter((agentId): agentId is string => typeof agentId === 'string')
       : [];
@@ -416,10 +416,9 @@ export class OpenClawConfigSyncService {
   private async syncManagedSessionModelsViaGateway(snapshot: ConfigSnapshot): Promise<void> {
     const defaults = parseModelReferenceV2026_8_1(snapshot.config?.agents?.defaults?.model);
     const targets = new Map<string, NonNullable<typeof defaults>>();
-    for (const agent of snapshot.config?.agents?.list ?? []) {
-      if (typeof agent.id !== 'string') continue;
+    for (const [agentId, agent] of Object.entries(snapshot.config?.agents?.entries ?? {})) {
       const target = parseModelReferenceV2026_8_1(agent.model) ?? defaults;
-      if (target) targets.set(agent.id, target);
+      if (target) targets.set(agentId, target);
     }
     if (defaults) targets.set('main', targets.get('main') ?? defaults);
     if (targets.size === 0) return;

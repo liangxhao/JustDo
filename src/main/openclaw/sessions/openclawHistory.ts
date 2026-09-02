@@ -7,6 +7,8 @@ import {
 
 type GatewayHistoryRole = 'user' | 'assistant' | 'system' | 'tool_use' | 'tool_result';
 
+const OPENCLAW_NESTED_TOOL_CUSTOM_TYPE = 'openclaw.nested-tool.v1';
+
 export interface GatewayHistoryEntry {
   role: GatewayHistoryRole;
   text: string;
@@ -166,6 +168,110 @@ const extractEmbeddedToolUseEntries = (message: unknown): GatewayHistoryEntry[] 
   });
 };
 
+const extractNestedToolActivityEntries = (message: unknown): GatewayHistoryEntry[] => {
+  if (!isRecord(message)) return [];
+  const role = typeof message.role === 'string' ? message.role.trim().toLowerCase() : '';
+  if (
+    role !== 'custom' ||
+    message.customType !== OPENCLAW_NESTED_TOOL_CUSTOM_TYPE ||
+    !Array.isArray(message.content)
+  ) {
+    return [];
+  }
+
+  const toolInputsByCallId = new Map<string, unknown>();
+  const entries: GatewayHistoryEntry[] = [];
+
+  for (const block of message.content) {
+    if (!isRecord(block)) continue;
+    const blockType = typeof block.type === 'string' ? block.type.trim().toLowerCase() : '';
+    if (['toolcall', 'tool_call', 'tooluse', 'tool_use'].includes(blockType)) {
+      const nestedFunction = isRecord(block.function) ? block.function : undefined;
+      const toolName = pickTrimmedString(
+        block.name,
+        block.toolName,
+        block.tool_name,
+        nestedFunction?.name,
+      );
+      const toolUseId = pickTrimmedString(
+        block.toolUseId,
+        block.tool_use_id,
+        block.toolCallId,
+        block.tool_call_id,
+        block.id,
+      );
+      if (!toolName || !toolUseId) continue;
+
+      const toolInput =
+        block.input ??
+        block.args ??
+        block.arguments ??
+        nestedFunction?.arguments ??
+        {};
+      toolInputsByCallId.set(toolUseId, toolInput);
+      let text = '';
+      if (typeof toolInput === 'string') {
+        text = toolInput;
+      } else {
+        try {
+          text = JSON.stringify(toolInput) ?? '';
+        } catch {
+          text = '';
+        }
+      }
+      entries.push({
+        role: 'tool_use',
+        text,
+        metadata: {
+          toolName,
+          toolInput,
+          toolUseId,
+        },
+      });
+      continue;
+    }
+
+    if (!['toolresult', 'tool_result'].includes(blockType)) continue;
+    const toolUseId = pickTrimmedString(
+      block.toolUseId,
+      block.tool_use_id,
+      block.toolCallId,
+      block.tool_call_id,
+      block.id,
+    );
+    if (!toolUseId) continue;
+
+    const rawToolResult = block.result ?? block.content ?? '';
+    let toolResultText = '';
+    if (Array.isArray(rawToolResult)) {
+      const chunks = collectTextChunks(rawToolResult);
+      toolResultText = chunks.length > 0 ? chunks.join('\n') : JSON.stringify(rawToolResult) ?? '';
+    } else if (typeof rawToolResult === 'string') {
+      toolResultText = rawToolResult;
+    } else {
+      try {
+        toolResultText = JSON.stringify(rawToolResult) ?? '';
+      } catch {
+        toolResultText = '';
+      }
+    }
+
+    entries.push({
+      role: 'tool_result',
+      text: toolResultText,
+      metadata: {
+        toolUseId,
+        isError: block.isError ?? block.is_error ?? false,
+        toolResult: toolResultText,
+        toolName: block.toolName ?? block.tool_name ?? block.name,
+        toolInput: toolInputsByCallId.get(toolUseId) ?? {},
+      },
+    });
+  }
+
+  return entries;
+};
+
 export const extractGatewayMessageText = (message: unknown): string => {
   if (typeof message === 'string') {
     return message;
@@ -212,6 +318,12 @@ export const extractGatewayHistoryEntry = (message: unknown): GatewayHistoryEntr
 
   const roleRaw = typeof message.role === 'string' ? message.role.trim() : '';
   const role = roleRaw.toLowerCase();
+  // `custom` is a native OpenClaw harness role. Supported display projections
+  // are expanded by extractGatewayHistoryEntries; all other custom types remain
+  // outside JustDo's conversation DTO instead of being reported as malformed.
+  if (role === 'custom') {
+    return null;
+  }
   // Support tool_use, tool_result, and Gateway's 'toolResult'/'toolresult' role
   // Gateway returns 'toolResult' (camelCase) which becomes 'toolresult' after toLowerCase()
   const validRoles = ['user', 'assistant', 'system', 'tool_use', 'tool_result', 'toolresult'];
@@ -366,6 +478,10 @@ export const extractGatewayHistoryEntry = (message: unknown): GatewayHistoryEntr
 export const extractGatewayHistoryEntries = (messages: unknown[]): GatewayHistoryEntry[] => {
   return messages.flatMap(message => {
     const primary = extractGatewayHistoryEntry(message);
-    return [...(primary ? [primary] : []), ...extractEmbeddedToolUseEntries(message)];
+    return [
+      ...(primary ? [primary] : []),
+      ...extractEmbeddedToolUseEntries(message),
+      ...extractNestedToolActivityEntries(message),
+    ];
   });
 };

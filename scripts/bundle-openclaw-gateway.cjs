@@ -318,6 +318,10 @@ esbuild
     logLevel: 'warning',
     logOverride: {
       'ignored-bare-import': 'silent',
+      // v2026.8.1 compiles a spread override in PluginInstallRecordShape into
+      // two literal `source` keys. The latter intentionally widens the union
+      // with `marketplace`, so the generated-code warning is non-actionable.
+      'duplicate-object-key': 'silent',
     },
     plugins: [createRuntimeImportMetaUrlPlugin(runtimeDir)],
   })

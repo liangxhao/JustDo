@@ -97,6 +97,7 @@ interface GatewayJobState {
 
 interface GatewayJob {
   id: string;
+  declarationKey?: string | null;
   name: string;
   description?: string;
   enabled: boolean;
@@ -746,13 +747,18 @@ export class CronJobService {
   ): Promise<GatewayJob[]> {
     const repairedJobs = await Promise.all(
       jobs.map(async job => {
-        if (job.payload.kind !== PayloadKind.AgentTurn || job.agentId === ScheduledTaskAgentId) {
+        if (
+          job.declarationKey?.trim() ||
+          job.payload.kind !== PayloadKind.AgentTurn ||
+          job.agentId === ScheduledTaskAgentId
+        ) {
           return job;
         }
         return this.withTaskMutation(job.id, async () => {
           const latest = await this.findGatewayJob(client, job.id);
           if (!latest) return null;
           if (
+            latest.declarationKey?.trim() ||
             latest.payload.kind !== PayloadKind.AgentTurn ||
             latest.agentId === ScheduledTaskAgentId
           ) {

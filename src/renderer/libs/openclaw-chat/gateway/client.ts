@@ -15,6 +15,11 @@
 
 import { PRODUCT_NAME } from '@shared/productMetadata';
 
+import {
+  buildGatewayDeviceAuthPayload,
+  loadOrCreateGatewayDeviceIdentity,
+} from './device-identity';
+
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 export interface GatewayClientOptions {
@@ -60,7 +65,7 @@ export interface GatewayRequestError extends Error {
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-const CHALLENGE_TIMEOUT_MS = 750;
+const CHALLENGE_TIMEOUT_MS = 10_000;
 const REQUEST_TIMEOUT_MS = 90_000;
 const RECONNECT_BASE_MS = 800;
 const RECONNECT_MAX_MS = 15_000;
@@ -88,7 +93,11 @@ export class GatewayClient {
   private tickIntervalMs = DEFAULT_TICK_INTERVAL_MS;
   private pendingRequests = new Map<
     string,
-    { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }
+    {
+      resolve: (v: unknown) => void;
+      reject: (e: Error) => void;
+      timer: ReturnType<typeof setTimeout>;
+    }
   >();
   private lastSeq = 0;
 
@@ -157,18 +166,17 @@ export class GatewayClient {
 
     ws.addEventListener('open', () => {
       if (!this.isActive(ws, generation)) return;
-      // Wait for challenge, then send connect
       this.challengeTimer = setTimeout(() => {
-        this.sendConnect(ws, generation, null);
+        if (this.isActive(ws, generation)) ws.close(1008, 'connect challenge timeout');
       }, CHALLENGE_TIMEOUT_MS);
     });
 
-    ws.addEventListener('message', (ev) => {
+    ws.addEventListener('message', ev => {
       if (!this.isActive(ws, generation)) return;
       this.handleMessage(ws, generation, String(ev.data ?? ''));
     });
 
-    ws.addEventListener('close', (ev) => {
+    ws.addEventListener('close', ev => {
       if (this.ws !== ws) return;
       this.ws = null;
       this.stopTickWatch();
@@ -200,8 +208,21 @@ export class GatewayClient {
       // Handle challenge
       if (event.event === 'connect.challenge') {
         clearTimeout(this.challengeTimer!);
-        const nonce = (event.payload as Record<string, unknown>)?.nonce as string | null;
-        this.sendConnect(ws, generation, nonce);
+        const payload = event.payload as Record<string, unknown> | undefined;
+        const nonce = typeof payload?.nonce === 'string' ? payload.nonce : '';
+        const challengeTs = payload?.ts;
+        if (
+          !nonce ||
+          typeof challengeTs !== 'number' ||
+          !Number.isSafeInteger(challengeTs) ||
+          challengeTs < 0
+        ) {
+          ws.close(1008, 'invalid connect challenge');
+          return;
+        }
+        void this.sendConnect(ws, generation, nonce, challengeTs).catch(() => {
+          if (this.isActive(ws, generation)) ws.close(1008, 'device identity unavailable');
+        });
         return;
       }
       this.opts.onEvent?.(event);
@@ -228,21 +249,52 @@ export class GatewayClient {
     }
   }
 
-  private sendConnect(ws: WebSocket, _generation: number, _nonce: string | null): void {
+  private async sendConnect(
+    ws: WebSocket,
+    generation: number,
+    nonce: string,
+    challengeTs: number,
+  ): Promise<void> {
+    if (!this.isActive(ws, generation)) return;
+    const client = {
+      id: 'openclaw-control-ui',
+      displayName: PRODUCT_NAME,
+      version: 'control-ui',
+      platform: navigator.platform,
+      mode: 'webchat',
+    };
+    const role = 'operator';
+    const scopes = ['operator.admin', 'operator.read', 'operator.write'];
+    const identity = await loadOrCreateGatewayDeviceIdentity();
+    if (!this.isActive(ws, generation)) return;
+    const signaturePayload = buildGatewayDeviceAuthPayload({
+      deviceId: identity.deviceId,
+      clientId: client.id,
+      clientMode: client.mode,
+      role,
+      scopes,
+      signedAtMs: challengeTs,
+      token: this.opts.token,
+      nonce,
+      platform: client.platform,
+    });
     const connectParams: Record<string, unknown> = {
       minProtocol: 4,
       maxProtocol: 4,
-      client: {
-        id: 'openclaw-control-ui',
-        displayName: PRODUCT_NAME,
-        version: 'control-ui',
-        platform: navigator.platform,
-        mode: 'webchat',
+      client,
+      role,
+      scopes,
+      device: {
+        id: identity.deviceId,
+        publicKey: identity.publicKey,
+        signature: await identity.sign(signaturePayload),
+        signedAt: challengeTs,
+        nonce,
       },
-      role: 'operator',
-      scopes: ['operator.admin', 'operator.read', 'operator.write'],
       caps: ['tool-events'],
     };
+
+    if (!this.isActive(ws, generation)) return;
 
     if (this.opts.token) {
       connectParams.auth = { token: this.opts.token };
@@ -256,7 +308,7 @@ export class GatewayClient {
     }, 15_000);
 
     this.pendingRequests.set(id, {
-      resolve: (payload) => {
+      resolve: payload => {
         this.backoffMs = RECONNECT_BASE_MS;
         const hello = payload as GatewayHelloOk;
         const advertisedTickInterval = hello.policy?.tickIntervalMs;
@@ -300,8 +352,14 @@ export class GatewayClient {
   }
 
   private clearTimers(): void {
-    if (this.connectTimer) { clearTimeout(this.connectTimer); this.connectTimer = null; }
-    if (this.challengeTimer) { clearTimeout(this.challengeTimer); this.challengeTimer = null; }
+    if (this.connectTimer) {
+      clearTimeout(this.connectTimer);
+      this.connectTimer = null;
+    }
+    if (this.challengeTimer) {
+      clearTimeout(this.challengeTimer);
+      this.challengeTimer = null;
+    }
     this.stopTickWatch();
   }
 

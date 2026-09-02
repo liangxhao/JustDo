@@ -19,6 +19,10 @@ const path = require('path');
 const { patchOpenClawRuntime } = require('./patch-openclaw-runtime.cjs');
 const { decideRuntimeInstall } = require('./openclaw-runtime-freeze.cjs');
 const {
+  assertNoActiveRuntimeDevLease,
+  resolveRuntimeDevLeaseDir,
+} = require('./openclaw-runtime-dev-lease.cjs');
+const {
   commitStagedRuntime,
   prepareStagedRuntimeForCommit,
 } = require('./openclaw-runtime-staging.cjs');
@@ -112,6 +116,7 @@ if (!npmTargetPlatform) {
 if (!['x64', 'arm64', 'ia32'].includes(targetArch)) {
   fail(`Unsupported arch: ${targetArch}`);
 }
+assertNoActiveRuntimeDevLease(resolveRuntimeDevLeaseDir(rootDir));
 
 console.log(
   `[install-openclaw-runtime] Target: ${targetId} (npm platform=${npmTargetPlatform}, arch=${targetArch})`,

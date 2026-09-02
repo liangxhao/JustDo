@@ -62,7 +62,7 @@ Create 映射 schedule/payload/delivery；Agent-turn 强制 `agentId = justdo-sc
 
 ## 5. Scheduler agent 隔离
 
-`justdo-scheduler` 是受管 agent，Agent-turn job 必须由它执行。list 会修复历史 job 的错误 assignment：成功则返回修复后 job；失败且 job enabled 时尝试禁用，避免以普通交互 agent/错误权限继续无人值守执行；连禁用都失败则整次 list 报错。
+`justdo-scheduler` 是受管 agent，JustDo 创建或接管的 Agent-turn job 必须由它执行。list 会修复没有 `declarationKey` 的普通 job 的错误 assignment：成功则返回修复后 job；失败且 job enabled 时尝试禁用，避免以普通交互 agent/错误权限继续无人值守执行；连禁用都失败则整次 list 报错。带 `declarationKey` 的 job 由 OpenClaw extension/core 声明并维护（例如 memory dreaming），JustDo 不改写其 owner；这类环境任务通过 `agents.defaults.systemAgent.agentId = main` 获得明确归属。
 
 toggle enabled 与 manual run 也会再次确认 assignment。用户不能用普通 cron mutation 把其他 agent 升级为 scheduler 的 full/unattended policy。
 

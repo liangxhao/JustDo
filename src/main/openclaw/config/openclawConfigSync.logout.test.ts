@@ -317,6 +317,7 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.tools.fs.mode).toBeUndefined();
     expect(config.tools.fs.workspaceOnly).toBe(true);
     expect(config.tools.exec.mode).toBe('ask');
+    expect(config.agents.defaults.systemAgent).toEqual({ agentId: 'main' });
     expect(config.session).toEqual({
       dmScope: 'per-account-channel-peer',
       reset: { mode: 'none' },
@@ -581,9 +582,13 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.agents.defaults).not.toHaveProperty('memorySearch');
     expect(config.memory.search).toEqual({ enabled: false });
     expect(config.agents.defaults.timeoutSeconds).toBe(120);
+    expect(config.agents.defaults.systemAgent).toEqual({ agentId: 'main' });
     expect(config.agents.defaults.compaction).not.toHaveProperty('keepRecentTokens');
     expect(config.agents.ownership).toBe('explicit');
-    expect(config.agents.entries.main).toEqual({ reasoningDefault: 'stream' });
+    expect(config.agents.entries.main).toEqual({
+      reasoningDefault: 'stream',
+      workspace: path.join(path.dirname(configPath), 'workspace'),
+    });
     expect(config.agents.entries).toHaveProperty('justdo-scheduler');
     expect(config.plugins.entries.custom_plugin).toEqual({
       enabled: true,
@@ -733,6 +738,7 @@ describe('OpenClaw auth logout config sync', () => {
 
     expect(result.ownership).toBe('explicit');
     expect(result.entries.main).toMatchObject({
+      workspace: 'E:/workspace/project',
       model: {
         primary: 'custom-provider/custom-model',
       },
