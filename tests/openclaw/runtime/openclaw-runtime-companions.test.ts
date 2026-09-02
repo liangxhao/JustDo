@@ -36,16 +36,36 @@ describe('OpenClaw runtime companions', () => {
     expect(rewritten).toContain('const unrelated = import.meta.url');
   });
 
+  it('anchors the database verifier worker to its original dist module', () => {
+    const source = `
+      function resolveDatabaseVerifyWorkerUrl(currentModuleUrl = import.meta.url) {
+        return new URL('./openclaw-database-verify.worker.js', currentModuleUrl);
+      }
+    `;
+
+    const rewritten = rewriteRuntimeWorkerImportMetaUrls(
+      source,
+      "new URL('./dist/state/openclaw-database-verify.js', import.meta.url).href",
+    );
+
+    expect(hasStaleRuntimeWorkerImportMetaUrl(rewritten)).toBe(false);
+    expect(rewritten).toContain(
+      "currentModuleUrl = new URL('./dist/state/openclaw-database-verify.js', import.meta.url).href",
+    );
+  });
+
   it('requires every companion referenced by the v2026.8.1 bundle', () => {
     const bundle = `
       distWorkerPath: 'infra/sqlite-readonly-location.worker.js';
       distWorkerPath: 'agents/model-provider-auth.worker.js';
+      return new URL('./openclaw-database-verify.worker.js', currentModuleUrl);
       distWorkerPath: 'process/supervisor/service-child-relay.js';
       distWorkerPath: 'process/supervisor/service-child-windows-job-anchor.js';
     `;
 
     expect(getRuntimeCompanionPathsReferencedByBundle(bundle)).toEqual([
       'dist/agents/model-provider-auth.worker.js',
+      'dist/state/openclaw-database-verify.worker.js',
       'dist/infra/sqlite-readonly-location.worker.js',
       'dist/process/supervisor/service-child-relay.js',
       'dist/process/supervisor/service-child-windows-job-anchor.js',

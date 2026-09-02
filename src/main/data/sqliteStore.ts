@@ -26,18 +26,6 @@ const REQUIRED_TABLE_COLUMNS: Record<string, string[]> = {
     'created_at',
     'updated_at',
   ],
-  cowork_messages: [
-    'id',
-    'session_id',
-    'type',
-    'content',
-    'metadata',
-    'created_at',
-    'sequence',
-    'thinking_content',
-    'model_name',
-    'usage',
-  ],
 };
 
 export class SqliteStore {
@@ -142,25 +130,10 @@ export class SqliteStore {
     this.ensureColumn('cowork_sessions', 'permission_mode', 'TEXT');
     this.ensureColumn('cowork_sessions', 'model_ref', 'TEXT');
 
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS cowork_messages (
-        id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        type TEXT NOT NULL,
-        content TEXT NOT NULL,
-        metadata TEXT,
-        created_at INTEGER NOT NULL,
-        sequence INTEGER,
-        thinking_content TEXT,
-        model_name TEXT,
-        usage TEXT,
-        FOREIGN KEY (session_id) REFERENCES cowork_sessions(id) ON DELETE CASCADE
-      );
-    `);
-
-    this.db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_cowork_messages_session_id ON cowork_messages(session_id);
-    `);
+    // OpenClaw v2026.8.1 owns the durable transcript in its per-agent SQLite
+    // database. The former table duplicated that transcript and routinely
+    // drifted from chat.history after reconnects or dropped stream frames.
+    this.db.exec('DROP TABLE IF EXISTS cowork_messages;');
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS cowork_session_runs (
@@ -285,11 +258,6 @@ export class SqliteStore {
     `);
 
     this.db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_cowork_messages_session_sequence
-      ON cowork_messages(session_id, sequence, created_at);
-    `);
-
-    this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_cowork_sessions_agent_order
       ON cowork_sessions(agent_id, pinned DESC, updated_at DESC);
     `);
@@ -342,32 +310,9 @@ export class SqliteStore {
       console.warn('Failed to migrate cowork execution mode:', error);
     }
 
-    this.cleanupOrphanedCoworkMessages();
     this.db.pragma('optimize');
 
     this.migrateFromElectronStore(basePath);
-  }
-
-  private cleanupOrphanedCoworkMessages(): void {
-    try {
-      const result = this.db
-        .prepare(
-          `
-          DELETE FROM cowork_messages
-          WHERE NOT EXISTS (
-            SELECT 1
-            FROM cowork_sessions
-            WHERE cowork_sessions.id = cowork_messages.session_id
-          )
-        `,
-        )
-        .run();
-      if (result.changes > 0) {
-        console.warn(`[SqliteStore] Removed ${result.changes} orphaned cowork message(s).`);
-      }
-    } catch (error) {
-      console.warn('[SqliteStore] Failed to clean orphaned cowork messages:', error);
-    }
   }
 
   onDidChange<T = unknown>(

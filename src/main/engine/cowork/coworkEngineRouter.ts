@@ -1,7 +1,6 @@
 import { EventEmitter } from 'events';
 
 import type {
-  CoworkContinueOptions,
   CoworkGenerateTitleOptions,
   CoworkRuntime,
   CoworkRuntimeEvents,
@@ -47,14 +46,6 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
     options: CoworkStartOptions = {},
   ): Promise<void> {
     await this.runtime.startSession(sessionId, prompt, options);
-  }
-
-  async continueSession(
-    sessionId: string,
-    prompt: string,
-    options: CoworkContinueOptions = {},
-  ): Promise<void> {
-    await this.runtime.continueSession(sessionId, prompt, options);
   }
 
   async stopSession(sessionId: string, options?: CoworkStopOptions): Promise<void> {
@@ -164,40 +155,8 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
   handleEngineConfigChanged(_nextEngine: string): void {}
 
   private bindRuntimeEvents(runtime: CoworkRuntime): void {
-    runtime.on('message', (sessionId, message) => {
-      this.emit('message', sessionId, message);
-    });
-
-    runtime.on('messageUpdate', (sessionId, messageId, content) => {
-      this.emit('messageUpdate', sessionId, messageId, content);
-    });
-
-    runtime.on('thinkingUpdate', (sessionId, messageId, thinkingDelta) => {
-      this.emit('thinkingUpdate', sessionId, messageId, thinkingDelta);
-    });
-
-    runtime.on(
-      'messageMetadataUpdate',
-      (
-        sessionId,
-        messageId,
-        metadata,
-        extra?: {
-          usage?: {
-            input?: number;
-            output?: number;
-            cacheRead?: number;
-            cacheWrite?: number;
-            total?: number;
-          };
-        },
-      ) => {
-        this.emit('messageMetadataUpdate', sessionId, messageId, metadata, extra);
-      },
-    );
-
-    runtime.on('messageDelete', (sessionId, messageId) => {
-      this.emit('messageDelete', sessionId, messageId);
+    runtime.on('activity', (sessionId, kind, timestamp) => {
+      this.emit('activity', sessionId, kind, timestamp);
     });
 
     runtime.on('complete', (sessionId, finalStatus) => {

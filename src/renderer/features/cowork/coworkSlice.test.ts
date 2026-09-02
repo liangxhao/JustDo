@@ -15,6 +15,7 @@ import coworkReducer, {
   setSessionRuntimeSnapshot,
   setSessionRunTimings,
   setSessions,
+  touchSessionActivity,
   updateSessionStatus,
   updateSessionTitle,
 } from './coworkSlice';
@@ -29,7 +30,6 @@ const createSession = (id: string, modelRef?: string) => ({
   permissionMode: 'full' as const,
   activeSkillIds: [],
   agentId: 'main',
-  messages: [],
   createdAt: 1,
   updatedAt: 2,
   modelRef,
@@ -229,6 +229,25 @@ describe('cowork draft attachments', () => {
 
 describe('cowork session recent activity', () => {
   const activityTime = 1_700_000_000_000;
+
+  test('updates and marks a background session unread without storing a message', () => {
+    const loaded = coworkReducer(
+      undefined,
+      setSessions([createSession('session-1'), createSession('session-2')]),
+    );
+    const selected = coworkReducer(loaded, setCurrentSession(createSession('session-1')));
+
+    const updated = coworkReducer(
+      selected,
+      touchSessionActivity({ sessionId: 'session-2', timestamp: activityTime }),
+    );
+
+    expect(updated.sessions.find(session => session.id === 'session-2')?.updatedAt).toBe(
+      activityTime,
+    );
+    expect(updated.unreadSessionIds).toContain('session-2');
+    expect(updated.currentSession).not.toHaveProperty('messages');
+  });
 
   test('keeps activity time when status changes', () => {
     const loaded = coworkReducer(

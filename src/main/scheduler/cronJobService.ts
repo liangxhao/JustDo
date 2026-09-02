@@ -28,7 +28,7 @@ import type {
   ScheduledTaskRunWithName,
   TaskState,
 } from '../../shared/scheduledTask/types';
-import { isCronSessionKey } from '../openclaw/sessions/openclawChannelSessionSync';
+import { isCronSessionKey } from '../openclaw/sessions/openclawSessionKeys';
 import { stringifyScheduledTaskLog } from './scheduledTaskLog';
 
 type GatewayClientLike = {

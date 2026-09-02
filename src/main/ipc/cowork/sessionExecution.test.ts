@@ -26,7 +26,6 @@ const session = (permissionMode: 'ask' | 'auto' | 'full'): CoworkSession => ({
   permissionMode,
   activeSkillIds: [],
   agentId: 'main',
-  messages: [],
   createdAt: 1,
   updatedAt: 2,
 });
@@ -70,60 +69,6 @@ describe('cowork session execution permissions', () => {
       'hello',
       expect.objectContaining({ workspaceRoot: 'C:\\workspace' }),
     );
-  });
-
-  test('continues an existing session without reapplying its historical permission snapshot', async () => {
-    const store = {
-      getSession: vi.fn().mockReturnValue(session('auto')),
-    } as unknown as CoworkStore;
-    const continueSession = vi.fn().mockResolvedValue(undefined);
-    registerCoworkSessionExecutionHandlers({
-      ensureEngineRunning: vi.fn().mockResolvedValue({ phase: 'running' }),
-      getCoworkStore: () => store,
-      getCoworkEngineRouter: () => ({ continueSession }) as unknown as CoworkEngineRouter,
-      waitForConfigUpdates: vi.fn().mockResolvedValue(undefined),
-      getEngineNotReadyResponse: vi.fn(),
-    });
-
-    const result = await handlers.get('cowork:session:continue')?.(
-      {},
-      { sessionId: 'session-1', prompt: 'continue' },
-    );
-    expect(result).toMatchObject({ success: true });
-    expect(continueSession).toHaveBeenCalledOnce();
-  });
-
-  test('waits for pending global permission synchronization before continuing a turn', async () => {
-    let releaseConfig!: () => void;
-    const waitForConfigUpdates = vi.fn(
-      () =>
-        new Promise<void>(resolve => {
-          releaseConfig = resolve;
-        }),
-    );
-    const ensureEngineRunning = vi.fn().mockResolvedValue({ phase: 'running' });
-    const continueSession = vi.fn().mockResolvedValue(undefined);
-    const store = {
-      getSession: vi.fn().mockReturnValue(session('full')),
-    } as unknown as CoworkStore;
-    registerCoworkSessionExecutionHandlers({
-      ensureEngineRunning,
-      getCoworkStore: () => store,
-      getCoworkEngineRouter: () => ({ continueSession }) as unknown as CoworkEngineRouter,
-      waitForConfigUpdates,
-      getEngineNotReadyResponse: vi.fn(),
-    });
-
-    const pending = handlers.get('cowork:session:continue')?.(
-      {},
-      { sessionId: 'session-1', prompt: 'continue' },
-    ) as Promise<unknown>;
-    await Promise.resolve();
-    expect(ensureEngineRunning).not.toHaveBeenCalled();
-
-    releaseConfig();
-    await expect(pending).resolves.toMatchObject({ success: true });
-    expect(continueSession).toHaveBeenCalledOnce();
   });
 
   test('waits for pending global permission synchronization before starting a turn', async () => {
@@ -205,5 +150,61 @@ describe('cowork session execution permissions', () => {
     expect(ensureEngineRunning).not.toHaveBeenCalled();
     expect(createSession).not.toHaveBeenCalled();
     expect(startSession).not.toHaveBeenCalled();
+  });
+
+  test('rejects an empty prompt before creating a session', async () => {
+    const createSession = vi.fn();
+    const store = {
+      getSessionRunByClientTurnId: vi.fn(),
+      createSession,
+    } as unknown as CoworkStore;
+    const ensureEngineRunning = vi.fn();
+    registerCoworkSessionExecutionHandlers({
+      ensureEngineRunning,
+      getCoworkStore: () => store,
+      getCoworkEngineRouter: () => ({}) as CoworkEngineRouter,
+      waitForConfigUpdates: vi.fn(),
+      getEngineNotReadyResponse: vi.fn(),
+    });
+
+    await expect(
+      handlers.get('cowork:session:start')?.({}, { prompt: '   ' }),
+    ).resolves.toEqual({ success: false, error: 'Prompt is required.' });
+    expect(ensureEngineRunning).not.toHaveBeenCalled();
+    expect(createSession).not.toHaveBeenCalled();
+  });
+
+  test('persists an asynchronous runtime start failure as an error', async () => {
+    const createdSession = { ...session('ask'), status: 'idle' as const };
+    const updateSession = vi.fn(
+      (_sessionId: string, updates: Partial<CoworkSession>) => Object.assign(createdSession, updates),
+    );
+    const store = {
+      getConfig: () => ({
+        workingDirectory: 'C:\\workspace',
+        executionMode: 'local',
+        permissionMode: 'ask',
+      }),
+      createSession: vi.fn().mockReturnValue(createdSession),
+      updateSession,
+      getSession: vi.fn().mockImplementation(() => createdSession),
+      getAgent: vi.fn(),
+    } as unknown as CoworkStore;
+    registerCoworkSessionExecutionHandlers({
+      ensureEngineRunning: vi.fn().mockResolvedValue({ phase: 'running' }),
+      getCoworkStore: () => store,
+      getCoworkEngineRouter: () =>
+        ({ startSession: vi.fn().mockRejectedValue(new Error('gateway unavailable')) }) as unknown as CoworkEngineRouter,
+      waitForConfigUpdates: vi.fn().mockResolvedValue(undefined),
+      getEngineNotReadyResponse: vi.fn(),
+    });
+
+    await expect(
+      handlers.get('cowork:session:start')?.({}, { prompt: 'hello' }),
+    ).resolves.toMatchObject({ success: true });
+    await vi.waitFor(() =>
+      expect(updateSession).toHaveBeenCalledWith(createdSession.id, { status: 'error' }),
+    );
+    expect(createdSession.status).toBe('error');
   });
 });

@@ -327,7 +327,7 @@ contextBridge.exposeInMainWorld('electron', {
     startSession: (options: {
       prompt: string;
       cwd?: string;
-      systemPrompt?: string;
+      title?: string;
       activeSkillIds?: string[];
       agentId?: string;
       attachments?: CoworkAttachmentPayload[];
@@ -335,13 +335,6 @@ contextBridge.exposeInMainWorld('electron', {
       clientTurnId?: string;
       startedAt?: number;
     }) => ipcRenderer.invoke('cowork:session:start', options),
-    continueSession: (options: {
-      sessionId: string;
-      prompt: string;
-      systemPrompt?: string;
-      activeSkillIds?: string[];
-      attachments?: CoworkAttachmentPayload[];
-    }) => ipcRenderer.invoke('cowork:session:continue', options),
     stopSession: (sessionId: string) => ipcRenderer.invoke('cowork:session:stop', sessionId),
     deleteSession: (sessionId: string) => ipcRenderer.invoke('cowork:session:delete', sessionId),
     deleteSessions: (sessionIds: string[]) =>
@@ -397,12 +390,6 @@ contextBridge.exposeInMainWorld('electron', {
         goalId,
         objective,
       }),
-    getContextUsage: (sessionId: string) =>
-      ipcRenderer.invoke('cowork:session:contextUsage', sessionId),
-    deleteMessage: (sessionId: string, messageId: string) =>
-      ipcRenderer.invoke('cowork:message:delete', sessionId, messageId),
-    deleteMessagesFrom: (sessionId: string, messageId: string) =>
-      ipcRenderer.invoke('cowork:message:deleteFrom', sessionId, messageId),
     // Extension interaction handling
     respondToInteraction: (options: { requestId: string; result: unknown }) =>
       ipcRenderer.invoke(CoworkInteractionIpc.Respond, options),
@@ -427,55 +414,19 @@ contextBridge.exposeInMainWorld('electron', {
       agentId?: string;
     }) => ipcRenderer.invoke('config:setDefaultModel', options),
     // Stream event listeners
-    onStreamMessage: (callback: (data: { sessionId: string; message: unknown }) => void) => {
-      const handler = (
-        _event: Electron.IpcRendererEvent,
-        data: { sessionId: string; message: unknown },
-      ) => callback(data);
-      ipcRenderer.on('cowork:stream:message', handler);
-      return () => ipcRenderer.removeListener('cowork:stream:message', handler);
-    },
-    onStreamMessageUpdate: (
-      callback: (data: { sessionId: string; messageId: string; content: string }) => void,
-    ) => {
-      const handler = (
-        _event: Electron.IpcRendererEvent,
-        data: { sessionId: string; messageId: string; content: string },
-      ) => callback(data);
-      ipcRenderer.on('cowork:stream:messageUpdate', handler);
-      return () => ipcRenderer.removeListener('cowork:stream:messageUpdate', handler);
-    },
-    onStreamThinkingUpdate: (
-      callback: (data: { sessionId: string; messageId: string; thinkingDelta: string }) => void,
-    ) => {
-      const handler = (
-        _event: Electron.IpcRendererEvent,
-        data: { sessionId: string; messageId: string; thinkingDelta: string },
-      ) => callback(data);
-      ipcRenderer.on('cowork:stream:thinkingUpdate', handler);
-      return () => ipcRenderer.removeListener('cowork:stream:thinkingUpdate', handler);
-    },
-    onStreamMessageMetadataUpdate: (
+    onSessionActivity: (
       callback: (data: {
         sessionId: string;
-        messageId: string;
-        metadata: Record<string, unknown>;
+        kind: 'user' | 'other';
+        timestamp: number;
       }) => void,
     ) => {
       const handler = (
         _event: Electron.IpcRendererEvent,
-        data: { sessionId: string; messageId: string; metadata: Record<string, unknown> },
+        data: { sessionId: string; kind: 'user' | 'other'; timestamp: number },
       ) => callback(data);
-      ipcRenderer.on('cowork:stream:messageMetadataUpdate', handler);
-      return () => ipcRenderer.removeListener('cowork:stream:messageMetadataUpdate', handler);
-    },
-    onStreamMessageDelete: (callback: (data: { sessionId: string; messageId: string }) => void) => {
-      const handler = (
-        _event: Electron.IpcRendererEvent,
-        data: { sessionId: string; messageId: string },
-      ) => callback(data);
-      ipcRenderer.on('cowork:stream:messageDelete', handler);
-      return () => ipcRenderer.removeListener('cowork:stream:messageDelete', handler);
+      ipcRenderer.on('cowork:session:activity', handler);
+      return () => ipcRenderer.removeListener('cowork:session:activity', handler);
     },
     onStreamInteraction: (callback: (data: { sessionId: string; request: unknown }) => void) => {
       const handler = (
@@ -491,10 +442,18 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.on(CoworkInteractionIpc.Dismiss, handler);
       return () => ipcRenderer.removeListener(CoworkInteractionIpc.Dismiss, handler);
     },
-    onStreamComplete: (callback: (data: { sessionId: string; finalStatus?: string }) => void) => {
+    onStreamComplete: (
+      callback: (data: {
+        sessionId: string;
+        finalStatus?: 'idle' | 'running' | 'completed' | 'error';
+      }) => void,
+    ) => {
       const handler = (
         _event: Electron.IpcRendererEvent,
-        data: { sessionId: string; finalStatus?: string },
+        data: {
+          sessionId: string;
+          finalStatus?: 'idle' | 'running' | 'completed' | 'error';
+        },
       ) => callback(data);
       ipcRenderer.on('cowork:stream:complete', handler);
       return () => ipcRenderer.removeListener('cowork:stream:complete', handler);
@@ -530,8 +489,6 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(CoworkSubagentDetailsIpc.Get, sessionKey),
     listSubTaskDescendants: (sessionId: string) =>
       ipcRenderer.invoke(CoworkSubagentDetailsIpc.ListDescendants, sessionId),
-    getSubTaskSession: (sessionKey: string) =>
-      ipcRenderer.invoke('cowork:subTask:session', sessionKey),
   },
   sessionGroup: {
     list: () => ipcRenderer.invoke('sessionGroup:list'),

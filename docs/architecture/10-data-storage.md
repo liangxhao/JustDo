@@ -1,6 +1,6 @@
 # 数据存储
 
-本文按 `v2026.8.12` 的 `SqliteStore`、`CoworkStore`、`GroupStore`、`ScheduledTaskResultStore` 和相关测试重写。JustDo 的核心产品数据使用 SQLite；OpenClaw 自己的 transcript、runtime 和 cron 数据仍位于其 state directory，不归入本 schema。
+本文按 `v2026.8.27` 的 `SqliteStore`、`CoworkStore`、`GroupStore`、`ScheduledTaskResultStore` 和相关测试重写。JustDo 的核心产品数据使用 SQLite；OpenClaw 自己的 transcript、runtime 和 cron 数据仍位于其 state directory，不归入本 schema。
 
 ## 1. 数据库位置与初始化
 
@@ -13,7 +13,7 @@
 3. 打开 `better-sqlite3` 连接。
 4. 设置 foreign keys、WAL、sync/cache/checkpoint。
 5. 创建表/索引并执行兼容迁移。
-6. 清理孤立 message，执行 `PRAGMA optimize`。
+6. 删除旧版冗余 `cowork_messages` 缓存表，执行 `PRAGMA optimize`。
 7. 若 KV 仍为空，从旧 `config.json` 一次性导入 electron-store 数据。
 
 数据库只在 `app.whenReady()` 后初始化；退出时在 Gateway/extension host 停止后关闭，以 flush WAL 和释放文件锁。
@@ -22,7 +22,7 @@
 
 | PRAGMA               | 当前值   | 目的                           |
 | -------------------- | -------- | ------------------------------ |
-| `foreign_keys`       | `ON`     | session 删除级联 message/run   |
+| `foreign_keys`       | `ON`     | session 删除级联 run/关联数据  |
 | `journal_mode`       | `WAL`    | 读写并发与崩溃恢复             |
 | `synchronous`        | `NORMAL` | WAL 下的性能/耐久折中          |
 | `cache_size`         | `-8000`  | 约 8 MiB page cache            |
@@ -32,13 +32,12 @@ WAL 是持久设置。备份不能只在运行中复制主 `.sqlite` 而忽略 W
 
 ## 3. Schema 总表
 
-当前共有 11 张核心表：
+当前共有 10 张核心表：
 
 | 表                              | 用途                         | Owner                      |
 | ------------------------------- | ---------------------------- | -------------------------- |
 | `kv`                            | 应用配置与内部同步元数据     | `SqliteStore`、领域 store  |
 | `cowork_sessions`               | 产品会话索引/元数据          | `CoworkStore`              |
-| `cowork_messages`               | 本地消息显示缓存             | `CoworkStore`              |
 | `cowork_session_runs`           | client turn/root run receipt | `CoworkStore`              |
 | `cowork_config`                 | Cowork/runtime 设置          | `CoworkStore`              |
 | `agents`                        | Agent 产品定义               | `CoworkStore`              |
@@ -86,13 +85,11 @@ WAL 是持久设置。备份不能只在运行中复制主 `.sqlite` 而忽略 W
 
 运行状态不能只信该表；启动会把遗留 running 重置为 idle，实时状态需结合 Gateway。
 
-## 6. `cowork_messages`
+## 6. 消息所有权
 
-列：id、session_id、type、content、metadata JSON、created_at、sequence、thinking_content、model_name、usage JSON。foreign key 对 session 使用 `ON DELETE CASCADE`。
+`cowork_messages` 已删除。OpenClaw v2026.8.1 自己的 SQLite transcript 是唯一持久消息来源，Renderer 通过 `chat.startup` / `chat.history` 和分页 history bridge 读取；JustDo 不再把同一份正文、Thinking、Tool output、usage 和附件元数据复制到 `justdo.sqlite`。升级初始化会直接删除遗留缓存表，不迁移其中内容，因为它不是权威数据。
 
-索引：按 session id；按 `(session_id, sequence, created_at)`。Store 支持 add、按 session 读取、update、delete 单项、从某消息开始删除等。
-
-这是 UI cache：Gateway history 是 transcript 权威。metadata 可包含 tool、plan、attachments、identity 等结构，读取时必须容忍旧/坏 JSON。启动会删除 foreign-key 引入前遗留的 orphan message。
+Main 与 Redux 也不再维护 transcript projection。Renderer 的 chat controller 直接消费 Gateway history、in-flight snapshot 和实时 Thinking/Tool/Content 事件，并只在页面生命周期内保存有界的显示状态。会话导出必须从 controller 的 Gateway 快照生成；全文搜索、历史详情、定时任务结果和 subagent timeline 均按需查询 Gateway。产品侧 `CoworkSession` 契约不再包含 `messages` 字段，避免空数组被误当作可用 transcript 或降级数据源。
 
 OpenClaw v2026.8.1 对接不再由 JustDo 直接读写 agent `sessions.json`。Gateway history、session model 与 task state 分别通过 `chat.history`、`sessions.patch`、`tasks.list/get` 获取；受限 history detail 由内置 runtime bridge RPC 投影。
 

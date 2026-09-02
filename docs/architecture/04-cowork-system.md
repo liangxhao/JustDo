@@ -1,28 +1,28 @@
 # Cowork 系统
 
-本文按 `v2026.8.12` 的会话 handler、SQLite store、OpenClaw adapter、Renderer feature 和 shared 合约重写。Cowork 是产品会话层，不是另一套 Agent engine。
+本文按 `v2026.8.27` 的会话 handler、SQLite store、OpenClaw adapter、Renderer feature 和 shared 合约重写。Cowork 是产品会话层，不是另一套 Agent engine。
 
 ## 1. 职责与边界
 
 Cowork 负责把本地产品会话映射到 OpenClaw session/run：
 
 - 保存标题、cwd、agent、model、permission、active skills、group、pin，以及与 Gateway goal 分离的本地 execution snapshot；
-- 对 start/continue/stop/delete 建立安全 admission 和幂等语义；
-- 把 Gateway message/agent/tool/lifecycle 事件归一化并广播；
-- 在重连、强退和历史加载后恢复 UI；
+- 对 start/stop/delete 建立安全 admission 和幂等语义；
+- 把 Gateway lifecycle 映射为产品 session/run 状态；
+- 让 Renderer 在重连、切页和历史加载后从 Gateway 恢复 chat UI；
 - 提供审批、ask-user、附件、subagent、goal、上下文用量和导出 UX。
 
-Gateway 仍是执行与 transcript 权威；`cowork_messages` 是本地产品缓存，不能覆盖 Gateway history。
+Gateway 仍是执行与 transcript 权威；JustDo SQLite 只保存产品会话元数据和 run receipt，不再持久化消息副本。Main 与 Redux 也不保留 transcript projection。
 
 ## 2. 主要实现
 
 | 层         | 入口                                                                | 职责                                                             |
 | ---------- | ------------------------------------------------------------------- | ---------------------------------------------------------------- |
 | Shared     | `src/shared/cowork/`、`sessionGoal.ts`、`openclaw/messageDomain.ts` | 附件、run、title、目标、事件分类                                 |
-| Main store | `src/main/data/coworkStore.ts`                                      | session/message/run/config/agent CRUD 与恢复                     |
+| Main store | `src/main/data/coworkStore.ts`                                      | session/run/config/agent 产品状态持久化                          |
 | Main IPC   | `src/main/ipc/cowork/`                                              | execution、session、runtime、config、interaction、subtask、group |
 | Router     | `src/main/engine/cowork/coworkEngineRouter.ts`                      | 仅转发到 OpenClaw runtime；不再多引擎路由                        |
-| Adapter    | `src/main/engine/openclaw/openclawRuntimeAdapter.ts`                | session mapping、Gateway RPC/事件、history reconciliation        |
+| Adapter    | `src/main/engine/openclaw/openclawRuntimeAdapter.ts`                | session/run mapping、Gateway RPC、生命周期/Goal/审批协调          |
 | Renderer   | `src/renderer/features/cowork/`                                     | 列表、输入、权限/审批、goal、subagent、文件预览                  |
 | Chat       | `src/renderer/libs/openclaw-chat/`                                  | history/live 状态与 timeline 渲染                                |
 
@@ -32,7 +32,7 @@ Gateway 仍是执行与 transcript 权威；`cowork_messages` 是本地产品缓
 
 | 标识                         | 生成方                      | 用途                                            |
 | ---------------------------- | --------------------------- | ----------------------------------------------- |
-| local `sessionId`            | `CoworkStore.createSession` | 产品导航和 SQLite foreign key                   |
+| local `sessionId`            | `CoworkStore.createSession` | 产品导航、run receipt 与生命周期状态             |
 | Gateway `sessionKey`         | managed-key 规则/Gateway    | transcript、session RPC、审批与 subagent parent |
 | `clientTurnId` / `rootRunId` | Renderer/Main / Gateway     | 幂等提交和事件归属                              |
 
@@ -61,7 +61,6 @@ sequenceDiagram
   else new turn
     IPC->>IPC: ensure Gateway + active permission policy
     IPC->>DB: create session, status=running, begin run
-    IPC->>DB: cache initial user message
     IPC-->>UI: session + timing
     IPC->>RT: startSession (async)
     RT->>GW: chat.send
@@ -76,11 +75,11 @@ sequenceDiagram
 - permission 使用 shared `resolvePermissionMode`；UI 传值不能越过已保存的应用 policy。
 - 初始 model 从所选 agent 读取并写入 session/run，保证统计和显示可追溯。
 - handler 不等待完整 Agent run；启动调用异步执行，错误经 stream 广播并落终态。
-- `skipInitialUserMessage` 避免 adapter 再写一份已经由 handler 保存的用户消息。
+- Renderer 在临时会话中显示首条 optimistic user item；canonical key 建立后由 Gateway history/实时事件接管，不经 Main 消息缓存。
 
-## 6. Continue 与模型切换
+## 6. 后续回合与模型切换
 
-Continue 先确认本地 session 存在、等待 config queue、ensure engine，然后调用 adapter。Renderer 的 submit helper负责 optimistic user message、client turn timing 和串行队列；Main/Gateway history 最终负责对账。
+首轮建立 canonical session 后，后续回合由 Renderer `ChatController` 直接调用 Gateway `chat.send`。Controller 负责 optimistic user item、提交串行化、run ownership 和 Gateway history 对账；不再经过旧的 `cowork:session:continue` IPC。
 
 会话模型读写通过 `sessions.patch/get`：
 
@@ -93,9 +92,9 @@ Continue 先确认本地 session 存在、等待 config queue、ensure engine，
 
 Stop 会发现主 session 与仍运行的 subagent key，逐一调用 `sessions.abort`，清除 pending approval/session grant、active turn、goal 控制 run 和缓存。`bestEffort` 仅允许在 Gateway confirmation 不可得时继续本地清理，不代表 abort 成功。
 
-删除 session 的顺序包括停止活动、删除本地 row（级联 messages/runs）、通知 adapter 清映射，并递归删除受管 subagent transcript；不能删除通用 `:main` 或不属于本产品的 Gateway session。
+删除 session 的顺序包括停止活动、删除本地 row（级联 runs）、通知 adapter 清映射，并递归删除受管 subagent transcript；不能删除通用 `:main` 或不属于本产品的 Gateway session。
 
-业务终态来自明确 chat/lifecycle/runtime 证据。WebSocket disconnect 只触发连接恢复和必要的错误提示，不能自动将所有 run 标成 error。完成后启动 history reconciliation，以 Gateway final text、usage、thinking 和 tool 结果校正缓存。
+业务终态来自明确 chat/lifecycle/runtime 证据。WebSocket disconnect 只触发连接恢复和必要的错误提示，不能自动将所有 run 标成 error。Renderer 在终态后直接刷新 Gateway history，以权威 final text、usage、thinking 和 tool 结果校正活动 timeline。
 
 对 managed JustDo 会话，模型回合终止不等于编排任务终止。OpenClaw v2026.8.1 原生 task
 ledger 与 required-child join 在提交 terminal assistant reply 前等待 required children 终态并续跑
@@ -114,31 +113,26 @@ Codex companion 在任何 plugin import 前按锁定版本/hash补齐 managed co
 
 `CoworkRuntimeEvents` 包含：
 
-- `message`：创建 user/assistant/thinking/tool/system item；
-- `messageUpdate`：正文快照或合并后的 streaming text；
-- `thinkingUpdate`：thinking delta；
-- `messageMetadataUpdate`：tool/lifecycle/model/usage/plan 等元数据；
-- `messageDelete`：移除临时或被权威历史取代的 item；
+- `activity`：仅携带 sessionId、user/other 分类和时间，用于会话列表排序、未读与外部触发发现；
 - `complete`：session 的明确终态；
 - `error`：可见错误，不一定等价 terminal；
 - `sessionStopped`：本地停止完成；
 - `cronChanged`：触发 scheduled task refresh/reconcile。
 
-共享 `messageDomain` 按 session/run 判定 current、related、foreign、stale 等 admission，并统一 tool terminal status。Main 与 Renderer 都应复用 shared normalize，避免协议分叉。
+Thinking、Tool、Content 不属于 `CoworkRuntimeEvents`；Renderer Gateway client 直接规范化并交给 reducer。共享 `messageDomain` 按 session/run 判定 current、related、foreign、stale 等 admission，并统一 tool terminal status，避免协议分叉。
 
 ## 9. 历史与缓存
 
-Main `HistoryReconciler` 在 final、detached run 或显式同步后调用 `chat.history`：
+Main 不再拥有 `HistoryReconciler` 或消息 CRUD。Renderer controller 统一处理：
 
-- 抽取稳定 message identity，合并当前 turn assistant text；
-- 按 occurrence 匹配 usage，不能只靠相同文本；
-- 恢复 thinking、tool 输入/结果、模型名、compaction 和 subagent completion；
-- 删除被权威历史证明为重复的临时项；
-- 对 history 边界丢失的文本只做安全 suffix/prefix merge。
+- `chat.startup` / 分页 `chat.history` 的权威 transcript；
+- in-flight snapshot 与实时 Thinking/Tool/Content 的接管；
+- 按 stable identity、run、sequence 和 history generation 对账；
+- 750 条有界显示窗口及 session 页面生命周期缓存。
 
-Renderer 另有分页 history window 和 persisted timeline cache，用于性能与切页恢复。两者是显示缓存，不改变 Gateway 权威。
+这些显示状态不写入 SQLite 或 Redux。导出从当前 controller 的 Gateway 快照生成；会话详情、用量、定时任务结果和 subagent history 由 Main 按需查询 Gateway，查询结果不回填 CoworkStore。
 
-会话列表的“会话详情”通过专用 `cowork:session:details` IPC 读取 Gateway 精确 session row，并以 `sessions.usage` 的 `range=all`、family 聚合读取原始 transcript 用量。对话消息、用户/助手消息和 Tool 调用按 SQLite 中实际展示的消息统计；各类 Token 累计和实际使用模型来自 Gateway 权威用量。每个 assistant 模型请求分别累计，总 Token 优先使用每次模型返回的 `total`，缺失时才把 input/output/cacheRead/cacheWrite 相加。`sessions.usage` 仅在 `cacheStatus=fresh` 时可用；refreshing、partial 或 stale 必须有界等待刷新，超时则整体回退，不能展示部分 lifetime 总计。界面中的 Session ID 只使用 Gateway `sessionId`，不能用通用 row `id` 或 `cowork_sessions.id` 代替。仅当权威统计没有模型时，才用 session row、run receipt、当前 session model 和本地 agent 默认值补空。
+会话列表的“会话详情”通过专用 `cowork:session:details` IPC 读取 Gateway 精确 session row，并以 `sessions.usage` 的 `range=all`、family 聚合读取原始 transcript 用量和消息/Tool 计数。各类 Token 累计和实际使用模型来自 Gateway 权威用量。每个 assistant 模型请求分别累计，总 Token 优先使用每次模型返回的 `total`，缺失时才把 input/output/cacheRead/cacheWrite 相加。`sessions.usage` 仅在 `cacheStatus=fresh` 时可用；refreshing、partial 或 stale 必须有界等待刷新，超时或 Gateway 不可用时应明确显示查询失败，不能用空的产品会话伪造 0 条消息或部分 lifetime 总计。界面中的 Session ID 只使用 Gateway `sessionId`，不能用通用 row `id` 或 `cowork_sessions.id` 代替。仅当权威统计没有模型时，才用 session row、run receipt、当前 session model 和本地 agent 默认值补空。
 
 ## 10. Goal 生命周期
 
@@ -177,7 +171,7 @@ Subagent 详情的 Token 用量不使用 `sessions.list.totalTokens`，因为该
 
 ## 14. Renderer 状态
 
-`coworkSlice` 保存 session 列表、选择、加载/错误等产品状态。大体量 transcript/live reducer 留在 chat component 内，避免 Redux 每个 delta 触发全应用 render。选择器、删除状态机、session presentation、latest serial queue、run activity、context usage refresh 都有独立纯函数和测试。
+`coworkSlice` 保存 session 列表、选择、加载/错误等产品状态。大体量 transcript/live reducer 留在 chat component 内，避免 Redux 每个 delta 触发全应用 render。选择器、删除状态机、session presentation、latest serial queue、run activity、context usage display 都有独立纯函数和测试。上下文用量不进入 Redux，也不经专用 IPC 轮询；ChatController 直接投影 Gateway `chat.history.sessionInfo`、`sessions.changed` 与 `session.message.session`，Wrapper 只把选中会话的轻量快照传给输入区。
 
 ## 15. 失败与排障
 
@@ -233,7 +227,7 @@ SQLite `session.status` 是产品快照，不是完整状态机权威。Gateway 
 | IPC admission               | `src/main/ipc/cowork/` 及 handler tests                         |
 | 路由与 stop-all             | `src/main/engine/cowork/coworkEngineRouter.ts`                  |
 | OpenClaw 映射               | `src/main/engine/openclaw/openclawRuntimeAdapter.ts` 及测试     |
-| History merge               | Main `historyReconciler.ts` 与 Renderer reconciliation tests    |
+| History/live merge          | Renderer `chat-controller`、`history-reconciler` 及 reducer tests |
 | Goal continuation           | `src/main/openclaw/goals/goalContinuationCoordinator.ts` 及测试 |
 | Permission/grants           | `src/main/openclaw/permissions/` 及测试                         |
 | UI session 状态             | `src/renderer/features/cowork/`、chat model tests               |

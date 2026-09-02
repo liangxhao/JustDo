@@ -38,12 +38,7 @@ import {
   selectSessionRunTimings,
 } from '@/features/cowork/coworkSelectors';
 import { coworkService } from '@/features/cowork/coworkService';
-import {
-  addMessage,
-  setCurrentSession,
-  setStreaming,
-  updateSessionStatus,
-} from '@/features/cowork/coworkSlice';
+import { setCurrentSession, setStreaming, updateSessionStatus } from '@/features/cowork/coworkSlice';
 import type {
   CoworkAttachmentPayload,
   CoworkSession,
@@ -55,6 +50,7 @@ import {
 } from '@/features/cowork/sessionExport';
 import { clearActiveSkills } from '@/features/plugins/slices/skillSlice';
 import type { SettingsOpenOptions } from '@/features/settings/Settings';
+import type { ChatContextUsageSnapshot } from '@/libs/openclaw-chat/gateway/chat-controller';
 import { i18nService } from '@/services/i18n';
 import BrainIcon from '@/shared/components/icons/BrainIcon';
 import ComposeIcon from '@/shared/components/icons/ComposeIcon';
@@ -109,6 +105,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const [selectedSubagent, setSelectedSubagent] = useState<Subagent | null>(null);
   const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
   const [goalRunProgress, setGoalRunProgress] = useState<GoalRunProgress | null>(null);
+  const [contextUsage, setContextUsage] = useState<ChatContextUsageSnapshot | null>(null);
   const [isSessionSearchOpen, setIsSessionSearchOpen] = useState(false);
   const [areProcessSummariesExpanded, setAreProcessSummariesExpanded] = useState(false);
   const [isSessionExportOpen, setIsSessionExportOpen] = useState(false);
@@ -142,6 +139,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   // Buffer for pending user message when JustDoChatWrapper isn't mounted yet
   const pendingPromptRef = useRef<string | null>(null);
   const pendingAttachmentsRef = useRef<CoworkAttachmentPayload[]>([]);
+  const pendingInitialGoalRef = useRef<{ sessionId: string; objective: string } | null>(null);
 
   const currentSession = useSelector(selectCurrentSession);
   const currentSessionId = currentSession?.id ?? null;
@@ -166,9 +164,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     : isStreaming;
   const currentSessionRuntimeRunningRef = useRef(currentSessionRuntimeRunning);
   currentSessionRuntimeRunningRef.current = currentSessionRuntimeRunning;
-  const sessionHasAssistantMessage =
-    currentSession?.messages.some(message => message.type === 'assistant') ?? false;
-
   useEffect(() => {
     const inputRegion = sessionPromptInputRegionRef.current;
     if (!inputRegion) return;
@@ -185,10 +180,13 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
 
     return () => inputRegion.removeAttribute('inert');
   }, [isQuestionInputBlocked]);
-  const initialGoalObjective = inferInitialGoalObjective(
-    currentSession?.messages ?? [],
-    currentSessionRuntimeRunning,
-  );
+  const pendingInitialGoal = pendingInitialGoalRef.current;
+  const initialGoalObjective =
+    currentSessionRuntimeRunning &&
+    pendingInitialGoal !== null &&
+    pendingInitialGoal.sessionId === currentSession?.id
+      ? pendingInitialGoal.objective
+      : null;
   const backgroundSessionIdsKey = resolveBackgroundRuntimeSessionIds(
     sessions,
     currentSessionId,
@@ -314,6 +312,10 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       // Capture active skill IDs before clearing them
       const sessionSkillIds = [...activeSkillIds];
 
+      const initialGoal = inferInitialGoalObjective(prompt, true);
+      pendingInitialGoalRef.current = initialGoal
+        ? { sessionId: tempSessionId, objective: initialGoal }
+        : null;
       const tempSession: CoworkSession = {
         id: tempSessionId,
         title: fallbackTitle,
@@ -326,21 +328,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         permissionMode: config.permissionMode,
         activeSkillIds: sessionSkillIds,
         agentId: currentAgentId,
-        messages: [
-          {
-            id: `msg-${now}`,
-            type: 'user',
-            content: prompt,
-            timestamp: now,
-            metadata:
-              sessionSkillIds.length > 0 || (attachments && attachments.length > 0)
-                ? {
-                    ...(sessionSkillIds.length > 0 ? { skillIds: sessionSkillIds } : {}),
-                    ...(attachments && attachments.length > 0 ? { attachments } : {}),
-                  }
-                : undefined,
-          },
-        ],
       };
 
       // Immediately show the session detail page with user message
@@ -386,20 +373,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       );
 
       if (!startedSession && startError) {
-        // Show the error as a system message in the temp session
-        dispatch(
-          addMessage({
-            sessionId: tempSessionId,
-            message: {
-              id: `error-${Date.now()}`,
-              type: 'system',
-              content: i18nService
-                .t('coworkErrorSessionStartFailed')
-                .replace('{error}', startError),
-              timestamp: Date.now(),
-            },
-          }),
-        );
         dispatch(updateSessionStatus({ sessionId: tempSessionId, status: 'error' }));
         chatWrapperRef.current?.clearSending();
         return;
@@ -907,19 +880,26 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         );
         return;
       }
-      setSessionExportMessageCount(snapshot?.messages.length ?? currentSession.messages.length);
+      setSessionExportMessageCount(snapshot.messages.length);
       setIsSessionExportOpen(true);
     };
 
     const handleExportSession = async (includeRawData: boolean): Promise<boolean> => {
       try {
         const snapshot = chatWrapperRef.current?.getExportSnapshot();
-        const messages = snapshot?.messages ?? currentSession.messages;
+        if (!snapshot || snapshot.isLoading) {
+          window.dispatchEvent(
+            new CustomEvent('app:showToast', {
+              detail: i18nService.t('coworkExportHistoryLoading'),
+            }),
+          );
+          return false;
+        }
         const document = createSessionExportDocument({
           session: currentSession,
-          messages,
+          messages: snapshot.messages,
           model: sessionSelectedModel?.id ?? sessionSelectedModel?.name,
-          runtimeSessionId: snapshot?.runtimeSessionId,
+          runtimeSessionId: snapshot.runtimeSessionId,
           includeRawData,
         });
         const result = await window.electron.dialog.saveTextFile({
@@ -1134,6 +1114,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             processSummariesExpanded={areProcessSummariesExpanded}
             onSearchMatchCountChange={handleSessionSearchMatchCountChange}
             onActivityChange={setGoalRunProgress}
+            onContextUsageChange={setContextUsage}
             runTimings={sessionRunTimings[currentSession.id] ?? []}
           />
           {/* Input */}
@@ -1152,7 +1133,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                     sessionId={currentSession.id}
                     modelAgentId={currentSession.agentId}
                     sessionModelRef={currentSession.modelRef}
-                    hasAssistantMessage={sessionHasAssistantMessage}
+                    contextUsage={contextUsage}
                     initialGoalObjective={initialGoalObjective}
                     goalRunProgress={goalRunProgress}
                   />

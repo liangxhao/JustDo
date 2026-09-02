@@ -28,7 +28,6 @@ describe('cowork session startup', () => {
       permissionMode: 'ask',
       activeSkillIds: [],
       agentId: 'main',
-      messages: [],
       createdAt: 1_000,
       updatedAt: 1_000,
     };
@@ -184,7 +183,6 @@ describe('cowork session permission selection', () => {
       permissionMode: 'ask' as const,
       activeSkillIds: [],
       agentId: 'main',
-      messages: [],
       createdAt: 1,
       updatedAt: 2,
     };
@@ -243,7 +241,6 @@ describe('cowork session permission selection', () => {
         permissionMode: 'ask',
         activeSkillIds: [],
         agentId: 'main',
-        messages: [],
         createdAt: 1,
         updatedAt: 2,
       },

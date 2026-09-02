@@ -47,49 +47,9 @@ export const GROUP_COLORS = [
   '#9297a3', // gray
 ];
 
-// Cowork message types
-export type CoworkMessageType =
-  'user' | 'assistant' | 'tool_use' | 'tool_result' | 'system' | 'subagent_completion';
-
 // Cowork execution mode
 export type CoworkExecutionMode = 'auto' | 'local' | 'sandbox';
 export type CoworkAgentEngine = 'openclaw';
-
-// Cowork message metadata
-export interface CoworkMessageMetadata {
-  toolName?: string;
-  toolInput?: Record<string, unknown>;
-  toolResult?: string | Record<string, unknown>;
-  toolUseId?: string | null;
-  error?: string;
-  isError?: boolean;
-  isStreaming?: boolean;
-  isFinal?: boolean;
-  isThinking?: boolean;
-  skillIds?: string[]; // Skills used for this message
-  [key: string]: unknown;
-}
-
-// Token usage for a single message
-export interface TokenUsage {
-  input?: number;
-  output?: number;
-  cacheRead?: number;
-  cacheWrite?: number;
-  total?: number;
-}
-
-// Cowork message
-export interface CoworkMessage {
-  id: string;
-  type: CoworkMessageType;
-  content: string;
-  timestamp: number;
-  metadata?: CoworkMessageMetadata;
-  thinkingContent?: string; // Accumulated thinking content during streaming
-  modelName?: string; // Model that generated this message (for assistant messages)
-  usage?: TokenUsage; // Token usage for assistant messages
-}
 
 // Cowork session
 export interface CoworkSession {
@@ -103,7 +63,6 @@ export interface CoworkSession {
   activeSkillIds: string[];
   agentId: string;
   modelRef?: string;
-  messages: CoworkMessage[];
   createdAt: number;
   updatedAt: number;
 }
@@ -200,14 +159,6 @@ export interface CoworkStartOptions {
   startedAt?: number;
 }
 
-// Continue session options
-export interface CoworkContinueOptions {
-  sessionId: string;
-  prompt: string;
-  activeSkillIds?: string[];
-  attachments?: CoworkAttachmentPayload[];
-}
-
 export type { SessionRunTiming };
 
 // IPC result types
@@ -229,17 +180,4 @@ export interface CoworkConfigResult {
   error?: string;
 }
 
-// Stream event types for IPC communication
-export type CoworkStreamEventType =
-  'message' | 'tool_use' | 'tool_result' | 'interaction_request' | 'complete' | 'error';
-
-export interface CoworkStreamEvent {
-  type: CoworkStreamEventType;
-  sessionId: string;
-  data: {
-    message?: CoworkMessage;
-    interaction?: CoworkInteractionRequest;
-    error?: string;
-  };
-}
 import type { PermissionMode } from '@shared/openclaw/approvals';

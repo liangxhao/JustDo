@@ -90,23 +90,22 @@ Main/Gateway 状态变化通过 `webContents.send` 到 preload listener。preloa
 
 主要调用包括：
 
-- `cowork:session:start|continue|stop|delete|deleteBatch`；
+- `cowork:session:start|stop|delete|deleteBatch`；
 - pin、rename、permission mode、model patch/get；
 - session get/list、Gateway session id、remote-managed、单个/批量 runtime status；
 - `cowork:session:run:begin|bind|list|fail` 管理 client turn 到 root run 的持久绑定；
-- goal get/continue/resume/restart-for-feedback 与 context usage；
-- message delete/deleteFrom；
+- goal get/continue/resume/restart-for-feedback；
 - interaction respond/replay；
 - config get/set、Agent runtime settings、default model；
 - subtask status 与 subagent session lookup。
 
-Start/continue handler 的 admission 次序是：校验输入 -> 等待排队的 config update -> ensure Gateway/config/permission ready -> 建立/绑定 run -> 调用 router。任何一步失败都要返回明确失败，而不是先让 Renderer进入 running。
+Start handler 的 admission 次序是：校验输入 -> 等待排队的 config update -> ensure Gateway/config/permission ready -> 建立/绑定 run -> 调用 router。后续回合由 Renderer chat controller 直接调用 Gateway `chat.send`。任何一步失败都要返回明确失败，而不是先让 Renderer进入 running。
 
 ### 4.2 Stream
 
-Cowork stream 至少包含 message、messageUpdate、thinkingUpdate、metadataUpdate、messageDelete、interaction、interactionDismiss、complete、error、sessionsChanged、goal changed/execution changed。
+Cowork stream 只承载产品层事件：轻量 session activity、interaction、interactionDismiss、complete、error、sessionsChanged、goal changed/execution changed。
 
-Main 的 runtime forwarder 负责把 Gateway 语义映射为产品事件；Renderer 的 `JustDoChatWrapper` 再把它们送入 chat model。消息正文、thinking、tool 生命周期和 run terminal 必须保持不同事件含义，不能把任意 error event 当作 session terminal。
+Thinking、Tool、Content 由 Renderer Gateway client 直接送入 chat model；Main runtime forwarder 不再复制消息正文。Main 只映射产品生命周期、run identity、审批和 Goal，且不能把任意 error event 当作 session terminal。
 
 ## 5. OpenClaw IPC
 

@@ -52,7 +52,6 @@ describe('CoworkSessionDetailsModal', () => {
         permissionMode: 'full',
         activeSkillIds: [],
         agentId: 'main',
-        messages: [],
         createdAt: 1_000,
         updatedAt: 2_000,
       },

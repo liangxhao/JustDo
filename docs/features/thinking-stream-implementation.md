@@ -6,11 +6,11 @@
 
 Thinking Stream 让用户在支持 reasoning 的模型执行期间看到独立的思考过程，并在历史重载后保留可显示的 reasoning 内容。它必须与最终 Assistant 回答分离，也不能暴露 Provider 未授权返回的内部数据。
 
-JustDo 不自行生成 reasoning，也不从普通回答里的自然语言推断 thinking。只有 OpenClaw/Provider 明确提供的 thinking、reasoning 或 redacted-thinking 内容，经过 Gateway 与 Adapter 的受控投影后才进入该通道。
+JustDo 不自行生成 reasoning，也不从普通回答里的自然语言推断 thinking。只有 OpenClaw/Provider 明确提供的 thinking、reasoning 或 redacted-thinking 内容，经过 Gateway 的显示投影后才进入该通道。
 
 ## 2. OpenClaw v2026.8.1 原生能力
 
-OpenClaw v2026.8.1 已原生提供实时 thinking、think-tag 归一和历史 display projection，因此旧的 002–004 补丁已删除。JustDo 通过版本化 wire 校验、Adapter identity 和 Renderer reducer 消费这些能力；不得为兼容旧 bundle 再恢复历史 patch。
+OpenClaw v2026.8.1 已原生提供实时 thinking、think-tag 归一和历史 display projection，因此旧的 002–004 补丁已删除。JustDo 通过版本化 wire 校验、Renderer Gateway client 和 reducer 直接消费这些能力；不得为兼容旧 bundle 再恢复历史 patch。
 
 升级 OpenClaw 时仍需逐项验证实时 delta/snapshot、终态顺序、历史 reasoning/redacted-thinking 和 consumer 行为。Pristine contract test 负责证明能力来自锁定上游产物，而不是被开发 runtime 中的残留补丁掩盖。
 
@@ -20,21 +20,19 @@ OpenClaw v2026.8.1 已原生提供实时 thinking、think-tag 归一和历史 di
 sequenceDiagram
   participant P as Provider/Model
   participant G as OpenClaw Gateway
-  participant A as openclawRuntimeAdapter
-  participant R as coworkRuntimeForwarder
+  participant R as Renderer Gateway client
   participant C as Chat reducer
   participant U as Timeline UI
 
   P-->>G: reasoning/thinking delta
-  G-->>A: native agent stream event
-  A->>A: bind session, run, message and lifecycle
-  A-->>R: thinkingUpdate(sessionId, messageId, delta)
-  R-->>C: cowork:stream:thinkingUpdate
+  G-->>R: native agent stream event
+  R->>R: normalize + session/run/generation admission
+  R-->>C: normalized thinking event
   C->>C: update independent ThinkingItem
   C-->>U: scheduled timeline render
 ```
 
-`openclawRuntimeAdapter.ts` 为 thinking 建立消息身份，并发出 `thinkingUpdate`。必要的模型、结束状态或关联元数据通过 `messageMetadataUpdate` 更新。`coworkEngineRouter.ts` 保持运行时无关的事件接口，`coworkRuntimeForwarder.ts` 再广播到 Renderer。
+`gateway/client.ts` 直接接收 OpenClaw 事件，`ChatController` 绑定 session/run/lifecycle 身份并交给 `agent-event-reducer.ts`。Main adapter 只保留产品会话生命周期、Goal 和审批协调，不建立 Thinking/Tool/Content 消息身份，也不通过 Electron IPC 复制正文。
 
 Renderer 只接受属于当前 transcript session/run/lifecycle 的事件，并遵守 agent sequence。重复、倒序或已终态 run 的迟到 thinking 不会再次应用。
 
@@ -84,13 +82,13 @@ Thinking delta 与回答 token 共用 transcript revision 和 `StreamRenderSched
 
 ## 7. 历史恢复
 
-实时事件只负责当前过程；重启应用、切换会话或重连后的显示必须以 Gateway 历史为准。OpenClaw v2026.8.1 原生 `chat.history` display projection 保留可显示的 reasoning 和 redacted-thinking，Main 历史协调器与 Renderer `project-history-timeline.ts` 再恢复为独立时间线项。
+实时事件只负责当前过程；重启应用、切换会话或重连后的显示必须以 Gateway 历史为准。OpenClaw v2026.8.1 原生 `chat.history` display projection 保留可显示的 reasoning 和 redacted-thinking，Renderer `project-history-timeline.ts` 将其恢复为独立时间线项。
 
-历史请求带 session 身份与 `historyGeneration`。响应过期时被丢弃，防止旧会话 thinking 覆盖当前会话。SQLite fallback 可能只有常规消息文本，无法保证恢复完整 thinking；降级视图必须接受信息减少，而不能从最终回答反向伪造。
+历史请求带 session 身份与 `historyGeneration`。响应过期时被丢弃，防止旧会话 thinking 覆盖当前会话。不存在 Main/SQLite transcript fallback；Gateway 暂时不可用时保留现有有界显示状态并走连接恢复，不能从最终回答反向伪造 thinking。
 
 ## 8. Provider 和模型差异
 
-并非所有模型都发送 reasoning，也不是所有 Provider 采用相同事件形状。Adapter 与补丁负责兼容受支持结构，Renderer 不按模型名称分支。对没有 thinking 的执行，UI 只显示 waiting、工具和回答等真实项目。
+并非所有模型都发送 reasoning，也不是所有 Provider 采用相同事件形状。OpenClaw Gateway 负责上游归一，Renderer 不按模型名称分支。对没有 thinking 的执行，UI 只显示 waiting、工具和回答等真实项目。
 
 redacted-thinking 表示 Provider 允许传递的受保护投影。JustDo 应按 OpenClaw 提供的显示内容处理，不尝试解密、还原或拼接隐藏 reasoning。
 
@@ -114,8 +112,8 @@ redacted-thinking 表示 Provider 允许传递的受保护投影。JustDo 应按
 1. 先记录 session id、run id、lifecycle generation 和时间范围；
 2. 查看当日 Main 日志与 Gateway 日志；
 3. 根据 `[gateway] log file:` 指向的 OpenClaw 原生 JSON 日志核对完整事件；
-4. 再检查 Adapter 是否发出 `thinkingUpdate` 与 metadata；
-5. 最后检查 Renderer 的会话/generation/sequence 过滤。
+4. 检查 Renderer Gateway client 是否收到并规范化 agent event；
+5. 最后检查 controller 的会话/generation/sequence 过滤和 reducer 状态。
 
 原生日志可能含用户内容或敏感信息，不应原样提交到仓库。
 
@@ -144,7 +142,7 @@ Thinking 可能包含比最终回答更敏感的上下文。维护时必须遵�
 - 高频 delta 经调度器合并但终态立即出现；
 - 中英文状态和 disclosure 无障碍行为。
 
-测试分布在 Renderer transcript/project/component 测试、Main OpenClaw adapter/history reconciler 测试，以及补丁安装/能力验证脚本中。
+测试分布在 Renderer controller/reducer/history projection/component 测试、Main OpenClaw lifecycle adapter 测试，以及补丁安装/能力验证脚本中。
 
 ## 13. 升级检查清单
 
@@ -183,11 +181,11 @@ Thinking可能包含系统上下文、工具规划和敏感推断，其风险高
 
 ## 17. 代码证据地图
 
-实时来源在 OpenClaw 原生 event 与 `openclawRuntimeAdapter.ts`，Main 通过 runtime forwarder 广播；Renderer 由 `agent-event-reducer.ts` 归约，`project-history-timeline.ts` 恢复历史，stream scheduler 控制发布。Pristine、adapter、history、reducer、projection 和 scheduler tests 共同构成证据，任一层缺失都不能宣称端到端支持。
+实时来源是 OpenClaw 原生 event，Renderer `GatewayClient` 直接接收，由 `agent-event-reducer.ts` 归约，`project-history-timeline.ts` 恢复历史，stream scheduler 控制发布。Pristine、client、controller、reducer、projection 和 scheduler tests 共同构成证据，任一层缺失都不能宣称端到端支持。
 
 ## 18. 故障定位决策
 
-原生日志有 reasoning 但 Main 无事件：检查 v2026.8.1 wire/adapter shape；Main 有事件但 UI 无 item：检查 session/run/generation/sequence admission；实时有而重载消失：检查 history display projection；文本重复：检查 delta/snapshot 语义；final 后仍动画：检查 terminal flush 和 item 收敛。
+原生日志有 reasoning 但 Renderer client 无事件：检查 v2026.8.1 wire 与 WebSocket generation；client 有事件但 UI 无 item：检查 session/run/generation/sequence admission；实时有而重载消失：检查 history display projection；文本重复：检查 delta/snapshot 语义；final 后仍动画：检查 terminal flush 和 item 收敛。
 
 ## 19. 完成定义
 

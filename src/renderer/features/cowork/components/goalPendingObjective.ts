@@ -1,14 +1,11 @@
 import { parseGoalStartObjective } from '@shared/slashCommands';
 
-import type { CoworkMessage } from '@/features/cowork/coworkTypes';
-
 export const inferInitialGoalObjective = (
-  messages: readonly Pick<CoworkMessage, 'type' | 'content'>[],
+  prompt: string,
   isSessionRunning: boolean,
 ): string | null => {
-  if (!isSessionRunning || messages.some(message => message.type === 'assistant')) return null;
-  const latestUserMessage = [...messages].reverse().find(message => message.type === 'user');
-  return parseGoalStartObjective(latestUserMessage?.content ?? '');
+  if (!isSessionRunning) return null;
+  return parseGoalStartObjective(prompt);
 };
 
 export const resolvePendingGoalObjectiveOnSessionChange = ({

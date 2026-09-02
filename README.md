@@ -5,7 +5,7 @@ OpenClaw Gateway. It is designed for real task execution: chat with an agent,
 attach files, manage skills and MCP servers, run scheduled tasks, and keep the
 desktop app available in the background.
 
-![Version](https://img.shields.io/badge/Version-v2026.8.10-green.svg?style=for-the-badge)
+![Version](https://img.shields.io/badge/Version-v2026.8.27-green.svg?style=for-the-badge)
 ![Electron](https://img.shields.io/badge/Electron-42-47848F?style=for-the-badge&logo=electron&logoColor=white)
 ![Node](https://img.shields.io/badge/Node-24.x-339933?style=for-the-badge&logo=node.js&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)
@@ -14,10 +14,10 @@ desktop app available in the background.
 
 | Capability          | Current implementation                                                                                                    |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| AI work sessions    | OpenClaw Gateway is the execution engine. JustDo manages the desktop shell, UI state, permissions, and local cache.       |
+| AI work sessions    | OpenClaw Gateway is the execution engine. JustDo manages the desktop shell, UI state, permissions, and product metadata.  |
 | Chat UI             | React owns the application shell; `<justdo-chat>` is a Lit custom element backed by the local OpenClaw Gateway WebSocket. |
-| Local storage       | `better-sqlite3` stores UI cache, app settings, agents, MCP servers, hooks, session groups, and cowork metadata.          |
-| Skills              | 7 bundled skills are listed in `resources/builtin-skills.json`; all 7 are enabled by default.                             |
+| Local storage       | `better-sqlite3` stores app settings, agents, MCP servers, hooks, session groups, cowork metadata, and run receipts.     |
+| Skills              | 8 bundled skills are listed in `resources/builtin-skills.json`; all 8 are enabled by default.                            |
 | MCP and hooks       | Managed from the Plugins screen, persisted locally, then synced into OpenClaw configuration.                              |
 | Scheduled tasks     | UI CRUD and polling are handled by JustDo; execution is delegated to the OpenClaw cron runtime.                           |
 | Desktop integration | Tray, auto launch, prevent sleep, local file preview, logs, proxy handling, and packaged platform resources.              |
@@ -139,14 +139,18 @@ Core tables include:
 - `kv`
 - `cowork_config`
 - `cowork_sessions`
-- `cowork_messages`
+- `cowork_session_runs`
 - `agents`
 - `mcp_servers`
 - `openclaw_hooks`
 - `session_groups`
+- `scheduled_task_run_receipts`
+- `scheduled_task_result_cleanup`
 
-Gateway chat history remains the authoritative execution history. SQLite keeps
-local UI cache and product metadata.
+OpenClaw's own SQLite transcript, exposed through Gateway chat history, is the
+only durable message source. JustDo SQLite keeps product metadata and run
+receipts. Thinking, Tool, and Content are consumed directly from Gateway by the
+Renderer and are not mirrored into Main-process or Redux transcript caches.
 
 ## Configuration
 
@@ -154,7 +158,7 @@ OpenClaw integration is declared in `package.json`:
 
 ```json
 {
-  "version": "v2026.8.10",
+  "version": "v2026.8.27",
   "openclaw": {
     "version": "v2026.8.1",
     "repo": "https://github.com/openclaw/openclaw.git"

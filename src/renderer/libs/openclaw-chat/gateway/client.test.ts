@@ -135,3 +135,114 @@ describe('GatewayClient v2026.8.1 handshake', () => {
     client.stop();
   });
 });
+
+describe('GatewayClient sequence recovery', () => {
+  it('drops duplicate and regressive frames without rewinding the connection high-water mark', () => {
+    class FakeWebSocket {
+      static readonly OPEN = 1;
+      static readonly sockets: FakeWebSocket[] = [];
+      readonly listeners = new Map<string, Array<(event: MessageEvent | CloseEvent) => void>>();
+      readyState = FakeWebSocket.OPEN;
+      close = vi.fn();
+
+      constructor(_url: string) {
+        FakeWebSocket.sockets.push(this);
+      }
+
+      addEventListener(type: string, listener: (event: MessageEvent | CloseEvent) => void): void {
+        const listeners = this.listeners.get(type) ?? [];
+        listeners.push(listener);
+        this.listeners.set(type, listeners);
+      }
+
+      send(): void {}
+
+      emit(type: string, event: MessageEvent | CloseEvent): void {
+        for (const listener of this.listeners.get(type) ?? []) listener(event);
+      }
+    }
+
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const onEvent = vi.fn();
+    const onGap = vi.fn();
+    const client = new GatewayClient({ url: 'ws://gateway.test', onEvent, onGap });
+    client.start();
+    const socket = FakeWebSocket.sockets[0];
+
+    for (const seq of [7, 7, 6, 8]) {
+      socket.emit('message', {
+        data: JSON.stringify({ type: 'event', event: 'agent', seq, payload: { seq } }),
+      } as MessageEvent);
+    }
+
+    expect(onEvent.mock.calls.map(([event]) => event.seq)).toEqual([7, 8]);
+    expect(onGap).not.toHaveBeenCalled();
+    expect(socket.close).not.toHaveBeenCalled();
+    client.stop();
+  });
+
+  it('retires a gapped socket and resets the outer sequence for its replacement', async () => {
+    vi.useFakeTimers();
+    class FakeWebSocket {
+      static readonly OPEN = 1;
+      static readonly CLOSING = 2;
+      static readonly CLOSED = 3;
+      static readonly sockets: FakeWebSocket[] = [];
+      readonly listeners = new Map<string, Array<(event: MessageEvent | CloseEvent) => void>>();
+      readyState = FakeWebSocket.OPEN;
+      close = vi.fn(() => {
+        this.readyState = FakeWebSocket.CLOSING;
+      });
+
+      constructor(_url: string) {
+        FakeWebSocket.sockets.push(this);
+      }
+
+      addEventListener(type: string, listener: (event: MessageEvent | CloseEvent) => void): void {
+        const listeners = this.listeners.get(type) ?? [];
+        listeners.push(listener);
+        this.listeners.set(type, listeners);
+      }
+
+      send(): void {}
+
+      emit(type: string, event: MessageEvent | CloseEvent): void {
+        for (const listener of this.listeners.get(type) ?? []) listener(event);
+      }
+    }
+
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const onEvent = vi.fn();
+    const onGap = vi.fn();
+    const client = new GatewayClient({ url: 'ws://gateway.test', onEvent, onGap });
+    client.start();
+    const first = FakeWebSocket.sockets[0];
+
+    first.emit('message', {
+      data: JSON.stringify({ type: 'event', event: 'agent', seq: 7, payload: {} }),
+    } as MessageEvent);
+    first.emit('message', {
+      data: JSON.stringify({ type: 'event', event: 'agent', seq: 9, payload: {} }),
+    } as MessageEvent);
+
+    expect(onEvent).toHaveBeenCalledTimes(1);
+    expect(onGap).toHaveBeenCalledWith({ expected: 8, received: 9 });
+    expect(first.close).toHaveBeenCalledWith(4000, 'gateway event sequence gap');
+
+    first.emit('message', {
+      data: JSON.stringify({ type: 'event', event: 'agent', seq: 8, payload: {} }),
+    } as MessageEvent);
+    expect(onEvent).toHaveBeenCalledTimes(1);
+
+    first.emit('close', { code: 4000, reason: 'gateway event sequence gap' } as CloseEvent);
+    await vi.advanceTimersByTimeAsync(800);
+    const replacement = FakeWebSocket.sockets[1];
+    replacement.emit('message', {
+      data: JSON.stringify({ type: 'event', event: 'agent', seq: 40, payload: {} }),
+    } as MessageEvent);
+
+    expect(onGap).toHaveBeenCalledTimes(1);
+    expect(onEvent).toHaveBeenCalledTimes(2);
+    client.stop();
+  });
+});

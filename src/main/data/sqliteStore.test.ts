@@ -79,6 +79,9 @@ test('deletes legacy schema database and creates a fresh database', () => {
   const sessionRunsTable = migratedDb
     .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'cowork_session_runs'")
     .get();
+  const messageCacheTable = migratedDb
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'cowork_messages'")
+    .get();
 
   expect(columns.map(column => column.name)).toEqual(
     expect.arrayContaining(['agent_id', 'group_id', 'pinned', 'active_skill_ids', 'model_ref']),
@@ -89,11 +92,12 @@ test('deletes legacy schema database and creates a fresh database', () => {
   expect(resultTable).toEqual({ name: 'scheduled_task_run_receipts' });
   expect(cleanupTable).toEqual({ name: 'scheduled_task_result_cleanup' });
   expect(sessionRunsTable).toEqual({ name: 'cowork_session_runs' });
+  expect(messageCacheTable).toBeUndefined();
 
   store.close();
 });
 
-test('adds model_ref to a current database without deleting sessions', () => {
+test('adds model_ref, keeps product sessions, and removes the redundant message cache', () => {
   const dir = createTempDir();
   const dbPath = path.join(dir, DB_FILENAME);
   const db = new BetterSqlite3(dbPath);
@@ -131,6 +135,11 @@ test('adds model_ref to a current database without deleting sessions', () => {
       (id, title, status, cwd, agent_id, created_at, updated_at)
      VALUES ('kept-session', 'kept', 'idle', '/tmp', 'main', ?, ?)`,
   ).run(now, now);
+  db.prepare(
+    `INSERT INTO cowork_messages
+      (id, session_id, type, content, created_at, sequence)
+     VALUES ('cached-message', 'kept-session', 'assistant', 'duplicate', ?, 1)`,
+  ).run(now);
   db.close();
 
   const store = SqliteStore.create(dir);
@@ -139,9 +148,13 @@ test('adds model_ref to a current database without deleting sessions', () => {
   const keptRow = migratedDb
     .prepare("SELECT id FROM cowork_sessions WHERE id = 'kept-session'")
     .get();
+  const messageCacheTable = migratedDb
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'cowork_messages'")
+    .get();
 
   expect(columns.map(column => column.name)).toContain('model_ref');
   expect(keptRow).toEqual({ id: 'kept-session' });
+  expect(messageCacheTable).toBeUndefined();
   store.close();
 });
 

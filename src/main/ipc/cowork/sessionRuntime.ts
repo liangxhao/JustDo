@@ -1,7 +1,6 @@
 import { ipcMain } from 'electron';
 
 import {
-  buildLocalSessionDetailStats,
   CoworkSessionDetailsIpc,
   type CoworkSessionDetailsResult,
   isSessionDetailModelVisible,
@@ -14,14 +13,14 @@ import {
 import type { CoworkSession, CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter, OpenClawRuntimeAdapter } from '../../engine';
 import {
-  buildManagedSessionKey,
-  DEFAULT_MANAGED_AGENT_ID,
-} from '../../openclaw/sessions/openclawChannelSessionSync';
-import {
   buildGatewaySessionDetailStats,
   type GatewaySessionUsageLoader,
   requestGatewaySessionUsage,
 } from '../../openclaw/sessions/openclawSessionDetails';
+import {
+  buildManagedSessionKey,
+  DEFAULT_MANAGED_AGENT_ID,
+} from '../../openclaw/sessions/openclawSessionKeys';
 
 interface Dependencies {
   getCoworkStore: () => CoworkStore;
@@ -56,12 +55,6 @@ export const readUsage = (session: Record<string, unknown>) => {
       : session.status === 'running' || session.runState === 'active'
         ? true
         : undefined;
-  // Match OpenClaw webchat once a usable context snapshot exists. A newly
-  // created active session can expose totalTokens: 0 with fresh: true while
-  // the live pre-prompt estimate is already available. Treat that zero as a
-  // bootstrap placeholder only when JustDo's provenance-guarded marker and
-  // the Gateway's explicit active-run projection both agree. Positive and
-  // idle Gateway snapshots always win.
   const useBootstrapEstimate =
     session.hasActiveRun === true &&
     (reportedTotalTokens === undefined || reportedTotalTokens === 0) &&
@@ -227,7 +220,6 @@ export const loadCoworkSessionDetails = async (
   const session = store.getSession(sessionId);
   if (!session) return { success: false, error: 'Session not found' };
 
-  const localStats = buildLocalSessionDetailStats(session);
   const lookupGatewaySession =
     dependencies.lookupGatewaySession ?? ((id: string) => queryGatewaySession(dependencies, id));
   const [gatewayResult, modelResult] = await Promise.all([
@@ -240,31 +232,37 @@ export const loadCoworkSessionDetails = async (
       .catch((): null => null),
   ]);
 
-  let stats = localStats;
+  if (!gatewayResult.session) {
+    return {
+      success: false,
+      error: gatewayResult.error || 'Session statistics are not available from Gateway',
+    };
+  }
+
   const gatewaySessionId = readGatewaySessionId(gatewayResult.session);
-  if (gatewayResult.session) {
-    try {
-      const usageLoader =
-        dependencies.getGatewaySessionUsage ??
-        (async (sessionKey: string) => {
-          const client = dependencies.getRuntime()?.getGatewayClient();
-          if (!client) throw new Error('Gateway client not connected');
-          return requestGatewaySessionUsage(client, sessionKey);
-        });
-      const gatewayStats = buildGatewaySessionDetailStats(
-        await usageLoader(gatewayResult.session.key),
-        localStats.summary,
-        localStats,
-      );
-      if (gatewayStats) stats = gatewayStats;
-    } catch {
-      // Preserve the complete SQLite fallback if raw transcript usage is unavailable.
-    }
+  let stats;
+  try {
+    const usageLoader =
+      dependencies.getGatewaySessionUsage ??
+      (async (sessionKey: string) => {
+        const client = dependencies.getRuntime()?.getGatewayClient();
+        if (!client) throw new Error('Gateway client not connected');
+        return requestGatewaySessionUsage(client, sessionKey);
+      });
+    stats = buildGatewaySessionDetailStats(await usageLoader(gatewayResult.session.key), null);
+  } catch (error) {
+    return {
+      success: false,
+      error:
+        error instanceof Error ? error.message : 'Session statistics are not available from Gateway',
+    };
+  }
+  if (!stats) {
+    return { success: false, error: 'Session statistics are not available from Gateway' };
   }
 
   if (stats.models.length === 0) {
     const models = new Set<string>();
-    for (const model of localStats.models) addModel(models, model);
     for (const run of store.getSessionRuns(sessionId)) addModel(models, run.modelRef);
     addModel(models, readGatewayModelRef(gatewayResult.session));
     addModel(models, modelResult && 'modelRef' in modelResult ? modelResult.modelRef : undefined);
@@ -398,26 +396,6 @@ export const registerCoworkSessionRuntimeHandlers = ({
       }
     },
   );
-
-  ipcMain.handle('cowork:session:contextUsage', async (_event, sessionId: string) => {
-    try {
-      const result = await findGatewaySession(sessionId);
-      if (!result.session) return { success: false, error: result.error };
-      const usage = readAvailableUsage(result.session);
-      if (!usage) {
-        return {
-          success: false,
-          error: 'Context usage is not available from OpenClaw session state',
-        };
-      }
-      return { success: true, ...usage };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to get context usage',
-      };
-    }
-  });
 
   ipcMain.handle(
     'cowork:session:patchModel',

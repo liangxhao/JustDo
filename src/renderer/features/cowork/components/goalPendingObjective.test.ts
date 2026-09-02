@@ -7,31 +7,13 @@ import {
 } from '@/features/cowork/components/goalPendingObjective';
 
 describe('goal pending objective', () => {
-  it('infers a goal only before the session produces an assistant message', () => {
-    expect(
-      inferInitialGoalObjective([{ type: 'user', content: '/goal write two poems' }], true),
-    ).toBe('write two poems');
-    expect(
-      inferInitialGoalObjective(
-        [
-          { type: 'user', content: '/goal write two poems' },
-          { type: 'assistant', content: 'Done' },
-        ],
-        true,
-      ),
-    ).toBeNull();
-    expect(
-      inferInitialGoalObjective([{ type: 'user', content: '/goal write two poems' }], false),
-    ).toBeNull();
+  it('infers a goal directly from the pending startup prompt', () => {
+    expect(inferInitialGoalObjective('/goal write two poems', true)).toBe('write two poems');
+    expect(inferInitialGoalObjective('/goal write two poems', false)).toBeNull();
   });
 
   it('does not infer an optimistic goal from the edit lifecycle command', () => {
-    expect(
-      inferInitialGoalObjective(
-        [{ type: 'user', content: '/goal edit refine the release dashboard' }],
-        true,
-      ),
-    ).toBeNull();
+    expect(inferInitialGoalObjective('/goal edit refine the release dashboard', true)).toBeNull();
   });
 
   it('carries an optimistic goal from a temporary session into its canonical session', () => {

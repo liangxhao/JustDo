@@ -9,7 +9,7 @@ JustDo is a local-first Electron + React desktop assistant. Agents execute real
 tasks through OpenClaw Gateway, with durable state in SQLite and bundled skills.
 
 - App: `v2026.8.27`
-- Electron: `42.6.0`
+- Electron: `42.7.0`
 - OpenClaw: `v2026.8.1`
 - Node: `>=24.15.0 <25` (`.nvmrc`)
 - Package manager: npm
@@ -117,12 +117,17 @@ Redux store (`src/renderer/store/index.ts`) mounts **6 slices**:
 Do not document/use unmounted slices as active state.
 
 SQLite core tables in `src/main/data/sqliteStore.ts`:
-`kv`, `cowork_sessions`, `cowork_messages`, `cowork_session_runs`, `cowork_config`, `agents`,
+`kv`, `cowork_sessions`, `cowork_session_runs`, `cowork_config`, `agents`,
 `mcp_servers`, `openclaw_hooks`, `session_groups`, `scheduled_task_run_receipts`,
 `scheduled_task_result_cleanup`.
 
-Built-in skills are declared in `resources/builtin-skills.json`: **15 skills**,
-**14 enabled** by default, `agent-browser` disabled.
+OpenClaw owns durable message transcripts in its native SQLite store. JustDo
+must not recreate a `cowork_messages`, Main-process, or Redux transcript cache.
+The Renderer consumes Gateway history and live Thinking/Tool/Content directly;
+Main keeps only product lifecycle, run identity, approval, and goal state.
+
+Built-in skills are declared in `resources/builtin-skills.json`: **8 skills**,
+all **8 enabled** by default.
 
 OpenClaw runtime patches live in `scripts/patches/v2026.8.1/`. They are
 new-version capability patches, not migrations of the historical

@@ -12,7 +12,7 @@
 | `OpenClawRuntimeAdapter`           | Gateway client、chat/session RPC、event normalize、approval、history、goal、subagent |
 | `CoworkEngineService`              | 延迟创建和访问 router/adapter                                                        |
 | `SessionPermissionModeCoordinator` | session permission 更新与同步 admission                                              |
-| `OpenClawChannelSessionSync`       | managed/channel/cron session key 与本地 session 映射                                 |
+| `openclawSessionKeys.ts`           | managed/cron session key 的纯解析与构造工具                                          |
 | patch pipeline                     | 为固定上游版本补足 JustDo 需要而上游尚未提供的能力                                   |
 
 ## 2. Runtime 来源与布局
@@ -107,23 +107,21 @@ Adapter 延迟建立 Gateway client，并维护 generation 防止旧 socket 回�
 
 ## 9. Managed session key
 
-JustDo 使用稳定 managed key 编码 agent 与本地 session。Parser 只接受规定格式，避免把任意 channel/session key 归入产品 session。Channel sync 还能识别 main agent channel 与 cron key，为外部/定时运行创建或解析本地展示 session。
+JustDo 使用稳定 managed key 编码 agent 与本地 session。纯 session-key helper 只接受规定格式，避免把任意 channel/session key 归入产品 session；它也识别 cron 隔离 key。未接入产品数据流的旧 channel 自动建会话逻辑已经删除，外部会话不会被静默写入本地产品列表。
 
 删除只操作可证明归属的 managed tree；通用 main session 不递归删除。runtime status 批量查询采用单飞/TTL snapshot，避免会话列表轮询造成 N+1 RPC。
 
 ## 10. Chat 与事件归一化
 
-Adapter 调用 `chat.send`，保存 requested run id，接收真实 run id 后重绑。它处理：
+Adapter 在初始会话和后台任务路径调用 `chat.send`，保存 requested run id，接收真实 run id 后重绑。普通对话的 Thinking/Tool/Content 由 Renderer Gateway client 直接处理；Main 不再建立第二套消息投影。Adapter 仍处理：
 
-- chat delta/final/aborted/error；
-- agent assistant/thinking/tool/lifecycle/item stream；
-- Webchat tool capability 与 legacy fallback；
-- stable message id、stream text overlap merge、final replacement；
-- model name、usage、execution plan 与 completion metadata；
-- foreign/detached/visible run 的不同展示；
-- completion 后 `chat.history` reconciliation。
+- chat final/aborted/error 对产品 run 状态的收敛；
+- agent lifecycle、审批、cron 与后台任务事件；
+- requested/acknowledged run id 绑定与迟到终态去重；
+- foreign/detached/visible run 的运行状态边界；
+- scheduler 等全量结果消费者的分页 `chat.history` 读取。
 
-`FINAL_HISTORY_SYNC_LIMIT` 当前为 1000；Renderer 另有分页窗口。扩大限制前必须评估内存和二次投影成本。
+后台全量历史同步按每页 1000 条循环读取；Renderer 另有分页窗口。扩大单页限制前必须评估内存和二次投影成本。
 
 Adapter 不再读写 OpenClaw `sessions.json`。模型变更在 Gateway ready 后用 `sessions.patch`；历史来自原生分页 `chat.history`；原生 display projection 未公开的 tool input 与 compaction detail 由 `justdo-runtime-bridge` 的受限 `operator.read` RPC 按请求 id 有界补齐。所有 RPC 结果先经过 `v2026.8.1` wire validator，再进入产品 DTO。
 
@@ -248,7 +246,7 @@ Gateway port/token 由 Main 管理；token 不应进入普通 Redux、日志或�
 | 启动参数与 Node          | `gatewayLaunchArgs.ts`、`electronNodeRuntime.ts` 及测试    |
 | Config reload            | `gatewayConfigReloadMonitor.ts`、config sync service tests |
 | Adapter/session RPC      | `openclawRuntimeAdapter.test.ts`、`sessionRpc.test.ts`     |
-| History/usage matching   | `historyReconciler.test.ts`、`historyUsageMatcher.test.ts` |
+| Renderer history/live    | `chat-controller.test.ts`、`history-reconciler.test.ts`    |
 | Model refs/agent models  | shared modelRef 与 `openclawAgentModels` tests             |
 | Goals/subagents/approval | goals、subagent gateway、permissions tests                 |
 | 日志压缩                 | `gatewayLogFilter.test.ts`                                 |

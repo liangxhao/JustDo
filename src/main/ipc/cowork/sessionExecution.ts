@@ -32,13 +32,6 @@ interface StartSessionOptions {
   startedAt?: number;
 }
 
-interface ContinueSessionOptions {
-  sessionId: string;
-  prompt: string;
-  activeSkillIds?: string[];
-  attachments?: CoworkAttachmentPayload[];
-}
-
 const broadcastSessionError = (sessionId: string, error: unknown): void => {
   const errorMessage = error instanceof Error ? error.message : String(error);
   BrowserWindow.getAllWindows().forEach(window => {
@@ -56,6 +49,9 @@ export const registerCoworkSessionExecutionHandlers = ({
 }: SessionExecutionHandlerDependencies): void => {
   ipcMain.handle('cowork:session:start', async (_event, options: StartSessionOptions) => {
     try {
+      if (!options || typeof options.prompt !== 'string' || !options.prompt.trim()) {
+        return { success: false, error: 'Prompt is required.' };
+      }
       await waitForConfigUpdates();
       const store = getCoworkStore();
       const existingTiming = options.clientTurnId
@@ -103,20 +99,8 @@ export const registerCoworkSessionExecutionHandlers = ({
             })
           : undefined;
 
-      const messageMetadata: Record<string, unknown> = {};
-      if (options.activeSkillIds?.length) messageMetadata.skillIds = options.activeSkillIds;
-      if (options.attachments?.length) {
-        messageMetadata.attachments = options.attachments;
-      }
-      store.addMessage(session.id, {
-        type: 'user',
-        content: options.prompt,
-        metadata: Object.keys(messageMetadata).length > 0 ? messageMetadata : undefined,
-      });
-
       const run = getCoworkEngineRouter()
         .startSession(session.id, options.prompt, {
-          skipInitialUserMessage: true,
           skillIds: options.activeSkillIds,
           workspaceRoot: resolvedWorkspaceRoot,
           confirmationMode: 'modal',
@@ -128,6 +112,7 @@ export const registerCoworkSessionExecutionHandlers = ({
           console.error('[Cowork] session error:', error);
           try {
             if (store.getSession(session.id)?.status !== 'error') {
+              store.updateSession(session.id, { status: 'error' });
               broadcastSessionError(session.id, error);
             }
           } catch (handlerError) {
@@ -149,39 +134,4 @@ export const registerCoworkSessionExecutionHandlers = ({
     }
   });
 
-  ipcMain.handle('cowork:session:continue', async (_event, options: ContinueSessionOptions) => {
-    try {
-      await waitForConfigUpdates();
-      const session = getCoworkStore().getSession(options.sessionId);
-      if (!session) return { success: false, error: 'Session not found.' };
-      const engineStatus = await ensureEngineRunning();
-      if (engineStatus.phase !== 'running') {
-        return getEngineNotReadyResponse(engineStatus);
-      }
-
-      const run = getCoworkEngineRouter()
-        .continueSession(options.sessionId, options.prompt, {
-          skillIds: options.activeSkillIds,
-          attachments: options.attachments,
-        })
-        .catch(error => {
-          console.error('[Cowork] continue error:', error);
-          try {
-            if (getCoworkStore().getSession(options.sessionId)?.status !== 'error') {
-              broadcastSessionError(options.sessionId, error);
-            }
-          } catch (handlerError) {
-            console.error('[Cowork] failed to send error notification to renderer:', handlerError);
-          }
-        });
-      void run;
-
-      return { success: true, session: getCoworkStore().getSession(options.sessionId) };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to continue session',
-      };
-    }
-  });
 };

@@ -2,6 +2,7 @@ import { isInternalManagedSubagentHandoffError } from '@shared/openclaw/internal
 import { extractGoalFollowUpRequest } from '@shared/prompts/goalFollowUpPrompt';
 
 import { FAILED_RUN_MESSAGE_FLAG } from '@/libs/openclaw-chat/model/failed-run-message';
+import { isAssistantHeartbeatAckForDisplay } from '@/libs/openclaw-chat/pipeline/heartbeat-display';
 
 const SILENT_REPLY_PATTERN = /^\s*NO_REPLY\s*$/;
 const AGENT_RUN_FAILED_BEFORE_REPLY = 'The agent run failed before producing a reply.';
@@ -225,9 +226,8 @@ export function shouldHideMessage(message: unknown): boolean {
   const role = typeof record.role === 'string' ? record.role.toLowerCase() : '';
   if (role !== 'assistant') return false;
   const text = extractSnapshotText(message);
-  return Boolean(
-    text && (isPersistedSilentReplyArtifactText(text) || text.includes('HEARTBEAT_OK')),
-  );
+  return Boolean(text && isPersistedSilentReplyArtifactText(text)) ||
+    isAssistantHeartbeatAckForDisplay(message);
 }
 
 export function projectGatewayHistoryForDisplay(messages: unknown[]): unknown[] {

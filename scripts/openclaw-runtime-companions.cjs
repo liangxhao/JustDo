@@ -22,6 +22,10 @@ const RUNTIME_COMPANION_CHECKS = [
     path: 'dist/audit/audit-event-writer.worker.js',
   },
   {
+    marker: 'openclaw-database-verify.worker.js',
+    path: 'dist/state/openclaw-database-verify.worker.js',
+  },
+  {
     marker: 'sqlite-readonly-location.worker.js',
     path: 'dist/infra/sqlite-readonly-location.worker.js',
   },
@@ -35,18 +39,24 @@ const RUNTIME_COMPANION_CHECKS = [
   },
 ];
 
-const STALE_RUNTIME_WORKER_URL_PATTERN =
-  /resolveRuntimeWorkerUrl\(\s*\{\s*currentModuleUrl:\s*import\.meta\.url,/;
+const STALE_RUNTIME_WORKER_URL_PATTERNS = [
+  /resolveRuntimeWorkerUrl\(\s*\{\s*currentModuleUrl:\s*import\.meta\.url,/,
+  /resolveDatabaseVerifyWorkerUrl\(\s*currentModuleUrl\s*=\s*import\.meta\.url\s*\)/,
+];
 
 function rewriteRuntimeWorkerImportMetaUrls(source, replacement) {
-  return source.replace(
-    /resolveRuntimeWorkerUrl\(\s*\{\s*currentModuleUrl:\s*import\.meta\.url,/g,
-    match => match.replace('import.meta.url', replacement),
-  );
+  return source
+    .replace(/resolveRuntimeWorkerUrl\(\s*\{\s*currentModuleUrl:\s*import\.meta\.url,/g, match =>
+      match.replace('import.meta.url', replacement),
+    )
+    .replace(
+      /resolveDatabaseVerifyWorkerUrl\(\s*currentModuleUrl\s*=\s*import\.meta\.url\s*\)/g,
+      match => match.replace('import.meta.url', replacement),
+    );
 }
 
 function hasStaleRuntimeWorkerImportMetaUrl(bundle) {
-  return STALE_RUNTIME_WORKER_URL_PATTERN.test(bundle);
+  return STALE_RUNTIME_WORKER_URL_PATTERNS.some(pattern => pattern.test(bundle));
 }
 
 function getRuntimeCompanionPathsReferencedByBundle(bundle) {

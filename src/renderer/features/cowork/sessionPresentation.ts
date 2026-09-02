@@ -1,9 +1,6 @@
 import type { CoworkSessionSummary } from '@/features/cowork/coworkTypes';
 export type { SessionDetailStats } from '@shared/cowork/sessionDetails';
-export {
-  buildLocalSessionDetailStats as buildSessionDetailStats,
-  sumSessionDetailTokenUsage,
-} from '@shared/cowork/sessionDetails';
+export { sumSessionDetailTokenUsage } from '@shared/cowork/sessionDetails';
 export type SessionDateGroupKey =
   'pinned' | 'today' | 'yesterday' | 'previous7Days' | 'previous30Days' | 'earlier';
 

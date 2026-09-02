@@ -175,6 +175,30 @@ describe('optimistic history tail ownership', () => {
     expect(projectPersistedMessagesForActiveTurn([user, optimistic], turn)).toEqual([user]);
   });
 
+  test('keeps a producer-owned session.message row hidden behind its active projection', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    const turn = beginAssistantTurn(state, { runId: 'run-current' }, dependencies);
+    const previous = {
+      role: 'assistant',
+      content: 'previous reply',
+      __openclaw: { id: 'message-1', seq: 1, runId: 'run-old' },
+    };
+    const user = {
+      role: 'user',
+      content: 'current prompt',
+      __openclaw: { id: 'message-2', seq: 2, runId: 'run-current' },
+    };
+    const durableCurrentReply = {
+      role: 'assistant',
+      content: 'streamed reply',
+      __openclaw: { id: 'message-3', seq: 3, runId: 'run-current' },
+    };
+
+    expect(
+      projectPersistedMessagesForActiveTurn([previous, user, durableCurrentReply], turn),
+    ).toEqual([previous, user]);
+  });
+
   test('hides a persisted Tool duplicate until a settled active turn is retired', () => {
     const state = createChatTranscriptState('session-1', 'sid-1');
     const turn = beginAssistantTurn(state, { runId: 'run-1' }, dependencies);

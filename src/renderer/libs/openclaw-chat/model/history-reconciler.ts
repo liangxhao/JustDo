@@ -26,8 +26,7 @@ export interface HistoryReconciliationResult {
 
 const SOURCE_AUTHORITY: Record<HistorySource, number> = {
   optimistic: 0,
-  'sqlite-fallback': 1,
-  gateway: 2,
+  gateway: 1,
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {

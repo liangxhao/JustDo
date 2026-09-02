@@ -62,6 +62,34 @@ function chat(
 }
 
 describe('agent event reducer', () => {
+  test('accepts the v2026.8 thinking snapshot field', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+
+    expect(
+      reduceAgentEvent(state, agent(1, 'thinking', { thinking: 'inspect the workspace' }), dependencies),
+    ).toBe('applied');
+    expect(state.activeTurn?.items).toMatchObject([
+      { type: 'thinking', status: 'running', text: 'inspect the workspace' },
+    ]);
+  });
+
+  test('advances ordering across new non-display streams', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+
+    expect(
+      reduceAgentEvent(
+        state,
+        agent(1, 'run_status', { phase: 'preparing_workspace' }),
+        dependencies,
+      ),
+    ).toBe('applied');
+    expect(reduceAgentEvent(state, agent(2, 'assistant', { text: 'ready' }), dependencies)).toBe(
+      'applied',
+    );
+    expect(state.activeTurn?.lastAgentSeq).toBe(2);
+    expect(state.activeTurn?.items).toMatchObject([{ type: 'content', text: 'ready' }]);
+  });
+
   test('accepts only documented managed-session aliases, not arbitrary suffixes', () => {
     const state = createChatTranscriptState('agent:main:justdo:session-1', 'sid-1');
 
@@ -107,6 +135,86 @@ describe('agent event reducer', () => {
       'tool:completed',
       'content:streaming',
     ]);
+  });
+
+  test('backfills missing activity owners without rewinding newer live content', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+
+    reduceAgentEvent(state, agent(4, 'assistant', { text: 'newer live answer' }), dependencies);
+    expect(
+      reduceAgentEvent(
+        state,
+        agent(1, 'thinking', { thinking: 'recovered reasoning' }),
+        dependencies,
+        { allowSequenceBackfill: true },
+      ),
+    ).toBe('applied');
+    expect(
+      reduceAgentEvent(
+        state,
+        agent(2, 'tool', {
+          phase: 'start',
+          toolCallId: 'call-recovered',
+          name: 'read',
+          args: { path: 'README.md' },
+        }),
+        dependencies,
+        { allowSequenceBackfill: true },
+      ),
+    ).toBe('applied');
+    expect(
+      reduceAgentEvent(
+        state,
+        agent(3, 'tool', {
+          phase: 'update',
+          toolCallId: 'call-recovered',
+          name: 'read',
+          partialResult: 'halfway',
+        }),
+        dependencies,
+        { allowSequenceBackfill: true },
+      ),
+    ).toBe('applied');
+
+    expect(state.activeTurn?.lastAgentSeq).toBe(4);
+    expect(state.activeTurn?.items).toMatchObject([
+      { type: 'thinking', status: 'completed', text: 'recovered reasoning' },
+      { type: 'tool', status: 'running', toolCallId: 'call-recovered', output: 'halfway' },
+      { type: 'content', status: 'streaming', text: 'newer live answer' },
+    ]);
+  });
+
+  test('keeps a terminal tool owner tombstoned against an older replay snapshot', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+
+    reduceAgentEvent(
+      state,
+      agent(6, 'tool', {
+        phase: 'result',
+        toolCallId: 'call-1',
+        name: 'read',
+        result: 'final output',
+      }),
+      dependencies,
+    );
+
+    expect(
+      reduceAgentEvent(
+        state,
+        agent(2, 'tool', {
+          phase: 'start',
+          toolCallId: 'call-1',
+          name: 'read',
+          args: { path: 'stale.md' },
+        }),
+        dependencies,
+        { allowSequenceBackfill: true },
+      ),
+    ).toBe('ignored-sequence');
+    expect(state.activeTurn?.toolById.get('call-1')).toMatchObject({
+      status: 'completed',
+      output: 'final output',
+    });
   });
 
   test('does not split streamed Content when an empty Thinking snapshot arrives', () => {

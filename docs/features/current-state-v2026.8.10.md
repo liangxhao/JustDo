@@ -60,7 +60,7 @@ Node 24、Electron 42、Vite 8、Windows NSIS/macOS DMG/Linux AppImage+deb。Ope
 
 Redux挂载6个slice：model、cowork、skill、mcp、scheduledTask、agent。
 
-SQLite有11表：kv、cowork_sessions、cowork_messages、cowork_session_runs、cowork_config、agents、mcp_servers、openclaw_hooks、session_groups、scheduled_task_run_receipts、scheduled_task_result_cleanup。Gateway transcript/cron不属于SQLite权威。
+当前 SQLite 有10表：kv、cowork_sessions、cowork_session_runs、cowork_config、agents、mcp_servers、openclaw_hooks、session_groups、scheduled_task_run_receipts、scheduled_task_result_cleanup。OpenClaw transcript 是唯一消息权威，JustDo 不再保存 `cowork_messages` 或 Main/Redux transcript projection。
 
 ## 4. 当前Runtime Patch
 

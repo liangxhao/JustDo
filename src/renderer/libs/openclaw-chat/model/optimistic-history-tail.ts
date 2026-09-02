@@ -59,8 +59,21 @@ function messageRole(message: unknown): string {
 function messageRunId(message: unknown): string | null {
   const record = asRecord(message);
   const nested = asRecord(record?.message);
-  const runId = nested?.runId ?? record?.runId;
-  return typeof runId === 'string' && runId.trim() ? runId.trim() : null;
+  const nestedOpenClaw = asRecord(nested?.__openclaw);
+  const openClaw = asRecord(record?.__openclaw);
+  for (const candidate of [
+    nested?.runId,
+    nested?.run_id,
+    nestedOpenClaw?.runId,
+    nestedOpenClaw?.run_id,
+    record?.runId,
+    record?.run_id,
+    openClaw?.runId,
+    openClaw?.run_id,
+  ]) {
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+  }
+  return null;
 }
 
 /**
@@ -73,10 +86,21 @@ export function projectPersistedMessagesForActiveTurn<T>(
   pendingUserMessage: unknown = null,
 ): T[] {
   if (!activeTurn) return messages;
-  let projected = messages;
+  // session.message can publish the producer-owned durable assistant row
+  // before its Agent stream ends. Keep it in the authoritative transcript,
+  // but leave the active turn as the sole visible owner until that projection
+  // retires so Content/Tool output is never rendered twice.
+  let lastUserIndex = -1;
+  messages.forEach((message, index) => {
+    if (messageRole(message) === 'user') lastUserIndex = index;
+  });
+  let projected = messages.filter((message, index) => {
+    if (index <= lastUserIndex || messageRole(message) === 'user') return true;
+    return messageRunId(message) !== activeTurn.runId;
+  });
   if (activeTurn.toolById.size > 0) {
     const activeToolCallIds = new Set(activeTurn.toolById.keys());
-    let lastUserIndex = -1;
+    lastUserIndex = -1;
     projected.forEach((message, index) => {
       if (messageRole(message) === 'user') lastUserIndex = index;
     });

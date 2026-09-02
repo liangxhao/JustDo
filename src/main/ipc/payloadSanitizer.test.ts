@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
 import {
-  sanitizeCoworkMessageForIpc,
   sanitizeInteractionRequestForIpc,
   sanitizeIpcPayload,
 } from './payloadSanitizer';
@@ -18,21 +17,6 @@ describe('sanitizeIpcPayload', () => {
     expect(result.self).toBe('[circular]');
     expect(result.items).toHaveLength(41);
     expect((result.items as unknown[]).at(-1)).toBe('[truncated-items:2]');
-  });
-
-  test('preserves image attachments while sanitizing message metadata', () => {
-    const attachments = [{ data: 'x'.repeat(5_000) }];
-
-    const result = sanitizeCoworkMessageForIpc({
-      content: 'hello',
-      metadata: {
-        attachments,
-        label: 'x'.repeat(5_000),
-      },
-    }) as { metadata: { attachments: unknown; label: string } };
-
-    expect(result.metadata.attachments).toBe(attachments);
-    expect(result.metadata.label.length).toBeLessThan(5_000);
   });
 
   test('sanitizes interaction tool input', () => {

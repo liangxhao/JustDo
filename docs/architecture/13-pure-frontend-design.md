@@ -112,7 +112,7 @@ Renderer区分 transport、engine readiness、admission、tool error、run termi
 ## 10. 反模式
 
 - React组件各自打开 Gateway WebSocket或复制 parser；现有直连必须集中在 `GatewayClient`/`ChatController`。
-- 把 `cowork_messages` 当完整 transcript覆盖 Gateway。
+- 重新引入 `cowork_messages`，或把任意产品缓存当完整 transcript 覆盖 Gateway。
 - 在 Redux增加未挂载/未消费的“未来状态”。
 - 用 timer假完成、用断线假失败、用相同文本去重。
 - Renderer直接拼 OpenClaw config或运行 shell。
@@ -241,8 +241,8 @@ SQLite 会清理产品 `running` 快照/计时，Gateway runtime status 决定�
 | 不变量                     | 主要测试                                                                  |
 | -------------------------- | ------------------------------------------------------------------------- |
 | session/run 域归属         | `src/shared/openclaw/messageDomain.test.ts`、`agentEvent.test.ts`         |
-| Gateway adapter 归一与恢复 | `src/main/engine/openclaw/openclawRuntimeAdapter.test.ts`                 |
-| history 合并               | Main `historyReconciler.test.ts` 与 Renderer `history-reconciler.test.ts` |
+| Gateway lifecycle adapter  | `src/main/engine/openclaw/openclawRuntimeAdapter.test.ts`                 |
+| history/live 合并          | Renderer `chat-controller.test.ts` 与 `history-reconciler.test.ts`       |
 | optimistic 去重            | `optimistic-user-message.test.ts`、`optimistic-history-tail.test.ts`      |
 | 有界历史                   | `history-window.test.ts`、`chunked-message-history.test.ts`               |
 | reducer 事件状态           | `agent-event-reducer.test.ts`、`run-activity.test.ts`                     |

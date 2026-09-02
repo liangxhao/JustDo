@@ -10,7 +10,6 @@ import {
 import type {
   CoworkConfig,
   CoworkInteractionRequest,
-  CoworkMessage,
   CoworkSession,
   CoworkSessionStatus,
   CoworkSessionSummary,
@@ -270,164 +269,17 @@ const coworkSlice = createSlice({
       }
     },
 
-    addMessage(state, action: PayloadAction<{ sessionId: string; message: CoworkMessage }>) {
-      const { sessionId, message } = action.payload;
-
+    touchSessionActivity(
+      state,
+      action: PayloadAction<{ sessionId: string; timestamp: number }>,
+    ) {
+      const { sessionId, timestamp } = action.payload;
       if (state.currentSession?.id === sessionId) {
-        const exists = state.currentSession.messages.some(item => item.id === message.id);
-        if (!exists) {
-          state.currentSession.messages.push(message);
-          state.currentSession.updatedAt = message.timestamp;
-        }
+        state.currentSession.updatedAt = Math.max(state.currentSession.updatedAt, timestamp);
       }
-
-      // Update session in list
-      const sessionIndex = state.sessions.findIndex(s => s.id === sessionId);
-      if (sessionIndex !== -1) {
-        state.sessions[sessionIndex].updatedAt = message.timestamp;
-      }
-
+      const session = state.sessions.find(item => item.id === sessionId);
+      if (session) session.updatedAt = Math.max(session.updatedAt, timestamp);
       markSessionUnread(state, sessionId);
-    },
-
-    updateMessageContent(
-      state,
-      action: PayloadAction<{ sessionId: string; messageId: string; content: string }>,
-    ) {
-      const { sessionId, messageId, content } = action.payload;
-
-      if (state.currentSession?.id === sessionId) {
-        const messageIndex = state.currentSession.messages.findIndex(m => m.id === messageId);
-        if (messageIndex !== -1) {
-          // Create a new messages array reference to trigger useMemo recalculation
-          // This is necessary because useMemo depends on the messages array reference
-          state.currentSession.messages = state.currentSession.messages.map((msg, idx) =>
-            idx === messageIndex ? { ...msg, content } : msg,
-          );
-        }
-        state.currentSession.updatedAt = Date.now();
-      }
-
-      // Update session in list
-      const sessionIndex = state.sessions.findIndex(s => s.id === sessionId);
-      if (sessionIndex !== -1) {
-        state.sessions[sessionIndex].updatedAt = Date.now();
-      }
-
-      markSessionUnread(state, sessionId);
-    },
-
-    updateMessageThinkingContent(
-      state,
-      action: PayloadAction<{ sessionId: string; messageId: string; thinkingDelta: string }>,
-    ) {
-      const { sessionId, messageId, thinkingDelta } = action.payload;
-
-      if (state.currentSession?.id === sessionId) {
-        const messageIndex = state.currentSession.messages.findIndex(m => m.id === messageId);
-        if (messageIndex !== -1) {
-          const previousThinking =
-            state.currentSession.messages[messageIndex].thinkingContent || '';
-          const newThinking = previousThinking + thinkingDelta;
-          // Create a new messages array reference to trigger useMemo recalculation
-          // This is necessary because useMemo depends on the messages array reference
-          state.currentSession.messages = state.currentSession.messages.map((msg, idx) =>
-            idx === messageIndex ? { ...msg, thinkingContent: newThinking } : msg,
-          );
-        }
-        state.currentSession.updatedAt = Date.now();
-      }
-
-      // Update session in list
-      const sessionIndex = state.sessions.findIndex(s => s.id === sessionId);
-      if (sessionIndex !== -1) {
-        state.sessions[sessionIndex].updatedAt = Date.now();
-      }
-    },
-
-    deleteMessage(state, action: PayloadAction<{ sessionId: string; messageId: string }>) {
-      const { sessionId, messageId } = action.payload;
-
-      if (state.currentSession?.id === sessionId) {
-        state.currentSession.messages = state.currentSession.messages.filter(
-          m => m.id !== messageId,
-        );
-      }
-    },
-
-    deleteMessagesFrom(state, action: PayloadAction<{ sessionId: string; messageId: string }>) {
-      const { sessionId, messageId } = action.payload;
-
-      if (state.currentSession?.id === sessionId) {
-        const messageIndex = state.currentSession.messages.findIndex(m => m.id === messageId);
-        if (messageIndex !== -1) {
-          state.currentSession.messages = state.currentSession.messages.slice(0, messageIndex);
-          state.currentSession.updatedAt = Date.now();
-        }
-      }
-    },
-
-    updateMessageMetadata(
-      state,
-      action: PayloadAction<{
-        sessionId: string;
-        messageId: string;
-        metadata: Record<string, unknown>;
-      }>,
-    ) {
-      const { sessionId, messageId, metadata } = action.payload;
-
-      if (state.currentSession?.id === sessionId) {
-        const messageIndex = state.currentSession.messages.findIndex(m => m.id === messageId);
-        if (messageIndex !== -1) {
-          // Merge new metadata with existing metadata
-          const existingMetadata = state.currentSession.messages[messageIndex].metadata || {};
-          // Create a new messages array reference to trigger useMemo recalculation
-          state.currentSession.messages = state.currentSession.messages.map((msg, idx) =>
-            idx === messageIndex ? { ...msg, metadata: { ...existingMetadata, ...metadata } } : msg,
-          );
-        }
-        state.currentSession.updatedAt = Date.now();
-      }
-
-      // Update session in list
-      const sessionIndex = state.sessions.findIndex(s => s.id === sessionId);
-      if (sessionIndex !== -1) {
-        state.sessions[sessionIndex].updatedAt = Date.now();
-      }
-    },
-
-    updateMessageUsage(
-      state,
-      action: PayloadAction<{
-        sessionId: string;
-        messageId: string;
-        usage: {
-          input?: number;
-          output?: number;
-          cacheRead?: number;
-          cacheWrite?: number;
-          total?: number;
-        };
-      }>,
-    ) {
-      const { sessionId, messageId, usage } = action.payload;
-
-      if (state.currentSession?.id === sessionId) {
-        const messageIndex = state.currentSession.messages.findIndex(m => m.id === messageId);
-        if (messageIndex !== -1) {
-          state.currentSession.messages = state.currentSession.messages.map((msg, idx) =>
-            idx === messageIndex ? { ...msg, usage } : msg,
-          );
-        }
-        state.currentSession.updatedAt = Date.now();
-      }
-
-      // Update session in list
-      const sessionIndex = state.sessions.findIndex(s => s.id === sessionId);
-      if (sessionIndex !== -1) {
-        state.sessions[sessionIndex].updatedAt = Date.now();
-      }
     },
 
     setStreaming(state, action: PayloadAction<boolean>) {
@@ -754,13 +606,7 @@ export const {
   updateSessionStatus,
   deleteSession,
   deleteSessions,
-  addMessage,
-  updateMessageContent,
-  updateMessageThinkingContent,
-  updateMessageMetadata,
-  updateMessageUsage,
-  deleteMessage,
-  deleteMessagesFrom,
+  touchSessionActivity,
   setStreaming,
   setRemoteManaged,
   updateSessionPinned,

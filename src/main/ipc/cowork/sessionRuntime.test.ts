@@ -21,9 +21,6 @@ describe('loadCoworkSessionDetails', () => {
     permissionMode: 'full' as const,
     activeSkillIds: [],
     agentId: 'main',
-    messages: [
-      { id: 'local-user', type: 'user' as const, content: 'Local fallback', timestamp: 1 },
-    ],
     createdAt: 1,
     updatedAt: 2,
   };
@@ -75,11 +72,11 @@ describe('loadCoworkSessionDetails', () => {
       success: true,
       gatewaySessionId: 'gateway-session-1',
       stats: {
-        summary: 'Local fallback',
-        messageCount: 1,
-        userMessageCount: 1,
-        assistantMessageCount: 0,
-        toolCallCount: 0,
+        summary: null,
+        messageCount: 4,
+        userMessageCount: 2,
+        assistantMessageCount: 2,
+        toolCallCount: 1,
         models: ['openai/gpt-5', 'anthropic/claude-sonnet-4'],
         tokenUsage: { input: 30, output: 3, cacheRead: 4, cacheWrite: 0 },
         totalTokens: 37,
@@ -89,7 +86,7 @@ describe('loadCoworkSessionDetails', () => {
     expect(getGatewaySessionUsage).toHaveBeenCalledWith('agent:main:justdo:local-session-1');
   });
 
-  it('falls back to complete local statistics when Gateway usage fails', async () => {
+  it('reports Gateway statistics as unavailable instead of manufacturing local zeros', async () => {
     const result = await loadCoworkSessionDetails(
       {
         getCoworkStore: () =>
@@ -112,17 +109,27 @@ describe('loadCoworkSessionDetails', () => {
       localSession.id,
     );
 
-    expect(result).toMatchObject({
-      success: true,
-      gatewaySessionId: 'gateway-session-1',
-      stats: {
-        summary: 'Local fallback',
-        messageCount: 1,
-        userMessageCount: 1,
-        models: ['fallback/model'],
-        totalTokens: 0,
+    expect(result).toEqual({ success: false, error: 'offline' });
+  });
+
+  it('reports statistics as unavailable when the Gateway session cannot be resolved', async () => {
+    const result = await loadCoworkSessionDetails(
+      {
+        getCoworkStore: () =>
+          ({
+            getSession: () => localSession,
+            getSessionRuns: () => [],
+            getAgent: () => null,
+          }) as never,
+        getCoworkEngineRouter: () =>
+          ({ getSessionModel: vi.fn().mockResolvedValue(null) }) as never,
+        getRuntime: () => null,
+        lookupGatewaySession: vi.fn().mockResolvedValue({ error: 'Gateway offline' }),
       },
-    });
+      localSession.id,
+    );
+
+    expect(result).toEqual({ success: false, error: 'Gateway offline' });
   });
 });
 

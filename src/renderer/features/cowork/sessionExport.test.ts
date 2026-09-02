@@ -17,7 +17,6 @@ const session: CoworkSession = {
   permissionMode: 'full',
   activeSkillIds: [],
   agentId: 'main',
-  messages: [],
   createdAt: Date.parse('2026-07-20T01:00:00.000Z'),
   updatedAt: Date.parse('2026-07-20T02:00:00.000Z'),
 };

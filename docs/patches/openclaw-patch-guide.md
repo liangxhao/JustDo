@@ -266,6 +266,7 @@ Patch 失败时保留完整错误中的 patch label、target file、anchor count
 | Patch transaction     | `scripts/patch-openclaw-runtime.cjs`                           | 顺序、快照、apply/verify、失败回滚、manifest写入  |
 | Patch utilities       | `scripts/patches/v2026.8.1/_patch-utils.js`                    | 唯一anchor、write-if-changed、索引一致性          |
 | Runtime install/stage | `install-openclaw-runtime.cjs`、`openclaw-runtime-staging.cjs` | 固定source到目标platform staging                  |
+| Gateway bundle        | `bundle-openclaw-gateway.cjs`、`openclaw-runtime-companions.cjs` | 固定 worker/module companion URL 并验证产物完整性 |
 | Freeze                | `openclaw-runtime-freeze.cjs`                                  | 构建输入和immutable artifact指纹                  |
 | Package verify        | `verify-openclaw-runtime-patches.cjs`                          | prepared/staged runtime与manifest一致             |
 | Prune                 | `prune-openclaw-runtime.cjs`                                   | 删除非运行文件且保留allowlisted capability资源    |

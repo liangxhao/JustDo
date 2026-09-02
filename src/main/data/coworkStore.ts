@@ -46,52 +46,8 @@ const normalizeRecentWorkspacePath = (cwd: string): string => {
   return resolved;
 };
 
-function extractConversationSearchTerms(value: string): string[] {
-  const normalized = value.replace(/\s+/g, ' ').trim().toLowerCase();
-  if (!normalized) return [];
-
-  const terms: string[] = [];
-  const seen = new Set<string>();
-  const addTerm = (term: string): void => {
-    const normalizedTerm = term.replace(/\s+/g, ' ').trim().toLowerCase();
-    if (!normalizedTerm) return;
-    if (/^[a-z0-9]$/i.test(normalizedTerm)) return;
-    if (seen.has(normalizedTerm)) return;
-    seen.add(normalizedTerm);
-    terms.push(normalizedTerm);
-  };
-
-  // Keep the full phrase and additionally match by per-token terms.
-  addTerm(normalized);
-  const tokens = normalized
-    .split(/[\s,，、|/\\;；]+/g)
-    .map(token => token.replace(/^['"`]+|['"`]+$/g, '').trim())
-    .filter(Boolean);
-
-  for (const token of tokens) {
-    addTerm(token);
-    if (terms.length >= 8) break;
-  }
-
-  return terms.slice(0, 8);
-}
-
-function truncate(value: string, maxChars: number): string {
-  if (value.length <= maxChars) return value;
-  return `${value.slice(0, maxChars - 1)}…`;
-}
-
-function parseTimeToMs(input?: string | null): number | null {
-  if (!input) return null;
-  const timestamp = Date.parse(input);
-  if (!Number.isFinite(timestamp)) return null;
-  return timestamp;
-}
-
 // Types mirroring src/types/cowork.ts for main process use
 export type CoworkSessionStatus = 'idle' | 'running' | 'completed' | 'error';
-export type CoworkMessageType =
-  'user' | 'assistant' | 'tool_use' | 'tool_result' | 'system' | 'subagent_completion';
 export type CoworkExecutionMode = 'auto' | 'local' | 'sandbox';
 export type CoworkAgentEngine = 'openclaw';
 
@@ -136,36 +92,6 @@ function normalizeCoworkAgentEngineValue(value?: string | null): CoworkAgentEngi
   return COWORK_AGENT_ENGINE;
 }
 
-export interface CoworkMessageMetadata {
-  toolName?: string;
-  toolInput?: Record<string, unknown>;
-  toolResult?: string | Record<string, unknown>;
-  toolUseId?: string | null;
-  error?: string;
-  isError?: boolean;
-  isStreaming?: boolean;
-  isFinal?: boolean;
-  skillIds?: string[];
-  [key: string]: unknown;
-}
-
-export interface CoworkMessage {
-  id: string;
-  type: CoworkMessageType;
-  content: string;
-  timestamp: number;
-  metadata?: CoworkMessageMetadata;
-  thinkingContent?: string; // Accumulated thinking content during streaming
-  modelName?: string; // Model that generated this message (for assistant messages)
-  usage?: {
-    input?: number;
-    output?: number;
-    cacheRead?: number;
-    cacheWrite?: number;
-    total?: number;
-  }; // Token usage
-}
-
 export interface CoworkSession {
   id: string;
   title: string;
@@ -177,7 +103,6 @@ export interface CoworkSession {
   activeSkillIds: string[];
   agentId: string;
   modelRef?: string;
-  messages: CoworkMessage[];
   createdAt: number;
   updatedAt: number;
 }
@@ -191,15 +116,6 @@ export interface CoworkSessionSummary {
   agentId: string;
   createdAt: number;
   updatedAt: number;
-}
-
-export interface CoworkConversationSearchRecord {
-  sessionId: string;
-  title: string;
-  updatedAt: number;
-  url: string;
-  human: string;
-  assistant: string;
 }
 
 export interface CoworkConfig {
@@ -220,18 +136,6 @@ export type CoworkConfigUpdate = Partial<
     | 'maxGoalContinuationTurns'
   >
 >;
-
-interface CoworkMessageRow {
-  id: string;
-  type: string;
-  content: string;
-  metadata: string | null;
-  created_at: number;
-  sequence: number | null;
-  thinking_content: string | null;
-  model_name: string | null;
-  usage: string | null;
-}
 
 interface SessionRunRow {
   id: string;
@@ -430,7 +334,6 @@ export class CoworkStore {
       activeSkillIds,
       agentId,
       ...(modelRef?.trim() ? { modelRef: modelRef.trim() } : {}),
-      messages: [],
       createdAt: now,
       updatedAt: now,
     };
@@ -463,8 +366,6 @@ export class CoworkStore {
 
     if (!row) return null;
 
-    const messages = this.getSessionMessages(id);
-
     let activeSkillIds: string[] = [];
     if (row.active_skill_ids) {
       try {
@@ -486,7 +387,6 @@ export class CoworkStore {
       activeSkillIds,
       agentId: row.agent_id || 'main',
       ...(row.model_ref?.trim() ? { modelRef: row.model_ref.trim() } : {}),
-      messages,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
@@ -651,390 +551,6 @@ export class CoworkStore {
     }
 
     return deduped;
-  }
-
-  private getSessionMessages(sessionId: string): CoworkMessage[] {
-    const rows = this.getAll<CoworkMessageRow>(
-      `
-      SELECT id, type, content, metadata, created_at, sequence, thinking_content, model_name, usage
-      FROM cowork_messages
-      WHERE session_id = ?
-      ORDER BY
-        COALESCE(sequence, created_at) ASC,
-        created_at ASC,
-        ROWID ASC
-    `,
-      [sessionId],
-    );
-
-    const messages = rows.map(row => {
-      let metadata: Record<string, unknown> | undefined;
-      if (row.metadata) {
-        try {
-          metadata = JSON.parse(row.metadata);
-        } catch {
-          console.warn(
-            `[CoworkStore] corrupt metadata detected for message ${row.id} in session ${sessionId}, discarding metadata`,
-          );
-          metadata = undefined;
-        }
-      }
-      return {
-        id: row.id,
-        type: row.type as CoworkMessageType,
-        content: row.content,
-        timestamp: row.created_at,
-        metadata,
-        ...(row.thinking_content ? { thinkingContent: row.thinking_content } : {}),
-        ...(row.model_name ? { modelName: row.model_name } : {}),
-        ...(row.usage ? { usage: JSON.parse(row.usage) } : {}),
-      };
-    });
-    return messages;
-  }
-
-  addMessage(sessionId: string, message: Omit<CoworkMessage, 'id' | 'timestamp'>): CoworkMessage {
-    const id = uuidv4();
-    const now = Date.now();
-
-    // Extract modelName from top-level or metadata (runtime adapter puts it in metadata)
-    const modelName =
-      message.modelName ||
-      (message.metadata &&
-        typeof message.metadata === 'object' &&
-        ((message.metadata as Record<string, unknown>).modelName as string | undefined)) ||
-      null;
-
-    const seqRow = this.db
-      .prepare(
-        'SELECT COALESCE(MAX(sequence), 0) + 1 as next_seq FROM cowork_messages WHERE session_id = ?',
-      )
-      .get(sessionId) as { next_seq: number } | undefined;
-    const sequence = seqRow?.next_seq ?? 1;
-
-    this.db
-      .prepare(
-        `
-      INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence, thinking_content, model_name, usage)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `,
-      )
-      .run(
-        id,
-        sessionId,
-        message.type,
-        message.content,
-        message.metadata ? JSON.stringify(message.metadata) : null,
-        now,
-        sequence,
-        message.thinkingContent || null,
-        modelName,
-        message.usage ? JSON.stringify(message.usage) : null,
-      );
-
-    this.db.prepare('UPDATE cowork_sessions SET updated_at = ? WHERE id = ?').run(now, sessionId);
-
-    return {
-      id,
-      type: message.type,
-      content: message.content,
-      timestamp: now,
-      metadata: message.metadata,
-      // Include thinkingContent if provided (used for streaming thinking display)
-      ...(message.thinkingContent ? { thinkingContent: message.thinkingContent } : {}),
-      // Include modelName if provided (used to display which model generated this message)
-      ...(message.modelName ? { modelName: message.modelName } : {}),
-      // Include usage if provided (used to display token counts)
-      ...(message.usage ? { usage: message.usage } : {}),
-    };
-  }
-
-  /**
-   * Insert a message with a pre-existing ID (used for runtime-emitted messages that need to persist).
-   * Returns the inserted message or the existing one if already present.
-   */
-  insertMessageWithId(sessionId: string, message: CoworkMessage): CoworkMessage {
-    // Check if message already exists
-    const existing = this.db
-      .prepare('SELECT * FROM cowork_messages WHERE id = ?')
-      .get(message.id) as CoworkMessage | undefined;
-    if (existing) {
-      return existing;
-    }
-
-    // Extract modelName from top-level or metadata (for consistency with addMessage)
-    const modelName =
-      message.modelName ||
-      (message.metadata &&
-        typeof message.metadata === 'object' &&
-        ((message.metadata as Record<string, unknown>).modelName as string | undefined)) ||
-      null;
-
-    const seqRow = this.db
-      .prepare(
-        'SELECT COALESCE(MAX(sequence), 0) + 1 as next_seq FROM cowork_messages WHERE session_id = ?',
-      )
-      .get(sessionId) as { next_seq: number } | undefined;
-    const sequence = seqRow?.next_seq ?? 1;
-
-    this.db
-      .prepare(
-        `
-      INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence, thinking_content, model_name, usage)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `,
-      )
-      .run(
-        message.id,
-        sessionId,
-        message.type,
-        message.content,
-        message.metadata ? JSON.stringify(message.metadata) : null,
-        message.timestamp,
-        sequence,
-        message.thinkingContent || null,
-        modelName,
-        message.usage ? JSON.stringify(message.usage) : null,
-      );
-
-    this.db
-      .prepare('UPDATE cowork_sessions SET updated_at = ? WHERE id = ?')
-      .run(message.timestamp, sessionId);
-
-    return message;
-  }
-
-  /**
-   * Insert a message before an existing message (by shifting sequences).
-   * Used for channel-originated sessions where user messages need to appear
-   * before assistant messages that were created during streaming.
-   */
-  insertMessageBeforeId(
-    sessionId: string,
-    beforeMessageId: string,
-    message: Omit<CoworkMessage, 'id' | 'timestamp'>,
-  ): CoworkMessage {
-    const id = uuidv4();
-    const now = Date.now();
-
-    // Get the target message's sequence
-    const targetRow = this.db
-      .prepare('SELECT sequence FROM cowork_messages WHERE id = ? AND session_id = ?')
-      .get(beforeMessageId, sessionId) as { sequence: number } | undefined;
-    const targetSequence = targetRow?.sequence;
-
-    if (targetSequence === undefined) {
-      // Fallback to normal append if the target message is not found
-      return this.addMessage(sessionId, message);
-    }
-
-    this.db.transaction(() => {
-      // Shift all messages with sequence >= target up by 1
-      this.db
-        .prepare(
-          'UPDATE cowork_messages SET sequence = sequence + 1 WHERE session_id = ? AND sequence >= ?',
-        )
-        .run(sessionId, targetSequence);
-
-      // Insert at the target's original sequence
-      this.db
-        .prepare(
-          `
-        INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence, thinking_content, model_name, usage)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-        )
-        .run(
-          id,
-          sessionId,
-          message.type,
-          message.content,
-          message.metadata ? JSON.stringify(message.metadata) : null,
-          now,
-          targetSequence,
-          message.thinkingContent || null,
-          message.modelName || null,
-          message.usage ? JSON.stringify(message.usage) : null,
-        );
-
-      this.db.prepare('UPDATE cowork_sessions SET updated_at = ? WHERE id = ?').run(now, sessionId);
-    })();
-
-    return {
-      id,
-      type: message.type,
-      content: message.content,
-      timestamp: now,
-      metadata: message.metadata,
-      // Include thinkingContent if provided (used for streaming thinking display)
-      ...(message.thinkingContent ? { thinkingContent: message.thinkingContent } : {}),
-      // Include modelName if provided (used to display which model generated this message)
-      ...(message.modelName ? { modelName: message.modelName } : {}),
-      // Include usage if provided (used to display token counts)
-      ...(message.usage ? { usage: message.usage } : {}),
-    };
-  }
-
-  /**
-   * Delete a message from a session.
-   * Used by reconciliation to remove duplicate or spurious messages.
-   */
-  deleteMessage(sessionId: string, messageId: string): boolean {
-    const result = this.db
-      .prepare('DELETE FROM cowork_messages WHERE id = ? AND session_id = ?')
-      .run(messageId, sessionId);
-    return result.changes > 0;
-  }
-
-  /**
-   * Delete a message and every later message in the same session.
-   * Used by the UI to rewind a conversation from a selected point.
-   */
-  deleteMessagesFrom(sessionId: string, messageId: string): boolean {
-    const target = this.db
-      .prepare('SELECT sequence FROM cowork_messages WHERE id = ? AND session_id = ?')
-      .get(messageId, sessionId) as { sequence: number | null } | undefined;
-
-    if (!target || target.sequence == null) {
-      return false;
-    }
-
-    const result = this.db
-      .prepare('DELETE FROM cowork_messages WHERE session_id = ? AND sequence >= ?')
-      .run(sessionId, target.sequence);
-    return result.changes > 0;
-  }
-
-  /**
-   * Refresh the local user/assistant message cache from Gateway chat.history.
-   * Tool messages (tool_use, tool_result, system) are preserved in their existing positions.
-   * This updates SQLite for UI display only; Runtime behavior must use OpenClaw Gateway state.
-   */
-  replaceConversationMessages(
-    sessionId: string,
-    authoritative: Array<{
-      role: 'user' | 'assistant';
-      text: string;
-      modelName?: string;
-      usage?: {
-        input?: number;
-        output?: number;
-        cacheRead?: number;
-        cacheWrite?: number;
-        total?: number;
-      };
-    }>,
-  ): void {
-    const now = Date.now();
-
-    this.db.transaction(() => {
-      // Delete all existing user/assistant messages for this session
-      this.db
-        .prepare(
-          "DELETE FROM cowork_messages WHERE session_id = ? AND type IN ('user', 'assistant')",
-        )
-        .run(sessionId);
-
-      // Re-insert authoritative messages with correct sequence numbers
-      // First, get the current max sequence from remaining messages (tool_use, tool_result, system)
-      const seqRow = this.db
-        .prepare(
-          'SELECT COALESCE(MAX(sequence), 0) as max_seq FROM cowork_messages WHERE session_id = ?',
-        )
-        .get(sessionId) as { max_seq: number } | undefined;
-      let nextSeq = (seqRow?.max_seq ?? 0) + 1;
-
-      for (const entry of authoritative) {
-        const id = uuidv4();
-        this.db
-          .prepare(
-            `
-          INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence, model_name, usage)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `,
-          )
-          .run(
-            id,
-            sessionId,
-            entry.role,
-            entry.text,
-            JSON.stringify({ isStreaming: false, isFinal: true }),
-            now,
-            nextSeq++,
-            entry.modelName || null,
-            entry.usage ? JSON.stringify(entry.usage) : null,
-          );
-      }
-
-      this.db.prepare('UPDATE cowork_sessions SET updated_at = ? WHERE id = ?').run(now, sessionId);
-    })();
-  }
-
-  updateMessage(
-    sessionId: string,
-    messageId: string,
-    updates: {
-      content?: string;
-      metadata?: CoworkMessageMetadata;
-      thinkingContent?: string;
-      modelName?: string;
-      usage?: {
-        input?: number;
-        output?: number;
-        cacheRead?: number;
-        cacheWrite?: number;
-        total?: number;
-      };
-    },
-  ): void {
-    const setClauses: string[] = [];
-    const values: (string | null)[] = [];
-
-    if (updates.content !== undefined) {
-      setClauses.push('content = ?');
-      values.push(updates.content);
-    }
-    if (updates.metadata !== undefined) {
-      setClauses.push('metadata = ?');
-      values.push(updates.metadata ? JSON.stringify(updates.metadata) : null);
-      const metadataModelName =
-        typeof updates.metadata?.modelName === 'string' ? updates.metadata.modelName.trim() : '';
-      if (updates.modelName === undefined && metadataModelName) {
-        setClauses.push('model_name = ?');
-        values.push(metadataModelName);
-      }
-    }
-    if (updates.thinkingContent !== undefined) {
-      setClauses.push('thinking_content = ?');
-      values.push(updates.thinkingContent || null);
-    }
-    if (updates.modelName !== undefined) {
-      setClauses.push('model_name = ?');
-      values.push(updates.modelName.trim() || null);
-    }
-    if (updates.usage !== undefined) {
-      setClauses.push('usage = ?');
-      values.push(updates.usage ? JSON.stringify(updates.usage) : null);
-    }
-
-    if (setClauses.length === 0) return;
-
-    values.push(messageId);
-    values.push(sessionId);
-    this.db
-      .prepare(
-        `
-      UPDATE cowork_messages
-      SET ${setClauses.join(', ')}
-      WHERE id = ? AND session_id = ?
-    `,
-      )
-      .run(...values);
-
-    // Bump session's updated_at so it stays at top of the list during streaming updates
-    this.db
-      .prepare('UPDATE cowork_sessions SET updated_at = ? WHERE id = ?')
-      .run(Date.now(), sessionId);
   }
 
   // Config operations
@@ -1304,159 +820,6 @@ export class CoworkStore {
     } catch {
       return 'zh';
     }
-  }
-
-  private getLatestMessageByType(sessionId: string, type: 'user' | 'assistant'): string {
-    const row = this.getOne<{ content: string }>(
-      `
-      SELECT content
-      FROM cowork_messages
-      WHERE session_id = ? AND type = ?
-      ORDER BY created_at DESC, ROWID DESC
-      LIMIT 1
-    `,
-      [sessionId, type],
-    );
-    return truncate((row?.content || '').replace(/\s+/g, ' ').trim(), 280);
-  }
-
-  conversationSearch(options: {
-    query: string;
-    maxResults?: number;
-    before?: string;
-    after?: string;
-  }): CoworkConversationSearchRecord[] {
-    const terms = extractConversationSearchTerms(options.query);
-    if (terms.length === 0) return [];
-
-    const maxResults = Math.max(1, Math.min(10, Math.floor(options.maxResults ?? 5)));
-    const beforeMs = parseTimeToMs(options.before);
-    const afterMs = parseTimeToMs(options.after);
-
-    const likeClauses = terms.map(() => 'LOWER(m.content) LIKE ?');
-    const clauses: string[] = ["m.type IN ('user', 'assistant')", `(${likeClauses.join(' OR ')})`];
-    const params: Array<string | number> = terms.map(term => `%${term}%`);
-
-    if (beforeMs !== null) {
-      clauses.push('m.created_at < ?');
-      params.push(beforeMs);
-    }
-    if (afterMs !== null) {
-      clauses.push('m.created_at > ?');
-      params.push(afterMs);
-    }
-
-    const rows = this.getAll<{
-      session_id: string;
-      title: string;
-      updated_at: number;
-      type: string;
-      content: string;
-      created_at: number;
-    }>(
-      `
-      SELECT m.session_id, s.title, s.updated_at, m.type, m.content, m.created_at
-      FROM cowork_messages m
-      INNER JOIN cowork_sessions s ON s.id = m.session_id
-      WHERE ${clauses.join(' AND ')}
-      ORDER BY m.created_at DESC
-      LIMIT ?
-    `,
-      [...params, maxResults * 40],
-    );
-
-    const bySession = new Map<string, CoworkConversationSearchRecord>();
-    for (const row of rows) {
-      if (!row.session_id) continue;
-      let current = bySession.get(row.session_id);
-      if (!current) {
-        current = {
-          sessionId: row.session_id,
-          title: row.title || 'Untitled',
-          updatedAt: Number(row.updated_at) || 0,
-          url: '',
-          human: '',
-          assistant: '',
-        };
-        bySession.set(row.session_id, current);
-      }
-
-      const snippet = truncate((row.content || '').replace(/\s+/g, ' ').trim(), 280);
-      if (row.type === 'user' && !current.human) {
-        current.human = snippet;
-      }
-      if (row.type === 'assistant' && !current.assistant) {
-        current.assistant = snippet;
-      }
-
-      if (bySession.size >= maxResults) {
-        const complete = Array.from(bySession.values()).every(
-          entry => entry.human && entry.assistant,
-        );
-        if (complete) break;
-      }
-    }
-
-    const records = Array.from(bySession.values())
-      .sort((a, b) => b.updatedAt - a.updatedAt)
-      .slice(0, maxResults)
-      .map(entry => ({
-        ...entry,
-        human: entry.human || this.getLatestMessageByType(entry.sessionId, 'user'),
-        assistant: entry.assistant || this.getLatestMessageByType(entry.sessionId, 'assistant'),
-      }));
-
-    return records;
-  }
-
-  recentChats(options: {
-    n?: number;
-    sortOrder?: 'asc' | 'desc';
-    before?: string;
-    after?: string;
-  }): CoworkConversationSearchRecord[] {
-    const n = Math.max(1, Math.min(20, Math.floor(options.n ?? 3)));
-    const sortOrder = options.sortOrder === 'asc' ? 'asc' : 'desc';
-    const beforeMs = parseTimeToMs(options.before);
-    const afterMs = parseTimeToMs(options.after);
-
-    const clauses: string[] = [];
-    const params: Array<string | number> = [];
-
-    if (beforeMs !== null) {
-      clauses.push('updated_at < ?');
-      params.push(beforeMs);
-    }
-    if (afterMs !== null) {
-      clauses.push('updated_at > ?');
-      params.push(afterMs);
-    }
-
-    const whereClause = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
-
-    const rows = this.getAll<{
-      id: string;
-      title: string;
-      updated_at: number;
-    }>(
-      `
-      SELECT id, title, updated_at
-      FROM cowork_sessions
-      ${whereClause}
-      ORDER BY updated_at ${sortOrder.toUpperCase()}
-      LIMIT ?
-    `,
-      [...params, n],
-    );
-
-    return rows.map(row => ({
-      sessionId: row.id,
-      title: row.title || 'Untitled',
-      updatedAt: Number(row.updated_at) || 0,
-      url: '',
-      human: this.getLatestMessageByType(row.id, 'user'),
-      assistant: this.getLatestMessageByType(row.id, 'assistant'),
-    }));
   }
 
   // ========== Agent state ==========

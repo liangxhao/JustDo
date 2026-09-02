@@ -14,10 +14,7 @@ import type {
   CoworkSessionSummary,
   SessionGroup,
 } from '@/features/cowork/coworkTypes';
-import {
-  buildSessionDetailStats,
-  type SessionDetailStats,
-} from '@/features/cowork/sessionPresentation';
+import type { SessionDetailStats } from '@/features/cowork/sessionPresentation';
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/common/Modal';
 
@@ -100,10 +97,10 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
           .getSessionDetails(sessionSummary.id)
           .then(result => {
             if (cancelled) return;
-            if (result.session) {
+            if (result.session && result.stats) {
               hasLoadedRef.current = true;
               setSession(result.session);
-              setStats(result.stats ?? buildSessionDetailStats(result.session));
+              setStats(result.stats);
               setGatewaySessionId(result.gatewaySessionId ?? null);
               setLoadFailed(false);
             } else if (isInitialLoad) {

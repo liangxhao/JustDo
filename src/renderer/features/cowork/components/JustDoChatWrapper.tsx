@@ -26,8 +26,10 @@ import {
 } from '@/features/cowork/components/goalRunProgress';
 import { selectCurrentSession } from '@/features/cowork/coworkSelectors';
 import type { CoworkAttachmentPayload, CoworkSession } from '@/features/cowork/coworkTypes';
-import { coworkMessagesToGateway } from '@/libs/openclaw-chat/conversion/cowork-to-gateway';
-import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
+import {
+  type ChatContextUsageSnapshot,
+  ChatController,
+} from '@/libs/openclaw-chat/gateway/chat-controller';
 
 const DEBUG_CHAT_WRAPPER =
   typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEBUG_CHAT_WRAPPER === 'true';
@@ -49,6 +51,7 @@ interface JustDoChatWrapperProps {
   processSummariesExpanded?: boolean;
   onSearchMatchCountChange?: (total: number, index: number) => void;
   onActivityChange?: (progress: GoalRunProgress | null) => void;
+  onContextUsageChange?: (usage: ChatContextUsageSnapshot | null) => void;
   runTimings?: SessionRunTiming[];
 }
 
@@ -89,6 +92,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       processSummariesExpanded,
       onSearchMatchCountChange,
       onActivityChange,
+      onContextUsageChange,
       runTimings = [],
     },
     ref,
@@ -96,13 +100,14 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     const currentSession = useSelector(selectCurrentSession) as CoworkSession | null;
     const currentSessionId = currentSession?.id;
     const currentSessionAgentId = currentSession?.agentId;
-    const currentSessionMessages = currentSession?.messages;
     const initialSessionRef = useRef(currentSession);
     const controllerRef = useRef<ChatController | null>(null);
     const [controller, setController] = useState<ChatController | null>(null);
     const connectedRef = useRef(false);
     const onActivityChangeRef = useRef(onActivityChange);
+    const onContextUsageChangeRef = useRef(onContextUsageChange);
     const lastActivityKeyRef = useRef('');
+    const lastContextUsageKeyRef = useRef('');
     const [connectionError, setConnectionError] = useState<string | null>(null);
     // Buffer for pending user message when the controller is not yet created
     const pendingUserMessageRef = useRef<{
@@ -114,6 +119,10 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     useEffect(() => {
       onActivityChangeRef.current = onActivityChange;
     }, [onActivityChange]);
+
+    useEffect(() => {
+      onContextUsageChangeRef.current = onContextUsageChange;
+    }, [onContextUsageChange]);
 
     // Expose sendMessage and setPendingUserMessage to parent via ref
     useImperativeHandle(
@@ -166,9 +175,26 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       const publishActivity = () => {
         const progress = buildGoalRunProgress(controller.state);
         const key = goalRunProgressKey(progress);
-        if (key === lastActivityKeyRef.current) return;
-        lastActivityKeyRef.current = key;
-        onActivityChangeRef.current?.(progress);
+        if (key !== lastActivityKeyRef.current) {
+          lastActivityKeyRef.current = key;
+          onActivityChangeRef.current?.(progress);
+        }
+        const usage = controller.state.contextUsage;
+        const contextKey = usage
+          ? [
+              usage.sessionKey,
+              usage.sessionId ?? '',
+              usage.totalTokens,
+              usage.contextTokens ?? '',
+              usage.totalTokensFresh,
+              usage.updatedAt ?? '',
+              usage.modelRef ?? '',
+            ].join(':')
+          : '';
+        if (contextKey !== lastContextUsageKeyRef.current) {
+          lastContextUsageKeyRef.current = contextKey;
+          onContextUsageChangeRef.current?.(usage);
+        }
       };
       const unsubscribeState = controller.subscribe(publishActivity);
       const unsubscribeStream = controller.onStream(publishActivity);
@@ -190,10 +216,6 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         const agentId = initialSession.agentId?.trim() || 'main';
         const sessionKey = `agent:${agentId}:justdo:${initialSession.id}`;
         controller.state.sessionKey = sessionKey;
-        controller.admitFallbackHistory(
-          sessionKey,
-          coworkMessagesToGateway(initialSession.messages),
-        );
       }
 
       // Cancellation flag: React StrictMode double-fires mount effects.
@@ -228,7 +250,9 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         unsubscribeState();
         unsubscribeStream();
         lastActivityKeyRef.current = '';
+        lastContextUsageKeyRef.current = '';
         onActivityChangeRef.current?.(null);
+        onContextUsageChangeRef.current?.(null);
         debugLog('[JustDoChatWrapper] cleanup — disconnecting controller');
         try {
           controller.disconnect();
@@ -247,18 +271,11 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     // that can expose an assistant-only snapshot until Gateway history arrives.
     useLayoutEffect(() => {
       const controller = controllerRef.current;
-      if (!controller || !currentSessionId || !currentSessionMessages) return;
+      if (!controller || !currentSessionId) return;
 
-      // Build the gateway session key (same format as openclawChannelSessionSync)
+      // Build the gateway session key (same format as the main-process session-key helpers).
       const agentId = currentSessionAgentId?.trim() || 'main';
       const sessionKey = `agent:${agentId}:justdo:${currentSessionId}`;
-
-      if (controller.state.sessionKey !== sessionKey) {
-        controller.admitFallbackHistory(
-          sessionKey,
-          coworkMessagesToGateway(currentSessionMessages),
-        );
-      }
 
       if (connectedRef.current && controller.state.sessionKey !== sessionKey) {
         const promoteFromSessionKey = promotionSourceByTargetRef.current.get(sessionKey);
@@ -272,18 +289,9 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         } else {
           // Not yet connected — set sessionKey so connect() picks it up.
           controller.state.sessionKey = sessionKey;
-          controller.admitFallbackHistory(
-            sessionKey,
-            coworkMessagesToGateway(currentSessionMessages),
-          );
         }
-      } else if (controller.state.transcript.historySource !== 'gateway') {
-        controller.admitFallbackHistory(
-          sessionKey,
-          coworkMessagesToGateway(currentSessionMessages),
-        );
       }
-    }, [currentSessionAgentId, currentSessionId, currentSessionMessages]);
+    }, [currentSessionAgentId, currentSessionId]);
 
     if (connectionError) {
       return (

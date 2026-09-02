@@ -82,6 +82,7 @@ import {
   type RunActivity,
   type RunProgressStage,
 } from '@/libs/openclaw-chat/model/run-activity';
+import { applySessionMessagePayload } from '@/libs/openclaw-chat/model/session-message-apply';
 import {
   hasToolResultPayload,
   isSessionsYieldTool,
@@ -95,6 +96,7 @@ import {
   unwrapToolMessage,
 } from '@/libs/openclaw-chat/model/tool-message-adapter';
 import { readTranscriptIdentity } from '@/libs/openclaw-chat/model/transcript-identity';
+import { stripHeartbeatTokenForDisplay } from '@/libs/openclaw-chat/pipeline/heartbeat-display';
 import {
   hydrateGatewayHistoryForDisplay,
   persistFailedRun,
@@ -135,6 +137,8 @@ export interface ChatState {
   hello: GatewayHelloOk | null;
   /** Ephemeral activity used only for delayed, non-persisted waiting notices. */
   runActivity: RunActivity | null;
+  /** Selected Gateway session's authoritative context-window snapshot. */
+  contextUsage: ChatContextUsageSnapshot | null;
   /** Optimistic user message shown until gateway history loads */
   pendingUserMessage: {
     role: string;
@@ -144,6 +148,16 @@ export interface ChatState {
   } | null;
   /** Canonical, sequence-ordered live display state. */
   transcript: ChatTranscriptState;
+}
+
+export interface ChatContextUsageSnapshot {
+  sessionKey: string;
+  sessionId: string | null;
+  totalTokens: number;
+  contextTokens: number | null;
+  totalTokensFresh: boolean;
+  updatedAt: number | null;
+  modelRef: string | null;
 }
 
 export type ChatStateListener = (state: ChatState) => void;
@@ -191,6 +205,42 @@ type LocalCompactionStatus = {
   };
 };
 
+type InFlightRunSnapshot = {
+  runId: string;
+  text?: string;
+  startedAt?: number;
+  sessionAbortable?: boolean;
+  events?: Array<{
+    runId: string;
+    seq: number;
+    stream: string;
+    ts: number;
+    sessionKey?: string;
+    agentId?: string;
+    data: Record<string, unknown>;
+  }>;
+  plan?: { steps: Array<{ step: string; status: string }>; explanation?: string };
+};
+
+type ChatHistorySnapshot = {
+  messages?: unknown[];
+  sessionId?: string;
+  sessionInfo?: {
+    key?: string;
+    sessionId?: string;
+    updatedAt?: number;
+    totalTokens?: number;
+    totalTokensFresh?: boolean;
+    contextTokens?: number;
+    modelProvider?: string;
+    model?: string;
+    hasActiveRun?: boolean;
+    activeRunIds?: string[];
+    status?: string;
+  };
+  inFlightRun?: InFlightRunSnapshot;
+};
+
 type SessionLiveState = Pick<
   ChatState,
   | 'currentSessionId'
@@ -199,12 +249,24 @@ type SessionLiveState = Pick<
   | 'chatRunId'
   | 'lastError'
   | 'runActivity'
+  | 'contextUsage'
   | 'pendingUserMessage'
   | 'transcript'
 > & {
   terminalLifecycleSeen: boolean;
   assistantSnapshotRunId: string | null;
   ignoredDeltaAfterAssistantSnapshotCount: number;
+};
+
+type PostFinalHistoryRecovery = {
+  sessionKey: string;
+  sessionId: string | null;
+  historyGeneration: number;
+  runId: string | null;
+  baselineMessageSeq: number | null;
+  baselineMessageCount: number;
+  expectsVisibleMessage: boolean;
+  attempt: number;
 };
 
 type SwitchSessionOptions = {
@@ -263,7 +325,7 @@ const MAX_EMPTY_HISTORY_PAGES_PER_BATCH = 8;
 const FULL_HISTORY_MESSAGE_MAX_CHARS = 1_000_000;
 const OPENCLAW_HISTORY_TRUNCATION_MARKER = '...(truncated)...';
 const SILENT_REPLY_PATTERN = /^\s*NO_REPLY\s*$/;
-const POST_FINAL_HISTORY_RELOAD_DELAY_MS = 1500;
+const POST_FINAL_HISTORY_RETRY_DELAYS_MS = [100, 400, 1500, 3000] as const;
 const DEFERRED_HISTORY_RELOAD_DELAY_MS = 1200;
 const ACTIVE_TOOL_HISTORY_CATCHUP_DELAY_MS = 150;
 const MAX_DEFERRED_HISTORY_CATCHUP_ATTEMPTS = 5;
@@ -291,6 +353,50 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function readNonNegativeFiniteNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function readChatContextUsageSnapshot(
+  value: unknown,
+  fallbackSessionKey: string,
+): ChatContextUsageSnapshot | null {
+  const row = asRecord(value);
+  const totalTokens = readNonNegativeFiniteNumber(row?.totalTokens);
+  if (!row || totalTokens === null) return null;
+  const sessionKey =
+    (typeof row.sessionKey === 'string' && row.sessionKey.trim()) ||
+    (typeof row.key === 'string' && row.key.trim()) ||
+    fallbackSessionKey;
+  const provider = typeof row.modelProvider === 'string' ? row.modelProvider.trim() : '';
+  const model = typeof row.model === 'string' ? row.model.trim() : '';
+  return {
+    sessionKey,
+    sessionId: normalizeSessionId(row.sessionId),
+    totalTokens,
+    contextTokens: readNonNegativeFiniteNumber(row.contextTokens),
+    totalTokensFresh: row.totalTokensFresh !== false,
+    updatedAt: readNonNegativeFiniteNumber(row.updatedAt),
+    modelRef: model ? (provider ? `${provider}/${model}` : model) : null,
+  };
+}
+
+function contextUsageSnapshotsEqual(
+  left: ChatContextUsageSnapshot | null,
+  right: ChatContextUsageSnapshot,
+): boolean {
+  return (
+    left !== null &&
+    left.sessionKey === right.sessionKey &&
+    left.sessionId === right.sessionId &&
+    left.totalTokens === right.totalTokens &&
+    left.contextTokens === right.contextTokens &&
+    left.totalTokensFresh === right.totalTokensFresh &&
+    left.updatedAt === right.updatedAt &&
+    left.modelRef === right.modelRef
+  );
 }
 
 function isSubagentTaskHistoryMessage(message: unknown): boolean {
@@ -378,13 +484,19 @@ function readExplicitMessageRunId(value: unknown): string | undefined {
   const message = asRecord(outer.message) ?? outer;
   const messageMetadata = asRecord(message.metadata);
   const outerMetadata = asRecord(outer.metadata);
+  const messageOpenClaw = asRecord(message.__openclaw);
+  const outerOpenClaw = asRecord(outer.__openclaw);
   for (const candidate of [
     message.runId,
     message.run_id,
+    messageOpenClaw?.runId,
+    messageOpenClaw?.run_id,
     messageMetadata?.runId,
     messageMetadata?.run_id,
     outer.runId,
     outer.run_id,
+    outerOpenClaw?.runId,
+    outerOpenClaw?.run_id,
     outerMetadata?.runId,
     outerMetadata?.run_id,
   ]) {
@@ -460,6 +572,7 @@ export class ChatController {
   private streamListeners: Set<ChatStreamListener> = new Set();
   private lifecycleEndFallbackTimer: ReturnType<typeof setTimeout> | null = null;
   private postFinalHistoryReloadTimer: ReturnType<typeof setTimeout> | null = null;
+  private postFinalHistoryRecovery: PostFinalHistoryRecovery | null = null;
   private deferredHistoryReloadTimer: ReturnType<typeof setTimeout> | null = null;
   private activeToolHistoryCatchUpTimer: ReturnType<typeof setTimeout> | null = null;
   private olderHistoryContinuationTimer: ReturnType<typeof setTimeout> | null = null;
@@ -551,13 +664,14 @@ export class ChatController {
       lastError: null,
       hello: null,
       runActivity: null,
+      contextUsage: null,
       pendingUserMessage: null,
       transcript: createChatTranscriptState(),
     };
   }
 
   /** Set an optimistic user message shown until the next loadHistory.
-   *  Also marks chatSending=true so session.message events are deferred. */
+   *  Also marks chatSending=true so fallback history reloads are deferred. */
   setPendingUserMessage(text: string, attachments: CoworkAttachmentPayload[] = []): void {
     debugLog('[ChatCtrl] setPendingUserMessage:', text.slice(0, 60));
     const attachmentBlocks = toAttachmentContentBlocks(attachments);
@@ -826,6 +940,7 @@ export class ChatController {
       chatRunId: this.state.chatRunId,
       lastError: this.state.lastError,
       runActivity: this.state.runActivity,
+      contextUsage: this.state.contextUsage,
       pendingUserMessage: this.state.pendingUserMessage,
       transcript: this.state.transcript,
       terminalLifecycleSeen: this.terminalLifecycleSeen,
@@ -849,6 +964,7 @@ export class ChatController {
       this.state.chatRunId = null;
       this.state.lastError = null;
       this.state.runActivity = null;
+      this.state.contextUsage = null;
       this.state.pendingUserMessage = null;
       this.state.transcript = createChatTranscriptState(sessionKey, null);
       this.terminalLifecycleSeen = false;
@@ -869,6 +985,7 @@ export class ChatController {
     this.state.chatRunId = cached.chatRunId;
     this.state.lastError = cached.lastError;
     this.state.runActivity = cached.runActivity;
+    this.state.contextUsage = cached.contextUsage;
     this.state.pendingUserMessage = cached.pendingUserMessage;
     this.state.transcript = cached.transcript;
     this.terminalLifecycleSeen = cached.terminalLifecycleSeen;
@@ -904,6 +1021,13 @@ export class ChatController {
     const [sourceLiveKey, sourceLiveState] = sourceLiveEntry;
     this.liveStateBySession.delete(sourceLiveKey);
     sourceLiveState.currentSessionId = null;
+    if (sourceLiveState.contextUsage) {
+      sourceLiveState.contextUsage = {
+        ...sourceLiveState.contextUsage,
+        sessionKey: targetSessionKey,
+        sessionId: null,
+      };
+    }
     sourceLiveState.transcript.sessionKey = targetSessionKey;
     sourceLiveState.transcript.sessionId = null;
     sourceLiveState.transcript.historyGeneration += 1;
@@ -1487,70 +1611,6 @@ export class ChatController {
     return this.currentMessageHistory.toArray();
   }
 
-  /**
-   * Admit the SQLite-backed Redux snapshot as an immediately renderable,
-   * lower-authority history source. Gateway history always wins, while an
-   * active live turn prevents the fallback from replacing its visible tail.
-   */
-  admitFallbackHistory(sessionKey: string, messages: unknown[]): boolean {
-    if (!sessionKey) return false;
-    const projectedMessages = projectGatewayHistoryForDisplay(messages);
-
-    if (sessionKey !== this.state.sessionKey) {
-      const existingSource = this.historySourceBySession.get(sessionKey) ?? 'optimistic';
-      if (existingSource === 'gateway') return false;
-      const existingHistory = this.chatMessagesBySession.get(sessionKey);
-      const cachedLiveState = this.findLiveSessionState(sessionKey)?.[1];
-      const fallbackState = createChatTranscriptState(sessionKey, null);
-      fallbackState.historySource = existingSource;
-      fallbackState.persistedMessages = existingHistory?.recentMessages ?? [];
-      const reconciliation = reconcileHistory(fallbackState, {
-        request: {
-          sessionKey,
-          sessionId: null,
-          historyGeneration: fallbackState.historyGeneration,
-        },
-        source: 'sqlite-fallback',
-        messages: projectedMessages,
-        requestStartMessages: fallbackState.persistedMessages,
-        currentMessages: fallbackState.persistedMessages,
-        activeRun:
-          cachedLiveState?.chatSending === true ||
-          cachedLiveState?.transcript.activeTurn?.status === 'running',
-        isVisibleMessage: message => !shouldHideMessage(message),
-      });
-      if (!reconciliation.accepted) return false;
-      const history = new ChunkedMessageHistory();
-      history.reset(reconciliation.messages);
-      this.chatMessagesBySession.set(sessionKey, history);
-      this.historySourceBySession.set(sessionKey, 'sqlite-fallback');
-      return true;
-    }
-
-    this.ensureTranscriptSessionIdentity();
-    const previousMessages = this.state.chatMessages;
-    const reconciliation = reconcileHistory(this.state.transcript, {
-      request: {
-        sessionKey,
-        sessionId: this.state.transcript.sessionId,
-        historyGeneration: this.state.transcript.historyGeneration,
-      },
-      source: 'sqlite-fallback',
-      messages: projectedMessages,
-      requestStartMessages: previousMessages,
-      currentMessages: this.state.chatMessages,
-      activeRun: this.state.chatSending || this.state.transcript.activeTurn?.status === 'running',
-      isVisibleMessage: message => !shouldHideMessage(message),
-    });
-    if (!reconciliation.accepted) return false;
-
-    this.state.historyHasMore = false;
-    this.state.historyNextCursor = null;
-    this.setCurrentSessionMessages(reconciliation.messages);
-    this.notify();
-    return true;
-  }
-
   private ensureTranscriptSessionIdentity(): void {
     if (this.state.transcript.sessionKey === this.state.sessionKey) return;
     this.resetTranscriptForSession(this.state.sessionKey, this.state.currentSessionId);
@@ -1852,9 +1912,11 @@ export class ChatController {
   }
 
   private clearPostFinalHistoryReload(): void {
-    if (!this.postFinalHistoryReloadTimer) return;
-    clearTimeout(this.postFinalHistoryReloadTimer);
-    this.postFinalHistoryReloadTimer = null;
+    if (this.postFinalHistoryReloadTimer) {
+      clearTimeout(this.postFinalHistoryReloadTimer);
+      this.postFinalHistoryReloadTimer = null;
+    }
+    this.postFinalHistoryRecovery = null;
   }
 
   private clearDeferredHistoryReload(): void {
@@ -2137,23 +2199,107 @@ export class ChatController {
     }, DEFERRED_HISTORY_RELOAD_DELAY_MS);
   }
 
-  private schedulePostFinalHistoryReload(sessionKey: string): void {
-    this.clearPostFinalHistoryReload();
+  private postFinalHistoryHasCaughtUp(recovery: PostFinalHistoryRecovery): boolean {
+    const messages = this.state.chatMessages;
+    if (recovery.expectsVisibleMessage) {
+      return !messages.some(message => {
+        if (!isLocallyOptimisticHistoryTail(message)) return false;
+        if (!recovery.runId) return true;
+        return readExplicitMessageRunId(message) === recovery.runId;
+      });
+    }
+
+    if (
+      recovery.runId &&
+      messages.some(
+        message =>
+          !isLocallyOptimisticHistoryTail(message) &&
+          readExplicitMessageRunId(message) === recovery.runId,
+      )
+    ) {
+      return true;
+    }
+    const latestMessageSeq = readLatestOpenClawMessageSeq(messages);
+    if (
+      recovery.baselineMessageSeq !== null &&
+      latestMessageSeq !== null &&
+      latestMessageSeq > recovery.baselineMessageSeq
+    ) {
+      return true;
+    }
+    return messages.length > recovery.baselineMessageCount;
+  }
+
+  private scheduleNextPostFinalHistoryReload(recovery: PostFinalHistoryRecovery): void {
+    const delay = POST_FINAL_HISTORY_RETRY_DELAYS_MS[recovery.attempt];
+    if (delay === undefined) {
+      if (this.postFinalHistoryRecovery === recovery) this.postFinalHistoryRecovery = null;
+      return;
+    }
     this.postFinalHistoryReloadTimer = setTimeout(() => {
       this.postFinalHistoryReloadTimer = null;
-      if (this.state.sessionKey !== sessionKey || !this.state.connected || this.state.chatSending) {
+      const currentSessionId = this.state.currentSessionId ?? this.state.transcript.sessionId;
+      if (
+        this.postFinalHistoryRecovery !== recovery ||
+        this.state.sessionKey !== recovery.sessionKey ||
+        this.state.transcript.historyGeneration !== recovery.historyGeneration ||
+        (recovery.sessionId && currentSessionId && recovery.sessionId !== currentSessionId) ||
+        !this.state.connected ||
+        this.state.chatSending
+      ) {
         debugLog('[ChatCtrl] post-final history reload skipped', {
-          sessionKey,
+          sessionKey: recovery.sessionKey,
+          runId: recovery.runId,
+          attempt: recovery.attempt + 1,
           ...this._snap(),
         });
+        if (this.postFinalHistoryRecovery === recovery) this.postFinalHistoryRecovery = null;
+        return;
+      }
+      if (this.postFinalHistoryHasCaughtUp(recovery)) {
+        this.postFinalHistoryRecovery = null;
         return;
       }
       debugLog('[ChatCtrl] post-final history reload → loadHistory', {
-        sessionKey,
+        sessionKey: recovery.sessionKey,
+        runId: recovery.runId,
+        attempt: recovery.attempt + 1,
         ...this._snap(),
       });
-      void this.loadHistory(true);
-    }, POST_FINAL_HISTORY_RELOAD_DELAY_MS);
+      void this.loadHistory(true).finally(() => {
+        if (this.postFinalHistoryRecovery !== recovery) return;
+        if (this.postFinalHistoryHasCaughtUp(recovery)) {
+          this.postFinalHistoryRecovery = null;
+          return;
+        }
+        recovery.attempt += 1;
+        this.scheduleNextPostFinalHistoryReload(recovery);
+      });
+    }, delay);
+  }
+
+  private schedulePostFinalHistoryReload(
+    sessionKey: string,
+    options: {
+      runId: string | null;
+      baselineMessageSeq: number | null;
+      baselineMessageCount: number;
+      expectsVisibleMessage: boolean;
+    },
+  ): void {
+    this.clearPostFinalHistoryReload();
+    const recovery: PostFinalHistoryRecovery = {
+      sessionKey,
+      sessionId: this.state.currentSessionId ?? this.state.transcript.sessionId,
+      historyGeneration: this.state.transcript.historyGeneration,
+      runId: options.runId,
+      baselineMessageSeq: options.baselineMessageSeq,
+      baselineMessageCount: options.baselineMessageCount,
+      expectsVisibleMessage: options.expectsVisibleMessage,
+      attempt: 0,
+    };
+    this.postFinalHistoryRecovery = recovery;
+    this.scheduleNextPostFinalHistoryReload(recovery);
   }
 
   private resetAssistantSnapshotSource(): void {
@@ -2218,6 +2364,13 @@ export class ChatController {
       token,
       onHello: hello => this.handleHello(hello),
       onEvent: event => this.handleEvent(event),
+      onGap: ({ expected, received }) => {
+        debugLog('[ChatCtrl] Gateway event sequence gap; reconnecting for history recovery', {
+          expected,
+          received,
+          sessionKey: this.state.sessionKey,
+        });
+      },
       onClose: () => this.handleClose(),
     });
 
@@ -2353,7 +2506,9 @@ export class ChatController {
     this.suspendedRunId =
       this.state.transcript.activeTurn?.status === 'running'
         ? this.state.transcript.activeTurn.runId
-        : null;
+        : this.state.chatSending
+          ? (this.state.chatRunId ?? this.state.runActivity?.runId ?? null)
+          : null;
     this.state.connected = false;
     this.state.transportStatus =
       this.state.client && runInProgress ? 'reconnecting' : 'disconnected';
@@ -2585,6 +2740,54 @@ export class ChatController {
     }
   }
 
+  /**
+   * Gateway reports an internal Agent-stream sequence gap as an unsequenced
+   * `stream:error` frame. It is transport recovery evidence, not a transcript
+   * item, so only the exact selected-session/run owner may retire the socket.
+   */
+  private recoverFromInternalAgentSequenceGap(payloadValue: unknown): boolean {
+    const payload = asRecord(payloadValue);
+    const data = asRecord(payload?.data);
+    if (
+      payload?.stream !== 'error' ||
+      readNonBlankString(data?.reason)?.toLowerCase() !== 'seq gap'
+    ) {
+      return false;
+    }
+    const runId = readNonBlankString(payload?.runId ?? payload?.run_id);
+    const sessionKey = readNonBlankString(payload?.sessionKey ?? payload?.session);
+    const sessionId = normalizeSessionId(payload?.sessionId ?? payload?.session_id);
+    const lifecycleGeneration = readNonBlankString(
+      payload?.lifecycleGeneration ?? payload?.lifecycle_generation,
+    );
+    const activeTurn = this.state.transcript.activeTurn;
+    const activeSessionId =
+      this.state.currentSessionId ?? this.state.transcript.sessionId ?? activeTurn?.sessionId;
+    const ownsGap = Boolean(
+      runId &&
+        sessionKey &&
+        this.isSelectedSession(sessionKey) &&
+        this.state.chatSending &&
+        activeTurn?.status === 'running' &&
+        activeTurn.runId === runId &&
+        (!this.state.chatRunId || this.state.chatRunId === runId) &&
+        (!sessionId || !activeSessionId || sessionId === activeSessionId) &&
+        (!lifecycleGeneration ||
+          !activeTurn.lifecycleGeneration ||
+          lifecycleGeneration === activeTurn.lifecycleGeneration),
+    );
+    if (!ownsGap) return false;
+
+    debugLog('[ChatCtrl] recovering selected run after internal Agent sequence gap', {
+      sessionKey,
+      runId,
+      expected: data?.expected ?? null,
+      received: data?.received ?? null,
+    });
+    this.state.client?.recoverFromGap('agent stream sequence gap');
+    return true;
+  }
+
   private handleEvent(event: GatewayEventFrame): void {
     if (event.event === 'tick') return;
     if (event.event === 'chat') {
@@ -2711,6 +2914,12 @@ export class ChatController {
         frameSeq: event.seq,
       });
       if (!normalized.event) {
+        if (
+          normalized.reason === 'missing-sequence' &&
+          this.recoverFromInternalAgentSequenceGap(event.payload)
+        ) {
+          return;
+        }
         debugLog('[ChatCtrl] Agent event rejected during normalization', {
           reason: normalized.reason,
           frameSeq: event.seq ?? null,
@@ -2777,7 +2986,7 @@ export class ChatController {
       return;
     }
 
-    // session.message — trigger history reload for the selected session.
+    // Session metadata and durable transcript notifications for the selected session.
     if (event.event === 'sessions.changed') {
       const payload = asRecord(event.payload);
       const eventSessionKey =
@@ -2814,6 +3023,7 @@ export class ChatController {
         this.pendingHistoryReload = false;
         this.scheduleDeferredHistoryReload(this.state.sessionKey, 'session-identity-rotation');
       }
+      if (this.applySessionContextUsage(payload, eventSessionKey)) this.notify();
       return;
     }
 
@@ -2830,6 +3040,14 @@ export class ChatController {
       }
       if (this.admitSubagentTaskMessage(payload?.message)) return;
       const sessionSnapshot = asRecord(payload?.session);
+      if (
+        this.applySessionContextUsage(
+          sessionSnapshot ?? payload,
+          eventSessionKey || this.state.sessionKey,
+        )
+      ) {
+        this.notify();
+      }
       const eventSessionId = normalizeSessionId(payload?.sessionId ?? sessionSnapshot?.sessionId);
       const activeTurn = this.state.transcript.activeTurn;
       const activeSessionId =
@@ -2843,10 +3061,12 @@ export class ChatController {
         ),
       );
       const explicitMessageRunId = readExplicitMessageRunId(payload?.message);
+      const runActiveValue = payload?.hasActiveRun ?? sessionSnapshot?.hasActiveRun;
+      const runActive = typeof runActiveValue === 'boolean' ? runActiveValue : undefined;
       const runIdentityMatches =
         (explicitMessageRunId === undefined || expectedRunIds.has(explicitMessageRunId)) &&
         (activeRunIds.length === 0 || activeRunIds.some(runId => expectedRunIds.has(runId))) &&
-        (payload?.hasActiveRun ?? sessionSnapshot?.hasActiveRun) !== false;
+        runActive !== false;
       const repairedActiveTail =
         payload?.message !== undefined &&
         sessionIdentityMatches &&
@@ -2856,9 +3076,50 @@ export class ChatController {
           backfillMissingToolsFromAppend: true,
         });
       if (repairedActiveTail) this.publishActiveToolHistoryRepair();
+      const loadedMessageSeq = readLatestOpenClawMessageSeq(this.state.chatMessages);
+      const projectedAppend =
+        payload?.message === undefined
+          ? []
+          : projectGatewayHistoryForDisplay([payload.message]);
+      const directApply =
+        sessionIdentityMatches && projectedAppend.length === 1
+          ? applySessionMessagePayload(
+              this.state.chatMessages,
+              { ...payload, message: projectedAppend[0] },
+              {
+                activeRunId:
+                  activeTurn?.status === 'running'
+                    ? activeTurn.runId
+                    : this.state.chatRunId,
+                runActive,
+                isRecentTerminalRun: runId => {
+                  const recent = this.state.transcript.recentRuns.get(runId);
+                  return Boolean(
+                    recent?.terminalStatus && recent.expiresAt > this.transcriptDependencies.now(),
+                  );
+                },
+              },
+            )
+          : null;
+      if (directApply?.kind === 'applied') {
+        this.state.transcript.historySource = 'gateway';
+        this.setCurrentSessionMessages(directApply.messages);
+        if (
+          directApply.role === 'user' &&
+          this.state.pendingUserMessage &&
+          isPendingUserMessageMatch(
+            directApply.message as GatewayMessage,
+            this.state.pendingUserMessage as unknown as GatewayMessage,
+          )
+        ) {
+          this.state.pendingUserMessage = null;
+        }
+        this.notify();
+      }
       const messageSeq =
         readPositiveSafeInteger(payload?.messageSeq) ?? readOpenClawMessageSeq(payload?.message);
-      const loadedMessageSeq = readLatestOpenClawMessageSeq(this.state.chatMessages);
+      // Compare against the snapshot that preceded this append. Including the
+      // just-applied row in the baseline would hide a real dropped-message gap.
       const activeTailCatchUpPending =
         sessionIdentityMatches &&
         this.observeSessionMessageSeq(
@@ -2878,6 +3139,13 @@ export class ChatController {
         // the active tail without allowing history to replace the live turn.
         this.scheduleActiveToolHistoryCatchUp(this.state.sessionKey, activeTurn.runId);
       }
+      const appendWasHidden = payload?.message !== undefined && projectedAppend.length === 0;
+      const needsHistoryFallback =
+        !sessionIdentityMatches ||
+        (!appendWasHidden && directApply?.kind !== 'applied') ||
+        activeTailCatchUpPending ||
+        (directApply?.kind === 'applied' && hasOpenClawHistoryTruncationMarker(directApply.message));
+      if (!needsHistoryFallback && !this.pendingHistoryReload) return;
       if (this.state.chatSending || this.pendingHistoryReload) {
         debugLog('[ChatCtrl] session.message DEFERRED:', this.state.sessionKey, {
           eventKeys: Object.keys((event.payload as Record<string, unknown> | undefined) ?? {}),
@@ -2906,11 +3174,10 @@ export class ChatController {
       }
       const eventSessionKey =
         typeof payload.sessionKey === 'string' ? payload.sessionKey.trim() : '';
-      const sessionKey = eventSessionKey || this.state.sessionKey;
-      if (
-        sessionKey !== this.state.sessionKey &&
-        !this.localCompactionStatusBySession.has(sessionKey)
-      ) {
+      const targetsSelectedSession =
+        !eventSessionKey || this.isSelectedSession(eventSessionKey);
+      const sessionKey = targetsSelectedSession ? this.state.sessionKey : eventSessionKey;
+      if (!targetsSelectedSession && !this.localCompactionStatusBySession.has(sessionKey)) {
         return;
       }
       const phase = typeof payload.phase === 'string' ? payload.phase : '';
@@ -2941,14 +3208,24 @@ export class ChatController {
     }
   }
 
-  private applyNormalizedAgentEvent(event: NormalizedAgentEvent): void {
+  private applyNormalizedAgentEvent(
+    event: NormalizedAgentEvent,
+    options: { replaySnapshot?: boolean } = {},
+  ): void {
+    const previousHighWater = this.state.transcript.activeTurn?.lastAgentSeq ?? -1;
     const reduceResult = reduceAgentEvent(
       this.state.transcript,
       event,
       this.transcriptDependencies,
+      { allowSequenceBackfill: options.replaySnapshot === true },
     );
     if (reduceResult === 'applied') {
-      this.handleAgentEvent(event);
+      // A bounded history snapshot can arrive after newer live activity. Its
+      // missing owner still repairs the transcript, but must not rewind the
+      // current run activity (for example responding -> thinking).
+      if (!options.replaySnapshot || event.agentSeq > previousHighWater) {
+        this.handleAgentEvent(event);
+      }
       return;
     }
     debugLog('[ChatCtrl] Agent event ignored by ordered reducer', {
@@ -2957,6 +3234,141 @@ export class ChatController {
       stream: event.stream,
       result: reduceResult,
     });
+  }
+
+  private applySessionContextUsage(value: unknown, sessionKey: string): boolean {
+    const next = readChatContextUsageSnapshot(value, sessionKey);
+    if (!next) return false;
+    const previous = this.state.contextUsage;
+    const sameGeneration =
+      previous !== null &&
+      normalizeTranscriptSessionKey(previous.sessionKey) ===
+        normalizeTranscriptSessionKey(next.sessionKey) &&
+      (!previous.sessionId || !next.sessionId || previous.sessionId === next.sessionId);
+    if (
+      sameGeneration &&
+      previous.updatedAt !== null &&
+      next.updatedAt !== null &&
+      next.updatedAt < previous.updatedAt
+    ) {
+      return false;
+    }
+    if (contextUsageSnapshotsEqual(previous, next)) return false;
+    this.state.contextUsage = next;
+    return true;
+  }
+
+  private applyInFlightRunSnapshot(
+    snapshot: InFlightRunSnapshot | undefined,
+    sessionKey: string,
+    sessionId: string | null,
+    requestRunId: string | null,
+    sessionInfo: ChatHistorySnapshot['sessionInfo'],
+  ): void {
+    const runId = snapshot?.runId?.trim();
+    if (!snapshot || !runId || this.state.sessionKey !== sessionKey) return;
+
+    const currentRunId = this.state.chatRunId;
+    const activeRunIds = sessionInfo?.activeRunIds;
+    const terminalSnapshotRun = this.state.transcript.recentRuns.get(runId)?.terminalStatus;
+    const snapshotIsActive =
+      sessionInfo?.hasActiveRun !== false &&
+      (!Array.isArray(activeRunIds) || activeRunIds.includes(runId));
+    const requestObservedRunRetirement = Boolean(requestRunId && !currentRunId);
+    const canBindRequestedProvisionalRun = Boolean(
+      currentRunId?.startsWith('justdo-') && currentRunId === requestRunId,
+    );
+    if (
+      terminalSnapshotRun ||
+      !snapshotIsActive ||
+      requestObservedRunRetirement ||
+      (currentRunId && currentRunId !== runId && !canBindRequestedProvisionalRun)
+    ) {
+      debugLog('[ChatCtrl] stale in-flight run snapshot ignored', {
+        sessionKey,
+        snapshotRunId: runId,
+        requestRunId,
+        currentRunId,
+        terminalSnapshotRun: terminalSnapshotRun ?? null,
+        hasActiveRun: sessionInfo?.hasActiveRun,
+      });
+      return;
+    }
+
+    const activeTurn = this.state.transcript.activeTurn;
+    if (activeTurn && activeTurn.runId !== runId) {
+      if (!canBindRequestedProvisionalRun || activeTurn.items.length > 0) return;
+      this.bindAcknowledgedRun(sessionKey, activeTurn.runId, runId);
+    }
+    if (!this.state.transcript.activeTurn) {
+      beginAssistantTurn(
+        this.state.transcript,
+        {
+          runId,
+          sessionId,
+          startedAt:
+            typeof snapshot.startedAt === 'number' && Number.isFinite(snapshot.startedAt)
+              ? snapshot.startedAt
+              : Date.now(),
+        },
+        this.transcriptDependencies,
+      );
+    }
+
+    this.state.chatRunId = runId;
+    this.state.chatSending = true;
+    if (!this.state.runActivity || this.state.runActivity.runId !== runId) {
+      this.beginRunActivity(
+        runId,
+        typeof snapshot.startedAt === 'number' && Number.isFinite(snapshot.startedAt)
+          ? snapshot.startedAt
+          : Date.now(),
+      );
+    }
+
+    const replayEvents = Array.isArray(snapshot.events) ? [...snapshot.events] : [];
+    replayEvents.sort((left, right) => left.seq - right.seq);
+    for (const replayEvent of replayEvents) {
+      if (!replayEvent || replayEvent.runId !== runId) continue;
+      const normalized = normalizeAgentEvent({
+        deliveryEvent: 'agent',
+        payload: {
+          ...replayEvent,
+          sessionKey: replayEvent.sessionKey ?? sessionKey,
+        },
+        allowAseqFallback: false,
+      });
+      if (normalized.event) {
+        this.applyNormalizedAgentEvent(normalized.event, { replaySnapshot: true });
+      }
+    }
+
+    const snapshotText =
+      typeof snapshot.text === 'string' &&
+      snapshot.text.trim() &&
+      !isHiddenOrPendingControlReplyText(snapshot.text)
+        ? snapshot.text
+        : null;
+    const activeContent = collectActiveContentText(this.state.transcript.activeTurn);
+    const mergedText = mergeInFlightAssistantText(snapshotText, activeContent);
+    if (mergedText && mergedText !== activeContent) {
+      reduceChatEvent(
+        this.state.transcript,
+        {
+          runId,
+          sessionKey,
+          sessionId,
+          lifecycleGeneration: this.state.transcript.activeTurn?.lifecycleGeneration ?? null,
+          frameSeq: null,
+          state: 'delta',
+          message: { role: 'assistant', content: mergedText },
+          replace: true,
+        },
+        this.transcriptDependencies,
+      );
+      this.updateRunActivity(runId, 'responding', { modelActivity: true });
+    }
+    this.notifyStream();
   }
 
   private pendingHistoryReload = false;
@@ -3403,6 +3815,7 @@ export class ChatController {
     const previousMessages = this.state.chatMessages;
     const previousHistoryHasMore = this.state.historyHasMore;
     const previousHistoryNextCursor = this.state.historyNextCursor;
+    const requestRunId = this.state.chatRunId;
     debugLog('[ChatCtrl] loadHistory START', {
       seq: loadSeq,
       sessionKey,
@@ -3419,9 +3832,7 @@ export class ChatController {
       // chat.startup includes metadata and agent list, but it is heavier than
       // chat.history. Use it only for initial connection/session switches;
       // ordinary post-run refreshes should stay read-only and lightweight.
-      let result:
-        | { messages?: unknown[]; sessionId?: string; sessionInfo?: { sessionId?: string } }
-        | undefined;
+      let result: ChatHistorySnapshot | undefined;
       const primaryMethod = options.preferStartup ? 'chat.startup' : 'chat.history';
       const fallbackMethod = options.preferStartup ? 'chat.history' : 'chat.startup';
       try {
@@ -3481,6 +3892,7 @@ export class ChatController {
       requestedSessionId = authoritativeSessionId;
       this.state.currentSessionId = authoritativeSessionId;
       this.state.transcript.sessionId = authoritativeSessionId;
+      this.applySessionContextUsage(result?.sessionInfo, sessionKey);
       const requestStillCurrent = (): boolean =>
         this.state.sessionKey === sessionKey &&
         this.state.transcript.historyGeneration === transcriptHistoryGeneration &&
@@ -3566,23 +3978,6 @@ export class ChatController {
       let messages = this.projectLocalCompactionStatus(sessionKey, hydratedMessages);
       if (pagedHistory) {
         messages = mergeRefreshedHistoryWindow(previousMessages, messages);
-      } else if (
-        previousMessages.length > messages.length &&
-        this.state.transcript.historySource === 'sqlite-fallback'
-      ) {
-        const mergedFallback = mergeRefreshedHistoryWindow(previousMessages, messages);
-        if (mergedFallback.length < previousMessages.length) {
-          debugLog('[ChatCtrl] limited RPC history cannot safely replace complete fallback', {
-            seq: loadSeq,
-            sessionKey,
-            fallbackCount: previousMessages.length,
-            rpcCount: messages.length,
-          });
-          this.state.chatLoading = false;
-          this.notify();
-          return false;
-        }
-        messages = mergedFallback;
       }
       debugLog('[ChatCtrl] loadHistory NORMALIZED', {
         seq: loadSeq,
@@ -3700,6 +4095,18 @@ export class ChatController {
             reconciliation.reason ?? 'history-catch-up',
           );
         }
+        if (reconciliation.reason === 'active-run') {
+          // Persisted history must not replace a live turn, but the same RPC's
+          // in-flight activity snapshot is designed to repair events missed
+          // before reconnect. It has independent run/sequence ownership.
+          this.applyInFlightRunSnapshot(
+            result?.inFlightRun,
+            sessionKey,
+            authoritativeSessionId,
+            requestRunId,
+            result?.sessionInfo,
+          );
+        }
         this.state.chatLoading = false;
         this.notify();
         return false;
@@ -3734,6 +4141,13 @@ export class ChatController {
       this.setCurrentSessionMessages(messages, {
         resetLoadedHistory: this.expectInitialHistory && subagentTaskHistoryIndex >= 0,
       });
+      this.applyInFlightRunSnapshot(
+        result?.inFlightRun,
+        sessionKey,
+        authoritativeSessionId,
+        requestRunId,
+        result?.sessionInfo,
+      );
       const pendingCompaction = this.localCompactionStatusBySession.get(sessionKey);
       if (pendingCompaction?.message.__openclaw.phase === 'completed') {
         this.scheduleDeferredHistoryReload(sessionKey, 'compaction-marker-pending');
@@ -3790,7 +4204,7 @@ export class ChatController {
 
   private handleChatEvent(payload: NormalizedChatEvent): void {
     // Only handle events for our session
-    if (payload.sessionKey !== this.state.sessionKey) return;
+    if (!this.isSelectedSession(payload.sessionKey)) return;
     if (!this.acceptRunId(payload.runId)) {
       debugLog('[ChatCtrl] chat event ignored (run mismatch)', {
         eventRunId: payload.runId ?? null,
@@ -3830,6 +4244,8 @@ export class ChatController {
   private handleFinal(payload: NormalizedChatEvent): void {
     this.clearLifecycleEndFallback();
     this.finishCurrentTurnTiming('final', payload.runId);
+    const baselineMessageSeq = readLatestOpenClawMessageSeq(this.state.chatMessages);
+    const baselineMessageCount = this.state.chatMessages.length;
     const message = stripAssistantSilentReplySuffix(payload.message);
     const willAppend = message && !shouldHideMessage(message);
     const liveThinkingText = collectActiveThinkingText(this.state.transcript.activeTurn);
@@ -3875,18 +4291,19 @@ export class ChatController {
     this.suspendedRunId = null;
     this.terminalLifecycleSeen = false;
     this.resetAssistantSnapshotSource();
-    if (willAppend) {
-      // Match OpenClaw webchat: a renderable final message already reconciles
-      // the visible turn. Replaying a deferred session.message reload here can
-      // race with transcript persistence and briefly replace the final message
-      // with stale history. A delayed guarded reload lets persisted history
-      // catch up once the authoritative tail exists.
-      this.pendingHistoryReload = false;
-      this.schedulePostFinalHistoryReload(payload.sessionKey);
-    } else {
-      this.pendingHistoryReload = true;
-      this.flushPendingHistoryReload();
-    }
+    // OpenClaw broadcasts chat.final before its terminal persistence settles.
+    // An immediate single history request can therefore read the pre-final
+    // snapshot, especially when the final has no renderable message. Keep the
+    // visible optimistic tail (when present) and retry with bounded backoff.
+    // Session/run/generation ownership prevents an older retry from touching a
+    // newly selected session or a subsequent turn.
+    this.pendingHistoryReload = false;
+    this.schedulePostFinalHistoryReload(this.state.sessionKey, {
+      runId: payload.runId?.trim() || null,
+      baselineMessageSeq,
+      baselineMessageCount,
+      expectsVisibleMessage: Boolean(willAppend),
+    });
     debugLog('[ChatCtrl] ▶ chat.final (done)', this._snap());
     this.notify();
   }
@@ -4011,7 +4428,12 @@ export class ChatController {
         sourceEvent,
         runId,
         agentSeq,
-        textLen: typeof data.text === 'string' ? data.text.length : 0,
+        textLen:
+          typeof data.thinking === 'string'
+            ? data.thinking.length
+            : typeof data.text === 'string'
+              ? data.text.length
+              : 0,
         wasSending,
         ...this._snap(),
       });
@@ -4321,6 +4743,7 @@ export class ChatController {
           ? [{ type: 'text', text: displayMessage }, ...attachmentBlocks]
           : displayMessage,
       timestamp: Date.now(),
+      __openclaw: { idempotencyKey: runId, runId },
     };
     // A post-send history refresh can race Gateway transcript persistence,
     // especially when the run is stopped before the model replies. Protect
@@ -4876,6 +5299,14 @@ function collectActiveContentText(turn: AssistantTurn | null): string | null {
   return text || null;
 }
 
+function mergeInFlightAssistantText(snapshot: string | null, live: string | null): string | null {
+  if (!snapshot || live?.startsWith(snapshot)) return live ?? snapshot;
+  if (!live || snapshot.startsWith(live)) return snapshot;
+  // A bounded history snapshot can lag newer live events. Never rewind a
+  // locally longer divergent stream merely because recovery ran concurrently.
+  return live;
+}
+
 function buildInterruptedTurnMessage(
   thinkingText: string | null,
   contentText: string | null,
@@ -4974,7 +5405,7 @@ function isHiddenOrPendingControlReplyText(text: string): boolean {
   return (
     SILENT_REPLY_PATTERN.test(trimmed) ||
     (upper.length > 0 && 'NO_REPLY'.startsWith(upper)) ||
-    trimmed.includes('HEARTBEAT_OK')
+    stripHeartbeatTokenForDisplay(trimmed).shouldSkip
   );
 }
 
@@ -5024,7 +5455,7 @@ function appendTerminalMessage(
 
   const last = result[result.length - 1];
   if (hasSameTerminalIdentity(last, terminal, activeRunStartedAt)) {
-    return [...result.slice(0, -1), terminal];
+    return [...result.slice(0, -1), retainOriginalOpenClawIdentity(terminal, last)];
   }
 
   result.push(terminal);
@@ -5062,9 +5493,12 @@ function messageDisplaySignature(message: unknown): string | null {
 function messageRunId(message: unknown): string | null {
   if (!message || typeof message !== 'object') return null;
   const record = message as Record<string, unknown>;
+  const openClaw = asRecord(record.__openclaw);
   for (const value of [
     record.runId,
     record.run_id,
+    openClaw?.runId,
+    openClaw?.run_id,
     asRecord(record.metadata)?.runId,
     asRecord(record.metadata)?.run_id,
   ]) {
@@ -5078,6 +5512,9 @@ function hasSameTerminalIdentity(
   right: unknown,
   activeRunStartedAt: number | null,
 ): boolean {
+  const leftRole = readNonBlankString(asRecord(left)?.role)?.toLowerCase();
+  const rightRole = readNonBlankString(asRecord(right)?.role)?.toLowerCase();
+  if (leftRole && rightRole && leftRole !== rightRole) return false;
   const leftIdentity = readTranscriptIdentity(left);
   const rightIdentity = readTranscriptIdentity(right);
   if (leftIdentity && rightIdentity && leftIdentity.kind === rightIdentity.kind) {

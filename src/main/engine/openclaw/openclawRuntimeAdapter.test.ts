@@ -45,7 +45,6 @@ function createEmptyStore() {
     createdAt: 1,
     updatedAt: 1,
   };
-  let nextId = 1;
   let persistedGoalExecution: Record<string, unknown> | null = null;
 
   return {
@@ -53,32 +52,6 @@ function createEmptyStore() {
     store: {
       getSession: (sessionId: string) => (sessionId === session.id ? session : null),
       getAgent: () => null,
-      addMessage: (sessionId: string, message: Record<string, unknown>) => {
-        expect(sessionId).toBe(session.id);
-        const created = {
-          id: `msg-${nextId++}`,
-          timestamp: nextId,
-          metadata: {},
-          ...message,
-        };
-        session.messages.push(created);
-        return created;
-      },
-      updateMessage: (sessionId: string, messageId: string, updates: Record<string, unknown>) => {
-        expect(sessionId).toBe(session.id);
-        const index = session.messages.findIndex(m => m.id === messageId);
-        if (index !== -1) {
-          session.messages[index] = {
-            ...session.messages[index],
-            ...updates,
-            metadata: {
-              ...((session.messages[index].metadata as Record<string, unknown>) ?? {}),
-              ...((updates.metadata as Record<string, unknown>) ?? {}),
-            },
-          };
-        }
-        return index !== -1;
-      },
       updateSession: () => {},
       listSessions: () => [
         {
@@ -92,8 +65,6 @@ function createEmptyStore() {
           updatedAt: session.updatedAt,
         },
       ],
-      deleteMessage: () => true,
-      replaceConversationMessages: () => {},
       getGoalExecutionSnapshot: () => persistedGoalExecution,
       setGoalExecutionSnapshot: (snapshot: Record<string, unknown>) => {
         persistedGoalExecution = snapshot;
@@ -110,18 +81,7 @@ const createSessionTurn = (overrides: Partial<SessionTurn> = {}): SessionTurn =>
   sessionKey: 'agent:main:justdo:session-1',
   runId: 'run-1',
   turnToken: 1,
-  chatStream: '',
-  agentAssistantStreamSeen: false,
-  committedAssistantSegments: [],
-  toolStreamById: new Map(),
-  toolStreamOrder: [],
-  chatToolMessages: [],
-  chatStreamSegments: [],
-  thinkingContent: '',
-  thinkingMessageId: null,
   stopRequested: false,
-  assistantMessageId: null,
-  modelName: 'test-model',
   knownRunIds: new Set(['run-1']),
   ...overrides,
 });
@@ -330,7 +290,7 @@ test('binds a new session receipt to the Gateway acknowledged root run', async (
     runTurn: (
       sessionId: string,
       prompt: string,
-      options: { skipInitialUserMessage: boolean; clientTurnId: string },
+      options: { clientTurnId: string },
     ) => Promise<void>;
     resolveTurn: (sessionId: string) => void;
     cleanupSessionTurn: (sessionId: string) => void;
@@ -340,7 +300,6 @@ test('binds a new session receipt to the Gateway acknowledged root run', async (
   internals.syncAgentWorkspaceIfNeeded = vi.fn().mockResolvedValue(undefined);
 
   const running = internals.runTurn(session.id, 'hello', {
-    skipInitialUserMessage: true,
     clientTurnId: 'client-turn-1',
   });
   await vi.waitFor(() => {
@@ -349,6 +308,56 @@ test('binds a new session receipt to the Gateway acknowledged root run', async (
   internals.resolveTurn(session.id);
   await running;
   internals.cleanupSessionTurn(session.id);
+});
+
+test('cleans a pending turn without leaking a rejection when chat.send fails', async () => {
+  const { store, session } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.on('error', vi.fn());
+  const request = vi.fn((method: string) => {
+    if (method === 'chat.send') return Promise.reject(new Error('send failed'));
+    return Promise.resolve({});
+  });
+  const internals = adapter as unknown as {
+    activeTurns: Map<string, SessionTurn>;
+    pendingTurns: Map<string, unknown>;
+    gatewayClient: GatewayClientLike | null;
+    ensureGatewayClientReady: () => Promise<void>;
+    syncAgentWorkspaceIfNeeded: () => Promise<void>;
+    runTurn: (sessionId: string, prompt: string, options: Record<string, never>) => Promise<void>;
+  };
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  internals.syncAgentWorkspaceIfNeeded = vi.fn().mockResolvedValue(undefined);
+
+  await expect(internals.runTurn(session.id, 'hello', {})).rejects.toThrow('send failed');
+
+  expect(internals.pendingTurns.has(session.id)).toBe(false);
+  expect(internals.activeTurns.has(session.id)).toBe(false);
+});
+
+test('reports preparation failures before an active turn is created', async () => {
+  const { store, session } = createEmptyStore();
+  const updateSession = vi.fn((_sessionId: string, updates: Record<string, unknown>) => {
+    Object.assign(session, updates);
+  });
+  Object.assign(store, { updateSession });
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const error = vi.fn();
+  adapter.on('error', error);
+  (
+    adapter as unknown as {
+      sessionRpc: { waitForModelUpdate: () => Promise<void> };
+    }
+  ).sessionRpc = {
+    waitForModelUpdate: vi.fn().mockRejectedValue(new Error('model update failed')),
+  };
+
+  await expect(adapter.startSession(session.id, 'hello')).rejects.toThrow('model update failed');
+
+  expect(updateSession).toHaveBeenCalledWith(session.id, { status: 'error' });
+  expect(error).toHaveBeenCalledWith(session.id, 'model update failed');
+  expect(adapter.isSessionActive(session.id)).toBe(false);
 });
 
 test('stops an acknowledged turn with the Gateway root run before lifecycle events arrive', async () => {
@@ -373,16 +382,14 @@ test('stops an acknowledged turn with the Gateway root run before lifecycle even
     runTurn: (
       sessionId: string,
       prompt: string,
-      options: { skipInitialUserMessage: boolean },
+      options: Record<string, never>,
     ) => Promise<void>;
   };
   internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
   internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
   internals.syncAgentWorkspaceIfNeeded = vi.fn().mockResolvedValue(undefined);
 
-  const running = internals.runTurn(session.id, 'hello', {
-    skipInitialUserMessage: true,
-  });
+  const running = internals.runTurn(session.id, 'hello', {});
   await vi.waitFor(() => {
     expect(internals.activeTurns.get(session.id)?.runId).toBe('gateway-run-1');
   });
@@ -478,6 +485,29 @@ test('keeps a managed parent turn alive when watchdog subagent inspection fails'
 
   expect(startTurnTimeoutWatchdog).toHaveBeenCalledWith(turn.sessionId);
   expect(internals.activeTurns.get(turn.sessionId)).toBe(turn);
+});
+
+test('publishes completion when a non-managed turn reaches its local watchdog', async () => {
+  const { session, store } = createEmptyStore();
+  session.status = 'running';
+  store.updateSession = (_sessionId: string, updates: Record<string, unknown>) => {
+    Object.assign(session, updates);
+  };
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const complete = vi.fn();
+  adapter.on('complete', complete);
+  const turn = createSessionTurn({ sessionKey: 'agent:main:discord:channel-1' });
+  const internals = adapter as unknown as {
+    activeTurns: Map<string, SessionTurn>;
+    handleTurnTimeoutWatchdog: (sessionId: string, turn: SessionTurn) => Promise<void>;
+  };
+  internals.activeTurns.set(turn.sessionId, turn);
+
+  await internals.handleTurnTimeoutWatchdog(turn.sessionId, turn);
+
+  expect(adapter.isSessionActive(turn.sessionId)).toBe(false);
+  expect(session.status).toBe('idle');
+  expect(complete).toHaveBeenCalledWith(turn.sessionId, 'idle');
 });
 
 test('resolves the Gateway session ID used by title generation', async () => {
@@ -583,22 +613,15 @@ test('returns raw gateway history without projecting message fields', async () =
   });
 });
 
-test('resolves a persisted session by gateway session ID when its run key has no history', async () => {
+test('loads every gateway history page in oldest-first order', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
-  const request = vi.fn((method: string, params: Record<string, unknown>) => {
-    if (method === 'chat.history' && params.sessionKey === 'agent:main:cron:job-1:run:1') {
-      return Promise.resolve({ messages: [] });
+  const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+    expect(method).toBe('chat.history');
+    if (params?.offset === 2) {
+      return { messages: ['oldest'], hasMore: false };
     }
-    if (method === 'sessions.resolve') {
-      return Promise.resolve({ ok: true, key: 'agent:main:cron:job-1:run:canonical' });
-    }
-    if (method === 'chat.history') {
-      return Promise.resolve({
-        messages: [{ role: 'assistant', content: 'completed result' }],
-      });
-    }
-    return Promise.resolve({});
+    return { messages: ['newer-1', 'newer-2'], hasMore: true, nextOffset: 2 };
   });
   (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
     start: vi.fn(),
@@ -606,58 +629,28 @@ test('resolves a persisted session by gateway session ID when its run key has no
     request,
   };
 
-  const session = await adapter.fetchSessionByKey(
-    'agent:main:cron:job-1:run:1',
-    'gateway-session-1',
-  );
-
-  expect(request).toHaveBeenCalledWith('sessions.resolve', {
-    sessionId: 'gateway-session-1',
-    allowMissing: true,
-    includeUnknown: true,
+  await expect(adapter.fetchSessionHistoryByKey('agent:main:cron:job-1:run:1')).resolves.toEqual({
+    sessionKey: 'agent:main:cron:job-1:run:1',
+    messages: ['oldest', 'newer-1', 'newer-2'],
   });
-  expect(session?.messages).toEqual([
-    expect.objectContaining({ type: 'assistant', content: 'completed result' }),
-  ]);
-  expect(session?.permissionMode).toBe('full');
+  expect(request).toHaveBeenNthCalledWith(1, 'chat.history', {
+    sessionKey: 'agent:main:cron:job-1:run:1',
+    limit: 1000,
+  });
+  expect(request).toHaveBeenNthCalledWith(2, 'chat.history', {
+    sessionKey: 'agent:main:cron:job-1:run:1',
+    limit: 1000,
+    offset: 2,
+  });
 });
 
-test('falls back to raw persisted messages when display history is empty', async () => {
+test('rejects a non-advancing gateway history cursor instead of looping', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
-  const request = vi.fn((method: string) => {
-    if (method === 'chat.history') return Promise.resolve({ messages: [] });
-    if (method === 'sessions.get') {
-      return Promise.resolve({
-        messages: [
-          {
-            role: 'assistant',
-            model: 'hdp/MiniMax-M2.7',
-            content: [
-              { type: 'thinking', thinking: 'stored thinking' },
-              {
-                type: 'toolCall',
-                id: 'call-1',
-                name: 'read',
-                arguments: { path: 'result.txt' },
-              },
-            ],
-          },
-          {
-            role: 'toolResult',
-            toolCallId: 'call-1',
-            toolName: 'read',
-            content: 'stored result',
-          },
-          {
-            role: 'assistant',
-            model: 'hdp/MiniMax-M2.7',
-            content: [{ type: 'text', text: 'final answer' }],
-          },
-        ],
-      });
-    }
-    return Promise.resolve({});
+  const request = vi.fn().mockResolvedValue({
+    messages: ['newest'],
+    hasMore: true,
+    nextOffset: 0,
   });
   (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
     start: vi.fn(),
@@ -665,42 +658,10 @@ test('falls back to raw persisted messages when display history is empty', async
     request,
   };
 
-  const session = await adapter.fetchSessionByKey('agent:main:cron:job-1:run:1');
-
-  expect(request).toHaveBeenCalledWith('sessions.get', {
-    key: 'agent:main:cron:job-1:run:1',
-    limit: expect.any(Number),
-  });
-  expect(session?.messages).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        type: 'assistant',
-        thinkingContent: 'stored thinking',
-        modelName: 'hdp/MiniMax-M2.7',
-      }),
-      expect.objectContaining({
-        type: 'tool_use',
-        metadata: expect.objectContaining({
-          toolName: 'read',
-          toolInput: { path: 'result.txt' },
-          toolUseId: 'call-1',
-        }),
-      }),
-      expect.objectContaining({
-        type: 'tool_result',
-        metadata: expect.objectContaining({
-          toolName: 'read',
-          toolUseId: 'call-1',
-          toolResult: 'stored result',
-        }),
-      }),
-      expect.objectContaining({
-        type: 'assistant',
-        content: 'final answer',
-        modelName: 'hdp/MiniMax-M2.7',
-      }),
-    ]),
-  );
+  await expect(
+    adapter.fetchSessionHistoryByKey('agent:main:cron:job-1:run:1'),
+  ).resolves.toBeNull();
+  expect(request).toHaveBeenCalledTimes(1);
 });
 
 type StopTestAdapter = {
@@ -1442,16 +1403,14 @@ test('cancels a goal turn stopped while its Gateway session is being prepared', 
     runTurn: (
       sessionId: string,
       prompt: string,
-      options: { skipInitialUserMessage: boolean },
+      options: Record<string, never>,
     ) => Promise<void>;
   };
   internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
   internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
   internals.syncAgentWorkspaceIfNeeded = vi.fn().mockResolvedValue(undefined);
 
-  const running = internals.runTurn(session.id, '/goal Ship the release', {
-    skipInitialUserMessage: true,
-  });
+  const running = internals.runTurn(session.id, '/goal Ship the release', {});
   await vi.waitFor(() => expect(request).toHaveBeenCalledWith('sessions.create', {
     key: 'agent:main:justdo:session-1',
   }));
@@ -1490,7 +1449,7 @@ test('does not let a cancelled preparation clean up a newer turn', async () => {
     runTurn: (
       sessionId: string,
       prompt: string,
-      options: { skipInitialUserMessage: boolean },
+      options: Record<string, never>,
     ) => Promise<void>;
     resolveTurn: (sessionId: string) => void;
     cleanupSessionTurn: (sessionId: string) => void;
@@ -1499,17 +1458,13 @@ test('does not let a cancelled preparation clean up a newer turn', async () => {
   internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
   internals.syncAgentWorkspaceIfNeeded = vi.fn().mockResolvedValue(undefined);
 
-  const oldTurn = internals.runTurn(session.id, '/goal Ship the release', {
-    skipInitialUserMessage: true,
-  });
+  const oldTurn = internals.runTurn(session.id, '/goal Ship the release', {});
   await vi.waitFor(() => {
     expect(request.mock.calls.some(([method]) => method === 'sessions.create')).toBe(true);
   });
   await adapter.stopSession(session.id);
 
-  const newTurn = internals.runTurn(session.id, 'continue with a normal message', {
-    skipInitialUserMessage: true,
-  });
+  const newTurn = internals.runTurn(session.id, 'continue with a normal message', {});
   await vi.waitFor(() => {
     expect(internals.activeTurns.get(session.id)?.runId).toBe('new-gateway-run');
   });
@@ -1537,14 +1492,12 @@ test('locally cancels a goal turn stopped before Gateway readiness', async () =>
     runTurn: (
       sessionId: string,
       prompt: string,
-      options: { skipInitialUserMessage: boolean },
+      options: Record<string, never>,
     ) => Promise<void>;
   };
   internals.ensureGatewayClientReady = ensureGatewayClientReady;
 
-  const running = internals.runTurn(session.id, '/goal Ship the release', {
-    skipInitialUserMessage: true,
-  });
+  const running = internals.runTurn(session.id, '/goal Ship the release', {});
   await vi.waitFor(() => expect(ensureGatewayClientReady).toHaveBeenCalledOnce());
 
   await expect(adapter.stopSession(session.id)).resolves.toBeUndefined();
@@ -1580,16 +1533,14 @@ test('aborts an older active turn while a new turn is resolving its conflict', a
     runTurn: (
       sessionId: string,
       prompt: string,
-      options: { skipInitialUserMessage: boolean },
+      options: Record<string, never>,
     ) => Promise<void>;
   };
   internals.activeTurns.set(session.id, oldTurn);
   internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
   internals.resolveActiveTurnConflict = resolveActiveTurnConflict;
 
-  const running = internals.runTurn(session.id, '/goal Ship the release', {
-    skipInitialUserMessage: true,
-  });
+  const running = internals.runTurn(session.id, '/goal Ship the release', {});
   await vi.waitFor(() => expect(resolveActiveTurnConflict).toHaveBeenCalledWith(session.id));
 
   await adapter.stopSession(session.id);
@@ -1633,16 +1584,14 @@ test('re-aborts a goal turn stopped while chat.send is being accepted', async ()
     runTurn: (
       sessionId: string,
       prompt: string,
-      options: { skipInitialUserMessage: boolean },
+      options: Record<string, never>,
     ) => Promise<void>;
   };
   internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
   internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
   internals.syncAgentWorkspaceIfNeeded = vi.fn().mockResolvedValue(undefined);
 
-  const running = internals.runTurn(session.id, '/goal Ship the release', {
-    skipInitialUserMessage: true,
-  });
+  const running = internals.runTurn(session.id, '/goal Ship the release', {});
   await vi.waitFor(() => expect(request).toHaveBeenCalledWith(
     'chat.send',
     expect.objectContaining({ message: '/goal Ship the release' }),
@@ -1701,7 +1650,7 @@ test('keeps a turn active when its post-ack abort cannot be confirmed', async ()
     runTurn: (
       sessionId: string,
       prompt: string,
-      options: { skipInitialUserMessage: boolean },
+      options: Record<string, never>,
     ) => Promise<void>;
     resolveTurn: (sessionId: string) => void;
     cleanupSessionTurn: (sessionId: string) => void;
@@ -1710,9 +1659,7 @@ test('keeps a turn active when its post-ack abort cannot be confirmed', async ()
   internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
   internals.syncAgentWorkspaceIfNeeded = vi.fn().mockResolvedValue(undefined);
 
-  const running = internals.runTurn(session.id, '/goal Ship the release', {
-    skipInitialUserMessage: true,
-  });
+  const running = internals.runTurn(session.id, '/goal Ship the release', {});
   await vi.waitFor(() => {
     expect(request.mock.calls.some(([method]) => method === 'chat.send')).toBe(true);
   });
@@ -1762,7 +1709,7 @@ test('does not report success when chat.send rejects and a key abort cannot be c
     runTurn: (
       sessionId: string,
       prompt: string,
-      options: { skipInitialUserMessage: boolean },
+      options: Record<string, never>,
     ) => Promise<void>;
     resolveTurn: (sessionId: string) => void;
     cleanupSessionTurn: (sessionId: string) => void;
@@ -1771,9 +1718,7 @@ test('does not report success when chat.send rejects and a key abort cannot be c
   internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
   internals.syncAgentWorkspaceIfNeeded = vi.fn().mockResolvedValue(undefined);
 
-  const running = internals.runTurn(session.id, '/goal Ship the release', {
-    skipInitialUserMessage: true,
-  });
+  const running = internals.runTurn(session.id, '/goal Ship the release', {});
   await vi.waitFor(() => {
     expect(request.mock.calls.some(([method]) => method === 'chat.send')).toBe(true);
   });
@@ -2323,24 +2268,6 @@ test('getSessionRuntimeStatus reports unknown when the Gateway snapshot fails', 
     running: false,
   });
   expect(request).toHaveBeenCalledTimes(1);
-});
-
-test('getSessionRuntimeStatus treats a visible announce stream as locally running', async () => {
-  const { store } = createEmptyStore();
-  const adapter = new OpenClawRuntimeAdapter(store, {});
-  const visibleRunStreams = (
-    adapter as unknown as {
-      visibleRunStreams: Map<string, { sessionId: string }>;
-    }
-  ).visibleRunStreams;
-  visibleRunStreams.set('announce:v1:child-run', { sessionId: 'session-1' });
-
-  await expect(adapter.getSessionRuntimeStatus('session-1')).resolves.toEqual({
-    known: true,
-    mainRunning: true,
-    subagentRunning: false,
-    running: true,
-  });
 });
 
 test('resumes a blocked goal through a control run before user input', async () => {
@@ -3004,6 +2931,8 @@ test('does not recover a resumed blocked goal before user input is accepted', as
 test('clears pending goal-input markers on the first direct renderer user run', () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
+  const activity = vi.fn();
+  adapter.on('activity', activity);
   const internals = adapter as unknown as {
     goalsAwaitingResumeInput: Map<string, string>;
   };
@@ -3033,6 +2962,7 @@ test('clears pending goal-input markers on the first direct renderer user run', 
   });
 
   expect(internals.goalsAwaitingResumeInput.has('session-1')).toBe(false);
+  expect(activity).toHaveBeenCalledWith('session-1', 'user', expect.any(Number));
 });
 
 test.each(['paused', 'blocked', 'complete'])('does not recover a %s goal after reconnect', async status => {
@@ -3241,736 +3171,6 @@ test('clears manual context compaction when Gateway state is cleaned up', async 
   ).resolves.toMatchObject({ mainRunning: false, running: false });
 });
 
-test('announce run events follow webchat chat-final and tool-stream split', () => {
-  const session = {
-    id: 'session-1',
-    title: 'Announce Session',
-    status: 'running',
-    pinned: false,
-    cwd: '',
-    executionMode: 'local',
-    activeSkillIds: [],
-    messages: [] as Array<Record<string, unknown>>,
-    createdAt: 1,
-    updatedAt: 1,
-  };
-  let nextId = 1;
-  const store = {
-    getSession: (sessionId: string) => (sessionId === session.id ? session : null),
-    getAgent: () => null,
-    addMessage: (sessionId: string, message: Record<string, unknown>) => {
-      expect(sessionId).toBe(session.id);
-      const created = {
-        id: `msg-${nextId++}`,
-        timestamp: nextId,
-        metadata: {},
-        ...message,
-      };
-      session.messages.push(created);
-      return created;
-    },
-    updateMessage: (sessionId: string, messageId: string, updates: Record<string, unknown>) => {
-      expect(sessionId).toBe(session.id);
-      const index = session.messages.findIndex(m => m.id === messageId);
-      if (index !== -1) {
-        session.messages[index] = {
-          ...session.messages[index],
-          ...updates,
-          metadata: {
-            ...((session.messages[index].metadata as Record<string, unknown>) ?? {}),
-            ...((updates.metadata as Record<string, unknown>) ?? {}),
-          },
-        };
-      }
-      return index !== -1;
-    },
-    updateSession: (_sessionId: string, updates: Record<string, unknown>) => {
-      Object.assign(session, updates);
-    },
-    deleteMessage: () => true,
-    replaceConversationMessages: () => {},
-  };
-  const adapter = new OpenClawRuntimeAdapter(store, {});
-  const mainMessages: Array<Record<string, unknown>> = [];
-  adapter.on('message', (_sessionId, message) => mainMessages.push(message));
-
-  adapter.rememberSessionKey('session-1', 'agent:main:justdo:session-1');
-  adapter.rememberSessionKey('session-1', 'agent:main:justdo:session-1');
-  adapter.rememberSessionKey('session-1', 'agent:main:justdo:session-1');
-  adapter.ensureActiveTurn('session-1', 'agent:main:justdo:session-1', 'main-run');
-  adapter.handleGatewayEvent({
-    event: 'agent',
-    payload: {
-      runId: 'announce:v1:agent:main:subagent:child-run',
-      sessionKey: 'agent:main:justdo:session-1',
-      stream: 'thinking',
-      data: { text: 'thinking snapshot' },
-    },
-  });
-  adapter.handleGatewayEvent({
-    event: 'agent',
-    payload: {
-      runId: 'announce:v1:agent:main:subagent:child-run',
-      sessionKey: 'agent:main:justdo:session-1',
-      stream: 'assistant',
-      data: { text: 'I will inspect the file.' },
-    },
-  });
-  adapter.handleGatewayEvent({
-    event: 'chat',
-    payload: {
-      sessionKey: 'agent:main:justdo:session-1',
-      state: 'delta',
-      message: {
-        role: 'assistant',
-        content: 'I will inspect the file.',
-      },
-    },
-  });
-  adapter.handleGatewayEvent({
-    event: 'agent',
-    payload: {
-      runId: 'announce:v1:agent:main:subagent:child-run',
-      sessionKey: 'agent:main:justdo:session-1',
-      stream: 'assistant',
-      data: { text: 'I will inspect the file and then report back.' },
-    },
-  });
-  adapter.handleGatewayEvent({
-    event: 'agent',
-    payload: {
-      runId: 'announce:v1:agent:main:subagent:child-run',
-      sessionKey: 'agent:main:justdo:session-1',
-      stream: 'tool',
-      data: {
-        phase: 'start',
-        toolCallId: 'call-1',
-        name: 'Bash',
-        args: { command: 'pwd' },
-      },
-    },
-  });
-  adapter.handleGatewayEvent({
-    event: 'agent',
-    payload: {
-      runId: 'announce:v1:agent:main:subagent:child-run',
-      sessionKey: 'agent:main:justdo:session-1',
-      stream: 'tool',
-      data: {
-        phase: 'result',
-        toolCallId: 'call-1',
-        name: 'Bash',
-        result: 'ok',
-      },
-    },
-  });
-  adapter.handleGatewayEvent({
-    event: 'chat',
-    payload: {
-      sessionKey: 'agent:main:justdo:session-1',
-      state: 'final',
-      message: {
-        role: 'assistant',
-        content: 'I will inspect the file and then report back.',
-      },
-    },
-  });
-
-  expect(mainMessages.map(message => message.type)).toEqual([
-    'assistant',
-    'tool_use',
-    'tool_result',
-  ]);
-  expect(session.messages.map(message => message.type)).toEqual([
-    'assistant',
-    'tool_use',
-    'tool_result',
-  ]);
-  expect(session.messages[0].content).toBe('I will inspect the file and then report back.');
-  expect(session.messages[0].thinkingContent).toBe('thinking snapshot');
-  expect(session.messages[0].metadata).toEqual(
-    expect.objectContaining({
-      isThinking: false,
-      isFinal: true,
-    }),
-  );
-});
-
-test('does not persist partial NO_REPLY snapshots from a detached announce run', () => {
-  const { session, store } = createEmptyStore();
-  const adapter = new OpenClawRuntimeAdapter(store, {});
-  const emittedMessages: Array<Record<string, unknown>> = [];
-  adapter.on('message', (_sessionId, message) => emittedMessages.push(message));
-
-  const sessionKey = 'agent:main:justdo:session-1';
-  const runId = 'announce:v1:agent:main:subagent:child-run';
-  adapter.rememberSessionKey(session.id, sessionKey);
-
-  for (const text of ['N', 'NO', 'NO_', 'NO_RE', 'NO_REPLY']) {
-    adapter.handleGatewayEvent({
-      event: 'agent',
-      payload: {
-        runId,
-        sessionKey,
-        stream: 'assistant',
-        data: { text },
-      },
-    });
-  }
-  adapter.handleGatewayEvent({
-    event: 'agent',
-    payload: {
-      runId,
-      sessionKey,
-      stream: 'lifecycle',
-      data: { phase: 'end' },
-    },
-  });
-
-  expect(emittedMessages).toEqual([]);
-  expect(session.messages).toEqual([]);
-});
-
-test('keeps a legitimate final NO reply after suppressing its live prefix', () => {
-  const { session, store } = createEmptyStore();
-  const adapter = new OpenClawRuntimeAdapter(store, {});
-  const sessionKey = 'agent:main:justdo:session-1';
-  const runId = 'main-run';
-
-  adapter.rememberSessionKey(session.id, sessionKey);
-  adapter.ensureActiveTurn(session.id, sessionKey, runId);
-  adapter.handleGatewayEvent({
-    event: 'agent',
-    payload: {
-      runId,
-      sessionKey,
-      stream: 'assistant',
-      data: { text: 'NO' },
-    },
-  });
-  adapter.handleGatewayEvent({
-    event: 'chat',
-    payload: {
-      runId,
-      sessionKey,
-      state: 'final',
-      message: { role: 'assistant', content: 'NO' },
-    },
-  });
-
-  expect(session.messages).toEqual([
-    expect.objectContaining({
-      type: 'assistant',
-      content: 'NO',
-      metadata: expect.objectContaining({ isFinal: true }),
-    }),
-  ]);
-});
-
-test('announce item and command_output events render tool messages', () => {
-  const session = {
-    id: 'session-1',
-    title: 'Announce Session',
-    status: 'running',
-    pinned: false,
-    cwd: '',
-    executionMode: 'local',
-    activeSkillIds: [],
-    messages: [] as Array<Record<string, unknown>>,
-    createdAt: 1,
-    updatedAt: 1,
-  };
-  let nextId = 1;
-  const store = {
-    getSession: (sessionId: string) => (sessionId === session.id ? session : null),
-    getAgent: () => null,
-    addMessage: (sessionId: string, message: Record<string, unknown>) => {
-      expect(sessionId).toBe(session.id);
-      const created = {
-        id: `msg-${nextId++}`,
-        timestamp: nextId,
-        metadata: {},
-        ...message,
-      };
-      session.messages.push(created);
-      return created;
-    },
-    updateMessage: () => true,
-    updateSession: (_sessionId: string, updates: Record<string, unknown>) => {
-      Object.assign(session, updates);
-    },
-    deleteMessage: () => true,
-    replaceConversationMessages: () => {},
-  };
-  const adapter = new OpenClawRuntimeAdapter(store, {});
-  const mainMessages: Array<Record<string, unknown>> = [];
-  adapter.on('message', (_sessionId, message) => mainMessages.push(message));
-
-  adapter.rememberSessionKey('session-1', 'agent:main:justdo:session-1');
-  adapter.ensureActiveTurn('session-1', 'agent:main:justdo:session-1', 'main-run');
-  adapter.handleGatewayEvent({
-    event: 'agent',
-    payload: {
-      runId: 'announce:v1:agent:main:subagent:child-run',
-      sessionKey: 'agent:main:justdo:session-1',
-      stream: 'item',
-      data: {
-        itemId: 'command:call-1',
-        phase: 'start',
-        kind: 'command',
-        title: 'exec command',
-        status: 'running',
-        name: 'exec',
-        toolCallId: 'call-1',
-      },
-    },
-  });
-  adapter.handleGatewayEvent({
-    event: 'agent',
-    payload: {
-      runId: 'announce:v1:agent:main:subagent:child-run',
-      sessionKey: 'agent:main:justdo:session-1',
-      stream: 'command_output',
-      data: {
-        itemId: 'command:call-1',
-        phase: 'end',
-        title: 'exec command',
-        toolCallId: 'call-1',
-        name: 'exec',
-        output: 'ok',
-        status: 'completed',
-      },
-    },
-  });
-
-  expect(mainMessages.map(message => message.type)).toEqual(['tool_use', 'tool_result']);
-  expect(session.messages.map(message => message.type)).toEqual(['tool_use', 'tool_result']);
-  expect(session.messages[1].content).toBe('ok');
-});
-
-test('announce events after parent turn cleanup do not render assistant deltas', () => {
-  const session = {
-    id: 'session-1',
-    title: 'Announce Session',
-    status: 'idle',
-    pinned: false,
-    cwd: '',
-    executionMode: 'local',
-    activeSkillIds: [],
-    messages: [] as Array<Record<string, unknown>>,
-    createdAt: 1,
-    updatedAt: 1,
-  };
-  let nextId = 1;
-  const store = {
-    getSession: (sessionId: string) => (sessionId === session.id ? session : null),
-    getAgent: () => null,
-    addMessage: (sessionId: string, message: Record<string, unknown>) => {
-      expect(sessionId).toBe(session.id);
-      const created = {
-        id: `msg-${nextId++}`,
-        timestamp: nextId,
-        metadata: {},
-        ...message,
-      };
-      session.messages.push(created);
-      return created;
-    },
-    updateMessage: () => true,
-    updateSession: (_sessionId: string, updates: Record<string, unknown>) => {
-      Object.assign(session, updates);
-    },
-    deleteMessage: () => true,
-    replaceConversationMessages: () => {},
-  };
-  const adapter = new OpenClawRuntimeAdapter(store, {});
-  const mainMessages: Array<Record<string, unknown>> = [];
-  adapter.on('message', (_sessionId, message) => mainMessages.push(message));
-
-  adapter.rememberSessionKey('session-1', 'agent:main:justdo:session-1');
-  adapter.handleGatewayEvent({
-    event: 'agent',
-    payload: {
-      runId: 'announce:v1:agent:main:subagent:child-run',
-      sessionKey: 'agent:main:justdo:session-1',
-      stream: 'assistant',
-      data: { text: '已汇总两个子agent的祝福语并写入Excel： | 序号 |' },
-    },
-  });
-  adapter.handleGatewayEvent({
-    event: 'agent',
-    payload: {
-      runId: 'announce:v1:agent:main:subagent:child-run',
-      sessionKey: 'agent:main:justdo:session-1',
-      stream: 'assistant',
-      data: {
-        text: '已汇总两个子agent的祝福语并写入Excel： | 序号 | 祝福语 | |:---:|---|',
-      },
-    },
-  });
-  adapter.handleGatewayEvent({
-    event: 'agent',
-    payload: {
-      runId: 'announce:v1:agent:main:subagent:child-run',
-      sessionKey: 'agent:main:justdo:session-1',
-      stream: 'tool',
-      data: {
-        phase: 'start',
-        toolCallId: 'call-1',
-        name: 'exec',
-        args: { command: 'write xlsx' },
-      },
-    },
-  });
-  adapter.handleGatewayEvent({
-    event: 'agent',
-    payload: {
-      runId: 'announce:v1:agent:main:subagent:child-run',
-      sessionKey: 'agent:main:justdo:session-1',
-      stream: 'tool',
-      data: {
-        phase: 'result',
-        toolCallId: 'call-1',
-        name: 'exec',
-        result: 'ok',
-      },
-    },
-  });
-  adapter.handleGatewayEvent({
-    event: 'agent',
-    payload: {
-      runId: 'announce:v1:agent:main:subagent:child-run',
-      sessionKey: 'agent:main:justdo:session-1',
-      stream: 'lifecycle',
-      data: { phase: 'end' },
-    },
-  });
-  adapter.handleGatewayEvent({
-    event: 'chat',
-    payload: {
-      sessionKey: 'agent:main:justdo:session-1',
-      state: 'final',
-      message: {
-        role: 'assistant',
-        content:
-          '已汇总两个子agent的祝福语并写入Excel：\n\n| 序号 | 祝福语 |\n|:---:|---|\n| 1 | 愿你今天的每一份努力都化作明天的惊喜。 |\n| 2 | 愿你今天的每一分努力都有回响。 |\n\n文件已保存到：`blessings.xlsx`',
-      },
-    },
-  });
-
-  expect(mainMessages.map(message => message.type)).toEqual([
-    'assistant',
-    'tool_use',
-    'tool_result',
-    'assistant',
-  ]);
-  expect(session.messages.map(message => message.type)).toEqual([
-    'assistant',
-    'tool_use',
-    'tool_result',
-    'assistant',
-  ]);
-  expect(session.messages[3].content).toContain('文件已保存到');
-});
-
-test('detached announce final does not append composite assistant snapshot', () => {
-  const session = {
-    id: 'session-1',
-    title: 'Announce Session',
-    status: 'idle',
-    pinned: false,
-    cwd: '',
-    executionMode: 'local',
-    activeSkillIds: [],
-    messages: [] as Array<Record<string, unknown>>,
-    createdAt: 1,
-    updatedAt: 1,
-  };
-  let nextId = 1;
-  const store = {
-    getSession: (sessionId: string) => (sessionId === session.id ? session : null),
-    getAgent: () => null,
-    addMessage: (sessionId: string, message: Record<string, unknown>) => {
-      expect(sessionId).toBe(session.id);
-      const created = {
-        id: `msg-${nextId++}`,
-        timestamp: nextId,
-        metadata: {},
-        ...message,
-      };
-      session.messages.push(created);
-      return created;
-    },
-    updateMessage: (sessionId: string, messageId: string, updates: Record<string, unknown>) => {
-      expect(sessionId).toBe(session.id);
-      const index = session.messages.findIndex(m => m.id === messageId);
-      if (index !== -1) {
-        session.messages[index] = {
-          ...session.messages[index],
-          ...updates,
-          metadata: {
-            ...((session.messages[index].metadata as Record<string, unknown>) ?? {}),
-            ...((updates.metadata as Record<string, unknown>) ?? {}),
-          },
-        };
-      }
-      return index !== -1;
-    },
-    updateSession: (_sessionId: string, updates: Record<string, unknown>) => {
-      Object.assign(session, updates);
-    },
-    deleteMessage: () => true,
-    replaceConversationMessages: () => {},
-  };
-  const adapter = new OpenClawRuntimeAdapter(store, {});
-  const mainMessages: Array<Record<string, unknown>> = [];
-  adapter.on('message', (_sessionId, message) => mainMessages.push(message));
-
-  const sessionKey = 'agent:main:justdo:session-1';
-  const runId = 'announce:v1:agent:main:subagent:child-run';
-  const beforeTool = '两个祝福语都收到了！现在汇总写入 Excel。';
-  const afterTool = '✅ **完成！** 两个 subagent 的祝福语已汇总写入 Excel';
-
-  adapter.rememberSessionKey('session-1', sessionKey);
-  adapter.handleGatewayEvent({
-    event: 'agent',
-    payload: {
-      runId,
-      sessionKey,
-      stream: 'assistant',
-      data: { text: beforeTool },
-    },
-  });
-  adapter.handleGatewayEvent({
-    event: 'agent',
-    payload: {
-      runId,
-      sessionKey,
-      stream: 'tool',
-      data: {
-        phase: 'start',
-        toolCallId: 'call-1',
-        name: 'exec',
-        args: { command: 'write xlsx' },
-      },
-    },
-  });
-  adapter.handleGatewayEvent({
-    event: 'agent',
-    payload: {
-      runId,
-      sessionKey,
-      stream: 'tool',
-      data: {
-        phase: 'result',
-        toolCallId: 'call-1',
-        name: 'exec',
-        result: 'ok',
-      },
-    },
-  });
-  adapter.handleGatewayEvent({
-    event: 'agent',
-    payload: {
-      runId,
-      sessionKey,
-      stream: 'assistant',
-      data: { text: afterTool },
-    },
-  });
-  adapter.handleGatewayEvent({
-    event: 'agent',
-    payload: {
-      runId,
-      sessionKey,
-      stream: 'lifecycle',
-      data: { phase: 'end' },
-    },
-  });
-  adapter.handleGatewayEvent({
-    event: 'chat',
-    payload: {
-      runId,
-      sessionKey,
-      state: 'final',
-      message: {
-        role: 'assistant',
-        content: `${beforeTool}${afterTool}`,
-      },
-    },
-  });
-
-  expect(mainMessages.map(message => message.type)).toEqual([
-    'assistant',
-    'tool_use',
-    'tool_result',
-    'assistant',
-  ]);
-  expect(session.messages.map(message => message.type)).toEqual([
-    'assistant',
-    'tool_use',
-    'tool_result',
-    'assistant',
-  ]);
-  expect(session.messages[0].content).toBe(beforeTool);
-  expect(session.messages[3].content).toBe(afterTool);
-});
-
-test('agent assistant stream wins over duplicate chat deltas for active run', () => {
-  vi.useFakeTimers();
-  const { session, store } = createEmptyStore();
-  const adapter = new OpenClawRuntimeAdapter(store, {});
-  const mainMessages: Array<Record<string, unknown>> = [];
-  const updates: Array<{ messageId: string; content: string }> = [];
-  adapter.on('message', (_sessionId, message) => mainMessages.push(message));
-  adapter.on('messageUpdate', (_sessionId, messageId, content) => {
-    updates.push({ messageId, content });
-  });
-
-  const sessionKey = 'agent:main:justdo:session-1';
-  const runId = 'run-1';
-  const firstSnapshot = '完成！两条祝福语已汇总写入 Excel 文件：';
-  const finalSnapshot =
-    '完成！两条祝福语已汇总写入 Excel 文件：\n\n| 序号 | 祝福语 |\n|------|--------|';
-
-  adapter.rememberSessionKey('session-1', sessionKey);
-  adapter.ensureActiveTurn('session-1', sessionKey, runId);
-
-  adapter.handleGatewayEvent({
-    event: 'agent',
-    payload: {
-      runId,
-      sessionKey,
-      stream: 'assistant',
-      data: { text: firstSnapshot },
-    },
-  });
-  adapter.handleGatewayEvent({
-    event: 'chat',
-    payload: {
-      runId,
-      sessionKey,
-      state: 'delta',
-      message: { role: 'assistant', content: '完成！' },
-    },
-  });
-  adapter.handleGatewayEvent({
-    event: 'agent',
-    payload: {
-      runId,
-      sessionKey,
-      stream: 'assistant',
-      data: { text: finalSnapshot },
-    },
-  });
-  adapter.handleGatewayEvent({
-    event: 'chat',
-    payload: {
-      runId,
-      sessionKey,
-      state: 'final',
-      message: { role: 'assistant', content: '完成！' },
-    },
-  });
-
-  vi.runOnlyPendingTimers();
-  vi.useRealTimers();
-
-  expect(mainMessages.map(message => message.type)).toEqual(['assistant']);
-  expect(session.messages).toHaveLength(1);
-  expect(session.messages[0].content).toBe(finalSnapshot);
-  expect(updates.at(-1)?.content).toBe(finalSnapshot);
-});
-
-test('merges a fuller chat final without run id into the active assistant stream', () => {
-  const { session, store } = createEmptyStore();
-  const adapter = new OpenClawRuntimeAdapter(store, {});
-  const mainMessages: Array<Record<string, unknown>> = [];
-  adapter.on('message', (_sessionId, message) => mainMessages.push(message));
-
-  const sessionKey = 'agent:main:justdo:session-1';
-  const runId = 'run-1';
-  const streamedSnapshot =
-    '报告已整理完成！文件保存在 `report.md`，以下是核心要点速览：\n\n---\n\n报告摘要已经整理完毕。';
-  const finalSnapshot =
-    '报告已整理完成！文件保存在 `report.md`，以下是核心要点速览：\n---\n报告摘要已经整理完毕。\nMEDIA:report.md\n还有什么需要我深入展开的吗？';
-
-  adapter.rememberSessionKey('session-1', sessionKey);
-  adapter.ensureActiveTurn('session-1', sessionKey, runId);
-  adapter.handleGatewayEvent({
-    event: 'agent',
-    payload: {
-      runId,
-      sessionKey,
-      stream: 'assistant',
-      data: { text: streamedSnapshot },
-    },
-  });
-  adapter.handleGatewayEvent({
-    event: 'chat',
-    payload: {
-      sessionKey,
-      state: 'final',
-      message: { role: 'assistant', content: finalSnapshot },
-    },
-  });
-
-  expect(mainMessages).toHaveLength(1);
-  expect(session.messages).toHaveLength(1);
-  expect(session.messages[0].content).toBe(finalSnapshot);
-  expect(session.messages[0].metadata).toMatchObject({
-    isStreaming: false,
-    isFinal: true,
-  });
-});
-
-test('throttled assistant stream updates are persisted before renderer reloads', () => {
-  vi.useFakeTimers();
-  const { session, store } = createEmptyStore();
-  const adapter = new OpenClawRuntimeAdapter(store, {});
-  const updates: Array<{ messageId: string; content: string }> = [];
-  adapter.on('messageUpdate', (_sessionId, messageId, content) => {
-    updates.push({ messageId, content });
-  });
-
-  const sessionKey = 'agent:main:justdo:session-1';
-  const runId = 'run-1';
-  adapter.rememberSessionKey('session-1', sessionKey);
-  adapter.ensureActiveTurn('session-1', sessionKey, runId);
-
-  adapter.handleGatewayEvent({
-    event: 'agent',
-    payload: {
-      runId,
-      sessionKey,
-      stream: 'assistant',
-      data: { text: 'first chunk' },
-    },
-  });
-  const firstMessageId = session.messages[0].id as string;
-  (
-    adapter as unknown as {
-      lastMessageUpdateEmitTime: Map<string, number>;
-    }
-  ).lastMessageUpdateEmitTime.set(firstMessageId, Date.now());
-  adapter.handleGatewayEvent({
-    event: 'agent',
-    payload: {
-      runId,
-      sessionKey,
-      stream: 'assistant',
-      data: { text: 'first chunk plus more' },
-    },
-  });
-
-  expect(updates).toHaveLength(0);
-  expect(session.messages).toHaveLength(1);
-  expect(session.messages[0].content).toBe('first chunk plus more');
-
-  vi.runOnlyPendingTimers();
-  vi.useRealTimers();
-});
-
 test('chat delta without run id is ignored while a turn is active', () => {
   const session = {
     id: 'session-1',
@@ -3987,17 +3187,9 @@ test('chat delta without run id is ignored while a turn is active', () => {
   const store = {
     getSession: (sessionId: string) => (sessionId === session.id ? session : null),
     getAgent: () => null,
-    addMessage: (sessionId: string, message: Record<string, unknown>) => {
-      expect(sessionId).toBe(session.id);
-      session.messages.push(message);
-      return { id: `msg-${session.messages.length}`, timestamp: Date.now(), ...message };
-    },
-    updateMessage: () => true,
     updateSession: (_sessionId: string, updates: Record<string, unknown>) => {
       Object.assign(session, updates);
     },
-    deleteMessage: () => true,
-    replaceConversationMessages: () => {},
   };
   const adapter = new OpenClawRuntimeAdapter(store, {});
   adapter.rememberSessionKey('session-1', 'agent:main:justdo:session-1');
@@ -4088,6 +3280,111 @@ test('chat final cancels the lifecycle end fallback', () => {
     vi.runOnlyPendingTimers();
     vi.useRealTimers();
   }
+});
+
+test('does not reopen a terminal run when Gateway replays late events', () => {
+  const { session, store } = createEmptyStore();
+  session.status = 'running';
+  store.updateSession = (_sessionId: string, updates: Record<string, unknown>) => {
+    Object.assign(session, updates);
+  };
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const activity = vi.fn();
+  const complete = vi.fn();
+  const handleLifecycle = vi.spyOn(
+    (
+      adapter as unknown as {
+        goalContinuationCoordinator: { handleLifecycle: (event: unknown) => Promise<void> };
+      }
+    ).goalContinuationCoordinator,
+    'handleLifecycle',
+  );
+  adapter.on('activity', activity);
+  adapter.on('complete', complete);
+  const sessionKey = 'agent:main:justdo:session-1';
+  adapter.rememberSessionKey('session-1', sessionKey);
+  adapter.ensureActiveTurn('session-1', sessionKey, 'run-1');
+
+  adapter.handleGatewayEvent({
+    event: 'chat',
+    payload: {
+      runId: 'run-1',
+      sessionKey,
+      state: 'final',
+      message: { role: 'assistant', content: 'done' },
+    },
+  });
+  adapter.handleGatewayEvent({
+    event: 'chat',
+    payload: {
+      runId: 'run-1',
+      sessionKey,
+      state: 'delta',
+      message: { role: 'assistant', content: 'late' },
+    },
+  });
+  adapter.handleGatewayEvent({
+    event: 'agent',
+    payload: {
+      runId: 'run-1',
+      sessionKey,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+    },
+  });
+  adapter.handleGatewayEvent({
+    event: 'agent',
+    payload: {
+      runId: 'run-1',
+      sessionKey,
+      stream: 'lifecycle',
+      data: { phase: 'end' },
+    },
+  });
+
+  expect(adapter.isSessionActive('session-1')).toBe(false);
+  expect(activity).toHaveBeenCalledOnce();
+  expect(complete).toHaveBeenCalledOnce();
+  expect(handleLifecycle).toHaveBeenCalledWith(expect.objectContaining({ phase: 'end' }));
+  expect(session.status).toBe('idle');
+});
+
+test('does not reopen a terminal turn through its superseded provisional run id', () => {
+  const { session, store } = createEmptyStore();
+  session.status = 'running';
+  store.updateSession = (_sessionId: string, updates: Record<string, unknown>) => {
+    Object.assign(session, updates);
+  };
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const activity = vi.fn();
+  adapter.on('activity', activity);
+  const sessionKey = 'agent:main:justdo:session-1';
+  adapter.rememberSessionKey('session-1', sessionKey);
+  adapter.ensureActiveTurn('session-1', sessionKey, 'client-turn');
+  const turn = (
+    adapter as unknown as { activeTurns: Map<string, SessionTurn> }
+  ).activeTurns.get('session-1');
+  expect(turn).toBeDefined();
+  turn!.runId = 'gateway-run';
+  turn!.knownRunIds.add('gateway-run');
+
+  adapter.handleGatewayEvent({
+    event: 'chat',
+    payload: { runId: 'gateway-run', sessionKey, state: 'final' },
+  });
+  adapter.handleGatewayEvent({
+    event: 'agent',
+    payload: {
+      runId: 'client-turn',
+      sessionKey,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+    },
+  });
+
+  expect(adapter.isSessionActive('session-1')).toBe(false);
+  expect(activity).toHaveBeenCalledOnce();
+  expect(session.status).toBe('idle');
 });
 
 test('compaction pauses and then resumes the lifecycle end fallback', () => {
@@ -4267,65 +3564,6 @@ test('compaction timeout resumes the lifecycle end fallback when its end event i
   }
 });
 
-test('session.message reload is deferred until sessions.changed clears active run', () => {
-  const session = {
-    id: 'session-1',
-    title: 'Session',
-    status: 'running',
-    pinned: false,
-    cwd: '',
-    executionMode: 'local',
-    activeSkillIds: [],
-    messages: [] as Array<Record<string, unknown>>,
-    createdAt: 1,
-    updatedAt: 1,
-  };
-  const store = {
-    getSession: (sessionId: string) => (sessionId === session.id ? session : null),
-    getAgent: () => null,
-    addMessage: () => {
-      throw new Error('not expected');
-    },
-    updateMessage: () => true,
-    updateSession: (_sessionId: string, updates: Record<string, unknown>) => {
-      Object.assign(session, updates);
-    },
-    deleteMessage: () => true,
-    replaceConversationMessages: () => {},
-  };
-  const adapter = new OpenClawRuntimeAdapter(store, {});
-  const complete = vi.fn();
-  adapter.on('complete', complete);
-  const reconcileWithHistory = vi.fn().mockResolvedValue(undefined);
-  (
-    adapter as unknown as {
-      historyReconciler: { reconcileWithHistory: typeof reconcileWithHistory };
-    }
-  ).historyReconciler = { reconcileWithHistory };
-  adapter.rememberSessionKey('session-1', 'agent:main:justdo:session-1');
-  adapter.ensureActiveTurn('session-1', 'agent:main:justdo:session-1', 'main-run');
-
-  adapter.handleGatewayEvent({
-    event: 'session.message',
-    payload: { sessionKey: 'agent:main:justdo:session-1' },
-  });
-  expect(reconcileWithHistory).not.toHaveBeenCalled();
-
-  adapter.handleGatewayEvent({
-    event: 'sessions.changed',
-    payload: {
-      sessionKey: 'agent:main:justdo:session-1',
-      key: 'agent:main:justdo:session-1',
-      status: 'idle',
-      hasActiveRun: false,
-    },
-  });
-
-  expect(reconcileWithHistory).toHaveBeenCalledWith('session-1', 'agent:main:justdo:session-1');
-  expect(session.status).toBe('idle');
-  expect(complete).toHaveBeenCalledWith('session-1', 'idle');
-});
-
 test.each(['failed', 'timeout', 'timed_out', 'killed', 'aborted', 'cancelled'])(
   'maps abnormal terminal session status %s to error',
   status => {
@@ -4371,15 +3609,9 @@ test('patchSessionModel applies immediately to subsequent calls while session is
   const store = {
     getSession: (sessionId: string) => (sessionId === session.id ? session : null),
     getAgent: () => null,
-    addMessage: () => {
-      throw new Error('not expected');
-    },
-    updateMessage: () => true,
     updateSession: (_sessionId: string, updates: Record<string, unknown>) => {
       Object.assign(session, updates);
     },
-    deleteMessage: () => true,
-    replaceConversationMessages: () => {},
   };
   const adapter = new OpenClawRuntimeAdapter(store, {});
   const patchSessionModel = vi.fn().mockResolvedValue({

@@ -105,7 +105,7 @@ flowchart LR
 | Main     | Node/Electron、shared、Main 领域                 | Renderer 组件/DOM                           |
 | Shared   | TypeScript 纯逻辑                                | Node/Electron/DOM/process state             |
 
-Electron/OS/SQLite 与产品命令统一走 `Renderer -> window.electron -> ipcRenderer -> ipcMain -> service`。聊天数据面是受控例外：`JustDoChatWrapper` 通过 preload 取得本地 port/token，集中式 `GatewayClient` 直连 loopback Gateway，处理订阅、history fallback 和 chat abort。Gateway token 不得进入普通 Renderer 业务、Redux、日志或持久化。
+Electron/OS/SQLite 与产品命令统一走 `Renderer -> window.electron -> ipcRenderer -> ipcMain -> service`。聊天数据面是受控例外：`JustDoChatWrapper` 通过 preload 取得本地 port/token，集中式 `GatewayClient` 直连 loopback Gateway，处理订阅、Gateway history 和 chat abort。Gateway token 不得进入普通 Renderer 业务、Redux、日志或持久化。
 
 ## 5. Main 的组合关系
 

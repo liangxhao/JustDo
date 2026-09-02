@@ -1,4 +1,3 @@
-const IPC_MESSAGE_CONTENT_MAX_CHARS = 120_000;
 const IPC_STRING_MAX_CHARS = 4_000;
 const IPC_MAX_DEPTH = 8;
 const IPC_MAX_KEYS = 80;
@@ -56,44 +55,6 @@ export const sanitizeIpcPayload = (value: unknown, depth = 0, seen?: WeakSet<obj
     return result;
   }
   return String(value);
-};
-
-export const sanitizeCoworkMessageForIpc = (message: unknown): unknown => {
-  if (!message || typeof message !== 'object') {
-    return message;
-  }
-  const messageRecord = message as {
-    metadata?: unknown;
-    content?: unknown;
-    thinkingContent?: unknown;
-  };
-
-  let sanitizedMetadata: unknown;
-  if (messageRecord.metadata && typeof messageRecord.metadata === 'object') {
-    const { attachments, ...rest } = messageRecord.metadata as Record<string, unknown>;
-    const sanitizedRest = sanitizeIpcPayload(rest) as Record<string, unknown> | undefined;
-    sanitizedMetadata = {
-      ...(sanitizedRest && typeof sanitizedRest === 'object' ? sanitizedRest : {}),
-      ...(Array.isArray(attachments) && attachments.length > 0 ? { attachments } : {}),
-    };
-  } else {
-    sanitizedMetadata = undefined;
-  }
-
-  const sanitizedThinkingContent =
-    typeof messageRecord.thinkingContent === 'string'
-      ? truncateIpcString(messageRecord.thinkingContent, IPC_MESSAGE_CONTENT_MAX_CHARS)
-      : undefined;
-
-  return {
-    ...message,
-    content:
-      typeof messageRecord.content === 'string'
-        ? truncateIpcString(messageRecord.content, IPC_MESSAGE_CONTENT_MAX_CHARS)
-        : '',
-    metadata: sanitizedMetadata,
-    ...(sanitizedThinkingContent ? { thinkingContent: sanitizedThinkingContent } : {}),
-  };
 };
 
 export const sanitizeInteractionRequestForIpc = (request: unknown): unknown => {

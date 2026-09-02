@@ -32,7 +32,7 @@ flowchart LR
 | 持久化   | session transcript、run facts       | Cowork 元数据、UI cache、read receipts |
 | 生命周期 | Gateway 协议                        | spawn/restart/stop、托盘、打包资源     |
 
-SQLite 不是执行历史真源。它可以缓存消息、保存 Cowork 会话标题或 scheduled result receipt，但不能用一条本地记录推断 Gateway run 一定发生或已经完成。
+SQLite 不是执行历史真源，也不再缓存聊天正文。它只保存 Cowork 会话索引、标题等产品元数据和 scheduled result receipt，不能用一条本地记录推断 Gateway run 一定发生或已经完成。
 
 ## 3. 进程边界
 
@@ -42,12 +42,12 @@ Renderer 是浏览器环境；Electron/OS/SQLite 能力只能通过 `window.elec
 
 ## 4. Chat 的薄前端实现
 
-聊天使用 `src/renderer/libs/openclaw-chat/` 的 Lit `<justdo-chat>`。Main 的 `openclawRuntimeAdapter.ts` 归一化产品运行事件并更新 Cowork 投影；Renderer 的 `GatewayClient`/`ChatController` 直接处理 loopback 聊天订阅与 history，reducer 构建可重建 transcript。两条消费路径必须保持 session/run/sequence 语义一致。关键不变量：
+聊天使用 `src/renderer/libs/openclaw-chat/` 的 Lit `<justdo-chat>`。Main 的 `openclawRuntimeAdapter.ts` 只归一化产品生命周期、Goal 和审批事件；Renderer 的 `GatewayClient`/`ChatController` 直接处理 loopback 聊天订阅与 history，reducer 构建可重建 transcript。两条消费路径必须保持 session/run identity 语义一致，但 Main 不复制消息内容。关键不变量：
 
 - session/run/lifecycle/sequence 决定事件归属；
 - Gateway 历史可在本地 cache 过期时重建显示；
 - thinking、tool、content 和 terminal 是显示投影，不是新的执行状态机；
-- SQLite fallback 明确标记为降级来源；
+- SQLite 不参与聊天正文或流式状态恢复；
 - Gateway restart 不要求重启 Renderer。
 
 如果 Renderer 开始解析工具输出文本来判断 run 状态，或 Main 根据最后一条 SQLite 消息决定 Gateway 是否完成，就说明边界正在回退。

@@ -36,12 +36,14 @@ describe('projectGatewayHistoryForDisplay', () => {
       { role: 'assistant', content: 'Visible answer\nNO_REPLY' },
       { role: 'assistant', content: 'NO_RE' },
       { role: 'assistant', content: 'HEARTBEAT_OK' },
+      { role: 'assistant', content: 'Use HEARTBEAT_OK as the acknowledgement token.' },
       { role: 'assistant', content: 'temporary', __openclawStreamFallback: true },
       { role: 'assistant', content: 'NO' },
     ]);
 
     expect(projected).toEqual([
       { role: 'assistant', content: 'Visible answer' },
+      { role: 'assistant', content: 'Use HEARTBEAT_OK as the acknowledgement token.' },
       { role: 'assistant', content: 'NO' },
     ]);
   });

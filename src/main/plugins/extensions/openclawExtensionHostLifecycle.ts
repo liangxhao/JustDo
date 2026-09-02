@@ -7,7 +7,7 @@ import {
   OpenClawToolName,
 } from '../../../shared/openclaw/extensions';
 import type { AskUserExtensionConfig } from '../../openclaw/config/openclawConfigSync';
-import { parseManagedSessionKey } from '../../openclaw/sessions/openclawChannelSessionSync';
+import { parseManagedSessionKey } from '../../openclaw/sessions/openclawSessionKeys';
 import { OpenClawExtensionHostController } from './openclawExtensionHostController';
 
 type OpenClawExtensionHostLifecycleDeps = {

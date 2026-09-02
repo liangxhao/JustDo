@@ -19,12 +19,8 @@ import { resolveAgentModelSelection } from '@/features/cowork/components/agentMo
 import AttachmentCard from '@/features/cowork/components/AttachmentCard';
 import ContextUsageIndicator from '@/features/cowork/components/ContextUsageIndicator';
 import {
-  type ContextUsageRunState,
-  type ContextUsageSnapshot,
-  mergeContextUsageSnapshot,
+  contextUsageMatchesSession,
   resolveContextUsageDisplay,
-  resolveContextUsageRunState,
-  startContextUsageRefresh,
 } from '@/features/cowork/components/contextUsageRefresh';
 import {
   canStopCoworkRun,
@@ -82,9 +78,9 @@ import { isSameModelIdentity } from '@/features/models/modelSlice';
 import {
   matchesOpenClawModelRef,
   resolveOpenClawModelRef,
-  toOpenClawModelRef,
 } from '@/features/models/openclawModelRef';
 import { ActiveSkillBadge } from '@/features/plugins/components/skills';
+import type { ChatContextUsageSnapshot } from '@/libs/openclaw-chat/gateway/chat-controller';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/common/Modal';
@@ -199,8 +195,8 @@ interface CoworkPromptInputProps {
   modelAgentId?: string;
   /** Last Gateway-confirmed model for this session. */
   sessionModelRef?: string;
-  /** Whether the session has completed at least one Gateway-backed turn. */
-  hasAssistantMessage?: boolean;
+  /** Context-window usage from chat.history/sessions.changed for this session. */
+  contextUsage?: ChatContextUsageSnapshot | null;
   /** Objective inferred from the optimistic first message while the real session is being created. */
   initialGoalObjective?: string | null;
   /** Live execution phase projected from the Gateway chat stream. */
@@ -257,7 +253,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       sessionId,
       modelAgentId,
       sessionModelRef,
-      hasAssistantMessage = false,
+      contextUsage = null,
       initialGoalObjective = null,
       goalRunProgress = null,
       remoteManaged = false,
@@ -314,22 +310,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const modelSelectionContextRef = useRef(0);
     const renderedSessionIdRef = useRef(sessionId);
     renderedSessionIdRef.current = sessionId;
-    const renderedModelSelectionContextKeyRef = useRef(modelSelectionContextKey);
-    renderedModelSelectionContextKeyRef.current = modelSelectionContextKey;
     const selectedModel = hasManualModelSelection ? manualModelSelection : baseSelectedModel;
     const effectiveSelectedModel = selectedModel
       ? (availableModels.find(model => isSameModelIdentity(model, selectedModel)) ?? selectedModel)
       : null;
-    const contextUsageSelectedModelRef = effectiveSelectedModel
-      ? (toOpenClawModelRef(effectiveSelectedModel) ?? undefined)
-      : undefined;
-    const matchesContextUsageModel = useCallback(
-      (modelRef: string | undefined) =>
-        !modelRef ||
-        !effectiveSelectedModel ||
-        matchesOpenClawModelRef(modelRef, effectiveSelectedModel),
-      [effectiveSelectedModel],
-    );
     const hasNoAvailableModels = !remoteManaged && availableModels.length === 0;
     const modelSupportsImage = !!effectiveSelectedModel?.supportsImage;
     const [value, setValue] = useState(draftPrompt);
@@ -345,9 +329,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const [slashMenuCommand, setSlashMenuCommand] = useState<SlashCommandDef | null>(null);
     const [slashMenuArgItems, setSlashMenuArgItems] = useState<string[]>([]);
     const [slashMenuExpanded, setSlashMenuExpanded] = useState(false);
-    const [contextUsage, setContextUsage] = useState<ContextUsageSnapshot | null>(null);
-    const contextUsageRef = useRef<ContextUsageSnapshot | null>(null);
-    const [contextUsageRefreshVersion, setContextUsageRefreshVersion] = useState(0);
     const [sessionGoal, setSessionGoal] = useState<SessionGoal | null>(null);
     const [goalExecution, setGoalExecution] = useState<GoalExecutionSnapshot | null>(null);
     const sessionGoalRef = useRef<SessionGoal | null>(null);
@@ -378,11 +359,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const goalClearPendingRef = useRef(false);
     const goalClearTargetIdRef = useRef<string | null>(null);
     const latestValueRef = useRef(value);
-    const contextUsageRunRef = useRef<ContextUsageRunState>({
-      sessionId,
-      active: isRunActive,
-      pendingFinalization: false,
-    });
     const updateCompletionFeedback = useCallback((next: GoalCompletionFeedbackState | null) => {
       completionFeedbackRef.current = next;
       setCompletionFeedback(next);
@@ -423,8 +399,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       }
       cancelGoalClear();
       modelSelectionContextRef.current += 1;
-      contextUsageRef.current = null;
-      setContextUsage(null);
       setSessionGoal(null);
       sessionGoalRef.current = null;
       setGoalExecution(null);
@@ -1174,9 +1148,21 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     }, [attachments, dispatch, draftKey, modelSupportsImage]);
 
     const contextUsageDisplay = useMemo(() => {
-      if (!contextUsage) return null;
+      if (!contextUsage || !sessionId) return null;
+      if (
+        !contextUsageMatchesSession(contextUsage.sessionKey, sessionId, effectiveAgentId)
+      ) {
+        return null;
+      }
+      if (
+        contextUsage.modelRef &&
+        effectiveSelectedModel &&
+        !matchesOpenClawModelRef(contextUsage.modelRef, effectiveSelectedModel)
+      ) {
+        return null;
+      }
       const contextTokens =
-        contextUsage.contextTokens || effectiveSelectedModel?.contextLength || 200_000;
+        contextUsage.contextTokens || effectiveSelectedModel?.contextLength || 0;
       if (contextTokens <= 0) return null;
       const { usedTokens, percentage, overflowed } = resolveContextUsageDisplay(
         contextUsage.totalTokens,
@@ -1188,7 +1174,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         percentage,
         text: `${estimatePrefix}${formatContextLength(usedTokens)}${overflowSuffix} / ${formatContextLength(contextTokens)} · ${estimatePrefix}${percentage}%`,
       };
-    }, [contextUsage, effectiveSelectedModel?.contextLength]);
+    }, [contextUsage, effectiveAgentId, effectiveSelectedModel, sessionId]);
     const contextUsageStatus = sessionId && contextUsageDisplay ? contextUsageDisplay : null;
     const contextUsageBadge = contextUsageStatus ? (
       <ContextUsageIndicator
@@ -1761,73 +1747,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       };
     }, [applyAcceptedGoalClear, cancelGoalClear, sessionId, updateCompletionFeedback]);
 
-    // During a run, Gateway can expose a live prompt estimate before the final usage lands.
-    // Keep the last valid value visible and refresh it without overlapping requests.
-    useEffect(() => {
-      const runState = resolveContextUsageRunState(
-        contextUsageRunRef.current,
-        sessionId,
-        isRunActive,
-      );
-      contextUsageRunRef.current = runState;
-      if (
-        !sessionId ||
-        sessionId.startsWith('temp-') ||
-        (!hasAssistantMessage && !isRunActive && !runState.pendingFinalization)
-      ) {
-        return;
-      }
-      return startContextUsageRefresh({
-        isRunActive,
-        retryAfterSuccess: runState.pendingFinalization,
-        fetchUsage: () => window.electron.cowork.getContextUsage(sessionId),
-        onUsage: result => {
-          if (!matchesContextUsageModel(result.modelRef)) return false;
-          const previous = contextUsageRef.current;
-          const next: ContextUsageSnapshot = {
-            totalTokens: result.totalTokens,
-            contextTokens: result.contextTokens ?? effectiveSelectedModel?.contextLength ?? 0,
-            totalTokensFresh: result.totalTokensFresh ?? true,
-            usageSource: result.usageSource,
-            usageUpdatedAt: result.usageUpdatedAt,
-            compactionCount: result.compactionCount ?? previous?.compactionCount ?? 0,
-            generationKey: [
-              result.gatewaySessionId ?? sessionId,
-              result.modelRef ?? contextUsageSelectedModelRef ?? effectiveSelectedModel?.id ?? '',
-            ].join(':'),
-          };
-          const merged = mergeContextUsageSnapshot(previous, next);
-          if (merged !== next) return false;
-          contextUsageRef.current = merged;
-          setContextUsage(merged);
-          if (
-            runState.pendingFinalization &&
-            result.usageSource === 'reported' &&
-            result.hasActiveRun === false
-          ) {
-            contextUsageRunRef.current.pendingFinalization = false;
-          }
-          return true;
-        },
-        schedule: (callback, delayMs) => window.setTimeout(callback, delayMs),
-        cancelSchedule: handle => window.clearTimeout(handle),
-        onIdleComplete: () => {
-          if (contextUsageRunRef.current === runState) {
-            contextUsageRunRef.current.pendingFinalization = false;
-          }
-        },
-      });
-    }, [
-      sessionId,
-      isRunActive,
-      hasAssistantMessage,
-      effectiveSelectedModel?.contextLength,
-      effectiveSelectedModel?.id,
-      contextUsageSelectedModelRef,
-      matchesContextUsageModel,
-      contextUsageRefreshVersion,
-    ]);
-
     const runGoalAction = useCallback(
       (action: () => void | Promise<void>) =>
         runGoalActionSingleFlight(goalActionPendingRef, setGoalActionPending, action),
@@ -2297,8 +2216,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                         onChange={async nextModel => {
                           if (!nextModel) return;
                           const selectionContextKey = modelSelectionContextKey;
-                          contextUsageRef.current = null;
-                          setContextUsage(null);
                           const { taskId, completion } = modelSelectionTaskQueue.enqueue(
                             async () => {
                               try {
@@ -2393,12 +2310,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                                 taskId,
                               }),
                             );
-                            if (
-                              sessionId &&
-                              renderedModelSelectionContextKeyRef.current === selectionContextKey
-                            ) {
-                              setContextUsageRefreshVersion(version => version + 1);
-                            }
                           } catch (error) {
                             const isLatestSelection =
                               store.getState().cowork.pendingModelSelectionTaskIds[
@@ -2411,12 +2322,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                               }),
                             );
                             if (!isLatestSelection) return;
-                            if (
-                              sessionId &&
-                              renderedModelSelectionContextKeyRef.current === selectionContextKey
-                            ) {
-                              setContextUsageRefreshVersion(version => version + 1);
-                            }
                             const errorMessage =
                               error instanceof Error ? error.message : String(error);
                             const userMessage = i18nService

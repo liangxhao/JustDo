@@ -48,7 +48,7 @@ JustDo可以缓存/映射，但冲突时以可验证 Gateway结果为准。
 
 ### 5.1 Cowork turn
 
-Renderer提交 -> Main验证cwd/permission/config -> SQLite建session/run receipt -> Gateway `chat.send` -> adapter绑定root run并更新产品投影；同时Renderer集中式chat client订阅loopback Gateway事件并查询history -> reducer收敛 -> SQLite保存产品终态。两条消费路径共享session/run identity，但不能各自发起重复turn。
+首轮由 Renderer 提交 -> Main 验证 cwd/permission/config -> SQLite 建 session/run receipt -> Gateway `chat.send` -> adapter 绑定 root run 并更新产品终态；Renderer 集中式 chat client 订阅 loopback Gateway 事件并查询 history -> reducer 收敛。后续回合由 chat client 直接提交 Gateway。两条消费路径共享 session/run identity，但 Main 不复制 transcript，也不能各自发起重复 turn。
 
 ### 5.2 Permission change
 
@@ -171,7 +171,7 @@ flowchart LR
 
 - SQLite session id 是 JustDo 导航/元数据身份；Gateway session id 是 runtime 身份，两者需显式映射。
 - Gateway history 是 transcript 权威；Renderer timeline 是 history + live + optimistic 的投影。
-- SQLite `cowork_messages` 的存在不授权新代码把它升级为完整 transcript source。
+- 不得重新引入 SQLite `cowork_messages` 或其他持久 transcript 副本；消息按需来自 Gateway。
 - 删除产品 session 时，必须分别考虑 Gateway session、SQLite metadata、run receipts、preview grants 和当前订阅清理。
 
 ### 15.2 Goal 与 subagent
@@ -266,7 +266,7 @@ Config sync 的核心不是“把 JustDo 对象 stringify 到 `openclaw.json`”
 | Config ownership        | `openclawConfigSyncService.test.ts`、`openclawConfigSync.logout.test.ts`     |
 | Goal continuation       | `goalContinuationCoordinator.test.ts`                                        |
 | Permission admission    | `sessionPermissionModeCoordinator.test.ts`、approval tests                   |
-| History ownership       | Main/Renderer `historyReconciler.test.ts`                                    |
+| History ownership       | Renderer `chat-controller.test.ts`、`history-reconciler.test.ts`             |
 | Cron receipt projection | `scheduledTaskResultSyncService.test.ts`、`scheduledTaskResultStore.test.ts` |
 | Plugin adapter          | Marketplace、skills、MCP、extension 各自 service tests                       |
 | Runtime lifecycle       | engine manager/launcher/reload monitor tests                                 |

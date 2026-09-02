@@ -84,30 +84,8 @@ interface CoworkSession {
   permissionMode: PermissionMode;
   activeSkillIds: string[];
   agentId: string;
-  messages: CoworkMessage[];
   createdAt: number;
   updatedAt: number;
-}
-
-interface CoworkMessageMetadata {
-  toolName?: string;
-  toolInput?: Record<string, unknown>;
-  toolResult?: string | Record<string, unknown>;
-  toolUseId?: string | null;
-  error?: string;
-  isError?: boolean;
-  isStreaming?: boolean;
-  isFinal?: boolean;
-  skillIds?: string[];
-  [key: string]: unknown;
-}
-
-interface TokenUsage {
-  input?: number;
-  output?: number;
-  cacheRead?: number;
-  cacheWrite?: number;
-  total?: number;
 }
 
 interface DailyTokenUsage {
@@ -117,17 +95,6 @@ interface DailyTokenUsage {
   cacheRead: number;
   cacheWrite: number;
   totalTokens: number;
-}
-
-interface CoworkMessage {
-  id: string;
-  type: 'user' | 'assistant' | 'tool_use' | 'tool_result' | 'system' | 'subagent_completion';
-  content: string;
-  timestamp: number;
-  metadata?: CoworkMessageMetadata;
-  thinkingContent?: string;
-  modelName?: string;
-  usage?: TokenUsage;
 }
 
 interface CoworkSessionSummary {
@@ -672,18 +639,6 @@ interface IElectronAPI {
       engineStatus?: OpenClawEngineStatus;
       timing?: SessionRunTiming;
     }>;
-    continueSession: (options: {
-      sessionId: string;
-      prompt: string;
-      activeSkillIds?: string[];
-      attachments?: CoworkAttachmentPayload[];
-    }) => Promise<{
-      success: boolean;
-      session?: CoworkSession;
-      error?: string;
-      code?: string;
-      engineStatus?: OpenClawEngineStatus;
-    }>;
     stopSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
     deleteSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
     deleteSessions: (sessionIds: string[]) => Promise<{ success: boolean; error?: string }>;
@@ -801,27 +756,6 @@ interface IElectronAPI {
       objective?: string;
       error?: string;
     }>;
-    getContextUsage: (sessionId: string) => Promise<{
-      success: boolean;
-      totalTokens?: number;
-      contextTokens?: number;
-      totalTokensFresh?: boolean;
-      usageSource?: 'estimate' | 'reported';
-      usageUpdatedAt?: number;
-      hasActiveRun?: boolean;
-      compactionCount?: number;
-      gatewaySessionId?: string;
-      modelRef?: string;
-      error?: string;
-    }>;
-    deleteMessage: (
-      sessionId: string,
-      messageId: string,
-    ) => Promise<{ success: boolean; error?: string }>;
-    deleteMessagesFrom: (
-      sessionId: string,
-      messageId: string,
-    ) => Promise<{ success: boolean; error?: string }>;
     respondToInteraction: (options: {
       requestId: string;
       result: CoworkInteractionResult;
@@ -849,31 +783,12 @@ interface IElectronAPI {
       modelRef?: string;
       agentId?: string;
     }) => Promise<{ success: boolean; error?: string }>;
-    onStreamMessage: (
-      callback: (data: { sessionId: string; message: CoworkMessage }) => void,
-    ) => () => void;
-    onStreamMessageUpdate: (
-      callback: (data: { sessionId: string; messageId: string; content: string }) => void,
-    ) => () => void;
-    onStreamThinkingUpdate: (
-      callback: (data: { sessionId: string; messageId: string; thinkingDelta: string }) => void,
-    ) => () => void;
-    onStreamMessageMetadataUpdate: (
+    onSessionActivity: (
       callback: (data: {
         sessionId: string;
-        messageId: string;
-        metadata: Record<string, unknown>;
-        usage?: {
-          input?: number;
-          output?: number;
-          cacheRead?: number;
-          cacheWrite?: number;
-          total?: number;
-        };
+        kind: 'user' | 'other';
+        timestamp: number;
       }) => void,
-    ) => () => void;
-    onStreamMessageDelete: (
-      callback: (data: { sessionId: string; messageId: string }) => void,
     ) => () => void;
     onStreamInteraction: (
       callback: (data: { sessionId: string; request: CoworkInteractionRequest }) => void,
@@ -911,11 +826,6 @@ interface IElectronAPI {
     }>;
     getSubTaskDetails: (sessionKey: string) => Promise<CoworkSubagentDetailsResult>;
     listSubTaskDescendants: (sessionId: string) => Promise<CoworkSubagentDescendantsResult>;
-    getSubTaskSession: (sessionKey: string) => Promise<{
-      success: boolean;
-      session?: CoworkSession | null;
-      error?: string;
-    }>;
   };
   sessionGroup: {
     list: () => Promise<{ success: boolean; groups?: SessionGroup[]; error?: string }>;

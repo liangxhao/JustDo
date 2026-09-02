@@ -8,17 +8,13 @@ import {
 import { isGatewayToolFailureNotice } from '@shared/cowork/toolFailureNotice';
 import type { PermissionMode } from '@shared/openclaw/approvals';
 import { isInternalManagedSubagentHandoffError } from '@shared/openclaw/internalRunError';
-import { flushSync } from 'react-dom';
 
 import {
   addGroup,
-  addMessage,
   addSession,
   clearCurrentSession,
   clearPendingInteractions,
   deleteGroup as deleteGroupAction,
-  deleteMessage as deleteMessageAction,
-  deleteMessagesFrom as deleteMessagesFromAction,
   deleteSession as deleteSessionAction,
   deleteSessions as deleteSessionsAction,
   dequeuePendingInteraction,
@@ -34,11 +30,8 @@ import {
   setSessionRunTimings,
   setSessions,
   setStreaming,
+  touchSessionActivity,
   updateGroup,
-  updateMessageContent,
-  updateMessageMetadata,
-  updateMessageThinkingContent,
-  updateMessageUsage,
   updateSessionPinned,
   updateSessionStatus,
   updateSessionTitle,
@@ -47,7 +40,6 @@ import {
 import type {
   CoworkApiConfig,
   CoworkConfigUpdate,
-  CoworkContinueOptions,
   CoworkInteractionResult,
   CoworkSession,
   CoworkStartOptions,
@@ -120,58 +112,34 @@ export class CoworkService {
     // Clean up any existing listeners
     this.cleanupListeners();
 
-    // Message listener - also check if session exists (for IM-created sessions)
-    const messageCleanup = cowork.onStreamMessage(async ({ sessionId, message }) => {
-      // Debug: log user messages to check if attachments are preserved
-      if (message.type === 'user') {
-        const meta = message.metadata as Record<string, unknown> | undefined;
-        debugLog('[CoworkService] onStreamMessage received user message', {
-          sessionId,
-          messageId: message.id,
-          hasMetadata: !!meta,
-          metadataKeys: meta ? Object.keys(meta) : [],
-          hasAttachments: !!meta?.attachments,
-          attachmentsCount: Array.isArray(meta?.attachments)
-            ? (meta.attachments as unknown[]).length
-            : 0,
-        });
-      }
+    // Lightweight activity listener. Transcript content comes directly from
+    // Gateway WebChat events and never crosses the Electron IPC bridge.
+    const activityCleanup = cowork.onSessionActivity(async ({ sessionId, kind, timestamp }) => {
       // Check if session exists in current list
       const state = store.getState().cowork;
       const sessionExists = state.sessions.some(s => s.id === sessionId);
       const currentSessionId = state.currentSession?.id;
       const isCurrentSession = currentSessionId === sessionId;
 
-      // Summarize message content for logging
-      const msg = message as unknown as Record<string, unknown>;
-      const contentPreview =
-        typeof msg.content === 'string'
-          ? msg.content.slice(0, 80)
-          : Array.isArray(msg.content)
-            ? `[${(msg.content as unknown[]).length} blocks]`
-            : String(msg.content ?? '').slice(0, 80);
-
-      debugLog('[CoworkService] ▶ onStreamMessage', {
+      debugLog('[CoworkService] ▶ onSessionActivity', {
         sessionId: sessionId.slice(0, 8),
-        type: message.type,
-        messageId: message.id?.slice?.(0, 8),
+        kind,
         sessionExists,
         isCurrentSession,
         currentSessionId: currentSessionId?.slice?.(0, 8),
         totalSessions: state.sessions.length,
         isStreaming: state.isStreaming,
-        contentPreview,
       });
       if (!sessionExists) {
         // Session was created by IM or another source, refresh the session list
         debugLog(
-          '[CoworkService] onStreamMessage: session NOT found in Redux, calling loadSessions...',
+          '[CoworkService] onSessionActivity: session NOT found in Redux, calling loadSessions...',
         );
         await this.loadSessions();
         const newState = store.getState().cowork;
         const nowExists = newState.sessions.some(s => s.id === sessionId);
         debugLog(
-          '[CoworkService] onStreamMessage: after loadSessions, sessionExists=',
+          '[CoworkService] onSessionActivity: after loadSessions, sessionExists=',
           nowExists,
           'totalSessions=',
           newState.sessions.length,
@@ -179,60 +147,15 @@ export class CoworkService {
       }
 
       // A new user turn means this session is actively running again
-      // (especially important for IM-triggered turns that do not call continueSession from renderer).
-      if (message.type === 'user') {
+      // (especially important for IM-triggered turns that do not originate in this renderer).
+      if (kind === 'user') {
         this.markSessionInProgress(sessionId);
         store.dispatch(updateSessionStatus({ sessionId, status: 'running' }));
       }
 
-      // Do not force status back to "running" on arbitrary messages.
-      // Late stream chunks can arrive after an error/complete event.
-      store.dispatch(addMessage({ sessionId, message }));
+      store.dispatch(touchSessionActivity({ sessionId, timestamp }));
     });
-    this.streamListenerCleanups.push(messageCleanup);
-
-    // Message update listener (for streaming content updates)
-    const messageUpdateCleanup = cowork.onStreamMessageUpdate(
-      ({ sessionId, messageId, content }) => {
-        store.dispatch(updateMessageContent({ sessionId, messageId, content }));
-      },
-    );
-    this.streamListenerCleanups.push(messageUpdateCleanup);
-
-    // Thinking update listener (for streaming thinking content)
-    // Use flushSync to force immediate rendering for each delta update
-    // This ensures the user sees the thinking content stream in real-time
-    const thinkingUpdateCleanup = cowork.onStreamThinkingUpdate(
-      ({ sessionId, messageId, thinkingDelta }) => {
-        // Use flushSync to bypass React's automatic batching and render immediately
-        flushSync(() => {
-          store.dispatch(updateMessageThinkingContent({ sessionId, messageId, thinkingDelta }));
-        });
-      },
-    );
-    this.streamListenerCleanups.push(thinkingUpdateCleanup);
-
-    // Message metadata update listener (for status changes like isStreaming)
-    // Also carries optional usage data from reconcileWithHistory.
-    const messageMetadataUpdateCleanup = cowork.onStreamMessageMetadataUpdate(
-      ({ sessionId, messageId, metadata, usage }) => {
-        flushSync(() => {
-          store.dispatch(updateMessageMetadata({ sessionId, messageId, metadata }));
-          if (usage) {
-            store.dispatch(updateMessageUsage({ sessionId, messageId, usage }));
-          }
-        });
-      },
-    );
-    this.streamListenerCleanups.push(messageMetadataUpdateCleanup);
-
-    // Message delete listener (for removing messages like filtered "NO_REPLY" markers)
-    const messageDeleteCleanup = cowork.onStreamMessageDelete(({ sessionId, messageId }) => {
-      flushSync(() => {
-        store.dispatch(deleteMessageAction({ sessionId, messageId }));
-      });
-    });
-    this.streamListenerCleanups.push(messageDeleteCleanup);
+    this.streamListenerCleanups.push(activityCleanup);
 
     // Extension interaction request listener
     const interactionCleanup = cowork.onStreamInteraction(({ sessionId, request }) => {
@@ -292,20 +215,6 @@ export class CoworkService {
       }
       this.confirmTerminalSessionIdle(sessionId);
       store.dispatch(updateSessionStatus({ sessionId, status: 'error' }));
-      // Surface the error as a visible message so the user knows what happened.
-      if (error) {
-        store.dispatch(
-          addMessage({
-            sessionId,
-            message: {
-              id: `error-${Date.now()}`,
-              type: 'system',
-              content: error,
-              timestamp: Date.now(),
-            },
-          }),
-        );
-      }
     });
     this.streamListenerCleanups.push(errorCleanup);
 
@@ -731,74 +640,6 @@ export class CoworkService {
     return { session: null, error: result.error };
   }
 
-  async continueSession(options: CoworkContinueOptions): Promise<boolean> {
-    const cowork = window.electron?.cowork;
-    if (!cowork) {
-      console.error('Cowork API not available');
-      return false;
-    }
-
-    store.dispatch(setStreaming(true));
-    if (options.sessionId) {
-      this.markSessionInProgress(options.sessionId);
-    }
-    store.dispatch(updateSessionStatus({ sessionId: options.sessionId, status: 'running' }));
-
-    const result = await cowork.continueSession({
-      sessionId: options.sessionId,
-      prompt: options.prompt,
-      activeSkillIds: options.activeSkillIds,
-      attachments: options.attachments,
-    });
-    if (!result.success) {
-      store.dispatch(setStreaming(false));
-      this.clearSessionInProgress(options.sessionId);
-      if (result.engineStatus) {
-        this.notifyOpenClawStatus(result.engineStatus);
-      }
-      if (result.code !== 'ENGINE_NOT_READY') {
-        store.dispatch(updateSessionStatus({ sessionId: options.sessionId, status: 'error' }));
-        if (result.error) {
-          store.dispatch(
-            addMessage({
-              sessionId: options.sessionId,
-              message: {
-                id: `error-${Date.now()}`,
-                type: 'system',
-                content: i18nService
-                  .t('coworkErrorSessionContinueFailed')
-                  .replace('{error}', result.error),
-                timestamp: Date.now(),
-              },
-            }),
-          );
-        }
-      }
-      // Show a user-visible error message in the session
-      if (result.error) {
-        const errorContent =
-          result.code === 'ENGINE_NOT_READY'
-            ? i18nService.t('coworkErrorEngineNotReady')
-            : result.error;
-        store.dispatch(
-          addMessage({
-            sessionId: options.sessionId,
-            message: {
-              id: `error-${Date.now()}`,
-              type: 'system',
-              content: errorContent,
-              timestamp: Date.now(),
-            },
-          }),
-        );
-      }
-      console.error('Failed to continue session:', result.error);
-      return false;
-    }
-
-    return true;
-  }
-
   async stopSession(sessionId: string): Promise<boolean> {
     const cowork = window.electron?.cowork;
     if (!cowork) return false;
@@ -844,34 +685,6 @@ export class CoworkService {
     }
 
     console.error('Failed to batch delete sessions:', result.error);
-    return false;
-  }
-
-  async deleteMessage(sessionId: string, messageId: string): Promise<boolean> {
-    const cowork = window.electron?.cowork;
-    if (!cowork) return false;
-
-    const result = await cowork.deleteMessage(sessionId, messageId);
-    if (result.success) {
-      store.dispatch(deleteMessageAction({ sessionId, messageId }));
-      return true;
-    }
-
-    console.error('Failed to delete message:', result.error);
-    return false;
-  }
-
-  async deleteMessagesFrom(sessionId: string, messageId: string): Promise<boolean> {
-    const cowork = window.electron?.cowork;
-    if (!cowork?.deleteMessagesFrom) return false;
-
-    const result = await cowork.deleteMessagesFrom(sessionId, messageId);
-    if (result.success) {
-      store.dispatch(deleteMessagesFromAction({ sessionId, messageId }));
-      return true;
-    }
-
-    console.error('Failed to delete messages:', result.error);
     return false;
   }
 
@@ -1190,19 +1003,6 @@ export class CoworkService {
       };
     }
     return { subagents: [] };
-  }
-
-  async getSubTaskSession(sessionKey: string): Promise<CoworkSession | null> {
-    const cowork = window.electron?.cowork;
-    if (!cowork?.getSubTaskSession) {
-      return null;
-    }
-
-    const result = await cowork.getSubTaskSession(sessionKey);
-    if (result.success) {
-      return result.session ?? null;
-    }
-    return null;
   }
 
   async createGroup(input: CreateGroupInput): Promise<SessionGroup | null> {

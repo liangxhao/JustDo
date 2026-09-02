@@ -87,29 +87,8 @@ export type SessionTurn = {
   /** SessionTurn only exists while the Main-process run is active. */
   status: 'running';
   turnToken: number;
-  /** Full accumulated text from chat delta events (gateway sends snapshot, not增量). */
-  chatStream: string;
-  /** Whether this run already received authoritative agent assistant snapshots. */
-  agentAssistantStreamSeen: boolean;
-  /** Assistant text already finalized before tool calls in this run. */
-  committedAssistantSegments: string[];
-  /** Tool stream entries keyed by toolCallId. */
-  toolStreamById: Map<string, ToolStreamEntry>;
-  /** OpenClaw webchat-style tool ordering for transient UI stream only. */
-  toolStreamOrder: string[];
-  /** Tool messages projected from the transient tool stream. */
-  chatToolMessages: Record<string, unknown>[];
-  /** Streaming assistant text segments committed before tool cards. */
-  chatStreamSegments: Array<{ text: string; ts: number }>;
-  /** Accumulated thinking content. */
-  thinkingContent: string;
-  thinkingMessageId: string | null;
   /** Whether the user requested a stop. */
   stopRequested: boolean;
-  /** Message ID of the current streaming assistant message. */
-  assistantMessageId: string | null;
-  /** Model name for this turn. */
-  modelName: string;
   /** Set of known runIds for this turn (main + announce). */
   knownRunIds: Set<string>;
 };

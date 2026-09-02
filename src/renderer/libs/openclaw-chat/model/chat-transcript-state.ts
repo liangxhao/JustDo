@@ -3,7 +3,7 @@ import { messageSessionMatches, normalizeMessageSessionKey } from '@shared/openc
 
 export type TurnStatus = 'running' | 'final' | 'aborted' | 'error';
 export type ProcessStatus = 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
-export type HistorySource = 'gateway' | 'sqlite-fallback' | 'optimistic';
+export type HistorySource = 'gateway' | 'optimistic';
 
 export interface BaseTurnItem {
   id: string;
@@ -62,6 +62,12 @@ export interface AssistantTurn {
   sessionKey: string;
   status: TurnStatus;
   lastAgentSeq: number;
+  /**
+   * Per projected activity owner sequence fences. A history in-flight snapshot
+   * can arrive after a newer live event for another owner, so the run-wide
+   * high-water mark alone cannot decide whether that snapshot fills a gap.
+   */
+  activityEventSeqById?: Map<string, number>;
   startedAt: number;
   endedAt?: number;
   modelRef?: string;
@@ -152,6 +158,7 @@ export function beginAssistantTurn(
     sessionKey: state.sessionKey,
     status: 'running',
     lastAgentSeq: -1,
+    activityEventSeqById: new Map(),
     startedAt: params.startedAt ?? dependencies.now(),
     items: [],
     toolById: new Map(),

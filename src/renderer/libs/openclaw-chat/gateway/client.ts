@@ -27,6 +27,7 @@ export interface GatewayClientOptions {
   token?: string;
   onHello?: (hello: GatewayHelloOk) => void;
   onEvent?: (event: GatewayEventFrame) => void;
+  onGap?: (info: { expected: number; received: number }) => void;
   onClose?: (info: { code: number; reason: string }) => void;
 }
 
@@ -99,7 +100,7 @@ export class GatewayClient {
       timer: ReturnType<typeof setTimeout>;
     }
   >();
-  private lastSeq = 0;
+  private lastSeq: number | null = null;
 
   constructor(opts: GatewayClientOptions) {
     this.opts = opts;
@@ -150,10 +151,28 @@ export class GatewayClient {
     });
   }
 
+  /** Retire the current transport so the next connection can recover from history. */
+  recoverFromGap(reason = 'event sequence gap'): void {
+    const socket = this.ws;
+    if (!socket || socket.readyState === WebSocket.CLOSING || socket.readyState === WebSocket.CLOSED) {
+      return;
+    }
+    // Retire the owner synchronously. WebSocket.close() is asynchronous and
+    // queued frames can otherwise reach the message listener before `close`.
+    // The close listener still owns cleanup/reconnect because `this.ws` stays
+    // attached to this socket until that callback runs.
+    this.connectGeneration += 1;
+    socket.close(4000, reason);
+  }
+
   // ─── Private ────────────────────────────────────────────────────────────
 
   private connect(): void {
     if (this.closed) return;
+    // Gateway frame sequences are scoped to a single WebSocket generation.
+    // Keeping the previous connection's value causes a fresh server stream to
+    // be mistaken for stale or missing data after reconnect.
+    this.lastSeq = null;
     let ws: WebSocket;
     try {
       ws = new WebSocket(this.opts.url);
@@ -202,9 +221,6 @@ export class GatewayClient {
     // Event frame
     if (frame.type === 'event') {
       const event = frame as unknown as GatewayEventFrame;
-      if (typeof event.seq === 'number' && event.seq > this.lastSeq) {
-        this.lastSeq = event.seq;
-      }
       // Handle challenge
       if (event.event === 'connect.challenge') {
         clearTimeout(this.challengeTimer!);
@@ -224,6 +240,25 @@ export class GatewayClient {
           if (this.isActive(ws, generation)) ws.close(1008, 'device identity unavailable');
         });
         return;
+      }
+      if (typeof event.seq === 'number') {
+        if (this.lastSeq !== null) {
+          // Gateway event sequences are a per-connection high-water mark.
+          // Replayed or out-of-order frames must not be delivered and, more
+          // importantly, must not rewind the mark used for the next gap check.
+          if (event.seq <= this.lastSeq) return;
+          if (event.seq > this.lastSeq + 1) {
+            const expected = this.lastSeq + 1;
+            this.opts.onGap?.({ expected, received: event.seq });
+            // Do not apply a frame after a proven transport gap. Reconnect so
+            // chat.history can replace persisted rows and replay inFlightRun.
+            if (this.isActive(ws, generation)) {
+              this.recoverFromGap('gateway event sequence gap');
+            }
+            return;
+          }
+        }
+        this.lastSeq = event.seq;
       }
       this.opts.onEvent?.(event);
       return;

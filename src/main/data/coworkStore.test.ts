@@ -1,11 +1,4 @@
-/**
- * Unit tests for CoworkStore – resilient metadata parsing.
- *
- * Verifies that corrupt JSON in the metadata column of cowork_messages does NOT
- * prevent a session from loading.  Valid/null metadata must still work correctly.
- *
- * Mocks the `electron` module so CoworkStore can be imported outside Electron.
- */
+/** Unit tests for CoworkStore product metadata. */
 import { beforeEach, expect, test, vi } from 'vitest';
 
 // ---------------------------------------------------------------------------
@@ -53,22 +46,6 @@ function setupDb(): void {
   `);
 
   db.exec(`
-    CREATE TABLE IF NOT EXISTS cowork_messages (
-      id TEXT PRIMARY KEY,
-      session_id TEXT NOT NULL,
-      type TEXT NOT NULL,
-      content TEXT NOT NULL,
-      metadata TEXT,
-      created_at INTEGER NOT NULL,
-      sequence INTEGER,
-      thinking_content TEXT,
-      model_name TEXT,
-      usage TEXT,
-      FOREIGN KEY (session_id) REFERENCES cowork_sessions(id) ON DELETE CASCADE
-    );
-  `);
-
-  db.exec(`
     CREATE TABLE IF NOT EXISTS cowork_config (
       key TEXT PRIMARY KEY,
       value TEXT,
@@ -106,22 +83,6 @@ function insertSession(id: string, updatedAt: number = Date.now()): void {
   ).run(id, createdAt, updatedAt);
 }
 
-/** Insert a message row directly, bypassing CoworkStore.addMessage. */
-function insertMessage(
-  id: string,
-  sessionId: string,
-  type: string,
-  content: string,
-  metadata: string | null,
-  sequence: number,
-): void {
-  const now = Date.now();
-  db.prepare(
-    `INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(id, sessionId, type, content, metadata, now, sequence);
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -130,88 +91,14 @@ beforeEach(() => {
   setupDb();
 });
 
-test('getSession returns all messages when one has corrupt metadata', () => {
+test('sessions do not expose a local transcript cache', () => {
   const sid = 'sess-1';
   insertSession(sid);
 
-  insertMessage('msg-valid', sid, 'user', 'hello', '{"key":"value"}', 1);
-  insertMessage('msg-corrupt', sid, 'tool_use', 'do something', '{broken', 2);
-  insertMessage('msg-null', sid, 'assistant', 'reply', null, 3);
-
-  const session = store.getSession(sid);
-  expect(session).not.toBeNull();
-  expect(session!.messages).toHaveLength(3);
-
-  // Valid metadata preserved
-  const validMsg = session!.messages.find(m => m.id === 'msg-valid')!;
-  expect(validMsg.metadata).toEqual({ key: 'value' });
-
-  // Corrupt metadata discarded
-  const corruptMsg = session!.messages.find(m => m.id === 'msg-corrupt')!;
-  expect(corruptMsg.metadata).toBeUndefined();
-  expect(corruptMsg.content).toBe('do something');
-  expect(corruptMsg.type).toBe('tool_use');
-
-  // Null metadata → undefined
-  const nullMsg = session!.messages.find(m => m.id === 'msg-null')!;
-  expect(nullMsg.metadata).toBeUndefined();
-});
-
-test('getSession returns all messages when ALL have corrupt metadata', () => {
-  const sid = 'sess-2';
-  insertSession(sid);
-
-  insertMessage('m1', sid, 'user', 'one', '{bad1', 1);
-  insertMessage('m2', sid, 'assistant', 'two', '{{bad2', 2);
-  insertMessage('m3', sid, 'tool_use', 'three', 'not json at all', 3);
-
-  const session = store.getSession(sid);
-  expect(session).not.toBeNull();
-  expect(session!.messages).toHaveLength(3);
-
-  for (const msg of session!.messages) {
-    expect(msg.metadata).toBeUndefined();
-    expect(msg.id).toBeTruthy();
-    expect(msg.content).toBeTruthy();
-  }
-});
-
-test('console.warn is called exactly once for single corrupt metadata row', () => {
-  const sid = 'sess-3';
-  insertSession(sid);
-
-  insertMessage('msg-ok', sid, 'user', 'hi', '{"a":1}', 1);
-  insertMessage('msg-bad', sid, 'tool_use', 'oops', '{broken', 2);
-  insertMessage('msg-nil', sid, 'assistant', 'reply', null, 3);
-
-  const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-
-  store.getSession(sid);
-
-  expect(warnSpy).toHaveBeenCalledTimes(1);
-
-  const warnMessage = warnSpy.mock.calls[0][0] as string;
-  expect(warnMessage).toContain('[CoworkStore]');
-  expect(warnMessage).toContain('msg-bad');
-  expect(warnMessage).toContain(sid);
-
-  warnSpy.mockRestore();
-});
-
-test('no console.warn when all metadata is valid or null', () => {
-  const sid = 'sess-4';
-  insertSession(sid);
-
-  insertMessage('m1', sid, 'user', 'hi', '{"ok":true}', 1);
-  insertMessage('m2', sid, 'assistant', 'reply', null, 2);
-
-  const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-
-  store.getSession(sid);
-
-  expect(warnSpy).not.toHaveBeenCalled();
-
-  warnSpy.mockRestore();
+  expect(store.getSession(sid)).not.toHaveProperty('messages');
+  expect(
+    db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'cowork_messages'").get(),
+  ).toBeUndefined();
 });
 
 test('session metadata updates do not change recent activity time', () => {
@@ -268,17 +155,6 @@ test('resetting stale running sessions does not change recent activity time', ()
 
   expect(store.resetRunningSessions()).toBe(1);
   expect(store.getSession(sid)).toMatchObject({ status: 'idle', updatedAt: activityTime });
-});
-
-test('adding a message advances recent activity time', () => {
-  const sid = 'sess-message';
-  const activityTime = 1_700_000_000_000;
-  insertSession(sid, activityTime);
-
-  const message = store.addMessage(sid, { type: 'user', content: 'hello' });
-
-  expect(message.timestamp).toBeGreaterThan(activityTime);
-  expect(store.getSession(sid)?.updatedAt).toBe(message.timestamp);
 });
 
 test('backfillEmptyAgentModels assigns the current default model to empty agents only', () => {

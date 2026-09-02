@@ -100,23 +100,4 @@ export const registerCoworkSubtaskHandlers = ({
       }
     },
   );
-
-  ipcMain.handle('cowork:subTask:session', async (_event, sessionKey: string) => {
-    try {
-      const runtime = getRuntime();
-      if (!runtime) {
-        return { success: false, session: null, error: 'OpenClaw runtime is not ready' };
-      }
-      if (!sessionKey || typeof sessionKey !== 'string') {
-        return { success: false, session: null, error: 'Session key is required' };
-      }
-      return { success: true, session: await runtime.fetchSessionByKey(sessionKey) };
-    } catch (error) {
-      return {
-        success: false,
-        session: null,
-        error: error instanceof Error ? error.message : 'Failed to get subagent session',
-      };
-    }
-  });
 };

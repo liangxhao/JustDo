@@ -560,45 +560,334 @@ test('discards a delayed probe result after model activity and keeps the exact n
   expect(request.mock.calls.filter(([method]) => method === 'sessions.describe')).toHaveLength(2);
 });
 
-test('renders a SQLite fallback immediately and lets Gateway history replace it', async () => {
+test('adopts and replays a v2026.8.1 in-flight Thinking, Tool, and Content snapshot', async () => {
+  const sessionKey = 'agent:main:justdo:session-1';
+  const request = vi.fn().mockResolvedValue({
+    messages: [{ role: 'user', content: 'continue the task', timestamp: 1_000 }],
+    sessionId: 'sid-1',
+    sessionInfo: {
+      sessionId: 'sid-1',
+      updatedAt: 1_120,
+      totalTokens: 42_000,
+      totalTokensFresh: false,
+      contextTokens: 200_000,
+      modelProvider: 'openai',
+      model: 'gpt-5.6-sol',
+      hasActiveRun: true,
+      activeRunIds: ['run-live'],
+      status: 'running',
+    },
+    inFlightRun: {
+      runId: 'run-live',
+      text: 'The recovered answer is still streaming.',
+      startedAt: 1_100,
+      events: [
+        {
+          runId: 'run-live',
+          seq: 1,
+          stream: 'thinking',
+          ts: 1_101,
+          sessionKey,
+          data: { thinking: 'Recovered reasoning' },
+        },
+        {
+          runId: 'run-live',
+          seq: 2,
+          stream: 'tool',
+          ts: 1_102,
+          sessionKey,
+          data: { phase: 'start', toolCallId: 'tool-1', name: 'read', args: { path: 'a' } },
+        },
+        {
+          runId: 'run-live',
+          seq: 3,
+          stream: 'tool',
+          ts: 1_103,
+          sessionKey,
+          data: {
+            phase: 'update',
+            toolCallId: 'tool-1',
+            name: 'read',
+            partialResult: 'halfway',
+          },
+        },
+        {
+          runId: 'run-live',
+          seq: 4,
+          stream: 'assistant',
+          ts: 1_104,
+          sessionKey,
+          data: { text: 'The recovered answer' },
+        },
+      ],
+    },
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+
+  await expect(controller.loadHistory()).resolves.toBe(true);
+
+  expect(controller.state.chatSending).toBe(true);
+  expect(controller.state.chatRunId).toBe('run-live');
+  expect(controller.state.contextUsage).toEqual({
+    sessionKey,
+    sessionId: 'sid-1',
+    totalTokens: 42_000,
+    totalTokensFresh: false,
+    contextTokens: 200_000,
+    updatedAt: 1_120,
+    modelRef: 'openai/gpt-5.6-sol',
+  });
+  expect(controller.state.transcript.activeTurn).toMatchObject({
+    runId: 'run-live',
+    lastAgentSeq: 4,
+    items: [
+      { type: 'thinking', status: 'completed', text: 'Recovered reasoning' },
+      { type: 'tool', status: 'running', toolCallId: 'tool-1', output: 'halfway' },
+      { type: 'content', status: 'streaming', text: 'The recovered answer is still streaming.' },
+    ],
+  });
+});
+
+test('backfills a delayed in-flight snapshot after a newer live event without rewinding it', async () => {
+  const sessionKey = 'agent:main:justdo:session-1';
+  let resolveHistory:
+    | ((value: {
+        messages: unknown[];
+        sessionId: string;
+        sessionInfo: Record<string, unknown>;
+        inFlightRun: Record<string, unknown>;
+      }) => void)
+    | undefined;
+  const history = new Promise<{
+    messages: unknown[];
+    sessionId: string;
+    sessionInfo: Record<string, unknown>;
+    inFlightRun: Record<string, unknown>;
+  }>(resolve => {
+    resolveHistory = resolve;
+  });
+  const controller = new ChatController();
+  controller.state.client = { request: vi.fn(() => history) } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+  controller.state.chatMessages = [{ role: 'user', content: 'continue', timestamp: 1_000 }];
+
+  const loading = controller.loadHistory();
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent({
+    event: 'agent',
+    payload: {
+      sessionKey,
+      runId: 'run-live',
+      seq: 4,
+      stream: 'assistant',
+      data: { text: 'newer live answer' },
+    },
+  });
+  expect(controller.state.runActivity?.stage).toBe('responding');
+
+  resolveHistory?.({
+    messages: [{ role: 'user', content: 'continue', timestamp: 1_000 }],
+    sessionId: 'sid-1',
+    sessionInfo: {
+      sessionId: 'sid-1',
+      hasActiveRun: true,
+      activeRunIds: ['run-live'],
+      status: 'running',
+    },
+    inFlightRun: {
+      runId: 'run-live',
+      text: 'older snapshot answer',
+      events: [
+        {
+          runId: 'run-live',
+          seq: 1,
+          stream: 'thinking',
+          ts: 1_001,
+          sessionKey,
+          data: { thinking: 'recovered reasoning' },
+        },
+        {
+          runId: 'run-live',
+          seq: 2,
+          stream: 'tool',
+          ts: 1_002,
+          sessionKey,
+          data: {
+            phase: 'start',
+            toolCallId: 'call-recovered',
+            name: 'read',
+            args: { path: 'README.md' },
+          },
+        },
+        {
+          runId: 'run-live',
+          seq: 3,
+          stream: 'tool',
+          ts: 1_003,
+          sessionKey,
+          data: {
+            phase: 'update',
+            toolCallId: 'call-recovered',
+            name: 'read',
+            partialResult: 'halfway',
+          },
+        },
+      ],
+    },
+  });
+  // Persisted history remains rejected while the live turn owns the pane, but
+  // its independently owned in-flight snapshot still repairs missing events.
+  await expect(loading).resolves.toBe(false);
+
+  expect(controller.state.runActivity?.stage).toBe('responding');
+  expect(controller.state.transcript.activeTurn).toMatchObject({
+    runId: 'run-live',
+    lastAgentSeq: 4,
+    items: [
+      { type: 'thinking', status: 'completed', text: 'recovered reasoning' },
+      { type: 'tool', status: 'running', toolCallId: 'call-recovered', output: 'halfway' },
+      { type: 'content', status: 'streaming', text: 'newer live answer' },
+    ],
+  });
+});
+
+test('does not resurrect a terminal run from a stale in-flight snapshot', () => {
   const sessionKey = 'agent:main:justdo:session-1';
   const controller = new ChatController();
   controller.state.sessionKey = sessionKey;
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
 
-  expect(
-    controller.admitFallbackHistory(sessionKey, [
-      { id: 'message-1', role: 'user', content: 'cached prompt', timestamp: 1000 },
-      { id: 'message-2', role: 'assistant', content: 'cached answer', timestamp: 2000 },
-    ]),
-  ).toBe(true);
-  expect(controller.state.chatMessages).toHaveLength(2);
-  expect(controller.state.transcript.historySource).toBe('sqlite-fallback');
-
-  const request = vi.fn().mockResolvedValue({
-    messages: [
-      { id: 'message-1', role: 'user', content: 'cached prompt', timestamp: 1000 },
-      { id: 'message-2', role: 'assistant', content: 'authoritative answer', timestamp: 2000 },
-    ],
+  handleEvent({
+    event: 'agent',
+    payload: {
+      sessionKey,
+      runId: 'run-finished',
+      seq: 4,
+      stream: 'assistant',
+      data: { text: 'finished answer' },
+    },
   });
-  controller.state.client = { request } as never;
-  controller.state.connected = true;
+  handleEvent({
+    event: 'chat',
+    payload: {
+      sessionKey,
+      runId: 'run-finished',
+      state: 'final',
+      message: { role: 'assistant', content: 'finished answer' },
+    },
+  });
 
-  await controller.loadHistory();
-
-  expect(controller.state.chatMessages).toEqual([
-    expect.objectContaining({ id: 'message-1', content: 'cached prompt' }),
-    expect.objectContaining({ id: 'message-2', content: 'authoritative answer' }),
-  ]);
-  expect(controller.state.transcript.historySource).toBe('gateway');
-  expect(
-    controller.admitFallbackHistory(sessionKey, [
-      { id: 'message-2', role: 'assistant', content: 'late stale cache' },
-    ]),
-  ).toBe(false);
-  expect(controller.state.chatMessages).toHaveLength(2);
-  expect(controller.state.chatMessages[1]).toEqual(
-    expect.objectContaining({ id: 'message-2', content: 'authoritative answer' }),
+  (
+    controller as unknown as {
+      applyInFlightRunSnapshot(
+        snapshot: Record<string, unknown>,
+        sessionKey: string,
+        sessionId: string | null,
+        requestRunId: string | null,
+        sessionInfo: Record<string, unknown>,
+      ): void;
+    }
+  ).applyInFlightRunSnapshot(
+    {
+      runId: 'run-finished',
+      text: 'stale partial',
+      events: [
+        {
+          runId: 'run-finished',
+          seq: 1,
+          stream: 'thinking',
+          ts: 1_000,
+          sessionKey,
+          data: { thinking: 'stale reasoning' },
+        },
+      ],
+    },
+    sessionKey,
+    null,
+    null,
+    { hasActiveRun: true, activeRunIds: ['run-finished'] },
   );
+
+  expect(controller.state.chatSending).toBe(false);
+  expect(controller.state.chatRunId).toBeNull();
+  expect(controller.state.transcript.activeTurn?.status).toBe('final');
+  expect(controller.state.transcript.activeTurn?.items).toMatchObject([
+    { type: 'content', text: 'finished answer' },
+  ]);
+});
+
+test('accepts cumulative Agent snapshots with sequence gaps without reconnecting', () => {
+  const sessionKey = 'agent:main:justdo:session-1';
+  const recoverFromGap = vi.fn();
+  const controller = new ChatController();
+  controller.state.client = { request: vi.fn(), recoverFromGap } as never;
+  controller.state.connected = true;
+  controller.state.initialHistoryReady = true;
+  controller.state.sessionKey = sessionKey;
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      sessionKey,
+      runId: 'run-live',
+      seq: 7,
+      stream: 'thinking',
+      data: { thinking: '你' },
+    },
+  });
+  handleEvent({
+    event: 'agent',
+    payload: {
+      sessionKey,
+      runId: 'run-live',
+      seq: 16,
+      stream: 'thinking',
+      data: { thinking: '你好' },
+    },
+  });
+  handleEvent({
+    event: 'agent',
+    payload: {
+      sessionKey,
+      runId: 'run-live',
+      seq: 17,
+      stream: 'usage',
+      data: { inputTokens: 12, outputTokens: 4 },
+    },
+  });
+  handleEvent({
+    event: 'agent',
+    payload: {
+      sessionKey,
+      runId: 'run-live',
+      seq: 18,
+      stream: 'assistant',
+      data: { text: '你好！有什么我可以帮你的吗？' },
+    },
+  });
+
+  expect(recoverFromGap).not.toHaveBeenCalled();
+  expect(controller.state.transcript.activeTurn?.lastAgentSeq).toBe(18);
+  expect(controller.state.transcript.activeTurn?.items).toMatchObject([
+    { type: 'thinking', status: 'completed', text: '你好' },
+    { type: 'content', status: 'streaming', text: '你好！有什么我可以帮你的吗？' },
+  ]);
 });
 
 test('replaces truncated OpenClaw history previews with complete messages', async () => {
@@ -696,167 +985,6 @@ test('keeps a truncated history preview when the complete message is unavailable
   expect(controller.state.chatMessages).toEqual([
     expect.objectContaining({ content: 'available preview\n...(truncated)...' }),
   ]);
-});
-
-test('keeps the SQLite fallback when Gateway history fails', async () => {
-  const sessionKey = 'agent:main:justdo:session-1';
-  const controller = new ChatController();
-  controller.state.sessionKey = sessionKey;
-  controller.admitFallbackHistory(sessionKey, [
-    { id: 'message-1', role: 'assistant', content: 'offline cached answer' },
-  ]);
-  controller.state.client = {
-    request: vi.fn().mockRejectedValue(new Error('gateway unavailable')),
-  } as never;
-  controller.state.connected = true;
-  const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-  await expect(controller.loadHistory()).resolves.toBe(false);
-
-  expect(controller.state.chatMessages).toEqual([
-    expect.objectContaining({ id: 'message-1', content: 'offline cached answer' }),
-  ]);
-  expect(controller.state.transcript.historySource).toBe('sqlite-fallback');
-  error.mockRestore();
-});
-
-test('hides persisted partial NO_REPLY artifacts without hiding legitimate NO text', () => {
-  const sessionKey = 'agent:main:justdo:session-1';
-  const controller = new ChatController();
-  controller.state.sessionKey = sessionKey;
-
-  controller.admitFallbackHistory(sessionKey, [
-    { id: 'message-1', role: 'assistant', content: 'cached answer' },
-    { id: 'message-2', role: 'assistant', content: 'NO_RE' },
-    { id: 'message-3', role: 'assistant', content: 'NO_REPLY' },
-    { id: 'message-4', role: 'assistant', content: 'NO' },
-    { id: 'message-5', role: 'user', content: 'NO_RE' },
-  ]);
-
-  expect(controller.state.chatMessages).toEqual([
-    expect.objectContaining({ id: 'message-1', content: 'cached answer' }),
-    expect.objectContaining({ id: 'message-4', content: 'NO' }),
-    expect.objectContaining({ id: 'message-5', content: 'NO_RE' }),
-  ]);
-});
-
-test('does not let a limited RPC snapshot truncate a complete SQLite fallback', async () => {
-  const sessionKey = 'agent:main:justdo:session-1';
-  const messages = Array.from({ length: 100_000 }, (_, index) => ({
-    id: `message-${index}`,
-    role: index % 2 === 0 ? 'user' : 'assistant',
-    content: `cached ${index}`,
-  }));
-  const rpcTail = messages.slice(-1000).map(message => ({
-    ...message,
-    content: `${message.content} authoritative`,
-  }));
-  vi.stubGlobal('electron', {
-    openclaw: {
-      history: {
-        getPagedHistory: vi.fn().mockResolvedValue({
-          success: false,
-          error: 'temporary IPC failure',
-        }),
-      },
-    },
-  });
-  const controller = new ChatController();
-  controller.state.sessionKey = sessionKey;
-  controller.admitFallbackHistory(sessionKey, messages);
-  controller.state.client = {
-    request: vi.fn().mockResolvedValue({ messages: rpcTail }),
-  } as never;
-  controller.state.connected = true;
-
-  await expect(controller.loadHistory()).resolves.toBe(true);
-
-  expect(controller.getLoadedMessages()).toHaveLength(100_000);
-  expect(controller.getLoadedMessages()[0]).toEqual(
-    expect.objectContaining({ id: 'message-0', content: 'cached 0' }),
-  );
-  expect(controller.getLoadedMessages()[99_999]).toEqual(
-    expect.objectContaining({
-      id: 'message-99999',
-      content: 'cached 99999 authoritative',
-    }),
-  );
-});
-
-test('keeps a complete fallback when a limited RPC snapshot has no safe overlap', async () => {
-  const sessionKey = 'agent:main:justdo:session-1';
-  const controller = new ChatController();
-  controller.state.sessionKey = sessionKey;
-  controller.admitFallbackHistory(sessionKey, [
-    { id: 'cached-1', role: 'user', content: 'cached prompt' },
-    { id: 'cached-2', role: 'assistant', content: 'cached answer' },
-  ]);
-  controller.state.client = {
-    request: vi.fn().mockResolvedValue({
-      messages: [{ id: 'rpc-1', role: 'assistant', content: 'unrelated limited snapshot' }],
-    }),
-  } as never;
-  controller.state.connected = true;
-
-  await expect(controller.loadHistory()).resolves.toBe(false);
-
-  expect(controller.getLoadedMessages()).toEqual([
-    expect.objectContaining({ id: 'cached-1' }),
-    expect.objectContaining({ id: 'cached-2' }),
-  ]);
-  expect(controller.state.transcript.historySource).toBe('sqlite-fallback');
-});
-
-test('never lets a SQLite fallback retire an active live turn', () => {
-  const sessionKey = 'agent:main:justdo:session-1';
-  const controller = new ChatController();
-  controller.state.sessionKey = sessionKey;
-  controller.admitFallbackHistory(sessionKey, [
-    { id: 'message-1', role: 'user', content: 'cached prompt' },
-  ]);
-  const turn = beginAssistantTurn(
-    controller.state.transcript,
-    { runId: 'run-1' },
-    { now: () => 1, createId: prefix => `${prefix}-1` },
-  );
-
-  expect(
-    controller.admitFallbackHistory(sessionKey, [
-      { id: 'message-1', role: 'user', content: 'stale cached prompt' },
-    ]),
-  ).toBe(false);
-  expect(controller.state.chatMessages).toEqual([
-    expect.objectContaining({ content: 'cached prompt' }),
-  ]);
-  expect(controller.state.transcript.activeTurn).toBe(turn);
-  expect(controller.state.transcript.activeTurn?.status).toBe('running');
-});
-
-test('keeps fallback snapshots isolated by session and does not truncate 100,000 messages', async () => {
-  const firstSessionKey = 'agent:main:justdo:session-1';
-  const secondSessionKey = 'agent:main:justdo:session-2';
-  const controller = new ChatController();
-  controller.state.sessionKey = firstSessionKey;
-  const messages = Array.from({ length: 100_000 }, (_, index) => ({
-    id: `message-${index}`,
-    role: index % 2 === 0 ? 'user' : 'assistant',
-    content: `message ${index}`,
-  }));
-
-  controller.admitFallbackHistory(firstSessionKey, messages);
-  controller.admitFallbackHistory(secondSessionKey, [
-    { id: 'other-message', role: 'assistant', content: 'other session' },
-  ]);
-
-  expect(controller.getLoadedMessages()).toHaveLength(100_000);
-  expect(controller.state.visibleChatMessages).toHaveLength(750);
-  await controller.switchSession(secondSessionKey);
-  expect(controller.state.chatMessages).toEqual([
-    expect.objectContaining({ id: 'other-message', content: 'other session' }),
-  ]);
-  await controller.switchSession(firstSessionKey);
-  expect(controller.getLoadedMessages()).toHaveLength(100_000);
-  expect(controller.getLoadedMessages()[0]).toEqual(expect.objectContaining({ id: 'message-0' }));
 });
 
 test('clears active sending state when switching between existing sessions', async () => {
@@ -1108,14 +1236,13 @@ test('does not promote a temporary session during ordinary navigation', async ()
   const temporarySession = 'agent:main:justdo:temp-b';
   const controller = new ChatController();
   controller.state.sessionKey = originalSession;
-  controller.admitFallbackHistory(originalSession, [
-    { role: 'assistant', content: 'A-old', timestamp: 1_000 },
-  ]);
+  const setMessages = (
+    controller as unknown as { setCurrentSessionMessages: (messages: unknown[]) => void }
+  ).setCurrentSessionMessages.bind(controller);
+  setMessages([{ role: 'assistant', content: 'A-old', timestamp: 1_000 }]);
 
   await controller.switchSession(temporarySession);
-  controller.admitFallbackHistory(temporarySession, [
-    { role: 'user', content: 'B-new', timestamp: 2_000 },
-  ]);
+  setMessages([{ role: 'user', content: 'B-new', timestamp: 2_000 }]);
   controller.setPendingUserMessage('B-new');
   await controller.switchSession(originalSession);
 
@@ -1132,14 +1259,13 @@ test('promotes the registered temporary session after navigating away from it', 
   const persistedSession = 'agent:main:justdo:session-b';
   const controller = new ChatController();
   controller.state.sessionKey = originalSession;
-  controller.admitFallbackHistory(originalSession, [
-    { role: 'assistant', content: 'A-old', timestamp: 1_000 },
-  ]);
+  const setMessages = (
+    controller as unknown as { setCurrentSessionMessages: (messages: unknown[]) => void }
+  ).setCurrentSessionMessages.bind(controller);
+  setMessages([{ role: 'assistant', content: 'A-old', timestamp: 1_000 }]);
 
   await controller.switchSession(temporarySession);
-  controller.admitFallbackHistory(temporarySession, [
-    { role: 'user', content: 'B-new', timestamp: 2_000 },
-  ]);
+  setMessages([{ role: 'user', content: 'B-new', timestamp: 2_000 }]);
   controller.setPendingUserMessage('B-new');
   await controller.switchSession(originalSession);
   await controller.switchSession(persistedSession, {
@@ -3204,6 +3330,18 @@ test('does not restore untimed or foreign-run Tool rows', () => {
       },
     },
   });
+  handleEvent({
+    event: 'session.message',
+    payload: {
+      sessionKey,
+      sessionId: 'session-current',
+      activeRunIds: ['run-current'],
+      message: {
+        ...toolMessage('call-openclaw-run', 'sessions_yield', 20_100),
+        __openclaw: { runId: 'run-other' },
+      },
+    },
+  });
 
   expect([...controller.state.transcript.activeTurn!.toolById.keys()]).toEqual([]);
 });
@@ -3991,7 +4129,6 @@ test('keeps a follow-up turn visible when return history still lacks the active 
   controller.state.client = { request } as never;
   controller.state.connected = true;
   controller.state.sessionKey = runningSessionKey;
-  controller.admitFallbackHistory(runningSessionKey, persistedMessages);
   await controller.loadHistory();
   await controller.sendMessage('follow-up prompt');
   const handleEvent = (
@@ -6065,10 +6202,64 @@ test('replays deferred session.message reload after silent final message', async
     },
   });
 
+  expect(request).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(100);
   expect(request).toHaveBeenCalledWith('chat.history', {
     sessionKey: 'agent:main:justdo:session-1',
     limit: 1000,
   });
+});
+
+test('retries a message-less final until terminal persistence catches up', async () => {
+  vi.useFakeTimers();
+  const persistedUser = {
+    role: 'user',
+    content: 'Run a tool',
+    __openclaw: { id: 'message-1', seq: 1 },
+  };
+  const persistedTool = {
+    role: 'toolResult',
+    content: [{ type: 'text', text: 'done' }],
+    __openclaw: { id: 'message-2', seq: 2, runId: 'run-1' },
+  };
+  const request = vi
+    .fn()
+    .mockResolvedValueOnce({ messages: [persistedUser] })
+    .mockResolvedValueOnce({ messages: [persistedUser] })
+    .mockResolvedValue({ messages: [persistedUser, persistedTool] });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.chatMessages = [persistedUser];
+  controller.state.transcript.persistedMessages = controller.state.chatMessages;
+  controller.state.chatSending = true;
+  controller.state.chatRunId = 'run-1';
+
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload?: unknown }): void;
+    }
+  ).handleEvent({
+    event: 'chat',
+    payload: {
+      sessionKey: 'agent:main:justdo:session-1',
+      runId: 'run-1',
+      state: 'final',
+    },
+  });
+
+  expect(request).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(100);
+  expect(request).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(400);
+  expect(request).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(1500);
+  expect(request).toHaveBeenCalledTimes(3);
+  expect(controller.state.chatMessages).toEqual([persistedUser, persistedTool]);
+
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(request).toHaveBeenCalledTimes(3);
 });
 
 test('does not retain NO_REPLY assistant streams for later lifecycle renders', () => {
@@ -6132,6 +6323,33 @@ test('does not retain NO_REPLY assistant streams for later lifecycle renders', (
 
   expect(controller.state.transcript.activeTurn?.items ?? []).toHaveLength(0);
   expect(streamListener).toHaveBeenCalledTimes(1);
+});
+
+test('keeps legitimate assistant text that mentions the heartbeat token', () => {
+  const controller = new ChatController();
+  const streamListener = vi.fn();
+  controller.onStream(streamListener);
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload?: unknown }): void;
+    }
+  ).handleEvent({
+    event: 'agent',
+    payload: {
+      session: 'justdo:session-1',
+      runId: 'run-1',
+      seq: 1,
+      stream: 'assistant',
+      data: { text: 'Use HEARTBEAT_OK as the acknowledgement token.' },
+    },
+  });
+
+  expect(controller.state.transcript.activeTurn?.items).toMatchObject([
+    { type: 'content', text: 'Use HEARTBEAT_OK as the acknowledgement token.' },
+  ]);
+  expect(streamListener).toHaveBeenCalledWith('stream');
 });
 
 test('does not revive a completed chat for a silent subagent announce run', () => {
@@ -6473,6 +6691,65 @@ test('keeps a live run suspended across transport loss and accepts later updates
   ]);
 });
 
+test('settles and refreshes a managed run when chat.final uses the compact session-key alias', async () => {
+  vi.useFakeTimers();
+  const request = vi.fn().mockResolvedValue({
+    messages: [
+      {
+        role: 'assistant',
+        content: 'finished through compact alias',
+        __openclaw: { seq: 1, runId: 'run-1' },
+      },
+    ],
+    sessionId: 'sid-1',
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.currentSessionId = 'sid-1';
+  controller.state.transcript.sessionKey = controller.state.sessionKey;
+  controller.state.transcript.sessionId = 'sid-1';
+  controller.state.chatSending = true;
+  controller.state.chatRunId = 'run-1';
+  beginAssistantTurn(
+    controller.state.transcript,
+    { runId: 'run-1', sessionId: 'sid-1' },
+    { now: () => 100, createId: prefix => `${prefix}-1` },
+  );
+
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent({
+    event: 'chat',
+    payload: {
+      sessionKey: 'justdo:session-1',
+      sessionId: 'sid-1',
+      runId: 'run-1',
+      state: 'final',
+      message: { role: 'assistant', content: 'finished through compact alias' },
+    },
+  });
+
+  expect(controller.state.chatSending).toBe(false);
+  expect(controller.state.chatRunId).toBeNull();
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({
+      role: 'assistant',
+      content: 'finished through compact alias',
+      runId: 'run-1',
+    }),
+  ]);
+
+  await vi.advanceTimersByTimeAsync(1500);
+  expect(request).toHaveBeenCalledWith('chat.history', {
+    sessionKey: 'agent:main:justdo:session-1',
+    limit: 1000,
+  });
+});
+
 test('creates one interruption only after reconnect confirms the run is inactive', async () => {
   const request = vi.fn().mockImplementation((method: string) => {
     if (method === 'chat.history') return Promise.resolve({ messages: [] });
@@ -6512,6 +6789,40 @@ test('creates one interruption only after reconnect confirms the run is inactive
   expect(controller.state.chatSending).toBe(false);
 });
 
+test('lets reconnect history settle a first turn that disconnected before run binding', async () => {
+  const persistedMessages = [
+    { role: 'user', content: 'first turn', __openclaw: { seq: 1 } },
+    { role: 'assistant', content: 'finished while offline', __openclaw: { seq: 2 } },
+  ];
+  const request = vi.fn().mockImplementation((method: string) => {
+    if (method === 'chat.startup') {
+      return Promise.resolve({
+        messages: persistedMessages,
+        sessionInfo: { key: 'agent:main:justdo:session-1', hasActiveRun: false },
+      });
+    }
+    return Promise.resolve({});
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.transcript.sessionKey = controller.state.sessionKey;
+  controller.setPendingUserMessage('first turn');
+
+  (controller as unknown as { handleClose(): void }).handleClose();
+  expect(controller.state.transportStatus).toBe('reconnecting');
+
+  controller.state.connected = true;
+  await (
+    controller as unknown as { reconcileSuspendedRun(): Promise<void> }
+  ).reconcileSuspendedRun();
+
+  expect(controller.state.chatSending).toBe(false);
+  expect(controller.state.chatRunId).toBeNull();
+  expect(controller.state.chatMessages).toEqual(persistedMessages);
+});
+
 test('invalidates in-flight history when sessions.changed rotates the session id', () => {
   vi.useFakeTimers();
   const controller = new ChatController();
@@ -6537,6 +6848,97 @@ test('invalidates in-flight history when sessions.changed rotates the session id
   expect(controller.state.currentSessionId).toBe('sid-new');
   expect(controller.state.transcript.historyGeneration).toBe(generation + 1);
   expect(controller.state.transcript.activeTurn).toBeNull();
+});
+
+test('projects context usage from sessions.changed and rejects an older snapshot', () => {
+  const controller = new ChatController();
+  const sessionKey = 'agent:main:justdo:session-1';
+  controller.state.sessionKey = sessionKey;
+  controller.state.currentSessionId = 'sid-1';
+  controller.state.transcript.sessionKey = sessionKey;
+  controller.state.transcript.sessionId = 'sid-1';
+  const listener = vi.fn();
+  controller.subscribe(listener);
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+
+  handleEvent({
+    event: 'sessions.changed',
+    payload: {
+      sessionKey,
+      sessionId: 'sid-1',
+      updatedAt: 200,
+      totalTokens: 160_000,
+      totalTokensFresh: true,
+      contextTokens: 200_000,
+      modelProvider: 'openai',
+      model: 'gpt-5.6-sol',
+    },
+  });
+  handleEvent({
+    event: 'sessions.changed',
+    payload: {
+      sessionKey,
+      sessionId: 'sid-1',
+      updatedAt: 100,
+      totalTokens: 190_000,
+      totalTokensFresh: true,
+      contextTokens: 200_000,
+    },
+  });
+
+  expect(controller.state.contextUsage).toEqual({
+    sessionKey,
+    sessionId: 'sid-1',
+    totalTokens: 160_000,
+    totalTokensFresh: true,
+    contextTokens: 200_000,
+    updatedAt: 200,
+    modelRef: 'openai/gpt-5.6-sol',
+  });
+  expect(listener).toHaveBeenCalledTimes(1);
+
+  handleEvent({
+    event: 'sessions.changed',
+    payload: {
+      sessionKey,
+      sessionId: 'sid-1',
+      updatedAt: 300,
+      totalTokens: 24_000,
+      totalTokensFresh: true,
+      contextTokens: 200_000,
+      modelProvider: 'openai',
+      model: 'gpt-5.6-sol',
+    },
+  });
+
+  expect(controller.state.contextUsage?.totalTokens).toBe(24_000);
+  expect(controller.state.contextUsage?.updatedAt).toBe(300);
+  expect(listener).toHaveBeenCalledTimes(2);
+
+  handleEvent({
+    event: 'session.message',
+    payload: {
+      sessionKey,
+      sessionId: 'sid-1',
+      session: {
+        sessionId: 'sid-1',
+        updatedAt: 400,
+        totalTokens: 26_000,
+        totalTokensFresh: true,
+        contextTokens: 200_000,
+        modelProvider: 'openai',
+        model: 'gpt-5.6-sol',
+      },
+    },
+  });
+
+  expect(controller.state.contextUsage?.totalTokens).toBe(26_000);
+  expect(controller.state.contextUsage?.updatedAt).toBe(400);
+  expect(listener).toHaveBeenCalledTimes(3);
 });
 
 test('rejects automatic session id rotation for a managed JustDo session', () => {
@@ -7406,6 +7808,36 @@ test('completes automatic compaction for a session while another session is sele
   ]);
 });
 
+test('applies compact session-operation aliases to the selected managed session', () => {
+  const controller = new ChatController();
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.transcript.sessionKey = controller.state.sessionKey;
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+
+  handleEvent({
+    event: 'session.operation',
+    payload: { operation: 'compact', phase: 'start', sessionKey: 'justdo:session-1' },
+  });
+  handleEvent({
+    event: 'session.operation',
+    payload: { operation: 'compact', phase: 'end', sessionKey: 'justdo:session-1' },
+  });
+
+  expect(controller.state.compactionInFlight).toBe(false);
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({
+      __openclaw: expect.objectContaining({
+        kind: 'compaction-status',
+        phase: 'completed',
+      }),
+    }),
+  ]);
+});
+
 test('keeps compaction progress when history only contains an existing legacy marker', () => {
   const sessionKey = 'agent:main:justdo:session-1';
   const legacyMarker = {
@@ -7483,4 +7915,186 @@ test('restores a persisted lifecycle failure after the controller restarts', asy
   expect(restartedController.state.chatMessages).toEqual([
     expect.objectContaining({ role: 'system', content: error, isError: true }),
   ]);
+});
+
+test('applies an identity-bearing session.message row without waiting for history', async () => {
+  vi.useFakeTimers();
+  const sessionKey = 'agent:main:justdo:session-1';
+  const request = vi.fn().mockResolvedValue({ messages: [] });
+  const baseline = {
+    role: 'assistant',
+    content: 'first',
+    __openclaw: { id: 'message-10', seq: 10, runId: 'run-old' },
+  };
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+  controller.state.chatMessages = [baseline];
+  controller.state.transcript.persistedMessages = [baseline];
+
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent({
+    event: 'session.message',
+    payload: {
+      sessionKey,
+      messageId: 'message-11',
+      messageSeq: 11,
+      message: { role: 'user', content: 'second' },
+    },
+  });
+
+  expect(controller.state.chatMessages).toEqual([
+    baseline,
+    {
+      role: 'user',
+      content: 'second',
+      __openclaw: { id: 'message-11', seq: 11 },
+    },
+  ]);
+  await vi.advanceTimersByTimeAsync(1300);
+  expect(request).not.toHaveBeenCalled();
+});
+
+test('keeps one assistant row when session.message beats chat.final', () => {
+  const sessionKey = 'agent:main:justdo:session-1';
+  const prompt = {
+    role: 'user',
+    content: 'prompt',
+    __openclaw: { id: 'message-1', seq: 1, runId: 'run-1' },
+  };
+  const controller = new ChatController();
+  controller.state.sessionKey = sessionKey;
+  controller.state.chatMessages = [prompt];
+  controller.state.transcript.persistedMessages = [prompt];
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 1,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+    },
+  });
+  handleEvent({
+    event: 'session.message',
+    payload: {
+      sessionKey,
+      runId: 'run-1',
+      hasActiveRun: true,
+      activeRunIds: ['run-1'],
+      message: {
+        role: 'assistant',
+        content: 'durable reply',
+        __openclaw: { id: 'message-2', seq: 2, runId: 'run-1' },
+      },
+    },
+  });
+  expect(controller.state.chatMessages).toHaveLength(2);
+
+  handleEvent({
+    event: 'chat',
+    payload: {
+      sessionKey,
+      runId: 'run-1',
+      state: 'final',
+      message: { role: 'assistant', content: 'durable reply' },
+    },
+  });
+
+  expect(controller.state.chatMessages).toHaveLength(2);
+  expect(controller.state.chatMessages[1]).toMatchObject({
+    role: 'assistant',
+    content: 'durable reply',
+    runId: 'run-1',
+    __openclaw: { id: 'message-2', seq: 2, runId: 'run-1' },
+  });
+});
+
+test('recovers an unsequenced internal Agent gap only for the selected run owner', () => {
+  const sessionKey = 'agent:main:justdo:session-1';
+  const recoverFromGap = vi.fn();
+  const controller = new ChatController();
+  controller.state.client = { recoverFromGap } as never;
+  controller.state.sessionKey = sessionKey;
+  controller.state.currentSessionId = 'session-current';
+  controller.state.transcript.sessionId = 'session-current';
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      sessionId: 'session-current',
+      lifecycleGeneration: 'generation-1',
+      runId: 'run-1',
+      seq: 1,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+    },
+  });
+  handleEvent({
+    event: 'agent',
+    payload: {
+      sessionKey,
+      sessionId: 'session-current',
+      lifecycleGeneration: 'generation-1',
+      runId: 'run-1',
+      stream: 'error',
+      data: { reason: 'seq gap', expected: 2, received: 4 },
+    },
+  });
+  expect(recoverFromGap).toHaveBeenCalledOnce();
+  expect(recoverFromGap).toHaveBeenCalledWith('agent stream sequence gap');
+
+  for (const payload of [
+    {
+      sessionKey: 'agent:main:justdo:session-other',
+      sessionId: 'session-current',
+      lifecycleGeneration: 'generation-1',
+      runId: 'run-1',
+    },
+    {
+      sessionKey,
+      sessionId: 'session-current',
+      lifecycleGeneration: 'generation-1',
+      runId: 'run-other',
+    },
+    {
+      sessionKey,
+      sessionId: 'session-other',
+      lifecycleGeneration: 'generation-1',
+      runId: 'run-1',
+    },
+    {
+      sessionKey,
+      sessionId: 'session-current',
+      lifecycleGeneration: 'generation-other',
+      runId: 'run-1',
+    },
+  ]) {
+    handleEvent({
+      event: 'agent',
+      payload: {
+        ...payload,
+        stream: 'error',
+        data: { reason: 'seq gap', expected: 2, received: 4 },
+      },
+    });
+  }
+  expect(recoverFromGap).toHaveBeenCalledOnce();
 });

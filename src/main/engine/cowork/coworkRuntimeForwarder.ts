@@ -1,14 +1,8 @@
 import { BrowserWindow } from 'electron';
 
 import { resolveCurrentApiConfig } from '../../cowork/providerApiConfig';
-import type { CoworkMessage, CoworkStore } from '../../data/coworkStore';
-import {
-  sanitizeCoworkMessageForIpc,
-  truncateIpcString,
-} from '../../ipc/payloadSanitizer';
+import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from './coworkEngineRouter';
-
-const IPC_UPDATE_CONTENT_MAX_CHARS = 120_000;
 
 const broadcast = (channel: string, payload: unknown): void => {
   BrowserWindow.getAllWindows().forEach(window => {
@@ -25,79 +19,12 @@ export const bindCoworkRuntimeForwarder = (
   runtime: CoworkEngineRouter,
   getCoworkStore: () => CoworkStore,
 ): void => {
-  runtime.on('message', (sessionId: string, message: unknown) => {
-    const safeMessage = sanitizeCoworkMessageForIpc(message);
-    const messageType =
-      typeof message === 'object' && message && 'type' in message
-        ? (message as { type?: unknown }).type
-        : undefined;
-    const forwardedMessage = message as CoworkMessage;
-
-    if (
-      messageType === 'subagent_completion' ||
-      messageType === 'assistant' ||
-      messageType === 'system' ||
-      messageType === 'user'
-    ) {
-      try {
-        getCoworkStore().insertMessageWithId(sessionId, forwardedMessage);
-      } catch (error) {
-        console.error('[CoworkForwarder] Failed to persist message:', error);
-      }
-    }
-
-    broadcast('cowork:stream:message', {
+  runtime.on('activity', (sessionId: string, kind: 'user' | 'other', timestamp: number) => {
+    broadcast('cowork:session:activity', {
       sessionId,
-      message: {
-        ...(safeMessage as Record<string, unknown>),
-        ...(forwardedMessage.modelName ? { modelName: forwardedMessage.modelName } : {}),
-      },
+      kind,
+      timestamp,
     });
-  });
-
-  runtime.on('messageUpdate', (sessionId: string, messageId: string, content: string) => {
-    broadcast('cowork:stream:messageUpdate', {
-      sessionId,
-      messageId,
-      content: truncateIpcString(content, IPC_UPDATE_CONTENT_MAX_CHARS),
-    });
-  });
-
-  runtime.on('thinkingUpdate', (sessionId: string, messageId: string, thinkingDelta: string) => {
-    broadcast('cowork:stream:thinkingUpdate', {
-      sessionId,
-      messageId,
-      thinkingDelta: truncateIpcString(thinkingDelta, IPC_UPDATE_CONTENT_MAX_CHARS),
-    });
-  });
-
-  runtime.on(
-    'messageMetadataUpdate',
-    (
-      sessionId: string,
-      messageId: string,
-      metadata: Partial<NonNullable<CoworkMessage['metadata']>>,
-      extra?: {
-        usage?: {
-          input?: number;
-          output?: number;
-          cacheRead?: number;
-          cacheWrite?: number;
-          total?: number;
-        };
-      },
-    ) => {
-      broadcast('cowork:stream:messageMetadataUpdate', {
-        sessionId,
-        messageId,
-        metadata,
-        ...extra,
-      });
-    },
-  );
-
-  runtime.on('messageDelete', (sessionId: string, messageId: string) => {
-    broadcast('cowork:stream:messageDelete', { sessionId, messageId });
   });
 
   runtime.on(

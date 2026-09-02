@@ -48,7 +48,7 @@ flowchart TD
 | -------------------------- | -------------------------------------------- |
 | `sessionKey` / `sessionId` | 当前消息域身份                               |
 | `persistedMessages`        | 已确认或降级加载的历史消息                   |
-| `historySource`            | `gateway`、`sqlite-fallback` 或 `optimistic` |
+| `historySource`            | `gateway` 或 `optimistic`                    |
 | `historyGeneration`        | 使旧的异步历史响应失效                       |
 | `activeTurn`               | 当前正在执行或刚刚收敛的 Assistant turn      |
 | `recentRuns`               | 短期终态去重集合                             |
@@ -60,7 +60,7 @@ flowchart TD
 
 ### 4.1 Thinking
 
-Thinking 是独立过程块，状态可为 running/completed/failed/cancelled/interrupted。它不写入 Assistant 正文。实时 reasoning 来自 `thinkingUpdate`；历史 reasoning 由 OpenClaw 历史显示补丁投影后恢复。
+Thinking 是独立过程块，状态可为 running/completed/failed/cancelled/interrupted。它不写入 Assistant 正文。实时 reasoning 来自 Renderer 直连 Gateway 的 agent event；历史 reasoning 由 OpenClaw 历史显示投影恢复。
 
 ### 4.2 Tool
 
@@ -198,7 +198,7 @@ Disclosure、停止按钮、跳到最新和计划区域应可键盘操作。动�
 | History     | generation 过期、Gateway/SQLite 来源、活动 turn 接管   |
 | Performance | 120k 工具输出、长 Markdown、750 条窗口、快速 token 流  |
 
-主要测试与实现同目录放置。修改共享事件或 Adapter 时，还要运行 Main 的 OpenClaw adapter/history reconciler 测试，不能只验证 Lit 快照。
+主要测试与实现同目录放置。修改共享事件时要运行 Renderer controller/reducer/history reconciler 测试；修改产品生命周期时另运行 Main OpenClaw adapter 测试，不能只验证 Lit 快照。
 
 ## 14. 验收基线
 

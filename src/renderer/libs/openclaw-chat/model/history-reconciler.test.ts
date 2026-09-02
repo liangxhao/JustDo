@@ -31,7 +31,7 @@ describe('history reconciliation', () => {
     expect(state.persistedMessages).toHaveLength(2);
   });
 
-  test('prevents fallback history from pruning Gateway-backed state', () => {
+  test('prevents optimistic history from pruning Gateway-backed state', () => {
     const state = createChatTranscriptState('session-1', null);
     state.historySource = 'gateway';
     state.persistedMessages = [{ id: 'gateway' }];
@@ -39,7 +39,7 @@ describe('history reconciliation', () => {
     expect(
       reconcileHistory(state, {
         request: { sessionKey: 'session-1', sessionId: null, historyGeneration: 0 },
-        source: 'sqlite-fallback',
+        source: 'optimistic',
         messages: [{ id: 'fallback' }],
       }),
     ).toMatchObject({ accepted: false, reason: 'lower-authority' });

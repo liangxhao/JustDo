@@ -54,7 +54,6 @@ const readModelNames = (value: unknown): string[] => {
 export const buildGatewaySessionDetailStats = (
   value: unknown,
   summary: string | null,
-  visibleStats?: SessionDetailStats,
 ): SessionDetailStats | null => {
   if (!isRecord(value)) return null;
   const counts = isRecord(value.messageCounts) ? value.messageCounts : undefined;
@@ -74,14 +73,11 @@ export const buildGatewaySessionDetailStats = (
   );
 
   return {
-    summary: visibleStats?.summary ?? summary,
-    messageCount:
-      visibleStats?.messageCount ??
-      nonNegativeNumber(counts?.total) ??
-      userMessageCount + assistantMessageCount,
-    userMessageCount: visibleStats?.userMessageCount ?? userMessageCount,
-    assistantMessageCount: visibleStats?.assistantMessageCount ?? assistantMessageCount,
-    toolCallCount: visibleStats?.toolCallCount ?? readMessageCount(counts, 'toolCalls'),
+    summary,
+    messageCount: nonNegativeNumber(counts?.total) ?? userMessageCount + assistantMessageCount,
+    userMessageCount,
+    assistantMessageCount,
+    toolCallCount: readMessageCount(counts, 'toolCalls'),
     models: readModelNames(modelUsage),
     tokenUsage,
     totalTokens,

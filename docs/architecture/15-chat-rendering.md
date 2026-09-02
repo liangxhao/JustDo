@@ -1,6 +1,6 @@
 # Chat 渲染架构
 
-本文按 `v2026.8.27` 的 `src/renderer/libs/openclaw-chat/`、`JustDoChatWrapper`、Main history/adapter 和相关测试重写。Chat 渲染不是“把 messages map 成 DOM”；它是 history、optimistic tail、实时事件、工具生命周期与滚动窗口的确定性投影。
+本文按 `v2026.8.27` 的 `src/renderer/libs/openclaw-chat/`、`JustDoChatWrapper`、Gateway client 和相关测试重写。Chat 渲染不是“把 messages map 成 DOM”；它是 history、optimistic tail、实时事件、工具生命周期与滚动窗口的确定性投影。
 
 ## 1. 目标与不变量
 
@@ -16,11 +16,12 @@
 
 | 目录/文件                                | 职责                                                          |
 | ---------------------------------------- | ------------------------------------------------------------- |
-| `JustDoChatWrapper.tsx`                  | React/Cowork与Lit chat的桥、IPC订阅、session切换、history载入 |
+| `JustDoChatWrapper.tsx`                  | React/Cowork与Lit chat的桥、Gateway订阅、session切换、history载入 |
 | `gateway/client.ts`                      | Renderer Gateway client与连接信息适配                         |
 | `gateway/chat-controller.ts`             | 对外状态/命令、订阅与transcript调度                           |
 | `model/chat-transcript-state.ts`         | persisted/history source、active turn、recent runs、revision  |
 | `model/agent-event-reducer.ts`           | normalized agent event -> turn items                          |
+| `model/session-message-apply.ts`         | durable append identity、ownership、去重与有序插入            |
 | `model/history-reconciler.ts`            | history与active/optimistic identity对账                       |
 | `model/history-window.ts`                | 750条窗口、每次250条前后移动                                  |
 | `pipeline/build-chat-items.ts`           | 原始message -> group/timeline display items                   |
@@ -32,7 +33,7 @@
 
 ## 3. 状态模型
 
-`ChatTranscriptState`：当前 session key/id、persistedMessages、historySource、historyGeneration、activeTurn、recentRuns和revision。History source是 `gateway`、`sqlite-fallback` 或 `optimistic`，调用方必须保留来源语义。
+`ChatTranscriptState`：当前 session key/id、persistedMessages、historySource、historyGeneration、activeTurn、recentRuns和revision。History source只有 `gateway` 或 `optimistic`：前者来自权威 history，后者是提交后等待 Gateway 接管的短暂用户尾部。Main/SQLite 不提供降级 transcript。
 
 `AssistantTurn`绑定 run/session/lifecycle generation，状态 `running|final|aborted|error`，保存 last agent seq、时间、modelRef和有序items。Item分：
 
@@ -48,7 +49,6 @@
 ```mermaid
 flowchart LR
   GH[Gateway history]
-  SF[SQLite fallback]
   OPT[Optimistic user tail]
   EVT[Normalized live events]
   PS[Persisted transcript state]
@@ -58,7 +58,6 @@ flowchart LR
   WIN[History render window]
   LIT[Lit timeline]
   GH --> REC
-  SF --> REC
   OPT --> REC
   EVT --> AT --> REC
   REC --> PS --> PIPE --> WIN --> LIT
@@ -66,9 +65,13 @@ flowchart LR
 
 Wrapper切换session时取消旧订阅、建立新generation、请求paged history/tool inputs/compaction detail，并设置chat element属性。Controller按session缓存未完成turn、pending user message、run activity和compaction状态；后台session的live/terminal事件及迟到的send/compact RPC结果写回所属缓存，重新选中时先恢复缓存再与history对账。
 
-临时session转为canonical session必须由创建流程显式登记准确的source/target key。普通的“临时session → 其他已有session”导航不能推断为promotion，也不能迁移消息或sending状态。Live事件先经过shared domain分类，再送controller/reducer；terminal触发Main/Gateway history同步。旧异步history请求即使晚返回，也因generation/session identity被丢弃。
+临时session转为canonical session必须由创建流程显式登记准确的source/target key。普通的“临时session → 其他已有session”导航不能推断为promotion，也不能迁移消息或sending状态。Live事件先经过shared domain分类，再送controller/reducer；terminal触发Controller刷新Gateway history。旧异步history请求即使晚返回，也因generation/session identity被丢弃。
 
-运行期间的 `session.message` 是transcript append的冗余权威通知。若对应Agent Tool start帧漏收或晚到，Controller可在session/run identity和active-turn时间边界均匹配时，用稳定toolCallId恢复该append里的缺失Tool；若通知本身也因背压丢失，后续append暴露的messageSeq缺口会登记unresolved target并触发有界active-tail history追赶，该兜底仍只恢复长等待所需的 `sessions_yield`。只有权威history追到target并经过安全Tool hydration后才清除缺口，陈旧快照或请求失败会重试。揭示缺口的消息可以是announce，但direct message回填仍必须匹配root run。恢复不替换整个live timeline，也不推进Agent sequence；每个新恢复Tool先作为live-tail边界，同一权威assistant row会补全并结束Tool前的Thinking，result-only首帧也会先结束该Thinking再释放边界。迟到的同轮Thinking帧只能更新已结束项而不能重新点亮；随后canonical start/result或携带同一toolCallId的Tool item原位确认该卡，无关status/commentary item不能释放边界。旧、无timestamp或foreign消息不得直接回填到当前turn。
+Gateway外层event sequence只属于单个WebSocket generation；每次连接都清空基线。发现向前缺口时当前socket立即退休，不消费缺口后的可疑帧，重连后重新订阅并加载history。Agent `payload.seq` 只提供run内顺序与去重栅栏，并不保证连续：累积Thinking/Content快照以及其他可替换高频事件可能被Gateway合并或因慢订阅者背压而丢弃，合法跳号不能触发断线。`chat.startup` / `chat.history` 返回的 `inFlightRun` 会重新接管run id/startedAt，按seq回放Thinking、Tool、Content等有界events，再以前缀安全规则合并累计text。这样切页、后台挂起和网络抖动后不依赖已丢失的delta；与请求并发发生的terminal或新run会通过run ownership fence拒绝陈旧snapshot。
+
+`session.message` 是transcript append的增量权威通知。Controller先按Gateway message id、messageSeq、idempotency、run id和import provenance判断身份与producer ownership；可证明归属的user/current assistant/previous-run assistant立即去重或按seq插入，不再为每一行重载整段history。当前run的durable assistant保留在权威transcript中，但ActiveTurn存在时由显示投影隐藏，避免与流式Content/Tool双显。身份缺失、foreign/queued user、ambiguous assistant、partial import或截断内容仍回退history。
+
+若对应Agent Tool start帧漏收或晚到，Controller还可在session/run identity和active-turn时间边界均匹配时，用稳定toolCallId恢复该append里的缺失Tool；若通知本身也因背压丢失，后续append暴露的messageSeq缺口会登记unresolved target并触发有界active-tail history追赶。只有权威history追到target并经过安全Tool hydration后才清除缺口，陈旧快照或请求失败会重试。恢复不替换整个live timeline，也不推进Agent sequence；每个新恢复Tool先作为live-tail边界，同一权威assistant row会补全并结束Tool前的Thinking。迟到的同轮Thinking帧只能更新已结束项而不能重新点亮；随后canonical start/result或携带同一toolCallId的Tool item原位确认该卡，无关status/commentary item不能释放边界。
 
 ## 5. Event admission
 
@@ -77,7 +80,8 @@ Reducer不只检查runId：
 - session key先标准化并与当前域匹配；
 - sessionId存在时必须一致；
 - lifecycleGeneration防止同run id重用/重连污染；
-- agent sequence必须单调，重复或回退忽略；
+- agent sequence按run维护单调高水位，并对Thinking/Tool等activity owner维护独立sequence fence；重复或回退的同身份事件忽略，但旧snapshot仍可补入此前未见的另一身份项；
+- 新增的非展示stream也推进sequence fence；缺失的持久消息由history/session.message对账，活动文本由后续累计快照或in-flight snapshot接管；
 - terminal recent run拒绝后续非合法修正；
 - tool terminal status通过shared normalizer统一；
 - foreign/detached run只在明确可见规则下形成历史项，不能抢当前active turn。
@@ -88,7 +92,7 @@ Main和Renderer共享 `agentEvent`/`messageDomain` 合约，禁止各自维护�
 
 ### 6.1 Thinking
 
-start/delta/snapshot创建或更新独立Thinking item；文本按delta或snapshot规则合并。终止时变completed/failed/cancelled/interrupted。Thinking不拼入最终Content，也不因没有正文被隐藏。
+start/delta/snapshot创建或更新独立Thinking item；兼容新版 `data.thinking` 与 `data.text`，文本按delta或snapshot规则合并。终止时变completed/failed/cancelled/interrupted。Thinking不拼入最终Content，也不因没有正文被隐藏。
 
 ### 6.2 Tool
 
@@ -98,7 +102,7 @@ start/delta/snapshot创建或更新独立Thinking item；文本按delta或snapsh
 
 Delta append、snapshot replace、replaceable允许权威final替换。文本merge处理suffix/prefix overlap，避免provider重复快照。final完成流；aborted/error把未完成内容标interrupted并增加terminal item。
 
-运行中的`session.message`只允许按稳定toolCallId恢复Tool及其之前的Content片段；无Tool锚点的普通assistant尾段不得抢先写入active Content，必须等待canonical assistant/chat stream，否则会把完整正文提前写入timeline并吞掉后续增量。
+运行中的producer-owned `session.message` assistant可以进入persisted transcript，但不能直接写入active Content；显示层在ActiveTurn结束前隐藏同run durable行。Tool及其前置Thinking/Content仍按稳定toolCallId修复活动项，不能让完整持久正文抢占后续流式增量。
 
 Gateway v2026.8.1 原生 required-task join 必须在所有 required child terminal 后才允许父 turn 收敛。Renderer 只消费已获准的 assistant stream 与原生 task terminal event；被 Gateway 延迟或拒绝的 terminal 候选不能作为正文泄漏到 timeline。
 
@@ -117,7 +121,7 @@ Stable transcript identity优先读取Gateway message id/记录标识，再用�
 5. 保留合法active tail，删除已被history覆盖的重复项；
 6. 增加historyGeneration/revision。
 
-SQLite fallback只在Gateway history不可用时提供初始/错误恢复显示；一旦Gateway结果到达必须takeover。Tool input lookup先使用原生 `chat.history` display projection，再通过 `justdoRuntimeBridge.historyDetails` 的 `operator.read` RPC 按 session 和 call id 有界补齐，不能跨 transcript 搜相同 call id，也不能直接读取 `sessions.json`。
+首屏、切页与应用重启都直接以Gateway history恢复；提交后的optimistic user tail只在当前Controller内短暂存在，权威结果到达后takeover。Tool input lookup先使用原生 `chat.history` display projection，再通过 `justdoRuntimeBridge.historyDetails` 的 `operator.read` RPC 按 session 和 call id 有界补齐，不能跨 transcript 搜相同 call id，也不能直接读取 `sessions.json`。
 
 ## 8. History 窗口
 
@@ -177,7 +181,7 @@ Minimap从timeline identity生成entry，追踪当前viewport并支持hover prev
 
 Goal card位于chat周边但状态来自Main snapshot。Compaction history detail通过专用IPC读取，timeline展示summary、tokens before/after和recovery progress；不把内部context markers显示给用户。
 
-输入区上下文圆环在 session 已有 `totalTokens` 后与 OpenClaw webchat 使用相同口径：展示原生 snapshot，`totalTokensFresh: false` 时以 `~` 标记近似值。首个 snapshot 尚未产生且 Gateway 明确报告 active run 时，UI 可使用 v2026.8.1 原生 context budget estimate 作为启动值，但永远不得覆盖较新的 `totalTokens`。运行结束后 UI 做有界收敛轮询，并按 generation/`updatedAt` 拒绝乱序 snapshot；显示层将异常 provider 值限制在窗口上限。
+输入区上下文圆环与 OpenClaw webchat 使用同一会话行口径：初始值取 `chat.history.sessionInfo`，运行中的更新取 `sessions.changed` 以及 transcript-derived `session.message.session`，只在 session 已有 `totalTokens` 且能确定 context limit 时展示；`totalTokensFresh: false` 以 `~` 标记近似值。Controller 按 session identity 与 `updatedAt` 拒绝陈旧 history/event 快照，同时允许压缩后的 token 数下降；显示层把超过窗口的 provider 值限制为 100%。该链路不再维护独立 estimate cache，也不再通过 Main IPC 轮询 `sessions.describe/list`。
 
 长时间无输出提示由active turn clock派生，仅表示等待，不宣告失败。Failed run message必须区分abort、error、transport和tool failure；OpenClaw log hint仅从streaming active content的特定系统尾部移除，普通完成内容中的“Logs”标题保留。
 
@@ -187,15 +191,15 @@ Goal card位于chat周边但状态来自Main snapshot。Compaction history detai
 
 ## 19. 测试矩阵
 
-现有测试覆盖 reducer sequence/terminal/tool/thinking、history identity/window/reconcile、optimistic tail、process summary、tool lifecycle/cards、active timeline、漏收 `sessions_yield` start后的直接恢复、foreign announce揭示双漏帧messageSeq缺口、陈旧history重试、连续/重复/乱序cursor、foreign/旧/无timestamp拒绝及后续sequence连续性、Markdown/KaTeX/Mermaid、stream scheduler、scroll、minimap、conversion和wrapper辅助逻辑。
+现有测试覆盖 WebSocket generation gap、in-flight run按owner补洞、reducer sequence/terminal/tool/thinking、session.message身份/producer admission/插序/去重、history identity/window/reconcile、optimistic tail、process summary、tool lifecycle/cards、active timeline、漏收 `sessions_yield` start后的直接恢复、messageSeq缺口、陈旧history重试、连续/重复/乱序cursor、foreign/旧/无timestamp拒绝及后续sequence连续性、Markdown/KaTeX/Mermaid、stream scheduler、scroll、minimap和wrapper辅助逻辑。
 
 变更还应覆盖：session快速切换、旧request晚返回、重连generation、foreign run、分页两端、超大Markdown/tool输出、XSS payload、展开锚点、search disclosure、RTL/CJK、无RAF/ResizeObserver、history takeover和导出一致性。
 
 ## 20. 维护规则
 
-- 新Gateway event先更新shared normalize和Main adapter，再更新reducer。
+- 新Gateway event先确认消费边界：聊天数据面更新Renderer normalize/reducer，产品生命周期面才同步Main adapter；不要重新双路投影同一消息。
 - 不在component render中修协议；复杂转换放纯函数并测试。
-- active/persisted状态只能通过transcript reducer/reconciler变更。
+- active状态只经transcript reducer/reconciler变更；durable append只经session-message apply或history reconciler进入persisted状态。
 - 调整limit必须以性能profile和内存证据为依据。
 - Chat架构变化同步Cowork、thin frontend、capability matrix和相关feature审计。
 
@@ -205,7 +209,7 @@ History message、live assistant segment、tool lifecycle、thinking、plan 和 
 
 ## 22. Terminal 与 Takeover
 
-Terminal event 关闭 active reducer 的本次 run，但 persisted history 何时包含完整结果由后续 query 决定。History takeover 的条件是权威项可覆盖对应 live/optimistic identity；不能在收到任意 history response 时清空 overlay，也不能长期保留导致重复。迟到 delta、旧 generation query 和 foreign run 都必须被 admission 拒绝。
+Terminal event 关闭 active reducer 的本次 run，但 OpenClaw 会先广播 `chat.final`，再完成终态持久化。Controller使用100/400/1500/3000ms有界退避检查history；可显示final保留optimistic tail直到durable identity接管，无message final则以messageSeq/count/run identity判断持久化是否追上。每次重试绑定session key/id、run与history generation，新会话或下一轮开始后立即失效。History takeover不能在收到任意旧快照时清空overlay，也不能长期保留导致重复。
 
 ## 23. 渲染预算与降级
 
@@ -230,12 +234,13 @@ Streaming 更新不应抢走键盘焦点或反复触发 screen reader 整页朗�
 | ------------------ | ----------------------------------------------------------------- |
 | Event reducer      | `model/agent-event-reducer.ts` 及测试                             |
 | Transcript/history | `chat-transcript-state.ts`、history/window/reconciler tests       |
+| Durable append      | `session-message-apply.ts` 及controller集成测试                  |
 | Optimistic         | `optimistic-user-message.ts`、`optimistic-history-tail.ts` 及测试 |
 | Projection         | `project-history-timeline.ts`、`project-turn-items.ts` 及测试     |
 | Item pipeline      | `pipeline/build-chat-items.ts`、normalizer/tool tests             |
 | Streaming/scroll   | controllers scheduler/scroll tests                                |
 | Search/minimap     | `search-match.ts`、`chat-minimap.ts` 及测试                       |
-| Gateway conversion | `conversion/cowork-to-gateway.ts` 及测试                          |
+| Gateway transport  | `gateway/client.ts`、`gateway/chat-controller.ts` 及测试         |
 
 ## 26. Chat 变更完成条件
 

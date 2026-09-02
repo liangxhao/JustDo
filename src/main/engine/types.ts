@@ -1,5 +1,4 @@
 import type { OpenClawSkillSource } from '../../shared/plugins/skills';
-import type { CoworkMessage } from '../data/coworkStore';
 
 export type CoworkAgentEngine = 'openclaw';
 
@@ -87,24 +86,7 @@ export interface SkillRpcResult {
 // ============================================================
 
 export interface CoworkRuntimeEvents {
-  message: (sessionId: string, message: CoworkMessage) => void;
-  messageUpdate: (sessionId: string, messageId: string, content: string) => void;
-  messageMetadataUpdate: (
-    sessionId: string,
-    messageId: string,
-    metadata: Partial<NonNullable<CoworkMessage['metadata']>>,
-    extra?: {
-      usage?: {
-        input?: number;
-        output?: number;
-        cacheRead?: number;
-        cacheWrite?: number;
-        total?: number;
-      };
-    },
-  ) => void;
-  messageDelete: (sessionId: string, messageId: string) => void;
-  thinkingUpdate: (sessionId: string, messageId: string, thinkingDelta: string) => void;
+  activity: (sessionId: string, kind: 'user' | 'other', timestamp: number) => void;
   complete: (sessionId: string, finalStatus?: 'idle' | 'running' | 'completed' | 'error') => void;
   error: (sessionId: string, error: string) => void;
   sessionStopped: (sessionId: string) => void;
@@ -114,19 +96,11 @@ export interface CoworkRuntimeEvents {
 import type { CoworkAttachmentPayload } from '../../shared/cowork/attachments';
 
 export type CoworkStartOptions = {
-  skipInitialUserMessage?: boolean;
   skillIds?: string[];
-  autoApprove?: boolean;
   workspaceRoot?: string;
   confirmationMode?: 'modal' | 'text';
   attachments?: CoworkAttachmentPayload[];
   agentId?: string;
-  clientTurnId?: string;
-};
-
-export type CoworkContinueOptions = {
-  skillIds?: string[];
-  attachments?: CoworkAttachmentPayload[];
   clientTurnId?: string;
 };
 
@@ -144,11 +118,6 @@ export interface CoworkRuntime {
   on<U extends keyof CoworkRuntimeEvents>(event: U, listener: CoworkRuntimeEvents[U]): this;
   off<U extends keyof CoworkRuntimeEvents>(event: U, listener: CoworkRuntimeEvents[U]): this;
   startSession(sessionId: string, prompt: string, options?: CoworkStartOptions): Promise<void>;
-  continueSession(
-    sessionId: string,
-    prompt: string,
-    options?: CoworkContinueOptions,
-  ): Promise<void>;
   stopSession(sessionId: string, options?: CoworkStopOptions): Promise<void>;
   stopAllSessions(): Promise<void>;
   isSessionActive(sessionId: string): boolean;

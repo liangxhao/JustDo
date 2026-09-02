@@ -1,18 +1,15 @@
 import '@/libs/openclaw-chat/components/justdo-chat';
 
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 
-import type { CoworkMessage } from '@/features/cowork/coworkTypes';
 import type { JustDoChatElement } from '@/libs/openclaw-chat/components/justdo-chat';
-import { resolveChatDisplayMessages } from '@/libs/openclaw-chat/conversion/cowork-to-gateway';
 import type { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
 import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 
 interface ChatMessageDisplayProps {
   className?: string;
   controller?: ChatController | null;
-  messages?: CoworkMessage[];
   gatewayMessages?: GatewayMessage[];
   isStreaming?: boolean;
   fullWidth?: boolean;
@@ -35,7 +32,6 @@ interface ChatMessageDisplayProps {
 const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
   className,
   controller = null,
-  messages = [],
   gatewayMessages,
   isStreaming = false,
   fullWidth = false,
@@ -51,11 +47,6 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const chatRef = useRef<JustDoChatElement | null>(null);
-  const displayedMessages = useMemo(
-    () => resolveChatDisplayMessages(messages, gatewayMessages),
-    [gatewayMessages, messages],
-  );
-
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -99,7 +90,7 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
     if (!chat) return;
     chat.controller = controller;
     if (!controller) {
-      chat.messages = displayedMessages;
+      chat.messages = gatewayMessages ?? [];
       chat.isStreaming = isStreaming;
     }
     chat.assistantName = assistantName ?? '';
@@ -109,7 +100,7 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
   }, [
     assistantName,
     controller,
-    displayedMessages,
+    gatewayMessages,
     isStreaming,
     processSummariesExpanded,
     workingDirectory,

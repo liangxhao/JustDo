@@ -40,6 +40,11 @@ export interface RecoveredPreToolSegment {
   text: string;
 }
 
+export interface AgentEventReduceOptions {
+  /** Allow an in-flight history snapshot to fill an owner absent from newer live state. */
+  allowSequenceBackfill?: boolean;
+}
+
 function stringValue(value: unknown): string | null {
   return typeof value === 'string' ? value : null;
 }
@@ -110,6 +115,62 @@ function itemToolCallId(data: Record<string, unknown>): string | null {
   const itemId = stringValue(data.itemId)?.trim() ?? '';
   const match = /^(?:tool|command|patch):(.+)$/i.exec(itemId);
   return match?.[1]?.trim() || null;
+}
+
+function eventItemId(data: Record<string, unknown>): string | null {
+  return stringValue(data.itemId)?.trim() || stringValue(data.id)?.trim() || null;
+}
+
+function activityEventIdentity(event: NormalizedAgentEvent): string {
+  if (event.stream === 'tool') {
+    const toolCallId = itemToolCallId(event.data);
+    if (toolCallId) return `tool:${JSON.stringify(toolCallId)}`;
+  }
+  if (event.stream === 'item') {
+    const kind = stringValue(event.data.kind)?.trim() || 'item';
+    const itemId = eventItemId(event.data) ?? 'latest';
+    return `item:${JSON.stringify([kind, itemId])}`;
+  }
+  const itemId = eventItemId(event.data);
+  return itemId
+    ? `stream:${JSON.stringify([event.stream, itemId])}`
+    : `stream:${JSON.stringify(event.stream)}`;
+}
+
+function toolTerminalIdentity(ownerIdentity: string): string {
+  return `${ownerIdentity}:result`;
+}
+
+function isTerminalToolEvent(event: NormalizedAgentEvent): boolean {
+  if (event.stream !== 'tool') return false;
+  const phase = stringValue(event.data.phase)?.trim().toLowerCase();
+  return phase === 'result' || phase === 'error' || phase === 'failed';
+}
+
+function acceptsBackfillSequence(turn: AssistantTurn, event: NormalizedAgentEvent): boolean {
+  const ownerIdentity = activityEventIdentity(event);
+  const sequences = turn.activityEventSeqById;
+  if (event.stream === 'tool' && !isTerminalToolEvent(event)) {
+    const terminalSeq = sequences?.get(toolTerminalIdentity(ownerIdentity));
+    if (terminalSeq !== undefined && event.agentSeq <= terminalSeq) return false;
+  }
+  const previous = sequences?.get(ownerIdentity);
+  return previous === undefined || event.agentSeq > previous;
+}
+
+function recordActivitySequence(turn: AssistantTurn, event: NormalizedAgentEvent): void {
+  const ownerIdentity = activityEventIdentity(event);
+  const sequences = (turn.activityEventSeqById ??= new Map());
+  sequences.set(ownerIdentity, event.agentSeq);
+  if (isTerminalToolEvent(event)) {
+    sequences.set(toolTerminalIdentity(ownerIdentity), event.agentSeq);
+  }
+}
+
+function insertAgentItemBySequence(turn: AssistantTurn, item: TurnItem): void {
+  const insertionIndex = turn.items.findIndex(candidate => candidate.firstSeq > item.firstSeq);
+  if (insertionIndex < 0) turn.items.push(item);
+  else turn.items.splice(insertionIndex, 0, item);
 }
 
 export function confirmRecoveredToolSequence(
@@ -406,8 +467,9 @@ function reduceThinking(
   turn: AssistantTurn,
   event: NormalizedAgentEvent,
   dependencies: TranscriptReducerDependencies,
+  backfill = false,
 ): void {
-  const snapshot = stringValue(event.data.text);
+  const snapshot = stringValue(event.data.thinking) ?? stringValue(event.data.text);
   const delta = stringValue(event.data.delta);
   const isDelta = delta !== null && (snapshot === null || !snapshot.trim());
   const text = isDelta ? delta : (snapshot ?? delta);
@@ -466,7 +528,7 @@ function reduceThinking(
     );
     return;
   }
-  completeStreamingContent(turn, event.agentSeq, event.timestamp);
+  if (!backfill) completeStreamingContent(turn, event.agentSeq, event.timestamp);
   const tail = activeAgentTail(turn);
   if (tail?.type === 'thinking' && tail.status === 'running') {
     tail.text = isDelta
@@ -479,16 +541,21 @@ function reduceThinking(
   const item: ThinkingItem = {
     ...createBase(turn, event, dependencies, 'thinking'),
     type: 'thinking',
-    status: 'running',
+    status:
+      backfill && turn.items.some(candidate => candidate.firstSeq > event.agentSeq)
+        ? 'completed'
+        : 'running',
     text,
   };
-  appendAgentItem(turn, item);
+  if (backfill) insertAgentItemBySequence(turn, item);
+  else appendAgentItem(turn, item);
 }
 
 function reduceContent(
   turn: AssistantTurn,
   event: NormalizedAgentEvent,
   dependencies: TranscriptReducerDependencies,
+  backfill = false,
 ): ContentItem | null {
   const snapshot = stringValue(event.data.text);
   const delta = stringValue(event.data.delta);
@@ -554,7 +621,7 @@ function reduceContent(
     );
     return hydrated ? (contentBeforeTool(turn, recoveredTool) ?? null) : null;
   }
-  completeRunningThinking(turn, event.agentSeq, event.timestamp);
+  if (!backfill) completeRunningThinking(turn, event.agentSeq, event.timestamp);
   const tail = activeAgentTail(turn);
   const replace = event.data.replace === true;
   if (tail?.type === 'content' && tail.status === 'streaming') {
@@ -572,11 +639,20 @@ function reduceContent(
   const item: ContentItem = {
     ...createBase(turn, event, dependencies, 'content'),
     type: 'content',
-    status: 'streaming',
+    status:
+      backfill && turn.items.some(candidate => candidate.firstSeq > event.agentSeq)
+        ? 'completed'
+        : 'streaming',
     text,
     sourceMode: replace ? 'replaceable' : isDelta ? 'delta' : 'snapshot',
   };
-  appendAgentItem(turn, item);
+  if (backfill) {
+    const followingItem = turn.items.find(candidate => candidate.firstSeq > event.agentSeq);
+    if (followingItem?.type === 'tool') item.followingToolCallId = followingItem.toolCallId;
+    insertAgentItemBySequence(turn, item);
+  } else {
+    appendAgentItem(turn, item);
+  }
   return item;
 }
 
@@ -599,6 +675,7 @@ function reduceTool(
   turn: AssistantTurn,
   event: NormalizedAgentEvent,
   dependencies: TranscriptReducerDependencies,
+  backfill = false,
 ): boolean {
   const normalized = normalizeToolEvent(event.data);
   const toolCallId = normalized.toolCallId;
@@ -622,30 +699,50 @@ function reduceTool(
   const status = outputlessSessionsYieldResult ? 'running' : resolved.status;
 
   if (existing) {
+    if (backfill && existing.agentSequencePending !== true && existing.lastSeq >= event.agentSeq) {
+      return false;
+    }
+    const preserveExistingTerminal = backfill && existing.status !== 'running';
     confirmRecoveredToolSequence(turn, existing, event.agentSeq, event.timestamp);
-    existing.name = resolved.name;
-    if (resolvedInput !== undefined && resolvedInput !== null) existing.input = resolvedInput;
-    if (resolved.output !== null && !outputlessSessionsYieldResult) {
+    if (!preserveExistingTerminal || existing.name === 'tool') existing.name = resolved.name;
+    if (
+      resolvedInput !== undefined &&
+      resolvedInput !== null &&
+      (!preserveExistingTerminal || existing.input === undefined)
+    ) {
+      existing.input = resolvedInput;
+    }
+    if (
+      resolved.output !== null &&
+      !outputlessSessionsYieldResult &&
+      (!preserveExistingTerminal || existing.output === undefined)
+    ) {
       existing.output = boundOutput(resolved.output);
     }
-    if (resolved.error !== null && !outputlessSessionsYieldResult) {
+    if (
+      resolved.error !== null &&
+      !outputlessSessionsYieldResult &&
+      (!preserveExistingTerminal || existing.error === undefined)
+    ) {
       existing.error = boundOutput(resolved.error);
     }
-    if (existing.status === 'running' || status !== 'running') {
+    if (!preserveExistingTerminal && (existing.status === 'running' || status !== 'running')) {
       existing.status = status;
     }
-    existing.lastSeq = event.agentSeq;
-    existing.updatedAt = event.timestamp;
+    existing.lastSeq = Math.max(existing.lastSeq, event.agentSeq);
+    existing.updatedAt = Math.max(existing.updatedAt, event.timestamp);
     return true;
   }
 
-  completeRunningThinking(turn, event.agentSeq, event.timestamp);
-  const previous = activeAgentTail(turn);
-  if (previous?.type === 'content' && previous.status === 'streaming') {
-    previous.status = 'completed';
-    previous.followingToolCallId = toolCallId;
-    previous.lastSeq = event.agentSeq;
-    previous.updatedAt = event.timestamp;
+  if (!backfill) {
+    completeRunningThinking(turn, event.agentSeq, event.timestamp);
+    const previous = activeAgentTail(turn);
+    if (previous?.type === 'content' && previous.status === 'streaming') {
+      previous.status = 'completed';
+      previous.followingToolCallId = toolCallId;
+      previous.lastSeq = event.agentSeq;
+      previous.updatedAt = event.timestamp;
+    }
   }
   const item: ToolItem = {
     ...createBase(turn, event, dependencies, 'tool'),
@@ -661,7 +758,8 @@ function reduceTool(
       ? { error: boundOutput(normalized.error) }
       : {}),
   };
-  appendAgentItem(turn, item);
+  if (backfill) insertAgentItemBySequence(turn, item);
+  else appendAgentItem(turn, item);
   turn.toolById.set(toolCallId, item);
   return true;
 }
@@ -670,6 +768,7 @@ function admitTurn(
   state: ChatTranscriptState,
   event: NormalizedAgentEvent,
   dependencies: TranscriptReducerDependencies,
+  allowSequenceBackfill = false,
 ): AssistantTurn | null {
   pruneRecentRuns(state, dependencies.now());
   const tombstone = state.recentRuns.get(event.runId);
@@ -683,7 +782,7 @@ function admitTurn(
   if (
     admission === 'ignored-session' ||
     admission === 'ignored-run' ||
-    admission === 'ignored-sequence' ||
+    (admission === 'ignored-sequence' && !allowSequenceBackfill) ||
     admission === 'ignored-terminal'
   ) {
     return null;
@@ -714,6 +813,7 @@ export function reduceAgentEvent(
   state: ChatTranscriptState,
   event: NormalizedAgentEvent,
   dependencies: TranscriptReducerDependencies,
+  options: AgentEventReduceOptions = {},
 ): TranscriptReduceResult {
   if (!eventMatchesTranscriptSession(state, event)) return 'ignored-session';
   const previousTurn = state.activeTurn;
@@ -724,9 +824,17 @@ export function reduceAgentEvent(
     terminalRun: Boolean(state.recentRuns.get(event.runId)?.terminalStatus),
   });
   if (admission === 'ignored-session') return 'ignored-session';
-  if (admission === 'ignored-sequence') return 'ignored-sequence';
+  const isSequenceBackfill = admission === 'ignored-sequence';
+  if (
+    isSequenceBackfill &&
+    (!options.allowSequenceBackfill ||
+      !previousTurn ||
+      !acceptsBackfillSequence(previousTurn, event))
+  ) {
+    return 'ignored-sequence';
+  }
   if (admission === 'ignored-run' || admission === 'ignored-terminal') return 'ignored-run';
-  const turn = admitTurn(state, event, dependencies);
+  const turn = admitTurn(state, event, dependencies, isSequenceBackfill);
   if (!turn) return 'ignored-run';
   if (turn.sessionId && event.sessionId && turn.sessionId !== event.sessionId) {
     return 'ignored-session';
@@ -738,21 +846,20 @@ export function reduceAgentEvent(
   ) {
     return 'ignored-run';
   }
-  let applied = true;
   if (event.stream === 'thinking') {
-    reduceThinking(turn, event, dependencies);
+    reduceThinking(turn, event, dependencies, isSequenceBackfill);
   } else if (event.stream === 'assistant') {
     const observation = readTerminalGuardObservation(event.data);
     if (observation?.action === 'commit' || observation?.action === 'rollback') {
       applyTerminalGuardObservationDecision(turn, observation);
     } else {
-      const content = reduceContent(turn, event, dependencies);
+      const content = reduceContent(turn, event, dependencies, isSequenceBackfill);
       if (content && observation?.action === 'update') {
         content.terminalGuardObservationToken = observation.token;
       }
     }
   } else if (event.stream === 'tool') {
-    applied = reduceTool(turn, event, dependencies);
+    reduceTool(turn, event, dependencies, isSequenceBackfill);
   } else if (
     event.stream === 'lifecycle' ||
     event.stream === 'item' ||
@@ -766,12 +873,14 @@ export function reduceAgentEvent(
         recoveredTool.lastSeq = Math.max(recoveredTool.lastSeq, event.agentSeq);
       }
     }
-  } else {
-    return 'ignored-stream';
   }
 
-  if (!applied) return 'ignored-stream';
-  turn.lastAgentSeq = event.agentSeq;
+  // New Gateway releases can add non-display streams (for example plan and
+  // run_status). They still advance the per-run high-water mark used to reject
+  // stale or duplicate events. Agent sequences are ordered but not contiguous:
+  // replaceable snapshots may be coalesced or dropped for a slow subscriber.
+  recordActivitySequence(turn, event);
+  turn.lastAgentSeq = Math.max(turn.lastAgentSeq, event.agentSeq);
   state.revision += 1;
   return 'applied';
 }

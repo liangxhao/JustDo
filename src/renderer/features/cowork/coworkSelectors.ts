@@ -33,21 +33,6 @@ export const selectExpandedGroupIds = (state: RootState) => state.cowork.expande
 
 export const selectIsOpenClawEngine = () => true;
 
-export const selectCurrentMessages = createSelector(
-  selectCurrentSession,
-  session => session?.messages ?? null,
-);
-
-export const selectCurrentMessagesLength = createSelector(
-  selectCurrentMessages,
-  messages => messages?.length ?? 0,
-);
-
-export const selectLastMessageContent = createSelector(selectCurrentMessages, messages => {
-  if (!messages || messages.length === 0) return undefined;
-  return messages[messages.length - 1]?.content;
-});
-
 export const selectFirstPendingInteraction = createSelector(
   selectPendingInteractions,
   interactions => interactions[0] ?? null,
