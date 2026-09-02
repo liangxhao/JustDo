@@ -1,3 +1,4 @@
+import { OPENCLAW_INDEFINITE_APPROVAL_EXPIRES_AT_MS } from '@shared/openclaw/agentRuntimeSettings';
 import {
   ApprovalDecision,
   type ApprovalDecision as ApprovalDecisionValue,
@@ -7,7 +8,6 @@ import {
   ExecApprovalDecision,
   PERSISTENT_APPROVAL_EXPIRES_AT_MS,
 } from '@shared/openclaw/approvals';
-import { OpenClawExtensionId } from '@shared/openclaw/extensions';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
@@ -46,27 +46,20 @@ export const resolveApprovalSummary = (approval: ApprovalRequest): string => {
     return approval.request.command?.trim() || approval.request.commandPreview?.trim() || '';
   }
 
+  const detail = approval.request.detail?.trim();
   const description = approval.request.description.trim();
   const toolName = approval.request.toolName?.trim();
-  if (
-    approval.request.pluginId === OpenClawExtensionId.ACTION_APPROVAL &&
-    toolName === 'cron'
-  ) {
-    return description;
-  }
-  return [toolName, description].filter(Boolean).join(' ');
+  return [toolName, detail || description].filter(Boolean).join(' ');
 };
-
-export const isScheduledTaskApproval = (approval: ApprovalRequest): boolean =>
-  approval.kind === ApprovalKind.Plugin &&
-  approval.request.pluginId === OpenClawExtensionId.ACTION_APPROVAL &&
-  approval.request.toolName?.trim() === 'cron';
 
 export const resolveApprovalDeadline = (
   expiresAtMs: number,
   now: number,
 ): { remainingSeconds: number | null; expired: boolean } => {
-  if (expiresAtMs >= PERSISTENT_APPROVAL_EXPIRES_AT_MS) {
+  if (
+    expiresAtMs >= PERSISTENT_APPROVAL_EXPIRES_AT_MS ||
+    expiresAtMs === OPENCLAW_INDEFINITE_APPROVAL_EXPIRES_AT_MS
+  ) {
     return { remainingSeconds: null, expired: false };
   }
   const remainingSeconds = Math.max(0, Math.ceil((expiresAtMs - now) / 1000));
@@ -96,18 +89,9 @@ const ExecApprovalModal: React.FC<ExecApprovalModalProps> = ({ approval, onExpir
   const allowed = useMemo(() => resolveAllowedDecisions(approval), [approval]);
   const { remainingSeconds, expired } = resolveApprovalDeadline(approval.expiresAtMs, now);
   const isPluginApproval = approval.kind === ApprovalKind.Plugin;
-  const isScheduledTask = isScheduledTaskApproval(approval);
-  const isFileApproval =
-    isPluginApproval &&
-    approval.request.pluginId === OpenClawExtensionId.ACTION_APPROVAL &&
-    !isScheduledTask;
-  const heading = isScheduledTask
-    ? i18nService.t('scheduledTaskApprovalHeading')
-    : isFileApproval
-      ? i18nService.t('fileApprovalHeading')
-    : isPluginApproval
-      ? approval.request.title?.trim() || i18nService.t('pluginApprovalHeading')
-      : i18nService.t('execApprovalHeading');
+  const heading = isPluginApproval
+    ? approval.request.title?.trim() || i18nService.t('pluginApprovalHeading')
+    : i18nService.t('execApprovalHeading');
   const summary = resolveApprovalSummary(approval);
 
   useEffect(() => {
@@ -193,7 +177,7 @@ const ExecApprovalModal: React.FC<ExecApprovalModalProps> = ({ approval, onExpir
           <div className="px-5 pb-4">
             <div
               className={
-                isScheduledTask
+                isPluginApproval
                   ? 'max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-surface/70 px-3 py-2 font-mono text-xs text-foreground'
                   : 'truncate rounded-lg bg-surface/70 px-3 py-2 font-mono text-xs text-foreground'
               }

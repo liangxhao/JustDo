@@ -32,19 +32,22 @@ Patch 工具拒绝：
 
 历史 `v2026.6.9` 与 `v2026.6.11` 目录仅供追溯；已移除的 `v2026.7.1-2` 补丁由 Git 历史保存。不能从旧编号推断当前依赖，也不能复制旧 anchor 伪装成升级。
 
-## 3. 当前九个能力补丁
+## 3. 当前十二个能力补丁
 
-v2026.8.1 已原生承担 thinking/history/tool directory/goal/subagent queue+join/approval/compaction/context budget/task query。JustDo 只保留九个无法在 Adapter/config/extension 层补齐的缺口：
+v2026.8.1 已原生承担 thinking/history/tool directory/goal/subagent queue+join/approval/compaction/context budget/task query。JustDo 只保留十二个无法在 Adapter/config/extension 层补齐的缺口：
 
-| Patch         | 能力                                                                         |
-| ------------- | ---------------------------------------------------------------------------- |
-| `001`         | value-bound managed Python 环境                                               |
-| `002`         | Windows 通用 npm/npx MCP runner                                               |
-| `003`–`004`   | Chrome MCP Windows/早期 stderr 与空页面恢复                                   |
-| `005`         | 最终 system-prompt-only replacements                                          |
-| `006`–`007`   | agent/session/parent/user-initiated 与 compaction/reviewer purpose metadata   |
-| `008`         | 同 app-start 内恢复、跨完整 JustDo 重启终止旧 active task                     |
-| `009`         | 手动 memory reindex 一次性 no-cache                                           |
+| Patch       | 能力                                                                        |
+| ----------- | --------------------------------------------------------------------------- |
+| `001`       | value-bound managed Python 环境                                             |
+| `002`       | Windows 通用 npm/npx MCP runner                                             |
+| `003`–`004` | Chrome MCP Windows/早期 stderr 与空页面恢复                                 |
+| `005`       | 最终 system-prompt-only replacements                                        |
+| `006`–`007` | agent/session/parent/user-initiated 与 compaction/reviewer purpose metadata |
+| `008`       | 同 app-start 内恢复、跨完整 JustDo 重启终止旧 active task                   |
+| `009`       | 手动 memory reindex 一次性 no-cache                                         |
+| `010`       | host 配置 OpenClaw 原生 exec approval 等待时限                              |
+| `011`       | 把 trusted policy 的 reviewer-only detail 转发到原生 plugin approval        |
+| `012`       | host 配置 OpenClaw 原生 plugin approval 等待时限                            |
 
 运行进度、embedding proxy 和只读 history detail 已迁入 `justdo-runtime-bridge`，cron 默认无外发由 JustDo config 显式发送 `{mode:'none'}`，均不应重新加入 patch。若新增能力，先证明公共 plugin/Gateway API 不足，并同步总账、source lock、测试和引用。
 
@@ -260,16 +263,16 @@ Patch 失败时保留完整错误中的 patch label、target file、anchor count
 
 ## 18. 工具链代码地图
 
-| 阶段                  | 实现入口                                                       | 证明内容                                          |
-| --------------------- | -------------------------------------------------------------- | ------------------------------------------------- |
-| Pristine contract     | `scripts/verify-openclaw-pristine-contracts.cjs`               | provenance、上游已吸收能力、保留patch在原包未生效 |
-| Patch transaction     | `scripts/patch-openclaw-runtime.cjs`                           | 顺序、快照、apply/verify、失败回滚、manifest写入  |
-| Patch utilities       | `scripts/patches/v2026.8.1/_patch-utils.js`                    | 唯一anchor、write-if-changed、索引一致性          |
-| Runtime install/stage | `install-openclaw-runtime.cjs`、`openclaw-runtime-staging.cjs` | 固定source到目标platform staging                  |
+| 阶段                  | 实现入口                                                         | 证明内容                                          |
+| --------------------- | ---------------------------------------------------------------- | ------------------------------------------------- |
+| Pristine contract     | `scripts/verify-openclaw-pristine-contracts.cjs`                 | provenance、上游已吸收能力、保留patch在原包未生效 |
+| Patch transaction     | `scripts/patch-openclaw-runtime.cjs`                             | 顺序、快照、apply/verify、失败回滚、manifest写入  |
+| Patch utilities       | `scripts/patches/v2026.8.1/_patch-utils.js`                      | 唯一anchor、write-if-changed、索引一致性          |
+| Runtime install/stage | `install-openclaw-runtime.cjs`、`openclaw-runtime-staging.cjs`   | 固定source到目标platform staging                  |
 | Gateway bundle        | `bundle-openclaw-gateway.cjs`、`openclaw-runtime-companions.cjs` | 固定 worker/module companion URL 并验证产物完整性 |
-| Freeze                | `openclaw-runtime-freeze.cjs`                                  | 构建输入和immutable artifact指纹                  |
-| Package verify        | `verify-openclaw-runtime-patches.cjs`                          | prepared/staged runtime与manifest一致             |
-| Prune                 | `prune-openclaw-runtime.cjs`                                   | 删除非运行文件且保留allowlisted capability资源    |
+| Freeze                | `openclaw-runtime-freeze.cjs`                                    | 构建输入和immutable artifact指纹                  |
+| Package verify        | `verify-openclaw-runtime-patches.cjs`                            | prepared/staged runtime与manifest一致             |
+| Prune                 | `prune-openclaw-runtime.cjs`                                     | 删除非运行文件且保留allowlisted capability资源    |
 
 ## 19. 失败分类与恢复
 

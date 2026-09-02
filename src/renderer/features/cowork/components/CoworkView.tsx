@@ -38,7 +38,11 @@ import {
   selectSessionRunTimings,
 } from '@/features/cowork/coworkSelectors';
 import { coworkService } from '@/features/cowork/coworkService';
-import { setCurrentSession, setStreaming, updateSessionStatus } from '@/features/cowork/coworkSlice';
+import {
+  setCurrentSession,
+  setStreaming,
+  updateSessionStatus,
+} from '@/features/cowork/coworkSlice';
 import type {
   CoworkAttachmentPayload,
   CoworkSession,
@@ -835,6 +839,10 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       let runTimingId: string | null = null;
       return submitCoworkMessage(
         async () => {
+          const permission = await coworkService.reconcileSessionPermissionMode(currentSession.id);
+          if (!permission.success) {
+            throw new Error(permission.error || i18nService.t('permissionModeSaveFailed'));
+          }
           const timing = await coworkService.beginSessionRun({
             sessionId: currentSession.id,
             clientTurnId,
@@ -1140,7 +1148,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                 </div>
                 {isQuestionInputBlocked && (
                   <div
-                    className="absolute inset-0 z-[60] flex cursor-not-allowed items-center justify-center rounded-2xl bg-background/45 backdrop-blur-[1px]"
+                    className="pointer-events-none absolute inset-0 z-[60] flex cursor-not-allowed items-center justify-center rounded-2xl bg-background/45 backdrop-blur-[1px]"
                     role="status"
                     aria-live="polite"
                   >

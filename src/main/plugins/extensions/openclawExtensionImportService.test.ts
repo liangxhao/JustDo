@@ -3,7 +3,6 @@ import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { OpenClawExtensionId } from '../../../shared/openclaw/extensions';
 import { ManagedDirectoryOperationCoordinator } from '../../core/managedDirectoryOperations';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import {
@@ -22,22 +21,30 @@ describe('OpenClawExtensionImportService', () => {
     fs.rmSync(fixtureRoot, { recursive: true, force: true });
   });
 
-  it('prevents disabling, deleting, or reconfiguring the permission policy extension', async () => {
+  it('protects managed permission extensions from user mutation', async () => {
     const runCommand = vi.fn();
     const service = new OpenClawExtensionImportService({
       getOpenClawEngineManager: () => ({}) as OpenClawEngineManager,
+      getManagedPluginIds: () => ['automation-permission'],
       runCommand,
     });
 
     await expect(
-      service.setEnabled(OpenClawExtensionId.ACTION_APPROVAL, false),
-    ).resolves.toMatchObject({ success: false });
-    await expect(service.delete(OpenClawExtensionId.ACTION_APPROVAL)).resolves.toMatchObject({
+      service.updateConfiguration('automation-permission', {
+        unrestrictedAgentIds: 'main',
+      }),
+    ).resolves.toEqual({
       success: false,
+      error: 'Managed extensions cannot be reconfigured here.',
     });
-    await expect(
-      service.updateConfiguration(OpenClawExtensionId.ACTION_APPROVAL, { mode: 'full' }),
-    ).resolves.toMatchObject({ success: false });
+    await expect(service.delete('automation-permission')).resolves.toEqual({
+      success: false,
+      error: 'Managed extensions cannot be deleted.',
+    });
+    await expect(service.setEnabled('automation-permission', false)).resolves.toEqual({
+      success: false,
+      error: 'Managed extensions cannot be disabled.',
+    });
     expect(runCommand).not.toHaveBeenCalled();
   });
 
@@ -84,6 +91,7 @@ describe('OpenClawExtensionImportService', () => {
     const service = new OpenClawExtensionImportService({
       getOpenClawEngineManager: () => manager,
       getManagedPluginIds: () => ['ask-user-question', 'workboard'],
+      restartGatewayAfterMutation: () => restartGateway(),
       runCommand,
     });
 
@@ -109,9 +117,7 @@ describe('OpenClawExtensionImportService', () => {
         }),
       }),
     );
-    expect(
-      JSON.parse(fs.readFileSync(configPath, 'utf8')),
-    ).toMatchObject({
+    expect(JSON.parse(fs.readFileSync(configPath, 'utf8'))).toMatchObject({
       plugins: {
         allow: ['ask-user-question', 'workboard', 'sample-extension'],
         bundledDiscovery: 'compat',
@@ -183,6 +189,7 @@ describe('OpenClawExtensionImportService', () => {
         runtime: {
           isRunning: () => phase === 'running' || phase === 'starting',
           ownsProcess: pid => pid === 4242,
+          prepareStop: async () => ({ ready: true, token: 'test-suspension' }),
           stop: stopGateway,
           start: async () => {
             const status = await startGateway();
@@ -319,8 +326,7 @@ describe('OpenClawExtensionImportService', () => {
     } as unknown as OpenClawEngineManager;
     const findLockingProcesses = vi.fn(async (targetPath: string) => ({
       available: true,
-      processes:
-        targetPath === installedDir ? [{ name: 'Typora', pid: 38412 }] : [],
+      processes: targetPath === installedDir ? [{ name: 'Typora', pid: 38412 }] : [],
     }));
     const runCommand = vi.fn();
     const service = new OpenClawExtensionImportService({
@@ -516,6 +522,7 @@ describe('OpenClawExtensionImportService', () => {
     } as unknown as OpenClawEngineManager;
     const service = new OpenClawExtensionImportService({
       getOpenClawEngineManager: () => manager,
+      restartGatewayAfterMutation: () => restartGateway(),
     });
 
     await expect(
@@ -574,6 +581,7 @@ describe('OpenClawExtensionImportService', () => {
     });
     const service = new OpenClawExtensionImportService({
       getOpenClawEngineManager: () => manager,
+      restartGatewayAfterMutation: () => restartGateway(),
       runCommand,
     });
 
@@ -644,6 +652,7 @@ describe('OpenClawExtensionImportService', () => {
     });
     const service = new OpenClawExtensionImportService({
       getOpenClawEngineManager: () => manager,
+      restartGatewayAfterMutation: () => restartGateway(),
       runCommand,
     });
 
@@ -700,6 +709,7 @@ describe('OpenClawExtensionImportService', () => {
     });
     const service = new OpenClawExtensionImportService({
       getOpenClawEngineManager: () => manager,
+      restartGatewayAfterMutation: () => restartGateway(),
       runCommand,
     });
 

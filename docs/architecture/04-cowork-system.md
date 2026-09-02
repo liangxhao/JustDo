@@ -22,7 +22,7 @@ Gateway 仍是执行与 transcript 权威；JustDo SQLite 只保存产品会话�
 | Main store | `src/main/data/coworkStore.ts`                                      | session/run/config/agent 产品状态持久化                          |
 | Main IPC   | `src/main/ipc/cowork/`                                              | execution、session、runtime、config、interaction、subtask、group |
 | Router     | `src/main/engine/cowork/coworkEngineRouter.ts`                      | 仅转发到 OpenClaw runtime；不再多引擎路由                        |
-| Adapter    | `src/main/engine/openclaw/openclawRuntimeAdapter.ts`                | session/run mapping、Gateway RPC、生命周期/Goal/审批协调          |
+| Adapter    | `src/main/engine/openclaw/openclawRuntimeAdapter.ts`                | session/run mapping、Gateway RPC、生命周期/Goal/审批协调         |
 | Renderer   | `src/renderer/features/cowork/`                                     | 列表、输入、权限/审批、goal、subagent、文件预览                  |
 | Chat       | `src/renderer/libs/openclaw-chat/`                                  | history/live 状态与 timeline 渲染                                |
 
@@ -32,7 +32,7 @@ Gateway 仍是执行与 transcript 权威；JustDo SQLite 只保存产品会话�
 
 | 标识                         | 生成方                      | 用途                                            |
 | ---------------------------- | --------------------------- | ----------------------------------------------- |
-| local `sessionId`            | `CoworkStore.createSession` | 产品导航、run receipt 与生命周期状态             |
+| local `sessionId`            | `CoworkStore.createSession` | 产品导航、run receipt 与生命周期状态            |
 | Gateway `sessionKey`         | managed-key 规则/Gateway    | transcript、session RPC、审批与 subagent parent |
 | `clientTurnId` / `rootRunId` | Renderer/Main / Gateway     | 幂等提交和事件归属                              |
 
@@ -40,7 +40,7 @@ Gateway 仍是执行与 transcript 权威；JustDo SQLite 只保存产品会话�
 
 ## 4. Session 数据模型
 
-本地 session 包含：`id`、`title`、`status`、`pinned`、`cwd`、`executionMode`、`permissionMode`、`activeSkillIds`、`agentId`、`modelRef`、`groupId` 和时间戳。当前 engine 固定为 OpenClaw，历史 `container` execution mode 会迁移为 `local`。
+本地 session 包含：`id`、`title`、`status`、`pinned`、`cwd`、`executionMode`、`permissionMode`、`activeSkillIds`、`agentId`、`modelRef`、`groupId` 和时间戳。`permissionMode`/`cwd` 是产品的耐久期望投影；执行时权威是 OpenClaw session entry 的 `permissionMode`/`sessionRoot`。当前 engine 固定为 OpenClaw，历史 `container` execution mode 会迁移为 `local`。
 
 状态字段是产品快照，不是判断运行中的唯一依据。实际 `running` 由 adapter memory、Gateway `sessions.list/describe`、root run 和 subagent 状态共同计算；启动时遗留的本地 running 会恢复为 idle。
 
@@ -59,10 +59,12 @@ sequenceDiagram
   alt duplicate receipt
     IPC-->>UI: existing session + timing
   else new turn
-    IPC->>IPC: ensure Gateway + active permission policy
+    IPC->>IPC: ensure Gateway + restricted fallback
     IPC->>DB: create session, status=running, begin run
     IPC-->>UI: session + timing
     IPC->>RT: startSession (async)
+    RT->>GW: sessions.create(key,cwd,permissionMode)
+    GW-->>RT: verified session entry
     RT->>GW: chat.send
     GW-->>RT: runId and stream
     RT->>DB: bind rootRunId
@@ -72,14 +74,15 @@ sequenceDiagram
 细节：
 
 - cwd 必须来自请求或 Cowork config，空值直接拒绝；真正任务目录由 `resolveTaskWorkingDirectory` 解析。
-- permission 使用 shared `resolvePermissionMode`；UI 传值不能越过已保存的应用 policy。
+- 新会话 permission 使用 shared `resolvePermissionMode` 从 Cowork 默认值创建；Renderer 的 start payload 不承载可信权限值。
+- adapter 把 `ask/auto/full` 映射为 `guarded/workspace/full`，并在发送前核对 Gateway 回传的 mode 与规范化 root；不匹配时不发送。
 - 初始 model 从所选 agent 读取并写入 session/run，保证统计和显示可追溯。
 - handler 不等待完整 Agent run；启动调用异步执行，错误经 stream 广播并落终态。
 - Renderer 在临时会话中显示首条 optimistic user item；canonical key 建立后由 Gateway history/实时事件接管，不经 Main 消息缓存。
 
 ## 6. 后续回合与模型切换
 
-首轮建立 canonical session 后，后续回合由 Renderer `ChatController` 直接调用 Gateway `chat.send`。Controller 负责 optimistic user item、提交串行化、run ownership 和 Gateway history 对账；不再经过旧的 `cowork:session:continue` IPC。
+首轮建立 canonical session 后，后续回合由 Renderer `ChatController` 直接调用 Gateway `chat.send`。发送前 `CoworkView` 必须先经 Main 的 permission coordinator 幂等 reconcile 当前 session mode/root；失败则不调用 `chat.send`。用户可在 run 活跃时修改权限，Main 先持久化新选择并在终态事件后后台应用；当前 run 不被打断，下一回合的 reconcile 仍是不可绕过的安全边界。Controller 负责 optimistic user item、提交串行化、run ownership 和 Gateway history 对账；不再经过旧的 `cowork:session:continue` IPC。
 
 会话模型读写通过 `sessions.patch/get`：
 
@@ -153,7 +156,7 @@ Renderer 的 GoalStatusCard 只按 snapshot 派生文案和按钮，不自行改
 
 Ask-user extension 通过本地 callback host 产生 interaction。Main 将 request id 绑定到 session，广播问题；Renderer 使用初始居中的非模态悬浮框收集结构化答案，不改变消息区布局。框外区域不拦截指针事件，标题栏可在视口范围内拖动，因此用户能在回答前滚动、选择和复制对话内容。悬浮框只在 interaction 所属 session 为当前会话时显示，切换会话时保留未提交答案与拖动位置；显示期间仅锁定当前会话的消息输入区，防止模型切换、发送或停止操作绕过待回答问题。Main 校验 question id、选项和 required/timeout policy 后响应。重连/刷新可 replay pending interactions；dismiss 是 UI 生命周期，不代表拒绝或完成。
 
-Exec/plugin approval 走独立 Gateway approval API，并继续使用阻塞式 modal；不得复用 ask-user 的非模态展示语义。session 级 exec grant 绑定 session key，结束/停止/删除时清除。权限 modal、文本确认模式和 scheduler 的无人值守模式不得共用含糊的 boolean `autoApprove`。
+Exec/plugin approval 走独立 Gateway approval API，并继续使用阻塞式 modal；不得复用 ask-user 的非模态展示语义。session 级 exec grant 绑定 session key，结束/停止/删除时清除。命令审批等待时限在配置页选择，并进入 OpenClaw 原生 request/wait 生命周期；无限等待不显示倒计时。文件范围与 exec reviewer 由 OpenClaw 原生 session mode 决定，不再由自定义 action approval extension 重复拦截。权限 modal、文本确认模式和 scheduler 的无人值守模式不得共用含糊的 boolean `autoApprove`。
 
 ## 12. Attachments 与文件预览
 
@@ -175,14 +178,14 @@ Subagent 详情的 Token 用量不使用 `sessions.list.totalTokens`，因为该
 
 ## 15. 失败与排障
 
-| 现象              | 首查                                                               |
-| ----------------- | ------------------------------------------------------------------ |
-| 提交立即失败      | engine status、config sync、permission verification、cwd           |
-| UI 一直 running   | runtime status、open run receipt、Gateway sessions、subagent       |
-| 消息重复/缺失     | session/run identity、sequence、history reconciliation             |
-| stop 后审批仍出现 | session key grant/pending approval cleanup                         |
+| 现象              | 首查                                                                 |
+| ----------------- | -------------------------------------------------------------------- |
+| 提交立即失败      | engine status、config sync、permission verification、cwd             |
+| UI 一直 running   | runtime status、open run receipt、Gateway sessions、subagent         |
+| 消息重复/缺失     | session/run identity、sequence、history reconciliation               |
+| stop 后审批仍出现 | session key grant/pending approval cleanup                           |
 | goal 不续跑       | goal snapshot、control run、原生 required-child task join、lifecycle |
-| 重启后状态错误    | startup reset、Gateway list/describe、channel session sync         |
+| 重启后状态错误    | startup reset、Gateway list/describe、channel session sync           |
 
 日志先看每日 main log 与 Gateway condensed log；需要完整 event sequence 时按 `[gateway] log file:` 查看 native JSON log并按时间、run id、session id 关联。
 
@@ -221,16 +224,16 @@ SQLite `session.status` 是产品快照，不是完整状态机权威。Gateway 
 
 ## 20. 代码证据地图
 
-| 行为                        | 实现/测试入口                                                   |
-| --------------------------- | --------------------------------------------------------------- |
-| Session CRUD 与 run receipt | `src/main/data/coworkStore.ts` 及同名测试                       |
-| IPC admission               | `src/main/ipc/cowork/` 及 handler tests                         |
-| 路由与 stop-all             | `src/main/engine/cowork/coworkEngineRouter.ts`                  |
-| OpenClaw 映射               | `src/main/engine/openclaw/openclawRuntimeAdapter.ts` 及测试     |
+| 行为                        | 实现/测试入口                                                     |
+| --------------------------- | ----------------------------------------------------------------- |
+| Session CRUD 与 run receipt | `src/main/data/coworkStore.ts` 及同名测试                         |
+| IPC admission               | `src/main/ipc/cowork/` 及 handler tests                           |
+| 路由与 stop-all             | `src/main/engine/cowork/coworkEngineRouter.ts`                    |
+| OpenClaw 映射               | `src/main/engine/openclaw/openclawRuntimeAdapter.ts` 及测试       |
 | History/live merge          | Renderer `chat-controller`、`history-reconciler` 及 reducer tests |
-| Goal continuation           | `src/main/openclaw/goals/goalContinuationCoordinator.ts` 及测试 |
-| Permission/grants           | `src/main/openclaw/permissions/` 及测试                         |
-| UI session 状态             | `src/renderer/features/cowork/`、chat model tests               |
+| Goal continuation           | `src/main/openclaw/goals/goalContinuationCoordinator.ts` 及测试   |
+| Permission/grants           | `src/main/openclaw/permissions/` 及测试                           |
+| UI session 状态             | `src/renderer/features/cowork/`、chat model tests                 |
 
 ## 21. 变更清单
 

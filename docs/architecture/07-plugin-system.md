@@ -91,7 +91,7 @@ Renderer 的 `skillSlice` 只是列表/loading/error 缓存。`skillGroups` 和 
 
 1. 解析准确目标；
 2. 执行导入/删除；
-3. 遇 Windows lock 时识别锁定进程；
+3. 遇 Windows lock 时识别锁定进程；若仅由受管 Gateway 占用，必须先在 config mutation queue 中取得原生 suspension，才可 stop/mutate/start；
 4. 必要时只停止属于应用/Gateway 的进程；
 5. 重试并恢复先前 runtime 状态；
 6. 返回结构化 code/syscall/path 的本地化错误。
@@ -129,7 +129,8 @@ Extension 使用 `openclaw.plugin.json`，由 OpenClaw CLI/registry 进行最终
 - 单根目录 archive 可自动下钻；manifest id 只作为结果标签，完整合法性由 OpenClaw installer 决定；
 - 命令 cwd/env 来自 manager，timeout 为 300 秒，输出最多保留 64K；
 - 所有 config mutation 进入 exclusive queue；目录锁处理复用 coordinator；
-- `action-approval` 是受保护 extension，不能被普通删除/禁用；
+- 退役的 `action-approval` / `file-permission-policy` 注册和 runtime 目录由受管同步清理；
+- `automation-permission` 是受保护的内置安全 extension，不能从通用扩展页重配置、禁用或删除；Gateway 每次连接都必须验证其 trusted policy 已加载；
 - 成功不能只看 exit code，还需匹配 OpenClaw 明确 success 输出并重新列举 registry。
 
 ## 9. Extension host 与 ask-user
@@ -140,7 +141,7 @@ Ask-user contract 最多 8 个问题；question id 满足 `[A-Za-z][A-Za-z0-9_-]
 
 Renderer 对单题和双选项不做隐式确认按钮降级，所有问题统一展示完整的 option label、description 和可选 input，选择后再提交。单题 header 用作对话框标题。多题向导的单选题在无需补充输入时自动前进；非末题的多选题只有在当前答案完整后才显示“下一个”按钮，由用户确认选择完成后前进。为兼容历史请求，自由文本“其他”默认显示；question 只有显式声明 `allowOther: false` 时才隐藏，shared parser 与 Extension 也只在该情况下拒绝 `other` 回答。需要用户解释某个选择时应使用 option `input`，而不是依赖后续对话。
 
-Action approval extension 补充文件写/cron 等产品 policy，但不重复 Gateway 原生 exec approval。adapter diagnostics 不能被解释为“可信 policy 已激活”；真正 admission 仍要由 config sync 的 active policy verification 证明。
+文件范围与 exec reviewer 使用 OpenClaw v2026.8.1 原生 session permission mode；Extension host 不再注册旧的全局 action approval mode。`automation-permission` 只补足原生 session mode 尚未覆盖的模型可见 scheduled-task mutation，并在每次调用时读取原生会话值，不维护第二份权限状态。第三方插件若使用 `plugin.approval.*`，仍作为独立风险域展示和解决，不能复用 exec grant。
 
 `justdo-runtime-bridge` 是随产品安装并受保护的内置 OpenClaw extension。它只使用 v2026.8.1 支持的 plugin API，承担三项不应继续做 runtime patch 的集成：
 

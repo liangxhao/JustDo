@@ -62,6 +62,22 @@ export interface ScheduleFormState {
   onceTime: string;
 }
 
+export function buildScheduledTaskExecutionInput(
+  job: Pick<ScheduledTask, 'sessionTarget' | 'payload'> | undefined,
+  message: string,
+): Pick<ScheduledTaskInput, 'sessionTarget' | 'payload'> {
+  if (job?.payload.kind === 'systemEvent') {
+    return {
+      sessionTarget: job.sessionTarget,
+      payload: { kind: 'systemEvent', text: message },
+    };
+  }
+  return {
+    sessionTarget: job?.sessionTarget ?? 'isolated',
+    payload: { kind: 'agentTurn', message },
+  };
+}
+
 function pad2(value: number): string {
   return String(value).padStart(2, '0');
 }
@@ -589,14 +605,15 @@ function CreateEditDialog({ open, job, onClose, onSave }: DialogProps) {
     setSaving(true);
     try {
       const schedule = buildScheduleFromForm(scheduleForm);
+      const execution = buildScheduledTaskExecutionInput(job, message.trim());
       const input: ScheduledTaskInput = {
         name: name.trim(),
         description: '',
         enabled,
         schedule,
-        sessionTarget: 'isolated',
+        sessionTarget: execution.sessionTarget,
         wakeMode: 'now',
-        payload: { kind: 'agentTurn', message: message.trim() },
+        payload: execution.payload,
         delivery:
           deliveryMode === 'none'
             ? { mode: 'none' }

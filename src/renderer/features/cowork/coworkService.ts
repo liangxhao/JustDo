@@ -31,6 +31,7 @@ import {
   setSessions,
   setStreaming,
   touchSessionActivity,
+  updateCurrentSessionPermissionMode,
   updateGroup,
   updateSessionPinned,
   updateSessionStatus,
@@ -82,6 +83,11 @@ export class CoworkService {
   private readonly runtimeStatusRequestVersions = new Map<string, number>();
   private readonly terminalIdleConfirmationTimers = new Map<string, number>();
   private readonly terminalIdleConfirmationTokens = new Map<string, symbol>();
+  private readonly sessionPermissionModeUpdates = new Map<
+    string,
+    Promise<{ success: boolean; error?: string; engineStatus?: OpenClawEngineStatus }>
+  >();
+  private readonly temporarySessionPermissionModes = new Map<string, PermissionMode>();
 
   async init(): Promise<void> {
     if (this.initialized) return;
@@ -590,15 +596,25 @@ export class CoworkService {
       return { session: null, error: 'Cowork API not available' };
     }
 
-    const permissionMode = store.getState().cowork.config.permissionMode;
-
     store.dispatch(setStreaming(true));
 
-    const result = await cowork.startSession({ ...options, permissionMode });
+    const temporarySessionId = store.getState().cowork.currentSession?.id;
+    const pendingTemporarySessionId = temporarySessionId?.startsWith('temp-')
+      ? temporarySessionId
+      : undefined;
+    const result = await cowork.startSession(options);
     if (result.success && result.session) {
+      const permissionMode = pendingTemporarySessionId
+        ? await this.promoteTemporarySessionPermissionMode(
+            pendingTemporarySessionId,
+            result.session.id,
+            result.session.permissionMode,
+          )
+        : result.session.permissionMode;
       const isRunning = result.timing ? result.timing.state === 'running' : true;
       const runningSession: CoworkSession = {
         ...result.session,
+        permissionMode,
         status: isRunning ? 'running' : result.session.status,
       };
       hooks.beforeSessionSelected?.(runningSession);
@@ -620,6 +636,10 @@ export class CoworkService {
         );
       }
       return { session: runningSession };
+    }
+
+    if (pendingTemporarySessionId) {
+      this.temporarySessionPermissionModes.delete(pendingTemporarySessionId);
     }
 
     if (result.engineStatus) {
@@ -798,12 +818,47 @@ export class CoworkService {
   async updatePermissionMode(
     permissionMode: PermissionMode,
   ): Promise<{ success: boolean; error?: string; engineStatus?: OpenClawEngineStatus }> {
+    const currentSession = store.getState().cowork.currentSession;
+    if (currentSession) {
+      if (currentSession.permissionMode === permissionMode) return { success: true };
+      if (currentSession.id.startsWith('temp-')) {
+        this.temporarySessionPermissionModes.set(currentSession.id, permissionMode);
+        store.dispatch(
+          updateCurrentSessionPermissionMode({
+            sessionId: currentSession.id,
+            permissionMode,
+          }),
+        );
+        return { success: true };
+      }
+
+      const previousUpdate = this.sessionPermissionModeUpdates.get(currentSession.id);
+      const update = (async () => {
+        if (previousUpdate) await previousUpdate;
+        const result = await this.setSessionPermissionMode(currentSession.id, permissionMode, true);
+        if (result.success) {
+          store.dispatch(
+            updateCurrentSessionPermissionMode({
+              sessionId: currentSession.id,
+              permissionMode,
+            }),
+          );
+        }
+        return result;
+      })();
+      this.sessionPermissionModeUpdates.set(currentSession.id, update);
+      try {
+        return await update;
+      } finally {
+        if (this.sessionPermissionModeUpdates.get(currentSession.id) === update) {
+          this.sessionPermissionModeUpdates.delete(currentSession.id);
+        }
+      }
+    }
+
     const previousConfig = store.getState().cowork.config;
     if (previousConfig.permissionMode === permissionMode) return { success: true };
 
-    // Permission synchronization can take a few seconds while OpenClaw reloads and
-    // verifies its policies. Reflect the selection immediately; Main still queues
-    // new turns behind that synchronization barrier.
     store.dispatch(setConfig({ ...previousConfig, permissionMode }));
     try {
       const result = await this.updateConfigResult({ permissionMode });
@@ -819,6 +874,78 @@ export class CoworkService {
       );
       throw error;
     }
+  }
+
+  private async promoteTemporarySessionPermissionMode(
+    temporarySessionId: string,
+    canonicalSessionId: string,
+    initialPermissionMode: PermissionMode,
+  ): Promise<PermissionMode> {
+    let appliedPermissionMode = initialPermissionMode;
+    while (true) {
+      const requestedPermissionMode = this.temporarySessionPermissionModes.get(temporarySessionId);
+      if (!requestedPermissionMode || requestedPermissionMode === appliedPermissionMode) {
+        if (
+          this.temporarySessionPermissionModes.get(temporarySessionId) === requestedPermissionMode
+        ) {
+          this.temporarySessionPermissionModes.delete(temporarySessionId);
+        }
+        return appliedPermissionMode;
+      }
+
+      const result = await this.setSessionPermissionMode(
+        canonicalSessionId,
+        requestedPermissionMode,
+        true,
+      );
+      if (result.success) {
+        appliedPermissionMode = requestedPermissionMode;
+        continue;
+      }
+      if (
+        this.temporarySessionPermissionModes.get(temporarySessionId) !== requestedPermissionMode
+      ) {
+        continue;
+      }
+
+      this.temporarySessionPermissionModes.delete(temporarySessionId);
+      const message = i18nService.t('coworkPermissionModeUpdateFailed');
+      window.dispatchEvent(new CustomEvent('app:showToast', { detail: message }));
+      return appliedPermissionMode;
+    }
+  }
+
+  async reconcileSessionPermissionMode(
+    sessionId: string,
+  ): Promise<{ success: boolean; error?: string; engineStatus?: OpenClawEngineStatus }> {
+    const pendingUpdate = this.sessionPermissionModeUpdates.get(sessionId);
+    if (pendingUpdate) {
+      const result = await pendingUpdate;
+      if (!result.success) return result;
+    }
+
+    const state = store.getState().cowork;
+    const session = state.currentSession?.id === sessionId ? state.currentSession : undefined;
+    if (!session) return { success: false, error: 'Session not found' };
+    return this.setSessionPermissionMode(sessionId, session.permissionMode);
+  }
+
+  private async setSessionPermissionMode(
+    sessionId: string,
+    permissionMode: PermissionMode,
+    deferIfActive = false,
+  ): Promise<{ success: boolean; error?: string; engineStatus?: OpenClawEngineStatus }> {
+    const cowork = window.electron?.cowork;
+    if (!cowork?.setSessionPermissionMode) {
+      return { success: false, error: 'Cowork API not available' };
+    }
+    const result = await cowork.setSessionPermissionMode({
+      sessionId,
+      permissionMode,
+      deferIfActive,
+    });
+    if (result.engineStatus) this.notifyOpenClawStatus(result.engineStatus);
+    return result;
   }
 
   async updateConfigResult(

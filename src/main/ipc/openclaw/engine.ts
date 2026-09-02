@@ -71,6 +71,15 @@ export const restartOpenClawGatewayForUser = async ({
 }: OpenClawEngineHandlerDependencies): Promise<OpenClawEngineStatus> => {
   const manager = getManager();
   const status = manager.getStatus();
+  if (status.phase === 'starting') {
+    const started = await manager.startGateway();
+    if (started.phase !== 'running') return started;
+    return restartOpenClawGatewayForUser({
+      getManager,
+      requestGateway,
+      reconnectGatewayClient,
+    });
+  }
   const requiresLaunchArgumentRefresh =
     status.phase === 'running' &&
     manager.getGatewayPort() !== manager.getConfiguredGatewayPort();
@@ -132,9 +141,7 @@ export const restartOpenClawGatewayForUser = async ({
     );
   }
 
-  const restarted = await manager.restartGateway({
-    afterCurrent: status.phase === 'starting',
-  });
+  const restarted = await manager.restartGateway();
   if (restarted.phase === 'running') {
     reconnectGatewayClientAfterRestart(reconnectGatewayClient);
   }

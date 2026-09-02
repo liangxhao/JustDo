@@ -49,6 +49,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     managedDirectoryLockedByApp: `{resource}：\n{path}\n\n${PRODUCT_NAME} 仍在使用该目录，暂时无法完成操作。\n\n请稍后重试；若问题持续出现，请重启 ${PRODUCT_NAME}。`,
     managedDirectoryPermissionDenied:
       '无法访问{resource}：\n{path}\n\n请检查 Windows 所有者和权限后重试。\n\n详细信息：{detail}',
+    managedDirectoryRuntimeBusy: 'Gateway 仍有活动任务，无法安全释放目录锁。请等待任务结束后重试。',
     managedDirectoryRuntimeRecoveryFailed: 'Gateway 恢复失败：{detail}',
   },
   en: {
@@ -88,6 +89,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     managedDirectoryLockedByApp: `${PRODUCT_NAME} is still using the {resource}:\n{path}\n\nTry again shortly. If the problem continues, restart ${PRODUCT_NAME}.`,
     managedDirectoryPermissionDenied:
       'Cannot access the {resource}:\n{path}\n\nCheck its Windows owner and permissions, then try again.\n\nDetails: {detail}',
+    managedDirectoryRuntimeBusy:
+      'The Gateway still has active work, so its directory lock cannot be released safely. Wait for the work to finish and try again.',
     managedDirectoryRuntimeRecoveryFailed: 'Gateway recovery failed: {detail}',
   },
 };

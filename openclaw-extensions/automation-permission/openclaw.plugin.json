@@ -1,0 +1,19 @@
+{
+  "id": "automation-permission",
+  "name": "Automation Permission",
+  "description": "Applies native session permissions to automation mutations.",
+  "contracts": {
+    "trustedToolPolicies": ["native-session-automation-permission"]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "unrestrictedAgentIds": {
+        "type": "array",
+        "items": { "type": "string", "minLength": 1 },
+        "uniqueItems": true
+      }
+    }
+  }
+}

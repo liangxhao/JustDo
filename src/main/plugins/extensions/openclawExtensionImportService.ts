@@ -13,7 +13,6 @@ import type {
   InstalledOpenClawExtension,
   OpenClawExtensionConfigurationField,
 } from '../../../shared/openclaw/extensions';
-import { OpenClawExtensionId } from '../../../shared/openclaw/extensions';
 import { t } from '../../core/i18n';
 import {
   managedDirectoryFailure,
@@ -30,9 +29,6 @@ const MAX_COMMAND_OUTPUT_CHARS = 64_000;
 const OPENCLAW_UNINSTALL_SUCCESS_PATTERN = /(?:^|\r?\n)Uninstalled plugin\s+['"][^'"\r\n]+['"]/i;
 const OPENCLAW_TOGGLE_SUCCESS_PATTERN =
   /(?:^|\r?\n)(?:Enabled|Disabled) plugin\s+['"][^'"\r\n]+['"]/i;
-const isProtectedExtension = (extensionId: string): boolean =>
-  extensionId === OpenClawExtensionId.ACTION_APPROVAL;
-
 const isPathWithinDirectory = (rootDirectory: string, candidatePath: string): boolean => {
   const relativePath = path.relative(path.resolve(rootDirectory), path.resolve(candidatePath));
   return (
@@ -73,6 +69,10 @@ type OpenClawExtensionImportServiceDeps = {
   getOpenClawEngineManager: () => OpenClawEngineManager;
   getManagedPluginIds?: () => string[];
   runConfigMutationExclusive?: <T>(operation: () => Promise<T>) => Promise<T>;
+  restartGatewayAfterMutation?: (reason: string) => Promise<{
+    phase: string;
+    message?: string;
+  }>;
   directoryOperations?: ManagedDirectoryOperationCoordinator;
   runCommand?: (
     executable: string,
@@ -557,21 +557,7 @@ export class OpenClawExtensionImportService {
   constructor(private readonly deps: OpenClawExtensionImportServiceDeps) {
     this.runCommand = deps.runCommand ?? runCommand;
     this.directoryOperations =
-      deps.directoryOperations ??
-      new ManagedDirectoryOperationCoordinator({
-        runtime: {
-          isRunning: () => {
-            const phase = deps.getOpenClawEngineManager().getStatus().phase;
-            return phase === 'running' || phase === 'starting';
-          },
-          ownsProcess: pid => deps.getOpenClawEngineManager().getGatewayProcessId?.() === pid,
-          stop: () => deps.getOpenClawEngineManager().stopGateway(),
-          start: async () => {
-            const status = await deps.getOpenClawEngineManager().startGateway();
-            return { running: status.phase === 'running', message: status.message };
-          },
-        },
-      });
+      deps.directoryOperations ?? new ManagedDirectoryOperationCoordinator();
   }
 
   private runMutationExclusive<T>(operation: () => Promise<T>): Promise<T> {
@@ -585,6 +571,16 @@ export class OpenClawExtensionImportService {
       (): void => undefined,
     );
     return result;
+  }
+
+  private restartGatewayAfterMutation(reason: string): Promise<{
+    phase: string;
+    message?: string;
+  }> {
+    if (!this.deps.restartGatewayAfterMutation) {
+      throw new Error('The safe Gateway restart coordinator is unavailable.');
+    }
+    return this.deps.restartGatewayAfterMutation(reason);
   }
 
   private async runDirectoryCommand(
@@ -682,8 +678,8 @@ export class OpenClawExtensionImportService {
     extensionId: string,
     values: Record<string, string>,
   ): Promise<{ success: boolean; error?: string }> {
-    if (isProtectedExtension(extensionId)) {
-      return { success: false, error: 'This extension is managed by the application.' };
+    if (this.deps.getManagedPluginIds?.().includes(extensionId)) {
+      return { success: false, error: 'Managed extensions cannot be reconfigured here.' };
     }
     const installed = this.listInstalled().find(extension => extension.id === extensionId);
     if (!installed) return { success: false, error: 'Extension is not installed.' };
@@ -724,7 +720,7 @@ export class OpenClawExtensionImportService {
       fs.renameSync(temporaryPath, configPath);
 
       if (wasRuntimeActive) {
-        const status = await manager.restartGateway({ afterCurrent: true });
+        const status = await this.restartGatewayAfterMutation('extension-config-change');
         if (status.phase !== 'running') {
           return {
             success: false,
@@ -756,8 +752,8 @@ export class OpenClawExtensionImportService {
   private async deleteExclusive(
     extensionId: string,
   ): Promise<{ success: boolean; error?: string }> {
-    if (isProtectedExtension(extensionId)) {
-      return { success: false, error: 'This extension is required by the permission system.' };
+    if (this.deps.getManagedPluginIds?.().includes(extensionId)) {
+      return { success: false, error: 'Managed extensions cannot be deleted.' };
     }
     const installed = this.listInstalled().find(extension => extension.id === extensionId);
     if (!installed) return { success: false, error: 'Extension is not installed.' };
@@ -809,7 +805,7 @@ export class OpenClawExtensionImportService {
       }
 
       if (wasRuntimeActive && !command.runtimeRestarted) {
-        const status = await manager.restartGateway({ afterCurrent: true });
+        const status = await this.restartGatewayAfterMutation('extension-delete');
         if (status.phase !== 'running') {
           return {
             success: false,
@@ -844,8 +840,8 @@ export class OpenClawExtensionImportService {
     extensionId: string,
     enabled: boolean,
   ): Promise<{ success: boolean; error?: string }> {
-    if (isProtectedExtension(extensionId) && !enabled) {
-      return { success: false, error: 'This extension is required by the permission system.' };
+    if (!enabled && this.deps.getManagedPluginIds?.().includes(extensionId)) {
+      return { success: false, error: 'Managed extensions cannot be disabled.' };
     }
     const installed = this.listInstalled().find(extension => extension.id === extensionId);
     if (!installed) return { success: false, error: 'Extension is not installed.' };
@@ -893,7 +889,7 @@ export class OpenClawExtensionImportService {
       }
 
       if (wasRuntimeActive) {
-        const status = await manager.restartGateway({ afterCurrent: true });
+        const status = await this.restartGatewayAfterMutation('extension-status-change');
         if (status.phase !== 'running') {
           return {
             success: false,
@@ -1064,7 +1060,7 @@ export class OpenClawExtensionImportService {
 
       if (wasRuntimeActive && !command.runtimeRestarted) {
         reportProgress('restarting_gateway', 90);
-        const status = await manager.restartGateway({ afterCurrent: true });
+        const status = await this.restartGatewayAfterMutation('extension-import');
         if (status.phase !== 'running') {
           return {
             success: false,

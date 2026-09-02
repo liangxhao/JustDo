@@ -226,7 +226,7 @@ export class OpenClawEngineManager extends EventEmitter {
   private startGatewayPromise: Promise<OpenClawEngineStatus> | null = null;
   private restartGatewayPromise: Promise<OpenClawEngineStatus> | null = null;
   private gatewayProcessGeneration = 0;
-  private secretEnvVars: Record<string, string> = {};
+  private gatewayLaunchEnvVars: Record<string, string> = {};
   private gatewayLaunchEnvironmentGeneration = 0;
   private launchedGatewayEnvironmentGeneration = -1;
   private gatewayPortListener: ((port: number | null) => void) | null = null;
@@ -294,25 +294,22 @@ export class OpenClawEngineManager extends EventEmitter {
         };
   }
 
-  /**
-   * Set secret environment variables to inject into the gateway process.
-   * These contain the plaintext values for `${VAR}` placeholders in openclaw.json.
-   */
-  setSecretEnvVars(vars: Record<string, string>): void {
-    const currentKeys = Object.keys(this.secretEnvVars);
+  /** Set the managed environment variables injected into the Gateway process. */
+  setGatewayLaunchEnvVars(vars: Record<string, string>): void {
+    const currentKeys = Object.keys(this.gatewayLaunchEnvVars);
     const nextKeys = Object.keys(vars);
     const unchanged =
       currentKeys.length === nextKeys.length &&
-      nextKeys.every(key => this.secretEnvVars[key] === vars[key]);
+      nextKeys.every(key => this.gatewayLaunchEnvVars[key] === vars[key]);
     if (unchanged) return;
 
-    this.secretEnvVars = { ...vars };
+    this.gatewayLaunchEnvVars = { ...vars };
     this.gatewayLaunchEnvironmentGeneration += 1;
   }
 
-  /** Return the current secret env vars snapshot (for change detection). */
-  getSecretEnvVars(): Record<string, string> {
-    return { ...this.secretEnvVars };
+  /** Return the managed Gateway launch environment snapshot for change detection. */
+  getGatewayLaunchEnvVars(): Record<string, string> {
+    return { ...this.gatewayLaunchEnvVars };
   }
 
   hasPendingGatewayLaunchEnvironmentChanges(): boolean {
@@ -612,7 +609,7 @@ export class OpenClawEngineManager extends EventEmitter {
       NODE_COMPILE_CACHE: compileCacheDir,
       JUSTDO_ELECTRON_PATH: electronNodeRuntimePath.replace(/\\/g, '/'),
       JUSTDO_OPENCLAW_ENTRY: openclawEntry.replace(/\\/g, '/'),
-      ...this.secretEnvVars,
+      ...this.gatewayLaunchEnvVars,
       JUSTDO_SYSTEM_PROMPT_REPLACEMENTS_PATH: this.systemPromptReplacementRulesPath,
     };
 

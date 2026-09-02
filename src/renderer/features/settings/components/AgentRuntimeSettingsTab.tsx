@@ -10,6 +10,7 @@ import {
   AgentRuntimeDelegationMode,
   type AgentRuntimeSettings,
   AgentRuntimeThinkingLevel,
+  APPROVAL_WAIT_TIMEOUT_MINUTES,
 } from '@shared/openclaw/agentRuntimeSettings';
 import {
   MAX_MAX_GOAL_CONTINUATION_TURNS,
@@ -142,6 +143,8 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
       ...settings,
       askUserQuestion: { ...settings.askUserQuestion, ...update },
     });
+  const updateApprovals = (update: Partial<AgentRuntimeSettings['approvals']>) =>
+    onChange({ ...settings, approvals: { ...settings.approvals, ...update } });
   const updateMcp = (update: Partial<AgentRuntimeSettings['mcp']>) =>
     onChange({ ...settings, mcp: { ...settings.mcp, ...update } });
   const updateSubagents = (update: Partial<AgentRuntimeSettings['subagents']>) =>
@@ -210,6 +213,15 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
     { value: '0', label: i18nService.t('agentRuntimeTimeoutUnlimited') },
     { value: 'custom', label: i18nService.t('agentRuntimeTimeoutCustom') },
   ];
+  const approvalTimeoutOptions = APPROVAL_WAIT_TIMEOUT_MINUTES.map(timeoutMinutes => ({
+    value: String(timeoutMinutes),
+    label:
+      timeoutMinutes === 0
+        ? i18nService.t('agentRuntimeApprovalTimeoutUnlimited')
+        : i18nService
+            .t('agentRuntimeApprovalTimeoutMinutes')
+            .replace('{minutes}', String(timeoutMinutes)),
+  }));
   const usesCustomTimeout = !timeoutOptions
     .filter(option => option.value !== 'custom')
     .some(option => Number(option.value) === subagents.runTimeoutSeconds);
@@ -389,6 +401,19 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
               {i18nService.t('agentRuntimeMinutes')}
             </span>
           </label>
+        </SettingRow>
+        <SettingRow
+          label={i18nService.t('agentRuntimeApprovalTimeoutTitle')}
+          description={i18nService.t('agentRuntimeApprovalTimeoutDescription')}
+        >
+          <ThemedSelect
+            id="agent-runtime-approval-timeout"
+            value={String(settings.approvals.timeoutMinutes)}
+            onChange={value => updateApprovals({ timeoutMinutes: Number(value) })}
+            options={approvalTimeoutOptions}
+            ariaLabel={i18nService.t('agentRuntimeApprovalTimeoutTitle')}
+            className="py-2 text-xs"
+          />
         </SettingRow>
       </CollapsibleSection>
 

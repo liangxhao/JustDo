@@ -8,6 +8,28 @@ export type PermissionMode = (typeof PermissionMode)[keyof typeof PermissionMode
 
 export const DEFAULT_PERMISSION_MODE: PermissionMode = PermissionMode.Full;
 
+export const OpenClawSessionPermissionMode = {
+  Guarded: 'guarded',
+  Workspace: 'workspace',
+  Full: 'full',
+} as const;
+
+export type OpenClawSessionPermissionMode =
+  (typeof OpenClawSessionPermissionMode)[keyof typeof OpenClawSessionPermissionMode];
+
+export const toOpenClawSessionPermissionMode = (
+  mode: PermissionMode,
+): OpenClawSessionPermissionMode => {
+  switch (mode) {
+    case PermissionMode.Ask:
+      return OpenClawSessionPermissionMode.Guarded;
+    case PermissionMode.Auto:
+      return OpenClawSessionPermissionMode.Workspace;
+    case PermissionMode.Full:
+      return OpenClawSessionPermissionMode.Full;
+  }
+};
+
 export const ExecApprovalDecision = {
   AllowOnce: 'allow-once',
   AllowAlways: 'allow-always',
@@ -80,6 +102,7 @@ export interface PluginApprovalRequestPayload {
   pluginId?: string | null;
   title: string;
   description: string;
+  detail?: string | null;
   severity?: 'info' | 'warning' | 'critical' | null;
   toolName?: string | null;
   toolCallId?: string | null;

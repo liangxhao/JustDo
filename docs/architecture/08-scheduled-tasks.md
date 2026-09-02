@@ -37,15 +37,15 @@ Delivery 包含 mode、channel、to、accountId、bestEffort。Session target �
 
 ## 3. 组件
 
-| 组件                             | 职责                                                        |
-| -------------------------------- | ----------------------------------------------------------- |
-| `CronJobService`                 | `cron.list/add/update/remove/run/runs` 映射、轮询、任务修复 |
-| `ScheduledTaskResultStore`       | receipt、未读、cursor 分页、baseline/catch-up metadata      |
-| `ScheduledTaskResultSyncService` | baseline、增量/强制 reconcile、durable catch-up、事件       |
-| `OpenClawCronRunCleanupService`  | 删除 result 对应的 session tree、transcript/archive/run log |
-| `cronJobServiceManager`          | 延迟组合 adapter、DB、services 和窗口广播                   |
-| IPC handlers                     | 输入 normalize、job/result API、session history resolve     |
-| Renderer slice/UI                | CronView、history、ResultInbox、RunSessionModal             |
+| 组件                             | 职责                                                                 |
+| -------------------------------- | -------------------------------------------------------------------- |
+| `CronJobService`                 | `cron.list/add/update/remove/run/runs` 映射、轮询、delivery 兼容修复 |
+| `ScheduledTaskResultStore`       | receipt、未读、cursor 分页、baseline/catch-up metadata               |
+| `ScheduledTaskResultSyncService` | baseline、增量/强制 reconcile、durable catch-up、事件                |
+| `OpenClawCronRunCleanupService`  | 删除 result 对应的 session tree、transcript/archive/run log          |
+| `cronJobServiceManager`          | 延迟组合 adapter、DB、services 和窗口广播                            |
+| IPC handlers                     | 输入 normalize、job/result API、session history resolve              |
+| Renderer slice/UI                | CronView、history、ResultInbox、RunSessionModal                      |
 
 ## 4. Job CRUD
 
@@ -62,9 +62,9 @@ Create 映射 schedule/payload/delivery；Agent-turn 强制 `agentId = justdo-sc
 
 ## 5. Scheduler agent 隔离
 
-`justdo-scheduler` 是受管 agent，JustDo 创建或接管的 Agent-turn job 必须由它执行。list 会修复没有 `declarationKey` 的普通 job 的错误 assignment：成功则返回修复后 job；失败且 job enabled 时尝试禁用，避免以普通交互 agent/错误权限继续无人值守执行；连禁用都失败则整次 list 报错。带 `declarationKey` 的 job 由 OpenClaw extension/core 声明并维护（例如 memory dreaming），JustDo 不改写其 owner；这类环境任务通过 `agents.defaults.systemAgent.agentId = main` 获得明确归属。
+`justdo-scheduler` 是受管 agent，JustDo 新建或把 system event 显式转换成 agent-turn 的 job 由它执行。由 Agent、OpenClaw core/extension 或其他客户端创建的任务保留原 owner；后台 list/poll、普通 update、toggle 和 manual run 均不得接管或改写其 `agentId`。这样 UI 中一次重命名、启停或试运行不会把 account-policy 任务静默提升到 scheduler 的 full/unattended policy。
 
-toggle enabled 与 manual run 也会再次确认 assignment。用户不能用普通 cron mutation 把其他 agent 升级为 scheduler 的 full/unattended policy。
+模型可见的 `automations` 工具不经过 JustDo IPC，因此受保护的 `automation-permission` extension 在 OpenClaw `before_tool_call` 层读取当前原生 session permission mode：Full 放行，Ask/Auto 要求 one-shot approval，read-only 拒绝。只有同时具备 scheduler agent id 与原生 cron-run session key 的无人值守执行可以豁免；普通交互会话不能冒用该 agent id。每次 Gateway 连接都通过 status RPC 验证 policy 已加载，缺失时禁止普通 turn。
 
 ## 6. Delivery 修复
 
@@ -144,7 +144,6 @@ IPC 对 id/taskId trim，limit clamp，cursor decode 校验；失败对 Renderer
 | --------------------------- | ----------------------------------------------------- |
 | Gateway 未 ready            | handler 等待 ensureReady 或返回失败，不返回空成功     |
 | list pagination cursor 异常 | 终止并报错，防无限循环                                |
-| scheduler assignment 失败   | enabled job 尝试禁用，禁止不安全运行                  |
 | reconcile 某批失败          | 恢复批前 continuation，下次从同边界重试               |
 | artifact cleanup 失败       | 保留 receipt，不产生“已删除”假象                      |
 | session history 暂不可用    | receipt仍可读；UI重试并做 fingerprint 诊断            |
@@ -182,7 +181,7 @@ flowchart LR
 
 ## 19. Unattended 安全不变量
 
-`agentTurn` 任务必须绑定 `justdo-scheduler` 隔离 agent，并使用受管无人值守 policy。错误 assignment 的 enabled job 要修复或禁用；绝不能回退到交互 agent 并等待不可出现的 approval modal。Webhook/channel delivery 中的 credential 由 Gateway/受管配置处理，receipt/log 只保留脱敏错误。
+JustDo 创建的 `agentTurn` 任务必须绑定 `justdo-scheduler` 隔离 agent，并使用受管无人值守 policy；外部或 Agent 创建的任务必须保留原 owner/policy。交互会话中的 automation mutation 由原生 session mode 门禁，不能通过改写 scheduler assignment 绕过审批。Webhook/channel delivery 中的 credential 由 Gateway/受管配置处理，receipt/log 只保留脱敏错误。
 
 ## 20. 代码与测试地图
 

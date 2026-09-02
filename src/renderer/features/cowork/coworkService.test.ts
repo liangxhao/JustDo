@@ -5,6 +5,7 @@ import { coworkService } from '@/features/cowork/coworkService';
 import {
   clearCurrentSession,
   setConfig as setCoworkConfig,
+  setCurrentSession,
   setSessionRuntimeActivity,
 } from '@/features/cowork/coworkSlice';
 import type { CoworkSession } from '@/features/cowork/coworkTypes';
@@ -73,10 +74,189 @@ const setRuntimeStatusResponse = (response: {
 
 describe('cowork session permission selection', () => {
   afterEach(() => {
+    store.dispatch(clearCurrentSession());
     vi.unstubAllGlobals();
   });
 
-  test('loads the persisted global permission without changing it', async () => {
+  test('queues permission changes made while a temporary session is promoted', async () => {
+    const temporarySession: CoworkSession = {
+      id: 'temp-123',
+      title: 'Starting',
+      status: 'running',
+      pinned: false,
+      cwd: 'C:\\workspace',
+      executionMode: 'local',
+      permissionMode: 'full',
+      activeSkillIds: [],
+      agentId: 'main',
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const canonicalSession: CoworkSession = {
+      ...temporarySession,
+      id: 'session-promoted',
+      permissionMode: 'full',
+    };
+    let resolveStart!: (value: { success: true; session: CoworkSession }) => void;
+    const startSession = vi.fn(
+      () =>
+        new Promise<{ success: true; session: CoworkSession }>(resolve => {
+          resolveStart = resolve;
+        }),
+    );
+    const setSessionPermissionMode = vi.fn().mockResolvedValue({
+      success: true,
+      deferred: true,
+    });
+    vi.stubGlobal('window', {
+      electron: { cowork: { startSession, setSessionPermissionMode } },
+    });
+    store.dispatch(setCurrentSession(temporarySession));
+
+    const starting = coworkService.startSession({ prompt: 'start' });
+    await expect(coworkService.updatePermissionMode('ask')).resolves.toEqual({ success: true });
+    expect(setSessionPermissionMode).not.toHaveBeenCalled();
+    expect(store.getState().cowork.currentSession?.permissionMode).toBe('ask');
+
+    resolveStart({ success: true, session: canonicalSession });
+    await expect(starting).resolves.toMatchObject({
+      session: { id: canonicalSession.id, permissionMode: 'ask' },
+    });
+    expect(setSessionPermissionMode).toHaveBeenCalledWith({
+      sessionId: canonicalSession.id,
+      permissionMode: 'ask',
+      deferIfActive: true,
+    });
+  });
+
+  test('promotes the latest temporary permission selected while an earlier update is in flight', async () => {
+    const temporarySession: CoworkSession = {
+      id: 'temp-racing-permission',
+      title: 'Starting',
+      status: 'running',
+      pinned: false,
+      cwd: 'C:\\workspace',
+      executionMode: 'local',
+      permissionMode: 'full',
+      activeSkillIds: [],
+      agentId: 'main',
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const canonicalSession = { ...temporarySession, id: 'session-racing-permission' };
+    let resolveStart!: (value: { success: true; session: CoworkSession }) => void;
+    let resolveFirstUpdate!: (value: { success: true; deferred: true }) => void;
+    const setSessionPermissionMode = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<{ success: true; deferred: true }>(resolve => {
+            resolveFirstUpdate = resolve;
+          }),
+      )
+      .mockResolvedValue({ success: true, deferred: true });
+    vi.stubGlobal('window', {
+      electron: {
+        cowork: {
+          startSession: vi.fn(
+            () =>
+              new Promise<{ success: true; session: CoworkSession }>(resolve => {
+                resolveStart = resolve;
+              }),
+          ),
+          setSessionPermissionMode,
+        },
+      },
+    });
+    store.dispatch(setCurrentSession(temporarySession));
+
+    const starting = coworkService.startSession({ prompt: 'start' });
+    await coworkService.updatePermissionMode('ask');
+    resolveStart({ success: true, session: canonicalSession });
+    await vi.waitFor(() => expect(setSessionPermissionMode).toHaveBeenCalledTimes(1));
+    await coworkService.updatePermissionMode('auto');
+    resolveFirstUpdate({ success: true, deferred: true });
+
+    await expect(starting).resolves.toMatchObject({
+      session: { id: canonicalSession.id, permissionMode: 'auto' },
+    });
+    expect(setSessionPermissionMode).toHaveBeenNthCalledWith(1, {
+      sessionId: canonicalSession.id,
+      permissionMode: 'ask',
+      deferIfActive: true,
+    });
+    expect(setSessionPermissionMode).toHaveBeenNthCalledWith(2, {
+      sessionId: canonicalSession.id,
+      permissionMode: 'auto',
+      deferIfActive: true,
+    });
+  });
+
+  test('keeps the authoritative mode and notifies the user when temporary promotion fails', async () => {
+    const temporarySession: CoworkSession = {
+      id: 'temp-failed-permission',
+      title: 'Starting',
+      status: 'running',
+      pinned: false,
+      cwd: 'C:\\workspace',
+      executionMode: 'local',
+      permissionMode: 'full',
+      activeSkillIds: [],
+      agentId: 'main',
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const canonicalSession = { ...temporarySession, id: 'session-failed-permission' };
+    let resolveStart!: (value: { success: true; session: CoworkSession }) => void;
+    const dispatchEvent = vi.fn();
+    vi.stubGlobal(
+      'CustomEvent',
+      class {
+        constructor(
+          public readonly type: string,
+          public readonly init: { detail: string },
+        ) {}
+
+        get detail(): string {
+          return this.init.detail;
+        }
+      },
+    );
+    vi.stubGlobal('window', {
+      dispatchEvent,
+      electron: {
+        cowork: {
+          startSession: vi.fn(
+            () =>
+              new Promise<{ success: true; session: CoworkSession }>(resolve => {
+                resolveStart = resolve;
+              }),
+          ),
+          setSessionPermissionMode: vi.fn().mockResolvedValue({
+            success: false,
+            error: 'SQLite unavailable',
+          }),
+        },
+      },
+    });
+    store.dispatch(setCurrentSession(temporarySession));
+
+    const starting = coworkService.startSession({ prompt: 'start' });
+    await coworkService.updatePermissionMode('ask');
+    resolveStart({ success: true, session: canonicalSession });
+
+    await expect(starting).resolves.toMatchObject({
+      session: { id: canonicalSession.id, permissionMode: 'full' },
+    });
+    expect(dispatchEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'app:showToast',
+        detail: i18nService.t('coworkPermissionModeUpdateFailed'),
+      }),
+    );
+  });
+
+  test('loads the persisted new-session permission default without changing it', async () => {
     store.dispatch(clearCurrentSession());
     store.dispatch(
       setCoworkConfig({
@@ -173,6 +353,14 @@ describe('cowork session permission selection', () => {
 
   test('restores an old session permission without changing the active runtime on view', async () => {
     store.dispatch(clearCurrentSession());
+    store.dispatch(
+      setCoworkConfig({
+        workingDirectory: 'C:\\workspace',
+        executionMode: 'local',
+        agentEngine: 'openclaw',
+        permissionMode: 'full',
+      }),
+    );
     const session = {
       id: 'session-permission-ask',
       title: 'Existing session',
@@ -205,6 +393,15 @@ describe('cowork session permission selection', () => {
   });
 
   test('keeps a new session selected when an older session load finishes late', async () => {
+    store.dispatch(clearCurrentSession());
+    store.dispatch(
+      setCoworkConfig({
+        workingDirectory: 'C:\\workspace',
+        executionMode: 'local',
+        agentEngine: 'openclaw',
+        permissionMode: 'full',
+      }),
+    );
     let resolveSession: ((value: { success: true; session: CoworkSession }) => void) | undefined;
     const pendingSession = new Promise<{ success: true; session: CoworkSession }>(resolve => {
       resolveSession = resolve;
@@ -249,6 +446,97 @@ describe('cowork session permission selection', () => {
 
     expect(store.getState().cowork.currentSession).toBeNull();
     expect(store.getState().cowork.config.permissionMode).toBe('full');
+  });
+
+  test('updates the selected session without changing the new-session default', async () => {
+    const session: CoworkSession = {
+      id: 'session-current',
+      title: 'Current session',
+      status: 'idle',
+      pinned: false,
+      cwd: 'C:\\workspace',
+      executionMode: 'local',
+      permissionMode: 'ask',
+      activeSkillIds: [],
+      agentId: 'main',
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    store.dispatch(clearCurrentSession());
+    store.dispatch(
+      setCoworkConfig({
+        workingDirectory: 'C:\\workspace',
+        executionMode: 'local',
+        agentEngine: 'openclaw',
+        permissionMode: 'full',
+      }),
+    );
+    store.dispatch(setCurrentSession(session));
+    const setSessionPermissionMode = vi.fn().mockResolvedValue({ success: true });
+    const setConfig = vi.fn();
+    vi.stubGlobal('window', {
+      electron: {
+        cowork: {
+          setSessionPermissionMode,
+          setConfig,
+        },
+      },
+    });
+
+    await expect(coworkService.updatePermissionMode('auto')).resolves.toEqual({ success: true });
+
+    expect(setSessionPermissionMode).toHaveBeenCalledWith({
+      sessionId: session.id,
+      permissionMode: 'auto',
+      deferIfActive: true,
+    });
+    expect(setConfig).not.toHaveBeenCalled();
+    expect(store.getState().cowork.currentSession?.permissionMode).toBe('auto');
+    expect(store.getState().cowork.config.permissionMode).toBe('full');
+  });
+
+  test('waits for an in-flight permission change before reconciling a send', async () => {
+    const session: CoworkSession = {
+      id: 'session-current',
+      title: 'Current session',
+      status: 'idle',
+      pinned: false,
+      cwd: 'C:\\workspace',
+      executionMode: 'local',
+      permissionMode: 'full',
+      activeSkillIds: [],
+      agentId: 'main',
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    store.dispatch(setCurrentSession(session));
+    let resolveChange!: (value: { success: true }) => void;
+    const setSessionPermissionMode = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<{ success: true }>(resolve => {
+            resolveChange = resolve;
+          }),
+      )
+      .mockResolvedValue({ success: true });
+    vi.stubGlobal('window', { electron: { cowork: { setSessionPermissionMode } } });
+
+    const change = coworkService.updatePermissionMode('ask');
+    const reconcile = coworkService.reconcileSessionPermissionMode(session.id);
+    await Promise.resolve();
+    expect(setSessionPermissionMode).toHaveBeenCalledTimes(1);
+
+    resolveChange({ success: true });
+    await expect(change).resolves.toEqual({ success: true });
+    await expect(reconcile).resolves.toEqual({ success: true });
+
+    expect(setSessionPermissionMode).toHaveBeenNthCalledWith(2, {
+      sessionId: session.id,
+      permissionMode: 'ask',
+      deferIfActive: false,
+    });
+    expect(store.getState().cowork.currentSession?.permissionMode).toBe('ask');
   });
 });
 

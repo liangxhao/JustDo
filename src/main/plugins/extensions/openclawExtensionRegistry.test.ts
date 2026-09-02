@@ -11,7 +11,6 @@ describe('openclawExtensionRegistry', () => {
   it('configures only the AskUser extension callback', () => {
     const entries = buildBundledExtensionEntries(
       {
-        permissionMode: 'ask',
         askUser: {
           askUserCallbackUrl: 'http://127.0.0.1:1234/askuser',
           secret: 'runtime-secret',
@@ -30,9 +29,11 @@ describe('openclawExtensionRegistry', () => {
           timeoutMinutes: 45,
         },
       },
-      [OpenClawExtensionId.ACTION_APPROVAL]: {
+      [OpenClawExtensionId.AUTOMATION_PERMISSION]: {
         enabled: true,
-        config: { mode: 'ask', fullAgentIds: ['justdo-scheduler'] },
+        config: {
+          unrestrictedAgentIds: ['justdo-scheduler'],
+        },
       },
       [OpenClawExtensionId.JUSTDO_RUNTIME_BRIDGE]: {
         enabled: true,
@@ -45,7 +46,6 @@ describe('openclawExtensionRegistry', () => {
       buildBundledExtensionToolContracts(
         {
           askUser: null,
-          permissionMode: 'ask',
         },
         () => true,
       ),
@@ -53,6 +53,9 @@ describe('openclawExtensionRegistry', () => {
   });
 
   it('declares former managed ids for config cleanup', () => {
-    expect(listRetiredBundledOpenClawExtensionIds()).toContain('file-permission-policy');
+    expect(listRetiredBundledOpenClawExtensionIds()).toEqual([
+      'action-approval',
+      'file-permission-policy',
+    ]);
   });
 });

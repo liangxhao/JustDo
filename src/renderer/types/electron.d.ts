@@ -628,7 +628,6 @@ interface IElectronAPI {
       activeSkillIds?: string[];
       agentId?: string;
       attachments?: CoworkAttachmentPayload[];
-      permissionMode?: PermissionMode;
       clientTurnId?: string;
       startedAt?: number;
     }) => Promise<{
@@ -653,8 +652,10 @@ interface IElectronAPI {
     setSessionPermissionMode: (options: {
       sessionId: string;
       permissionMode: PermissionMode;
+      deferIfActive?: boolean;
     }) => Promise<{
       success: boolean;
+      deferred?: boolean;
       error?: string;
       engineStatus?: OpenClawEngineStatus;
     }>;
@@ -784,11 +785,7 @@ interface IElectronAPI {
       agentId?: string;
     }) => Promise<{ success: boolean; error?: string }>;
     onSessionActivity: (
-      callback: (data: {
-        sessionId: string;
-        kind: 'user' | 'other';
-        timestamp: number;
-      }) => void,
+      callback: (data: { sessionId: string; kind: 'user' | 'other'; timestamp: number }) => void,
     ) => () => void;
     onStreamInteraction: (
       callback: (data: { sessionId: string; request: CoworkInteractionRequest }) => void,

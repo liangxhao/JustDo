@@ -44,9 +44,17 @@ export type ManagedDirectoryOperationResult<T> =
 export type ManagedDirectoryRuntimeLifecycle = {
   isRunning(): boolean;
   ownsProcess?(pid: number): boolean;
-  stop(): Promise<void>;
-  start(): Promise<{ running: boolean; message?: string }>;
+  prepareStop(): Promise<{ ready: true; token: unknown } | { ready: false; message?: string }>;
+  stop(token: unknown): Promise<void>;
+  start(token: unknown): Promise<{ running: boolean; message?: string }>;
 };
+
+export class ManagedDirectoryRuntimeStopAbortedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ManagedDirectoryRuntimeStopAbortedError';
+  }
+}
 
 type ManagedDirectoryOperationCoordinatorDeps = {
   runtime?: ManagedDirectoryRuntimeLifecycle;
@@ -556,13 +564,49 @@ export class ManagedDirectoryOperationCoordinator {
     }
 
     let runtimeStopAttempted = false;
+    let runtimeStopToken: unknown;
     if (runtime) {
+      let stopPreparation: { ready: true; token: unknown } | { ready: false; message?: string };
+      try {
+        stopPreparation = await runtime.prepareStop();
+      } catch (error) {
+        console.error(
+          '[ManagedDirectoryOperations] Failed to prepare a safe runtime stop:',
+          error instanceof Error ? error.message : error,
+        );
+        stopPreparation = { ready: false };
+      }
+      if (stopPreparation.ready === false) {
+        return {
+          success: false,
+          failure: {
+            ...attempt.failure,
+            message:
+              ('message' in stopPreparation ? stopPreparation.message : undefined) ??
+              `${attempt.failure.message}\n\n${t('managedDirectoryRuntimeBusy')}`,
+          },
+          recoveredFromLock: false,
+          runtimeRestarted: false,
+        };
+      }
+      runtimeStopToken = stopPreparation.token;
       runtimeStopAttempted = true;
       let runtimeStopped = false;
       try {
-        await runtime.stop();
+        await runtime.stop(stopPreparation.token);
         runtimeStopped = true;
       } catch (error) {
+        if (error instanceof ManagedDirectoryRuntimeStopAbortedError) {
+          return {
+            success: false,
+            failure: {
+              ...attempt.failure,
+              message: `${attempt.failure.message}\n\n${error.message}`,
+            },
+            recoveredFromLock: false,
+            runtimeRestarted: false,
+          };
+        }
         console.error(
           '[ManagedDirectoryOperations] Failed to stop runtime for a locked directory:',
           error instanceof Error ? error.message : error,
@@ -593,15 +637,13 @@ export class ManagedDirectoryOperationCoordinator {
     let runtimeRecoveryError = '';
     if (runtimeStopAttempted && runtime) {
       try {
-        if (runtime.isRunning()) {
-          runtimeRestarted = true;
-        } else {
-          const restart = await runtime.start();
-          runtimeRestarted = restart.running;
-          if (!restart.running) {
-            runtimeRecoveryError =
-              restart.message || 'The Gateway did not return to running state.';
-          }
+        // `stop()` may fail after partially changing runtime state. Always call
+        // `start()` as an ensure-running/restore operation so the runtime bridge
+        // is repaired whether the process stopped or survived.
+        const restart = await runtime.start(runtimeStopToken);
+        runtimeRestarted = restart.running;
+        if (!restart.running) {
+          runtimeRecoveryError = restart.message || 'The Gateway did not return to running state.';
         }
       } catch (error) {
         runtimeRecoveryError = error instanceof Error ? error.message : String(error);
@@ -611,16 +653,23 @@ export class ManagedDirectoryOperationCoordinator {
           '[ManagedDirectoryOperations] Runtime restart failed after a directory mutation:',
           runtimeRecoveryError,
         );
+        const recoveryMessage = t('managedDirectoryRuntimeRecoveryFailed', {
+          detail: runtimeRecoveryError,
+        });
         if ('failure' in attempt) {
           attempt = {
             success: false,
             failure: {
               ...attempt.failure,
-              message: `${attempt.failure.message}\n\n${t('managedDirectoryRuntimeRecoveryFailed', {
-                detail: runtimeRecoveryError,
-              })}`,
+              message: `${attempt.failure.message}\n\n${recoveryMessage}`,
             },
           };
+        } else {
+          attempt = managedDirectoryFailure({
+            reason: 'filesystem',
+            message: recoveryMessage,
+            targetPath,
+          });
         }
       }
     }

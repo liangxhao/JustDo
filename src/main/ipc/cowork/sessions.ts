@@ -19,6 +19,7 @@ interface SessionHandlerDependencies {
   setSessionPermissionMode: (
     sessionId: string,
     permissionMode: PermissionMode,
+    options?: { deferIfActive?: boolean },
   ) => Promise<PermissionModeOperationResult>;
 }
 
@@ -372,20 +373,24 @@ export const registerCoworkSessionHandlers = ({
 
   ipcMain.handle(
     'cowork:session:setPermissionMode',
-    async (_event, options: { sessionId: string; permissionMode: unknown }) => {
+    async (
+      _event,
+      options: { sessionId: string; permissionMode: unknown; deferIfActive?: unknown },
+    ) => {
       try {
         if (!options?.sessionId || !isPermissionMode(options.permissionMode)) {
           return { success: false, error: 'Invalid session permission mode.' };
         }
-        const result = await setSessionPermissionMode(options.sessionId, options.permissionMode);
+        const result = await setSessionPermissionMode(options.sessionId, options.permissionMode, {
+          deferIfActive: options.deferIfActive === true,
+        });
         if ('error' in result) {
           return {
             success: false,
             error: result.error,
-            ...(result.status ? { engineStatus: result.status } : {}),
           };
         }
-        return { success: true };
+        return { success: true, ...(result.deferred ? { deferred: true } : {}) };
       } catch (error) {
         return {
           success: false,

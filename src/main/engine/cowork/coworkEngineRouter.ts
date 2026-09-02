@@ -2,6 +2,8 @@ import { EventEmitter } from 'events';
 
 import type {
   CoworkGenerateTitleOptions,
+  CoworkPreparedSession,
+  CoworkPrepareSessionOptions,
   CoworkRuntime,
   CoworkRuntimeEvents,
   CoworkStartOptions,
@@ -46,6 +48,13 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
     options: CoworkStartOptions = {},
   ): Promise<void> {
     await this.runtime.startSession(sessionId, prompt, options);
+  }
+
+  async prepareSession(
+    sessionId: string,
+    options?: CoworkPrepareSessionOptions,
+  ): Promise<CoworkPreparedSession> {
+    return this.runtime.prepareSession(sessionId, options);
   }
 
   async stopSession(sessionId: string, options?: CoworkStopOptions): Promise<void> {

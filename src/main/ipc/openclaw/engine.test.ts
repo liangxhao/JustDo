@@ -14,7 +14,7 @@ import {
 } from './engine';
 
 const createRestartHarness = (options: {
-  phase?: 'ready' | 'running' | 'error';
+  phase?: 'ready' | 'starting' | 'running' | 'error';
   activePort?: number;
   configuredPort?: number;
   ready?: boolean;
@@ -33,8 +33,9 @@ const createRestartHarness = (options: {
     version: 'v-test',
     canRetry: false,
   } as const;
+  let currentStatus = initialStatus;
   const manager = {
-    getStatus: vi.fn().mockReturnValue(initialStatus),
+    getStatus: vi.fn(() => currentStatus),
     getGatewayPort: vi.fn().mockReturnValue(options.activePort ?? 6126),
     getConfiguredGatewayPort: vi.fn().mockReturnValue(options.configuredPort ?? 6126),
     hasPendingGatewayLaunchEnvironmentChanges: vi
@@ -42,7 +43,14 @@ const createRestartHarness = (options: {
       .mockReturnValue(options.pendingLaunchEnvironmentChanges ?? false),
     getGatewayLifecycleGeneration: vi.fn().mockReturnValue(7),
     waitForGatewayReadyAfter: vi.fn().mockResolvedValue(options.ready ?? true),
-    restartGateway: vi.fn().mockResolvedValue(restartStatus),
+    startGateway: vi.fn(async () => {
+      currentStatus = restartStatus;
+      return restartStatus;
+    }),
+    restartGateway: vi.fn(async () => {
+      currentStatus = restartStatus;
+      return restartStatus;
+    }),
     onSessionMigrationProgress: vi.fn().mockReturnValue(() => undefined),
   };
   const requestGateway = options.requestError
@@ -134,6 +142,19 @@ describe('manual OpenClaw Gateway restart', () => {
     expect(harness.manager.waitForGatewayReadyAfter).toHaveBeenCalledWith(7, 30_000);
     expect(harness.manager.restartGateway).not.toHaveBeenCalled();
     expect(harness.reconnectGatewayClient).toHaveBeenCalledOnce();
+  });
+
+  test('waits for an in-flight start before requesting the user restart', async () => {
+    const harness = createRestartHarness({ phase: 'starting' });
+
+    await expect(harness.restart()).resolves.toMatchObject({ phase: 'running' });
+
+    expect(harness.manager.startGateway).toHaveBeenCalledOnce();
+    expect(harness.requestGateway).toHaveBeenCalledWith('gateway.restart.request', {
+      reason: 'justdo-manual-restart',
+      skipDeferral: true,
+    });
+    expect(harness.manager.restartGateway).not.toHaveBeenCalled();
   });
 
   test('uses a full restart when the configured port differs from the active port', async () => {

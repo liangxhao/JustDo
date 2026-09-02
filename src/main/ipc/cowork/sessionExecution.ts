@@ -1,7 +1,9 @@
 import { BrowserWindow, ipcMain } from 'electron';
 
 import type { CoworkAttachmentPayload } from '../../../shared/cowork/attachments';
+import { normalizeOpenClawAgentId } from '../../../shared/openclaw/agentId';
 import { resolvePermissionMode } from '../../../shared/openclaw/approvals';
+import { ScheduledTaskAgentId } from '../../../shared/scheduledTask/constants';
 import { resolveTaskWorkingDirectory } from '../../core/taskWorkspace';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
@@ -27,7 +29,6 @@ interface StartSessionOptions {
   activeSkillIds?: string[];
   attachments?: CoworkAttachmentPayload[];
   agentId?: string;
-  permissionMode?: unknown;
   clientTurnId?: string;
   startedAt?: number;
 }
@@ -51,6 +52,9 @@ export const registerCoworkSessionExecutionHandlers = ({
     try {
       if (!options || typeof options.prompt !== 'string' || !options.prompt.trim()) {
         return { success: false, error: 'Prompt is required.' };
+      }
+      if (options.agentId && normalizeOpenClawAgentId(options.agentId) === ScheduledTaskAgentId) {
+        return { success: false, error: 'The scheduler agent is reserved for scheduled tasks.' };
       }
       await waitForConfigUpdates();
       const store = getCoworkStore();
@@ -133,5 +137,4 @@ export const registerCoworkSessionExecutionHandlers = ({
       };
     }
   });
-
 };

@@ -33,7 +33,7 @@ const session = (permissionMode: 'ask' | 'auto' | 'full'): CoworkSession => ({
 describe('cowork session execution permissions', () => {
   beforeEach(() => handlers.clear());
 
-  test('records the current global permission on a new session without switching the runtime', async () => {
+  test('uses the persisted new-session default and ignores a renderer-supplied mode', async () => {
     const createSession = vi.fn().mockReturnValue(session('ask'));
     const store = {
       getConfig: () => ({
@@ -71,7 +71,7 @@ describe('cowork session execution permissions', () => {
     );
   });
 
-  test('waits for pending global permission synchronization before starting a turn', async () => {
+  test('waits for queued config writes before reading the new-session default', async () => {
     let releaseConfig!: () => void;
     const waitForConfigUpdates = vi.fn(
       () =>
@@ -167,17 +167,40 @@ describe('cowork session execution permissions', () => {
       getEngineNotReadyResponse: vi.fn(),
     });
 
-    await expect(
-      handlers.get('cowork:session:start')?.({}, { prompt: '   ' }),
-    ).resolves.toEqual({ success: false, error: 'Prompt is required.' });
+    await expect(handlers.get('cowork:session:start')?.({}, { prompt: '   ' })).resolves.toEqual({
+      success: false,
+      error: 'Prompt is required.',
+    });
     expect(ensureEngineRunning).not.toHaveBeenCalled();
     expect(createSession).not.toHaveBeenCalled();
   });
 
+  test.each(['JUSTDO-SCHEDULER', 'justdo scheduler', 'justdo.scheduler'])(
+    'rejects normalized reserved scheduler agent %s for interactive sessions',
+    async agentId => {
+      const ensureEngineRunning = vi.fn();
+      registerCoworkSessionExecutionHandlers({
+        ensureEngineRunning,
+        getCoworkStore: () => ({}) as CoworkStore,
+        getCoworkEngineRouter: () => ({}) as CoworkEngineRouter,
+        waitForConfigUpdates: vi.fn(),
+        getEngineNotReadyResponse: vi.fn(),
+      });
+
+      await expect(
+        handlers.get('cowork:session:start')?.({}, { prompt: 'hello', agentId }),
+      ).resolves.toEqual({
+        success: false,
+        error: 'The scheduler agent is reserved for scheduled tasks.',
+      });
+      expect(ensureEngineRunning).not.toHaveBeenCalled();
+    },
+  );
+
   test('persists an asynchronous runtime start failure as an error', async () => {
     const createdSession = { ...session('ask'), status: 'idle' as const };
-    const updateSession = vi.fn(
-      (_sessionId: string, updates: Partial<CoworkSession>) => Object.assign(createdSession, updates),
+    const updateSession = vi.fn((_sessionId: string, updates: Partial<CoworkSession>) =>
+      Object.assign(createdSession, updates),
     );
     const store = {
       getConfig: () => ({
@@ -194,7 +217,9 @@ describe('cowork session execution permissions', () => {
       ensureEngineRunning: vi.fn().mockResolvedValue({ phase: 'running' }),
       getCoworkStore: () => store,
       getCoworkEngineRouter: () =>
-        ({ startSession: vi.fn().mockRejectedValue(new Error('gateway unavailable')) }) as unknown as CoworkEngineRouter,
+        ({
+          startSession: vi.fn().mockRejectedValue(new Error('gateway unavailable')),
+        }) as unknown as CoworkEngineRouter,
       waitForConfigUpdates: vi.fn().mockResolvedValue(undefined),
       getEngineNotReadyResponse: vi.fn(),
     });

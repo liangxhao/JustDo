@@ -54,11 +54,13 @@ Main 在 Linux/Windows启动参数中加入 `no-sandbox` 以处理平台/管理�
 
 ## 6. Agent 权限
 
-产品模式 ask/auto/full 映射为 Gateway tool/approval policy。权限更新必须在串行队列写入 config 并验证 active policy；失败时新 turn fail closed。Adapter info 只是诊断，不是可信 policy activation 证明。
+产品模式 ask/auto/full 映射为 OpenClaw 原生 session `guarded/workspace/full`。每个 turn 前以 `sessions.create` 幂等写入并核对 `permissionMode` 与规范化 `sessionRoot`。显式切换先把用户期望值写入 SQLite；空闲时立即同步，run 活跃时允许操作并延迟到终态后台应用。同步失败保留待应用状态，不恢复旧权限；下一 turn 必须严格收敛成功才能发送。全局 config 固定 restricted fallback，不能因某个会话选择 Full 而提升其他会话。
 
 Exec 与 plugin approval 分开。allow-once/allow-session/allow-always/deny 只有 Gateway/shared contract允许的组合可提交；session grant 绑定 session key并在 terminal/stop/delete 清理。UI modal 关闭不能等同允许。
 
-`action-approval` extension 对文件写和 cron mutation 提供产品 policy补充：auto 文件写降为一次审批，full 或显式 Full agent才免交互；不重复拦截 Gateway 原生 exec approval。无人值守 `justdo-scheduler` 使用受管隔离 policy，普通 agent/cron 修改不能获得该权限。
+命令审批等待时限由 `agentRuntimeSettings:v1` 管理，预设无限、10、20、30、60 分钟。该值通过受管进程环境进入 OpenClaw 原生 exec approval 生命周期；UI 只展示 Gateway 给出的期限，不自行延长后端请求。设置变更只影响后续审批。
+
+OpenClaw 原生 session mode 同时约束管理型文件工具与 exec reviewer；旧 `action-approval` 扩展及其全局 mode 已删除。受保护的 `automation-permission` extension 直接读取原生 session mode，补足 scheduled-task mutation 门禁；它不保存独立模式，缺失时 Gateway readiness 失败。无人值守 `justdo-scheduler` 只有在原生 cron-run session key 下才可豁免，普通交互 session 不能继承或冒用该权限。
 
 ## 7. 命令与工具
 
@@ -82,7 +84,7 @@ Preview 只支持 shared allowlist extension，最大 2 MiB。读取流程用 `l
 
 - Skill/Hook/Extension目标必须在精确 managed root，删除前 canonicalize。
 - archive 支持类型有限；解压检查 traversal，Extension 递归拒绝 symlink。
-- built-in/protected item（如 action-approval、built-in Hook）不可普通覆盖/删除。
+- built-in/protected item（如受管 runtime bridge、built-in Hook）不可普通覆盖/删除；退役 permission extension 由同步代码定向清理。
 - Extension CLI 有 300 秒 timeout与 64K 输出上限；成功需明确模式和重新列举。
 - Marketplace response 逐字段 allowlist、长度/数量限制，provider error 脱敏；prepared payload finally cleanup。
 - MCP config/remote resource 不进入 DOM 前需 normalize；credential/env 不记录。

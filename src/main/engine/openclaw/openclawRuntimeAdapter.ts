@@ -18,9 +18,10 @@ import {
   ExecApprovalDecision,
   type ExecApprovalRequest,
   OpenClawApprovalIpc,
+  type PermissionMode,
   type PluginApprovalRequest,
+  toOpenClawSessionPermissionMode,
 } from '../../../shared/openclaw/approvals';
-import { OpenClawExtensionId } from '../../../shared/openclaw/extensions';
 import { isInternalManagedSubagentHandoffError } from '../../../shared/openclaw/internalRunError';
 import {
   classifyAgentEvent,
@@ -87,6 +88,8 @@ import type {
 } from '../gateway/types';
 import type {
   CoworkGenerateTitleOptions,
+  CoworkPreparedSession,
+  CoworkPrepareSessionOptions,
   CoworkRuntime,
   CoworkRuntimeEvents,
   CoworkStartOptions,
@@ -125,6 +128,7 @@ const TITLE_SESSION_ID_RESOLUTION_TIMEOUT_MS = 30_000;
 const TITLE_SESSION_ID_POLL_INTERVAL_MS = 100;
 const TITLE_SESSION_ID_SNAPSHOT_INTERVAL_MS = 2_000;
 const LIFECYCLE_END_FALLBACK_MS = 1_500;
+const AUTOMATION_PERMISSION_POLICY_ID = 'native-session-automation-permission';
 const COMPACTION_IN_FLIGHT_TIMEOUT_MS = OPENCLAW_COMPACTION_TIMEOUT_SECONDS * 1_000 + 60_000;
 const ERROR_TERMINAL_SESSION_STATUSES = new Set([
   'aborted',
@@ -144,28 +148,6 @@ type SessionAbortResponse = {
 const RUNTIME_STATUS_WARNING_INTERVAL_MS = 30_000;
 
 // ─── Utilities ──────────────────────────────────────────────────────────────
-
-export const ensureSlashCommandSession = async (
-  client: GatewayClientLike,
-  sessionKey: string,
-  prompt: string,
-): Promise<string | undefined> => {
-  if (
-    !hasSlashCommandBeforeSendHook(prompt, SlashCommandBeforeSendHook.EnsureSessionEntry)
-  ) {
-    return undefined;
-  }
-
-  const created = await client.request<{
-    sessionId?: string;
-    entry?: { sessionId?: string };
-  }>('sessions.create', { key: sessionKey });
-  const sessionId = created?.sessionId ?? created?.entry?.sessionId;
-  if (typeof sessionId !== 'string' || !sessionId.trim()) {
-    throw new Error('OpenClaw sessions.create returned no sessionId');
-  }
-  return sessionId.trim();
-};
 
 // ─── Adapter ────────────────────────────────────────────────────────────────
 
@@ -190,10 +172,6 @@ type PendingTurnStart = {
   settled: Promise<void>;
   resolveSettled: () => void;
   turn?: SessionTurn;
-};
-
-type GatewayAgentsListResult = {
-  agents?: unknown[];
 };
 
 const normalizeWorkspacePath = (workspace: string): string => {
@@ -249,11 +227,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private gatewayReadyPromise: Promise<void> | null = null;
   private gatewayClientInitLock: Promise<void> | null = null;
   private gatewayClientGeneration = 0;
+  private automationPermissionVerifiedGeneration = -1;
+  private continuationPermissionPreparer: ((sessionId: string) => Promise<void>) | null = null;
   private gatewayStoppingIntentionally = false;
   private gatewayReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private gatewayReconnectAttempt = 0;
-  private readonly agentWorkspaceSyncPromises = new Map<string, Promise<void>>();
-  private readonly agentTurnAdmissionPromises = new Map<string, Promise<void>>();
   private goalRecoveryGeneration: number | null = null;
   private goalRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly appStartedAtMs: number;
@@ -276,7 +254,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly latestTurnTokenBySession = new Map<string, number>();
   private readonly sessionExecApprovalGrants = new SessionExecApprovalGrants();
   private readonly approvalResolutionByKey = new Map<string, Promise<void>>();
-  private readonly denyOnlyPluginApprovalIds = new Set<string>();
   private approvalReconciliation: {
     generation: number;
     events: Array<{ channel: string; payload: Record<string, unknown> }>;
@@ -357,6 +334,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         }
         this.broadcastGoalExecution(snapshot);
       },
+      prepareSessionForContinuation: async sessionId => {
+        if (this.continuationPermissionPreparer) {
+          await this.continuationPermissionPreparer(sessionId);
+          return;
+        }
+        await this.prepareSession(sessionId);
+      },
       waitBeforeAutomaticContinuation: () =>
         new Promise(resolve => setTimeout(resolve, 1_600)),
     });
@@ -400,6 +384,75 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       workspaceRoot: options.workspaceRoot,
       clientTurnId: options.clientTurnId,
     });
+  }
+
+  async prepareSession(
+    sessionId: string,
+    options: CoworkPrepareSessionOptions = {},
+  ): Promise<CoworkPreparedSession> {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`Session ${sessionId} not found`);
+
+    const agentId = options.agentId || session.agentId || DEFAULT_MANAGED_AGENT_ID;
+    return this.prepareSessionKey(sessionId, this.toSessionKey(sessionId, agentId), options);
+  }
+
+  setContinuationPermissionPreparer(
+    preparer: ((sessionId: string) => Promise<void>) | null,
+  ): void {
+    this.continuationPermissionPreparer = preparer;
+  }
+
+  private async prepareSessionKey(
+    sessionId: string,
+    sessionKey: string,
+    options: CoworkPrepareSessionOptions = {},
+  ): Promise<CoworkPreparedSession> {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`Session ${sessionId} not found`);
+
+    const workspaceRoot = (options.workspaceRoot || session.cwd).trim();
+    if (!workspaceRoot || !path.isAbsolute(workspaceRoot)) {
+      throw new Error('The session workspace must be an absolute path.');
+    }
+    const permissionMode: PermissionMode = options.permissionMode ?? session.permissionMode;
+    const nativePermissionMode = toOpenClawSessionPermissionMode(permissionMode);
+
+    await this.ensureGatewayClientReady();
+    const result = await this.requireGatewayClient().request<{
+      key?: unknown;
+      sessionId?: unknown;
+      entry?: {
+        sessionId?: unknown;
+        permissionMode?: unknown;
+        sessionRoot?: unknown;
+      };
+    }>('sessions.create', {
+      key: sessionKey,
+      cwd: workspaceRoot,
+      permissionMode: nativePermissionMode,
+    });
+    const gatewaySessionId =
+      typeof result.sessionId === 'string'
+        ? result.sessionId.trim()
+        : typeof result.entry?.sessionId === 'string'
+          ? result.entry.sessionId.trim()
+          : '';
+    if (!gatewaySessionId) {
+      throw new Error('OpenClaw sessions.create returned no sessionId.');
+    }
+    if (result.entry?.permissionMode !== nativePermissionMode) {
+      throw new Error('OpenClaw did not persist the requested session permission mode.');
+    }
+    if (
+      typeof result.entry.sessionRoot !== 'string' ||
+      !areWorkspacePathsEquivalent(result.entry.sessionRoot, workspaceRoot)
+    ) {
+      throw new Error('OpenClaw did not persist the requested session workspace boundary.');
+    }
+
+    this.rememberSessionKey(sessionId, sessionKey);
+    return { sessionKey, gatewaySessionId };
   }
 
   async stopSession(sessionId: string, options: CoworkStopOptions = {}): Promise<void> {
@@ -520,6 +573,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       break;
     }
     if (!sessionKey) throw new Error('The session does not have an active goal');
+    await this.prepareSessionKey(sessionId, sessionKey);
     // Explicit user intent transfers this Goal to the current app lifecycle.
     // Keep that ownership across Gateway reconnects, but not app restarts.
     if (goalId) this.goalIdsActivatedThisApp.add(`${sessionId}:${goalId}`);
@@ -615,6 +669,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       break;
     }
     if (!sessionKey || !blockedGoalId) throw new Error('The session does not have a blocked goal');
+    await this.prepareSessionKey(sessionId, sessionKey);
     this.goalIdsActivatedThisApp.add(`${sessionId}:${blockedGoalId}`);
 
     const runId = `justdo-goal-resume-input-${randomUUID()}`;
@@ -1009,12 +1064,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       this.confirmationModeBySession.set(sessionId, confirmationMode);
 
       const agentId = options.agentId || session.agentId || 'main';
-      const sessionKey = this.toSessionKey(sessionId, agentId);
-      this.rememberSessionKey(sessionId, sessionKey);
       this.store.updateSession(sessionId, { status: 'running' });
       this.emit('activity', sessionId, 'user', Date.now());
-      await this.ensureGatewayClientReady();
+      const preparedSession = await this.prepareSession(sessionId, {
+        permissionMode: session.permissionMode,
+        workspaceRoot: options.workspaceRoot,
+        agentId,
+      });
       if (isStartCancelled()) return;
+      const sessionKey = preparedSession.sessionKey;
 
       const runId = options.clientTurnId?.trim() || randomUUID();
       this.rootRunIdBySession.set(sessionId, runId);
@@ -1026,7 +1084,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       // the original promise rejectable for active-turn failures, but attach a
       // handler immediately so an admission/send exception cannot create an
       // unhandled rejection alongside the error propagated by runTurn itself.
-      void completionPromise.catch(() => undefined);
+      void completionPromise.catch((): void => undefined);
 
       // Create SessionTurn (replaces 22-field ActiveTurn)
       turn = {
@@ -1052,28 +1110,27 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         const attachments = options.attachments?.length
           ? options.attachments.map(toGatewayAttachment)
           : undefined;
-        const commandSessionId = await ensureSlashCommandSession(client, sessionKey, prompt);
+        const commandSessionId = hasSlashCommandBeforeSendHook(
+          prompt,
+          SlashCommandBeforeSendHook.EnsureSessionEntry,
+        )
+          ? preparedSession.gatewaySessionId
+          : undefined;
         if (isStartCancelled()) return;
-        const result = await this.runWithAgentTurnAdmission(agentId, async () => {
-          await this.syncAgentWorkspaceIfNeeded(agentId, options.workspaceRoot);
-          if (isStartCancelled()) return null;
-
-          pendingStart.phase = 'sending';
-          return client.request<{ runId?: string }>('chat.send', {
-            sessionKey,
-            ...(commandSessionId ? { sessionId: commandSessionId } : {}),
-            message: prompt.trim(),
-            deliver: false,
-            justdoUserInitiated: true,
-            // Gateway timeout 0 means timer-safe "no timeout". JustDo owns the
-            // user-turn watchdog below so it can suspend that deadline while
-            // managed subagents are still running in an in-place sessions_yield.
-            timeoutMs: 0,
-            idempotencyKey: runId,
-            ...(attachments ? { attachments } : {}),
-          });
+        pendingStart.phase = 'sending';
+        const result = await client.request<{ runId?: string }>('chat.send', {
+          sessionKey,
+          ...(commandSessionId ? { sessionId: commandSessionId } : {}),
+          message: prompt.trim(),
+          deliver: false,
+          justdoUserInitiated: true,
+          // Gateway timeout 0 means timer-safe "no timeout". JustDo owns the
+          // user-turn watchdog below so it can suspend that deadline while
+          // managed subagents are still running in an in-place sessions_yield.
+          timeoutMs: 0,
+          idempotencyKey: runId,
+          ...(attachments ? { attachments } : {}),
         });
-        if (!result) return;
         const rootRunId = result.runId?.trim() || turn.runId || runId;
         this.rootRunIdBySession.set(sessionId, rootRunId);
         this.sessionIdByRunId.set(rootRunId, sessionId);
@@ -1148,85 +1205,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     await completionPromise;
   }
 
-  private async runWithAgentTurnAdmission<T>(
-    agentId: string,
-    operation: () => Promise<T>,
-  ): Promise<T> {
-    const normalizedAgentId = agentId.trim().toLowerCase() || DEFAULT_MANAGED_AGENT_ID;
-    const previousAdmission = this.agentTurnAdmissionPromises.get(normalizedAgentId);
-    const admission = (previousAdmission?.catch((): undefined => undefined) ?? Promise.resolve()).then(
-      operation,
-    );
-    const tail = admission.then(
-      (): void => undefined,
-      (): void => undefined,
-    );
-    this.agentTurnAdmissionPromises.set(normalizedAgentId, tail);
-
-    try {
-      return await admission;
-    } finally {
-      if (this.agentTurnAdmissionPromises.get(normalizedAgentId) === tail) {
-        this.agentTurnAdmissionPromises.delete(normalizedAgentId);
-      }
-    }
-  }
-
-  private async syncAgentWorkspaceIfNeeded(agentId: string, workspaceRoot?: string): Promise<void> {
-    const workspace = workspaceRoot?.trim();
-    if (!workspace) return;
-
-    const normalizedAgentId = agentId.trim().toLowerCase() || DEFAULT_MANAGED_AGENT_ID;
-    const previousSync = this.agentWorkspaceSyncPromises.get(normalizedAgentId);
-    const syncPromise = (previousSync?.catch((): undefined => undefined) ?? Promise.resolve()).then(() =>
-      this.syncAgentWorkspace(normalizedAgentId, workspace),
-    );
-    this.agentWorkspaceSyncPromises.set(normalizedAgentId, syncPromise);
-
-    try {
-      await syncPromise;
-    } finally {
-      if (this.agentWorkspaceSyncPromises.get(normalizedAgentId) === syncPromise) {
-        this.agentWorkspaceSyncPromises.delete(normalizedAgentId);
-      }
-    }
-  }
-
-  private async syncAgentWorkspace(agentId: string, workspace: string): Promise<void> {
-    const client = this.requireGatewayClient();
-    try {
-      let currentWorkspace: string | undefined;
-      try {
-        const result = await client.request<GatewayAgentsListResult>('agents.list', {});
-        const currentAgent = result.agents?.find(
-          candidate =>
-            isRecord(candidate) &&
-            typeof candidate.id === 'string' &&
-            candidate.id.trim().toLowerCase() === agentId,
-        );
-        if (isRecord(currentAgent) && typeof currentAgent.workspace === 'string') {
-          currentWorkspace = currentAgent.workspace.trim();
-        }
-      } catch {
-        // Preserve the previous write-first behavior when the read-only lookup is unavailable.
-      }
-
-      if (currentWorkspace && areWorkspacePathsEquivalent(currentWorkspace, workspace)) return;
-
-      await client.request('agents.update', {
-        agentId,
-        workspace,
-      });
-    } catch (error) {
-      coworkLog('WARN', 'OpenClawRuntime', 'Failed to sync agent workspace before chat turn', {
-        agentId,
-        workspace,
-        error: String(error),
-      });
-      throw error;
-    }
-  }
-
   // ─── Gateway Event Routing ──────────────────────────────────────────────
 
   private handleGatewayEvent(event: GatewayEventFrame): void {
@@ -1273,9 +1251,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
 
     if (event.event === 'plugin.approval.resolved') {
-      if (isRecord(event.payload) && typeof event.payload.id === 'string') {
-        this.denyOnlyPluginApprovalIds.delete(event.payload.id);
-      }
       this.broadcastApproval(OpenClawApprovalIpc.Resolved, ApprovalKind.Plugin, event.payload);
       return;
     }
@@ -1620,79 +1595,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
   }
 
-  private normalizePluginApprovalRequest(payload: unknown): PluginApprovalRequest | null {
-    if (!isRecord(payload) || typeof payload.id !== 'string' || !isRecord(payload.request)) {
-      return null;
-    }
-    return payload as unknown as PluginApprovalRequest;
-  }
-
-  private async enrichScheduledTaskApproval(
-    request: PluginApprovalRequest,
-  ): Promise<PluginApprovalRequest> {
-    const payload = request.request;
-    if (
-      payload.pluginId !== OpenClawExtensionId.ACTION_APPROVAL ||
-      payload.toolName !== 'cron'
-    ) {
-      this.denyOnlyPluginApprovalIds.delete(request.id);
-      return request;
-    }
-    const toolCallId = payload.toolCallId?.trim();
-    const denyOnly = (reason: string): PluginApprovalRequest => ({
-      ...request,
-      request: {
-        ...payload,
-        description: `${payload.description.trim()}\n\n${reason}`.trim(),
-        allowedDecisions: [ExecApprovalDecision.Deny],
-      },
-    });
-    const detailNonce = /^justdo-detail:([0-9a-f-]{36})\n/i.exec(payload.description)?.[1];
-    if (!detailNonce) {
-      this.denyOnlyPluginApprovalIds.add(request.id);
-      return denyOnly('Full scheduled-task details are unavailable; approval is disabled.');
-    }
-    if (!toolCallId) {
-      this.denyOnlyPluginApprovalIds.add(request.id);
-      return denyOnly('Full scheduled-task details are unavailable; approval is disabled.');
-    }
-    const client = this.gatewayClient;
-    if (!client) {
-      this.denyOnlyPluginApprovalIds.add(request.id);
-      return denyOnly('Full scheduled-task details are unavailable; approval is disabled.');
-    }
-    try {
-      const detail = await client.request<{ found?: boolean; description?: unknown }>(
-        'actionApproval.approvalDetails',
-        {
-          nonce: detailNonce,
-          toolCallId,
-          agentId: payload.agentId ?? undefined,
-          sessionKey: payload.sessionKey ?? undefined,
-        },
-      );
-      if (detail?.found === true && typeof detail.description === 'string') {
-        this.denyOnlyPluginApprovalIds.delete(request.id);
-        return {
-          ...request,
-          request: { ...payload, description: detail.description },
-        };
-      }
-    } catch (error) {
-      coworkLog('WARN', 'OpenClawRuntime', 'Failed to load scheduled-task approval details', {
-        approvalId: request.id,
-        toolCallId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-    this.denyOnlyPluginApprovalIds.add(request.id);
-    return denyOnly('Full scheduled-task details are unavailable; approval is disabled.');
-  }
-
-  private async handlePluginApprovalRequested(payload: unknown): Promise<void> {
-    const request = this.normalizePluginApprovalRequest(payload);
-    const enriched = request ? await this.enrichScheduledTaskApproval(request) : payload;
-    this.broadcastApproval(OpenClawApprovalIpc.Requested, ApprovalKind.Plugin, enriched);
+  private handlePluginApprovalRequested(payload: unknown): void {
+    this.broadcastApproval(OpenClawApprovalIpc.Requested, ApprovalKind.Plugin, payload);
   }
 
   async listPendingApprovals(): Promise<ApprovalRequest[]> {
@@ -1709,10 +1613,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }
     }
     for (const request of Array.isArray(pluginRequests) ? pluginRequests : []) {
-      requests.push({
-        ...(await this.enrichScheduledTaskApproval(request)),
-        kind: ApprovalKind.Plugin,
-      });
+      requests.push({ ...request, kind: ApprovalKind.Plugin });
     }
     return requests.sort((a, b) => a.createdAtMs - b.createdAtMs);
   }
@@ -1724,13 +1625,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   ): Promise<void> {
     await this.ensureGatewayClientReady();
     const client = this.requireGatewayClient();
-    if (
-      kind === ApprovalKind.Plugin &&
-      decision !== ApprovalDecision.Deny &&
-      this.denyOnlyPluginApprovalIds.has(id)
-    ) {
-      throw new Error('This approval cannot be allowed because its full details are unavailable.');
-    }
     if (decision !== ApprovalDecision.AllowForSession) {
       if (decision === ApprovalDecision.AllowOnce) {
         await this.resolveApprovalAllowOnce(kind, id);
@@ -1740,7 +1634,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         kind === ApprovalKind.Plugin ? 'plugin.approval.resolve' : 'exec.approval.resolve',
         { id, decision },
       );
-      if (kind === ApprovalKind.Plugin) this.denyOnlyPluginApprovalIds.delete(id);
       return;
     }
     if (kind !== ApprovalKind.Exec) {
@@ -2147,6 +2040,22 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     await this.ensureGatewayClientReady();
   }
 
+  private async ensureAutomationPermissionPolicyReady(): Promise<void> {
+    if (this.automationPermissionVerifiedGeneration === this.gatewayClientGeneration) return;
+    const generation = this.gatewayClientGeneration;
+    const client = this.requireGatewayClient();
+    const result = await client.request<{ loaded?: unknown; policyId?: unknown }>(
+      'automationPermission.info',
+    );
+    if (result.loaded !== true || result.policyId !== AUTOMATION_PERMISSION_POLICY_ID) {
+      throw new Error('OpenClaw automation permission policy is unavailable.');
+    }
+    if (generation !== this.gatewayClientGeneration || client !== this.gatewayClient) {
+      throw new Error('OpenClaw Gateway connection changed');
+    }
+    this.automationPermissionVerifiedGeneration = generation;
+  }
+
   async reconnectGateway(): Promise<void> {
     this.stopGatewayClient();
     try {
@@ -2163,15 +2072,20 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   private async ensureGatewayClientReady(): Promise<void> {
-    if (this.gatewayClient) return;
+    if (this.gatewayClient) {
+      await this.ensureAutomationPermissionPolicyReady();
+      return;
+    }
 
     if (this.gatewayClientInitLock) {
       await this.gatewayClientInitLock;
+      await this.ensureAutomationPermissionPolicyReady();
       return;
     }
     this.gatewayClientInitLock = this._ensureGatewayClientReadyImpl();
     try {
       await this.gatewayClientInitLock;
+      await this.ensureAutomationPermissionPolicyReady();
     } finally {
       this.gatewayClientInitLock = null;
     }
@@ -2513,6 +2427,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
               runId || undefined,
             );
           } else {
+            await this.prepareSessionKey(session.id, sessionKey);
             await this.goalContinuationCoordinator.continue(session.id, sessionKey);
           }
           break;

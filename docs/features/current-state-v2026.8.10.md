@@ -28,11 +28,11 @@ Markdown支持task list、KaTeX、highlight、Mermaid、CJK链接修正与stream
 
 ### 2.4 Permissions
 
-Ask/auto/full产品语义通过config sync映射并验证Gateway active policy；新turn fail closed。Exec/plugin approval分离，session grant终态清理。`action-approval`扩展处理文件写/cron产品policy，scheduler agent使用受管无人值守权限。
+Ask/auto/full 分别映射 OpenClaw 原生 session `guarded/workspace/full`；每个 turn 先通过 `sessions.create` 写入并核对 mode/root，失败则不发送。SQLite session 是耐久期望投影，Cowork config 只保存新会话默认值；全局 config 固定 restricted fallback。Exec/plugin approval 分离，session grant 终态清理；旧 `action-approval` 扩展已移除，scheduler agent 继续使用受管无人值守权限。
 
 ### 2.5 Scheduled Tasks
 
-原生 `cron.*` job/run，at/every/cron、agentTurn/systemEvent、none/announce/webhook、main/isolated 和 channel/account。Agent-turn 强制 `justdo-scheduler`，错误 assignment 会修复或禁用；JustDo 创建 job 时默认显式发送 `delivery: { mode: 'none' }`。
+原生 `cron.*` job/run，at/every/cron、agentTurn/systemEvent、none/announce/webhook、main/isolated 和 channel/account。JustDo 新建的 Agent-turn 使用 `justdo-scheduler`；外部或模型创建的任务保留原 owner，列表、启停、编辑与手动运行不会接管。模型的 automation mutation 由受保护 extension 按原生 session mode 审批。JustDo 创建 job 时默认显式发送 `delivery: { mode: 'none' }`。
 
 应用内Result Inbox已实现SQLite receipts、未读、分页、baseline、durable catch-up、reconcile、完整session查看和artifact清理后删除。
 
@@ -64,7 +64,7 @@ Redux挂载6个slice：model、cowork、skill、mcp、scheduledTask、agent。
 
 ## 4. 当前Runtime Patch
 
-`scripts/patches/v2026.8.1/` 只保留九个产品缺口：managed Python、Windows 通用 MCP runner、Chrome Windows runner/早期 stderr、Chrome 空页面恢复、最终 system prompt replacement、agent request metadata、compaction/reviewer purpose metadata、app-start task recovery boundary 和手动 memory reindex no-cache。Thinking/history、tool directory、goal、task queue/join、approval、compaction/context budget 都使用 v2026.8.1 原生能力；progress、embedding 和受限 history detail 迁入 `justdo-runtime-bridge`。
+`scripts/patches/v2026.8.1/` 只保留十二个产品缺口：managed Python、Windows 通用 MCP runner、Chrome Windows runner/早期 stderr、Chrome 空页面恢复、最终 system prompt replacement、agent request metadata、compaction/reviewer purpose metadata、app-start task recovery boundary、手动 memory reindex no-cache、原生 exec/plugin approval 可配置等待时限和 plugin approval reviewer detail 转发。Thinking/history、tool directory、goal、task queue/join、approval 状态机、compaction/context budget 都使用 v2026.8.1 原生能力；progress、embedding 和受限 history detail 迁入 `justdo-runtime-bridge`。
 
 ## 5. 尚未完整交付/明确限制
 
@@ -213,7 +213,8 @@ sequenceDiagram
   R->>I: session + clientTurnId + settings
   I->>S: validate/create durable turn and root run
   I->>A: start/continue session
-  A->>G: request with mapped permission/model/context
+  A->>G: reconcile native session mode/root
+  A->>G: request with model/context
   G-->>A: lifecycle/thinking/tool/message events
   A-->>R: normalized runtime events
   R->>R: reduce stable transcript + live state
@@ -231,7 +232,7 @@ sequenceDiagram
 
 ## 12. 配置变更与 Gateway 重启
 
-`app_config` 变化并不一律重启 Gateway。语言变化只更新 Main i18n 与 tray；标题栏配置只更新窗口；代理签名变化才执行异步代理应用。如果 Gateway 正在运行，Main 会先断开 adapter 的旧 client，再重启 Gateway，最后重新连接 Cowork service。
+`app_config` 变化并不一律重启 Gateway。语言变化只更新 Main i18n 与 tray；标题栏配置只更新窗口；代理签名变化才执行异步代理应用。如果 Gateway 正在运行，代理重启与配置、extension 自动重启共用 `OpenClawConfigSyncService` 的串行队列：先取得原生 `gateway.suspend.prepare` admission 屏障，确认当前 generation 空闲后断开 adapter 的旧 client、重启 Gateway，最后重新连接 Cowork service。
 
 这个“先 dispose client、再 restart”的顺序用于避免旧 WebSocket 异步关闭后污染新的 `gatewayReadyPromise`。若重连失败，代码会进一步停止 Gateway，避免 UI 误认为一个不可通信的进程仍然健康。任何新增的运行时配置都应明确属于：
 
@@ -261,7 +262,7 @@ sequenceDiagram
 
 - Renderer 没有 Node/Electron 直接导入；特权操作通过 preload allowlist。
 - Exec approval 与 plugin approval 分开建模，避免一个批准覆盖不同风险域。
-- 新 turn 在 active Gateway policy 未验证时 fail closed。
+- 新 turn 在原生 session mode/root 未验证时 fail closed；全局 fallback 与 scheduler policy 也需 active 回读。
 - 用户导入的 skill/extension 有专门 extraction 与安装事务，不把 archive 路径当作可信目录。
 - Extension relay 只监听 loopback，并使用单独 pairing token/secret。
 - 日志过滤器压缩高频 Gateway stream，并避免把完整 native event 默认复制到主日志。

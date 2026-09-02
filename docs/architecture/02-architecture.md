@@ -114,8 +114,8 @@ Main 启动时延迟创建重型服务，主要对象关系如下：
 - `SqliteStore` 提供数据库连接和 KV；`CoworkStore`、`GroupStore` 复用该连接。
 - `CoworkEngineService` 持有当前 router/runtime adapter。
 - `OpenClawEngineManager` 管理 runtime 状态、端口、token、进程与网络环境。
-- `OpenClawConfigSyncService` 汇总 provider、agent、permission、MCP、Hook、Extension、browser 等配置并串行写入。
-- `SessionPermissionModeCoordinator` 串行会话权限切换和配置同步。
+- `OpenClawConfigSyncService` 汇总 provider、agent、全局权限兜底、MCP、Hook、Extension、browser 等配置并串行写入。
+- `SessionPermissionModeCoordinator` 串行写入并验证原生 session mode/root，成功后更新本地投影。
 - `OpenClawExtensionHostLifecycle` 管理 ask-user callback 与 extension MCP transports。
 - `ManagedDirectoryOperationCoordinator` 在插件目录变更前识别/停止相关进程，完成后恢复。
 - `CronJobService`、result store/sync service 共享 Gateway adapter 与 SQLite。
@@ -171,7 +171,7 @@ sequenceDiagram
 2. Gateway：执行、工具、真实 transcript 和 session runtime。
 3. Renderer：当前页面的历史窗口、乐观 user message、active turn reducer 和派生 timeline。
 
-Start/continue handler 先等待待处理配置更新并确保 Gateway 运行及权限 policy 可验证，然后建立 run receipt、调用 router/adapter。Main adapter 的事件经 forwarder 更新产品 session/Redux；Renderer chat controller 同时通过集中式 loopback Gateway client 接收聊天协议事件，并优先经 IPC、必要时经认证 REST fallback 加载历史。两条投影都必须按 domain/session/run/sequence/generation 收敛到同一 Gateway 事实。
+Start/continue handler 先等待待处理配置更新并确保 Gateway 的全局安全兜底可验证，然后建立 run receipt、调用 router/adapter。每个 turn 在 `chat.send` 前以 `sessions.create` 幂等写入并核对该 session 的原生 permission mode 与 root；Renderer 直接发送后续 turn 时也先经 Main 执行同一 reconcile。Main adapter 的事件经 forwarder 更新产品 session/Redux；Renderer chat controller 同时通过集中式 loopback Gateway client 接收聊天协议事件，并优先经 IPC、必要时经认证 REST fallback 加载历史。两条投影都必须按 domain/session/run/sequence/generation 收敛到同一 Gateway 事实。
 
 ## 8. 配置流
 
@@ -182,7 +182,7 @@ Start/continue handler 先等待待处理配置更新并确保 Gateway 运行及
 - `agents`、`mcp_servers`、`openclaw_hooks` 是结构化产品配置。
 - extension/skill 文件与 manifest 位于 OpenClaw state/受管目录。
 
-`OpenClawConfigSyncService` 在 config mutation lock 内读取这些来源，生成/更新 Gateway 配置，必要时断开 adapter、重启 Gateway、重连并验证 active permission policy。UI 保存成功不等于 Gateway 已接受；Main 返回值必须表达 sync 失败。
+`OpenClawConfigSyncService` 在 config mutation lock 内读取这些来源，生成/更新 Gateway 配置，必要时断开 adapter、重启 Gateway、重连并验证全局 restricted fallback 与 scheduler 隔离。会话权限不通过全局 config sync；它由原生 session RPC 单独写入、回读和报错。
 
 ## 9. 退出生命周期
 

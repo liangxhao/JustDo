@@ -5,9 +5,27 @@ const path = require('path');
 
 let activeRuntimePhase = null;
 const atomicRenameWaitArray = new Int32Array(new SharedArrayBuffer(4));
+const normalizedGatewayBundleCache = new Map();
 
 function normalizeFilePath(filePath) {
   return path.resolve(filePath);
+}
+
+function isGatewayBundlePath(filePath) {
+  return path.basename(filePath) === 'gateway-bundle.mjs';
+}
+
+function normalizeJustDoGatewayBundle(content, filePath = '') {
+  const cacheKey = filePath ? normalizeFilePath(filePath) : null;
+  const cached = cacheKey ? normalizedGatewayBundleCache.get(cacheKey) : null;
+  if (cached?.content === content) return cached.normalized;
+  const withoutMarkers = content.replace(/\/\*JUSTDO_[A-Z0-9_]+\*\//gu, '');
+  const normalized = withoutMarkers.replace(
+    /"(?:\\.|[^"\\\r\n])*"|'(?:\\.|[^'\\\r\n])*'|`(?:\\.|[^`\\\r\n])*`|\s+/gu,
+    match => (/^\s+$/u.test(match) ? '' : match),
+  );
+  if (cacheKey) normalizedGatewayBundleCache.set(cacheKey, { content, normalized });
+  return normalized;
 }
 
 function isRuntimeJavaScriptFile(runtimeDir, filePath) {
@@ -54,6 +72,11 @@ function endRuntimePatchPhase(runtimeDir) {
       `Cannot end runtime patch phase for ${normalizedRuntimeDir}; active phase is ${activeRuntimePhase.runtimeDir}`,
     );
   }
+  for (const filePath of normalizedGatewayBundleCache.keys()) {
+    if (isRuntimeJavaScriptFile(normalizedRuntimeDir, filePath)) {
+      normalizedGatewayBundleCache.delete(filePath);
+    }
+  }
   activeRuntimePhase = null;
 }
 
@@ -85,6 +108,7 @@ function readRuntimeTextFile(filePath) {
 function updateActiveRuntimeFile(filePath, content) {
   if (!activeRuntimePhase) return;
   const normalizedFilePath = normalizeFilePath(filePath);
+  normalizedGatewayBundleCache.delete(normalizedFilePath);
   if (!isRuntimeJavaScriptFile(activeRuntimePhase.runtimeDir, normalizedFilePath)) return;
   if (!activeRuntimePhase.fileSet.has(normalizedFilePath)) {
     activeRuntimePhase.fileSet.add(normalizedFilePath);
@@ -327,7 +351,9 @@ module.exports = {
   endRuntimePatchPhase,
   findMatchingDelimiter,
   findFilesContaining,
+  isGatewayBundlePath,
   listJavaScriptFiles,
+  normalizeJustDoGatewayBundle,
   replaceUnique,
   replaceUniquePattern,
   replaceNamedFunction,

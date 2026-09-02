@@ -63,20 +63,20 @@ WAL 是持久设置。备份不能只在运行中复制主 `.sqlite` 而忽略 W
 
 ## 5. `cowork_sessions`
 
-| 列                        | 说明                                    |
-| ------------------------- | --------------------------------------- |
-| `id`                      | UUID/稳定本地 session id，主键          |
-| `title`                   | 用户/模型生成标题                       |
-| `status`                  | idle/running/completed/error 等产品快照 |
-| `pinned`                  | SQLite integer boolean                  |
-| `cwd`                     | task workspace                          |
-| `execution_mode`          | 当前使用 local；legacy container 被迁移 |
-| `permission_mode`         | ask/auto/full 之一，经 shared normalize |
-| `active_skill_ids`        | JSON array                              |
-| `agent_id`                | 默认 `main`                             |
-| `model_ref`               | qualified provider/model，可空          |
-| `group_id`                | 指向 session_groups，可空               |
-| `created_at`,`updated_at` | Unix ms                                 |
+| 列                        | 说明                                                |
+| ------------------------- | --------------------------------------------------- |
+| `id`                      | UUID/稳定本地 session id，主键                      |
+| `title`                   | 用户/模型生成标题                                   |
+| `status`                  | idle/running/completed/error 等产品快照             |
+| `pinned`                  | SQLite integer boolean                              |
+| `cwd`                     | task workspace                                      |
+| `execution_mode`          | 当前使用 local；legacy container 被迁移             |
+| `permission_mode`         | ask/auto/full 之一；原生 session 权限的耐久期望投影 |
+| `active_skill_ids`        | JSON array                                          |
+| `agent_id`                | 默认 `main`                                         |
+| `model_ref`               | qualified provider/model，可空                      |
+| `group_id`                | 指向 session_groups，可空                           |
+| `created_at`,`updated_at` | Unix ms                                             |
 
 索引：
 
@@ -112,9 +112,9 @@ OpenClaw v2026.8.1 对接不再由 JustDo 直接读写 agent `sessions.json`。G
 
 ## 8. `cowork_config`
 
-结构同 KV：key/value/updated_at，但 owner 是 Cowork/runtime domain。`CoworkStore.getConfig/setConfig` 对 execution mode、working directory、permission mode 等做默认与 normalize；版本化 runtime settings 通过 `agentRuntimeSettings:v1` 保存。旧记录缺少 AskUserQuestion 或 MCP 配置时分别补入默认 10 分钟与 60 秒，损坏或越界值按 shared contract 回退。
+结构同 KV：key/value/updated_at，但 owner 是 Cowork/runtime domain。`CoworkStore.getConfig/setConfig` 对 execution mode、working directory、permission mode 等做默认与 normalize；其中 permission mode 只作为新会话默认值，当前会话使用 `cowork_sessions.permission_mode` 保存用户期望值，并在发送前与 Gateway 原生 session entry reconcile。版本化 runtime settings 通过 `agentRuntimeSettings:v1` 保存。旧记录缺少 AskUserQuestion、命令审批或 MCP 配置时分别补入默认 10 分钟、30 分钟与 60 秒，损坏或越界值按 shared contract 回退。
 
-修改配置的 IPC 使用 promise queue 串行，并在成功写入后同步 OpenClaw。Subagent 设置生成 `agents.defaults.subagents`；AskUserQuestion 等待时限生成 `plugins.entries.ask-user-question.config.timeoutMinutes`；全局 MCP 请求时限作为每个用户 `mcp.servers.<name>.timeout` 的默认值。同步失败会恢复上一份数据库值；数据库保存成功不自动证明 Gateway config active。
+修改配置的 IPC 使用 promise queue 串行。会影响 Gateway config 或启动环境的字段在成功写入后同步 OpenClaw；纯 permission 默认值变更不触发同步。Subagent 设置生成 `agents.defaults.subagents`；AskUserQuestion 等待时限生成 `plugins.entries.ask-user-question.config.timeoutMinutes`；命令审批等待时限生成受管 `JUSTDO_EXEC_APPROVAL_TIMEOUT_MS`；全局 MCP 请求时限作为每个用户 `mcp.servers.<name>.timeout` 的默认值。需同步的配置失败会恢复上一份数据库值；数据库保存成功不自动证明 Gateway config active。
 
 ## 9. `agents`
 

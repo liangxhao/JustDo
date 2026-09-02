@@ -1,3 +1,4 @@
+import { OPENCLAW_INDEFINITE_APPROVAL_EXPIRES_AT_MS } from '@shared/openclaw/agentRuntimeSettings';
 import {
   ApprovalDecision,
   ApprovalKind,
@@ -7,7 +8,6 @@ import {
 import { describe, expect, it } from 'vitest';
 
 import {
-  isScheduledTaskApproval,
   resolveAllowedDecisions,
   resolveApprovalDeadline,
   resolveApprovalSummary,
@@ -73,7 +73,7 @@ describe('resolveApprovalSummary', () => {
       id: 'approval-2',
       kind: ApprovalKind.Plugin,
       request: {
-        pluginId: 'action-approval',
+        pluginId: 'example-plugin',
         title: 'Allow file changes?',
         description: 'C:/project/report.md',
         toolName: 'write',
@@ -85,36 +85,36 @@ describe('resolveApprovalSummary', () => {
     expect(resolveApprovalSummary(request)).toBe('write C:/project/report.md');
   });
 
-  it('preserves multiline scheduled-task details without a redundant tool prefix', () => {
-    const description = JSON.stringify(
-      {
-        action: 'add',
-        job: { name: 'Morning report', schedule: { kind: 'cron', expr: '0 9 * * *' } },
-      },
-      null,
-      2,
-    );
+  it('shows reviewer-only plugin detail instead of a truncated description', () => {
     const request: ApprovalRequest = {
       id: 'approval-3',
       kind: ApprovalKind.Plugin,
       request: {
-        pluginId: 'action-approval',
+        pluginId: 'automation-permission',
         title: 'Allow scheduled task change?',
-        description,
-        toolName: 'cron',
+        description: '{"action":"add"}... [details truncated]',
+        detail: '{\n  "action": "add",\n  "delivery": "private-channel"\n}',
+        toolName: 'automations',
       },
       createdAtMs: 1,
       expiresAtMs: Date.now() + 60_000,
     };
 
-    expect(isScheduledTaskApproval(request)).toBe(true);
-    expect(resolveApprovalSummary(request)).toBe(description);
+    expect(resolveApprovalSummary(request)).toContain('"delivery": "private-channel"');
+    expect(resolveApprovalSummary(request)).not.toContain('[details truncated]');
   });
 });
 
 describe('resolveApprovalDeadline', () => {
   it('does not expose a countdown or expire persistent approvals', () => {
     expect(resolveApprovalDeadline(Number.MAX_SAFE_INTEGER, Date.now())).toEqual({
+      remainingSeconds: null,
+      expired: false,
+    });
+  });
+
+  it('presents the no-expiry sentinel as unlimited', () => {
+    expect(resolveApprovalDeadline(OPENCLAW_INDEFINITE_APPROVAL_EXPIRES_AT_MS, 60_000)).toEqual({
       remainingSeconds: null,
       expired: false,
     });

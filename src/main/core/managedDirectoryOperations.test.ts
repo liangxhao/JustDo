@@ -230,7 +230,13 @@ test('stops the runtime, retries, diagnoses external owners, and restarts', asyn
     return { running: true };
   });
   const coordinator = new ManagedDirectoryOperationCoordinator({
-    runtime: { isRunning: () => running, ownsProcess: pid => pid === 4321, stop, start },
+    runtime: {
+      isRunning: () => running,
+      ownsProcess: pid => pid === 4321,
+      prepareStop: async () => ({ ready: true, token: 'test-suspension' }),
+      stop,
+      start,
+    },
     findLockingProcesses: vi.fn(async () => ({
       available: true,
       processes: [{ name: 'Code', pid: 4321 }],
@@ -271,7 +277,13 @@ test('recovers the runtime when stop throws after the process has stopped', asyn
     return { running: true };
   });
   const coordinator = new ManagedDirectoryOperationCoordinator({
-    runtime: { isRunning: () => running, ownsProcess: pid => pid === 4321, stop, start },
+    runtime: {
+      isRunning: () => running,
+      ownsProcess: pid => pid === 4321,
+      prepareStop: async () => ({ ready: true, token: 'test-suspension' }),
+      stop,
+      start,
+    },
     findLockingProcesses: vi.fn(async () => ({
       available: true,
       processes: [{ name: 'Gateway', pid: 4321 }],
@@ -302,6 +314,7 @@ test('reports a runtime recovery failure with the original directory failure', a
     runtime: {
       isRunning: () => running,
       ownsProcess: pid => pid === 4321,
+      prepareStop: async () => ({ ready: true, token: 'test-suspension' }),
       stop: vi.fn(async () => {
         running = false;
       }),
@@ -357,6 +370,7 @@ test('does not stop the runtime for a lock owned only by an external process', a
     runtime: {
       isRunning: () => true,
       ownsProcess: pid => pid === 4242,
+      prepareStop: async () => ({ ready: true, token: 'test-suspension' }),
       stop,
       start: vi.fn(async () => ({ running: true })),
     },
@@ -393,6 +407,7 @@ test('hides app-managed processes without enabling runtime management for skill 
     runtime: {
       isRunning: () => true,
       ownsProcess: pid => pid === gatewayPid,
+      prepareStop: async () => ({ ready: true, token: 'test-suspension' }),
       stop,
       start: vi.fn(async () => ({ running: true })),
     },
@@ -487,7 +502,13 @@ test('preflight lock checks stop an owning runtime before mutating the directory
     return managedDirectorySuccess(undefined);
   });
   const coordinator = new ManagedDirectoryOperationCoordinator({
-    runtime: { isRunning: () => running, ownsProcess: pid => pid === 4242, stop, start },
+    runtime: {
+      isRunning: () => running,
+      ownsProcess: pid => pid === 4242,
+      prepareStop: async () => ({ ready: true, token: 'test-suspension' }),
+      stop,
+      start,
+    },
     findLockingProcesses: vi.fn(async () => ({
       available: true,
       processes: [{ name: 'OpenClaw Gateway', pid: 4242 }],
@@ -509,6 +530,42 @@ test('preflight lock checks stop an owning runtime before mutating the directory
   expect(running).toBe(true);
 });
 
+test('does not stop an owning runtime until its native work barrier is ready', async () => {
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+  const prepareStop = vi.fn(async () => ({ ready: false }));
+  const stop = vi.fn(async () => undefined);
+  const start = vi.fn(async () => ({ running: true }));
+  const operation = vi.fn(async () => managedDirectorySuccess(undefined));
+  const coordinator = new ManagedDirectoryOperationCoordinator({
+    runtime: {
+      isRunning: () => true,
+      ownsProcess: pid => pid === 4242,
+      prepareStop,
+      stop,
+      start,
+    },
+    findLockingProcesses: vi.fn(async () => ({
+      available: true,
+      processes: [{ name: 'OpenClaw Gateway', pid: 4242 }],
+    })),
+  });
+
+  const result = await coordinator.execute({
+    operation,
+    resourceName: 'extension directory',
+    targetPath: 'C:\\extensions\\demo',
+    manageRuntimeOnLock: true,
+    preflightLockCheck: true,
+  });
+
+  expect(result.success).toBe(false);
+  if (!result.success) expect(result.failure.message).toContain('Gateway');
+  expect(prepareStop).toHaveBeenCalledOnce();
+  expect(stop).not.toHaveBeenCalled();
+  expect(start).not.toHaveBeenCalled();
+  expect(operation).not.toHaveBeenCalled();
+});
+
 test('reports an operation exception after stopping the runtime and still restores it', async () => {
   vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
   let running = true;
@@ -520,7 +577,13 @@ test('reports an operation exception after stopping the runtime and still restor
     return { running: true };
   });
   const coordinator = new ManagedDirectoryOperationCoordinator({
-    runtime: { isRunning: () => running, ownsProcess: pid => pid === 4242, stop, start },
+    runtime: {
+      isRunning: () => running,
+      ownsProcess: pid => pid === 4242,
+      prepareStop: async () => ({ ready: true, token: 'test-suspension' }),
+      stop,
+      start,
+    },
     findLockingProcesses: vi.fn(async () => ({
       available: true,
       processes: [{ name: 'OpenClaw Gateway', pid: 4242 }],
@@ -545,6 +608,42 @@ test('reports an operation exception after stopping the runtime and still restor
   expect(stop).toHaveBeenCalledOnce();
   expect(start).toHaveBeenCalledOnce();
   expect(running).toBe(true);
+});
+
+test('reports a successful directory mutation as failed when runtime recovery fails', async () => {
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+  let running = true;
+  const operation = vi.fn(async () => managedDirectorySuccess(undefined));
+  const coordinator = new ManagedDirectoryOperationCoordinator({
+    runtime: {
+      isRunning: () => running,
+      ownsProcess: pid => pid === 4242,
+      prepareStop: async () => ({ ready: true, token: 'test-suspension' }),
+      stop: vi.fn(async () => {
+        running = false;
+      }),
+      start: vi.fn(async () => ({ running: false, message: 'bridge unavailable' })),
+    },
+    findLockingProcesses: vi.fn(async () => ({
+      available: true,
+      processes: [{ name: 'OpenClaw Gateway', pid: 4242 }],
+    })),
+  });
+
+  const result = await coordinator.execute({
+    operation,
+    resourceName: 'skill directory',
+    targetPath: 'C:\\skills\\demo',
+    manageRuntimeOnLock: true,
+    preflightLockCheck: true,
+  });
+
+  expect(operation).toHaveBeenCalledOnce();
+  expect(result.success).toBe(false);
+  if (!result.success) {
+    expect(result.failure.reason).toBe('filesystem');
+    expect(result.failure.message).toContain('bridge unavailable');
+  }
 });
 
 test('preserves an unknown lock classification when diagnostics are unavailable', async () => {

@@ -36,7 +36,7 @@ const createSession = (id: string, modelRef?: string) => ({
 });
 
 describe('cowork session permissions', () => {
-  test('uses full access for a new session draft', () => {
+  test('preserves the configured default when clearing the current session', () => {
     const restricted = coworkReducer(
       undefined,
       setConfig({
@@ -49,7 +49,7 @@ describe('cowork session permissions', () => {
 
     const newSession = coworkReducer(restricted, clearCurrentSession());
 
-    expect(newSession.config.permissionMode).toBe('full');
+    expect(newSession.config.permissionMode).toBe('ask');
   });
 });
 

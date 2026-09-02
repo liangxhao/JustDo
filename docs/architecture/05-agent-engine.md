@@ -8,7 +8,7 @@
 | ---------------------------------- | ------------------------------------------------------------------------------------ |
 | `OpenClawEngineManager`            | runtime/state 路径、端口/token、child process、状态机、stdout filter、CLI env        |
 | `OpenClawConfigSyncService`        | config mutation 串行化、写入/验证、restart/reconnect 决策                            |
-| `openclawConfigSync.ts`            | 把 provider/agent/permission/plugin/browser 等产品配置映射为 OpenClaw config         |
+| `openclawConfigSync.ts`            | 把 provider/agent/全局权限兜底/plugin/browser 等产品配置映射为 OpenClaw config       |
 | `OpenClawRuntimeAdapter`           | Gateway client、chat/session RPC、event normalize、approval、history、goal、subagent |
 | `CoworkEngineService`              | 延迟创建和访问 router/adapter                                                        |
 | `SessionPermissionModeCoordinator` | session permission 更新与同步 admission                                              |
@@ -48,14 +48,14 @@ Engine status 至少表达 stopped、starting、running、stopping/error 类 pha
 
 - provider models、base URL、API format、auth 与 capability；
 - agents 的 identity、system prompt、qualified model 和 skills；
-- 全局/会话权限 policy 与审批模式；
+- 无显式 session mode 时的全局 restricted fallback 与 scheduler 隔离 policy；
 - runtime settings，包括 AskUserQuestion 等待时限、MCP 请求超时与 subagent 调度参数；
 - MCP servers、Hooks、Extensions 与 ask-user 动态 callback；
 - browser mode；
 - system prompt replacement rules；
 - scheduler 隔离 agent 与其他 JustDo 管理项。
 
-同步在 exclusive queue 内执行，避免设置页、MCP/Hook/Extension、permission 同时覆盖文件。写入后必须验证 active Gateway permission policy。若 Gateway 正在运行且变化需要 restart，流程是断开 adapter -> restart -> reconnect；有 active workloads 时 service 应遵守安全策略，不盲目重启。
+同步在 exclusive queue 内执行，避免设置页、MCP/Hook/Extension 同时覆盖文件。写入后必须验证 active Gateway 的 restricted fallback 与 scheduler policy。会话 permission 不写全局 config，而由 session RPC 管理。若 Gateway 正在运行且变化需要 restart，Main 先通过原生 `gateway.suspend.prepare` 原子暂停 scheduler、封闭新 admission 并确认所有 Gateway workload 已空闲，再执行断开 adapter -> restart -> reconnect；busy 或 suspension RPC 不可用时继续延迟，不能用 `cron.list`/本地 active snapshot 代替该屏障。
 
 v2026.8.1 配置只生成 keyed `agents.entries` roster，并以 `agents.ownership: explicit` 标记多 Agent 所有权；`main` 与隔离的 `justdo-scheduler` 在无模型的最小配置中也必须存在。`agents.defaults.systemAgent.agentId` 固定为 `main`，让 memory dreaming 等 OpenClaw 原生环境任务拥有明确 owner；JustDo 创建的无人值守任务仍逐项显式绑定 `justdo-scheduler`。启动权限验收同样只读取 v2026.8.1 的 `agents.entries`，不能再用已删除的 `agents.list` 判断 scheduler 权限。自定义 provider 的展示名同时是 Gateway 模型引用中的 provider ID，使 OpenClaw 注入的当前模型身份保持用户可读；设置页与主进程同步入口都会拒绝 v2026.8.1 内置 provider、官方外置 provider/别名以及 JustDo 内部命名空间，避免触发错误的 provider 或插件路由。记忆检索写入顶层 `memory.search`，计划工具开关写入 `tools.updatePlan`。同步会定向清理 JustDo 历史写入但已被该版本删除的 metadata、diagnostics、pricing、heartbeat 与 experimental tool 字段，避免把旧生成结果重新喂给严格 schema。
 
@@ -68,11 +68,11 @@ v2026.8.1 配置只生成 keyed `agents.entries` roster，并以 `agents.ownersh
 1. 检测 legacy `sessions.json`。存在时先生成原生 SQLite migration dry-run plan，并在用户确认前阻止 Gateway 启动。
 2. 确保 extension host 可用；其失败会记录，但后续 config/能力验证决定是否可继续。
 3. 执行 config sync；失败则设置 external engine error。
-4. 若 manager 已 running，仍验证 active permission policy。
-5. 否则调用可合并的 start；running 后再次验证 policy。
+4. 若 manager 已 running，仍验证 active fallback/scheduler policy。
+5. 否则调用可合并的 start；running 后再次验证该 policy。
 6. 只有 phase 为 running 且验证成功，Cowork start/continue 才被接受。
 
-这防止“本地保存成功、Gateway 实际仍用旧权限”的危险窗口。
+这防止 Gateway 在无显式 session mode 的路径使用旧 Full fallback。具体 session 的 mode/root 在每个 turn admission 中另外回读验证。
 
 Legacy session migration 是显式事务：`doctor --session-sqlite plan` dry-run -> 用户确认 -> 创建不含 workspace 的已验证备份 -> import 全部 agent session -> `validate`/`inspect`/integrity -> 写 receipt 与 manifest。取消或任一步失败会恢复旧 session store、保留备份和脱敏错误，并继续阻止空 Gateway；成功 receipt 使重复启动只做完整性复核，不重复导入。
 
@@ -143,19 +143,19 @@ Goal、required child join、queue admission、审批、thinking、compaction/co
 
 ## 13. Agent runtime settings
 
-Shared contract 对 delegation mode、全局及单 Server MCP request timeout、subagent concurrency/children/depth/timeout/archive/model/thinking/announce timeout 等字段做默认值、范围和跨字段 normalize。Main IPC 保存后进入 config sync。MCP timeout 变化会重建托管 server 配置；subagent 配置通常影响新 spawn/turn，不能承诺正在运行的 subagent 热更新。
+Shared contract 对 delegation mode、命令审批等待时限、全局及单 Server MCP request timeout、subagent concurrency/children/depth/timeout/archive/model/thinking/announce timeout 等字段做默认值、范围和跨字段 normalize。Main IPC 保存后进入 config sync。命令审批预设为无限、10、20、30、60 分钟，并通过受管 Gateway 环境作用于后续原生 exec approval；需要 hard restart 的配置会一直通过原生 suspension 屏障等待活动任务结束，不设置强制中断上限，真正重启前 scheduler 与新 admission 已被冻结；MCP timeout 变化会重建托管 server 配置；subagent 配置通常影响新 spawn/turn，不能承诺正在运行的 subagent 热更新。
 
 受管字段（例如 scheduler agent 的权限、关键 extension/plugin 配置）不能被通用 settings UI 覆盖。
 
 ## 14. 权限与审批
 
-权限模式是 ask、auto、full 三档产品语义，经 config mapper 转为 Gateway tool/approval policy。会话变更由 coordinator 串行，先写/同步/验证；失败回滚或返回明确错误。
+权限模式是 ask、auto、full 三档产品语义，分别映射到 OpenClaw 原生 session `guarded`、`workspace`、`full`。`OpenClawRuntimeAdapter.prepareSession` 通过 `sessions.create({key,cwd,permissionMode})` 幂等写入并核对 entry；会话变更由 coordinator 串行并先保存 SQLite 期望值，活跃 run 允许切换并在终态后应用最新值。原生同步失败只保留 pending，不回滚旧模式；下一 turn 前的严格 reconcile 失败会阻止发送。Cowork config 中的 mode 只作为新会话默认值，不触发 Gateway config reload。
 
 Exec 和 plugin approval API 分开，pending list 在连接后恢复。session grant 仅对满足 shared predicate 的 exec request 有效，并在 session terminal/stop/delete 清除。scheduler agent 使用固定无人值守 policy，不能弹 UI，也不能借 cron 修改升级普通交互会话。
 
 ## 15. Runtime patches
 
-当前补丁目录为 `scripts/patches/v2026.8.1/`，仅保留九个产品缺口：managed Python、通用 Windows MCP runner、Chrome Windows/诊断与空页面恢复、最终 system-prompt replacements、agent metadata、compaction/reviewer purpose、app-start task boundary 和 manual memory no-cache reindex。权威处置与删除条件以该目录 README 为准。
+当前补丁目录为 `scripts/patches/v2026.8.1/`，仅保留十二个产品缺口：managed Python、通用 Windows MCP runner、Chrome Windows/诊断与空页面恢复、最终 system-prompt replacements、agent metadata、compaction/reviewer purpose、app-start task boundary、manual memory no-cache reindex、原生 exec/plugin approval 可配置等待时限和 plugin approval reviewer detail 转发。权威处置与删除条件以该目录 README 为准。
 
 补丁不是传统数据库 migration：每次 runtime 都从锁定的 pristine npm tarball 构建，source lock 同时验证 registry integrity 与 tarball SHA-256。安装、source/worker、esbuild bundle 和 prune 后均验证当前 patch shape；旧 marker 或部分应用状态 fail closed，禁止对旧 JustDo runtime 原地升级。开发态 Electron 会在系统临时目录持有按仓库隔离、带心跳的进程租约；已有开发会话未退出时，新的 runtime prepare 必须在下载或目录替换前失败，避免 Windows 对正在执行的 runtime 进行 rename 而产生延迟 `EPERM`。
 
@@ -213,11 +213,11 @@ npm test
 
 ## 19. Manager 并发约束
 
-Gateway start/restart/stop 不是三个互不相关的按钮。Manager 需要共享启动与完整重启 promise、shutdown flag、child identity 和 readiness wait：并发 ensure 复用同一启动；无新状态的并发 hard restart 复用同一 stop/start，避免重复替换进程；若当前 start/restart 的启动快照之后又发生 secrets、代理或扩展等启动输入变化，则排队执行一次 trailing restart，确保新输入不会被 single-flight 吞掉。shutdown 让 readiness/retry loop 尽快退出；stop 有超时兜底，不能永久阻塞应用退出。
+Gateway start/restart/stop 不是三个互不相关的按钮。Manager 需要共享启动与完整重启 promise、shutdown flag、child identity 和 readiness wait：并发 ensure 复用同一启动；同一 generation 的并发 hard restart 复用同一 stop/start，禁止通过 `afterCurrent` 给新进程排入未获取 suspension 的 trailing restart。若当前 start/restart 的启动快照之后又发生 secrets、代理或扩展等启动输入变化，上层必须等当前 generation 完成后，针对新 generation 重新获取原生 suspension 再执行下一轮。ready lease 返回后还要再次核对 phase 与 process generation，旧 lease 不能作用于新进程。shutdown 让 readiness/retry loop 尽快退出；stop 有超时兜底，不能永久阻塞应用退出。
 
 设置页的手动 restart 优先请求 Gateway 的 `gateway.restart.request`，并以当前受管进程日志中的下一次 `[gateway] ready` 作为完成边界。受管 Gateway 设置 `OPENCLAW_NO_RESPAWN=1`，因此该请求复用当前 Node 进程和已加载模块，避免重新解析 runtime bundle。若 RPC 不可用、进程退出、ready 超时或 Gateway 因 cooldown 给出较长延迟，Main 回退到有序 stop/start。端口属于 launch argument；配置端口与当前监听端口不同时必须直接走完整重启。Secrets 等启动环境有尚未应用的变更时同样必须完整重启，避免进程内 restart 继续使用旧环境。
 
-`phase=running` 只表示受管进程/readiness 达标，不保证每个 adapter consumer 的 WebSocket 仍健康。代理重启路径因此会显式 disconnect 旧 client、restart Gateway、再让 Cowork service connect；最后一步失败时停止 Gateway，避免留下假健康状态。
+`phase=running` 只表示受管进程/readiness 达标，不保证每个 adapter consumer 的 WebSocket 仍健康。配置、代理以及 extension 配置/启停/导入/删除触发的自动 hard restart 都进入 `OpenClawConfigSyncService` 的 exclusive queue 与原生 suspension 屏障，由同一路径 disconnect 旧 client、restart Gateway、再 connect Cowork service；最后一步失败时停止 Gateway，避免留下假健康状态。Skill/Extension 的 Windows 目录锁恢复也在同一 exclusive queue 中，只有原生 suspension 返回 ready 才能 stop/mutate/start；Gateway 忙碌时操作失败并提示稍后重试，不能直接中断 active run。
 
 ## 20. 启动失败分层
 

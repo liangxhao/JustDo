@@ -1149,9 +1149,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
     const contextUsageDisplay = useMemo(() => {
       if (!contextUsage || !sessionId) return null;
-      if (
-        !contextUsageMatchesSession(contextUsage.sessionKey, sessionId, effectiveAgentId)
-      ) {
+      if (!contextUsageMatchesSession(contextUsage.sessionKey, sessionId, effectiveAgentId)) {
         return null;
       }
       if (
@@ -2370,7 +2368,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                       >
                         <PaperClipIcon className="h-4 w-4" />
                       </button>
-                      <PermissionModeSelector disabled={disabled} />
+                      <PermissionModeSelector />
                       {showFolderSelector && (
                         <>
                           <div className="flex items-center">
@@ -2499,7 +2497,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   >
                     <PaperClipIcon className="h-4 w-4" />
                   </button>
-                  <PermissionModeSelector disabled={disabled} />
+                  <PermissionModeSelector />
                   {contextUsageBadge}
                 </div>
               )}

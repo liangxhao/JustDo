@@ -117,6 +117,11 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     agentRuntimeAskUserTimeoutTitle: '提问等待时限',
     agentRuntimeAskUserTimeoutDescription:
       'AskUserQuestion 启用超时后等待用户回答的分钟数，范围 1–1440 分钟。',
+    agentRuntimeApprovalTimeoutTitle: '权限审批等待时限',
+    agentRuntimeApprovalTimeoutDescription:
+      '等待命令和计划任务变更权限审批的时间；修改后会在当前任务结束时重启运行服务，并对后续审批生效。',
+    agentRuntimeApprovalTimeoutUnlimited: '无限等待',
+    agentRuntimeApprovalTimeoutMinutes: '{minutes} 分钟',
     agentRuntimeModelTitle: '模型与思考强度',
     agentRuntimeModelDescription: '为新建的 Subagent 设定默认能力；单次任务仍可使用明确覆盖。',
     agentRuntimeDefaultModel: '默认模型',
@@ -828,6 +833,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkCompactNotNeeded: 'No context compaction needed',
     coworkErrorSessionContinueFailed: '发送消息失败：{error}',
     coworkErrorEngineNotReady: 'AI 引擎正在启动中，请稍等几秒后重试。',
+    coworkPermissionModeUpdateFailed: '权限模式更新失败，请重试。',
 
     // Skills
     skills: '技能',
@@ -1002,16 +1008,17 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     goalContinuationMaxTurnsDescription: '达到此轮数后将停止自动续跑，可手动继续。',
     goalContinuationSettingsSaveFailed: '无法保存 Goal 模式续跑设置',
     permissionModeTitle: '执行权限',
-    permissionModeDescription: '控制所有对话在本机执行命令时的全局审批方式。',
+    permissionModeDescription: '控制当前对话的文件范围和命令审批；未打开对话时作为新对话默认值。',
     permissionModeAsk: '请求批准',
-    permissionModeAskDescription: '新命令和文件修改前询问',
+    permissionModeAskDescription: '仅可读写任务目录，执行主机命令前询问',
     permissionModeAuto: '智能审批',
-    permissionModeAutoDescription: '自动审核命令，文件修改仍需确认',
+    permissionModeAutoDescription: '仅可读写任务目录，智能审核主机命令',
     permissionModeFull: '完全权限',
     permissionModeFullActive: '完全权限已启用',
-    permissionModeFullDescription: '命令和文件修改均无需批准',
+    permissionModeFullDescription: '不限制文件范围，执行主机命令无需批准',
     permissionModeFullConfirmTitle: '确认启用完全权限？',
-    permissionModeFullConfirmDescription: 'Agent 和定时任务将无需批准执行主机命令和修改文件。',
+    permissionModeFullConfirmDescription:
+      '当前对话将可在任务目录外读写，并且无需批准即可执行主机命令。',
     permissionModeFullConfirmAction: '启用完全权限',
     permissionModeSaveFailed: '无法保存执行权限设置',
     execApprovalTitle: '需要批准主机命令',
@@ -1025,12 +1032,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     execApprovalAllowSession: '本会话允许相同命令',
     execApprovalAllowOnce: '仅本次允许',
     execApprovalFailed: '无法提交审批决定',
-    fileApprovalTitle: '需要批准文件修改',
-    fileApprovalHeading: '需要批准',
-    fileApprovalDescription: '请确认 Agent 请求修改的文件。',
-    fileApprovalTarget: '目标文件',
-    fileApprovalTool: '操作',
-    scheduledTaskApprovalHeading: '需要批准定时任务变更',
     pluginApprovalSource: '插件来源',
     pluginApprovalSeverity: '风险级别',
     pluginApprovalDescription: '请求内容',
@@ -1283,7 +1284,8 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     cronDialogMinuteLabel: '每小时的第几分钟',
     cronDialogCronPlaceholder: 'Cron 表达式 (例如：0 9 * * *)',
     cronDialogEnableImmediately: '立即启用',
-    cronDialogEnableImmediatelyDesc: '创建后开始调度；每次任务在隔离会话中运行并遵循当前权限设置',
+    cronDialogEnableImmediatelyDesc:
+      '创建后开始调度；每次任务使用独立的无人值守权限在隔离会话中运行，不会弹出审批',
     cronDialogSaveChanges: '保存更改',
     cronDialogDeliveryTitle: '投递设置',
     cronDialogDeliveryDescription: '选择仅在应用内保留结果，或推送到外部通道。',
@@ -1428,6 +1430,11 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     agentRuntimeAskUserTimeoutTitle: 'Question response timeout',
     agentRuntimeAskUserTimeoutDescription:
       'How many minutes AskUserQuestion waits for an answer when timeout is enabled. Range: 1–1440 minutes.',
+    agentRuntimeApprovalTimeoutTitle: 'Approval wait timeout',
+    agentRuntimeApprovalTimeoutDescription:
+      'How long command and scheduled-task change approvals wait. The runtime service restarts after current work finishes, and the change applies to subsequent approvals.',
+    agentRuntimeApprovalTimeoutUnlimited: 'Wait indefinitely',
+    agentRuntimeApprovalTimeoutMinutes: '{minutes} minutes',
     agentRuntimeModelTitle: 'Model and thinking effort',
     agentRuntimeModelDescription:
       'Set defaults for newly created Subagents. An individual task can still provide an explicit override.',
@@ -1854,7 +1861,8 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkOpenClawReadyNotice: 'The AI engine is ready and will run when you start a task.',
     coworkOpenClawStarting: 'AI engine is starting...',
     coworkOpenClawError: 'The AI engine took too long to start. Please restart it.',
-    coworkOpenClawMigrationRequired: 'Legacy sessions must be migrated before the AI engine can start.',
+    coworkOpenClawMigrationRequired:
+      'Legacy sessions must be migrated before the AI engine can start.',
     coworkOpenClawReviewMigration: 'Review migration',
     coworkOpenClawMigrationTitle: 'Migrate legacy sessions',
     coworkOpenClawMigrationDescription:
@@ -2171,6 +2179,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkCompactNotNeeded: 'No context compaction needed',
     coworkErrorSessionContinueFailed: 'Failed to send message: {error}',
     coworkErrorEngineNotReady: 'AI engine is starting up. Please wait a few seconds and try again.',
+    coworkPermissionModeUpdateFailed: 'Failed to update the permission mode. Please try again.',
 
     // Skills
     skills: 'Skills',
@@ -2354,17 +2363,20 @@ export const translations: Record<LanguageType, Record<string, string>> = {
       'Automatic continuation stops after this many turns. You can continue manually.',
     goalContinuationSettingsSaveFailed: 'Unable to save Goal continuation settings',
     permissionModeTitle: 'Execution permissions',
-    permissionModeDescription: 'Controls host-command approval globally for all conversations.',
+    permissionModeDescription:
+      'Controls file scope and command approval for this conversation, or the default for new conversations when none is open.',
     permissionModeAsk: 'Ask for approval',
-    permissionModeAskDescription: 'Ask before new commands and file changes',
+    permissionModeAskDescription: 'Limit files to the task folder and ask before host commands',
     permissionModeAuto: 'Smart approval',
-    permissionModeAutoDescription: 'Review commands automatically; ask for file changes',
+    permissionModeAutoDescription:
+      'Limit files to the task folder and review host commands automatically',
     permissionModeFull: 'Full access',
     permissionModeFullActive: 'Full access enabled',
-    permissionModeFullDescription: 'Commands and file changes need no approval',
+    permissionModeFullDescription:
+      'Allow files outside the task folder and run commands without approval',
     permissionModeFullConfirmTitle: 'Enable full access?',
     permissionModeFullConfirmDescription:
-      'The agent and scheduled tasks can execute host commands and change files without approval.',
+      'This conversation can access files outside the task folder and run host commands without approval.',
     permissionModeFullConfirmAction: 'Enable full access',
     permissionModeSaveFailed: 'Unable to save execution permission settings',
     execApprovalTitle: 'Approve host command',
@@ -2378,12 +2390,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     execApprovalAllowSession: 'Allow same command in this conversation',
     execApprovalAllowOnce: 'Allow once',
     execApprovalFailed: 'Unable to submit approval decision',
-    fileApprovalTitle: 'Approve file changes',
-    fileApprovalHeading: 'Approval required',
-    fileApprovalDescription: 'Review the files the agent requested to change.',
-    fileApprovalTarget: 'Target files',
-    fileApprovalTool: 'Operation',
-    scheduledTaskApprovalHeading: 'Approve scheduled task change',
     pluginApprovalSource: 'Plugin source',
     pluginApprovalSeverity: 'Severity',
     pluginApprovalDescription: 'Request',
@@ -2651,7 +2657,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     cronDialogCronPlaceholder: 'Cron expression (e.g., 0 9 * * *)',
     cronDialogEnableImmediately: 'Enable immediately',
     cronDialogEnableImmediatelyDesc:
-      'Start scheduling after creation; each run uses an isolated session and the current permission settings',
+      'Start scheduling after creation; each run uses separate unattended permissions in an isolated session without approval prompts',
     cronDialogSaveChanges: 'Save Changes',
     cronDialogDeliveryTitle: 'Delivery',
     cronDialogDeliveryDescription:

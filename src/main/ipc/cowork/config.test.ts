@@ -76,7 +76,7 @@ describe('cowork config IPC', () => {
     expect(syncOpenClawConfig).not.toHaveBeenCalled();
   });
 
-  it('hot-updates a global permission change without a workload restriction', async () => {
+  it('persists a permission change as the default for new sessions without reloading Gateway', async () => {
     const result = await handlers.get('cowork:config:set')?.({}, { permissionMode: 'ask' });
 
     expect(result).toEqual({ success: true });
@@ -86,98 +86,33 @@ describe('cowork config IPC', () => {
       agentEngine: undefined,
       permissionMode: 'ask',
     });
-    expect(syncOpenClawConfig).toHaveBeenCalledWith({
-      reason: 'cowork-config-change',
-      restartGatewayIfRunning: false,
-    });
+    expect(syncOpenClawConfig).not.toHaveBeenCalled();
   });
 
-  it('rolls back persisted and generated policy when config sync fails', async () => {
-    syncOpenClawConfig
-      .mockResolvedValueOnce({ success: false, changed: true, error: 'disk full' })
-      .mockResolvedValueOnce({ success: true, changed: true });
-
-    const result = await handlers.get('cowork:config:set')?.({}, { permissionMode: 'ask' });
-
-    expect(result).toMatchObject({
-      success: false,
-      error: expect.stringContaining('preference was rolled back'),
-    });
-    expect(setConfig).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({ permissionMode: 'ask' }),
-    );
-    expect(setConfig).toHaveBeenNthCalledWith(2, baseConfig);
-    expect(syncOpenClawConfig).toHaveBeenNthCalledWith(2, {
-      reason: 'cowork-config-change-rollback',
-      restartGatewayIfRunning: false,
-    });
-    expect(currentConfig).toEqual(baseConfig);
-  });
-
-  it('reports persisted preference separately when rollback synchronization also fails', async () => {
-    syncOpenClawConfig
-      .mockResolvedValueOnce({ success: false, changed: true, error: 'apply failed' })
-      .mockResolvedValueOnce({ success: false, changed: true, error: 'rollback failed' });
-
-    const result = await handlers.get('cowork:config:set')?.({}, { permissionMode: 'ask' });
-
-    expect(result).toMatchObject({
-      success: false,
-      error: expect.stringContaining('preference rollback could not be confirmed'),
-    });
-    expect(result).toMatchObject({
-      error: expect.stringContaining('Gateway remains stopped'),
-    });
-    expect(syncOpenClawConfig).toHaveBeenCalledTimes(2);
-    expect(currentConfig).toEqual(baseConfig);
-  });
-
-  it('serializes rapid permission changes so an older update cannot overwrite a newer one', async () => {
-    let finishFirstSync: ((value: { success: boolean; changed: boolean }) => void) | undefined;
-    syncOpenClawConfig
-      .mockImplementationOnce(
-        () =>
-          new Promise(resolve => {
-            finishFirstSync = resolve;
-          }),
-      )
-      .mockResolvedValueOnce({ success: true, changed: true });
+  it('serializes rapid default permission changes in request order', async () => {
     const handler = handlers.get('cowork:config:set');
 
     const first = handler?.({}, { permissionMode: 'ask' });
     const second = handler?.({}, { permissionMode: 'auto' });
-    let barrierResolved = false;
-    const barrier = waitForCoworkConfigUpdates().then(() => {
-      barrierResolved = true;
-    });
-
-    await vi.waitFor(() => expect(setConfig).toHaveBeenCalledTimes(1));
-    expect(currentConfig.permissionMode).toBe('ask');
-    expect(barrierResolved).toBe(false);
-
-    finishFirstSync?.({ success: true, changed: true });
     await expect(first).resolves.toEqual({ success: true });
     await expect(second).resolves.toEqual({ success: true });
-    await barrier;
-    expect(barrierResolved).toBe(true);
+    await waitForCoworkConfigUpdates();
+    expect(setConfig).toHaveBeenCalledTimes(2);
     expect(setConfig).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({ permissionMode: 'auto' }),
     );
     expect(currentConfig.permissionMode).toBe('auto');
+    expect(syncOpenClawConfig).not.toHaveBeenCalled();
   });
 
-  it('keeps pure permission changes on the no-restart hot-update path', async () => {
+  it('does not couple a pure permission preference change to config sync', async () => {
     currentConfig = { ...baseConfig, permissionMode: 'ask' };
 
     const result = await handlers.get('cowork:config:set')?.({}, { permissionMode: 'auto' });
 
     expect(result).toEqual({ success: true });
-    expect(syncOpenClawConfig).toHaveBeenCalledWith({
-      reason: 'cowork-config-change',
-      restartGatewayIfRunning: false,
-    });
+    expect(syncOpenClawConfig).not.toHaveBeenCalled();
   });
 
   it('preserves restart fallback for non-permission config changes', async () => {

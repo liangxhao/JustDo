@@ -15,6 +15,7 @@ import { type LocalSkillFileResult, OpenClawSkillFiles } from './openclawSkillFi
 type OpenClawSkillFileServiceDeps = {
   getOpenClawEngineManager: () => OpenClawEngineManager;
   directoryOperations?: ManagedDirectoryOperationCoordinator;
+  runConfigMutationExclusive?: <T>(operation: () => Promise<T>) => Promise<T>;
   findLockingProcesses?: typeof findWindowsLockingProcesses;
   createSkillFiles?: (managedSkillsDir: string) => OpenClawSkillFiles;
 };
@@ -43,6 +44,20 @@ export class OpenClawSkillFileService {
   }
 
   async importPath(sourcePath: string): Promise<LocalSkillFileResult> {
+    return this.runMutationExclusive(() => this.importPathExclusive(sourcePath));
+  }
+
+  async deleteDirectory(skillDirectory: string): Promise<void> {
+    return this.runMutationExclusive(() => this.deleteDirectoryExclusive(skillDirectory));
+  }
+
+  private runMutationExclusive<T>(operation: () => Promise<T>): Promise<T> {
+    return this.deps.runConfigMutationExclusive
+      ? this.deps.runConfigMutationExclusive(operation)
+      : operation();
+  }
+
+  private async importPathExclusive(sourcePath: string): Promise<LocalSkillFileResult> {
     let targetPath = this.getManagedSkillsDir();
     const operation = await this.directoryOperations.execute({
       resourceName: t('skillDirectoryResource'),
@@ -74,7 +89,7 @@ export class OpenClawSkillFileService {
     };
   }
 
-  async deleteDirectory(skillDirectory: string): Promise<void> {
+  private async deleteDirectoryExclusive(skillDirectory: string): Promise<void> {
     const operation = await this.directoryOperations.execute({
       resourceName: t('skillDirectoryResource'),
       targetPath: skillDirectory,

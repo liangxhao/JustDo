@@ -1,3 +1,4 @@
+import type { PermissionMode } from '../../shared/openclaw/approvals';
 import type { OpenClawSkillSource } from '../../shared/plugins/skills';
 
 export type CoworkAgentEngine = 'openclaw';
@@ -109,6 +110,17 @@ export type CoworkStopOptions = {
   bestEffort?: boolean;
 };
 
+export type CoworkPrepareSessionOptions = {
+  permissionMode?: PermissionMode;
+  workspaceRoot?: string;
+  agentId?: string;
+};
+
+export type CoworkPreparedSession = {
+  sessionKey: string;
+  gatewaySessionId: string;
+};
+
 export interface CoworkGenerateTitleOptions {
   sessionId?: string;
   timeoutMs?: number;
@@ -118,6 +130,10 @@ export interface CoworkRuntime {
   on<U extends keyof CoworkRuntimeEvents>(event: U, listener: CoworkRuntimeEvents[U]): this;
   off<U extends keyof CoworkRuntimeEvents>(event: U, listener: CoworkRuntimeEvents[U]): this;
   startSession(sessionId: string, prompt: string, options?: CoworkStartOptions): Promise<void>;
+  prepareSession(
+    sessionId: string,
+    options?: CoworkPrepareSessionOptions,
+  ): Promise<CoworkPreparedSession>;
   stopSession(sessionId: string, options?: CoworkStopOptions): Promise<void>;
   stopAllSessions(): Promise<void>;
   isSessionActive(sessionId: string): boolean;

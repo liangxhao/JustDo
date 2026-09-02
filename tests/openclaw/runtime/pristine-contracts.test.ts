@@ -28,6 +28,9 @@ const EXPECTED_PATCH_FILES = [
   '007-request-purpose-metadata.cjs',
   '008-app-startup-task-recovery-boundary.cjs',
   '009-memory-force-reembed-opt-in.cjs',
+  '010-configurable-exec-approval-timeout.cjs',
+  '011-plugin-approval-detail-forwarding.cjs',
+  '012-configurable-plugin-approval-timeout.cjs',
 ] as const;
 
 const UPSTREAM_CONTRACTS = [
@@ -158,7 +161,7 @@ afterEach(() => {
 });
 
 describe('OpenClaw pristine artifact contracts', () => {
-  test('keeps exactly nine independently auditable v2026.8.1 patches', () => {
+  test('keeps exactly twelve independently auditable v2026.8.1 patches', () => {
     const patchDir = path.resolve('scripts', 'patches', 'v2026.8.1');
     const patchFiles = fs
       .readdirSync(patchDir)

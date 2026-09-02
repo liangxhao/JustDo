@@ -5,7 +5,6 @@ import {
   AgentRuntimeDelegationMode,
   createDefaultAgentRuntimeSettings,
 } from '../../../shared/openclaw/agentRuntimeSettings';
-import { PermissionMode } from '../../../shared/openclaw/approvals';
 import { OpenClawExtensionId } from '../../../shared/openclaw/extensions';
 import {
   OpenClawApi,
@@ -28,6 +27,8 @@ import {
   hasOpenClawConfigChanged,
   mergeOpenClawPluginConfig,
   mergeOpenClawSkillConfig,
+  OPENCLAW_FALLBACK_EXEC_MODE,
+  OPENCLAW_FALLBACK_FS_WORKSPACE_ONLY,
   OPENCLAW_MAX_SKILLS_IN_PROMPT,
   OPENCLAW_MAX_SKILLS_PROMPT_CHARS,
   OPENCLAW_MODEL_PROVIDER_TIMEOUT_SECONDS,
@@ -35,9 +36,8 @@ import {
   OPENCLAW_SESSION_PRUNE_AFTER,
   OPENCLAW_SUBAGENT_MAX_CHILDREN_PER_AGENT,
   OPENCLAW_SUBAGENT_MAX_CONCURRENT,
+  OpenClawConfigSync,
   removeUnavailableOpenClawPluginRegistrations,
-  resolveFileToolsWorkspaceOnly,
-  resolvePermissionPolicy,
   sanitizeOpenClawV2026_8_1Config,
 } from './openclawConfigSync';
 
@@ -181,6 +181,28 @@ describe('OpenClaw provider config', () => {
 
     expect(selection.providerConfig.timeoutSeconds).toBe(OPENCLAW_MODEL_PROVIDER_TIMEOUT_SECONDS);
     expect(selection.providerConfig.timeoutSeconds).toBeGreaterThan(120);
+  });
+});
+
+describe('exec approval timeout environment', () => {
+  test.each([
+    [30, '1800000'],
+    [0, '0'],
+  ])('projects %s minutes into the native runtime environment', (timeoutMinutes, expected) => {
+    const settings = createDefaultAgentRuntimeSettings();
+    settings.approvals.timeoutMinutes = timeoutMinutes;
+    const sync = new OpenClawConfigSync({
+      engineManager: {},
+      getCoworkConfig: () => ({
+        workingDirectory: '',
+        executionMode: 'local',
+        agentEngine: 'openclaw',
+        permissionMode: 'ask',
+      }),
+      getAgentRuntimeSettings: () => settings,
+    } as never);
+
+    expect(sync.collectGatewayLaunchEnvVars().JUSTDO_EXEC_APPROVAL_TIMEOUT_MS).toBe(expected);
   });
 });
 
@@ -342,26 +364,9 @@ describe('OpenClaw managed heartbeat config', () => {
 });
 
 describe('OpenClaw permission policy', () => {
-  test.each([
-    [
-      PermissionMode.Ask,
-      { security: 'allowlist', ask: 'on-miss', askFallback: 'deny' },
-    ],
-    [
-      PermissionMode.Auto,
-      { security: 'allowlist', ask: 'on-miss', askFallback: 'deny' },
-    ],
-    [PermissionMode.Full, { security: 'full', ask: 'off', askFallback: 'full' }],
-  ])('maps %s to the matching host approval policy', (mode, expected) => {
-    expect(resolvePermissionPolicy(mode)).toEqual(expected);
-  });
-
-  test.each([
-    [PermissionMode.Ask, true],
-    [PermissionMode.Auto, true],
-    [PermissionMode.Full, false],
-  ])('maps %s to workspace-only file tools=%s', (mode, expected) => {
-    expect(resolveFileToolsWorkspaceOnly(mode)).toBe(expected);
+  test('uses a restricted global fallback for sessions without native policy metadata', () => {
+    expect(OPENCLAW_FALLBACK_EXEC_MODE).toBe('ask');
+    expect(OPENCLAW_FALLBACK_FS_WORKSPACE_ONLY).toBe(true);
   });
 });
 describe('OpenClaw managed connectivity config', () => {
@@ -565,17 +570,17 @@ describe('OpenClaw plugin config merging', () => {
           },
           allow: ['existing', 'removed'],
         },
-        { 'action-approval': { enabled: true } },
+        { 'ask-user-question': { enabled: true } },
         [],
-        ['existing', 'action-approval'],
+        ['existing', 'ask-user-question'],
       ),
     ).toEqual({
       enabled: true,
-      allow: ['existing', 'action-approval'],
+      allow: ['existing', 'ask-user-question'],
       bundledDiscovery: 'compat',
       entries: {
         existing: { enabled: false },
-        'action-approval': { enabled: true },
+        'ask-user-question': { enabled: true },
       },
     });
   });
@@ -593,6 +598,7 @@ describe('OpenClaw plugin config merging', () => {
         { workboard: { enabled: true } },
       ),
     ).toEqual({
+      enabled: true,
       slots: { contextEngine: 'openviking' },
       entries: {
         openviking: { enabled: true, config: { baseUrl: 'http://127.0.0.1:1933' } },
@@ -691,7 +697,7 @@ describe('OpenClaw skill config merging', () => {
           entries: { existing: { enabled: false } },
           allow: ['existing-trusted'],
         },
-        { 'action-approval': { enabled: true } },
+        { 'ask-user-question': { enabled: true } },
         ['justdo-skill-only-example', 'justdo-skill-only-example'],
       ),
     ).toEqual({
@@ -699,12 +705,12 @@ describe('OpenClaw skill config merging', () => {
       allow: [
         'existing-trusted',
         'justdo-skill-only-example',
-        'action-approval',
+        'ask-user-question',
       ],
       bundledDiscovery: 'compat',
       entries: {
         existing: { enabled: false },
-        'action-approval': { enabled: true },
+        'ask-user-question': { enabled: true },
       },
     });
   });
@@ -723,6 +729,7 @@ describe('OpenClaw skill config merging', () => {
         },
       ),
     ).toEqual({
+      enabled: true,
       allow: ['workboard', 'ask-user-question'],
       bundledDiscovery: 'compat',
       entries: {

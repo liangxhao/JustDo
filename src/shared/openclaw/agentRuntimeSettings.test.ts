@@ -17,6 +17,9 @@ describe('Agent runtime settings', () => {
       askUserQuestion: {
         timeoutMinutes: 10,
       },
+      approvals: {
+        timeoutMinutes: 30,
+      },
       mcp: {
         requestTimeoutSeconds: 60,
       },
@@ -98,6 +101,31 @@ describe('Agent runtime settings', () => {
       ...input,
       mcp: { requestTimeoutSeconds: 60 },
     });
+  });
+
+  test('migrates version 1 settings saved before approval wait preferences', () => {
+    const input = createDefaultAgentRuntimeSettings();
+    input.subagents.maxConcurrent = 7;
+    const { approvals: _removed, ...legacyInput } = input;
+
+    expect(parseAgentRuntimeSettings(legacyInput)).toEqual({
+      ...input,
+      approvals: { timeoutMinutes: 30 },
+    });
+  });
+
+  test.each([0, 10, 20, 30, 60])('accepts approval wait timeout %s', timeoutMinutes => {
+    const input = createDefaultAgentRuntimeSettings();
+    input.approvals.timeoutMinutes = timeoutMinutes;
+
+    expect(validateAgentRuntimeSettings(input)).toEqual({ ok: true, settings: input });
+  });
+
+  test.each([-1, 1, 15, 61, 1.5])('rejects unsupported approval wait timeout %s', timeoutMinutes => {
+    const input = createDefaultAgentRuntimeSettings();
+    input.approvals.timeoutMinutes = timeoutMinutes;
+
+    expect(validateAgentRuntimeSettings(input).ok).toBe(false);
   });
 
   test('accepts and validates the main Agent thinking preference', () => {

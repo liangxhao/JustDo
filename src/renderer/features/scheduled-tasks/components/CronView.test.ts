@@ -3,6 +3,7 @@ import { describe, expect, test } from 'vitest';
 import { i18nService } from '@/services/i18n';
 
 import {
+  buildScheduledTaskExecutionInput,
   buildScheduleFromForm,
   computeNextRunPreview,
   parseScheduleToForm,
@@ -72,5 +73,27 @@ describe('CronView schedule form mapping', () => {
 
     expect(formatScheduleLabel({ kind: 'every', everyMs: 1000 })).toBe('每 1 秒');
     expect(formatScheduleLabel({ kind: 'every', everyMs: 90_500 })).toBe('每 90.5 秒');
+  });
+
+  test('preserves an existing system event execution shape while editing', () => {
+    expect(
+      buildScheduledTaskExecutionInput(
+        {
+          sessionTarget: 'main',
+          payload: { kind: 'systemEvent', text: 'original' },
+        },
+        'updated',
+      ),
+    ).toEqual({
+      sessionTarget: 'main',
+      payload: { kind: 'systemEvent', text: 'updated' },
+    });
+  });
+
+  test('uses an isolated agent turn for a new task', () => {
+    expect(buildScheduledTaskExecutionInput(undefined, 'new task')).toEqual({
+      sessionTarget: 'isolated',
+      payload: { kind: 'agentTurn', message: 'new task' },
+    });
   });
 });

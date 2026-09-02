@@ -130,6 +130,7 @@ test('does not manage the Gateway when using the shared runtime-aware coordinato
   const directoryOperations = new ManagedDirectoryOperationCoordinator({
     runtime: {
       isRunning: () => true,
+      prepareStop: async () => ({ ready: true, token: 'test-suspension' }),
       stop: manager.stopGateway,
       start: async () => {
         const status = await manager.startGateway();
@@ -157,16 +158,15 @@ test('does not manage the Gateway when using the shared runtime-aware coordinato
 
 test('restarts the Gateway when it owns a locked skill directory', async () => {
   const manager = createManager();
-  const findLockingProcesses = vi
-    .fn()
-    .mockResolvedValue({
-      available: true,
-      processes: [{ name: 'JustDo Gateway', pid: 4242 }],
-    });
+  const findLockingProcesses = vi.fn().mockResolvedValue({
+    available: true,
+    processes: [{ name: 'JustDo Gateway', pid: 4242 }],
+  });
   const directoryOperations = new ManagedDirectoryOperationCoordinator({
     runtime: {
       isRunning: () => manager.manager.getStatus().phase === 'running',
       ownsProcess: pid => pid === 4242,
+      prepareStop: async () => ({ ready: true, token: 'test-suspension' }),
       stop: manager.stopGateway,
       start: async () => {
         const status = await manager.startGateway();
@@ -213,4 +213,20 @@ test('serializes concurrent skill mutations', async () => {
   await Promise.all([service.importPath('C:\\one'), service.importPath('C:\\two')]);
 
   expect(maximumActive).toBe(1);
+});
+
+test('runs skill mutations inside the shared config mutation queue', async () => {
+  const manager = createManager('ready');
+  const importPath = vi.fn(async () => ({ success: true, skillId: 'demo' }));
+  const runConfigMutationExclusive = vi.fn(async <T>(operation: () => Promise<T>) => operation());
+  const service = new OpenClawSkillFileService({
+    getOpenClawEngineManager: () => manager.manager,
+    createSkillFiles: () => ({ importPath }) as unknown as OpenClawSkillFiles,
+    runConfigMutationExclusive,
+  });
+
+  await service.importPath('C:\\source');
+
+  expect(runConfigMutationExclusive).toHaveBeenCalledOnce();
+  expect(importPath).toHaveBeenCalledOnce();
 });

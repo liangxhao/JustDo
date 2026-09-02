@@ -6,12 +6,14 @@ import path from 'path';
 import { BrowserMode, type BrowserMode as BrowserModeValue } from '../../../shared/browser';
 import { BuiltinModelSyncReason } from '../../../shared/builtinModels';
 import { OPENAI_REQUEST_USER_AGENT } from '../../../shared/cowork/modelRequestHeaders';
+import { normalizeOpenClawAgentId } from '../../../shared/openclaw/agentId';
 import {
   type AgentRuntimeSettings,
   createDefaultAgentRuntimeSettings,
   DEFAULT_AGENT_RUNTIME_SETTINGS,
+  resolveApprovalWaitTimeoutMs,
 } from '../../../shared/openclaw/agentRuntimeSettings';
-import { PermissionMode, type PermissionMode as PermissionModeValue } from '../../../shared/openclaw/approvals';
+import { PermissionMode } from '../../../shared/openclaw/approvals';
 import { OpenClawExtensionId } from '../../../shared/openclaw/extensions';
 import {
   getEffectiveCustomProviderDisplayName,
@@ -93,21 +95,6 @@ const resolveConfiguredPluginPath = (value: string): string => {
   const homeDir = process.env.OPENCLAW_HOME?.trim() || os.homedir();
   const expanded = trimmed.replace(/^~(?=$|[\\/])/, homeDir);
   return path.resolve(expanded);
-};
-
-// Version-locked to OpenClaw v2026.8.1 routing/session-key normalizeAgentId.
-const normalizeOpenClawAgentId = (value: string): string => {
-  const trimmed = value.trim();
-  if (!trimmed) return 'main';
-  const normalized = trimmed.toLowerCase();
-  if (/^[a-z0-9][a-z0-9_-]{0,63}$/i.test(trimmed)) return normalized;
-  return (
-    normalized
-      .replace(/[^a-z0-9_-]+/g, '-')
-      .replace(/^-+/, '')
-      .replace(/-+$/, '')
-      .slice(0, 64) || 'main'
-  );
 };
 
 const listKnownOpenClawWorkspaceDirs = ({
@@ -860,14 +847,44 @@ export const mergeOpenClawPluginConfig = (
   trustedInstalledExtensionIds: string[] = [],
   availableExtensionIds: readonly string[] | null = null,
 ): Record<string, unknown> => {
+  const retiredIds = new Set(listRetiredBundledOpenClawExtensionIds());
+  const retainedRegistrationIds = new Set<string>();
+  for (const field of ['entries', 'installs'] as const) {
+    const registrations = isRecord(existingPlugins[field]) ? existingPlugins[field] : {};
+    for (const extensionId of Object.keys(registrations)) {
+      if (!retiredIds.has(extensionId)) retainedRegistrationIds.add(extensionId);
+    }
+  }
+  for (const field of ['allow', 'deny'] as const) {
+    const registrations = Array.isArray(existingPlugins[field]) ? existingPlugins[field] : [];
+    for (const extensionId of registrations) {
+      if (typeof extensionId === 'string' && !retiredIds.has(extensionId)) {
+        retainedRegistrationIds.add(extensionId);
+      }
+    }
+  }
+  const slots = isRecord(existingPlugins.slots) ? existingPlugins.slots : {};
+  for (const extensionId of Object.values(slots)) {
+    if (
+      typeof extensionId === 'string' &&
+      !RESERVED_PLUGIN_SLOT_VALUES.has(extensionId) &&
+      !retiredIds.has(extensionId)
+    ) {
+      retainedRegistrationIds.add(extensionId);
+    }
+  }
+  const existingWithoutRetired = removeUnavailableOpenClawPluginRegistrations(
+    existingPlugins,
+    [...retainedRegistrationIds],
+  );
   const managedIds = Object.keys(managedEntries);
   const sourcePlugins = availableExtensionIds
-    ? removeUnavailableOpenClawPluginRegistrations(existingPlugins, [
+    ? removeUnavailableOpenClawPluginRegistrations(existingWithoutRetired, [
         ...availableExtensionIds,
         ...trustedInstalledExtensionIds,
         ...managedIds,
       ])
-    : existingPlugins;
+    : existingWithoutRetired;
   const mergedEntries = {
     ...(isRecord(sourcePlugins.entries) ? sourcePlugins.entries : {}),
     ...managedEntries,
@@ -877,29 +894,18 @@ export const mergeOpenClawPluginConfig = (
   ];
   if (Object.keys(mergedEntries).length === 0 && trustedIds.length === 0) return sourcePlugins;
 
-  const protectsActionApproval = Object.hasOwn(
-    managedEntries,
-    OpenClawExtensionId.ACTION_APPROVAL,
-  );
   const existingAllow = Array.isArray(sourcePlugins.allow)
     ? sourcePlugins.allow.filter((value): value is string => typeof value === 'string')
     : Array.isArray(existingPlugins.allow)
       ? []
       : null;
-  const existingDeny = Array.isArray(sourcePlugins.deny)
-    ? sourcePlugins.deny.filter((value): value is string => typeof value === 'string')
-    : null;
   const shouldPinInstalledExtensions = trustedIds.length > 0;
-  const remainingDeny = existingDeny?.filter(
-    id => id !== OpenClawExtensionId.ACTION_APPROVAL,
-  );
   const allow = existingAllow
     ? [
         ...new Set([
           ...existingAllow,
           ...trustedIds,
           ...managedIds,
-          ...(protectsActionApproval ? [OpenClawExtensionId.ACTION_APPROVAL] : []),
         ]),
       ]
     : shouldPinInstalledExtensions
@@ -907,19 +913,15 @@ export const mergeOpenClawPluginConfig = (
           ...new Set([
             ...trustedIds,
             ...managedIds,
-            ...(protectsActionApproval ? [OpenClawExtensionId.ACTION_APPROVAL] : []),
           ]),
         ]
       : null;
   return {
     ...sourcePlugins,
-    ...(protectsActionApproval ? { enabled: true } : {}),
+    ...(managedIds.length > 0 ? { enabled: true } : {}),
     ...(allow ? { allow } : {}),
     ...(allow && sourcePlugins.bundledDiscovery === undefined
       ? { bundledDiscovery: 'compat' }
-      : {}),
-    ...(protectsActionApproval && existingDeny
-      ? { deny: remainingDeny && remainingDeny.length > 0 ? remainingDeny : undefined }
       : {}),
     entries: mergedEntries,
   };
@@ -953,8 +955,8 @@ const mapExecutionModeToSandboxMode = (mode: CoworkExecutionMode): 'off' | 'non-
   }
 };
 
-export const resolveFileToolsWorkspaceOnly = (mode: PermissionModeValue): boolean =>
-  mode !== PermissionMode.Full;
+export const OPENCLAW_FALLBACK_EXEC_MODE = PermissionMode.Ask;
+export const OPENCLAW_FALLBACK_FS_WORKSPACE_ONLY = true;
 
 /**
  * Default agent timeout in seconds written to openclaw config.
@@ -1397,24 +1399,6 @@ export const buildProviderSelection = (options: {
   };
 };
 
-export const resolvePermissionPolicy = (mode: PermissionModeValue) => {
-  switch (mode) {
-    case PermissionMode.Full:
-      return {
-        security: 'full' as const,
-        ask: 'off' as const,
-        askFallback: 'full' as const,
-      };
-    case PermissionMode.Auto:
-    case PermissionMode.Ask:
-      return {
-        security: 'allowlist' as const,
-        ask: 'on-miss' as const,
-        askFallback: 'deny' as const,
-      };
-  }
-};
-
 type ManagedMemorySearchConfig =
   | {
       enabled: true;
@@ -1722,7 +1706,6 @@ export class OpenClawConfigSync {
       ...buildBundledExtensionEntries(
         {
           askUser: askUserConfig,
-          permissionMode: coworkConfig.permissionMode,
         },
         isBundledPluginAvailable,
       ),
@@ -1814,12 +1797,12 @@ export class OpenClawConfigSync {
         ...connectivityTools,
         fs: {
           ...(isRecord(connectivityTools.fs) ? connectivityTools.fs : {}),
-          workspaceOnly: resolveFileToolsWorkspaceOnly(coworkConfig.permissionMode),
+          workspaceOnly: OPENCLAW_FALLBACK_FS_WORKSPACE_ONLY,
         },
         exec: {
           ...(isRecord(connectivityTools.exec) ? connectivityTools.exec : {}),
           host: 'gateway',
-          mode: coworkConfig.permissionMode,
+          mode: OPENCLAW_FALLBACK_EXEC_MODE,
         },
         // OpenClaw applies an additional tool gate to sandboxed turns. Native
         // MCP tools belong to bundle-mcp, so explicitly allow that owner when
@@ -1889,7 +1872,6 @@ export class OpenClawConfigSync {
       : buildBundledExtensionToolContracts(
           {
             askUser: askUserConfig,
-            permissionMode: coworkConfig.permissionMode,
           },
           isBundledPluginAvailable,
         ).reduce(
@@ -2008,11 +1990,11 @@ export class OpenClawConfigSync {
   }
 
   /**
-   * Collect all secret values that should be injected as environment variables
-   * into the OpenClaw gateway process. The openclaw.json file uses `${VAR}`
-   * placeholders for these values so that no plaintext secrets are stored on disk.
+   * Collect the managed environment passed to the OpenClaw Gateway process.
+   * This includes plaintext values for `${VAR}` placeholders as well as runtime-only
+   * settings that cannot be represented in openclaw.json.
    */
-  collectSecretEnvVars(): Record<string, string> {
+  collectGatewayLaunchEnvVars(): Record<string, string> {
     const env: Record<string, string> = {};
 
     // Provider API Keys — one per configured provider so switching models
@@ -2025,11 +2007,14 @@ export class OpenClawConfigSync {
     // openclaw.json files with the old placeholder don't crash the gateway.
     // Use the active provider's key if available, but ONLY for the first sync —
     // after that, openclaw.json uses provider-specific placeholders and this var
-    // is never resolved. Use a fixed value to avoid secretEnvVarsChanged on switch.
+    // is never resolved. Use a fixed value to avoid launch-environment changes on switch.
     env.JUSTDO_PROVIDER_API_KEY = 'legacy-unused';
 
     const askUserConfig = this.getAskUserExtensionConfig?.();
     env.JUSTDO_ASK_USER_SECRET = askUserConfig?.secret || 'unconfigured';
+    env.JUSTDO_EXEC_APPROVAL_TIMEOUT_MS = String(
+      resolveApprovalWaitTimeoutMs(this.getAgentRuntimeSettings().approvals.timeoutMinutes),
+    );
 
     // IM channel secrets removed — channels disabled pending future adaptation
 
@@ -2173,7 +2158,6 @@ export class OpenClawConfigSync {
       ...buildBundledExtensionEntries(
         {
           askUser: askUserConfig,
-          permissionMode: coworkConfig.permissionMode,
         },
         isBundledPluginAvailable,
       ),
@@ -2229,12 +2213,12 @@ export class OpenClawConfigSync {
         ...connectivityTools,
         fs: {
           ...(isRecord(connectivityTools.fs) ? connectivityTools.fs : {}),
-          workspaceOnly: resolveFileToolsWorkspaceOnly(coworkConfig.permissionMode),
+          workspaceOnly: OPENCLAW_FALLBACK_FS_WORKSPACE_ONLY,
         },
         exec: {
           ...(isRecord(connectivityTools.exec) ? connectivityTools.exec : {}),
           host: 'gateway',
-          mode: coworkConfig.permissionMode,
+          mode: OPENCLAW_FALLBACK_EXEC_MODE,
         },
       },
       plugins: mergeOpenClawPluginConfig(
@@ -2372,12 +2356,12 @@ export class OpenClawConfigSync {
                 ...existingTools,
                 fs: {
                   ...existingFileTools,
-                  workspaceOnly: resolveFileToolsWorkspaceOnly(coworkConfig.permissionMode),
+                  workspaceOnly: OPENCLAW_FALLBACK_FS_WORKSPACE_ONLY,
                 },
                 exec: {
                   ...existingExecTools,
                   host: 'gateway',
-                  mode: coworkConfig.permissionMode,
+                  mode: OPENCLAW_FALLBACK_EXEC_MODE,
                 },
               },
               plugins: mergeOpenClawPluginConfig(

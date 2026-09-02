@@ -11,6 +11,7 @@ import {
   isPermissionMode,
   PermissionMode,
   resolvePermissionMode,
+  toOpenClawSessionPermissionMode,
 } from './approvals';
 
 describe('OpenClaw approval contracts', () => {
@@ -27,6 +28,14 @@ describe('OpenClaw approval contracts', () => {
 
   test.each(Object.values(PermissionMode))('accepts permission mode %s', mode => {
     expect(isPermissionMode(mode)).toBe(true);
+  });
+
+  test.each([
+    [PermissionMode.Ask, 'guarded'],
+    [PermissionMode.Auto, 'workspace'],
+    [PermissionMode.Full, 'full'],
+  ] as const)('maps %s to the OpenClaw session mode %s', (mode, expected) => {
+    expect(toOpenClawSessionPermissionMode(mode)).toBe(expected);
   });
 
   test.each(Object.values(ExecApprovalDecision))('accepts exec decision %s', decision => {

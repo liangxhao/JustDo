@@ -30,6 +30,9 @@ export type AgentRuntimeThinkingLevelValue =
 
 export const AGENT_RUNTIME_THINKING_LEVELS = Object.values(AgentRuntimeThinkingLevel);
 
+export const APPROVAL_WAIT_TIMEOUT_MINUTES = [0, 10, 20, 30, 60] as const;
+export const OPENCLAW_INDEFINITE_APPROVAL_EXPIRES_AT_MS = Number.MAX_SAFE_INTEGER;
+
 export const AGENT_RUNTIME_LIMITS = {
   askUserQuestionTimeoutMinutes: { min: 1, max: 24 * 60 },
   mcpRequestTimeoutSeconds: MCP_REQUEST_TIMEOUT_LIMITS,
@@ -46,6 +49,10 @@ export interface AgentRuntimeSettings {
     thinking: AgentRuntimeThinkingLevelValue | null;
   };
   askUserQuestion: {
+    timeoutMinutes: number;
+  };
+  approvals: {
+    /** Zero disables automatic expiry for native exec and plugin approvals. */
     timeoutMinutes: number;
   };
   mcp: {
@@ -70,6 +77,9 @@ export const DEFAULT_AGENT_RUNTIME_SETTINGS: Readonly<AgentRuntimeSettings> = Ob
   askUserQuestion: Object.freeze({
     timeoutMinutes: 10,
   }),
+  approvals: Object.freeze({
+    timeoutMinutes: 30,
+  }),
   mcp: Object.freeze({
     requestTimeoutSeconds: DEFAULT_MCP_REQUEST_TIMEOUT_SECONDS,
   }),
@@ -88,6 +98,7 @@ export const createDefaultAgentRuntimeSettings = (): AgentRuntimeSettings => ({
   version: DEFAULT_AGENT_RUNTIME_SETTINGS.version,
   agent: { ...DEFAULT_AGENT_RUNTIME_SETTINGS.agent },
   askUserQuestion: { ...DEFAULT_AGENT_RUNTIME_SETTINGS.askUserQuestion },
+  approvals: { ...DEFAULT_AGENT_RUNTIME_SETTINGS.approvals },
   mcp: { ...DEFAULT_AGENT_RUNTIME_SETTINGS.mcp },
   subagents: { ...DEFAULT_AGENT_RUNTIME_SETTINGS.subagents },
 });
@@ -142,6 +153,21 @@ export const validateAgentRuntimeSettings = (
     )
   ) {
     return { ok: false, error: 'AskUserQuestion timeout is outside the supported range.' };
+  }
+
+  // Version 1 predates approval wait preferences. Keep the native 30-minute
+  // behavior for existing profiles while accepting zero as the unlimited sentinel.
+  const approvals = isRecord(value.approvals)
+    ? value.approvals
+    : DEFAULT_AGENT_RUNTIME_SETTINGS.approvals;
+  const approvalTimeoutMinutes = approvals.timeoutMinutes;
+  if (
+    typeof approvalTimeoutMinutes !== 'number' ||
+    !APPROVAL_WAIT_TIMEOUT_MINUTES.includes(
+      approvalTimeoutMinutes as (typeof APPROVAL_WAIT_TIMEOUT_MINUTES)[number],
+    )
+  ) {
+    return { ok: false, error: 'Approval wait timeout is unsupported.' };
   }
 
   // Version 1 predates MCP runtime preferences. Keep older persisted settings
@@ -241,6 +267,9 @@ export const validateAgentRuntimeSettings = (
       askUserQuestion: {
         timeoutMinutes: askUserQuestionTimeoutMinutes,
       },
+      approvals: {
+        timeoutMinutes: approvalTimeoutMinutes,
+      },
       mcp: {
         requestTimeoutSeconds: mcpRequestTimeoutSeconds,
       },
@@ -256,6 +285,9 @@ export const validateAgentRuntimeSettings = (
     },
   };
 };
+
+export const resolveApprovalWaitTimeoutMs = (timeoutMinutes: number): number =>
+  timeoutMinutes === 0 ? 0 : timeoutMinutes * 60_000;
 
 export const parseAgentRuntimeSettings = (value: unknown): AgentRuntimeSettings => {
   const result = validateAgentRuntimeSettings(value);

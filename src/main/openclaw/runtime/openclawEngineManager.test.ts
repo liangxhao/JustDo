@@ -37,32 +37,32 @@ test('builds an isolated proxy environment for an opted-in CLI command', () => {
   expect(buildNetworkEnvironment).toHaveBeenCalledWith(baseEnv);
 });
 
-test('tracks secret environment changes until a Gateway launch applies them', () => {
+test('tracks managed environment changes until a Gateway launch applies them', () => {
   const manager = Object.create(OpenClawEngineManager.prototype) as unknown as {
-    secretEnvVars: Record<string, string>;
+    gatewayLaunchEnvVars: Record<string, string>;
     gatewayLaunchEnvironmentGeneration: number;
     launchedGatewayEnvironmentGeneration: number;
-    setSecretEnvVars: (vars: Record<string, string>) => void;
-    getSecretEnvVars: () => Record<string, string>;
+    setGatewayLaunchEnvVars: (vars: Record<string, string>) => void;
+    getGatewayLaunchEnvVars: () => Record<string, string>;
     hasPendingGatewayLaunchEnvironmentChanges: () => boolean;
   };
-  manager.secretEnvVars = {};
+  manager.gatewayLaunchEnvVars = {};
   manager.gatewayLaunchEnvironmentGeneration = 0;
   manager.launchedGatewayEnvironmentGeneration = 0;
 
-  manager.setSecretEnvVars({ MODEL_TOKEN: 'first' });
+  manager.setGatewayLaunchEnvVars({ MODEL_TOKEN: 'first' });
   expect(manager.hasPendingGatewayLaunchEnvironmentChanges()).toBe(true);
   expect(manager.gatewayLaunchEnvironmentGeneration).toBe(1);
 
-  manager.setSecretEnvVars({ MODEL_TOKEN: 'first' });
+  manager.setGatewayLaunchEnvVars({ MODEL_TOKEN: 'first' });
   expect(manager.gatewayLaunchEnvironmentGeneration).toBe(1);
 
   manager.launchedGatewayEnvironmentGeneration = 1;
   expect(manager.hasPendingGatewayLaunchEnvironmentChanges()).toBe(false);
 
-  const snapshot = manager.getSecretEnvVars();
+  const snapshot = manager.getGatewayLaunchEnvVars();
   snapshot.MODEL_TOKEN = 'mutated outside manager';
-  expect(manager.getSecretEnvVars()).toEqual({ MODEL_TOKEN: 'first' });
+  expect(manager.getGatewayLaunchEnvVars()).toEqual({ MODEL_TOKEN: 'first' });
 });
 
 test('ignores lifecycle events from a superseded Gateway process', () => {

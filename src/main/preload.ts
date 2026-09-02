@@ -331,7 +331,6 @@ contextBridge.exposeInMainWorld('electron', {
       activeSkillIds?: string[];
       agentId?: string;
       attachments?: CoworkAttachmentPayload[];
-      permissionMode?: 'ask' | 'auto' | 'full';
       clientTurnId?: string;
       startedAt?: number;
     }) => ipcRenderer.invoke('cowork:session:start', options),
@@ -346,6 +345,7 @@ contextBridge.exposeInMainWorld('electron', {
     setSessionPermissionMode: (options: {
       sessionId: string;
       permissionMode: 'ask' | 'auto' | 'full';
+      deferIfActive?: boolean;
     }) => ipcRenderer.invoke('cowork:session:setPermissionMode', options),
     getSession: (sessionId: string) => ipcRenderer.invoke('cowork:session:get', sessionId),
     getSessionDetails: (sessionId: string) =>
@@ -415,11 +415,7 @@ contextBridge.exposeInMainWorld('electron', {
     }) => ipcRenderer.invoke('config:setDefaultModel', options),
     // Stream event listeners
     onSessionActivity: (
-      callback: (data: {
-        sessionId: string;
-        kind: 'user' | 'other';
-        timestamp: number;
-      }) => void,
+      callback: (data: { sessionId: string; kind: 'user' | 'other'; timestamp: number }) => void,
     ) => {
       const handler = (
         _event: Electron.IpcRendererEvent,

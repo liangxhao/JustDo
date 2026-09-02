@@ -85,7 +85,7 @@ OpenClaw skill API 是技能元数据和运行状态的权威。`openclawSkillFi
 
 MCP、hooks、extensions 和 Marketplace 属于 JustDo 的插件产品面，但执行语义仍由 OpenClaw。当前 Marketplace service 默认 provider 列表为空；不能仅因存在 adapter 接口就宣称已经接入远程市场。
 
-Runtime patch 位于 `scripts/patches/v2026.8.1/`，只补齐锁定上游仍缺失的九项产品能力。每个 patch 必须有版本锚点、幂等测试、职责说明和可删除条件；不得重做上游原生 task/history/approval/compaction，也不得塞入只属于 JustDo UI 的产品规则。
+Runtime patch 位于 `scripts/patches/v2026.8.1/`，只补齐锁定上游仍缺失的十二项产品能力。每个 patch 必须有版本锚点、幂等测试、职责说明和可删除条件；不得重做上游原生 task/history/approval/compaction；010/012 只让 host 为原生 exec/plugin approval 提供等待期限，011 只转发上游已有的 reviewer-only plugin approval detail，均不复制 approval 状态机。
 
 ## 8. Scheduled Tasks
 

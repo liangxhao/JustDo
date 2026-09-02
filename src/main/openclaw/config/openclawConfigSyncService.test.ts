@@ -4,6 +4,10 @@ import path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  ManagedDirectoryOperationCoordinator,
+  managedDirectorySuccess,
+} from '../../core/managedDirectoryOperations';
+import {
   OpenClawConfigSyncService,
   resolveDeferredGatewayRestartAction,
   resolveOpenClawConfigApplyMode,
@@ -15,7 +19,7 @@ describe('resolveOpenClawConfigApplyMode', () => {
       resolveOpenClawConfigApplyMode({
         gatewayPhase: 'running',
         configChanged: true,
-        secretEnvVarsChanged: false,
+        gatewayLaunchEnvVarsChanged: false,
         requiresGatewayRestart: false,
       }),
     ).toBe('native-reload');
@@ -26,7 +30,7 @@ describe('resolveOpenClawConfigApplyMode', () => {
       resolveOpenClawConfigApplyMode({
         gatewayPhase: 'running',
         configChanged: true,
-        secretEnvVarsChanged: true,
+        gatewayLaunchEnvVarsChanged: true,
         requiresGatewayRestart: false,
       }),
     ).toBe('hard-restart');
@@ -34,7 +38,7 @@ describe('resolveOpenClawConfigApplyMode', () => {
       resolveOpenClawConfigApplyMode({
         gatewayPhase: 'running',
         configChanged: false,
-        secretEnvVarsChanged: false,
+        gatewayLaunchEnvVarsChanged: false,
         requiresGatewayRestart: true,
       }),
     ).toBe('hard-restart');
@@ -45,7 +49,7 @@ describe('resolveOpenClawConfigApplyMode', () => {
       resolveOpenClawConfigApplyMode({
         gatewayPhase: 'ready',
         configChanged: true,
-        secretEnvVarsChanged: true,
+        gatewayLaunchEnvVarsChanged: true,
         requiresGatewayRestart: true,
       }),
     ).toBe('none');
@@ -53,7 +57,7 @@ describe('resolveOpenClawConfigApplyMode', () => {
       resolveOpenClawConfigApplyMode({
         gatewayPhase: 'running',
         configChanged: false,
-        secretEnvVarsChanged: false,
+        gatewayLaunchEnvVarsChanged: false,
         requiresGatewayRestart: false,
       }),
     ).toBe('none');
@@ -64,7 +68,7 @@ describe('resolveOpenClawConfigApplyMode', () => {
       resolveOpenClawConfigApplyMode({
         gatewayPhase: 'starting',
         configChanged: false,
-        secretEnvVarsChanged: true,
+        gatewayLaunchEnvVarsChanged: true,
         requiresGatewayRestart: false,
       }),
     ).toBe('hard-restart');
@@ -72,7 +76,7 @@ describe('resolveOpenClawConfigApplyMode', () => {
       resolveOpenClawConfigApplyMode({
         gatewayPhase: 'starting',
         configChanged: true,
-        secretEnvVarsChanged: false,
+        gatewayLaunchEnvVarsChanged: false,
         requiresGatewayRestart: false,
       }),
     ).toBe('hard-restart');
@@ -186,15 +190,13 @@ describe('OpenClawConfigSyncService', () => {
     phase?: 'ready' | 'starting' | 'running' | 'error';
     waitForReload?: boolean;
     activeWorkloads?: boolean;
+    prepareGatewaySuspend?: () => unknown | Promise<unknown>;
     previousSecrets?: Record<string, string>;
     nextSecrets?: Record<string, string>;
     configPath?: string;
     permissionMode?: 'ask' | 'auto' | 'full';
     reportedPermissionMode?: 'ask' | 'auto' | 'full';
     reportedSchedulerMode?: 'ask' | 'auto' | 'full';
-    permissionPolicyLoaded?: boolean;
-    reportedPolicyMode?: 'ask' | 'auto' | 'full';
-    reportedFullAgentIds?: string[];
     configChanged?: boolean;
     syncError?: string;
   } = {}) => {
@@ -221,8 +223,8 @@ describe('OpenClawConfigSyncService', () => {
       getStatus,
       getGatewayConfigReloadGeneration: vi.fn(() => 7),
       waitForGatewayConfigReload: vi.fn(async () => options.waitForReload ?? true),
-      getSecretEnvVars: vi.fn(() => options.previousSecrets ?? {}),
-      setSecretEnvVars: vi.fn(),
+      getGatewayLaunchEnvVars: vi.fn(() => options.previousSecrets ?? {}),
+      setGatewayLaunchEnvVars: vi.fn(),
       getGatewayProcessGeneration: vi.fn(() => processGeneration),
       getDesiredVersion: vi.fn(() => 'v2026.6.11'),
       startGateway,
@@ -249,6 +251,27 @@ describe('OpenClawConfigSyncService', () => {
       },
     };
     const requestGateway = vi.fn(async (method: string, params?: unknown) => {
+      if (method === 'gateway.suspend.prepare') {
+        if (options.prepareGatewaySuspend) return options.prepareGatewaySuspend();
+        return activeWorkloads
+          ? {
+              status: 'busy',
+              reason: 'active-work',
+              retryAfterMs: 3_000,
+              activeCount: 1,
+              blockers: [],
+            }
+          : {
+              status: 'ready',
+              suspensionId: 'suspension-1',
+              expiresAtMs: Date.now() + 120_000,
+              activeCount: 0,
+              blockers: [],
+            };
+      }
+      if (method === 'gateway.suspend.resume') {
+        return { ok: true, status: 'running', resumed: true };
+      }
       if (method === 'exec.approvals.get') {
         return {
           hash: approvalHash,
@@ -261,7 +284,7 @@ describe('OpenClawConfigSyncService', () => {
         return { hash: approvalHash };
       }
       if (method === 'config.get') {
-        const permissionMode = options.reportedPermissionMode ?? options.permissionMode ?? 'ask';
+        const permissionMode = options.reportedPermissionMode ?? 'ask';
         return {
           config: {
             agents: {
@@ -284,15 +307,6 @@ describe('OpenClawConfigSyncService', () => {
           },
         };
       }
-      if (method === 'actionApproval.info') {
-        return {
-          loaded: options.permissionPolicyLoaded ?? true,
-          adapterVersion: 2,
-          configuredMode:
-            options.reportedPolicyMode ?? options.reportedPermissionMode ?? options.permissionMode ?? 'ask',
-          fullAgentIds: options.reportedFullAgentIds ?? ['justdo-scheduler'],
-        };
-      }
       throw new Error(`Unexpected Gateway method: ${method}`);
     });
     const service = new OpenClawConfigSyncService({
@@ -303,7 +317,6 @@ describe('OpenClawConfigSyncService', () => {
       getAskUserExtensionConfig: vi.fn(),
       getMcpStore: vi.fn(),
       getHookStore: vi.fn(),
-      hasActiveGatewayWorkloads: vi.fn(() => activeWorkloads),
       disconnectGatewayClient,
       connectGatewayClient,
       requestGateway,
@@ -320,7 +333,7 @@ describe('OpenClawConfigSyncService', () => {
               configPath: options.configPath ?? 'openclaw.json',
             },
       ),
-      collectSecretEnvVars: vi.fn(() => options.nextSecrets ?? {}),
+      collectGatewayLaunchEnvVars: vi.fn(() => options.nextSecrets ?? {}),
     };
     (
       service as unknown as {
@@ -343,6 +356,9 @@ describe('OpenClawConfigSyncService', () => {
       },
       setActiveWorkloads: (active: boolean) => {
         activeWorkloads = active;
+      },
+      advanceProcessGeneration: () => {
+        processGeneration += 1;
       },
     };
   };
@@ -369,7 +385,7 @@ describe('OpenClawConfigSyncService', () => {
       success: true,
       configSynced: true,
     });
-    expect(result).not.toHaveProperty('permissionVerified');
+    expect(result).not.toHaveProperty('hostPolicyVerified');
     expect(harness.configSync.sync).toHaveBeenCalledWith('startup');
   });
 
@@ -419,8 +435,13 @@ describe('OpenClawConfigSyncService', () => {
       changed: true,
     });
     expect(harness.disconnectGatewayClient).toHaveBeenCalledOnce();
+    expect(harness.requestGateway).toHaveBeenCalledWith('gateway.suspend.prepare', {
+      requestId: 'justdo-config-restart-1',
+      terminalPolicy: 'preserve',
+    });
     expect(harness.stopGateway).toHaveBeenCalledOnce();
     expect(harness.startGateway).toHaveBeenCalledOnce();
+    expect(harness.engineManager.restartGateway.mock.calls).toEqual([[]]);
     expect(harness.connectGatewayClient).toHaveBeenCalledOnce();
   });
 
@@ -498,13 +519,13 @@ describe('OpenClawConfigSyncService', () => {
     expect(harness.startGateway).not.toHaveBeenCalled();
   });
 
-  it('verifies the active runtime and compatibility policy after reload', async () => {
+  it('verifies the active runtime fallback and host approval policy after reload', async () => {
     const harness = createHarness({ waitForReload: true });
 
     await expect(harness.service.syncConfig({ reason: 'test' })).resolves.toMatchObject({
       success: true,
       configSynced: true,
-      permissionVerified: true,
+      hostPolicyVerified: true,
     });
     expect(harness.requestGateway).toHaveBeenCalledWith('exec.approvals.get');
     expect(harness.requestGateway).toHaveBeenCalledWith(
@@ -512,7 +533,6 @@ describe('OpenClawConfigSyncService', () => {
       expect.objectContaining({ baseHash: 'approval-hash' }),
     );
     expect(harness.requestGateway).toHaveBeenCalledWith('config.get');
-    expect(harness.requestGateway).toHaveBeenCalledWith('actionApproval.info');
     expect(harness.stopGateway).not.toHaveBeenCalled();
   });
 
@@ -523,12 +543,11 @@ describe('OpenClawConfigSyncService', () => {
 
     await expect(harness.service.verifyActivePermissionPolicy()).resolves.toMatchObject({
       success: true,
-      permissionVerified: true,
+      hostPolicyVerified: true,
     });
 
     expect(harness.requestGateway.mock.calls.map(([method]) => method)).toEqual([
       'config.get',
-      'actionApproval.info',
       'exec.approvals.get',
     ]);
   });
@@ -540,13 +559,12 @@ describe('OpenClawConfigSyncService', () => {
 
     await expect(harness.service.syncConfig({ reason: 'second' })).resolves.toMatchObject({
       success: true,
-      permissionVerified: true,
+      hostPolicyVerified: true,
     });
 
     expect(harness.requestGateway.mock.calls.map(([method]) => method)).toEqual([
       'exec.approvals.get',
       'config.get',
-      'actionApproval.info',
     ]);
   });
 
@@ -625,8 +643,8 @@ describe('OpenClawConfigSyncService', () => {
     );
   });
 
-  it('fails closed when the runtime reports a stale permission mode', async () => {
-    const harness = createHarness({ permissionMode: 'auto', reportedPermissionMode: 'ask' });
+  it('fails closed when the runtime reports an unsafe global fallback mode', async () => {
+    const harness = createHarness({ permissionMode: 'full', reportedPermissionMode: 'full' });
 
     await expect(harness.service.syncConfig({ reason: 'test' })).resolves.toMatchObject({
       success: false,
@@ -647,28 +665,6 @@ describe('OpenClawConfigSyncService', () => {
     expect(harness.stopGateway).toHaveBeenCalledOnce();
   });
 
-  it('fails closed when the file permission policy extension is not active', async () => {
-    const harness = createHarness({ permissionPolicyLoaded: false });
-
-    await expect(harness.service.syncConfig({ reason: 'test' })).resolves.toMatchObject({
-      success: false,
-      configSynced: false,
-      error: expect.stringContaining('Gateway was stopped'),
-    });
-    expect(harness.stopGateway).toHaveBeenCalledOnce();
-  });
-
-  it('fails closed when the scheduler is missing from the file-policy Full allowlist', async () => {
-    const harness = createHarness({ reportedFullAgentIds: [] });
-
-    await expect(harness.service.syncConfig({ reason: 'test' })).resolves.toMatchObject({
-      success: false,
-      configSynced: false,
-      error: expect.stringContaining('Gateway was stopped'),
-    });
-    expect(harness.stopGateway).toHaveBeenCalledOnce();
-  });
-
   it.each(['running', 'ready'] as const)(
     'fails closed from %s when the initial config write cannot be confirmed',
     async phase => {
@@ -677,7 +673,7 @@ describe('OpenClawConfigSyncService', () => {
       await expect(harness.service.syncConfig({ reason: 'startup' })).resolves.toMatchObject({
         success: false,
         configSynced: false,
-        error: expect.stringContaining('runtime permission state was not confirmed'),
+        error: expect.stringContaining('active runtime safety state was not confirmed'),
       });
       expect(harness.disconnectGatewayClient).toHaveBeenCalledOnce();
       expect(harness.stopGateway).toHaveBeenCalledOnce();
@@ -710,6 +706,203 @@ describe('OpenClawConfigSyncService', () => {
     harness.setPhase('ready');
     harness.setActiveWorkloads(false);
     await vi.advanceTimersByTimeAsync(3_000);
+
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+    expect(harness.startGateway).not.toHaveBeenCalled();
+  });
+
+  it('keeps a hard restart deferred for as long as active workloads remain', async () => {
+    vi.useFakeTimers();
+    const harness = createHarness({
+      activeWorkloads: true,
+      nextSecrets: { API_TOKEN: 'changed' },
+    });
+
+    await harness.service.syncConfig({ reason: 'test' });
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+    expect(harness.startGateway).not.toHaveBeenCalled();
+
+    harness.setActiveWorkloads(false);
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    expect(harness.stopGateway).toHaveBeenCalledOnce();
+    expect(harness.startGateway).toHaveBeenCalledOnce();
+  });
+
+  it('awaits the native suspension barrier before performing a deferred restart', async () => {
+    vi.useFakeTimers();
+    let activeWorkloads = true;
+    const harness = createHarness({
+      nextSecrets: { API_TOKEN: 'changed' },
+      prepareGatewaySuspend: async () =>
+        activeWorkloads
+          ? { status: 'busy' }
+          : { status: 'ready', suspensionId: 'suspension-async' },
+    });
+
+    await harness.service.syncConfig({ reason: 'test' });
+    activeWorkloads = false;
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    expect(harness.stopGateway).toHaveBeenCalledOnce();
+    expect(harness.startGateway).toHaveBeenCalledOnce();
+  });
+
+  it('does not apply an old suspension lease to a newer Gateway generation', async () => {
+    vi.useFakeTimers();
+    let releaseSuspension!: () => void;
+    const suspension = new Promise<{ status: 'ready'; suspensionId: string }>(resolve => {
+      releaseSuspension = () => resolve({ status: 'ready', suspensionId: 'stale-suspension' });
+    });
+    let suspensionAttempt = 0;
+    const harness = createHarness({
+      nextSecrets: { API_TOKEN: 'changed' },
+      prepareGatewaySuspend: () => {
+        suspensionAttempt += 1;
+        return suspensionAttempt === 1
+          ? suspension
+          : { status: 'ready', suspensionId: 'current-suspension' };
+      },
+    });
+
+    const sync = harness.service.syncConfig({ reason: 'test' });
+    await vi.waitFor(() =>
+      expect(harness.requestGateway).toHaveBeenCalledWith(
+        'gateway.suspend.prepare',
+        expect.any(Object),
+      ),
+    );
+    harness.advanceProcessGeneration();
+    releaseSuspension();
+
+    await expect(sync).resolves.toMatchObject({ success: true });
+    expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    expect(harness.requestGateway).toHaveBeenCalledWith('gateway.suspend.prepare', {
+      requestId: 'justdo-config-restart-2',
+      terminalPolicy: 'preserve',
+    });
+    expect(harness.engineManager.restartGateway).toHaveBeenCalledOnce();
+  });
+
+  it('does not stop or mutate a replacement Gateway with an old directory suspension', async () => {
+    const harness = createHarness();
+    const operation = vi.fn(async () => managedDirectorySuccess(undefined));
+    const coordinator = new ManagedDirectoryOperationCoordinator({
+      runtime: {
+        isRunning: () => harness.engineManager.getStatus().phase === 'running',
+        ownsProcess: pid => pid === 4242,
+        prepareStop: async () => {
+          const preparation = await harness.service.prepareGatewayStopAfterExclusiveMutation(
+            'directory-test',
+          );
+          harness.advanceProcessGeneration();
+          return preparation;
+        },
+        stop: token => harness.service.stopGatewayAfterExclusiveMutation(token),
+        start: token => harness.service.startGatewayAfterExclusiveMutation(token),
+      },
+      findLockingProcesses: vi.fn(async () => ({
+        available: true,
+        processes: [{ name: 'OpenClaw Gateway', pid: 4242 }],
+      })),
+    });
+
+    const result = await coordinator.execute({
+      operation,
+      resourceName: 'extension directory',
+      targetPath: 'C:\\extensions\\demo',
+      manageRuntimeOnLock: true,
+      preflightLockCheck: true,
+    });
+
+    expect(result.success).toBe(false);
+    expect(operation).not.toHaveBeenCalled();
+    expect(harness.disconnectGatewayClient).not.toHaveBeenCalled();
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+    expect(harness.startGateway).not.toHaveBeenCalled();
+  });
+
+  it('resumes the admission fence when a prepared directory stop leaves the Gateway running', async () => {
+    const harness = createHarness();
+    harness.stopGateway.mockRejectedValueOnce(new Error('stop acknowledgement failed'));
+    const preparation = await harness.service.prepareGatewayStopAfterExclusiveMutation(
+      'directory-test',
+    );
+    expect(preparation.ready).toBe(true);
+    if (!preparation.ready) return;
+
+    await expect(
+      harness.service.stopGatewayAfterExclusiveMutation(preparation.token),
+    ).rejects.toThrow('could not be stopped safely');
+
+    expect(harness.requestGateway).toHaveBeenCalledWith('gateway.suspend.resume', {
+      suspensionId: 'suspension-1',
+    });
+    expect(harness.connectGatewayClient).not.toHaveBeenCalled();
+    expect(harness.disconnectGatewayClient).not.toHaveBeenCalled();
+  });
+
+  it('coalesces an old deferred intent with an immediate restart of the same process', async () => {
+    vi.useFakeTimers();
+    let suspensionAttempt = 0;
+    const harness = createHarness({
+      nextSecrets: { API_TOKEN: 'changed' },
+      prepareGatewaySuspend: () => {
+        suspensionAttempt += 1;
+        return suspensionAttempt === 1
+          ? { status: 'busy' }
+          : { status: 'ready', suspensionId: 'immediate-suspension' };
+      },
+    });
+
+    await harness.service.syncConfig({ reason: 'deferred-change' });
+    await harness.service.restartGatewayWhenIdle('immediate-change');
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    expect(harness.engineManager.restartGateway).toHaveBeenCalledOnce();
+  });
+
+  it('serializes deferred restart polling behind config mutations', async () => {
+    vi.useFakeTimers();
+    const harness = createHarness({
+      activeWorkloads: true,
+      nextSecrets: { API_TOKEN: 'changed' },
+    });
+    await harness.service.syncConfig({ reason: 'deferred-change' });
+
+    let releaseMutation!: () => void;
+    const mutation = harness.service.runConfigMutationExclusive(
+      () =>
+        new Promise<void>(resolve => {
+          releaseMutation = resolve;
+        }),
+    );
+    await vi.waitFor(() => expect(releaseMutation).toBeTypeOf('function'));
+    harness.setActiveWorkloads(false);
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+    releaseMutation();
+    await mutation;
+    await vi.waitFor(() => expect(harness.engineManager.restartGateway).toHaveBeenCalledOnce());
+  });
+
+  it('keeps the restart deferred when the native suspension barrier is unavailable', async () => {
+    vi.useFakeTimers();
+    const harness = createHarness({
+      nextSecrets: { API_TOKEN: 'changed' },
+      prepareGatewaySuspend: async () => {
+        throw new Error('Gateway unavailable');
+      },
+    });
+
+    await harness.service.syncConfig({ reason: 'test' });
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
 
     expect(harness.stopGateway).not.toHaveBeenCalled();
     expect(harness.startGateway).not.toHaveBeenCalled();
@@ -765,7 +958,7 @@ describe('OpenClawConfigSyncService', () => {
         configSynced: false,
         error: expect.stringContaining('built-in API key placeholder remains'),
       });
-      expect(harness.engineManager.setSecretEnvVars).not.toHaveBeenCalled();
+      expect(harness.engineManager.setGatewayLaunchEnvVars).not.toHaveBeenCalled();
       expect(harness.stopGateway).toHaveBeenCalledOnce();
       expect(harness.startGateway).not.toHaveBeenCalled();
     } finally {

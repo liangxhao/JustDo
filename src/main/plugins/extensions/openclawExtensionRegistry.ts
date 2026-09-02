@@ -1,12 +1,10 @@
 import { DEFAULT_AGENT_RUNTIME_SETTINGS } from '../../../shared/openclaw/agentRuntimeSettings';
-import type { PermissionMode } from '../../../shared/openclaw/approvals';
 import { OpenClawExtensionId } from '../../../shared/openclaw/extensions';
 import { ScheduledTaskAgentId } from '../../../shared/scheduledTask/constants';
 import type { AskUserExtensionConfig } from '../../openclaw/config/openclawConfigSync';
 
 export type OpenClawExtensionContext = {
   askUser: AskUserExtensionConfig | null;
-  permissionMode: PermissionMode;
 };
 
 export type OpenClawExtensionDescriptor = {
@@ -37,11 +35,12 @@ export const bundledOpenClawExtensions: readonly OpenClawExtensionDescriptor[] =
     }),
   },
   {
-    id: OpenClawExtensionId.ACTION_APPROVAL,
-    retiredIds: ['file-permission-policy'],
-    buildEntry: ({ permissionMode }) => ({
+    id: OpenClawExtensionId.AUTOMATION_PERMISSION,
+    buildEntry: () => ({
       enabled: true,
-      config: { mode: permissionMode, fullAgentIds: [ScheduledTaskAgentId] },
+      config: {
+        unrestrictedAgentIds: [ScheduledTaskAgentId],
+      },
     }),
   },
   {
@@ -51,7 +50,11 @@ export const bundledOpenClawExtensions: readonly OpenClawExtensionDescriptor[] =
 ] as const;
 
 export const listRetiredBundledOpenClawExtensionIds = (): string[] => [
-  ...new Set(bundledOpenClawExtensions.flatMap(extension => extension.retiredIds ?? [])),
+  ...new Set([
+    'action-approval',
+    'file-permission-policy',
+    ...bundledOpenClawExtensions.flatMap(extension => extension.retiredIds ?? []),
+  ]),
 ];
 
 export const buildBundledExtensionEntries = (

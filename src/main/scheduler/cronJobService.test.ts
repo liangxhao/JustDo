@@ -418,21 +418,15 @@ describe('isolated scheduler agent assignment', () => {
     expect(task.agentId).toBe(ScheduledTaskAgentId);
   });
 
-  test('repairs unmanaged agent-turn tasks while leaving system events alone', async () => {
+  test('keeps externally owned agent-turn tasks unchanged while listing', async () => {
     const systemJob = {
       ...gatewayJob,
       id: 'system-job',
       agentId: 'main',
       payload: { kind: 'systemEvent' as const, text: 'Wake up' },
     };
-    const request = vi.fn(async (method: string, params?: unknown) => {
+    const request = vi.fn(async (method: string) => {
       if (method === 'cron.list') return { jobs: [gatewayJob, systemJob] };
-      if (method === 'cron.update') {
-        return {
-          ...gatewayJob,
-          agentId: (params as { patch: { agentId: string } }).patch.agentId,
-        };
-      }
       throw new Error(`Unexpected method: ${method}`);
     });
     const service = new CronJobService({
@@ -442,69 +436,19 @@ describe('isolated scheduler agent assignment', () => {
 
     const tasks = await service.listJobs();
 
-    expect(request).toHaveBeenCalledWith('cron.update', {
-      id: gatewayJob.id,
-      patch: { agentId: ScheduledTaskAgentId },
-    });
-    expect(request.mock.calls.filter(([method]) => method === 'cron.update')).toHaveLength(1);
     expect(tasks.map(task => [task.id, task.agentId])).toEqual([
-      [gatewayJob.id, ScheduledTaskAgentId],
+      [gatewayJob.id, 'main'],
       [systemJob.id, 'main'],
     ]);
-  });
-
-  test('does not take ownership of OpenClaw-declared agent-turn jobs', async () => {
-    const declaredJob = {
-      ...gatewayJob,
-      id: 'memory-dreaming',
-      declarationKey: 'memory-core:memory-dreaming-promotion',
-      agentId: null,
-    };
-    const request = vi.fn(async (method: string) => {
-      if (method === 'cron.list') return { jobs: [declaredJob] };
-      throw new Error(`Unexpected method: ${method}`);
-    });
-    const service = new CronJobService({
-      getGatewayClient: () => ({ request }) as never,
-      ensureGatewayReady: vi.fn(),
-    });
-
-    const tasks = await service.listJobs();
-
-    expect(tasks).toHaveLength(1);
-    expect(tasks[0]).toMatchObject({ id: declaredJob.id, agentId: null });
     expect(request.mock.calls.filter(([method]) => method === 'cron.update')).toHaveLength(0);
   });
 
-  test('skips scheduler assignment when the task disappears after the initial list', async () => {
-    let listCount = 0;
-    const request = vi.fn(async (method: string) => {
-      if (method === 'cron.list') {
-        listCount += 1;
-        return { jobs: listCount === 1 ? [gatewayJob] : [] };
-      }
-      throw new Error(`Unexpected method: ${method}`);
-    });
-    const service = new CronJobService({
-      getGatewayClient: () => ({ request }) as never,
-      ensureGatewayReady: vi.fn(),
-    });
-
-    const tasks = await service.listJobs();
-
-    expect(tasks).toEqual([]);
-    expect(request).not.toHaveBeenCalledWith('cron.update', expect.anything());
-  });
-
-  test('suppresses an assignment failure when the task was removed concurrently', async () => {
-    let listCount = 0;
-    const request = vi.fn(async (method: string) => {
-      if (method === 'cron.list') {
-        listCount += 1;
-        return { jobs: listCount < 3 ? [gatewayJob] : [] };
-      }
+  test('keeps the original agent when enabling an externally owned task', async () => {
+    const request = vi.fn(async (method: string, params?: unknown) => {
+      if (method === 'cron.list') return { jobs: [{ ...gatewayJob, enabled: false }] };
       if (method === 'cron.update') {
-        throw new Error('invalid cron.update params: id not found');
+        const patch = (params as { patch: Record<string, unknown> }).patch;
+        return { ...gatewayJob, enabled: false, ...patch };
       }
       throw new Error(`Unexpected method: ${method}`);
     });
@@ -513,126 +457,18 @@ describe('isolated scheduler agent assignment', () => {
       ensureGatewayReady: vi.fn(),
     });
 
-    const tasks = await service.listJobs();
+    const task = await service.toggleJob(gatewayJob.id, true);
 
-    expect(tasks).toEqual([]);
-    expect(request.mock.calls.filter(([method]) => method === 'cron.update')).toHaveLength(1);
-  });
-
-  test('suppresses a fallback disable failure when the task was removed concurrently', async () => {
-    let listCount = 0;
-    let updateCount = 0;
-    const request = vi.fn(async (method: string) => {
-      if (method === 'cron.list') {
-        listCount += 1;
-        return { jobs: listCount < 4 ? [gatewayJob] : [] };
-      }
-      if (method === 'cron.update') {
-        updateCount += 1;
-        throw new Error(
-          updateCount === 1
-            ? 'assignment rejected'
-            : 'invalid cron.update params: id not found',
-        );
-      }
-      throw new Error(`Unexpected method: ${method}`);
-    });
-    const service = new CronJobService({
-      getGatewayClient: () => ({ request }) as never,
-      ensureGatewayReady: vi.fn(),
-    });
-
-    const tasks = await service.listJobs();
-
-    expect(tasks).toEqual([]);
-    expect(request.mock.calls.filter(([method]) => method === 'cron.update')).toHaveLength(2);
-  });
-
-  test('does not disable a task converted to a system event after assignment failure', async () => {
-    const converted = {
-      ...gatewayJob,
-      payload: { kind: 'systemEvent' as const, text: 'Wake up' },
-      sessionTarget: 'main' as const,
-      agentId: null,
-    };
-    let listCount = 0;
-    const request = vi.fn(async (method: string) => {
-      if (method === 'cron.list') {
-        listCount += 1;
-        return { jobs: listCount < 3 ? [gatewayJob] : [converted] };
-      }
-      if (method === 'cron.update') throw new Error('assignment rejected');
-      throw new Error(`Unexpected method: ${method}`);
-    });
-    const service = new CronJobService({
-      getGatewayClient: () => ({ request }) as never,
-      ensureGatewayReady: vi.fn(),
-    });
-
-    const tasks = await service.listJobs();
-
-    expect(tasks).toHaveLength(1);
-    expect(tasks[0]).toMatchObject({
+    expect(task).toMatchObject({ enabled: true, agentId: 'main' });
+    expect(request).toHaveBeenCalledWith('cron.update', {
       id: gatewayJob.id,
-      enabled: true,
-      payload: { kind: 'systemEvent', text: 'Wake up' },
+      patch: { enabled: true },
     });
-    expect(request.mock.calls.filter(([method]) => method === 'cron.update')).toHaveLength(1);
   });
 
-  test('serializes deletion behind an in-flight scheduler assignment', async () => {
-    let releaseUpdate!: () => void;
-    let notifyUpdateStarted!: () => void;
-    const updateGate = new Promise<void>(resolve => {
-      releaseUpdate = resolve;
-    });
-    const updateStarted = new Promise<void>(resolve => {
-      notifyUpdateStarted = resolve;
-    });
-    const request = vi.fn(async (method: string, params?: unknown) => {
+  test('runs an externally owned task without changing its agent', async () => {
+    const request = vi.fn(async (method: string) => {
       if (method === 'cron.list') return { jobs: [gatewayJob] };
-      if (method === 'cron.update') {
-        notifyUpdateStarted();
-        await updateGate;
-        return {
-          ...gatewayJob,
-          agentId: (params as { patch: { agentId: string } }).patch.agentId,
-        };
-      }
-      if (method === 'cron.remove') return { removed: true };
-      throw new Error(`Unexpected method: ${method}`);
-    });
-    const service = new CronJobService({
-      getGatewayClient: () => ({ request }) as never,
-      ensureGatewayReady: vi.fn(),
-    });
-
-    const listing = service.listJobs();
-    await updateStarted;
-    const removal = service.removeJob(gatewayJob.id);
-
-    expect(request.mock.calls.some(([method]) => method === 'cron.remove')).toBe(false);
-    releaseUpdate();
-    await Promise.all([listing, removal]);
-
-    const updateOrder = request.mock.invocationCallOrder.find(
-      (_order, index) => request.mock.calls[index]?.[0] === 'cron.update',
-    );
-    const removeOrder = request.mock.invocationCallOrder.find(
-      (_order, index) => request.mock.calls[index]?.[0] === 'cron.remove',
-    );
-    expect(updateOrder).toBeLessThan(removeOrder as number);
-  });
-
-  test('repairs an old task before manual execution', async () => {
-    const request = vi.fn(async (method: string, params?: unknown) => {
-      if (method === 'cron.list') return { jobs: [gatewayJob] };
-      if (method === 'cron.update') {
-        return {
-          ...gatewayJob,
-          agentId: (params as { patch: { agentId: string } }).patch.agentId,
-        };
-      }
       if (method === 'cron.run') return undefined;
       throw new Error(`Unexpected method: ${method}`);
     });
@@ -643,28 +479,35 @@ describe('isolated scheduler agent assignment', () => {
 
     await service.runJob(gatewayJob.id);
 
-    const updateOrder = request.mock.invocationCallOrder.find(
-      (_order, index) => request.mock.calls[index]?.[0] === 'cron.update',
-    );
-    const runOrder = request.mock.invocationCallOrder.find(
-      (_order, index) => request.mock.calls[index]?.[0] === 'cron.run',
-    );
-    expect(updateOrder).toBeDefined();
-    expect(updateOrder).toBeLessThan(runOrder as number);
+    expect(request.mock.calls.map(([method]) => method)).toEqual(['cron.list', 'cron.run']);
   });
 
-  test('reconciles scheduler ownership during the initial poll even while cowork is busy', async () => {
-    const onJobsPolled = vi.fn().mockResolvedValue(undefined);
+  test('keeps the original agent during an ordinary update', async () => {
     const request = vi.fn(async (method: string, params?: unknown) => {
       if (method === 'cron.list') return { jobs: [gatewayJob] };
       if (method === 'cron.update') {
-        return {
-          ...gatewayJob,
-          agentId: (params as { patch: { agentId: string } }).patch.agentId,
-        };
+        const patch = (params as { patch: Record<string, unknown> }).patch;
+        return { ...gatewayJob, ...patch };
       }
       throw new Error(`Unexpected method: ${method}`);
     });
+    const service = new CronJobService({
+      getGatewayClient: () => ({ request }) as never,
+      ensureGatewayReady: vi.fn(),
+    });
+
+    const task = await service.updateJob(gatewayJob.id, { name: 'Renamed' });
+
+    expect(task).toMatchObject({ name: 'Renamed', agentId: 'main' });
+    expect(request).toHaveBeenCalledWith('cron.update', {
+      id: gatewayJob.id,
+      patch: { name: 'Renamed' },
+    });
+  });
+
+  test('does not mutate or publish polled tasks while cowork is busy', async () => {
+    const onJobsPolled = vi.fn().mockResolvedValue(undefined);
+    const request = vi.fn(async () => ({ jobs: [gatewayJob] }));
     const service = new CronJobService({
       getGatewayClient: () => ({ request }) as never,
       ensureGatewayReady: vi.fn(),
@@ -673,20 +516,16 @@ describe('isolated scheduler agent assignment', () => {
     });
 
     service.startPolling();
-    await vi.waitFor(() =>
-      expect(request).toHaveBeenCalledWith('cron.update', {
-        id: gatewayJob.id,
-        patch: { agentId: ScheduledTaskAgentId },
-      }),
-    );
+    await vi.waitFor(() => expect(request).toHaveBeenCalledWith('cron.list', expect.any(Object)));
     service.stopPolling();
 
+    expect(request.mock.calls.filter(([method]) => method === 'cron.update')).toHaveLength(0);
     expect(onJobsPolled).not.toHaveBeenCalled();
   });
 
-  test('reads every cron.list page before reconciling tasks', async () => {
+  test('reads every cron.list page without mutating task ownership', async () => {
     const first = { ...gatewayJob, id: 'job-1', agentId: ScheduledTaskAgentId };
-    const second = { ...gatewayJob, id: 'job-201', agentId: ScheduledTaskAgentId };
+    const second = { ...gatewayJob, id: 'job-201', agentId: 'main' };
     const request = vi.fn(async (method: string, params?: unknown) => {
       if (method !== 'cron.list') throw new Error(`Unexpected method: ${method}`);
       const offset = (params as { offset?: number }).offset ?? 0;
@@ -701,7 +540,10 @@ describe('isolated scheduler agent assignment', () => {
 
     const tasks = await service.listJobs();
 
-    expect(tasks.map(task => task.id)).toEqual(['job-1', 'job-201']);
+    expect(tasks.map(task => [task.id, task.agentId])).toEqual([
+      ['job-1', ScheduledTaskAgentId],
+      ['job-201', 'main'],
+    ]);
     expect(request).toHaveBeenNthCalledWith(1, 'cron.list', {
       includeDisabled: true,
       limit: 200,
@@ -711,90 +553,6 @@ describe('isolated scheduler agent assignment', () => {
       includeDisabled: true,
       limit: 200,
       offset: 200,
-    });
-  });
-
-  test('disables an enabled task when scheduler assignment fails', async () => {
-    const request = vi.fn(async (method: string, params?: unknown) => {
-      if (method === 'cron.list') return { jobs: [gatewayJob] };
-      if (method === 'cron.update') {
-        const patch = (params as { patch: Record<string, unknown> }).patch;
-        if (patch.agentId) throw new Error('assignment rejected');
-        if (patch.enabled === false) return { ...gatewayJob, enabled: false };
-      }
-      throw new Error(`Unexpected method: ${method}`);
-    });
-    const service = new CronJobService({
-      getGatewayClient: () => ({ request }) as never,
-      ensureGatewayReady: vi.fn(),
-    });
-
-    const tasks = await service.listJobs();
-
-    expect(tasks[0]).toMatchObject({ id: gatewayJob.id, enabled: false, agentId: 'main' });
-    expect(request).toHaveBeenCalledWith('cron.update', {
-      id: gatewayJob.id,
-      patch: { enabled: false },
-    });
-  });
-
-  test('surfaces reconciliation failure when an unsafe task cannot be disabled', async () => {
-    const request = vi.fn(async (method: string) => {
-      if (method === 'cron.list') return { jobs: [gatewayJob] };
-      if (method === 'cron.update') throw new Error('gateway rejected update');
-      throw new Error(`Unexpected method: ${method}`);
-    });
-    const service = new CronJobService({
-      getGatewayClient: () => ({ request }) as never,
-      ensureGatewayReady: vi.fn(),
-    });
-
-    await expect(service.listJobs()).rejects.toThrow(
-      `Failed to assign or disable scheduled task ${gatewayJob.id}`,
-    );
-    expect(request.mock.calls.filter(([method]) => method === 'cron.update')).toHaveLength(2);
-  });
-
-  test('rejects a disable response that leaves an unsafe task enabled', async () => {
-    const request = vi.fn(async (method: string, params?: unknown) => {
-      if (method === 'cron.list') return { jobs: [gatewayJob] };
-      if (method === 'cron.update') {
-        const patch = (params as { patch: Record<string, unknown> }).patch;
-        if (patch.agentId) throw new Error('assignment rejected');
-        if (patch.enabled === false) return { ...gatewayJob, enabled: true };
-      }
-      throw new Error(`Unexpected method: ${method}`);
-    });
-    const service = new CronJobService({
-      getGatewayClient: () => ({ request }) as never,
-      ensureGatewayReady: vi.fn(),
-    });
-
-    await expect(service.listJobs()).rejects.toThrow(
-      `Failed to assign or disable scheduled task ${gatewayJob.id}`,
-    );
-  });
-
-  test('assigns the scheduler atomically when enabling an old task', async () => {
-    const request = vi.fn(async (method: string, params?: unknown) => {
-      if (method === 'cron.list') return { jobs: [{ ...gatewayJob, enabled: false }] };
-      if (method === 'cron.update') {
-        const patch = (params as { patch: Record<string, unknown> }).patch;
-        return { ...gatewayJob, ...patch };
-      }
-      throw new Error(`Unexpected method: ${method}`);
-    });
-    const service = new CronJobService({
-      getGatewayClient: () => ({ request }) as never,
-      ensureGatewayReady: vi.fn(),
-    });
-
-    const task = await service.toggleJob(gatewayJob.id, true);
-
-    expect(task).toMatchObject({ enabled: true, agentId: ScheduledTaskAgentId });
-    expect(request).toHaveBeenCalledWith('cron.update', {
-      id: gatewayJob.id,
-      patch: { enabled: true, agentId: ScheduledTaskAgentId },
     });
   });
 

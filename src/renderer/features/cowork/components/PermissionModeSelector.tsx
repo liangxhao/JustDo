@@ -13,6 +13,7 @@ import {
 import React, { useEffect, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 
+import { selectCurrentSession } from '@/features/cowork/coworkSelectors';
 import { coworkService } from '@/features/cowork/coworkService';
 import { i18nService } from '@/services/i18n';
 import type { RootState } from '@/store';
@@ -31,7 +32,11 @@ interface PermissionModeSelectorProps {
 }
 
 const PermissionModeSelector: React.FC<PermissionModeSelectorProps> = ({ disabled = false }) => {
-  const permissionMode = useSelector((state: RootState) => state.cowork.config.permissionMode);
+  const defaultPermissionMode = useSelector(
+    (state: RootState) => state.cowork.config.permissionMode,
+  );
+  const currentSession = useSelector(selectCurrentSession);
+  const permissionMode = currentSession?.permissionMode ?? defaultPermissionMode;
   const [isOpen, setIsOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [confirmingFullAccess, setConfirmingFullAccess] = useState(false);

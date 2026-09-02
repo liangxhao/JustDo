@@ -102,7 +102,32 @@ test('persists a valid permission mode for an existing session', async () => {
   await expect(handler({}, { sessionId: 'session-1', permissionMode: 'ask' })).resolves.toEqual({
     success: true,
   });
-  expect(setSessionPermissionMode).toHaveBeenCalledWith('session-1', 'ask');
+  expect(setSessionPermissionMode).toHaveBeenCalledWith('session-1', 'ask', {
+    deferIfActive: false,
+  });
+});
+
+test('forwards active-run deferral and reports the persisted selection as successful', async () => {
+  const setSessionPermissionMode = vi.fn().mockResolvedValue({
+    success: true,
+    deferred: true,
+  });
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => ({}) as CoworkStore,
+    getCoworkEngineRouter: () => ({ stopSession: vi.fn() }) as unknown as CoworkEngineRouter,
+    setSessionPermissionMode,
+  });
+  const registration = mocks.handle.mock.calls.find(
+    ([channel]) => channel === 'cowork:session:setPermissionMode',
+  );
+  const handler = registration?.[1] as IpcHandler;
+
+  await expect(
+    handler({}, { sessionId: 'session-1', permissionMode: 'auto', deferIfActive: true }),
+  ).resolves.toEqual({ success: true, deferred: true });
+  expect(setSessionPermissionMode).toHaveBeenCalledWith('session-1', 'auto', {
+    deferIfActive: true,
+  });
 });
 
 test('rejects an invalid session permission mode', async () => {

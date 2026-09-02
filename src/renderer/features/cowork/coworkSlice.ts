@@ -269,10 +269,7 @@ const coworkSlice = createSlice({
       }
     },
 
-    touchSessionActivity(
-      state,
-      action: PayloadAction<{ sessionId: string; timestamp: number }>,
-    ) {
+    touchSessionActivity(state, action: PayloadAction<{ sessionId: string; timestamp: number }>) {
       const { sessionId, timestamp } = action.payload;
       if (state.currentSession?.id === sessionId) {
         state.currentSession.updatedAt = Math.max(state.currentSession.updatedAt, timestamp);
@@ -481,7 +478,6 @@ const coworkSlice = createSlice({
       state.currentSession = null;
       state.isStreaming = false;
       state.remoteManaged = false;
-      state.config.permissionMode = DEFAULT_PERMISSION_MODE;
     },
 
     setDraftAttachments(

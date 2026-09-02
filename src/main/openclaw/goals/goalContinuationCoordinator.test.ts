@@ -23,6 +23,7 @@ const createHarness = (
   goalStatus: string = SessionGoalStatus.Active,
   waitBeforeAutomaticContinuation?: () => Promise<void>,
   maxContinuationTurns = 20,
+  prepareSessionForContinuation = vi.fn().mockResolvedValue(undefined),
 ) => {
   let currentGoal: unknown = goal(goalStatus);
   const request = vi.fn(async (method: string) => {
@@ -42,6 +43,7 @@ const createHarness = (
     onRunAccepted,
     onRunFailed,
     onSnapshot,
+    prepareSessionForContinuation,
     waitBeforeAutomaticContinuation,
     now: () => ++now,
   });
@@ -51,6 +53,7 @@ const createHarness = (
     onSnapshot,
     onRunAccepted,
     onRunFailed,
+    prepareSessionForContinuation,
     setGoal: (value: unknown) => {
       currentGoal = value;
     },
@@ -68,6 +71,10 @@ describe('GoalContinuationCoordinator', () => {
     await harness.coordinator.handleLifecycle({ runId: 'run-1', sessionKey, phase: 'end' });
 
     expect(harness.request).toHaveBeenCalledWith('sessions.describe', { key: sessionKey });
+    expect(harness.prepareSessionForContinuation).toHaveBeenCalledWith(sessionId);
+    expect(harness.prepareSessionForContinuation.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.onRunAccepted.mock.invocationCallOrder[0]!,
+    );
     const agentParams = harness.request.mock.calls.find(call => call[0] === 'agent')?.[1];
     expect(agentParams).toMatchObject({
       sessionKey,
@@ -81,6 +88,27 @@ describe('GoalContinuationCoordinator', () => {
       goalId: 'goal-1',
       phase: GoalExecutionPhase.Running,
       continuationCount: 1,
+    });
+  });
+
+  it('fails closed when the native session permission cannot be prepared', async () => {
+    const prepareSessionForContinuation = vi
+      .fn()
+      .mockRejectedValue(new Error('permission synchronization failed'));
+    const harness = createHarness(
+      SessionGoalStatus.Active,
+      undefined,
+      20,
+      prepareSessionForContinuation,
+    );
+
+    await harness.coordinator.handleLifecycle({ runId: 'run-1', sessionKey, phase: 'end' });
+
+    expect(prepareSessionForContinuation).toHaveBeenCalledWith(sessionId);
+    expect(harness.request.mock.calls.some(call => call[0] === 'agent')).toBe(false);
+    expect(harness.onRunAccepted).not.toHaveBeenCalled();
+    expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({
+      phase: GoalExecutionPhase.Retrying,
     });
   });
 

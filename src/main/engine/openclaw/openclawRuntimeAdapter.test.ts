@@ -1,4 +1,3 @@
-import path from 'path';
 import { expect, test, vi } from 'vitest';
 
 const { sendToRenderer } = vi.hoisted(() => ({ sendToRenderer: vi.fn() }));
@@ -28,9 +27,19 @@ import {
 } from '../../../shared/openclaw/approvals';
 import { OPENCLAW_COMPACTION_TIMEOUT_SECONDS } from '../../openclaw/config/openclawConfigSync';
 import type { GatewayClientCtor, GatewayClientLike, SessionTurn } from '../gateway/types';
-import { ensureSlashCommandSession, OpenClawRuntimeAdapter } from './openclawRuntimeAdapter';
+import { OpenClawRuntimeAdapter } from './openclawRuntimeAdapter';
 
 const COMPACTION_WATCHDOG_MS = OPENCLAW_COMPACTION_TIMEOUT_SECONDS * 1_000 + 60_000;
+
+const createPreparedSessionReceipt = (key = 'agent:main:justdo:session-1') => ({
+  key,
+  sessionId: 'gateway-session-1',
+  entry: {
+    sessionId: 'gateway-session-1',
+    permissionMode: 'full',
+    sessionRoot: process.cwd(),
+  },
+});
 
 function createEmptyStore() {
   const session = {
@@ -38,9 +47,11 @@ function createEmptyStore() {
     title: 'Test Session',
     status: 'completed',
     pinned: false,
-    cwd: '',
+    cwd: process.cwd(),
     executionMode: 'local',
+    permissionMode: 'full' as const,
     activeSkillIds: [],
+    agentId: 'main',
     messages: [] as Array<Record<string, unknown>>,
     createdAt: 1,
     updatedAt: 1,
@@ -86,181 +97,96 @@ const createSessionTurn = (overrides: Partial<SessionTurn> = {}): SessionTurn =>
   ...overrides,
 });
 
-type WorkspaceSyncInternals = {
+type SessionPreparationInternals = {
   gatewayClient: GatewayClientLike | null;
-  gatewayClientGeneration: number;
-  runWithAgentTurnAdmission: <T>(agentId: string, operation: () => Promise<T>) => Promise<T>;
-  syncAgentWorkspaceIfNeeded: (agentId: string, workspaceRoot?: string) => Promise<void>;
+  ensureGatewayClientReady: () => Promise<void>;
 };
 
-const getWorkspaceSyncInternals = (
+const getSessionPreparationInternals = (
   adapter: OpenClawRuntimeAdapter,
-): WorkspaceSyncInternals => adapter as unknown as WorkspaceSyncInternals;
+): SessionPreparationInternals => adapter as unknown as SessionPreparationInternals;
 
-test('skips the agent config write when the resolved workspace already matches', async () => {
+test('prepares the native OpenClaw session root and permission mode', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
   const workspace = process.cwd();
-  const request = vi.fn().mockResolvedValue({
-    agents: [{ id: 'main', workspace: `${workspace}${path.sep}` }],
+  const request = vi.fn(async (method: string) => {
+    if (method === 'automationPermission.info') {
+      return { loaded: true, policyId: 'native-session-automation-permission' };
+    }
+    return {
+      key: 'agent:main:justdo:session-1',
+      sessionId: 'gateway-session-1',
+      entry: {
+        sessionId: 'gateway-session-1',
+        permissionMode: 'workspace',
+        sessionRoot: workspace,
+      },
+    };
   });
-  const internals = getWorkspaceSyncInternals(adapter);
+  const internals = getSessionPreparationInternals(adapter);
   internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
 
-  await internals.syncAgentWorkspaceIfNeeded('main', workspace);
+  await expect(
+    adapter.prepareSession('session-1', {
+      permissionMode: 'auto',
+      workspaceRoot: workspace,
+      agentId: 'main',
+    }),
+  ).resolves.toEqual({
+    sessionKey: 'agent:main:justdo:session-1',
+    gatewaySessionId: 'gateway-session-1',
+  });
 
   expect(request).toHaveBeenCalledOnce();
-  expect(request).toHaveBeenCalledWith('agents.list', {});
+  expect(request).toHaveBeenCalledWith('sessions.create', {
+    key: 'agent:main:justdo:session-1',
+    cwd: workspace,
+    permissionMode: 'workspace',
+  });
 });
 
-test('updates the agent config when the workspace changed', async () => {
+test('rejects a session response that did not persist the permission mode', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
-  const workspace = path.resolve('new-workspace');
-  const request = vi.fn((method: string) => {
-    if (method === 'agents.list') {
-      return Promise.resolve({
-        agents: [{ id: 'main', workspace: path.resolve('old-workspace') }],
-      });
+  const request = vi.fn(async (method: string) => {
+    if (method === 'automationPermission.info') {
+      return { loaded: true, policyId: 'native-session-automation-permission' };
     }
-    return Promise.resolve({ ok: true });
+    return {
+      sessionId: 'gateway-session-1',
+      entry: {
+        sessionId: 'gateway-session-1',
+        permissionMode: 'guarded',
+        sessionRoot: process.cwd(),
+      },
+    };
   });
-  const internals = getWorkspaceSyncInternals(adapter);
+  const internals = getSessionPreparationInternals(adapter);
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+
+  await expect(adapter.prepareSession('session-1', { permissionMode: 'full' })).rejects.toThrow(
+    'did not persist the requested session permission mode',
+  );
+});
+
+test('refuses to prepare a turn when the automation permission policy is unavailable', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const request = vi.fn().mockRejectedValue(new Error('method not found'));
+  const internals = adapter as unknown as {
+    gatewayClient: GatewayClientLike | null;
+    ensureAutomationPermissionPolicyReady: () => Promise<void>;
+  };
   internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
 
-  await internals.syncAgentWorkspaceIfNeeded('main', workspace);
-
-  expect(request).toHaveBeenNthCalledWith(1, 'agents.list', {});
-  expect(request).toHaveBeenNthCalledWith(2, 'agents.update', {
-    agentId: 'main',
-    workspace,
-  });
-});
-
-test('does not case-fold unresolved workspace paths that may be distinct', async () => {
-  const { store } = createEmptyStore();
-  const adapter = new OpenClawRuntimeAdapter(store, {});
-  const upperWorkspace = path.resolve('case-sensitive-workspace', 'Foo');
-  const lowerWorkspace = path.resolve('case-sensitive-workspace', 'foo');
-  const request = vi.fn((method: string) => {
-    if (method === 'agents.list') {
-      return Promise.resolve({ agents: [{ id: 'main', workspace: upperWorkspace }] });
-    }
-    return Promise.resolve({ ok: true });
-  });
-  const internals = getWorkspaceSyncInternals(adapter);
-  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
-
-  await internals.syncAgentWorkspaceIfNeeded('main', lowerWorkspace);
-
-  expect(request).toHaveBeenNthCalledWith(2, 'agents.update', {
-    agentId: 'main',
-    workspace: lowerWorkspace,
-  });
-});
-
-test('holds same-agent admission until the accepted send operation finishes', async () => {
-  const { store } = createEmptyStore();
-  const adapter = new OpenClawRuntimeAdapter(store, {});
-  const internals = getWorkspaceSyncInternals(adapter);
-  const order: string[] = [];
-  let releaseFirst: (() => void) | undefined;
-  const firstGate = new Promise<void>(resolve => {
-    releaseFirst = resolve;
-  });
-
-  const first = internals.runWithAgentTurnAdmission('main', async () => {
-    order.push('workspace-a');
-    await firstGate;
-    order.push('send-a');
-  });
-  const second = internals.runWithAgentTurnAdmission('MAIN', async () => {
-    order.push('workspace-b');
-    order.push('send-b');
-  });
-
-  await vi.waitFor(() => expect(order).toEqual(['workspace-a']));
-  releaseFirst?.();
-  await Promise.all([first, second]);
-
-  expect(order).toEqual(['workspace-a', 'send-a', 'workspace-b', 'send-b']);
-});
-
-test('serializes concurrent workspace syncs for the same agent', async () => {
-  const { store } = createEmptyStore();
-  const adapter = new OpenClawRuntimeAdapter(store, {});
-  const workspace = path.resolve('shared-workspace');
-  let currentWorkspace = path.resolve('old-workspace');
-  const request = vi.fn((method: string, params?: unknown) => {
-    if (method === 'agents.list') {
-      return Promise.resolve({ agents: [{ id: 'main', workspace: currentWorkspace }] });
-    }
-    if (method === 'agents.update') {
-      currentWorkspace = (params as { workspace: string }).workspace;
-    }
-    return Promise.resolve({ ok: true });
-  });
-  const internals = getWorkspaceSyncInternals(adapter);
-  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
-
-  await Promise.all([
-    internals.syncAgentWorkspaceIfNeeded('main', workspace),
-    internals.syncAgentWorkspaceIfNeeded('main', workspace),
-  ]);
-
-  expect(request.mock.calls.filter(([method]) => method === 'agents.list')).toHaveLength(2);
-  expect(request.mock.calls.filter(([method]) => method === 'agents.update')).toHaveLength(1);
-});
-
-test('rechecks the workspace after the Gateway client reconnects', async () => {
-  const { store } = createEmptyStore();
-  const adapter = new OpenClawRuntimeAdapter(store, {});
-  const workspace = path.resolve('selected-workspace');
-  const firstRequest = vi.fn().mockResolvedValue({
-    agents: [{ id: 'main', workspace }],
-  });
-  const secondRequest = vi.fn((method: string) => {
-    if (method === 'agents.list') {
-      return Promise.resolve({
-        agents: [{ id: 'main', workspace: path.resolve('gateway-default-workspace') }],
-      });
-    }
-    return Promise.resolve({ ok: true });
-  });
-  const internals = getWorkspaceSyncInternals(adapter);
-  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request: firstRequest };
-
-  await internals.syncAgentWorkspaceIfNeeded('main', workspace);
-  internals.gatewayClientGeneration++;
-  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request: secondRequest };
-  await internals.syncAgentWorkspaceIfNeeded('main', workspace);
-
-  expect(firstRequest).toHaveBeenCalledOnce();
-  expect(secondRequest).toHaveBeenNthCalledWith(1, 'agents.list', {});
-  expect(secondRequest).toHaveBeenNthCalledWith(2, 'agents.update', {
-    agentId: 'main',
-    workspace,
-  });
-});
-
-test('falls back to the existing workspace update when listing agents fails', async () => {
-  const { store } = createEmptyStore();
-  const adapter = new OpenClawRuntimeAdapter(store, {});
-  const workspace = path.resolve('selected-workspace');
-  const request = vi.fn((method: string) => {
-    if (method === 'agents.list') return Promise.reject(new Error('unsupported'));
-    return Promise.resolve({ ok: true });
-  });
-  const internals = getWorkspaceSyncInternals(adapter);
-  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
-
-  await internals.syncAgentWorkspaceIfNeeded('main', workspace);
-
-  expect(request).toHaveBeenNthCalledWith(1, 'agents.list', {});
-  expect(request).toHaveBeenNthCalledWith(2, 'agents.update', {
-    agentId: 'main',
-    workspace,
-  });
+  await expect(internals.ensureAutomationPermissionPolicyReady()).rejects.toThrow(
+    'method not found',
+  );
+  expect(request).toHaveBeenCalledOnce();
+  expect(request).toHaveBeenCalledWith('automationPermission.info');
 });
 
 test('binds a new session receipt to the Gateway acknowledged root run', async () => {
@@ -286,7 +212,7 @@ test('binds a new session receipt to the Gateway acknowledged root run', async (
   const internals = adapter as unknown as {
     gatewayClient: GatewayClientLike | null;
     ensureGatewayClientReady: () => Promise<void>;
-    syncAgentWorkspaceIfNeeded: () => Promise<void>;
+    prepareSession: () => Promise<{ sessionKey: string; gatewaySessionId: string }>;
     runTurn: (
       sessionId: string,
       prompt: string,
@@ -297,7 +223,10 @@ test('binds a new session receipt to the Gateway acknowledged root run', async (
   };
   internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
   internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
-  internals.syncAgentWorkspaceIfNeeded = vi.fn().mockResolvedValue(undefined);
+  internals.prepareSession = vi.fn().mockResolvedValue({
+    sessionKey: 'agent:main:justdo:session-1',
+    gatewaySessionId: 'gateway-session-1',
+  });
 
   const running = internals.runTurn(session.id, 'hello', {
     clientTurnId: 'client-turn-1',
@@ -323,12 +252,15 @@ test('cleans a pending turn without leaking a rejection when chat.send fails', a
     pendingTurns: Map<string, unknown>;
     gatewayClient: GatewayClientLike | null;
     ensureGatewayClientReady: () => Promise<void>;
-    syncAgentWorkspaceIfNeeded: () => Promise<void>;
+    prepareSession: () => Promise<{ sessionKey: string; gatewaySessionId: string }>;
     runTurn: (sessionId: string, prompt: string, options: Record<string, never>) => Promise<void>;
   };
   internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
   internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
-  internals.syncAgentWorkspaceIfNeeded = vi.fn().mockResolvedValue(undefined);
+  internals.prepareSession = vi.fn().mockResolvedValue({
+    sessionKey: 'agent:main:justdo:session-1',
+    gatewaySessionId: 'gateway-session-1',
+  });
 
   await expect(internals.runTurn(session.id, 'hello', {})).rejects.toThrow('send failed');
 
@@ -378,7 +310,7 @@ test('stops an acknowledged turn with the Gateway root run before lifecycle even
     activeTurns: Map<string, SessionTurn>;
     gatewayClient: GatewayClientLike | null;
     ensureGatewayClientReady: () => Promise<void>;
-    syncAgentWorkspaceIfNeeded: () => Promise<void>;
+    prepareSession: () => Promise<{ sessionKey: string; gatewaySessionId: string }>;
     runTurn: (
       sessionId: string,
       prompt: string,
@@ -387,7 +319,10 @@ test('stops an acknowledged turn with the Gateway root run before lifecycle even
   };
   internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
   internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
-  internals.syncAgentWorkspaceIfNeeded = vi.fn().mockResolvedValue(undefined);
+  internals.prepareSession = vi.fn().mockResolvedValue({
+    sessionKey: 'agent:main:justdo:session-1',
+    gatewaySessionId: 'gateway-session-1',
+  });
 
   const running = internals.runTurn(session.id, 'hello', {});
   await vi.waitFor(() => {
@@ -544,24 +479,30 @@ test('continues a goal with the canonical key that actually owns it', async () =
   const adapter = new OpenClawRuntimeAdapter(store, {});
   const canonicalKey = 'agent:legacy:justdo:session-1';
   const request = vi.fn(async (method: string, params: Record<string, unknown>) => {
-    expect(method).toBe('sessions.describe');
-    if (params.key !== canonicalKey) return { session: null };
-    return {
-      session: {
-        key: canonicalKey,
-        goal: {
-          schemaVersion: 1,
-          id: 'goal-1',
-          objective: 'Ship the release',
-          status: 'active',
-          createdAt: 1,
-          updatedAt: 1,
-          tokenStart: 0,
-          tokensUsed: 0,
-          continuationTurns: 0,
+    if (method === 'automationPermission.info') {
+      return { loaded: true, policyId: 'native-session-automation-permission' };
+    }
+    if (method === 'sessions.describe') {
+      if (params.key !== canonicalKey) return { session: null };
+      return {
+        session: {
+          key: canonicalKey,
+          goal: {
+            schemaVersion: 1,
+            id: 'goal-1',
+            objective: 'Ship the release',
+            status: 'active',
+            createdAt: 1,
+            updatedAt: 1,
+            tokenStart: 0,
+            tokensUsed: 0,
+            continuationTurns: 0,
+          },
         },
-      },
-    };
+      };
+    }
+    if (method === 'sessions.create') return createPreparedSessionReceipt(canonicalKey);
+    throw new Error(`unexpected method ${method}`);
   });
   const continueGoal = vi.fn().mockResolvedValue({
     sessionId: 'session-1',
@@ -581,6 +522,10 @@ test('continues a goal with the canonical key that actually owns it', async () =
 
   await adapter.continueGoal('session-1');
 
+  expect(request).toHaveBeenCalledWith(
+    'sessions.create',
+    expect.objectContaining({ key: canonicalKey, permissionMode: 'full' }),
+  );
   expect(continueGoal).toHaveBeenCalledWith('session-1', canonicalKey);
 });
 
@@ -673,7 +618,7 @@ type StopTestAdapter = {
   approvalReconciliation: { events: unknown[] } | null;
 };
 
-test('publishes native cron changes for global permission enforcement', () => {
+test('publishes native cron changes for scheduled-task reconciliation', () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
   const listener = vi.fn();
@@ -769,128 +714,6 @@ test('does not auto-approve cron-shaped exec or plugin approval requests', async
     expect.stringMatching(/approval\.resolve$/),
     expect.anything(),
   );
-});
-
-test('replaces the truncated cron approval summary with complete extension details', async () => {
-  sendToRenderer.mockClear();
-  const { store } = createEmptyStore();
-  const adapter = new OpenClawRuntimeAdapter(store, {});
-  const completeDescription = JSON.stringify(
-    {
-      action: 'add',
-      job: {
-        name: 'Morning report',
-        schedule: { kind: 'cron', expr: '0 9 * * *' },
-        payload: { kind: 'agentTurn', message: 'A'.repeat(400) },
-      },
-    },
-    null,
-    2,
-  );
-  const request = vi.fn((method: string) => {
-    if (method === 'actionApproval.approvalDetails') {
-      return Promise.resolve({ found: true, description: completeDescription });
-    }
-    return Promise.resolve({});
-  });
-  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
-    start: vi.fn(),
-    stop: vi.fn(),
-    request,
-  };
-
-  adapter.handleGatewayEvent({
-    event: 'plugin.approval.requested',
-    payload: {
-      id: 'approval-cron',
-      request: {
-        pluginId: 'action-approval',
-        title: 'Allow scheduled task change?',
-        description:
-          'justdo-detail:11111111-1111-4111-8111-111111111111\n{"action":"add"...',
-        toolName: 'cron',
-        toolCallId: 'tool-call-1',
-        agentId: 'main',
-        sessionKey: 'agent:main:justdo:session-1',
-        allowedDecisions: [ExecApprovalDecision.AllowOnce, ExecApprovalDecision.Deny],
-      },
-      createdAtMs: 1,
-      expiresAtMs: Date.now() + 60_000,
-    },
-  });
-
-  await vi.waitFor(() =>
-    expect(sendToRenderer).toHaveBeenCalledWith(OpenClawApprovalIpc.Requested, {
-      id: 'approval-cron',
-      kind: ApprovalKind.Plugin,
-      request: expect.objectContaining({ description: completeDescription }),
-      createdAtMs: 1,
-      expiresAtMs: expect.any(Number),
-    }),
-  );
-  expect(request).toHaveBeenCalledWith('actionApproval.approvalDetails', {
-    nonce: '11111111-1111-4111-8111-111111111111',
-    toolCallId: 'tool-call-1',
-    agentId: 'main',
-    sessionKey: 'agent:main:justdo:session-1',
-  });
-});
-
-test('offers deny only when complete cron approval details are unavailable', async () => {
-  sendToRenderer.mockClear();
-  const { store } = createEmptyStore();
-  const adapter = new OpenClawRuntimeAdapter(store, {});
-  const request = vi.fn(() => Promise.resolve({ found: false }));
-  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
-    start: vi.fn(),
-    stop: vi.fn(),
-    request,
-  };
-
-  adapter.handleGatewayEvent({
-    event: 'plugin.approval.requested',
-    payload: {
-      id: 'approval-cron-unavailable',
-      request: {
-        pluginId: 'action-approval',
-        title: 'Allow scheduled task change?',
-        description:
-          'justdo-detail:22222222-2222-4222-8222-222222222222\n{"action":"update"...',
-        toolName: 'cron',
-        toolCallId: 'tool-call-missing',
-        allowedDecisions: [ExecApprovalDecision.AllowOnce, ExecApprovalDecision.Deny],
-      },
-      createdAtMs: 1,
-      expiresAtMs: Date.now() + 60_000,
-    },
-  });
-
-  await vi.waitFor(() =>
-    expect(sendToRenderer).toHaveBeenCalledWith(
-      OpenClawApprovalIpc.Requested,
-      expect.objectContaining({
-        id: 'approval-cron-unavailable',
-        kind: ApprovalKind.Plugin,
-        request: expect.objectContaining({
-          allowedDecisions: [ExecApprovalDecision.Deny],
-          description: expect.stringContaining('approval is disabled'),
-        }),
-      }),
-    ),
-  );
-
-  (
-    adapter as unknown as { ensureGatewayClientReady: () => Promise<void> }
-  ).ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
-  request.mockClear();
-  await expect(
-    adapter.resolveApproval(
-      'approval-cron-unavailable',
-      ApprovalDecision.AllowOnce,
-      ApprovalKind.Plugin,
-    ),
-  ).rejects.toThrow('full details are unavailable');
-  expect(request).not.toHaveBeenCalledWith('plugin.approval.resolve', expect.anything());
 });
 
 test('reuses an exact command grant only in the approved session', async () => {
@@ -1341,47 +1164,15 @@ test('stops a recovered active descendant through an idle child session', async 
   expect(abortedKeys).toEqual([parentKey, grandchildKey]);
 });
 
-test('creates or reuses the OpenClaw session before a goal command', async () => {
-  const request = vi.fn().mockResolvedValue({
-    sessionId: ' backing-session-1 ',
-  });
-  const client = {
-    start: vi.fn(),
-    stop: vi.fn(),
-    request,
-  } as GatewayClientLike;
-
-  await expect(
-    ensureSlashCommandSession(
-      client,
-      'agent:main:justdo:session-1',
-      '/goal build a release dashboard',
-    ),
-  ).resolves.toBe('backing-session-1');
-  expect(request).toHaveBeenCalledWith('sessions.create', {
-    key: 'agent:main:justdo:session-1',
-  });
-});
-
-test('does not prepare an OpenClaw session for an ordinary prompt', async () => {
-  const request = vi.fn();
-  const client = {
-    start: vi.fn(),
-    stop: vi.fn(),
-    request,
-  } as GatewayClientLike;
-
-  await expect(
-    ensureSlashCommandSession(client, 'agent:main:justdo:session-1', 'hello'),
-  ).resolves.toBeUndefined();
-  expect(request).not.toHaveBeenCalled();
-});
-
 test('cancels a goal turn stopped while its Gateway session is being prepared', async () => {
   const { store, session } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
-  let resolveSessionCreate: ((value: { sessionId: string }) => void) | undefined;
-  const sessionCreate = new Promise<{ sessionId: string }>(resolve => {
+  type SessionCreateResult = {
+    sessionId: string;
+    entry: { sessionId: string; permissionMode: string; sessionRoot: string };
+  };
+  let resolveSessionCreate: ((value: SessionCreateResult) => void) | undefined;
+  const sessionCreate = new Promise<SessionCreateResult>(resolve => {
     resolveSessionCreate = resolve;
   });
   const request = vi.fn((method: string) => {
@@ -1399,7 +1190,6 @@ test('cancels a goal turn stopped while its Gateway session is being prepared', 
   const internals = adapter as unknown as {
     gatewayClient: GatewayClientLike | null;
     ensureGatewayClientReady: () => Promise<void>;
-    syncAgentWorkspaceIfNeeded: () => Promise<void>;
     runTurn: (
       sessionId: string,
       prompt: string,
@@ -1408,15 +1198,23 @@ test('cancels a goal turn stopped while its Gateway session is being prepared', 
   };
   internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
   internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
-  internals.syncAgentWorkspaceIfNeeded = vi.fn().mockResolvedValue(undefined);
 
   const running = internals.runTurn(session.id, '/goal Ship the release', {});
   await vi.waitFor(() => expect(request).toHaveBeenCalledWith('sessions.create', {
     key: 'agent:main:justdo:session-1',
+    cwd: process.cwd(),
+    permissionMode: 'full',
   }));
 
   await adapter.stopSession(session.id);
-  resolveSessionCreate?.({ sessionId: 'gateway-session-1' });
+  resolveSessionCreate?.({
+    sessionId: 'gateway-session-1',
+    entry: {
+      sessionId: 'gateway-session-1',
+      permissionMode: 'full',
+      sessionRoot: process.cwd(),
+    },
+  });
   await running;
 
   expect(request.mock.calls.some(([method]) => method === 'chat.send')).toBe(false);
@@ -1425,12 +1223,29 @@ test('cancels a goal turn stopped while its Gateway session is being prepared', 
 test('does not let a cancelled preparation clean up a newer turn', async () => {
   const { store, session } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
-  let resolveSessionCreate: ((value: { sessionId: string }) => void) | undefined;
-  const sessionCreate = new Promise<{ sessionId: string }>(resolve => {
+  type SessionCreateResult = {
+    sessionId: string;
+    entry: { sessionId: string; permissionMode: string; sessionRoot: string };
+  };
+  let resolveSessionCreate: ((value: SessionCreateResult) => void) | undefined;
+  const sessionCreate = new Promise<SessionCreateResult>(resolve => {
     resolveSessionCreate = resolve;
   });
+  let sessionCreateCount = 0;
   const request = vi.fn((method: string) => {
-    if (method === 'sessions.create') return sessionCreate;
+    if (method === 'sessions.create') {
+      sessionCreateCount += 1;
+      return sessionCreateCount === 1
+        ? sessionCreate
+        : Promise.resolve({
+            sessionId: 'new-gateway-session',
+            entry: {
+              sessionId: 'new-gateway-session',
+              permissionMode: 'full',
+              sessionRoot: process.cwd(),
+            },
+          });
+    }
     if (method === 'chat.send') return Promise.resolve({ runId: 'new-gateway-run' });
     if (method === 'sessions.list') return Promise.resolve({ sessions: [] });
     if (method === 'sessions.abort') {
@@ -1445,7 +1260,6 @@ test('does not let a cancelled preparation clean up a newer turn', async () => {
     activeTurns: Map<string, SessionTurn>;
     gatewayClient: GatewayClientLike | null;
     ensureGatewayClientReady: () => Promise<void>;
-    syncAgentWorkspaceIfNeeded: () => Promise<void>;
     runTurn: (
       sessionId: string,
       prompt: string,
@@ -1456,7 +1270,6 @@ test('does not let a cancelled preparation clean up a newer turn', async () => {
   };
   internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
   internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
-  internals.syncAgentWorkspaceIfNeeded = vi.fn().mockResolvedValue(undefined);
 
   const oldTurn = internals.runTurn(session.id, '/goal Ship the release', {});
   await vi.waitFor(() => {
@@ -1468,7 +1281,14 @@ test('does not let a cancelled preparation clean up a newer turn', async () => {
   await vi.waitFor(() => {
     expect(internals.activeTurns.get(session.id)?.runId).toBe('new-gateway-run');
   });
-  resolveSessionCreate?.({ sessionId: 'old-gateway-session' });
+  resolveSessionCreate?.({
+    sessionId: 'old-gateway-session',
+    entry: {
+      sessionId: 'old-gateway-session',
+      permissionMode: 'full',
+      sessionRoot: process.cwd(),
+    },
+  });
   await oldTurn;
 
   expect(internals.activeTurns.get(session.id)?.runId).toBe('new-gateway-run');
@@ -1580,7 +1400,7 @@ test('re-aborts a goal turn stopped while chat.send is being accepted', async ()
   const internals = adapter as unknown as {
     gatewayClient: GatewayClientLike | null;
     ensureGatewayClientReady: () => Promise<void>;
-    syncAgentWorkspaceIfNeeded: () => Promise<void>;
+    prepareSession: () => Promise<{ sessionKey: string; gatewaySessionId: string }>;
     runTurn: (
       sessionId: string,
       prompt: string,
@@ -1589,7 +1409,10 @@ test('re-aborts a goal turn stopped while chat.send is being accepted', async ()
   };
   internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
   internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
-  internals.syncAgentWorkspaceIfNeeded = vi.fn().mockResolvedValue(undefined);
+  internals.prepareSession = vi.fn().mockResolvedValue({
+    sessionKey: 'agent:main:justdo:session-1',
+    gatewaySessionId: 'gateway-session-1',
+  });
 
   const running = internals.runTurn(session.id, '/goal Ship the release', {});
   await vi.waitFor(() => expect(request).toHaveBeenCalledWith(
@@ -1646,7 +1469,7 @@ test('keeps a turn active when its post-ack abort cannot be confirmed', async ()
     activeTurns: Map<string, SessionTurn>;
     gatewayClient: GatewayClientLike | null;
     ensureGatewayClientReady: () => Promise<void>;
-    syncAgentWorkspaceIfNeeded: () => Promise<void>;
+    prepareSession: () => Promise<{ sessionKey: string; gatewaySessionId: string }>;
     runTurn: (
       sessionId: string,
       prompt: string,
@@ -1657,7 +1480,10 @@ test('keeps a turn active when its post-ack abort cannot be confirmed', async ()
   };
   internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
   internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
-  internals.syncAgentWorkspaceIfNeeded = vi.fn().mockResolvedValue(undefined);
+  internals.prepareSession = vi.fn().mockResolvedValue({
+    sessionKey: 'agent:main:justdo:session-1',
+    gatewaySessionId: 'gateway-session-1',
+  });
 
   const running = internals.runTurn(session.id, '/goal Ship the release', {});
   await vi.waitFor(() => {
@@ -1705,7 +1531,7 @@ test('does not report success when chat.send rejects and a key abort cannot be c
     activeTurns: Map<string, SessionTurn>;
     gatewayClient: GatewayClientLike | null;
     ensureGatewayClientReady: () => Promise<void>;
-    syncAgentWorkspaceIfNeeded: () => Promise<void>;
+    prepareSession: () => Promise<{ sessionKey: string; gatewaySessionId: string }>;
     runTurn: (
       sessionId: string,
       prompt: string,
@@ -1716,7 +1542,10 @@ test('does not report success when chat.send rejects and a key abort cannot be c
   };
   internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
   internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
-  internals.syncAgentWorkspaceIfNeeded = vi.fn().mockResolvedValue(undefined);
+  internals.prepareSession = vi.fn().mockResolvedValue({
+    sessionKey: 'agent:main:justdo:session-1',
+    gatewaySessionId: 'gateway-session-1',
+  });
 
   const running = internals.runTurn(session.id, '/goal Ship the release', {});
   await vi.waitFor(() => {
@@ -1878,7 +1707,12 @@ test('ensureGatewayClientReady reuses an already connected Gateway client', asyn
     gatewayClient: GatewayClientLike | null;
     ensureGatewayClientReady: () => Promise<void>;
   };
-  internals.gatewayClient = { request: vi.fn() } as unknown as GatewayClientLike;
+  internals.gatewayClient = {
+    request: vi.fn().mockResolvedValue({
+      loaded: true,
+      policyId: 'native-session-automation-permission',
+    }),
+  } as unknown as GatewayClientLike;
 
   await internals.ensureGatewayClientReady();
 
@@ -2275,6 +2109,9 @@ test('resumes a blocked goal through a control run before user input', async () 
   const adapter = new OpenClawRuntimeAdapter(store, {});
   let resumed = false;
   const request = vi.fn(async (method: string) => {
+    if (method === 'automationPermission.info') {
+      return { loaded: true, policyId: 'native-session-automation-permission' };
+    }
     if (method === 'sessions.describe') {
       return {
         session: {
@@ -2292,6 +2129,7 @@ test('resumes a blocked goal through a control run before user input', async () 
       resumed = true;
       return { runId: 'resume-run', status: 'ok' };
     }
+    if (method === 'sessions.create') return createPreparedSessionReceipt();
     throw new Error(`unexpected method ${method}`);
   });
   const registerControlRun = vi.fn();
@@ -2508,6 +2346,9 @@ test('recovers an idle active goal after a Gateway reconnect', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
   const request = vi.fn(async (method: string) => {
+    if (method === 'automationPermission.info') {
+      return { loaded: true, policyId: 'native-session-automation-permission' };
+    }
     if (method === 'sessions.list') {
       return {
         sessions: [{
@@ -2516,6 +2357,7 @@ test('recovers an idle active goal after a Gateway reconnect', async () => {
         }],
       };
     }
+    if (method === 'sessions.create') return createPreparedSessionReceipt();
     throw new Error(`unexpected method ${method}`);
   });
   const continueGoal = vi.fn().mockResolvedValue(undefined);
@@ -2579,11 +2421,17 @@ test('stops an active goal on the initial app connection instead of relaunching 
 test('continues a goal created after the app-start boundary', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
-  const request = vi.fn().mockResolvedValue({
-    sessions: [{
-      key: 'agent:main:justdo:session-1',
-      goal: { id: 'goal-1', status: 'active', createdAt: 300 },
-    }],
+  const request = vi.fn(async (method: string) => {
+    if (method === 'sessions.create') return createPreparedSessionReceipt();
+    if (method === 'automationPermission.info') {
+      return { loaded: true, policyId: 'native-session-automation-permission' };
+    }
+    return {
+      sessions: [{
+        key: 'agent:main:justdo:session-1',
+        goal: { id: 'goal-1', status: 'active', createdAt: 300 },
+      }],
+    };
   });
   const continueGoal = vi.fn().mockResolvedValue(undefined);
   const internals = adapter as unknown as {
@@ -2678,13 +2526,19 @@ test('keeps the initial cutoff pending when the Gateway generation changes mid-s
   const adapter = new OpenClawRuntimeAdapter(store, {});
   let goalCreatedAt = 300;
   const request = vi.fn(async (method: string) => {
-    if (method !== 'sessions.list') throw new Error(`unexpected method ${method}`);
-    return {
-      sessions: [{
-        key: 'agent:main:justdo:session-1',
-        goal: { id: 'goal-1', status: 'active', createdAt: goalCreatedAt },
-      }],
-    };
+    if (method === 'automationPermission.info') {
+      return { loaded: true, policyId: 'native-session-automation-permission' };
+    }
+    if (method === 'sessions.list') {
+      return {
+        sessions: [{
+          key: 'agent:main:justdo:session-1',
+          goal: { id: 'goal-1', status: 'active', createdAt: goalCreatedAt },
+        }],
+      };
+    }
+    if (method === 'sessions.create') return createPreparedSessionReceipt();
+    throw new Error(`unexpected method ${method}`);
   });
   let releaseContinue: (() => void) | undefined;
   const continueGoal = vi.fn(
@@ -2728,6 +2582,9 @@ test('falls back to sessions.describe when the recovery session list is truncate
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
   const request = vi.fn(async (method: string) => {
+    if (method === 'automationPermission.info') {
+      return { loaded: true, policyId: 'native-session-automation-permission' };
+    }
     if (method === 'sessions.list') return { sessions: [], hasMore: true };
     if (method === 'sessions.describe') {
       return {
@@ -2737,6 +2594,7 @@ test('falls back to sessions.describe when the recovery session list is truncate
         },
       };
     }
+    if (method === 'sessions.create') return createPreparedSessionReceipt();
     throw new Error(`unexpected method ${method}`);
   });
   const continueGoal = vi.fn().mockResolvedValue(undefined);

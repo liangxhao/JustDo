@@ -301,7 +301,7 @@ describe('OpenClaw auth logout config sync', () => {
     );
   });
 
-  test('minimal config enables the JustDo permission policy before model setup', () => {
+  test('minimal config uses a restricted fallback before model setup', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-policy-'));
     temporaryDirectories.push(directory);
     const configPath = path.join(directory, 'openclaw.json');
@@ -310,10 +310,8 @@ describe('OpenClaw auth logout config sync', () => {
 
     expect(result.ok).toBe(true);
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    expect(config.plugins.entries['action-approval']).toEqual({
-      enabled: true,
-      config: { mode: 'ask', fullAgentIds: ['justdo-scheduler'] },
-    });
+    expect(config.plugins.entries['action-approval']).toBeUndefined();
+    expect(config.plugins.entries['file-permission-policy']).toBeUndefined();
     expect(config.tools.fs.mode).toBeUndefined();
     expect(config.tools.fs.workspaceOnly).toBe(true);
     expect(config.tools.exec.mode).toBe('ask');
@@ -329,7 +327,7 @@ describe('OpenClaw auth logout config sync', () => {
     });
   });
 
-  test('a second no-model sync force-merges the latest managed permission preset', () => {
+  test('a second no-model sync keeps the fallback and removes retired permission plugins', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-policy-switch-'));
     temporaryDirectories.push(directory);
     const configPath = path.join(directory, 'openclaw.json');
@@ -346,20 +344,17 @@ describe('OpenClaw auth logout config sync', () => {
 
     expect(result.ok).toBe(true);
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    expect(config.tools.exec.mode).toBe('full');
-    expect(config.tools.fs.workspaceOnly).toBe(false);
+    expect(config.tools.exec.mode).toBe('ask');
+    expect(config.tools.fs.workspaceOnly).toBe(true);
     expect(config.plugins.enabled).toBe(true);
     expect(config.plugins.allow).toEqual([
       'browser',
       'ask-user-question',
-      'action-approval',
+      'automation-permission',
       'justdo-runtime-bridge',
     ]);
     expect(config.plugins.deny).toBeUndefined();
-    expect(config.plugins.entries['action-approval']).toEqual({
-      enabled: true,
-      config: { mode: 'full', fullAgentIds: ['justdo-scheduler'] },
-    });
+    expect(config.plugins.entries['action-approval']).toBeUndefined();
     expect(config.plugins.entries['file-permission-policy']).toBeUndefined();
     expect(config.plugins.entries.browser).toEqual({ enabled: true });
   });
@@ -443,7 +438,7 @@ describe('OpenClaw auth logout config sync', () => {
       'agent-workspace-plugin',
       'browser',
       'ask-user-question',
-      'action-approval',
+      'automation-permission',
       'justdo-runtime-bridge',
     ]);
     expect(config.plugins.deny).toBeUndefined();
@@ -560,7 +555,7 @@ describe('OpenClaw auth logout config sync', () => {
       'justdo-skill-only-example',
       'browser',
       'ask-user-question',
-      'action-approval',
+      'automation-permission',
       'justdo-runtime-bridge',
     ]);
     expect(config.plugins.entries.browser).toEqual({ enabled: true });

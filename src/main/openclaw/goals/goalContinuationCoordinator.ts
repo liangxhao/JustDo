@@ -65,6 +65,7 @@ interface GoalContinuationCoordinatorDependencies {
   onRunAccepted: (sessionId: string, sessionKey: string, runId: string) => void;
   onRunFailed: (sessionId: string, runId: string) => void;
   onSnapshot: (snapshot: GoalExecutionSnapshot) => void;
+  prepareSessionForContinuation?: (sessionId: string) => Promise<void>;
   waitBeforeAutomaticContinuation?: () => Promise<void>;
   now?: () => number;
 }
@@ -496,6 +497,9 @@ export class GoalContinuationCoordinator {
       continuationCount,
       updatedAt: this.now(),
     });
+
+    await this.dependencies.prepareSessionForContinuation?.(sessionId);
+    if (generation !== this.generation || this.stoppedSessionIds.has(sessionId)) return;
 
     const runId = `justdo-goal-${goal.id}-${continuationCount}-${randomUUID()}`;
     this.continuationRuns.add(runId);

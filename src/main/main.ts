@@ -70,7 +70,6 @@ import {
   registerWindowHandlers,
 } from './ipc/app';
 import {
-  enqueueCoworkConfigUpdate,
   registerAgentHandlers,
   registerCoworkConfigHandlers,
   registerCoworkInteractionHandlers,
@@ -401,11 +400,12 @@ const getOpenClawDirectoryOperations = (): ManagedDirectoryOperationCoordinator 
           return phase === 'running' || phase === 'starting';
         },
         ownsProcess: pid => getOpenClawEngineManager().getGatewayProcessId() === pid,
-        stop: () => getOpenClawEngineManager().stopGateway(),
-        start: async () => {
-          const status = await getOpenClawEngineManager().startGateway();
-          return { running: status.phase === 'running', message: status.message };
-        },
+        prepareStop: () =>
+          getOpenClawConfigSyncService().prepareGatewayStopAfterExclusiveMutation(
+            'managed-directory-lock',
+          ),
+        stop: token => getOpenClawConfigSyncService().stopGatewayAfterExclusiveMutation(token),
+        start: token => getOpenClawConfigSyncService().startGatewayAfterExclusiveMutation(token),
       },
     });
   }
@@ -486,7 +486,7 @@ const ensureOpenClawRunningForCowork = async () => {
 
   const status = manager.getStatus();
   if (status.phase === 'running') {
-    if (syncResult.permissionVerified) return status;
+    if (syncResult.hostPolicyVerified) return status;
 
     const verification = await getOpenClawConfigSyncService().verifyActivePermissionPolicy();
     return verification.success
@@ -532,7 +532,6 @@ const getOpenClawConfigSyncService = (): OpenClawConfigSyncService => {
       getAskUserExtensionConfig: () => extensionHostLifecycle.config,
       getMcpStore,
       getHookStore,
-      hasActiveGatewayWorkloads: () => getCoworkEngineService().hasActiveSessions(),
       disconnectGatewayClient: () => getCoworkEngineService().disconnectGatewayClient(),
       connectGatewayClient: () => getCoworkEngineService().connectGatewayClient(),
       requestGateway: <T>(method: string, params?: unknown) =>
@@ -604,6 +603,8 @@ const getOpenClawSkillFiles = () => {
     openClawSkillFileService = new OpenClawSkillFileService({
       getOpenClawEngineManager,
       directoryOperations: getOpenClawDirectoryOperations(),
+      runConfigMutationExclusive: operation =>
+        getOpenClawConfigSyncService().runConfigMutationExclusive(operation),
     });
   }
   return openClawSkillFileService;
@@ -890,6 +891,8 @@ if (!gotTheLock) {
       getManagedPluginIds: listManagedOpenClawPluginIds,
       runConfigMutationExclusive: operation =>
         getOpenClawConfigSyncService().runConfigMutationExclusive(operation),
+      restartGatewayAfterMutation: reason =>
+        getOpenClawConfigSyncService().restartGatewayAfterExclusiveMutation(reason),
       directoryOperations: getOpenClawDirectoryOperations(),
     }),
     installationService: pluginInstallationService,
@@ -919,9 +922,47 @@ if (!gotTheLock) {
 
   const sessionPermissionModeCoordinator = new SessionPermissionModeCoordinator({
     getCoworkStore,
-    syncOpenClawConfig,
-    enqueue: enqueueCoworkConfigUpdate,
+    isSessionActive: sessionId => getCoworkEngineRouter().isSessionActive(sessionId),
+    prepareSession: async options => {
+      await getCoworkEngineRouter().prepareSession(options.sessionId, options);
+    },
   });
+  const applyDeferredSessionPermissionMode = (sessionId: string): void => {
+    void sessionPermissionModeCoordinator
+      .applyPendingSessionMode(sessionId)
+      .then(result => {
+        if (!result.success || result.deferred) {
+          const errorSuffix = 'error' in result ? `: ${result.error}` : '.';
+          console.warn(
+            `[OpenClaw] Failed to apply the deferred permission mode for session ${sessionId}${errorSuffix}`,
+          );
+        }
+      })
+      .catch(error => {
+        console.warn(
+          `[OpenClaw] Failed to read the deferred permission mode for session ${sessionId}: ${String(error)}`,
+        );
+      });
+  };
+  let sessionPermissionModeRuntimeBound = false;
+  const bindSessionPermissionModeRuntime = (): void => {
+    if (sessionPermissionModeRuntimeBound) return;
+    const router = getCoworkEngineRouter();
+    const runtimeAdapter = getOpenClawRuntimeAdapter();
+    if (!runtimeAdapter) {
+      throw new Error('OpenClaw runtime adapter was not initialized with the Cowork router.');
+    }
+    runtimeAdapter.setContinuationPermissionPreparer(async sessionId => {
+      const result = await sessionPermissionModeCoordinator.prepareSessionForRun(sessionId);
+      if (!result.success) {
+        throw new Error('error' in result ? result.error : 'Failed to prepare session permissions.');
+      }
+    });
+    router.on('complete', applyDeferredSessionPermissionMode);
+    router.on('error', applyDeferredSessionPermissionMode);
+    router.on('sessionStopped', applyDeferredSessionPermissionMode);
+    sessionPermissionModeRuntimeBound = true;
+  };
 
   registerCoworkSessionExecutionHandlers({
     ensureEngineRunning: ensureOpenClawRunningForCowork,
@@ -934,8 +975,8 @@ if (!gotTheLock) {
   registerCoworkSessionHandlers({
     getCoworkStore,
     getCoworkEngineRouter,
-    setSessionPermissionMode: (sessionId, permissionMode) =>
-      sessionPermissionModeCoordinator.setSessionMode(sessionId, permissionMode),
+    setSessionPermissionMode: (sessionId, permissionMode, options) =>
+      sessionPermissionModeCoordinator.setSessionMode(sessionId, permissionMode, options),
   });
 
   registerCoworkSessionRuntimeHandlers({
@@ -1185,8 +1226,10 @@ if (!gotTheLock) {
     // flows can switch this single call between Enabled and Disabled.
     await syncBuiltinModelProvider(store, { access: BuiltinModelAccess.Enabled });
 
-    bindCoworkRuntimeForwarder(getCoworkEngineRouter(), getCoworkStore);
-    getCoworkEngineRouter().on('cronChanged', () => {
+    const coworkEngineRouter = getCoworkEngineRouter();
+    bindSessionPermissionModeRuntime();
+    bindCoworkRuntimeForwarder(coworkEngineRouter, getCoworkStore);
+    coworkEngineRouter.on('cronChanged', () => {
       void getCronJobService()
         .reconcileGatewayChange()
         .catch(error => {
@@ -1310,21 +1353,10 @@ if (!gotTheLock) {
           const manager = getOpenClawEngineManager();
           const phase = manager.getStatus().phase;
           if (phase === 'running' || phase === 'starting') {
-            // Dispose the adapter's client before restarting the Gateway. Otherwise the
-            // old socket closes asynchronously and leaves gatewayReadyPromise rejected,
-            // so requests made during the restart can observe a permanently stale client.
-            getOpenClawRuntimeAdapter()?.disconnectGatewayClient();
-            void manager
-              .restartGateway({ afterCurrent: true })
-              .then(status => {
-                if (status.phase !== 'running') return;
-                return getCoworkEngineService().connectGatewayClient();
-              })
+            void getOpenClawConfigSyncService()
+              .restartGatewayWhenIdle('proxy-change')
               .catch(async error => {
-                console.error(
-                  '[OpenClaw] Failed to reconnect runtime adapter after proxy restart:',
-                  error,
-                );
+                console.error('[OpenClaw] Failed to restart Gateway after proxy change:', error);
                 await getOpenClawEngineManager()
                   .stopGateway()
                   .catch(stopError => {

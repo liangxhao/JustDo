@@ -154,7 +154,6 @@ export interface CoworkStartOptions {
   activeSkillIds?: string[];
   agentId?: string;
   attachments?: CoworkAttachmentPayload[];
-  permissionMode?: PermissionMode;
   clientTurnId?: string;
   startedAt?: number;
 }

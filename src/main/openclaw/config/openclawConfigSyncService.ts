@@ -1,7 +1,7 @@
 import type { BrowserMode } from '../../../shared/browser';
 import { BuiltinModelSyncReason } from '../../../shared/builtinModels';
-import type { PermissionMode } from '../../../shared/openclaw/approvals';
 import { ScheduledTaskAgentId } from '../../../shared/scheduledTask/constants';
+import { ManagedDirectoryRuntimeStopAbortedError } from '../../core/managedDirectoryOperations';
 import type { CoworkStore } from '../../data/coworkStore';
 import {
   parseModelReferenceV2026_8_1,
@@ -15,6 +15,8 @@ import type { OpenClawHookStore } from '../../plugins/hooks';
 import type { McpStore } from '../../plugins/mcp';
 import type { AskUserExtensionConfig } from './openclawConfigSync';
 import {
+  OPENCLAW_FALLBACK_EXEC_MODE,
+  OPENCLAW_FALLBACK_FS_WORKSPACE_ONLY,
   OpenClawConfigSync,
   verifyLoggedOutOpenClawConfig,
 } from './openclawConfigSync';
@@ -25,7 +27,6 @@ type OpenClawConfigSyncServiceDeps = {
   getAskUserExtensionConfig: () => AskUserExtensionConfig | null;
   getMcpStore: () => McpStore;
   getHookStore: () => OpenClawHookStore;
-  hasActiveGatewayWorkloads: () => boolean;
   disconnectGatewayClient: () => void;
   connectGatewayClient: () => Promise<void>;
   requestGateway: <T>(method: string, params?: unknown) => Promise<T>;
@@ -41,7 +42,7 @@ type SyncOpenClawConfigResult = {
   success: boolean;
   changed: boolean;
   configSynced: boolean;
-  permissionVerified?: boolean;
+  hostPolicyVerified?: boolean;
   status?: OpenClawEngineStatus;
   error?: string;
 };
@@ -58,12 +59,34 @@ type ExecApprovalsSnapshot = {
   file?: ExecApprovalsFile;
 };
 
-const resolveExecApprovalFields = (mode: PermissionMode) => {
-  if (mode === 'full') {
-    return { security: 'full', ask: 'off', askFallback: 'full' };
-  }
-  return { security: 'allowlist', ask: 'on-miss', askFallback: 'deny' };
+type GatewaySuspendPrepareResult =
+  | {
+      status: 'busy' | 'draining';
+      suspensionId?: string;
+    }
+  | {
+      status: 'ready';
+      suspensionId: string;
+    };
+
+type GatewayRestartSuspension = {
+  suspensionId: string;
+  targetProcessGeneration: number;
 };
+
+const FALLBACK_EXEC_APPROVAL_FIELDS = {
+  // OpenClaw ask/auto deliberately share this host floor. The native session
+  // mode remains intact and decides whether the automatic reviewer is enabled.
+  security: 'allowlist',
+  ask: 'on-miss',
+  askFallback: 'deny',
+} as const;
+
+const SCHEDULER_EXEC_APPROVAL_FIELDS = {
+  security: 'full',
+  ask: 'off',
+  askFallback: 'full',
+} as const;
 
 type ConfigSnapshot = {
   config?: {
@@ -97,13 +120,6 @@ type ConfigSnapshot = {
   };
 };
 
-type ActionApprovalInfo = {
-  loaded?: boolean;
-  adapterVersion?: unknown;
-  configuredMode?: unknown;
-  fullAgentIds?: unknown;
-};
-
 const removePersistentApprovalGrants = (
   entry: Record<string, unknown>,
 ): Record<string, unknown> => {
@@ -122,20 +138,19 @@ const removePersistentApprovalGrants = (
 };
 
 const DEFERRED_RESTART_POLL_MS = 3_000;
-const DEFERRED_RESTART_MAX_WAIT_MS = 5 * 60_000;
 
 export type OpenClawConfigApplyMode = 'none' | 'native-reload' | 'hard-restart';
 
 export const resolveOpenClawConfigApplyMode = (options: {
   gatewayPhase: OpenClawEngineStatus['phase'];
   configChanged: boolean;
-  secretEnvVarsChanged: boolean;
+  gatewayLaunchEnvVarsChanged: boolean;
   requiresGatewayRestart: boolean;
 }): OpenClawConfigApplyMode => {
   if (options.gatewayPhase !== 'running' && options.gatewayPhase !== 'starting') {
     return 'none';
   }
-  if (options.secretEnvVarsChanged || options.requiresGatewayRestart) {
+  if (options.gatewayLaunchEnvVarsChanged || options.requiresGatewayRestart) {
     return 'hard-restart';
   }
   if (options.gatewayPhase === 'starting' && options.configChanged) {
@@ -170,8 +185,8 @@ export class OpenClawConfigSyncService {
   private readonly deps: OpenClawConfigSyncServiceDeps;
   private configSync: OpenClawConfigSync | null = null;
   private deferredRestartTimer: ReturnType<typeof setInterval> | null = null;
-  private deferredRestartTimeout: ReturnType<typeof setTimeout> | null = null;
   private deferredRestartGeneration: number | null = null;
+  private deferredRestartCheckInProgress = false;
   private syncTail: Promise<void> = Promise.resolve();
 
   constructor(deps: OpenClawConfigSyncServiceDeps) {
@@ -186,6 +201,151 @@ export class OpenClawConfigSyncService {
 
   runConfigMutationExclusive<T>(operation: () => Promise<T>): Promise<T> {
     return this.enqueueSyncOperation(operation);
+  }
+
+  restartGatewayWhenIdle(reason: string): Promise<OpenClawEngineStatus> {
+    return this.enqueueSyncOperation(() => this.restartGatewayAfterExclusiveMutation(reason));
+  }
+
+  async restartGatewayAfterExclusiveMutation(reason: string): Promise<OpenClawEngineStatus> {
+    const result = await this.restartGatewayOrDefer(reason, true, true);
+    return result.status ?? this.deps.getOpenClawEngineManager().getStatus();
+  }
+
+  async prepareGatewayStopAfterExclusiveMutation(
+    reason: string,
+  ): Promise<
+    { ready: true; token: GatewayRestartSuspension } | { ready: false; message?: string }
+  > {
+    const engineManager = this.deps.getOpenClawEngineManager();
+    const status = engineManager.getStatus();
+    if (status.phase !== 'running') {
+      return { ready: false };
+    }
+
+    const targetProcessGeneration = engineManager.getGatewayProcessGeneration();
+    const suspension = await this.prepareGatewayRestartSuspension(targetProcessGeneration);
+    if (!suspension) {
+      console.log(
+        `[OpenClaw] Gateway directory-lock stop remains busy (reason: ${reason})`,
+      );
+      return { ready: false };
+    }
+    const actionAfterSuspension = resolveDeferredGatewayRestartAction({
+      gatewayPhase: engineManager.getStatus().phase,
+      currentProcessGeneration: engineManager.getGatewayProcessGeneration(),
+      targetProcessGeneration,
+    });
+    if (actionAfterSuspension === 'discard') {
+      console.log(
+        `[OpenClaw] Gateway lifecycle changed while preparing a directory-lock stop (reason: ${reason})`,
+      );
+      return { ready: false };
+    }
+    return { ready: true, token: suspension };
+  }
+
+  async stopGatewayAfterExclusiveMutation(token: unknown): Promise<void> {
+    const engineManager = this.deps.getOpenClawEngineManager();
+    if (
+      !token ||
+      typeof token !== 'object' ||
+      !('targetProcessGeneration' in token) ||
+      typeof token.targetProcessGeneration !== 'number' ||
+      !('suspensionId' in token) ||
+      typeof token.suspensionId !== 'string'
+    ) {
+      throw new ManagedDirectoryRuntimeStopAbortedError(
+        'The Gateway stop preparation is invalid. Try the operation again.',
+      );
+    }
+    const { targetProcessGeneration, suspensionId } = token;
+    if (
+      engineManager.getStatus().phase !== 'running' ||
+      engineManager.getGatewayProcessGeneration() !== targetProcessGeneration
+    ) {
+      throw new ManagedDirectoryRuntimeStopAbortedError(
+        'The Gateway changed after the directory operation was prepared. Try again.',
+      );
+    }
+    try {
+      await engineManager.stopGateway();
+    } catch (error) {
+      const sameGatewayStillRunning =
+        engineManager.getStatus().phase === 'running' &&
+        engineManager.getGatewayProcessGeneration() === targetProcessGeneration;
+      if (sameGatewayStillRunning) {
+        try {
+          await this.deps.requestGateway('gateway.suspend.resume', { suspensionId });
+        } catch (recoveryError) {
+          throw new Error(
+            `Gateway stop failed and its suspension could not be resumed: ${String(recoveryError)}`,
+            { cause: error },
+          );
+        }
+        throw new ManagedDirectoryRuntimeStopAbortedError(
+          `The Gateway could not be stopped safely: ${String(error)}`,
+        );
+      }
+      throw error;
+    } finally {
+      const status = engineManager.getStatus();
+      if (
+        status.phase !== 'running' ||
+        engineManager.getGatewayProcessGeneration() !== targetProcessGeneration
+      ) {
+        this.deps.disconnectGatewayClient();
+        this.clearDeferredRestartForGeneration(targetProcessGeneration);
+      }
+    }
+  }
+
+  async startGatewayAfterExclusiveMutation(
+    token: unknown,
+  ): Promise<{ running: boolean; message?: string }> {
+    const engineManager = this.deps.getOpenClawEngineManager();
+    const status = await engineManager.startGateway();
+    if (status.phase !== 'running') {
+      return { running: false, message: status.message };
+    }
+    if (
+      token &&
+      typeof token === 'object' &&
+      'targetProcessGeneration' in token &&
+      typeof token.targetProcessGeneration === 'number' &&
+      'suspensionId' in token &&
+      typeof token.suspensionId === 'string' &&
+      token.suspensionId &&
+      engineManager.getGatewayProcessGeneration() === token.targetProcessGeneration
+    ) {
+      try {
+        await this.deps.requestGateway('gateway.suspend.resume', {
+          suspensionId: token.suspensionId,
+        });
+        return { running: true };
+      } catch (error) {
+        this.deps.disconnectGatewayClient();
+        await engineManager.stopGateway().catch(stopError => {
+          console.error(
+            '[OpenClaw] Failed to stop Gateway after suspension recovery failed:',
+            stopError,
+          );
+        });
+        const message = `Gateway suspension recovery failed: ${String(error)}`;
+        engineManager.setExternalError(message);
+        return { running: false, message };
+      }
+    }
+    const bridgeResult = await this.restoreGatewayBridgeOrFailClosed({
+      success: true,
+      changed: true,
+      configSynced: true,
+      status,
+    });
+    return {
+      running: bridgeResult.success && bridgeResult.status?.phase === 'running',
+      message: bridgeResult.error ?? bridgeResult.status?.message,
+    };
   }
 
   private enqueueSyncOperation<T>(operation: () => Promise<T>): Promise<T> {
@@ -205,12 +365,11 @@ export class OpenClawConfigSyncService {
     const engineManager = this.deps.getOpenClawEngineManager();
     const statusBeforeSync = engineManager.getStatus();
     const reloadGeneration = engineManager.getGatewayConfigReloadGeneration();
-    const expectedPermissionMode = this.deps.getCoworkStore().getConfig().permissionMode;
-    let restrictedExecPolicyVerified = false;
-    if (statusBeforeSync.phase === 'running' && expectedPermissionMode !== 'full') {
+    let fallbackExecPolicyVerified = false;
+    if (statusBeforeSync.phase === 'running') {
       try {
-        const restrictedPolicyApplied = await this.applyExecApprovalPolicy(expectedPermissionMode);
-        if (!restrictedPolicyApplied) {
+        const fallbackPolicyApplied = await this.applyExecApprovalPolicy();
+        if (!fallbackPolicyApplied) {
           return this.failClosedConfigApplication(
             {
               success: false,
@@ -221,7 +380,7 @@ export class OpenClawConfigSyncService {
             'The restricted host execution policy could not be applied before reloading OpenClaw configuration.',
           );
         }
-        restrictedExecPolicyVerified = true;
+        fallbackExecPolicyVerified = true;
       } catch (error) {
         return this.failClosedConfigApplication(
           {
@@ -260,11 +419,12 @@ export class OpenClawConfigSyncService {
       console.log(`[OpenClaw] Verified logged-out config at ${syncResult.configPath}`);
     }
 
-    const nextSecretEnvVars = this.getConfigSync().collectSecretEnvVars();
-    const prevSecretEnvVars = engineManager.getSecretEnvVars();
-    const secretEnvVarsChanged =
-      JSON.stringify(nextSecretEnvVars) !== JSON.stringify(prevSecretEnvVars);
-    engineManager.setSecretEnvVars(nextSecretEnvVars);
+    const nextGatewayLaunchEnvVars = this.getConfigSync().collectGatewayLaunchEnvVars();
+    const previousGatewayLaunchEnvVars = engineManager.getGatewayLaunchEnvVars();
+    const gatewayLaunchEnvVarsChanged =
+      JSON.stringify(nextGatewayLaunchEnvVars) !==
+      JSON.stringify(previousGatewayLaunchEnvVars);
+    engineManager.setGatewayLaunchEnvVars(nextGatewayLaunchEnvVars);
 
     const isAuthLogout = options.reason === BuiltinModelSyncReason.AuthLogout;
     const applyMode = isAuthLogout
@@ -275,7 +435,7 @@ export class OpenClawConfigSyncService {
       : resolveOpenClawConfigApplyMode({
           gatewayPhase: statusBeforeSync.phase,
           configChanged: syncResult.configChanged,
-          secretEnvVarsChanged,
+          gatewayLaunchEnvVarsChanged,
           requiresGatewayRestart: syncResult.requiresGatewayRestart,
         });
 
@@ -286,7 +446,7 @@ export class OpenClawConfigSyncService {
           changed: syncResult.changed,
           configSynced: true,
         },
-        { execPolicyAlreadyVerified: restrictedExecPolicyVerified },
+        { execPolicyAlreadyVerified: fallbackExecPolicyVerified },
       );
     }
 
@@ -363,16 +523,15 @@ export class OpenClawConfigSyncService {
     if (engineManager.getStatus().phase !== 'running') return result;
 
     try {
-      const expectedMode = this.deps.getCoworkStore().getConfig().permissionMode;
       const [runtimeConfigResult, execPolicyApplied] = await Promise.all([
-        this.verifyRuntimePermissionConfig(expectedMode),
+        this.verifyRuntimePermissionConfig(),
         options.execPolicyAlreadyVerified
           ? Promise.resolve(true)
-          : this.applyExecApprovalPolicy(expectedMode),
+          : this.applyExecApprovalPolicy(),
       ]);
       if (runtimeConfigResult.verified && execPolicyApplied) {
         await this.syncManagedSessionModelsViaGateway(runtimeConfigResult.snapshot);
-        return { ...result, permissionVerified: true };
+        return { ...result, hostPolicyVerified: true };
       }
 
       const error = 'The OpenClaw host execution policy could not be verified.';
@@ -385,31 +544,21 @@ export class OpenClawConfigSyncService {
     }
   }
 
-  private async verifyRuntimePermissionConfig(
-    mode: PermissionMode,
-  ): Promise<{ verified: boolean; snapshot: ConfigSnapshot }> {
-    const [snapshot, pluginInfo] = await Promise.all([
-      this.deps.requestGateway<ConfigSnapshot>('config.get'),
-      this.deps.requestGateway<ActionApprovalInfo>('actionApproval.info'),
-    ]);
-    const expectedWorkspaceOnly = mode !== 'full';
+  private async verifyRuntimePermissionConfig(): Promise<{
+    verified: boolean;
+    snapshot: ConfigSnapshot;
+  }> {
+    const snapshot = await this.deps.requestGateway<ConfigSnapshot>('config.get');
     const schedulerAgent = snapshot.config?.agents?.entries?.[ScheduledTaskAgentId];
-    const fullAgentIds = Array.isArray(pluginInfo.fullAgentIds)
-      ? pluginInfo.fullAgentIds.filter((agentId): agentId is string => typeof agentId === 'string')
-      : [];
     return {
       snapshot,
       verified:
       snapshot.config?.tools?.exec?.host === 'gateway' &&
-      snapshot.config.tools.exec.mode === mode &&
-      snapshot.config?.tools?.fs?.workspaceOnly === expectedWorkspaceOnly &&
+      snapshot.config.tools.exec.mode === OPENCLAW_FALLBACK_EXEC_MODE &&
+      snapshot.config?.tools?.fs?.workspaceOnly === OPENCLAW_FALLBACK_FS_WORKSPACE_ONLY &&
       schedulerAgent?.tools?.exec?.host === 'gateway' &&
       schedulerAgent.tools.exec.mode === 'full' &&
-      schedulerAgent.tools.fs?.workspaceOnly === false &&
-      pluginInfo.loaded === true &&
-      pluginInfo.adapterVersion === 2 &&
-      pluginInfo.configuredMode === mode &&
-      fullAgentIds.includes(ScheduledTaskAgentId),
+      schedulerAgent.tools.fs?.workspaceOnly === false,
     };
   }
 
@@ -466,13 +615,13 @@ export class OpenClawConfigSyncService {
     }
   }
 
-  private async applyExecApprovalPolicy(mode: PermissionMode): Promise<boolean> {
+  private async applyExecApprovalPolicy(): Promise<boolean> {
     const current =
       await this.deps.requestGateway<ExecApprovalsSnapshot>('exec.approvals.get');
     if (
       typeof current.hash === 'string' &&
       current.hash.length > 0 &&
-      this.isExecApprovalPolicyApplied(current.file, mode)
+      this.isExecApprovalPolicyApplied(current.file)
     ) {
       return true;
     }
@@ -481,8 +630,8 @@ export class OpenClawConfigSyncService {
       ...(current.file ?? {}),
       version: 1,
     };
-    const policy = resolveExecApprovalFields(mode);
-    const schedulerPolicy = resolveExecApprovalFields('full');
+    const policy = FALLBACK_EXEC_APPROVAL_FIELDS;
+    const schedulerPolicy = SCHEDULER_EXEC_APPROVAL_FIELDS;
     file.defaults = { ...(file.defaults ?? {}), ...policy };
     file.agents = {
       ...Object.fromEntries(
@@ -508,18 +657,15 @@ export class OpenClawConfigSyncService {
       typeof submitted.hash === 'string' &&
       submitted.hash.length > 0 &&
       applied.hash === submitted.hash &&
-      this.isExecApprovalPolicyApplied(applied.file, mode)
+      this.isExecApprovalPolicyApplied(applied.file)
     );
   }
 
-  private isExecApprovalPolicyApplied(
-    file: ExecApprovalsFile | undefined,
-    mode: PermissionMode,
-  ): boolean {
+  private isExecApprovalPolicyApplied(file: ExecApprovalsFile | undefined): boolean {
     if (file?.version !== 1) return false;
 
-    const expected = resolveExecApprovalFields(mode);
-    const schedulerPolicy = resolveExecApprovalFields('full');
+    const expected = FALLBACK_EXEC_APPROVAL_FIELDS;
+    const schedulerPolicy = SCHEDULER_EXEC_APPROVAL_FIELDS;
     const defaults = file.defaults;
     const agents = file.agents ?? {};
     if (!Object.prototype.hasOwnProperty.call(agents, ScheduledTaskAgentId)) return false;
@@ -570,8 +716,8 @@ export class OpenClawConfigSyncService {
     }
     const status = engineManager.setExternalError(
       stopError
-        ? `Permission synchronization is unverified and the Gateway stop failed: ${stopError}`
-        : `Permission synchronization is unverified; the Gateway was stopped. ${error}`,
+        ? `Runtime safety verification failed and the Gateway stop failed: ${stopError}`
+        : `Runtime safety verification failed; the Gateway was stopped. ${error}`,
     );
     return {
       ...result,
@@ -579,7 +725,7 @@ export class OpenClawConfigSyncService {
       configSynced: false,
       status,
       error:
-        `The product preference may have been persisted, but the runtime permission state was not confirmed. ` +
+        `The product configuration may have been persisted, but the active runtime safety state was not confirmed. ` +
         (stopError
           ? `The Gateway stop failed after the app disconnected from it: ${stopError}. `
           : 'The Gateway was stopped to fail closed. ') +
@@ -643,14 +789,13 @@ export class OpenClawConfigSyncService {
         status,
       };
     }
-    if (this.deps.hasActiveGatewayWorkloads()) {
+    const targetProcessGeneration = engineManager.getGatewayProcessGeneration();
+    const suspension = await this.prepareGatewayRestartSuspension(targetProcessGeneration);
+    if (!suspension) {
       console.log(
-        `[OpenClaw] syncOpenClawConfig: deferring hard restart because active workloads exist (reason: ${reason})`,
+        `[OpenClaw] syncOpenClawConfig: deferring hard restart until the native Gateway suspension is ready (reason: ${reason})`,
       );
-      this.scheduleDeferredGatewayRestart(
-        reason,
-        engineManager.getGatewayProcessGeneration(),
-      );
+      this.scheduleDeferredGatewayRestart(reason, targetProcessGeneration);
       return {
         success: true,
         changed,
@@ -659,12 +804,33 @@ export class OpenClawConfigSyncService {
       };
     }
 
+    const actionAfterSuspension = resolveDeferredGatewayRestartAction({
+      gatewayPhase: engineManager.getStatus().phase,
+      currentProcessGeneration: engineManager.getGatewayProcessGeneration(),
+      targetProcessGeneration,
+    });
+    if (actionAfterSuspension === 'discard') {
+      console.log(
+        `[OpenClaw] syncOpenClawConfig: concurrent Gateway lifecycle superseded the prepared restart (reason: ${reason})`,
+      );
+      this.rescheduleDeferredGatewayRestartForCurrentLifecycle(reason);
+      return {
+        success: true,
+        changed,
+        configSynced: true,
+        status: engineManager.getStatus(),
+      };
+    }
+
     console.log(
       `[OpenClaw] syncOpenClawConfig: pre-emptively disconnecting runtime adapter before gateway restart (reason: ${reason})`,
     );
+    this.clearDeferredRestartForGeneration(targetProcessGeneration);
     this.deps.disconnectGatewayClient();
 
-    const restarted = await engineManager.restartGateway({ afterCurrent: true });
+    // A concurrent caller must reuse this generation's restart. Queueing an
+    // un-fenced trailing restart would target the newly started Gateway.
+    const restarted = await engineManager.restartGateway();
     if (restarted.phase !== 'running') {
       return {
         success: false,
@@ -722,18 +888,52 @@ export class OpenClawConfigSyncService {
       clearInterval(this.deferredRestartTimer);
       this.deferredRestartTimer = null;
     }
-    if (this.deferredRestartTimeout) {
-      clearTimeout(this.deferredRestartTimeout);
-      this.deferredRestartTimeout = null;
-    }
     this.deferredRestartGeneration = null;
+  }
+
+  private clearDeferredRestartForGeneration(targetProcessGeneration: number): void {
+    if (this.deferredRestartGeneration === targetProcessGeneration) {
+      this.clearDeferredRestart();
+    }
+  }
+
+  private async prepareGatewayRestartSuspension(
+    targetProcessGeneration: number,
+  ): Promise<GatewayRestartSuspension | null> {
+    try {
+      const result = await this.deps.requestGateway<GatewaySuspendPrepareResult>(
+        'gateway.suspend.prepare',
+        {
+          requestId: `justdo-config-restart-${targetProcessGeneration}`,
+          terminalPolicy: 'preserve',
+        },
+      );
+      if (
+        result.status === 'ready' &&
+        typeof result.suspensionId === 'string' &&
+        result.suspensionId.trim()
+      ) {
+        return {
+          suspensionId: result.suspensionId,
+          targetProcessGeneration,
+        };
+      }
+      if (result.status === 'busy' || result.status === 'draining') {
+        return null;
+      }
+      throw new Error(`unexpected suspension response: ${JSON.stringify(result)}`);
+    } catch (error) {
+      console.warn(
+        `[OpenClaw] Failed to acquire the native Gateway restart suspension; deferring restart: ${String(error)}`,
+      );
+      return null;
+    }
   }
 
   private async executeDeferredGatewayRestart(
     reason: string,
     targetProcessGeneration: number,
   ): Promise<void> {
-    this.clearDeferredRestart();
     const engineManager = this.deps.getOpenClawEngineManager();
     const action = resolveDeferredGatewayRestartAction({
       gatewayPhase: engineManager.getStatus().phase,
@@ -741,16 +941,17 @@ export class OpenClawConfigSyncService {
       targetProcessGeneration,
     });
     if (action === 'discard') {
-      console.log(
-        `[OpenClaw] executeDeferredGatewayRestart: discarding stale restart intent (reason: ${reason})`,
-      );
+      this.rescheduleDeferredGatewayRestartForCurrentLifecycle(reason);
       return;
     }
+    this.clearDeferredRestart();
     console.log(
       `[OpenClaw] executeDeferredGatewayRestart: performing deferred restart (reason: ${reason})`,
     );
     this.deps.disconnectGatewayClient();
-    const status = await engineManager.restartGateway({ afterCurrent: true });
+    // Suspension is bound to targetProcessGeneration, so a concurrent caller
+    // must coalesce with this restart instead of queueing work on the next one.
+    const status = await engineManager.restartGateway();
     if (status.phase !== 'running') {
       console.error(
         `[OpenClaw] executeDeferredGatewayRestart: gateway restart failed (reason: ${reason}): ${status.message || status.phase}`,
@@ -786,16 +987,58 @@ export class OpenClawConfigSyncService {
     this.deferredRestartGeneration = targetProcessGeneration;
 
     this.deferredRestartTimer = setInterval(() => {
-      if (!this.deps.hasActiveGatewayWorkloads()) {
-        void this.executeDeferredGatewayRestart(reason, targetProcessGeneration);
-      }
+      if (this.deferredRestartCheckInProgress) return;
+      this.deferredRestartCheckInProgress = true;
+      void this.enqueueSyncOperation(() =>
+        this.checkDeferredGatewayRestart(reason, targetProcessGeneration),
+      )
+        .catch(error => {
+          console.error(
+            `[OpenClaw] Deferred Gateway restart check failed (reason: ${reason}): ${String(error)}`,
+          );
+        })
+        .finally(() => {
+          this.deferredRestartCheckInProgress = false;
+        });
     }, DEFERRED_RESTART_POLL_MS);
+  }
 
-    this.deferredRestartTimeout = setTimeout(() => {
-      console.warn(
-        `[OpenClaw] scheduleDeferredGatewayRestart: max wait exceeded, forcing restart (reason: ${reason})`,
+  private rescheduleDeferredGatewayRestartForCurrentLifecycle(reason: string): void {
+    const engineManager = this.deps.getOpenClawEngineManager();
+    const status = engineManager.getStatus();
+    this.clearDeferredRestart();
+    if (status.phase === 'running' || status.phase === 'starting') {
+      const generation = engineManager.getGatewayProcessGeneration();
+      console.log(
+        `[OpenClaw] Retargeting deferred Gateway restart to process generation ${generation} (reason: ${reason})`,
       );
-      void this.executeDeferredGatewayRestart(reason, targetProcessGeneration);
-    }, DEFERRED_RESTART_MAX_WAIT_MS);
+      this.scheduleDeferredGatewayRestart(reason, generation);
+      return;
+    }
+    console.log(
+      `[OpenClaw] Discarding deferred Gateway restart because the managed Gateway is ${status.phase} (reason: ${reason})`,
+    );
+  }
+
+  private async checkDeferredGatewayRestart(
+    reason: string,
+    targetProcessGeneration: number,
+  ): Promise<void> {
+    if (this.deferredRestartGeneration !== targetProcessGeneration) return;
+
+    const engineManager = this.deps.getOpenClawEngineManager();
+    const action = resolveDeferredGatewayRestartAction({
+      gatewayPhase: engineManager.getStatus().phase,
+      currentProcessGeneration: engineManager.getGatewayProcessGeneration(),
+      targetProcessGeneration,
+    });
+    if (action === 'discard') {
+      await this.executeDeferredGatewayRestart(reason, targetProcessGeneration);
+      return;
+    }
+    const suspension = await this.prepareGatewayRestartSuspension(targetProcessGeneration);
+    if (suspension && this.deferredRestartGeneration === targetProcessGeneration) {
+      await this.executeDeferredGatewayRestart(reason, targetProcessGeneration);
+    }
   }
 }
