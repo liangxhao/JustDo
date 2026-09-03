@@ -12,6 +12,7 @@ __pycache__/
 .idea/
 vendor/openclaw-runtime/
 vendor/openclaw-plugins/
+.agent-tasks/
 
 # Tar archives generated during Windows packaging
 build-tar/

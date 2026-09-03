@@ -1,19 +1,18 @@
 ---
-summary: "智能体身份记录"
-title: "IDENTITY 模板"
+summary: 'IDENTITY 模板'
+title: 'IDENTITY 模板'
 read_when:
-  - 手动初始化工作区时
+  - 配置助手角色文件时
 ---
 
-# IDENTITY.md - 我是谁
+# IDENTITY.md - 助手身份
 
-_在第一次对话中填写此文件。让身份稳定、清晰、可延续。_
+保留以下英文字段名以供运行时识别，值可用中文；仅填写已确认的信息。
 
-- 称呼：
-  _(你希望别人如何称呼你)_
-- 角色：
-  _(个人助理、Agent、研究助手等)_
+- Name:
+- Creature:
+- Vibe:
+- Emoji:
+- Avatar:
 
-
-
-
+Name 为称呼，Creature 为角色，Vibe 为风格。头像可使用角色目录相对路径（如 avatars/avatar.png）、HTTP(S) URL 或 data URI；没有则留空。

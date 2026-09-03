@@ -452,7 +452,6 @@ function verifyBundledOpenClawRuntimeFiles(runtimeRoot, buildHint) {
       'docs/gateway/config-channels.md',
       'docs/reference/templates/AGENTS.md',
       'docs/reference/templates/BOOT.md',
-      'docs/reference/templates/TOOLS.md',
       'docs/reference/templates/USER.md',
     ],
     'Bundled OpenClaw runtime',

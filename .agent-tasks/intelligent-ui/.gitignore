@@ -1,8 +1,0 @@
-# Disposable native fixture captures and isolated Electron profile.
-host-smoke/
-host-review/
-native-history.json
-native-view-metadata.json
-native-sandbox-shell.html
-*.png
-*.jpg
