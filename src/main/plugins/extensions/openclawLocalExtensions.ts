@@ -3,8 +3,6 @@ import fs from 'fs';
 import JSON5 from 'json5';
 import path from 'path';
 
-import { listRetiredBundledOpenClawExtensionIds } from './openclawExtensionRegistry';
-
 const LOCAL_EXTENSIONS_DIR = 'openclaw-extensions';
 
 const isPathInside = (parentDir: string, childPath: string): boolean => {
@@ -150,19 +148,6 @@ export const syncLocalOpenClawExtensionsIntoRuntime = (
   }
   if (!isPathInside(realRuntimeRoot, realTargetExtensionsDir)) {
     return { sourceDir, copied: [] };
-  }
-
-  for (const retiredId of listRetiredBundledOpenClawExtensionIds()) {
-    const retiredDir = path.join(targetExtensionsDir, retiredId);
-    try {
-      if (fs.lstatSync(retiredDir).isSymbolicLink()) continue;
-      const realRetiredDir = fs.realpathSync(retiredDir);
-      if (!isPathInside(realTargetExtensionsDir, realRetiredDir)) continue;
-    } catch (error) {
-      if (isMissingPathError(error)) continue;
-      return { sourceDir, copied: [] };
-    }
-    fs.rmSync(retiredDir, { recursive: true, force: true });
   }
 
   const copied: string[] = [];

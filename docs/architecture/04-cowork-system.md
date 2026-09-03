@@ -156,7 +156,7 @@ Renderer 的 GoalStatusCard 只按 snapshot 派生文案和按钮，不自行改
 
 `AskUserQuestion` extension 通过 `plugin.ask-user-question.requested/resolved` 产生 interaction。Main 把 extension 的 pending record 绑定到产品 session 并广播问题；Renderer 使用初始居中的非模态悬浮框收集结构化答案，不改变消息区布局。框外区域不拦截指针事件，标题栏可在视口范围内拖动，因此用户能在回答前滚动、选择和复制对话内容。悬浮框只在 interaction 所属 session 为当前会话时显示，切换会话时保留未提交答案与拖动位置；显示期间仅锁定当前会话的消息输入区，防止模型切换、发送或停止操作绕过待回答问题。提交前 Main 根据当前投影校验 question/option id，extension 在 `askUserQuestion.resolve` 再按权威 pending record 校验并完成 promise。pending、`expiresAt`、timeout/default 和 abort 都由 extension 持有；adapter 重连和 Renderer 刷新分别通过 `askUserQuestion.list` 与 interaction replay 恢复待答问题；dismiss 只是 UI 生命周期，不代表拒绝或完成。
 
-Exec/plugin approval 走独立 Gateway approval API，并继续使用阻塞式 modal；不得复用 ask-user 的非模态展示语义。session 级 exec grant 绑定 session key，结束/停止/删除时清除。命令审批等待时限在配置页选择，并进入 OpenClaw 原生 request/wait 生命周期；无限等待不显示倒计时。文件范围与 exec reviewer 由 OpenClaw 原生 session mode 决定，不再由自定义 action approval extension 重复拦截。权限 modal、文本确认模式和 scheduler 的无人值守模式不得共用含糊的 boolean `autoApprove`。
+Exec/plugin approval 走独立 Gateway approval API，并继续使用阻塞式 modal；不得复用 ask-user 的非模态展示语义。session 级 exec grant 绑定 session key，结束/停止/删除时清除。命令审批等待时限在配置页选择，并进入 OpenClaw 原生 request/wait 生命周期；无限等待不显示倒计时。文件范围与 exec reviewer 由 OpenClaw 原生 session mode 统一决定。权限 modal、文本确认模式和 scheduler 的无人值守模式不得共用含糊的 boolean `autoApprove`。
 
 ## 12. Attachments 与文件预览
 

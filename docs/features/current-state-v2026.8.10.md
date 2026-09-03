@@ -28,7 +28,7 @@ Markdown支持task list、KaTeX、highlight、Mermaid、CJK链接修正与stream
 
 ### 2.4 Permissions
 
-Ask/auto/full 分别映射 OpenClaw 原生 session `guarded/workspace/full`；每个 turn 先通过 `sessions.create` 写入并核对 mode/root，失败则不发送。SQLite session 是耐久期望投影，Cowork config 只保存新会话默认值；全局 config 固定 restricted fallback。Exec/plugin approval 分离，session grant 终态清理；旧 `action-approval` 扩展已移除，scheduler agent 继续使用受管无人值守权限。
+Ask/auto/full 分别映射 OpenClaw 原生 session `guarded/workspace/full`；每个 turn 先通过 `sessions.create` 写入并核对 mode/root，失败则不发送。SQLite session 是耐久期望投影，Cowork config 只保存新会话默认值；全局 config 固定 restricted fallback。Exec/plugin approval 分离，session grant 终态清理；scheduler agent 继续使用受管无人值守权限。
 
 ### 2.5 Scheduled Tasks
 

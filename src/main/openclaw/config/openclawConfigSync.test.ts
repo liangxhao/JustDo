@@ -549,7 +549,7 @@ describe('OpenClaw plugin config merging', () => {
           load: { paths: ['C:/plugins'] },
           entries: {
             available: { enabled: true },
-            'file-permission-policy': { enabled: true },
+            unavailable: { enabled: true },
           },
           installs: {
             available: { source: 'npm' },
@@ -597,18 +597,6 @@ describe('OpenClaw plugin config merging', () => {
         'automation-permission': { enabled: true },
       },
     });
-  });
-
-  test('never trusts retired extensions reported by the installed inventory', () => {
-    const merged = mergeOpenClawPluginConfig(
-      {},
-      { 'automation-permission': { enabled: true } },
-      ['file-permission-policy', 'custom-extension'],
-      ['automation-permission', 'custom-extension'],
-    );
-
-    expect(merged.allow).toEqual(['custom-extension', 'automation-permission']);
-    expect(merged.allow).not.toContain('file-permission-policy');
   });
 
   test('preserves imported plugin entries and exclusive slots', () => {

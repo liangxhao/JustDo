@@ -271,8 +271,6 @@ describe('OpenClaw auth logout config sync', () => {
 
     expect(result.ok).toBe(true);
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    expect(config.plugins.entries['action-approval']).toBeUndefined();
-    expect(config.plugins.entries['file-permission-policy']).toBeUndefined();
     expect(config.tools.fs.mode).toBeUndefined();
     expect(config.tools.fs.workspaceOnly).toBe(true);
     expect(config.tools.exec.mode).toBe('ask');
@@ -368,14 +366,14 @@ describe('OpenClaw auth logout config sync', () => {
     expect(JSON.stringify(config.plugins.entries['ask-user-question'])).not.toContain('secret');
   });
 
-  test('a second no-model sync restores AskUserQuestion and removes retired permission plugins', () => {
+  test('a second no-model sync restores AskUserQuestion and removes unavailable plugins', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-policy-switch-'));
     temporaryDirectories.push(directory);
     const configPath = path.join(directory, 'openclaw.json');
-    const retiredInstalledDir = path.join(directory, 'extensions', 'ask-user-question');
-    fs.mkdirSync(retiredInstalledDir, { recursive: true });
+    const installedExtensionDir = path.join(directory, 'extensions', 'ask-user-question');
+    fs.mkdirSync(installedExtensionDir, { recursive: true });
     fs.writeFileSync(
-      path.join(retiredInstalledDir, 'openclaw.plugin.json'),
+      path.join(installedExtensionDir, 'openclaw.plugin.json'),
       JSON.stringify({ id: 'ask-user-question' }),
       'utf8',
     );
@@ -383,10 +381,10 @@ describe('OpenClaw auth logout config sync', () => {
     expect(writeMinimalConfig(configPath, 'startup', 'ask').ok).toBe(true);
     const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     existing.plugins.enabled = false;
-    existing.plugins.entries['file-permission-policy'] = { enabled: true };
+    existing.plugins.entries['unavailable-extension'] = { enabled: true };
     existing.plugins.entries['ask-user-question'] = { enabled: true };
-    existing.plugins.allow = ['custom-plugin', 'ask-user-question', 'file-permission-policy'];
-    existing.plugins.deny = ['action-approval', 'other-denied-plugin'];
+    existing.plugins.allow = ['custom-plugin', 'ask-user-question', 'unavailable-extension'];
+    existing.plugins.deny = ['other-unavailable-extension'];
     fs.writeFileSync(configPath, JSON.stringify(existing), 'utf8');
 
     const result = writeMinimalConfig(configPath, 'cowork-config-change', 'full');
@@ -403,12 +401,11 @@ describe('OpenClaw auth logout config sync', () => {
       'justdo-runtime-bridge',
     ]);
     expect(config.plugins.deny).toBeUndefined();
-    expect(config.plugins.entries['action-approval']).toBeUndefined();
     expect(config.plugins.entries['ask-user-question']).toEqual({
       enabled: true,
       config: { timeoutMinutes: 10 },
     });
-    expect(config.plugins.entries['file-permission-policy']).toBeUndefined();
+    expect(config.plugins.entries['unavailable-extension']).toBeUndefined();
     expect(config.plugins.entries.browser).toEqual({ enabled: true });
   });
 

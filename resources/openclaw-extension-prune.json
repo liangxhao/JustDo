@@ -22,11 +22,6 @@
   ],
   "remove": [
     {
-      "category": "retired-justdo-extensions",
-      "reason": "Former JustDo extension ids retained only so rebuilt runtime staging can remove stale directories after a rename or retirement.",
-      "extensions": ["file-permission-policy"]
-    },
-    {
       "category": "unused-remote-and-device-integrations",
       "reason": "External messaging, device, node and remote-control integrations are not part of the JustDo desktop runtime.",
       "extensions": [

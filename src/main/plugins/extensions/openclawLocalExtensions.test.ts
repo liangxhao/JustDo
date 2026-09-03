@@ -91,48 +91,41 @@ describe('openclawLocalExtensions', () => {
     });
   });
 
-  it('removes retired managed extension directories before syncing local sources', () => {
+  it('syncs local extension sources into the runtime', () => {
     electronApp.isPackaged = false;
     electronApp.getAppPath.mockReturnValue(resourcesDir);
     const sourceDir = path.join(resourcesDir, 'openclaw-extensions', 'automation-permission');
     const runtimeRoot = path.join(resourcesDir, 'runtime');
     const targetExtensionsDir = path.join(runtimeRoot, 'dist', 'extensions');
-    const retiredPermissionDir = path.join(targetExtensionsDir, 'action-approval');
-    const retiredFilePolicyDir = path.join(targetExtensionsDir, 'file-permission-policy');
     fs.mkdirSync(sourceDir, { recursive: true });
-    fs.mkdirSync(retiredPermissionDir, { recursive: true });
-    fs.mkdirSync(retiredFilePolicyDir, { recursive: true });
+    fs.mkdirSync(targetExtensionsDir, { recursive: true });
     fs.writeFileSync(
       path.join(sourceDir, 'openclaw.plugin.json'),
       JSON.stringify({ id: 'automation-permission' }),
     );
-    fs.writeFileSync(path.join(retiredPermissionDir, 'index.js'), 'export default {};');
-    fs.writeFileSync(path.join(retiredFilePolicyDir, 'index.js'), 'export default {};');
 
     expect(syncLocalOpenClawExtensionsIntoRuntime(runtimeRoot).copied).toEqual([
       'automation-permission',
     ]);
-    expect(fs.existsSync(retiredPermissionDir)).toBe(false);
-    expect(fs.existsSync(retiredFilePolicyDir)).toBe(false);
     expect(fs.existsSync(path.join(targetExtensionsDir, 'automation-permission'))).toBe(true);
   });
 
-  it('does not clean through an extensions directory link outside the runtime root', () => {
+  it('does not sync through an extensions directory link outside the runtime root', () => {
     electronApp.isPackaged = false;
     electronApp.getAppPath.mockReturnValue(resourcesDir);
     const sourceDir = path.join(resourcesDir, 'openclaw-extensions', 'automation-permission');
     const runtimeRoot = path.join(resourcesDir, 'runtime-link-test');
     const runtimeDistDir = path.join(runtimeRoot, 'dist');
     const externalExtensionsDir = path.join(resourcesDir, 'external-extensions');
-    const retiredDir = path.join(externalExtensionsDir, 'file-permission-policy');
+    const externalMarker = path.join(externalExtensionsDir, 'keep.txt');
     fs.mkdirSync(sourceDir, { recursive: true });
     fs.mkdirSync(runtimeDistDir, { recursive: true });
-    fs.mkdirSync(retiredDir, { recursive: true });
+    fs.mkdirSync(externalExtensionsDir, { recursive: true });
     fs.writeFileSync(
       path.join(sourceDir, 'openclaw.plugin.json'),
       JSON.stringify({ id: 'automation-permission' }),
     );
-    fs.writeFileSync(path.join(retiredDir, 'keep.txt'), 'do not delete');
+    fs.writeFileSync(externalMarker, 'do not overwrite');
     try {
       fs.symlinkSync(
         externalExtensionsDir,
@@ -144,6 +137,6 @@ describe('openclawLocalExtensions', () => {
     }
 
     expect(syncLocalOpenClawExtensionsIntoRuntime(runtimeRoot).copied).toEqual([]);
-    expect(fs.existsSync(path.join(retiredDir, 'keep.txt'))).toBe(true);
+    expect(fs.readFileSync(externalMarker, 'utf8')).toBe('do not overwrite');
   });
 });

@@ -42,7 +42,6 @@ import {
   inspectLocalOpenClawExtensions,
   inspectOpenClawExtensionCandidate,
   inspectOpenClawExtensionDirectory,
-  listRetiredBundledOpenClawExtensionIds,
 } from '../../plugins/extensions';
 import type { OpenClawHookRecord } from '../../plugins/hooks';
 import type { McpServerRecord } from '../../plugins/mcp';
@@ -244,7 +243,6 @@ export const listAvailableOpenClawExtensionIds = (
   ) {
     return null;
   }
-  const retiredIds = new Set(listRetiredBundledOpenClawExtensionIds());
   return [
     ...new Set([
       ...bundledInventory.ids,
@@ -252,7 +250,7 @@ export const listAvailableOpenClawExtensionIds = (
       ...installedInventory.ids,
       ...workspaceInventories.flatMap(inventory => inventory.ids),
       ...configuredInventory.ids,
-    ].filter(id => !retiredIds.has(id))),
+    ]),
   ].sort();
 };
 
@@ -840,18 +838,17 @@ export const mergeOpenClawPluginConfig = (
   trustedInstalledExtensionIds: string[] = [],
   availableExtensionIds: readonly string[] | null = null,
 ): Record<string, unknown> => {
-  const retiredIds = new Set(listRetiredBundledOpenClawExtensionIds());
   const retainedRegistrationIds = new Set<string>();
   for (const field of ['entries', 'installs'] as const) {
     const registrations = isRecord(existingPlugins[field]) ? existingPlugins[field] : {};
     for (const extensionId of Object.keys(registrations)) {
-      if (!retiredIds.has(extensionId)) retainedRegistrationIds.add(extensionId);
+      retainedRegistrationIds.add(extensionId);
     }
   }
   for (const field of ['allow', 'deny'] as const) {
     const registrations = Array.isArray(existingPlugins[field]) ? existingPlugins[field] : [];
     for (const extensionId of registrations) {
-      if (typeof extensionId === 'string' && !retiredIds.has(extensionId)) {
+      if (typeof extensionId === 'string') {
         retainedRegistrationIds.add(extensionId);
       }
     }
@@ -860,24 +857,23 @@ export const mergeOpenClawPluginConfig = (
   for (const extensionId of Object.values(slots)) {
     if (
       typeof extensionId === 'string' &&
-      !RESERVED_PLUGIN_SLOT_VALUES.has(extensionId) &&
-      !retiredIds.has(extensionId)
+      !RESERVED_PLUGIN_SLOT_VALUES.has(extensionId)
     ) {
       retainedRegistrationIds.add(extensionId);
     }
   }
-  const existingWithoutRetired = removeUnavailableOpenClawPluginRegistrations(
+  const existingRegistrations = removeUnavailableOpenClawPluginRegistrations(
     existingPlugins,
     [...retainedRegistrationIds],
   );
   const managedIds = Object.keys(managedEntries);
   const sourcePlugins = availableExtensionIds
-    ? removeUnavailableOpenClawPluginRegistrations(existingWithoutRetired, [
+    ? removeUnavailableOpenClawPluginRegistrations(existingRegistrations, [
         ...availableExtensionIds,
         ...trustedInstalledExtensionIds,
         ...managedIds,
       ])
-    : existingWithoutRetired;
+    : existingRegistrations;
   const mergedEntries = {
     ...(isRecord(sourcePlugins.entries) ? sourcePlugins.entries : {}),
     ...managedEntries,
@@ -886,7 +882,7 @@ export const mergeOpenClawPluginConfig = (
     ...new Set(
       trustedInstalledExtensionIds
         .map(id => id.trim())
-        .filter(id => Boolean(id) && !retiredIds.has(id)),
+        .filter(Boolean),
     ),
   ];
   if (Object.keys(mergedEntries).length === 0 && trustedIds.length === 0) return sourcePlugins;

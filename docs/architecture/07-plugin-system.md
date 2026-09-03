@@ -129,7 +129,6 @@ Extension 使用 `openclaw.plugin.json`，由 OpenClaw CLI/registry 进行最终
 - 单根目录 archive 可自动下钻；manifest id 只作为结果标签，完整合法性由 OpenClaw installer 决定；
 - 命令 cwd/env 来自 manager，timeout 为 300 秒，输出最多保留 64K；
 - 所有 config mutation 进入 exclusive queue；目录锁处理复用 coordinator；
-- 退役的 `action-approval` / `file-permission-policy` 注册和 runtime 目录由受管同步清理；
 - `ask-user-question` 是受保护的内置交互 extension；其启用状态与等待时限由 config sync 管理，不能从通用扩展页禁用或删除；
 - `automation-permission` 是受保护的内置安全 extension，不能从通用扩展页重配置、禁用或删除；Gateway 每次连接都必须验证其 trusted policy 已加载；
 - 成功不能只看 exit code，还需匹配 OpenClaw 明确 success 输出并重新列举 registry。

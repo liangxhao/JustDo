@@ -10,7 +10,6 @@ export type { OpenClawExtensionDescriptor } from './openclawExtensionRegistry';
 export {
   buildBundledExtensionEntries,
   bundledOpenClawExtensions,
-  listRetiredBundledOpenClawExtensionIds,
 } from './openclawExtensionRegistry';
 export {
   hasBundledOpenClawExtension,

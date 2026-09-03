@@ -3,7 +3,6 @@ import { ScheduledTaskAgentId } from '../../../shared/scheduledTask/constants';
 
 export type OpenClawExtensionDescriptor = {
   id: string;
-  retiredIds?: readonly string[];
   buildEntry: () => Record<string, unknown>;
 };
 
@@ -26,14 +25,6 @@ export const bundledOpenClawExtensions: readonly OpenClawExtensionDescriptor[] =
     buildEntry: () => ({ enabled: true }),
   },
 ] as const;
-
-export const listRetiredBundledOpenClawExtensionIds = (): string[] => [
-  ...new Set([
-    'action-approval',
-    'file-permission-policy',
-    ...bundledOpenClawExtensions.flatMap(extension => extension.retiredIds ?? []),
-  ]),
-];
 
 export const buildBundledExtensionEntries = (
   isAvailable: (id: string) => boolean,

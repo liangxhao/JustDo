@@ -1,10 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { OpenClawExtensionId } from '../../../shared/openclaw/extensions';
-import {
-  buildBundledExtensionEntries,
-  listRetiredBundledOpenClawExtensionIds,
-} from './openclawExtensionRegistry';
+import { buildBundledExtensionEntries } from './openclawExtensionRegistry';
 
 describe('openclawExtensionRegistry', () => {
   it('configures the remaining managed extensions', () => {
@@ -24,12 +21,5 @@ describe('openclawExtensionRegistry', () => {
         enabled: true,
       },
     });
-  });
-
-  it('declares former managed ids for config cleanup', () => {
-    expect(listRetiredBundledOpenClawExtensionIds()).toEqual([
-      'action-approval',
-      'file-permission-policy',
-    ]);
   });
 });

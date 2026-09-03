@@ -83,12 +83,8 @@ OpenClaw 对非 Full session mode 继续应用 host approval file 的限制；�
 
 - 把 UI 选择投影到全局 `tools.exec.mode` / `tools.fs.workspaceOnly`；
 - 每个 turn 修改 Agent workspace 的 admission 逻辑；
-- `action-approval` / `file-permission-policy` 内置扩展、专用 RPC 和 UI 特判；
-- action approval 的保护安装/卸载分支；
 - 将旧 session `permission_mode` 解释为无执行意义的兼容快照；
 - 清空当前会话时强制把默认权限重置为 Full。
-
-config sync 会从 `plugins.entries`、`allow`、`deny`、`installs` 和 slots 中删除两个退役扩展的注册；开发 runtime 资源同步也会删除其目录。该清理是配置资源清理，不是对历史 runtime patch 做原地升级。
 
 ## 7. Fail-closed 规则
 
