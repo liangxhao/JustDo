@@ -55,6 +55,7 @@ const writeExistingBuiltinConfig = (): string => {
       agents: {
         defaults: {
           model: { primary: 'builtin_models/chat-model' },
+          modelSelectionScope: 'global',
           timeoutSeconds: 120,
           compaction: {
             mode: 'safeguard',
@@ -186,6 +187,7 @@ describe('OpenClaw auth logout config sync', () => {
       },
     });
     expect(config.agents.defaults.compaction).not.toHaveProperty('keepRecentTokens');
+    expect(config.agents.defaults.modelSelectionScope).toBe('session');
   });
 
   test('writes the configured MCP request timeout before model setup', () => {
@@ -276,6 +278,7 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.tools.exec.mode).toBe('ask');
     expect(config.tools.sessions).toEqual({ visibility: 'tree' });
     expect(config.agents.defaults.systemAgent).toEqual({ agentId: 'main' });
+    expect(config.agents.defaults.modelSelectionScope).toBe('session');
     expect(config.session).toEqual({
       dmScope: 'per-account-channel-peer',
       reset: { mode: 'none' },
@@ -673,6 +676,7 @@ describe('OpenClaw auth logout config sync', () => {
     expect(JSON.parse(content).agents.defaults.compaction).not.toHaveProperty(
       'keepRecentTokens',
     );
+    expect(JSON.parse(content).agents.defaults.modelSelectionScope).toBe('session');
   });
 
   test('minimal logout removes only built-in model config and preserves custom selections', () => {

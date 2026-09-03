@@ -8,6 +8,7 @@ import {
 import { isGatewayToolFailureNotice } from '@shared/cowork/toolFailureNotice';
 import type { PermissionMode } from '@shared/openclaw/approvals';
 import { isInternalManagedSubagentHandoffError } from '@shared/openclaw/internalRunError';
+import type { OpenClawModelsListResult } from '@shared/openclaw/models';
 
 import {
   addGroup,
@@ -1082,6 +1083,17 @@ export class CoworkService {
       return { success: false, error: 'setDefaultModel API not available' };
     }
     return window.electron.cowork.setDefaultModel(options);
+  }
+
+  async listModels(options?: { agentId?: string }): Promise<OpenClawModelsListResult> {
+    if (!window.electron?.openclaw?.models?.list) {
+      return { success: false, models: [], error: 'listModels API not available' };
+    }
+    return window.electron.openclaw.models.list(options).catch(error => ({
+        success: false,
+        models: [],
+        error: error instanceof Error ? error.message : String(error),
+      }));
   }
 
   async getRecentCwds(limit?: number): Promise<string[]> {

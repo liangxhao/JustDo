@@ -92,6 +92,7 @@ import {
   registerOpenClawEngineHandlers,
   registerOpenClawHistoryHandlers,
   registerOpenClawMemoryHandlers,
+  registerOpenClawModelHandlers,
   registerOpenClawUsageHandlers,
   registerSkillHandlers,
   registerSlashCommandHandlers,
@@ -857,6 +858,7 @@ if (!gotTheLock) {
   registerOpenClawUsageHandlers({ getRuntime: getOpenClawRuntimeAdapter });
   registerOpenClawApprovalHandlers({ getRuntime: getOpenClawRuntimeAdapter });
   registerOpenClawMemoryHandlers({ getManager: getOpenClawEngineManager });
+  registerOpenClawModelHandlers({ getRuntime: getOpenClawRuntimeAdapter });
 
   registerSlashCommandHandlers({
     getGatewayClient: () => getOpenClawRuntimeAdapter()?.getGatewayClient() ?? null,

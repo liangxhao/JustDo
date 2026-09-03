@@ -10,6 +10,11 @@ export interface Model {
   supportsImage?: boolean;
   contextLength?: number; // 模型支持的上下文窗口长度（token 数量）
   maxTokens?: number; // 模型最大输出 token 数量，默认 32k
+  available?: boolean; // OpenClaw 当前运行时是否可选；undefined 表示未知
+  unavailableReason?: 'missing-auth' | 'auth-failed' | 'cooldown';
+  unavailableUntil?: number;
+  reasoning?: boolean;
+  supportsTools?: boolean;
   isServerModel?: boolean; // 是否为服务端套餐模型
   serverApiFormat?: string; // 服务端模型的 API 格式
 }

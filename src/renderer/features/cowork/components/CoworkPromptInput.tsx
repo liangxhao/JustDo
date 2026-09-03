@@ -1,5 +1,6 @@
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { FolderIcon, PaperAirplaneIcon, PauseIcon, StopIcon } from '@heroicons/react/24/solid';
+import type { OpenClawModelChoice } from '@shared/openclaw/models';
 import {
   GoalExecutionPhase,
   type GoalExecutionSnapshot,
@@ -75,6 +76,7 @@ import {
 import { CoworkAttachmentPayload } from '@/features/cowork/coworkTypes';
 import ModelSelector from '@/features/models/ModelSelector';
 import { isSameModelIdentity } from '@/features/models/modelSlice';
+import { enrichModelsFromOpenClawCatalog } from '@/features/models/openclawModelCatalog';
 import {
   matchesOpenClawModelRef,
   resolveOpenClawModelRef,
@@ -269,8 +271,46 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
     const agents = useSelector((state: RootState) => state.agent.agents);
     const availableModels = useSelector((state: RootState) => state.model.availableModels);
+    const [openClawModelCatalog, setOpenClawModelCatalog] = useState<OpenClawModelChoice[]>([]);
+    const [modelCatalogLoading, setModelCatalogLoading] = useState(false);
+    const modelCatalogRequestRef = useRef(0);
     const globalSelectedModel = useSelector((state: RootState) => state.model.selectedModel);
     const effectiveAgentId = modelAgentId ?? currentAgentId;
+    const loadOpenClawModelCatalog = useCallback(async () => {
+      const requestId = ++modelCatalogRequestRef.current;
+      if (
+        !showModelSelector ||
+        remoteManaged ||
+        !effectiveAgentId ||
+        availableModels.length === 0
+      ) {
+        setOpenClawModelCatalog([]);
+        setModelCatalogLoading(false);
+        return;
+      }
+      setModelCatalogLoading(true);
+      try {
+        const result = await coworkService.listModels({ agentId: effectiveAgentId });
+        if (requestId === modelCatalogRequestRef.current) {
+          setOpenClawModelCatalog(result.success ? result.models : []);
+        }
+      } catch {
+        if (requestId === modelCatalogRequestRef.current) setOpenClawModelCatalog([]);
+      } finally {
+        if (requestId === modelCatalogRequestRef.current) setModelCatalogLoading(false);
+      }
+    }, [availableModels, effectiveAgentId, remoteManaged, showModelSelector]);
+    useEffect(() => {
+      setOpenClawModelCatalog([]);
+      void loadOpenClawModelCatalog();
+      return () => {
+        modelCatalogRequestRef.current += 1;
+      };
+    }, [loadOpenClawModelCatalog]);
+    const selectableModels = useMemo(
+      () => enrichModelsFromOpenClawCatalog(availableModels, openClawModelCatalog),
+      [availableModels, openClawModelCatalog],
+    );
     const currentAgent = agents.find(agent => agent.id === effectiveAgentId);
     const { selectedModel: agentSelectedModel, hasInvalidExplicitModel: hasUnresolvedAgentModel } =
       resolveAgentModelSelection({
@@ -312,9 +352,15 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     renderedSessionIdRef.current = sessionId;
     const selectedModel = hasManualModelSelection ? manualModelSelection : baseSelectedModel;
     const effectiveSelectedModel = selectedModel
-      ? (availableModels.find(model => isSameModelIdentity(model, selectedModel)) ?? selectedModel)
+      ? (selectableModels.find(model => isSameModelIdentity(model, selectedModel)) ?? selectedModel)
       : null;
-    const hasNoAvailableModels = !remoteManaged && availableModels.length === 0;
+    const selectedModelUnavailable =
+      !!showModelSelector && !remoteManaged && effectiveSelectedModel?.available === false;
+    const hasNoAvailableModels =
+      !remoteManaged &&
+      (availableModels.length === 0 ||
+        (openClawModelCatalog.length > 0 &&
+          selectableModels.every(model => model.available === false)));
     const modelSupportsImage = !!effectiveSelectedModel?.supportsImage;
     const [value, setValue] = useState(draftPrompt);
     const [showFolderMenu, setShowFolderMenu] = useState(false);
@@ -651,7 +697,14 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           modelSelectionContextRef.current === submissionContext &&
           renderedSessionIdRef.current === sessionId;
         // Require user text even when attachments exist; empty prompts produce poor session titles.
-        if (!trimmedValue || isRunActive || disabled || modelUpdatePending || hasNoAvailableModels)
+        if (
+          !trimmedValue ||
+          isRunActive ||
+          disabled ||
+          modelUpdatePending ||
+          hasNoAvailableModels ||
+          selectedModelUnavailable
+        )
           return;
         setShowFolderRequiredWarning(false);
 
@@ -853,6 +906,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         modelSupportsImage,
         modelUpdatePending,
         hasNoAvailableModels,
+        selectedModelUnavailable,
         sessionId,
         goalExecution?.phase,
         applyAcceptedGoalClear,
@@ -1635,7 +1689,12 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       ];
     }, [disabled, isRunActive, value, contextMenuPos]);
 
-    const canSubmit = !disabled && !modelUpdatePending && !hasNoAvailableModels && !!value.trim();
+    const canSubmit =
+      !disabled &&
+      !modelUpdatePending &&
+      !hasNoAvailableModels &&
+      !selectedModelUnavailable &&
+      !!value.trim();
     const effectivePlaceholder = completionFeedback
       ? i18nService.t('coworkGoalCompletionFeedbackPlaceholder')
       : placeholder;
@@ -2209,8 +2268,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                       <ModelSelector
                         dropdownDirection="up"
                         value={effectiveSelectedModel}
+                        models={selectableModels}
+                        onOpen={() => void loadOpenClawModelCatalog()}
                         disabled={disabled}
-                        loading={modelUpdatePending}
+                        loading={modelUpdatePending || modelCatalogLoading}
                         onChange={async nextModel => {
                           if (!nextModel) return;
                           const selectionContextKey = modelSelectionContextKey;
@@ -2342,6 +2403,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                       {hasNoAvailableModels && (
                         <span className="max-w-60 text-[11px] leading-4 text-red-500">
                           {i18nService.t('noModelAvailableHint')}
+                        </span>
+                      )}
+                      {!hasNoAvailableModels && selectedModelUnavailable && (
+                        <span className="max-w-60 text-[11px] leading-4 text-warning">
+                          {i18nService.t('selectedModelUnavailableHint')}
                         </span>
                       )}
                     </div>

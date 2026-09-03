@@ -587,6 +587,11 @@ interface IElectronAPI {
         error?: string;
       }>;
     };
+    models: {
+      list: (options?: { agentId?: string }) => Promise<
+        import('@shared/openclaw/models').OpenClawModelsListResult
+      >;
+    };
     memory: {
       getOverview: () => Promise<MemoryOverviewResult>;
       getDocument: (relativePath: string) => Promise<MemoryDocumentResult>;

@@ -87,6 +87,12 @@ sequenceDiagram
 会话模型读写通过 `sessions.patch/get`：
 
 - 输入必须是 qualified `provider/model`；旧的裸 model id 在启动迁移时只在唯一匹配时补齐 provider。
+- 模型候选范围仍由 JustDo provider 配置决定；输入框按 Agent 调用 Gateway `models.list`
+  的 `provider-config` 视图，以 OpenClaw v2026.8.2 的目录投影补充认证可用性、输入能力和
+  上下文窗口。明确不可用的模型保留可见但禁止选择，目录读取失败时退回本地配置，不阻断对话。
+- managed config 固定 `agents.defaults.modelSelectionScope=session`。`sessions.patch` 只负责当前
+  session override，Agent/全局默认模型仍由 JustDo SQLite 与 config sync 单点持久化，避免双方
+  同时改写 `openclaw.json`。
 - 返回声明 `appliesTo` 是 next turn 或 subsequent calls，并标记来源是 gateway、local cache 或 agent default。
 - UI 不应在 Gateway patch 失败时永久保留乐观模型；需回退显示并提示。
 - 同一 session/agent 上下文在完成初始 Agent/模型数据加载后，模型选择由用户拥有：只有模型选择框的手动操作可以改变它。选择值、pending task 和确认态保存在 Redux，模型更新通过跨组件实例共享的串行队列执行，避免导航卸载后的旧结果覆盖新选择。Gateway 回读、终态事件、同 session reload、全局默认值和模型列表刷新不得静默切换；打开另一条 session 时，选择框才按该 session 已保存的模型初始化。

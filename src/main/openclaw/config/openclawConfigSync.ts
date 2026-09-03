@@ -645,6 +645,7 @@ const buildAuthScopedOpenClawConfig = (
   const managedDefaults = isRecord(managedAgents.defaults) ? managedAgents.defaults : {};
   const defaults: Record<string, unknown> = {
     ...existingDefaults,
+    modelSelectionScope: managedDefaults.modelSelectionScope ?? 'session',
     ...(Object.prototype.hasOwnProperty.call(existingDefaults, 'model')
       ? { model: rewriteProviderAliasInModel(existingDefaults.model, providerAliases) }
       : {}),
@@ -1762,6 +1763,9 @@ export class OpenClawConfigSync {
       agents: {
         defaults: {
           timeoutSeconds: OPENCLAW_AGENT_TIMEOUT_SECONDS,
+          // JustDo owns durable agent/default-model state. Keep Gateway picker
+          // mutations session-scoped so sessions.patch cannot race the config sync.
+          modelSelectionScope: 'session',
           ...buildManagedOpenClawAgentThinkingConfig(agentRuntimeSettings),
           systemAgent: { agentId: 'main' },
           model: {
@@ -2090,6 +2094,7 @@ export class OpenClawConfigSync {
       agents: {
         ownership: 'explicit',
         defaults: {
+          modelSelectionScope: 'session',
           ...buildManagedOpenClawAgentThinkingConfig(agentRuntimeSettings),
           systemAgent: { agentId: 'main' },
           heartbeat: buildDisabledOpenClawHeartbeatConfig(),
@@ -2210,6 +2215,7 @@ export class OpenClawConfigSync {
               : {};
             const mergedDefaults: Record<string, unknown> = {
               ...existingDefaults,
+              modelSelectionScope: 'session',
               systemAgent: { agentId: 'main' },
               // Replace rather than deep-merge so stale managed keys are removed.
               compaction: buildManagedOpenClawCompactionConfig(),
