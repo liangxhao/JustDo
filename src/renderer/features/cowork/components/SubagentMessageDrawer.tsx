@@ -4,7 +4,11 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import ChatMessageDisplay from '@/features/cowork/components/ChatMessageDisplay';
 import { connectToGateway } from '@/features/cowork/components/JustDoChatWrapper';
-import { type Subagent, subagentStatusStyles } from '@/features/cowork/components/SubagentMenu';
+import {
+  type Subtask as Subagent,
+  SUBTASK_STATUS_I18N_KEYS,
+  subtaskStatusStyles,
+} from '@/features/cowork/components/subtaskPresentation';
 import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/common/Modal';
@@ -258,10 +262,10 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
   if (!displaySubagent) return null;
 
   const formatDateTime = (value?: number): string =>
-    value ? new Date(value).toLocaleString() : i18nService.t('subagentInfoUnavailable');
+    value ? new Date(value).toLocaleString() : i18nService.t('subtaskInfoUnavailable');
 
   const formatRuntime = (value?: number): string => {
-    if (value === undefined) return i18nService.t('subagentInfoUnavailable');
+    if (value === undefined) return i18nService.t('subtaskInfoUnavailable');
     const seconds = Math.max(0, Math.round(value / 1000));
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
@@ -289,26 +293,27 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
   };
 
   const subagentStatus = displaySubagent.status;
+  const subagentStatusLabel = i18nService.t(SUBTASK_STATUS_I18N_KEYS[subagentStatus]);
   const detailRows: Array<[string, React.ReactNode, boolean?]> = [
-    [i18nService.t('subagentInfoStatus'), subagentStatus],
-    [i18nService.t('subagentInfoTask'), displaySubagent.task],
-    [i18nService.t('subagentInfoModel'), displaySubagent.model],
-    [i18nService.t('subagentInfoRuntime'), formatRuntime(displaySubagent.runtimeMs)],
-    [i18nService.t('subagentInfoStarted'), formatDateTime(displaySubagent.startedAt)],
-    [i18nService.t('subagentInfoEnded'), formatDateTime(displaySubagent.endedAt)],
+    [i18nService.t('subtaskInfoStatus'), subagentStatusLabel],
+    [i18nService.t('subtaskInfoTask'), displaySubagent.task],
+    [i18nService.t('subtaskInfoModel'), displaySubagent.model],
+    [i18nService.t('subtaskInfoDuration'), formatRuntime(displaySubagent.runtimeMs)],
+    [i18nService.t('subtaskInfoStarted'), formatDateTime(displaySubagent.startedAt)],
+    [i18nService.t('subtaskInfoEnded'), formatDateTime(displaySubagent.endedAt)],
     [
-      i18nService.t('subagentInfoTokens'),
+      i18nService.t('subtaskInfoTokens'),
       <SubagentTokenUsage key="token-usage" stats={detailStats} isLoading={isDetailStatsLoading} />,
     ],
-    [i18nService.t('subagentInfoSession'), displaySubagent.sessionKey],
-    [i18nService.t('subagentInfoSessionId'), displaySubagent.sessionId, true],
+    [i18nService.t('subtaskInfoSession'), displaySubagent.sessionKey],
+    [i18nService.t('subtaskInfoSessionId'), displaySubagent.sessionId, true],
   ];
 
   const emptyText = hasError
-    ? i18nService.t('subagentMessagesLoadFailed')
+    ? i18nService.t('subtaskMessagesLoadFailed')
     : isLoading
       ? i18nService.t('loading')
-      : i18nService.t('subagentMessagesEmpty');
+      : i18nService.t('subtaskMessagesEmpty');
 
   return (
     <>
@@ -322,16 +327,16 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
           onMouseDown={handleResizeStart}
           role="separator"
           aria-orientation="vertical"
-          aria-label={i18nService.t('subagentDrawerResize')}
-          title={i18nService.t('subagentDrawerResize')}
+          aria-label={i18nService.t('subtaskDrawerResize')}
+          title={i18nService.t('subtaskDrawerResize')}
         />
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-surface/80 px-4 py-2.5">
           <div className="flex min-w-0 flex-1 items-center gap-2.5">
             <span
-              className={`h-2.5 w-2.5 shrink-0 rounded-full ${subagentStatusStyles[subagentStatus]}`}
+              className={`h-2.5 w-2.5 shrink-0 rounded-full ${subtaskStatusStyles[subagentStatus]}`}
             />
             <h2 className="min-w-0 truncate text-sm font-semibold text-foreground">
-              {i18nService.t('subagentDrawerTitle').replace('{title}', displaySubagent.label)}
+              {i18nService.t('subtaskDrawerTitle').replace('{title}', displaySubagent.label)}
             </h2>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
@@ -339,13 +344,13 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
               type="button"
               className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
               onClick={() => setIsInfoOpen(true)}
-              aria-label={i18nService.t('subagentShowInfo')}
-              title={i18nService.t('subagentShowInfo')}
+              aria-label={i18nService.t('subtaskShowInfo')}
+              title={i18nService.t('subtaskShowInfo')}
             >
               <InformationCircleIcon className="h-4 w-4" />
             </button>
             <span className="shrink-0 rounded-full border border-border bg-background px-2 py-0.5 text-xs font-medium text-secondary">
-              {subagentStatus}
+              {subagentStatusLabel}
             </span>
             <button
               type="button"
@@ -408,9 +413,9 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
                     <DocumentDuplicateIcon className="mt-0.5 h-4 w-4 shrink-0" />
                   </button>
                 ) : value == null ? (
-                  i18nService.t('subagentInfoUnavailable')
+                  i18nService.t('subtaskInfoUnavailable')
                 ) : typeof value === 'string' ? (
-                  value || i18nService.t('subagentInfoUnavailable')
+                  value || i18nService.t('subtaskInfoUnavailable')
                 ) : (
                   value
                 )}

@@ -1,4 +1,4 @@
-import { ArrowDownTrayIcon } from '@heroicons/react/24/outline';
+import { ArrowDownTrayIcon, QueueListIcon } from '@heroicons/react/24/outline';
 import { SaveTextFileErrorCode } from '@shared/dialogIpc';
 import { isGoalEditCommand } from '@shared/slashCommands';
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
@@ -26,8 +26,9 @@ import {
   resolveBackgroundRuntimeSessionIds,
   shouldContinueFullRuntimeScan,
 } from '@/features/cowork/components/runtimePolling';
-import SubagentMenu, { type Subagent } from '@/features/cowork/components/SubagentMenu';
 import SubagentMessageDrawer from '@/features/cowork/components/SubagentMessageDrawer';
+import SubtaskListPanel from '@/features/cowork/components/SubtaskListPanel';
+import { isActiveSubtask, type Subtask } from '@/features/cowork/components/subtaskPresentation';
 import {
   selectCoworkConfig,
   selectCoworkSessions,
@@ -106,7 +107,10 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const isMac = window.electron.platform === 'darwin';
   const [isInitialized, setIsInitialized] = useState(false);
   const openClawStatusRef = useRef<OpenClawEngineStatus | null>(null);
-  const [selectedSubagent, setSelectedSubagent] = useState<Subagent | null>(null);
+  const [selectedSubagent, setSelectedSubagent] = useState<Subtask | null>(null);
+  const [subtasks, setSubtasks] = useState<Subtask[]>([]);
+  const [isSubtaskListOpen, setIsSubtaskListOpen] = useState(false);
+  const subtaskListToggleRef = useRef<HTMLButtonElement>(null);
   const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
   const [goalRunProgress, setGoalRunProgress] = useState<GoalRunProgress | null>(null);
   const [contextUsage, setContextUsage] = useState<ChatContextUsageSnapshot | null>(null);
@@ -423,12 +427,20 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     return stopped;
   };
 
-  const handleSubagentsChange = useCallback((subagents: Subagent[]) => {
+  const handleSubtasksChange = useCallback((nextSubtasks: Subtask[]) => {
+    setSubtasks(nextSubtasks);
     setSelectedSubagent(current => {
       if (!current) return null;
-      return subagents.find(subagent => subagent.id === current.id) ?? current;
+      return nextSubtasks.find(subtask => subtask.id === current.id) ?? null;
     });
   }, []);
+
+  const closeSubtaskList = useCallback(() => {
+    setIsSubtaskListOpen(false);
+    requestAnimationFrame(() => subtaskListToggleRef.current?.focus());
+  }, []);
+
+  const activeSubtaskCount = subtasks.filter(subtask => isActiveSubtask(subtask.status)).length;
 
   useEffect(() => {
     const handleNewSession = () => onNewChat?.();
@@ -1044,12 +1056,31 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             >
               <ArrowDownTrayIcon className="h-4 w-4" />
             </button>
-            <SubagentMenu
-              sessionId={currentSession.id}
-              parentRunning={currentSessionRuntimeRunning}
-              onOpenSubagent={setSelectedSubagent}
-              onSubagentsChange={handleSubagentsChange}
-            />
+            <button
+              ref={subtaskListToggleRef}
+              type="button"
+              onMouseDown={event => event.stopPropagation()}
+              onClick={event => {
+                event.stopPropagation();
+                setIsSubtaskListOpen(open => !open);
+              }}
+              className={`relative inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
+                isSubtaskListOpen
+                  ? 'bg-surface-raised text-primary'
+                  : 'text-secondary hover:bg-surface-raised hover:text-foreground'
+              }`}
+              title={i18nService.t(isSubtaskListOpen ? 'subtaskHide' : 'subtaskShow')}
+              aria-label={i18nService.t(isSubtaskListOpen ? 'subtaskHide' : 'subtaskShow')}
+              aria-expanded={isSubtaskListOpen}
+              aria-controls="cowork-subtask-list"
+            >
+              <QueueListIcon className="h-[18px] w-[18px]" />
+              {!isSubtaskListOpen && activeSubtaskCount > 0 && (
+                <span className="absolute -right-0.5 -top-0.5 inline-flex min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold leading-4 text-white">
+                  {activeSubtaskCount}
+                </span>
+              )}
+            </button>
             <WindowTitleBar inline />
           </div>
           {isSessionSearchOpen && (
@@ -1108,61 +1139,71 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             </div>
           )}
         </div>
-        <div className="relative flex min-h-0 flex-1 flex-col">
-          {/* Messages */}
-          <JustDoChatWrapper
-            ref={chatWrapperRef}
-            className="flex-1 min-h-0"
-            assistantName={assistantName}
-            workingDirectory={currentSessionFolderPath}
-            searchQuery={isSessionSearchOpen ? sessionSearchQuery : ''}
-            searchCaseSensitive={!sessionSearchIgnoreCase}
-            searchNavigationToken={sessionSearchNavigation.token}
-            searchNavigationDirection={sessionSearchNavigation.direction}
-            processSummariesExpanded={areProcessSummariesExpanded}
-            onSearchMatchCountChange={handleSessionSearchMatchCountChange}
-            onActivityChange={setGoalRunProgress}
-            onContextUsageChange={setContextUsage}
-            runTimings={sessionRunTimings[currentSession.id] ?? []}
-          />
-          {/* Input */}
-          <div className="shrink-0 pb-4 pt-2">
-            <div className="cowork-content-width mx-auto min-w-0 space-y-1.5">
-              <div className="relative isolate rounded-2xl">
-                <div ref={sessionPromptInputRegionRef} className="shadow-glow-accent rounded-2xl">
-                  <CoworkPromptInput
-                    onSubmit={handleSendMessage}
-                    onStop={handleStopSession}
-                    isStreaming={currentSessionRuntimeRunning}
-                    disabled={!isEngineReady || isQuestionInputBlocked}
-                    placeholder={i18nService.t('coworkContinuePlaceholder')}
-                    size="large"
-                    showModelSelector={true}
-                    sessionId={currentSession.id}
-                    modelAgentId={currentSession.agentId}
-                    sessionModelRef={currentSession.modelRef}
-                    contextUsage={contextUsage}
-                    initialGoalObjective={initialGoalObjective}
-                    goalRunProgress={goalRunProgress}
-                  />
-                </div>
-                {isQuestionInputBlocked && (
-                  <div
-                    className="pointer-events-none absolute inset-0 z-[60] flex cursor-not-allowed items-center justify-center rounded-2xl bg-background/45 backdrop-blur-[1px]"
-                    role="status"
-                    aria-live="polite"
-                  >
-                    <span className="rounded-full border border-border bg-surface/95 px-3 py-1.5 text-xs font-medium text-secondary shadow-subtle">
-                      {i18nService.t('coworkQuestionInputBlocked')}
-                    </span>
+        <div className="relative flex min-h-0 flex-1">
+          <div className="flex min-w-0 flex-1 flex-col">
+            {/* Messages */}
+            <JustDoChatWrapper
+              ref={chatWrapperRef}
+              className="flex-1 min-h-0"
+              assistantName={assistantName}
+              workingDirectory={currentSessionFolderPath}
+              searchQuery={isSessionSearchOpen ? sessionSearchQuery : ''}
+              searchCaseSensitive={!sessionSearchIgnoreCase}
+              searchNavigationToken={sessionSearchNavigation.token}
+              searchNavigationDirection={sessionSearchNavigation.direction}
+              processSummariesExpanded={areProcessSummariesExpanded}
+              onSearchMatchCountChange={handleSessionSearchMatchCountChange}
+              onActivityChange={setGoalRunProgress}
+              onContextUsageChange={setContextUsage}
+              runTimings={sessionRunTimings[currentSession.id] ?? []}
+            />
+            {/* Input */}
+            <div className="shrink-0 pb-4 pt-2">
+              <div className="cowork-content-width mx-auto min-w-0 space-y-1.5">
+                <div className="relative isolate rounded-2xl">
+                  <div ref={sessionPromptInputRegionRef} className="shadow-glow-accent rounded-2xl">
+                    <CoworkPromptInput
+                      onSubmit={handleSendMessage}
+                      onStop={handleStopSession}
+                      isStreaming={currentSessionRuntimeRunning}
+                      disabled={!isEngineReady || isQuestionInputBlocked}
+                      placeholder={i18nService.t('coworkContinuePlaceholder')}
+                      size="large"
+                      showModelSelector={true}
+                      sessionId={currentSession.id}
+                      modelAgentId={currentSession.agentId}
+                      sessionModelRef={currentSession.modelRef}
+                      contextUsage={contextUsage}
+                      initialGoalObjective={initialGoalObjective}
+                      goalRunProgress={goalRunProgress}
+                    />
                   </div>
-                )}
+                  {isQuestionInputBlocked && (
+                    <div
+                      className="pointer-events-none absolute inset-0 z-[60] flex cursor-not-allowed items-center justify-center rounded-2xl bg-background/45 backdrop-blur-[1px]"
+                      role="status"
+                      aria-live="polite"
+                    >
+                      <span className="rounded-full border border-border bg-surface/95 px-3 py-1.5 text-xs font-medium text-secondary shadow-subtle">
+                        {i18nService.t('coworkQuestionInputBlocked')}
+                      </span>
+                    </div>
+                  )}
+                </div>
+                <p className="px-1 text-center text-[11px] font-light leading-4 text-muted">
+                  {i18nService.t('aiGeneratedDisclaimer')}
+                </p>
               </div>
-              <p className="px-1 text-center text-[11px] font-light leading-4 text-muted">
-                {i18nService.t('aiGeneratedDisclaimer')}
-              </p>
             </div>
           </div>
+          <SubtaskListPanel
+            sessionId={currentSession.id}
+            isOpen={isSubtaskListOpen}
+            parentRunning={currentSessionRuntimeRunning}
+            onClose={closeSubtaskList}
+            onOpenSubtask={setSelectedSubagent}
+            onSubtasksChange={handleSubtasksChange}
+          />
           <SubagentMessageDrawer
             parentSessionId={currentSession.id}
             subagent={selectedSubagent}

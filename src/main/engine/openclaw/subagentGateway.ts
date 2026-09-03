@@ -41,9 +41,16 @@ export type GatewaySubagent = {
   task?: string;
   model?: string;
   startedAt?: number;
+  updatedAt?: number;
   endedAt?: number;
   runtimeMs?: number;
   totalTokens?: number;
+  progressSummary?: string;
+  terminalSummary?: string;
+  error?: string;
+  lastActivity?: string;
+  lastToolName?: string;
+  toolUseCount?: number;
 };
 
 type GatewaySubagentProjection = Omit<GatewaySubagent, 'label' | 'labelSource'> & {
@@ -60,6 +67,7 @@ type ListGatewaySubagentsOptions = {
   client: GatewayClientLike;
   parentKeys: string[];
   hydrateDetails?: boolean;
+  hydrateTaskDetails?: boolean;
   includeMalformedForRuntimeControl?: boolean;
 };
 
@@ -145,6 +153,11 @@ const toGatewaySubagent = (
     return null;
   }
   const startedAt = toTimestamp(task.startedAt) ?? toTimestamp(task.createdAt);
+  const updatedAt = toTimestamp(
+    typeof task.updatedAt === 'string' || typeof task.updatedAt === 'number'
+      ? task.updatedAt
+      : undefined,
+  );
   const endedAt = toTimestamp(task.endedAt);
   return {
     id: task.id,
@@ -152,12 +165,19 @@ const toGatewaySubagent = (
     sessionKey,
     ...resolveTaskTitle(task),
     status: mapTaskStatus(task.status),
-    task: optionalString(task.prompt),
+    task: optionalString(task.prompt) ?? optionalString(task.title),
     startedAt,
+    updatedAt,
     endedAt,
     ...(startedAt !== undefined && endedAt !== undefined
       ? { runtimeMs: Math.max(0, endedAt - startedAt) }
       : {}),
+    progressSummary: optionalString(task.progressSummary),
+    terminalSummary: optionalString(task.terminalSummary),
+    error: optionalString(task.error),
+    lastActivity: optionalString(task.lastActivity),
+    lastToolName: optionalString(task.lastToolName),
+    toolUseCount: optionalNumber(task.toolUseCount),
   };
 };
 
@@ -235,9 +255,16 @@ export const mergeGatewaySubagentSnapshots = (
       task: subagent.task ?? previous.task,
       model: subagent.model ?? previous.model,
       startedAt: subagent.startedAt ?? previous.startedAt,
+      updatedAt: subagent.updatedAt ?? previous.updatedAt,
       endedAt: subagent.endedAt ?? previous.endedAt,
       runtimeMs: subagent.runtimeMs ?? previous.runtimeMs,
       totalTokens: subagent.totalTokens ?? previous.totalTokens,
+      progressSummary: subagent.progressSummary ?? previous.progressSummary,
+      terminalSummary: subagent.terminalSummary ?? previous.terminalSummary,
+      error: subagent.error ?? previous.error,
+      lastActivity: subagent.lastActivity ?? previous.lastActivity,
+      lastToolName: subagent.lastToolName ?? previous.lastToolName,
+      toolUseCount: subagent.toolUseCount ?? previous.toolUseCount,
     });
   }
   return [...byId.values()];
@@ -311,7 +338,7 @@ const collectGatewaySubagents = async (
   for (const parentKey of options.parentKeys) {
     try {
       let tasks = await listTaskPages(options.client, parentKey);
-      if (options.hydrateDetails !== false) {
+      if (options.hydrateDetails !== false && options.hydrateTaskDetails !== false) {
         tasks = await hydrateTaskDetails(options.client, tasks);
       }
       for (const task of tasks) tasksById.set(task.id, task);

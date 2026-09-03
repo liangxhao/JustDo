@@ -28,6 +28,11 @@ test('maps native task ledger states and keeps task id separate from display lab
             sessionKey: 'agent:main:justdo:parent',
             childSessionKey: 'agent:main:subagent:child',
             createdAt: 100,
+            updatedAt: 150,
+            toolUseCount: 3,
+            lastToolName: 'read',
+            lastActivity: 'Inspecting source',
+            progressSummary: 'Reviewing the runtime adapter',
           },
         ],
       };
@@ -42,6 +47,11 @@ test('maps native task ledger states and keeps task id separate from display lab
           sessionKey: 'agent:main:justdo:parent',
           childSessionKey: 'agent:main:subagent:child',
           createdAt: 100,
+          updatedAt: 150,
+          toolUseCount: 3,
+          lastToolName: 'read',
+          lastActivity: 'Inspecting source',
+          progressSummary: 'Reviewing the runtime adapter',
           prompt: 'Inspect the implementation.',
         },
       };
@@ -81,7 +91,14 @@ test('maps native task ledger states and keeps task id separate from display lab
       model: 'gpt-5.6',
       totalTokens: 42,
       startedAt: 100,
+      updatedAt: 150,
       endedAt: undefined,
+      progressSummary: 'Reviewing the runtime adapter',
+      terminalSummary: undefined,
+      error: undefined,
+      lastActivity: 'Inspecting source',
+      lastToolName: 'read',
+      toolUseCount: 3,
     },
   ]);
 });

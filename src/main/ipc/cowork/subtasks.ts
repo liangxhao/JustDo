@@ -49,16 +49,19 @@ export const registerCoworkSubtaskHandlers = ({
   getRuntime,
   getGatewaySessionUsage,
 }: Dependencies): void => {
-  ipcMain.handle('cowork:subTask:status', async (_event, sessionId?: string) => {
-    try {
-      const runtime = getRuntime();
-      if (!runtime) return { success: true, subagents: [] };
-      const result = await runtime.getSubagentStatuses(sessionId);
-      return { success: true, subagents: result.subagents || [] };
-    } catch {
-      return { success: false, subagents: [] };
-    }
-  });
+  ipcMain.handle(
+    CoworkSubagentDetailsIpc.Status,
+    async (_event, sessionId?: string, forceRefresh?: boolean) => {
+      try {
+        const runtime = getRuntime();
+        if (!runtime) return { success: true, subagents: [] };
+        const result = await runtime.getSubagentStatuses(sessionId, forceRefresh === true);
+        return { success: true, subagents: result.subagents || [] };
+      } catch {
+        return { success: false, subagents: [] };
+      }
+    },
+  );
 
   ipcMain.handle(
     CoworkSubagentDetailsIpc.Get,

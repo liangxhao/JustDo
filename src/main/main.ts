@@ -8,6 +8,7 @@ import packageJson from '../../package.json';
 import appUpdateConfig from '../shared/appUpdateConfig.json';
 import { normalizeBrowserMode } from '../shared/browser';
 import { BuiltinModelIpc } from '../shared/builtinModels';
+import { CoworkSubagentDetailsIpc } from '../shared/cowork/subagentDetails';
 import type { DeveloperConfig } from '../shared/developerConfig';
 import {
   DEFAULT_WORKSPACE_DIRECTORY_NAME,
@@ -955,7 +956,9 @@ if (!gotTheLock) {
     runtimeAdapter.setContinuationPermissionPreparer(async sessionId => {
       const result = await sessionPermissionModeCoordinator.prepareSessionForRun(sessionId);
       if (!result.success) {
-        throw new Error('error' in result ? result.error : 'Failed to prepare session permissions.');
+        throw new Error(
+          'error' in result ? result.error : 'Failed to prepare session permissions.',
+        );
       }
     });
     router.on('complete', applyDeferredSessionPermissionMode);
@@ -1235,6 +1238,13 @@ if (!gotTheLock) {
         .catch(error => {
           console.warn('[CronJobService] Failed to reconcile scheduler agent assignment:', error);
         });
+    });
+    coworkEngineRouter.on('taskChanged', event => {
+      BrowserWindow.getAllWindows().forEach(window => {
+        if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+          window.webContents.send(CoworkSubagentDetailsIpc.Changed, event);
+        }
+      });
     });
     bindOpenClawStatusForwarder();
 

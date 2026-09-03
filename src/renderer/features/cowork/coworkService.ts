@@ -1101,7 +1101,10 @@ export class CoworkService {
   }
 
   // Get subagent status for a session
-  async getSubTaskStatus(sessionId?: string): Promise<{
+  async getSubTaskStatus(
+    sessionId?: string,
+    forceRefresh = false,
+  ): Promise<{
     subagents?: Array<{
       id: string;
       taskName: string;
@@ -1113,9 +1116,16 @@ export class CoworkService {
       task?: string;
       model?: string;
       startedAt?: number;
+      updatedAt?: number;
       endedAt?: number;
       runtimeMs?: number;
       totalTokens?: number;
+      progressSummary?: string;
+      terminalSummary?: string;
+      error?: string;
+      lastActivity?: string;
+      lastToolName?: string;
+      toolUseCount?: number;
     }>;
   }> {
     const cowork = window.electron?.cowork;
@@ -1123,7 +1133,9 @@ export class CoworkService {
       return { subagents: [] };
     }
 
-    const result = await cowork.getSubTaskStatus(sessionId);
+    const result = forceRefresh
+      ? await cowork.getSubTaskStatus(sessionId, true)
+      : await cowork.getSubTaskStatus(sessionId);
     if (result.success) {
       return {
         subagents: result.subagents,

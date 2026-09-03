@@ -17,7 +17,7 @@ const SubagentTokenUsage: React.FC<SubagentTokenUsageProps> = ({ stats, isLoadin
         <QueryingIndicator />
       </span>
     );
-  if (!stats) return <>{i18nService.t('subagentInfoUnavailable')}</>;
+  if (!stats) return <>{i18nService.t('subtaskInfoUnavailable')}</>;
   if (!stats.hasTokenUsage) return <>{i18nService.t('sessionDetailsNoTokenUsage')}</>;
 
   return (

@@ -19,7 +19,10 @@ import {
 import type { CoworkAttachmentPayload } from '../shared/cowork/attachments';
 import { CoworkSessionDetailsIpc } from '../shared/cowork/sessionDetails';
 import { type GenerateSessionTitleRequest, SessionTitleIpc } from '../shared/cowork/sessionTitle';
-import { CoworkSubagentDetailsIpc } from '../shared/cowork/subagentDetails';
+import {
+  CoworkSubagentDetailsIpc,
+  type CoworkSubtaskChangedEvent,
+} from '../shared/cowork/subagentDetails';
 import { DeveloperConfigIpc } from '../shared/developerConfig';
 import { DialogIpc, type SaveTextFileOptions } from '../shared/dialogIpc';
 import {
@@ -479,12 +482,18 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.on(SessionGoalIpc.Changed, handler);
       return () => ipcRenderer.removeListener(SessionGoalIpc.Changed, handler);
     },
-    getSubTaskStatus: (sessionId?: string) =>
-      ipcRenderer.invoke('cowork:subTask:status', sessionId),
+    getSubTaskStatus: (sessionId?: string, forceRefresh?: boolean) =>
+      ipcRenderer.invoke(CoworkSubagentDetailsIpc.Status, sessionId, forceRefresh),
     getSubTaskDetails: (sessionKey: string) =>
       ipcRenderer.invoke(CoworkSubagentDetailsIpc.Get, sessionKey),
     listSubTaskDescendants: (sessionId: string) =>
       ipcRenderer.invoke(CoworkSubagentDetailsIpc.ListDescendants, sessionId),
+    onSubtasksChanged: (callback: (event: CoworkSubtaskChangedEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, event: CoworkSubtaskChangedEvent) =>
+        callback(event);
+      ipcRenderer.on(CoworkSubagentDetailsIpc.Changed, handler);
+      return () => ipcRenderer.removeListener(CoworkSubagentDetailsIpc.Changed, handler);
+    },
   },
   sessionGroup: {
     list: () => ipcRenderer.invoke('sessionGroup:list'),

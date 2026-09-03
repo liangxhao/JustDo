@@ -92,6 +92,7 @@ export interface CoworkRuntimeEvents {
   error: (sessionId: string, error: string) => void;
   sessionStopped: (sessionId: string) => void;
   cronChanged: (payload: unknown) => void;
+  taskChanged: (event: { sessionId?: string }) => void;
 }
 
 import type { CoworkAttachmentPayload } from '../../shared/cowork/attachments';

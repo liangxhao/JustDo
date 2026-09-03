@@ -9,6 +9,8 @@ type CoworkSubagentDetailsResult =
   import('../../shared/cowork/subagentDetails').CoworkSubagentDetailsResult;
 type CoworkSubagentDescendantsResult =
   import('../../shared/cowork/subagentDetails').CoworkSubagentDescendantsResult;
+type CoworkSubtaskChangedEvent =
+  import('../../shared/cowork/subagentDetails').CoworkSubtaskChangedEvent;
 type GenerateSessionTitleRequest =
   import('../../shared/cowork/sessionTitle').GenerateSessionTitleRequest;
 type SaveTextFileOptions = import('../../shared/dialogIpc').SaveTextFileOptions;
@@ -803,7 +805,10 @@ interface IElectronAPI {
       callback: (snapshot: import('@shared/sessionGoal').GoalExecutionSnapshot) => void,
     ) => () => void;
     onSessionGoalChanged: (callback: (data: { sessionId: string }) => void) => () => void;
-    getSubTaskStatus: (sessionId?: string) => Promise<{
+    getSubTaskStatus: (
+      sessionId?: string,
+      forceRefresh?: boolean,
+    ) => Promise<{
       success: boolean;
       subagents?: Array<{
         id: string;
@@ -816,13 +821,21 @@ interface IElectronAPI {
         task?: string;
         model?: string;
         startedAt?: number;
+        updatedAt?: number;
         endedAt?: number;
         runtimeMs?: number;
         totalTokens?: number;
+        progressSummary?: string;
+        terminalSummary?: string;
+        error?: string;
+        lastActivity?: string;
+        lastToolName?: string;
+        toolUseCount?: number;
       }>;
     }>;
     getSubTaskDetails: (sessionKey: string) => Promise<CoworkSubagentDetailsResult>;
     listSubTaskDescendants: (sessionId: string) => Promise<CoworkSubagentDescendantsResult>;
+    onSubtasksChanged: (callback: (event: CoworkSubtaskChangedEvent) => void) => () => void;
   };
   sessionGroup: {
     list: () => Promise<{ success: boolean; groups?: SessionGroup[]; error?: string }>;

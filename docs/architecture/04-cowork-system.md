@@ -162,11 +162,11 @@ Exec/plugin approval 走独立 Gateway approval API，并继续使用阻塞式 m
 
 附件先用 shared normalizer 验证类型、名称、路径/内容，再作为结构化 metadata 和 Gateway payload 发送。历史解析会提取实际发送路径用于展示。预览读取通过 Main；编辑必须先取得绑定目标的授权 token。会话导出会把 timeline 转成明确格式，不直接复制内部 Gateway JSON。
 
-## 13. Subagent
+## 13. 子任务列表与 Subagent
 
-Subagent 列表以原生 `tasks.list/get` 与 `task` event 为权威；状态稳定化为 `pending/running/done/failed/killed/timeout`。`taskName` 是机器标识，`label` 是展示标题，不能把随机 session key 当用户标题。
+子任务列表以原生 `tasks.list/get` 与 `task` event 为权威，当前展示会话直接派生的 Subagent 任务；状态稳定化为 `pending/running/done/failed/killed/timeout`。`taskName` 是机器标识，`label` 是展示标题，不能把随机 session key 当用户标题。
 
-Main 对 task 查询做 single-flight 和短时缓存，并用版本化 wire validator 检查分页、cursor、状态和 terminal projection；实时 `task` event 合并进同一 ledger。菜单在父会话或任一 child 活动时每 5 秒刷新，全部终态后退避到 30 秒；抽屉只在所选 child 活动时持续刷新，终态只做一次确认。查询不再调用 agent 的 `subagents list` 工具，因此不需要旧 patch 049，也不会计入 agent tool-loop。
+Main 对 task 查询做 single-flight 和短时缓存，并用版本化 wire validator 检查分页、cursor、状态、进度摘要和 terminal projection；实时 `task` event 会使对应快照失效，并经 IPC 通知 Renderer 立即重读原生 ledger。Renderer 参考 OpenClaw WebChat 使用右侧 rail：进行中任务固定优先展示，结束历史默认展开且可手动折叠，每行固定按状态灯、标题、原始状态值和详情按钮排列；右上角入口在 rail 收起时显示活动数。列表即使收起也会预加载，并在父会话或任一 child 活动时每 5 秒刷新，全部终态后退避到 30 秒，轮询也作为重连或丢事件的兜底；抽屉只在所选 child 活动时持续刷新，终态只做一次确认。查询不再调用 agent 的 `subagents list` 工具，因此不需要旧 patch 049，也不会计入 agent tool-loop。
 
 Subagent 详情的 Token 用量不使用 `sessions.list.totalTokens`，因为该字段是上下文快照而非生命周期消耗。详情打开时通过专用 `cowork:subTask:details` IPC 读取该 subagent 的 `sessions.usage` 原始 transcript 聚合，按每个 assistant 模型请求实际返回的 `usage` 累计输入、输出、缓存读取和缓存写入；“总 Token”严格等于这四项之和。tool-only 与控制类 assistant 轮次会计入；当前 transcript 不持久化上下文压缩和 exec review 请求的 `usage`，因此这两类请求尚不在详情累计中。读取失败时保留上一次完整结果，不展示部分累计值。
 

@@ -185,12 +185,19 @@ export type OpenClawTaskSummaryV2026_8_2 = {
   title?: string;
   sessionKey?: string;
   childSessionKey?: string;
+  ownerKey?: string;
   parentTaskId?: string;
   runId?: string;
   agentId?: string;
   createdAt?: string | number;
+  updatedAt?: string | number;
   startedAt?: string | number;
   endedAt?: string | number;
+  toolUseCount?: number;
+  lastToolName?: string;
+  lastActivity?: string;
+  progressSummary?: string;
+  terminalSummary?: string;
   prompt?: string;
   result?: string;
   error?: string;
@@ -219,7 +226,24 @@ export const parseTaskSummaryV2026_8_2 = (
     throw new Error(`${OPENCLAW_WIRE_VERSION} ${field} has an invalid status`);
   }
   const strings = Object.fromEntries(
-    ['runtime', 'kind', 'title', 'sessionKey', 'childSessionKey', 'parentTaskId', 'runId', 'agentId', 'prompt', 'result', 'error']
+    [
+      'runtime',
+      'kind',
+      'title',
+      'sessionKey',
+      'childSessionKey',
+      'ownerKey',
+      'parentTaskId',
+      'runId',
+      'agentId',
+      'lastToolName',
+      'lastActivity',
+      'progressSummary',
+      'terminalSummary',
+      'prompt',
+      'result',
+      'error',
+    ]
       .map(key => [key, optionalString(value[key], `${field}.${key}`)] as const)
       .filter(([, entry]) => entry !== undefined),
   );
@@ -229,8 +253,10 @@ export const parseTaskSummaryV2026_8_2 = (
     status: value.status as OpenClawTaskStatusV2026_8_2,
     ...strings,
     createdAt: parseTaskTimestamp(value.createdAt, `${field}.createdAt`),
+    updatedAt: parseTaskTimestamp(value.updatedAt, `${field}.updatedAt`),
     startedAt: parseTaskTimestamp(value.startedAt, `${field}.startedAt`),
     endedAt: parseTaskTimestamp(value.endedAt, `${field}.endedAt`),
+    toolUseCount: optionalNonNegativeInteger(value.toolUseCount, `${field}.toolUseCount`),
   };
 };
 

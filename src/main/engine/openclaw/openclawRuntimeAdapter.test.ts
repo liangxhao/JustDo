@@ -629,6 +629,79 @@ test('publishes native cron changes for scheduled-task reconciliation', () => {
   expect(listener).toHaveBeenCalledWith({ action: 'added', jobId: 'job-1' });
 });
 
+test.each(['sessionKey', 'childSessionKey', 'ownerKey'] as const)(
+  'publishes native task changes matched by %s for the owning JustDo session',
+  sessionKeyField => {
+    const { store } = createEmptyStore();
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const listener = vi.fn();
+    adapter.on('taskChanged', listener);
+
+    adapter.handleGatewayEvent({
+      event: 'task',
+      payload: {
+        action: 'upserted',
+        task: {
+          id: 'task-1',
+          status: 'running',
+          runtime: 'subagent',
+          [sessionKeyField]: 'agent:main:justdo:session-1',
+        },
+      },
+    });
+
+    expect(listener).toHaveBeenCalledWith({ sessionId: 'session-1' });
+  },
+);
+
+test.each([
+  { action: 'deleted', taskId: 'task-1' },
+  { action: 'restored' },
+])('globally invalidates in-flight task snapshots for $action events', payload => {
+  const { store, session } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const listener = vi.fn();
+  adapter.on('taskChanged', listener);
+  const internals = adapter as unknown as {
+    subagentStatusRefreshes: Map<string, Promise<unknown>>;
+    subagentDetailCache: Map<string, unknown>;
+  };
+  internals.subagentStatusRefreshes.set(session.id, Promise.resolve([]));
+  internals.subagentDetailCache.set(session.id, {});
+
+  adapter.handleGatewayEvent({ event: 'task', payload });
+
+  expect(internals.subagentStatusRefreshes.has(session.id)).toBe(false);
+  expect(internals.subagentDetailCache.has(session.id)).toBe(false);
+  expect(listener).toHaveBeenCalledWith({});
+});
+
+test('publishes task changes to every related managed session', () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.rememberSessionKey('session-2', 'agent:main:justdo:session-2');
+  const listener = vi.fn();
+  adapter.on('taskChanged', listener);
+
+  adapter.handleGatewayEvent({
+    event: 'task',
+    payload: {
+      action: 'upserted',
+      task: {
+        id: 'shared-task',
+        status: 'running',
+        runtime: 'subagent',
+        sessionKey: 'agent:main:justdo:session-1',
+        ownerKey: 'agent:main:justdo:session-2',
+      },
+    },
+  });
+
+  expect(listener).toHaveBeenCalledTimes(2);
+  expect(listener).toHaveBeenCalledWith({ sessionId: 'session-1' });
+  expect(listener).toHaveBeenCalledWith({ sessionId: 'session-2' });
+});
+
 test.each([
   ['exec.approval.resolved', OpenClawApprovalIpc.Resolved, ApprovalKind.Exec],
   ['plugin.approval.requested', OpenClawApprovalIpc.Requested, ApprovalKind.Plugin],
@@ -3582,7 +3655,7 @@ test('keeps native task status authoritative while hydrating retained details le
       { sessionKey: 'agent:main:subagent:old-child', status: 'done' },
     ]);
     expect(request.mock.calls.filter(([method]) => method === 'tasks.list')).toHaveLength(2);
-    expect(request.mock.calls.filter(([method]) => method === 'tasks.get')).toHaveLength(2);
+    expect(request.mock.calls.filter(([method]) => method === 'tasks.get')).toHaveLength(0);
   } finally {
     now.mockRestore();
   }
@@ -3742,6 +3815,114 @@ test('does not repopulate subagent caches after a parent session is deleted', as
 
   expect(internals.subagentStatusCache.has(session.id)).toBe(false);
   expect(internals.subagentDetailCache.has(session.id)).toBe(false);
+});
+
+test('bypasses the subagent status cache for an explicit refresh', async () => {
+  const { store, session } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  let taskListInvocation = 0;
+  const request = vi.fn(async (method: string) => {
+    if (method === 'tasks.list') {
+      taskListInvocation += 1;
+      return {
+        tasks: [
+          {
+            id: 'task-1',
+            runtime: 'subagent',
+            status: taskListInvocation === 1 ? 'running' : 'completed',
+            title: 'Child',
+            childSessionKey: 'agent:main:subagent:child-1',
+          },
+        ],
+      };
+    }
+    if (method === 'sessions.list') {
+      return { sessions: [], hasMore: false, nextOffset: null };
+    }
+    return {};
+  });
+  const internals = adapter as unknown as {
+    gatewayClient: GatewayClientLike | null;
+    ensureGatewayClientReady: () => Promise<void>;
+  };
+  internals.gatewayClient = { request } as unknown as GatewayClientLike;
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+
+  await expect(adapter.getSubagentStatuses(session.id)).resolves.toMatchObject({
+    subagents: [{ status: 'running' }],
+  });
+  await expect(adapter.getSubagentStatuses(session.id)).resolves.toMatchObject({
+    subagents: [{ status: 'running' }],
+  });
+  await expect(adapter.getSubagentStatuses(session.id, true)).resolves.toMatchObject({
+    subagents: [{ status: 'done' }],
+  });
+  expect(request.mock.calls.filter(([method]) => method === 'tasks.list')).toHaveLength(2);
+});
+
+test('starts a fresh task-ledger read when a task event invalidates an in-flight snapshot', async () => {
+  const { store, session } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const parentKey = 'agent:main:justdo:session-1';
+  let releaseFirstList!: () => void;
+  const firstListGate = new Promise<void>(resolve => {
+    releaseFirstList = resolve;
+  });
+  let taskListInvocation = 0;
+  const freshTask = {
+    id: 'fresh-task',
+    runtime: 'subagent',
+    status: 'running',
+    title: 'Fresh child',
+    sessionKey: parentKey,
+    childSessionKey: 'agent:main:subagent:fresh-child',
+  };
+  const request = vi.fn(async (method: string) => {
+    if (method === 'tasks.list') {
+      taskListInvocation += 1;
+      if (taskListInvocation === 1) {
+        await firstListGate;
+        return { tasks: [] };
+      }
+      return { tasks: [freshTask] };
+    }
+    if (method === 'tasks.get') return { task: freshTask };
+    if (method === 'sessions.list') {
+      return { sessions: [], hasMore: false, nextOffset: null };
+    }
+    return {};
+  });
+  const internals = adapter as unknown as {
+    gatewayClient: GatewayClientLike | null;
+    ensureGatewayClientReady: () => Promise<void>;
+    subagentStatusCache: Map<string, { subagents: Array<{ id: string }> }>;
+  };
+  internals.gatewayClient = { request } as unknown as GatewayClientLike;
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  vi.spyOn(adapter, 'getSessionKeysForSession').mockReturnValue([parentKey]);
+
+  const staleRefresh = adapter.getSubagentStatuses(session.id);
+  await vi.waitFor(() => {
+    expect(request.mock.calls.filter(([method]) => method === 'tasks.list')).toHaveLength(1);
+  });
+
+  adapter.handleGatewayEvent({
+    event: 'task',
+    payload: { action: 'upserted', task: freshTask },
+  });
+  const freshRefresh = adapter.getSubagentStatuses(session.id);
+  await vi.waitFor(() => {
+    expect(request.mock.calls.filter(([method]) => method === 'tasks.list')).toHaveLength(2);
+  });
+  await expect(freshRefresh).resolves.toMatchObject({
+    subagents: [{ id: 'fresh-task', status: 'running' }],
+  });
+
+  releaseFirstList();
+  await expect(staleRefresh).resolves.toEqual({ subagents: [] });
+  expect(internals.subagentStatusCache.get(session.id)?.subagents).toMatchObject([
+    { id: 'fresh-task' },
+  ]);
 });
 
 test('coalesces concurrent subagent status refreshes for the same parent session', async () => {

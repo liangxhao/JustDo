@@ -22,15 +22,32 @@ describe('OpenClaw v2026.8.2 wire validators', () => {
           title: 'Research complete',
           sessionKey: 'agent:main:justdo:parent',
           childSessionKey: 'agent:researcher:justdo:child',
+          ownerKey: 'agent:main:justdo:parent',
           createdAt: 100,
+          updatedAt: 180,
           endedAt: 200,
+          toolUseCount: 4,
+          lastToolName: 'read',
+          lastActivity: 'Reading tests',
+          progressSummary: 'Checking task projection',
+          terminalSummary: 'Research finished',
         },
       ],
       nextCursor: '1',
     });
 
     expect(page.nextCursor).toBe('1');
-    expect(page.tasks[0]).toMatchObject({ id: 'task-1', status: 'completed' });
+    expect(page.tasks[0]).toMatchObject({
+      id: 'task-1',
+      status: 'completed',
+      ownerKey: 'agent:main:justdo:parent',
+      updatedAt: 180,
+      toolUseCount: 4,
+      lastToolName: 'read',
+      lastActivity: 'Reading tests',
+      progressSummary: 'Checking task projection',
+      terminalSummary: 'Research finished',
+    });
     expect(parseTasksGetResultV2026_8_2({ task: page.tasks[0] }).task.id).toBe(
       'task-1',
     );

@@ -183,5 +183,9 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
     runtime.on('cronChanged', payload => {
       this.emit('cronChanged', payload);
     });
+
+    runtime.on('taskChanged', event => {
+      this.emit('taskChanged', event);
+    });
   }
 }

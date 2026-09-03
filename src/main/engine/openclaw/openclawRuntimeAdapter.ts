@@ -1279,10 +1279,23 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private handleTaskEvent(payload: unknown): void {
     try {
       const event = parseTaskEventV2026_8_2(payload);
-      if (event.action === 'upserted' && event.task.sessionKey) {
-        const sessionId = this.resolveSessionIdBySessionKey(event.task.sessionKey);
-        if (sessionId) {
-          this.invalidateSubagentStatus(sessionId);
+      if (event.action === 'upserted') {
+        const sessionIds = new Set<string>();
+        for (const sessionKey of [
+          event.task.sessionKey,
+          event.task.childSessionKey,
+          event.task.ownerKey,
+        ]) {
+          if (sessionKey) {
+            const sessionId = this.resolveSessionIdBySessionKey(sessionKey);
+            if (sessionId) sessionIds.add(sessionId);
+          }
+        }
+        if (sessionIds.size > 0) {
+          for (const sessionId of sessionIds) {
+            this.invalidateSubagentStatusSnapshot(sessionId);
+            this.emit('taskChanged', { sessionId });
+          }
           return;
         }
       }
@@ -1291,9 +1304,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       for (const sessionId of new Set([
         ...this.subagentStatusCache.keys(),
         ...this.subagentDetailCache.keys(),
+        ...this.subagentStatusRefreshes.keys(),
       ])) {
-        this.invalidateSubagentStatus(sessionId);
+        if (event.action === 'upserted') {
+          this.invalidateSubagentStatusSnapshot(sessionId);
+        } else {
+          this.invalidateSubagentStatus(sessionId);
+        }
       }
+      this.emit('taskChanged', {});
     } catch (error) {
       coworkLog('WARN', 'OpenClawRuntime', 'Ignored malformed v2026.8.2 task event', {
         error: String(error),
@@ -2683,7 +2702,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     await this.ensureGatewayClientReady();
   }
 
-  async getSubagentStatuses(sessionId?: string): Promise<{
+  async getSubagentStatuses(sessionId?: string, forceRefresh = false): Promise<{
     subagents: Array<{
       id: string;
       taskName: string;
@@ -2695,12 +2714,20 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       task?: string;
       model?: string;
       startedAt?: number;
+      updatedAt?: number;
       endedAt?: number;
       runtimeMs?: number;
       totalTokens?: number;
+      progressSummary?: string;
+      terminalSummary?: string;
+      error?: string;
+      lastActivity?: string;
+      lastToolName?: string;
+      toolUseCount?: number;
     }>;
   }> {
     if (!sessionId) return { subagents: [] };
+    if (forceRefresh) this.invalidateSubagentStatusSnapshot(sessionId);
     const cached = this.subagentStatusCache.get(sessionId);
     if (cached && cached.expiresAt > Date.now()) {
       return { subagents: cached.subagents };
@@ -2735,6 +2762,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       client: this.gatewayClient,
       parentKeys: this.getSessionKeysForSession(sessionId),
       hydrateDetails: detailHydrationRequested,
+      hydrateTaskDetails: false,
     });
     let current = listing.subagents;
     let taskLedgerComplete = !detailHydrationRequested || listing.taskLedgerComplete;
@@ -2749,6 +2777,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       const hydrated = await listGatewaySubagentsWithMetadata({
         client: this.gatewayClient,
         parentKeys: this.getSessionKeysForSession(sessionId),
+        hydrateTaskDetails: false,
       });
       current = mergeGatewaySubagentSnapshots(hydrated.subagents, current);
       detailHydrationRequested = true;
@@ -2786,13 +2815,21 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     return subagents;
   }
 
-  private invalidateSubagentStatus(sessionId: string): void {
+  private invalidateSubagentStatusSnapshot(sessionId: string): void {
     this.subagentStatusCache.delete(sessionId);
-    this.subagentDetailCache.delete(sessionId);
+    // Let the next caller start an authoritative read even if an older snapshot
+    // is still in flight. The generation guard prevents that stale request from
+    // repopulating either cache when it eventually resolves.
+    this.subagentStatusRefreshes.delete(sessionId);
     this.subagentStatusGenerations.set(
       sessionId,
       (this.subagentStatusGenerations.get(sessionId) ?? 0) + 1,
     );
+  }
+
+  private invalidateSubagentStatus(sessionId: string): void {
+    this.invalidateSubagentStatusSnapshot(sessionId);
+    this.subagentDetailCache.delete(sessionId);
   }
 
   async getSessionRuntimeStatus(
