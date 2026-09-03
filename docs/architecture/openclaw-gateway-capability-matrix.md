@@ -1,13 +1,13 @@
 # OpenClaw Gateway Capability Matrix
 
-本文以 OpenClaw `v2026.8.1`、当前 adapter/config sync、`scripts/patches/v2026.8.1/README.md` 和 runtime tests 为基线。矩阵用于判定能力 owner 与升级漂移；“Patch”只表示锁定 pristine npm 产物仍缺少 JustDo 所需语义，不表示 Renderer 拥有 Gateway 行为。
+本文以 OpenClaw `v2026.8.2`、当前 adapter/config sync、`scripts/patches/v2026.8.2/README.md` 和 runtime tests 为基线。矩阵用于判定能力 owner 与升级漂移；“Patch”只表示锁定 pristine npm 产物仍缺少 JustDo 所需语义，不表示 Renderer 拥有 Gateway 行为。
 
 ## 1. 当前能力归属
 
-| 能力                    | Gateway/上游                                                     | JustDo App                                                 | v2026.8.1 处置                      |
+| 能力                    | Gateway/上游                                                     | JustDo App                                                 | v2026.8.2 处置                      |
 | ----------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------- | ----------------------------------- |
 | chat、history、thinking | 执行、transcript、实时与历史 display projection                  | wire 校验、identity、reconcile、timeline                   | 原生；删除旧 002–004                |
-| session、goal、model    | session/goal 权威 RPC                                            | managed key、产品 metadata、ready 后 `sessions.patch`      | 原生；不读写运行中 `sessions.json`  |
+| session、goal、model    | session/goal 权威 RPC；session tool visibility                  | managed key、产品 metadata、ready 后 `sessions.patch`；用户设置访问范围，默认 `tree` | 原生；不读写运行中 `sessions.json`  |
 | tool directory          | tool schema、搜索和执行                                          | permission 与结构化卡片                                    | 原生；删除旧 009                    |
 | subagent/task           | admission、排队、timeout、required-child join、task ledger/event | `tasks.list/get` 映射、父子展示、stop                      | 原生；删除旧 013–021、049           |
 | approvals               | request 生命周期、挂起、恢复和终态清理                           | policy sync、modal、session grant                          | 原生；删除旧 022–025                |
@@ -42,7 +42,7 @@
 | 011  | trusted-policy plugin approval detail 转发   | 上游 before-tool approval 原生转发 `detail` |
 | 012  | 原生 plugin approval 可配置等待时限          | 上游提供 host plugin approval timeout 设置  |
 
-当前目录只对 pristine `openclaw@2026.8.1` 有效。旧 marker、历史补丁或部分应用状态必须明确失败；处理方式是从 source lock 重建，而不是原地迁移。
+当前目录只对 pristine `openclaw@2026.8.2` 有效。旧 marker、历史补丁或部分应用状态必须明确失败；处理方式是从 source lock 重建，而不是原地迁移。
 
 ## 3. Gateway API 与 wire 边界
 
@@ -56,7 +56,7 @@
 | Cron           | `cron.list/add/update/remove/run/runs`、cron event                | agent 归属、receipt、readAt/catch-up                                                    |
 | Runtime bridge | `justdoRuntimeBridge.historyDetails` 与扩展事件/provider          | 有界 `operator.read`、progress、embeddings                                              |
 
-所有 v2026.8.1 专用响应先经过 `src/main/engine/openclaw/wire/v2026_8_1.ts`。Adapter 对 Renderer 只暴露稳定 DTO，不把上游内部的 `succeeded`、`lost`、cursor shape 或 bundle 类型泄漏到 shared contract。
+所有 v2026.8.2 专用响应先经过 `src/main/engine/openclaw/wire/v2026_8_2.ts`。Adapter 对 Renderer 只暴露稳定 DTO，不把上游内部的 `succeeded`、`lost`、cursor shape 或 bundle 类型泄漏到 shared contract。
 
 ## 4. Session 存储与旧数据迁移
 
@@ -91,7 +91,7 @@ Config sync 使用原生 safeguard compaction、1800 秒 timeout、关闭 memory
 
 JustDo 内置 loopback 模型服务必须遵守响应契约：存在完整、结构化且工具名已知的 `tool_calls` 时，最终 `finish_reason` 必须为 `tool_calls`。普通可见文本、不完整参数或未知工具不得被 JustDo 推断为调用。
 
-第三方 provider 继续使用 OpenClaw v2026.8.1 上游安全规则；尤其不能恢复旧 patch 045 去放宽“可见文本 + `finish_reason=stop`”响应。Pristine contract tests 验证该安全边界。
+第三方 provider 继续使用 OpenClaw v2026.8.2 上游安全规则；尤其不能恢复旧 patch 045 去放宽“可见文本 + `finish_reason=stop`”响应。Pristine contract tests 验证该安全边界。
 
 ## 8. 升级与测试证据
 

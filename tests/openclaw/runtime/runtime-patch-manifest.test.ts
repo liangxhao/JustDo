@@ -307,7 +307,7 @@ describe('OpenClaw runtime patch manifest', () => {
       '../../..',
       'scripts',
       'patches',
-      'v2026.8.1',
+      'v2026.8.2',
       '_patch-utils.js',
     );
     fs.writeFileSync(
@@ -632,7 +632,7 @@ module.exports = { applyPatch, verifyPatch };
 
   test('verifies the patch proof copied into the packaged Windows runtime archive', async () => {
     const repositoryRoot = path.resolve(__dirname, '../../..');
-    const sourceLock = readOpenClawSourceLock(repositoryRoot, 'v2026.8.1');
+    const sourceLock = readOpenClawSourceLock(repositoryRoot, 'v2026.8.2');
     const appOutDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-packaged-patch-test-'));
     temporaryRoots.push(appOutDir);
     const archiveRoot = path.join(appOutDir, 'archive-source');
@@ -647,14 +647,14 @@ module.exports = { applyPatch, verifyPatch };
     fs.writeFileSync(
       path.join(runtimeRoot, 'runtime-build-info.json'),
       JSON.stringify({
-        openclawVersion: 'v2026.8.1',
+        openclawVersion: 'v2026.8.2',
         installMethod: 'npm-package',
         target: 'win-x64',
         npmPackageVersion: sourceLock.version,
         npmIntegrity: sourceLock.integrity,
         npmTarballSha256: sourceLock.tarballSha256,
-        patchSetSha256: buildOpenClawPatchSetFingerprint(repositoryRoot, 'v2026.8.1'),
-        buildRecipeSha256: buildOpenClawBuildRecipeFingerprint(repositoryRoot, 'v2026.8.1'),
+        patchSetSha256: buildOpenClawPatchSetFingerprint(repositoryRoot, 'v2026.8.2'),
+        buildRecipeSha256: buildOpenClawBuildRecipeFingerprint(repositoryRoot, 'v2026.8.2'),
         gatewayAsarSha256: crypto
           .createHash('sha256')
           .update(fs.readFileSync(path.join(runtimeRoot, 'gateway.asar')))

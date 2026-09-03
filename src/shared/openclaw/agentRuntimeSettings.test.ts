@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest';
 
 import {
   AgentRuntimeDelegationMode,
+  AgentRuntimeSessionVisibility,
   createDefaultAgentRuntimeSettings,
   parseAgentRuntimeSettings,
   validateAgentRuntimeSettings,
@@ -22,6 +23,9 @@ describe('Agent runtime settings', () => {
       },
       mcp: {
         requestTimeoutSeconds: 60,
+      },
+      sessions: {
+        visibility: 'tree',
       },
       subagents: {
         delegationMode: 'suggest',
@@ -112,6 +116,34 @@ describe('Agent runtime settings', () => {
       ...input,
       approvals: { timeoutMinutes: 30 },
     });
+  });
+
+  test('migrates version 1 settings saved before session visibility preferences', () => {
+    const input = createDefaultAgentRuntimeSettings();
+    input.subagents.maxConcurrent = 7;
+    const { sessions: _removed, ...legacyInput } = input;
+
+    expect(parseAgentRuntimeSettings(legacyInput)).toEqual({
+      ...input,
+      sessions: { visibility: AgentRuntimeSessionVisibility.Tree },
+    });
+  });
+
+  test.each(Object.values(AgentRuntimeSessionVisibility))(
+    'accepts session visibility %s',
+    visibility => {
+      const input = createDefaultAgentRuntimeSettings();
+      input.sessions.visibility = visibility;
+
+      expect(validateAgentRuntimeSettings(input)).toEqual({ ok: true, settings: input });
+    },
+  );
+
+  test('rejects an unsupported session visibility', () => {
+    const input = createDefaultAgentRuntimeSettings();
+    input.sessions.visibility = 'siblings' as never;
+
+    expect(validateAgentRuntimeSettings(input).ok).toBe(false);
   });
 
   test.each([0, 10, 20, 30, 60])('accepts approval wait timeout %s', timeoutMinutes => {

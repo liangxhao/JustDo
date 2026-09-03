@@ -8,6 +8,7 @@ import {
 import {
   AGENT_RUNTIME_LIMITS,
   AgentRuntimeDelegationMode,
+  AgentRuntimeSessionVisibility,
   type AgentRuntimeSettings,
   AgentRuntimeThinkingLevel,
   APPROVAL_WAIT_TIMEOUT_MINUTES,
@@ -147,6 +148,8 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
     onChange({ ...settings, approvals: { ...settings.approvals, ...update } });
   const updateMcp = (update: Partial<AgentRuntimeSettings['mcp']>) =>
     onChange({ ...settings, mcp: { ...settings.mcp, ...update } });
+  const updateSessions = (update: Partial<AgentRuntimeSettings['sessions']>) =>
+    onChange({ ...settings, sessions: { ...settings.sessions, ...update } });
   const updateSubagents = (update: Partial<AgentRuntimeSettings['subagents']>) =>
     onChange({ ...settings, subagents: { ...subagents, ...update } });
 
@@ -222,6 +225,38 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
             .t('agentRuntimeApprovalTimeoutMinutes')
             .replace('{minutes}', String(timeoutMinutes)),
   }));
+  const sessionVisibilityOptions = [
+    {
+      value: AgentRuntimeSessionVisibility.Self,
+      label: i18nService.t('agentRuntimeSessionVisibilitySelf'),
+    },
+    {
+      value: AgentRuntimeSessionVisibility.Tree,
+      label: i18nService.t('agentRuntimeSessionVisibilityTree'),
+    },
+    {
+      value: AgentRuntimeSessionVisibility.Agent,
+      label: i18nService.t('agentRuntimeSessionVisibilityAgent'),
+    },
+    {
+      value: AgentRuntimeSessionVisibility.All,
+      label: i18nService.t('agentRuntimeSessionVisibilityAll'),
+    },
+  ];
+  const sessionVisibilityHint = {
+    [AgentRuntimeSessionVisibility.Self]: i18nService.t(
+      'agentRuntimeSessionVisibilitySelfDescription',
+    ),
+    [AgentRuntimeSessionVisibility.Tree]: i18nService.t(
+      'agentRuntimeSessionVisibilityTreeDescription',
+    ),
+    [AgentRuntimeSessionVisibility.Agent]: i18nService.t(
+      'agentRuntimeSessionVisibilityAgentDescription',
+    ),
+    [AgentRuntimeSessionVisibility.All]: i18nService.t(
+      'agentRuntimeSessionVisibilityAllDescription',
+    ),
+  }[settings.sessions.visibility];
   const usesCustomTimeout = !timeoutOptions
     .filter(option => option.value !== 'custom')
     .some(option => Number(option.value) === subagents.runTimeoutSeconds);
@@ -369,6 +404,26 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
                 {label}
               </button>
             ))}
+          </div>
+        </SettingRow>
+        <SettingRow
+          label={i18nService.t('agentRuntimeSessionVisibilityTitle')}
+          description={i18nService.t('agentRuntimeSessionVisibilityDescription')}
+        >
+          <div className="ml-auto w-full">
+            <ThemedSelect
+              id="agent-runtime-session-visibility"
+              value={settings.sessions.visibility}
+              onChange={value =>
+                updateSessions({
+                  visibility: value as AgentRuntimeSettings['sessions']['visibility'],
+                })
+              }
+              options={sessionVisibilityOptions}
+              ariaLabel={i18nService.t('agentRuntimeSessionVisibilityTitle')}
+              className="py-2 text-xs"
+            />
+            <p className="mt-1.5 text-[11px] leading-4 text-secondary">{sessionVisibilityHint}</p>
           </div>
         </SettingRow>
         <SettingRow

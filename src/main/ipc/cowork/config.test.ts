@@ -168,6 +168,17 @@ describe('cowork config IPC', () => {
     expect(syncOpenClawConfig).not.toHaveBeenCalled();
   });
 
+  it('rejects an unsupported session visibility before persistence', async () => {
+    const invalid = createDefaultAgentRuntimeSettings();
+    invalid.sessions.visibility = 'siblings' as never;
+
+    const result = await handlers.get(AgentRuntimeSettingsIpc.Set)?.({}, invalid);
+
+    expect(result).toMatchObject({ success: false });
+    expect(setAgentRuntimeSettings).not.toHaveBeenCalled();
+    expect(syncOpenClawConfig).not.toHaveBeenCalled();
+  });
+
   it('rolls Agent runtime settings back when generated config cannot be applied', async () => {
     const previous = currentAgentRuntimeSettings;
     const next = createDefaultAgentRuntimeSettings();

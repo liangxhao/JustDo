@@ -1,10 +1,10 @@
 # JustDo v2026.8.27 当前实现状态
 
-文件名保留 `v2026.8.10` 仅为历史链接兼容；本文按 `package.json.version=v2026.8.27`、OpenClaw `v2026.8.1` 和当前代码维护，不再描述旧版快照。
+文件名保留 `v2026.8.10` 仅为历史链接兼容；本文按 `package.json.version=v2026.8.27`、OpenClaw `v2026.8.2` 和当前代码维护，不再描述旧版快照。
 
 ## 1. 产品边界
 
-JustDo 是 Electron 桌面产品层：UI、SQLite 产品数据、权限、安全文件/网络入口、打包与 OpenClaw 生命周期。OpenClaw `v2026.8.1` 是唯一 Agent engine，拥有 run、SQLite session/history、tasks、tools、skills runtime 和 cron。Renderer 是薄客户端，不实现第二套 runtime。
+JustDo 是 Electron 桌面产品层：UI、SQLite 产品数据、权限、安全文件/网络入口、打包与 OpenClaw 生命周期。OpenClaw `v2026.8.2` 是唯一 Agent engine，拥有 run、SQLite session/history、tasks、tools、skills runtime 和 cron。Renderer 是薄客户端，不实现第二套 runtime。
 
 ## 2. 当前主要能力
 
@@ -64,7 +64,7 @@ Redux挂载6个slice：model、cowork、skill、mcp、scheduledTask、agent。
 
 ## 4. 当前Runtime Patch
 
-`scripts/patches/v2026.8.1/` 只保留十二个产品缺口：managed Python、Windows 通用 MCP runner、Chrome Windows runner/早期 stderr、Chrome 空页面恢复、最终 system prompt replacement、agent request metadata、compaction/reviewer purpose metadata、app-start task recovery boundary、手动 memory reindex no-cache、原生 exec/plugin approval 可配置等待时限和 plugin approval reviewer detail 转发。Thinking/history、tool directory、goal、task queue/join、approval 状态机、compaction/context budget 都使用 v2026.8.1 原生能力；progress、embedding 和受限 history detail 迁入 `justdo-runtime-bridge`。
+`scripts/patches/v2026.8.2/` 只保留十二个产品缺口：managed Python、Windows 通用 MCP runner、Chrome Windows runner/早期 stderr、Chrome 空页面恢复、最终 system prompt replacement、agent request metadata、compaction/reviewer purpose metadata、app-start task recovery boundary、手动 memory reindex no-cache、原生 exec/plugin approval 可配置等待时限和 plugin approval reviewer detail 转发。Thinking/history、tool directory、goal、task queue/join、approval 状态机、compaction/context budget 都使用 v2026.8.2 原生能力；progress、embedding 和受限 history detail 迁入 `justdo-runtime-bridge`。
 
 ## 5. 尚未完整交付/明确限制
 
@@ -90,7 +90,7 @@ Redux挂载6个slice：model、cowork、skill、mcp、scheduledTask、agent。
 | Plugins     | `src/main/plugins/`、plugins UI                         |
 | Cron        | `src/main/scheduler/`、scheduled-task IPC/UI            |
 | Browser     | Browser shared/Main/settings/extension                  |
-| Patch       | `scripts/patches/v2026.8.1/README.md`                   |
+| Patch       | `scripts/patches/v2026.8.2/README.md`                   |
 
 ## 7. 验证基线
 
@@ -305,7 +305,7 @@ sequenceDiagram
 | Scheduled result reconcile | `src/main/scheduler/scheduledTaskResultSyncService.ts`                      | 同名测试和 result store 测试                |
 | Chat reconciliation        | `src/renderer/libs/openclaw-chat/`                                          | reducer/history/renderer 相邻测试           |
 | Browser modes              | `src/main/ipc/app/browser.ts`、`resources/browser-extension/`               | Main browser 与 extension test scripts      |
-| Runtime patch 完整性       | `scripts/patches/v2026.8.1/`                                                | `npm run openclaw:patches:verify`           |
+| Runtime patch 完整性       | `scripts/patches/v2026.8.2/`                                                | `npm run openclaw:patches:verify`           |
 | 产品元数据                 | `src/shared/productMetadata.ts`、builder config                             | `npm run validate:product-metadata`         |
 
 ## 17. 变更影响检查表

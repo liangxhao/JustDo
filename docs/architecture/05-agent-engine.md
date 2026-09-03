@@ -1,6 +1,6 @@
 # Agent Engine 与 OpenClaw 集成
 
-本文描述 JustDo 如何安装、配置、启动、连接和监督 OpenClaw `v2026.8.1`。当前唯一 Cowork engine 是 OpenClaw；`CoworkEngineRouter` 只是稳定接口层，不再提供多引擎选择。
+本文描述 JustDo 如何安装、配置、启动、连接和监督 OpenClaw `v2026.8.2`。当前唯一 Cowork engine 是 OpenClaw；`CoworkEngineRouter` 只是稳定接口层，不再提供多引擎选择。
 
 ## 1. 组件分工
 
@@ -57,9 +57,9 @@ Engine status 至少表达 stopped、starting、running、stopping/error 类 pha
 
 同步在 exclusive queue 内执行，避免设置页、MCP/Hook/Extension 同时覆盖文件。写入后必须验证 active Gateway 的 restricted fallback 与 scheduler policy。会话 permission 不写全局 config，而由 session RPC 管理。若 Gateway 正在运行且变化需要 restart，Main 先通过原生 `gateway.suspend.prepare` 原子暂停 scheduler、封闭新 admission 并确认所有 Gateway workload 已空闲，再执行断开 adapter -> restart -> reconnect；busy 或 suspension RPC 不可用时继续延迟，不能用 `cron.list`/本地 active snapshot 代替该屏障。
 
-v2026.8.1 配置只生成 keyed `agents.entries` roster，并以 `agents.ownership: explicit` 标记多 Agent 所有权；`main` 与隔离的 `justdo-scheduler` 在无模型的最小配置中也必须存在。`agents.defaults.systemAgent.agentId` 固定为 `main`，让 memory dreaming 等 OpenClaw 原生环境任务拥有明确 owner；JustDo 创建的无人值守任务仍逐项显式绑定 `justdo-scheduler`。启动权限验收同样只读取 v2026.8.1 的 `agents.entries`，不能再用已删除的 `agents.list` 判断 scheduler 权限。自定义 provider 的展示名同时是 Gateway 模型引用中的 provider ID，使 OpenClaw 注入的当前模型身份保持用户可读；设置页与主进程同步入口都会拒绝 v2026.8.1 内置 provider、官方外置 provider/别名以及 JustDo 内部命名空间，避免触发错误的 provider 或插件路由。记忆检索写入顶层 `memory.search`，计划工具开关写入 `tools.updatePlan`。同步会定向清理 JustDo 历史写入但已被该版本删除的 metadata、diagnostics、pricing、heartbeat 与 experimental tool 字段，避免把旧生成结果重新喂给严格 schema。
+v2026.8.2 配置只生成 keyed `agents.entries` roster，并以 `agents.ownership: explicit` 标记多 Agent 所有权；`main` 与隔离的 `justdo-scheduler` 在无模型的最小配置中也必须存在。`agents.defaults.systemAgent.agentId` 固定为 `main`，让 memory dreaming 等 OpenClaw 原生环境任务拥有明确 owner；JustDo 创建的无人值守任务仍逐项显式绑定 `justdo-scheduler`。启动权限验收同样只读取 v2026.8.2 的 `agents.entries`，不能再用已删除的 `agents.list` 判断 scheduler 权限。v2026.8.2 将 `tools.sessions.visibility` 的隐式默认值扩展为同一 Agent 的全部 session；JustDo 在“设置 → 配置”开放 `self/tree/agent/all`，产品默认仍为 `tree`，以保留父子任务树边界并避免 sibling session 在升级后自动相互可见。OpenClaw 默认还会把沙盒会话的有效范围归一为当前任务树：`agent/all` 会被收窄，而 `self` 在沙盒内也按任务树范围执行；设置页必须明确提示这一运行时差异。自定义 provider 的展示名同时是 Gateway 模型引用中的 provider ID，使 OpenClaw 注入的当前模型身份保持用户可读；设置页与主进程同步入口都会拒绝 v2026.8.2 内置 provider、官方外置 provider/别名以及 JustDo 内部命名空间，避免触发错误的 provider 或插件路由。记忆检索写入顶层 `memory.search`，计划工具开关写入 `tools.updatePlan`。同步会定向清理 JustDo 历史写入但已被该版本删除的 metadata、diagnostics、pricing、heartbeat 与 experimental tool 字段，避免把旧生成结果重新喂给严格 schema。
 
-版本化的 `agentRuntimeSettings:v1` 同时生成 `agents.defaults.subagents`，把 AskUserQuestion 等待时限写入 `plugins.entries.ask-user-question.config.timeoutMinutes`，并以全局 MCP 请求时限作为用户 MCP Server 的默认 `timeout`。`mcp_servers.config_json.requestTimeoutSeconds` 可覆盖单个 Server；旧数据缺少这些后来加入的字段时分别使用 10 分钟、60 秒或继承全局默认；配置同步失败会恢复上一份数据库值。
+版本化的 `agentRuntimeSettings:v1` 同时生成 `agents.defaults.subagents` 和 `tools.sessions.visibility`，把 AskUserQuestion 等待时限写入 `plugins.entries.ask-user-question.config.timeoutMinutes`，并以全局 MCP 请求时限作为用户 MCP Server 的默认 `timeout`。`mcp_servers.config_json.requestTimeoutSeconds` 可覆盖单个 Server；旧数据缺少后来加入的会话访问范围、提问、审批或 MCP 字段时分别使用 `tree`、10 分钟、30 分钟与 60 秒；配置同步失败会恢复上一份数据库值。
 
 ## 5. Fail-closed admission
 
@@ -123,7 +123,7 @@ Adapter 在初始会话和后台任务路径调用 `chat.send`，保存 requeste
 
 后台全量历史同步按每页 1000 条循环读取；Renderer 另有分页窗口。扩大单页限制前必须评估内存和二次投影成本。
 
-Adapter 不再读写 OpenClaw `sessions.json`。模型变更在 Gateway ready 后用 `sessions.patch`；历史来自原生分页 `chat.history`；原生 display projection 未公开的 tool input 与 compaction detail 由 `justdo-runtime-bridge` 的受限 `operator.read` RPC 按请求 id 有界补齐。所有 RPC 结果先经过 `v2026.8.1` wire validator，再进入产品 DTO。
+Adapter 不再读写 OpenClaw `sessions.json`。模型变更在 Gateway ready 后用 `sessions.patch`；历史来自原生分页 `chat.history`；原生 display projection 未公开的 tool input 与 compaction detail 由 `justdo-runtime-bridge` 的受限 `operator.read` RPC 按请求 id 有界补齐。所有 RPC 结果先经过 `v2026.8.2` wire validator，再进入产品 DTO。
 
 ## 11. Slash commands
 
@@ -139,7 +139,7 @@ Adapter 内的 coordinator 将 Gateway goal、tool、lifecycle 和原生 task �
 不能清除首次扫描状态。首次扫描成功后，后续 Gateway-only reconnect 恢复当前软件进程内的
 active Goal。
 
-Goal、required child join、queue admission、审批、thinking、compaction/context budget 均使用 v2026.8.1 原生能力。Subagent 列表和终态来自 `task` events 与 `tasks.list/get`；产品层只映射为 `pending/running/done/failed/killed/timeout`，其中 `taskName` 是稳定 task id，`label` 是展示标题。
+Goal、required child join、queue admission、审批、thinking、compaction/context budget 均使用 v2026.8.2 原生能力。Subagent 列表和终态来自 `task` events 与 `tasks.list/get`；产品层只映射为 `pending/running/done/failed/killed/timeout`，其中 `taskName` 是稳定 task id，`label` 是展示标题。
 
 ## 13. Agent runtime settings
 
@@ -155,7 +155,7 @@ Exec 和 plugin approval API 分开，pending list 在连接后恢复。session 
 
 ## 15. Runtime patches
 
-当前补丁目录为 `scripts/patches/v2026.8.1/`，仅保留十二个产品缺口：managed Python、通用 Windows MCP runner、Chrome Windows/诊断与空页面恢复、最终 system-prompt replacements、agent metadata、compaction/reviewer purpose、app-start task boundary、manual memory no-cache reindex、原生 exec/plugin approval 可配置等待时限和 plugin approval reviewer detail 转发。权威处置与删除条件以该目录 README 为准。
+当前补丁目录为 `scripts/patches/v2026.8.2/`，仅保留十二个产品缺口：managed Python、通用 Windows MCP runner、Chrome Windows/诊断与空页面恢复、最终 system-prompt replacements、agent metadata、compaction/reviewer purpose、app-start task boundary、manual memory no-cache reindex、原生 exec/plugin approval 可配置等待时限和 plugin approval reviewer detail 转发。权威处置与删除条件以该目录 README 为准。
 
 补丁不是传统数据库 migration：每次 runtime 都从锁定的 pristine npm tarball 构建，source lock 同时验证 registry integrity 与 tarball SHA-256。安装、source/worker、esbuild bundle 和 prune 后均验证当前 patch shape；旧 marker 或部分应用状态 fail closed，禁止对旧 JustDo runtime 原地升级。开发态 Electron 会在系统临时目录持有按仓库隔离、带心跳的进程租约；已有开发会话未退出时，新的 runtime prepare 必须在下载或目录替换前失败，避免 Windows 对正在执行的 runtime 进行 rename 而产生延迟 `EPERM`。
 

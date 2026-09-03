@@ -560,7 +560,7 @@ test('discards a delayed probe result after model activity and keeps the exact n
   expect(request.mock.calls.filter(([method]) => method === 'sessions.describe')).toHaveLength(2);
 });
 
-test('adopts and replays a v2026.8.1 in-flight Thinking, Tool, and Content snapshot', async () => {
+test('adopts and replays a v2026.8.2 in-flight Thinking, Tool, and Content snapshot', async () => {
   const sessionKey = 'agent:main:justdo:session-1';
   const request = vi.fn().mockResolvedValue({
     messages: [{ role: 'user', content: 'continue the task', timestamp: 1_000 }],

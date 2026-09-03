@@ -1,10 +1,10 @@
 # Subagent Runtime 设置审计
 
-> 审计基线：JustDo `v2026.8.27`、OpenClaw `v2026.8.1`。本文按当前共享契约、Config Sync、原生 task ledger 与设置页重新核对。
+> 审计基线：JustDo `v2026.8.27`、OpenClaw `v2026.8.2`。本文按当前共享契约、Config Sync、原生 task ledger 与设置页重新核对。
 
 ## 1. 结论
 
-JustDo 设置页当前管理主 Agent 的默认 thinking，以及 SubAgent 的默认模型、默认 thinking、委派倾向、全局并发、单父 child 上限、run timeout 和嵌套深度。它们持久化为版本化 `AgentRuntimeSettings`，再分别投影到 `agents.defaults.thinkingDefault` 与 `agents.defaults.subagents`。
+JustDo 设置页当前管理主 Agent 的默认 thinking、session tool 访问范围，以及 SubAgent 的默认模型、默认 thinking、委派倾向、全局并发、单父 child 上限、run timeout 和嵌套深度。它们持久化为版本化 `AgentRuntimeSettings`，再分别投影到 `agents.defaults.thinkingDefault`、`tools.sessions.visibility` 与 `agents.defaults.subagents`。
 
 JustDo 另外固定写入 `archiveAfterMinutes: 0` 以保留完成的 Subagent 历史，但不把该字段暴露给用户。上游仍有 `allowAgents`、`announceTimeoutMs`、`requireAgentId` 等公开字段，当前使用 OpenClaw 默认或由托管 Agent 配置决定。
 
@@ -24,6 +24,7 @@ JustDo 另外固定写入 `archiveAfterMinutes: 0` 以保留完成的 Subagent �
 | 字段                  | 类型/范围                   | JustDo 默认      | UI       |
 | --------------------- | --------------------------- | ---------------- | -------- |
 | `agent.thinking`      | level 或 null               | null，模型默认   | Agent    |
+| `sessions.visibility` | `self/tree/agent/all`       | `tree`           | Agent    |
 | `delegationMode`      | `suggest \| prefer`         | `suggest`        | 基础设置 |
 | `model`               | model ref 或 null，最长 256 | null，跟随调用者 | 基础设置 |
 | `thinking`            | level 或 null               | null，跟随调用者 | 基础设置 |
@@ -32,7 +33,7 @@ JustDo 另外固定写入 `archiveAfterMinutes: 0` 以保留完成的 Subagent �
 | `runTimeoutSeconds`   | 0 或 60–86400               | 7200             | 基础设置 |
 | `maxSpawnDepth`       | 1–2                         | 1                | 高级调度 |
 
-`version` 当前为 1。Parser 对整个对象严格验证，失败时回到完整 JustDo 默认，不接受半个损坏设置；缺少后来加入的 `agent` 或 `askUserQuestion` 时会补入兼容默认值。model 会 trim；thinking 的可选值为 off、minimal、low、medium、high、xhigh、adaptive、max、ultra。
+`version` 当前为 1。Parser 对整个对象严格验证，失败时回到完整 JustDo 默认，不接受半个损坏设置；缺少后来加入的 `agent`、`sessions`、`askUserQuestion`、`approvals` 或 `mcp` 时会补入兼容默认值。model 会 trim；thinking 的可选值为 off、minimal、low、medium、high、xhigh、adaptive、max、ultra。
 
 `0` run timeout 表示无限，但 UI 必须明确区分“无限”与 0 秒。模型是否真正支持某 thinking level 由模型能力决定，保存 schema 合法并不保证 Provider 接受。
 
@@ -58,6 +59,8 @@ JustDo 另外固定写入 `archiveAfterMinutes: 0` 以保留完成的 Subagent �
 
 主 Agent 的 thinking 非 null 时由 `buildManagedOpenClawAgentThinkingConfig` 写入 `agents.defaults.thinkingDefault`；null 时不写该字段，继续使用所选模型的默认思考强度。
 
+会话访问范围由 `buildManagedOpenClawConnectivityConfig` 写入 `tools.sessions.visibility`。JustDo 始终显式写入用户选择，默认 `tree`，不继承 v2026.8.2 扩大的 `agent` 默认。
+
 `buildManagedOpenClawSubagentConfig` 写入：
 
 - `delegationMode`；
@@ -82,15 +85,15 @@ null 表示跟随调用者。非 null 是 provider/model ref，设置页只允�
 
 ### 6.3 thinking
 
-主 Agent 的 null 表示使用模型默认值，固定 level 写入 `agents.defaults.thinkingDefault`。SubAgent 的 null 表示跟随 caller，固定 level 会传给 child 默认；completion reasoning 使用 v2026.8.1 原生 agent stream。某些 Provider 不流式发布 reasoning，设置成功不等于 UI 一定看到 thinking token。
+主 Agent 的 null 表示使用模型默认值，固定 level 写入 `agents.defaults.thinkingDefault`。SubAgent 的 null 表示跟随 caller，固定 level 会传给 child 默认；completion reasoning 使用 v2026.8.2 原生 agent stream。某些 Provider 不流式发布 reasoning，设置成功不等于 UI 一定看到 thinking token。
 
 ### 6.4 maxConcurrent
 
-限制全局原生 Subagent 同时 running 数，JustDo 默认 3。它不等于 accepted spawn 数；超过 running 容量的 accepted child 由 v2026.8.1 原生 task scheduler 排队。run timeout 从真正 running 才开始。
+限制全局原生 Subagent 同时 running 数，JustDo 默认 3。它不等于 accepted spawn 数；超过 running 容量的 accepted child 由 v2026.8.2 原生 task scheduler 排队。run timeout 从真正 running 才开始。
 
 ### 6.5 maxChildrenPerAgent
 
-限制一个 requester 的活动 child admission，默认 5。v2026.8.1 原生 admission 使用原子 reservation，避免并行 preflight 超卖。该值不是历史 child 数，也不应因为 completed child 保留在 UI 就拒绝新 spawn。
+限制一个 requester 的活动 child admission，默认 5。v2026.8.2 原生 admission 使用原子 reservation，避免并行 preflight 超卖。该值不是历史 child 数，也不应因为 completed child 保留在 UI 就拒绝新 spawn。
 
 ### 6.6 runTimeoutSeconds
 
@@ -103,6 +106,10 @@ JustDo UI 只开放 1 或 2，尽管上游 schema 可能支持更深。深度 2 
 ### 6.8 archiveAfterMinutes
 
 固定 0 是产品持久历史约束。Subagent UI 依赖 Gateway registry/session projection 在 child link 老化后仍可查看。若允许自动归档，必须先设计归档后的索引、恢复与用户说明。
+
+### 6.9 sessions.visibility
+
+`self` 仅允许当前会话；`tree` 允许当前会话及其 spawn 子树；`agent` 允许同一 Agent 的全部会话；`all` 允许策略放行的全部会话，跨 Agent 仍需额外授权。canonical main session 在 `tree` 下保留同 Agent 全量访问例外。设置页默认 `tree`，并在选择器下展示当前范围说明。
 
 ## 7. 未开放字段
 
@@ -147,19 +154,19 @@ Full 模式下并发 child 可并行修改文件，用户应理解冲突风险�
 ## 11. 测试要求
 
 - shared parser：版本、边界、null model/thinking、trim、非法对象回退；
-- Config Sync：七个设置与 archiveAfterMinutes 0 的准确投影；
+- Config Sync：各项设置与 archiveAfterMinutes 0 的准确投影；
 - IPC：get/set、Main 复验、持久化失败、同步失败；
-- UI：默认恢复、custom timeout、无效模型、thinking 列表、深度警告；
+- UI：默认恢复、session 访问范围、custom timeout、无效模型、thinking 列表、深度警告；
 - Runtime：原子 admission、queued/running、timeout 起点、深度限制；
 - Upgrade：上游 11 字段、默认值、schema、原生 admission/queue/timeout 与 `tasks.list/get` wire 仍兼容。
 
 ## 12. 维护结论
 
-当前设置面已经覆盖最有产品价值且能被清楚解释的七个字段，同时把归档、announce 和跨 Agent 安全策略留在内部。后续扩展应优先保证“UI 名称与真实 runtime 语义一致”，并在每次 OpenClaw 升级时重新审计字段默认和优先级，而不是机械地把全部 schema 暴露给用户。
+当前设置面已经覆盖最有产品价值且能被清楚解释的字段，同时把归档、announce 和 Agent 间通信授权留在内部。后续扩展应优先保证“UI 名称与真实 runtime 语义一致”，并在每次 OpenClaw 升级时重新审计字段默认和优先级，而不是机械地把全部 schema 暴露给用户。
 
 ## 13. 设置优先级与生效时点
 
-产品默认 → SQLite版本化用户设置 → Config Sync受管agent投影 → Gateway active config → 具体spawn时caller/per-agent语义，构成完整优先链。Renderer保存成功不等于Gateway active；运行中的child通常保持创建时配置，新设置主要影响后续spawn，除非上游明确支持热更新现有队列。
+产品默认 → SQLite版本化用户设置 → Config Sync受管配置投影 → Gateway active config → 具体spawn时caller/per-agent语义，构成完整优先链。Renderer保存成功不等于Gateway active；运行中的child通常保持创建时配置，新设置主要影响后续spawn，除非上游明确支持热更新现有队列。session tool 访问范围由 active config 在每次工具调用时执行。
 
 ## 14. 持久化与损坏恢复
 
@@ -177,7 +184,7 @@ sequenceDiagram
   UI->>IPC: full validated settings
   IPC->>IPC: validate again
   IPC->>DB: persist versioned value
-  IPC->>C: project managed subagent config
+  IPC->>C: project managed runtime config
   C->>G: reload/restart if needed
   G-->>IPC: apply result
   IPC-->>UI: confirmed or recoverable failure

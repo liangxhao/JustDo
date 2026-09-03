@@ -145,7 +145,7 @@ const listKnownOpenClawWorkspaceDirs = ({
   }
 
   // Inventory a legacy roster only for locating user-installed extensions
-  // before the next config sync rewrites it to v2026.8.1's keyed entries.
+  // before the next config sync rewrites it to v2026.8.2's keyed entries.
   const legacyAgentList = Array.isArray(existingAgents.list) ? existingAgents.list : [];
   for (const entry of legacyAgentList) {
     if (!isRecord(entry)) continue;
@@ -379,11 +379,11 @@ const collectCanonicalAgentEntries = (
 };
 
 /**
- * Remove JustDo-owned fields retired by OpenClaw v2026.8.1 and translate the
+ * Remove JustDo-owned fields retired by OpenClaw v2026.8.2 and translate the
  * two renamed config surfaces. This is deliberately narrow: unrelated
  * operator-owned config remains untouched and is still validated by Gateway.
  */
-export const sanitizeOpenClawV2026_8_1Config = (
+export const sanitizeOpenClawV2026_8_2Config = (
   config: Record<string, unknown>,
 ): Record<string, unknown> => {
   const next = { ...config };
@@ -591,7 +591,7 @@ const buildAuthScopedOpenClawConfig = (
   managedConfig: Record<string, unknown>,
   reason: string,
 ): Record<string, unknown> => {
-  const canonicalExistingConfig = sanitizeOpenClawV2026_8_1Config(existingConfig);
+  const canonicalExistingConfig = sanitizeOpenClawV2026_8_2Config(existingConfig);
   const isLogin = reason === BuiltinModelSyncReason.AuthLogin;
   const existingModels = isRecord(canonicalExistingConfig.models)
     ? canonicalExistingConfig.models
@@ -672,7 +672,7 @@ const buildAuthScopedOpenClawConfig = (
     defaults.compaction = managedDefaults.compaction;
   }
   if (Object.prototype.hasOwnProperty.call(managedDefaults, 'systemAgent')) {
-    // OpenClaw v2026.8.1 requires an explicit ambient owner when more than one
+    // OpenClaw v2026.8.2 requires an explicit ambient owner when more than one
     // Agent exists. Keep native maintenance work (for example memory dreaming)
     // bound to the main Agent; JustDo user-created scheduled tasks set their
     // isolated scheduler Agent explicitly.
@@ -772,7 +772,7 @@ const buildAuthScopedOpenClawConfig = (
     delete models.providers;
   }
 
-  return sanitizeOpenClawV2026_8_1Config({
+  return sanitizeOpenClawV2026_8_2Config({
     ...canonicalExistingConfig,
     models,
     agents: {
@@ -1049,6 +1049,8 @@ export const buildManagedOpenClawCompactionConfig = () => ({
 
 export const buildManagedOpenClawConnectivityConfig = (
   browserMode: BrowserModeValue = BrowserMode.Isolated,
+  sessionVisibility: AgentRuntimeSettings['sessions']['visibility'] =
+    DEFAULT_AGENT_RUNTIME_SETTINGS.sessions.visibility,
 ) => ({
   update: {
     checkOnStart: false,
@@ -1058,10 +1060,13 @@ export const buildManagedOpenClawConnectivityConfig = (
   },
   tools: {
     updatePlan: true,
-    // OpenClaw v2026.8.1 owns native tool-directory discovery and hydration.
+    // OpenClaw v2026.8.2 owns native tool-directory discovery and hydration.
     toolSearch: {
       enabled: true,
       mode: 'directory',
+    },
+    sessions: {
+      visibility: sessionVisibility,
     },
     deny: [
       'web_search',
@@ -1728,7 +1733,10 @@ export class OpenClawConfigSync {
       }),
     );
     const hookConfig = buildOpenClawHookConfig(this.getHooks?.() ?? []);
-    const connectivityConfig = buildManagedOpenClawConnectivityConfig(this.getBrowserMode?.());
+    const connectivityConfig = buildManagedOpenClawConnectivityConfig(
+      this.getBrowserMode?.(),
+      agentRuntimeSettings.sessions.visibility,
+    );
     const connectivityTools: Record<string, unknown> = connectivityConfig.tools;
 
     const managedModels: Record<string, unknown> = {
@@ -2024,7 +2032,7 @@ export class OpenClawConfigSync {
   /**
    * Build the canonical `agents.entries` roster for openclaw.json.
    *
-   * With an explicit v2026.8.1 roster every entry without `workspace`, including
+   * With an explicit v2026.8.2 roster every entry without `workspace`, including
    * `main`, resolves under `<defaults.workspace>/<normalizedAgentId>`. Pin the
    * main entry to the user's configured directory; non-main agents keep the
    * native nested workspace behavior.
@@ -2138,11 +2146,14 @@ export class OpenClawConfigSync {
     const resolvedWorkspaceDir = configuredWorkspaceDir
       ? path.resolve(configuredWorkspaceDir)
       : path.join(this.engineManager.getStateDir(), 'workspace');
+    const agentRuntimeSettings = this.getAgentRuntimeSettings();
     const hookConfig = buildOpenClawHookConfig(this.getHooks?.() ?? []);
-    const connectivityConfig = buildManagedOpenClawConnectivityConfig(this.getBrowserMode?.());
+    const connectivityConfig = buildManagedOpenClawConnectivityConfig(
+      this.getBrowserMode?.(),
+      agentRuntimeSettings.sessions.visibility,
+    );
     const connectivityTools: Record<string, unknown> = connectivityConfig.tools;
     const askUserHostConfig = this.getAskUserExtensionConfig?.() ?? null;
-    const agentRuntimeSettings = this.getAgentRuntimeSettings();
     const mcpServers = buildOpenClawMcpServers(
       this.getMcpServers?.() ?? [],
       agentRuntimeSettings.mcp.requestTimeoutSeconds,
@@ -2278,7 +2289,7 @@ export class OpenClawConfigSync {
       try {
         const existing = JSON.parse(currentContent);
         if (isRecord(existing)) {
-          const canonicalExisting = sanitizeOpenClawV2026_8_1Config(existing);
+          const canonicalExisting = sanitizeOpenClawV2026_8_2Config(existing);
           const hasHookConfig = Object.keys(hookConfig).length > 0;
           const hasSubstantiveConfig =
             Boolean(isRecord(canonicalExisting.models) && canonicalExisting.models.providers) ||
@@ -2328,7 +2339,7 @@ export class OpenClawConfigSync {
                 existingConfig: canonicalExisting,
               }),
             );
-            const mergedConfig = sanitizeOpenClawV2026_8_1Config(withMemorySearch({
+            const mergedConfig = sanitizeOpenClawV2026_8_2Config(withMemorySearch({
               ...canonicalExisting,
               diagnostics: {
                 ...existingDiagnostics,
@@ -2354,6 +2365,7 @@ export class OpenClawConfigSync {
               ...hookConfig,
               tools: {
                 ...existingTools,
+                sessions: connectivityTools.sessions,
                 fs: {
                   ...existingFileTools,
                   workspaceOnly: OPENCLAW_FALLBACK_FS_WORKSPACE_ONLY,

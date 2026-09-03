@@ -147,7 +147,7 @@ OpenClaw 集成在 `package.json` 中声明：
 {
   "version": "v2026.8.27",
   "openclaw": {
-    "version": "v2026.8.1",
+    "version": "v2026.8.2",
     "repo": "https://github.com/openclaw/openclaw.git"
   },
   "devServer": {

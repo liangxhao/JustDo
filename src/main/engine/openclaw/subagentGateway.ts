@@ -1,11 +1,11 @@
 import type { GatewayClientLike } from '../gateway/types';
 import {
-  type OpenClawTaskStatusV2026_8_1,
-  type OpenClawTaskSummaryV2026_8_1,
-  parseSessionsListResultV2026_8_1,
-  parseTasksGetResultV2026_8_1,
-  parseTasksListResultV2026_8_1,
-} from './wire/v2026_8_1';
+  type OpenClawTaskStatusV2026_8_2,
+  type OpenClawTaskSummaryV2026_8_2,
+  parseSessionsListResultV2026_8_2,
+  parseTasksGetResultV2026_8_2,
+  parseTasksListResultV2026_8_2,
+} from './wire/v2026_8_2';
 
 export type GatewayRequestClient = Pick<GatewayClientLike, 'request'>;
 
@@ -101,7 +101,7 @@ const summarizeTask = (value: unknown): string | undefined => {
     : `${characters.slice(0, TASK_TITLE_MAX_CHARS).join('')}…`;
 };
 
-const mapTaskStatus = (status: OpenClawTaskStatusV2026_8_1): SubagentStatus => {
+const mapTaskStatus = (status: OpenClawTaskStatusV2026_8_2): SubagentStatus => {
   switch (status) {
     case 'queued':
       return SUBAGENT_STATUSES.PENDING;
@@ -119,7 +119,7 @@ const mapTaskStatus = (status: OpenClawTaskStatusV2026_8_1): SubagentStatus => {
 };
 
 const resolveTaskTitle = (
-  task: OpenClawTaskSummaryV2026_8_1,
+  task: OpenClawTaskSummaryV2026_8_2,
 ): { label: string; labelSource: SubagentLabelSource } => {
   const label = optionalString(task.title);
   if (label) return { label, labelSource: SUBAGENT_LABEL_SOURCES.LABEL };
@@ -128,11 +128,11 @@ const resolveTaskTitle = (
   return { label: task.id, labelSource: SUBAGENT_LABEL_SOURCES.TASK_NAME };
 };
 
-const isSubagentTask = (task: OpenClawTaskSummaryV2026_8_1): boolean =>
+const isSubagentTask = (task: OpenClawTaskSummaryV2026_8_2): boolean =>
   task.runtime === 'subagent' || task.kind === 'subagent';
 
 const toGatewaySubagent = (
-  task: OpenClawTaskSummaryV2026_8_1,
+  task: OpenClawTaskSummaryV2026_8_2,
 ): GatewaySubagentProjection | null => {
   const sessionKey = optionalString(task.childSessionKey);
   if (!sessionKey) {
@@ -164,8 +164,8 @@ const toGatewaySubagent = (
 const listTaskPages = async (
   client: GatewayRequestClient,
   sessionKey: string,
-): Promise<OpenClawTaskSummaryV2026_8_1[]> => {
-  const tasks: OpenClawTaskSummaryV2026_8_1[] = [];
+): Promise<OpenClawTaskSummaryV2026_8_2[]> => {
+  const tasks: OpenClawTaskSummaryV2026_8_2[] = [];
   let cursor: string | undefined;
   const seenCursors = new Set<string>();
   do {
@@ -173,7 +173,7 @@ const listTaskPages = async (
       throw new Error('OpenClaw tasks.list returned a repeated cursor');
     }
     if (cursor) seenCursors.add(cursor);
-    const page = parseTasksListResultV2026_8_1(
+    const page = parseTasksListResultV2026_8_2(
       await client.request('tasks.list', {
         sessionKey,
         limit: TASK_PAGE_SIZE,
@@ -188,15 +188,15 @@ const listTaskPages = async (
 
 const hydrateTaskDetails = async (
   client: GatewayRequestClient,
-  tasks: OpenClawTaskSummaryV2026_8_1[],
-): Promise<OpenClawTaskSummaryV2026_8_1[]> => {
-  const hydrated: OpenClawTaskSummaryV2026_8_1[] = [];
+  tasks: OpenClawTaskSummaryV2026_8_2[],
+): Promise<OpenClawTaskSummaryV2026_8_2[]> => {
+  const hydrated: OpenClawTaskSummaryV2026_8_2[] = [];
   for (let offset = 0; offset < tasks.length; offset += TASK_DETAIL_CONCURRENCY) {
     hydrated.push(
       ...(await Promise.all(
         tasks.slice(offset, offset + TASK_DETAIL_CONCURRENCY).map(async task => {
           try {
-            return parseTasksGetResultV2026_8_1(
+            return parseTasksGetResultV2026_8_2(
               await client.request('tasks.get', { taskId: task.id }),
             ).task;
           } catch (error) {
@@ -251,7 +251,7 @@ export const listPersistedGatewaySessions = async (
   const seenOffsets = new Set<number>();
   while (!seenOffsets.has(offset)) {
     seenOffsets.add(offset);
-    const page = parseSessionsListResultV2026_8_1(
+    const page = parseSessionsListResultV2026_8_2(
       await client.request('sessions.list', { limit: SESSION_PAGE_SIZE, offset }),
     );
     sessions.push(...page.sessions);
@@ -306,7 +306,7 @@ const collectGatewaySubagents = async (
   subagents: GatewaySubagentProjection[];
   taskLedgerComplete: boolean;
 }> => {
-  const tasksById = new Map<string, OpenClawTaskSummaryV2026_8_1>();
+  const tasksById = new Map<string, OpenClawTaskSummaryV2026_8_2>();
   let complete = true;
   for (const parentKey of options.parentKeys) {
     try {

@@ -55,7 +55,7 @@ function createPristineFixture(): string {
   fs.mkdirSync(path.join(root, 'dist'), { recursive: true });
   fs.writeFileSync(
     path.join(root, 'package.json'),
-    JSON.stringify({ name: 'openclaw', version: '2026.8.1' }),
+    JSON.stringify({ name: 'openclaw', version: '2026.8.2' }),
   );
   writeDistFile(
     root,
@@ -114,7 +114,7 @@ function createPristineFixture(): string {
   writeDistFile(
     root,
     'task-delivery.js',
-    'queueTaskSystemEvent(latest, sessionEventText); "session_queued";',
+    'queueTaskSystemEvent(latest, sessionEventText, owner); "session_queued";',
   );
   writeDistFile(
     root,
@@ -161,8 +161,8 @@ afterEach(() => {
 });
 
 describe('OpenClaw pristine artifact contracts', () => {
-  test('keeps exactly twelve independently auditable v2026.8.1 patches', () => {
-    const patchDir = path.resolve('scripts', 'patches', 'v2026.8.1');
+  test('keeps exactly twelve independently auditable v2026.8.2 patches', () => {
+    const patchDir = path.resolve('scripts', 'patches', 'v2026.8.2');
     const patchFiles = fs
       .readdirSync(patchDir)
       .filter(name => /^\d.*\.cjs$/.test(name))
@@ -185,7 +185,7 @@ describe('OpenClaw pristine artifact contracts', () => {
       patchFiles: [writePatch(root, false)],
     });
 
-    expect(result.version).toBe('2026.8.1');
+    expect(result.version).toBe('2026.8.2');
     expect(Object.keys(result.upstream)).toEqual(UPSTREAM_CONTRACTS);
     expect(result.retainedGaps).toEqual(['required.cjs']);
   });

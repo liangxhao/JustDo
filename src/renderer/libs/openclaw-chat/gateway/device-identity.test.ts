@@ -51,7 +51,7 @@ describe('Gateway device identity', () => {
     ).resolves.toBe(true);
   });
 
-  it('builds the v2026.8.1 v3 signature payload byte-for-byte', () => {
+  it('builds the v2026.8.2 v3 signature payload byte-for-byte', () => {
     expect(
       buildGatewayDeviceAuthPayload({
         deviceId: 'device',

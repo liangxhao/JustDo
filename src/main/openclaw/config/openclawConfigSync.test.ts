@@ -3,6 +3,7 @@ import { describe, expect, test } from 'vitest';
 import { BrowserMode } from '../../../shared/browser';
 import {
   AgentRuntimeDelegationMode,
+  AgentRuntimeSessionVisibility,
   createDefaultAgentRuntimeSettings,
 } from '../../../shared/openclaw/agentRuntimeSettings';
 import { OpenClawExtensionId } from '../../../shared/openclaw/extensions';
@@ -38,7 +39,7 @@ import {
   OPENCLAW_SUBAGENT_MAX_CONCURRENT,
   OpenClawConfigSync,
   removeUnavailableOpenClawPluginRegistrations,
-  sanitizeOpenClawV2026_8_1Config,
+  sanitizeOpenClawV2026_8_2Config,
 } from './openclawConfigSync';
 
 const providerApiKeyEnvVar = (providerName: string): string => {
@@ -207,11 +208,11 @@ describe('exec approval timeout environment', () => {
 });
 
 describe('OpenClaw managed config metadata', () => {
-  test('writes only metadata accepted by OpenClaw v2026.8.1', () => {
-    const meta = buildOpenClawConfigMeta('2026.8.1');
+  test('writes only metadata accepted by OpenClaw v2026.8.2', () => {
+    const meta = buildOpenClawConfigMeta('2026.8.2');
 
     expect(meta).toEqual({
-      lastTouchedVersion: '2026.8.1',
+      lastTouchedVersion: '2026.8.2',
     });
   });
 
@@ -219,13 +220,13 @@ describe('OpenClaw managed config metadata', () => {
     const currentContent = JSON.stringify({
       gateway: { mode: 'local' },
       meta: {
-        lastTouchedVersion: '2026.8.1',
+        lastTouchedVersion: '2026.8.2',
         lastTouchedAt: '2026-07-13T03:27:00.677Z',
       },
     });
     const nextConfig = {
       meta: {
-        lastTouchedVersion: '2026.8.1',
+        lastTouchedVersion: '2026.8.2',
       },
       gateway: { mode: 'local' },
     };
@@ -260,11 +261,11 @@ describe('OpenClaw managed config metadata', () => {
   });
 });
 
-describe('OpenClaw v2026.8.1 config sanitization', () => {
+describe('OpenClaw v2026.8.2 config sanitization', () => {
   test('removes retired fields and converts legacy managed surfaces', () => {
-    const config = sanitizeOpenClawV2026_8_1Config({
+    const config = sanitizeOpenClawV2026_8_2Config({
       meta: {
-        lastTouchedVersion: '2026.8.1',
+        lastTouchedVersion: '2026.8.2',
         lastTouchedAt: '2026-09-01T00:00:00.000Z',
       },
       diagnostics: {
@@ -302,7 +303,7 @@ describe('OpenClaw v2026.8.1 config sanitization', () => {
     });
 
     expect(config).toMatchObject({
-      meta: { lastTouchedVersion: '2026.8.1' },
+      meta: { lastTouchedVersion: '2026.8.2' },
       diagnostics: { otel: { enabled: false } },
       models: { mode: 'replace' },
       tools: { updatePlan: true },
@@ -321,7 +322,7 @@ describe('OpenClaw v2026.8.1 config sanitization', () => {
     expect(config.models).not.toHaveProperty('pricing');
     expect(config.tools).not.toHaveProperty('experimental');
     expect(config.agents).not.toHaveProperty('list');
-    expect(sanitizeOpenClawV2026_8_1Config(config)).toEqual(config);
+    expect(sanitizeOpenClawV2026_8_2Config(config)).toEqual(config);
   });
 });
 
@@ -380,10 +381,13 @@ describe('OpenClaw managed connectivity config', () => {
       },
       tools: {
         updatePlan: true,
-      toolSearch: {
-        enabled: true,
-        mode: 'directory',
-      },
+        toolSearch: {
+          enabled: true,
+          mode: 'directory',
+        },
+        sessions: {
+          visibility: 'tree',
+        },
         deny: [
           'web_search',
           'tts',
@@ -450,6 +454,15 @@ describe('OpenClaw managed connectivity config', () => {
       },
     });
   });
+
+  test.each(Object.values(AgentRuntimeSessionVisibility))(
+    'projects the selected session visibility %s',
+    visibility => {
+      expect(
+        buildManagedOpenClawConnectivityConfig(BrowserMode.Isolated, visibility).tools.sessions,
+      ).toEqual({ visibility });
+    },
+  );
 });
 
 describe('OpenClaw managed subagent config', () => {

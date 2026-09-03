@@ -19,7 +19,7 @@ JustDo 是 local-first 的 Electron 桌面助手。用户在桌面 UI 中创建�
 | 维度              | 当前实现                                                           |
 | ----------------- | ------------------------------------------------------------------ |
 | 应用              | `v2026.8.12`                                                       |
-| OpenClaw runtime  | `v2026.8.1`，按平台安装/同步、bundle、patch、prune 后打包          |
+| OpenClaw runtime  | `v2026.8.2`，按平台安装/同步、bundle、patch、prune 后打包          |
 | Electron          | 42.6 系列                                                          |
 | Node.js           | 24.15+ 且小于 25                                                   |
 | UI                | React 18 + Redux Toolkit + Tailwind；聊天核心是 Lit custom element |

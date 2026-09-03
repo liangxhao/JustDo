@@ -4,9 +4,9 @@ import { ScheduledTaskAgentId } from '../../../shared/scheduledTask/constants';
 import { ManagedDirectoryRuntimeStopAbortedError } from '../../core/managedDirectoryOperations';
 import type { CoworkStore } from '../../data/coworkStore';
 import {
-  parseModelReferenceV2026_8_1,
-  parseSessionsListResultV2026_8_1,
-} from '../../engine/openclaw/wire/v2026_8_1';
+  parseModelReferenceV2026_8_2,
+  parseSessionsListResultV2026_8_2,
+} from '../../engine/openclaw/wire/v2026_8_2';
 import type {
   OpenClawEngineManager,
   OpenClawEngineStatus,
@@ -563,10 +563,10 @@ export class OpenClawConfigSyncService {
   }
 
   private async syncManagedSessionModelsViaGateway(snapshot: ConfigSnapshot): Promise<void> {
-    const defaults = parseModelReferenceV2026_8_1(snapshot.config?.agents?.defaults?.model);
+    const defaults = parseModelReferenceV2026_8_2(snapshot.config?.agents?.defaults?.model);
     const targets = new Map<string, NonNullable<typeof defaults>>();
     for (const [agentId, agent] of Object.entries(snapshot.config?.agents?.entries ?? {})) {
-      const target = parseModelReferenceV2026_8_1(agent.model) ?? defaults;
+      const target = parseModelReferenceV2026_8_2(agent.model) ?? defaults;
       if (target) targets.set(agentId, target);
     }
     if (defaults) targets.set('main', targets.get('main') ?? defaults);
@@ -587,13 +587,13 @@ export class OpenClawConfigSyncService {
     const seenOffsets = new Set<number>();
     while (!seenOffsets.has(offset)) {
       seenOffsets.add(offset);
-      const page = parseSessionsListResultV2026_8_1(
+      const page = parseSessionsListResultV2026_8_2(
         await this.deps.requestGateway('sessions.list', { limit, offset }),
       );
       for (const session of page.sessions) {
         const match = /^agent:([^:]+):justdo:(.+)$/.exec(session.key);
         if (!match) continue;
-        const persistedTarget = parseModelReferenceV2026_8_1(
+        const persistedTarget = parseModelReferenceV2026_8_2(
           this.deps.getCoworkStore().getSessionModelRef(match[2]),
         );
         const target =

@@ -13,6 +13,18 @@ export const AgentRuntimeDelegationMode = {
 export type AgentRuntimeDelegationModeValue =
   (typeof AgentRuntimeDelegationMode)[keyof typeof AgentRuntimeDelegationMode];
 
+export const AgentRuntimeSessionVisibility = {
+  Self: 'self',
+  Tree: 'tree',
+  Agent: 'agent',
+  All: 'all',
+} as const;
+
+export type AgentRuntimeSessionVisibilityValue =
+  (typeof AgentRuntimeSessionVisibility)[keyof typeof AgentRuntimeSessionVisibility];
+
+export const AGENT_RUNTIME_SESSION_VISIBILITIES = Object.values(AgentRuntimeSessionVisibility);
+
 export const AgentRuntimeThinkingLevel = {
   Off: 'off',
   Minimal: 'minimal',
@@ -58,6 +70,9 @@ export interface AgentRuntimeSettings {
   mcp: {
     requestTimeoutSeconds: number;
   };
+  sessions: {
+    visibility: AgentRuntimeSessionVisibilityValue;
+  };
   subagents: {
     delegationMode: AgentRuntimeDelegationModeValue;
     model: string | null;
@@ -83,6 +98,9 @@ export const DEFAULT_AGENT_RUNTIME_SETTINGS: Readonly<AgentRuntimeSettings> = Ob
   mcp: Object.freeze({
     requestTimeoutSeconds: DEFAULT_MCP_REQUEST_TIMEOUT_SECONDS,
   }),
+  sessions: Object.freeze({
+    visibility: AgentRuntimeSessionVisibility.Tree,
+  }),
   subagents: Object.freeze({
     delegationMode: AgentRuntimeDelegationMode.Suggest,
     model: null,
@@ -100,6 +118,7 @@ export const createDefaultAgentRuntimeSettings = (): AgentRuntimeSettings => ({
   askUserQuestion: { ...DEFAULT_AGENT_RUNTIME_SETTINGS.askUserQuestion },
   approvals: { ...DEFAULT_AGENT_RUNTIME_SETTINGS.approvals },
   mcp: { ...DEFAULT_AGENT_RUNTIME_SETTINGS.mcp },
+  sessions: { ...DEFAULT_AGENT_RUNTIME_SETTINGS.sessions },
   subagents: { ...DEFAULT_AGENT_RUNTIME_SETTINGS.subagents },
 });
 
@@ -112,6 +131,10 @@ const isIntegerInRange = (value: unknown, min: number, max: number): value is nu
 const isThinkingLevel = (value: unknown): value is AgentRuntimeThinkingLevelValue =>
   typeof value === 'string' &&
   AGENT_RUNTIME_THINKING_LEVELS.includes(value as AgentRuntimeThinkingLevelValue);
+
+const isSessionVisibility = (value: unknown): value is AgentRuntimeSessionVisibilityValue =>
+  typeof value === 'string' &&
+  AGENT_RUNTIME_SESSION_VISIBILITIES.includes(value as AgentRuntimeSessionVisibilityValue);
 
 export type AgentRuntimeSettingsValidationResult =
   | { ok: true; settings: AgentRuntimeSettings }
@@ -182,6 +205,16 @@ export const validateAgentRuntimeSettings = (
     )
   ) {
     return { ok: false, error: 'MCP request timeout is outside the supported range.' };
+  }
+
+  // Version 1 predates session-tool visibility preferences. Preserve the
+  // pre-v2026.8.2 parent/child boundary for existing profiles.
+  const sessions = isRecord(value.sessions)
+    ? value.sessions
+    : DEFAULT_AGENT_RUNTIME_SETTINGS.sessions;
+  const sessionVisibility = sessions.visibility;
+  if (!isSessionVisibility(sessionVisibility)) {
+    return { ok: false, error: 'Invalid session visibility.' };
   }
 
   const subagents = value.subagents;
@@ -272,6 +305,9 @@ export const validateAgentRuntimeSettings = (
       },
       mcp: {
         requestTimeoutSeconds: mcpRequestTimeoutSeconds,
+      },
+      sessions: {
+        visibility: sessionVisibility,
       },
       subagents: {
         delegationMode,

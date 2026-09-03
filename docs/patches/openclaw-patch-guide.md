@@ -7,20 +7,20 @@ JustDo 是 OpenClaw 的桌面前端和运行时宿主，不是 OpenClaw 的长�
 当前版本来自 `package.json.openclaw.version`：
 
 ```text
-v2026.8.1
+v2026.8.2
 ```
 
 当前 patch 目录：
 
 ```text
-scripts/patches/v2026.8.1/
+scripts/patches/v2026.8.2/
 ```
 
 该目录的 `README.md` 是能力、上游原始证据、依赖关系、测试和删除条件的唯一权威总账。本文只说明工程流程，不能维护另一份逐文件行为副本。
 
 ## 2. 当前锁定供应链
 
-目标是未经修改的 `openclaw@2026.8.1` npm 产物。`source-lock.json` 记录精确 npm integrity 与 tarball SHA-256。运行时要求 Node `24.15.0`，项目支持范围为 `>=24.15.0 <25`。
+目标是未经修改的 `openclaw@2026.8.2` npm 产物。`source-lock.json` 记录精确 npm integrity 与 tarball SHA-256。运行时要求 Node `24.15.0`，项目支持范围为 `>=24.15.0 <25`。
 
 Patch 工具拒绝：
 
@@ -30,11 +30,11 @@ Patch 工具拒绝：
 - 已经部分应用、但没有完整证明的 runtime；
 - patch 顺序、helper、source lock 或 build recipe 改变后的陈旧 manifest。
 
-历史 `v2026.6.9` 与 `v2026.6.11` 目录仅供追溯；已移除的 `v2026.7.1-2` 补丁由 Git 历史保存。不能从旧编号推断当前依赖，也不能复制旧 anchor 伪装成升级。
+历史 `v2026.6.9`、`v2026.6.11`、`v2026.7.1-2` 与 `v2026.8.1` 目录仅供追溯。不能从旧编号推断当前依赖，也不能复制旧 anchor 伪装成升级。
 
 ## 3. 当前十二个能力补丁
 
-v2026.8.1 已原生承担 thinking/history/tool directory/goal/subagent queue+join/approval/compaction/context budget/task query。JustDo 只保留十二个无法在 Adapter/config/extension 层补齐的缺口：
+v2026.8.2 已原生承担 thinking/history/tool directory/goal/subagent queue+join/approval/compaction/context budget/task query。JustDo 只保留十二个无法在 Adapter/config/extension 层补齐的缺口：
 
 | Patch       | 能力                                                                        |
 | ----------- | --------------------------------------------------------------------------- |
@@ -173,7 +173,7 @@ Patch 修改至少执行：
 1. 对锁定 pristine runtime 的首次应用；
 2. 对已 patch runtime 的第二次应用，确认零字节变化；
 3. `npm run openclaw:patches:verify`；
-4. 对应 `tests/openclaw/patches/v2026.8.1/` focused tests；
+4. 对应 `tests/openclaw/patches/v2026.8.2/` focused tests；
 5. 受影响 Main Adapter/Renderer tests；
 6. 真实 runtime smoke；
 7. 若涉及平台兼容，至少目标平台的打包/启动 smoke；
@@ -253,7 +253,7 @@ Patch 失败时保留完整错误中的 patch label、target file、anchor count
 
 ## 17. 文档责任
 
-- `scripts/patches/v2026.8.1/README.md`：当前能力事实与逐 patch总账；
+- `scripts/patches/v2026.8.2/README.md`：当前能力事实与逐 patch总账；
 - 本文：通用生命周期与操作规范；
 - `docs/architecture/openclaw-gateway-capability-matrix.md`：App 与 Gateway 能力边界；
 - feature docs：用户可见行为与维护约束；
@@ -267,7 +267,7 @@ Patch 失败时保留完整错误中的 patch label、target file、anchor count
 | --------------------- | ---------------------------------------------------------------- | ------------------------------------------------- |
 | Pristine contract     | `scripts/verify-openclaw-pristine-contracts.cjs`                 | provenance、上游已吸收能力、保留patch在原包未生效 |
 | Patch transaction     | `scripts/patch-openclaw-runtime.cjs`                             | 顺序、快照、apply/verify、失败回滚、manifest写入  |
-| Patch utilities       | `scripts/patches/v2026.8.1/_patch-utils.js`                      | 唯一anchor、write-if-changed、索引一致性          |
+| Patch utilities       | `scripts/patches/v2026.8.2/_patch-utils.js`                      | 唯一anchor、write-if-changed、索引一致性          |
 | Runtime install/stage | `install-openclaw-runtime.cjs`、`openclaw-runtime-staging.cjs`   | 固定source到目标platform staging                  |
 | Gateway bundle        | `bundle-openclaw-gateway.cjs`、`openclaw-runtime-companions.cjs` | 固定 worker/module companion URL 并验证产物完整性 |
 | Freeze                | `openclaw-runtime-freeze.cjs`                                    | 构建输入和immutable artifact指纹                  |

@@ -431,7 +431,7 @@ function patchFacadeRuntime(runtimeDir) {
     'facade runtime candidates',
   );
 
-  // Remove the v2026.8.1 plugin-cache accessors used only by the dynamic loader.
+  // Remove the v2026.8.2 plugin-cache accessors used only by the dynamic loader.
   replaceRequired(
     /function\s+getFacadeActivationCheckRuntimeModule\(\)\s*\{[\s\S]*?\n\}\n/,
     '',
@@ -571,7 +571,7 @@ function processSkills(electronRoot, runtimeRoot) {
 // ===========================================================================
 
 function installProdDeps(runtimeDir, npmPlatform, npmArch, isolatedStateDir) {
-  // Remove existing node_modules and both npm lockfile forms. The v2026.8.1
+  // Remove existing node_modules and both npm lockfile forms. The v2026.8.2
   // package no longer ships npm-shrinkwrap.json, so the runtime build owns the
   // production dependency snapshot it later verifies and packages.
   const nmDir = path.join(runtimeDir, 'node_modules');

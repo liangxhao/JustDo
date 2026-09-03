@@ -19,6 +19,7 @@ import type {
   ScheduledTask,
   ScheduledTaskChannelOption,
   ScheduledTaskInput,
+  ScheduledTaskRun,
 } from '@shared/scheduledTask/types';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
@@ -47,6 +48,7 @@ const RECURRENCE_KINDS: RecurrenceKind[] = [
   'weekly',
   'custom',
 ];
+const EMPTY_SCHEDULED_TASK_RUNS: ScheduledTaskRun[] = [];
 
 export interface ScheduleFormState {
   mode: ScheduleMode;
@@ -1059,7 +1061,9 @@ export const CronView: React.FC<CronViewProps> = ({
   const [activeTab, setActiveTab] = useState<'tasks' | 'results'>('tasks');
 
   const historyRuns = useSelector((s: RootState) =>
-    historyTaskId ? (s.scheduledTask.runs[historyTaskId] ?? []) : [],
+    historyTaskId
+      ? (s.scheduledTask.runs[historyTaskId] ?? EMPTY_SCHEDULED_TASK_RUNS)
+      : EMPTY_SCHEDULED_TASK_RUNS,
   );
   const historyJob = useSelector((s: RootState) =>
     historyTaskId ? s.scheduledTask.tasks.find(t => t.id === historyTaskId) : undefined,

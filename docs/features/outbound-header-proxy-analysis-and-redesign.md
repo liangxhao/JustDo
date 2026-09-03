@@ -1,6 +1,6 @@
 # Outbound Header Proxy 架构、实现与风险
 
-> 本文按 JustDo `v2026.8.27`、OpenClaw `v2026.8.1` 当前代码重新审计。历史上的作用域隔离、CONNECT 选择性拦截、本地 capability、上游代理和关闭顺序问题已大体完成整改；PAC 多候选、SOCKS、任意客户端强制代理与完整热重载仍不是现有能力。
+> 本文按 JustDo `v2026.8.27`、OpenClaw `v2026.8.2` 当前代码重新审计。历史上的作用域隔离、CONNECT 选择性拦截、本地 capability、上游代理和关闭顺序问题已大体完成整改；PAC 多候选、SOCKS、任意客户端强制代理与完整热重载仍不是现有能力。
 
 ## 1. 功能目的
 

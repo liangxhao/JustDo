@@ -99,7 +99,7 @@ Stop 会发现主 session 与仍运行的 subagent key，逐一调用 `sessions.
 
 业务终态来自明确 chat/lifecycle/runtime 证据。WebSocket disconnect 只触发连接恢复和必要的错误提示，不能自动将所有 run 标成 error。Renderer 在终态后直接刷新 Gateway history，以权威 final text、usage、thinking 和 tool 结果校正活动 timeline。
 
-对 managed JustDo 会话，模型回合终止不等于编排任务终止。OpenClaw v2026.8.1 原生 task
+对 managed JustDo 会话，模型回合终止不等于编排任务终止。OpenClaw v2026.8.2 原生 task
 ledger 与 required-child join 在提交 terminal assistant reply 前等待 required children 终态并续跑
 同一父会话；只有结果已被父 agent 消费且 continuation 成功提交，父 run 才能结束。显式
 fire-and-forget 不形成该 obligation，用户 stop/abort 会中断等待。JustDo 只消费 task RPC/event

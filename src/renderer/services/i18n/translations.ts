@@ -99,7 +99,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     agentRuntimeUnsaved: '有未保存更改',
     agentRuntimeRestoreDefaults: '恢复默认值',
     agentRuntimeAgentSectionTitle: 'Agent',
-    agentRuntimeAgentSectionDescription: '主 Agent 的任务规划、用户交互与委派行为。',
+    agentRuntimeAgentSectionDescription: '主 Agent 的任务规划、会话访问、用户交互与委派行为。',
     agentRuntimeSubagentSectionTitle: 'SubAgent',
     agentRuntimeSubagentSectionDescription: 'SubAgent 的模型、容量和任务执行参数。',
     agentRuntimeMcpSectionTitle: 'MCP',
@@ -114,6 +114,21 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     agentRuntimeDelegationPrefer: '优先委派',
     agentRuntimeDelegationPreferDescription:
       '更积极地让主 Agent 负责协调，将可拆分工作交给 Subagent。',
+    agentRuntimeSessionVisibilityTitle: '会话访问范围',
+    agentRuntimeSessionVisibilityDescription:
+      '控制 Agent 使用会话工具时可以查看、搜索和联系哪些会话。',
+    agentRuntimeSessionVisibilitySelf: '仅当前会话',
+    agentRuntimeSessionVisibilityTree: '当前任务树（默认）',
+    agentRuntimeSessionVisibilityAgent: '同一 Agent 的全部会话',
+    agentRuntimeSessionVisibilityAll: '所有允许的会话',
+    agentRuntimeSessionVisibilitySelfDescription:
+      '非沙盒会话只能访问当前会话；沙盒会话遵循运行时默认限制，使用当前任务树范围。',
+    agentRuntimeSessionVisibilityTreeDescription:
+      '可访问当前会话及其创建的子任务；主会话仍可访问同一 Agent 的全部会话。',
+    agentRuntimeSessionVisibilityAgentDescription:
+      '可访问同一 Agent 的全部会话，包括彼此独立的会话；沙盒会话会收窄为当前任务树。',
+    agentRuntimeSessionVisibilityAllDescription:
+      '可访问策略允许的全部会话；跨 Agent 访问仍需额外授权，沙盒会话会收窄为当前任务树。',
     agentRuntimeAskUserTimeoutTitle: '提问等待时限',
     agentRuntimeAskUserTimeoutDescription:
       'AskUserQuestion 启用超时后等待用户回答的分钟数，范围 1–1440 分钟。',
@@ -1409,7 +1424,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     agentRuntimeRestoreDefaults: 'Restore defaults',
     agentRuntimeAgentSectionTitle: 'Agent',
     agentRuntimeAgentSectionDescription:
-      'Task planning, user interaction, and delegation behavior for the main Agent.',
+      'Task planning, session access, user interaction, and delegation behavior for the main Agent.',
     agentRuntimeSubagentSectionTitle: 'SubAgent',
     agentRuntimeSubagentSectionDescription:
       'Model, capacity, and task execution settings for SubAgents.',
@@ -1427,6 +1442,21 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     agentRuntimeDelegationPrefer: 'Prefer delegation',
     agentRuntimeDelegationPreferDescription:
       'Encourage the main Agent to coordinate and hand off work that can run independently.',
+    agentRuntimeSessionVisibilityTitle: 'Session access scope',
+    agentRuntimeSessionVisibilityDescription:
+      'Controls which sessions the Agent can view, search, and contact with session tools.',
+    agentRuntimeSessionVisibilitySelf: 'Current session only',
+    agentRuntimeSessionVisibilityTree: 'Current task tree (default)',
+    agentRuntimeSessionVisibilityAgent: 'All sessions for this Agent',
+    agentRuntimeSessionVisibilityAll: 'All permitted sessions',
+    agentRuntimeSessionVisibilitySelfDescription:
+      'Only the current session is accessible outside the sandbox; sandboxed sessions follow the runtime default task-tree clamp.',
+    agentRuntimeSessionVisibilityTreeDescription:
+      'Includes the current session and tasks it spawned; the main session retains same-Agent access.',
+    agentRuntimeSessionVisibilityAgentDescription:
+      'Includes every session for the same Agent, including unrelated conversations; sandboxed sessions are narrowed to the current task tree.',
+    agentRuntimeSessionVisibilityAllDescription:
+      'Includes every policy-permitted session; cross-Agent access still requires separate authorization, and sandboxed sessions are narrowed to the current task tree.',
     agentRuntimeAskUserTimeoutTitle: 'Question response timeout',
     agentRuntimeAskUserTimeoutDescription:
       'How many minutes AskUserQuestion waits for an answer when timeout is enabled. Range: 1–1440 minutes.',

@@ -1,4 +1,4 @@
-export const OPENCLAW_WIRE_VERSION = 'v2026.8.1' as const;
+export const OPENCLAW_WIRE_VERSION = 'v2026.8.2' as const;
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -24,22 +24,22 @@ const optionalNonNegativeInteger = (
   return value as number;
 };
 
-export type OpenClawSessionRowV2026_8_1 = {
+export type OpenClawSessionRowV2026_8_2 = {
   key: string;
   modelProvider?: string;
   model?: string;
   [key: string]: unknown;
 };
 
-export type OpenClawSessionsListResultV2026_8_1 = {
-  sessions: OpenClawSessionRowV2026_8_1[];
+export type OpenClawSessionsListResultV2026_8_2 = {
+  sessions: OpenClawSessionRowV2026_8_2[];
   nextOffset?: number | null;
   hasMore?: boolean;
 };
 
-export const parseSessionsListResultV2026_8_1 = (
+export const parseSessionsListResultV2026_8_2 = (
   value: unknown,
-): OpenClawSessionsListResultV2026_8_1 => {
+): OpenClawSessionsListResultV2026_8_2 => {
   if (!isRecord(value) || !Array.isArray(value.sessions)) {
     throw new Error(`${OPENCLAW_WIRE_VERSION} sessions.list returned an invalid payload`);
   }
@@ -73,7 +73,7 @@ export const parseSessionsListResultV2026_8_1 = (
   };
 };
 
-export const parseModelReferenceV2026_8_1 = (
+export const parseModelReferenceV2026_8_2 = (
   value: unknown,
 ): { provider: string; model: string; reference: string } | null => {
   const reference =
@@ -91,15 +91,15 @@ export const parseModelReferenceV2026_8_1 = (
   };
 };
 
-export type OpenClawChatHistoryResultV2026_8_1 = {
+export type OpenClawChatHistoryResultV2026_8_2 = {
   messages: unknown[];
   hasMore: boolean;
   nextOffset?: number;
 };
 
-export const parseChatHistoryResultV2026_8_1 = (
+export const parseChatHistoryResultV2026_8_2 = (
   value: unknown,
-): OpenClawChatHistoryResultV2026_8_1 => {
+): OpenClawChatHistoryResultV2026_8_2 => {
   if (!isRecord(value) || !Array.isArray(value.messages)) {
     throw new Error(`${OPENCLAW_WIRE_VERSION} chat.history returned an invalid payload`);
   }
@@ -118,7 +118,7 @@ export const parseChatHistoryResultV2026_8_1 = (
   };
 };
 
-export type OpenClawHistoryDetailsResultV2026_8_1 = {
+export type OpenClawHistoryDetailsResultV2026_8_2 = {
   toolInputs: Record<string, { name?: string; input: unknown }>;
   compactionDetails: Record<
     string,
@@ -126,15 +126,15 @@ export type OpenClawHistoryDetailsResultV2026_8_1 = {
   >;
 };
 
-export const parseHistoryDetailsResultV2026_8_1 = (
+export const parseHistoryDetailsResultV2026_8_2 = (
   value: unknown,
-): OpenClawHistoryDetailsResultV2026_8_1 => {
+): OpenClawHistoryDetailsResultV2026_8_2 => {
   if (!isRecord(value) || !isRecord(value.toolInputs) || !isRecord(value.compactionDetails)) {
     throw new Error(
       `${OPENCLAW_WIRE_VERSION} justdoRuntimeBridge.historyDetails returned an invalid payload`,
     );
   }
-  const toolInputs: OpenClawHistoryDetailsResultV2026_8_1['toolInputs'] = {};
+  const toolInputs: OpenClawHistoryDetailsResultV2026_8_2['toolInputs'] = {};
   for (const [id, detail] of Object.entries(value.toolInputs)) {
     if (!isRecord(detail) || !Object.hasOwn(detail, 'input')) {
       throw new Error(`${OPENCLAW_WIRE_VERSION} history tool input ${id} is malformed`);
@@ -142,7 +142,7 @@ export const parseHistoryDetailsResultV2026_8_1 = (
     const name = optionalString(detail.name, `history tool input ${id}.name`);
     toolInputs[id] = { ...(name ? { name } : {}), input: detail.input };
   }
-  const compactionDetails: OpenClawHistoryDetailsResultV2026_8_1['compactionDetails'] = {};
+  const compactionDetails: OpenClawHistoryDetailsResultV2026_8_2['compactionDetails'] = {};
   for (const [id, detail] of Object.entries(value.compactionDetails)) {
     if (!isRecord(detail)) {
       throw new Error(`${OPENCLAW_WIRE_VERSION} compaction detail ${id} is malformed`);
@@ -165,7 +165,7 @@ export const parseHistoryDetailsResultV2026_8_1 = (
   return { toolInputs, compactionDetails };
 };
 
-export const OPENCLAW_TASK_STATUSES_V2026_8_1 = [
+export const OPENCLAW_TASK_STATUSES_V2026_8_2 = [
   'queued',
   'running',
   'completed',
@@ -174,12 +174,12 @@ export const OPENCLAW_TASK_STATUSES_V2026_8_1 = [
   'timed_out',
 ] as const;
 
-export type OpenClawTaskStatusV2026_8_1 =
-  (typeof OPENCLAW_TASK_STATUSES_V2026_8_1)[number];
+export type OpenClawTaskStatusV2026_8_2 =
+  (typeof OPENCLAW_TASK_STATUSES_V2026_8_2)[number];
 
-export type OpenClawTaskSummaryV2026_8_1 = {
+export type OpenClawTaskSummaryV2026_8_2 = {
   id: string;
-  status: OpenClawTaskStatusV2026_8_1;
+  status: OpenClawTaskStatusV2026_8_2;
   runtime?: string;
   kind?: string;
   title?: string;
@@ -205,16 +205,16 @@ const parseTaskTimestamp = (value: unknown, field: string): string | number | un
   throw new Error(`${OPENCLAW_WIRE_VERSION} ${field} is not a timestamp`);
 };
 
-export const parseTaskSummaryV2026_8_1 = (
+export const parseTaskSummaryV2026_8_2 = (
   value: unknown,
   field = 'task',
-): OpenClawTaskSummaryV2026_8_1 => {
+): OpenClawTaskSummaryV2026_8_2 => {
   if (!isRecord(value) || typeof value.id !== 'string' || !value.id) {
     throw new Error(`${OPENCLAW_WIRE_VERSION} ${field} is missing id`);
   }
   if (
     typeof value.status !== 'string' ||
-    !OPENCLAW_TASK_STATUSES_V2026_8_1.includes(value.status as OpenClawTaskStatusV2026_8_1)
+    !OPENCLAW_TASK_STATUSES_V2026_8_2.includes(value.status as OpenClawTaskStatusV2026_8_2)
   ) {
     throw new Error(`${OPENCLAW_WIRE_VERSION} ${field} has an invalid status`);
   }
@@ -226,7 +226,7 @@ export const parseTaskSummaryV2026_8_1 = (
   return {
     ...value,
     id: value.id,
-    status: value.status as OpenClawTaskStatusV2026_8_1,
+    status: value.status as OpenClawTaskStatusV2026_8_2,
     ...strings,
     createdAt: parseTaskTimestamp(value.createdAt, `${field}.createdAt`),
     startedAt: parseTaskTimestamp(value.startedAt, `${field}.startedAt`),
@@ -234,41 +234,41 @@ export const parseTaskSummaryV2026_8_1 = (
   };
 };
 
-export const parseTasksListResultV2026_8_1 = (
+export const parseTasksListResultV2026_8_2 = (
   value: unknown,
-): { tasks: OpenClawTaskSummaryV2026_8_1[]; nextCursor?: string } => {
+): { tasks: OpenClawTaskSummaryV2026_8_2[]; nextCursor?: string } => {
   if (!isRecord(value) || !Array.isArray(value.tasks)) {
     throw new Error(`${OPENCLAW_WIRE_VERSION} tasks.list returned an invalid payload`);
   }
   const nextCursor = optionalString(value.nextCursor, 'tasks.list nextCursor');
   return {
     tasks: value.tasks.map((task, index) =>
-      parseTaskSummaryV2026_8_1(task, `tasks.list tasks[${index}]`),
+      parseTaskSummaryV2026_8_2(task, `tasks.list tasks[${index}]`),
     ),
     ...(nextCursor ? { nextCursor } : {}),
   };
 };
 
-export const parseTasksGetResultV2026_8_1 = (
+export const parseTasksGetResultV2026_8_2 = (
   value: unknown,
-): { task: OpenClawTaskSummaryV2026_8_1 } => {
+): { task: OpenClawTaskSummaryV2026_8_2 } => {
   if (!isRecord(value)) {
     throw new Error(`${OPENCLAW_WIRE_VERSION} tasks.get returned an invalid payload`);
   }
-  return { task: parseTaskSummaryV2026_8_1(value.task, 'tasks.get task') };
+  return { task: parseTaskSummaryV2026_8_2(value.task, 'tasks.get task') };
 };
 
-export type OpenClawTaskEventV2026_8_1 =
-  | { action: 'upserted'; task: OpenClawTaskSummaryV2026_8_1 }
+export type OpenClawTaskEventV2026_8_2 =
+  | { action: 'upserted'; task: OpenClawTaskSummaryV2026_8_2 }
   | { action: 'deleted'; taskId: string }
   | { action: 'restored' };
 
-export const parseTaskEventV2026_8_1 = (value: unknown): OpenClawTaskEventV2026_8_1 => {
+export const parseTaskEventV2026_8_2 = (value: unknown): OpenClawTaskEventV2026_8_2 => {
   if (!isRecord(value) || typeof value.action !== 'string') {
     throw new Error(`${OPENCLAW_WIRE_VERSION} task event returned an invalid payload`);
   }
   if (value.action === 'upserted') {
-    return { action: 'upserted', task: parseTaskSummaryV2026_8_1(value.task, 'task event task') };
+    return { action: 'upserted', task: parseTaskSummaryV2026_8_2(value.task, 'task event task') };
   }
   if (value.action === 'deleted') {
     if (typeof value.taskId !== 'string' || !value.taskId) {

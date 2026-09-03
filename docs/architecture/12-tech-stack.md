@@ -8,7 +8,7 @@
 | ---------- | --------------------------------- | ---------------------------------------------- |
 | Node.js    | `24.15.0`，engine `>=24.15.0 <25` | 开发脚本、Main、OpenClaw tooling               |
 | Electron   | `^42.6.2`（42.6 系列）            | 桌面进程、窗口、IPC、系统集成                  |
-| OpenClaw   | `v2026.8.1`                       | Agent/Gateway/session/tool/cron/plugin runtime |
+| OpenClaw   | `v2026.8.2`                       | Agent/Gateway/session/tool/cron/plugin runtime |
 | npm        | package dependency `^11.18.0`     | 安装与脚本                                     |
 | TypeScript | `^5.7.3`                          | Renderer/Main/shared 静态检查                  |
 
@@ -211,7 +211,7 @@ Runtime pipeline 的每一步解决不同问题：
 
 1. **install**：取得固定 upstream/version 的平台内容。
 2. **sync current**：建立本次构建的 current source，而不是直接修改历史缓存。
-3. **bundle**：生成应用启动的 Gateway bundle。
+3. **bundle**：生成应用启动的 Gateway bundle；依赖 `import.meta.url` 定位 worker 的共享进程入口必须锚定回原始 `dist` 模块，同时从 bundle 推导并校验所有 companion 文件，禁止只验证文件存在却让运行时解析到 bundle 根目录。
 4. **plugins/resources**：放入 JustDo 所需 plugin 与运行资源。
 5. **precompile**：把需要的 extension 预编译，降低最终环境动态构建依赖。
 6. **prune**：删除开发、测试和非运行必需文件，同时受 allowlist/测试约束。

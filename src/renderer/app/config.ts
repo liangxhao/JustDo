@@ -210,7 +210,7 @@ export const isReservedProviderDisplayName = isReservedOpenClawProviderId;
  * - 首字符必须是字母
  * - 允许字母、数字、下划线、中划线、空格
  * - 长度限制：1-32 字符
- * - 不能与 OpenClaw v2026.8.1 的保留 provider ID 冲突
+ * - 不能与 OpenClaw v2026.8.2 的保留 provider ID 冲突
  * - displayName 为空时允许，会回退到对应的 CustomN 默认名称
  */
 export const validateDisplayName = (name: string): { valid: boolean; error?: string } => {

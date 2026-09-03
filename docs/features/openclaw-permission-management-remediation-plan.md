@@ -1,10 +1,10 @@
 # OpenClaw 会话权限管理
 
-> 文件名保留 `remediation-plan` 以兼容旧链接。本文按 JustDo `v2026.8.27` 和 OpenClaw `v2026.8.1` 维护。
+> 文件名保留 `remediation-plan` 以兼容旧链接。本文按 JustDo `v2026.8.27` 和 OpenClaw `v2026.8.2` 维护。
 
 ## 1. 结论
 
-OpenClaw v2026.8.1 已提供原生的会话级 `permissionMode` 和 `sessionRoot`。JustDo 的三档产品模式继续有效，但实现必须映射到这个原生模型，而不是修改全局 `tools.exec.mode`、修改 Agent workspace，或用自定义插件再次拦截文件工具。
+OpenClaw v2026.8.2 已提供原生的会话级 `permissionMode` 和 `sessionRoot`。JustDo 的三档产品模式继续有效，但实现必须映射到这个原生模型，而不是修改全局 `tools.exec.mode`、修改 Agent workspace，或用自定义插件再次拦截文件工具。
 
 | JustDo | OpenClaw session mode | 文件范围               | 命令审核                           |
 | ------ | --------------------- | ---------------------- | ---------------------------------- |
@@ -24,7 +24,7 @@ OpenClaw 还支持 `read-only`，但 JustDo 当前没有对应的第四档产品
 - `cowork_sessions.permission_mode` 和 `cwd` 是用户期望状态的耐久产品投影，用于恢复 UI、延迟切换并在每次 turn 前重新声明。
 - `cowork_config.permission_mode` 只作为新会话默认值。
 
-每次初始发送、继续发送和斜杠命令发送前，Main 都调用幂等的 `sessions.create({ key, cwd, permissionMode })`。v2026.8.1 会创建、采用或更新同 key 的 session entry。JustDo 必须回读并核对 `sessionId`、`entry.permissionMode` 和 `entry.sessionRoot`；任何字段缺失或不匹配都阻止发送。显式切换若发生在空闲期会立即执行同一同步；若当前 run 活跃，则先保存期望值并在终态后台应用。
+每次初始发送、继续发送和斜杠命令发送前，Main 都调用幂等的 `sessions.create({ key, cwd, permissionMode })`。v2026.8.2 会创建、采用或更新同 key 的 session entry。JustDo 必须回读并核对 `sessionId`、`entry.permissionMode` 和 `entry.sessionRoot`；任何字段缺失或不匹配都阻止发送。显式切换若发生在空闲期会立即执行同一同步；若当前 run 活跃，则先保存期望值并在终态后台应用。
 
 既有本地会话不需要单独迁移。它们在下一次发送或模式切换时按当前 SQLite 投影写入原生 session entry。项目约束禁止为旧 JustDo runtime patch 形状增加原地兼容逻辑。
 
@@ -58,13 +58,14 @@ sequenceDiagram
 
 ## 4. 全局配置与 Host approvals
 
-原生 session mode 是主路径，但无显式 session mode 的 OpenClaw 调用仍需要安全兜底。因此生成的全局配置固定为：
+原生 session mode 是主路径，但无显式 session mode 的 OpenClaw 调用仍需要安全兜底。因此生成的全局配置包含：
 
 - `tools.exec.mode: "ask"`；
 - `tools.fs.workspaceOnly: true`；
+- `tools.sessions.visibility` 来自“设置 → 配置”的会话访问范围，默认 `"tree"`；
 - host approval defaults 为 `allowlist` / `on-miss` / `deny`。
 
-这些值不随 JustDo 选择器切换。修改新会话默认值只写 `cowork_config`，不会重载 Gateway。这样多个会话可以同时使用不同权限，也不会因一个会话切换 Full 而短暂提升其他会话。
+exec、fs 与 host approval fallback 不随会话权限选择器切换。v2026.8.2 把 session tool 的隐式可见范围扩展为同一 Agent 的全部 session；JustDo 用显式设置覆盖该默认值，初始采用 `tree`，用户也可选择 `self/agent/all`。修改新会话默认权限只写 `cowork_config`，不会重载 Gateway；修改会话访问范围则通过 `agentRuntimeSettings:v1` 同步全局配置。这样多个会话可以同时使用不同执行权限，也不会因一个会话切换 Full 而短暂提升其他会话。
 
 OpenClaw 对非 Full session mode 继续应用 host approval file 的限制；显式 `full` 是需要 `operator.admin` 的原生例外。JustDo Gateway client 具备该 scope。普通 session 仍通过 `exec.approval.*` 展示与解决人工审批，且“本会话允许相同命令”的 grant 只绑定对应 session 和命令身份。
 
@@ -78,7 +79,7 @@ OpenClaw 对非 Full session mode 继续应用 host approval file 的限制；�
 
 ## 6. 已删除的旧实现
 
-以下实现与 v2026.8.1 原生模型冲突，已彻底移除：
+以下实现与 v2026.8.2 原生模型冲突，已彻底移除：
 
 - 把 UI 选择投影到全局 `tools.exec.mode` / `tools.fs.workspaceOnly`；
 - 每个 turn 修改 Agent workspace 的 admission 逻辑；

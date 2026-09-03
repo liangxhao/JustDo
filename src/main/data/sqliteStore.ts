@@ -130,7 +130,7 @@ export class SqliteStore {
     this.ensureColumn('cowork_sessions', 'permission_mode', 'TEXT');
     this.ensureColumn('cowork_sessions', 'model_ref', 'TEXT');
 
-    // OpenClaw v2026.8.1 owns the durable transcript in its per-agent SQLite
+    // OpenClaw v2026.8.2 owns the durable transcript in its per-agent SQLite
     // database. The former table duplicated that transcript and routinely
     // drifted from chat.history after reconnects or dropped stream frames.
     this.db.exec('DROP TABLE IF EXISTS cowork_messages;');

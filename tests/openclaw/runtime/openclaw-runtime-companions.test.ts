@@ -14,6 +14,31 @@ const {
 };
 
 describe('OpenClaw runtime companions', () => {
+  it('anchors the shared v2026.8.2 process entrypoints module to its dist location', () => {
+    const source = `
+      const currentModuleUrl = import.meta.url;
+      const runtimeProcessEntrypoints = {
+        sqliteReadOnly: {
+          currentModuleUrl,
+          sourceWorkerName: 'sqlite-readonly-location.worker',
+          distWorkerPath: 'infra/sqlite-readonly-location.worker.js',
+        },
+      };
+    `;
+
+    expect(hasStaleRuntimeWorkerImportMetaUrl(source)).toBe(true);
+
+    const rewritten = rewriteRuntimeWorkerImportMetaUrls(
+      source,
+      "new URL('./dist/runtime-process-entrypoints.js', import.meta.url).href",
+    );
+
+    expect(hasStaleRuntimeWorkerImportMetaUrl(rewritten)).toBe(false);
+    expect(rewritten).toContain(
+      "const currentModuleUrl = new URL('./dist/runtime-process-entrypoints.js', import.meta.url).href;",
+    );
+  });
+
   it('anchors generic runtime workers to their original dist module', () => {
     const source = `
       const workerUrl = resolveRuntimeWorkerUrl({
@@ -54,12 +79,16 @@ describe('OpenClaw runtime companions', () => {
     );
   });
 
-  it('requires every companion referenced by the v2026.8.1 bundle', () => {
+  it('requires every companion referenced by the v2026.8.2 bundle', () => {
     const bundle = `
       distWorkerPath: 'infra/sqlite-readonly-location.worker.js';
       distWorkerPath: 'agents/model-provider-auth.worker.js';
       return new URL('./openclaw-database-verify.worker.js', currentModuleUrl);
+      distWorkerPath: 'config/sessions/session-accessor.sqlite-archive.worker.js';
+      distWorkerPath: 'config/sessions/session-transcript-reconcile.worker.js';
+      distWorkerPath: 'infra/tailscale-route-owner.worker.js';
       distWorkerPath: 'process/supervisor/service-child-relay.js';
+      distWorkerPath: 'process/supervisor/service-child-group-anchor.js';
       distWorkerPath: 'process/supervisor/service-child-windows-job-anchor.js';
     `;
 
@@ -67,7 +96,11 @@ describe('OpenClaw runtime companions', () => {
       'dist/agents/model-provider-auth.worker.js',
       'dist/state/openclaw-database-verify.worker.js',
       'dist/infra/sqlite-readonly-location.worker.js',
+      'dist/config/sessions/session-accessor.sqlite-archive.worker.js',
+      'dist/config/sessions/session-transcript-reconcile.worker.js',
+      'dist/infra/tailscale-route-owner.worker.js',
       'dist/process/supervisor/service-child-relay.js',
+      'dist/process/supervisor/service-child-group-anchor.js',
       'dist/process/supervisor/service-child-windows-job-anchor.js',
     ]);
   });

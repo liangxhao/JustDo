@@ -1,6 +1,6 @@
 # Subagent 模型恢复与 Completion 一致性
 
-> 本文按 JustDo `v2026.8.27`、OpenClaw `v2026.8.1` 重新核对。Task admission、queue、required-child join 与 completion delivery 已由上游原生实现；“当前模型请求无副作用时的同模型 retry”仍不是一项可宣称完整落地的通用能力。
+> 本文按 JustDo `v2026.8.27`、OpenClaw `v2026.8.2` 重新核对。Task admission、queue、required-child join 与 completion delivery 已由上游原生实现；“当前模型请求无副作用时的同模型 retry”仍不是一项可宣称完整落地的通用能力。
 
 ## 1. 问题拆分
 
@@ -13,7 +13,7 @@
 
 ## 2. Subagent 执行事实
 
-OpenClaw v2026.8.1 原生负责 `sessions_spawn`、task ledger/event、原子 admission、排队、run timeout、required-child join 和 completion delivery。JustDo 通过 `tasks.list/get` 的版本化 wire validator 与稳定 DTO 展示父子关系，不再维护 managed join/FIFO/canonical patch 状态机。
+OpenClaw v2026.8.2 原生负责 `sessions_spawn`、task ledger/event、原子 admission、排队、run timeout、required-child join 和 completion delivery。JustDo 通过 `tasks.list/get` 的版本化 wire validator 与稳定 DTO 展示父子关系，不再维护 managed join/FIFO/canonical patch 状态机。
 
 ```mermaid
 flowchart TD
@@ -172,12 +172,12 @@ Runtime 终态与产物存在是两件事，UI 应允许用户查看已生成 ar
 
 | 能力                                    | 状态                          |
 | --------------------------------------- | ----------------------------- |
-| 原子 spawn admission                    | v2026.8.1 原生                |
-| queued/running timeout 语义             | v2026.8.1 原生                |
-| required child join/completion delivery | v2026.8.1 原生                |
-| task ledger/event 与重启恢复            | v2026.8.1 原生 + app epoch 008 |
+| 原子 spawn admission                    | v2026.8.2 原生                |
+| queued/running timeout 语义             | v2026.8.2 原生                |
+| required child join/completion delivery | v2026.8.2 原生                |
+| task ledger/event 与重启恢复            | v2026.8.2 原生 + app epoch 008 |
 | task status/label 产品投影              | `tasks.list/get` Adapter DTO  |
-| context overflow 收敛/归因              | v2026.8.1 原生                |
+| context overflow 收敛/归因              | v2026.8.2 原生                |
 | 通用“当前 request 零副作用”同模型 retry | 尚不能声明完整实现            |
 
 ## 12. 实施约束
@@ -223,7 +223,7 @@ Per-requester completion按提交/commit规则串行，保证同一父上下文�
 
 ## 17. 诊断与测试证据
 
-诊断记录 parent/child/task/run/request id、model/provider 错误分类、是否已有 delta/tool/commit 和 native delivery 状态；不记录 prompt/tool secret。Pristine tests 证明 queue/join 来自上游，`v2026_8_1` wire、`subagentGateway.test.ts` 和 adapter/goal tests 验证 consumer 映射。
+诊断记录 parent/child/task/run/request id、model/provider 错误分类、是否已有 delta/tool/commit 和 native delivery 状态；不记录 prompt/tool secret。Pristine tests 证明 queue/join 来自上游，`v2026_8_2` wire、`subagentGateway.test.ts` 和 adapter/goal tests 验证 consumer 映射。
 
 ## 18. 完成定义
 

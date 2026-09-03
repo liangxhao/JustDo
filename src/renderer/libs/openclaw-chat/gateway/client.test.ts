@@ -73,7 +73,7 @@ describe('GatewayClient tick watchdog', () => {
   });
 });
 
-describe('GatewayClient v2026.8.1 handshake', () => {
+describe('GatewayClient v2026.8.2 handshake', () => {
   it('signs the server challenge with a persistent browser device identity', async () => {
     class FakeWebSocket {
       static readonly OPEN = 1;

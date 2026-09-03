@@ -160,7 +160,7 @@ OpenClaw integration is declared in `package.json`:
 {
   "version": "v2026.8.27",
   "openclaw": {
-    "version": "v2026.8.1",
+    "version": "v2026.8.2",
     "repo": "https://github.com/openclaw/openclaw.git"
   },
   "devServer": {

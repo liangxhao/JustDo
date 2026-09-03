@@ -78,9 +78,9 @@ UI/Agent调用native cron -> Gateway保存/调度 -> Main轮询runs -> SQLite up
 
 ## 7. Patch 边界
 
-Patch 只适用于必须在 Gateway 内看到完整上下文或需要 host/runtime 联合语义、且 v2026.8.1 没有等价公开能力的缺口。当前例子包括 managed Python 环境、Windows MCP runner、最终 system-prompt replacement、请求 metadata、app-start task epoch 和手动 reindex no-cache。
+Patch 只适用于必须在 Gateway 内看到完整上下文或需要 host/runtime 联合语义、且 v2026.8.2 没有等价公开能力的缺口。当前例子包括 managed Python 环境、Windows MCP runner、最终 system-prompt replacement、请求 metadata、app-start task epoch 和手动 reindex no-cache。
 
-Patch 不适用于主题、分组、未读、窗口布局、产品标题等纯产品能力，也不应重做 v2026.8.1 已原生提供的 thinking/history、tool directory、task queue/join、approval 或 compaction。每个 patch 必须绑定 `v2026.8.1`，有 manifest、README 和测试；上游等价实现后应删除。
+Patch 不适用于主题、分组、未读、窗口布局、产品标题等纯产品能力，也不应重做 v2026.8.2 已原生提供的 thinking/history、tool directory、task queue/join、approval 或 compaction。每个 patch 必须绑定 `v2026.8.2`，有 manifest、README 和测试；上游等价实现后应删除。
 
 ## 8. Execution truth
 
@@ -237,7 +237,7 @@ Config sync 的核心不是“把 JustDo 对象 stringify 到 `openclaw.json`”
 - 有 pristine preimage、patch application 和 consumer behavior 测试；
 - README/manifest 记录 upstream disposition 与删除条件。
 
-补丁编号是构建顺序，不是功能优先级。`scripts/patches/v2026.8.1/README.md` 是当前十二个补丁的权威表；历史目录不能作为新版本补丁源，也不能把旧 marker 当作兼容输入。
+补丁编号是构建顺序，不是功能优先级。`scripts/patches/v2026.8.2/README.md` 是当前十二个补丁的权威表；历史目录不能作为新版本补丁源，也不能把旧 marker 当作兼容输入。
 
 ## 19. 端到端审查示例
 

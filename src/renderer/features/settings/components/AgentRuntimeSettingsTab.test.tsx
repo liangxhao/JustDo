@@ -95,4 +95,46 @@ describe('AgentRuntimeSettingsTab runtime settings', () => {
       approvals: { timeoutMinutes: 20 },
     });
   });
+
+  test('shows tree as the default session scope and emits a broader selection', () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 132,
+      height: 32,
+      left: 20,
+      right: 220,
+      top: 100,
+      width: 200,
+      x: 20,
+      y: 100,
+      toJSON: () => ({}),
+    });
+    const settings = createDefaultAgentRuntimeSettings();
+    const onChange = vi.fn();
+
+    render(
+      <AgentRuntimeSettingsTab
+        settings={settings}
+        models={[]}
+        isLoading={false}
+        loadError={null}
+        onChange={onChange}
+        onRetry={vi.fn()}
+        maxGoalContinuationTurns={10}
+        onMaxGoalContinuationTurnsChange={vi.fn()}
+      />,
+    );
+
+    const select = screen.getByRole('combobox', {
+      name: 'agentRuntimeSessionVisibilityTitle',
+    });
+    expect(select.textContent).toContain('agentRuntimeSessionVisibilityTree');
+
+    fireEvent.click(select);
+    fireEvent.click(screen.getByRole('option', { name: 'agentRuntimeSessionVisibilityAgent' }));
+
+    expect(onChange).toHaveBeenCalledWith({
+      ...settings,
+      sessions: { visibility: 'agent' },
+    });
+  });
 });

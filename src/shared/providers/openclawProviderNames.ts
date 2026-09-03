@@ -1,5 +1,5 @@
 /**
- * Provider IDs that OpenClaw v2026.8.1 assigns built-in behaviour to, or
+ * Provider IDs that OpenClaw v2026.8.2 assigns built-in behaviour to, or
  * resolves to an official external provider plugin. Custom provider display
  * names become wire-level model provider IDs, so they must not use these IDs.
  *
@@ -7,7 +7,7 @@
  * `BUILT_IN_MODEL_PROVIDER_OVERLAY_IDS` and official external provider catalog
  * whenever the locked runtime version changes.
  */
-export const OPENCLAW_V2026_8_1_RESERVED_PROVIDER_IDS = [
+export const OPENCLAW_V2026_8_2_RESERVED_PROVIDER_IDS = [
   'amazon-bedrock',
   'amazon-bedrock-mantle',
   'anthropic',
@@ -100,7 +100,7 @@ export const OPENCLAW_V2026_8_1_RESERVED_PROVIDER_IDS = [
   'zai',
 ] as const;
 
-const RESERVED_PROVIDER_IDS = new Set<string>(OPENCLAW_V2026_8_1_RESERVED_PROVIDER_IDS);
+const RESERVED_PROVIDER_IDS = new Set<string>(OPENCLAW_V2026_8_2_RESERVED_PROVIDER_IDS);
 const INTERNAL_CUSTOM_PROVIDER_ID_PATTERN = /^custom_\d+$/;
 const VALID_CUSTOM_PROVIDER_DISPLAY_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9_ -]{0,31}$/;
 

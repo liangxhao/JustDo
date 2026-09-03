@@ -315,6 +315,7 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.tools.fs.mode).toBeUndefined();
     expect(config.tools.fs.workspaceOnly).toBe(true);
     expect(config.tools.exec.mode).toBe('ask');
+    expect(config.tools.sessions).toEqual({ visibility: 'tree' });
     expect(config.agents.defaults.systemAgent).toEqual({ agentId: 'main' });
     expect(config.session).toEqual({
       dmScope: 'per-account-channel-peer',
@@ -324,6 +325,57 @@ describe('OpenClaw auth logout config sync', () => {
         pruneAfter: '365d',
         maxEntries: 500,
       },
+    });
+  });
+
+  test('writes the selected session visibility before model setup', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-session-visibility-'));
+    temporaryDirectories.push(directory);
+    const configPath = path.join(directory, 'openclaw.json');
+    const runtimeSettings = createDefaultAgentRuntimeSettings();
+    runtimeSettings.sessions.visibility = 'agent';
+
+    const result = writeMinimalConfig(
+      configPath,
+      BuiltinModelSyncReason.ManualRefresh,
+      'ask',
+      BrowserMode.Isolated,
+      [],
+      runtimeSettings,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).tools.sessions).toEqual({
+      visibility: 'agent',
+    });
+  });
+
+  test('updates the selected session visibility in an existing minimal config', () => {
+    const directory = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'justdo-minimal-session-visibility-update-'),
+    );
+    temporaryDirectories.push(directory);
+    const configPath = path.join(directory, 'openclaw.json');
+    const runtimeSettings = createDefaultAgentRuntimeSettings();
+
+    expect(writeMinimalConfig(configPath, 'startup').ok).toBe(true);
+    expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).tools.sessions).toEqual({
+      visibility: 'tree',
+    });
+
+    runtimeSettings.sessions.visibility = 'self';
+    expect(
+      writeMinimalConfig(
+        configPath,
+        BuiltinModelSyncReason.CoworkConfigChange,
+        'ask',
+        BrowserMode.Isolated,
+        [],
+        runtimeSettings,
+      ).ok,
+    ).toBe(true);
+    expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).tools.sessions).toEqual({
+      visibility: 'self',
     });
   });
 

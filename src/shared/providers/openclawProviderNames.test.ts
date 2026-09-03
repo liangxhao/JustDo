@@ -5,20 +5,20 @@ import {
   getEffectiveCustomProviderDisplayName,
   isReservedOpenClawProviderId,
   normalizeOpenClawProviderId,
-  OPENCLAW_V2026_8_1_RESERVED_PROVIDER_IDS,
+  OPENCLAW_V2026_8_2_RESERVED_PROVIDER_IDS,
   rewriteOpenClawModelProviderId,
   validateCustomProviderDisplayName,
 } from './openclawProviderNames';
 
 describe('OpenClaw provider names', () => {
-  test('keeps the locked v2026.8.1 inventory unique and normalized', () => {
-    expect(new Set(OPENCLAW_V2026_8_1_RESERVED_PROVIDER_IDS).size).toBe(
-      OPENCLAW_V2026_8_1_RESERVED_PROVIDER_IDS.length,
+  test('keeps the locked v2026.8.2 inventory unique and normalized', () => {
+    expect(new Set(OPENCLAW_V2026_8_2_RESERVED_PROVIDER_IDS).size).toBe(
+      OPENCLAW_V2026_8_2_RESERVED_PROVIDER_IDS.length,
     );
-    expect(OPENCLAW_V2026_8_1_RESERVED_PROVIDER_IDS).toEqual(
-      [...OPENCLAW_V2026_8_1_RESERVED_PROVIDER_IDS].sort(),
+    expect(OPENCLAW_V2026_8_2_RESERVED_PROVIDER_IDS).toEqual(
+      [...OPENCLAW_V2026_8_2_RESERVED_PROVIDER_IDS].sort(),
     );
-    expect(OPENCLAW_V2026_8_1_RESERVED_PROVIDER_IDS).toContain('opencode');
+    expect(OPENCLAW_V2026_8_2_RESERVED_PROVIDER_IDS).toContain('opencode');
   });
 
   test.each([' OpenCode ', 'OPENCODE', 'moonshot-ai', 'custom_7'])(

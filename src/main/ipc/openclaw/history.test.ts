@@ -14,7 +14,7 @@ import {
   registerOpenClawHistoryHandlers,
 } from './history';
 
-describe('OpenClaw v2026.8.1 history IPC', () => {
+describe('OpenClaw v2026.8.2 history IPC', () => {
   beforeEach(() => {
     ipcHandle.mockReset();
   });
@@ -100,7 +100,7 @@ describe('OpenClaw v2026.8.1 history IPC', () => {
     });
   });
 
-  test('rejects malformed v2026.8.1 wire responses and redacts paths', async () => {
+  test('rejects malformed v2026.8.2 wire responses and redacts paths', async () => {
     const requestGateway = vi
       .fn()
       .mockRejectedValue(new Error('failed at C:\\Users\\secret\\sessions.db'));

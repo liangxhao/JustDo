@@ -8,9 +8,9 @@ Thinking Stream 让用户在支持 reasoning 的模型执行期间看到独立�
 
 JustDo 不自行生成 reasoning，也不从普通回答里的自然语言推断 thinking。只有 OpenClaw/Provider 明确提供的 thinking、reasoning 或 redacted-thinking 内容，经过 Gateway 的显示投影后才进入该通道。
 
-## 2. OpenClaw v2026.8.1 原生能力
+## 2. OpenClaw v2026.8.2 原生能力
 
-OpenClaw v2026.8.1 已原生提供实时 thinking、think-tag 归一和历史 display projection，因此旧的 002–004 补丁已删除。JustDo 通过版本化 wire 校验、Renderer Gateway client 和 reducer 直接消费这些能力；不得为兼容旧 bundle 再恢复历史 patch。
+OpenClaw v2026.8.2 已原生提供实时 thinking、think-tag 归一和历史 display projection，因此旧的 002–004 补丁已删除。JustDo 通过版本化 wire 校验、Renderer Gateway client 和 reducer 直接消费这些能力；不得为兼容旧 bundle 再恢复历史 patch。
 
 升级 OpenClaw 时仍需逐项验证实时 delta/snapshot、终态顺序、历史 reasoning/redacted-thinking 和 consumer 行为。Pristine contract test 负责证明能力来自锁定上游产物，而不是被开发 runtime 中的残留补丁掩盖。
 
@@ -82,7 +82,7 @@ Thinking delta 与回答 token 共用 transcript revision 和 `StreamRenderSched
 
 ## 7. 历史恢复
 
-实时事件只负责当前过程；重启应用、切换会话或重连后的显示必须以 Gateway 历史为准。OpenClaw v2026.8.1 原生 `chat.history` display projection 保留可显示的 reasoning 和 redacted-thinking，Renderer `project-history-timeline.ts` 将其恢复为独立时间线项。
+实时事件只负责当前过程；重启应用、切换会话或重连后的显示必须以 Gateway 历史为准。OpenClaw v2026.8.2 原生 `chat.history` display projection 保留可显示的 reasoning 和 redacted-thinking，Renderer `project-history-timeline.ts` 将其恢复为独立时间线项。
 
 历史请求带 session 身份与 `historyGeneration`。响应过期时被丢弃，防止旧会话 thinking 覆盖当前会话。不存在 Main/SQLite transcript fallback；Gateway 暂时不可用时保留现有有界显示状态并走连接恢复，不能从最终回答反向伪造 thinking。
 
@@ -185,7 +185,7 @@ Thinking可能包含系统上下文、工具规划和敏感推断，其风险高
 
 ## 18. 故障定位决策
 
-原生日志有 reasoning 但 Renderer client 无事件：检查 v2026.8.1 wire 与 WebSocket generation；client 有事件但 UI 无 item：检查 session/run/generation/sequence admission；实时有而重载消失：检查 history display projection；文本重复：检查 delta/snapshot 语义；final 后仍动画：检查 terminal flush 和 item 收敛。
+原生日志有 reasoning 但 Renderer client 无事件：检查 v2026.8.2 wire 与 WebSocket generation；client 有事件但 UI 无 item：检查 session/run/generation/sequence admission；实时有而重载消失：检查 history display projection；文本重复：检查 delta/snapshot 语义；final 后仍动画：检查 terminal flush 和 item 收敛。
 
 ## 19. 完成定义
 
