@@ -8,8 +8,9 @@ areas live here with the marketplace and manager facade.
 - `skills/` contains Gateway-backed skill RPC access and local skill file
   import/delete operations.
 - `mcp/` contains MCP server persistence, probing, and OpenClaw config sync.
-- `extensions/` contains bundled extension registry, local extension runtime
-  sync, the ask-user callback server, and interaction routing.
+- `extensions/` contains the bundled extension registry, local extension runtime
+  sync, import transactions, and retired-extension cleanup. Bundled extension
+  behavior, including `AskUserQuestion`, stays in `openclaw-extensions/`.
 - `hooks/` contains hook persistence and OpenClaw config sync.
 - `marketplace/` contains provider-neutral models, routing, and providers.
 

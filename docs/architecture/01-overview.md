@@ -87,7 +87,7 @@ Renderer 是浏览器权限域。它包含 6 个已挂载 Redux slice：`model`�
 
 ### 5.2 Preload 与 Main
 
-`src/main/preload.ts` 是 Renderer 获取 Electron/OS 能力以及本地 Gateway 连接信息的唯一桥，用 `contextBridge` 暴露语义化 namespace。Main 是权限和生命周期边界：窗口、日志、SQLite、IPC、系统代理、extension host、配置同步、Gateway、审批、文件协议、插件目录事务、cron 轮询和退出清理。聊天控制器取得 port/token 后会直接连接 loopback Gateway；这条受控数据通道不赋予 Node/Electron 权限。`main.ts` 是 composition root，领域逻辑应留在对应服务。
+`src/main/preload.ts` 是 Renderer 获取 Electron/OS 能力以及本地 Gateway 连接信息的唯一桥，用 `contextBridge` 暴露语义化 namespace。Main 是权限和生命周期边界：窗口、日志、SQLite、IPC、系统代理、配置同步、Gateway、审批、文件协议、插件目录事务、cron 轮询和退出清理。聊天控制器取得 port/token 后会直接连接 loopback Gateway；这条受控数据通道不赋予 Node/Electron 权限。`main.ts` 是 composition root，领域逻辑应留在对应服务。
 
 ### 5.3 OpenClaw Gateway
 
@@ -159,7 +159,7 @@ sequenceDiagram
 
 ## 11. 启动与退出概览
 
-启动不是先创建窗口再逐步补服务。Main 在窗口出现前完成 SQLite 初始化、残留 run/session 修复、代理恢复、内置模型刷新、Extension Host callback 建立和 startup config sync。Gateway 自动启动是 config sync 成功后的异步步骤；Gateway 或 Python runtime 失败时保留产品壳用于设置与诊断。
+启动不是先创建窗口再逐步补服务。Main 在窗口出现前完成 SQLite 初始化、残留 run/session 修复、代理恢复、内置模型刷新和 startup config sync。Gateway 自动启动是 config sync 成功后的异步步骤；Gateway 或 Python runtime 失败时保留产品壳用于设置与诊断。
 
 ```mermaid
 flowchart LR
@@ -176,7 +176,7 @@ flowchart LR
   Runtime --> Poll
 ```
 
-退出顺序反向保护依赖：先阻止 cron 新工作、停止 Cowork session，再停止 Gateway；随后释放 Extension Host/MCP transport、代理，最后关闭 SQLite。安装器和自动更新也应复用同一优雅清理链。
+退出顺序反向保护依赖：先阻止 cron 新工作、停止 Cowork session，再停止 Gateway；随后释放代理，最后关闭 SQLite。安装器和自动更新也应复用同一优雅清理链。
 
 ## 12. 一次用户任务涉及的状态
 
@@ -215,11 +215,11 @@ flowchart LR
 
 ## 14. 正常、降级和阻断三类结果
 
-| 类型             | 何时使用                           | 示例                                                 |
-| ---------------- | ---------------------------------- | ---------------------------------------------------- |
-| 正常             | 权威动作已确认，状态可重建         | Gateway 接纳 turn；SQLite 完成 pin 更新              |
-| 可诊断降级       | 非核心依赖失败，产品壳仍能帮助恢复 | Gateway/Python/Extension Host 启动失败后设置页仍可开 |
-| 阻断/fail closed | 继续会扩大权限或产生错误执行       | session mode/root 未验证、路径越界、安装包校验失败   |
+| 类型             | 何时使用                           | 示例                                               |
+| ---------------- | ---------------------------------- | -------------------------------------------------- |
+| 正常             | 权威动作已确认，状态可重建         | Gateway 接纳 turn；SQLite 完成 pin 更新            |
+| 可诊断降级       | 非核心依赖失败，产品壳仍能帮助恢复 | Gateway/Python 启动失败后设置页仍可开              |
+| 阻断/fail closed | 继续会扩大权限或产生错误执行       | session mode/root 未验证、路径越界、安装包校验失败 |
 
 不要为了“应用还能打开”把所有失败都吞掉；降级路径必须记录带模块前缀的错误并在 UI 提供正确能力状态。也不要把普通网络超时都升级为不可恢复 fatal。
 
@@ -227,7 +227,7 @@ flowchart LR
 
 - SQLite 位于 Electron userData 下，文件名固定 `justdo.sqlite`。
 - 默认 workspace 位于用户主目录下由 productName 小写派生的目录；用户选定的其他 cwd 可含中文和空格。
-- OpenClaw state/runtime、用户导入 plugin、extension host 配置和浏览器配对 secret 各有受管位置；它们不能通过字符串拼接暴露给 Renderer。
+- OpenClaw state/runtime、用户导入 plugin 和浏览器配对 secret 各有受管位置；它们不能通过字符串拼接暴露给 Renderer。
 - 发布资源位于 `resources/` 并由 builder/scripts 明确包含；开发源码存在不代表打包产物自动包含。
 - 日志分 Main daily log、Gateway log 和 OpenClaw native JSON log；开发终端捕获不替代上述权威日志。
 

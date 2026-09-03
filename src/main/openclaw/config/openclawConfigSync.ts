@@ -36,7 +36,6 @@ import type { Agent, CoworkConfig, CoworkExecutionMode } from '../../data/cowork
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import {
   buildBundledExtensionEntries,
-  buildBundledExtensionToolContracts,
   bundledOpenClawExtensions,
   hasBundledOpenClawExtension,
   inspectBundledOpenClawExtensions,
@@ -51,12 +50,6 @@ import {
   buildAgentEntry,
   buildManagedAgentEntries,
 } from '../models/openclawAgentModels';
-
-export type AskUserExtensionConfig = {
-  askUserCallbackUrl: string;
-  secret: string;
-  timeoutMinutes?: number;
-};
 
 export const buildOpenClawMcpServers = (
   servers: McpServerRecord[],
@@ -890,7 +883,11 @@ export const mergeOpenClawPluginConfig = (
     ...managedEntries,
   };
   const trustedIds = [
-    ...new Set(trustedInstalledExtensionIds.map(id => id.trim()).filter(Boolean)),
+    ...new Set(
+      trustedInstalledExtensionIds
+        .map(id => id.trim())
+        .filter(id => Boolean(id) && !retiredIds.has(id)),
+    ),
   ];
   if (Object.keys(mergedEntries).length === 0 && trustedIds.length === 0) return sourcePlugins;
 
@@ -1069,6 +1066,7 @@ export const buildManagedOpenClawConnectivityConfig = (
       visibility: sessionVisibility,
     },
     deny: [
+      'ask_user',
       'web_search',
       'tts',
       'message',
@@ -1527,11 +1525,27 @@ const buildVerifiedConfigSyncResult = (
   };
 };
 
+const buildManagedBundledExtensionEntries = (
+  agentRuntimeSettings: AgentRuntimeSettings,
+): Record<string, Record<string, unknown>> => ({
+  [OpenClawExtensionId.BROWSER]: { enabled: true },
+  ...buildBundledExtensionEntries(isBundledPluginAvailable),
+  ...(isBundledPluginAvailable(OpenClawExtensionId.ASK_USER_QUESTION)
+    ? {
+        [OpenClawExtensionId.ASK_USER_QUESTION]: {
+          enabled: true,
+          config: {
+            timeoutMinutes: agentRuntimeSettings.askUserQuestion.timeoutMinutes,
+          },
+        },
+      }
+    : {}),
+});
+
 type OpenClawConfigSyncDeps = {
   engineManager: OpenClawEngineManager;
   getCoworkConfig: () => CoworkConfig;
   getAgentRuntimeSettings?: () => AgentRuntimeSettings;
-  getAskUserExtensionConfig?: () => AskUserExtensionConfig | null;
   getMcpServers?: () => McpServerRecord[];
   getHooks?: () => OpenClawHookRecord[];
   getAgents?: () => Agent[];
@@ -1542,7 +1556,6 @@ export class OpenClawConfigSync {
   private readonly engineManager: OpenClawEngineManager;
   private readonly getCoworkConfig: () => CoworkConfig;
   private readonly getAgentRuntimeSettings: () => AgentRuntimeSettings;
-  private readonly getAskUserExtensionConfig?: () => AskUserExtensionConfig | null;
   private readonly getMcpServers?: () => McpServerRecord[];
   private readonly getHooks?: () => OpenClawHookRecord[];
   private readonly getAgents?: () => Agent[];
@@ -1553,7 +1566,6 @@ export class OpenClawConfigSync {
     this.getCoworkConfig = deps.getCoworkConfig;
     this.getAgentRuntimeSettings =
       deps.getAgentRuntimeSettings ?? createDefaultAgentRuntimeSettings;
-    this.getAskUserExtensionConfig = deps.getAskUserExtensionConfig;
     this.getMcpServers = deps.getMcpServers;
     this.getHooks = deps.getHooks;
     this.getAgents = deps.getAgents;
@@ -1698,23 +1710,8 @@ export class OpenClawConfigSync {
     const preinstalledPluginIds = readPreinstalledPluginIds().filter(id =>
       isBundledPluginAvailable(id),
     );
-    const askUserHostConfig = this.getAskUserExtensionConfig?.() ?? null;
     const agentRuntimeSettings = this.getAgentRuntimeSettings();
-    const askUserConfig = askUserHostConfig
-      ? {
-          ...askUserHostConfig,
-          timeoutMinutes: agentRuntimeSettings.askUserQuestion.timeoutMinutes,
-        }
-      : null;
-    const bundledExtensionEntries = {
-      [OpenClawExtensionId.BROWSER]: { enabled: true },
-      ...buildBundledExtensionEntries(
-        {
-          askUser: askUserConfig,
-        },
-        isBundledPluginAvailable,
-      ),
-    };
+    const bundledExtensionEntries = buildManagedBundledExtensionEntries(agentRuntimeSettings);
     const mcpServers = buildOpenClawMcpServers(
       this.getMcpServers?.() ?? [],
       agentRuntimeSettings.mcp.requestTimeoutSeconds,
@@ -1875,19 +1872,6 @@ export class OpenClawConfigSync {
         : managedConfig;
     const nextContent = `${JSON.stringify(configToPersist, null, 2)}\n`;
     const configChanged = hasOpenClawConfigChanged(currentContent, configToPersist);
-    const extensionContractsChanged = isAuthLifecycleSync
-      ? false
-      : buildBundledExtensionToolContracts(
-          {
-            askUser: askUserConfig,
-          },
-          isBundledPluginAvailable,
-        ).reduce(
-          (changed, contract) =>
-            this.syncExtensionToolContracts(contract.id, contract.tools) || changed,
-          false,
-        );
-
     if (configChanged) {
       try {
         ensureDir(path.dirname(configPath));
@@ -1925,76 +1909,11 @@ export class OpenClawConfigSync {
 
     return {
       ok: true,
-      changed: configChanged || extensionContractsChanged,
+      changed: configChanged,
       configChanged,
-      requiresGatewayRestart: extensionContractsChanged,
+      requiresGatewayRestart: false,
       configPath,
     };
-  }
-
-  private syncExtensionToolContracts(extensionId: string, nextToolNames: string[]): boolean {
-    const extensionsDir = this.findBundledExtensionsDir();
-    if (!extensionsDir) {
-      return false;
-    }
-
-    const manifestPath = path.join(extensionsDir, extensionId, 'openclaw.plugin.json');
-    let manifest: Record<string, unknown>;
-    try {
-      manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
-    } catch (error) {
-      console.warn(
-        `[OpenClawConfigSync] failed to read ${extensionId} manifest: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      return false;
-    }
-
-    const contracts = isRecord(manifest.contracts) ? manifest.contracts : {};
-    const currentTools = Array.isArray(contracts.tools)
-      ? contracts.tools.filter((value): value is string => typeof value === 'string')
-      : [];
-
-    if (JSON.stringify(currentTools) === JSON.stringify(nextToolNames)) {
-      return false;
-    }
-
-    manifest.contracts = {
-      ...contracts,
-      tools: nextToolNames,
-    };
-
-    try {
-      fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
-      console.log(
-        `[OpenClawConfigSync] synced ${extensionId} contracts.tools (${nextToolNames.length})`,
-      );
-      return true;
-    } catch (error) {
-      console.warn(
-        `[OpenClawConfigSync] failed to write ${extensionId} manifest: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      return false;
-    }
-  }
-
-  private findBundledExtensionsDir(): string | null {
-    const candidates = app.isPackaged
-      ? [path.join(process.resourcesPath, 'cfmind', 'dist', 'extensions')]
-      : [
-          path.join(app.getAppPath(), 'vendor', 'openclaw-runtime', 'current', 'dist', 'extensions'),
-          path.join(process.cwd(), 'vendor', 'openclaw-runtime', 'current', 'dist', 'extensions'),
-        ];
-
-    for (const candidate of candidates) {
-      try {
-        if (fs.statSync(candidate).isDirectory()) {
-          return candidate;
-        }
-      } catch {
-        // Ignore missing candidates.
-      }
-    }
-    return null;
   }
 
   /**
@@ -2018,8 +1937,6 @@ export class OpenClawConfigSync {
     // is never resolved. Use a fixed value to avoid launch-environment changes on switch.
     env.JUSTDO_PROVIDER_API_KEY = 'legacy-unused';
 
-    const askUserConfig = this.getAskUserExtensionConfig?.();
-    env.JUSTDO_ASK_USER_SECRET = askUserConfig?.secret || 'unconfigured';
     env.JUSTDO_EXEC_APPROVAL_TIMEOUT_MS = String(
       resolveApprovalWaitTimeoutMs(this.getAgentRuntimeSettings().approvals.timeoutMinutes),
     );
@@ -2153,26 +2070,11 @@ export class OpenClawConfigSync {
       agentRuntimeSettings.sessions.visibility,
     );
     const connectivityTools: Record<string, unknown> = connectivityConfig.tools;
-    const askUserHostConfig = this.getAskUserExtensionConfig?.() ?? null;
     const mcpServers = buildOpenClawMcpServers(
       this.getMcpServers?.() ?? [],
       agentRuntimeSettings.mcp.requestTimeoutSeconds,
     );
-    const askUserConfig = askUserHostConfig
-      ? {
-          ...askUserHostConfig,
-          timeoutMinutes: agentRuntimeSettings.askUserQuestion.timeoutMinutes,
-        }
-      : null;
-    const bundledExtensionEntries = {
-      [OpenClawExtensionId.BROWSER]: { enabled: true },
-      ...buildBundledExtensionEntries(
-        {
-          askUser: askUserConfig,
-        },
-        isBundledPluginAvailable,
-      ),
-    };
+    const bundledExtensionEntries = buildManagedBundledExtensionEntries(agentRuntimeSettings);
     const trustedInstalledExtensionIds = listInstalledOpenClawExtensionIds(
       this.engineManager.getStateDir(),
     );

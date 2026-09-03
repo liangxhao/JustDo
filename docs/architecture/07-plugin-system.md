@@ -130,18 +130,31 @@ Extension 使用 `openclaw.plugin.json`，由 OpenClaw CLI/registry 进行最终
 - 命令 cwd/env 来自 manager，timeout 为 300 秒，输出最多保留 64K；
 - 所有 config mutation 进入 exclusive queue；目录锁处理复用 coordinator；
 - 退役的 `action-approval` / `file-permission-policy` 注册和 runtime 目录由受管同步清理；
+- `ask-user-question` 是受保护的内置交互 extension；其启用状态与等待时限由 config sync 管理，不能从通用扩展页禁用或删除；
 - `automation-permission` 是受保护的内置安全 extension，不能从通用扩展页重配置、禁用或删除；Gateway 每次连接都必须验证其 trusted policy 已加载；
 - 成功不能只看 exit code，还需匹配 OpenClaw 明确 success 输出并重新列举 registry。
 
-## 9. Extension host 与 ask-user
+## 9. AskUserQuestion Extension
 
-`OpenClawExtensionHostLifecycle` 管理本地 callback server、host controller 和 MCP transports。它必须在首次 config sync 前启动，因为 callback port 是动态值。
+JustDo 使用内置 `ask-user-question` extension 注册模型工具 `AskUserQuestion`，并在受管 `tools.deny` 中关闭 OpenClaw 原生 `ask_user`，避免同一会话出现两套相近但不兼容的协议。工具描述沿用原生能力最重要的决策边界：只有当模型已被一个确实属于用户、且无法从请求、代码、上下文或合理默认值判断的决定阻塞时才能提问；禁止询问是否继续、是否执行下一步或要求确认模型自己的计划；除非多个答案必须一起提交，否则优先一次只问一题。
 
-Ask-user contract 最多 8 个问题；question id 满足 `[A-Za-z][A-Za-z0-9_-]{0,63}`。shared parser 验证类型、选项、默认值、required 和 timeout，timeout 最大 24 小时。模型用顶层 `timeoutEnabled` 选择是否启用等待时限，实际分钟数来自“设置 → 配置”，默认 10 分钟，并通过插件 config 的 `timeoutMinutes` 下发。Broker 保存 pending request，interaction router 按 request/session 关联并支持重放；回答只接受原问题中的 id/选项。多问题请求允许用户用 `skipped: true` 明确跳过单题，renderer、Host 和 Extension 都会校验并把该状态明确返回模型。
+extension 保留产品原有的丰富结构：一次 1–8 题、每题 2–4 个稳定 id 选项、单选/多选、Other、选项附带必填输入、默认项以及逐题跳过。`timeoutEnabled` 默认关闭，此时必须等待用户；显式开启后使用 runtime settings 中的分钟数。所有题都有默认项时超时自动选默认值，否则把控制权交还模型自行判断。
 
-Renderer 对单题和双选项不做隐式确认按钮降级，所有问题统一展示完整的 option label、description 和可选 input，选择后再提交。单题 header 用作对话框标题。多题向导的单选题在无需补充输入时自动前进；非末题的多选题只有在当前答案完整后才显示“下一个”按钮，由用户确认选择完成后前进。为兼容历史请求，自由文本“其他”默认显示；question 只有显式声明 `allowOther: false` 时才隐藏，shared parser 与 Extension 也只在该情况下拒绝 `other` 回答。需要用户解释某个选择时应使用 option `input`，而不是依赖后续对话。
+交互完全使用 OpenClaw plugin API，不再存在 callback server、host controller、共享 secret、端口或额外 HTTP transport：
 
-文件范围与 exec reviewer 使用 OpenClaw v2026.8.2 原生 session permission mode；Extension host 不再注册旧的全局 action approval mode。`automation-permission` 只补足原生 session mode 尚未覆盖的模型可见 scheduled-task mutation，并在每次调用时读取原生会话值，不维护第二份权限状态。第三方插件若使用 `plugin.approval.*`，仍作为独立风险域展示和解决，不能复用 exec grant。
+```mermaid
+flowchart LR
+  Tool[AskUserQuestion tool] --> State[Extension pending Map]
+  State -->|plugin.* requested/resolved| Adapter[Main adapter]
+  Adapter -->|既有 interaction IPC| UI[Renderer wizard]
+  UI -->|answer ids| Adapter
+  Adapter -->|askUserQuestion.resolve RPC| State
+  Adapter -->|askUserQuestion.list RPC| State
+```
+
+pending promise、同一 session 只允许一个待答请求、timeout/default、run abort 和最终答案校验都由 extension 自己负责；Gateway service 停止时会取消全部等待。它通过 `gatewayEvents.emit` 发布 `plugin.ask-user-question.requested/resolved`，并提供 `askUserQuestion.list/resolve` 两个有 scope 的 Gateway RPC。Main 只负责严格解析、session 投影、Renderer IPC 和提交前的本地校验，不保存第二份权威状态。adapter 在连接恢复后用 `list` 找回同一 Gateway 进程中的等待项，Renderer reload 再通过 interaction replay 获取投影。
+
+文件范围与 exec reviewer 使用 OpenClaw v2026.8.2 原生 session permission mode。`automation-permission` 只补足原生 session mode 尚未覆盖的模型可见 scheduled-task mutation，并在每次调用时读取原生会话值，不维护第二份权限状态。第三方插件若使用 `plugin.approval.*`，仍作为独立风险域展示和解决，不能复用 exec grant。
 
 `justdo-runtime-bridge` 是随产品安装并受保护的内置 OpenClaw extension。它只使用 v2026.8.2 支持的 plugin API，承担三项不应继续做 runtime patch 的集成：
 
@@ -183,7 +196,7 @@ UI 应显示 source、eligible/missing、install state 和操作结果；破坏�
 
 ## 13. 变更与测试
 
-新增 plugin kind 或 provider 时同步 shared union、installer 注册、IPC/preload/declaration、UI、config owner、删除语义和测试。现有测试覆盖 marketplace validation/cleanup/redaction、安装器冲突、Skill/Hook archive/path/lock、extension import/registry/host、ask-user 和 MCP discovery/probe。运行时行为变化还要更新 capability matrix 与 patch tests。
+新增 plugin kind 或 provider 时同步 shared union、installer 注册、IPC/preload/declaration、UI、config owner、删除语义和测试。现有测试覆盖 marketplace validation/cleanup/redaction、安装器冲突、Skill/Hook archive/path/lock、extension import/registry、`AskUserQuestion` 状态机与 MCP discovery/probe。运行时行为变化还要更新 capability matrix 与 patch tests。
 
 ## 14. 各类型生命周期对照
 
@@ -228,7 +241,7 @@ MCP env、Extension configuration、Skill credential 和 Marketplace provider �
 | Commit 中断               | 回滚 staging/目标，保留可诊断错误                     |
 | Runtime stop 后安装失败   | 恢复原运行状态，不能让 cleanup error 覆盖主错误       |
 | Config sync 失败          | 产品记录可保留为未生效/错误，UI 不宣告 runtime ready  |
-| Extension host 崩溃       | 重新 list/config/start，拒绝遗留 ask-user pending     |
+| AskUserQuestion 事件连接中断 | adapter 重连后用 `askUserQuestion.list` 恢复 pending |
 | Marketplace provider 异常 | 隔离 source、返回脱敏稳定错误，不污染其他 source 结果 |
 
 ## 18. Plugin Definition of Done

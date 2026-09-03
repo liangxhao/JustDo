@@ -24,7 +24,7 @@ import { useDialogFocusTrap } from './useDialogFocusTrap';
 
 interface CoworkQuestionWizardProps {
   interaction: CoworkInteractionRequest;
-  onRespond: (result: CoworkInteractionResult) => void;
+  onRespond: (result: CoworkInteractionResult) => Promise<boolean>;
   presentation?: CoworkInteractionPresentation;
   isActive?: boolean;
 }
@@ -49,10 +49,13 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
   const [otherInputs, setOtherInputs] = useState<Record<string, string>>({});
   const [otherActive, setOtherActive] = useState<Record<string, boolean>>({});
   const [skippedQuestions, setSkippedQuestions] = useState<Record<string, boolean>>({});
+  const [isResponding, setIsResponding] = useState(false);
   const advanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const respondingRef = useRef(false);
   const dialogRef = useRef<HTMLDivElement>(null);
 
   const isFloating = presentation === 'floating';
+  const dialogTitleId = `cowork-question-wizard-title-${interaction.requestId}`;
 
   useDialogFocusTrap(dialogRef, dialogRef, interaction.requestId, !isFloating, isActive);
 
@@ -78,6 +81,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
   const totalSteps = questions.length;
   const activeStep = Math.min(currentStep, totalSteps - 1);
   const currentQuestion = questions[activeStep];
+  const currentQuestionDomId = `ask-user-question-${interaction.requestId}-${currentQuestion.id}`;
   const isFirstStep = activeStep === 0;
   const isLastStep = activeStep === totalSteps - 1;
 
@@ -104,7 +108,6 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
         return next;
       });
       setOtherActive(prev => ({ ...prev, [question.id]: false }));
-
       setOptionInputs(prev => ({
         ...prev,
         [question.id]: prev[question.id]?.[optionId]
@@ -112,9 +115,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
           : {},
       }));
 
-      const selectedOption = question.options.find(option => option.id === optionId);
-      // Keep the question visible when the selected option requires extra input.
-      if (!selectedOption?.input) {
+      if (!question.options.find(option => option.id === optionId)?.input) {
         const scheduledStep = activeStep;
         advanceTimerRef.current = setTimeout(() => {
           advanceTimerRef.current = null;
@@ -156,16 +157,6 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
     }
   };
 
-  const handleOptionInputChange = (option: AskUserQuestionOption, value: string) => {
-    setOptionInputs(prev => ({
-      ...prev,
-      [currentQuestion.id]: {
-        ...(prev[currentQuestion.id] ?? {}),
-        [option.id]: value,
-      },
-    }));
-  };
-
   const handleOtherInputChange = (value: string) => {
     clearAutoAdvance();
     setSkippedQuestions(prev => ({ ...prev, [currentQuestion.id]: false }));
@@ -203,6 +194,17 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
         return next;
       });
     }
+  };
+
+  const handleOptionInputChange = (option: AskUserQuestionOption, value: string) => {
+    setSkippedQuestions(prev => ({ ...prev, [currentQuestion.id]: false }));
+    setOptionInputs(prev => ({
+      ...prev,
+      [currentQuestion.id]: {
+        ...(prev[currentQuestion.id] ?? {}),
+        [option.id]: value,
+      },
+    }));
   };
 
   const handlePrevious = () => {
@@ -247,6 +249,21 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
     setCurrentStep(step);
   };
 
+  const respond = async (result: CoworkInteractionResult): Promise<void> => {
+    if (respondingRef.current) return;
+    clearAutoAdvance();
+    respondingRef.current = true;
+    setIsResponding(true);
+    try {
+      const succeeded = await onRespond(result);
+      if (succeeded) return;
+    } catch {
+      // App owns user-visible error reporting; keep the dialog retryable here.
+    }
+    respondingRef.current = false;
+    setIsResponding(false);
+  };
+
   const handleSubmit = () => {
     const finalAnswers: AskUserAnswers = {};
     questions.forEach(question => {
@@ -270,7 +287,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
       };
     });
 
-    onRespond({
+    void respond({
       behavior: 'submit',
       updatedInput: {
         ...(toolInput && typeof toolInput === 'object' ? toolInput : {}),
@@ -280,7 +297,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
   };
 
   const handleCancel = () => {
-    onRespond({
+    void respond({
       behavior: 'cancel',
       message: 'Interaction canceled',
     });
@@ -319,7 +336,8 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
         }
         role="dialog"
         aria-modal={isFloating ? undefined : true}
-        aria-labelledby="cowork-question-wizard-title"
+        aria-labelledby={dialogTitleId}
+        aria-busy={isResponding}
         tabIndex={-1}
       >
         {/* Header */}
@@ -330,12 +348,13 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
           data-question-drag-handle={isFloating ? true : undefined}
         >
           <div className="flex-1">
-            <h2 id="cowork-question-wizard-title" className="text-lg font-semibold text-foreground">
+            <h2 id={dialogTitleId} className="text-lg font-semibold text-foreground">
               {i18nService.t('coworkQuestionWizardTitle')}
             </h2>
           </div>
           <button
             onClick={handleCancel}
+            disabled={isResponding}
             className="p-2 rounded-lg hover:bg-surface-raised text-secondary transition-colors"
             aria-label={i18nService.t('close')}
           >
@@ -371,10 +390,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
                   </span>
                 )}
                 {/* Question text */}
-                <h3
-                  id={`ask-user-question-${currentQuestion.id}`}
-                  className="text-base font-medium text-foreground"
-                >
+                <h3 id={currentQuestionDomId} className="text-base font-medium text-foreground">
                   {currentQuestion.question}
                   <span className="ml-1.5 text-sm font-normal text-secondary">
                     {i18nService.t(
@@ -392,6 +408,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
                 {!isFirstStep && (
                   <button
                     onClick={handlePrevious}
+                    disabled={isResponding}
                     className="p-1.5 rounded-lg text-foreground hover:bg-surface-raised transition-colors"
                     title={i18nService.t('coworkQuestionWizardPrevious')}
                   >
@@ -403,13 +420,14 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
                 <div className="flex min-w-0 flex-1 flex-wrap items-center justify-center gap-1.5 sm:flex-none sm:flex-nowrap">
                   {questions.map((question, index) => {
                     const isActive = index === activeStep;
-                    const isAnswered = isQuestionAnswered(question);
+                    const isAnswered = isQuestionComplete(question);
 
                     return (
                       <button
                         key={index}
                         type="button"
                         onClick={() => handleStepSelect(index)}
+                        disabled={isResponding}
                         aria-current={isActive ? 'step' : undefined}
                         className={`relative flex items-center justify-center w-7 h-7 rounded-full text-xs font-medium transition-all ${
                           isActive
@@ -442,6 +460,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
                 {!isLastStep && !currentQuestion.multiSelect && (
                   <button
                     onClick={handleNext}
+                    disabled={isResponding}
                     className="p-1.5 rounded-lg text-foreground hover:bg-surface-raised transition-colors"
                     title={i18nService.t('coworkQuestionWizardNext')}
                   >
@@ -455,7 +474,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
             <div
               className="space-y-2"
               role={currentQuestion.multiSelect ? 'group' : 'radiogroup'}
-              aria-labelledby={`ask-user-question-${currentQuestion.id}`}
+              aria-labelledby={currentQuestionDomId}
             >
               {currentQuestion.options.map(option => {
                 const isSelected = selectedValues.includes(option.id);
@@ -470,9 +489,10 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
                     >
                       <input
                         type={currentQuestion.multiSelect ? 'checkbox' : 'radio'}
-                        name={`ask-user-question-${currentQuestion.id}`}
+                        name={currentQuestionDomId}
                         value={option.id}
                         checked={isSelected}
+                        disabled={isResponding}
                         onChange={() => handleSelectOption(currentQuestion, option.id)}
                         className="sr-only"
                       />
@@ -531,6 +551,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
                         <textarea
                           rows={3}
                           value={optionInputs[currentQuestion.id]?.[option.id] ?? ''}
+                          disabled={isResponding}
                           onChange={event => handleOptionInputChange(option, event.target.value)}
                           placeholder={option.input.placeholder}
                           className="mt-1 w-full min-h-20 max-h-40 resize-y px-3 py-2 rounded-lg border border-border bg-background text-foreground placeholder:text-secondary dark:placeholder:text-foregroundSecondary focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm font-normal"
@@ -551,8 +572,9 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
                 >
                   <input
                     type={currentQuestion.multiSelect ? 'checkbox' : 'radio'}
-                    name={`ask-user-question-${currentQuestion.id}`}
+                    name={currentQuestionDomId}
                     checked={Boolean(otherActive[currentQuestion.id])}
+                    disabled={isResponding}
                     onChange={handleToggleOther}
                     className="sr-only"
                   />
@@ -603,6 +625,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
                 <textarea
                   rows={3}
                   value={otherInputs[currentQuestion.id] || ''}
+                  disabled={isResponding}
                   onChange={e => handleOtherInputChange(e.target.value)}
                   placeholder={i18nService.t('coworkQuestionWizardOtherPlaceholder')}
                   className="flex-1 min-h-20 max-h-40 resize-y px-3 py-2 rounded-lg border border-border bg-background text-foreground placeholder:text-secondary dark:placeholder:text-foregroundSecondary focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm"
@@ -613,6 +636,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
                 <button
                   type="button"
                   onClick={handleSkip}
+                  disabled={isResponding}
                   aria-pressed={Boolean(skippedQuestions[currentQuestion.id])}
                   className={`ml-auto px-4 py-2 text-sm font-medium rounded-lg transition-colors whitespace-nowrap ${
                     skippedQuestions[currentQuestion.id]
@@ -633,6 +657,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
                   <button
                     type="button"
                     onClick={handleNext}
+                    disabled={isResponding}
                     className="inline-flex items-center gap-1.5 rounded-lg border border-primary bg-primary px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-hover"
                   >
                     {i18nService.t('coworkQuestionWizardNext')}
@@ -644,12 +669,20 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end px-6 py-4 border-t border-border bg-surface-raised">
+        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-border bg-surface-raised">
+          <button
+            type="button"
+            onClick={handleCancel}
+            disabled={isResponding}
+            className="px-5 py-2 text-sm font-medium rounded-lg text-secondary hover:bg-surface transition-colors"
+          >
+            {i18nService.t('coworkCancelRequest')}
+          </button>
           <button
             onClick={handleSubmit}
-            disabled={!allAnswered}
+            disabled={!allAnswered || isResponding}
             className={`px-5 py-2 text-sm font-medium rounded-lg border shadow-sm transition-colors ${
-              allAnswered
+              allAnswered && !isResponding
                 ? 'border-primary bg-primary text-white hover:bg-primary-hover'
                 : 'border-border bg-surface text-secondary cursor-not-allowed'
             }`}

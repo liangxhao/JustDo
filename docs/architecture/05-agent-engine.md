@@ -49,8 +49,8 @@ Engine status 至少表达 stopped、starting、running、stopping/error 类 pha
 - provider models、base URL、API format、auth 与 capability；
 - agents 的 identity、system prompt、qualified model 和 skills；
 - 无显式 session mode 时的全局 restricted fallback 与 scheduler 隔离 policy；
-- runtime settings，包括 AskUserQuestion 等待时限、MCP 请求超时与 subagent 调度参数；
-- MCP servers、Hooks、Extensions 与 ask-user 动态 callback；
+- runtime settings，包括 MCP 请求超时与 subagent 调度参数；
+- MCP servers、Hooks 与 Extensions；
 - browser mode；
 - system prompt replacement rules；
 - scheduler 隔离 agent 与其他 JustDo 管理项。
@@ -59,18 +59,17 @@ Engine status 至少表达 stopped、starting、running、stopping/error 类 pha
 
 v2026.8.2 配置只生成 keyed `agents.entries` roster，并以 `agents.ownership: explicit` 标记多 Agent 所有权；`main` 与隔离的 `justdo-scheduler` 在无模型的最小配置中也必须存在。`agents.defaults.systemAgent.agentId` 固定为 `main`，让 memory dreaming 等 OpenClaw 原生环境任务拥有明确 owner；JustDo 创建的无人值守任务仍逐项显式绑定 `justdo-scheduler`。启动权限验收同样只读取 v2026.8.2 的 `agents.entries`，不能再用已删除的 `agents.list` 判断 scheduler 权限。v2026.8.2 将 `tools.sessions.visibility` 的隐式默认值扩展为同一 Agent 的全部 session；JustDo 在“设置 → 配置”开放 `self/tree/agent/all`，产品默认仍为 `tree`，以保留父子任务树边界并避免 sibling session 在升级后自动相互可见。OpenClaw 默认还会把沙盒会话的有效范围归一为当前任务树：`agent/all` 会被收窄，而 `self` 在沙盒内也按任务树范围执行；设置页必须明确提示这一运行时差异。自定义 provider 的展示名同时是 Gateway 模型引用中的 provider ID，使 OpenClaw 注入的当前模型身份保持用户可读；设置页与主进程同步入口都会拒绝 v2026.8.2 内置 provider、官方外置 provider/别名以及 JustDo 内部命名空间，避免触发错误的 provider 或插件路由。记忆检索写入顶层 `memory.search`，计划工具开关写入 `tools.updatePlan`。同步会定向清理 JustDo 历史写入但已被该版本删除的 metadata、diagnostics、pricing、heartbeat 与 experimental tool 字段，避免把旧生成结果重新喂给严格 schema。
 
-版本化的 `agentRuntimeSettings:v1` 同时生成 `agents.defaults.subagents` 和 `tools.sessions.visibility`，把 AskUserQuestion 等待时限写入 `plugins.entries.ask-user-question.config.timeoutMinutes`，并以全局 MCP 请求时限作为用户 MCP Server 的默认 `timeout`。`mcp_servers.config_json.requestTimeoutSeconds` 可覆盖单个 Server；旧数据缺少后来加入的会话访问范围、提问、审批或 MCP 字段时分别使用 `tree`、10 分钟、30 分钟与 60 秒；配置同步失败会恢复上一份数据库值。
+版本化的 `agentRuntimeSettings:v1` 同时生成 `agents.defaults.subagents` 和 `tools.sessions.visibility`，并以全局 MCP 请求时限作为用户 MCP Server 的默认 `timeout`。`mcp_servers.config_json.requestTimeoutSeconds` 可覆盖单个 Server；旧数据缺少后来加入的会话访问范围、审批、AskUserQuestion 或 MCP 字段时分别使用 `tree`、30 分钟、10 分钟与 60 秒；配置同步失败会恢复上一份数据库值。AskUserQuestion 的分钟数只供 extension 在模型显式设置 `timeoutEnabled` 时使用；默认是必须等待，不能把全局数值误解为每次提问都会超时。
 
 ## 5. Fail-closed admission
 
 `ensureOpenClawRunningForCowork` 的顺序：
 
 1. 检测 legacy `sessions.json`。存在时先生成原生 SQLite migration dry-run plan，并在用户确认前阻止 Gateway 启动。
-2. 确保 extension host 可用；其失败会记录，但后续 config/能力验证决定是否可继续。
-3. 执行 config sync；失败则设置 external engine error。
-4. 若 manager 已 running，仍验证 active fallback/scheduler policy。
-5. 否则调用可合并的 start；running 后再次验证该 policy。
-6. 只有 phase 为 running 且验证成功，Cowork start/continue 才被接受。
+2. 执行 config sync；失败则设置 external engine error。
+3. 若 manager 已 running，仍验证 active fallback/scheduler policy。
+4. 否则调用可合并的 start；running 后再次验证该 policy。
+5. 只有 phase 为 running 且验证成功，Cowork start/continue 才被接受。
 
 这防止 Gateway 在无显式 session mode 的路径使用旧 Full fallback。具体 session 的 mode/root 在每个 turn admission 中另外回读验证。
 

@@ -12,7 +12,7 @@ import CoworkQuestionWizard from './CoworkQuestionWizard';
 interface CoworkQuestionFloatingWindowProps {
   interaction: CoworkInteractionRequest;
   isVisible: boolean;
-  onRespond: (result: CoworkInteractionResult) => void;
+  onRespond: (result: CoworkInteractionResult) => Promise<boolean>;
 }
 
 type WindowOffset = {

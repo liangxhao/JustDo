@@ -116,7 +116,6 @@ Main 启动时延迟创建重型服务，主要对象关系如下：
 - `OpenClawEngineManager` 管理 runtime 状态、端口、token、进程与网络环境。
 - `OpenClawConfigSyncService` 汇总 provider、agent、全局权限兜底、MCP、Hook、Extension、browser 等配置并串行写入。
 - `SessionPermissionModeCoordinator` 串行写入并验证原生 session mode/root，成功后更新本地投影。
-- `OpenClawExtensionHostLifecycle` 管理 ask-user callback 与 extension MCP transports。
 - `ManagedDirectoryOperationCoordinator` 在插件目录变更前识别/停止相关进程，完成后恢复。
 - `CronJobService`、result store/sync service 共享 Gateway adapter 与 SQLite。
 - `OutboundHeaderProxy` 向 Gateway generation 及显式 opt-in 的 OpenClaw one-shot CLI
@@ -132,7 +131,6 @@ sequenceDiagram
   participant E as Electron
   participant M as Main
   participant D as SQLite
-  participant X as Extension host
   participant C as Config sync
   participant G as Gateway
   participant W as Window
@@ -143,7 +141,6 @@ sequenceDiagram
   M->>D: open DB, schema/migrations
   M->>D: reset stale session/run state
   M->>M: restore system proxy and built-in provider
-  M->>X: start host; obtain dynamic callback config
   M->>C: sync OpenClaw config
   C-->>M: verified config result
   M->>G: start managed Gateway
@@ -159,9 +156,8 @@ sequenceDiagram
 2. IPC handler 可以提前注册，但所有 store getter 在数据库 ready 前会抛错，防止静默使用空状态。
 3. DB 打开后重置上次强退遗留的 running session；open run 的计时从本次启动重新计算，离线时间不计入。
 4. 先恢复代理，再刷新 built-in provider，否则模型发现可能使用错误网络路径。
-5. 先启动 extension host，再同步 config，避免把上次进程的动态 callback 端口写给 Gateway。
-6. config sync 成功后才自动启动 Gateway 和 cron polling；失败被记录且新 Cowork admission 会 fail closed。
-7. 窗口创建晚于核心本地服务初始化，UI 不会在数据库不可用时假装 ready。
+5. config sync 成功后才自动启动 Gateway 和 cron polling；失败被记录且新 Cowork admission 会 fail closed。
+6. 窗口创建晚于核心本地服务初始化，UI 不会在数据库不可用时假装 ready。
 
 ## 7. Cowork 数据流
 
@@ -191,12 +187,11 @@ Start/continue handler 先等待待处理配置更新并确保 Gateway 的全局
 1. 停止 customer registration、tray 和 cron polling，阻止新后台工作。
 2. 停止全部 Cowork session。
 3. 停止 Gateway，使其不再发起 extension/tool 调用。
-4. 停止 extension host 和其 stdio/client/callback server。
-5. 停止 outbound-header proxy。
-6. 关闭 SQLite，flush WAL 并释放锁。
-7. 自动更新安装也复用同一 cleanup，再交给 updater。
+4. 停止 outbound-header proxy。
+5. 关闭 SQLite，flush WAL 并释放锁。
+6. 自动更新安装也复用同一 cleanup，再交给 updater。
 
-这个顺序不能随意反转；例如先关闭 proxy 或 extension host 可能让仍在运行的 Gateway 进入不完整失败状态。
+这个顺序不能随意反转；例如先关闭 proxy 可能让仍在运行的 Gateway 进入不完整失败状态。
 
 ## 10. 故障恢复
 

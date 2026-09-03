@@ -801,14 +801,19 @@ export class CoworkService {
     const cowork = window.electron?.cowork;
     if (!cowork) return false;
 
-    const response = await cowork.respondToInteraction({ requestId, result });
-    if (response.success) {
-      store.dispatch(dequeuePendingInteraction({ requestId }));
-      return true;
-    }
+    try {
+      const response = await cowork.respondToInteraction({ requestId, result });
+      if (response.success) {
+        store.dispatch(dequeuePendingInteraction({ requestId }));
+        return true;
+      }
 
-    console.error('Failed to respond to interaction:', response.error);
-    return false;
+      console.error('Failed to respond to interaction:', response.error);
+      return false;
+    } catch (error) {
+      console.error('Failed to respond to interaction:', error);
+      return false;
+    }
   }
 
   async updateConfig(config: CoworkConfigUpdate): Promise<boolean> {

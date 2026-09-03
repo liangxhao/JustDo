@@ -1,7 +1,11 @@
 {
   "id": "ask-user-question",
   "name": "AskUserQuestion",
-  "description": "Structured choice and confirmation tool for the desktop application.",
+  "description": "Rich structured questions for the JustDo desktop application.",
+  "activation": {
+    "onStartup": true,
+    "onCapabilities": ["tool"]
+  },
   "contracts": {
     "tools": ["AskUserQuestion"]
   },
@@ -9,20 +13,12 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "callbackUrl": {
-        "type": "string",
-        "description": "Desktop application HTTP callback URL for approval requests"
-      },
-      "secret": {
-        "type": "string",
-        "description": "Shared secret for callback authentication"
-      },
       "timeoutMinutes": {
         "type": "integer",
         "minimum": 1,
         "maximum": 1440,
         "default": 10,
-        "description": "User-configured timeout in minutes for questions with timeoutEnabled"
+        "description": "Wait time for questions with timeoutEnabled"
       }
     }
   }

@@ -14,24 +14,19 @@ describe('ask-user interaction answer builders', () => {
     expect(resolveWizardAutoAdvanceStep(3, 3, 4)).toBe(3);
   });
 
-  test('requires selected option inputs before marking a question complete', () => {
+  test('accepts a selected option or a non-empty Other answer', () => {
     const question = {
       id: 'environment',
       question: 'Which environment?',
       options: [
-        { id: 'custom', label: 'Custom', input: { label: 'Environment name' } },
+        { id: 'custom', label: 'Custom' },
         { id: 'production', label: 'Production' },
       ],
     };
 
-    expect(isQuestionAnswerComplete(question, ['custom'], undefined, false, undefined)).toBe(false);
-    expect(isQuestionAnswerComplete(question, ['custom'], { custom: '  ' }, false, undefined)).toBe(
-      false,
-    );
-    expect(
-      isQuestionAnswerComplete(question, ['custom'], { custom: 'staging' }, false, undefined),
-    ).toBe(true);
+    expect(isQuestionAnswerComplete(question, ['custom'], undefined, false, undefined)).toBe(true);
     expect(isQuestionAnswerComplete(question, [], undefined, true, 'Other environment')).toBe(true);
+    expect(isQuestionAnswerComplete(question, [], undefined, true, '  ')).toBe(false);
   });
 
   test('requires active other input even when a regular option is selected', () => {
@@ -47,6 +42,28 @@ describe('ask-user interaction answer builders', () => {
 
     expect(isQuestionAnswerComplete(question, ['desktop'], undefined, true, '  ')).toBe(false);
     expect(isQuestionAnswerComplete(question, ['desktop'], undefined, true, 'Tablet')).toBe(true);
+  });
+
+  test('requires text for every selected option that declares an input', () => {
+    const question = {
+      id: 'environment',
+      question: 'Which environment?',
+      options: [
+        { id: 'custom', label: 'Custom', input: { label: 'Environment' } },
+        { id: 'production', label: 'Production' },
+      ],
+    };
+
+    expect(isQuestionAnswerComplete(question, ['custom'], {}, false, undefined)).toBe(false);
+    expect(
+      isQuestionAnswerComplete(
+        question,
+        ['custom'],
+        { custom: 'staging' },
+        false,
+        undefined,
+      ),
+    ).toBe(true);
   });
 });
 

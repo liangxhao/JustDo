@@ -13,7 +13,6 @@ import type {
 } from '../../openclaw/runtime/openclawEngineManager';
 import type { OpenClawHookStore } from '../../plugins/hooks';
 import type { McpStore } from '../../plugins/mcp';
-import type { AskUserExtensionConfig } from './openclawConfigSync';
 import {
   OPENCLAW_FALLBACK_EXEC_MODE,
   OPENCLAW_FALLBACK_FS_WORKSPACE_ONLY,
@@ -24,7 +23,6 @@ import {
 type OpenClawConfigSyncServiceDeps = {
   getCoworkStore: () => CoworkStore;
   getOpenClawEngineManager: () => OpenClawEngineManager;
-  getAskUserExtensionConfig: () => AskUserExtensionConfig | null;
   getMcpStore: () => McpStore;
   getHookStore: () => OpenClawHookStore;
   disconnectGatewayClient: () => void;
@@ -873,7 +871,6 @@ export class OpenClawConfigSyncService {
         getCoworkConfig: () => this.deps.getCoworkStore().getConfig(),
         getAgentRuntimeSettings: () =>
           this.deps.getCoworkStore().getAgentRuntimeSettings(),
-        getAskUserExtensionConfig: this.deps.getAskUserExtensionConfig,
         getMcpServers: () => this.deps.getMcpStore().listServers(),
         getHooks: () => this.deps.getHookStore().listHooks(),
         getAgents: () => this.deps.getCoworkStore().listAgents(),

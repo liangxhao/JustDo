@@ -12,7 +12,7 @@ import type { PluginMarketplaceService } from './marketplace';
 /**
  * Application boundary for plugin management.
  *
- * Installed-plugin adapters (OpenClaw, local MCP storage, extension host) and
+ * Installed-plugin adapters (OpenClaw and local MCP storage) and
  * marketplace providers meet here so renderer code never depends on either.
  */
 export class PluginManager {

@@ -22,6 +22,16 @@ import {
   type PluginApprovalRequest,
   toOpenClawSessionPermissionMode,
 } from '../../../shared/openclaw/approvals';
+import {
+  type AskUserInteractionEnvelope,
+  AskUserQuestionGateway,
+  type AskUserRequest,
+  CoworkInteractionIpc,
+  CoworkInteractionKind,
+  OpenClawToolName,
+  parseAskUserAnswers,
+  parseAskUserRequest,
+} from '../../../shared/openclaw/extensions';
 import { isInternalManagedSubagentHandoffError } from '../../../shared/openclaw/internalRunError';
 import {
   classifyAgentEvent,
@@ -124,6 +134,7 @@ const GATEWAY_CONNECT_RETRY_DELAYS = [500, 1_500, 3_000];
 const SUBAGENT_STATUS_CACHE_TTL_MS = 8_000;
 const SUBAGENT_DETAIL_CACHE_TTL_MS = 60_000;
 const RUNTIME_SESSION_SNAPSHOT_TTL_MS = 2_000;
+const ASK_USER_TERMINAL_CACHE_SIZE = 256;
 const TITLE_SESSION_ID_RESOLUTION_TIMEOUT_MS = 30_000;
 const TITLE_SESSION_ID_POLL_INTERVAL_MS = 100;
 const TITLE_SESSION_ID_SNAPSHOT_INTERVAL_MS = 2_000;
@@ -258,6 +269,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     generation: number;
     events: Array<{ channel: string; payload: Record<string, unknown> }>;
   } | null = null;
+  private readonly pendingAskUserRequests = new Map<string, AskUserRequest>();
+  private readonly terminalAskUserIds = new Set<string>();
   private readonly subagentStatusCache = new Map<
     string,
     {
@@ -1235,6 +1248,16 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       return;
     }
 
+    if (event.event === AskUserQuestionGateway.REQUESTED_EVENT) {
+      this.handleAskUserRequested(event.payload);
+      return;
+    }
+
+    if (event.event === AskUserQuestionGateway.RESOLVED_EVENT) {
+      this.handleAskUserResolved(event.payload);
+      return;
+    }
+
     if (event.event === 'exec.approval.requested') {
       void this.handleExecApprovalRequested(event.payload);
       return;
@@ -1541,6 +1564,193 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }
     }
   }
+
+  private resolveAskUserSessionId(request: AskUserRequest): string {
+    return request.sessionKey
+      ? (this.resolveSessionIdBySessionKey(request.sessionKey) ?? '__askuser__')
+      : '__askuser__';
+  }
+
+  private toAskUserInteraction(request: AskUserRequest): AskUserInteractionEnvelope {
+    const sessionId = this.resolveAskUserSessionId(request);
+    return {
+      sessionId,
+      request: {
+        requestId: request.requestId,
+        toolName: OpenClawToolName.ASK_USER_QUESTION,
+        interactionKind: CoworkInteractionKind.STRUCTURED_QUESTION,
+        toolInput: {
+          questions: request.questions,
+          waitPolicy: request.waitPolicy,
+          ...(request.expiresAt ? { expiresAt: request.expiresAt } : {}),
+          ...(request.sessionKey ? { sessionKey: request.sessionKey } : {}),
+          sessionId,
+        },
+      },
+    };
+  }
+
+  private parseAskUserInteractionRequest(
+    interaction: AskUserInteractionEnvelope,
+  ): AskUserRequest | null {
+    return parseAskUserRequest({
+      requestId: interaction.request.requestId,
+      ...interaction.request.toolInput,
+    });
+  }
+
+  private sendAskUserInteraction(interaction: AskUserInteractionEnvelope): void {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) {
+        window.webContents.send(CoworkInteractionIpc.Stream, interaction);
+      }
+    }
+  }
+
+  private sendAskUserDismiss(requestId: string): void {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) {
+        window.webContents.send(CoworkInteractionIpc.Dismiss, { requestId });
+      }
+    }
+  }
+
+  private rememberTerminalAskUser(requestId: string): void {
+    this.terminalAskUserIds.add(requestId);
+    while (this.terminalAskUserIds.size > ASK_USER_TERMINAL_CACHE_SIZE) {
+      const oldestRequestId = this.terminalAskUserIds.values().next().value;
+      if (typeof oldestRequestId !== 'string') break;
+      this.terminalAskUserIds.delete(oldestRequestId);
+    }
+  }
+
+  private handleAskUserRequested(payload: unknown): void {
+    const request = parseAskUserRequest(payload);
+    if (!request) {
+      coworkLog('WARN', 'OpenClawRuntime', 'Ignored malformed AskUserQuestion request');
+      return;
+    }
+    if (this.terminalAskUserIds.has(request.requestId)) return;
+    this.pendingAskUserRequests.set(request.requestId, request);
+    this.sendAskUserInteraction(this.toAskUserInteraction(request));
+  }
+
+  private handleAskUserResolved(payload: unknown): void {
+    if (
+      !isRecord(payload) ||
+      typeof payload.requestId !== 'string' ||
+      !payload.requestId.trim() ||
+      !['answered', 'cancelled', 'timeout'].includes(String(payload.status))
+    ) {
+      return;
+    }
+    const requestId = payload.requestId.trim();
+    this.rememberTerminalAskUser(requestId);
+    if (!this.pendingAskUserRequests.delete(requestId)) return;
+    this.sendAskUserDismiss(requestId);
+  }
+
+  private async readPendingAskUserInteractions(
+    client: GatewayClientLike,
+  ): Promise<AskUserInteractionEnvelope[]> {
+    const result = await client.request(AskUserQuestionGateway.LIST, {});
+    if (!isRecord(result) || !Array.isArray(result.requests)) {
+      throw new Error('AskUserQuestion list returned an invalid payload.');
+    }
+    const interactions: AskUserInteractionEnvelope[] = [];
+    for (const [index, rawRequest] of result.requests.entries()) {
+      const request = parseAskUserRequest(rawRequest);
+      if (!request) {
+        coworkLog('WARN', 'OpenClawRuntime', 'Ignored malformed AskUserQuestion list entry', {
+          index,
+        });
+        continue;
+      }
+      if (this.terminalAskUserIds.has(request.requestId)) continue;
+      interactions.push(this.toAskUserInteraction(request));
+    }
+    return interactions;
+  }
+
+  async listPendingAskUserInteractions(): Promise<AskUserInteractionEnvelope[]> {
+    await this.ensureGatewayClientReady();
+    const client = this.requireGatewayClient();
+    const generation = this.gatewayClientGeneration;
+    const interactions = await this.readPendingAskUserInteractions(client);
+    if (generation !== this.gatewayClientGeneration || client !== this.gatewayClient) return [];
+    for (const interaction of interactions) {
+      const request = this.parseAskUserInteractionRequest(interaction);
+      if (request) this.pendingAskUserRequests.set(request.requestId, request);
+    }
+    return interactions;
+  }
+
+  async resolveAskUserInteraction(
+    requestId: string,
+    response: { behavior: 'submit'; answers: unknown } | { behavior: 'cancel' },
+  ): Promise<{ sessionId: string }> {
+    const normalizedRequestId = requestId.trim();
+    const pending = this.pendingAskUserRequests.get(normalizedRequestId);
+    if (!normalizedRequestId || !pending) {
+      throw new Error('This question is not an active JustDo AskUserQuestion interaction.');
+    }
+    const answers =
+      response.behavior === 'submit'
+        ? parseAskUserAnswers(response.answers, pending.questions)
+        : undefined;
+    if (response.behavior === 'submit' && !answers) {
+      throw new Error('The submitted answers do not match the pending question.');
+    }
+    await this.ensureGatewayClientReady();
+    const client = this.requireGatewayClient();
+    const result = await client.request(AskUserQuestionGateway.RESOLVE, {
+      requestId: normalizedRequestId,
+      behavior: response.behavior,
+      ...(answers ? { answers } : {}),
+    });
+    if (
+      !isRecord(result) ||
+      result.requestId !== normalizedRequestId ||
+      !['answered', 'cancelled'].includes(String(result.status))
+    ) {
+      throw new Error('AskUserQuestion resolve returned an invalid payload.');
+    }
+    this.rememberTerminalAskUser(normalizedRequestId);
+    if (this.pendingAskUserRequests.delete(normalizedRequestId)) {
+      this.sendAskUserDismiss(normalizedRequestId);
+    }
+    return { sessionId: this.resolveAskUserSessionId(pending) };
+  }
+
+  private async reconcilePendingAskUserInteractions(generation: number): Promise<void> {
+    const client = this.gatewayClient;
+    if (!client) return;
+    try {
+      const interactions = await this.readPendingAskUserInteractions(client);
+      if (generation !== this.gatewayClientGeneration || client !== this.gatewayClient) return;
+      for (const interaction of interactions) {
+        if (!this.terminalAskUserIds.has(interaction.request.requestId)) {
+          const request = this.parseAskUserInteractionRequest(interaction);
+          if (!request) continue;
+          this.pendingAskUserRequests.set(request.requestId, request);
+          this.sendAskUserInteraction(interaction);
+        }
+      }
+    } catch (error) {
+      coworkLog('WARN', 'OpenClawRuntime', 'Failed to recover pending AskUserQuestion requests', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private dismissAllAskUserInteractions(): void {
+    for (const requestId of this.pendingAskUserRequests.keys()) {
+      this.sendAskUserDismiss(requestId);
+    }
+    this.pendingAskUserRequests.clear();
+    this.terminalAskUserIds.clear();
+  }
+
   private broadcastApproval(channel: string, kind: ApprovalKind, payload: unknown): void {
     if (!isRecord(payload)) return;
     const normalizedPayload = { ...payload, kind };
@@ -2201,7 +2411,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       mode: 'backend',
       caps: [OPENCLAW_GATEWAY_TOOL_EVENTS_CAP],
       role: 'operator',
-      scopes: ['operator.admin', 'operator.approvals'],
+      scopes: ['operator.admin', 'operator.approvals', 'operator.questions'],
       // JustDo authenticates this loopback backend client with the managed
       // gateway token. Avoid OpenClaw creating a second device identity under
       // the Electron main process's default ~/.openclaw state directory.
@@ -2225,6 +2435,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         this.startTickWatchdog();
         void this.handleGatewayReady(generation);
         void this.reconcilePendingApprovals(generation);
+        void this.reconcilePendingAskUserInteractions(generation);
       },
       onConnectError: (error: Error) => settleReject(error),
       onClose: (_code: number, reason: string) => {
@@ -2268,6 +2479,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private stopGatewayClient(): void {
     this.goalContinuationCoordinator.clear();
     this.cancelGoalRecovery();
+    this.dismissAllAskUserInteractions();
     this.gatewayClientGeneration++;
     this.gatewayStoppingIntentionally = true;
     this.cancelGatewayReconnect();
@@ -2495,6 +2707,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private cleanupGatewayClientState(): void {
     this.goalContinuationCoordinator.clear();
     this.cancelGoalRecovery();
+    this.dismissAllAskUserInteractions();
     this.cancelGatewayReconnect();
     this.stopTickWatchdog();
     this.gatewayClient = null;

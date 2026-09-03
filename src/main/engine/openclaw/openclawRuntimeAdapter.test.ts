@@ -25,6 +25,10 @@ import {
   ExecApprovalDecision,
   OpenClawApprovalIpc,
 } from '../../../shared/openclaw/approvals';
+import {
+  AskUserQuestionGateway,
+  CoworkInteractionIpc,
+} from '../../../shared/openclaw/extensions';
 import { OPENCLAW_COMPACTION_TIMEOUT_SECONDS } from '../../openclaw/config/openclawConfigSync';
 import type { GatewayClientCtor, GatewayClientLike, SessionTurn } from '../gateway/types';
 import { OpenClawRuntimeAdapter } from './openclawRuntimeAdapter';
@@ -105,6 +109,182 @@ type SessionPreparationInternals = {
 const getSessionPreparationInternals = (
   adapter: OpenClawRuntimeAdapter,
 ): SessionPreparationInternals => adapter as unknown as SessionPreparationInternals;
+
+const createAskUserRequest = () => ({
+  requestId: 'ask_0123456789abcdef',
+  questions: [
+    {
+      id: 'deploy_target',
+      header: 'Deploy',
+      question: 'Where should this be deployed?',
+      options: [
+        { id: 'staging', label: 'Staging' },
+        { id: 'production', label: 'Production' },
+      ],
+      allowOther: true,
+    },
+  ],
+  sessionKey: 'agent:main:justdo:session-1',
+  waitPolicy: { mode: 'required' as const },
+});
+
+test('forwards AskUserQuestion extension events through the renderer interaction channel', () => {
+  sendToRenderer.mockClear();
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const request = createAskUserRequest();
+
+  adapter.handleGatewayEvent({
+    event: AskUserQuestionGateway.REQUESTED_EVENT,
+    payload: request,
+  });
+
+  expect(sendToRenderer).toHaveBeenCalledWith(CoworkInteractionIpc.Stream, {
+    sessionId: 'session-1',
+    request: expect.objectContaining({
+      requestId: request.requestId,
+      toolName: 'AskUserQuestion',
+      toolInput: expect.objectContaining({ waitPolicy: { mode: 'required' } }),
+    }),
+  });
+
+  adapter.handleGatewayEvent({
+    event: AskUserQuestionGateway.RESOLVED_EVENT,
+    payload: { requestId: request.requestId, status: 'cancelled' },
+  });
+  expect(sendToRenderer).toHaveBeenCalledWith(CoworkInteractionIpc.Dismiss, {
+    requestId: request.requestId,
+  });
+});
+
+test('does not reopen an AskUserQuestion after its terminal event', () => {
+  sendToRenderer.mockClear();
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const request = createAskUserRequest();
+
+  adapter.handleGatewayEvent({
+    event: AskUserQuestionGateway.RESOLVED_EVENT,
+    payload: { requestId: request.requestId, status: 'timeout' },
+  });
+  adapter.handleGatewayEvent({
+    event: AskUserQuestionGateway.REQUESTED_EVENT,
+    payload: request,
+  });
+
+  expect(sendToRenderer).not.toHaveBeenCalled();
+});
+
+test('recovers and resolves AskUserQuestion through extension-owned Gateway RPCs', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const pendingRequest = createAskUserRequest();
+  const request = vi.fn(async (method: string) => {
+    if (method === AskUserQuestionGateway.LIST) return { requests: [pendingRequest] };
+    if (method === AskUserQuestionGateway.RESOLVE) {
+      return { requestId: pendingRequest.requestId, status: 'answered' };
+    }
+    throw new Error(`Unexpected method: ${method}`);
+  });
+  const internals = getSessionPreparationInternals(adapter);
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+
+  await expect(adapter.listPendingAskUserInteractions()).resolves.toEqual([
+    expect.objectContaining({
+      sessionId: 'session-1',
+      request: expect.objectContaining({ requestId: pendingRequest.requestId }),
+    }),
+  ]);
+  await expect(
+    adapter.resolveAskUserInteraction(pendingRequest.requestId, {
+      behavior: 'submit',
+      answers: { deploy_target: { selected: ['production'] } },
+    }),
+  ).resolves.toEqual({ sessionId: 'session-1' });
+  expect(request).toHaveBeenCalledWith(AskUserQuestionGateway.RESOLVE, {
+    requestId: pendingRequest.requestId,
+    behavior: 'submit',
+    answers: { deploy_target: { selected: ['production'] } },
+  });
+});
+
+test('isolates malformed AskUserQuestion records during pending recovery', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const pendingRequest = createAskUserRequest();
+  const internals = getSessionPreparationInternals(adapter);
+  internals.gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request: vi.fn().mockResolvedValue({ requests: [{ requestId: 'malformed' }, pendingRequest] }),
+  };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+
+  await expect(adapter.listPendingAskUserInteractions()).resolves.toEqual([
+    expect.objectContaining({
+      request: expect.objectContaining({ requestId: pendingRequest.requestId }),
+    }),
+  ]);
+});
+
+test('does not authorize requests returned by a stale Gateway reconciliation', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const pendingRequest = createAskUserRequest();
+  let resolveList!: (value: unknown) => void;
+  const oldClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request: vi.fn(
+      () =>
+        new Promise<unknown>(resolve => {
+          resolveList = resolve;
+        }),
+    ),
+  };
+  const newClient = { start: vi.fn(), stop: vi.fn(), request: vi.fn() };
+  const internals = adapter as unknown as {
+    gatewayClient: GatewayClientLike | null;
+    gatewayClientGeneration: number;
+    reconcilePendingAskUserInteractions: (generation: number) => Promise<void>;
+  };
+  internals.gatewayClient = oldClient;
+  internals.gatewayClientGeneration = 1;
+
+  const reconciliation = internals.reconcilePendingAskUserInteractions(1);
+  internals.gatewayClient = newClient;
+  internals.gatewayClientGeneration = 2;
+  resolveList({ requests: [pendingRequest] });
+  await reconciliation;
+
+  await expect(
+    adapter.resolveAskUserInteraction(pendingRequest.requestId, { behavior: 'cancel' }),
+  ).rejects.toThrow('not an active JustDo AskUserQuestion interaction');
+  expect(newClient.request).not.toHaveBeenCalled();
+});
+
+test('rejects forged answers before calling the extension resolve RPC', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const pendingRequest = createAskUserRequest();
+  adapter.handleGatewayEvent({
+    event: AskUserQuestionGateway.REQUESTED_EVENT,
+    payload: pendingRequest,
+  });
+  const request = vi.fn();
+  const internals = getSessionPreparationInternals(adapter);
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+
+  await expect(
+    adapter.resolveAskUserInteraction(pendingRequest.requestId, {
+      behavior: 'submit',
+      answers: { deploy_target: { selected: ['forged'] } },
+    }),
+  ).rejects.toThrow('do not match the pending question');
+  expect(request).not.toHaveBeenCalled();
+});
 
 test('prepares the native OpenClaw session root and permission mode', async () => {
   const { store } = createEmptyStore();
@@ -1685,6 +1865,9 @@ test('an intentionally stopped gateway client cannot reclaim the active connecti
   const onHelloOk = clientOptions?.onHelloOk;
   expect(typeof onHelloOk).toBe('function');
   expect(clientOptions?.deviceIdentity).toBeNull();
+  expect(clientOptions?.scopes).toEqual(
+    expect.arrayContaining(['operator.admin', 'operator.approvals', 'operator.questions']),
+  );
   (onHelloOk as () => void)();
   expect(connectionAdapter.gatewayClient).not.toBeNull();
   expect(connectionAdapter.pendingGatewayClient).toBeNull();

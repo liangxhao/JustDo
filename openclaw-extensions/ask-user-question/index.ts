@@ -1,26 +1,15 @@
-import http from 'node:http';
-import https from 'node:https';
+import { randomUUID } from 'node:crypto';
 
-import type { OpenClawPluginApi } from 'openclaw/plugin-sdk';
+import type { OpenClawPluginApi, OpenClawPluginGatewayEvents } from 'openclaw/plugin-sdk';
 import { Type } from 'typebox';
 
-/**
- * AskUserQuestion plugin for OpenClaw.
- *
- * Registers a structured tool that lets the model ask the user a question
- * with predefined options (single/multi select). The tool pauses execution
- * and waits for the user's response via an HTTP callback to JustDo.
- *
- * This enables structured choice prompts and confirmation modals on
- * the JustDo desktop app without relying on OpenClaw's exec.approval
- * mechanism.
- */
-
-type PluginConfig = {
-  callbackUrl: string;
-  secret: string;
-  timeoutMinutes: number;
-};
+export const ASK_USER_TIMEOUT_MINUTES = 10;
+export const MAX_ASK_USER_TIMEOUT_MINUTES = 24 * 60;
+export const MAX_ASK_USER_QUESTIONS = 8;
+export const MAX_ASK_USER_HEADER_LENGTH = 12;
+export const ASK_USER_ID_PATTERN = '^[A-Za-z][A-Za-z0-9_-]{0,63}$';
+export const ASK_USER_LIST_METHOD = 'askUserQuestion.list';
+export const ASK_USER_RESOLVE_METHOD = 'askUserQuestion.resolve';
 
 type QuestionOption = {
   id: string;
@@ -32,7 +21,7 @@ type QuestionOption = {
   };
 };
 
-type Question = {
+export type Question = {
   id: string;
   question: string;
   header?: string;
@@ -42,7 +31,17 @@ type Question = {
   defaultOptionIds?: string[];
 };
 
-type WaitPolicy =
+type AskUserAnswers = Record<
+  string,
+  {
+    selected: string[];
+    optionInputs?: Record<string, string>;
+    other?: string;
+    skipped?: true;
+  }
+>;
+
+export type WaitPolicy =
   | { mode: 'required' }
   | {
       mode: 'timeout';
@@ -50,138 +49,46 @@ type WaitPolicy =
       onTimeout: 'use-defaults' | 'model-decides';
     };
 
-type AskUserToolInput = {
-  questions: Question[];
-  timeoutEnabled?: boolean;
-};
-
-type AskUserCallbackInput = {
-  questions: Question[];
+export type AskUserRequest = {
+  requestId: string;
   sessionKey?: string;
+  questions: Question[];
   waitPolicy: WaitPolicy;
+  expiresAt?: number;
 };
 
-type AskUserResponse = {
-  behavior: 'allow' | 'deny' | 'timeout';
-  answers?: Record<
-    string,
-    {
-      selected: string[];
-      optionInputs?: Record<string, string>;
-      other?: string;
-      skipped?: true;
-    }
-  >;
-  timedOut?: boolean;
+export type AskUserResponse =
+  | { status: 'answered'; answers: AskUserAnswers; timedOut?: boolean }
+  | { status: 'cancelled' }
+  | { status: 'timeout' };
+
+type PendingRequest = {
+  request: AskUserRequest;
+  resolve: (response: AskUserResponse) => void;
+  timeout?: ReturnType<typeof setTimeout>;
+  removeAbortListener?: () => void;
 };
 
-const LOOPBACK_CALLBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
-const ASK_USER_ID_PATTERN = '^[A-Za-z][A-Za-z0-9_-]{0,63}$';
-export const MAX_ASK_USER_QUESTIONS = 8;
-export const MAX_ASK_USER_HEADER_LENGTH = 12;
-export const ASK_USER_TIMEOUT_MINUTES = 10;
-const MAX_ASK_USER_TIMEOUT_MINUTES = 24 * 60;
+type PluginConfig = {
+  timeoutMinutes: number;
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+const readRequiredString = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim();
+  return normalized || null;
+};
+
 const askUserIdRegex = new RegExp(ASK_USER_ID_PATTERN);
-
-type HttpCallbackResult = {
-  ok: boolean;
-  status: number;
-  statusText: string;
-  body: string;
-};
-
-type CallbackResponse = Response | HttpCallbackResult;
-
-const isLoopbackCallbackUrl = (value: string): boolean => {
-  try {
-    const url = new URL(value);
-    return (
-      (url.protocol === 'http:' || url.protocol === 'https:') &&
-      LOOPBACK_CALLBACK_HOSTS.has(url.hostname.toLowerCase())
-    );
-  } catch {
-    return false;
-  }
-};
-
-const postLoopbackJson = (
-  callbackUrl: string,
-  input: AskUserCallbackInput,
-  secret: string,
-  signal?: AbortSignal,
-): Promise<HttpCallbackResult> => {
-  return new Promise((resolve, reject) => {
-    let url: URL;
-    try {
-      url = new URL(callbackUrl);
-    } catch (error) {
-      reject(error);
-      return;
-    }
-
-    const body = JSON.stringify(input);
-    const client = url.protocol === 'https:' ? https : http;
-    const request = client.request(
-      url,
-      {
-        method: 'POST',
-        agent: false,
-        headers: {
-          'content-type': 'application/json',
-          'content-length': Buffer.byteLength(body),
-          'x-ask-user-secret': secret,
-        },
-      },
-      response => {
-        const chunks: Buffer[] = [];
-        response.on('data', (chunk: Buffer) => chunks.push(chunk));
-        response.on('end', () => {
-          const status = response.statusCode ?? 0;
-          resolve({
-            ok: status >= 200 && status < 300,
-            status,
-            statusText: response.statusMessage ?? '',
-            body: Buffer.concat(chunks).toString('utf8'),
-          });
-        });
-      },
-    );
-
-    const abort = () => {
-      request.destroy(Object.assign(new Error('AbortError'), { name: 'AbortError' }));
-    };
-    request.on('error', error => {
-      signal?.removeEventListener('abort', abort);
-      reject(error);
-    });
-    request.on('close', () => signal?.removeEventListener('abort', abort));
-    if (signal?.aborted) {
-      abort();
-      return;
-    }
-    signal?.addEventListener('abort', abort, { once: true });
-    request.end(body);
-  });
-};
-
-const readCallbackBody = async (response: CallbackResponse): Promise<string> => {
-  const body = (response as HttpCallbackResult).body;
-  if (typeof body === 'string') {
-    return body;
-  }
-  return response.text();
-};
-
-const isRecord = (value: unknown): value is Record<string, unknown> => {
-  return !!value && typeof value === 'object' && !Array.isArray(value);
-};
+const isSafeId = (value: string): boolean =>
+  askUserIdRegex.test(value) && !(value in Object.prototype);
 
 const parsePluginConfig = (value: unknown): PluginConfig => {
-  const raw = isRecord(value) ? value : {};
-  const timeoutMinutes = raw.timeoutMinutes;
+  const timeoutMinutes = isRecord(value) ? value.timeoutMinutes : undefined;
   return {
-    callbackUrl: typeof raw.callbackUrl === 'string' ? raw.callbackUrl.trim() : '',
-    secret: typeof raw.secret === 'string' ? raw.secret.trim() : '',
     timeoutMinutes:
       typeof timeoutMinutes === 'number' &&
       Number.isInteger(timeoutMinutes) &&
@@ -192,52 +99,50 @@ const parsePluginConfig = (value: unknown): PluginConfig => {
   };
 };
 
-const readRequiredString = (value: unknown): string | null => {
-  if (typeof value !== 'string') return null;
-  const normalized = value.trim();
-  return normalized || null;
-};
-
-const isSafeAskUserId = (value: string): boolean =>
-  askUserIdRegex.test(value) && !(value in Object.prototype);
-
 export const parseQuestions = (value: unknown): Question[] | null => {
-  if (!Array.isArray(value) || value.length < 1 || value.length > MAX_ASK_USER_QUESTIONS)
+  if (!Array.isArray(value) || value.length < 1 || value.length > MAX_ASK_USER_QUESTIONS) {
     return null;
+  }
+
   const questionIds = new Set<string>();
   const questions: Question[] = [];
   for (const rawQuestion of value) {
     if (!isRecord(rawQuestion)) return null;
     const id = readRequiredString(rawQuestion.id);
     const question = readRequiredString(rawQuestion.question);
+    if (!id || !isSafeId(id) || !question || questionIds.has(id)) return null;
     if (
-      !id ||
-      !isSafeAskUserId(id) ||
-      !question ||
-      questionIds.has(id) ||
       (rawQuestion.header !== undefined && typeof rawQuestion.header !== 'string') ||
       (rawQuestion.multiSelect !== undefined && typeof rawQuestion.multiSelect !== 'boolean') ||
-      (rawQuestion.allowOther !== undefined && typeof rawQuestion.allowOther !== 'boolean') ||
-      (typeof rawQuestion.header === 'string' &&
-        rawQuestion.header.trim().length > MAX_ASK_USER_HEADER_LENGTH) ||
+      (rawQuestion.allowOther !== undefined && typeof rawQuestion.allowOther !== 'boolean')
+    ) {
+      return null;
+    }
+    if (
+      typeof rawQuestion.header === 'string' &&
+      rawQuestion.header.trim().length > MAX_ASK_USER_HEADER_LENGTH
+    ) {
+      return null;
+    }
+    if (
       !Array.isArray(rawQuestion.options) ||
       rawQuestion.options.length < 2 ||
       rawQuestion.options.length > 4
-    )
+    ) {
       return null;
+    }
+
     const optionIds = new Set<string>();
     const options: QuestionOption[] = [];
     for (const rawOption of rawQuestion.options) {
       if (!isRecord(rawOption)) return null;
       const optionId = readRequiredString(rawOption.id);
       const label = readRequiredString(rawOption.label);
-      if (!optionId || !isSafeAskUserId(optionId) || !label || optionIds.has(optionId)) {
-        return null;
-      }
+      if (!optionId || !isSafeId(optionId) || !label || optionIds.has(optionId)) return null;
       if (rawOption.description !== undefined && typeof rawOption.description !== 'string') {
         return null;
       }
-      optionIds.add(optionId);
+
       let input: QuestionOption['input'];
       if (rawOption.input !== undefined) {
         if (!isRecord(rawOption.input)) return null;
@@ -246,8 +151,9 @@ export const parseQuestions = (value: unknown): Question[] | null => {
         if (
           rawOption.input.placeholder !== undefined &&
           typeof rawOption.input.placeholder !== 'string'
-        )
+        ) {
           return null;
+        }
         input = {
           label: inputLabel,
           ...(typeof rawOption.input.placeholder === 'string'
@@ -255,6 +161,8 @@ export const parseQuestions = (value: unknown): Question[] | null => {
             : {}),
         };
       }
+
+      optionIds.add(optionId);
       options.push({
         id: optionId,
         label,
@@ -264,27 +172,30 @@ export const parseQuestions = (value: unknown): Question[] | null => {
         ...(input ? { input } : {}),
       });
     }
-    questionIds.add(id);
+
     let defaultOptionIds: string[] | undefined;
     if (rawQuestion.defaultOptionIds !== undefined) {
       if (!Array.isArray(rawQuestion.defaultOptionIds)) return null;
-      const rawDefaultIds = rawQuestion.defaultOptionIds.map(readRequiredString);
-      if (rawDefaultIds.some(defaultId => !defaultId)) return null;
-      defaultOptionIds = rawDefaultIds as string[];
-      const defaultIdSet = new Set(defaultOptionIds);
+      const parsedDefaults = rawQuestion.defaultOptionIds.map(readRequiredString);
+      if (parsedDefaults.some(id => !id)) return null;
+      defaultOptionIds = parsedDefaults as string[];
+      const uniqueDefaults = new Set(defaultOptionIds);
       const optionsById = new Map(options.map(option => [option.id, option]));
       if (
         defaultOptionIds.length < 1 ||
         defaultOptionIds.length > options.length ||
-        defaultIdSet.size !== defaultOptionIds.length ||
+        uniqueDefaults.size !== defaultOptionIds.length ||
         (!rawQuestion.multiSelect && defaultOptionIds.length !== 1) ||
-        defaultOptionIds.some(defaultId => {
-          const option = optionsById.get(defaultId);
+        defaultOptionIds.some(optionId => {
+          const option = optionsById.get(optionId);
           return !option || Boolean(option.input);
         })
-      )
+      ) {
         return null;
+      }
     }
+
+    questionIds.add(id);
     questions.push({
       id,
       question,
@@ -305,67 +216,73 @@ export const buildWaitPolicy = (
 ): WaitPolicy | null => {
   if (timeoutEnabled === undefined || timeoutEnabled === false) return { mode: 'required' };
   if (timeoutEnabled !== true) return null;
-
-  const hasDefaultsForEveryQuestion = questions.every(
-    question => question.defaultOptionIds?.length,
-  );
   return {
     mode: 'timeout',
     timeoutMinutes,
-    onTimeout: hasDefaultsForEveryQuestion ? 'use-defaults' : 'model-decides',
+    onTimeout: questions.every(question => question.defaultOptionIds?.length)
+      ? 'use-defaults'
+      : 'model-decides',
   };
 };
 
-const parseAnswers = (value: unknown, questions: Question[]): AskUserResponse['answers'] => {
-  if (!isRecord(value) || Object.keys(value).length !== questions.length) return undefined;
-  const answers: NonNullable<AskUserResponse['answers']> = {};
+const buildDefaultAnswers = (questions: Question[]): AskUserAnswers | null => {
+  const answers: AskUserAnswers = {};
   for (const question of questions) {
+    if (!question.defaultOptionIds?.length) return null;
+    answers[question.id] = { selected: [...question.defaultOptionIds] };
+  }
+  return answers;
+};
+
+export const parseAnswers = (value: unknown, questions: Question[]): AskUserAnswers | null => {
+  if (!isRecord(value) || Object.keys(value).length !== questions.length) return null;
+  const answers: AskUserAnswers = {};
+  for (const question of questions) {
+    if (!Object.prototype.hasOwnProperty.call(value, question.id)) return null;
     const rawAnswer = value[question.id];
-    if (!isRecord(rawAnswer) || !Array.isArray(rawAnswer.selected)) return undefined;
+    if (!isRecord(rawAnswer) || !Array.isArray(rawAnswer.selected)) return null;
     const selected = rawAnswer.selected.map(readRequiredString);
-    if (selected.some(id => !id)) return undefined;
+    if (selected.some(id => !id)) return null;
     const selectedIds = selected as string[];
-    const optionsById = new Map(question.options.map(option => [option.id, option]));
-    if (
-      new Set(selectedIds).size !== selectedIds.length ||
-      (!question.multiSelect && selectedIds.length > 1) ||
-      selectedIds.some(id => !optionsById.has(id))
-    )
-      return undefined;
+    if (new Set(selectedIds).size !== selectedIds.length) return null;
+    if (!question.multiSelect && selectedIds.length > 1) return null;
+
     const skipped = rawAnswer.skipped === true;
-    if (rawAnswer.skipped !== undefined && !skipped) return undefined;
+    if (rawAnswer.skipped !== undefined && !skipped) return null;
     if (skipped) {
       if (
         selectedIds.length > 0 ||
         rawAnswer.optionInputs !== undefined ||
         rawAnswer.other !== undefined
       ) {
-        return undefined;
+        return null;
       }
       answers[question.id] = { selected: [], skipped: true };
       continue;
     }
+
+    const optionsById = new Map(question.options.map(option => [option.id, option]));
+    if (selectedIds.some(id => !optionsById.has(id))) return null;
     const other = rawAnswer.other === undefined ? undefined : readRequiredString(rawAnswer.other);
-    if (
-      (rawAnswer.other !== undefined && !other) ||
-      (other && question.allowOther === false) ||
-      (!question.multiSelect && selectedIds.length > 0 && other) ||
-      (selectedIds.length === 0 && !other)
-    )
-      return undefined;
+    if (rawAnswer.other !== undefined && !other) return null;
+    if (other && question.allowOther === false) return null;
+    if (!question.multiSelect && selectedIds.length > 0 && other) return null;
+    if (selectedIds.length === 0 && !other) return null;
+
     let optionInputs: Record<string, string> | undefined;
     if (rawAnswer.optionInputs !== undefined) {
-      if (!isRecord(rawAnswer.optionInputs)) return undefined;
+      if (!isRecord(rawAnswer.optionInputs)) return null;
       optionInputs = {};
       for (const [optionId, rawInput] of Object.entries(rawAnswer.optionInputs)) {
         const input = readRequiredString(rawInput);
         if (!input || !selectedIds.includes(optionId) || !optionsById.get(optionId)?.input) {
-          return undefined;
+          return null;
         }
         optionInputs[optionId] = input;
       }
     }
-    if (selectedIds.some(id => optionsById.get(id)?.input && !optionInputs?.[id])) return undefined;
+    if (selectedIds.some(id => optionsById.get(id)?.input && !optionInputs?.[id])) return null;
+
     answers[question.id] = {
       selected: selectedIds,
       ...(optionInputs && Object.keys(optionInputs).length > 0 ? { optionInputs } : {}),
@@ -375,43 +292,169 @@ const parseAnswers = (value: unknown, questions: Question[]): AskUserResponse['a
   return answers;
 };
 
+const formatResponse = (response: AskUserResponse, questions: Question[]): string => {
+  if (response.status === 'cancelled') {
+    return 'The question was cancelled; proceed with best judgment.';
+  }
+  if (response.status === 'timeout') {
+    return 'No answer arrived before the timeout; proceed with best judgment.';
+  }
+
+  const lines = questions.map(question => {
+    const answer = response.answers[question.id];
+    if (answer?.skipped) return `${question.question}\nUser skipped this question.`;
+    const optionsById = new Map(question.options.map(option => [option.id, option]));
+    const selected = answer?.selected.map(id => optionsById.get(id)?.label ?? id) ?? [];
+    const details = [question.question, `User selected: ${selected.join(', ') || 'none'}`];
+    if (answer?.optionInputs) {
+      details.push(
+        'Additional information:',
+        ...Object.entries(answer.optionInputs).map(
+          ([optionId, input]) => `- ${optionsById.get(optionId)?.label ?? optionId}: ${input}`,
+        ),
+      );
+    }
+    if (answer?.other) details.push(`Other: ${answer.other}`);
+    return details.join('\n');
+  });
+  const prefix = response.timedOut
+    ? 'The user did not respond before the timeout. The configured defaults were selected automatically.\n\n'
+    : '';
+  return `${prefix}${lines.join('\n\n')}`;
+};
+
+type GatewayEventEmitter = OpenClawPluginGatewayEvents['emit'];
+
+export class AskUserQuestionManager {
+  private readonly pending = new Map<string, PendingRequest>();
+  private readonly requestIdBySession = new Map<string, string>();
+  private emitGatewayEvent: GatewayEventEmitter | null = null;
+
+  constructor(private readonly logger: OpenClawPluginApi['logger']) {}
+
+  setGatewayEventEmitter(emitter: GatewayEventEmitter | null): void {
+    this.emitGatewayEvent = emitter;
+  }
+
+  list(): AskUserRequest[] {
+    return [...this.pending.values()].map(entry => entry.request);
+  }
+
+  request(
+    questions: Question[],
+    waitPolicy: WaitPolicy,
+    sessionKey: string | undefined,
+    signal?: AbortSignal,
+  ): Promise<AskUserResponse> {
+    signal?.throwIfAborted();
+    if (!this.emitGatewayEvent) {
+      throw new Error('Gateway event delivery is unavailable.');
+    }
+    if (sessionKey && this.requestIdBySession.has(sessionKey)) {
+      throw new Error('This session already has a pending AskUserQuestion request.');
+    }
+
+    const requestId = `ask_${randomUUID()}`;
+    const expiresAt =
+      waitPolicy.mode === 'timeout' ? Date.now() + waitPolicy.timeoutMinutes * 60_000 : undefined;
+    const request: AskUserRequest = {
+      requestId,
+      ...(sessionKey ? { sessionKey } : {}),
+      questions,
+      waitPolicy,
+      ...(expiresAt ? { expiresAt } : {}),
+    };
+
+    let resolveResponse!: (response: AskUserResponse) => void;
+    const response = new Promise<AskUserResponse>(resolve => {
+      resolveResponse = resolve;
+    });
+    const pending: PendingRequest = { request, resolve: resolveResponse };
+    if (signal) {
+      const onAbort = () => this.settle(requestId, { status: 'cancelled' });
+      signal.addEventListener('abort', onAbort, { once: true });
+      pending.removeAbortListener = () => signal.removeEventListener('abort', onAbort);
+    }
+    if (waitPolicy.mode === 'timeout') {
+      pending.timeout = setTimeout(() => {
+        const answers =
+          waitPolicy.onTimeout === 'use-defaults' ? buildDefaultAnswers(questions) : null;
+        this.settle(
+          requestId,
+          answers ? { status: 'answered', answers, timedOut: true } : { status: 'timeout' },
+        );
+      }, waitPolicy.timeoutMinutes * 60_000);
+      pending.timeout.unref?.();
+    }
+    this.pending.set(requestId, pending);
+    if (sessionKey) this.requestIdBySession.set(sessionKey, requestId);
+
+    try {
+      this.emitGatewayEvent('requested', request, { scope: 'operator.read' });
+    } catch (error) {
+      this.settle(requestId, { status: 'cancelled' }, false);
+      throw error;
+    }
+    return response;
+  }
+
+  resolve(requestId: string, behavior: 'submit' | 'cancel', value?: unknown): AskUserRequest {
+    const pending = this.pending.get(requestId);
+    if (!pending) throw new Error('The question is no longer waiting for an answer.');
+    if (behavior === 'cancel') {
+      this.settle(requestId, { status: 'cancelled' });
+      return pending.request;
+    }
+    const answers = parseAnswers(value, pending.request.questions);
+    if (!answers) throw new Error('The submitted answers do not match the pending question.');
+    this.settle(requestId, { status: 'answered', answers });
+    return pending.request;
+  }
+
+  cancelAll(): void {
+    for (const requestId of [...this.pending.keys()]) {
+      this.settle(requestId, { status: 'cancelled' });
+    }
+  }
+
+  private settle(requestId: string, response: AskUserResponse, publish = true): boolean {
+    const pending = this.pending.get(requestId);
+    if (!pending) return false;
+    this.pending.delete(requestId);
+    if (pending.request.sessionKey) this.requestIdBySession.delete(pending.request.sessionKey);
+    if (pending.timeout) clearTimeout(pending.timeout);
+    pending.removeAbortListener?.();
+    pending.resolve(response);
+    if (publish && this.emitGatewayEvent) {
+      try {
+        this.emitGatewayEvent(
+          'resolved',
+          { requestId, status: response.status },
+          { scope: 'operator.read' },
+        );
+      } catch (error) {
+        this.logger.warn(`[ask-user-question] failed to publish resolution: ${String(error)}`);
+      }
+    }
+    return true;
+  }
+}
+
 const QuestionOptionSchema = Type.Object({
-  id: Type.String({
-    minLength: 1,
-    maxLength: 64,
-    pattern: ASK_USER_ID_PATTERN,
-    description: 'Stable option identifier, unique within the question.',
-  }),
+  id: Type.String({ minLength: 1, maxLength: 64, pattern: ASK_USER_ID_PATTERN }),
   label: Type.String({ description: 'Option label (1-5 words).' }),
   description: Type.Optional(Type.String({ description: 'Short explanation or tradeoff.' })),
   input: Type.Optional(
-    Type.Object(
-      {
-        label: Type.String({
-          description:
-            'Label for the required extra information requested after this option is selected.',
-        }),
-        placeholder: Type.Optional(
-          Type.String({
-            description: 'Example or hint shown in the extra-information field.',
-          }),
-        ),
-      },
-      {
-        description: 'Required text input shown only when this option is selected.',
-      },
-    ),
+    Type.Object({
+      label: Type.String({ description: 'Label for required follow-up text.' }),
+      placeholder: Type.Optional(Type.String({ description: 'Example or input hint.' })),
+    }),
   ),
 });
 
 const QuestionSchema = Type.Object({
-  id: Type.String({
-    minLength: 1,
-    maxLength: 64,
-    pattern: ASK_USER_ID_PATTERN,
-    description: 'Stable question identifier, unique within this request.',
-  }),
-  question: Type.String({ description: 'Question shown to the user.' }),
+  id: Type.String({ minLength: 1, maxLength: 64, pattern: ASK_USER_ID_PATTERN }),
+  question: Type.String({ description: 'One clear question shown to the user.' }),
   header: Type.Optional(
     Type.String({
       maxLength: MAX_ASK_USER_HEADER_LENGTH,
@@ -421,30 +464,21 @@ const QuestionSchema = Type.Object({
   options: Type.Array(QuestionOptionSchema, {
     minItems: 2,
     maxItems: 4,
-    description: 'Available choices (2-4 options).',
+    description: 'Every selectable choice (2-4 options).',
   }),
-  multiSelect: Type.Optional(Type.Boolean({ description: 'Allow multiple selections.' })),
+  multiSelect: Type.Optional(Type.Boolean({ description: 'Allow several choices.' })),
   allowOther: Type.Optional(
     Type.Boolean({
       default: true,
-      description:
-        'Show a free-text Other choice. Defaults to true; set false only when answers must be limited to the predefined options.',
+      description: 'Allow a free-text Other answer. Defaults to true.',
     }),
   ),
   defaultOptionIds: Type.Optional(
-    Type.Array(
-      Type.String({
-        minLength: 1,
-        maxLength: 64,
-        pattern: ASK_USER_ID_PATTERN,
-      }),
-      {
-        minItems: 1,
-        maxItems: 4,
-        description:
-          'Default option ids for this question when top-level timeoutEnabled is true. Define this field on every question to auto-select defaults after timeout. Use exactly one id for single-select questions. Options requiring input cannot be defaults.',
-      },
-    ),
+    Type.Array(Type.String({ minLength: 1, maxLength: 64, pattern: ASK_USER_ID_PATTERN }), {
+      minItems: 1,
+      maxItems: 4,
+      description: 'Defaults used only after an enabled timeout.',
+    }),
   ),
 });
 
@@ -453,108 +487,32 @@ export const AskUserQuestionSchema = Type.Object(
     questions: Type.Array(QuestionSchema, {
       minItems: 1,
       maxItems: MAX_ASK_USER_QUESTIONS,
-      description: `Questions to show (1-${MAX_ASK_USER_QUESTIONS}).`,
+      description: `Questions to show (1-${MAX_ASK_USER_QUESTIONS}). Prefer exactly one unless answers must be submitted together.`,
     }),
     timeoutEnabled: Type.Optional(
       Type.Boolean({
         description:
-          'Set true to enable the user-configured timeout. Omit or set false when an explicit user answer is required. After timeout, defaults are selected automatically only when every question defines defaultOptionIds; otherwise control returns to the model to decide from context.',
+          'Enable the configured timeout only when the model can safely decide after no answer. Defaults are applied only when every question defines defaultOptionIds.',
       }),
     ),
   },
   { additionalProperties: false },
 );
 
-async function askUser(
-  config: PluginConfig,
-  input: AskUserCallbackInput,
-  signal?: AbortSignal,
-): Promise<AskUserResponse> {
-  try {
-    const response = isLoopbackCallbackUrl(config.callbackUrl)
-      ? await postLoopbackJson(config.callbackUrl, input, config.secret, signal)
-      : await fetch(config.callbackUrl, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            'x-ask-user-secret': config.secret,
-          },
-          body: JSON.stringify(input),
-          signal,
-        });
-
-    const text = await readCallbackBody(response);
-
-    if (!response.ok) {
-      throw new Error(
-        `AskUserQuestion callback HTTP ${response.status}: ${text.trim() || response.statusText}`,
-      );
-    }
-
-    if (!text.trim()) return { behavior: 'deny' };
-
-    const parsed = JSON.parse(text);
-    if (parsed?.behavior === 'timeout') return { behavior: 'timeout' };
-    if (parsed?.behavior !== 'allow') return { behavior: 'deny' };
-    const answers = parseAnswers(parsed.answers, input.questions);
-    if (!answers) return { behavior: 'deny' };
-    return {
-      behavior: 'allow',
-      answers,
-      ...(parsed.timedOut === true ? { timedOut: true } : {}),
-    };
-  } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') return { behavior: 'deny' };
-    throw error;
-  }
-}
-
-export const formatAskUserToolResponse = (
-  response: AskUserResponse,
-  questions: Question[],
-): string => {
-  if (response.behavior === 'deny') return 'User denied the operation.';
-  if (response.behavior === 'timeout') {
-    return 'Timed out waiting for the user. Choose suitable values yourself based on the context and continue.';
-  }
-
-  const answerLines = response.answers
-    ? Object.entries(response.answers)
-        .map(([questionId, answer]) => {
-          const question = questions.find(item => item.id === questionId);
-          const optionsById = new Map(question?.options.map(option => [option.id, option]) ?? []);
-          if (answer.skipped) {
-            return `${question?.question ?? questionId}\nUser skipped this question.`;
-          }
-          const lines = [
-            question?.question ?? questionId,
-            `用户选择：${answer.selected.map(id => optionsById.get(id)?.label ?? id).join(', ') || '无'}`,
-          ];
-          if (answer.optionInputs && Object.keys(answer.optionInputs).length > 0) {
-            lines.push(
-              '补充信息：',
-              ...Object.entries(answer.optionInputs).map(
-                ([optionId, value]) =>
-                  `- ${optionsById.get(optionId)?.label ?? optionId}: ${value}`,
-              ),
-            );
-          }
-          if (answer.other) lines.push(`其他：${answer.other}`);
-          return lines.join('\n');
-        })
-        .join('\n\n')
-    : 'User approved.';
-
-  const prefix = response.timedOut
-    ? 'The user did not respond before the timeout. The configured default choices were selected automatically.\n\n'
-    : '';
-  return `${prefix}${answerLines}`;
-};
+export const ASK_USER_QUESTION_DESCRIPTION = [
+  'Ask the human user structured questions and wait for their answer.',
+  'Use only when blocked on a decision that genuinely belongs to the user and cannot be resolved from the request, code, context, or a sensible default; never ask whether to proceed, whether to continue, or to confirm your own plan.',
+  'Ask exactly one question per call unless several answers must be submitted together.',
+  'Put every selectable choice in options, never only in question prose. Put the recommended option first and suffix its label with (Recommended).',
+  'Use multiSelect only when several choices may be selected.',
+  'When a selected option requires details, define its input instead of asking in a later message. Free-text Other is enabled by default.',
+  'Omit timeoutEnabled when an explicit user answer is essential. Enable it only when no answer can safely fall back to defaults or your best judgment.',
+].join(' ');
 
 const plugin = {
   id: 'ask-user-question',
   name: 'AskUserQuestion',
-  description: 'Structured choice and confirmation tool for the desktop application.',
+  description: 'Rich structured questions for the JustDo desktop application.',
   configSchema: {
     parse(value: unknown): PluginConfig {
       return parsePluginConfig(value);
@@ -562,74 +520,94 @@ const plugin = {
   },
   register(api: OpenClawPluginApi) {
     const config = parsePluginConfig(api.pluginConfig);
-    if (!config.callbackUrl || !config.secret) {
-      api.logger.info('[ask-user-question] skipped: callbackUrl or secret not configured.');
-      return;
-    }
+    const manager = new AskUserQuestionManager(api.logger);
 
-    // Use a factory so the tool is only available for JustDo desktop sessions.
-    // IM channel sessions (qqbot, dingtalk, weixin, feishu, etc.) get null -> tool hidden.
+    api.registerService({
+      id: 'ask-user-question',
+      start(ctx) {
+        if (!ctx.gatewayEvents) {
+          throw new Error('AskUserQuestion requires plugin Gateway events.');
+        }
+        manager.setGatewayEventEmitter(ctx.gatewayEvents.emit);
+      },
+      stop() {
+        manager.cancelAll();
+        manager.setGatewayEventEmitter(null);
+      },
+    });
+
+    api.registerGatewayMethod(
+      ASK_USER_LIST_METHOD,
+      ({ respond }) => respond(true, { requests: manager.list() }),
+      { scope: 'operator.read' },
+    );
+    api.registerGatewayMethod(
+      ASK_USER_RESOLVE_METHOD,
+      ({ params, respond }) => {
+        try {
+          const requestId = readRequiredString(params.requestId);
+          const behavior = params.behavior;
+          if (!requestId || (behavior !== 'submit' && behavior !== 'cancel')) {
+            throw new Error('Invalid AskUserQuestion resolution request.');
+          }
+          const request = manager.resolve(requestId, behavior, params.answers);
+          respond(true, {
+            requestId,
+            status: behavior === 'submit' ? 'answered' : 'cancelled',
+            ...(request.sessionKey ? { sessionKey: request.sessionKey } : {}),
+          });
+        } catch (error) {
+          respond(false, undefined, {
+            code: 'invalid_request',
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      },
+      { scope: 'operator.write' },
+    );
+
     api.registerTool(
       ctx => {
-        const sessionKey = ctx.sessionKey ?? '';
-        const isLocalDesktop =
-          sessionKey.startsWith('justdo:') || /^agent:[^:]+:justdo:/.test(sessionKey);
-        if (!isLocalDesktop) {
+        const sessionKey = ctx.sessionKey?.trim() ?? '';
+        if (!sessionKey.startsWith('justdo:') && !/^agent:[^:]+:justdo:/.test(sessionKey)) {
           return null;
         }
-
         return {
           name: 'AskUserQuestion',
           label: 'Ask User Question',
-          description:
-            'Ask the user to choose from 2-4 predefined options. ' +
-            'When an option requires explanation, define its input instead of asking the user to provide details in a later message. Keep option descriptions consistent with the question details. ' +
-            'The free-text Other choice is enabled by default; set allowOther to false only when answers must be limited to the predefined options. ' +
-            'Omit timeoutEnabled when only the user can safely answer, including consequential confirmations. ' +
-            'For non-critical preferences, set timeoutEnabled to true to use the user-configured wait time. To auto-select on timeout, set defaultOptionIds inside every question; otherwise the model resumes and decides from context. ' +
-            'Prefer this tool whenever the user needs to choose, decide, confirm, or select and clear options can be provided.',
+          description: ASK_USER_QUESTION_DESCRIPTION,
           parameters: AskUserQuestionSchema,
-          async execute(_id: string, params: unknown, signal?: AbortSignal) {
-            const toolInput = params as AskUserToolInput;
-            const questions = parseQuestions(toolInput?.questions);
+          async execute(_toolCallId: string, params: unknown, signal?: AbortSignal) {
+            const input = isRecord(params) ? params : {};
+            const questions = parseQuestions(input.questions);
             const waitPolicy = questions
-              ? buildWaitPolicy(toolInput?.timeoutEnabled, questions, config.timeoutMinutes)
+              ? buildWaitPolicy(input.timeoutEnabled, questions, config.timeoutMinutes)
               : null;
-            const input: AskUserCallbackInput = {
-              questions: questions ?? [],
-              sessionKey,
-              waitPolicy: waitPolicy ?? { mode: 'required' },
-            };
             if (!questions || !waitPolicy) {
               return {
-                content: [
-                  { type: 'text', text: 'Invalid questions or timeoutEnabled flag provided.' },
-                ],
+                content: [{ type: 'text', text: 'Invalid questions or timeoutEnabled flag.' }],
                 isError: true,
               };
             }
-
             try {
-              const response = await askUser(config, input, signal);
+              const response = await manager.request(questions, waitPolicy, sessionKey, signal);
+              return { content: [{ type: 'text', text: formatResponse(response, questions) }] };
+            } catch (error) {
               return {
                 content: [
-                  { type: 'text', text: formatAskUserToolResponse(response, input.questions) },
+                  {
+                    type: 'text',
+                    text: `AskUserQuestion failed: ${error instanceof Error ? error.message : String(error)}`,
+                  },
                 ],
-              };
-            } catch (error) {
-              const message = error instanceof Error ? error.message : String(error);
-              return {
-                content: [{ type: 'text', text: `AskUserQuestion failed: ${message}` }],
                 isError: true,
               };
             }
           },
-        }; // end of returned tool object
+        };
       },
       { name: 'AskUserQuestion' },
-    ); // end of factory function passed to registerTool
-
-    api.logger.info('[ask-user-question] registered AskUserQuestion tool factory.');
+    );
   },
 };
 

@@ -24,7 +24,7 @@ import { useDialogFocusTrap } from './useDialogFocusTrap';
 
 interface CoworkInteractionModalProps {
   interaction: CoworkInteractionRequest;
-  onRespond: (result: CoworkInteractionResult) => void;
+  onRespond: (result: CoworkInteractionResult) => Promise<boolean>;
   presentation?: CoworkInteractionPresentation;
   isActive?: boolean;
 }
@@ -50,10 +50,13 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
   const [otherInputs, setOtherInputs] = useState<Record<string, string>>({});
   const [otherActive, setOtherActive] = useState<Record<string, boolean>>({});
   const [skippedQuestions, setSkippedQuestions] = useState<Record<string, boolean>>({});
+  const [isResponding, setIsResponding] = useState(false);
+  const respondingRef = useRef(false);
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
   const isFloating = presentation === 'floating';
+  const dialogTitleId = `cowork-interaction-modal-title-${interaction.requestId}`;
 
   useDialogFocusTrap(
     dialogRef,
@@ -65,9 +68,9 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
 
   useEffect(() => {
     setAnswers({});
+    setOptionInputs({});
     setOtherInputs({});
     setOtherActive({});
-    setOptionInputs({});
     setSkippedQuestions({});
   }, [isQuestionTool, interaction.requestId, toolInput]);
 
@@ -98,6 +101,9 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
   const getSelectedValues = (question: AskUserQuestion): string[] => {
     return answers[question.id] ?? [];
   };
+
+  const getQuestionDomId = (question: AskUserQuestion): string =>
+    `ask-user-question-${interaction.requestId}-${question.id}`;
 
   const handleSelectOption = (question: AskUserQuestion, optionId: string) => {
     setSkippedQuestions(prev => ({ ...prev, [question.id]: false }));
@@ -167,6 +173,7 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
     option: AskUserQuestionOption,
     value: string,
   ) => {
+    setSkippedQuestions(prev => ({ ...prev, [question.id]: false }));
     setOptionInputs(prev => ({
       ...prev,
       [question.id]: {
@@ -243,10 +250,24 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
     ? i18nService.t('coworkSubmitSelection')
     : i18nService.t('coworkSubmit');
 
+  const respond = async (result: CoworkInteractionResult): Promise<void> => {
+    if (respondingRef.current) return;
+    respondingRef.current = true;
+    setIsResponding(true);
+    try {
+      const succeeded = await onRespond(result);
+      if (succeeded) return;
+    } catch {
+      // App owns user-visible error reporting; keep the dialog retryable here.
+    }
+    respondingRef.current = false;
+    setIsResponding(false);
+  };
+
   const handleSubmit = () => {
     if (isQuestionTool) {
       if (!isComplete) return;
-      onRespond({
+      void respond({
         behavior: 'submit',
         updatedInput: {
           ...(toolInput && typeof toolInput === 'object' ? toolInput : {}),
@@ -256,14 +277,14 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
       return;
     }
 
-    onRespond({
+    void respond({
       behavior: 'submit',
       updatedInput: toolInput && typeof toolInput === 'object' ? toolInput : {},
     });
   };
 
   const handleCancel = () => {
-    onRespond({
+    void respond({
       behavior: 'cancel',
       message: 'Interaction canceled',
     });
@@ -292,7 +313,8 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
         }
         role="dialog"
         aria-modal={isFloating ? undefined : true}
-        aria-labelledby="cowork-interaction-modal-title"
+        aria-labelledby={dialogTitleId}
+        aria-busy={isResponding}
         tabIndex={-1}
       >
         {/* Header */}
@@ -306,10 +328,7 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
             <QuestionMarkCircleIcon className="h-6 w-6 text-blue-600 dark:text-blue-500" />
           </div>
           <div className="flex-1">
-            <h2
-              id="cowork-interaction-modal-title"
-              className="text-lg font-semibold text-foreground"
-            >
+            <h2 id={dialogTitleId} className="text-lg font-semibold text-foreground">
               {isQuestionTool ? questionDialogTitle : i18nService.t('coworkInteractionRequired')}
             </h2>
             <p className="text-sm text-secondary">
@@ -321,6 +340,7 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
           <button
             ref={closeButtonRef}
             onClick={handleCancel}
+            disabled={isResponding}
             className="p-2 rounded-lg hover:bg-surface-raised text-secondary transition-colors"
             aria-label={i18nService.t('close')}
           >
@@ -345,7 +365,7 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
                   <div key={question.id} className="rounded-xl border border-border p-4 space-y-3">
                     {/* 问题 */}
                     <div
-                      id={`ask-user-question-${question.id}`}
+                      id={getQuestionDomId(question)}
                       className="text-sm font-medium text-foreground"
                     >
                       {shouldShowQuestionHeader(questions.length) && question.header && (
@@ -367,6 +387,7 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
                         <button
                           type="button"
                           onClick={() => handleSkipQuestion(question.id)}
+                          disabled={isResponding}
                           aria-pressed={Boolean(skippedQuestions[question.id])}
                           className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
                             skippedQuestions[question.id]
@@ -399,7 +420,7 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
                     <div
                       className="space-y-2"
                       role={question.multiSelect ? 'group' : 'radiogroup'}
-                      aria-labelledby={`ask-user-question-${question.id}`}
+                      aria-labelledby={getQuestionDomId(question)}
                     >
                       {question.options.map(option => {
                         const isSelected = selectedValues.includes(option.id);
@@ -414,9 +435,10 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
                             >
                               <input
                                 type={question.multiSelect ? 'checkbox' : 'radio'}
-                                name={`ask-user-question-${question.id}`}
+                                name={getQuestionDomId(question)}
                                 value={option.id}
                                 checked={isSelected}
+                                disabled={isResponding}
                                 onChange={() => handleSelectOption(question, option.id)}
                                 className="sr-only"
                               />
@@ -459,6 +481,7 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
                                 <textarea
                                   rows={3}
                                   value={optionInputs[question.id]?.[option.id] ?? ''}
+                                  disabled={isResponding}
                                   onChange={event =>
                                     handleOptionInputChange(question, option, event.target.value)
                                   }
@@ -482,8 +505,9 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
                           >
                             <input
                               type={question.multiSelect ? 'checkbox' : 'radio'}
-                              name={`ask-user-question-${question.id}`}
+                              name={getQuestionDomId(question)}
                               checked={Boolean(otherActive[question.id])}
+                              disabled={isResponding}
                               onChange={() => handleToggleOther(question)}
                               className="sr-only"
                             />
@@ -516,6 +540,7 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
                             <textarea
                               rows={3}
                               value={otherInputs[question.id] || ''}
+                              disabled={isResponding}
                               onChange={event =>
                                 handleOtherInputChange(question, event.target.value)
                               }
@@ -562,15 +587,16 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-border">
           <button
             onClick={handleCancel}
+            disabled={isResponding}
             className="px-4 py-2 text-sm font-medium rounded-lg text-secondary hover:bg-surface-raised transition-colors"
           >
             {cancelButtonLabel}
           </button>
           <button
             onClick={handleSubmit}
-            disabled={!canRespond}
+            disabled={!canRespond || isResponding}
             className={`px-4 py-2 text-sm font-medium rounded-lg border shadow-sm transition-colors ${
-              canRespond
+              canRespond && !isResponding
                 ? 'border-primary bg-primary text-white hover:bg-primary-hover'
                 : 'border-border bg-surface text-secondary cursor-not-allowed'
             }`}

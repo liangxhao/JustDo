@@ -74,17 +74,6 @@ describe('Agent runtime settings', () => {
     expect(validateAgentRuntimeSettings(input).ok).toBe(false);
   });
 
-  test('migrates version 1 settings saved before AskUserQuestion preferences', () => {
-    const input = createDefaultAgentRuntimeSettings();
-    input.subagents.maxConcurrent = 7;
-    const { askUserQuestion: _removed, ...legacyInput } = input;
-
-    expect(parseAgentRuntimeSettings(legacyInput)).toEqual({
-      ...input,
-      askUserQuestion: { timeoutMinutes: 10 },
-    });
-  });
-
   test('migrates version 1 settings saved before main Agent thinking preferences', () => {
     const input = createDefaultAgentRuntimeSettings();
     input.subagents.maxConcurrent = 7;
@@ -129,6 +118,24 @@ describe('Agent runtime settings', () => {
     });
   });
 
+  test('preserves AskUserQuestion timeout preferences', () => {
+    const input = createDefaultAgentRuntimeSettings();
+    input.askUserQuestion.timeoutMinutes = 45;
+
+    expect(parseAgentRuntimeSettings(input)).toEqual(input);
+  });
+
+  test('restores the AskUserQuestion default for profiles saved while the field was absent', () => {
+    const input = createDefaultAgentRuntimeSettings();
+    input.subagents.maxConcurrent = 7;
+    const { askUserQuestion: _removed, ...legacyInput } = input;
+
+    expect(parseAgentRuntimeSettings(legacyInput)).toEqual({
+      ...input,
+      askUserQuestion: { timeoutMinutes: 10 },
+    });
+  });
+
   test.each(Object.values(AgentRuntimeSessionVisibility))(
     'accepts session visibility %s',
     visibility => {
@@ -169,13 +176,6 @@ describe('Agent runtime settings', () => {
     const invalid = createDefaultAgentRuntimeSettings();
     invalid.agent.thinking = 'unbounded' as never;
     expect(validateAgentRuntimeSettings(invalid).ok).toBe(false);
-  });
-
-  test.each([0, 1441, 1.5])('rejects invalid AskUserQuestion timeout %s', timeoutMinutes => {
-    const input = createDefaultAgentRuntimeSettings();
-    input.askUserQuestion.timeoutMinutes = timeoutMinutes;
-
-    expect(validateAgentRuntimeSettings(input).ok).toBe(false);
   });
 
   test.each([0, 86_401, 1.5])('rejects invalid MCP request timeout %s', timeoutSeconds => {

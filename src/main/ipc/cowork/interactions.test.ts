@@ -17,60 +17,114 @@ vi.mock('electron', () => ({
 }));
 
 import { CoworkInteractionIpc } from '../../../shared/openclaw/extensions';
-import type { OpenClawExtensionHostController } from '../../plugins/extensions';
 import { registerCoworkInteractionHandlers } from './interactions';
 
-describe('cowork interaction IPC', () => {
+describe('cowork AskUserQuestion interaction IPC', () => {
   beforeEach(() => {
     mocks.handlers.clear();
     mocks.send.mockClear();
   });
 
-  test('publishes lightweight user activity after a handled response', async () => {
-    const respondToInteraction = vi.fn().mockReturnValue({ handled: true });
-    const sessions = new Map([['request-1', 'session-1']]);
+  test('resolves a submitted answer and publishes lightweight user activity', async () => {
+    const resolveAskUserInteraction = vi.fn().mockResolvedValue({ sessionId: 'session-1' });
     registerCoworkInteractionHandlers({
-      getExtensionHostController: () =>
-        ({ respondToInteraction }) as unknown as OpenClawExtensionHostController,
-      getPendingInteractions: () => [],
-      askUserSessionByRequestId: sessions,
+      getRuntime: () => ({
+        listPendingAskUserInteractions: vi.fn().mockResolvedValue([]),
+        resolveAskUserInteraction,
+      }),
     });
 
     await expect(
-      mocks.handlers.get(CoworkInteractionIpc.Respond)?.({}, {
-        requestId: 'request-1',
-        result: { behavior: 'submit', updatedInput: { answer: 'yes' } },
-      }),
+      mocks.handlers.get(CoworkInteractionIpc.Respond)?.(
+        {},
+        {
+          requestId: 'ask-1',
+          result: {
+            behavior: 'submit',
+            updatedInput: { answers: { deploy_target: { selected: ['option_1'] } } },
+          },
+        },
+      ),
     ).resolves.toEqual({ success: true });
 
-    expect(respondToInteraction).toHaveBeenCalledWith('request-1', {
-      behavior: 'allow',
-      updatedInput: { answer: 'yes' },
+    expect(resolveAskUserInteraction).toHaveBeenCalledWith('ask-1', {
+      behavior: 'submit',
+      answers: { deploy_target: { selected: ['option_1'] } },
     });
     expect(mocks.send).toHaveBeenCalledWith('cowork:session:activity', {
       sessionId: 'session-1',
       kind: 'user',
       timestamp: expect.any(Number),
     });
-    expect(sessions.has('request-1')).toBe(false);
   });
 
-  test('does not publish activity when the extension rejects an unknown response', async () => {
-    const respondToInteraction = vi.fn().mockReturnValue({ handled: false });
+  test('maps cancel to extension question cancellation', async () => {
+    const resolveAskUserInteraction = vi.fn().mockResolvedValue({ sessionId: '__askuser__' });
     registerCoworkInteractionHandlers({
-      getExtensionHostController: () =>
-        ({ respondToInteraction }) as unknown as OpenClawExtensionHostController,
-      getPendingInteractions: () => [],
-      askUserSessionByRequestId: new Map([['request-1', 'session-1']]),
+      getRuntime: () => ({
+        listPendingAskUserInteractions: vi.fn().mockResolvedValue([]),
+        resolveAskUserInteraction,
+      }),
     });
 
     await expect(
-      mocks.handlers.get(CoworkInteractionIpc.Respond)?.({}, {
-        requestId: 'request-1',
-        result: { behavior: 'cancel', message: 'cancelled' },
-      }),
+      mocks.handlers.get(CoworkInteractionIpc.Respond)?.(
+        {},
+        {
+          requestId: 'ask-1',
+          result: { behavior: 'cancel', message: 'cancelled' },
+        },
+      ),
     ).resolves.toEqual({ success: true });
 
+    expect(resolveAskUserInteraction).toHaveBeenCalledWith('ask-1', { behavior: 'cancel' });
     expect(mocks.send).not.toHaveBeenCalled();
+  });
+
+  test('rejects an unknown response behavior instead of treating it as cancellation', async () => {
+    const resolveAskUserInteraction = vi.fn();
+    registerCoworkInteractionHandlers({
+      getRuntime: () => ({
+        listPendingAskUserInteractions: vi.fn().mockResolvedValue([]),
+        resolveAskUserInteraction,
+      }),
+    });
+
+    await expect(
+      mocks.handlers.get(CoworkInteractionIpc.Respond)?.(
+        {},
+        { requestId: 'ask-1', result: { behavior: 'typo' } },
+      ),
+    ).resolves.toEqual({ success: false, error: 'Invalid interaction response.' });
+    expect(resolveAskUserInteraction).not.toHaveBeenCalled();
+  });
+
+  test('replays pending extension questions to a newly loaded renderer', async () => {
+    const interaction = {
+      sessionId: 'session-1',
+      request: {
+        requestId: 'ask-1',
+        toolName: 'AskUserQuestion' as const,
+        interactionKind: 'structured-question' as const,
+        toolInput: {
+          sessionId: 'session-1',
+          waitPolicy: { mode: 'required' as const },
+          questions: [],
+        },
+      },
+    };
+    const sender = { send: vi.fn() };
+    registerCoworkInteractionHandlers({
+      getRuntime: () => ({
+        listPendingAskUserInteractions: vi.fn().mockResolvedValue([interaction]),
+        resolveAskUserInteraction: vi.fn(),
+      }),
+    });
+
+    await expect(mocks.handlers.get(CoworkInteractionIpc.Replay)?.({ sender })).resolves.toEqual({
+      success: true,
+      count: 1,
+    });
+    expect(sender.send).toHaveBeenCalledWith(CoworkInteractionIpc.Stream, interaction);
   });
 });

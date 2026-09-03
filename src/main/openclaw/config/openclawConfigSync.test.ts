@@ -389,6 +389,7 @@ describe('OpenClaw managed connectivity config', () => {
           visibility: 'tree',
         },
         deny: [
+          'ask_user',
           'web_search',
           'tts',
           'message',
@@ -583,19 +584,31 @@ describe('OpenClaw plugin config merging', () => {
           },
           allow: ['existing', 'removed'],
         },
-        { 'ask-user-question': { enabled: true } },
+        { 'automation-permission': { enabled: true } },
         [],
-        ['existing', 'ask-user-question'],
+        ['existing', 'automation-permission'],
       ),
     ).toEqual({
       enabled: true,
-      allow: ['existing', 'ask-user-question'],
+      allow: ['existing', 'automation-permission'],
       bundledDiscovery: 'compat',
       entries: {
         existing: { enabled: false },
-        'ask-user-question': { enabled: true },
+        'automation-permission': { enabled: true },
       },
     });
+  });
+
+  test('never trusts retired extensions reported by the installed inventory', () => {
+    const merged = mergeOpenClawPluginConfig(
+      {},
+      { 'automation-permission': { enabled: true } },
+      ['file-permission-policy', 'custom-extension'],
+      ['automation-permission', 'custom-extension'],
+    );
+
+    expect(merged.allow).toEqual(['custom-extension', 'automation-permission']);
+    expect(merged.allow).not.toContain('file-permission-policy');
   });
 
   test('preserves imported plugin entries and exclusive slots', () => {
@@ -710,7 +723,7 @@ describe('OpenClaw skill config merging', () => {
           entries: { existing: { enabled: false } },
           allow: ['existing-trusted'],
         },
-        { 'ask-user-question': { enabled: true } },
+        { 'automation-permission': { enabled: true } },
         ['justdo-skill-only-example', 'justdo-skill-only-example'],
       ),
     ).toEqual({
@@ -718,12 +731,12 @@ describe('OpenClaw skill config merging', () => {
       allow: [
         'existing-trusted',
         'justdo-skill-only-example',
-        'ask-user-question',
+        'automation-permission',
       ],
       bundledDiscovery: 'compat',
       entries: {
         existing: { enabled: false },
-        'ask-user-question': { enabled: true },
+        'automation-permission': { enabled: true },
       },
     });
   });
@@ -735,20 +748,20 @@ describe('OpenClaw skill config merging', () => {
           allow: ['workboard'],
         },
         {
-          'ask-user-question': {
+          'automation-permission': {
             enabled: true,
-            config: { callbackUrl: 'http://127.0.0.1:43127/askuser' },
+            config: { unrestrictedAgentIds: ['justdo-scheduler'] },
           },
         },
       ),
     ).toEqual({
       enabled: true,
-      allow: ['workboard', 'ask-user-question'],
+      allow: ['workboard', 'automation-permission'],
       bundledDiscovery: 'compat',
       entries: {
-        'ask-user-question': {
+        'automation-permission': {
           enabled: true,
-          config: { callbackUrl: 'http://127.0.0.1:43127/askuser' },
+          config: { unrestrictedAgentIds: ['justdo-scheduler'] },
         },
       },
     });
@@ -759,13 +772,13 @@ describe('OpenClaw skill config merging', () => {
       mergeOpenClawPluginConfig(
         {},
         {
-          'ask-user-question': { enabled: true },
+          'automation-permission': { enabled: true },
           workboard: { enabled: true },
         },
         ['installed-extension'],
       ),
     ).toMatchObject({
-      allow: ['installed-extension', 'ask-user-question', 'workboard'],
+      allow: ['installed-extension', 'automation-permission', 'workboard'],
       bundledDiscovery: 'compat',
     });
   });

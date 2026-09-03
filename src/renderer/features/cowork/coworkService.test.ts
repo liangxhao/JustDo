@@ -4,6 +4,8 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import { coworkService } from '@/features/cowork/coworkService';
 import {
   clearCurrentSession,
+  clearPendingInteractions,
+  enqueuePendingInteraction,
   setConfig as setCoworkConfig,
   setCurrentSession,
   setSessionRuntimeActivity,
@@ -11,6 +13,40 @@ import {
 import type { CoworkSession } from '@/features/cowork/coworkTypes';
 import { i18nService } from '@/services/i18n';
 import { store } from '@/store';
+
+describe('cowork interaction responses', () => {
+  afterEach(() => {
+    store.dispatch(clearPendingInteractions());
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  test.each([
+    ['an unsuccessful response', vi.fn().mockResolvedValue({ success: false, error: 'offline' })],
+    ['a rejected IPC request', vi.fn().mockRejectedValue(new Error('transport closed'))],
+  ])('keeps a pending interaction retryable after %s', async (_name, respondToInteraction) => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.stubGlobal('window', { electron: { cowork: { respondToInteraction } } });
+    store.dispatch(
+      enqueuePendingInteraction({
+        sessionId: 'session-1',
+        requestId: 'request-1',
+        toolName: 'AskUserQuestion',
+        interactionKind: 'structured-question',
+        toolInput: {},
+      }),
+    );
+
+    await expect(
+      coworkService.respondToInteraction('request-1', {
+        behavior: 'cancel',
+        message: 'cancelled',
+      }),
+    ).resolves.toBe(false);
+
+    expect(store.getState().cowork.pendingInteractions).toHaveLength(1);
+  });
+});
 
 describe('cowork session startup', () => {
   afterEach(() => {

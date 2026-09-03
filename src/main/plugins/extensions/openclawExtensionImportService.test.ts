@@ -66,7 +66,7 @@ describe('OpenClawExtensionImportService', () => {
       JSON.stringify({
         plugins: {
           entries: {
-            'ask-user-question': { enabled: true },
+            'automation-permission': { enabled: true },
             workboard: { enabled: true },
             'untrusted-user-entry': { enabled: true },
           },
@@ -90,7 +90,7 @@ describe('OpenClawExtensionImportService', () => {
     const runCommand = vi.fn().mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' });
     const service = new OpenClawExtensionImportService({
       getOpenClawEngineManager: () => manager,
-      getManagedPluginIds: () => ['ask-user-question', 'workboard'],
+      getManagedPluginIds: () => ['automation-permission', 'workboard'],
       restartGatewayAfterMutation: () => restartGateway(),
       runCommand,
     });
@@ -119,10 +119,10 @@ describe('OpenClawExtensionImportService', () => {
     );
     expect(JSON.parse(fs.readFileSync(configPath, 'utf8'))).toMatchObject({
       plugins: {
-        allow: ['ask-user-question', 'workboard', 'sample-extension'],
+        allow: ['automation-permission', 'workboard', 'sample-extension'],
         bundledDiscovery: 'compat',
         entries: {
-          'ask-user-question': { enabled: true },
+          'automation-permission': { enabled: true },
           workboard: { enabled: true },
           'untrusted-user-entry': { enabled: true },
         },

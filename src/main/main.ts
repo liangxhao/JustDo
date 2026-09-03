@@ -103,7 +103,6 @@ import {
   initCronJobServiceManager,
   registerScheduledTaskHandlers,
 } from './ipc/scheduledTask';
-import type { AskUserExtensionConfig } from './openclaw/config/openclawConfigSync';
 import {
   buildProviderSelection,
   listManagedOpenClawPluginIds,
@@ -120,7 +119,6 @@ import {
   createPluginMarketplaceService,
   discoverExtensionMcpServers,
   McpServices,
-  OpenClawExtensionHostLifecycle,
   OpenClawExtensionImportService,
   OpenClawHookServices,
   OpenClawSkillFileService,
@@ -347,10 +345,6 @@ const openClawSkillService = new OpenClawSkillService(
 );
 const pluginInstallationService = new PluginInstallationService();
 const pluginManager = new PluginManager(createPluginMarketplaceService(pluginInstallationService));
-const askUserSessionByRequestId = new Map<string, string>();
-const extensionHostLifecycle = new OpenClawExtensionHostLifecycle({
-  askUserSessionByRequestId,
-});
 let openClawSkillFileService: OpenClawSkillFileService | null = null;
 let mcpServices: McpServices | null = null;
 let openClawHookServices: OpenClawHookServices | null = null;
@@ -471,9 +465,6 @@ const ensureOpenClawRunningForCowork = async () => {
   bindOpenClawGatewayPortProxyBypass();
   const manager = getOpenClawEngineManager();
 
-  await startExtensionHost().catch((err: unknown) => {
-    console.error('[OpenClaw] ensureRunning: extension host startup failed (non-fatal):', err);
-  });
   const syncResult = await syncOpenClawConfig({
     reason: 'ensureRunning',
   });
@@ -530,7 +521,6 @@ const getOpenClawConfigSyncService = (): OpenClawConfigSyncService => {
     openClawConfigSyncService = new OpenClawConfigSyncService({
       getCoworkStore,
       getOpenClawEngineManager,
-      getAskUserExtensionConfig: () => extensionHostLifecycle.config,
       getMcpStore,
       getHookStore,
       disconnectGatewayClient: () => getCoworkEngineService().disconnectGatewayClient(),
@@ -637,14 +627,6 @@ const getOpenClawHookServices = (): OpenClawHookServices => {
 
 const getHookStore = () => {
   return getOpenClawHookServices().getStore();
-};
-
-const startExtensionHost = (): Promise<AskUserExtensionConfig | null> => {
-  return extensionHostLifecycle.start();
-};
-
-const stopExtensionHost = (): Promise<void> => {
-  return extensionHostLifecycle.stop();
 };
 
 const syncMcpConfig = (): Promise<{ tools: number; error?: string }> => {
@@ -999,9 +981,7 @@ if (!gotTheLock) {
   });
 
   registerCoworkInteractionHandlers({
-    getExtensionHostController: () => extensionHostLifecycle.currentController,
-    getPendingInteractions: () => extensionHostLifecycle.listPendingInteractions(),
-    askUserSessionByRequestId,
+    getRuntime: getOpenClawRuntimeAdapter,
   });
 
   registerCoworkConfigHandlers({
@@ -1117,11 +1097,6 @@ if (!gotTheLock) {
         console.error('[OpenClaw] Failed to stop gateway on quit:', error);
       });
     }
-
-    // The extension host owns MCP client transports/stdio child processes and
-    // the local callback server. Stop it after the Gateway can no longer issue
-    // tool calls, and before closing application storage.
-    await stopExtensionHost();
 
     outboundHeaderProxy.stop();
 
@@ -1255,14 +1230,6 @@ if (!gotTheLock) {
       console.log(
         `[Main] migrated agent model bindings: backfilled=${backfilledAgentModels}, qualified=${qualifiedAgentModels}`,
       );
-    }
-
-    // The ask-user extension configuration contains the callback server's
-    // dynamic port. Start the host before the first config sync so a packaged
-    // Gateway never boots with a callback URL left over from an earlier run.
-    const startupExtensionConfig = await startExtensionHost();
-    if (!startupExtensionConfig) {
-      console.error('[OpenClaw] Startup extension host failed to provide callback config.');
     }
 
     const startupSync = await syncOpenClawConfig({

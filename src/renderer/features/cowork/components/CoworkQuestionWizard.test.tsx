@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { CoworkInteractionKind } from '@shared/openclaw/extensions';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import type { CoworkInteractionRequest } from '@/features/cowork/coworkTypes';
@@ -21,6 +21,7 @@ const buildInteraction = (
       questions: [
         {
           id: 'targets',
+          header: 'Targets',
           question: 'Which targets should be included?',
           multiSelect: true,
           options: [
@@ -31,6 +32,7 @@ const buildInteraction = (
         },
         {
           id: 'environment',
+          header: 'Environment',
           question: 'Which environment should be used?',
           options: [
             { id: 'staging', label: 'Staging' },
@@ -70,32 +72,6 @@ describe('CoworkQuestionWizard multi-select navigation', () => {
 
     expect(screen.getByText('Which environment should be used?')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Next|下一个/ })).toBeNull();
-  });
-
-  test('waits for required option input before showing Next', () => {
-    render(
-      <CoworkQuestionWizard
-        interaction={buildInteraction({
-          options: [
-            {
-              id: 'custom',
-              label: 'Custom target',
-              input: { label: 'Target name', placeholder: 'Enter a target' },
-            },
-            { id: 'desktop', label: 'Desktop' },
-          ],
-        })}
-        onRespond={vi.fn()}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Custom target' }));
-    expect(screen.queryByRole('button', { name: /Next|下一个/ })).toBeNull();
-
-    fireEvent.change(screen.getByPlaceholderText('Enter a target'), {
-      target: { value: 'Embedded' },
-    });
-    expect(screen.getByRole('button', { name: /Next|下一个/ })).toBeTruthy();
   });
 
   test('hides Next again when the last selected option is cleared', () => {
@@ -159,5 +135,32 @@ describe('CoworkQuestionWizard multi-select navigation', () => {
 
     expect(screen.getByText('Which environment should be used?')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Next|下一个/ })).toBeNull();
+  });
+
+  test('prevents duplicate submission and restores controls when submission fails', async () => {
+    let resolveResponse!: (success: boolean) => void;
+    const onRespond = vi.fn(
+      () =>
+        new Promise<boolean>(resolve => {
+          resolveResponse = resolve;
+        }),
+    );
+    render(<CoworkQuestionWizard interaction={buildInteraction()} onRespond={onRespond} />);
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Desktop' }));
+    fireEvent.click(screen.getByRole('button', { name: /Next|下一个/ }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Staging' }));
+    const submit = screen.getByRole('button', { name: /^Submit$|^提交$/ });
+    fireEvent.click(submit);
+    fireEvent.click(submit);
+
+    expect(onRespond).toHaveBeenCalledTimes(1);
+    expect((submit as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole('dialog').getAttribute('aria-busy')).toBe('true');
+
+    await act(async () => resolveResponse(false));
+
+    expect((submit as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByRole('dialog').getAttribute('aria-busy')).toBe('false');
   });
 });

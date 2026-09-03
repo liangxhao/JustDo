@@ -423,7 +423,7 @@ describe('projectPersistedTimeline', () => {
               {
                 type: 'toolCall',
                 id: 'call-question-1',
-                name: 'AskUserQuestion',
+                name: 'ask_user',
               },
             ],
           },

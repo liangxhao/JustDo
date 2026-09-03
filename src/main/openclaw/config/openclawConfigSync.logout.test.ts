@@ -166,45 +166,6 @@ const writeMinimalConfig = (
 };
 
 describe('OpenClaw auth logout config sync', () => {
-  test('writes the configured AskUserQuestion timeout before model setup', () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-ask-user-config-'));
-    temporaryDirectories.push(directory);
-    const configPath = path.join(directory, 'openclaw.json');
-    const runtimeSettings = createDefaultAgentRuntimeSettings();
-    runtimeSettings.askUserQuestion.timeoutMinutes = 45;
-    const sync = new OpenClawConfigSync({
-      engineManager: {
-        getDesiredVersion: () => '2026.6.11',
-        getStateDir: () => directory,
-      },
-      getCoworkConfig: () => ({
-        workingDirectory: '',
-        executionMode: 'local',
-        agentEngine: 'openclaw',
-        permissionMode: 'ask',
-      }),
-      getAgentRuntimeSettings: () => runtimeSettings,
-      getAskUserExtensionConfig: () => ({
-        askUserCallbackUrl: 'http://127.0.0.1:43127/askuser',
-        secret: 'runtime-secret',
-      }),
-    } as never);
-
-    const result = (
-      sync as unknown as {
-        writeMinimalConfig: (path: string, reason: string) => OpenClawConfigSyncResult;
-      }
-    ).writeMinimalConfig(configPath, BuiltinModelSyncReason.ManualRefresh);
-
-    expect(result.ok).toBe(true);
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    expect(config.plugins.entries['ask-user-question'].config).toEqual({
-      callbackUrl: 'http://127.0.0.1:43127/askuser',
-      secret: '${JUSTDO_ASK_USER_SECRET}',
-      timeoutMinutes: 45,
-    });
-  });
-
   test('writes the managed safeguard compaction policy before model setup', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-compaction-config-'));
     temporaryDirectories.push(directory);
@@ -379,16 +340,52 @@ describe('OpenClaw auth logout config sync', () => {
     });
   });
 
-  test('a second no-model sync keeps the fallback and removes retired permission plugins', () => {
+  test('writes the AskUserQuestion timeout without callback transport and disables native ask_user', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-ask-user-'));
+    temporaryDirectories.push(directory);
+    const configPath = path.join(directory, 'openclaw.json');
+    const runtimeSettings = createDefaultAgentRuntimeSettings();
+    runtimeSettings.askUserQuestion.timeoutMinutes = 45;
+
+    expect(
+      writeMinimalConfig(
+        configPath,
+        BuiltinModelSyncReason.CoworkConfigChange,
+        'ask',
+        BrowserMode.Isolated,
+        [],
+        runtimeSettings,
+      ).ok,
+    ).toBe(true);
+
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.plugins.entries['ask-user-question']).toEqual({
+      enabled: true,
+      config: { timeoutMinutes: 45 },
+    });
+    expect(config.tools.deny).toContain('ask_user');
+    expect(JSON.stringify(config.plugins.entries['ask-user-question'])).not.toContain('callback');
+    expect(JSON.stringify(config.plugins.entries['ask-user-question'])).not.toContain('secret');
+  });
+
+  test('a second no-model sync restores AskUserQuestion and removes retired permission plugins', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-policy-switch-'));
     temporaryDirectories.push(directory);
     const configPath = path.join(directory, 'openclaw.json');
+    const retiredInstalledDir = path.join(directory, 'extensions', 'ask-user-question');
+    fs.mkdirSync(retiredInstalledDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(retiredInstalledDir, 'openclaw.plugin.json'),
+      JSON.stringify({ id: 'ask-user-question' }),
+      'utf8',
+    );
 
     expect(writeMinimalConfig(configPath, 'startup', 'ask').ok).toBe(true);
     const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     existing.plugins.enabled = false;
     existing.plugins.entries['file-permission-policy'] = { enabled: true };
-    existing.plugins.allow = ['custom-plugin', 'file-permission-policy'];
+    existing.plugins.entries['ask-user-question'] = { enabled: true };
+    existing.plugins.allow = ['custom-plugin', 'ask-user-question', 'file-permission-policy'];
     existing.plugins.deny = ['action-approval', 'other-denied-plugin'];
     fs.writeFileSync(configPath, JSON.stringify(existing), 'utf8');
 
@@ -400,13 +397,17 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.tools.fs.workspaceOnly).toBe(true);
     expect(config.plugins.enabled).toBe(true);
     expect(config.plugins.allow).toEqual([
-      'browser',
       'ask-user-question',
+      'browser',
       'automation-permission',
       'justdo-runtime-bridge',
     ]);
     expect(config.plugins.deny).toBeUndefined();
     expect(config.plugins.entries['action-approval']).toBeUndefined();
+    expect(config.plugins.entries['ask-user-question']).toEqual({
+      enabled: true,
+      config: { timeoutMinutes: 10 },
+    });
     expect(config.plugins.entries['file-permission-policy']).toBeUndefined();
     expect(config.plugins.entries.browser).toEqual({ enabled: true });
   });

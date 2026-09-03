@@ -13,7 +13,7 @@ JustDo 是 Electron 桌面产品层：UI、SQLite 产品数据、权限、安全
 - 创建/继续/停止/删除、批量删除、pin、rename、group、cwd、agent/model/permission。
 - `clientTurnId`幂等和 `cowork_session_runs` root run绑定/计时。
 - Gateway session/runtime批量查询、重连恢复、历史reconciliation。
-- attachments、ask-user wizard、exec/plugin approvals、文件预览/授权编辑和导出。
+- attachments、内置 `AskUserQuestion` extension wizard、exec/plugin approvals、文件预览/授权编辑和导出。
 - subagent状态/抽屉/label与父会话running合并。
 
 ### 2.2 持续目标
@@ -38,7 +38,7 @@ Ask/auto/full 分别映射 OpenClaw 原生 session `guarded/workspace/full`；�
 
 ### 2.6 Plugins
 
-Skill/MCP/Hook/Extension/Marketplace 统一页面。当前声明 15 个内置 Skill，其中 14 个默认启用，`agent-browser` 默认关闭。Skill 状态来自 Gateway；MCP/Hook 有 SQLite 配置；Extension 支持 archive/目录 import、progress、enable/config/delete 和 ask-user host。
+Skill/MCP/Hook/Extension/Marketplace 统一页面。当前声明 15 个内置 Skill，其中 14 个默认启用，`agent-browser` 默认关闭。Skill 状态来自 Gateway；MCP/Hook 有 SQLite 配置；Extension 支持 archive/目录 import、progress、enable/config/delete。结构化用户提问由受保护的 `AskUserQuestion` extension 提供；extension 自己持有 pending/timeout/default 状态，并通过 Gateway event/RPC 接入现有桌面交互，不使用额外 callback server。
 
 Marketplace adapter支持四种kind、provider validation、聚合/detail/install事务，但默认没有注册provider，页面正确显示未配置。
 
@@ -114,17 +114,14 @@ flowchart LR
   Bridge[Preload<br/>contextBridge allowlist]
   Main[Electron Main<br/>composition + IPC]
   DB[(SQLite<br/>产品状态)]
-  Host[Extension Host<br/>MCP / ask-user]
   Gateway[OpenClaw Gateway<br/>执行状态]
   OS[OS / filesystem / shell]
 
   UI --> Bridge --> Main
   UI <-->|loopback chat WS/HTTP| Gateway
   Main --> DB
-  Main --> Host
   Main --> Gateway
   Main --> OS
-  Host --> Gateway
 ```
 
 同一个概念可能同时存在“产品投影”和“执行事实”，修改代码前必须先判断权威来源：
@@ -151,18 +148,16 @@ flowchart LR
 4. 初始化 SQLite，重启上一次进程遗留的 open run 计时，并把残留 `running` session 归一为 `idle`。
 5. 注入 store getter，恢复系统/自定义代理，再刷新内置模型。这里的顺序保证模型发现走用户已保存的代理。
 6. 绑定 Cowork runtime 事件与 OpenClaw 状态转发，迁移空 agent model 和旧的非 qualified model ref。
-7. 启动 Extension Host，取得本次进程动态 callback 地址；随后执行 startup config sync，避免 Gateway 使用上次进程留下的 callback 端口。
-8. 仅当 config sync 成功时异步确保 Gateway 运行；成功后启动 cron polling。Gateway 启动失败会记录错误，但不会阻止主窗口创建。
-9. 异步准备 Python runtime；失败记录到主日志，窗口仍可打开并显示相应能力不可用。
-10. 注册 CSP、创建主窗口、安排自动更新检查，并绑定系统唤醒重连。
-11. 初始化 auto-launch 默认标记，恢复 prevent-sleep，并监听 `app_config` 的语言、标题栏与代理变化。
+7. 执行 startup config sync；仅当同步成功时异步确保 Gateway 运行，成功后启动 cron polling。Gateway 启动失败会记录错误，但不会阻止主窗口创建。
+8. 异步准备 Python runtime；失败记录到主日志，窗口仍可打开并显示相应能力不可用。
+9. 注册 CSP、创建主窗口、安排自动更新检查，并绑定系统唤醒重连。
+10. 初始化 auto-launch 默认标记，恢复 prevent-sleep，并监听 `app_config` 的语言、标题栏与代理变化。
 
 ```mermaid
 sequenceDiagram
   participant E as Electron
   participant M as Main
   participant D as SQLite
-  participant H as Extension Host
   participant C as Config Sync
   participant G as Gateway
   participant W as Main Window
@@ -170,7 +165,6 @@ sequenceDiagram
   E->>M: app.whenReady
   M->>D: init + stale-state repair
   M->>M: proxy + builtin model sync
-  M->>H: start and resolve callback config
   M->>C: sync(reason=startup)
   alt sync succeeds
     M-->>G: ensure running (async)
@@ -182,7 +176,7 @@ sequenceDiagram
   M->>W: createWindow
 ```
 
-关键故障边界：SQLite 初始化是核心边界；它失败会使 `initApp()` 失败。Gateway、Python runtime、cron polling 和 Extension Host 中的部分失败采用可诊断降级，以便用户仍能进入设置或导出日志。
+关键故障边界：SQLite 初始化是核心边界；它失败会使 `initApp()` 失败。Gateway、Python runtime 和 cron polling 中的部分失败采用可诊断降级，以便用户仍能进入设置或导出日志。
 
 ## 10. 关闭生命周期
 
@@ -192,9 +186,8 @@ sequenceDiagram
 2. 停止 cron polling，阻止清理期间再派生计划任务工作。
 3. 请求 Cowork router 停止全部 session。
 4. 停止 Gateway，确保不再发出新的 tool call。
-5. 停止 Extension Host，释放 MCP transport、stdio 子进程和本地 callback server。
-6. 停止 outbound-header proxy。
-7. 最后关闭 SQLite，让 WAL 落盘并释放文件锁。
+5. 停止 outbound-header proxy。
+6. 最后关闭 SQLite，让 WAL 落盘并释放文件锁。
 
 安装器通过 `--justdo-*` 内部开关请求优雅退出时也进入同一清理链。自动更新安装同样先等待清理；安装失败路径会重新拉起应用。不要在新的 `before-quit` listener 中复制一套并行清理，否则容易出现 Gateway 已停但 session 未结算、或数据库先关闭导致清理写入失败。
 
@@ -280,16 +273,16 @@ sequenceDiagram
 
 ## 15. 降级与恢复矩阵
 
-| 故障                              | 用户可见结果                     | 自动恢复/下一步                                  | 主要证据                                        |
-| --------------------------------- | -------------------------------- | ------------------------------------------------ | ----------------------------------------------- |
-| SQLite 打不开                     | 应用初始化失败                   | 检查主日志、路径权限、原生模块 ABI               | `sqliteStore.ts`、main daily log                |
-| Startup config sync 失败          | 窗口可开，Gateway 不自动启动     | 修复配置后手工刷新/重启                          | `[OpenClaw] Startup config sync failed`         |
-| Gateway 启动失败                  | 产品壳和设置可用，Agent 不可执行 | runtime status、gateway log、native JSON log     | `openclawEngineManager.ts`                      |
-| Extension Host 无 callback config | ask-user/MCP 扩展能力不完整      | 检查 host startup error 后重启                   | `openclawExtensionHostController.ts`            |
-| Python runtime 准备失败           | Python 相关 skill/tool 不可用    | 检查 bundled runtime/requirements                | `[Main] initApp: ensurePythonRuntimeReady`      |
-| 代理变化后重连失败                | Gateway 被主动停止               | 修复代理后重新启动 Gateway                       | proxy restart/reconnect 日志                    |
-| 强制退出遗留 running              | 下次启动归一为 idle/aborted      | Gateway 确认 active 才重新打开；新提交前强制对账 | `interruptOpenSessionRuns`、runtime `run:begin` |
-| 系统睡眠导致 WS 断开              | 状态可能短暂离线                 | `powerMonitor.resume` 触发 adapter 重连          | runtime adapter resume path                     |
+| 故障                     | 用户可见结果                     | 自动恢复/下一步                                  | 主要证据                                        |
+| ------------------------ | -------------------------------- | ------------------------------------------------ | ----------------------------------------------- |
+| SQLite 打不开            | 应用初始化失败                   | 检查主日志、路径权限、原生模块 ABI               | `sqliteStore.ts`、main daily log                |
+| Startup config sync 失败 | 窗口可开，Gateway 不自动启动     | 修复配置后手工刷新/重启                          | `[OpenClaw] Startup config sync failed`         |
+| Gateway 启动失败         | 产品壳和设置可用，Agent 不可执行 | runtime status、gateway log、native JSON log     | `openclawEngineManager.ts`                      |
+| AskUserQuestion 事件连接中断 | 待答弹窗短暂消失              | adapter 重连后通过 `askUserQuestion.list` 自动恢复 | runtime adapter、Gateway native log             |
+| Python runtime 准备失败  | Python 相关 skill/tool 不可用    | 检查 bundled runtime/requirements                | `[Main] initApp: ensurePythonRuntimeReady`      |
+| 代理变化后重连失败       | Gateway 被主动停止               | 修复代理后重新启动 Gateway                       | proxy restart/reconnect 日志                    |
+| 强制退出遗留 running     | 下次启动归一为 idle/aborted      | Gateway 确认 active 才重新打开；新提交前强制对账 | `interruptOpenSessionRuns`、runtime `run:begin` |
+| 系统睡眠导致 WS 断开     | 状态可能短暂离线                 | `powerMonitor.resume` 触发 adapter 重连          | runtime adapter resume path                     |
 
 ## 16. 代码与测试证据地图
 

@@ -9,6 +9,13 @@ export const OpenClawToolName = {
   ASK_USER_QUESTION: 'AskUserQuestion',
 } as const;
 
+export const AskUserQuestionGateway = {
+  LIST: 'askUserQuestion.list',
+  RESOLVE: 'askUserQuestion.resolve',
+  REQUESTED_EVENT: 'plugin.ask-user-question.requested',
+  RESOLVED_EVENT: 'plugin.ask-user-question.resolved',
+} as const;
+
 export const CoworkInteractionKind = {
   STRUCTURED_QUESTION: 'structured-question',
 } as const;
@@ -56,9 +63,7 @@ export const AskUserTimeoutBehavior = {
 export const MAX_ASK_USER_TIMEOUT_MINUTES = 24 * 60;
 
 export type AskUserWaitPolicy =
-  | {
-      mode: typeof AskUserWaitMode.REQUIRED;
-    }
+  | { mode: typeof AskUserWaitMode.REQUIRED }
   | {
       mode: typeof AskUserWaitMode.TIMEOUT;
       timeoutMinutes: number;
@@ -82,10 +87,20 @@ export type AskUserQuestionAnswer = {
 
 export type AskUserAnswers = Record<string, AskUserQuestionAnswer>;
 
-export type AskUserResponse = {
-  behavior: 'allow' | 'deny' | 'timeout';
-  answers?: AskUserAnswers;
-  timedOut?: boolean;
+export type AskUserInteractionEnvelope = {
+  sessionId: string;
+  request: {
+    requestId: string;
+    toolName: typeof OpenClawToolName.ASK_USER_QUESTION;
+    interactionKind: typeof CoworkInteractionKind.STRUCTURED_QUESTION;
+    toolInput: {
+      questions: AskUserQuestion[];
+      waitPolicy: AskUserWaitPolicy;
+      expiresAt?: number;
+      sessionKey?: string;
+      sessionId: string;
+    };
+  };
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -110,9 +125,7 @@ const readRequiredString = (value: unknown): string | null => {
 };
 
 export const parseAskUserQuestions = (value: unknown): AskUserQuestion[] | null => {
-  if (!Array.isArray(value)
-    || value.length < 1
-    || value.length > MAX_ASK_USER_QUESTIONS) return null;
+  if (!Array.isArray(value) || value.length < 1 || value.length > MAX_ASK_USER_QUESTIONS) return null;
 
   const questionIds = new Set<string>();
   const questions: AskUserQuestion[] = [];
@@ -121,16 +134,26 @@ export const parseAskUserQuestions = (value: unknown): AskUserQuestion[] | null 
     const id = readRequiredString(rawQuestion.id);
     const question = readRequiredString(rawQuestion.question);
     if (!id || !isSafeAskUserId(id) || !question || questionIds.has(id)) return null;
-    if ((rawQuestion.header !== undefined && typeof rawQuestion.header !== 'string')
-      || (rawQuestion.multiSelect !== undefined && typeof rawQuestion.multiSelect !== 'boolean')
-      || (rawQuestion.allowOther !== undefined && typeof rawQuestion.allowOther !== 'boolean')) {
+    if (
+      (rawQuestion.header !== undefined && typeof rawQuestion.header !== 'string') ||
+      (rawQuestion.multiSelect !== undefined && typeof rawQuestion.multiSelect !== 'boolean') ||
+      (rawQuestion.allowOther !== undefined && typeof rawQuestion.allowOther !== 'boolean')
+    ) {
       return null;
     }
-    if (typeof rawQuestion.header === 'string'
-      && rawQuestion.header.trim().length > MAX_ASK_USER_HEADER_LENGTH) return null;
-    if (!Array.isArray(rawQuestion.options)
-      || rawQuestion.options.length < 2
-      || rawQuestion.options.length > 4) return null;
+    if (
+      typeof rawQuestion.header === 'string' &&
+      rawQuestion.header.trim().length > MAX_ASK_USER_HEADER_LENGTH
+    ) {
+      return null;
+    }
+    if (
+      !Array.isArray(rawQuestion.options) ||
+      rawQuestion.options.length < 2 ||
+      rawQuestion.options.length > 4
+    ) {
+      return null;
+    }
 
     const optionIds = new Set<string>();
     const options: AskUserQuestionOption[] = [];
@@ -151,8 +174,12 @@ export const parseAskUserQuestions = (value: unknown): AskUserQuestion[] | null 
         if (!isRecord(rawOption.input)) return null;
         const inputLabel = readRequiredString(rawOption.input.label);
         if (!inputLabel) return null;
-        if (rawOption.input.placeholder !== undefined
-          && typeof rawOption.input.placeholder !== 'string') return null;
+        if (
+          rawOption.input.placeholder !== undefined &&
+          typeof rawOption.input.placeholder !== 'string'
+        ) {
+          return null;
+        }
         input = {
           label: inputLabel,
           ...(typeof rawOption.input.placeholder === 'string'
@@ -179,14 +206,18 @@ export const parseAskUserQuestions = (value: unknown): AskUserQuestion[] | null 
       defaultOptionIds = rawDefaultIds as string[];
       const defaultIdSet = new Set(defaultOptionIds);
       const optionsById = new Map(options.map(option => [option.id, option]));
-      if (defaultOptionIds.length < 1
-        || defaultOptionIds.length > options.length
-        || defaultIdSet.size !== defaultOptionIds.length
-        || (!rawQuestion.multiSelect && defaultOptionIds.length !== 1)
-        || defaultOptionIds.some(optionId => {
+      if (
+        defaultOptionIds.length < 1 ||
+        defaultOptionIds.length > options.length ||
+        defaultIdSet.size !== defaultOptionIds.length ||
+        (!rawQuestion.multiSelect && defaultOptionIds.length !== 1) ||
+        defaultOptionIds.some(optionId => {
           const option = optionsById.get(optionId);
           return !option || Boolean(option.input);
-        })) return null;
+        })
+      ) {
+        return null;
+      }
     }
 
     questionIds.add(id);
@@ -194,9 +225,7 @@ export const parseAskUserQuestions = (value: unknown): AskUserQuestion[] | null 
       id,
       question,
       options,
-      ...(typeof rawQuestion.header === 'string'
-        ? { header: rawQuestion.header.trim() }
-        : {}),
+      ...(typeof rawQuestion.header === 'string' ? { header: rawQuestion.header.trim() } : {}),
       ...(rawQuestion.multiSelect === true ? { multiSelect: true } : {}),
       allowOther: rawQuestion.allowOther !== false,
       ...(defaultOptionIds ? { defaultOptionIds } : {}),
@@ -218,16 +247,24 @@ export const parseAskUserWaitPolicy = (
       : null;
   }
 
-  if (value.mode !== AskUserWaitMode.TIMEOUT
-    || !Number.isInteger(value.timeoutMinutes)
-    || typeof value.timeoutMinutes !== 'number'
-    || value.timeoutMinutes < 1
-    || value.timeoutMinutes > MAX_ASK_USER_TIMEOUT_MINUTES
-    || (value.onTimeout !== AskUserTimeoutBehavior.USE_DEFAULTS
-      && value.onTimeout !== AskUserTimeoutBehavior.MODEL_DECIDES)) return null;
+  if (
+    value.mode !== AskUserWaitMode.TIMEOUT ||
+    !Number.isInteger(value.timeoutMinutes) ||
+    typeof value.timeoutMinutes !== 'number' ||
+    value.timeoutMinutes < 1 ||
+    value.timeoutMinutes > MAX_ASK_USER_TIMEOUT_MINUTES ||
+    (value.onTimeout !== AskUserTimeoutBehavior.USE_DEFAULTS &&
+      value.onTimeout !== AskUserTimeoutBehavior.MODEL_DECIDES)
+  ) {
+    return null;
+  }
 
-  if (value.onTimeout === AskUserTimeoutBehavior.USE_DEFAULTS
-    && questions.some(question => !question.defaultOptionIds?.length)) return null;
+  if (
+    value.onTimeout === AskUserTimeoutBehavior.USE_DEFAULTS &&
+    questions.some(question => !question.defaultOptionIds?.length)
+  ) {
+    return null;
+  }
 
   return {
     mode: AskUserWaitMode.TIMEOUT,
@@ -247,6 +284,36 @@ export const buildAskUserDefaultAnswers = (
   return answers;
 };
 
+export const parseAskUserRequest = (value: unknown): AskUserRequest | null => {
+  if (!isRecord(value)) return null;
+  const requestId = readRequiredString(value.requestId);
+  const questions = parseAskUserQuestions(value.questions);
+  if (!requestId || !questions) return null;
+  const waitPolicy = parseAskUserWaitPolicy(value.waitPolicy, questions);
+  if (!waitPolicy) return null;
+  if (value.sessionKey !== undefined && typeof value.sessionKey !== 'string') return null;
+  const sessionKey = typeof value.sessionKey === 'string' ? value.sessionKey.trim() : '';
+  if (
+    value.expiresAt !== undefined &&
+    (typeof value.expiresAt !== 'number' || !Number.isFinite(value.expiresAt))
+  ) {
+    return null;
+  }
+  if (
+    (waitPolicy.mode === AskUserWaitMode.REQUIRED && value.expiresAt !== undefined) ||
+    (waitPolicy.mode === AskUserWaitMode.TIMEOUT && typeof value.expiresAt !== 'number')
+  ) {
+    return null;
+  }
+  return {
+    requestId,
+    ...(sessionKey ? { sessionKey } : {}),
+    questions,
+    waitPolicy,
+    ...(typeof value.expiresAt === 'number' ? { expiresAt: value.expiresAt } : {}),
+  };
+};
+
 export const parseAskUserAnswers = (
   value: unknown,
   questions: AskUserQuestion[],
@@ -255,6 +322,7 @@ export const parseAskUserAnswers = (
 
   const answers: AskUserAnswers = {};
   for (const question of questions) {
+    if (!Object.prototype.hasOwnProperty.call(value, question.id)) return null;
     const rawAnswer = value[question.id];
     if (!isRecord(rawAnswer) || !Array.isArray(rawAnswer.selected)) return null;
     const selected = rawAnswer.selected.map(readRequiredString);
@@ -299,7 +367,6 @@ export const parseAskUserAnswers = (
         optionInputs[optionId] = input;
       }
     }
-
     for (const optionId of selectedIds) {
       if (optionsById.get(optionId)?.input && !optionInputs?.[optionId]) return null;
     }

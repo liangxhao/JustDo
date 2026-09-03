@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { CoworkInteractionKind } from '@shared/openclaw/extensions';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import type { CoworkInteractionRequest } from '@/features/cowork/coworkTypes';
@@ -119,18 +119,14 @@ describe('CoworkInteractionModal structured questions', () => {
     expect(screen.queryByRole('radio', { name: /Other|其他/ })).toBeNull();
   });
 
-  test('requires option input and keeps cancel separate from option selection', () => {
-    const onRespond = vi.fn();
+  test('keeps native option selection separate from cancelling the request', () => {
+    const onRespond = vi.fn().mockResolvedValue(true);
     render(
       <CoworkInteractionModal
         interaction={buildInteraction({
           options: [
             { id: 'confirm_start', label: 'Confirm and start' },
-            {
-              id: 'need_modify',
-              label: 'Modify design',
-              input: { label: 'Requested changes', placeholder: 'Describe the changes' },
-            },
+            { id: 'need_modify', label: 'Modify design' },
           ],
         })}
         onRespond={onRespond}
@@ -139,10 +135,7 @@ describe('CoworkInteractionModal structured questions', () => {
 
     const submit = screen.getByRole('button', { name: /Submit current selection|提交当前选择/ });
     fireEvent.click(screen.getByRole('radio', { name: /Modify design/ }));
-    expect((submit as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.change(screen.getByPlaceholderText('Describe the changes'), {
-      target: { value: 'Rename the project' },
-    });
+    expect((submit as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(submit);
     expect(onRespond).toHaveBeenLastCalledWith(
       expect.objectContaining({
@@ -150,18 +143,56 @@ describe('CoworkInteractionModal structured questions', () => {
           answers: {
             design_confirm: {
               selected: ['need_modify'],
-              optionInputs: { need_modify: 'Rename the project' },
             },
           },
         }),
       }),
     );
 
-    onRespond.mockClear();
+    cleanup();
+    const onCancel = vi.fn().mockResolvedValue(true);
+    render(
+      <CoworkInteractionModal
+        interaction={buildInteraction({
+          options: [
+            { id: 'confirm_start', label: 'Confirm and start' },
+            { id: 'need_modify', label: 'Modify design' },
+          ],
+        })}
+        onRespond={onCancel}
+      />,
+    );
     fireEvent.click(screen.getByRole('button', { name: /Cancel request|取消请求/ }));
-    expect(onRespond).toHaveBeenCalledWith({
+    expect(onCancel).toHaveBeenCalledWith({
       behavior: 'cancel',
       message: 'Interaction canceled',
     });
+  });
+
+  test('prevents duplicate responses and becomes retryable after a failed response', async () => {
+    let resolveResponse!: (success: boolean) => void;
+    const onRespond = vi.fn(
+      () =>
+        new Promise<boolean>(resolve => {
+          resolveResponse = resolve;
+        }),
+    );
+    render(<CoworkInteractionModal interaction={buildInteraction()} onRespond={onRespond} />);
+
+    fireEvent.click(screen.getByRole('radio', { name: /Modify design/ }));
+    const submit = screen.getByRole('button', { name: /Submit current selection|提交当前选择/ });
+    fireEvent.click(submit);
+    fireEvent.click(submit);
+
+    expect(onRespond).toHaveBeenCalledTimes(1);
+    expect((submit as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole('dialog').getAttribute('aria-busy')).toBe('true');
+
+    await act(async () => resolveResponse(false));
+
+    expect((submit as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByRole('dialog').getAttribute('aria-busy')).toBe('false');
+    fireEvent.click(submit);
+    expect(onRespond).toHaveBeenCalledTimes(2);
   });
 });

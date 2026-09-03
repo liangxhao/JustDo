@@ -106,7 +106,7 @@ loopback RPC 被系统代理。代理是本机网络边界，需防任意本地�
 
 - Gateway token 是随机 24-byte hex，存 state `gateway-token`，通过 child env/launch arg 使用；不得写日志。
 - Browser extension relay token 是 32-byte hex，host-local 文件用 exclusive create 和 `0600`，配对复制到剪贴板但 status API不回 token。
-- Extension callback用 secret header认证，失败返回 401/deny。
+- `AskUserQuestion` 只通过已认证 Gateway 的 scoped `plugin.ask-user-question.*` event、`askUserQuestion.*` RPC 与固定 Electron IPC 流转；Main 和 extension 都按稳定 id 校验 Renderer 回传，extension pending record 是最终权威。该链路没有额外 HTTP listener、callback secret 或开放端口。
 - Provider API key、proxy password、MCP env、Marketplace内部字段和 auth header 不输出。
 - Renderer encryption helper不能被当作强 secret vault；真正凭证的落盘/传输边界由 Main/provider config负责。
 

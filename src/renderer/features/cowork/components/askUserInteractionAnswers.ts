@@ -10,7 +10,6 @@ export const isQuestionAnswerComplete = (
   if (otherActive && !otherInput?.trim()) return false;
   const hasOther = Boolean(otherActive && otherInput?.trim());
   if (selected.length === 0 && !hasOther) return false;
-
   return selected.every(id => {
     const option = question.options.find(candidate => candidate.id === id);
     return !option?.input || Boolean(optionInputs?.[id]?.trim());

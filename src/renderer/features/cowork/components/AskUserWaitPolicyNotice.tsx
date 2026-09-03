@@ -37,13 +37,11 @@ const AskUserWaitPolicyNotice: React.FC<AskUserWaitPolicyNoticeProps> = ({
   useEffect(() => {
     setNow(Date.now());
     if (waitPolicy?.mode !== AskUserWaitMode.TIMEOUT || expiresAt === null) return;
-
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [expiresAt, waitPolicy?.mode]);
 
   if (!waitPolicy) return null;
-
   const message =
     waitPolicy.mode === AskUserWaitMode.REQUIRED
       ? i18nService.t('coworkQuestionWaitRequired')

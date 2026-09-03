@@ -4,14 +4,13 @@
 
 ## 1. 进程与信任边界
 
-| 参与者         | 权限                          | 主要职责                                                     |
-| -------------- | ----------------------------- | ------------------------------------------------------------ |
-| Renderer       | Chromium 页面权限             | UI、交互、Redux、聊天显示；不访问系统资源                    |
-| Image preview  | 独立沙箱化 Chromium 页面      | 在原生独立窗口中显示图片并处理缩放/拖动                      |
-| Preload        | 隔离上下文中的 Electron IPC   | 暴露固定 `window.electron` API，转换 listener 为 unsubscribe |
-| Main           | Node/Electron 完整权限        | 验证输入、SQLite、文件/网络/进程、Gateway 和系统集成         |
-| Gateway        | 独立受管子进程                | Agent、tool、session/history、cron、plugin runtime           |
-| Extension host | Main 管理的本地服务/transport | ask-user callback、extension MCP 等受管能力                  |
+| 参与者        | 权限                        | 主要职责                                                     |
+| ------------- | --------------------------- | ------------------------------------------------------------ |
+| Renderer      | Chromium 页面权限           | UI、交互、Redux、聊天显示；不访问系统资源                    |
+| Image preview | 独立沙箱化 Chromium 页面    | 在原生独立窗口中显示图片并处理缩放/拖动                      |
+| Preload       | 隔离上下文中的 Electron IPC | 暴露固定 `window.electron` API，转换 listener 为 unsubscribe |
+| Main          | Node/Electron 完整权限      | 验证输入、SQLite、文件/网络/进程、Gateway 和系统集成         |
+| Gateway       | 独立受管子进程              | Agent、tool、session/history、cron、plugin runtime           |
 
 BrowserWindow 必须维持 context isolation；即使某平台通过启动 switch 降低 Chromium sandbox，也不能因此扩大 Renderer API。
 

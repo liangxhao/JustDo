@@ -2,188 +2,172 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { Value } from 'typebox/value';
-import { describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import {
+  ASK_USER_QUESTION_DESCRIPTION,
   ASK_USER_TIMEOUT_MINUTES,
+  AskUserQuestionManager,
   AskUserQuestionSchema,
   buildWaitPolicy,
-  formatAskUserToolResponse,
-  MAX_ASK_USER_HEADER_LENGTH,
+  default as askUserQuestionPlugin,
   MAX_ASK_USER_QUESTIONS,
   parseQuestions,
 } from '../../../../openclaw-extensions/ask-user-question/index';
 
-const makeQuestion = (index: number) => ({
-  id: `question_${index + 1}`,
-  question: `Question ${index + 1}`,
+const question = {
+  id: 'deploy_target',
+  header: 'Deploy',
+  question: 'Where should this be deployed?',
   options: [
-    { id: 'yes', label: 'Yes' },
-    { id: 'no', label: 'No' },
+    { id: 'staging', label: 'Staging (Recommended)' },
+    { id: 'production', label: 'Production' },
   ],
+};
+
+const logger = {
+  debug: vi.fn(),
+  error: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+};
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
-describe('ask-user-question plugin limits', () => {
-  test('declares the managed timeout in the plugin manifest schema', () => {
-    const manifest = JSON.parse(
-      fs.readFileSync(
-        path.join(
-          process.cwd(),
-          'openclaw-extensions',
-          'ask-user-question',
-          'openclaw.plugin.json',
-        ),
-        'utf8',
-      ),
-    ) as {
-      configSchema: {
-        additionalProperties: boolean;
-        properties: Record<string, Record<string, unknown>>;
-      };
-    };
+describe('AskUserQuestion extension', () => {
+  test('keeps the rich question contract while adopting the native decision-only policy', () => {
+    const questions = Array.from({ length: MAX_ASK_USER_QUESTIONS }, (_, index) => ({
+      ...question,
+      id: `question_${index + 1}`,
+    }));
 
-    expect(manifest.configSchema.additionalProperties).toBe(false);
-    expect(manifest.configSchema.properties.timeoutMinutes).toMatchObject({
-      type: 'integer',
-      minimum: 1,
-      maximum: 1440,
-      default: ASK_USER_TIMEOUT_MINUTES,
-    });
-  });
-
-  test('accepts up to eight questions and rejects more', () => {
     expect(MAX_ASK_USER_QUESTIONS).toBe(8);
-    const questions = Array.from({ length: MAX_ASK_USER_QUESTIONS }, (_, index) =>
-      makeQuestion(index),
+    expect(parseQuestions(questions)).toHaveLength(8);
+    expect(AskUserQuestionSchema.properties.questions.maxItems).toBe(8);
+    expect(Value.Check(AskUserQuestionSchema, { questions: [question] })).toBe(true);
+    expect(ASK_USER_QUESTION_DESCRIPTION).toContain(
+      'Use only when blocked on a decision that genuinely belongs to the user',
     );
-
-    expect(parseQuestions(questions)).toHaveLength(MAX_ASK_USER_QUESTIONS);
-    expect(parseQuestions([...questions, makeQuestion(MAX_ASK_USER_QUESTIONS)])).toBeNull();
-  });
-
-  test('advertises the same question limit in the tool schema', () => {
-    expect(AskUserQuestionSchema.properties.questions.maxItems).toBe(MAX_ASK_USER_QUESTIONS);
-    expect(AskUserQuestionSchema.properties.questions.description).toBe('Questions to show (1-8).');
-    expect(AskUserQuestionSchema.properties.timeoutEnabled.type).toBe('boolean');
-    expect(AskUserQuestionSchema.properties.questions.items.properties.header.maxLength).toBe(
-      MAX_ASK_USER_HEADER_LENGTH,
-    );
-    expect(AskUserQuestionSchema.properties.questions.items.properties.allowOther.type).toBe(
-      'boolean',
-    );
-    expect(AskUserQuestionSchema.properties.questions.items.properties.allowOther.default).toBe(
-      true,
+    expect(ASK_USER_QUESTION_DESCRIPTION).toContain(
+      'never ask whether to proceed, whether to continue, or to confirm your own plan',
     );
   });
 
-  test('exposes a flat timeout contract without a wait-policy union', () => {
-    const questions = [{ ...makeQuestion(0), defaultOptionIds: ['no'] }];
+  test('uses only native plugin services, scoped RPCs, and JustDo root sessions', () => {
+    const registerGatewayMethod = vi.fn();
+    const registerService = vi.fn();
+    const registerTool = vi.fn();
 
-    expect(AskUserQuestionSchema).not.toHaveProperty('anyOf');
-    expect(AskUserQuestionSchema.properties).not.toHaveProperty('waitPolicy');
-    expect(AskUserQuestionSchema.additionalProperties).toBe(false);
-    expect(
-      Value.Check(AskUserQuestionSchema, {
-        questions,
-      }),
-    ).toBe(true);
-    expect(
-      Value.Check(AskUserQuestionSchema, {
-        questions,
-        timeoutEnabled: true,
-      }),
-    ).toBe(true);
-    expect(
-      Value.Check(AskUserQuestionSchema, {
-        questions,
-        timeoutEnabled: 'yes',
-      }),
-    ).toBe(false);
-    expect(
-      Value.Check(AskUserQuestionSchema, {
-        questions,
-        waitPolicy: {
-          mode: 'timeout',
-          timeoutMinutes: ASK_USER_TIMEOUT_MINUTES,
-        },
-      }),
-    ).toBe(false);
+    askUserQuestionPlugin.register({
+      logger,
+      pluginConfig: { timeoutMinutes: 15 },
+      registerGatewayMethod,
+      registerService,
+      registerTool,
+    } as never);
+
+    expect(registerService).toHaveBeenCalledOnce();
+    expect(registerGatewayMethod.mock.calls.map(call => [call[0], call[2]])).toEqual([
+      ['askUserQuestion.list', { scope: 'operator.read' }],
+      ['askUserQuestion.resolve', { scope: 'operator.write' }],
+    ]);
+    const factory = registerTool.mock.calls[0][0];
+    expect(factory({ sessionKey: 'agent:main:subagent:child' })).toBeNull();
+    expect(factory({ sessionKey: 'agent:main:unrelated:session' })).toBeNull();
+    expect(factory({ sessionKey: 'agent:main:justdo:session-1' })).toMatchObject({
+      name: 'AskUserQuestion',
+      description: ASK_USER_QUESTION_DESCRIPTION,
+    });
   });
 
-  test('derives required waits and bounded timeout behavior', () => {
-    const questions = parseQuestions([
-      {
-        ...makeQuestion(0),
-        defaultOptionIds: ['no'],
-      },
-    ])!;
+  test('owns pending state and resolution inside the extension', async () => {
+    const manager = new AskUserQuestionManager(logger);
+    const emit = vi.fn();
+    manager.setGatewayEventEmitter(emit);
 
-    expect(buildWaitPolicy(undefined, questions)).toEqual({ mode: 'required' });
-    expect(buildWaitPolicy(true, questions)).toEqual({
+    const response = manager.request([question], { mode: 'required' }, 'justdo:session-1');
+    const request = manager.list()[0];
+    expect(emit).toHaveBeenCalledWith('requested', request, { scope: 'operator.read' });
+
+    manager.resolve(request.requestId, 'submit', {
+      deploy_target: { selected: ['staging'] },
+    });
+
+    await expect(response).resolves.toEqual({
+      status: 'answered',
+      answers: { deploy_target: { selected: ['staging'] } },
+    });
+    expect(manager.list()).toEqual([]);
+    expect(emit).toHaveBeenLastCalledWith(
+      'resolved',
+      { requestId: request.requestId, status: 'answered' },
+      { scope: 'operator.read' },
+    );
+  });
+
+  test('applies defaults or returns control to the model after the configured timeout', async () => {
+    vi.useFakeTimers();
+    const manager = new AskUserQuestionManager(logger);
+    manager.setGatewayEventEmitter(vi.fn());
+    const withDefaults = { ...question, defaultOptionIds: ['staging'] };
+
+    expect(buildWaitPolicy(true, [withDefaults], 1)).toEqual({
       mode: 'timeout',
-      timeoutMinutes: ASK_USER_TIMEOUT_MINUTES,
+      timeoutMinutes: 1,
       onTimeout: 'use-defaults',
     });
-    expect(buildWaitPolicy(false, questions)).toEqual({ mode: 'required' });
-    expect(buildWaitPolicy('yes', questions)).toBeNull();
-    expect(buildWaitPolicy(true, questions, 45)).toEqual({
-      mode: 'timeout',
-      timeoutMinutes: 45,
-      onTimeout: 'use-defaults',
-    });
-  });
-
-  test('lets the model decide after timeout when any question has no default', () => {
-    const questions = parseQuestions([makeQuestion(0)])!;
-
-    expect(buildWaitPolicy(true, questions)).toEqual({
-      mode: 'timeout',
-      timeoutMinutes: ASK_USER_TIMEOUT_MINUTES,
-      onTimeout: 'model-decides',
-    });
-    expect(
-      parseQuestions([
-        {
-          ...makeQuestion(0),
-          options: [
-            { id: 'yes', label: 'Yes', input: { label: 'Why?' } },
-            { id: 'no', label: 'No' },
-          ],
-          defaultOptionIds: ['yes'],
-        },
-      ]),
-    ).toBeNull();
-  });
-
-  test('returns actionable model guidance or reports automatic defaults after timeout', () => {
-    const questions = parseQuestions([
-      {
-        ...makeQuestion(0),
-        defaultOptionIds: ['no'],
-      },
-    ])!;
-
-    expect(formatAskUserToolResponse({ behavior: 'timeout' }, questions)).toContain(
-      'Choose suitable values yourself based on the context and continue.',
+    const defaulted = manager.request(
+      [withDefaults],
+      { mode: 'timeout', timeoutMinutes: 1, onTimeout: 'use-defaults' },
+      'justdo:session-1',
     );
-    expect(
-      formatAskUserToolResponse(
-        {
-          behavior: 'allow',
-          answers: { question_1: { selected: ['no'] } },
-          timedOut: true,
-        },
-        questions,
-      ),
-    ).toContain('configured default choices were selected automatically');
-    expect(
-      formatAskUserToolResponse(
-        {
-          behavior: 'allow',
-          answers: { question_1: { selected: [], skipped: true } },
-        },
-        questions,
-      ),
-    ).toContain('User skipped this question.');
+    await vi.advanceTimersByTimeAsync(60_000);
+    await expect(defaulted).resolves.toEqual({
+      status: 'answered',
+      answers: { deploy_target: { selected: ['staging'] } },
+      timedOut: true,
+    });
+
+    const modelDecides = manager.request(
+      [question],
+      { mode: 'timeout', timeoutMinutes: 1, onTimeout: 'model-decides' },
+      'justdo:session-1',
+    );
+    await vi.advanceTimersByTimeAsync(60_000);
+    await expect(modelDecides).resolves.toEqual({ status: 'timeout' });
+  });
+
+  test('does not publish a request after its run was already aborted', () => {
+    const manager = new AskUserQuestionManager(logger);
+    const emit = vi.fn();
+    const controller = new AbortController();
+    manager.setGatewayEventEmitter(emit);
+    controller.abort();
+
+    expect(() =>
+      manager.request([question], { mode: 'required' }, 'justdo:session-1', controller.signal),
+    ).toThrow();
+    expect(manager.list()).toEqual([]);
+    expect(emit).not.toHaveBeenCalled();
+  });
+
+  test('declares only timeout configuration and no callback transport', () => {
+    const extensionDir = path.join(process.cwd(), 'openclaw-extensions', 'ask-user-question');
+    const manifest = JSON.parse(
+      fs.readFileSync(path.join(extensionDir, 'openclaw.plugin.json'), 'utf8'),
+    ) as { configSchema: { properties: Record<string, unknown> } };
+    const source = fs.readFileSync(path.join(extensionDir, 'index.ts'), 'utf8');
+
+    expect(manifest.configSchema.properties).toEqual({
+      timeoutMinutes: expect.objectContaining({ default: ASK_USER_TIMEOUT_MINUTES }),
+    });
+    expect(JSON.stringify(manifest)).not.toContain('callback');
+    expect(JSON.stringify(manifest)).not.toContain('secret');
+    expect(source).not.toContain("from 'node:http'");
+    expect(source).not.toContain("from 'node:https'");
+    expect(source).not.toContain('callbackUrl');
+    expect(source).not.toContain('x-ask-user-secret');
   });
 });

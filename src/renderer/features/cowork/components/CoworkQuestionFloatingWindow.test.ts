@@ -13,14 +13,18 @@ import CoworkQuestionFloatingWindow, {
   shouldShowCoworkQuestionWindow,
 } from './CoworkQuestionFloatingWindow';
 
-const buildInteraction = (questionCount: number): CoworkInteractionRequest => ({
+const buildInteraction = (
+  questionCount: number,
+  requestId = 'request-1',
+): CoworkInteractionRequest => ({
   sessionId: 'session-1',
-  requestId: 'request-1',
+  requestId,
   toolName: 'AskUserQuestion',
   interactionKind: CoworkInteractionKind.STRUCTURED_QUESTION,
   toolInput: {
     questions: Array.from({ length: questionCount }, (_, index) => ({
       id: `question_${index + 1}`,
+      header: `Step ${index + 1}`,
       question: `Question ${index + 1}`,
       options: [
         { id: 'yes', label: 'Yes' },
@@ -57,6 +61,34 @@ describe('CoworkQuestionFloatingWindow', () => {
   it('uses the wizard only when multiple valid questions are present', () => {
     expect(hasMultipleAskUserQuestions(buildInteraction(1))).toBe(false);
     expect(hasMultipleAskUserQuestions(buildInteraction(2))).toBe(true);
+  });
+
+  it('scopes question ids and radio groups to each request', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(
+        React.Fragment,
+        null,
+        React.createElement(CoworkQuestionFloatingWindow, {
+          interaction: buildInteraction(1, 'request-a'),
+          isVisible: true,
+          onRespond: vi.fn(),
+        }),
+        React.createElement(CoworkQuestionFloatingWindow, {
+          interaction: buildInteraction(1, 'request-b'),
+          isVisible: false,
+          onRespond: vi.fn(),
+        }),
+      ),
+    );
+
+    expect(html).toContain('id="ask-user-question-request-a-question_1"');
+    expect(html).toContain('id="cowork-interaction-modal-title-request-a"');
+    expect(html).toContain('name="ask-user-question-request-a-question_1"');
+    expect(html).toContain('aria-labelledby="ask-user-question-request-a-question_1"');
+    expect(html).toContain('id="ask-user-question-request-b-question_1"');
+    expect(html).toContain('id="cowork-interaction-modal-title-request-b"');
+    expect(html).toContain('name="ask-user-question-request-b-question_1"');
+    expect(html).toContain('aria-labelledby="ask-user-question-request-b-question_1"');
   });
 
   it('is visible only while its owning session is the active cowork session', () => {

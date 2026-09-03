@@ -109,4 +109,5 @@ describe('OpenClaw v2026.8.2 wire validators', () => {
       }),
     ).toThrow('malformed');
   });
+
 });

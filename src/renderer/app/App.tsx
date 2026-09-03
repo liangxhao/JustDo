@@ -498,10 +498,20 @@ const App: React.FC = () => {
   }, []);
 
   const handleInteractionResponse = useCallback(
-    async (requestId: string, result: CoworkInteractionResult) => {
-      await coworkService.respondToInteraction(requestId, result);
+    async (requestId: string, result: CoworkInteractionResult): Promise<boolean> => {
+      try {
+        const success = await coworkService.respondToInteraction(requestId, result);
+        if (!success) {
+          showToast(i18nService.t('coworkInteractionResponseFailed'));
+        }
+        return success;
+      } catch (error) {
+        console.error('Failed to respond to interaction:', error);
+        showToast(i18nService.t('coworkInteractionResponseFailed'));
+        return false;
+      }
     },
-    [],
+    [showToast],
   );
 
   const handleCloseSettings = () => {

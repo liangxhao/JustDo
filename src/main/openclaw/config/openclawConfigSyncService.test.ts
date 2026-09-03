@@ -314,7 +314,6 @@ describe('OpenClawConfigSyncService', () => {
         getConfig: () => ({ permissionMode: options.permissionMode ?? 'ask' }),
       }),
       getOpenClawEngineManager: () => engineManager,
-      getAskUserExtensionConfig: vi.fn(),
       getMcpStore: vi.fn(),
       getHookStore: vi.fn(),
       disconnectGatewayClient,

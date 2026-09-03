@@ -162,8 +162,6 @@ export const validateAgentRuntimeSettings = (
     validatedAgentThinking = agentThinking;
   }
 
-  // Version 1 predates AskUserQuestion preferences. Preserve stored Subagent
-  // choices while filling the new setting with its managed default.
   const askUserQuestion = isRecord(value.askUserQuestion)
     ? value.askUserQuestion
     : DEFAULT_AGENT_RUNTIME_SETTINGS.askUserQuestion;
