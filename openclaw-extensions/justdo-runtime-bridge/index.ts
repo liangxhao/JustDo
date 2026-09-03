@@ -158,19 +158,35 @@ const readEmbeddingVectors = (value: unknown, expected: number): number[][] => {
   if (!isRecord(value) || !Array.isArray(value.data) || value.data.length !== expected) {
     throw new Error('JustDo embedding service returned malformed data.');
   }
-  const vectors = value.data.map((entry, index) => {
+  // Match OpenClaw's indexed/positional response contract without changing the guarded transport.
+  const vectors: number[][] = [];
+  let indexed: boolean | undefined;
+  for (const [position, entry] of value.data.entries()) {
     if (!isRecord(entry) || !Array.isArray(entry.embedding)) {
-      throw new Error(`JustDo embedding result ${index} is malformed.`);
+      throw new Error(`JustDo embedding result ${position} is malformed.`);
     }
+    const usesIndex = entry.index !== undefined;
     const vector = entry.embedding;
     if (
       vector.length === 0 ||
+      (indexed !== undefined && indexed !== usesIndex) ||
       !vector.every(item => typeof item === 'number' && Number.isFinite(item))
     ) {
-      throw new Error(`JustDo embedding result ${index} is malformed.`);
+      throw new Error(`JustDo embedding result ${position} is malformed.`);
     }
-    return vector as number[];
-  });
+    indexed = usesIndex;
+    const index = usesIndex ? entry.index : position;
+    if (
+      typeof index !== 'number' ||
+      !Number.isInteger(index) ||
+      index < 0 ||
+      index >= expected ||
+      vectors[index] !== undefined
+    ) {
+      throw new Error(`JustDo embedding result ${position} is malformed.`);
+    }
+    vectors[index] = vector;
+  }
   return vectors;
 };
 
@@ -180,7 +196,7 @@ const plugin = {
   description: 'Bounded JustDo integration over supported OpenClaw plugin APIs.',
   register(api: OpenClawPluginApi) {
     const emitProgress = (
-      stage: 'preparing' | 'waiting_model' | 'retrying',
+      stage: 'preparing' | 'waiting_model',
       ctx: { runId?: string; sessionKey?: string; modelProviderId?: string; modelId?: string },
     ): void => {
       if (!ctx.runId || !ctx.sessionKey || !/^agent:[^:]+:justdo:/i.test(ctx.sessionKey)) return;
@@ -197,17 +213,10 @@ const plugin = {
         },
       });
     };
-    const modelCalls = new Map<string, number>();
     api.on('before_agent_reply', (_event, ctx) => emitProgress('preparing', ctx));
+    // A model call can follow a successful tool round. These hooks do not identify retries.
     api.on('model_call_started', (_event, ctx) => {
-      if (!ctx.runId) return;
-      const calls = (modelCalls.get(ctx.runId) ?? 0) + 1;
-      modelCalls.set(ctx.runId, calls);
-      if (calls > 1) emitProgress('retrying', ctx);
       emitProgress('waiting_model', ctx);
-    });
-    api.on('agent_end', (_event, ctx) => {
-      if (ctx.runId) modelCalls.delete(ctx.runId);
     });
 
     api.registerGatewayMethod(

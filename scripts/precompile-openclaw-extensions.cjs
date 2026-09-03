@@ -17,16 +17,6 @@ const fs = require('fs');
 const path = require('path');
 
 const rootDir = path.resolve(__dirname, '..');
-const runtimeDir = process.argv[2]
-  ? path.resolve(process.argv[2])
-  : path.join(rootDir, 'vendor', 'openclaw-runtime', 'current');
-
-const extensionsDir = path.join(runtimeDir, 'dist', 'extensions');
-
-if (!fs.existsSync(extensionsDir)) {
-  console.log('[precompile-extensions] No extensions directory found, skipping.');
-  process.exit(0);
-}
 
 // SDK imports that must stay external — jiti resolves them via alias at runtime.
 const SDK_EXTERNALS = [
@@ -48,14 +38,6 @@ const openclawInternalsPlugin = {
     }));
   },
 };
-
-let esbuild;
-try {
-  esbuild = require('esbuild');
-} catch {
-  console.error('[precompile-extensions] esbuild not found. Run: npm install --save-dev esbuild');
-  process.exit(1);
-}
 
 /**
  * Resolve the TypeScript entry point for a plugin directory.
@@ -93,7 +75,16 @@ function resolvePluginEntry(pluginDir) {
   return null;
 }
 
-async function main() {
+async function precompileOpenClawExtensions(runtimeDir, options = {}) {
+  const extensionsDir = path.join(runtimeDir, 'dist', 'extensions');
+  if (!fs.existsSync(extensionsDir)) {
+    if (options.required) {
+      throw new Error(`[precompile-extensions] Missing extensions directory: ${extensionsDir}`);
+    }
+    console.log('[precompile-extensions] No extensions directory found, skipping.');
+    return { compiled: 0, skipped: 0, errors: 0 };
+  }
+  const esbuild = require('esbuild');
   const t0 = Date.now();
   const dirs = fs.readdirSync(extensionsDir, { withFileTypes: true })
     .filter(d => d.isDirectory())
@@ -133,26 +124,21 @@ async function main() {
         logLevel: 'warning',
       });
 
-      // Remove the .ts source file so the gateway plugin loader doesn't
-      // prefer it over the compiled .js entry.
-      if (entry.entryAbs !== outFile && fs.existsSync(entry.entryAbs)) {
-        fs.unlinkSync(entry.entryAbs);
-      }
-
-      // Update package.json to point to the compiled .js entry
+      // Keep the explicit entry in sync: bundled plugins do not infer adjacent .js files.
       if (entry.hasPkg) {
         const pkgPath = path.join(pluginDir, 'package.json');
-        try {
-          const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
-          if (Array.isArray(pkg.openclaw?.extensions)) {
-            pkg.openclaw.extensions = pkg.openclaw.extensions.map(e =>
-              e === entry.entryRel ? outRel : e,
-            );
-            fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
-          }
-        } catch {
-          // Non-critical — jiti will still find index.js by convention
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+        if (Array.isArray(pkg.openclaw?.extensions)) {
+          pkg.openclaw.extensions = pkg.openclaw.extensions.map(e =>
+            e === entry.entryRel ? outRel : e,
+          );
+          fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
         }
+      }
+
+      // Remove source only after the package entry was updated successfully.
+      if (entry.entryAbs !== outFile && fs.existsSync(entry.entryAbs)) {
+        fs.unlinkSync(entry.entryAbs);
       }
 
       compiled++;
@@ -169,9 +155,23 @@ async function main() {
   );
 
   if (errors > 0) {
+    if (options.required) {
+      throw new Error(`[precompile-extensions] Failed to compile ${errors} extension(s).`);
+    }
     // Non-fatal — plugins will fall back to jiti runtime compilation
     console.warn('[precompile-extensions] Some plugins failed to compile. They will use jiti fallback.');
   }
+  return { compiled, skipped, errors };
 }
 
-main();
+if (require.main === module) {
+  const runtimeDir = process.argv[2]
+    ? path.resolve(process.argv[2])
+    : path.join(rootDir, 'vendor', 'openclaw-runtime', 'current');
+  precompileOpenClawExtensions(runtimeDir).catch(error => {
+    console.error(`[precompile-extensions] ${error instanceof Error ? error.message : String(error)}`);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { precompileOpenClawExtensions };

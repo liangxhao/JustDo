@@ -1,3 +1,4 @@
+import { OPENCLAW_HISTORY_DETAIL_MAX_IDS } from '@shared/openclaw/historyIpc';
 import { buildGoalFollowUpPrompt } from '@shared/prompts/goalFollowUpPrompt';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
@@ -73,6 +74,131 @@ describe('projectGatewayHistoryForDisplay', () => {
 });
 
 describe('normalizeGatewayHistoryForDisplay', () => {
+  test.each([250, 251, 501])('hydrates %i tool results in bounded batches', async count => {
+    const sessionKey = 'agent:main:justdo:large-history';
+    const getToolInputs = vi.fn(async (params: { sessionKey: string; toolCallIds: string[] }) => {
+      expect(params.sessionKey).toBe(sessionKey);
+      expect(params.toolCallIds.length).toBeLessThanOrEqual(OPENCLAW_HISTORY_DETAIL_MAX_IDS);
+      return {
+        success: true,
+        inputs: Object.fromEntries(
+          params.toolCallIds.map(id => [id, { name: 'read', input: { path: id } }]),
+        ),
+      };
+    });
+    vi.stubGlobal('electron', { openclaw: { history: { getToolInputs } } });
+    const source = Array.from({ length: count }, (_, index) => ({
+      role: 'toolResult',
+      toolCallId: `call-${index}`,
+      content: 'result',
+    }));
+
+    const messages = await normalizeGatewayHistoryForDisplay(source, { sessionKey });
+
+    expect(getToolInputs).toHaveBeenCalledTimes(Math.ceil(count / OPENCLAW_HISTORY_DETAIL_MAX_IDS));
+    expect(getToolInputs.mock.calls.flatMap(([params]) => params.toolCallIds)).toEqual(
+      source.map(message => message.toolCallId),
+    );
+    expect(messages).toEqual(
+      source.map(message => ({
+        ...message,
+        toolName: 'read',
+        toolInput: { path: message.toolCallId },
+      })),
+    );
+  });
+
+  test.each([250, 251, 501])('hydrates %i compaction markers in bounded batches', async count => {
+    const sessionKey = 'agent:main:justdo:large-history';
+    const getCompactionDetails = vi.fn(
+      async (params: { sessionKey: string; entryIds: string[] }) => {
+        expect(params.sessionKey).toBe(sessionKey);
+        expect(params.entryIds.length).toBeLessThanOrEqual(OPENCLAW_HISTORY_DETAIL_MAX_IDS);
+        return {
+          success: true,
+          details: Object.fromEntries(
+            params.entryIds.map(id => [
+              id,
+              { summary: `Summary ${id}`, tokensBefore: 1000, tokensAfter: 100 },
+            ]),
+          ),
+        };
+      },
+    );
+    vi.stubGlobal('electron', { openclaw: { history: { getCompactionDetails } } });
+    const source = Array.from({ length: count }, (_, index) => ({
+      role: 'system',
+      __openclaw: { kind: 'compaction', id: `compact-${index}` },
+    }));
+
+    const messages = await normalizeGatewayHistoryForDisplay(source, { sessionKey });
+
+    expect(getCompactionDetails).toHaveBeenCalledTimes(
+      Math.ceil(count / OPENCLAW_HISTORY_DETAIL_MAX_IDS),
+    );
+    expect(messages).toEqual(
+      source.map(message => ({
+        ...message,
+        __openclaw: {
+          ...message.__openclaw,
+          summary: `Summary ${message.__openclaw.id}`,
+          tokensBefore: 1000,
+          tokensAfter: 100,
+        },
+      })),
+    );
+  });
+
+  test.each(['rejected', 'unsuccessful'])(
+    'keeps history and later tool batches when a lookup is %s',
+    async failure => {
+      const getToolInputs = vi.fn().mockResolvedValue({
+        success: true,
+        inputs: { 'call-250': { name: 'read', input: { path: 'last.md' } } },
+      });
+      if (failure === 'rejected')
+        getToolInputs.mockRejectedValueOnce(new Error('Gateway disconnected'));
+      else getToolInputs.mockResolvedValueOnce({ success: false });
+      vi.stubGlobal('electron', { openclaw: { history: { getToolInputs } } });
+      const source = Array.from({ length: 251 }, (_, index) => ({
+        role: 'toolResult',
+        toolCallId: `call-${index}`,
+        content: 'result',
+      }));
+
+      const messages = await normalizeGatewayHistoryForDisplay(source, {
+        sessionKey: 'agent:main:justdo:history',
+      });
+
+      expect(messages).toHaveLength(source.length);
+      expect(messages[0]).toEqual(source[0]);
+      expect(messages[250]).toMatchObject({ toolInput: { path: 'last.md' } });
+    },
+  );
+
+  test('retains successful compaction batches when a later lookup fails', async () => {
+    const getCompactionDetails = vi
+      .fn()
+      .mockResolvedValueOnce({
+        success: true,
+        details: { 'compact-0': { summary: 'Retained summary' } },
+      })
+      .mockRejectedValueOnce(new Error('Gateway disconnected'));
+    vi.stubGlobal('electron', { openclaw: { history: { getCompactionDetails } } });
+    const source = Array.from({ length: 251 }, (_, index) => ({
+      role: 'system',
+      __openclaw: { kind: 'compaction', id: `compact-${index}` },
+    }));
+
+    const messages = await normalizeGatewayHistoryForDisplay(source, {
+      sessionKey: 'agent:main:justdo:history',
+    });
+
+    expect(messages).toHaveLength(source.length);
+    expect(messages[0]).toMatchObject({ __openclaw: { summary: 'Retained summary' } });
+    expect(messages[250]).toEqual(source[250]);
+  });
+
   test('restores a locally persisted interrupted message across later history reloads', async () => {
     const now = Date.now();
     const storage = new Map<string, string>();

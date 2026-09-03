@@ -23,6 +23,7 @@ const yaml = require('js-yaml');
 const { ensurePortablePythonRuntime, checkRuntimeHealth } = require('./setup-python-runtime.js');
 const { ensurePortableGit } = require('./setup-mingit.js');
 const { syncOpenClawRuntimeResources } = require('./sync-openclaw-runtime-resources.cjs');
+const { precompileOpenClawExtensions } = require('./precompile-openclaw-extensions.cjs');
 const { readBundledSkillConfig, syncBundledSkills } = require('./sync-bundled-skills.cjs');
 const { compressTarArchive, packMultipleSources } = require('./pack-openclaw-tar.cjs');
 const { readWindowsUpdateConfig } = require('./windows-update-config.cjs');
@@ -268,11 +269,13 @@ function verifyBundledSkillResources(buildHint) {
   console.log('[electron-builder-hooks] Verified bundled skill resources.');
 }
 
-function ensureBundledOpenClawRuntime(context) {
+async function ensureBundledOpenClawRuntime(context) {
   const { runtimeRoot, targetId } = syncCurrentOpenClawRuntimeForTarget(context);
   const buildHint = getOpenClawRuntimeBuildHint(targetId);
 
   syncOpenClawRuntimeResources(runtimeRoot, { label: 'electron-builder-hooks' });
+  // Resource sync restores local TypeScript entries; package only their newly compiled output.
+  await precompileOpenClawExtensions(runtimeRoot, { required: true });
   syncBundledSkills(path.join(__dirname, '..'), runtimeRoot, 'electron-builder-hooks');
   verifyBundledOpenClawRuntimeFiles(runtimeRoot, buildHint);
   verifyBundledSkillResources(buildHint);
@@ -615,7 +618,7 @@ async function beforePack(context) {
   installSkillDependencies();
   // Copy the fully prepared custom skills after dependencies are installed so
   // every packaging entry point receives the exact enabled skill set.
-  ensureBundledOpenClawRuntime(context);
+  await ensureBundledOpenClawRuntime(context);
 
   if (isWindowsTarget(context)) {
     // The locked electron-builder 26.15.3 can let modern 7za choose BCJ2 for PE files,

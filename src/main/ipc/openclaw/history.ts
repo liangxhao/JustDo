@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 
 import {
+  OPENCLAW_HISTORY_DETAIL_MAX_IDS,
   type OpenClawCompactionDetailLookup,
   OpenClawHistoryIpc,
   type OpenClawPagedHistoryParams,
@@ -19,7 +20,6 @@ type OpenClawHistoryHandlerDependencies = {
 
 const DEFAULT_HISTORY_PAGE_LIMIT = 250;
 const MAX_HISTORY_PAGE_LIMIT = 500;
-const MAX_DETAIL_IDS = 250;
 const MAX_DETAIL_ID_LENGTH = 256;
 const OFFSET_CURSOR_PREFIX = 'offset:';
 
@@ -49,7 +49,9 @@ export const normalizeDetailIds = (
   label: string,
 ): { ids: string[]; error?: string } => {
   const rawIds = Array.isArray(value) ? value : [];
-  if (rawIds.length > MAX_DETAIL_IDS) return { ids: [], error: `Too many ${label} IDs` };
+  if (rawIds.length > OPENCLAW_HISTORY_DETAIL_MAX_IDS) {
+    return { ids: [], error: `Too many ${label} IDs` };
+  }
   const ids = new Set<string>();
   for (const rawId of rawIds) {
     if (typeof rawId !== 'string') continue;

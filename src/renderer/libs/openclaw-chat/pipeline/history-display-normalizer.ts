@@ -1,3 +1,4 @@
+import { OPENCLAW_HISTORY_DETAIL_MAX_IDS } from '@shared/openclaw/historyIpc';
 import { isInternalManagedSubagentHandoffError } from '@shared/openclaw/internalRunError';
 import { extractGoalFollowUpRequest } from '@shared/prompts/goalFollowUpPrompt';
 
@@ -396,11 +397,20 @@ async function hydrateMissingToolInputs(
   );
   if (missingIds.length === 0) return messages;
 
-  const result = await historyDisplayBridge()?.getToolInputs?.({
-    sessionKey,
-    toolCallIds: missingIds,
-  });
-  const inputs = result?.success && result.inputs ? result.inputs : {};
+  const bridge = historyDisplayBridge();
+  if (!bridge?.getToolInputs) return messages;
+  const inputs: Record<string, { name?: string; input?: unknown }> = {};
+  for (let offset = 0; offset < missingIds.length; offset += OPENCLAW_HISTORY_DETAIL_MAX_IDS) {
+    try {
+      const result = await bridge.getToolInputs({
+        sessionKey,
+        toolCallIds: missingIds.slice(offset, offset + OPENCLAW_HISTORY_DETAIL_MAX_IDS),
+      });
+      if (result?.success && result.inputs) Object.assign(inputs, result.inputs);
+    } catch {
+      // Preserve the history and any successful batches if a detail lookup fails.
+    }
+  }
   if (Object.keys(inputs).length === 0) return messages;
 
   return messages.map(message => {
@@ -437,21 +447,21 @@ async function hydrateMissingCompactionDetails(
   );
   if (missingEntryIds.length === 0) return messages;
 
-  let result:
-    | {
-        success?: boolean;
-        details?: Record<string, { summary?: string; tokensBefore?: number; tokensAfter?: number }>;
-      }
-    | undefined;
-  try {
-    result = await historyDisplayBridge()?.getCompactionDetails?.({
-      sessionKey,
-      entryIds: missingEntryIds,
-    });
-  } catch {
-    return messages;
+  const bridge = historyDisplayBridge();
+  if (!bridge?.getCompactionDetails) return messages;
+  const details: Record<string, { summary?: string; tokensBefore?: number; tokensAfter?: number }> =
+    {};
+  for (let offset = 0; offset < missingEntryIds.length; offset += OPENCLAW_HISTORY_DETAIL_MAX_IDS) {
+    try {
+      const result = await bridge.getCompactionDetails({
+        sessionKey,
+        entryIds: missingEntryIds.slice(offset, offset + OPENCLAW_HISTORY_DETAIL_MAX_IDS),
+      });
+      if (result?.success && result.details) Object.assign(details, result.details);
+    } catch {
+      // A failed batch must not discard details already fetched for other markers.
+    }
   }
-  const details = result?.success && result.details ? result.details : {};
   if (Object.keys(details).length === 0) return messages;
 
   return messages.map(message => {
