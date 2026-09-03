@@ -4,6 +4,7 @@ import {
   inferInitialGoalObjective,
   resolveGoalClearFetch,
   resolvePendingGoalObjectiveOnSessionChange,
+  shouldApplyGoalClearResult,
 } from '@/features/cowork/components/goalPendingObjective';
 
 describe('goal pending objective', () => {
@@ -54,5 +55,11 @@ describe('goal pending objective', () => {
     expect(resolveGoalClearFetch('goal-1', 'goal-1')).toBe('ignore_old_goal');
     expect(resolveGoalClearFetch('goal-1', null)).toBe('cleared');
     expect(resolveGoalClearFetch('goal-1', 'goal-2')).toBe('accept_new_goal');
+  });
+
+  it('does not let a delayed clear receipt erase a newer Goal generation', () => {
+    expect(shouldApplyGoalClearResult('goal-1', 'goal-1')).toBe(true);
+    expect(shouldApplyGoalClearResult('goal-1', null)).toBe(true);
+    expect(shouldApplyGoalClearResult('goal-1', 'goal-2')).toBe(false);
   });
 });

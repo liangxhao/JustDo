@@ -4,7 +4,10 @@ import type { OpenClawModelChoice } from '@shared/openclaw/models';
 import {
   GoalExecutionPhase,
   type GoalExecutionSnapshot,
+  SESSION_GOAL_MAX_NOTE_LENGTH,
   type SessionGoal,
+  SessionGoalMutationAction,
+  type SessionGoalMutationRequest,
   SessionGoalStatus,
 } from '@shared/sessionGoal';
 import {
@@ -38,6 +41,7 @@ import { pauseGoalRun } from '@/features/cowork/components/goalPause';
 import {
   resolveGoalClearFetch,
   resolvePendingGoalObjectiveOnSessionChange,
+  shouldApplyGoalClearResult,
 } from '@/features/cowork/components/goalPendingObjective';
 import type { GoalRunProgress } from '@/features/cowork/components/goalRunProgress';
 import GoalStatusCard from '@/features/cowork/components/GoalStatusCard';
@@ -427,6 +431,45 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       goalClearPendingRef.current = false;
       goalClearTargetIdRef.current = null;
     }, []);
+    const runGoalAction = useCallback(
+      (action: () => void | Promise<void>) =>
+        runGoalActionSingleFlight(goalActionPendingRef, setGoalActionPending, action),
+      [],
+    );
+    const mutateGoal = useCallback(
+      async (request: SessionGoalMutationRequest): Promise<boolean> => {
+        if (!sessionId || sessionId.startsWith('temp-')) return false;
+        if (request.action === SessionGoalMutationAction.Clear) beginGoalClear();
+        let result: Awaited<ReturnType<typeof window.electron.cowork.mutateSessionGoal>>;
+        try {
+          result = await window.electron.cowork.mutateSessionGoal(sessionId, request);
+        } catch {
+          if (request.action === SessionGoalMutationAction.Clear) cancelGoalClear();
+          return false;
+        }
+        if (!result.success || result.goal === undefined) {
+          if (request.action === SessionGoalMutationAction.Clear) cancelGoalClear();
+          return false;
+        }
+        if (result.goal === null) {
+          if (
+            request.action === SessionGoalMutationAction.Clear &&
+            !shouldApplyGoalClearResult(request.goalId, sessionGoalRef.current?.id ?? null)
+          ) {
+            cancelGoalClear();
+            return true;
+          }
+          applyAcceptedGoalClear();
+        } else {
+          if (request.action === SessionGoalMutationAction.Clear) cancelGoalClear();
+          sessionGoalRef.current = result.goal;
+          setSessionGoal(result.goal);
+          if (result.execution) setGoalExecution(result.execution);
+        }
+        return true;
+      },
+      [applyAcceptedGoalClear, beginGoalClear, cancelGoalClear, sessionId],
+    );
     useEffect(() => {
       const previousSessionId = goalStateSessionIdRef.current;
       goalStateSessionIdRef.current = sessionId;
@@ -708,6 +751,26 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           return;
         setShowFolderRequiredWarning(false);
 
+        const goalForResume = sessionGoalRef.current;
+        const executionAwaitsInputForGoal =
+          goalExecution?.phase === GoalExecutionPhase.AwaitingInput &&
+          (!goalExecution.goalId || goalExecution.goalId === goalForResume?.id);
+        const resumeWithInput =
+          goalForResume &&
+          (goalForResume.status === SessionGoalStatus.Blocked ||
+            goalForResume.status === SessionGoalStatus.UsageLimited ||
+            goalForResume.status === SessionGoalStatus.BudgetLimited ||
+            executionAwaitsInputForGoal) &&
+          !isGoalSlashCommand(trimmedValue);
+        if (resumeWithInput && attachments.length > 0) {
+          window.dispatchEvent(
+            new CustomEvent('app:showToast', {
+              detail: i18nService.t('coworkGoalResumeAttachmentUnsupported'),
+            }),
+          );
+          return;
+        }
+
         const attachmentPayloads: CoworkAttachmentPayload[] = [];
         const mediaDirectivePaths: string[] = [];
         let attachmentPreparationFailed = false;
@@ -838,14 +901,26 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           }
           return;
         }
-        if (
-          sessionId &&
-          (sessionGoalRef.current?.status === SessionGoalStatus.Blocked ||
-            goalExecution?.phase === GoalExecutionPhase.AwaitingInput) &&
-          !isGoalSlashCommand(trimmedValue)
-        ) {
-          const resumed = await window.electron.cowork.resumeGoalForUserInput(sessionId);
-          if (!resumed.success) {
+        if (resumeWithInput) {
+          if (finalPrompt.length > SESSION_GOAL_MAX_NOTE_LENGTH) {
+            window.dispatchEvent(
+              new CustomEvent('app:showToast', {
+                detail: i18nService
+                  .t('coworkGoalResumeNoteTooLong')
+                  .replace('{max}', String(SESSION_GOAL_MAX_NOTE_LENGTH)),
+              }),
+            );
+            return;
+          }
+          let resumed = false;
+          const started = await runGoalAction(async () => {
+            resumed = await mutateGoal({
+              action: SessionGoalMutationAction.Resume,
+              goalId: goalForResume.id,
+              note: finalPrompt,
+            });
+          });
+          if (!started || !resumed) {
             window.dispatchEvent(
               new CustomEvent('app:showToast', {
                 detail: i18nService.t('coworkGoalResumeForInputFailed'),
@@ -853,6 +928,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             );
             return;
           }
+          clearSubmittedInput();
+          return;
         }
         const goalObjective = parseGoalStartObjective(trimmedValue);
         const goalClear = isGoalClearCommand(trimmedValue);
@@ -888,6 +965,18 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           }
           return;
         }
+        if (goalObjective && sessionId && !sessionId.startsWith('temp-')) {
+          try {
+            const refreshed = await window.electron.cowork.getSessionGoal(sessionId);
+            if (refreshed.success && refreshed.goal) {
+              sessionGoalRef.current = refreshed.goal;
+              setSessionGoal(refreshed.goal);
+              setPendingGoalObjective(null);
+            }
+          } catch {
+            // The Gateway session event listener remains the fallback convergence path.
+          }
+        }
         if (goalClear) applyAcceptedGoalClear();
         if (!clearBeforeSubmit) {
           clearSubmittedInput();
@@ -908,10 +997,13 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         hasNoAvailableModels,
         selectedModelUnavailable,
         sessionId,
+        goalExecution?.goalId,
         goalExecution?.phase,
         applyAcceptedGoalClear,
         beginGoalClear,
         cancelGoalClear,
+        mutateGoal,
+        runGoalAction,
         updateCompletionFeedback,
       ],
     );
@@ -1804,41 +1896,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       };
     }, [applyAcceptedGoalClear, cancelGoalClear, sessionId, updateCompletionFeedback]);
 
-    const runGoalAction = useCallback(
-      (action: () => void | Promise<void>) =>
-        runGoalActionSingleFlight(goalActionPendingRef, setGoalActionPending, action),
-      [],
-    );
-    const submitGoalCommand = useCallback(
-      async (command: string) => {
-        const goalClear = isGoalClearCommand(command);
-        if (goalClear) beginGoalClear();
-        try {
-          const result = await onSubmit(command);
-          if (result === false) {
-            if (goalClear) cancelGoalClear();
-            return false;
-          }
-          if (goalClear) applyAcceptedGoalClear();
-          return true;
-        } catch (error) {
-          if (goalClear) cancelGoalClear();
-          throw error;
-        }
-      },
-      [applyAcceptedGoalClear, beginGoalClear, cancelGoalClear, onSubmit],
-    );
-
-    const handleGoalCommand = useCallback(
-      (command: string) => {
-        if (disabled || isRunActive) return;
-        void runGoalAction(async () => {
-          await submitGoalCommand(command);
-        });
-      },
-      [disabled, isRunActive, runGoalAction, submitGoalCommand],
-    );
-
     const handleGoalEdit = useCallback(
       async (objective: string): Promise<boolean> => {
         const currentGoal = sessionGoalRef.current;
@@ -1861,7 +1918,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         let accepted = false;
         try {
           const started = await runGoalAction(async () => {
-            accepted = await submitGoalCommand(`/goal edit ${normalizedObjective}`);
+            accepted = await mutateGoal({
+              action: SessionGoalMutationAction.Edit,
+              goalId: currentGoal.id,
+              objective,
+            });
           });
           if (started && accepted) return true;
         } catch {
@@ -1880,7 +1941,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         goalExecution?.phase,
         isRunActive,
         runGoalAction,
-        submitGoalCommand,
+        mutateGoal,
       ],
     );
 
@@ -1897,10 +1958,18 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           const result = await pauseGoalRun({
             sessionId,
             goal: sessionGoalRef.current,
-            execution: goalExecution,
             stop: onStop,
             pause: async () => {
-              await onSubmit('/goal pause');
+              const goal = sessionGoalRef.current;
+              if (
+                !goal ||
+                !(await mutateGoal({
+                  action: SessionGoalMutationAction.Pause,
+                  goalId: goal.id,
+                }))
+              ) {
+                throw new Error('Failed to pause session goal');
+              }
             },
           });
           if (
@@ -1913,15 +1982,38 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           } else if (result === 'stopped') {
             setPendingGoalObjective(null);
           }
-        } catch (error) {
+        } catch {
           if (pendingCancellation && pendingGoalCancellationRef.current === pendingCancellation) {
             pendingGoalCancellationRef.current = null;
             setPendingGoalObjective(pendingCancellation.objective);
           }
-          throw error;
+          window.dispatchEvent(
+            new CustomEvent('app:showToast', {
+              detail: i18nService.t('coworkGoalPauseFailed'),
+            }),
+          );
         }
       });
-    }, [disabled, goalExecution, onStop, onSubmit, pendingGoalObjective, runGoalAction, sessionId]);
+    }, [disabled, mutateGoal, onStop, pendingGoalObjective, runGoalAction, sessionId]);
+
+    const handleGoalResume = useCallback(async () => {
+      const goal = sessionGoalRef.current;
+      if (!goal || disabled || isRunActive) return;
+      let resumed = false;
+      await runGoalAction(async () => {
+        resumed = await mutateGoal({
+          action: SessionGoalMutationAction.Resume,
+          goalId: goal.id,
+        });
+      });
+      if (!resumed) {
+        window.dispatchEvent(
+          new CustomEvent('app:showToast', {
+            detail: i18nService.t('coworkGoalContinueFailed'),
+          }),
+        );
+      }
+    }, [disabled, isRunActive, mutateGoal, runGoalAction]);
 
     const handleGoalContinue = useCallback(async () => {
       if (
@@ -1933,16 +2025,20 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         return;
       }
       await runGoalAction(async () => {
-        const result = await window.electron.cowork.continueGoal(sessionId);
-        if (!result.success) {
-          window.dispatchEvent(
-            new CustomEvent('app:showToast', {
-              detail: i18nService.t('coworkGoalContinueFailed'),
-            }),
-          );
-          return;
+        try {
+          const result = await window.electron.cowork.continueGoal(sessionId);
+          if (result.success) {
+            if (result.execution) setGoalExecution(result.execution);
+            return;
+          }
+        } catch {
+          // The same user-facing failure applies to transport and Gateway rejections.
         }
-        if (result.execution) setGoalExecution(result.execution);
+        window.dispatchEvent(
+          new CustomEvent('app:showToast', {
+            detail: i18nService.t('coworkGoalContinueFailed'),
+          }),
+        );
       });
     }, [disabled, goalExecution?.phase, isRunActive, runGoalAction, sessionId]);
 
@@ -1973,6 +2069,20 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       updateCompletionFeedback(null);
     }, [sessionId, updateCompletionFeedback]);
 
+    const handleGoalClear = useCallback(() => {
+      const goal = sessionGoalRef.current;
+      if (!goal || disabled || goalActionPendingRef.current) return;
+      void runGoalAction(async () => {
+        if (!(await mutateGoal({ action: SessionGoalMutationAction.Clear, goalId: goal.id }))) {
+          window.dispatchEvent(
+            new CustomEvent('app:showToast', {
+              detail: i18nService.t('coworkGoalClearFailed'),
+            }),
+          );
+        }
+      });
+    }, [disabled, mutateGoal, runGoalAction]);
+
     const handleGoalEndRequest = useCallback(() => {
       const goal = sessionGoalRef.current;
       if (!goal || disabled || goalActionPendingRef.current) return;
@@ -1984,9 +2094,15 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       setEndingGoalId(null);
       if (!goalId || disabled || sessionGoalRef.current?.id !== goalId) return;
       await runGoalAction(async () => {
-        await submitGoalCommand('/goal clear');
+        if (!(await mutateGoal({ action: SessionGoalMutationAction.Clear, goalId }))) {
+          window.dispatchEvent(
+            new CustomEvent('app:showToast', {
+              detail: i18nService.t('coworkGoalClearFailed'),
+            }),
+          );
+        }
       });
-    }, [disabled, endingGoalId, runGoalAction, submitGoalCommand]);
+    }, [disabled, endingGoalId, mutateGoal, runGoalAction]);
 
     const handleGoalEndDialogKeyDown = useCallback(
       (event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -2050,9 +2166,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             isRunning={isRunActive}
             completionFeedbackActive={completionFeedback !== null}
             disabled={disabled || goalActionPending}
-            onCommand={handleGoalCommand}
             onEdit={handleGoalEdit}
             onPause={handleGoalPause}
+            onResume={handleGoalResume}
+            onClear={handleGoalClear}
             onContinue={handleGoalContinue}
             onContinueImproving={handleGoalContinueImproving}
             onCancelContinueImproving={handleGoalCancelImproving}

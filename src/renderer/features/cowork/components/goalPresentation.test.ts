@@ -9,4 +9,14 @@ describe('goal presentation', () => {
       Object.values(SessionGoalStatus).map(status => getGoalPresentation(status).tone),
     ).toEqual(['active', 'muted', 'warning', 'warning', 'warning', 'success']);
   });
+
+  it('keeps usage and budget limits distinguishable from a blocked Goal', () => {
+    expect(getGoalPresentation(SessionGoalStatus.Blocked).labelKey).toBe('coworkGoalBlocked');
+    expect(getGoalPresentation(SessionGoalStatus.UsageLimited).labelKey).toBe(
+      'coworkGoalUsageLimited',
+    );
+    expect(getGoalPresentation(SessionGoalStatus.BudgetLimited).labelKey).toBe(
+      'coworkGoalBudgetLimited',
+    );
+  });
 });

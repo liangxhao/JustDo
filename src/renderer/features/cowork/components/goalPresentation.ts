@@ -3,11 +3,19 @@ import { type SessionGoal, SessionGoalStatus } from '@shared/sessionGoal';
 export type GoalTone = 'active' | 'muted' | 'warning' | 'danger' | 'success';
 
 export interface GoalPresentation {
-  labelKey: 'coworkGoalActive' | 'coworkGoalPaused' | 'coworkGoalBlocked' | 'coworkGoalComplete';
+  labelKey:
+    | 'coworkGoalActive'
+    | 'coworkGoalPaused'
+    | 'coworkGoalBlocked'
+    | 'coworkGoalUsageLimited'
+    | 'coworkGoalBudgetLimited'
+    | 'coworkGoalComplete';
   hintKey:
     | 'coworkGoalActiveHint'
     | 'coworkGoalPausedHint'
     | 'coworkGoalBlockedHint'
+    | 'coworkGoalUsageLimitedHint'
+    | 'coworkGoalBudgetLimitedHint'
     | 'coworkGoalCompleteHint';
   tone: GoalTone;
 }
@@ -33,10 +41,15 @@ export const getGoalPresentation = (status: SessionGoal['status']): GoalPresenta
         tone: 'warning',
       };
     case SessionGoalStatus.UsageLimited:
+      return {
+        labelKey: 'coworkGoalUsageLimited',
+        hintKey: 'coworkGoalUsageLimitedHint',
+        tone: 'warning',
+      };
     case SessionGoalStatus.BudgetLimited:
       return {
-        labelKey: 'coworkGoalBlocked',
-        hintKey: 'coworkGoalBlockedHint',
+        labelKey: 'coworkGoalBudgetLimited',
+        hintKey: 'coworkGoalBudgetLimitedHint',
         tone: 'warning',
       };
     case SessionGoalStatus.Complete:

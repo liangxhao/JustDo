@@ -6,7 +6,11 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { i18nService } from '@/services/i18n';
 
-import GoalStatusCard, { formatGoalElapsed } from './GoalStatusCard';
+import GoalStatusCard, {
+  formatGoalElapsed,
+  formatGoalTokenCount,
+  goalElapsedEnd,
+} from './GoalStatusCard';
 
 const activeGoal = {
   schemaVersion: 1 as const,
@@ -51,7 +55,6 @@ describe('GoalStatusCard', () => {
         goal: null,
         pendingObjective: 'Build a release dashboard',
         isRunning: true,
-        onCommand: vi.fn(),
       }),
     );
 
@@ -68,7 +71,6 @@ describe('GoalStatusCard', () => {
           ...activeGoal,
           objective: command.slice('/goal start '.length),
         },
-        onCommand: vi.fn(),
         onPause: vi.fn(),
       }),
     );
@@ -83,7 +85,6 @@ describe('GoalStatusCard', () => {
       React.createElement(GoalStatusCard, {
         goal: activeGoal,
         execution: null,
-        onCommand: vi.fn(),
         onEdit: vi.fn(),
         onPause: vi.fn(),
       }),
@@ -93,8 +94,8 @@ describe('GoalStatusCard', () => {
     expect(rendered).toContain(`>${i18nService.t('coworkGoalPause')}<`);
     expect(rendered).not.toContain(`>${i18nService.t('coworkGoalContinue')}<`);
     expect(rendered).not.toContain(i18nService.t('coworkGoalMarkComplete'));
-    expect(rendered).not.toContain('42k');
-    expect(rendered).not.toContain('50k');
+    expect(rendered).toContain('42k');
+    expect(rendered).toContain('50k');
     expect(rendered).toContain(i18nService.t('coworkGoalEdit'));
   });
 
@@ -103,7 +104,6 @@ describe('GoalStatusCard', () => {
       React.createElement(GoalStatusCard, {
         goal: activeGoal,
         isRunning: true,
-        onCommand: vi.fn(),
         onEdit: vi.fn(),
         onPause: vi.fn(),
       }),
@@ -111,7 +111,7 @@ describe('GoalStatusCard', () => {
     const complete = renderToStaticMarkup(
       React.createElement(GoalStatusCard, {
         goal: { ...activeGoal, status: SessionGoalStatus.Complete },
-        onCommand: vi.fn(),
+        onClear: vi.fn(),
         onEdit: vi.fn(),
       }),
     );
@@ -120,7 +120,7 @@ describe('GoalStatusCard', () => {
     expect(complete).not.toContain(`aria-label="${i18nService.t('coworkGoalEdit')}"`);
   });
 
-  it('formats elapsed goal age without exposing token progress', () => {
+  it('formats elapsed goal age', () => {
     const previousLanguage = i18nService.getLanguage();
     try {
       i18nService.setLanguage('en', { persist: false });
@@ -137,6 +137,28 @@ describe('GoalStatusCard', () => {
     }
   });
 
+  it('freezes elapsed time at the canonical terminal-state timestamp', () => {
+    expect(
+      goalElapsedEnd(
+        { ...activeGoal, status: SessionGoalStatus.Paused, pausedAt: 2_000, updatedAt: 3_000 },
+        9_000,
+      ),
+    ).toBe(2_000);
+    expect(
+      goalElapsedEnd(
+        {
+          ...activeGoal,
+          status: SessionGoalStatus.BudgetLimited,
+          budgetLimitedAt: 4_000,
+          updatedAt: 5_000,
+        },
+        9_000,
+      ),
+    ).toBe(4_000);
+    expect(goalElapsedEnd(activeGoal, 9_000)).toBe(9_000);
+    expect(formatGoalTokenCount(42_000)).toBe('42k');
+  });
+
   it('keeps an active goal live while its execution snapshot is not matched yet', () => {
     const rendered = renderToStaticMarkup(
       React.createElement(GoalStatusCard, {
@@ -149,7 +171,6 @@ describe('GoalStatusCard', () => {
           updatedAt: Date.now(),
         },
         isRunning: true,
-        onCommand: vi.fn(),
         onPause: vi.fn(),
       }),
     );
@@ -173,7 +194,6 @@ describe('GoalStatusCard', () => {
           continuationCount: 3,
           updatedAt: Date.now(),
         },
-        onCommand: vi.fn(),
         onPause: vi.fn(),
       }),
     );
@@ -196,7 +216,6 @@ describe('GoalStatusCard', () => {
           continuationCount: 3,
           updatedAt: Date.now(),
         },
-        onCommand: vi.fn(),
         onPause: vi.fn(),
       }),
     );
@@ -218,7 +237,6 @@ describe('GoalStatusCard', () => {
         updatedAt: Date.now(),
       },
       isRunning: true,
-      onCommand: vi.fn(),
       onEdit: vi.fn(),
       onPause: vi.fn(),
       onContinue,
@@ -245,7 +263,6 @@ describe('GoalStatusCard', () => {
           continuationCount: 1,
           updatedAt: Date.now(),
         },
-        onCommand: vi.fn(),
         onPause: vi.fn(),
       }),
     );
@@ -258,6 +275,8 @@ describe('GoalStatusCard', () => {
   it.each([
     [SessionGoalStatus.Paused, 'coworkGoalPaused'],
     [SessionGoalStatus.Blocked, 'coworkGoalBlocked'],
+    [SessionGoalStatus.UsageLimited, 'coworkGoalUsageLimited'],
+    [SessionGoalStatus.BudgetLimited, 'coworkGoalBudgetLimited'],
   ] as const)(
     'renders resume and end actions for OpenClaw %s lifecycle state',
     (status, labelKey) => {
@@ -270,7 +289,8 @@ describe('GoalStatusCard', () => {
             continuationCount: 0,
             updatedAt: Date.now(),
           },
-          onCommand: vi.fn(),
+          onResume: vi.fn(),
+          onClear: vi.fn(),
         }),
       );
 
@@ -281,11 +301,31 @@ describe('GoalStatusCard', () => {
     },
   );
 
+  it('does not let the shared awaiting-input phase collapse a native limited status', () => {
+    const rendered = renderToStaticMarkup(
+      React.createElement(GoalStatusCard, {
+        goal: { ...activeGoal, status: SessionGoalStatus.BudgetLimited },
+        execution: {
+          sessionId: 'session-1',
+          goalId: 'goal-1',
+          phase: GoalExecutionPhase.AwaitingInput,
+          continuationCount: 1,
+          updatedAt: Date.now(),
+        },
+        onResume: vi.fn(),
+        onEnd: vi.fn(),
+      }),
+    );
+
+    expect(rendered).toContain(i18nService.t('coworkGoalBudgetLimited'));
+    expect(rendered).not.toContain(i18nService.t('coworkGoalBlocked'));
+  });
+
   it('renders continue improving and confirm complete for a completed goal', () => {
     const rendered = renderToStaticMarkup(
       React.createElement(GoalStatusCard, {
         goal: { ...activeGoal, status: SessionGoalStatus.Complete },
-        onCommand: vi.fn(),
+        onClear: vi.fn(),
         onContinueImproving: vi.fn(),
       }),
     );
@@ -308,7 +348,7 @@ describe('GoalStatusCard', () => {
           continuationCount: 2,
           updatedAt: Date.now(),
         },
-        onCommand: vi.fn(),
+        onClear: vi.fn(),
         onPause: vi.fn(),
       }),
     );
@@ -320,16 +360,16 @@ describe('GoalStatusCard', () => {
   });
 
   it('clears the goal when completion is confirmed', () => {
-    const onCommand = vi.fn();
+    const onClear = vi.fn();
     const tree = GoalStatusCard({
       goal: { ...activeGoal, status: SessionGoalStatus.Complete },
-      onCommand,
+      onClear,
     });
     const confirmButton = findButtonByLabel(tree, i18nService.t('coworkGoalMarkComplete'));
 
     expect(confirmButton).not.toBeNull();
     confirmButton?.props.onClick?.();
-    expect(onCommand).toHaveBeenCalledWith('/goal clear');
+    expect(onClear).toHaveBeenCalledOnce();
   });
 
   it('enters and cancels completion feedback without changing the goal', () => {
@@ -337,7 +377,7 @@ describe('GoalStatusCard', () => {
     const onCancelContinueImproving = vi.fn();
     const initialTree = GoalStatusCard({
       goal: { ...activeGoal, status: SessionGoalStatus.Complete },
-      onCommand: vi.fn(),
+      onClear: vi.fn(),
       onContinueImproving,
     });
     findButtonByLabel(initialTree, i18nService.t('coworkGoalContinueImproving'))?.props.onClick?.();
@@ -345,7 +385,7 @@ describe('GoalStatusCard', () => {
     const feedbackTree = GoalStatusCard({
       goal: { ...activeGoal, status: SessionGoalStatus.Complete },
       completionFeedbackActive: true,
-      onCommand: vi.fn(),
+      onClear: vi.fn(),
       onCancelContinueImproving,
     });
     const feedbackMarkup = renderToStaticMarkup(feedbackTree);
@@ -358,11 +398,10 @@ describe('GoalStatusCard', () => {
   });
 
   it('delegates the end action instead of clearing the goal directly', () => {
-    const onCommand = vi.fn();
     const onEnd = vi.fn();
     const tree = GoalStatusCard({
       goal: { ...activeGoal, status: SessionGoalStatus.Paused },
-      onCommand,
+      onResume: vi.fn(),
       onEnd,
     });
     const endButton = findButtonByLabel(tree, i18nService.t('coworkGoalEnd'));
@@ -370,6 +409,5 @@ describe('GoalStatusCard', () => {
     expect(endButton).not.toBeNull();
     endButton?.props.onClick?.();
     expect(onEnd).toHaveBeenCalledOnce();
-    expect(onCommand).not.toHaveBeenCalled();
   });
 });

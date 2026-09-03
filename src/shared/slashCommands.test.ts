@@ -57,6 +57,10 @@ describe('parseGoalStartObjective', () => {
     expect(parseGoalStartObjective('/goal --tokens 50K improve startup time')).toBe(
       '--tokens 50K improve startup time',
     );
+    expect(parseGoalStartObjective('/goal start Cafe\u0301')).toBe('Café');
+    expect(parseGoalStartObjective('/goal start line one\n\n  line two')).toBe(
+      'line one\n\n  line two',
+    );
   });
 
   it('does not treat lifecycle controls as new goals', () => {

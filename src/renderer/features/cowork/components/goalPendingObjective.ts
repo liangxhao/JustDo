@@ -40,3 +40,8 @@ export const resolveGoalClearFetch = (
   if (clearTargetId && fetchedGoalId !== clearTargetId) return 'accept_new_goal';
   return 'ignore_old_goal';
 };
+
+export const shouldApplyGoalClearResult = (
+  clearTargetId: string,
+  currentGoalId: string | null,
+): boolean => !currentGoalId || currentGoalId === clearTargetId;

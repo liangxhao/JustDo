@@ -10,6 +10,7 @@ import { extractGoalFollowUpRequest } from '@shared/prompts/goalFollowUpPrompt';
 import {
   GoalExecutionPhase,
   type GoalExecutionSnapshot,
+  SESSION_GOAL_MAX_OBJECTIVE_LENGTH,
   type SessionGoal,
   SessionGoalStatus,
 } from '@shared/sessionGoal';
@@ -25,9 +26,10 @@ interface GoalStatusCardProps {
   isRunning?: boolean;
   completionFeedbackActive?: boolean;
   disabled?: boolean;
-  onCommand: (command: string) => void;
   onEdit?: (objective: string) => Promise<boolean>;
   onPause?: () => void;
+  onResume?: () => void;
+  onClear?: () => void;
   onContinue?: () => void;
   onContinueImproving?: () => void;
   onCancelContinueImproving?: () => void;
@@ -55,19 +57,56 @@ export const formatGoalElapsed = (createdAt: number, now: number): string => {
     .replace('{hours}', String(elapsedHours % 24));
 };
 
-const GoalElapsed = ({ createdAt }: { createdAt: number }) => {
+export const goalElapsedEnd = (goal: SessionGoal, now: number): number => {
+  switch (goal.status) {
+    case SessionGoalStatus.Active:
+      return now;
+    case SessionGoalStatus.Paused:
+      return goal.pausedAt ?? goal.updatedAt;
+    case SessionGoalStatus.Blocked:
+      return goal.blockedAt ?? goal.updatedAt;
+    case SessionGoalStatus.UsageLimited:
+      return goal.usageLimitedAt ?? goal.updatedAt;
+    case SessionGoalStatus.BudgetLimited:
+      return goal.budgetLimitedAt ?? goal.updatedAt;
+    case SessionGoalStatus.Complete:
+      return goal.completedAt ?? goal.updatedAt;
+  }
+};
+
+const GoalElapsed = ({ goal }: { goal: SessionGoal }) => {
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
+    if (goal.status !== SessionGoalStatus.Active) return;
     const timer = window.setInterval(() => setNow(Date.now()), 60_000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [goal.status]);
 
   return (
     <span className="flex-shrink-0 text-[10px] tabular-nums text-secondary">
-      {formatGoalElapsed(createdAt, now)}
+      {formatGoalElapsed(goal.createdAt, goalElapsedEnd(goal, now))}
     </span>
   );
+};
+
+export const formatGoalTokenCount = (value: number): string => {
+  if (value < 1_000) return String(Math.floor(value));
+  if (value < 1_000_000) return `${(value / 1_000).toFixed(value < 10_000 ? 1 : 0)}k`;
+  return `${(value / 1_000_000).toFixed(value < 10_000_000 ? 1 : 0)}m`;
+};
+
+const formatGoalUsage = (goal: SessionGoal): string | null => {
+  if (goal.tokenBudget !== undefined) {
+    return i18nService
+      .t('coworkGoalTokenBudget')
+      .replace('{used}', formatGoalTokenCount(goal.tokensUsed))
+      .replace('{budget}', formatGoalTokenCount(goal.tokenBudget));
+  }
+  if (goal.tokensUsed <= 0) return null;
+  return i18nService
+    .t('coworkGoalTokensUsed')
+    .replace('{used}', formatGoalTokenCount(goal.tokensUsed));
 };
 
 interface GoalObjectiveEditorProps {
@@ -80,7 +119,7 @@ const GoalObjectiveEditor = ({ objective, canEdit, onEdit }: GoalObjectiveEditor
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(objective);
   const [saving, setSaving] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     if (!editing) setDraft(objective);
@@ -103,11 +142,10 @@ const GoalObjectiveEditor = ({ objective, canEdit, onEdit }: GoalObjectiveEditor
   };
 
   const save = async () => {
-    const nextObjective = draft.trim();
-    if (!nextObjective || !onEdit || saving) return;
+    if (!draft.trim() || !onEdit || saving) return;
     setSaving(true);
     try {
-      if (await onEdit(nextObjective)) setEditing(false);
+      if (await onEdit(draft)) setEditing(false);
     } catch {
       // The caller owns user-facing error reporting. Keep the draft open for retry.
     } finally {
@@ -117,11 +155,12 @@ const GoalObjectiveEditor = ({ objective, canEdit, onEdit }: GoalObjectiveEditor
 
   if (editing) {
     return (
-      <div className="flex min-w-0 flex-1 basis-64 items-center gap-2">
-        <input
+      <div className="flex min-w-0 flex-1 basis-64 items-start gap-2">
+        <textarea
           ref={inputRef}
-          type="text"
+          rows={2}
           value={draft}
+          maxLength={SESSION_GOAL_MAX_OBJECTIVE_LENGTH}
           disabled={saving}
           aria-label={i18nService.t('coworkGoalEditPlaceholder')}
           placeholder={i18nService.t('coworkGoalEditPlaceholder')}
@@ -130,12 +169,12 @@ const GoalObjectiveEditor = ({ objective, canEdit, onEdit }: GoalObjectiveEditor
             if (event.key === 'Escape') {
               event.preventDefault();
               cancel();
-            } else if (event.key === 'Enter') {
+            } else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
               event.preventDefault();
               void save();
             }
           }}
-          className="min-w-32 flex-1 rounded-md border border-border bg-surface px-2.5 py-1 text-sm font-medium text-foreground outline-none transition-colors focus:border-primary disabled:opacity-60"
+          className="max-h-40 min-h-14 min-w-32 flex-1 resize-y rounded-md border border-border bg-surface px-2.5 py-1 text-sm font-medium text-foreground outline-none transition-colors focus:border-primary disabled:opacity-60"
         />
         <GoalActionButton
           disabled={saving || !draft.trim()}
@@ -150,7 +189,7 @@ const GoalObjectiveEditor = ({ objective, canEdit, onEdit }: GoalObjectiveEditor
 
   return (
     <div className="flex min-w-32 flex-1 basis-40 items-start gap-1.5">
-      <span className="line-clamp-2 min-w-0 flex-1 break-words text-sm font-semibold leading-5 text-foreground">
+      <span className="line-clamp-2 min-w-0 flex-1 whitespace-pre-wrap break-words text-sm font-semibold leading-5 text-foreground">
         {objective}
       </span>
       {canEdit && onEdit && (
@@ -215,17 +254,17 @@ const GoalStatusIcon = ({ status }: { status: SessionGoal['status'] }) => {
   return <FlagIcon className="h-4 w-4" />;
 };
 
-const getPrimaryAction = (status: SessionGoal['status']) => {
+const getPrimaryActionLabel = (status: SessionGoal['status']) => {
   switch (status) {
     case SessionGoalStatus.Active:
-      return { command: '/goal pause', label: i18nService.t('coworkGoalPause') };
+      return i18nService.t('coworkGoalPause');
     case SessionGoalStatus.Paused:
     case SessionGoalStatus.Blocked:
     case SessionGoalStatus.UsageLimited:
     case SessionGoalStatus.BudgetLimited:
-      return { command: '/goal resume', label: i18nService.t('coworkGoalResume') };
+      return i18nService.t('coworkGoalResume');
     case SessionGoalStatus.Complete:
-      return { command: '/goal clear', label: i18nService.t('coworkGoalMarkComplete') };
+      return i18nService.t('coworkGoalMarkComplete');
   }
 };
 
@@ -261,9 +300,10 @@ const GoalStatusCard: React.FC<GoalStatusCardProps> = ({
   isRunning = false,
   completionFeedbackActive = false,
   disabled = false,
-  onCommand,
   onEdit,
   onPause,
+  onResume,
+  onClear,
   onContinue,
   onContinueImproving,
   onCancelContinueImproving,
@@ -272,12 +312,14 @@ const GoalStatusCard: React.FC<GoalStatusCardProps> = ({
   const status = goal?.status ?? SessionGoalStatus.Active;
   const rawObjective = goal?.objective ?? pendingObjective ?? '';
   const objective = extractGoalFollowUpRequest(`/goal start ${rawObjective}`) ?? rawObjective;
+  const usage = goal ? formatGoalUsage(goal) : null;
   const matchedExecution =
     goal && execution && (!execution.goalId || execution.goalId === goal.id) ? execution : null;
   const effectiveStatus =
     matchedExecution?.phase === GoalExecutionPhase.AwaitingConfirmation
       ? SessionGoalStatus.Complete
-      : matchedExecution?.phase === GoalExecutionPhase.AwaitingInput
+      : matchedExecution?.phase === GoalExecutionPhase.AwaitingInput &&
+          status === SessionGoalStatus.Active
         ? SessionGoalStatus.Blocked
         : status;
   const presentation = getGoalPresentation(effectiveStatus);
@@ -328,13 +370,13 @@ const GoalStatusCard: React.FC<GoalStatusCardProps> = ({
   ) : effectiveStatus !== SessionGoalStatus.Complete ? (
     <>
       <GoalActionButton
-        disabled={disabled}
-        label={getPrimaryAction(effectiveStatus).label}
-        onClick={() => onCommand(getPrimaryAction(effectiveStatus).command)}
+        disabled={disabled || isRunning || !onResume}
+        label={getPrimaryActionLabel(effectiveStatus)}
+        onClick={() => onResume?.()}
         primary
       />
       <GoalActionButton
-        disabled={disabled || !onEnd}
+        disabled={disabled || isRunning || !onEnd}
         label={i18nService.t('coworkGoalEnd')}
         onClick={() => onEnd?.()}
       />
@@ -352,9 +394,9 @@ const GoalStatusCard: React.FC<GoalStatusCardProps> = ({
       />
       {!completionFeedbackActive && (
         <GoalActionButton
-          disabled={disabled}
-          label={getPrimaryAction(effectiveStatus).label}
-          onClick={() => onCommand(getPrimaryAction(effectiveStatus).command)}
+          disabled={disabled || isRunning || !onClear}
+          label={getPrimaryActionLabel(effectiveStatus)}
+          onClick={() => onClear?.()}
           primary
         />
       )}
@@ -397,7 +439,10 @@ const GoalStatusCard: React.FC<GoalStatusCardProps> = ({
                 .replace('{count}', String(matchedExecution.continuationCount))}
             </span>
           )}
-          {goal && <GoalElapsed createdAt={goal.createdAt} />}
+          {goal && <GoalElapsed goal={goal} />}
+          {usage && (
+            <span className="flex-shrink-0 text-[10px] tabular-nums text-secondary">{usage}</span>
+          )}
           {live ? (
             <span className="flex min-w-0 items-center gap-1.5 text-[10px] text-secondary">
               <ArrowPathIcon className="h-3 w-3 flex-shrink-0 animate-spin text-primary" />

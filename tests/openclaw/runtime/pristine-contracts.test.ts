@@ -91,6 +91,16 @@ function createPristineFixture(): string {
   writeDistFile(root, 'goal-tools.js', 'create_goal; update_goal; get_goal;');
   writeDistFile(
     root,
+    'goal-rpc.js',
+    '"sessions.goal.update": validateSessionsGoalUpdateParams; "sessions.goal.clear":;',
+  );
+  writeDistFile(
+    root,
+    'goal-start.js',
+    'action: "start"; operationId: p.idempotencyKey; issuedAtMs: p.intent.issuedAtMs;',
+  );
+  writeDistFile(
+    root,
     'tasks-rpc.js',
     '"tasks.list": validateTasksListParams; nextCursor; ' +
       '"tasks.get": validateTasksGetParams; getTaskById;',

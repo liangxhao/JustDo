@@ -126,11 +126,13 @@ Adapter 不再读写 OpenClaw `sessions.json`。模型变更在 Gateway ready �
 
 ## 11. Slash commands
 
-命令列表来自 Gateway，再应用 JustDo policy 的 blacklist、category、tier、execution type 和 before-send hook。本地命令和 Gateway 命令分开：例如 goal 控制可能要求先确保 session entry。UI 不应把未知 `/...` 默认为本地执行，也不能绕开 policy 直接 RPC。
+命令列表来自 Gateway，再应用 JustDo policy 的 blacklist、category、tier、execution type 和 before-send hook。本地命令和 Gateway 命令分开；UI 不应把未知 `/...` 默认为本地执行，也不能绕开 policy 直接 RPC。用户手工输入的 Gateway slash command仍可走命令处理，但 Goal 卡片生命周期操作使用原生 structured Goal RPC，不依赖命令文本和控制 run。
 
 ## 12. Goal continuation
 
-Adapter 内的 coordinator 将 Gateway goal、tool、lifecycle 和原生 task 状态组合成可恢复状态机。继续动作带控制 run id、退避/重试、等待用户输入/确认和 terminal latch。连接 generation 变化后扫描本地 session 与 Gateway goal/runtime；只有 goal id 和状态一致才恢复，避免旧 snapshot 续跑新目标。
+Adapter 内的 coordinator 将 Gateway Goal、tool/lifecycle 和原生 task 状态组合成产品自动续跑状态机，但不拥有 Goal 内容或 lifecycle。创建通过带 `session-goal-start` intent 的 `chat.send` 完成；edit/pause/resume/block/complete/clear 使用 `sessions.goal.update` / `sessions.goal.clear`，并以精确 sessionId、goalId 和 24 小时 operation receipt 做并发隔离与幂等重放。Resume 自身原子启动 continuation，不建立 `/goal resume` 控制 run。
+
+Coordinator 只为仍是 canonical `active` 的目标调度后续 turn，并保留退避、最大续跑次数、等待用户输入/确认和 stop latch。连接 generation 变化后扫描本地 session 与 Gateway Goal/runtime；只有 Goal id 和状态一致才恢复，避免旧 snapshot 续跑新目标。`usage_limited` 与 `budget_limited` 保持独立展示，resume 后由 OpenClaw 原生逻辑重置预算窗口。
 
 软件启动后的首次完整 Goal 扫描复用 Manager 的 app-start cutoff：早于 cutoff 或缺少
 `createdAt`、且没有当前 active run/用户 activation/精确 session+goal ownership 的 active Goal

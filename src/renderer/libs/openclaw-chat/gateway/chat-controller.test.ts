@@ -369,11 +369,18 @@ test('keeps the confirmed run model in the footer timing after final clears acti
 });
 
 test('can display user feedback while sending a combined goal command to the Gateway', async () => {
-  const request = vi.fn((method: string) =>
+  const request = vi.fn((method: string, params?: Record<string, unknown>) =>
     Promise.resolve(
       method === 'sessions.create'
         ? { sessionId: 'gateway-session-1' }
-        : { runId: 'run-1', status: 'started' },
+        : {
+            operationId: params?.idempotencyKey,
+            action: 'start',
+            sessionId: 'gateway-session-1',
+            goalId: 'goal-1',
+            runId: params?.idempotencyKey,
+            status: 'started',
+          },
     ),
   );
   const controller = new ChatController();
@@ -395,17 +402,28 @@ test('can display user feedback while sending a combined goal command to the Gat
   expect(request).toHaveBeenCalledWith(
     'chat.send',
     expect.objectContaining({
-      message: buildGoalFollowUpPrompt('Write the novel', 'Please improve chapter two.'),
+      message: 'Please improve chapter two.',
+      intent: expect.objectContaining({
+        kind: 'session-goal-start',
+        version: 1,
+      }),
     }),
   );
 });
 
 test('never renders an internal goal follow-up prompt when no display override is supplied', async () => {
-  const request = vi.fn((method: string) =>
+  const request = vi.fn((method: string, params?: Record<string, unknown>) =>
     Promise.resolve(
       method === 'sessions.create'
         ? { sessionId: 'gateway-session-1' }
-        : { runId: 'run-1', status: 'started' },
+        : {
+            operationId: params?.idempotencyKey,
+            action: 'start',
+            sessionId: 'gateway-session-1',
+            goalId: 'goal-1',
+            runId: params?.idempotencyKey,
+            status: 'started',
+          },
     ),
   );
   const controller = new ChatController();
@@ -423,8 +441,208 @@ test('never renders an internal goal follow-up prompt when no display override i
   });
   expect(request).toHaveBeenCalledWith(
     'chat.send',
-    expect.objectContaining({ message: gatewayPrompt }),
+    expect.objectContaining({
+      message: '再来一首',
+      intent: expect.objectContaining({ kind: 'session-goal-start', version: 1 }),
+    }),
   );
+});
+
+test('reuses the exact native Goal start identity after an ambiguous transport failure', async () => {
+  let sendAttempts = 0;
+  const request = vi.fn((method: string, params?: Record<string, unknown>) => {
+    if (method === 'sessions.create') {
+      return Promise.resolve({ sessionId: 'gateway-session-1' });
+    }
+    if (method === 'chat.send') {
+      sendAttempts += 1;
+      if (sendAttempts === 1) {
+        return Promise.reject(
+          Object.assign(new Error('unavailable after commit'), {
+            gatewayCode: 'UNAVAILABLE',
+            retryable: false,
+          }),
+        );
+      }
+      return Promise.resolve({
+        operationId: params?.idempotencyKey,
+        action: 'start',
+        sessionId: 'gateway-session-1',
+        goalId: 'goal-1',
+        runId: params?.idempotencyKey,
+        status: 'started',
+        replayed: true,
+      });
+    }
+    if (method === 'chat.startup') return Promise.resolve({ messages: [] });
+    return Promise.resolve({});
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+
+  await controller.sendMessage('/goal start Ship the release');
+  await controller.sendMessage('/goal start Ship the release');
+
+  const sends = request.mock.calls.filter(([method]) => method === 'chat.send');
+  expect(sends).toHaveLength(2);
+  expect(sends[1]?.[1]).toEqual(sends[0]?.[1]);
+  expect(sends[0]?.[1]).toMatchObject({
+    message: 'Ship the release',
+    sessionId: 'gateway-session-1',
+    intent: {
+      kind: 'session-goal-start',
+      version: 1,
+      issuedAtMs: expect.any(Number),
+    },
+    idempotencyKey: expect.any(String),
+  });
+  expect(sends[0]?.[1]).not.toHaveProperty('timeoutMs');
+  expect(controller.state.chatSending).toBe(false);
+});
+
+test('keeps a replayed native Goal start bound while its exact run and goal remain active', async () => {
+  let runId = '';
+  const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+    if (method === 'sessions.create') return { sessionId: 'gateway-session-1' };
+    if (method === 'chat.send') {
+      runId = String(params?.idempotencyKey);
+      return {
+        operationId: runId,
+        action: 'start',
+        sessionId: 'gateway-session-1',
+        goalId: 'goal-1',
+        runId,
+        status: 'started',
+        replayed: true,
+      };
+    }
+    if (method === 'sessions.describe') {
+      return {
+        session: {
+          goal: {
+            schemaVersion: 1,
+            id: 'goal-1',
+            objective: 'Ship the release',
+            status: 'active',
+            createdAt: 1,
+            updatedAt: 2,
+            tokenStart: 0,
+            tokensUsed: 0,
+            continuationTurns: 0,
+          },
+        },
+      };
+    }
+    if (method === 'sessions.list') {
+      return {
+        sessions: [
+          { key: 'agent:main:justdo:session-1', activeRunIds: [runId] },
+        ],
+      };
+    }
+    throw new Error(`unexpected method ${method}`);
+  });
+  const onRunBound = vi.fn();
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+
+  await controller.sendMessage('/goal start Ship the release', [], undefined, { onRunBound });
+
+  expect(controller.state.chatSending).toBe(true);
+  expect(controller.state.chatRunId).toBe(runId);
+  expect(onRunBound).toHaveBeenCalledWith(runId);
+});
+
+test('retains ambiguous Goal start identities independently across session switches', async () => {
+  const operationIds = new Map<string, string[]>();
+  let sessionAAttempts = 0;
+  const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+    const key = String(params?.sessionKey ?? params?.key ?? '');
+    if (method === 'sessions.create') {
+      return { sessionId: key.endsWith('session-a') ? 'gateway-a' : 'gateway-b' };
+    }
+    if (method === 'chat.send') {
+      const operationId = String(params?.idempotencyKey);
+      operationIds.set(key, [...(operationIds.get(key) ?? []), operationId]);
+      if (key.endsWith('session-a')) {
+        sessionAAttempts += 1;
+        if (sessionAAttempts === 1) {
+          throw Object.assign(new Error('unavailable after commit'), {
+            gatewayCode: 'UNAVAILABLE',
+            retryable: false,
+          });
+        }
+        return {
+          operationId,
+          action: 'start',
+          sessionId: 'gateway-a',
+          goalId: 'goal-a',
+          runId: operationId,
+          status: 'started',
+          replayed: true,
+        };
+      }
+      return {
+        operationId,
+        action: 'start',
+        sessionId: 'gateway-b',
+        goalId: 'goal-b',
+        runId: operationId,
+        status: 'started',
+      };
+    }
+    if (method === 'sessions.describe') {
+      return {
+        session: {
+          goal: {
+            schemaVersion: 1,
+            id: 'goal-a',
+            objective: 'Goal A',
+            status: 'complete',
+            createdAt: 1,
+            updatedAt: 2,
+            tokenStart: 0,
+            tokensUsed: 1,
+            continuationTurns: 0,
+          },
+        },
+      };
+    }
+    if (method === 'sessions.list') return { sessions: [] };
+    if (method === 'chat.startup') return { messages: [] };
+    throw new Error(`unexpected method ${method}`);
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+
+  controller.state.sessionKey = 'agent:main:justdo:session-a';
+  controller.state.currentSessionId = 'gateway-a';
+  await controller.sendMessage('/goal start Goal A');
+
+  controller.state.sessionKey = 'agent:main:justdo:session-b';
+  controller.state.currentSessionId = 'gateway-b';
+  await controller.sendMessage('/goal start Goal B');
+  const sessionBRunId = operationIds.get('agent:main:justdo:session-b')?.[0] ?? '';
+  (
+    controller as unknown as {
+      settleChatSend: (sessionKey: string, runId: string, state: 'final') => void;
+    }
+  ).settleChatSend('agent:main:justdo:session-b', sessionBRunId, 'final');
+
+  controller.state.sessionKey = 'agent:main:justdo:session-a';
+  controller.state.currentSessionId = 'gateway-a';
+  await controller.sendMessage('/goal start Goal A');
+
+  expect(operationIds.get('agent:main:justdo:session-a')).toEqual([
+    expect.any(String),
+    operationIds.get('agent:main:justdo:session-a')?.[0],
+  ]);
+  expect(sessionBRunId).not.toBe(operationIds.get('agent:main:justdo:session-a')?.[0]);
 });
 
 test('rejects a second message while a run is active instead of silently dropping it', async () => {
@@ -1349,7 +1567,7 @@ test('sends the backing session id returned by chat history', async () => {
 });
 
 test('creates a backing session before the first goal command', async () => {
-  const request = vi.fn().mockImplementation((method: string) => {
+  const request = vi.fn().mockImplementation((method: string, params?: Record<string, unknown>) => {
     if (method === 'sessions.create') {
       return Promise.resolve({
         key: 'agent:main:justdo:new-session',
@@ -1357,7 +1575,14 @@ test('creates a backing session before the first goal command', async () => {
       });
     }
     if (method === 'chat.send') {
-      return Promise.resolve({ runId: 'run-1', status: 'started' });
+      return Promise.resolve({
+        operationId: params?.idempotencyKey,
+        action: 'start',
+        sessionId: 'new-backing-session',
+        goalId: 'goal-1',
+        runId: params?.idempotencyKey,
+        status: 'started',
+      });
     }
     return Promise.resolve({});
   });
@@ -1378,7 +1603,8 @@ test('creates a backing session before the first goal command', async () => {
     expect.objectContaining({
       sessionKey: 'agent:main:justdo:new-session',
       sessionId: 'new-backing-session',
-      message: '/goal build a release dashboard',
+      message: 'build a release dashboard',
+      intent: expect.objectContaining({ kind: 'session-goal-start', version: 1 }),
       justdoUserInitiated: true,
     }),
   );

@@ -128,11 +128,13 @@ export const parseGoalStartObjective = (value: string): string | null => {
   const { argumentsText } = command;
   if (!argumentsText) return null;
 
-  const [first = '', ...rest] = argumentsText.split(/\s+/);
-  const action = first.toLowerCase();
+  const actionMatch = /^(\S+)([\s\S]*)$/.exec(argumentsText);
+  const action = (actionMatch?.[1] ?? '').toLowerCase();
   if (GOAL_CONTROL_ACTIONS.has(action)) return null;
-  const objectiveText = GOAL_CREATE_ACTIONS.has(action) ? rest.join(' ') : argumentsText;
-  const objective = objectiveText.trim();
+  const objectiveText = GOAL_CREATE_ACTIONS.has(action)
+    ? (actionMatch?.[2] ?? '')
+    : argumentsText;
+  const objective = objectiveText.trim().normalize('NFC');
   return objective || null;
 };
 

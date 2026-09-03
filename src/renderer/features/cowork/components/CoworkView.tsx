@@ -15,7 +15,7 @@ import {
   progressCardIsComplete,
   type ProgressCardViewState,
 } from '@shared/openclaw/progressCard';
-import { isGoalEditCommand } from '@shared/slashCommands';
+import { isGoalEditCommand, parseGoalStartObjective } from '@shared/slashCommands';
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
@@ -905,7 +905,9 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       gatewayPrompt?: string,
     ) => {
       if (!ensureOpenClawReadyForSubmit()) return false;
-      const goalEdit = isGoalEditCommand(gatewayPrompt ?? prompt);
+      const outboundPrompt = gatewayPrompt ?? prompt;
+      const goalEdit = isGoalEditCommand(outboundPrompt);
+      const nativeGoalStart = parseGoalStartObjective(outboundPrompt) !== null;
       const startedAt = Date.now();
       const clientTurnId = `justdo-${startedAt}-${crypto.randomUUID()}`;
       let runTimingId: string | null = null;
@@ -925,7 +927,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
           const chatWrapper = chatWrapperRef.current;
           if (!chatWrapper) throw new Error('Chat controller is not ready');
           await chatWrapper.sendMessage(prompt, attachments, gatewayPrompt, {
-            propagateRequestFailure: goalEdit,
+            propagateRequestFailure: goalEdit || nativeGoalStart,
             clientTurnId,
             onRunBound: runId => coworkService.bindSessionRun(timing.id, runId, currentSession.id),
           });

@@ -8,7 +8,9 @@ import {
 import {
   GoalExecutionIpc,
   normalizeSessionGoal,
+  normalizeSessionGoalMutationRequest,
   type SessionGoal,
+  SessionGoalIpc,
 } from '../../../shared/sessionGoal';
 import type { CoworkSession, CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter, OpenClawRuntimeAdapter } from '../../engine';
@@ -341,6 +343,22 @@ export const registerCoworkSessionRuntimeHandlers = ({
     }
   });
 
+  ipcMain.handle(SessionGoalIpc.Mutate, async (_event, sessionId: string, value: unknown) => {
+    try {
+      const request = normalizeSessionGoalMutationRequest(value);
+      if (!request) return { success: false, error: 'Invalid session goal operation' };
+      const runtime = getRuntime();
+      if (!runtime) return { success: false, error: 'OpenClaw runtime adapter not available' };
+      const outcome = await runtime.mutateSessionGoal(sessionId, request);
+      return { success: true, ...outcome };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to update session goal',
+      };
+    }
+  });
+
   ipcMain.handle(GoalExecutionIpc.Get, (_event, sessionId: string) => {
     const runtime = getRuntime();
     return runtime
@@ -358,20 +376,6 @@ export const registerCoworkSessionRuntimeHandlers = ({
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to continue session goal',
-      };
-    }
-  });
-
-  ipcMain.handle(GoalExecutionIpc.ResumeForUserInput, async (_event, sessionId: string) => {
-    try {
-      const runtime = getRuntime();
-      if (!runtime) return { success: false, error: 'OpenClaw runtime adapter not available' };
-      await runtime.resumeGoalForUserInput(sessionId);
-      return { success: true };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to resume blocked goal',
       };
     }
   });

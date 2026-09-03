@@ -1626,7 +1626,7 @@ test('aborts an older active turn while a new turn is resolving its conflict', a
   });
 });
 
-test('re-aborts a goal turn stopped while chat.send is being accepted', async () => {
+test('re-aborts a turn stopped while chat.send is being accepted', async () => {
   const { store, session } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
   let resolveChatSend: ((value: { runId: string }) => void) | undefined;
@@ -1667,10 +1667,13 @@ test('re-aborts a goal turn stopped while chat.send is being accepted', async ()
     gatewaySessionId: 'gateway-session-1',
   });
 
-  const running = internals.runTurn(session.id, '/goal Ship the release', {});
+  const running = internals.runTurn(session.id, 'Ship the release', {});
   await vi.waitFor(() => expect(request).toHaveBeenCalledWith(
     'chat.send',
-    expect.objectContaining({ message: '/goal Ship the release' }),
+    expect.objectContaining({
+      message: 'Ship the release',
+      timeoutMs: 0,
+    }),
   ));
 
   let stopSettled = false;
@@ -1691,6 +1694,84 @@ test('re-aborts a goal turn stopped while chat.send is being accepted', async ()
     key: 'agent:main:justdo:session-1',
     runId: 'gateway-run-1',
   });
+});
+
+test('refreshes a replayed Goal start receipt instead of adopting a historical run', async () => {
+  const { store, session } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+    if (method === 'chat.send') {
+      return {
+        operationId: params?.idempotencyKey,
+        action: 'start',
+        sessionId: 'gateway-session-1',
+        goalId: 'goal-1',
+        runId: params?.idempotencyKey,
+        status: 'started',
+        replayed: true,
+      };
+    }
+    if (method === 'sessions.describe') {
+      return {
+        session: {
+          goal: {
+            schemaVersion: 1,
+            id: 'goal-1',
+            objective: 'Ship the release',
+            status: 'complete',
+            createdAt: 1,
+            updatedAt: 2,
+            tokenStart: 0,
+            tokensUsed: 10,
+            continuationTurns: 1,
+          },
+        },
+      };
+    }
+    if (method === 'sessions.list') {
+      return {
+        sessions: [{ key: 'agent:main:justdo:session-1', activeRunIds: [] }],
+      };
+    }
+    throw new Error(`unexpected method ${method}`);
+  });
+  const internals = adapter as unknown as {
+    gatewayClient: GatewayClientLike | null;
+    ensureGatewayClientReady: () => Promise<void>;
+    prepareSession: () => Promise<{ sessionKey: string; gatewaySessionId: string }>;
+    activeTurns: Map<string, SessionTurn>;
+    runTurn: (
+      sessionId: string,
+      prompt: string,
+      options: Record<string, never>,
+    ) => Promise<void>;
+  };
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  internals.prepareSession = vi.fn().mockResolvedValue({
+    sessionKey: 'agent:main:justdo:session-1',
+    gatewaySessionId: 'gateway-session-1',
+  });
+
+  await internals.runTurn(session.id, '/goal Ship the release', {});
+
+  const goalSend = request.mock.calls.find(([method]) => method === 'chat.send')?.[1];
+  expect(goalSend).toMatchObject({
+    sessionKey: 'agent:main:justdo:session-1',
+    sessionId: 'gateway-session-1',
+    message: 'Ship the release',
+    intent: {
+      kind: 'session-goal-start',
+      version: 1,
+      issuedAtMs: expect.any(Number),
+    },
+    idempotencyKey: expect.any(String),
+  });
+  expect(goalSend).not.toHaveProperty('timeoutMs');
+  expect(request).toHaveBeenCalledWith('sessions.describe', {
+    key: 'agent:main:justdo:session-1',
+  });
+  expect(internals.activeTurns.has(session.id)).toBe(false);
 });
 
 test('keeps a turn active when its post-ack abort cannot be confirmed', async () => {
@@ -1865,9 +1946,13 @@ test('an intentionally stopped gateway client cannot reclaim the active connecti
   const onHelloOk = clientOptions?.onHelloOk;
   expect(typeof onHelloOk).toBe('function');
   expect(clientOptions?.deviceIdentity).toBeNull();
-  expect(clientOptions?.scopes).toEqual(
-    expect.arrayContaining(['operator.admin', 'operator.approvals', 'operator.questions']),
-  );
+  expect(clientOptions?.scopes).toEqual([
+    'operator.admin',
+    'operator.read',
+    'operator.write',
+    'operator.approvals',
+    'operator.questions',
+  ]);
   (onHelloOk as () => void)();
   expect(connectionAdapter.gatewayClient).not.toBeNull();
   expect(connectionAdapter.pendingGatewayClient).toBeNull();
@@ -2360,11 +2445,237 @@ test('getSessionRuntimeStatus reports unknown when the Gateway snapshot fails', 
   expect(request).toHaveBeenCalledTimes(1);
 });
 
-test('resumes a blocked goal through a control run before user input', async () => {
+test('resumes a blocked goal atomically through the structured Goal RPC', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
-  let resumed = false;
-  const request = vi.fn(async (method: string) => {
+  const blockedGoal = {
+    schemaVersion: 1 as const,
+    id: 'goal-1',
+    objective: 'Ship the release',
+    status: 'blocked' as const,
+    createdAt: 1,
+    updatedAt: 2,
+    tokenStart: 0,
+    tokensUsed: 0,
+    continuationTurns: 0,
+  };
+  let resumeRunId = '';
+  const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+    if (method === 'automationPermission.info') {
+      return { loaded: true, policyId: 'native-session-automation-permission' };
+    }
+    if (method === 'sessions.create') return createPreparedSessionReceipt();
+    if (method === 'sessions.describe') {
+      return {
+        session: {
+          key: 'agent:main:justdo:session-1',
+          sessionId: 'gateway-session-1',
+          goal: blockedGoal,
+        },
+      };
+    }
+    if (method === 'sessions.goal.update') {
+      resumeRunId = String(params?.operationId);
+      return {
+        operationId: params?.operationId,
+        action: 'resume',
+        sessionId: 'gateway-session-1',
+        goalId: 'goal-1',
+        goal: { ...blockedGoal, status: 'active', updatedAt: 3 },
+        runId: resumeRunId,
+        status: 'started',
+      };
+    }
+    if (method === 'sessions.create') return createPreparedSessionReceipt();
+    throw new Error(`unexpected method ${method}`);
+  });
+  const internals = adapter as unknown as {
+    gatewayClient: GatewayClientLike | null;
+  };
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+
+  const result = await adapter.mutateSessionGoal('session-1', {
+    action: 'resume',
+    goalId: 'goal-1',
+    note: 'Credentials are available now.',
+  });
+
+  expect(request).toHaveBeenCalledWith(
+    'sessions.goal.update',
+    expect.objectContaining({
+      action: 'resume',
+      goalId: 'goal-1',
+      sessionId: 'gateway-session-1',
+      note: 'Credentials are available now.',
+      operationId: expect.any(String),
+      issuedAtMs: expect.any(Number),
+    }),
+  );
+  expect(request.mock.calls.some(([method]) => method === 'chat.send')).toBe(false);
+  expect(result).toMatchObject({
+    goal: { status: 'active' },
+    execution: { goalId: 'goal-1', phase: 'running', runId: resumeRunId },
+  });
+});
+
+test('adopts a replayed resume run only while Gateway still reports that exact run active', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const pausedGoal = {
+    schemaVersion: 1 as const,
+    id: 'goal-1',
+    objective: 'Ship the release',
+    status: 'paused' as const,
+    createdAt: 1,
+    updatedAt: 2,
+    tokenStart: 0,
+    tokensUsed: 0,
+    continuationTurns: 0,
+  };
+  const activeGoal = { ...pausedGoal, status: 'active' as const, updatedAt: 3 };
+  let describeCalls = 0;
+  let resumeRunId = '';
+  const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+    if (method === 'automationPermission.info') {
+      return { loaded: true, policyId: 'native-session-automation-permission' };
+    }
+    if (method === 'sessions.create') return createPreparedSessionReceipt();
+    if (method === 'sessions.describe') {
+      describeCalls += 1;
+      return {
+        session: {
+          key: 'agent:main:justdo:session-1',
+          sessionId: 'gateway-session-1',
+          goal: describeCalls === 1 ? pausedGoal : activeGoal,
+        },
+      };
+    }
+    if (method === 'sessions.list') {
+      return {
+        sessions: [
+          { key: 'agent:main:justdo:session-1', activeRunIds: [resumeRunId] },
+        ],
+      };
+    }
+    if (method === 'sessions.goal.update') {
+      resumeRunId = String(params?.operationId);
+      return {
+        operationId: params?.operationId,
+        action: 'resume',
+        sessionId: 'gateway-session-1',
+        goalId: 'goal-1',
+        goal: activeGoal,
+        runId: resumeRunId,
+        status: 'started',
+        replayed: true,
+      };
+    }
+    throw new Error(`unexpected method ${method}`);
+  });
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request,
+  };
+
+  await expect(
+    adapter.mutateSessionGoal('session-1', { action: 'resume', goalId: 'goal-1' }),
+  ).resolves.toMatchObject({
+    mutation: { replayed: true, status: 'started', runId: expect.any(String) },
+    goal: { status: 'active' },
+    execution: { phase: 'running', runId: expect.any(String) },
+  });
+  expect(resumeRunId).not.toBe('');
+});
+
+test('does not bind a replayed resume run to a replacement canonical goal', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const baseGoal = {
+    schemaVersion: 1 as const,
+    objective: 'Ship the release',
+    createdAt: 1,
+    updatedAt: 2,
+    tokenStart: 0,
+    tokensUsed: 0,
+    continuationTurns: 0,
+  };
+  const pausedGoal = { ...baseGoal, id: 'goal-1', status: 'paused' as const };
+  const replacementGoal = {
+    ...baseGoal,
+    id: 'goal-2',
+    objective: 'Prepare the next release',
+    status: 'active' as const,
+    updatedAt: 3,
+  };
+  let describeCalls = 0;
+  let resumeRunId = '';
+  const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+    if (method === 'automationPermission.info') {
+      return { loaded: true, policyId: 'native-session-automation-permission' };
+    }
+    if (method === 'sessions.create') return createPreparedSessionReceipt();
+    if (method === 'sessions.describe') {
+      describeCalls += 1;
+      return {
+        session: {
+          key: 'agent:main:justdo:session-1',
+          sessionId: 'gateway-session-1',
+          goal: describeCalls === 1 ? pausedGoal : replacementGoal,
+        },
+      };
+    }
+    if (method === 'sessions.goal.update') {
+      resumeRunId = String(params?.operationId);
+      return {
+        operationId: resumeRunId,
+        action: 'resume',
+        sessionId: 'gateway-session-1',
+        goalId: 'goal-1',
+        runId: resumeRunId,
+        status: 'started',
+        replayed: true,
+      };
+    }
+    if (method === 'sessions.list') {
+      return {
+        sessions: [
+          { key: 'agent:main:justdo:session-1', activeRunIds: [resumeRunId] },
+        ],
+      };
+    }
+    throw new Error(`unexpected method ${method}`);
+  });
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request,
+  };
+
+  await expect(
+    adapter.mutateSessionGoal('session-1', { action: 'resume', goalId: 'goal-1' }),
+  ).resolves.toMatchObject({
+    goal: { id: 'goal-2' },
+    execution: { goalId: 'goal-2', phase: 'waiting' },
+  });
+});
+
+test('reuses the exact Goal operation identity after an ambiguous transport failure', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const goal = {
+    schemaVersion: 1 as const,
+    id: 'goal-1',
+    objective: 'Ship the release',
+    status: 'paused' as const,
+    createdAt: 1,
+    updatedAt: 2,
+    tokenStart: 0,
+    tokensUsed: 0,
+    continuationTurns: 0,
+  };
+  let updateAttempts = 0;
+  const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
     if (method === 'automationPermission.info') {
       return { loaded: true, policyId: 'native-session-automation-permission' };
     }
@@ -2372,43 +2683,276 @@ test('resumes a blocked goal through a control run before user input', async () 
       return {
         session: {
           key: 'agent:main:justdo:session-1',
-          goal: {
-            schemaVersion: 1,
-            id: 'goal-1',
-            objective: 'Ship the release',
-            status: resumed ? 'active' : 'blocked',
-          },
+          sessionId: 'gateway-session-1',
+          goal,
         },
       };
     }
-    if (method === 'chat.send') {
-      resumed = true;
-      return { runId: 'resume-run', status: 'ok' };
+    if (method === 'sessions.goal.update') {
+      updateAttempts += 1;
+      if (updateAttempts === 1) {
+        throw Object.assign(new Error('unavailable after commit'), {
+          gatewayCode: 'UNAVAILABLE',
+          retryable: false,
+        });
+      }
+      return {
+        operationId: params?.operationId,
+        action: 'pause',
+        sessionId: 'gateway-session-1',
+        goalId: 'goal-1',
+        goal,
+        status: 'updated',
+        replayed: true,
+      };
     }
     if (method === 'sessions.create') return createPreparedSessionReceipt();
     throw new Error(`unexpected method ${method}`);
   });
-  const registerControlRun = vi.fn();
-  const unregisterControlRun = vi.fn();
-  const internals = adapter as unknown as {
-    gatewayClient: GatewayClientLike | null;
-    goalContinuationCoordinator: {
-      registerControlRun: typeof registerControlRun;
-      unregisterControlRun: (runId: string) => void;
-    };
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request,
   };
-  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
-  internals.goalContinuationCoordinator.registerControlRun = registerControlRun;
-  internals.goalContinuationCoordinator.unregisterControlRun = unregisterControlRun;
+  const operation = { action: 'pause' as const, goalId: 'goal-1', note: 'Hold.' };
 
-  await adapter.resumeGoalForUserInput('session-1');
-
-  expect(request).toHaveBeenCalledWith(
-    'chat.send',
-    expect.objectContaining({ message: '/goal resume', justdoUserInitiated: true }),
+  await expect(adapter.mutateSessionGoal('session-1', operation)).rejects.toThrow(
+    'unavailable after commit',
   );
-  expect(registerControlRun).toHaveBeenCalled();
-  expect(request.mock.calls.at(-1)?.[0]).toBe('sessions.describe');
+  await expect(adapter.mutateSessionGoal('session-1', operation)).resolves.toMatchObject({
+    mutation: { replayed: true },
+    goal: { status: 'paused' },
+  });
+
+  const updateParams = request.mock.calls
+    .filter(([method]) => method === 'sessions.goal.update')
+    .map(([, params]) => params);
+  expect(updateParams).toHaveLength(2);
+  expect(updateParams[1]).toEqual(updateParams[0]);
+});
+
+test('releases a retained Goal operation after a definitive mismatched receipt', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const goal = {
+    schemaVersion: 1 as const,
+    id: 'goal-1',
+    objective: 'Ship the release',
+    status: 'active' as const,
+    createdAt: 1,
+    updatedAt: 2,
+    tokenStart: 0,
+    tokensUsed: 0,
+    continuationTurns: 0,
+  };
+  const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+    if (method === 'automationPermission.info') {
+      return { loaded: true, policyId: 'native-session-automation-permission' };
+    }
+    if (method === 'sessions.create') return createPreparedSessionReceipt();
+    if (method === 'sessions.describe') {
+      return {
+        session: {
+          key: 'agent:main:justdo:session-1',
+          sessionId: 'gateway-session-1',
+          goal,
+        },
+      };
+    }
+    if (method === 'sessions.goal.update' && params?.action === 'pause') {
+      return {
+        operationId: 'wrong-operation',
+        action: 'pause',
+        sessionId: 'gateway-session-1',
+        goalId: 'goal-1',
+        goal,
+        status: 'updated',
+      };
+    }
+    if (method === 'sessions.goal.update' && params?.action === 'edit') {
+      return {
+        operationId: params.operationId,
+        action: 'edit',
+        sessionId: 'gateway-session-1',
+        goalId: 'goal-1',
+        goal: { ...goal, objective: String(params.objective) },
+        status: 'updated',
+      };
+    }
+    throw new Error(`unexpected method ${method}`);
+  });
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request,
+  };
+
+  await expect(
+    adapter.mutateSessionGoal('session-1', { action: 'pause', goalId: 'goal-1' }),
+  ).rejects.toThrow('mismatched goal mutation receipt');
+  await expect(
+    adapter.mutateSessionGoal('session-1', {
+      action: 'edit',
+      goalId: 'goal-1',
+      objective: 'Ship the release safely',
+    }),
+  ).resolves.toMatchObject({ goal: { objective: 'Ship the release safely' } });
+
+  expect(
+    request.mock.calls
+      .filter(([method]) => method === 'sessions.goal.update')
+      .map(([, params]) => params?.action),
+  ).toEqual(['pause', 'edit']);
+});
+
+test('settles an ambiguous Goal operation before applying a newer action', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const baseGoal = {
+    schemaVersion: 1 as const,
+    id: 'goal-1',
+    objective: 'Ship the release',
+    createdAt: 1,
+    updatedAt: 2,
+    tokenStart: 0,
+    tokensUsed: 0,
+    continuationTurns: 0,
+  };
+  let currentGoal: typeof baseGoal & { status: 'active' | 'paused' } = {
+    ...baseGoal,
+    status: 'active',
+  };
+  let pauseParams: Record<string, unknown> | undefined;
+  let pauseAttempts = 0;
+  const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+    if (method === 'automationPermission.info') {
+      return { loaded: true, policyId: 'native-session-automation-permission' };
+    }
+    if (method === 'sessions.create') return createPreparedSessionReceipt();
+    if (method === 'sessions.describe') {
+      return {
+        session: {
+          key: 'agent:main:justdo:session-1',
+          sessionId: 'gateway-session-1',
+          goal: currentGoal,
+          activeRunIds: [],
+        },
+      };
+    }
+    if (method === 'sessions.goal.update' && params?.action === 'pause') {
+      pauseAttempts += 1;
+      pauseParams ??= params;
+      currentGoal = { ...baseGoal, status: 'paused' as const, updatedAt: 3 };
+      if (pauseAttempts === 1) throw new Error('connection closed after commit');
+      return {
+        operationId: params.operationId,
+        action: 'pause',
+        sessionId: 'gateway-session-1',
+        goalId: 'goal-1',
+        goal: currentGoal,
+        status: 'updated',
+        replayed: true,
+      };
+    }
+    if (method === 'sessions.goal.update' && params?.action === 'resume') {
+      currentGoal = { ...baseGoal, status: 'active' as const, updatedAt: 4 };
+      return {
+        operationId: params.operationId,
+        action: 'resume',
+        sessionId: 'gateway-session-1',
+        goalId: 'goal-1',
+        goal: currentGoal,
+        runId: params.operationId,
+        status: 'started',
+      };
+    }
+    throw new Error(`unexpected method ${method}`);
+  });
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request,
+  };
+
+  await expect(
+    adapter.mutateSessionGoal('session-1', { action: 'pause', goalId: 'goal-1' }),
+  ).rejects.toThrow('connection closed after commit');
+  await expect(
+    adapter.mutateSessionGoal('session-1', { action: 'resume', goalId: 'goal-1' }),
+  ).resolves.toMatchObject({
+    goal: { status: 'active' },
+    execution: { phase: 'running', runId: expect.any(String) },
+  });
+
+  const updates = request.mock.calls.filter(([method]) => method === 'sessions.goal.update');
+  expect(updates.map(([, params]) => params?.action)).toEqual(['pause', 'pause', 'resume']);
+  expect(updates[1]?.[1]).toEqual(pauseParams);
+  expect(updates[2]?.[1]?.operationId).not.toBe(pauseParams?.operationId);
+});
+
+test('refreshes a replayed clear receipt and preserves a newer canonical goal', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const oldGoal = {
+    schemaVersion: 1 as const,
+    id: 'goal-1',
+    objective: 'Ship the release',
+    status: 'complete' as const,
+    createdAt: 1,
+    updatedAt: 2,
+    tokenStart: 0,
+    tokensUsed: 10,
+    continuationTurns: 1,
+  };
+  const newGoal = {
+    ...oldGoal,
+    id: 'goal-2',
+    objective: 'Prepare the next release',
+    status: 'active' as const,
+    updatedAt: 3,
+  };
+  let describeCalls = 0;
+  const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+    if (method === 'automationPermission.info') {
+      return { loaded: true, policyId: 'native-session-automation-permission' };
+    }
+    if (method === 'sessions.create') return createPreparedSessionReceipt();
+    if (method === 'sessions.describe') {
+      describeCalls += 1;
+      return {
+        session: {
+          key: 'agent:main:justdo:session-1',
+          sessionId: 'gateway-session-1',
+          goal: describeCalls === 1 ? oldGoal : newGoal,
+        },
+      };
+    }
+    if (method === 'sessions.goal.clear') {
+      return {
+        operationId: params?.operationId,
+        action: 'clear',
+        sessionId: 'gateway-session-1',
+        goalId: 'goal-1',
+        status: 'cleared',
+        replayed: true,
+      };
+    }
+    throw new Error(`unexpected method ${method}`);
+  });
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request,
+  };
+
+  await expect(
+    adapter.mutateSessionGoal('session-1', { action: 'clear', goalId: 'goal-1' }),
+  ).resolves.toMatchObject({
+    mutation: { replayed: true },
+    goal: { id: 'goal-2', status: 'active' },
+    execution: { goalId: 'goal-2' },
+  });
+  expect(describeCalls).toBe(2);
 });
 
 test('clears a completed goal before returning its objective for combined feedback', async () => {
@@ -2426,23 +2970,40 @@ test('clears a completed goal before returning its objective for combined feedba
     continuationTurns: 0,
   });
   let currentGoal: ReturnType<typeof goal> | null = goal('goal-1', 'complete');
-  const request = vi.fn(async (method: string) => {
+  const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+    if (method === 'automationPermission.info') {
+      return { loaded: true, policyId: 'native-session-automation-permission' };
+    }
+    if (method === 'sessions.create') return createPreparedSessionReceipt();
     if (method === 'sessions.describe') {
       return {
         session: {
           key: 'agent:main:justdo:session-1',
+          sessionId: 'gateway-session-1',
           goal: currentGoal,
         },
       };
     }
     if (method === 'sessions.goal.clear') {
       currentGoal = null;
-      return { ok: true, cleared: true, key: 'agent:main:justdo:session-1' };
+      return {
+        operationId: params?.operationId,
+        action: 'clear',
+        sessionId: 'gateway-session-1',
+        goalId: 'goal-1',
+        status: 'cleared',
+      };
     }
     throw new Error(`unexpected method ${method}`);
   });
-  const internals = adapter as unknown as { gatewayClient: GatewayClientLike | null };
+  const internals = adapter as unknown as {
+    gatewayClient: GatewayClientLike | null;
+    stoppedSessions: Map<string, number>;
+    manuallyStoppedSessions: Set<string>;
+  };
   internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.stoppedSessions.set('session-1', Date.now());
+  internals.manuallyStoppedSessions.add('session-1');
 
   const [first, concurrent] = await Promise.all([
     adapter.restartCompletedGoalForFeedback('session-1', 'goal-1'),
@@ -2451,14 +3012,22 @@ test('clears a completed goal before returning its objective for combined feedba
 
   expect(request).toHaveBeenCalledWith(
     'sessions.goal.clear',
-    { key: 'agent:main:justdo:session-1' },
+    expect.objectContaining({
+      sessionKey: 'agent:main:justdo:session-1',
+      sessionId: 'gateway-session-1',
+      goalId: 'goal-1',
+      operationId: expect.any(String),
+      issuedAtMs: expect.any(Number),
+    }),
   );
   expect(request.mock.calls.some(([method]) => method === 'chat.send')).toBe(false);
   expect(first).toEqual({ objective: 'Ship the release' });
   expect(concurrent).toEqual(first);
+  expect(internals.stoppedSessions.has('session-1')).toBe(false);
+  expect(internals.manuallyStoppedSessions.has('session-1')).toBe(false);
 });
 
-test('accepts active metadata while completion is already latched', async () => {
+test('does not clear active metadata based on a stale local completion latch', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
   let describeCount = 0;
@@ -2499,11 +3068,12 @@ test('accepts active metadata while completion is already latched', async () => 
 
   await expect(
     adapter.restartCompletedGoalForFeedback('session-1', 'goal-1'),
-  ).resolves.toEqual({ objective: 'Ship the release' });
-  expect(describeCount).toBe(2);
+  ).rejects.toThrow('completed goal changed');
+  expect(describeCount).toBe(4);
+  expect(request.mock.calls.some(([method]) => method === 'sessions.goal.clear')).toBe(false);
 });
 
-test('prepares a goal when completion is latched but metadata was reverted to active', async () => {
+test('requires canonical complete metadata before replacing a goal', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
   const makeGoal = (id: string) => ({
@@ -2547,11 +3117,8 @@ test('prepares a goal when completion is latched but metadata was reverted to ac
 
   await expect(
     adapter.restartCompletedGoalForFeedback('session-1', 'goal-1'),
-  ).resolves.toEqual({ objective: 'Ship the release' });
-  expect(request).toHaveBeenCalledWith(
-    'sessions.goal.clear',
-    { key: 'agent:main:justdo:session-1' },
-  );
+  ).rejects.toThrow('completed goal changed');
+  expect(request.mock.calls.some(([method]) => method === 'sessions.goal.clear')).toBe(false);
 });
 
 test('treats an already-cleared completed goal as prepared when the objective was persisted', async () => {
@@ -3008,75 +3575,6 @@ test('restores but does not duplicate a goal run already active after reconnect'
 
   expect(restoreRunning).toHaveBeenCalledWith('session-1', 'goal-1', 'active-run');
   expect(continueGoal).not.toHaveBeenCalled();
-});
-
-test('does not recover a resumed blocked goal before user input is accepted', async () => {
-  const { store } = createEmptyStore();
-  const adapter = new OpenClawRuntimeAdapter(store, {});
-  const request = vi.fn(async (method: string) => {
-    if (method === 'sessions.list') {
-      return {
-        sessions: [{
-          key: 'agent:main:justdo:session-1',
-          goal: { id: 'goal-1', status: 'active' },
-        }],
-      };
-    }
-    throw new Error(`unexpected method ${method}`);
-  });
-  const continueGoal = vi.fn();
-  const internals = adapter as unknown as {
-    gatewayClient: GatewayClientLike | null;
-    gatewayClientGeneration: number;
-    recoverActiveGoals: (generation: number) => Promise<void>;
-    goalsAwaitingResumeInput: Map<string, string>;
-    goalContinuationCoordinator: { continue: typeof continueGoal };
-  };
-  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
-  internals.gatewayClientGeneration = 6;
-  internals.goalsAwaitingResumeInput.set('session-1', 'goal-1');
-  internals.goalContinuationCoordinator.continue = continueGoal;
-
-  await internals.recoverActiveGoals(6);
-
-  expect(continueGoal).not.toHaveBeenCalled();
-});
-
-test('clears pending goal-input markers on the first direct renderer user run', () => {
-  const { store } = createEmptyStore();
-  const adapter = new OpenClawRuntimeAdapter(store, {});
-  const activity = vi.fn();
-  adapter.on('activity', activity);
-  const internals = adapter as unknown as {
-    goalsAwaitingResumeInput: Map<string, string>;
-  };
-  internals.goalsAwaitingResumeInput.set('session-1', 'goal-2');
-  adapter.rememberSessionKey('session-1', 'agent:main:justdo:session-1');
-
-  adapter.handleGatewayEvent({
-    event: 'agent',
-    payload: {
-      runId: 'child-run',
-      sessionKey: 'agent:main:justdo:session-1',
-      spawnedBy: 'parent-run',
-      stream: 'lifecycle',
-      data: { phase: 'start' },
-    },
-  });
-  expect(internals.goalsAwaitingResumeInput.has('session-1')).toBe(true);
-
-  adapter.handleGatewayEvent({
-    event: 'agent',
-    payload: {
-      runId: 'renderer-user-run',
-      sessionKey: 'agent:main:justdo:session-1',
-      stream: 'lifecycle',
-      data: { phase: 'start' },
-    },
-  });
-
-  expect(internals.goalsAwaitingResumeInput.has('session-1')).toBe(false);
-  expect(activity).toHaveBeenCalledWith('session-1', 'user', expect.any(Number));
 });
 
 test.each(['paused', 'blocked', 'complete'])('does not recover a %s goal after reconnect', async status => {

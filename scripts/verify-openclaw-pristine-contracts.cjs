@@ -137,6 +137,16 @@ function verifyPristineOpenClawContracts(runtimeDir, options = {}) {
           ['create_goal', 'update_goal', 'get_goal'],
           'native Goal tool surface',
         ),
+        findFileWithAll(
+          files,
+          ['"sessions.goal.update":', 'validateSessionsGoalUpdateParams', '"sessions.goal.clear":'],
+          'fenced native Goal mutation RPCs',
+        ),
+        findFileWithAll(
+          files,
+          ['action: "start"', 'operationId: p.idempotencyKey', 'issuedAtMs: p.intent.issuedAtMs'],
+          'idempotent session-goal-start chat intent',
+        ),
       ),
       'native-task-rpc-and-events': uniqueEvidence(
         findFileWithAll(

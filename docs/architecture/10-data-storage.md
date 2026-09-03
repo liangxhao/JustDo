@@ -207,7 +207,7 @@ SQLite transaction 只能保护本数据库，不能回滚 Gateway、文件系�
 
 ## 20. JSON 与枚举兼容
 
-`kv`/配置字段中的 JSON 是长期数据接口。读取时应对缺字段、旧 enum、坏 JSON 和 `NULL` 设置安全默认；写入时使用当前 canonical shape。Goal 的历史 usage/budget limited、旧 model ref、旧 agent model 空值等通过读取归一/启动迁移处理，不要让 Renderer 同时支持多套旧 shape。
+`kv`/配置字段中的 JSON 是长期数据接口。读取时应对缺字段、旧 enum、坏 JSON 和 `NULL` 设置安全默认；写入时使用当前 canonical shape。旧 model ref、旧 agent model 空值等通过读取归一/启动迁移处理，不要让 Renderer 同时支持多套旧 shape。Goal 不存入 JustDo SQLite；原生 `usage_limited` / `budget_limited` 是当前 Gateway 契约，必须原样投影，不能作为旧枚举折叠或迁移。
 
 ## 21. 数据保留与隐私
 

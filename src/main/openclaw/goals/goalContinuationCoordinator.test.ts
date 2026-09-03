@@ -1,13 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { GoalExecutionPhase, SessionGoalStatus } from '../../../shared/sessionGoal';
+import {
+  GoalExecutionPhase,
+  type SessionGoal,
+  SessionGoalStatus,
+} from '../../../shared/sessionGoal';
 import type { GatewayClientLike } from '../../engine/gateway/types';
 import { GoalContinuationCoordinator } from './goalContinuationCoordinator';
 
 const sessionId = 'session-1';
 const sessionKey = 'agent:main:justdo:session-1';
 
-const goal = (status: string = SessionGoalStatus.Active) => ({
+const goal = (status: SessionGoal['status'] = SessionGoalStatus.Active): SessionGoal => ({
   schemaVersion: 1,
   id: 'goal-1',
   objective: 'Ship the release',
@@ -20,7 +24,7 @@ const goal = (status: string = SessionGoalStatus.Active) => ({
 });
 
 const createHarness = (
-  goalStatus: string = SessionGoalStatus.Active,
+  goalStatus: SessionGoal['status'] = SessionGoalStatus.Active,
   waitBeforeAutomaticContinuation?: () => Promise<void>,
   maxContinuationTurns = 20,
   prepareSessionForContinuation = vi.fn().mockResolvedValue(undefined),
@@ -65,6 +69,127 @@ afterEach(() => {
 });
 
 describe('GoalContinuationCoordinator', () => {
+  it('reconciles structured mutation results into product execution state', () => {
+    const harness = createHarness();
+
+    harness.coordinator.synchronizeGoal(sessionId, goal(SessionGoalStatus.Paused));
+    expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({
+      goalId: 'goal-1',
+      phase: GoalExecutionPhase.Stopped,
+    });
+
+    harness.coordinator.restoreRunning(sessionId, 'goal-1', 'resume-run');
+    expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({
+      goalId: 'goal-1',
+      phase: GoalExecutionPhase.Running,
+      runId: 'resume-run',
+    });
+
+    harness.coordinator.clearSession(sessionId);
+    expect(harness.coordinator.getSnapshot(sessionId)).toBeNull();
+    expect(harness.onSnapshot).toHaveBeenLastCalledWith(
+      expect.objectContaining({ sessionId, phase: GoalExecutionPhase.Waiting }),
+    );
+  });
+
+  it('preserves an explicit local stop while editing the same active goal', () => {
+    const harness = createHarness();
+    harness.coordinator.restoreRunning(sessionId, 'goal-1', 'run-1');
+    harness.coordinator.stop(sessionId);
+    harness.coordinator.confirmStop(sessionId);
+
+    harness.coordinator.synchronizeGoal(sessionId, goal(SessionGoalStatus.Active), {
+      preserveStopped: true,
+    });
+
+    expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({
+      goalId: 'goal-1',
+      phase: GoalExecutionPhase.Stopped,
+    });
+  });
+
+  it('does not dispatch a continuation after the session goal is cleared during lookup', async () => {
+    let resolveGoal!: (value: { session: { key: string; goal: SessionGoal } }) => void;
+    const goalLookup = new Promise<{ session: { key: string; goal: SessionGoal } }>(resolve => {
+      resolveGoal = resolve;
+    });
+    const harness = createHarness();
+    harness.request.mockImplementation(async (method: string) => {
+      if (method === 'sessions.describe') return goalLookup;
+      if (method === 'agent') return { runId: 'accepted', status: 'accepted' };
+      throw new Error(`unexpected method ${method}`);
+    });
+
+    const continuing = harness.coordinator.continue(sessionId, sessionKey);
+    harness.coordinator.clearSession(sessionId);
+    resolveGoal({ session: { key: sessionKey, goal: goal() } });
+
+    await expect(continuing).rejects.toThrow('stopped');
+    expect(harness.request.mock.calls.some(([method]) => method === 'agent')).toBe(false);
+  });
+
+  it('rejects a manual continuation cleared during session preparation', async () => {
+    let resolvePreparation!: () => void;
+    const preparation = new Promise<void>(resolve => {
+      resolvePreparation = resolve;
+    });
+    const harness = createHarness(undefined, undefined, 20, vi.fn(() => preparation));
+
+    const continuing = harness.coordinator.continue(sessionId, sessionKey);
+    await vi.waitFor(() => expect(harness.prepareSessionForContinuation).toHaveBeenCalledOnce());
+    harness.coordinator.clearSession(sessionId);
+    resolvePreparation();
+
+    await expect(continuing).rejects.toThrow('stopped');
+    expect(harness.request.mock.calls.some(([method]) => method === 'agent')).toBe(false);
+  });
+
+  it('does not restore retry state when a cleared lifecycle lookup rejects', async () => {
+    let rejectGoal!: (error: Error) => void;
+    const goalLookup = new Promise<never>((_resolve, reject) => {
+      rejectGoal = reject;
+    });
+    const harness = createHarness();
+    harness.request.mockImplementation(async (method: string) => {
+      if (method === 'sessions.describe') return goalLookup;
+      throw new Error(`unexpected method ${method}`);
+    });
+
+    const handling = harness.coordinator.handleLifecycle({
+      runId: 'run-1',
+      sessionKey,
+      phase: 'end',
+    });
+    harness.coordinator.clearSession(sessionId);
+    rejectGoal(new Error('lookup unavailable'));
+    await handling;
+
+    expect(harness.coordinator.getSnapshot(sessionId)).toBeNull();
+    expect(harness.onSnapshot).toHaveBeenLastCalledWith(
+      expect.objectContaining({ sessionId, phase: GoalExecutionPhase.Waiting }),
+    );
+  });
+
+  it('ignores late terminal tool and lifecycle events from a cleared run', async () => {
+    const harness = createHarness();
+    harness.coordinator.restoreRunning(sessionId, 'goal-1', 'run-1');
+    harness.coordinator.clearSession(sessionId);
+
+    harness.coordinator.handleToolEvent({
+      runId: 'run-1',
+      sessionKey,
+      name: 'update_goal',
+      toolCallId: 'call-1',
+      input: { status: SessionGoalStatus.Complete },
+      status: 'completed',
+      failed: false,
+    });
+    await harness.coordinator.handleLifecycle({ runId: 'run-1', sessionKey, phase: 'end' });
+
+    expect(harness.coordinator.getSnapshot(sessionId)).toBeNull();
+    expect(harness.request).not.toHaveBeenCalled();
+  });
+
   it('dispatches another turn whenever a successful goal run remains active', async () => {
     const harness = createHarness();
 
@@ -210,23 +335,14 @@ describe('GoalContinuationCoordinator', () => {
   it.each([
     [SessionGoalStatus.Paused, GoalExecutionPhase.Stopped],
     [SessionGoalStatus.Blocked, GoalExecutionPhase.AwaitingInput],
+    [SessionGoalStatus.UsageLimited, GoalExecutionPhase.AwaitingInput],
+    [SessionGoalStatus.BudgetLimited, GoalExecutionPhase.AwaitingInput],
     [SessionGoalStatus.Complete, GoalExecutionPhase.AwaitingConfirmation],
   ] as const)('does not continue a %s goal', async (status, phase) => {
     const harness = createHarness(status);
     await harness.coordinator.handleLifecycle({ runId: `run-${status}`, sessionKey, phase: 'end' });
     expect(harness.request).not.toHaveBeenCalledWith('agent', expect.anything());
     expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({ phase });
-  });
-
-  it.each([
-    [SessionGoalStatus.UsageLimited, SessionGoalStatus.Blocked],
-    [SessionGoalStatus.BudgetLimited, SessionGoalStatus.Blocked],
-  ])('defensively treats unsupported %s as blocked', async status => {
-    const harness = createHarness(status);
-    await harness.coordinator.handleLifecycle({ runId: `run-${status}`, sessionKey, phase: 'end' });
-    expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({
-      phase: GoalExecutionPhase.AwaitingInput,
-    });
   });
 
   it.each([
@@ -643,26 +759,6 @@ describe('GoalContinuationCoordinator', () => {
       goalId: 'goal-2',
       phase: GoalExecutionPhase.Running,
     });
-  });
-
-  it('does not auto-continue an internal resume control run', async () => {
-    const harness = createHarness();
-    harness.coordinator.registerControlRun('resume-run');
-    await harness.coordinator.handleLifecycle({ runId: 'resume-run', sessionKey, phase: 'start' });
-    await harness.coordinator.handleLifecycle({ runId: 'resume-run', sessionKey, phase: 'end' });
-    expect(harness.request).not.toHaveBeenCalled();
-  });
-
-  it('does not let a late control start hide the user feedback terminal event', async () => {
-    const harness = createHarness();
-    harness.coordinator.registerControlRun('control-run');
-
-    await harness.coordinator.handleLifecycle({ runId: 'feedback-run', sessionKey, phase: 'start' });
-    await harness.coordinator.handleLifecycle({ runId: 'control-run', sessionKey, phase: 'start' });
-    await harness.coordinator.handleLifecycle({ runId: 'feedback-run', sessionKey, phase: 'end' });
-    await harness.coordinator.handleLifecycle({ runId: 'control-run', sessionKey, phase: 'end' });
-
-    expect(harness.request.mock.calls.filter(call => call[0] === 'agent')).toHaveLength(1);
   });
 
   it('deduplicates terminal lifecycle events and ignores unrelated sessions', async () => {

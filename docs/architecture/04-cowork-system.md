@@ -145,18 +145,21 @@ Main 不再拥有 `HistoryReconciler` 或消息 CRUD。Renderer controller 统�
 
 ## 10. Goal 生命周期
 
-`SessionGoalStatus` 契约枚举包含 `active`、`paused`、`blocked`、`usage_limited`、`budget_limited`、`complete`；其中 `usage_limited` 和 `budget_limited` 是历史兼容输入，`normalizeSessionGoal` 会将二者统一转成 `blocked`，Coordinator 不把它们当作独立运行状态。`GoalExecutionPhase` 包含 `waiting`、`running`、`continuing`、`retrying`、`awaiting_input`、`awaiting_confirmation`、`stopped`。
+OpenClaw 的 session row 是 Goal 内容、状态、token 预算和状态时间戳的唯一权威。`SessionGoalStatus` 原样保留 `active`、`paused`、`blocked`、`usage_limited`、`budget_limited`、`complete` 六种原生状态；后两者不能折叠成 `blocked`，因为 resume 会为受限 Goal 重置预算窗口。JustDo 的 `GoalExecutionPhase` 仅描述产品侧自动续跑状态：`waiting`、`running`、`continuing`、`retrying`、`awaiting_input`、`awaiting_confirmation`、`stopped`。
 
-Goal continuation coordinator 监听 tool/lifecycle：
+新 Goal 通过 `chat.send` 的 `session-goal-start` intent 建立。`message` 是 NFC 规范化后的原文目标，`idempotencyKey` 同时是 operation identity，`issuedAtMs` 在不确定重试时保持不变。发送前必须通过 `sessions.create` 取得并携带精确 `sessionId`；Goal admission 不携带 `timeoutMs`、queue 或其他临时 runtime override。
 
-- active goal 在普通 run 结束且无托管 subagent 未完成时，可发起继续；
-- control run 与 user-input run 单独登记，避免把 `/goal resume` 当普通任务；
-- blocked goal 的 resume 先通过 `sessions.describe` 验证相同 goal id；
-- completed goal 接收反馈时，先原子确认 goal 未变化，再 clear 并用 follow-up prompt 建立新目标上下文；
-- reconnect 会从本地 snapshot 与 Gateway goal/runtime 恢复，完整 `sessions.list` 优先于逐个 describe；
-- UI 的 continue/resume/feedback 操作使用 single-flight，避免重复控制。
+编辑、暂停、恢复和清除不再拼接 slash command，而走 `sessions.goal.update` / `sessions.goal.clear`。每次请求同时携带 `sessionKey`、`agentId`、`sessionId`、`goalId`、`operationId`、`issuedAtMs`：session/goal identity 防止迟到按钮修改替换后的目标，24 小时 durable receipt 使响应丢失后的同一请求可安全重放。收到 replay receipt 后必须重新 `sessions.describe`，不能把 receipt 中的历史快照直接当当前状态。Resume RPC 会在同一原子流程中激活 Goal 并启动隐藏 continuation，用户补充内容放在最长 2000 字符的 `note` 中；Renderer 不再随后发送第二个普通 chat turn。
 
-Renderer 的 GoalStatusCard 只按 snapshot 派生文案和按钮，不自行改服务端状态。
+Goal continuation coordinator 只负责产品自动续跑：
+
+- `active` Goal 在普通 run 结束且无托管 subagent 未完成时可发起下一 turn；
+- `paused` 映射为本地 stopped，`blocked`/两种 limited 映射为 awaiting input，`complete` 映射为 awaiting confirmation；
+- reconnect 从本地 execution snapshot 与 Gateway Goal/runtime 恢复，但任何 canonical Goal 状态都会覆盖本地推断；
+- completed Goal 接收后续反馈时，必须重新确认同一 `goalId` 仍为 canonical `complete`，再 structured clear，并以用户反馈原文建立新 Goal；
+- continue、mutation 和 feedback replacement 均按 session single-flight，且只接受匹配当前 generation 的迟到结果。
+
+Renderer 的 GoalStatusCard 只投影 Gateway Goal 与 Main execution snapshot。卡片区分 usage/budget limited，展示 token 使用量；运行时长在 active 状态增长，其他状态冻结在对应原生时间戳。Renderer 不能乐观伪造服务端 lifecycle。
 
 ## 11. Ask-user 与 Approval
 

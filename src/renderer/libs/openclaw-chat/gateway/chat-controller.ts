@@ -38,6 +38,13 @@ import {
 } from '@shared/openclaw/progressCard';
 import { extractGoalFollowUpRequest } from '@shared/prompts/goalFollowUpPrompt';
 import {
+  isDefinitiveSessionGoalGatewayError,
+  normalizeSessionGoal,
+  type SessionGoalMutationResult,
+  SessionGoalStatus,
+} from '@shared/sessionGoal';
+import {
+  parseGoalStartObjective,
   resolveSlashCommandBehavior,
   SlashCommandBeforeSendHook,
   SlashCommandExecution,
@@ -617,6 +624,11 @@ export class ChatController {
   private runProbeToken: symbol | null = null;
   private terminalLifecycleSeen = false;
   private transcriptIdSequence = 0;
+  private readonly retainedGoalStartOperations = new Map<string, {
+    signature: string;
+    operationId: string;
+    issuedAtMs: number;
+  }>();
   private readonly expectInitialHistory: boolean;
   private readonly initialMessageSubscriptionBarrierTimeoutMs: number;
   private readonly initialHistoryRetryDelaysMs: readonly number[];
@@ -4904,8 +4916,12 @@ export class ChatController {
     if (!client || !this.state.connected) throw new Error('not connected');
     if (this.state.chatSending) throw new Error('A message is already being sent');
 
-    const displayMessage = extractGoalFollowUpRequest(gatewayMessage) ?? message;
-    const slashCommand = resolveSlashCommandBehavior(gatewayMessage);
+    const goalStartObjective = parseGoalStartObjective(gatewayMessage);
+    const gatewayOutboundMessage = goalStartObjective ?? gatewayMessage;
+    const displayMessage =
+      goalStartObjective ?? extractGoalFollowUpRequest(gatewayMessage) ?? message;
+    const slashCommand =
+      goalStartObjective === null ? resolveSlashCommandBehavior(gatewayMessage) : null;
     if (slashCommand?.execution === SlashCommandExecution.Blocked) {
       const error = new Error(
         `/${slashCommand.name} is managed by the application and cannot be sent as a chat command.`,
@@ -4927,7 +4943,11 @@ export class ChatController {
     this.ensureTranscriptSessionIdentity();
 
     try {
-      for (const hook of slashCommand?.beforeSend ?? []) {
+      const beforeSendHooks =
+        goalStartObjective === null
+          ? (slashCommand?.beforeSend ?? [])
+          : [SlashCommandBeforeSendHook.EnsureSessionEntry];
+      for (const hook of beforeSendHooks) {
         const handler = this.slashCommandBeforeSendHandlers.get(hook);
         if (!handler) throw new Error(`No slash command hook registered for ${hook}`);
         await handler(sessionKey);
@@ -4941,9 +4961,40 @@ export class ChatController {
       throw sessionError;
     }
 
-    const runId =
+    const goalStartSessionId =
+      goalStartObjective === null ? null : this.state.currentSessionId?.trim();
+    if (goalStartObjective !== null && !goalStartSessionId) {
+      throw new Error('Gateway session identity is unavailable for Goal start');
+    }
+
+    const proposedRunId =
       options.clientTurnId?.trim() ||
       `justdo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const goalStartSignature =
+      goalStartObjective === null
+        ? null
+        : JSON.stringify([
+            sessionKey,
+            goalStartSessionId,
+            goalStartObjective,
+            attachments.map(attachment => [
+              attachment.name,
+              attachment.mimeType,
+              attachment.base64Data,
+            ]),
+          ]);
+    let goalStartOperation =
+      goalStartSignature ? (this.retainedGoalStartOperations.get(goalStartSignature) ?? null) : null;
+    if (goalStartSignature && !goalStartOperation) {
+      const encodedIssuedAtMs = /^justdo-(\d{10,16})-/.exec(proposedRunId)?.[1];
+      goalStartOperation = {
+        signature: goalStartSignature,
+        operationId: proposedRunId,
+        issuedAtMs: encodedIssuedAtMs ? Number(encodedIssuedAtMs) : Date.now(),
+      };
+      this.retainedGoalStartOperations.set(goalStartSignature, goalStartOperation);
+    }
+    const runId = goalStartOperation?.operationId ?? proposedRunId;
     debugLog('[ChatCtrl] sendMessage:', displayMessage.slice(0, 60), {
       sessionKey,
       runId,
@@ -4992,19 +5043,87 @@ export class ChatController {
       const gatewayAttachments = attachments
         .filter(attachment => attachment.base64Data)
         .map(toGatewayAttachment);
-      const ack = await client.request<{ runId?: string; status?: string }>('chat.send', {
+      const ack = await client.request<
+        SessionGoalMutationResult | { runId?: string; status?: string }
+      >('chat.send', {
         sessionKey,
-        ...(this.state.currentSessionId ? { sessionId: this.state.currentSessionId } : {}),
-        message: gatewayMessage,
+        ...(goalStartSessionId || this.state.currentSessionId
+          ? { sessionId: goalStartSessionId || this.state.currentSessionId }
+          : {}),
+        message: gatewayOutboundMessage,
+        ...(goalStartOperation
+          ? {
+              intent: {
+                kind: 'session-goal-start',
+                version: 1,
+                issuedAtMs: goalStartOperation.issuedAtMs,
+              },
+            }
+          : {}),
         deliver: false,
         justdoUserInitiated: true,
         idempotencyKey: runId,
         ...(gatewayAttachments.length > 0 ? { attachments: gatewayAttachments } : {}),
       });
+      if (goalStartOperation) {
+        const receipt = asRecord(ack);
+        const receiptGoal = asRecord(receipt?.goal);
+        if (
+          receipt?.operationId !== runId ||
+          receipt.action !== 'start' ||
+          receipt.sessionId !== goalStartSessionId ||
+          receipt.status !== 'started' ||
+          receipt.runId !== runId ||
+          typeof receipt.goalId !== 'string' ||
+          !receipt.goalId.trim() ||
+          (receipt.goal !== undefined && receiptGoal?.id !== receipt.goalId)
+        ) {
+          throw new Error('Gateway returned a mismatched Goal start receipt');
+        }
+      }
       try {
         await options.onRunBound?.(ack?.runId ?? runId);
       } catch (error) {
         debugLog('[ChatCtrl] failed to persist root run binding', error);
+      }
+      if (goalStartOperation && 'replayed' in ack && ack.replayed) {
+        const [described, listed] = await Promise.all([
+          client.request<{ session?: { goal?: unknown } | null }>('sessions.describe', {
+            key: sessionKey,
+          }),
+          client.request<{ sessions?: unknown[] }>('sessions.list', {
+            search: sessionKey,
+            limit: 20,
+          }),
+        ]);
+        const runtimeRow = (listed.sessions ?? []).map(asRecord).find(row => {
+          const key = typeof row?.key === 'string' ? row.key : '';
+          return normalizeTranscriptSessionKey(key) === normalizeTranscriptSessionKey(sessionKey);
+        });
+        const activeRunIds = readStringList(runtimeRow?.activeRunIds);
+        const currentGoal = normalizeSessionGoal(described.session?.goal);
+        const replayStillCurrent =
+          activeRunIds.includes(runId) &&
+          currentGoal?.id === ack.goalId &&
+          currentGoal.status === SessionGoalStatus.Active;
+        if (!replayStillCurrent) {
+          if (
+            goalStartSignature &&
+            this.retainedGoalStartOperations.get(goalStartSignature) === goalStartOperation
+          ) {
+            this.retainedGoalStartOperations.delete(goalStartSignature);
+          }
+          this.settleChatSend(sessionKey, runId, 'final');
+          void this.loadHistory(true);
+          return;
+        }
+      }
+      if (
+        goalStartOperation &&
+        goalStartSignature &&
+        this.retainedGoalStartOperations.get(goalStartSignature) === goalStartOperation
+      ) {
+        this.retainedGoalStartOperations.delete(goalStartSignature);
       }
 
       if (ack?.runId) this.bindAcknowledgedRun(sessionKey, runId, ack.runId);
@@ -5017,6 +5136,14 @@ export class ChatController {
         this.settleChatSend(sessionKey, acknowledgedRunId, 'final');
       }
     } catch (err) {
+      if (
+        goalStartOperation &&
+        goalStartSignature &&
+        this.retainedGoalStartOperations.get(goalStartSignature) === goalStartOperation &&
+        isDefinitiveSessionGoalGatewayError(err)
+      ) {
+        this.retainedGoalStartOperations.delete(goalStartSignature);
+      }
       if (this.getSessionRunId(sessionKey) !== runId) {
         if (options.propagateRequestFailure) throw err;
         return;

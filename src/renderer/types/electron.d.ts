@@ -744,6 +744,16 @@ interface IElectronAPI {
       goal?: import('@shared/sessionGoal').SessionGoal;
       error?: string;
     }>;
+    mutateSessionGoal: (
+      sessionId: string,
+      request: import('@shared/sessionGoal').SessionGoalMutationRequest,
+    ) => Promise<{
+      success: boolean;
+      mutation?: import('@shared/sessionGoal').SessionGoalMutationResult;
+      goal?: import('@shared/sessionGoal').SessionGoal | null;
+      execution?: import('@shared/sessionGoal').GoalExecutionSnapshot;
+      error?: string;
+    }>;
     getGoalExecution: (sessionId: string) => Promise<{
       success: boolean;
       execution?: import('@shared/sessionGoal').GoalExecutionSnapshot;
@@ -754,7 +764,6 @@ interface IElectronAPI {
       execution?: import('@shared/sessionGoal').GoalExecutionSnapshot;
       error?: string;
     }>;
-    resumeGoalForUserInput: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
     restartCompletedGoalForFeedback: (
       sessionId: string,
       goalId: string,

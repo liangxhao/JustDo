@@ -1,5 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { SessionGoalIpc } from '../../../shared/sessionGoal';
+
+const electronMocks = vi.hoisted(() => ({ handle: vi.fn() }));
+
+vi.mock('electron', () => ({
+  ipcMain: { handle: electronMocks.handle },
+}));
+
 import {
   createSingleFlightTtlLookup,
   loadCoworkSessionDetails,
@@ -8,6 +16,7 @@ import {
   readGatewaySessionId,
   readSessionGoal,
   readUsage,
+  registerCoworkSessionRuntimeHandlers,
 } from './sessionRuntime';
 
 describe('loadCoworkSessionDetails', () => {
@@ -317,11 +326,11 @@ describe('readSessionGoal', () => {
       }),
     ).toMatchObject({
       id: 'goal-1',
-      objective: 'Ship the goal UI',
+      objective: '  Ship the goal UI  ',
       status: 'blocked',
       tokensUsed: 25,
       tokenBudget: 50,
-      lastStatusNote: 'Waiting for review',
+      lastStatusNote: '  Waiting for review  ',
     });
   });
 
@@ -716,7 +725,7 @@ describe('readUsage', () => {
   });
 
   it.each(['usage_limited', 'budget_limited'])(
-    'normalizes unsupported %s goals to blocked',
+    'preserves the native %s lifecycle state',
     status => {
       expect(
         readSessionGoal({
@@ -725,7 +734,7 @@ describe('readUsage', () => {
           objective: 'Ship it',
           status,
         }),
-      ).toMatchObject({ status: 'blocked' });
+      ).toMatchObject({ status });
     },
   );
 });
@@ -786,5 +795,63 @@ describe('createSingleFlightTtlLookup', () => {
     currentTime += 751;
     await expect(lookup('session-1')).resolves.toBe('value-3');
     expect(loader).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('session Goal mutation IPC', () => {
+  it('validates and forwards a fenced structured mutation', async () => {
+    electronMocks.handle.mockClear();
+    const outcome = {
+      mutation: {
+        operationId: 'operation-1',
+        action: 'pause' as const,
+        sessionId: 'gateway-session-1',
+        goalId: 'goal-1',
+        status: 'updated' as const,
+      },
+      goal: null,
+    };
+    const mutateSessionGoal = vi.fn().mockResolvedValue(outcome);
+    registerCoworkSessionRuntimeHandlers({
+      getCoworkStore: vi.fn() as never,
+      getCoworkEngineRouter: vi.fn() as never,
+      getRuntime: () => ({ mutateSessionGoal }) as never,
+      getGatewaySessionUsage: vi.fn() as never,
+    });
+    const handler = electronMocks.handle.mock.calls.find(
+      ([channel]) => channel === SessionGoalIpc.Mutate,
+    )?.[1] as ((event: unknown, sessionId: string, value: unknown) => Promise<unknown>) | undefined;
+
+    await expect(
+      handler?.({}, 'local-session-1', {
+        action: 'pause',
+        goalId: ' goal-1 ',
+        note: '  wait for CI  ',
+      }),
+    ).resolves.toEqual({ success: true, ...outcome });
+    expect(mutateSessionGoal).toHaveBeenCalledWith('local-session-1', {
+      action: 'pause',
+      goalId: 'goal-1',
+      note: '  wait for CI  ',
+    });
+  });
+
+  it('rejects an invalid mutation before touching the runtime', async () => {
+    electronMocks.handle.mockClear();
+    const mutateSessionGoal = vi.fn();
+    registerCoworkSessionRuntimeHandlers({
+      getCoworkStore: vi.fn() as never,
+      getCoworkEngineRouter: vi.fn() as never,
+      getRuntime: () => ({ mutateSessionGoal }) as never,
+      getGatewaySessionUsage: vi.fn() as never,
+    });
+    const handler = electronMocks.handle.mock.calls.find(
+      ([channel]) => channel === SessionGoalIpc.Mutate,
+    )?.[1] as ((event: unknown, sessionId: string, value: unknown) => Promise<unknown>) | undefined;
+
+    await expect(
+      handler?.({}, 'local-session-1', { action: 'resume', goalId: '' }),
+    ).resolves.toEqual({ success: false, error: 'Invalid session goal operation' });
+    expect(mutateSessionGoal).not.toHaveBeenCalled();
   });
 });

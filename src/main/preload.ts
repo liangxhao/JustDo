@@ -94,6 +94,7 @@ import {
   GoalExecutionIpc,
   type GoalExecutionSnapshot,
   SessionGoalIpc,
+  type SessionGoalMutationRequest,
 } from '../shared/sessionGoal';
 import { SlashCommandIpc } from '../shared/slashCommands';
 
@@ -388,10 +389,10 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('cowork:session:model', options),
     listSessions: (agentId?: string) => ipcRenderer.invoke('cowork:session:list', agentId),
     getSessionGoal: (sessionId: string) => ipcRenderer.invoke('cowork:session:goal', sessionId),
+    mutateSessionGoal: (sessionId: string, request: SessionGoalMutationRequest) =>
+      ipcRenderer.invoke(SessionGoalIpc.Mutate, sessionId, request),
     getGoalExecution: (sessionId: string) => ipcRenderer.invoke(GoalExecutionIpc.Get, sessionId),
     continueGoal: (sessionId: string) => ipcRenderer.invoke(GoalExecutionIpc.Continue, sessionId),
-    resumeGoalForUserInput: (sessionId: string) =>
-      ipcRenderer.invoke(GoalExecutionIpc.ResumeForUserInput, sessionId),
     restartCompletedGoalForFeedback: (sessionId: string, goalId: string, objective?: string) =>
       ipcRenderer.invoke(GoalExecutionIpc.RestartCompletedForFeedback, {
         sessionId,
