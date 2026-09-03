@@ -8,6 +8,7 @@
  * with a direct gateway connection, identical to OpenClaw's webchat.
  */
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
+import type { ProgressCardViewState } from '@shared/openclaw/progressCard';
 import {
   forwardRef,
   useEffect,
@@ -52,6 +53,7 @@ interface JustDoChatWrapperProps {
   onSearchMatchCountChange?: (total: number, index: number) => void;
   onActivityChange?: (progress: GoalRunProgress | null) => void;
   onContextUsageChange?: (usage: ChatContextUsageSnapshot | null) => void;
+  onProgressCardChange?: (state: ProgressCardViewState | null) => void;
   runTimings?: SessionRunTiming[];
 }
 
@@ -77,6 +79,8 @@ export interface JustDoChatWrapperRef {
   registerSessionPromotion: (sourceSessionKey: string, targetSessionKey: string) => void;
   /** Clear sending state (e.g. when session start fails) */
   clearSending: () => void;
+  /** Clear the current card only if its completed revision is still current. */
+  dismissProgressCard: () => Promise<boolean>;
 }
 
 const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProps>(
@@ -93,6 +97,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       onSearchMatchCountChange,
       onActivityChange,
       onContextUsageChange,
+      onProgressCardChange,
       runTimings = [],
     },
     ref,
@@ -106,8 +111,10 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     const connectedRef = useRef(false);
     const onActivityChangeRef = useRef(onActivityChange);
     const onContextUsageChangeRef = useRef(onContextUsageChange);
+    const onProgressCardChangeRef = useRef(onProgressCardChange);
     const lastActivityKeyRef = useRef('');
     const lastContextUsageKeyRef = useRef('');
+    const lastProgressCardKeyRef = useRef('');
     const [connectionError, setConnectionError] = useState<string | null>(null);
     // Buffer for pending user message when the controller is not yet created
     const pendingUserMessageRef = useRef<{
@@ -123,6 +130,10 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     useEffect(() => {
       onContextUsageChangeRef.current = onContextUsageChange;
     }, [onContextUsageChange]);
+
+    useEffect(() => {
+      onProgressCardChangeRef.current = onProgressCardChange;
+    }, [onProgressCardChange]);
 
     // Expose sendMessage and setPendingUserMessage to parent via ref
     useImperativeHandle(
@@ -162,6 +173,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         clearSending: () => {
           controllerRef.current?.clearSending();
         },
+        dismissProgressCard: async () => controllerRef.current?.dismissProgressCard() ?? false,
       }),
       [],
     );
@@ -194,6 +206,23 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         if (contextKey !== lastContextUsageKeyRef.current) {
           lastContextUsageKeyRef.current = contextKey;
           onContextUsageChangeRef.current?.(usage);
+        }
+        const progressCardKey = [
+          controller.state.sessionKey,
+          controller.state.progressCard?.revision ?? 'none',
+          controller.state.progressCardLoading,
+          controller.state.progressCardAvailable,
+          controller.state.progressCardError ?? '',
+        ].join(':');
+        if (progressCardKey !== lastProgressCardKeyRef.current) {
+          lastProgressCardKeyRef.current = progressCardKey;
+          onProgressCardChangeRef.current?.({
+            sessionKey: controller.state.sessionKey,
+            card: controller.state.progressCard,
+            loading: controller.state.progressCardLoading,
+            available: controller.state.progressCardAvailable,
+            error: controller.state.progressCardError,
+          });
         }
       };
       const unsubscribeState = controller.subscribe(publishActivity);
@@ -251,8 +280,10 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         unsubscribeStream();
         lastActivityKeyRef.current = '';
         lastContextUsageKeyRef.current = '';
+        lastProgressCardKeyRef.current = '';
         onActivityChangeRef.current?.(null);
         onContextUsageChangeRef.current?.(null);
+        onProgressCardChangeRef.current?.(null);
         debugLog('[JustDoChatWrapper] cleanup — disconnecting controller');
         try {
           controller.disconnect();

@@ -40,7 +40,7 @@ JustDo 是 local-first 的 Electron 桌面助手。用户在桌面 UI 中创建�
 
 ### 4.1 Cowork 与持续目标
 
-Cowork 支持创建、继续、停止和删除会话，选择 agent、模型、工作目录和权限模式，发送附件，查看 thinking、工具执行、execution plan、目标状态和 subagent 活动。会话可以分组、固定、重命名、导出并恢复历史。
+Cowork 支持创建、继续、停止和删除会话，选择 agent、模型、工作目录和权限模式，发送附件，查看 thinking、工具执行、Gateway session progress card、目标状态和 subagent 活动。会话可以分组、固定、重命名、导出并恢复历史。
 
 目标状态由 Gateway session goal metadata 与 Main 协调器共同维护；SQLite 只保存产品侧的 goal execution snapshot，不是目标权威。当前实际状态为 active、paused、blocked、complete；共享契约保留的 usage/budget limited 兼容值在读取时统一归一为 blocked。执行阶段支持 running、continuing、retrying、等待输入/确认等。UI 只呈现并发起继续或反馈，不自行认定任务完成。
 

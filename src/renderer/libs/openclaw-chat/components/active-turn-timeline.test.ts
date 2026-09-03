@@ -8,7 +8,7 @@ vi.mock('./markdown', () => ({
   toStreamingMarkdownHtml: (text: string) => text,
 }));
 
-import { latestPlanUpdateKey, type ProcessSummaryTimelineItem } from '../model/project-turn-items';
+import type { ProcessSummaryTimelineItem } from '../model/project-turn-items';
 import { renderTimelineItem } from './active-turn-timeline';
 
 function flatten(value: unknown): string {
@@ -251,7 +251,6 @@ describe('active turn timeline', () => {
         Date.now(),
         false,
         true,
-        false,
         new Map([['edit-live', 'split']]),
         vi.fn(),
       ),
@@ -295,23 +294,23 @@ describe('active turn timeline', () => {
     );
   });
 
-  test('renders update_plan as an always-visible ordered plan card', () => {
-    const plan = {
-      kind: 'plan-update' as const,
-      key: 'plan:tool-plan',
+  test('renders progress_card as a compact receipt without duplicating the card body', () => {
+    const receipt = {
+      kind: 'progress-receipt' as const,
+      key: 'progress:tool-progress',
       item: {
-        id: 'tool-plan',
+        id: 'tool-progress',
         runId: 'run-1',
         firstSeq: 1,
         lastSeq: 1,
         startedAt: 1,
         updatedAt: 1,
         type: 'tool' as const,
-        status: 'running' as const,
-        toolCallId: 'call-plan',
-        name: 'update_plan',
+        status: 'completed' as const,
+        toolCallId: 'call-progress',
+        name: 'progress_card',
         input: {
-          explanation: 'Starting the implementation',
+          markdown: 'Starting the implementation',
           plan: [
             { step: 'Inspect existing code', status: 'completed' },
             { step: 'Build the timeline card', status: 'in_progress' },
@@ -320,35 +319,41 @@ describe('active turn timeline', () => {
         },
       },
     };
-    const rendered = flatten(renderTimelineItem(plan));
-    const liveRendered = flatten(renderTimelineItem(plan, Date.now(), false, true, true));
-    const latestPlan = {
-      ...plan,
-      key: 'plan:tool-plan-latest',
-      item: { ...plan.item, id: 'tool-plan-latest' },
-    };
+    const rendered = flatten(renderTimelineItem(receipt));
 
-    expect(rendered).toContain('data-plan-update-id');
-    expect(rendered).toContain('chat-group--plan-update');
-    expect(rendered).toContain('更新计划');
-    expect(rendered).toContain('已完成 1/3');
-    expect(rendered.indexOf('<strong>更新计划</strong>')).toBeLessThan(
-      rendered.indexOf('已完成 1/3'),
-    );
-    expect(rendered).toContain('Starting the implementation');
-    expect(rendered.indexOf('Inspect existing code')).toBeLessThan(
-      rendered.indexOf('Build the timeline card'),
-    );
-    expect(rendered).toContain('execution-plan-update__step--completed');
-    expect(rendered).toContain('execution-plan-update__step--in_progress');
-    expect(rendered).toContain('execution-plan-update__step--pending');
-    expect(rendered.match(/aria-label=已完成/g)).toHaveLength(1);
-    expect(rendered.match(/aria-label=进行中/g)).toHaveLength(1);
-    expect(rendered.match(/aria-label=待处理/g)).toHaveLength(1);
+    expect(rendered).toContain('data-progress-receipt-id');
+    expect(rendered).toContain('chat-group--progress-receipt');
+    expect(rendered).toContain('进度已更新 · 1/3 · Build the timeline card');
+    expect(rendered).not.toContain('Starting the implementation');
+    expect(rendered).not.toContain('Inspect existing code');
+    expect(rendered).not.toContain('Run validation');
     expect(rendered).not.toContain('<details');
-    expect(rendered).not.toContain('execution-plan-update--live');
-    expect(liveRendered).toContain('execution-plan-update--live');
-    expect(latestPlanUpdateKey([plan, latestPlan])).toBe(latestPlan.key);
+  });
+
+  test('does not claim a progress card was cleared when history omitted the Tool input', () => {
+    const rendered = flatten(
+      renderTimelineItem({
+        kind: 'progress-receipt',
+        key: 'history-progress:tool-progress-result-only',
+        item: {
+          id: 'tool-progress-result-only',
+          runId: 'run-1',
+          firstSeq: 2,
+          lastSeq: 2,
+          startedAt: 1,
+          updatedAt: 2,
+          type: 'tool',
+          status: 'completed',
+          toolCallId: 'call-progress-result-only',
+          name: 'progress_card',
+          output: 'Progress card updated.',
+        },
+      }),
+    );
+
+    expect(rendered).toContain('进度已更新');
+    expect(rendered).not.toContain('进度卡已清除');
+    expect(rendered).not.toContain('role="status"');
   });
 
   test('does not put archived details or Tool input into the main timeline DOM', () => {

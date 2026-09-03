@@ -71,9 +71,9 @@ Skills状态来自 Gateway，MCP/Hook配置来自 Main stores并同步，Extensi
 
 Renderer可以展示菜单/抽屉/label；status和parent/run由 Gateway或adapter normalize。不能根据文本“subagent complete”猜状态。
 
-### 5.4 Execution plan
+### 5.4 Session progress card
 
-UI把结构化 plan update投影为卡片；不从普通Markdown checklist推断计划，也不回写步骤状态除非调用明确工具/API。
+Renderer 通过 Gateway 的 `progressCard.get` 读取 session 级耐久状态，并在 `progressCard.changed` 后按 revision 失效重取；`progress_card` 工具调用在 transcript 中只保留紧凑回执。UI 不从普通 Markdown checklist 推断计划，也不在本地维护第二份步骤状态。只有全部步骤完成时才允许携带 `expectedRevision` 调用 `progressCard.put` 清除，避免覆盖并发更新。
 
 ### 5.5 Scheduled result
 
@@ -238,16 +238,16 @@ SQLite 会清理产品 `running` 快照/计时，Gateway runtime status 决定�
 
 ## 19. 测试证据
 
-| 不变量                     | 主要测试                                                                  |
-| -------------------------- | ------------------------------------------------------------------------- |
-| session/run 域归属         | `src/shared/openclaw/messageDomain.test.ts`、`agentEvent.test.ts`         |
-| Gateway lifecycle adapter  | `src/main/engine/openclaw/openclawRuntimeAdapter.test.ts`                 |
-| history/live 合并          | Renderer `chat-controller.test.ts` 与 `history-reconciler.test.ts`       |
-| optimistic 去重            | `optimistic-user-message.test.ts`、`optimistic-history-tail.test.ts`      |
-| 有界历史                   | `history-window.test.ts`、`chunked-message-history.test.ts`               |
-| reducer 事件状态           | `agent-event-reducer.test.ts`、`run-activity.test.ts`                     |
-| scroll/render batching     | `chat-scroll-controller.test.ts`、`stream-render-scheduler.test.ts`       |
-| timeline 构建              | `build-chat-items.test.ts`、`project-history-timeline.test.ts`            |
+| 不变量                    | 主要测试                                                             |
+| ------------------------- | -------------------------------------------------------------------- |
+| session/run 域归属        | `src/shared/openclaw/messageDomain.test.ts`、`agentEvent.test.ts`    |
+| Gateway lifecycle adapter | `src/main/engine/openclaw/openclawRuntimeAdapter.test.ts`            |
+| history/live 合并         | Renderer `chat-controller.test.ts` 与 `history-reconciler.test.ts`   |
+| optimistic 去重           | `optimistic-user-message.test.ts`、`optimistic-history-tail.test.ts` |
+| 有界历史                  | `history-window.test.ts`、`chunked-message-history.test.ts`          |
+| reducer 事件状态          | `agent-event-reducer.test.ts`、`run-activity.test.ts`                |
+| scroll/render batching    | `chat-scroll-controller.test.ts`、`stream-render-scheduler.test.ts`  |
+| timeline 构建             | `build-chat-items.test.ts`、`project-history-timeline.test.ts`       |
 
 ## 20. 维护清单
 

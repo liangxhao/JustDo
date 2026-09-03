@@ -149,6 +149,7 @@
     "markdown-it-task-lists": "^2.1.1",
     "markdown-it-texmath": "^1.0.0",
     "mermaid": "^10.9.5",
+    "monaco-editor": "0.55.1",
     "postcss": "^8.4.35",
     "prettier": "^3.8.1",
     "proxy-agent": "^6.5.0",

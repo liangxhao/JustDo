@@ -64,7 +64,6 @@ import {
 } from '@/libs/openclaw-chat/model/project-history-timeline';
 import {
   type ActiveTurnTimelineItem,
-  latestPlanUpdateKey,
   projectTurnItems,
 } from '@/libs/openclaw-chat/model/project-turn-items';
 import { projectWaitingStatus } from '@/libs/openclaw-chat/model/run-activity';
@@ -1564,8 +1563,8 @@ export class JustDoChatElement extends LitElement {
       .chat-group--timeline {
         padding-block: 0;
       }
-      .chat-group--plan-update {
-        margin-bottom: 8px;
+      .chat-group--progress-receipt {
+        margin-bottom: 2px;
       }
       .chat-group--timeline .chat-group__content {
         padding-top: 1px;
@@ -1986,158 +1985,34 @@ export class JustDoChatElement extends LitElement {
       .process-live__tool > summary {
         list-style-position: outside;
       }
-      .execution-plan-update {
-        width: min(100%, 680px);
-        box-sizing: border-box;
-        border: 1px solid color-mix(in srgb, var(--justdo-chat-border, #cbd5e1) 62%, transparent);
-        border-radius: 12px;
-        padding: 12px 14px;
-        background: color-mix(
-          in srgb,
-          var(--surface-raised, #ffffff) 94%,
-          var(--justdo-chat-process-bg, #f1f5f9)
-        );
-        box-shadow:
-          0 1px 2px rgba(15, 23, 42, 0.04),
-          0 6px 18px rgba(15, 23, 42, 0.035);
-        color: var(--justdo-chat-text, #111827);
-        font-size: 13px;
-      }
-      .execution-plan-update--failed {
-        border-color: color-mix(in srgb, #ef4444 36%, transparent);
-      }
-      .execution-plan-update__header {
+      .progress-card-receipt {
         display: flex;
+        width: fit-content;
+        max-width: 100%;
         min-width: 0;
         align-items: center;
-        gap: 9px;
+        gap: 7px;
+        padding: 4px 7px;
+        color: var(--justdo-chat-muted, #64748b);
+        font-size: 12px;
+        line-height: 1.4;
       }
-      .execution-plan-update__icon {
-        display: inline-grid;
-        width: 22px;
-        height: 22px;
-        flex: 0 0 auto;
-        place-items: center;
-        border-radius: 6px;
-        background: color-mix(in srgb, #3b82f6 11%, transparent);
-        color: color-mix(in srgb, #2563eb 88%, var(--justdo-chat-text, #111827));
+      .progress-card-receipt__icon {
+        display: inline-flex;
+        width: 16px;
+        height: 16px;
+        flex: 0 0 16px;
+        align-items: center;
+        justify-content: center;
+        color: color-mix(in srgb, var(--justdo-chat-muted, #64748b) 86%, transparent);
       }
-      .execution-plan-update__icon svg {
-        width: 15px;
-        height: 15px;
+      .progress-card-receipt__icon svg {
+        width: 14px;
+        height: 14px;
         stroke: currentColor;
         stroke-linecap: round;
         stroke-linejoin: round;
         stroke-width: 1.35;
-      }
-      .execution-plan-update__header strong {
-        min-width: 0;
-        font-size: 13px;
-        font-weight: 600;
-        line-height: 1.3;
-      }
-      .execution-plan-update__count {
-        margin-left: auto;
-        flex: 0 0 auto;
-        color: var(--justdo-chat-muted, #64748b);
-        font-size: 11px;
-        font-weight: 550;
-        font-variant-numeric: tabular-nums;
-        line-height: 1.4;
-      }
-      .execution-plan-update__progress {
-        display: flex;
-        gap: 3px;
-        height: 3px;
-        margin: 9px 0 8px;
-      }
-      .execution-plan-update__progress-segment {
-        min-width: 0;
-        flex: 1 1 0;
-        border-radius: 999px;
-        background: color-mix(in srgb, var(--justdo-chat-border, #cbd5e1) 55%, transparent);
-      }
-      .execution-plan-update__progress-segment--completed {
-        background: #22c55e;
-      }
-      .execution-plan-update__progress-segment--in_progress {
-        background: color-mix(in srgb, #3b82f6 30%, transparent);
-        box-shadow: inset 0 0 0 1px color-mix(in srgb, #3b82f6 14%, transparent);
-      }
-      .execution-plan-update__explanation {
-        margin: 0 0 11px;
-        color: var(--justdo-chat-muted, #64748b);
-        font-size: 12px;
-        line-height: 1.55;
-      }
-      .execution-plan-update__steps {
-        display: grid;
-        gap: 0;
-        margin: 0;
-        padding: 0;
-        list-style: none;
-      }
-      .execution-plan-update__step {
-        position: relative;
-        display: grid;
-        min-width: 0;
-        grid-template-columns: 18px minmax(0, 1fr);
-        gap: 10px;
-        align-items: center;
-        padding: 4px 3px;
-        line-height: 1.5;
-      }
-      .execution-plan-update__step:not(:last-child)::after {
-        position: absolute;
-        top: 21px;
-        bottom: -4px;
-        left: 11.5px;
-        width: 1px;
-        background: color-mix(in srgb, var(--justdo-chat-border, #cbd5e1) 62%, transparent);
-        content: '';
-      }
-      .execution-plan-update__marker {
-        display: inline-grid;
-        z-index: 1;
-        width: 17px;
-        height: 17px;
-        place-items: center;
-        box-sizing: border-box;
-        border: 1px solid color-mix(in srgb, var(--justdo-chat-muted, #64748b) 42%, transparent);
-        border-radius: 999px;
-        background: var(--surface-raised, #ffffff);
-        color: var(--justdo-chat-muted, #64748b);
-        font-size: 9px;
-        font-weight: 600;
-        line-height: 1;
-      }
-      .execution-plan-update__step--completed {
-        color: var(--justdo-chat-muted, #64748b);
-      }
-      .execution-plan-update__step--in_progress {
-        color: var(--justdo-chat-text, #111827);
-        font-weight: 550;
-      }
-      .execution-plan-update__step--completed .execution-plan-update__marker {
-        border-color: #22c55e;
-        background: #22c55e;
-        color: #ffffff;
-      }
-      .execution-plan-update__step--in_progress .execution-plan-update__marker {
-        border: 4px solid color-mix(in srgb, #3b82f6 12%, var(--surface-raised, #ffffff));
-        background: #3b82f6;
-        color: transparent;
-      }
-      .execution-plan-update--live
-        .execution-plan-update__step--in_progress
-        .execution-plan-update__marker {
-        border-color: color-mix(in srgb, #3b82f6 24%, var(--surface-raised, #ffffff));
-        background: #3b82f6;
-        animation: process-pulse 1.4s ease-in-out infinite;
-      }
-      .execution-plan-update__step-text {
-        min-width: 0;
-        overflow-wrap: anywhere;
       }
       .timeline-content__body > :first-child {
         margin-top: 0;
@@ -2362,8 +2237,6 @@ export class JustDoChatElement extends LitElement {
     if (ctrl) {
       const historyTimeline = getHistoryTimeline();
       const activeTimeline = this.projectActiveTimeline(activeTurn);
-      const livePlanKey =
-        activeTurn?.status === 'running' ? latestPlanUpdateKey(activeTimeline) : undefined;
       const activeTurnFooter = projectActiveTurnFooter(
         currentRunTiming ?? ctrl.getCurrentTurnTiming(),
       );
@@ -2445,13 +2318,7 @@ export class JustDoChatElement extends LitElement {
             ${repeat(
               timelineView.activeRows,
               row => row.item.key,
-              row =>
-                this.renderVisibleTimelineItem(
-                  row.item,
-                  row.showAvatar,
-                  row.showFooter,
-                  row.item.kind === 'plan-update' && row.item.key === livePlanKey,
-                ),
+              row => this.renderVisibleTimelineItem(row.item, row.showAvatar, row.showFooter),
             )}
             ${
               interruptedTerminalFallback
@@ -3242,7 +3109,6 @@ export class JustDoChatElement extends LitElement {
     item: PersistedTimelineItem | ActiveTurnTimelineItem,
     showAvatar: boolean,
     showFooter: boolean,
-    animatePlan = false,
   ): TemplateResult | typeof nothing {
     if (item.kind === 'history-message') {
       const historyItems = this.buildItems([item.message], [], [], null).map(historyItem =>
@@ -3270,7 +3136,6 @@ export class JustDoChatElement extends LitElement {
           !this.renderedCollapsedProcessSummaryKeys.has(item.key)) ||
           this.renderedOpenProcessSummaryKey === item.key),
       showAvatar,
-      animatePlan,
       this.editDiffModes,
       this.handleEditDiffModeChange,
     );

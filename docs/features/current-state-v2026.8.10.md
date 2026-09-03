@@ -22,7 +22,7 @@ Session goal 当前实际呈现 active/paused/blocked/complete；共享契约仍
 
 ### 2.3 Chat
 
-已采用单一transcript state、normalized agent reducer、stable identity history reconciliation、optimistic tail、有界750/250 history窗口、process summary、独立live thinking/tool、execution plan card、搜索/minimap和锚点滚动。
+已采用单一transcript state、normalized agent reducer、stable identity history reconciliation、optimistic tail、有界750/250 history窗口、process summary、独立live thinking/tool、Gateway session progress card、搜索/minimap和锚点滚动。
 
 Markdown支持task list、KaTeX、highlight、Mermaid、CJK链接修正与stream稳定边界，统一DOMPurify清洗并有限额/cache。
 
@@ -273,16 +273,16 @@ sequenceDiagram
 
 ## 15. 降级与恢复矩阵
 
-| 故障                     | 用户可见结果                     | 自动恢复/下一步                                  | 主要证据                                        |
-| ------------------------ | -------------------------------- | ------------------------------------------------ | ----------------------------------------------- |
-| SQLite 打不开            | 应用初始化失败                   | 检查主日志、路径权限、原生模块 ABI               | `sqliteStore.ts`、main daily log                |
-| Startup config sync 失败 | 窗口可开，Gateway 不自动启动     | 修复配置后手工刷新/重启                          | `[OpenClaw] Startup config sync failed`         |
-| Gateway 启动失败         | 产品壳和设置可用，Agent 不可执行 | runtime status、gateway log、native JSON log     | `openclawEngineManager.ts`                      |
-| AskUserQuestion 事件连接中断 | 待答弹窗短暂消失              | adapter 重连后通过 `askUserQuestion.list` 自动恢复 | runtime adapter、Gateway native log             |
-| Python runtime 准备失败  | Python 相关 skill/tool 不可用    | 检查 bundled runtime/requirements                | `[Main] initApp: ensurePythonRuntimeReady`      |
-| 代理变化后重连失败       | Gateway 被主动停止               | 修复代理后重新启动 Gateway                       | proxy restart/reconnect 日志                    |
-| 强制退出遗留 running     | 下次启动归一为 idle/aborted      | Gateway 确认 active 才重新打开；新提交前强制对账 | `interruptOpenSessionRuns`、runtime `run:begin` |
-| 系统睡眠导致 WS 断开     | 状态可能短暂离线                 | `powerMonitor.resume` 触发 adapter 重连          | runtime adapter resume path                     |
+| 故障                         | 用户可见结果                     | 自动恢复/下一步                                    | 主要证据                                        |
+| ---------------------------- | -------------------------------- | -------------------------------------------------- | ----------------------------------------------- |
+| SQLite 打不开                | 应用初始化失败                   | 检查主日志、路径权限、原生模块 ABI                 | `sqliteStore.ts`、main daily log                |
+| Startup config sync 失败     | 窗口可开，Gateway 不自动启动     | 修复配置后手工刷新/重启                            | `[OpenClaw] Startup config sync failed`         |
+| Gateway 启动失败             | 产品壳和设置可用，Agent 不可执行 | runtime status、gateway log、native JSON log       | `openclawEngineManager.ts`                      |
+| AskUserQuestion 事件连接中断 | 待答弹窗短暂消失                 | adapter 重连后通过 `askUserQuestion.list` 自动恢复 | runtime adapter、Gateway native log             |
+| Python runtime 准备失败      | Python 相关 skill/tool 不可用    | 检查 bundled runtime/requirements                  | `[Main] initApp: ensurePythonRuntimeReady`      |
+| 代理变化后重连失败           | Gateway 被主动停止               | 修复代理后重新启动 Gateway                         | proxy restart/reconnect 日志                    |
+| 强制退出遗留 running         | 下次启动归一为 idle/aborted      | Gateway 确认 active 才重新打开；新提交前强制对账   | `interruptOpenSessionRuns`、runtime `run:begin` |
+| 系统睡眠导致 WS 断开         | 状态可能短暂离线                 | `powerMonitor.resume` 触发 adapter 重连            | runtime adapter resume path                     |
 
 ## 16. 代码与测试证据地图
 

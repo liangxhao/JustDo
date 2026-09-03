@@ -1,5 +1,20 @@
-import { ArrowDownTrayIcon, QueueListIcon } from '@heroicons/react/24/outline';
+import {
+  ArrowDownTrayIcon,
+  ArrowPathIcon,
+  CheckCircleIcon,
+  ClipboardDocumentCheckIcon,
+  QueueListIcon,
+  StopCircleIcon,
+  XCircleIcon,
+} from '@heroicons/react/24/outline';
+import { PauseCircleIcon as PauseCircleSolidIcon } from '@heroicons/react/24/solid';
+import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import { SaveTextFileErrorCode } from '@shared/dialogIpc';
+import {
+  type ProgressCard,
+  progressCardIsComplete,
+  type ProgressCardViewState,
+} from '@shared/openclaw/progressCard';
 import { isGoalEditCommand } from '@shared/slashCommands';
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
@@ -26,9 +41,13 @@ import {
   resolveBackgroundRuntimeSessionIds,
   shouldContinueFullRuntimeScan,
 } from '@/features/cowork/components/runtimePolling';
+import SessionProgressCard, {
+  type ProgressCardRunState,
+} from '@/features/cowork/components/SessionProgressCard';
 import SubagentMessageDrawer from '@/features/cowork/components/SubagentMessageDrawer';
 import SubtaskListPanel from '@/features/cowork/components/SubtaskListPanel';
 import { isActiveSubtask, type Subtask } from '@/features/cowork/components/subtaskPresentation';
+import { useProgressCardVisibility } from '@/features/cowork/components/useProgressCardVisibility';
 import {
   selectCoworkConfig,
   selectCoworkSessions,
@@ -76,6 +95,22 @@ const BACKGROUND_SESSION_POLL_MS = 30_000;
 const BACKGROUND_DISCOVERY_POLL_MS = 60_000;
 const HIDDEN_DISCOVERY_POLL_MS = 120_000;
 const HIDDEN_WINDOW_POLL_MS = 60_000;
+function resolveProgressCardRunState(
+  card: ProgressCard,
+  runtimeRunning: boolean,
+  runTimings: readonly SessionRunTiming[],
+): ProgressCardRunState {
+  const matchingRun = [...runTimings]
+    .sort((left, right) => right.startedAt - left.startedAt)
+    .find(
+      timing =>
+        card.updatedAt >= timing.startedAt &&
+        (timing.endedAt === undefined || card.updatedAt <= timing.endedAt),
+    );
+  if (!matchingRun) return runtimeRunning ? 'running' : 'idle';
+  if (matchingRun.state === 'running') return runtimeRunning ? 'running' : 'idle';
+  return matchingRun.state;
+}
 
 function debugLog(...args: unknown[]): void {
   if (DEBUG_COWORK_VIEW) {
@@ -114,6 +149,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
   const [goalRunProgress, setGoalRunProgress] = useState<GoalRunProgress | null>(null);
   const [contextUsage, setContextUsage] = useState<ChatContextUsageSnapshot | null>(null);
+  const [progressCardState, setProgressCardState] = useState<ProgressCardViewState | null>(null);
   const [isSessionSearchOpen, setIsSessionSearchOpen] = useState(false);
   const [areProcessSummariesExpanded, setAreProcessSummariesExpanded] = useState(false);
   const [isSessionExportOpen, setIsSessionExportOpen] = useState(false);
@@ -172,6 +208,30 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     : isStreaming;
   const currentSessionRuntimeRunningRef = useRef(currentSessionRuntimeRunning);
   currentSessionRuntimeRunningRef.current = currentSessionRuntimeRunning;
+  const currentGatewaySessionKey = currentSession
+    ? `agent:${currentSession.agentId?.trim() || 'main'}:justdo:${currentSession.id}`
+    : null;
+  const progressCard =
+    progressCardState?.sessionKey === currentGatewaySessionKey ? progressCardState.card : null;
+  const currentSessionRunTimings = currentSession
+    ? (sessionRunTimings[currentSession.id] ?? [])
+    : [];
+  const progressCardRunState = progressCard
+    ? resolveProgressCardRunState(
+        progressCard,
+        currentSessionRuntimeRunning,
+        currentSessionRunTimings,
+      )
+    : 'idle';
+  const progressCardVisibility = useProgressCardVisibility(progressCard);
+  const progressCardComplete = progressCard ? progressCardIsComplete(progressCard) : false;
+  const progressCardPaused = Boolean(
+    progressCard &&
+    !progressCardComplete &&
+    (progressCardRunState === 'completed' ||
+      (progressCardRunState === 'idle' &&
+        progressCard.steps?.some(step => step.status === 'in_progress'))),
+  );
   useEffect(() => {
     const inputRegion = sessionPromptInputRegionRef.current;
     if (!inputRegion) return;
@@ -1056,6 +1116,63 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             >
               <ArrowDownTrayIcon className="h-4 w-4" />
             </button>
+            {progressCard && (
+              <button
+                type="button"
+                onMouseDown={event => event.stopPropagation()}
+                onClick={event => {
+                  event.stopPropagation();
+                  if (progressCardVisibility.visible) {
+                    progressCardVisibility.hide();
+                  } else {
+                    progressCardVisibility.show();
+                  }
+                }}
+                className={`relative inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
+                  progressCardVisibility.visible
+                    ? 'bg-surface-raised text-primary'
+                    : progressCardComplete
+                      ? 'text-green-500 hover:bg-surface-raised'
+                      : progressCardRunState === 'failed'
+                        ? 'text-destructive hover:bg-surface-raised'
+                        : progressCardPaused
+                          ? 'text-amber-500 hover:bg-surface-raised'
+                          : 'text-secondary hover:bg-surface-raised hover:text-foreground'
+                }`}
+                title={i18nService.t(
+                  progressCardVisibility.visible
+                    ? 'coworkProgressCardHide'
+                    : 'coworkProgressCardShow',
+                )}
+                aria-label={i18nService.t(
+                  progressCardVisibility.visible
+                    ? 'coworkProgressCardHide'
+                    : 'coworkProgressCardShow',
+                )}
+                aria-expanded={progressCardVisibility.visible}
+                aria-controls="cowork-progress-card-overlay"
+              >
+                {progressCardComplete ? (
+                  <CheckCircleIcon className="h-[18px] w-[18px]" />
+                ) : progressCardRunState === 'running' ? (
+                  <ArrowPathIcon className="h-[18px] w-[18px] animate-spin" />
+                ) : progressCardRunState === 'failed' ? (
+                  <XCircleIcon className="h-[18px] w-[18px]" />
+                ) : progressCardRunState === 'aborted' ? (
+                  <StopCircleIcon className="h-[18px] w-[18px]" />
+                ) : progressCardPaused ? (
+                  <PauseCircleSolidIcon className="h-[18px] w-[18px]" />
+                ) : (
+                  <ClipboardDocumentCheckIcon className="h-[18px] w-[18px]" />
+                )}
+                {!progressCardVisibility.visible && !progressCardComplete && (
+                  <span
+                    className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-primary"
+                    aria-hidden="true"
+                  />
+                )}
+              </button>
+            )}
             <button
               ref={subtaskListToggleRef}
               type="button"
@@ -1140,7 +1257,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
           )}
         </div>
         <div className="relative flex min-h-0 flex-1">
-          <div className="flex min-w-0 flex-1 flex-col">
+          <div className="relative flex min-w-0 flex-1 flex-col">
             {/* Messages */}
             <JustDoChatWrapper
               ref={chatWrapperRef}
@@ -1155,6 +1272,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               onSearchMatchCountChange={handleSessionSearchMatchCountChange}
               onActivityChange={setGoalRunProgress}
               onContextUsageChange={setContextUsage}
+              onProgressCardChange={setProgressCardState}
               runTimings={sessionRunTimings[currentSession.id] ?? []}
             />
             {/* Input */}
@@ -1195,6 +1313,22 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                 </p>
               </div>
             </div>
+            {progressCard && progressCardVisibility.visible && (
+              <div className="pointer-events-none absolute left-3 right-3 top-3 z-40 sm:left-auto sm:w-[min(340px,calc(100%-24px))]">
+                <div
+                  className="pointer-events-auto"
+                  onPointerDownCapture={progressCardVisibility.show}
+                  onFocusCapture={progressCardVisibility.show}
+                >
+                  <SessionProgressCard
+                    key={`floating:${progressCard.sessionKey}`}
+                    card={progressCard}
+                    runState={progressCardRunState}
+                    onClose={progressCardVisibility.hide}
+                  />
+                </div>
+              </div>
+            )}
           </div>
           <SubtaskListPanel
             sessionId={currentSession.id}

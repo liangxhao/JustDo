@@ -30,6 +30,12 @@ import type {
 } from '@shared/openclaw/historyIpc';
 import { isInternalManagedSubagentHandoffError } from '@shared/openclaw/internalRunError';
 import { normalizeModelRef } from '@shared/openclaw/modelRef';
+import {
+  parseProgressCardChangedEvent,
+  parseProgressCardGetResult,
+  type ProgressCard,
+  progressCardIsComplete,
+} from '@shared/openclaw/progressCard';
 import { extractGoalFollowUpRequest } from '@shared/prompts/goalFollowUpPrompt';
 import {
   resolveSlashCommandBehavior,
@@ -139,6 +145,11 @@ export interface ChatState {
   runActivity: RunActivity | null;
   /** Selected Gateway session's authoritative context-window snapshot. */
   contextUsage: ChatContextUsageSnapshot | null;
+  /** Gateway-owned durable status card for the selected session. */
+  progressCard: ProgressCard | null;
+  progressCardLoading: boolean;
+  progressCardAvailable: boolean;
+  progressCardError: 'access-denied' | 'unavailable' | null;
   /** Optimistic user message shown until gateway history loads */
   pendingUserMessage: {
     role: string;
@@ -219,7 +230,6 @@ type InFlightRunSnapshot = {
     agentId?: string;
     data: Record<string, unknown>;
   }>;
-  plan?: { steps: Array<{ step: string; status: string }>; explanation?: string };
 };
 
 type ChatHistorySnapshot = {
@@ -332,6 +342,9 @@ const MAX_DEFERRED_HISTORY_CATCHUP_ATTEMPTS = 5;
 const MAX_ACTIVE_TOOL_HISTORY_CATCHUP_ATTEMPTS = 4;
 const DEFAULT_INITIAL_MESSAGE_SUBSCRIPTION_BARRIER_TIMEOUT_MS = 3000;
 const DEFAULT_INITIAL_HISTORY_RETRY_DELAYS_MS = [100, 300, 900] as const;
+const PROGRESS_CARD_GET_METHOD = 'progressCard.get';
+const PROGRESS_CARD_PUT_METHOD = 'progressCard.put';
+const PROGRESS_CARD_CACHE_LIMIT = 100;
 const DEBUG_CHAT_CONTROLLER =
   typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEBUG_CHAT_CONTROLLER === 'true';
 
@@ -589,6 +602,8 @@ export class ChatController {
     }
   >();
   private localCompactionStatusBySession = new Map<string, LocalCompactionStatus>();
+  private progressCardCache = new Map<string, ProgressCard | null>();
+  private progressCardLoadGeneration = 0;
   private assistantSnapshotRunId: string | null = null;
   private ignoredDeltaAfterAssistantSnapshotCount = 0;
   private pendingAnnounceEvents = new Map<string, NormalizedAgentEvent[]>();
@@ -665,6 +680,10 @@ export class ChatController {
       hello: null,
       runActivity: null,
       contextUsage: null,
+      progressCard: null,
+      progressCardLoading: false,
+      progressCardAvailable: false,
+      progressCardError: null,
       pendingUserMessage: null,
       transcript: createChatTranscriptState(),
     };
@@ -694,6 +713,58 @@ export class ChatController {
     this.resetAssistantSnapshotSource();
     this.clearRunActivity();
     this.notify();
+  }
+
+  /** Safely dismiss an unchanged, fully completed progress card. */
+  async dismissProgressCard(): Promise<boolean> {
+    const card = this.state.progressCard;
+    const client = this.state.client;
+    if (
+      !card ||
+      !client ||
+      !this.state.connected ||
+      !progressCardIsComplete(card) ||
+      !this.isGatewayMethodAdvertised(PROGRESS_CARD_PUT_METHOD)
+    ) {
+      return false;
+    }
+
+    const sessionKey = this.state.sessionKey;
+    const generation = ++this.progressCardLoadGeneration;
+    try {
+      const response = await client.request(PROGRESS_CARD_PUT_METHOD, {
+        sessionKey,
+        expectedRevision: card.revision,
+      });
+      const nextCard = parseProgressCardGetResult(response, sessionKey);
+      if (nextCard === undefined) throw new Error('invalid progress card response');
+      if (client !== this.state.client || sessionKey !== this.state.sessionKey) {
+        return false;
+      }
+      // The Gateway broadcasts progressCard.changed before returning from put.
+      // A matching clear event therefore invalidates the load generation first;
+      // it is still a successful dismissal when the authoritative response and
+      // selected state both confirm that the card is gone.
+      if (generation !== this.progressCardLoadGeneration) {
+        return nextCard === null && this.state.progressCard === null;
+      }
+      this.rememberProgressCard(sessionKey, nextCard);
+      this.state.progressCard = nextCard;
+      this.state.progressCardLoading = false;
+      this.state.progressCardError = null;
+      this.notify();
+      return nextCard === null;
+    } catch {
+      if (
+        generation === this.progressCardLoadGeneration &&
+        client === this.state.client &&
+        sessionKey === this.state.sessionKey
+      ) {
+        this.state.progressCardError = 'unavailable';
+        this.notify();
+      }
+      return false;
+    }
   }
 
   /** Subscribe to state changes */
@@ -1319,7 +1390,7 @@ export class ChatController {
             ? item.items.filter(process => process.type === 'tool')
             : item.kind === 'live-process' && item.item.type === 'tool'
               ? [item.item]
-              : item.kind === 'plan-update'
+              : item.kind === 'progress-receipt'
                 ? [item.item]
                 : [],
         )
@@ -1756,6 +1827,7 @@ export class ChatController {
     initializationSeq: number;
     resumedTransport: boolean;
   }): Promise<void> {
+    void this.loadProgressCard(params.sessionKey, true);
     // Establish the durable notification edge before taking the snapshot. Any
     // write racing the snapshot then either appears in history or queues a
     // session.message catch-up reload.
@@ -2307,6 +2379,133 @@ export class ChatController {
     this.ignoredDeltaAfterAssistantSnapshotCount = 0;
   }
 
+  private isGatewayMethodAdvertised(method: string): boolean {
+    const methods = this.state.hello?.features?.methods;
+    return Array.isArray(methods) && methods.includes(method);
+  }
+
+  private rememberProgressCard(sessionKey: string, card: ProgressCard | null): void {
+    this.progressCardCache.delete(sessionKey);
+    this.progressCardCache.set(sessionKey, card);
+    while (this.progressCardCache.size > PROGRESS_CARD_CACHE_LIMIT) {
+      const oldestSessionKey = this.progressCardCache.keys().next().value as string | undefined;
+      if (!oldestSessionKey) break;
+      this.progressCardCache.delete(oldestSessionKey);
+    }
+  }
+
+  private async loadProgressCard(sessionKey: string, force = false): Promise<void> {
+    const client = this.state.client;
+    const available =
+      !!client && this.state.connected && this.isGatewayMethodAdvertised(PROGRESS_CARD_GET_METHOD);
+    if (this.state.sessionKey === sessionKey) {
+      this.state.progressCardAvailable = available;
+    }
+    if (!client || !available) {
+      if (this.state.sessionKey === sessionKey) {
+        this.state.progressCard = null;
+        this.state.progressCardLoading = false;
+        this.state.progressCardError = null;
+        this.notify();
+      }
+      return;
+    }
+
+    if (!force && this.progressCardCache.has(sessionKey)) {
+      if (this.state.sessionKey === sessionKey) {
+        const cachedCard = this.progressCardCache.get(sessionKey) ?? null;
+        this.rememberProgressCard(sessionKey, cachedCard);
+        this.state.progressCard = cachedCard;
+        this.state.progressCardLoading = false;
+        this.state.progressCardError = null;
+        this.notify();
+      }
+      return;
+    }
+
+    const generation = ++this.progressCardLoadGeneration;
+    if (this.state.sessionKey === sessionKey) {
+      if (force) this.state.progressCard = null;
+      this.state.progressCardLoading = true;
+      this.state.progressCardError = null;
+      this.notify();
+    }
+    try {
+      const response = await client.request(PROGRESS_CARD_GET_METHOD, { sessionKey });
+      if (
+        generation !== this.progressCardLoadGeneration ||
+        client !== this.state.client ||
+        sessionKey !== this.state.sessionKey
+      ) {
+        return;
+      }
+      const card = parseProgressCardGetResult(response, sessionKey);
+      if (card === undefined) throw new Error('invalid progress card response');
+      this.rememberProgressCard(sessionKey, card);
+      this.state.progressCard = card;
+      this.state.progressCardLoading = false;
+      this.state.progressCardError = null;
+      this.notify();
+    } catch (error) {
+      if (
+        generation !== this.progressCardLoadGeneration ||
+        client !== this.state.client ||
+        sessionKey !== this.state.sessionKey
+      ) {
+        return;
+      }
+      const gatewayCode =
+        error && typeof error === 'object' && 'gatewayCode' in error
+          ? (error as { gatewayCode?: unknown }).gatewayCode
+          : undefined;
+      const details =
+        error && typeof error === 'object' && 'details' in error
+          ? (error as { details?: unknown }).details
+          : undefined;
+      const detailCode =
+        details && typeof details === 'object' && !Array.isArray(details) && 'code' in details
+          ? (details as { code?: unknown }).code
+          : undefined;
+      this.progressCardCache.delete(sessionKey);
+      this.state.progressCard = null;
+      this.state.progressCardLoading = false;
+      this.state.progressCardError =
+        gatewayCode === 'SESSION_PARTICIPATION_REQUIRED' ||
+        detailCode === 'SESSION_PARTICIPATION_REQUIRED'
+          ? 'access-denied'
+          : 'unavailable';
+      this.notify();
+    }
+  }
+
+  private handleProgressCardChanged(payload: unknown): void {
+    const changed = parseProgressCardChangedEvent(payload);
+    if (!changed) return;
+
+    const targetsSelectedSession =
+      normalizeTranscriptSessionKey(changed.sessionKey) ===
+      normalizeTranscriptSessionKey(this.state.sessionKey);
+    const cached = this.progressCardCache.get(changed.sessionKey);
+    if (changed.revision === null) {
+      this.rememberProgressCard(changed.sessionKey, null);
+      if (targetsSelectedSession) {
+        this.progressCardLoadGeneration += 1;
+        this.state.progressCard = null;
+        this.state.progressCardLoading = false;
+        this.state.progressCardError = null;
+        this.notify();
+      }
+      return;
+    }
+    if (cached?.revision === changed.revision) return;
+
+    this.progressCardCache.delete(changed.sessionKey);
+    if (targetsSelectedSession) {
+      this.state.progressCard = null;
+      void this.loadProgressCard(this.state.sessionKey, true);
+    }
+  }
+
   // ─── Connection ───────────────────────────────────────────────────────
 
   /**
@@ -2322,6 +2521,8 @@ export class ChatController {
     this.connectionInitializationSeq += 1;
     this.subscribedMessageSessionKey = null;
     this.clearOlderHistoryContinuation();
+    this.progressCardLoadGeneration += 1;
+    this.progressCardCache.clear();
 
     this.state.sessionKey = sessionKey;
     this.state.currentSessionId = null;
@@ -2355,6 +2556,10 @@ export class ChatController {
     this.terminalLifecycleSeen = false;
     this.suspendedRunId = null;
     this.state.lastError = null;
+    this.state.progressCard = null;
+    this.state.progressCardLoading = false;
+    this.state.progressCardAvailable = false;
+    this.state.progressCardError = null;
     this.resetAssistantSnapshotSource();
     this.notify();
 
@@ -2404,6 +2609,10 @@ export class ChatController {
       this.promoteCachedSessionState(promotionSource, sessionKey);
     }
     this.state.sessionKey = sessionKey;
+    this.progressCardLoadGeneration += 1;
+    this.state.progressCard = this.progressCardCache.get(sessionKey) ?? null;
+    this.state.progressCardLoading = false;
+    this.state.progressCardError = null;
     this.state.initialHistoryReady = false;
     this.state.historyLoadingOlder = false;
     this.state.historyHasMore = false;
@@ -2469,6 +2678,12 @@ export class ChatController {
     this.connectionInitializationSeq += 1;
     this.messageSubscriptionSeq += 1;
     this.subscribedMessageSessionKey = null;
+    this.progressCardLoadGeneration += 1;
+    this.progressCardCache.clear();
+    this.state.progressCard = null;
+    this.state.progressCardLoading = false;
+    this.state.progressCardAvailable = false;
+    this.state.progressCardError = null;
     this.notify();
   }
 
@@ -2483,6 +2698,7 @@ export class ChatController {
     this.subscribedMessageSessionKey = null;
     this.state.hello = hello;
     this.state.lastError = null;
+    this.state.progressCardAvailable = this.isGatewayMethodAdvertised(PROGRESS_CARD_GET_METHOD);
     this.notify();
 
     // Subscribe to session events (matches webchat: subscribeSessions + syncSelectedSessionMessageSubscription)
@@ -2519,6 +2735,10 @@ export class ChatController {
     this.terminalLifecycleSeen = false;
     this.messageSubscriptionSeq += 1;
     this.subscribedMessageSessionKey = null;
+    this.progressCardLoadGeneration += 1;
+    this.state.progressCard = null;
+    this.state.progressCardLoading = false;
+    this.state.progressCardAvailable = false;
     this.notify();
   }
 
@@ -2765,16 +2985,16 @@ export class ChatController {
       this.state.currentSessionId ?? this.state.transcript.sessionId ?? activeTurn?.sessionId;
     const ownsGap = Boolean(
       runId &&
-        sessionKey &&
-        this.isSelectedSession(sessionKey) &&
-        this.state.chatSending &&
-        activeTurn?.status === 'running' &&
-        activeTurn.runId === runId &&
-        (!this.state.chatRunId || this.state.chatRunId === runId) &&
-        (!sessionId || !activeSessionId || sessionId === activeSessionId) &&
-        (!lifecycleGeneration ||
-          !activeTurn.lifecycleGeneration ||
-          lifecycleGeneration === activeTurn.lifecycleGeneration),
+      sessionKey &&
+      this.isSelectedSession(sessionKey) &&
+      this.state.chatSending &&
+      activeTurn?.status === 'running' &&
+      activeTurn.runId === runId &&
+      (!this.state.chatRunId || this.state.chatRunId === runId) &&
+      (!sessionId || !activeSessionId || sessionId === activeSessionId) &&
+      (!lifecycleGeneration ||
+        !activeTurn.lifecycleGeneration ||
+        lifecycleGeneration === activeTurn.lifecycleGeneration),
     );
     if (!ownsGap) return false;
 
@@ -2790,6 +3010,10 @@ export class ChatController {
 
   private handleEvent(event: GatewayEventFrame): void {
     if (event.event === 'tick') return;
+    if (event.event === 'progressCard.changed') {
+      this.handleProgressCardChanged(event.payload);
+      return;
+    }
     if (event.event === 'chat') {
       const normalizedPayload = normalizeChatEvent({ payload: event.payload, frameSeq: event.seq });
       if (normalizedPayload) {
@@ -3078,9 +3302,7 @@ export class ChatController {
       if (repairedActiveTail) this.publishActiveToolHistoryRepair();
       const loadedMessageSeq = readLatestOpenClawMessageSeq(this.state.chatMessages);
       const projectedAppend =
-        payload?.message === undefined
-          ? []
-          : projectGatewayHistoryForDisplay([payload.message]);
+        payload?.message === undefined ? [] : projectGatewayHistoryForDisplay([payload.message]);
       const directApply =
         sessionIdentityMatches && projectedAppend.length === 1
           ? applySessionMessagePayload(
@@ -3088,9 +3310,7 @@ export class ChatController {
               { ...payload, message: projectedAppend[0] },
               {
                 activeRunId:
-                  activeTurn?.status === 'running'
-                    ? activeTurn.runId
-                    : this.state.chatRunId,
+                  activeTurn?.status === 'running' ? activeTurn.runId : this.state.chatRunId,
                 runActive,
                 isRecentTerminalRun: runId => {
                   const recent = this.state.transcript.recentRuns.get(runId);
@@ -3144,7 +3364,8 @@ export class ChatController {
         !sessionIdentityMatches ||
         (!appendWasHidden && directApply?.kind !== 'applied') ||
         activeTailCatchUpPending ||
-        (directApply?.kind === 'applied' && hasOpenClawHistoryTruncationMarker(directApply.message));
+        (directApply?.kind === 'applied' &&
+          hasOpenClawHistoryTruncationMarker(directApply.message));
       if (!needsHistoryFallback && !this.pendingHistoryReload) return;
       if (this.state.chatSending || this.pendingHistoryReload) {
         debugLog('[ChatCtrl] session.message DEFERRED:', this.state.sessionKey, {
@@ -3174,8 +3395,7 @@ export class ChatController {
       }
       const eventSessionKey =
         typeof payload.sessionKey === 'string' ? payload.sessionKey.trim() : '';
-      const targetsSelectedSession =
-        !eventSessionKey || this.isSelectedSession(eventSessionKey);
+      const targetsSelectedSession = !eventSessionKey || this.isSelectedSession(eventSessionKey);
       const sessionKey = targetsSelectedSession ? this.state.sessionKey : eventSessionKey;
       if (!targetsSelectedSession && !this.localCompactionStatusBySession.has(sessionKey)) {
         return;

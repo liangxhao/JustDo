@@ -14,22 +14,22 @@
 
 ## 2. 模块地图
 
-| 目录/文件                                | 职责                                                          |
-| ---------------------------------------- | ------------------------------------------------------------- |
+| 目录/文件                                | 职责                                                              |
+| ---------------------------------------- | ----------------------------------------------------------------- |
 | `JustDoChatWrapper.tsx`                  | React/Cowork与Lit chat的桥、Gateway订阅、session切换、history载入 |
-| `gateway/client.ts`                      | Renderer Gateway client与连接信息适配                         |
-| `gateway/chat-controller.ts`             | 对外状态/命令、订阅与transcript调度                           |
-| `model/chat-transcript-state.ts`         | persisted/history source、active turn、recent runs、revision  |
-| `model/agent-event-reducer.ts`           | normalized agent event -> turn items                          |
-| `model/session-message-apply.ts`         | durable append identity、ownership、去重与有序插入            |
-| `model/history-reconciler.ts`            | history与active/optimistic identity对账                       |
-| `model/history-window.ts`                | 750条窗口、每次250条前后移动                                  |
-| `pipeline/build-chat-items.ts`           | 原始message -> group/timeline display items                   |
-| `components/justdo-chat.ts`              | Lit组件、搜索、minimap、timeline、滚动、Mermaid后处理         |
-| `components/markdown.ts`                 | Markdown-it、highlight、KaTeX、DOMPurify、stream边界/cache    |
-| `controllers/assistant-stream-pacer.ts`  | 保留assistant快照边界并按frame平滑揭示                        |
-| `controllers/stream-render-scheduler.ts` | frame合批和tool partial节流                                   |
-| `controllers/chat-scroll-controller.ts`  | follow/paused、锚点、unseen revision、加载旧窗口              |
+| `gateway/client.ts`                      | Renderer Gateway client与连接信息适配                             |
+| `gateway/chat-controller.ts`             | 对外状态/命令、订阅与transcript调度                               |
+| `model/chat-transcript-state.ts`         | persisted/history source、active turn、recent runs、revision      |
+| `model/agent-event-reducer.ts`           | normalized agent event -> turn items                              |
+| `model/session-message-apply.ts`         | durable append identity、ownership、去重与有序插入                |
+| `model/history-reconciler.ts`            | history与active/optimistic identity对账                           |
+| `model/history-window.ts`                | 750条窗口、每次250条前后移动                                      |
+| `pipeline/build-chat-items.ts`           | 原始message -> group/timeline display items                       |
+| `components/justdo-chat.ts`              | Lit组件、搜索、minimap、timeline、滚动、Mermaid后处理             |
+| `components/markdown.ts`                 | Markdown-it、highlight、KaTeX、DOMPurify、stream边界/cache        |
+| `controllers/assistant-stream-pacer.ts`  | 保留assistant快照边界并按frame平滑揭示                            |
+| `controllers/stream-render-scheduler.ts` | frame合批和tool partial节流                                       |
+| `controllers/chat-scroll-controller.ts`  | follow/paused、锚点、unseen revision、加载旧窗口                  |
 
 ## 3. 状态模型
 
@@ -96,7 +96,7 @@ start/delta/snapshot创建或更新独立Thinking item；兼容新版 `data.thin
 
 ### 6.2 Tool
 
-用toolCallId稳定更新单卡；input只在详情展示，partial output节流，terminal result/error结束。`sessions_yield` 无输出但仍可显示蓝色running tool，不伪造空result。若其实时start漏收，可由身份受限的 `session.message` 或active-tail history按toolCallId恢复running卡片，并由后续实时事件原位完成；这种missing-item恢复不泛化到普通Tool。若持久化 history 中的 Tool 缺少 result，但其 root run receipt 已是 terminal，history projection 将该 Tool 收敛为 interrupted，不能在应用重启后继续显示呼吸灯。Projection 同时接收 running receipts 做 identity matching，但 running receipt 本身不能提供终态或耗时；同 root 的较新 running receipt 也会阻止旧 terminal receipt 错误结束当前 Tool。`update_plan`解析成始终可见的有序plan card，状态仅接受 pending/in_progress/completed。
+用toolCallId稳定更新单卡；input只在详情展示，partial output节流，terminal result/error结束。`sessions_yield` 无输出但仍可显示蓝色running tool，不伪造空result。若其实时start漏收，可由身份受限的 `session.message` 或active-tail history按toolCallId恢复running卡片，并由后续实时事件原位完成；这种missing-item恢复不泛化到普通Tool。若持久化 history 中的 Tool 缺少 result，但其 root run receipt 已是 terminal，history projection 将该 Tool 收敛为 interrupted，不能在应用重启后继续显示呼吸灯。Projection 同时接收 running receipts 做 identity matching，但 running receipt 本身不能提供终态或耗时；同 root 的较新 running receipt 也会阻止旧 terminal receipt 错误结束当前 Tool。`progress_card` 的 Tool item 只投影为紧凑回执；完整卡片由 Renderer 调用 `progressCard.get` 读取，并在 `progressCard.changed` 后按 revision 刷新。
 
 ### 6.3 Content
 
@@ -234,13 +234,13 @@ Streaming 更新不应抢走键盘焦点或反复触发 screen reader 整页朗�
 | ------------------ | ----------------------------------------------------------------- |
 | Event reducer      | `model/agent-event-reducer.ts` 及测试                             |
 | Transcript/history | `chat-transcript-state.ts`、history/window/reconciler tests       |
-| Durable append      | `session-message-apply.ts` 及controller集成测试                  |
+| Durable append     | `session-message-apply.ts` 及controller集成测试                   |
 | Optimistic         | `optimistic-user-message.ts`、`optimistic-history-tail.ts` 及测试 |
 | Projection         | `project-history-timeline.ts`、`project-turn-items.ts` 及测试     |
 | Item pipeline      | `pipeline/build-chat-items.ts`、normalizer/tool tests             |
 | Streaming/scroll   | controllers scheduler/scroll tests                                |
 | Search/minimap     | `search-match.ts`、`chat-minimap.ts` 及测试                       |
-| Gateway transport  | `gateway/client.ts`、`gateway/chat-controller.ts` 及测试         |
+| Gateway transport  | `gateway/client.ts`、`gateway/chat-controller.ts` 及测试          |
 
 ## 26. Chat 变更完成条件
 

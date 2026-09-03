@@ -1,8 +1,3 @@
-import {
-  type ExecutionPlanStep,
-  ExecutionPlanStepStatus,
-  parseExecutionPlanUpdate,
-} from '@shared/openclaw/executionPlan';
 import { html, nothing, type TemplateResult } from 'lit';
 import { repeat } from 'lit/directives/repeat.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
@@ -21,7 +16,6 @@ import {
 } from '../model/edit-tool-diff';
 import {
   type ActiveTurnTimelineItem,
-  latestPlanUpdateKey,
   type ProcessSummaryTimelineItem,
 } from '../model/project-turn-items';
 import { stripOpenClawLogHintText } from '../pipeline/message-normalizer';
@@ -343,90 +337,72 @@ function toolStateLabel(tool: ToolItem): string {
   return i18nService.t(stateKey);
 }
 
-function planStepStatusLabel(step: ExecutionPlanStep): string {
-  const key =
-    step.status === ExecutionPlanStepStatus.Completed
-      ? 'coworkExecutionPlanCompleted'
-      : step.status === ExecutionPlanStepStatus.InProgress
-        ? 'coworkExecutionPlanInProgress'
-        : 'coworkExecutionPlanPending';
-  return i18nService.t(key);
+function progressReceiptSteps(input: unknown): Array<{ step: string; status: string }> {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return [];
+  const plan = (input as Record<string, unknown>).plan;
+  if (!Array.isArray(plan)) return [];
+  return plan.flatMap(candidate => {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return [];
+    const step = (candidate as Record<string, unknown>).step;
+    const status = (candidate as Record<string, unknown>).status;
+    if (
+      typeof step !== 'string' ||
+      (status !== 'pending' && status !== 'in_progress' && status !== 'completed')
+    ) {
+      return [];
+    }
+    return [{ step: step.trim(), status }];
+  });
 }
 
-function renderPlanUpdate(tool: ToolItem, showAvatar: boolean, isLive: boolean): TemplateResult {
-  const update = parseExecutionPlanUpdate(tool.input);
-  if (!update) {
-    return renderAssistantTimelineRow(
-      html`<section class="process-live process-live--tool">${tool.name}</section>`,
-      showAvatar,
-    );
-  }
-  const completed = update.plan.filter(
-    step => step.status === ExecutionPlanStepStatus.Completed,
-  ).length;
+function renderProgressReceipt(tool: ToolItem, showAvatar: boolean): TemplateResult {
+  const steps = progressReceiptSteps(tool.input);
+  const input =
+    tool.input && typeof tool.input === 'object' && !Array.isArray(tool.input)
+      ? (tool.input as Record<string, unknown>)
+      : null;
+  const markdown = typeof input?.markdown === 'string' ? input.markdown.trim() : '';
+  const completed = steps.filter(step => step.status === 'completed').length;
+  const current =
+    steps.find(step => step.status === 'in_progress') ??
+    steps.find(step => step.status === 'pending') ??
+    [...steps].reverse().find(step => step.status === 'completed');
+  const label =
+    tool.status === 'running'
+      ? i18nService.t('coworkProgressReceiptUpdating')
+      : tool.status === 'failed'
+        ? i18nService.t('coworkProgressReceiptFailed')
+        : tool.status === 'cancelled' || tool.status === 'interrupted'
+          ? i18nService.t('coworkProgressReceiptInterrupted')
+          : steps.length > 0
+            ? i18nService
+                .t('coworkProgressReceiptUpdated')
+                .replace('{completed}', String(completed))
+                .replace('{total}', String(steps.length))
+                .replace('{current}', current?.step ?? '')
+            : markdown
+              ? i18nService.t('coworkProgressReceiptNoteUpdated')
+              : input
+                ? i18nService.t('coworkProgressReceiptCleared')
+                : i18nService.t('coworkProgressReceiptChanged');
   return renderAssistantTimelineRow(
     html`
       <section
-        class=${`execution-plan-update execution-plan-update--${tool.status}${
-          isLive ? ' execution-plan-update--live' : ''
-        }`}
-        data-plan-update-id=${tool.id}
-        aria-label=${i18nService.t('coworkExecutionPlanTitle')}
+        class="progress-card-receipt"
+        data-progress-receipt-id=${tool.id}
+        role=${tool.status === 'running' ? 'status' : nothing}
       >
-        <header class="execution-plan-update__header">
-          <span class="execution-plan-update__icon" aria-hidden="true">
-            <svg viewBox="0 0 16 16" fill="none">
-              <path d="M4.25 4.25h7.5M4.25 8h7.5M4.25 11.75h4.5" />
-              <path d="m2 4.25.55.55L3.6 3.7M2 8l.55.55L3.6 7.45M2 11.75l.55.55 1.05-1.1" />
-            </svg>
-          </span>
-          <strong>${i18nService.t('coworkExecutionPlanTitle')}</strong>
-          <span class="execution-plan-update__count"
-            >${i18nService
-              .t('coworkExecutionPlanCompletedCount')
-              .replace('{completed}', String(completed))
-              .replace('{total}', String(update.plan.length))}</span
-          >
-        </header>
-        <div class="execution-plan-update__progress" aria-hidden="true">
-          ${update.plan.map(
-            step =>
-              html`<span
-                class="execution-plan-update__progress-segment execution-plan-update__progress-segment--${step.status}"
-              ></span>`,
-          )}
-        </div>
-        ${
-          update.explanation
-            ? html`<p class="execution-plan-update__explanation">${update.explanation}</p>`
-            : nothing
-        }
-        <ol class="execution-plan-update__steps">
-          ${update.plan.map(
-            (step, index) => html`
-              <li class="execution-plan-update__step execution-plan-update__step--${step.status}">
-                <span
-                  class="execution-plan-update__marker"
-                  role="img"
-                  aria-label=${planStepStatusLabel(step)}
-                >
-                  ${
-                    step.status === ExecutionPlanStepStatus.Completed
-                      ? '✓'
-                      : step.status === ExecutionPlanStepStatus.InProgress
-                        ? '•'
-                        : String(index + 1)
-                  }
-                </span>
-                <span class="execution-plan-update__step-text">${step.step}</span>
-              </li>
-            `,
-          )}
-        </ol>
+        <span class="progress-card-receipt__icon" aria-hidden="true">
+          <svg viewBox="0 0 16 16" fill="none">
+            <path d="M4.25 4.25h7.5M4.25 8h7.5M4.25 11.75h4.5" />
+            <path d="m2 4.25.55.55L3.6 3.7M2 8l.55.55L3.6 7.45M2 11.75l.55.55 1.05-1.1" />
+          </svg>
+        </span>
+        <span>${label}</span>
       </section>
     `,
     showAvatar,
-    'chat-group--plan-update',
+    'chat-group--progress-receipt',
   );
 }
 
@@ -452,7 +428,6 @@ export function renderTimelineItem(
   _now = Date.now(),
   expanded = false,
   showAvatar = true,
-  animatePlan = false,
   editDiffModes: ReadonlyMap<string, EditDiffMode> = new Map(),
   onEditDiffModeChange?: EditDiffModeChangeHandler,
 ): TemplateResult {
@@ -488,8 +463,8 @@ export function renderTimelineItem(
       </div>
     `;
   }
-  if (item.kind === 'plan-update') {
-    return renderPlanUpdate(item.item, showAvatar, animatePlan);
+  if (item.kind === 'progress-receipt') {
+    return renderProgressReceipt(item.item, showAvatar);
   }
   if (item.kind === 'live-process') {
     if (item.item.type === 'thinking') {
@@ -649,7 +624,6 @@ export function renderActiveTurnTimeline(
   editDiffModes: ReadonlyMap<string, EditDiffMode> = new Map(),
   onEditDiffModeChange?: EditDiffModeChangeHandler,
 ): TemplateResult {
-  const latestPlanKey = latestPlanUpdateKey(items);
   return html`
     <section class="active-turn-timeline">
       ${repeat(
@@ -661,7 +635,6 @@ export function renderActiveTurnTimeline(
             now,
             expandedSummaryKeys.has(item.key),
             true,
-            item.kind === 'plan-update' && item.key === latestPlanKey,
             editDiffModes,
             onEditDiffModeChange,
           ),

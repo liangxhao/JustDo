@@ -696,7 +696,7 @@ describe('projectPersistedTimeline', () => {
     );
   });
 
-  test('restores every valid update_plan call as a standalone timeline item', () => {
+  test('restores progress card calls as compact standalone receipts', () => {
     const result = projectPersistedTimeline([
       {
         role: 'assistant',
@@ -705,15 +705,15 @@ describe('projectPersistedTimeline', () => {
           { type: 'thinking', thinking: 'planning' },
           {
             type: 'tool_use',
-            id: 'plan-1',
-            name: 'update_plan',
+            id: 'progress-1',
+            name: 'progress_card',
             input: { plan: [{ step: 'Inspect', status: 'completed' }] },
           },
           { type: 'tool_use', id: 'read-1', name: 'read', input: { path: 'README.md' } },
           {
             type: 'tool_use',
-            id: 'plan-2',
-            name: 'update_plan',
+            id: 'progress-2',
+            name: 'progress_card',
             input: {
               plan: [
                 { step: 'Inspect', status: 'completed' },
@@ -727,11 +727,11 @@ describe('projectPersistedTimeline', () => {
 
     expect(result.map(item => item.kind)).toEqual([
       'process-summary',
-      'plan-update',
+      'progress-receipt',
       'live-process',
-      'plan-update',
+      'progress-receipt',
     ]);
-    expect(result.filter(item => item.kind === 'plan-update')).toHaveLength(2);
+    expect(result.filter(item => item.kind === 'progress-receipt')).toHaveLength(2);
   });
 
   test('keeps a failed persisted Tool only inside its process summary', () => {

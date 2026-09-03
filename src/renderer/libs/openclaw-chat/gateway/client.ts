@@ -47,6 +47,7 @@ export interface GatewayResponseFrame {
     code: string;
     message: string;
     retryable?: boolean;
+    details?: unknown;
   };
 }
 
@@ -54,7 +55,11 @@ export interface GatewayHelloOk {
   type: 'hello-ok';
   protocol: number;
   server?: unknown;
-  features?: unknown;
+  features?: {
+    methods?: string[];
+    events?: string[];
+    capabilities?: string[];
+  };
   auth?: { role?: string; scopes?: string[] };
   policy?: { tickIntervalMs?: number };
 }
@@ -62,6 +67,7 @@ export interface GatewayHelloOk {
 export interface GatewayRequestError extends Error {
   gatewayCode: string;
   retryable: boolean;
+  details?: unknown;
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -154,7 +160,11 @@ export class GatewayClient {
   /** Retire the current transport so the next connection can recover from history. */
   recoverFromGap(reason = 'event sequence gap'): void {
     const socket = this.ws;
-    if (!socket || socket.readyState === WebSocket.CLOSING || socket.readyState === WebSocket.CLOSED) {
+    if (
+      !socket ||
+      socket.readyState === WebSocket.CLOSING ||
+      socket.readyState === WebSocket.CLOSED
+    ) {
       return;
     }
     // Retire the owner synchronously. WebSocket.close() is asynchronous and
@@ -277,6 +287,7 @@ export class GatewayClient {
           const err = new Error(res.error?.message ?? 'request failed') as GatewayRequestError;
           err.gatewayCode = res.error?.code ?? 'UNKNOWN';
           err.retryable = res.error?.retryable === true;
+          err.details = res.error?.details;
           pending.reject(err);
         }
       }

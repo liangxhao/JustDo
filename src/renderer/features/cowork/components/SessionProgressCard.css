@@ -1,0 +1,338 @@
+.cowork-progress-card {
+  overflow: hidden;
+  border: 1px solid var(--justdo-border);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--justdo-surface) 94%, transparent);
+  box-shadow:
+    0 12px 32px rgba(15, 23, 42, 0.1),
+    0 2px 8px rgba(15, 23, 42, 0.05);
+  color: var(--justdo-foreground);
+  backdrop-filter: blur(14px);
+  animation: cowork-progress-card-enter 160ms ease-out;
+}
+
+.cowork-progress-card--floating {
+  width: 100%;
+  max-height: min(70vh, 620px);
+}
+
+.cowork-progress-card__header {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+}
+
+.cowork-progress-card__summary {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  grid-template-columns: 20px minmax(0, 1fr) auto 16px;
+  gap: 8px;
+  align-items: center;
+  padding: 11px 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.cowork-progress-card__summary:hover {
+  background: color-mix(in srgb, var(--justdo-surface-raised) 56%, transparent);
+}
+
+.cowork-progress-card__summary:focus-visible,
+.cowork-progress-card__dismiss:focus-visible {
+  outline: 2px solid var(--justdo-primary);
+  outline-offset: -2px;
+}
+
+.cowork-progress-card__state,
+.cowork-progress-card__state svg,
+.cowork-progress-card__dismiss,
+.cowork-progress-card__dismiss svg,
+.cowork-progress-card__chevron {
+  width: 18px;
+  height: 18px;
+}
+
+.cowork-progress-card__state {
+  color: var(--justdo-primary);
+}
+
+.cowork-progress-card__state--completed {
+  color: #22c55e;
+}
+
+.cowork-progress-card__state--failed {
+  color: var(--justdo-destructive);
+}
+
+.cowork-progress-card__state--aborted {
+  color: var(--justdo-text-muted);
+}
+
+.cowork-progress-card__state--waiting,
+.cowork-progress-card__state--paused {
+  color: #f59e0b;
+}
+
+.cowork-progress-card__summary-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.cowork-progress-card__title {
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.cowork-progress-card__count,
+.cowork-progress-card__footer {
+  color: var(--justdo-text-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cowork-progress-card__chevron {
+  color: var(--justdo-text-muted);
+  transition: transform 160ms ease;
+}
+
+.cowork-progress-card__dismiss {
+  display: inline-flex;
+  flex: 0 0 30px;
+  align-items: center;
+  justify-content: center;
+  margin: 7px 7px 0 0;
+  padding: 6px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--justdo-text-muted);
+  cursor: pointer;
+}
+
+.cowork-progress-card__dismiss:hover {
+  background: var(--justdo-surface-raised);
+  color: var(--justdo-foreground);
+}
+
+.cowork-progress-card__dismiss:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.cowork-progress-card__body {
+  max-height: min(54vh, 500px);
+  overflow-y: auto;
+  border-top: 1px solid var(--justdo-border-subtle);
+  padding: 10px 12px 11px;
+}
+
+.cowork-progress-card__markdown {
+  color: var(--justdo-text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.cowork-progress-card__markdown > :first-child {
+  margin-top: 0;
+}
+
+.cowork-progress-card__markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.cowork-progress-card__markdown p,
+.cowork-progress-card__markdown ul,
+.cowork-progress-card__markdown ol,
+.cowork-progress-card__markdown pre,
+.cowork-progress-card__markdown blockquote {
+  margin: 0 0 8px;
+}
+
+.cowork-progress-card__markdown a {
+  color: var(--justdo-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.cowork-progress-card__markdown code {
+  border-radius: 4px;
+  background: var(--justdo-surface-raised);
+  padding: 1px 4px;
+  font-size: 0.92em;
+}
+
+.cowork-progress-card__markdown pre {
+  overflow-x: auto;
+  border-radius: 8px;
+  background: var(--justdo-surface-raised);
+  padding: 8px;
+}
+
+.cowork-progress-card__markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.cowork-progress-card__markdown .markdown-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.cowork-progress-card__markdown th,
+.cowork-progress-card__markdown td {
+  padding: 5px 6px;
+  border-bottom: 1px solid var(--justdo-border-subtle);
+  text-align: left;
+}
+
+.cowork-progress-card__markdown progress {
+  width: 100%;
+  height: 6px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  accent-color: var(--justdo-primary);
+}
+
+.cowork-progress-card__markdown progress::-webkit-progress-bar {
+  border-radius: 999px;
+  background: var(--justdo-surface-raised);
+}
+
+.cowork-progress-card__markdown progress::-webkit-progress-value {
+  border-radius: 999px;
+  background: var(--justdo-primary);
+}
+
+.cowork-progress-card__markdown + .cowork-progress-card__steps {
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--justdo-border-subtle);
+}
+
+.cowork-progress-card__steps {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cowork-progress-card__step {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  color: var(--justdo-text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.cowork-progress-card__step-marker {
+  display: inline-grid;
+  width: 17px;
+  height: 17px;
+  place-items: center;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--justdo-text-muted) 52%, transparent);
+  border-radius: 999px;
+  color: var(--justdo-text-muted);
+  font-size: 9px;
+  line-height: 1;
+}
+
+.cowork-progress-card__step--completed {
+  color: var(--justdo-text-muted);
+}
+
+.cowork-progress-card__step--completed .cowork-progress-card__step-marker {
+  border-color: #22c55e;
+  background: #22c55e;
+  color: #fff;
+}
+
+.cowork-progress-card__step--in_progress {
+  color: var(--justdo-foreground);
+  font-weight: 550;
+}
+
+.cowork-progress-card__step--in_progress .cowork-progress-card__step-marker {
+  border: 4px solid color-mix(in srgb, var(--justdo-primary) 18%, var(--justdo-surface));
+  background: var(--justdo-primary);
+  color: transparent;
+  animation: cowork-progress-card-pulse 1.5s ease-in-out infinite;
+}
+
+.cowork-progress-card__step--paused .cowork-progress-card__step-marker,
+.cowork-progress-card__step--waiting .cowork-progress-card__step-marker {
+  border-color: #f59e0b;
+  background: color-mix(in srgb, #f59e0b 14%, var(--justdo-surface));
+  color: #d97706;
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.cowork-progress-card__step--failed .cowork-progress-card__step-marker {
+  border-color: var(--justdo-destructive);
+  background: color-mix(in srgb, var(--justdo-destructive) 12%, transparent);
+  color: var(--justdo-destructive);
+}
+
+.cowork-progress-card__step--aborted .cowork-progress-card__step-marker {
+  border-color: color-mix(in srgb, var(--justdo-text-muted) 65%, transparent);
+  background: var(--justdo-surface-raised);
+  color: var(--justdo-text-muted);
+}
+
+.cowork-progress-card__step-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.cowork-progress-card__footer {
+  margin-top: 10px;
+  text-align: right;
+}
+
+@keyframes cowork-progress-card-pulse {
+  0%,
+  100% {
+    opacity: 0.65;
+  }
+  50% {
+    opacity: 1;
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--justdo-primary) 10%, transparent);
+  }
+}
+
+@keyframes cowork-progress-card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cowork-progress-card {
+    animation: none;
+  }
+
+  .cowork-progress-card__step--in_progress .cowork-progress-card__step-marker {
+    animation: none;
+  }
+}

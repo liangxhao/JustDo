@@ -44,10 +44,14 @@ const MARKDOWN_CACHE_LIMIT = 200;
 const MARKDOWN_CACHE_MAX_CHARS = 50_000;
 const MARKDOWN_RENDER_CACHE_VERSION = 'markdown-render-v13';
 const CJK_URL_TRAILING_PUNCTUATION_RE = /[，。；！？、]/;
-const CJK_SCRIPT_START_RE = /^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+const CJK_SCRIPT_START_RE =
+  /^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
 const BOX_DRAWING_TOP_RE = /^[ \t]*[┌╔].*[┐╗][ \t]*$/u;
 const BOX_DRAWING_BOTTOM_RE = /^[ \t]*[└╚].*[┘╝][ \t]*$/u;
 const INLINE_DATA_IMAGE_RE = /^data:image\/[a-z0-9.+-]+;base64,/i;
+const PROGRESS_HTML_RE = /^(?:<progress(?:\s[^<>]*)?>\s*(?:<\/progress>)?|<\/progress>)$/iu;
+const PROGRESS_CARD_RAW_CONTENT_BLOCK_RE =
+  /<(script|style|iframe|object|template)\b[^>]*>[\s\S]*?<\/\1\s*>/giu;
 const FENCE_OPEN_RE = /^[ \t]{0,3}(`{3,}|~{3,})/;
 const FENCE_CONTAINER_PREFIX_RE = /^[ \t]{0,3}(?:(?:>\s?)|(?:(?:[-+*]|\d{1,9}[.)])[ \t]+))/;
 const STRONG_QUOTE_PAIRS: Readonly<Record<string, string>> = {
@@ -62,21 +66,72 @@ const STRONG_QUOTE_PAIRS: Readonly<Record<string, string>> = {
 };
 
 const allowedTags = [
-  'a', 'b', 'blockquote', 'br', 'button', 'code', 'del', 'details', 'div',
-  'em', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'i', 'input', 'li', 'ol',
-  'p', 'pre', 's', 'span', 'strong', 'summary', 'table', 'tbody', 'td', 'th',
-  'thead', 'tr', 'ul', 'img',
+  'a',
+  'b',
+  'blockquote',
+  'br',
+  'button',
+  'code',
+  'del',
+  'details',
+  'div',
+  'em',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'hr',
+  'i',
+  'input',
+  'li',
+  'ol',
+  'p',
+  'pre',
+  's',
+  'span',
+  'strong',
+  'summary',
+  'table',
+  'tbody',
+  'td',
+  'th',
+  'thead',
+  'tr',
+  'ul',
+  'img',
 ];
 
 const allowedAttrs = [
-  'checked', 'class', 'disabled', 'href', 'rel', 'target', 'title', 'start',
-  'src', 'alt', 'data-code', 'hidden', 'type', 'style', 'aria-hidden', 'aria-label',
+  'checked',
+  'class',
+  'disabled',
+  'href',
+  'rel',
+  'target',
+  'title',
+  'start',
+  'src',
+  'alt',
+  'data-code',
+  'hidden',
+  'type',
+  'style',
+  'aria-hidden',
+  'aria-label',
 ];
 
 const sanitizeOptions = {
   ALLOWED_TAGS: allowedTags,
   ALLOWED_ATTR: allowedAttrs,
   ADD_DATA_URI_TAGS: ['img'],
+};
+
+const progressCardSanitizeOptions = {
+  ...sanitizeOptions,
+  ALLOWED_TAGS: [...allowedTags, 'progress'],
+  ALLOWED_ATTR: [...allowedAttrs, 'value', 'max'],
 };
 
 // ── highlight.js setup ──────────────────────────────────────────────────────
@@ -143,16 +198,50 @@ hljs.registerLanguage('mermaid', () => ({
 }));
 
 const autoHighlightLanguages = [
-  'bash', 'c', 'cpp', 'csharp', 'css', 'diff', 'dockerfile', 'go', 'java',
-  'javascript', 'json', 'kotlin', 'markdown', 'mermaid', 'php', 'powershell',
-  'python', 'ruby', 'rust', 'sql', 'swift', 'typescript', 'xml', 'yaml',
+  'bash',
+  'c',
+  'cpp',
+  'csharp',
+  'css',
+  'diff',
+  'dockerfile',
+  'go',
+  'java',
+  'javascript',
+  'json',
+  'kotlin',
+  'markdown',
+  'mermaid',
+  'php',
+  'powershell',
+  'python',
+  'ruby',
+  'rust',
+  'sql',
+  'swift',
+  'typescript',
+  'xml',
+  'yaml',
 ];
 
 const HIGHLIGHT_ALIASES: Record<string, string> = {
-  'c#': 'csharp', 'c++': 'cpp', cs: 'csharp', cxx: 'cpp', docker: 'dockerfile',
-  js: 'javascript', jsx: 'javascript', kt: 'kotlin', kts: 'kotlin', md: 'markdown',
-  ps1: 'powershell', pwsh: 'powershell', rb: 'ruby', sh: 'bash', shell: 'bash',
-  ts: 'typescript', tsx: 'typescript',
+  'c#': 'csharp',
+  'c++': 'cpp',
+  cs: 'csharp',
+  cxx: 'cpp',
+  docker: 'dockerfile',
+  js: 'javascript',
+  jsx: 'javascript',
+  kt: 'kotlin',
+  kts: 'kotlin',
+  md: 'markdown',
+  ps1: 'powershell',
+  pwsh: 'powershell',
+  rb: 'ruby',
+  sh: 'bash',
+  shell: 'bash',
+  ts: 'typescript',
+  tsx: 'typescript',
 };
 
 // ── Utility functions ───────────────────────────────────────────────────────
@@ -166,13 +255,17 @@ function escapeHtml(value: string): string {
     .replace(/'/g, '&#39;');
 }
 
-function truncateText(text: string, limit: number): { text: string; truncated: boolean; total: number } {
+function truncateText(
+  text: string,
+  limit: number,
+): { text: string; truncated: boolean; total: number } {
   if (text.length <= limit) return { text, truncated: false, total: text.length };
   return { text: text.slice(0, limit), truncated: true, total: text.length };
 }
 
 function highlightCode(text: string, lang: string): string {
-  const language = (HIGHLIGHT_ALIASES[lang.trim().toLowerCase()] ?? lang.trim().toLowerCase()) || '';
+  const language =
+    (HIGHLIGHT_ALIASES[lang.trim().toLowerCase()] ?? lang.trim().toLowerCase()) || '';
   try {
     if (language && hljs.getLanguage(language)) {
       return hljs.highlight(text, { language, ignoreIllegals: true }).value;
@@ -271,7 +364,20 @@ function installHooks(): void {
   if (hooksInstalled) return;
   hooksInstalled = true;
 
-  DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+  DOMPurify.addHook('uponSanitizeAttribute', (node, data) => {
+    const tagName = node.nodeName.toLowerCase();
+    if (tagName === 'progress' && data.attrName !== 'value' && data.attrName !== 'max') {
+      data.keepAttr = false;
+    } else if ((data.attrName === 'value' || data.attrName === 'max') && tagName !== 'progress') {
+      data.keepAttr = false;
+    }
+  });
+
+  DOMPurify.addHook('afterSanitizeAttributes', node => {
+    if (node.nodeName.toLowerCase() === 'progress') {
+      node.setAttribute('aria-label', i18nService.t('coworkProgressCardProgress'));
+      return;
+    }
     if (!(node instanceof HTMLAnchorElement)) return;
     const href = node.getAttribute('href');
     if (!href) return;
@@ -461,7 +567,7 @@ const trimCjkUrlTrailingText = (
   match.url = match.url.slice(0, punctuationIndex);
 };
 const defaultLinkifyMatch = md.linkify.match.bind(md.linkify);
-md.linkify.match = (text) => {
+md.linkify.match = text => {
   const matches = defaultLinkifyMatch(text);
   if (!matches) return null;
 
@@ -470,7 +576,7 @@ md.linkify.match = (text) => {
   return matches;
 };
 const defaultLinkifyMatchAtStart = md.linkify.matchAtStart.bind(md.linkify);
-md.linkify.matchAtStart = (text) => {
+md.linkify.matchAtStart = text => {
   const match = defaultLinkifyMatchAtStart(text);
   if (match) trimCjkUrlTrailingText(match);
   return match;
@@ -526,12 +632,26 @@ md.block.ruler.before(
 md.renderer.rules.box_drawing_diagram = (tokens, idx) =>
   `<div class="markdown-box-drawing-diagram">${escapeHtml(tokens[idx].content)}</div>\n`;
 
-// Override html_block/html_inline to escape raw HTML
-md.renderer.rules.html_block = (tokens, idx) => escapeHtml(tokens[idx].content) + '\n';
-md.renderer.rules.html_inline = (tokens, idx) => {
+function renderRawMarkdownHtml(
+  tokens: Parameters<NonNullable<typeof md.renderer.rules.html_inline>>[0],
+  index: number,
+  allowProgressElement: boolean,
+  block: boolean,
+): string {
+  const content = tokens[index]?.content ?? '';
+  if (allowProgressElement) return PROGRESS_HTML_RE.test(content.trim()) ? content : '';
+  return escapeHtml(content) + (block ? '\n' : '');
+}
+
+// Raw HTML stays visible as escaped source in chat. Progress-card rendering
+// admits only the protocol's <progress value max> extension; DOMPurify remains
+// the final attribute and tag boundary.
+md.renderer.rules.html_block = (tokens, idx, _options, env) =>
+  renderRawMarkdownHtml(tokens, idx, env?.allowProgressElement === true, true);
+md.renderer.rules.html_inline = (tokens, idx, _options, env) => {
   const token = tokens[idx];
   if (token.meta?.taskListPlugin === true) return token.content;
-  return escapeHtml(token.content);
+  return renderRawMarkdownHtml(tokens, idx, env?.allowProgressElement === true, false);
 };
 
 // Override image to only allow base64 data URIs
@@ -614,7 +734,10 @@ function toEscapedPlainTextHtml(value: string): string {
 }
 
 /** Remove a YAML front matter block when rendering a Markdown document preview. */
-export function splitMarkdownFrontmatter(text: string): { body: string; frontmatter: string | null } {
+export function splitMarkdownFrontmatter(text: string): {
+  body: string;
+  frontmatter: string | null;
+} {
   const lines = text.split('\n');
   if (lines[0]?.replace(/^\uFEFF/, '') !== '---') return { body: text, frontmatter: null };
 
@@ -624,7 +747,10 @@ export function splitMarkdownFrontmatter(text: string): { body: string; frontmat
   if (closingLineIndex < 0) return { body: text, frontmatter: null };
 
   return {
-    body: lines.slice(closingLineIndex + 1).join('\n').trim(),
+    body: lines
+      .slice(closingLineIndex + 1)
+      .join('\n')
+      .trim(),
     frontmatter: lines.slice(1, closingLineIndex).join('\n'),
   };
 }
@@ -637,6 +763,8 @@ export interface MarkdownRenderOptions {
   parseLimit?: number;
   stripFrontmatter?: boolean;
   renderFrontmatter?: boolean;
+  /** Allow only OpenClaw's progress-card `<progress value max>` extension. */
+  allowProgressElement?: boolean;
 }
 
 export function toSanitizedMarkdownHtml(text: string, options: MarkdownRenderOptions = {}): string {
@@ -644,9 +772,10 @@ export function toSanitizedMarkdownHtml(text: string, options: MarkdownRenderOpt
   installHooks();
 
   const normalizedInput = text.trim().replace(/\r\n?/g, '\n');
-  const frontmatterResult = options.renderFrontmatter || options.stripFrontmatter
-    ? splitMarkdownFrontmatter(normalizedInput)
-    : { body: normalizedInput, frontmatter: null };
+  const frontmatterResult =
+    options.renderFrontmatter || options.stripFrontmatter
+      ? splitMarkdownFrontmatter(normalizedInput)
+      : { body: normalizedInput, frontmatter: null };
   const input = frontmatterResult.body;
   if (!input) return '';
   const parseLimit = Math.min(
@@ -659,7 +788,11 @@ export function toSanitizedMarkdownHtml(text: string, options: MarkdownRenderOpt
     : options.stripFrontmatter
       ? 'frontmatter-stripped'
       : 'full-document';
-  const cacheKey = `${MARKDOWN_RENDER_CACHE_VERSION}:${parseLimit}:${frontmatterMode}:${i18nService.getLanguage()}:${normalizedInput}`;
+  const sanitizeMode = options.allowProgressElement ? 'progress-card' : 'standard';
+  const activeSanitizeOptions = options.allowProgressElement
+    ? progressCardSanitizeOptions
+    : sanitizeOptions;
+  const cacheKey = `${MARKDOWN_RENDER_CACHE_VERSION}:${parseLimit}:${frontmatterMode}:${sanitizeMode}:${i18nService.getLanguage()}:${normalizedInput}`;
   if (input.length <= MARKDOWN_CACHE_MAX_CHARS) {
     const cached = getCachedMarkdown(cacheKey);
     if (cached !== null) return cached;
@@ -672,23 +805,28 @@ export function toSanitizedMarkdownHtml(text: string, options: MarkdownRenderOpt
 
   if (truncated.text.length > parseLimit) {
     const html = toEscapedPlainTextHtml(`${truncated.text}${suffix}`);
-    const sanitized = DOMPurify.sanitize(html, sanitizeOptions) as unknown as string;
+    const sanitized = DOMPurify.sanitize(html, activeSanitizeOptions) as unknown as string;
     if (input.length <= MARKDOWN_CACHE_MAX_CHARS) setCachedMarkdown(cacheKey, sanitized);
     return sanitized;
   }
 
+  const renderInput = options.allowProgressElement
+    ? `${truncated.text}${suffix}`.replace(PROGRESS_CARD_RAW_CONTENT_BLOCK_RE, '')
+    : `${truncated.text}${suffix}`;
   let rendered: string;
   try {
-    rendered = md.render(`${truncated.text}${suffix}`);
+    rendered = md.render(renderInput, {
+      allowProgressElement: options.allowProgressElement === true,
+    });
   } catch {
-    rendered = `<pre class="code-block">${escapeHtml(`${truncated.text}${suffix}`)}</pre>`;
+    rendered = `<pre class="code-block">${escapeHtml(renderInput)}</pre>`;
   }
 
   if (options.renderFrontmatter && frontmatterResult.frontmatter !== null) {
     rendered = `<pre class="markdown-frontmatter">${escapeHtml(frontmatterResult.frontmatter)}</pre>${rendered}`;
   }
 
-  const sanitized = DOMPurify.sanitize(rendered, sanitizeOptions) as unknown as string;
+  const sanitized = DOMPurify.sanitize(rendered, activeSanitizeOptions) as unknown as string;
   if (input.length <= MARKDOWN_CACHE_MAX_CHARS) setCachedMarkdown(cacheKey, sanitized);
   return sanitized;
 }

@@ -142,7 +142,7 @@ final 事件关闭活动 turn，补齐结束时间并完成仍在运行的适用
 
 可证明身份和 producer ownership 的 `session.message` 不等待整页重载：按 message id、messageSeq、idempotency、run id/import provenance 即时替换或插序。身份不完整、ownership 不明确、消息截断或检测到 seq 缺口时才回退 history。当前 run 的 durable assistant 进入 persisted transcript 后，在 ActiveTurn 结束前由显示投影隐藏，避免同一 Content/Tool 双显。
 
-`project-history-timeline.ts` 负责把持久消息投影为显示项，`project-turn-items.ts` 投影活动过程。二者使用一致的特殊工具识别规则，例如合法 `update_plan` 都作为独立计划项显示；无效输入仍作为普通工具调用保留，确保历史和实时不发生语义分叉。
+`project-history-timeline.ts` 负责把持久消息投影为显示项，`project-turn-items.ts` 投影活动过程。二者使用一致的特殊工具识别规则，例如 `progress_card` 调用只显示紧凑更新回执；当前完整进度卡始终通过 Gateway 的持久状态接口独立读取，不从历史消息重建。
 
 ## 8. 渲染与滚动背压
 
@@ -212,7 +212,7 @@ final 事件关闭活动 turn，补齐结束时间并完成仍在运行的适用
 | Main forward     | `src/main/engine/cowork/coworkRuntimeForwarder.ts`             | 事件命名、目标窗口、脱敏                  |
 | Shared admission | `src/shared/openclaw/messageDomain.ts`、`agentEvent.ts`        | domain、sequence、normalize               |
 | Renderer reduce  | `src/renderer/libs/openclaw-chat/model/agent-event-reducer.ts` | item identity、幂等、终态                 |
-| History baseline | Renderer controller/history reconciler                        | generation、stable merge、takeover        |
+| History baseline | Renderer controller/history reconciler                         | generation、stable merge、takeover        |
 | Visible items    | `pipeline/build-chat-items.ts`                                 | ordering、fallback、display limit         |
 | Rendering        | chat components/Markdown pipeline                              | 清洗、cache、scroll、accessibility        |
 

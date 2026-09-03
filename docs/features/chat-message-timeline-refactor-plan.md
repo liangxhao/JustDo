@@ -44,15 +44,15 @@ flowchart TD
 
 `ChatTranscriptState` 包含：
 
-| 字段                       | 含义                                         |
-| -------------------------- | -------------------------------------------- |
-| `sessionKey` / `sessionId` | 当前消息域身份                               |
-| `persistedMessages`        | 已确认或降级加载的历史消息                   |
-| `historySource`            | `gateway` 或 `optimistic`                    |
-| `historyGeneration`        | 使旧的异步历史响应失效                       |
-| `activeTurn`               | 当前正在执行或刚刚收敛的 Assistant turn      |
-| `recentRuns`               | 短期终态去重集合                             |
-| `revision`                 | 驱动渲染与未读变更计算的单调版本             |
+| 字段                       | 含义                                    |
+| -------------------------- | --------------------------------------- |
+| `sessionKey` / `sessionId` | 当前消息域身份                          |
+| `persistedMessages`        | 已确认或降级加载的历史消息              |
+| `historySource`            | `gateway` 或 `optimistic`               |
+| `historyGeneration`        | 使旧的异步历史响应失效                  |
+| `activeTurn`               | 当前正在执行或刚刚收敛的 Assistant turn |
+| `recentRuns`               | 短期终态去重集合                        |
+| `revision`                 | 驱动渲染与未读变更计算的单调版本        |
 
 活动 turn 记录 `runId`、session、lifecycle generation、最后 sequence、起止时间、模型和 item 列表。`toolById` 只作为运行期索引，不替代有序 items。
 
@@ -66,7 +66,7 @@ Thinking 是独立过程块，状态可为 running/completed/failed/cancelled/in
 
 Tool item 用 `toolCallId` 关联开始、部分输出和结果。输入、输出和错误是不同字段；过程状态不会通过输出文本猜测。普通工具详情默认可折叠，超长实时输出限制为 120,000 字符。
 
-`sessions_yield` 等没有结果正文的长等待工具仍显示为运行中卡片，不能因为 output 为空就误判完成。合法 `update_plan` 是特殊投影：始终显示有序计划卡；不合法输入回退为普通工具卡，以保留诊断信息。
+`sessions_yield` 等没有结果正文的长等待工具仍显示为运行中卡片，不能因为 output 为空就误判完成。`progress_card` 是特殊投影：消息时间线只显示更新回执，完整内容由会话级持久进度卡承载。
 
 ### 4.3 Content
 

@@ -136,6 +136,58 @@ describe('GatewayClient v2026.8.2 handshake', () => {
   });
 });
 
+describe('GatewayClient request errors', () => {
+  it('preserves structured Gateway error details for policy-aware callers', async () => {
+    class FakeWebSocket {
+      static readonly OPEN = 1;
+      readonly sent: string[] = [];
+      readonly listeners = new Map<string, Array<(event: MessageEvent | CloseEvent) => void>>();
+      readyState = FakeWebSocket.OPEN;
+      close = vi.fn();
+
+      addEventListener(type: string, listener: (event: MessageEvent | CloseEvent) => void): void {
+        const listeners = this.listeners.get(type) ?? [];
+        listeners.push(listener);
+        this.listeners.set(type, listeners);
+      }
+
+      send(frame: string): void {
+        this.sent.push(frame);
+      }
+
+      emit(type: string, event: MessageEvent | CloseEvent): void {
+        for (const listener of this.listeners.get(type) ?? []) listener(event);
+      }
+    }
+
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const client = new GatewayClient({ url: 'ws://gateway.test' });
+    client.start();
+    const socket = (client as unknown as { ws: FakeWebSocket }).ws;
+    const request = client.request('progressCard.get', { sessionKey: 'agent:main:main' });
+    const requestId = (JSON.parse(socket.sent[0]) as { id: string }).id;
+
+    socket.emit('message', {
+      data: JSON.stringify({
+        type: 'res',
+        id: requestId,
+        ok: false,
+        error: {
+          code: 'INVALID_REQUEST',
+          message: 'participation required',
+          details: { code: 'SESSION_PARTICIPATION_REQUIRED' },
+        },
+      }),
+    } as MessageEvent);
+
+    await expect(request).rejects.toMatchObject({
+      gatewayCode: 'INVALID_REQUEST',
+      details: { code: 'SESSION_PARTICIPATION_REQUIRED' },
+    });
+    client.stop();
+  });
+});
+
 describe('GatewayClient sequence recovery', () => {
   it('drops duplicate and regressive frames without rewinding the connection high-water mark', () => {
     class FakeWebSocket {

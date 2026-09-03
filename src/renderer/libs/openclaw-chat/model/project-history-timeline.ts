@@ -1,5 +1,4 @@
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
-import { parseExecutionPlanUpdate } from '@shared/openclaw/executionPlan';
 import { normalizeToolTerminalStatus } from '@shared/openclaw/messageDomain';
 
 import { getTranscriptMedia } from '@/libs/openclaw-chat/attachments';
@@ -13,8 +12,8 @@ import {
 import { deterministicHistoryKey } from './history-reconciler';
 import type {
   LiveProcessTimelineItem,
-  PlanUpdateTimelineItem,
   ProcessSummaryTimelineItem,
+  ProgressReceiptTimelineItem,
 } from './project-turn-items';
 import {
   hasToolResultPayload,
@@ -44,7 +43,7 @@ export type PersistedTimelineItem =
     }
   | ProcessSummaryTimelineItem
   | LiveProcessTimelineItem
-  | PlanUpdateTimelineItem;
+  | ProgressReceiptTimelineItem;
 
 const THINKING_TYPES = new Set(['thinking', 'reasoning']);
 const TOOL_RESULT_ROLES = new Set(['tool', 'toolresult', 'tool_result', 'function']);
@@ -310,10 +309,8 @@ export function projectPersistedTimeline(
     return undefined;
   };
 
-  const isPlanUpdate = (item: ThinkingItem | ToolItem): item is ToolItem =>
-    item.type === 'tool' &&
-    item.name.toLowerCase() === 'update_plan' &&
-    parseExecutionPlanUpdate(item.input) !== null;
+  const isProgressCardUpdate = (item: ThinkingItem | ToolItem): item is ToolItem =>
+    item.type === 'tool' && item.name.trim().toLowerCase() === 'progress_card';
 
   const flushSummary = () => {
     if (archived.length === 0) return;
@@ -337,11 +334,11 @@ export function projectPersistedTimeline(
       segment += 1;
     };
     for (const item of archived) {
-      if (isPlanUpdate(item)) {
+      if (isProgressCardUpdate(item)) {
         flushSummaryItems();
         projected.push({
-          kind: 'plan-update',
-          key: `history-plan:${segment}:${item.id}`,
+          kind: 'progress-receipt',
+          key: `history-progress:${segment}:${item.id}`,
           item,
         });
         segment += 1;

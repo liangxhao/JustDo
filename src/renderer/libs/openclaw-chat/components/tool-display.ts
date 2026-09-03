@@ -20,7 +20,6 @@ const TOOL_TITLE_MAP: Record<string, string> = {
   webfetch: 'WebFetch',
   websearch: 'WebSearch',
   todowrite: 'TodoWrite',
-  updateplan: 'Plan',
   cron: 'Cron',
   process: 'Process',
   sessions_spawn: 'Subagent',

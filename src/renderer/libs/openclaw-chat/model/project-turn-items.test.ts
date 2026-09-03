@@ -167,19 +167,19 @@ describe('projectTurnItems', () => {
     expect(second[0].key).toBe(first[0].key);
   });
 
-  test('keeps every valid update_plan call as a standalone timeline item', () => {
+  test('keeps progress card writes as compact standalone receipts', () => {
     const result = projectTurnItems(
       turn([
         item('think-1', 'thinking', 'completed'),
-        item('plan-1', 'tool', 'completed', {
-          name: 'update_plan',
+        item('progress-1', 'tool', 'completed', {
+          name: 'progress_card',
           input: { plan: [{ step: 'Inspect', status: 'completed' }] },
         }),
         item('tool-1', 'tool', 'completed'),
-        item('plan-2', 'tool', 'running', {
-          name: 'UPDATE_PLAN',
+        item('progress-2', 'tool', 'running', {
+          name: 'PROGRESS_CARD',
           input: {
-            explanation: 'Implementation started',
+            markdown: 'Implementation started',
             plan: [
               { step: 'Inspect', status: 'completed' },
               { step: 'Implement', status: 'in_progress' },
@@ -191,27 +191,27 @@ describe('projectTurnItems', () => {
 
     expect(result.map(entry => entry.kind)).toEqual([
       'process-summary',
-      'plan-update',
+      'progress-receipt',
       'process-summary',
-      'plan-update',
+      'progress-receipt',
     ]);
-    expect(result.filter(entry => entry.kind === 'plan-update')).toMatchObject([
-      { item: { id: 'plan-1' } },
-      { item: { id: 'plan-2', status: 'running' } },
+    expect(result.filter(entry => entry.kind === 'progress-receipt')).toMatchObject([
+      { item: { id: 'progress-1' } },
+      { item: { id: 'progress-2', status: 'running' } },
     ]);
   });
 
-  test('keeps malformed update_plan calls in the ordinary Tool timeline', () => {
+  test('keeps a progress card clear as a standalone receipt', () => {
     const result = projectTurnItems(
       turn([
-        item('plan-invalid', 'tool', 'completed', {
-          name: 'update_plan',
-          input: { plan: [] },
+        item('progress-clear', 'tool', 'completed', {
+          name: 'progress_card',
+          input: {},
         }),
       ]),
     );
 
-    expect(result.map(entry => entry.kind)).toEqual(['process-summary']);
+    expect(result.map(entry => entry.kind)).toEqual(['progress-receipt']);
   });
 
   test('does not repeat a Tool failure as a terminal banner after Content', () => {

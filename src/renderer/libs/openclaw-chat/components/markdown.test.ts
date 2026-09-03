@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import { describe, expect, test } from 'vitest';
 
 import {
@@ -5,7 +7,42 @@ import {
   md,
   splitMarkdownFrontmatter,
   stripMarkdownFrontmatter,
+  toSanitizedMarkdownHtml,
 } from '@/libs/openclaw-chat/components/markdown';
+
+describe('Progress card Markdown', () => {
+  test('allows only the scoped progress element extension', () => {
+    const source =
+      '<progress value="3" max="7" class="evil" hidden style="position:fixed;inset:0;background:url(https://example.test/pixel)" title="unsafe" onclick="alert(1)"></progress><script>alert(2)</script>';
+
+    const standard = toSanitizedMarkdownHtml(source);
+    const progressCard = toSanitizedMarkdownHtml(source, { allowProgressElement: true });
+
+    expect(standard).not.toContain('<progress');
+    const container = document.createElement('div');
+    container.innerHTML = progressCard;
+    const progress = container.querySelector('progress');
+    expect(progress?.getAttribute('value')).toBe('3');
+    expect(progress?.getAttribute('max')).toBe('7');
+    expect(progress?.getAttribute('aria-label')).toBeTruthy();
+    expect(progressCard).not.toContain('onclick');
+    expect(progressCard).not.toContain('class=');
+    expect(progressCard).not.toContain('style=');
+    expect(progressCard).not.toContain('hidden');
+    expect(progressCard).not.toContain('title=');
+    expect(progressCard).not.toContain('example.test');
+    expect(progressCard).not.toContain('<script');
+  });
+
+  test('does not allow progress-only attributes on other elements', () => {
+    const html = toSanitizedMarkdownHtml('<input value="secret" max="7">', {
+      allowProgressElement: true,
+    });
+
+    expect(html).not.toContain('value=');
+    expect(html).not.toContain('max=');
+  });
+});
 
 describe('Markdown front matter', () => {
   test('strips a YAML front matter block from document previews', () => {
@@ -34,7 +71,7 @@ describe('Markdown front matter', () => {
 describe('Markdown autolinks', () => {
   test.each(['，', '。', '；', '！', '？', '、'])(
     'ends a bare URL before the CJK punctuation %s',
-    (punctuation) => {
+    punctuation => {
       const html = md.render(`详情见 https://docs.openclaw.ai/tools/skills${punctuation}后续正文`);
 
       expect(html).toContain(
@@ -73,9 +110,7 @@ describe('Markdown emphasis', () => {
   test('ignores apparent closing markers inside code spans', () => {
     const html = md.render('**"use `"**` now"**这种');
 
-    expect(html).toContain(
-      '<strong>&quot;use <code>&quot;**</code> now&quot;</strong>这种',
-    );
+    expect(html).toContain('<strong>&quot;use <code>&quot;**</code> now&quot;</strong>这种');
   });
 
   test('does not parse quote-wrapped strong syntax inside code spans', () => {
@@ -120,11 +155,7 @@ describe('Markdown images', () => {
 
 describe('Box-drawing diagrams', () => {
   test('renders unfenced multiline diagrams in a literal text container', () => {
-    const source = [
-      '┌────┐',
-      '│ AB │',
-      '└────┘',
-    ].join('\n');
+    const source = ['┌────┐', '│ AB │', '└────┘'].join('\n');
 
     const html = md.render(source);
 

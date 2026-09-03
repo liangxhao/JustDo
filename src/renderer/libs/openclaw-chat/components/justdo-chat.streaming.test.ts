@@ -204,7 +204,9 @@ describe('justdo-chat assistant stream pacing', () => {
     await chat.updateComplete;
 
     expect(assistantText(chat)).toBe('先完成这段正文');
-    expect(chat.shadowRoot?.textContent).toContain('exec');
+    expect(chat.shadowRoot?.querySelector('.process-summary__tool-title strong')?.textContent).toBe(
+      'Bash',
+    );
   });
 
   test('seeds an existing background stream when returning to its session', async () => {

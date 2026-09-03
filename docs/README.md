@@ -59,21 +59,21 @@
 
 `docs/features/` 保存跨多个架构域的功能说明、实现审计与历史方案的当前化结论。文件名中保留日期或 `plan` 不表示内容仍停留在规划阶段；每篇开头必须声明当前状态。
 
-| 主题                          | 文档                                                                                          |
-| ----------------------------- | --------------------------------------------------------------------------------------------- |
-| 内置模型认证生命周期          | [authentication-builtin-model-lifecycle](features/authentication-builtin-model-lifecycle.md)  |
-| 浏览器模式、扩展配对和诊断    | [browser-settings-design](features/browser-settings-design.md)                                |
-| Chat 端到端审计               | [chat-message-flow-review](features/chat-message-flow-review-2026-07-26.md)                   |
-| Chat timeline 重构现状        | [chat-message-timeline-refactor-plan](features/chat-message-timeline-refactor-plan.md)        |
-| 当前版本能力快照              | [v2026.8.12 当前实现状态](features/current-state-v2026.8.10.md)                               |
-| Execution plan timeline       | [openclaw-execution-plan-ui](features/openclaw-execution-plan-ui-implementation-plan.md)      |
-| 权限管理与 fail-closed 约束   | [openclaw-permission-management](features/openclaw-permission-management-remediation-plan.md) |
-| 薄前端重构状态                | [openclaw-thin-frontend](features/openclaw-thin-frontend-refactor-plan.md)                    |
-| 出站 Header 代理              | [outbound-header-proxy](features/outbound-header-proxy-analysis-and-redesign.md)              |
-| 定时任务应用内结果            | [scheduled-task-results](features/scheduled-task-in-app-results-implementation-plan.md)       |
-| Subagent 重试与完成通知一致性 | [subagent-model-retry](features/subagent-model-retry-and-announce-consistency-plan.md)        |
-| Agent runtime 参数            | [subagent-runtime-settings](features/subagent-runtime-settings-audit.md)                      |
-| Thinking stream               | [thinking-stream](features/thinking-stream-implementation.md)                                 |
+| 主题                           | 文档                                                                                          |
+| ------------------------------ | --------------------------------------------------------------------------------------------- |
+| 内置模型认证生命周期           | [authentication-builtin-model-lifecycle](features/authentication-builtin-model-lifecycle.md)  |
+| 浏览器模式、扩展配对和诊断     | [browser-settings-design](features/browser-settings-design.md)                                |
+| Chat 端到端审计                | [chat-message-flow-review](features/chat-message-flow-review-2026-07-26.md)                   |
+| Chat timeline 重构现状         | [chat-message-timeline-refactor-plan](features/chat-message-timeline-refactor-plan.md)        |
+| 当前版本能力快照               | [v2026.8.12 当前实现状态](features/current-state-v2026.8.10.md)                               |
+| OpenClaw session progress card | [openclaw-progress-card-ui](features/openclaw-progress-card-ui.md)                            |
+| 权限管理与 fail-closed 约束    | [openclaw-permission-management](features/openclaw-permission-management-remediation-plan.md) |
+| 薄前端重构状态                 | [openclaw-thin-frontend](features/openclaw-thin-frontend-refactor-plan.md)                    |
+| 出站 Header 代理               | [outbound-header-proxy](features/outbound-header-proxy-analysis-and-redesign.md)              |
+| 定时任务应用内结果             | [scheduled-task-results](features/scheduled-task-in-app-results-implementation-plan.md)       |
+| Subagent 重试与完成通知一致性  | [subagent-model-retry](features/subagent-model-retry-and-announce-consistency-plan.md)        |
+| Agent runtime 参数             | [subagent-runtime-settings](features/subagent-runtime-settings-audit.md)                      |
+| Thinking stream                | [thinking-stream](features/thinking-stream-implementation.md)                                 |
 
 ## Runtime Patch 文档
 

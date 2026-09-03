@@ -1,3 +1,4 @@
+import { ProgressCardStepStatus } from '@shared/openclaw/progressCard';
 import { buildGoalFollowUpPrompt } from '@shared/prompts/goalFollowUpPrompt';
 import { afterEach, expect, test, vi } from 'vitest';
 
@@ -9,6 +10,229 @@ import { projectWaitingStatus } from '@/libs/openclaw-chat/model/run-activity';
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
+});
+
+test('loads the selected session progress card from the advertised Gateway method', async () => {
+  const sessionKey = 'agent:main:justdo:session-1';
+  const request = vi.fn().mockResolvedValue({
+    card: {
+      sessionKey,
+      revision: 2,
+      updatedAt: 1_000,
+      markdown: 'Working',
+      steps: [{ step: 'Verify', status: 'in_progress' }],
+    },
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+  controller.state.hello = {
+    type: 'hello-ok',
+    protocol: 4,
+    features: { methods: ['progressCard.get', 'progressCard.put'] },
+  };
+
+  await (
+    controller as unknown as {
+      loadProgressCard(sessionKey: string, force?: boolean): Promise<void>;
+    }
+  ).loadProgressCard(sessionKey, true);
+
+  expect(request).toHaveBeenCalledWith('progressCard.get', { sessionKey });
+  expect(controller.state.progressCard).toMatchObject({
+    sessionKey,
+    revision: 2,
+    markdown: 'Working',
+  });
+  expect(controller.state.progressCardLoading).toBe(false);
+  expect(controller.state.progressCardAvailable).toBe(true);
+});
+
+test('refreshes and clears progress cards from revision notifications', async () => {
+  const sessionKey = 'agent:main:justdo:session-1';
+  const request = vi.fn().mockResolvedValue({
+    card: {
+      sessionKey,
+      revision: 3,
+      updatedAt: 2_000,
+      steps: [{ step: 'Done', status: 'completed' }],
+    },
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+  controller.state.hello = {
+    type: 'hello-ok',
+    protocol: 4,
+    features: { methods: ['progressCard.get'] },
+  };
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+
+  handleEvent({ event: 'progressCard.changed', payload: { sessionKey, revision: 3 } });
+  await vi.waitFor(() => expect(controller.state.progressCard?.revision).toBe(3));
+  expect(request).toHaveBeenCalledWith('progressCard.get', { sessionKey });
+
+  handleEvent({ event: 'progressCard.changed', payload: { sessionKey, revision: null } });
+  expect(controller.state.progressCard).toBeNull();
+});
+
+test('dismisses only the unchanged completed progress revision', async () => {
+  const sessionKey = 'agent:main:justdo:session-1';
+  const request = vi.fn().mockResolvedValue({ card: null });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+  controller.state.hello = {
+    type: 'hello-ok',
+    protocol: 4,
+    features: { methods: ['progressCard.get', 'progressCard.put'] },
+  };
+  controller.state.progressCard = {
+    sessionKey,
+    revision: 7,
+    updatedAt: 2_000,
+    steps: [{ step: 'Done', status: ProgressCardStepStatus.Completed }],
+  };
+
+  await expect(controller.dismissProgressCard()).resolves.toBe(true);
+  expect(request).toHaveBeenCalledWith('progressCard.put', {
+    sessionKey,
+    expectedRevision: 7,
+  });
+  expect(controller.state.progressCard).toBeNull();
+});
+
+test('does not issue a dismiss request for an active progress card', async () => {
+  const sessionKey = 'agent:main:justdo:session-1';
+  const request = vi.fn();
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+  controller.state.hello = {
+    type: 'hello-ok',
+    protocol: 4,
+    features: { methods: ['progressCard.put'] },
+  };
+  controller.state.progressCard = {
+    sessionKey,
+    revision: 1,
+    updatedAt: 1,
+    steps: [{ step: 'Working', status: ProgressCardStepStatus.InProgress }],
+  };
+
+  await expect(controller.dismissProgressCard()).resolves.toBe(false);
+  expect(request).not.toHaveBeenCalled();
+});
+
+test('treats the clear event sent before a dismiss response as success', async () => {
+  const sessionKey = 'agent:main:justdo:session-1';
+  let resolvePut: ((value: { card: null }) => void) | undefined;
+  const request = vi.fn().mockImplementation(
+    () =>
+      new Promise<{ card: null }>(resolve => {
+        resolvePut = resolve;
+      }),
+  );
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+  controller.state.hello = {
+    type: 'hello-ok',
+    protocol: 4,
+    features: { methods: ['progressCard.get', 'progressCard.put'] },
+  };
+  controller.state.progressCard = {
+    sessionKey,
+    revision: 7,
+    updatedAt: 2_000,
+    steps: [{ step: 'Done', status: ProgressCardStepStatus.Completed }],
+  };
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+
+  const dismissing = controller.dismissProgressCard();
+  handleEvent({ event: 'progressCard.changed', payload: { sessionKey, revision: null } });
+  resolvePut?.({ card: null });
+
+  await expect(dismissing).resolves.toBe(true);
+  expect(controller.state.progressCard).toBeNull();
+});
+
+test('removes an invalidated card when its authoritative refresh fails', async () => {
+  const sessionKey = 'agent:main:justdo:session-1';
+  const request = vi
+    .fn()
+    .mockResolvedValueOnce({
+      card: {
+        sessionKey,
+        revision: 1,
+        updatedAt: 1_000,
+        steps: [{ step: 'Old work', status: 'in_progress' }],
+      },
+    })
+    .mockRejectedValueOnce(new Error('temporary failure'));
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+  controller.state.hello = {
+    type: 'hello-ok',
+    protocol: 4,
+    features: { methods: ['progressCard.get'] },
+  };
+  const internals = controller as unknown as {
+    loadProgressCard(sessionKey: string, force?: boolean): Promise<void>;
+    handleEvent(event: { event: string; payload: unknown }): void;
+  };
+  await internals.loadProgressCard(sessionKey, true);
+  expect(controller.state.progressCard?.revision).toBe(1);
+
+  internals.handleEvent({
+    event: 'progressCard.changed',
+    payload: { sessionKey, revision: 2 },
+  });
+
+  expect(controller.state.progressCard).toBeNull();
+  await vi.waitFor(() => expect(controller.state.progressCardError).toBe('unavailable'));
+  expect(controller.state.progressCard).toBeNull();
+});
+
+test('classifies the nested participation error returned by OpenClaw', async () => {
+  const sessionKey = 'agent:main:justdo:session-1';
+  const request = vi.fn().mockRejectedValue({
+    gatewayCode: 'INVALID_REQUEST',
+    details: { code: 'SESSION_PARTICIPATION_REQUIRED' },
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+  controller.state.hello = {
+    type: 'hello-ok',
+    protocol: 4,
+    features: { methods: ['progressCard.get'] },
+  };
+
+  await (
+    controller as unknown as {
+      loadProgressCard(sessionKey: string, force?: boolean): Promise<void>;
+    }
+  ).loadProgressCard(sessionKey, true);
+
+  expect(controller.state.progressCardError).toBe('access-denied');
+  expect(controller.state.progressCard).toBeNull();
 });
 
 test('shows a stalled-run status at 20 seconds and clears it on model activity', async () => {
@@ -2750,7 +2974,7 @@ test('keeps late Thinking before a sessions_yield recovered from the same assist
   expect(recovered).not.toHaveProperty('agentSequencePending');
 });
 
-test('settles truncated Thinking before an update_plan restored from its assistant append', () => {
+test('settles truncated Thinking before a progress_card receipt restored from its assistant append', () => {
   vi.useFakeTimers();
   vi.setSystemTime(15_500);
   const sessionKey = 'agent:main:justdo:session-1';
@@ -2791,7 +3015,7 @@ test('settles truncated Thinking before an update_plan restored from its assista
           {
             type: 'toolCall',
             id: 'call-plan-after-thinking',
-            name: 'update_plan',
+            name: 'progress_card',
             arguments: {
               plan: [
                 { step: '批次1', status: 'completed' },
@@ -2849,7 +3073,7 @@ test('settles truncated Thinking before an update_plan restored from its assista
       data: {
         phase: 'start',
         toolCallId: 'call-plan-after-thinking',
-        name: 'update_plan',
+        name: 'progress_card',
       },
     },
   });
