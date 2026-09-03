@@ -1,3 +1,4 @@
+import type { ScheduledTask } from '@shared/scheduledTask/types';
 import { describe, expect, test } from 'vitest';
 
 import { i18nService } from '@/services/i18n';
@@ -7,6 +8,7 @@ import {
   buildScheduleFromForm,
   computeNextRunPreview,
   parseScheduleToForm,
+  requiresScheduledTaskRunConfirmation,
 } from './CronView';
 import { formatScheduleLabel } from './utils';
 
@@ -90,10 +92,86 @@ describe('CronView schedule form mapping', () => {
     });
   });
 
+  test('preserves native agent-turn execution options while editing the message', () => {
+    expect(
+      buildScheduledTaskExecutionInput(
+        {
+          sessionTarget: 'isolated',
+          payload: {
+            kind: 'agentTurn',
+            message: 'original',
+            model: 'openai/gpt-5.4',
+            timeoutSeconds: 90,
+            toolsAllow: ['web_search'],
+          },
+        },
+        'updated',
+      ),
+    ).toEqual({
+      sessionTarget: 'isolated',
+      payload: {
+        kind: 'agentTurn',
+        message: 'updated',
+        model: 'openai/gpt-5.4',
+        timeoutSeconds: 90,
+        toolsAllow: ['web_search'],
+      },
+    });
+  });
+
+  test('formats native event-driven schedules without assuming a cron expression', () => {
+    i18nService.setLanguage('en', { persist: false });
+
+    expect(formatScheduleLabel({ kind: 'on-exit', command: './watch.sh', cwd: '/srv/app' })).toBe(
+      'On process exit · ./watch.sh',
+    );
+    expect(formatScheduleLabel({ kind: 'stream', command: ['node', 'events.mjs'] })).toBe(
+      'Event stream · node events.mjs',
+    );
+  });
+
   test('uses an isolated agent turn for a new task', () => {
     expect(buildScheduledTaskExecutionInput(undefined, 'new task')).toEqual({
       sessionTarget: 'isolated',
       payload: { kind: 'agentTurn', message: 'new task' },
     });
+  });
+
+  test('requires confirmation before running advanced command or script tasks', () => {
+    const task: ScheduledTask = {
+      id: 'advanced-1',
+      name: 'Build watcher',
+      description: '',
+      enabled: true,
+      schedule: { kind: 'on-exit', command: './watch.sh' },
+      sessionTarget: 'isolated',
+      wakeMode: 'now',
+      payload: { kind: 'command', argv: ['npm', 'test'] },
+      delivery: { mode: 'none' },
+      agentId: null,
+      sessionKey: null,
+      management: 'advanced',
+      state: {
+        nextRunAtMs: null,
+        lastRunAtMs: null,
+        lastStatus: null,
+        lastError: null,
+        lastDurationMs: null,
+        runningAtMs: null,
+        consecutiveErrors: 0,
+      },
+      createdAt: '2026-09-03T00:00:00.000Z',
+      updatedAt: '2026-09-03T00:00:00.000Z',
+    };
+
+    expect(requiresScheduledTaskRunConfirmation(task)).toBe(true);
+    expect(
+      requiresScheduledTaskRunConfirmation({
+        ...task,
+        management: 'editable',
+        schedule: { kind: 'cron', expr: '0 9 * * *' },
+        payload: { kind: 'agentTurn', message: 'Summarize' },
+      }),
+    ).toBe(false);
   });
 });

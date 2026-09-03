@@ -21,15 +21,23 @@
 - `at`: ISO 时间字符串；一次性执行。
 - `every`: `everyMs` 和可选 `anchorMs`。
 - `cron`: 表达式、可选 timezone 和 `staggerMs`。
+- `on-exit`: Gateway 监管的进程退出时触发，可带 cwd。
+- `stream`: Gateway 监管的长驻命令产生事件批次时触发。
+
+创建/编辑表单只生成 `at/every/cron`。`on-exit/stream` 可以由 OpenClaw CLI、Agent 或其他原生客户端创建，JustDo 会正确展示，但不把它们塞进旧表单做有损编辑。
 
 ### 2.2 Payload
 
 - `agentTurn`: message，可选 timeout/model；使用隔离 scheduler agent。
 - `systemEvent`: text；通常目标 main session。
+- `command`、`script`: v2026.8.2 原生无人值守 payload；JustDo 只读展示，并在手动运行前以精确 argv/脚本文本二次确认。确认请求携带所展示配置的 revision，由 Main 在运行前重新读取并拒绝已变化的任务；这是运行前复核，不是 Gateway 原子 CAS。
+- `heartbeat`、`skillCollectionReview`: Gateway 收敛的系统 payload；在 JustDo 中标记为 OpenClaw 管理。
 
 ### 2.3 Delivery 与目标
 
-Delivery 包含 mode、channel、to、accountId、bestEffort。Session target 是 `main` 或 `isolated`；wake mode 是 `now` 或 `next-heartbeat`。channel option 可标 disabled，并用 accountId 区分多实例 bot。
+Delivery 包含 mode、channel、to、accountId、bestEffort。创建表单使用 `main/isolated`；列表还能安全读取 v2026.8.2 的 `current` 与 `session:*` target。wake mode 是 `now` 或 `next-heartbeat`。channel option 可标 disabled，并用 accountId 区分多实例 bot。
+
+Job 映射额外给 Renderer 一个 management 分类：`editable` 是表单可无损 round-trip 的普通任务，`advanced` 可启停/试运行/删除但不进入旧表单，`managed` 是 declaration key 或系统 payload 收敛的任务，只读展示并保留运行历史。owner/account tool policy、pacing、trigger、failure alert、非默认 delete-after-run 和高级 delivery 字段都会把任务归为 advanced，防止基础编辑器覆盖隐藏权限或执行语义。
 
 ### 2.4 状态
 
@@ -37,19 +45,19 @@ Delivery 包含 mode、channel、to、accountId、bestEffort。Session target �
 
 ## 3. 组件
 
-| 组件                             | 职责                                                                 |
-| -------------------------------- | -------------------------------------------------------------------- |
-| `CronJobService`                 | `cron.list/add/update/remove/run/runs` 映射、轮询、delivery 兼容修复 |
-| `ScheduledTaskResultStore`       | receipt、未读、cursor 分页、baseline/catch-up metadata               |
-| `ScheduledTaskResultSyncService` | baseline、增量/强制 reconcile、durable catch-up、事件                |
-| `OpenClawCronRunCleanupService`  | 删除 result 对应的 session tree、transcript/archive/run log          |
-| `cronJobServiceManager`          | 延迟组合 adapter、DB、services 和窗口广播                            |
-| IPC handlers                     | 输入 normalize、job/result API、session history resolve              |
-| Renderer slice/UI                | CronView、history、ResultInbox、RunSessionModal                      |
+| 组件                             | 职责                                                                    |
+| -------------------------------- | ----------------------------------------------------------------------- |
+| `CronJobService`                 | `cron.get/list/add/update/remove/run/runs` 映射、事件投影与低频兜底轮询 |
+| `ScheduledTaskResultStore`       | receipt、未读、cursor 分页、baseline/catch-up metadata                  |
+| `ScheduledTaskResultSyncService` | baseline、增量/强制 reconcile、durable catch-up、事件                   |
+| `OpenClawCronRunCleanupService`  | 删除 result 对应的 session tree、transcript/archive/run log             |
+| `cronJobServiceManager`          | 延迟组合 adapter、DB、services 和窗口广播                               |
+| IPC handlers                     | 输入 normalize、job/result API、session history resolve                 |
+| Renderer slice/UI                | CronView、history、ResultInbox、RunSessionModal                         |
 
 ## 4. Job CRUD
 
-`CronJobService` 先 ensure Gateway ready，再调用 RPC。list 使用 `limit=200` 和 offset 遍历全部 job，去重 id，并验证 `nextOffset` 单调增加。get/update/toggle/run 先通过窄 query 找到当前 job，避免基于过期 UI patch。
+`CronJobService` 先 ensure Gateway ready，再调用 RPC。list 使用 `limit=200` 和 offset 遍历全部 job，显式设置 `includeDeliveryPreviews=false`，避免列表/轮询触发逐任务的 delivery target I/O；分页同时校验 `nextOffset` 单调增加和 `snapshotRevision` 一致。get/update/toggle/run 使用 v2026.8.2 原生 `cron.get` 精确读取，不再用模糊 query 扫描。
 
 Create 映射 schedule/payload/delivery；Agent-turn 强制 `agentId = justdo-scheduler`。Update 根据 payload kind 原子调整：
 
@@ -57,6 +65,8 @@ Create 映射 schedule/payload/delivery；Agent-turn 强制 `agentId = justdo-sc
 - 转为 systemEvent 时清除 scheduler agent 和不再适用的 session key；
 - delivery 显式设 none 时发 `{mode:'none'}`，不是遗漏字段；
 - mutation 按 task id 串行，避免 toggle/update/run 互相覆盖。
+- update/toggle 将最新 job 的 `configRevision` 作为 `expectedConfigRevision` 发回 Gateway；定义已被 Agent/其他客户端改写时拒绝覆盖，并由 Renderer 重载权威列表。
+- declaration key 与 Gateway 系统 payload 任务在 Main 和 Renderer 两层都拒绝修改，避免下一轮 OpenClaw 收敛把 UI 操作覆盖。
 
 新建 job 即使调用方省略 delivery，也必须显式发送 `delivery: {mode:'none'}`。这样应用内结果不会因 OpenClaw 默认 delivery 改变而意外 announce；只有用户明确选择外发模式时才发送 channel/webhook 字段。
 
@@ -66,13 +76,15 @@ Create 映射 schedule/payload/delivery；Agent-turn 强制 `agentId = justdo-sc
 
 模型可见的 `automations` 工具不经过 JustDo IPC，因此受保护的 `automation-permission` extension 在 OpenClaw `before_tool_call` 层读取当前原生 session permission mode：Full 放行，Ask/Auto 要求 one-shot approval，read-only 拒绝。只有同时具备 scheduler agent id 与原生 cron-run session key 的无人值守执行可以豁免；普通交互会话不能冒用该 agent id。每次 Gateway 连接都通过 status RPC 验证 policy 已加载，缺失时禁止普通 turn。
 
-## 6. Delivery 修复
+## 6. v2026.8.2 Delivery 语义
 
-应用内结果不需要外部 channel。历史任务若因为默认 announce 且缺 channel 进入 delivery error/backoff，list 流程会识别 in-app-only 条件，修正为无外部 delivery 并清除不适用 backoff。不能吞掉真实 webhook/channel 发送失败。
+应用内结果不需要外部 channel，新建 job 仍显式发送 `delivery.mode=none`。v2026.8.2 已把执行 `status/error` 与 `deliveryStatus/deliveryError` 分开，JustDo 直接映射 Gateway 事实，不再用 v2026.6.11 的字符串启发式把 error 改写成 success，也不再在 list 读取路径中偷偷 update job 清 backoff。旧本地 receipt 的展示兼容可以保留，但不能反向改写新 Gateway 定义。
 
 ## 7. Polling 与事件
 
-Gateway 启动成功后开始 polling，退出清理先停止 polling。轮询比较 job state 和 lastRunAt，发 `StatusUpdate`、`RunUpdate`/`Refresh`，并调用 result sync。任务 ID 集合发生增删时必须发 `Refresh`，避免一次性任务执行后 Renderer 留下已被 Gateway 删除的陈旧 job。Gateway `cronChanged` 也触发 list/reconcile，并在完成或失败后通知 Renderer 刷新。
+Gateway 启动成功后开始 polling，退出清理先停止 polling。v2026.8.2 的 `cron` event 携带 action、job snapshot 和终态字段；`started` 没有稳定 runId，因此只投影 job `StatusUpdate`，`finished` 才按 runId 投影 `RunUpdate` 并定向同步该 job 的 receipt（不得把单 job 当成权威全量集合）。结构增删改触发 Renderer 权威刷新，`scheduled` 不做全量请求，避免高频 stream 任务形成请求风暴。低频轮询仍负责断线/漏事件兜底；仅已初始化的运行历史缓存接收 live/result upsert，从而在漏掉 finished event 时最终收敛且不会无限积累未查看任务的历史。
+
+`cron.run` 是 enqueue RPC，不代表任务已开始或完成。Main 显式发送 `mode=force`，要求响应包含 `enqueued=true` 与非空 `runId`；UI 只提示“已加入队列”，不伪造 running 历史。未入队、already-running 或缺少 runId 都作为失败返回，最终状态由 Gateway event / `cron.runs` 事实产生。
 
 轮询失败记录 module-prefixed error并等待下轮；不能用空成功列表覆盖 UI，因为启动时事件可能早于 Renderer 订阅。`isCoworkBusy` 可用于降低后台竞争，但不是永远暂停调度的理由。
 
@@ -128,26 +140,30 @@ Gateway 启动成功后开始 polling，退出清理先停止 polling。轮询�
 
 ## 13. Renderer
 
-`scheduledTaskSlice` 保存 tasks、runs、result pages/unread 等共享状态。`CronView` 管理 create/edit/toggle/manual run；`TaskRunHistory` 展示单任务历史；`ResultInbox` 提供未读筛选、分页、标记和删除；`RunSessionModal` 复用 chat pipeline 展示完整历史。
+`scheduledTaskSlice` 保存 tasks、runs、Gateway nextOffset、result pages/unread 等共享状态。`CronView` 管理 create/edit/toggle/manual run，并给 advanced/managed job 明确徽标和受限动作；高级与系统任务提供只读详情，展示 schedule/payload/session/delivery 及不会进入基础编辑器的原生能力。command/script 手动运行前必须二次确认。`TaskRunHistory` 展示加载/失败反馈并防止同一 cursor 重复请求；`ResultInbox` 提供未读筛选、分页、标记和删除；`RunSessionModal` 复用 chat pipeline 展示完整历史。
+
+编辑普通任务时必须保留表单未暴露但 Gateway 已有的 agent-turn model/timeout/fallback/toolsAllow 等字段、cron timezone/stagger 和 announce target/account/bestEffort，不能因为只改名称或提示词而清空原生配置。
 
 事件订阅后仍需主动首次 list/results，不能依赖可能已错过的 startup refresh。optimistic toggle/run 应以 handler 返回或下次权威 list 回正。
 
 ## 14. IPC
 
-Job：List/Get/Create/Update/Delete/Toggle/RunManually/ListRuns/ResolveSession/ListChannels。事件：StatusUpdate/RunUpdate/Refresh。Result：ListResults/MarkResultRead/MarkAllResultsRead/DeleteResult/ReconcileResults，以及 ResultUpserted/UnreadCountChanged。
+Job：List/Get/Create/Update/Delete/Toggle/RunManually/ListRuns/ResolveSession/ListChannels。RunManually 返回 enqueue receipt，ListRuns 透传 Gateway 的 `hasMore/nextOffset`，不能再用“页长等于 limit”猜测下一页。事件：StatusUpdate/RunUpdate/Refresh。Result：ListResults/MarkResultRead/MarkAllResultsRead/DeleteResult/ReconcileResults，以及 ResultUpserted/UnreadCountChanged。
 
-IPC 对 id/taskId trim，limit clamp，cursor decode 校验；失败对 Renderer 返回稳定通用信息，详细内部错误只进日志且不能含 prompt/credential。
+结果收件箱 IPC 对 run id/taskId 做规范化并校验 limit/cursor；原生 cron job id 保持精确值交给 Gateway 校验，run-history 分页边界由 Gateway schema 限制。失败对 Renderer 返回稳定通用信息，详细内部错误只进日志且不能含 prompt/credential。
 
 ## 15. 失败处理
 
-| 故障                        | 行为                                                  |
-| --------------------------- | ----------------------------------------------------- |
-| Gateway 未 ready            | handler 等待 ensureReady 或返回失败，不返回空成功     |
-| list pagination cursor 异常 | 终止并报错，防无限循环                                |
-| reconcile 某批失败          | 恢复批前 continuation，下次从同边界重试               |
-| artifact cleanup 失败       | 保留 receipt，不产生“已删除”假象                      |
-| session history 暂不可用    | receipt仍可读；UI重试并做 fingerprint 诊断            |
-| external delivery 缺失      | 仅在 in-app-only 条件修复，不掩盖真实 channel failure |
+| 故障                        | 行为                                                |
+| --------------------------- | --------------------------------------------------- |
+| Gateway 未 ready            | handler 等待 ensureReady 或返回失败，不返回空成功   |
+| list pagination cursor 异常 | 终止并报错，防无限循环                              |
+| reconcile 某批失败          | 恢复批前 continuation，下次从同边界重试             |
+| artifact cleanup 失败       | 保留 receipt，不产生“已删除”假象                    |
+| session history 暂不可用    | receipt仍可读；UI重试并做 fingerprint 诊断          |
+| job 定义并发变化            | `expectedConfigRevision` 冲突，拒绝覆盖并刷新列表   |
+| managed/advanced job        | managed 全只读；advanced 禁止表单编辑、保留安全动作 |
+| manual run 未入队           | IPC 返回失败，不显示“触发成功”                      |
 
 ## 16. 测试与维护
 
@@ -197,4 +213,4 @@ JustDo 创建的 `agentTurn` 任务必须绑定 `justdo-scheduler` 隔离 agent�
 
 ## 21. 变更完成条件
 
-新增 cron 字段必须从 shared type 到 Gateway mapping、create/update/read-back、UI edit 和测试全链路对称；新增 run status 要更新 result normalize、排序/终态、delivery error 和展示。任何 polling 优化必须验证跨多页、重启、重复事件和 read preservation，不能只测空列表与单页。
+表单支持的新 cron 字段必须从 shared type 到 Gateway mapping、create/update/read-back、UI edit 和测试全链路对称；只读取的新版本字段必须显式进入 advanced/managed 展示，不能强塞进不支持的编辑器。新增 run status 要更新 result normalize、排序/终态、delivery error 和展示。任何 polling 优化必须验证跨多页、重启、重复事件和 read preservation，不能只测空列表与单页。

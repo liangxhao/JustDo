@@ -310,8 +310,7 @@ contextBridge.exposeInMainWorld('electron', {
         ipcRenderer.invoke(OpenClawHistoryIpc.GetPagedHistory, params),
     },
     models: {
-      list: (options?: { agentId?: string }) =>
-        ipcRenderer.invoke(OpenClawModelsIpc.List, options),
+      list: (options?: { agentId?: string }) => ipcRenderer.invoke(OpenClawModelsIpc.List, options),
     },
     memory: {
       getOverview: () => ipcRenderer.invoke(MemoryIpc.GetOverview),
@@ -614,7 +613,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(ScheduledTaskIpc.Toggle, id, enabled),
 
     // Execution
-    runManually: (id: string) => ipcRenderer.invoke(ScheduledTaskIpc.RunManually, id),
+    runManually: (id: string, expectedConfigRevision?: string) =>
+      ipcRenderer.invoke(ScheduledTaskIpc.RunManually, id, expectedConfigRevision),
 
     // Run history
     listRuns: (taskId: string, limit?: number, offset?: number) =>

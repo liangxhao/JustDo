@@ -6,6 +6,7 @@ import {
   ChevronDownIcon,
   ClockIcon,
   ExclamationTriangleIcon,
+  InformationCircleIcon,
   PauseIcon,
   PencilSquareIcon,
   PlayIcon,
@@ -15,6 +16,7 @@ import {
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import type {
+  EditableSchedule,
   Schedule,
   ScheduledTask,
   ScheduledTaskChannelOption,
@@ -27,7 +29,14 @@ import { useSelector } from 'react-redux';
 import WindowTitleBar from '@/app/shell/window/WindowTitleBar';
 import ResultInbox from '@/features/scheduled-tasks/components/ResultInbox';
 import TaskRunHistory from '@/features/scheduled-tasks/components/TaskRunHistory';
-import { formatDateTime, formatScheduleLabel } from '@/features/scheduled-tasks/components/utils';
+import {
+  formatDateTime,
+  formatScheduleLabel,
+  getStatusLabelKey,
+  getStatusTone,
+  getTaskExecutionPreview,
+  getTaskPromptText,
+} from '@/features/scheduled-tasks/components/utils';
 import { scheduledTaskService } from '@/features/scheduled-tasks/scheduledTaskService';
 import { i18nService } from '@/services/i18n';
 import ComposeIcon from '@/shared/components/icons/ComposeIcon';
@@ -50,6 +59,13 @@ const RECURRENCE_KINDS: RecurrenceKind[] = [
 ];
 const EMPTY_SCHEDULED_TASK_RUNS: ScheduledTaskRun[] = [];
 
+export function requiresScheduledTaskRunConfirmation(job: ScheduledTask): boolean {
+  return (
+    job.management === 'advanced' &&
+    (job.payload.kind === 'command' || job.payload.kind === 'script')
+  );
+}
+
 export interface ScheduleFormState {
   mode: ScheduleMode;
   recurrence: RecurrenceKind;
@@ -70,14 +86,26 @@ export function buildScheduledTaskExecutionInput(
 ): Pick<ScheduledTaskInput, 'sessionTarget' | 'payload'> {
   if (job?.payload.kind === 'systemEvent') {
     return {
-      sessionTarget: job.sessionTarget,
-      payload: { kind: 'systemEvent', text: message },
+      sessionTarget: job.sessionTarget === 'main' ? 'main' : 'isolated',
+      payload: { ...job.payload, text: message },
+    };
+  }
+  if (job?.payload.kind === 'agentTurn') {
+    return {
+      sessionTarget: job.sessionTarget === 'main' ? 'main' : 'isolated',
+      payload: { ...job.payload, message },
     };
   }
   return {
-    sessionTarget: job?.sessionTarget ?? 'isolated',
+    sessionTarget: 'isolated',
     payload: { kind: 'agentTurn', message },
   };
+}
+
+function editablePayloadText(job?: ScheduledTask): string {
+  if (job?.payload.kind === 'systemEvent') return job.payload.text;
+  if (job?.payload.kind === 'agentTurn') return job.payload.message;
+  return '';
 }
 
 function pad2(value: number): string {
@@ -147,6 +175,7 @@ export function parseScheduleToForm(schedule?: Schedule): ScheduleFormState {
       intervalAnchorMs: schedule.anchorMs,
     };
   }
+  if (schedule.kind !== 'cron') return base;
   const expr = schedule.expr.trim();
   const parts = expr.split(/\s+/);
   if (parts.length !== 5) {
@@ -186,7 +215,7 @@ function intervalMilliseconds(form: ScheduleFormState): number {
   return Math.round(form.intervalValue * INTERVAL_UNIT_MS[form.intervalUnit]);
 }
 
-export function buildScheduleFromForm(form: ScheduleFormState): Schedule {
+export function buildScheduleFromForm(form: ScheduleFormState): EditableSchedule {
   if (form.mode === 'once') {
     const dateTime = new Date(`${form.onceDate}T${form.onceTime || '00:00'}`);
     return { kind: 'at', at: dateTime.toISOString() };
@@ -287,11 +316,20 @@ interface CronJobCardProps {
   onToggle: (enabled: boolean) => void;
   onEdit: () => void;
   onDelete: () => void;
-  onTrigger: () => Promise<void>;
+  onTrigger: () => Promise<boolean>;
   onHistory: () => void;
+  onDetails: () => void;
 }
 
-function CronJobCard({ job, onToggle, onEdit, onDelete, onTrigger, onHistory }: CronJobCardProps) {
+function CronJobCard({
+  job,
+  onToggle,
+  onEdit,
+  onDelete,
+  onTrigger,
+  onHistory,
+  onDetails,
+}: CronJobCardProps) {
   const t = i18nService.t.bind(i18nService);
   const [triggering, setTriggering] = useState(false);
 
@@ -299,8 +337,10 @@ function CronJobCard({ job, onToggle, onEdit, onDelete, onTrigger, onHistory }: 
     e.stopPropagation();
     setTriggering(true);
     try {
-      await onTrigger();
-      window.dispatchEvent(new CustomEvent('app:showToast', { detail: t('cronToastTriggered') }));
+      const queued = await onTrigger();
+      if (queued) {
+        window.dispatchEvent(new CustomEvent('app:showToast', { detail: t('cronToastTriggered') }));
+      }
     } catch {
       window.dispatchEvent(
         new CustomEvent('app:showToast', { detail: t('cronToastFailedTrigger') }),
@@ -315,8 +355,10 @@ function CronJobCard({ job, onToggle, onEdit, onDelete, onTrigger, onHistory }: 
     onDelete();
   };
 
-  const promptText = job.payload.kind === 'systemEvent' ? job.payload.text : job.payload.message;
+  const promptText = getTaskPromptText(job);
   const isEnabled = job.enabled;
+  const isManaged = job.management === 'managed';
+  const isEditable = job.management === 'editable';
   const hasLastRun = Boolean(job.state.lastRunAtMs);
   const lastStatus = job.state.lastStatus;
   const lastError = job.state.lastError;
@@ -329,12 +371,13 @@ function CronJobCard({ job, onToggle, onEdit, onDelete, onTrigger, onHistory }: 
     <div
       data-testid={'cron-job-card-' + job.id}
       className={
-        'group relative flex h-full min-h-[154px] cursor-pointer flex-col overflow-hidden rounded-2xl border bg-surface shadow-subtle transition-all duration-200 hover:-translate-y-0.5 hover:shadow-card ' +
+        'group relative flex h-full min-h-[154px] flex-col overflow-hidden rounded-2xl border bg-surface shadow-subtle transition-all duration-200 hover:-translate-y-0.5 hover:shadow-card ' +
+        (isEditable ? 'cursor-pointer ' : '') +
         (isEnabled
           ? 'border-border-subtle hover:border-primary/25'
           : 'border-border-subtle opacity-75 hover:border-border hover:opacity-100')
       }
-      onClick={onEdit}
+      onClick={isEditable ? onEdit : undefined}
     >
       <div
         className={
@@ -351,19 +394,28 @@ function CronJobCard({ job, onToggle, onEdit, onDelete, onTrigger, onHistory }: 
           {job.name}
         </h3>
 
+        {job.management !== 'editable' && (
+          <span className="shrink-0 rounded-md bg-surface-raised px-1.5 py-0.5 text-[10px] font-medium text-secondary">
+            {t(isManaged ? 'cronCardManaged' : 'cronCardAdvanced')}
+          </span>
+        )}
+
         <div className="shrink-0" onClick={e => e.stopPropagation()}>
           <button
             type="button"
             role="switch"
             aria-checked={isEnabled}
             aria-label={t(isEnabled ? 'cronStatsActive' : 'cronStatsPaused')}
+            disabled={isManaged}
+            title={isManaged ? t('cronCardManagedHint') : undefined}
             onClick={e => {
               e.stopPropagation();
               onToggle(!job.enabled);
             }}
             className={
               'inline-flex items-center gap-2 rounded-lg py-1 pl-2 transition-colors hover:bg-surface-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ' +
-              (isEnabled ? 'text-green-600 dark:text-green-400' : 'text-secondary')
+              (isEnabled ? 'text-green-600 dark:text-green-400' : 'text-secondary') +
+              (isManaged ? ' cursor-not-allowed opacity-60' : '')
             }
           >
             <span className="text-[10px] font-medium">
@@ -426,6 +478,12 @@ function CronJobCard({ job, onToggle, onEdit, onDelete, onTrigger, onHistory }: 
               title={lastError ?? undefined}
             >
               {t('cronCardLast')}: {formatDateTime(new Date(job.state.lastRunAtMs!))}
+              {lastStatus && (
+                <span className={getStatusTone(lastStatus)}>
+                  {' · '}
+                  {t(getStatusLabelKey(lastStatus))}
+                </span>
+              )}
             </span>
           </>
         )}
@@ -441,7 +499,8 @@ function CronJobCard({ job, onToggle, onEdit, onDelete, onTrigger, onHistory }: 
             e.stopPropagation();
             void handleTrigger(e);
           }}
-          disabled={triggering}
+          disabled={triggering || isManaged}
+          title={isManaged ? t('cronCardManagedHint') : undefined}
           className="inline-flex h-7 items-center gap-1 rounded-lg bg-primary/10 px-2.5 text-xs font-medium text-primary transition-colors hover:bg-primary/15 disabled:opacity-50"
         >
           {triggering ? (
@@ -463,27 +522,286 @@ function CronJobCard({ job, onToggle, onEdit, onDelete, onTrigger, onHistory }: 
           {t('cronCardHistory')}
         </button>
         <div className="flex-1" />
-        <button
-          type="button"
-          onClick={e => {
-            e.stopPropagation();
-            onEdit();
-          }}
-          title={t('cronDialogEditTitle')}
-          aria-label={t('cronDialogEditTitle')}
-          className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
-        >
-          <PencilSquareIcon className="h-4 w-4" />
-        </button>
-        <button
-          type="button"
-          onClick={handleDeleteClick}
-          title={t('delete')}
-          aria-label={t('delete')}
-          className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-red-500/10 hover:text-red-500"
-        >
-          <TrashIcon className="h-4 w-4" />
-        </button>
+        {!isEditable && (
+          <button
+            type="button"
+            onClick={e => {
+              e.stopPropagation();
+              onDetails();
+            }}
+            title={t('cronDetailsTitle')}
+            aria-label={t('cronDetailsTitle')}
+            className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+          >
+            <InformationCircleIcon className="h-4 w-4" />
+          </button>
+        )}
+        {isEditable && (
+          <button
+            type="button"
+            onClick={e => {
+              e.stopPropagation();
+              onEdit();
+            }}
+            title={t('cronDialogEditTitle')}
+            aria-label={t('cronDialogEditTitle')}
+            className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+          >
+            <PencilSquareIcon className="h-4 w-4" />
+          </button>
+        )}
+        {!isManaged && (
+          <button
+            type="button"
+            onClick={handleDeleteClick}
+            title={t('delete')}
+            aria-label={t('delete')}
+            className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-red-500/10 hover:text-red-500"
+          >
+            <TrashIcon className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+interface TaskDetailsDialogProps {
+  job: ScheduledTask;
+  onClose: () => void;
+}
+
+function TaskDetailsDialog({ job, onClose }: TaskDetailsDialogProps) {
+  const t = i18nService.t.bind(i18nService);
+  const payloadKind =
+    job.payload.kind === 'agentTurn'
+      ? t('scheduledTasksFormPayloadKindAgentTurn')
+      : job.payload.kind === 'systemEvent'
+        ? t('scheduledTasksFormPayloadKindSystemEvent')
+        : job.payload.kind === 'command'
+          ? t('scheduledTasksPayloadCommand')
+          : job.payload.kind === 'script'
+            ? t('scheduledTasksPayloadScript')
+            : job.payload.kind === 'heartbeat'
+              ? t('scheduledTasksPayloadHeartbeat')
+              : t('scheduledTasksPayloadSkillReview');
+  const sessionTarget =
+    job.sessionTarget === 'main'
+      ? t('cronDetailsSessionMain')
+      : job.sessionTarget === 'isolated'
+        ? t('cronDetailsSessionIsolated')
+        : job.sessionTarget === 'current'
+          ? t('cronDetailsSessionCurrent')
+          : job.sessionTarget.slice('session:'.length);
+  const delivery =
+    job.delivery.mode === 'none'
+      ? t('cronDialogDeliveryModeNone')
+      : [
+          job.delivery.mode === 'announce'
+            ? t('cronDialogDeliveryModeAnnounce')
+            : t('scheduledTasksFormDeliveryModeWebhook'),
+          job.delivery.channel,
+          job.delivery.to,
+          job.delivery.accountId,
+          job.delivery.bestEffort === true ? t('cronDetailsBestEffort') : undefined,
+        ]
+          .filter(Boolean)
+          .join(' · ');
+  const triggerOptions =
+    job.schedule.kind === 'cron'
+      ? [
+          job.schedule.tz ? `${t('cronDetailsTimezone')}: ${job.schedule.tz}` : undefined,
+          typeof job.schedule.staggerMs === 'number'
+            ? `${t('cronDetailsStagger')}: ${job.schedule.staggerMs} ms`
+            : undefined,
+        ]
+          .filter(Boolean)
+          .join(' · ')
+      : job.schedule.kind === 'every'
+        ? [
+            typeof job.schedule.anchorMs === 'number'
+              ? `${t('cronDetailsAnchor')}: ${formatDateTime(new Date(job.schedule.anchorMs))}`
+              : undefined,
+          ]
+            .filter(Boolean)
+            .join(' · ')
+        : job.schedule.kind === 'on-exit'
+          ? [
+              job.schedule.cwd
+                ? `${t('cronDetailsWorkingDirectory')}: ${job.schedule.cwd}`
+                : undefined,
+            ]
+              .filter(Boolean)
+              .join(' · ')
+          : job.schedule.kind === 'stream'
+            ? [
+                job.schedule.cwd
+                  ? `${t('cronDetailsWorkingDirectory')}: ${job.schedule.cwd}`
+                  : undefined,
+                job.schedule.mode ? `${t('cronDetailsMode')}: ${job.schedule.mode}` : undefined,
+                job.schedule.match ? `${t('cronDetailsMatch')}: ${job.schedule.match}` : undefined,
+                typeof job.schedule.batchMs === 'number'
+                  ? `${t('cronDetailsBatchWindow')}: ${job.schedule.batchMs} ms`
+                  : undefined,
+                typeof job.schedule.maxBatchBytes === 'number'
+                  ? `${t('cronDetailsMaxOutput')}: ${job.schedule.maxBatchBytes} bytes`
+                  : undefined,
+              ]
+                .filter(Boolean)
+                .join(' · ')
+            : '';
+  const payloadOptions =
+    job.payload.kind === 'command'
+      ? [
+          job.payload.cwd ? `${t('cronDetailsWorkingDirectory')}: ${job.payload.cwd}` : undefined,
+          typeof job.payload.timeoutSeconds === 'number'
+            ? `${t('cronDetailsTimeout')}: ${job.payload.timeoutSeconds} s`
+            : undefined,
+          typeof job.payload.noOutputTimeoutSeconds === 'number'
+            ? `${t('cronDetailsNoOutputTimeout')}: ${job.payload.noOutputTimeoutSeconds} s`
+            : undefined,
+          typeof job.payload.outputMaxBytes === 'number'
+            ? `${t('cronDetailsMaxOutput')}: ${job.payload.outputMaxBytes} bytes`
+            : undefined,
+          job.payload.toolsAllow?.length
+            ? `${t('cronDetailsAllowedTools')}: ${job.payload.toolsAllow.join(', ')}`
+            : undefined,
+        ]
+          .filter(Boolean)
+          .join(' · ')
+      : job.payload.kind === 'script'
+        ? [
+            typeof job.payload.timeoutSeconds === 'number'
+              ? `${t('cronDetailsTimeout')}: ${job.payload.timeoutSeconds} s`
+              : undefined,
+            typeof job.payload.toolBudget === 'number'
+              ? `${t('cronDetailsToolBudget')}: ${job.payload.toolBudget}`
+              : undefined,
+            job.payload.toolsAllow?.length
+              ? `${t('cronDetailsAllowedTools')}: ${job.payload.toolsAllow.join(', ')}`
+              : undefined,
+          ]
+            .filter(Boolean)
+            .join(' · ')
+        : job.payload.kind === 'agentTurn'
+          ? [
+              job.payload.model ? `${t('cronDetailsModel')}: ${job.payload.model}` : undefined,
+              job.payload.fallbacks?.length
+                ? `${t('cronDetailsFallbacks')}: ${job.payload.fallbacks.join(', ')}`
+                : undefined,
+              typeof job.payload.timeoutSeconds === 'number'
+                ? `${t('cronDetailsTimeout')}: ${job.payload.timeoutSeconds} s`
+                : undefined,
+              job.payload.toolsAllow?.length
+                ? `${t('cronDetailsAllowedTools')}: ${job.payload.toolsAllow.join(', ')}`
+                : undefined,
+            ]
+              .filter(Boolean)
+              .join(' · ')
+          : job.payload.kind === 'systemEvent' && job.payload.toolsAllow?.length
+            ? `${t('cronDetailsAllowedTools')}: ${job.payload.toolsAllow.join(', ')}`
+            : '';
+  const advancedFeatureLabels: Record<
+    NonNullable<ScheduledTask['advancedFeatures']>[number],
+    string
+  > = {
+    owner: t('cronAdvancedFeatureOwner'),
+    'account-tool-policy': t('cronAdvancedFeatureAccountPolicy'),
+    pacing: t('cronAdvancedFeaturePacing'),
+    trigger: t('cronAdvancedFeatureTrigger'),
+    'failure-alert': t('cronAdvancedFeatureFailureAlert'),
+    'delete-after-run': t('cronAdvancedFeatureDeleteAfterRun'),
+    'advanced-delivery': t('cronAdvancedFeatureDelivery'),
+    'command-environment': t('cronAdvancedFeatureCommandEnvironment'),
+    'command-input': t('cronAdvancedFeatureCommandInput'),
+  };
+  const advancedFeatures = job.advancedFeatures
+    ?.map(feature => advancedFeatureLabels[feature])
+    .join(' · ');
+  const rows = [
+    ...(job.description ? [{ label: t('cronDetailsDescription'), value: job.description }] : []),
+    { label: t('cronDialogSchedule'), value: formatScheduleLabel(job.schedule) },
+    ...(triggerOptions ? [{ label: t('cronDetailsTriggerOptions'), value: triggerOptions }] : []),
+    { label: t('cronDetailsPayloadType'), value: payloadKind },
+    ...(payloadOptions ? [{ label: t('cronDetailsPayloadOptions'), value: payloadOptions }] : []),
+    ...(advancedFeatures
+      ? [{ label: t('cronDetailsAdvancedFeatures'), value: advancedFeatures }]
+      : []),
+    { label: t('cronDetailsSessionTarget'), value: sessionTarget },
+    { label: t('cronDialogDeliveryTitle'), value: delivery },
+    {
+      label: t('cronDetailsStatus'),
+      value: t(job.enabled ? 'cronStatsActive' : 'cronStatsPaused'),
+    },
+    { label: t('cronDetailsTaskId'), value: job.id },
+  ];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/40 dark:bg-black/60" />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="scheduled-task-details-title"
+        className="relative mx-4 flex max-h-[85vh] w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex shrink-0 items-center justify-between border-b border-border-subtle px-5 py-4">
+          <div className="min-w-0">
+            <h2
+              id="scheduled-task-details-title"
+              className="truncate text-lg font-semibold text-foreground"
+            >
+              {job.name}
+            </h2>
+            <p className="mt-0.5 text-xs text-secondary">{t('cronDetailsTitle')}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={t('close')}
+            className="rounded-lg p-1.5 text-secondary transition-colors hover:bg-surface-raised"
+          >
+            <XMarkIcon className="h-5 w-5" />
+          </button>
+        </div>
+        <div className="flex-1 space-y-5 overflow-y-auto px-5 py-4">
+          <div className="rounded-xl border border-border-subtle bg-surface-raised/60 px-4 py-3">
+            <div className="flex items-center gap-2">
+              <span className="rounded-md bg-background px-2 py-1 text-xs font-medium text-secondary">
+                {t(job.management === 'managed' ? 'cronCardManaged' : 'cronCardAdvanced')}
+              </span>
+            </div>
+            <p className="mt-2 text-xs leading-5 text-secondary">
+              {t(job.management === 'managed' ? 'cronCardManagedHint' : 'cronDetailsAdvancedHint')}
+            </p>
+          </div>
+
+          <dl className="grid grid-cols-1 gap-4 sm:grid-cols-[140px_minmax(0,1fr)]">
+            {rows.map(row => (
+              <React.Fragment key={row.label}>
+                <dt className="text-xs font-medium text-secondary">{row.label}</dt>
+                <dd className="break-words text-sm text-foreground">{row.value}</dd>
+              </React.Fragment>
+            ))}
+          </dl>
+
+          <div>
+            <h3 className="mb-2 text-xs font-medium text-secondary">{t('cronDetailsPayload')}</h3>
+            <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-border-subtle bg-surface px-4 py-3 font-sans text-sm leading-6 text-foreground">
+              {getTaskPromptText(job)}
+            </pre>
+          </div>
+        </div>
+        <div className="flex justify-end border-t border-border-subtle px-5 py-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl bg-primary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-hover"
+          >
+            {t('close')}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -503,9 +821,7 @@ function CreateEditDialog({ open, job, onClose, onSave }: DialogProps) {
   const isEdit = !!job;
 
   const [name, setName] = useState(job?.name ?? '');
-  const [message, setMessage] = useState(
-    job ? (job.payload.kind === 'systemEvent' ? job.payload.text : job.payload.message) : '',
-  );
+  const [message, setMessage] = useState(editablePayloadText(job));
   const [scheduleForm, setScheduleForm] = useState<ScheduleFormState>(() =>
     parseScheduleToForm(job?.schedule),
   );
@@ -529,9 +845,7 @@ function CreateEditDialog({ open, job, onClose, onSave }: DialogProps) {
     setPrevOpen(open);
     if (open) {
       setName(job?.name ?? '');
-      setMessage(
-        job ? (job.payload.kind === 'systemEvent' ? job.payload.text : job.payload.message) : '',
-      );
+      setMessage(editablePayloadText(job));
       setScheduleForm(parseScheduleToForm(job?.schedule));
       setEnabled(job ? job.enabled : true);
       setDeliveryChannel(job?.delivery.channel ?? '');
@@ -606,22 +920,36 @@ function CreateEditDialog({ open, job, onClose, onSave }: DialogProps) {
     if (!validate()) return;
     setSaving(true);
     try {
-      const schedule = buildScheduleFromForm(scheduleForm);
+      const builtSchedule = buildScheduleFromForm(scheduleForm);
+      const schedule =
+        builtSchedule.kind === 'cron' && job?.schedule.kind === 'cron'
+          ? {
+              ...builtSchedule,
+              ...(job.schedule.tz ? { tz: job.schedule.tz } : {}),
+              ...(typeof job.schedule.staggerMs === 'number'
+                ? { staggerMs: job.schedule.staggerMs }
+                : {}),
+            }
+          : builtSchedule;
       const execution = buildScheduledTaskExecutionInput(job, message.trim());
       const input: ScheduledTaskInput = {
         name: name.trim(),
-        description: '',
+        description: job?.description ?? '',
         enabled,
         schedule,
         sessionTarget: execution.sessionTarget,
-        wakeMode: 'now',
+        wakeMode: job?.wakeMode ?? 'now',
         payload: execution.payload,
         delivery:
           deliveryMode === 'none'
-            ? { mode: 'none' }
+            ? job?.delivery.mode === 'none'
+              ? job.delivery
+              : { mode: 'none' }
             : deliveryMode === 'webhook' && job?.delivery.mode === 'webhook'
               ? job.delivery
-              : { mode: 'announce', channel: deliveryChannel || undefined },
+              : deliveryMode === 'announce' && job?.delivery.mode === 'announce'
+                ? { ...job.delivery, channel: deliveryChannel || undefined }
+                : { mode: 'announce', channel: deliveryChannel || undefined },
       };
       await onSave(input);
       onClose();
@@ -645,16 +973,18 @@ function CreateEditDialog({ open, job, onClose, onSave }: DialogProps) {
       <div
         role="dialog"
         aria-modal="true"
+        aria-labelledby="scheduled-task-edit-title"
         className="relative w-full max-w-lg mx-4 max-h-[85vh] flex flex-col rounded-2xl shadow-2xl bg-background border border-border overflow-hidden"
       >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle shrink-0">
-          <h2 className="text-lg font-semibold text-foreground">
+          <h2 id="scheduled-task-edit-title" className="text-lg font-semibold text-foreground">
             {isEdit ? t('cronDialogEditTitle') : t('cronDialogCreateTitle')}
           </h2>
           <button
             type="button"
             onClick={onClose}
+            aria-label={t('close')}
             className="p-1.5 rounded-lg text-secondary hover:bg-surface-raised transition-colors"
           >
             <XMarkIcon className="w-5 h-5" />
@@ -1057,7 +1387,13 @@ export const CronView: React.FC<CronViewProps> = ({
   const [showDialog, setShowDialog] = useState(false);
   const [editingJob, setEditingJob] = useState<ScheduledTask | undefined>();
   const [jobToDelete, setJobToDelete] = useState<ScheduledTask | null>(null);
+  const [jobToRunId, setJobToRunId] = useState<string | null>(null);
+  const [runSubmitting, setRunSubmitting] = useState(false);
+  const [detailsJobId, setDetailsJobId] = useState<string | null>(null);
   const [historyTaskId, setHistoryTaskId] = useState<string | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyLoadError, setHistoryLoadError] = useState(false);
+  const [historyRequestRevision, setHistoryRequestRevision] = useState(0);
   const [activeTab, setActiveTab] = useState<'tasks' | 'results'>('tasks');
 
   const historyRuns = useSelector((s: RootState) =>
@@ -1068,16 +1404,38 @@ export const CronView: React.FC<CronViewProps> = ({
   const historyJob = useSelector((s: RootState) =>
     historyTaskId ? s.scheduledTask.tasks.find(t => t.id === historyTaskId) : undefined,
   );
+  const detailsJob = useSelector((s: RootState) =>
+    detailsJobId ? s.scheduledTask.tasks.find(t => t.id === detailsJobId) : undefined,
+  );
+  const jobToRun = useSelector((s: RootState) =>
+    jobToRunId ? s.scheduledTask.tasks.find(task => task.id === jobToRunId) : undefined,
+  );
 
   useEffect(() => {
     scheduledTaskService.loadTasks();
   }, []);
 
   useEffect(() => {
-    if (historyTaskId) {
-      scheduledTaskService.loadRuns(historyTaskId);
+    if (!historyTaskId) {
+      setHistoryLoading(false);
+      return;
     }
-  }, [historyTaskId]);
+    let active = true;
+    setHistoryLoadError(false);
+    setHistoryLoading(true);
+    void scheduledTaskService
+      .loadRuns(historyTaskId)
+      .catch(() => {
+        if (!active) return;
+        setHistoryLoadError(true);
+      })
+      .finally(() => {
+        if (active) setHistoryLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [historyRequestRevision, historyTaskId]);
 
   useEffect(() => {
     if (editingJob && !tasks.some(task => task.id === editingJob.id)) {
@@ -1087,7 +1445,29 @@ export const CronView: React.FC<CronViewProps> = ({
     if (jobToDelete && !tasks.some(task => task.id === jobToDelete.id)) {
       setJobToDelete(null);
     }
-  }, [editingJob, jobToDelete, tasks]);
+    if (detailsJobId && !tasks.some(task => task.id === detailsJobId)) {
+      setDetailsJobId(null);
+    }
+    if (jobToRunId && !tasks.some(task => task.id === jobToRunId)) {
+      setJobToRunId(null);
+    }
+  }, [detailsJobId, editingJob, jobToDelete, jobToRunId, tasks]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (jobToRunId && !runSubmitting) setJobToRunId(null);
+      else if (detailsJobId) setDetailsJobId(null);
+      else if (historyTaskId) setHistoryTaskId(null);
+      else if (jobToDelete) setJobToDelete(null);
+      else if (showDialog) {
+        setShowDialog(false);
+        setEditingJob(undefined);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [detailsJobId, historyTaskId, jobToDelete, jobToRunId, runSubmitting, showDialog]);
 
   const handleSave = useCallback(
     async (input: ScheduledTaskInput) => {
@@ -1133,6 +1513,31 @@ export const CronView: React.FC<CronViewProps> = ({
     }
     setJobToDelete(null);
   }, [jobToDelete, t]);
+
+  const handleRunRequest = useCallback(async (job: ScheduledTask): Promise<boolean> => {
+    if (requiresScheduledTaskRunConfirmation(job)) {
+      setJobToRunId(job.id);
+      return false;
+    }
+    await scheduledTaskService.runManually(job.id);
+    return true;
+  }, []);
+
+  const handleConfirmedRun = useCallback(async () => {
+    if (!jobToRun || runSubmitting) return;
+    setRunSubmitting(true);
+    try {
+      await scheduledTaskService.runManually(jobToRun.id, jobToRun.configRevision ?? undefined);
+      window.dispatchEvent(new CustomEvent('app:showToast', { detail: t('cronToastTriggered') }));
+      setJobToRunId(null);
+    } catch {
+      window.dispatchEvent(
+        new CustomEvent('app:showToast', { detail: t('cronToastFailedTrigger') }),
+      );
+    } finally {
+      setRunSubmitting(false);
+    }
+  }, [jobToRun, runSubmitting, t]);
 
   const activeJobs = tasks.filter(j => j.enabled);
   const pausedJobs = tasks.filter(j => !j.enabled);
@@ -1314,8 +1719,9 @@ export const CronView: React.FC<CronViewProps> = ({
                         setShowDialog(true);
                       }}
                       onDelete={() => setJobToDelete(job)}
-                      onTrigger={() => scheduledTaskService.runManually(job.id)}
+                      onTrigger={() => handleRunRequest(job)}
                       onHistory={() => setHistoryTaskId(job.id)}
+                      onDetails={() => setDetailsJobId(job.id)}
                     />
                   ))}
                 </div>
@@ -1336,6 +1742,71 @@ export const CronView: React.FC<CronViewProps> = ({
         onSave={handleSave}
       />
 
+      {detailsJob && <TaskDetailsDialog job={detailsJob} onClose={() => setDetailsJobId(null)} />}
+
+      {jobToRun && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          onClick={() => {
+            if (!runSubmitting) setJobToRunId(null);
+          }}
+        >
+          <div className="absolute inset-0 bg-black/40 dark:bg-black/60" />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="scheduled-task-run-confirm-title"
+            className="relative mx-4 w-full max-w-lg rounded-2xl border border-border bg-background p-6 shadow-2xl"
+            onClick={e => e.stopPropagation()}
+          >
+            <h3
+              id="scheduled-task-run-confirm-title"
+              className="mb-2 text-lg font-semibold text-foreground"
+            >
+              {t('cronRunConfirmTitle')}
+            </h3>
+            <p className="mb-4 text-sm leading-6 text-secondary">
+              {t('cronRunConfirmDescription').replace('{name}', jobToRun.name)}
+            </p>
+            <pre className="mb-6 max-h-52 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-yellow-500/20 bg-yellow-500/10 px-4 py-3 font-sans text-sm leading-6 text-foreground">
+              {getTaskExecutionPreview(jobToRun)}
+            </pre>
+            {jobToRun.payload.kind === 'command' && jobToRun.payload.cwd && (
+              <p className="-mt-3 mb-4 text-xs text-secondary">
+                {t('cronDetailsWorkingDirectory')}: {jobToRun.payload.cwd}
+              </p>
+            )}
+            {jobToRun.advancedFeatures?.some(
+              feature => feature === 'command-environment' || feature === 'command-input',
+            ) && (
+              <p className="mb-4 text-sm text-yellow-700 dark:text-yellow-300" role="alert">
+                {t('cronRunConfirmHiddenContext')}
+              </p>
+            )}
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                autoFocus
+                disabled={runSubmitting}
+                onClick={() => setJobToRunId(null)}
+                className="rounded-xl px-4 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised disabled:opacity-50"
+              >
+                {t('cancel')}
+              </button>
+              <button
+                type="button"
+                disabled={runSubmitting}
+                onClick={() => void handleConfirmedRun()}
+                className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-hover disabled:opacity-50"
+              >
+                {runSubmitting && <ArrowPathIcon className="h-4 w-4 animate-spin" />}
+                {t('cronCardRunNow')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Delete Confirmation Dialog */}
       {jobToDelete && (
         <div
@@ -1344,16 +1815,30 @@ export const CronView: React.FC<CronViewProps> = ({
         >
           <div className="absolute inset-0 bg-black/40 dark:bg-black/60" />
           <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="scheduled-task-delete-title"
             className="relative w-full max-w-sm mx-4 rounded-2xl shadow-2xl bg-background border border-border p-6"
             onClick={e => e.stopPropagation()}
           >
-            <h3 className="text-lg font-semibold text-foreground mb-2">{t('delete')}</h3>
+            <h3
+              id="scheduled-task-delete-title"
+              className="text-lg font-semibold text-foreground mb-2"
+            >
+              {t('delete')}
+            </h3>
             <p className="text-sm text-secondary mb-6">
               {t('scheduledTasksDeleteConfirm').replace('{name}', jobToDelete.name)}
             </p>
+            {jobToDelete.management === 'advanced' && (
+              <p className="mb-6 rounded-xl bg-yellow-500/10 px-3 py-2 text-xs leading-5 text-yellow-700 dark:text-yellow-300">
+                {t('cronDetailsAdvancedDeleteWarning')}
+              </p>
+            )}
             <div className="flex justify-end gap-3">
               <button
                 type="button"
+                autoFocus
                 onClick={() => setJobToDelete(null)}
                 className="px-4 py-2 text-sm font-medium rounded-xl text-secondary hover:bg-surface-raised transition-colors"
               >
@@ -1379,17 +1864,24 @@ export const CronView: React.FC<CronViewProps> = ({
         >
           <div className="absolute inset-0 bg-black/40 dark:bg-black/60" />
           <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="scheduled-task-history-title"
             className="relative w-full max-w-lg mx-4 max-h-[80vh] flex flex-col rounded-2xl shadow-2xl bg-background border border-border overflow-hidden"
             onClick={e => e.stopPropagation()}
           >
             {/* Header */}
             <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle shrink-0">
-              <h2 className="text-lg font-semibold text-foreground">
+              <h2
+                id="scheduled-task-history-title"
+                className="text-lg font-semibold text-foreground"
+              >
                 {historyJob?.name ?? ''} - {t('cronCardHistory')}
               </h2>
               <button
                 type="button"
                 onClick={() => setHistoryTaskId(null)}
+                aria-label={t('close')}
                 className="p-1.5 rounded-lg text-secondary hover:bg-surface-raised transition-colors"
               >
                 <XMarkIcon className="w-5 h-5" />
@@ -1402,6 +1894,9 @@ export const CronView: React.FC<CronViewProps> = ({
                 taskId={historyTaskId}
                 taskName={historyJob?.name}
                 runs={historyRuns}
+                loading={historyLoading}
+                loadError={historyLoadError}
+                onRetry={() => setHistoryRequestRevision(revision => revision + 1)}
               />
             </div>
           </div>

@@ -10,29 +10,37 @@ describe('stringifyScheduledTaskLog', () => {
     });
 
     expect(output).toBe(
-      '{"name":"Summary","schedule":{"kind":"at","at":"2026-08-24T10:00:00.000Z"}}',
+      '{"name":"[redacted]","schedule":{"kind":"at","at":"2026-08-24T10:00:00.000Z"}}',
     );
     expect(output).not.toMatch(/[\r\n]/);
   });
 
-  test('keeps only the first 30 characters of nested message fields', () => {
-    const visible = '123456789012345678901234567890';
-    const sensitiveSuffix = 'sensitive-content';
-
+  test('redacts task content instead of logging previews', () => {
     const output = stringifyScheduledTaskLog({
-      payload: { kind: 'agentTurn', message: `${visible}${sensitiveSuffix}` },
+      name: 'Sensitive name',
+      payload: { kind: 'agentTurn', message: 'sensitive-content' },
+      delivery: { to: 'https://example.test/hook?token=secret', accountId: 'private' },
     });
 
     expect(JSON.parse(output)).toEqual({
-      payload: { kind: 'agentTurn', message: `${visible}…` },
+      name: '[redacted]',
+      payload: { kind: 'agentTurn', message: '[redacted]' },
+      delivery: { to: '[redacted]', accountId: '[redacted]' },
     });
-    expect(output).not.toContain(sensitiveSuffix);
+    expect(output).not.toContain('sensitive-content');
+    expect(output).not.toContain('token=secret');
   });
 
-  test('counts Unicode code points instead of splitting surrogate pairs', () => {
-    const output = stringifyScheduledTaskLog({ message: `${'你'.repeat(29)}😀secret` });
+  test('redacts command execution context', () => {
+    const output = stringifyScheduledTaskLog({
+      payload: { kind: 'command', argv: ['tool', '--token', 'secret'], env: { TOKEN: 'x' } },
+    });
 
-    expect(JSON.parse(output).message).toBe(`${'你'.repeat(29)}😀…`);
+    expect(JSON.parse(output).payload).toEqual({
+      kind: 'command',
+      argv: '[redacted]',
+      env: '[redacted]',
+    });
     expect(output).not.toContain('secret');
   });
 });

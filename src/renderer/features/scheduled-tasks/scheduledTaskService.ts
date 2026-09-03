@@ -2,6 +2,7 @@ import type {
   ScheduledTask,
   ScheduledTaskChannelOption,
   ScheduledTaskInput,
+  ScheduledTaskManualRunResult,
   ScheduledTaskResultQuery,
   ScheduledTaskResultUpsertedEvent,
   ScheduledTaskRunEvent,
@@ -99,12 +100,17 @@ export class ScheduledTaskService {
     this.cleanupFns.push(cleanupStatus);
 
     const cleanupRun = api.onRunUpdate((event: ScheduledTaskRunEvent) => {
-      store.dispatch(addOrUpdateRun(event.run));
+      if (store.getState().scheduledTask.runs[event.run.taskId] !== undefined) {
+        store.dispatch(addOrUpdateRun(event.run));
+      }
     });
     this.cleanupFns.push(cleanupRun);
 
     const cleanupResult = api.onResultUpserted((event: ScheduledTaskResultUpsertedEvent) => {
       this.resultsRevision += 1;
+      if (store.getState().scheduledTask.runs[event.result.taskId] !== undefined) {
+        store.dispatch(addOrUpdateRun(event.result));
+      }
       const filter = store.getState().scheduledTask.resultFilter;
       if (
         (!filter.taskId || filter.taskId === event.result.taskId) &&
@@ -151,7 +157,7 @@ export class ScheduledTaskService {
 
   async createTask(input: ScheduledTaskInput): Promise<void> {
     const api = window.electron?.scheduledTasks;
-    if (!api) return;
+    if (!api) throw new Error('Scheduled task API is unavailable');
 
     try {
       const result = await api.create(input);
@@ -174,13 +180,13 @@ export class ScheduledTaskService {
 
   async updateTaskById(id: string, input: Partial<ScheduledTaskInput>): Promise<void> {
     const api = window.electron?.scheduledTasks;
-    if (!api) return;
+    if (!api) throw new Error('Scheduled task API is unavailable');
 
     try {
       const result = await api.update(id, input);
       if (result.success && result.task) {
         store.dispatch(updateTask(result.task));
-      } else if (!result.success) {
+      } else {
         const errorMsg = result.error || 'Failed to update task';
         store.dispatch(setError(errorMsg));
         throw new Error(errorMsg);
@@ -194,7 +200,7 @@ export class ScheduledTaskService {
 
   async deleteTask(id: string): Promise<void> {
     const api = window.electron?.scheduledTasks;
-    if (!api) return;
+    if (!api) throw new Error('Scheduled task API is unavailable');
 
     try {
       const result = await api.delete(id);
@@ -212,26 +218,36 @@ export class ScheduledTaskService {
 
   async toggleTask(id: string, enabled: boolean): Promise<string | null> {
     const api = window.electron?.scheduledTasks;
-    if (!api) return null;
+    if (!api) throw new Error('Scheduled task API is unavailable');
 
     try {
       const result = await api.toggle(id, enabled);
       if (result.success && result.task) {
         store.dispatch(updateTask(result.task));
+      } else {
+        throw new Error(result.error || 'Failed to update task');
       }
       return result.warning ?? null;
     } catch (err: unknown) {
       store.dispatch(setError(err instanceof Error ? err.message : String(err)));
+      await this.loadTasks();
       throw err;
     }
   }
 
-  async runManually(id: string): Promise<void> {
+  async runManually(
+    id: string,
+    expectedConfigRevision?: string,
+  ): Promise<ScheduledTaskManualRunResult> {
     const api = window.electron?.scheduledTasks;
-    if (!api) return;
+    if (!api) throw new Error('Scheduled task API is unavailable');
 
     try {
-      await api.runManually(id);
+      const response = await api.runManually(id, expectedConfigRevision);
+      if (!response.success || !response.result) {
+        throw new Error(response.error || 'Failed to run task');
+      }
+      return response.result;
     } catch (err: unknown) {
       store.dispatch(setError(err instanceof Error ? err.message : String(err)));
       throw err;
@@ -240,20 +256,24 @@ export class ScheduledTaskService {
 
   async loadRuns(taskId: string, limit = 20, offset?: number): Promise<void> {
     const api = window.electron?.scheduledTasks;
-    if (!api) return;
+    if (!api) throw new Error('Scheduled task API is unavailable');
 
     try {
       const result = await api.listRuns(taskId, limit, offset);
       if (result.success && result.runs) {
-        const hasMore = result.runs.length >= limit;
+        const hasMore = result.hasMore === true;
+        const nextOffset = result.nextOffset ?? null;
         if (offset && offset > 0) {
-          store.dispatch(appendRuns({ taskId, runs: result.runs, hasMore }));
+          store.dispatch(appendRuns({ taskId, runs: result.runs, hasMore, nextOffset }));
         } else {
-          store.dispatch(setRuns({ taskId, runs: result.runs, hasMore }));
+          store.dispatch(setRuns({ taskId, runs: result.runs, hasMore, nextOffset }));
         }
+      } else {
+        throw new Error(result.error || 'Failed to load task runs');
       }
     } catch (err: unknown) {
       store.dispatch(setError(err instanceof Error ? err.message : String(err)));
+      throw err;
     }
   }
 

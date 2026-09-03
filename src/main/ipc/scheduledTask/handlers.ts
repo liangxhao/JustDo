@@ -17,10 +17,7 @@ export interface ScheduledTaskHandlerDeps {
   getCronJobService: () => CronJobService;
   getOpenClawRuntimeAdapter: () => {
     getGatewayClient: () => unknown;
-    fetchSessionHistoryByKey: (
-      sessionKey: string,
-      sessionId?: string | null,
-    ) => Promise<unknown>;
+    fetchSessionHistoryByKey: (sessionKey: string, sessionId?: string | null) => Promise<unknown>;
   } | null;
   getResultStore?: () => ScheduledTaskResultStore;
   getResultSyncService?: () => ScheduledTaskResultSyncService;
@@ -99,18 +96,21 @@ export function registerScheduledTaskHandlers(deps: ScheduledTaskHandlerDeps): v
     }
   });
 
-  ipcMain.handle(ScheduledTaskIpc.Update, async (_event, id: string, input: Partial<ScheduledTaskInput>) => {
-    try {
-      const normalizedInput = { ...input };
-      const task = await getCronJobService().updateJob(id, normalizedInput);
-      return { success: true, task };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to update task',
-      };
-    }
-  });
+  ipcMain.handle(
+    ScheduledTaskIpc.Update,
+    async (_event, id: string, input: Partial<ScheduledTaskInput>) => {
+      try {
+        const normalizedInput = { ...input };
+        const task = await getCronJobService().updateJob(id, normalizedInput);
+        return { success: true, task };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to update task',
+        };
+      }
+    },
+  );
 
   ipcMain.handle(ScheduledTaskIpc.Delete, async (_event, id: string) => {
     try {
@@ -136,23 +136,26 @@ export function registerScheduledTaskHandlers(deps: ScheduledTaskHandlerDeps): v
     }
   });
 
-  ipcMain.handle(ScheduledTaskIpc.RunManually, async (_event, id: string) => {
-    try {
-      await getCronJobService().runJob(id);
-      return { success: true };
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      console.error(`[IPC] Manual run failed for ${id}:`, msg);
-      return { success: false, error: msg };
-    }
-  });
+  ipcMain.handle(
+    ScheduledTaskIpc.RunManually,
+    async (_event, id: string, expectedConfigRevision?: string) => {
+      try {
+        const result = await getCronJobService().runJob(id, expectedConfigRevision);
+        return { success: true, result };
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        console.error(`[IPC] Manual run failed for ${id}:`, msg);
+        return { success: false, error: msg };
+      }
+    },
+  );
 
   ipcMain.handle(
     ScheduledTaskIpc.ListRuns,
     async (_event, taskId: string, limit?: number, offset?: number) => {
       try {
-        const runs = await getCronJobService().listRuns(taskId, limit, offset);
-        return { success: true, runs };
+        const page = await getCronJobService().listRunsPage(taskId, limit, offset);
+        return { success: true, ...page };
       } catch (error) {
         return {
           success: false,
@@ -222,8 +225,7 @@ export function registerScheduledTaskHandlers(deps: ScheduledTaskHandlerDeps): v
     async (_event, rawQuery?: ScheduledTaskResultQuery) => {
       try {
         if (!deps.getResultStore) throw new Error('Result store is unavailable');
-        const taskId =
-          typeof rawQuery?.taskId === 'string' ? rawQuery.taskId.trim() : '';
+        const taskId = typeof rawQuery?.taskId === 'string' ? rawQuery.taskId.trim() : '';
         const cursor = typeof rawQuery?.cursor === 'string' ? rawQuery.cursor : '';
         const rawLimit =
           typeof rawQuery?.limit === 'number' && Number.isFinite(rawQuery.limit)

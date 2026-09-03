@@ -2,13 +2,30 @@ import type { ScheduledTaskResult } from '@shared/scheduledTask/types';
 import { describe, expect, test } from 'vitest';
 
 import reducer, {
+  appendRuns,
   markAllResultsReadLocal,
   markResultReadLocal,
   removeResultLocal,
   replaceResults,
   setResultFilter,
+  setRuns,
   upsertResult,
 } from './scheduledTaskSlice';
+
+const run = (id: string) => ({
+  id,
+  taskId: 'task-1',
+  sessionId: null,
+  sessionKey: null,
+  status: 'success' as const,
+  summary: null,
+  startedAt: '2026-08-27T00:00:00.000Z',
+  finishedAt: '2026-08-27T00:00:01.000Z',
+  durationMs: 1_000,
+  error: null,
+  deliveryStatus: null,
+  deliveryError: null,
+});
 
 function result(id: string, taskId = 'task-1', readAt: string | null = null) {
   return {
@@ -31,12 +48,29 @@ function result(id: string, taskId = 'task-1', readAt: string | null = null) {
 }
 
 describe('scheduledTask result filtering', () => {
-  test('a first page replaces stale results from the previous query', () => {
-    let state = reducer(undefined, replaceResults({ results: [result('1')], nextCursor: null }));
+  test('keeps the Gateway run cursor across appended history pages', () => {
+    let state = reducer(
+      undefined,
+      setRuns({ taskId: 'task-1', runs: [run('run-1')], hasMore: true, nextOffset: 50 }),
+    );
     state = reducer(
       state,
-      replaceResults({ results: [result('2', 'task-2')], nextCursor: null }),
+      appendRuns({
+        taskId: 'task-1',
+        runs: [run('run-1'), run('run-2')],
+        hasMore: false,
+        nextOffset: null,
+      }),
     );
+
+    expect(state.runs['task-1'].map(item => item.id)).toEqual(['run-1', 'run-2']);
+    expect(state.runsHasMore['task-1']).toBe(false);
+    expect(state.runsNextOffset['task-1']).toBeNull();
+  });
+
+  test('a first page replaces stale results from the previous query', () => {
+    let state = reducer(undefined, replaceResults({ results: [result('1')], nextCursor: null }));
+    state = reducer(state, replaceResults({ results: [result('2', 'task-2')], nextCursor: null }));
 
     expect(state.results.map(item => item.id)).toEqual(['2']);
   });

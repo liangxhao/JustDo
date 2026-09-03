@@ -1,16 +1,25 @@
-const SENSITIVE_MESSAGE_PREVIEW_LENGTH = 30;
-
-function truncateMessage(value: string): string {
-  const characters = Array.from(value);
-  if (characters.length <= SENSITIVE_MESSAGE_PREVIEW_LENGTH) return value;
-  return `${characters.slice(0, SENSITIVE_MESSAGE_PREVIEW_LENGTH).join('')}…`;
-}
+const REDACTED = '[redacted]';
+const SENSITIVE_KEYS = new Set([
+  'accountId',
+  'agentId',
+  'argv',
+  'completionDestination',
+  'cwd',
+  'description',
+  'env',
+  'failureDestination',
+  'input',
+  'message',
+  'name',
+  'script',
+  'sessionKey',
+  'text',
+  'to',
+]);
 
 export function stringifyScheduledTaskLog(value: unknown): string {
   return JSON.stringify(value, (key, nestedValue) => {
-    if (key === 'message' && typeof nestedValue === 'string') {
-      return truncateMessage(nestedValue);
-    }
+    if (SENSITIVE_KEYS.has(key) && nestedValue !== undefined) return REDACTED;
     return nestedValue;
   });
 }

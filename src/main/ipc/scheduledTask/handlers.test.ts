@@ -38,6 +38,36 @@ test('loads persisted tasks through the service while the gateway is still conne
   expect(listJobs).toHaveBeenCalledOnce();
 });
 
+test('returns the native queued run receipt to the renderer', async () => {
+  const runJob = vi.fn().mockResolvedValue({ enqueued: true, runId: 'manual-run-1' });
+  registerScheduledTaskHandlers({
+    getCronJobService: () => ({ runJob }) as unknown as CronJobService,
+    getOpenClawRuntimeAdapter: () => null,
+  });
+
+  await expect(
+    handlers.get(ScheduledTaskIpc.RunManually)?.({}, 'task-1', 'sha256:confirmed'),
+  ).resolves.toEqual({
+    success: true,
+    result: { enqueued: true, runId: 'manual-run-1' },
+  });
+  expect(runJob).toHaveBeenCalledWith('task-1', 'sha256:confirmed');
+});
+
+test('passes Gateway run-history pagination metadata through IPC', async () => {
+  const page = { runs: [], hasMore: true, nextOffset: 20 };
+  const listRunsPage = vi.fn().mockResolvedValue(page);
+  registerScheduledTaskHandlers({
+    getCronJobService: () => ({ listRunsPage }) as unknown as CronJobService,
+    getOpenClawRuntimeAdapter: () => null,
+  });
+
+  await expect(handlers.get(ScheduledTaskIpc.ListRuns)?.({}, 'task-1', 20, 0)).resolves.toEqual({
+    success: true,
+    ...page,
+  });
+});
+
 test('caps result page limits and normalizes an empty task filter', async () => {
   const listResults = vi.fn().mockReturnValue({
     results: [],
@@ -146,9 +176,7 @@ test('marks one result read and returns the durable global unread count', async 
     getResultSyncService: () => ({ updateUnreadCount }) as never,
   });
 
-  await expect(
-    handlers.get(ScheduledTaskIpc.MarkResultRead)?.({}, ' run-1 '),
-  ).resolves.toEqual({
+  await expect(handlers.get(ScheduledTaskIpc.MarkResultRead)?.({}, ' run-1 ')).resolves.toEqual({
     success: true,
     result: storedResult,
     unreadCount: 3,
@@ -164,9 +192,7 @@ test('rejects an empty result ID without touching storage', async () => {
     getResultStore: () => ({ markRead }) as never,
   });
 
-  await expect(
-    handlers.get(ScheduledTaskIpc.MarkResultRead)?.({}, '  '),
-  ).resolves.toEqual({
+  await expect(handlers.get(ScheduledTaskIpc.MarkResultRead)?.({}, '  ')).resolves.toEqual({
     success: false,
     error: 'A non-empty run ID is required',
   });
@@ -177,10 +203,7 @@ test('deletes one result and publishes the updated unread count', async () => {
   const storedResult = { id: 'run-1', taskId: 'task-1' };
   const deleteRunArtifacts = vi.fn().mockResolvedValue(undefined);
   const deleteResult = vi.fn(
-    async (
-      _runId: string,
-      cleanup: (result: typeof storedResult) => Promise<void>,
-    ) => {
+    async (_runId: string, cleanup: (result: typeof storedResult) => Promise<void>) => {
       await cleanup(storedResult);
       return true;
     },
@@ -196,9 +219,7 @@ test('deletes one result and publishes the updated unread count', async () => {
     getResultSyncService: () => ({ deleteResult, updateUnreadCount }) as never,
   });
 
-  await expect(
-    handlers.get(ScheduledTaskIpc.DeleteResult)?.({}, ' run-1 '),
-  ).resolves.toEqual({
+  await expect(handlers.get(ScheduledTaskIpc.DeleteResult)?.({}, ' run-1 ')).resolves.toEqual({
     success: true,
     unreadCount: 2,
   });

@@ -1,7 +1,7 @@
-import type { ScheduledTask } from '@shared/scheduledTask/types';
+import type { ScheduledTask, ScheduledTaskRunEvent } from '@shared/scheduledTask/types';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
-import { setError, setTasks } from '@/features/scheduled-tasks/scheduledTaskSlice';
+import { setError, setRuns, setTasks } from '@/features/scheduled-tasks/scheduledTaskSlice';
 import { store } from '@/store';
 
 import { ScheduledTaskService } from './scheduledTaskService';
@@ -19,6 +19,7 @@ function createTask(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
     delivery: { mode: 'none' },
     agentId: 'justdo-scheduler',
     sessionKey: null,
+    management: 'editable',
     state: {
       nextRunAtMs: null,
       lastRunAtMs: null,
@@ -63,6 +64,111 @@ describe('ScheduledTaskService', () => {
     expect(result).toEqual({ deletedIds: ['run-1', 'run-2'], failedIds: [] });
     expect(store.getState().scheduledTask.unreadResultCount).toBe(1);
     expect(listResults).toHaveBeenCalledOnce();
+  });
+
+  test('rejects a manual run when the IPC response reports an enqueue failure', async () => {
+    const runManually = vi.fn().mockResolvedValue({
+      success: false,
+      error: 'already running',
+    });
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: { electron: { scheduledTasks: { runManually } } },
+    });
+    const service = new ScheduledTaskService();
+
+    await expect(service.runManually('task-1')).rejects.toThrow('already running');
+  });
+
+  test('only projects live run events into an initialized history cache', () => {
+    let onRun: ((event: ScheduledTaskRunEvent) => void) | undefined;
+    const subscribe = () => () => undefined;
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: {
+        electron: {
+          scheduledTasks: {
+            onStatusUpdate: subscribe,
+            onRunUpdate: (callback: typeof onRun) => {
+              onRun = callback;
+              return () => undefined;
+            },
+            onResultUpserted: subscribe,
+            onUnreadCountChanged: subscribe,
+            onRefresh: subscribe,
+          },
+        },
+      },
+    });
+    const service = new ScheduledTaskService();
+    (service as unknown as { setupListeners: () => void }).setupListeners();
+    const liveRun = {
+      id: 'live-run',
+      taskId: 'live-task',
+      taskName: 'Live task',
+      sessionId: null,
+      sessionKey: null,
+      status: 'success' as const,
+      summary: null,
+      startedAt: '2026-08-24T00:00:00.000Z',
+      finishedAt: '2026-08-24T00:00:01.000Z',
+      durationMs: 1000,
+      error: null,
+      deliveryStatus: null,
+      deliveryError: null,
+    };
+
+    onRun?.({ run: liveRun });
+    expect(store.getState().scheduledTask.runs['live-task']).toBeUndefined();
+
+    store.dispatch(setRuns({ taskId: 'live-task', runs: [], hasMore: false, nextOffset: null }));
+    onRun?.({ run: liveRun });
+    expect(store.getState().scheduledTask.runs['live-task']).toEqual([liveRun]);
+  });
+
+  test('rejects a failed toggle and reloads the authoritative task list', async () => {
+    const toggle = vi.fn().mockResolvedValue({ success: false, error: 'revision conflict' });
+    const list = vi.fn().mockResolvedValue({ success: true, tasks: [] });
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: { electron: { scheduledTasks: { toggle, list } } },
+    });
+    const service = new ScheduledTaskService();
+
+    await expect(service.toggleTask('task-1', false)).rejects.toThrow('revision conflict');
+
+    expect(list).toHaveBeenCalledOnce();
+  });
+
+  test('rejects a failed run-history page request', async () => {
+    const listRuns = vi.fn().mockResolvedValue({ success: false, error: 'history unavailable' });
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: { electron: { scheduledTasks: { listRuns } } },
+    });
+    const service = new ScheduledTaskService();
+
+    await expect(service.loadRuns('task-1')).rejects.toThrow('history unavailable');
+  });
+
+  test('uses Gateway run pagination metadata instead of page length heuristics', async () => {
+    const runs = Array.from({ length: 20 }, (_, index) => ({ id: `run-${index}` }));
+    const listRuns = vi.fn().mockResolvedValue({
+      success: true,
+      runs,
+      hasMore: true,
+      nextOffset: 75,
+    });
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: { electron: { scheduledTasks: { listRuns } } },
+    });
+    const service = new ScheduledTaskService();
+
+    await service.loadRuns('task-1', 20);
+
+    expect(store.getState().scheduledTask.runsHasMore['task-1']).toBe(true);
+    expect(store.getState().scheduledTask.runsNextOffset['task-1']).toBe(75);
   });
 
   test('reports failed IDs while continuing with the remaining results', async () => {
@@ -134,10 +240,10 @@ describe('ScheduledTaskService', () => {
       name: createdTask.name,
       description: createdTask.description,
       enabled: createdTask.enabled,
-      schedule: createdTask.schedule,
-      sessionTarget: createdTask.sessionTarget,
+      schedule: { kind: 'cron', expr: '0 9 * * *' },
+      sessionTarget: 'isolated',
       wakeMode: createdTask.wakeMode,
-      payload: createdTask.payload,
+      payload: { kind: 'agentTurn', message: 'Summarize updates' },
       delivery: createdTask.delivery,
     });
 

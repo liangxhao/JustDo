@@ -68,6 +68,7 @@ export function getCronJobService(): CronJobService {
       ensureGatewayReady: () => adapter.ensureReady(),
       isCoworkBusy: () => adapter.hasActiveSessions?.() ?? false,
       onJobsPolled: jobs => resultSyncService?.reconcile(jobs) ?? Promise.resolve(),
+      onJobFinished: job => resultSyncService?.reconcileFinishedJob(job) ?? Promise.resolve(),
       deleteRunArtifacts: result => cleanupService.deleteResultArtifacts(result),
     });
     resultSyncService = new ScheduledTaskResultSyncService({

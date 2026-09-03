@@ -18,21 +18,82 @@ export interface ScheduleCron {
   staggerMs?: number;
 }
 
-export type Schedule = ScheduleAt | ScheduleEvery | ScheduleCron;
+export interface ScheduleOnExit {
+  kind: 'on-exit';
+  command: string;
+  cwd?: string;
+}
+
+export interface ScheduleStream {
+  kind: 'stream';
+  command: string[];
+  cwd?: string;
+  mode?: 'line' | 'match';
+  match?: string;
+  batchMs?: number;
+  maxBatchBytes?: number;
+}
+
+export type EditableSchedule = ScheduleAt | ScheduleEvery | ScheduleCron;
+export type Schedule = EditableSchedule | ScheduleOnExit | ScheduleStream;
 
 export interface AgentTurnPayload {
   kind: 'agentTurn';
   message: string;
   timeoutSeconds?: number;
   model?: string;
+  fallbacks?: string[];
+  thinking?: string;
+  allowUnsafeExternalContent?: boolean;
+  lightContext?: boolean;
+  toolsAllow?: string[];
 }
 
 export interface SystemEventPayload {
   kind: 'systemEvent';
   text: string;
+  toolsAllow?: string[];
 }
 
-export type ScheduledTaskPayload = AgentTurnPayload | SystemEventPayload;
+export interface CommandPayload {
+  kind: 'command';
+  argv: string[];
+  cwd?: string;
+  timeoutSeconds?: number;
+  noOutputTimeoutSeconds?: number;
+  outputMaxBytes?: number;
+  toolsAllow?: string[];
+}
+
+export interface ScriptPayload {
+  kind: 'script';
+  script: string;
+  timeoutSeconds?: number;
+  toolBudget?: number;
+  toolsAllow?: string[];
+}
+
+export interface GatewayManagedPayload {
+  kind: 'heartbeat' | 'skillCollectionReview';
+}
+
+export type EditableScheduledTaskPayload = AgentTurnPayload | SystemEventPayload;
+export type ScheduledTaskPayload =
+  EditableScheduledTaskPayload | CommandPayload | ScriptPayload | GatewayManagedPayload;
+
+export type ScheduledTaskSessionTarget = SessionTarget | 'current' | `session:${string}`;
+
+export type ScheduledTaskManagement = 'editable' | 'advanced' | 'managed';
+export type ScheduledTaskAdvancedFeature =
+  | 'owner'
+  | 'account-tool-policy'
+  | 'pacing'
+  | 'trigger'
+  | 'failure-alert'
+  | 'delete-after-run'
+  | 'advanced-delivery'
+  | 'command-environment'
+  | 'command-input';
 
 export interface ScheduledTaskDelivery {
   mode: DeliveryMode;
@@ -60,12 +121,18 @@ export interface ScheduledTask {
   description: string;
   enabled: boolean;
   schedule: Schedule;
-  sessionTarget: SessionTarget;
+  sessionTarget: ScheduledTaskSessionTarget;
   wakeMode: WakeMode;
   payload: ScheduledTaskPayload;
   delivery: ScheduledTaskDelivery;
   agentId: string | null;
   sessionKey: string | null;
+  /** Whether JustDo can safely round-trip edits for this native OpenClaw job. */
+  management: ScheduledTaskManagement;
+  /** Native features intentionally preserved outside JustDo's basic editor. */
+  advancedFeatures?: ScheduledTaskAdvancedFeature[];
+  /** Opaque OpenClaw revision used to reject stale destructive confirmations. */
+  configRevision?: string | null;
   state: TaskState;
   createdAt: string;
   updatedAt: string;
@@ -125,13 +192,24 @@ export interface ScheduledTaskInput {
   name: string;
   description: string;
   enabled: boolean;
-  schedule: Schedule;
+  schedule: EditableSchedule;
   sessionTarget: SessionTarget;
   wakeMode: WakeMode;
-  payload: ScheduledTaskPayload;
+  payload: EditableScheduledTaskPayload;
   delivery?: ScheduledTaskDelivery;
   agentId?: string | null;
   sessionKey?: string | null;
+}
+
+export interface ScheduledTaskManualRunResult {
+  enqueued: boolean;
+  runId: string | null;
+}
+
+export interface ScheduledTaskRunPage {
+  runs: ScheduledTaskRun[];
+  hasMore: boolean;
+  nextOffset: number | null;
 }
 
 export interface ScheduledTaskStatusEvent {

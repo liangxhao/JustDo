@@ -44,6 +44,28 @@ export class ScheduledTaskResultSyncService {
     return this.syncing;
   }
 
+  /** Reconciles one finished job without treating it as the authoritative job list. */
+  reconcileFinishedJob(job: ScheduledTask): Promise<void> {
+    if (this.deleting) {
+      return this.deleting.then(() => this.reconcileFinishedJob(job));
+    }
+    if (this.syncing) {
+      return this.syncing.then(() => this.reconcileFinishedJob(job));
+    }
+    if (!this.deps.resultStore.hasInitializedBaseline()) return Promise.resolve();
+    this.syncing = this.reconcileFinishedJobInternal(job).finally(() => {
+      this.syncing = null;
+    });
+    return this.syncing;
+  }
+
+  private async reconcileFinishedJobInternal(job: ScheduledTask): Promise<void> {
+    const localLatest = this.deps.resultStore.getLatestStartedAt(job.id);
+    const completedThrough = localLatest ?? this.getCompletedThrough(job.id);
+    await this.reconcileJob(job, completedThrough, false);
+    this.emitUnreadCountIfChanged();
+  }
+
   async deleteResult(
     runId: string,
     cleanup: (result: ScheduledTaskResult) => Promise<void>,
@@ -113,9 +135,7 @@ export class ScheduledTaskResultSyncService {
     }
 
     if (!this.startupReconciled || forceGlobal) {
-      const previousLatest = new Map(
-        jobs.map(job => [job.id, this.getCompletedThrough(job.id)]),
-      );
+      const previousLatest = new Map(jobs.map(job => [job.id, this.getCompletedThrough(job.id)]));
       // Re-upsert the bounded recent window so corrected mapping rules repair
       // durable projections without deleting read receipts.
       this.upsertChronologically(await this.fetchGlobal(RESULT_RECONCILE_LIMIT, taskNames));
@@ -222,11 +242,7 @@ export class ScheduledTaskResultSyncService {
     let boundaryPassed = !pending;
     let offset = pending?.resumeOffset ?? 0;
     while (true) {
-      const runs = await this.deps.cronJobService.listRuns(
-        job.id,
-        RESULT_PAGE_SIZE,
-        offset,
-      );
+      const runs = await this.deps.cronJobService.listRuns(job.id, RESULT_PAGE_SIZE, offset);
       if (!runs.length) {
         this.catchUps.delete(job.id);
         break;

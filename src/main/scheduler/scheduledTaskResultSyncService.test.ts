@@ -147,9 +147,7 @@ describe('ScheduledTaskResultSyncService', () => {
       emitUnreadCountChanged: vi.fn(),
     });
 
-    await expect(service.deleteResult('running', cleanup)).rejects.toThrow(
-      'cannot be deleted',
-    );
+    await expect(service.deleteResult('running', cleanup)).rejects.toThrow('cannot be deleted');
     expect(cleanup).not.toHaveBeenCalled();
     expect(deleteResult).not.toHaveBeenCalled();
   });
@@ -178,6 +176,48 @@ describe('ScheduledTaskResultSyncService', () => {
     expect(initializeBaseline).toHaveBeenCalledWith([], expect.any(Number), []);
     expect(emitResultUpserted).not.toHaveBeenCalled();
     expect(RESULT_BASELINE_LIMIT).toBe(200);
+  });
+
+  test('reconciles one finished job without treating it as the full job set', async () => {
+    const finishedRun = run('finished', '2026-07-28T09:00:00.000Z');
+    const listAllRuns = vi.fn();
+    const listRuns = vi.fn().mockResolvedValueOnce([finishedRun]).mockResolvedValueOnce([]);
+    const setCatchUp = vi.fn();
+    const resultStore = {
+      hasInitializedBaseline: () => true,
+      getLatestStartedAt: () => null,
+      getBaselineAt: () => Date.parse('2026-07-28T08:00:00.000Z'),
+      getCatchUp: (taskId: string) =>
+        taskId === 'task-2'
+          ? {
+              boundaryRunId: 'older',
+              boundaryStartedAt: 1,
+              stopAt: null,
+              ignoreKnown: false,
+              resumeOffset: 50,
+            }
+          : null,
+      setCatchUp,
+      getResult: () => null,
+      upsertResults: vi.fn().mockReturnValue([]),
+      countUnread: () => 0,
+    } as unknown as ScheduledTaskResultStore;
+    const service = new ScheduledTaskResultSyncService({
+      cronJobService: { listAllRuns, listRuns } as unknown as CronJobService,
+      resultStore,
+      emitResultUpserted: vi.fn(),
+      emitUnreadCountChanged: vi.fn(),
+    });
+
+    await service.reconcileFinishedJob({
+      id: 'task-1',
+      name: 'Task',
+      state: { lastRunAtMs: Date.parse(finishedRun.startedAt) },
+    } as ScheduledTask);
+
+    expect(listAllRuns).not.toHaveBeenCalled();
+    expect(listRuns).toHaveBeenCalledWith('task-1', 50, 0);
+    expect(setCatchUp).not.toHaveBeenCalledWith('task-2', null);
   });
 
   test('uses the local task title when a global run only contains the job ID', async () => {
@@ -401,7 +441,11 @@ describe('ScheduledTaskResultSyncService', () => {
       hasInitializedBaseline: () => true,
       getBaselineAt: () => 1000,
       getLatestStartedAt: () =>
-        known.size > 0 ? Math.max(...missed.filter(item => known.has(item.id)).map(item => Date.parse(item.startedAt))) : null,
+        known.size > 0
+          ? Math.max(
+              ...missed.filter(item => known.has(item.id)).map(item => Date.parse(item.startedAt)),
+            )
+          : null,
       getResult: (id: string) => (known.has(id) ? { id } : null),
       getCatchUp: (taskId: string) => durableCatchUps.get(taskId) ?? null,
       setCatchUp: (taskId: string, catchUp: ScheduledTaskResultCatchUp | null) => {

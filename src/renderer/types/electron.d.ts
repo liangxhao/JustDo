@@ -329,6 +329,7 @@ import type {
   ScheduledTask,
   ScheduledTaskChannelOption,
   ScheduledTaskInput,
+  ScheduledTaskManualRunResult,
   ScheduledTaskResult,
   ScheduledTaskResultPage,
   ScheduledTaskResultQuery,
@@ -588,9 +589,9 @@ interface IElectronAPI {
       }>;
     };
     models: {
-      list: (options?: { agentId?: string }) => Promise<
-        import('@shared/openclaw/models').OpenClawModelsListResult
-      >;
+      list: (options?: {
+        agentId?: string;
+      }) => Promise<import('@shared/openclaw/models').OpenClawModelsListResult>;
     };
     memory: {
       getOverview: () => Promise<MemoryOverviewResult>;
@@ -999,7 +1000,14 @@ interface IElectronAPI {
       warning?: string;
       error?: string;
     }>;
-    runManually: (id: string) => Promise<{ success: boolean; error?: string }>;
+    runManually: (
+      id: string,
+      expectedConfigRevision?: string,
+    ) => Promise<{
+      success: boolean;
+      result?: ScheduledTaskManualRunResult;
+      error?: string;
+    }>;
     listRuns: (
       taskId: string,
       limit?: number,
@@ -1007,6 +1015,8 @@ interface IElectronAPI {
     ) => Promise<{
       success: boolean;
       runs?: ScheduledTaskRun[];
+      hasMore?: boolean;
+      nextOffset?: number | null;
       error?: string;
     }>;
     resolveSession: (

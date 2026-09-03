@@ -3,7 +3,6 @@ import { BrowserWindow } from 'electron';
 import type {
   DeliveryMode as DeliveryModeType,
   GatewayStatus as GatewayStatusType,
-  SessionTarget as SessionTargetType,
   WakeMode as WakeModeType,
 } from '../../shared/scheduledTask/constants';
 import {
@@ -16,19 +15,21 @@ import {
   SessionTarget,
   TaskStatus,
 } from '../../shared/scheduledTask/constants';
-import { isMissingExternalChannelError } from '../../shared/scheduledTask/deliveryError';
 import type {
+  EditableScheduledTaskPayload,
   Schedule,
   ScheduledTask,
+  ScheduledTaskAdvancedFeature,
   ScheduledTaskDelivery,
   ScheduledTaskInput,
+  ScheduledTaskManualRunResult,
   ScheduledTaskPayload,
   ScheduledTaskResult,
   ScheduledTaskRun,
+  ScheduledTaskRunPage,
   ScheduledTaskRunWithName,
   TaskState,
 } from '../../shared/scheduledTask/types';
-import { isCronSessionKey } from '../openclaw/sessions/openclawSessionKeys';
 import { stringifyScheduledTaskLog } from './scheduledTaskLog';
 
 type GatewayClientLike = {
@@ -57,7 +58,28 @@ interface GatewayScheduleCron {
   staggerMs?: number;
 }
 
-type GatewaySchedule = GatewayScheduleAt | GatewayScheduleEvery | GatewayScheduleCron;
+interface GatewayScheduleOnExit {
+  kind: 'on-exit';
+  command: string;
+  cwd?: string;
+}
+
+interface GatewayScheduleStream {
+  kind: 'stream';
+  command: string[];
+  cwd?: string;
+  mode?: 'line' | 'match';
+  match?: string;
+  batchMs?: number;
+  maxBatchBytes?: number;
+}
+
+type GatewaySchedule =
+  | GatewayScheduleAt
+  | GatewayScheduleEvery
+  | GatewayScheduleCron
+  | GatewayScheduleOnExit
+  | GatewayScheduleStream;
 
 type GatewayPayload =
   | {
@@ -65,12 +87,37 @@ type GatewayPayload =
       message: string;
       timeoutSeconds?: number;
       model?: string;
+      fallbacks?: string[];
       thinking?: string;
+      allowUnsafeExternalContent?: boolean;
+      lightContext?: boolean;
+      toolsAllow?: string[];
     }
   | {
       kind: 'systemEvent';
       text: string;
-    };
+      toolsAllow?: string[];
+    }
+  | {
+      kind: 'command';
+      argv: string[];
+      cwd?: string;
+      timeoutSeconds?: number;
+      noOutputTimeoutSeconds?: number;
+      outputMaxBytes?: number;
+      toolsAllow?: string[];
+      env?: Record<string, string>;
+      input?: unknown;
+    }
+  | {
+      kind: 'script';
+      script: string;
+      timeoutSeconds?: number;
+      toolBudget?: number;
+      toolsAllow?: string[];
+    }
+  | { kind: 'heartbeat' }
+  | { kind: 'skillCollectionReview' };
 
 interface GatewayDelivery {
   mode: DeliveryModeType;
@@ -78,6 +125,9 @@ interface GatewayDelivery {
   to?: string;
   accountId?: string;
   bestEffort?: boolean;
+  threadId?: string | number;
+  completionDestination?: unknown;
+  failureDestination?: unknown;
 }
 
 interface GatewayJobState {
@@ -98,31 +148,40 @@ interface GatewayJobState {
 interface GatewayJob {
   id: string;
   declarationKey?: string | null;
+  displayName?: string | null;
+  owner?: { agentId?: string; sessionKey?: string; accountId?: string };
+  scheduledToolPolicy?: { version: 1; mode: 'trusted' | 'account' };
   name: string;
   description?: string;
   enabled: boolean;
+  deleteAfterRun?: boolean;
   schedule: GatewaySchedule;
-  sessionTarget: SessionTargetType;
+  pacing?: unknown;
+  trigger?: unknown;
+  sessionTarget: 'main' | 'isolated' | 'current' | `session:${string}`;
   wakeMode: WakeModeType;
   payload: GatewayPayload;
   delivery?: GatewayDelivery;
   agentId?: string | null;
   sessionKey?: string | null;
+  failureAlert?: unknown;
   state: GatewayJobState;
   createdAtMs: number;
   updatedAtMs: number;
+  configRevision?: string;
 }
 
 interface GatewayJobListResult {
   jobs?: GatewayJob[];
+  snapshotRevision?: string;
   hasMore?: boolean;
-  nextOffset?: number;
+  nextOffset?: number | null;
 }
 
 interface GatewayRunLogEntry {
-  ts: number;
+  ts?: number;
   jobId: string;
-  action?: string;
+  action?: 'added' | 'updated' | 'removed' | 'started' | 'finished' | 'scheduled';
   status?: GatewayStatusType;
   error?: string;
   sessionId?: string;
@@ -136,11 +195,31 @@ interface GatewayRunLogEntry {
   deliveryError?: string;
 }
 
+interface GatewayRunPage {
+  entries?: GatewayRunLogEntry[];
+  hasMore?: boolean;
+  nextOffset?: number | null;
+}
+
+interface GatewayManualRunResult {
+  ok?: boolean;
+  enqueued?: boolean;
+  ran?: boolean;
+  runId?: string;
+  reason?: string;
+}
+
+interface GatewayCronEvent extends GatewayRunLogEntry {
+  action: 'added' | 'updated' | 'removed' | 'started' | 'finished' | 'scheduled';
+  job?: GatewayJob;
+}
+
 interface CronJobServiceDeps {
   getGatewayClient: () => GatewayClientLike | null;
   ensureGatewayReady: () => Promise<void>;
   isCoworkBusy?: () => boolean;
   onJobsPolled?: (jobs: ScheduledTask[]) => Promise<void>;
+  onJobFinished?: (job: ScheduledTask) => Promise<void>;
   deleteRunArtifacts?: (result: ScheduledTaskResult) => Promise<void>;
 }
 
@@ -172,55 +251,6 @@ function mapGatewayResultStatus(
   return null;
 }
 
-/**
- * Returns true when a gateway error is exclusively a delivery failure —
- * the agent turn itself completed successfully but the gateway reports an
- * error because delivery was attempted and failed (or was not requested).
- *
- * The gateway currently conflates delivery failure with job failure for
- * `delivery.mode: "none"` jobs, setting `status: "error"` even though the
- * agent turn produced a valid summary.  This helper lets callers downgrade
- * such errors to success.
- */
-function isDeliveryOnlyError(opts: {
-  status?: GatewayStatusType;
-  error?: string;
-  deliveryError?: string;
-  deliveryStatus?: string;
-}): boolean {
-  if (opts.status !== GatewayStatus.Error) return false;
-  if (!opts.error) return false;
-  if (opts.deliveryError && opts.error === opts.deliveryError) return true;
-
-  // OpenClaw v2026.6.11 can finish the agent turn successfully, then fail while
-  // resolving an announce target. In that path it records deliveryStatus=unknown
-  // and puts the routing error only in `error`, leaving `deliveryError` absent.
-  return (
-    (opts.deliveryStatus === 'unknown' || opts.deliveryStatus === 'not-delivered') &&
-    isMissingExternalChannelError(opts.error)
-  );
-}
-
-export function shouldRepairInAppOnlyDeliveryBackoff(job: GatewayJob): boolean {
-  const status = job.state.lastRunStatus ?? job.state.lastStatus;
-  const deliveryOnlyError = isDeliveryOnlyError({
-    status,
-    error: job.state.lastError,
-    deliveryError: job.state.lastDeliveryError,
-    deliveryStatus: job.state.lastDeliveryStatus,
-  });
-  if (!deliveryOnlyError || !isMissingExternalChannelError(job.state.lastError)) return false;
-
-  const delivery = job.delivery;
-  if (delivery?.mode === DeliveryMode.None) return true;
-  if (delivery?.mode === DeliveryMode.Webhook) return false;
-
-  // Announce always represents external-delivery intent, even if its target
-  // is incomplete. Only an omitted delivery object is treated as legacy
-  // in-app intent.
-  return delivery === undefined;
-}
-
 export function mapGatewaySchedule(schedule: GatewaySchedule): Schedule {
   switch (schedule.kind) {
     case ScheduleKind.At:
@@ -243,10 +273,28 @@ export function mapGatewaySchedule(schedule: GatewaySchedule): Schedule {
         ...(staggerMs !== null ? { staggerMs } : {}),
       };
     }
+    case 'on-exit':
+      return {
+        kind: 'on-exit',
+        command: schedule.command,
+        ...(schedule.cwd ? { cwd: schedule.cwd } : {}),
+      };
+    case 'stream':
+      return {
+        kind: 'stream',
+        command: [...schedule.command],
+        ...(schedule.cwd ? { cwd: schedule.cwd } : {}),
+        ...(schedule.mode ? { mode: schedule.mode } : {}),
+        ...(schedule.match ? { match: schedule.match } : {}),
+        ...(typeof schedule.batchMs === 'number' ? { batchMs: schedule.batchMs } : {}),
+        ...(typeof schedule.maxBatchBytes === 'number'
+          ? { maxBatchBytes: schedule.maxBatchBytes }
+          : {}),
+      };
   }
 }
 
-function toGatewaySchedule(schedule: Schedule): GatewaySchedule {
+function toGatewaySchedule(schedule: ScheduledTaskInput['schedule']): GatewaySchedule {
   switch (schedule.kind) {
     case ScheduleKind.At:
       return { kind: ScheduleKind.At, at: schedule.at };
@@ -266,11 +314,12 @@ function toGatewaySchedule(schedule: Schedule): GatewaySchedule {
   }
 }
 
-function toGatewayPayload(payload: ScheduledTaskPayload): GatewayPayload {
+function toGatewayPayload(payload: EditableScheduledTaskPayload): GatewayPayload {
   if (payload.kind === PayloadKind.SystemEvent) {
     return {
       kind: PayloadKind.SystemEvent,
       text: payload.text,
+      ...(payload.toolsAllow ? { toolsAllow: [...payload.toolsAllow] } : {}),
     };
   }
 
@@ -281,7 +330,128 @@ function toGatewayPayload(payload: ScheduledTaskPayload): GatewayPayload {
       ? { timeoutSeconds: payload.timeoutSeconds }
       : {}),
     ...(payload.model ? { model: payload.model } : {}),
+    ...(payload.fallbacks ? { fallbacks: [...payload.fallbacks] } : {}),
+    ...(payload.thinking ? { thinking: payload.thinking } : {}),
+    ...(typeof payload.allowUnsafeExternalContent === 'boolean'
+      ? { allowUnsafeExternalContent: payload.allowUnsafeExternalContent }
+      : {}),
+    ...(typeof payload.lightContext === 'boolean' ? { lightContext: payload.lightContext } : {}),
+    ...(payload.toolsAllow ? { toolsAllow: [...payload.toolsAllow] } : {}),
   };
+}
+
+function mapGatewayPayload(payload: GatewayPayload): ScheduledTaskPayload {
+  switch (payload.kind) {
+    case 'systemEvent':
+      return {
+        kind: 'systemEvent',
+        text: payload.text,
+        ...(payload.toolsAllow ? { toolsAllow: [...payload.toolsAllow] } : {}),
+      };
+    case 'agentTurn':
+      return {
+        kind: 'agentTurn',
+        message: payload.message,
+        ...(typeof payload.timeoutSeconds === 'number'
+          ? { timeoutSeconds: payload.timeoutSeconds }
+          : {}),
+        ...(payload.model ? { model: payload.model } : {}),
+        ...(payload.fallbacks ? { fallbacks: [...payload.fallbacks] } : {}),
+        ...(payload.thinking ? { thinking: payload.thinking } : {}),
+        ...(typeof payload.allowUnsafeExternalContent === 'boolean'
+          ? { allowUnsafeExternalContent: payload.allowUnsafeExternalContent }
+          : {}),
+        ...(typeof payload.lightContext === 'boolean'
+          ? { lightContext: payload.lightContext }
+          : {}),
+        ...(payload.toolsAllow ? { toolsAllow: [...payload.toolsAllow] } : {}),
+      };
+    case 'command':
+      return {
+        kind: 'command',
+        argv: [...payload.argv],
+        ...(payload.cwd ? { cwd: payload.cwd } : {}),
+        ...(typeof payload.timeoutSeconds === 'number'
+          ? { timeoutSeconds: payload.timeoutSeconds }
+          : {}),
+        ...(typeof payload.noOutputTimeoutSeconds === 'number'
+          ? { noOutputTimeoutSeconds: payload.noOutputTimeoutSeconds }
+          : {}),
+        ...(typeof payload.outputMaxBytes === 'number'
+          ? { outputMaxBytes: payload.outputMaxBytes }
+          : {}),
+        ...(payload.toolsAllow ? { toolsAllow: [...payload.toolsAllow] } : {}),
+      };
+    case 'script':
+      return {
+        kind: 'script',
+        script: payload.script,
+        ...(typeof payload.timeoutSeconds === 'number'
+          ? { timeoutSeconds: payload.timeoutSeconds }
+          : {}),
+        ...(typeof payload.toolBudget === 'number' ? { toolBudget: payload.toolBudget } : {}),
+        ...(payload.toolsAllow ? { toolsAllow: [...payload.toolsAllow] } : {}),
+      };
+    case 'heartbeat':
+    case 'skillCollectionReview':
+      return { kind: payload.kind };
+  }
+}
+
+function resolveGatewayJobManagement(job: GatewayJob): ScheduledTask['management'] {
+  if (
+    job.declarationKey ||
+    job.payload.kind === 'heartbeat' ||
+    job.payload.kind === 'skillCollectionReview'
+  ) {
+    return 'managed';
+  }
+  if (
+    job.owner !== undefined ||
+    job.scheduledToolPolicy?.mode === 'account' ||
+    job.pacing !== undefined ||
+    job.trigger !== undefined ||
+    job.failureAlert !== undefined ||
+    (job.deleteAfterRun !== undefined && job.deleteAfterRun !== (job.schedule.kind === 'at')) ||
+    job.schedule.kind === 'on-exit' ||
+    job.schedule.kind === 'stream' ||
+    job.payload.kind === 'command' ||
+    job.payload.kind === 'script' ||
+    job.sessionTarget === 'current' ||
+    job.sessionTarget.startsWith('session:') ||
+    job.delivery?.threadId !== undefined ||
+    job.delivery?.completionDestination !== undefined ||
+    job.delivery?.failureDestination !== undefined
+  ) {
+    return 'advanced';
+  }
+  return 'editable';
+}
+
+function collectGatewayAdvancedFeatures(job: GatewayJob): ScheduledTaskAdvancedFeature[] {
+  const features: ScheduledTaskAdvancedFeature[] = [];
+  if (job.owner !== undefined) features.push('owner');
+  if (job.scheduledToolPolicy?.mode === 'account') features.push('account-tool-policy');
+  if (job.pacing !== undefined) features.push('pacing');
+  if (job.trigger !== undefined) features.push('trigger');
+  if (job.failureAlert !== undefined) features.push('failure-alert');
+  if (job.payload.kind === 'command' && job.payload.env !== undefined) {
+    features.push('command-environment');
+  }
+  if (job.payload.kind === 'command' && job.payload.input !== undefined) {
+    features.push('command-input');
+  }
+  if (job.deleteAfterRun !== undefined && job.deleteAfterRun !== (job.schedule.kind === 'at')) {
+    features.push('delete-after-run');
+  }
+  if (
+    job.delivery?.threadId !== undefined ||
+    job.delivery?.completionDestination !== undefined ||
+    job.delivery?.failureDestination !== undefined
+  ) {
+    features.push('advanced-delivery');
+  }
+  return features;
 }
 
 function toGatewayDelivery(delivery?: ScheduledTaskDelivery): GatewayDelivery {
@@ -311,26 +481,10 @@ function toGatewayDelivery(delivery?: ScheduledTaskDelivery): GatewayDelivery {
   return result;
 }
 
-export function mapGatewayTaskState(
-  state: GatewayJobState,
-  _deliveryMode?: DeliveryModeType,
-): TaskState {
-  let lastStatus = state.runningAtMs
+export function mapGatewayTaskState(state: GatewayJobState): TaskState {
+  const lastStatus = state.runningAtMs
     ? TaskStatus.Running
     : mapGatewayResultStatus(state.lastRunStatus ?? state.lastStatus);
-
-  // Keep execution and external delivery outcomes separate.
-  if (
-    lastStatus === TaskStatus.Error &&
-    isDeliveryOnlyError({
-      status: state.lastRunStatus ?? state.lastStatus,
-      error: state.lastError,
-      deliveryError: state.lastDeliveryError,
-      deliveryStatus: state.lastDeliveryStatus,
-    })
-  ) {
-    lastStatus = TaskStatus.Success;
-  }
 
   return {
     nextRunAtMs: safeFiniteNumberOrNull(state.nextRunAtMs),
@@ -345,70 +499,40 @@ export function mapGatewayTaskState(
 
 export function mapGatewayJob(job: GatewayJob): ScheduledTask {
   const delivery = job.delivery ?? { mode: DeliveryMode.None };
-
-  // Infer delivery channel/to from sessionKey when the gateway job has no
-  // explicit delivery target. IM channel inference removed — only cron sessions remain.
-  let inferredChannel: string | undefined;
-  let inferredTo: string | undefined;
-  if (!delivery.channel && job.sessionKey && isCronSessionKey(job.sessionKey)) {
-    // Cron sessions don't have channel/to targets
-    inferredChannel = undefined;
-    inferredTo = undefined;
-  }
+  const advancedFeatures = collectGatewayAdvancedFeatures(job);
 
   return {
     id: job.id,
-    name: job.name,
+    name: job.displayName?.trim() || job.name,
     description: job.description ?? '',
     enabled: job.enabled,
     schedule: mapGatewaySchedule(job.schedule),
     sessionTarget: job.sessionTarget,
     wakeMode: job.wakeMode,
-    payload:
-      job.payload.kind === PayloadKind.SystemEvent
-        ? { kind: PayloadKind.SystemEvent, text: job.payload.text }
-        : {
-            kind: PayloadKind.AgentTurn,
-            message: job.payload.message,
-            ...(typeof job.payload.timeoutSeconds === 'number'
-              ? { timeoutSeconds: job.payload.timeoutSeconds }
-              : {}),
-            ...(job.payload.model ? { model: job.payload.model } : {}),
-          },
+    payload: mapGatewayPayload(job.payload),
     delivery: {
       mode: delivery.mode,
-      ...(delivery.channel || inferredChannel
-        ? { channel: delivery.channel ?? inferredChannel }
-        : {}),
-      ...(delivery.to || inferredTo ? { to: delivery.to ?? inferredTo } : {}),
+      ...(delivery.channel ? { channel: delivery.channel } : {}),
+      ...(delivery.to ? { to: delivery.to } : {}),
       ...(delivery.accountId ? { accountId: delivery.accountId } : {}),
       ...(typeof delivery.bestEffort === 'boolean' ? { bestEffort: delivery.bestEffort } : {}),
     },
     agentId: job.agentId ?? null,
     sessionKey: job.sessionKey ?? null,
-    state: mapGatewayTaskState(job.state, delivery.mode),
+    management: resolveGatewayJobManagement(job),
+    ...(advancedFeatures.length > 0 ? { advancedFeatures } : {}),
+    configRevision: job.configRevision ?? null,
+    state: mapGatewayTaskState(job.state),
     createdAt: new Date(safeFiniteNumber(job.createdAtMs, Date.now())).toISOString(),
     updatedAt: new Date(safeFiniteNumber(job.updatedAtMs, Date.now())).toISOString(),
   };
 }
 
 export function mapGatewayRun(entry: GatewayRunLogEntry): ScheduledTaskRun {
-  let status =
+  const status =
     entry.action && entry.action !== 'finished'
       ? TaskStatus.Running
       : (mapGatewayResultStatus(entry.status) ?? TaskStatus.Error);
-
-  // Suppress delivery-only errors: the agent turn succeeded but the
-  // gateway conflated a delivery failure with the job status.
-  const deliveryOnlyError = isDeliveryOnlyError({
-    status: entry.status,
-    error: entry.error,
-    deliveryError: entry.deliveryError,
-    deliveryStatus: entry.deliveryStatus,
-  });
-  if (status === TaskStatus.Error && deliveryOnlyError) {
-    status = TaskStatus.Success;
-  }
 
   const completionMs = safeFiniteNumber(entry.ts, Date.now());
   const tsMs = safeFiniteNumber(entry.runAtMs, completionMs);
@@ -433,7 +557,7 @@ export function mapGatewayRun(entry: GatewayRunLogEntry): ScheduledTaskRun {
     durationMs: safeFiniteNumberOrNull(entry.durationMs),
     error: status === TaskStatus.Success ? null : (entry.error ?? null),
     deliveryStatus: entry.deliveryStatus ?? null,
-    deliveryError: entry.deliveryError ?? (deliveryOnlyError ? (entry.error ?? null) : null),
+    deliveryError: entry.deliveryError ?? null,
   };
 }
 
@@ -442,19 +566,13 @@ export class CronJobService {
   private readonly ensureGatewayReady: () => Promise<void>;
   private readonly isCoworkBusy: () => boolean;
   private readonly onJobsPolled: (jobs: ScheduledTask[]) => Promise<void>;
+  private readonly onJobFinished: (job: ScheduledTask) => Promise<void>;
   private readonly deleteRunArtifactsImpl: (result: ScheduledTaskResult) => Promise<void>;
   private pollingTimer: ReturnType<typeof setInterval> | null = null;
   private lastKnownStates: Map<string, string> = new Map();
-  private lastKnownRunAtMs: Map<string, number> = new Map();
   private polling = false;
   private pollOnceInProgress = false;
   private firstPollDone = false;
-  private runningJobIds: Set<string> = new Set();
-  private inAppDeliveryBackoffRepairs: Map<
-    string,
-    { signature: string; promise: Promise<GatewayJob | null> }
-  > = new Map();
-  private repairedInAppDeliveryBackoffs: Map<string, string> = new Map();
   private taskMutationTails = new Map<string, Promise<void>>();
 
   private static readonly POLL_INTERVAL_MS = 60_000;
@@ -464,6 +582,7 @@ export class CronJobService {
     this.ensureGatewayReady = deps.ensureGatewayReady;
     this.isCoworkBusy = deps.isCoworkBusy ?? (() => false);
     this.onJobsPolled = deps.onJobsPolled ?? (async () => undefined);
+    this.onJobFinished = deps.onJobFinished ?? (async () => undefined);
     this.deleteRunArtifactsImpl =
       deps.deleteRunArtifacts ??
       (async () => {
@@ -487,10 +606,6 @@ export class CronJobService {
       this.pollingTimer = null;
     }
     this.lastKnownStates.clear();
-    this.lastKnownRunAtMs.clear();
-    this.runningJobIds.clear();
-    this.inAppDeliveryBackoffRepairs.clear();
-    this.repairedInAppDeliveryBackoffs.clear();
     this.taskMutationTails.clear();
     this.pollOnceInProgress = false;
     this.firstPollDone = false;
@@ -504,17 +619,9 @@ export class CronJobService {
       const client = this.getGatewayClient();
       if (!client) return;
 
-      const listedJobs = await this.listAllGatewayJobs(client);
+      const jobs = await this.listAllGatewayJobs(client);
       if (this.isCoworkBusy()) return;
-      const jobs = await this.repairInAppOnlyDeliveryBackoffs(client, listedJobs);
-
-      this.runningJobIds.clear();
       const mappedJobs = jobs.map(mapGatewayJob);
-      for (const job of jobs) {
-        if (job.state.runningAtMs) {
-          this.runningJobIds.add(job.id);
-        }
-      }
 
       const knownIdsBeforePoll = new Set(this.lastKnownStates.keys());
       for (const job of jobs) {
@@ -527,8 +634,6 @@ export class CronJobService {
             this.emitStatusUpdate(task.id, task.state);
           }
         }
-
-        this.lastKnownRunAtMs.set(job.id, job.state.lastRunAtMs ?? 0);
       }
 
       await this.onJobsPolled(mappedJobs);
@@ -540,7 +645,6 @@ export class CronJobService {
       for (const knownId of this.lastKnownStates.keys()) {
         if (!currentIds.has(knownId)) {
           this.lastKnownStates.delete(knownId);
-          this.lastKnownRunAtMs.delete(knownId);
         }
       }
 
@@ -563,6 +667,14 @@ export class CronJobService {
     });
   }
 
+  private emitRunUpdate(run: ScheduledTaskRunWithName): void {
+    BrowserWindow.getAllWindows().forEach(window => {
+      if (!window.isDestroyed()) {
+        window.webContents.send(IpcChannel.RunUpdate, { run });
+      }
+    });
+  }
+
   private emitFullRefresh(): void {
     BrowserWindow.getAllWindows().forEach(window => {
       if (!window.isDestroyed()) {
@@ -571,12 +683,53 @@ export class CronJobService {
     });
   }
 
-  async reconcileGatewayChange(): Promise<void> {
+  async reconcileGatewayChange(payload?: unknown): Promise<void> {
+    const event = this.parseGatewayCronEvent(payload);
+    if (event?.job) {
+      const task = mapGatewayJob(event.job);
+      this.emitStatusUpdate(task.id, task.state);
+    }
+    if (event?.action === 'finished') {
+      this.emitRunUpdate({
+        ...mapGatewayRun(event),
+        taskName: event.job?.displayName?.trim() || event.job?.name || event.jobId,
+      });
+    }
+    if (event) {
+      if (event.action === 'finished' && event.job) {
+        await this.onJobFinished(mapGatewayJob(event.job));
+      } else if (
+        event.action === 'added' ||
+        event.action === 'updated' ||
+        event.action === 'removed'
+      ) {
+        this.emitFullRefresh();
+      }
+      return;
+    }
     try {
-      await this.listJobs();
+      const jobs = await this.listJobs();
+      await this.onJobsPolled(jobs);
     } finally {
       this.emitFullRefresh();
     }
+  }
+
+  private parseGatewayCronEvent(payload: unknown): GatewayCronEvent | null {
+    if (!payload || typeof payload !== 'object') return null;
+    const event = payload as Partial<GatewayCronEvent>;
+    if (typeof event.jobId !== 'string' || !event.jobId.trim()) return null;
+    if (
+      event.action !== 'added' &&
+      event.action !== 'updated' &&
+      event.action !== 'removed' &&
+      event.action !== 'started' &&
+      event.action !== 'finished' &&
+      event.action !== 'scheduled'
+    ) {
+      return null;
+    }
+    return event as GatewayCronEvent;
   }
 
   private async client(): Promise<GatewayClientLike> {
@@ -611,97 +764,36 @@ export class CronJobService {
     }
   }
 
-  private async repairInAppOnlyDeliveryBackoffs(
-    client: GatewayClientLike,
-    jobs: GatewayJob[],
-  ): Promise<GatewayJob[]> {
-    const repairedJobs: Array<GatewayJob | null> = [...jobs];
-    await Promise.all(
-      jobs.map(async (job, index) => {
-        if (!shouldRepairInAppOnlyDeliveryBackoff(job)) {
-          this.inAppDeliveryBackoffRepairs.delete(job.id);
-          this.repairedInAppDeliveryBackoffs.delete(job.id);
-          return;
-        }
-
-        const signature = `${job.state.lastRunAtMs ?? ''}\n${job.state.lastError ?? ''}`;
-        if (this.repairedInAppDeliveryBackoffs.get(job.id) === signature) return;
-
-        let repairEntry = this.inAppDeliveryBackoffRepairs.get(job.id);
-        if (!repairEntry || repairEntry.signature !== signature) {
-          const promise = this.withTaskMutation(job.id, async () => {
-            const latestResult = await client.request<{ jobs?: GatewayJob[] }>('cron.list', {
-              includeDisabled: true,
-              query: job.id,
-              limit: 20,
-            });
-            const latest = latestResult.jobs?.find(item => item.id === job.id) ?? null;
-            if (!latest) return null;
-            if (!shouldRepairInAppOnlyDeliveryBackoff(latest)) return latest;
-            return client.request<GatewayJob>('cron.update', {
-              id: latest.id,
-              patch: {
-                delivery: { mode: DeliveryMode.None },
-                // Reapplying the current schedule forces OpenClaw to discard
-                // the stale error-backoff timestamp.
-                schedule: latest.schedule,
-              },
-            });
-          });
-          repairEntry = { signature, promise };
-          this.inAppDeliveryBackoffRepairs.set(job.id, repairEntry);
-        }
-
-        try {
-          const repaired = await repairEntry.promise;
-          if (!repaired) {
-            repairedJobs[index] = null;
-            this.repairedInAppDeliveryBackoffs.delete(job.id);
-            return;
-          }
-          // The repair runs under the same per-task mutation lock as user
-          // updates and re-reads the task inside that lock, so this is the
-          // newest complete snapshot.
-          repairedJobs[index] = repaired;
-          this.repairedInAppDeliveryBackoffs.set(job.id, signature);
-          console.info(
-            `[CronJobService] Cleared external-delivery backoff for in-app task ${job.id}`,
-          );
-        } catch (error) {
-          try {
-            if (!(await this.findGatewayJob(client, job.id))) {
-              repairedJobs[index] = null;
-              this.repairedInAppDeliveryBackoffs.delete(job.id);
-              return;
-            }
-          } catch {
-            // Preserve the original repair error when the verification request also fails.
-          }
-          console.warn(
-            `[CronJobService] Failed to clear external-delivery backoff for task ${job.id}:`,
-            error,
-          );
-        } finally {
-          if (this.inAppDeliveryBackoffRepairs.get(job.id) === repairEntry) {
-            this.inAppDeliveryBackoffRepairs.delete(job.id);
-          }
-        }
-      }),
-    );
-    return repairedJobs.filter((job): job is GatewayJob => job !== null);
-  }
-
   private async listAllGatewayJobs(client: GatewayClientLike): Promise<GatewayJob[]> {
     const jobs: GatewayJob[] = [];
     const seenIds = new Set<string>();
     let offset = 0;
+    let snapshotRevision: string | undefined;
+    let snapshotRestarts = 0;
 
     while (true) {
       const result = await client.request<GatewayJobListResult>('cron.list', {
         includeDisabled: true,
         limit: 200,
         offset,
+        includeDeliveryPreviews: false,
       });
+      if (
+        snapshotRevision !== undefined &&
+        result.snapshotRevision !== undefined &&
+        result.snapshotRevision !== snapshotRevision
+      ) {
+        if (snapshotRestarts >= 2) {
+          throw new Error('OpenClaw cron.list changed while pagination was in progress.');
+        }
+        snapshotRestarts += 1;
+        jobs.length = 0;
+        seenIds.clear();
+        offset = 0;
+        snapshotRevision = undefined;
+        continue;
+      }
+      snapshotRevision ??= result.snapshotRevision;
       for (const job of Array.isArray(result.jobs) ? result.jobs : []) {
         if (seenIds.has(job.id)) continue;
         seenIds.add(job.id);
@@ -720,12 +812,25 @@ export class CronJobService {
     client: GatewayClientLike,
     jobId: string,
   ): Promise<GatewayJob | null> {
-    const result = await client.request<GatewayJobListResult>('cron.list', {
-      includeDisabled: true,
-      query: jobId,
-      limit: 20,
-    });
-    return result.jobs?.find(job => job.id === jobId) ?? null;
+    try {
+      return await client.request<GatewayJob>('cron.get', { id: jobId });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/unknown cron job id|cron job not found|automation not found/i.test(message)) return null;
+      throw error;
+    }
+  }
+
+  private assertJobIsMutable(job: GatewayJob): void {
+    if (resolveGatewayJobManagement(job) === 'managed') {
+      throw new Error('This automation is system-managed and cannot be changed here.');
+    }
+  }
+
+  private assertJobIsEditable(job: GatewayJob): void {
+    if (resolveGatewayJobManagement(job) !== 'editable') {
+      throw new Error('This automation uses advanced or system-managed settings and is read-only.');
+    }
   }
 
   async addJob(input: ScheduledTaskInput): Promise<ScheduledTask> {
@@ -766,12 +871,19 @@ export class CronJobService {
     const job = await this.withTaskMutation(id, async () => {
       const current = await this.findGatewayJob(client, id);
       if (!current) throw new Error(`Scheduled task not found: ${id}`);
+      this.assertJobIsEditable(current);
 
       const patch: Record<string, unknown> = {};
       const nextPayload = input.payload ? toGatewayPayload(input.payload) : current.payload;
       const payloadKindChanged = nextPayload.kind !== current.payload.kind;
 
-      if (input.name !== undefined) patch.name = input.name;
+      if (input.name !== undefined) {
+        if (current.displayName?.trim()) {
+          patch.displayName = input.name;
+        } else {
+          patch.name = input.name;
+        }
+      }
       if (input.description !== undefined) patch.description = input.description || undefined;
       if (input.enabled !== undefined) patch.enabled = input.enabled;
       if (input.schedule !== undefined) patch.schedule = toGatewaySchedule(input.schedule);
@@ -805,7 +917,11 @@ export class CronJobService {
 
       console.log('[CronJobService][updateJob] final patch:', stringifyScheduledTaskLog(patch));
       try {
-        return await client.request<GatewayJob>('cron.update', { id, patch });
+        return await client.request<GatewayJob>('cron.update', {
+          id,
+          patch,
+          ...(current.configRevision ? { expectedConfigRevision: current.configRevision } : {}),
+        });
       } catch (error) {
         let currentAfterFailure: GatewayJob | null | undefined;
         try {
@@ -829,6 +945,7 @@ export class CronJobService {
     await this.withTaskMutation(id, async () => {
       const current = await this.findGatewayJob(client, id);
       if (current) {
+        this.assertJobIsMutable(current);
         try {
           await client.request('cron.remove', { id });
         } catch (error) {
@@ -842,17 +959,12 @@ export class CronJobService {
         }
       }
       this.lastKnownStates.delete(id);
-      this.lastKnownRunAtMs.delete(id);
-      this.inAppDeliveryBackoffRepairs.delete(id);
-      this.repairedInAppDeliveryBackoffs.delete(id);
     });
   }
 
   async listJobs(): Promise<ScheduledTask[]> {
     const client = await this.client();
-    const listedJobs = await this.listAllGatewayJobs(client);
-    const deliveryRepairedJobs = await this.repairInAppOnlyDeliveryBackoffs(client, listedJobs);
-    return deliveryRepairedJobs.map(mapGatewayJob);
+    return (await this.listAllGatewayJobs(client)).map(mapGatewayJob);
   }
 
   async getJob(id: string): Promise<ScheduledTask | null> {
@@ -862,11 +974,7 @@ export class CronJobService {
 
   private async getJobRaw(id: string): Promise<GatewayJob | null> {
     const client = await this.client();
-    try {
-      return await this.findGatewayJob(client, id);
-    } catch {
-      return null;
-    }
+    return this.findGatewayJob(client, id);
   }
 
   async toggleJob(id: string, enabled: boolean): Promise<ScheduledTask> {
@@ -878,22 +986,49 @@ export class CronJobService {
     const job = await this.withTaskMutation(id, async () => {
       const current = await this.findGatewayJob(client, id);
       if (!current) throw new Error(`Scheduled task not found: ${id}`);
+      this.assertJobIsMutable(current);
       const patch: Record<string, unknown> = { enabled };
-      return await client.request<GatewayJob>('cron.update', { id, patch });
+      return await client.request<GatewayJob>('cron.update', {
+        id,
+        patch,
+        ...(current.configRevision ? { expectedConfigRevision: current.configRevision } : {}),
+      });
     });
     return mapGatewayJob(job);
   }
 
-  async runJob(id: string): Promise<void> {
-    return this.runJobLocked(id);
+  async runJob(id: string, expectedConfigRevision?: string): Promise<ScheduledTaskManualRunResult> {
+    return this.runJobLocked(id, expectedConfigRevision);
   }
 
-  private async runJobLocked(id: string): Promise<void> {
+  private async runJobLocked(
+    id: string,
+    expectedConfigRevision?: string,
+  ): Promise<ScheduledTaskManualRunResult> {
     const client = await this.client();
-    await this.withTaskMutation(id, async () => {
+    return this.withTaskMutation(id, async () => {
       const current = await this.findGatewayJob(client, id);
       if (!current) throw new Error(`Scheduled task not found: ${id}`);
-      await client.request('cron.run', { id });
+      this.assertJobIsMutable(current);
+      if (
+        expectedConfigRevision !== undefined &&
+        current.configRevision !== expectedConfigRevision
+      ) {
+        throw new Error('The automation changed. Review the latest configuration before running.');
+      }
+      const result = await client.request<GatewayManualRunResult>('cron.run', {
+        id,
+        mode: 'force',
+      });
+      const runId = result.runId?.trim() || null;
+      if (result.enqueued !== true || !runId) {
+        throw new Error(
+          result.reason
+            ? `The scheduler did not enqueue the automation: ${result.reason}`
+            : 'The scheduler did not return a run ID for the automation.',
+        );
+      }
+      return { enqueued: true, runId };
     });
   }
 
@@ -901,16 +1036,27 @@ export class CronJobService {
     await this.deleteRunArtifactsImpl(result);
   }
 
-  async listRuns(jobId: string, limit = 20, offset = 0): Promise<ScheduledTaskRun[]> {
+  async listRunsPage(jobId: string, limit = 20, offset = 0): Promise<ScheduledTaskRunPage> {
     const client = await this.client();
-    const result = await client.request<{ entries?: GatewayRunLogEntry[] }>('cron.runs', {
+    const result = await client.request<GatewayRunPage>('cron.runs', {
       scope: 'job',
       id: jobId,
       limit,
       offset,
       sortDir: 'desc',
     });
-    return Array.isArray(result.entries) ? result.entries.map(mapGatewayRun) : [];
+    return {
+      runs: Array.isArray(result.entries) ? result.entries.map(mapGatewayRun) : [],
+      hasMore: result.hasMore === true,
+      nextOffset:
+        typeof result.nextOffset === 'number' && Number.isFinite(result.nextOffset)
+          ? result.nextOffset
+          : null,
+    };
+  }
+
+  async listRuns(jobId: string, limit = 20, offset = 0): Promise<ScheduledTaskRun[]> {
+    return (await this.listRunsPage(jobId, limit, offset)).runs;
   }
 
   async listAllRuns(
@@ -918,10 +1064,7 @@ export class CronJobService {
     offset = 0,
   ): Promise<{ runs: ScheduledTaskRunWithName[]; nextOffset: number | null }> {
     const client = await this.client();
-    const result = await client.request<{
-      entries?: GatewayRunLogEntry[];
-      nextOffset?: number | null;
-    }>('cron.runs', {
+    const result = await client.request<GatewayRunPage>('cron.runs', {
       scope: 'all',
       limit,
       offset,

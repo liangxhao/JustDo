@@ -1209,11 +1209,11 @@ if (!gotTheLock) {
     const coworkEngineRouter = getCoworkEngineRouter();
     bindSessionPermissionModeRuntime();
     bindCoworkRuntimeForwarder(coworkEngineRouter, getCoworkStore);
-    coworkEngineRouter.on('cronChanged', () => {
+    coworkEngineRouter.on('cronChanged', payload => {
       void getCronJobService()
-        .reconcileGatewayChange()
+        .reconcileGatewayChange(payload)
         .catch(error => {
-          console.warn('[CronJobService] Failed to reconcile scheduler agent assignment:', error);
+          console.warn('[CronJobService] Failed to reconcile OpenClaw cron change:', error);
         });
     });
     coworkEngineRouter.on('taskChanged', event => {

@@ -243,6 +243,14 @@ export function formatScheduleLabel(schedule: Schedule): string {
     return `${i18nService.t('scheduledTasksScheduleEvery')} ${everyMs / 1000} ${i18nService.t('scheduledTasksFormIntervalSeconds')}`;
   }
 
+  if (schedule.kind === 'on-exit') {
+    return `${i18nService.t('scheduledTasksScheduleOnExit')} · ${schedule.command}`;
+  }
+
+  if (schedule.kind === 'stream') {
+    return `${i18nService.t('scheduledTasksScheduleStream')} · ${schedule.command.join(' ')}`;
+  }
+
   return formatCronExpr(schedule);
 }
 
@@ -268,6 +276,21 @@ export function formatDuration(ms: number | null): string {
 export function formatPayloadLabel(payload: ScheduledTaskPayload): string {
   if (payload.kind === 'systemEvent') {
     return `${i18nService.t('scheduledTasksFormPayloadKindSystemEvent')} · ${payload.text}`;
+  }
+  if (payload.kind === 'command') {
+    return `${i18nService.t('scheduledTasksPayloadCommand')} · ${payload.argv.join(' ')}`;
+  }
+  if (payload.kind === 'script') {
+    return `${i18nService.t('scheduledTasksPayloadScript')} · ${payload.script}`;
+  }
+  if (payload.kind === 'heartbeat') {
+    return i18nService.t('scheduledTasksPayloadHeartbeat');
+  }
+  if (payload.kind === 'skillCollectionReview') {
+    return i18nService.t('scheduledTasksPayloadSkillReview');
+  }
+  if (payload.kind !== 'agentTurn') {
+    return payload.kind;
   }
   const timeoutLabel =
     typeof payload.timeoutSeconds === 'number' ? ` · ${payload.timeoutSeconds}s` : '';
@@ -350,6 +373,10 @@ export function scheduleToPlanInfo(schedule: Schedule): PlanInfo {
     return { ...DEFAULT_PLAN_INFO, planType: 'advanced' };
   }
 
+  if (schedule.kind !== 'cron') {
+    return { ...DEFAULT_PLAN_INFO, planType: 'advanced' };
+  }
+
   const parts = schedule.expr.trim().split(/\s+/);
   if (parts.length !== 5) return { ...DEFAULT_PLAN_INFO, planType: 'advanced' };
 
@@ -412,7 +439,27 @@ export function scheduleToPlanInfo(schedule: Schedule): PlanInfo {
 }
 
 export function getTaskPromptText(task: ScheduledTask): string {
-  return task.payload.kind === 'systemEvent' ? task.payload.text : task.payload.message;
+  switch (task.payload.kind) {
+    case 'systemEvent':
+      return task.payload.text;
+    case 'agentTurn':
+      return task.payload.message;
+    case 'command':
+      return task.payload.argv.join(' ');
+    case 'script':
+      return task.payload.script;
+    case 'heartbeat':
+      return i18nService.t('scheduledTasksPayloadHeartbeat');
+    case 'skillCollectionReview':
+      return i18nService.t('scheduledTasksPayloadSkillReview');
+  }
+}
+
+/** Exact execution text for security-sensitive command/script confirmation. */
+export function getTaskExecutionPreview(task: ScheduledTask): string {
+  return task.payload.kind === 'command'
+    ? JSON.stringify(task.payload.argv, null, 2)
+    : getTaskPromptText(task);
 }
 
 export function getStatusTone(status: TaskLastStatus): string {

@@ -10,6 +10,7 @@ interface ScheduledTaskState {
   tasks: ScheduledTask[];
   runs: Record<string, ScheduledTaskRun[]>;
   runsHasMore: Record<string, boolean>;
+  runsNextOffset: Record<string, number | null>;
   loading: boolean;
   error: string | null;
   results: ScheduledTaskResult[];
@@ -24,6 +25,7 @@ const initialState: ScheduledTaskState = {
   tasks: [],
   runs: {},
   runsHasMore: {},
+  runsNextOffset: {},
   loading: false,
   error: null,
   results: [],
@@ -63,6 +65,7 @@ const scheduledTaskSlice = createSlice({
       state.tasks = state.tasks.filter(t => t.id !== action.payload);
       delete state.runs[action.payload];
       delete state.runsHasMore[action.payload];
+      delete state.runsNextOffset[action.payload];
     },
     updateTaskState(state, action: PayloadAction<{ taskId: string; taskState: TaskState }>) {
       const task = state.tasks.find(t => t.id === action.payload.taskId);
@@ -72,16 +75,27 @@ const scheduledTaskSlice = createSlice({
     },
     setRuns(
       state,
-      action: PayloadAction<{ taskId: string; runs: ScheduledTaskRun[]; hasMore: boolean }>,
+      action: PayloadAction<{
+        taskId: string;
+        runs: ScheduledTaskRun[];
+        hasMore: boolean;
+        nextOffset: number | null;
+      }>,
     ) {
       state.runs[action.payload.taskId] = action.payload.runs;
       state.runsHasMore[action.payload.taskId] = action.payload.hasMore;
+      state.runsNextOffset[action.payload.taskId] = action.payload.nextOffset;
     },
     appendRuns(
       state,
-      action: PayloadAction<{ taskId: string; runs: ScheduledTaskRun[]; hasMore: boolean }>,
+      action: PayloadAction<{
+        taskId: string;
+        runs: ScheduledTaskRun[];
+        hasMore: boolean;
+        nextOffset: number | null;
+      }>,
     ) {
-      const { taskId, runs, hasMore } = action.payload;
+      const { taskId, runs, hasMore, nextOffset } = action.payload;
       if (!state.runs[taskId]) {
         state.runs[taskId] = runs;
       } else {
@@ -90,6 +104,7 @@ const scheduledTaskSlice = createSlice({
         state.runs[taskId] = [...state.runs[taskId], ...newRuns];
       }
       state.runsHasMore[taskId] = hasMore;
+      state.runsNextOffset[taskId] = nextOffset;
     },
     addOrUpdateRun(state, action: PayloadAction<ScheduledTaskRun>) {
       const { taskId } = action.payload;
@@ -111,8 +126,7 @@ const scheduledTaskSlice = createSlice({
       action: PayloadAction<{ results: ScheduledTaskResult[]; nextCursor: string | null }>,
     ) {
       state.results = [...action.payload.results].sort(
-        (a, b) =>
-          Date.parse(b.startedAt) - Date.parse(a.startedAt) || b.id.localeCompare(a.id),
+        (a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt) || b.id.localeCompare(a.id),
       );
       state.resultsNextCursor = action.payload.nextCursor;
       state.resultsInitialized = true;
@@ -125,8 +139,7 @@ const scheduledTaskSlice = createSlice({
       const byId = new Map(state.results.map(result => [result.id, result]));
       action.payload.results.forEach(result => byId.set(result.id, result));
       state.results = [...byId.values()].sort(
-        (a, b) =>
-          Date.parse(b.startedAt) - Date.parse(a.startedAt) || b.id.localeCompare(a.id),
+        (a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt) || b.id.localeCompare(a.id),
       );
       state.resultsNextCursor = action.payload.nextCursor;
       state.resultsLoading = false;
@@ -143,8 +156,7 @@ const scheduledTaskSlice = createSlice({
       if (index >= 0) state.results[index] = action.payload;
       else state.results.push(action.payload);
       state.results.sort(
-        (a, b) =>
-          Date.parse(b.startedAt) - Date.parse(a.startedAt) || b.id.localeCompare(a.id),
+        (a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt) || b.id.localeCompare(a.id),
       );
     },
     setUnreadResultCount(state, action: PayloadAction<number>) {
@@ -179,10 +191,7 @@ const scheduledTaskSlice = createSlice({
     removeResultLocal(state, action: PayloadAction<string>) {
       state.results = state.results.filter(result => result.id !== action.payload);
     },
-    setResultFilter(
-      state,
-      action: PayloadAction<{ taskId: string | null; unreadOnly: boolean }>,
-    ) {
+    setResultFilter(state, action: PayloadAction<{ taskId: string | null; unreadOnly: boolean }>) {
       state.resultFilter = action.payload;
       state.results = [];
       state.resultsNextCursor = null;

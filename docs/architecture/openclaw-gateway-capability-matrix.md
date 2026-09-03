@@ -47,15 +47,15 @@
 
 ## 3. Gateway API 与 wire 边界
 
-| 域             | 当前方法/事件                                                     | JustDo 稳定化                                                                           |
-| -------------- | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| Chat           | `chat.send`、`chat.history`、chat/agent/tool/lifecycle events     | session/run/generation、history takeover、thinking/tool timeline                        |
-| Sessions       | `sessions.subscribe/list/get/describe/resolve/patch/abort/delete` | managed identity、model patch、分页与终态映射                                           |
-| Tasks          | `tasks.list`、`tasks.get`、`task` event                           | `pending/running/done/failed/killed/timeout` DTO；`taskName` 是机器标识，`label` 是标题 |
-| Approvals      | `exec.approval.*`、`plugin.approval.*`、`exec.approvals.get/set`  | fail-closed policy、交互 modal、session grant                                           |
-| Skills         | `skills.status`、`skills.update`                                  | manifest、用户文件和 UI                                                                 |
-| Cron           | `cron.list/add/update/remove/run/runs`、cron event                | agent 归属、receipt、readAt/catch-up                                                    |
-| Runtime bridge | `justdoRuntimeBridge.historyDetails` 与扩展事件/provider          | 有界 `operator.read`、progress、embeddings                                              |
+| 域             | 当前方法/事件                                                           | JustDo 稳定化                                                                           |
+| -------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Chat           | `chat.send`、`chat.history`、chat/agent/tool/lifecycle events           | session/run/generation、history takeover、thinking/tool timeline                        |
+| Sessions       | `sessions.subscribe/list/get/describe/resolve/patch/abort/delete`       | managed identity、model patch、分页与终态映射                                           |
+| Tasks          | `tasks.list`、`tasks.get`、`task` event                                 | `pending/running/done/failed/killed/timeout` DTO；`taskName` 是机器标识，`label` 是标题 |
+| Approvals      | `exec.approval.*`、`plugin.approval.*`、`exec.approvals.get/set`        | fail-closed policy、交互 modal、session grant                                           |
+| Skills         | `skills.status`、`skills.update`                                        | manifest、用户文件和 UI                                                                 |
+| Cron           | `cron.get/list/add/update/remove/run/runs`、config revision、cron event | account policy 隔离、management 分类、增量事件、enqueue receipt、readAt/catch-up        |
+| Runtime bridge | `justdoRuntimeBridge.historyDetails` 与扩展事件/provider                | 有界 `operator.read`、progress、embeddings                                              |
 
 所有 v2026.8.2 专用响应先经过 `src/main/engine/openclaw/wire/v2026_8_2.ts`。Adapter 对 Renderer 只暴露稳定 DTO，不把上游内部的 `succeeded`、`lost`、cursor shape 或 bundle 类型泄漏到 shared contract。
 
