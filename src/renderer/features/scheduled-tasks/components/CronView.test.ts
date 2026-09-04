@@ -7,6 +7,8 @@ import {
   buildScheduledTaskExecutionInput,
   buildScheduleFromForm,
   computeNextRunPreview,
+  groupScheduledTasks,
+  isValidFutureOnceSchedule,
   parseScheduleToForm,
   requiresScheduledTaskRunConfirmation,
 } from './CronView';
@@ -67,6 +69,21 @@ describe('CronView schedule form mapping', () => {
 
     expect(computeNextRunPreview(form, now)).toBe(
       new Date('2026-07-28T10:01:12.000Z').toLocaleString(),
+    );
+  });
+
+  test('requires a valid future date for one-time schedules', () => {
+    const now = new Date('2026-09-05T08:00:00').getTime();
+
+    expect(isValidFutureOnceSchedule({ onceDate: '', onceTime: '09:00' }, now)).toBe(false);
+    expect(isValidFutureOnceSchedule({ onceDate: 'not-a-date', onceTime: '09:00' }, now)).toBe(
+      false,
+    );
+    expect(isValidFutureOnceSchedule({ onceDate: '2026-09-05', onceTime: '07:59' }, now)).toBe(
+      false,
+    );
+    expect(isValidFutureOnceSchedule({ onceDate: '2026-09-05', onceTime: '09:00' }, now)).toBe(
+      true,
     );
   });
 
@@ -173,5 +190,41 @@ describe('CronView schedule form mapping', () => {
         payload: { kind: 'agentTurn', message: 'Summarize' },
       }),
     ).toBe(false);
+  });
+
+  test('groups only system-managed jobs as system tasks', () => {
+    const baseTask: ScheduledTask = {
+      id: 'task-1',
+      name: 'Task',
+      description: '',
+      enabled: true,
+      schedule: { kind: 'cron', expr: '0 9 * * *' },
+      sessionTarget: 'isolated',
+      wakeMode: 'now',
+      payload: { kind: 'agentTurn', message: 'Summarize' },
+      delivery: { mode: 'none' },
+      agentId: null,
+      sessionKey: null,
+      management: 'editable',
+      state: {
+        nextRunAtMs: null,
+        lastRunAtMs: null,
+        lastStatus: null,
+        lastError: null,
+        lastDurationMs: null,
+        runningAtMs: null,
+        consecutiveErrors: 0,
+      },
+      createdAt: '2026-09-04T00:00:00.000Z',
+      updatedAt: '2026-09-04T00:00:00.000Z',
+    };
+    const editableTask = baseTask;
+    const advancedTask = { ...baseTask, id: 'task-2', management: 'advanced' as const };
+    const managedTask = { ...baseTask, id: 'task-3', management: 'managed' as const };
+
+    expect(groupScheduledTasks([managedTask, advancedTask, editableTask])).toEqual({
+      userTasks: [advancedTask, editableTask],
+      systemTasks: [managedTask],
+    });
   });
 });

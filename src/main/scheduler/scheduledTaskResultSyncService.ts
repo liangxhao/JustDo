@@ -60,8 +60,7 @@ export class ScheduledTaskResultSyncService {
   }
 
   private async reconcileFinishedJobInternal(job: ScheduledTask): Promise<void> {
-    const localLatest = this.deps.resultStore.getLatestStartedAt(job.id);
-    const completedThrough = localLatest ?? this.getCompletedThrough(job.id);
+    const completedThrough = this.getCompletedThrough(job.id);
     await this.reconcileJob(job, completedThrough, false);
     this.emitUnreadCountIfChanged();
   }
@@ -81,7 +80,11 @@ export class ScheduledTaskResultSyncService {
       await previousDeletion;
       await this.syncing?.catch((): void => undefined);
       const result = this.deps.resultStore.getResult(normalizedRunId);
-      if (!result) return false;
+      if (!result) {
+        // A retry after the first IPC response was lost should be idempotent.
+        // The durable tombstone proves the requested deletion already finished.
+        return this.deps.resultStore.isResultDeleted?.(normalizedRunId) === true;
+      }
       if (result.status === 'running') {
         throw new Error('A running scheduled task result cannot be deleted');
       }
@@ -105,7 +108,15 @@ export class ScheduledTaskResultSyncService {
   }
 
   private async reconcileInternal(jobs: ScheduledTask[], forceGlobal: boolean): Promise<void> {
-    const taskNames = new Map(jobs.map(job => [job.id, job.name]));
+    this.deps.resultStore.updateTaskManagement?.(
+      jobs.map(job => ({
+        taskId: job.id,
+        systemManaged: job.management === 'managed',
+      })),
+    );
+    const taskDetails = new Map(
+      jobs.map(job => [job.id, { name: job.name, systemManaged: job.management === 'managed' }]),
+    );
     const activeJobIds = new Set(jobs.map(job => job.id));
     for (const taskId of this.catchUps.keys()) {
       if (!activeJobIds.has(taskId)) {
@@ -117,14 +128,18 @@ export class ScheduledTaskResultSyncService {
     if (!this.deps.resultStore.hasInitializedBaseline()) {
       const baselineAt = Date.now();
       const counts = new Map<string, number>();
-      const baseline = (await this.fetchGlobal(RESULT_BASELINE_LIMIT, taskNames)).filter(run => {
+      const baseline = (await this.fetchGlobal(RESULT_BASELINE_LIMIT, taskDetails)).filter(run => {
         const count = counts.get(run.taskId) ?? 0;
         if (count >= RESULT_BASELINE_PER_TASK_LIMIT) return false;
         counts.set(run.taskId, count + 1);
         return true;
       });
       this.deps.resultStore.initializeBaseline(
-        baseline.map(run => ({ run, taskName: run.taskName })),
+        baseline.map(run => ({
+          run,
+          taskName: run.taskName,
+          systemManaged: run.systemManaged,
+        })),
         baselineAt,
         jobs.map(job => ({ taskId: job.id, lastRunAtMs: job.state.lastRunAtMs })),
       );
@@ -138,7 +153,7 @@ export class ScheduledTaskResultSyncService {
       const previousLatest = new Map(jobs.map(job => [job.id, this.getCompletedThrough(job.id)]));
       // Re-upsert the bounded recent window so corrected mapping rules repair
       // durable projections without deleting read receipts.
-      this.upsertChronologically(await this.fetchGlobal(RESULT_RECONCILE_LIMIT, taskNames));
+      this.upsertChronologically(await this.fetchGlobal(RESULT_RECONCILE_LIMIT, taskDetails));
       for (const job of jobs) {
         const stopAt = previousLatest.get(job.id) ?? null;
         if (
@@ -157,8 +172,7 @@ export class ScheduledTaskResultSyncService {
     }
 
     for (const job of jobs) {
-      const localLatest = this.deps.resultStore.getLatestStartedAt(job.id);
-      const completedThrough = localLatest ?? this.getCompletedThrough(job.id);
+      const completedThrough = this.getCompletedThrough(job.id);
       const pending = this.loadCatchUp(job.id) !== null;
       if (
         !pending &&
@@ -208,7 +222,7 @@ export class ScheduledTaskResultSyncService {
 
   private async fetchGlobal(
     limit: number,
-    taskNames: ReadonlyMap<string, string>,
+    taskDetails: ReadonlyMap<string, { name: string; systemManaged: boolean }>,
   ): Promise<ScheduledTaskRunWithName[]> {
     const collected: ScheduledTaskRunWithName[] = [];
     let offset = 0;
@@ -218,9 +232,11 @@ export class ScheduledTaskResultSyncService {
         offset,
       );
       for (const run of page.runs) {
+        const task = taskDetails.get(run.taskId);
         collected.push({
           ...run,
-          taskName: taskNames.get(run.taskId)?.trim() || run.taskName,
+          taskName: task?.name.trim() || run.taskName,
+          systemManaged: task?.systemManaged,
         });
         if (collected.length >= limit) break;
       }
@@ -265,7 +281,11 @@ export class ScheduledTaskResultSyncService {
           this.catchUps.delete(job.id);
           return collected;
         }
-        collected.push({ ...run, taskName: job.name });
+        collected.push({
+          ...run,
+          taskName: job.name,
+          systemManaged: job.management === 'managed',
+        });
         if (collected.length >= RESULT_RECONCILE_LIMIT) {
           this.catchUps.set(job.id, {
             boundaryRunId: run.id,
@@ -304,9 +324,10 @@ export class ScheduledTaskResultSyncService {
 
   private getCompletedThrough(taskId: string): number | null {
     const localLatest = this.deps.resultStore.getLatestStartedAt(taskId);
+    const durable = this.deps.resultStore.getBaselineWatermark?.(taskId)?.lastRunAtMs ?? null;
+    if (localLatest !== null && durable !== null) return Math.max(localLatest, durable);
     if (localLatest !== null) return localLatest;
-    const watermark = this.deps.resultStore.getBaselineWatermark?.(taskId);
-    if (watermark) return watermark.lastRunAtMs;
+    if (durable !== null) return durable;
     return this.getBaselineAt();
   }
 
@@ -329,12 +350,27 @@ export class ScheduledTaskResultSyncService {
       return valid;
     });
     const outcomes = this.deps.resultStore.upsertResults(
-      validRuns.map(run => ({ run, taskName: run.taskName })),
+      validRuns.map(run => ({
+        run,
+        taskName: run.taskName,
+        systemManaged: run.systemManaged,
+      })),
     );
     for (const outcome of outcomes) {
       if (outcome.changed) {
         this.deps.emitResultUpserted(outcome.result, outcome.isNewUnread);
       }
+    }
+    const completedThroughByTask = new Map<string, number>();
+    for (const run of validRuns) {
+      const startedAt = Date.parse(run.startedAt);
+      completedThroughByTask.set(
+        run.taskId,
+        Math.max(completedThroughByTask.get(run.taskId) ?? Number.MIN_SAFE_INTEGER, startedAt),
+      );
+    }
+    for (const [taskId, completedThrough] of completedThroughByTask) {
+      this.deps.resultStore.advanceCompletedThrough?.(taskId, completedThrough);
     }
   }
 

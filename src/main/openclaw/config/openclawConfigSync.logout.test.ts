@@ -167,6 +167,24 @@ const writeMinimalConfig = (
 };
 
 describe('OpenClaw auth logout config sync', () => {
+  test.each([
+    BuiltinModelSyncReason.ManualRefresh,
+    BuiltinModelSyncReason.AuthLogin,
+    BuiltinModelSyncReason.AuthLogout,
+  ])('forces the managed heartbeat off in the final no-model config for %s', reason => {
+    const configPath = writeExistingBuiltinConfig();
+    const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    existing.agents.defaults.heartbeat = { every: '2h' };
+    existing.agents.list[0].heartbeat = { every: '2h' };
+    fs.writeFileSync(configPath, JSON.stringify(existing), 'utf8');
+
+    expect(writeMinimalConfig(configPath, reason)).toMatchObject({ ok: true });
+
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.agents.defaults.heartbeat).toEqual({ every: '0m' });
+    expect(config.agents.entries.main.heartbeat).toEqual({ every: '0m' });
+  });
+
   test('writes the managed safeguard compaction policy before model setup', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-compaction-config-'));
     temporaryDirectories.push(directory);
@@ -635,6 +653,7 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.agents.ownership).toBe('explicit');
     expect(config.agents.entries.main).toEqual({
       reasoningDefault: 'stream',
+      heartbeat: { every: '0m' },
       workspace: path.join(path.dirname(configPath), 'workspace'),
     });
     expect(config.agents.entries).toHaveProperty('justdo-scheduler');

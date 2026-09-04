@@ -76,7 +76,15 @@ describe('scheduledTask result filtering', () => {
   });
 
   test('removes read results while unread-only is active', () => {
-    let state = reducer(undefined, setResultFilter({ taskId: null, unreadOnly: true }));
+    let state = reducer(
+      undefined,
+      setResultFilter({
+        taskId: null,
+        unreadOnly: true,
+        includeRoutine: false,
+        includeSystem: false,
+      }),
+    );
     state = reducer(state, upsertResult(result('1')));
     state = reducer(state, markResultReadLocal('1'));
     expect(state.results).toEqual([]);
@@ -87,21 +95,75 @@ describe('scheduledTask result filtering', () => {
   });
 
   test('does not insert a realtime result that misses the current filter', () => {
-    let state = reducer(undefined, setResultFilter({ taskId: 'task-1', unreadOnly: true }));
+    let state = reducer(
+      undefined,
+      setResultFilter({
+        taskId: 'task-1',
+        unreadOnly: true,
+        includeRoutine: false,
+        includeSystem: false,
+      }),
+    );
     state = reducer(state, upsertResult(result('1', 'task-2')));
     state = reducer(state, upsertResult(result('2', 'task-1', new Date().toISOString())));
 
     expect(state.results).toEqual([]);
   });
 
-  test('removes a deleted result from the current page', () => {
+  test('shows routine results only when all activity is selected', () => {
+    const routineResult = {
+      ...result('1'),
+      status: 'skipped' as const,
+      summary: null,
+      error: 'heartbeat skipped: no-route',
+      systemManaged: true,
+    };
     let state = reducer(
       undefined,
-      replaceResults({ results: [result('1'), result('2')], nextCursor: 'next' }),
+      setResultFilter({
+        taskId: null,
+        unreadOnly: false,
+        includeRoutine: false,
+        includeSystem: true,
+      }),
     );
-    state = reducer(state, removeResultLocal('2'));
+    state = reducer(state, upsertResult(routineResult));
+    expect(state.results).toEqual([]);
 
+    state = reducer(
+      state,
+      setResultFilter({
+        taskId: null,
+        unreadOnly: false,
+        includeRoutine: true,
+        includeSystem: true,
+      }),
+    );
+    state = reducer(state, upsertResult(routineResult));
     expect(state.results.map(item => item.id)).toEqual(['1']);
+  });
+
+  test('removes a deleted result from both the inbox and cached run history', () => {
+    let state = reducer(
+      undefined,
+      replaceResults({
+        results: [result('run-1'), result('run-2')],
+        nextCursor: 'next',
+      }),
+    );
+    state = reducer(
+      state,
+      setRuns({
+        taskId: 'task-1',
+        runs: [run('run-1'), run('run-2')],
+        hasMore: false,
+        nextOffset: null,
+      }),
+    );
+    state = reducer(state, removeResultLocal('run-2'));
+
+    expect(state.results.map(item => item.id)).toEqual(['run-1']);
+    expect(state.runs['task-1'].map(item => item.id)).toEqual(['run-1']);
     expect(state.resultsNextCursor).toBe('next');
   });
 });

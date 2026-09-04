@@ -136,19 +136,21 @@ Reorder 应在 transaction 中更新所有传入 id；删除 group 时要明确 
 
 ## 12. `scheduled_task_run_receipts`
 
-run_id PK；task id/name；session id/key；status；summary/error；delivery status/error；started/finished/duration；observed/read/updated。索引分别支持全局时间、task 时间和 partial unread。
+run_id PK；task id/name；`system_managed`；session id/key；status；summary/error；delivery status/error；started/finished/duration；observed/read/updated。`system_managed` 由同步时的 Gateway job management 投影，用于让系统任务保留运行证据但不制造收件箱未读。索引分别支持全局时间、task 时间和 partial unread。
 
 Store 行为：
 
 - upsert Gateway runs，保留已有 `read_at`；baseline 可把旧记录设为已读；
 - list 用 `(started_at, run_id)` base64url cursor keyset 分页，默认 30、最大 100；
 - unread 排除 running；markRead 首次时间用 `COALESCE`；
-- baseline、per-task watermark、durable catch-up 存入 KV prefix；
+- baseline、per-task completed-through watermark、durable catch-up 存入 KV prefix；每次成功导入以及删除 receipt 前只允许单调推进 completed-through，避免删除最新结果后回扫旧历史；
 - malformed cursor 抛 `Invalid result cursor`，IPC 转为稳定错误。
 
-## 13. `scheduled_task_result_cleanup`
+## 13. `scheduled_task_result_cleanup` 与 tombstone
 
 run_id PK、`archived_paths_json`、updated_at。它不是结果内容表，而是删除 Gateway cron session/transcript/run artifacts 时的恢复记录。只有外部 artifacts 清理成功后才删除 receipt；失败保留两者，便于重试。
+
+`scheduled_task_result_tombstones` 以 run_id 为主键记录已完成的用户删除。写 tombstone 与删除 receipt 在同一 transaction 内完成；后续启动同步或强制全局 reconcile 必须跳过 tombstoned run，防止 Gateway 的延迟 registry 写回使已删除结果复活。
 
 ## 14. 兼容与迁移
 
@@ -157,6 +159,7 @@ run_id PK、`archived_paths_json`、updated_at。它不是结果内容表，而�
 - 为 session 加 permission_mode/model_ref；
 - 为 session run 加 accepted_at；
 - 为 MCP 加 description；
+- 为 scheduled task receipt 加 `system_managed`，并幂等建立删除 tombstone 表；
 - 建立 main agent并继承旧 prompt；
 - `container` execution mode -> `local`；
 - 清 orphan messages；

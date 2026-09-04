@@ -1,8 +1,6 @@
 import { ArrowPathIcon, XMarkIcon } from '@heroicons/react/24/outline';
-import type {
-  ScheduledTaskRun,
-  ScheduledTaskSessionHistory,
-} from '@shared/scheduledTask/types';
+import { isSilentScheduledTaskResult } from '@shared/scheduledTask/resultPresentation';
+import type { ScheduledTaskRun, ScheduledTaskSessionHistory } from '@shared/scheduledTask/types';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import ChatMessageDisplay from '@/features/cowork/components/ChatMessageDisplay';
@@ -19,13 +17,37 @@ interface RunSessionModalProps {
 const MAX_RETRIES = 5;
 const RETRY_INTERVAL_MS = 3000;
 
+export { isSilentScheduledTaskResult } from '@shared/scheduledTask/resultPresentation';
+
 const RunSessionModal: React.FC<RunSessionModalProps> = ({ run, title, onClose }) => {
+  const isIntentionalSilence =
+    run.status === 'success' && !run.error?.trim() && isSilentScheduledTaskResult(run.summary);
   const [history, setHistory] = useState<ScheduledTaskSessionHistory | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!isIntentionalSilence);
   const [unavailable, setUnavailable] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const requestGenerationRef = useRef(0);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  useEffect(() => {
+    const previouslyFocused =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    closeButtonRef.current?.focus();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      onCloseRef.current();
+    };
+    window.addEventListener('keydown', handleKeyDown, { capture: true });
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown, { capture: true });
+      previouslyFocused?.focus();
+    };
+  }, []);
 
   const loadSession = useCallback(
     async (requestGeneration: number, reportUnavailable = false): Promise<boolean> => {
@@ -33,15 +55,12 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({ run, title, onClose }
       if (!sessionKey) return false;
 
       try {
-        const result = await window.electron?.scheduledTasks?.resolveSession(
-          sessionKey,
-          {
-            runId: run.id,
-            status: run.status,
-            sessionId: run.sessionId,
-            ...(reportUnavailable ? { reason: 'retry-exhausted' as const } : {}),
-          },
-        );
+        const result = await window.electron?.scheduledTasks?.resolveSession(sessionKey, {
+          runId: run.id,
+          status: run.status,
+          sessionId: run.sessionId,
+          ...(reportUnavailable ? { reason: 'retry-exhausted' as const } : {}),
+        });
         if (requestGenerationRef.current !== requestGeneration) return false;
         if (result?.success && result.history?.messages.length) {
           const messages = await normalizeGatewayHistoryForDisplay(result.history.messages, {
@@ -70,6 +89,15 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({ run, title, onClose }
     setUnavailable(false);
     setRetryCount(0);
 
+    if (isIntentionalSilence) {
+      setLoading(false);
+      return () => {
+        if (requestGenerationRef.current === requestGeneration) {
+          requestGenerationRef.current += 1;
+        }
+      };
+    }
+
     void loadSession(requestGeneration).then(success => {
       if (!success && requestGenerationRef.current === requestGeneration) setRetryCount(1);
     });
@@ -80,7 +108,7 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({ run, title, onClose }
       }
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
     };
-  }, [loadSession]);
+  }, [isIntentionalSilence, loadSession]);
 
   useEffect(() => {
     if (retryCount === 0 || retryCount > MAX_RETRIES || history) return;
@@ -120,23 +148,30 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({ run, title, onClose }
     });
   };
 
-  const hasSavedResult = Boolean(run.summary?.trim() || run.error?.trim());
+  const hasSavedResult = Boolean(
+    (!isIntentionalSilence && run.summary?.trim()) || run.error?.trim(),
+  );
 
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center" onClick={onClose}>
       <div className="absolute inset-0 bg-black/40 dark:bg-black/60" />
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="scheduled-task-session-title"
         className="relative mx-4 flex h-[80vh] max-h-[800px] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl"
         onClick={event => event.stopPropagation()}
       >
         <div className="flex shrink-0 items-center justify-between border-b border-border-subtle bg-surface/50 px-5 py-3">
           <h3
+            id="scheduled-task-session-title"
             className="truncate text-sm font-semibold text-foreground"
             title={title?.trim() || undefined}
           >
             {title?.trim() || i18nService.t('scheduledTasksViewSession')}
           </h3>
           <button
+            ref={closeButtonRef}
             type="button"
             onClick={onClose}
             className="rounded-lg p-1 text-secondary transition-colors hover:bg-surface-raised"
@@ -193,6 +228,17 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({ run, title, onClose }
             </div>
           )}
 
+          {!history && isIntentionalSilence && (
+            <div className="mx-5 my-5 rounded-xl border border-border bg-surface p-4">
+              <p className="text-sm font-medium text-foreground">
+                {i18nService.t('scheduledTasksSilentResultTitle')}
+              </p>
+              <p className="mt-1 text-sm text-secondary">
+                {i18nService.t('scheduledTasksSilentResultDescription')}
+              </p>
+            </div>
+          )}
+
           {!history && hasSavedResult && (
             <div className="mx-5 mb-5 overflow-y-auto rounded-xl border border-border bg-surface p-4">
               <p className="mb-2 text-xs font-medium text-secondary">
@@ -216,10 +262,7 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({ run, title, onClose }
           )}
 
           {history && (
-            <ChatMessageDisplay
-              gatewayMessages={history.messages as GatewayMessage[]}
-              fullWidth
-            />
+            <ChatMessageDisplay gatewayMessages={history.messages as GatewayMessage[]} fullWidth />
           )}
         </div>
       </div>

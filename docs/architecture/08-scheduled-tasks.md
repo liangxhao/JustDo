@@ -31,7 +31,7 @@
 - `agentTurn`: message，可选 timeout/model；使用隔离 scheduler agent。
 - `systemEvent`: text；通常目标 main session。
 - `command`、`script`: v2026.8.2 原生无人值守 payload；JustDo 只读展示，并在手动运行前以精确 argv/脚本文本二次确认。确认请求携带所展示配置的 revision，由 Main 在运行前重新读取并拒绝已变化的任务；这是运行前复核，不是 Gateway 原子 CAS。
-- `heartbeat`、`skillCollectionReview`: Gateway 收敛的系统 payload；在 JustDo 中标记为 OpenClaw 管理。
+- `heartbeat`、`skillCollectionReview`: Gateway 收敛的系统 payload；在 JustDo 中标记为 OpenClaw 管理。JustDo 对主 Agent 显式配置 `heartbeat.every: 0m`，关闭不适用于本产品的周期性外部通知检查；OpenClaw 保留的 disabled heartbeat 行不进入 Renderer 任务列表。对话创建任务直接使用原生 automations/`cron.add`，普通 `agentTurn` 任务由 cron timer 独立调度，不依赖周期 Heartbeat。
 
 ### 2.3 Delivery 与目标
 
@@ -114,9 +114,9 @@ Gateway 启动成功后开始 polling，退出清理先停止 polling。v2026.8.
 
 ## 10. Result Store
 
-`scheduled_task_run_receipts` 以 run id 为主键，保存任务名快照、session、状态、summary/error、delivery、时间、observed/read/updated。列表按 `(started_at DESC, run_id DESC)` keyset cursor 分页，limit 在 IPC 限为 1..100。unread 查询排除 running，mark read 使用 `COALESCE` 保留第一次阅读时间。
+`scheduled_task_run_receipts` 以 run id 为主键，保存任务名快照、系统任务标记、session、状态、summary/error、delivery、时间、observed/read/updated。列表按 `(started_at DESC, run_id DESC)` keyset cursor 分页，limit 在 IPC 限为 1..100。unread 查询排除 running、系统任务、OpenClaw `NO_REPLY` 成功结果，并仅对系统管理任务的 `heartbeat skipped:*` 做例行心跳降噪；被降噪的结果仍保存在 receipt 中并可由 `includeSystem` / `includeRoutine` 查询。mark read 使用 `COALESCE` 保留第一次阅读时间。
 
-`scheduled_task_result_cleanup` 记录清理过程中归档路径/进度，支持失败重试。Baseline/watermark/catch-up metadata 位于 KV 的受管 key，不是 Gateway job 定义。
+`scheduled_task_result_cleanup` 记录清理过程中归档路径/进度，支持失败重试。Baseline/per-task completed-through/catch-up metadata 位于 KV 的受管 key，不是 Gateway job 定义；completed-through 在导入和删除时单调推进，因此删除最新 receipt 不会让同步水位回退。
 
 ## 11. 删除结果
 
@@ -126,8 +126,8 @@ Gateway 启动成功后开始 polling，退出清理先停止 polling。v2026.8.
 2. 对该 run 加 suppression，等待在途 sync。
 3. Cleanup service 验证 session key属于 cron run，枚举最多 1000 个 session tree。
 4. 通过 Gateway 删除 child -> root session/transcript，清 session approval grants。
-5. 清 OpenClaw run log/受管 archive artifacts；路径必须在 state dir。
-6. 全部成功后才物理删除 receipt；失败保留 receipt 以便重试。
+5. 清 OpenClaw v2026.8.2 `task_runs` 中对应的 cron history row、delivery sidecar 与可选 lifecycle binding，并清理受管 archive artifacts；匹配必须同时约束 cron runtime、job id 和 run identity/时间，路径必须在 state dir。
+6. 全部成功后在同一 SQLite transaction 中推进 task completed-through、写 durable run tombstone 并删除 receipt；失败保留 receipt 以便重试。后续启动/强制同步会忽略 tombstoned run，避免 Gateway 延迟写回导致结果复活。
 7. 更新 unread count，解除 suppression。
 
 删除 job 不自动等同删除所有已同步结果；两者生命周期独立。
@@ -140,7 +140,7 @@ Gateway 启动成功后开始 polling，退出清理先停止 polling。v2026.8.
 
 ## 13. Renderer
 
-`scheduledTaskSlice` 保存 tasks、runs、Gateway nextOffset、result pages/unread 等共享状态。`CronView` 管理 create/edit/toggle/manual run，并给 advanced/managed job 明确徽标和受限动作；高级与系统任务提供只读详情，展示 schedule/payload/session/delivery 及不会进入基础编辑器的原生能力。command/script 手动运行前必须二次确认。`TaskRunHistory` 展示加载/失败反馈并防止同一 cursor 重复请求；`ResultInbox` 提供未读筛选、分页、标记和删除；`RunSessionModal` 复用 chat pipeline 展示完整历史。
+`scheduledTaskSlice` 保存 tasks、runs、Gateway nextOffset、result pages/unread 等共享状态。`CronView` 管理 create/edit/toggle/manual run，并给 advanced/managed job 明确徽标和受限动作；高级与系统任务提供只读详情，展示 schedule/payload/session/delivery 及不会进入基础编辑器的原生能力。command/script 手动运行前必须二次确认。`TaskRunHistory` 展示加载/失败反馈并防止同一 cursor 重复请求；`ResultInbox` 默认只显示用户任务中有内容或需要处理的结果，支持未读、任务、分页、标记和删除，齿轮设置可按需显示系统任务或例行记录且偏好保存在 Renderer 本地；`RunSessionModal` 复用 chat pipeline 展示完整历史。
 
 编辑普通任务时必须保留表单未暴露但 Gateway 已有的 agent-turn model/timeout/fallback/toolsAllow 等字段、cron timezone/stagger 和 announce target/account/bestEffort，不能因为只改名称或提示词而清空原生配置。
 

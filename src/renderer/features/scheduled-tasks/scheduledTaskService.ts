@@ -1,3 +1,4 @@
+import { isRoutineScheduledTaskResult } from '@shared/scheduledTask/resultPresentation';
 import type {
   ScheduledTask,
   ScheduledTaskChannelOption,
@@ -10,6 +11,7 @@ import type {
   ScheduledTaskUnreadCountEvent,
 } from '@shared/scheduledTask/types';
 
+import { saveScheduledTaskResultPreferences } from '@/features/scheduled-tasks/scheduledTaskResultPreferences';
 import {
   addOrUpdateRun,
   addTask,
@@ -36,6 +38,20 @@ import { store } from '@/store';
 
 function showToast(message: string): void {
   window.dispatchEvent(new CustomEvent('app:showToast', { detail: message }));
+}
+
+export function isVisibleScheduledTask(task: ScheduledTask): boolean {
+  // OpenClaw retains an explicitly disabled heartbeat as a managed cron row.
+  // It is runtime plumbing rather than a user-facing automation in JustDo.
+  return task.payload.kind !== 'heartbeat';
+}
+
+export function resolveVisibleResultTaskId(
+  tasks: ScheduledTask[],
+  taskId: string | null,
+): string | null {
+  if (!taskId) return null;
+  return tasks.some(task => task.id === taskId) ? taskId : null;
 }
 
 function hasTaskDataAnomaly(task: ScheduledTask): boolean {
@@ -71,12 +87,23 @@ export class ScheduledTaskService {
   private resultsRequestId = 0;
   private resultsRevision = 0;
 
+  private invalidateResultsRequests(): void {
+    this.resultsRequestId += 1;
+    store.dispatch(setResultsLoading(false));
+  }
+
+  private reportResultActionError(message: string): void {
+    store.dispatch(setError(message));
+    showToast(message);
+  }
+
   async init(): Promise<void> {
     if (this.initialized) return;
     this.initialized = true;
 
     this.setupListeners();
-    await Promise.all([this.loadTasks(), this.loadResults()]);
+    await this.loadTasks();
+    await this.loadResults();
   }
 
   destroy(): void {
@@ -114,7 +141,9 @@ export class ScheduledTaskService {
       const filter = store.getState().scheduledTask.resultFilter;
       if (
         (!filter.taskId || filter.taskId === event.result.taskId) &&
-        (!filter.unreadOnly || event.result.readAt === null)
+        (!filter.unreadOnly || event.result.readAt === null) &&
+        (filter.includeRoutine || !isRoutineScheduledTaskResult(event.result)) &&
+        (filter.includeSystem || event.result.systemManaged !== true)
       ) {
         store.dispatch(upsertResult(event.result));
       }
@@ -127,8 +156,7 @@ export class ScheduledTaskService {
     this.cleanupFns.push(cleanupUnread);
 
     const cleanupRefresh = api.onRefresh(() => {
-      this.loadTasks();
-      this.loadResults();
+      void this.loadTasks().finally(() => this.loadResults());
     });
     this.cleanupFns.push(cleanupRefresh);
   }
@@ -143,8 +171,9 @@ export class ScheduledTaskService {
       const result = await api.list();
       if (requestId !== this.tasksRequestId) return;
       if (result.success && result.tasks) {
-        checkTasksForAnomalies(result.tasks);
-        store.dispatch(setTasks(result.tasks));
+        const visibleTasks = result.tasks.filter(isVisibleScheduledTask);
+        checkTasksForAnomalies(visibleTasks);
+        store.dispatch(setTasks(visibleTasks));
         store.dispatch(setError(null));
       }
     } catch (err: unknown) {
@@ -169,6 +198,7 @@ export class ScheduledTaskService {
           showToast(msg);
         }
         store.dispatch(addTask(result.task));
+        store.dispatch(setError(null));
       } else {
         throw new Error(result.error || 'Failed to create task');
       }
@@ -186,6 +216,7 @@ export class ScheduledTaskService {
       const result = await api.update(id, input);
       if (result.success && result.task) {
         store.dispatch(updateTask(result.task));
+        store.dispatch(setError(null));
       } else {
         const errorMsg = result.error || 'Failed to update task';
         store.dispatch(setError(errorMsg));
@@ -206,6 +237,7 @@ export class ScheduledTaskService {
       const result = await api.delete(id);
       if (result.success) {
         store.dispatch(removeTask(id));
+        store.dispatch(setError(null));
       } else {
         throw new Error(result.error || 'Failed to delete task');
       }
@@ -224,6 +256,7 @@ export class ScheduledTaskService {
       const result = await api.toggle(id, enabled);
       if (result.success && result.task) {
         store.dispatch(updateTask(result.task));
+        store.dispatch(setError(null));
       } else {
         throw new Error(result.error || 'Failed to update task');
       }
@@ -247,6 +280,7 @@ export class ScheduledTaskService {
       if (!response.success || !response.result) {
         throw new Error(response.error || 'Failed to run task');
       }
+      store.dispatch(setError(null));
       return response.result;
     } catch (err: unknown) {
       store.dispatch(setError(err instanceof Error ? err.message : String(err)));
@@ -297,6 +331,8 @@ export class ScheduledTaskService {
     const query: ScheduledTaskResultQuery = {
       taskId: state.resultFilter.taskId ?? undefined,
       unreadOnly: state.resultFilter.unreadOnly,
+      includeRoutine: state.resultFilter.includeRoutine,
+      includeSystem: state.resultFilter.includeSystem,
       limit: 30,
       cursor: append ? (state.resultsNextCursor ?? undefined) : undefined,
     };
@@ -307,8 +343,8 @@ export class ScheduledTaskService {
     try {
       const response = await api.listResults(query);
       if (requestId !== this.resultsRequestId) return;
-      if (!append && resultsRevision !== this.resultsRevision) {
-        await this.loadResults();
+      if (resultsRevision !== this.resultsRevision) {
+        await this.loadResults(append);
         return;
       }
       if (!response.success || !response.page) throw new Error(response.error);
@@ -318,59 +354,86 @@ export class ScheduledTaskService {
       };
       store.dispatch(append ? appendResults(payload) : replaceResults(payload));
       store.dispatch(setUnreadResultCount(response.page.unreadCount));
+      store.dispatch(setError(null));
     } catch (err: unknown) {
       if (requestId !== this.resultsRequestId) return;
-      store.dispatch(setResultsLoading(false));
       store.dispatch(setError(err instanceof Error ? err.message : String(err)));
+    } finally {
+      if (requestId === this.resultsRequestId) store.dispatch(setResultsLoading(false));
     }
   }
 
-  async setResultsFilter(taskId: string | null, unreadOnly: boolean): Promise<void> {
-    this.resultsRequestId += 1;
-    store.dispatch(setResultFilter({ taskId, unreadOnly }));
+  async setResultsFilter(
+    taskId: string | null,
+    unreadOnly: boolean,
+    includeRoutine: boolean,
+    includeSystem: boolean,
+  ): Promise<void> {
+    this.invalidateResultsRequests();
+    saveScheduledTaskResultPreferences({ includeRoutine, includeSystem });
+    store.dispatch(setResultFilter({ taskId, unreadOnly, includeRoutine, includeSystem }));
     await this.loadResults();
   }
 
   async markResultRead(runId: string): Promise<void> {
     const api = window.electron?.scheduledTasks;
     if (!api) return;
-    this.resultsRequestId += 1;
+    this.invalidateResultsRequests();
     store.dispatch(markResultReadLocal(runId));
-    const response = await api.markResultRead(runId);
-    if (!response.success) {
+    try {
+      const response = await api.markResultRead(runId);
+      if (!response.success)
+        throw new Error(response.error || i18nService.t('scheduledTasksResultsMarkReadFailed'));
+      if (response.result) store.dispatch(upsertResult(response.result));
+      if (typeof response.unreadCount === 'number') {
+        store.dispatch(setUnreadResultCount(response.unreadCount));
+      }
+      store.dispatch(setError(null));
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error && err.message
+          ? err.message
+          : i18nService.t('scheduledTasksResultsMarkReadFailed');
+      this.reportResultActionError(message);
       await this.loadResults();
-      return;
-    }
-    if (response.result) store.dispatch(upsertResult(response.result));
-    if (typeof response.unreadCount === 'number') {
-      store.dispatch(setUnreadResultCount(response.unreadCount));
     }
   }
 
-  async markAllResultsRead(taskId?: string): Promise<void> {
+  async markAllResultsRead(): Promise<void> {
     const api = window.electron?.scheduledTasks;
     if (!api) return;
-    this.resultsRequestId += 1;
-    store.dispatch(markAllResultsReadLocal(taskId));
-    const response = await api.markAllResultsRead(taskId);
-    if (!response.success) {
+    this.invalidateResultsRequests();
+    store.dispatch(markAllResultsReadLocal(undefined));
+    try {
+      const response = await api.markAllResultsRead();
+      if (!response.success) {
+        throw new Error(response.error || i18nService.t('scheduledTasksResultsMarkAllReadFailed'));
+      }
+      if (typeof response.unreadCount === 'number') {
+        store.dispatch(setUnreadResultCount(response.unreadCount));
+      }
+      store.dispatch(setError(null));
+      if (store.getState().scheduledTask.resultFilter.unreadOnly) await this.loadResults();
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error && err.message
+          ? err.message
+          : i18nService.t('scheduledTasksResultsMarkAllReadFailed');
+      this.reportResultActionError(message);
       await this.loadResults();
-      return;
     }
-    if (typeof response.unreadCount === 'number') {
-      store.dispatch(setUnreadResultCount(response.unreadCount));
-    }
-    if (store.getState().scheduledTask.resultFilter.unreadOnly) await this.loadResults();
   }
 
   async deleteResult(runId: string): Promise<boolean> {
     const api = window.electron?.scheduledTasks;
     if (!api?.deleteResult) return false;
-    this.resultsRequestId += 1;
+    this.invalidateResultsRequests();
     try {
       const response = await api.deleteResult(runId);
       if (!response.success) {
-        store.dispatch(setError(response.error || 'Failed to delete scheduled task result'));
+        this.reportResultActionError(
+          response.error || i18nService.t('scheduledTasksResultsDeleteFailed'),
+        );
         await this.loadResults();
         return false;
       }
@@ -379,9 +442,14 @@ export class ScheduledTaskService {
         store.dispatch(setUnreadResultCount(response.unreadCount));
       }
       await this.loadResults();
+      store.dispatch(setError(null));
       return true;
     } catch (err: unknown) {
-      store.dispatch(setError(err instanceof Error ? err.message : String(err)));
+      const message =
+        err instanceof Error && err.message
+          ? err.message
+          : i18nService.t('scheduledTasksResultsDeleteFailed');
+      this.reportResultActionError(message);
       await this.loadResults();
       return false;
     }
@@ -394,7 +462,7 @@ export class ScheduledTaskService {
       return { deletedIds: [], failedIds: normalizedRunIds };
     }
 
-    this.resultsRequestId += 1;
+    this.invalidateResultsRequests();
     const deletedIds: string[] = [];
     const failedIds: string[] = [];
     let unreadCount: number | undefined;
@@ -418,23 +486,36 @@ export class ScheduledTaskService {
       store.dispatch(setUnreadResultCount(unreadCount));
     }
     if (failedIds.length > 0) {
-      store.dispatch(
-        setError(
-          i18nService
-            .t('scheduledTasksResultsBatchDeleteFailed')
-            .replace('{count}', String(failedIds.length)),
-        ),
+      this.reportResultActionError(
+        i18nService
+          .t('scheduledTasksResultsBatchDeleteFailed')
+          .replace('{count}', String(failedIds.length)),
       );
     }
     await this.loadResults();
+    if (failedIds.length === 0) store.dispatch(setError(null));
     return { deletedIds, failedIds };
   }
 
   async refreshResults(): Promise<void> {
     const api = window.electron?.scheduledTasks;
     if (!api) return;
-    await api.reconcileResults();
-    await this.loadResults();
+    this.invalidateResultsRequests();
+    store.dispatch(setResultsLoading(true));
+    try {
+      const response = await api.reconcileResults();
+      if (!response.success) {
+        throw new Error(response.error || i18nService.t('scheduledTasksResultsRefreshFailed'));
+      }
+      await this.loadResults();
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error && err.message
+          ? err.message
+          : i18nService.t('scheduledTasksResultsRefreshFailed');
+      this.reportResultActionError(message);
+      store.dispatch(setResultsLoading(false));
+    }
   }
 }
 

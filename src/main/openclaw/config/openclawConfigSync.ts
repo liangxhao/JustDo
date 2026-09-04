@@ -557,7 +557,7 @@ const rewriteProviderAliasInModel = (
   };
 };
 
-const mergeAgentEntriesWithManagedMainWorkspace = (
+const mergeAgentEntriesWithManagedMainSettings = (
   managedEntries: Record<string, unknown>,
   existingEntries: Record<string, unknown>,
 ): Record<string, unknown> => {
@@ -568,10 +568,14 @@ const mergeAgentEntriesWithManagedMainWorkspace = (
   const managedMain = isRecord(managedEntries.main) ? managedEntries.main : undefined;
   const managedMainWorkspace =
     typeof managedMain?.workspace === 'string' ? managedMain.workspace.trim() : '';
-  if (managedMainWorkspace) {
+  const managedMainHeartbeat = isRecord(managedMain?.heartbeat)
+    ? managedMain.heartbeat
+    : undefined;
+  if (managedMainWorkspace || managedMainHeartbeat) {
     entries.main = {
       ...(isRecord(entries.main) ? entries.main : {}),
-      workspace: managedMainWorkspace,
+      ...(managedMainWorkspace ? { workspace: managedMainWorkspace } : {}),
+      ...(managedMainHeartbeat ? { heartbeat: managedMainHeartbeat } : {}),
     };
   }
   return entries;
@@ -670,6 +674,11 @@ const buildAuthScopedOpenClawConfig = (
     // isolated scheduler Agent explicitly.
     defaults.systemAgent = managedDefaults.systemAgent;
   }
+  if (Object.prototype.hasOwnProperty.call(managedDefaults, 'heartbeat')) {
+    // Heartbeat cadence is JustDo-managed. Authentication-only syncs must not
+    // resurrect a stale periodic cadence from an older generated config.
+    defaults.heartbeat = managedDefaults.heartbeat;
+  }
   const managedDefaultModel = isRecord(managedDefaults.model)
     ? managedDefaults.model
     : undefined;
@@ -700,7 +709,7 @@ const buildAuthScopedOpenClawConfig = (
 
   const existingEntries = isRecord(existingAgents.entries) ? existingAgents.entries : {};
   const managedEntries = isRecord(managedAgents.entries) ? managedAgents.entries : {};
-  const agentEntries = mergeAgentEntriesWithManagedMainWorkspace(
+  const agentEntries = mergeAgentEntriesWithManagedMainSettings(
     managedEntries,
     existingEntries,
   );
@@ -1012,10 +1021,10 @@ export const buildManagedOpenClawAgentThinkingConfig = (
 ) => (settings.agent.thinking ? { thinkingDefault: settings.agent.thinking } : {});
 
 export const buildManagedOpenClawHeartbeatConfig = () => ({
-  every: '2h',
-});
-
-const buildDisabledOpenClawHeartbeatConfig = () => ({
+  // JustDo has no external notification channel and v2026.8.2 automations
+  // create/run through the native cron tool without a recurring heartbeat.
+  // Keep the explicit zero cadence so OpenClaw does not fall back to its
+  // native default while retaining event-driven targeted wake-ups.
   every: '0m',
 });
 
@@ -1774,7 +1783,7 @@ export class OpenClawConfigSync {
           sandbox: {
             mode: sandboxMode,
           },
-          heartbeat: buildDisabledOpenClawHeartbeatConfig(),
+          heartbeat: buildManagedOpenClawHeartbeatConfig(),
           compaction: buildManagedOpenClawCompactionConfig(),
           workspace: resolvedWorkspaceDir,
           subagents: buildManagedOpenClawSubagentConfig(agentRuntimeSettings),
@@ -2097,7 +2106,7 @@ export class OpenClawConfigSync {
           modelSelectionScope: 'session',
           ...buildManagedOpenClawAgentThinkingConfig(agentRuntimeSettings),
           systemAgent: { agentId: 'main' },
-          heartbeat: buildDisabledOpenClawHeartbeatConfig(),
+          heartbeat: buildManagedOpenClawHeartbeatConfig(),
           compaction: buildManagedOpenClawCompactionConfig(),
           subagents: buildManagedOpenClawSubagentConfig(agentRuntimeSettings),
           workspace: resolvedWorkspaceDir,
@@ -2217,6 +2226,7 @@ export class OpenClawConfigSync {
               ...existingDefaults,
               modelSelectionScope: 'session',
               systemAgent: { agentId: 'main' },
+              heartbeat: buildManagedOpenClawHeartbeatConfig(),
               // Replace rather than deep-merge so stale managed keys are removed.
               compaction: buildManagedOpenClawCompactionConfig(),
             };
@@ -2255,7 +2265,7 @@ export class OpenClawConfigSync {
                 ...existingAgents,
                 ownership: 'explicit',
                 defaults: mergedDefaults,
-                entries: mergeAgentEntriesWithManagedMainWorkspace(
+                entries: mergeAgentEntriesWithManagedMainSettings(
                   minimalEntries,
                   existingEntries,
                 ),

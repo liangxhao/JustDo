@@ -344,18 +344,18 @@ describe('OpenClaw managed compaction config', () => {
 });
 
 describe('OpenClaw managed heartbeat config', () => {
-  test('enables heartbeat wake-ups without injecting heartbeat instructions', () => {
+  test('disables recurring heartbeat runs', () => {
     expect(buildManagedOpenClawHeartbeatConfig()).toEqual({
-      every: '2h',
+      every: '0m',
     });
   });
 
-  test('enables managed heartbeat only for the main agent', () => {
+  test('prevents the main agent from inheriting OpenClaw heartbeat defaults', () => {
     expect(applyManagedOpenClawHeartbeatConfig({ id: 'main', default: true })).toEqual({
       id: 'main',
       default: true,
       heartbeat: {
-        every: '2h',
+        every: '0m',
       },
     });
     expect(applyManagedOpenClawHeartbeatConfig({ id: 'researcher' })).toEqual({

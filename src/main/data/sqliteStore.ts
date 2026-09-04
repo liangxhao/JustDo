@@ -227,6 +227,7 @@ export class SqliteStore {
         run_id TEXT PRIMARY KEY,
         task_id TEXT NOT NULL,
         task_name TEXT NOT NULL,
+        system_managed INTEGER NOT NULL DEFAULT 0,
         session_id TEXT,
         session_key TEXT,
         status TEXT NOT NULL,
@@ -255,7 +256,17 @@ export class SqliteStore {
         archived_paths_json TEXT NOT NULL DEFAULT '[]',
         updated_at INTEGER NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS scheduled_task_result_tombstones (
+        run_id TEXT PRIMARY KEY,
+        deleted_at INTEGER NOT NULL
+      );
     `);
+    this.ensureColumn(
+      'scheduled_task_run_receipts',
+      'system_managed',
+      'INTEGER NOT NULL DEFAULT 0',
+    );
 
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_cowork_sessions_agent_order

@@ -1,10 +1,13 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
+import { isRoutineScheduledTaskResult } from '@shared/scheduledTask/resultPresentation';
 import type {
   ScheduledTask,
   ScheduledTaskResult,
   ScheduledTaskRun,
   TaskState,
 } from '@shared/scheduledTask/types';
+
+import { loadScheduledTaskResultPreferences } from './scheduledTaskResultPreferences';
 
 interface ScheduledTaskState {
   tasks: ScheduledTask[];
@@ -18,8 +21,15 @@ interface ScheduledTaskState {
   resultsLoading: boolean;
   resultsInitialized: boolean;
   unreadResultCount: number;
-  resultFilter: { taskId: string | null; unreadOnly: boolean };
+  resultFilter: {
+    taskId: string | null;
+    unreadOnly: boolean;
+    includeRoutine: boolean;
+    includeSystem: boolean;
+  };
 }
+
+const resultPreferences = loadScheduledTaskResultPreferences();
 
 const initialState: ScheduledTaskState = {
   tasks: [],
@@ -33,7 +43,12 @@ const initialState: ScheduledTaskState = {
   resultsLoading: false,
   resultsInitialized: false,
   unreadResultCount: 0,
-  resultFilter: { taskId: null, unreadOnly: false },
+  resultFilter: {
+    taskId: null,
+    unreadOnly: false,
+    includeRoutine: resultPreferences.includeRoutine,
+    includeSystem: resultPreferences.includeSystem,
+  },
 };
 
 const scheduledTaskSlice = createSlice({
@@ -147,7 +162,9 @@ const scheduledTaskSlice = createSlice({
     upsertResult(state, action: PayloadAction<ScheduledTaskResult>) {
       const matchesFilter =
         (!state.resultFilter.taskId || state.resultFilter.taskId === action.payload.taskId) &&
-        (!state.resultFilter.unreadOnly || action.payload.readAt === null);
+        (!state.resultFilter.unreadOnly || action.payload.readAt === null) &&
+        (state.resultFilter.includeRoutine || !isRoutineScheduledTaskResult(action.payload)) &&
+        (state.resultFilter.includeSystem || action.payload.systemManaged !== true);
       const index = state.results.findIndex(result => result.id === action.payload.id);
       if (!matchesFilter) {
         if (index >= 0) state.results.splice(index, 1);
@@ -190,8 +207,19 @@ const scheduledTaskSlice = createSlice({
     },
     removeResultLocal(state, action: PayloadAction<string>) {
       state.results = state.results.filter(result => result.id !== action.payload);
+      for (const taskId of Object.keys(state.runs)) {
+        state.runs[taskId] = state.runs[taskId].filter(run => run.id !== action.payload);
+      }
     },
-    setResultFilter(state, action: PayloadAction<{ taskId: string | null; unreadOnly: boolean }>) {
+    setResultFilter(
+      state,
+      action: PayloadAction<{
+        taskId: string | null;
+        unreadOnly: boolean;
+        includeRoutine: boolean;
+        includeSystem: boolean;
+      }>,
+    ) {
       state.resultFilter = action.payload;
       state.results = [];
       state.resultsNextCursor = null;

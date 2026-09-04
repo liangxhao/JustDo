@@ -1,10 +1,27 @@
-import type { ScheduledTask, ScheduledTaskRunEvent } from '@shared/scheduledTask/types';
+import type {
+  ScheduledTask,
+  ScheduledTaskResult,
+  ScheduledTaskResultUpsertedEvent,
+  ScheduledTaskRunEvent,
+} from '@shared/scheduledTask/types';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
-import { setError, setRuns, setTasks } from '@/features/scheduled-tasks/scheduledTaskSlice';
+import {
+  replaceResults,
+  setError,
+  setResultFilter,
+  setResultsLoading,
+  setRuns,
+  setTasks,
+  setUnreadResultCount,
+} from '@/features/scheduled-tasks/scheduledTaskSlice';
 import { store } from '@/store';
 
-import { ScheduledTaskService } from './scheduledTaskService';
+import {
+  isVisibleScheduledTask,
+  resolveVisibleResultTaskId,
+  ScheduledTaskService,
+} from './scheduledTaskService';
 
 function createTask(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
   return {
@@ -35,11 +52,43 @@ function createTask(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
   };
 }
 
+function createResult(overrides: Partial<ScheduledTaskResult> = {}): ScheduledTaskResult {
+  return {
+    id: 'run-1',
+    taskId: 'task-1',
+    taskName: 'Daily summary',
+    sessionId: null,
+    sessionKey: 'agent:justdo-scheduler:cron:task-1:run:run-1',
+    status: 'success',
+    summary: 'Done',
+    startedAt: '2026-09-05T00:00:00.000Z',
+    finishedAt: '2026-09-05T00:00:01.000Z',
+    durationMs: 1_000,
+    error: null,
+    deliveryStatus: null,
+    deliveryError: null,
+    observedAt: '2026-09-05T00:00:01.000Z',
+    readAt: null,
+    ...overrides,
+  };
+}
+
 describe('ScheduledTaskService', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     store.dispatch(setTasks([]));
     store.dispatch(setError(null));
+    store.dispatch(replaceResults({ results: [], nextCursor: null }));
+    store.dispatch(setResultsLoading(false));
+    store.dispatch(setUnreadResultCount(0));
+    store.dispatch(
+      setResultFilter({
+        taskId: null,
+        unreadOnly: false,
+        includeRoutine: false,
+        includeSystem: false,
+      }),
+    );
     Reflect.deleteProperty(globalThis, 'window');
   });
 
@@ -54,7 +103,10 @@ describe('ScheduledTaskService', () => {
     });
     Object.defineProperty(globalThis, 'window', {
       configurable: true,
-      value: { electron: { scheduledTasks: { deleteResult, listResults } } },
+      value: {
+        electron: { scheduledTasks: { deleteResult, listResults } },
+        dispatchEvent: vi.fn(),
+      },
     });
     const service = new ScheduledTaskService();
 
@@ -64,6 +116,165 @@ describe('ScheduledTaskService', () => {
     expect(result).toEqual({ deletedIds: ['run-1', 'run-2'], failedIds: [] });
     expect(store.getState().scheduledTask.unreadResultCount).toBe(1);
     expect(listResults).toHaveBeenCalledOnce();
+  });
+
+  test('keeps disabled OpenClaw heartbeat plumbing out of the task list', async () => {
+    const userTask = createTask();
+    const heartbeatTask = createTask({
+      id: 'heartbeat-main',
+      name: 'Heartbeat (main)',
+      enabled: false,
+      sessionTarget: 'main',
+      payload: { kind: 'heartbeat' },
+      management: 'managed',
+    });
+    const list = vi.fn().mockResolvedValue({
+      success: true,
+      tasks: [heartbeatTask, userTask],
+    });
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: { electron: { scheduledTasks: { list } } },
+    });
+    const service = new ScheduledTaskService();
+
+    await service.loadTasks();
+
+    expect(isVisibleScheduledTask(heartbeatTask)).toBe(false);
+    expect(store.getState().scheduledTask.tasks).toEqual([userTask]);
+  });
+
+  test('clears a result task filter that is no longer available', () => {
+    const task = createTask();
+
+    expect(resolveVisibleResultTaskId([task], 'task-1')).toBe('task-1');
+    expect(resolveVisibleResultTaskId([task], 'missing-task')).toBeNull();
+    expect(resolveVisibleResultTaskId([task], null)).toBeNull();
+  });
+
+  test('marks all results read globally so the action matches the global unread count', async () => {
+    const markAllResultsRead = vi.fn().mockResolvedValue({ success: true, unreadCount: 0 });
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: { electron: { scheduledTasks: { markAllResultsRead } }, dispatchEvent: vi.fn() },
+    });
+    const service = new ScheduledTaskService();
+
+    await service.markAllResultsRead();
+
+    expect(markAllResultsRead).toHaveBeenCalledWith();
+  });
+
+  test('does not leave result loading stuck when marking a result read invalidates a list request', async () => {
+    let resolveList!: (value: {
+      success: true;
+      page: { results: ScheduledTaskResult[]; nextCursor: null; unreadCount: number };
+    }) => void;
+    const pendingList = new Promise<{
+      success: true;
+      page: { results: ScheduledTaskResult[]; nextCursor: null; unreadCount: number };
+    }>(resolve => {
+      resolveList = resolve;
+    });
+    const listResults = vi.fn().mockReturnValue(pendingList);
+    const markResultRead = vi.fn().mockResolvedValue({ success: true, unreadCount: 0 });
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: {
+        electron: { scheduledTasks: { listResults, markResultRead } },
+        dispatchEvent: vi.fn(),
+      },
+    });
+    const service = new ScheduledTaskService();
+
+    const pendingLoad = service.loadResults();
+    expect(store.getState().scheduledTask.resultsLoading).toBe(true);
+    await service.markResultRead('run-1');
+    expect(store.getState().scheduledTask.resultsLoading).toBe(false);
+
+    resolveList({
+      success: true,
+      page: { results: [], nextCursor: null, unreadCount: 0 },
+    });
+    await pendingLoad;
+    expect(store.getState().scheduledTask.resultsLoading).toBe(false);
+  });
+
+  test('reports a rejected mark-read request and reloads authoritative results', async () => {
+    const listResults = vi.fn().mockResolvedValue({
+      success: true,
+      page: { results: [], nextCursor: null, unreadCount: 0 },
+    });
+    const dispatchEvent = vi.fn();
+    const markResultRead = vi.fn().mockRejectedValue(new Error('mark read unavailable'));
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: { electron: { scheduledTasks: { listResults, markResultRead } }, dispatchEvent },
+    });
+    const service = new ScheduledTaskService();
+
+    await service.markResultRead('run-1');
+
+    expect(listResults).toHaveBeenCalledOnce();
+    expect(dispatchEvent).toHaveBeenCalledOnce();
+    expect(store.getState().scheduledTask.resultsLoading).toBe(false);
+  });
+
+  test('retries an appended result page when a live result arrives during the request', async () => {
+    const staleResult = createResult({ status: 'running', finishedAt: null });
+    const liveResult = createResult();
+    store.dispatch(replaceResults({ results: [staleResult], nextCursor: 'next-page' }));
+    let onResult: ((event: ScheduledTaskResultUpsertedEvent) => void) | undefined;
+    let resolveFirst!: (value: {
+      success: true;
+      page: { results: ScheduledTaskResult[]; nextCursor: null; unreadCount: number };
+    }) => void;
+    const firstPage = new Promise<{
+      success: true;
+      page: { results: ScheduledTaskResult[]; nextCursor: null; unreadCount: number };
+    }>(resolve => {
+      resolveFirst = resolve;
+    });
+    const listResults = vi
+      .fn()
+      .mockReturnValueOnce(firstPage)
+      .mockResolvedValueOnce({
+        success: true,
+        page: { results: [], nextCursor: null, unreadCount: 0 },
+      });
+    const subscribe = () => () => undefined;
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: {
+        electron: {
+          scheduledTasks: {
+            listResults,
+            onStatusUpdate: subscribe,
+            onRunUpdate: subscribe,
+            onResultUpserted: (callback: typeof onResult) => {
+              onResult = callback;
+              return () => undefined;
+            },
+            onUnreadCountChanged: subscribe,
+            onRefresh: subscribe,
+          },
+        },
+      },
+    });
+    const service = new ScheduledTaskService();
+    (service as unknown as { setupListeners: () => void }).setupListeners();
+
+    const pendingLoad = service.loadResults(true);
+    onResult?.({ result: liveResult, isNewUnread: true });
+    resolveFirst({
+      success: true,
+      page: { results: [staleResult], nextCursor: null, unreadCount: 1 },
+    });
+    await pendingLoad;
+
+    expect(listResults).toHaveBeenCalledTimes(2);
+    expect(store.getState().scheduledTask.results[0].status).toBe('success');
+    expect(store.getState().scheduledTask.resultsLoading).toBe(false);
   });
 
   test('rejects a manual run when the IPC response reports an enqueue failure', async () => {
@@ -180,9 +391,13 @@ describe('ScheduledTaskService', () => {
       success: true,
       page: { results: [], nextCursor: null, unreadCount: 0 },
     });
+    const dispatchEvent = vi.fn();
     Object.defineProperty(globalThis, 'window', {
       configurable: true,
-      value: { electron: { scheduledTasks: { deleteResult, listResults } } },
+      value: {
+        electron: { scheduledTasks: { deleteResult, listResults } },
+        dispatchEvent,
+      },
     });
     const service = new ScheduledTaskService();
 
@@ -191,6 +406,29 @@ describe('ScheduledTaskService', () => {
     expect(result).toEqual({ deletedIds: ['run-2'], failedIds: ['run-1'] });
     expect(deleteResult).toHaveBeenCalledTimes(2);
     expect(listResults).toHaveBeenCalledOnce();
+    expect(dispatchEvent).toHaveBeenCalledOnce();
+  });
+
+  test('reports reconciliation failures and always clears the refresh indicator', async () => {
+    const dispatchEvent = vi.fn();
+    const reconcileResults = vi.fn().mockResolvedValue({
+      success: false,
+      error: 'reconciliation unavailable',
+    });
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: {
+        electron: { scheduledTasks: { reconcileResults } },
+        dispatchEvent,
+      },
+    });
+    const service = new ScheduledTaskService();
+
+    await service.refreshResults();
+
+    expect(store.getState().scheduledTask.resultsLoading).toBe(false);
+    expect(store.getState().scheduledTask.error).toBe('reconciliation unavailable');
+    expect(dispatchEvent).toHaveBeenCalledOnce();
   });
 
   test('reloads the authoritative task list after an update failure', async () => {

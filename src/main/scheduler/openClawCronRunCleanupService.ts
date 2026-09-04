@@ -13,6 +13,10 @@ interface SessionDeleteResult {
   archived?: string[];
 }
 
+interface SessionDescribeResult {
+  session?: Record<string, unknown> | null;
+}
+
 export interface OpenClawCronRunCleanupDeps {
   getGatewayClient: () => GatewayRequestClient | null;
   ensureGatewayReady: () => Promise<void>;
@@ -21,10 +25,17 @@ export interface OpenClawCronRunCleanupDeps {
   clearSessionApprovalGrants?: (sessionKey: string) => void;
 }
 
-interface CronRunLogKey {
-  store_key: string;
-  job_id: string;
-  seq: number;
+interface CronTaskRunRow {
+  task_id: string;
+  run_id: string | null;
+  started_at: number | null;
+  detail_json: string | null;
+}
+
+interface CronTaskRunDetail {
+  kind?: unknown;
+  storeKey?: unknown;
+  runId?: unknown;
 }
 
 const MAX_SESSION_TREE_SIZE = 1000;
@@ -34,25 +45,35 @@ export class OpenClawCronRunCleanupService {
 
   async deleteResultArtifacts(result: ScheduledTaskResult): Promise<void> {
     this.deletePendingArchivedTranscripts(result.id);
-    if (
-      result.sessionKey?.trim() &&
-      this.isCronOwnedSessionKey(result.sessionKey.trim(), result.taskId)
-    ) {
+    const runSession = this.getCronRunSessionIdentity(result);
+    if (runSession) {
       const client = await this.client();
-      await this.deletePersistedSessionTree(client, result.id, result.sessionKey.trim());
+      await this.deletePersistedSessionTree(
+        client,
+        result.id,
+        runSession.sessionKey,
+        runSession.sessionId,
+      );
     }
-    this.deleteCronRunLog(result);
+    this.deleteCronTaskRunHistory(result);
     this.clearPendingArchivedTranscripts(result.id);
   }
 
-  private isCronOwnedSessionKey(sessionKey: string, taskId: string): boolean {
-    const cronKey = `cron:${taskId}`;
-    return (
-      sessionKey === cronKey ||
-      sessionKey.startsWith(`${cronKey}:`) ||
-      sessionKey.includes(`:${cronKey}:`) ||
-      sessionKey.endsWith(`:${cronKey}`)
-    );
+  private getCronRunSessionIdentity(
+    result: ScheduledTaskResult,
+  ): { sessionKey: string; sessionId: string } | null {
+    const sessionKey = result.sessionKey?.trim();
+    const sessionId = result.sessionId?.trim();
+    const taskId = result.taskId.trim();
+    if (!sessionKey || !sessionId || !taskId || sessionId.includes(':') || taskId.includes(':')) {
+      return null;
+    }
+
+    const expectedSuffix = `:cron:${taskId}:run:${sessionId}`;
+    if (!sessionKey.endsWith(expectedSuffix)) return null;
+    const agentPrefix = sessionKey.slice(0, -expectedSuffix.length);
+    if (!/^agent:[^:]+$/u.test(agentPrefix)) return null;
+    return { sessionKey, sessionId };
   }
 
   private async client(): Promise<GatewayRequestClient> {
@@ -69,7 +90,11 @@ export class OpenClawCronRunCleanupService {
     client: GatewayRequestClient,
     runId: string,
     rootSessionKey: string,
+    rootSessionId: string,
   ): Promise<void> {
+    const root = await this.describeSession(client, rootSessionKey);
+    if (!root || root.sessionId !== rootSessionId) return;
+
     const childrenByParent = new Map<string, Set<string>>();
     for (const row of await listPersistedGatewaySessions(client)) {
       const key = typeof row.key === 'string' ? row.key.trim() : '';
@@ -101,9 +126,17 @@ export class OpenClawCronRunCleanupService {
     visit(rootSessionKey);
 
     for (const sessionKey of deletionOrder) {
+      const session = await this.describeSession(client, sessionKey);
+      if (!session) continue;
+      if (sessionKey === rootSessionKey && session.sessionId !== rootSessionId) return;
       const deleted = await client.request<SessionDeleteResult>('sessions.delete', {
         key: sessionKey,
         deleteTranscript: true,
+        expectedSessionId: session.sessionId,
+        ...(session.lifecycleRevision
+          ? { expectedLifecycleRevision: session.lifecycleRevision }
+          : {}),
+        ...(session.updatedAt !== undefined ? { expectedSessionUpdatedAt: session.updatedAt } : {}),
       });
       this.deps.clearSessionApprovalGrants?.(sessionKey);
       const archivedPaths = (deleted.archived ?? []).filter(
@@ -186,7 +219,7 @@ export class OpenClawCronRunCleanupService {
       .run(runId);
   }
 
-  private deleteCronRunLog(result: ScheduledTaskResult): void {
+  private deleteCronTaskRunHistory(result: ScheduledTaskResult): void {
     const stateDir = path.resolve(this.deps.getStateDir());
     const databasePath = path.join(stateDir, 'state', 'openclaw.sqlite');
     const cronStoreKey = path.resolve(stateDir, 'cron', 'jobs.json');
@@ -201,29 +234,110 @@ export class OpenClawCronRunCleanupService {
     const db = new Database(databasePath);
     try {
       db.pragma('busy_timeout = 5000');
-      const row = db
+      const rows = db
         .prepare(
-          `SELECT store_key, job_id, seq
-           FROM cron_run_logs
-           WHERE store_key = ?
-             AND job_id = ?
-             AND (
-               run_id = ?
-               OR (run_id IS NULL AND COALESCE(run_at_ms, ts) = ?)
-             )
-           ORDER BY ts DESC, seq DESC
-           LIMIT 1`,
+          `SELECT task_id, run_id, started_at, detail_json
+           FROM task_runs
+           WHERE runtime = 'cron'
+             AND source_id = ?
+             AND ended_at IS NOT NULL`,
         )
-        .get(cronStoreKey, result.taskId, result.id, startedAt) as CronRunLogKey | undefined;
-      if (!row) return;
-      const deleted = db
-        .prepare('DELETE FROM cron_run_logs WHERE store_key = ? AND job_id = ? AND seq = ?')
-        .run(row.store_key, row.job_id, row.seq);
-      if (deleted.changes !== 1) {
-        throw new Error('OpenClaw cron run changed during deletion');
+        .all(result.taskId) as CronTaskRunRow[];
+      const exact: CronTaskRunRow[] = [];
+      const legacy: CronTaskRunRow[] = [];
+      for (const row of rows) {
+        const detail = this.parseCronTaskRunDetail(row.detail_json);
+        if (
+          detail?.kind !== 'cron-run' ||
+          detail.storeKey !== cronStoreKey ||
+          row.started_at !== startedAt
+        ) {
+          continue;
+        }
+        if (!Object.prototype.hasOwnProperty.call(detail, 'runId')) {
+          legacy.push(row);
+          continue;
+        }
+        if (typeof detail.runId === 'string' && detail.runId.trim() === result.id) exact.push(row);
       }
+      const candidates = exact.length > 0 ? exact : legacy;
+      if (candidates.length === 0) return;
+      if (candidates.length > 1) {
+        throw new Error('OpenClaw cron task history is ambiguous');
+      }
+
+      const row = candidates[0];
+      db.transaction(() => {
+        db.prepare('DELETE FROM task_delivery_state WHERE task_id = ?').run(row.task_id);
+        const deleted = db
+          .prepare(
+            `DELETE FROM task_runs
+             WHERE task_id = ?
+               AND runtime = 'cron'
+               AND source_id = ?
+               AND ended_at IS NOT NULL
+               AND started_at IS ?
+               AND run_id IS ?
+               AND detail_json IS ?`,
+          )
+          .run(row.task_id, result.taskId, row.started_at, row.run_id, row.detail_json);
+        if (deleted.changes !== 1) {
+          throw new Error('OpenClaw cron task history changed during deletion');
+        }
+        if (this.tableExists(db, 'execution_owner_lifecycle_bindings')) {
+          db.prepare(
+            "DELETE FROM execution_owner_lifecycle_bindings WHERE owner_kind = 'task' AND owner_id = ?",
+          ).run(row.task_id);
+        }
+      })();
     } finally {
       db.close();
     }
+  }
+
+  private async describeSession(
+    client: GatewayRequestClient,
+    sessionKey: string,
+  ): Promise<{ sessionId: string; lifecycleRevision?: string; updatedAt?: number } | null> {
+    const described = await client.request<SessionDescribeResult>('sessions.describe', {
+      key: sessionKey,
+    });
+    const session = described.session;
+    if (!session) return null;
+    const sessionId = typeof session.sessionId === 'string' ? session.sessionId.trim() : '';
+    if (!sessionId) throw new Error('OpenClaw session identity is unavailable');
+    const lifecycleRevision =
+      typeof session.lifecycleRevision === 'string' ? session.lifecycleRevision.trim() : '';
+    const updatedAt =
+      typeof session.updatedAt === 'number' &&
+      Number.isFinite(session.updatedAt) &&
+      session.updatedAt >= 0
+        ? session.updatedAt
+        : undefined;
+    return {
+      sessionId,
+      ...(lifecycleRevision ? { lifecycleRevision } : {}),
+      ...(updatedAt !== undefined ? { updatedAt } : {}),
+    };
+  }
+
+  private parseCronTaskRunDetail(value: string | null): CronTaskRunDetail | null {
+    if (!value) return null;
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? (parsed as CronTaskRunDetail)
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private tableExists(db: Database.Database, tableName: string): boolean {
+    return Boolean(
+      db
+        .prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ? LIMIT 1")
+        .get(tableName),
+    );
   }
 }

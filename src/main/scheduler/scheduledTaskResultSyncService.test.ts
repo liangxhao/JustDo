@@ -88,6 +88,23 @@ describe('ScheduledTaskResultSyncService', () => {
     expect(deleteResult).not.toHaveBeenCalled();
   });
 
+  test('treats a retry for an already tombstoned result as a successful deletion', async () => {
+    const cleanup = vi.fn();
+    const service = new ScheduledTaskResultSyncService({
+      cronJobService: {} as CronJobService,
+      resultStore: {
+        getResult: vi.fn().mockReturnValue(null),
+        isResultDeleted: vi.fn().mockReturnValue(true),
+      } as unknown as ScheduledTaskResultStore,
+      emitResultUpserted: vi.fn(),
+      emitUnreadCountChanged: vi.fn(),
+    });
+
+    await expect(service.deleteResult('already-deleted', cleanup)).resolves.toBe(true);
+
+    expect(cleanup).not.toHaveBeenCalled();
+  });
+
   test('queues reconciliation until an in-flight deletion finishes', async () => {
     const storedResult = {
       ...run('delete-me', '2026-07-28T08:00:00.000Z'),
@@ -243,6 +260,7 @@ describe('ScheduledTaskResultSyncService', () => {
     const job = {
       id: 'task-1',
       name: 'Daily report',
+      management: 'managed',
       state: { lastRunAtMs: Date.parse(gatewayRun.startedAt) },
     } as ScheduledTask;
 
@@ -250,13 +268,38 @@ describe('ScheduledTaskResultSyncService', () => {
 
     expect(initializeBaseline.mock.calls[0]?.[0]).toEqual([
       {
-        run: { ...gatewayRun, taskName: 'Daily report' },
+        run: { ...gatewayRun, taskName: 'Daily report', systemManaged: true },
         taskName: 'Daily report',
+        systemManaged: true,
       },
     ]);
     expect(initializeBaseline.mock.calls[0]?.[2]).toEqual([
       { taskId: 'task-1', lastRunAtMs: Date.parse(gatewayRun.startedAt) },
     ]);
+  });
+
+  test('leaves management unknown when a global run has no matching current job', async () => {
+    const initializeBaseline = vi.fn();
+    const gatewayRun = {
+      ...run('orphaned', '2026-07-28T08:00:00.000Z'),
+      taskName: 'Historical managed task',
+    };
+    const service = new ScheduledTaskResultSyncService({
+      cronJobService: {
+        listAllRuns: vi.fn().mockResolvedValue({ runs: [gatewayRun], nextOffset: null }),
+      } as unknown as CronJobService,
+      resultStore: {
+        hasInitializedBaseline: () => false,
+        initializeBaseline,
+        countUnread: () => 0,
+      } as unknown as ScheduledTaskResultStore,
+      emitResultUpserted: vi.fn(),
+      emitUnreadCountChanged: vi.fn(),
+    });
+
+    await service.reconcile([]);
+
+    expect(initializeBaseline.mock.calls[0]?.[0]?.[0]?.systemManaged).toBeUndefined();
   });
 
   test('catches up multiple missed runs oldest first and only once', async () => {
@@ -590,6 +633,76 @@ describe('ScheduledTaskResultSyncService', () => {
     await service.reconcile([job]);
 
     expect(known.has(completed.id)).toBe(true);
+  });
+
+  test('keeps a durable completed-through watermark after deleting the latest result', async () => {
+    const latest = run('latest', '2026-07-28T09:00:00.000Z');
+    const newer = run('newer', '2026-07-28T10:00:00.000Z');
+    const known = new Map<string, ReturnType<typeof run>>();
+    let completedThrough = Date.parse('2026-07-28T08:00:00.000Z');
+    const listRuns = vi.fn().mockResolvedValue([latest]);
+    const resultStore = {
+      hasInitializedBaseline: () => true,
+      getBaselineAt: () => 1000,
+      getBaselineWatermark: () => ({ lastRunAtMs: completedThrough }),
+      getLatestStartedAt: () => {
+        const starts = [...known.values()].map(item => Date.parse(item.startedAt));
+        return starts.length ? Math.max(...starts) : null;
+      },
+      getResult: (id: string) => {
+        const item = known.get(id);
+        return item
+          ? { ...item, taskName: 'Task', observedAt: item.startedAt, readAt: null }
+          : null;
+      },
+      getCatchUp: () => null,
+      setCatchUp: vi.fn(),
+      advanceCompletedThrough: (_taskId: string, startedAt: number) => {
+        completedThrough = Math.max(completedThrough, startedAt);
+      },
+      upsertResults: (items: Array<{ run: ScheduledTaskRun }>) =>
+        items.map(({ run: item }) => {
+          known.set(item.id, item);
+          return {
+            result: { ...item, taskName: 'Task', observedAt: item.startedAt, readAt: null },
+            changed: true,
+            isNewUnread: true,
+          };
+        }),
+      deleteResult: (id: string) => known.delete(id),
+      countUnread: () => known.size,
+    } as unknown as ScheduledTaskResultStore;
+    const cronJobService = {
+      listAllRuns: vi.fn().mockResolvedValue({ runs: [], nextOffset: null }),
+      listRuns,
+    } as unknown as CronJobService;
+    const service = new ScheduledTaskResultSyncService({
+      cronJobService,
+      resultStore,
+      emitResultUpserted: vi.fn(),
+      emitUnreadCountChanged: vi.fn(),
+    });
+    const job = {
+      id: 'task-1',
+      name: 'Task',
+      state: { lastRunAtMs: Date.parse(latest.startedAt) },
+    } as ScheduledTask;
+
+    await service.reconcile([]);
+    await service.reconcile([job]);
+    expect(known.has(latest.id)).toBe(true);
+    await service.deleteResult(latest.id, async () => undefined);
+    expect(known.has(latest.id)).toBe(false);
+
+    listRuns.mockClear();
+    await service.reconcile([job]);
+    expect(listRuns).not.toHaveBeenCalled();
+
+    job.state = { lastRunAtMs: Date.parse(newer.startedAt) };
+    listRuns.mockResolvedValue([newer, latest]);
+    await service.reconcile([job]);
+    expect(known.has(newer.id)).toBe(true);
+    expect(known.has(latest.id)).toBe(false);
   });
 
   test('queues a forced reconcile behind an active background reconcile', async () => {

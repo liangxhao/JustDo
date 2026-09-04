@@ -155,10 +155,12 @@ export interface ScheduledTaskRun {
 
 export interface ScheduledTaskRunWithName extends ScheduledTaskRun {
   taskName: string;
+  systemManaged?: boolean;
 }
 
 export interface ScheduledTaskResult extends ScheduledTaskRun {
   taskName: string;
+  systemManaged?: boolean;
   observedAt: string;
   readAt: string | null;
 }
@@ -178,6 +180,8 @@ export interface ScheduledTaskSessionHistory {
 export interface ScheduledTaskResultQuery {
   taskId?: string;
   unreadOnly?: boolean;
+  includeRoutine?: boolean;
+  includeSystem?: boolean;
   limit?: number;
   cursor?: string;
 }

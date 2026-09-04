@@ -82,14 +82,18 @@ test('caps result page limits and normalizes an empty task filter', async () => 
 
   const result = await handlers.get(ScheduledTaskIpc.ListResults)?.(
     {},
-    { taskId: '   ', limit: 500 },
+    { taskId: '   ', includeRoutine: true, includeSystem: true, limit: 500 },
   );
 
   expect(result).toEqual({
     success: true,
     page: { results: [], nextCursor: null, unreadCount: 0 },
   });
-  expect(listResults).toHaveBeenCalledWith({ limit: 100 });
+  expect(listResults).toHaveBeenCalledWith({
+    includeRoutine: true,
+    includeSystem: true,
+    limit: 100,
+  });
 });
 
 test('logs one content-free diagnostic when full result retries are exhausted', async () => {

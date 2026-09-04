@@ -1,6 +1,11 @@
 import type Database from 'better-sqlite3';
 
 import { TaskStatus } from '../../shared/scheduledTask/constants';
+import {
+  isRoutineScheduledTaskResult,
+  OPENCLAW_HEARTBEAT_SKIPPED_PREFIX,
+  OPENCLAW_SILENT_REPLY_MARKER,
+} from '../../shared/scheduledTask/resultPresentation';
 import type {
   ScheduledTaskResult,
   ScheduledTaskResultPage,
@@ -13,11 +18,16 @@ const BASELINE_TASK_KEY_PREFIX = 'scheduled_task_results_baseline_task_v1:';
 const CATCH_UP_KEY_PREFIX = 'scheduled_task_results_catch_up_v1:';
 const DEFAULT_PAGE_SIZE = 30;
 const MAX_PAGE_SIZE = 100;
+const ROUTINE_RESULT_EXCLUSION_SQL = `NOT (
+  (system_managed = 1 AND status = ? AND LOWER(TRIM(COALESCE(error, ''))) LIKE ?)
+  OR (status = ? AND UPPER(TRIM(COALESCE(summary, ''))) = ? AND TRIM(COALESCE(error, '')) = '')
+)`;
 
 interface ResultRow {
   run_id: string;
   task_id: string;
   task_name: string;
+  system_managed: number;
   session_id: string | null;
   session_key: string | null;
   status: string;
@@ -35,6 +45,7 @@ interface ResultRow {
 export interface ResultUpsertOptions {
   observedAt?: number;
   baselineReadAt?: number;
+  systemManaged?: boolean;
 }
 
 export interface ResultUpsertOutcome {
@@ -66,6 +77,7 @@ function rowToResult(row: ResultRow): ScheduledTaskResult {
     id: row.run_id,
     taskId: row.task_id,
     taskName: row.task_name,
+    systemManaged: row.system_managed === 1,
     sessionId: row.session_id,
     sessionKey: row.session_key,
     status: row.status as ScheduledTaskResult['status'],
@@ -104,6 +116,16 @@ function decodeCursor(cursor: string): [number, string] {
   }
 }
 
+function excludeRoutineResults(clauses: string[], params: Array<string | number>): void {
+  clauses.push(ROUTINE_RESULT_EXCLUSION_SQL);
+  params.push(
+    TaskStatus.Skipped,
+    `${OPENCLAW_HEARTBEAT_SKIPPED_PREFIX}%`,
+    TaskStatus.Success,
+    OPENCLAW_SILENT_REPLY_MARKER,
+  );
+}
+
 export class ScheduledTaskResultStore {
   constructor(private readonly db: Database.Database) {}
 
@@ -112,9 +134,8 @@ export class ScheduledTaskResultStore {
   }
 
   getBaselineAt(): number | null {
-    const row = this.db
-      .prepare('SELECT updated_at FROM kv WHERE key = ?')
-      .get(BASELINE_KEY) as { updated_at: number } | undefined;
+    const row = this.db.prepare('SELECT updated_at FROM kv WHERE key = ?').get(BASELINE_KEY) as
+      { updated_at: number } | undefined;
     return row && Number.isFinite(row.updated_at) ? row.updated_at : null;
   }
 
@@ -135,6 +156,23 @@ export class ScheduledTaskResultStore {
     } catch {
       return null;
     }
+  }
+
+  advanceCompletedThrough(taskId: string, lastRunAtMs: number, observedAt = Date.now()): void {
+    const normalizedTaskId = taskId.trim();
+    if (!normalizedTaskId || !Number.isFinite(lastRunAtMs)) return;
+    const current = this.getBaselineWatermark(normalizedTaskId)?.lastRunAtMs ?? null;
+    if (current !== null && current >= lastRunAtMs) return;
+    this.db
+      .prepare(
+        `INSERT INTO kv (key, value, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+      )
+      .run(
+        `${BASELINE_TASK_KEY_PREFIX}${normalizedTaskId}`,
+        JSON.stringify({ lastRunAtMs }),
+        observedAt,
+      );
   }
 
   getCatchUp(taskId: string): ScheduledTaskResultCatchUp | null {
@@ -179,7 +217,7 @@ export class ScheduledTaskResultStore {
   }
 
   initializeBaseline(
-    results: Array<{ run: ScheduledTaskRun; taskName: string }>,
+    results: Array<{ run: ScheduledTaskRun; taskName: string; systemManaged?: boolean }>,
     baselineAt = Date.now(),
     taskWatermarks: Array<{ taskId: string; lastRunAtMs: number | null }> = [],
   ): void {
@@ -189,6 +227,7 @@ export class ScheduledTaskResultStore {
         this.upsertResult(result.run, result.taskName, {
           observedAt: baselineAt,
           baselineReadAt: baselineAt,
+          systemManaged: result.systemManaged,
         });
       }
       const upsertWatermark = this.db.prepare(
@@ -212,18 +251,24 @@ export class ScheduledTaskResultStore {
     run: ScheduledTaskRun,
     taskName: string,
     options: ResultUpsertOptions = {},
-  ): ResultUpsertOutcome {
+  ): ResultUpsertOutcome | null {
+    if (this.isResultDeleted(run.id)) return null;
     const existing = this.db
       .prepare('SELECT * FROM scheduled_task_run_receipts WHERE run_id = ?')
       .get(run.id) as ResultRow | undefined;
     const observedAt = existing?.observed_at ?? options.observedAt ?? Date.now();
     const terminal = run.status !== TaskStatus.Running;
     const existingTerminal = existing ? existing.status !== TaskStatus.Running : false;
+    const systemManaged = options.systemManaged ?? existing?.system_managed === 1;
+    const routine = isRoutineScheduledTaskResult({ ...run, systemManaged });
     const isNewUnread =
       terminal &&
+      !routine &&
+      !systemManaged &&
       options.baselineReadAt === undefined &&
       ((!existing && this.hasInitializedBaseline()) || (!!existing && !existingTerminal));
-    const readAt = existing?.read_at ?? options.baselineReadAt ?? null;
+    const readAt =
+      existing?.read_at ?? options.baselineReadAt ?? (routine || systemManaged ? observedAt : null);
     const startedAt = toMillis(run.startedAt);
     if (startedAt === null) throw new Error(`Invalid start timestamp for run ${run.id}`);
 
@@ -231,6 +276,7 @@ export class ScheduledTaskResultStore {
       run.id,
       run.taskId,
       taskName,
+      systemManaged ? 1 : 0,
       run.sessionId,
       run.sessionKey,
       run.status,
@@ -249,10 +295,10 @@ export class ScheduledTaskResultStore {
     this.db
       .prepare(
         `INSERT INTO scheduled_task_run_receipts (
-          run_id, task_id, task_name, session_id, session_key, status, summary, error,
+          run_id, task_id, task_name, system_managed, session_id, session_key, status, summary, error,
           delivery_status, delivery_error, started_at, finished_at, duration_ms,
           observed_at, read_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(run_id) DO UPDATE SET
           task_id = excluded.task_id,
           task_name = CASE
@@ -261,6 +307,7 @@ export class ScheduledTaskResultStore {
               THEN excluded.task_name
             ELSE scheduled_task_run_receipts.task_name
           END,
+          system_managed = excluded.system_managed,
           session_id = excluded.session_id,
           session_key = excluded.session_key,
           status = excluded.status,
@@ -285,11 +332,37 @@ export class ScheduledTaskResultStore {
   }
 
   upsertResults(
-    results: Array<{ run: ScheduledTaskRun; taskName: string }>,
+    results: Array<{ run: ScheduledTaskRun; taskName: string; systemManaged?: boolean }>,
   ): ResultUpsertOutcome[] {
     return this.db.transaction(() =>
-      results.map(result => this.upsertResult(result.run, result.taskName)),
+      results.flatMap(result => {
+        const outcome = this.upsertResult(result.run, result.taskName, {
+          systemManaged: result.systemManaged,
+        });
+        return outcome ? [outcome] : [];
+      }),
     )();
+  }
+
+  updateTaskManagement(
+    tasks: Array<{ taskId: string; systemManaged: boolean }>,
+    observedAt = Date.now(),
+  ): void {
+    const update = this.db.prepare(
+      `UPDATE scheduled_task_run_receipts
+       SET system_managed = ?,
+           read_at = CASE WHEN ? = 1 THEN COALESCE(read_at, ?) ELSE read_at END,
+           updated_at = ?
+       WHERE task_id = ? AND system_managed != ?`,
+    );
+    this.db.transaction(() => {
+      for (const task of tasks) {
+        const taskId = task.taskId.trim();
+        if (!taskId) continue;
+        const systemManaged = task.systemManaged ? 1 : 0;
+        update.run(systemManaged, systemManaged, observedAt, observedAt, taskId, systemManaged);
+      }
+    })();
   }
 
   getResult(runId: string): ScheduledTaskResult | null {
@@ -300,13 +373,18 @@ export class ScheduledTaskResultStore {
   }
 
   listResults(query: ScheduledTaskResultQuery = {}): ScheduledTaskResultPage {
-    const limit = Math.min(MAX_PAGE_SIZE, Math.max(1, Math.floor(query.limit ?? DEFAULT_PAGE_SIZE)));
+    const limit = Math.min(
+      MAX_PAGE_SIZE,
+      Math.max(1, Math.floor(query.limit ?? DEFAULT_PAGE_SIZE)),
+    );
     const clauses: string[] = [];
     const params: Array<string | number> = [];
     if (query.taskId?.trim()) {
       clauses.push('task_id = ?');
       params.push(query.taskId.trim());
     }
+    if (!query.includeRoutine) excludeRoutineResults(clauses, params);
+    if (!query.includeSystem) clauses.push('system_managed = 0');
     if (query.unreadOnly) clauses.push("read_at IS NULL AND status != 'running'");
     if (query.cursor) {
       const [startedAt, runId] = decodeCursor(query.cursor);
@@ -331,17 +409,18 @@ export class ScheduledTaskResultStore {
   }
 
   countUnread(taskId?: string): number {
-    const row = (taskId?.trim()
-      ? this.db
-          .prepare(
-            "SELECT COUNT(*) AS count FROM scheduled_task_run_receipts WHERE read_at IS NULL AND status != 'running' AND task_id = ?",
-          )
-          .get(taskId.trim())
-      : this.db
-          .prepare(
-            "SELECT COUNT(*) AS count FROM scheduled_task_run_receipts WHERE read_at IS NULL AND status != 'running'",
-          )
-          .get()) as { count: number };
+    const clauses = ["read_at IS NULL AND status != 'running'", 'system_managed = 0'];
+    const params: Array<string | number> = [];
+    excludeRoutineResults(clauses, params);
+    if (taskId?.trim()) {
+      clauses.push('task_id = ?');
+      params.push(taskId.trim());
+    }
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS count FROM scheduled_task_run_receipts WHERE ${clauses.join(' AND ')}`,
+      )
+      .get(...params) as { count: number };
     return row.count;
   }
 
@@ -370,22 +449,43 @@ export class ScheduledTaskResultStore {
   }
 
   deleteResult(runId: string): boolean {
-    const result = this.db
-      .prepare('DELETE FROM scheduled_task_run_receipts WHERE run_id = ?')
-      .run(runId);
-    return result.changes > 0;
+    return this.db.transaction(() => {
+      const existing = this.db
+        .prepare('SELECT task_id, started_at FROM scheduled_task_run_receipts WHERE run_id = ?')
+        .get(runId) as { task_id: string; started_at: number } | undefined;
+      if (!existing) return false;
+      this.advanceCompletedThrough(existing.task_id, existing.started_at);
+      this.db
+        .prepare(
+          `INSERT INTO scheduled_task_result_tombstones (run_id, deleted_at) VALUES (?, ?)
+           ON CONFLICT(run_id) DO UPDATE SET deleted_at = excluded.deleted_at`,
+        )
+        .run(runId, Date.now());
+      const result = this.db
+        .prepare('DELETE FROM scheduled_task_run_receipts WHERE run_id = ?')
+        .run(runId);
+      return result.changes > 0;
+    })();
+  }
+
+  isResultDeleted(runId: string): boolean {
+    return !!this.db
+      .prepare('SELECT 1 FROM scheduled_task_result_tombstones WHERE run_id = ?')
+      .get(runId);
   }
 
   getLatestStartedAt(taskId?: string): number | null {
-    const row = (taskId
-      ? this.db
-          .prepare(
-            'SELECT MAX(started_at) AS started_at FROM scheduled_task_run_receipts WHERE task_id = ?',
-          )
-          .get(taskId)
-      : this.db
-          .prepare('SELECT MAX(started_at) AS started_at FROM scheduled_task_run_receipts')
-          .get()) as { started_at: number | null };
+    const row = (
+      taskId
+        ? this.db
+            .prepare(
+              'SELECT MAX(started_at) AS started_at FROM scheduled_task_run_receipts WHERE task_id = ?',
+            )
+            .get(taskId)
+        : this.db
+            .prepare('SELECT MAX(started_at) AS started_at FROM scheduled_task_run_receipts')
+            .get()
+    ) as { started_at: number | null };
     return row.started_at;
   }
 }

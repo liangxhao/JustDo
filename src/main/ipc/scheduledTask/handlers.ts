@@ -234,6 +234,8 @@ export function registerScheduledTaskHandlers(deps: ScheduledTaskHandlerDeps): v
         const query: ScheduledTaskResultQuery = {
           ...(taskId ? { taskId } : {}),
           ...(rawQuery?.unreadOnly === true ? { unreadOnly: true } : {}),
+          ...(rawQuery?.includeRoutine === true ? { includeRoutine: true } : {}),
+          ...(rawQuery?.includeSystem === true ? { includeSystem: true } : {}),
           ...(cursor ? { cursor } : {}),
           limit: Math.min(100, Math.max(1, Math.floor(rawLimit))),
         };

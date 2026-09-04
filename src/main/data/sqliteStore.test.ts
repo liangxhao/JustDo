@@ -71,9 +71,17 @@ test('deletes legacy schema database and creates a fresh database', () => {
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'scheduled_task_run_receipts'",
     )
     .get();
+  const resultColumns = migratedDb.pragma('table_info(scheduled_task_run_receipts)') as Array<{
+    name: string;
+  }>;
   const cleanupTable = migratedDb
     .prepare(
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'scheduled_task_result_cleanup'",
+    )
+    .get();
+  const tombstoneTable = migratedDb
+    .prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'scheduled_task_result_tombstones'",
     )
     .get();
   const sessionRunsTable = migratedDb
@@ -90,7 +98,9 @@ test('deletes legacy schema database and creates a fresh database', () => {
   expect(indexes.map(index => index.name)).toContain('idx_cowork_sessions_agent_order');
   expect(legacyRow).toBeUndefined();
   expect(resultTable).toEqual({ name: 'scheduled_task_run_receipts' });
+  expect(resultColumns.map(column => column.name)).toContain('system_managed');
   expect(cleanupTable).toEqual({ name: 'scheduled_task_result_cleanup' });
+  expect(tombstoneTable).toEqual({ name: 'scheduled_task_result_tombstones' });
   expect(sessionRunsTable).toEqual({ name: 'cowork_session_runs' });
   expect(messageCacheTable).toBeUndefined();
 
@@ -129,6 +139,24 @@ test('adds model_ref, keeps product sessions, and removes the redundant message 
       model_name TEXT,
       usage TEXT
     );
+    CREATE TABLE scheduled_task_run_receipts (
+      run_id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      task_name TEXT NOT NULL,
+      session_id TEXT,
+      session_key TEXT,
+      status TEXT NOT NULL,
+      summary TEXT,
+      error TEXT,
+      delivery_status TEXT,
+      delivery_error TEXT,
+      started_at INTEGER NOT NULL,
+      finished_at INTEGER,
+      duration_ms INTEGER,
+      observed_at INTEGER NOT NULL,
+      read_at INTEGER,
+      updated_at INTEGER NOT NULL
+    );
   `);
   db.prepare(
     `INSERT INTO cowork_sessions
@@ -140,6 +168,11 @@ test('adds model_ref, keeps product sessions, and removes the redundant message 
       (id, session_id, type, content, created_at, sequence)
      VALUES ('cached-message', 'kept-session', 'assistant', 'duplicate', ?, 1)`,
   ).run(now);
+  db.prepare(
+    `INSERT INTO scheduled_task_run_receipts
+      (run_id, task_id, task_name, status, started_at, observed_at, updated_at)
+     VALUES ('kept-result', 'task-1', 'Task', 'success', 1000, 1001, 1001)`,
+  ).run();
   db.close();
 
   const store = SqliteStore.create(dir);
@@ -151,11 +184,32 @@ test('adds model_ref, keeps product sessions, and removes the redundant message 
   const messageCacheTable = migratedDb
     .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'cowork_messages'")
     .get();
+  const resultColumns = migratedDb.pragma('table_info(scheduled_task_run_receipts)') as Array<{
+    name: string;
+  }>;
+  const keptResult = migratedDb
+    .prepare(
+      "SELECT run_id, system_managed FROM scheduled_task_run_receipts WHERE run_id = 'kept-result'",
+    )
+    .get();
 
   expect(columns.map(column => column.name)).toContain('model_ref');
   expect(keptRow).toEqual({ id: 'kept-session' });
   expect(messageCacheTable).toBeUndefined();
+  expect(resultColumns.map(column => column.name)).toContain('system_managed');
+  expect(keptResult).toEqual({ run_id: 'kept-result', system_managed: 0 });
   store.close();
+
+  const reopened = SqliteStore.create(dir);
+  expect(
+    reopened
+      .getDatabase()
+      .prepare(
+        "SELECT run_id, system_managed FROM scheduled_task_run_receipts WHERE run_id = 'kept-result'",
+      )
+      .get(),
+  ).toEqual({ run_id: 'kept-result', system_managed: 0 });
+  reopened.close();
 });
 
 test('persists one idempotent user run and cascades it with the session', () => {

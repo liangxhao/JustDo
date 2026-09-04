@@ -119,7 +119,7 @@ Do not document/use unmounted slices as active state.
 SQLite core tables in `src/main/data/sqliteStore.ts`:
 `kv`, `cowork_sessions`, `cowork_session_runs`, `cowork_config`, `agents`,
 `mcp_servers`, `openclaw_hooks`, `session_groups`, `scheduled_task_run_receipts`,
-`scheduled_task_result_cleanup`.
+`scheduled_task_result_cleanup`, `scheduled_task_result_tombstones`.
 
 OpenClaw owns durable message transcripts in its native SQLite store. JustDo
 must not recreate a `cowork_messages`, Main-process, or Redux transcript cache.
