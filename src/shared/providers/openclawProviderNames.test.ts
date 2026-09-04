@@ -4,24 +4,24 @@ import {
   buildCustomProviderRenameAliases,
   getEffectiveCustomProviderDisplayName,
   isReservedOpenClawProviderId,
+  JUSTDO_RESERVED_OPENCLAW_PROVIDER_IDS,
   normalizeOpenClawProviderId,
-  OPENCLAW_V2026_8_2_RESERVED_PROVIDER_IDS,
   rewriteOpenClawModelProviderId,
   validateCustomProviderDisplayName,
 } from './openclawProviderNames';
 
 describe('OpenClaw provider names', () => {
-  test('keeps the locked v2026.8.2 inventory unique and normalized', () => {
-    expect(new Set(OPENCLAW_V2026_8_2_RESERVED_PROVIDER_IDS).size).toBe(
-      OPENCLAW_V2026_8_2_RESERVED_PROVIDER_IDS.length,
+  test('keeps the JustDo-owned provider id inventory unique and normalized', () => {
+    expect(new Set(JUSTDO_RESERVED_OPENCLAW_PROVIDER_IDS).size).toBe(
+      JUSTDO_RESERVED_OPENCLAW_PROVIDER_IDS.length,
     );
-    expect(OPENCLAW_V2026_8_2_RESERVED_PROVIDER_IDS).toEqual(
-      [...OPENCLAW_V2026_8_2_RESERVED_PROVIDER_IDS].sort(),
+    expect(JUSTDO_RESERVED_OPENCLAW_PROVIDER_IDS).toEqual(
+      [...JUSTDO_RESERVED_OPENCLAW_PROVIDER_IDS].sort(),
     );
-    expect(OPENCLAW_V2026_8_2_RESERVED_PROVIDER_IDS).toContain('opencode');
+    expect(JUSTDO_RESERVED_OPENCLAW_PROVIDER_IDS).toEqual(['builtin_models', 'justdo']);
   });
 
-  test.each([' OpenCode ', 'OPENCODE', 'moonshot-ai', 'custom_7'])(
+  test.each([' BUILTIN_MODELS ', 'JustDo', 'custom_7'])(
     'detects reserved provider id %s case-insensitively',
     name => {
       expect(isReservedOpenClawProviderId(name)).toBe(true);
@@ -29,6 +29,14 @@ describe('OpenClaw provider names', () => {
         valid: false,
         reason: 'reserved',
       });
+    },
+  );
+
+  test.each(['OpenAI', 'Anthropic', 'DeepSeek', 'OpenCode', 'moonshot-ai'])(
+    'allows an explicitly configured OpenClaw provider id %s',
+    name => {
+      expect(isReservedOpenClawProviderId(name)).toBe(false);
+      expect(validateCustomProviderDisplayName(name)).toEqual({ valid: true });
     },
   );
 

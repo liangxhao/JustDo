@@ -208,9 +208,9 @@ export const isReservedProviderDisplayName = isReservedOpenClawProviderId;
 /**
  * 校验 displayName 是否合法
  * - 首字符必须是字母
- * - 允许字母、数字、下划线、中划线、空格
+ * - 允许字母、数字、下划线、中划线、句点、空格
  * - 长度限制：1-32 字符
- * - 不能与 OpenClaw v2026.8.2 的保留 provider ID 冲突
+ * - 不能与 JustDo 管理的 OpenClaw provider ID 冲突
  * - displayName 为空时允许，会回退到对应的 CustomN 默认名称
  */
 export const validateDisplayName = (name: string): { valid: boolean; error?: string } => {
@@ -218,12 +218,12 @@ export const validateDisplayName = (name: string): { valid: boolean; error?: str
   if (!trimmed) return { valid: true }; // 空 name 允许，回退到 custom_0
   const validation = validateCustomProviderDisplayName(trimmed);
   if (!validation.valid && validation.reason === 'reserved') {
-    return { valid: false, error: 'Cannot use reserved OpenClaw provider name' };
+    return { valid: false, error: 'Cannot use application-reserved provider name' };
   }
   if (!validation.valid) {
     return {
       valid: false,
-      error: 'Must start with letter, only letters/numbers/_/-/space allowed',
+      error: 'Must start with letter, only letters/numbers/_/-/./space allowed',
     };
   }
   return { valid: true };

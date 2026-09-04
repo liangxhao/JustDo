@@ -89,23 +89,20 @@ test('validateDisplayName: empty string is valid (fallback to custom_0)', () => 
 test.each([
   'builtin_models',
   'BUILTIN_MODELS',
-  'OpenCode',
-  'OPENAI',
-  'Anthropic',
-  'LMStudio',
+  'JustDo',
   'custom_12',
 ])(
-  'validateDisplayName: reserved OpenClaw provider name %s is invalid',
+  'validateDisplayName: application-reserved provider name %s is invalid',
   name => {
     expect(validateDisplayName(name)).toEqual({
       valid: false,
-      error: 'Cannot use reserved OpenClaw provider name',
+      error: 'Cannot use application-reserved provider name',
     });
   },
 );
 
-test.each(['OpenCodeProxy', 'MyOpenAI', 'Local LM Studio'])(
-  'validateDisplayName: non-conflicting provider name %s is valid',
+test.each(['OpenAI', 'Anthropic', 'DeepSeek', 'OpenCode', 'LMStudio', 'Z.AI', 'Local LM Studio'])(
+  'validateDisplayName: explicit OpenClaw provider name %s is valid',
   name => {
     expect(validateDisplayName(name)).toEqual({ valid: true });
   },
@@ -142,21 +139,21 @@ test('validateDisplayName: mixed characters is valid', () => {
 test('validateDisplayName: starts with number is invalid', () => {
   expect(validateDisplayName('123Studio')).toEqual({
     valid: false,
-    error: 'Must start with letter, only letters/numbers/_/-/space allowed',
+    error: 'Must start with letter, only letters/numbers/_/-/./space allowed',
   });
 });
 
 test('validateDisplayName: starts with underscore is invalid', () => {
   expect(validateDisplayName('_GPT')).toEqual({
     valid: false,
-    error: 'Must start with letter, only letters/numbers/_/-/space allowed',
+    error: 'Must start with letter, only letters/numbers/_/-/./space allowed',
   });
 });
 
 test('validateDisplayName: starts with hyphen is invalid', () => {
   expect(validateDisplayName('-GPT')).toEqual({
     valid: false,
-    error: 'Must start with letter, only letters/numbers/_/-/space allowed',
+    error: 'Must start with letter, only letters/numbers/_/-/./space allowed',
   });
 });
 
@@ -168,13 +165,13 @@ test('validateDisplayName: starts with space is valid after trim', () => {
 test('validateDisplayName: special characters are invalid', () => {
   expect(validateDisplayName('GPT@4')).toEqual({
     valid: false,
-    error: 'Must start with letter, only letters/numbers/_/-/space allowed',
+    error: 'Must start with letter, only letters/numbers/_/-/./space allowed',
   });
 });
 
 test('validateDisplayName: too long name is invalid', () => {
   expect(validateDisplayName('ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567')).toEqual({
     valid: false,
-    error: 'Must start with letter, only letters/numbers/_/-/space allowed',
+    error: 'Must start with letter, only letters/numbers/_/-/./space allowed',
   });
 });

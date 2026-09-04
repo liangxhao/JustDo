@@ -362,13 +362,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const effectiveSelectedModel = selectedModel
       ? (selectableModels.find(model => isSameModelIdentity(model, selectedModel)) ?? selectedModel)
       : null;
-    const selectedModelUnavailable =
-      !!showModelSelector && !remoteManaged && effectiveSelectedModel?.available === false;
-    const hasNoAvailableModels =
-      !remoteManaged &&
-      (availableModels.length === 0 ||
-        (openClawModelCatalog.length > 0 &&
-          selectableModels.every(model => model.available === false)));
+    const hasNoAvailableModels = !remoteManaged && availableModels.length === 0;
     const modelSupportsImage = !!effectiveSelectedModel?.supportsImage;
     const [value, setValue] = useState(draftPrompt);
     const [showFolderMenu, setShowFolderMenu] = useState(false);
@@ -753,8 +747,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           isRunActive ||
           disabled ||
           modelUpdatePending ||
-          hasNoAvailableModels ||
-          selectedModelUnavailable
+          hasNoAvailableModels
         )
           return;
         setShowFolderRequiredWarning(false);
@@ -1003,7 +996,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         modelSupportsImage,
         modelUpdatePending,
         hasNoAvailableModels,
-        selectedModelUnavailable,
         sessionId,
         goalExecution?.goalId,
         goalExecution?.phase,
@@ -1793,7 +1785,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       !disabled &&
       !modelUpdatePending &&
       !hasNoAvailableModels &&
-      !selectedModelUnavailable &&
       !!value.trim();
     const effectivePlaceholder = completionFeedback
       ? i18nService.t('coworkGoalCompletionFeedbackPlaceholder')
@@ -2528,11 +2519,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                       {hasNoAvailableModels && (
                         <span className="max-w-60 text-[11px] leading-4 text-red-500">
                           {i18nService.t('noModelAvailableHint')}
-                        </span>
-                      )}
-                      {!hasNoAvailableModels && selectedModelUnavailable && (
-                        <span className="max-w-60 text-[11px] leading-4 text-warning">
-                          {i18nService.t('selectedModelUnavailableHint')}
                         </span>
                       )}
                     </div>

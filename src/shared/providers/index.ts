@@ -14,8 +14,8 @@ export {
   getEffectiveCustomProviderDisplayName,
   isJustDoCustomProviderKey,
   isReservedOpenClawProviderId,
+  JUSTDO_RESERVED_OPENCLAW_PROVIDER_IDS,
   normalizeOpenClawProviderId,
-  OPENCLAW_V2026_8_2_RESERVED_PROVIDER_IDS,
   rewriteOpenClawModelProviderId,
   validateCustomProviderDisplayName,
 } from './openclawProviderNames';

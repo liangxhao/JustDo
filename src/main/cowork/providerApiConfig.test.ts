@@ -15,7 +15,7 @@ afterEach(() => {
 });
 
 describe('OpenClaw custom provider names', () => {
-  it('rejects an official provider id before config sync', () => {
+  it('allows an explicitly configured OpenClaw provider id before config sync', () => {
     setStoreGetter(
       () =>
         ({
@@ -32,10 +32,25 @@ describe('OpenClaw custom provider names', () => {
         }) as unknown as SqliteStore,
     );
 
+    expect(validateConfiguredOpenClawProviderNames()).toEqual({ ok: true });
+  });
+
+  it('rejects a JustDo-owned provider id before config sync', () => {
+    setStoreGetter(
+      () =>
+        ({
+          get: () => ({
+            providers: {
+              custom_0: { enabled: true, displayName: 'builtin_models' },
+            },
+          }),
+        }) as unknown as SqliteStore,
+    );
+
     expect(validateConfiguredOpenClawProviderNames()).toEqual({
       ok: false,
       providerKey: 'custom_0',
-      displayName: 'OpenCode',
+      displayName: 'builtin_models',
       reason: 'reserved',
     });
   });

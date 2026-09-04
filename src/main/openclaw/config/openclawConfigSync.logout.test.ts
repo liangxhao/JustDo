@@ -803,7 +803,7 @@ describe('OpenClaw auth logout config sync', () => {
     );
   });
 
-  test('rejects a plugin-colliding display-name provider without changing config', () => {
+  test('rejects an application-reserved display-name provider without changing config', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-full-auth-logout-'));
     temporaryDirectories.push(directory);
     const stateDir = path.join(directory, 'state');
@@ -857,7 +857,7 @@ describe('OpenClaw auth logout config sync', () => {
           apiKey: 'custom-secret',
           baseUrl: 'https://custom.example/v1',
           apiFormat: 'openai' as const,
-          displayName: 'OpenCode',
+          displayName: 'JustDo',
           models: [{ id: 'custom-model', name: 'Custom Model' }],
         },
       },
@@ -901,7 +901,9 @@ describe('OpenClaw auth logout config sync', () => {
 
     expect(result.ok).toBe(false);
     expect(result.configChanged).toBe(false);
-    expect(result.error).toContain('custom provider name "OpenCode" is reserved by OpenClaw');
+    expect(result.error).toContain(
+      'custom provider name "JustDo" conflicts with an application-managed provider id',
+    );
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     expect(config.models).toHaveProperty('pricing');
     expect(config.models.providers.builtin_models).toBeDefined();

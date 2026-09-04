@@ -1,108 +1,17 @@
 /**
- * Provider IDs that OpenClaw v2026.8.2 assigns built-in behaviour to, or
- * resolves to an official external provider plugin. Custom provider display
- * names become wire-level model provider IDs, so they must not use these IDs.
- *
- * Keep this inventory in sync with OpenClaw's
- * `BUILT_IN_MODEL_PROVIDER_OVERLAY_IDS` and official external provider catalog
- * whenever the locked runtime version changes.
+ * Provider IDs owned by JustDo's OpenClaw configuration. OpenClaw's built-in
+ * and plugin provider IDs are intentionally not reserved: an explicit
+ * `models.providers.<id>` entry is a supported route override, and blocking
+ * those IDs prevents users from giving a custom endpoint its natural name.
  */
-export const OPENCLAW_V2026_8_2_RESERVED_PROVIDER_IDS = [
-  'amazon-bedrock',
-  'amazon-bedrock-mantle',
-  'anthropic',
-  'anthropic-vertex',
-  'arcee',
-  'azure-openai-responses',
-  'bailian-token-plan',
-  'baseten',
+export const JUSTDO_RESERVED_OPENCLAW_PROVIDER_IDS = [
   'builtin_models',
-  'byteplus',
-  'byteplus-plan',
-  'cerebras',
-  'chutes',
-  'claude-cli',
-  'clawrouter',
-  'cloudflare-ai-gateway',
-  'codex',
-  'cohere',
-  'comfy',
-  'copilot-proxy',
-  'dashscope',
-  'deepinfra',
-  'deepseek',
-  'fal',
-  'featherless',
-  'fireworks',
-  'fireworks-ai',
-  'github-copilot',
-  'gmi',
-  'gmi-cloud',
-  'gmicloud',
-  'google',
-  'google-antigravity',
-  'google-gemini-cli',
-  'google-vertex',
-  'groq',
-  'huggingface',
   'justdo',
-  'kilocode',
-  'kimi',
-  'kimi-coding',
-  'litellm',
-  'lmstudio',
-  'longcat',
-  'meituan-longcat',
-  'meta',
-  'microsoft-foundry',
-  'minimax',
-  'minimax-portal',
-  'mistral',
-  'modelstudio',
-  'moonshot',
-  'moonshot-ai',
-  'moonshotai',
-  'novita',
-  'novita-ai',
-  'novitaai',
-  'nvidia',
-  'ollama',
-  'ollama-cloud',
-  'openai',
-  'opencode',
-  'opencode-go',
-  'openrouter',
-  'pixverse',
-  'qianfan',
-  'qwen',
-  'qwen-token-plan',
-  'qwencloud',
-  'sglang',
-  'stepfun',
-  'stepfun-plan',
-  'synthetic',
-  'tencent-tokenhub',
-  'tencent-tokenplan',
-  'together',
-  'venice',
-  'vercel-ai-gateway',
-  'vllm',
-  'volcengine',
-  'volcengine-plan',
-  'voyage',
-  'vydra',
-  'x-ai',
-  'xai',
-  'xiaomi',
-  'xiaomi-token-plan',
-  'z-ai',
-  'z.ai',
-  'zai',
 ] as const;
 
-const RESERVED_PROVIDER_IDS = new Set<string>(OPENCLAW_V2026_8_2_RESERVED_PROVIDER_IDS);
+const RESERVED_PROVIDER_IDS = new Set<string>(JUSTDO_RESERVED_OPENCLAW_PROVIDER_IDS);
 const INTERNAL_CUSTOM_PROVIDER_ID_PATTERN = /^custom_\d+$/;
-const VALID_CUSTOM_PROVIDER_DISPLAY_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9_ -]{0,31}$/;
+const VALID_CUSTOM_PROVIDER_DISPLAY_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9_. -]{0,31}$/;
 
 export type CustomProviderDisplayNameValidation =
   { valid: true } | { valid: false; reason: 'reserved' | 'format' };

@@ -19,7 +19,7 @@ const renderSelector = (models: Model[], onChange = vi.fn(), onOpen = vi.fn()) =
 };
 
 describe('ModelSelector', () => {
-  test('keeps unavailable models visible and focusable without selecting them', () => {
+  test('allows selecting models regardless of transient runtime availability', () => {
     const models: Model[] = [
       { id: 'ready', name: 'Ready model', providerKey: 'custom_0', provider: 'Acme' },
       {
@@ -28,7 +28,8 @@ describe('ModelSelector', () => {
         providerKey: 'custom_0',
         provider: 'Acme',
         available: false,
-        unavailableReason: 'missing-auth',
+        unavailableReason: 'cooldown',
+        unavailableUntil: Date.now() + 60_000,
       },
     ];
     const { onChange, onOpen } = renderSelector(models);
@@ -36,30 +37,36 @@ describe('ModelSelector', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Ready model' }));
 
     const unavailableButton = screen.getByText('Unavailable model').closest('button');
-    expect(unavailableButton?.getAttribute('aria-disabled')).toBe('true');
-    expect(unavailableButton?.hasAttribute('disabled')).toBe(false);
+    expect(unavailableButton?.getAttribute('aria-disabled')).toBeNull();
+    expect(unavailableButton?.getAttribute('title')).toBeNull();
+    expect(unavailableButton?.textContent).toBe('Acme/Unavailable model');
     fireEvent.click(unavailableButton!);
-    expect(onChange).not.toHaveBeenCalled();
+    expect(onChange).toHaveBeenCalledWith(models[1]);
     expect(onOpen).toHaveBeenCalledOnce();
   });
 
-  test('selects an available model and reports runtime metadata', () => {
+  test('renders the configured provider and complete model display name on one line', () => {
     const models: Model[] = [
       { id: 'current', name: 'Current model', providerKey: 'custom_0', provider: 'Acme' },
       {
         id: 'next',
-        name: 'Next model',
+        name: 'team/Next model',
         providerKey: 'custom_0',
-        provider: 'Acme',
+        provider: 'Acme AI',
         contextLength: 128_000,
         reasoning: true,
         supportsTools: false,
+        supportsImage: true,
       },
     ];
     const { onChange } = renderSelector(models);
     fireEvent.click(screen.getByRole('button', { name: 'Current model' }));
 
-    fireEvent.click(screen.getByText('Next model'));
+    const nextButton = screen.getByText('team/Next model').closest('button');
+    expect(nextButton?.textContent).toBe('Acme AI/team/Next model');
+    expect(screen.getByTitle('Acme AI/team/Next model')).toBeTruthy();
+    expect(screen.getByLabelText('图像')).toBeTruthy();
+    fireEvent.click(nextButton!);
 
     expect(onChange).toHaveBeenCalledWith(models[1]);
   });

@@ -1598,7 +1598,7 @@ export class OpenClawConfigSync {
     if (providerNameValidation.ok === false) {
       const reason =
         providerNameValidation.reason === 'reserved'
-          ? 'is reserved by OpenClaw'
+          ? 'conflicts with an application-managed provider id'
           : providerNameValidation.reason === 'duplicate'
             ? 'duplicates another enabled provider name'
             : 'has an invalid format';

@@ -378,15 +378,23 @@ const ModelSettingsTab: React.FC<Props> = ({
                           ? undefined
                           : i18nService.t('providerNameInvalid');
                     setDisplayNameError(nameError ?? null);
-                    if (validation.valid && !duplicateName) {
-                      handleProviderConfigChange(activeProvider, 'displayName', value);
-                    }
+                    handleProviderConfigChange(activeProvider, 'displayName', value);
                   }}
+                  aria-invalid={displayNameError ? true : undefined}
+                  aria-describedby={
+                    displayNameError ? `${activeProvider}-displayName-error` : undefined
+                  }
                   className={`block w-full rounded-xl border border-border-input bg-surface px-3 py-1.5 text-center text-xs text-foreground shadow-sm transition-colors hover:border-primary/40 focus:border-primary focus:ring-1 focus:ring-primary/30 ${displayNameError ? 'border-red-500 focus:border-red-500' : ''}`}
                   placeholder={getCustomProviderDefaultName(activeProvider)}
                 />
                 {displayNameError && (
-                  <p className="mt-1 text-xs text-red-500">{displayNameError}</p>
+                  <p
+                    id={`${activeProvider}-displayName-error`}
+                    role="alert"
+                    className="mt-1 text-xs text-red-500"
+                  >
+                    {displayNameError}
+                  </p>
                 )}
               </div>
             </div>

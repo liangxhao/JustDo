@@ -1041,6 +1041,7 @@ const Settings: React.FC<SettingsProps> = ({
     setModelCapabilitiesDirty(false);
     setModelFormError(null);
     setModelDiscoveryMessage(null);
+    setDisplayNameError(null);
     setActiveProvider(provider);
     // 切换 provider 时清除测试结果
     setIsTestResultModalOpen(false);

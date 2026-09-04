@@ -85,8 +85,20 @@ describe('provider transfer format', () => {
     ).toThrow('Duplicate provider display name');
   });
 
-  test('rejects an OpenClaw-reserved provider name during import', () => {
+  test('rejects an application-reserved provider name during import', () => {
     expect(() =>
+      parseProvidersImportPayload({
+        type: EXPORT_FORMAT_TYPE,
+        version: PROVIDERS_EXPORT_VERSION,
+        providers: [
+          { ...providerConfig, apiKey: encryptedApiKey, displayName: 'JustDo' },
+        ],
+      }),
+    ).toThrow('Invalid provider display name');
+  });
+
+  test('accepts an explicitly configured OpenClaw provider name during import', () => {
+    expect(
       parseProvidersImportPayload({
         type: EXPORT_FORMAT_TYPE,
         version: PROVIDERS_EXPORT_VERSION,
@@ -94,7 +106,7 @@ describe('provider transfer format', () => {
           { ...providerConfig, apiKey: encryptedApiKey, displayName: 'OpenCode' },
         ],
       }),
-    ).toThrow('Invalid provider display name');
+    ).toHaveLength(1);
   });
 });
 
