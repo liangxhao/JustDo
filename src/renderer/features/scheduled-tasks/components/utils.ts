@@ -20,6 +20,49 @@ const WEEKDAY_KEYS = [
   'scheduledTasksFormWeekSat',
 ] as const;
 
+const MEMORY_DREAMING_TRIGGER = '__openclaw_memory_core_short_term_promotion_dream__';
+
+export function isMemoryDreamingTask(task: Pick<ScheduledTask, 'management' | 'payload'>): boolean {
+  if (task.management !== 'managed') return false;
+  if (task.payload.kind === 'agentTurn') {
+    return task.payload.message.trim() === MEMORY_DREAMING_TRIGGER;
+  }
+  if (task.payload.kind === 'systemEvent') {
+    return task.payload.text.trim() === MEMORY_DREAMING_TRIGGER;
+  }
+  return false;
+}
+
+export function isSkillCollectionReviewTask(
+  task: Pick<ScheduledTask, 'management' | 'payload'>,
+): boolean {
+  return task.management === 'managed' && task.payload.kind === 'skillCollectionReview';
+}
+
+export function getKnownSystemTaskPresentation(
+  task: Pick<ScheduledTask, 'management' | 'payload'>,
+): { name: string; description: string; managedHint: string } | null {
+  if (isMemoryDreamingTask(task)) {
+    return {
+      name: i18nService.t('scheduledTasksMemoryDreamingName'),
+      description: i18nService.t('scheduledTasksMemoryDreamingDescription'),
+      managedHint: i18nService.t('scheduledTasksMemoryDreamingManagedHint'),
+    };
+  }
+  if (isSkillCollectionReviewTask(task)) {
+    return {
+      name: i18nService.t('scheduledTasksSkillReviewName'),
+      description: i18nService.t('scheduledTasksSkillReviewDescription'),
+      managedHint: i18nService.t('scheduledTasksSkillReviewManagedHint'),
+    };
+  }
+  return null;
+}
+
+export function getTaskDisplayName(task: ScheduledTask): string {
+  return getKnownSystemTaskPresentation(task)?.name ?? task.name;
+}
+
 /**
  * Pad a number to 2 digits, e.g. 5 → "05".
  */
@@ -439,6 +482,8 @@ export function scheduleToPlanInfo(schedule: Schedule): PlanInfo {
 }
 
 export function getTaskPromptText(task: ScheduledTask): string {
+  const systemPresentation = getKnownSystemTaskPresentation(task);
+  if (systemPresentation) return systemPresentation.description;
   switch (task.payload.kind) {
     case 'systemEvent':
       return task.payload.text;

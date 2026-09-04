@@ -40,8 +40,10 @@ import TaskRunHistory from '@/features/scheduled-tasks/components/TaskRunHistory
 import {
   formatDateTime,
   formatScheduleLabel,
+  getKnownSystemTaskPresentation,
   getStatusLabelKey,
   getStatusTone,
+  getTaskDisplayName,
   getTaskExecutionPreview,
   getTaskPromptText,
 } from '@/features/scheduled-tasks/components/utils';
@@ -438,6 +440,7 @@ function CronJobCard({
   };
 
   const promptText = getTaskPromptText(job);
+  const displayName = getTaskDisplayName(job);
   const isEnabled = job.enabled;
   const isManaged = job.management === 'managed';
   const isEditable = job.management === 'editable';
@@ -473,9 +476,9 @@ function CronJobCard({
           </span>
           <h3
             className="min-w-0 flex-1 truncate text-sm font-semibold leading-5 text-foreground"
-            title={job.name}
+            title={displayName}
           >
-            {job.name}
+            {displayName}
           </h3>
         </div>
 
@@ -658,8 +661,12 @@ interface TaskDetailsDialogProps {
 
 function TaskDetailsDialog({ job, onClose }: TaskDetailsDialogProps) {
   const t = i18nService.t.bind(i18nService);
-  const payloadKind =
-    job.payload.kind === 'agentTurn'
+  const systemPresentation = getKnownSystemTaskPresentation(job);
+  const isKnownSystemTask = systemPresentation !== null;
+  const displayName = getTaskDisplayName(job);
+  const payloadKind = isKnownSystemTask
+    ? t('scheduledTasksManagedBackgroundType')
+    : job.payload.kind === 'agentTurn'
       ? t('scheduledTasksFormPayloadKindAgentTurn')
       : job.payload.kind === 'systemEvent'
         ? t('scheduledTasksFormPayloadKindSystemEvent')
@@ -678,8 +685,9 @@ function TaskDetailsDialog({ job, onClose }: TaskDetailsDialogProps) {
         : job.sessionTarget === 'current'
           ? t('cronDetailsSessionCurrent')
           : job.sessionTarget.slice('session:'.length);
-  const delivery =
-    job.delivery.mode === 'none'
+  const delivery = isKnownSystemTask
+    ? t('scheduledTasksManagedBackgroundDelivery')
+    : job.delivery.mode === 'none'
       ? t('cronDialogDeliveryModeNone')
       : [
           job.delivery.mode === 'announce'
@@ -804,22 +812,34 @@ function TaskDetailsDialog({ job, onClose }: TaskDetailsDialogProps) {
     ?.map(feature => advancedFeatureLabels[feature])
     .join(' · ');
   const rows = [
-    ...(job.description ? [{ label: t('cronDetailsDescription'), value: job.description }] : []),
+    ...(systemPresentation
+      ? [
+          {
+            label: t('cronDetailsDescription'),
+            value: systemPresentation.description,
+          },
+        ]
+      : job.description
+        ? [{ label: t('cronDetailsDescription'), value: job.description }]
+        : []),
     { label: t('cronDialogSchedule'), value: formatScheduleLabel(job.schedule) },
     ...(triggerOptions ? [{ label: t('cronDetailsTriggerOptions'), value: triggerOptions }] : []),
     { label: t('cronDetailsPayloadType'), value: payloadKind },
-    ...(payloadOptions ? [{ label: t('cronDetailsPayloadOptions'), value: payloadOptions }] : []),
-    ...(advancedFeatures
+    ...(!isKnownSystemTask && payloadOptions
+      ? [{ label: t('cronDetailsPayloadOptions'), value: payloadOptions }]
+      : []),
+    ...(!isKnownSystemTask && advancedFeatures
       ? [{ label: t('cronDetailsAdvancedFeatures'), value: advancedFeatures }]
       : []),
-    { label: t('cronDetailsSessionTarget'), value: sessionTarget },
+    ...(!isKnownSystemTask ? [{ label: t('cronDetailsSessionTarget'), value: sessionTarget }] : []),
     { label: t('cronDialogDeliveryTitle'), value: delivery },
     {
       label: t('cronDetailsStatus'),
       value: t(job.enabled ? 'cronStatsActive' : 'cronStatsPaused'),
     },
-    { label: t('cronDetailsTaskId'), value: job.id },
+    ...(!isKnownSystemTask ? [{ label: t('cronDetailsTaskId'), value: job.id }] : []),
   ];
+  const technicalRows = [{ label: t('cronDetailsTaskId'), value: job.id }];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
@@ -837,7 +857,7 @@ function TaskDetailsDialog({ job, onClose }: TaskDetailsDialogProps) {
               id="scheduled-task-details-title"
               className="truncate text-lg font-semibold text-foreground"
             >
-              {job.name}
+              {displayName}
             </h2>
             <p className="mt-0.5 text-xs text-secondary">{t('cronDetailsTitle')}</p>
           </div>
@@ -858,7 +878,8 @@ function TaskDetailsDialog({ job, onClose }: TaskDetailsDialogProps) {
               </span>
             </div>
             <p className="mt-2 text-xs leading-5 text-secondary">
-              {t(job.management === 'managed' ? 'cronCardManagedHint' : 'cronDetailsAdvancedHint')}
+              {systemPresentation?.managedHint ??
+                t(job.management === 'managed' ? 'cronCardManagedHint' : 'cronDetailsAdvancedHint')}
             </p>
           </div>
 
@@ -871,12 +892,28 @@ function TaskDetailsDialog({ job, onClose }: TaskDetailsDialogProps) {
             ))}
           </dl>
 
-          <div>
-            <h3 className="mb-2 text-xs font-medium text-secondary">{t('cronDetailsPayload')}</h3>
-            <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-border-subtle bg-surface px-4 py-3 font-sans text-sm leading-6 text-foreground">
-              {getTaskPromptText(job)}
-            </pre>
-          </div>
+          {isKnownSystemTask ? (
+            <details className="rounded-xl border border-border-subtle bg-surface-raised/30 px-4 py-3">
+              <summary className="cursor-pointer text-xs font-medium text-secondary">
+                {t('cronDetailsTechnicalInfo')}
+              </summary>
+              <dl className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-[140px_minmax(0,1fr)]">
+                {technicalRows.map(row => (
+                  <React.Fragment key={row.label}>
+                    <dt className="text-xs font-medium text-secondary">{row.label}</dt>
+                    <dd className="break-all text-xs leading-5 text-secondary">{row.value}</dd>
+                  </React.Fragment>
+                ))}
+              </dl>
+            </details>
+          ) : (
+            <div>
+              <h3 className="mb-2 text-xs font-medium text-secondary">{t('cronDetailsPayload')}</h3>
+              <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-border-subtle bg-surface px-4 py-3 font-sans text-sm leading-6 text-foreground">
+                {getTaskPromptText(job)}
+              </pre>
+            </div>
+          )}
         </div>
         <div className="flex justify-end border-t border-border-subtle px-5 py-3">
           <button
@@ -1682,6 +1719,7 @@ export const CronView: React.FC<CronViewProps> = ({
     return tasks.filter(task => {
       const matchesQuery =
         normalizedQuery.length === 0 ||
+        getTaskDisplayName(task).toLocaleLowerCase().includes(normalizedQuery) ||
         task.name.toLocaleLowerCase().includes(normalizedQuery) ||
         getTaskPromptText(task).toLocaleLowerCase().includes(normalizedQuery);
       const matchesStatus =
@@ -2131,7 +2169,7 @@ export const CronView: React.FC<CronViewProps> = ({
                 id="scheduled-task-history-title"
                 className="text-lg font-semibold text-foreground"
               >
-                {historyJob?.name ?? ''} - {t('cronCardHistory')}
+                {historyJob ? getTaskDisplayName(historyJob) : ''} - {t('cronCardHistory')}
               </h2>
               <button
                 type="button"
@@ -2147,7 +2185,7 @@ export const CronView: React.FC<CronViewProps> = ({
             <div className="flex-1 overflow-y-auto px-5 py-4">
               <TaskRunHistory
                 taskId={historyTaskId}
-                taskName={historyJob?.name}
+                taskName={historyJob ? getTaskDisplayName(historyJob) : undefined}
                 runs={historyRuns}
                 loading={historyLoading}
                 loadError={historyLoadError}

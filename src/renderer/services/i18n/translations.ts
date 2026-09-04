@@ -1390,6 +1390,18 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     cronDetailsAllowedTools: '允许的工具',
     cronDetailsModel: '模型',
     cronDetailsFallbacks: '备用模型',
+    cronDetailsTechnicalInfo: '技术信息',
+    scheduledTasksMemoryDreamingName: '长期记忆整理',
+    scheduledTasksMemoryDreamingDescription: '整理近期对话，将反复出现的重要信息沉淀为长期记忆。',
+    scheduledTasksManagedBackgroundType: '系统后台任务',
+    scheduledTasksManagedBackgroundDelivery: '不发送通知',
+    scheduledTasksMemoryDreamingManagedHint:
+      '此任务由记忆功能自动管理，用于维护长期记忆，不会发送通知。',
+    scheduledTasksSkillReviewName: '技能库自动整理',
+    scheduledTasksSkillReviewDescription:
+      '每周检查自动学习生成的技能，合并重复内容并清理低质量条目。',
+    scheduledTasksSkillReviewManagedHint:
+      '此任务由技能学习功能自动管理，可能使用当前模型；仅自动修改自动学习生成的技能，用户编写的技能保持只读。',
     cronAdvancedFeatureOwner: '外部所有者',
     cronAdvancedFeatureAccountPolicy: '账户权限策略',
     cronAdvancedFeaturePacing: '动态执行频率',
@@ -2915,6 +2927,19 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     cronDetailsAllowedTools: 'Allowed tools',
     cronDetailsModel: 'Model',
     cronDetailsFallbacks: 'Fallback models',
+    cronDetailsTechnicalInfo: 'Technical information',
+    scheduledTasksMemoryDreamingName: 'Long-term memory maintenance',
+    scheduledTasksMemoryDreamingDescription:
+      'Reviews recent conversations and promotes recurring important information into long-term memory.',
+    scheduledTasksManagedBackgroundType: 'System background task',
+    scheduledTasksManagedBackgroundDelivery: 'No notifications',
+    scheduledTasksMemoryDreamingManagedHint:
+      'The memory feature manages this task automatically to maintain long-term memory. It does not send notifications.',
+    scheduledTasksSkillReviewName: 'Automatic skill library cleanup',
+    scheduledTasksSkillReviewDescription:
+      'Reviews automatically learned skills weekly, merging overlaps and removing low-quality entries.',
+    scheduledTasksSkillReviewManagedHint:
+      'The skill learning feature manages this task and may use the current model. It can only change automatically learned skills; user-authored skills remain read-only.',
     cronAdvancedFeatureOwner: 'External owner',
     cronAdvancedFeatureAccountPolicy: 'Account tool policy',
     cronAdvancedFeaturePacing: 'Dynamic pacing',

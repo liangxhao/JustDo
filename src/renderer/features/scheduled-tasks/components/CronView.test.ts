@@ -12,7 +12,13 @@ import {
   parseScheduleToForm,
   requiresScheduledTaskRunConfirmation,
 } from './CronView';
-import { formatScheduleLabel } from './utils';
+import {
+  formatScheduleLabel,
+  getTaskDisplayName,
+  getTaskPromptText,
+  isMemoryDreamingTask,
+  isSkillCollectionReviewTask,
+} from './utils';
 
 describe('CronView schedule form mapping', () => {
   test('round-trips fixed-interval schedules without converting every into a cron expression', () => {
@@ -226,5 +232,87 @@ describe('CronView schedule form mapping', () => {
       userTasks: [advancedTask, editableTask],
       systemTasks: [managedTask],
     });
+  });
+
+  test('presents the managed memory dreaming trigger as a localized system task', () => {
+    i18nService.setLanguage('zh', { persist: false });
+    const task: ScheduledTask = {
+      id: 'memory-dreaming',
+      name: 'Memory Dreaming Promotion',
+      description: '[managed-by=memory-core.short-term-promotion] internal configuration',
+      enabled: true,
+      schedule: { kind: 'cron', expr: '0 3 * * *' },
+      sessionTarget: 'isolated',
+      wakeMode: 'now',
+      payload: {
+        kind: 'agentTurn',
+        message: '__openclaw_memory_core_short_term_promotion_dream__',
+        toolsAllow: ['*'],
+      },
+      delivery: { mode: 'none' },
+      agentId: 'main',
+      sessionKey: null,
+      management: 'managed',
+      state: {
+        nextRunAtMs: null,
+        lastRunAtMs: null,
+        lastStatus: null,
+        lastError: null,
+        lastDurationMs: null,
+        runningAtMs: null,
+        consecutiveErrors: 0,
+      },
+      createdAt: '2026-09-04T00:00:00.000Z',
+      updatedAt: '2026-09-04T00:00:00.000Z',
+    };
+
+    expect(isMemoryDreamingTask(task)).toBe(true);
+    expect(getTaskDisplayName(task)).toBe('长期记忆整理');
+    expect(getTaskPromptText(task)).toBe('整理近期对话，将反复出现的重要信息沉淀为长期记忆。');
+
+    const userTask = { ...task, management: 'editable' as const };
+    expect(isMemoryDreamingTask(userTask)).toBe(false);
+    expect(getTaskDisplayName(userTask)).toBe('Memory Dreaming Promotion');
+    expect(getTaskPromptText(userTask)).toBe('__openclaw_memory_core_short_term_promotion_dream__');
+  });
+
+  test('presents the system-owned skill review payload as automatic skill cleanup', () => {
+    i18nService.setLanguage('zh', { persist: false });
+    const task: ScheduledTask = {
+      id: 'skill-review-main',
+      name: 'Skill collection review (main)',
+      description: '',
+      enabled: true,
+      schedule: { kind: 'every', everyMs: 7 * 24 * 60 * 60_000 },
+      sessionTarget: 'main',
+      wakeMode: 'next-heartbeat',
+      payload: { kind: 'skillCollectionReview' },
+      delivery: { mode: 'none' },
+      agentId: 'main',
+      sessionKey: null,
+      management: 'managed',
+      state: {
+        nextRunAtMs: null,
+        lastRunAtMs: null,
+        lastStatus: null,
+        lastError: null,
+        lastDurationMs: null,
+        runningAtMs: null,
+        consecutiveErrors: 0,
+      },
+      createdAt: '2026-09-04T00:00:00.000Z',
+      updatedAt: '2026-09-04T00:00:00.000Z',
+    };
+
+    expect(isSkillCollectionReviewTask(task)).toBe(true);
+    expect(getTaskDisplayName(task)).toBe('技能库自动整理');
+    expect(getTaskPromptText(task)).toBe(
+      '每周检查自动学习生成的技能，合并重复内容并清理低质量条目。',
+    );
+
+    const userTask = { ...task, management: 'editable' as const };
+    expect(isSkillCollectionReviewTask(userTask)).toBe(false);
+    expect(getTaskDisplayName(userTask)).toBe('Skill collection review (main)');
+    expect(getTaskPromptText(userTask)).toBe('技能集合审查');
   });
 });
