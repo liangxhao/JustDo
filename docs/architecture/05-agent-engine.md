@@ -169,6 +169,11 @@ Manager 通过 `OutboundHeaderProxy.buildGatewayEnvironment` 为 Gateway child �
 proxy 变化会更新 bypass，其中动态加入当前 Gateway loopback 端口，避免本地 RPC 被送到上游代理。
 内置 provider 若使用 loopback base URL 可列为 forced URL。
 
+Header proxy 的 CA 使用每次生成唯一的 Subject，启动前验证 CA 自签名、有效期、公私钥及缓存叶子证书。旧版固定
+`CN=NodeMITMProxyCA`、不完整 store、密钥不匹配或跨 CA 叶子证书会触发应用生成的 `certs/`、
+`keys/` 重建；Main 不安装、删除或修改 Windows 系统根证书。这样 Gateway 同时启用 system CA 时，
+系统库里的历史同名根证书不会覆盖当前本地代理 CA 并触发 `CERT_SIGNATURE_FAILURE`。
+
 仅提供 CLI 环境并不足以让 OpenClaw 的 guarded fetch 使用代理。内置 `justdo-runtime-bridge`
 注册 remote embedding provider，复用 OpenClaw SSRF guard，并只对 eligible URL 使用 env proxy；
 没有 `HTTP(S)_PROXY` 或命中 `NO_PROXY` 时保持原路径。请求到达本地代理后仍由完整 URL 白名单决定

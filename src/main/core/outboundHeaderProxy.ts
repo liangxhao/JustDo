@@ -10,6 +10,7 @@ import path from 'path';
 import type { Duplex } from 'stream';
 
 import { buildGatewayNetworkEnvironment } from './gatewayNetworkEnvironment';
+import { prepareOutboundHeaderCertificateStore } from './outboundHeaderCertificateStore';
 import {
   captureOutboundHeaderStartupEnabled,
   getOutboundHeaderPolicyConfig,
@@ -669,6 +670,18 @@ export class OutboundHeaderProxy {
     if (!isOutboundHeaderProxyActive(config)) {
       return null;
     }
+    const userDataDirectory = this.caDirectory
+      ? path.dirname(this.caDirectory)
+      : app.getPath('userData');
+    const caDirectory = this.caDirectory ?? path.join(userDataDirectory, CA_DIRECTORY_NAME);
+    const certificateResetReason = prepareOutboundHeaderCertificateStore(caDirectory);
+    if (certificateResetReason) {
+      console.warn(
+        `[OutboundHeaderProxy] Reset generated certificate store: reason=${certificateResetReason}`,
+      );
+    }
+    fs.mkdirSync(caDirectory, { recursive: true });
+
     this.activePolicy = Object.freeze({
       ...config,
       baseUrlWhitelist: Object.freeze([...config.baseUrlWhitelist]),
@@ -678,12 +691,6 @@ export class OutboundHeaderProxy {
       ...getOutboundHeaderUserInfo(this.userInfoPath, config.headerNames),
     });
     this.capability = crypto.randomBytes(32).toString('base64url');
-
-    const userDataDirectory = this.caDirectory
-      ? path.dirname(this.caDirectory)
-      : app.getPath('userData');
-    const caDirectory = this.caDirectory ?? path.join(userDataDirectory, CA_DIRECTORY_NAME);
-    fs.mkdirSync(caDirectory, { recursive: true });
 
     const proxy = new Proxy();
     const proxyInternals = proxy as Proxy & {

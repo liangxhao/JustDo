@@ -63,7 +63,7 @@ sequenceDiagram
   M->>G: spawn generation with snapshot
 ```
 
-策略未启用或白名单为空时 `start()` 返回 null。启用时代理绑定 loopback 随机端口，在用户数据目录创建 CA，并为当前 generation 生成 32 字节随机 base64url capability。Gateway proxy URL 使用 Basic auth 携带 capability。
+策略未启用或白名单为空时 `start()` 返回 null。启用时代理绑定 loopback 随机端口，在用户数据目录创建 CA，并为当前 generation 生成 32 字节随机 base64url capability。新 CA 的 Subject 带有由公钥标识派生的唯一后缀，不再复用 `http-mitm-proxy` 默认的固定 `CN=NodeMITMProxyCA`；否则 Windows 系统证书库中残留的同名旧 CA 可能被 OpenSSL 选为错误签发者，导致 `CERT_SIGNATURE_FAILURE`。启动 preflight 会验证 CA 自签名、CA 与缓存站点证书有效期、公私钥和签发关系，发现旧固定 Subject、不完整文件、尚未生效或过期的证书、密钥不匹配或跨 CA 叶子证书时，只清理应用生成的 `certs/`、`keys/` 后重建，不修改系统证书库。Gateway proxy URL 使用 Basic auth 携带 capability。
 
 环境只传给 Gateway/后代和显式 opt-in CLI，不写回 Main `process.env`。当前 memory search/index
 opt-in，memory status 保持普通继承环境。CA bundle 通过 Node、Python 等常见环境变量进入受支持
@@ -232,7 +232,7 @@ Policy匹配必须基于规范化URL/host/port和明确规则；不能按字符�
 
 ## 17. 并发与证书风险
 
-多个CONNECT可能并行触发证书生成/cache，必须按host稳定并避免重复写/竞态。升级 `http-mitm-proxy` 时检查依赖的私有hook、错误事件和socket cleanup。非候选raw tunnel路径是隐私/兼容关键：任何回归到全量MITM都会扩大证书信任和敏感流量暴露面。
+多个CONNECT可能并行触发证书生成/cache，必须按host稳定并避免重复写/竞态。CA identity 必须保持每次生成唯一；不能恢复上游固定 Subject，否则系统 trust store 中的历史同名根证书会让 OpenSSL 产生不确定的 issuer 选择。升级 `http-mitm-proxy` 时检查依赖的私有hook、CA Subject patch、错误事件和socket cleanup。非候选raw tunnel路径是隐私/兼容关键：任何回归到全量MITM都会扩大证书信任和敏感流量暴露面。
 
 ## 18. 证据地图与完成条件
 
