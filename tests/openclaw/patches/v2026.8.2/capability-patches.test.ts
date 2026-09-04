@@ -46,7 +46,7 @@ const runtimePatchSetIsCurrent = (() => {
 })();
 
 describe('OpenClaw v2026.8.2 capability patches', () => {
-  test('contains exactly the twelve retained capability patches', () => {
+  test('contains exactly the fourteen retained capability patches', () => {
     expect(patchFiles).toEqual([
       '001-managed-pip-config-environment.cjs',
       '002-windows-mcp-package-runner.cjs',
@@ -60,7 +60,268 @@ describe('OpenClaw v2026.8.2 capability patches', () => {
       '010-configurable-exec-approval-timeout.cjs',
       '011-plugin-approval-detail-forwarding.cjs',
       '012-configurable-plugin-approval-timeout.cjs',
+      '013-goal-resume-after-pause.cjs',
+      '014-assistant-display-block-replay.cjs',
     ]);
+  });
+
+  test('excludes assistant display blocks before tool-call ID normalization', () => {
+    const testing = patches.get('014')?.__testing as {
+      MARKER: string;
+      transform: (content: string, filePath: string) => string;
+    };
+    const source = [
+      'function transformTransportMessages(messages, model, normalizeToolCallId, options) {',
+      '  void normalizeToolCallId;',
+      '  return messages.map((message) => {',
+      '    if (message.role !== "assistant") return message;',
+      '    const content = [];',
+      '    for (const block of message.content) {',
+      '      if (block.type === "thinking" || block.type === "text") {',
+      '        content.push(block);',
+      '        continue;',
+      '      }',
+      '      if (block.type !== "toolCall") {',
+      '        content.push(block);',
+      '        continue;',
+      '      }',
+      '      if (options?.preserveCrossModelToolCallThoughtSignature) void model;',
+      '      if (options?.normalizeSameModelToolCallIds) void model;',
+      '      content.push({ ...block, id: block.id.trim() });',
+      '    }',
+      '    return { ...message, content };',
+      '  });',
+      '}',
+    ].join('\n');
+    const patched = testing.transform(source, 'worker.mjs');
+    expect(patched).toContain(`if (block.type !== "toolCall") continue;/*${testing.MARKER}*/`);
+    expect(patched.indexOf('block.type !== "toolCall"')).toBeLessThan(
+      patched.indexOf('block.id.trim()'),
+    );
+    expect(testing.transform(patched, 'worker.mjs')).toBe(patched);
+
+    const bundle = testing.transform(source, 'gateway-bundle.mjs');
+    expect(bundle).toContain('if (block.type !== "toolCall") continue;');
+    expect(bundle).not.toContain(testing.MARKER);
+    expect(testing.transform(bundle, 'gateway-bundle.mjs')).toBe(bundle);
+
+    const replay = new Function(`${patched}\nreturn transformTransportMessages;`)() as (
+      messages: Array<{ role: string; content: Array<Record<string, unknown>> }>,
+      model: object,
+      normalizeToolCallId: undefined,
+      options: object,
+    ) => Array<{ content: Array<Record<string, unknown>> }>;
+    const messages = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'done' },
+          { type: 'attachment_error', attachment: { error: 'missing' } },
+          { type: 'toolCall', id: ' call-1 ', name: 'get_goal' },
+        ],
+      },
+    ];
+    expect(replay(messages, {}, undefined, {})[0].content).toEqual([
+      { type: 'text', text: 'done' },
+      { type: 'toolCall', id: 'call-1', name: 'get_goal' },
+    ]);
+    expect(messages[0].content).toContainEqual({
+      type: 'attachment_error',
+      attachment: { error: 'missing' },
+    });
+
+    expect(() =>
+      testing.transform(patched.replace(`/*${testing.MARKER}*/`, ''), 'worker.mjs'),
+    ).toThrow('historical or partial');
+    expect(() =>
+      testing.transform(
+        patched.replace('block.type !== "toolCall"', 'block.type !== "attachment_error"'),
+        'worker.mjs',
+      ),
+    ).toThrow('historical or partial');
+  });
+
+  test('applies and verifies assistant display-block replay against a portable runtime fixture', () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-display-replay-patch-'));
+    const distRoot = path.join(fixtureRoot, 'dist');
+    const workerRoot = path.join(distRoot, 'worker');
+    fs.mkdirSync(workerRoot, { recursive: true });
+    const source = [
+      'function transformTransportMessages(messages, model, normalizeToolCallId, options) {',
+      '  const content = [];',
+      '  for (const block of messages) {',
+      '    if (block.type !== "toolCall") { content.push(block); continue; }',
+      '    if (options?.preserveCrossModelToolCallThoughtSignature) void model;',
+      '    if (options?.normalizeSameModelToolCallIds) void normalizeToolCallId;',
+      '    content.push(block);',
+      '  }',
+      '  return content;',
+      '}',
+    ].join('\n');
+    const sourcePath = path.join(distRoot, 'ai-transport-runtime-host.js');
+    const workerPath = path.join(workerRoot, 'worker.mjs');
+    const bundlePath = path.join(fixtureRoot, 'gateway-bundle.mjs');
+
+    try {
+      fs.writeFileSync(sourcePath, source);
+      fs.writeFileSync(workerPath, source);
+      fs.writeFileSync(bundlePath, source);
+      const patch = patches.get('014')!;
+      expect(patch.applyPatch(fixtureRoot)).toHaveLength(3);
+      expect(() => patch.verifyPatch(fixtureRoot)).not.toThrow();
+      expect(patch.applyPatch(fixtureRoot)).toEqual([]);
+
+      fs.writeFileSync(
+        workerPath,
+        fs
+          .readFileSync(workerPath, 'utf8')
+          .replace(/\/\*JUSTDO_ASSISTANT_DISPLAY_BLOCK_REPLAY_V2026_8_2\*\//u, ''),
+      );
+      expect(() => patch.verifyPatch(fixtureRoot)).toThrow('historical or partial');
+    } finally {
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  test.skipIf(!runtimeIsV2026_8_2)(
+    'matches assistant display-block replay in the worker and Gateway bundle shapes',
+    () => {
+      const testing = patches.get('014')?.__testing as {
+        transform: (content: string, filePath: string) => string;
+      };
+      const files = [
+        path.join(runtimeRoot, 'dist', 'ai-transport-runtime-host-D8WbiE1j.js'),
+        path.join(runtimeRoot, 'dist', 'worker', 'worker.mjs'),
+        path.join(runtimeRoot, 'gateway-bundle.mjs'),
+      ];
+      for (const filePath of files) {
+        const content = fs.readFileSync(filePath, 'utf8');
+        const transformed = testing.transform(content, filePath);
+        expect(transformed).toContain('type !== "toolCall"');
+        expect(testing.transform(transformed, filePath)).toBe(transformed);
+      }
+    },
+    120_000,
+  );
+
+  test('admits only Goal resume through an intentionally aborted idle session', () => {
+    const testing = patches.get('013')?.__testing as {
+      ERROR_TEXT: string;
+      transform: (content: string, filePath: string) => string;
+    };
+    const source = [
+      'function isRestartSafeChatSession(params) {',
+      '  const entry = params.entry;',
+      '  return Boolean(entry?.sessionId && entry.abortedLastRun !== true && entry.archivedAt === void 0);',
+      '}',
+      'function resolveRestartSafeChatAdmission(params) {',
+      '  return isRestartSafeChatSession(params) ? params : undefined;',
+      '}',
+      'async function admitChatSend(params) {',
+      '  const { request, session } = params;',
+      '  void session;',
+      '  if (request.goalOperation && (isBusy())) throw new Error("goal-session-busy");',
+      '  const restartSafeAdmission = resolveRestartSafeChatAdmission({ request: {} });',
+      `  if (request.goalOperation && !restartSafeAdmission) throw new Error("${testing.ERROR_TEXT}");`,
+      '}',
+    ].join('\n');
+    const patched = testing.transform(source, 'chat-send-handler.js');
+    expect(patched).toContain(
+      '(entry.abortedLastRun !== true || params.allowAbortedLastRun === true)',
+    );
+    expect(patched).toContain(
+      'allowAbortedLastRun: request.goalOperation?.action === "resume"',
+    );
+    expect(testing.transform(patched, 'chat-send-handler.js')).toBe(patched);
+    expect(() =>
+      testing.transform(
+        patched.replace(
+          'request.goalOperation?.action === "resume"',
+          'request.goalOperation?.action === "start"',
+        ),
+        'damaged-chat-send-handler.js',
+      ),
+    ).toThrow('historical or partial');
+    expect(() =>
+      testing.transform(
+        patched.replace(/\/\*JUSTDO_GOAL_RESUME_ABORTED_ADMISSION_V2026_8_2\*\//u, ''),
+        'partially-patched-chat-send-handler.js',
+      ),
+    ).toThrow('partial Goal resume admission patch');
+    expect(() =>
+      testing.transform(
+        patched.replace(/\/\*JUSTDO_GOAL_RESUME_ABORTED_(?:ADMISSION|GUARD)_V2026_8_2\*\//gu, ''),
+        'markerless-patched-chat-send-handler.js',
+      ),
+    ).toThrow('historical or partial');
+  });
+
+  test.skipIf(!runtimeIsV2026_8_2)(
+    'matches Goal resume admission in the source, worker, and Gateway bundle shapes',
+    () => {
+      const testing = patches.get('013')?.__testing as {
+        transform: (content: string, filePath: string) => string;
+      };
+      const files = [
+        path.join(runtimeRoot, 'dist', 'chat-send-handler-8cDg2Jl1.js'),
+        path.join(runtimeRoot, 'dist', 'worker', 'worker.mjs'),
+        path.join(runtimeRoot, 'gateway-bundle.mjs'),
+      ];
+      for (const filePath of files) {
+        const content = fs.readFileSync(filePath, 'utf8');
+        const transformed = testing.transform(content, filePath);
+        expect(transformed).toContain('allowAbortedLastRun');
+        expect(testing.transform(transformed, filePath)).toBe(transformed);
+      }
+    },
+    120_000,
+  );
+
+  test('applies and verifies Goal resume admission against a portable runtime fixture', () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-goal-resume-patch-'));
+    const distRoot = path.join(fixtureRoot, 'dist');
+    const workerRoot = path.join(distRoot, 'worker');
+    fs.mkdirSync(workerRoot, { recursive: true });
+    const testing = patches.get('013')?.__testing as { ERROR_TEXT: string };
+    const source = [
+      'function isRestartSafeChatSession(params) {',
+      '  const entry = params.entry;',
+      '  return Boolean(entry?.sessionId && entry.abortedLastRun !== true && entry.archivedAt === void 0);',
+      '}',
+      'function resolveRestartSafeChatAdmission(params) {',
+      '  return isRestartSafeChatSession(params) ? params : undefined;',
+      '}',
+      'async function admitChatSend(params) {',
+      '  const { request, session } = params;',
+      '  void session;',
+      '  if (request.goalOperation && isBusy()) throw new Error("goal-session-busy");',
+      '  const restartSafeAdmission = resolveRestartSafeChatAdmission({ request: {} });',
+      `  if (request.goalOperation && !restartSafeAdmission) throw new Error("${testing.ERROR_TEXT}");`,
+      '}',
+    ].join('\n');
+    const files = [
+      path.join(distRoot, 'runtime.js'),
+      path.join(workerRoot, 'worker.mjs'),
+      path.join(fixtureRoot, 'gateway-bundle.mjs'),
+    ];
+
+    try {
+      for (const filePath of files) fs.writeFileSync(filePath, source);
+      const patch = patches.get('013')!;
+      expect(patch.applyPatch(fixtureRoot)).toHaveLength(3);
+      expect(() => patch.verifyPatch(fixtureRoot)).not.toThrow();
+      expect(patch.applyPatch(fixtureRoot)).toEqual([]);
+
+      fs.writeFileSync(
+        files[0],
+        fs
+          .readFileSync(files[0], 'utf8')
+          .replace(/\/\*JUSTDO_GOAL_RESUME_ABORTED_ADMISSION_V2026_8_2\*\//u, ''),
+      );
+      expect(() => patch.verifyPatch(fixtureRoot)).toThrow('historical or partial');
+    } finally {
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
+    }
   });
 
   test('accepts only exact app-proven managed Python values', () => {

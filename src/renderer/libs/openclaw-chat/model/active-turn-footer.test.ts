@@ -1,3 +1,4 @@
+import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import { describe, expect, test } from 'vitest';
 
 import {
@@ -5,6 +6,7 @@ import {
   formatActiveTurnTimestamp,
   projectActiveTurnFooter,
   resolveActiveTurnModel,
+  selectActiveTurnTiming,
   shouldRenderInterruptedTerminalFallback,
 } from './active-turn-footer';
 import type { AssistantTurn, TurnItem } from './chat-transcript-state';
@@ -26,6 +28,70 @@ function turn(status: AssistantTurn['status'], items: TurnItem[] = []): Assistan
 }
 
 describe('active turn footer', () => {
+  test('does not let a stale aborted receipt override a newly resumed turn', () => {
+    const resumed = turn('running');
+    resumed.runId = 'run-resumed';
+    const staleReceipt: SessionRunTiming = {
+      id: 'timing-paused',
+      sessionId: 'session-1',
+      clientTurnId: 'run-paused',
+      rootRunId: 'run-paused',
+      startedAt: 1_000,
+      endedAt: 2_000,
+      state: 'aborted',
+    };
+
+    expect(selectActiveTurnTiming(resumed, staleReceipt, true)).toBe(resumed);
+    expect(
+      projectActiveTurnFooter(selectActiveTurnTiming(resumed, staleReceipt, true), 3_000),
+    ).toEqual(expect.objectContaining({ status: 'running', running: true }));
+  });
+
+  test('uses the durable receipt when it belongs to the current turn', () => {
+    const resumed = turn('running');
+    resumed.runId = 'run-resumed';
+    const currentReceipt: SessionRunTiming = {
+      id: 'timing-resumed',
+      sessionId: 'session-1',
+      clientTurnId: 'operation-resumed',
+      rootRunId: 'run-resumed',
+      startedAt: 1_000,
+      state: 'running',
+    };
+
+    expect(selectActiveTurnTiming(resumed, currentReceipt, true)).toBe(currentReceipt);
+  });
+
+  test('uses newer durable timing when the controller has no active turn', () => {
+    const cachedInterrupted = turn('aborted');
+    cachedInterrupted.runId = 'run-paused';
+    const durableRunning: SessionRunTiming = {
+      id: 'timing-background',
+      sessionId: 'session-1',
+      clientTurnId: 'runtime-recovery-1',
+      rootRunId: 'run-background',
+      startedAt: 3_000,
+      state: 'running',
+    };
+
+    expect(selectActiveTurnTiming(cachedInterrupted, durableRunning, false)).toBe(durableRunning);
+  });
+
+  test('uses a newer running receipt over a stale terminal active turn', () => {
+    const staleInterrupted = turn('aborted');
+    staleInterrupted.runId = 'run-paused';
+    const durableRunning: SessionRunTiming = {
+      id: 'timing-automatic',
+      sessionId: 'session-1',
+      clientTurnId: 'runtime-recovery-2',
+      rootRunId: 'run-automatic',
+      startedAt: 3_000,
+      state: 'running',
+    };
+
+    expect(selectActiveTurnTiming(staleInterrupted, durableRunning, true)).toBe(durableRunning);
+  });
+
   test.each([
     [
       'Thinking',

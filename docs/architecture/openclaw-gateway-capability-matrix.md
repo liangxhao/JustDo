@@ -4,28 +4,28 @@
 
 ## 1. 当前能力归属
 
-| 能力                    | Gateway/上游                                                     | JustDo App                                                 | v2026.8.2 处置                      |
-| ----------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------- | ----------------------------------- |
-| chat、history、thinking | 执行、transcript、实时与历史 display projection                  | wire 校验、identity、reconcile、timeline                   | 原生；删除旧 002–004                |
-| session、goal、model    | session/goal 权威 RPC；session tool visibility                  | managed key、产品 metadata、ready 后 `sessions.patch`；用户设置访问范围，默认 `tree` | 原生；不读写运行中 `sessions.json`  |
-| tool directory          | tool schema、搜索和执行                                          | permission 与结构化卡片                                    | 原生；删除旧 009                    |
-| subagent/task           | admission、排队、timeout、required-child join、task ledger/event | `tasks.list/get` 映射、父子展示、stop                      | 原生；删除旧 013–021、049           |
-| approvals               | request 生命周期、挂起、恢复和终态清理                           | policy sync、modal、session grant                          | 原生；删除旧 022–025                |
-| compaction/context      | safeguard、overflow、budget、precheck                            | 配置、进度与 detail 展示                                   | 原生；只保留 purpose metadata patch |
-| cron                    | job/run scheduler                                                | isolated agent、receipt、显式 `delivery: { mode: 'none' }` | 原生；删除旧默认 delivery patch     |
-| progress                | run/task/compaction 事实                                         | bounded runtime bridge 投影与 UI                           | 迁入 `justdo-runtime-bridge`        |
-| embeddings              | provider 调用与 memory index                                     | loopback provider、代理与凭证边界                          | 迁入 `justdo-runtime-bridge`        |
-| Windows/Chrome MCP      | MCP/Browser runtime                                              | bundled runner、Chrome 管理与设置                          | 保留 002–004 三个窄补丁             |
-| host metadata           | provider request 构造                                            | session/parent/user/purpose metadata                       | 保留 006–007                        |
-| app-start recovery      | durable task recovery                                            | JustDo app-start epoch                                     | 保留 008                            |
-| manual reindex          | memory index/cache                                               | 一次性用户意图                                             | 保留 009                            |
-| exec approval timeout   | 原生 approval request/wait                                       | 用户选择的等待时限                                         | 保留 010                            |
-| plugin approval detail  | before-tool approval dispatch                                    | reviewer-only 完整变更内容                                 | 保留 011                            |
-| plugin approval timeout | 原生 plugin approval request/wait                                | 用户选择的等待时限                                         | 保留 012                            |
+| 能力                    | Gateway/上游                                                     | JustDo App                                                                           | v2026.8.2 处置                                                    |
+| ----------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
+| chat、history、thinking | 执行、transcript、实时与历史 display projection                  | wire 校验、identity、reconcile、timeline                                             | 原生；删除旧 002–004                                              |
+| session、goal、model    | session/goal 权威 RPC；session tool visibility                   | managed key、产品 metadata、ready 后 `sessions.patch`；用户设置访问范围，默认 `tree` | 原生；Goal pause 后 resume 保留 013；不读写运行中 `sessions.json` |
+| tool directory          | tool schema、搜索和执行                                          | permission 与结构化卡片                                                              | 原生；删除旧 009                                                  |
+| subagent/task           | admission、排队、timeout、required-child join、task ledger/event | `tasks.list/get` 映射、父子展示、stop                                                | 原生；删除旧 013–021、049                                         |
+| approvals               | request 生命周期、挂起、恢复和终态清理                           | policy sync、modal、session grant                                                    | 原生；删除旧 022–025                                              |
+| compaction/context      | safeguard、overflow、budget、precheck                            | 配置、进度与 detail 展示                                                             | 原生；只保留 purpose metadata patch                               |
+| cron                    | job/run scheduler                                                | isolated agent、receipt、显式 `delivery: { mode: 'none' }`                           | 原生；删除旧默认 delivery patch                                   |
+| progress                | run/task/compaction 事实                                         | bounded runtime bridge 投影与 UI                                                     | 迁入 `justdo-runtime-bridge`                                      |
+| embeddings              | provider 调用与 memory index                                     | loopback provider、代理与凭证边界                                                    | 迁入 `justdo-runtime-bridge`                                      |
+| Windows/Chrome MCP      | MCP/Browser runtime                                              | bundled runner、Chrome 管理与设置                                                    | 保留 002–004 三个窄补丁                                           |
+| host metadata           | provider request 构造                                            | session/parent/user/purpose metadata                                                 | 保留 006–007                                                      |
+| app-start recovery      | durable task recovery                                            | JustDo app-start epoch                                                               | 保留 008                                                          |
+| manual reindex          | memory index/cache                                               | 一次性用户意图                                                                       | 保留 009                                                          |
+| exec approval timeout   | 原生 approval request/wait                                       | 用户选择的等待时限                                                                   | 保留 010                                                          |
+| plugin approval detail  | before-tool approval dispatch                                    | reviewer-only 完整变更内容                                                           | 保留 011                                                          |
+| plugin approval timeout | 原生 plugin approval request/wait                                | 用户选择的等待时限                                                                   | 保留 012                                                          |
 
 窗口、tray、update、主题、i18n、session 分组/cwd、SQLite 产品数据、Marketplace、文件 preview 和代理 UI 都属于 JustDo，不应要求 Gateway patch。
 
-## 2. 十二个保留补丁
+## 2. 十三个保留补丁
 
 | 编号 | 能力                                         | 移除条件                                    |
 | ---- | -------------------------------------------- | ------------------------------------------- |
@@ -41,6 +41,7 @@
 | 010  | 原生 exec approval 可配置等待时限            | 上游提供 exec approval timeout 设置         |
 | 011  | trusted-policy plugin approval detail 转发   | 上游 before-tool approval 原生转发 `detail` |
 | 012  | 原生 plugin approval 可配置等待时限          | 上游提供 host plugin approval timeout 设置  |
+| 013  | 暂停中止后的原生 Goal resume 准入            | 上游原生接受空闲 paused session 的该状态    |
 
 当前目录只对 pristine `openclaw@2026.8.2` 有效。旧 marker、历史补丁或部分应用状态必须明确失败；处理方式是从 source lock 重建，而不是原地迁移。
 

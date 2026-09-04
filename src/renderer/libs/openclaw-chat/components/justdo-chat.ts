@@ -40,6 +40,7 @@ import {
   formatActiveTurnTimestamp,
   projectActiveTurnFooter,
   resolveActiveTurnModel,
+  selectActiveTurnTiming,
   shouldRenderInterruptedTerminalFallback,
 } from '@/libs/openclaw-chat/model/active-turn-footer';
 import {
@@ -2238,7 +2239,7 @@ export class JustDoChatElement extends LitElement {
       const historyTimeline = getHistoryTimeline();
       const activeTimeline = this.projectActiveTimeline(activeTurn);
       const activeTurnFooter = projectActiveTurnFooter(
-        currentRunTiming ?? ctrl.getCurrentTurnTiming(),
+        selectActiveTurnTiming(ctrl.getCurrentTurnTiming(), currentRunTiming, activeTurn !== null),
       );
       const timelineView = projectIncrementalTimelineView({
         persisted: this.persistedTimelineRenderCache.get(historyTimeline),
@@ -2256,9 +2257,9 @@ export class JustDoChatElement extends LitElement {
       )
         ? ({
             kind: 'terminal',
-            key: `terminal:aborted:fallback:${currentRunTiming?.id ?? activeTurn?.runId ?? 'run'}`,
+            key: `terminal:aborted:fallback:${activeTurn?.runId ?? currentRunTiming?.id ?? 'run'}`,
             item: {
-              id: `terminal:aborted:fallback:${currentRunTiming?.id ?? activeTurn?.runId ?? 'run'}`,
+              id: `terminal:aborted:fallback:${activeTurn?.runId ?? currentRunTiming?.id ?? 'run'}`,
               runId: activeTurn?.runId ?? currentRunTiming?.rootRunId ?? 'run',
               firstSeq: activeTurn?.lastAgentSeq ?? 0,
               lastSeq: activeTurn?.lastAgentSeq ?? 0,

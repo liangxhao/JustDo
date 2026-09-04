@@ -1,3 +1,5 @@
+import { parseGoalStartObjective } from '@shared/slashCommands';
+
 import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 
 import { unwrapToolMessage } from './tool-message-adapter';
@@ -43,8 +45,13 @@ export function isPendingUserMessageMatch(
   pending: GatewayMessage,
 ): boolean {
   const pendingText = messageText(pending);
+  const persistedText = messageText(message);
+  const comparablePendingText = parseGoalStartObjective(pendingText) ?? pendingText;
+  const comparablePersistedText = parseGoalStartObjective(persistedText) ?? persistedText;
   const pendingTimestamp = messageTimestamp(pending);
-  if (messageRole(message) !== 'user' || messageText(message) !== pendingText) return false;
+  if (messageRole(message) !== 'user' || comparablePersistedText !== comparablePendingText) {
+    return false;
+  }
 
   const timestamp = messageTimestamp(message);
   // The temporary Cowork message, pending Lit projection, and Gateway record
@@ -55,10 +62,6 @@ export function isPendingUserMessageMatch(
     pendingTimestamp === null ||
     Math.abs(timestamp - pendingTimestamp) < 60_000
   );
-}
-
-function hasPendingMessage(messages: GatewayMessage[], pending: GatewayMessage): boolean {
-  return messages.some(message => isPendingUserMessageMatch(message, pending));
 }
 
 /**
@@ -72,7 +75,8 @@ export function mergePendingUserMessageForDisplay(
   messages: GatewayMessage[],
   pending: GatewayMessage | null,
 ): GatewayMessage[] {
-  if (!pending || hasPendingMessage(messages, pending)) return messages;
+  if (!pending) return messages;
+  if (messages.some(message => isPendingUserMessageMatch(message, pending))) return messages;
 
   const pendingTimestamp = messageTimestamp(pending);
   let insertionIndex = -1;

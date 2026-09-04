@@ -209,6 +209,9 @@ describe('GoalContinuationCoordinator', () => {
     });
     expect(agentParams.message).toContain('Ship the release');
     expect(agentParams.extraSystemPrompt).toContain('do not repeat completed work');
+    expect(agentParams.extraSystemPrompt).toContain('call update_goal with complete');
+    expect(agentParams.extraSystemPrompt).toContain('reply with exactly NO_REPLY');
+    expect(agentParams.extraSystemPrompt).not.toContain('get_goal');
     expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({
       goalId: 'goal-1',
       phase: GoalExecutionPhase.Running,

@@ -4,14 +4,17 @@ This directory is the authoritative inventory for the JustDo runtime built from 
 pristine `openclaw@2026.8.2` npm artifact. The runtime is never upgraded in place. Historical
 or partially applied JustDo markers are rejected; rebuild from `source-lock.json` instead.
 
-The previous 49-patch integration has been reduced to twelve product-specific gaps. Thinking,
-history projection, native tool search, goals, subagent admission/queueing/join, approvals,
-compaction/context-budget behavior and task queries are upstream capabilities and must not be
-reimplemented here.
+The previous 49-patch integration has been reduced to fourteen product-specific gaps. Thinking,
+history projection, native tool search, most Goal behavior, subagent admission/queueing/join,
+approvals, compaction/context-budget behavior and task queries are upstream capabilities and must
+not be reimplemented here.
 
-The v2026.8.2 audit revalidated all twelve retained gaps against the pristine artifact. Patch 007
+The v2026.8.2 audit revalidated all fourteen retained gaps against the pristine artifact. Patch 007
 now tracks the prepared simple-completion transport added upstream, while patch 010 recognizes
-the two exact approval-timeout build shapes emitted by the shared chunk and worker bundle.
+the two exact approval-timeout build shapes emitted by the shared chunk and worker bundle. Patch
+013 narrowly restores native Goal resume after an intentional pause abort without weakening the
+remaining restart-safe admission checks. Patch 014 keeps display-only assistant blocks out of the
+OpenClaw provider-safe replay context before the generic AI converter sees them.
 
 | Patch                                          | Retained capability                                                                                                          | Remove when upstream provides                                                   |
 | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
@@ -27,6 +30,8 @@ the two exact approval-timeout build shapes emitted by the shared chunk and work
 | `010-configurable-exec-approval-timeout.cjs`   | Applies the host-selected wait time to OpenClaw's native exec approval lifecycle.                                            | A native exec approval timeout setting.                                         |
 | `011-plugin-approval-detail-forwarding.cjs`    | Forwards trusted-policy reviewer detail through the native plugin approval request path.                                     | Native `PluginApprovalRequest.detail` forwarding in before-tool approval calls. |
 | `012-configurable-plugin-approval-timeout.cjs` | Applies the host-selected wait time to policy, CLI-native-tool, and native-hook-relay plugin approvals.                      | A native host-level plugin approval timeout setting.                            |
+| `013-goal-resume-after-pause.cjs`              | Lets native Goal resume admit an idle paused session whose preceding run was intentionally aborted.                          | Upstream Goal resume accepts this native paused-session state.                  |
+| `014-assistant-display-block-replay.cjs`       | Excludes display-only assistant blocks at OpenClaw's provider-safe replay boundary without changing durable history or UI.   | Upstream provider replay filters non-provider assistant content.                |
 
 Each patch must fail on ambiguous anchors, verify both source and bundled output where relevant,
 and be idempotent only for its exact v2026.8.2 marker shape. `verify-openclaw-pristine-contracts`

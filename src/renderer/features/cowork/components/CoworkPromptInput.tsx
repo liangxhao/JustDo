@@ -43,6 +43,7 @@ import {
   resolvePendingGoalObjectiveOnSessionChange,
   shouldApplyGoalClearResult,
 } from '@/features/cowork/components/goalPendingObjective';
+import { acceptedGoalResumeRunId } from '@/features/cowork/components/goalResume';
 import type { GoalRunProgress } from '@/features/cowork/components/goalRunProgress';
 import GoalStatusCard from '@/features/cowork/components/GoalStatusCard';
 import { LatestSerialTaskQueue } from '@/features/cowork/components/latestSerialTaskQueue';
@@ -207,6 +208,8 @@ interface CoworkPromptInputProps {
   initialGoalObjective?: string | null;
   /** Live execution phase projected from the Gateway chat stream. */
   goalRunProgress?: GoalRunProgress | null;
+  /** Notifies the chat projection as soon as a Goal resume is accepted. */
+  onGoalResumeAccepted?: (sessionId: string, runId: string) => void;
   /** When true, hides attachment/skill buttons but keeps the input box visible (disabled) */
   remoteManaged?: boolean;
 }
@@ -262,6 +265,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       contextUsage = null,
       initialGoalObjective = null,
       goalRunProgress = null,
+      onGoalResumeAccepted,
       remoteManaged = false,
     } = props;
     const dispatch = useDispatch();
@@ -465,10 +469,14 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           sessionGoalRef.current = result.goal;
           setSessionGoal(result.goal);
           if (result.execution) setGoalExecution(result.execution);
+          if (request.action === SessionGoalMutationAction.Resume) {
+            const runId = acceptedGoalResumeRunId(result, sessionId);
+            if (runId) onGoalResumeAccepted?.(sessionId, runId);
+          }
         }
         return true;
       },
-      [applyAcceptedGoalClear, beginGoalClear, cancelGoalClear, sessionId],
+      [applyAcceptedGoalClear, beginGoalClear, cancelGoalClear, onGoalResumeAccepted, sessionId],
     );
     useEffect(() => {
       const previousSessionId = goalStateSessionIdRef.current;

@@ -15,6 +15,28 @@ export interface ActiveTurnFooter {
   modelRef?: string;
 }
 
+/** Resolve live and durable timing without allowing an older run to override a newer one. */
+export function selectActiveTurnTiming(
+  controllerTurn: AssistantTurnTiming | null,
+  latestRunTiming: SessionRunTiming | null,
+  hasActiveTurn: boolean,
+): AssistantTurnTiming | SessionRunTiming | null {
+  if (!hasActiveTurn) return latestRunTiming ?? controllerTurn;
+  if (!controllerTurn) return latestRunTiming;
+  if (!latestRunTiming) return controllerTurn;
+  if (
+    latestRunTiming.rootRunId === controllerTurn.runId ||
+    latestRunTiming.clientTurnId === controllerTurn.runId
+  ) {
+    return latestRunTiming;
+  }
+  const controllerRunning = controllerTurn.status === 'running';
+  const durableRunning = latestRunTiming.state === 'running';
+  if (controllerRunning !== durableRunning)
+    return controllerRunning ? controllerTurn : latestRunTiming;
+  return latestRunTiming.startedAt > controllerTurn.startedAt ? latestRunTiming : controllerTurn;
+}
+
 /**
  * Resolve the model for the live turn without treating OpenClaw's internal
  * gateway-injected assistant records as model output. Progress metadata is

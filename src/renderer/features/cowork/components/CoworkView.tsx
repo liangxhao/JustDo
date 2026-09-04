@@ -211,6 +211,13 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const currentGatewaySessionKey = currentSession
     ? `agent:${currentSession.agentId?.trim() || 'main'}:justdo:${currentSession.id}`
     : null;
+  const currentGatewaySessionKeyRef = useRef(currentGatewaySessionKey);
+  currentGatewaySessionKeyRef.current = currentGatewaySessionKey;
+  const handleGoalResumeAccepted = useCallback((sessionId: string, runId: string) => {
+    if (currentSessionIdRef.current !== sessionId) return;
+    const sessionKey = currentGatewaySessionKeyRef.current;
+    if (sessionKey) chatWrapperRef.current?.beginGoalResume(sessionKey, runId);
+  }, []);
   const progressCard =
     progressCardState?.sessionKey === currentGatewaySessionKey ? progressCardState.card : null;
   const currentSessionRunTimings = currentSession
@@ -1296,6 +1303,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                       contextUsage={contextUsage}
                       initialGoalObjective={initialGoalObjective}
                       goalRunProgress={goalRunProgress}
+                      onGoalResumeAccepted={handleGoalResumeAccepted}
                     />
                   </div>
                   {isQuestionInputBlocked && (

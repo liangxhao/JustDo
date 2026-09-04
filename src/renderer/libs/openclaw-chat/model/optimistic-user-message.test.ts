@@ -56,6 +56,24 @@ describe('mergePendingUserMessageForDisplay', () => {
     ]);
   });
 
+  test('reconciles a Goal command with its persisted objective without duplicating it', () => {
+    const pendingGoal = {
+      role: 'user',
+      content: '/goal write two poems',
+      timestamp: 100,
+    } as GatewayMessage;
+    const persistedGoal = {
+      role: 'user',
+      content: 'write two poems',
+      timestamp: 110,
+      __openclaw: { id: 'goal-message' },
+    } as GatewayMessage;
+
+    expect(mergePendingUserMessageForDisplay([persistedGoal], pendingGoal)).toEqual([
+      persistedGoal,
+    ]);
+  });
+
   test('matches text blocks when the pending prompt also contains attachments', () => {
     const pendingWithAttachment = {
       role: 'user',

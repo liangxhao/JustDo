@@ -537,9 +537,7 @@ test('keeps a replayed native Goal start bound while its exact run and goal rema
     }
     if (method === 'sessions.list') {
       return {
-        sessions: [
-          { key: 'agent:main:justdo:session-1', activeRunIds: [runId] },
-        ],
+        sessions: [{ key: 'agent:main:justdo:session-1', activeRunIds: [runId] }],
       };
     }
     throw new Error(`unexpected method ${method}`);
@@ -1679,6 +1677,51 @@ test('preserves optimistic prompt when promoting a temp session to a persisted s
   expect(controller.state.chatSending).toBe(true);
   expect(controller.state.pendingUserMessage?.content).toBe('start this task');
   expect(controller.state.chatLoading).toBe(true);
+});
+
+test('reconciles a pending Goal command with its persisted objective without duplication', async () => {
+  const timestamp = Date.now();
+  const request = vi.fn().mockImplementation((method: string) => {
+    if (method === 'chat.startup' || method === 'chat.history') {
+      return Promise.resolve({
+        messages: [
+          {
+            role: 'user',
+            content: 'write two poems',
+            timestamp: timestamp + 10,
+            __openclaw: { id: 'goal-message' },
+          },
+        ],
+      });
+    }
+    return Promise.resolve({});
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.setPendingUserMessage('/goal write two poems');
+
+  await expect(controller.loadHistory(false, { reconcileSuspended: true })).resolves.toBe(true);
+
+  expect(controller.state.pendingUserMessage).toBeNull();
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({
+      role: 'user',
+      content: 'write two poems',
+      __openclaw: { id: 'goal-message' },
+    }),
+  ]);
+
+  await expect(controller.loadHistory(false, { reconcileSuspended: true })).resolves.toBe(true);
+
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({
+      role: 'user',
+      content: 'write two poems',
+      __openclaw: { id: 'goal-message' },
+    }),
+  ]);
 });
 
 test('does not promote a temporary session during ordinary navigation', async () => {
@@ -6127,6 +6170,87 @@ test('keeps streamed assistant text as a truncated message when an aborted run h
   expect(controller.state.chatMessages).toHaveLength(1);
 });
 
+test('replaces an interrupted active turn as soon as Goal resume is accepted', () => {
+  const controller = new ChatController();
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.currentSessionId = 'session-runtime-1';
+  controller.state.transcript.sessionKey = controller.state.sessionKey;
+  const interrupted = beginAssistantTurn(
+    controller.state.transcript,
+    { runId: 'run-paused', sessionId: controller.state.currentSessionId },
+    { now: () => 100, createId: prefix => `${prefix}-paused` },
+  );
+  interrupted.status = 'aborted';
+  interrupted.items.push({
+    id: 'terminal-paused',
+    runId: 'run-paused',
+    firstSeq: 1,
+    lastSeq: 1,
+    startedAt: 100,
+    updatedAt: 200,
+    type: 'terminal',
+    status: 'aborted',
+    message: 'The run was interrupted.',
+  });
+  const preservedPartialMessage = {
+    role: 'assistant',
+    content: [{ type: 'thinking', thinking: 'Partial reasoning' }],
+    interrupted: true,
+  };
+  controller.state.chatMessages = [preservedPartialMessage];
+
+  controller.beginGoalResume(controller.state.sessionKey, 'run-resumed');
+
+  expect(controller.state.chatSending).toBe(true);
+  expect(controller.state.chatRunId).toBe('run-resumed');
+  expect(controller.state.transcript.activeTurn).toMatchObject({
+    runId: 'run-resumed',
+    sessionId: 'session-runtime-1',
+    status: 'running',
+    items: [],
+  });
+  expect(controller.state.chatMessages).toEqual([preservedPartialMessage]);
+});
+
+test('does not reset a resumed turn whose stream event arrived before the acceptance callback', () => {
+  const controller = new ChatController();
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.transcript.sessionKey = controller.state.sessionKey;
+  const resumed = beginAssistantTurn(
+    controller.state.transcript,
+    { runId: 'run-resumed' },
+    { now: () => 100, createId: prefix => `${prefix}-resumed` },
+  );
+  resumed.items.push({
+    id: 'thinking-resumed',
+    runId: 'run-resumed',
+    firstSeq: 1,
+    lastSeq: 1,
+    startedAt: 100,
+    updatedAt: 100,
+    type: 'thinking',
+    status: 'running',
+    text: 'Already streaming',
+  });
+
+  controller.beginGoalResume(controller.state.sessionKey, 'run-resumed');
+
+  expect(controller.state.transcript.activeTurn).toBe(resumed);
+  expect(controller.state.transcript.activeTurn?.items).toHaveLength(1);
+});
+
+test('does not apply a Goal resume receipt to a different selected session', () => {
+  const controller = new ChatController();
+  controller.state.sessionKey = 'agent:main:justdo:session-2';
+  controller.state.transcript.sessionKey = controller.state.sessionKey;
+
+  controller.beginGoalResume('agent:main:justdo:session-1', 'run-session-1');
+
+  expect(controller.state.transcript.activeTurn).toBeNull();
+  expect(controller.state.chatSending).toBe(false);
+  expect(controller.state.chatRunId).toBeNull();
+});
+
 test('keeps an empty lifecycle abort out of assistant messages until real output arrives', () => {
   const controller = new ChatController();
   controller.state.sessionKey = 'agent:main:justdo:session-1';
@@ -8407,6 +8531,36 @@ test('applies an identity-bearing session.message row without waiting for histor
   ]);
   await vi.advanceTimersByTimeAsync(1300);
   expect(request).not.toHaveBeenCalled();
+});
+
+test('reconciles a pending Goal command from session.message without duplication', () => {
+  const sessionKey = 'agent:main:justdo:session-1';
+  const controller = new ChatController();
+  controller.state.sessionKey = sessionKey;
+  controller.setPendingUserMessage('/goal write two poems');
+
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent({
+    event: 'session.message',
+    payload: {
+      sessionKey,
+      messageId: 'goal-message',
+      messageSeq: 1,
+      message: { role: 'user', content: 'write two poems' },
+    },
+  });
+
+  expect(controller.state.pendingUserMessage).toBeNull();
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({
+      role: 'user',
+      content: 'write two poems',
+      __openclaw: { id: 'goal-message', seq: 1 },
+    }),
+  ]);
 });
 
 test('keeps one assistant row when session.message beats chat.final', () => {

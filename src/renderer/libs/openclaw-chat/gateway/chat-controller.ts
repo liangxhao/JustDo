@@ -624,11 +624,14 @@ export class ChatController {
   private runProbeToken: symbol | null = null;
   private terminalLifecycleSeen = false;
   private transcriptIdSequence = 0;
-  private readonly retainedGoalStartOperations = new Map<string, {
-    signature: string;
-    operationId: string;
-    issuedAtMs: number;
-  }>();
+  private readonly retainedGoalStartOperations = new Map<
+    string,
+    {
+      signature: string;
+      operationId: string;
+      issuedAtMs: number;
+    }
+  >();
   private readonly expectInitialHistory: boolean;
   private readonly initialMessageSubscriptionBarrierTimeoutMs: number;
   private readonly initialHistoryRetryDelaysMs: readonly number[];
@@ -724,6 +727,38 @@ export class ChatController {
     this.state.pendingUserMessage = null;
     this.resetAssistantSnapshotSource();
     this.clearRunActivity();
+    this.notify();
+  }
+
+  /** Adopt an accepted Goal resume before its first Gateway stream event arrives. */
+  beginGoalResume(sessionKey: string, runId: string): void {
+    const normalizedRunId = runId.trim();
+    if (
+      !normalizedRunId ||
+      normalizeTranscriptSessionKey(sessionKey) !==
+        normalizeTranscriptSessionKey(this.state.sessionKey)
+    ) {
+      return;
+    }
+    const activeTurn = this.state.transcript.activeTurn;
+    // The lifecycle event can beat the IPC response. Never replace an already
+    // observed copy of this run or discard content received during admission.
+    if (activeTurn?.runId === normalizedRunId) return;
+
+    beginAssistantTurn(
+      this.state.transcript,
+      {
+        runId: normalizedRunId,
+        sessionId: this.state.currentSessionId,
+        startedAt: Date.now(),
+      },
+      this.transcriptDependencies,
+    );
+    this.state.chatSending = true;
+    this.state.chatRunId = normalizedRunId;
+    this.beginRunActivity(normalizedRunId);
+    this.state.lastError = null;
+    this.resetAssistantSnapshotSource();
     this.notify();
   }
 
@@ -4283,17 +4318,15 @@ export class ChatController {
         pendingUserMessageFoundIndex = messages.findIndex((message: unknown) =>
           isPendingUserMessageMatch(message as GatewayMessage, p as unknown as GatewayMessage),
         );
-        if (pendingUserMessageFoundIndex >= 0) {
-          if (Array.isArray(p.content)) {
-            messages = messages.map((historyMessage, index) =>
-              index === pendingUserMessageFoundIndex
-                ? {
-                    ...(historyMessage as Record<string, unknown>),
-                    content: p.content,
-                  }
-                : historyMessage,
-            );
-          }
+        if (pendingUserMessageFoundIndex >= 0 && Array.isArray(p.content)) {
+          messages = messages.map((historyMessage, index) =>
+            index === pendingUserMessageFoundIndex
+              ? {
+                  ...(historyMessage as Record<string, unknown>),
+                  content: p.content,
+                }
+              : historyMessage,
+          );
         }
       }
 
@@ -4983,8 +5016,9 @@ export class ChatController {
               attachment.base64Data,
             ]),
           ]);
-    let goalStartOperation =
-      goalStartSignature ? (this.retainedGoalStartOperations.get(goalStartSignature) ?? null) : null;
+    let goalStartOperation = goalStartSignature
+      ? (this.retainedGoalStartOperations.get(goalStartSignature) ?? null)
+      : null;
     if (goalStartSignature && !goalStartOperation) {
       const encodedIssuedAtMs = /^justdo-(\d{10,16})-/.exec(proposedRunId)?.[1];
       goalStartOperation = {

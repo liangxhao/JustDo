@@ -156,7 +156,7 @@ Exec 和 plugin approval API 分开，pending list 在连接后恢复。session 
 
 ## 15. Runtime patches
 
-当前补丁目录为 `scripts/patches/v2026.8.2/`，仅保留十二个产品缺口：managed Python、通用 Windows MCP runner、Chrome Windows/诊断与空页面恢复、最终 system-prompt replacements、agent metadata、compaction/reviewer purpose、app-start task boundary、manual memory no-cache reindex、原生 exec/plugin approval 可配置等待时限和 plugin approval reviewer detail 转发。权威处置与删除条件以该目录 README 为准。
+当前补丁目录为 `scripts/patches/v2026.8.2/`，仅保留十三个产品缺口：managed Python、通用 Windows MCP runner、Chrome Windows/诊断与空页面恢复、最终 system-prompt replacements、agent metadata、compaction/reviewer purpose、app-start task boundary、manual memory no-cache reindex、原生 exec/plugin approval 可配置等待时限、plugin approval reviewer detail 转发，以及暂停中止后的原生 Goal resume 准入。权威处置与删除条件以该目录 README 为准。
 
 补丁不是传统数据库 migration：每次 runtime 都从锁定的 pristine npm tarball 构建，source lock 同时验证 registry integrity 与 tarball SHA-256。安装、source/worker、esbuild bundle 和 prune 后均验证当前 patch shape；旧 marker 或部分应用状态 fail closed，禁止对旧 JustDo runtime 原地升级。开发态 Electron 会在系统临时目录持有按仓库隔离、带心跳的进程租约；已有开发会话未退出时，新的 runtime prepare 必须在下载或目录替换前失败，避免 Windows 对正在执行的 runtime 进行 rename 而产生延迟 `EPERM`。
 

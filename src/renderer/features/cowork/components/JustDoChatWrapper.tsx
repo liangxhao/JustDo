@@ -79,6 +79,8 @@ export interface JustDoChatWrapperRef {
   registerSessionPromotion: (sourceSessionKey: string, targetSessionKey: string) => void;
   /** Clear sending state (e.g. when session start fails) */
   clearSending: () => void;
+  /** Adopt an accepted Goal resume before its first stream event arrives. */
+  beginGoalResume: (sessionKey: string, runId: string) => void;
   /** Clear the current card only if its completed revision is still current. */
   dismissProgressCard: () => Promise<boolean>;
 }
@@ -172,6 +174,9 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         },
         clearSending: () => {
           controllerRef.current?.clearSending();
+        },
+        beginGoalResume: (sessionKey: string, runId: string) => {
+          controllerRef.current?.beginGoalResume(sessionKey, runId);
         },
         dismissProgressCard: async () => controllerRef.current?.dismissProgressCard() ?? false,
       }),

@@ -12,10 +12,11 @@ import type { GatewayClientLike } from '../../engine/gateway/types';
 
 const CONTINUATION_SYSTEM_PROMPT = [
   'This is an automatic continuation of the active session goal.',
-  'Call get_goal first to confirm that the same goal is still active.',
+  'The host has already confirmed that the same goal is still active.',
   'Review the existing conversation, artifacts, and tool results before acting.',
   'First determine whether the existing evidence already proves the objective is achieved; do not repeat completed work merely to create activity.',
   'If achieved, perform only the verification still needed, then call update_goal with complete and a non-empty concise note describing the evidence; never mark complete without that evidence note.',
+  'After update_goal succeeds, reply with exactly NO_REPLY if the completed results were already clearly summarized for the user earlier; otherwise provide one concise final summary.',
   'If incomplete, advance the next unresolved part with concrete work instead of only restating status or proposing future work.',
   'Call update_goal with blocked only when the same blocking condition has persisted for at least three consecutive goal turns and no meaningful progress remains possible without user input or an external state change.',
   'Before ending the turn, reassess the objective; keep it active only when useful work genuinely remains.',
