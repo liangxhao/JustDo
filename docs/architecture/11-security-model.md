@@ -106,6 +106,8 @@ loopback RPC 被系统代理。代理是本机网络边界，需防任意本地�
 
 - Gateway token 是随机 24-byte hex，存 state `gateway-token`，通过 child env/launch arg 使用；不得写日志。
 - Browser extension relay token 是 32-byte hex，host-local 文件用 exclusive create 和 `0600`，配对复制到剪贴板但 status API不回 token。
+- 新版内置模型不使用长期客户端 key。Main 从登录组件维护的 `user_info.json` 读取最长 5 分钟、非对称签名的 `X-JustDo-JWT` 与 `X-User-Account`，要求 JWT `sub` 匹配账号；`X-Cookie` 留给既有登录/工具权限链路。SQLite 中的 builtin provider 始终写空 `apiKey`，OpenClaw 仅保存指向交接文件的 SecretRef，Gateway env 与 Renderer 不含 JWT。文件轮换调用 `secrets.reload`；logout、临近过期与 shutdown 均 fail closed。JWT 仍可在剩余有效期内重放；彻底防重放需设备密钥绑定。
+- LiteLLM master key 只留在服务端管理面。新版数据面以自定义 Hook 校验 JWT，再从 PostgreSQL 解析唯一 JustDo-managed Team；Team 长期执行模型白名单、blocked、预算和限流，不为新用户创建 Virtual Key。`X-User-Account` 继续映射为 Customer/EndUser，但不能单独授权。历史共享值只在独立 legacy 数据面注册为一枚受限、不可续期的 30 天 Virtual Key，且迁移前必须旋转旧 master key；到期后未升级客户端停止模型服务。
 - `AskUserQuestion` 只通过已认证 Gateway 的 scoped `plugin.ask-user-question.*` event、`askUserQuestion.*` RPC 与固定 Electron IPC 流转；Main 和 extension 都按稳定 id 校验 Renderer 回传，extension pending record 是最终权威。该链路没有额外 HTTP listener、callback secret 或开放端口。
 - Provider API key、proxy password、MCP env、Marketplace内部字段和 auth header 不输出。
 - Renderer encryption helper不能被当作强 secret vault；真正凭证的落盘/传输边界由 Main/provider config负责。

@@ -140,7 +140,8 @@ sequenceDiagram
   M->>M: create default workspace/localfile protocol
   M->>D: open DB, schema/migrations
   M->>D: reset stale session/run state
-  M->>M: restore system proxy and built-in provider
+  M->>M: load short-lived JWT and restore system proxy
+  M->>M: discover the user's built-in models
   M->>C: sync OpenClaw config
   C-->>M: verified config result
   M->>G: start managed Gateway
@@ -155,9 +156,10 @@ sequenceDiagram
 1. 在 module initialization 阶段设置 userData 路径、依赖管理器环境、日志和系统 CA。
 2. IPC handler 可以提前注册，但所有 store getter 在数据库 ready 前会抛错，防止静默使用空状态。
 3. DB 打开后重置上次强退遗留的 running session；open run 的计时从本次启动重新计算，离线时间不计入。
-4. 先恢复代理，再刷新 built-in provider，否则模型发现可能使用错误网络路径。
-5. config sync 成功后才自动启动 Gateway 和 cron polling；失败被记录且新 Cowork admission 会 fail closed。
-6. 窗口创建晚于核心本地服务初始化，UI 不会在数据库不可用时假装 ready。
+4. 从 `user_info.json` 加载最长 5 分钟的 `X-JustDo-JWT` 和账号标识；JWT `sub` 必须匹配账号，缺失、不安全或临近过期时 fail closed，`X-Cookie` 不参与模型认证。
+5. 先恢复代理，再刷新 built-in provider，否则模型发现可能使用错误网络路径。
+6. config sync 成功后才自动启动 Gateway 和 cron polling；失败被记录且新 Cowork admission 会 fail closed。
+7. 窗口创建晚于核心本地服务初始化，UI 不会在数据库不可用时假装 ready。
 
 ## 7. Cowork 数据流
 
@@ -184,7 +186,7 @@ Start/continue handler 先等待待处理配置更新并确保 Gateway 的全局
 
 退出由统一 shutdown coordinator 保证只执行一次：
 
-1. 停止 customer registration、tray 和 cron polling，阻止新后台工作。
+1. 清除内存中的内置模型 JWT，停止凭据文件监听、tray 和 cron polling，阻止新后台工作。
 2. 停止全部 Cowork session。
 3. 停止 Gateway，使其不再发起 extension/tool 调用。
 4. 停止 outbound-header proxy。

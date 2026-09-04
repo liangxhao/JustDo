@@ -1,10 +1,38 @@
-import { afterEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import type { SqliteStore } from '../data/sqliteStore';
+import {
+  clearActiveBuiltinModelCredential,
+  setActiveBuiltinModelCredential,
+} from './builtinModelCredential';
 import { BuiltinModelAccess, syncBuiltinModelProvider } from './builtinModelProvider';
 
+const createCredential = () => {
+  const nowSeconds = Math.floor(Date.now() / 1_000);
+  const encode = (value: unknown): string =>
+    Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
+  const accessToken = [
+    encode({ alg: 'RS256', kid: 'login-key-1' }),
+    encode({
+      iss: 'https://login.example.test',
+      aud: 'justdo-litellm',
+      sub: 'user-123',
+      iat: nowSeconds,
+      exp: nowSeconds + 300,
+      jti: 'token-1',
+    }),
+    'test-signature',
+  ].join('.');
+  return { accessToken, userAccount: 'user-123', expiresAt: nowSeconds + 300 };
+};
+
 describe('syncBuiltinModelProvider', () => {
+  beforeEach(() => {
+    setActiveBuiltinModelCredential(createCredential());
+  });
+
   afterEach(() => {
+    clearActiveBuiltinModelCredential();
     vi.unstubAllGlobals();
   });
 
@@ -44,31 +72,39 @@ describe('syncBuiltinModelProvider', () => {
       get: vi.fn(() => ({})),
       set,
     } as unknown as SqliteStore;
-    vi.stubGlobal(
-      'fetch',
-      vi
-        .fn()
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({
-            data: [{ id: 'chat-model' }, { id: 'embedding-z' }, { id: 'embedding-a' }],
-          }),
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({
-            data: [
-              { model_name: 'chat-model', model_info: { mode: 'chat' } },
-              { model_name: 'embedding-z', model_info: { mode: 'embedding' } },
-              { model_name: 'embedding-a', model_info: { mode: 'embedding' } },
-            ],
-          }),
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: [{ id: 'chat-model' }, { id: 'embedding-z' }, { id: 'embedding-a' }],
         }),
-    );
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: [
+            { model_name: 'chat-model', model_info: { mode: 'chat' } },
+            { model_name: 'embedding-z', model_info: { mode: 'embedding' } },
+            { model_name: 'embedding-a', model_info: { mode: 'embedding' } },
+          ],
+        }),
+      });
+    vi.stubGlobal('fetch', fetchMock);
 
     await syncBuiltinModelProvider(store, { access: BuiltinModelAccess.Enabled });
 
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const [, requestInit] of fetchMock.mock.calls) {
+      expect(requestInit?.headers).toEqual({
+        Authorization: 'Bearer justdo-jwt-auth',
+        'X-JustDo-JWT': expect.stringMatching(/^[^.]+\.[^.]+\.[^.]+$/),
+        'X-User-Account': 'user-123',
+      });
+    }
     const savedConfig = set.mock.calls[0]?.[1];
+    expect(savedConfig.providers.builtin_models.apiKey).toBe('');
+    expect(JSON.stringify(savedConfig)).not.toContain('test-signature');
     expect(savedConfig.providers.builtin_models.models).toEqual([
       expect.objectContaining({ id: 'chat-model' }),
     ]);
@@ -149,6 +185,41 @@ describe('syncBuiltinModelProvider', () => {
       providers: {
         custom_0: appConfig.providers.custom_0,
       },
+    });
+  });
+
+  test('removes the built-in provider without fetching when the user credential is missing', async () => {
+    clearActiveBuiltinModelCredential();
+    const appConfig = {
+      api: { key: 'cached-key', baseUrl: 'https://cached.example.com/v1' },
+      model: {
+        defaultModel: 'cached-model',
+        defaultModelProvider: 'builtin_models',
+      },
+      providers: {
+        builtin_models: {
+          enabled: true,
+          apiKey: 'cached-key',
+          baseUrl: 'https://cached.example.com/v1',
+          models: [{ id: 'cached-model', name: 'Cached model' }],
+        },
+      },
+    };
+    const set = vi.fn();
+    const store = {
+      get: vi.fn(() => appConfig),
+      set,
+    } as unknown as SqliteStore;
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await syncBuiltinModelProvider(store, { access: BuiltinModelAccess.Enabled });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(set).toHaveBeenCalledWith('app_config', {
+      ...appConfig,
+      api: { ...appConfig.api, key: '' },
+      providers: {},
     });
   });
 

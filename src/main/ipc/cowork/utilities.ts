@@ -6,11 +6,14 @@ import {
 } from '../../../shared/cowork/sessionTitle';
 import { saveCoworkApiConfig } from '../../cowork/coworkConfigStore';
 import { probeCoworkModelReadiness } from '../../cowork/coworkModelReadiness';
-import { getCurrentApiConfig, resolveCurrentApiConfig } from '../../cowork/providerApiConfig';
+import { resolveRendererApiConfig } from '../../cowork/providerApiConfig';
 import type { CoworkGenerateTitleOptions } from '../../engine/types';
 
 interface TitleGenerator {
-  generateTitle?: (userInput: string | null, options?: CoworkGenerateTitleOptions) => Promise<string>;
+  generateTitle?: (
+    userInput: string | null,
+    options?: CoworkGenerateTitleOptions,
+  ) => Promise<string>;
 }
 
 interface CoworkUtilitiesHandlerOptions {
@@ -51,11 +54,11 @@ export const registerCoworkUtilityHandlers = ({
   });
 
   ipcMain.handle('get-api-config', async () => {
-    return getCurrentApiConfig();
+    return resolveRendererApiConfig().config;
   });
 
   ipcMain.handle('check-api-config', async (_event, options?: { probeModel?: boolean }) => {
-    const { config, error } = resolveCurrentApiConfig();
+    const { config, error } = resolveRendererApiConfig();
     if (config && options?.probeModel) {
       const probe = await probeCoworkModelReadiness();
       if (probe.ok === false) {

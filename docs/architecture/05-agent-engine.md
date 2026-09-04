@@ -90,7 +90,7 @@ OpenClaw model ref 必须是 `provider/model-id`。启动迁移规则：
 
 ## 7. Built-in model 生命周期
 
-`BuiltinModelLifecycle` 与 `syncBuiltinModelProvider` 管理内置 provider。当前启动保持 access enabled，未来认证 login/logout 通过同一入口切换。刷新会获取可用模型、更新 `app_config.providers`、通知 Renderer，并触发 OpenClaw config sync。刷新失败不能删除上一次可用配置，也不能记录凭证。
+`BuiltinModelLifecycle` 与 `syncBuiltinModelProvider` 管理内置 provider。启动和 login refresh 只有在 Main 从 `user_info.json` 取得最长 5 分钟、`sub` 匹配账号的 `X-JustDo-JWT` 后才启用；`X-Cookie` 不参与模型认证。缺失凭据时删除 provider 且不发请求。刷新从 LiteLLM 获取 JWT 身份所属长期 Team 的可见模型、更新不含凭据的 `app_config.providers`、通知 Renderer，并触发 OpenClaw config sync。JWT 只留在登录交接文件和 Main 内存；OpenClaw provider 与 memory search 使用 file SecretRef，Gateway env 和配置文件都不含明文。文件变化触发模型刷新与 `secrets.reload`，未续签则在到期前 fail closed。发现失败会清空模型投影，避免跨账号沿用旧目录。
 
 内置模型服务的 OpenAI-compatible 响应契约要求：完整结构化 `tool_calls` 的最终 `finish_reason` 必须是 `tool_calls`；普通文本、不完整参数或未知工具不能被服务推断为调用。JustDo 不再用通用 runtime patch 放宽第三方 provider；第三方响应继续遵守 OpenClaw 原生的 visible-text + stop 安全策略。
 

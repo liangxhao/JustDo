@@ -2,9 +2,14 @@ import {
   getEffectiveCustomProviderDisplayName,
   isJustDoCustomProviderKey,
   normalizeOpenClawProviderId,
+  ProviderName,
   validateCustomProviderDisplayName,
 } from '../../shared/providers';
 import type { SqliteStore } from '../data/sqliteStore';
+import {
+  BUILTIN_MODEL_AUTHORIZATION_PLACEHOLDER,
+  getActiveBuiltinModelCredential,
+} from './builtinModelCredential';
 import type { CoworkApiConfig } from './coworkConfigStore';
 
 type ProviderModel = {
@@ -72,9 +77,17 @@ type MatchedProvider = {
   maxTokens?: number;
 };
 
-function providerRequiresApiKey(providerName: string): boolean {
-  return providerName !== 'builtin_models';
-}
+const resolveProviderApiKey = (providerName: string, providerConfig: ProviderConfig): string =>
+  providerName === ProviderName.BuiltinModels
+    ? getActiveBuiltinModelCredential()
+      ? BUILTIN_MODEL_AUTHORIZATION_PLACEHOLDER
+      : ''
+    : providerConfig.apiKey?.trim() || '';
+
+const providerCredentialError = (providerName: string): string =>
+  providerName === ProviderName.BuiltinModels
+    ? 'Built-in model authentication is unavailable.'
+    : `Provider ${providerName} requires API key.`;
 
 function resolveMatchedProvider(appConfig: AppConfig): {
   matched: MatchedProvider | null;
@@ -88,7 +101,11 @@ function resolveMatchedProvider(appConfig: AppConfig): {
     modelId: string;
   } | null => {
     for (const [providerName, providerConfig] of Object.entries(providers)) {
-      if (!providerConfig?.enabled || !providerConfig.models?.length) {
+      if (
+        !providerConfig?.enabled ||
+        !providerConfig.models?.length ||
+        !resolveProviderApiKey(providerName, providerConfig)
+      ) {
         continue;
       }
       const fallbackModel = providerConfig.models.find(
@@ -122,15 +139,17 @@ function resolveMatchedProvider(appConfig: AppConfig): {
     const preferredProvider = providers[preferredProviderName];
     if (
       preferredProvider?.enabled &&
+      resolveProviderApiKey(preferredProviderName, preferredProvider) &&
       preferredProvider.models?.some(model => isProviderModelEnabled(model) && model.id === modelId)
     ) {
       providerEntry = [preferredProviderName, preferredProvider];
     }
   }
 
-  providerEntry ??= Object.entries(providers).find(([, provider]) => {
+  providerEntry ??= Object.entries(providers).find(([providerName, provider]) => {
     return (
       !!provider?.enabled &&
+      Boolean(resolveProviderApiKey(providerName, provider)) &&
       !!provider.models?.some(model => isProviderModelEnabled(model) && model.id === modelId)
     );
   });
@@ -138,6 +157,17 @@ function resolveMatchedProvider(appConfig: AppConfig): {
   if (!providerEntry) {
     const fallback = resolveFallbackModel();
     if (!fallback) {
+      const unavailableProviderName = Object.entries(providers).find(
+        ([, provider]) =>
+          provider?.enabled &&
+          provider.models?.some(model => isProviderModelEnabled(model) && model.id === modelId),
+      )?.[0];
+      if (unavailableProviderName) {
+        return {
+          matched: null,
+          error: providerCredentialError(unavailableProviderName),
+        };
+      }
       return { matched: null, error: `No enabled provider found for model: ${modelId}` };
     }
     modelId = fallback.modelId;
@@ -150,8 +180,8 @@ function resolveMatchedProvider(appConfig: AppConfig): {
     return { matched: null, error: `Provider ${providerName} is missing base URL.` };
   }
 
-  if (providerRequiresApiKey(providerName) && !providerConfig.apiKey?.trim()) {
-    return { matched: null, error: `Provider ${providerName} requires API key.` };
+  if (!resolveProviderApiKey(providerName, providerConfig)) {
+    return { matched: null, error: providerCredentialError(providerName) };
   }
 
   const matchedModel = providerConfig.models?.find(
@@ -188,9 +218,7 @@ export function resolveCurrentApiConfig(): ApiConfigResolution {
     return { config: null, error };
   }
 
-  const apiKey = matched.providerConfig.apiKey?.trim() || '';
-  const effectiveApiKey =
-    apiKey || (!providerRequiresApiKey(matched.providerName) ? 'sk-justdo-local' : '');
+  const effectiveApiKey = resolveProviderApiKey(matched.providerName, matched.providerConfig);
 
   return {
     config: {
@@ -210,8 +238,21 @@ export function resolveCurrentApiConfig(): ApiConfigResolution {
   };
 }
 
-export function getCurrentApiConfig(): CoworkApiConfig | null {
-  return resolveCurrentApiConfig().config;
+export function resolveRendererApiConfig(): ApiConfigResolution {
+  const resolution = resolveCurrentApiConfig();
+  if (
+    !resolution.config ||
+    resolution.providerMetadata?.providerName !== ProviderName.BuiltinModels
+  ) {
+    return resolution;
+  }
+  return {
+    ...resolution,
+    config: {
+      ...resolution.config,
+      apiKey: '',
+    },
+  };
 }
 
 export function resolveRawApiConfig(): ApiConfigResolution {
@@ -237,9 +278,7 @@ export function resolveRawApiConfig(): ApiConfigResolution {
     return { config: null, error };
   }
 
-  const apiKey = matched.providerConfig.apiKey?.trim() || '';
-  const effectiveApiKey =
-    apiKey || (!providerRequiresApiKey(matched.providerName) ? 'sk-justdo-local' : '');
+  const effectiveApiKey = resolveProviderApiKey(matched.providerName, matched.providerConfig);
   const providerSignature = `${matched.providerName}:${matched.modelId}:${matched.providerConfig.apiFormat ?? 'unknown'}`;
   if (providerSignature !== lastLoggedProviderSignature) {
     lastLoggedProviderSignature = providerSignature;
@@ -275,10 +314,10 @@ export function resolveAllProviderApiKeys(): Record<string, string> {
 
   for (const [providerName, providerConfig] of Object.entries(providers)) {
     if (!providerConfig?.enabled) continue;
-    const apiKey = providerConfig.apiKey?.trim();
-    if (!apiKey && providerRequiresApiKey(providerName)) continue;
+    const apiKey = resolveProviderApiKey(providerName, providerConfig);
+    if (!apiKey) continue;
     const envName = providerName.toUpperCase().replace(/[^A-Z0-9]/g, '_');
-    result[envName] = apiKey || 'sk-justdo-local';
+    result[envName] = apiKey;
   }
 
   return result;
@@ -365,8 +404,8 @@ export function resolveAllEnabledProviderConfigs(): ProviderRawConfig[] {
   for (const [providerName, providerConfig] of Object.entries(providers)) {
     if (!providerConfig?.enabled) continue;
 
-    const apiKey = providerConfig.apiKey?.trim() || '';
-    if (!apiKey && providerRequiresApiKey(providerName)) continue;
+    const apiKey = resolveProviderApiKey(providerName, providerConfig);
+    if (!apiKey) continue;
 
     const baseURL = providerConfig.baseUrl?.trim() || '';
     if (!baseURL) continue;
@@ -382,7 +421,7 @@ export function resolveAllEnabledProviderConfigs(): ProviderRawConfig[] {
     result.push({
       providerName,
       baseURL,
-      apiKey: apiKey || 'sk-justdo-local',
+      apiKey,
       apiType: 'openai',
       models,
       embeddingModels,

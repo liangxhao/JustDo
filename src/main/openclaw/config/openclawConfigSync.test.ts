@@ -130,7 +130,11 @@ describe('OpenClaw provider config', () => {
       model: 'embedding-a',
       remote: {
         baseUrl: 'http://127.0.0.1:4000/v1',
-        apiKey: '${JUSTDO_APIKEY_BUILTIN_MODELS}',
+        apiKey: {
+          source: 'file',
+          provider: 'justdo_login',
+          id: '/X-JustDo-JWT',
+        },
         headers: {
           'User-Agent': 'OpenAI/JS 6.39.1',
         },
@@ -168,6 +172,34 @@ describe('OpenClaw provider config', () => {
     expect(selection.providerConfig.models).toHaveLength(1);
     expect(selection.providerConfig.models[0]?.compat).toEqual({
       supportsUsageInStreaming: true,
+    });
+  });
+
+  test('adds JWT identity placeholders only to the built-in provider', () => {
+    const selection = buildProviderSelection({
+      apiKey: 'justdo-jwt-auth',
+      baseURL: 'https://models.example.test/v1',
+      modelId: 'team-model',
+      apiType: 'openai',
+      providerName: ProviderName.BuiltinModels,
+    });
+
+    expect(selection.providerConfig.headers).toEqual({
+      'X-JustDo-JWT': {
+        source: 'file',
+        provider: 'justdo_login',
+        id: '/X-JustDo-JWT',
+      },
+      'X-User-Account': {
+        source: 'file',
+        provider: 'justdo_login',
+        id: '/X-User-Account',
+      },
+    });
+    expect(selection.providerConfig.apiKey).toEqual({
+      source: 'file',
+      provider: 'justdo_login',
+      id: '/X-JustDo-JWT',
     });
   });
 

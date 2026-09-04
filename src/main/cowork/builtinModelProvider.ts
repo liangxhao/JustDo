@@ -8,6 +8,11 @@ import {
   parseProviderModelsResponse,
 } from '../../shared/providers/modelDiscovery';
 import type { SqliteStore } from '../data/sqliteStore';
+import {
+  buildBuiltinModelRequestHeaders,
+  type BuiltinModelCredential,
+  getActiveBuiltinModelCredential,
+} from './builtinModelCredential';
 import { BUILTIN_MODEL_PROVIDER_CONFIG } from './builtinModelProviderConfig';
 
 type ProviderModel = {
@@ -45,7 +50,6 @@ type AppConfig = {
 
 type BuiltinProviderFile = {
   enabled?: boolean;
-  apiKey?: string;
   baseUrl?: string;
 };
 
@@ -85,7 +89,6 @@ const isCurrentBuiltinModelSync = (store: SqliteStore, state: BuiltinModelSyncSt
 export function readBuiltinModelProviderFile(): BuiltinProviderFile | null {
   return {
     enabled: BUILTIN_MODEL_PROVIDER_CONFIG.enabled,
-    apiKey: BUILTIN_MODEL_PROVIDER_CONFIG.apiKey.trim(),
     baseUrl: normalizeModelProviderBaseUrl(BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl),
   };
 }
@@ -100,10 +103,10 @@ const compareModelIds = (left: ProviderModel, right: ProviderModel): number =>
 
 async function fetchBuiltinModels(
   baseUrl: string,
-  apiKey: string,
+  credential: BuiltinModelCredential,
   signal: AbortSignal,
 ): Promise<BuiltinModels> {
-  const headers = apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined;
+  const headers = buildBuiltinModelRequestHeaders(credential);
   const modelsResponse = await fetch(buildProviderModelsUrl(baseUrl), { headers, signal });
   if (!modelsResponse.ok) {
     throw new Error(`GET /models failed with ${modelsResponse.status}`);
@@ -136,17 +139,33 @@ export async function syncBuiltinModelProvider(
   options: SyncBuiltinModelProviderOptions,
 ): Promise<void> {
   const fileConfig = readBuiltinModelProviderFile();
+  const credential = getActiveBuiltinModelCredential();
   const shouldEnable =
     options?.access === BuiltinModelAccess.Enabled &&
     fileConfig?.enabled === true &&
-    Boolean(fileConfig.baseUrl);
+    Boolean(fileConfig.baseUrl) &&
+    credential !== null;
   const syncState = beginBuiltinModelSync(store, shouldEnable);
   const appConfig = store.get<AppConfig>('app_config') || {};
   const providers = { ...(appConfig.providers ?? {}) };
+  const previousBuiltinApiKey = providers[ProviderName.BuiltinModels]?.apiKey?.trim() || '';
+  const shouldClearLegacyApiKey =
+    appConfig.model?.defaultModelProvider === ProviderName.BuiltinModels ||
+    (Boolean(previousBuiltinApiKey) && appConfig.api?.key === previousBuiltinApiKey);
+  const sanitizedApi = appConfig.api
+    ? {
+        ...appConfig.api,
+        ...(shouldClearLegacyApiKey ? { key: '' } : {}),
+      }
+    : undefined;
 
-  if (!shouldEnable || !fileConfig?.baseUrl) {
+  if (!shouldEnable || !fileConfig?.baseUrl || !credential) {
     delete providers[ProviderName.BuiltinModels];
-    store.set('app_config', { ...appConfig, providers });
+    store.set('app_config', {
+      ...appConfig,
+      ...(sanitizedApi ? { api: sanitizedApi } : {}),
+      providers,
+    });
     return;
   }
 
@@ -155,7 +174,7 @@ export async function syncBuiltinModelProvider(
   try {
     const fetchedModels = await fetchBuiltinModels(
       fileConfig.baseUrl,
-      fileConfig.apiKey ?? '',
+      credential,
       syncState.controller!.signal,
     );
     if (!isCurrentBuiltinModelSync(store, syncState)) {
@@ -183,7 +202,7 @@ export async function syncBuiltinModelProvider(
 
   providers[ProviderName.BuiltinModels] = {
     enabled: true,
-    apiKey: fileConfig.apiKey ?? '',
+    apiKey: '',
     baseUrl: fileConfig.baseUrl,
     apiFormat: 'openai',
     readonly: true,
@@ -201,7 +220,7 @@ export async function syncBuiltinModelProvider(
     ...appConfig,
     api: {
       ...appConfig.api,
-      key: appConfig.api?.key || fileConfig.apiKey || '',
+      key: shouldClearLegacyApiKey ? '' : appConfig.api?.key || '',
       baseUrl: appConfig.api?.baseUrl || fileConfig.baseUrl,
     },
     model: nextModel,

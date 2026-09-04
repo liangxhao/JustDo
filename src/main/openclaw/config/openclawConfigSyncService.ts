@@ -29,6 +29,7 @@ type OpenClawConfigSyncServiceDeps = {
   connectGatewayClient: () => Promise<void>;
   requestGateway: <T>(method: string, params?: unknown) => Promise<T>;
   getBrowserMode?: () => BrowserMode;
+  getBuiltinModelCredentialPath?: () => string;
 };
 
 type SyncOpenClawConfigOptions = {
@@ -875,6 +876,7 @@ export class OpenClawConfigSyncService {
         getHooks: () => this.deps.getHookStore().listHooks(),
         getAgents: () => this.deps.getCoworkStore().listAgents(),
         getBrowserMode: this.deps.getBrowserMode,
+        getBuiltinModelCredentialPath: this.deps.getBuiltinModelCredentialPath,
       });
     }
     return this.configSync;

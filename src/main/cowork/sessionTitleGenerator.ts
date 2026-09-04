@@ -1,4 +1,6 @@
 import { buildOpenAIJsonRequestHeaders } from '../../shared/cowork/modelRequestHeaders';
+import { ProviderName } from '../../shared/providers';
+import { getBuiltinModelRequestHeaders } from './builtinModelCredential';
 import {
   buildOpenAIChatCompletionsUrl,
   extractApiErrorSnippet,
@@ -40,7 +42,11 @@ export interface SessionTitleGenerationOptions {
 }
 
 export interface SessionTitleGeneratorCallbacks {
-  resolveApiConfig(): { config: SessionTitleApiConfig | null; error?: string };
+  resolveApiConfig(): {
+    config: SessionTitleApiConfig | null;
+    error?: string;
+    providerMetadata?: { providerName?: string };
+  };
   fetch?: SessionTitleFetch;
 }
 
@@ -99,6 +105,13 @@ export class SessionTitleGenerator {
         ],
       });
       const headers = buildOpenAIJsonRequestHeaders(body, apiKey);
+      if (resolution.providerMetadata?.providerName === ProviderName.BuiltinModels) {
+        const builtinHeaders = getBuiltinModelRequestHeaders();
+        if (!builtinHeaders) {
+          return fallbackTitle;
+        }
+        Object.assign(headers, builtinHeaders);
+      }
 
       const response = await (this.callbacks.fetch ?? fetch)(
         buildOpenAIChatCompletionsUrl(baseURL),

@@ -24,6 +24,10 @@ import {
   ProviderName,
 } from '../../../shared/providers';
 import { ScheduledTaskAgentId } from '../../../shared/scheduledTask/constants';
+import {
+  BUILTIN_MODEL_JWT_FIELD,
+  BUILTIN_MODEL_USER_ACCOUNT_FIELD,
+} from '../../cowork/builtinModelCredential';
 import type { ProviderRawConfig } from '../../cowork/providerApiConfig';
 import {
   getProviderDisplayNameMap,
@@ -310,11 +314,57 @@ const containsBuiltinModelRef = (value: unknown): boolean => {
 };
 
 const BUILTIN_MODELS_API_KEY_PLACEHOLDER = '${JUSTDO_APIKEY_BUILTIN_MODELS}';
+const BUILTIN_MODEL_SECRET_PROVIDER_ID = 'justdo_login';
+
+type OpenClawFileSecretRef = Readonly<{
+  source: 'file';
+  provider: typeof BUILTIN_MODEL_SECRET_PROVIDER_ID;
+  id: string;
+}>;
+
+const buildBuiltinModelSecretRef = (fieldName: string): OpenClawFileSecretRef => ({
+  source: 'file',
+  provider: BUILTIN_MODEL_SECRET_PROVIDER_ID,
+  id: `/${fieldName}`,
+});
+
+const buildBuiltinModelOpenClawHeaders = (): Record<string, OpenClawFileSecretRef> => ({
+  [BUILTIN_MODEL_JWT_FIELD]: buildBuiltinModelSecretRef(BUILTIN_MODEL_JWT_FIELD),
+  [BUILTIN_MODEL_USER_ACCOUNT_FIELD]: buildBuiltinModelSecretRef(
+    BUILTIN_MODEL_USER_ACCOUNT_FIELD,
+  ),
+});
+
+const buildManagedOpenClawSecrets = (
+  existingConfig: Record<string, unknown> | null,
+  builtinModelEnabled: boolean,
+  userInfoPath: string,
+): Record<string, unknown> => {
+  const existingSecrets = isRecord(existingConfig?.secrets) ? existingConfig.secrets : {};
+  const existingProviders = isRecord(existingSecrets.providers)
+    ? existingSecrets.providers
+    : {};
+  const providers = { ...existingProviders };
+  delete providers[BUILTIN_MODEL_SECRET_PROVIDER_ID];
+  if (builtinModelEnabled) {
+    providers[BUILTIN_MODEL_SECRET_PROVIDER_ID] = {
+      source: 'file',
+      path: userInfoPath,
+      mode: 'json',
+    };
+  }
+  const secrets = { ...existingSecrets, providers };
+  if (Object.keys(providers).length === 0) {
+    delete secrets.providers;
+  }
+  return secrets;
+};
 
 const containsBuiltinMemorySearchRef = (value: unknown): boolean =>
   containsBuiltinModelRef(value) ||
   (typeof value === 'string'
-    ? value.includes(BUILTIN_MODELS_API_KEY_PLACEHOLDER)
+    ? value.includes(BUILTIN_MODELS_API_KEY_PLACEHOLDER) ||
+      value === BUILTIN_MODEL_SECRET_PROVIDER_ID
     : Array.isArray(value)
       ? value.some(containsBuiltinMemorySearchRef)
       : isRecord(value) && Object.values(value).some(containsBuiltinMemorySearchRef));
@@ -458,10 +508,13 @@ export const verifyLoggedOutOpenClawConfig = (
     };
   }
 
-  if (content.includes(BUILTIN_MODELS_API_KEY_PLACEHOLDER)) {
+  if (
+    content.includes(BUILTIN_MODELS_API_KEY_PLACEHOLDER) ||
+    content.includes(BUILTIN_MODEL_SECRET_PROVIDER_ID)
+  ) {
     return {
       ok: false,
-      error: `OpenClaw logout config verification failed at ${configPath}: built-in API key placeholder remains.`,
+      error: `OpenClaw logout config verification failed at ${configPath}: built-in authentication placeholder remains.`,
     };
   }
 
@@ -588,6 +641,9 @@ const buildAuthScopedOpenClawConfig = (
     ? canonicalExistingConfig.models
     : {};
   const managedModels = isRecord(managedConfig.models) ? managedConfig.models : {};
+  const managedSecrets = isRecord(managedConfig.secrets)
+    ? managedConfig.secrets
+    : buildManagedOpenClawSecrets(canonicalExistingConfig, false, '');
   const existingProviders = isRecord(existingModels.providers)
     ? existingModels.providers
     : {};
@@ -764,8 +820,9 @@ const buildAuthScopedOpenClawConfig = (
     delete models.providers;
   }
 
-  return sanitizeOpenClawV2026_8_2Config({
+  const result = sanitizeOpenClawV2026_8_2Config({
     ...canonicalExistingConfig,
+    secrets: managedSecrets,
     models,
     agents: {
       ...existingAgents,
@@ -781,6 +838,10 @@ const buildAuthScopedOpenClawConfig = (
     ...(existingTools ? { tools: removeRetiredManagedToolDenyEntries(existingTools) } : {}),
     ...(isRecord(managedConfig.meta) ? { meta: managedConfig.meta } : {}),
   });
+  if (Object.keys(managedSecrets).length === 0) {
+    delete result.secrets;
+  }
+  return result;
 };
 
 const RESERVED_PLUGIN_SLOT_VALUES = new Set(['legacy', 'none']);
@@ -1238,8 +1299,9 @@ type OpenClawProviderSelection = {
   providerConfig: {
     baseUrl: string;
     api: OpenClawProviderApi;
-    apiKey: string;
+    apiKey: string | OpenClawFileSecretRef;
     auth: 'api-key';
+    headers?: Record<string, string | OpenClawFileSecretRef>;
     timeoutSeconds: number;
     models: Array<{
       id: string;
@@ -1345,10 +1407,13 @@ export const buildProviderSelection = (options: {
   let baseUrl =
     descriptor.resolveRuntimeBaseUrl?.() ?? descriptor.normalizeBaseUrl(options.baseURL);
   const api = OpenClawApiConst.OpenAICompletions as OpenClawProviderApi;
-  // apiKey placeholder still uses original providerName for env var consistency
-  const apiKey = descriptor.resolveApiKey
-    ? descriptor.resolveApiKey({ apiKey: options.apiKey, providerName })
-    : `\${${providerApiKeyEnvVar(providerName)}}`;
+  // Built-in auth is a file SecretRef; custom providers retain env placeholders.
+  const apiKey =
+    providerName === ProviderName.BuiltinModels
+      ? buildBuiltinModelSecretRef(BUILTIN_MODEL_JWT_FIELD)
+      : descriptor.resolveApiKey
+        ? descriptor.resolveApiKey({ apiKey: options.apiKey, providerName })
+        : `\${${providerApiKeyEnvVar(providerName)}}`;
   const sessionModelId = descriptor.resolveSessionModelId
     ? descriptor.resolveSessionModelId(options.modelId)
     : options.modelId;
@@ -1379,6 +1444,9 @@ export const buildProviderSelection = (options: {
       api,
       apiKey,
       auth: 'api-key' as const,
+      ...(providerName === ProviderName.BuiltinModels
+        ? { headers: buildBuiltinModelOpenClawHeaders() }
+        : {}),
       timeoutSeconds: OPENCLAW_MODEL_PROVIDER_TIMEOUT_SECONDS,
       models: [
         {
@@ -1406,8 +1474,8 @@ type ManagedMemorySearchConfig =
       model: string;
       remote: {
         baseUrl: string;
-        apiKey: string;
-        headers: Record<string, string>;
+        apiKey: string | OpenClawFileSecretRef;
+        headers: Record<string, string | OpenClawFileSecretRef>;
       };
     }
   | { enabled: false };
@@ -1547,6 +1615,7 @@ type OpenClawConfigSyncDeps = {
   getHooks?: () => OpenClawHookRecord[];
   getAgents?: () => Agent[];
   getBrowserMode?: () => BrowserModeValue;
+  getBuiltinModelCredentialPath?: () => string;
 };
 
 export class OpenClawConfigSync {
@@ -1557,6 +1626,7 @@ export class OpenClawConfigSync {
   private readonly getHooks?: () => OpenClawHookRecord[];
   private readonly getAgents?: () => Agent[];
   private readonly getBrowserMode?: () => BrowserModeValue;
+  private readonly getBuiltinModelCredentialPath: () => string;
 
   constructor(deps: OpenClawConfigSyncDeps) {
     this.engineManager = deps.engineManager;
@@ -1567,6 +1637,9 @@ export class OpenClawConfigSync {
     this.getHooks = deps.getHooks;
     this.getAgents = deps.getAgents;
     this.getBrowserMode = deps.getBrowserMode;
+    this.getBuiltinModelCredentialPath =
+      deps.getBuiltinModelCredentialPath ??
+      (() => path.join(this.engineManager.getStateDir(), 'justdo-user-info.json'));
   }
 
   sync(reason: string): OpenClawConfigSyncResult {
@@ -1737,6 +1810,14 @@ export class OpenClawConfigSync {
       mode: 'replace',
       providers: allProvidersMap,
     };
+    const managedSecrets = buildManagedOpenClawSecrets(
+      existingConfig,
+      Object.prototype.hasOwnProperty.call(
+        allProvidersMap,
+        OpenClawProviderId.BuiltinModels,
+      ),
+      this.getBuiltinModelCredentialPath(),
+    );
     const availableModelRefs = new Set(
       Object.entries(allProvidersMap).flatMap(([providerId, provider]) =>
         provider.models.map(model => `${providerId}/${model.id}`),
@@ -1752,6 +1833,7 @@ export class OpenClawConfigSync {
         },
       },
       models: managedModels,
+      ...(Object.keys(managedSecrets).length > 0 ? { secrets: managedSecrets } : {}),
       diagnostics: {
         otel: {
           enabled: false,
@@ -1928,6 +2010,7 @@ export class OpenClawConfigSync {
     // never changes env vars and avoids gateway process restarts.
     const allApiKeys = resolveAllProviderApiKeys();
     for (const [envSuffix, apiKey] of Object.entries(allApiKeys)) {
+      if (envSuffix === 'BUILTIN_MODELS') continue;
       env[`JUSTDO_APIKEY_${envSuffix}`] = apiKey;
     }
     // Legacy fallback: keep JUSTDO_PROVIDER_API_KEY set to a stable value so stale

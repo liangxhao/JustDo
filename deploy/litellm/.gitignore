@@ -1,0 +1,4 @@
+.env
+groups.json
+.pytest_cache/
+__pycache__/

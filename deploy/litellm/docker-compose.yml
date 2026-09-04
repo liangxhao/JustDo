@@ -1,0 +1,65 @@
+name: justdo-litellm
+
+services:
+  db:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-litellm}
+      POSTGRES_USER: ${POSTGRES_USER:-litellm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - litellm-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  litellm-legacy:
+    image: ghcr.io/berriai/litellm:v1.99.1
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ['--config', '/app/config.yaml', '--port', '4000', '--num_workers', '4']
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?set LITELLM_MASTER_KEY in .env}
+      MINIMUM_CUSTOM_KEY_LENGTH: ${MINIMUM_CUSTOM_KEY_LENGTH:-16}
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+
+  litellm-jwt:
+    image: ghcr.io/berriai/litellm:v1.99.1
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ['--config', '/app/config.yaml', '--port', '4000', '--num_workers', '2']
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?set LITELLM_MASTER_KEY in .env}
+      JUSTDO_JWT_ISSUER: ${JUSTDO_JWT_ISSUER:?set JUSTDO_JWT_ISSUER in .env}
+      JUSTDO_JWT_AUDIENCE: ${JUSTDO_JWT_AUDIENCE:?set JUSTDO_JWT_AUDIENCE in .env}
+      JUSTDO_JWT_JWKS_URL: ${JUSTDO_JWT_JWKS_URL:?set JUSTDO_JWT_JWKS_URL in .env}
+      JUSTDO_JWT_ALGORITHMS: ${JUSTDO_JWT_ALGORITHMS:-RS256}
+      JUSTDO_JWT_MAX_LIFETIME_SECONDS: ${JUSTDO_JWT_MAX_LIFETIME_SECONDS:-300}
+      JUSTDO_JWT_CLOCK_SKEW_SECONDS: ${JUSTDO_JWT_CLOCK_SKEW_SECONDS:-30}
+    volumes:
+      - ./config.jwt.yaml:/app/config.yaml:ro
+      - ./custom_auth.py:/app/custom_auth.py:ro
+
+  gateway:
+    image: nginx:1.29.1-alpine
+    restart: unless-stopped
+    depends_on:
+      - litellm-legacy
+      - litellm-jwt
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - '${LITELLM_PORT:-9108}:4000'
+
+volumes:
+  litellm-postgres:

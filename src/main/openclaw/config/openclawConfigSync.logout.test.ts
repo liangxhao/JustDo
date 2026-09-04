@@ -6,6 +6,10 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import { BrowserMode, type BrowserMode as BrowserModeValue } from '../../../shared/browser';
 import { BuiltinModelSyncReason } from '../../../shared/builtinModels';
 import { createDefaultAgentRuntimeSettings } from '../../../shared/openclaw/agentRuntimeSettings';
+import {
+  clearActiveBuiltinModelCredential,
+  setActiveBuiltinModelCredential,
+} from '../../cowork/builtinModelCredential';
 import { setStoreGetter } from '../../cowork/providerApiConfig';
 import {
   OpenClawConfigSync,
@@ -22,7 +26,32 @@ vi.mock('electron', () => ({
 
 const temporaryDirectories: string[] = [];
 
+const setActiveJwt = (): string => {
+  const nowSeconds = Math.floor(Date.now() / 1_000);
+  const encode = (value: unknown): string =>
+    Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
+  const accessToken = [
+    encode({ alg: 'RS256', kid: 'login-key-1' }),
+    encode({
+      iss: 'https://login.example.test',
+      aud: 'justdo-litellm',
+      sub: 'user@example.com',
+      iat: nowSeconds,
+      exp: nowSeconds + 300,
+      jti: 'token-1',
+    }),
+    'test-signature',
+  ].join('.');
+  setActiveBuiltinModelCredential({
+    accessToken,
+    userAccount: 'user@example.com',
+    expiresAt: nowSeconds + 300,
+  });
+  return accessToken;
+};
+
 afterEach(() => {
+  clearActiveBuiltinModelCredential();
   setStoreGetter(() => null);
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { recursive: true, force: true });
@@ -40,6 +69,20 @@ const writeExistingBuiltinConfig = (): string => {
       customFeature: {
         enabled: true,
         nested: { value: 'preserve-me' },
+      },
+      secrets: {
+        providers: {
+          justdo_login: {
+            source: 'file',
+            path: path.join(directory, 'user_info.json'),
+            mode: 'json',
+          },
+          operator_secrets: {
+            source: 'file',
+            path: path.join(directory, 'operator-secrets.json'),
+            mode: 'json',
+          },
+        },
       },
       models: {
         pricing: {
@@ -99,6 +142,20 @@ const writeExistingMixedProviderConfig = (): string => {
     JSON.stringify({
       gateway: { mode: 'local', customSetting: 'keep-me' },
       customFeature: { enabled: true },
+      secrets: {
+        providers: {
+          justdo_login: {
+            source: 'file',
+            path: path.join(directory, 'user_info.json'),
+            mode: 'json',
+          },
+          operator_secrets: {
+            source: 'file',
+            path: path.join(directory, 'operator-secrets.json'),
+            mode: 'json',
+          },
+        },
+      },
       models: {
         mode: 'replace',
         pricing: { enabled: true },
@@ -643,6 +700,13 @@ describe('OpenClaw auth logout config sync', () => {
       config: { mode: 'keep-me' },
     });
     expect(config.skills.entries.docx).toEqual({ enabled: false });
+    expect(config.secrets.providers).toEqual({
+      operator_secrets: {
+        source: 'file',
+        path: path.join(path.dirname(configPath), 'operator-secrets.json'),
+        mode: 'json',
+      },
+    });
     expect(config.session.maintenance).toEqual({
       mode: 'enforce',
       pruneAfter: '365d',
@@ -699,6 +763,13 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.agents.entries.worker.model.primary).toBe('custom-provider/custom-model');
     expect(config.gateway).toEqual({ mode: 'local', customSetting: 'keep-me' });
     expect(config.customFeature).toEqual({ enabled: true });
+    expect(config.secrets.providers).toEqual({
+      operator_secrets: {
+        source: 'file',
+        path: path.join(path.dirname(configPath), 'operator-secrets.json'),
+        mode: 'json',
+      },
+    });
     expect(verifyLoggedOutOpenClawConfig(configPath)).toEqual({ ok: true });
   });
 
@@ -731,7 +802,7 @@ describe('OpenClaw auth logout config sync', () => {
 
     expect(verifyLoggedOutOpenClawConfig(configPath)).toEqual({
       ok: false,
-      error: expect.stringContaining('built-in API key placeholder remains'),
+      error: expect.stringContaining('built-in authentication placeholder remains'),
     });
   });
 
@@ -739,6 +810,7 @@ describe('OpenClaw auth logout config sync', () => {
     const configPath = writeExistingBuiltinConfig();
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     config.models = { pricing: { enabled: false } };
+    delete config.secrets;
     fs.writeFileSync(configPath, JSON.stringify(config), 'utf8');
 
     expect(verifyLoggedOutOpenClawConfig(configPath)).toEqual({
@@ -915,10 +987,48 @@ describe('OpenClaw auth logout config sync', () => {
     });
   });
 
+  test('never places the built-in JWT in the Gateway launch environment', () => {
+    const accessToken = setActiveJwt();
+    setStoreGetter(
+      () =>
+        ({
+          get: () => ({
+            providers: {
+              builtin_models: {
+                enabled: true,
+                apiKey: '',
+                baseUrl: 'https://models.example.test/v1',
+                models: [{ id: 'builtin-model' }],
+              },
+              custom_1: {
+                enabled: true,
+                apiKey: 'custom-secret',
+                baseUrl: 'https://custom.example.test/v1',
+                models: [{ id: 'custom-model' }],
+              },
+            },
+          }),
+        }) as never,
+    );
+    const sync = new OpenClawConfigSync({
+      engineManager: {},
+      getCoworkConfig: () => ({}),
+      getAgentRuntimeSettings: createDefaultAgentRuntimeSettings,
+    } as never);
+
+    const environment = sync.collectGatewayLaunchEnvVars();
+
+    expect(environment).not.toHaveProperty('JUSTDO_APIKEY_BUILTIN_MODELS');
+    expect(environment.JUSTDO_APIKEY_CUSTOM_1).toBe('custom-secret');
+    expect(JSON.stringify(environment)).not.toContain(accessToken);
+  });
+
   test('login adds the built-in provider and preserves validated custom provider ids', () => {
+    const accessToken = setActiveJwt();
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-auth-login-sync-'));
     temporaryDirectories.push(stateDir);
     const configPath = path.join(stateDir, 'openclaw.json');
+    const credentialPath = path.join(stateDir, 'huawei', 'user_info.json');
     fs.writeFileSync(
       configPath,
       JSON.stringify({
@@ -955,7 +1065,7 @@ describe('OpenClaw auth logout config sync', () => {
       providers: {
         builtin_models: {
           enabled: true,
-          apiKey: 'builtin-secret',
+          apiKey: '',
           baseUrl: 'http://127.0.0.1:4000/v1',
           apiFormat: 'openai' as const,
           models: [{ id: 'builtin-model', name: 'Built-in Model' }],
@@ -987,6 +1097,7 @@ describe('OpenClaw auth logout config sync', () => {
         executionMode: 'local',
         agentEngine: 'openclaw',
       }),
+      getBuiltinModelCredentialPath: () => credentialPath,
       getAgents: () => [],
     } as never);
 
@@ -994,9 +1105,29 @@ describe('OpenClaw auth logout config sync', () => {
 
     expect(result.ok).toBe(true);
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    expect(config.models.providers.builtin_models.apiKey).toBe(
-      '${JUSTDO_APIKEY_BUILTIN_MODELS}',
-    );
+    expect(config.models.providers.builtin_models.apiKey).toEqual({
+      source: 'file',
+      provider: 'justdo_login',
+      id: '/X-JustDo-JWT',
+    });
+    expect(config.models.providers.builtin_models.headers).toEqual({
+      'X-JustDo-JWT': {
+        source: 'file',
+        provider: 'justdo_login',
+        id: '/X-JustDo-JWT',
+      },
+      'X-User-Account': {
+        source: 'file',
+        provider: 'justdo_login',
+        id: '/X-User-Account',
+      },
+    });
+    expect(config.secrets.providers.justdo_login).toEqual({
+      source: 'file',
+      path: credentialPath,
+      mode: 'json',
+    });
+    expect(fs.readFileSync(configPath, 'utf8')).not.toContain(accessToken);
     expect(config.models.providers['custom-provider'].apiKey).toBe(
       '${JUSTDO_APIKEY_CUSTOM_1}',
     );

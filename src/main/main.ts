@@ -7,7 +7,7 @@ import path from 'path';
 import packageJson from '../../package.json';
 import appUpdateConfig from '../shared/appUpdateConfig.json';
 import { normalizeBrowserMode } from '../shared/browser';
-import { BuiltinModelIpc } from '../shared/builtinModels';
+import { BuiltinModelIpc, BuiltinModelSyncReason } from '../shared/builtinModels';
 import { CoworkSubagentDetailsIpc } from '../shared/cowork/subagentDetails';
 import type { DeveloperConfig } from '../shared/developerConfig';
 import {
@@ -21,7 +21,6 @@ import { registerAppShutdown } from './core/appShutdown';
 import { isAutoLaunched } from './core/autoLaunchManager';
 import { AutoUpdateService } from './core/autoUpdateService';
 import { registerContentSecurityPolicy } from './core/contentSecurityPolicy';
-import { CustomerRegistrationService } from './core/customerRegistrationService';
 import { applyDependencyManagerConfigEnv } from './core/dependencyManagerConfig';
 import { loadDeveloperConfig } from './core/developerConfigFile';
 import { setLanguage } from './core/i18n';
@@ -31,7 +30,10 @@ import { initLogger } from './core/logger';
 import { mainProcessFetch, mainProcessTitleFetch } from './core/mainProcessFetch';
 import { createMainWindow } from './core/mainWindowFactory';
 import { ManagedDirectoryOperationCoordinator } from './core/managedDirectoryOperations';
-import { resolveOutboundHeaderUserInfoPath } from './core/outboundHeaderPolicyConfig';
+import {
+  resolveOutboundHeaderUserInfoPath,
+  updateOutboundHeaderUserInfoCache,
+} from './core/outboundHeaderPolicyConfig';
 import { OutboundHeaderProxy } from './core/outboundHeaderProxy';
 import { ensurePythonRuntimeReady } from './core/pythonRuntime';
 import { isLoopbackBaseUrl, setProcessProxyRouting } from './core/systemProxy';
@@ -41,6 +43,11 @@ import {
 } from './core/systemProxyPreference';
 import { createTray, destroyTray, updateTrayMenu } from './core/trayManager';
 import { enableSystemCaForCurrentProcess } from './core/trustedCertificates';
+import {
+  clearActiveBuiltinModelCredential,
+  refreshActiveBuiltinModelCredential,
+} from './cowork/builtinModelCredential';
+import { BuiltinModelCredentialMonitor } from './cowork/builtinModelCredentialMonitor';
 import { BuiltinModelLifecycle } from './cowork/builtinModelLifecycle';
 import { BuiltinModelAccess, syncBuiltinModelProvider } from './cowork/builtinModelProvider';
 import { BUILTIN_MODEL_PROVIDER_CONFIG } from './cowork/builtinModelProviderConfig';
@@ -351,7 +358,7 @@ let mcpServices: McpServices | null = null;
 let openClawHookServices: OpenClawHookServices | null = null;
 let openClawConfigSyncService: OpenClawConfigSyncService | null = null;
 let builtinModelLifecycle: BuiltinModelLifecycle | null = null;
-let customerRegistrationService: CustomerRegistrationService | null = null;
+let builtinModelCredentialMonitor: BuiltinModelCredentialMonitor | null = null;
 let storeInitPromise: Promise<SqliteStore> | null = null;
 let openClawEngineManager: OpenClawEngineManager | null = null;
 let openClawDirectoryOperations: ManagedDirectoryOperationCoordinator | null = null;
@@ -530,6 +537,7 @@ const getOpenClawConfigSyncService = (): OpenClawConfigSyncService => {
         getCoworkEngineService().requestGateway<T>(method, params),
       getBrowserMode: () =>
         normalizeBrowserMode(getStore().get<{ browserMode?: unknown }>('app_config')?.browserMode),
+      getBuiltinModelCredentialPath: resolveOutboundHeaderUserInfoPath,
     });
   }
   return openClawConfigSyncService;
@@ -563,13 +571,31 @@ const getBuiltinModelLifecycle = (): BuiltinModelLifecycle => {
   return builtinModelLifecycle;
 };
 
+const refreshBuiltinModelCredentialFromLoginFile = async () => {
+  updateOutboundHeaderUserInfoCache();
+  const credential = refreshActiveBuiltinModelCredential(resolveOutboundHeaderUserInfoPath());
+  if (!credential) {
+    await getBuiltinModelLifecycle().refreshAfterLogout();
+    return null;
+  }
+  await getBuiltinModelLifecycle().refreshAfterLogin();
+  if (openClawEngineManager?.getStatus().phase === 'running') {
+    await getCoworkEngineService().requestGateway('secrets.reload');
+  }
+  return credential;
+};
+
 // Authentication handlers should call these only after the Main process has
 // committed the corresponding authenticated/logged-out state.
-export const refreshAfterLogin = (): Promise<void> =>
-  getBuiltinModelLifecycle().refreshAfterLogin();
+export const refreshAfterLogin = async (): Promise<void> => {
+  await refreshBuiltinModelCredentialFromLoginFile();
+};
 
-export const refreshAfterLogout = (): Promise<void> =>
-  getBuiltinModelLifecycle().refreshAfterLogout();
+export const refreshAfterLogout = (): Promise<void> => {
+  updateOutboundHeaderUserInfoCache();
+  clearActiveBuiltinModelCredential();
+  return getBuiltinModelLifecycle().refreshAfterLogout();
+};
 
 const getCoworkEngineService = (): CoworkEngineService => {
   if (!coworkEngineService) {
@@ -1079,7 +1105,8 @@ if (!gotTheLock) {
 
   const runAppCleanup = async (): Promise<void> => {
     console.log('[Main] App is quitting, starting cleanup...');
-    customerRegistrationService?.stop();
+    builtinModelCredentialMonitor?.stop();
+    clearActiveBuiltinModelCredential();
     destroyTray();
     // Prevent scheduled work from starting while dependent runtimes are draining.
     try {
@@ -1154,17 +1181,9 @@ if (!gotTheLock) {
     await app.whenReady();
 
     await outboundHeaderProxy.start();
-
-    if (BUILTIN_MODEL_PROVIDER_CONFIG.enabled) {
-      customerRegistrationService = new CustomerRegistrationService({
-        apiKey: BUILTIN_MODEL_PROVIDER_CONFIG.apiKey.trim(),
-        baseUrl: BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl,
-        productName: packageJson.productName,
-        version: packageJson.version,
-        userInfoPath: resolveOutboundHeaderUserInfoPath(),
-      });
-      customerRegistrationService.start();
-    }
+    const builtinModelCredential = refreshActiveBuiltinModelCredential(
+      resolveOutboundHeaderUserInfoPath(),
+    );
 
     // Note: Calendar permission is checked on-demand when calendar operations are requested
     // We don't trigger permission dialogs at startup to avoid annoying users
@@ -1202,9 +1221,9 @@ if (!gotTheLock) {
     const appConfig = getStore().get<AppConfigSettings>('app_config');
     await applySystemProxyPreference(appConfig);
 
-    // Keep access enabled until authentication is introduced. Future login/logout
-    // flows can switch this single call between Enabled and Disabled.
-    await syncBuiltinModelProvider(store, { access: BuiltinModelAccess.Enabled });
+    await syncBuiltinModelProvider(store, {
+      access: builtinModelCredential ? BuiltinModelAccess.Enabled : BuiltinModelAccess.Disabled,
+    });
 
     const coworkEngineRouter = getCoworkEngineRouter();
     bindSessionPermissionModeRuntime();
@@ -1234,9 +1253,14 @@ if (!gotTheLock) {
       );
     }
 
-    const startupSync = await syncOpenClawConfig({
+    let startupSync = await syncOpenClawConfig({
       reason: 'startup',
     });
+    if (startupSync.success && !builtinModelCredential) {
+      startupSync = await syncOpenClawConfig({
+        reason: BuiltinModelSyncReason.AuthLogout,
+      });
+    }
     if (!startupSync.success) {
       console.error('[OpenClaw] Startup config sync failed:', startupSync.error);
     }
@@ -1254,6 +1278,15 @@ if (!gotTheLock) {
           console.error('[OpenClaw] Failed to auto-start gateway on app startup:', error);
         });
     }
+
+    builtinModelCredentialMonitor = new BuiltinModelCredentialMonitor({
+      userInfoPath: resolveOutboundHeaderUserInfoPath(),
+      refresh: refreshBuiltinModelCredentialFromLoginFile,
+      onError: error => {
+        console.error('[BuiltinModelCredentialMonitor] Credential refresh failed:', error);
+      },
+    });
+    builtinModelCredentialMonitor.start(builtinModelCredential);
 
     try {
       const runtimeResult = await ensurePythonRuntimeReady();

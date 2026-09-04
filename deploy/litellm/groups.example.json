@@ -1,0 +1,26 @@
+{
+  "legacy_client": {
+    "team_id": "justdo-legacy",
+    "team_alias": "Legacy desktop clients",
+    "key_alias": "justdo-legacy-client",
+    "models": ["gpt-4o-mini"],
+    "rpm_limit": 120
+  },
+  "teams": [
+    {
+      "team_id": "justdo-standard",
+      "team_alias": "Standard",
+      "models": ["gpt-4o-mini"],
+      "users": ["user-001", "user-002"],
+      "max_budget": 20,
+      "budget_duration": "30d"
+    },
+    {
+      "team_id": "justdo-advanced",
+      "team_alias": "Advanced",
+      "models": ["gpt-4o-mini", "gpt-4o"],
+      "users": ["user-003"],
+      "blocked": false
+    }
+  ]
+}

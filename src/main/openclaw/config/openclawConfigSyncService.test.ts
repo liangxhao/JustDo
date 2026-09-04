@@ -388,10 +388,10 @@ describe('OpenClawConfigSyncService', () => {
     expect(harness.configSync.sync).toHaveBeenCalledWith('startup');
   });
 
-  it('restarts login only when the running Gateway needs the newly added secret', async () => {
+  it('restarts when a running Gateway needs a newly added environment secret', async () => {
     const harness = createHarness({
       nextSecrets: {
-        JUSTDO_APIKEY_BUILTIN_MODELS: 'builtin-secret',
+        JUSTDO_APIKEY_CUSTOM_1: 'custom-secret',
       },
     });
 
@@ -405,9 +405,9 @@ describe('OpenClawConfigSyncService', () => {
     expect(harness.startGateway).toHaveBeenCalledOnce();
   });
 
-  it('hot-reloads login when the Gateway already has the same secret environment', async () => {
+  it('hot-reloads login when the Gateway environment is unchanged', async () => {
     const secrets = {
-      JUSTDO_APIKEY_BUILTIN_MODELS: 'builtin-secret',
+      JUSTDO_APIKEY_CUSTOM_1: 'custom-secret',
     };
     const harness = createHarness({
       previousSecrets: secrets,
@@ -955,7 +955,7 @@ describe('OpenClawConfigSyncService', () => {
       ).resolves.toMatchObject({
         success: false,
         configSynced: false,
-        error: expect.stringContaining('built-in API key placeholder remains'),
+        error: expect.stringContaining('built-in authentication placeholder remains'),
       });
       expect(harness.engineManager.setGatewayLaunchEnvVars).not.toHaveBeenCalled();
       expect(harness.stopGateway).toHaveBeenCalledOnce();

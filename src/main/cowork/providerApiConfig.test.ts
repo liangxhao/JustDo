@@ -2,16 +2,133 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SqliteStore } from '../data/sqliteStore';
 import {
+  BUILTIN_MODEL_AUTHORIZATION_PLACEHOLDER,
+  clearActiveBuiltinModelCredential,
+  setActiveBuiltinModelCredential,
+} from './builtinModelCredential';
+import {
   getProviderDisplayNameMap,
   resolveAllEnabledProviderConfigs,
+  resolveAllProviderApiKeys,
+  resolveCurrentApiConfig,
   resolveRawApiConfig,
+  resolveRendererApiConfig,
   setStoreGetter,
   validateConfiguredOpenClawProviderNames,
 } from './providerApiConfig';
 
 afterEach(() => {
+  clearActiveBuiltinModelCredential();
   setStoreGetter(() => null);
   vi.restoreAllMocks();
+});
+
+describe('built-in provider credential resolution', () => {
+  const setActiveJwt = (): void => {
+    const nowSeconds = Math.floor(Date.now() / 1_000);
+    const encode = (value: unknown): string =>
+      Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
+    const accessToken = [
+      encode({ alg: 'RS256', kid: 'login-key-1' }),
+      encode({
+        iss: 'https://login.example.test',
+        aud: 'justdo-litellm',
+        sub: 'user-123',
+        iat: nowSeconds,
+        exp: nowSeconds + 300,
+        jti: 'token-1',
+      }),
+      'test-signature',
+    ].join('.');
+    setActiveBuiltinModelCredential({
+      accessToken,
+      userAccount: 'user-123',
+      expiresAt: nowSeconds + 300,
+    });
+  };
+
+  const setBuiltinStore = (): void => {
+    setStoreGetter(
+      () =>
+        ({
+          get: () => ({
+            model: {
+              defaultModel: 'team-model',
+              defaultModelProvider: 'builtin_models',
+            },
+            providers: {
+              builtin_models: {
+                enabled: true,
+                apiKey: '',
+                baseUrl: 'http://127.0.0.1:9108/v1',
+                models: [{ id: 'team-model' }],
+              },
+            },
+          }),
+        }) as unknown as SqliteStore,
+    );
+  };
+
+  it('uses only a non-secret API-key sentinel while the in-memory JWT is active', () => {
+    setBuiltinStore();
+    setActiveJwt();
+
+    expect(resolveCurrentApiConfig().config?.apiKey).toBe(BUILTIN_MODEL_AUTHORIZATION_PLACEHOLDER);
+    expect(resolveRendererApiConfig().config?.apiKey).toBe('');
+    expect(resolveAllProviderApiKeys()).toEqual({
+      BUILTIN_MODELS: BUILTIN_MODEL_AUTHORIZATION_PLACEHOLDER,
+    });
+    expect(resolveAllEnabledProviderConfigs()[0]?.apiKey).toBe(
+      BUILTIN_MODEL_AUTHORIZATION_PLACEHOLDER,
+    );
+  });
+
+  it('does not fall back to a shared placeholder when the user token is missing', () => {
+    setBuiltinStore();
+
+    expect(resolveCurrentApiConfig()).toMatchObject({
+      config: null,
+      error: 'Built-in model authentication is unavailable.',
+    });
+    expect(resolveAllProviderApiKeys()).toEqual({});
+    expect(resolveAllEnabledProviderConfigs()).toEqual([]);
+  });
+
+  it('falls back to an authenticated custom provider when the built-in token is missing', () => {
+    setStoreGetter(
+      () =>
+        ({
+          get: () => ({
+            model: {
+              defaultModel: 'team-model',
+              defaultModelProvider: 'builtin_models',
+            },
+            providers: {
+              builtin_models: {
+                enabled: true,
+                apiKey: '',
+                baseUrl: 'http://127.0.0.1:9108/v1',
+                models: [{ id: 'team-model' }],
+              },
+              custom_0: {
+                enabled: true,
+                apiKey: 'custom-secret',
+                baseUrl: 'https://custom.example.test/v1',
+                models: [{ id: 'custom-model' }],
+              },
+            },
+          }),
+        }) as unknown as SqliteStore,
+    );
+
+    expect(resolveCurrentApiConfig()).toMatchObject({
+      config: {
+        apiKey: 'custom-secret',
+        model: 'custom-model',
+      },
+      providerMetadata: { providerName: 'custom_0' },
+    });
+  });
 });
 
 describe('OpenClaw custom provider names', () => {

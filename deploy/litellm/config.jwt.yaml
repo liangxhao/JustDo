@@ -1,0 +1,9 @@
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL
+  store_model_in_db: true
+  custom_auth: custom_auth.user_api_key_auth
+  custom_auth_run_common_checks: true
+  user_header_mappings:
+    - header_name: X-User-Account
+      litellm_user_role: customer

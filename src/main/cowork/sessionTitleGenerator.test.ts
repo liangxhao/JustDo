@@ -1,10 +1,64 @@
 import { afterEach, expect, test, vi } from 'vitest';
 
+import { ProviderName } from '../../shared/providers';
+import {
+  clearActiveBuiltinModelCredential,
+  setActiveBuiltinModelCredential,
+} from './builtinModelCredential';
 import { SessionTitleGenerator } from './sessionTitleGenerator';
 
 afterEach(() => {
+  clearActiveBuiltinModelCredential();
   vi.useRealTimers();
   vi.restoreAllMocks();
+});
+
+test('generateTitle adds the short-lived JWT only for the built-in provider', async () => {
+  const nowSeconds = Math.floor(Date.now() / 1_000);
+  const encode = (value: unknown): string =>
+    Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
+  const accessToken = [
+    encode({ alg: 'RS256', kid: 'login-key-1' }),
+    encode({
+      iss: 'https://login.example.test',
+      aud: 'justdo-litellm',
+      sub: 'user-123',
+      iat: nowSeconds,
+      exp: nowSeconds + 300,
+      jti: 'token-1',
+    }),
+    'test-signature',
+  ].join('.');
+  setActiveBuiltinModelCredential({
+    accessToken,
+    userAccount: 'user-123',
+    expiresAt: nowSeconds + 300,
+  });
+  const fetchMock = vi.fn(
+    async () =>
+      new Response(JSON.stringify({ choices: [{ message: { content: '测试标题' } }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+  );
+  const handler = new SessionTitleGenerator({
+    resolveApiConfig: () => ({
+      config: {
+        apiKey: 'justdo-jwt-auth',
+        baseURL: 'https://model.example/v1',
+        model: 'current-model',
+      },
+      providerMetadata: { providerName: ProviderName.BuiltinModels },
+    }),
+    fetch: fetchMock,
+  });
+
+  await expect(handler.generateTitle('测试')).resolves.toBe('测试标题');
+  expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({
+    Authorization: 'Bearer justdo-jwt-auth',
+    'X-JustDo-JWT': accessToken,
+    'X-User-Account': 'user-123',
+  });
 });
 
 test('generateTitle sends the Gateway session ID as LiteLLM metadata', async () => {
