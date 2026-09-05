@@ -63,6 +63,7 @@ describe('normalizeMessage image content', () => {
           url: '/api/chat/media/outgoing/session/image/full',
           alt: 'Uploaded image',
           mimeType: 'image/png',
+          artifactId: 'artifact_managed_image_image',
         },
       ],
     });
@@ -74,12 +75,44 @@ describe('normalizeMessage image content', () => {
         kind: 'image',
         label: 'Uploaded image',
         mimeType: 'image/png',
+        artifactId: 'artifact_managed_image_image',
       },
     });
   });
 });
 
 describe('normalizeMessage assistant media', () => {
+  test('preserves the artifact identity of a managed document attachment', () => {
+    const message = normalizeMessage({
+      role: 'assistant',
+      content: [
+        {
+          type: 'attachment',
+          attachment: {
+            artifactId: 'artifact_managed_media_document',
+            url: '/api/chat/media/outgoing/agent%3Amain%3Ajustdo%3Asession/file/full',
+            kind: 'document',
+            label: 'result.py',
+            mimeType: 'application/octet-stream',
+          },
+        },
+      ],
+    });
+
+    expect(message.content).toEqual([
+      {
+        type: 'attachment',
+        attachment: {
+          artifactId: 'artifact_managed_media_document',
+          url: '/api/chat/media/outgoing/agent%3Amain%3Ajustdo%3Asession/file/full',
+          kind: 'document',
+          label: 'result.py',
+          mimeType: 'application/octet-stream',
+        },
+      },
+    ]);
+  });
+
   test('renders a MEDIA path even when it is relative or does not exist', () => {
     const message = normalizeMessage({
       role: 'assistant',
@@ -139,7 +172,7 @@ describe('normalizeMessage assistant media', () => {
     ]);
   });
 
-  test('preserves final text and structured attachment delivery failures', () => {
+  test('preserves final text while dropping non-standard failure path details', () => {
     const message = normalizeMessage({
       role: 'assistant',
       content: [
@@ -167,8 +200,6 @@ describe('normalizeMessage assistant media', () => {
           kind: 'document',
           label: 'quicksort_v1.py',
           mimeType: 'application/octet-stream',
-          url: 'quicksort_demo\\quicksort_v1.py',
-          error: 'Managed media attachment has an unsupported content type',
         },
       },
     ]);

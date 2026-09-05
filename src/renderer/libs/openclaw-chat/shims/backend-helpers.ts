@@ -33,25 +33,28 @@ export function extractCanvasShortcodes(text: string | undefined): {
 } {
   if (!text) return { text: '', previews: [] };
   const previews: CanvasPreview[] = [];
-  const cleanedText = text.replace(/\[embed\s+([^\]]*?)\](?:[\s\S]*?\[\/embed\])|\[embed\s+([^\]]*?)\/\]/gi, (_match, attrs1, attrs2) => {
-    const attrs = attrs1 || attrs2 || '';
-    const urlMatch = attrs.match(/url="([^"]*)"/i);
-    const titleMatch = attrs.match(/title="([^"]*)"/i);
-    const heightMatch = attrs.match(/height="(\d+)"/i);
-    const viewIdMatch = attrs.match(/viewId="([^"]*)"/i);
-    if (urlMatch) {
-      previews.push({
-        kind: 'canvas',
-        surface: 'assistant_message',
-        render: 'url',
-        url: urlMatch[1],
-        ...(titleMatch ? { title: titleMatch[1] } : {}),
-        ...(heightMatch ? { preferredHeight: parseInt(heightMatch[1], 10) } : {}),
-        ...(viewIdMatch ? { viewId: viewIdMatch[1] } : {}),
-      });
-    }
-    return '';
-  });
+  const cleanedText = text.replace(
+    /\[embed\s+([^\]]*?)\](?:[\s\S]*?\[\/embed\])|\[embed\s+([^\]]*?)\/\]/gi,
+    (_match, attrs1, attrs2) => {
+      const attrs = attrs1 || attrs2 || '';
+      const urlMatch = attrs.match(/url="([^"]*)"/i);
+      const titleMatch = attrs.match(/title="([^"]*)"/i);
+      const heightMatch = attrs.match(/height="(\d+)"/i);
+      const viewIdMatch = attrs.match(/viewId="([^"]*)"/i);
+      if (urlMatch) {
+        previews.push({
+          kind: 'canvas',
+          surface: 'assistant_message',
+          render: 'url',
+          url: urlMatch[1],
+          ...(titleMatch ? { title: titleMatch[1] } : {}),
+          ...(heightMatch ? { preferredHeight: parseInt(heightMatch[1], 10) } : {}),
+          ...(viewIdMatch ? { viewId: viewIdMatch[1] } : {}),
+        });
+      }
+      return '';
+    },
+  );
   return { text: cleanedText.trim(), previews };
 }
 
@@ -90,8 +93,7 @@ export function resolveToolUseId(item: Record<string, unknown>): string | undefi
 // Returns shape compatible with message-normalizer: { text, mediaUrls?, segments?, audioAsVoice? }
 
 export type ParsedMediaSegment =
-  | { type: 'text'; text: string }
-  | { type: 'media'; url: string; listMarker?: string };
+  { type: 'text'; text: string } | { type: 'media'; url: string; listMarker?: string };
 
 export function splitMediaFromOutput(text: string): {
   text: string;
@@ -244,7 +246,10 @@ export function extractAssistantVisibleText(message: unknown): string | undefine
 export function stripInternalRuntimeContext(text: string): string {
   if (!text) return text;
   return text
-    .replace(/<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>[\s\S]*?<<<END_OPENCLAW_INTERNAL_CONTEXT>>>/g, '')
+    .replace(
+      /<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>[\s\S]*?<<<END_OPENCLAW_INTERNAL_CONTEXT>>>/g,
+      '',
+    )
     .trim();
 }
 

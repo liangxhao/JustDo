@@ -1053,9 +1053,15 @@ export class JustDoChatElement extends LitElement {
           color 120ms ease;
       }
 
-      .message-attachment:hover {
+      .message-attachment:hover:not(:disabled):not(.message-attachment--unavailable) {
         background: var(--surface-hover, rgba(127, 127, 127, 0.1));
         border-color: color-mix(in srgb, var(--accent, #4f7cff) 28%, transparent);
+      }
+
+      .message-attachment:disabled,
+      .message-attachment--unavailable {
+        cursor: default;
+        opacity: 0.7;
       }
 
       .message-attachment:focus-visible {
@@ -3407,6 +3413,9 @@ export class JustDoChatElement extends LitElement {
     );
   }
 
+  private readonly resolveArtifactDownload = (params: { sessionKey: string; artifactId: string }) =>
+    this._controller?.resolveArtifactDownload(params) ?? Promise.resolve(null);
+
   private renderItem(
     item: ChatItem | MessageGroup,
     thinkingStream: string | null = null,
@@ -3421,6 +3430,7 @@ export class JustDoChatElement extends LitElement {
           showAvatar,
           assistantName: this.assistantName,
           workingDirectory: this.workingDirectory,
+          resolveArtifactDownload: this.resolveArtifactDownload,
         });
       }
       if (item.kind === 'stream') {
@@ -3493,6 +3503,7 @@ export class JustDoChatElement extends LitElement {
             searchQuery: this.searchQuery,
             showAvatar: shouldRenderGroupAvatarByPrevItem(item as MessageGroup, prev),
             workingDirectory: this.workingDirectory,
+            resolveArtifactDownload: this.resolveArtifactDownload,
           }),
         );
         index += 1;
@@ -3513,6 +3524,7 @@ export class JustDoChatElement extends LitElement {
             showAvatar,
             assistantName: this.assistantName,
             workingDirectory: this.workingDirectory,
+            resolveArtifactDownload: this.resolveArtifactDownload,
           }),
         );
         continue;

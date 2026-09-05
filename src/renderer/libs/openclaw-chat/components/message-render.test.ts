@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 
 vi.mock('./markdown', () => ({
   toSanitizedMarkdownHtml: (text: string) => text,
@@ -42,6 +42,17 @@ function stringifyTemplate(value: unknown): string {
   }
   return Object.values(record).map(stringifyTemplate).join('');
 }
+
+function collectTemplateFunctions(value: unknown): Array<(event: Event) => unknown> {
+  if (typeof value === 'function') return [value as (event: Event) => unknown];
+  if (!value || typeof value !== 'object') return [];
+  if (Array.isArray(value)) return value.flatMap(collectTemplateFunctions);
+  return Object.values(value as Record<string, unknown>).flatMap(collectTemplateFunctions);
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe('shouldRenderGroupFooter', () => {
   test('hides assistant footer when another assistant group follows', () => {
@@ -401,7 +412,7 @@ describe('renderMessageBlock', () => {
     expect(rendered).not.toContain('message-attachment__detail');
   });
 
-  test('renders an attachment failure as an ordinary actionable file with a raw warning', () => {
+  test('renders an attachment failure as a non-actionable status card', () => {
     const rendered = stringifyTemplate(
       renderMessageBlock(
         {
@@ -440,17 +451,72 @@ describe('renderMessageBlock', () => {
 
     expect(rendered).toContain('5 个文件均已生成并验证通过。');
     expect(rendered).toContain('quicksort_v1.py');
-    expect(rendered).toContain('C:\\workspace\\project\\quicksort_demo\\quicksort_v1.py');
+    expect(rendered).not.toContain('C:\\workspace\\project\\quicksort_demo\\quicksort_v1.py');
     expect(rendered).toContain('message-attachment__warning');
-    expect(rendered).toMatch(/message-attachment__warning[^>]*@click=/u);
-    expect(rendered).toContain('Managed media attachment has an unsupported content type');
-    expect(rendered).toContain('@click=');
-    expect(rendered).toContain('@contextmenu=');
-    expect(rendered).toContain('message-attachment__open');
-    expect(rendered).not.toContain('message-attachment--error');
-    expect(rendered).not.toContain('附件未能送达');
+    expect(rendered).toContain('附件不可用：quicksort_v1.py');
+    expect(rendered).not.toContain('Managed media attachment has an unsupported content type');
+    expect(rendered).not.toContain('@contextmenu=');
+    expect(rendered).not.toContain('message-attachment__open');
+    expect(rendered).toContain('message-attachment--unavailable');
     expect(rendered).not.toContain('message-attachment__detail');
     expect(rendered).not.toContain('delete');
+  });
+
+  test('opens a managed document through the Gateway artifact download capability', async () => {
+    const openExternal = vi.fn().mockResolvedValue({ success: true });
+    const openPath = vi.fn();
+    vi.stubGlobal('window', {
+      electron: { shell: { openExternal, openPath } },
+      dispatchEvent: vi.fn(),
+      setTimeout,
+    });
+    const resolveArtifactDownload = vi.fn().mockResolvedValue({
+      url: 'http://127.0.0.1:14041/api/chat/media/outgoing/session/file/full?mediaTicket=ticket',
+    });
+    const rendered = renderMessageBlock(
+      {
+        kind: 'group',
+        key: 'assistant-managed-document-group',
+        role: 'assistant',
+        messages: [
+          {
+            key: 'assistant-managed-document-message',
+            message: {
+              role: 'assistant',
+              content: [
+                {
+                  type: 'attachment',
+                  attachment: {
+                    artifactId: 'artifact_managed_media_file',
+                    url: '/api/chat/media/outgoing/agent%3Amain%3Ajustdo%3Asession/file/full',
+                    kind: 'document',
+                    label: 'result.py',
+                    mimeType: 'application/octet-stream',
+                  },
+                },
+              ],
+            },
+          },
+        ],
+        timestamp: 1,
+        isStreaming: false,
+      },
+      { resolveArtifactDownload },
+    );
+
+    const handlers = collectTemplateFunctions(rendered);
+    expect(handlers.length).toBeGreaterThanOrEqual(2);
+    handlers[0]({ stopPropagation: vi.fn() } as unknown as Event);
+
+    await vi.waitFor(() => expect(openExternal).toHaveBeenCalledOnce());
+    expect(resolveArtifactDownload).toHaveBeenCalledWith({
+      sessionKey: 'agent:main:justdo:session',
+      artifactId: 'artifact_managed_media_file',
+    });
+    expect(openExternal).toHaveBeenCalledWith(
+      'http://127.0.0.1:14041/api/chat/media/outgoing/session/file/full?mediaTicket=ticket',
+    );
+    expect(openPath).not.toHaveBeenCalled();
   });
 
   test('resolves a relative assistant attachment against the current workspace', () => {

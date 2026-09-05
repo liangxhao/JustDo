@@ -175,7 +175,7 @@ Minimap从timeline identity生成entry，追踪当前viewport并支持hover prev
 
 ## 16. Attachments 与路径
 
-附件转换为Gateway content blocks，历史媒体从结构化message提取。OpenClaw 持久化 `attachment_error` 时保留 `MEDIA:` 的完整原始路径和安全错误信息；Renderer 将相对附件路径与当前工作空间目录拼接为绝对路径后，再按普通文件附件提供打开、系统打开和在文件夹中显示操作。文件名后的轻量感叹号仅在悬浮时原样显示 Gateway 错误字段，附件菜单不提供删除操作；附件交付失败不能导致同一条 assistant message 的最终文本被丢弃。对于已经通过本地媒体根目录、常规文件、符号链接和大小检查的 trusted local MEDIA 文件，无法识别 MIME 时以 `application/octet-stream` 的强制下载附件交付；不能借此放宽远程或不可信来源。Markdown本地路径链接经专门utility转成应用操作；图片保存由Main shell IPC执行。双击消息图片通过专用IPC打开无 parent 的独立原生查看窗口，查看器使用单独的沙箱Renderer和最小权限preload，并在自身窗口内处理滚轮缩放、拖动与双击复位；最大化/还原由操作系统窗口框架负责，不受聊天主窗口尺寸限制。Renderer不能直接读 `file://`；`localfile://` 使用需遵守安全文档中的限制。
+附件转换为Gateway content blocks，历史媒体从结构化message提取。成功的 managed assistant 附件保留 Gateway 提供的 `artifactId`；用户打开文件时，Renderer 使用附件 URL 中的所属 session 调用 `artifacts.download`，再打开 Gateway 返回的短期 HTTP capability URL，不把 `/api/chat/media/outgoing/...` 当成本地文件路径。`attachment_error` 仅作为不可操作的失败状态展示；附件交付失败不能导致同一条 assistant message 的最终文本被丢弃。对于已经通过本地媒体根目录、常规文件、符号链接和大小检查的 trusted local MEDIA 文件，无法识别 MIME 时以 `application/octet-stream` 的强制下载附件交付；不能借此放宽远程或不可信来源。消息复制遵循 OpenClaw WebChat 的可见 Markdown 语义，不承诺恢复已从展示投影移除的原始 `MEDIA:` 指令。普通相对附件路径仍与当前工作空间目录拼接；Markdown本地路径链接经专门utility转成应用操作；图片保存由Main shell IPC执行。双击消息图片通过专用IPC打开无 parent 的独立原生查看窗口，查看器使用单独的沙箱Renderer和最小权限preload，并在自身窗口内处理滚轮缩放、拖动与双击复位；最大化/还原由操作系统窗口框架负责，不受聊天主窗口尺寸限制。Renderer不能直接读 `file://`；`localfile://` 使用需遵守安全文档中的限制。
 
 ## 17. Goal、Compaction 与错误
 

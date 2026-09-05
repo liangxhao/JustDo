@@ -190,6 +190,7 @@ function coerceAudioContentBlock(
     sourceRecord.media_type.trim().toLowerCase().startsWith('audio/')
       ? sourceRecord.media_type.trim()
       : 'audio/mpeg';
+  const artifactId = pickTrimmedString(item.artifactId) ?? undefined;
   if (sourceRecord.type === 'base64' && typeof sourceRecord.data === 'string') {
     const data = sourceRecord.data.trim();
     if (!data) {
@@ -204,6 +205,7 @@ function coerceAudioContentBlock(
         label: typeof item.label === 'string' && item.label.trim() ? item.label.trim() : 'Audio',
         mimeType: mediaType,
         ...(item.isVoiceNote === true ? { isVoiceNote: true } : {}),
+        ...(artifactId ? { artifactId } : {}),
       },
     };
   }
@@ -220,6 +222,7 @@ function coerceAudioContentBlock(
         label: typeof item.label === 'string' && item.label.trim() ? item.label.trim() : 'Audio',
         mimeType: mediaType,
         ...(item.isVoiceNote === true ? { isVoiceNote: true } : {}),
+        ...(artifactId ? { artifactId } : {}),
       },
     };
   }
@@ -250,6 +253,7 @@ function coerceImageContentBlock(
           : typeof source?.url === 'string'
             ? source.url.trim()
             : '';
+  const artifactId = pickTrimmedString(item.artifactId) ?? undefined;
   if (directUrl) {
     return {
       type: 'attachment',
@@ -263,6 +267,7 @@ function coerceImageContentBlock(
               ? item.label.trim()
               : 'Image',
         ...(typeof item.mimeType === 'string' ? { mimeType: item.mimeType } : {}),
+        ...(artifactId ? { artifactId } : {}),
       },
     };
   }
@@ -292,6 +297,7 @@ function coerceImageContentBlock(
       kind: 'image',
       label,
       mimeType,
+      ...(artifactId ? { artifactId } : {}),
     },
   };
 }
@@ -320,12 +326,6 @@ function coerceAttachmentErrorBlock(
       label,
       ...(typeof attachment.mimeType === 'string' && attachment.mimeType.trim()
         ? { mimeType: attachment.mimeType.trim() }
-        : {}),
-      ...(typeof attachment.url === 'string' && attachment.url.trim()
-        ? { url: attachment.url.trim() }
-        : {}),
-      ...(typeof attachment.error === 'string' && attachment.error.trim()
-        ? { error: attachment.error.trim() }
         : {}),
     },
   };
@@ -600,6 +600,7 @@ export function normalizeMessage(message: unknown): NormalizedMessage {
           label?: unknown;
           mimeType?: unknown;
           isVoiceNote?: unknown;
+          artifactId?: unknown;
         };
         if (
           typeof attachment.url !== 'string' ||
@@ -620,6 +621,9 @@ export function normalizeMessage(message: unknown): NormalizedMessage {
               label: attachment.label,
               ...(typeof attachment.mimeType === 'string' ? { mimeType: attachment.mimeType } : {}),
               ...(attachment.isVoiceNote === true ? { isVoiceNote: true } : {}),
+              ...(typeof attachment.artifactId === 'string' && attachment.artifactId.trim()
+                ? { artifactId: attachment.artifactId.trim() }
+                : {}),
             },
           },
         ];

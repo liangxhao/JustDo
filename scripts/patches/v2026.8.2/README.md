@@ -16,8 +16,7 @@ the two exact approval-timeout build shapes emitted by the shared chunk and work
 remaining restart-safe admission checks. Patch 014 keeps display-only assistant blocks out of the
 OpenClaw provider-safe replay context before the generic AI converter sees them. Patch 015 lets
 trusted local assistant MEDIA files with unknown MIME use the existing managed document path as
-forced downloads without widening remote or untrusted attachment admission, and retains the
-original MEDIA path plus OpenClaw-sanitized error text when preparation still fails.
+forced downloads without widening remote or untrusted attachment admission.
 
 | Patch                                          | Retained capability                                                                                                          | Remove when upstream provides                                                   |
 | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
@@ -35,7 +34,7 @@ original MEDIA path plus OpenClaw-sanitized error text when preparation still fa
 | `012-configurable-plugin-approval-timeout.cjs` | Applies the host-selected wait time to policy, CLI-native-tool, and native-hook-relay plugin approvals.                      | A native host-level plugin approval timeout setting.                            |
 | `013-goal-resume-after-pause.cjs`              | Lets native Goal resume admit an idle paused session whose preceding run was intentionally aborted.                          | Upstream Goal resume accepts this native paused-session state.                  |
 | `014-assistant-display-block-replay.cjs`       | Excludes display-only assistant blocks at OpenClaw's provider-safe replay boundary without changing durable history or UI.   | Upstream provider replay filters non-provider assistant content.                |
-| `015-trusted-local-file-media.cjs`             | Safely downloads trusted generic local MEDIA and retains source/error metadata when managed delivery still fails.            | Upstream outbound MEDIA provides both capabilities.                             |
+| `015-trusted-local-file-media.cjs`             | Safely downloads trusted generic local MEDIA without changing failure metadata.                                              | Upstream supports generic trusted local MEDIA downloads.                        |
 
 Each patch must fail on ambiguous anchors, verify both source and bundled output where relevant,
 and be idempotent only for its exact v2026.8.2 marker shape. `verify-openclaw-pristine-contracts`

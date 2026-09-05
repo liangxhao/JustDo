@@ -28,12 +28,18 @@ import { i18nService } from '@/services/i18n';
 
 type AssistantCanvasItem = Extract<MessageContentItem, { type: 'canvas' }>;
 
+type ArtifactDownloadResolver = (params: {
+  sessionKey: string;
+  artifactId: string;
+}) => Promise<{ url: string; expiresAt?: string } | null>;
+
 type MessageRenderOptions = {
   searchQuery?: string;
   showFooter?: boolean;
   showAvatar?: boolean;
   assistantName?: string;
   workingDirectory?: string;
+  resolveArtifactDownload?: ArtifactDownloadResolver;
 };
 
 type AssistantTimelineContentOptions = Pick<
@@ -158,6 +164,53 @@ function resolveAttachmentUrl(url: string, workingDirectory?: string): string {
   return `${directory.replace(/[\\/]+$/u, '')}${separator}${trimmed.replace(/^[\\/]+/u, '')}`;
 }
 
+function isManagedOutgoingMediaSource(source: string): boolean {
+  return /^\/api\/chat\/media\/outgoing\/[^/]+\/[^/]+\/full(?:[?#].*)?$/u.test(source.trim());
+}
+
+function resolveManagedOutgoingMediaSessionKey(source: string): string | null {
+  try {
+    const encodedSessionKey = new URL(source, 'http://justdo.invalid').pathname.split('/')[5];
+    return encodedSessionKey ? decodeURIComponent(encodedSessionKey) : null;
+  } catch {
+    return null;
+  }
+}
+
+type AttachmentOpenOptions = {
+  workingDirectory?: string;
+  label?: string;
+  artifactId?: string;
+  resolveArtifactDownload?: ArtifactDownloadResolver;
+};
+
+function showAttachmentUnavailable(label: string): void {
+  window.dispatchEvent(
+    new CustomEvent('app:showToast', {
+      detail: i18nService.t('coworkAttachmentUnavailable').replace('{filename}', label),
+    }),
+  );
+}
+
+async function resolveAttachmentOpenTarget(
+  source: string,
+  options: AttachmentOpenOptions,
+): Promise<string | null> {
+  if (!isManagedOutgoingMediaSource(source)) {
+    return resolveAttachmentUrl(source, options.workingDirectory);
+  }
+  const sessionKey = resolveManagedOutgoingMediaSessionKey(source);
+  const artifactId = options.artifactId?.trim();
+  if (!sessionKey || !artifactId || !options.resolveArtifactDownload) return null;
+  try {
+    const result = await options.resolveArtifactDownload({ sessionKey, artifactId });
+    const url = result?.url.trim() ?? '';
+    return /^https?:\/\//iu.test(url) ? url : null;
+  } catch {
+    return null;
+  }
+}
+
 function labelForMediaPath(mediaPath: string): string {
   const trimmed = mediaPath.trim();
   try {
@@ -185,21 +238,30 @@ function extractTranscriptAttachments(message: unknown): RenderableAttachment[] 
     .filter((attachment): attachment is NonNullable<typeof attachment> => attachment !== null);
 }
 
-async function openAttachment(event: Event, url: string, workingDirectory?: string): Promise<void> {
+async function openAttachment(
+  event: Event,
+  source: string,
+  options: AttachmentOpenOptions = {},
+): Promise<void> {
   event.stopPropagation();
   try {
+    const url = await resolveAttachmentOpenTarget(source, options);
+    if (!url) {
+      showAttachmentUnavailable(options.label ?? source);
+      return;
+    }
     const localPath = localPathFromAttachmentUrl(url);
     if (!/^https?:\/\//i.test(url) && getPreviewableFileExtension(localPath)) {
       window.dispatchEvent(
         new CustomEvent('cowork:preview-file', {
-          detail: { filePath: localPath, workingDirectory },
+          detail: { filePath: localPath, workingDirectory: options.workingDirectory },
         }),
       );
       return;
     }
     const result = /^https?:\/\//i.test(url)
       ? await window.electron.shell.openExternal(url)
-      : await window.electron.shell.openPath(localPath, workingDirectory);
+      : await window.electron.shell.openPath(localPath, options.workingDirectory);
     if (!result.success) {
       if ('notFound' in result && result.notFound) {
         window.dispatchEvent(
@@ -218,29 +280,38 @@ async function openAttachment(event: Event, url: string, workingDirectory?: stri
 
 async function showAttachmentContextMenu(
   event: Event,
-  url: string,
-  workingDirectory?: string,
+  source: string,
+  options: AttachmentOpenOptions = {},
 ): Promise<void> {
   event.preventDefault();
   event.stopPropagation();
   const action = await window.electron.shell.showAttachmentContextMenu();
   if (!action) return;
   if (action === 'open') {
-    await openAttachment(event, url, workingDirectory);
+    await openAttachment(event, source, options);
+    return;
+  }
+  if (isManagedOutgoingMediaSource(source) && action !== 'open-with-system') {
+    showAttachmentUnavailable(options.label ?? source);
     return;
   }
 
   try {
+    const url = await resolveAttachmentOpenTarget(source, options);
+    if (!url) {
+      showAttachmentUnavailable(options.label ?? source);
+      return;
+    }
     const isExternal = /^https?:\/\//i.test(url);
     const localPath = localPathFromAttachmentUrl(url);
     const result =
       action === 'open-with-system'
         ? isExternal
           ? await window.electron.shell.openExternal(url)
-          : await window.electron.shell.openPath(localPath, workingDirectory)
+          : await window.electron.shell.openPath(localPath, options.workingDirectory)
         : isExternal
           ? { success: false, notFound: true }
-          : await window.electron.shell.showItemInFolder(localPath, workingDirectory);
+          : await window.electron.shell.showItemInFolder(localPath, options.workingDirectory);
     if (!result.success) {
       if ('notFound' in result && result.notFound) {
         window.dispatchEvent(
@@ -260,21 +331,41 @@ async function showAttachmentContextMenu(
 function renderAssistantAttachments(
   attachments: RenderableAttachment[],
   workingDirectory?: string,
+  resolveArtifactDownload?: ArtifactDownloadResolver,
 ): TemplateResult | typeof nothing {
   if (attachments.length === 0) return nothing;
   return html`
     <div class="message-attachments">
       ${attachments.map(attachment => {
-        const url = resolveAttachmentUrl(attachment.url, workingDirectory);
+        const managed = isManagedOutgoingMediaSource(attachment.url);
+        const url = managed
+          ? attachment.url
+          : resolveAttachmentUrl(attachment.url, workingDirectory);
+        const canOpen = !managed || Boolean(attachment.artifactId && resolveArtifactDownload);
+        const openOptions: AttachmentOpenOptions = {
+          workingDirectory,
+          label: attachment.label,
+          artifactId: attachment.artifactId,
+          resolveArtifactDownload,
+        };
         return html`
           <button
             type="button"
             class="message-attachment"
-            title=${url}
+            title=${managed ? attachment.label : url}
             aria-label=${`${i18nService.t('coworkOpenAttachment')}: ${attachment.label}`}
-            @click=${(event: Event) => void openAttachment(event, url, workingDirectory)}
-            @contextmenu=${(event: Event) =>
-              void showAttachmentContextMenu(event, url, workingDirectory)}
+            ?disabled=${!canOpen}
+            @click=${
+              canOpen
+                ? (event: Event) => void openAttachment(event, attachment.url, openOptions)
+                : nothing
+            }
+            @contextmenu=${
+              canOpen
+                ? (event: Event) =>
+                    void showAttachmentContextMenu(event, attachment.url, openOptions)
+                : nothing
+            }
           >
             <span class="message-attachment__icon">${ATTACHMENT_ICON}</span>
             <span class="message-attachment__content">
@@ -290,36 +381,27 @@ function renderAssistantAttachments(
 
 function renderAttachmentError(
   item: Extract<MessageContentItem, { type: 'attachment_error' }>,
-  workingDirectory?: string,
 ): TemplateResult {
   const { attachment } = item;
-  const url = resolveAttachmentUrl(attachment.url?.trim() || attachment.label, workingDirectory);
-  const error = attachment.error?.trim() || attachment.code;
+  const unavailable = i18nService
+    .t('coworkAttachmentUnavailable')
+    .replace('{filename}', attachment.label);
   return html`
-    <button
-      type="button"
-      class="message-attachment"
-      title=${url}
-      aria-label=${`${i18nService.t('coworkOpenAttachment')}: ${attachment.label}`}
-      @click=${(event: Event) => void openAttachment(event, url, workingDirectory)}
-      @contextmenu=${(event: Event) => void showAttachmentContextMenu(event, url, workingDirectory)}
+    <div
+      class="message-attachment message-attachment--unavailable"
+      title=${unavailable}
+      aria-label=${unavailable}
     >
       <span class="message-attachment__icon">${ATTACHMENT_ICON}</span>
       <span class="message-attachment__content">
         <span class="message-attachment__name message-attachment__name--with-warning">
           <span class="message-attachment__filename">${attachment.label}</span>
-          <span
-            class="message-attachment__warning"
-            title=${error}
-            aria-label=${error}
-            @click=${(event: Event) => event.stopPropagation()}
-          >
+          <span class="message-attachment__warning" title=${unavailable} aria-label=${unavailable}>
             !
           </span>
         </span>
       </span>
-      <span class="message-attachment__open" aria-hidden="true">↗</span>
-    </button>
+    </div>
   `;
 }
 
@@ -421,6 +503,7 @@ function renderOrderedBubble(
   items: BubbleContentItem[],
   role: 'user' | 'assistant',
   workingDirectory?: string,
+  resolveArtifactDownload?: ArtifactDownloadResolver,
 ): TemplateResult | typeof nothing {
   if (items.length === 0) return nothing;
   const text = items
@@ -444,7 +527,7 @@ function renderOrderedBubble(
             `;
           }
           if (item.type === 'attachment_error') {
-            return renderAttachmentError(item, workingDirectory);
+            return renderAttachmentError(item);
           }
           if (item.attachment.kind === 'image') {
             return renderListedAttachment(
@@ -454,7 +537,11 @@ function renderOrderedBubble(
           }
           return renderListedAttachment(
             item.attachment,
-            renderAssistantAttachments([item.attachment], workingDirectory),
+            renderAssistantAttachments(
+              [item.attachment],
+              workingDirectory,
+              resolveArtifactDownload,
+            ),
           );
         })}
       </div>
@@ -550,8 +637,20 @@ function renderSingleMessage(
 
   // The canonical timeline exclusively owns Tool presentation.
   if (isTool) return nothing;
-  if (isUser) return renderUserMessage(normalized, message, opts?.workingDirectory);
-  return renderAssistantMessage(normalized, message, opts?.workingDirectory);
+  if (isUser) {
+    return renderUserMessage(
+      normalized,
+      message,
+      opts?.workingDirectory,
+      opts?.resolveArtifactDownload,
+    );
+  }
+  return renderAssistantMessage(
+    normalized,
+    message,
+    opts?.workingDirectory,
+    opts?.resolveArtifactDownload,
+  );
 }
 
 // ─── User Message ───────────────────────────────────────────────────────────
@@ -560,6 +659,7 @@ function renderUserMessage(
   msg: NormalizedMessage,
   rawMessage: unknown,
   workingDirectory?: string,
+  resolveArtifactDownload?: ArtifactDownloadResolver,
 ): TemplateResult {
   const hasImage = msg.content.some(
     item => item.type === 'attachment' && item.attachment.kind === 'image',
@@ -579,6 +679,7 @@ function renderUserMessage(
     [...content, ...transcriptAttachments],
     'user',
     workingDirectory,
+    resolveArtifactDownload,
   ) as TemplateResult;
 }
 
@@ -588,12 +689,15 @@ function renderAssistantMessage(
   msg: NormalizedMessage,
   _rawMessage: unknown,
   workingDirectory?: string,
+  resolveArtifactDownload?: ArtifactDownloadResolver,
 ): TemplateResult {
   const sections: Array<TemplateResult | typeof nothing> = [];
   let bubbleItems: BubbleContentItem[] = [];
   const flushBubble = () => {
     if (bubbleItems.length === 0) return;
-    sections.push(renderOrderedBubble(bubbleItems, 'assistant', workingDirectory));
+    sections.push(
+      renderOrderedBubble(bubbleItems, 'assistant', workingDirectory, resolveArtifactDownload),
+    );
     bubbleItems = [];
   };
 

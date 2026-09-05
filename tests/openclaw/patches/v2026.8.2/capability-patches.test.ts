@@ -281,7 +281,7 @@ describe('OpenClaw v2026.8.2 capability patches', () => {
     120_000,
   );
 
-  test('delivers trusted generic files and preserves actionable MEDIA failures', async () => {
+  test('delivers trusted generic files without extending MEDIA failure metadata', async () => {
     const testing = patches.get('015')?.__testing as {
       MARKER: string;
       transform: (content: string, filePath: string) => string;
@@ -309,7 +309,7 @@ describe('OpenClaw v2026.8.2 capability patches', () => {
     };
     await expect(
       behavior.createManagedOutgoingMediaBlocks({
-        item: { url: 'file:script.unknown', trustedLocal: true },
+        item: { url: 'file:quicksort_demo\\quicksort_v1.py', trustedLocal: true },
         savedOriginal: {},
       }),
     ).resolves.toEqual({ mediaKind: 'document', contentType: 'application/octet-stream' });
@@ -346,8 +346,6 @@ describe('OpenClaw v2026.8.2 capability patches', () => {
           code: 'delivery-failed',
           kind: 'document',
           label: 'quicksort_1_lomuto.py',
-          url: sourcePath,
-          error: 'Managed media attachment has no detectable content type',
           mimeType: 'application/octet-stream',
         },
       },
@@ -411,7 +409,10 @@ describe('OpenClaw v2026.8.2 capability patches', () => {
         files[0],
         fs
           .readFileSync(files[0], 'utf8')
-          .replace(/\/\*JUSTDO_TRUSTED_LOCAL_FILE_MEDIA_V2026_8_2\*\//u, ''),
+          .replace(
+            /\/\*JUSTDO_TRUSTED_LOCAL_FILE_MEDIA_DOWNLOAD_ONLY_V2026_8_2\*\//u,
+            '',
+          ),
       );
       expect(() => patch.verifyPatch(fixtureRoot)).toThrow('historical or partial');
     } finally {
@@ -436,8 +437,6 @@ describe('OpenClaw v2026.8.2 capability patches', () => {
         expect(transformed).toContain('"application/octet-stream"');
         expect(transformed).toContain('assertLocalMediaAllowed');
         expect(transformed).toContain('maxBytesForManagedMediaKind');
-        expect(transformed).toMatch(/url\s*:\s*[A-Za-z_$][\w$]*/u);
-        expect(transformed).toMatch(/error\s*:\s*[A-Za-z_$][\w$]*/u);
         expect(testing.transform(transformed, filePath)).toBe(transformed);
       }
     },

@@ -61,6 +61,8 @@ export type MessageContentItem =
         mimeType?: string;
         isVoiceNote?: boolean;
         listMarker?: string;
+        /** Gateway artifact identity used to request a short-lived download URL. */
+        artifactId?: string;
       };
     }
   | {
@@ -70,8 +72,6 @@ export type MessageContentItem =
         kind: 'image' | 'audio' | 'video' | 'document';
         label: string;
         mimeType?: string;
-        url?: string;
-        error?: string;
       };
     }
   | {
