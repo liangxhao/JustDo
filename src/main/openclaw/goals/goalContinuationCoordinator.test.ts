@@ -210,7 +210,19 @@ describe('GoalContinuationCoordinator', () => {
     expect(agentParams.message).toContain('Ship the release');
     expect(agentParams.extraSystemPrompt).toContain('do not repeat completed work');
     expect(agentParams.extraSystemPrompt).toContain('call update_goal with complete');
-    expect(agentParams.extraSystemPrompt).toContain('reply with exactly NO_REPLY');
+    expect(agentParams.extraSystemPrompt).toContain(
+      'always provide one concise user-visible final answer',
+    );
+    expect(agentParams.extraSystemPrompt).toContain(
+      'do not repeat, regenerate, paraphrase, or summarize them',
+    );
+    expect(agentParams.extraSystemPrompt).toContain(
+      'exactly one short sentence in the user\'s language',
+    );
+    expect(agentParams.extraSystemPrompt).toContain(
+      'without referring to earlier messages or results',
+    );
+    expect(agentParams.extraSystemPrompt).not.toContain('NO_REPLY');
     expect(agentParams.extraSystemPrompt).not.toContain('get_goal');
     expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({
       goalId: 'goal-1',

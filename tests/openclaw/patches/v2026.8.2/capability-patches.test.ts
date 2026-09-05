@@ -5,6 +5,10 @@ import path from 'node:path';
 import { buildSync } from 'esbuild';
 import { describe, expect, test } from 'vitest';
 
+const { buildOpenClawPatchSetFingerprint } = require('../../../../scripts/verify-openclaw-runtime-patches.cjs') as {
+  buildOpenClawPatchSetFingerprint: (repoRoot: string, version: string) => string;
+};
+
 type PatchModule = {
   applyPatch: (runtimeDir: string) => string[];
   verifyPatch: (runtimeDir: string) => void;
@@ -36,17 +40,89 @@ const runtimePatchSetIsCurrent = (() => {
   try {
     const manifest = JSON.parse(
       fs.readFileSync(path.join(runtimeRoot, 'runtime-patch-manifest.json'), 'utf8'),
-    ) as { patches?: Array<{ file?: string }> };
+    ) as { patchSetSha256?: string; patches?: Array<{ file?: string }> };
     return JSON.stringify(
       (manifest.patches ?? []).map(patch => path.basename(patch.file ?? '')),
-    ) === JSON.stringify(patchFiles);
+    ) === JSON.stringify(patchFiles) &&
+      manifest.patchSetSha256 === buildOpenClawPatchSetFingerprint(path.resolve('.'), 'v2026.8.2');
   } catch {
     return false;
   }
 })();
 
+function buildTrustedLocalFileMediaFixture(): string {
+  return [
+    'const MANAGED_DOCUMENT_MIME_TYPES = new Set([',
+    '  "application/json",',
+    '  "application/pdf"',
+    ']);',
+    'function normalizeMimeType(value) { return value?.toLowerCase(); }',
+    'function mediaKindFromMime(value) { return value === "image/png" ? "image" : undefined; }',
+    'function resolveManagedMediaKind(contentType) {',
+    '  const normalized = normalizeMimeType(contentType);',
+    '  const kind = mediaKindFromMime(normalized);',
+    '  if (kind === "image" || kind === "audio" || kind === "video") return kind;',
+    '  return normalized && MANAGED_DOCUMENT_MIME_TYPES.has(normalized) ? "document" : null;',
+    '}',
+    'function resolveLocalMediaPath(value) { return value.startsWith("file:") ? value : undefined; }',
+    'function getSanitizedManagedImageAttachmentError(error) { return error; }',
+    'function buildManagedMediaFailureBlock(params) {',
+    '  return {',
+    '    type: "attachment_error",',
+    '    attachment: {',
+    '      code: params.code,',
+    '      kind: params.kind === "media" ? "document" : params.kind,',
+    '      label: params.label,',
+    '      ...params.mimeType ? { mimeType: params.mimeType } : {}',
+    '    }',
+    '  };',
+    '}',
+    'function validateManagedImageBuffer() {}',
+    'function mimeTypeFromFilePath() { return "application/octet-stream"; }',
+    'async function createManagedOutgoingMediaBlocks(params) {',
+    '  const item = params.item;',
+    '  const mediaUrl = item.url;',
+    '  const unrelatedUrl = params.item.url;',
+    '  void unrelatedUrl;',
+    '  const localMediaPath = resolveLocalMediaPath(mediaUrl);',
+    '  const savedOriginal = params.savedOriginal;',
+    '  const hintedKind = "document";',
+    '  const label = params.label ?? "generated-media";',
+    '  const blocks = [];',
+    '  try {',
+    '    let savedOriginalContentType = savedOriginal.contentType ?? item.mimeType;',
+    '    if (!savedOriginalContentType) throw new Error("Managed media attachment has no detectable content type");',
+    '    const mediaKind = resolveManagedMediaKind(savedOriginalContentType);',
+    '    if (!mediaKind) throw new Error("Managed media attachment has an unsupported content type");',
+    '    return { mediaKind, contentType: savedOriginalContentType };',
+    '  } catch (error) {',
+    '    const sanitizedError = getSanitizedManagedImageAttachmentError(error, label, hintedKind);',
+    '    if (params.continueOnPrepareError) {',
+    '      blocks.push(buildManagedMediaFailureBlock({',
+    '        code: "delivery-failed",',
+    '        kind: hintedKind,',
+    '        label,',
+    '        mimeType: item.mimeType ?? mimeTypeFromFilePath(localMediaPath ?? mediaUrl)',
+    '      }));',
+    '      params.onPrepareError?.(sanitizedError);',
+    '      return blocks;',
+    '    }',
+    '    throw sanitizedError;',
+    '  }',
+    '}',
+    'function sendStatus() {}',
+    'function buildAssistantMediaContentDisposition(filename) { return "attachment: " + filename; }',
+    'function buildManagedMediaContentDisposition(value, contentType) {',
+    '  const filename = value ?? "generated-media";',
+    '  if (mediaKindFromMime(contentType) === "document") return buildAssistantMediaContentDisposition(filename);',
+    '  return "inline: " + filename;',
+    '}',
+    'async function handleManagedOutgoingMediaHttpRequest() {}',
+  ].join('\n');
+}
+
 describe('OpenClaw v2026.8.2 capability patches', () => {
-  test('contains exactly the fourteen retained capability patches', () => {
+  test('contains exactly the fifteen retained capability patches', () => {
     expect(patchFiles).toEqual([
       '001-managed-pip-config-environment.cjs',
       '002-windows-mcp-package-runner.cjs',
@@ -62,6 +138,7 @@ describe('OpenClaw v2026.8.2 capability patches', () => {
       '012-configurable-plugin-approval-timeout.cjs',
       '013-goal-resume-after-pause.cjs',
       '014-assistant-display-block-replay.cjs',
+      '015-trusted-local-file-media.cjs',
     ]);
   });
 
@@ -198,6 +275,169 @@ describe('OpenClaw v2026.8.2 capability patches', () => {
         const content = fs.readFileSync(filePath, 'utf8');
         const transformed = testing.transform(content, filePath);
         expect(transformed).toContain('type !== "toolCall"');
+        expect(testing.transform(transformed, filePath)).toBe(transformed);
+      }
+    },
+    120_000,
+  );
+
+  test('delivers trusted generic files and preserves actionable MEDIA failures', async () => {
+    const testing = patches.get('015')?.__testing as {
+      MARKER: string;
+      transform: (content: string, filePath: string) => string;
+    };
+    const source = buildTrustedLocalFileMediaFixture();
+    const patched = testing.transform(source, 'managed-media.js');
+    expect(patched).toContain('"application/octet-stream"');
+    expect(patched).toContain(`/*${testing.MARKER}*/`);
+    expect(patched).toContain('resolveManagedMediaKind(contentType)');
+    expect(testing.transform(patched, 'managed-media.js')).toBe(patched);
+
+    const behavior = new Function(
+      `${patched}\nreturn { createManagedOutgoingMediaBlocks, buildManagedMediaContentDisposition };`,
+    )() as {
+      createManagedOutgoingMediaBlocks: (params: {
+        item: { url: string; trustedLocal?: boolean; mimeType?: string };
+        savedOriginal: { contentType?: string };
+        label?: string;
+        continueOnPrepareError?: boolean;
+        onPrepareError?: (error: Error) => void;
+      }) => Promise<
+        { mediaKind: string; contentType: string } | Array<Record<string, unknown>>
+      >;
+      buildManagedMediaContentDisposition: (filename: string, contentType: string) => string;
+    };
+    await expect(
+      behavior.createManagedOutgoingMediaBlocks({
+        item: { url: 'file:script.unknown', trustedLocal: true },
+        savedOriginal: {},
+      }),
+    ).resolves.toEqual({ mediaKind: 'document', contentType: 'application/octet-stream' });
+    await expect(
+      behavior.createManagedOutgoingMediaBlocks({
+        item: { url: 'https://example.test/script.unknown' },
+        savedOriginal: {},
+      }),
+    ).rejects.toThrow('no detectable content type');
+    await expect(
+      behavior.createManagedOutgoingMediaBlocks({
+        item: { url: 'file:script.unknown' },
+        savedOriginal: {},
+      }),
+    ).rejects.toThrow('no detectable content type');
+    await expect(
+      behavior.createManagedOutgoingMediaBlocks({
+        item: { url: 'https://example.test/archive.bin' },
+        savedOriginal: { contentType: 'application/octet-stream' },
+      }),
+    ).rejects.toThrow('unsupported content type');
+    const sourcePath = 'quicksort_demo\\quicksort_1_lomuto.py';
+    await expect(
+      behavior.createManagedOutgoingMediaBlocks({
+        item: { url: sourcePath },
+        savedOriginal: {},
+        label: 'quicksort_1_lomuto.py',
+        continueOnPrepareError: true,
+      }),
+    ).resolves.toEqual([
+      {
+        type: 'attachment_error',
+        attachment: {
+          code: 'delivery-failed',
+          kind: 'document',
+          label: 'quicksort_1_lomuto.py',
+          url: sourcePath,
+          error: 'Managed media attachment has no detectable content type',
+          mimeType: 'application/octet-stream',
+        },
+      },
+    ]);
+    expect(
+      behavior.buildManagedMediaContentDisposition('script.unknown', 'application/octet-stream'),
+    ).toBe('attachment: script.unknown');
+    expect(behavior.buildManagedMediaContentDisposition('image.png', 'image/png')).toBe(
+      'inline: image.png',
+    );
+
+    const bundle = testing.transform(source, 'gateway-bundle.mjs');
+    expect(bundle).not.toContain(testing.MARKER);
+    expect(testing.transform(bundle, 'gateway-bundle.mjs')).toBe(bundle);
+    const bundleFromPatchedSource = testing.transform(patched, 'gateway-bundle.mjs');
+    expect(bundleFromPatchedSource).not.toContain(testing.MARKER);
+    expect(testing.transform(bundleFromPatchedSource, 'gateway-bundle.mjs')).toBe(
+      bundleFromPatchedSource,
+    );
+    const compiledBundle = buildSync({
+      stdin: {
+        contents: `${patched}\nexport { createManagedOutgoingMediaBlocks, sendStatus, buildManagedMediaContentDisposition, handleManagedOutgoingMediaHttpRequest };`,
+        sourcefile: 'managed-media.js',
+      },
+      bundle: true,
+      format: 'esm',
+      minifySyntax: true,
+      platform: 'node',
+      write: false,
+    }).outputFiles[0].text;
+    const normalizedCompiledBundle = testing.transform(compiledBundle, 'gateway-bundle.mjs');
+    expect(normalizedCompiledBundle).not.toContain(testing.MARKER);
+    expect(testing.transform(normalizedCompiledBundle, 'gateway-bundle.mjs')).toBe(
+      normalizedCompiledBundle,
+    );
+    expect(() =>
+      testing.transform(patched.replace(`/*${testing.MARKER}*/`, ''), 'managed-media.js'),
+    ).toThrow('historical or partial');
+  });
+
+  test('applies and verifies trusted local file media against a portable runtime fixture', () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-local-media-patch-'));
+    const distRoot = path.join(fixtureRoot, 'dist');
+    const workerRoot = path.join(distRoot, 'worker');
+    fs.mkdirSync(workerRoot, { recursive: true });
+    const source = buildTrustedLocalFileMediaFixture();
+    const files = [
+      path.join(distRoot, 'managed-media.js'),
+      path.join(workerRoot, 'worker.mjs'),
+      path.join(fixtureRoot, 'gateway-bundle.mjs'),
+    ];
+
+    try {
+      for (const filePath of files) fs.writeFileSync(filePath, source);
+      const patch = patches.get('015')!;
+      expect(patch.applyPatch(fixtureRoot)).toHaveLength(3);
+      expect(() => patch.verifyPatch(fixtureRoot)).not.toThrow();
+      expect(patch.applyPatch(fixtureRoot)).toEqual([]);
+
+      fs.writeFileSync(
+        files[0],
+        fs
+          .readFileSync(files[0], 'utf8')
+          .replace(/\/\*JUSTDO_TRUSTED_LOCAL_FILE_MEDIA_V2026_8_2\*\//u, ''),
+      );
+      expect(() => patch.verifyPatch(fixtureRoot)).toThrow('historical or partial');
+    } finally {
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  test.skipIf(!runtimeIsV2026_8_2 || !runtimePatchSetIsCurrent)(
+    'matches trusted local file media in the shared, worker, and Gateway bundle shapes',
+    () => {
+      const testing = patches.get('015')?.__testing as {
+        transform: (content: string, filePath: string) => string;
+      };
+      const files = [
+        path.join(runtimeRoot, 'dist', 'managed-image-attachments-DMb2rOSI.js'),
+        path.join(runtimeRoot, 'dist', 'worker', 'worker.mjs'),
+        path.join(runtimeRoot, 'gateway-bundle.mjs'),
+      ];
+      for (const filePath of files) {
+        const content = fs.readFileSync(filePath, 'utf8');
+        const transformed = testing.transform(content, filePath);
+        expect(transformed).toContain('"application/octet-stream"');
+        expect(transformed).toContain('assertLocalMediaAllowed');
+        expect(transformed).toContain('maxBytesForManagedMediaKind');
+        expect(transformed).toMatch(/url\s*:\s*[A-Za-z_$][\w$]*/u);
+        expect(transformed).toMatch(/error\s*:\s*[A-Za-z_$][\w$]*/u);
         expect(testing.transform(transformed, filePath)).toBe(transformed);
       }
     },

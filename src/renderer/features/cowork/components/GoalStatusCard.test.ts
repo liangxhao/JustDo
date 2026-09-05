@@ -99,6 +99,19 @@ describe('GoalStatusCard', () => {
     expect(rendered).toContain(i18nService.t('coworkGoalEdit'));
   });
 
+  it('exposes complete first-row text when its visible labels are truncated', () => {
+    const statusNote = 'Five quicksort implementations completed and repaired';
+    const rendered = renderToStaticMarkup(
+      React.createElement(GoalStatusCard, {
+        goal: { ...activeGoal, lastStatusNote: statusNote },
+        onPause: vi.fn(),
+      }),
+    );
+
+    expect(rendered).toContain(`title="${i18nService.t('coworkGoalActive')}"`);
+    expect(rendered).toContain(`title="${statusNote}"`);
+  });
+
   it('hides editing while the goal is running or complete', () => {
     const running = renderToStaticMarkup(
       React.createElement(GoalStatusCard, {

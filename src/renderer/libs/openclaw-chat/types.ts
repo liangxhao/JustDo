@@ -64,6 +64,17 @@ export type MessageContentItem =
       };
     }
   | {
+      type: 'attachment_error';
+      attachment: {
+        code: string;
+        kind: 'image' | 'audio' | 'video' | 'document';
+        label: string;
+        mimeType?: string;
+        url?: string;
+        error?: string;
+      };
+    }
+  | {
       type: 'canvas';
       preview: {
         kind: 'canvas';
@@ -167,13 +178,7 @@ export type ChatQueueItem = {
   createdAt: number;
   sendSubmittedAtMs?: number;
   sendState?:
-    | 'queued'
-    | 'sending'
-    | 'sent'
-    | 'error'
-    | 'failed'
-    | 'waiting-model'
-    | 'waiting-reconnect';
+    'queued' | 'sending' | 'sent' | 'error' | 'failed' | 'waiting-model' | 'waiting-reconnect';
   attachments?: ChatAttachment[];
 };
 

@@ -1097,6 +1097,40 @@ export class JustDoChatElement extends LitElement {
         white-space: nowrap;
       }
 
+      .message-attachment__name--with-warning {
+        display: flex;
+        align-items: center;
+        gap: 2px;
+      }
+
+      .message-attachment__filename {
+        overflow: hidden;
+        min-width: 0;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .message-attachment__warning {
+        display: inline-grid;
+        flex: 0 0 9px;
+        width: 9px;
+        height: 9px;
+        margin-right: 3px;
+        color: var(--text-secondary);
+        font-size: 7px;
+        font-weight: 700;
+        line-height: 1;
+        border: 1px solid color-mix(in srgb, currentColor 55%, transparent);
+        border-radius: 50%;
+        cursor: help;
+        opacity: 0.6;
+        place-items: center;
+      }
+
+      .message-attachment__warning:hover {
+        opacity: 1;
+      }
+
       .message-attachment__open {
         flex: 0 0 auto;
         color: var(--text-secondary);

@@ -296,6 +296,41 @@ function coerceImageContentBlock(
   };
 }
 
+function coerceAttachmentErrorBlock(
+  item: Record<string, unknown>,
+): Extract<MessageContentItem, { type: 'attachment_error' }> | null {
+  if (item.type !== 'attachment_error') return null;
+  const attachment = asRecord(item.attachment);
+  if (!attachment) return null;
+  const code = pickTrimmedString(attachment.code);
+  const label = pickTrimmedString(attachment.label);
+  const kind = attachment.kind;
+  if (
+    !code ||
+    !label ||
+    (kind !== 'image' && kind !== 'audio' && kind !== 'video' && kind !== 'document')
+  ) {
+    return null;
+  }
+  return {
+    type: 'attachment_error',
+    attachment: {
+      code,
+      kind,
+      label,
+      ...(typeof attachment.mimeType === 'string' && attachment.mimeType.trim()
+        ? { mimeType: attachment.mimeType.trim() }
+        : {}),
+      ...(typeof attachment.url === 'string' && attachment.url.trim()
+        ? { url: attachment.url.trim() }
+        : {}),
+      ...(typeof attachment.error === 'string' && attachment.error.trim()
+        ? { error: attachment.error.trim() }
+        : {}),
+    },
+  };
+}
+
 function mergeAdjacentTextItems(items: MessageContentItem[]): MessageContentItem[] {
   const merged: MessageContentItem[] = [];
   for (const item of items) {
@@ -542,6 +577,13 @@ export function normalizeMessage(message: unknown): NormalizedMessage {
         const audioAttachment = coerceAudioContentBlock(item);
         if (audioAttachment) {
           return [audioAttachment];
+        }
+        const attachmentError = coerceAttachmentErrorBlock(item);
+        if (attachmentError) {
+          return [attachmentError];
+        }
+        if (item.type === 'attachment_error') {
+          return [];
         }
       } else if (item.type === 'audio') {
         return [];

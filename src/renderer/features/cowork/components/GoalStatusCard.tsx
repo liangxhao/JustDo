@@ -324,6 +324,9 @@ const GoalStatusCard: React.FC<GoalStatusCardProps> = ({
         : status;
   const presentation = getGoalPresentation(effectiveStatus);
   const tone = TONE_CLASSES[presentation.tone];
+  const statusLabel = goal
+    ? i18nService.t(presentation.labelKey)
+    : i18nService.t('coworkGoalCreating');
   const executionRunning =
     matchedExecution?.phase === GoalExecutionPhase.Running ||
     matchedExecution?.phase === GoalExecutionPhase.Continuing;
@@ -348,6 +351,9 @@ const GoalStatusCard: React.FC<GoalStatusCardProps> = ({
       : matchedExecution?.phase === GoalExecutionPhase.Stopped
         ? i18nService.t('coworkGoalStoppedHint')
         : goal?.lastStatusNote || i18nService.t(presentation.hintKey);
+  const liveExecutionHint = retrying
+    ? i18nService.t('coworkGoalRetryingHint')
+    : i18nService.t('coworkGoalPhaseRunning');
   const goalActions = !goal ? null : stopped && effectiveStatus === SessionGoalStatus.Active ? (
     <GoalActionButton
       disabled={disabled || !onContinue}
@@ -422,9 +428,10 @@ const GoalStatusCard: React.FC<GoalStatusCardProps> = ({
           <span
             role="status"
             aria-live="polite"
+            title={statusLabel}
             className={`min-w-0 truncate text-[11px] font-semibold ${tone.label}`}
           >
-            {goal ? i18nService.t(presentation.labelKey) : i18nService.t('coworkGoalCreating')}
+            {statusLabel}
           </span>
           {live && (
             <span className="inline-flex flex-shrink-0 items-center gap-1 rounded-full border border-primary/15 bg-primary/[0.06] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-primary">
@@ -446,16 +453,16 @@ const GoalStatusCard: React.FC<GoalStatusCardProps> = ({
           {live ? (
             <span className="flex min-w-0 items-center gap-1.5 text-[10px] text-secondary">
               <ArrowPathIcon className="h-3 w-3 flex-shrink-0 animate-spin text-primary" />
-              <span className="truncate">
-                {retrying
-                  ? i18nService.t('coworkGoalRetryingHint')
-                  : i18nService.t('coworkGoalPhaseRunning')}
+              <span className="truncate" title={liveExecutionHint}>
+                {liveExecutionHint}
               </span>
             </span>
           ) : (
             <span className="flex min-w-0 items-center gap-1.5 text-[10px] text-secondary">
               <span className={`h-1 w-1 flex-shrink-0 rounded-full ${tone.bar}`} />
-              <span className="truncate">{idleExecutionHint}</span>
+              <span className="truncate" title={idleExecutionHint}>
+                {idleExecutionHint}
+              </span>
             </span>
           )}
         </div>

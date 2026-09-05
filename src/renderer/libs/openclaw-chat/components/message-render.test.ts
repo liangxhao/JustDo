@@ -401,6 +401,96 @@ describe('renderMessageBlock', () => {
     expect(rendered).not.toContain('message-attachment__detail');
   });
 
+  test('renders an attachment failure as an ordinary actionable file with a raw warning', () => {
+    const rendered = stringifyTemplate(
+      renderMessageBlock(
+        {
+          kind: 'group',
+          key: 'assistant-attachment-error-group',
+          role: 'assistant',
+          messages: [
+            {
+              key: 'assistant-attachment-error-msg',
+              message: {
+                role: 'assistant',
+                content: [
+                  { type: 'text', text: '5 个文件均已生成并验证通过。' },
+                  {
+                    type: 'attachment_error',
+                    attachment: {
+                      code: 'delivery-failed',
+                      kind: 'document',
+                      label: 'quicksort_v1.py',
+                      mimeType: 'application/octet-stream',
+                      url: 'quicksort_demo\\quicksort_v1.py',
+                      error: 'Managed media attachment has an unsupported content type',
+                    },
+                  },
+                ],
+                timestamp: 1,
+              },
+            },
+          ],
+          timestamp: 1,
+          isStreaming: false,
+        },
+        { workingDirectory: 'C:\\workspace\\project' },
+      ),
+    );
+
+    expect(rendered).toContain('5 个文件均已生成并验证通过。');
+    expect(rendered).toContain('quicksort_v1.py');
+    expect(rendered).toContain('C:\\workspace\\project\\quicksort_demo\\quicksort_v1.py');
+    expect(rendered).toContain('message-attachment__warning');
+    expect(rendered).toMatch(/message-attachment__warning[^>]*@click=/u);
+    expect(rendered).toContain('Managed media attachment has an unsupported content type');
+    expect(rendered).toContain('@click=');
+    expect(rendered).toContain('@contextmenu=');
+    expect(rendered).toContain('message-attachment__open');
+    expect(rendered).not.toContain('message-attachment--error');
+    expect(rendered).not.toContain('附件未能送达');
+    expect(rendered).not.toContain('message-attachment__detail');
+    expect(rendered).not.toContain('delete');
+  });
+
+  test('resolves a relative assistant attachment against the current workspace', () => {
+    const rendered = stringifyTemplate(
+      renderMessageBlock(
+        {
+          kind: 'group',
+          key: 'assistant-relative-attachment-group',
+          role: 'assistant',
+          messages: [
+            {
+              key: 'assistant-relative-attachment-msg',
+              message: {
+                role: 'assistant',
+                content: [
+                  {
+                    type: 'attachment',
+                    attachment: {
+                      url: 'quicksort_demo\\quicksort_v1.py',
+                      kind: 'document',
+                      label: 'quicksort_v1.py',
+                    },
+                  },
+                ],
+                timestamp: 1,
+              },
+            },
+          ],
+          timestamp: 1,
+          isStreaming: false,
+        },
+        { workingDirectory: 'C:\\workspace\\project' },
+      ),
+    );
+
+    expect(rendered).toContain('C:\\workspace\\project\\quicksort_demo\\quicksort_v1.py');
+    expect(rendered).toContain('@click=');
+    expect(rendered).toContain('@contextmenu=');
+  });
+
   test('renders Markdown list MEDIA deliveries without dropping the following section', () => {
     const content =
       '5 个 subagent 已全部完成。\n\n## 生成文件（已核验存在）\n\n' +

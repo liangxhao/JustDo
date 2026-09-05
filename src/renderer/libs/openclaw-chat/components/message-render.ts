@@ -147,6 +147,17 @@ function localPathFromAttachmentUrl(url: string): string {
   }
 }
 
+function resolveAttachmentUrl(url: string, workingDirectory?: string): string {
+  const trimmed = url.trim();
+  const isAbsoluteLocalPath = /^(?:[A-Za-z]:[\\/]|[\\/]{2}|\/)/.test(trimmed);
+  const hasProtocol = /^[A-Za-z][A-Za-z\d+.-]*:/u.test(trimmed);
+  const directory = workingDirectory?.trim();
+  if (!trimmed || isAbsoluteLocalPath || hasProtocol || !directory) return trimmed;
+
+  const separator = directory.includes('\\') ? '\\' : '/';
+  return `${directory.replace(/[\\/]+$/u, '')}${separator}${trimmed.replace(/^[\\/]+/u, '')}`;
+}
+
 function labelForMediaPath(mediaPath: string): string {
   const trimmed = mediaPath.trim();
   try {
@@ -253,16 +264,17 @@ function renderAssistantAttachments(
   if (attachments.length === 0) return nothing;
   return html`
     <div class="message-attachments">
-      ${attachments.map(
-        attachment => html`
+      ${attachments.map(attachment => {
+        const url = resolveAttachmentUrl(attachment.url, workingDirectory);
+        return html`
           <button
             type="button"
             class="message-attachment"
-            title=${attachment.url}
+            title=${url}
             aria-label=${`${i18nService.t('coworkOpenAttachment')}: ${attachment.label}`}
-            @click=${(event: Event) => void openAttachment(event, attachment.url, workingDirectory)}
+            @click=${(event: Event) => void openAttachment(event, url, workingDirectory)}
             @contextmenu=${(event: Event) =>
-              void showAttachmentContextMenu(event, attachment.url, workingDirectory)}
+              void showAttachmentContextMenu(event, url, workingDirectory)}
           >
             <span class="message-attachment__icon">${ATTACHMENT_ICON}</span>
             <span class="message-attachment__content">
@@ -270,9 +282,44 @@ function renderAssistantAttachments(
             </span>
             <span class="message-attachment__open" aria-hidden="true">↗</span>
           </button>
-        `,
-      )}
+        `;
+      })}
     </div>
+  `;
+}
+
+function renderAttachmentError(
+  item: Extract<MessageContentItem, { type: 'attachment_error' }>,
+  workingDirectory?: string,
+): TemplateResult {
+  const { attachment } = item;
+  const url = resolveAttachmentUrl(attachment.url?.trim() || attachment.label, workingDirectory);
+  const error = attachment.error?.trim() || attachment.code;
+  return html`
+    <button
+      type="button"
+      class="message-attachment"
+      title=${url}
+      aria-label=${`${i18nService.t('coworkOpenAttachment')}: ${attachment.label}`}
+      @click=${(event: Event) => void openAttachment(event, url, workingDirectory)}
+      @contextmenu=${(event: Event) => void showAttachmentContextMenu(event, url, workingDirectory)}
+    >
+      <span class="message-attachment__icon">${ATTACHMENT_ICON}</span>
+      <span class="message-attachment__content">
+        <span class="message-attachment__name message-attachment__name--with-warning">
+          <span class="message-attachment__filename">${attachment.label}</span>
+          <span
+            class="message-attachment__warning"
+            title=${error}
+            aria-label=${error}
+            @click=${(event: Event) => event.stopPropagation()}
+          >
+            !
+          </span>
+        </span>
+      </span>
+      <span class="message-attachment__open" aria-hidden="true">↗</span>
+    </button>
   `;
 }
 
@@ -368,7 +415,7 @@ function resolveImageSourceUrl(url: string, workingDirectory?: string): string {
 
 type BubbleContentItem =
   | { type: 'text'; text?: string; name?: string; args?: unknown }
-  | Extract<MessageContentItem, { type: 'attachment' }>;
+  | Extract<MessageContentItem, { type: 'attachment' | 'attachment_error' }>;
 
 function renderOrderedBubble(
   items: BubbleContentItem[],
@@ -395,6 +442,9 @@ function renderOrderedBubble(
                 ${unsafeHTML(toSanitizedMarkdownHtml(item.text))}
               </div>
             `;
+          }
+          if (item.type === 'attachment_error') {
+            return renderAttachmentError(item, workingDirectory);
           }
           if (item.attachment.kind === 'image') {
             return renderListedAttachment(
@@ -548,7 +598,7 @@ function renderAssistantMessage(
   };
 
   for (const item of msg.content) {
-    if (item.type === 'attachment') {
+    if (item.type === 'attachment' || item.type === 'attachment_error') {
       bubbleItems.push(item);
       continue;
     }

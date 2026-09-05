@@ -33,6 +33,7 @@ const EXPECTED_PATCH_FILES = [
   '012-configurable-plugin-approval-timeout.cjs',
   '013-goal-resume-after-pause.cjs',
   '014-assistant-display-block-replay.cjs',
+  '015-trusted-local-file-media.cjs',
 ] as const;
 
 const UPSTREAM_CONTRACTS = [
@@ -173,7 +174,7 @@ afterEach(() => {
 });
 
 describe('OpenClaw pristine artifact contracts', () => {
-  test('keeps exactly fourteen independently auditable v2026.8.2 patches', () => {
+  test('keeps exactly fifteen independently auditable v2026.8.2 patches', () => {
     const patchDir = path.resolve('scripts', 'patches', 'v2026.8.2');
     const patchFiles = fs
       .readdirSync(patchDir)

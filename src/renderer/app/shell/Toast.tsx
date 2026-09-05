@@ -15,7 +15,7 @@ const Toast: React.FC<ToastProps> = ({ message, onClose }) => {
           <div className="shrink-0 rounded-full bg-primary-muted p-2">
             <InformationCircleIcon className="h-4 w-4 text-primary" />
           </div>
-          <div className="flex-1 text-sm font-medium leading-snug">
+          <div className="min-w-0 flex-1 text-sm font-medium leading-snug [overflow-wrap:anywhere]">
             {message}
           </div>
           {onClose && (

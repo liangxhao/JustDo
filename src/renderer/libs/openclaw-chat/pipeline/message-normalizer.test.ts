@@ -138,6 +138,53 @@ describe('normalizeMessage assistant media', () => {
       },
     ]);
   });
+
+  test('preserves final text and structured attachment delivery failures', () => {
+    const message = normalizeMessage({
+      role: 'assistant',
+      content: [
+        { type: 'text', text: '5 个文件均已生成并验证通过。' },
+        {
+          type: 'attachment_error',
+          attachment: {
+            code: 'delivery-failed',
+            kind: 'document',
+            label: 'quicksort_v1.py',
+            mimeType: 'application/octet-stream',
+            url: 'quicksort_demo\\quicksort_v1.py',
+            error: 'Managed media attachment has an unsupported content type',
+          },
+        },
+      ],
+    });
+
+    expect(message.content).toEqual([
+      { type: 'text', text: '5 个文件均已生成并验证通过。' },
+      {
+        type: 'attachment_error',
+        attachment: {
+          code: 'delivery-failed',
+          kind: 'document',
+          label: 'quicksort_v1.py',
+          mimeType: 'application/octet-stream',
+          url: 'quicksort_demo\\quicksort_v1.py',
+          error: 'Managed media attachment has an unsupported content type',
+        },
+      },
+    ]);
+  });
+
+  test('discards malformed attachment delivery failures', () => {
+    const message = normalizeMessage({
+      role: 'assistant',
+      content: [
+        { type: 'attachment_error', attachment: { code: 'delivery-failed' } },
+        { type: 'text', text: '最终总结仍然保留。' },
+      ],
+    });
+
+    expect(message.content).toEqual([{ type: 'text', text: '最终总结仍然保留。' }]);
+  });
 });
 
 describe('normalizeMessage user media', () => {
