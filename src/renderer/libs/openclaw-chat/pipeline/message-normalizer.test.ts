@@ -172,7 +172,7 @@ describe('normalizeMessage assistant media', () => {
     ]);
   });
 
-  test('preserves final text while dropping non-standard failure path details', () => {
+  test('normalizes an attachment delivery failure as non-actionable', () => {
     const message = normalizeMessage({
       role: 'assistant',
       content: [
@@ -184,7 +184,7 @@ describe('normalizeMessage assistant media', () => {
             kind: 'document',
             label: 'quicksort_v1.py',
             mimeType: 'application/octet-stream',
-            url: 'quicksort_demo\\quicksort_v1.py',
+            url: '/api/chat/media/outgoing/session/file/full',
             error: 'Managed media attachment has an unsupported content type',
           },
         },
@@ -200,6 +200,98 @@ describe('normalizeMessage assistant media', () => {
           kind: 'document',
           label: 'quicksort_v1.py',
           mimeType: 'application/octet-stream',
+        },
+      },
+    ]);
+  });
+
+  test('renders original absolute and relative MEDIA paths from delivery metadata', () => {
+    const message = normalizeMessage({
+      role: 'assistant',
+      openclawDelivery: {
+        mediaUrls: [
+          'C:\\workspace\\result.py',
+          'missing\\report.txt',
+          'https://example.test/remote.pdf',
+        ],
+      },
+      content: [
+        {
+          type: 'attachment',
+          attachment: {
+            artifactId: 'artifact_managed_media_local',
+            url: '/api/chat/media/outgoing/session/local/full',
+            kind: 'document',
+            label: 'result.py',
+          },
+        },
+        {
+          type: 'attachment_error',
+          attachment: {
+            code: 'delivery-failed',
+            kind: 'document',
+            label: 'report.txt',
+          },
+        },
+        {
+          type: 'attachment',
+          attachment: {
+            artifactId: 'artifact_managed_media_remote',
+            url: '/api/chat/media/outgoing/session/remote/full',
+            kind: 'document',
+            label: 'remote.pdf',
+          },
+        },
+      ],
+    });
+
+    expect(message.content).toEqual([
+      {
+        type: 'attachment',
+        attachment: {
+          url: 'C:\\workspace\\result.py',
+          kind: 'document',
+          label: 'result.py',
+          mimeType: undefined,
+        },
+      },
+      {
+        type: 'attachment',
+        attachment: {
+          url: 'missing\\report.txt',
+          kind: 'document',
+          label: 'report.txt',
+          mimeType: 'text/plain',
+        },
+      },
+      {
+        type: 'attachment',
+        attachment: {
+          url: 'https://example.test/remote.pdf',
+          kind: 'document',
+          label: 'remote.pdf',
+          mimeType: 'application/pdf',
+        },
+      },
+    ]);
+  });
+
+  test('renders metadata MEDIA paths without checking whether the file exists', () => {
+    const message = normalizeMessage({
+      role: 'assistant',
+      openclawDelivery: { mediaUrls: ['missing\\never-created.txt'] },
+      content: [{ type: 'text', text: '文件如下。' }],
+    });
+
+    expect(message.content).toEqual([
+      { type: 'text', text: '文件如下。' },
+      {
+        type: 'attachment',
+        attachment: {
+          url: 'missing\\never-created.txt',
+          kind: 'document',
+          label: 'never-created.txt',
+          mimeType: 'text/plain',
         },
       },
     ]);

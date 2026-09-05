@@ -61,7 +61,7 @@ export type MessageContentItem =
         mimeType?: string;
         isVoiceNote?: boolean;
         listMarker?: string;
-        /** Gateway artifact identity used to request a short-lived download URL. */
+        /** Gateway-managed artifact identity retained with the history block. */
         artifactId?: string;
       };
     }

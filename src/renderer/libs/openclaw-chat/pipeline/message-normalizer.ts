@@ -174,6 +174,49 @@ function inferAttachmentKind(url: string): {
   return { kind, mimeType, label };
 }
 
+function mediaAttachment(url: string): Extract<MessageContentItem, { type: 'attachment' }> {
+  const inferred = inferAttachmentKind(url);
+  return {
+    type: 'attachment',
+    attachment: {
+      url,
+      kind: inferred.kind,
+      label: inferred.label,
+      mimeType: inferred.mimeType,
+    },
+  };
+}
+
+function assistantMediaUrls(message: Record<string, unknown>): string[] {
+  const delivery = asRecord(message.openclawDelivery);
+  if (!Array.isArray(delivery?.mediaUrls)) return [];
+  return [
+    ...new Set(
+      delivery.mediaUrls.flatMap(value => {
+        const url = pickTrimmedString(value);
+        return url ? [url] : [];
+      }),
+    ),
+  ];
+}
+
+function applyAssistantMediaUrls(
+  content: MessageContentItem[],
+  mediaUrls: string[],
+): MessageContentItem[] {
+  if (mediaUrls.length === 0) return content;
+  const mediaUrlSet = new Set(mediaUrls);
+  const retained = content.filter(item => {
+    if (item.type === 'attachment_error') return false;
+    if (item.type !== 'attachment') return true;
+    return (
+      !item.attachment.url.startsWith('/api/chat/media/outgoing/') &&
+      !mediaUrlSet.has(item.attachment.url)
+    );
+  });
+  return [...retained, ...mediaUrls.map(mediaAttachment)];
+}
+
 function coerceAudioContentBlock(
   item: Record<string, unknown>,
 ): Extract<MessageContentItem, { type: 'attachment' }> | null {
@@ -373,17 +416,15 @@ function expandTextContent(text: string): {
 
   for (const segment of segments) {
     if (segment.type === 'media') {
-      const inferred = inferAttachmentKind(segment.url);
-      parts.push({
-        type: 'attachment',
-        attachment: {
-          url: segment.url,
-          kind: inferred.kind,
-          label: inferred.label,
-          mimeType: inferred.mimeType,
-          ...(segment.listMarker ? { listMarker: segment.listMarker } : {}),
-        },
-      });
+      const attachment = mediaAttachment(segment.url);
+      parts.push(
+        segment.listMarker
+          ? {
+              ...attachment,
+              attachment: { ...attachment.attachment, listMarker: segment.listMarker },
+            }
+          : attachment,
+      );
       continue;
     }
 
@@ -691,6 +732,7 @@ export function normalizeMessage(message: unknown): NormalizedMessage {
 
   content = stripMessageDisplayMetadata(content);
   if (isAssistantMessage) {
+    content = applyAssistantMediaUrls(content, assistantMediaUrls(m));
     content = stripUnreliableGoalZeroUsage(content);
     content = stripOpenClawLogHint(content);
   }

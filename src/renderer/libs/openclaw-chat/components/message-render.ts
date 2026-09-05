@@ -28,18 +28,12 @@ import { i18nService } from '@/services/i18n';
 
 type AssistantCanvasItem = Extract<MessageContentItem, { type: 'canvas' }>;
 
-type ArtifactDownloadResolver = (params: {
-  sessionKey: string;
-  artifactId: string;
-}) => Promise<{ url: string; expiresAt?: string } | null>;
-
 type MessageRenderOptions = {
   searchQuery?: string;
   showFooter?: boolean;
   showAvatar?: boolean;
   assistantName?: string;
   workingDirectory?: string;
-  resolveArtifactDownload?: ArtifactDownloadResolver;
 };
 
 type AssistantTimelineContentOptions = Pick<
@@ -164,52 +158,9 @@ function resolveAttachmentUrl(url: string, workingDirectory?: string): string {
   return `${directory.replace(/[\\/]+$/u, '')}${separator}${trimmed.replace(/^[\\/]+/u, '')}`;
 }
 
-function isManagedOutgoingMediaSource(source: string): boolean {
-  return /^\/api\/chat\/media\/outgoing\/[^/]+\/[^/]+\/full(?:[?#].*)?$/u.test(source.trim());
-}
-
-function resolveManagedOutgoingMediaSessionKey(source: string): string | null {
-  try {
-    const encodedSessionKey = new URL(source, 'http://justdo.invalid').pathname.split('/')[5];
-    return encodedSessionKey ? decodeURIComponent(encodedSessionKey) : null;
-  } catch {
-    return null;
-  }
-}
-
 type AttachmentOpenOptions = {
   workingDirectory?: string;
-  label?: string;
-  artifactId?: string;
-  resolveArtifactDownload?: ArtifactDownloadResolver;
 };
-
-function showAttachmentUnavailable(label: string): void {
-  window.dispatchEvent(
-    new CustomEvent('app:showToast', {
-      detail: i18nService.t('coworkAttachmentUnavailable').replace('{filename}', label),
-    }),
-  );
-}
-
-async function resolveAttachmentOpenTarget(
-  source: string,
-  options: AttachmentOpenOptions,
-): Promise<string | null> {
-  if (!isManagedOutgoingMediaSource(source)) {
-    return resolveAttachmentUrl(source, options.workingDirectory);
-  }
-  const sessionKey = resolveManagedOutgoingMediaSessionKey(source);
-  const artifactId = options.artifactId?.trim();
-  if (!sessionKey || !artifactId || !options.resolveArtifactDownload) return null;
-  try {
-    const result = await options.resolveArtifactDownload({ sessionKey, artifactId });
-    const url = result?.url.trim() ?? '';
-    return /^https?:\/\//iu.test(url) ? url : null;
-  } catch {
-    return null;
-  }
-}
 
 function labelForMediaPath(mediaPath: string): string {
   const trimmed = mediaPath.trim();
@@ -245,11 +196,7 @@ async function openAttachment(
 ): Promise<void> {
   event.stopPropagation();
   try {
-    const url = await resolveAttachmentOpenTarget(source, options);
-    if (!url) {
-      showAttachmentUnavailable(options.label ?? source);
-      return;
-    }
+    const url = resolveAttachmentUrl(source, options.workingDirectory);
     const localPath = localPathFromAttachmentUrl(url);
     if (!/^https?:\/\//i.test(url) && getPreviewableFileExtension(localPath)) {
       window.dispatchEvent(
@@ -291,17 +238,8 @@ async function showAttachmentContextMenu(
     await openAttachment(event, source, options);
     return;
   }
-  if (isManagedOutgoingMediaSource(source) && action !== 'open-with-system') {
-    showAttachmentUnavailable(options.label ?? source);
-    return;
-  }
-
   try {
-    const url = await resolveAttachmentOpenTarget(source, options);
-    if (!url) {
-      showAttachmentUnavailable(options.label ?? source);
-      return;
-    }
+    const url = resolveAttachmentUrl(source, options.workingDirectory);
     const isExternal = /^https?:\/\//i.test(url);
     const localPath = localPathFromAttachmentUrl(url);
     const result =
@@ -331,39 +269,34 @@ async function showAttachmentContextMenu(
 function renderAssistantAttachments(
   attachments: RenderableAttachment[],
   workingDirectory?: string,
-  resolveArtifactDownload?: ArtifactDownloadResolver,
 ): TemplateResult | typeof nothing {
   if (attachments.length === 0) return nothing;
   return html`
     <div class="message-attachments">
       ${attachments.map(attachment => {
-        const managed = isManagedOutgoingMediaSource(attachment.url);
-        const url = managed
-          ? attachment.url
-          : resolveAttachmentUrl(attachment.url, workingDirectory);
-        const canOpen = !managed || Boolean(attachment.artifactId && resolveArtifactDownload);
+        const managed = /^\/api\/chat\/media\/outgoing\//u.test(attachment.url.trim());
+        const source = managed ? undefined : attachment.url;
+        const canOpen = Boolean(source);
+        const url = source ? resolveAttachmentUrl(source, workingDirectory) : '';
+        const unavailable = i18nService
+          .t('coworkAttachmentUnavailable')
+          .replace('{filename}', attachment.label);
         const openOptions: AttachmentOpenOptions = {
           workingDirectory,
-          label: attachment.label,
-          artifactId: attachment.artifactId,
-          resolveArtifactDownload,
         };
         return html`
           <button
             type="button"
-            class="message-attachment"
-            title=${managed ? attachment.label : url}
+            class=${`message-attachment${canOpen ? '' : ' message-attachment--unavailable'}`}
+            title=${canOpen ? url : unavailable}
             aria-label=${`${i18nService.t('coworkOpenAttachment')}: ${attachment.label}`}
             ?disabled=${!canOpen}
             @click=${
-              canOpen
-                ? (event: Event) => void openAttachment(event, attachment.url, openOptions)
-                : nothing
+              canOpen ? (event: Event) => void openAttachment(event, source!, openOptions) : nothing
             }
             @contextmenu=${
               canOpen
-                ? (event: Event) =>
-                    void showAttachmentContextMenu(event, attachment.url, openOptions)
+                ? (event: Event) => void showAttachmentContextMenu(event, source!, openOptions)
                 : nothing
             }
           >
@@ -503,7 +436,6 @@ function renderOrderedBubble(
   items: BubbleContentItem[],
   role: 'user' | 'assistant',
   workingDirectory?: string,
-  resolveArtifactDownload?: ArtifactDownloadResolver,
 ): TemplateResult | typeof nothing {
   if (items.length === 0) return nothing;
   const text = items
@@ -537,11 +469,7 @@ function renderOrderedBubble(
           }
           return renderListedAttachment(
             item.attachment,
-            renderAssistantAttachments(
-              [item.attachment],
-              workingDirectory,
-              resolveArtifactDownload,
-            ),
+            renderAssistantAttachments([item.attachment], workingDirectory),
           );
         })}
       </div>
@@ -638,19 +566,9 @@ function renderSingleMessage(
   // The canonical timeline exclusively owns Tool presentation.
   if (isTool) return nothing;
   if (isUser) {
-    return renderUserMessage(
-      normalized,
-      message,
-      opts?.workingDirectory,
-      opts?.resolveArtifactDownload,
-    );
+    return renderUserMessage(normalized, message, opts?.workingDirectory);
   }
-  return renderAssistantMessage(
-    normalized,
-    message,
-    opts?.workingDirectory,
-    opts?.resolveArtifactDownload,
-  );
+  return renderAssistantMessage(normalized, message, opts?.workingDirectory);
 }
 
 // ─── User Message ───────────────────────────────────────────────────────────
@@ -659,7 +577,6 @@ function renderUserMessage(
   msg: NormalizedMessage,
   rawMessage: unknown,
   workingDirectory?: string,
-  resolveArtifactDownload?: ArtifactDownloadResolver,
 ): TemplateResult {
   const hasImage = msg.content.some(
     item => item.type === 'attachment' && item.attachment.kind === 'image',
@@ -679,7 +596,6 @@ function renderUserMessage(
     [...content, ...transcriptAttachments],
     'user',
     workingDirectory,
-    resolveArtifactDownload,
   ) as TemplateResult;
 }
 
@@ -689,15 +605,12 @@ function renderAssistantMessage(
   msg: NormalizedMessage,
   _rawMessage: unknown,
   workingDirectory?: string,
-  resolveArtifactDownload?: ArtifactDownloadResolver,
 ): TemplateResult {
   const sections: Array<TemplateResult | typeof nothing> = [];
   let bubbleItems: BubbleContentItem[] = [];
   const flushBubble = () => {
     if (bubbleItems.length === 0) return;
-    sections.push(
-      renderOrderedBubble(bubbleItems, 'assistant', workingDirectory, resolveArtifactDownload),
-    );
+    sections.push(renderOrderedBubble(bubbleItems, 'assistant', workingDirectory));
     bubbleItems = [];
   };
 

@@ -49,49 +49,6 @@ test('loads the selected session progress card from the advertised Gateway metho
   expect(controller.state.progressCardAvailable).toBe(true);
 });
 
-test('resolves an artifact ticket against the Gateway HTTP origin', async () => {
-  const request = vi.fn().mockResolvedValue({
-    url: '/api/chat/media/outgoing/session/file/full?mediaTicket=ticket',
-    expiresAt: '2026-09-05T12:00:00.000Z',
-  });
-  const controller = new ChatController();
-  controller.state.client = { request } as never;
-  controller.state.connected = true;
-  (
-    controller as unknown as {
-      gatewayHttpBase: string;
-    }
-  ).gatewayHttpBase = 'http://127.0.0.1:14041';
-
-  await expect(
-    controller.resolveArtifactDownload({
-      sessionKey: 'agent:main:justdo:artifact-owner',
-      artifactId: 'artifact_managed_media_file',
-    }),
-  ).resolves.toEqual({
-    url: 'http://127.0.0.1:14041/api/chat/media/outgoing/session/file/full?mediaTicket=ticket',
-    expiresAt: '2026-09-05T12:00:00.000Z',
-  });
-  expect(request).toHaveBeenCalledWith('artifacts.download', {
-    sessionKey: 'agent:main:justdo:artifact-owner',
-    artifactId: 'artifact_managed_media_file',
-  });
-});
-
-test('rejects malformed artifact download responses', async () => {
-  const request = vi.fn().mockResolvedValue({ url: 42, expiresAt: {} });
-  const controller = new ChatController();
-  controller.state.client = { request } as never;
-  controller.state.connected = true;
-
-  await expect(
-    controller.resolveArtifactDownload({
-      sessionKey: 'agent:main:justdo:artifact-owner',
-      artifactId: 'artifact_managed_media_file',
-    }),
-  ).resolves.toBeNull();
-});
-
 test('refreshes and clears progress cards from revision notifications', async () => {
   const sessionKey = 'agent:main:justdo:session-1';
   const request = vi.fn().mockResolvedValue({

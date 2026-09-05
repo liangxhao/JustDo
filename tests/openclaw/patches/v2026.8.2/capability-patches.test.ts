@@ -121,6 +121,28 @@ function buildTrustedLocalFileMediaFixture(): string {
   ].join('\n');
 }
 
+function buildMediaProjectionFixture(): string {
+  return [
+    'function takeAssistantManagedMediaUrlsForDisplay(entry, role) {',
+    '  const delivery = role === "assistant" ? entry.openclawDelivery : undefined;',
+    '  const urls = Array.isArray(delivery?.mediaUrls)',
+    '    ? delivery.mediaUrls.filter((url) => typeof url === "string")',
+    '    : [];',
+    '  if (!delivery || !Object.hasOwn(delivery, "mediaUrls")) {',
+    '    return { changed: false, urls };',
+    '  }',
+    '  const projectedDelivery = { ...delivery };',
+    '  delete projectedDelivery.mediaUrls;',
+    '  if (Object.keys(projectedDelivery).length > 0) {',
+    '    entry.openclawDelivery = projectedDelivery;',
+    '  } else {',
+    '    delete entry.openclawDelivery;',
+    '  }',
+    '  return { changed: true, urls };',
+    '}',
+  ].join('\n');
+}
+
 describe('OpenClaw v2026.8.2 capability patches', () => {
   test('contains exactly the fifteen retained capability patches', () => {
     expect(patchFiles).toEqual([
@@ -391,7 +413,7 @@ describe('OpenClaw v2026.8.2 capability patches', () => {
     const distRoot = path.join(fixtureRoot, 'dist');
     const workerRoot = path.join(distRoot, 'worker');
     fs.mkdirSync(workerRoot, { recursive: true });
-    const source = buildTrustedLocalFileMediaFixture();
+    const source = `${buildTrustedLocalFileMediaFixture()}\n${buildMediaProjectionFixture()}`;
     const files = [
       path.join(distRoot, 'managed-media.js'),
       path.join(workerRoot, 'worker.mjs'),
@@ -409,10 +431,7 @@ describe('OpenClaw v2026.8.2 capability patches', () => {
         files[0],
         fs
           .readFileSync(files[0], 'utf8')
-          .replace(
-            /\/\*JUSTDO_TRUSTED_LOCAL_FILE_MEDIA_DOWNLOAD_ONLY_V2026_8_2\*\//u,
-            '',
-          ),
+          .replace(/\/\*JUSTDO_TRUSTED_LOCAL_FILE_MEDIA_V2026_8_2\*\//u, ''),
       );
       expect(() => patch.verifyPatch(fixtureRoot)).toThrow('historical or partial');
     } finally {
@@ -420,11 +439,44 @@ describe('OpenClaw v2026.8.2 capability patches', () => {
     }
   });
 
+  test('retains original assistant MEDIA paths in the display projection', () => {
+    const testing = patches.get('015')?.__testing as {
+      PROJECTION_MARKER: string;
+      transformDisplayProjection: (content: string, filePath: string) => string;
+    };
+    const patched = testing.transformDisplayProjection(
+      buildMediaProjectionFixture(),
+      'chat-display-projection.js',
+    );
+    expect(patched).toContain(`/*${testing.PROJECTION_MARKER}*/`);
+    expect(patched).not.toContain('delete projectedDelivery.mediaUrls');
+
+    const behavior = new Function(`${patched}; return takeAssistantManagedMediaUrlsForDisplay;`)() as (
+      entry: Record<string, unknown>,
+      role: string,
+    ) => { changed: boolean; urls: string[] };
+    const entry = {
+      openclawDelivery: {
+        mediaUrls: ['C:\\project\\result.txt', 'output\\report.pdf'],
+      },
+    };
+    expect(behavior(entry, 'assistant')).toEqual({
+      changed: false,
+      urls: ['C:\\project\\result.txt', 'output\\report.pdf'],
+    });
+    expect(entry.openclawDelivery.mediaUrls).toEqual([
+      'C:\\project\\result.txt',
+      'output\\report.pdf',
+    ]);
+    expect(testing.transformDisplayProjection(patched, 'chat-display-projection.js')).toBe(patched);
+  });
+
   test.skipIf(!runtimeIsV2026_8_2 || !runtimePatchSetIsCurrent)(
     'matches trusted local file media in the shared, worker, and Gateway bundle shapes',
     () => {
       const testing = patches.get('015')?.__testing as {
         transform: (content: string, filePath: string) => string;
+        transformDisplayProjection: (content: string, filePath: string) => string;
       };
       const files = [
         path.join(runtimeRoot, 'dist', 'managed-image-attachments-DMb2rOSI.js'),
@@ -438,6 +490,15 @@ describe('OpenClaw v2026.8.2 capability patches', () => {
         expect(transformed).toContain('assertLocalMediaAllowed');
         expect(transformed).toContain('maxBytesForManagedMediaKind');
         expect(testing.transform(transformed, filePath)).toBe(transformed);
+      }
+      const projectionFiles = [
+        path.join(runtimeRoot, 'dist', 'chat-display-projection.helpers-BO81PUf8.js'),
+        path.join(runtimeRoot, 'dist', 'worker', 'worker.mjs'),
+        path.join(runtimeRoot, 'gateway-bundle.mjs'),
+      ];
+      for (const filePath of projectionFiles) {
+        const content = fs.readFileSync(filePath, 'utf8');
+        expect(testing.transformDisplayProjection(content, filePath)).toBe(content);
       }
     },
     120_000,

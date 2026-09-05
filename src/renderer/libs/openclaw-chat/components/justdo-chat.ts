@@ -3413,9 +3413,6 @@ export class JustDoChatElement extends LitElement {
     );
   }
 
-  private readonly resolveArtifactDownload = (params: { sessionKey: string; artifactId: string }) =>
-    this._controller?.resolveArtifactDownload(params) ?? Promise.resolve(null);
-
   private renderItem(
     item: ChatItem | MessageGroup,
     thinkingStream: string | null = null,
@@ -3430,7 +3427,6 @@ export class JustDoChatElement extends LitElement {
           showAvatar,
           assistantName: this.assistantName,
           workingDirectory: this.workingDirectory,
-          resolveArtifactDownload: this.resolveArtifactDownload,
         });
       }
       if (item.kind === 'stream') {
@@ -3503,7 +3499,6 @@ export class JustDoChatElement extends LitElement {
             searchQuery: this.searchQuery,
             showAvatar: shouldRenderGroupAvatarByPrevItem(item as MessageGroup, prev),
             workingDirectory: this.workingDirectory,
-            resolveArtifactDownload: this.resolveArtifactDownload,
           }),
         );
         index += 1;
@@ -3524,7 +3519,6 @@ export class JustDoChatElement extends LitElement {
             showAvatar,
             assistantName: this.assistantName,
             workingDirectory: this.workingDirectory,
-            resolveArtifactDownload: this.resolveArtifactDownload,
           }),
         );
         continue;

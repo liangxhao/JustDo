@@ -452,9 +452,9 @@ describe('renderMessageBlock', () => {
     expect(rendered).toContain('5 个文件均已生成并验证通过。');
     expect(rendered).toContain('quicksort_v1.py');
     expect(rendered).not.toContain('C:\\workspace\\project\\quicksort_demo\\quicksort_v1.py');
+    expect(rendered).not.toContain('Managed media attachment has an unsupported content type');
     expect(rendered).toContain('message-attachment__warning');
     expect(rendered).toContain('附件不可用：quicksort_v1.py');
-    expect(rendered).not.toContain('Managed media attachment has an unsupported content type');
     expect(rendered).not.toContain('@contextmenu=');
     expect(rendered).not.toContain('message-attachment__open');
     expect(rendered).toContain('message-attachment--unavailable');
@@ -462,36 +462,76 @@ describe('renderMessageBlock', () => {
     expect(rendered).not.toContain('delete');
   });
 
-  test('opens a managed document through the Gateway artifact download capability', async () => {
-    const openExternal = vi.fn().mockResolvedValue({ success: true });
-    const openPath = vi.fn();
+  test('opens an absolute MEDIA document in the editable sidebar', async () => {
+    const openExternal = vi.fn();
+    const openPath = vi.fn().mockResolvedValue({ success: true });
+    const dispatchEvent = vi.fn();
     vi.stubGlobal('window', {
       electron: { shell: { openExternal, openPath } },
-      dispatchEvent: vi.fn(),
+      dispatchEvent,
       setTimeout,
     });
-    const resolveArtifactDownload = vi.fn().mockResolvedValue({
-      url: 'http://127.0.0.1:14041/api/chat/media/outgoing/session/file/full?mediaTicket=ticket',
+    const rendered = renderMessageBlock({
+      kind: 'group',
+      key: 'assistant-media-document-group',
+      role: 'assistant',
+      messages: [
+        {
+          key: 'assistant-media-document-message',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'attachment',
+                attachment: {
+                  url: 'C:\\workspace\\project\\result.py',
+                  kind: 'document',
+                  label: 'result.py',
+                  mimeType: 'application/octet-stream',
+                },
+              },
+            ],
+          },
+        },
+      ],
+      timestamp: 1,
+      isStreaming: false,
     });
-    const rendered = renderMessageBlock(
+
+    const handlers = collectTemplateFunctions(rendered);
+    expect(handlers.length).toBeGreaterThanOrEqual(2);
+    handlers[0]({ stopPropagation: vi.fn() } as unknown as Event);
+
+    await vi.waitFor(() => expect(dispatchEvent).toHaveBeenCalledOnce());
+    const previewEvent = dispatchEvent.mock.calls[0][0] as CustomEvent;
+    expect(previewEvent.type).toBe('cowork:preview-file');
+    expect(previewEvent.detail).toEqual({
+      filePath: 'C:\\workspace\\project\\result.py',
+      workingDirectory: undefined,
+    });
+    expect(openPath).not.toHaveBeenCalled();
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  test('does not infer a local path for an unbound managed attachment', () => {
+    const renderedTemplate = renderMessageBlock(
       {
         kind: 'group',
-        key: 'assistant-managed-document-group',
+        key: 'assistant-unbound-managed-group',
         role: 'assistant',
         messages: [
           {
-            key: 'assistant-managed-document-message',
+            key: 'assistant-unbound-managed-message',
             message: {
               role: 'assistant',
               content: [
                 {
                   type: 'attachment',
                   attachment: {
-                    artifactId: 'artifact_managed_media_file',
-                    url: '/api/chat/media/outgoing/agent%3Amain%3Ajustdo%3Asession/file/full',
+                    artifactId: 'artifact_managed_media_remote',
+                    url: '/api/chat/media/outgoing/session/remote/full',
                     kind: 'document',
-                    label: 'result.py',
-                    mimeType: 'application/octet-stream',
+                    label: 'remote.pdf',
                   },
                 },
               ],
@@ -501,23 +541,127 @@ describe('renderMessageBlock', () => {
         timestamp: 1,
         isStreaming: false,
       },
-      { resolveArtifactDownload },
+      { workingDirectory: 'C:\\workspace\\project' },
     );
+    const rendered = stringifyTemplate(renderedTemplate);
+
+    expect(rendered).toContain('message-attachment--unavailable');
+    expect(rendered).not.toContain('C:\\workspace\\project\\remote.pdf');
+    expect(collectTemplateFunctions(renderedTemplate)).toHaveLength(0);
+  });
+
+  test.each([
+    ['open-with-system', 'openPath'],
+    ['show-in-folder', 'showItemInFolder'],
+  ] as const)('runs %s against the absolute MEDIA path', async (action, expectedMethod) => {
+    const openPath = vi.fn().mockResolvedValue({ success: true });
+    const showItemInFolder = vi.fn().mockResolvedValue({ success: true });
+    const showAttachmentContextMenu = vi.fn().mockResolvedValue(action);
+    vi.stubGlobal('window', {
+      electron: {
+        shell: {
+          openExternal: vi.fn(),
+          openPath,
+          showItemInFolder,
+          showAttachmentContextMenu,
+        },
+      },
+      dispatchEvent: vi.fn(),
+      setTimeout,
+    });
+    const rendered = renderMessageBlock({
+      kind: 'group',
+      key: `assistant-media-${action}-group`,
+      role: 'assistant',
+      messages: [
+        {
+          key: `assistant-media-${action}-message`,
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'attachment',
+                attachment: {
+                  url: 'C:\\workspace\\project\\result.bin',
+                  kind: 'document',
+                  label: 'result.bin',
+                },
+              },
+            ],
+          },
+        },
+      ],
+      timestamp: 1,
+      isStreaming: false,
+    });
 
     const handlers = collectTemplateFunctions(rendered);
-    expect(handlers.length).toBeGreaterThanOrEqual(2);
-    handlers[0]({ stopPropagation: vi.fn() } as unknown as Event);
+    handlers[1]({ preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as Event);
 
-    await vi.waitFor(() => expect(openExternal).toHaveBeenCalledOnce());
-    expect(resolveArtifactDownload).toHaveBeenCalledWith({
-      sessionKey: 'agent:main:justdo:session',
-      artifactId: 'artifact_managed_media_file',
-    });
-    expect(openExternal).toHaveBeenCalledWith(
-      'http://127.0.0.1:14041/api/chat/media/outgoing/session/file/full?mediaTicket=ticket',
-    );
-    expect(openPath).not.toHaveBeenCalled();
+    const expected = expectedMethod === 'openPath' ? openPath : showItemInFolder;
+    const unexpected = expectedMethod === 'openPath' ? showItemInFolder : openPath;
+    await vi.waitFor(() => expect(expected).toHaveBeenCalledOnce());
+    expect(expected).toHaveBeenCalledWith('C:\\workspace\\project\\result.bin', undefined);
+    expect(unexpected).not.toHaveBeenCalled();
   });
+
+  test.each([
+    ['open-with-system', 'openPath'],
+    ['show-in-folder', 'showItemInFolder'],
+  ] as const)(
+    'shows a file-not-found toast when %s targets a deleted source file',
+    async (action, expectedMethod) => {
+      const dispatchEvent = vi.fn();
+      const openPath = vi.fn().mockResolvedValue({ success: false, notFound: true });
+      const showItemInFolder = vi.fn().mockResolvedValue({ success: false, notFound: true });
+      vi.stubGlobal('window', {
+        electron: {
+          shell: {
+            openExternal: vi.fn(),
+            openPath,
+            showItemInFolder,
+            showAttachmentContextMenu: vi.fn().mockResolvedValue(action),
+          },
+        },
+        dispatchEvent,
+        setTimeout,
+      });
+      const rendered = renderMessageBlock({
+        kind: 'group',
+        key: 'assistant-deleted-source-group',
+        role: 'assistant',
+        messages: [
+          {
+            key: 'assistant-deleted-source-message',
+            message: {
+              role: 'assistant',
+              content: [
+                {
+                  type: 'attachment',
+                  attachment: {
+                    kind: 'document',
+                    label: 'deleted.bin',
+                    url: 'C:\\workspace\\project\\deleted.bin',
+                  },
+                },
+              ],
+            },
+          },
+        ],
+        timestamp: 1,
+        isStreaming: false,
+      });
+
+      const handlers = collectTemplateFunctions(rendered);
+      handlers[1]({ preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as Event);
+
+      const expected = expectedMethod === 'openPath' ? openPath : showItemInFolder;
+      await vi.waitFor(() => expect(expected).toHaveBeenCalledOnce());
+      const toastEvent = dispatchEvent.mock.calls[0][0] as CustomEvent;
+      expect(toastEvent.type).toBe('app:showToast');
+      expect(toastEvent.detail).toBe('文件不存在：C:\\workspace\\project\\deleted.bin');
+    },
+  );
 
   test('resolves a relative assistant attachment against the current workspace', () => {
     const rendered = stringifyTemplate(
@@ -583,7 +727,7 @@ describe('renderMessageBlock', () => {
       }),
     );
 
-    expect(rendered.match(/class="message-attachment"/g)).toHaveLength(5);
+    expect(rendered.match(/class=message-attachment(?:\s|>)/g)).toHaveLength(5);
     expect(rendered.match(/class="message-attachment-list-item__marker"/g)).toHaveLength(5);
     expect(rendered.match(/•/g)).toHaveLength(5);
     expect(rendered).not.toContain('MEDIA:');

@@ -290,16 +290,6 @@ type SwitchSessionOptions = {
   promoteFromSessionKey?: string;
 };
 
-export type ArtifactDownloadRequest = {
-  sessionKey: string;
-  artifactId: string;
-};
-
-export type ArtifactDownloadResult = {
-  url: string;
-  expiresAt?: string;
-};
-
 type OpenClawHistoryBridge = {
   getToolInputs?: (params: { sessionKey: string; toolCallIds: string[] }) => Promise<{
     success?: boolean;
@@ -567,21 +557,6 @@ function mergeRefreshedHistoryWindow(current: unknown[], recent: unknown[]): unk
 
 function readNonBlankString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value : undefined;
-}
-
-export function resolveGatewayHttpResourceUrl(
-  gatewayHttpBase: string,
-  resourceUrl: string,
-): string | null {
-  const base = gatewayHttpBase.trim();
-  const resource = resourceUrl.trim();
-  if (!base || !resource) return null;
-  try {
-    const resolved = new URL(resource, base);
-    return resolved.protocol === 'http:' || resolved.protocol === 'https:' ? resolved.href : null;
-  } catch {
-    return null;
-  }
 }
 
 // ─── ChatController ─────────────────────────────────────────────────────────
@@ -2653,31 +2628,6 @@ export class ChatController {
 
     this.state.client = client;
     client.start();
-  }
-
-  /** Resolve a transcript-backed artifact to a short-lived HTTP capability URL. */
-  async resolveArtifactDownload(
-    params: ArtifactDownloadRequest,
-  ): Promise<ArtifactDownloadResult | null> {
-    const client = this.state.client;
-    const sessionKey = params.sessionKey.trim();
-    const artifactId = params.artifactId.trim();
-    if (!client || !this.state.connected || !sessionKey || !artifactId) return null;
-
-    const result = await client.request<Partial<ArtifactDownloadResult> | null>(
-      'artifacts.download',
-      { sessionKey, artifactId },
-    );
-    if (client !== this.state.client) return null;
-
-    const rawUrl = typeof result?.url === 'string' ? result.url : '';
-    const url = resolveGatewayHttpResourceUrl(this.gatewayHttpBase, rawUrl);
-    if (!url) return null;
-    const expiresAt =
-      typeof result?.expiresAt === 'string' && result.expiresAt.trim()
-        ? result.expiresAt.trim()
-        : undefined;
-    return { url, ...(expiresAt ? { expiresAt } : {}) };
   }
 
   /** Switch to a different session */

@@ -1,10 +1,13 @@
 'use strict';
 
-// Capability: deliver trusted local MEDIA files whose MIME type cannot be detected.
-// Target: openclaw@2026.8.2 managed outgoing media preparation and HTTP disposition.
-// Scope: trusted local generic downloads only.
-// Safety: admission and size checks stay unchanged; remote and untrusted octet streams remain denied.
-// Remove when: upstream safely downloads generic trusted local files.
+// Capability: deliver trusted local MEDIA files whose MIME type cannot be detected and keep the
+// original MEDIA references in the chat display projection.
+// Target: openclaw@2026.8.2 managed outgoing media preparation, HTTP disposition, and chat history.
+// Scope: trusted local generic downloads plus original MEDIA reference retention for JustDo's
+// local desktop renderer.
+// Safety: media admission and size checks stay unchanged.
+// Remove when: upstream safely downloads generic trusted local files and exposes original MEDIA
+// references to authenticated local chat clients.
 
 const fs = require('fs');
 const path = require('path');
@@ -15,8 +18,8 @@ const {
   isGatewayBundlePath,
   writeIfChanged,
 } = require('./_patch-utils.js');
-
-const MARKER = 'JUSTDO_TRUSTED_LOCAL_FILE_MEDIA_DOWNLOAD_ONLY_V2026_8_2';
+const MARKER = 'JUSTDO_TRUSTED_LOCAL_FILE_MEDIA_V2026_8_2';
+const PROJECTION_MARKER = 'JUSTDO_RETAIN_ASSISTANT_MEDIA_URLS_V2026_8_2';
 const DOCUMENT_SET_PATTERN =
   /\bMANAGED_DOCUMENT_MIME_TYPES\s*=\s*(?:\/\*[^*]*\*\/\s*)?new Set\(\[/gu;
 const ORIGINAL_DOCUMENT_MIME_PATTERN =
@@ -26,7 +29,7 @@ const PATCHED_DOCUMENT_MIME_PATTERN =
 const ORIGINAL_CONTENT_TYPE_PATTERN =
   /((?:(?:const|let)\s+|,)\s*([A-Za-z_$][\w$]*)\s*=\s*([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\.contentType\s*\?\?\s*([A-Za-z_$][\w$]*)\.mimeType)\s*;/gu;
 const PATCHED_CONTENT_TYPE_PATTERN =
-  /((?:(?:const|let)\s+|,)\s*([A-Za-z_$][\w$]*)\s*=\s*([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\.contentType\s*\?\?\s*([A-Za-z_$][\w$]*)\.mimeType)\s*\?\?\s*\(\s*([A-Za-z_$][\w$]*)\s*&&\s*\4\.trustedLocal\s*\?\s*(["'`])application\/octet-stream\6\s*:\s*(?:void\s+0|undefined)\s*\)\s*;(?:\/\*JUSTDO_TRUSTED_LOCAL_FILE_MEDIA_DOWNLOAD_ONLY_V2026_8_2\*\/)?/gu;
+  /((?:(?:const|let)\s+|,)\s*([A-Za-z_$][\w$]*)\s*=\s*([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\.contentType\s*\?\?\s*([A-Za-z_$][\w$]*)\.mimeType)\s*\?\?\s*\(\s*([A-Za-z_$][\w$]*)\s*&&\s*\4\.trustedLocal\s*\?\s*(["'`])application\/octet-stream\6\s*:\s*(?:void\s+0|undefined)\s*\)\s*;(?:\/\*JUSTDO_TRUSTED_LOCAL_FILE_MEDIA_V2026_8_2\*\/)?/gu;
 const ORIGINAL_KIND_GUARD_PATTERN =
   /((?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*resolveManagedMediaKind\(\s*([A-Za-z_$][\w$]*)\s*\)\s*;)\s*if\s*\(\s*!\2\s*\)\s*throw\s+(?:new\s+)?Error\(\s*(["'`])Managed media attachment has an unsupported content type\4\s*\)\s*;?/gu;
 const PATCHED_KIND_GUARD_PATTERN =
@@ -38,7 +41,7 @@ function expectedCount(runtimeDir) {
   return fs.existsSync(path.join(runtimeDir, 'gateway-bundle.mjs')) ? 3 : 2;
 }
 
-function targets(runtimeDir) {
+function managedMediaTargets(runtimeDir) {
   return findFilesContaining(runtimeDir, [
     'function resolveManagedMediaKind(',
     'Managed media attachment has no detectable content type',
@@ -77,8 +80,6 @@ function findFunctionSegment(content, filePath, functionName, nextSignature) {
     }
     return { start, end, body: content.slice(start, end) };
   }
-
-  // This short helper can lose its neighbor during bundle tree-shaking.
   const parametersStart = start + signature.length - 1;
   const parametersEnd = findMatchingDelimiter(
     content,
@@ -96,8 +97,7 @@ function findFunctionSegment(content, filePath, functionName, nextSignature) {
     '}',
     `${filePath}: ${functionName} body`,
   );
-  const end = bodyEnd + 1;
-  return { start, end, body: content.slice(start, end) };
+  return { start, end: bodyEnd + 1, body: content.slice(start, bodyEnd + 1) };
 }
 
 function replaceRange(content, range, updatedBody) {
@@ -166,7 +166,7 @@ function isExactPatchedState(state, markerCount, filePath) {
   return markerCount === 1 && markerInContentType;
 }
 
-function transform(content, filePath) {
+function transformManagedMedia(content, filePath) {
   const markerCount = countOccurrences(content, MARKER);
   const state = matchState(content, filePath);
   if (isExactPatchedState(state, markerCount, filePath)) {
@@ -271,37 +271,165 @@ function transform(content, filePath) {
   return updated;
 }
 
-function applyPatch(runtimeDir) {
-  const files = targets(runtimeDir);
-  const expected = expectedCount(runtimeDir);
-  if (files.length !== expected) {
+const PROJECTION_CLONE_PATTERN =
+  /const\s+([A-Za-z_$][\w$]*)\s*=\s*\{\s*\.\.\.([A-Za-z_$][\w$]*)\s*\}\s*;/gu;
+const PROJECTION_DELETE_MEDIA_PATTERN = /delete\s+([A-Za-z_$][\w$]*)\.mediaUrls\s*;/gu;
+const PROJECTION_ASSIGN_PATTERN =
+  /([A-Za-z_$][\w$]*)\.openclawDelivery\s*=\s*([A-Za-z_$][\w$]*)\s*;/gu;
+const PROJECTION_DELETE_DELIVERY_PATTERN = /delete\s+([A-Za-z_$][\w$]*)\.openclawDelivery\s*;/gu;
+const ORIGINAL_PROJECTION_RETURN_PATTERN =
+  /return\s*\{\s*changed:\s*(?:true|!0)\s*,\s*urls(?:\s*:\s*([A-Za-z_$][\w$]*))?\s*\}\s*;/gu;
+const COMPACT_PROJECTION_TAIL_PATTERN =
+  /(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*\{\s*\.\.\.([A-Za-z_$][\w$]*)\s*\}\s*;\s*return\s+delete\s+\1\.mediaUrls\s*,\s*Object\.keys\(\1\)\.length\s*>\s*0\s*\?\s*([A-Za-z_$][\w$]*)\.openclawDelivery\s*=\s*\1\s*:\s*delete\s+\3\.openclawDelivery\s*,\s*\{\s*changed:\s*!0\s*,\s*urls:\s*([A-Za-z_$][\w$]*)\s*\}/gu;
+const PATCHED_PROJECTION_RETURN_PATTERN =
+  /return\s*\{\s*changed:\s*(?:false|!1)\s*,\s*urls(?:\s*:\s*([A-Za-z_$][\w$]*))?\s*\}\s*;(?:\/\*JUSTDO_RETAIN_ASSISTANT_MEDIA_URLS_V2026_8_2\*\/)?/gu;
+
+function projectionReturnVariable(match) {
+  return match[1] ?? 'urls';
+}
+
+function projectionTargets(runtimeDir) {
+  return findFilesContaining(runtimeDir, [
+    'function takeAssistantManagedMediaUrlsForDisplay(',
+    '.openclawDelivery',
+    '.mediaUrls',
+  ]);
+}
+
+function transformDisplayProjection(content, filePath) {
+  const range = findFunctionSegment(content, filePath, 'takeAssistantManagedMediaUrlsForDisplay');
+  const markerCount = countOccurrences(range.body, PROJECTION_MARKER);
+  const clones = [...range.body.matchAll(PROJECTION_CLONE_PATTERN)];
+  const mediaDeletes = [...range.body.matchAll(PROJECTION_DELETE_MEDIA_PATTERN)];
+  const assignments = [...range.body.matchAll(PROJECTION_ASSIGN_PATTERN)];
+  const deliveryDeletes = [...range.body.matchAll(PROJECTION_DELETE_DELIVERY_PATTERN)];
+  const originalReturns = [...range.body.matchAll(ORIGINAL_PROJECTION_RETURN_PATTERN)];
+  const compactTails = [...range.body.matchAll(COMPACT_PROJECTION_TAIL_PATTERN)];
+  const patchedReturns = [...range.body.matchAll(PATCHED_PROJECTION_RETURN_PATTERN)];
+  const expectedMarkerCount = isGatewayBundlePath(filePath) ? 0 : 1;
+  if (
+    clones.length === 0 &&
+    mediaDeletes.length === 0 &&
+    assignments.length === 0 &&
+    deliveryDeletes.length === 0 &&
+    originalReturns.length === 0 &&
+    compactTails.length === 0 &&
+    patchedReturns.length === 2 &&
+    markerCount === expectedMarkerCount &&
+    projectionReturnVariable(patchedReturns[0]) === projectionReturnVariable(patchedReturns[1])
+  ) {
+    return content;
+  }
+  const expandedPristine =
+    clones.length === 1 &&
+    mediaDeletes.length === 1 &&
+    assignments.length === 1 &&
+    deliveryDeletes.length === 1 &&
+    originalReturns.length === 1;
+  const compactPristine = compactTails.length === 1;
+  if (expandedPristine === compactPristine || patchedReturns.length !== 1 || markerCount !== 0) {
     throw new Error(
-      `trusted local file media target count is ${files.length}, expected ${expected}`,
+      `${filePath}: retained assistant MEDIA projection is historical or partial ` +
+        `(clone=${clones.length}, mediaDelete=${mediaDeletes.length}, ` +
+        `assignment=${assignments.length}, deliveryDelete=${deliveryDeletes.length}, ` +
+        `originalReturn=${originalReturns.length}, compact=${compactTails.length}, ` +
+        `falseReturn=${patchedReturns.length}, ` +
+        `marker=${markerCount})`,
     );
   }
-  const changed = [];
-  for (const filePath of files) {
-    const original = fs.readFileSync(filePath, 'utf8');
-    const updated = transform(original, filePath);
-    if (writeIfChanged(filePath, original, updated)) {
-      changed.push(path.relative(runtimeDir, filePath));
+  const pristine = compactPristine ? compactTails[0] : clones[0];
+  const returnVariable = compactPristine
+    ? compactTails[0][4]
+    : projectionReturnVariable(originalReturns[0]);
+  if (compactPristine) {
+    if (
+      pristine[3] === undefined ||
+      returnVariable !== projectionReturnVariable(patchedReturns[0])
+    ) {
+      throw new Error(`${filePath}: assistant MEDIA projection variables do not match`);
     }
+  } else if (
+    pristine[1] !== mediaDeletes[0][1] ||
+    pristine[1] !== assignments[0][2] ||
+    assignments[0][1] !== deliveryDeletes[0][1] ||
+    returnVariable !== projectionReturnVariable(patchedReturns[0])
+  ) {
+    throw new Error(`${filePath}: assistant MEDIA projection variables do not match`);
+  }
+  const marker = isGatewayBundlePath(filePath) ? '' : `/*${PROJECTION_MARKER}*/`;
+  const replacement = `return { changed: false, urls: ${returnVariable} };${marker}`;
+  const replaceStart = pristine.index;
+  const replaceEnd = compactPristine
+    ? pristine.index + pristine[0].length
+    : originalReturns[0].index + originalReturns[0][0].length;
+  const updatedBody =
+    range.body.slice(0, replaceStart) + replacement + range.body.slice(replaceEnd);
+  const updated = replaceSegment(content, range, updatedBody);
+  const finalRange = findFunctionSegment(
+    updated,
+    filePath,
+    'takeAssistantManagedMediaUrlsForDisplay',
+  );
+  const finalReturns = [...finalRange.body.matchAll(PATCHED_PROJECTION_RETURN_PATTERN)];
+  if (
+    [...finalRange.body.matchAll(PROJECTION_CLONE_PATTERN)].length !== 0 ||
+    [...finalRange.body.matchAll(PROJECTION_DELETE_MEDIA_PATTERN)].length !== 0 ||
+    [...finalRange.body.matchAll(PROJECTION_ASSIGN_PATTERN)].length !== 0 ||
+    [...finalRange.body.matchAll(PROJECTION_DELETE_DELIVERY_PATTERN)].length !== 0 ||
+    [...finalRange.body.matchAll(ORIGINAL_PROJECTION_RETURN_PATTERN)].length !== 0 ||
+    [...finalRange.body.matchAll(COMPACT_PROJECTION_TAIL_PATTERN)].length !== 0 ||
+    finalReturns.length !== 2 ||
+    projectionReturnVariable(finalReturns[0]) !== projectionReturnVariable(finalReturns[1]) ||
+    countOccurrences(finalRange.body, PROJECTION_MARKER) !== expectedMarkerCount
+  ) {
+    throw new Error(`${filePath}: retained assistant MEDIA projection patch is invalid`);
+  }
+  return updated;
+}
+
+function buildTransformMap(runtimeDir) {
+  const mediaFiles = managedMediaTargets(runtimeDir);
+  const projectionFiles = projectionTargets(runtimeDir);
+  const expected = expectedCount(runtimeDir);
+  if (mediaFiles.length !== expected) {
+    throw new Error(
+      `trusted local file media target count is ${mediaFiles.length}, expected ${expected}`,
+    );
+  }
+  if (projectionFiles.length !== expected) {
+    throw new Error(
+      `assistant MEDIA projection target count is ${projectionFiles.length}, expected ${expected}`,
+    );
+  }
+  const transforms = new Map();
+  for (const filePath of mediaFiles) transforms.set(filePath, transformManagedMedia);
+  for (const filePath of projectionFiles) transforms.set(filePath, transformDisplayProjection);
+  for (const filePath of new Set([...mediaFiles, ...projectionFiles])) {
+    if (mediaFiles.includes(filePath) && projectionFiles.includes(filePath)) {
+      transforms.set(filePath, (content, targetPath) =>
+        transformDisplayProjection(transformManagedMedia(content, targetPath), targetPath),
+      );
+    }
+  }
+  return transforms;
+}
+
+function applyPatch(runtimeDir) {
+  const changed = [];
+  for (const [filePath, transformer] of buildTransformMap(runtimeDir)) {
+    const original = fs.readFileSync(filePath, 'utf8');
+    const updated = transformer(original, filePath);
+    if (writeIfChanged(filePath, original, updated))
+      changed.push(path.relative(runtimeDir, filePath));
   }
   return changed;
 }
 
 function verifyPatch(runtimeDir) {
-  const files = targets(runtimeDir);
-  const expected = expectedCount(runtimeDir);
-  if (files.length !== expected) {
-    throw new Error(
-      `trusted local file media target count is ${files.length}, expected ${expected}`,
-    );
-  }
-  for (const filePath of files) {
+  for (const [filePath, transformer] of buildTransformMap(runtimeDir)) {
     const content = fs.readFileSync(filePath, 'utf8');
-    if (transform(content, filePath) !== content) {
-      throw new Error(`${filePath}: trusted local generic file delivery is missing`);
+    if (transformer(content, filePath) !== content) {
+      throw new Error(`${filePath}: trusted local MEDIA capability is missing`);
     }
   }
 }
@@ -311,6 +439,8 @@ module.exports = {
   verifyPatch,
   __testing: {
     MARKER,
-    transform,
+    PROJECTION_MARKER,
+    transform: transformManagedMedia,
+    transformDisplayProjection,
   },
 };
