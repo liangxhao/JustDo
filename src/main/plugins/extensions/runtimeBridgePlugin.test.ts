@@ -8,6 +8,7 @@ import runtimeBridgePlugin from '../../../../openclaw-extensions/justdo-runtime-
 const sdk = vi.hoisted(() => ({
   getSessionEntry: vi.fn(),
   loadTranscriptEventsSync: vi.fn(),
+  readVisibleSessionTranscriptMessageEntries: vi.fn(),
   fetchWithSsrFGuard: vi.fn(),
   ssrfPolicyFromHttpBaseUrlAllowedHostname: vi.fn(() => ({ allowedHostnames: ['example.test'] })),
 }));
@@ -15,6 +16,9 @@ const sdk = vi.hoisted(() => ({
 vi.mock('openclaw/plugin-sdk/session-store-runtime', () => ({
   getSessionEntry: sdk.getSessionEntry,
   loadTranscriptEventsSync: sdk.loadTranscriptEventsSync,
+}));
+vi.mock('openclaw/plugin-sdk/session-transcript-runtime', () => ({
+  readVisibleSessionTranscriptMessageEntries: sdk.readVisibleSessionTranscriptMessageEntries,
 }));
 vi.mock('openclaw/plugin-sdk/ssrf-runtime', () => ({
   fetchWithSsrFGuard: sdk.fetchWithSsrFGuard,
@@ -85,6 +89,11 @@ describe('runtime bridge startup and progress', () => {
     const { registerGatewayMethod } = registerPlugin();
     expect(registerGatewayMethod).toHaveBeenCalledWith(
       'justdoRuntimeBridge.historyDetails',
+      expect.any(Function),
+      { scope: 'operator.read' },
+    );
+    expect(registerGatewayMethod).toHaveBeenCalledWith(
+      'justdoRuntimeBridge.historyMessage',
       expect.any(Function),
       { scope: 'operator.read' },
     );
@@ -205,6 +214,18 @@ describe('runtime bridge embeddings', () => {
 
 test('reads only requested history details from the specified native session', async () => {
   sdk.getSessionEntry.mockReturnValue({ sessionId: 'native-session-1' });
+  sdk.readVisibleSessionTranscriptMessageEntries.mockResolvedValue([
+    {
+      entryId: 'message-1',
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'toolCall', id: 'call-1', name: 'read', arguments: { path: 'README.md' } },
+          { type: 'toolCall', id: 'other-call', name: 'read', arguments: { path: 'other.md' } },
+        ],
+      },
+    },
+  ]);
   sdk.loadTranscriptEventsSync.mockReturnValue([
     {
       type: 'message',
@@ -236,4 +257,52 @@ test('reads only requested history details from the specified native session', a
     toolInputs: { 'call-1': { name: 'read', input: { path: 'README.md' } } },
     compactionDetails: { 'compact-1': { summary: 'Earlier work', tokensBefore: 1000 } },
   });
+});
+
+test('reads one native transcript message through advancing bounded chunks', async () => {
+  const sessionKey = 'agent:main:justdo:session-1';
+  const message = { role: 'toolResult', content: `head:${'x'.repeat(200)}:tail` };
+  sdk.getSessionEntry.mockReturnValue({ sessionId: 'native-session-1' });
+  sdk.readVisibleSessionTranscriptMessageEntries.mockResolvedValue([
+    { entryId: 'message-1', message },
+  ]);
+  const { registerGatewayMethod } = registerPlugin();
+  const handler = registerGatewayMethod.mock.calls.find(
+    ([method]) => method === 'justdoRuntimeBridge.historyMessage',
+  )?.[1] as HistoryHandler;
+  const firstRespond = vi.fn();
+
+  await handler({
+    params: { sessionKey, messageId: 'message-1', cursor: 0, maxChars: 80 },
+    respond: firstRespond,
+  });
+
+  const first = firstRespond.mock.calls[0]?.[1] as {
+    chunk: string;
+    complete: boolean;
+    nextCursor: number;
+    transferId: string;
+  };
+  expect(first.chunk).toHaveLength(80);
+  expect(first.complete).toBe(false);
+  const secondRespond = vi.fn();
+  await handler({
+    params: {
+      sessionKey,
+      messageId: 'message-1',
+      cursor: first.nextCursor,
+      maxChars: 1_024,
+      transferId: first.transferId,
+    },
+    respond: secondRespond,
+  });
+  const second = secondRespond.mock.calls[0]?.[1] as { chunk: string; complete: boolean };
+
+  expect(JSON.parse(first.chunk + second.chunk)).toEqual(message);
+  expect(second.complete).toBe(true);
+  expect(sdk.readVisibleSessionTranscriptMessageEntries).toHaveBeenCalledWith({
+    sessionKey,
+    sessionId: 'native-session-1',
+  });
+  expect(sdk.readVisibleSessionTranscriptMessageEntries).toHaveBeenCalledTimes(1);
 });

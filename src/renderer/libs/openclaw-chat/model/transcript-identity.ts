@@ -38,3 +38,26 @@ export function readTranscriptIdentity(message: unknown): TranscriptIdentity | n
   }
   return null;
 }
+
+/**
+ * Identifies one displayed projection at a native history page seam.
+ * OpenClaw may project sibling Thinking/Tool/Content rows from one transcript
+ * event, so source id/seq alone is not unique. Keep the projection bytes in
+ * the key and ignore only history-read timing metadata.
+ */
+export function readHistoryProjectionIdentity(message: unknown): string | null {
+  const identity = readTranscriptIdentity(message);
+  const record = asRecord(message);
+  if (!identity || !record) return null;
+  const metadata = asRecord(record.__openclaw);
+  let projection: Record<string, unknown> = record;
+  if (metadata) {
+    const { recordTimestampMs: _recordTimestampMs, ...stableMetadata } = metadata;
+    projection = { ...record, __openclaw: stableMetadata };
+  }
+  try {
+    return `${identity.kind}:${identity.value}:${JSON.stringify(projection)}`;
+  } catch {
+    return `${identity.kind}:${identity.value}`;
+  }
+}

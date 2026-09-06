@@ -66,7 +66,11 @@ describe('agent event reducer', () => {
     const state = createChatTranscriptState('session-1', 'sid-1');
 
     expect(
-      reduceAgentEvent(state, agent(1, 'thinking', { thinking: 'inspect the workspace' }), dependencies),
+      reduceAgentEvent(
+        state,
+        agent(1, 'thinking', { thinking: 'inspect the workspace' }),
+        dependencies,
+      ),
     ).toBe('applied');
     expect(state.activeTurn?.items).toMatchObject([
       { type: 'thinking', status: 'running', text: 'inspect the workspace' },
@@ -135,6 +139,19 @@ describe('agent event reducer', () => {
       'tool:completed',
       'content:streaming',
     ]);
+  });
+
+  test('preserves a tool result larger than the former live-output limit', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    const output = `head:${'x'.repeat(250_000)}:tail`;
+
+    reduceAgentEvent(
+      state,
+      agent(1, 'tool', { phase: 'result', toolCallId: 'call-large', result: output }),
+      dependencies,
+    );
+
+    expect(state.activeTurn?.toolById.get('call-large')?.output).toBe(output);
   });
 
   test('backfills missing activity owners without rewinding newer live content', () => {

@@ -66,7 +66,7 @@ function readIdentity(
     readString(envelope.clientRunId);
   const persistedRunId = normalizeRunId(idempotencyKey);
   const envelopeRunId = normalizeRunId(envelope.runId);
-  const metadataRunId = normalizeRunId(metadata?.runId ?? metadata?.run_id);
+  const metadataRunId = normalizeRunId(metadata?.runId ?? metadata?.run_id ?? record.runId);
   const mirroredMessage = readString(metadata?.mirrorOrigin) !== null;
   const isCliAssistant = role === 'assistant' && readString(record.api)?.toLowerCase() === 'cli';
   const canonicalPersistedRunId =

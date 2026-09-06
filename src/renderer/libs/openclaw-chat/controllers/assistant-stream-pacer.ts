@@ -51,7 +51,7 @@ function takeGraphemePrefix(
 export class AssistantStreamPacer {
   static readonly MAX_CATCH_UP_FRAMES = 45;
   static readonly MAX_PENDING_SNAPSHOT_BOUNDARIES = 240;
-  static readonly MAX_GRAPHEMES_PER_FRAME = 24;
+  static readonly TARGET_GRAPHEMES_PER_FRAME = 24;
 
   private readonly streams = new Map<string, PacedStreamState>();
 
@@ -125,7 +125,13 @@ export class AssistantStreamPacer {
         1,
         Math.ceil(stream.pendingSnapshotEnds.length / framesRemaining),
       );
-      let graphemeBudget = AssistantStreamPacer.MAX_GRAPHEMES_PER_FRAME;
+      // Large reconnect snapshots must still converge within the frame
+      // budget. Spread their suffix across the remaining frames instead of
+      // imposing a fixed 24-grapheme ceiling that can take minutes to drain.
+      let graphemeBudget = Math.max(
+        AssistantStreamPacer.TARGET_GRAPHEMES_PER_FRAME,
+        Math.ceil((stream.observedText.length - stream.displayedLength) / framesRemaining),
+      );
 
       while (
         snapshotBudget > 0 &&

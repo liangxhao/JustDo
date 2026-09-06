@@ -17,7 +17,6 @@ import {
   type ChatTranscriptState,
   type ContentItem,
   eventMatchesTranscriptSession,
-  MAX_LIVE_TOOL_OUTPUT_CHARS,
   pruneRecentRuns,
   RECENT_RUN_RETENTION_MS,
   type ThinkingItem,
@@ -47,11 +46,6 @@ export interface AgentEventReduceOptions {
 
 function stringValue(value: unknown): string | null {
   return typeof value === 'string' ? value : null;
-}
-
-function boundOutput(value: string): string {
-  if (value.length <= MAX_LIVE_TOOL_OUTPUT_CHARS) return value;
-  return `[output truncated]\n${value.slice(-MAX_LIVE_TOOL_OUTPUT_CHARS)}`;
 }
 
 function activeAgentTailIndex(turn: AssistantTurn): number {
@@ -717,14 +711,14 @@ function reduceTool(
       !outputlessSessionsYieldResult &&
       (!preserveExistingTerminal || existing.output === undefined)
     ) {
-      existing.output = boundOutput(resolved.output);
+      existing.output = resolved.output;
     }
     if (
       resolved.error !== null &&
       !outputlessSessionsYieldResult &&
       (!preserveExistingTerminal || existing.error === undefined)
     ) {
-      existing.error = boundOutput(resolved.error);
+      existing.error = resolved.error;
     }
     if (!preserveExistingTerminal && (existing.status === 'running' || status !== 'running')) {
       existing.status = status;
@@ -752,10 +746,10 @@ function reduceTool(
     name: resolved.name,
     ...(resolvedInput !== undefined && resolvedInput !== null ? { input: resolvedInput } : {}),
     ...(normalized.output !== null && !outputlessSessionsYieldResult
-      ? { output: boundOutput(normalized.output) }
+      ? { output: normalized.output }
       : {}),
     ...(normalized.error !== null && !outputlessSessionsYieldResult
-      ? { error: boundOutput(normalized.error) }
+      ? { error: normalized.error }
       : {}),
   };
   if (backfill) insertAgentItemBySequence(turn, item);

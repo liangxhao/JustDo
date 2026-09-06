@@ -4,13 +4,8 @@ import {
   OPENCLAW_HISTORY_DETAIL_MAX_IDS,
   type OpenClawCompactionDetailLookup,
   OpenClawHistoryIpc,
-  type OpenClawPagedHistoryParams,
-  type OpenClawPagedHistoryResult,
 } from '../../../shared/openclaw/historyIpc';
-import {
-  parseChatHistoryResultV2026_9_2,
-  parseHistoryDetailsResultV2026_9_2,
-} from '../../engine/openclaw/wire/v2026_9_2';
+import { parseHistoryDetailsResultV2026_9_2 } from '../../engine/openclaw/wire/v2026_9_2';
 
 export type OpenClawToolInputLookup = Record<string, { name?: string; input: unknown }>;
 
@@ -18,31 +13,10 @@ type OpenClawHistoryHandlerDependencies = {
   requestGateway: <T>(method: string, params?: unknown) => Promise<T>;
 };
 
-const DEFAULT_HISTORY_PAGE_LIMIT = 250;
-const MAX_HISTORY_PAGE_LIMIT = 500;
 const MAX_DETAIL_ID_LENGTH = 256;
-const OFFSET_CURSOR_PREFIX = 'offset:';
 
 const normalizeSessionKey = (value: unknown): string =>
   typeof value === 'string' ? value.trim() : '';
-
-const normalizeHistoryPageLimit = (value: unknown): number => {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_HISTORY_PAGE_LIMIT;
-  return Math.max(1, Math.min(MAX_HISTORY_PAGE_LIMIT, Math.floor(value)));
-};
-
-export const encodeHistoryOffsetCursor = (offset: number): string =>
-  `${OFFSET_CURSOR_PREFIX}${offset}`;
-
-export const decodeHistoryOffsetCursor = (value: unknown): number | undefined => {
-  if (value === undefined || value === null || value === '') return undefined;
-  if (typeof value !== 'string' || !value.startsWith(OFFSET_CURSOR_PREFIX)) {
-    throw new Error('Invalid history cursor');
-  }
-  const offset = Number(value.slice(OFFSET_CURSOR_PREFIX.length));
-  if (!Number.isSafeInteger(offset) || offset < 0) throw new Error('Invalid history cursor');
-  return offset;
-};
 
 export const normalizeDetailIds = (
   value: unknown,
@@ -139,37 +113,4 @@ export const registerOpenClawHistoryHandlers = (
     },
   );
 
-  ipcMain.handle(
-    OpenClawHistoryIpc.GetPagedHistory,
-    async (
-      _event,
-      params: Partial<OpenClawPagedHistoryParams>,
-    ): Promise<OpenClawPagedHistoryResult> => {
-      try {
-        const sessionKey = normalizeSessionKey(params?.sessionKey);
-        if (!sessionKey) return { success: false, error: 'Missing session key' };
-        const limit = normalizeHistoryPageLimit(params?.limit);
-        const offset = decodeHistoryOffsetCursor(params?.cursor);
-        const page = parseChatHistoryResultV2026_9_2(
-          await dependencies.requestGateway('chat.history', {
-            sessionKey,
-            limit,
-            ...(offset !== undefined ? { offset } : {}),
-          }),
-        );
-        return {
-          success: true,
-          messages: page.messages,
-          hasMore: page.hasMore,
-          ...(page.hasMore && page.nextOffset !== undefined
-            ? { nextCursor: encodeHistoryOffsetCursor(page.nextOffset) }
-            : {}),
-        };
-      } catch (error) {
-        const message = publicError(error);
-        console.warn('[OpenClawHistory] failed to load paged history:', message);
-        return { success: false, error: message };
-      }
-    },
-  );
 };

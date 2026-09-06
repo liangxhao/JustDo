@@ -85,6 +85,35 @@ describe('ChunkedMessageHistory', () => {
     ]);
   });
 
+  test('keeps sibling projections that share one native source identity', () => {
+    const history = new ChunkedMessageHistory();
+    const sibling = (kind: string, text: string) => ({
+      role: 'assistant',
+      content: [{ type: kind, text }],
+      __openclaw: { id: 'source-1', seq: 7 },
+    });
+    history.reset([message(8)]);
+    history.prepend([
+      sibling('thinking', 'old thought'),
+      sibling('toolCall', 'old tool'),
+      sibling('text', 'old answer'),
+    ]);
+
+    history.replaceRecent([
+      sibling('thinking', 'complete thought'),
+      sibling('toolCall', 'complete tool'),
+      sibling('text', 'complete answer'),
+      message(8),
+    ]);
+
+    expect(history.toArray()).toEqual([
+      sibling('thinking', 'complete thought'),
+      sibling('toolCall', 'complete tool'),
+      sibling('text', 'complete answer'),
+      message(8),
+    ]);
+  });
+
   test('does not rescan older chunks when the live tail changes', () => {
     let olderIdentityReads = 0;
     const older = Array.from({ length: 10_000 }, (_, index) => ({

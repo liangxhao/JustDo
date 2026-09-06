@@ -83,7 +83,7 @@ afterEach(() => {
 });
 
 describe('justdo-chat assistant stream pacing', () => {
-  test('reveals burst snapshots by frame and keeps optimistic final history behind the live text', async () => {
+  test('reveals burst snapshots by frame, flushes the terminal snapshot, and avoids history duplication', async () => {
     const frames = createAnimationFrameHarness();
     const controller = prepareController();
     const handleEvent = gatewayEventHandler(controller);
@@ -143,10 +143,10 @@ describe('justdo-chat assistant stream pacing', () => {
     await chat.updateComplete;
 
     expect(controller.state.transcript.activeTurn?.status).toBe('final');
-    expect(assistantText(chat)).toBe('你好');
-    expect(chat.shadowRoot?.querySelector('.chat-group--streaming')).not.toBeNull();
+    expect(assistantText(chat)).toBe('你好，世界！');
+    expect(chat.shadowRoot?.querySelector('.chat-group--streaming')).toBeNull();
     expect(chat.shadowRoot?.querySelector('.chat-container')?.getAttribute('aria-busy')).toBe(
-      'true',
+      'false',
     );
 
     const authoritativeHistory = [{ role: 'assistant', content: '你好，世界！', runId: 'run-1' }];
@@ -157,7 +157,7 @@ describe('justdo-chat assistant stream pacing', () => {
     notifyController(controller);
     await chat.updateComplete;
 
-    expect(assistantText(chat)).toBe('你好');
+    expect(assistantText(chat)).toBe('你好，世界！');
     expect(chat.shadowRoot?.querySelectorAll('.chat-bubble__text')).toHaveLength(1);
 
     await frames.drain(chat);
@@ -257,7 +257,7 @@ describe('justdo-chat assistant stream pacing', () => {
     expect(assistantText(chat)).toBe('已经看到并在后台完成');
   });
 
-  test('waits for final pacing before enhancing completed Mermaid content', async () => {
+  test('flushes terminal Mermaid content before enhancing it', async () => {
     const frames = createAnimationFrameHarness();
     const controller = prepareController();
     const handleEvent = gatewayEventHandler(controller);
@@ -293,7 +293,7 @@ describe('justdo-chat assistant stream pacing', () => {
     });
     await chat.updateComplete;
 
-    expect(chat.shadowRoot?.querySelector('.mermaid-block')).toBeNull();
+    expect(chat.shadowRoot?.querySelector('.mermaid-block')).not.toBeNull();
 
     await frames.drain(chat);
     await Promise.resolve();

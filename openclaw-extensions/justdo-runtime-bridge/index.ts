@@ -3,6 +3,7 @@ import {
   getSessionEntry,
   loadTranscriptEventsSync,
 } from 'openclaw/plugin-sdk/session-store-runtime';
+import { readVisibleSessionTranscriptMessageEntries } from 'openclaw/plugin-sdk/session-transcript-runtime';
 import {
   fetchWithSsrFGuard,
   ssrfPolicyFromHttpBaseUrlAllowedHostname,
@@ -11,6 +12,9 @@ import {
 const PLUGIN_ID = 'justdo-runtime-bridge';
 const MAX_DETAIL_IDS = 250;
 const MAX_DETAIL_ID_CHARS = 256;
+const MAX_HISTORY_MESSAGE_CHUNK_CHARS = 1024 * 1024;
+const MAX_HISTORY_MESSAGE_TRANSFERS = 8;
+const HISTORY_MESSAGE_TRANSFER_TTL_MS = 2 * 60 * 1000;
 
 type UnknownRecord = Record<string, unknown>;
 type ToolInputLookup = Record<string, { name?: string; input: unknown }>;
@@ -18,6 +22,13 @@ type CompactionDetailLookup = Record<
   string,
   { summary?: string; tokensBefore?: number; tokensAfter?: number }
 >;
+type HistoryMessageTransfer = {
+  createdAt: number;
+  messageId: string;
+  serialized: string;
+  sessionId: string;
+  sessionKey: string;
+};
 
 const isRecord = (value: unknown): value is UnknownRecord =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -50,6 +61,18 @@ const hasToolInput = (value: unknown): boolean => {
   if (Array.isArray(value)) return value.length > 0;
   if (isRecord(value)) return Object.keys(value).length > 0;
   return true;
+};
+
+const serializeVisibleTranscriptMessage = (
+  entries: Array<{ entryId: string; message: unknown }>,
+  messageId: string,
+): string | null => {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (entry?.entryId !== messageId || !isRecord(entry.message)) continue;
+    return JSON.stringify(entry.message);
+  }
+  return null;
 };
 
 const collectHistoryDetails = (
@@ -195,6 +218,19 @@ const plugin = {
   name: 'JustDo Runtime Bridge',
   description: 'Bounded JustDo integration over supported OpenClaw plugin APIs.',
   register(api: OpenClawPluginApi) {
+    const historyMessageTransfers = new Map<string, HistoryMessageTransfer>();
+    let historyMessageTransferSequence = 0;
+    const pruneHistoryMessageTransfers = (): void => {
+      const expiredBefore = Date.now() - HISTORY_MESSAGE_TRANSFER_TTL_MS;
+      for (const [id, transfer] of historyMessageTransfers) {
+        if (transfer.createdAt < expiredBefore) historyMessageTransfers.delete(id);
+      }
+      while (historyMessageTransfers.size >= MAX_HISTORY_MESSAGE_TRANSFERS) {
+        const oldest = historyMessageTransfers.keys().next().value as string | undefined;
+        if (!oldest) break;
+        historyMessageTransfers.delete(oldest);
+      }
+    };
     const emitProgress = (
       stage: 'preparing' | 'waiting_model',
       ctx: { runId?: string; sessionKey?: string; modelProviderId?: string; modelId?: string },
@@ -236,18 +272,126 @@ const plugin = {
         const compactionEntryIds = boundedIds(params.compactionEntryIds);
         const toolInputs: ToolInputLookup = {};
         const compactionDetails: CompactionDetailLookup = {};
-        const events = loadTranscriptEventsSync({
-          sessionKey,
-          sessionId: entry.sessionId,
-        });
-        collectHistoryDetails(
-          events,
-          toolCallIds,
-          compactionEntryIds,
-          toolInputs,
-          compactionDetails,
-        );
+        if (toolCallIds.size > 0) {
+          const visibleMessages = await readVisibleSessionTranscriptMessageEntries({
+            sessionKey,
+            sessionId: entry.sessionId,
+          });
+          collectHistoryDetails(
+            visibleMessages.map(item => item.message),
+            toolCallIds,
+            new Set(),
+            toolInputs,
+            compactionDetails,
+          );
+        }
+        if (compactionEntryIds.size > 0) {
+          collectHistoryDetails(
+            loadTranscriptEventsSync({ sessionKey, sessionId: entry.sessionId }),
+            new Set(),
+            compactionEntryIds,
+            toolInputs,
+            compactionDetails,
+          );
+        }
         respond(true, { toolInputs, compactionDetails });
+      },
+      { scope: 'operator.read' },
+    );
+
+    // OpenClaw deliberately bounds chat.history and chat.message.get payloads.
+    // Preserve that fast path, while allowing JustDo to recover an explicitly
+    // selected oversized transcript row through bounded chunks when necessary.
+    api.registerGatewayMethod(
+      'justdoRuntimeBridge.historyMessage',
+      async ({ params, respond }) => {
+        if (
+          !isRecord(params) ||
+          typeof params.sessionKey !== 'string' ||
+          typeof params.messageId !== 'string'
+        ) {
+          respond(false, undefined, {
+            code: 'INVALID_REQUEST',
+            message: 'Missing history identity',
+          });
+          return;
+        }
+        const sessionKey = params.sessionKey.trim();
+        const messageId = params.messageId.trim();
+        const cursor =
+          typeof params.cursor === 'number' && Number.isSafeInteger(params.cursor)
+            ? params.cursor
+            : 0;
+        const requestedMaxChars =
+          typeof params.maxChars === 'number' && Number.isSafeInteger(params.maxChars)
+            ? params.maxChars
+            : MAX_HISTORY_MESSAGE_CHUNK_CHARS;
+        const requestedTransferId =
+          typeof params.transferId === 'string' ? params.transferId.trim() : '';
+        if (
+          !sessionKey ||
+          !messageId ||
+          messageId.length > MAX_DETAIL_ID_CHARS ||
+          cursor < 0 ||
+          requestedMaxChars <= 0
+        ) {
+          respond(false, undefined, { code: 'INVALID_REQUEST', message: 'Invalid history range' });
+          return;
+        }
+        const entry = getSessionEntry({ sessionKey, readConsistency: 'latest' });
+        if (!entry?.sessionId) {
+          respond(true, { ok: false, unavailableReason: 'not_found' });
+          return;
+        }
+        pruneHistoryMessageTransfers();
+        let transferId = requestedTransferId;
+        let transfer = transferId ? historyMessageTransfers.get(transferId) : undefined;
+        if (
+          transfer &&
+          (transfer.sessionKey !== sessionKey ||
+            transfer.sessionId !== entry.sessionId ||
+            transfer.messageId !== messageId)
+        ) {
+          transfer = undefined;
+        }
+        if (!transfer && cursor === 0 && !requestedTransferId) {
+          const serialized = serializeVisibleTranscriptMessage(
+            await readVisibleSessionTranscriptMessageEntries({
+              sessionKey,
+              sessionId: entry.sessionId,
+            }),
+            messageId,
+          );
+          if (serialized !== null) {
+            transferId = `${Date.now().toString(36)}-${++historyMessageTransferSequence}`;
+            transfer = {
+              createdAt: Date.now(),
+              messageId,
+              serialized,
+              sessionId: entry.sessionId,
+              sessionKey,
+            };
+            historyMessageTransfers.set(transferId, transfer);
+          }
+        }
+        const serialized = transfer?.serialized ?? null;
+        if (serialized === null || cursor > serialized.length) {
+          respond(true, { ok: false, unavailableReason: 'not_found' });
+          return;
+        }
+        const end = Math.min(
+          serialized.length,
+          cursor + Math.min(requestedMaxChars, MAX_HISTORY_MESSAGE_CHUNK_CHARS),
+        );
+        const complete = end === serialized.length;
+        respond(true, {
+          ok: true,
+          transferId,
+          chunk: serialized.slice(cursor, end),
+          complete,
+          ...(end < serialized.length ? { nextCursor: end } : {}),
+        });
+        if (complete) historyMessageTransfers.delete(transferId);
       },
       { scope: 'operator.read' },
     );

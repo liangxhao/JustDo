@@ -17,6 +17,9 @@ function host(options: { asyncSmooth?: boolean } = {}) {
       listeners.set(name, listener),
     ),
     removeEventListener: vi.fn(),
+    emit(name: string, event: Event) {
+      listeners.get(name)?.(event);
+    },
     emitScroll() {
       listeners.get('scroll')?.(new Event('scroll'));
     },
@@ -192,6 +195,28 @@ describe('ChatScrollController', () => {
     target.emitScroll();
 
     expect(loadOlder).toHaveBeenCalledOnce();
+  });
+
+  test('loads and retries from upward wheel intent when scrollTop cannot move', async () => {
+    class TestWheelEvent extends Event {
+      constructor(public readonly deltaY: number) {
+        super('wheel');
+      }
+    }
+    vi.stubGlobal('WheelEvent', TestWheelEvent);
+    const target = host();
+    target.scrollTop = 0;
+    target.scrollHeight = target.clientHeight;
+    const loadOlder = vi.fn().mockResolvedValue(false);
+    const controller = new ChatScrollController(vi.fn(), loadOlder);
+    controller.connect(target as unknown as HTMLElement);
+
+    target.emit('wheel', new TestWheelEvent(-40));
+    expect(loadOlder).toHaveBeenCalledOnce();
+
+    await Promise.resolve();
+    target.emit('wheel', new TestWheelEvent(-40));
+    expect(loadOlder).toHaveBeenCalledTimes(2);
   });
 
   test('prefetches history before the edge and only in the active scroll direction', () => {

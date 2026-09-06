@@ -2912,6 +2912,7 @@ export class JustDoChatElement extends LitElement {
         id: item.id,
         text: item.text,
         flush:
+          turn?.status !== 'running' ||
           item.status === 'interrupted' ||
           Boolean(item.followingToolCallId) ||
           (item.status === 'completed' && turn?.status === 'running'),

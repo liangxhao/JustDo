@@ -1338,13 +1338,13 @@ test('replaces truncated OpenClaw history previews with complete messages', asyn
         messages: [
           {
             role: 'assistant',
-            content: 'preview one\n...(truncated)...',
-            __openclaw: { id: 'assistant-1', seq: 1 },
+            content: '[chat.history omitted: message too large]',
+            __openclaw: { id: 'assistant-1', seq: 1, truncated: true, reason: 'oversized' },
           },
           {
             role: 'assistant',
-            content: [{ type: 'thinking', thinking: 'preview two\n...(truncated)...' }],
-            __openclaw: { id: 'assistant-2', seq: 2 },
+            content: '[chat.history omitted: message too large]',
+            __openclaw: { id: 'assistant-2', seq: 2, truncated: true, reason: 'oversized' },
           },
         ],
       });
@@ -1388,12 +1388,12 @@ test('replaces truncated OpenClaw history previews with complete messages', asyn
   expect(request).toHaveBeenCalledWith('chat.message.get', {
     sessionKey,
     messageId: 'assistant-1',
-    maxChars: 1_000_000,
+    maxChars: 2_000_000,
   });
   expect(request).toHaveBeenCalledWith('chat.message.get', {
     sessionKey,
     messageId: 'assistant-2',
-    maxChars: 1_000_000,
+    maxChars: 2_000_000,
   });
 });
 
@@ -1404,8 +1404,8 @@ test('keeps a truncated history preview when the complete message is unavailable
         messages: [
           {
             role: 'assistant',
-            content: 'available preview\n...(truncated)...',
-            __openclaw: { id: 'assistant-1' },
+            content: '[chat.history omitted: message too large]',
+            __openclaw: { id: 'assistant-1', truncated: true, reason: 'oversized' },
           },
         ],
       });
@@ -1423,7 +1423,7 @@ test('keeps a truncated history preview when the complete message is unavailable
   await expect(controller.loadHistory()).resolves.toBe(true);
 
   expect(controller.state.chatMessages).toEqual([
-    expect.objectContaining({ content: 'available preview\n...(truncated)...' }),
+    expect.objectContaining({ content: '[chat.history omitted: message too large]' }),
   ]);
 });
 
@@ -1440,6 +1440,53 @@ test('clears active sending state when switching between existing sessions', asy
   expect(controller.state.chatSending).toBe(false);
   expect(controller.state.pendingUserMessage).toBeNull();
   expect(controller.state.chatLoading).toBe(true);
+});
+
+test('queues a fresh load when switching A to B to A while the first A load is in flight', async () => {
+  const sessionA = 'agent:main:justdo:session-a';
+  const sessionB = 'agent:main:justdo:session-b';
+  let resolveFirstA:
+    ((value: { messages: Array<{ role: string; content: string }> }) => void) | undefined;
+  const firstA = new Promise<{ messages: Array<{ role: string; content: string }> }>(resolve => {
+    resolveFirstA = resolve;
+  });
+  let aHistoryReads = 0;
+  const request = vi.fn().mockImplementation((method: string, params: { sessionKey?: string }) => {
+    if (method === 'sessions.messages.subscribe' || method === 'sessions.messages.unsubscribe') {
+      return Promise.resolve({});
+    }
+    if (method === 'chat.startup' || method === 'chat.history') {
+      if (params.sessionKey === sessionA) {
+        aHistoryReads += 1;
+        return aHistoryReads === 1
+          ? firstA
+          : Promise.resolve({
+              messages: [{ role: 'assistant', content: 'fresh A history' }],
+            });
+      }
+      return Promise.resolve({
+        messages: [{ role: 'assistant', content: 'B history' }],
+      });
+    }
+    return Promise.resolve({});
+  });
+  const controller = new ChatController({ initialHistoryRetryDelaysMs: [] });
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+
+  const firstSwitch = controller.switchSession(sessionA);
+  await vi.waitFor(() => expect(aHistoryReads).toBe(1));
+  await controller.switchSession(sessionB);
+  await controller.switchSession(sessionA);
+  resolveFirstA?.({ messages: [{ role: 'assistant', content: 'stale A history' }] });
+  await firstSwitch;
+
+  await vi.waitFor(() => expect(aHistoryReads).toBe(2));
+  await vi.waitFor(() =>
+    expect(controller.state.chatMessages).toEqual([
+      expect.objectContaining({ content: 'fresh A history' }),
+    ]),
+  );
 });
 
 test('keeps run timing across session switches and after completion', async () => {
@@ -1795,7 +1842,8 @@ test('moves the message subscription when switching connected sessions', async (
   });
   expect(request).toHaveBeenNthCalledWith(3, 'chat.startup', {
     sessionKey: 'agent:main:justdo:session-2',
-    limit: 1000,
+    limit: 250,
+    maxChars: 500_000,
   });
 });
 
@@ -1809,17 +1857,6 @@ test('subscribes to session messages before taking the initial history snapshot'
     if (method === 'sessions.messages.subscribe') return subscriptionGate;
     if (method === 'chat.startup') return Promise.resolve({ messages: [historyMessage] });
     return Promise.resolve({});
-  });
-  vi.stubGlobal('electron', {
-    openclaw: {
-      history: {
-        getPagedHistory: vi.fn().mockResolvedValue({
-          success: true,
-          messages: [historyMessage],
-          hasMore: false,
-        }),
-      },
-    },
   });
   const controller = new ChatController();
   controller.state.client = { request } as never;
@@ -1881,7 +1918,8 @@ test('bounds a stalled initial message subscription and catches up after it reso
   await vi.waitFor(() =>
     expect(request).toHaveBeenCalledWith('chat.history', {
       sessionKey: 'agent:main:subagent:child-1',
-      limit: 1000,
+      limit: 250,
+      maxChars: 500_000,
     }),
   );
   await vi.waitFor(() => expect(controller.state.chatMessages).toEqual(caughtUpHistory));
@@ -1918,11 +1956,6 @@ test('clears a transient initial history error after a successful empty retry', 
 
 test('retries an unexpectedly empty initial subagent history before revealing the transcript', async () => {
   const historyMessage = { role: 'user', content: 'persisted subagent task' };
-  const getPagedHistory = vi
-    .fn()
-    .mockResolvedValueOnce({ success: true, messages: [], hasMore: false })
-    .mockResolvedValueOnce({ success: true, messages: [historyMessage], hasMore: false });
-  vi.stubGlobal('electron', { openclaw: { history: { getPagedHistory } } });
   const request = vi.fn().mockImplementation((method: string) => {
     if (method === 'chat.startup') return Promise.resolve({ messages: [] });
     if (method === 'chat.history') return Promise.resolve({ messages: [historyMessage] });
@@ -1942,14 +1975,15 @@ test('retries an unexpectedly empty initial subagent history before revealing th
   ).handleHello({});
 
   await vi.waitFor(() => expect(controller.state.initialHistoryReady).toBe(true));
-  expect(getPagedHistory).toHaveBeenCalledTimes(2);
   expect(request).toHaveBeenCalledWith('chat.startup', {
     sessionKey: 'agent:main:subagent:child-1',
-    limit: 1000,
+    limit: 250,
+    maxChars: 500_000,
   });
   expect(request).toHaveBeenCalledWith('chat.history', {
     sessionKey: 'agent:main:subagent:child-1',
-    limit: 1000,
+    limit: 250,
+    maxChars: 500_000,
   });
   expect(controller.state.chatMessages).toEqual([historyMessage]);
 });
@@ -1958,21 +1992,6 @@ test('retries an assistant-only subagent tail until the originating task is pres
   const sessionKey = 'agent:main:subagent:assistant-tail-child';
   const assistantTail = { role: 'assistant', content: 'completed result' };
   const completeHistory = [{ role: 'user', content: 'persisted subagent task' }, assistantTail];
-  let currentSessionRequestCount = 0;
-  const getPagedHistory = vi
-    .fn()
-    .mockImplementation(({ sessionKey: requestedSessionKey }: { sessionKey: string }) => {
-      if (requestedSessionKey !== sessionKey) {
-        return Promise.resolve({ success: true, messages: completeHistory, hasMore: false });
-      }
-      currentSessionRequestCount += 1;
-      return Promise.resolve({
-        success: true,
-        messages: currentSessionRequestCount === 1 ? [assistantTail] : completeHistory,
-        hasMore: false,
-      });
-    });
-  vi.stubGlobal('electron', { openclaw: { history: { getPagedHistory } } });
   const request = vi.fn().mockImplementation((method: string) => {
     if (method === 'chat.startup') return Promise.resolve({ messages: [assistantTail] });
     if (method === 'chat.history') return Promise.resolve({ messages: completeHistory });
@@ -1992,9 +2011,8 @@ test('retries an assistant-only subagent tail until the originating task is pres
   ).handleHello({});
 
   await vi.waitFor(() => expect(controller.state.initialHistoryReady).toBe(true));
-  expect(
-    getPagedHistory.mock.calls.filter(([params]) => params.sessionKey === sessionKey),
-  ).toHaveLength(2);
+  expect(request.mock.calls.filter(([method]) => method === 'chat.startup')).toHaveLength(1);
+  expect(request.mock.calls.filter(([method]) => method === 'chat.history')).toHaveLength(1);
   expect(controller.state.chatMessages).toEqual(completeHistory);
 });
 
@@ -2063,7 +2081,11 @@ test('catches up a missing subagent task during an active streamed turn', async 
   await vi.advanceTimersByTimeAsync(1200);
   await vi.waitFor(() => expect(controller.state.chatMessages).toEqual([taskMessage]));
 
-  expect(request).toHaveBeenCalledWith('chat.history', { sessionKey, limit: 1000 });
+  expect(request).toHaveBeenCalledWith('chat.history', {
+    sessionKey,
+    limit: 250,
+    maxChars: 500_000,
+  });
   expect(controller.state.chatSending).toBe(true);
   expect(controller.state.transcript.activeTurn).toBe(activeTurn);
   expect(controller.state.transcript.activeTurn?.items).toEqual([
@@ -2216,7 +2238,7 @@ test('starts forked subagent display at its task instead of an inherited user tu
   expect(controller.state.historyHasMore).toBe(false);
 });
 
-test('prefers an RPC subagent task over a paged assistant-only recent window', async () => {
+test('uses the native Gateway snapshot as the subagent history authority', async () => {
   const sessionKey = 'agent:main:subagent:child-1';
   const taskMessage = {
     role: 'user',
@@ -2224,18 +2246,6 @@ test('prefers an RPC subagent task over a paged assistant-only recent window', a
       '[Subagent Context] You are running as a subagent (depth 1/1). Results auto-announce to your requester; do not busy-poll for status.\n\n[Subagent Task]\n\nInspect the stream.',
   };
   const persistedAssistant = { role: 'assistant', content: 'persisted reply' };
-  vi.stubGlobal('electron', {
-    openclaw: {
-      history: {
-        getPagedHistory: vi.fn().mockResolvedValue({
-          success: true,
-          messages: [persistedAssistant],
-          hasMore: true,
-          nextCursor: 'older-page',
-        }),
-      },
-    },
-  });
   const request = vi.fn().mockImplementation((method: string) => {
     if (method === 'chat.history') {
       return Promise.resolve({ messages: [taskMessage, persistedAssistant] });
@@ -3929,7 +3939,11 @@ test('catches up a missed sessions_yield after a later session.message reveals a
       },
     ),
   );
-  expect(request).toHaveBeenCalledWith('chat.history', { sessionKey, limit: 1000 });
+  expect(request).toHaveBeenCalledWith('chat.history', {
+    sessionKey,
+    limit: 250,
+    maxChars: 500_000,
+  });
   expect(controller.state.runActivity).toMatchObject({
     runId: 'run-current',
     stage: 'running-tool',
@@ -4703,7 +4717,8 @@ test('compacts the current session instead of sending /compact as chat', async (
   });
   expect(request).toHaveBeenNthCalledWith(2, 'chat.history', {
     sessionKey: 'agent:main:justdo:session-1',
-    limit: 1000,
+    limit: 250,
+    maxChars: 500_000,
   });
   expect(request).toHaveBeenNthCalledWith(3, 'sessions.compaction.list', {
     key: 'agent:main:justdo:session-1',
@@ -5377,50 +5392,102 @@ test('does not shift an older positioned checkpoint onto a newer marker', async 
   ]);
 });
 
-test('loads the latest history page first and prepends older history on demand', async () => {
-  const request = vi.fn().mockResolvedValueOnce({
-    messages: [{ role: 'assistant', content: 'rpc fallback' }],
+test('keeps the previous transcript visible while a rotated oversized snapshot hydrates', async () => {
+  let historyReads = 0;
+  let resolveFullMessage: ((value: { ok: true; message: unknown }) => void) | undefined;
+  const request = vi.fn((method: string) => {
+    if (method === 'chat.history') {
+      historyReads += 1;
+      if (historyReads === 1) {
+        return Promise.resolve({
+          messages: [
+            {
+              role: 'assistant',
+              content: 'previous physical session',
+              __openclaw: { id: 'old-message', seq: 1 },
+            },
+          ],
+          sessionInfo: { sessionId: 'old-session' },
+        });
+      }
+      return Promise.resolve({
+        messages: [
+          {
+            role: 'assistant',
+            content: '[chat.history omitted: message too large]',
+            __openclaw: {
+              id: 'new-message',
+              seq: 1,
+              truncated: true,
+              reason: 'oversized',
+            },
+          },
+        ],
+        sessionInfo: { sessionId: 'new-session' },
+      });
+    }
+    if (method === 'chat.message.get') {
+      return new Promise(resolve => {
+        resolveFullMessage = resolve;
+      });
+    }
+    return Promise.resolve({});
   });
-  const fetchMock = vi
-    .fn()
-    .mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+
+  await controller.loadHistory();
+  const rotatingLoad = controller.loadHistory();
+  await vi.waitFor(() => expect(resolveFullMessage).toBeTypeOf('function'));
+
+  expect(controller.state.currentSessionId).toBe('old-session');
+  expect(controller.state.visibleChatMessages).toEqual([
+    expect.objectContaining({ content: 'previous physical session' }),
+  ]);
+
+  resolveFullMessage?.({
+    ok: true,
+    message: {
+      role: 'assistant',
+      content: 'complete replacement session',
+      __openclaw: { id: 'new-message', seq: 1 },
+    },
+  });
+  await expect(rotatingLoad).resolves.toBe(true);
+
+  expect(controller.state.currentSessionId).toBe('new-session');
+  expect(controller.state.visibleChatMessages).toEqual([
+    expect.objectContaining({ content: 'complete replacement session' }),
+  ]);
+});
+
+test('loads the latest history page first and prepends older history on demand', async () => {
+  const request = vi.fn().mockImplementation((_method: string, params: { offset?: number }) =>
+    params.offset === 2
+      ? Promise.resolve({ messages: [{ role: 'user', content: 'older' }], hasMore: false })
+      : Promise.resolve({
           messages: [
             { role: 'assistant', content: 'recent 1' },
             { role: 'assistant', content: 'recent 2' },
           ],
           hasMore: true,
-          nextCursor: '2',
+          nextOffset: 2,
         }),
-        { status: 200, headers: { 'content-type': 'application/json' } },
-      ),
-    )
-    .mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          messages: [{ role: 'user', content: 'older' }],
-          hasMore: false,
-        }),
-        { status: 200, headers: { 'content-type': 'application/json' } },
-      ),
-    );
-  vi.stubGlobal('fetch', fetchMock);
+  );
 
   const controller = new ChatController();
   controller.state.client = { request } as never;
   controller.state.connected = true;
   controller.state.sessionKey = 'agent:main:justdo:session-1';
-  (controller as unknown as { gatewayHttpBase: string; gatewayToken: string }).gatewayHttpBase =
-    'http://127.0.0.1:4173';
-
   await controller.loadHistory();
 
-  expect(fetchMock).toHaveBeenNthCalledWith(
-    1,
-    'http://127.0.0.1:4173/sessions/agent%3Amain%3Ajustdo%3Asession-1/history?limit=250',
-    expect.anything(),
-  );
+  expect(request).toHaveBeenNthCalledWith(1, 'chat.history', {
+    sessionKey: 'agent:main:justdo:session-1',
+    limit: 250,
+    maxChars: 500_000,
+  });
   expect(controller.state.historyHasMore).toBe(true);
   expect(
     controller.state.chatMessages.map(message => (message as { content?: unknown }).content),
@@ -5428,16 +5495,60 @@ test('loads the latest history page first and prepends older history on demand',
 
   await controller.loadOlderHistory();
 
-  expect(fetchMock).toHaveBeenNthCalledWith(
-    2,
-    'http://127.0.0.1:4173/sessions/agent%3Amain%3Ajustdo%3Asession-1/history?limit=250&cursor=2',
-    expect.anything(),
-  );
+  expect(request).toHaveBeenNthCalledWith(2, 'chat.history', {
+    sessionKey: 'agent:main:justdo:session-1',
+    limit: 250,
+    maxChars: 500_000,
+    offset: 2,
+  });
   expect(
     controller.getLoadedMessages().map(message => (message as { content?: unknown }).content),
   ).toEqual(['older', 'recent 1', 'recent 2']);
   expect(controller.state.chatMessages).toHaveLength(2);
   expect(controller.state.loadedMessageCount).toBe(3);
+  expect(controller.state.historyHasMore).toBe(false);
+});
+
+test('follows native older-page offsets until the initial subagent task is found', async () => {
+  const sessionKey = 'agent:main:subagent:child-paged';
+  const taskMessage = {
+    role: 'user',
+    content:
+      '[Subagent Context] You are running as a subagent (depth 1/1). Results auto-announce to your requester; do not busy-poll for status.\n\n[Subagent Task]\n\nInspect all pages.',
+    __openclaw: { id: 'task-1', seq: 1 },
+  };
+  const assistantTail = {
+    role: 'assistant',
+    content: 'working',
+    __openclaw: { id: 'assistant-1', seq: 2 },
+  };
+  const request = vi.fn().mockImplementation((method: string, params: { offset?: number }) => {
+    if (method === 'chat.startup') {
+      return Promise.resolve({ messages: [assistantTail], hasMore: true, nextOffset: 1 });
+    }
+    if (method === 'chat.history' && params.offset === 1) {
+      return Promise.resolve({ messages: [taskMessage], hasMore: false });
+    }
+    return Promise.resolve({});
+  });
+  const controller = new ChatController({ expectInitialHistory: true });
+  controller.state.client = { request } as never;
+  controller.state.sessionKey = sessionKey;
+
+  (
+    controller as unknown as {
+      handleHello(hello: Record<string, unknown>): void;
+    }
+  ).handleHello({});
+
+  await vi.waitFor(() => expect(controller.state.initialHistoryReady).toBe(true));
+  expect(request).toHaveBeenCalledWith('chat.history', {
+    sessionKey,
+    limit: 250,
+    maxChars: 500_000,
+    offset: 1,
+  });
+  expect(controller.state.chatMessages).toEqual([taskMessage, assistantTail]);
   expect(controller.state.historyHasMore).toBe(false);
 });
 
@@ -5452,34 +5563,24 @@ test('preserves a newer window selected while an older page is loading', async (
     content: `older-${index}`,
     __openclaw: { id: `older-${index}` },
   }));
-  let resolveOlderPage:
-    ((value: { success: true; messages: typeof older; hasMore: false }) => void) | undefined;
+  let resolveOlderPage: ((value: { messages: typeof older; hasMore: false }) => void) | undefined;
   const olderPage = new Promise<{
-    success: true;
     messages: typeof older;
     hasMore: false;
   }>(resolve => {
     resolveOlderPage = resolve;
   });
-  const getPagedHistory = vi.fn().mockImplementation(({ cursor }: { cursor?: string }) =>
-    cursor
+  const request = vi.fn().mockImplementation((_method: string, params: { offset?: number }) =>
+    params.offset !== undefined
       ? olderPage
       : Promise.resolve({
-          success: true,
           messages: recent,
           hasMore: true,
-          nextCursor: 'older-page',
+          nextOffset: 1_000,
         }),
   );
-  vi.stubGlobal('electron', {
-    openclaw: {
-      history: { getPagedHistory },
-    },
-  });
   const controller = new ChatController();
-  controller.state.client = {
-    request: vi.fn().mockResolvedValue({ messages: recent }),
-  } as never;
+  controller.state.client = { request } as never;
   controller.state.connected = true;
   controller.state.sessionKey = 'agent:main:justdo:session-1';
 
@@ -5493,7 +5594,7 @@ test('preserves a newer window selected while an older page is loading', async (
   expect(controller.state.historyWindowStart).toBe(250);
   expect(controller.state.historyWindowEnd).toBe(1_000);
 
-  resolveOlderPage?.({ success: true, messages: older, hasMore: false });
+  resolveOlderPage?.({ messages: older, hasMore: false });
   await expect(olderLoad).resolves.toBe(true);
 
   expect(controller.state.historyWindowStart).toBe(500);
@@ -5517,35 +5618,22 @@ test.each(['newer', 'latest'] as const)(
       content: `older-${index}`,
       __openclaw: { id: `older-${index}` },
     }));
-    let resolveOlderPage:
-      ((value: { success: true; messages: typeof older; hasMore: false }) => void) | undefined;
+    let resolveOlderPage: ((value: { messages: typeof older; hasMore: false }) => void) | undefined;
     const olderPage = new Promise<{
-      success: true;
       messages: typeof older;
       hasMore: false;
     }>(resolve => {
       resolveOlderPage = resolve;
     });
-    vi.stubGlobal('electron', {
-      openclaw: {
-        history: {
-          getPagedHistory: vi.fn().mockImplementation(({ cursor }: { cursor?: string }) =>
-            cursor
-              ? olderPage
-              : Promise.resolve({
-                  success: true,
-                  messages: recent,
-                  hasMore: true,
-                  nextCursor: 'older-page',
-                }),
-          ),
-        },
-      },
-    });
+    const request = vi
+      .fn()
+      .mockImplementation((_method: string, params: { offset?: number }) =>
+        params.offset !== undefined
+          ? olderPage
+          : Promise.resolve({ messages: recent, hasMore: true, nextOffset: 750 }),
+      );
     const controller = new ChatController();
-    controller.state.client = {
-      request: vi.fn().mockResolvedValue({ messages: recent }),
-    } as never;
+    controller.state.client = { request } as never;
     controller.state.connected = true;
     controller.state.sessionKey = 'agent:main:justdo:session-1';
 
@@ -5555,7 +5643,7 @@ test.each(['newer', 'latest'] as const)(
       navigation === 'newer' ? controller.showNewerHistory() : controller.showLatestHistory(),
     ).toBe(false);
 
-    resolveOlderPage?.({ success: true, messages: older, hasMore: false });
+    resolveOlderPage?.({ messages: older, hasMore: false });
     await expect(olderLoad).resolves.toBe(true);
 
     expect(controller.state.historyWindowStart).toBe(250);
@@ -5571,13 +5659,34 @@ test('hydrates a truncated message while loading an older history page', async (
   const sessionKey = 'agent:main:justdo:session-1';
   const request = vi.fn().mockImplementation((method: string, params: unknown) => {
     if (method === 'chat.history') {
-      return Promise.resolve({ messages: [{ role: 'assistant', content: 'rpc fallback' }] });
+      return (params as { offset?: number }).offset === 1
+        ? Promise.resolve({
+            messages: [
+              {
+                role: 'assistant',
+                content: '[chat.history omitted: message too large]',
+                __openclaw: { id: 'older-1', seq: 1, truncated: true, reason: 'oversized' },
+              },
+            ],
+            hasMore: false,
+          })
+        : Promise.resolve({
+            messages: [
+              {
+                role: 'assistant',
+                content: 'recent response',
+                __openclaw: { id: 'recent-1' },
+              },
+            ],
+            hasMore: true,
+            nextOffset: 1,
+          });
     }
     if (method === 'chat.message.get') {
       expect(params).toEqual({
         sessionKey,
         messageId: 'older-1',
-        maxChars: 1_000_000,
+        maxChars: 2_000_000,
       });
       return Promise.resolve({
         ok: true,
@@ -5586,46 +5695,10 @@ test('hydrates a truncated message while loading an older history page', async (
     }
     return Promise.resolve({});
   });
-  const fetchMock = vi
-    .fn()
-    .mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          messages: [
-            {
-              role: 'assistant',
-              content: 'recent response',
-              __openclaw: { id: 'recent-1' },
-            },
-          ],
-          hasMore: true,
-          nextCursor: 'older-page',
-        }),
-        { status: 200, headers: { 'content-type': 'application/json' } },
-      ),
-    )
-    .mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          messages: [
-            {
-              role: 'assistant',
-              content: 'older preview\n...(truncated)...',
-              __openclaw: { id: 'older-1', seq: 1 },
-            },
-          ],
-          hasMore: false,
-        }),
-        { status: 200, headers: { 'content-type': 'application/json' } },
-      ),
-    );
-  vi.stubGlobal('fetch', fetchMock);
   const controller = new ChatController();
   controller.state.client = { request } as never;
   controller.state.connected = true;
   controller.state.sessionKey = sessionKey;
-  (controller as unknown as { gatewayHttpBase: string }).gatewayHttpBase = 'http://127.0.0.1:4173';
-
   await controller.loadHistory();
   await expect(controller.loadOlderHistory()).resolves.toBe(true);
 
@@ -5638,63 +5711,78 @@ test('hydrates a truncated message while loading an older history page', async (
   ]);
 });
 
-test('skips duplicate older pages until a page adds visible history', async () => {
-  const request = vi.fn().mockResolvedValueOnce({
-    messages: [{ role: 'assistant', content: 'rpc fallback' }],
+test('does not rewind an advanced older-page cursor when the recent tail refreshes', async () => {
+  const sessionKey = 'agent:main:justdo:session-1';
+  const requestedOffsets: Array<number | undefined> = [];
+  const request = vi.fn().mockImplementation((_method: string, params: { offset?: number }) => {
+    requestedOffsets.push(params.offset);
+    if (params.offset === 250) {
+      return Promise.resolve({
+        messages: [{ role: 'assistant', content: 'older page one', __openclaw: { id: 'older-1' } }],
+        hasMore: true,
+        nextOffset: 500,
+      });
+    }
+    if (params.offset === 500) {
+      return Promise.resolve({
+        messages: [{ role: 'user', content: 'older page two', __openclaw: { id: 'older-2' } }],
+        hasMore: false,
+      });
+    }
+    return Promise.resolve({
+      messages: [{ role: 'assistant', content: 'recent', __openclaw: { id: 'recent-1' } }],
+      hasMore: true,
+      nextOffset: 250,
+    });
   });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+
+  await controller.loadHistory();
+  await controller.loadOlderHistory();
+  await controller.loadHistory();
+  await controller.loadOlderHistory();
+
+  expect(requestedOffsets).toEqual([undefined, 250, undefined, 500]);
+  expect(controller.getLoadedMessages()).toEqual([
+    expect.objectContaining({ content: 'older page two' }),
+    expect.objectContaining({ content: 'older page one' }),
+    expect.objectContaining({ content: 'recent' }),
+  ]);
+});
+
+test('skips duplicate older pages until a page adds visible history', async () => {
   const recent = {
     role: 'assistant',
     content: 'recent',
     __openclaw: { id: 'recent-1' },
   };
-  const fetchMock = vi
-    .fn()
-    .mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          messages: [recent],
-          hasMore: true,
-          nextCursor: 'duplicate-page',
-        }),
-        { status: 200, headers: { 'content-type': 'application/json' } },
-      ),
-    )
-    .mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          messages: [recent],
-          hasMore: true,
-          nextCursor: 'older-page',
-        }),
-        { status: 200, headers: { 'content-type': 'application/json' } },
-      ),
-    )
-    .mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          messages: [
-            {
-              role: 'user',
-              content: 'older visible message',
-              __openclaw: { id: 'older-1' },
-            },
-          ],
-          hasMore: false,
-        }),
-        { status: 200, headers: { 'content-type': 'application/json' } },
-      ),
-    );
-  vi.stubGlobal('fetch', fetchMock);
+  const request = vi.fn().mockImplementation((_method: string, params: { offset?: number }) => {
+    if (params.offset === 2) {
+      return Promise.resolve({
+        messages: [
+          { role: 'user', content: 'older visible message', __openclaw: { id: 'older-1' } },
+        ],
+        hasMore: false,
+      });
+    }
+    return Promise.resolve({
+      messages: [recent],
+      hasMore: true,
+      nextOffset: params.offset === 1 ? 2 : 1,
+    });
+  });
   const controller = new ChatController();
   controller.state.client = { request } as never;
   controller.state.connected = true;
   controller.state.sessionKey = 'agent:main:justdo:session-1';
-  (controller as unknown as { gatewayHttpBase: string }).gatewayHttpBase = 'http://127.0.0.1:4173';
   await controller.loadHistory();
 
   await expect(controller.loadOlderHistory()).resolves.toBe(true);
 
-  expect(fetchMock).toHaveBeenCalledTimes(3);
+  expect(request).toHaveBeenCalledTimes(3);
   expect(
     controller.getLoadedMessages().map(message => (message as { content?: unknown }).content),
   ).toEqual(['older visible message', 'recent']);
@@ -5702,34 +5790,30 @@ test('skips duplicate older pages until a page adds visible history', async () =
   expect(controller.state.historyNextCursor).toBeNull();
 });
 
-test('continues duplicate-only history pages in bounded automatic batches', async () => {
-  vi.useFakeTimers();
+test('continues duplicate-only history pages without an artificial page cap', async () => {
   const recent = {
     role: 'assistant',
     content: 'recent',
     __openclaw: { id: 'recent-1' },
   };
   let olderRequestCount = 0;
-  const getPagedHistory = vi.fn().mockImplementation(({ cursor }: { cursor?: string }) => {
-    if (!cursor) {
+  const request = vi.fn().mockImplementation((_method: string, params: { offset?: number }) => {
+    if (params.offset === undefined) {
       return Promise.resolve({
-        success: true,
         messages: [recent],
         hasMore: true,
-        nextCursor: 'duplicate-0',
+        nextOffset: 1,
       });
     }
     olderRequestCount += 1;
     if (olderRequestCount <= 8) {
       return Promise.resolve({
-        success: true,
         messages: [recent],
         hasMore: true,
-        nextCursor: `duplicate-${olderRequestCount}`,
+        nextOffset: olderRequestCount + 1,
       });
     }
     return Promise.resolve({
-      success: true,
       messages: [
         {
           role: 'user',
@@ -5740,24 +5824,14 @@ test('continues duplicate-only history pages in bounded automatic batches', asyn
       hasMore: false,
     });
   });
-  vi.stubGlobal('electron', {
-    openclaw: {
-      history: { getPagedHistory },
-    },
-  });
   const controller = new ChatController();
-  controller.state.client = {
-    request: vi.fn().mockResolvedValue({ messages: [recent] }),
-  } as never;
+  controller.state.client = { request } as never;
   controller.state.connected = true;
   controller.state.sessionKey = 'agent:main:justdo:session-1';
   await controller.loadHistory();
 
-  await expect(controller.loadOlderHistory()).resolves.toBe(false);
+  await expect(controller.loadOlderHistory()).resolves.toBe(true);
 
-  expect(olderRequestCount).toBe(8);
-  expect(controller.state.historyNextCursor).toBe('duplicate-8');
-  await vi.runAllTimersAsync();
   expect(
     controller.getLoadedMessages().map(message => (message as { content?: unknown }).content),
   ).toEqual(['older visible message', 'recent']);
@@ -5771,68 +5845,64 @@ test('preserves an existing older-page cursor across a transient paging failure'
     content: 'recent',
     __openclaw: { id: 'recent-1' },
   };
-  const request = vi.fn().mockResolvedValue({ messages: [recent] });
-  const fetchMock = vi
+  const request = vi
     .fn()
-    .mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          messages: [recent],
-          hasMore: true,
-          nextCursor: 'older-page',
-        }),
-        { status: 200, headers: { 'content-type': 'application/json' } },
-      ),
-    )
+    .mockResolvedValueOnce({ messages: [recent], hasMore: true, nextOffset: 1 })
     .mockRejectedValueOnce(new Error('temporary paging failure'));
-  vi.stubGlobal('fetch', fetchMock);
   const controller = new ChatController();
   controller.state.client = { request } as never;
   controller.state.connected = true;
   controller.state.sessionKey = 'agent:main:justdo:session-1';
-  (controller as unknown as { gatewayHttpBase: string }).gatewayHttpBase = 'http://127.0.0.1:4173';
-
   await controller.loadHistory();
   await controller.loadHistory();
 
   expect(controller.state.historyHasMore).toBe(true);
-  expect(controller.state.historyNextCursor).toBe('older-page');
+  expect(controller.state.historyNextCursor).toBe('offset:1');
 });
 
 test('does not truncate loaded history or hide an older cursor', async () => {
-  const request = vi.fn().mockResolvedValueOnce({ messages: [] });
   const messages = Array.from({ length: 2105 }, (_, index) => ({
     role: 'assistant',
     content: `message-${index}`,
     __openclaw: { id: `message-${index}` },
   }));
-  vi.stubGlobal(
-    'fetch',
-    vi.fn().mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          messages,
-          hasMore: true,
-          nextCursor: 'older',
-        }),
-        { status: 200, headers: { 'content-type': 'application/json' } },
-      ),
-    ),
-  );
+  const request = vi.fn().mockImplementation((_method: string, params: { offset?: number }) => {
+    if (params.offset === 2_000) {
+      return Promise.resolve({
+        messages: messages.slice(1_000, 2_000),
+        hasMore: true,
+        nextOffset: 1_000,
+      });
+    }
+    if (params.offset === 1_000) {
+      return Promise.resolve({ messages: messages.slice(0, 1_000), hasMore: false });
+    }
+    return Promise.resolve({
+      messages: messages.slice(2_000),
+      hasMore: true,
+      nextOffset: 2_000,
+    });
+  });
 
   const controller = new ChatController();
   controller.state.client = { request } as never;
   controller.state.connected = true;
   controller.state.sessionKey = 'agent:main:justdo:session-1';
-  (controller as unknown as { gatewayHttpBase: string }).gatewayHttpBase = 'http://127.0.0.1:4173';
-
   await controller.loadHistory();
 
-  expect(controller.state.chatMessages).toHaveLength(2105);
-  expect((controller.state.chatMessages[0] as { content: string }).content).toBe('message-0');
-  expect(controller.state.visibleChatMessages).toHaveLength(750);
+  expect(controller.state.chatMessages).toHaveLength(105);
   expect(controller.state.historyHasMore).toBe(true);
-  expect(controller.state.historyNextCursor).toBe('older');
+  expect(controller.state.historyNextCursor).toBe('offset:2000');
+
+  await controller.loadOlderHistory();
+  await controller.loadOlderHistory();
+
+  expect(controller.getLoadedMessages()).toHaveLength(2105);
+  expect((controller.getLoadedMessages()[0] as { content: string }).content).toBe('message-0');
+  expect(controller.state.visibleChatMessages.length).toBeGreaterThan(0);
+  expect(controller.state.visibleChatMessages.length).toBeLessThanOrEqual(750);
+  expect(controller.state.historyHasMore).toBe(false);
+  expect(controller.state.historyNextCursor).toBeNull();
 });
 
 test('deduplicates an RPC fallback snapshot against already loaded older pages', async () => {
@@ -5841,30 +5911,24 @@ test('deduplicates an RPC fallback snapshot against already loaded older pages',
     content: `message-${index}`,
     __openclaw: { id: `message-${index}` },
   }));
-  let pagingAvailable = true;
-  const getPagedHistory = vi.fn().mockImplementation(({ cursor }: { cursor?: string }) => {
-    if (!pagingAvailable) {
-      return Promise.resolve({ success: false, error: 'temporary paging failure' });
+  let refreshed = false;
+  const request = vi.fn().mockImplementation((_method: string, params: { offset?: number }) => {
+    if (refreshed) {
+      return Promise.resolve({
+        messages: messages.map(message => ({
+          ...message,
+          content: `${message.content} authoritative`,
+        })),
+        hasMore: false,
+      });
     }
-    const end = cursor ? Number(cursor) : messages.length;
+    const end = params.offset ?? messages.length;
     const start = Math.max(0, end - 250);
     return Promise.resolve({
-      success: true,
       messages: messages.slice(start, end),
       hasMore: start > 0,
-      nextCursor: start > 0 ? String(start) : undefined,
+      ...(start > 0 ? { nextOffset: start } : {}),
     });
-  });
-  vi.stubGlobal('electron', {
-    openclaw: {
-      history: { getPagedHistory },
-    },
-  });
-  const request = vi.fn().mockResolvedValue({
-    messages: messages.map(message => ({
-      ...message,
-      content: `${message.content} authoritative`,
-    })),
   });
   const controller = new ChatController();
   controller.state.client = { request } as never;
@@ -5877,7 +5941,7 @@ test('deduplicates an RPC fallback snapshot against already loaded older pages',
   await controller.loadOlderHistory();
   expect(controller.getLoadedMessages()).toHaveLength(1000);
 
-  pagingAvailable = false;
+  refreshed = true;
   await expect(controller.loadHistory()).resolves.toBe(true);
 
   const loaded = controller.getLoadedMessages() as Array<{
@@ -5891,50 +5955,24 @@ test('deduplicates an RPC fallback snapshot against already loaded older pages',
   expect(controller.state.loadedMessageCount).toBe(1000);
 });
 
-test('loads paged REST history for Electron loopback gateway sessions', async () => {
-  const getPagedHistory = vi.fn().mockResolvedValue({
-    success: false,
-    error: 'temporary IPC failure',
-  });
-  vi.stubGlobal('electron', {
-    openclaw: {
-      history: { getPagedHistory },
-    },
-  });
+test('uses one native Gateway snapshot without a REST history fallback', async () => {
   const request = vi.fn().mockResolvedValueOnce({
-    messages: [{ role: 'assistant', content: 'rpc fallback' }],
+    messages: [{ role: 'assistant', content: 'native history' }],
+    hasMore: false,
   });
-  const fetchMock = vi.fn().mockResolvedValueOnce(
-    new Response(
-      JSON.stringify({
-        messages: [{ role: 'assistant', content: 'rest history' }],
-        hasMore: false,
-      }),
-      { status: 200, headers: { 'content-type': 'application/json' } },
-    ),
-  );
+  const fetchMock = vi.fn();
   vi.stubGlobal('fetch', fetchMock);
 
   const controller = new ChatController();
   controller.state.client = { request } as never;
   controller.state.connected = true;
   controller.state.sessionKey = 'agent:main:justdo:session-1';
-  (controller as unknown as { gatewayHttpBase: string; gatewayToken: string }).gatewayHttpBase =
-    'http://127.0.0.1:42871';
-
   await controller.loadHistory();
 
-  expect(getPagedHistory).toHaveBeenCalledWith({
-    sessionKey: 'agent:main:justdo:session-1',
-    cursor: undefined,
-    limit: 250,
-  });
-  expect(fetchMock).toHaveBeenCalledWith(
-    'http://127.0.0.1:42871/sessions/agent%3Amain%3Ajustdo%3Asession-1/history?limit=250',
-    expect.anything(),
-  );
+  expect(request).toHaveBeenCalledTimes(1);
+  expect(fetchMock).not.toHaveBeenCalled();
   expect(controller.state.chatMessages).toEqual([
-    expect.objectContaining({ role: 'assistant', content: 'rest history' }),
+    expect.objectContaining({ role: 'assistant', content: 'native history' }),
   ]);
 });
 
@@ -6590,7 +6628,7 @@ test('strips trailing NO_REPLY from renderable final payloads', () => {
   ]);
 });
 
-test('does not replay deferred session.message reload immediately after renderable final message', async () => {
+test('reconciles a pending transcript invalidation after a renderable final message', async () => {
   vi.useFakeTimers();
   const request = vi.fn().mockResolvedValue({ messages: [] });
   const controller = new ChatController();
@@ -6632,7 +6670,8 @@ test('does not replay deferred session.message reload immediately after renderab
 
   expect(request).toHaveBeenCalledWith('chat.history', {
     sessionKey: 'agent:main:justdo:session-1',
-    limit: 1000,
+    limit: 250,
+    maxChars: 500_000,
   });
   expect(controller.state.chatMessages).toEqual([
     expect.objectContaining({
@@ -6642,7 +6681,130 @@ test('does not replay deferred session.message reload immediately after renderab
   ]);
 });
 
-test('keeps live tool messages until delayed post-final history catches up', async () => {
+test('never lets a truncated final overwrite the complete live assistant snapshot', async () => {
+  vi.useFakeTimers();
+  const sessionKey = 'agent:main:justdo:session-1';
+  const fullText = `head:${'x'.repeat(9_000)}:tail`;
+  const request = vi.fn().mockResolvedValue({
+    messages: [
+      {
+        role: 'assistant',
+        content: fullText,
+        __openclaw: { id: 'assistant-1', seq: 1, runId: 'run-1' },
+      },
+    ],
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+  controller.state.transcript.sessionKey = sessionKey;
+  controller.state.chatSending = true;
+  controller.state.chatRunId = 'run-1';
+  beginAssistantTurn(
+    controller.state.transcript,
+    { runId: 'run-1', sessionId: null },
+    { now: () => 100, createId: prefix => `${prefix}-1` },
+  );
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+  handleEvent({
+    event: 'agent',
+    payload: {
+      sessionKey,
+      runId: 'run-1',
+      seq: 1,
+      stream: 'assistant',
+      data: { text: fullText },
+    },
+  });
+  handleEvent({
+    event: 'chat',
+    payload: {
+      sessionKey,
+      runId: 'run-1',
+      state: 'final',
+      message: {
+        role: 'assistant',
+        content: `${fullText.slice(0, 8_000)}\n...(truncated)...`,
+        __openclaw: { id: 'assistant-1', truncated: true, reason: 'display-cap' },
+      },
+    },
+  });
+
+  expect(JSON.stringify(controller.state.chatMessages)).not.toContain('...(truncated)...');
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({ content: fullText, runId: 'run-1' }),
+  ]);
+
+  await vi.advanceTimersByTimeAsync(100);
+  await Promise.resolve();
+  expect(request).toHaveBeenCalledWith('chat.history', {
+    sessionKey,
+    limit: 250,
+    maxChars: 500_000,
+  });
+  expect(JSON.stringify(controller.state.chatMessages)).not.toContain('...(truncated)...');
+});
+
+test('does not apply a later truncated session.message over a complete terminal reply', () => {
+  vi.useFakeTimers();
+  const sessionKey = 'agent:main:justdo:session-1';
+  const fullText = `complete:${'y'.repeat(9_000)}`;
+  const controller = new ChatController();
+  controller.state.client = { request: vi.fn() } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+  controller.state.transcript.sessionKey = sessionKey;
+  controller.state.chatSending = true;
+  controller.state.chatRunId = 'run-1';
+  beginAssistantTurn(
+    controller.state.transcript,
+    { runId: 'run-1', sessionId: null },
+    { now: () => 100, createId: prefix => `${prefix}-1` },
+  );
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+  handleEvent({
+    event: 'chat',
+    payload: {
+      sessionKey,
+      runId: 'run-1',
+      state: 'final',
+      message: { role: 'assistant', content: fullText },
+    },
+  });
+  handleEvent({
+    event: 'session.message',
+    payload: {
+      sessionKey,
+      runId: 'run-1',
+      message: {
+        role: 'assistant',
+        content: `${fullText.slice(0, 8_000)}\n...(truncated)...`,
+        __openclaw: {
+          id: 'assistant-1',
+          seq: 1,
+          truncated: true,
+          reason: 'display-cap',
+        },
+      },
+    },
+  });
+
+  expect(JSON.stringify(controller.state.chatMessages)).not.toContain('...(truncated)...');
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({ content: fullText, runId: 'run-1' }),
+  ]);
+});
+
+test('keeps live tool messages until the subscribed terminal row arrives', async () => {
   vi.useFakeTimers();
   const persistedFinal = {
     role: 'assistant',
@@ -6695,10 +6857,33 @@ test('keeps live tool messages until delayed post-final history catches up', asy
   );
   expect(request).not.toHaveBeenCalled();
 
-  await vi.runOnlyPendingTimersAsync();
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload?: unknown }): void;
+    }
+  ).handleEvent({
+    event: 'session.message',
+    payload: {
+      sessionKey: 'agent:main:justdo:session-1',
+      runId: 'run-1',
+      messageSeq: 1,
+      messageId: 'assistant-1',
+      message: {
+        ...persistedFinal,
+        __openclaw: { id: 'assistant-1', seq: 1, runId: 'run-1' },
+      },
+    },
+  });
 
   expect(controller.state.transcript.activeTurn).toBeNull();
-  expect(controller.state.chatMessages).toEqual([persistedFinal]);
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'Final answer' }],
+      __openclaw: { id: 'assistant-1', seq: 1, runId: 'run-1' },
+    }),
+  ]);
+  expect(request).not.toHaveBeenCalled();
 });
 
 test('coalesces idle session.message events before refreshing history', async () => {
@@ -6722,7 +6907,8 @@ test('coalesces idle session.message events before refreshing history', async ()
   expect(request).toHaveBeenCalledTimes(1);
   expect(request).toHaveBeenCalledWith('chat.history', {
     sessionKey: 'agent:main:justdo:session-1',
-    limit: 1000,
+    limit: 250,
+    maxChars: 500_000,
   });
 });
 
@@ -6780,7 +6966,8 @@ test('replays deferred session.message reload after silent final message', async
   await vi.advanceTimersByTimeAsync(100);
   expect(request).toHaveBeenCalledWith('chat.history', {
     sessionKey: 'agent:main:justdo:session-1',
-    limit: 1000,
+    limit: 250,
+    maxChars: 500_000,
   });
 });
 
@@ -7265,7 +7452,7 @@ test('keeps a live run suspended across transport loss and accepts later updates
   ]);
 });
 
-test('settles and refreshes a managed run when chat.final uses the compact session-key alias', async () => {
+test('settles a managed run when chat.final uses the compact session-key alias', async () => {
   vi.useFakeTimers();
   const request = vi.fn().mockResolvedValue({
     messages: [
@@ -7318,10 +7505,7 @@ test('settles and refreshes a managed run when chat.final uses the compact sessi
   ]);
 
   await vi.advanceTimersByTimeAsync(1500);
-  expect(request).toHaveBeenCalledWith('chat.history', {
-    sessionKey: 'agent:main:justdo:session-1',
-    limit: 1000,
-  });
+  expect(request).not.toHaveBeenCalled();
 });
 
 test('creates one interruption only after reconnect confirms the run is inactive', async () => {
@@ -7422,6 +7606,82 @@ test('invalidates in-flight history when sessions.changed rotates the session id
   expect(controller.state.currentSessionId).toBe('sid-new');
   expect(controller.state.transcript.historyGeneration).toBe(generation + 1);
   expect(controller.state.transcript.activeTurn).toBeNull();
+});
+
+test('reloads history for a sessions.changed message invalidation without a row payload', async () => {
+  vi.useFakeTimers();
+  const sessionKey = 'agent:main:justdo:session-1';
+  const request = vi.fn().mockResolvedValue({ messages: [] });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+  controller.state.transcript.sessionKey = sessionKey;
+
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent({
+    event: 'sessions.changed',
+    payload: { sessionKey, phase: 'message' },
+  });
+
+  expect(request).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1_200);
+  expect(request).toHaveBeenCalledWith('chat.history', {
+    sessionKey,
+    limit: 250,
+    maxChars: 500_000,
+  });
+});
+
+test('replaces loaded pages when activeLeafEntryId selects another branch', async () => {
+  const sessionKey = 'agent:main:justdo:session-1';
+  let tailRead = 0;
+  const request = vi.fn().mockImplementation((_method: string, params: { offset?: number }) => {
+    if (params.offset === 1) {
+      return Promise.resolve({
+        messages: [{ role: 'user', content: 'branch one root', __openclaw: { id: 'old-1' } }],
+        hasMore: false,
+      });
+    }
+    tailRead += 1;
+    return tailRead === 1
+      ? Promise.resolve({
+          messages: [
+            { role: 'assistant', content: 'branch one tail', __openclaw: { id: 'old-2' } },
+          ],
+          hasMore: true,
+          nextOffset: 1,
+          sessionId: 'sid-1',
+          sessionInfo: { sessionId: 'sid-1', activeLeafEntryId: 'leaf-one' },
+        })
+      : Promise.resolve({
+          messages: [
+            { role: 'assistant', content: 'branch two only', __openclaw: { id: 'new-1' } },
+          ],
+          hasMore: false,
+          sessionId: 'sid-1',
+          sessionInfo: { sessionId: 'sid-1', activeLeafEntryId: 'leaf-two' },
+        });
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+
+  await controller.loadHistory();
+  await controller.loadOlderHistory();
+  expect(controller.getLoadedMessages()).toHaveLength(2);
+
+  await controller.loadHistory();
+
+  expect(controller.getLoadedMessages()).toEqual([
+    expect.objectContaining({ content: 'branch two only' }),
+  ]);
+  expect(controller.state.historyHasMore).toBe(false);
+  expect(controller.state.historyNextCursor).toBeNull();
 });
 
 test('projects context usage from sessions.changed and rejects an older snapshot', () => {
@@ -7839,7 +8099,8 @@ test('does not apply a shorter post-run history snapshot over a newer visible fi
   expect(controller.state.chatMessages).toEqual(settledHistory);
 });
 
-test('does not preserve ordinary cached messages when refreshed history is empty', async () => {
+test('retains stable cached messages when a same-scope history snapshot is transiently empty', async () => {
+  vi.useFakeTimers();
   const staleMessage = {
     role: 'assistant',
     content: 'old cached history',
@@ -7856,7 +8117,7 @@ test('does not preserve ordinary cached messages when refreshed history is empty
 
   await controller.loadHistory();
 
-  expect(controller.state.chatMessages).toEqual([]);
+  expect(controller.state.chatMessages).toEqual([staleMessage]);
 });
 
 test('hydrates OpenClaw transcript MediaPaths as image blocks', async () => {

@@ -7,23 +7,11 @@ vi.mock('electron', () => ({
 }));
 
 import { OpenClawHistoryIpc } from '../../../shared/openclaw/historyIpc';
-import {
-  decodeHistoryOffsetCursor,
-  encodeHistoryOffsetCursor,
-  normalizeDetailIds,
-  registerOpenClawHistoryHandlers,
-} from './history';
+import { normalizeDetailIds, registerOpenClawHistoryHandlers } from './history';
 
-describe('OpenClaw v2026.9.2 history IPC', () => {
+describe('OpenClaw v2026.9.2 history detail IPC', () => {
   beforeEach(() => {
     ipcHandle.mockReset();
-  });
-
-  test('encodes only bounded opaque offset cursors', () => {
-    expect(encodeHistoryOffsetCursor(42)).toBe('offset:42');
-    expect(decodeHistoryOffsetCursor('offset:42')).toBe(42);
-    expect(decodeHistoryOffsetCursor(undefined)).toBeUndefined();
-    expect(() => decodeHistoryOffsetCursor('../sessions.json')).toThrow('Invalid history cursor');
   });
 
   test('bounds and deduplicates detail identifiers', () => {
@@ -31,32 +19,6 @@ describe('OpenClaw v2026.9.2 history IPC', () => {
     expect(normalizeDetailIds(Array.from({ length: 251 }, () => 'id'), 'tool call')).toEqual({
       ids: [],
       error: 'Too many tool call IDs',
-    });
-  });
-
-  test('uses native chat.history pagination instead of runtime files or REST', async () => {
-    const requestGateway = vi.fn().mockResolvedValue({
-      messages: [{ role: 'assistant', content: 'recent' }],
-      hasMore: true,
-      nextOffset: 30,
-    });
-    registerOpenClawHistoryHandlers({ requestGateway });
-    const handler = ipcHandle.mock.calls.find(
-      ([channel]) => channel === OpenClawHistoryIpc.GetPagedHistory,
-    )?.[1];
-
-    await expect(
-      handler({}, { sessionKey: 'agent:main:justdo:one', cursor: 'offset:10', limit: 20 }),
-    ).resolves.toEqual({
-      success: true,
-      messages: [{ role: 'assistant', content: 'recent' }],
-      hasMore: true,
-      nextCursor: 'offset:30',
-    });
-    expect(requestGateway).toHaveBeenCalledWith('chat.history', {
-      sessionKey: 'agent:main:justdo:one',
-      offset: 10,
-      limit: 20,
     });
   });
 
@@ -100,16 +62,18 @@ describe('OpenClaw v2026.9.2 history IPC', () => {
     });
   });
 
-  test('rejects malformed v2026.9.2 wire responses and redacts paths', async () => {
+  test('redacts runtime paths from bridge failures', async () => {
     const requestGateway = vi
       .fn()
       .mockRejectedValue(new Error('failed at C:\\Users\\secret\\sessions.db'));
     registerOpenClawHistoryHandlers({ requestGateway });
     const handler = ipcHandle.mock.calls.find(
-      ([channel]) => channel === OpenClawHistoryIpc.GetPagedHistory,
+      ([channel]) => channel === OpenClawHistoryIpc.GetToolInputs,
     )?.[1];
 
-    await expect(handler({}, { sessionKey: 'agent:main:justdo:one' })).resolves.toEqual({
+    await expect(
+      handler({}, { sessionKey: 'agent:main:justdo:one', toolCallIds: ['call_1'] }),
+    ).resolves.toEqual({
       success: false,
       error: 'failed at [path]',
     });

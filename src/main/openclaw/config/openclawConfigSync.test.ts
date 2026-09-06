@@ -523,7 +523,7 @@ describe('OpenClaw managed Agent thinking config', () => {
 });
 
 describe('OpenClaw managed session retention', () => {
-  test('retains sessions for at most one year and caps the store at 500 entries', () => {
+  test('keeps 365-day stale retention while allowing OpenClaw to archive overflow entries', () => {
     expect(buildManagedOpenClawSessionConfig()).toEqual({
       dmScope: 'per-account-channel-peer',
       reset: {

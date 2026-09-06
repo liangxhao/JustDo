@@ -9,7 +9,7 @@
 - sessionId、sessionKey、runId、lifecycleGeneration、sequence 和 stable message identity共同防串线。
 - history/live/optimistic可对账并被替换，不靠文本相同或时间邻近去重。
 - 高频delta最多每animation frame发布，长历史只渲染有界窗口。
-- Markdown/diagram/tool输出是未可信内容，必须限制、转义和清洗。
+- Markdown/diagram/tool输出是未可信内容，必须转义和清洗；性能降级不能裁剪canonical文本。
 - 用户上滚后保持阅读锚点；新消息不强制抢焦点。
 
 ## 2. 模块地图
@@ -19,6 +19,7 @@
 | `JustDoChatWrapper.tsx`                  | React/Cowork与Lit chat的桥、Gateway订阅、session切换、history载入 |
 | `gateway/client.ts`                      | Renderer Gateway client与连接信息适配                             |
 | `gateway/chat-controller.ts`             | 对外状态/命令、订阅与transcript调度                               |
+| `gateway/chat-history-protocol.ts`       | 原生offset分页、结构化超大行识别与完整消息补取                    |
 | `model/chat-transcript-state.ts`         | persisted/history source、active turn、recent runs、revision      |
 | `model/agent-event-reducer.ts`           | normalized agent event -> turn items                              |
 | `model/session-message-apply.ts`         | durable append identity、ownership、去重与有序插入                |
@@ -42,7 +43,7 @@
 - Content：streaming/completed/interrupted，标记 delta/snapshot/replaceable；
 - Terminal：aborted/error可见行。
 
-最近24个run保留5分钟terminal/sequence fence，阻止迟到事件重新创建已结束turn。Live tool output最大120,000字符。
+最近24个run保留5分钟terminal/sequence fence，阻止迟到事件重新创建已结束turn。实时Tool结果保留完整canonical字符串；折叠detail和有界history DOM控制渲染成本，不再通过截断数据控制成本。
 
 ## 4. 端到端数据流
 
@@ -63,9 +64,9 @@ flowchart LR
   REC --> PS --> PIPE --> WIN --> LIT
 ```
 
-Wrapper切换session时取消旧订阅、建立新generation、请求paged history/tool inputs/compaction detail，并设置chat element属性。Controller按session缓存未完成turn、pending user message、run activity和compaction状态；后台session的live/terminal事件及迟到的send/compact RPC结果写回所属缓存，重新选中时先恢复缓存再与history对账。
+Wrapper切换session时取消旧订阅、建立新generation、请求Gateway原生history/tool inputs/compaction detail，并设置chat element属性。Controller按session缓存未完成turn、pending user message、run activity和compaction状态；后台session的live/terminal事件及迟到的send/compact RPC结果写回所属缓存，重新选中时先恢复缓存再与history对账。
 
-临时session转为canonical session必须由创建流程显式登记准确的source/target key。普通的“临时session → 其他已有session”导航不能推断为promotion，也不能迁移消息或sending状态。Live事件先经过shared domain分类，再送controller/reducer；terminal触发Controller刷新Gateway history。旧异步history请求即使晚返回，也因generation/session identity被丢弃。
+临时session转为canonical session必须由创建流程显式登记准确的source/target key。普通的“临时session → 其他已有session”导航不能推断为promotion，也不能迁移消息或sending状态。Live事件先经过shared domain分类，再送controller/reducer；完整final由后续`session.message`直接接管；无消息、带结构化截断标记、订阅未建立或已有持久化失效通知的final继续做有界补查。旧异步history请求即使晚返回，也因generation/session identity/active leaf fence被丢弃。
 
 Gateway外层event sequence只属于单个WebSocket generation；每次连接都清空基线。发现向前缺口时当前socket立即退休，不消费缺口后的可疑帧，重连后重新订阅并加载history。Agent `payload.seq` 只提供run内顺序与去重栅栏，并不保证连续：累积Thinking/Content快照以及其他可替换高频事件可能被Gateway合并或因慢订阅者背压而丢弃，合法跳号不能触发断线。`chat.startup` / `chat.history` 返回的 `inFlightRun` 会重新接管run id/startedAt，按seq回放Thinking、Tool、Content等有界events，再以前缀安全规则合并累计text。这样切页、后台挂起和网络抖动后不依赖已丢失的delta；与请求并发发生的terminal或新run会通过run ownership fence拒绝陈旧snapshot。
 
@@ -121,13 +122,17 @@ Stable transcript identity优先读取Gateway message id/记录标识，再用�
 5. 保留合法active tail，删除已被history覆盖的重复项；
 6. 增加historyGeneration/revision。
 
-首屏、切页与应用重启都直接以Gateway history恢复；提交后的optimistic user tail只在当前Controller内短暂存在，权威结果到达后takeover。Tool input lookup先使用原生 `chat.history` display projection，再通过 `justdoRuntimeBridge.historyDetails` 的 `operator.read` RPC 按 session 和 call id 有界补齐，不能跨 transcript 搜相同 call id，也不能直接读取 `sessions.json`。工具参数与 compaction detail 的缺失 ID 均去重后按最多 250 个分批顺序查询，覆盖较宽 RPC 历史回退窗口；批次失败保留原始消息与其他成功批次的详情。
+首屏、切页与应用重启都直接以Gateway history恢复；提交后的optimistic user tail只在当前Controller内短暂存在，权威结果到达后takeover。每次刷新只读取一次`chat.startup`或`chat.history`，首屏和旧页均按250条读取，旧页直接使用响应的`nextOffset`调用`chat.history({ offset, limit: 250 })`。不存在Main IPC、REST或第二份独立快照之间的竞态；重复边界按source identity、projection和出现次数合并，尾页刷新不能让已推进的旧页cursor倒退。持续翻页直到新增可见消息或Gateway明确`hasMore: false`，不能用固定空页次数提前停止。Subagent首屏若尚未包含自己的task边界，会先沿同一原生offset链向前读取，而不是反复请求相同尾页。
+
+Gateway会把超过单行history预算的消息替换为带`__openclaw.truncated`和message id的结构化占位。Renderer不再嗅探`...(truncated)...`文本：先用原生`chat.message.get`补取完整display message；若原生返回`oversized`或响应超过WebSocket frame预算，再调用受保护的`justdoRuntimeBridge.historyMessage`，按有界字符块从原生SQLite transcript的active branch重组同一message id。Bridge只接受Gateway已经发出的id，不列举消息；一次transfer固定同一份序列化快照，避免逐块重读整个transcript。只有全部块到齐并通过JSON解析后才替换占位，原display identity保留但`truncated/reason`标记被移除。
+
+Tool input lookup先使用原生 `chat.history` display projection，再通过 `justdoRuntimeBridge.historyDetails` 的 `operator.read` RPC 按 session 和 call id 有界补齐，不能跨 transcript 搜相同 call id，也不能直接读取 `sessions.json`。工具参数与 compaction detail 的缺失 ID 均去重后按最多 250 个分批顺序查询；批次失败保留原始消息与其他成功批次的详情。
 
 ## 8. History 窗口
 
 默认只渲染最新750条，older/newer每次移动250。用户在最新窗口时新history继续锁定尾部；浏览旧窗口时用第一条可见stable identity在新数组中重新定位，identity不存在才用索引clamp。窗口切换按滚动方向在距离边缘两个viewport时预取，避免反向误切和用户先撞到边界再等待刷新。
 
-窗口是DOM/投影优化，不限制Gateway分页存储。加载旧页时保留滚动锚点和搜索/minimap identity；异步older返回前若用户转向newer/latest，只按prepend数量平移窗口，不反向覆盖用户意图。滚动期锚点/minimap更新按animation frame合并，并用有序节点的二分定位限制同步layout测量；不能用反复数组前插导致O(n²)组装。
+窗口是DOM/投影优化，不限制Gateway分页存储。Controller的chunked history store持有所有已加载页，`chatMessages`只保留最近权威窗口；加载旧页时保留滚动锚点和搜索/minimap identity。异步older返回前若用户转向newer/latest，只按prepend数量平移窗口，不反向覆盖用户意图。滚动期锚点/minimap更新按animation frame合并，并用有序节点的二分定位限制同步layout测量；不能用反复数组前插导致O(n²)组装。
 
 ## 9. 渲染管线
 
@@ -139,7 +144,7 @@ Timeline层决定avatar、sender/model label、timestamp、duration、usage、go
 
 `toSanitizedMarkdownHtml` 使用 Markdown-it的linkify/breaks、task list、texmath/KaTeX和自定义fence/table规则，再用DOMPurify tag/attribute allowlist清洗。
 
-限制：原文最多140,000字符；完整Markdown解析前40,000字符，超限安全截断/转义；cache最多200项且只缓存不超过50,000字符的输入，version为 `markdown-render-v11`。Unknown code language只转义不自动highlight；自动highlight语言是固定allowlist。
+完整Markdown解析预算为40,000字符；超过预算时整条消息降级为经过转义和DOMPurify清洗的plaintext，但不丢弃任何字符或首尾空白。cache最多200项且只缓存不超过50,000字符的输入，version为 `markdown-render-v13`。Unknown code language只转义不自动highlight；自动highlight语言是固定allowlist。
 
 链接修正CJK尾随标点但不改显式Markdown link。HTML原文不会直接注入。inline data image仅允许明确image MIME。
 
@@ -161,11 +166,11 @@ ScrollController只有follow/paused：在底部（0.5px容差）follow并随revi
 
 ## 14. 渲染调度与性能
 
-Canonical transcript始终立即接收完整assistant snapshot；显示层以canonical文本游标和snapshot结束位置按`requestAnimationFrame`依次揭示，避免provider在同一browser task内突发多个delta时直接跳出整段文本。正常流保留provider边界，边界对象上限240；积压以45 frame为追赶目标，但每frame硬限制24个grapheme，极大snapshot宁可延长追平也不会在尾帧整段跳出。非prefix权威修订、terminal guard rollback和Tool边界不会继续播放已撤销或越界的旧文本；会话切换返回已有live turn时直接seed当前可见正文，不重播历史。
+Canonical transcript始终立即接收完整assistant snapshot；显示层以canonical文本游标和snapshot结束位置按`requestAnimationFrame`依次揭示，避免provider在同一browser task内突发多个delta时直接跳出整段文本。正常流以24个grapheme为每frame目标并保留provider边界，边界对象上限240；超大重连snapshot按剩余字符和剩余frame自适应提高预算，保证在45 frame内收敛。非prefix权威修订、terminal guard rollback、Tool边界和turn terminal不会继续播放已撤销或越界的旧文本；会话切换返回已有live turn时直接seed当前可见正文，不重播历史。
 
 Stream scheduler负责驱动上述显示节奏；无RAF时在一个microtask内直接收敛，tool partial有独立最小间隔，terminal立即发布当前frame但允许剩余合法正文继续有界追平。Dispose清timer/frame和显示状态。Final追平期间仍按streaming Markdown渲染不完整前缀；若authoritative history先到，component保留该terminal投影直到游标排空，再无缝交给history。该节奏器只改变active Content投影，不修改reducer、history或导出所读的canonical文本；流式期间DOM搜索、复制与`aria-busy`保持和当前可见进度一致，完成态Mermaid增强会等待对应Content追平后再运行。
 
-性能边界包括：有界history DOM、Markdown cache/limit、live tool output cap、collapsed detail不入DOM、persisted timeline/render cache、minimap最少2项才显示。任何新投影应避免每个token重新扫描全部history或JSON stringify大对象作为key。
+性能边界包括：有界history DOM、Markdown解析预算与cache、超长Markdown的完整plaintext降级、collapsed detail不入DOM、persisted timeline/render cache、minimap最少2项才显示。任何新投影应避免每个token重新扫描全部history或JSON stringify大对象作为key；不能用裁剪canonical Thinking/Tool/Content代替渲染优化。
 
 ## 15. 搜索与 Minimap
 
@@ -209,18 +214,18 @@ History message、live assistant segment、tool lifecycle、thinking、plan 和 
 
 ## 22. Terminal 与 Takeover
 
-Terminal event 关闭 active reducer 的本次 run，但 OpenClaw 会先广播 `chat.final`，再完成终态持久化。Controller使用100/400/1500/3000ms有界退避检查history；可显示final保留optimistic tail直到durable identity接管，无message final则以messageSeq/count/run identity判断持久化是否追上。每次重试绑定session key/id、run与history generation，新会话或下一轮开始后立即失效。History takeover不能在收到任意旧快照时清空overlay，也不能长期保留导致重复。
+Terminal event 关闭 active reducer 的本次 run，但 OpenClaw 的两条final广播路径都可能先经过默认8K display projection。结构化截断final不能回退已经完整到达的live Content，也不能取消补全；只有前缀能够证明时才用live段恢复显示，并继续以100/400/1500/3000ms有界退避等待完整durable row。完整final保留optimistic tail，订阅到的producer-owned完整`session.message`按message/run identity原位替换并退休active turn；截断`session.message`只触发补查，不能覆盖完整本地投影。无消息、订阅缺口和`sessions.changed phase: message`失效同样进入补查。每次重试绑定session key/id、run与history generation，并且只把非optimistic、非truncated消息视为追平证据。
 
 ## 23. 渲染预算与降级
 
 | 内容            | 控制                             | 降级                             |
 | --------------- | -------------------------------- | -------------------------------- |
 | History         | 750/250 有界窗口及分块           | 保留锚点，按需加载旧页           |
-| Streaming delta | snapshot边界游标、24字素/frame   | 修订/回滚/Tool边界立即收敛       |
-| Markdown        | normalize/cache/内容限额         | plain text 或截断提示            |
+| Streaming delta | snapshot边界游标、45-frame追赶   | 大快照自适应、终态立即收敛       |
+| Markdown        | normalize/cache/解析预算         | 全量escaped plaintext            |
 | Mermaid         | source hash/cache/尺寸与错误边界 | 显示源码/错误卡，不执行任意 HTML |
 | Highlight/KaTeX | 按块处理与 cache                 | 未识别语言/公式显示安全文本      |
-| Tool output     | 摘要卡 + disclosure              | 大 payload 不直接挂完整 DOM      |
+| Tool output     | 摘要卡 + disclosure              | 折叠时不挂detail DOM，数据不裁剪 |
 
 限额是产品行为，调整时要同时评估内存、首屏、搜索范围、导出语义和 accessibility，不只观察单次 benchmark。
 

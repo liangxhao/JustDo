@@ -38,7 +38,6 @@ import { i18nService } from '@/services/i18n';
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-const MARKDOWN_CHAR_LIMIT = 140_000;
 const MARKDOWN_PARSE_LIMIT = 40_000;
 const MARKDOWN_CACHE_LIMIT = 200;
 const MARKDOWN_CACHE_MAX_CHARS = 50_000;
@@ -253,14 +252,6 @@ function escapeHtml(value: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
-}
-
-function truncateText(
-  text: string,
-  limit: number,
-): { text: string; truncated: boolean; total: number } {
-  if (text.length <= limit) return { text, truncated: false, total: text.length };
-  return { text: text.slice(0, limit), truncated: true, total: text.length };
 }
 
 function highlightCode(text: string, lang: string): string {
@@ -771,17 +762,15 @@ export function toSanitizedMarkdownHtml(text: string, options: MarkdownRenderOpt
   if (!text) return '';
   installHooks();
 
-  const normalizedInput = text.trim().replace(/\r\n?/g, '\n');
+  const normalizedInput = text.replace(/\r\n?/g, '\n');
+  if (!normalizedInput.trim()) return '';
   const frontmatterResult =
     options.renderFrontmatter || options.stripFrontmatter
       ? splitMarkdownFrontmatter(normalizedInput)
       : { body: normalizedInput, frontmatter: null };
   const input = frontmatterResult.body;
   if (!input) return '';
-  const parseLimit = Math.min(
-    Math.max(options.parseLimit ?? MARKDOWN_PARSE_LIMIT, 1),
-    MARKDOWN_CHAR_LIMIT,
-  );
+  const parseLimit = Math.max(options.parseLimit ?? MARKDOWN_PARSE_LIMIT, 1);
 
   const frontmatterMode = options.renderFrontmatter
     ? 'frontmatter-rendered'
@@ -798,21 +787,18 @@ export function toSanitizedMarkdownHtml(text: string, options: MarkdownRenderOpt
     if (cached !== null) return cached;
   }
 
-  const truncated = truncateText(input, MARKDOWN_CHAR_LIMIT);
-  const suffix = truncated.truncated
-    ? `\n\n… truncated (${truncated.total} chars, showing first ${truncated.text.length}).`
-    : '';
-
-  if (truncated.text.length > parseLimit) {
-    const html = toEscapedPlainTextHtml(`${truncated.text}${suffix}`);
+  if (input.length > parseLimit) {
+    // Keep every character. Very large messages use escaped plaintext to avoid
+    // unbounded markdown parsing work, but they are never shortened.
+    const html = toEscapedPlainTextHtml(input);
     const sanitized = DOMPurify.sanitize(html, activeSanitizeOptions) as unknown as string;
     if (input.length <= MARKDOWN_CACHE_MAX_CHARS) setCachedMarkdown(cacheKey, sanitized);
     return sanitized;
   }
 
   const renderInput = options.allowProgressElement
-    ? `${truncated.text}${suffix}`.replace(PROGRESS_CARD_RAW_CONTENT_BLOCK_RE, '')
-    : `${truncated.text}${suffix}`;
+    ? input.replace(PROGRESS_CARD_RAW_CONTENT_BLOCK_RE, '')
+    : input;
   let rendered: string;
   try {
     rendered = md.render(renderInput, {
@@ -833,8 +819,8 @@ export function toSanitizedMarkdownHtml(text: string, options: MarkdownRenderOpt
 
 export function toStreamingMarkdownHtml(text: string): string {
   if (!text) return '';
-  const input = text.trim().replace(/\r\n?/g, '\n');
-  if (!input) return '';
+  const input = text.replace(/\r\n?/g, '\n');
+  if (!input.trim()) return '';
 
   const boundary = findStableStreamingMarkdownBoundary(input);
   if (boundary <= 0) return toEscapedPlainTextHtml(input);

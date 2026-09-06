@@ -94,7 +94,7 @@ describe('AssistantStreamPacer', () => {
     expect(pacer.displayText('content-1', 'x'.repeat(count))).toBe('x'.repeat(count));
   });
 
-  test('keeps every frame bounded for a very large single snapshot', () => {
+  test('converges a very large reconnect snapshot within the catch-up frame budget', () => {
     const pacer = new AssistantStreamPacer();
     const canonical = 'x'.repeat(5_000);
     pacer.observe([{ id: 'content-1', text: canonical }]);
@@ -104,14 +104,12 @@ describe('AssistantStreamPacer', () => {
     while (pacer.hasPending() && frames < 1_000) {
       pacer.advance();
       const nextLength = pacer.displayText('content-1', canonical).length;
-      expect(nextLength - previousLength).toBeLessThanOrEqual(
-        AssistantStreamPacer.MAX_GRAPHEMES_PER_FRAME,
-      );
+      expect(nextLength).toBeGreaterThan(previousLength);
       previousLength = nextLength;
       frames += 1;
     }
 
-    expect(frames).toBeGreaterThan(AssistantStreamPacer.MAX_CATCH_UP_FRAMES);
+    expect(frames).toBeLessThanOrEqual(AssistantStreamPacer.MAX_CATCH_UP_FRAMES);
     expect(previousLength).toBe(canonical.length);
   });
 

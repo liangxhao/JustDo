@@ -4,11 +4,7 @@ import { normalizeToolTerminalStatus } from '@shared/openclaw/messageDomain';
 import { getTranscriptMedia } from '@/libs/openclaw-chat/attachments';
 import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 
-import {
-  MAX_LIVE_TOOL_OUTPUT_CHARS,
-  type ThinkingItem,
-  type ToolItem,
-} from './chat-transcript-state';
+import { type ThinkingItem, type ToolItem } from './chat-transcript-state';
 import { deterministicHistoryKey } from './history-reconciler';
 import type {
   LiveProcessTimelineItem,
@@ -59,12 +55,6 @@ function blockText(block: Record<string, unknown>, ...keys: string[]): string {
     if (typeof value === 'string') return value;
   }
   return '';
-}
-
-function boundedOutput(value: string): string {
-  return value.length <= MAX_LIVE_TOOL_OUTPUT_CHARS
-    ? value
-    : `${value.slice(0, MAX_LIVE_TOOL_OUTPUT_CHARS)}\n[truncated]`;
 }
 
 function timestampOf(outer: Record<string, unknown>, message: Record<string, unknown>): number {
@@ -479,9 +469,9 @@ export function projectPersistedTimeline(
         output: output ?? undefined,
         error: error.message ?? undefined,
       });
-    if (output !== null && !outputlessSessionsYieldResult) tool.output = boundedOutput(output);
+    if (output !== null && !outputlessSessionsYieldResult) tool.output = output;
     if (error.message !== null && !outputlessSessionsYieldResult) {
-      tool.error = boundedOutput(error.message);
+      tool.error = error.message;
     }
     const terminalStatus = normalizeToolTerminalStatus(source.phase ?? source.status, error.failed);
     tool.status = error.failed

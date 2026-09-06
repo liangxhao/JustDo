@@ -44,6 +44,21 @@ describe('Progress card Markdown', () => {
   });
 });
 
+describe('large Markdown content', () => {
+  test('falls back to plaintext without truncating the message', () => {
+    const source = `head:${'x'.repeat(200_000)}:<tail>`;
+
+    const html = toSanitizedMarkdownHtml(source);
+
+    expect(html).toContain('head:');
+    expect(html).toContain('&lt;tail&gt;');
+    expect(html).not.toContain('truncated');
+    expect(html.replace(/<br>\n?/g, '\n').replace(/^<pre>|<\/pre>$/g, '')).toContain(
+      'x'.repeat(200_000),
+    );
+  });
+});
+
 describe('Markdown front matter', () => {
   test('strips a YAML front matter block from document previews', () => {
     const source = ['---', 'name: example', 'description: A test', '---', '', '# Content'].join(

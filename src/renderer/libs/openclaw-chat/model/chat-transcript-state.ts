@@ -105,7 +105,6 @@ export interface TranscriptReducerDependencies {
   createId: (prefix: string) => string;
 }
 
-export const MAX_LIVE_TOOL_OUTPUT_CHARS = 120_000;
 export const MAX_RECENT_RUNS = 24;
 export const RECENT_RUN_RETENTION_MS = 5 * 60 * 1000;
 

@@ -59,7 +59,7 @@ import {
   type ExtensionSetEnabledRequest,
   type ExtensionUpdateConfigurationRequest,
 } from '../shared/openclaw/extensions';
-import { OpenClawHistoryIpc, type OpenClawPagedHistoryParams } from '../shared/openclaw/historyIpc';
+import { OpenClawHistoryIpc } from '../shared/openclaw/historyIpc';
 import { HookIpc } from '../shared/openclaw/hooks';
 import { MemoryIpc } from '../shared/openclaw/memory';
 import { OpenClawModelsIpc } from '../shared/openclaw/models';
@@ -306,8 +306,6 @@ contextBridge.exposeInMainWorld('electron', {
         ipcRenderer.invoke(OpenClawHistoryIpc.GetToolInputs, params),
       getCompactionDetails: (params: { sessionKey: string; entryIds: string[] }) =>
         ipcRenderer.invoke(OpenClawHistoryIpc.GetCompactionDetails, params),
-      getPagedHistory: (params: OpenClawPagedHistoryParams) =>
-        ipcRenderer.invoke(OpenClawHistoryIpc.GetPagedHistory, params),
     },
     models: {
       list: (options?: { agentId?: string }) => ipcRenderer.invoke(OpenClawModelsIpc.List, options),

@@ -4,7 +4,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import { i18nService } from '@/services/i18n';
 
-import { MAX_LIVE_TOOL_OUTPUT_CHARS, type ToolItem } from '../model/chat-transcript-state';
+import type { ToolItem } from '../model/chat-transcript-state';
 import {
   buildEditDiffView,
   buildEditSplitDiffRows,
@@ -57,15 +57,9 @@ function readableValue(value: unknown): string {
   }
 }
 
-function boundedDetail(value: unknown): string {
-  const readable = readableValue(value);
-  if (readable.length <= MAX_LIVE_TOOL_OUTPUT_CHARS) return readable;
-  return `${readable.slice(0, MAX_LIVE_TOOL_OUTPUT_CHARS)}\n[truncated]`;
-}
-
 function toolResult(tool: ToolItem): string {
-  if (tool.output !== undefined) return boundedDetail(tool.output);
-  if (tool.error !== undefined) return boundedDetail(tool.error);
+  if (tool.output !== undefined) return readableValue(tool.output);
+  if (tool.error !== undefined) return readableValue(tool.error);
   return i18nService.t('coworkToolNoOutput');
 }
 
@@ -309,7 +303,7 @@ function renderToolDetail(
           ? renderEditDiff(tool.id, editDiff, editDiffMode, onEditDiffModeChange)
           : html`
               <div class="process-summary__detail-label">${i18nService.t('coworkToolInput')}</div>
-              <pre>${boundedDetail(tool.input) || i18nService.t('coworkToolNoOutput')}</pre>
+              <pre>${readableValue(tool.input) || i18nService.t('coworkToolNoOutput')}</pre>
             `
       }
       ${

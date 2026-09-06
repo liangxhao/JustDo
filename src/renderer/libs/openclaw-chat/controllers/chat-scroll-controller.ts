@@ -19,6 +19,7 @@ export class ChatScrollController {
   private pendingNewerHistoryShift: object | null = null;
   private interactionAnchor: { element: HTMLElement; offset: number } | null = null;
   private navigationTargetTop: number | null = null;
+  private historyTouchY: number | null = null;
 
   constructor(
     private readonly onStateChange: () => void,
@@ -39,6 +40,12 @@ export class ChatScrollController {
     this.clearPendingHistoryShifts();
     host.addEventListener('scroll', this.handleScroll, { passive: true });
     host.addEventListener('scrollend', this.handleScrollEnd, { passive: true });
+    host.addEventListener('wheel', this.handleHistoryIntent, { passive: true });
+    host.addEventListener('keydown', this.handleHistoryIntent);
+    host.addEventListener('touchstart', this.handleHistoryIntent, { passive: true });
+    host.addEventListener('touchmove', this.handleHistoryIntent, { passive: true });
+    host.addEventListener('touchend', this.handleHistoryIntent, { passive: true });
+    host.addEventListener('touchcancel', this.handleHistoryIntent, { passive: true });
     if (typeof ResizeObserver !== 'undefined') {
       this.resizeObserver = new ResizeObserver(() => this.handleResize());
       this.resizeObserver.observe(host);
@@ -92,6 +99,7 @@ export class ChatScrollController {
     this.unseenRevisions = 0;
     this.clearPendingHistoryShifts();
     this.interactionAnchor = null;
+    this.historyTouchY = null;
     this.finishNavigation();
     this.scrollToBottom();
     this.onStateChange();
@@ -132,6 +140,7 @@ export class ChatScrollController {
     this.previousRevision = -1;
     this.clearPendingHistoryShifts();
     this.interactionAnchor = null;
+    this.historyTouchY = null;
     this.finishNavigation();
     this.onStateChange();
   }
@@ -139,6 +148,12 @@ export class ChatScrollController {
   disconnect(): void {
     this.host?.removeEventListener('scroll', this.handleScroll);
     this.host?.removeEventListener('scrollend', this.handleScrollEnd);
+    this.host?.removeEventListener('wheel', this.handleHistoryIntent);
+    this.host?.removeEventListener('keydown', this.handleHistoryIntent);
+    this.host?.removeEventListener('touchstart', this.handleHistoryIntent);
+    this.host?.removeEventListener('touchmove', this.handleHistoryIntent);
+    this.host?.removeEventListener('touchend', this.handleHistoryIntent);
+    this.host?.removeEventListener('touchcancel', this.handleHistoryIntent);
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
     this.observedContent = null;
@@ -147,7 +162,44 @@ export class ChatScrollController {
     this.clearPendingHistoryShifts();
     this.interactionAnchor = null;
     this.navigationTargetTop = null;
+    this.historyTouchY = null;
   }
+
+  private readonly handleHistoryIntent = (event: Event): void => {
+    const host = this.host;
+    if (!host || !this.onNearTop || this.pendingOlderHistoryRequest !== null) return;
+    const threshold = Math.max(
+      ChatScrollController.MIN_HISTORY_SHIFT_THRESHOLD_PX,
+      host.clientHeight * ChatScrollController.HISTORY_SHIFT_THRESHOLD_VIEWPORTS,
+    );
+    if (host.scrollTop > threshold) return;
+
+    let upward = false;
+    if (typeof WheelEvent !== 'undefined' && event instanceof WheelEvent) {
+      upward = event.deltaY < 0;
+    } else if (typeof KeyboardEvent !== 'undefined' && event instanceof KeyboardEvent) {
+      const target = event.target;
+      const editing =
+        typeof HTMLElement !== 'undefined' &&
+        target instanceof HTMLElement &&
+        (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
+      upward = !editing && ['ArrowUp', 'PageUp', 'Home'].includes(event.key);
+    } else if (typeof TouchEvent !== 'undefined' && event instanceof TouchEvent) {
+      const touchY = event.touches[0]?.clientY ?? null;
+      if (event.type === 'touchstart') {
+        this.historyTouchY = touchY;
+        return;
+      }
+      if (event.type === 'touchend' || event.type === 'touchcancel') {
+        this.historyTouchY = null;
+        return;
+      }
+      const previousTouchY = this.historyTouchY;
+      upward = touchY !== null && previousTouchY !== null && touchY - previousTouchY >= 8;
+      if (touchY !== null) this.historyTouchY = touchY;
+    }
+    if (upward) this.requestOlderHistory();
+  };
 
   private readonly handleScroll = (): void => {
     const host = this.host;

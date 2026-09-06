@@ -988,6 +988,9 @@ export const OPENCLAW_SUBAGENT_RUN_TIMEOUT_SECONDS =
 export const OPENCLAW_MCP_TOOL_OWNER = 'bundle-mcp';
 export const OPENCLAW_MAX_SKILLS_IN_PROMPT = 200;
 export const OPENCLAW_MAX_SKILLS_PROMPT_CHARS = 50_000;
+// Keep the product's historical 365-day stale-session policy. In current
+// OpenClaw, maxEntries archives overflow entries; it does not shorten the
+// transcript retention window or authorize JustDo to delete message rows.
 export const OPENCLAW_SESSION_PRUNE_AFTER = '365d';
 export const OPENCLAW_SESSION_MAX_ENTRIES = 500;
 

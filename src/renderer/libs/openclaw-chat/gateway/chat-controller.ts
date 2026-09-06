@@ -8,8 +8,9 @@
  * - Handles streaming events (delta, final, aborted, error)
  * - Sends messages via chat.send RPC
  *
- * No JustDo adapter and no Redux. Electron-only filesystem/HTTP bridge calls
- * are kept narrow and only used where browser security blocks gateway REST.
+ * No renderer-side transcript cache and no Redux. JustDo-specific Gateway
+ * methods stay narrow: they only recover data that OpenClaw intentionally
+ * omits from bounded history payloads.
  */
 
 import {
@@ -24,10 +25,6 @@ import {
   type NormalizedChatEvent,
   readTerminalGuardObservation,
 } from '@shared/openclaw/agentEvent';
-import type {
-  OpenClawPagedHistoryParams,
-  OpenClawPagedHistoryResult,
-} from '@shared/openclaw/historyIpc';
 import { isInternalManagedSubagentHandoffError } from '@shared/openclaw/internalRunError';
 import { normalizeModelRef } from '@shared/openclaw/modelRef';
 import {
@@ -51,6 +48,16 @@ import {
 } from '@shared/slashCommands';
 
 import { getTranscriptMedia, toAttachmentContentBlocks } from '@/libs/openclaw-chat/attachments';
+import {
+  CHAT_HISTORY_INITIAL_LIMIT,
+  CHAT_HISTORY_MAX_CHARS,
+  CHAT_HISTORY_OLDER_PAGE_LIMIT,
+  type ChatHistoryPage,
+  decodeHistoryOffsetCursor,
+  hydrateTruncatedHistoryMessages,
+  isTruncatedHistoryMessage,
+  parseChatHistoryPage,
+} from '@/libs/openclaw-chat/gateway/chat-history-protocol';
 import type {
   GatewayClient,
   GatewayEventFrame,
@@ -85,6 +92,7 @@ import {
 import {
   isLocallyOptimisticHistoryTail,
   markOptimisticHistoryTail,
+  retireSettledActiveTurn,
 } from '@/libs/openclaw-chat/model/optimistic-history-tail';
 import { isPendingUserMessageMatch } from '@/libs/openclaw-chat/model/optimistic-user-message';
 import { projectPersistedTimeline } from '@/libs/openclaw-chat/model/project-history-timeline';
@@ -241,6 +249,8 @@ type InFlightRunSnapshot = {
 
 type ChatHistorySnapshot = {
   messages?: unknown[];
+  hasMore?: boolean;
+  nextOffset?: number;
   sessionId?: string;
   sessionInfo?: {
     key?: string;
@@ -253,6 +263,7 @@ type ChatHistorySnapshot = {
     model?: string;
     hasActiveRun?: boolean;
     activeRunIds?: string[];
+    activeLeafEntryId?: string | null;
     status?: string;
   };
   inFlightRun?: InFlightRunSnapshot;
@@ -281,40 +292,13 @@ type PostFinalHistoryRecovery = {
   historyGeneration: number;
   runId: string | null;
   baselineMessageSeq: number | null;
-  baselineMessageCount: number;
-  expectsVisibleMessage: boolean;
+  baselineCompleteMessageCount: number;
   attempt: number;
 };
 
 type SwitchSessionOptions = {
   promoteFromSessionKey?: string;
 };
-
-type OpenClawHistoryBridge = {
-  getToolInputs?: (params: { sessionKey: string; toolCallIds: string[] }) => Promise<{
-    success?: boolean;
-    inputs?: Record<string, { name?: string; input?: unknown }>;
-  }>;
-  getCompactionDetails?: (params: { sessionKey: string; entryIds: string[] }) => Promise<{
-    success?: boolean;
-    details?: Record<string, { summary?: string; tokensBefore?: number; tokensAfter?: number }>;
-  }>;
-  getPagedHistory?: (
-    params: OpenClawPagedHistoryParams,
-  ) => Promise<Partial<OpenClawPagedHistoryResult>>;
-};
-
-function getOpenClawHistoryBridge(): OpenClawHistoryBridge | undefined {
-  return (
-    globalThis as {
-      electron?: {
-        openclaw?: {
-          history?: OpenClawHistoryBridge;
-        };
-      };
-    }
-  ).electron?.openclaw?.history;
-}
 
 function getContentImageUrl(value: unknown): string | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -336,17 +320,19 @@ function getContentImageUrl(value: unknown): string | null {
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-const HISTORY_LIMIT = 1000;
-const HISTORY_PAGE_LIMIT = 250;
-const MAX_EMPTY_HISTORY_PAGES_PER_BATCH = 8;
-const FULL_HISTORY_MESSAGE_MAX_CHARS = 1_000_000;
-const OPENCLAW_HISTORY_TRUNCATION_MARKER = '...(truncated)...';
 const SILENT_REPLY_PATTERN = /^\s*NO_REPLY\s*$/;
-const POST_FINAL_HISTORY_RETRY_DELAYS_MS = [100, 400, 1500, 3000] as const;
+// Current OpenClaw can publish a message-less terminal frame before its final
+// transcript row is queryable. These delays match that one persistence race;
+// visible finals are completed by their subscribed session.message row.
+const MISSING_TERMINAL_HISTORY_RETRY_DELAYS_MS = [100, 400, 1500, 3000] as const;
+// Ambiguous or broad transcript invalidations and sessions_yield repair remain
+// JustDo-specific catch-up cases. They never cap history pages or message data.
 const DEFERRED_HISTORY_RELOAD_DELAY_MS = 1200;
 const ACTIVE_TOOL_HISTORY_CATCHUP_DELAY_MS = 150;
 const MAX_DEFERRED_HISTORY_CATCHUP_ATTEMPTS = 5;
 const MAX_ACTIVE_TOOL_HISTORY_CATCHUP_ATTEMPTS = 4;
+// Subscribe-before-snapshot closes the initial race. The timeout only prevents
+// a stalled subscription RPC from blocking the session UI indefinitely.
 const DEFAULT_INITIAL_MESSAGE_SUBSCRIPTION_BARRIER_TIMEOUT_MS = 3000;
 const DEFAULT_INITIAL_HISTORY_RETRY_DELAYS_MS = [100, 300, 900] as const;
 const PROGRESS_CARD_GET_METHOD = 'progressCard.get';
@@ -357,10 +343,6 @@ const DEBUG_CHAT_CONTROLLER =
 
 function normalizeSessionId(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
-}
-
-function isHistoryNotFoundError(value: unknown): boolean {
-  return typeof value === 'string' && /\bhistory REST returned 404\b/i.test(value);
 }
 
 function debugLog(...args: unknown[]): void {
@@ -441,35 +423,6 @@ function sliceActiveSubagentHistoryPrefix(messages: unknown[]): unknown[] {
   return lastUserIndex >= 0 ? messages.slice(0, lastUserIndex + 1) : messages;
 }
 
-function hasOpenClawHistoryTruncationMarker(message: unknown): boolean {
-  const record = asRecord(message);
-  if (!record) return false;
-  const hasMarker = (value: unknown): boolean =>
-    typeof value === 'string' && value.trimEnd().endsWith(OPENCLAW_HISTORY_TRUNCATION_MARKER);
-  if (
-    [record.text, record.content, record.thinking, record.partialJson, record.arguments].some(
-      hasMarker,
-    )
-  ) {
-    return true;
-  }
-  if (Array.isArray(record.content)) {
-    return record.content.some(block => {
-      const item = asRecord(block);
-      return (
-        item !== null &&
-        [item.text, item.content, item.thinking, item.partialJson, item.arguments].some(hasMarker)
-      );
-    });
-  }
-  return false;
-}
-
-function readOpenClawMessageId(message: unknown): string | null {
-  const marker = asRecord(asRecord(message)?.__openclaw);
-  return typeof marker?.id === 'string' && marker.id.trim() ? marker.id.trim() : null;
-}
-
 function readPositiveSafeInteger(value: unknown): number | null {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) return null;
   return value;
@@ -538,12 +491,6 @@ function retainOriginalOpenClawIdentity(fullMessage: unknown, originalMessage: u
   };
 }
 
-type HistoryPage = {
-  messages: unknown[];
-  hasMore: boolean;
-  nextCursor: string | null;
-};
-
 function mergeRefreshedHistoryWindow(current: unknown[], recent: unknown[]): unknown[] {
   if (current.length <= recent.length || recent.length === 0) return recent;
   const firstIdentity = readTranscriptIdentity(recent[0]);
@@ -595,7 +542,6 @@ export class ChatController {
   private postFinalHistoryRecovery: PostFinalHistoryRecovery | null = null;
   private deferredHistoryReloadTimer: ReturnType<typeof setTimeout> | null = null;
   private activeToolHistoryCatchUpTimer: ReturnType<typeof setTimeout> | null = null;
-  private olderHistoryContinuationTimer: ReturnType<typeof setTimeout> | null = null;
   private deferredHistoryReloadAttempts = new Map<string, number>();
   private observedSessionMessageSeqBySession = new Map<
     string,
@@ -615,6 +561,13 @@ export class ChatController {
   private ignoredDeltaAfterAssistantSnapshotCount = 0;
   private pendingAnnounceEvents = new Map<string, NormalizedAgentEvent[]>();
   private historyLoadSeq = 0;
+  private historyPagingGeneration = 0;
+  private historyPaginationAdvanced = false;
+  private historyPaginationBySession = new Map<
+    string,
+    { hasMore: boolean; nextCursor: string | null; advanced: boolean }
+  >();
+  private displayedHistoryLeafBySession = new Map<string, string | null>();
   private newerHistoryNavigationRevision = 0;
   private connectionInitializationSeq = 0;
   private subscribedMessageSessionKey: string | null = null;
@@ -1134,6 +1087,19 @@ export class ChatController {
       this.historySourceBySession.set(targetSessionKey, sourceHistorySource);
     }
 
+    const sourcePagination = this.historyPaginationBySession.get(sourceSessionKey);
+    this.historyPaginationBySession.delete(sourceSessionKey);
+    if (sourcePagination) {
+      this.historyPaginationBySession.set(targetSessionKey, sourcePagination);
+    }
+    const sourceLeafKey = normalizeTranscriptSessionKey(sourceSessionKey);
+    const targetLeafKey = normalizeTranscriptSessionKey(targetSessionKey);
+    if (this.displayedHistoryLeafBySession.has(sourceLeafKey)) {
+      const sourceLeaf = this.displayedHistoryLeafBySession.get(sourceLeafKey) ?? null;
+      this.displayedHistoryLeafBySession.delete(sourceLeafKey);
+      this.displayedHistoryLeafBySession.set(targetLeafKey, sourceLeaf);
+    }
+
     const sourceLiveEntry = this.findLiveSessionState(sourceSessionKey);
     if (!sourceLiveEntry) return;
     const [sourceLiveKey, sourceLiveState] = sourceLiveEntry;
@@ -1381,6 +1347,7 @@ export class ChatController {
         nextWindow.end,
       );
       this.state.transcript.persistedMessages = messages;
+      retireSettledActiveTurn(this.state.transcript, messages);
       this.cacheSessionMessages(this.state.sessionKey);
       return;
     }
@@ -1407,6 +1374,7 @@ export class ChatController {
       nextWindow.end,
     );
     this.state.transcript.persistedMessages = messages;
+    retireSettledActiveTurn(this.state.transcript, messages);
     this.cacheSessionMessages(this.state.sessionKey);
   }
 
@@ -1694,6 +1662,29 @@ export class ChatController {
     return true;
   }
 
+  private rememberHistoryPagination(sessionKey: string): void {
+    if (!sessionKey) return;
+    this.historyPaginationBySession.set(sessionKey, {
+      hasMore: this.state.historyHasMore,
+      nextCursor: this.state.historyNextCursor,
+      advanced: this.historyPaginationAdvanced,
+    });
+  }
+
+  private restoreHistoryPagination(sessionKey: string): void {
+    const cached = this.historyPaginationBySession.get(sessionKey);
+    this.historyPaginationAdvanced = cached?.advanced ?? false;
+    this.state.historyHasMore = cached?.hasMore ?? false;
+    this.state.historyNextCursor = cached?.nextCursor ?? null;
+  }
+
+  private resetHistoryPagination(sessionKey: string): void {
+    this.historyPaginationAdvanced = false;
+    this.state.historyHasMore = false;
+    this.state.historyNextCursor = null;
+    if (sessionKey) this.historyPaginationBySession.delete(sessionKey);
+  }
+
   async showOlderHistory(): Promise<boolean> {
     const shifted = shiftHistoryWindowOlder(
       {
@@ -1810,9 +1801,19 @@ export class ChatController {
   }): Promise<void> {
     let initialHistoryError: string | null = null;
     try {
-      const initialLoadSucceeded = await this.loadHistory(false, { preferStartup: true });
+      const initialLoadSucceeded = await this.loadHistory(true, { preferStartup: true });
       if (!initialLoadSucceeded) initialHistoryError = this.state.lastError;
       if (this.hasExpectedInitialHistory()) return;
+
+      // A subagent's originating task can be older than the recent startup
+      // page. Follow the native offset chain before treating the missing row
+      // as a persistence race and retrying the tail snapshot.
+      while (this.state.historyHasMore && this.state.historyNextCursor) {
+        const cursor = this.state.historyNextCursor;
+        await this.loadOlderHistory();
+        if (this.hasExpectedInitialHistory()) return;
+        if (this.state.historyNextCursor === cursor) break;
+      }
 
       for (const delayMs of this.initialHistoryRetryDelaysMs) {
         if (!(await this.waitForInitialHistoryRetry(delayMs, params))) return;
@@ -2211,39 +2212,15 @@ export class ChatController {
     }, ACTIVE_TOOL_HISTORY_CATCHUP_DELAY_MS);
   }
 
-  private clearOlderHistoryContinuation(): void {
-    if (this.olderHistoryContinuationTimer === null) return;
-    clearTimeout(this.olderHistoryContinuationTimer);
-    this.olderHistoryContinuationTimer = null;
-  }
-
-  private scheduleOlderHistoryContinuation(params: {
-    sessionKey: string;
-    sessionId: string | null;
-    historyGeneration: number;
-    cursor: string;
-  }): void {
-    if (this.olderHistoryContinuationTimer !== null) return;
-    this.olderHistoryContinuationTimer = setTimeout(() => {
-      this.olderHistoryContinuationTimer = null;
-      if (
-        this.state.sessionKey !== params.sessionKey ||
-        this.state.transcript.sessionId !== params.sessionId ||
-        this.state.transcript.historyGeneration !== params.historyGeneration ||
-        !this.state.historyHasMore ||
-        this.state.historyNextCursor !== params.cursor
-      ) {
-        return;
-      }
-      void this.loadOlderHistory();
-    }, 0);
-  }
-
   private scheduleDeferredHistoryReload(sessionKey: string, reason: string): void {
     if (reason === 'agent-item') {
       this.deferredHistoryReloadAttempts.delete(sessionKey);
     }
-    if (reason === 'stale-history' || reason === 'regressive-history') {
+    if (
+      reason === 'stale-history' ||
+      reason === 'regressive-history' ||
+      reason === 'empty-history-snapshot'
+    ) {
       const attempts = (this.deferredHistoryReloadAttempts.get(sessionKey) ?? 0) + 1;
       if (attempts > MAX_DEFERRED_HISTORY_CATCHUP_ATTEMPTS) {
         debugLog('[ChatCtrl] deferred history reload suppressed after catchup limit', {
@@ -2319,22 +2296,12 @@ export class ChatController {
   }
 
   private postFinalHistoryHasCaughtUp(recovery: PostFinalHistoryRecovery): boolean {
-    const messages = this.state.chatMessages;
-    if (recovery.expectsVisibleMessage) {
-      return !messages.some(message => {
-        if (!isLocallyOptimisticHistoryTail(message)) return false;
-        if (!recovery.runId) return true;
-        return readExplicitMessageRunId(message) === recovery.runId;
-      });
-    }
-
+    const messages = this.state.chatMessages.filter(
+      message => !isLocallyOptimisticHistoryTail(message) && !isTruncatedHistoryMessage(message),
+    );
     if (
       recovery.runId &&
-      messages.some(
-        message =>
-          !isLocallyOptimisticHistoryTail(message) &&
-          readExplicitMessageRunId(message) === recovery.runId,
-      )
+      messages.some(message => readExplicitMessageRunId(message) === recovery.runId)
     ) {
       return true;
     }
@@ -2346,11 +2313,11 @@ export class ChatController {
     ) {
       return true;
     }
-    return messages.length > recovery.baselineMessageCount;
+    return messages.length > recovery.baselineCompleteMessageCount;
   }
 
   private scheduleNextPostFinalHistoryReload(recovery: PostFinalHistoryRecovery): void {
-    const delay = POST_FINAL_HISTORY_RETRY_DELAYS_MS[recovery.attempt];
+    const delay = MISSING_TERMINAL_HISTORY_RETRY_DELAYS_MS[recovery.attempt];
     if (delay === undefined) {
       if (this.postFinalHistoryRecovery === recovery) this.postFinalHistoryRecovery = null;
       return;
@@ -2402,8 +2369,7 @@ export class ChatController {
     options: {
       runId: string | null;
       baselineMessageSeq: number | null;
-      baselineMessageCount: number;
-      expectsVisibleMessage: boolean;
+      baselineCompleteMessageCount: number;
     },
   ): void {
     this.clearPostFinalHistoryReload();
@@ -2413,8 +2379,7 @@ export class ChatController {
       historyGeneration: this.state.transcript.historyGeneration,
       runId: options.runId,
       baselineMessageSeq: options.baselineMessageSeq,
-      baselineMessageCount: options.baselineMessageCount,
-      expectsVisibleMessage: options.expectsVisibleMessage,
+      baselineCompleteMessageCount: options.baselineCompleteMessageCount,
       attempt: 0,
     };
     this.postFinalHistoryRecovery = recovery;
@@ -2560,6 +2525,7 @@ export class ChatController {
    * This replicates the webchat's connectGateway + loadChatHistory flow.
    */
   async connect(url: string, token: string, sessionKey: string): Promise<void> {
+    this.rememberHistoryPagination(this.state.sessionKey);
     this.gatewayHttpBase = url.replace(/^ws:/, 'http:').replace(/^wss:/, 'https:');
     this.gatewayToken = token;
     // Stop existing client
@@ -2567,16 +2533,15 @@ export class ChatController {
     this.messageSubscriptionSeq += 1;
     this.connectionInitializationSeq += 1;
     this.subscribedMessageSessionKey = null;
-    this.clearOlderHistoryContinuation();
     this.progressCardLoadGeneration += 1;
     this.progressCardCache.clear();
 
     this.state.sessionKey = sessionKey;
+    this.historyPagingGeneration += 1;
     this.state.currentSessionId = null;
     this.state.initialHistoryReady = false;
     this.state.historyLoadingOlder = false;
-    this.state.historyHasMore = false;
-    this.state.historyNextCursor = null;
+    this.restoreHistoryPagination(sessionKey);
     this.resetTranscriptForSession(sessionKey, null);
     this.state.chatLoading = true;
     this.currentMessageHistory =
@@ -2652,18 +2617,19 @@ export class ChatController {
       this.pendingAnnounceEvents.clear();
     }
     this.cacheCurrentLiveState(previousSessionKey);
+    this.rememberHistoryPagination(previousSessionKey);
     if (isTempSessionPromotion && promotionSource) {
       this.promoteCachedSessionState(promotionSource, sessionKey);
     }
     this.state.sessionKey = sessionKey;
+    this.historyPagingGeneration += 1;
     this.progressCardLoadGeneration += 1;
     this.state.progressCard = this.progressCardCache.get(sessionKey) ?? null;
     this.state.progressCardLoading = false;
     this.state.progressCardError = null;
     this.state.initialHistoryReady = false;
     this.state.historyLoadingOlder = false;
-    this.state.historyHasMore = false;
-    this.state.historyNextCursor = null;
+    this.restoreHistoryPagination(sessionKey);
     this.restoreLiveState(sessionKey);
     this.currentMessageHistory =
       this.chatMessagesBySession.get(sessionKey) ?? new ChunkedMessageHistory();
@@ -2686,7 +2652,6 @@ export class ChatController {
     this.clearPostFinalHistoryReload();
     this.clearDeferredHistoryReload();
     this.clearActiveToolHistoryCatchUp();
-    this.clearOlderHistoryContinuation();
     this.notify();
 
     const client = this.state.client;
@@ -2707,7 +2672,6 @@ export class ChatController {
     this.clearPostFinalHistoryReload();
     this.clearDeferredHistoryReload();
     this.clearActiveToolHistoryCatchUp();
-    this.clearOlderHistoryContinuation();
     for (const sessionKey of [...this.localCompactionStatusBySession.keys()]) {
       this.clearLocalCompactionStatus(sessionKey);
     }
@@ -2722,6 +2686,8 @@ export class ChatController {
     this.suspendedRunId = null;
     this.pendingAnnounceEvents.clear();
     this.observedSessionMessageSeqBySession.clear();
+    this.historyReloadRequested.clear();
+    this.immediateHistoryReloadRequested.clear();
     this.connectionInitializationSeq += 1;
     this.messageSubscriptionSeq += 1;
     this.subscribedMessageSessionKey = null;
@@ -3148,9 +3114,16 @@ export class ChatController {
             this.transcriptDependencies,
           );
         }
+        // Both chat.final delivery paths use OpenClaw's display projection and
+        // can therefore carry only an 8K preview. Do not let that preview
+        // rewind the complete assistant snapshot already accumulated live.
+        const reducerPayload =
+          payload.state === 'final' && isTruncatedHistoryMessage(payload.message)
+            ? { ...payload, message: undefined }
+            : payload;
         const reduceResult = reduceChatEvent(
           this.state.transcript,
-          payload,
+          reducerPayload,
           this.transcriptDependencies,
         );
         const externalFinal =
@@ -3260,8 +3233,13 @@ export class ChatController {
     // Session metadata and durable transcript notifications for the selected session.
     if (event.event === 'sessions.changed') {
       const payload = asRecord(event.payload);
+      const sessionSnapshot = asRecord(payload?.session);
       const eventSessionKey =
-        typeof payload?.sessionKey === 'string' ? payload.sessionKey.trim() : '';
+        typeof payload?.sessionKey === 'string'
+          ? payload.sessionKey.trim()
+          : typeof sessionSnapshot?.key === 'string'
+            ? sessionSnapshot.key.trim()
+            : '';
       if (
         !eventSessionKey ||
         normalizeTranscriptSessionKey(eventSessionKey) !==
@@ -3269,11 +3247,13 @@ export class ChatController {
       ) {
         return;
       }
-      const nextSessionId = normalizeSessionId(payload?.sessionId);
+      const reason = typeof payload?.reason === 'string' ? payload.reason.trim().toLowerCase() : '';
+      const nextSessionId = normalizeSessionId(payload?.sessionId ?? sessionSnapshot?.sessionId);
       const currentSessionId = this.state.currentSessionId ?? this.state.transcript.sessionId;
-      if (nextSessionId && currentSessionId && nextSessionId !== currentSessionId) {
-        const reason =
-          typeof payload?.reason === 'string' ? payload.reason.trim().toLowerCase() : '';
+      const rotatesSessionIdentity = Boolean(
+        nextSessionId && currentSessionId && nextSessionId !== currentSessionId,
+      );
+      if (rotatesSessionIdentity) {
         const explicitIdentityChange =
           reason === 'new' || reason === 'reset' || reason === 'delete';
         const managedSession = /^agent:[^:]+:justdo:[^:]+$/i.test(this.state.sessionKey);
@@ -3287,14 +3267,51 @@ export class ChatController {
           return;
         }
         this.resetTranscriptForSession(this.state.sessionKey, nextSessionId, false);
+        this.historyPagingGeneration += 1;
+        this.resetHistoryPagination(this.state.sessionKey);
+        this.displayedHistoryLeafBySession.delete(
+          normalizeTranscriptSessionKey(this.state.sessionKey),
+        );
         this.state.currentSessionId = nextSessionId;
         this.state.chatRunId = null;
         this.state.chatSending = false;
         this.clearRunActivity();
         this.pendingHistoryReload = false;
         this.scheduleDeferredHistoryReload(this.state.sessionKey, 'session-identity-rotation');
+      } else if (reason === 'reset') {
+        // A native reset can retain the public session id. Its explicit
+        // lifecycle event is authoritative proof that the prior branch no
+        // longer belongs in this pane.
+        this.resetTranscriptForSession(
+          this.state.sessionKey,
+          nextSessionId ?? currentSessionId,
+          false,
+        );
+        this.historyPagingGeneration += 1;
+        this.resetHistoryPagination(this.state.sessionKey);
+        this.displayedHistoryLeafBySession.delete(
+          normalizeTranscriptSessionKey(this.state.sessionKey),
+        );
+        this.setCurrentSessionMessages([], { resetLoadedHistory: true });
+        this.state.chatRunId = null;
+        this.state.chatSending = false;
+        this.clearRunActivity();
+        this.pendingHistoryReload = false;
+        this.scheduleDeferredHistoryReload(this.state.sessionKey, 'session-reset');
       }
-      if (this.applySessionContextUsage(payload, eventSessionKey)) this.notify();
+      if (this.applySessionContextUsage(sessionSnapshot ?? payload, eventSessionKey)) this.notify();
+      if (payload?.phase === 'message') {
+        // New OpenClaw emits this invalidation when a committed batch,
+        // rewrite, or suppressed row has no single session.message payload.
+        // During a run the snapshot may repair Tool boundaries but cannot
+        // replace the live turn; terminal reconciliation will finish it.
+        this.pendingHistoryReload = true;
+        if (this.state.chatSending && this.state.transcript.activeTurn?.status === 'running') {
+          void this.loadHistory(true, { backfillActiveSessionsYield: true });
+        } else {
+          this.scheduleDeferredHistoryReload(this.state.sessionKey, 'sessions-changed-message');
+        }
+      }
       return;
     }
 
@@ -3331,7 +3348,7 @@ export class ChatController {
           (value): value is string => typeof value === 'string' && value.length > 0,
         ),
       );
-      const explicitMessageRunId = readExplicitMessageRunId(payload?.message);
+      const explicitMessageRunId = readExplicitMessageRunId(payload);
       const runActiveValue = payload?.hasActiveRun ?? sessionSnapshot?.hasActiveRun;
       const runActive = typeof runActiveValue === 'boolean' ? runActiveValue : undefined;
       const runIdentityMatches =
@@ -3340,6 +3357,7 @@ export class ChatController {
         runActive !== false;
       const repairedActiveTail =
         payload?.message !== undefined &&
+        !isTruncatedHistoryMessage(payload.message) &&
         sessionIdentityMatches &&
         runIdentityMatches &&
         this.hydrateActiveToolItemsFromHistory([payload.message], {
@@ -3350,8 +3368,10 @@ export class ChatController {
       const loadedMessageSeq = readLatestOpenClawMessageSeq(this.state.chatMessages);
       const projectedAppend =
         payload?.message === undefined ? [] : projectGatewayHistoryForDisplay([payload.message]);
+      const appendIsTruncated =
+        projectedAppend.length === 1 && isTruncatedHistoryMessage(projectedAppend[0]);
       const directApply =
-        sessionIdentityMatches && projectedAppend.length === 1
+        sessionIdentityMatches && projectedAppend.length === 1 && !appendIsTruncated
           ? applySessionMessagePayload(
               this.state.chatMessages,
               { ...payload, message: projectedAppend[0] },
@@ -3401,9 +3421,9 @@ export class ChatController {
         sessionIdentityMatches &&
         activeTailCatchUpPending
       ) {
-        // session.message is dropIfSlow. A later append and its messageSeq can
-        // therefore be the first evidence that a Tool row was missed; fetch
-        // the active tail without allowing history to replace the live turn.
+        // A targeted append can be absent while a later append/messageSeq is
+        // the first evidence that a Tool row was missed. Fetch the active tail
+        // without allowing history to replace the live turn.
         this.scheduleActiveToolHistoryCatchUp(this.state.sessionKey, activeTurn.runId);
       }
       const appendWasHidden = payload?.message !== undefined && projectedAppend.length === 0;
@@ -3411,8 +3431,7 @@ export class ChatController {
         !sessionIdentityMatches ||
         (!appendWasHidden && directApply?.kind !== 'applied') ||
         activeTailCatchUpPending ||
-        (directApply?.kind === 'applied' &&
-          hasOpenClawHistoryTruncationMarker(directApply.message));
+        (directApply?.kind === 'applied' && isTruncatedHistoryMessage(directApply.message));
       if (!needsHistoryFallback && !this.pendingHistoryReload) return;
       if (this.state.chatSending || this.pendingHistoryReload) {
         debugLog('[ChatCtrl] session.message DEFERRED:', this.state.sessionKey, {
@@ -3641,6 +3660,7 @@ export class ChatController {
   private pendingHistoryReload = false;
   private historyLoadsInFlight = new Set<string>();
   private historyReloadRequested = new Set<string>();
+  private immediateHistoryReloadRequested = new Set<string>();
 
   private async readTranscriptImageDataUrl(mediaPath: string): Promise<string | null> {
     const cached = this.transcriptImageCache.get(mediaPath);
@@ -3765,170 +3785,33 @@ export class ChatController {
     );
   }
 
-  private async loadPagedHistoryFromIpc(
-    sessionKey: string,
-    cursor?: string,
-  ): Promise<HistoryPage | null> {
-    const getPagedHistory = getOpenClawHistoryBridge()?.getPagedHistory;
-    if (!getPagedHistory) return null;
-
-    const result = await getPagedHistory({ sessionKey, cursor, limit: HISTORY_PAGE_LIMIT });
-    if (!result?.success || !Array.isArray(result.messages)) {
-      const error = result?.error ?? 'unknown error';
-      if (!isHistoryNotFoundError(error)) {
-        debugLog('[ChatCtrl] paged IPC history unavailable', {
-          sessionKey,
-          error,
-        });
-      }
-      return null;
-    }
-    debugLog('[ChatCtrl] paged IPC history done', {
-      sessionKey,
-      cursor: cursor ?? null,
-      totalCount: result.messages.length,
-      summary: summarizeHistoryForDebug(result.messages),
-    });
-    const nextCursor =
-      result.hasMore === true && typeof result.nextCursor === 'string'
-        ? result.nextCursor.trim() || null
-        : null;
-    return {
-      messages: result.messages,
-      hasMore: nextCursor !== null,
-      nextCursor,
-    };
-  }
-
-  private async loadPagedHistoryFromRest(
-    sessionKey: string,
-    cursor?: string,
-  ): Promise<HistoryPage | null> {
-    const ipcPage = await this.loadPagedHistoryFromIpc(sessionKey, cursor).catch(error => {
-      debugLog('[ChatCtrl] paged IPC history request failed, trying REST', {
+  private async loadOlderHistoryPage(sessionKey: string, cursor: string): Promise<ChatHistoryPage> {
+    const client = this.state.client;
+    if (!client) throw new Error('OpenClaw Gateway is not connected');
+    return parseChatHistoryPage(
+      await client.request('chat.history', {
         sessionKey,
-        cursor: cursor ?? null,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return null;
-    });
-    if (ipcPage) return ipcPage;
-    if (!this.gatewayHttpBase) {
-      return null;
-    }
-
-    const headers = new Headers({ Accept: 'application/json' });
-    if (this.gatewayToken) {
-      headers.set('Authorization', `Bearer ${this.gatewayToken}`);
-    }
-
-    const params = new URLSearchParams({ limit: String(HISTORY_PAGE_LIMIT) });
-    if (cursor) params.set('cursor', cursor);
-    const response = await fetch(
-      `${this.gatewayHttpBase}/sessions/${encodeURIComponent(sessionKey)}/history?${params}`,
-      { headers },
+        limit: CHAT_HISTORY_OLDER_PAGE_LIMIT,
+        maxChars: CHAT_HISTORY_MAX_CHARS,
+        offset: decodeHistoryOffsetCursor(cursor),
+      }),
     );
-    if (!response.ok) {
-      debugLog('[ChatCtrl] paged REST history non-ok', {
-        sessionKey,
-        status: response.status,
-        cursor: cursor ?? null,
-      });
-      return null;
-    }
-    const body = (await response.json()) as {
-      messages?: unknown[];
-      hasMore?: boolean;
-      nextCursor?: string;
-    };
-    const messages = Array.isArray(body.messages) ? body.messages : [];
-    const nextCursor =
-      body.hasMore && typeof body.nextCursor === 'string' ? body.nextCursor.trim() || null : null;
-    debugLog('[ChatCtrl] paged REST history page', {
-      sessionKey,
-      cursor: cursor ?? null,
-      totalCount: messages.length,
-      nextCursor,
-      summary: summarizeHistoryForDebug(messages),
-    });
-    return {
-      messages,
-      hasMore: nextCursor !== null,
-      nextCursor,
-    };
   }
 
   private async normalizeHistoryPage(messages: unknown[], sessionKey: string): Promise<unknown[]> {
     const projected = projectGatewayHistoryForDisplay(messages);
-    const hydratedFullMessages = await this.hydrateTruncatedHistoryMessages(projected, sessionKey);
-    return hydrateGatewayHistoryForDisplay(hydratedFullMessages, {
+    const client = this.state.client;
+    const hydratedFullMessages = client
+      ? await hydrateTruncatedHistoryMessages(client, projected, sessionKey)
+      : projected;
+    const normalized = await hydrateGatewayHistoryForDisplay(hydratedFullMessages, {
       sessionKey,
       lastError: this.state.lastError,
       includeInterruptedOverlays: false,
       enrichCompactionMarkers: (projectedMessages, key) =>
         this.enrichCompactionMarkers(projectedMessages, key),
     });
-  }
-
-  private async hydrateTruncatedHistoryMessages(
-    messages: unknown[],
-    sessionKey: string,
-  ): Promise<unknown[]> {
-    const client = this.state.client;
-    if (!client) return messages;
-
-    const candidatesById = new Map<string, { indices: number[] }>();
-    messages.forEach((message, index) => {
-      if (!hasOpenClawHistoryTruncationMarker(message)) return;
-      const messageId = readOpenClawMessageId(message);
-      if (!messageId) return;
-      const existing = candidatesById.get(messageId);
-      if (existing) {
-        existing.indices.push(index);
-      } else {
-        candidatesById.set(messageId, { indices: [index] });
-      }
-    });
-    const candidates = [...candidatesById.entries()].map(([messageId, value]) => ({
-      messageId,
-      indices: value.indices,
-    }));
-    if (candidates.length === 0) return messages;
-
-    const replacements = new Map<number, unknown>();
-    const batchSize = 8;
-    for (let start = 0; start < candidates.length; start += batchSize) {
-      await Promise.all(
-        candidates.slice(start, start + batchSize).map(async candidate => {
-          try {
-            const result = await client.request<{
-              ok?: boolean;
-              message?: unknown;
-            }>('chat.message.get', {
-              sessionKey,
-              messageId: candidate.messageId,
-              maxChars: FULL_HISTORY_MESSAGE_MAX_CHARS,
-            });
-            const fullMessage = asRecord(result?.message);
-            if (!result?.ok || !fullMessage) return;
-            for (const index of candidate.indices) {
-              replacements.set(
-                index,
-                retainOriginalOpenClawIdentity(result.message, messages[index]),
-              );
-            }
-          } catch (error) {
-            debugLog('[ChatCtrl] full history message unavailable', {
-              sessionKey,
-              messageId: candidate.messageId,
-              error: error instanceof Error ? error.message : String(error),
-            });
-          }
-        }),
-      );
-    }
-    if (replacements.size === 0) return messages;
-    return messages.map((message, index) => replacements.get(index) ?? message);
+    return this.resolveManagedHistoryImages(normalized);
   }
 
   async loadOlderHistory(): Promise<boolean> {
@@ -3938,6 +3821,7 @@ export class ChatController {
 
     const historyGeneration = this.state.transcript.historyGeneration;
     const sessionId = this.state.transcript.sessionId;
+    const pagingGeneration = this.historyPagingGeneration;
     const requestedWindow = {
       start: this.state.historyWindowStart,
       end: this.state.historyWindowEnd,
@@ -3945,18 +3829,18 @@ export class ChatController {
     const requestedNewerNavigationRevision = this.newerHistoryNavigationRevision;
     const seenCursors = new Set<string>();
     let cursor: string | null = initialCursor;
-    let emptyPageCount = 0;
     this.state.historyLoadingOlder = true;
     this.notify();
     try {
       while (cursor && !seenCursors.has(cursor)) {
         seenCursors.add(cursor);
-        const page = await this.loadPagedHistoryFromRest(sessionKey, cursor);
+        const page = await this.loadOlderHistoryPage(sessionKey, cursor);
         if (
           !page ||
           this.state.sessionKey !== sessionKey ||
           this.state.transcript.historyGeneration !== historyGeneration ||
-          this.state.transcript.sessionId !== sessionId
+          this.state.transcript.sessionId !== sessionId ||
+          this.historyPagingGeneration !== pagingGeneration
         ) {
           return false;
         }
@@ -3964,10 +3848,12 @@ export class ChatController {
         if (
           this.state.sessionKey !== sessionKey ||
           this.state.transcript.historyGeneration !== historyGeneration ||
-          this.state.transcript.sessionId !== sessionId
+          this.state.transcript.sessionId !== sessionId ||
+          this.historyPagingGeneration !== pagingGeneration
         ) {
           return false;
         }
+        this.historyPaginationAdvanced = true;
         const subagentTaskPageIndex = this.findSubagentTaskHistoryIndex(normalized);
         if (this.expectInitialHistory && subagentTaskPageIndex >= 0) {
           const taskBoundedPage = normalized.slice(subagentTaskPageIndex);
@@ -3978,6 +3864,7 @@ export class ChatController {
           this.state.transcript.historySource = 'gateway';
           this.state.historyHasMore = false;
           this.state.historyNextCursor = null;
+          this.rememberHistoryPagination(sessionKey);
           this.setCurrentSessionMessages(messages, { resetLoadedHistory: true });
           this.state.transcript.revision += 1;
           this.notify();
@@ -3990,23 +3877,13 @@ export class ChatController {
           (page.nextCursor !== null && seenCursors.has(page.nextCursor));
         this.state.historyHasMore = page.hasMore && !repeatedCursor;
         this.state.historyNextCursor = this.state.historyHasMore ? page.nextCursor : null;
+        this.rememberHistoryPagination(sessionKey);
         if (!changed) {
           if (!this.state.historyHasMore || !this.state.historyNextCursor) {
             this.notify();
             return false;
           }
           cursor = this.state.historyNextCursor;
-          emptyPageCount += 1;
-          if (emptyPageCount >= MAX_EMPTY_HISTORY_PAGES_PER_BATCH) {
-            this.scheduleOlderHistoryContinuation({
-              sessionKey,
-              sessionId,
-              historyGeneration,
-              cursor,
-            });
-            this.notify();
-            return false;
-          }
           continue;
         }
 
@@ -4032,6 +3909,7 @@ export class ChatController {
       }
       this.state.historyHasMore = false;
       this.state.historyNextCursor = null;
+      this.rememberHistoryPagination(sessionKey);
       this.notify();
       return false;
     } catch (error) {
@@ -4065,7 +3943,10 @@ export class ChatController {
     const sessionKey = this.state.sessionKey;
     this.ensureTranscriptSessionIdentity();
     if (this.historyLoadsInFlight.has(sessionKey)) {
-      if (queueIfBusy) this.historyReloadRequested.add(sessionKey);
+      if (queueIfBusy) {
+        this.historyReloadRequested.add(sessionKey);
+        this.immediateHistoryReloadRequested.add(sessionKey);
+      }
       debugLog('[ChatCtrl] loadHistory SKIP busy', {
         sessionKey,
         queueIfBusy,
@@ -4075,13 +3956,12 @@ export class ChatController {
       });
       return false;
     }
+    const pagingGeneration = ++this.historyPagingGeneration;
     const loadSeq = ++this.historyLoadSeq;
     let transcriptHistoryGeneration = this.state.transcript.historyGeneration;
     let requestedSessionId = this.state.transcript.sessionId;
     this.historyLoadsInFlight.add(sessionKey);
     const previousMessages = this.state.chatMessages;
-    const previousHistoryHasMore = this.state.historyHasMore;
-    const previousHistoryNextCursor = this.state.historyNextCursor;
     const requestRunId = this.state.chatRunId;
     debugLog('[ChatCtrl] loadHistory START', {
       seq: loadSeq,
@@ -4096,37 +3976,24 @@ export class ChatController {
     this.notify();
 
     try {
-      // chat.startup includes metadata and agent list, but it is heavier than
-      // chat.history. Use it only for initial connection/session switches;
-      // ordinary post-run refreshes should stay read-only and lightweight.
-      let result: ChatHistorySnapshot | undefined;
-      const primaryMethod = options.preferStartup ? 'chat.startup' : 'chat.history';
-      const fallbackMethod = options.preferStartup ? 'chat.history' : 'chat.startup';
-      try {
-        result = await client.request(primaryMethod, { sessionKey, limit: HISTORY_LIMIT });
-        debugLog('[ChatCtrl] loadHistory RPC OK', {
-          seq: loadSeq,
-          method: primaryMethod,
-          sessionKey,
-          rpcCount: Array.isArray(result?.messages) ? result.messages.length : null,
-          rpcSessionId: result?.sessionId ?? null,
-          rpcSummary: summarizeHistoryForDebug(result?.messages ?? []),
-        });
-      } catch (err: unknown) {
-        if (isUnknownMethodError(err)) {
-          result = await client.request(fallbackMethod, { sessionKey, limit: HISTORY_LIMIT });
-          debugLog('[ChatCtrl] loadHistory RPC fallback OK', {
-            seq: loadSeq,
-            method: fallbackMethod,
-            sessionKey,
-            rpcCount: Array.isArray(result?.messages) ? result.messages.length : null,
-            rpcSessionId: result?.sessionId ?? null,
-            rpcSummary: summarizeHistoryForDebug(result?.messages ?? []),
-          });
-        } else {
-          throw err;
-        }
-      }
+      // The UI and Gateway ship at the same OpenClaw version. One native RPC
+      // owns both the recent page and its offset cursor; no REST/IPC fallback or
+      // second independently timed snapshot is needed.
+      const method = options.preferStartup ? 'chat.startup' : 'chat.history';
+      const result = await client.request<ChatHistorySnapshot>(method, {
+        sessionKey,
+        limit: CHAT_HISTORY_INITIAL_LIMIT,
+        maxChars: CHAT_HISTORY_MAX_CHARS,
+      });
+      const pagedHistory = parseChatHistoryPage(result);
+      debugLog('[ChatCtrl] loadHistory RPC OK', {
+        seq: loadSeq,
+        method,
+        sessionKey,
+        rpcCount: pagedHistory.messages.length,
+        rpcSessionId: result?.sessionId ?? null,
+        rpcSummary: summarizeHistoryForDebug(pagedHistory.messages),
+      });
 
       if (this.state.sessionKey !== sessionKey) {
         debugLog('[ChatCtrl] loadHistory ABORT session changed after RPC', {
@@ -4140,76 +4007,42 @@ export class ChatController {
       const loadedSessionId = normalizeSessionId(
         result?.sessionInfo?.sessionId ?? result?.sessionId,
       );
-      if (
+      const normalizedSessionKey = normalizeTranscriptSessionKey(sessionKey);
+      const responseHasActiveLeaf = Object.prototype.hasOwnProperty.call(
+        result?.sessionInfo ?? {},
+        'activeLeafEntryId',
+      );
+      const loadedActiveLeaf = responseHasActiveLeaf
+        ? normalizeSessionId(result?.sessionInfo?.activeLeafEntryId)
+        : undefined;
+      const previousActiveLeafKnown = this.displayedHistoryLeafBySession.has(normalizedSessionKey);
+      const previousActiveLeaf = this.displayedHistoryLeafBySession.get(normalizedSessionKey);
+      const rotatesSessionIdentity = Boolean(
         loadedSessionId &&
         this.state.transcript.sessionId &&
-        loadedSessionId !== this.state.transcript.sessionId
-      ) {
-        this.resetTranscriptForSession(sessionKey, loadedSessionId, false);
-        this.currentMessageHistory.reset();
-        this.state.chatMessages = [];
-        this.state.loadedMessageCount = 0;
-        this.state.visibleChatMessages = [];
-        this.state.historyWindowStart = 0;
-        this.state.historyWindowEnd = 0;
-        transcriptHistoryGeneration = this.state.transcript.historyGeneration;
-        requestedSessionId = loadedSessionId;
-      }
+        loadedSessionId !== this.state.transcript.sessionId,
+      );
+      const switchesHistoryBranch = Boolean(
+        responseHasActiveLeaf && previousActiveLeafKnown && previousActiveLeaf !== loadedActiveLeaf,
+      );
+      const replacesHistoryProjection = rotatesSessionIdentity || switchesHistoryBranch;
       const authoritativeSessionId = loadedSessionId ?? this.state.transcript.sessionId;
-      requestedSessionId = authoritativeSessionId;
-      this.state.currentSessionId = authoritativeSessionId;
-      this.state.transcript.sessionId = authoritativeSessionId;
-      this.applySessionContextUsage(result?.sessionInfo, sessionKey);
+      if (!replacesHistoryProjection) {
+        requestedSessionId = authoritativeSessionId;
+        this.state.currentSessionId = authoritativeSessionId;
+        this.state.transcript.sessionId = authoritativeSessionId;
+      }
       const requestStillCurrent = (): boolean =>
         this.state.sessionKey === sessionKey &&
+        this.historyPagingGeneration === pagingGeneration &&
         this.state.transcript.historyGeneration === transcriptHistoryGeneration &&
         this.state.transcript.sessionId === requestedSessionId;
 
-      let pagedHistory = await this.loadPagedHistoryFromRest(sessionKey).catch(error => {
-        debugLog('[ChatCtrl] paged history unavailable, using RPC history', {
-          seq: loadSeq,
-          sessionKey,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        return null;
-      });
-      if (!requestStillCurrent()) {
-        debugLog('[ChatCtrl] loadHistory ABORT identity changed during paged history', {
-          seq: loadSeq,
-          sessionKey,
-        });
-        return false;
-      }
-      let rawMessages = pagedHistory?.messages ?? result?.messages ?? [];
-      if (options.backfillActiveSessionsYield && pagedHistory && Array.isArray(result?.messages)) {
-        const pagedLatestSeq = readLatestOpenClawMessageSeq(pagedHistory.messages);
-        const rpcLatestSeq = readLatestOpenClawMessageSeq(result.messages);
-        if (rpcLatestSeq !== null && (pagedLatestSeq === null || rpcLatestSeq > pagedLatestSeq)) {
-          // The REST window and RPC snapshot are read independently. During a
-          // live catch-up, prefer whichever source has observed the newer
-          // transcript append so a stale paged response cannot consume the
-          // unresolved sequence gap.
-          rawMessages = result.messages;
-          pagedHistory = null;
-        }
-      }
-      if (
-        this.expectInitialHistory &&
-        pagedHistory &&
-        this.findSubagentTaskHistoryIndex(rawMessages) < 0 &&
-        Array.isArray(result?.messages) &&
-        this.findSubagentTaskHistoryIndex(result.messages) >= 0
-      ) {
-        // The recent paged window can omit the first subagent turn while the
-        // wider RPC snapshot still contains it. Prefer the source that proves
-        // the task boundary, then trim inherited fork context below.
-        rawMessages = result.messages;
-        pagedHistory = null;
-      }
+      const rawMessages = pagedHistory.messages;
       debugLog('[ChatCtrl] loadHistory AFTER-AWAIT', {
         seq: loadSeq,
         sessionKey,
-        source: pagedHistory ? 'paged' : 'rpc',
+        source: 'rpc',
         rawMsgCount: rawMessages.length,
         rawSummary: summarizeHistoryForDebug(rawMessages),
         ...this._snap(),
@@ -4225,7 +4058,8 @@ export class ChatController {
         hiddenCount: rawMessages.length - projectedMessages.length,
         projectedSummary: summarizeHistoryForDebug(projectedMessages),
       });
-      const hydratedFullMessages = await this.hydrateTruncatedHistoryMessages(
+      const hydratedFullMessages = await hydrateTruncatedHistoryMessages(
+        client,
         projectedMessages,
         sessionKey,
       );
@@ -4242,10 +4076,38 @@ export class ChatController {
         });
         return false;
       }
-      let messages = this.projectLocalCompactionStatus(sessionKey, hydratedMessages);
-      if (pagedHistory) {
-        messages = mergeRefreshedHistoryWindow(previousMessages, messages);
+      // Commit owns pagination from this point. Any older-page request that
+      // started while the tail snapshot was being hydrated must not mutate the
+      // new cursor or mix a prior branch into it.
+      this.historyPagingGeneration += 1;
+      const preserveLoadedPaginationDepth =
+        !replacesHistoryProjection && this.historyPaginationAdvanced;
+      // Hydrating oversized rows and compaction details can take multiple RPCs.
+      // Keep the previous physical session visible until the replacement
+      // snapshot is complete, then swap identity and messages in one render.
+      // Clearing here used to expose a transient empty transcript whenever a
+      // reset/rotation coincided with a large history response.
+      if (replacesHistoryProjection) {
+        this.resetTranscriptForSession(sessionKey, authoritativeSessionId, false);
+        this.resetHistoryPagination(sessionKey);
+        this.displayedHistoryLeafBySession.delete(normalizedSessionKey);
+        this.currentMessageHistory.reset();
+        this.state.chatMessages = [];
+        this.state.loadedMessageCount = 0;
+        this.state.visibleChatMessages = [];
+        this.state.historyWindowStart = 0;
+        this.state.historyWindowEnd = 0;
+        transcriptHistoryGeneration = this.state.transcript.historyGeneration;
+        requestedSessionId = authoritativeSessionId;
       }
+      this.state.currentSessionId = authoritativeSessionId;
+      this.state.transcript.sessionId = authoritativeSessionId;
+      this.applySessionContextUsage(result?.sessionInfo, sessionKey);
+      let messages = this.projectLocalCompactionStatus(sessionKey, hydratedMessages);
+      messages = mergeRefreshedHistoryWindow(
+        replacesHistoryProjection ? [] : previousMessages,
+        messages,
+      );
       debugLog('[ChatCtrl] loadHistory NORMALIZED', {
         seq: loadSeq,
         sessionKey,
@@ -4288,6 +4150,17 @@ export class ChatController {
         subagentTaskHistoryIndex >= 0;
       if (catchesUpMissingInitialHistory) {
         messages = sliceActiveSubagentHistoryPrefix(messages);
+      }
+
+      if (!replacesHistoryProjection && messages.length === 0 && previousMessages.length > 0) {
+        // A tail read can briefly observe the SQLite write/rewrite boundary.
+        // An empty response is not proof that a stable displayed projection
+        // disappeared; retain it and retry. Explicit reset/session/leaf scope
+        // changes take the replacement path above and are still allowed empty.
+        this.state.chatLoading = false;
+        this.scheduleDeferredHistoryReload(sessionKey, 'empty-history-snapshot');
+        this.notify();
+        return false;
       }
 
       // Active-run history is not allowed to replace the live timeline, but it
@@ -4386,15 +4259,15 @@ export class ChatController {
         activeTurnTakeover: reconciliation.activeTurnTakeover,
       });
       this.state.chatLoading = false;
-      this.state.historyHasMore =
-        this.expectInitialHistory && subagentTaskHistoryIndex >= 0
-          ? false
-          : pagedHistory
-            ? pagedHistory.hasMore
-            : previousHistoryHasMore;
-      this.state.historyNextCursor = this.state.historyHasMore
-        ? (pagedHistory?.nextCursor ?? previousHistoryNextCursor)
-        : null;
+      if (!preserveLoadedPaginationDepth) {
+        this.state.historyHasMore =
+          this.expectInitialHistory && subagentTaskHistoryIndex >= 0 ? false : pagedHistory.hasMore;
+        this.state.historyNextCursor = this.state.historyHasMore ? pagedHistory.nextCursor : null;
+      }
+      this.rememberHistoryPagination(sessionKey);
+      if (responseHasActiveLeaf) {
+        this.displayedHistoryLeafBySession.set(normalizedSessionKey, loadedActiveLeaf ?? null);
+      }
       if (this.state.pendingUserMessage && pendingUserMessageFoundIndex >= 0) {
         debugLog('[ChatCtrl] loadHistory OK — pendingUserMessage found in history, clearing', {
           seq: loadSeq,
@@ -4447,13 +4320,19 @@ export class ChatController {
       return false;
     } finally {
       this.historyLoadsInFlight.delete(sessionKey);
-      if (this.historyReloadRequested.delete(sessionKey) && this.state.sessionKey === sessionKey) {
+      const reloadRequested = this.historyReloadRequested.delete(sessionKey);
+      const immediateReloadRequested = this.immediateHistoryReloadRequested.delete(sessionKey);
+      if (reloadRequested && immediateReloadRequested && this.state.sessionKey === sessionKey) {
         debugLog('[ChatCtrl] loadHistory QUEUED reload starting', {
           seq: loadSeq,
           sessionKey,
           nextSeq: this.historyLoadSeq + 1,
         });
-        this.scheduleDeferredHistoryReload(sessionKey, 'queued-history');
+        // A→B→A can leave the original A request in flight while the second A
+        // initialization queues behind it. Start its replacement immediately
+        // after releasing ownership; a generic debounce would leave the pane
+        // visibly empty for another 1.2 seconds.
+        void Promise.resolve().then(() => this.loadHistory(true));
       } else {
         debugLog('[ChatCtrl] loadHistory FINISH', {
           seq: loadSeq,
@@ -4510,9 +4389,17 @@ export class ChatController {
     this.clearLifecycleEndFallback();
     this.finishCurrentTurnTiming('final', payload.runId);
     const baselineMessageSeq = readLatestOpenClawMessageSeq(this.state.chatMessages);
-    const baselineMessageCount = this.state.chatMessages.length;
-    const message = stripAssistantSilentReplySuffix(payload.message);
-    const willAppend = message && !shouldHideMessage(message);
+    const baselineCompleteMessageCount = this.state.chatMessages.filter(
+      candidate =>
+        !isLocallyOptimisticHistoryTail(candidate) && !isTruncatedHistoryMessage(candidate),
+    ).length;
+    const projectedMessage = stripAssistantSilentReplySuffix(payload.message);
+    const terminalNeedsHydration = isTruncatedHistoryMessage(projectedMessage);
+    const message = terminalNeedsHydration
+      ? completeTruncatedTerminalFromActiveTurn(projectedMessage, this.state.transcript.activeTurn)
+      : projectedMessage;
+    const willAppend =
+      message && !isTruncatedHistoryMessage(message) && !shouldHideMessage(message);
     const liveThinkingText = collectActiveThinkingText(this.state.transcript.activeTurn);
     debugLog('[ChatCtrl] ▶ chat.final', {
       hasMessage: !!message,
@@ -4556,19 +4443,25 @@ export class ChatController {
     this.suspendedRunId = null;
     this.terminalLifecycleSeen = false;
     this.resetAssistantSnapshotSource();
-    // OpenClaw broadcasts chat.final before its terminal persistence settles.
-    // An immediate single history request can therefore read the pre-final
-    // snapshot, especially when the final has no renderable message. Keep the
-    // visible optimistic tail (when present) and retry with bounded backoff.
-    // Session/run/generation ownership prevents an older retry from touching a
-    // newly selected session or a subsequent turn.
+    // A visible final is already complete and its subscribed session.message
+    // row will replace the optimistic tail. Only message-less finals need the
+    // bounded persistence catch-up used by the current OpenClaw UI.
+    const needsPersistenceRecovery =
+      !willAppend ||
+      terminalNeedsHydration ||
+      this.pendingHistoryReload ||
+      (this.messageSubscriptionSeq > 0 &&
+        this.subscribedMessageSessionKey !== this.state.sessionKey);
     this.pendingHistoryReload = false;
-    this.schedulePostFinalHistoryReload(this.state.sessionKey, {
-      runId: payload.runId?.trim() || null,
-      baselineMessageSeq,
-      baselineMessageCount,
-      expectsVisibleMessage: Boolean(willAppend),
-    });
+    if (!needsPersistenceRecovery) {
+      this.clearPostFinalHistoryReload();
+    } else {
+      this.schedulePostFinalHistoryReload(this.state.sessionKey, {
+        runId: payload.runId?.trim() || null,
+        baselineMessageSeq,
+        baselineCompleteMessageCount,
+      });
+    }
     debugLog('[ChatCtrl] ▶ chat.final (done)', this._snap());
     this.notify();
   }
@@ -5037,6 +4930,7 @@ export class ChatController {
     this.clearDeferredHistoryReload();
     this.resetActiveToolHistoryCatchUpForRun(sessionKey);
     this.historyReloadRequested.delete(sessionKey);
+    this.immediateHistoryReloadRequested.delete(sessionKey);
     this.pendingHistoryReload = false;
 
     // Optimistic: append user message immediately
@@ -5680,6 +5574,86 @@ function collectActiveContentText(turn: AssistantTurn | null): string | null {
   return text || null;
 }
 
+const OPENCLAW_DISPLAY_TRUNCATION_SUFFIX = '\n...(truncated)...';
+
+function recoverTruncatedText(value: unknown, candidates: readonly string[]): unknown {
+  if (typeof value !== 'string' || !value.endsWith(OPENCLAW_DISPLAY_TRUNCATION_SUFFIX)) {
+    return value;
+  }
+  const prefix = value.slice(0, -OPENCLAW_DISPLAY_TRUNCATION_SUFFIX.length);
+  return (
+    [...candidates]
+      .reverse()
+      .find(candidate => candidate.length > prefix.length && candidate.startsWith(prefix)) ?? value
+  );
+}
+
+function containsDisplayTruncationMarker(value: unknown, seen = new Set<object>()): boolean {
+  if (typeof value === 'string') return value.includes('...(truncated)...');
+  if (!value || typeof value !== 'object' || seen.has(value)) return false;
+  seen.add(value);
+  return Object.values(value).some(candidate => containsDisplayTruncationMarker(candidate, seen));
+}
+
+/**
+ * A terminal display frame may be capped even though the live agent stream
+ * already owns the complete current model segment. Recover only prefix-proven
+ * text; otherwise leave the structured marker in place so history hydration
+ * remains mandatory.
+ */
+function completeTruncatedTerminalFromActiveTurn(
+  message: unknown,
+  turn: AssistantTurn | null,
+): unknown {
+  if (!isTruncatedHistoryMessage(message) || !message || typeof message !== 'object') {
+    return message;
+  }
+  const contentCandidates = (turn?.items ?? [])
+    .filter(item => item.type === 'content')
+    .map(item => item.text);
+  const thinkingCandidates = (turn?.items ?? [])
+    .filter(item => item.type === 'thinking')
+    .map(item => item.text);
+  if (contentCandidates.length === 0 && thinkingCandidates.length === 0) return message;
+
+  const record = message as Record<string, unknown>;
+  const recoverBlock = (value: unknown): unknown => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+    const block = value as Record<string, unknown>;
+    return {
+      ...block,
+      ...(typeof block.text === 'string'
+        ? { text: recoverTruncatedText(block.text, contentCandidates) }
+        : {}),
+      ...(typeof block.content === 'string'
+        ? { content: recoverTruncatedText(block.content, contentCandidates) }
+        : {}),
+      ...(typeof block.thinking === 'string'
+        ? { thinking: recoverTruncatedText(block.thinking, thinkingCandidates) }
+        : {}),
+    };
+  };
+  const recovered: Record<string, unknown> = {
+    ...record,
+    ...(typeof record.text === 'string'
+      ? { text: recoverTruncatedText(record.text, contentCandidates) }
+      : {}),
+    ...(typeof record.content === 'string'
+      ? { content: recoverTruncatedText(record.content, contentCandidates) }
+      : Array.isArray(record.content)
+        ? { content: record.content.map(recoverBlock) }
+        : {}),
+  };
+  if (containsDisplayTruncationMarker(recovered)) return recovered;
+
+  const metadata = asRecord(recovered.__openclaw);
+  if (metadata) {
+    const { truncated: _truncated, reason: _reason, ...completeMetadata } = metadata;
+    recovered.__openclaw = completeMetadata;
+  }
+  return recovered;
+}
+
 function mergeInFlightAssistantText(snapshot: string | null, live: string | null): string | null {
   if (!snapshot || live?.startsWith(snapshot)) return live ?? snapshot;
   if (!live || snapshot.startsWith(live)) return snapshot;
@@ -5942,16 +5916,6 @@ function isNonTerminalToolPhase(phase: string): boolean {
   return ['start', 'delta', 'partial', 'progress', 'update', 'streaming'].includes(
     phase.toLowerCase(),
   );
-}
-
-function isUnknownMethodError(err: unknown): boolean {
-  if (err instanceof Error) {
-    return (
-      err.message.includes('unknown method') ||
-      (err as { gatewayCode?: string }).gatewayCode === 'METHOD_NOT_FOUND'
-    );
-  }
-  return false;
 }
 
 function blobToDataUrl(blob: Blob): Promise<string> {
