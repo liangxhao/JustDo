@@ -22,7 +22,6 @@ const EXPECTED_PATCH_FILES = [
   '001-managed-pip-config-environment.cjs',
   '002-windows-mcp-package-runner.cjs',
   '003-chrome-mcp-launch-diagnostics.cjs',
-  '004-chrome-mcp-empty-page-recovery.cjs',
   '005-final-system-prompt-replacements.cjs',
   '006-agent-request-metadata.cjs',
   '007-request-purpose-metadata.cjs',
@@ -174,7 +173,7 @@ afterEach(() => {
 });
 
 describe('OpenClaw pristine artifact contracts', () => {
-  test('keeps exactly fifteen independently auditable v2026.8.2 patches', () => {
+  test('keeps exactly fourteen independently auditable v2026.8.2 patches', () => {
     const patchDir = path.resolve('scripts', 'patches', 'v2026.8.2');
     const patchFiles = fs
       .readdirSync(patchDir)

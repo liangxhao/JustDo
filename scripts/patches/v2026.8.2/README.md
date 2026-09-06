@@ -4,12 +4,12 @@ This directory is the authoritative inventory for the JustDo runtime built from 
 pristine `openclaw@2026.8.2` npm artifact. The runtime is never upgraded in place. Historical
 or partially applied JustDo markers are rejected; rebuild from `source-lock.json` instead.
 
-The previous 49-patch integration has been reduced to fifteen product-specific gaps. Thinking,
+The previous 49-patch integration has been reduced to fourteen product-specific gaps. Thinking,
 history projection, native tool search, most Goal behavior, subagent admission/queueing/join,
 approvals, compaction/context-budget behavior and task queries are upstream capabilities and must
 not be reimplemented here.
 
-The v2026.8.2 audit revalidated all fifteen retained gaps against the pristine artifact. Patch 007
+The v2026.8.2 audit revalidated all fourteen retained gaps against the pristine artifact. Patch 007
 now tracks the prepared simple-completion transport added upstream, while patch 010 recognizes
 the two exact approval-timeout build shapes emitted by the shared chunk and worker bundle. Patch
 013 narrowly restores native Goal resume after an intentional pause abort without weakening the
@@ -24,7 +24,6 @@ without widening attachment admission.
 | `001-managed-pip-config-environment.cjs`       | Restores only value-bound JustDo managed `PIP_CONFIG_FILE` and `PYTHONUSERBASE` after the host sanitizer.                    | A trusted, provenance-bound managed Python environment API.                     |
 | `002-windows-mcp-package-runner.cjs`           | Runs generic npm/npx MCP packages through the bundled Node/npm path on Windows without Electron GUI startup.                 | An Electron-safe Windows package runner with equivalent hidden-window behavior. |
 | `003-chrome-mcp-launch-diagnostics.cjs`        | Uses the Windows-safe Chrome MCP runner and starts stderr capture before connect.                                            | Equivalent upstream Windows launch and early diagnostics.                       |
-| `004-chrome-mcp-empty-page-recovery.cjs`       | Creates one `about:blank` page and retries once when Chrome MCP returns no pages.                                            | Native empty-session recovery.                                                  |
 | `005-final-system-prompt-replacements.cjs`     | Applies app-managed replacements after all prompt hooks/model additions and before provider dispatch.                        | A final, cache-safe system-prompt-only hook.                                    |
 | `006-agent-request-metadata.cjs`               | Sends authenticated session, parent and user-initiated metadata to the built-in model service only.                          | Equivalent provider request metadata.                                           |
 | `007-request-purpose-metadata.cjs`             | Marks compaction/reviewer requests for the built-in service without broadening third-party metadata.                         | Equivalent purpose metadata across native summary paths.                        |

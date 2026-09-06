@@ -144,12 +144,11 @@ function buildMediaProjectionFixture(): string {
 }
 
 describe('OpenClaw v2026.8.2 capability patches', () => {
-  test('contains exactly the fifteen retained capability patches', () => {
+  test('contains exactly the fourteen retained capability patches', () => {
     expect(patchFiles).toEqual([
       '001-managed-pip-config-environment.cjs',
       '002-windows-mcp-package-runner.cjs',
       '003-chrome-mcp-launch-diagnostics.cjs',
-      '004-chrome-mcp-empty-page-recovery.cjs',
       '005-final-system-prompt-replacements.cjs',
       '006-agent-request-metadata.cjs',
       '007-request-purpose-metadata.cjs',

@@ -15,7 +15,7 @@
 | cron                    | job/run scheduler                                                | isolated agent、receipt、显式 `delivery: { mode: 'none' }`                           | 原生；删除旧默认 delivery patch                                   |
 | progress                | run/task/compaction 事实                                         | bounded runtime bridge 投影与 UI                                                     | 迁入 `justdo-runtime-bridge`                                      |
 | embeddings              | provider 调用与 memory index                                     | loopback provider、代理与凭证边界                                                    | 迁入 `justdo-runtime-bridge`                                      |
-| Windows/Chrome MCP      | MCP/Browser runtime                                              | bundled runner、Chrome 管理与设置                                                    | 保留 002–004 三个窄补丁                                           |
+| Windows/Chrome MCP      | MCP/Browser runtime                                              | bundled runner、Chrome 管理与设置                                                    | 保留 002–003 两个窄补丁                                           |
 | host metadata           | provider request 构造                                            | session/parent/user/purpose metadata                                                 | 保留 006–007                                                      |
 | app-start recovery      | durable task recovery                                            | JustDo app-start epoch                                                               | 保留 008                                                          |
 | manual reindex          | memory index/cache                                               | 一次性用户意图                                                                       | 保留 009                                                          |
@@ -25,23 +25,24 @@
 
 窗口、tray、update、主题、i18n、session 分组/cwd、SQLite 产品数据、Marketplace、文件 preview 和代理 UI 都属于 JustDo，不应要求 Gateway patch。
 
-## 2. 十三个保留补丁
+## 2. 十四个保留补丁
 
-| 编号 | 能力                                         | 移除条件                                    |
-| ---- | -------------------------------------------- | ------------------------------------------- |
-| 001  | value-bound managed Python 环境注入          | 上游提供可信 host Python 环境 API           |
-| 002  | Windows 通用 npm/npx MCP runner              | 上游 runner 在 Electron/Windows 下等价可靠  |
-| 003  | Chrome MCP Windows runner 与早期 stderr      | 上游提供等价启动与诊断                      |
-| 004  | Chrome MCP 空页面恢复                        | 上游原生恢复 empty page set                 |
-| 005  | 最终 system-prompt-only replacements         | 上游提供 final、cache-safe prompt hook      |
-| 006  | agent session/parent/user-initiated metadata | 上游提供等价 provider metadata              |
-| 007  | compaction/reviewer purpose metadata         | 上游为两类请求提供等价 metadata             |
-| 008  | JustDo app-start task recovery boundary      | 上游 durable task 支持 host-instance epoch  |
-| 009  | 手动 memory reindex 一次性 no-cache          | 上游提供 one-shot force re-embed            |
-| 010  | 原生 exec approval 可配置等待时限            | 上游提供 exec approval timeout 设置         |
-| 011  | trusted-policy plugin approval detail 转发   | 上游 before-tool approval 原生转发 `detail` |
-| 012  | 原生 plugin approval 可配置等待时限          | 上游提供 host plugin approval timeout 设置  |
-| 013  | 暂停中止后的原生 Goal resume 准入            | 上游原生接受空闲 paused session 的该状态    |
+| 编号 | 能力                                              | 移除条件                                               |
+| ---- | ------------------------------------------------- | ------------------------------------------------------ |
+| 001  | value-bound managed Python 环境注入               | 上游提供可信 host Python 环境 API                      |
+| 002  | Windows 通用 npm/npx MCP runner                   | 上游 runner 在 Electron/Windows 下等价可靠             |
+| 003  | Chrome MCP Windows runner 与早期 stderr           | 上游提供等价启动与诊断                                 |
+| 005  | 最终 system-prompt-only replacements              | 上游提供 final、cache-safe prompt hook                 |
+| 006  | agent session/parent/user-initiated metadata      | 上游提供等价 provider metadata                         |
+| 007  | compaction/reviewer purpose metadata              | 上游为两类请求提供等价 metadata                        |
+| 008  | JustDo app-start task recovery boundary           | 上游 durable task 支持 host-instance epoch             |
+| 009  | 手动 memory reindex 一次性 no-cache               | 上游提供 one-shot force re-embed                       |
+| 010  | 原生 exec approval 可配置等待时限                 | 上游提供 exec approval timeout 设置                    |
+| 011  | trusted-policy plugin approval detail 转发        | 上游 before-tool approval 原生转发 `detail`            |
+| 012  | 原生 plugin approval 可配置等待时限               | 上游提供 host plugin approval timeout 设置             |
+| 013  | 暂停中止后的原生 Goal resume 准入                 | 上游原生接受空闲 paused session 的该状态               |
+| 014  | provider replay 排除 display-only assistant block | 上游 provider replay 过滤非 provider assistant content |
+| 015  | trusted local generic MEDIA 与原始引用保留        | 上游支持 trusted generic MEDIA 并暴露原始引用          |
 
 当前目录只对 pristine `openclaw@2026.8.2` 有效。旧 marker、历史补丁或部分应用状态必须明确失败；处理方式是从 source lock 重建，而不是原地迁移。
 
@@ -107,6 +108,6 @@ JustDo 内置 loopback 模型服务必须遵守响应契约：存在完整、结
 
 运行时 manifest 绑定 npm integrity、tarball SHA-256、Node major、构建 recipe 和最终 bundle。开发 runtime 是冻结快照，只有显式 force install 才从锁定 pristine 包重建。
 
-最低验收场景包括：thinking 实时与历史一致；多个 subagent 在 `maxConcurrent=1` 排队且父 agent 等待；审批到期/恢复；compaction overflow；cron 无外发；embedding proxy；manual reindex；Windows MCP/Chrome empty page；迁移取消和各失败点；同进程 Gateway restart 与完整 app restart 的不同 task 边界。
+最低验收场景包括：thinking 实时与历史一致；多个 subagent 在 `maxConcurrent=1` 排队且父 agent 等待；审批到期/恢复；compaction overflow；cron 无外发；embedding proxy；manual reindex；Windows MCP/Chrome launch；迁移取消和各失败点；同进程 Gateway restart 与完整 app restart 的不同 task 边界。
 
 新增或移除 Gateway 调用、patch 或 bridge method 时，同步本矩阵、`05-agent-engine.md`、patch README、patch guide 和对应行为测试。
