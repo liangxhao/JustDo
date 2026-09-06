@@ -119,6 +119,7 @@ import { justDoSlashCommandPolicy } from './openclaw/slashCommands/slashCommandP
 import {
   createPluginMarketplaceService,
   discoverExtensionMcpServers,
+  discoverOpenClawManagedMcpServers,
   McpServices,
   OpenClawExtensionImportService,
   OpenClawHookServices,
@@ -536,7 +537,11 @@ const getOpenClawConfigSyncService = (): OpenClawConfigSyncService => {
 };
 
 const syncOpenClawConfig = (
-  options: { reason: string; restartGatewayIfRunning?: boolean } = { reason: 'unknown' },
+  options: {
+    reason: string;
+    restartGatewayIfRunning?: boolean;
+    discoverExternalMcpServers?: boolean;
+  } = { reason: 'unknown' },
 ) => getOpenClawConfigSyncService().syncConfig(options);
 
 const notifyBuiltinModelsChanged = (): void => {
@@ -874,6 +879,8 @@ if (!gotTheLock) {
     extensionImportService: new OpenClawExtensionImportService({
       getOpenClawEngineManager,
       getManagedPluginIds: listManagedOpenClawPluginIds,
+      requestGateway: <T>(method: string, params?: unknown) =>
+        getCoworkEngineService().requestGateway<T>(method, params),
       runConfigMutationExclusive: operation =>
         getOpenClawConfigSyncService().runConfigMutationExclusive(operation),
       restartGatewayAfterMutation: reason =>
@@ -883,8 +890,9 @@ if (!gotTheLock) {
     installationService: pluginInstallationService,
   });
   registerHookHandlers({
-    getManager: getOpenClawEngineManager,
     getStore: getHookStore,
+    requestGateway: <T>(method: string, params?: unknown) =>
+      getCoworkEngineService().requestGateway<T>(method, params),
     syncConfig: syncHookConfig,
     installationService: pluginInstallationService,
   });
@@ -902,6 +910,15 @@ if (!gotTheLock) {
     probeServer: probeMcpServer,
     readResource: readMcpResource,
     listExtensionServers: () => discoverExtensionMcpServers(getOpenClawEngineManager()),
+    discoverExternalServers: () => {
+      const discovered = discoverOpenClawManagedMcpServers(
+        getOpenClawEngineManager().getConfigPath(),
+        getMcpStore(),
+      );
+      if (discovered > 0) {
+        console.log(`[OpenClawMcp] discovered ${discovered} externally installed server(s)`);
+      }
+    },
     installationService: pluginInstallationService,
   });
 

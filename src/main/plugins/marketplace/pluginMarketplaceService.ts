@@ -11,7 +11,7 @@ import {
   MarketplaceErrorCode,
   MarketplaceInstallOperation,
   MarketplaceInstallState,
-  PluginKind,
+  MarketplacePluginKind,
 } from '../../../shared/plugins/marketplace';
 import type { PluginInstallResult } from '../installation';
 import { PluginInstallationService, PluginInstallOrigin } from '../installation';
@@ -20,7 +20,7 @@ import { MarketplaceError, type PluginMarketplaceProvider } from './types';
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
 const installStates = new Set<string>(Object.values(MarketplaceInstallState));
-const pluginKinds = new Set<string>(Object.values(PluginKind));
+const pluginKinds = new Set<string>(Object.values(MarketplacePluginKind));
 
 export class PluginMarketplaceService {
   private readonly providers: Map<string, PluginMarketplaceProvider>;
@@ -267,6 +267,7 @@ export class PluginMarketplaceService {
       [item?.homepage, 2_048],
       [item?.iconUrl, 2_048],
       [item?.installedVersion, 128],
+      [item?.runtimeId, 256],
     ];
     const valid =
       item?.kind === expectedKind &&
@@ -291,6 +292,7 @@ export class PluginMarketplaceService {
     }
     return {
       id: item.id.trim(),
+      runtimeId: item.runtimeId?.trim() || undefined,
       kind: item.kind,
       name: item.name.trim(),
       description: item.description.trim(),

@@ -124,7 +124,7 @@ OpenClaw v2026.9.2 对接不再由 JustDo 直接读写 agent `sessions.json`。G
 
 ## 10. `mcp_servers` 与 `openclaw_hooks`
 
-MCP：id PK、唯一 name、description、enabled、transport_type（默认 stdio）、config_json、created/updated。`config_json.requestTimeoutSeconds` 是可选的单 Server 请求超时覆盖；缺失时继承全局默认。Hook：id PK、enabled（默认 false）、config_json、created/updated。
+MCP：id PK、唯一 name、description、enabled、transport_type（默认 stdio）、config_json、created/updated。`config_json.requestTimeoutSeconds` 是可选的单 Server 请求超时覆盖；缺失时继承全局默认。`config_json.openClawConfig` 保存从 OpenClaw 原生配置发现的完整 server 字段，使对话内安装的 MCP 回流数据库并跨重启保留，同时不丢失 JustDo 表单未建模的高级字段。Hook：id PK、enabled（默认 false）、config_json、created/updated。
 
 两表保存产品配置，不等于 runtime 已应用。CRUD 后必须调用 config sync；sync 失败需向 UI 报告并允许恢复。config JSON可能含 environment/credential，禁止原样记录日志。
 

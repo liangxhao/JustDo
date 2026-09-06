@@ -277,6 +277,11 @@ describe('OpenClaw v2026.9.2 config sanitization', () => {
         pricing: { enabled: false },
         mode: 'replace',
       },
+      mcp: {
+        servers: {
+          docs: { url: 'https://example.com/mcp', timeout: 60 },
+        },
+      },
       tools: {
         experimental: { planTool: true },
       },
@@ -306,6 +311,11 @@ describe('OpenClaw v2026.9.2 config sanitization', () => {
       meta: { lastTouchedVersion: '2026.9.2' },
       diagnostics: { otel: { enabled: false } },
       models: { mode: 'replace' },
+      mcp: {
+        servers: {
+          docs: { url: 'https://example.com/mcp', requestTimeoutMs: 60_000 },
+        },
+      },
       tools: { updatePlan: true },
       memory: { search: { enabled: false } },
       agents: {
@@ -320,6 +330,7 @@ describe('OpenClaw v2026.9.2 config sanitization', () => {
     expect(config.meta).not.toHaveProperty('lastTouchedAt');
     expect(config.diagnostics).not.toHaveProperty('stuckSessionWarnMs');
     expect(config.models).not.toHaveProperty('pricing');
+    expect(config.mcp.servers.docs).not.toHaveProperty('timeout');
     expect(config.tools).not.toHaveProperty('experimental');
     expect(config.agents).not.toHaveProperty('list');
     expect(sanitizeOpenClawV2026_9_2Config(config)).toEqual(config);
@@ -591,7 +602,6 @@ describe('OpenClaw plugin config merging', () => {
     ).toEqual({
       enabled: true,
       allow: ['existing', 'automation-permission'],
-      bundledDiscovery: 'compat',
       entries: {
         existing: { enabled: false },
         'automation-permission': { enabled: true },
@@ -704,7 +714,7 @@ describe('OpenClaw skill config merging', () => {
     });
   });
 
-  test('pins app-installed extensions while preserving bundled plugin discovery', () => {
+  test('pins app-installed extensions in the plugin allowlist', () => {
     expect(
       mergeOpenClawPluginConfig(
         {
@@ -721,7 +731,6 @@ describe('OpenClaw skill config merging', () => {
         'justdo-skill-only-example',
         'automation-permission',
       ],
-      bundledDiscovery: 'compat',
       entries: {
         existing: { enabled: false },
         'automation-permission': { enabled: true },
@@ -745,7 +754,6 @@ describe('OpenClaw skill config merging', () => {
     ).toEqual({
       enabled: true,
       allow: ['workboard', 'automation-permission'],
-      bundledDiscovery: 'compat',
       entries: {
         'automation-permission': {
           enabled: true,
@@ -767,7 +775,6 @@ describe('OpenClaw skill config merging', () => {
       ),
     ).toMatchObject({
       allow: ['installed-extension', 'automation-permission', 'workboard'],
-      bundledDiscovery: 'compat',
     });
   });
 });

@@ -293,6 +293,75 @@ test('reports success after moving a skill out of the scan root even if cleanup 
   expect(fs.existsSync(path.join(managed, 'locked-skill'))).toBe(false);
 });
 
+test('cleans pending deletion transactions without touching live skills or unknown trash entries', () => {
+  const stateDir = makeTempDir();
+  const managed = path.join(stateDir, 'skills');
+  const liveSkill = path.join(managed, 'live-skill');
+  const trashRoot = path.join(stateDir, '.justdo-skill-trash');
+  const pendingTransaction = path.join(trashRoot, 'delete-pending');
+  const unknownEntry = path.join(trashRoot, 'keep-me');
+  fs.mkdirSync(liveSkill, { recursive: true });
+  fs.writeFileSync(path.join(liveSkill, 'SKILL.md'), '---\nname: live-skill\n---\n');
+  fs.mkdirSync(pendingTransaction, { recursive: true });
+  fs.writeFileSync(path.join(pendingTransaction, 'old.txt'), 'old');
+  fs.mkdirSync(unknownEntry, { recursive: true });
+  fs.writeFileSync(path.join(unknownEntry, 'keep.txt'), 'keep');
+
+  new OpenClawSkillFiles(managed);
+
+  expect(fs.existsSync(pendingTransaction)).toBe(false);
+  expect(fs.existsSync(liveSkill)).toBe(true);
+  expect(fs.existsSync(unknownEntry)).toBe(true);
+});
+
+test('retries cleanup of a pending deletion transaction on the next skill operation', () => {
+  const stateDir = makeTempDir();
+  const managed = path.join(stateDir, 'skills');
+  const source = makeTempDir();
+  const files = new OpenClawSkillFiles(managed);
+  const pendingTransaction = path.join(stateDir, '.justdo-skill-trash', 'delete-retry');
+  fs.mkdirSync(pendingTransaction, { recursive: true });
+  fs.writeFileSync(path.join(pendingTransaction, 'old.txt'), 'old');
+  fs.writeFileSync(path.join(source, 'SKILL.md'), '---\nname: next-skill\n---\n');
+
+  expect(files.importDirectory(source)).toEqual({ success: true, skillId: 'next-skill' });
+
+  expect(fs.existsSync(pendingTransaction)).toBe(false);
+  expect(fs.existsSync(path.join(managed, 'next-skill', 'SKILL.md'))).toBe(true);
+});
+
+test('reuses Windows retry and ACL repair while sweeping pending deletion transactions', () => {
+  const stateDir = makeTempDir();
+  const managed = path.join(stateDir, 'skills');
+  const pendingTransaction = path.join(stateDir, '.justdo-skill-trash', 'delete-windows');
+  fs.mkdirSync(pendingTransaction, { recursive: true });
+  fs.writeFileSync(path.join(pendingTransaction, 'old.txt'), 'old');
+  const rmSync = fs.rmSync.bind(fs);
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+  vi.spyOn(fs, 'rmSync')
+    .mockImplementationOnce(() => {
+      throw Object.assign(new Error('permission denied'), { code: 'EPERM' });
+    })
+    .mockImplementation(rmSync);
+  vi.spyOn(childProcess, 'spawnSync').mockReturnValue({
+    pid: 1,
+    output: [],
+    stdout: null,
+    stderr: null,
+    status: 0,
+    signal: null,
+  });
+
+  new OpenClawSkillFiles(managed);
+
+  expect(childProcess.spawnSync).toHaveBeenCalledWith(
+    expect.stringMatching(/[\\/]icacls\.exe$|^icacls\.exe$/),
+    [pendingTransaction, '/reset', '/T', '/C', '/Q', '/L'],
+    expect.objectContaining({ windowsHide: true, stdio: 'ignore' }),
+  );
+  expect(fs.existsSync(pendingTransaction)).toBe(false);
+});
+
 test('does not leave a partial managed skill when copying fails', () => {
   const source = makeTempDir();
   const managed = makeTempDir();

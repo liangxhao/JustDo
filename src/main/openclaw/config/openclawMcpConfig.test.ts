@@ -24,7 +24,7 @@ describe('buildOpenClawMcpServers', () => {
     ).toEqual({
       server: {
         enabled: true,
-        timeout: 60,
+        requestTimeoutMs: 60_000,
         command: 'npx',
         args: ['-y', 'example-mcp'],
         env: { TOKEN: 'secret' },
@@ -52,13 +52,50 @@ describe('buildOpenClawMcpServers', () => {
         300,
       ),
     ).toEqual({
-      events: { enabled: true, timeout: 900, url: 'https://example.com/sse', transport: 'sse' },
+      events: {
+        enabled: true,
+        requestTimeoutMs: 900_000,
+        url: 'https://example.com/sse',
+        transport: 'sse',
+      },
       http: {
         enabled: true,
-        timeout: 300,
+        requestTimeoutMs: 300_000,
         url: 'https://example.com/mcp',
         transport: 'streamable-http',
         headers: { Authorization: 'Bearer token' },
+      },
+    });
+  });
+
+  it('preserves OpenClaw fields that the JustDo form does not model', () => {
+    expect(
+      buildOpenClawMcpServers([
+        record({
+          name: 'privateDocs',
+          transportType: 'http',
+          url: 'https://example.com/mcp',
+          openClawConfig: {
+            url: 'https://example.com/mcp',
+            transport: 'streamable-http',
+            requestTimeoutMs: 1_500,
+            headers: { RetryCount: 3, Enabled: true },
+            auth: 'oauth',
+            oauth: { identity: 'per-requester' },
+            toolFilter: { include: ['search_*'] },
+          },
+        }),
+      ]),
+    ).toEqual({
+      privateDocs: {
+        enabled: true,
+        url: 'https://example.com/mcp',
+        transport: 'streamable-http',
+        requestTimeoutMs: 1_500,
+        headers: { RetryCount: 3, Enabled: true },
+        auth: 'oauth',
+        oauth: { identity: 'per-requester' },
+        toolFilter: { include: ['search_*'] },
       },
     });
   });

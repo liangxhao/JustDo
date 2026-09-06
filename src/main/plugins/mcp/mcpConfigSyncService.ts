@@ -10,7 +10,10 @@ type OpenClawConfigSyncResult = {
 
 type McpConfigSyncServiceDeps = {
   getMcpStore: () => McpStore;
-  syncOpenClawConfig: (options: { reason: string }) => Promise<OpenClawConfigSyncResult>;
+  syncOpenClawConfig: (options: {
+    reason: string;
+    discoverExternalMcpServers?: boolean;
+  }) => Promise<OpenClawConfigSyncResult>;
 };
 
 type McpConfigSyncResult = {
@@ -37,6 +40,7 @@ export class McpConfigSyncService {
         this.broadcast('mcp:config:syncStart');
         const syncResult = await this.deps.syncOpenClawConfig({
           reason: 'mcp-server-changed',
+          discoverExternalMcpServers: false,
         });
         if (!syncResult.success) {
           console.error('[OpenClawMcp] config sync failed:', syncResult.error);

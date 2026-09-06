@@ -250,7 +250,7 @@ describe('OpenClaw auth logout config sync', () => {
     expect(result.ok).toBe(true);
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     expect(config.mcp.servers.docs).toMatchObject({
-      timeout: 300,
+      requestTimeoutMs: 300_000,
       url: 'https://example.com/mcp',
     });
   });
@@ -630,7 +630,7 @@ describe('OpenClaw auth logout config sync', () => {
       'justdo-runtime-bridge',
     ]);
     expect(config.plugins.entries.browser).toEqual({ enabled: true });
-    expect(config.plugins.bundledDiscovery).toBe('compat');
+    expect(config.plugins.bundledDiscovery).toBeUndefined();
   });
 
   test('removes the built-in provider placeholder before its environment variable is revoked', () => {

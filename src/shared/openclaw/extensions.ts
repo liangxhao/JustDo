@@ -403,8 +403,16 @@ export type InstalledOpenClawExtension = {
   name: string;
   description: string;
   version?: string;
-  installPath: string;
+  installPath?: string;
   enabled: boolean;
+  state?: 'enabled' | 'disabled' | 'error';
+  origin?: string;
+  category?: string;
+  kinds?: string[];
+  error?: string;
+  removable?: boolean;
+  canToggle?: boolean;
+  managed?: boolean;
   missingRequirements: string[];
   configurationFields: OpenClawExtensionConfigurationField[];
 };
@@ -422,11 +430,73 @@ export type ExtensionUpdateConfigurationResult = {
 export type ExtensionSetEnabledRequest = {
   extensionId: string;
   enabled: boolean;
+  reviewToken?: string;
+};
+
+export type OpenClawPluginDeclaredSurface = {
+  channels: string[];
+  providers: string[];
+  tools: string[];
+  contracts: string[];
+  hooks: string[];
+  mcpServers: string[];
+  cliCommands: string[];
+  cliBackends: string[];
+  skills: string[];
+  dangerousConfigFlags: string[];
+};
+
+export type OpenClawPluginCapabilityReview = {
+  reviewToken: string;
+  declared: OpenClawPluginDeclaredSurface;
+  widened?: Partial<OpenClawPluginDeclaredSurface>;
+  source?: {
+    kind:
+      | 'bundled'
+      | 'clawhub'
+      | 'npm'
+      | 'git'
+      | 'path'
+      | 'archive'
+      | 'marketplace'
+      | 'official-catalog';
+    spec?: string;
+    packageName?: string;
+    integrity?: string;
+    integrityKind?: 'ssri' | 'sha256' | 'git-commit';
+  };
+  grants: {
+    hooks: {
+      allowPromptInjection: { effective: boolean; configured?: boolean };
+      allowConversationAccess: { effective: boolean; configured?: boolean };
+    };
+    llm?: {
+      allowModelOverride?: boolean;
+      allowedModels?: string[];
+      allowedCompletionModels?: string[];
+      allowAuthProfileOverride?: boolean;
+      allowAgentIdOverride?: boolean;
+    };
+    subagent?: {
+      allowModelOverride?: boolean;
+      allowedModels?: string[];
+    };
+  };
+  trust?: {
+    disposition: 'clean' | 'review-recommended' | 'review-required' | 'blocked';
+    reasons?: string[];
+    checkedAt?: string;
+    acknowledgedAt?: string;
+    pending?: boolean;
+    stale?: boolean;
+  };
 };
 
 export type ExtensionSetEnabledResult = {
   success: boolean;
   error?: string;
+  warnings?: string[];
+  capabilityReview?: OpenClawPluginCapabilityReview;
 };
 
 export type ExtensionDeleteRequest = {
@@ -436,6 +506,7 @@ export type ExtensionDeleteRequest = {
 export type ExtensionDeleteResult = {
   success: boolean;
   error?: string;
+  warnings?: string[];
 };
 
 export type ExtensionImportStage =
@@ -451,6 +522,7 @@ export type ExtensionImportStage =
 export type ExtensionImportRequest = {
   requestId: string;
   sourcePath: string;
+  reviewToken?: string;
 };
 
 export type ExtensionImportProgress = ExtensionImportRequest & {
@@ -463,4 +535,5 @@ export type ExtensionImportResult = {
   extensionId?: string;
   error?: string;
   failedStage?: ExtensionImportStage;
+  capabilityReview?: OpenClawPluginCapabilityReview;
 };

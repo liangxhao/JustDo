@@ -18,6 +18,8 @@ export interface McpServerRecord {
   isBuiltIn: boolean;
   githubUrl?: string;
   registryId?: string;
+  /** Native OpenClaw fields that the JustDo form does not currently model. */
+  openClawConfig?: Record<string, unknown>;
   createdAt: number;
   updatedAt: number;
 }
@@ -35,6 +37,7 @@ export interface McpServerFormData {
   isBuiltIn?: boolean;
   githubUrl?: string;
   registryId?: string;
+  openClawConfig?: Record<string, unknown>;
 }
 
 interface McpServerRow {
@@ -58,7 +61,11 @@ interface McpConfigJson {
   isBuiltIn?: boolean;
   githubUrl?: string;
   registryId?: string;
+  openClawConfig?: Record<string, unknown>;
 }
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 export class McpStore {
   private db: Database.Database;
@@ -92,6 +99,7 @@ export class McpStore {
       isBuiltIn: config.isBuiltIn === true,
       githubUrl: config.githubUrl,
       registryId: config.registryId,
+      openClawConfig: isRecord(config.openClawConfig) ? config.openClawConfig : undefined,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
@@ -114,6 +122,9 @@ export class McpStore {
     if (data.isBuiltIn) config.isBuiltIn = true;
     if (data.githubUrl) config.githubUrl = data.githubUrl;
     if (data.registryId) config.registryId = data.registryId;
+    if (isRecord(data.openClawConfig) && Object.keys(data.openClawConfig).length > 0) {
+      config.openClawConfig = data.openClawConfig;
+    }
     return JSON.stringify(config);
   }
 
@@ -151,11 +162,49 @@ export class McpStore {
     return this.getServer(id)!;
   }
 
+  createDiscoveredServer(
+    data: McpServerFormData & { enabled: boolean },
+  ): McpServerRecord | null {
+    const existing = this.db
+      .prepare('SELECT id FROM mcp_servers WHERE name = ? LIMIT 1')
+      .get(data.name) as { id: string } | undefined;
+    if (existing) return null;
+
+    const id = crypto.randomUUID();
+    const now = Date.now();
+    const configJson = this.serializeConfig(data);
+    this.db
+      .prepare(
+        `INSERT INTO mcp_servers (id, name, description, enabled, transport_type, config_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        id,
+        data.name,
+        data.description?.trim() ?? '',
+        data.enabled ? 1 : 0,
+        data.transportType,
+        configJson,
+        now,
+        now,
+      );
+    return this.getServer(id)!;
+  }
+
   updateServer(id: string, data: Partial<McpServerFormData>): McpServerRecord | null {
     const existing = this.getServer(id);
     if (!existing) return null;
 
     const now = Date.now();
+    const openClawConfig = data.openClawConfig ??
+      (existing.openClawConfig ? { ...existing.openClawConfig } : undefined);
+    if (openClawConfig && data.openClawConfig === undefined) {
+      for (const key of ['command', 'args', 'env', 'url', 'headers'] as const) {
+        if (data[key] !== undefined) delete openClawConfig[key];
+      }
+      if (data.requestTimeoutSeconds !== undefined) delete openClawConfig.requestTimeoutMs;
+      if (data.transportType !== undefined) delete openClawConfig.transport;
+    }
     const merged: McpServerFormData = {
       name: data.name ?? existing.name,
       description: data.description !== undefined ? data.description.trim() : existing.description,
@@ -172,6 +221,7 @@ export class McpStore {
       isBuiltIn: data.isBuiltIn !== undefined ? data.isBuiltIn : existing.isBuiltIn,
       githubUrl: data.githubUrl !== undefined ? data.githubUrl : existing.githubUrl,
       registryId: data.registryId !== undefined ? data.registryId : existing.registryId,
+      openClawConfig,
     };
 
     const configJson = this.serializeConfig(merged);

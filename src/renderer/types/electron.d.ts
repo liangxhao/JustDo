@@ -407,6 +407,7 @@ interface IElectronAPI {
       extensionId?: string;
       error?: string;
       failedStage?: ExtensionImportStage;
+      capabilityReview?: import('../../shared/openclaw/extensions').OpenClawPluginCapabilityReview;
     }>;
     onImportProgress: (callback: (progress: ExtensionImportProgress) => void) => () => void;
   };

@@ -12,6 +12,7 @@ export type PluginInstallPayload =
   | {
       kind: typeof PluginKind.EXTENSION | typeof PluginKind.SKILL | typeof PluginKind.HOOK;
       sourcePath: string;
+      reviewToken?: string;
     }
   | {
       kind: typeof PluginKind.MCP;
@@ -33,6 +34,7 @@ export interface PluginInstallResult {
   restartRequired?: boolean;
   failedStage?: string;
   error?: string;
+  capabilityReview?: import('../../../shared/openclaw/extensions').OpenClawPluginCapabilityReview;
 }
 
 export interface PluginInstaller {

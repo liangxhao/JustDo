@@ -54,4 +54,34 @@ describe('McpStore request timeout overrides', () => {
       }),
     ).toThrow('MCP request timeout must be an integer between 1 and 86400 seconds.');
   });
+
+  test('persists a server discovered from OpenClaw exactly once', () => {
+    const first = store.createDiscoveredServer({
+      name: 'self-installed',
+      description: '',
+      enabled: false,
+      transportType: 'http',
+      url: 'https://example.com/mcp',
+      openClawConfig: {
+        url: 'https://example.com/mcp',
+        auth: 'oauth',
+        oauth: { identity: 'per-requester' },
+      },
+    });
+
+    expect(first).toMatchObject({
+      name: 'self-installed',
+      enabled: false,
+      openClawConfig: { auth: 'oauth', oauth: { identity: 'per-requester' } },
+    });
+    expect(
+      store.createDiscoveredServer({
+        name: 'self-installed',
+        enabled: true,
+        transportType: 'stdio',
+        command: 'ignored',
+      }),
+    ).toBeNull();
+    expect(store.listServers()).toHaveLength(1);
+  });
 });

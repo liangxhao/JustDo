@@ -35,19 +35,22 @@ export const registerExtensionHandlers = ({
       const result = await extensionImportService.importPath(
         request.payload.sourcePath,
         request.onProgress,
+        request.payload.reviewToken,
+        { trustMarketplaceSource: request.origin === PluginInstallOrigin.MARKETPLACE },
       );
       return {
         success: result.success,
         pluginId: result.extensionId,
         failedStage: result.failedStage,
         error: result.error,
+        capabilityReview: result.capabilityReview,
       };
     },
   });
 
-  ipcMain.handle(ExtensionIpc.List, () => {
+  ipcMain.handle(ExtensionIpc.List, async () => {
     try {
-      return { success: true, extensions: extensionImportService.listInstalled() };
+      return { success: true, extensions: await extensionImportService.listCatalog() };
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Failed to list extensions';
       console.error('[Extensions] extensions:list error:', errorMsg);
@@ -62,17 +65,31 @@ export const registerExtensionHandlers = ({
         typeof request.requestId !== 'string' ||
         !request.requestId.trim() ||
         typeof request.sourcePath !== 'string' ||
-        !request.sourcePath.trim()
+        !request.sourcePath.trim() ||
+        (request.reviewToken !== undefined &&
+          (typeof request.reviewToken !== 'string' ||
+            !request.reviewToken.trim() ||
+            request.reviewToken.length > 256))
       ) {
         return { success: false, error: 'Extension source path is required' };
       }
       const result = await installationService.install({
         operation: MarketplaceInstallOperation.INSTALL,
         origin: PluginInstallOrigin.CUSTOM,
-        payload: { kind: PluginKind.EXTENSION, sourcePath: request.sourcePath },
+        payload: {
+          kind: PluginKind.EXTENSION,
+          sourcePath: request.sourcePath,
+          ...(typeof request.reviewToken === 'string' && request.reviewToken.trim()
+            ? { reviewToken: request.reviewToken.trim() }
+            : {}),
+        },
         onProgress: progress => {
           if (!event.sender.isDestroyed()) {
-            event.sender.send(ExtensionIpc.ImportProgress, { ...request, ...progress });
+            event.sender.send(ExtensionIpc.ImportProgress, {
+              requestId: request.requestId,
+              sourcePath: request.sourcePath,
+              ...progress,
+            });
           }
         },
       });
@@ -81,6 +98,7 @@ export const registerExtensionHandlers = ({
         extensionId: result.pluginId,
         failedStage: result.failedStage,
         error: result.error,
+        capabilityReview: result.capabilityReview,
       };
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Failed to import extension';
@@ -121,6 +139,9 @@ export const registerExtensionHandlers = ({
         return await extensionImportService.setEnabled(
           request.extensionId.trim(),
           request.enabled,
+          typeof request.reviewToken === 'string'
+            ? request.reviewToken.trim() || undefined
+            : undefined,
         );
       } catch (error) {
         const errorMsg =

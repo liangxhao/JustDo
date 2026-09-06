@@ -13,6 +13,7 @@ import type {
 } from '../../openclaw/runtime/openclawEngineManager';
 import type { OpenClawHookStore } from '../../plugins/hooks';
 import type { McpStore } from '../../plugins/mcp';
+import { discoverOpenClawManagedMcpServers } from '../../plugins/mcp';
 import {
   OPENCLAW_FALLBACK_EXEC_MODE,
   OPENCLAW_FALLBACK_FS_WORKSPACE_ONLY,
@@ -34,6 +35,7 @@ type OpenClawConfigSyncServiceDeps = {
 type SyncOpenClawConfigOptions = {
   reason: string;
   restartGatewayIfRunning?: boolean;
+  discoverExternalMcpServers?: boolean;
 };
 
 type SyncOpenClawConfigResult = {
@@ -361,6 +363,22 @@ export class OpenClawConfigSyncService {
     console.log(`[OpenClaw] syncOpenClawConfig: called (reason: ${options.reason})`);
 
     const engineManager = this.deps.getOpenClawEngineManager();
+    if (options.discoverExternalMcpServers !== false) {
+      try {
+        const discovered = discoverOpenClawManagedMcpServers(
+          engineManager.getConfigPath(),
+          this.deps.getMcpStore(),
+        );
+        if (discovered > 0) {
+          console.log(`[OpenClawMcp] discovered ${discovered} externally installed server(s)`);
+        }
+      } catch (error) {
+        console.warn(
+          '[OpenClawMcp] Failed to discover externally installed MCP servers:',
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
     const statusBeforeSync = engineManager.getStatus();
     const reloadGeneration = engineManager.getGatewayConfigReloadGeneration();
     let fallbackExecPolicyVerified = false;

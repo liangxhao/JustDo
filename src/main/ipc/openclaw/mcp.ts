@@ -21,6 +21,7 @@ interface McpHandlerDependencies {
   readResource: (id: string, uri: string) => Promise<McpReadResourceResult>;
   installationService: PluginInstallationService;
   listExtensionServers: () => Promise<ExtensionProvidedMcpServer[]>;
+  discoverExternalServers: () => void;
 }
 
 const syncMcpConfigInBackground = (syncConfig: McpHandlerDependencies['syncConfig']): void => {
@@ -36,6 +37,7 @@ export const registerMcpHandlers = ({
   readResource,
   installationService,
   listExtensionServers,
+  discoverExternalServers,
 }: McpHandlerDependencies): void => {
   installationService.registerInstaller({
     kind: PluginKind.MCP,
@@ -104,6 +106,14 @@ export const registerMcpHandlers = ({
 
   ipcMain.handle('mcp:list', () => {
     try {
+      try {
+        discoverExternalServers();
+      } catch (error) {
+        console.warn(
+          '[OpenClawMcp] Failed to discover externally installed MCP servers:',
+          error instanceof Error ? error.message : String(error),
+        );
+      }
       return { success: true, servers: getStore().listServers() };
     } catch (error) {
       return {

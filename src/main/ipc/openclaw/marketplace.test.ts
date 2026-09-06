@@ -88,3 +88,13 @@ test('constructs a narrow validated install request', async () => {
     operation: MarketplaceInstallOperation.UPDATE,
   });
 });
+
+test('accepts Hook marketplace requests for providers that opt into them', async () => {
+  const manager = createPluginManager();
+  registerMarketplaceHandlers(manager);
+
+  const response = await handlers.get(MarketplaceIpc.Search)?.({}, { kind: PluginKind.HOOK });
+
+  expect(response).toEqual({ success: true, result: { items: [] } });
+  expect(manager.searchMarketplace).toHaveBeenCalledWith({ kind: PluginKind.HOOK });
+});

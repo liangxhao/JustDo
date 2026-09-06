@@ -104,9 +104,54 @@ const resolveExtractedSkillDirectory = (extractDir: string): string => {
 };
 
 export class OpenClawSkillFiles {
-  constructor(private readonly managedSkillsDir: string) {}
+  private readonly pendingDeletionTrashRoots = new Set<string>();
+
+  constructor(private readonly managedSkillsDir: string) {
+    this.pendingDeletionTrashRoots.add(
+      path.join(path.dirname(this.managedSkillsDir), SKILL_TRASH_DIRECTORY_NAME),
+    );
+    this.cleanupPendingDeletionTransactions();
+  }
+
+  private cleanupPendingDeletionTransactions(): void {
+    for (const trashRoot of this.pendingDeletionTrashRoots) {
+      this.cleanupPendingDeletionTransactionsInRoot(trashRoot);
+    }
+  }
+
+  private cleanupPendingDeletionTransactionsInRoot(trashRoot: string): void {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(trashRoot, { withFileTypes: true });
+    } catch (error) {
+      const { code } = findFileSystemErrorDetails(error);
+      if (code === 'ENOENT' || code === 'ENOTDIR') return;
+      console.warn(
+        '[OpenClawSkillFiles] Failed to inspect pending skill deletion transactions:',
+        error instanceof Error ? error.message : String(error),
+      );
+      return;
+    }
+
+    const resolvedTrashRoot = path.resolve(trashRoot);
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !entry.name.startsWith('delete-')) continue;
+      const transactionDir = path.resolve(resolvedTrashRoot, entry.name);
+      const relative = path.relative(resolvedTrashRoot, transactionDir);
+      if (!relative || path.dirname(relative) !== '.' || path.isAbsolute(relative)) continue;
+      try {
+        removeDirectoryWithRetry(transactionDir);
+      } catch (error) {
+        console.warn(
+          '[OpenClawSkillFiles] Failed to clean pending skill deletion transaction:',
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
+  }
 
   async importPath(sourcePath: string): Promise<LocalSkillFileResult> {
+    this.cleanupPendingDeletionTransactions();
     try {
       const stats = fs.statSync(sourcePath);
       if (stats.isDirectory()) {
@@ -125,6 +170,7 @@ export class OpenClawSkillFiles {
   }
 
   importDirectory(folderPath: string): LocalSkillFileResult {
+    this.cleanupPendingDeletionTransactions();
     let targetDir = '';
     try {
       if (!fs.statSync(folderPath).isDirectory()) {
@@ -232,10 +278,13 @@ export class OpenClawSkillFiles {
     ) {
       throw new Error('Only user-owned skill directories can be deleted');
     }
+    const trashRoot = path.join(path.dirname(path.dirname(targetDir)), SKILL_TRASH_DIRECTORY_NAME);
+    this.pendingDeletionTrashRoots.add(trashRoot);
+    this.cleanupPendingDeletionTransactions();
     try {
       removeDirectoryTransactional({
         targetDir,
-        trashRoot: path.join(path.dirname(path.dirname(targetDir)), SKILL_TRASH_DIRECTORY_NAME),
+        trashRoot,
         onCleanupError: message => {
           console.warn(
             '[OpenClawSkillFiles] Skill was removed but its quarantined files could not be cleaned:',

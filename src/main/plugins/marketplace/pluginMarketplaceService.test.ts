@@ -33,6 +33,15 @@ test('searches only providers that support the requested plugin kind', async () 
   expect(provider.search).not.toHaveBeenCalled();
 });
 
+test('allows providers to opt into Hook marketplace content', () => {
+  const provider = createProvider();
+  provider.source.supportedKinds = [PluginKind.HOOK];
+
+  expect(new PluginMarketplaceService([provider]).listSources(PluginKind.HOOK)).toEqual([
+    provider.source,
+  ]);
+});
+
 test('normalizes marketplace search options', async () => {
   const provider = createProvider();
   const plugin: MarketplacePlugin = {
@@ -40,6 +49,7 @@ test('normalizes marketplace search options', async () => {
     kind: PluginKind.SKILL,
     name: 'Writer',
     description: 'Writes text',
+    runtimeId: 'writer-runtime',
     sourceId: provider.source.id,
   };
   vi.mocked(provider.search).mockResolvedValue({ items: [plugin], nextCursor: 'next-page' });
@@ -209,6 +219,7 @@ test('returns only allowlisted source and plugin fields', async () => {
     kind: PluginKind.SKILL,
     name: 'Writer',
     description: 'Writes text',
+    runtimeId: 'writer-runtime',
     sourceId: 'spoofed-source',
     token: 'private-plugin-token',
   } as MarketplacePlugin & { token: string };
@@ -221,6 +232,7 @@ test('returns only allowlisted source and plugin fields', async () => {
   expect(sources[0]).not.toHaveProperty('token');
   expect(result.items[0]).not.toHaveProperty('token');
   expect(result.items[0].sourceId).toBe(provider.source.id);
+  expect(result.items[0].runtimeId).toBe('writer-runtime');
 });
 
 test('returns only allowlisted detail fields', async () => {

@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import extractZip from 'extract-zip';
 import fs from 'fs';
 import yaml from 'js-yaml';
@@ -8,13 +9,18 @@ import * as tar from 'tar';
 import { cpRecursiveSync } from '../../core/fsCompat';
 
 const HOOK_FILE_NAME = 'HOOK.md';
-const HANDLER_FILE_NAME = 'handler.js';
+const HANDLER_FILE_NAMES = ['handler.ts', 'handler.js', 'index.ts', 'index.js'] as const;
 const SUPPORTED_ARCHIVE_EXTENSIONS = ['.zip', '.tar', '.tar.gz', '.tgz'];
 
 export type LocalHookFileResult = {
   success: boolean;
   hookId?: string;
   error?: string;
+};
+
+export type StagedHookDeletion = {
+  commit: () => void;
+  rollback: () => void;
 };
 
 const normalizeHookId = (name: string): string | null => {
@@ -109,8 +115,11 @@ export class OpenClawHookFiles {
       if (!fs.existsSync(path.join(folderPath, HOOK_FILE_NAME))) {
         return { success: false, error: 'A Hook package must contain a HOOK.md file.' };
       }
-      if (!fs.existsSync(path.join(folderPath, HANDLER_FILE_NAME))) {
-        return { success: false, error: 'A Hook package must contain a handler.js file.' };
+      if (!HANDLER_FILE_NAMES.some(name => fs.existsSync(path.join(folderPath, name)))) {
+        return {
+          success: false,
+          error: 'A Hook package must contain handler.ts, handler.js, index.ts, or index.js.',
+        };
       }
 
       const hookId = readHookId(folderPath);
@@ -138,6 +147,12 @@ export class OpenClawHookFiles {
           error: 'The selected Hook is already in the managed Hook folder.',
         };
       }
+      if (fs.existsSync(targetDir)) {
+        return {
+          success: false,
+          error: `Hook "${hookId}" is already installed. Delete it before importing a replacement.`,
+        };
+      }
       replaceDirectory(sourceDir, targetDir);
       return { success: true, hookId };
     } catch (error) {
@@ -149,6 +164,10 @@ export class OpenClawHookFiles {
   }
 
   deleteDirectory(hookDirectory: string): void {
+    this.stageDeleteDirectory(hookDirectory).commit();
+  }
+
+  stageDeleteDirectory(hookDirectory: string): StagedHookDeletion {
     const managedRoot = path.resolve(this.managedHooksDir);
     const targetDir = path.resolve(hookDirectory);
     const relative = path.relative(managedRoot, targetDir);
@@ -163,12 +182,26 @@ export class OpenClawHookFiles {
     if (!fs.existsSync(path.join(targetDir, HOOK_FILE_NAME))) {
       throw new Error('Only custom Hooks can be deleted');
     }
-    fs.rmSync(targetDir, {
-      recursive: true,
-      force: true,
-      maxRetries: process.platform === 'win32' ? 5 : 0,
-      retryDelay: process.platform === 'win32' ? 200 : 0,
-    });
+    const quarantineDir = path.join(
+      path.dirname(managedRoot),
+      `.justdo-hook-delete-${path.basename(targetDir)}-${randomUUID()}`,
+    );
+    fs.renameSync(targetDir, quarantineDir);
+    return {
+      commit: () => {
+        fs.rmSync(quarantineDir, {
+          recursive: true,
+          force: true,
+          maxRetries: process.platform === 'win32' ? 5 : 0,
+          retryDelay: process.platform === 'win32' ? 200 : 0,
+        });
+      },
+      rollback: () => {
+        if (fs.existsSync(quarantineDir) && !fs.existsSync(targetDir)) {
+          fs.renameSync(quarantineDir, targetDir);
+        }
+      },
+    };
   }
 
   private async importArchive(archivePath: string): Promise<LocalHookFileResult> {

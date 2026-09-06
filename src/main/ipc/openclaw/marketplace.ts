@@ -7,15 +7,15 @@ import {
   type MarketplaceInstallRequest,
   type MarketplaceInstallResponse,
   MarketplaceIpc,
+  MarketplacePluginKind,
   type MarketplaceQuery,
   type MarketplaceSearchResponse,
   type MarketplaceSourcesResponse,
-  PluginKind,
 } from '../../../shared/plugins/marketplace';
 import type { PluginManager } from '../../plugins';
 import { MarketplaceError } from '../../plugins/marketplace/types';
 
-const pluginKinds = new Set<string>(Object.values(PluginKind));
+const pluginKinds = new Set<string>(Object.values(MarketplacePluginKind));
 const installOperations = new Set<string>(Object.values(MarketplaceInstallOperation));
 
 const requireRecord = (value: unknown): Record<string, unknown> => {

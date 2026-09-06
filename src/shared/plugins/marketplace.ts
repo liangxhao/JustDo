@@ -7,6 +7,16 @@ export const PluginKind = {
 
 export type PluginKind = (typeof PluginKind)[keyof typeof PluginKind];
 
+export const MarketplacePluginKind = {
+  EXTENSION: PluginKind.EXTENSION,
+  SKILL: PluginKind.SKILL,
+  MCP: PluginKind.MCP,
+  HOOK: PluginKind.HOOK,
+} as const;
+
+export type MarketplacePluginKind =
+  (typeof MarketplacePluginKind)[keyof typeof MarketplacePluginKind];
+
 export const MarketplaceErrorCode = {
   INVALID_REQUEST: 'invalid-request',
   SOURCE_NOT_FOUND: 'source-not-found',
@@ -21,12 +31,14 @@ export type MarketplaceErrorCode = (typeof MarketplaceErrorCode)[keyof typeof Ma
 export interface MarketplaceSource {
   id: string;
   name: string;
-  supportedKinds: PluginKind[];
+  supportedKinds: MarketplacePluginKind[];
 }
 
 export interface MarketplacePlugin {
   id: string;
-  kind: PluginKind;
+  /** Runtime-owned id after installation, when it differs from the marketplace catalog id. */
+  runtimeId?: string;
+  kind: MarketplacePluginKind;
   name: string;
   description: string;
   version?: string;
@@ -66,7 +78,7 @@ export interface MarketplacePluginDetail extends MarketplacePlugin {
 }
 
 export interface MarketplaceQuery {
-  kind: PluginKind;
+  kind: MarketplacePluginKind;
   query?: string;
   limit?: number;
   cursor?: string;
@@ -81,7 +93,7 @@ export interface MarketplaceSearchResult {
 export interface MarketplaceInstallRequest {
   sourceId: string;
   pluginId: string;
-  kind: PluginKind;
+  kind: MarketplacePluginKind;
   version?: string;
   operation?: MarketplaceInstallOperation;
 }
@@ -89,7 +101,7 @@ export interface MarketplaceInstallRequest {
 export interface MarketplaceDetailRequest {
   sourceId: string;
   pluginId: string;
-  kind: PluginKind;
+  kind: MarketplacePluginKind;
 }
 
 export const MarketplaceIpc = {

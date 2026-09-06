@@ -50,7 +50,7 @@ test('imports a valid Hook folder into the managed directory', async () => {
   expect(fs.existsSync(path.join(managed, 'demo-hook', 'handler.js'))).toBe(true);
 });
 
-test('requires both Hook metadata and a runnable JavaScript handler', async () => {
+test('requires both Hook metadata and a supported handler entrypoint', async () => {
   const source = path.join(root, 'source');
   fs.mkdirSync(source);
   fs.writeFileSync(path.join(source, 'HOOK.md'), '---\nname: incomplete\n---\n');
@@ -58,7 +58,18 @@ test('requires both Hook metadata and a runnable JavaScript handler', async () =
   const result = await new OpenClawHookFiles(managed).importPath(source);
 
   expect(result.success).toBe(false);
-  expect(result.error).toContain('handler.js');
+  expect(result.error).toContain('handler.ts');
+});
+
+test('accepts the latest TypeScript handler entrypoint', async () => {
+  const source = path.join(root, 'source');
+  createHook(source, 'typescript-hook');
+  fs.renameSync(path.join(source, 'handler.js'), path.join(source, 'handler.ts'));
+
+  await expect(new OpenClawHookFiles(managed).importPath(source)).resolves.toEqual({
+    success: true,
+    hookId: 'typescript-hook',
+  });
 });
 
 test('imports a zipped Hook package with one wrapper directory', async () => {
@@ -96,4 +107,14 @@ test('deletes only a Hook inside the managed Hook directory', async () => {
 
   expect(fs.existsSync(hookDir)).toBe(false);
   expect(() => files.deleteDirectory(path.join(root, 'outside'))).toThrow('Invalid Hook directory');
+});
+
+test('can roll back an atomically staged Hook deletion', () => {
+  const hookDir = path.join(managed, 'custom-hook');
+  createHook(hookDir, 'custom-hook');
+  const staged = new OpenClawHookFiles(managed).stageDeleteDirectory(hookDir);
+
+  expect(fs.existsSync(hookDir)).toBe(false);
+  staged.rollback();
+  expect(fs.existsSync(path.join(hookDir, 'HOOK.md'))).toBe(true);
 });

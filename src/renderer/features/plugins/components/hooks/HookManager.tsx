@@ -231,7 +231,7 @@ const HookManager: React.FC = () => {
 
   const tabClass = (tab: HookTab) =>
     `px-4 py-2 text-sm font-medium transition-colors relative ${
-      activeTab === tab ? 'text-foreground' : 'text-secondary hover:hover:text-foreground'
+      activeTab === tab ? 'text-foreground' : 'text-secondary hover:text-foreground'
     }`;
 
   const tabIndicatorClass = (tab: HookTab) =>

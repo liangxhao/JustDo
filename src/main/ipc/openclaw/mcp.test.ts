@@ -36,6 +36,7 @@ const createStore = () => ({
 const register = (
   store: ReturnType<typeof createStore>,
   listExtensionServers = vi.fn(async () => []),
+  discoverExternalServers = vi.fn(),
 ) => {
   const installationService = new PluginInstallationService();
   registerMcpHandlers({
@@ -45,6 +46,7 @@ const register = (
     readResource: vi.fn(),
     installationService,
     listExtensionServers,
+    discoverExternalServers,
   });
   return installationService;
 };
@@ -59,6 +61,35 @@ test('lists user-configured MCP servers without waiting for extension discovery'
     servers: store.listServers(),
   });
   expect(listExtensionServers).not.toHaveBeenCalled();
+});
+
+test('discovers OpenClaw-managed MCP servers before returning the list', () => {
+  const store = createStore();
+  const discoverExternalServers = vi.fn();
+  register(store, vi.fn(async () => []), discoverExternalServers);
+
+  expect(handlers.get('mcp:list')?.()).toEqual({
+    success: true,
+    servers: store.listServers(),
+  });
+  expect(discoverExternalServers).toHaveBeenCalledOnce();
+});
+
+test('keeps stored MCP servers visible when external discovery fails', () => {
+  const store = createStore();
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  register(store, vi.fn(async () => []), () => {
+    throw new Error('invalid native config');
+  });
+
+  expect(handlers.get('mcp:list')?.()).toEqual({
+    success: true,
+    servers: store.listServers(),
+  });
+  expect(warn).toHaveBeenCalledWith(
+    '[OpenClawMcp] Failed to discover externally installed MCP servers:',
+    'invalid native config',
+  );
 });
 
 test('lists extension-provided MCP servers through a separate handler', async () => {

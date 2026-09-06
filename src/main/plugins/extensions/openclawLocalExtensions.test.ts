@@ -79,6 +79,32 @@ describe('openclawLocalExtensions', () => {
     expect(hasBundledOpenClawExtension('legacy-directory-name')).toBe(false);
   });
 
+  it('discovers compatible bundle manifests using OpenClaw id normalization', () => {
+    const extensionsDir = path.join(resourcesDir, 'bundle-extensions');
+    const extensionDir = path.join(extensionsDir, 'different-directory-name');
+    fs.mkdirSync(path.join(extensionDir, '.claude-plugin'), { recursive: true });
+    fs.writeFileSync(
+      path.join(extensionDir, '.claude-plugin', 'plugin.json'),
+      JSON.stringify({ name: 'Internal Research Tools' }),
+    );
+
+    expect(inspectOpenClawExtensionDirectory(extensionsDir)).toEqual({
+      complete: true,
+      ids: ['internal-research-tools'],
+    });
+  });
+
+  it('discovers manifestless Claude-compatible bundles', () => {
+    const extensionsDir = path.join(resourcesDir, 'bundle-extensions');
+    const extensionDir = path.join(extensionsDir, 'Company Skills');
+    fs.mkdirSync(path.join(extensionDir, 'skills'), { recursive: true });
+
+    expect(inspectOpenClawExtensionDirectory(extensionsDir)).toEqual({
+      complete: true,
+      ids: ['company-skills'],
+    });
+  });
+
   it('marks an unrecognized extension candidate as an incomplete inventory', () => {
     const extensionsDir = path.join(resourcesDir, 'opaque-extensions');
     const opaqueExtensionDir = path.join(extensionsDir, 'opaque-extension');

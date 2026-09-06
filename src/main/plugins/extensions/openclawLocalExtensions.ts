@@ -4,6 +4,7 @@ import JSON5 from 'json5';
 import path from 'path';
 
 const LOCAL_EXTENSIONS_DIR = 'openclaw-extensions';
+const AGENT_PLUGIN_MANIFEST_SCHEMA = 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json';
 
 const isPathInside = (parentDir: string, childPath: string): boolean => {
   const relative = path.relative(parentDir, childPath);
@@ -27,14 +28,66 @@ export const inspectOpenClawExtensionCandidate = (
   extensionDir: string,
 ): OpenClawExtensionInventory => {
   try {
-    const manifest = JSON5.parse(
-      fs.readFileSync(path.join(extensionDir, 'openclaw.plugin.json'), 'utf8'),
-    ) as unknown;
-    if (manifest && typeof manifest === 'object' && !Array.isArray(manifest)) {
-      const id = (manifest as Record<string, unknown>).id;
-      if (typeof id === 'string' && id.trim()) {
-        return { complete: true, ids: [id.trim()] };
+    const nativeManifestPath = path.join(extensionDir, 'openclaw.plugin.json');
+    const bundleManifestPath = [
+      path.join(extensionDir, '.codex-plugin', 'plugin.json'),
+      path.join(extensionDir, '.cursor-plugin', 'plugin.json'),
+      path.join(extensionDir, '.claude-plugin', 'plugin.json'),
+    ].find(candidate => fs.existsSync(candidate));
+    let manifestPath = fs.existsSync(nativeManifestPath) ? nativeManifestPath : bundleManifestPath;
+    const agentManifestPath = path.join(extensionDir, 'plugin.json');
+    if (!manifestPath && fs.existsSync(agentManifestPath)) {
+      const agentManifest = JSON.parse(fs.readFileSync(agentManifestPath, 'utf8')) as unknown;
+      if (
+        agentManifest &&
+        typeof agentManifest === 'object' &&
+        !Array.isArray(agentManifest) &&
+        (agentManifest as Record<string, unknown>).$schema === AGENT_PLUGIN_MANIFEST_SCHEMA
+      ) {
+        manifestPath = agentManifestPath;
       }
+    }
+    if (!manifestPath) {
+      const hasManifestlessBundleMarker = [
+        'skills',
+        'commands',
+        'agents',
+        path.join('hooks', 'hooks.json'),
+        '.mcp.json',
+        '.lsp.json',
+        'settings.json',
+      ].some(candidate => fs.existsSync(path.join(extensionDir, candidate)));
+      if (!hasManifestlessBundleMarker) return { complete: false, ids: [] };
+      const id =
+        path
+          .basename(extensionDir)
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/-+/g, '-')
+          .replace(/^-+|-+$/g, '') || 'bundle-plugin';
+      return { complete: true, ids: [id] };
+    }
+    const manifest = JSON5.parse(fs.readFileSync(manifestPath, 'utf8')) as unknown;
+    if (manifest && typeof manifest === 'object' && !Array.isArray(manifest)) {
+      const record = manifest as Record<string, unknown>;
+      if (manifestPath === nativeManifestPath) {
+        const id = record.id;
+        return typeof id === 'string' && id.trim()
+          ? { complete: true, ids: [id.trim()] }
+          : { complete: false, ids: [] };
+      }
+      const bundleName =
+        typeof record.name === 'string' && record.name.trim()
+          ? record.name
+          : path.basename(extensionDir);
+      const slug = bundleName
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-+|-+$/g, '');
+      return { complete: true, ids: [slug || 'bundle-plugin'] };
     }
     return { complete: false, ids: [] };
   } catch {
@@ -193,9 +246,7 @@ export const inspectBundledOpenClawExtensions = (): OpenClawExtensionInventory =
 
 export const inspectLocalOpenClawExtensions = (): OpenClawExtensionInventory => {
   const sourceDir = findLocalExtensionsSourceDir();
-  return sourceDir
-    ? inspectOpenClawExtensionDirectory(sourceDir)
-    : { complete: true, ids: [] };
+  return sourceDir ? inspectOpenClawExtensionDirectory(sourceDir) : { complete: true, ids: [] };
 };
 
 export const hasBundledOpenClawExtension = (extensionId: string): boolean => {

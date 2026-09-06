@@ -57,17 +57,39 @@ export const buildOpenClawMcpServers = (
   return Object.fromEntries(
     servers.map(server => {
       const config: Record<string, unknown> = {
+        ...(server.openClawConfig ?? {}),
         enabled: server.enabled,
-        timeout: server.requestTimeoutSeconds ?? requestTimeoutSeconds,
       };
+      if (server.requestTimeoutSeconds !== undefined) {
+        config.requestTimeoutMs = server.requestTimeoutSeconds * 1_000;
+      } else if (config.requestTimeoutMs === undefined) {
+        config.requestTimeoutMs = requestTimeoutSeconds * 1_000;
+      }
       if (server.transportType === 'stdio') {
-        config.command = server.command;
-        config.args = server.args ?? [];
-        if (server.env && Object.keys(server.env).length > 0) config.env = server.env;
+        delete config.url;
+        delete config.headers;
+        if (config.command === undefined) config.command = server.command;
+        if (config.args === undefined) config.args = server.args ?? [];
+        if (
+          config.env === undefined &&
+          server.env &&
+          Object.keys(server.env).length > 0
+        ) {
+          config.env = server.env;
+        }
       } else {
-        config.url = server.url;
+        delete config.command;
+        delete config.args;
+        delete config.env;
+        if (config.url === undefined) config.url = server.url;
         config.transport = server.transportType === 'sse' ? 'sse' : 'streamable-http';
-        if (server.headers && Object.keys(server.headers).length > 0) config.headers = server.headers;
+        if (
+          config.headers === undefined &&
+          server.headers &&
+          Object.keys(server.headers).length > 0
+        ) {
+          config.headers = server.headers;
+        }
       }
       return [server.name, config];
     }),
@@ -396,6 +418,29 @@ export const sanitizeOpenClawV2026_9_2Config = (
     const models = { ...config.models };
     delete models.pricing;
     next.models = models;
+  }
+
+  if (isRecord(config.mcp)) {
+    const mcp = { ...config.mcp };
+    if (isRecord(mcp.servers)) {
+      mcp.servers = Object.fromEntries(
+        Object.entries(mcp.servers).map(([name, rawServer]) => {
+          if (!isRecord(rawServer)) return [name, rawServer];
+          const server = { ...rawServer };
+          if (
+            typeof server.timeout === 'number' &&
+            Number.isFinite(server.timeout) &&
+            server.timeout > 0 &&
+            server.requestTimeoutMs === undefined
+          ) {
+            server.requestTimeoutMs = server.timeout * 1_000;
+          }
+          delete server.timeout;
+          return [name, server];
+        }),
+      );
+    }
+    next.mcp = mcp;
   }
 
   if (isRecord(config.tools)) {
@@ -923,9 +968,6 @@ export const mergeOpenClawPluginConfig = (
     ...sourcePlugins,
     ...(managedIds.length > 0 ? { enabled: true } : {}),
     ...(allow ? { allow } : {}),
-    ...(allow && sourcePlugins.bundledDiscovery === undefined
-      ? { bundledDiscovery: 'compat' }
-      : {}),
     entries: mergedEntries,
   };
 };

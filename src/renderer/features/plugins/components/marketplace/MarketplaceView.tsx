@@ -1,14 +1,17 @@
-import { ArrowPathIcon, CheckIcon, PlusIcon } from '@heroicons/react/24/outline';
+import { ArrowPathIcon, CheckIcon, PlusIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import {
   MarketplaceInstallOperation,
   MarketplaceInstallState,
   type MarketplacePlugin,
+  type MarketplacePluginDetail,
+  type MarketplacePluginKind,
   type MarketplaceSource,
-  type PluginKind,
 } from '@shared/plugins/marketplace';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import { i18nService } from '@/services/i18n';
+import Modal from '@/shared/components/common/Modal';
 import ErrorMessage from '@/shared/components/ErrorMessage';
 import SearchIcon from '@/shared/components/icons/SearchIcon';
 import Tooltip from '@/shared/components/ui/Tooltip';
@@ -19,7 +22,7 @@ export interface InstalledMarketplacePlugin {
 }
 
 interface MarketplaceViewProps {
-  kind: PluginKind;
+  kind: MarketplacePluginKind;
   installed?: InstalledMarketplacePlugin[];
   icon: React.ReactNode;
   readOnly?: boolean;
@@ -43,6 +46,8 @@ const MarketplaceView: React.FC<MarketplaceViewProps> = ({
   const [nextCursor, setNextCursor] = useState<string | undefined>();
   const [error, setError] = useState('');
   const [installingKeys, setInstallingKeys] = useState<Set<string>>(() => new Set());
+  const [selectedDetail, setSelectedDetail] = useState<MarketplacePluginDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
   const searchGeneration = useRef(0);
   const installedById = useMemo(
     () => new Map(installed.map(item => [item.id.toLowerCase(), item])),
@@ -178,8 +183,7 @@ const MarketplaceView: React.FC<MarketplaceViewProps> = ({
     if (item.installState === MarketplaceInstallState.UNAVAILABLE) {
       return MarketplaceInstallState.UNAVAILABLE;
     }
-    return installedById.has(item.id.toLowerCase()) ||
-      item.installState === MarketplaceInstallState.INSTALLED
+    return installedById.has((item.runtimeId || item.id).toLowerCase())
       ? MarketplaceInstallState.INSTALLED
       : MarketplaceInstallState.AVAILABLE;
   };
@@ -211,17 +215,6 @@ const MarketplaceView: React.FC<MarketplaceViewProps> = ({
       if (!response.success) {
         throw new Error(response.error || i18nService.t('marketplaceInstallFailed'));
       }
-      setItems(current =>
-        current.map(candidate =>
-          candidate.id === item.id && candidate.sourceId === item.sourceId
-            ? {
-                ...candidate,
-                installState: MarketplaceInstallState.INSTALLED,
-                installedVersion: candidate.version,
-              }
-            : candidate,
-        ),
-      );
       await onInstalled?.();
     } catch (installError) {
       setError(
@@ -235,6 +228,32 @@ const MarketplaceView: React.FC<MarketplaceViewProps> = ({
         next.delete(key);
         return next;
       });
+    }
+  };
+
+  const openDetail = async (item: MarketplacePlugin) => {
+    setSelectedDetail({ ...item });
+    setDetailLoading(true);
+    setError('');
+    try {
+      const response = await window.electron.marketplace.detail({
+        sourceId: item.sourceId,
+        pluginId: item.id,
+        kind: item.kind,
+      });
+      if (!response.success) {
+        throw new Error(response.error || i18nService.t('marketplaceDetailFailed'));
+      }
+      if (response.detail) setSelectedDetail(response.detail);
+    } catch (detailError) {
+      setSelectedDetail(null);
+      setError(
+        detailError instanceof Error
+          ? detailError.message
+          : i18nService.t('marketplaceDetailFailed'),
+      );
+    } finally {
+      setDetailLoading(false);
     }
   };
 
@@ -264,7 +283,10 @@ const MarketplaceView: React.FC<MarketplaceViewProps> = ({
           aria-label={label}
           title={label}
           disabled={disabled}
-          onClick={() => void handleInstall(item)}
+          onClick={event => {
+            event.stopPropagation();
+            void handleInstall(item);
+          }}
           className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-border bg-background text-secondary transition-colors hover:border-primary hover:text-primary disabled:cursor-default disabled:opacity-60"
         >
           {installing ? (
@@ -334,7 +356,16 @@ const MarketplaceView: React.FC<MarketplaceViewProps> = ({
           {items.map(item => (
             <article
               key={`${item.sourceId}:${item.id}`}
-              className="rounded-xl border border-border bg-surface p-3 transition-colors hover:border-primary"
+              role="button"
+              tabIndex={0}
+              onClick={() => void openDetail(item)}
+              onKeyDown={event => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  void openDetail(item);
+                }
+              }}
+              className="cursor-pointer rounded-xl border border-border bg-surface p-3 transition-colors hover:border-primary focus:outline-none focus:ring-2 focus:ring-primary"
             >
               <div className="mb-2 flex items-start justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2">
@@ -377,6 +408,86 @@ const MarketplaceView: React.FC<MarketplaceViewProps> = ({
           )}
         </div>
       )}
+
+      {selectedDetail &&
+        createPortal(
+          <Modal
+            onClose={() => {
+              if (!detailLoading) setSelectedDetail(null);
+            }}
+            overlayClassName="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+            className="mx-4 max-h-[80vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-border bg-surface p-5 shadow-2xl"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <h2 className="truncate text-lg font-semibold text-foreground">
+                    {selectedDetail.name}
+                  </h2>
+                  {selectedDetail.version && (
+                    <span className="shrink-0 text-xs text-secondary">
+                      v{selectedDetail.version}
+                    </span>
+                  )}
+                </div>
+                {selectedDetail.author && (
+                  <p className="mt-1 text-xs text-secondary">{selectedDetail.author}</p>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedDetail(null)}
+                disabled={detailLoading}
+                className="rounded-lg p-1.5 text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:opacity-50"
+                aria-label={i18nService.t('close')}
+              >
+                <XMarkIcon className="h-5 w-5" />
+              </button>
+            </div>
+            <p className="mt-3 text-sm leading-6 text-secondary">{selectedDetail.description}</p>
+            {detailLoading ? (
+              <div className="py-8 text-center text-sm text-secondary">
+                {i18nService.t('marketplaceLoading')}
+              </div>
+            ) : (
+              <>
+                {(selectedDetail.requirements?.bins?.length ||
+                  selectedDetail.requirements?.env?.length) && (
+                  <div className="mt-4 rounded-xl border border-border bg-background p-3">
+                    <div className="text-xs font-semibold text-foreground">
+                      {i18nService.t('marketplaceRequirements')}
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {[
+                        ...(selectedDetail.requirements.bins ?? []),
+                        ...(selectedDetail.requirements.env ?? []),
+                      ].map(requirement => (
+                        <code
+                          key={requirement}
+                          className="rounded-md bg-surface-raised px-2 py-1 text-xs text-foreground"
+                        >
+                          {requirement}
+                        </code>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {selectedDetail.readme && (
+                  <div className="mt-4">
+                    <div className="text-xs font-semibold text-foreground">
+                      {i18nService.t('marketplaceReadme')}
+                    </div>
+                    <pre className="mt-2 whitespace-pre-wrap break-words rounded-xl border border-border bg-background p-3 font-sans text-xs leading-5 text-secondary">
+                      {selectedDetail.readme}
+                    </pre>
+                  </div>
+                )}
+                <div className="mt-5 flex justify-end">{action(selectedDetail)}</div>
+              </>
+            )}
+          </Modal>,
+          document.body,
+        )}
     </div>
   );
 };
