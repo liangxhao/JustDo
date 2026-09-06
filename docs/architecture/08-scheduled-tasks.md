@@ -30,12 +30,12 @@
 
 - `agentTurn`: message，可选 timeout/model；使用隔离 scheduler agent。
 - `systemEvent`: text；通常目标 main session。
-- `command`、`script`: v2026.8.2 原生无人值守 payload；JustDo 只读展示，并在手动运行前以精确 argv/脚本文本二次确认。确认请求携带所展示配置的 revision，由 Main 在运行前重新读取并拒绝已变化的任务；这是运行前复核，不是 Gateway 原子 CAS。
+- `command`、`script`: v2026.9.2 原生无人值守 payload；JustDo 只读展示，并在手动运行前以精确 argv/脚本文本二次确认。确认请求携带所展示配置的 revision，由 Main 在运行前重新读取并拒绝已变化的任务；这是运行前复核，不是 Gateway 原子 CAS。
 - `heartbeat`、`skillCollectionReview`: Gateway 收敛的系统 payload；在 JustDo 中标记为 OpenClaw 管理。JustDo 对主 Agent 显式配置 `heartbeat.every: 0m`，关闭不适用于本产品的周期性外部通知检查；OpenClaw 保留的 disabled heartbeat 行不进入 Renderer 任务列表。对话创建任务直接使用原生 automations/`cron.add`，普通 `agentTurn` 任务由 cron timer 独立调度，不依赖周期 Heartbeat。
 
 ### 2.3 Delivery 与目标
 
-Delivery 包含 mode、channel、to、accountId、bestEffort。创建表单使用 `main/isolated`；列表还能安全读取 v2026.8.2 的 `current` 与 `session:*` target。wake mode 是 `now` 或 `next-heartbeat`。channel option 可标 disabled，并用 accountId 区分多实例 bot。
+Delivery 包含 mode、channel、to、accountId、bestEffort。创建表单使用 `main/isolated`；列表还能安全读取 v2026.9.2 的 `current` 与 `session:*` target。wake mode 是 `now` 或 `next-heartbeat`。channel option 可标 disabled，并用 accountId 区分多实例 bot。
 
 Job 映射额外给 Renderer 一个 management 分类：`editable` 是表单可无损 round-trip 的普通任务，`advanced` 可启停/试运行/删除但不进入旧表单，`managed` 是 declaration key 或系统 payload 收敛的任务，只读展示并保留运行历史。owner/account tool policy、pacing、trigger、failure alert、非默认 delete-after-run 和高级 delivery 字段都会把任务归为 advanced，防止基础编辑器覆盖隐藏权限或执行语义。
 
@@ -57,7 +57,7 @@ Job 映射额外给 Renderer 一个 management 分类：`editable` 是表单可�
 
 ## 4. Job CRUD
 
-`CronJobService` 先 ensure Gateway ready，再调用 RPC。list 使用 `limit=200` 和 offset 遍历全部 job，显式设置 `includeDeliveryPreviews=false`，避免列表/轮询触发逐任务的 delivery target I/O；分页同时校验 `nextOffset` 单调增加和 `snapshotRevision` 一致。get/update/toggle/run 使用 v2026.8.2 原生 `cron.get` 精确读取，不再用模糊 query 扫描。
+`CronJobService` 先 ensure Gateway ready，再调用 RPC。list 使用 `limit=200` 和 offset 遍历全部 job，显式设置 `includeDeliveryPreviews=false`，避免列表/轮询触发逐任务的 delivery target I/O；分页同时校验 `nextOffset` 单调增加和 `snapshotRevision` 一致。get/update/toggle/run 使用 v2026.9.2 原生 `cron.get` 精确读取，不再用模糊 query 扫描。
 
 Create 映射 schedule/payload/delivery；Agent-turn 强制 `agentId = justdo-scheduler`。Update 根据 payload kind 原子调整：
 
@@ -76,13 +76,13 @@ Create 映射 schedule/payload/delivery；Agent-turn 强制 `agentId = justdo-sc
 
 模型可见的 `automations` 工具不经过 JustDo IPC，因此受保护的 `automation-permission` extension 在 OpenClaw `before_tool_call` 层读取当前原生 session permission mode：Full 放行，Ask/Auto 要求 one-shot approval，read-only 拒绝。只有同时具备 scheduler agent id 与原生 cron-run session key 的无人值守执行可以豁免；普通交互会话不能冒用该 agent id。每次 Gateway 连接都通过 status RPC 验证 policy 已加载，缺失时禁止普通 turn。
 
-## 6. v2026.8.2 Delivery 语义
+## 6. v2026.9.2 Delivery 语义
 
-应用内结果不需要外部 channel，新建 job 仍显式发送 `delivery.mode=none`。v2026.8.2 已把执行 `status/error` 与 `deliveryStatus/deliveryError` 分开，JustDo 直接映射 Gateway 事实，不再用 v2026.6.11 的字符串启发式把 error 改写成 success，也不再在 list 读取路径中偷偷 update job 清 backoff。旧本地 receipt 的展示兼容可以保留，但不能反向改写新 Gateway 定义。
+应用内结果不需要外部 channel，新建 job 仍显式发送 `delivery.mode=none`。v2026.9.2 已把执行 `status/error` 与 `deliveryStatus/deliveryError` 分开，JustDo 直接映射 Gateway 事实，不再用 v2026.6.11 的字符串启发式把 error 改写成 success，也不再在 list 读取路径中偷偷 update job 清 backoff。旧本地 receipt 的展示兼容可以保留，但不能反向改写新 Gateway 定义。
 
 ## 7. Polling 与事件
 
-Gateway 启动成功后开始 polling，退出清理先停止 polling。v2026.8.2 的 `cron` event 携带 action、job snapshot 和终态字段；`started` 没有稳定 runId，因此只投影 job `StatusUpdate`，`finished` 才按 runId 投影 `RunUpdate` 并定向同步该 job 的 receipt（不得把单 job 当成权威全量集合）。结构增删改触发 Renderer 权威刷新，`scheduled` 不做全量请求，避免高频 stream 任务形成请求风暴。低频轮询仍负责断线/漏事件兜底；仅已初始化的运行历史缓存接收 live/result upsert，从而在漏掉 finished event 时最终收敛且不会无限积累未查看任务的历史。
+Gateway 启动成功后开始 polling，退出清理先停止 polling。v2026.9.2 的 `cron` event 携带 action、job snapshot 和终态字段；`started` 没有稳定 runId，因此只投影 job `StatusUpdate`，`finished` 才按 runId 投影 `RunUpdate` 并定向同步该 job 的 receipt（不得把单 job 当成权威全量集合）。结构增删改触发 Renderer 权威刷新，`scheduled` 不做全量请求，避免高频 stream 任务形成请求风暴。低频轮询仍负责断线/漏事件兜底；仅已初始化的运行历史缓存接收 live/result upsert，从而在漏掉 finished event 时最终收敛且不会无限积累未查看任务的历史。
 
 `cron.run` 是 enqueue RPC，不代表任务已开始或完成。Main 显式发送 `mode=force`，要求响应包含 `enqueued=true` 与非空 `runId`；UI 只提示“已加入队列”，不伪造 running 历史。未入队、already-running 或缺少 runId 都作为失败返回，最终状态由 Gateway event / `cron.runs` 事实产生。
 
@@ -126,7 +126,7 @@ Gateway 启动成功后开始 polling，退出清理先停止 polling。v2026.8.
 2. 对该 run 加 suppression，等待在途 sync。
 3. Cleanup service 验证 session key属于 cron run，枚举最多 1000 个 session tree。
 4. 通过 Gateway 删除 child -> root session/transcript，清 session approval grants。
-5. 清 OpenClaw v2026.8.2 `task_runs` 中对应的 cron history row、delivery sidecar 与可选 lifecycle binding，并清理受管 archive artifacts；匹配必须同时约束 cron runtime、job id 和 run identity/时间，路径必须在 state dir。
+5. 清 OpenClaw v2026.9.2 `task_runs` 中对应的 cron history row、delivery sidecar 与可选 lifecycle binding，并清理受管 archive artifacts；匹配必须同时约束 cron runtime、job id 和 run identity/时间，路径必须在 state dir。
 6. 全部成功后在同一 SQLite transaction 中推进 task completed-through、写 durable run tombstone 并删除 receipt；失败保留 receipt 以便重试。后续启动/强制同步会忽略 tombstoned run，避免 Gateway 延迟写回导致结果复活。
 7. 更新 unread count，解除 suppression。
 

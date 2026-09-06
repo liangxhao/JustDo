@@ -6,9 +6,9 @@ const {
   beginRuntimePatchPhase,
   endRuntimePatchPhase,
   readRuntimeTextFile,
-} = require('./patches/v2026.8.2/_patch-utils.js');
+} = require('./patches/v2026.9.2/_patch-utils.js');
 
-const TARGET_VERSION = '2026.8.2';
+const TARGET_VERSION = '2026.9.2';
 
 function walkJavaScriptFiles(dir, output = []) {
   if (!fs.existsSync(dir)) return output;

@@ -1,6 +1,6 @@
 # OpenClaw Progress Card UI
 
-JustDo 使用 OpenClaw v2026.8.2 的会话级 `progress_card` 作为复杂任务进度的唯一真实来源。卡片不属于消息 transcript，Renderer 不从 Tool input、历史消息或兼容期 plan stream 重建当前状态。
+JustDo 使用 OpenClaw v2026.9.2 的会话级 `progress_card` 作为复杂任务进度的唯一真实来源。卡片不属于消息 transcript，Renderer 不从 Tool input、历史消息或兼容期 plan stream 重建当前状态。
 
 ## 状态流
 
@@ -39,4 +39,4 @@ sequenceDiagram
 
 ## 历史边界
 
-OpenClaw v2026.8.2 的 Gateway 只提供每个会话最新的进度卡，没有 revision 历史查询接口。因此标题栏可恢复的是当前会话最近一张卡片，不从 Tool input 或 transcript 重建更早的卡片。若未来需要完整历史，应由 OpenClaw 提供权威的 `progressCard.list` 或等价接口。
+OpenClaw v2026.9.2 的 Gateway 只提供每个会话最新的进度卡，没有 revision 历史查询接口。因此标题栏可恢复的是当前会话最近一张卡片，不从 Tool input 或 transcript 重建更早的卡片。若未来需要完整历史，应由 OpenClaw 提供权威的 `progressCard.list` 或等价接口。

@@ -22,12 +22,16 @@ function createFixture() {
   const sourceDir = path.join(repoRoot, 'openclaw-extensions', 'justdo-runtime-bridge');
   const outputDir = path.join(runtimeRoot, 'dist', 'extensions', 'justdo-runtime-bridge');
   fs.mkdirSync(runtimeRoot, { recursive: true });
+  fs.writeFileSync(
+    path.join(repoRoot, 'package.json'),
+    JSON.stringify({ openclaw: { version: 'v2026.9.2' } }),
+  );
   for (const relative of ['reference/templates', 'channels', 'gateway']) {
     fs.mkdirSync(path.join(repoRoot, 'resources', 'docs', relative), { recursive: true });
   }
   fs.writeFileSync(path.join(repoRoot, 'resources/docs/gateway/config-channels.md'), 'fixture');
   fs.writeFileSync(path.join(repoRoot, 'resources/openclaw-extension-prune.json'), JSON.stringify({
-    version: 1, keep: [], remove: [],
+    version: 1, openclawVersion: '2026.9.2', keep: [], remove: [],
   }));
   fs.cpSync(path.join(process.cwd(), 'openclaw-extensions/justdo-runtime-bridge'), sourceDir, { recursive: true });
   vi.spyOn(console, 'log').mockImplementation(() => undefined);

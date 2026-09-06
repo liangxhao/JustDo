@@ -1,4 +1,4 @@
-// Version-locked to OpenClaw v2026.8.2 routing/session-key normalizeAgentId.
+// Version-locked to OpenClaw v2026.9.2 routing/session-key normalizeAgentId.
 export const normalizeOpenClawAgentId = (value: string): string => {
   const trimmed = value.trim();
   if (!trimmed) return 'main';

@@ -105,7 +105,7 @@ describe('buildMemoryCliEnvironment', () => {
     });
   });
 
-  it('opts only a rebuild CLI into recomputing cached embeddings', async () => {
+  it('uses the normal proxied CLI environment for native forced rebuilds', async () => {
     const cli = {
       env: { EXISTING_VALUE: 'kept' },
       runtimeRoot: 'runtime',
@@ -116,12 +116,7 @@ describe('buildMemoryCliEnvironment', () => {
     const buildCliEnvironment = vi.fn().mockResolvedValue(cli);
     const manager = { buildCliEnvironment } as unknown as OpenClawEngineManager;
 
-    await expect(buildMemoryRebuildCliEnvironment(manager)).resolves.toMatchObject({
-      env: {
-        EXISTING_VALUE: 'kept',
-        JUSTDO_MEMORY_REINDEX_NO_CACHE: '1',
-      },
-    });
+    await expect(buildMemoryRebuildCliEnvironment(manager)).resolves.toBe(cli);
     expect(cli.env).toEqual({ EXISTING_VALUE: 'kept' });
     expect(buildCliEnvironment).toHaveBeenCalledWith({
       networkMode: OpenClawCliNetworkMode.OutboundProxy,

@@ -58,9 +58,9 @@ http://localhost:43127
 npm run electron:dev:openclaw
 ```
 
-已有 OpenClaw runtime 会作为冻结快照复用；即使配置的 OpenClaw 版本、patch
-或 runtime 构建脚本发生变化，也不会自动重新安装或 patch。需要重新下载、安装并
-应用 patch 时，请设置 `OPENCLAW_FORCE_INSTALL=1`：
+配置的 OpenClaw 版本变化时，会自动从锁定的 pristine 包重建 runtime。同版本下
+若 patch 或 runtime 构建脚本发生变化，冻结快照会 fail closed；需要重新下载、安装
+并应用 patch 时，请显式设置 `OPENCLAW_FORCE_INSTALL=1`：
 
 ```bash
 # macOS / Linux
@@ -147,7 +147,7 @@ OpenClaw 集成在 `package.json` 中声明：
 {
   "version": "v2026.8.27",
   "openclaw": {
-    "version": "v2026.8.2",
+    "version": "v2026.9.2",
     "repo": "https://github.com/openclaw/openclaw.git"
   },
   "devServer": {

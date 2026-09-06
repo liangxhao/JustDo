@@ -120,9 +120,9 @@ import {
   type SubagentStatus,
 } from './subagentGateway';
 import {
-  parseChatHistoryResultV2026_8_2,
-  parseTaskEventV2026_8_2,
-} from './wire/v2026_8_2';
+  parseChatHistoryResultV2026_9_2,
+  parseTaskEventV2026_9_2,
+} from './wire/v2026_9_2';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -1517,7 +1517,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   private handleTaskEvent(payload: unknown): void {
     try {
-      const event = parseTaskEventV2026_8_2(payload);
+      const event = parseTaskEventV2026_9_2(payload);
       if (event.action === 'upserted') {
         const sessionIds = new Set<string>();
         for (const sessionKey of [
@@ -1553,7 +1553,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }
       this.emit('taskChanged', {});
     } catch (error) {
-      coworkLog('WARN', 'OpenClawRuntime', 'Ignored malformed v2026.8.2 task event', {
+      coworkLog('WARN', 'OpenClawRuntime', 'Ignored malformed v2026.9.2 task event', {
         error: String(error),
       });
     }
@@ -3493,7 +3493,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             limit: FULL_HISTORY_SYNC_LIMIT,
             ...(offset !== undefined ? { offset } : {}),
           });
-          const page = parseChatHistoryResultV2026_8_2(raw);
+          const page = parseChatHistoryResultV2026_9_2(raw);
           // chat.history starts at the newest page; increasing offset walks
           // backward through the transcript. Prepend every older page so
           // whole-history consumers receive the canonical oldest-first order.

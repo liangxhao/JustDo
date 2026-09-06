@@ -1,6 +1,6 @@
 # Subagent Runtime 设置审计
 
-> 审计基线：JustDo `v2026.8.27`、OpenClaw `v2026.8.2`。本文按当前共享契约、Config Sync、原生 task ledger 与设置页重新核对。
+> 审计基线：JustDo `v2026.8.27`、OpenClaw `v2026.9.2`。本文按当前共享契约、Config Sync、原生 task ledger 与设置页重新核对。
 
 ## 1. 结论
 
@@ -59,7 +59,7 @@ JustDo 另外固定写入 `archiveAfterMinutes: 0` 以保留完成的 Subagent �
 
 主 Agent 的 thinking 非 null 时由 `buildManagedOpenClawAgentThinkingConfig` 写入 `agents.defaults.thinkingDefault`；null 时不写该字段，继续使用所选模型的默认思考强度。
 
-会话访问范围由 `buildManagedOpenClawConnectivityConfig` 写入 `tools.sessions.visibility`。JustDo 始终显式写入用户选择，默认 `tree`，不继承 v2026.8.2 扩大的 `agent` 默认。
+会话访问范围由 `buildManagedOpenClawConnectivityConfig` 写入 `tools.sessions.visibility`。JustDo 始终显式写入用户选择，默认 `tree`，不继承 v2026.9.2 的 `all` 隐式默认；跨 Agent 访问仍受 `tools.agentToAgent` 约束。
 
 `buildManagedOpenClawSubagentConfig` 写入：
 
@@ -85,15 +85,15 @@ null 表示跟随调用者。非 null 是 provider/model ref，设置页只允�
 
 ### 6.3 thinking
 
-主 Agent 的 null 表示使用模型默认值，固定 level 写入 `agents.defaults.thinkingDefault`。SubAgent 的 null 表示跟随 caller，固定 level 会传给 child 默认；completion reasoning 使用 v2026.8.2 原生 agent stream。某些 Provider 不流式发布 reasoning，设置成功不等于 UI 一定看到 thinking token。
+主 Agent 的 null 表示使用模型默认值，固定 level 写入 `agents.defaults.thinkingDefault`。SubAgent 的 null 表示跟随 caller，固定 level 会传给 child 默认；completion reasoning 使用 v2026.9.2 原生 agent stream。某些 Provider 不流式发布 reasoning，设置成功不等于 UI 一定看到 thinking token。
 
 ### 6.4 maxConcurrent
 
-限制全局原生 Subagent 同时 running 数，JustDo 默认 3。它不等于 accepted spawn 数；超过 running 容量的 accepted child 由 v2026.8.2 原生 task scheduler 排队。run timeout 从真正 running 才开始。
+限制全局原生 Subagent 同时 running 数，JustDo 默认 3。它不等于 accepted spawn 数；超过 running 容量的 accepted child 由 v2026.9.2 原生 task scheduler 排队。run timeout 从真正 running 才开始。
 
 ### 6.5 maxChildrenPerAgent
 
-限制一个 requester 的活动 child admission，默认 5。v2026.8.2 原生 admission 使用原子 reservation，避免并行 preflight 超卖。该值不是历史 child 数，也不应因为 completed child 保留在 UI 就拒绝新 spawn。
+限制一个 requester 的活动 child admission，默认 5。v2026.9.2 原生 admission 使用原子 reservation，避免并行 preflight 超卖。该值不是历史 child 数，也不应因为 completed child 保留在 UI 就拒绝新 spawn。
 
 ### 6.6 runTimeoutSeconds
 

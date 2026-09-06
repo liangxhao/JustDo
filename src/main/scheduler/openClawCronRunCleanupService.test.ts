@@ -138,7 +138,7 @@ afterEach(() => {
   }
 });
 
-test('deletes the OpenClaw session transcript and matching v2026.8.2 task-ledger row', async () => {
+test('deletes the OpenClaw session transcript and matching v2026.9.2 task-ledger row', async () => {
   const fixture = createFixture();
   const duplicateDb = new Database(fixture.databasePath);
   duplicateDb

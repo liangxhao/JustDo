@@ -16,6 +16,7 @@ const BUILD_RECIPE_FILES = [
   'electron-builder.config.cjs',
   'scripts/electron-builder-hooks.cjs',
   'scripts/install-openclaw-runtime.cjs',
+  'scripts/openclaw-facade-runtime-patch.cjs',
   'scripts/openclaw-runtime-dev-lease.cjs',
   'scripts/openclaw-runtime-freeze.cjs',
   'scripts/openclaw-runtime-companions.cjs',
@@ -116,6 +117,14 @@ function verifyFrozenOpenClawRuntime(runtimeRoot, options = {}) {
     normalizeOpenClawVersion(buildInfo.openclawVersion);
   } catch {
     problems.push('OpenClaw version is invalid');
+  }
+  if (
+    options.expectedVersion &&
+    buildInfo.openclawVersion !== normalizeOpenClawVersion(options.expectedVersion)
+  ) {
+    problems.push(
+      `OpenClaw version is ${String(buildInfo.openclawVersion)}, expected ${normalizeOpenClawVersion(options.expectedVersion)}`,
+    );
   }
   if (buildInfo.npmPackageVersion !== String(buildInfo.openclawVersion || '').replace(/^v/, '')) {
     problems.push('npm package version does not match the OpenClaw version');

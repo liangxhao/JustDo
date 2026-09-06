@@ -10,7 +10,7 @@
   "license": "MIT",
   "version": "v2026.8.27",
   "openclaw": {
-    "version": "v2026.8.2",
+    "version": "v2026.9.2",
     "repo": "https://github.com/openclaw/openclaw.git",
     "plugins": []
   },

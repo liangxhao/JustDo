@@ -165,7 +165,7 @@ describe('mapGatewayJob', () => {
     expect(job.management).toBe('editable');
   });
 
-  test('maps v2026.8.2 event schedules and command payloads as advanced read-only edits', () => {
+  test('maps v2026.9.2 event schedules and command payloads as advanced read-only edits', () => {
     const job = mapGatewayJob({
       id: 'watch-build',
       name: 'Watch build',
@@ -272,7 +272,7 @@ describe('mapGatewayTaskState', () => {
     expect(state.lastStatus).toBe(TaskStatus.Running);
   });
 
-  test('uses the native v2026.8.2 execution status without delivery heuristics', () => {
+  test('uses the native v2026.9.2 execution status without delivery heuristics', () => {
     const state = mapGatewayTaskState({
       lastRunStatus: GatewayStatus.Error,
       lastError: 'agent failed',

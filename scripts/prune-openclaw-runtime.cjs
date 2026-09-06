@@ -213,6 +213,17 @@ function loadExtensionPrunePolicy(repoRoot) {
   }
 
   const policy = readJson(policyPath);
+  const packagePath = path.join(repoRoot, 'package.json');
+  const expectedOpenClawVersion = String(readJson(packagePath)?.openclaw?.version || '').replace(
+    /^v/,
+    '',
+  );
+  if (!expectedOpenClawVersion || policy.openclawVersion !== expectedOpenClawVersion) {
+    throw new Error(
+      `Extension prune policy targets OpenClaw ${String(policy.openclawVersion)}, ` +
+        `expected ${expectedOpenClawVersion || 'a package.json openclaw.version'}: ${policyPath}`,
+    );
+  }
   if (!Array.isArray(policy.keep)) {
     throw new Error(`Invalid extension prune policy, "keep" must be an array: ${policyPath}`);
   }

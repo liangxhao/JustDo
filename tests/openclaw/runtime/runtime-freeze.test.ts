@@ -5,6 +5,8 @@ const { decideRuntimeBundle, decideRuntimeInstall } =
     decideRuntimeInstall: (state: {
       forceInstall: boolean;
       targetExists: boolean;
+      currentVersion?: string;
+      targetVersion?: string;
     }) => 'install' | 'verify-frozen';
     decideRuntimeBundle: (state: {
       forceInstall: boolean;
@@ -13,10 +15,26 @@ const { decideRuntimeBundle, decideRuntimeInstall } =
     }) => 'build' | 'build-initial' | 'verify-frozen' | 'reject';
   };
 
-test('installs only for a missing target or explicit force', () => {
+test('installs for a missing target, target-version change, or explicit force', () => {
   expect(decideRuntimeInstall({ forceInstall: false, targetExists: false })).toBe('install');
   expect(decideRuntimeInstall({ forceInstall: false, targetExists: true })).toBe('verify-frozen');
   expect(decideRuntimeInstall({ forceInstall: true, targetExists: true })).toBe('install');
+  expect(
+    decideRuntimeInstall({
+      forceInstall: false,
+      targetExists: true,
+      currentVersion: 'v2026.8.2',
+      targetVersion: 'v2026.9.2',
+    }),
+  ).toBe('install');
+  expect(
+    decideRuntimeInstall({
+      forceInstall: false,
+      targetExists: true,
+      currentVersion: 'v2026.9.2',
+      targetVersion: 'v2026.9.2',
+    }),
+  ).toBe('verify-frozen');
 });
 
 test('builds a bundle only for first installation or explicit force', () => {

@@ -21,7 +21,7 @@ const temporaryRoots: string[] = [];
 const EXPECTED_PATCH_FILES = [
   '001-managed-pip-config-environment.cjs',
   '002-windows-mcp-package-runner.cjs',
-  '003-chrome-mcp-launch-diagnostics.cjs',
+  '003-windows-chrome-mcp-launch.cjs',
   '005-final-system-prompt-replacements.cjs',
   '006-agent-request-metadata.cjs',
   '007-request-purpose-metadata.cjs',
@@ -57,7 +57,7 @@ function createPristineFixture(): string {
   fs.mkdirSync(path.join(root, 'dist'), { recursive: true });
   fs.writeFileSync(
     path.join(root, 'package.json'),
-    JSON.stringify({ name: 'openclaw', version: '2026.8.2' }),
+    JSON.stringify({ name: 'openclaw', version: '2026.9.2' }),
   );
   writeDistFile(
     root,
@@ -173,8 +173,8 @@ afterEach(() => {
 });
 
 describe('OpenClaw pristine artifact contracts', () => {
-  test('keeps exactly fourteen independently auditable v2026.8.2 patches', () => {
-    const patchDir = path.resolve('scripts', 'patches', 'v2026.8.2');
+  test('keeps exactly fourteen independently auditable v2026.9.2 patches', () => {
+    const patchDir = path.resolve('scripts', 'patches', 'v2026.9.2');
     const patchFiles = fs
       .readdirSync(patchDir)
       .filter(name => /^\d.*\.cjs$/.test(name))
@@ -197,7 +197,7 @@ describe('OpenClaw pristine artifact contracts', () => {
       patchFiles: [writePatch(root, false)],
     });
 
-    expect(result.version).toBe('2026.8.2');
+    expect(result.version).toBe('2026.9.2');
     expect(Object.keys(result.upstream)).toEqual(UPSTREAM_CONTRACTS);
     expect(result.retainedGaps).toEqual(['required.cjs']);
   });

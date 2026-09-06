@@ -8,9 +8,9 @@ import {
   type OpenClawPagedHistoryResult,
 } from '../../../shared/openclaw/historyIpc';
 import {
-  parseChatHistoryResultV2026_8_2,
-  parseHistoryDetailsResultV2026_8_2,
-} from '../../engine/openclaw/wire/v2026_8_2';
+  parseChatHistoryResultV2026_9_2,
+  parseHistoryDetailsResultV2026_9_2,
+} from '../../engine/openclaw/wire/v2026_9_2';
 
 export type OpenClawToolInputLookup = Record<string, { name?: string; input: unknown }>;
 
@@ -78,7 +78,7 @@ const requestHistoryDetails = async (
     compactionEntryIds?: string[];
   },
 ) =>
-  parseHistoryDetailsResultV2026_8_2(
+  parseHistoryDetailsResultV2026_9_2(
     await dependencies.requestGateway('justdoRuntimeBridge.historyDetails', params),
   );
 
@@ -150,7 +150,7 @@ export const registerOpenClawHistoryHandlers = (
         if (!sessionKey) return { success: false, error: 'Missing session key' };
         const limit = normalizeHistoryPageLimit(params?.limit);
         const offset = decodeHistoryOffsetCursor(params?.cursor);
-        const page = parseChatHistoryResultV2026_8_2(
+        const page = parseChatHistoryResultV2026_9_2(
           await dependencies.requestGateway('chat.history', {
             sessionKey,
             limit,

@@ -1,7 +1,14 @@
 'use strict';
 
-function decideRuntimeInstall({ forceInstall, targetExists }) {
+function decideRuntimeInstall({ forceInstall, targetExists, currentVersion, targetVersion }) {
   if (forceInstall || !targetExists) return 'install';
+  if (
+    typeof currentVersion === 'string' &&
+    typeof targetVersion === 'string' &&
+    currentVersion !== targetVersion
+  ) {
+    return 'install';
+  }
   return 'verify-frozen';
 }
 

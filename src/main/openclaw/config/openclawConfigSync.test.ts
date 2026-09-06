@@ -39,7 +39,7 @@ import {
   OPENCLAW_SUBAGENT_MAX_CONCURRENT,
   OpenClawConfigSync,
   removeUnavailableOpenClawPluginRegistrations,
-  sanitizeOpenClawV2026_8_2Config,
+  sanitizeOpenClawV2026_9_2Config,
 } from './openclawConfigSync';
 
 const providerApiKeyEnvVar = (providerName: string): string => {
@@ -208,11 +208,11 @@ describe('exec approval timeout environment', () => {
 });
 
 describe('OpenClaw managed config metadata', () => {
-  test('writes only metadata accepted by OpenClaw v2026.8.2', () => {
-    const meta = buildOpenClawConfigMeta('2026.8.2');
+  test('writes only metadata accepted by OpenClaw v2026.9.2', () => {
+    const meta = buildOpenClawConfigMeta('2026.9.2');
 
     expect(meta).toEqual({
-      lastTouchedVersion: '2026.8.2',
+      lastTouchedVersion: '2026.9.2',
     });
   });
 
@@ -220,13 +220,13 @@ describe('OpenClaw managed config metadata', () => {
     const currentContent = JSON.stringify({
       gateway: { mode: 'local' },
       meta: {
-        lastTouchedVersion: '2026.8.2',
+        lastTouchedVersion: '2026.9.2',
         lastTouchedAt: '2026-07-13T03:27:00.677Z',
       },
     });
     const nextConfig = {
       meta: {
-        lastTouchedVersion: '2026.8.2',
+        lastTouchedVersion: '2026.9.2',
       },
       gateway: { mode: 'local' },
     };
@@ -261,11 +261,11 @@ describe('OpenClaw managed config metadata', () => {
   });
 });
 
-describe('OpenClaw v2026.8.2 config sanitization', () => {
+describe('OpenClaw v2026.9.2 config sanitization', () => {
   test('removes retired fields and converts legacy managed surfaces', () => {
-    const config = sanitizeOpenClawV2026_8_2Config({
+    const config = sanitizeOpenClawV2026_9_2Config({
       meta: {
-        lastTouchedVersion: '2026.8.2',
+        lastTouchedVersion: '2026.9.2',
         lastTouchedAt: '2026-09-01T00:00:00.000Z',
       },
       diagnostics: {
@@ -303,7 +303,7 @@ describe('OpenClaw v2026.8.2 config sanitization', () => {
     });
 
     expect(config).toMatchObject({
-      meta: { lastTouchedVersion: '2026.8.2' },
+      meta: { lastTouchedVersion: '2026.9.2' },
       diagnostics: { otel: { enabled: false } },
       models: { mode: 'replace' },
       tools: { updatePlan: true },
@@ -322,7 +322,7 @@ describe('OpenClaw v2026.8.2 config sanitization', () => {
     expect(config.models).not.toHaveProperty('pricing');
     expect(config.tools).not.toHaveProperty('experimental');
     expect(config.agents).not.toHaveProperty('list');
-    expect(sanitizeOpenClawV2026_8_2Config(config)).toEqual(config);
+    expect(sanitizeOpenClawV2026_9_2Config(config)).toEqual(config);
   });
 });
 

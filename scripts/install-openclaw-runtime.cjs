@@ -17,6 +17,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { patchOpenClawRuntime } = require('./patch-openclaw-runtime.cjs');
+const { patchFacadeRuntime } = require('./openclaw-facade-runtime-patch.cjs');
 const { decideRuntimeInstall } = require('./openclaw-runtime-freeze.cjs');
 const {
   assertNoActiveRuntimeDevLease,
@@ -127,13 +128,30 @@ console.log(`[install-openclaw-runtime] Package: ${npmSpec}`);
 // 2. Build cache check
 // ---------------------------------------------------------------------------
 
+const existingBuildInfo = fs.existsSync(outDir)
+  ? readJsonFile(path.join(outDir, 'runtime-build-info.json'))
+  : null;
 const installDecision = decideRuntimeInstall({
   forceInstall: process.env.OPENCLAW_FORCE_INSTALL === '1',
   targetExists: fs.existsSync(outDir),
+  currentVersion: existingBuildInfo?.openclawVersion,
+  targetVersion: openclawVersion,
 });
+if (
+  installDecision === 'install' &&
+  existingBuildInfo?.openclawVersion &&
+  existingBuildInfo.openclawVersion !== openclawVersion
+) {
+  console.log(
+    `[install-openclaw-runtime] Rebuilding frozen ${existingBuildInfo.openclawVersion} runtime for ${openclawVersion}.`,
+  );
+}
 if (installDecision === 'verify-frozen') {
   try {
-    verifyFrozenOpenClawRuntime(outDir, { expectedTarget: targetId });
+    verifyFrozenOpenClawRuntime(outDir, {
+      expectedTarget: targetId,
+      expectedVersion: openclawVersion,
+    });
   } catch (error) {
     fail(
       `Existing runtime is incomplete or damaged; refusing to rebuild without ` +
@@ -337,179 +355,6 @@ fs.mkdirSync(extractDir, { recursive: true });
 });
 
 // ===========================================================================
-// Facade-runtime JS patch
-// ===========================================================================
-
-function patchFacadeRuntime(runtimeDir) {
-  const distDir = path.join(runtimeDir, 'dist');
-  if (!fs.existsSync(distDir)) {
-    fail('dist/ directory not found in runtime.');
-  }
-
-  const facadeFiles = fs.readdirSync(distDir).filter(f => /^facade-runtime-.*\.js$/.test(f));
-  if (facadeFiles.length !== 1) {
-    throw new Error(
-      `facade-runtime target count is ${facadeFiles.length}, expected 1: ${facadeFiles.join(', ')}`,
-    );
-  }
-
-  const facadePath = path.join(distDir, facadeFiles[0]);
-  let content = fs.readFileSync(facadePath, 'utf8');
-
-  const staticImport =
-    'import * as _facadeActivationCheckStatic from "./facade-activation-check.runtime.js";';
-  const isFullyPatched =
-    content.includes(staticImport) &&
-    /function loadFacadeActivationCheckRuntime\(\)\s*\{\s*return _facadeActivationCheckStatic;\s*\}/.test(
-      content,
-    ) &&
-    /async function loadFacadeActivationCheckRuntimeAsync\(\)\s*\{\s*return _facadeActivationCheckStatic;\s*\}/.test(
-      content,
-    ) &&
-    !content.includes('createRequire(import.meta.url)') &&
-    !content.includes('FACADE_ACTIVATION_CHECK_RUNTIME_CANDIDATES') &&
-    !content.includes('getFacadeActivationCheckRuntimeModule') &&
-    !content.includes('getCachedPluginSourceModuleLoader');
-  if (isFullyPatched) {
-    console.log('[install-openclaw-runtime] facade-runtime static loader already verified.');
-    return;
-  }
-
-  // Only a pristine target is eligible. A partial or unknown facade must fail closed.
-  if (!content.includes('createRequire(import.meta.url)')) {
-    throw new Error(
-      'facade-runtime is neither pristine nor completely patched; rebuild from the locked npm tarball.',
-    );
-  }
-  if (!content.includes('FACADE_ACTIVATION_CHECK_RUNTIME_CANDIDATES')) {
-    throw new Error(
-      'facade-runtime pristine candidate loader anchor is missing; npm package structure changed.',
-    );
-  }
-
-  const replaceRequired = (pattern, replacement, description) => {
-    const flags = pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`;
-    const count = [...content.matchAll(new RegExp(pattern.source, flags))].length;
-    if (count !== 1) throw new Error(`${description} count is ${count}, expected 1`);
-    content = content.replace(pattern, replacement);
-  };
-
-  // 1. Remove imports that only support the runtime source-loader fallback.
-  replaceRequired(
-    /import\s*\{\s*createRequire\s*\}\s*from\s*"node:module";\s*\n?/,
-    '',
-    'facade createRequire import',
-  );
-  replaceRequired(
-    /import\s*\{\s*[A-Za-z_$][\w$]*\s+as\s+getCachedPluginSourceModuleLoader\s*\}\s*from\s*"[^"]*plugin-module-loader-cache[^"]*";\s*\n?/g,
-    '',
-    'facade plugin source loader import',
-  );
-  replaceRequired(
-    /import\s*\{\s*([A-Za-z_$][\w$]*\s+as\s+getPluginCacheRoot),\s*[A-Za-z_$][\w$]*\s+as\s+getPluginCacheSource\s*\}\s*from\s*("[^"]*plugin-cache[^"]*");/,
-    'import { $1 } from $2;',
-    'facade plugin cache import',
-  );
-
-  // 2. Add static import after the last existing import statement.
-  const lastImportIdx = findLastImportEnd(content);
-  if (lastImportIdx === 0) throw new Error('facade-runtime import boundary was not found');
-  content = content.slice(0, lastImportIdx) + `\n${staticImport}` + content.slice(lastImportIdx);
-
-  // 3. Remove dead code: variable declarations and helper functions.
-  // Remove: const nodeRequire = createRequire(import.meta.url);
-  replaceRequired(
-    /const\s+nodeRequire\s*=\s*createRequire\(import\.meta\.url\);\s*\n?/g,
-    '',
-    'facade nodeRequire declaration',
-  );
-
-  // Remove: const FACADE_ACTIVATION_CHECK_RUNTIME_CANDIDATES = [...];
-  replaceRequired(
-    /const\s+FACADE_ACTIVATION_CHECK_RUNTIME_CANDIDATES\s*=\s*\[[\s\S]*?\];\s*\n?/g,
-    '',
-    'facade runtime candidates',
-  );
-
-  // Remove the v2026.8.2 plugin-cache accessors used only by the dynamic loader.
-  replaceRequired(
-    /function\s+getFacadeActivationCheckRuntimeModule\(\)\s*\{[\s\S]*?\n\}\n/,
-    '',
-    'facade dynamic module getter',
-  );
-  replaceRequired(
-    /function\s+setFacadeActivationCheckRuntimeModule\([^)]*\)\s*\{[\s\S]*?\n\}\n/,
-    '',
-    'facade dynamic module setter',
-  );
-
-  // Remove: getFacadeActivationCheckRuntimeSourceLoader function
-  replaceRequired(
-    /function\s+getFacadeActivationCheckRuntimeSourceLoader\([\s\S]*?\n\}\n/g,
-    '',
-    'facade source loader helper',
-  );
-
-  // Remove: loadFacadeActivationCheckRuntimeFromCandidates function
-  replaceRequired(
-    /function\s+loadFacadeActivationCheckRuntimeFromCandidates\([\s\S]*?\n\}\n/g,
-    '',
-    'facade candidate loader helper',
-  );
-
-  // 4. Replace loadFacadeActivationCheckRuntime function body.
-  replaceRequired(
-    /function\s+loadFacadeActivationCheckRuntime\(\)\s*\{[\s\S]*?\n\}/,
-    'function loadFacadeActivationCheckRuntime() {\n\treturn _facadeActivationCheckStatic;\n}',
-    'facade synchronous loader',
-  );
-  replaceRequired(
-    /async function\s+loadFacadeActivationCheckRuntimeAsync\(\)\s*\{[\s\S]*?\n\}/,
-    'async function loadFacadeActivationCheckRuntimeAsync() {\n\treturn _facadeActivationCheckStatic;\n}',
-    'facade asynchronous loader',
-  );
-
-  // 5. Make setFacadeActivationCheckRuntimeForTest a no-op (if present).
-  content = content.replace(
-    /function\s+setFacadeActivationCheckRuntimeForTest\([\s\S]*?\n\}/,
-    'function setFacadeActivationCheckRuntimeForTest(_module) {\n\t// no-op: static import cannot be replaced at test time\n}',
-  );
-
-  // 6. Fix resetFacadeRuntimeStateForTest: keep only resetFacadeLoaderStateForTest().
-  content = content.replace(
-    /function\s+resetFacadeRuntimeStateForTest\(\)\s*\{[\s\S]*?\n\}/,
-    'function resetFacadeRuntimeStateForTest() {\n\tresetFacadeLoaderStateForTest();\n}',
-  );
-
-  // Clean up any double blank lines left by removals.
-  content = content.replace(/\n{3,}/g, '\n\n');
-
-  if (
-    !content.includes(staticImport) ||
-    content.includes('createRequire(import.meta.url)') ||
-    content.includes('FACADE_ACTIVATION_CHECK_RUNTIME_CANDIDATES') ||
-    content.includes('getFacadeActivationCheckRuntimeModule') ||
-    content.includes('getCachedPluginSourceModuleLoader')
-  ) {
-    throw new Error('facade-runtime static-loader verification failed before commit');
-  }
-
-  fs.writeFileSync(facadePath, content, 'utf8');
-  console.log(`[install-openclaw-runtime] Patched: ${path.relative(runtimeDir, facadePath)}`);
-}
-
-function findLastImportEnd(content) {
-  // Find the end of the last import statement (line ending with ;\n).
-  const importRegex = /^import\s+[\s\S]*?;\s*$/gm;
-  let lastIdx = 0;
-  let match;
-  while ((match = importRegex.exec(content)) !== null) {
-    lastIdx = match.index + match[0].length;
-  }
-  return lastIdx;
-}
-
-// ===========================================================================
 // Skills processing
 // ===========================================================================
 
@@ -571,7 +416,7 @@ function processSkills(electronRoot, runtimeRoot) {
 // ===========================================================================
 
 function installProdDeps(runtimeDir, npmPlatform, npmArch, isolatedStateDir) {
-  // Remove existing node_modules and both npm lockfile forms. The v2026.8.2
+  // Remove existing node_modules and both npm lockfile forms. The v2026.9.2
   // package no longer ships npm-shrinkwrap.json, so the runtime build owns the
   // production dependency snapshot it later verifies and packages.
   const nmDir = path.join(runtimeDir, 'node_modules');

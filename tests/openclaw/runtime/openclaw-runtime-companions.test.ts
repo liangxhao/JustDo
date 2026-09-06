@@ -14,7 +14,7 @@ const {
 };
 
 describe('OpenClaw runtime companions', () => {
-  it('anchors the shared v2026.8.2 process entrypoints module to its dist location', () => {
+  it('anchors the shared v2026.9.2 process entrypoints module to its dist location', () => {
     const source = `
       const currentModuleUrl = import.meta.url;
       const runtimeProcessEntrypoints = {
@@ -79,7 +79,7 @@ describe('OpenClaw runtime companions', () => {
     );
   });
 
-  it('requires every companion referenced by the v2026.8.2 bundle', () => {
+  it('requires every companion referenced by the v2026.9.2 bundle', () => {
     const bundle = `
       distWorkerPath: 'infra/sqlite-readonly-location.worker.js';
       distWorkerPath: 'agents/model-provider-auth.worker.js';

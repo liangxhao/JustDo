@@ -83,7 +83,7 @@ export const registerOpenClawModelHandlers = ({ getRuntime }: Dependencies): voi
         const result = await runtime.requestGateway<{ models?: unknown }>('models.list', {
           ...(agentId ? { agentId } : {}),
           // This view reflects only models authored in JustDo's provider config while
-          // retaining the v2026.8.2 runtime availability and input-capability projection.
+          // retaining the v2026.9.2 runtime availability and input-capability projection.
           view: 'provider-config',
         });
         return { success: true, models: normalizeOpenClawModelChoices(result?.models) };

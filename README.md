@@ -61,10 +61,10 @@ To prepare and run with the OpenClaw host runtime:
 npm run electron:dev:openclaw
 ```
 
-An existing OpenClaw runtime is kept as a frozen snapshot, even when the
-configured OpenClaw version, patches, or runtime build scripts change. Set
-`OPENCLAW_FORCE_INSTALL=1` when you need to download, reinstall, and patch it
-even if the matching version is already present:
+An existing OpenClaw runtime is rebuilt automatically when the configured
+OpenClaw version changes. For the same version, patch or runtime-build-script
+changes fail closed against the frozen snapshot; set `OPENCLAW_FORCE_INSTALL=1`
+to download, reinstall, and patch it explicitly:
 
 ```bash
 # macOS / Linux
@@ -160,7 +160,7 @@ OpenClaw integration is declared in `package.json`:
 {
   "version": "v2026.8.27",
   "openclaw": {
-    "version": "v2026.8.2",
+    "version": "v2026.9.2",
     "repo": "https://github.com/openclaw/openclaw.git"
   },
   "devServer": {

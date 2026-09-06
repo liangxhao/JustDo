@@ -153,9 +153,9 @@ flowchart LR
 
 pending promise、同一 session 只允许一个待答请求、timeout/default、run abort 和最终答案校验都由 extension 自己负责；Gateway service 停止时会取消全部等待。它通过 `gatewayEvents.emit` 发布 `plugin.ask-user-question.requested/resolved`，并提供 `askUserQuestion.list/resolve` 两个有 scope 的 Gateway RPC。Main 只负责严格解析、session 投影、Renderer IPC 和提交前的本地校验，不保存第二份权威状态。adapter 在连接恢复后用 `list` 找回同一 Gateway 进程中的等待项，Renderer reload 再通过 interaction replay 获取投影。
 
-文件范围与 exec reviewer 使用 OpenClaw v2026.8.2 原生 session permission mode。`automation-permission` 只补足原生 session mode 尚未覆盖的模型可见 scheduled-task mutation，并在每次调用时读取原生会话值，不维护第二份权限状态。第三方插件若使用 `plugin.approval.*`，仍作为独立风险域展示和解决，不能复用 exec grant。
+文件范围与 exec reviewer 使用 OpenClaw v2026.9.2 原生 session permission mode。`automation-permission` 只补足原生 session mode 尚未覆盖的模型可见 scheduled-task mutation，并在每次调用时读取原生会话值，不维护第二份权限状态。第三方插件若使用 `plugin.approval.*`，仍作为独立风险域展示和解决，不能复用 exec grant。
 
-`justdo-runtime-bridge` 是随产品安装并受保护的内置 OpenClaw extension。manifest 显式声明 `activation.onStartup: true` 和 hook capability，确保未配置 embedding 或关闭 memory search 时，历史 RPC 与进度 hooks 仍进入 Gateway 的活动插件注册表。仅有 `plugins.entries.<id>.enabled: true` 或能力探测期间的初始化日志不能证明启动激活。它只使用 v2026.8.2 支持的 plugin API，承担三项不应继续做 runtime patch 的集成：
+`justdo-runtime-bridge` 是随产品安装并受保护的内置 OpenClaw extension。manifest 显式声明 `activation.onStartup: true` 和 hook capability，确保未配置 embedding 或关闭 memory search 时，历史 RPC 与进度 hooks 仍进入 Gateway 的活动插件注册表。仅有 `plugins.entries.<id>.enabled: true` 或能力探测期间的初始化日志不能证明启动激活。它只使用 v2026.9.2 支持的 plugin API，承担三项不应继续做 runtime patch 的集成：
 
 - 从 agent hooks 发布 `preparing`、`waiting_model` 有界进度事件。`model_call_started` 也会出现在成功的工具轮次之后，不是重试信号；插件不再根据同一 run 的调用次数推断 `retrying`；
 - 注册 `justdo-runtime-bridge` remote embedding provider，保留 SSRF policy 与 eligible env proxy。批量响应有 `index` 时按请求顺序恢复向量，并拒绝重复、越界或混用有索引/无索引的响应；完全无索引的响应按位置处理；
