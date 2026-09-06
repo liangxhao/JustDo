@@ -19,6 +19,7 @@ vi.mock('../../cowork/coworkLogger', () => ({
   coworkLog: vi.fn(),
 }));
 
+import { createDefaultAgentRuntimeSettings } from '../../../shared/openclaw/agentRuntimeSettings';
 import {
   ApprovalDecision,
   ApprovalKind,
@@ -65,6 +66,7 @@ function createEmptyStore() {
   return {
     session,
     store: {
+      getAgentRuntimeSettings: () => createDefaultAgentRuntimeSettings(),
       getSession: (sessionId: string) => (sessionId === session.id ? session : null),
       getAgent: () => null,
       updateSession: () => {},
@@ -600,6 +602,25 @@ test('keeps a managed parent turn alive when watchdog subagent inspection fails'
 
   expect(startTurnTimeoutWatchdog).toHaveBeenCalledWith(turn.sessionId);
   expect(internals.activeTurns.get(turn.sessionId)).toBe(turn);
+});
+
+test('does not schedule a local watchdog when the Agent run limit is unlimited', () => {
+  const { store } = createEmptyStore();
+  const runtimeSettings = createDefaultAgentRuntimeSettings();
+  runtimeSettings.agent.runTimeoutSeconds = 0;
+  store.getAgentRuntimeSettings = () => runtimeSettings;
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+  const turn = createSessionTurn();
+  const internals = adapter as unknown as {
+    activeTurns: Map<string, SessionTurn>;
+    startTurnTimeoutWatchdog: (sessionId: string) => void;
+  };
+  internals.activeTurns.set(turn.sessionId, turn);
+
+  internals.startTurnTimeoutWatchdog(turn.sessionId);
+
+  expect(setTimeoutSpy).not.toHaveBeenCalled();
 });
 
 test('publishes completion when a non-managed turn reaches its local watchdog', async () => {
@@ -3797,6 +3818,7 @@ test('chat delta without run id is ignored while a turn is active', () => {
     updatedAt: 1,
   };
   const store = {
+    getAgentRuntimeSettings: () => createDefaultAgentRuntimeSettings(),
     getSession: (sessionId: string) => (sessionId === session.id ? session : null),
     getAgent: () => null,
     updateSession: (_sessionId: string, updates: Record<string, unknown>) => {
@@ -4219,6 +4241,7 @@ test('patchSessionModel applies immediately to subsequent calls while session is
     agentId: 'main',
   };
   const store = {
+    getAgentRuntimeSettings: () => createDefaultAgentRuntimeSettings(),
     getSession: (sessionId: string) => (sessionId === session.id ? session : null),
     getAgent: () => null,
     updateSession: (_sessionId: string, updates: Record<string, unknown>) => {

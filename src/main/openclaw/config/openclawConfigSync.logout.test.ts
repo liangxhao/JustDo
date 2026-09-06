@@ -57,6 +57,11 @@ const writeExistingBuiltinConfig = (): string => {
           model: { primary: 'builtin_models/chat-model' },
           modelSelectionScope: 'global',
           timeoutSeconds: 120,
+          subagents: {
+            allowAgents: ['worker'],
+            announceTimeoutMs: 90_000,
+            requireAgentId: true,
+          },
           compaction: {
             mode: 'safeguard',
             keepRecentTokens: 20_000,
@@ -206,6 +211,37 @@ describe('OpenClaw auth logout config sync', () => {
     });
     expect(config.agents.defaults.compaction).not.toHaveProperty('keepRecentTokens');
     expect(config.agents.defaults.modelSelectionScope).toBe('session');
+  });
+
+  test('projects Agent and SubAgent runtime controls before model setup', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-runtime-config-'));
+    temporaryDirectories.push(directory);
+    const configPath = path.join(directory, 'openclaw.json');
+    const runtimeSettings = createDefaultAgentRuntimeSettings();
+    runtimeSettings.agent.runTimeoutSeconds = 5400;
+    runtimeSettings.agent.maxConcurrent = 6;
+    runtimeSettings.subagents.archiveAfterMinutes = 1440;
+    runtimeSettings.subagents.maxSpawnDepth = 5;
+
+    expect(
+      writeMinimalConfig(
+        configPath,
+        BuiltinModelSyncReason.ManualRefresh,
+        'ask',
+        BrowserMode.Isolated,
+        [],
+        runtimeSettings,
+      ),
+    ).toMatchObject({ ok: true });
+
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.agents.defaults.timeoutSeconds).toBe(5400);
+    expect(config.agents.defaults.maxConcurrent).toBe(6);
+    expect(config.agents.defaults.subagents).toMatchObject({
+      archiveAfterMinutes: 1440,
+      maxSpawnDepth: 5,
+    });
+    expect(config.agents.defaults.subagents).not.toHaveProperty('delegationMode');
   });
 
   test('writes the configured MCP request timeout before model setup', () => {
@@ -647,7 +683,15 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.agents.defaults.model).toBeUndefined();
     expect(config.agents.defaults).not.toHaveProperty('memorySearch');
     expect(config.memory.search).toEqual({ enabled: false });
-    expect(config.agents.defaults.timeoutSeconds).toBe(120);
+    expect(config.agents.defaults.timeoutSeconds).toBe(
+      createDefaultAgentRuntimeSettings().agent.runTimeoutSeconds,
+    );
+    expect(config.agents.defaults.maxConcurrent).toBeUndefined();
+    expect(config.agents.defaults.subagents).toMatchObject({
+      allowAgents: ['worker'],
+      announceTimeoutMs: 90_000,
+      requireAgentId: true,
+    });
     expect(config.agents.defaults.systemAgent).toEqual({ agentId: 'main' });
     expect(config.agents.defaults.compaction).not.toHaveProperty('keepRecentTokens');
     expect(config.agents.ownership).toBe('explicit');
@@ -696,6 +740,11 @@ describe('OpenClaw auth logout config sync', () => {
       'keepRecentTokens',
     );
     expect(JSON.parse(content).agents.defaults.modelSelectionScope).toBe('session');
+    expect(JSON.parse(content).agents.defaults.subagents).toMatchObject({
+      allowAgents: ['worker'],
+      announceTimeoutMs: 90_000,
+      requireAgentId: true,
+    });
   });
 
   test('minimal logout removes only built-in model config and preserves custom selections', () => {
@@ -713,7 +762,9 @@ describe('OpenClaw auth logout config sync', () => {
     });
     expect(config.models).not.toHaveProperty('pricing');
     expect(config.agents.defaults.model.primary).toBe('custom-provider/custom-model');
-    expect(config.agents.defaults.timeoutSeconds).toBe(120);
+    expect(config.agents.defaults.timeoutSeconds).toBe(
+      createDefaultAgentRuntimeSettings().agent.runTimeoutSeconds,
+    );
     expect(config.agents.entries.main.model.primary).toBe('custom-provider/custom-model');
     expect(config.agents.entries.worker.model.primary).toBe('custom-provider/custom-model');
     expect(config.gateway).toEqual({ mode: 'local', customSetting: 'keep-me' });

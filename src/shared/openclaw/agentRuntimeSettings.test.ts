@@ -14,6 +14,8 @@ describe('Agent runtime settings', () => {
       version: 1,
       agent: {
         thinking: null,
+        runTimeoutSeconds: 0,
+        maxConcurrent: null,
       },
       askUserQuestion: {
         timeoutMinutes: 10,
@@ -28,13 +30,14 @@ describe('Agent runtime settings', () => {
         visibility: 'tree',
       },
       subagents: {
-        delegationMode: 'suggest',
+        delegationMode: null,
         model: null,
         thinking: null,
         maxConcurrent: 3,
         maxChildrenPerAgent: 5,
         runTimeoutSeconds: 7200,
         maxSpawnDepth: 1,
+        archiveAfterMinutes: 0,
       },
     });
   });
@@ -49,7 +52,8 @@ describe('Agent runtime settings', () => {
       maxConcurrent: 16,
       maxChildrenPerAgent: 20,
       runTimeoutSeconds: 0,
-      maxSpawnDepth: 2,
+      maxSpawnDepth: 5,
+      archiveAfterMinutes: 10_080,
     };
 
     expect(validateAgentRuntimeSettings(input)).toEqual({
@@ -64,7 +68,7 @@ describe('Agent runtime settings', () => {
   test.each([
     ['concurrency', { maxConcurrent: 0 }],
     ['children', { maxChildrenPerAgent: 21 }],
-    ['nesting', { maxSpawnDepth: 3 }],
+    ['nesting', { maxSpawnDepth: 6 }],
     ['timeout', { runTimeoutSeconds: 59 }],
     ['thinking', { thinking: 'unbounded' }],
   ])('rejects invalid %s values', (_name, update) => {
@@ -81,8 +85,23 @@ describe('Agent runtime settings', () => {
 
     expect(parseAgentRuntimeSettings(legacyInput)).toEqual({
       ...input,
-      agent: { thinking: null },
+      agent: { thinking: null, runTimeoutSeconds: 0, maxConcurrent: null },
     });
+  });
+
+  test('migrates version 1 settings saved before the latest runtime controls', () => {
+    const input = createDefaultAgentRuntimeSettings();
+    const legacyInput = {
+      ...input,
+      agent: { thinking: input.agent.thinking },
+      subagents: {
+        ...input.subagents,
+        delegationMode: undefined,
+        archiveAfterMinutes: undefined,
+      },
+    };
+
+    expect(parseAgentRuntimeSettings(legacyInput)).toEqual(input);
   });
 
   test('migrates version 1 settings saved before MCP preferences', () => {
@@ -176,6 +195,25 @@ describe('Agent runtime settings', () => {
     const invalid = createDefaultAgentRuntimeSettings();
     invalid.agent.thinking = 'unbounded' as never;
     expect(validateAgentRuntimeSettings(invalid).ok).toBe(false);
+  });
+
+  test.each([
+    ['timeout', { runTimeoutSeconds: 59 }],
+    ['timeout ceiling', { runTimeoutSeconds: 86_401 }],
+    ['concurrency', { maxConcurrent: 0 }],
+    ['concurrency ceiling', { maxConcurrent: 17 }],
+  ])('rejects invalid main Agent %s', (_name, update) => {
+    const input = createDefaultAgentRuntimeSettings();
+    Object.assign(input.agent, update);
+
+    expect(validateAgentRuntimeSettings(input).ok).toBe(false);
+  });
+
+  test.each([-1, 525_601, 1.5])('rejects invalid archive delay %s', archiveAfterMinutes => {
+    const input = createDefaultAgentRuntimeSettings();
+    input.subagents.archiveAfterMinutes = archiveAfterMinutes;
+
+    expect(validateAgentRuntimeSettings(input).ok).toBe(false);
   });
 
   test.each([0, 86_401, 1.5])('rejects invalid MCP request timeout %s', timeoutSeconds => {

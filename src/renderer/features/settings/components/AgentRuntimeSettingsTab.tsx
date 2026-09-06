@@ -208,14 +208,50 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
     { value: '', label: i18nService.t('agentRuntimeInheritParentThinking') },
     ...thinkingLevelOptions,
   ];
+  const agentConcurrencyOptions = [
+    { value: '', label: i18nService.t('agentRuntimeSystemDefault') },
+    ...Array.from(
+      {
+        length:
+          AGENT_RUNTIME_LIMITS.agentMaxConcurrent.max -
+          AGENT_RUNTIME_LIMITS.agentMaxConcurrent.min +
+          1,
+      },
+      (_, index) => {
+        const value = AGENT_RUNTIME_LIMITS.agentMaxConcurrent.min + index;
+        return { value: String(value), label: String(value) };
+      },
+    ),
+  ];
   const timeoutOptions = [
+    { value: '0', label: i18nService.t('agentRuntimeTimeoutUnlimited') },
     { value: '900', label: i18nService.t('agentRuntimeTimeout15m') },
     { value: '1800', label: i18nService.t('agentRuntimeTimeout30m') },
     { value: '3600', label: i18nService.t('agentRuntimeTimeout1h') },
     { value: '7200', label: i18nService.t('agentRuntimeTimeout2h') },
-    { value: '0', label: i18nService.t('agentRuntimeTimeoutUnlimited') },
     { value: 'custom', label: i18nService.t('agentRuntimeTimeoutCustom') },
   ];
+  const archiveOptions = [
+    { value: '60', label: i18nService.t('agentRuntimeArchive1h') },
+    { value: '1440', label: i18nService.t('agentRuntimeArchive1d') },
+    { value: '10080', label: i18nService.t('agentRuntimeArchive7d') },
+    { value: '0', label: i18nService.t('agentRuntimeArchiveNever') },
+  ];
+  const nestingOptions = Array.from(
+    {
+      length: AGENT_RUNTIME_LIMITS.maxSpawnDepth.max - AGENT_RUNTIME_LIMITS.maxSpawnDepth.min + 1,
+    },
+    (_, index) => {
+      const depth = AGENT_RUNTIME_LIMITS.maxSpawnDepth.min + index;
+      return {
+        value: String(depth),
+        label:
+          depth === 1
+            ? i18nService.t('agentRuntimeNestingOff')
+            : i18nService.t('agentRuntimeNestingDepth').replace('{depth}', String(depth)),
+      };
+    },
+  );
   const approvalTimeoutOptions = APPROVAL_WAIT_TIMEOUT_MINUTES.map(timeoutMinutes => ({
     value: String(timeoutMinutes),
     label:
@@ -261,6 +297,10 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
     .filter(option => option.value !== 'custom')
     .some(option => Number(option.value) === subagents.runTimeoutSeconds);
   const customTimeoutMinutes = Math.max(1, Math.round(subagents.runTimeoutSeconds / 60));
+  const usesCustomAgentTimeout = !timeoutOptions
+    .filter(option => option.value !== 'custom')
+    .some(option => Number(option.value) === settings.agent.runTimeoutSeconds);
+  const customAgentTimeoutMinutes = Math.max(1, Math.round(settings.agent.runTimeoutSeconds / 60));
 
   if (isLoading) {
     return (
@@ -379,6 +419,66 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
               })
             }
             options={agentThinkingOptions}
+            ariaLabel={i18nService.t('agentRuntimeDefaultThinking')}
+            className="py-2 text-xs"
+          />
+        </SettingRow>
+        <SettingRow
+          label={i18nService.t('agentRuntimeAgentTimeoutTitle')}
+          description={i18nService.t('agentRuntimeAgentTimeoutDescription')}
+        >
+          <div className="flex items-center gap-2">
+            <div className="min-w-0 flex-1">
+              <ThemedSelect
+                id="agent-runtime-agent-timeout"
+                value={usesCustomAgentTimeout ? 'custom' : String(settings.agent.runTimeoutSeconds)}
+                onChange={value =>
+                  updateAgent({ runTimeoutSeconds: value === 'custom' ? 90 * 60 : Number(value) })
+                }
+                options={timeoutOptions}
+                ariaLabel={i18nService.t('agentRuntimeAgentTimeoutTitle')}
+                className="py-2 text-xs"
+              />
+            </div>
+            {usesCustomAgentTimeout && (
+              <label className="flex h-9 shrink-0 items-center overflow-hidden rounded-lg border border-border bg-surface-inset">
+                <input
+                  type="number"
+                  min={AGENT_RUNTIME_LIMITS.agentRunTimeoutSeconds.min / 60}
+                  max={AGENT_RUNTIME_LIMITS.agentRunTimeoutSeconds.max / 60}
+                  value={customAgentTimeoutMinutes}
+                  onChange={event => {
+                    const minutes = Math.min(
+                      AGENT_RUNTIME_LIMITS.agentRunTimeoutSeconds.max / 60,
+                      Math.max(
+                        AGENT_RUNTIME_LIMITS.agentRunTimeoutSeconds.min / 60,
+                        Number(event.target.value) || 1,
+                      ),
+                    );
+                    updateAgent({ runTimeoutSeconds: Math.round(minutes * 60) });
+                  }}
+                  className="h-full w-16 bg-transparent px-2 text-right text-xs tabular-nums text-foreground outline-none"
+                  aria-label={i18nService.t('agentRuntimeTimeoutCustomMinutes')}
+                />
+                <span className="border-l border-border px-2 text-[11px] text-secondary">
+                  {i18nService.t('agentRuntimeMinutes')}
+                </span>
+              </label>
+            )}
+          </div>
+        </SettingRow>
+        <SettingRow
+          label={i18nService.t('agentRuntimeAgentMaxConcurrent')}
+          description={i18nService.t('agentRuntimeAgentMaxConcurrentDescription')}
+        >
+          <ThemedSelect
+            id="agent-runtime-agent-max-concurrent"
+            value={
+              settings.agent.maxConcurrent === null ? '' : String(settings.agent.maxConcurrent)
+            }
+            onChange={value => updateAgent({ maxConcurrent: value ? Number(value) : null })}
+            options={agentConcurrencyOptions}
+            ariaLabel={i18nService.t('agentRuntimeAgentMaxConcurrent')}
             className="py-2 text-xs"
           />
         </SettingRow>
@@ -386,14 +486,20 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
           label={i18nService.t('agentRuntimeDelegationTitle')}
           description={i18nService.t('agentRuntimeDelegationDescription')}
         >
-          <div className="grid grid-cols-2 rounded-lg bg-surface-raised p-1">
+          <div
+            className="grid grid-cols-3 rounded-lg bg-surface-raised p-1"
+            role="group"
+            aria-label={i18nService.t('agentRuntimeDelegationTitle')}
+          >
             {[
+              [null, i18nService.t('agentRuntimeDelegationDefault')],
               [AgentRuntimeDelegationMode.Suggest, i18nService.t('agentRuntimeDelegationSuggest')],
               [AgentRuntimeDelegationMode.Prefer, i18nService.t('agentRuntimeDelegationPrefer')],
             ].map(([value, label]) => (
               <button
-                key={value}
+                key={value ?? 'default'}
                 type="button"
+                aria-pressed={subagents.delegationMode === value}
                 onClick={() =>
                   updateSubagents({
                     delegationMode: value as AgentRuntimeSettings['subagents']['delegationMode'],
@@ -491,6 +597,7 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
             value={subagents.model ?? ''}
             onChange={value => updateSubagents({ model: value || null })}
             options={displayedModelOptions}
+            ariaLabel={i18nService.t('agentRuntimeDefaultModel')}
             className="py-2 text-xs"
           />
         </SettingRow>
@@ -507,6 +614,7 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
               })
             }
             options={subagentThinkingOptions}
+            ariaLabel={i18nService.t('agentRuntimeDefaultThinking')}
             className="py-2 text-xs"
           />
         </SettingRow>
@@ -549,6 +657,7 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
                   })
                 }
                 options={timeoutOptions}
+                ariaLabel={i18nService.t('agentRuntimeTimeoutTitle')}
                 className="py-2 text-xs"
               />
             </div>
@@ -580,24 +689,31 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
           </div>
         </SettingRow>
         <SettingRow
+          label={i18nService.t('agentRuntimeArchiveTitle')}
+          description={i18nService.t('agentRuntimeArchiveDescription')}
+        >
+          <ThemedSelect
+            id="agent-runtime-archive"
+            value={String(subagents.archiveAfterMinutes)}
+            onChange={value => updateSubagents({ archiveAfterMinutes: Number(value) })}
+            options={archiveOptions}
+            ariaLabel={i18nService.t('agentRuntimeArchiveTitle')}
+            className="py-2 text-xs"
+          />
+        </SettingRow>
+        <SettingRow
           label={i18nService.t('agentRuntimeNestingTitle')}
           description={i18nService.t('agentRuntimeNestingDescription')}
         >
-          <div className="grid grid-cols-2 rounded-lg bg-surface-raised p-1">
-            {[1, 2].map(depth => (
-              <button
-                key={depth}
-                type="button"
-                onClick={() => updateSubagents({ maxSpawnDepth: depth })}
-                className={`rounded-md px-3 py-1.5 text-xs font-medium ${subagents.maxSpawnDepth === depth ? 'bg-surface text-primary shadow-sm' : 'text-secondary hover:text-foreground'}`}
-              >
-                {i18nService.t(
-                  depth === 1 ? 'agentRuntimeNestingOff' : 'agentRuntimeNestingWorker',
-                )}
-              </button>
-            ))}
-          </div>
-          {subagents.maxSpawnDepth === 2 && (
+          <ThemedSelect
+            id="agent-runtime-nesting-depth"
+            value={String(subagents.maxSpawnDepth)}
+            onChange={value => updateSubagents({ maxSpawnDepth: Number(value) })}
+            options={nestingOptions}
+            ariaLabel={i18nService.t('agentRuntimeNestingTitle')}
+            className="py-2 text-xs"
+          />
+          {subagents.maxSpawnDepth > 1 && (
             <p className="mt-1.5 text-[11px] leading-4 text-amber-700 dark:text-amber-300">
               {i18nService.t('agentRuntimeNestingWarning')}
             </p>

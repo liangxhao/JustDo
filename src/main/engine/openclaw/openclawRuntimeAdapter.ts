@@ -69,10 +69,7 @@ import type {
   CoworkSessionStatus,
   CoworkStore,
 } from '../../data/coworkStore';
-import {
-  OPENCLAW_AGENT_TIMEOUT_SECONDS,
-  OPENCLAW_COMPACTION_TIMEOUT_SECONDS,
-} from '../../openclaw/config/openclawConfigSync';
+import { OPENCLAW_COMPACTION_TIMEOUT_SECONDS } from '../../openclaw/config/openclawConfigSync';
 import { GoalContinuationCoordinator } from '../../openclaw/goals/goalContinuationCoordinator';
 import {
   buildSessionExecApprovalFingerprint,
@@ -317,7 +314,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private titleGenerator!: SessionTitleGenerator;
   private readonly goalContinuationCoordinator: GoalContinuationCoordinator;
 
-  agentTimeoutSeconds = OPENCLAW_AGENT_TIMEOUT_SECONDS;
+  get agentTimeoutSeconds(): number {
+    return this.store.getAgentRuntimeSettings().agent.runTimeoutSeconds;
+  }
 
   constructor(
     store: CoworkStore,
@@ -2351,7 +2350,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private startTurnTimeoutWatchdog(sessionId: string): void {
     const turn = this.activeTurns.get(sessionId);
     if (!turn) return;
-    const timeoutMs = this.agentTimeoutSeconds * 1000 + CLIENT_TIMEOUT_GRACE_MS;
+    const timeoutSeconds = this.agentTimeoutSeconds;
+    if (timeoutSeconds === 0) return;
+    const timeoutMs = timeoutSeconds * 1000 + CLIENT_TIMEOUT_GRACE_MS;
     setTimeout(() => {
       void this.handleTurnTimeoutWatchdog(sessionId, turn);
     }, timeoutMs);

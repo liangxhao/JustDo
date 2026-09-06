@@ -706,6 +706,20 @@ const buildAuthScopedOpenClawConfig = (
     // "Not specified", so an older explicit value must not survive the merge.
     delete defaults.thinkingDefault;
   }
+  if (Object.prototype.hasOwnProperty.call(managedDefaults, 'timeoutSeconds')) {
+    defaults.timeoutSeconds = managedDefaults.timeoutSeconds;
+  }
+  if (Object.prototype.hasOwnProperty.call(managedDefaults, 'maxConcurrent')) {
+    defaults.maxConcurrent = managedDefaults.maxConcurrent;
+  } else {
+    delete defaults.maxConcurrent;
+  }
+  if (Object.prototype.hasOwnProperty.call(managedDefaults, 'subagents')) {
+    defaults.subagents = mergeManagedOpenClawSubagentConfig(
+      existingDefaults.subagents,
+      managedDefaults.subagents,
+    );
+  }
   if (Object.prototype.hasOwnProperty.call(managedDefaults, 'compaction')) {
     // Compaction is JustDo-managed policy. Replace the whole object so removed
     // keys (notably the legacy explicit keepRecentTokens) do not survive an
@@ -1003,23 +1017,17 @@ const mapExecutionModeToSandboxMode = (mode: CoworkExecutionMode): 'off' | 'non-
 export const OPENCLAW_FALLBACK_EXEC_MODE = PermissionMode.Ask;
 export const OPENCLAW_FALLBACK_FS_WORKSPACE_ONLY = true;
 
-/**
- * Default agent timeout in seconds written to openclaw config.
- * Also used by the runtime adapter's client-side timeout watchdog.
- */
-export const OPENCLAW_AGENT_TIMEOUT_SECONDS = 3600;
-// Provider idle timeout for slow long-context model calls. This must be lower
-// than the agent ceiling but higher than OpenClaw's default 120s.
+/** Default agent timeout used when no persisted runtime preference exists. */
+export const OPENCLAW_AGENT_TIMEOUT_SECONDS =
+  DEFAULT_AGENT_RUNTIME_SETTINGS.agent.runTimeoutSeconds;
+// Provider idle timeout for slow long-context model calls. This remains finite
+// even though the main Agent has no overall turn limit by default.
 export const OPENCLAW_MODEL_PROVIDER_TIMEOUT_SECONDS = 30 * 60;
 // Context compaction has its own OpenClaw safety timeout. Keep it aligned with
 // the provider ceiling so a healthy long-context SSE response is not aborted
 // by the much shorter upstream default (180s).
 export const OPENCLAW_COMPACTION_TIMEOUT_SECONDS = OPENCLAW_MODEL_PROVIDER_TIMEOUT_SECONDS;
-// OpenClaw treats zero as "never archive" for completed run-mode subagents.
-export const OPENCLAW_SUBAGENT_ARCHIVE_AFTER_MINUTES = 0;
-// Keep model execution bounded while allowing a small per-parent backlog.
-// These values are written to OpenClaw config so a future settings surface can
-// replace the defaults without changing runtime admission behavior.
+// Stable product defaults retained for callers and focused config tests.
 export const OPENCLAW_SUBAGENT_MAX_CONCURRENT =
   DEFAULT_AGENT_RUNTIME_SETTINGS.subagents.maxConcurrent;
 export const OPENCLAW_SUBAGENT_MAX_CHILDREN_PER_AGENT =
@@ -1051,15 +1059,30 @@ export const buildManagedOpenClawSessionConfig = () => ({
 export const buildManagedOpenClawSubagentConfig = (
   settings: AgentRuntimeSettings = createDefaultAgentRuntimeSettings(),
 ) => ({
-  delegationMode: settings.subagents.delegationMode,
+  ...(settings.subagents.delegationMode
+    ? { delegationMode: settings.subagents.delegationMode }
+    : {}),
   maxSpawnDepth: settings.subagents.maxSpawnDepth,
   maxChildrenPerAgent: settings.subagents.maxChildrenPerAgent,
   maxConcurrent: settings.subagents.maxConcurrent,
   runTimeoutSeconds: settings.subagents.runTimeoutSeconds,
-  archiveAfterMinutes: OPENCLAW_SUBAGENT_ARCHIVE_AFTER_MINUTES,
+  archiveAfterMinutes: settings.subagents.archiveAfterMinutes,
   ...(settings.subagents.model ? { model: settings.subagents.model } : {}),
   ...(settings.subagents.thinking ? { thinking: settings.subagents.thinking } : {}),
 });
+
+const mergeManagedOpenClawSubagentConfig = (
+  existingValue: unknown,
+  managedValue: unknown,
+): Record<string, unknown> => {
+  const existing = isRecord(existingValue) ? existingValue : {};
+  const managed = isRecord(managedValue) ? managedValue : {};
+  const merged: Record<string, unknown> = { ...existing, ...managed };
+  for (const key of ['delegationMode', 'model', 'thinking'] as const) {
+    if (!Object.prototype.hasOwnProperty.call(managed, key)) delete merged[key];
+  }
+  return merged;
+};
 
 export const buildManagedOpenClawAgentThinkingConfig = (
   settings: AgentRuntimeSettings = createDefaultAgentRuntimeSettings(),
@@ -1816,7 +1839,10 @@ export class OpenClawConfigSync {
       },
       agents: {
         defaults: {
-          timeoutSeconds: OPENCLAW_AGENT_TIMEOUT_SECONDS,
+          timeoutSeconds: agentRuntimeSettings.agent.runTimeoutSeconds,
+          ...(agentRuntimeSettings.agent.maxConcurrent === null
+            ? {}
+            : { maxConcurrent: agentRuntimeSettings.agent.maxConcurrent }),
           // JustDo owns durable agent/default-model state. Keep Gateway picker
           // mutations session-scoped so sessions.patch cannot race the config sync.
           modelSelectionScope: 'session',
@@ -2149,6 +2175,10 @@ export class OpenClawConfigSync {
         ownership: 'explicit',
         defaults: {
           modelSelectionScope: 'session',
+          timeoutSeconds: agentRuntimeSettings.agent.runTimeoutSeconds,
+          ...(agentRuntimeSettings.agent.maxConcurrent === null
+            ? {}
+            : { maxConcurrent: agentRuntimeSettings.agent.maxConcurrent }),
           ...buildManagedOpenClawAgentThinkingConfig(agentRuntimeSettings),
           systemAgent: { agentId: 'main' },
           heartbeat: buildManagedOpenClawHeartbeatConfig(),
@@ -2270,11 +2300,21 @@ export class OpenClawConfigSync {
             const mergedDefaults: Record<string, unknown> = {
               ...existingDefaults,
               modelSelectionScope: 'session',
+              timeoutSeconds: agentRuntimeSettings.agent.runTimeoutSeconds,
               systemAgent: { agentId: 'main' },
               heartbeat: buildManagedOpenClawHeartbeatConfig(),
               // Replace rather than deep-merge so stale managed keys are removed.
               compaction: buildManagedOpenClawCompactionConfig(),
+              subagents: mergeManagedOpenClawSubagentConfig(
+                existingDefaults.subagents,
+                buildManagedOpenClawSubagentConfig(agentRuntimeSettings),
+              ),
             };
+            if (agentRuntimeSettings.agent.maxConcurrent === null) {
+              delete mergedDefaults.maxConcurrent;
+            } else {
+              mergedDefaults.maxConcurrent = agentRuntimeSettings.agent.maxConcurrent;
+            }
             if (agentRuntimeSettings.agent.thinking) {
               mergedDefaults.thinkingDefault = agentRuntimeSettings.agent.thinking;
             } else {

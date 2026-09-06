@@ -99,7 +99,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     agentRuntimeUnsaved: '有未保存更改',
     agentRuntimeRestoreDefaults: '恢复默认值',
     agentRuntimeAgentSectionTitle: 'Agent',
-    agentRuntimeAgentSectionDescription: '主 Agent 的任务规划、会话访问、用户交互与委派行为。',
+    agentRuntimeAgentSectionDescription: '所有 Agent 默认继承的运行、会话访问与委派行为。',
     agentRuntimeSubagentSectionTitle: 'SubAgent',
     agentRuntimeSubagentSectionDescription: 'SubAgent 的模型、容量和任务执行参数。',
     agentRuntimeMcpSectionTitle: 'MCP',
@@ -108,7 +108,8 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     agentRuntimeMcpRequestTimeoutDescription:
       '单次 MCP 工具请求等待响应的默认时限；每个 Server 可在编辑弹窗中单独覆盖。',
     agentRuntimeDelegationTitle: '委派策略',
-    agentRuntimeDelegationDescription: '决定主 Agent 在什么情况下倾向于拆分和委派任务。',
+    agentRuntimeDelegationDescription: '调整任务拆分提示的强度；这是行为引导，不是强制调度规则。',
+    agentRuntimeDelegationDefault: '系统默认',
     agentRuntimeDelegationSuggest: '按需使用',
     agentRuntimeDelegationSuggestDescription: '较大或较慢的任务才建议使用 Subagent，适合日常工作。',
     agentRuntimeDelegationPrefer: '优先委派',
@@ -146,27 +147,37 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     agentRuntimeDefaultThinking: '默认思考强度',
     agentRuntimeUseModelDefaultThinking: '不指定',
     agentRuntimeInheritParentThinking: '继承父 Agent 的思考强度',
-    agentRuntimeThinkingOff: '关闭',
-    agentRuntimeThinkingMinimal: '极简',
-    agentRuntimeThinkingLow: '低',
-    agentRuntimeThinkingMedium: '中',
-    agentRuntimeThinkingHigh: '高',
-    agentRuntimeThinkingXHigh: '超高',
-    agentRuntimeThinkingAdaptive: '自适应',
-    agentRuntimeThinkingMax: '最大',
-    agentRuntimeThinkingUltra: '极致',
+    agentRuntimeThinkingOff: 'Off',
+    agentRuntimeThinkingMinimal: 'Minimal',
+    agentRuntimeThinkingLow: 'Low',
+    agentRuntimeThinkingMedium: 'Medium',
+    agentRuntimeThinkingHigh: 'High',
+    agentRuntimeThinkingXHigh: 'Extra high',
+    agentRuntimeThinkingAdaptive: 'Adaptive',
+    agentRuntimeThinkingMax: 'Maximum',
+    agentRuntimeThinkingUltra: 'Ultra',
     agentRuntimeAgentThinkingHint:
-      '不指定时，使用当前模型的默认思考强度；不同思考强度是否受支持，取决于当前模型。',
+      '不指定时使用系统默认值；不受模型支持的档位会自动匹配到最接近的可用档位。',
     agentRuntimeThinkingHint:
-      '继承时，沿用父 Agent 的思考强度；所选思考强度是否受支持，取决于 SubAgent 使用的模型。',
+      '继承时沿用父 Agent 的思考强度；不受模型支持的档位会自动匹配到最接近的可用档位。',
+    agentRuntimeAgentTimeoutTitle: 'Agent 单轮运行时限',
+    agentRuntimeAgentTimeoutDescription:
+      '限制从发送一条消息到本轮完成的最长运行时间；默认不限制。',
+    agentRuntimeAgentMaxConcurrent: 'Agent 总并发数',
+    agentRuntimeSystemDefault: '系统默认',
+    agentRuntimeAgentMaxConcurrentDescription:
+      '整个运行服务中可同时执行的 Agent 任务数；系统默认会根据设备能力在 8–16 之间自动选择。',
     agentRuntimeCapacityTitle: '容量与排队',
-    agentRuntimeCapacityDescription: '并发上限是全局额度；每个父 Agent 的子任务上限独立计算。',
+    agentRuntimeCapacityDescription:
+      '所有后台 Subagent 共享全局运行额度；每个父 Agent 的直属子任务上限独立计算。',
     agentRuntimeHighConcurrency: '高负载：请留意费用与速率限制',
     agentRuntimeCapacityLimited: '实际并发受子任务上限限制',
-    agentRuntimeMaxConcurrent: '全局并发数',
-    agentRuntimeMaxConcurrentDescription: '同一时间真正运行的 Subagent 数量，超出的任务会排队。',
+    agentRuntimeMaxConcurrent: '后台 Subagent 全局并发数',
+    agentRuntimeMaxConcurrentDescription:
+      '同一时间真正运行的后台 Subagent 数量，包括批量协作任务；超出的已接受任务会排队。可见持久子会话不受此项限制。',
     agentRuntimeMaxChildren: '每个父 Agent 的子任务数',
-    agentRuntimeMaxChildrenDescription: '包含运行中和排队中的任务；达到上限后不再接受新任务。',
+    agentRuntimeMaxChildrenDescription:
+      '计算同一父会话直接创建的普通、可见及 ACP 子任务；运行中、排队中，以及仍有活动后代的已完成子任务均占用额度。达到上限后拒绝新任务；批量协作任务使用独立限制。',
     agentRuntimeTimeoutTitle: '单任务运行时限',
     agentRuntimeTimeoutDescription:
       '只计算实际运行时间，排队等待不会消耗时限。超时后会停止任务并保留记录。',
@@ -180,12 +191,20 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     agentRuntimeMinutes: '分钟',
     agentRuntimeSeconds: '秒',
     agentRuntimeTimeoutStartsOnRun: '范围 1–1440 分钟',
+    agentRuntimeArchiveTitle: '完成后自动清理',
+    agentRuntimeArchiveDescription:
+      '临时 SubAgent 完成后的自动清理时间；清理后会从列表移除，并可能删除对应会话记录。持久会话不受影响。',
+    agentRuntimeArchive1h: '1 小时后清理',
+    agentRuntimeArchive1d: '1 天后清理',
+    agentRuntimeArchive7d: '7 天后清理',
+    agentRuntimeArchiveNever: '永不自动清理',
     agentRuntimeAdvancedTitle: '高级调度',
     agentRuntimeAdvancedDescription: '嵌套层级会改变 Subagent 的角色和可用工具。',
     agentRuntimeNestingTitle: '允许 Subagent 继续拆分任务',
-    agentRuntimeNestingDescription: '默认关闭。开启后可形成“主 Agent → 协调者 → Worker”两层结构。',
+    agentRuntimeNestingDescription: '设置 SubAgent 可以继续拆分任务的最大层级。',
     agentRuntimeNestingOff: '关闭嵌套',
     agentRuntimeNestingWorker: '允许一层 Worker',
+    agentRuntimeNestingDepth: '深度 {depth}',
     agentRuntimeNestingWarning:
       '嵌套会快速放大同时存在的任务数量，并增加模型费用、速率限制和工具进程压力。',
     agentRuntimeSaveFailed: '运行配置保存失败。',
@@ -1589,7 +1608,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     agentRuntimeRestoreDefaults: 'Restore defaults',
     agentRuntimeAgentSectionTitle: 'Agent',
     agentRuntimeAgentSectionDescription:
-      'Task planning, session access, user interaction, and delegation behavior for the main Agent.',
+      'Runtime, session access, and delegation defaults inherited by all Agents.',
     agentRuntimeSubagentSectionTitle: 'SubAgent',
     agentRuntimeSubagentSectionDescription:
       'Model, capacity, and task execution settings for SubAgents.',
@@ -1600,7 +1619,9 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     agentRuntimeMcpRequestTimeoutDescription:
       'Default wait for one MCP tool request. Each server can override it in its edit dialog.',
     agentRuntimeDelegationTitle: 'Delegation strategy',
-    agentRuntimeDelegationDescription: 'Choose when the main Agent should split and delegate work.',
+    agentRuntimeDelegationDescription:
+      'Adjust the strength of task-splitting guidance. This guides behavior rather than enforcing scheduling.',
+    agentRuntimeDelegationDefault: 'System default',
     agentRuntimeDelegationSuggest: 'Use when helpful',
     agentRuntimeDelegationSuggestDescription:
       'Suggest Subagents for larger or slower tasks. A balanced choice for everyday work.',
@@ -1651,20 +1672,27 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     agentRuntimeThinkingMax: 'Maximum',
     agentRuntimeThinkingUltra: 'Ultra',
     agentRuntimeAgentThinkingHint:
-      'When not specified, the current model uses its default thinking effort. Support for each level depends on the model.',
+      'When not specified, the system default is used. Unsupported levels are mapped to the closest available level.',
     agentRuntimeThinkingHint:
-      "When inherited, the SubAgent uses its parent Agent's thinking effort. Support for the selected level depends on the SubAgent's model.",
+      "When inherited, the SubAgent uses its parent Agent's thinking effort. Unsupported levels are mapped to the closest available level.",
+    agentRuntimeAgentTimeoutTitle: 'Agent turn run limit',
+    agentRuntimeAgentTimeoutDescription:
+      'Limits the runtime from sending one message until that turn completes. Unlimited by default.',
+    agentRuntimeAgentMaxConcurrent: 'Total Agent concurrency',
+    agentRuntimeSystemDefault: 'System default',
+    agentRuntimeAgentMaxConcurrentDescription:
+      'Agent tasks that may run concurrently across the runtime service. The system default adapts between 8 and 16 based on the device.',
     agentRuntimeCapacityTitle: 'Capacity and queueing',
     agentRuntimeCapacityDescription:
-      'The concurrency limit is global; each parent Agent has its own child-task limit.',
+      'All background Subagents share a global run limit; each parent Agent has its own direct-child limit.',
     agentRuntimeHighConcurrency: 'High load: watch cost and rate limits',
     agentRuntimeCapacityLimited: 'Child limit caps effective concurrency',
-    agentRuntimeMaxConcurrent: 'Global concurrency',
+    agentRuntimeMaxConcurrent: 'Background Subagent concurrency',
     agentRuntimeMaxConcurrentDescription:
-      'Subagents that can actively run at once. Additional accepted tasks wait in the queue.',
+      'Background Subagents that can actively run at once, including batch collaboration tasks. Additional accepted tasks wait in the queue. Visible persistent child sessions are not limited here.',
     agentRuntimeMaxChildren: 'Child tasks per parent',
     agentRuntimeMaxChildrenDescription:
-      'Counts running and queued tasks. New tasks are rejected after the limit is reached.',
+      'Counts ordinary, visible, and ACP child tasks created directly by the same parent session. Running and queued tasks count, as do completed children with active descendants. New tasks are rejected at the limit; batch collaboration tasks use separate limits.',
     agentRuntimeTimeoutTitle: 'Per-task run limit',
     agentRuntimeTimeoutDescription:
       'Only active run time is counted; queue time is excluded. A timed-out task stops but keeps its history.',
@@ -1678,13 +1706,20 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     agentRuntimeMinutes: 'minutes',
     agentRuntimeSeconds: 'seconds',
     agentRuntimeTimeoutStartsOnRun: 'Range: 1–1440 minutes',
+    agentRuntimeArchiveTitle: 'Clean up after completion',
+    agentRuntimeArchiveDescription:
+      'When temporary SubAgents are cleaned up after completion. Cleanup removes them from the list and may delete their session history. Persistent sessions are unaffected.',
+    agentRuntimeArchive1h: 'Clean up after 1 hour',
+    agentRuntimeArchive1d: 'Clean up after 1 day',
+    agentRuntimeArchive7d: 'Clean up after 7 days',
+    agentRuntimeArchiveNever: 'Never clean up automatically',
     agentRuntimeAdvancedTitle: 'Advanced orchestration',
     agentRuntimeAdvancedDescription: 'Nesting changes a Subagent’s role and available tools.',
     agentRuntimeNestingTitle: 'Let Subagents delegate again',
-    agentRuntimeNestingDescription:
-      'Off by default. Enabling this allows a main Agent → coordinator → worker structure.',
+    agentRuntimeNestingDescription: 'Maximum depth at which SubAgents may split work again.',
     agentRuntimeNestingOff: 'No nesting',
     agentRuntimeNestingWorker: 'Allow one worker layer',
+    agentRuntimeNestingDepth: 'Depth {depth}',
     agentRuntimeNestingWarning:
       'Nesting can multiply active tasks quickly and increase model cost, rate-limit pressure, and tool processes.',
     agentRuntimeSaveFailed: 'Runtime configuration could not be saved.',

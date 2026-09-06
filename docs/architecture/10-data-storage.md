@@ -112,7 +112,7 @@ OpenClaw v2026.9.2 对接不再由 JustDo 直接读写 agent `sessions.json`。G
 
 ## 8. `cowork_config`
 
-结构同 KV：key/value/updated_at，但 owner 是 Cowork/runtime domain。`CoworkStore.getConfig/setConfig` 对 execution mode、working directory、permission mode 等做默认与 normalize；其中 permission mode 只作为新会话默认值，当前会话使用 `cowork_sessions.permission_mode` 保存用户期望值，并在发送前与 Gateway 原生 session entry reconcile。版本化 runtime settings 通过 `agentRuntimeSettings:v1` 保存。旧记录缺少会话访问范围、命令审批、AskUserQuestion 或 MCP 配置时分别补入默认 `tree`、30 分钟、10 分钟与 60 秒，损坏或越界值按 shared contract 回退。
+结构同 KV：key/value/updated_at，但 owner 是 Cowork/runtime domain。`CoworkStore.getConfig/setConfig` 对 execution mode、working directory、permission mode 等做默认与 normalize；其中 permission mode 只作为新会话默认值，当前会话使用 `cowork_sessions.permission_mode` 保存用户期望值，并在发送前与 Gateway 原生 session entry reconcile。版本化 runtime settings 通过 `agentRuntimeSettings:v1` 保存。旧记录缺少 Agent 时限/并发、SubAgent 委派/归档、会话访问范围、命令审批、AskUserQuestion 或 MCP 配置时补入对应默认值，损坏或越界值按 shared contract 回退。
 
 修改配置的 IPC 使用 promise queue 串行。会影响 Gateway config 或启动环境的字段在成功写入后同步 OpenClaw；纯 permission 默认值变更不触发同步。会话访问范围生成 `tools.sessions.visibility`；Subagent 设置生成 `agents.defaults.subagents`；命令审批等待时限生成受管 `JUSTDO_EXEC_APPROVAL_TIMEOUT_MS`；AskUserQuestion 等待时限生成该 extension 的 `timeoutMinutes`；全局 MCP 请求时限作为每个用户 `mcp.servers.<name>.timeout` 的默认值。AskUserQuestion pending 只保存在 extension 的 Gateway 进程内存中，不写入 JustDo SQLite；Main/Redux 也不维护 transcript 式副本。需同步的配置失败会恢复上一份数据库值；数据库保存成功不自动证明 Gateway config active。
 

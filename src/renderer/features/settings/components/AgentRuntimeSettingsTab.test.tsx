@@ -8,7 +8,22 @@ import AgentRuntimeSettingsTab from './AgentRuntimeSettingsTab';
 
 vi.mock('@/services/i18n', () => ({
   i18nService: {
-    t: (key: string) => (key === 'agentRuntimeApprovalTimeoutMinutes' ? '{minutes} minutes' : key),
+    t: (key: string) => {
+      const values: Record<string, string> = {
+        agentRuntimeApprovalTimeoutMinutes: '{minutes} minutes',
+        agentRuntimeThinkingOff: 'Off',
+        agentRuntimeThinkingMinimal: 'Minimal',
+        agentRuntimeThinkingLow: 'Low',
+        agentRuntimeThinkingMedium: 'Medium',
+        agentRuntimeThinkingHigh: 'High',
+        agentRuntimeThinkingXHigh: 'Extra high',
+        agentRuntimeThinkingAdaptive: 'Adaptive',
+        agentRuntimeThinkingMax: 'Maximum',
+        agentRuntimeThinkingUltra: 'Ultra',
+        agentRuntimeNestingDepth: 'Depth {depth}',
+      };
+      return values[key] ?? key;
+    },
   },
 }));
 
@@ -18,7 +33,7 @@ describe('AgentRuntimeSettingsTab runtime settings', () => {
     vi.restoreAllMocks();
   });
 
-  test('shows the default timeout and emits a bounded timeout update', () => {
+  test('shows an unlimited Agent turn default and emits a bounded MCP timeout update', () => {
     const settings = createDefaultAgentRuntimeSettings();
     const onChange = vi.fn();
 
@@ -34,6 +49,10 @@ describe('AgentRuntimeSettingsTab runtime settings', () => {
         onMaxGoalContinuationTurnsChange={vi.fn()}
       />,
     );
+
+    expect(
+      screen.getByRole('combobox', { name: 'agentRuntimeAgentTimeoutTitle' }).textContent,
+    ).toContain('agentRuntimeTimeoutUnlimited');
 
     const input = screen.getByRole('spinbutton', {
       name: 'agentRuntimeMcpRequestTimeoutTitle',
@@ -135,6 +154,106 @@ describe('AgentRuntimeSettingsTab runtime settings', () => {
     expect(onChange).toHaveBeenCalledWith({
       ...settings,
       sessions: { visibility: 'agent' },
+    });
+  });
+
+  test('uses the WebChat English thinking labels', () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 132,
+      height: 32,
+      left: 20,
+      right: 220,
+      top: 100,
+      width: 200,
+      x: 20,
+      y: 100,
+      toJSON: () => ({}),
+    });
+
+    render(
+      <AgentRuntimeSettingsTab
+        settings={createDefaultAgentRuntimeSettings()}
+        models={[]}
+        isLoading={false}
+        loadError={null}
+        onChange={vi.fn()}
+        onRetry={vi.fn()}
+        maxGoalContinuationTurns={10}
+        onMaxGoalContinuationTurnsChange={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getAllByRole('combobox', { name: 'agentRuntimeDefaultThinking' })[0]!);
+
+    for (const label of [
+      'Off',
+      'Minimal',
+      'Low',
+      'Medium',
+      'High',
+      'Extra high',
+      'Adaptive',
+      'Maximum',
+      'Ultra',
+    ]) {
+      expect(screen.getByRole('option', { name: label })).toBeTruthy();
+    }
+  });
+
+  test('emits system concurrency, delegation, cleanup, and depth selections', () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 132,
+      height: 32,
+      left: 20,
+      right: 220,
+      top: 100,
+      width: 200,
+      x: 20,
+      y: 100,
+      toJSON: () => ({}),
+    });
+    const settings = createDefaultAgentRuntimeSettings();
+    settings.agent.maxConcurrent = 8;
+    const onChange = vi.fn();
+
+    render(
+      <AgentRuntimeSettingsTab
+        settings={settings}
+        models={[]}
+        isLoading={false}
+        loadError={null}
+        onChange={onChange}
+        onRetry={vi.fn()}
+        maxGoalContinuationTurns={10}
+        onMaxGoalContinuationTurnsChange={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('combobox', { name: 'agentRuntimeAgentMaxConcurrent' }));
+    fireEvent.click(screen.getByRole('option', { name: 'agentRuntimeSystemDefault' }));
+    expect(onChange).toHaveBeenLastCalledWith({
+      ...settings,
+      agent: { ...settings.agent, maxConcurrent: null },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'agentRuntimeDelegationPrefer' }));
+    expect(onChange).toHaveBeenLastCalledWith({
+      ...settings,
+      subagents: { ...settings.subagents, delegationMode: 'prefer' },
+    });
+
+    fireEvent.click(screen.getByRole('combobox', { name: 'agentRuntimeArchiveTitle' }));
+    fireEvent.click(screen.getByRole('option', { name: 'agentRuntimeArchive1d' }));
+    expect(onChange).toHaveBeenLastCalledWith({
+      ...settings,
+      subagents: { ...settings.subagents, archiveAfterMinutes: 1440 },
+    });
+
+    fireEvent.click(screen.getByRole('combobox', { name: 'agentRuntimeNestingTitle' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Depth 5' }));
+    expect(onChange).toHaveBeenLastCalledWith({
+      ...settings,
+      subagents: { ...settings.subagents, maxSpawnDepth: 5 },
     });
   });
 });

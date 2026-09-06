@@ -49,8 +49,11 @@ export const AGENT_RUNTIME_LIMITS = {
   askUserQuestionTimeoutMinutes: { min: 1, max: 24 * 60 },
   mcpRequestTimeoutSeconds: MCP_REQUEST_TIMEOUT_LIMITS,
   maxConcurrent: { min: 1, max: 16 },
+  agentMaxConcurrent: { min: 1, max: 16 },
   maxChildrenPerAgent: { min: 1, max: 20 },
-  maxSpawnDepth: { min: 1, max: 2 },
+  maxSpawnDepth: { min: 1, max: 5 },
+  archiveAfterMinutes: { min: 0, max: 365 * 24 * 60 },
+  agentRunTimeoutSeconds: { min: 60, max: 24 * 60 * 60 },
   runTimeoutSeconds: { min: 60, max: 24 * 60 * 60 },
   modelRefMaxLength: 256,
 } as const;
@@ -59,6 +62,8 @@ export interface AgentRuntimeSettings {
   version: typeof AGENT_RUNTIME_SETTINGS_VERSION;
   agent: {
     thinking: AgentRuntimeThinkingLevelValue | null;
+    runTimeoutSeconds: number;
+    maxConcurrent: number | null;
   };
   askUserQuestion: {
     timeoutMinutes: number;
@@ -74,13 +79,14 @@ export interface AgentRuntimeSettings {
     visibility: AgentRuntimeSessionVisibilityValue;
   };
   subagents: {
-    delegationMode: AgentRuntimeDelegationModeValue;
+    delegationMode: AgentRuntimeDelegationModeValue | null;
     model: string | null;
     thinking: AgentRuntimeThinkingLevelValue | null;
     maxConcurrent: number;
     maxChildrenPerAgent: number;
     runTimeoutSeconds: number;
     maxSpawnDepth: number;
+    archiveAfterMinutes: number;
   };
 }
 
@@ -88,6 +94,8 @@ export const DEFAULT_AGENT_RUNTIME_SETTINGS: Readonly<AgentRuntimeSettings> = Ob
   version: AGENT_RUNTIME_SETTINGS_VERSION,
   agent: Object.freeze({
     thinking: null,
+    runTimeoutSeconds: 0,
+    maxConcurrent: null,
   }),
   askUserQuestion: Object.freeze({
     timeoutMinutes: 10,
@@ -102,13 +110,14 @@ export const DEFAULT_AGENT_RUNTIME_SETTINGS: Readonly<AgentRuntimeSettings> = Ob
     visibility: AgentRuntimeSessionVisibility.Tree,
   }),
   subagents: Object.freeze({
-    delegationMode: AgentRuntimeDelegationMode.Suggest,
+    delegationMode: null,
     model: null,
     thinking: null,
     maxConcurrent: 3,
     maxChildrenPerAgent: 5,
     runTimeoutSeconds: 2 * 60 * 60,
     maxSpawnDepth: 1,
+    archiveAfterMinutes: 0,
   }),
 });
 
@@ -160,6 +169,33 @@ export const validateAgentRuntimeSettings = (
       return { ok: false, error: 'Invalid Agent thinking level.' };
     }
     validatedAgentThinking = agentThinking;
+  }
+  const agentRunTimeoutSeconds =
+    agent.runTimeoutSeconds ?? DEFAULT_AGENT_RUNTIME_SETTINGS.agent.runTimeoutSeconds;
+  if (
+    agentRunTimeoutSeconds !== 0 &&
+    !isIntegerInRange(
+      agentRunTimeoutSeconds,
+      AGENT_RUNTIME_LIMITS.agentRunTimeoutSeconds.min,
+      AGENT_RUNTIME_LIMITS.agentRunTimeoutSeconds.max,
+    )
+  ) {
+    return { ok: false, error: 'Agent run timeout is outside the supported range.' };
+  }
+  const agentMaxConcurrent =
+    agent.maxConcurrent ?? DEFAULT_AGENT_RUNTIME_SETTINGS.agent.maxConcurrent;
+  let validatedAgentMaxConcurrent: number | null = null;
+  if (agentMaxConcurrent !== null) {
+    if (
+      !isIntegerInRange(
+        agentMaxConcurrent,
+        AGENT_RUNTIME_LIMITS.agentMaxConcurrent.min,
+        AGENT_RUNTIME_LIMITS.agentMaxConcurrent.max,
+      )
+    ) {
+      return { ok: false, error: 'Agent concurrency is outside the supported range.' };
+    }
+    validatedAgentMaxConcurrent = agentMaxConcurrent;
   }
 
   const askUserQuestion = isRecord(value.askUserQuestion)
@@ -216,12 +252,17 @@ export const validateAgentRuntimeSettings = (
   }
 
   const subagents = value.subagents;
-  const delegationMode = subagents.delegationMode;
-  if (
-    delegationMode !== AgentRuntimeDelegationMode.Suggest &&
-    delegationMode !== AgentRuntimeDelegationMode.Prefer
-  ) {
-    return { ok: false, error: 'Invalid Subagent delegation mode.' };
+  const delegationMode =
+    subagents.delegationMode ?? DEFAULT_AGENT_RUNTIME_SETTINGS.subagents.delegationMode;
+  let validatedDelegationMode: AgentRuntimeDelegationModeValue | null = null;
+  if (delegationMode !== null) {
+    if (
+      delegationMode !== AgentRuntimeDelegationMode.Suggest &&
+      delegationMode !== AgentRuntimeDelegationMode.Prefer
+    ) {
+      return { ok: false, error: 'Invalid Subagent delegation mode.' };
+    }
+    validatedDelegationMode = delegationMode;
   }
 
   const model = subagents.model;
@@ -288,12 +329,26 @@ export const validateAgentRuntimeSettings = (
     return { ok: false, error: 'Subagent run timeout is outside the supported range.' };
   }
 
+  const archiveAfterMinutes =
+    subagents.archiveAfterMinutes ?? DEFAULT_AGENT_RUNTIME_SETTINGS.subagents.archiveAfterMinutes;
+  if (
+    !isIntegerInRange(
+      archiveAfterMinutes,
+      AGENT_RUNTIME_LIMITS.archiveAfterMinutes.min,
+      AGENT_RUNTIME_LIMITS.archiveAfterMinutes.max,
+    )
+  ) {
+    return { ok: false, error: 'Subagent archive delay is outside the supported range.' };
+  }
+
   return {
     ok: true,
     settings: {
       version: AGENT_RUNTIME_SETTINGS_VERSION,
       agent: {
         thinking: validatedAgentThinking,
+        runTimeoutSeconds: agentRunTimeoutSeconds,
+        maxConcurrent: validatedAgentMaxConcurrent,
       },
       askUserQuestion: {
         timeoutMinutes: askUserQuestionTimeoutMinutes,
@@ -308,13 +363,14 @@ export const validateAgentRuntimeSettings = (
         visibility: sessionVisibility,
       },
       subagents: {
-        delegationMode,
+        delegationMode: validatedDelegationMode,
         model: typeof model === 'string' ? model.trim() : null,
         thinking: validatedThinking,
         maxConcurrent,
         maxChildrenPerAgent,
         runTimeoutSeconds,
         maxSpawnDepth,
+        archiveAfterMinutes,
       },
     },
   };
