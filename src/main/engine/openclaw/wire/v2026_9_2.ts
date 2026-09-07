@@ -73,6 +73,73 @@ export const parseSessionsListResultV2026_9_2 = (
   };
 };
 
+export type OpenClawSessionsSearchHitV2026_9_2 = {
+  sessionKey: string;
+  sessionId: string;
+  messageId: string;
+  role: 'user' | 'assistant';
+  timestamp: number;
+  snippet: string;
+  score: number;
+};
+
+export type OpenClawSessionsSearchResultV2026_9_2 = {
+  results: OpenClawSessionsSearchHitV2026_9_2[];
+  indexing: boolean;
+  truncated: boolean;
+};
+
+export const parseSessionsSearchResultV2026_9_2 = (
+  value: unknown,
+): OpenClawSessionsSearchResultV2026_9_2 => {
+  if (!isRecord(value) || !Array.isArray(value.results)) {
+    throw new Error(`${OPENCLAW_WIRE_VERSION} sessions.search returned an invalid payload`);
+  }
+  if (value.results.length > 25) {
+    throw new Error(`${OPENCLAW_WIRE_VERSION} sessions.search returned more than 25 results`);
+  }
+  const results = value.results.map((entry, index): OpenClawSessionsSearchHitV2026_9_2 => {
+    if (
+      !isRecord(entry) ||
+      typeof entry.sessionKey !== 'string' ||
+      !entry.sessionKey ||
+      typeof entry.sessionId !== 'string' ||
+      !entry.sessionId ||
+      typeof entry.messageId !== 'string' ||
+      !entry.messageId ||
+      (entry.role !== 'user' && entry.role !== 'assistant') ||
+      !Number.isInteger(entry.timestamp) ||
+      (entry.timestamp as number) < 0 ||
+      typeof entry.snippet !== 'string' ||
+      entry.snippet.length > 501 ||
+      typeof entry.score !== 'number' ||
+      !Number.isFinite(entry.score)
+    ) {
+      throw new Error(`${OPENCLAW_WIRE_VERSION} sessions.search results[${index}] is malformed`);
+    }
+    return {
+      sessionKey: entry.sessionKey,
+      sessionId: entry.sessionId,
+      messageId: entry.messageId,
+      role: entry.role,
+      timestamp: entry.timestamp as number,
+      snippet: entry.snippet,
+      score: entry.score,
+    };
+  });
+  if (value.indexing !== undefined && typeof value.indexing !== 'boolean') {
+    throw new Error(`${OPENCLAW_WIRE_VERSION} sessions.search indexing must be a boolean`);
+  }
+  if (value.truncated !== undefined && typeof value.truncated !== 'boolean') {
+    throw new Error(`${OPENCLAW_WIRE_VERSION} sessions.search truncated must be a boolean`);
+  }
+  return {
+    results,
+    indexing: value.indexing === true,
+    truncated: value.truncated === true,
+  };
+};
+
 export const parseModelReferenceV2026_9_2 = (
   value: unknown,
 ): { provider: string; model: string; reference: string } | null => {

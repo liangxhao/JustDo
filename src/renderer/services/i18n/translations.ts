@@ -487,7 +487,11 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     // 侧边栏
     renameConversation: '重命名',
     confirmDelete: '确认删除',
-    searchConversations: '搜索任务...',
+    searchConversations: '搜索标题和消息...',
+    searchingConversations: '正在搜索消息...',
+    searchConversationsIncomplete: '部分结果可能尚未显示。',
+    searchConversationsFailed: '无法搜索消息，请重试。',
+    searchConversationsRetry: '重试',
     searchNoResults: '未找到匹配任务',
 
     // 聊天窗口
@@ -2021,7 +2025,11 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     // Sidebar
     renameConversation: 'Rename',
     confirmDelete: 'Confirm Delete',
-    searchConversations: 'Search tasks...',
+    searchConversations: 'Search titles and messages...',
+    searchingConversations: 'Searching messages...',
+    searchConversationsIncomplete: 'Some results may not be available yet.',
+    searchConversationsFailed: "Couldn't search messages. Please retry.",
+    searchConversationsRetry: 'Retry',
     searchNoResults: 'No matching tasks',
 
     // Chat Window

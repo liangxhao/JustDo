@@ -20,13 +20,13 @@ test('relies on the npm predist:win lifecycle without invoking it twice', () => 
   expect(packageJson.scripts['dist:win']).not.toContain('npm run predist:win');
 });
 
-test('keeps Electron readiness probes quiet and bounded', () => {
+test('keeps Electron readiness probes quiet and allows slow cold builds', () => {
   const devRunner = fs.readFileSync(
     path.resolve(__dirname, '../../scripts/run-electron-dev.cjs'),
     'utf8',
   );
 
-  expect(devRunner).toContain('wait-on -t 120000 -d 20000 --simultaneous 1');
+  expect(devRunner).toContain('wait-on -t 300000 -d 20000 --simultaneous 1');
   expect(devRunner).not.toContain('wait-on -v');
 });
 

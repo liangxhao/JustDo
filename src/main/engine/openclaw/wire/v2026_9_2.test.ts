@@ -4,6 +4,7 @@ import {
   parseChatHistoryResultV2026_9_2,
   parseHistoryDetailsResultV2026_9_2,
   parseSessionsListResultV2026_9_2,
+  parseSessionsSearchResultV2026_9_2,
   parseTaskEventV2026_9_2,
   parseTasksGetResultV2026_9_2,
   parseTasksListResultV2026_9_2,
@@ -86,6 +87,55 @@ describe('OpenClaw v2026.9.2 wire validators', () => {
     expect(() =>
       parseSessionsListResultV2026_9_2({ sessions: [{ key: 1 }] }),
     ).toThrow('missing key');
+  });
+
+  test('validates bounded session transcript search results', () => {
+    expect(
+      parseSessionsSearchResultV2026_9_2({
+        results: [
+          {
+            sessionKey: 'agent:main:justdo:one',
+            sessionId: 'gateway-session-1',
+            messageId: 'message-1',
+            role: 'assistant',
+            timestamp: 123,
+            snippet: 'matched content',
+            score: 1.5,
+          },
+        ],
+        indexing: true,
+        truncated: false,
+      }),
+    ).toMatchObject({
+      indexing: true,
+      truncated: false,
+      results: [{ role: 'assistant', snippet: 'matched content' }],
+    });
+    expect(() =>
+      parseSessionsSearchResultV2026_9_2({
+        results: [{ sessionKey: 'agent:main:justdo:one', role: 'tool' }],
+      }),
+    ).toThrow('malformed');
+    expect(() =>
+      parseSessionsSearchResultV2026_9_2({
+        results: Array.from({ length: 26 }, () => ({})),
+      }),
+    ).toThrow('more than 25 results');
+    expect(() =>
+      parseSessionsSearchResultV2026_9_2({
+        results: [
+          {
+            sessionKey: 'agent:main:justdo:one',
+            sessionId: 'gateway-session-1',
+            messageId: 'message-1',
+            role: 'user',
+            timestamp: 123,
+            snippet: 'x'.repeat(502),
+            score: 1,
+          },
+        ],
+      }),
+    ).toThrow('malformed');
   });
 
   test('accepts only bounded runtime-bridge history detail shapes', () => {

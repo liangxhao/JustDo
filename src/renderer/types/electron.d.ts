@@ -730,6 +730,9 @@ interface IElectronAPI {
     listSessions: (
       agentId?: string,
     ) => Promise<{ success: boolean; sessions?: CoworkSessionSummary[]; error?: string }>;
+    searchSessionMessages: (
+      query: string,
+    ) => Promise<import('@shared/cowork/sessionSearch').CoworkSessionMessageSearchResult>;
     getSessionGoal: (sessionId: string) => Promise<{
       success: boolean;
       goal?: import('@shared/sessionGoal').SessionGoal;

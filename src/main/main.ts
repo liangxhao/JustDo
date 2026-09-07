@@ -979,6 +979,8 @@ if (!gotTheLock) {
   registerCoworkSessionHandlers({
     getCoworkStore,
     getCoworkEngineRouter,
+    requestGateway: <T>(method: string, params?: unknown) =>
+      getCoworkEngineService().requestGateway<T>(method, params),
     setSessionPermissionMode: (sessionId, permissionMode, options) =>
       sessionPermissionModeCoordinator.setSessionMode(sessionId, permissionMode, options),
   });

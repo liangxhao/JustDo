@@ -8,10 +8,12 @@ import {
   type SessionRuntimeSnapshot,
   type SessionRunTiming,
 } from '../../../shared/cowork/sessionRun';
+import { CoworkSessionSearchIpc } from '../../../shared/cowork/sessionSearch';
 import { isPermissionMode, type PermissionMode } from '../../../shared/openclaw/approvals';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
 import type { PermissionModeOperationResult } from '../../openclaw/permissions/sessionPermissionModeCoordinator';
+import { searchCoworkSessionMessages } from '../../openclaw/sessions/openclawSessionSearch';
 
 interface SessionHandlerDependencies {
   getCoworkStore: () => CoworkStore;
@@ -21,6 +23,7 @@ interface SessionHandlerDependencies {
     permissionMode: PermissionMode,
     options?: { deferIfActive?: boolean },
   ) => Promise<PermissionModeOperationResult>;
+  requestGateway?: <T>(method: string, params?: unknown) => Promise<T>;
 }
 
 const isRestartCheckpoint = (timing: SessionRunTiming | undefined): boolean =>
@@ -32,6 +35,7 @@ export const registerCoworkSessionHandlers = ({
   getCoworkStore,
   getCoworkEngineRouter,
   setSessionPermissionMode,
+  requestGateway,
 }: SessionHandlerDependencies): void => {
   const idleConfirmations = new Map<string, { count: number; observedAt: number }>();
   const revisions = new Map<string, number>();
@@ -418,6 +422,28 @@ export const registerCoworkSessionHandlers = ({
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to list sessions',
+      };
+    }
+  });
+
+  ipcMain.handle(CoworkSessionSearchIpc.SearchMessages, async (_event, rawQuery: unknown) => {
+    try {
+      if (typeof rawQuery !== 'string') {
+        return { success: false, error: 'Search query must be a string.' };
+      }
+      if (!requestGateway) {
+        return { success: false, error: 'OpenClaw Gateway search is unavailable.' };
+      }
+      const result = await searchCoworkSessionMessages({
+        query: rawQuery,
+        store: getCoworkStore(),
+        requestGateway,
+      });
+      return { success: true, ...result };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to search session messages',
       };
     }
   });

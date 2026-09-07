@@ -33,6 +33,7 @@ const EXPECTED_PATCH_FILES = [
   '013-goal-resume-after-pause.cjs',
   '014-assistant-display-block-replay.cjs',
   '015-trusted-local-file-media.cjs',
+  '016-offline-official-plugin-catalog.cjs',
 ] as const;
 
 const UPSTREAM_CONTRACTS = [
