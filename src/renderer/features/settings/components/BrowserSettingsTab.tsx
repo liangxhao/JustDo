@@ -39,25 +39,15 @@ const isTransientExtensionTestFailure = (result: BrowserConnectionTestResult): b
   (result.errorCode === 'gateway-unavailable' || result.errorCode === 'extension-not-connected');
 
 export const extensionConnectionErrorMessage = (result: BrowserConnectionTestResult): string => {
-  const port = typeof result.relayPort === 'number' ? String(result.relayPort) : '—';
-  const owner = result.relayPortOwner
-    ? `${result.relayPortOwner.processName || i18nService.t('browserUnknownProcess')} (PID ${result.relayPortOwner.pid})`
-    : i18nService.t('browserUnknownProcess');
   const key =
     result.errorCode === 'gateway-unavailable'
       ? 'browserExtensionRelayUnavailable'
-      : result.errorCode === 'extension-relay-unavailable'
-        ? 'browserExtensionRelayUnavailable'
-        : result.errorCode === 'extension-pairing-mismatch'
-          ? 'browserExtensionPairingMismatch'
-          : result.errorCode === 'extension-relay-port-conflict'
-            ? 'browserExtensionRelayPortConflict'
-            : result.errorCode === 'extension-browser-service-failed'
-              ? 'browserExtensionBrowserServiceFailed'
-              : result.errorCode === 'extension-not-connected'
-                ? 'browserExtensionNotConnected'
-                : 'browserExtensionRelayUnavailable';
-  return i18nService.t(key).replace('{port}', port).replace('{owner}', owner);
+      : result.errorCode === 'extension-not-connected'
+        ? 'browserExtensionNotConnected'
+        : result.errorCode === 'permission-timeout'
+          ? 'browserPermissionTimeout'
+          : 'browserConnectionFailed';
+  return i18nService.t(key);
 };
 
 type StepProps = {
@@ -327,6 +317,8 @@ const BrowserSettingsTab: React.FC = () => {
         setUserConnectionTestError(i18nService.t('browserPermissionTimeout'));
       } else if (result.errorCode === 'gateway-unavailable') {
         setUserConnectionTestError(i18nService.t('browserGatewayUnavailable'));
+      } else if (result.errorCode === 'browser-not-running') {
+        setUserConnectionTestError(i18nService.t('browserStatusNotReady'));
       } else {
         setUserConnectionTestError(i18nService.t('browserConnectionFailed'));
       }

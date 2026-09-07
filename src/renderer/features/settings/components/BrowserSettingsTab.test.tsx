@@ -1,10 +1,6 @@
 // @vitest-environment jsdom
 
-import {
-  type BrowserConnectionStatus,
-  type BrowserConnectionTestResult,
-  BrowserMode,
-} from '@shared/browser';
+import { type BrowserConnectionStatus, BrowserMode } from '@shared/browser';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -87,29 +83,12 @@ const installElectronBrowserMock = (overrides: Record<string, unknown> = {}) => 
 describe('extension connection error messages', () => {
   test.each([
     ['gateway-unavailable', 'browserExtensionRelayUnavailable'],
-    ['extension-relay-unavailable', 'browserExtensionRelayUnavailable'],
-    ['extension-pairing-mismatch', 'browserExtensionPairingMismatch'],
-    ['extension-relay-port-conflict', 'browserExtensionRelayPortConflict'],
-    ['extension-browser-service-failed', 'browserExtensionBrowserServiceFailed'],
     ['extension-not-connected', 'browserExtensionNotConnected'],
-    ['connection-failed', 'browserExtensionRelayUnavailable'],
+    ['permission-timeout', 'browserPermissionTimeout'],
+    ['browser-not-running', 'browserConnectionFailed'],
+    ['connection-failed', 'browserConnectionFailed'],
   ] as const)('maps %s to %s', (errorCode, expected) => {
     expect(extensionConnectionErrorMessage({ success: false, errorCode })).toBe(expected);
-  });
-
-  test('formats relay port and owner details', () => {
-    mocks.translate.mockImplementation(key =>
-      key === 'browserExtensionRelayPortConflict' ? '{port} / {owner}' : key,
-    );
-    const result: BrowserConnectionTestResult = {
-      success: false,
-      errorCode: 'extension-relay-port-conflict',
-      relayPort: 42881,
-      relayPortOwner: { pid: 321, processName: 'other.exe', isChrome: false },
-    };
-
-    expect(extensionConnectionErrorMessage(result)).toBe('42881 / other.exe (PID 321)');
-    mocks.translate.mockImplementation((key: string) => key);
   });
 });
 
@@ -268,9 +247,9 @@ describe('BrowserSettingsTab extension connection checks', () => {
     const warning = screen.getByRole('alert');
     expect(warning.querySelector('svg')?.classList.contains('h-5')).toBe(true);
     expect(warning.querySelector('svg')?.classList.contains('w-5')).toBe(true);
-    expect(
-      screen.getByText('browserModeActiveSessionWarning').classList.contains('flex-1'),
-    ).toBe(true);
+    expect(screen.getByText('browserModeActiveSessionWarning').classList.contains('flex-1')).toBe(
+      true,
+    );
     expect(
       screen.getByRole('radio', { name: /browserModeIsolatedTitle/ }).getAttribute('aria-checked'),
     ).toBe('true');

@@ -1,33 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  buildGatewayLaunchArgs,
-  buildGatewayLaunchEnvironment,
-  hasExtensionBrowserProfile,
-} from './gatewayLaunchArgs';
-
-describe('hasExtensionBrowserProfile', () => {
-  it('detects an extension-driven profile', () => {
-    expect(
-      hasExtensionBrowserProfile({
-        browser: { profiles: { chrome: { driver: 'extension' } } },
-      }),
-    ).toBe(true);
-    expect(hasExtensionBrowserProfile({ browser: { profiles: {} } })).toBe(false);
-  });
-});
+import { buildGatewayLaunchArgs, buildGatewayLaunchEnvironment } from './gatewayLaunchArgs';
 
 describe('buildGatewayLaunchEnvironment', () => {
-  it('starts browser control eagerly for extension mode while preserving the base environment', () => {
+  it('preserves the base environment without legacy browser startup flags', () => {
     expect(
-      buildGatewayLaunchEnvironment({
-        PATH: 'runtime-bin',
-        OPENCLAW_EAGER_BROWSER_CONTROL_SERVER: '0',
-      }, { eagerBrowserControl: true, appStartedAtMs: 1_800_000_000_000 }),
+      buildGatewayLaunchEnvironment(
+        {
+          PATH: 'runtime-bin',
+        },
+        { appStartedAtMs: 1_800_000_000_000 },
+      ),
     ).toEqual({
       PATH: 'runtime-bin',
       OPENCLAW_DISABLE_BONJOUR: '1',
-      OPENCLAW_EAGER_BROWSER_CONTROL_SERVER: '1',
       OPENCLAW_EXEC_SHELL_SNAPSHOT: '0',
       OPENCLAW_NO_RESPAWN: '1',
       OPENCLAW_SKIP_CHANNELS: '1',
@@ -37,14 +23,14 @@ describe('buildGatewayLaunchEnvironment', () => {
     });
   });
 
-  it('does not opt other browser modes into eager control startup', () => {
+  it('replaces a stale app-start boundary', () => {
     expect(
       buildGatewayLaunchEnvironment(
         {
           PATH: 'runtime-bin',
           JUSTDO_APP_STARTED_AT_MS: '1',
         },
-        { eagerBrowserControl: false, appStartedAtMs: 1_800_000_000_000 },
+        { appStartedAtMs: 1_800_000_000_000 },
       ),
     ).toEqual({
       PATH: 'runtime-bin',

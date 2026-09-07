@@ -33,7 +33,6 @@ const {
 const { releaseHistory: releaseHistoryLimits } = require('../src/shared/appUpdateConfig.json');
 const {
   prepareBrowserExtension,
-  readProductName,
   verifyBrowserExtension,
 } = require('./prepare-browser-extension.cjs');
 const {
@@ -852,9 +851,9 @@ function verifyPackagedBrowserExtension(context) {
       )
     : path.join(context.appOutDir, 'resources');
   const extensionDir = path.join(resourcesRoot, 'browser-extension', 'chrome-extension');
-  const result = verifyBrowserExtension(extensionDir, readProductName(path.join(__dirname, '..')));
+  const result = verifyBrowserExtension(extensionDir);
   console.log(
-    `[electron-builder-hooks] Verified packaged ${result.productName} browser extension.`,
+    `[electron-builder-hooks] Verified packaged OpenClaw browser extension ${result.manifest.version}.`,
   );
 }
 

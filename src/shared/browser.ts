@@ -73,16 +73,11 @@ export type BrowserConnectionTestResult = BrowserActionResult & {
     | 'gateway-unavailable'
     | 'permission-timeout'
     | 'extension-not-connected'
-    | 'extension-relay-unavailable'
-    | 'extension-pairing-mismatch'
-    | 'extension-relay-port-conflict'
-    | 'extension-browser-service-failed'
+    | 'browser-not-running'
     | 'connection-failed';
-  relayPort?: number;
-  relayPortOwner?: BrowserPortOwner | null;
 };
 
-export const isBrowserExtensionConnected = (value: unknown): boolean => {
+export const isBrowserProfileRunning = (value: unknown): boolean => {
   if (!value || typeof value !== 'object') return false;
   return (value as { running?: unknown }).running === true;
 };

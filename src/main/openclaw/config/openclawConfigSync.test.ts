@@ -435,6 +435,9 @@ describe('OpenClaw managed connectivity config', () => {
       },
       browser: {
         enabled: true,
+        extensionRelay: {
+          allowLegacyAuth: false,
+        },
         defaultProfile: 'openclaw',
         ssrfPolicy: {
           dangerouslyAllowPrivateNetwork: true,
@@ -446,6 +449,9 @@ describe('OpenClaw managed connectivity config', () => {
   test('uses the existing user session only after the user opts in', () => {
     expect(buildManagedOpenClawConnectivityConfig(BrowserMode.User).browser).toEqual({
       enabled: true,
+      extensionRelay: {
+        allowLegacyAuth: false,
+      },
       defaultProfile: 'user',
       profiles: {
         user: {
@@ -462,6 +468,9 @@ describe('OpenClaw managed connectivity config', () => {
   test('uses the Chrome extension profile after the user opts in', () => {
     expect(buildManagedOpenClawConnectivityConfig(BrowserMode.Extension).browser).toEqual({
       enabled: true,
+      extensionRelay: {
+        allowLegacyAuth: false,
+      },
       defaultProfile: 'chrome',
       profiles: {
         chrome: {

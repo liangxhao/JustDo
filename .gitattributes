@@ -4,3 +4,11 @@
 # Patch modules serialize function source into runtime bundles. Keep their source
 # stable so Windows autocrlf settings cannot change generated runtime artifacts.
 scripts/patches/** text eol=lf
+
+# The bundled browser extension is an exact, checksummed OpenClaw snapshot.
+resources/browser-extension/chrome-extension/**/*.js text eol=lf
+resources/browser-extension/chrome-extension/*.js text eol=lf
+resources/browser-extension/chrome-extension/*.html text eol=lf
+resources/browser-extension/chrome-extension/*.json text eol=lf
+resources/browser-extension/chrome-extension/*.txt text eol=lf
+resources/browser-extension/chrome-extension/**/*.png binary

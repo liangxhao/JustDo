@@ -1174,6 +1174,11 @@ export const buildManagedOpenClawConnectivityConfig = (
   },
   browser: {
     enabled: true,
+    // The bundled v2.2.0 extension uses Browser Relay Authentication v2.
+    // Fail closed instead of retaining OpenClaw's one-release legacy window.
+    extensionRelay: {
+      allowLegacyAuth: false,
+    },
     defaultProfile:
       browserMode === BrowserMode.User
         ? 'user'

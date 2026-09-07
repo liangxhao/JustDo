@@ -1,8 +1,6 @@
 import { execFile, spawn } from 'child_process';
-import crypto from 'crypto';
 import { app, clipboard, ipcMain, shell } from 'electron';
 import fs from 'fs';
-import http from 'http';
 import net from 'net';
 import os from 'os';
 import path from 'path';
@@ -19,7 +17,7 @@ import {
   type BrowserModeSwitchAvailabilityResult,
   type BrowserModeUpdateResult,
   type BrowserPortOwner,
-  isBrowserExtensionConnected,
+  isBrowserProfileRunning,
   normalizeBrowserMode,
   parseDevToolsActivePort,
 } from '../../../shared/browser';
@@ -28,9 +26,6 @@ import type { OpenClawCliEnvironment } from '../../openclaw/runtime/openclawEngi
 
 const REMOTE_DEBUGGING_URL = 'chrome://inspect/#remote-debugging';
 const EXTENSION_MANAGEMENT_URL = 'chrome://extensions';
-const EXTENSION_RELAY_SECRET_FILE = 'browser-extension-relay.secret';
-const DEFAULT_EXTENSION_RELAY_PORT = 18_799;
-const EXTENSION_RELAY_GATEWAY_PORT_OFFSET = 10;
 const execFileAsync = promisify(execFile);
 
 type PortOwnerLookup = {
@@ -246,60 +241,6 @@ export const findBundledBrowserExtensionPath = (
   );
 };
 
-const normalizeExtensionRelayToken = (value: string): string | null => {
-  const token = value.trim();
-  return /^[0-9a-f]{64}$/.test(token) ? token : null;
-};
-
-const readExtensionRelayToken = (secretPath: string): string | null => {
-  try {
-    return normalizeExtensionRelayToken(fs.readFileSync(secretPath, 'utf8'));
-  } catch {
-    return null;
-  }
-};
-
-export const ensureBrowserExtensionRelayToken = (stateDir: string): string => {
-  const secretPath = path.join(stateDir, 'credentials', EXTENSION_RELAY_SECRET_FILE);
-  const existing = readExtensionRelayToken(secretPath);
-  if (existing) return existing;
-
-  const token = crypto.randomBytes(32).toString('hex');
-  fs.mkdirSync(path.dirname(secretPath), { recursive: true, mode: 0o700 });
-  try {
-    fs.writeFileSync(secretPath, `${token}\n`, { mode: 0o600, flag: 'wx' });
-    return token;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-    const winner = readExtensionRelayToken(secretPath);
-    if (!winner) throw new Error('Browser extension relay secret is invalid.');
-    return winner;
-  }
-};
-
-const readConfiguredExtensionRelayPort = (configPath: string | undefined): number | null => {
-  if (!configPath) return null;
-  try {
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as {
-      browser?: { profiles?: { chrome?: { cdpPort?: unknown } } };
-    };
-    const port = Number(config.browser?.profiles?.chrome?.cdpPort);
-    return Number.isInteger(port) && port > 0 && port <= 65_535 ? port : null;
-  } catch {
-    return null;
-  }
-};
-
-export const resolveBrowserExtensionRelayPort = (cli: OpenClawCliEnvironment): number => {
-  const configured = readConfiguredExtensionRelayPort(cli.env.OPENCLAW_CONFIG_PATH);
-  if (configured) return configured;
-  const gatewayPort = Number(cli.env.OPENCLAW_GATEWAY_PORT);
-  const derived = gatewayPort + EXTENSION_RELAY_GATEWAY_PORT_OFFSET;
-  return Number.isInteger(derived) && derived > 0 && derived <= 65_535
-    ? derived
-    : DEFAULT_EXTENSION_RELAY_PORT;
-};
-
 const resolveBrowserExtensionPath = (): string => {
   const extensionPath = findBundledBrowserExtensionPath({
     isPackaged: app.isPackaged,
@@ -310,18 +251,76 @@ const resolveBrowserExtensionPath = (): string => {
   return extensionPath;
 };
 
+const parseBrowserExtensionPairingResult = (
+  raw: string,
+): { pairingString: string; relayPort: number } => {
+  const invalid = () => new Error('OpenClaw returned an invalid browser extension pairing result.');
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    throw invalid();
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalid();
+  const { pairingString, relayPort } = value as {
+    pairingString?: unknown;
+    relayPort?: unknown;
+  };
+  if (
+    typeof pairingString !== 'string' ||
+    !Number.isInteger(relayPort) ||
+    (relayPort as number) < 1 ||
+    (relayPort as number) > 65_535
+  ) {
+    throw invalid();
+  }
+  const fragmentAt = pairingString.lastIndexOf('#');
+  const token = pairingString.slice(fragmentAt + 1);
+  let relayUrl: URL;
+  try {
+    relayUrl = new URL(pairingString.slice(0, fragmentAt));
+  } catch {
+    throw invalid();
+  }
+  if (
+    fragmentAt <= 0 ||
+    !/^[0-9a-f]{64}$/.test(token) ||
+    relayUrl.protocol !== 'ws:' ||
+    relayUrl.hostname !== '127.0.0.1' ||
+    relayUrl.pathname !== '/extension' ||
+    Number(relayUrl.port) !== relayPort ||
+    relayUrl.username ||
+    relayUrl.password
+  ) {
+    throw invalid();
+  }
+  return { pairingString, relayPort: relayPort as number };
+};
+
 export const copyBrowserExtensionPairing = async (
   buildCliEnvironment: () => Promise<OpenClawCliEnvironment>,
+  runPairCommand: (cli: OpenClawCliEnvironment) => Promise<string> = async cli => {
+    const executable = cli.env.JUSTDO_ELECTRON_PATH?.trim() || process.execPath;
+    const { stdout } = await execFileAsync(
+      executable,
+      [cli.openclawEntry, 'browser', 'extension', 'pair', '--json'],
+      {
+        cwd: cli.runtimeRoot,
+        env: { ...cli.env, ELECTRON_RUN_AS_NODE: '1' },
+        timeout: 15_000,
+        maxBuffer: 1024 * 1024,
+        windowsHide: true,
+      },
+    );
+    return stdout;
+  },
 ): Promise<void> => {
   const cli = await buildCliEnvironment();
-  const stateDir = cli.env.OPENCLAW_STATE_DIR?.trim();
-  if (!stateDir || !path.isAbsolute(stateDir)) {
-    throw new Error('Browser extension state directory is unavailable.');
-  }
-  const token = ensureBrowserExtensionRelayToken(stateDir);
-  const relayPort = resolveBrowserExtensionRelayPort(cli);
-  clipboard.writeText(`ws://127.0.0.1:${relayPort}/extension#${token}`);
-  console.log(`[BrowserSettings] Browser extension pairing copied (relayPort=${relayPort}).`);
+  const result = parseBrowserExtensionPairingResult(await runPairCommand(cli));
+  clipboard.writeText(result.pairingString);
+  console.log(
+    `[BrowserSettings] Browser extension pairing copied (relayPort=${result.relayPort}).`,
+  );
 };
 
 export const openBrowserExtensionFolder = async (
@@ -358,190 +357,6 @@ const probeLoopbackPort = (port: number, timeoutMs = 700): Promise<boolean> =>
     socket.once('timeout', () => finish(false));
     socket.once('error', () => finish(false));
   });
-
-type ExtensionRelayProbe = {
-  reachable: boolean;
-  identified: boolean;
-  statusCode: number | null;
-};
-
-export const isBrowserExtensionRelayResponse = (
-  port: number,
-  statusCode: number | undefined,
-  authenticateHeader: string | string[] | undefined,
-  body: string,
-): boolean => {
-  if (statusCode === 401) {
-    const authenticate = Array.isArray(authenticateHeader)
-      ? authenticateHeader.join(',')
-      : (authenticateHeader ?? '');
-    return /Basic\s+realm=["']openclaw-extension-relay["']/i.test(authenticate);
-  }
-  let payload: { error?: unknown; webSocketDebuggerUrl?: unknown };
-  try {
-    payload = JSON.parse(body) as { error?: unknown; webSocketDebuggerUrl?: unknown };
-  } catch {
-    return false;
-  }
-  if (statusCode === 503) {
-    return (
-      typeof payload.error === 'string' &&
-      payload.error.includes('OpenClaw Chrome extension is not connected')
-    );
-  }
-  if (statusCode !== 200 || typeof payload.webSocketDebuggerUrl !== 'string') return false;
-  try {
-    const endpoint = new URL(payload.webSocketDebuggerUrl);
-    return (
-      endpoint.protocol === 'ws:' &&
-      endpoint.hostname === '127.0.0.1' &&
-      Number(endpoint.port) === port &&
-      endpoint.pathname === '/cdp'
-    );
-  } catch {
-    return false;
-  }
-};
-
-export const probeBrowserExtensionRelay = (
-  port: number,
-  token: string,
-  timeoutMs = 1_500,
-): Promise<ExtensionRelayProbe> =>
-  new Promise(resolve => {
-    let settled = false;
-    let responseStarted = false;
-    let responseRef: http.IncomingMessage | null = null;
-    let deadlineTimer: ReturnType<typeof setTimeout> | null = null;
-    const finish = (probe: ExtensionRelayProbe) => {
-      if (settled) return;
-      settled = true;
-      if (deadlineTimer) clearTimeout(deadlineTimer);
-      resolve(probe);
-    };
-    const authorization = Buffer.from(`openclaw:${token}`).toString('base64');
-    const request = http.request(
-      {
-        host: '127.0.0.1',
-        port,
-        path: '/json/version',
-        method: 'GET',
-        headers: { Authorization: `Basic ${authorization}` },
-      },
-      response => {
-        responseStarted = true;
-        responseRef = response;
-        const chunks: Buffer[] = [];
-        let size = 0;
-        const finishInterruptedResponse = () => {
-          response.destroy();
-          request.destroy();
-          finish({ reachable: true, identified: false, statusCode: response.statusCode ?? null });
-        };
-        response.on('data', (chunk: Buffer | string) => {
-          const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-          size += buffer.length;
-          if (size > 8_192) {
-            finishInterruptedResponse();
-            return;
-          }
-          chunks.push(buffer);
-        });
-        response.once('end', () => {
-          const body = Buffer.concat(chunks).toString('utf8');
-          finish({
-            reachable: true,
-            identified: isBrowserExtensionRelayResponse(
-              port,
-              response.statusCode,
-              response.headers['www-authenticate'],
-              body,
-            ),
-            statusCode: response.statusCode ?? null,
-          });
-        });
-        response.once('aborted', finishInterruptedResponse);
-        response.once('error', finishInterruptedResponse);
-        response.once('close', () => {
-          if (!response.complete) finishInterruptedResponse();
-        });
-      },
-    );
-    request.once('error', () =>
-      finish({
-        reachable: responseStarted,
-        identified: false,
-        statusCode: responseRef?.statusCode ?? null,
-      }),
-    );
-    deadlineTimer = setTimeout(() => {
-      responseRef?.destroy();
-      request.destroy();
-      finish({
-        reachable: responseStarted,
-        identified: false,
-        statusCode: responseRef?.statusCode ?? null,
-      });
-    }, timeoutMs);
-    request.end();
-  });
-
-export const classifyBrowserExtensionRelayProbe = (probe: {
-  relayPort: number;
-  portListening: boolean;
-  portOwner: BrowserPortOwner | null;
-  reachable: boolean;
-  identified: boolean;
-  statusCode: number | null;
-}): BrowserConnectionTestResult => {
-  const details = { relayPort: probe.relayPort, relayPortOwner: probe.portOwner };
-  if (!probe.portListening) {
-    return { success: false, errorCode: 'extension-relay-unavailable', ...details };
-  }
-  if (!probe.reachable || !probe.identified) {
-    return { success: false, errorCode: 'extension-relay-port-conflict', ...details };
-  }
-  if (probe.statusCode === 401) {
-    return { success: false, errorCode: 'extension-pairing-mismatch', ...details };
-  }
-  if (probe.statusCode === 503) {
-    return { success: false, errorCode: 'extension-not-connected', ...details };
-  }
-  if (probe.statusCode === 200) {
-    return { success: false, errorCode: 'extension-browser-service-failed', ...details };
-  }
-  return { success: false, errorCode: 'extension-relay-port-conflict', ...details };
-};
-
-export const diagnoseBrowserExtensionConnection = async (
-  buildCliEnvironment: () => Promise<OpenClawCliEnvironment>,
-): Promise<BrowserConnectionTestResult> => {
-  const cli = await buildCliEnvironment();
-  const stateDir = cli.env.OPENCLAW_STATE_DIR?.trim();
-  const relayPort = resolveBrowserExtensionRelayPort(cli);
-  if (!stateDir || !path.isAbsolute(stateDir)) {
-    return { success: false, errorCode: 'extension-relay-unavailable', relayPort };
-  }
-  const token = readExtensionRelayToken(
-    path.join(stateDir, 'credentials', EXTENSION_RELAY_SECRET_FILE),
-  );
-  if (!token) {
-    return { success: false, errorCode: 'extension-relay-unavailable', relayPort };
-  }
-  const portListening = await probeLoopbackPort(relayPort, 1_000);
-  const relayProbe = portListening
-    ? await probeBrowserExtensionRelay(relayPort, token)
-    : { reachable: false, identified: false, statusCode: null };
-  const diagnostic = classifyBrowserExtensionRelayProbe({
-    relayPort,
-    portListening,
-    portOwner: null,
-    ...relayProbe,
-  });
-  if (diagnostic.errorCode !== 'extension-relay-port-conflict') return diagnostic;
-  const ownerLookup = await resolvePortOwner(relayPort);
-  return { ...diagnostic, relayPortOwner: ownerLookup.owner };
-};
 
 export const getBrowserConnectionStatus = async (): Promise<BrowserConnectionStatus> => {
   const userDataDir = resolveChromeUserDataDir();
@@ -625,11 +440,14 @@ export const testBrowserConnection = async (
       query: { profile },
       timeoutMs: 45_000,
     });
-    if (profile === 'chrome' && !isBrowserExtensionConnected(response)) {
+    if (!isBrowserProfileRunning(response)) {
       return {
         success: false,
-        errorCode: 'extension-not-connected',
-        error: 'The browser extension is not connected.',
+        errorCode: profile === 'chrome' ? 'extension-not-connected' : 'browser-not-running',
+        error:
+          profile === 'chrome'
+            ? 'The browser extension is not connected.'
+            : 'The Chrome browser profile is not running.',
       };
     }
     return { success: true };
@@ -779,19 +597,7 @@ export const registerBrowserHandlers = ({
   ipcMain.handle(
     BrowserIpc.TestExtensionConnection,
     async (): Promise<BrowserConnectionTestResult> => {
-      const result = await testBrowserConnection(getGatewayClient(), 'chrome');
-      if (result.success || result.errorCode === 'gateway-unavailable') return result;
-      try {
-        const diagnostic = await diagnoseBrowserExtensionConnection(buildCliEnvironment);
-        const owner = diagnostic.relayPortOwner;
-        console.warn(
-          `[BrowserSettings] Browser extension connection diagnostic: code=${diagnostic.errorCode ?? 'unknown'}, relayPort=${diagnostic.relayPort ?? 'unknown'}, owner=${owner ? `${owner.processName ?? 'unknown'} (pid=${owner.pid})` : 'none'}.`,
-        );
-        return diagnostic;
-      } catch (error) {
-        console.error('[BrowserSettings] Failed to diagnose browser extension connection:', error);
-        return result;
-      }
+      return testBrowserConnection(getGatewayClient(), 'chrome');
     },
   );
 };

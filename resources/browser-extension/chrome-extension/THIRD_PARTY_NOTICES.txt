@@ -1,4 +1,6 @@
-This browser extension is derived from the OpenClaw browser extension.
+This directory contains the unmodified OpenClaw browser extension shipped with
+the OpenClaw v2026.9.2 runtime. JustDo copies it as an unpacked extension and
+does not maintain a separate relay protocol implementation.
 Upstream: https://github.com/openclaw/openclaw
 
 MIT License

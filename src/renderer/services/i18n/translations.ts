@@ -215,13 +215,14 @@ export const translations: Record<LanguageType, Record<string, string>> = {
       '使用独立的浏览器资料，不读取日常 Chrome 的账号、Cookie 或标签页。',
     browserModeIsolatedActive:
       '当前使用隔离浏览器。它与日常 Chrome 完全分开，也是默认和更安全的选择。',
-    browserModeIsolatedNetworkNotice: '提示：隔离浏览器仅支持访问公司内网，无法访问互联网。',
+    browserModeIsolatedNetworkNotice:
+      '网络访问仍受应用代理和安全策略约束；隔离只针对浏览器资料与登录状态。',
     browserModeUserTitle: '允许连接你的浏览器',
     browserModeUserDescription:
       '连接日常 Chrome，复用其中的登录状态、Cookie 和标签页，需要你主动授权。',
     browserModeExtensionTitle: '通过扩展连接 Chrome',
     browserModeExtensionDescription:
-      '安装并配对浏览器助手扩展，只共享指定标签页，无需每次批准远程调试。',
+      '安装并配对内置浏览器扩展，可在扩展设置中选择共享全部网页或仅共享指定标签页。',
     browserModeChangeFailed: '浏览器模式切换失败',
     browserModeApplying: '正在应用浏览器设置，AI 引擎可能会短暂重启…',
     browserModeGatewayRestarting: '正在重启 AI 引擎，期间浏览器连接会短暂断开…',
@@ -271,10 +272,10 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserConnectionFailed: 'Chrome 连接测试失败',
     browserExtensionTitle: '通过扩展连接你的 Chrome',
     browserExtensionDescription:
-      '首次配对后会自动重连；只有浏览器助手标签组中的网页会被共享，移出标签组即可停止访问。',
+      '首次手动配对默认仅共享选定标签页，配对后会自动重连；如需扩大范围，可在扩展设置中选择“All tabs”。',
     browserExtensionStepChromeTitle: '1. 安装并启动 Google Chrome',
     browserExtensionStepChromeDescription: '扩展模式要求 Chrome 125 或更高版本。',
-    browserExtensionStepInstallTitle: '2. 加载浏览器助手扩展',
+    browserExtensionStepInstallTitle: '2. 加载内置浏览器扩展',
     browserExtensionStepInstallDescription:
       '（1）打开 Chrome 扩展管理页，开启“开发者模式”。\n（2）点击“加载已解压的扩展程序”，选择应用打开目录中的“chrome-extension”文件夹。',
     browserExtensionOpenPage: '打开扩展管理页',
@@ -284,7 +285,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserExtensionRevealFailed: '无法找到或打开内置浏览器扩展',
     browserExtensionStepPairTitle: '3. 配对扩展',
     browserExtensionStepPairDescription:
-      '（1）点击右侧“复制配对信息”按钮。\n（2）点击 Chrome 工具栏中的“浏览器助手”图标，粘贴配对信息并确认。如果图标未显示，请在 {extensionsButton} 菜单中找到它。',
+      '（1）点击右侧“复制配对信息”按钮。\n（2）打开 Chrome 工具栏中的内置浏览器扩展，进入 Settings → Advanced manual pairing，粘贴并保存。\n（3）按需选择 All tabs 或 Selected tabs；后者只允许扩展标签组中的网页。',
     browserExtensionToolbarExtensions: '“扩展程序”',
     browserExtensionCopyPairing: '复制配对信息',
     browserExtensionPairingCopied: '已复制，请粘贴到扩展中',
@@ -294,10 +295,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserExtensionTestConnection: '测试扩展连接',
     browserExtensionRelayUnavailable:
       '本地连接服务未响应。请重启应用；仍无法连接时，请检查安全软件是否阻止本地连接。',
-    browserExtensionPairingMismatch: '配对信息无效，请重新配对。',
-    browserExtensionRelayPortConflict: '本地端口 {port} 被 {owner} 占用，请关闭占用程序后重试。',
-    browserExtensionBrowserServiceFailed:
-      'Chrome 扩展已连接，但无法建立浏览器控制通道。请在扩展管理页重新加载扩展后重试。',
     browserExtensionNotConnected: 'Chrome 扩展尚未连接，请确认扩展已启用或重新配对。',
     shortcuts: '快捷键',
     help: '帮助',
@@ -1740,13 +1737,13 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserModeIsolatedActive:
       'The isolated browser is active. It stays separate from everyday Chrome and is the default, safer choice.',
     browserModeIsolatedNetworkNotice:
-      'Note: The isolated browser can access only the company intranet, not the internet.',
+      'Network access still follows the app proxy and security policy; isolation applies to browser data and sign-in state.',
     browserModeUserTitle: 'Allow access to your browser',
     browserModeUserDescription:
       'Connects to everyday Chrome and reuses its sign-in state, cookies, and tabs after you explicitly authorize it.',
     browserModeExtensionTitle: 'Connect through extension',
     browserModeExtensionDescription:
-      'Install and pair the browser assistant extension to share selected tabs without approving remote debugging every time.',
+      'Install and pair the bundled browser extension, then choose all eligible pages or selected tabs in its settings.',
     browserModeChangeFailed: 'Failed to change browser mode',
     browserModeApplying: 'Applying browser settings; the AI engine may restart briefly…',
     browserModeGatewayRestarting:
@@ -1797,10 +1794,10 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserConnectionFailed: 'Chrome connection test failed',
     browserExtensionTitle: 'Connect your Chrome through the extension',
     browserExtensionDescription:
-      'After the first pairing, the extension reconnects automatically. Only pages in the browser assistant tab group are shared; move a page out to stop access.',
+      'Manual pairing shares selected tabs by default and reconnects automatically; choose All tabs in extension settings only when broader access is needed.',
     browserExtensionStepChromeTitle: '1. Install and start Google Chrome',
     browserExtensionStepChromeDescription: 'Extension mode requires Chrome 125 or newer.',
-    browserExtensionStepInstallTitle: '2. Load the browser assistant extension',
+    browserExtensionStepInstallTitle: '2. Load the bundled browser extension',
     browserExtensionStepInstallDescription:
       '(1) Open Chrome’s extension management page and enable Developer mode.\n(2) Choose Load unpacked, then select the chrome-extension folder inside the directory opened by the app.',
     browserExtensionOpenPage: 'Open extensions page',
@@ -1811,7 +1808,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserExtensionRevealFailed: 'Unable to find or open the bundled browser extension',
     browserExtensionStepPairTitle: '3. Pair the extension',
     browserExtensionStepPairDescription:
-      '(1) Select Copy pairing information on the right.\n(2) Open the browser assistant from the Chrome toolbar, paste the pairing information, and confirm. If its icon is hidden, find it in the {extensionsButton} menu.',
+      '(1) Select Copy pairing information on the right.\n(2) Open the bundled browser extension, go to Settings → Advanced manual pairing, then paste and save.\n(3) Choose All tabs or Selected tabs; the latter exposes only pages in the extension tab group.',
     browserExtensionToolbarExtensions: '“Extensions”',
     browserExtensionCopyPairing: 'Copy pairing information',
     browserExtensionPairingCopied: 'Copied; paste it into the extension',
@@ -1822,11 +1819,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserExtensionTestConnection: 'Test extension connection',
     browserExtensionRelayUnavailable:
       'The local connection service is not responding. Restart the app; if it still cannot connect, check whether security software blocks local connections.',
-    browserExtensionPairingMismatch: 'The pairing information is invalid. Pair again.',
-    browserExtensionRelayPortConflict:
-      'Local port {port} is in use by {owner}. Close that process and try again.',
-    browserExtensionBrowserServiceFailed:
-      'The Chrome extension is connected, but the browser control channel could not be established. Reload the extension from the extensions page and try again.',
     browserExtensionNotConnected: 'The Chrome extension is not connected. Enable it or pair again.',
     shortcuts: 'Shortcuts',
     help: 'Help',

@@ -4,39 +4,24 @@ import path from 'node:path';
 
 import { describe, expect, test } from 'vitest';
 
-const { prepareBrowserExtension, readProductName, verifyBrowserExtension } =
+const { prepareBrowserExtension, verifyBrowserExtension } =
   require('../../scripts/prepare-browser-extension.cjs') as {
     prepareBrowserExtension: (options: { outputDir?: string; repoRoot: string }) => {
       outputDir: string;
-      productName: string;
       sourceDir: string;
     };
-    readProductName: (repoRoot: string) => string;
-    verifyBrowserExtension: (extensionDir: string, productName: string) => unknown;
+    verifyBrowserExtension: (extensionDir: string) => unknown;
   };
 
 const projectRoot = path.resolve(__dirname, '../..');
 
-const createFixture = (productName = 'ExampleApp') => {
+const createFixture = () => {
   const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-browser-extension-'));
-  fs.writeFileSync(
-    path.join(repoRoot, 'package.json'),
-    `${JSON.stringify({ name: 'internal-name', productName }, null, 2)}\n`,
-    'utf8',
-  );
   fs.cpSync(
     path.join(projectRoot, 'resources', 'browser-extension'),
     path.join(repoRoot, 'resources', 'browser-extension'),
     { recursive: true },
   );
-  for (const size of [16, 32, 48, 128]) {
-    const iconDir = path.join(repoRoot, 'resources', 'icons', 'png');
-    fs.mkdirSync(iconDir, { recursive: true });
-    fs.copyFileSync(
-      path.join(projectRoot, 'resources', 'icons', 'png', `${size}x${size}.png`),
-      path.join(iconDir, `${size}x${size}.png`),
-    );
-  }
   return repoRoot;
 };
 
@@ -54,8 +39,8 @@ describe('browser extension preparation', () => {
     );
   });
 
-  test('brands the loadable extension from productName and preserves relay protocols', () => {
-    const repoRoot = createFixture('ExampleApp');
+  test('packages the locked upstream extension with relay authentication v2 intact', () => {
+    const repoRoot = createFixture();
 
     try {
       const first = prepareBrowserExtension({ repoRoot });
@@ -74,41 +59,20 @@ describe('browser extension preparation', () => {
         'utf8',
       );
 
-      expect(first.productName).toBe('ExampleApp');
-      expect(second.productName).toBe('ExampleApp');
+      expect(first.sourceDir).toBe(second.sourceDir);
       expect(manifest).toMatchObject({
-        name: 'ExampleApp',
-        version: '1.0.0',
-        action: { default_title: 'ExampleApp' },
+        name: 'OpenClaw',
+        version: '2.2.0',
+        action: { default_title: 'OpenClaw' },
       });
-      expect(manifest.description).toContain('ExampleApp');
-      expect(popup).toContain('chrome.runtime.getManifest().name');
-      expect(relayCore).toContain('openclaw-extension-relay');
-      expect(relayCore).toContain('openclaw-extension-token.');
+      expect(manifest.description).toContain('OpenClaw');
+      expect(popup).toContain('chrome.runtime.openOptionsPage()');
+      expect(relayCore).toContain('openclaw-extension-relay.v2');
+      expect(relayCore).toContain('authVersion');
+      expect(fs.existsSync(path.join(second.outputDir, 'modules', 'relay-auth-v2.js'))).toBe(true);
+      expect(fs.existsSync(path.join(second.outputDir, 'options.html'))).toBe(true);
       expect(fs.existsSync(path.join(second.outputDir, 'manifest.template.json'))).toBe(false);
-      expect(() => verifyBrowserExtension(second.outputDir, 'ExampleApp')).not.toThrow();
-    } finally {
-      fs.rmSync(repoRoot, { recursive: true, force: true });
-    }
-  });
-
-  test('reads productName instead of the internal package name', () => {
-    const repoRoot = createFixture('VisibleBrand');
-
-    try {
-      expect(readProductName(repoRoot)).toBe('VisibleBrand');
-    } finally {
-      fs.rmSync(repoRoot, { recursive: true, force: true });
-    }
-  });
-
-  test('rejects an invalid productName', () => {
-    const repoRoot = createFixture('Invalid Brand');
-
-    try {
-      expect(() => prepareBrowserExtension({ repoRoot })).toThrow(
-        'package.json productName must be a non-reserved English word',
-      );
+      expect(() => verifyBrowserExtension(second.outputDir)).not.toThrow();
     } finally {
       fs.rmSync(repoRoot, { recursive: true, force: true });
     }
@@ -139,8 +103,40 @@ describe('browser extension preparation', () => {
         path.join(outputDir, 'icons', 'icon128.png'),
       );
 
-      expect(() => verifyBrowserExtension(outputDir, 'ExampleApp')).toThrow(
-        'icon must be a 128x128 PNG',
+      expect(() => verifyBrowserExtension(outputDir)).toThrow('icon must be a 128x128 PNG');
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  test.each([
+    'THIRD_PARTY_NOTICES.txt',
+    'modules/relay-auth-v2-crypto.js',
+    'modules/tab-access-command-scope.js',
+  ])('rejects a locked snapshot missing %s', relativePath => {
+    const repoRoot = createFixture();
+
+    try {
+      const { outputDir } = prepareBrowserExtension({ repoRoot });
+      fs.rmSync(path.join(outputDir, relativePath));
+
+      expect(() => verifyBrowserExtension(outputDir)).toThrow(
+        'files do not match the locked OpenClaw snapshot',
+      );
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects a modified locked extension file', () => {
+    const repoRoot = createFixture();
+
+    try {
+      const { outputDir } = prepareBrowserExtension({ repoRoot });
+      fs.appendFileSync(path.join(outputDir, 'options.js'), '\n// unexpected mutation\n', 'utf8');
+
+      expect(() => verifyBrowserExtension(outputDir)).toThrow(
+        'Browser extension file checksum mismatch: options.js',
       );
     } finally {
       fs.rmSync(repoRoot, { recursive: true, force: true });

@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 
 import {
   BrowserMode,
-  isBrowserExtensionConnected,
+  isBrowserProfileRunning,
   normalizeBrowserMode,
   parseDevToolsActivePort,
 } from './browser';
@@ -36,18 +36,18 @@ describe('parseDevToolsActivePort', () => {
   });
 });
 
-describe('isBrowserExtensionConnected', () => {
+describe('isBrowserProfileRunning', () => {
   test.each([{ running: true }, { running: true, tabs: [] }, { running: true, tabs: [null] }])(
     'accepts a running extension independently of shared tabs %#',
     response => {
-      expect(isBrowserExtensionConnected(response)).toBe(true);
+      expect(isBrowserProfileRunning(response)).toBe(true);
     },
   );
 
   test.each([null, {}, { running: false }, { running: 'true' }])(
     'rejects a response without the running signal %#',
     response => {
-      expect(isBrowserExtensionConnected(response)).toBe(false);
+      expect(isBrowserProfileRunning(response)).toBe(false);
     },
   );
 });
