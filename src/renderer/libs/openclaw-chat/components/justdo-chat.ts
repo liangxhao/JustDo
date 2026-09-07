@@ -448,16 +448,51 @@ export class JustDoChatElement extends LitElement {
         padding-bottom: 0;
       }
 
-      .chat-group--content + .chat-group--content {
-        margin-top: var(--justdo-message-gap, 8px);
+      .chat-group--assistant.chat-group--content {
+        padding-block: 0;
+      }
+
+      .chat-group--assistant:not(.chat-group--continuation) {
+        position: relative;
+      }
+
+      .chat-group--assistant:not(.chat-group--continuation) > .chat-group__avatar {
+        position: var(--justdo-assistant-leading-avatar-position, static);
+        top: 0;
+        left: 0;
+      }
+
+      .chat-group--assistant:not(.chat-group--continuation) > .chat-group__content {
+        margin-left: var(--justdo-assistant-leading-content-margin-left, 0px);
+      }
+
+      .chat-group--assistant.chat-group--content:not(.chat-group--continuation)
+        > .chat-group__content {
+        padding-top: var(--justdo-assistant-avatar-first-line-offset, 0px);
+      }
+
+      .chat-group--content + .chat-group--content,
+      .chat-container > .chat-history-row + .chat-history-row {
+        margin-top: max(var(--justdo-message-gap, 8px), var(--justdo-assistant-row-gap, 0px));
       }
 
       .chat-container > .chat-group--timeline + .chat-group--timeline {
-        margin-top: var(--justdo-timeline-gap, 4px);
+        margin-top: max(var(--justdo-timeline-gap, 4px), var(--justdo-assistant-row-gap, 0px));
+      }
+
+      .chat-container > .chat-group--timeline + .chat-group--content,
+      .chat-container > .chat-group--content + .chat-group--timeline,
+      .chat-container > .chat-history-row + .chat-group--timeline,
+      .chat-container > .chat-group--timeline + .chat-history-row {
+        margin-top: var(--justdo-assistant-row-gap, 0px);
       }
 
       .chat-group--content .chat-bubble + .chat-bubble {
         margin-top: var(--justdo-message-gap, 8px);
+      }
+
+      .chat-group--assistant .chat-bubble + .chat-bubble {
+        margin-top: max(var(--justdo-message-gap, 8px), var(--justdo-assistant-row-gap, 0px));
       }
 
       .chat-group--user {
@@ -571,14 +606,29 @@ export class JustDoChatElement extends LitElement {
         display: flex;
         align-items: center;
         gap: 6px;
+        line-height: 1.45;
       }
 
       .chat-group--user .chat-group__footer {
         justify-content: flex-end;
       }
 
+      .chat-group--assistant .chat-group__footer,
+      .active-turn__footer {
+        padding-left: var(--justdo-assistant-footer-padding-left, 0px);
+      }
+
+      .chat-group--assistant .chat-group__footer {
+        margin-top: var(--justdo-assistant-footer-margin-top, 2px);
+      }
+
       .chat-group__sender {
-        font-weight: 500;
+        font-weight: 400;
+      }
+
+      .chat-group__footer-separator,
+      .active-turn__footer-separator {
+        opacity: 0.6;
       }
 
       /* ── Chat Bubble ────────────────────────────────────────────────── */
@@ -714,15 +764,27 @@ export class JustDoChatElement extends LitElement {
       }
 
       .chat-bubble--assistant {
-        background: var(--justdo-chat-assistant-bg, #ffffff);
+        padding: var(--justdo-assistant-bubble-padding, 10px 14px);
+        background: color-mix(
+          in srgb,
+          var(--justdo-chat-assistant-bg, #ffffff)
+            var(--justdo-assistant-bubble-background-strength, 100%),
+          transparent
+        );
         color: var(--justdo-chat-assistant-text, inherit);
-        border-bottom-left-radius: 4px;
+        border-radius: var(--justdo-assistant-bubble-radius, 12px 12px 12px 4px);
+        min-width: var(--justdo-assistant-bubble-min-width, 0);
         max-width: 100%;
-        width: fit-content;
+        width: var(--justdo-assistant-bubble-width, fit-content);
+      }
+
+      .chat-bubble--assistant:has(> .message-copy) {
+        padding-right: var(--justdo-assistant-bubble-copy-padding-right, 14px);
       }
 
       .chat-bubble--streaming {
-        border-left: 3px solid var(--justdo-chat-accent, #6366f1);
+        border-left: var(--justdo-assistant-stream-border-width, 3px) solid
+          var(--justdo-chat-accent, #6366f1);
       }
 
       .chat-bubble__text {
@@ -1565,7 +1627,12 @@ export class JustDoChatElement extends LitElement {
         color: #e5e7eb;
       }
       :host(.dark) .chat-bubble--assistant {
-        background: var(--justdo-chat-assistant-bg, #1f2937);
+        background: color-mix(
+          in srgb,
+          var(--justdo-chat-assistant-bg, #1f2937)
+            var(--justdo-assistant-bubble-background-strength, 100%),
+          transparent
+        );
         border-color: rgba(255, 255, 255, 0.06);
       }
       :host(.dark) .chat-thinking__content {
@@ -1584,7 +1651,7 @@ export class JustDoChatElement extends LitElement {
         position: relative;
         width: 100%;
         box-sizing: border-box;
-        margin: 8px 0 22px;
+        margin: var(--justdo-active-turn-footer-margin-top, 8px) 0 22px;
         color: var(--justdo-chat-text, #111827);
       }
       .active-turn__footer {
@@ -1596,10 +1663,11 @@ export class JustDoChatElement extends LitElement {
         gap: 6px;
         color: var(--justdo-chat-muted, #64748b);
         font-size: 11px;
+        line-height: 1.45;
       }
       .active-turn-timeline {
         display: grid;
-        gap: var(--justdo-timeline-gap, 4px);
+        gap: max(var(--justdo-timeline-gap, 4px), var(--justdo-assistant-row-gap, 0px));
       }
       .chat-group--timeline {
         padding-block: 0;
@@ -1608,7 +1676,7 @@ export class JustDoChatElement extends LitElement {
         margin-bottom: 2px;
       }
       .chat-group--timeline .chat-group__content {
-        padding-top: 1px;
+        padding-top: 0;
       }
       .process-summary {
         display: flex;
@@ -1618,7 +1686,7 @@ export class JustDoChatElement extends LitElement {
         gap: 7px;
         border: 0;
         border-radius: 8px;
-        padding: 6px 9px;
+        padding: var(--justdo-process-summary-padding, 6px 9px);
         background: transparent;
         color: var(--justdo-chat-muted, #64748b);
         font: inherit;
@@ -3135,14 +3203,22 @@ export class JustDoChatElement extends LitElement {
       ${
         completedDate
           ? html`
-              ${model ? html`<span>·</span>` : nothing}
+              ${
+                model
+                  ? html`<span class="active-turn__footer-separator" aria-hidden="true">·</span>`
+                  : nothing
+              }
               <time datetime=${completedDate.toISOString()}
                 >${formatActiveTurnTimestamp(completedDate)}</time
               >
             `
           : nothing
       }
-      ${model || completedDate ? html`<span>·</span>` : nothing}
+      ${
+        model || completedDate
+          ? html`<span class="active-turn__footer-separator" aria-hidden="true">·</span>`
+          : nothing
+      }
       <span>${durationLabel}</span>
     `;
   }
@@ -3165,7 +3241,7 @@ export class JustDoChatElement extends LitElement {
           : historyItem,
       );
       return html`
-        <div data-history-key=${item.key} data-minimap-anchor=${item.key}>
+        <div class="chat-history-row" data-history-key=${item.key} data-minimap-anchor=${item.key}>
           ${this.renderItems(historyItems, null, showAvatar, showFooter)}
         </div>
       `;

@@ -161,8 +161,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     agentRuntimeThinkingHint:
       '继承时沿用父 Agent 的思考强度；不受模型支持的档位会自动匹配到最接近的可用档位。',
     agentRuntimeAgentTimeoutTitle: 'Agent 单轮运行时限',
-    agentRuntimeAgentTimeoutDescription:
-      '限制从发送一条消息到本轮完成的最长运行时间；默认不限制。',
+    agentRuntimeAgentTimeoutDescription: '限制从发送一条消息到本轮完成的最长运行时间；默认不限制。',
     agentRuntimeAgentMaxConcurrent: 'Agent 总并发数',
     agentRuntimeSystemDefault: '系统默认',
     agentRuntimeAgentMaxConcurrentDescription:
@@ -353,6 +352,9 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     themeColor: '主题色',
     readingExperience: '阅读体验',
     readingExperienceDescription: '调整后会立即预览，保存设置后长期生效',
+    messageLayout: '消息样式',
+    messageLayoutBubble: '气泡模式',
+    messageLayoutDocument: '文档模式',
     restoreDefaults: '恢复默认值',
     chatContentWidth: '消息区域宽度',
     chatContentWidthDescription: '按当前窗口可用宽度调整对话内容和输入框，窗口变化时自动适配',
@@ -1878,6 +1880,9 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     themeColor: 'Color Themes',
     readingExperience: 'Reading Experience',
     readingExperienceDescription: 'Changes are previewed instantly and persist after saving',
+    messageLayout: 'Message Style',
+    messageLayoutBubble: 'Bubble',
+    messageLayoutDocument: 'Document',
     restoreDefaults: 'Restore Defaults',
     chatContentWidth: 'Message Area Width',
     chatContentWidthDescription:

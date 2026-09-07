@@ -697,11 +697,16 @@ function renderGroupFooter(
   return html`
     <div class="chat-group__footer">
       ${roleName ? html`<span class="chat-group__sender">${roleName}</span>` : nothing}
+      ${
+        roleName
+          ? html`<span class="chat-group__footer-separator" aria-hidden="true">·</span>`
+          : nothing
+      }
       <time class="chat-group__timestamp" datetime=${date.toISOString()}>${time}</time>
       ${
         duration
           ? html`
-              <span>·</span>
+              <span class="chat-group__footer-separator" aria-hidden="true">·</span>
               <span
                 >${i18nService.t('coworkRunWorkedDuration').replace('{duration}', duration)}</span
               >

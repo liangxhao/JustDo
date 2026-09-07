@@ -1,10 +1,12 @@
 export type AppearanceFontFamily = 'system' | 'sans' | 'serif' | 'monospace';
+export type MessageLayout = 'bubble' | 'document';
 export type MessageDensity = 'compact' | 'comfortable' | 'spacious';
 
 export interface AppearanceConfig {
   chatContentWidth: number;
   fontFamily: AppearanceFontFamily;
   fontSize: number;
+  messageLayout: MessageLayout;
   messageDensity: MessageDensity;
   wrapCodeBlocks: boolean;
 }
@@ -13,6 +15,7 @@ export const defaultAppearanceConfig: AppearanceConfig = {
   chatContentWidth: 70,
   fontFamily: 'system',
   fontSize: 16,
+  messageLayout: 'bubble',
   messageDensity: 'comfortable',
   wrapCodeBlocks: false,
 };
@@ -37,11 +40,26 @@ const TIMELINE_GAPS: Record<MessageDensity, number> = {
   spacious: 8,
 };
 
+const ASSISTANT_ROW_GAPS: Record<MessageDensity, number> = {
+  compact: 8,
+  comfortable: 12,
+  spacious: 18,
+};
+
+const DOCUMENT_FOOTER_GAPS: Record<MessageDensity, number> = {
+  compact: 6,
+  comfortable: 8,
+  spacious: 10,
+};
+
 const isFontFamily = (value: unknown): value is AppearanceFontFamily =>
   value === 'system' || value === 'sans' || value === 'serif' || value === 'monospace';
 
 const isMessageDensity = (value: unknown): value is MessageDensity =>
   value === 'compact' || value === 'comfortable' || value === 'spacious';
+
+const isMessageLayout = (value: unknown): value is MessageLayout =>
+  value === 'bubble' || value === 'document';
 
 const clampNumber = (
   value: unknown,
@@ -66,6 +84,9 @@ export const normalizeAppearanceConfig = (
     ? value.fontFamily
     : defaultAppearanceConfig.fontFamily,
   fontSize: clampNumber(value?.fontSize, 13, 20, defaultAppearanceConfig.fontSize),
+  messageLayout: isMessageLayout(value?.messageLayout)
+    ? value.messageLayout
+    : defaultAppearanceConfig.messageLayout,
   messageDensity: isMessageDensity(value?.messageDensity)
     ? value.messageDensity
     : defaultAppearanceConfig.messageDensity,
@@ -88,6 +109,68 @@ export const applyAppearanceConfig = (
   root.style.setProperty('--justdo-chat-content-width', `${appearance.chatContentWidth}%`);
   root.style.setProperty('--justdo-message-gap', `${MESSAGE_GAPS[appearance.messageDensity]}px`);
   root.style.setProperty('--justdo-timeline-gap', `${TIMELINE_GAPS[appearance.messageDensity]}px`);
+  const usesDocumentLayout = appearance.messageLayout === 'document';
+  root.style.setProperty(
+    '--justdo-assistant-row-gap',
+    `${
+      usesDocumentLayout
+        ? ASSISTANT_ROW_GAPS[appearance.messageDensity]
+        : ASSISTANT_ROW_GAPS[appearance.messageDensity] / 2
+    }px`,
+  );
+  root.style.setProperty(
+    '--justdo-assistant-bubble-background-strength',
+    usesDocumentLayout ? '0%' : '100%',
+  );
+  root.style.setProperty(
+    '--justdo-assistant-bubble-padding',
+    usesDocumentLayout ? '0' : '10px 14px',
+  );
+  root.style.setProperty(
+    '--justdo-assistant-bubble-copy-padding-right',
+    usesDocumentLayout ? '34px' : '14px',
+  );
+  root.style.setProperty(
+    '--justdo-assistant-bubble-radius',
+    usesDocumentLayout ? '0' : '12px 12px 12px 4px',
+  );
+  root.style.setProperty(
+    '--justdo-assistant-bubble-width',
+    usesDocumentLayout ? '100%' : 'fit-content',
+  );
+  root.style.setProperty('--justdo-assistant-bubble-min-width', usesDocumentLayout ? '100%' : '0');
+  root.style.setProperty(
+    '--justdo-assistant-stream-border-width',
+    usesDocumentLayout ? '0px' : '3px',
+  );
+  root.style.setProperty(
+    '--justdo-assistant-footer-margin-top',
+    usesDocumentLayout ? `${DOCUMENT_FOOTER_GAPS[appearance.messageDensity]}px` : '2px',
+  );
+  root.style.setProperty(
+    '--justdo-assistant-footer-padding-left',
+    usesDocumentLayout ? '0px' : '14px',
+  );
+  root.style.setProperty(
+    '--justdo-assistant-avatar-first-line-offset',
+    usesDocumentLayout ? 'calc(16px - 0.8em)' : '0px',
+  );
+  root.style.setProperty(
+    '--justdo-assistant-leading-avatar-position',
+    usesDocumentLayout ? 'absolute' : 'static',
+  );
+  root.style.setProperty(
+    '--justdo-assistant-leading-content-margin-left',
+    usesDocumentLayout ? '44px' : '0px',
+  );
+  root.style.setProperty(
+    '--justdo-active-turn-footer-margin-top',
+    usesDocumentLayout ? `${DOCUMENT_FOOTER_GAPS[appearance.messageDensity]}px` : '8px',
+  );
+  root.style.setProperty(
+    '--justdo-process-summary-padding',
+    usesDocumentLayout ? '0 9px 0 0' : '6px 9px',
+  );
   root.style.setProperty(
     '--justdo-code-white-space',
     appearance.wrapCodeBlocks ? 'pre-wrap' : 'pre',

@@ -92,6 +92,7 @@ import {
 import { validateModelForm } from '@/features/settings/modelFormValidation';
 import { mergeRefreshedBuiltinProvider } from '@/features/settings/modelSettingsRefresh';
 import {
+  buildSettingsAppConfigUpdate,
   persistSettingsInOrder,
   resolveSubagentModelAfterProviderChange,
 } from '@/features/settings/settingsPersistence';
@@ -300,6 +301,38 @@ const getDefaultProviders = (): ProvidersConfig => {
     ]),
   ) as ProvidersConfig;
 };
+
+const normalizeProvidersForSettings = (providers: ProvidersConfig): ProvidersConfig =>
+  Object.fromEntries(
+    Object.entries(providers).map(([providerKey, providerConfig]) => [
+      providerKey,
+      {
+        ...providerConfig,
+        apiFormat: 'openai',
+        models: providerConfig.models?.map(model => ({
+          ...model,
+          enabled: model.enabled ?? true,
+          supportsImage: model.supportsImage ?? false,
+        })),
+      },
+    ]),
+  ) as ProvidersConfig;
+
+const normalizeProvidersForSave = (providers: ProvidersConfig): ProvidersConfig =>
+  Object.fromEntries(
+    Object.entries(providers).map(([providerKey, providerConfig]) => [
+      providerKey,
+      {
+        ...providerConfig,
+        displayName:
+          isCustomProvider(providerKey) && !providerConfig.displayName?.trim()
+            ? getCustomProviderDefaultName(providerKey)
+            : providerConfig.displayName?.trim(),
+        apiFormat: 'openai',
+        baseUrl: resolveBaseUrl(providerKey, providerConfig.baseUrl),
+      },
+    ]),
+  ) as ProvidersConfig;
 
 const getDefaultActiveProvider = (): ProviderType => {
   const providers = (defaultConfig.providers ?? {}) as ProvidersConfig;
@@ -736,25 +769,7 @@ const Settings: React.FC<SettingsProps> = ({
             setActiveProvider(firstEnabledProvider);
           }
 
-          return Object.fromEntries(
-            Object.entries(merged).map(([providerKey, providerConfig]) => {
-              const models = providerConfig.models?.map(model => {
-                return {
-                  ...model,
-                  enabled: model.enabled ?? true,
-                  supportsImage: model.supportsImage ?? false,
-                };
-              });
-              return [
-                providerKey,
-                {
-                  ...providerConfig,
-                  apiFormat: 'openai',
-                  models,
-                },
-              ];
-            }),
-          ) as ProvidersConfig;
+          return normalizeProvidersForSettings(merged);
         });
       }
 
@@ -1188,22 +1203,7 @@ const Settings: React.FC<SettingsProps> = ({
     setError(null);
 
     try {
-      const normalizedProviders = Object.fromEntries(
-        Object.entries(providers).map(([providerKey, providerConfig]) => {
-          return [
-            providerKey,
-            {
-              ...providerConfig,
-              displayName:
-                isCustomProvider(providerKey) && !providerConfig.displayName?.trim()
-                  ? getCustomProviderDefaultName(providerKey)
-                  : providerConfig.displayName?.trim(),
-              apiFormat: 'openai',
-              baseUrl: resolveBaseUrl(providerKey as ProviderType, providerConfig.baseUrl),
-            },
-          ];
-        }),
-      ) as ProvidersConfig;
+      const normalizedProviders = normalizeProvidersForSave(providers);
 
       // Find the first enabled provider to use as the primary API
       const firstEnabledProvider = Object.entries(normalizedProviders).find(
@@ -1276,13 +1276,21 @@ const Settings: React.FC<SettingsProps> = ({
           setAgentRuntimeSettings(savedRuntimeSettings);
           setInitialAgentRuntimeSettings(savedRuntimeSettings);
         },
-        saveAppConfig: () =>
-          configService.updateConfig({
+        saveAppConfig: async () => {
+          const currentConfig = configService.getConfig();
+          const currentProviders = normalizeProvidersForSave(
+            normalizeProvidersForSettings({
+              ...getDefaultProviders(),
+              ...(currentConfig.providers ?? {}),
+            }),
+          );
+          const update = buildSettingsAppConfigUpdate(currentConfig, {
             api: {
               key: primaryProvider.apiKey,
               baseUrl: primaryProvider.baseUrl,
             },
             providers: normalizedProviders,
+            currentProviders,
             theme,
             appearance,
             language,
@@ -1290,7 +1298,11 @@ const Settings: React.FC<SettingsProps> = ({
             proxy: normalizedProxy,
             developerMode,
             shortcuts,
-          }),
+          });
+          if (Object.keys(update).length > 0) {
+            await configService.updateConfig(update);
+          }
+        },
         onAppConfigCommitted: () => {
           initialThemeRef.current = theme;
           initialThemeIdRef.current = themeService.getThemeId();

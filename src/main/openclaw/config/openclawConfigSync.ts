@@ -1186,7 +1186,6 @@ export const buildManagedOpenClawConnectivityConfig = (
             user: {
               driver: 'existing-session',
               attachOnly: true,
-              color: '#00AA00',
             },
           },
         }
@@ -1195,7 +1194,6 @@ export const buildManagedOpenClawConnectivityConfig = (
             profiles: {
               chrome: {
                 driver: 'extension',
-                color: '#FF4500',
               },
             },
           }

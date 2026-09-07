@@ -1,9 +1,84 @@
 import { describe, expect, test, vi } from 'vitest';
 
+import { defaultAppearanceConfig } from '@/app/appearance';
+import { defaultConfig } from '@/app/config';
 import {
+  buildSettingsAppConfigUpdate,
   persistSettingsInOrder,
   resolveSubagentModelAfterProviderChange,
 } from '@/features/settings/settingsPersistence';
+
+describe('settings app config updates', () => {
+  test('persists an appearance-only edit without rewriting runtime-facing providers', () => {
+    const providers = defaultConfig.providers!;
+    const appearance = { ...defaultAppearanceConfig, messageLayout: 'document' as const };
+
+    expect(
+      buildSettingsAppConfigUpdate(defaultConfig, {
+        api: defaultConfig.api,
+        providers,
+        currentProviders: providers,
+        theme: defaultConfig.theme,
+        appearance,
+        language: defaultConfig.language,
+        useSystemProxy: defaultConfig.useSystemProxy,
+        proxy: defaultConfig.proxy,
+        developerMode: defaultConfig.developerMode,
+        shortcuts: defaultConfig.shortcuts!,
+      }),
+    ).toEqual({ appearance });
+  });
+
+  test('couples provider and primary API updates when model settings changed', () => {
+    const currentProviders = defaultConfig.providers!;
+    const providers = {
+      ...currentProviders,
+      custom_0: {
+        enabled: true,
+        apiKey: 'secret',
+        baseUrl: 'https://example.test/v1',
+      },
+    };
+    const api = { key: 'secret', baseUrl: 'https://example.test/v1' };
+
+    expect(
+      buildSettingsAppConfigUpdate(defaultConfig, {
+        api,
+        providers,
+        currentProviders,
+        theme: defaultConfig.theme,
+        appearance: defaultConfig.appearance,
+        language: defaultConfig.language,
+        useSystemProxy: defaultConfig.useSystemProxy,
+        proxy: defaultConfig.proxy,
+        developerMode: defaultConfig.developerMode,
+        shortcuts: defaultConfig.shortcuts!,
+      }),
+    ).toMatchObject({ api, providers });
+  });
+
+  test('persists a system proxy toggle even when proxy details are unchanged', () => {
+    const providers = defaultConfig.providers!;
+
+    expect(
+      buildSettingsAppConfigUpdate(defaultConfig, {
+        api: defaultConfig.api,
+        providers,
+        currentProviders: providers,
+        theme: defaultConfig.theme,
+        appearance: defaultConfig.appearance,
+        language: defaultConfig.language,
+        useSystemProxy: !defaultConfig.useSystemProxy,
+        proxy: defaultConfig.proxy,
+        developerMode: defaultConfig.developerMode,
+        shortcuts: defaultConfig.shortcuts!,
+      }),
+    ).toEqual({
+      useSystemProxy: !defaultConfig.useSystemProxy,
+      proxy: defaultConfig.proxy,
+    });
+  });
+});
 
 describe('subagent model persistence', () => {
   test('keeps the main-process rename when the renderer draft still has the previous ref', () => {

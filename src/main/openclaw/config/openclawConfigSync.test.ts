@@ -451,7 +451,6 @@ describe('OpenClaw managed connectivity config', () => {
         user: {
           driver: 'existing-session',
           attachOnly: true,
-          color: '#00AA00',
         },
       },
       ssrfPolicy: {
@@ -467,7 +466,6 @@ describe('OpenClaw managed connectivity config', () => {
       profiles: {
         chrome: {
           driver: 'extension',
-          color: '#FF4500',
         },
       },
       ssrfPolicy: {
