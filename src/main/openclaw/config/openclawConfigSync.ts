@@ -2016,12 +2016,6 @@ export class OpenClawConfigSync {
     for (const [envSuffix, apiKey] of Object.entries(allApiKeys)) {
       env[`JUSTDO_APIKEY_${envSuffix}`] = apiKey;
     }
-    // Legacy fallback: keep JUSTDO_PROVIDER_API_KEY set to a stable value so stale
-    // openclaw.json files with the old placeholder don't crash the gateway.
-    // Use the active provider's key if available, but ONLY for the first sync —
-    // after that, openclaw.json uses provider-specific placeholders and this var
-    // is never resolved. Use a fixed value to avoid launch-environment changes on switch.
-    env.JUSTDO_PROVIDER_API_KEY = 'legacy-unused';
 
     env.JUSTDO_EXEC_APPROVAL_TIMEOUT_MS = String(
       resolveApprovalWaitTimeoutMs(this.getAgentRuntimeSettings().approvals.timeoutMinutes),

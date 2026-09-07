@@ -26,7 +26,11 @@ describe('buildGatewayLaunchEnvironment', () => {
       }, { eagerBrowserControl: true, appStartedAtMs: 1_800_000_000_000 }),
     ).toEqual({
       PATH: 'runtime-bin',
+      OPENCLAW_DISABLE_BONJOUR: '1',
       OPENCLAW_EAGER_BROWSER_CONTROL_SERVER: '1',
+      OPENCLAW_EXEC_SHELL_SNAPSHOT: '0',
+      OPENCLAW_NO_RESPAWN: '1',
+      OPENCLAW_SKIP_CHANNELS: '1',
       JUSTDO_APP_STARTED_AT_MS: '1800000000000',
       NO_COLOR: '1',
       FORCE_COLOR: '0',
@@ -44,6 +48,10 @@ describe('buildGatewayLaunchEnvironment', () => {
       ),
     ).toEqual({
       PATH: 'runtime-bin',
+      OPENCLAW_DISABLE_BONJOUR: '1',
+      OPENCLAW_EXEC_SHELL_SNAPSHOT: '0',
+      OPENCLAW_NO_RESPAWN: '1',
+      OPENCLAW_SKIP_CHANNELS: '1',
       JUSTDO_APP_STARTED_AT_MS: '1800000000000',
       NO_COLOR: '1',
       FORCE_COLOR: '0',

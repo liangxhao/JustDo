@@ -14,6 +14,13 @@
 
 BrowserWindow 必须维持 context isolation；即使某平台通过启动 switch 降低 Chromium sandbox，也不能因此扩大 Renderer API。
 
+Main 按 OpenClaw embedding contract 监管 Gateway 子进程：设置
+`OPENCLAW_DISABLE_BONJOUR=1`、`OPENCLAW_EXEC_SHELL_SNAPSHOT=0`、
+`OPENCLAW_NO_RESPAWN=1` 和 `OPENCLAW_SKIP_CHANNELS=1`。JustDo 自己负责进程、发现与
+WebChat-only channel 生命周期；关闭 Electron shell snapshot 还可避免 Gateway 把 Electron
+可执行文件误当作 Node 启动。不要设置 `OPENCLAW_OFFLINE`：当前运行时没有随包提供 `fd` 与
+`ripgrep`，OpenClaw 需要按需下载受管工具才能启用原生 find/grep 工具。
+
 ## 2. IPC 形态
 
 ### 2.1 调用型

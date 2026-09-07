@@ -79,6 +79,11 @@ manifest 的 `disableOpenClawDefaults: true` 表示只使用 JustDo 声明的 bu
 
 ## 5. Skill 系统
 
+与 Skill 路径相关的 Gateway 启动环境只显式固定 `OPENCLAW_STATE_DIR`、
+`OPENCLAW_CONFIG_PATH` 与 `OPENCLAW_BUNDLED_SKILLS_DIR`。OpenClaw 原生把
+`<stateDir>/skills` 作为 shared managed Skill root，JustDo 不再引入单独的用户 Skill root
+环境别名，也不再把同一路径重复写入 `skills.load.extraDirs`。
+
 ### 5.1 状态查询与启用
 
 `OpenClawSkillService` 通过 adapter 调用 `skills.status`，返回 workspace/managed dir 和每个 Skill 的 source、eligibility、disabled/allowlist、missing requirements、install options 与 config checks。启停用 `skills.update`，Gateway 返回值是最终成功依据。
@@ -119,11 +124,17 @@ stdio command、args、env 与 remote URL 都是高风险输入：UI 隐藏不�
 
 Hook 元数据/启用状态在 `openclaw_hooks`，文件位于受管目录。一个本地 Hook 至少包含 `HOOK.md`，入口支持 `handler.ts`、`handler.js`、`index.ts`、`index.js`；支持 `.zip`、`.tar`、`.tar.gz`、`.tgz` 导入。
 
+JustDo 的 Gateway 是单文件 bundle，无法依靠 `import.meta.url` 推导 OpenClaw 内置 Hook 目录；启动环境显式设置 `OPENCLAW_BUNDLED_HOOKS_DIR=<runtime>/dist/bundled`。
+
 文件层规范化 hook id、拒绝路径逃逸、拒绝覆盖 built-in 或已安装 Hook；config sync service 只把 store 中已启用且可用的 hook 映射到 OpenClaw。启停和删除都进入 config mutation queue。删除先把目录原子移动到受管根目录之外的隔离区，再修改 SQLite 并同步；同步失败时恢复数据库记录和目录，成功后清理隔离区。
 
 ## 8. Extensions
 
 Extension 列表、启停和卸载以 Gateway `plugins.list`、`plugins.setEnabled`、`plugins.uninstall` 为唯一运行态权威；JustDo 不再从目录或 `plugins.entries` 推断最终状态。列表同时投影 bundled、installed-index 和错误状态，只有 Gateway 标为 removable 的非产品托管插件才显示删除操作。
+
+裁剪和预编译后的 bundled extension 根位于运行时的 `dist/extensions`；Gateway 与受管
+OpenClaw CLI 都通过 `OPENCLAW_BUNDLED_PLUGINS_DIR` 固定到该目录，不能指向源码布局的
+`<runtime>/extensions` 并依赖 OpenClaw 的回退扫描。
 
 本地导入是 Gateway 当前未提供 path/archive mutation 的唯一例外，因此通过受管 OpenClaw CLI 执行 `plugins install`。安装前由锁定版本运行时的 `capability-artifact` 与 `capability-summary` 模块扫描暂存内容，Renderer 展示完整 declared surface、operator grants、source/integrity 与 trust；只有用户提交本次 surface 的 `reviewToken` 且复查结果仍一致，CLI 才使用 `--accept-capabilities` 提交安装。OpenClaw `v2026.9.2` 同时支持原生 code plugin、Codex/Claude/Cursor bundle、Agent Plugins manifest 及允许的 manifestless bundle；JustDo 只负责来源选择、审查界面、进度、进程协调与错误脱敏，最终 schema、capability 和 installed-index 事务完全由 OpenClaw 安装器负责。
 

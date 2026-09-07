@@ -944,10 +944,7 @@ describe('OpenClawConfigSyncService', () => {
       }),
       'utf8',
     );
-    const harness = createHarness({
-      configPath,
-      nextSecrets: { JUSTDO_PROVIDER_API_KEY: 'legacy-unused' },
-    });
+    const harness = createHarness({ configPath });
 
     try {
       await expect(
@@ -979,7 +976,6 @@ describe('OpenClawConfigSyncService', () => {
     const harness = createHarness({
       configPath,
       waitForReload: true,
-      nextSecrets: { JUSTDO_PROVIDER_API_KEY: 'legacy-unused' },
     });
 
     try {
@@ -1011,7 +1007,6 @@ describe('OpenClawConfigSyncService', () => {
     const harness = createHarness({
       configPath,
       waitForReload: false,
-      nextSecrets: { JUSTDO_PROVIDER_API_KEY: 'legacy-unused' },
     });
 
     try {

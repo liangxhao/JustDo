@@ -25,6 +25,12 @@ export const buildGatewayLaunchEnvironment = (
   options: { eagerBrowserControl: boolean; appStartedAtMs: number },
 ): NodeJS.ProcessEnv => ({
   ...env,
+  // JustDo owns discovery, process supervision, and the WebChat-only channel
+  // lifecycle for its embedded Gateway.
+  OPENCLAW_DISABLE_BONJOUR: '1',
+  OPENCLAW_EXEC_SHELL_SNAPSHOT: '0',
+  OPENCLAW_NO_RESPAWN: '1',
+  OPENCLAW_SKIP_CHANNELS: '1',
   // The browser service normally starts on the first browser.request. Starting
   // it with the Gateway gives a paired Chrome extension time to reconnect to
   // the relay before the settings page performs its initial readiness probe.

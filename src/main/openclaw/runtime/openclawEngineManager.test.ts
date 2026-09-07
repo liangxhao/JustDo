@@ -1,12 +1,28 @@
 import { EventEmitter } from 'node:events';
+import path from 'node:path';
 
 import { expect, test, vi } from 'vitest';
 
 import {
   applyOpenClawCliNetworkMode,
+  buildInitialOpenClawConfig,
   OpenClawCliNetworkMode,
   OpenClawEngineManager,
+  resolveOpenClawRuntimeResourcePaths,
 } from './openclawEngineManager';
+
+test('resolves the OpenClaw v2026.9.2 runtime resource layout', () => {
+  expect(resolveOpenClawRuntimeResourcePaths('C:\\runtime', 'C:\\state')).toEqual({
+    bundledSkillsDir: path.join('C:\\runtime', 'skills'),
+    bundledPluginsDir: path.join('C:\\runtime', 'dist', 'extensions'),
+    bundledHooksDir: path.join('C:\\runtime', 'dist', 'bundled'),
+    managedSkillsDir: path.join('C:\\state', 'skills'),
+  });
+});
+
+test('leaves managed skill discovery out of the initial OpenClaw config', () => {
+  expect(buildInitialOpenClawConfig()).toEqual({ gateway: { mode: 'local' } });
+});
 
 test('keeps the inherited CLI environment when outbound proxy mode is not requested', () => {
   const baseEnv = { PATH: 'base' };

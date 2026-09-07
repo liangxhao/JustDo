@@ -171,15 +171,13 @@ const interactiveShellCommand = (fallbackShell: string): string =>
 const isOpenClawTerminalEnvKey = (key: string): boolean => {
   if (key.toUpperCase() === JUSTDO_MANAGED_PYTHON_USER_BASE_ENV) return false;
   return (
-    key === 'SKILLS_ROOT' ||
-    key === 'JUSTDO_SKILLS_ROOT' ||
     key === 'OPENCLAW_BUNDLED_SKILLS_DIR' ||
+    key === 'OPENCLAW_BUNDLED_HOOKS_DIR' ||
     key === 'OPENCLAW_STATE_DIR' ||
     key === 'OPENCLAW_CONFIG_PATH' ||
     key === 'OPENCLAW_GATEWAY_TOKEN' ||
     key === 'OPENCLAW_GATEWAY_PORT' ||
-    key === 'OPENCLAW_NO_RESPAWN' ||
-    key === 'OPENCLAW_ENGINE_VERSION' ||
+    key === 'OPENCLAW_NO_AUTO_UPDATE' ||
     key === 'OPENCLAW_BUNDLED_PLUGINS_DIR' ||
     key === 'OPENCLAW_LOG_LEVEL' ||
     key === 'NODE_COMPILE_CACHE' ||

@@ -86,6 +86,22 @@ afterEach(() => {
 });
 
 describe('OpenClaw terminal environment', () => {
+  test('keeps current OpenClaw runtime controls', () => {
+    const keys = getOpenClawTerminalEnvKeys({
+      OPENCLAW_BUNDLED_SKILLS_DIR: 'C:\\runtime\\skills',
+      OPENCLAW_BUNDLED_HOOKS_DIR: 'C:\\runtime\\dist\\bundled',
+      OPENCLAW_NO_AUTO_UPDATE: '1',
+      UNRELATED_HOST_VALUE: 'blocked',
+    });
+
+    expect(keys).toEqual([
+      'PATH',
+      'OPENCLAW_BUNDLED_HOOKS_DIR',
+      'OPENCLAW_BUNDLED_SKILLS_DIR',
+      'OPENCLAW_NO_AUTO_UPDATE',
+    ]);
+  });
+
   test('passes the managed Python user base but excludes unrelated host values', () => {
     const keys = getOpenClawTerminalEnvKeys({
       PATH: 'C:\\Windows',

@@ -130,6 +130,25 @@ type RuntimeMetadata = {
   expectedPathHint: string;
 };
 
+export const resolveOpenClawRuntimeResourcePaths = (
+  runtimeRoot: string,
+  stateDir: string,
+): {
+  bundledSkillsDir: string;
+  bundledPluginsDir: string;
+  bundledHooksDir: string;
+  managedSkillsDir: string;
+} => ({
+  bundledSkillsDir: path.join(runtimeRoot, 'skills'),
+  bundledPluginsDir: path.join(runtimeRoot, 'dist', 'extensions'),
+  bundledHooksDir: path.join(runtimeRoot, 'dist', 'bundled'),
+  managedSkillsDir: path.join(stateDir, 'skills'),
+});
+
+export const buildInitialOpenClawConfig = (): Record<string, unknown> => ({
+  gateway: { mode: 'local' },
+});
+
 const parseJsonFile = <T>(filePath: string): T | null => {
   try {
     const raw = fs.readFileSync(filePath, 'utf8');
@@ -588,23 +607,21 @@ export class OpenClawEngineManager extends EventEmitter {
     const compileCacheDir = path.join(this.stateDir, '.compile-cache');
     const electronNodeRuntimePath = getElectronNodeRuntimePath();
     const cliShimDir = this.ensureBundledCliShims();
-    const userSkillsDir = path.join(this.stateDir, 'skills').replace(/\\/g, '/');
-    const bundledSkillsDir = path.join(runtime.root, 'skills').replace(/\\/g, '/');
+    const runtimeResourcePaths = resolveOpenClawRuntimeResourcePaths(
+      runtime.root,
+      this.stateDir,
+    );
 
     const env: NodeJS.ProcessEnv = {
       ...process.env,
-      SKILLS_ROOT: userSkillsDir,
-      JUSTDO_SKILLS_ROOT: userSkillsDir,
-      OPENCLAW_BUNDLED_SKILLS_DIR: bundledSkillsDir,
+      OPENCLAW_BUNDLED_SKILLS_DIR: runtimeResourcePaths.bundledSkillsDir,
+      OPENCLAW_BUNDLED_HOOKS_DIR: runtimeResourcePaths.bundledHooksDir,
       OPENCLAW_STATE_DIR: this.stateDir,
       OPENCLAW_CONFIG_PATH: this.configPath,
       OPENCLAW_GATEWAY_TOKEN: token,
       OPENCLAW_GATEWAY_PORT: String(port),
-      OPENCLAW_NO_RESPAWN: '1',
       OPENCLAW_NO_AUTO_UPDATE: '1',
-      OPENCLAW_OFFLINE: '1',
-      OPENCLAW_ENGINE_VERSION: runtime.version,
-      OPENCLAW_BUNDLED_PLUGINS_DIR: path.join(runtime.root, 'extensions'),
+      OPENCLAW_BUNDLED_PLUGINS_DIR: runtimeResourcePaths.bundledPluginsDir,
       OPENCLAW_LOG_LEVEL: app.isPackaged ? 'info' : 'debug',
       NODE_COMPILE_CACHE: compileCacheDir,
       JUSTDO_ELECTRON_PATH: electronNodeRuntimePath.replace(/\\/g, '/'),
@@ -820,12 +837,14 @@ export class OpenClawEngineManager extends EventEmitter {
       canRetry: false,
     });
 
-    // Debug: Log skills-related environment variables passed to Gateway
-    console.log('[OpenClaw] Skills env vars passed to Gateway:', {
-      OPENCLAW_STATE_DIR: this.stateDir,
+    console.log('[OpenClaw] Gateway runtime paths:', {
+      OPENCLAW_STATE_DIR: env.OPENCLAW_STATE_DIR,
+      OPENCLAW_CONFIG_PATH: env.OPENCLAW_CONFIG_PATH,
       OPENCLAW_BUNDLED_SKILLS_DIR: env.OPENCLAW_BUNDLED_SKILLS_DIR,
-      // OPENCLAW_HOME and OPENCLAW_USER_HOME are inherited from process.env (default user home)
-      userSkillsDir: env.JUSTDO_SKILLS_ROOT,
+      OPENCLAW_BUNDLED_HOOKS_DIR: env.OPENCLAW_BUNDLED_HOOKS_DIR,
+      OPENCLAW_BUNDLED_PLUGINS_DIR: env.OPENCLAW_BUNDLED_PLUGINS_DIR,
+      managedSkillsDir: resolveOpenClawRuntimeResourcePaths(runtime.root, this.stateDir)
+        .managedSkillsDir,
       runtimeRoot: runtime.root,
       isPackaged: app.isPackaged,
     });
@@ -1530,49 +1549,36 @@ export class OpenClawEngineManager extends EventEmitter {
 
   private ensureConfigFile(): void {
     ensureDir(path.dirname(this.configPath));
-    // Gateway managed skills directory is stateDir/skills (userData/openclaw/state/skills)
-    // This is where user-imported skills are stored.
-    const userSkillsDir = path.join(this.stateDir, 'skills').replace(/\\/g, '/');
 
     if (!fs.existsSync(this.configPath)) {
       fs.writeFileSync(
         this.configPath,
-        JSON.stringify(
-          {
-            gateway: { mode: 'local' },
-            skills: {
-              load: {
-                extraDirs: [userSkillsDir],
-              },
-            },
-          },
-          null,
-          2,
-        ) + '\n',
+        JSON.stringify(buildInitialOpenClawConfig(), null, 2) + '\n',
         'utf8',
       );
       return;
     }
-    // Ensure gateway.mode is set and skills.load.extraDirs includes user skills
     try {
       const raw = fs.readFileSync(this.configPath, 'utf8');
-      const config = JSON.parse(raw);
-      if (!config.gateway?.mode) {
-        config.gateway = { ...config.gateway, mode: 'local' };
+      const parsedConfig: unknown = JSON.parse(raw);
+      if (!parsedConfig || typeof parsedConfig !== 'object' || Array.isArray(parsedConfig)) {
+        return;
       }
-      // Ensure user skills directory (stateDir/skills) is in extraDirs
-      if (!config.skills?.load?.extraDirs) {
-        config.skills = {
-          ...config.skills,
-          load: {
-            ...config.skills?.load,
-            extraDirs: [userSkillsDir],
-          },
-        };
-      } else if (!config.skills.load.extraDirs.includes(userSkillsDir)) {
-        config.skills.load.extraDirs = [...config.skills.load.extraDirs, userSkillsDir];
+      let config = parsedConfig as Record<string, unknown>;
+      let changed = false;
+      const gateway = config.gateway;
+      const gatewayRecord =
+        gateway && typeof gateway === 'object' && !Array.isArray(gateway)
+          ? (gateway as Record<string, unknown>)
+          : {};
+      if (!gatewayRecord.mode) {
+        config = { ...config, gateway: { ...gatewayRecord, mode: 'local' } };
+        changed = true;
       }
-      fs.writeFileSync(this.configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
+
+      if (changed) {
+        fs.writeFileSync(this.configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
+      }
     } catch {
       // ignore parse errors
     }
