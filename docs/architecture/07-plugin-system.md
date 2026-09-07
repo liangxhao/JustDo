@@ -176,7 +176,7 @@ pending promise、同一 session 只允许一个待答请求、timeout/default�
 
 ## 10. Marketplace Adapter
 
-当前 `createPluginMarketplaceService` 传入空 provider 数组，因此开源构建默认没有 marketplace source。企业构建通过公司 SDK Provider 接入，目前只声明 Extension、Skill、MCP；Hook 保留通用市场入口和 Provider 扩展点，但没有历史市场数据兼容。
+当前 `createPluginMarketplaceService` 传入空 provider 数组，因此开源构建默认没有 marketplace source。企业构建通过公司 SDK Provider 接入，目前只声明 Extension、Skill、MCP；Hook 保留通用市场入口和 Provider 扩展点，但没有历史市场数据兼容。Gateway `plugins.list` 只以离线模式读取随 OpenClaw 打包的官方目录元数据，不刷新其默认 ClawHub feed；生成的 OpenClaw 配置也关闭默认远程模型目录刷新。外部目录网络访问只能由显式注册或配置的 product provider 发起。
 
 Provider contract：source metadata、search、detail、prepareInstall。Service 的防御性规则包括：
 

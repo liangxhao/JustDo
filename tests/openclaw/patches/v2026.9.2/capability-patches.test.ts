@@ -160,7 +160,7 @@ describe('OpenClaw v2026.9.2 capability patches', () => {
     expect(runtimePatchSetIsCurrent).toBe(true);
   });
 
-  test('contains exactly the fourteen retained capability patches', () => {
+  test('contains exactly the fifteen retained capability patches', () => {
     expect(patchFiles).toEqual([
       '001-managed-pip-config-environment.cjs',
       '002-windows-mcp-package-runner.cjs',
@@ -176,7 +176,62 @@ describe('OpenClaw v2026.9.2 capability patches', () => {
       '013-goal-resume-after-pause.cjs',
       '014-assistant-display-block-replay.cjs',
       '015-trusted-local-file-media.cjs',
+      '016-offline-official-plugin-catalog.cjs',
     ]);
+  });
+
+  test('keeps routine official plugin catalog reads offline', () => {
+    const testing = patches.get('016')?.__testing as {
+      MARKER: string;
+      transform: (content: string, filePath: string) => string;
+    };
+    const source = [
+      'async function loadOfficialCatalog() {',
+      '  const cache = getManagedPluginCache();',
+      '  if (!cache.officialCatalog) {',
+      '    const promise = Promise.resolve().then(() => loadConfiguredHostedOfficialExternalPluginCatalogEntries());',
+      '    cache.officialCatalog = promise;',
+      '  }',
+      '  return await cache.officialCatalog;',
+      '}',
+    ].join('\n');
+
+    const patched = testing.transform(source, 'management-catalog.js');
+    expect(patched).toContain(
+      `loadConfiguredHostedOfficialExternalPluginCatalogEntries({ offline: true })/*${testing.MARKER}*/`,
+    );
+    expect(testing.transform(patched, 'management-catalog.js')).toBe(patched);
+    const bundled = testing.transform(source, 'gateway-bundle.mjs');
+    expect(bundled).toContain(
+      'loadConfiguredHostedOfficialExternalPluginCatalogEntries({ offline: true })',
+    );
+    expect(bundled).not.toContain(testing.MARKER);
+    expect(testing.transform(bundled, 'gateway-bundle.mjs')).toBe(bundled);
+    const generatedFromPatchedSource = patched.replace(
+      `)/*${testing.MARKER}*/`,
+      `)\n      /*${testing.MARKER}*/`,
+    );
+    const normalizedBundle = testing.transform(
+      generatedFromPatchedSource,
+      'gateway-bundle.mjs',
+    );
+    expect(normalizedBundle).toContain(
+      'loadConfiguredHostedOfficialExternalPluginCatalogEntries({ offline: true })',
+    );
+    expect(normalizedBundle).not.toContain(testing.MARKER);
+    expect(testing.transform(normalizedBundle, 'gateway-bundle.mjs')).toBe(normalizedBundle);
+    expect(() =>
+      testing.transform(
+        generatedFromPatchedSource.replace('V2026_9_2', 'V2026_8_2'),
+        'gateway-bundle.mjs',
+      ),
+    ).toThrow('historical or partial');
+    expect(() =>
+      testing.transform(
+        patched.replace(testing.MARKER, testing.MARKER.replace('9_2', '8_2')),
+        'historical-management-catalog.js',
+      ),
+    ).toThrow('historical or partial');
   });
 
   test('rejects historical v2026.8.2 contracts in retained patch families', () => {

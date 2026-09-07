@@ -730,17 +730,22 @@ describe('OpenClaw auth logout config sync', () => {
 
   test('keeps the existing preservation behavior for non-logout minimal syncs', () => {
     const configPath = writeExistingBuiltinConfig();
+    const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    existing.models.catalogRefresh = { enabled: true };
+    fs.writeFileSync(configPath, JSON.stringify(existing), 'utf8');
 
     const result = writeMinimalConfig(configPath, BuiltinModelSyncReason.ManualRefresh);
 
     expect(result.ok).toBe(true);
     const content = fs.readFileSync(configPath, 'utf8');
     expect(content).toContain('JUSTDO_APIKEY_BUILTIN_MODELS');
-    expect(JSON.parse(content).agents.defaults.compaction).not.toHaveProperty(
+    const config = JSON.parse(content);
+    expect(config.models.catalogRefresh).toEqual({ enabled: false });
+    expect(config.agents.defaults.compaction).not.toHaveProperty(
       'keepRecentTokens',
     );
-    expect(JSON.parse(content).agents.defaults.modelSelectionScope).toBe('session');
-    expect(JSON.parse(content).agents.defaults.subagents).toMatchObject({
+    expect(config.agents.defaults.modelSelectionScope).toBe('session');
+    expect(config.agents.defaults.subagents).toMatchObject({
       allowAgents: ['worker'],
       announceTimeoutMs: 90_000,
       requireAgentId: true,

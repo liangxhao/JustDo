@@ -823,6 +823,7 @@ const buildAuthScopedOpenClawConfig = (
 
   const models: Record<string, unknown> = {
     ...existingModels,
+    catalogRefresh: managedModels.catalogRefresh,
     ...(Object.prototype.hasOwnProperty.call(existingModels, 'mode')
       ? {}
       : { mode: managedModels.mode }),
@@ -1212,6 +1213,12 @@ export const buildOpenClawConfigMeta = (
   version: string | null | undefined,
 ): Record<string, string> => ({
   lastTouchedVersion: version || 'unknown',
+});
+
+export const buildManagedOpenClawModelCatalogConfig = (): Record<string, unknown> => ({
+  catalogRefresh: {
+    enabled: false,
+  },
 });
 
 const sortJsonValue = (value: unknown): unknown => {
@@ -1811,6 +1818,7 @@ export class OpenClawConfigSync {
     const connectivityTools: Record<string, unknown> = connectivityConfig.tools;
 
     const managedModels: Record<string, unknown> = {
+      ...buildManagedOpenClawModelCatalogConfig(),
       mode: 'replace',
       providers: allProvidersMap,
     };
@@ -2165,7 +2173,7 @@ export class OpenClawConfigSync {
           allowedOrigins: ['*'],
         },
       },
-      models: {},
+      models: buildManagedOpenClawModelCatalogConfig(),
       diagnostics: {
         otel: {
           enabled: false,
@@ -2340,6 +2348,10 @@ export class OpenClawConfigSync {
             );
             const mergedConfig = sanitizeOpenClawV2026_9_2Config(withMemorySearch({
               ...canonicalExisting,
+              models: {
+                ...(isRecord(canonicalExisting.models) ? canonicalExisting.models : {}),
+                ...buildManagedOpenClawModelCatalogConfig(),
+              },
               diagnostics: {
                 ...existingDiagnostics,
                 otel: {

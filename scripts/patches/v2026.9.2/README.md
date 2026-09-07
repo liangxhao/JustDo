@@ -4,12 +4,12 @@ This directory is the authoritative inventory for the JustDo runtime built from 
 pristine `openclaw@2026.9.2` npm artifact. The runtime is never upgraded in place. Historical
 or partially applied JustDo markers are rejected; rebuild from `source-lock.json` instead.
 
-The previous 49-patch integration has been reduced to fourteen product-specific gaps. Thinking,
+The previous 49-patch integration has been reduced to fifteen product-specific gaps. Thinking,
 history projection, native tool search, most Goal behavior, subagent admission/queueing/join,
 approvals, compaction/context-budget behavior and task queries are upstream capabilities and must
 not be reimplemented here.
 
-The v2026.9.2 audit revalidated all fourteen retained gaps against the pristine artifact. Upstream
+The v2026.9.2 audit revalidated all fifteen retained gaps against the pristine artifact. Upstream
 now starts Chrome MCP stderr capture before connect, so patch 003 no longer owns that behavior and
 only supplies the Windows Electron-safe package runner. Patch 007 tracks the prepared
 simple-completion transport added upstream, while patch 009 now follows the native forced CLI
@@ -20,7 +20,8 @@ restart-safe admission checks. Patch 014 keeps display-only assistant blocks out
 provider-safe replay context before the generic AI converter sees them. Patch 015 lets trusted
 local assistant MEDIA files with unknown MIME use the existing managed document path and keeps the
 original `openclawDelivery.mediaUrls` references in the local chat display projection, without
-widening attachment admission.
+widening attachment admission. Patch 016 keeps routine plugin inventory reads on the bundled
+catalog instead of refreshing OpenClaw's hosted ClawHub feed.
 
 | Patch                                          | Retained capability                                                                                                          | Remove when upstream provides                                                   |
 | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
@@ -38,6 +39,7 @@ widening attachment admission.
 | `013-goal-resume-after-pause.cjs`              | Lets native Goal resume admit an idle paused session whose preceding run was intentionally aborted.                          | Upstream Goal resume accepts this native paused-session state.                  |
 | `014-assistant-display-block-replay.cjs`       | Excludes display-only assistant blocks at OpenClaw's provider-safe replay boundary without changing durable history or UI.   | Upstream provider replay filters non-provider assistant content.                |
 | `015-trusted-local-file-media.cjs`             | Delivers trusted generic local MEDIA and retains original MEDIA references in local chat history responses.                  | Upstream supports generic trusted MEDIA and exposes original references.        |
+| `016-offline-official-plugin-catalog.cjs`      | Keeps plugin inventory reads on the bundled catalog without contacting the hosted ClawHub feed.                              | Upstream exposes an offline plugin-management catalog setting.                  |
 
 Each patch must fail on ambiguous anchors, verify both source and bundled output where relevant,
 and be idempotent only for its exact v2026.9.2 marker shape. `verify-openclaw-pristine-contracts`

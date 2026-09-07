@@ -21,6 +21,7 @@ import {
   buildManagedOpenClawCompactionConfig,
   buildManagedOpenClawConnectivityConfig,
   buildManagedOpenClawHeartbeatConfig,
+  buildManagedOpenClawModelCatalogConfig,
   buildManagedOpenClawSessionConfig,
   buildManagedOpenClawSubagentConfig,
   buildOpenClawConfigMeta,
@@ -258,6 +259,14 @@ describe('OpenClaw managed config metadata', () => {
         },
       }),
     ).toBe(true);
+  });
+});
+
+describe('OpenClaw managed model catalog config', () => {
+  test('disables the unconfigured hosted model catalog refresh', () => {
+    expect(buildManagedOpenClawModelCatalogConfig()).toEqual({
+      catalogRefresh: { enabled: false },
+    });
   });
 });
 
