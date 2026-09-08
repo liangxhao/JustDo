@@ -209,6 +209,8 @@ Goal card 位于 chat 周边，Goal 内容/状态来自 Gateway session row，�
 
 长时间无输出提示由active turn clock派生，仅表示等待，不宣告失败。Failed run message必须区分abort、error、transport和tool failure；OpenClaw log hint仅从streaming active content的特定系统尾部移除，普通完成内容中的“Logs”标题保留。
 
+历史失败消息不使用会话级 `lastError` 回填；错误详情优先取消息自身的 `errorMessage`，其次取同一 run 的失败记录。缺少 run identity 时仅允许唯一且完全相同的时间戳匹配，不使用一分钟邻近窗口，避免新一轮失败改写历史错误。匿名失败消息一旦关联失败记录，不再被其他 run 覆盖；补齐错误详情时保留原生消息已有的错误正文。
+
 ## 18. 会话导出
 
 导出使用Cowork session presentation与canonical items生成文本/Markdown等产品格式，包含必要角色、时间和内容；不直接dump internal state、token、approval payload或Gateway原始JSON。导出前需完成当前显示history加载范围的产品约定，避免误称“完整”却只导出窗口。

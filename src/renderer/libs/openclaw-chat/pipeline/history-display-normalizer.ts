@@ -334,13 +334,10 @@ function findFailedRun(
     .filter(item => !options.sessionId || item.sessionId === options.sessionId);
   const exact = runId ? candidates.find(item => item.runId === runId) : null;
   if (exact) return { record: exact, exactRunMatch: true };
-  if (timestamp === null) return { record: null, exactRunMatch: false };
-  const record = candidates
-    .filter(item => Math.abs(item.timestamp - timestamp) < 60_000)
-    .sort(
-      (left, right) => Math.abs(left.timestamp - timestamp) - Math.abs(right.timestamp - timestamp),
-    )[0];
-  return { record: record ?? null, exactRunMatch: false };
+  if (runId || timestamp === null) return { record: null, exactRunMatch: false };
+  // Nearby failures can belong to different turns; never infer run identity from proximity.
+  const matches = candidates.filter(item => item.timestamp === timestamp);
+  return { record: matches.length === 1 ? matches[0] : null, exactRunMatch: false };
 }
 
 function messageRunId(
@@ -468,7 +465,14 @@ function mergeMissingFailedRunMessages(
       if (index <= nearbyUserIndex || index >= turnEndIndex) return false;
       const outer = asRecord(message);
       const raw = asRecord(outer?.message) ?? outer;
-      if (!outer || !raw || messageRunId(outer, raw) || messageTimestamp(message) !== null) {
+      if (
+        !outer ||
+        !raw ||
+        messageRunId(outer, raw) ||
+        messageTimestamp(message) !== null ||
+        outer[FAILED_RUN_MESSAGE_ID] ||
+        raw[FAILED_RUN_MESSAGE_ID]
+      ) {
         return false;
       }
       return outer[FAILED_RUN_MESSAGE_FLAG] === true || raw[FAILED_RUN_MESSAGE_FLAG] === true;
@@ -480,7 +484,10 @@ function mergeMissingFailedRunMessages(
       if (outer && raw) {
         const enriched = {
           ...raw,
-          content: record.error,
+          content:
+            messageText(raw.content).trim() === AGENT_RUN_FAILED_BEFORE_REPLY
+              ? record.error
+              : raw.content,
           [FAILED_RUN_MESSAGE_ID]: id,
         };
         result[anonymousFailureIndex] = raw === outer ? enriched : { ...outer, message: enriched };
@@ -500,9 +507,9 @@ function mergeMissingFailedRunMessages(
       const replyRunId = messageRunId(outer, raw);
       return Boolean(
         record.runId &&
-          replyRunId &&
-          !replyRunId.startsWith('announce:v1:') &&
-          replyRunId !== record.runId,
+        replyRunId &&
+        !replyRunId.startsWith('announce:v1:') &&
+        replyRunId !== record.runId,
       );
     });
     if (hasAlternateAssistantReply) continue;
@@ -529,7 +536,6 @@ function mergeMissingFailedRunMessages(
 function normalizeFailedRunMessage(
   message: unknown,
   options: HistoryDisplayNormalizationOptions,
-  errorMessage: string | null,
 ): unknown {
   const outer = asRecord(message);
   const raw = asRecord(outer?.message) ?? outer;
@@ -548,8 +554,7 @@ function normalizeFailedRunMessage(
   ) {
     return null;
   }
-  const resolvedError =
-    persistedError || durableError || errorMessage?.trim() || AGENT_RUN_FAILED_BEFORE_REPLY;
+  const resolvedError = durableError || persistedError || AGENT_RUN_FAILED_BEFORE_REPLY;
   const normalized = {
     ...raw,
     role: 'system',
@@ -712,7 +717,7 @@ export async function hydrateGatewayHistoryForDisplay(
     withLocalCompactionDetails,
   );
   const normalizedFailures = withToolInputs
-    .map(message => normalizeFailedRunMessage(message, options, options.lastError ?? null))
+    .map(message => normalizeFailedRunMessage(message, options))
     .filter(message => message !== null);
   return options.includeFailedRunOverlays === false
     ? normalizedFailures

@@ -242,7 +242,7 @@ describe('normalizeGatewayHistoryForDisplay', () => {
     });
   });
 
-  test('turns a persisted pre-reply failure into a visible error', async () => {
+  test('keeps a persisted failure independent of the session last error', async () => {
     const messages = await normalizeGatewayHistoryForDisplay(
       [
         {
@@ -259,11 +259,122 @@ describe('normalizeGatewayHistoryForDisplay', () => {
     expect(messages).toEqual([
       {
         role: 'system',
-        content: 'Model request failed',
+        content: 'The agent run failed before producing a reply.',
         isError: true,
         __justdoFailedRunMessage: true,
       },
     ]);
+  });
+
+  test.each(['run-old', undefined])(
+    'does not rewrite an older failure after a new failure (%s)',
+    async runId => {
+      const storage = new Map<string, string>();
+      vi.stubGlobal('localStorage', {
+        getItem: (key: string) => storage.get(key) ?? null,
+        setItem: (key: string, value: string) => storage.set(key, value),
+      });
+      const timestamp = Date.now();
+      const sessionKey = 'agent:main:justdo:session-1';
+      const history = [
+        { role: 'user', content: 'First', timestamp: timestamp - 5_000 },
+        {
+          role: 'assistant',
+          runId,
+          content: 'The agent run failed before producing a reply.',
+          timestamp: timestamp - 4_000,
+        },
+        { role: 'user', content: 'Retry', timestamp: timestamp - 500 },
+      ];
+      const before = await normalizeGatewayHistoryForDisplay(history, { sessionKey });
+      persistFailedRun({
+        sessionKey,
+        runId: 'run-new',
+        error: 'New provider failure',
+        timestamp,
+        promptTimestamp: timestamp - 500,
+      });
+      const after = await normalizeGatewayHistoryForDisplay(history, {
+        sessionKey,
+        lastError: 'New provider failure',
+      });
+      expect(after[1]).toEqual(before[1]);
+      expect(after).toHaveLength(4);
+      expect(after[3]).toMatchObject({ content: 'New provider failure', runId: 'run-new' });
+    },
+  );
+
+  test.each([true, false])(
+    'preserves durable error details with timestamp: %s',
+    async withTimestamp => {
+      const storage = new Map<string, string>();
+      vi.stubGlobal('localStorage', {
+        getItem: (key: string) => storage.get(key) ?? null,
+        setItem: (key: string, value: string) => storage.set(key, value),
+      });
+      const timestamp = Date.now();
+      const sessionKey = 'agent:main:justdo:session-1';
+      persistFailedRun({
+        sessionKey,
+        runId: 'run-1',
+        error: 'Local error',
+        timestamp,
+        promptTimestamp: timestamp - 500,
+      });
+      const messages = await normalizeGatewayHistoryForDisplay(
+        [
+          { role: 'user', content: 'Prompt', timestamp: timestamp - 500 },
+          {
+            role: 'assistant',
+            content: [],
+            stopReason: 'error',
+            errorMessage: 'Durable error',
+            ...(withTimestamp ? { timestamp } : {}),
+          },
+        ],
+        { sessionKey },
+      );
+      expect(messages).toHaveLength(2);
+      expect(messages[1]).toMatchObject({
+        content: 'Durable error',
+        __justdoFailedRunMessageId: 'run-1',
+      });
+    },
+  );
+
+  test('does not overwrite an anonymous failure already assigned to another run', async () => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+    });
+    const timestamp = Date.now();
+    const sessionKey = 'agent:main:justdo:session-1';
+    for (const [runId, error, offset] of [
+      ['run-1', 'First error', 0],
+      ['run-2', 'Second error', 100],
+    ] as const) {
+      persistFailedRun({
+        sessionKey,
+        runId,
+        error,
+        timestamp: timestamp + offset,
+        promptTimestamp: timestamp - 500,
+      });
+    }
+    const messages = await normalizeGatewayHistoryForDisplay(
+      [
+        { role: 'user', content: 'Prompt', timestamp: timestamp - 500 },
+        { role: 'assistant', content: 'The agent run failed before producing a reply.' },
+      ],
+      { sessionKey },
+    );
+    expect(messages).toHaveLength(3);
+    expect(messages[1]).toMatchObject({
+      content: 'First error',
+      __justdoFailedRunMessageId: 'run-1',
+    });
+    expect(messages[2]).toMatchObject({ content: 'Second error', runId: 'run-2' });
   });
 
   test('turns an empty persisted assistant error into a visible error', async () => {
@@ -852,7 +963,7 @@ describe('normalizeGatewayHistoryForDisplay', () => {
         timestamp: 2_000,
         message: {
           role: 'system',
-          content: 'API rate limit reached. Please try again later.',
+          content: 'The agent run failed before producing a reply.',
           isError: true,
           __justdoFailedRunMessage: true,
         },
