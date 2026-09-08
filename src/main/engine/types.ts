@@ -137,6 +137,11 @@ export interface CoworkRuntime {
     options?: CoworkPrepareSessionOptions,
   ): Promise<CoworkPreparedSession>;
   stopSession(sessionId: string, options?: CoworkStopOptions): Promise<void>;
+  registerUnknownSessionRun?(
+    sessionId: string,
+    runId: string,
+    options?: { cancelled?: boolean },
+  ): void;
   stopAllSessions(): Promise<void>;
   isSessionActive(sessionId: string): boolean;
   getSessionConfirmationMode(sessionId: string): 'modal' | 'text' | null;

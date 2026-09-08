@@ -32,6 +32,7 @@ import {
   parseAskUserAnswers,
   parseAskUserRequest,
 } from '../../../shared/openclaw/extensions';
+import { isGatewayRequestOutcomeUnknown } from '../../../shared/openclaw/gatewayRequestOutcome';
 import { isInternalManagedSubagentHandoffError } from '../../../shared/openclaw/internalRunError';
 import {
   classifyAgentEvent,
@@ -235,6 +236,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly confirmationModeBySession = new Map<string, 'modal' | 'text'>();
   private readonly stoppedSessions = new Map<string, number>();
   private readonly manuallyStoppedSessions = new Set<string>();
+  private readonly disconnectedSessionIds = new Set<string>();
+  private readonly unknownSessionRuns = new Map<string, { runId: string; cancelled: boolean }>();
+  private readonly disconnectedRecoveryPromises = new Map<string, Promise<void>>();
   private readonly terminalLifecycleSessionIds = new Set<string>();
   private readonly terminalLifecycleErrorSessionIds = new Set<string>();
   private readonly recentTerminalRunIds = new Map<string, number>();
@@ -499,12 +503,37 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
   }
 
+  registerUnknownSessionRun(sessionId: string, runId: string, options: { cancelled?: boolean } = {}): void {
+    const existing = this.unknownSessionRuns.get(sessionId);
+    const current = this.activeTurns.get(sessionId);
+    if (current && current.runId !== runId) return;
+    const session = this.store.getSession(sessionId);
+    if (!session || !runId.trim()) return;
+    // A stop ACK may have retired local state before the lost-send-ACK report
+    // arrives. Reopen only tracking, never dispatch; agent.wait revalidates truth.
+    const stoppedLocally = this.stoppedSessions.has(sessionId);
+    this.stoppedSessions.delete(sessionId);
+    this.recentTerminalRunIds.delete(runId);
+    const sessionKey = current?.sessionKey ?? buildManagedSessionKey(sessionId, session.agentId || DEFAULT_MANAGED_AGENT_ID);
+    this.ensureActiveTurn(sessionId, sessionKey, runId);
+    if (existing?.runId === runId) {
+      existing.cancelled ||= options.cancelled === true || stoppedLocally;
+    } else {
+      this.unknownSessionRuns.set(sessionId, {
+        runId, cancelled: options.cancelled === true || stoppedLocally,
+      });
+    }
+    this.disconnectedSessionIds.add(sessionId);
+  }
+
   private async stopSessionInternal(
     sessionId: string,
     options: CoworkStopOptions,
     cancelPendingStart: boolean,
   ): Promise<void> {
     const pendingStart = cancelPendingStart ? this.pendingTurnStarts.get(sessionId) : undefined;
+    const unknownRun = this.unknownSessionRuns.get(sessionId);
+    if (cancelPendingStart && unknownRun) unknownRun.cancelled = true;
     const pendingStartWasSending = pendingStart?.phase === 'sending';
     if (pendingStart) pendingStart.cancelled = true;
     this.goalContinuationCoordinator.stop(sessionId);
@@ -518,8 +547,18 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     if (!canCancelPreparationLocally) {
       try {
-        await this.abortSessionAndSubagents(sessionId, turn);
+        await this.abortSessionAndSubagents(sessionId, turn, cancelPendingStart);
+        if (unknownRun?.cancelled) {
+          await this.reconcileDisconnectedTurn(sessionId);
+          if (this.unknownSessionRuns.get(sessionId) === unknownRun) {
+            throw new Error('The submitted run is still unconfirmed; cancellation remains pending.');
+          }
+        }
       } catch (error) {
+        if (unknownRun?.cancelled && this.unknownSessionRuns.get(sessionId) === unknownRun) {
+          if (options.bestEffort) return;
+          throw error;
+        }
         if (pendingStartWasSending) {
           coworkLog('WARN', 'OpenClawRuntime', 'Initial abort raced a pending chat.send', {
             error: String(error),
@@ -530,14 +569,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             turn.stopRequested = false;
           }
           this.manuallyStoppedSessions.delete(sessionId);
+          this.goalContinuationCoordinator.rollbackStop(sessionId);
           if (!options.bestEffort) {
-            this.goalContinuationCoordinator.rollbackStop(sessionId);
             throw error;
           }
           coworkLog('WARN', 'OpenClawRuntime', 'Failed to confirm session stop', {
             error: String(error),
             sessionId,
           });
+          return;
         }
       }
     }
@@ -546,19 +586,39 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       await pendingStart.settled;
     }
     if (pendingStart?.cancellationAbortError) {
+      if (this.unknownSessionRuns.get(sessionId)?.cancelled) {
+        if (options.bestEffort) return;
+        throw pendingStart.cancellationAbortError;
+      }
       if (turn && this.activeTurns.get(sessionId) === turn) {
         turn.stopRequested = false;
       }
       this.manuallyStoppedSessions.delete(sessionId);
+      this.goalContinuationCoordinator.rollbackStop(sessionId);
       if (!options.bestEffort) {
-        this.goalContinuationCoordinator.rollbackStop(sessionId);
         throw pendingStart.cancellationAbortError;
       }
       coworkLog('WARN', 'OpenClawRuntime', 'Failed to confirm a cancelled turn start', {
         error: String(pendingStart.cancellationAbortError),
         sessionId,
       });
+      return;
     }
+
+    // Renderer may report a lost ACK while the stop RPC itself is pending.
+    // Re-read admission uncertainty before any terminal cleanup.
+    const lateUnknownRun = this.unknownSessionRuns.get(sessionId);
+    if (cancelPendingStart && lateUnknownRun) {
+      lateUnknownRun.cancelled = true;
+      await this.reconcileDisconnectedTurn(sessionId);
+      if (this.unknownSessionRuns.get(sessionId) === lateUnknownRun) {
+        if (options.bestEffort) return;
+        throw new Error('The submitted run is still unconfirmed; cancellation remains pending.');
+      }
+    }
+    // A delayed acknowledgement must never retire a replacement run.
+    const currentTurn = this.activeTurns.get(sessionId);
+    if (currentTurn && currentTurn !== turn && currentTurn !== pendingStart?.turn) return;
 
     this.goalContinuationCoordinator.confirmStop(sessionId);
 
@@ -998,6 +1058,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private async abortSessionAndSubagents(
     sessionId: string,
     turn?: SessionTurn,
+    fullSession = false,
   ): Promise<void> {
     const client = this.gatewayClient;
     if (!client) {
@@ -1012,13 +1073,17 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     let subagentKeys: string[] = [];
     let subagentDiscoveryError: unknown;
     try {
-      subagentKeys = await this.collectRunningSubagentSessionKeys(client, parentKeys);
+      if (fullSession || !turn) {
+        subagentKeys = await this.collectRunningSubagentSessionKeys(client, parentKeys);
+      }
     } catch (error) {
       subagentDiscoveryError = error;
     }
-    const abortTargets: Array<{ key: string; runId?: string }> = [
-      ...(turn ? [{ key: turn.sessionKey, runId: turn.runId }] : parentKeys.map(key => ({ key }))),
-      ...subagentKeys.map(key => ({ key })),
+    const abortTargets: Array<{ key: string; runId?: string; clearQueued?: boolean }> = [
+      ...(turn && !fullSession
+        ? [{ key: turn.sessionKey, runId: turn.runId }]
+        : parentKeys.map(key => ({ key, clearQueued: true }))),
+      ...subagentKeys.map(key => ({ key, clearQueued: true })),
     ];
     const uniqueTargets = [
       ...new Map(abortTargets.map(target => [`${target.key}\0${target.runId ?? ''}`, target])).values(),
@@ -1121,6 +1186,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         parentKeys: [parentKey],
         hydrateDetails: false,
         includeMalformedForRuntimeControl: true,
+        requireComplete: true,
       });
       for (const subagent of subagents) {
         if (!visitedParentKeys.has(subagent.sessionKey)) {
@@ -1167,6 +1233,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   ): Promise<void> {
     if (!prompt.trim()) {
       throw new Error('Prompt is required.');
+    }
+    if (this.stopSessionPromises.has(sessionId)) {
+      throw new Error('The session is still stopping. Retry after it has stopped.');
+    }
+    if (this.unknownSessionRuns.has(sessionId)) {
+      throw new Error('The previous submission is still awaiting confirmation.');
     }
     const goalStartObjective = parseGoalStartObjective(prompt);
 
@@ -1367,7 +1439,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         turn.runId = rootRunId;
         if (isStartCancelled()) {
           try {
-            await this.abortSessionAndSubagents(sessionId, { ...turn, runId: rootRunId });
+            await this.abortSessionAndSubagents(
+              sessionId,
+              { ...turn, runId: rootRunId },
+              this.stopSessionPromises.has(sessionId),
+            );
           } catch (error) {
             pendingStart.cancellationAbortError = error;
           }
@@ -1382,12 +1458,26 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         }
       } catch (error) {
         if (isStartCancelled()) {
+          if (this.disconnectedSessionIds.has(sessionId) || isGatewayRequestOutcomeUnknown(error)) {
+            this.registerUnknownSessionRun(sessionId, turn.runId, { cancelled: true });
+            pendingStart.cancellationAbortError = new Error(
+              'The submitted run is still unconfirmed; cancellation remains pending.',
+            );
+            await this.reconcileDisconnectedTurn(sessionId);
+            if (!this.unknownSessionRuns.has(sessionId)) pendingStart.cancellationAbortError = undefined;
+            return;
+          }
           try {
             await this.abortSessionAndSubagents(sessionId);
           } catch (abortError) {
             pendingStart.cancellationAbortError = abortError;
           }
           if (!pendingStart.cancellationAbortError) return;
+        } else if (this.disconnectedSessionIds.has(sessionId) || isGatewayRequestOutcomeUnknown(error)) {
+          this.registerUnknownSessionRun(sessionId, turn.runId);
+          coworkLog('WARN', 'OpenClawRuntime', 'chat.send outcome is unknown; awaiting authoritative recovery', {
+            sessionId,
+          });
         } else {
           this.cleanupSessionTurn(sessionId);
           this.store.updateSession(sessionId, { status: 'error' });
@@ -1598,6 +1688,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
     if (turn.runId && !runId) return;
     if (admission === 'ignored-run') return;
+    if (this.unknownSessionRuns.get(sessionId)?.cancelled && event.state === 'delta') {
+      void this.reconcileDisconnectedTurn(sessionId);
+    }
     if (admission === 'bind-provisional-run' && runId) {
       this.sessionIdByRunId.delete(turn.runId);
       turn.runId = runId;
@@ -1734,6 +1827,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     turn.knownRunIds.add(runId);
     this.sessionIdByRunId.set(runId, sessionId);
 
+    if (this.unknownSessionRuns.get(sessionId)?.cancelled &&
+      !(stream === 'lifecycle' && (data.phase === 'end' || data.phase === 'error'))) {
+      void this.reconcileDisconnectedTurn(sessionId);
+    }
     if (stream === 'compaction') {
       const phase = typeof data.phase === 'string' ? data.phase : '';
       this.handleCompactionPhase(sessionId, phase, turn);
@@ -2256,6 +2353,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   private cleanupSessionTurn(sessionId: string): void {
+    this.disconnectedSessionIds.delete(sessionId);
+    this.unknownSessionRuns.delete(sessionId);
     const lifecycleEndFallbackTimer = this.lifecycleEndFallbackTimers.get(sessionId);
     if (lifecycleEndFallbackTimer) {
       clearTimeout(lifecycleEndFallbackTimer);
@@ -2665,10 +2764,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
         const disconnectedError = new Error(reason || 'OpenClaw gateway client disconnected');
         for (const sessionId of this.activeTurns.keys()) {
-          this.store.updateSession(sessionId, { status: 'error' });
-          this.emit('error', sessionId, disconnectedError.message);
-          this.cleanupSessionTurn(sessionId);
-          this.rejectTurn(sessionId, disconnectedError);
+          // Transport loss does not prove that the Gateway run failed.
+          this.disconnectedSessionIds.add(sessionId);
         }
         // Connection is already closed — don't call client.stop() which would
         // reject all pending requests with "gateway client stopped" noise.
@@ -3280,14 +3377,25 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     options?: { includeSubagents?: boolean; forceRefresh?: boolean; fullScan?: boolean },
   ): Promise<Record<string, SessionRuntimeStatus>> {
     const uniqueSessionIds = [...new Set(sessionIds.filter(Boolean))];
+    const disconnected = uniqueSessionIds.filter(sessionId =>
+      this.disconnectedSessionIds.has(sessionId) || this.disconnectedRecoveryPromises.has(sessionId));
+    if (disconnected.length > 0) {
+      await Promise.all(disconnected.map(sessionId => this.reconcileDisconnectedTurn(sessionId)));
+    }
+    const goalScheduling = new Map(uniqueSessionIds.map(sessionId => {
+      const phase = this.goalContinuationCoordinator.getSnapshot(sessionId)?.phase;
+      return [sessionId, phase === GoalExecutionPhase.Continuing || phase === GoalExecutionPhase.Retrying];
+    }));
     const localMainRunning = new Map(
       uniqueSessionIds.map(sessionId => [
         sessionId,
-        this.isSessionActive(sessionId) || this.compactionInFlightSessionIds.has(sessionId),
+        (!this.disconnectedSessionIds.has(sessionId) && this.isSessionActive(sessionId)) ||
+          this.compactionInFlightSessionIds.has(sessionId),
       ]),
     );
     const statuses: Record<string, SessionRuntimeStatus> = {};
-    if (uniqueSessionIds.every(sessionId => localMainRunning.get(sessionId) === true)) {
+    if (options?.includeSubagents !== true &&
+      uniqueSessionIds.every(sessionId => localMainRunning.get(sessionId) === true)) {
       for (const sessionId of uniqueSessionIds) {
         statuses[sessionId] = {
           known: true,
@@ -3315,7 +3423,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     for (const sessionId of uniqueSessionIds) {
       const localRunning = localMainRunning.get(sessionId) === true;
-      if (!snapshot.known && !localRunning) {
+      const scheduling = goalScheduling.get(sessionId) === true;
+      if (!snapshot.known && !localRunning && !scheduling) {
         statuses[sessionId] = {
           known: false,
           mainRunning: false,
@@ -3333,11 +3442,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         localRunning ||
         snapshot.sessions.some(row => {
           const key = this.runtimeRowString(row.key);
-          return sessionKeys.has(key) && this.isRuntimeSessionRowActive(row);
+          return sessionKeys.has(key) && this.isRuntimeSessionRowMainActive(row);
         });
       let subagentRunning = false;
-      if (options?.includeSubagents && !mainRunning) {
-        subagentRunning = snapshot.sessions.some(row => {
+      if (options?.includeSubagents) {
+        subagentRunning = snapshot.sessions.some(row =>
+          sessionKeys.has(this.runtimeRowString(row.key)) && row.hasActiveSubagentRun === true,
+        );
+        subagentRunning ||= snapshot.sessions.some(row => {
           if (!this.isRuntimeSessionRowActive(row)) return false;
           let parent = parentByKey.get(this.runtimeRowString(row.key));
           const visited = new Set<string>();
@@ -3362,13 +3474,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         !snapshot.hasMore ||
         (hasMainSessionRow && options?.includeSubagents !== true) ||
         subagentRunning;
-      const known = localRunning || (snapshot.known && requestedStateIsCovered);
+      const known = localRunning || scheduling || (snapshot.known && requestedStateIsCovered &&
+        (!this.disconnectedSessionIds.has(sessionId) || mainRunning || subagentRunning));
       statuses[sessionId] = {
         known,
         mainRunning,
         subagentRunning,
-        running: mainRunning || subagentRunning,
-        ...(mainRunning || subagentRunning
+        running: mainRunning || subagentRunning || scheduling,
+        ...(mainRunning || subagentRunning || scheduling
           ? (() => {
               const rootRunId = this.rootRunIdBySession.get(sessionId);
               return rootRunId ? { rootRunId } : {};
@@ -3383,16 +3496,94 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     return typeof value === 'string' ? value.trim() : '';
   }
 
-  private isRuntimeSessionRowActive(row: Record<string, unknown>): boolean {
+  private isRuntimeSessionRowMainActive(row: Record<string, unknown>): boolean {
     return (
       row.hasActiveRun === true ||
-      row.hasActiveSubagentRun === true ||
-      row.status === 'pending' ||
-      row.status === 'running' ||
       row.runState === 'active' ||
-      row.subagentRunState === 'active' ||
-      row.subagentRunState === 'pending'
+      // Current Gateway activity flags outrank persisted status strings.
+      (row.hasActiveRun === undefined && row.runState === undefined &&
+        (row.status === 'pending' || row.status === 'running'))
     );
+  }
+
+  private isRuntimeSessionRowActive(row: Record<string, unknown>): boolean {
+    return this.isRuntimeSessionRowMainActive(row) ||
+      row.hasActiveSubagentRun === true ||
+      row.subagentRunState === 'active' || row.subagentRunState === 'pending';
+  }
+
+  private reconcileDisconnectedTurn(sessionId: string): Promise<void> {
+    const existing = this.disconnectedRecoveryPromises.get(sessionId);
+    if (existing) return existing;
+    const pending = this.performDisconnectedTurnRecovery(sessionId).finally(() => {
+      if (this.disconnectedRecoveryPromises.get(sessionId) === pending) {
+        this.disconnectedRecoveryPromises.delete(sessionId);
+      }
+    });
+    this.disconnectedRecoveryPromises.set(sessionId, pending);
+    return pending;
+  }
+
+  private async performDisconnectedTurnRecovery(sessionId: string): Promise<void> {
+    if (!this.disconnectedSessionIds.has(sessionId)) return;
+    const client = this.gatewayClient;
+    const turn = this.activeTurns.get(sessionId);
+    if (!client || !turn?.runId) return;
+    try {
+      const unknownRun = this.unknownSessionRuns.get(sessionId);
+      if (unknownRun?.cancelled && unknownRun.runId === turn.runId) {
+        // Precise identity also cancels native pre-registered admission. Never
+        // use a broad stop here: an old cancelled request must not kill a successor.
+        await client.request('sessions.abort', { key: turn.sessionKey, runId: unknownRun.runId });
+        if (this.activeTurns.get(sessionId) !== turn) return;
+      }
+      const result = await client.request<{
+        runId?: string;
+        status?: string;
+        endedAt?: number;
+        stopReason?: string;
+        error?: string;
+        yielded?: boolean;
+      }>('agent.wait', { runId: turn.runId, timeoutMs: 0 });
+      if (this.gatewayClient !== client || this.activeTurns.get(sessionId) !== turn) return;
+      if (result.runId && result.runId !== turn.runId) return;
+      if (result.yielded) {
+        // Yield proves admission, but not whole-session completion. Release the
+        // old request identity to normal parent/descendant activity aggregation.
+        // Cancelled admission still owns its session fence until queued and
+        // descendant work has received the explicit full-session stop.
+        if (unknownRun?.cancelled) {
+          await this.abortSessionAndSubagents(sessionId, turn, true);
+          if (this.gatewayClient !== client || this.activeTurns.get(sessionId) !== turn) return;
+          this.goalContinuationCoordinator.confirmStop(sessionId);
+        }
+        this.cleanupSessionTurn(sessionId);
+        this.resolveTurn(sessionId);
+        return;
+      }
+      // A plain timeout means no terminal receipt was found, not a failed run.
+      if (result.status !== 'ok' && result.status !== 'error' &&
+        !(result.status === 'timeout' && typeof result.endedAt === 'number')) return;
+      const aborted = result.stopReason === 'aborted' || result.stopReason === 'rpc';
+      this.handleChatEvent({
+        sessionKey: turn.sessionKey,
+        runId: turn.runId,
+        state: aborted ? 'aborted' : result.status === 'ok' ? 'final' : 'error',
+        ...(result.error ? { errorMessage: result.error } : {}),
+      });
+      // The lifecycle event may have been lost with the connection as well.
+      // Reconcile the Goal before exposing idle so an automatic continuation
+      // cannot disappear from the aggregate between root runs.
+      await this.goalContinuationCoordinator.handleLifecycle({
+        sessionKey: turn.sessionKey,
+        runId: turn.runId,
+        phase: result.status === 'ok' ? 'end' : 'error',
+        aborted,
+        ...(result.error ? { error: result.error } : {}),
+      });
+    } catch {
+      // Keep execution outcome unknown when the authority cannot be queried.
+    }
   }
 
   private invalidateRuntimeSessionSnapshot(): void {

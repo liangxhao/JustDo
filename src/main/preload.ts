@@ -18,6 +18,7 @@ import {
 } from '../shared/browser';
 import type { CoworkAttachmentPayload } from '../shared/cowork/attachments';
 import { CoworkSessionDetailsIpc } from '../shared/cowork/sessionDetails';
+import { SessionRunIpc, type SessionRunUnknownInput } from '../shared/cowork/sessionRun';
 import { CoworkSessionSearchIpc } from '../shared/cowork/sessionSearch';
 import { type GenerateSessionTitleRequest, SessionTitleIpc } from '../shared/cowork/sessionTitle';
 import {
@@ -393,6 +394,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('cowork:session:run:bind', input),
     listSessionRuns: (sessionId: string) =>
       ipcRenderer.invoke('cowork:session:run:list', sessionId),
+    markSessionRunUnknown: (input: SessionRunUnknownInput) =>
+      ipcRenderer.invoke(SessionRunIpc.Unknown, input),
     failSessionRun: (input: { sessionId: string; id: string; endedAt: number }) =>
       ipcRenderer.invoke('cowork:session:run:fail', input),
     patchSessionModel: (options: { sessionId: string; model: string; agentId?: string }) =>

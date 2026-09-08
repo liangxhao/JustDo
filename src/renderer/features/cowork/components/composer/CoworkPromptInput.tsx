@@ -1,5 +1,5 @@
 import { ChevronDownIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
-import { FolderIcon, PaperAirplaneIcon, PauseIcon, StopIcon } from '@heroicons/react/24/solid';
+import { FolderIcon } from '@heroicons/react/24/solid';
 import type { OpenClawModelChoice } from '@shared/openclaw/models';
 import {
   GoalExecutionPhase,
@@ -30,6 +30,7 @@ import {
   resolvePersistedSessionModelRefAfterApplyError,
 } from '@/features/cowork/components/composer/modelSelectionUpdate';
 import PermissionModeSelector from '@/features/cowork/components/composer/PermissionModeSelector';
+import { RunControlButton } from '@/features/cowork/components/composer/RunControlButton';
 import {
   getHiddenCommandCount,
   getSlashCommandByName,
@@ -39,6 +40,7 @@ import {
   SlashCommandCategoryLabels,
   type SlashCommandDef,
 } from '@/features/cowork/components/composer/slashCommands';
+import { useSessionStop } from '@/features/cowork/components/composer/useSessionStop';
 import { runGoalActionSingleFlight } from '@/features/cowork/components/goals/goalActionSingleFlight';
 import {
   shouldDiscardGoalCompletionFeedback,
@@ -95,6 +97,8 @@ import PaperClipIcon from '@/shared/components/icons/PaperClipIcon';
 import XMarkIcon from '@/shared/components/icons/XMarkIcon';
 import { type RootState, store } from '@/store';
 import { getCompactFolderName } from '@/utils/path';
+
+import { canClearSubmittedDraft } from './sessionSubmission';
 
 // CoworkAttachment is aliased from the Redux-persisted DraftAttachment type
 // so that attachment state survives view switches (cowork ↔ skills, etc.)
@@ -189,6 +193,8 @@ interface CoworkPromptInputProps {
     gatewayPrompt?: string,
   ) => boolean | void | Promise<boolean | void>;
   onStop?: () => boolean | void | Promise<boolean | void>;
+  /** Stable cancellation identity while a temporary session becomes canonical. */
+  stopOperationKey?: string;
   isStreaming?: boolean;
   placeholder?: string;
   disabled?: boolean;
@@ -232,25 +238,12 @@ const formatContextLength = (tokens: number): string => {
   return `${tokens}`;
 };
 
-const InProgressBadge = () => (
-  <span
-    role="status"
-    aria-live="polite"
-    className="mr-1.5 inline-flex flex-shrink-0 items-center gap-2 whitespace-nowrap rounded-full border border-primary/20 bg-primary/5 px-2.5 py-1 text-xs font-medium text-primary/90 shadow-subtle"
-  >
-    <span className="relative flex h-2 w-2" aria-hidden="true">
-      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/30" />
-      <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
-    </span>
-    {i18nService.t('coworkInProgress')}
-  </span>
-);
-
 const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInputProps>(
   (props, ref) => {
     const {
       onSubmit,
       onStop,
+      stopOperationKey,
       isStreaming = false,
       placeholder = 'Enter your task...',
       disabled = false,
@@ -390,9 +383,12 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const goalStateSessionIdRef = useRef(sessionId);
     const initialGoalObjectiveRef = useRef(initialGoalObjective);
     initialGoalObjectiveRef.current = initialGoalObjective;
-    const isRunActive = isCoworkRunActive(isStreaming, goalRunProgress);
+    const { isStopping, isStopPending, requestStop } = useSessionStop(
+      stopOperationKey ?? sessionId,
+      onStop,
+    );
+    const isRunActive = isStopping || isCoworkRunActive(isStreaming, goalRunProgress);
     const canStopRun = canStopCoworkRun(isStreaming, goalRunProgress);
-    const isCompacting = goalRunProgress?.phase === 'compacting';
 
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const slashMenuRef = useRef<HTMLDivElement>(null);
@@ -407,6 +403,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const goalClearPendingRef = useRef(false);
     const goalClearTargetIdRef = useRef<string | null>(null);
     const latestValueRef = useRef(value);
+    const submittedDraftsRef = useRef(new Set<string>());
+    const visibleDraftRef = useRef({ value, attachments });
+    visibleDraftRef.current = { value, attachments };
     const updateCompletionFeedback = useCallback((next: GoalCompletionFeedbackState | null) => {
       completionFeedbackRef.current = next;
       setCompletionFeedback(next);
@@ -442,9 +441,15 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         try {
           result = await window.electron.cowork.mutateSessionGoal(sessionId, request);
         } catch {
-          if (request.action === SessionGoalMutationAction.Clear) cancelGoalClear();
+          if (
+            renderedSessionIdRef.current === sessionId &&
+            request.action === SessionGoalMutationAction.Clear
+          )
+            cancelGoalClear();
           return false;
         }
+        // Apply a delayed mutation result only to its originating session.
+        if (renderedSessionIdRef.current !== sessionId) return result.success;
         if (!result.success || result.goal === undefined) {
           if (request.action === SessionGoalMutationAction.Clear) cancelGoalClear();
           return false;
@@ -742,244 +747,288 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           modelSelectionContextRef.current === submissionContext &&
           renderedSessionIdRef.current === sessionId;
         // Require user text even when attachments exist; empty prompts produce poor session titles.
-        if (!trimmedValue || isRunActive || disabled || modelUpdatePending || hasNoAvailableModels)
+        if (
+          !trimmedValue ||
+          isRunActive ||
+          isStopPending() ||
+          goalActionPendingRef.current ||
+          disabled ||
+          modelUpdatePending ||
+          hasNoAvailableModels
+        )
           return;
-        setShowFolderRequiredWarning(false);
+        if (submittedDraftsRef.current.has(draftKey)) return;
+        submittedDraftsRef.current.add(draftKey);
+        dispatch(setDraftPrompt({ sessionId: draftKey, draft: promptValue }));
+        try {
+          setShowFolderRequiredWarning(false);
 
-        const goalForResume = sessionGoalRef.current;
-        const executionAwaitsInputForGoal =
-          goalExecution?.phase === GoalExecutionPhase.AwaitingInput &&
-          (!goalExecution.goalId || goalExecution.goalId === goalForResume?.id);
-        const resumeWithInput =
-          goalForResume &&
-          (goalForResume.status === SessionGoalStatus.Blocked ||
-            goalForResume.status === SessionGoalStatus.UsageLimited ||
-            goalForResume.status === SessionGoalStatus.BudgetLimited ||
-            executionAwaitsInputForGoal) &&
-          !isGoalSlashCommand(trimmedValue);
-        if (resumeWithInput && attachments.length > 0) {
-          window.dispatchEvent(
-            new CustomEvent('app:showToast', {
-              detail: i18nService.t('coworkGoalResumeAttachmentUnsupported'),
-            }),
-          );
-          return;
-        }
-
-        const attachmentPayloads: CoworkAttachmentPayload[] = [];
-        const mediaDirectivePaths: string[] = [];
-        let attachmentPreparationFailed = false;
-        let imagePreparationFailed = false;
-        for (const attachment of attachments) {
-          const attachmentIsImage = isImageAttachment(attachment);
-          let dataUrl = attachment.dataUrl;
-
-          if (
-            attachmentIsImage &&
-            modelSupportsImage &&
-            !dataUrl &&
-            !attachment.path.startsWith('inline:')
-          ) {
-            try {
-              const result = await window.electron.dialog.readFileAsDataUrl(attachment.path);
-              dataUrl = result.success ? result.dataUrl : undefined;
-            } catch (error) {
-              console.error('Failed to read image before submit:', error);
-            }
+          const goalForResume = sessionGoalRef.current;
+          const executionAwaitsInputForGoal =
+            goalExecution?.phase === GoalExecutionPhase.AwaitingInput &&
+            (!goalExecution.goalId || goalExecution.goalId === goalForResume?.id);
+          const resumeWithInput =
+            goalForResume &&
+            (goalForResume.status === SessionGoalStatus.Blocked ||
+              goalForResume.status === SessionGoalStatus.UsageLimited ||
+              goalForResume.status === SessionGoalStatus.BudgetLimited ||
+              executionAwaitsInputForGoal) &&
+            !isGoalSlashCommand(trimmedValue);
+          if (resumeWithInput && attachments.length > 0) {
+            window.dispatchEvent(
+              new CustomEvent('app:showToast', {
+                detail: i18nService.t('coworkGoalResumeAttachmentUnsupported'),
+              }),
+            );
+            return;
           }
 
-          if (!dataUrl) {
-            if (!attachment.path.startsWith('inline:')) {
+          const attachmentPayloads: CoworkAttachmentPayload[] = [];
+          const mediaDirectivePaths: string[] = [];
+          let attachmentPreparationFailed = false;
+          let imagePreparationFailed = false;
+          for (const attachment of attachments) {
+            const attachmentIsImage = isImageAttachment(attachment);
+            let dataUrl = attachment.dataUrl;
+
+            if (
+              attachmentIsImage &&
+              modelSupportsImage &&
+              !dataUrl &&
+              !attachment.path.startsWith('inline:')
+            ) {
+              try {
+                const result = await window.electron.dialog.readFileAsDataUrl(attachment.path);
+                dataUrl = result.success ? result.dataUrl : undefined;
+              } catch (error) {
+                console.error('Failed to read image before submit:', error);
+              }
+            }
+
+            if (!dataUrl) {
+              if (!attachment.path.startsWith('inline:')) {
+                mediaDirectivePaths.push(attachment.path);
+              } else {
+                attachmentPreparationFailed = true;
+                imagePreparationFailed ||= attachmentIsImage;
+              }
+              continue;
+            }
+
+            const extracted = extractBase64FromDataUrl(dataUrl);
+            if (extracted && (!attachmentIsImage || modelSupportsImage)) {
+              attachmentPayloads.push({
+                name: attachment.name,
+                mimeType: extracted.mimeType,
+                base64Data: extracted.base64Data,
+              });
+            } else if (!attachment.path.startsWith('inline:')) {
               mediaDirectivePaths.push(attachment.path);
-            } else {
+            } else if (extracted && attachmentIsImage) {
+              const staged = await window.electron.dialog.saveInlineFile({
+                dataBase64: extracted.base64Data,
+                fileName: attachment.name,
+                mimeType: extracted.mimeType,
+                cwd: workingDirectory,
+              });
+              if (staged.success && staged.path) {
+                mediaDirectivePaths.push(staged.path);
+              } else {
+                attachmentPreparationFailed = true;
+                imagePreparationFailed = true;
+                console.error('Failed to stage image for non-vision model:', staged.error);
+              }
+            } else if (!extracted) {
               attachmentPreparationFailed = true;
               imagePreparationFailed ||= attachmentIsImage;
             }
-            continue;
           }
 
-          const extracted = extractBase64FromDataUrl(dataUrl);
-          if (extracted && (!attachmentIsImage || modelSupportsImage)) {
-            attachmentPayloads.push({
-              name: attachment.name,
-              mimeType: extracted.mimeType,
-              base64Data: extracted.base64Data,
-            });
-          } else if (!attachment.path.startsWith('inline:')) {
-            mediaDirectivePaths.push(attachment.path);
-          } else if (extracted && attachmentIsImage) {
-            const staged = await window.electron.dialog.saveInlineFile({
-              dataBase64: extracted.base64Data,
-              fileName: attachment.name,
-              mimeType: extracted.mimeType,
-              cwd: workingDirectory,
-            });
-            if (staged.success && staged.path) {
-              mediaDirectivePaths.push(staged.path);
-            } else {
-              attachmentPreparationFailed = true;
-              imagePreparationFailed = true;
-              console.error('Failed to stage image for non-vision model:', staged.error);
+          if (!submissionIsCurrent() || isStopPending() || goalActionPendingRef.current) return;
+          if (attachmentPreparationFailed) {
+            if (!modelSupportsImage && imagePreparationFailed) {
+              setImageVisionHint(true);
             }
-          } else if (!extracted) {
-            attachmentPreparationFailed = true;
-            imagePreparationFailed ||= attachmentIsImage;
-          }
-        }
-
-        if (attachmentPreparationFailed) {
-          if (!modelSupportsImage && imagePreparationFailed) {
-            setImageVisionHint(true);
-          }
-          return;
-        }
-
-        const clearSubmittedInput = (clearVisibleValue = true) => {
-          if (clearVisibleValue) setValue('');
-          dispatch(setDraftPrompt({ sessionId: draftKey, draft: '' }));
-          dispatch(clearDraftAttachments(draftKey));
-          setImageVisionHint(false);
-        };
-        const finalPrompt = appendMediaDirectiveLines(trimmedValue, mediaDirectivePaths);
-        const feedback = submittedCompletionFeedback;
-        if (feedback && sessionId && !trimmedValue.startsWith('/')) {
-          const outcome = await submitGoalCompletionFeedback({
-            completedGoalId: feedback.completedGoalId,
-            preparedObjective: feedback.preparedObjective,
-            restart: (goalId, objective) =>
-              window.electron.cowork.restartCompletedGoalForFeedback(sessionId, goalId, objective),
-            onPrepared: objective => {
-              const nextFeedback = {
-                completedGoalId: feedback.completedGoalId,
-                preparedObjective: objective,
-              };
-              window.localStorage.setItem(
-                goalFeedbackStorageKey(sessionId),
-                JSON.stringify(nextFeedback),
-              );
-              if (submissionIsCurrent()) updateCompletionFeedback(nextFeedback);
-            },
-            canSend: submissionIsCurrent,
-            feedback: finalPrompt,
-            send: async gatewayPrompt =>
-              onSubmit(
-                finalPrompt,
-                attachmentPayloads.length > 0 ? attachmentPayloads : undefined,
-                gatewayPrompt,
-              ),
-          });
-          if (outcome === 'context_changed') return;
-          if (outcome === 'restart_failed') {
-            if (!submissionIsCurrent()) return;
-            window.dispatchEvent(
-              new CustomEvent('app:showToast', {
-                detail: i18nService.t('coworkGoalContinueImprovingFailed'),
-              }),
-            );
             return;
           }
-          if (outcome === 'send_failed') {
-            if (submissionIsCurrent()) {
+
+          const clearSubmittedInput = (clearVisibleValue = true) => {
+            const current = store.getState();
+            const sourceText = selectDraftPrompts(current)[draftKey] || '';
+            const sourceAttachments = selectDraftAttachments(current, draftKey);
+            const isVisible = renderedSessionIdRef.current === sessionId;
+            if (
+              !canClearSubmittedDraft({
+                submittedText: promptValue,
+                submittedAttachments: attachments,
+                sourceText,
+                sourceAttachments,
+                visible: isVisible,
+                visibleText: visibleDraftRef.current.value,
+                visibleAttachments: visibleDraftRef.current.attachments,
+              })
+            )
+              return;
+            if (clearVisibleValue && isVisible) {
+              latestValueRef.current = '';
+              setValue('');
+              setImageVisionHint(false);
+            }
+            dispatch(setDraftPrompt({ sessionId: draftKey, draft: '' }));
+            dispatch(clearDraftAttachments(draftKey));
+          };
+          const finalPrompt = appendMediaDirectiveLines(trimmedValue, mediaDirectivePaths);
+          const feedback = submittedCompletionFeedback;
+          if (feedback && sessionId && !trimmedValue.startsWith('/')) {
+            const outcome = await submitGoalCompletionFeedback({
+              completedGoalId: feedback.completedGoalId,
+              preparedObjective: feedback.preparedObjective,
+              restart: (goalId, objective) =>
+                window.electron.cowork.restartCompletedGoalForFeedback(
+                  sessionId,
+                  goalId,
+                  objective,
+                ),
+              onPrepared: objective => {
+                const nextFeedback = {
+                  completedGoalId: feedback.completedGoalId,
+                  preparedObjective: objective,
+                };
+                window.localStorage.setItem(
+                  goalFeedbackStorageKey(sessionId),
+                  JSON.stringify(nextFeedback),
+                );
+                if (submissionIsCurrent()) updateCompletionFeedback(nextFeedback);
+              },
+              canSend: submissionIsCurrent,
+              feedback: finalPrompt,
+              send: async gatewayPrompt =>
+                onSubmit(
+                  finalPrompt,
+                  attachmentPayloads.length > 0 ? attachmentPayloads : undefined,
+                  gatewayPrompt,
+                ),
+            });
+            if (outcome === 'context_changed') return;
+            if (outcome === 'restart_failed') {
+              if (!submissionIsCurrent()) return;
               window.dispatchEvent(
                 new CustomEvent('app:showToast', {
-                  detail: i18nService.t('coworkGoalFeedbackSendFailed'),
+                  detail: i18nService.t('coworkGoalContinueImprovingFailed'),
                 }),
               );
+              return;
+            }
+            if (outcome === 'send_failed') {
+              if (submissionIsCurrent()) {
+                window.dispatchEvent(
+                  new CustomEvent('app:showToast', {
+                    detail: i18nService.t('coworkGoalFeedbackSendFailed'),
+                  }),
+                );
+              }
+              return;
+            }
+            const submissionStillCurrent = submissionIsCurrent();
+            clearSubmittedInput(submissionStillCurrent);
+            if (submissionStillCurrent) {
+              window.localStorage.removeItem(goalFeedbackStorageKey(sessionId));
+              updateCompletionFeedback(null);
             }
             return;
           }
-          const submissionStillCurrent = submissionIsCurrent();
-          clearSubmittedInput(submissionStillCurrent);
-          if (submissionStillCurrent) {
-            window.localStorage.removeItem(goalFeedbackStorageKey(sessionId));
-            updateCompletionFeedback(null);
-          }
-          return;
-        }
-        if (resumeWithInput) {
-          if (finalPrompt.length > SESSION_GOAL_MAX_NOTE_LENGTH) {
-            window.dispatchEvent(
-              new CustomEvent('app:showToast', {
-                detail: i18nService
-                  .t('coworkGoalResumeNoteTooLong')
-                  .replace('{max}', String(SESSION_GOAL_MAX_NOTE_LENGTH)),
-              }),
-            );
-            return;
-          }
-          let resumed = false;
-          const started = await runGoalAction(async () => {
-            resumed = await mutateGoal({
-              action: SessionGoalMutationAction.Resume,
-              goalId: goalForResume.id,
-              note: finalPrompt,
+          if (resumeWithInput) {
+            if (finalPrompt.length > SESSION_GOAL_MAX_NOTE_LENGTH) {
+              window.dispatchEvent(
+                new CustomEvent('app:showToast', {
+                  detail: i18nService
+                    .t('coworkGoalResumeNoteTooLong')
+                    .replace('{max}', String(SESSION_GOAL_MAX_NOTE_LENGTH)),
+                }),
+              );
+              return;
+            }
+            let resumed = false;
+            const started = await runGoalAction(async () => {
+              resumed = await mutateGoal({
+                action: SessionGoalMutationAction.Resume,
+                goalId: goalForResume.id,
+                note: finalPrompt,
+              });
             });
-          });
-          if (!started || !resumed) {
-            window.dispatchEvent(
-              new CustomEvent('app:showToast', {
-                detail: i18nService.t('coworkGoalResumeForInputFailed'),
-              }),
-            );
+            if (!started || !resumed) {
+              window.dispatchEvent(
+                new CustomEvent('app:showToast', {
+                  detail: i18nService.t('coworkGoalResumeForInputFailed'),
+                }),
+              );
+              return;
+            }
+            clearSubmittedInput();
             return;
           }
-          clearSubmittedInput();
-          return;
-        }
-        const goalObjective = parseGoalStartObjective(trimmedValue);
-        const goalClear = isGoalClearCommand(trimmedValue);
-        if (goalObjective) {
-          cancelGoalClear();
-          setPendingGoalObjective(goalObjective);
-        }
-        if (goalClear) {
-          beginGoalClear();
-        }
+          const goalObjective = parseGoalStartObjective(trimmedValue);
+          const goalClear = isGoalClearCommand(trimmedValue);
+          if (goalObjective) {
+            cancelGoalClear();
+            setPendingGoalObjective(goalObjective);
+          }
+          if (goalClear) {
+            beginGoalClear();
+          }
 
-        const clearBeforeSubmit = shouldClearSlashCommandComposerBeforeExecution(trimmedValue);
-        if (clearBeforeSubmit) {
-          clearSubmittedInput();
-        }
-        let result: boolean | void;
-        try {
-          result = await onSubmit(
-            finalPrompt,
-            attachmentPayloads.length > 0 ? attachmentPayloads : undefined,
-          );
-        } catch (error) {
-          if (goalClear) cancelGoalClear();
-          if (goalObjective) {
-            setPendingGoalObjective(current => (current === goalObjective ? null : current));
+          const clearBeforeSubmit = shouldClearSlashCommandComposerBeforeExecution(trimmedValue);
+          if (clearBeforeSubmit) {
+            clearSubmittedInput();
           }
-          throw error;
-        }
-        if (result === false) {
-          if (goalClear) cancelGoalClear();
-          if (goalObjective) {
-            setPendingGoalObjective(current => (current === goalObjective ? null : current));
-          }
-          return;
-        }
-        if (goalObjective && sessionId && !sessionId.startsWith('temp-')) {
+          let result: boolean | void;
           try {
-            const refreshed = await window.electron.cowork.getSessionGoal(sessionId);
-            if (refreshed.success && refreshed.goal) {
-              sessionGoalRef.current = refreshed.goal;
-              setSessionGoal(refreshed.goal);
-              setPendingGoalObjective(null);
+            result = await onSubmit(
+              finalPrompt,
+              attachmentPayloads.length > 0 ? attachmentPayloads : undefined,
+            );
+          } catch (error) {
+            if (goalClear) cancelGoalClear();
+            if (goalObjective) {
+              setPendingGoalObjective(current => (current === goalObjective ? null : current));
             }
-          } catch {
-            // The Gateway session event listener remains the fallback convergence path.
+            throw error;
           }
-        }
-        if (goalClear) applyAcceptedGoalClear();
-        if (!clearBeforeSubmit) {
-          clearSubmittedInput();
+          if (!submissionIsCurrent()) {
+            if (result !== false && !clearBeforeSubmit) clearSubmittedInput(false);
+            return;
+          }
+          if (result === false) {
+            if (goalClear) cancelGoalClear();
+            if (goalObjective) {
+              setPendingGoalObjective(current => (current === goalObjective ? null : current));
+            }
+            return;
+          }
+          if (goalObjective && sessionId && !sessionId.startsWith('temp-')) {
+            try {
+              const refreshed = await window.electron.cowork.getSessionGoal(sessionId);
+              if (submissionIsCurrent() && refreshed.success && refreshed.goal) {
+                sessionGoalRef.current = refreshed.goal;
+                setSessionGoal(refreshed.goal);
+                setPendingGoalObjective(null);
+              }
+            } catch {
+              // The Gateway session event listener remains the fallback convergence path.
+            }
+          }
+          if (goalClear) applyAcceptedGoalClear();
+          if (!clearBeforeSubmit) {
+            clearSubmittedInput();
+          }
+        } finally {
+          submittedDraftsRef.current.delete(draftKey);
         }
       },
       [
         value,
         isRunActive,
+        isStopPending,
         disabled,
         onSubmit,
         attachments,
@@ -1188,7 +1237,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     };
 
     const handleStopClick = () => {
-      if (!onStop) return;
+      if (!onStop || isStopPending()) return;
+      const stoppedSessionId = sessionId;
       const pendingCancellation =
         !sessionGoalRef.current && pendingGoalObjective
           ? { sessionId, objective: pendingGoalObjective }
@@ -1198,7 +1248,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       }
       void (async () => {
         try {
-          const stopped = await onStop();
+          const stopped = await requestStop();
+          if (renderedSessionIdRef.current !== stoppedSessionId) return;
           if (!pendingCancellation || pendingGoalCancellationRef.current !== pendingCancellation) {
             return;
           }
@@ -1775,7 +1826,13 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       ];
     }, [disabled, isRunActive, value, contextMenuPos]);
 
-    const canSubmit = !disabled && !modelUpdatePending && !hasNoAvailableModels && !!value.trim();
+    const canSubmit =
+      !disabled &&
+      !isRunActive &&
+      !goalActionPending &&
+      !modelUpdatePending &&
+      !hasNoAvailableModels &&
+      !!value.trim();
     const effectivePlaceholder = completionFeedback
       ? i18nService.t('coworkGoalCompletionFeedbackPlaceholder')
       : placeholder;
@@ -1936,6 +1993,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
     const handleGoalPause = useCallback(async () => {
       if (disabled || !onStop) return;
+      const goalToPause = sessionGoalRef.current;
       await runGoalAction(async () => {
         const pendingCancellation = pendingGoalObjective
           ? { sessionId, objective: pendingGoalObjective }
@@ -1946,10 +2004,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         try {
           const result = await pauseGoalRun({
             sessionId,
-            goal: sessionGoalRef.current,
-            stop: onStop,
-            pause: async () => {
-              const goal = sessionGoalRef.current;
+            goal: goalToPause,
+            stop: requestStop,
+            pause: async goal => {
               if (
                 !goal ||
                 !(await mutateGoal({
@@ -1961,6 +2018,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
               }
             },
           });
+          if (renderedSessionIdRef.current !== sessionId) return;
           if (
             result === 'stop_failed' &&
             pendingCancellation &&
@@ -1983,7 +2041,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           );
         }
       });
-    }, [disabled, mutateGoal, onStop, pendingGoalObjective, runGoalAction, sessionId]);
+    }, [disabled, mutateGoal, onStop, pendingGoalObjective, requestStop, runGoalAction, sessionId]);
 
     const handleGoalResume = useCallback(async () => {
       const goal = sessionGoalRef.current;
@@ -2451,7 +2509,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                         >
                           /
                         </button>
-                        <PermissionModeSelector />
+                        <PermissionModeSelector disabled={disabled} />
                         {contextUsageBadge}
                       </>
                     )}
@@ -2606,39 +2664,15 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                         )}
                       </div>
                     )}
-                    {isRunActive && <InProgressBadge />}
-                    {isCompacting ? (
-                      <button
-                        type="button"
-                        disabled
-                        className="p-2 rounded-xl bg-surface-raised text-muted cursor-not-allowed shadow-subtle"
-                        aria-label={i18nService.t('coworkCompactionInProgress')}
-                        title={i18nService.t('coworkCompactionInProgress')}
-                      >
-                        <PauseIcon className="h-5 w-5" />
-                      </button>
-                    ) : canStopRun ? (
-                      <button
-                        type="button"
-                        onClick={handleStopClick}
-                        disabled={disabled}
-                        className="p-2 rounded-xl bg-red-500 hover:bg-red-600 text-white transition-all shadow-subtle hover:shadow-card active:scale-95"
-                        aria-label="Stop"
-                      >
-                        <StopIcon className="h-5 w-5" />
-                      </button>
-                    ) : !isRunActive ? (
-                      <button
-                        type="button"
-                        onClick={() => void handleSubmit()}
-                        disabled={!canSubmit}
-                        className={`p-2 rounded-xl bg-primary hover:bg-primary-hover text-white transition-all shadow-subtle hover:shadow-card active:scale-95 disabled:cursor-not-allowed ${!canSubmit ? 'opacity-50' : ''}`}
-                        aria-label="Send"
-                        title={getSendShortcutLabel(currentSendShortcut)}
-                      >
-                        <PaperAirplaneIcon className="h-5 w-5" />
-                      </button>
-                    ) : null}
+                    <RunControlButton
+                      isRunning={isRunActive}
+                      isStopping={isStopping}
+                      canSubmit={canSubmit}
+                      size="large"
+                      sendTitle={getSendShortcutLabel(currentSendShortcut)}
+                      onStop={onStop && canStopRun ? handleStopClick : undefined}
+                      onSend={() => void handleSubmit()}
+                    />
                   </div>
                 </div>
               </>
@@ -2679,44 +2713,20 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                     >
                       /
                     </button>
-                    <PermissionModeSelector />
+                    <PermissionModeSelector disabled={disabled} />
                     {contextUsageBadge}
                   </div>
                 )}
 
-                {isRunActive && <InProgressBadge />}
-                {isCompacting ? (
-                  <button
-                    type="button"
-                    disabled
-                    className="flex-shrink-0 p-2 rounded-lg bg-surface-raised text-muted cursor-not-allowed shadow-subtle"
-                    aria-label={i18nService.t('coworkCompactionInProgress')}
-                    title={i18nService.t('coworkCompactionInProgress')}
-                  >
-                    <PauseIcon className="h-4 w-4" />
-                  </button>
-                ) : canStopRun ? (
-                  <button
-                    type="button"
-                    onClick={handleStopClick}
-                    disabled={disabled}
-                    className="flex-shrink-0 p-2 rounded-lg bg-red-500 hover:bg-red-600 text-white transition-all shadow-subtle hover:shadow-card active:scale-95"
-                    aria-label="Stop"
-                  >
-                    <StopIcon className="h-4 w-4" />
-                  </button>
-                ) : !isRunActive ? (
-                  <button
-                    type="button"
-                    onClick={() => void handleSubmit()}
-                    disabled={!canSubmit}
-                    className={`flex-shrink-0 p-2 rounded-lg bg-primary hover:bg-primary-hover text-white transition-all shadow-subtle hover:shadow-card active:scale-95 disabled:cursor-not-allowed ${!canSubmit ? 'opacity-50' : ''}`}
-                    aria-label="Send"
-                    title={getSendShortcutLabel(currentSendShortcut)}
-                  >
-                    <PaperAirplaneIcon className="h-4 w-4" />
-                  </button>
-                ) : null}
+                <RunControlButton
+                  isRunning={isRunActive}
+                  isStopping={isStopping}
+                  canSubmit={canSubmit}
+                  size="normal"
+                  sendTitle={getSendShortcutLabel(currentSendShortcut)}
+                  onStop={onStop && canStopRun ? handleStopClick : undefined}
+                  onSend={() => void handleSubmit()}
+                />
               </>
             )}
           </div>

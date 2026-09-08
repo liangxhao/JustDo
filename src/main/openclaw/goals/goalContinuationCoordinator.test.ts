@@ -589,6 +589,7 @@ describe('GoalContinuationCoordinator', () => {
       error: 'provider failed',
     });
 
+    harness.request.mockClear();
     await harness.coordinator.handleLifecycle({ runId: 'manual-run', sessionKey, phase: 'start' });
     await vi.advanceTimersByTimeAsync(60_000);
 
@@ -794,4 +795,29 @@ describe('GoalContinuationCoordinator', () => {
     });
     expect(harness.request.mock.calls.filter(call => call[0] === 'agent')).toHaveLength(1);
   });
+});
+
+
+it('rearms automatic retry after a stop fails instead of restoring a timerless active snapshot', async () => {
+  vi.useFakeTimers();
+  const harness = createHarness();
+  await harness.coordinator.handleLifecycle({ runId: 'failed-run', sessionKey, phase: 'error', error: 'provider failure' });
+  harness.coordinator.stop(sessionId);
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(harness.request).not.toHaveBeenCalledWith('agent', expect.anything());
+  harness.coordinator.rollbackStop(sessionId);
+  expect(harness.coordinator.getSnapshot(sessionId)?.phase).toBe(GoalExecutionPhase.Retrying);
+  await vi.advanceTimersByTimeAsync(2_000);
+  expect(harness.request).toHaveBeenCalledWith('agent', expect.objectContaining({ sessionKey }));
+});
+
+
+it('does not schedule automatic work for a failed ordinary conversation with no goal', async () => {
+  vi.useFakeTimers();
+  const harness = createHarness();
+  harness.setGoal(null);
+  await harness.coordinator.handleLifecycle({ runId: 'ordinary-run', sessionKey, phase: 'error', error: 'provider failed' });
+  expect(harness.coordinator.getSnapshot(sessionId)?.phase).toBe(GoalExecutionPhase.Waiting);
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(harness.request).not.toHaveBeenCalledWith('agent', expect.anything());
 });

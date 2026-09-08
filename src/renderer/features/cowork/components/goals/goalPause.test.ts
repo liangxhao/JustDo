@@ -54,3 +54,23 @@ describe('goal pause', () => {
     expect(calls).toEqual(['stop', 'pause']);
   });
 });
+
+it('pauses the originating Goal after navigation while the stop is pending', async () => {
+  let finishStop!: (stopped: boolean) => void;
+  let displayedGoal = goal;
+  const pause = vi.fn();
+  const pausing = pauseGoalRun({
+    sessionId: 'session-a',
+    goal: displayedGoal,
+    stop: () =>
+      new Promise<boolean>(resolve => {
+        finishStop = resolve;
+      }),
+    pause,
+  });
+  displayedGoal = { ...goal, id: 'goal-b' };
+  finishStop(true);
+  await pausing;
+  expect(pause).toHaveBeenCalledWith(goal);
+  expect(pause).not.toHaveBeenCalledWith(displayedGoal);
+});

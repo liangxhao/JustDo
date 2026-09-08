@@ -224,19 +224,22 @@ const coworkSlice = createSlice({
       }
     },
 
-    addSession(state, action: PayloadAction<CoworkSession>) {
+    addSession(state, action: PayloadAction<{ session: CoworkSession; select: boolean }>) {
+      const { session, select } = action.payload;
       const summary: CoworkSessionSummary = {
-        id: action.payload.id,
-        title: action.payload.title,
-        status: action.payload.status,
-        pinned: action.payload.pinned ?? false,
-        createdAt: action.payload.createdAt,
-        updatedAt: action.payload.updatedAt,
+        id: session.id,
+        title: session.title,
+        status: session.status,
+        pinned: session.pinned ?? false,
+        createdAt: session.createdAt,
+        updatedAt: session.updatedAt,
       };
       state.sessions.unshift(summary);
-      state.currentSession = action.payload;
-      state.currentSessionId = action.payload.id;
-      markSessionRead(state, action.payload.id);
+      if (select) {
+        state.currentSession = session;
+        state.currentSessionId = session.id;
+        markSessionRead(state, session.id);
+      }
     },
 
     updateSessionStatus(

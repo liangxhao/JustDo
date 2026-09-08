@@ -99,7 +99,11 @@ sequenceDiagram
 
 ## 7. Stop、删除与终态
 
-Stop 会发现主 session 与仍运行的 subagent key，逐一调用 `sessions.abort`，清除 pending approval/session grant、active turn、goal 控制 run 和缓存。`bestEffort` 仅允许在 Gateway confirmation 不可得时继续本地清理，不代表 abort 成功。
+用户 Stop 以 session 为范围调用 `sessions.abort {key, clearQueued: true}`，由 Gateway 取消本会话的运行、排队工作及受控后代；内部替换冲突 run 则保留精确 `runId`，避免停止无关的新运行。后代发现不完整或取消失败不能报告完整停止成功，`bestEffort` 也保留未确认的运行状态。停止期间拒绝同会话的新 Main 提交，迟到响应只能清理原运行。
+
+Renderer 的发送准备、Gateway 受理和 Stop 共享会话级操作身份。切换会话后不得将原消息交给新会话的 Controller，迟到的停止也不能清理新会话／新 run 的发送状态。Stop 等待在途发送或首次会话创建收敛，并在晚到受理后再次确认取消。手动压缩在准备阶段尚未注册取消 handle 时，`no-active-run` 不算取消完成；Controller 保留原压缩操作并重复请求取消，直到原请求收敛。压缩与等待用户回答仅限制编辑／发送，不禁用取消；停止进行中禁用重复点击并保持停止控件，失败后显示反馈并允许重试。
+
+发送明确拒绝会结算 Main receipt 并保留草稿。传输超时或断连只能证明受理结果未知，保留原操作身份，通过 Gateway 活动快照和 `agent.wait` 的权威终态恢复；不得把未知请求伪造为成功受理，也不得直接结算 failed。显式停止确认后可结算从未发出的 aborted receipt；已发出但受理未知的请求通过专用生命周期 IPC 保留取消意图，两个 `no-active-run` 也不能证明该请求以后不会被受理。`agent.wait` 的 yielded 证明已受理但不代表整项任务结束，应交回主任务／后代聚合；取消中的 yielded 先确认会话级清队列和子树停止。
 
 删除 session 的顺序包括停止活动、删除本地 row（级联 runs）、通知 adapter 清映射，并递归删除受管 subagent transcript；不能删除通用 `:main` 或不属于本产品的 Gateway session。
 
@@ -163,7 +167,7 @@ Renderer 的 GoalStatusCard 只投影 Gateway Goal 与 Main execution snapshot�
 
 ## 11. Ask-user 与 Approval
 
-`AskUserQuestion` extension 通过 `plugin.ask-user-question.requested/resolved` 产生 interaction。Main 把 extension 的 pending record 绑定到产品 session 并广播问题；Renderer 使用初始居中的非模态悬浮框收集结构化答案，不改变消息区布局。框外区域不拦截指针事件，标题栏可在视口范围内拖动，因此用户能在回答前滚动、选择和复制对话内容。悬浮框只在 interaction 所属 session 为当前会话时显示，切换会话时保留未提交答案与拖动位置；显示期间仅锁定当前会话的消息输入区，防止模型切换、发送或停止操作绕过待回答问题。提交前 Main 根据当前投影校验 question/option id，extension 在 `askUserQuestion.resolve` 再按权威 pending record 校验并完成 promise。pending、`expiresAt`、timeout/default 和 abort 都由 extension 持有；adapter 重连和 Renderer 刷新分别通过 `askUserQuestion.list` 与 interaction replay 恢复待答问题；dismiss 只是 UI 生命周期，不代表拒绝或完成。
+`AskUserQuestion` extension 通过 `plugin.ask-user-question.requested/resolved` 产生 interaction。Main 把 extension 的 pending record 绑定到产品 session 并广播问题；Renderer 使用初始居中的非模态悬浮框收集结构化答案，不改变消息区布局。框外区域不拦截指针事件，标题栏可在视口范围内拖动，因此用户能在回答前滚动、选择和复制对话内容。悬浮框只在 interaction 所属 session 为当前会话时显示，切换会话时保留未提交答案与拖动位置；显示期间锁定当前会话的编辑、模型切换和普通发送，停止按钮仍可用，以便用户直接取消等待中的任务。提交前 Main 根据当前投影校验 question/option id，extension 在 `askUserQuestion.resolve` 再按权威 pending record 校验并完成 promise。pending、`expiresAt`、timeout/default 和 abort 都由 extension 持有；adapter 重连和 Renderer 刷新分别通过 `askUserQuestion.list` 与 interaction replay 恢复待答问题；dismiss 只是 UI 生命周期，不代表拒绝或完成。
 
 Exec/plugin approval 走独立 Gateway approval API，并继续使用阻塞式 modal；不得复用 ask-user 的非模态展示语义。session 级 exec grant 绑定 session key，结束/停止/删除时清除。命令审批等待时限在配置页选择，并进入 OpenClaw 原生 request/wait 生命周期；无限等待不显示倒计时。文件范围与 exec reviewer 由 OpenClaw 原生 session mode 统一决定。权限 modal、文本确认模式和 scheduler 的无人值守模式不得共用含糊的 boolean `autoApprove`。
 
@@ -179,7 +183,7 @@ Main 对 task 查询做 single-flight 和短时缓存，并用版本化 wire val
 
 Subagent 详情的 Token 用量不使用 `sessions.list.totalTokens`，因为该字段是上下文快照而非生命周期消耗。详情打开时通过专用 `cowork:subTask:details` IPC 读取该 subagent 的 `sessions.usage` 原始 transcript 聚合，按每个 assistant 模型请求实际返回的 `usage` 累计输入、输出、缓存读取和缓存写入；“总 Token”严格等于这四项之和。tool-only 与控制类 assistant 轮次会计入；当前 transcript 不持久化上下文压缩和 exec review 请求的 `usage`，因此这两类请求尚不在详情累计中。读取失败时保留上一次完整结果，不展示部分累计值。
 
-父会话运行状态包含 `mainRunning || subagentRunning`。stop 会递归发现活动子树；完成通知、工具卡和抽屉必须按 parent/session/run identity 归属，迟到 announce 不能写入另一 turn。该 UI 聚合规则不替代 Gateway 的 terminal guard：前者决定展示 active，后者保证 required child 未被父模型处理时 run 本身不会静默结束。
+父会话运行状态聚合真实主运行、活动后代，以及 Goal `Continuing` / `Retrying` 调度阶段；`mainRunning` 与 `subagentRunning` 保留各自含义，父 row 的后代活动字段不能算作主运行。停止按钮和列表圆环消费同一聚合态，独立手动压缩在本地请求期间也保留取消入口。完成通知、工具卡和抽屉必须按 parent/session/run identity 归属，迟到 announce 不能写入另一 turn。该 UI 聚合规则不替代 Gateway 的 terminal guard：前者决定展示 active，后者保证 required child 未被父模型处理时 run 本身不会静默结束。
 
 ## 14. Renderer 状态
 

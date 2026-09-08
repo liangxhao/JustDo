@@ -61,6 +61,14 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
     await this.runtime.stopSession(sessionId, options);
   }
 
+  registerUnknownSessionRun(
+    sessionId: string,
+    runId: string,
+    options?: { cancelled?: boolean },
+  ): void {
+    this.runtime.registerUnknownSessionRun?.(sessionId, runId, options);
+  }
+
   async stopAllSessions(): Promise<void> {
     await this.runtime.stopAllSessions();
   }

@@ -2,10 +2,10 @@ import type { GoalRunProgress } from '@/features/cowork/components/goals/goalRun
 
 export const isCoworkRunActive = (
   runtimeRunning: boolean,
-  _progress: GoalRunProgress | null | undefined,
-): boolean => runtimeRunning;
+  progress: GoalRunProgress | null | undefined,
+): boolean => runtimeRunning || progress?.phase === 'compacting';
 
 export const canStopCoworkRun = (
   runtimeRunning: boolean,
   progress: GoalRunProgress | null | undefined,
-): boolean => runtimeRunning && progress?.phase !== 'compacting';
+): boolean => isCoworkRunActive(runtimeRunning, progress);

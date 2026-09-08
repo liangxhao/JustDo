@@ -956,3 +956,90 @@ describe('cowork runtime activity reconciliation', () => {
     expect(store.getState().cowork.sessionRuntimeActivity[sessionId]).toBe(true);
   });
 });
+
+test('a delayed startup adds its canonical session without stealing selection from B', async () => {
+  const session: CoworkSession = {
+    id: 'temp-navigation',
+    title: 'A',
+    status: 'running',
+    pinned: false,
+    cwd: '',
+    executionMode: 'local',
+    permissionMode: 'ask',
+    activeSkillIds: [],
+    agentId: 'main',
+    createdAt: 1,
+    updatedAt: 1,
+  };
+  let resolveStart!: (result: unknown) => void;
+  const beforeSessionSelected = vi.fn();
+  vi.stubGlobal('window', {
+    electron: {
+      cowork: {
+        startSession: vi.fn(
+          () =>
+            new Promise(resolve => {
+              resolveStart = resolve;
+            }),
+        ),
+      },
+    },
+  });
+  store.dispatch(setCurrentSession(session));
+  const starting = coworkService.startSession({ prompt: 'A' }, { beforeSessionSelected });
+  store.dispatch(setCurrentSession({ ...session, id: 'navigation-b', title: 'B' }));
+  resolveStart({ success: true, session: { ...session, id: 'navigation-a' } });
+  await starting;
+  expect(store.getState().cowork.currentSessionId).toBe('navigation-b');
+  expect(store.getState().cowork.sessions.some(item => item.id === 'navigation-a')).toBe(true);
+  expect(beforeSessionSelected).not.toHaveBeenCalled();
+  store.dispatch(clearCurrentSession());
+  vi.unstubAllGlobals();
+});
+
+test('publishes the unknown admission receipt only after Main confirms recording it', async () => {
+  let recordUnknown!: (result: unknown) => void;
+  const marker = vi.fn(
+    () =>
+      new Promise(resolve => {
+        recordUnknown = resolve;
+      }),
+  );
+  vi.stubGlobal('window', { electron: { cowork: { markSessionRunUnknown: marker } } });
+  let settled = false;
+  const marking = coworkService
+    .markSessionRunUnknown({
+      sessionId: 'unknown-marker-session',
+      id: 'unknown-marker-receipt',
+      cancelled: true,
+    })
+    .then(() => {
+      settled = true;
+    });
+  expect(marker).toHaveBeenCalledWith({
+    sessionId: 'unknown-marker-session',
+    id: 'unknown-marker-receipt',
+    cancelled: true,
+  });
+  expect(settled).toBe(false);
+  recordUnknown({
+    success: true,
+    snapshot: {
+      revision: 99999,
+      known: false,
+      running: true,
+      mainRunning: false,
+      subagentRunning: false,
+      timing: {
+        id: 'unknown-marker-receipt',
+        sessionId: 'unknown-marker-session',
+        clientTurnId: 'unknown-client-turn',
+        state: 'running',
+        startedAt: 1,
+      },
+    },
+  });
+  await marking;
+  expect(store.getState().cowork.sessionRuntimeActivity['unknown-marker-session']).toBe(true);
+  vi.unstubAllGlobals();
+});

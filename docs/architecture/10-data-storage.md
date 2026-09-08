@@ -108,6 +108,8 @@ OpenClaw v2026.9.2 对接不再由 JustDo 直接读写 agent `sessions.json`。G
 | `started_at`,`accepted_at`,`ended_at` | 各阶段 Unix ms                   |
 | `created_at`,`updated_at`             | receipt 时间                     |
 
+未受理的 running receipt 不能仅因 Gateway 暂时 idle 就结算，因为 `chat.send` 的 ACK 可能迟到或丢失。明确发送拒绝走失败结算；传输结果未知时保留 `client_turn_id`，用原生 `agent.wait` 查询对应 run 的终态。只有确认的 terminal result 或已确认的用户取消才能结束这类记录，查询超时和部分快照不构成完成证据。yielded 结果只将对应 receipt 转为已受理，随后仍按整个会话的活动与连续空闲确认结算；未知受理的取消意图必须保留到该请求被权威确认。断连不写业务 failed；异步恢复必须再次核对当前 receipt/run 身份，避免把旧响应写入后续运行。
+
 `idx_cowork_session_runs_session_started` 支持时间线；partial unique `idx_cowork_session_runs_open` 保证每个 session 最多一个 `ended_at IS NULL` 的 receipt。Start 先查 client turn 实现幂等，Adapter 收到真实 run id 后 bind；终态填 ended_at。启动 `interruptOpenSessionRuns(now)` 把上一应用进程遗留的开口 receipt 记为零时长 `aborted` checkpoint，避免恢复期间误报运行且不把离线时间算入耗时；若 Gateway 随后确认该 session 仍有 active work，runtime reconciliation 会重新打开该 checkpoint（root run id 暂缺时也原位恢复）并从当前进程重新计时。首次对账前若用户提交新 turn，main 进程会强制刷新该 checkpoint 的 Gateway 状态：active 时恢复旧 receipt 并拒绝新建，unknown 时 fail closed，只有 confirmed idle 才创建新 receipt。
 
 ## 8. `cowork_config`

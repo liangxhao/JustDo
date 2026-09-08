@@ -64,6 +64,9 @@ export interface JustDoChatWrapperRef {
     gatewayMessage?: string,
     options?: {
       propagateRequestFailure?: boolean;
+      expectedSessionKey?: string;
+      isCancelled?: () => boolean;
+      onRequestUnknown?: (runId: string) => void | Promise<void>;
       clientTurnId?: string;
       onRunBound?: (runId: string) => void | Promise<void>;
     },
@@ -78,7 +81,14 @@ export interface JustDoChatWrapperRef {
   /** Register the exact temporary/canonical pair created for a new session. */
   registerSessionPromotion: (sourceSessionKey: string, targetSessionKey: string) => void;
   /** Clear sending state (e.g. when session start fails) */
-  clearSending: () => void;
+  cancelManualCompaction: (sessionKey: string) => Promise<void>;
+  settleConfirmedRun: (
+    sessionKey: string,
+    runId: string,
+    state: 'completed' | 'failed' | 'aborted',
+  ) => void;
+  getSendingRunId: () => string | null;
+  clearSending: (expectedSessionKey?: string, expectedRunId?: string | null) => void;
   /** Adopt an accepted Goal resume before its first stream event arrives. */
   beginGoalResume: (sessionKey: string, runId: string) => void;
   /** Clear the current card only if its completed revision is still current. */
@@ -172,8 +182,15 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         registerSessionPromotion: (sourceSessionKey: string, targetSessionKey: string) => {
           promotionSourceByTargetRef.current.set(targetSessionKey, sourceSessionKey);
         },
-        clearSending: () => {
-          controllerRef.current?.clearSending();
+        cancelManualCompaction: async sessionKey => {
+          await controllerRef.current?.cancelManualCompaction(sessionKey);
+        },
+        settleConfirmedRun: (sessionKey, runId, state) => {
+          controllerRef.current?.settleConfirmedRun(sessionKey, runId, state);
+        },
+        getSendingRunId: () => controllerRef.current?.state.chatRunId ?? null,
+        clearSending: (expectedSessionKey, expectedRunId) => {
+          controllerRef.current?.clearSending(expectedSessionKey, expectedRunId);
         },
         beginGoalResume: (sessionKey: string, runId: string) => {
           controllerRef.current?.beginGoalResume(sessionKey, runId);

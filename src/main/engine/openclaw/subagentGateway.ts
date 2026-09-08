@@ -69,6 +69,7 @@ type ListGatewaySubagentsOptions = {
   hydrateDetails?: boolean;
   hydrateTaskDetails?: boolean;
   includeMalformedForRuntimeControl?: boolean;
+  requireComplete?: boolean;
 };
 
 const TASK_PAGE_SIZE = 500;
@@ -406,6 +407,9 @@ export async function listGatewaySubagents(
   options: ListGatewaySubagentsOptions,
 ): Promise<GatewaySubagentProjection[]> {
   const result = await collectGatewaySubagents(options);
+  if (options.requireComplete && !result.taskLedgerComplete) {
+    throw new Error('OpenClaw descendant discovery is incomplete; session stop was not confirmed.');
+  }
   return options.includeMalformedForRuntimeControl
     ? result.subagents
     : filterWellFormedSubagents(result.subagents);

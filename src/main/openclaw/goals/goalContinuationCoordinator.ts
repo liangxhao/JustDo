@@ -113,6 +113,7 @@ const errorSummary = (error: unknown): string => {
 
 export class GoalContinuationCoordinator {
   private readonly snapshots = new Map<string, GoalExecutionSnapshot>();
+  private readonly sessionKeys = new Map<string, string>();
   private readonly processedTerminalRuns = new Set<string>();
   private readonly stoppedSessionIds = new Set<string>();
   private readonly continuationRuns = new Set<string>();
@@ -175,6 +176,7 @@ export class GoalContinuationCoordinator {
   }
 
   clearSession(sessionId: string): void {
+    this.sessionKeys.delete(sessionId);
     this.cancelRetry(sessionId, true);
     const runIds = new Set([
       this.latestRunIds.get(sessionId),
@@ -219,6 +221,7 @@ export class GoalContinuationCoordinator {
     this.retryTimers.clear();
     this.retryAttempts.clear();
     this.snapshots.clear();
+    this.sessionKeys.clear();
     this.processedTerminalRuns.clear();
     this.stoppedSessionIds.clear();
     this.continuationRuns.clear();
@@ -266,6 +269,14 @@ export class GoalContinuationCoordinator {
     this.snapshotsBeforeStop.delete(sessionId);
     if (previous) {
       this.publish({ ...previous, updatedAt: this.now() });
+      const sessionKey = this.sessionKeys.get(sessionId);
+      if (sessionKey && (previous.phase === GoalExecutionPhase.Retrying ||
+        previous.phase === GoalExecutionPhase.Continuing)) {
+        // stop() invalidates in-flight dispatches and cancels retry timers.
+        // Restoring only the snapshot would leave an active task with no work
+        // scheduled after a failed cancellation.
+        this.scheduleRetry(sessionId, sessionKey, previous.goalId, previous.error);
+      }
       return;
     }
     this.snapshots.delete(sessionId);
@@ -278,6 +289,7 @@ export class GoalContinuationCoordinator {
   }
 
   async continue(sessionId: string, sessionKey: string): Promise<GoalExecutionSnapshot> {
+    this.sessionKeys.set(sessionId, sessionKey);
     const generation = this.generation;
     const stopGeneration = this.stopGenerations.get(sessionId) ?? 0;
     if (!isManagedGoalSessionKey(sessionKey)) {
@@ -333,6 +345,7 @@ export class GoalContinuationCoordinator {
     if (!isManagedGoalSessionKey(event.sessionKey) || event.spawnedBy) return;
     const sessionId = this.dependencies.resolveSessionId(event.sessionKey);
     if (!sessionId) return;
+    this.sessionKeys.set(sessionId, event.sessionKey);
     if (this.processedTerminalRuns.has(event.runId)) return;
     if (event.phase === 'start') {
       this.latestRunIds.set(sessionId, event.runId);
@@ -406,6 +419,22 @@ export class GoalContinuationCoordinator {
       return;
     }
     if (event.aborted || event.phase === 'error') {
+      try {
+        const retryGoal = await this.readGoal(event.sessionKey);
+        if (generation !== this.generation ||
+          (this.stopGenerations.get(sessionId) ?? 0) !== sessionGeneration ||
+          this.stoppedSessionIds.has(sessionId) ||
+          (this.latestRunIds.has(sessionId) && this.latestRunIds.get(sessionId) !== event.runId)) return;
+        if (!retryGoal || retryGoal.status !== SessionGoalStatus.Active) {
+          this.publishGoalState(sessionId, retryGoal, current?.continuationCount ?? 0);
+          return;
+        }
+      } catch {
+        if (generation !== this.generation ||
+          (this.stopGenerations.get(sessionId) ?? 0) !== sessionGeneration ||
+          this.stoppedSessionIds.has(sessionId) ||
+          (this.latestRunIds.has(sessionId) && this.latestRunIds.get(sessionId) !== event.runId)) return;
+      }
       this.scheduleRetry(
         sessionId,
         event.sessionKey,

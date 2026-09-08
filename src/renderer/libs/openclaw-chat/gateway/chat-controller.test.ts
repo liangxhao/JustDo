@@ -12,6 +12,109 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+test('waits through pre-registration no-active replies and cancels the later manual compaction handle', async () => {
+  vi.useFakeTimers();
+  const controller = new ChatController();
+  let finishCompact!: (result: unknown) => void;
+  const compact = new Promise(resolve => {
+    finishCompact = resolve;
+  });
+  let abortCount = 0;
+  const request = vi.fn(async (method: string) => {
+    if (method === 'sessions.compact') return compact;
+    if (method === 'sessions.abort') {
+      abortCount += 1;
+      if (abortCount === 2) finishCompact({ ok: false, compacted: false, reason: 'aborted' });
+      return { ok: true, status: abortCount === 1 ? 'no-active-run' : 'aborted' };
+    }
+    return {};
+  });
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'session-a';
+  const compacting = controller.sendMessage('/compact');
+  let stopped = false;
+  const stopping = controller.cancelManualCompaction('session-a').then(() => {
+    stopped = true;
+  });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(stopped).toBe(false);
+  expect(controller.state.compactionInFlight).toBe(true);
+  await vi.advanceTimersByTimeAsync(500);
+  await Promise.all([compacting, stopping]);
+  expect(abortCount).toBe(2);
+  expect(controller.state.compactionInFlight).toBe(false);
+  expect(controller.state.chatSending).toBe(false);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test('stopping a manual compaction after switching sessions never aborts or clears the new session', async () => {
+  const controller = new ChatController();
+  let finishCompact!: (result: unknown) => void;
+  const compact = new Promise(resolve => {
+    finishCompact = resolve;
+  });
+  const request = vi.fn(async (method: string) => {
+    if (method === 'sessions.compact') return compact;
+    finishCompact({ ok: false, reason: 'aborted' });
+    return { ok: true, status: 'aborted' };
+  });
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'session-a';
+  const compacting = controller.sendMessage('/compact');
+  controller.state.sessionKey = 'session-b';
+  controller.state.chatSending = true;
+  await controller.cancelManualCompaction('session-a');
+  await compacting;
+  expect(request).toHaveBeenCalledWith('sessions.abort', { key: 'session-a', clearQueued: true });
+  expect(controller.state.chatSending).toBe(true);
+});
+
+test('manual compaction cancellation reports a lost connection instead of claiming it stopped', async () => {
+  const controller = new ChatController();
+  let rejectCompact!: (error: Error) => void;
+  const compact = new Promise((_resolve, reject) => {
+    rejectCompact = reject;
+  });
+  const request = vi.fn(async (method: string) => {
+    if (method === 'sessions.compact') return compact;
+    rejectCompact(new Error('connection closed'));
+    throw new Error('connection closed');
+  });
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'session-a';
+  const compacting = controller.sendMessage('/compact');
+  await expect(controller.cancelManualCompaction('session-a')).rejects.toThrow('connection closed');
+  await compacting;
+  const recoveredRequest = vi.fn().mockResolvedValue({ ok: true, status: 'no-active-run' });
+  controller.state.client = { request: recoveredRequest } as never;
+  await expect(controller.cancelManualCompaction('session-a')).rejects.toThrow('connection closed');
+  recoveredRequest.mockResolvedValue({ ok: true, status: 'aborted' });
+  await controller.cancelManualCompaction('session-a');
+  expect(controller.state.compactionInFlight).toBe(false);
+  expect(controller.state.chatSending).toBe(false);
+});
+
+test.each([true, false])(
+  'does not abort new work when the earlier manual compaction already settled (%s)',
+  async success => {
+    const controller = new ChatController();
+    const request = vi.fn().mockResolvedValue({
+      ok: success,
+      compacted: false,
+      reason: 'Nothing to compact (session too small)',
+    });
+    controller.state.client = { request } as never;
+    controller.state.connected = true;
+    controller.state.sessionKey = 'session-a';
+    await controller.sendMessage('/compact');
+    await controller.cancelManualCompaction('session-a');
+    expect(request).toHaveBeenCalledTimes(1);
+  },
+);
+
 test.each(['failed', 'skipped', 'aborted'] as const)(
   'preserves the native automatic compaction %s outcome without claiming success',
   outcome => {
@@ -1657,9 +1760,18 @@ test('handles the next run activity when its sequence restarts below the previou
   };
   const handle = vi.spyOn(internal, 'handleAgentEvent').mockImplementation(() => {});
   const event = {
-    runId: 'old-run', sessionKey: 'session-1', sessionId: null, lifecycleGeneration: null,
-    agentId: 'main', spawnedBy: null, agentSeq: 100, frameSeq: 100, timestamp: 100,
-    deliveryEvent: 'agent', stream: 'assistant', data: { text: 'old' },
+    runId: 'old-run',
+    sessionKey: 'session-1',
+    sessionId: null,
+    lifecycleGeneration: null,
+    agentId: 'main',
+    spawnedBy: null,
+    agentSeq: 100,
+    frameSeq: 100,
+    timestamp: 100,
+    deliveryEvent: 'agent',
+    stream: 'assistant',
+    data: { text: 'old' },
   };
   internal.applyNormalizedAgentEvent(event);
   controller.state.transcript.activeTurn!.status = 'final';
@@ -9725,4 +9837,188 @@ test('recovers an unsequenced internal Agent gap only for the selected run owner
     });
   }
   expect(recoverFromGap).toHaveBeenCalledOnce();
+});
+
+test('rejects a send captured for another session before making a Gateway request', async () => {
+  const request = vi.fn();
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'session-b';
+  await expect(
+    controller.sendMessage('for A', [], undefined, {
+      expectedSessionKey: 'session-a',
+      propagateRequestFailure: true,
+    }),
+  ).rejects.toThrow('context changed');
+  expect(request).not.toHaveBeenCalled();
+  expect(controller.state.chatSending).toBe(false);
+});
+
+test('keeps a possibly accepted run active when chat.send acknowledgement is lost', async () => {
+  const controller = new ChatController();
+  controller.state.client = {
+    request: vi.fn().mockRejectedValue(new Error('request timeout')),
+  } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'session-a';
+  const onRequestUnknown = vi.fn();
+  await expect(
+    controller.sendMessage('hello', [], undefined, {
+      clientTurnId: 'pending-run',
+      propagateRequestFailure: true,
+      onRequestUnknown,
+    }),
+  ).rejects.toThrow('request timeout');
+  expect(onRequestUnknown).toHaveBeenCalledWith('pending-run');
+  expect(controller.state.chatSending).toBe(true);
+  expect(controller.state.chatRunId).toBe('pending-run');
+  expect(controller.state.lastError).toBeNull();
+});
+
+test('propagates a definitive send rejection so the product can settle its receipt', async () => {
+  const controller = new ChatController();
+  const rejection = Object.assign(new Error('invalid prompt'), { gatewayCode: 'INVALID_REQUEST' });
+  controller.state.client = { request: vi.fn().mockRejectedValue(rejection) } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'session-a';
+  const onRequestUnknown = vi.fn();
+  await expect(
+    controller.sendMessage('hello', [], undefined, {
+      propagateRequestFailure: true,
+      onRequestUnknown,
+    }),
+  ).rejects.toThrow('invalid prompt');
+  expect(onRequestUnknown).not.toHaveBeenCalled();
+  expect(controller.state.chatSending).toBe(false);
+});
+
+test('does not clear the active session when an earlier session stop completes', () => {
+  const controller = new ChatController();
+  controller.state.sessionKey = 'session-b';
+  controller.state.chatSending = true;
+  controller.state.chatRunId = 'run-b';
+  controller.clearSending('session-a');
+  expect(controller.state.chatSending).toBe(true);
+  expect(controller.state.chatRunId).toBe('run-b');
+});
+
+test('does not send after cancellation while session preparation is pending', async () => {
+  let finishPreparation!: (value: unknown) => void;
+  const request = vi.fn((method: string) =>
+    method === 'sessions.create'
+      ? new Promise(resolve => {
+          finishPreparation = resolve;
+        })
+      : Promise.resolve({}),
+  );
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'session-a';
+  let cancelled = false;
+  const sending = controller.sendMessage('/goal start do work', [], undefined, {
+    expectedSessionKey: 'session-a',
+    isCancelled: () => cancelled,
+    propagateRequestFailure: true,
+  });
+  cancelled = true;
+  finishPreparation({ sessionId: 'backing-session' });
+  await expect(sending).rejects.toThrow('context changed');
+  expect(request.mock.calls.some(([method]) => method === 'chat.send')).toBe(false);
+  expect(controller.state.chatSending).toBe(false);
+});
+
+test('does not clear a replacement run in the same session after a delayed stop response', () => {
+  const controller = new ChatController();
+  controller.state.sessionKey = 'session-a';
+  controller.state.chatSending = true;
+  controller.state.chatRunId = 'replacement';
+  controller.clearSending('session-a', 'stopped-run');
+  expect(controller.state.chatSending).toBe(true);
+  expect(controller.state.chatRunId).toBe('replacement');
+});
+
+test('does not release unknown admission before Main records its cancellation identity', async () => {
+  const controller = new ChatController();
+  controller.state.client = {
+    request: vi.fn().mockRejectedValue(new Error('request timeout: chat.send')),
+  } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'session-a';
+  let recordUnknown!: () => void;
+  const onRequestUnknown = vi.fn(
+    () =>
+      new Promise<void>(resolve => {
+        recordUnknown = resolve;
+      }),
+  );
+  let settled = false;
+  const sending = controller
+    .sendMessage('hello', [], undefined, {
+      clientTurnId: 'uncertain-admission',
+      onRequestUnknown,
+      propagateRequestFailure: true,
+    })
+    .catch(() => {
+      settled = true;
+    });
+  await vi.waitFor(() => expect(onRequestUnknown).toHaveBeenCalledWith('uncertain-admission'));
+  expect(settled).toBe(false);
+  expect(controller.state.chatSending).toBe(true);
+  recordUnknown();
+  await sending;
+  expect(settled).toBe(true);
+  expect(controller.state.chatRunId).toBe('uncertain-admission');
+});
+
+test.each(['completed', 'aborted'] as const)(
+  'settles an unknown request from a confirmed %s receipt',
+  async state => {
+    const controller = new ChatController();
+    const request = vi.fn((method: string) =>
+      method === 'chat.send'
+        ? Promise.reject(new Error('request timeout: chat.send'))
+        : Promise.resolve({ messages: [] }),
+    );
+    controller.state.client = { request } as never;
+    controller.state.connected = true;
+    controller.state.sessionKey = 'session-a';
+    await controller
+      .sendMessage('hello', [], undefined, {
+        clientTurnId: 'uncertain',
+        onRequestUnknown: () => undefined,
+      })
+      .catch(() => undefined);
+    controller.settleConfirmedRun('session-a', 'uncertain', state);
+    expect(controller.state.chatSending).toBe(false);
+    expect(controller.state.chatRunId).toBeNull();
+  },
+);
+
+test('settles the background unknown run without clearing the selected session', async () => {
+  const controller = new ChatController();
+  const request = vi.fn((method: string) =>
+    method === 'chat.send'
+      ? Promise.reject(new Error('request timeout: chat.send'))
+      : Promise.resolve({ messages: [] }),
+  );
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'session-a';
+  await controller
+    .sendMessage('hello', [], undefined, {
+      clientTurnId: 'uncertain-a',
+      onRequestUnknown: () => undefined,
+    })
+    .catch(() => undefined);
+  await controller.switchSession('session-b');
+  controller.state.chatSending = true;
+  controller.state.chatRunId = 'run-b';
+  controller.settleConfirmedRun('session-a', 'uncertain-a', 'aborted');
+  expect(controller.state.chatSending).toBe(true);
+  expect(controller.state.chatRunId).toBe('run-b');
+  await controller.switchSession('session-a');
+  expect(controller.state.chatSending).toBe(false);
+  expect(controller.state.chatRunId).toBeNull();
 });

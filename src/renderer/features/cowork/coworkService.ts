@@ -4,6 +4,7 @@ import {
   SessionRunBeginErrorCode,
   type SessionRuntimeSnapshot,
   type SessionRunTiming,
+  type SessionRunUnknownInput,
 } from '@shared/cowork/sessionRun';
 import { isGatewayToolFailureNotice } from '@shared/cowork/toolFailureNotice';
 import type { PermissionMode } from '@shared/openclaw/approvals';
@@ -549,6 +550,18 @@ export class CoworkService {
     }
   }
 
+  async markSessionRunUnknown(input: SessionRunUnknownInput): Promise<void> {
+    this.nextRuntimeStatusRequestVersion(input.sessionId);
+    const result = await window.electron.cowork.markSessionRunUnknown(input);
+    this.nextRuntimeStatusRequestVersion(input.sessionId);
+    if (!result.success) throw new Error(result.error || 'Failed to record unknown run admission');
+    if (result.snapshot) {
+      store.dispatch(
+        setSessionRuntimeSnapshot({ sessionId: input.sessionId, snapshot: result.snapshot }),
+      );
+    }
+  }
+
   async failSessionRun(sessionId: string, id: string): Promise<void> {
     this.nextRuntimeStatusRequestVersion(sessionId);
     const result = await window.electron.cowork.failSessionRun({
@@ -618,8 +631,9 @@ export class CoworkService {
         permissionMode,
         status: isRunning ? 'running' : result.session.status,
       };
-      hooks.beforeSessionSelected?.(runningSession);
-      store.dispatch(addSession(runningSession));
+      const select = store.getState().cowork.currentSession?.id === temporarySessionId;
+      if (select) hooks.beforeSessionSelected?.(runningSession);
+      store.dispatch(addSession({ session: runningSession, select }));
       if (isRunning) this.markSessionInProgress(runningSession.id);
       if (result.timing) {
         store.dispatch(
@@ -656,7 +670,9 @@ export class CoworkService {
       window.dispatchEvent(new CustomEvent('app:showToast', { detail: errorContent }));
     }
 
-    store.dispatch(setStreaming(false));
+    if (store.getState().cowork.currentSession?.id === temporarySessionId) {
+      store.dispatch(setStreaming(false));
+    }
     console.error('Failed to start session:', result.error);
     return { session: null, error: result.error };
   }
@@ -668,7 +684,9 @@ export class CoworkService {
     try {
       const result = await cowork.stopSession(sessionId);
       if (result.success) {
-        store.dispatch(setStreaming(false));
+        if (store.getState().cowork.currentSession?.id === sessionId) {
+          store.dispatch(setStreaming(false));
+        }
         this.confirmTerminalSessionIdle(sessionId);
         return true;
       }
@@ -1090,10 +1108,10 @@ export class CoworkService {
       return { success: false, models: [], error: 'listModels API not available' };
     }
     return window.electron.openclaw.models.list(options).catch(error => ({
-        success: false,
-        models: [],
-        error: error instanceof Error ? error.message : String(error),
-      }));
+      success: false,
+      models: [],
+      error: error instanceof Error ? error.message : String(error),
+    }));
   }
 
   async getRecentCwds(limit?: number): Promise<string[]> {

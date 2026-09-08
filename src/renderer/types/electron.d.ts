@@ -1,3 +1,4 @@
+type SessionRunUnknownInput = import('../../shared/cowork/sessionRun').SessionRunUnknownInput;
 type CoworkAttachmentPayload = import('../../shared/cowork/attachments').CoworkAttachmentPayload;
 type BeginSessionRunInput = import('../../shared/cowork/sessionRun').BeginSessionRunInput;
 type SessionRunBeginErrorCode = import('../../shared/cowork/sessionRun').SessionRunBeginErrorCode;
@@ -717,6 +718,11 @@ interface IElectronAPI {
     listSessionRuns: (sessionId: string) => Promise<{
       success: boolean;
       timings: SessionRunTiming[];
+      error?: string;
+    }>;
+    markSessionRunUnknown: (input: SessionRunUnknownInput) => Promise<{
+      success: boolean;
+      snapshot?: SessionRuntimeSnapshot;
       error?: string;
     }>;
     failSessionRun: (input: { sessionId: string; id: string; endedAt: number }) => Promise<{

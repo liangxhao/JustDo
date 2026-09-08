@@ -566,6 +566,16 @@ export class ChatController {
   private localCompactionStatusBySession = new Map<string, LocalCompactionStatus>();
   private settledCompactionEventIds = new Set<string>();
   private manualCompactionRequestIdsBySession = new Map<string, string>();
+  private manualCompactionOperations = new Map<
+    string,
+    {
+      sessionKey: string;
+      client: NonNullable<ChatController['state']['client']>;
+      cancelled: boolean;
+      settled: boolean;
+      error?: unknown;
+    }
+  >();
   private progressCardCache = new Map<string, ProgressCard | null>();
   private progressCardLoadGeneration = 0;
   private assistantSnapshotRunId: string | null = null;
@@ -687,13 +697,43 @@ export class ChatController {
   }
 
   /** Clear sending state (e.g. when session start fails) */
-  clearSending(): void {
+  clearSending(expectedSessionKey?: string, expectedRunId?: string | null): void {
+    if (expectedSessionKey && this.state.sessionKey !== expectedSessionKey) return;
+    if (expectedRunId !== undefined && this.state.chatRunId !== expectedRunId) return;
     this.state.chatSending = false;
     this.state.chatRunId = null;
     this.state.pendingUserMessage = null;
     this.resetAssistantSnapshotSource();
     this.clearRunActivity();
     this.notify();
+  }
+
+  /** Apply a product receipt only to the same live run, including background sessions. */
+  settleConfirmedRun(
+    sessionKey: string,
+    runId: string,
+    state: 'completed' | 'failed' | 'aborted',
+  ): void {
+    if (this.getSessionRunId(sessionKey) !== runId) return;
+    const event: NormalizedChatEvent = {
+      runId,
+      sessionKey,
+      sessionId: this.isSelectedSession(sessionKey)
+        ? this.state.currentSessionId
+        : (this.findLiveSessionState(sessionKey)?.[1].currentSessionId ?? null),
+      lifecycleGeneration: null,
+      frameSeq: null,
+      replace: false,
+      state: state === 'completed' ? 'final' : state === 'failed' ? 'error' : 'aborted',
+    };
+    if (!this.isSelectedSession(sessionKey)) {
+      this.applyBackgroundChatEvent(event);
+      return;
+    }
+    if (reduceChatEvent(this.state.transcript, event, this.transcriptDependencies) === 'applied') {
+      this.handleChatEvent(event);
+      this.notify();
+    }
   }
 
   /** Adopt an accepted Goal resume before its first Gateway stream event arrives. */
@@ -5026,12 +5066,21 @@ export class ChatController {
     gatewayMessage = message,
     options: {
       propagateRequestFailure?: boolean;
+      expectedSessionKey?: string;
+      isCancelled?: () => boolean;
+      onRequestUnknown?: (runId: string) => void | Promise<void>;
       clientTurnId?: string;
       onRunBound?: (runId: string) => void | Promise<void>;
     } = {},
   ): Promise<void> {
     const client = this.state.client;
     if (!client || !this.state.connected) throw new Error('not connected');
+    if (
+      options.isCancelled?.() ||
+      (options.expectedSessionKey && options.expectedSessionKey !== this.state.sessionKey)
+    ) {
+      throw new Error('The message submission context changed');
+    }
     if (this.state.chatSending) throw new Error('A message is already being sent');
 
     const goalStartObjective = parseGoalStartObjective(gatewayMessage);
@@ -5069,10 +5118,12 @@ export class ChatController {
         const handler = this.slashCommandBeforeSendHandlers.get(hook);
         if (!handler) throw new Error(`No slash command hook registered for ${hook}`);
         await handler(sessionKey);
-        if (this.state.sessionKey !== sessionKey) return;
+        if (this.state.sessionKey !== sessionKey || options.isCancelled?.()) {
+          throw new Error('The message submission context changed');
+        }
       }
     } catch (error) {
-      if (this.state.sessionKey !== sessionKey) return;
+      if (this.state.sessionKey !== sessionKey) throw error;
       const sessionError = error instanceof Error ? error : new Error(String(error));
       this.state.lastError = sessionError.message;
       this.notify();
@@ -5256,6 +5307,14 @@ export class ChatController {
         this.settleChatSend(sessionKey, acknowledgedRunId, 'final');
       }
     } catch (err) {
+      // A lost ACK does not prove rejection. Keep its operation identity live.
+      const definitiveRejection = goalStartOperation
+        ? isDefinitiveSessionGoalGatewayError(err)
+        : typeof asRecord(err)?.gatewayCode === 'string';
+      if (options.onRequestUnknown && !definitiveRejection) {
+        await options.onRequestUnknown(runId);
+        throw err;
+      }
       if (
         goalStartOperation &&
         goalStartSignature &&
@@ -5288,15 +5347,82 @@ export class ChatController {
     if (this.state.sessionKey === sessionKey) this.state.currentSessionId = sessionId;
   }
 
+  async cancelManualCompaction(sessionKey: string): Promise<void> {
+    const operations = [...this.manualCompactionOperations.values()].filter(
+      operation => operation.sessionKey === sessionKey,
+    );
+    for (const operation of operations) operation.cancelled = true;
+    // The native cancellation handle is registered after async preparation.
+    // A no-active-run reply during that preparation is not completion proof.
+    const needsConfirmation = (operation: (typeof operations)[number]) =>
+      !operation.settled ||
+      Boolean(operation.error && !isDefinitiveSessionGoalGatewayError(operation.error));
+    while (operations.some(needsConfirmation)) {
+      const operation = operations.find(needsConfirmation)!;
+      const client =
+        this.state.connected && this.state.client ? this.state.client : operation.client;
+      const result = await client.request<{ ok?: boolean; status?: string }>('sessions.abort', {
+        key: sessionKey,
+        clearQueued: true,
+      });
+      if (result.ok !== true || !['aborted', 'no-active-run'].includes(result.status ?? '')) {
+        throw new Error('Gateway did not confirm compaction cancellation');
+      }
+      if (
+        operation.settled &&
+        operation.error &&
+        !isDefinitiveSessionGoalGatewayError(operation.error)
+      ) {
+        if (result.status !== 'aborted') throw operation.error;
+        operation.error = undefined;
+      }
+      if (operations.some(candidate => !candidate.settled)) {
+        await new Promise(resolve => setTimeout(resolve, 250));
+      }
+    }
+    const uncertain = operations.find(
+      operation => operation.error && !isDefinitiveSessionGoalGatewayError(operation.error),
+    );
+    if (uncertain) throw uncertain.error;
+    for (const [id, operation] of this.manualCompactionOperations) {
+      if (operations.includes(operation)) this.manualCompactionOperations.delete(id);
+    }
+    if (operations.length > 0) {
+      this.settleCompactionRequest(sessionKey);
+      if (this.isSelectedSession(sessionKey)) {
+        this.notifyStream();
+        this.notify();
+      }
+    }
+  }
+
   private async compactSession(_argumentsText = ''): Promise<void> {
     const client = this.state.client;
     if (!client || !this.state.connected) throw new Error('not connected');
     const sessionKey = this.state.sessionKey;
+    if (
+      [...this.manualCompactionOperations.values()].some(
+        operation =>
+          operation.sessionKey === sessionKey &&
+          operation.cancelled &&
+          (!operation.settled || operation.error),
+      )
+    ) {
+      throw new Error('The session is still stopping');
+    }
     // v2026.9.2 sessions.compact accepts key, agentId and maxLines only.
     // Inline instructions cannot be forwarded by this RPC.
     const localStatus = this.beginLocalCompactionStatus(sessionKey, { forceNew: true });
     const statusId = localStatus.id;
     const markerFingerprintsBefore = localStatus.markerFingerprintsBefore;
+    const operation = {
+      sessionKey,
+      client,
+      cancelled: false,
+      settled: false,
+      error: undefined as unknown,
+    };
+    this.manualCompactionOperations.set(statusId, operation);
     this.manualCompactionRequestIdsBySession.set(sessionKey, statusId);
     const requestStillCurrent = (): boolean =>
       this.state.client === client &&
@@ -5315,7 +5441,21 @@ export class ChatController {
         reason?: string;
         result?: { tokensBefore?: number; tokensAfter?: number };
       }>('sessions.compact', { key: sessionKey });
+      operation.settled = true;
       if (!requestStillCurrent()) return;
+      if (operation.cancelled) {
+        this.updateLocalCompactionMessage(sessionKey, statusId, {
+          ...localStatus.message,
+          __openclaw: { ...localStatus.message.__openclaw, phase: 'aborted' },
+        });
+        this.localCompactionStatusBySession.delete(sessionKey);
+        this.settleCompactionRequest(sessionKey);
+        if (this.isSelectedSession(sessionKey)) {
+          this.notifyStream();
+          this.notify();
+        }
+        return;
+      }
       if (result?.ok === false && !isBenignCompactionNoopReason(result.reason)) {
         throw new Error(result.reason || i18nService.t('coworkCompactUnknownError'));
       }
@@ -5382,7 +5522,16 @@ export class ChatController {
       this.notifyStream();
       this.notify();
     } catch (err) {
+      operation.error = err;
+      operation.settled = true;
       if (!requestStillCurrent()) return;
+      if (operation.cancelled && !isDefinitiveSessionGoalGatewayError(err)) {
+        if (this.isSelectedSession(sessionKey)) {
+          this.state.lastError = (err as Error).message;
+          this.notify();
+        }
+        return;
+      }
       this.localCompactionStatusBySession.delete(sessionKey);
       this.deferredHistoryReloadAttempts.delete(sessionKey);
       const errorMessage = (err as Error).message;
@@ -5396,6 +5545,16 @@ export class ChatController {
       this.notifyStream();
       this.notify();
     } finally {
+      operation.settled = true;
+      // Retain an uncertain cancelled request so a retry cannot silently claim
+      // success after its transport has disappeared during native preparation.
+      if (
+        !operation.cancelled ||
+        !operation.error ||
+        isDefinitiveSessionGoalGatewayError(operation.error)
+      ) {
+        this.manualCompactionOperations.delete(statusId);
+      }
       if (this.manualCompactionRequestIdsBySession.get(sessionKey) === statusId) {
         this.manualCompactionRequestIdsBySession.delete(sessionKey);
       }

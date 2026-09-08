@@ -449,6 +449,44 @@ test('cleans a pending turn without leaking a rejection when chat.send fails', a
   expect(internals.activeTurns.has(session.id)).toBe(false);
 });
 
+test.each([
+  Object.assign(new Error('request timed out'), { code: 'CLIENT_TIMEOUT', requestSent: true }),
+  new Error('gateway closed (1006): lost connection'),
+])('retains a sent turn for authoritative recovery after $message', async failure => {
+  const { store, session } = createEmptyStore();
+  const update = vi.spyOn(store, 'updateSession');
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const errors = vi.fn();
+  adapter.on('error', errors);
+  const request = vi.fn(async (method: string) => {
+    if (method === 'chat.send') throw failure;
+    return {};
+  });
+  const internals = adapter as unknown as {
+    activeTurns: Map<string, SessionTurn>;
+    disconnectedSessionIds: Set<string>;
+    gatewayClient: GatewayClientLike;
+    ensureGatewayClientReady: () => Promise<void>;
+    prepareSession: () => Promise<{ sessionKey: string; gatewaySessionId: string }>;
+    runTurn: (sessionId: string, prompt: string, options: object) => Promise<void>;
+    resolveTurn: (sessionId: string) => void;
+    cleanupSessionTurn: (sessionId: string) => void;
+  };
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  internals.prepareSession = vi.fn().mockResolvedValue({
+    sessionKey: 'agent:main:justdo:session-1', gatewaySessionId: 'gateway-session-1',
+  });
+  const running = internals.runTurn(session.id, 'hello', {});
+  await vi.waitFor(() => expect(internals.disconnectedSessionIds.has(session.id)).toBe(true));
+  expect(internals.activeTurns.has(session.id)).toBe(true);
+  expect(update).not.toHaveBeenCalledWith(session.id, { status: 'error' });
+  expect(errors).not.toHaveBeenCalled();
+  internals.resolveTurn(session.id);
+  await running;
+  internals.cleanupSessionTurn(session.id);
+});
+
 test('reports preparation failures before an active turn is created', async () => {
   const { store, session } = createEmptyStore();
   const updateSession = vi.fn((_sessionId: string, updates: Record<string, unknown>) => {
@@ -479,6 +517,7 @@ test('stops an acknowledged turn with the Gateway root run before lifecycle even
   const request = vi.fn((method: string) => {
     if (method === 'chat.send') return Promise.resolve({ runId: 'gateway-run-1' });
     if (method === 'sessions.list') return Promise.resolve({ sessions: [] });
+    if (method === 'tasks.list') return Promise.resolve({ tasks: [] });
     if (method === 'sessions.abort') {
       return Promise.resolve({ ok: true, status: 'aborted' });
     }
@@ -515,7 +554,7 @@ test('stops an acknowledged turn with the Gateway root run before lifecycle even
 
   expect(request).toHaveBeenCalledWith('sessions.abort', {
     key: 'agent:main:justdo:session-1',
-    runId: 'gateway-run-1',
+    clearQueued: true,
   });
 });
 
@@ -1179,6 +1218,7 @@ test('waits for Gateway confirmation before clearing a stopped session', async (
   });
   const request = vi.fn((method: string) => {
     if (method === 'sessions.list') return Promise.resolve({ sessions: [] });
+    if (method === 'tasks.list') return Promise.resolve({ tasks: [] });
     if (method === 'sessions.abort') return abortResponse;
     return Promise.resolve({});
   });
@@ -1187,7 +1227,7 @@ test('waits for Gateway confirmation before clearing a stopped session', async (
   const stopping = adapter.stopSession(turn.sessionId);
   await vi.waitFor(() => expect(request).toHaveBeenCalledWith('sessions.abort', {
     key: turn.sessionKey,
-    runId: turn.runId,
+    clearQueued: true,
   }));
   expect(internals.activeTurns.get(turn.sessionId)).toBe(turn);
 
@@ -1195,6 +1235,79 @@ test('waits for Gateway confirmation before clearing a stopped session', async (
   await stopping;
 
   expect(internals.activeTurns.has(turn.sessionId)).toBe(false);
+});
+
+test('keeps a session active when descendant discovery fails despite no active root', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const internals = adapter as unknown as StopTestAdapter;
+  const turn = createSessionTurn();
+  internals.activeTurns.set(turn.sessionId, turn);
+  const request = vi.fn(async (method: string) => {
+    if (method === 'tasks.list') throw new Error('task ledger unavailable');
+    if (method === 'sessions.abort') return { ok: true, status: 'no-active-run' };
+    return [];
+  });
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+
+  await expect(adapter.stopSession(turn.sessionId)).rejects.toThrow('discovery is incomplete');
+
+  expect(request).toHaveBeenCalledWith('sessions.abort', {
+    key: turn.sessionKey,
+    clearQueued: true,
+  });
+  expect(internals.activeTurns.get(turn.sessionId)).toBe(turn);
+  expect(turn.stopRequested).toBe(false);
+});
+
+test('rejects new Main submissions while stopping and preserves a replacement turn on late acknowledgement', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const internals = adapter as unknown as StopTestAdapter & {
+    runTurn: (sessionId: string, prompt: string, options: object) => Promise<void>;
+  };
+  const turn = createSessionTurn();
+  internals.activeTurns.set(turn.sessionId, turn);
+  let confirmAbort!: (value: unknown) => void;
+  const abort = new Promise(resolve => { confirmAbort = resolve; });
+  const request = vi.fn(async (method: string) => {
+    if (method === 'tasks.list') return { tasks: [] };
+    if (method === 'sessions.abort') return abort;
+    return [];
+  });
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  const stopping = adapter.stopSession(turn.sessionId);
+  await vi.waitFor(() => expect(request).toHaveBeenCalledWith('sessions.abort', {
+    key: turn.sessionKey, clearQueued: true,
+  }));
+
+  await expect(internals.runTurn(turn.sessionId, 'new message', {})).rejects.toThrow('still stopping');
+  const replacement = createSessionTurn({ runId: 'replacement-run' });
+  internals.activeTurns.set(turn.sessionId, replacement);
+  confirmAbort({ ok: true, status: 'aborted' });
+  await stopping;
+
+  expect(internals.activeTurns.get(turn.sessionId)).toBe(replacement);
+});
+
+test('internal conflict cancellation targets only the exact root run', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const internals = adapter as unknown as StopTestAdapter & {
+    abortSessionAndSubagents: (sessionId: string, turn: SessionTurn) => Promise<void>;
+  };
+  const turn = createSessionTurn();
+  const request = vi.fn(async (method: string) => {
+    if (method === 'sessions.abort') return { ok: true, status: 'aborted' };
+    return [];
+  });
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+
+  await internals.abortSessionAndSubagents(turn.sessionId, turn);
+
+  expect(request).toHaveBeenCalledWith('sessions.abort', { key: turn.sessionKey, runId: turn.runId });
+  expect(request.mock.calls.filter(([method]) => method === 'sessions.abort')).toHaveLength(1);
+  expect(request.mock.calls.some(([method]) => method === 'tasks.list')).toBe(false);
 });
 
 test('coalesces concurrent stops for the same session', async () => {
@@ -1209,6 +1322,7 @@ test('coalesces concurrent stops for the same session', async () => {
   });
   const request = vi.fn((method: string) => {
     if (method === 'sessions.list') return Promise.resolve({ sessions: [] });
+    if (method === 'tasks.list') return Promise.resolve({ tasks: [] });
     if (method === 'sessions.abort') return abortResponse;
     if (method === 'exec.approval.list' || method === 'plugin.approval.list') {
       return Promise.resolve([]);
@@ -1238,6 +1352,7 @@ test('denies only approvals belonging to a stopped session after abort confirmat
   let pluginTargetPending = true;
   const request = vi.fn((method: string) => {
     if (method === 'sessions.list') return Promise.resolve({ sessions: [] });
+    if (method === 'tasks.list') return Promise.resolve({ tasks: [] });
     if (method === 'sessions.abort') return Promise.resolve({ ok: true, status: 'aborted' });
     if (method === 'exec.approval.list') {
       return Promise.resolve([
@@ -1436,6 +1551,7 @@ test('stops a recovered active descendant through an idle child session', async 
       }
       return Promise.resolve({ tasks: [] });
     }
+    if (method === 'tasks.list') return Promise.resolve({ tasks: [] });
     if (method === 'sessions.abort') {
       return Promise.resolve({ ok: true, status: 'aborted', abortedRunId: 'remote-run' });
     }
@@ -1465,6 +1581,7 @@ test('cancels a goal turn stopped while its Gateway session is being prepared', 
   const request = vi.fn((method: string) => {
     if (method === 'sessions.create') return sessionCreate;
     if (method === 'sessions.list') return Promise.resolve({ sessions: [] });
+    if (method === 'tasks.list') return Promise.resolve({ tasks: [] });
     if (method === 'sessions.abort') {
       return Promise.resolve({ ok: true, status: 'no-active-run' });
     }
@@ -1535,6 +1652,7 @@ test('does not let a cancelled preparation clean up a newer turn', async () => {
     }
     if (method === 'chat.send') return Promise.resolve({ runId: 'new-gateway-run' });
     if (method === 'sessions.list') return Promise.resolve({ sessions: [] });
+    if (method === 'tasks.list') return Promise.resolve({ tasks: [] });
     if (method === 'sessions.abort') {
       return Promise.resolve({ ok: true, status: 'no-active-run' });
     }
@@ -1625,6 +1743,7 @@ test('aborts an older active turn while a new turn is resolving its conflict', a
   const resolveActiveTurnConflict = vi.fn(() => conflict);
   const request = vi.fn((method: string) => {
     if (method === 'sessions.list') return Promise.resolve({ sessions: [] });
+    if (method === 'tasks.list') return Promise.resolve({ tasks: [] });
     if (method === 'sessions.abort') {
       return Promise.resolve({ ok: true, status: 'aborted' });
     }
@@ -1656,7 +1775,7 @@ test('aborts an older active turn while a new turn is resolving its conflict', a
 
   expect(request).toHaveBeenCalledWith('sessions.abort', {
     key: oldTurn.sessionKey,
-    runId: oldTurn.runId,
+    clearQueued: true,
   });
 });
 
@@ -1667,15 +1786,17 @@ test('re-aborts a turn stopped while chat.send is being accepted', async () => {
   const chatSend = new Promise<{ runId: string }>(resolve => {
     resolveChatSend = resolve;
   });
-  const request = vi.fn((method: string, params?: unknown) => {
+  let abortCount = 0;
+  const request = vi.fn((method: string) => {
     if (method === 'sessions.create') {
       return Promise.resolve({ sessionId: 'gateway-session-1' });
     }
     if (method === 'chat.send') return chatSend;
     if (method === 'sessions.list') return Promise.resolve({ sessions: [] });
+    if (method === 'tasks.list') return Promise.resolve({ tasks: [] });
     if (method === 'sessions.abort') {
-      const runId = (params as { runId?: string } | undefined)?.runId;
-      return runId === 'gateway-run-1'
+      abortCount += 1;
+      return abortCount > 1
         ? Promise.resolve({ ok: true, status: 'aborted' })
         : Promise.reject(new Error('pre-ack abort unavailable'));
     }
@@ -1726,7 +1847,7 @@ test('re-aborts a turn stopped while chat.send is being accepted', async () => {
   expect(abortCalls).toHaveLength(2);
   expect(abortCalls[1]?.[1]).toEqual({
     key: 'agent:main:justdo:session-1',
-    runId: 'gateway-run-1',
+    clearQueued: true,
   });
 });
 
@@ -1822,6 +1943,7 @@ test('keeps a turn active when its post-ack abort cannot be confirmed', async ()
     }
     if (method === 'chat.send') return chatSend;
     if (method === 'sessions.list') return Promise.resolve({ sessions: [] });
+    if (method === 'tasks.list') return Promise.resolve({ tasks: [] });
     if (method === 'sessions.abort') {
       abortCount += 1;
       return abortCount === 1
@@ -1884,6 +2006,7 @@ test('does not report success when chat.send rejects and a key abort cannot be c
     }
     if (method === 'chat.send') return chatSend;
     if (method === 'sessions.list') return Promise.resolve({ sessions: [] });
+    if (method === 'tasks.list') return Promise.resolve({ tasks: [] });
     if (method === 'sessions.abort') {
       abortCount += 1;
       return abortCount === 1
@@ -4758,4 +4881,212 @@ test('coalesces concurrent subagent status refreshes for the same parent session
       ],
     },
   ]);
+});
+
+
+test.each(['continuing', 'retrying'])('keeps %s goal scheduling active without claiming a root run', async phase => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.gatewayClient = { request: vi.fn().mockResolvedValue({ sessions: [] }) };
+  adapter.goalContinuationCoordinator.restoreSnapshot({
+    sessionId: 'session-1', goalId: 'goal-1', phase, continuationCount: 1, updatedAt: Date.now(),
+  });
+  await expect(adapter.getSessionRuntimeStatus('session-1')).resolves.toMatchObject({
+    known: true, mainRunning: false, subagentRunning: false, running: true,
+  });
+  adapter.goalContinuationCoordinator.stop('session-1');
+  adapter.goalContinuationCoordinator.confirmStop('session-1');
+  await expect(adapter.getSessionRuntimeStatus('session-1')).resolves.toMatchObject({ running: false });
+});
+
+test('reports descendant-only activity separately from the root even when only the parent row is returned', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.gatewayClient = { request: vi.fn().mockResolvedValue({ sessions: [{
+    key: 'agent:main:justdo:session-1', hasActiveRun: false, runState: 'idle',
+    hasActiveSubagentRun: true, status: 'running',
+  }] }) };
+  await expect(adapter.getSessionRuntimeStatus('session-1')).resolves.toMatchObject({
+    known: true, mainRunning: false, subagentRunning: false, running: false,
+  });
+  await expect(adapter.getSessionRuntimeStatus('session-1', { includeSubagents: true })).resolves.toMatchObject({
+    known: true, mainRunning: false, subagentRunning: true, running: true,
+  });
+});
+
+test.each([
+  { status: 'ok', expected: 'idle' },
+  { status: 'error', expected: 'error' },
+  { status: 'timeout', endedAt: 123, expected: 'error' },
+])('recovers a disconnected run from the authoritative $status terminal result', async ({ status, endedAt, expected }) => {
+  const { store } = createEmptyStore();
+  store.updateSession = vi.fn();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.on('error', vi.fn());
+  adapter.activeTurns.set('session-1', createSessionTurn());
+  adapter.rememberSessionKey('session-1', 'agent:main:justdo:session-1');
+  adapter.disconnectedSessionIds.add('session-1');
+  const request = vi.fn(async method => method === 'agent.wait'
+    ? { runId: 'run-1', status, endedAt }
+    : method === 'sessions.describe' ? { session: { key: 'agent:main:justdo:session-1', goal: null } }
+    : { sessions: [] });
+  adapter.gatewayClient = { request };
+  await expect(adapter.getSessionRuntimeStatus('session-1')).resolves.toMatchObject({ known: true, running: false });
+  expect(request).toHaveBeenCalledWith('agent.wait', { runId: 'run-1', timeoutMs: 0 });
+  expect(store.updateSession).toHaveBeenCalledWith('session-1', { status: expected });
+  expect(adapter.activeTurns.has('session-1')).toBe(false);
+});
+
+test.each([{ status: 'timeout' }])('does not invent a terminal outcome when recovery returns %j', async result => {
+  const { store } = createEmptyStore();
+  store.updateSession = vi.fn();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.activeTurns.set('session-1', createSessionTurn());
+  adapter.disconnectedSessionIds.add('session-1');
+  adapter.gatewayClient = { request: vi.fn(async method => method === 'agent.wait' ? result : { sessions: [] }) };
+  await expect(adapter.getSessionRuntimeStatus('session-1')).resolves.toMatchObject({ known: false });
+  expect(store.updateSession).not.toHaveBeenCalled();
+  expect(adapter.activeTurns.has('session-1')).toBe(true);
+});
+
+
+test('an unexpected Gateway close preserves execution identity without publishing a business failure', async () => {
+  vi.useFakeTimers();
+  try {
+    const { store } = createEmptyStore();
+    store.updateSession = vi.fn();
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const error = vi.fn();
+    adapter.on('error', error);
+    let options;
+    class FakeClient {
+      constructor(value) { options = value; }
+      start() {}
+      stop() {}
+      async request() { return {}; }
+    }
+    adapter.loadGatewayClientCtor = vi.fn().mockResolvedValue(FakeClient);
+    adapter.handleGatewayReady = vi.fn().mockResolvedValue(undefined);
+    adapter.reconcilePendingApprovals = vi.fn().mockResolvedValue(undefined);
+    adapter.reconcilePendingAskUserInteractions = vi.fn().mockResolvedValue(undefined);
+    await adapter.createGatewayClient({ url: 'ws://127.0.0.1:1234', token: '', version: 'test', clientEntryPath: 'test.js' });
+    options.onHelloOk();
+    const turn = createSessionTurn();
+    const reject = vi.fn();
+    adapter.activeTurns.set('session-1', turn);
+    adapter.pendingTurns.set('session-1', { resolve: vi.fn(), reject });
+    options.onClose(1006, 'network interrupted');
+    expect(adapter.activeTurns.get('session-1')).toBe(turn);
+    expect(adapter.disconnectedSessionIds.has('session-1')).toBe(true);
+    expect(store.updateSession).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+    expect(reject).not.toHaveBeenCalled();
+    adapter.disconnectGatewayClient();
+  } finally {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  }
+});
+
+
+test('concurrent recovery polls wait until Goal lifecycle reconciliation completes', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.activeTurns.set('session-1', createSessionTurn());
+  adapter.disconnectedSessionIds.add('session-1');
+  adapter.rememberSessionKey('session-1', 'agent:main:justdo:session-1');
+  adapter.gatewayClient = { request: vi.fn(async method => method === 'agent.wait'
+    ? { status: 'ok' } : { sessions: [] }) };
+  let finishGoal;
+  adapter.goalContinuationCoordinator.handleLifecycle = vi.fn(() => new Promise<void>(resolve => { finishGoal = resolve; }));
+  const first = adapter.getSessionRuntimeStatus('session-1');
+  await vi.waitFor(() => expect(finishGoal).toBeDefined());
+  let secondSettled = false;
+  const second = adapter.getSessionRuntimeStatus('session-1').then(status => { secondSettled = true; return status; });
+  await Promise.resolve();
+  expect(secondSettled).toBe(false);
+  finishGoal();
+  await Promise.all([first, second]);
+  expect(adapter.gatewayClient.request.mock.calls.filter(([method]) => method === 'agent.wait')).toHaveLength(1);
+});
+
+
+test('retains cancelled unknown admission across no-active stops and later aborts only its run', async () => {
+  const { store, session } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const internals = adapter as unknown as StopTestAdapter & {
+    unknownSessionRuns: Map<string, { runId: string; cancelled: boolean }>;
+    reconcileDisconnectedTurn: (sessionId: string) => Promise<void>;
+  };
+  let terminal = false;
+  const request = vi.fn(async (method: string) => {
+    if (method === 'tasks.list') return { tasks: [] };
+    if (method === 'sessions.abort') return { ok: true, status: 'no-active-run' };
+    if (method === 'agent.wait') return terminal
+      ? { runId: 'unknown-run', status: 'timeout', endedAt: Date.now(), stopReason: 'rpc' }
+      : { status: 'timeout' };
+    return {};
+  });
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  adapter.registerUnknownSessionRun(session.id, 'unknown-run');
+  await expect(adapter.stopSession(session.id)).rejects.toThrow('unconfirmed');
+  expect(internals.unknownSessionRuns.get(session.id)).toEqual({ runId: 'unknown-run', cancelled: true });
+  expect(internals.activeTurns.get(session.id)?.runId).toBe('unknown-run');
+  request.mockClear();
+  terminal = true;
+  await internals.reconcileDisconnectedTurn(session.id);
+  expect(request).toHaveBeenCalledWith('sessions.abort', { key: 'agent:main:justdo:session-1', runId: 'unknown-run' });
+  expect(request.mock.calls.filter(([method]) => method === 'sessions.abort')).toHaveLength(1);
+  expect(internals.unknownSessionRuns.has(session.id)).toBe(false);
+  expect(internals.activeTurns.has(session.id)).toBe(false);
+});
+
+
+test.each([false, true])('yielded unknown admission returns to normal runtime aggregation (cancelled=%s)', async cancelled => {
+  const { store, session } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const internals = adapter as unknown as StopTestAdapter & {
+    unknownSessionRuns: Map<string, { runId: string; cancelled: boolean }>;
+    reconcileDisconnectedTurn: (sessionId: string) => Promise<void>;
+  };
+  const request = vi.fn(async (method: string) => {
+    if (method === 'tasks.list') return { tasks: [] };
+    if (method === 'sessions.abort') return { ok: true, status: 'aborted' };
+    if (method === 'agent.wait') return { runId: 'yielded-run', status: 'ok', yielded: true };
+    return {};
+  });
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  adapter.registerUnknownSessionRun(session.id, 'yielded-run', { cancelled });
+  const complete = vi.fn();
+  adapter.on('complete', complete);
+  await internals.reconcileDisconnectedTurn(session.id);
+  expect(internals.unknownSessionRuns.has(session.id)).toBe(false);
+  expect(internals.activeTurns.has(session.id)).toBe(false);
+  expect(complete).not.toHaveBeenCalled();
+  if (cancelled) {
+    expect(request).toHaveBeenCalledWith('sessions.abort', { key: 'agent:main:justdo:session-1', clearQueued: true });
+  } else {
+    expect(request.mock.calls.some(([method]) => method === 'sessions.abort')).toBe(false);
+  }
+});
+
+test('late unknown admission reopens locally stopped tracking and repeated reports preserve cancellation identity', async () => {
+  const { store, session } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const internals = adapter as unknown as StopTestAdapter & {
+    unknownSessionRuns: Map<string, { runId: string; cancelled: boolean }>;
+  };
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request: vi.fn(async (method: string) => {
+    if (method === 'tasks.list') return { tasks: [] };
+    if (method === 'sessions.abort') return { ok: true, status: 'no-active-run' };
+    return {};
+  }) };
+  internals.activeTurns.set(session.id, createSessionTurn({ runId: 'late-run' }));
+  await adapter.stopSession(session.id);
+  adapter.registerUnknownSessionRun(session.id, 'late-run');
+  const identity = internals.unknownSessionRuns.get(session.id);
+  expect(identity).toEqual({ runId: 'late-run', cancelled: true });
+  expect(internals.activeTurns.get(session.id)?.runId).toBe('late-run');
+  adapter.registerUnknownSessionRun(session.id, 'late-run', { cancelled: true });
+  expect(internals.unknownSessionRuns.get(session.id)).toBe(identity);
 });

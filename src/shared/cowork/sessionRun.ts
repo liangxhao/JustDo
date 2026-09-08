@@ -36,3 +36,11 @@ export interface BeginSessionRunInput {
   startedAt: number;
   modelRef?: string;
 }
+
+export const SessionRunIpc = { Unknown: 'cowork:session:run:unknown' } as const;
+
+export interface SessionRunUnknownInput {
+  sessionId: string;
+  id: string;
+  cancelled?: boolean;
+}

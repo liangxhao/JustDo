@@ -20,12 +20,12 @@ export const pauseGoalRun = async ({
   sessionId: string | undefined;
   goal: SessionGoal | null;
   stop: () => boolean | void | Promise<boolean | void>;
-  pause: () => void | Promise<void>;
+  pause: (goal: SessionGoal) => void | Promise<void>;
 }): Promise<GoalPauseResult> => {
   const sendPauseCommand = shouldSendGoalPauseCommand(sessionId, goal);
   const stopped = await stop();
   if (stopped === false) return 'stop_failed';
-  if (!sendPauseCommand) return 'stopped';
-  await pause();
+  if (!sendPauseCommand || !goal) return 'stopped';
+  await pause(goal);
   return 'paused';
 };
