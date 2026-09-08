@@ -18,7 +18,7 @@ import {
   type ActiveTurnTimelineItem,
   type ProcessSummaryTimelineItem,
 } from '../model/project-turn-items';
-import { stripOpenClawLogHintText } from '../pipeline/message-normalizer';
+import { stripOpenClawLogHintText } from '../pipeline/system-message-display';
 import { renderChatAvatar } from './chat-avatar';
 import { type EditDiffMonacoData, resolveEditDiffLanguage } from './edit-diff-monaco';
 import { toSanitizedMarkdownHtml } from './markdown';
@@ -428,7 +428,7 @@ export function renderTerminalTimelineMessage(
     html`
       <div class="process-terminal process-terminal--${status}" role="status">
         ${status === 'aborted' ? html`<span aria-hidden="true">!</span>` : nothing}
-        <span>${message}</span>
+        <span>${stripOpenClawLogHintText(message).trim()}</span>
       </div>
       ${
         footer === nothing

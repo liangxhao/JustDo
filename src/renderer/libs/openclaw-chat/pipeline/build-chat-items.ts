@@ -14,7 +14,6 @@ import {
 import {
   normalizeMessage,
   stripMessageDisplayMetadataText,
-  stripOpenClawLogHintText,
   stripUnreliableGoalZeroUsageText,
 } from '@/libs/openclaw-chat/pipeline/message-normalizer';
 import { normalizeRoleForGrouping } from '@/libs/openclaw-chat/pipeline/role-normalizer';
@@ -33,6 +32,8 @@ import type {
 } from '@/libs/openclaw-chat/types';
 import type { ChatQueueItem } from '@/libs/openclaw-chat/types';
 import { i18nService } from '@/services/i18n';
+
+import { stripOpenClawLogHintText } from './system-message-display';
 
 export type BuildChatItemsProps = {
   sessionKey: string;

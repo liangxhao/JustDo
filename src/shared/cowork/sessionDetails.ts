@@ -1,3 +1,5 @@
+import { isGatewayInjectedModelRef } from '../openclaw/modelRef';
+
 export interface SessionDetailTokenUsage {
   input: number;
   output: number;
@@ -5,10 +7,8 @@ export interface SessionDetailTokenUsage {
   cacheWrite: number;
 }
 
-const HIDDEN_SESSION_DETAIL_MODELS = new Set(['openclaw/gateway-injected']);
-
 export const isSessionDetailModelVisible = (value: string): boolean =>
-  !HIDDEN_SESSION_DETAIL_MODELS.has(value.trim().toLowerCase());
+  !isGatewayInjectedModelRef(value);
 
 /** Displayed total: the four visible token categories must add up exactly. */
 export const sumSessionDetailTokenUsage = (usage: SessionDetailTokenUsage): number =>

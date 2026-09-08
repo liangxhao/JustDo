@@ -254,3 +254,9 @@ Streaming 更新不应抢走键盘焦点或反复触发 screen reader 整页朗�
 ## 26. Chat 变更完成条件
 
 新增 item/event 必须同时说明 live 与 history 表达、identity、session/run admission、terminal/takeover、渲染清洗、性能上限、搜索/导出和失败 fallback。至少测试乱序、重复、session 切换、分页、重连和危险内容；只截图证明视觉正常不构成数据流验收。
+
+### 系统消息展示边界
+
+Renderer 的 pipeline/system-message-display.ts 统一过滤历史消息、实时 Content 及实时/历史终态错误中的内部日志提示：旧版 Log:/Logs: 行、独立命令行，以及新版完整句子 To view logs, run ... in a terminal.。流式输出仅暂扣末尾匹配的提示前缀，完成后保留不完整或无关文本；实际错误原因和恢复建议不变。规则不依赖模型元数据，因为 Gateway 投影可能省略它；用户及工具正文不经过此过滤。原始 Gateway transcript 和诊断日志不改写。
+
+气泡页脚、活动轮次页脚及会话详情使用共享的 isGatewayInjectedModelRef 判断内部模型标识，覆盖裸名、provider 前缀及大小写变化；气泡显示现有本地化系统消息标签，模型统计隐藏该内部标识。

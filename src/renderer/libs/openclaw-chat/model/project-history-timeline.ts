@@ -1,5 +1,6 @@
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import { normalizeToolTerminalStatus } from '@shared/openclaw/messageDomain';
+import { isGatewayInjectedModelRef } from '@shared/openclaw/modelRef';
 
 import { getTranscriptMedia } from '@/libs/openclaw-chat/attachments';
 import type { GatewayMessage } from '@/libs/openclaw-chat/types';
@@ -111,11 +112,7 @@ function isGatewayInjectedAssistant(
     outer.model,
     outerMetadata?.modelName,
     outerMetadata?.model,
-  ].some(value => {
-    if (typeof value !== 'string') return false;
-    const normalized = value.trim().toLowerCase();
-    return normalized === 'gateway-injected' || normalized.endsWith('/gateway-injected');
-  });
+  ].some(isGatewayInjectedModelRef);
 }
 
 function runIdOf(

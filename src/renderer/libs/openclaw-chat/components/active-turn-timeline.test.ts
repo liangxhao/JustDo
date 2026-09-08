@@ -143,6 +143,30 @@ describe('active turn timeline', () => {
     expect(rendered).toContain('zcode/glm-5.3-flash');
   });
 
+  test('cleans the live terminal error without losing the failure reason', () => {
+    const rendered = flatten(
+      renderTimelineItem({
+        kind: 'terminal',
+        key: 'terminal:error',
+        item: {
+          id: 'terminal:error',
+          runId: 'run-1',
+          firstSeq: 1,
+          lastSeq: 1,
+          startedAt: 1,
+          updatedAt: 1,
+          type: 'terminal',
+          status: 'error',
+          message:
+            'Provider request failed. To view logs, run `openclaw logs --follow` in a terminal.',
+        },
+      }),
+    );
+    expect(rendered).toContain('Provider request failed.');
+    expect(rendered).not.toContain('To view logs');
+    expect(rendered).not.toContain('openclaw');
+  });
+
   test('renders running Thinking as an independently streaming block', () => {
     const rendered = flatten(
       renderTimelineItem({
@@ -398,7 +422,10 @@ describe('active turn timeline', () => {
     },
   );
 
-  test('removes the OpenClaw log hint from streaming active Content', () => {
+  test.each([
+    'Logs: openclaw logs --follow',
+    'To view logs, run `openclaw logs --follow` in a terminal.',
+  ])('removes the OpenClaw log hint from streaming active Content: %s', hint => {
     const rendered = flatten(
       renderTimelineItem({
         kind: 'content',
@@ -412,7 +439,7 @@ describe('active turn timeline', () => {
           updatedAt: 1,
           type: 'content',
           status: 'streaming',
-          text: 'Task failed\nLogs: openclaw logs --follow',
+          text: `Task failed\n${hint}`,
           sourceMode: 'delta',
         },
       }),

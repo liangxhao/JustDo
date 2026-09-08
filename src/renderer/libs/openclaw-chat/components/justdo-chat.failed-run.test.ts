@@ -31,7 +31,8 @@ describe('justdo-chat failed runs', () => {
     chat.messages = [
       {
         role: 'system',
-        content: 'Provider request failed.',
+        content:
+          'Provider request failed. To view logs, run `openclaw logs --follow` in a terminal.',
         timestamp: 6_000,
         runId: 'run-1',
         isError: true,
@@ -47,6 +48,8 @@ describe('justdo-chat failed runs', () => {
       '.process-terminal.process-terminal--error',
     );
     expect(terminal?.textContent).toContain('Provider request failed.');
+    expect(terminal?.textContent).not.toContain('To view logs');
+    expect(terminal?.textContent).not.toContain('openclaw');
     expect(chat.shadowRoot?.querySelector('.chat-avatar.error')).not.toBeNull();
     expect(chat.shadowRoot?.querySelector('.chat-avatar.assistant')).toBeNull();
     expect(chat.shadowRoot?.querySelector('.chat-avatar.other')).toBeNull();

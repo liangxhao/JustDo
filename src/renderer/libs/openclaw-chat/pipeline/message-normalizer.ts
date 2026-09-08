@@ -4,6 +4,7 @@
 
 import { normalizeModelRef } from '@shared/openclaw/modelRef';
 
+import { stripOpenClawLogHintText } from '@/libs/openclaw-chat/pipeline/system-message-display';
 import { stripInboundMetadata } from '@/libs/openclaw-chat/shims/backend-helpers';
 import { extractCanvasShortcodes } from '@/libs/openclaw-chat/shims/backend-helpers';
 import {
@@ -492,30 +493,6 @@ const stripUnreliableGoalZeroUsage = (content: MessageContentItem[]): MessageCon
     const text = stripUnreliableGoalZeroUsageText(item.text, textContent);
     return text ? [{ ...item, text }] : [];
   });
-};
-
-const OPENCLAW_LOG_HINT_COMMAND = 'openclaw logs --follow';
-const OPENCLAW_LOG_HINT_LINE_PATTERN = /^[\t ]*Logs?:[\t ]*(.*)$/i;
-
-function isOpenClawLogHintLine(line: string, hidePartial: boolean): boolean {
-  const match = OPENCLAW_LOG_HINT_LINE_PATTERN.exec(line);
-  if (!match) return false;
-  const candidate = (match[1] ?? '')
-    .trim()
-    .replace(/^`/, '')
-    .replace(/`$/, '')
-    .trim()
-    .replace(/[\t ]+/g, ' ')
-    .toLowerCase();
-  return hidePartial
-    ? OPENCLAW_LOG_HINT_COMMAND.startsWith(candidate)
-    : candidate === OPENCLAW_LOG_HINT_COMMAND;
-}
-
-export const stripOpenClawLogHintText = (text: string, hidePartial = false): string => {
-  const lines = text.split(/\r?\n/);
-  if (!lines.some(line => isOpenClawLogHintLine(line, hidePartial))) return text;
-  return lines.filter(line => !isOpenClawLogHintLine(line, hidePartial)).join('\n');
 };
 
 const stripOpenClawLogHint = (content: MessageContentItem[]): MessageContentItem[] => {
