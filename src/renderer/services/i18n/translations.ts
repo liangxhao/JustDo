@@ -2,9 +2,12 @@ import { PRODUCT_NAME } from '@shared/productMetadata';
 
 import type { LanguageType } from '@/services/i18n';
 
+import { getHomeGreetingTranslations } from './homeGreetings';
+
 // 语言文本映射
 export const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
+    ...getHomeGreetingTranslations('zh'),
     // 通用
     save: '保存',
     cancel: '取消',
@@ -751,6 +754,8 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkGoalTokenBudget: '目标 Token：{used}/{budget}',
     coworkGoalContinuationCount: '自动续跑 {count} 轮',
     coworkWelcome: '开始协作',
+    coworkGreetingSupport: '把想做的事告诉我，我们一起慢慢完成。',
+    coworkSelectProject: '选择项目',
     coworkDescription: '7×24 小时帮你干活的硬件场景个人助理 Agent',
     openChatWeb: '打开 ChatWeb',
     openTerminal: '打开 Terminal',
@@ -1716,6 +1721,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     cronToastDeliveryChannelRequired: '请选择一个外部通知通道。',
   },
   en: {
+    ...getHomeGreetingTranslations('en'),
     // Common
     save: 'Save',
     cancel: 'Cancel',
@@ -2500,6 +2506,8 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkGoalTokenBudget: 'Goal tokens: {used}/{budget}',
     coworkGoalContinuationCount: '{count} automatic continuations',
     coworkWelcome: 'Start Collaborating',
+    coworkGreetingSupport: 'Tell me what you’d like to do. We’ll take it one step at a time.',
+    coworkSelectProject: 'Select project',
     coworkDescription: 'A 24/7 hardware-focused personal assistant agent',
     openChatWeb: 'Open ChatWeb',
     openTerminal: 'Open Terminal',

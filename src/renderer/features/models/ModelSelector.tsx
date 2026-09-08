@@ -1,9 +1,4 @@
-import {
-  ArrowPathIcon,
-  CheckIcon,
-  ChevronDownIcon,
-  PhotoIcon,
-} from '@heroicons/react/24/outline';
+import { ArrowPathIcon, CheckIcon, ChevronDownIcon, PhotoIcon } from '@heroicons/react/24/outline';
 import React from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
@@ -18,6 +13,7 @@ import { RootState } from '@/store';
 
 interface ModelSelectorProps {
   dropdownDirection?: 'up' | 'down';
+  dropdownAlign?: 'left' | 'right';
   /**
    * Controlled mode: the currently selected Model (or `null` for "default").
    * When provided, the component does NOT read/write Redux global state.
@@ -37,6 +33,7 @@ interface ModelSelectorProps {
 
 const ModelSelector: React.FC<ModelSelectorProps> = ({
   dropdownDirection = 'down',
+  dropdownAlign = 'left',
   value,
   onChange,
   defaultLabel,
@@ -162,7 +159,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
 
       {isOpen && (
         <div
-          className={`absolute ${dropdownPositionClass} z-50 w-max min-w-48 max-w-[calc(100vw-2rem)] overflow-hidden rounded-2xl border border-border/70 bg-surface p-2 shadow-popover popover-enter`}
+          className={`absolute ${dropdownPositionClass} ${dropdownAlign === 'right' ? 'right-0' : 'left-0'} z-50 w-max min-w-48 max-w-[calc(100vw-2rem)] overflow-hidden rounded-2xl border border-border/70 bg-surface p-2 shadow-popover popover-enter`}
         >
           <div className="max-h-64 overflow-y-auto">
             {defaultLabel && (

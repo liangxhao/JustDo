@@ -1,4 +1,4 @@
-import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
+import { ChevronDownIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { FolderIcon, PaperAirplaneIcon, PauseIcon, StopIcon } from '@heroicons/react/24/solid';
 import type { OpenClawModelChoice } from '@shared/openclaw/models';
 import {
@@ -742,13 +742,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           modelSelectionContextRef.current === submissionContext &&
           renderedSessionIdRef.current === sessionId;
         // Require user text even when attachments exist; empty prompts produce poor session titles.
-        if (
-          !trimmedValue ||
-          isRunActive ||
-          disabled ||
-          modelUpdatePending ||
-          hasNoAvailableModels
-        )
+        if (!trimmedValue || isRunActive || disabled || modelUpdatePending || hasNoAvailableModels)
           return;
         setShowFolderRequiredWarning(false);
 
@@ -1781,11 +1775,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       ];
     }, [disabled, isRunActive, value, contextMenuPos]);
 
-    const canSubmit =
-      !disabled &&
-      !modelUpdatePending &&
-      !hasNoAvailableModels &&
-      !!value.trim();
+    const canSubmit = !disabled && !modelUpdatePending && !hasNoAvailableModels && !!value.trim();
     const effectivePlaceholder = completionFeedback
       ? i18nService.t('coworkGoalCompletionFeedbackPlaceholder')
       : placeholder;
@@ -2351,369 +2341,385 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           </div>
         )}
         <div
-          className={enhancedContainerClass}
-          onDragEnter={handleDragEnter}
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
+          className={
+            isLarge && showFolderSelector && !remoteManaged
+              ? 'rounded-[20px] bg-surface-raised p-1 shadow-subtle'
+              : undefined
+          }
         >
-          {isDraggingFiles && (
-            <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-[inherit] bg-primary/10 text-xs font-medium text-primary">
-              {i18nService.t('coworkDropFileHint')}
+          {isLarge && showFolderSelector && !remoteManaged && (
+            <div className="relative flex items-center px-2 py-1.5">
+              <div className="flex items-center">
+                <button
+                  ref={folderButtonRef as React.RefObject<HTMLButtonElement>}
+                  type="button"
+                  onClick={() => setShowFolderMenu(!showFolderMenu)}
+                  aria-haspopup="dialog"
+                  aria-expanded={showFolderMenu}
+                  title={workingDirectory || i18nService.t('coworkSelectProject')}
+                  aria-label={i18nService.t('workspacePickerTitle')}
+                  className={`flex items-center gap-1.5 pl-2.5 pr-1.5 py-1.5 rounded-full bg-surface text-sm transition-colors ${
+                    showFolderRequiredWarning
+                      ? 'ring-1 ring-warning text-warning animate-shake'
+                      : 'text-secondary hover:bg-surface-raised hover:text-foreground'
+                  }`}
+                >
+                  <FolderIcon className="h-4 w-4 flex-shrink-0" />
+                  <span className="max-w-[150px] truncate text-xs">
+                    {workingDirectory
+                      ? truncatePath(workingDirectory)
+                      : i18nService.t('coworkSelectProject')}
+                  </span>
+                  <ChevronDownIcon className="h-3 w-3 shrink-0" />
+                  {workingDirectory && (
+                    <span
+                      role="button"
+                      tabIndex={-1}
+                      onClick={e => {
+                        e.stopPropagation();
+                        handleFolderSelect('');
+                      }}
+                      className="flex-shrink-0 ml-0.5 p-0.5 rounded hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
+                    >
+                      <XMarkIcon className="h-3 w-3" />
+                    </span>
+                  )}
+                </button>
+              </div>
+              <FolderSelectorPopover
+                isOpen={showFolderMenu}
+                onClose={() => setShowFolderMenu(false)}
+                onSelectFolder={handleFolderSelect}
+                anchorRef={folderButtonRef as React.RefObject<HTMLElement>}
+                currentFolder={workingDirectory}
+              />
+              {showFolderRequiredWarning && (
+                <div className="absolute left-0 top-full mt-1 px-2 py-1 rounded-md bg-surface-raised text-warning text-xs whitespace-nowrap animate-fade-in-up shadow-subtle z-10">
+                  {i18nService.t('coworkSelectFolderFirst')}
+                </div>
+              )}
             </div>
           )}
-          {isLarge ? (
-            <>
-              <textarea
-                ref={textareaRef}
-                value={value}
-                onChange={handleInputChange}
-                onKeyDown={handleKeyDown}
-                onPaste={handlePaste}
-                onContextMenu={handleContextMenu}
-                placeholder={effectivePlaceholder}
-                disabled={disabled}
-                rows={isLarge ? 2 : 1}
-                className={textareaClass}
-                style={{ minHeight: `${minHeight}px` }}
-              />
-              <div className="flex items-center justify-between px-4 pb-2 pt-1.5">
-                <div className="flex items-center gap-2 relative">
-                  {showModelSelector && !remoteManaged && (
-                    <div className="flex flex-col items-start gap-1">
-                      <ModelSelector
-                        dropdownDirection="up"
-                        value={effectiveSelectedModel}
-                        models={selectableModels}
-                        onOpen={() => void loadOpenClawModelCatalog()}
-                        disabled={disabled}
-                        loading={modelUpdatePending || modelCatalogLoading}
-                        onChange={async nextModel => {
-                          if (!nextModel) return;
-                          const selectionContextKey = modelSelectionContextKey;
-                          const { taskId, completion } = modelSelectionTaskQueue.enqueue(
-                            async () => {
-                              try {
-                                const result = await applyModelSelectionUpdate(
-                                  {
-                                    sessionId,
-                                    agentId: effectiveAgentId,
-                                    model: nextModel,
-                                    onDefaultModelUpdated: () =>
-                                      syncDefaultModelSelectionState(
-                                        dispatch,
-                                        effectiveAgentId,
-                                        nextModel,
-                                      ),
-                                  },
-                                  coworkService,
-                                );
-                                if (sessionId) {
-                                  dispatch(
-                                    confirmDefaultModelSelection({
-                                      contextKey: `__home__\0${effectiveAgentId}`,
+          <div
+            className={enhancedContainerClass}
+            onDragEnter={handleDragEnter}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+          >
+            {isDraggingFiles && (
+              <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-[inherit] bg-primary/10 text-xs font-medium text-primary">
+                {i18nService.t('coworkDropFileHint')}
+              </div>
+            )}
+            {isLarge ? (
+              <>
+                <textarea
+                  ref={textareaRef}
+                  value={value}
+                  onChange={handleInputChange}
+                  onKeyDown={handleKeyDown}
+                  onPaste={handlePaste}
+                  onContextMenu={handleContextMenu}
+                  placeholder={effectivePlaceholder}
+                  disabled={disabled}
+                  rows={isLarge ? 2 : 1}
+                  className={textareaClass}
+                  style={{ minHeight: `${minHeight}px` }}
+                />
+                <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 pb-2 pt-1.5">
+                  <div className="flex items-center gap-2 relative">
+                    {!remoteManaged && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={handleAddFile}
+                          className="flex items-center justify-center p-1.5 rounded-lg text-sm text-secondary hover:bg-surface-raised hover:text-foreground transition-colors"
+                          title={i18nService.t('coworkAddFile')}
+                          aria-label={i18nService.t('coworkAddFile')}
+                          disabled={disabled || isRunActive || isAddingFile}
+                        >
+                          <PaperClipIcon className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleSlashButtonClick}
+                          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-secondary/70 text-xs text-secondary hover:border-secondary hover:bg-surface-raised hover:text-foreground transition-colors font-mono font-semibold"
+                          title={i18nService.t('slashCommandButton')}
+                          aria-label={i18nService.t('slashCommandButton')}
+                          disabled={disabled || isRunActive}
+                        >
+                          /
+                        </button>
+                        <PermissionModeSelector />
+                        {contextUsageBadge}
+                      </>
+                    )}
+                    {!remoteManaged && <ActiveSkillBadge />}
+                  </div>
+                  <div className="flex min-w-0 items-center justify-end gap-2">
+                    {showModelSelector && !remoteManaged && (
+                      <div className="flex flex-col items-start gap-1">
+                        <ModelSelector
+                          dropdownDirection="up"
+                          dropdownAlign="right"
+                          value={effectiveSelectedModel}
+                          models={selectableModels}
+                          onOpen={() => void loadOpenClawModelCatalog()}
+                          disabled={disabled}
+                          loading={modelUpdatePending || modelCatalogLoading}
+                          onChange={async nextModel => {
+                            if (!nextModel) return;
+                            const selectionContextKey = modelSelectionContextKey;
+                            const { taskId, completion } = modelSelectionTaskQueue.enqueue(
+                              async () => {
+                                try {
+                                  const result = await applyModelSelectionUpdate(
+                                    {
+                                      sessionId,
+                                      agentId: effectiveAgentId,
                                       model: nextModel,
-                                    }),
+                                      onDefaultModelUpdated: () =>
+                                        syncDefaultModelSelectionState(
+                                          dispatch,
+                                          effectiveAgentId,
+                                          nextModel,
+                                        ),
+                                    },
+                                    coworkService,
                                   );
-                                }
-                                if (!sessionId || !result.sessionModelRef) {
+                                  if (sessionId) {
+                                    dispatch(
+                                      confirmDefaultModelSelection({
+                                        contextKey: `__home__\0${effectiveAgentId}`,
+                                        model: nextModel,
+                                      }),
+                                    );
+                                  }
+                                  if (!sessionId || !result.sessionModelRef) {
+                                    dispatch(
+                                      confirmManualModelSelection({
+                                        contextKey: selectionContextKey,
+                                        taskId,
+                                        model: nextModel,
+                                      }),
+                                    );
+                                    return;
+                                  }
+                                  const confirmed =
+                                    resolveOpenClawModelRef(
+                                      result.sessionModelRef,
+                                      availableModels,
+                                    ) ?? nextModel;
                                   dispatch(
                                     confirmManualModelSelection({
                                       contextKey: selectionContextKey,
                                       taskId,
-                                      model: nextModel,
-                                    }),
-                                  );
-                                  return;
-                                }
-                                const confirmed =
-                                  resolveOpenClawModelRef(
-                                    result.sessionModelRef,
-                                    availableModels,
-                                  ) ?? nextModel;
-                                dispatch(
-                                  confirmManualModelSelection({
-                                    contextKey: selectionContextKey,
-                                    taskId,
-                                    model: confirmed,
-                                  }),
-                                );
-                                dispatch(
-                                  confirmCurrentSessionModelSelection({
-                                    sessionId,
-                                    modelRef: result.sessionModelRef,
-                                  }),
-                                );
-                              } catch (error) {
-                                const persistedModelRef =
-                                  resolvePersistedSessionModelRefAfterApplyError(error, nextModel);
-                                if (persistedModelRef && sessionId) {
-                                  const persistedModel =
-                                    resolveOpenClawModelRef(persistedModelRef, availableModels) ??
-                                    nextModel;
-                                  dispatch(
-                                    confirmManualModelSelection({
-                                      contextKey: selectionContextKey,
-                                      taskId,
-                                      model: persistedModel,
+                                      model: confirmed,
                                     }),
                                   );
                                   dispatch(
                                     confirmCurrentSessionModelSelection({
                                       sessionId,
-                                      modelRef: persistedModelRef,
+                                      modelRef: result.sessionModelRef,
                                     }),
                                   );
+                                } catch (error) {
+                                  const persistedModelRef =
+                                    resolvePersistedSessionModelRefAfterApplyError(
+                                      error,
+                                      nextModel,
+                                    );
+                                  if (persistedModelRef && sessionId) {
+                                    const persistedModel =
+                                      resolveOpenClawModelRef(persistedModelRef, availableModels) ??
+                                      nextModel;
+                                    dispatch(
+                                      confirmManualModelSelection({
+                                        contextKey: selectionContextKey,
+                                        taskId,
+                                        model: persistedModel,
+                                      }),
+                                    );
+                                    dispatch(
+                                      confirmCurrentSessionModelSelection({
+                                        sessionId,
+                                        modelRef: persistedModelRef,
+                                      }),
+                                    );
+                                  }
+                                  throw error;
                                 }
-                                throw error;
-                              }
-                            },
-                          );
-                          dispatch(
-                            beginManualModelSelection({
-                              contextKey: selectionContextKey,
-                              taskId,
-                              model: nextModel,
-                              previousModel: effectiveSelectedModel,
-                            }),
-                          );
-                          try {
-                            await completion;
+                              },
+                            );
                             dispatch(
-                              completeManualModelSelection({
+                              beginManualModelSelection({
                                 contextKey: selectionContextKey,
                                 taskId,
+                                model: nextModel,
+                                previousModel: effectiveSelectedModel,
                               }),
                             );
-                          } catch (error) {
-                            const isLatestSelection =
-                              store.getState().cowork.pendingModelSelectionTaskIds[
-                                selectionContextKey
-                              ] === taskId;
-                            dispatch(
-                              rollbackManualModelSelection({
-                                contextKey: selectionContextKey,
-                                taskId,
-                              }),
-                            );
-                            if (!isLatestSelection) return;
-                            const errorMessage =
-                              error instanceof Error ? error.message : String(error);
-                            const userMessage = i18nService
-                              .t(
-                                error instanceof DefaultModelApplyError
-                                  ? 'coworkDefaultModelApplyFailedSessionUpdated'
-                                  : 'coworkModelApplyFailed',
-                              )
-                              .replace('{error}', errorMessage);
-                            window.dispatchEvent(
-                              new CustomEvent('app:showToast', { detail: userMessage }),
-                            );
-                            console.warn('[CoworkPromptInput] Failed to update session model', {
-                              sessionId,
-                              error,
-                            });
-                          }
-                        }}
-                      />
-                      {hasNoAvailableModels && (
-                        <span className="max-w-60 text-[11px] leading-4 text-red-500">
-                          {i18nService.t('noModelAvailableHint')}
-                        </span>
-                      )}
-                    </div>
-                  )}
-                  {!remoteManaged && (
-                    <>
+                            try {
+                              await completion;
+                              dispatch(
+                                completeManualModelSelection({
+                                  contextKey: selectionContextKey,
+                                  taskId,
+                                }),
+                              );
+                            } catch (error) {
+                              const isLatestSelection =
+                                store.getState().cowork.pendingModelSelectionTaskIds[
+                                  selectionContextKey
+                                ] === taskId;
+                              dispatch(
+                                rollbackManualModelSelection({
+                                  contextKey: selectionContextKey,
+                                  taskId,
+                                }),
+                              );
+                              if (!isLatestSelection) return;
+                              const errorMessage =
+                                error instanceof Error ? error.message : String(error);
+                              const userMessage = i18nService
+                                .t(
+                                  error instanceof DefaultModelApplyError
+                                    ? 'coworkDefaultModelApplyFailedSessionUpdated'
+                                    : 'coworkModelApplyFailed',
+                                )
+                                .replace('{error}', errorMessage);
+                              window.dispatchEvent(
+                                new CustomEvent('app:showToast', { detail: userMessage }),
+                              );
+                              console.warn('[CoworkPromptInput] Failed to update session model', {
+                                sessionId,
+                                error,
+                              });
+                            }
+                          }}
+                        />
+                        {hasNoAvailableModels && (
+                          <span className="max-w-60 text-[11px] leading-4 text-red-500">
+                            {i18nService.t('noModelAvailableHint')}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {isRunActive && <InProgressBadge />}
+                    {isCompacting ? (
                       <button
                         type="button"
-                        onClick={handleSlashButtonClick}
-                        className="flex items-center justify-center p-1.5 rounded-lg text-sm text-secondary hover:bg-surface-raised hover:text-foreground transition-colors font-mono font-semibold"
-                        title={i18nService.t('slashCommandButton')}
-                        aria-label={i18nService.t('slashCommandButton')}
-                        disabled={disabled || isRunActive}
+                        disabled
+                        className="p-2 rounded-xl bg-surface-raised text-muted cursor-not-allowed shadow-subtle"
+                        aria-label={i18nService.t('coworkCompactionInProgress')}
+                        title={i18nService.t('coworkCompactionInProgress')}
                       >
-                        /
+                        <PauseIcon className="h-5 w-5" />
                       </button>
+                    ) : canStopRun ? (
                       <button
                         type="button"
-                        onClick={handleAddFile}
-                        className="flex items-center justify-center p-1.5 rounded-lg text-sm text-secondary hover:bg-surface-raised hover:text-foreground transition-colors"
-                        title={i18nService.t('coworkAddFile')}
-                        aria-label={i18nService.t('coworkAddFile')}
-                        disabled={disabled || isRunActive || isAddingFile}
+                        onClick={handleStopClick}
+                        disabled={disabled}
+                        className="p-2 rounded-xl bg-red-500 hover:bg-red-600 text-white transition-all shadow-subtle hover:shadow-card active:scale-95"
+                        aria-label="Stop"
                       >
-                        <PaperClipIcon className="h-4 w-4" />
+                        <StopIcon className="h-5 w-5" />
                       </button>
-                      <PermissionModeSelector />
-                      {showFolderSelector && (
-                        <>
-                          <div className="flex items-center">
-                            <button
-                              ref={folderButtonRef as React.RefObject<HTMLButtonElement>}
-                              type="button"
-                              onClick={() => setShowFolderMenu(!showFolderMenu)}
-                              aria-haspopup="dialog"
-                              aria-expanded={showFolderMenu}
-                              aria-label={i18nService.t('workspacePickerTitle')}
-                              className={`flex items-center gap-1.5 pl-2.5 pr-1.5 py-1.5 rounded-lg text-sm transition-colors ${
-                                showFolderRequiredWarning
-                                  ? 'ring-1 ring-warning text-warning animate-shake'
-                                  : 'text-secondary hover:bg-surface-raised hover:text-foreground'
-                              }`}
-                            >
-                              <FolderIcon className="h-4 w-4 flex-shrink-0" />
-                              <span className="max-w-[150px] truncate text-xs">
-                                {truncatePath(workingDirectory)}
-                              </span>
-                              {workingDirectory && (
-                                <span
-                                  role="button"
-                                  tabIndex={-1}
-                                  onClick={e => {
-                                    e.stopPropagation();
-                                    handleFolderSelect('');
-                                  }}
-                                  className="flex-shrink-0 ml-0.5 p-0.5 rounded hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
-                                >
-                                  <XMarkIcon className="h-3 w-3" />
-                                </span>
-                              )}
-                            </button>
-                          </div>
-                          <FolderSelectorPopover
-                            isOpen={showFolderMenu}
-                            onClose={() => setShowFolderMenu(false)}
-                            onSelectFolder={handleFolderSelect}
-                            anchorRef={folderButtonRef as React.RefObject<HTMLElement>}
-                            currentFolder={workingDirectory}
-                          />
-                          {showFolderRequiredWarning && (
-                            <div className="absolute left-0 top-full mt-1 px-2 py-1 rounded-md bg-surface-raised text-warning text-xs whitespace-nowrap animate-fade-in-up shadow-subtle z-10">
-                              {i18nService.t('coworkSelectFolderFirst')}
-                            </div>
-                          )}
-                        </>
-                      )}
-                      {contextUsageBadge}
-                    </>
-                  )}
-                  {!remoteManaged && <ActiveSkillBadge />}
+                    ) : !isRunActive ? (
+                      <button
+                        type="button"
+                        onClick={() => void handleSubmit()}
+                        disabled={!canSubmit}
+                        className={`p-2 rounded-xl bg-primary hover:bg-primary-hover text-white transition-all shadow-subtle hover:shadow-card active:scale-95 disabled:cursor-not-allowed ${!canSubmit ? 'opacity-50' : ''}`}
+                        aria-label="Send"
+                        title={getSendShortcutLabel(currentSendShortcut)}
+                      >
+                        <PaperAirplaneIcon className="h-5 w-5" />
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  {isRunActive && <InProgressBadge />}
-                  {isCompacting ? (
-                    <button
-                      type="button"
-                      disabled
-                      className="p-2 rounded-xl bg-surface-raised text-muted cursor-not-allowed shadow-subtle"
-                      aria-label={i18nService.t('coworkCompactionInProgress')}
-                      title={i18nService.t('coworkCompactionInProgress')}
-                    >
-                      <PauseIcon className="h-5 w-5" />
-                    </button>
-                  ) : canStopRun ? (
-                    <button
-                      type="button"
-                      onClick={handleStopClick}
-                      disabled={disabled}
-                      className="p-2 rounded-xl bg-red-500 hover:bg-red-600 text-white transition-all shadow-subtle hover:shadow-card active:scale-95"
-                      aria-label="Stop"
-                    >
-                      <StopIcon className="h-5 w-5" />
-                    </button>
-                  ) : !isRunActive ? (
-                    <button
-                      type="button"
-                      onClick={() => void handleSubmit()}
-                      disabled={!canSubmit}
-                      className={`p-2 rounded-xl bg-primary hover:bg-primary-hover text-white transition-all shadow-subtle hover:shadow-card active:scale-95 disabled:cursor-not-allowed ${!canSubmit ? 'opacity-50' : ''}`}
-                      aria-label="Send"
-                      title={getSendShortcutLabel(currentSendShortcut)}
-                    >
-                      <PaperAirplaneIcon className="h-5 w-5" />
-                    </button>
-                  ) : null}
-                </div>
-              </div>
-            </>
-          ) : (
-            <>
-              <textarea
-                ref={textareaRef}
-                value={value}
-                onChange={handleInputChange}
-                onKeyDown={handleKeyDown}
-                onPaste={handlePaste}
-                onContextMenu={handleContextMenu}
-                placeholder={effectivePlaceholder}
-                disabled={disabled}
-                rows={1}
-                className={textareaClass}
-              />
-
-              {!remoteManaged && (
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={handleSlashButtonClick}
-                    className="flex-shrink-0 p-1.5 rounded-lg text-secondary hover:bg-surface-raised hover:text-foreground transition-colors font-mono font-semibold"
-                    title={i18nService.t('slashCommandButton')}
-                    aria-label={i18nService.t('slashCommandButton')}
-                    disabled={disabled || isRunActive}
-                  >
-                    /
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleAddFile}
-                    className="flex-shrink-0 p-1.5 rounded-lg text-secondary hover:bg-surface-raised hover:text-foreground transition-colors"
-                    title={i18nService.t('coworkAddFile')}
-                    aria-label={i18nService.t('coworkAddFile')}
-                    disabled={disabled || isRunActive || isAddingFile}
-                  >
-                    <PaperClipIcon className="h-4 w-4" />
-                  </button>
-                  <PermissionModeSelector />
-                  {contextUsageBadge}
-                </div>
-              )}
-
-              {isRunActive && <InProgressBadge />}
-              {isCompacting ? (
-                <button
-                  type="button"
-                  disabled
-                  className="flex-shrink-0 p-2 rounded-lg bg-surface-raised text-muted cursor-not-allowed shadow-subtle"
-                  aria-label={i18nService.t('coworkCompactionInProgress')}
-                  title={i18nService.t('coworkCompactionInProgress')}
-                >
-                  <PauseIcon className="h-4 w-4" />
-                </button>
-              ) : canStopRun ? (
-                <button
-                  type="button"
-                  onClick={handleStopClick}
+              </>
+            ) : (
+              <>
+                <textarea
+                  ref={textareaRef}
+                  value={value}
+                  onChange={handleInputChange}
+                  onKeyDown={handleKeyDown}
+                  onPaste={handlePaste}
+                  onContextMenu={handleContextMenu}
+                  placeholder={effectivePlaceholder}
                   disabled={disabled}
-                  className="flex-shrink-0 p-2 rounded-lg bg-red-500 hover:bg-red-600 text-white transition-all shadow-subtle hover:shadow-card active:scale-95"
-                  aria-label="Stop"
-                >
-                  <StopIcon className="h-4 w-4" />
-                </button>
-              ) : !isRunActive ? (
-                <button
-                  type="button"
-                  onClick={() => void handleSubmit()}
-                  disabled={!canSubmit}
-                  className={`flex-shrink-0 p-2 rounded-lg bg-primary hover:bg-primary-hover text-white transition-all shadow-subtle hover:shadow-card active:scale-95 disabled:cursor-not-allowed ${!canSubmit ? 'opacity-50' : ''}`}
-                  aria-label="Send"
-                  title={getSendShortcutLabel(currentSendShortcut)}
-                >
-                  <PaperAirplaneIcon className="h-4 w-4" />
-                </button>
-              ) : null}
-            </>
-          )}
+                  rows={1}
+                  className={textareaClass}
+                />
+
+                {!remoteManaged && (
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={handleAddFile}
+                      className="flex-shrink-0 p-1.5 rounded-lg text-secondary hover:bg-surface-raised hover:text-foreground transition-colors"
+                      title={i18nService.t('coworkAddFile')}
+                      aria-label={i18nService.t('coworkAddFile')}
+                      disabled={disabled || isRunActive || isAddingFile}
+                    >
+                      <PaperClipIcon className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSlashButtonClick}
+                      className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-secondary/70 text-xs text-secondary hover:border-secondary hover:bg-surface-raised hover:text-foreground transition-colors font-mono font-semibold"
+                      title={i18nService.t('slashCommandButton')}
+                      aria-label={i18nService.t('slashCommandButton')}
+                      disabled={disabled || isRunActive}
+                    >
+                      /
+                    </button>
+                    <PermissionModeSelector />
+                    {contextUsageBadge}
+                  </div>
+                )}
+
+                {isRunActive && <InProgressBadge />}
+                {isCompacting ? (
+                  <button
+                    type="button"
+                    disabled
+                    className="flex-shrink-0 p-2 rounded-lg bg-surface-raised text-muted cursor-not-allowed shadow-subtle"
+                    aria-label={i18nService.t('coworkCompactionInProgress')}
+                    title={i18nService.t('coworkCompactionInProgress')}
+                  >
+                    <PauseIcon className="h-4 w-4" />
+                  </button>
+                ) : canStopRun ? (
+                  <button
+                    type="button"
+                    onClick={handleStopClick}
+                    disabled={disabled}
+                    className="flex-shrink-0 p-2 rounded-lg bg-red-500 hover:bg-red-600 text-white transition-all shadow-subtle hover:shadow-card active:scale-95"
+                    aria-label="Stop"
+                  >
+                    <StopIcon className="h-4 w-4" />
+                  </button>
+                ) : !isRunActive ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleSubmit()}
+                    disabled={!canSubmit}
+                    className={`flex-shrink-0 p-2 rounded-lg bg-primary hover:bg-primary-hover text-white transition-all shadow-subtle hover:shadow-card active:scale-95 disabled:cursor-not-allowed ${!canSubmit ? 'opacity-50' : ''}`}
+                    aria-label="Send"
+                    title={getSendShortcutLabel(currentSendShortcut)}
+                  >
+                    <PaperAirplaneIcon className="h-4 w-4" />
+                  </button>
+                ) : null}
+              </>
+            )}
+          </div>
         </div>
         {/* Context menu for textarea */}
         {contextMenuPos && (

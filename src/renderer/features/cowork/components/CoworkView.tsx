@@ -76,6 +76,7 @@ import { clearActiveSkills } from '@/features/plugins/slices/skillSlice';
 import type { SettingsOpenOptions } from '@/features/settings/Settings';
 import type { ChatContextUsageSnapshot } from '@/libs/openclaw-chat/gateway/chat-controller';
 import { i18nService } from '@/services/i18n';
+import { getGreetingPeriod, pickHomeGreeting } from '@/services/i18n/homeGreetings';
 import BrainIcon from '@/shared/components/icons/BrainIcon';
 import ComposeIcon from '@/shared/components/icons/ComposeIcon';
 import FolderIcon from '@/shared/components/icons/FolderIcon';
@@ -130,6 +131,9 @@ export interface CoworkViewHandle {
   requestFilePreviewTransition: () => Promise<boolean>;
 }
 
+// Keep the last greeting across home view remounts in this app session.
+let lastHomeGreeting: string | undefined;
+
 const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) => {
   const {
     onRequestAppSettings,
@@ -141,6 +145,19 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const dispatch = useDispatch();
   const isMac = window.electron.platform === 'darwin';
   const [isInitialized, setIsInitialized] = useState(false);
+  const [greetingPeriod, setGreetingPeriod] = useState(() =>
+    getGreetingPeriod(new Date().getHours()),
+  );
+  const [greetingKey, setGreetingKey] = useState(() =>
+    pickHomeGreeting(getGreetingPeriod(new Date().getHours()), lastHomeGreeting),
+  );
+  useEffect(() => {
+    const timer = setInterval(
+      () => setGreetingPeriod(getGreetingPeriod(new Date().getHours())),
+      60_000,
+    );
+    return () => clearInterval(timer);
+  }, []);
   const openClawStatusRef = useRef<OpenClawEngineStatus | null>(null);
   const [selectedSubagent, setSelectedSubagent] = useState<Subtask | null>(null);
   const [subtasks, setSubtasks] = useState<Subtask[]>([]);
@@ -187,6 +204,12 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
 
   const currentSession = useSelector(selectCurrentSession);
   const currentSessionId = currentSession?.id ?? null;
+  useEffect(() => {
+    if (currentSessionId) return;
+    const next = pickHomeGreeting(getGreetingPeriod(new Date().getHours()), lastHomeGreeting);
+    lastHomeGreeting = next;
+    setGreetingKey(next);
+  }, [currentSessionId, greetingPeriod]);
   const currentSessionIdRef = useRef(currentSessionId);
   currentSessionIdRef.current = currentSessionId;
   const isStreaming = useSelector(selectIsStreaming);
@@ -1385,10 +1408,10 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             <div className="text-center space-y-5">
               <img src={logoUrl} alt="logo" className="mx-auto h-[5.333rem] w-[5.333rem]" />
               <h2 className="text-3xl font-bold tracking-tight text-foreground">
-                {i18nService.t('coworkWelcome')}
+                {i18nService.t(greetingKey)}
               </h2>
               <p className="text-sm text-secondary max-w-md mx-auto">
-                {i18nService.t('coworkDescription')}
+                {i18nService.t('coworkGreetingSupport')}
               </p>
             </div>
 
