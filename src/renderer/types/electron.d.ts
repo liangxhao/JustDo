@@ -16,6 +16,7 @@ type GenerateSessionTitleRequest =
 type SaveTextFileOptions = import('../../shared/dialogIpc').SaveTextFileOptions;
 type SaveTextFileResult = import('../../shared/dialogIpc').SaveTextFileResult;
 type ExtensionImportProgress = import('../../shared/openclaw/extensions').ExtensionImportProgress;
+type ExtensionChangedEvent = import('../../shared/openclaw/extensions').ExtensionChangedEvent;
 type ExtensionImportRequest = import('../../shared/openclaw/extensions').ExtensionImportRequest;
 type ExtensionImportStage = import('../../shared/openclaw/extensions').ExtensionImportStage;
 type ExtensionDeleteRequest = import('../../shared/openclaw/extensions').ExtensionDeleteRequest;
@@ -65,6 +66,18 @@ type FilePreviewEditAuthorizationResult =
   import('../../shared/filePreview').FilePreviewEditAuthorizationResult;
 type FilePreviewWriteRequest = import('../../shared/filePreview').FilePreviewWriteRequest;
 type FilePreviewWriteResult = import('../../shared/filePreview').FilePreviewWriteResult;
+type WorkboardCard = import('../../shared/openclaw/workboard').WorkboardCard;
+type WorkboardCardInput = import('../../shared/openclaw/workboard').WorkboardCardInput;
+type WorkboardCardPatch = import('../../shared/openclaw/workboard').WorkboardCardPatch;
+type WorkboardChangedEvent = import('../../shared/openclaw/workboard').WorkboardChangedEvent;
+type WorkboardDispatchSummary = import('../../shared/openclaw/workboard').WorkboardDispatchSummary;
+type WorkboardResult<T = undefined> = import('../../shared/openclaw/workboard').WorkboardResult<T>;
+type WorkboardSnapshot = import('../../shared/openclaw/workboard').WorkboardSnapshot;
+type WorkboardStatus = import('../../shared/openclaw/workboard').WorkboardStatus;
+type WorkboardStartResult = import('../../shared/openclaw/workboard').WorkboardStartResult;
+type WorkboardStopIdentity = import('../../shared/openclaw/workboard').WorkboardStopIdentity;
+type WorkboardSessionResolution =
+  import('../../shared/openclaw/workboard').WorkboardSessionResolution;
 
 interface ApiResponse<T = unknown> {
   ok: boolean;
@@ -410,6 +423,7 @@ interface IElectronAPI {
       capabilityReview?: import('../../shared/openclaw/extensions').OpenClawPluginCapabilityReview;
     }>;
     onImportProgress: (callback: (progress: ExtensionImportProgress) => void) => () => void;
+    onChanged: (callback: (event: ExtensionChangedEvent) => void) => () => void;
   };
   hooks: {
     list: () => Promise<{
@@ -1052,6 +1066,31 @@ interface IElectronAPI {
     onResultUpserted: (callback: (data: ScheduledTaskResultUpsertedEvent) => void) => () => void;
     onUnreadCountChanged: (callback: (data: ScheduledTaskUnreadCountEvent) => void) => () => void;
     onRefresh: (callback: () => void) => () => void;
+  };
+  workboard: {
+    getSnapshot: () => Promise<WorkboardResult<WorkboardSnapshot>>;
+    createCard: (input: WorkboardCardInput) => Promise<WorkboardResult<WorkboardCard>>;
+    updateCard: (
+      id: string,
+      patch: WorkboardCardPatch,
+      expectedUpdatedAt: number,
+    ) => Promise<WorkboardResult<WorkboardCard>>;
+    moveCard: (
+      id: string,
+      status: WorkboardStatus,
+      position: number,
+    ) => Promise<WorkboardResult<WorkboardCard>>;
+    deleteCard: (id: string) => Promise<WorkboardResult>;
+    archiveCard: (id: string, archived: boolean) => Promise<WorkboardResult<WorkboardCard>>;
+    commentCard: (id: string, body: string) => Promise<WorkboardResult<WorkboardCard>>;
+    startCard: (id: string) => Promise<WorkboardResult<WorkboardStartResult>>;
+    stopCard: (
+      id: string,
+      expectedExecution?: WorkboardStopIdentity,
+    ) => Promise<WorkboardResult<WorkboardCard>>;
+    resolveSession: (sessionKey: string) => Promise<WorkboardResult<WorkboardSessionResolution>>;
+    dispatch: (boardId?: string) => Promise<WorkboardResult<WorkboardDispatchSummary>>;
+    onChanged: (callback: (event: WorkboardChangedEvent) => void) => () => void;
   };
   permissions: {
     checkCalendar: () => Promise<{

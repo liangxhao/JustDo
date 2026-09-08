@@ -10,6 +10,7 @@ import { normalizeBrowserMode } from '../shared/browser';
 import { BuiltinModelIpc } from '../shared/builtinModels';
 import { CoworkSubagentDetailsIpc } from '../shared/cowork/subagentDetails';
 import type { DeveloperConfig } from '../shared/developerConfig';
+import { WorkboardIpc } from '../shared/openclaw/workboard';
 import {
   DEFAULT_WORKSPACE_DIRECTORY_NAME,
   USER_DATA_DIRECTORY_NAME,
@@ -94,6 +95,7 @@ import {
   registerOpenClawMemoryHandlers,
   registerOpenClawModelHandlers,
   registerOpenClawUsageHandlers,
+  registerOpenClawWorkboardHandlers,
   registerSkillHandlers,
   registerSlashCommandHandlers,
 } from './ipc/openclaw';
@@ -861,6 +863,7 @@ if (!gotTheLock) {
       getCoworkEngineService().requestGateway<T>(method, params),
   });
   registerOpenClawUsageHandlers({ getRuntime: getOpenClawRuntimeAdapter });
+  registerOpenClawWorkboardHandlers({ getRuntime: getOpenClawRuntimeAdapter });
   registerOpenClawApprovalHandlers({ getRuntime: getOpenClawRuntimeAdapter });
   registerOpenClawMemoryHandlers({ getManager: getOpenClawEngineManager });
   registerOpenClawModelHandlers({ getRuntime: getOpenClawRuntimeAdapter });
@@ -1234,6 +1237,13 @@ if (!gotTheLock) {
         .catch(error => {
           console.warn('[CronJobService] Failed to reconcile OpenClaw cron change:', error);
         });
+    });
+    coworkEngineRouter.on('workboardChanged', payload => {
+      BrowserWindow.getAllWindows().forEach(window => {
+        if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+          window.webContents.send(WorkboardIpc.Changed, payload);
+        }
+      });
     });
     coworkEngineRouter.on('taskChanged', event => {
       BrowserWindow.getAllWindows().forEach(window => {

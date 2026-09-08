@@ -62,6 +62,25 @@ function chat(
 }
 
 describe('agent event reducer', () => {
+  test('fills delayed tool input without replacing its result or rewinding sequence ownership', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    reduceAgentEvent(state, agent(12, 'tool', {
+      phase: 'result', toolCallId: 'write-1', name: 'write', result: 'Written',
+    }), dependencies);
+    const start = agent(10, 'tool', {
+      phase: 'start', toolCallId: 'write-1', name: 'write', args: { path: 'a.txt' },
+    }, { deliveryEvent: 'session.tool' });
+    expect(reduceAgentEvent(state, start, dependencies, { allowSequenceBackfill: true })).toBe('applied');
+    expect(state.activeTurn?.toolById.get('write-1')).toMatchObject({
+      input: { path: 'a.txt' }, output: 'Written', status: 'completed', lastSeq: 12,
+    });
+    expect(reduceAgentEvent(state, agent(11, 'tool', {
+      phase: 'result', toolCallId: 'write-1', name: 'write', result: 'stale',
+    }), dependencies, { allowSequenceBackfill: true })).toBe('ignored-sequence');
+    expect(reduceAgentEvent(state, start, dependencies, { allowSequenceBackfill: true })).toBe('ignored-sequence');
+    expect(state.activeTurn?.lastAgentSeq).toBe(12);
+  });
+
   test('accepts the v2026.8 thinking snapshot field', () => {
     const state = createChatTranscriptState('session-1', 'sid-1');
 

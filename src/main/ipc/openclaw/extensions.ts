@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 
 import {
+  type ExtensionChangedEvent,
   type ExtensionDeleteRequest,
   type ExtensionImportRequest,
   ExtensionIpc,
@@ -126,7 +127,7 @@ export const registerExtensionHandlers = ({
 
   ipcMain.handle(
     ExtensionIpc.SetEnabled,
-    async (_event, request: ExtensionSetEnabledRequest) => {
+    async (event, request: ExtensionSetEnabledRequest) => {
       try {
         if (
           !request ||
@@ -136,13 +137,21 @@ export const registerExtensionHandlers = ({
         ) {
           return { success: false, error: 'Extension id and enabled state are required' };
         }
-        return await extensionImportService.setEnabled(
-          request.extensionId.trim(),
+        const extensionId = request.extensionId.trim();
+        const result = await extensionImportService.setEnabled(
+          extensionId,
           request.enabled,
           typeof request.reviewToken === 'string'
             ? request.reviewToken.trim() || undefined
             : undefined,
         );
+        if (result.success && !event.sender.isDestroyed()) {
+          event.sender.send(ExtensionIpc.Changed, {
+            extensionId,
+            enabled: request.enabled,
+          } satisfies ExtensionChangedEvent);
+        }
+        return result;
       } catch (error) {
         const errorMsg =
           error instanceof Error ? error.message : 'Failed to update extension status';

@@ -71,7 +71,7 @@ flowchart TB
 ### 3.2 `src/renderer/`
 
 - `app/`：应用壳、路由/导航、全局布局和产品级组合。
-- `features/`：`agents`、`cowork`、`memory`、`models`、`plugins`、`scheduled-tasks`、`settings` 等领域 UI。
+- `features/`：`agents`、`cowork`、`memory`、`models`、`plugins`、`scheduled-tasks`、`workboard`、`settings` 等领域 UI。
 - `libs/openclaw-chat/`：独立聊天显示栈，包括 Gateway client/controller、模型 reducer、history reconciliation、pipeline、Lit 组件和滚动调度。
 - `services/`：Renderer 配置适配、i18n、theme、shortcut 等浏览器侧服务。
 - `shared/components/`：跨 feature UI 原语。

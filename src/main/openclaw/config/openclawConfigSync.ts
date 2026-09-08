@@ -988,6 +988,21 @@ export const mergeOpenClawPluginConfig = (
   };
 };
 
+export const applyDefaultOpenClawPluginEntries = (
+  existingPlugins: Record<string, unknown>,
+  defaultEntries: Record<string, unknown>,
+): Record<string, unknown> => {
+  if (Object.keys(defaultEntries).length === 0) return existingPlugins;
+  const existingEntries = isRecord(existingPlugins.entries) ? existingPlugins.entries : {};
+  return {
+    ...existingPlugins,
+    entries: {
+      ...defaultEntries,
+      ...existingEntries,
+    },
+  };
+};
+
 export const mergeOpenClawSkillConfig = (
   existingSkills: Record<string, unknown>,
   managedSkills: Record<string, unknown>,
@@ -1566,13 +1581,21 @@ const isBundledPluginAvailable = (pluginId: string): boolean => {
   return hasBundledOpenClawExtension(pluginId);
 };
 
+const isUserToggleableBundledPlugin = (pluginId: string): boolean =>
+  pluginId === OpenClawExtensionId.WORKBOARD;
+
 export const listManagedOpenClawPluginIds = (): string[] => [
   ...new Set([
-    ...readPreinstalledPluginIds().filter(id => isBundledPluginAvailable(id)),
+    ...readPreinstalledPluginIds().filter(
+      id => !isUserToggleableBundledPlugin(id) && isBundledPluginAvailable(id),
+    ),
     ...bundledOpenClawExtensions
-      .filter(extension => isBundledPluginAvailable(extension.id))
+      .filter(
+        extension =>
+          !isUserToggleableBundledPlugin(extension.id) &&
+          isBundledPluginAvailable(extension.id),
+      )
       .map(extension => extension.id),
-    'workboard',
   ]),
 ];
 export type OpenClawConfigSyncResult = {
@@ -1792,11 +1815,14 @@ export class OpenClawConfigSync {
     // Default workspace to stateDir/workspace so skills are found in stateDir/skills
     const defaultWorkspaceDir = path.join(this.engineManager.getStateDir(), 'workspace');
     const resolvedWorkspaceDir = workspaceDir ? path.resolve(workspaceDir) : defaultWorkspaceDir;
-    const preinstalledPluginIds = readPreinstalledPluginIds().filter(id =>
-      isBundledPluginAvailable(id),
+    const preinstalledPluginIds = readPreinstalledPluginIds().filter(
+      id => !isUserToggleableBundledPlugin(id) && isBundledPluginAvailable(id),
     );
     const agentRuntimeSettings = this.getAgentRuntimeSettings();
     const bundledExtensionEntries = buildManagedBundledExtensionEntries(agentRuntimeSettings);
+    const defaultPluginEntries = isBundledPluginAvailable(OpenClawExtensionId.WORKBOARD)
+      ? { [OpenClawExtensionId.WORKBOARD]: { enabled: true } }
+      : {};
     const mcpServers = buildOpenClawMcpServers(
       this.getMcpServers?.() ?? [],
       agentRuntimeSettings.mcp.requestTimeoutSeconds,
@@ -1936,13 +1962,12 @@ export class OpenClawConfigSync {
             }),
           ),
           ...bundledExtensionEntries,
-          workboard: { enabled: true },
         };
 
         const mergedPlugins = mergeOpenClawPluginConfig(
-          existingPlugins,
+          applyDefaultOpenClawPluginEntries(existingPlugins, defaultPluginEntries),
           pluginEntries,
-          trustedInstalledExtensionIds,
+          [...trustedInstalledExtensionIds, ...Object.keys(defaultPluginEntries)],
           availableExtensionIds,
         );
         return Object.keys(mergedPlugins).length > 0
@@ -2161,6 +2186,9 @@ export class OpenClawConfigSync {
       agentRuntimeSettings.mcp.requestTimeoutSeconds,
     );
     const bundledExtensionEntries = buildManagedBundledExtensionEntries(agentRuntimeSettings);
+    const defaultPluginEntries = isBundledPluginAvailable(OpenClawExtensionId.WORKBOARD)
+      ? { [OpenClawExtensionId.WORKBOARD]: { enabled: true } }
+      : {};
     const trustedInstalledExtensionIds = listInstalledOpenClawExtensionIds(
       this.engineManager.getStateDir(),
     );
@@ -2226,9 +2254,9 @@ export class OpenClawConfigSync {
         },
       },
       plugins: mergeOpenClawPluginConfig(
-        {},
+        applyDefaultOpenClawPluginEntries({}, defaultPluginEntries),
         bundledExtensionEntries,
-        trustedInstalledExtensionIds,
+        [...trustedInstalledExtensionIds, ...Object.keys(defaultPluginEntries)],
       ),
       meta: buildOpenClawConfigMeta(this.engineManager.getDesiredVersion()),
       // The managed permission extension is part of Gateway readiness even
@@ -2386,9 +2414,9 @@ export class OpenClawConfigSync {
                 },
               },
               plugins: mergeOpenClawPluginConfig(
-                existingPlugins,
+                applyDefaultOpenClawPluginEntries(existingPlugins, defaultPluginEntries),
                 bundledExtensionEntries,
-                trustedInstalledExtensionIds,
+                [...trustedInstalledExtensionIds, ...Object.keys(defaultPluginEntries)],
                 availableExtensionIds,
               ),
               meta: minimalConfig.meta,

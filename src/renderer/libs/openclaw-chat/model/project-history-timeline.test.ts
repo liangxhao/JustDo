@@ -5,6 +5,33 @@ import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 import { projectPersistedTimeline } from './project-history-timeline';
 
 describe('projectPersistedTimeline', () => {
+  test('interrupts an unresolved old tool when a subsequent explicit run has resumed', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        runId: 'old-run',
+        content: [
+          { type: 'toolcall', id: 'bash-1', name: 'exec', arguments: { command: 'node -e' } },
+        ],
+      },
+      { role: 'user', content: 'continue' },
+      {
+        role: 'assistant',
+        runId: 'new-run',
+        content: [{ type: 'toolcall', id: 'write-1', name: 'write' }],
+      },
+    ]);
+    expect(
+      result.flatMap(item => (item.kind === 'process-summary' ? item.items : [])),
+    ).toContainEqual(expect.objectContaining({ toolCallId: 'bash-1', status: 'interrupted' }));
+    expect(result).toContainEqual(
+      expect.objectContaining({
+        kind: 'live-process',
+        item: expect.objectContaining({ toolCallId: 'write-1', status: 'running' }),
+      }),
+    );
+  });
+
   test('flattens mixed persisted assistant content around hard Content boundaries', () => {
     const result = projectPersistedTimeline([
       { role: 'user', content: 'go', id: 'user-1' },

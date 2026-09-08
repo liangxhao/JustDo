@@ -53,6 +53,7 @@ import {
 } from '../shared/openclaw/approvals';
 import {
   CoworkInteractionIpc,
+  type ExtensionChangedEvent,
   type ExtensionDeleteRequest,
   type ExtensionImportProgress,
   type ExtensionImportRequest,
@@ -74,6 +75,13 @@ import {
   type SystemPromptReplacementRule,
 } from '../shared/openclaw/systemPromptReplacements';
 import { UsageStatsIpc } from '../shared/openclaw/usage';
+import {
+  type WorkboardCardInput,
+  type WorkboardCardPatch,
+  type WorkboardChangedEvent,
+  WorkboardIpc,
+  type WorkboardStopIdentity,
+} from '../shared/openclaw/workboard';
 import {
   type MarketplaceDetailRequest,
   type MarketplaceInstallRequest,
@@ -140,6 +148,12 @@ contextBridge.exposeInMainWorld('electron', {
         callback(progress);
       ipcRenderer.on(ExtensionIpc.ImportProgress, handler);
       return () => ipcRenderer.removeListener(ExtensionIpc.ImportProgress, handler);
+    },
+    onChanged: (callback: (event: ExtensionChangedEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: ExtensionChangedEvent) =>
+        callback(data);
+      ipcRenderer.on(ExtensionIpc.Changed, handler);
+      return () => ipcRenderer.removeListener(ExtensionIpc.Changed, handler);
     },
   },
   hooks: {
@@ -663,6 +677,31 @@ contextBridge.exposeInMainWorld('electron', {
       const handler = () => callback();
       ipcRenderer.on(ScheduledTaskIpc.Refresh, handler);
       return () => ipcRenderer.removeListener(ScheduledTaskIpc.Refresh, handler);
+    },
+  },
+  workboard: {
+    getSnapshot: () => ipcRenderer.invoke(WorkboardIpc.GetSnapshot),
+    createCard: (input: WorkboardCardInput) => ipcRenderer.invoke(WorkboardIpc.CreateCard, input),
+    updateCard: (id: string, patch: WorkboardCardPatch, expectedUpdatedAt: number) =>
+      ipcRenderer.invoke(WorkboardIpc.UpdateCard, id, patch, expectedUpdatedAt),
+    moveCard: (id: string, status: WorkboardCardInput['status'], position: number) =>
+      ipcRenderer.invoke(WorkboardIpc.MoveCard, id, status, position),
+    deleteCard: (id: string) => ipcRenderer.invoke(WorkboardIpc.DeleteCard, id),
+    archiveCard: (id: string, archived: boolean) =>
+      ipcRenderer.invoke(WorkboardIpc.ArchiveCard, id, archived),
+    commentCard: (id: string, body: string) =>
+      ipcRenderer.invoke(WorkboardIpc.CommentCard, id, body),
+    startCard: (id: string) => ipcRenderer.invoke(WorkboardIpc.StartCard, id),
+    stopCard: (id: string, expectedExecution?: WorkboardStopIdentity) =>
+      ipcRenderer.invoke(WorkboardIpc.StopCard, id, expectedExecution),
+    resolveSession: (sessionKey: string) =>
+      ipcRenderer.invoke(WorkboardIpc.ResolveSession, sessionKey),
+    dispatch: (boardId?: string) => ipcRenderer.invoke(WorkboardIpc.Dispatch, boardId),
+    onChanged: (callback: (event: WorkboardChangedEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: WorkboardChangedEvent) =>
+        callback(data);
+      ipcRenderer.on(WorkboardIpc.Changed, handler);
+      return () => ipcRenderer.removeListener(WorkboardIpc.Changed, handler);
     },
   },
   networkStatus: {

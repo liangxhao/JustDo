@@ -1,4 +1,8 @@
-import { CommandLineIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
+import {
+  CommandLineIcon,
+  ExclamationTriangleIcon,
+  Squares2X2Icon,
+} from '@heroicons/react/24/outline';
 import React, { useCallback, useEffect, useState } from 'react';
 import { useSelector } from 'react-redux';
 
@@ -24,9 +28,11 @@ import TrashIcon from '@/shared/components/icons/TrashIcon';
 
 interface SidebarProps {
   onShowSettings: () => void;
-  activeView: 'cowork' | 'scheduledTasks' | 'plugins';
+  activeView: 'cowork' | 'scheduledTasks' | 'workboard' | 'plugins';
   onShowCowork: () => void;
   onShowScheduledTasks: () => void;
+  onShowWorkboard: () => void;
+  showWorkboard: boolean;
   onShowPlugins: () => void;
   onNewChat: () => void;
   onBeforeCoworkNavigation: () => Promise<boolean>;
@@ -40,6 +46,8 @@ const Sidebar: React.FC<SidebarProps> = ({
   activeView,
   onShowCowork,
   onShowScheduledTasks,
+  onShowWorkboard,
+  showWorkboard,
   onShowPlugins,
   onNewChat,
   onBeforeCoworkNavigation,
@@ -326,6 +334,23 @@ const Sidebar: React.FC<SidebarProps> = ({
               </span>
             )}
           </button>
+          {showWorkboard && (
+            <button
+              type="button"
+              onClick={() => {
+                setIsSearchOpen(false);
+                onShowWorkboard();
+              }}
+              className={`w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
+                activeView === 'workboard'
+                  ? 'text-primary hover:bg-surface'
+                  : 'text-secondary hover:text-foreground hover:bg-surface'
+              }`}
+            >
+              <Squares2X2Icon className="h-4 w-4" />
+              {i18nService.t('workboard')}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => {

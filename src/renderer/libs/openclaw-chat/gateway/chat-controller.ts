@@ -198,6 +198,8 @@ export type ChatStreamListener = (kind: ChatStreamUpdateKind) => void;
 export interface ChatControllerOptions {
   /** Subagent transcripts are expected to contain their originating user/task turn. */
   expectInitialHistory?: boolean;
+  /** Isolated external runs may use their first user row directly instead of a subagent envelope. */
+  expectInitialUserMessage?: boolean;
   /** Maximum time to hold the first history snapshot behind message subscription setup. */
   initialMessageSubscriptionBarrierTimeoutMs?: number;
   /** Test seam and bounded persistence catch-up policy. */
@@ -595,6 +597,7 @@ export class ChatController {
     }
   >();
   private readonly expectInitialHistory: boolean;
+  private readonly expectInitialUserMessage: boolean;
   private readonly initialMessageSubscriptionBarrierTimeoutMs: number;
   private readonly initialHistoryRetryDelaysMs: readonly number[];
   private readonly transcriptDependencies: TranscriptReducerDependencies = {
@@ -627,6 +630,7 @@ export class ChatController {
 
   constructor(options: ChatControllerOptions = {}) {
     this.expectInitialHistory = options.expectInitialHistory === true;
+    this.expectInitialUserMessage = options.expectInitialUserMessage === true;
     this.initialMessageSubscriptionBarrierTimeoutMs = Math.max(
       0,
       options.initialMessageSubscriptionBarrierTimeoutMs ??
@@ -1920,23 +1924,31 @@ export class ChatController {
 
   private hasExpectedInitialHistory(): boolean {
     if (!this.expectInitialHistory) return true;
-    return this.findSubagentTaskHistoryIndex(this.state.chatMessages) >= 0;
+    return this.findExpectedInitialHistoryIndex(this.state.chatMessages) >= 0;
   }
 
-  private findSubagentTaskHistoryIndex(messages: readonly unknown[]): number {
-    return messages.findIndex(isSubagentTaskHistoryMessage);
+  private isExpectedInitialHistoryMessage(message: unknown): boolean {
+    if (isSubagentTaskHistoryMessage(message)) return true;
+    return (
+      this.expectInitialUserMessage &&
+      String(asRecord(message)?.role ?? '').toLowerCase() === 'user'
+    );
   }
 
-  private admitSubagentTaskMessage(message: unknown): boolean {
+  private findExpectedInitialHistoryIndex(messages: readonly unknown[]): number {
+    return messages.findIndex(message => this.isExpectedInitialHistoryMessage(message));
+  }
+
+  private admitExpectedInitialHistoryMessage(message: unknown): boolean {
     if (
       !this.expectInitialHistory ||
       this.hasExpectedInitialHistory() ||
-      !isSubagentTaskHistoryMessage(message)
+      !this.isExpectedInitialHistoryMessage(message)
     ) {
       return false;
     }
     const projected = projectGatewayHistoryForDisplay([message]);
-    if (projected.length !== 1 || !isSubagentTaskHistoryMessage(projected[0])) return false;
+    if (projected.length !== 1 || !this.isExpectedInitialHistoryMessage(projected[0])) return false;
 
     // session.message is emitted after OpenClaw appends the transcript row and
     // carries that authoritative row. Admit the task immediately instead of
@@ -1947,6 +1959,7 @@ export class ChatController {
     this.pendingHistoryReload = true;
     this.setCurrentSessionMessages(projected, { resetLoadedHistory: true });
     this.state.lastError = null;
+    this.state.initialHistoryReady = true;
     this.notify();
     return true;
   }
@@ -3485,7 +3498,7 @@ export class ChatController {
       ) {
         return;
       }
-      if (this.admitSubagentTaskMessage(payload?.message)) return;
+      if (this.admitExpectedInitialHistoryMessage(payload?.message)) return;
       const sessionSnapshot = asRecord(payload?.session);
       if (
         this.applySessionContextUsage(
@@ -3658,19 +3671,25 @@ export class ChatController {
     event: NormalizedAgentEvent,
     options: { replaySnapshot?: boolean } = {},
   ): void {
-    const previousHighWater = this.state.transcript.activeTurn?.lastAgentSeq ?? -1;
+    const previousTurn = this.state.transcript.activeTurn;
+    const previousHighWater = previousTurn?.runId === event.runId ? previousTurn.lastAgentSeq : -1;
     const reduceResult = reduceAgentEvent(
       this.state.transcript,
       event,
       this.transcriptDependencies,
-      { allowSequenceBackfill: options.replaySnapshot === true },
+      {
+        allowSequenceBackfill:
+          options.replaySnapshot === true || event.deliveryEvent === 'session.tool',
+      },
     );
     if (reduceResult === 'applied') {
       // A bounded history snapshot can arrive after newer live activity. Its
       // missing owner still repairs the transcript, but must not rewind the
       // current run activity (for example responding -> thinking).
-      if (!options.replaySnapshot || event.agentSeq > previousHighWater) {
+      if (event.agentSeq > previousHighWater) {
         this.handleAgentEvent(event);
+      } else {
+        this.notifyStream('terminal');
       }
       return;
     }
@@ -4016,7 +4035,7 @@ export class ChatController {
           return false;
         }
         this.historyPaginationAdvanced = true;
-        const subagentTaskPageIndex = this.findSubagentTaskHistoryIndex(normalized);
+        const subagentTaskPageIndex = this.findExpectedInitialHistoryIndex(normalized);
         if (this.expectInitialHistory && subagentTaskPageIndex >= 0) {
           const taskBoundedPage = normalized.slice(subagentTaskPageIndex);
           const boundedHistory = [...taskBoundedPage, ...this.currentMessageHistory.recentMessages];
@@ -4289,10 +4308,10 @@ export class ChatController {
       // artifacts from the same turn by the time its delayed first user turn
       // becomes readable. Only admit the authoritative prefix through that
       // user turn; the active transcript remains the sole owner of live output.
-      const subagentTaskHistoryIndex = this.findSubagentTaskHistoryIndex(messages);
-      const previousHasSubagentTask = this.findSubagentTaskHistoryIndex(previousMessages) >= 0;
+      const subagentTaskHistoryIndex = this.findExpectedInitialHistoryIndex(messages);
+      const previousHasSubagentTask = this.findExpectedInitialHistoryIndex(previousMessages) >= 0;
       const currentHasSubagentTask =
-        this.findSubagentTaskHistoryIndex(this.state.chatMessages) >= 0;
+        this.findExpectedInitialHistoryIndex(this.state.chatMessages) >= 0;
       if (currentHasSubagentTask && subagentTaskHistoryIndex < 0) {
         debugLog('[ChatCtrl] rejected history snapshot older than live subagent task event', {
           seq: loadSeq,

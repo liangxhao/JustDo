@@ -3,6 +3,7 @@ export const OpenClawExtensionId = {
   AUTOMATION_PERMISSION: 'automation-permission',
   BROWSER: 'browser',
   JUSTDO_RUNTIME_BRIDGE: 'justdo-runtime-bridge',
+  WORKBOARD: 'workboard',
 } as const;
 
 export const OpenClawToolName = {
@@ -387,7 +388,13 @@ export const ExtensionIpc = {
   Delete: 'extensions:delete',
   SetEnabled: 'extensions:set-enabled',
   UpdateConfiguration: 'extensions:update-configuration',
+  Changed: 'extensions:changed',
 } as const;
+
+export type ExtensionChangedEvent = {
+  extensionId: string;
+  enabled: boolean;
+};
 
 export type OpenClawExtensionConfigurationField = {
   path: string;

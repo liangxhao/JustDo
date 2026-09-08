@@ -453,6 +453,7 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.plugins.enabled).toBe(true);
     expect(config.plugins.allow).toEqual([
       'ask-user-question',
+      'workboard',
       'browser',
       'automation-permission',
       'justdo-runtime-bridge',
@@ -543,6 +544,7 @@ describe('OpenClaw auth logout config sync', () => {
       'external-plugin',
       'workspace-plugin',
       'agent-workspace-plugin',
+      'workboard',
       'browser',
       'ask-user-question',
       'automation-permission',
@@ -660,6 +662,7 @@ describe('OpenClaw auth logout config sync', () => {
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     expect(config.plugins.allow).toEqual([
       'justdo-skill-only-example',
+      'workboard',
       'browser',
       'ask-user-question',
       'automation-permission',
@@ -667,6 +670,26 @@ describe('OpenClaw auth logout config sync', () => {
     ]);
     expect(config.plugins.entries.browser).toEqual({ enabled: true });
     expect(config.plugins.bundledDiscovery).toBeUndefined();
+  });
+
+  test('a no-model sync preserves an explicitly disabled Workboard plugin', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-workboard-disabled-'));
+    temporaryDirectories.push(directory);
+    const configPath = path.join(directory, 'openclaw.json');
+    expect(writeMinimalConfig(configPath, 'startup').ok).toBe(true);
+    const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(existing.plugins.entries.workboard).toEqual({ enabled: true });
+    existing.plugins.entries.workboard = { enabled: false };
+    fs.writeFileSync(configPath, JSON.stringify(existing), 'utf8');
+
+    expect(writeMinimalConfig(configPath, BuiltinModelSyncReason.CoworkConfigChange).ok).toBe(true);
+    expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).plugins.entries.workboard).toEqual({
+      enabled: false,
+    });
+    expect(writeMinimalConfig(configPath, 'startup').ok).toBe(true);
+    expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).plugins.entries.workboard).toEqual({
+      enabled: false,
+    });
   });
 
   test('removes the built-in provider placeholder before its environment variable is revoked', () => {

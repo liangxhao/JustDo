@@ -39,6 +39,7 @@ import {
   normalizeMessageSessionKey,
   normalizeToolEvent,
 } from '../../../shared/openclaw/messageDomain';
+import { WORKBOARD_CHANGED_EVENT } from '../../../shared/openclaw/workboard';
 import { PRODUCT_NAME } from '../../../shared/productMetadata';
 import {
   GoalExecutionIpc,
@@ -1495,6 +1496,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       return;
     }
 
+    if (event.event === WORKBOARD_CHANGED_EVENT) {
+      this.emit('workboardChanged', event.payload);
+      return;
+    }
+
     if (event.event === 'task') {
       this.handleTaskEvent(event.payload);
       return;
@@ -2630,6 +2636,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         this.gatewayClientVersion = connection.version;
         this.gatewayClientEntryPath = connection.clientEntryPath;
         settleResolve();
+        // Native plugin change events cannot arrive while the Gateway is offline.
+        // Invalidate the Workboard once the replacement client is actually usable
+        // so its renderer clears stale disconnect errors and reloads canonical data.
+        this.emit('workboardChanged', {});
         this.lastTickTimestamp = Date.now();
         this.startTickWatchdog();
         void this.handleGatewayReady(generation);

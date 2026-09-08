@@ -203,13 +203,47 @@ Provider contract：source metadata、search、detail、prepareInstall。Service
 
 Marketplace 返回的 `installState` 只描述目录侧状态，不能覆盖 OpenClaw/JustDo 的实际安装 inventory。安装完成后 UI 先等待目标 kind 重新列举；只有 `runtimeId`（缺失时用目录 id）出现在实际 inventory 中才显示为已安装，刷新失败不能保留乐观的“已安装”状态。
 
-## 11. Renderer
+## 11. Workboard
+
+OpenClaw v2026.9.2 的 bundled `workboard` extension 保留在桌面 runtime prune allowlist 中，并由 JustDo config sync 在用户尚未做出选择时默认启用。它不是 JustDo 运行所必需的受管理扩展：用户可以在“插件 / 扩展”中关闭或重新开启，config sync 必须保留该选择；主页侧栏的任务看板入口只在扩展启用时显示。Gateway plugin 自己的 SQLite 是看板、卡片和执行关联的唯一权威；JustDo 不复制 Workboard 表，也不把卡片写入 Redux。
+
+v2026.9.2 将官方 Workboard 页面迁入 extension 自带的 `controlUi` browser bundle，但该 bundle 依赖 OpenClaw Control UI plugin host。JustDo Renderer 不实现或注入该宿主，也不直接执行 runtime extension 的浏览器代码；桌面端保持 React 产品页面和最小 preload bridge，同时复用同一组稳定的 Gateway RPC 与变更事件。
+
+主页侧栏在“定时任务”下方提供 Workboard 入口。Renderer 通过受限的 `window.electron.workboard` namespace 调用 Main，Main 只映射卡片 list/create/update/move/delete/archive/comment/start/stop、board list、dispatch 与有界的 session resolution，不开放任意 Gateway method。编辑请求携带 Gateway 返回的 `expectedUpdatedAt`，让 plugin 的并发冲突检查继续生效。
+
+卡片点击先进入详情抽屉，编辑是独立动作。详情展示状态、Agent、Task/Run/Session、claim、执行尝试、评论、证明、产物、附件、诊断、worker 日志/协议、自动化信息和事件，并承载移动、归档、停止、删除和添加操作备注。
+
+看板首屏提供可收起的中英文使用引导，用产品语义解释“待梳理→准备→执行→验收”流程，不要将 upstream 的 `triage` 等内部状态名直译给用户。九个状态列始终使用同一套 `minmax` 响应式网格：宽窗口自动等分并显示全部列，窄窗口中列宽随容器收缩，只有达到最小可读宽度后才产生横向滚动。不得为普通窗口回退到比宽窗口更大的固定列宽。
+
+卡片的 `sessionKey`/`execution.sessionKey` 指向 OpenClaw 原生执行会话，不进入 JustDo 普通会话列表。Renderer 对已关联卡片在卡面和详情中都提供明确的“查看会话”入口，先将 provisional key 有界解析为 canonical key，再通过既有 Gateway chat transport 读取历史。Workboard 使用独立 Worker 指令作为首条 user message，而不是标准 `[Subagent Task]` envelope；会话抽屉收到这条权威 `session.message` 后必须立即解除初始加载态，使用户消息与后续增量输出同时可见。启动 RPC 返回的 session key 会被保留，并立即打开该会话。
+
+卡片详情和会话抽屉按卡片执行状态提供“停止执行”，请求携带所查看执行的 session/run/task 身份。Main 在停止前核对身份，避免旧抽屉误停新关联执行；已结束的卡片不再改写。只有所有关联 task 和 session 均已停止或确认不活跃后，才以 `expectedUpdatedAt` 将卡片转为 blocked，不通过强制 release 伪造停止结果。应用重启后的陈旧 running 记录，需要 task 已终止或不存在且 `sessions.list.hasActiveRun` 明确为 `false` 才能收敛；未知 task 状态不视为终态。
+
+主页入口读取插件启用状态，异步目录查询不得覆盖更新的用户开关操作；成功查询发现插件不再存在时隐藏入口，连接暂不可用时保留上次状态。
+
+只有处于 backlog/todo/ready、没有 session/task link 且没有未过期 claim 的卡片才显示“启动”，避免对 triage、review 或已领取卡片发送必然失败的 start 请求。已关联卡片若要重做，必须在编辑中明确解除旧 session link，再移到可启动状态。
+
+```mermaid
+flowchart LR
+  View[React WorkboardView] --> Preload[workboard preload namespace]
+  Preload --> IPC[OpenClaw Workboard IPC]
+  IPC --> RPC[Gateway workboard.* RPC]
+  RPC --> Plugin[Bundled workboard extension]
+  Plugin --> Store[(workboard plugin SQLite)]
+  Plugin -->|plugin.workboard.changed| Adapter[Runtime adapter]
+  Adapter -->|revision invalidation| View
+  View -->|canonical reload| RPC
+```
+
+变更事件只转发 epoch/revision 失效信号；Renderer 收到后重新读取 canonical snapshot。Gateway 客户端重新握手成功时 adapter 也发送一次不带 revision 的失效信号，用于清除断线期间留下的错误并恢复页面数据。编辑、拖拽或写操作进行中时延迟刷新，结束后补一次读取，避免实时事件覆盖本地交互。插件不可用、Gateway 未连接或 RPC 失败时页面显示可恢复错误，不创建本地伪数据。
+
+## 12. Renderer
 
 `PluginsView` 切换 Skill/MCP/Hook/Extension。Marketplace 分别嵌入各管理页面；未声明对应 kind 的 Provider 时显示未配置状态。Skill 与 MCP 有已挂载 Redux slice；Hook/Extension/Marketplace 主要由组件/service 局部状态管理。文档不能把未 mount 的状态描述为全局 store。
 
 UI 应显示 source、eligible/missing、install state 和操作结果；破坏性删除需要明确目标。安装进行中禁用重复提交，extension progress 允许刷新后重新列举实际状态。
 
-## 12. 安全模型
+## 13. 安全模型
 
 - 只允许 Main 接触受管路径、archive、子进程、MCP transport 与 config 文件。
 - 所有 archive 防 traversal/symlink；所有 delete 验证 resolved target 位于确切 managed root。
@@ -218,11 +252,11 @@ UI 应显示 source、eligible/missing、install state 和操作结果；破坏�
 - MCP env、Extension config、Skill API key 是 secret，不输出完整 config。
 - runtime 在目录操作期间被停止时必须在 finally 路径按原状态恢复。
 
-## 13. 变更与测试
+## 14. 变更与测试
 
 新增 plugin kind 或 provider 时同步 shared union、installer 注册、IPC/preload/declaration、UI、config owner、删除语义和测试。现有测试覆盖 marketplace validation/cleanup/redaction、安装器冲突、Skill/Hook archive/path/lock、extension import/registry、`AskUserQuestion` 状态机与 MCP discovery/probe。运行时行为变化还要更新 capability matrix 与 patch tests。
 
-## 14. 各类型生命周期对照
+## 15. 各类型生命周期对照
 
 | Kind        | 发现/列表                    | 安装或导入                       | Enable           | 删除                   | Runtime 生效               |
 | ----------- | ---------------------------- | -------------------------------- | ---------------- | ---------------------- | -------------------------- |
@@ -234,7 +268,7 @@ UI 应显示 source、eligible/missing、install state 和操作结果；破坏�
 
 统一 UI 不代表统一生命周期；尤其不能实现一个“删除 plugin”通用 handler 接收任意 kind/path。
 
-## 15. 文件事务状态机
+## 16. 文件事务状态机
 
 ```mermaid
 stateDiagram-v2
@@ -253,11 +287,11 @@ stateDiagram-v2
 
 临时目录 cleanup 和 runtime 恢复放在 `finally` 语义中。目标 path 必须在解压后再次 canonicalize，拒绝 traversal、symlink escape 和不允许的根目录。已有同名项的 replace/冲突语义必须由具体 manager 明确，不能靠文件覆盖默认决定。
 
-## 16. Secret 与配置投影
+## 17. Secret 与配置投影
 
 MCP env、Extension configuration、Skill credential 和 Marketplace provider 内部字段不得原样返回 UI/log。Renderer 需要的是是否配置、缺失字段名或稳定错误码，而不是 secret value。Config sync 只写 JustDo 管理区域并保持其他用户配置；probe 错误需脱敏后再进入 UI。
 
-## 17. 故障与恢复
+## 18. 故障与恢复
 
 | 故障                         | 恢复原则                                              |
 | ---------------------------- | ----------------------------------------------------- |
@@ -268,6 +302,6 @@ MCP env、Extension configuration、Skill credential 和 Marketplace provider �
 | AskUserQuestion 事件连接中断 | adapter 重连后用 `askUserQuestion.list` 恢复 pending  |
 | Marketplace provider 异常    | 隔离 source、返回脱敏稳定错误，不污染其他 source 结果 |
 
-## 18. Plugin Definition of Done
+## 19. Plugin Definition of Done
 
 新增能力必须证明 source ownership、manifest/schema validation、managed path、冲突/replace、enable 与 runtime apply、删除/rollback、secret redaction、IPC/preload/UI consumer 和打包资源。若 Marketplace 只是新增 provider adapter但没有 composition 注册，文档与 UI 必须继续显示“未配置”，不能写成已有目录内容。

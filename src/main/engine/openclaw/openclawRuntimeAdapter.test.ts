@@ -829,6 +829,20 @@ test('publishes native cron changes for scheduled-task reconciliation', () => {
   expect(listener).toHaveBeenCalledWith({ action: 'added', jobId: 'job-1' });
 });
 
+test('publishes Workboard revision invalidations without projecting card data', () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const listener = vi.fn();
+  adapter.on('workboardChanged', listener);
+
+  adapter.handleGatewayEvent({
+    event: 'plugin.workboard.changed',
+    payload: { epoch: 'epoch-1', revision: 7 },
+  });
+
+  expect(listener).toHaveBeenCalledWith({ epoch: 'epoch-1', revision: 7 });
+});
+
 test.each(['sessionKey', 'childSessionKey', 'ownerKey'] as const)(
   'publishes native task changes matched by %s for the owning JustDo session',
   sessionKeyField => {
@@ -1922,6 +1936,8 @@ test('an intentionally stopped gateway client cannot reclaim the active connecti
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
   const stop = vi.fn();
+  const workboardChanged = vi.fn();
+  adapter.on('workboardChanged', workboardChanged);
   let clientOptions: Record<string, unknown> | null = null;
 
   class FakeGatewayClient {
@@ -1976,12 +1992,15 @@ test('an intentionally stopped gateway client cannot reclaim the active connecti
   (onHelloOk as () => void)();
   expect(connectionAdapter.gatewayClient).not.toBeNull();
   expect(connectionAdapter.pendingGatewayClient).toBeNull();
+  expect(workboardChanged).toHaveBeenCalledOnce();
+  expect(workboardChanged).toHaveBeenCalledWith({});
 
   connectionAdapter.disconnectGatewayClient();
   expect(connectionAdapter.gatewayClient).toBeNull();
 
   (onHelloOk as () => void)();
   expect(connectionAdapter.gatewayClient).toBeNull();
+  expect(workboardChanged).toHaveBeenCalledOnce();
   expect(stop).toHaveBeenCalledTimes(2);
 });
 

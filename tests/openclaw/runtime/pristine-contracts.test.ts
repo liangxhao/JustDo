@@ -174,7 +174,7 @@ afterEach(() => {
 });
 
 describe('OpenClaw pristine artifact contracts', () => {
-  test('keeps exactly fourteen independently auditable v2026.9.2 patches', () => {
+  test('keeps exactly fifteen independently auditable v2026.9.2 patches', () => {
     const patchDir = path.resolve('scripts', 'patches', 'v2026.9.2');
     const patchFiles = fs
       .readdirSync(patchDir)

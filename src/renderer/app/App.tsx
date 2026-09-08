@@ -51,6 +51,8 @@ import {
 } from '@/features/settings/appUpdateToastState';
 import AppUpdateToast from '@/features/settings/components/AppUpdateToast';
 import Settings, { type SettingsOpenOptions } from '@/features/settings/Settings';
+import WorkboardView from '@/features/workboard/components/WorkboardView';
+import { useWorkboardAvailability } from '@/features/workboard/useWorkboardAvailability';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 import { matchesShortcut } from '@/services/shortcuts';
@@ -60,7 +62,9 @@ import { RootState, store } from '@/store';
 const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [settingsOptions, setSettingsOptions] = useState<SettingsOpenOptions>({});
-  const [mainView, setMainView] = useState<'cowork' | 'scheduledTasks' | 'plugins'>('cowork');
+  const [mainView, setMainView] = useState<'cowork' | 'scheduledTasks' | 'workboard' | 'plugins'>(
+    'cowork',
+  );
   const [isInitialized, setIsInitialized] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -68,6 +72,7 @@ const App: React.FC = () => {
   const [, forceLanguageRefresh] = useState(0);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [developerModeAvailable, setDeveloperModeAvailable] = useState(false);
+  const workboardEnabled = useWorkboardAvailability(isInitialized);
   const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequest[]>([]);
   const resolvedApprovalIdsRef = useRef(new Map<string, number>());
   const dismissedUpdateRevisionRef = useRef<number | null>(null);
@@ -263,6 +268,10 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    if (!workboardEnabled && mainView === 'workboard') setMainView('cowork');
+  }, [mainView, workboardEnabled]);
+
+  useEffect(() => {
     const approvals = window.electron.openclaw.approvals;
     type ApprovalEvent =
       | { type: 'requested'; request: ApprovalRequest }
@@ -411,6 +420,11 @@ const App: React.FC = () => {
       setMainView('scheduledTasks'),
     );
   }, [requestCoworkNavigation]);
+
+  const handleShowWorkboard = useCallback(async () => {
+    if (!workboardEnabled) return;
+    await runGuardedFilePreviewNavigation(requestCoworkNavigation, () => setMainView('workboard'));
+  }, [requestCoworkNavigation, workboardEnabled]);
 
   const handleShowPlugins = useCallback(async () => {
     await runGuardedFilePreviewNavigation(requestCoworkNavigation, () => setMainView('plugins'));
@@ -790,6 +804,8 @@ const App: React.FC = () => {
               activeView={mainView}
               onShowCowork={handleShowCowork}
               onShowScheduledTasks={handleShowScheduledTasks}
+              onShowWorkboard={handleShowWorkboard}
+              showWorkboard={workboardEnabled}
               onShowPlugins={handleShowPlugins}
               onNewChat={handleNewChat}
               onBeforeCoworkNavigation={requestCoworkNavigation}
@@ -801,6 +817,12 @@ const App: React.FC = () => {
               <div className="relative h-full min-h-0 rounded-xl bg-background overflow-hidden">
                 {mainView === 'scheduledTasks' ? (
                   <CronView
+                    isSidebarCollapsed={isSidebarCollapsed}
+                    onToggleSidebar={handleToggleSidebar}
+                    onNewChat={handleNewChat}
+                  />
+                ) : mainView === 'workboard' && workboardEnabled ? (
+                  <WorkboardView
                     isSidebarCollapsed={isSidebarCollapsed}
                     onToggleSidebar={handleToggleSidebar}
                     onNewChat={handleNewChat}

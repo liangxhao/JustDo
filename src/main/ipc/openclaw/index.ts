@@ -10,3 +10,4 @@ export { registerOpenClawModelHandlers } from './models';
 export { registerSkillHandlers } from './skills';
 export { registerSlashCommandHandlers } from './slashCommands';
 export { registerOpenClawUsageHandlers } from './usage';
+export { registerOpenClawWorkboardHandlers } from './workboard';

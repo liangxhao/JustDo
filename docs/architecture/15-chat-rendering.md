@@ -4,6 +4,8 @@
 
 ## 1. 目标与不变量
 
+附加会话的 `session.tool` 与普通 Agent 事件可能交错到达。工具详情允许按工具调用身份补入较早的 sequence，仍保留每个工具的去重与终态保护；终态后晚到的 start 只能补齐缺失参数，不能覆盖结果、状态或回退工具 sequence。运行活动的 sequence 比较限定在同一 run，补入不回退当前运行活动，新 run 从低 sequence 开始仍正常显示。历史中，用户续跑后的新 assistant run 可将旧 run 缺失结果的工具显示为中断，不伪造执行结果；同一轮中的子助手通知不结束等待中的工具。
+
 - Gateway transcript/history 是持久消息权威。
 - 当前 run 的 agent events 进入单一 reducer，不能再维护并行 overlay 状态机。
 - sessionId、sessionKey、runId、lifecycleGeneration、sequence 和 stable message identity共同防串线。

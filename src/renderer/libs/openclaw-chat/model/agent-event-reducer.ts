@@ -141,7 +141,16 @@ function isTerminalToolEvent(event: NormalizedAgentEvent): boolean {
   return phase === 'result' || phase === 'error' || phase === 'failed';
 }
 
+function fillsMissingToolInput(turn: AssistantTurn, event: NormalizedAgentEvent): boolean {
+  if (event.stream !== 'tool' || event.deliveryEvent !== 'session.tool') return false;
+  const normalized = normalizeToolEvent(event.data);
+  const existing = normalized.toolCallId ? turn.toolById.get(normalized.toolCallId) : undefined;
+  return existing !== undefined && existing.status !== 'running' && existing.input === undefined &&
+    normalized.input !== undefined && normalized.input !== null;
+}
+
 function acceptsBackfillSequence(turn: AssistantTurn, event: NormalizedAgentEvent): boolean {
+  if (fillsMissingToolInput(turn, event)) return true;
   const ownerIdentity = activityEventIdentity(event);
   const sequences = turn.activityEventSeqById;
   if (event.stream === 'tool' && !isTerminalToolEvent(event)) {
@@ -155,9 +164,10 @@ function acceptsBackfillSequence(turn: AssistantTurn, event: NormalizedAgentEven
 function recordActivitySequence(turn: AssistantTurn, event: NormalizedAgentEvent): void {
   const ownerIdentity = activityEventIdentity(event);
   const sequences = (turn.activityEventSeqById ??= new Map());
-  sequences.set(ownerIdentity, event.agentSeq);
+  sequences.set(ownerIdentity, Math.max(sequences.get(ownerIdentity) ?? -1, event.agentSeq));
   if (isTerminalToolEvent(event)) {
-    sequences.set(toolTerminalIdentity(ownerIdentity), event.agentSeq);
+    const terminalIdentity = toolTerminalIdentity(ownerIdentity);
+    sequences.set(terminalIdentity, Math.max(sequences.get(terminalIdentity) ?? -1, event.agentSeq));
   }
 }
 
@@ -694,6 +704,13 @@ function reduceTool(
 
   if (existing) {
     if (backfill && existing.agentSequencePending !== true && existing.lastSeq >= event.agentSeq) {
+      // A result may arrive before its start payload on the session subscription.
+      // Fill only the absent input; an older event cannot revise terminal output.
+      if (fillsMissingToolInput(turn, event)) {
+        existing.input = resolved.input;
+        if (existing.name === 'tool') existing.name = resolved.name;
+        return true;
+      }
       return false;
     }
     const preserveExistingTerminal = backfill && existing.status !== 'running';

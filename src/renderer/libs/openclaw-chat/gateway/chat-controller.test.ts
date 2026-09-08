@@ -1647,6 +1647,78 @@ test('does not resurrect a terminal run from a stale in-flight snapshot', () => 
   ]);
 });
 
+test('handles the next run activity when its sequence restarts below the previous run', () => {
+  const controller = new ChatController();
+  controller.state.sessionKey = 'session-1';
+  controller.state.transcript.sessionKey = 'session-1';
+  const internal = controller as unknown as {
+    applyNormalizedAgentEvent(event: unknown): void;
+    handleAgentEvent(event: unknown): void;
+  };
+  const handle = vi.spyOn(internal, 'handleAgentEvent').mockImplementation(() => {});
+  const event = {
+    runId: 'old-run', sessionKey: 'session-1', sessionId: null, lifecycleGeneration: null,
+    agentId: 'main', spawnedBy: null, agentSeq: 100, frameSeq: 100, timestamp: 100,
+    deliveryEvent: 'agent', stream: 'assistant', data: { text: 'old' },
+  };
+  internal.applyNormalizedAgentEvent(event);
+  controller.state.transcript.activeTurn!.status = 'final';
+  const next = { ...event, runId: 'new-run', agentSeq: 1, timestamp: 200, data: { text: 'new' } };
+  internal.applyNormalizedAgentEvent(next);
+  expect(handle).toHaveBeenLastCalledWith(next);
+  expect(controller.state.transcript.activeTurn?.runId).toBe('new-run');
+  controller.disconnect();
+});
+
+test('hydrates delayed session tool details after a newer item event', () => {
+  const controller = new ChatController();
+  controller.state.sessionKey = 'session-1';
+  controller.state.transcript.sessionKey = 'session-1';
+  controller.state.connected = true;
+  controller.state.initialHistoryReady = true;
+  const apply = (
+    controller as unknown as {
+      applyNormalizedAgentEvent(event: unknown): void;
+    }
+  ).applyNormalizedAgentEvent.bind(controller);
+  const emit = (seq: number, stream: string, data: unknown) =>
+    apply({
+      runId: 'run-1',
+      sessionKey: 'session-1',
+      sessionId: null,
+      lifecycleGeneration: null,
+      agentId: 'main',
+      spawnedBy: null,
+      agentSeq: seq,
+      frameSeq: seq,
+      timestamp: 100 + seq,
+      deliveryEvent: stream === 'tool' ? 'session.tool' : 'agent',
+      stream,
+      data,
+    });
+  emit(10, 'item', { kind: 'tool', phase: 'start', toolCallId: 'write-1' });
+  emit(9, 'tool', {
+    phase: 'start',
+    toolCallId: 'write-1',
+    name: 'write',
+    args: { path: 'a.txt', content: 'hello' },
+  });
+  emit(12, 'item', { kind: 'tool', phase: 'end', toolCallId: 'write-1' });
+  emit(11, 'tool', {
+    phase: 'result',
+    toolCallId: 'write-1',
+    name: 'write',
+    result: 'Wrote a.txt',
+  });
+  expect(controller.state.transcript.activeTurn?.toolById.get('write-1')).toMatchObject({
+    input: { path: 'a.txt', content: 'hello' },
+    output: 'Wrote a.txt',
+    status: 'completed',
+  });
+  expect(controller.state.transcript.activeTurn?.lastAgentSeq).toBe(12);
+  controller.disconnect();
+});
+
 test('accepts cumulative Agent snapshots with sequence gaps without reconnecting', () => {
   const sessionKey = 'agent:main:justdo:session-1';
   const recoverFromGap = vi.fn();
@@ -2683,6 +2755,34 @@ test('admits a live subagent task event immediately and rejects an older in-flig
   resolveHistory?.({ messages: [staleAssistant] });
   await expect(historyLoad).resolves.toBe(false);
   expect(controller.state.chatMessages).toEqual([taskMessage]);
+});
+
+test('reveals a live Workboard user task as soon as its authoritative message arrives', () => {
+  const sessionKey = 'agent:main:subagent:workboard-default-card-1';
+  const taskMessage = {
+    role: 'user',
+    content:
+      'Work on this OpenClaw Workboard card: Fix the streaming drawer\n\n## Worker protocol\nCard id: card-1',
+  };
+  const controller = new ChatController({
+    expectInitialHistory: true,
+    expectInitialUserMessage: true,
+  });
+  controller.state.sessionKey = sessionKey;
+  controller.state.transcript.sessionKey = sessionKey;
+  controller.state.chatSending = true;
+
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent({
+    event: 'session.message',
+    payload: { sessionKey, message: taskMessage },
+  });
+
+  expect(controller.state.chatMessages).toEqual([taskMessage]);
+  expect(controller.state.initialHistoryReady).toBe(true);
 });
 
 test('catches up subagent task history when its session.message event was dropped', async () => {

@@ -200,6 +200,7 @@ export function projectPersistedTimeline(
   let activeTiming: SessionRunTiming | null = null;
   let lastTimedMessage: Extract<PersistedTimelineItem, { kind: 'history-message' }> | null = null;
   const terminalTimingByProcessId = new Map<string, SessionRunTiming>();
+  const supersededTools = new Set<string>();
 
   const rememberTerminalTiming = (process: ThinkingItem | ToolItem): void => {
     if (!activeTiming) return;
@@ -531,6 +532,19 @@ export function projectPersistedTimeline(
     if (runId === messageKey) syntheticRunIds.add(runId);
     const timestamp = timestampOf(outer, message);
     const role = roleOf(message);
+    // A subsequent explicit assistant run cannot still be executing tools
+    // from the previous run. Missing results remain interrupted, not successful.
+    if (
+      role === 'assistant' &&
+      !syntheticRunIds.has(runId) &&
+      !isGatewayInjectedAssistant(outer, message)
+    ) {
+      for (const tool of allTools) {
+        if (tool.runId !== runId && !syntheticRunIds.has(tool.runId) && !isCurrentToolEpoch(tool)) {
+          supersededTools.add(tool.id);
+        }
+      }
+    }
     const matchingTiming = timingByRootRunId.get(runId);
     if (role === 'user') {
       toolEpoch += 1;
@@ -712,9 +726,9 @@ export function projectPersistedTimeline(
             : latestRootTiming.endedAt !== undefined
               ? latestRootTiming
               : undefined;
-        if (terminalTiming) {
+        if (terminalTiming || supersededTools.has(process.id)) {
           process.status = 'interrupted';
-          process.updatedAt = Math.max(process.updatedAt, terminalTiming.endedAt ?? 0);
+          process.updatedAt = Math.max(process.updatedAt, terminalTiming?.endedAt ?? 0);
           settled.push(process);
           continue;
         }

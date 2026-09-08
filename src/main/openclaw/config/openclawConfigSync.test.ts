@@ -15,6 +15,7 @@ import {
 } from '../../../shared/providers';
 import type { ProviderRawConfig } from '../../cowork/providerApiConfig';
 import {
+  applyDefaultOpenClawPluginEntries,
   applyManagedOpenClawHeartbeatConfig,
   buildBuiltinMemorySearchConfig,
   buildManagedOpenClawAgentThinkingConfig,
@@ -568,6 +569,18 @@ describe('OpenClaw managed session retention', () => {
 });
 
 describe('OpenClaw plugin config merging', () => {
+  test('applies a default plugin state without overwriting an explicit user choice', () => {
+    const defaults = { [OpenClawExtensionId.WORKBOARD]: { enabled: true } };
+
+    expect(applyDefaultOpenClawPluginEntries({}, defaults)).toEqual({ entries: defaults });
+    expect(
+      applyDefaultOpenClawPluginEntries(
+        { entries: { [OpenClawExtensionId.WORKBOARD]: { enabled: false } } },
+        defaults,
+      ),
+    ).toEqual({ entries: { [OpenClawExtensionId.WORKBOARD]: { enabled: false } } });
+  });
+
   test('removes registrations for extensions that are no longer discoverable', () => {
     expect(
       removeUnavailableOpenClawPluginRegistrations(
