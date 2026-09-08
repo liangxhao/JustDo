@@ -5,6 +5,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import ChatMessageDisplay from '@/features/cowork/components/chat/ChatMessageDisplay';
 import { connectToGateway } from '@/features/cowork/components/chat/JustDoChatWrapper';
 import {
+  mergeSubtaskSnapshots,
+  resolveSubtaskElapsedMs,
   type Subtask as Subagent,
   SUBTASK_STATUS_I18N_KEYS,
   subtaskStatusStyles,
@@ -43,17 +45,22 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [isEmpty, setIsEmpty] = useState(false);
   const [hasError, setHasError] = useState(false);
+  const [hasActiveChildTurn, setHasActiveChildTurn] = useState(false);
   const [isInfoOpen, setIsInfoOpen] = useState(false);
   const [detailStats, setDetailStats] = useState<SessionDetailStats>();
   const [isDetailStatsLoading, setIsDetailStatsLoading] = useState(false);
+  const [detailStatsFailed, setDetailStatsFailed] = useState(false);
   const [drawerWidth, setDrawerWidth] = useState(DRAWER_DEFAULT_WIDTH);
+  const [clock, setClock] = useState(Date.now());
   const drawerRef = useRef<HTMLElement>(null);
   const detailStatsSessionKeyRef = useRef<string>();
   const detailStatsRef = useRef<SessionDetailStats>();
+  const lifecycleRequestSequenceRef = useRef(0);
   const subagentRef = useRef(subagent);
   subagentRef.current = subagent;
   const subagentSessionKey = subagent?.sessionKey;
-  const shouldPollStatus = isActiveSubagentStatus(displaySubagent?.status);
+  const shouldPollStatus =
+    isActiveSubagentStatus(displaySubagent?.status) || hasActiveChildTurn;
 
   useEffect(() => {
     setDisplaySubagent(subagent);
@@ -62,6 +69,7 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
   useEffect(() => {
     if (!subagentSessionKey) {
       setController(null);
+      setHasActiveChildTurn(false);
       return;
     }
 
@@ -73,6 +81,7 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
       if (cancelled) return;
       const hasVisibleTranscript =
         state.chatMessages.length > 0 || state.transcript.activeTurn !== null;
+      setHasActiveChildTurn(state.transcript.activeTurn !== null);
       if (!state.initialHistoryReady) {
         setIsLoading(!initialHistoryTimedOut);
         if (initialHistoryTimedOut) {
@@ -135,22 +144,30 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
     const refreshStatus = async () => {
       if (refreshInFlight) return;
       refreshInFlight = true;
+      const lifecycleRequestSequence = ++lifecycleRequestSequenceRef.current;
       try {
-        const result = await window.electron.cowork.getSubTaskStatus(parentSessionId);
+        const result = await window.electron.cowork.getSubTaskStatus(
+          parentSessionId,
+          hasActiveChildTurn,
+        );
         if (cancelled || !result.success) return;
-        const latest = result.subagents?.find(item => item.sessionKey === subagentSessionKey);
+        const latest = result.subagents?.find(item => item.id === subagent?.id);
         if (latest) {
           setDisplaySubagent(current => {
             const previous = current ?? subagentRef.current;
             if (!previous) return current;
-            return {
-              ...previous,
-              ...latest,
-              ...reconcileSubagentLabel(
-                { label: previous.label, labelSource: previous.labelSource },
-                { label: latest.label, labelSource: latest.labelSource },
-              ),
-            };
+            return mergeSubtaskSnapshots(
+              previous,
+              {
+                ...latest,
+                lifecycleRequestSequence,
+                ...reconcileSubagentLabel(
+                  { label: previous.label, labelSource: previous.labelSource },
+                  { label: latest.label, labelSource: latest.labelSource },
+                ),
+              },
+              { preserveCurrentTask: true },
+            );
           });
         }
       } catch {
@@ -168,22 +185,33 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
       cancelled = true;
       if (timer !== undefined) window.clearInterval(timer);
     };
-  }, [parentSessionId, shouldPollStatus, subagentSessionKey]);
+  }, [hasActiveChildTurn, parentSessionId, shouldPollStatus, subagent?.id, subagentSessionKey]);
+
+  useEffect(() => {
+    if (!isInfoOpen || !isActiveSubagentStatus(displaySubagent?.status)) return;
+    setClock(Date.now());
+    const timer = window.setInterval(() => setClock(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [displaySubagent?.status, isInfoOpen]);
 
   useEffect(() => {
     const sessionKey = displaySubagent?.sessionKey;
+    const taskId = displaySubagent?.id;
     if (!sessionKey) {
       detailStatsSessionKeyRef.current = undefined;
       detailStatsRef.current = undefined;
       setDetailStats(undefined);
       setIsDetailStatsLoading(false);
+      setDetailStatsFailed(false);
       return;
     }
-    const isNewSession = detailStatsSessionKeyRef.current !== sessionKey;
-    if (isNewSession) {
-      detailStatsSessionKeyRef.current = sessionKey;
+    const detailIdentity = `${taskId ?? ''}:${sessionKey}`;
+    const isNewTask = detailStatsSessionKeyRef.current !== detailIdentity;
+    if (isNewTask) {
+      detailStatsSessionKeyRef.current = detailIdentity;
       detailStatsRef.current = undefined;
       setDetailStats(undefined);
+      setDetailStatsFailed(false);
     }
     if (!isInfoOpen) {
       setIsDetailStatsLoading(false);
@@ -198,23 +226,40 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
     const refreshDetails = async (attempt = 0): Promise<void> => {
       if (refreshInFlight) return;
       refreshInFlight = true;
+      const lifecycleRequestSequence = ++lifecycleRequestSequenceRef.current;
       let succeeded = false;
       try {
-        const result = await window.electron.cowork.getSubTaskDetails(sessionKey);
+        const result = await window.electron.cowork.getSubTaskDetails(sessionKey, taskId);
         if (!cancelled && result.success) {
           succeeded = true;
           detailStatsRef.current = result.stats;
           setDetailStats(result.stats);
+          setDetailStatsFailed(false);
+          if (result.subagent) {
+            setDisplaySubagent(current => {
+              if (!current || current.id !== result.subagent?.id) return current;
+              return mergeSubtaskSnapshots(current, {
+                ...result.subagent,
+                lifecycleRequestSequence,
+                ...reconcileSubagentLabel(
+                  { label: current.label, labelSource: current.labelSource },
+                  {
+                    label: result.subagent.label,
+                    labelSource: result.subagent.labelSource,
+                  },
+                ),
+              });
+            });
+          }
         }
       } catch {
         // Preserve the last complete lifetime total until the next refresh.
       } finally {
         refreshInFlight = false;
         const willRetry = !succeeded && !isActive && attempt < 2;
-        const waitingForActiveRefresh =
-          !succeeded && isActive && detailStatsRef.current === undefined;
-        if (!cancelled && !willRetry && !waitingForActiveRefresh) {
+        if (!cancelled && !willRetry) {
           setIsDetailStatsLoading(false);
+          if (!succeeded) setDetailStatsFailed(true);
         }
       }
       if (!cancelled && !succeeded && !isActive && attempt < 2) {
@@ -228,7 +273,7 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
       if (timer !== undefined) window.clearInterval(timer);
     };
-  }, [displaySubagent?.sessionKey, displaySubagent?.status, isInfoOpen]);
+  }, [displaySubagent?.id, displaySubagent?.sessionKey, displaySubagent?.status, isInfoOpen]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -298,7 +343,14 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
     [i18nService.t('subtaskInfoStatus'), subagentStatusLabel],
     [i18nService.t('subtaskInfoTask'), displaySubagent.task],
     [i18nService.t('subtaskInfoModel'), displaySubagent.model],
-    [i18nService.t('subtaskInfoDuration'), formatRuntime(displaySubagent.runtimeMs)],
+    [
+      i18nService.t('subtaskInfoRequestedModels'),
+      detailStats?.models.length ? detailStats.models.join('\n') : undefined,
+    ],
+    [
+      i18nService.t('subtaskInfoDuration'),
+      formatRuntime(resolveSubtaskElapsedMs(displaySubagent, clock)),
+    ],
     [i18nService.t('subtaskInfoStarted'), formatDateTime(displaySubagent.startedAt)],
     [i18nService.t('subtaskInfoEnded'), formatDateTime(displaySubagent.endedAt)],
     [
@@ -393,6 +445,14 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
             ×
           </button>
         </div>
+        {detailStatsFailed && (
+          <div
+            className="border-b border-amber-500/30 bg-amber-500/5 px-5 py-2 text-xs text-amber-700 dark:text-amber-300"
+            role="status"
+          >
+            {i18nService.t('subtaskDetailsRefreshFailed')}
+          </div>
+        )}
         <dl className="max-h-[calc(80vh-4rem)] overflow-y-auto px-5 py-3">
           {detailRows.map(([label, value, copyable]) => (
             <div

@@ -828,6 +828,161 @@ test('loads every gateway history page in oldest-first order', async () => {
   });
 });
 
+test('replaces a replayed partial history boundary instead of double-counting it', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const partial = { role: 'tool_use', name: 'read-two', __openclaw: { id: 'entry-2', seq: 2 } };
+  const newest = { role: 'assistant', content: 'Done', __openclaw: { id: 'entry-3', seq: 3 } };
+  const completeBoundary = [
+    { role: 'assistant', content: 'Working', __openclaw: { id: 'entry-2', seq: 2 } },
+    { role: 'tool_use', name: 'read-one', __openclaw: { id: 'entry-2', seq: 2 } },
+    partial,
+  ];
+  const oldest = { role: 'user', content: 'Question', __openclaw: { id: 'entry-1', seq: 1 } };
+  const request = vi.fn(async (_method: string, params?: Record<string, unknown>) =>
+    params?.offset === 2
+      ? { messages: [oldest, ...completeBoundary], hasMore: false }
+      : { messages: [partial, newest], hasMore: true, nextOffset: 2 },
+  );
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request,
+  };
+
+  await expect(adapter.fetchSessionHistoryByKey('agent:main:one')).resolves.toEqual({
+    sessionKey: 'agent:main:one',
+    messages: [oldest, ...completeBoundary, newest],
+  });
+});
+
+test('restarts full history pagination when the transcript changes between pages', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  let firstPageReads = 0;
+  const request = vi.fn(async (_method: string, params?: Record<string, unknown>) => {
+    if (params?.offset === 1) {
+      return firstPageReads === 1
+        ? { messages: ['stale-oldest'], hasMore: false, totalMessages: 3 }
+        : { messages: ['oldest'], hasMore: false, totalMessages: 2 };
+    }
+    firstPageReads += 1;
+    return firstPageReads === 1
+      ? { messages: ['stale-newest'], hasMore: true, nextOffset: 1, totalMessages: 2 }
+      : { messages: ['newest'], hasMore: true, nextOffset: 1, totalMessages: 2 };
+  });
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request,
+  };
+
+  await expect(adapter.fetchSessionHistoryByKey('agent:main:one')).resolves.toEqual({
+    sessionKey: 'agent:main:one',
+    messages: ['oldest', 'newest'],
+  });
+  expect(request).toHaveBeenCalledTimes(4);
+});
+
+test('fails closed when full history never reaches a stable snapshot', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  let generation = 0;
+  const request = vi.fn(async (_method: string, params?: Record<string, unknown>) => {
+    if (params?.offset === 1) {
+      return { messages: ['oldest'], hasMore: false, totalMessages: generation + 1 };
+    }
+    generation += 1;
+    return { messages: ['newest'], hasMore: true, nextOffset: 1, totalMessages: generation };
+  });
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request,
+  };
+
+  await expect(adapter.fetchSessionHistoryByKey('agent:main:one')).resolves.toBeNull();
+  expect(request).toHaveBeenCalledTimes(6);
+});
+
+test('catches up a stable full history snapshot and uses deltas on later reads', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const request = vi
+    .fn()
+    .mockResolvedValueOnce({
+      messages: ['oldest'],
+      hasMore: false,
+      totalMessages: 1,
+      deltaCursor: 'cursor-1',
+    })
+    .mockResolvedValueOnce({
+      kind: 'delta',
+      messages: ['arrived-during-scan'],
+      deltaCursor: 'cursor-2',
+    })
+    .mockResolvedValueOnce({
+      kind: 'delta',
+      messages: ['arrived-later'],
+      deltaCursor: 'cursor-3',
+    });
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request,
+  };
+
+  await expect(adapter.fetchSessionHistoryByKey('agent:main:one')).resolves.toEqual({
+    sessionKey: 'agent:main:one',
+    messages: ['oldest', 'arrived-during-scan'],
+  });
+  await expect(adapter.fetchSessionHistoryByKey('agent:main:one')).resolves.toEqual({
+    sessionKey: 'agent:main:one',
+    messages: ['oldest', 'arrived-during-scan', 'arrived-later'],
+  });
+  expect(request).toHaveBeenCalledTimes(3);
+  expect(request).toHaveBeenLastCalledWith('chat.history', {
+    sessionKey: 'agent:main:one',
+    cursor: 'cursor-2',
+  });
+});
+
+test('rebuilds history when an equal-sized transcript generation resets its cursor', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const request = vi
+    .fn()
+    .mockResolvedValueOnce({
+      messages: ['old-generation'],
+      hasMore: false,
+      totalMessages: 1,
+      deltaCursor: 'cursor-old',
+    })
+    .mockResolvedValueOnce({ kind: 'delta', messages: [], deltaCursor: 'cursor-old' })
+    .mockResolvedValueOnce({ kind: 'reset' })
+    .mockResolvedValueOnce({
+      messages: ['new-generation'],
+      hasMore: false,
+      totalMessages: 1,
+      deltaCursor: 'cursor-new',
+    })
+    .mockResolvedValueOnce({ kind: 'delta', messages: [], deltaCursor: 'cursor-new' });
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request,
+  };
+
+  await expect(adapter.fetchSessionHistoryByKey('agent:main:one')).resolves.toMatchObject({
+    messages: ['old-generation'],
+  });
+  await expect(adapter.fetchSessionHistoryByKey('agent:main:one')).resolves.toEqual({
+    sessionKey: 'agent:main:one',
+    messages: ['new-generation'],
+  });
+  expect(request).toHaveBeenCalledTimes(5);
+});
+
 test('rejects a non-advancing gateway history cursor instead of looping', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
@@ -4544,6 +4699,66 @@ test('keeps native task status authoritative while hydrating retained details le
     ]);
     expect(request.mock.calls.filter(([method]) => method === 'tasks.list')).toHaveLength(2);
     expect(request.mock.calls.filter(([method]) => method === 'tasks.get')).toHaveLength(0);
+  } finally {
+    now.mockRestore();
+  }
+});
+
+test('keeps a reactivated terminal task running across ordinary status refreshes', async () => {
+  const { store, session } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const parentKey = 'agent:main:cowork:parent';
+  const childKey = 'agent:main:subagent:reactivated';
+  const request = vi.fn(async (method: string) => {
+    if (method === 'tasks.list') {
+      return {
+        tasks: [
+          {
+            id: 'reactivated-task',
+            runtime: 'subagent',
+            status: 'completed',
+            terminalOutcome: 'blocked',
+            childSessionKey: childKey,
+            updatedAt: 100,
+            endedAt: 100,
+          },
+        ],
+      };
+    }
+    if (method === 'sessions.describe') {
+      return {
+        session: {
+          key: childKey,
+          sessionId: 'reactivated-session',
+          status: 'running',
+          subagentRunState: 'active',
+          updatedAt: 200,
+          startedAt: 150,
+          runtimeMs: 50,
+        },
+      };
+    }
+    throw new Error(`unexpected ${method}`);
+  });
+  const internals = adapter as unknown as {
+    gatewayClient: GatewayClientLike | null;
+    ensureGatewayClientReady: () => Promise<void>;
+  };
+  internals.gatewayClient = { request } as unknown as GatewayClientLike;
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  vi.spyOn(adapter, 'getSessionKeysForSession').mockReturnValue([parentKey]);
+  const now = vi.spyOn(Date, 'now').mockReturnValue(100_000);
+
+  try {
+    await expect(adapter.getSubagentStatuses(session.id)).resolves.toMatchObject({
+      subagents: [{ status: 'running', updatedAt: 200 }],
+    });
+    now.mockReturnValue(109_000);
+    await expect(adapter.getSubagentStatuses(session.id)).resolves.toMatchObject({
+      subagents: [{ status: 'running', updatedAt: 200 }],
+    });
+    expect(request.mock.calls.filter(([method]) => method === 'sessions.describe')).toHaveLength(2);
+    expect(request.mock.calls.some(([method]) => method === 'sessions.list')).toBe(false);
   } finally {
     now.mockRestore();
   }

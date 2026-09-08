@@ -25,7 +25,7 @@ const installElectron = (
 };
 
 describe('SubtaskListPanel', () => {
-  it('renders one compact row per subtask with the raw status value', async () => {
+  it('renders one compact row per subtask with a localized status value', async () => {
     i18nService.setLanguage('zh', { persist: false });
     installElectron(
       vi.fn().mockResolvedValue({
@@ -71,14 +71,13 @@ describe('SubtaskListPanel', () => {
     expect(runningRow?.children).toHaveLength(4);
     expect(runningRow?.children[0]?.getAttribute('aria-hidden')).toBe('true');
     expect(runningRow?.children[1]?.textContent).toBe('检索资料');
-    expect(runningRow?.children[2]?.textContent).toBe('running');
+    expect(runningRow?.children[2]?.textContent).toBe('运行中');
     expect(runningRow?.children[3]?.getAttribute('aria-label')).toBe('查看详情');
-    expect(screen.queryByText('运行中')).toBeNull();
     expect(screen.queryByText('正在阅读源码')).toBeNull();
     expect(screen.queryByText('read')).toBeNull();
     expect(screen.queryByText('3 次工具调用')).toBeNull();
     expect(screen.getByText('整理结论')).toBeTruthy();
-    expect(screen.getByText('done')).toBeTruthy();
+    expect(screen.getByText('已完成')).toBeTruthy();
     expect(screen.queryByText('已提交报告')).toBeNull();
 
     fireEvent.click(finishedToggle);
@@ -86,7 +85,7 @@ describe('SubtaskListPanel', () => {
     expect(screen.queryByText('整理结论')).toBeNull();
   });
 
-  it('shows lifetime model-request usage in the subtask detail dialog', async () => {
+  it('shows current-instance model-request usage in the subtask detail dialog', async () => {
     i18nService.setLanguage('zh', { persist: false });
     const getSubTaskDetails = vi.fn().mockResolvedValue({
       success: true,
@@ -125,7 +124,7 @@ describe('SubtaskListPanel', () => {
     fireEvent.click(detailTrigger);
 
     await waitFor(() =>
-      expect(getSubTaskDetails).toHaveBeenCalledWith('agent:main:subagent:child-1'),
+      expect(getSubTaskDetails).toHaveBeenCalledWith('agent:main:subagent:child-1', 'child-1'),
     );
     expect(await screen.findByText('154')).toBeTruthy();
     expect(screen.queryByText('999')).toBeNull();
@@ -189,6 +188,11 @@ describe('SubtaskListPanel', () => {
     act(() => taskChanged?.({ sessionId: 'parent-1' }));
     await waitFor(() => expect(getSubTaskDetails).toHaveBeenCalledTimes(2));
     expect(screen.getByText('154')).toBeTruthy();
+    expect(
+      await screen.findByText('详情刷新失败，当前数据可能不是最新状态。', undefined, {
+        timeout: 4_000,
+      }),
+    ).toBeTruthy();
   });
 
   it('keeps the detail query animation active while a terminal request retries', async () => {
@@ -293,6 +297,74 @@ describe('SubtaskListPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Refresh subtasks' }));
 
     await waitFor(() => expect(getSubTaskStatus).toHaveBeenCalledWith('parent-1', true));
+  });
+
+  it('does not let an invalidated status response close an open detail dialog', async () => {
+    i18nService.setLanguage('en', { persist: false });
+    const child = {
+      id: 'child-1',
+      taskName: 'child-1',
+      sessionKey: 'agent:main:subagent:child-1',
+      label: 'Research',
+      labelSource: 'label',
+      status: 'running',
+    };
+    let resolveStale:
+      ((value: { success: true; subagents: Array<Record<string, unknown>> }) => void) | undefined;
+    let resolveFresh:
+      ((value: { success: true; subagents: Array<Record<string, unknown>> }) => void) | undefined;
+    const stale = new Promise<{ success: true; subagents: Array<Record<string, unknown>> }>(
+      resolve => {
+        resolveStale = resolve;
+      },
+    );
+    const fresh = new Promise<{ success: true; subagents: Array<Record<string, unknown>> }>(
+      resolve => {
+        resolveFresh = resolve;
+      },
+    );
+    const getSubTaskStatus = vi
+      .fn()
+      .mockResolvedValueOnce({ success: true, subagents: [child] })
+      .mockReturnValueOnce(stale)
+      .mockReturnValueOnce(fresh);
+    const getSubTaskDetails = vi.fn().mockResolvedValue({
+      success: true,
+      stats: {
+        summary: null,
+        messageCount: 0,
+        userMessageCount: 0,
+        assistantMessageCount: 0,
+        toolCallCount: 0,
+        models: [],
+        tokenUsage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        totalTokens: 0,
+        hasTokenUsage: false,
+      },
+    });
+    let taskChanged: ((event: { sessionId?: string }) => void) | undefined;
+    installElectron(
+      getSubTaskStatus,
+      getSubTaskDetails,
+      vi.fn(callback => {
+        taskChanged = callback;
+        return vi.fn();
+      }),
+    );
+
+    render(<SubtaskListPanel sessionId="parent-1" isOpen onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'View details' }));
+    expect(screen.getByRole('dialog', { name: 'Research' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh subtasks' }));
+    await waitFor(() => expect(getSubTaskStatus).toHaveBeenCalledTimes(2));
+    act(() => taskChanged?.({ sessionId: 'parent-1' }));
+    resolveStale?.({ success: true, subagents: [] });
+    await waitFor(() => expect(getSubTaskStatus).toHaveBeenCalledTimes(3));
+
+    expect(screen.getByRole('dialog', { name: 'Research' })).toBeTruthy();
+    resolveFresh?.({ success: true, subagents: [child] });
+    await waitFor(() => expect(screen.getByRole('dialog', { name: 'Research' })).toBeTruthy());
   });
 
   it('refreshes the matching session immediately when OpenClaw publishes a task event', async () => {

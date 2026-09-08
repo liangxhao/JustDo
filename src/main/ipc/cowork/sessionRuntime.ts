@@ -3,7 +3,6 @@ import { ipcMain } from 'electron';
 import {
   CoworkSessionDetailsIpc,
   type CoworkSessionDetailsResult,
-  isSessionDetailModelVisible,
 } from '../../../shared/cowork/sessionDetails';
 import {
   GoalExecutionIpc,
@@ -16,6 +15,7 @@ import type { CoworkSession, CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter, OpenClawRuntimeAdapter } from '../../engine';
 import {
   buildGatewaySessionDetailStats,
+  type GatewaySessionHistoryLoader,
   type GatewaySessionUsageLoader,
   requestGatewaySessionUsage,
 } from '../../openclaw/sessions/openclawSessionDetails';
@@ -29,15 +29,56 @@ interface Dependencies {
   getCoworkEngineRouter: () => CoworkEngineRouter;
   getRuntime: () => OpenClawRuntimeAdapter | null;
   getGatewaySessionUsage?: GatewaySessionUsageLoader;
+  getGatewaySessionHistory?: GatewaySessionHistoryLoader;
 }
 
 const SESSION_LOOKUP_CACHE_TTL_MS = 750;
+// Only one session details modal can be visible. Retaining one revision avoids
+// repeated full-history reads without pinning transcripts from older sessions.
+const SESSION_HISTORY_CACHE_MAX = 1;
 
 const nonNegativeNumber = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
 
 const nonEmptyString = (value: unknown): string | undefined =>
   typeof value === 'string' && value.trim() ? value.trim() : undefined;
+
+const readGatewayActivityTimestamp = (session: Record<string, unknown>): number | undefined =>
+  nonNegativeNumber(session.lastActivityAt) ??
+  nonNegativeNumber(session.lastInteractionAt) ??
+  nonNegativeNumber(session.updatedAt);
+
+export const createRevisionedSessionHistoryLoader = (
+  loader: GatewaySessionHistoryLoader,
+  maxEntries = SESSION_HISTORY_CACHE_MAX,
+): GatewaySessionHistoryLoader => {
+  const entries = new Map<string, { revision: number; promise: Promise<unknown[] | null> }>();
+  return (sessionKey, fallbackSessionId, revision) => {
+    if (revision === undefined) return loader(sessionKey, fallbackSessionId, revision);
+    const cacheKey = `${sessionKey}\u0000${fallbackSessionId ?? ''}`;
+    const cached = entries.get(cacheKey);
+    if (cached?.revision === revision) return cached.promise;
+    const promise = loader(sessionKey, fallbackSessionId, revision)
+      .then(result => {
+        if (result === null && entries.get(cacheKey)?.promise === promise) {
+          entries.delete(cacheKey);
+        }
+        return result;
+      })
+      .catch(error => {
+        if (entries.get(cacheKey)?.promise === promise) entries.delete(cacheKey);
+        throw error;
+      });
+    entries.delete(cacheKey);
+    entries.set(cacheKey, { revision, promise });
+    while (entries.size > Math.max(1, maxEntries)) {
+      const oldestKey = entries.keys().next().value;
+      if (oldestKey === undefined) break;
+      entries.delete(oldestKey);
+    }
+    return promise;
+  };
+};
 
 export const readSessionGoal = (value: unknown): SessionGoal | undefined =>
   normalizeSessionGoal(value);
@@ -155,8 +196,8 @@ export const queryGatewaySession = async (
   const agentId =
     dependencies.getCoworkStore().getSession(sessionId)?.agentId || DEFAULT_MANAGED_AGENT_ID;
   const keys = [
-    buildManagedSessionKey(sessionId, agentId),
     ...runtime.getSessionKeysForSession(sessionId),
+    buildManagedSessionKey(sessionId, agentId),
     buildManagedSessionKey(sessionId, DEFAULT_MANAGED_AGENT_ID),
   ];
   for (const key of new Set(keys)) {
@@ -202,18 +243,6 @@ export const createSingleFlightTtlLookup = <T>(
   };
 };
 
-const addModel = (models: Set<string>, value: unknown): void => {
-  const model = nonEmptyString(value);
-  if (model && isSessionDetailModelVisible(model)) models.add(model);
-};
-
-const readGatewayModelRef = (session: GatewaySession | undefined): string | undefined => {
-  if (!session) return undefined;
-  const provider = nonEmptyString(session.modelProvider);
-  const model = nonEmptyString(session.model);
-  return model ? (provider ? `${provider}/${model}` : model) : undefined;
-};
-
 export const loadCoworkSessionDetails = async (
   dependencies: SessionDetailsDependencies,
   sessionId: string,
@@ -224,15 +253,11 @@ export const loadCoworkSessionDetails = async (
 
   const lookupGatewaySession =
     dependencies.lookupGatewaySession ?? ((id: string) => queryGatewaySession(dependencies, id));
-  const [gatewayResult, modelResult] = await Promise.all([
-    lookupGatewaySession(sessionId).catch((error): GatewaySessionResult => ({
+  const gatewayResult = await lookupGatewaySession(sessionId).catch(
+    (error): GatewaySessionResult => ({
       error: error instanceof Error ? error.message : 'Failed to resolve Gateway session',
-    })),
-    dependencies
-      .getCoworkEngineRouter()
-      .getSessionModel(sessionId, session.agentId)
-      .catch((): null => null),
-  ]);
+    }),
+  );
 
   if (!gatewayResult.session) {
     return {
@@ -246,36 +271,54 @@ export const loadCoworkSessionDetails = async (
   try {
     const usageLoader =
       dependencies.getGatewaySessionUsage ??
-      (async (sessionKey: string) => {
+      (async (sessionKey: string, revision?: number) => {
         const client = dependencies.getRuntime()?.getGatewayClient();
         if (!client) throw new Error('Gateway client not connected');
-        return requestGatewaySessionUsage(client, sessionKey);
+        return requestGatewaySessionUsage(client, sessionKey, {
+          cacheDiscriminator: revision,
+        });
       });
-    stats = buildGatewaySessionDetailStats(await usageLoader(gatewayResult.session.key), null);
+    const historyLoader =
+      dependencies.getGatewaySessionHistory ??
+      (async (sessionKey: string, fallbackSessionId?: string) => {
+        const history = await dependencies
+          .getRuntime()
+          ?.fetchSessionHistoryByKey(sessionKey, fallbackSessionId);
+        return history?.messages ?? null;
+      });
+    // Session updatedAt advances at run boundaries, not for every transcript
+    // append. Active sessions must bypass the revision cache so live message
+    // and tool counts do not freeze until the run ends.
+    const sessionRevision =
+      nonNegativeNumber(gatewayResult.session.updatedAt) ??
+      readGatewayActivityTimestamp(gatewayResult.session);
+    const historyRevision =
+      gatewayResult.session.hasActiveRun === true ? undefined : sessionRevision;
+    const [usage, historyMessages] = await Promise.all([
+      usageLoader(gatewayResult.session.key, historyRevision),
+      historyLoader(gatewayResult.session.key, gatewaySessionId, historyRevision),
+    ]);
+    if (!historyMessages) throw new Error('Gateway session history is not available');
+    stats = buildGatewaySessionDetailStats(usage, null, historyMessages);
   } catch (error) {
     return {
       success: false,
       error:
-        error instanceof Error ? error.message : 'Session statistics are not available from Gateway',
+        error instanceof Error
+          ? error.message
+          : 'Session statistics are not available from Gateway',
     };
   }
   if (!stats) {
     return { success: false, error: 'Session statistics are not available from Gateway' };
   }
 
-  if (stats.models.length === 0) {
-    const models = new Set<string>();
-    for (const run of store.getSessionRuns(sessionId)) addModel(models, run.modelRef);
-    addModel(models, readGatewayModelRef(gatewayResult.session));
-    addModel(models, modelResult && 'modelRef' in modelResult ? modelResult.modelRef : undefined);
-    addModel(models, session.modelRef);
-    if (models.size === 0) addModel(models, store.getAgent(session.agentId)?.model);
-    stats = { ...stats, models: [...models] };
-  }
+  const lastActivity =
+    readGatewayActivityTimestamp(gatewayResult.session) ?? stats.lastActivity ?? session.updatedAt;
 
   return {
     success: true,
-    session,
+    session: lastActivity !== session.updatedAt ? { ...session, updatedAt: lastActivity } : session,
     stats,
     ...(gatewaySessionId ? { gatewaySessionId } : {}),
   };
@@ -286,8 +329,19 @@ export const registerCoworkSessionRuntimeHandlers = ({
   getCoworkEngineRouter,
   getRuntime,
   getGatewaySessionUsage,
+  getGatewaySessionHistory,
 }: Dependencies): void => {
   const sessionDependencies = { getCoworkStore, getRuntime };
+  const sessionHistoryLoader = createRevisionedSessionHistoryLoader(
+    getGatewaySessionHistory ??
+      (async (sessionKey: string, fallbackSessionId?: string) => {
+        const history = await getRuntime()?.fetchSessionHistoryByKey(
+          sessionKey,
+          fallbackSessionId,
+        );
+        return history?.messages ?? null;
+      }),
+  );
   const findGatewaySession = createSingleFlightTtlLookup(
     sessionId => queryGatewaySession(sessionDependencies, sessionId),
     SESSION_LOOKUP_CACHE_TTL_MS,
@@ -301,6 +355,7 @@ export const registerCoworkSessionRuntimeHandlers = ({
           getCoworkEngineRouter,
           getRuntime,
           getGatewaySessionUsage,
+          getGatewaySessionHistory: sessionHistoryLoader,
           lookupGatewaySession: findGatewaySession,
         },
         sessionId,

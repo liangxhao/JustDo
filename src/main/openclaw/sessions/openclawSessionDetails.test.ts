@@ -6,7 +6,7 @@ import {
 } from './openclawSessionDetails';
 
 describe('Gateway session detail statistics', () => {
-  it('uses raw transcript counts and sums the four displayed token categories', () => {
+  it('uses the canonical total while preserving the provider token breakdown', () => {
     expect(
       buildGatewaySessionDetailStats(
         {
@@ -37,12 +37,12 @@ describe('Gateway session detail statistics', () => {
       toolCallCount: 2,
       models: ['openai/gpt-5', 'anthropic/claude-sonnet-4'],
       tokenUsage: { input: 40, output: 8, cacheRead: 14, cacheWrite: 2 },
-      totalTokens: 64,
+      totalTokens: 71,
       hasTokenUsage: true,
     });
   });
 
-  it('ignores a divergent provider total and always uses component sums', () => {
+  it('falls back to component sums only when the provider total is absent', () => {
     expect(
       buildGatewaySessionDetailStats(
         { total_tokens: 9, messageCounts: {}, modelUsage: [{ model: 'gpt-5', count: 1 }] },
@@ -50,7 +50,7 @@ describe('Gateway session detail statistics', () => {
       ),
     ).toMatchObject({
       tokenUsage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      totalTokens: 0,
+      totalTokens: 9,
       hasTokenUsage: true,
     });
     expect(
@@ -63,7 +63,7 @@ describe('Gateway session detail statistics', () => {
 });
 
 describe('requestGatewaySessionUsage', () => {
-  it('requests complete family usage and returns the specific session summary', async () => {
+  it('requests fresh current-instance usage and returns the specific session summary', async () => {
     const usage = { totalTokens: 123 };
     const request = vi.fn().mockResolvedValue({
       sessions: [{ key: 'child', usage }],
@@ -73,11 +73,52 @@ describe('requestGatewaySessionUsage', () => {
     await expect(
       requestGatewaySessionUsage({ request } as never, 'agent:main:subagent:child'),
     ).resolves.toBe(usage);
-    expect(request).toHaveBeenCalledWith('sessions.usage', {
-      key: 'agent:main:subagent:child',
-      range: 'all',
-      groupBy: 'family',
-      limit: 1,
+    expect(request).toHaveBeenCalledWith(
+      'sessions.usage',
+      expect.objectContaining({
+        key: 'agent:main:subagent:child',
+        range: 'all',
+        groupBy: 'instance',
+        limit: expect.any(Number),
+      }),
+    );
+  });
+
+  it('uses visible history for the summary, message counts, and duplicate tool calls', () => {
+    expect(
+      buildGatewaySessionDetailStats(
+        {
+          totalTokens: 10,
+          lastActivity: 500,
+          messageCounts: { total: 99, user: 20, assistant: 79, toolCalls: 1 },
+          modelUsage: [
+            { provider: 'openrouter', model: 'anthropic/claude-sonnet-4', count: 1 },
+            { provider: 'openclaw', model: 'delivery-mirror', count: 1 },
+            { provider: 'ollama', model: 'delivery-mirror', count: 1 },
+          ],
+        },
+        null,
+        [
+          { role: 'user', content: 'First visible question' },
+          {
+            role: 'assistant',
+            content: [
+              { type: 'text', text: 'Working' },
+              { type: 'tool_use', name: 'read', id: 'call-1', input: {} },
+              { type: 'tool_use', name: 'read', id: 'call-2', input: {} },
+            ],
+          },
+        ],
+      ),
+    ).toMatchObject({
+      summary: 'First visible question',
+      messageCount: 2,
+      userMessageCount: 1,
+      assistantMessageCount: 1,
+      toolCallCount: 2,
+      models: ['openrouter/anthropic/claude-sonnet-4', 'ollama/delivery-mirror'],
+      totalTokens: 10,
+      lastActivity: 500,
     });
   });
 
@@ -102,10 +143,51 @@ describe('requestGatewaySessionUsage', () => {
       }),
     ).resolves.toBe(usage);
     expect(wait).toHaveBeenCalledTimes(1);
+    const limits = request.mock.calls.map(([, params]) => params.limit);
+    expect(new Set(limits).size).toBe(1);
+  });
+
+  it('uses a supplied session revision as a stable outer-cache discriminator', async () => {
+    const request = vi.fn().mockResolvedValue({
+      sessions: [{ key: 'child', usage: {} }],
+      cacheStatus: { status: 'fresh' },
+    });
+
+    await requestGatewaySessionUsage({ request } as never, 'agent:main:subagent:child', {
+      cacheDiscriminator: 1_234,
+    });
+
+    expect(request).toHaveBeenCalledWith(
+      'sessions.usage',
+      expect.objectContaining({ limit: 1_234 }),
+    );
+  });
+
+  it('treats a fresh session row with null usage as an empty token snapshot', async () => {
+    const request = vi.fn().mockResolvedValue({
+      sessions: [{ key: 'child', usage: null }],
+      cacheStatus: { status: 'fresh' },
+    });
+
+    const usage = await requestGatewaySessionUsage(
+      { request } as never,
+      'agent:main:subagent:child',
+    );
+
+    expect(usage).toEqual({});
+    expect(
+      buildGatewaySessionDetailStats(usage, null, [{ role: 'user', content: 'Pending reply' }]),
+    ).toMatchObject({
+      messageCount: 1,
+      userMessageCount: 1,
+      assistantMessageCount: 0,
+      totalTokens: 0,
+      hasTokenUsage: false,
+    });
   });
 
   it.each(['partial', 'stale'] as const)(
-    'rejects %s family usage after bounded retries',
+    'rejects %s instance usage after bounded retries',
     async status => {
       const request = vi.fn().mockResolvedValue({
         sessions: [{ key: 'child', usage: { totalTokens: 50 } }],

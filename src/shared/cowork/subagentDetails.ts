@@ -11,8 +11,34 @@ export interface CoworkSubtaskChangedEvent {
   sessionId?: string;
 }
 
+export interface CoworkSubagentDetailTask {
+  id: string;
+  taskName: string;
+  sessionKey: string;
+  sessionId?: string;
+  label: string;
+  labelSource: 'taskName' | 'label' | 'task';
+  status: 'pending' | 'running' | 'done' | 'failed' | 'killed' | 'timeout' | 'blocked';
+  task?: string;
+  runId?: string;
+  model?: string;
+  startedAt?: number;
+  updatedAt?: number;
+  endedAt?: number;
+  runtimeMs?: number;
+  runtimeSampledAt?: number;
+  totalTokens?: number;
+  progressSummary?: string;
+  terminalSummary?: string;
+  error?: string;
+  lastActivity?: string;
+  lastToolName?: string;
+  toolUseCount?: number;
+}
+
 export type CoworkSubagentDetailsResult =
-  { success: true; stats: SessionDetailStats } | { success: false; error: string };
+  | { success: true; stats: SessionDetailStats; subagent?: CoworkSubagentDetailTask }
+  | { success: false; error: string };
 
 export interface CoworkSubagentDescendant {
   sessionKey: string;

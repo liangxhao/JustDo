@@ -145,7 +145,7 @@ Main 不再拥有 `HistoryReconciler` 或消息 CRUD。Renderer controller 统�
 
 这些显示状态不写入 SQLite 或 Redux。导出从当前 controller 的 Gateway 快照生成；会话详情、用量、定时任务结果和 subagent history 由 Main 按需查询 Gateway，查询结果不回填 CoworkStore。
 
-会话列表的“会话详情”通过专用 `cowork:session:details` IPC 读取 Gateway 精确 session row，并以 `sessions.usage` 的 `range=all`、family 聚合读取原始 transcript 用量和消息/Tool 计数。各类 Token 累计和实际使用模型来自 Gateway 权威用量。每个 assistant 模型请求分别累计，总 Token 优先使用每次模型返回的 `total`，缺失时才把 input/output/cacheRead/cacheWrite 相加。`sessions.usage` 仅在 `cacheStatus=fresh` 时可用；refreshing、partial 或 stale 必须有界等待刷新，超时或 Gateway 不可用时应明确显示查询失败，不能用空的产品会话伪造 0 条消息或部分 lifetime 总计。界面中的 Session ID 只使用 Gateway `sessionId`，不能用通用 row `id` 或 `cowork_sessions.id` 代替。仅当权威统计没有模型时，才用 session row、run receipt、当前 session model 和本地 agent 默认值补空。
+会话列表的“会话详情”通过专用 `cowork:session:details` IPC 读取 Gateway 精确 session row。Token 和实际请求模型使用 `sessions.usage` 的 `range=all`、instance 聚合；总 Token 优先使用 OpenClaw 的 canonical `totalTokens`，缺失时才把 input/output/cacheRead/cacheWrite 相加。摘要、可见用户/助手消息和工具调用次数从同一当前实例的完整 `chat.history` 投影计算；history 失败时整次统计失败，不能把原始 usage count 静默标成“可见消息”。同一原始记录跨分页重放时按投影记录身份合并，保证同名并行工具调用不会被去重；全量分页同时校验 `totalMessages` 并在末尾用 `deltaCursor` 追平，后续活动刷新只读取 delta，遇到 reset、compaction、分支或物理实例切换导致的 `kind=reset` 才丢弃快照重建。OpenClaw v2026.9.2 的 usage 外层缓存会 stale-while-revalidate：终态精确 key 查询使用 session revision 作为稳定 discriminator，活动会话每轮使用新 discriminator；一次查询的所有 fresh 重试复用同一值，避免每次重试污染缓存。合法的 `usage=null` 表示当前还没有 Token，而不是查询失败。终态会话的完整 history 只缓存当前一个 revision，`null` 或 reject 都不留失败缓存；活动会话逐次读取 history，避免同一 run 内 Token、消息和工具计数冻结。运行中详情在上一轮查询完成后才调度下一轮刷新。界面中的“最后活动”优先使用 session row 的 `lastActivityAt`，Session ID 只使用 Gateway `sessionId`，不能用通用 row `id` 或 `cowork_sessions.id` 代替。统计范围与当前 Session ID 一致，不跨 reset/rotation 的历史实例。
 
 ## 10. Goal 生命周期
 
@@ -177,11 +177,11 @@ Exec/plugin approval 走独立 Gateway approval API，并继续使用阻塞式 m
 
 ## 13. 子任务列表与 Subagent
 
-子任务列表以原生 `tasks.list/get` 与 `task` event 为权威，当前展示会话直接派生的 Subagent 任务；状态稳定化为 `pending/running/done/failed/killed/timeout`。`taskName` 是机器标识，`label` 是展示标题，不能把随机 session key 当用户标题。
+子任务列表以原生 `tasks.list/get` 与 `task` event 为权威，当前展示会话直接派生的 Subagent 任务；状态稳定化为 `pending/running/done/failed/killed/timeout/blocked`，其中 OpenClaw 的 `completed + terminalOutcome=blocked` 必须保留为 blocked，不能显示成成功。`taskName` 是机器标识，`label` 是展示标题，不能把随机 session key 当用户标题。
 
 Main 对 task 查询做 single-flight 和短时缓存，并用版本化 wire validator 检查分页、cursor、状态、进度摘要和 terminal projection；实时 `task` event 会使对应快照失效，并经 IPC 通知 Renderer 立即重读原生 ledger。Renderer 参考 OpenClaw WebChat 使用右侧 rail：进行中任务固定优先展示，结束历史默认展开且可手动折叠，每行固定按状态灯、标题、原始状态值和详情按钮排列；右上角入口在 rail 收起时显示活动数。列表即使收起也会预加载，并在父会话或任一 child 活动时每 5 秒刷新，全部终态后退避到 30 秒，轮询也作为重连或丢事件的兜底；抽屉只在所选 child 活动时持续刷新，终态只做一次确认。查询不再调用 agent 的 `subagents list` 工具，因此不需要旧 patch 049，也不会计入 agent tool-loop。
 
-Subagent 详情的 Token 用量不使用 `sessions.list.totalTokens`，因为该字段是上下文快照而非生命周期消耗。详情打开时通过专用 `cowork:subTask:details` IPC 读取该 subagent 的 `sessions.usage` 原始 transcript 聚合，按每个 assistant 模型请求实际返回的 `usage` 累计输入、输出、缓存读取和缓存写入；“总 Token”严格等于这四项之和。tool-only 与控制类 assistant 轮次会计入；当前 transcript 不持久化上下文压缩和 exec review 请求的 `usage`，因此这两类请求尚不在详情累计中。读取失败时保留上一次完整结果，不展示部分累计值。
+Subagent 详情的 Token 用量不使用 `sessions.list.totalTokens`，因为该字段是上下文快照而非当前实例累计消耗。详情打开时通过专用 `cowork:subTask:details` IPC 按 `taskId` 组合 `tasks.get`、`sessions.describe` 和 `sessions.usage`：完整 prompt 和 task terminal outcome 来自 task，精确 session 身份、当前重激活状态及累计运行时长来自 session row，Token 与实际请求模型来自当前 instance usage。每轮状态刷新都读取轻量 session lifecycle；仅当 session revision 不旧于 task 时才覆盖 task 终态。传入 `taskId` 后 task 查询或身份校验失败必须整体失败，不能退化为调用方所给 `sessionKey` 的未验证详情。当前子任务弹框不展示消息计数，因此不能为每次 Token 刷新全量读取 history。“总 Token”使用 OpenClaw canonical total，四项仅作为 breakdown，二者不要求相等。queued 任务没有 `startedAt` 时不显示开始时间或运行时长；重新激活进入 pending/running 时，Main 与 Renderer 都必须清除上一代 terminal 字段，并以 Gateway `runtimeMs` 快照加本地采样后增量连续显示累计运行时长。Renderer 使用请求代次拒绝事件前或同毫秒乱序的旧生命周期响应。读取失败时保留上一次完整结果并明确标记刷新失败。
 
 父会话运行状态聚合真实主运行、活动后代，以及 Goal `Continuing` / `Retrying` 调度阶段；`mainRunning` 与 `subagentRunning` 保留各自含义，父 row 的后代活动字段不能算作主运行。停止按钮和列表圆环消费同一聚合态，独立手动压缩在本地请求期间也保留取消入口。完成通知、工具卡和抽屉必须按 parent/session/run identity 归属，迟到 announce 不能写入另一 turn。该 UI 聚合规则不替代 Gateway 的 terminal guard：前者决定展示 active，后者保证 required child 未被父模型处理时 run 本身不会静默结束。
 

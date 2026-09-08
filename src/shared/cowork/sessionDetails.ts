@@ -7,10 +7,16 @@ export interface SessionDetailTokenUsage {
   cacheWrite: number;
 }
 
-export const isSessionDetailModelVisible = (value: string): boolean =>
-  !isGatewayInjectedModelRef(value);
+export const isSessionDetailModelVisible = (value: string): boolean => {
+  const normalized = value.trim().toLowerCase();
+  return (
+    !isGatewayInjectedModelRef(value) &&
+    normalized !== 'delivery-mirror' &&
+    normalized !== 'openclaw/delivery-mirror'
+  );
+};
 
-/** Displayed total: the four visible token categories must add up exactly. */
+/** Fallback total for providers that do not report a canonical aggregate. */
 export const sumSessionDetailTokenUsage = (usage: SessionDetailTokenUsage): number =>
   usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
 
@@ -28,6 +34,7 @@ export interface SessionDetailStats {
   tokenUsage: SessionDetailTokenUsage;
   totalTokens: number;
   hasTokenUsage: boolean;
+  lastActivity?: number;
 }
 
 export type CoworkSessionDetailsResult<TSession> =

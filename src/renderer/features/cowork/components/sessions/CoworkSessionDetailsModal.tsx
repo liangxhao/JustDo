@@ -52,6 +52,8 @@ const formatDateTime = (timestamp: number): string =>
 const formatNumber = (value: number): string =>
   value.toLocaleString(i18nService.getLanguage() === 'zh' ? 'zh-CN' : 'en-US');
 
+const ACTIVE_SESSION_DETAILS_REFRESH_MS = 5_000;
+
 const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
   sessionSummary,
   groups,
@@ -64,6 +66,8 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
   const [gatewaySessionId, setGatewaySessionId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
+  const [refreshFailed, setRefreshFailed] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const [isTotalTokenUsageOpen, setIsTotalTokenUsageOpen] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -85,10 +89,13 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
 
   useEffect(() => {
     let cancelled = false;
+    let nextRefreshTimer: number | undefined;
     const isInitialLoad = !hasLoadedRef.current;
     if (isInitialLoad) {
       setIsLoading(true);
       setLoadFailed(false);
+    } else {
+      setIsRefreshing(true);
     }
 
     const refreshTimer = setTimeout(
@@ -103,15 +110,27 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
               setStats(result.stats);
               setGatewaySessionId(result.gatewaySessionId ?? null);
               setLoadFailed(false);
+              setRefreshFailed(false);
             } else if (isInitialLoad) {
               setLoadFailed(true);
+            } else {
+              setRefreshFailed(true);
             }
           })
           .catch(() => {
             if (!cancelled && isInitialLoad) setLoadFailed(true);
+            else if (!cancelled) setRefreshFailed(true);
           })
           .finally(() => {
-            if (!cancelled && isInitialLoad) setIsLoading(false);
+            if (cancelled) return;
+            if (isInitialLoad) setIsLoading(false);
+            else setIsRefreshing(false);
+            if (isRuntimeRunning) {
+              nextRefreshTimer = window.setTimeout(
+                () => setReloadKey(value => value + 1),
+                ACTIVE_SESSION_DETAILS_REFRESH_MS,
+              );
+            }
           });
       },
       isInitialLoad ? 0 : 250,
@@ -120,6 +139,7 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
     return () => {
       cancelled = true;
       clearTimeout(refreshTimer);
+      if (nextRefreshTimer !== undefined) window.clearTimeout(nextRefreshTimer);
     };
   }, [isRuntimeRunning, reloadKey, sessionSummary.id, sessionSummary.updatedAt]);
 
@@ -302,6 +322,22 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
 
           {!isLoading && session && stats && (
             <div className="space-y-5">
+              {refreshFailed && (
+                <div
+                  className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-300"
+                  role="status"
+                >
+                  <span>{i18nService.t('sessionDetailsRefreshFailed')}</span>{' '}
+                  <button
+                    type="button"
+                    onClick={retry}
+                    disabled={isRefreshing}
+                    className="font-medium underline underline-offset-2 hover:no-underline disabled:opacity-50"
+                  >
+                    {i18nService.t('sessionDetailsRetry')}
+                  </button>
+                </div>
+              )}
               <section>
                 <h3 className="mb-2 text-xs font-semibold text-secondary">
                   {i18nService.t('sessionDetailsSummary')}

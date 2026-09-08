@@ -9,6 +9,7 @@ vi.mock('electron', () => ({
 }));
 
 import {
+  createRevisionedSessionHistoryLoader,
   createSingleFlightTtlLookup,
   loadCoworkSessionDetails,
   queryGatewaySession,
@@ -41,6 +42,7 @@ describe('loadCoworkSessionDetails', () => {
       cacheRead: 4,
       cacheWrite: 0,
       totalTokens: 41,
+      lastActivity: 500,
       messageCounts: { total: 4, user: 2, assistant: 2, toolCalls: 1 },
       modelUsage: [
         { provider: 'openai', model: 'gpt-5', count: 1 },
@@ -65,10 +67,17 @@ describe('loadCoworkSessionDetails', () => {
           }) as never,
         getRuntime: () => null,
         getGatewaySessionUsage,
+        getGatewaySessionHistory: vi.fn().mockResolvedValue([
+          { role: 'user', content: 'First visible prompt' },
+          { role: 'assistant', content: 'First answer' },
+          { role: 'user', content: 'Follow-up' },
+          { role: 'assistant', content: 'Second answer' },
+        ]),
         lookupGatewaySession: vi.fn().mockResolvedValue({
           session: {
             key: 'agent:main:justdo:local-session-1',
             sessionId: 'gateway-session-1',
+            lastActivityAt: 600,
             modelProvider: 'openai',
             model: 'gpt-5',
           },
@@ -81,18 +90,23 @@ describe('loadCoworkSessionDetails', () => {
       success: true,
       gatewaySessionId: 'gateway-session-1',
       stats: {
-        summary: null,
+        summary: 'First visible prompt',
         messageCount: 4,
         userMessageCount: 2,
         assistantMessageCount: 2,
-        toolCallCount: 1,
+        toolCallCount: 0,
         models: ['openai/gpt-5', 'anthropic/claude-sonnet-4'],
         tokenUsage: { input: 30, output: 3, cacheRead: 4, cacheWrite: 0 },
-        totalTokens: 37,
+        totalTokens: 41,
         hasTokenUsage: true,
+        lastActivity: 500,
       },
+      session: { updatedAt: 600 },
     });
-    expect(getGatewaySessionUsage).toHaveBeenCalledWith('agent:main:justdo:local-session-1');
+    expect(getGatewaySessionUsage).toHaveBeenCalledWith(
+      'agent:main:justdo:local-session-1',
+      600,
+    );
   });
 
   it('reports Gateway statistics as unavailable instead of manufacturing local zeros', async () => {
@@ -121,6 +135,58 @@ describe('loadCoworkSessionDetails', () => {
     expect(result).toEqual({ success: false, error: 'offline' });
   });
 
+  it('does not relabel raw usage counts as visible messages when history fails', async () => {
+    const result = await loadCoworkSessionDetails(
+      {
+        getCoworkStore: () => ({ getSession: () => localSession }) as never,
+        getCoworkEngineRouter: () => ({}) as never,
+        getRuntime: () => null,
+        getGatewaySessionUsage: vi.fn().mockResolvedValue({
+          totalTokens: 10,
+          messageCounts: { total: 99, user: 40, assistant: 59 },
+        }),
+        getGatewaySessionHistory: vi.fn().mockRejectedValue(new Error('history offline')),
+        lookupGatewaySession: vi.fn().mockResolvedValue({
+          session: {
+            key: 'agent:main:justdo:local-session-1',
+            sessionId: 'gateway-session-1',
+          },
+        }),
+      },
+      localSession.id,
+    );
+
+    expect(result).toEqual({ success: false, error: 'history offline' });
+  });
+
+  it('does not reuse a stable usage discriminator while the session is active', async () => {
+    const getGatewaySessionUsage = vi.fn().mockResolvedValue({});
+    const result = await loadCoworkSessionDetails(
+      {
+        getCoworkStore: () => ({ getSession: () => localSession }) as never,
+        getCoworkEngineRouter: () => ({}) as never,
+        getRuntime: () => null,
+        getGatewaySessionUsage,
+        getGatewaySessionHistory: vi.fn().mockResolvedValue([]),
+        lookupGatewaySession: vi.fn().mockResolvedValue({
+          session: {
+            key: 'agent:main:justdo:local-session-1',
+            sessionId: 'gateway-session-1',
+            updatedAt: 600,
+            hasActiveRun: true,
+          },
+        }),
+      },
+      localSession.id,
+    );
+
+    expect(result.success).toBe(true);
+    expect(getGatewaySessionUsage).toHaveBeenCalledWith(
+      'agent:main:justdo:local-session-1',
+      undefined,
+    );
+  });
+
   it('reports statistics as unavailable when the Gateway session cannot be resolved', async () => {
     const result = await loadCoworkSessionDetails(
       {
@@ -139,6 +205,49 @@ describe('loadCoworkSessionDetails', () => {
     );
 
     expect(result).toEqual({ success: false, error: 'Gateway offline' });
+  });
+});
+
+describe('createRevisionedSessionHistoryLoader', () => {
+  it('reuses one full-history read until the Gateway session revision changes', async () => {
+    const loader = vi.fn().mockResolvedValue([{ role: 'user', content: 'Question' }]);
+    const cached = createRevisionedSessionHistoryLoader(loader);
+
+    await expect(cached('agent:main:one', 'session-one', 10)).resolves.toHaveLength(1);
+    await expect(cached('agent:main:one', 'session-one', 10)).resolves.toHaveLength(1);
+    await expect(cached('agent:main:one', 'session-one', 11)).resolves.toHaveLength(1);
+
+    expect(loader).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not retain a rejected history read', async () => {
+    const loader = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('temporary'))
+      .mockResolvedValueOnce([]);
+    const cached = createRevisionedSessionHistoryLoader(loader);
+
+    await expect(cached('agent:main:one', 'session-one', 10)).rejects.toThrow('temporary');
+    await expect(cached('agent:main:one', 'session-one', 10)).resolves.toEqual([]);
+    expect(loader).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not retain a null history result', async () => {
+    const loader = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce([]);
+    const cached = createRevisionedSessionHistoryLoader(loader);
+
+    await expect(cached('agent:main:one', 'session-one', 10)).resolves.toBeNull();
+    await expect(cached('agent:main:one', 'session-one', 10)).resolves.toEqual([]);
+    expect(loader).toHaveBeenCalledTimes(2);
+  });
+
+  it('bypasses the revision cache for active sessions', async () => {
+    const loader = vi.fn().mockResolvedValue([]);
+    const cached = createRevisionedSessionHistoryLoader(loader);
+
+    await cached('agent:main:one', 'session-one', undefined);
+    await cached('agent:main:one', 'session-one', undefined);
+    expect(loader).toHaveBeenCalledTimes(2);
   });
 });
 

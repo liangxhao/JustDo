@@ -162,6 +162,8 @@ export type OpenClawChatHistoryResultV2026_9_2 = {
   messages: unknown[];
   hasMore: boolean;
   nextOffset?: number;
+  totalMessages?: number;
+  deltaCursor?: string;
 };
 
 export const parseChatHistoryResultV2026_9_2 = (
@@ -175,6 +177,11 @@ export const parseChatHistoryResultV2026_9_2 = (
   }
   const hasMore = value.hasMore === true;
   const nextOffset = optionalNonNegativeInteger(value.nextOffset, 'chat.history nextOffset');
+  const totalMessages = optionalNonNegativeInteger(
+    value.totalMessages,
+    'chat.history totalMessages',
+  );
+  const deltaCursor = optionalString(value.deltaCursor, 'chat.history deltaCursor');
   if (hasMore && nextOffset === undefined) {
     throw new Error(`${OPENCLAW_WIRE_VERSION} chat.history omitted nextOffset for a partial page`);
   }
@@ -182,7 +189,30 @@ export const parseChatHistoryResultV2026_9_2 = (
     messages: value.messages,
     hasMore,
     ...(nextOffset !== undefined ? { nextOffset } : {}),
+    ...(totalMessages !== undefined ? { totalMessages } : {}),
+    ...(deltaCursor !== undefined ? { deltaCursor } : {}),
   };
+};
+
+export type OpenClawChatHistoryCursorResultV2026_9_2 =
+  | { kind: 'reset' }
+  | { kind: 'delta'; messages: unknown[]; deltaCursor: string };
+
+export const parseChatHistoryCursorResultV2026_9_2 = (
+  value: unknown,
+): OpenClawChatHistoryCursorResultV2026_9_2 => {
+  if (!isRecord(value)) {
+    throw new Error(`${OPENCLAW_WIRE_VERSION} chat.history cursor returned an invalid payload`);
+  }
+  if (value.kind === 'reset') return { kind: 'reset' };
+  if (value.kind !== 'delta' || !Array.isArray(value.messages)) {
+    throw new Error(`${OPENCLAW_WIRE_VERSION} chat.history cursor returned an invalid outcome`);
+  }
+  const deltaCursor = optionalString(value.deltaCursor, 'chat.history cursor deltaCursor');
+  if (deltaCursor === undefined) {
+    throw new Error(`${OPENCLAW_WIRE_VERSION} chat.history delta omitted deltaCursor`);
+  }
+  return { kind: 'delta', messages: value.messages, deltaCursor };
 };
 
 export type OpenClawHistoryDetailsResultV2026_9_2 = {
@@ -244,9 +274,15 @@ export const OPENCLAW_TASK_STATUSES_V2026_9_2 = [
 export type OpenClawTaskStatusV2026_9_2 =
   (typeof OPENCLAW_TASK_STATUSES_V2026_9_2)[number];
 
+export const OPENCLAW_TASK_TERMINAL_OUTCOMES_V2026_9_2 = ['succeeded', 'blocked'] as const;
+
+export type OpenClawTaskTerminalOutcomeV2026_9_2 =
+  (typeof OPENCLAW_TASK_TERMINAL_OUTCOMES_V2026_9_2)[number];
+
 export type OpenClawTaskSummaryV2026_9_2 = {
   id: string;
   status: OpenClawTaskStatusV2026_9_2;
+  terminalOutcome?: OpenClawTaskTerminalOutcomeV2026_9_2;
   runtime?: string;
   kind?: string;
   title?: string;
@@ -292,6 +328,15 @@ export const parseTaskSummaryV2026_9_2 = (
   ) {
     throw new Error(`${OPENCLAW_WIRE_VERSION} ${field} has an invalid status`);
   }
+  if (
+    value.terminalOutcome !== undefined &&
+    (typeof value.terminalOutcome !== 'string' ||
+      !OPENCLAW_TASK_TERMINAL_OUTCOMES_V2026_9_2.includes(
+        value.terminalOutcome as OpenClawTaskTerminalOutcomeV2026_9_2,
+      ))
+  ) {
+    throw new Error(`${OPENCLAW_WIRE_VERSION} ${field} has an invalid terminalOutcome`);
+  }
   const strings = Object.fromEntries(
     [
       'runtime',
@@ -318,6 +363,9 @@ export const parseTaskSummaryV2026_9_2 = (
     ...value,
     id: value.id,
     status: value.status as OpenClawTaskStatusV2026_9_2,
+    ...(value.terminalOutcome
+      ? { terminalOutcome: value.terminalOutcome as OpenClawTaskTerminalOutcomeV2026_9_2 }
+      : {}),
     ...strings,
     createdAt: parseTaskTimestamp(value.createdAt, `${field}.createdAt`),
     updatedAt: parseTaskTimestamp(value.updatedAt, `${field}.updatedAt`),

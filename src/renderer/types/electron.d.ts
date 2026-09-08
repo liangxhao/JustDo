@@ -845,13 +845,15 @@ interface IElectronAPI {
         sessionId?: string;
         label: string;
         labelSource: 'taskName' | 'label' | 'task';
-        status: 'pending' | 'running' | 'done' | 'failed' | 'killed' | 'timeout';
+        status: 'pending' | 'running' | 'done' | 'failed' | 'killed' | 'timeout' | 'blocked';
         task?: string;
+        runId?: string;
         model?: string;
         startedAt?: number;
         updatedAt?: number;
         endedAt?: number;
         runtimeMs?: number;
+        runtimeSampledAt?: number;
         totalTokens?: number;
         progressSummary?: string;
         terminalSummary?: string;
@@ -861,7 +863,10 @@ interface IElectronAPI {
         toolUseCount?: number;
       }>;
     }>;
-    getSubTaskDetails: (sessionKey: string) => Promise<CoworkSubagentDetailsResult>;
+    getSubTaskDetails: (
+      sessionKey: string,
+      taskId?: string,
+    ) => Promise<CoworkSubagentDetailsResult>;
     listSubTaskDescendants: (sessionId: string) => Promise<CoworkSubagentDescendantsResult>;
     onSubtasksChanged: (callback: (event: CoworkSubtaskChangedEvent) => void) => () => void;
   };

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { coworkService } from '@/features/cowork/coworkService';
@@ -10,6 +10,7 @@ import CoworkSessionDetailsModal from './CoworkSessionDetailsModal';
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -98,17 +99,103 @@ describe('CoworkSessionDetailsModal', () => {
     const aggregateTokensButton = screen.getByRole('button', { name: '汇总 Token' });
     expect(aggregateTokensButton).toBeTruthy();
     expect(aggregateTokensButton.getAttribute('title')).toBe(
-      '统计主会话与所有 Subagent 的 Token 总量',
+      '统计主会话与所有 Subagent 当前 Session 实例的 Token 总量',
     );
     expect(screen.getByText('154')).toBeTruthy();
     expect(screen.getByText('100')).toBeTruthy();
     const tokenScopeNote = screen.getByText(
-      '仅统计普通会话，不含上下文压缩、权限审批 Review 等其他模型请求。',
+      '统计当前 Session 实例的普通对话，不含压缩与审批 Review；总量可能不等于分项之和。',
     );
     expect(tokenScopeNote.className).toContain('text-right');
     expect(tokenScopeNote.className).toContain('text-[10px]');
 
     fireEvent.click(screen.getByRole('button', { name: '复制 Session ID' }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('gateway-session-id'));
+  });
+
+  it('schedules an active refresh only after the previous request settles', async () => {
+    i18nService.setLanguage('en', { persist: false });
+    vi.useFakeTimers();
+    let resolveDetails:
+      | ((value: Awaited<ReturnType<typeof coworkService.getSessionDetails>>) => void)
+      | undefined;
+    const pendingDetails = new Promise<
+      Awaited<ReturnType<typeof coworkService.getSessionDetails>>
+    >(resolve => {
+      resolveDetails = resolve;
+    });
+    const details = {
+      session: {
+        id: 'local-session-id',
+        title: 'Session title',
+        status: 'running' as const,
+        pinned: false,
+        cwd: 'E:\\workspace',
+        executionMode: 'local' as const,
+        permissionMode: 'full' as const,
+        activeSkillIds: [],
+        agentId: 'main',
+        createdAt: 1_000,
+        updatedAt: 2_000,
+      },
+      stats: {
+        summary: null,
+        messageCount: 0,
+        userMessageCount: 0,
+        assistantMessageCount: 0,
+        toolCallCount: 0,
+        models: [],
+        tokenUsage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        totalTokens: 0,
+        hasTokenUsage: false,
+      },
+    };
+    const getSessionDetails = vi
+      .spyOn(coworkService, 'getSessionDetails')
+      .mockReturnValueOnce(pendingDetails)
+      .mockResolvedValue(details);
+
+    render(
+      <CoworkSessionDetailsModal
+        sessionSummary={{
+          id: 'local-session-id',
+          title: 'Session title',
+          status: 'running',
+          pinned: false,
+          createdAt: 1_000,
+          updatedAt: 2_000,
+        }}
+        groups={[]}
+        isRuntimeRunning
+        onClose={vi.fn()}
+      />,
+    );
+
+    await act(async () => {
+      vi.advanceTimersByTime(0);
+      await Promise.resolve();
+    });
+    expect(getSessionDetails).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      vi.advanceTimersByTime(30_000);
+      await Promise.resolve();
+    });
+    expect(getSessionDetails).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveDetails?.(details);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(250);
+      await Promise.resolve();
+    });
+    expect(getSessionDetails).toHaveBeenCalledTimes(2);
   });
 });

@@ -6,7 +6,11 @@ import {
   type CoworkSubagentDetailsResult,
 } from '../../../shared/cowork/subagentDetails';
 import type { OpenClawRuntimeAdapter } from '../../engine';
-import { listGatewaySubagentDescendants } from '../../engine/openclaw/subagentGateway';
+import {
+  type GatewaySubagent,
+  getGatewaySubagentDetails,
+  listGatewaySubagentDescendants,
+} from '../../engine/openclaw/subagentGateway';
 import {
   buildGatewaySessionDetailStats,
   type GatewaySessionUsageLoader,
@@ -21,21 +25,42 @@ interface Dependencies {
 export const loadCoworkSubagentDetails = async (
   loadSessionUsage: GatewaySessionUsageLoader | undefined,
   sessionKey: unknown,
+  options: {
+    taskId?: unknown;
+    loadSubagent?: (taskId: string) => Promise<GatewaySubagent | null>;
+  } = {},
 ): Promise<CoworkSubagentDetailsResult> => {
   const normalizedSessionKey = typeof sessionKey === 'string' ? sessionKey.trim() : '';
+  const normalizedTaskId = typeof options.taskId === 'string' ? options.taskId.trim() : '';
   if (!normalizedSessionKey) return { success: false, error: 'Session key is required' };
   if (!loadSessionUsage) {
     return { success: false, error: 'Gateway usage is not available' };
   }
   try {
-    const stats = buildGatewaySessionDetailStats(
-      await loadSessionUsage(normalizedSessionKey),
-      null,
-    );
+    if (normalizedTaskId && !options.loadSubagent) {
+      return { success: false, error: 'Gateway task details are not available' };
+    }
+    const subagent = normalizedTaskId ? await options.loadSubagent!(normalizedTaskId) : null;
+    if (normalizedTaskId && !subagent) {
+      return { success: false, error: 'Subagent task was not found' };
+    }
+    if (subagent && subagent.sessionKey !== normalizedSessionKey) {
+      return { success: false, error: 'Task does not belong to the requested session' };
+    }
+    // Session updatedAt advances at run boundaries rather than for each usage
+    // change. Active tasks must use a fresh discriminator on every poll so the
+    // Gateway's outer stale-while-revalidate cache cannot freeze live totals.
+    const usageRevision =
+      subagent?.status === 'pending' || subagent?.status === 'running'
+        ? undefined
+        : subagent?.updatedAt;
+    const usage = await loadSessionUsage(normalizedSessionKey, usageRevision);
+    const stats = buildGatewaySessionDetailStats(usage, null);
     if (!stats) return { success: false, error: 'Subagent usage is not available' };
     return {
       success: true,
       stats,
+      ...(subagent ? { subagent } : {}),
     };
   } catch (error) {
     return {
@@ -65,15 +90,21 @@ export const registerCoworkSubtaskHandlers = ({
 
   ipcMain.handle(
     CoworkSubagentDetailsIpc.Get,
-    async (_event, sessionKey: unknown): Promise<CoworkSubagentDetailsResult> => {
+    async (_event, sessionKey: unknown, taskId: unknown): Promise<CoworkSubagentDetailsResult> => {
+      const runtime = getRuntime();
+      const client = runtime?.getGatewayClient();
       const loadSessionUsage =
         getGatewaySessionUsage ??
-        (async (key: string) => {
-          const client = getRuntime()?.getGatewayClient();
+        (async (key: string, revision?: number) => {
           if (!client) throw new Error('Gateway client not connected');
-          return requestGatewaySessionUsage(client, key);
+          return requestGatewaySessionUsage(client, key, {
+            cacheDiscriminator: revision,
+          });
         });
-      return loadCoworkSubagentDetails(loadSessionUsage, sessionKey);
+      return loadCoworkSubagentDetails(loadSessionUsage, sessionKey, {
+        taskId,
+        ...(client ? { loadSubagent: (id: string) => getGatewaySubagentDetails(client, id) } : {}),
+      });
     },
   );
 

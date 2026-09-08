@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 
 import {
+  parseChatHistoryCursorResultV2026_9_2,
   parseChatHistoryResultV2026_9_2,
   parseHistoryDetailsResultV2026_9_2,
   parseSessionsListResultV2026_9_2,
@@ -20,6 +21,7 @@ describe('OpenClaw v2026.9.2 wire validators', () => {
           runtime: 'subagent',
           kind: 'subagent',
           status: 'completed',
+          terminalOutcome: 'blocked',
           title: 'Research complete',
           sessionKey: 'agent:main:justdo:parent',
           childSessionKey: 'agent:researcher:justdo:child',
@@ -41,6 +43,7 @@ describe('OpenClaw v2026.9.2 wire validators', () => {
     expect(page.tasks[0]).toMatchObject({
       id: 'task-1',
       status: 'completed',
+      terminalOutcome: 'blocked',
       ownerKey: 'agent:main:justdo:parent',
       updatedAt: 180,
       toolUseCount: 4,
@@ -65,17 +68,52 @@ describe('OpenClaw v2026.9.2 wire validators', () => {
     }
   });
 
+  test('rejects unknown task terminal outcomes', () => {
+    expect(() =>
+      parseTasksListResultV2026_9_2({
+        tasks: [{ id: 'task-1', status: 'completed', terminalOutcome: 'failed' }],
+      }),
+    ).toThrow('invalid terminalOutcome');
+  });
+
   test('validates history and session pagination instead of guessing malformed pages', () => {
     expect(
       parseChatHistoryResultV2026_9_2({
         messages: [{ role: 'assistant', content: 'done' }],
         hasMore: true,
         nextOffset: 50,
+        totalMessages: 75,
+        deltaCursor: 'cursor-1',
       }),
-    ).toMatchObject({ hasMore: true, nextOffset: 50 });
+    ).toMatchObject({
+      hasMore: true,
+      nextOffset: 50,
+      totalMessages: 75,
+      deltaCursor: 'cursor-1',
+    });
     expect(() =>
       parseChatHistoryResultV2026_9_2({ messages: [], hasMore: true }),
     ).toThrow('omitted nextOffset');
+    expect(() =>
+      parseChatHistoryResultV2026_9_2({
+        messages: [],
+        totalMessages: -1,
+      }),
+    ).toThrow('totalMessages');
+
+    expect(
+      parseChatHistoryCursorResultV2026_9_2({
+        kind: 'delta',
+        messages: [{ role: 'assistant' }],
+        deltaCursor: 'cursor-2',
+      }),
+    ).toMatchObject({ kind: 'delta', deltaCursor: 'cursor-2' });
+    expect(parseChatHistoryCursorResultV2026_9_2({ kind: 'reset' })).toEqual({
+      kind: 'reset',
+    });
+    expect(() =>
+      parseChatHistoryCursorResultV2026_9_2({ kind: 'delta', messages: [] }),
+    ).toThrow('omitted deltaCursor');
 
     expect(
       parseSessionsListResultV2026_9_2({

@@ -18,6 +18,7 @@ import { resolveSubagentPollInterval } from './subagentPolling';
 import SubagentTokenUsage from './SubagentTokenUsage';
 import {
   isActiveSubtask,
+  mergeSubtaskSnapshots,
   partitionSubtasks,
   resolveSubtaskElapsedMs,
   type Subtask,
@@ -61,6 +62,8 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
   const [detailSubtask, setDetailSubtask] = useState<Subtask | null>(null);
   const [detailStats, setDetailStats] = useState<SessionDetailStats>();
   const [isDetailStatsLoading, setIsDetailStatsLoading] = useState(false);
+  const [detailStatsFailed, setDetailStatsFailed] = useState(false);
+  const [detailReloadKey, setDetailReloadKey] = useState(0);
   const [clock, setClock] = useState(Date.now());
   const detailDialogRef = useRef<HTMLDivElement>(null);
   const detailCloseButtonRef = useRef<HTMLButtonElement>(null);
@@ -72,6 +75,7 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
   const refreshPendingRef = useRef(false);
   const refreshRef = useRef<(force?: boolean) => void>(() => undefined);
   const refreshGenerationRef = useRef(0);
+  const lifecycleRequestSequenceRef = useRef(0);
   const mountedRef = useRef(false);
   const detailStatsSessionKeyRef = useRef<string>();
   const detailStatsRef = useRef<SessionDetailStats>();
@@ -94,11 +98,18 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
   const refresh = useCallback(
     async (force = false) => {
       if (refreshInFlightRef.current?.sessionId === sessionId) {
-        if (force) refreshPendingRef.current = true;
+        if (force) {
+          refreshPendingRef.current = true;
+          // The in-flight response predates the event that requested a forced
+          // refresh. Let it settle only to start the queued authoritative read;
+          // it must not close the current detail dialog or replace the list.
+          refreshGenerationRef.current += 1;
+        }
         return;
       }
       refreshPendingRef.current = false;
       const refreshToken = { sessionId, generation: ++refreshGenerationRef.current };
+      const lifecycleRequestSequence = ++lifecycleRequestSequenceRef.current;
       refreshInFlightRef.current = refreshToken;
       setIsLoading(true);
       try {
@@ -109,7 +120,8 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
           result.success &&
           mountedRef.current &&
           sessionIdRef.current === sessionId &&
-          refreshInFlightRef.current === refreshToken
+          refreshInFlightRef.current === refreshToken &&
+          refreshGenerationRef.current === refreshToken.generation
         ) {
           const nextSubtasks = (result.subagents as Subtask[] | undefined) ?? [];
           const normalizedSubtasks = nextSubtasks.map(subtask => {
@@ -117,7 +129,7 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
               label: subtask.label,
               labelSource: subtask.labelSource,
             });
-            return { ...subtask, ...resolved };
+            return { ...subtask, ...resolved, lifecycleRequestSequence };
           });
           subtaskLabelsRef.current = new Map(
             normalizedSubtasks.map(subtask => [
@@ -128,7 +140,12 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
           setSubtasks(normalizedSubtasks);
           setDetailSubtask(current =>
             current
-              ? (normalizedSubtasks.find(subtask => subtask.id === current.id) ?? null)
+              ? (() => {
+                  const latest = normalizedSubtasks.find(subtask => subtask.id === current.id);
+                  return latest
+                    ? mergeSubtaskSnapshots(current, latest, { preserveCurrentTask: true })
+                    : null;
+                })()
               : null,
           );
           onSubtasksChange?.(normalizedSubtasks);
@@ -137,12 +154,17 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
         } else if (
           !result.success &&
           mountedRef.current &&
-          refreshInFlightRef.current === refreshToken
+          refreshInFlightRef.current === refreshToken &&
+          refreshGenerationRef.current === refreshToken.generation
         ) {
           setHasLoadError(true);
         }
       } catch {
-        if (mountedRef.current && refreshInFlightRef.current === refreshToken) {
+        if (
+          mountedRef.current &&
+          refreshInFlightRef.current === refreshToken &&
+          refreshGenerationRef.current === refreshToken.generation
+        ) {
           setHasLoadError(true);
         }
       } finally {
@@ -219,46 +241,66 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
 
   useEffect(() => {
     const sessionKey = detailSubtask?.sessionKey;
+    const taskId = detailSubtask?.id;
     if (!sessionKey) {
       detailStatsSessionKeyRef.current = undefined;
       detailStatsRef.current = undefined;
       setDetailStats(undefined);
       setIsDetailStatsLoading(false);
+      setDetailStatsFailed(false);
       return;
     }
 
     let cancelled = false;
     let refreshInFlight = false;
     let retryTimer: number | undefined;
-    const isNewSession = detailStatsSessionKeyRef.current !== sessionKey;
-    detailStatsSessionKeyRef.current = sessionKey;
-    if (isNewSession) {
+    const detailIdentity = `${taskId ?? ''}:${sessionKey}`;
+    const isNewTask = detailStatsSessionKeyRef.current !== detailIdentity;
+    detailStatsSessionKeyRef.current = detailIdentity;
+    if (isNewTask) {
       detailStatsRef.current = undefined;
       setDetailStats(undefined);
       setIsDetailStatsLoading(true);
+      setDetailStatsFailed(false);
     }
-    let hasCompleteStats = detailStatsRef.current !== undefined;
     const isActive = isActiveSubtask(detailSubtask.status);
     const refreshDetails = async (attempt = 0): Promise<void> => {
       if (refreshInFlight) return;
       refreshInFlight = true;
+      const lifecycleRequestSequence = ++lifecycleRequestSequenceRef.current;
       let succeeded = false;
       try {
-        const result = await window.electron.cowork.getSubTaskDetails(sessionKey);
+        const result = await window.electron.cowork.getSubTaskDetails(sessionKey, taskId);
         if (!cancelled && result.success) {
           succeeded = true;
-          hasCompleteStats = true;
           detailStatsRef.current = result.stats;
           setDetailStats(result.stats);
+          setDetailStatsFailed(false);
+          if (result.subagent) {
+            setDetailSubtask(current => {
+              if (!current || current.id !== result.subagent?.id) return current;
+              return mergeSubtaskSnapshots(current, {
+                ...result.subagent,
+                lifecycleRequestSequence,
+                ...reconcileSubagentLabel(
+                  { label: current.label, labelSource: current.labelSource },
+                  {
+                    label: result.subagent.label,
+                    labelSource: result.subagent.labelSource,
+                  },
+                ),
+              });
+            });
+          }
         }
       } catch {
         // Preserve the last complete lifetime total until the next refresh.
       } finally {
         refreshInFlight = false;
         const willRetry = !succeeded && !isActive && attempt < 2;
-        const waitingForActiveRefresh = !succeeded && isActive && !hasCompleteStats;
-        if (!cancelled && !willRetry && !waitingForActiveRefresh) {
+        if (!cancelled && !willRetry) {
           setIsDetailStatsLoading(false);
+          if (!succeeded) setDetailStatsFailed(true);
         }
       }
       if (!cancelled && !succeeded && !isActive && attempt < 2) {
@@ -272,7 +314,7 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
       if (timer !== undefined) window.clearInterval(timer);
     };
-  }, [detailSubtask?.sessionKey, detailSubtask?.status]);
+  }, [detailReloadKey, detailSubtask?.id, detailSubtask?.sessionKey, detailSubtask?.status]);
 
   useEffect(() => {
     if (!detailSessionKey) return;
@@ -345,6 +387,10 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
         [i18nService.t('subtaskInfoTask'), detailSubtask.task],
         [i18nService.t('subtaskInfoModel'), detailSubtask.model],
         [
+          i18nService.t('subtaskInfoRequestedModels'),
+          detailStats?.models.length ? detailStats.models.join('\n') : undefined,
+        ],
+        [
           i18nService.t('subtaskInfoDuration'),
           formatDuration(resolveSubtaskElapsedMs(detailSubtask, clock)),
         ],
@@ -392,7 +438,9 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
         >
           {subtask.label}
         </button>
-        <span className="shrink-0 text-xs text-secondary">{subtask.status}</span>
+        <span className="shrink-0 text-xs text-secondary">
+          {i18nService.t(SUBTASK_STATUS_I18N_KEYS[subtask.status])}
+        </span>
         <button
           type="button"
           className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted opacity-70 transition-colors hover:bg-surface hover:text-foreground group-hover:opacity-100"
@@ -562,6 +610,25 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
                 ×
               </button>
             </div>
+            {detailStatsFailed && (
+              <div
+                className="border-b border-amber-500/30 bg-amber-500/5 px-5 py-2 text-xs text-amber-700 dark:text-amber-300"
+                role="status"
+              >
+                <span>{i18nService.t('subtaskDetailsRefreshFailed')}</span>{' '}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsDetailStatsLoading(true);
+                    setDetailReloadKey(value => value + 1);
+                  }}
+                  disabled={isDetailStatsLoading}
+                  className="font-medium underline underline-offset-2 hover:no-underline disabled:opacity-50"
+                >
+                  {i18nService.t('sessionDetailsRetry')}
+                </button>
+              </div>
+            )}
             <dl className="max-h-[calc(80vh-4rem)] overflow-y-auto px-5 py-3">
               {detailRows.map(([label, value, copyable]) => (
                 <div

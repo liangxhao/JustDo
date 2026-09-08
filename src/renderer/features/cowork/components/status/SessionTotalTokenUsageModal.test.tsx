@@ -162,12 +162,12 @@ describe('SessionTotalTokenUsageModal', () => {
     });
     vi.spyOn(coworkService, 'getSessionDetails').mockResolvedValue({
       session: null,
-      stats: stats(40, 8, 12, 2),
+      stats: { ...stats(40, 8, 12, 2), totalTokens: 70 },
     });
 
     render(<SessionTotalTokenUsageModal sessionId="parent-1" onClose={vi.fn()} />);
 
-    expect(await screen.findAllByText('62')).toHaveLength(2);
+    expect(await screen.findAllByText('70')).toHaveLength(2);
     expect(screen.getByText('主会话 + 所有 Subagent')).toBeTruthy();
     expect(getSubTaskDetails).not.toHaveBeenCalled();
   });

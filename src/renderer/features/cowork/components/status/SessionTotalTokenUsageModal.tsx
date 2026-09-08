@@ -5,7 +5,6 @@ import {
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import type { SessionDetailTokenUsage } from '@shared/cowork/sessionDetails';
-import { sumSessionDetailTokenUsage } from '@shared/cowork/sessionDetails';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { coworkService } from '@/features/cowork/coworkService';
@@ -23,7 +22,9 @@ interface SessionTotalTokenUsageModalProps {
 
 interface AggregateResult {
   main: SessionDetailTokenUsage;
+  mainTotal: number;
   subagents: SessionDetailTokenUsage;
+  subagentTotal: number;
   subagentCount: number;
   failedSessions: FailedSession[];
 }
@@ -125,6 +126,7 @@ const SessionTotalTokenUsageModal: React.FC<SessionTotalTokenUsageModalProps> = 
 
         const failedSessions: FailedSession[] = [];
         let mainUsage = { ...EMPTY_USAGE };
+        let mainTotal = 0;
         let mainDetails: Awaited<ReturnType<typeof coworkService.getSessionDetails>> | undefined;
         for (let attempt = 0; attempt < 2; attempt += 1) {
           if (cancelled) return;
@@ -141,8 +143,10 @@ const SessionTotalTokenUsageModal: React.FC<SessionTotalTokenUsageModalProps> = 
             // Retry once before recording this session as skipped.
           }
         }
-        if (mainDetails?.stats) mainUsage = mainDetails.stats.tokenUsage;
-        else {
+        if (mainDetails?.stats) {
+          mainUsage = mainDetails.stats.tokenUsage;
+          mainTotal = mainDetails.stats.totalTokens;
+        } else {
           if (!gatewaySessionId) throw new Error('Main Gateway Session ID is unavailable');
           failedSessions.push({
             sessionId: gatewaySessionId,
@@ -154,10 +158,11 @@ const SessionTotalTokenUsageModal: React.FC<SessionTotalTokenUsageModalProps> = 
         setIsRetrying(false);
 
         let subagentUsage = { ...EMPTY_USAGE };
+        let subagentTotal = 0;
         for (let index = 0; index < subagents.length; index += 1) {
           const subagent = subagents[index];
           setCurrentSubagent(subagent.label || `Subagent ${index + 1}`);
-          let detailStats: SessionDetailTokenUsage | undefined;
+          let detailStats: { usage: SessionDetailTokenUsage; totalTokens: number } | undefined;
           for (let attempt = 0; attempt < 2; attempt += 1) {
             if (cancelled) return;
             setIsRetrying(attempt > 0);
@@ -167,7 +172,10 @@ const SessionTotalTokenUsageModal: React.FC<SessionTotalTokenUsageModalProps> = 
               );
               if (cancelled) return;
               if (detailResult.success) {
-                detailStats = detailResult.stats.tokenUsage;
+                detailStats = {
+                  usage: detailResult.stats.tokenUsage,
+                  totalTokens: detailResult.stats.totalTokens,
+                };
                 break;
               }
             } catch {
@@ -175,8 +183,10 @@ const SessionTotalTokenUsageModal: React.FC<SessionTotalTokenUsageModalProps> = 
               // Retry once before recording this session as skipped.
             }
           }
-          if (detailStats) subagentUsage = addUsage(subagentUsage, detailStats);
-          else {
+          if (detailStats) {
+            subagentUsage = addUsage(subagentUsage, detailStats.usage);
+            subagentTotal += detailStats.totalTokens;
+          } else {
             failedSessions.push({
               sessionId: subagent.sessionId,
               label: subagent.label || `Subagent ${index + 1}`,
@@ -189,7 +199,9 @@ const SessionTotalTokenUsageModal: React.FC<SessionTotalTokenUsageModalProps> = 
 
         setResult({
           main: mainUsage,
+          mainTotal,
           subagents: subagentUsage,
+          subagentTotal,
           subagentCount: subagents.length,
           failedSessions,
         });
@@ -215,7 +227,7 @@ const SessionTotalTokenUsageModal: React.FC<SessionTotalTokenUsageModalProps> = 
     () => (result ? addUsage(result.main, result.subagents) : undefined),
     [result],
   );
-  const combinedTotal = combinedUsage ? sumSessionDetailTokenUsage(combinedUsage) : 0;
+  const combinedTotal = result ? result.mainTotal + result.subagentTotal : 0;
 
   const copySessionId = useCallback(async (value: string): Promise<void> => {
     try {
@@ -409,14 +421,8 @@ const SessionTotalTokenUsageModal: React.FC<SessionTotalTokenUsageModalProps> = 
 
               <div className="mt-3 grid grid-cols-3 gap-2">
                 {[
-                  [
-                    i18nService.t('sessionTotalTokensMain'),
-                    sumSessionDetailTokenUsage(result.main),
-                  ],
-                  [
-                    i18nService.t('sessionTotalTokensSubagents'),
-                    sumSessionDetailTokenUsage(result.subagents),
-                  ],
+                  [i18nService.t('sessionTotalTokensMain'), result.mainTotal],
+                  [i18nService.t('sessionTotalTokensSubagents'), result.subagentTotal],
                   [i18nService.t('sessionTotalTokensSubagentCount'), result.subagentCount],
                 ].map(([label, value]) => (
                   <div key={String(label)} className="rounded-xl border border-border px-3 py-2.5">
