@@ -3,13 +3,15 @@ import {
   CheckIcon,
   CubeIcon,
   ExclamationTriangleIcon,
+  EyeIcon,
+  EyeSlashIcon,
   MagnifyingGlassIcon,
   SignalIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { normalizeOpenClawProviderId } from '@shared/providers';
 import { buildOpenAIChatCompletionsUrl } from '@shared/providers/modelDiscovery';
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 import {
   type AppConfig,
@@ -123,6 +125,10 @@ const ModelSettingsTab: React.FC<Props> = ({
   onRequestDeleteProvider,
 }) => {
   const importInputRef = useRef<HTMLInputElement>(null);
+  const [isApiKeyVisible, setIsApiKeyVisible] = useState(false);
+  useEffect(() => {
+    setIsApiKeyVisible(false);
+  }, [activeProvider]);
   const [isImporting, setIsImporting] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const activeConfig: ProviderConfig = providers[activeProvider] ??
@@ -453,18 +459,35 @@ const ModelSettingsTab: React.FC<Props> = ({
                       {i18nService.t('apiKey')}
                       {isCustomProvider(activeProvider) && <span className="text-red-500"> *</span>}
                     </label>
-                    <input
-                      type="password"
-                      id={`${activeProvider}-apiKey`}
-                      value={activeConfig.apiKey}
-                      onChange={e =>
-                        handleProviderConfigChange(activeProvider, 'apiKey', e.target.value)
-                      }
-                      disabled={isModelActionBusy}
-                      className="block w-full rounded-xl border border-border-input !bg-white px-3 py-1.5 text-xs text-foreground shadow-sm transition-colors hover:border-primary/40 focus:border-primary focus:ring-1 focus:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-50 dark:!bg-surface"
-                      placeholder={i18nService.t('apiKeyPlaceholder')}
-                      required={isCustomProvider(activeProvider)}
-                    />
+                    <div className="relative">
+                      <input
+                        type={isApiKeyVisible ? 'text' : 'password'}
+                        id={`${activeProvider}-apiKey`}
+                        value={activeConfig.apiKey}
+                        onChange={e =>
+                          handleProviderConfigChange(activeProvider, 'apiKey', e.target.value)
+                        }
+                        disabled={isModelActionBusy}
+                        className="block w-full rounded-xl border border-border-input !bg-white pl-3 pr-10 py-1.5 text-xs text-foreground shadow-sm transition-colors hover:border-primary/40 focus:border-primary focus:ring-1 focus:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-50 dark:!bg-surface"
+                        placeholder={i18nService.t('apiKeyPlaceholder')}
+                        required={isCustomProvider(activeProvider)}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setIsApiKeyVisible(visible => !visible)}
+                        aria-label={i18nService.t(isApiKeyVisible ? 'hideApiKey' : 'showApiKey')}
+                        title={i18nService.t(isApiKeyVisible ? 'hideApiKey' : 'showApiKey')}
+                        aria-controls={`${activeProvider}-apiKey`}
+                        aria-pressed={isApiKeyVisible}
+                        className="absolute inset-y-0 right-0 flex w-9 items-center justify-center rounded-r-xl text-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                      >
+                        {isApiKeyVisible ? (
+                          <EyeSlashIcon className="h-4 w-4" aria-hidden="true" />
+                        ) : (
+                          <EyeIcon className="h-4 w-4" aria-hidden="true" />
+                        )}
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>

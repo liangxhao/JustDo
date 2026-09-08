@@ -73,6 +73,19 @@ const renderTab = (options: { displayNameError?: string | null } = {}) => {
 describe('ModelSettingsTab provider name input', () => {
   afterEach(cleanup);
 
+  test('reveals and hides the API key without changing its value', () => {
+    const { handleProviderConfigChange } = renderTab();
+    const input = screen.getByLabelText(/apiKey/) as HTMLInputElement;
+    expect(input.type).toBe('password');
+    fireEvent.click(screen.getByRole('button', { name: 'showApiKey' }));
+    expect(input.type).toBe('text');
+    expect(input.value).toBe('secret');
+    fireEvent.click(screen.getByRole('button', { name: 'hideApiKey' }));
+    expect(input.type).toBe('password');
+    expect(input.value).toBe('secret');
+    expect(handleProviderConfigChange).not.toHaveBeenCalled();
+  });
+
   test.each([
     ['JustDo', 'providerNameReserved'],
     ['Invalid@Name', 'providerNameInvalid'],

@@ -376,6 +376,8 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     // API设置
     apiKey: 'API Key',
     apiKeyPlaceholder: '输入你的 API Key',
+    showApiKey: '显示 API Key',
+    hideApiKey: '隐藏 API Key',
     baseUrl: 'API Base URL',
     baseUrlPlaceholder: '输入 API 基础 URL',
     availableModels: '可用模型列表',
@@ -1910,6 +1912,8 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     // API Settings
     apiKey: 'API Key',
     apiKeyPlaceholder: 'Enter your API Key',
+    showApiKey: 'Show API Key',
+    hideApiKey: 'Hide API Key',
     baseUrl: 'API Base URL',
     baseUrlPlaceholder: 'Enter API Base URL',
     availableModels: 'Available Models',
