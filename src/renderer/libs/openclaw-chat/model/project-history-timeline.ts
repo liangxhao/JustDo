@@ -5,6 +5,7 @@ import { getTranscriptMedia } from '@/libs/openclaw-chat/attachments';
 import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 
 import { type ThinkingItem, type ToolItem } from './chat-transcript-state';
+import { isFailedRunMessage } from './failed-run-message';
 import { deterministicHistoryKey } from './history-reconciler';
 import type {
   LiveProcessTimelineItem,
@@ -36,6 +37,7 @@ export type PersistedTimelineItem =
       message: GatewayMessage;
       durationMs?: number;
       completedAt?: number;
+      modelRef?: string;
     }
   | ProcessSummaryTimelineItem
   | LiveProcessTimelineItem
@@ -345,6 +347,7 @@ export function projectPersistedTimeline(
     key: string,
     durationMs?: number,
     completedAt?: number,
+    modelRef?: string,
   ) => {
     flushSummary();
     if (durationMs !== undefined && lastTimedMessage) {
@@ -357,6 +360,7 @@ export function projectPersistedTimeline(
       message,
       ...(durationMs !== undefined ? { durationMs } : {}),
       ...(completedAt !== undefined ? { completedAt } : {}),
+      ...(modelRef ? { modelRef } : {}),
     };
     projected.push(item);
     if (durationMs !== undefined) lastTimedMessage = item;
@@ -540,13 +544,16 @@ export function projectPersistedTimeline(
       claimedTimingIds.add(matchingTiming.id);
       lastTimedMessage = null;
     }
+    const failedRunMessage = isFailedRunMessage(outerMessage);
     const durationMs =
-      role === 'assistant' &&
-      (!isGatewayInjectedAssistant(outer, message) || runId.startsWith('announce:v1:')) &&
+      (failedRunMessage ||
+        (role === 'assistant' &&
+          (!isGatewayInjectedAssistant(outer, message) || runId.startsWith('announce:v1:')))) &&
       activeTiming?.endedAt !== undefined
         ? Math.max(0, activeTiming.endedAt - activeTiming.startedAt)
         : undefined;
     const completedAt = durationMs === undefined ? undefined : activeTiming?.endedAt;
+    const modelRef = durationMs === undefined ? undefined : activeTiming?.modelRef;
     const attachments = [
       ...attachedToolMessages(message),
       ...(message === outer ? [] : attachedToolMessages(outer)),
@@ -587,7 +594,7 @@ export function projectPersistedTimeline(
         (attachments.length === 0 && !hasBlankAssistantControlContent) ||
         (typeof message.content === 'string' && message.content.trim().length > 0)
       ) {
-        emitMessage(outerMessage, messageKey, durationMs, completedAt);
+        emitMessage(outerMessage, messageKey, durationMs, completedAt, modelRef);
       }
       for (const [index, attached] of attachments.entries()) {
         applyToolOnlyMessage(
@@ -609,6 +616,7 @@ export function projectPersistedTimeline(
         `${messageKey}:content:${segment}`,
         durationMs,
         completedAt,
+        modelRef,
       );
       visibleBlocks = [];
     };

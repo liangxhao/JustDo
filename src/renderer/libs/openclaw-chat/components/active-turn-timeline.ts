@@ -404,6 +404,7 @@ function renderAssistantTimelineRow(
   content: TemplateResult,
   showAvatar: boolean,
   rowClass = '',
+  avatarRole: 'assistant' | 'error' = 'assistant',
 ): TemplateResult {
   return html`
     <div
@@ -411,10 +412,34 @@ function renderAssistantTimelineRow(
         showAvatar ? '' : ' chat-group--continuation'
       }${rowClass ? ` ${rowClass}` : ''}`}
     >
-      <div class="chat-group__avatar">${showAvatar ? renderChatAvatar('assistant') : nothing}</div>
+      <div class="chat-group__avatar">${showAvatar ? renderChatAvatar(avatarRole) : nothing}</div>
       <div class="chat-group__content">${content}</div>
     </div>
   `;
+}
+
+export function renderTerminalTimelineMessage(
+  message: string,
+  status: 'aborted' | 'error',
+  showAvatar = true,
+  footer: TemplateResult | typeof nothing = nothing,
+): TemplateResult {
+  return renderAssistantTimelineRow(
+    html`
+      <div class="process-terminal process-terminal--${status}" role="status">
+        ${status === 'aborted' ? html`<span aria-hidden="true">!</span>` : nothing}
+        <span>${message}</span>
+      </div>
+      ${
+        footer === nothing
+          ? nothing
+          : html`<footer class="active-turn__footer process-terminal__footer">${footer}</footer>`
+      }
+    `,
+    showAvatar,
+    '',
+    status === 'error' ? 'error' : 'assistant',
+  );
 }
 
 export function renderTimelineItem(
@@ -600,15 +625,7 @@ export function renderTimelineItem(
     item.item.status === 'aborted'
       ? i18nService.t('coworkRunInterruptedMessage')
       : item.item.message;
-  return renderAssistantTimelineRow(
-    html`
-      <div class="process-terminal process-terminal--${item.item.status}" role="status">
-        <span aria-hidden="true">!</span>
-        <span>${terminalMessage}</span>
-      </div>
-    `,
-    showAvatar,
-  );
+  return renderTerminalTimelineMessage(terminalMessage, item.item.status, showAvatar);
 }
 
 export function renderActiveTurnTimeline(

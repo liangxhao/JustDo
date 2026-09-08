@@ -4506,6 +4506,11 @@ test('settles the originating session when chat.send completes after switching a
 });
 
 test('records the originating session error when chat.send rejects after switching away', async () => {
+  const values = new Map<string, string>();
+  vi.stubGlobal('localStorage', {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value),
+  });
   const runningSessionKey = 'agent:main:justdo:session-1';
   const otherSessionKey = 'agent:main:justdo:session-2';
   let rejectSend: ((error: Error) => void) | undefined;
@@ -4540,6 +4545,9 @@ test('records the originating session error when chat.send rejects after switchi
     expect.objectContaining({ role: 'user', content: 'hello' }),
     expect.objectContaining({ role: 'assistant', content: 'Error: chat.send failed' }),
   ]);
+  expect([...values.values()].some(value => value.includes('"error":"chat.send failed"'))).toBe(
+    true,
+  );
 });
 
 test('restores a pending first turn and its background stream after switching away', async () => {
@@ -8275,6 +8283,91 @@ test('captures the gateway detail when a lifecycle run fails', () => {
   );
 });
 
+test('persists an ordinary chat error before the history refresh replaces live state', () => {
+  const values = new Map<string, string>();
+  vi.stubGlobal('localStorage', {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value),
+  });
+  const sessionKey = 'agent:main:justdo:session-1';
+  const controller = new ChatController();
+  controller.state.sessionKey = sessionKey;
+  controller.state.currentSessionId = 'physical-session-1';
+  controller.state.transcript.sessionKey = sessionKey;
+  controller.state.transcript.sessionId = 'physical-session-1';
+  controller.state.chatSending = true;
+  controller.state.chatRunId = 'run-1';
+  beginAssistantTurn(
+    controller.state.transcript,
+    { runId: 'run-1', sessionId: 'physical-session-1', startedAt: 500 },
+    { now: () => Date.now(), createId: prefix => `${prefix}-1` },
+  );
+
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent({
+    event: 'chat',
+    payload: {
+      runId: 'run-1',
+      sessionKey: 'justdo:session-1',
+      sessionId: 'physical-session-1',
+      state: 'error',
+      errorMessage: 'Provider request failed.',
+    },
+  });
+
+  const stored = [...values.values()].find(value => value.includes('Provider request failed.'));
+  expect(stored).toBeDefined();
+  expect(JSON.parse(stored ?? '[]')).toEqual([
+    expect.objectContaining({
+      sessionKey,
+      sessionId: 'physical-session-1',
+      runId: 'run-1',
+      error: 'Provider request failed.',
+      promptTimestamp: 500,
+    }),
+  ]);
+});
+
+test('does not persist a stale chat error rejected by the transcript reducer', () => {
+  const values = new Map<string, string>();
+  vi.stubGlobal('localStorage', {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value),
+  });
+  const sessionKey = 'agent:main:justdo:session-1';
+  const controller = new ChatController();
+  controller.state.sessionKey = sessionKey;
+  controller.state.transcript.sessionKey = sessionKey;
+  controller.state.chatSending = true;
+  controller.state.chatRunId = 'run-current';
+  beginAssistantTurn(
+    controller.state.transcript,
+    { runId: 'run-current', startedAt: 500 },
+    { now: () => Date.now(), createId: prefix => `${prefix}-1` },
+  );
+
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent({
+    event: 'chat',
+    payload: {
+      runId: 'run-stale',
+      sessionKey,
+      state: 'error',
+      errorMessage: 'Stale provider failure.',
+    },
+  });
+
+  expect([...values.values()].some(value => value.includes('Stale provider failure.'))).toBe(false);
+  expect(controller.state.chatSending).toBe(true);
+  expect(controller.state.chatRunId).toBe('run-current');
+});
+
 test('settles an internal managed handoff failure without exposing it to the user', () => {
   const controller = new ChatController();
   controller.state.sessionKey = 'agent:main:justdo:session-1';
@@ -8749,6 +8842,48 @@ test('restores a persisted lifecycle failure after the controller restarts', asy
 
   expect(restartedController.state.chatMessages).toEqual([
     expect.objectContaining({ role: 'system', content: error, isError: true }),
+  ]);
+});
+
+test('keeps a lifecycle failure visible when refreshed history has only the user prompt', async () => {
+  const values = new Map<string, string>();
+  vi.stubGlobal('localStorage', {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value),
+  });
+  const sessionKey = 'agent:main:justdo:session-1';
+  const runId = 'run-1';
+  const error = 'Inline API key is temporarily disabled.';
+  const timestamp = Date.now();
+  const firstController = new ChatController();
+  firstController.state.sessionKey = sessionKey;
+  firstController.state.chatSending = true;
+  firstController.state.chatRunId = runId;
+  (
+    firstController as unknown as {
+      handleAgentEvent(payload: Record<string, unknown>): void;
+    }
+  ).handleAgentEvent({
+    runId,
+    stream: 'lifecycle',
+    session: sessionKey,
+    data: { phase: 'error', error },
+  });
+
+  const restartedController = new ChatController();
+  restartedController.state.sessionKey = sessionKey;
+  restartedController.state.connected = true;
+  restartedController.state.client = {
+    request: vi.fn().mockResolvedValue({
+      messages: [{ role: 'user', content: 'Continue', timestamp: timestamp - 250 }],
+    }),
+  } as never;
+
+  await restartedController.loadHistory();
+
+  expect(restartedController.state.chatMessages).toEqual([
+    expect.objectContaining({ role: 'user', content: 'Continue' }),
+    expect.objectContaining({ role: 'system', content: error, isError: true, runId }),
   ]);
 });
 

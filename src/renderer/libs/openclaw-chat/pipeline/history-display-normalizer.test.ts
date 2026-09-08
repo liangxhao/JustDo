@@ -266,6 +266,474 @@ describe('normalizeGatewayHistoryForDisplay', () => {
     ]);
   });
 
+  test('turns an empty persisted assistant error into a visible error', async () => {
+    const messages = await normalizeGatewayHistoryForDisplay(
+      [
+        {
+          role: 'assistant',
+          content: [],
+          stopReason: 'error',
+          errorMessage: '429 insufficient balance',
+          __openclaw: { runId: 'run-1' },
+        },
+      ],
+      {
+        sessionKey: 'agent:main:justdo:session-1',
+      },
+    );
+
+    expect(messages).toEqual([
+      {
+        role: 'system',
+        content: '429 insufficient balance',
+        stopReason: 'error',
+        errorMessage: '429 insufficient balance',
+        isError: true,
+        __justdoFailedRunMessage: true,
+        __openclaw: { runId: 'run-1' },
+      },
+    ]);
+  });
+
+  test('restores a failed run when history contains only its user prompt', async () => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+    });
+    const timestamp = Date.now();
+    persistFailedRun({
+      sessionKey: 'agent:main:justdo:session-1',
+      runId: 'run-1',
+      error: 'Inline API key is temporarily disabled.',
+      timestamp,
+    });
+
+    const messages = await normalizeGatewayHistoryForDisplay(
+      [{ role: 'user', content: 'Continue', timestamp: timestamp - 250 }],
+      {
+        sessionKey: 'agent:main:justdo:session-1',
+      },
+    );
+
+    expect(messages).toEqual([
+      { role: 'user', content: 'Continue', timestamp: timestamp - 250 },
+      {
+        role: 'system',
+        content: 'Inline API key is temporarily disabled.',
+        isError: true,
+        __justdoFailedRunMessage: true,
+        __justdoFailedRunMessageId: 'run-1',
+        runId: 'run-1',
+        timestamp,
+      },
+    ]);
+    expect(readTranscriptIdentity(messages[1])).toEqual({
+      kind: 'durable-id',
+      value: 'failed-run:run-1',
+    });
+  });
+
+  test('does not restore a failed run without its nearby user prompt', async () => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+    });
+    const timestamp = Date.now();
+    persistFailedRun({
+      sessionKey: 'agent:main:justdo:session-1',
+      runId: 'run-1',
+      error: 'Model request failed.',
+      timestamp,
+    });
+
+    const messages = await normalizeGatewayHistoryForDisplay(
+      [{ role: 'user', content: 'Older prompt', timestamp: timestamp - 120_000 }],
+      {
+        sessionKey: 'agent:main:justdo:session-1',
+      },
+    );
+
+    expect(messages).toEqual([
+      { role: 'user', content: 'Older prompt', timestamp: timestamp - 120_000 },
+    ]);
+  });
+
+  test('keeps partial assistant output and restores its terminal failure', async () => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+    });
+    const timestamp = Date.now();
+    persistFailedRun({
+      sessionKey: 'agent:main:justdo:session-1',
+      runId: 'run-1',
+      error: 'The model stream failed.',
+      timestamp,
+    });
+
+    const messages = await normalizeGatewayHistoryForDisplay(
+      [
+        { role: 'user', content: 'Continue', timestamp: timestamp - 500 },
+        {
+          role: 'assistant',
+          content: 'Partial reply',
+          timestamp: timestamp - 200,
+          __openclaw: { runId: 'run-1' },
+        },
+      ],
+      { sessionKey: 'agent:main:justdo:session-1' },
+    );
+
+    expect(messages).toHaveLength(3);
+    expect(messages[1]).toMatchObject({ role: 'assistant', content: 'Partial reply' });
+    expect(messages[2]).toMatchObject({
+      role: 'system',
+      content: 'The model stream failed.',
+      isError: true,
+      runId: 'run-1',
+    });
+  });
+
+  test('keeps a failure after partial assistant output without a run id', async () => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+    });
+    const timestamp = Date.now();
+    persistFailedRun({
+      sessionKey: 'agent:main:justdo:session-1',
+      runId: 'run-1',
+      error: 'The model stream failed.',
+      timestamp,
+      promptTimestamp: timestamp - 500,
+    });
+
+    const messages = await normalizeGatewayHistoryForDisplay(
+      [
+        { role: 'user', content: 'Continue', timestamp: timestamp - 500 },
+        { role: 'assistant', content: 'Partial reply', timestamp: timestamp - 200 },
+      ],
+      { sessionKey: 'agent:main:justdo:session-1' },
+    );
+
+    expect(messages).toHaveLength(3);
+    expect(messages[2]).toMatchObject({
+      role: 'system',
+      content: 'The model stream failed.',
+      isError: true,
+      runId: 'run-1',
+    });
+  });
+
+  test('anchors a delayed failure to the prompt timestamp encoded in its run id', async () => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+    });
+    const promptTimestamp = Date.now() - 180_000;
+    const failureTimestamp = promptTimestamp + 120_000;
+    persistFailedRun({
+      sessionKey: 'agent:main:justdo:session-1',
+      sessionId: 'physical-session-1',
+      runId: `justdo-${promptTimestamp}-run-1`,
+      error: 'The long-running request failed.',
+      timestamp: failureTimestamp,
+    });
+
+    const messages = await normalizeGatewayHistoryForDisplay(
+      [{ role: 'user', content: 'Run the long task', timestamp: promptTimestamp + 100 }],
+      {
+        sessionKey: 'agent:main:justdo:session-1',
+        sessionId: 'physical-session-1',
+      },
+    );
+
+    expect(messages).toHaveLength(2);
+    expect(messages[1]).toMatchObject({
+      content: 'The long-running request failed.',
+      isError: true,
+      runId: `justdo-${promptTimestamp}-run-1`,
+    });
+  });
+
+  test('does not restore a failure from a replaced physical session', async () => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+    });
+    const timestamp = Date.now();
+    persistFailedRun({
+      sessionKey: 'agent:main:justdo:session-1',
+      sessionId: 'physical-session-old',
+      runId: 'run-1',
+      error: 'Old session failed.',
+      timestamp,
+      promptTimestamp: timestamp - 100,
+    });
+
+    const messages = await normalizeGatewayHistoryForDisplay(
+      [{ role: 'user', content: 'New session prompt', timestamp: timestamp - 100 }],
+      {
+        sessionKey: 'agent:main:justdo:session-1',
+        sessionId: 'physical-session-new',
+      },
+    );
+
+    expect(messages).toEqual([
+      { role: 'user', content: 'New session prompt', timestamp: timestamp - 100 },
+    ]);
+  });
+
+  test('does not restore an unscoped legacy failure into a known physical session', async () => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+    });
+    const timestamp = Date.now();
+    persistFailedRun({
+      sessionKey: 'agent:main:justdo:session-1',
+      runId: 'run-legacy',
+      error: 'Legacy session failed.',
+      timestamp,
+      promptTimestamp: timestamp - 100,
+    });
+
+    const messages = await normalizeGatewayHistoryForDisplay(
+      [{ role: 'user', content: 'Current session prompt', timestamp: timestamp - 100 }],
+      {
+        sessionKey: 'agent:main:justdo:session-1',
+        sessionId: 'physical-session-current',
+      },
+    );
+
+    expect(messages).toEqual([
+      { role: 'user', content: 'Current session prompt', timestamp: timestamp - 100 },
+    ]);
+  });
+
+  test('does not append local failed-run overlays to an older history page', async () => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+    });
+    const timestamp = Date.now();
+    persistFailedRun({
+      sessionKey: 'agent:main:justdo:session-1',
+      runId: 'run-1',
+      error: 'Recent run failed.',
+      timestamp,
+    });
+
+    const messages = await normalizeGatewayHistoryForDisplay(
+      [{ role: 'user', content: 'Older page prompt', timestamp: timestamp - 100 }],
+      {
+        sessionKey: 'agent:main:justdo:session-1',
+        includeFailedRunOverlays: false,
+      },
+    );
+
+    expect(messages).toEqual([
+      { role: 'user', content: 'Older page prompt', timestamp: timestamp - 100 },
+    ]);
+  });
+
+  test('deduplicates a durable failure without a run id against its local record', async () => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+    });
+    const timestamp = Date.now();
+    persistFailedRun({
+      sessionKey: 'agent:main:justdo:session-1',
+      runId: 'run-1',
+      error: '429 insufficient balance',
+      timestamp,
+      promptTimestamp: timestamp - 500,
+    });
+
+    const messages = await normalizeGatewayHistoryForDisplay(
+      [
+        { role: 'user', content: 'Continue', timestamp: timestamp - 500 },
+        {
+          role: 'assistant',
+          content: [],
+          stopReason: 'error',
+          errorMessage: '429 insufficient balance',
+          timestamp,
+        },
+      ],
+      { sessionKey: 'agent:main:justdo:session-1' },
+    );
+
+    expect(messages).toHaveLength(2);
+    expect(messages[1]).toMatchObject({
+      role: 'system',
+      content: '429 insufficient balance',
+      __justdoFailedRunMessageId: 'run-1',
+    });
+  });
+
+  test('deduplicates and enriches a durable failure without identity or timestamp', async () => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+    });
+    const timestamp = Date.now();
+    persistFailedRun({
+      sessionKey: 'agent:main:justdo:session-1',
+      runId: 'run-1',
+      error: 'Provider request failed.',
+      timestamp,
+      promptTimestamp: timestamp - 500,
+    });
+
+    const messages = await normalizeGatewayHistoryForDisplay(
+      [
+        { role: 'user', content: 'Continue', timestamp: timestamp - 500 },
+        {
+          role: 'assistant',
+          content: 'The agent run failed before producing a reply.',
+        },
+      ],
+      { sessionKey: 'agent:main:justdo:session-1' },
+    );
+
+    expect(messages).toEqual([
+      { role: 'user', content: 'Continue', timestamp: timestamp - 500 },
+      expect.objectContaining({
+        role: 'system',
+        content: 'Provider request failed.',
+        __justdoFailedRunMessageId: 'run-1',
+      }),
+    ]);
+  });
+
+  test('does not restore a failed attempt beside a successful sibling-branch reply', async () => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+    });
+    const timestamp = Date.now();
+    persistFailedRun({
+      sessionKey: 'agent:main:justdo:session-1',
+      sessionId: 'physical-session-1',
+      runId: 'run-failed',
+      error: 'The first branch failed.',
+      timestamp,
+      promptTimestamp: timestamp - 500,
+    });
+
+    const messages = await normalizeGatewayHistoryForDisplay(
+      [
+        { role: 'user', content: 'Continue', timestamp: timestamp - 500 },
+        {
+          role: 'assistant',
+          content: 'The regenerated branch succeeded.',
+          runId: 'run-success',
+          timestamp: timestamp + 500,
+        },
+      ],
+      {
+        sessionKey: 'agent:main:justdo:session-1',
+        sessionId: 'physical-session-1',
+      },
+    );
+
+    expect(messages).toEqual([
+      { role: 'user', content: 'Continue', timestamp: timestamp - 500 },
+      {
+        role: 'assistant',
+        content: 'The regenerated branch succeeded.',
+        runId: 'run-success',
+        timestamp: timestamp + 500,
+      },
+    ]);
+  });
+
+  test('keeps a failed run visible beside a managed subagent announcement', async () => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+    });
+    const timestamp = Date.now();
+    persistFailedRun({
+      sessionKey: 'agent:main:justdo:session-1',
+      runId: 'run-parent',
+      error: 'The parent run failed.',
+      timestamp,
+      promptTimestamp: timestamp - 500,
+    });
+
+    const messages = await normalizeGatewayHistoryForDisplay(
+      [
+        { role: 'user', content: 'Continue', timestamp: timestamp - 500 },
+        {
+          role: 'assistant',
+          content: 'The managed subagent finished its task.',
+          runId: 'announce:v1:agent:main:subagent:child-run',
+          timestamp: timestamp - 200,
+        },
+      ],
+      { sessionKey: 'agent:main:justdo:session-1' },
+    );
+
+    expect(messages).toHaveLength(3);
+    expect(messages[2]).toMatchObject({
+      role: 'system',
+      content: 'The parent run failed.',
+      isError: true,
+      runId: 'run-parent',
+    });
+  });
+
+  test('recognizes run_id metadata and blank text blocks in durable failures', async () => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+    });
+    const timestamp = Date.now();
+    persistFailedRun({
+      sessionKey: 'agent:main:justdo:session-1',
+      runId: 'run-1',
+      error: 'Provider request failed.',
+      timestamp,
+    });
+
+    const messages = await normalizeGatewayHistoryForDisplay(
+      [
+        {
+          role: 'assistant',
+          content: [{ type: 'text', text: '  ' }],
+          stop_reason: 'error',
+          metadata: { run_id: 'run-1' },
+          timestamp,
+        },
+      ],
+      { sessionKey: 'agent:main:justdo:session-1' },
+    );
+
+    expect(messages).toEqual([
+      expect.objectContaining({
+        role: 'system',
+        content: 'Provider request failed.',
+        isError: true,
+      }),
+    ]);
+  });
+
   test('hides the internal managed handoff failure placeholder', async () => {
     const storage = new Map<string, string>();
     vi.stubGlobal('localStorage', {
@@ -289,6 +757,22 @@ describe('normalizeGatewayHistoryForDisplay', () => {
       {
         sessionKey: 'agent:main:justdo:session-1',
       },
+    );
+
+    expect(messages).toEqual([]);
+  });
+
+  test('hides a durable internal managed handoff error without local storage context', async () => {
+    const messages = await normalizeGatewayHistoryForDisplay(
+      [
+        {
+          role: 'assistant',
+          content: [],
+          stopReason: 'error',
+          errorMessage: 'Managed subagent terminal handoff could not be persisted.',
+        },
+      ],
+      { sessionKey: 'agent:main:justdo:session-1' },
     );
 
     expect(messages).toEqual([]);

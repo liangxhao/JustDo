@@ -16,6 +16,7 @@ import monacoEditorStyles from 'monaco-editor/min/vs/editor/editor.main.css?inli
 
 import {
   type EditDiffMode,
+  renderTerminalTimelineMessage,
   renderTimelineItem,
 } from '@/libs/openclaw-chat/components/active-turn-timeline';
 import {
@@ -51,6 +52,12 @@ import {
   type AssistantTurn,
   normalizeTranscriptSessionKey,
 } from '@/libs/openclaw-chat/model/chat-transcript-state';
+import {
+  isFailedRunMessage,
+  readFailedRunMessageModelRef,
+  readFailedRunMessageText,
+  readFailedRunMessageTimestamp,
+} from '@/libs/openclaw-chat/model/failed-run-message';
 import { projectPersistedMessagesForActiveTurn } from '@/libs/openclaw-chat/model/optimistic-history-tail';
 import { mergePendingUserMessageForDisplay } from '@/libs/openclaw-chat/model/optimistic-user-message';
 import { PersistedTimelineCache } from '@/libs/openclaw-chat/model/persisted-timeline-cache';
@@ -574,6 +581,11 @@ export class JustDoChatElement extends LitElement {
       .chat-avatar.assistant {
         background: var(--justdo-chat-assistant-avatar-bg, #f3e8ff);
         color: var(--justdo-chat-assistant-avatar-text, #7c3aed);
+      }
+
+      .chat-avatar.error {
+        background: var(--justdo-chat-error-avatar-bg, #fee2e2);
+        color: var(--justdo-chat-error-avatar-text, #b91c1c);
       }
 
       .chat-avatar.tool {
@@ -2163,6 +2175,10 @@ export class JustDoChatElement extends LitElement {
         font-size: 11px;
         opacity: 0.78;
       }
+      .process-terminal__footer {
+        min-height: 0;
+        margin-top: 2px;
+      }
       .new-messages-indicator {
         position: sticky;
         z-index: 12;
@@ -3186,18 +3202,64 @@ export class JustDoChatElement extends LitElement {
   private activeTurnFooter(
     footer: ActiveTurnFooter,
     persistedMessages: GatewayMessage[],
-  ): TemplateResult {
+  ): TemplateResult | typeof nothing {
     const activity = this._controller?.state.runActivity;
     const model = resolveActiveTurnModel(
       persistedMessages,
       footer.modelRef ?? activity?.model,
       footer.modelRef ? undefined : activity?.provider,
     );
-    const duration = formatActiveTurnDuration(footer.durationMs);
-    const durationLabel = i18nService
-      .t(footer.running ? 'coworkRunWorkingDuration' : 'coworkRunWorkedDuration')
-      .replace('{duration}', duration);
-    const completedDate = footer.completedAt === null ? null : new Date(footer.completedAt);
+    return this.renderRunFooter({
+      status: footer.status,
+      running: footer.running,
+      model,
+      completedAt: footer.completedAt,
+      durationMs: footer.durationMs,
+    });
+  }
+
+  private failedRunFooter(
+    item: Extract<PersistedTimelineItem, { kind: 'history-message' }>,
+  ): TemplateResult | typeof nothing {
+    return this.renderRunFooter({
+      status: 'failed',
+      running: false,
+      model: item.modelRef ?? readFailedRunMessageModelRef(item.message),
+      completedAt: item.completedAt ?? readFailedRunMessageTimestamp(item.message),
+      durationMs: item.durationMs,
+    });
+  }
+
+  private renderRunFooter(details: {
+    status: ActiveTurnFooter['status'];
+    running: boolean;
+    model?: string;
+    completedAt?: number | null;
+    durationMs?: number;
+  }): TemplateResult | typeof nothing {
+    const model = details.model?.trim() ?? '';
+    const completedDateCandidate =
+      typeof details.completedAt === 'number' && Number.isFinite(details.completedAt)
+        ? new Date(details.completedAt)
+        : null;
+    const completedDate =
+      completedDateCandidate && Number.isFinite(completedDateCandidate.getTime())
+        ? completedDateCandidate
+        : null;
+    const durationKey = details.running
+      ? 'coworkRunWorkingDuration'
+      : details.status === 'failed'
+        ? 'coworkRunFailedDuration'
+        : details.status === 'aborted'
+          ? 'coworkRunAbortedDuration'
+          : 'coworkRunWorkedDuration';
+    const durationLabel =
+      typeof details.durationMs === 'number' && Number.isFinite(details.durationMs)
+        ? i18nService
+            .t(durationKey)
+            .replace('{duration}', formatActiveTurnDuration(details.durationMs))
+        : '';
+    if (!model && !completedDate && !durationLabel) return nothing;
     return html`
       ${model ? html`<span>${model}</span>` : nothing}
       ${
@@ -3215,11 +3277,11 @@ export class JustDoChatElement extends LitElement {
           : nothing
       }
       ${
-        model || completedDate
+        durationLabel && (model || completedDate)
           ? html`<span class="active-turn__footer-separator" aria-hidden="true">·</span>`
           : nothing
       }
-      <span>${durationLabel}</span>
+      ${durationLabel ? html`<span>${durationLabel}</span>` : nothing}
     `;
   }
 
@@ -3229,6 +3291,22 @@ export class JustDoChatElement extends LitElement {
     showFooter: boolean,
   ): TemplateResult | typeof nothing {
     if (item.kind === 'history-message') {
+      if (isFailedRunMessage(item.message)) {
+        return html`
+          <div
+            class="chat-history-row"
+            data-history-key=${item.key}
+            data-minimap-anchor=${item.key}
+          >
+            ${renderTerminalTimelineMessage(
+              readFailedRunMessageText(item.message),
+              'error',
+              showAvatar,
+              showFooter ? this.failedRunFooter(item) : nothing,
+            )}
+          </div>
+        `;
+      }
       const historyItems = this.buildItems([item.message], [], [], null).map(historyItem =>
         historyItem.kind === 'group' &&
         historyItem.role === 'assistant' &&

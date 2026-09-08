@@ -1,4 +1,4 @@
-import type { TemplateResult } from 'lit';
+import { html, type TemplateResult } from 'lit';
 import { describe, expect, test, vi } from 'vitest';
 
 import { i18nService } from '@/services/i18n';
@@ -9,7 +9,7 @@ vi.mock('./markdown', () => ({
 }));
 
 import type { ProcessSummaryTimelineItem } from '../model/project-turn-items';
-import { renderTimelineItem } from './active-turn-timeline';
+import { renderTerminalTimelineMessage, renderTimelineItem } from './active-turn-timeline';
 
 function flatten(value: unknown): string {
   if (value == null || value === false) return '';
@@ -124,6 +124,23 @@ describe('active turn timeline', () => {
     expect(rendered).not.toContain('运行已中断。');
     expect(rendered).not.toContain('chat-bubble');
     expect(rendered).not.toContain('active-turn__status');
+  });
+
+  test('renders a failed run with an error avatar and optional diagnostic footer', () => {
+    const rendered = flatten(
+      renderTerminalTimelineMessage(
+        'Provider request failed.',
+        'error',
+        true,
+        html`<span>zcode/glm-5.3-flash</span>`,
+      ),
+    );
+
+    expect(rendered).toContain('chat-avatar error');
+    expect(rendered).not.toContain('chat-avatar assistant');
+    expect(rendered).toContain('process-terminal--error');
+    expect(rendered).toContain('process-terminal__footer');
+    expect(rendered).toContain('zcode/glm-5.3-flash');
   });
 
   test('renders running Thinking as an independently streaming block', () => {

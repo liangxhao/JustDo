@@ -1,3 +1,5 @@
+import { FAILED_RUN_MESSAGE_ID } from '@/libs/openclaw-chat/model/failed-run-message';
+
 export interface TranscriptIdentity {
   kind: 'openclaw-id' | 'openclaw-seq' | 'durable-id';
   value: string;
@@ -25,6 +27,10 @@ export function readTranscriptIdentity(message: unknown): TranscriptIdentity | n
   const interruptedOverlayId = readScalar(record.__justdoInterruptedOverlayId);
   if (interruptedOverlayId) {
     return { kind: 'durable-id', value: `interrupted:${interruptedOverlayId}` };
+  }
+  const failedRunMessageId = readScalar(record[FAILED_RUN_MESSAGE_ID]);
+  if (failedRunMessageId) {
+    return { kind: 'durable-id', value: `failed-run:${failedRunMessageId}` };
   }
   const marker = asRecord(record.__openclaw);
   const openClawId = readScalar(marker?.id);

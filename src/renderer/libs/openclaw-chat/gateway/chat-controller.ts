@@ -1152,6 +1152,28 @@ export class ChatController {
     bindAssistantTurnRunId(cached.transcript, provisionalRunId, acknowledgedRunId);
   }
 
+  private persistRunFailure(
+    sessionKey: string,
+    sessionId: string | null,
+    runId: string | null,
+    error: string,
+    timestamp = Date.now(),
+  ): void {
+    const liveState = this.isSelectedSession(sessionKey)
+      ? this.state
+      : this.findLiveSessionState(sessionKey, sessionId)?.[1];
+    const activeTurn = liveState?.transcript.activeTurn;
+    persistFailedRun({
+      sessionKey,
+      sessionId: sessionId ?? liveState?.currentSessionId ?? activeTurn?.sessionId ?? null,
+      runId,
+      error,
+      timestamp,
+      promptTimestamp:
+        activeTurn && (!runId || activeTurn.runId === runId) ? activeTurn.startedAt : null,
+    });
+  }
+
   private settleChatSend(
     sessionKey: string,
     runId: string,
@@ -1187,6 +1209,15 @@ export class ChatController {
     }
     if (reduceChatEvent(this.state.transcript, event, this.transcriptDependencies) !== 'applied') {
       return;
+    }
+    if (state === 'error') {
+      this.persistRunFailure(
+        sessionKey,
+        sessionId,
+        runId,
+        errorMessage ?? 'Unknown error',
+        terminalMessage?.timestamp,
+      );
     }
     this.finishTurnTimingForSession(sessionKey, state, runId);
     this.state.chatSending = false;
@@ -2817,7 +2848,10 @@ export class ChatController {
     }
   }
 
-  private applyBackgroundChatEvent(payload: NormalizedChatEvent): void {
+  private applyBackgroundChatEvent(
+    payload: NormalizedChatEvent,
+    suppressedErrorMessage?: string,
+  ): void {
     const cachedEntry = this.findLiveSessionState(payload.sessionKey);
     if (!cachedEntry) {
       if (payload.state !== 'delta') {
@@ -2841,6 +2875,12 @@ export class ChatController {
     const reduceResult = reduceChatEvent(cached.transcript, payload, this.transcriptDependencies);
     if (reduceResult !== 'applied') return;
     if (payload.state === 'delta') return;
+    const failedErrorMessage =
+      suppressedErrorMessage ??
+      (payload.state === 'error' ? (payload.errorMessage ?? 'Unknown error') : null);
+    if (failedErrorMessage) {
+      this.persistRunFailure(sessionKey, payload.sessionId, payload.runId, failedErrorMessage);
+    }
 
     this.finishTurnTimingForSession(sessionKey, payload.state, payload.runId);
     let terminalMessage =
@@ -2943,21 +2983,18 @@ export class ChatController {
           ? event.data.error.trim()
           : 'Unknown error';
       if (isInternalManagedSubagentHandoffError(errorMessage)) {
-        persistFailedRun({
-          sessionKey,
-          runId: event.runId,
-          error: errorMessage,
-          timestamp: Date.now(),
-        });
-        this.applyBackgroundChatEvent({
-          runId: event.runId,
-          sessionKey,
-          sessionId: event.sessionId,
-          lifecycleGeneration: event.lifecycleGeneration,
-          frameSeq: event.frameSeq,
-          state: 'final',
-          replace: false,
-        });
+        this.applyBackgroundChatEvent(
+          {
+            runId: event.runId,
+            sessionKey,
+            sessionId: event.sessionId,
+            lifecycleGeneration: event.lifecycleGeneration,
+            frameSeq: event.frameSeq,
+            state: 'final',
+            replace: false,
+          },
+          errorMessage,
+        );
         return;
       }
       this.applyBackgroundChatEvent({
@@ -3031,16 +3068,14 @@ export class ChatController {
       const normalizedPayload = normalizeChatEvent({ payload: event.payload, frameSeq: event.seq });
       if (normalizedPayload) {
         let payload = normalizedPayload;
+        const failedErrorMessage =
+          normalizedPayload.state === 'error'
+            ? (normalizedPayload.errorMessage ?? 'Unknown error')
+            : null;
         if (
           normalizedPayload.state === 'error' &&
           isInternalManagedSubagentHandoffError(normalizedPayload.errorMessage)
         ) {
-          persistFailedRun({
-            sessionKey: normalizedPayload.sessionKey,
-            runId: normalizedPayload.runId,
-            error: normalizedPayload.errorMessage ?? '',
-            timestamp: Date.now(),
-          });
           payload = {
             runId: normalizedPayload.runId,
             sessionKey: normalizedPayload.sessionKey,
@@ -3060,7 +3095,7 @@ export class ChatController {
           normalizeTranscriptSessionKey(payload.sessionKey) ===
           normalizeTranscriptSessionKey(this.state.sessionKey);
         if (!matchesSelectedSession) {
-          this.applyBackgroundChatEvent(payload);
+          this.applyBackgroundChatEvent(payload, failedErrorMessage ?? undefined);
           return;
         }
         if (
@@ -3137,6 +3172,14 @@ export class ChatController {
             !this.state.currentSessionId ||
             payload.sessionId === this.state.currentSessionId);
         if (reduceResult === 'applied' || externalFinal) {
+          if (failedErrorMessage) {
+            this.persistRunFailure(
+              this.state.sessionKey,
+              normalizedPayload.sessionId,
+              normalizedPayload.runId,
+              failedErrorMessage,
+            );
+          }
           this.handleChatEvent(payload);
         } else {
           debugLog('[ChatCtrl] chat event ignored by transcript reducer', {
@@ -3806,7 +3849,9 @@ export class ChatController {
       : projected;
     const normalized = await hydrateGatewayHistoryForDisplay(hydratedFullMessages, {
       sessionKey,
+      sessionId: this.state.transcript.sessionId,
       lastError: this.state.lastError,
+      includeFailedRunOverlays: false,
       includeInterruptedOverlays: false,
       enrichCompactionMarkers: (projectedMessages, key) =>
         this.enrichCompactionMarkers(projectedMessages, key),
@@ -4065,6 +4110,7 @@ export class ChatController {
       );
       const hydratedMessages = await hydrateGatewayHistoryForDisplay(hydratedFullMessages, {
         sessionKey,
+        sessionId: authoritativeSessionId,
         lastError: this.state.lastError,
         enrichCompactionMarkers: (messages, key) => this.enrichCompactionMarkers(messages, key),
       });
@@ -4742,13 +4788,8 @@ export class ChatController {
       if (phase === 'error') {
         const errorMessage =
           typeof data.error === 'string' && data.error.trim() ? data.error.trim() : 'Unknown error';
+        this.persistRunFailure(this.state.sessionKey, payload.sessionId, runId, errorMessage);
         if (isInternalManagedSubagentHandoffError(errorMessage)) {
-          persistFailedRun({
-            sessionKey: this.state.sessionKey,
-            runId,
-            error: errorMessage,
-            timestamp: Date.now(),
-          });
           const finalEvent: NormalizedChatEvent = {
             runId,
             sessionKey: this.state.sessionKey,
@@ -4764,12 +4805,6 @@ export class ChatController {
         }
         this.clearLifecycleEndFallback();
         this.state.lastError = errorMessage;
-        persistFailedRun({
-          sessionKey: this.state.sessionKey,
-          runId,
-          error: errorMessage,
-          timestamp: Date.now(),
-        });
         reduceChatEvent(
           this.state.transcript,
           {

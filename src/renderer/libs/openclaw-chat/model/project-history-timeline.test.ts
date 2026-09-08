@@ -459,6 +459,40 @@ describe('projectPersistedTimeline', () => {
     },
   );
 
+  test('attaches failed-run timing and model metadata to its persisted error row', () => {
+    const result = projectPersistedTimeline(
+      [
+        { role: 'user', content: 'continue', timestamp: 1_000 },
+        {
+          role: 'system',
+          content: 'Provider request failed.',
+          timestamp: 6_000,
+          __justdoFailedRunMessage: true,
+          runId: 'run-root',
+        },
+      ],
+      [
+        {
+          id: 'timing-1',
+          sessionId: 'session-1',
+          clientTurnId: 'run-root',
+          rootRunId: 'run-root',
+          modelRef: 'zcode/glm-5.3-flash',
+          startedAt: 1_000,
+          endedAt: 6_000,
+          state: 'failed',
+        },
+      ],
+    );
+
+    expect(result[1]).toMatchObject({
+      kind: 'history-message',
+      durationMs: 5_000,
+      completedAt: 6_000,
+      modelRef: 'zcode/glm-5.3-flash',
+    });
+  });
+
   test('does not associate a restarted receipt with a newer user turn', () => {
     const originalTurnStartedAt = 1_787_885_461_166;
     const restartedAt = 1_787_886_368_411;

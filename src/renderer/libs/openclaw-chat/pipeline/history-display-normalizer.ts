@@ -2,7 +2,11 @@ import { OPENCLAW_HISTORY_DETAIL_MAX_IDS } from '@shared/openclaw/historyIpc';
 import { isInternalManagedSubagentHandoffError } from '@shared/openclaw/internalRunError';
 import { extractGoalFollowUpRequest } from '@shared/prompts/goalFollowUpPrompt';
 
-import { FAILED_RUN_MESSAGE_FLAG } from '@/libs/openclaw-chat/model/failed-run-message';
+import { normalizeTranscriptSessionKey } from '@/libs/openclaw-chat/model/chat-transcript-state';
+import {
+  FAILED_RUN_MESSAGE_FLAG,
+  FAILED_RUN_MESSAGE_ID,
+} from '@/libs/openclaw-chat/model/failed-run-message';
 import { isAssistantHeartbeatAckForDisplay } from '@/libs/openclaw-chat/pipeline/heartbeat-display';
 
 const SILENT_REPLY_PATTERN = /^\s*NO_REPLY\s*$/;
@@ -15,9 +19,11 @@ const LEGACY_INTERRUPTED_STATUS_TEXTS = new Set(['运行已中断。', 'The run 
 
 type FailedRunRecord = {
   sessionKey: string;
+  sessionId?: string | null;
   runId: string | null;
   error: string;
   timestamp: number;
+  promptTimestamp?: number | null;
 };
 
 type InterruptedMessageRecord = {
@@ -41,7 +47,9 @@ type HistoryDisplayBridge = {
 
 export interface HistoryDisplayNormalizationOptions {
   sessionKey: string;
+  sessionId?: string | null;
   lastError?: string | null;
+  includeFailedRunOverlays?: boolean;
   includeInterruptedOverlays?: boolean;
   enrichCompactionMarkers?: (messages: unknown[], sessionKey: string) => Promise<unknown[]>;
 }
@@ -226,9 +234,12 @@ export function shouldHideMessage(message: unknown): boolean {
   if (!record) return false;
   const role = typeof record.role === 'string' ? record.role.toLowerCase() : '';
   if (role !== 'assistant') return false;
+  if (isPersistedFailedAssistantMessage(record)) return false;
   const text = extractSnapshotText(message);
-  return Boolean(text && isPersistedSilentReplyArtifactText(text)) ||
-    isAssistantHeartbeatAckForDisplay(message);
+  return (
+    Boolean(text && isPersistedSilentReplyArtifactText(text)) ||
+    isAssistantHeartbeatAckForDisplay(message)
+  );
 }
 
 export function projectGatewayHistoryForDisplay(messages: unknown[]): unknown[] {
@@ -273,9 +284,15 @@ function readFailedRuns(): FailedRunRecord[] {
     return value.filter(
       (item): item is FailedRunRecord =>
         typeof item?.sessionKey === 'string' &&
+        (item.sessionId === undefined ||
+          typeof item.sessionId === 'string' ||
+          item.sessionId === null) &&
         (typeof item.runId === 'string' || item.runId === null) &&
         typeof item.error === 'string' &&
         typeof item.timestamp === 'number' &&
+        (item.promptTimestamp === undefined ||
+          typeof item.promptTimestamp === 'number' ||
+          item.promptTimestamp === null) &&
         item.timestamp >= cutoff,
     );
   } catch {
@@ -286,7 +303,13 @@ function readFailedRuns(): FailedRunRecord[] {
 export function persistFailedRun(record: FailedRunRecord): void {
   if (typeof localStorage === 'undefined') return;
   const records = readFailedRuns().filter(
-    item => !(record.runId && item.sessionKey === record.sessionKey && item.runId === record.runId),
+    item =>
+      !(
+        record.runId &&
+        normalizeTranscriptSessionKey(item.sessionKey) ===
+          normalizeTranscriptSessionKey(record.sessionKey) &&
+        item.runId === record.runId
+      ),
   );
   try {
     localStorage.setItem(FAILED_RUN_STORAGE_KEY, JSON.stringify([...records, record].slice(-100)));
@@ -298,21 +321,17 @@ export function persistFailedRun(record: FailedRunRecord): void {
 function findFailedRun(
   outer: Record<string, unknown>,
   message: Record<string, unknown>,
-  sessionKey: string,
+  options: HistoryDisplayNormalizationOptions,
 ): { record: FailedRunRecord | null; exactRunMatch: boolean } {
-  const runId =
-    typeof message.runId === 'string'
-      ? message.runId
-      : typeof outer.runId === 'string'
-        ? outer.runId
-        : null;
-  const timestamp =
-    typeof message.timestamp === 'number'
-      ? message.timestamp
-      : typeof outer.timestamp === 'number'
-        ? outer.timestamp
-        : null;
-  const candidates = readFailedRuns().filter(item => item.sessionKey === sessionKey);
+  const runId = messageRunId(outer, message);
+  const timestamp = messageTimestamp(outer);
+  const candidates = readFailedRuns()
+    .filter(
+      item =>
+        normalizeTranscriptSessionKey(item.sessionKey) ===
+        normalizeTranscriptSessionKey(options.sessionKey),
+    )
+    .filter(item => !options.sessionId || item.sessionId === options.sessionId);
   const exact = runId ? candidates.find(item => item.runId === runId) : null;
   if (exact) return { record: exact, exactRunMatch: true };
   if (timestamp === null) return { record: null, exactRunMatch: false };
@@ -324,31 +343,222 @@ function findFailedRun(
   return { record: record ?? null, exactRunMatch: false };
 }
 
+function messageRunId(
+  outer: Record<string, unknown>,
+  message: Record<string, unknown>,
+): string | null {
+  const outerMetadata = asRecord(outer.__openclaw);
+  const messageMetadata = asRecord(message.__openclaw);
+  const outerEnvelopeMetadata = asRecord(outer.metadata);
+  const messageEnvelopeMetadata = asRecord(message.metadata);
+  for (const candidate of [
+    message.runId,
+    message.run_id,
+    messageMetadata?.runId,
+    messageMetadata?.run_id,
+    messageEnvelopeMetadata?.runId,
+    messageEnvelopeMetadata?.run_id,
+    outer.runId,
+    outer.run_id,
+    outerMetadata?.runId,
+    outerMetadata?.run_id,
+    outerEnvelopeMetadata?.runId,
+    outerEnvelopeMetadata?.run_id,
+  ]) {
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+  }
+  return null;
+}
+
+function messageTimestamp(message: unknown): number | null {
+  const outer = asRecord(message);
+  const raw = asRecord(outer?.message) ?? outer;
+  const value = raw?.timestamp ?? outer?.timestamp;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function isEmptyMessageContent(content: unknown): boolean {
+  return (
+    content === null ||
+    content === undefined ||
+    (typeof content === 'string' && !content.trim()) ||
+    (Array.isArray(content) &&
+      content.every(block => {
+        const item = asRecord(block);
+        return item?.type === 'text' && typeof item.text === 'string' && !item.text.trim();
+      }))
+  );
+}
+
+function isPersistedFailedAssistantMessage(message: Record<string, unknown>): boolean {
+  if (String(message.role ?? '').toLowerCase() !== 'assistant') return false;
+  if (messageText(message.content).trim() === AGENT_RUN_FAILED_BEFORE_REPLY) return true;
+  const stopReason = message.stopReason ?? message.stop_reason;
+  return stopReason === 'error' && isEmptyMessageContent(message.content);
+}
+
+function failedRunMessageId(record: FailedRunRecord): string {
+  return record.runId ?? `${record.timestamp}`;
+}
+
+function failedRunPromptTimestamp(record: FailedRunRecord): number {
+  if (typeof record.promptTimestamp === 'number' && Number.isFinite(record.promptTimestamp)) {
+    return record.promptTimestamp;
+  }
+  const encodedTimestamp = /^justdo-(\d{10,16})-/.exec(record.runId ?? '')?.[1];
+  return encodedTimestamp ? Number(encodedTimestamp) : record.timestamp;
+}
+
+function mergeMissingFailedRunMessages(
+  messages: unknown[],
+  options: HistoryDisplayNormalizationOptions,
+): unknown[] {
+  const records = readFailedRuns()
+    .filter(
+      record =>
+        normalizeTranscriptSessionKey(record.sessionKey) ===
+        normalizeTranscriptSessionKey(options.sessionKey),
+    )
+    .filter(record => !options.sessionId || record.sessionId === options.sessionId)
+    .filter(record => !isInternalManagedSubagentHandoffError(record.error))
+    .sort((left, right) => left.timestamp - right.timestamp);
+  if (records.length === 0) return messages;
+
+  const result = [...messages];
+  for (const record of records) {
+    const id = failedRunMessageId(record);
+    const exactFailureIndex = result.findIndex(message => {
+      const outer = asRecord(message);
+      const raw = asRecord(outer?.message) ?? outer;
+      if (!outer || !raw) return false;
+      if (outer[FAILED_RUN_MESSAGE_ID] === id || raw[FAILED_RUN_MESSAGE_ID] === id) return true;
+      if (outer[FAILED_RUN_MESSAGE_FLAG] !== true && raw[FAILED_RUN_MESSAGE_FLAG] !== true) {
+        return false;
+      }
+      if (record.runId) return messageRunId(outer, raw) === record.runId;
+      const timestamp = messageTimestamp(message);
+      return timestamp !== null && Math.abs(timestamp - record.timestamp) < 60_000;
+    });
+    if (exactFailureIndex >= 0) continue;
+
+    const nearbyUserIndex = result.reduce<number>((latestIndex, message, index) => {
+      const outer = asRecord(message);
+      const raw = asRecord(outer?.message) ?? outer;
+      if (String(raw?.role ?? '').toLowerCase() !== 'user') return latestIndex;
+      const timestamp = messageTimestamp(message);
+      if (timestamp === null) return latestIndex;
+      const promptTimestamp = failedRunPromptTimestamp(record);
+      const hasPrecisePromptTimestamp =
+        record.promptTimestamp != null || /^justdo-\d{10,16}-/.test(record.runId ?? '');
+      const toleranceMs = hasPrecisePromptTimestamp ? 10_000 : 60_000;
+      return Math.abs(promptTimestamp - timestamp) < toleranceMs ? index : latestIndex;
+    }, -1);
+    if (nearbyUserIndex < 0) continue;
+
+    const nextUserOffset = result.slice(nearbyUserIndex + 1).findIndex(message => {
+      const outer = asRecord(message);
+      const raw = asRecord(outer?.message) ?? outer;
+      return String(raw?.role ?? '').toLowerCase() === 'user';
+    });
+    const turnEndIndex = nextUserOffset < 0 ? result.length : nearbyUserIndex + 1 + nextUserOffset;
+    const anonymousFailureIndex = result.findIndex((message, index) => {
+      if (index <= nearbyUserIndex || index >= turnEndIndex) return false;
+      const outer = asRecord(message);
+      const raw = asRecord(outer?.message) ?? outer;
+      if (!outer || !raw || messageRunId(outer, raw) || messageTimestamp(message) !== null) {
+        return false;
+      }
+      return outer[FAILED_RUN_MESSAGE_FLAG] === true || raw[FAILED_RUN_MESSAGE_FLAG] === true;
+    });
+    if (anonymousFailureIndex >= 0) {
+      const message = result[anonymousFailureIndex];
+      const outer = asRecord(message);
+      const raw = asRecord(outer?.message) ?? outer;
+      if (outer && raw) {
+        const enriched = {
+          ...raw,
+          content: record.error,
+          [FAILED_RUN_MESSAGE_ID]: id,
+        };
+        result[anonymousFailureIndex] = raw === outer ? enriched : { ...outer, message: enriched };
+      }
+      continue;
+    }
+
+    const hasAlternateAssistantReply = result.some((message, index) => {
+      if (index <= nearbyUserIndex || index >= turnEndIndex) return false;
+      const outer = asRecord(message);
+      const raw = asRecord(outer?.message) ?? outer;
+      if (!outer || !raw || String(raw.role ?? '').toLowerCase() !== 'assistant') return false;
+      if (outer[FAILED_RUN_MESSAGE_FLAG] === true || raw[FAILED_RUN_MESSAGE_FLAG] === true) {
+        return false;
+      }
+      if (!messageText(raw.content).trim()) return false;
+      const replyRunId = messageRunId(outer, raw);
+      return Boolean(
+        record.runId &&
+          replyRunId &&
+          !replyRunId.startsWith('announce:v1:') &&
+          replyRunId !== record.runId,
+      );
+    });
+    if (hasAlternateAssistantReply) continue;
+
+    const overlay = {
+      role: 'system',
+      content: record.error,
+      isError: true,
+      [FAILED_RUN_MESSAGE_FLAG]: true,
+      [FAILED_RUN_MESSAGE_ID]: id,
+      ...(record.runId ? { runId: record.runId } : {}),
+      timestamp: record.timestamp,
+    };
+    const insertAt = result.findIndex(message => {
+      const timestamp = messageTimestamp(message);
+      return timestamp !== null && timestamp > record.timestamp;
+    });
+    if (insertAt < 0) result.push(overlay);
+    else result.splice(insertAt, 0, overlay);
+  }
+  return result;
+}
+
 function normalizeFailedRunMessage(
   message: unknown,
-  sessionKey: string,
+  options: HistoryDisplayNormalizationOptions,
   errorMessage: string | null,
 ): unknown {
   const outer = asRecord(message);
   const raw = asRecord(outer?.message) ?? outer;
-  if (
-    raw?.role !== 'assistant' ||
-    messageText(raw.content).trim() !== AGENT_RUN_FAILED_BEFORE_REPLY
-  ) {
-    return message;
-  }
-  const persistedFailure = findFailedRun(outer ?? raw, raw, sessionKey);
+  if (!raw || !isPersistedFailedAssistantMessage(raw)) return message;
+  const persistedFailure = findFailedRun(outer ?? raw, raw, options);
   const persistedError = persistedFailure.record?.error ?? null;
-  if (persistedFailure.exactRunMatch && isInternalManagedSubagentHandoffError(persistedError)) {
+  const durableError =
+    typeof raw.errorMessage === 'string' && raw.errorMessage.trim()
+      ? raw.errorMessage.trim()
+      : typeof outer?.errorMessage === 'string' && outer.errorMessage.trim()
+        ? outer.errorMessage.trim()
+        : null;
+  if (
+    (persistedFailure.exactRunMatch && isInternalManagedSubagentHandoffError(persistedError)) ||
+    isInternalManagedSubagentHandoffError(durableError)
+  ) {
     return null;
   }
-  const resolvedError = persistedError || errorMessage?.trim() || AGENT_RUN_FAILED_BEFORE_REPLY;
+  const resolvedError =
+    persistedError || durableError || errorMessage?.trim() || AGENT_RUN_FAILED_BEFORE_REPLY;
   const normalized = {
     ...raw,
     role: 'system',
     content: resolvedError,
     isError: true,
     [FAILED_RUN_MESSAGE_FLAG]: true,
+    ...(persistedFailure.record && !messageRunId(outer ?? raw, raw)
+      ? { [FAILED_RUN_MESSAGE_ID]: failedRunMessageId(persistedFailure.record) }
+      : {}),
   };
   return raw === outer ? normalized : { ...outer, message: normalized };
 }
@@ -501,11 +711,12 @@ export async function hydrateGatewayHistoryForDisplay(
     options.sessionKey,
     withLocalCompactionDetails,
   );
-  return withToolInputs
-    .map(message =>
-      normalizeFailedRunMessage(message, options.sessionKey, options.lastError ?? null),
-    )
+  const normalizedFailures = withToolInputs
+    .map(message => normalizeFailedRunMessage(message, options, options.lastError ?? null))
     .filter(message => message !== null);
+  return options.includeFailedRunOverlays === false
+    ? normalizedFailures
+    : mergeMissingFailedRunMessages(normalizedFailures, options);
 }
 
 export async function normalizeGatewayHistoryForDisplay(
