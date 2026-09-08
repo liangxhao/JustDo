@@ -33,6 +33,9 @@ function buildOpenClawGatewayBundleLauncherSource() {
     `} else {\n` +
     `  process.argv.splice(1, 0, bundlePath);\n` +
     `}\n` +
+    `// OpenClaw recognizes Node runtimes from argv[0]. Electron keeps its own\n` +
+    `// executable path in that slot even with ELECTRON_RUN_AS_NODE=1.\n` +
+    `process.argv[0] = 'node';\n` +
     `// Keep only the Gateway alive. One-shot CLI commands must exit normally.\n` +
     `const _keepAlive = process.argv[2] === 'gateway'\n` +
     `  ? setInterval(() => {}, 30000)\n` +

@@ -1277,6 +1277,9 @@ export class OpenClawEngineManager extends EventEmitter {
       `} else {\n` +
       `  process.argv.splice(1, 0, esmEntry);\n` +
       `}\n` +
+      `// OpenClaw recognizes Node runtimes from argv[0]. Electron keeps its own\n` +
+      `// executable path in that slot even with ELECTRON_RUN_AS_NODE=1.\n` +
+      `process.argv[0] = 'node';\n` +
       `process.stderr.write('[openclaw-launcher] argv=' + JSON.stringify(process.argv) + '\\n');\n` +
       `process.stderr.write('[openclaw-launcher] node=' + process.versions.node + '\\n');\n` +
       `// Only the long-running gateway command needs an explicit event-loop handle.\n` +

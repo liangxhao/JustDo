@@ -1,8 +1,6 @@
 import {
-  createNativeBootstrapController,
   discardRetiredCopilotState,
   prepareRetiredCopilotState,
-  requestRelayEnsure,
 } from "./modules/native-bootstrap.js";
 import { createPopupMessageHandler } from "./modules/popup-background.js";
 import { createRelayCommandHandler } from "./modules/relay-command-handler.js";
@@ -17,7 +15,6 @@ import { openAuthenticatedRelaySocket } from "./modules/relay-connection.js";
 import {
   ACCESS_MODE_SELECTED,
   createPairingConfigStore,
-  directLoopbackRelayPort,
   reconnectDelayMs,
   toRelayTabInfo,
 } from "./modules/relay-core.js";
@@ -32,7 +29,6 @@ const BADGE = {
   on: { text: "ON", color: "#0F9D58" },
   error: { text: "!", color: "#B91C1C" },
 };
-const RELAY_ENSURE_MIN_INTERVAL_MS = 60_000;
 const RELAY_WATCHDOG_ALARM = "openclaw-relay-watchdog";
 const RELAY_OPENING_DEADLINE_ALARM = "openclaw-relay-opening-deadline";
 const RELAY_AUTH_TIMEOUT_MS = 10_000;
@@ -47,11 +43,9 @@ let relayOpeningDeadlineTimer = null;
 let relayAuthenticatedSocket = null;
 let relaySocketOwner = null;
 let relayStatusHint = "";
-let lastRelayEnsureAtMs = 0;
 let reconciledPairingInvalidationRevision = 0;
 let relayConnectionGeneration = 0;
 let relayConnectionsSuspended = false;
-let nativeBootstrap = null;
 // Start blocked: no runtime path may outrun the retired-state storage read.
 let retiredCopilotCustodyBlocked = true;
 /** Debounce handle for tab-list refreshes. */
@@ -91,7 +85,7 @@ async function requireAutomationAllowed() {
 }
 
 function retireRelayOwner(owner) {
-  void owner?.retire().catch((error) => {
+  void owner?.retire().catch(error => {
     console.warn("Relay debugger retirement failed", error);
   });
 }
@@ -209,16 +203,16 @@ async function syncTabsToRelay() {
   ) {
     return;
   }
-  const accessibleIds = new Set(accessible.map((tab) => tab.id));
+  const accessibleIds = new Set(accessible.map(tab => tab.id));
   for (const [tabId, generation] of generations) {
     if (!accessibleIds.has(tabId) && attachments.get(tabId) === generation) {
-      void detachDebugger(tabId).catch((error) =>
+      void detachDebugger(tabId).catch(error =>
         console.warn("Debugger access cleanup failed", error),
       );
     }
   }
   // A creation is authorized internally, but discovery must wait for handoff.
-  const tabs = accessible.filter((tab) => tabAccessPolicy.canPublishTab(tab.id));
+  const tabs = accessible.filter(tab => tabAccessPolicy.canPublishTab(tab.id));
   send({ type: "tabs", tabs: tabs.map(toRelayTabInfo) }, socket);
 }
 
@@ -241,14 +235,14 @@ async function reconcileAccessMode(nextMode, { transitioning = false } = {}) {
     return mode;
   }
   const generations = [...attachments].filter(([, record]) => !record.retired);
-  await Promise.allSettled([...attachments.values()].map((record) => record.pending));
+  await Promise.allSettled([...attachments.values()].map(record => record.pending));
   if (mode === ACCESS_MODE_SELECTED) {
     const selectedIds = new Set(
       (
         await tabAccessPolicy.listAccessibleTabs({
           allowDuringTransition: transitioning,
         })
-      ).map((tab) => tab.id),
+      ).map(tab => tab.id),
     );
     await Promise.allSettled(
       generations
@@ -335,7 +329,7 @@ function failRelayAuthentication(ws, error) {
     return;
   }
   relayStatusHint =
-    "Relay authentication v2 failed. Update OpenClaw, or re-pair after a relay key rotation.";
+    "Connection authentication failed. Update __PRODUCT_NAME__, or create a new pairing.";
   try {
     closeRelaySocket(
       4001,
@@ -362,7 +356,7 @@ async function sendHello(socket) {
       userAgent: navigator.userAgent,
       browserVersion: uaMatch ? uaMatch[0] : "Chrome/unknown",
       extensionVersion: chrome.runtime.getManifest().version,
-      tabs: accessible.filter((tab) => tabAccessPolicy.canPublishTab(tab.id)).map(toRelayTabInfo),
+      tabs: accessible.filter(tab => tabAccessPolicy.canPublishTab(tab.id)).map(toRelayTabInfo),
     },
     socket,
   );
@@ -406,7 +400,6 @@ async function connectRelay(isConnectionAllowed = () => true) {
     return;
   }
   closeRelaySocket();
-  void maybeEnsureRelayDaemon(relayUrl, connectionIsCurrent).catch(() => {});
   setBadge("connecting");
   let ws;
   const owner = relayDebugger.createOwner(
@@ -417,7 +410,7 @@ async function connectRelay(isConnectionAllowed = () => true) {
       ws.readyState === WebSocket.OPEN,
   );
   const handleRelayCommand = createRelayCommandHandler({
-    send: (message) => send(message, ws),
+    send: message => send(message, ws),
     isCurrent: owner.isCurrent,
     attachDebugger: owner.attach,
     detachDebugger: owner.detach,
@@ -444,8 +437,8 @@ async function connectRelay(isConnectionAllowed = () => true) {
     ws = openAuthenticatedRelaySocket({
       relayUrl,
       token,
-      isCurrent: (socket) => relayWs === socket,
-      onAuthenticated: async (socket) => {
+      isCurrent: socket => relayWs === socket,
+      onAuthenticated: async socket => {
         relayAuthenticatedSocket = socket;
         relayStatusHint = "";
         clearRelayOpeningDeadline();
@@ -469,7 +462,7 @@ async function connectRelay(isConnectionAllowed = () => true) {
           relayAuthenticatedSocket = null;
         } else if (!relayStatusHint) {
           relayStatusHint =
-            "Relay authentication v2 failed. Update OpenClaw, or re-pair after a relay key rotation.";
+            "Connection authentication failed. Update __PRODUCT_NAME__, or create a new pairing.";
         }
         setBadge("error");
         scheduleReconnect();
@@ -509,31 +502,9 @@ function handleRelayOpeningDeadline() {
     // The socket may have changed state while the alarm event was queued.
   }
   setBadge("error");
-  relayStatusHint = "Relay authentication v2 timed out. Make sure OpenClaw is up to date.";
+  relayStatusHint =
+    "Connection authentication timed out. Make sure __PRODUCT_NAME__ is up to date.";
   scheduleReconnect();
-}
-
-/**
- * On a reconnect cycle against a direct loopback relay URL, ask the native
- * host (rate-limited) to spawn the standalone relay daemon so the extension
- * has something to connect to without a running Gateway.
- */
-async function maybeEnsureRelayDaemon(relayUrl, connectionIsCurrent) {
-  const relayPort = directLoopbackRelayPort(relayUrl);
-  if (reconnectAttempt === 0 || relayPort === null) {
-    return;
-  }
-  const { disabled } = await nativeBootstrap.status();
-  // Opt-out or pair revocation can win the storage read above.
-  if (disabled || retiredCopilotCustodyBlocked || !connectionIsCurrent()) {
-    return;
-  }
-  const now = Date.now();
-  if (now - lastRelayEnsureAtMs < RELAY_ENSURE_MIN_INTERVAL_MS) {
-    return;
-  }
-  lastRelayEnsureAtMs = now;
-  await requestRelayEnsure(relayPort, chrome);
 }
 
 function scheduleReconnect() {
@@ -553,7 +524,6 @@ async function startAutomation() {
   if (retiredCopilotCustodyBlocked) {
     return;
   }
-  await nativeBootstrap.attempt();
   await connectRelay();
 }
 
@@ -568,19 +538,6 @@ const handlePopupMessage = createPopupMessageHandler({
   getConfig,
   getRelayState: () => relayState,
   getRelayStatusHint: () => relayStatusHint,
-  getNativeBootstrapStatus: async () => {
-    await tabAccessReady;
-    if (!retiredCopilotCustodyBlocked) {
-      await nativeBootstrap.attempt();
-    }
-    return await nativeBootstrap.status();
-  },
-  enableNativeBootstrap: async (enabled) => {
-    await requireAutomationAllowed();
-    return enabled ? await nativeBootstrap.enable() : await nativeBootstrap.disableSynchronously();
-  },
-  onManualPairing: () => nativeBootstrap.enable({ attemptNow: false }),
-  onUnpairStart: () => nativeBootstrap.disableSynchronously(),
   isRetiredCopilotCustodyBlocked: () => retiredCopilotCustodyBlocked,
   requireAutomationAllowed,
   discardRetiredCopilotCustody: async () => {
@@ -606,13 +563,9 @@ const handlePopupMessage = createPopupMessageHandler({
   setBadge,
   detachDebugger,
   removeTabFromOpenClawGroup,
-  addTabToOpenClawGroup: (tabId) => tabAccessPolicy.addTabToGroup(tabId),
+  addTabToOpenClawGroup: tabId => tabAccessPolicy.addTabToGroup(tabId),
   scheduleTabsSync,
   pauseTab,
-});
-nativeBootstrap = createNativeBootstrapController({
-  getPairing: getConfig,
-  applyPairing: async (request) => await handlePopupMessage.applyPairing(request),
 });
 chrome.runtime.onMessage.addListener((msg, _sender, reply) => handlePopupMessage(msg, reply));
 
@@ -631,7 +584,7 @@ registerTabAccessEvents({
 
 // Watchdog: MV3 can stop this worker; the alarm revives it and re-connects.
 chrome.alarms.create(RELAY_WATCHDOG_ALARM, { periodInMinutes: 0.5 });
-chrome.alarms.onAlarm.addListener((alarm) => {
+chrome.alarms.onAlarm.addListener(alarm => {
   if (alarm.name === RELAY_WATCHDOG_ALARM) {
     void startAutomation();
   } else if (alarm.name === RELAY_OPENING_DEADLINE_ALARM) {

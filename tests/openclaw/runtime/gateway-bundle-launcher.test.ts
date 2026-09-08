@@ -26,6 +26,16 @@ function createRuntime() {
   return runtimeRoot;
 }
 
+function createArgvRuntime() {
+  const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-launcher-argv-test-'));
+  temporaryRoots.push(runtimeRoot);
+  fs.writeFileSync(
+    path.join(runtimeRoot, 'gateway-bundle.mjs'),
+    `process.stdout.write(JSON.stringify(process.argv));\n`,
+  );
+  return runtimeRoot;
+}
+
 afterEach(() => {
   for (const temporaryRoot of temporaryRoots.splice(0)) {
     fs.rmSync(temporaryRoot, { recursive: true, force: true });
@@ -56,6 +66,26 @@ describe('OpenClaw gateway bundle launcher', () => {
 
     expect(replaced).toMatchObject({ changed: true, replaced: true });
     expect(unchanged).toMatchObject({ changed: false, replaced: false });
+  });
+
+  test('normalizes Electron Node argv before loading one-shot CLI commands', () => {
+    const runtimeRoot = createArgvRuntime();
+    const { launcherPath } = ensureOpenClawGatewayBundleLauncher(runtimeRoot);
+    const script = [
+      `process.argv = ['electron.exe', ${JSON.stringify(launcherPath)}, 'browser', 'extension', 'pair', '--json'];`,
+      `require(${JSON.stringify(launcherPath)});`,
+    ].join('');
+
+    const output = execFileSync(process.execPath, ['-e', script], { encoding: 'utf8' });
+
+    expect(JSON.parse(output)).toEqual([
+      'node',
+      path.join(runtimeRoot, 'gateway-bundle.mjs'),
+      'browser',
+      'extension',
+      'pair',
+      '--json',
+    ]);
   });
 
   test('refuses to generate a launcher without a gateway bundle', () => {

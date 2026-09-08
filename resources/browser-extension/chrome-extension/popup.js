@@ -10,14 +10,8 @@ async function activeTab() {
   return tab ?? null;
 }
 
-function unpairedLabel(nativeBootstrap) {
-  if (nativeBootstrap?.disabled) {
-    return "Automatic setup disabled";
-  }
-  if (nativeBootstrap?.state === "manual_required") {
-    return "Manual setup required";
-  }
-  return "Waiting for local OpenClaw";
+function unpairedLabel() {
+  return "Open __PRODUCT_NAME__ to finish setup";
 }
 
 async function refresh() {
@@ -33,7 +27,7 @@ async function refresh() {
     return;
   }
   if (!status.paired) {
-    statusLine.textContent = unpairedLabel(status.nativeBootstrap);
+    statusLine.textContent = unpairedLabel();
     tabAction.classList.add("hidden");
     return;
   }
@@ -42,7 +36,7 @@ async function refresh() {
       ? "Connected"
       : status.state === "connecting"
         ? "Connecting…"
-        : "OpenClaw relay unavailable";
+        : "__PRODUCT_NAME__ connection unavailable";
   accessMode.textContent = status.accessMode === "selected" ? "Selected tabs" : "All tabs";
   const tab = await activeTab();
   if (tab?.id === undefined) {

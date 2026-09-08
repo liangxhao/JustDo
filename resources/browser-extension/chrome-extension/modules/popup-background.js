@@ -20,10 +20,6 @@ export function createPopupMessageHandler({
   getConfig,
   getRelayState,
   getRelayStatusHint,
-  getNativeBootstrapStatus,
-  enableNativeBootstrap,
-  onManualPairing,
-  onUnpairStart,
   isRetiredCopilotCustodyBlocked,
   requireAutomationAllowed,
   discardRetiredCopilotCustody,
@@ -46,7 +42,7 @@ export function createPopupMessageHandler({
 }) {
   let pairingGeneration = 0;
 
-  const assertPairingCurrent = (generation) => {
+  const assertPairingCurrent = generation => {
     if (generation !== pairingGeneration) {
       throw new Error("Pairing was superseded by a newer request.");
     }
@@ -60,9 +56,6 @@ export function createPopupMessageHandler({
     }
     if (source === "native" && (await getConfig()).relayUrl) {
       return { ok: false, existing: true };
-    }
-    if (source === "manual") {
-      await onManualPairing();
     }
     const generation = ++pairingGeneration;
     suspendRelayConnections();
@@ -110,7 +103,6 @@ export function createPopupMessageHandler({
 
   async function unpair() {
     pairingGeneration += 1;
-    const disabledPersisted = onUnpairStart();
     policy.setEnabled(false);
     policy.invalidateAll();
     suspendRelayConnections();
@@ -126,7 +118,6 @@ export function createPopupMessageHandler({
       policy.setEnabled(false);
       const detaching = detachAllDebuggerSessions();
       await syncTabsToRelay();
-      await disabledPersisted;
       await pairingConfigStore.clear();
       await policy.clearDenied();
       await detaching;
@@ -140,7 +131,7 @@ export function createPopupMessageHandler({
 
   const handler = (msg, reply) => {
     let settled = false;
-    const sendResponse = (response) => {
+    const sendResponse = response => {
       if (!settled) {
         settled = true;
         reply(response);
@@ -152,7 +143,6 @@ export function createPopupMessageHandler({
           case "getStatus": {
             await accessReady;
             const retiredCopilotCustodyBlocked = isRetiredCopilotCustodyBlocked();
-            const nativeBootstrap = await getNativeBootstrapStatus();
             const { relayUrl, accessMode } = await getConfig();
             await reconcilePairingInvalidation();
             const accessible = await policy.listAccessibleTabs();
@@ -163,7 +153,6 @@ export function createPopupMessageHandler({
               accessMode,
               accessibleTabCount: accessible.length,
               relayUrl: relayUrl ?? "",
-              nativeBootstrap,
               retiredCopilotCustodyBlocked,
               ...(hint ? { hint } : {}),
             });
@@ -180,13 +169,6 @@ export function createPopupMessageHandler({
             return;
           case "unpair":
             sendResponse(await unpair());
-            return;
-          case "setNativeBootstrapEnabled":
-            if (typeof msg.enabled !== "boolean") {
-              sendResponse({ ok: false, error: "Invalid automatic setup setting." });
-              return;
-            }
-            sendResponse({ ok: true, result: await enableNativeBootstrap(msg.enabled) });
             return;
           case "setAccessMode": {
             if (msg.accessMode !== ACCESS_MODE_ALL && msg.accessMode !== ACCESS_MODE_SELECTED) {

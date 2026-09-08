@@ -5,6 +5,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { BrowserMode } from '../../../shared/browser';
 import {
   applyBrowserModeChange,
+  buildBrowserPairingCommandEnvironment,
   copyBrowserExtensionPairing,
   findBundledBrowserExtensionPath,
   getBrowserModeSwitchAvailability,
@@ -230,6 +231,22 @@ describe('testBrowserConnection', () => {
 });
 
 describe('browser extension resources', () => {
+  test('prevents OpenClaw from respawning the pairing CLI under Electron', () => {
+    const cli = {
+      openclawEntry: 'gateway-launcher.cjs',
+      runtimeRoot: 'runtime',
+      port: 42871,
+      token: 'gateway-token',
+      env: { OPENCLAW_NO_RESPAWN: '0', EXISTING_VALUE: 'preserved' },
+    };
+
+    expect(buildBrowserPairingCommandEnvironment(cli)).toMatchObject({
+      ELECTRON_RUN_AS_NODE: '1',
+      OPENCLAW_NO_RESPAWN: '1',
+      EXISTING_VALUE: 'preserved',
+    });
+  });
+
   test('finds the generated extension in development', () => {
     const appPath = path.resolve('app');
     const expected = path.join(appPath, 'build', 'browser-extension');

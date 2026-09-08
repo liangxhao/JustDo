@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>OpenClaw Browser Settings</title>
+    <title>__PRODUCT_NAME__ Browser Settings</title>
     <style>
       :root {
         color-scheme: light dark;
@@ -84,27 +84,24 @@
     </style>
   </head>
   <body>
-    <h1>OpenClaw Browser Settings</h1>
+    <h1>__PRODUCT_NAME__ Browser Settings</h1>
     <p class="muted">
       The extension only relays browser automation. Pairing keys and URLs are never shown here.
     </p>
 
     <section id="retiredCustody" class="hidden">
       <h2>Automation paused</h2>
-      <p>Automation is paused to protect a pre-upgrade copilot session.</p>
+      <p>Automation is paused to protect pre-upgrade browser session data.</p>
       <p class="muted">
         Confirm old runs are finished, then use
-        <strong>Disconnect and disable automatic setup</strong> to discard retired recovery state,
-        followed by <strong>Use local OpenClaw</strong> to reconnect.
+        <strong>Disconnect</strong> to discard retired recovery state, then create a new pairing
+        from __PRODUCT_NAME__ to reconnect.
       </p>
     </section>
 
     <section>
       <h2>Connection</h2>
       <p id="connectionStatus" class="status">Checking…</p>
-      <p id="bootstrapStatus" class="muted"></p>
-      <label><input id="automaticSetup" type="checkbox" /> Use automatic local setup</label>
-      <button id="useLocal" class="primary" type="button">Use local OpenClaw</button>
     </section>
 
     <section>
@@ -117,29 +114,22 @@
     </section>
 
     <section>
-      <h2>Advanced manual pairing</h2>
+      <h2>Connect to __PRODUCT_NAME__</h2>
       <p class="muted">
-        Use this only for a direct remote Gateway or when automatic setup reports that manual action
-        is required.
+        In __PRODUCT_NAME__, open Settings &gt; Browser, copy the extension pairing information,
+        then paste it below.
       </p>
       <textarea
         id="pairingString"
         spellcheck="false"
         placeholder="Paste the pairing string"
       ></textarea>
-      <button id="pair" type="button">Pair manually</button>
+      <button id="pair" class="primary" type="button">Connect</button>
     </section>
 
     <section>
       <h2>Diagnostics</h2>
-      <p class="muted">
-        <code>openclaw browser extension status --json</code><br /><code
-          >openclaw browser doctor --browser-profile chrome</code
-        >
-      </p>
-      <button id="disconnect" class="danger" type="button">
-        Disconnect and disable automatic setup
-      </button>
+      <button id="disconnect" class="danger" type="button">Disconnect</button>
     </section>
     <p id="message" class="status"></p>
     <script type="module" src="options.js"></script>

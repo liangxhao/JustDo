@@ -3,7 +3,7 @@
 // repo's vitest suite can exercise the logic directly.
 
 /** Tab group shown to the user; an ACL in selected mode and an ownership marker in all mode. */
-export const OPENCLAW_TAB_GROUP_TITLE = "OpenClaw";
+export const OPENCLAW_TAB_GROUP_TITLE = "__PRODUCT_NAME__";
 export const ACCESS_MODE_ALL = "all";
 export const ACCESS_MODE_SELECTED = "selected";
 const EXTENSION_RELAY_PROTOCOL = "openclaw-extension-relay.v2";
@@ -13,7 +13,7 @@ const ACCESS_MODE_KEY = "accessMode";
 const PAIRING_STATUS_KEY = "pairingStatus";
 const UNSUPPORTED_PROXY_PREFIX_STATUS = "proxy-prefix-unsupported";
 const UNSUPPORTED_PROXY_PREFIX_HINT =
-  "Stored proxy-prefixed browser relay pairing is no longer supported. Re-run `openclaw browser extension pair` with a Gateway URL that has no path prefix.";
+  "This stored browser pairing is no longer supported. Create a new pairing in __PRODUCT_NAME__.";
 
 const CHROME_GROUP_COLORS = {
   grey: [128, 128, 128],
@@ -238,7 +238,7 @@ export function createPairingConfigStore(storage) {
   let chain = Promise.resolve();
   let invalidObserved = false;
   let invalidationRevision = 0;
-  const run = (task) => {
+  const run = task => {
     const pending = chain.then(task, task);
     chain = pending.catch(() => undefined);
     return pending;
@@ -255,7 +255,7 @@ export function createPairingConfigStore(storage) {
           PAIRING_STATUS_KEY,
           "groupColor",
         ]);
-        const hasPairing = PAIRING_STORAGE_KEYS.some((key) => Object.hasOwn(stored, key));
+        const hasPairing = PAIRING_STORAGE_KEYS.some(key => Object.hasOwn(stored, key));
         const pairing = hasPairing ? parseStoredPairing(stored) : null;
         let pairingStatus =
           stored[PAIRING_STATUS_KEY] === UNSUPPORTED_PROXY_PREFIX_STATUS
@@ -326,7 +326,7 @@ export function createPairingConfigStore(storage) {
         });
         await storage.remove([PAIRING_STATUS_KEY]);
       }),
-    setAccessMode: (accessMode) =>
+    setAccessMode: accessMode =>
       run(async () => {
         const stored = await storage.get(PAIRING_STORAGE_KEYS);
         if (!parseStoredPairing(stored)) {

@@ -1,6 +1,7 @@
-This directory contains the unmodified OpenClaw browser extension shipped with
-the OpenClaw v2026.9.2 runtime. JustDo copies it as an unpacked extension and
-does not maintain a separate relay protocol implementation.
+This directory contains a browser extension derived from the OpenClaw extension
+shipped with the OpenClaw v2026.9.2 runtime. __PRODUCT_NAME__ customizes the
+user-facing product identity and setup flow while preserving relay protocol
+compatibility.
 Upstream: https://github.com/openclaw/openclaw
 
 MIT License

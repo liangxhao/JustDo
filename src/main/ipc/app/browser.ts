@@ -297,6 +297,17 @@ const parseBrowserExtensionPairingResult = (
   return { pairingString, relayPort: relayPort as number };
 };
 
+export const buildBrowserPairingCommandEnvironment = (
+  cli: OpenClawCliEnvironment,
+): NodeJS.ProcessEnv => ({
+  ...cli.env,
+  ELECTRON_RUN_AS_NODE: '1',
+  // OpenClaw adds Windows Node flags by respawning the CLI. Under Electron that
+  // respawn restores electron.exe in argv[0], which Commander treats as a
+  // command name. The launcher already runs on the supported embedded Node.
+  OPENCLAW_NO_RESPAWN: '1',
+});
+
 export const copyBrowserExtensionPairing = async (
   buildCliEnvironment: () => Promise<OpenClawCliEnvironment>,
   runPairCommand: (cli: OpenClawCliEnvironment) => Promise<string> = async cli => {
@@ -306,7 +317,7 @@ export const copyBrowserExtensionPairing = async (
       [cli.openclawEntry, 'browser', 'extension', 'pair', '--json'],
       {
         cwd: cli.runtimeRoot,
-        env: { ...cli.env, ELECTRON_RUN_AS_NODE: '1' },
+        env: buildBrowserPairingCommandEnvironment(cli),
         timeout: 15_000,
         maxBuffer: 1024 * 1024,
         windowsHide: true,

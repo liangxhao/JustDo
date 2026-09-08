@@ -6,14 +6,25 @@ import { describe, expect, test } from 'vitest';
 
 const { prepareBrowserExtension, verifyBrowserExtension } =
   require('../../scripts/prepare-browser-extension.cjs') as {
-    prepareBrowserExtension: (options: { outputDir?: string; repoRoot: string }) => {
+    prepareBrowserExtension: (options: {
+      outputDir?: string;
+      productName?: string;
+      repoRoot: string;
+    }) => {
       outputDir: string;
+      productName: string;
       sourceDir: string;
     };
-    verifyBrowserExtension: (extensionDir: string) => unknown;
+    verifyBrowserExtension: (
+      extensionDir: string,
+      options?: { productName?: string; repoRoot?: string },
+    ) => unknown;
   };
 
 const projectRoot = path.resolve(__dirname, '../..');
+const projectProductName = JSON.parse(
+  fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'),
+).productName as string;
 
 const createFixture = () => {
   const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-browser-extension-'));
@@ -22,6 +33,7 @@ const createFixture = () => {
     path.join(repoRoot, 'resources', 'browser-extension'),
     { recursive: true },
   );
+  fs.copyFileSync(path.join(projectRoot, 'package.json'), path.join(repoRoot, 'package.json'));
   return repoRoot;
 };
 
@@ -39,7 +51,7 @@ describe('browser extension preparation', () => {
     );
   });
 
-  test('packages the locked upstream extension with relay authentication v2 intact', () => {
+  test('packages the product-branded extension with relay authentication v2 intact', () => {
     const repoRoot = createFixture();
 
     try {
@@ -51,6 +63,7 @@ describe('browser extension preparation', () => {
         action: { default_title: string };
         description: string;
         name: string;
+        permissions: string[];
         version: string;
       };
       const popup = fs.readFileSync(path.join(second.outputDir, 'popup.js'), 'utf8');
@@ -60,19 +73,56 @@ describe('browser extension preparation', () => {
       );
 
       expect(first.sourceDir).toBe(second.sourceDir);
+      expect(second.productName).toBe(projectProductName);
       expect(manifest).toMatchObject({
-        name: 'OpenClaw',
+        name: projectProductName,
         version: '2.2.0',
-        action: { default_title: 'OpenClaw' },
+        action: { default_title: projectProductName },
       });
-      expect(manifest.description).toContain('OpenClaw');
+      expect(manifest.description).toContain(projectProductName);
+      expect(manifest.permissions).not.toContain('nativeMessaging');
       expect(popup).toContain('chrome.runtime.openOptionsPage()');
       expect(relayCore).toContain('openclaw-extension-relay.v2');
       expect(relayCore).toContain('authVersion');
       expect(fs.existsSync(path.join(second.outputDir, 'modules', 'relay-auth-v2.js'))).toBe(true);
       expect(fs.existsSync(path.join(second.outputDir, 'options.html'))).toBe(true);
       expect(fs.existsSync(path.join(second.outputDir, 'manifest.template.json'))).toBe(false);
-      expect(() => verifyBrowserExtension(second.outputDir)).not.toThrow();
+      expect(() => verifyBrowserExtension(second.outputDir, { repoRoot })).not.toThrow();
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('injects package.json productName into every customer-facing extension surface', () => {
+    const repoRoot = createFixture();
+    const packagePath = path.join(repoRoot, 'package.json');
+    const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf8')) as {
+      productName: string;
+    };
+    packageJson.productName = 'Acme';
+    fs.writeFileSync(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`, 'utf8');
+
+    try {
+      const { outputDir } = prepareBrowserExtension({ repoRoot });
+      const manifest = JSON.parse(
+        fs.readFileSync(path.join(outputDir, 'manifest.json'), 'utf8'),
+      ) as { action: { default_title: string }; description: string; name: string };
+      const optionsHtml = fs.readFileSync(path.join(outputDir, 'options.html'), 'utf8');
+      const popupHtml = fs.readFileSync(path.join(outputDir, 'popup.html'), 'utf8');
+      const popupJs = fs.readFileSync(path.join(outputDir, 'popup.js'), 'utf8');
+
+      expect(manifest).toMatchObject({
+        name: 'Acme',
+        action: { default_title: 'Acme' },
+      });
+      expect(manifest.description).toContain('Acme');
+      expect(optionsHtml).toContain('Connect to Acme');
+      expect(optionsHtml).not.toContain('Use local OpenClaw');
+      expect(optionsHtml).not.toContain('automaticSetup');
+      expect(optionsHtml).not.toContain('openclaw browser');
+      expect(popupHtml).toContain('Acme Browser');
+      expect(popupJs).toContain('Open Acme to finish setup');
+      expect(() => verifyBrowserExtension(outputDir, { repoRoot })).not.toThrow();
     } finally {
       fs.rmSync(repoRoot, { recursive: true, force: true });
     }
@@ -103,7 +153,9 @@ describe('browser extension preparation', () => {
         path.join(outputDir, 'icons', 'icon128.png'),
       );
 
-      expect(() => verifyBrowserExtension(outputDir)).toThrow('icon must be a 128x128 PNG');
+      expect(() => verifyBrowserExtension(outputDir, { repoRoot })).toThrow(
+        'icon must be a 128x128 PNG',
+      );
     } finally {
       fs.rmSync(repoRoot, { recursive: true, force: true });
     }
@@ -120,7 +172,7 @@ describe('browser extension preparation', () => {
       const { outputDir } = prepareBrowserExtension({ repoRoot });
       fs.rmSync(path.join(outputDir, relativePath));
 
-      expect(() => verifyBrowserExtension(outputDir)).toThrow(
+      expect(() => verifyBrowserExtension(outputDir, { repoRoot })).toThrow(
         'files do not match the locked OpenClaw snapshot',
       );
     } finally {
@@ -135,7 +187,7 @@ describe('browser extension preparation', () => {
       const { outputDir } = prepareBrowserExtension({ repoRoot });
       fs.appendFileSync(path.join(outputDir, 'options.js'), '\n// unexpected mutation\n', 'utf8');
 
-      expect(() => verifyBrowserExtension(outputDir)).toThrow(
+      expect(() => verifyBrowserExtension(outputDir, { repoRoot })).toThrow(
         'Browser extension file checksum mismatch: options.js',
       );
     } finally {
