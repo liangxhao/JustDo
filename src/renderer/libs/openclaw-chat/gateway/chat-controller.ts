@@ -4206,9 +4206,8 @@ export class ChatController {
       const switchesHistoryBranch = Boolean(
         responseHasActiveLeaf && previousActiveLeafKnown && previousActiveLeaf !== loadedActiveLeaf,
       );
-      const replacesHistoryProjection = rotatesSessionIdentity || switchesHistoryBranch;
       const authoritativeSessionId = loadedSessionId ?? this.state.transcript.sessionId;
-      if (!replacesHistoryProjection) {
+      if (!rotatesSessionIdentity) {
         requestedSessionId = authoritativeSessionId;
         this.state.currentSessionId = authoritativeSessionId;
         this.state.transcript.sessionId = authoritativeSessionId;
@@ -4262,6 +4261,12 @@ export class ChatController {
       // started while the tail snapshot was being hydrated must not mutate the
       // new cursor or mix a prior branch into it.
       this.historyPagingGeneration += 1;
+      // Hydration awaits can span a run starting or finishing. Decide at commit
+      // time, and retain a running turn even during suspended reconciliation:
+      // that path still needs it to recover the remote run's lifecycle.
+      const deferHistoryBranchReplacement = switchesHistoryBranch && this.state.chatSending;
+      const replacesHistoryProjection =
+        rotatesSessionIdentity || (switchesHistoryBranch && !deferHistoryBranchReplacement);
       const preserveLoadedPaginationDepth =
         !replacesHistoryProjection && this.historyPaginationAdvanced;
       // Hydrating oversized rows and compaction details can take multiple RPCs.
@@ -4457,7 +4462,7 @@ export class ChatController {
         this.state.historyNextCursor = this.state.historyHasMore ? pagedHistory.nextCursor : null;
       }
       this.rememberHistoryPagination(sessionKey);
-      if (responseHasActiveLeaf) {
+      if (responseHasActiveLeaf && !deferHistoryBranchReplacement) {
         this.displayedHistoryLeafBySession.set(normalizedSessionKey, loadedActiveLeaf ?? null);
       }
       if (this.state.pendingUserMessage && pendingUserMessageFoundIndex >= 0) {

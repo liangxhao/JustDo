@@ -8196,6 +8196,130 @@ test('replaces loaded pages when activeLeafEntryId selects another branch', asyn
   expect(controller.state.historyNextCursor).toBeNull();
 });
 
+test('keeps history and the live turn visible until a changed leaf can be reconciled', async () => {
+  const sessionKey = 'agent:main:justdo:session-1';
+  const messages = [
+    { role: 'user', content: 'first prompt', __openclaw: { id: 'user-1' } },
+    { role: 'assistant', content: 'billing error', __openclaw: { id: 'error-1' } },
+    { role: 'user', content: 'retry with another model', __openclaw: { id: 'user-2' } },
+  ];
+  let leaf = 'failed-leaf';
+  const request = vi.fn().mockImplementation(() =>
+    Promise.resolve({
+      messages,
+      sessionId: 'sid-1',
+      sessionInfo: { sessionId: 'sid-1', activeLeafEntryId: leaf },
+    }),
+  );
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+  await controller.loadHistory();
+  const activeTurn = beginAssistantTurn(
+    controller.state.transcript,
+    { runId: 'retry-run', sessionId: 'sid-1' },
+    { now: () => 1000, createId: prefix => `${prefix}-1` },
+  );
+  controller.state.chatSending = true;
+  controller.state.chatRunId = activeTurn.runId;
+  const generation = controller.state.transcript.historyGeneration;
+  const visibleMessages = controller.state.visibleChatMessages;
+
+  for (const nextLeaf of ['thinking-leaf', 'content-leaf']) {
+    leaf = nextLeaf;
+    expect(await controller.loadHistory()).toBe(false);
+    expect(controller.state.visibleChatMessages).toEqual(visibleMessages);
+    expect(controller.getLoadedMessages()).toEqual(messages);
+    expect(controller.state.transcript.activeTurn).toBe(activeTurn);
+    expect(controller.state.transcript.historyGeneration).toBe(generation);
+  }
+
+  controller.state.chatSending = false;
+  activeTurn.status = 'final';
+  expect(await controller.loadHistory()).toBe(true);
+  expect(controller.state.visibleChatMessages).toEqual(messages);
+  expect(controller.state.transcript.activeTurn).toBeNull();
+  expect(controller.state.transcript.historyGeneration).toBeGreaterThan(generation);
+});
+
+test.each(['starts', 'finishes'] as const)(
+  'rechecks branch replacement when a run %s during history hydration',
+  async transition => {
+    const sessionKey = 'agent:main:justdo:session-1';
+    const initialMessages = [{ role: 'user', content: 'prompt', __openclaw: { id: 'user-1' } }];
+    const finalMessage = {
+      role: 'assistant',
+      content: 'complete answer',
+      __openclaw: { id: 'answer-1' },
+    };
+    let resolveMessage!: (value: unknown) => void;
+    let tailRead = 0;
+    const request = vi.fn().mockImplementation((method: string) => {
+      if (method === 'chat.message.get')
+        return new Promise(resolve => {
+          resolveMessage = resolve;
+        });
+      tailRead += 1;
+      return Promise.resolve({
+        messages:
+          tailRead === 1
+            ? initialMessages
+            : [
+                ...initialMessages,
+                {
+                  ...finalMessage,
+                  content: 'preview',
+                  __openclaw: { id: 'answer-1', truncated: true },
+                },
+              ],
+        sessionId: 'sid-1',
+        sessionInfo: {
+          sessionId: 'sid-1',
+          activeLeafEntryId: tailRead === 1 ? 'old-leaf' : 'new-leaf',
+        },
+      });
+    });
+    const controller = new ChatController();
+    controller.state.client = { request } as never;
+    controller.state.connected = true;
+    controller.state.sessionKey = sessionKey;
+    await controller.loadHistory();
+    const startRun = () => {
+      const turn = beginAssistantTurn(
+        controller.state.transcript,
+        { runId: 'run-1', sessionId: 'sid-1' },
+        { now: () => 1000, createId: prefix => `${prefix}-1` },
+      );
+      controller.state.chatSending = true;
+      controller.state.chatRunId = turn.runId;
+      return turn;
+    };
+    let activeTurn = transition === 'finishes' ? startRun() : null;
+    const generation = controller.state.transcript.historyGeneration;
+    const load = controller.loadHistory();
+    await vi.waitFor(() => expect(resolveMessage).toBeTypeOf('function'));
+
+    if (transition === 'starts') activeTurn = startRun();
+    else {
+      controller.state.chatSending = false;
+      activeTurn!.status = 'final';
+    }
+    resolveMessage({ ok: true, message: finalMessage });
+
+    expect(await load).toBe(transition === 'finishes');
+    if (transition === 'starts') {
+      expect(controller.state.visibleChatMessages).toEqual(initialMessages);
+      expect(controller.state.transcript.activeTurn).toBe(activeTurn);
+      expect(controller.state.transcript.historyGeneration).toBe(generation);
+    } else {
+      expect(controller.state.visibleChatMessages).toEqual([...initialMessages, finalMessage]);
+      expect(controller.state.transcript.activeTurn).toBeNull();
+      expect(controller.state.transcript.historyGeneration).toBeGreaterThan(generation);
+    }
+  },
+);
+
 test('projects context usage from sessions.changed and rejects an older snapshot', () => {
   const controller = new ChatController();
   const sessionKey = 'agent:main:justdo:session-1';
