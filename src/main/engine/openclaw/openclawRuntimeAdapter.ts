@@ -69,7 +69,6 @@ import type {
   CoworkSessionStatus,
   CoworkStore,
 } from '../../data/coworkStore';
-import { OPENCLAW_COMPACTION_TIMEOUT_SECONDS } from '../../openclaw/config/openclawConfigSync';
 import { GoalContinuationCoordinator } from '../../openclaw/goals/goalContinuationCoordinator';
 import {
   buildSessionExecApprovalFingerprint,
@@ -142,7 +141,6 @@ const TITLE_SESSION_ID_POLL_INTERVAL_MS = 100;
 const TITLE_SESSION_ID_SNAPSHOT_INTERVAL_MS = 2_000;
 const LIFECYCLE_END_FALLBACK_MS = 1_500;
 const AUTOMATION_PERMISSION_POLICY_ID = 'native-session-automation-permission';
-const COMPACTION_IN_FLIGHT_TIMEOUT_MS = OPENCLAW_COMPACTION_TIMEOUT_SECONDS * 1_000 + 60_000;
 const ERROR_TERMINAL_SESSION_STATUSES = new Set([
   'aborted',
   'cancelled',
@@ -240,7 +238,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly terminalLifecycleErrorSessionIds = new Set<string>();
   private readonly recentTerminalRunIds = new Map<string, number>();
   private readonly compactionInFlightSessionIds = new Set<string>();
-  private readonly compactionInFlightTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly lifecycleEndFallbackTimers = new Map<
     string,
     ReturnType<typeof setTimeout>
@@ -2126,6 +2123,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (!sessionKey) return;
     if (payload.operation === 'reset' || payload.operation === 'delete') {
       this.sessionExecApprovalGrants.clearSession(sessionKey);
+      const sessionId = this.resolveSessionIdBySessionKey(sessionKey);
+      if (sessionId) this.clearCompactionInFlight(sessionId);
       return;
     }
     if (payload.operation !== 'compact') return;
@@ -2143,17 +2142,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (phase === 'start') {
       this.clearCompactionInFlight(sessionId);
       this.compactionInFlightSessionIds.add(sessionId);
-      const compactionTimer = setTimeout(() => {
-        if (this.compactionInFlightTimers.get(sessionId) !== compactionTimer) return;
-        this.compactionInFlightTimers.delete(sessionId);
-        this.compactionInFlightSessionIds.delete(sessionId);
-        const activeTurn = this.activeTurns.get(sessionId);
-        if (activeTurn && this.terminalLifecycleSessionIds.has(sessionId)) {
-          this.scheduleLifecycleEndFallback(sessionId, activeTurn);
-        }
-      }, COMPACTION_IN_FLIGHT_TIMEOUT_MS);
-      compactionTimer.unref?.();
-      this.compactionInFlightTimers.set(sessionId, compactionTimer);
+      // The native watchdog resets with progress. Elapsed time cannot prove
+      // compaction ended; terminal events and transport/session cleanup own it.
       const timer = this.lifecycleEndFallbackTimers.get(sessionId);
       if (timer) {
         clearTimeout(timer);
@@ -2169,15 +2159,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   private clearCompactionInFlight(sessionId: string): void {
-    const timer = this.compactionInFlightTimers.get(sessionId);
-    if (timer) clearTimeout(timer);
-    this.compactionInFlightTimers.delete(sessionId);
     this.compactionInFlightSessionIds.delete(sessionId);
   }
 
   private clearAllCompactionInFlight(): void {
-    for (const timer of this.compactionInFlightTimers.values()) clearTimeout(timer);
-    this.compactionInFlightTimers.clear();
     this.compactionInFlightSessionIds.clear();
   }
 
@@ -2194,6 +2179,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const reason = typeof payload.reason === 'string' ? payload.reason.trim().toLowerCase() : '';
     if (reason === 'delete' || reason === 'reset' || reason === 'new') {
       this.sessionExecApprovalGrants.clearSession(sessionKey);
+      const resetSessionId = this.resolveSessionIdBySessionKey(sessionKey);
+      if (resetSessionId) this.clearCompactionInFlight(resetSessionId);
     }
     const sessionId = this.resolveSessionIdBySessionKey(sessionKey);
     if (!sessionId) return;

@@ -16,6 +16,43 @@ function build(overrides: Partial<Parameters<typeof buildChatItems>[0]> = {}) {
   });
 }
 
+test.each([
+  ['failed', '上下文压缩失败'],
+  ['skipped', '上下文压缩已跳过'],
+  ['aborted', '上下文压缩已取消'],
+])(
+  'renders the %s compaction outcome without a success label or unfinished summary',
+  (phase, label) => {
+    const items = build({
+      messages: [
+        {
+          role: 'system',
+          timestamp: 1,
+          __openclaw: {
+            kind: 'compaction-status',
+            id: 'compact-1',
+            phase,
+            reason: 'native reason',
+            summary: 'Partial model output',
+            tokensBefore: 100,
+            tokensAfter: 20,
+          },
+        },
+      ],
+    });
+    expect(items).toContainEqual(
+      expect.objectContaining({
+        kind: 'divider',
+        label,
+        description: 'native reason',
+        inProgress: false,
+        expandable: false,
+        summary: undefined,
+      }),
+    );
+  },
+);
+
 function groups(items: ReturnType<typeof buildChatItems>): MessageGroup[] {
   return items.filter((item): item is MessageGroup => item.kind === 'group');
 }
@@ -180,15 +217,15 @@ test('keeps an automatic compaction summary expandable without token or checkpoi
 
   expect(divider).toEqual(
     expect.objectContaining({
-      label: 'Context compacted',
+      label: '上下文已压缩',
       summary: 'Automatic compaction preserved the active task.',
       expandable: true,
     }),
   );
-  expect(divider?.action).toBeUndefined();
+  expect(divider).not.toHaveProperty('action');
 });
 
-test('builds an English in-progress divider for local compaction status', () => {
+test('builds a localized in-progress divider for local compaction status', () => {
   const items = build({
     messages: [
       {
@@ -209,7 +246,7 @@ test('builds an English in-progress divider for local compaction status', () => 
   expect(divider).toEqual(
     expect.objectContaining({
       key: 'divider:compaction-status:local-compact-1',
-      label: 'Compacting...',
+      label: '正在压缩上下文…',
       expandable: false,
       inProgress: true,
     }),
@@ -237,7 +274,7 @@ test('makes a streamed in-progress compaction summary expandable', () => {
 
   expect(divider).toEqual(
     expect.objectContaining({
-      label: 'Compacting...',
+      label: '正在压缩上下文…',
       summary: 'Preserved decisions and current implementation state.',
       expandable: true,
       inProgress: true,

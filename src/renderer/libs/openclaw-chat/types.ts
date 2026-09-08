@@ -16,7 +16,6 @@ export type ChatItem =
       summary?: string;
       expandable?: boolean;
       inProgress?: boolean;
-      action?: { kind: 'session-checkpoints'; label: string };
       timestamp: number;
     }
   | {

@@ -14,6 +14,7 @@ import {
   resolveApprovalWaitTimeoutMs,
 } from '../../../shared/openclaw/agentRuntimeSettings';
 import { PermissionMode } from '../../../shared/openclaw/approvals';
+import { OPENCLAW_COMPACTION_TIMEOUT_SECONDS } from '../../../shared/openclaw/compaction';
 import { OpenClawExtensionId } from '../../../shared/openclaw/extensions';
 import {
   getEffectiveCustomProviderDisplayName,
@@ -1027,7 +1028,7 @@ export const OPENCLAW_MODEL_PROVIDER_TIMEOUT_SECONDS = 30 * 60;
 // Context compaction has its own OpenClaw safety timeout. Keep it aligned with
 // the provider ceiling so a healthy long-context SSE response is not aborted
 // by the much shorter upstream default (180s).
-export const OPENCLAW_COMPACTION_TIMEOUT_SECONDS = OPENCLAW_MODEL_PROVIDER_TIMEOUT_SECONDS;
+export { OPENCLAW_COMPACTION_TIMEOUT_SECONDS } from '../../../shared/openclaw/compaction';
 // Stable product defaults retained for callers and focused config tests.
 export const OPENCLAW_SUBAGENT_MAX_CONCURRENT =
   DEFAULT_AGENT_RUNTIME_SETTINGS.subagents.maxConcurrent;

@@ -103,7 +103,7 @@ export class GatewayClient {
     {
       resolve: (v: unknown) => void;
       reject: (e: Error) => void;
-      timer: ReturnType<typeof setTimeout>;
+      timer: ReturnType<typeof setTimeout> | undefined;
     }
   >();
   private lastSeq: number | null = null;
@@ -138,10 +138,15 @@ export class GatewayClient {
     const id = generateId();
     const frame = JSON.stringify({ type: 'req', id, method, params });
     return new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pendingRequests.delete(id);
-        reject(new Error(`request timeout: ${method}`));
-      }, REQUEST_TIMEOUT_MS);
+      // Native compaction resets its watchdog as work progresses, so it has no
+      // fixed total deadline. Transport loss still rejects every pending request.
+      const timer =
+        method === 'sessions.compact'
+          ? undefined
+          : setTimeout(() => {
+              this.pendingRequests.delete(id);
+              reject(new Error(`request timeout: ${method}`));
+            }, REQUEST_TIMEOUT_MS);
       this.pendingRequests.set(id, {
         resolve: resolve as (v: unknown) => void,
         reject,

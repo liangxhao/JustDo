@@ -7,6 +7,69 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it('accepts manual compaction success beyond the resettable backend watchdog window', async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal('WebSocket', { OPEN: 1 });
+  const send = vi.fn();
+  const client = new GatewayClient({ url: 'ws://gateway.test' });
+  const internals = client as unknown as {
+    ws: { readyState: number; send: typeof send; close: ReturnType<typeof vi.fn> };
+    handleMessage(ws: unknown, generation: number, data: string): void;
+  };
+  internals.ws = { readyState: 1, send, close: vi.fn() };
+  const settled = vi.fn();
+  const pending = client.request('sessions.compact', { key: 'session-1' });
+  void pending.then(settled, settled);
+  await vi.advanceTimersByTimeAsync(2 * 60 * 60 * 1000);
+  expect(settled).not.toHaveBeenCalled();
+  const { id } = JSON.parse(send.mock.calls[0][0]) as { id: string };
+  internals.handleMessage(
+    internals.ws,
+    0,
+    JSON.stringify({ type: 'res', id, ok: true, payload: { ok: true, compacted: true } }),
+  );
+  await expect(pending).resolves.toEqual({ ok: true, compacted: true });
+  client.stop();
+});
+
+it.each([['chat.history', 90_000]] as const)(
+  'bounds the %s request wait',
+  async (method, timeoutMs) => {
+    vi.useFakeTimers();
+    vi.stubGlobal('WebSocket', { OPEN: 1 });
+    const client = new GatewayClient({ url: 'ws://gateway.test' });
+    (client as unknown as { ws: unknown }).ws = { readyState: 1, send: vi.fn(), close: vi.fn() };
+    const pending = client.request(method);
+    const rejected = expect(pending).rejects.toThrow(`request timeout: ${method}`);
+    await vi.advanceTimersByTimeAsync(timeoutMs);
+    await rejected;
+    client.stop();
+  },
+);
+
+it('rejects a pending manual compaction when its gateway connection closes', async () => {
+  vi.useFakeTimers();
+  const listeners = new Map<string, (event: CloseEvent) => void>();
+  class FakeWebSocket {
+    static readonly OPEN = 1;
+    readyState = 1;
+    addEventListener(type: string, listener: (event: CloseEvent) => void): void {
+      listeners.set(type, listener);
+    }
+    send(): void {}
+    close(): void {}
+  }
+  vi.stubGlobal('WebSocket', FakeWebSocket);
+  const client = new GatewayClient({ url: 'ws://gateway.test' });
+  client.start();
+  const pending = client.request('sessions.compact');
+  const rejected = expect(pending).rejects.toThrow('gateway closed (1006)');
+  listeners.get('close')?.({ code: 1006, reason: '' } as CloseEvent);
+  await rejected;
+  client.stop();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
 describe('resolveGatewayTickTimeoutMs', () => {
   it('allows jitter around the standard gateway tick interval', () => {
     expect(resolveGatewayTickTimeoutMs(30_000)).toBe(65_000);

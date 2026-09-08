@@ -188,6 +188,12 @@ Minimap从timeline identity生成entry，追踪当前viewport并支持hover prev
 
 ## 17. Goal、Compaction 与错误
 
+压缩进度消费原生 `agent` compaction stream 和 `session.operation`，包括已切到后台的会话。`end` 中的 `completed: false` 或 `outcome: failed/skipped/aborted` 必须显示对应失败、跳过、取消状态，不能生成成功提示或等待不存在的成功 history marker。存在 `itemId/operationId` 时按操作身份去重并拒绝前一操作的迟到事件；没有身份的连续 start 不用时间窗口猜测是否重复。手动 `sessions.compact` 的 payload `ok: false` 通常是业务失败，但原生 preflight 的 `Already compacted` 与 `Nothing to compact (session too small)` 也是该形状，必须精确识别为无需压缩，其他失败不能被吞掉。原生 1800 秒 watchdog 会随进展重置，并非总执行上限，因此 `sessions.compact` 不再设置前端固定 RPC 总超时，仍由原生 watchdog 和断连拒绝收敛；其他 RPC 保持 90 秒超时。手动请求按连接和本地请求身份隔离，旧请求返回不得覆盖新操作。
+
+压缩成功后从原生 history/checkpoint 查询补齐 summary 与 token 数；自动压缩按 marker 的 `itemId` 精确接管对应本地状态，不能把 transcript entry id 当作 item id，也不能用上一轮迟到 marker 替换下一轮状态。已经确认成功的压缩在临时 history 读取失败时保留成功提示，并有界重试补全。运行时若提供摘要增量则可以展示，但不要求原生 compaction stream 一定发送增量。当前仅展示摘要，不生成指向尚未实现的 checkpoint branch/restore 界面的操作提示。
+
+历史 marker 可以先于原生 `end` 到达：这时只隐藏对应本地卡片，保留操作身份直到终态；若提交后扩展失败，同时保留已提交 marker 和失败诊断。连接中断时清除尚未确认的压缩进度，避免后台失败事件漏收后永久显示“压缩中”，后续由新的原生事件与历史恢复显示。
+
 Goal card 位于 chat 周边，Goal 内容/状态来自 Gateway session row，自动续跑 phase 来自 Main snapshot。卡片生命周期按钮通过最小 preload IPC 提交带 goalId fence 的 structured mutation；start/resume 的 optimistic user text 始终显示用户原文，不展示 transport intent 或历史 follow-up envelope。`usage_limited`、`budget_limited` 使用独立状态文案，token 用量直接显示；elapsed 只在 active 时递增，并冻结在 paused/blocked/limited/complete 的原生时间戳。Compaction history detail通过专用IPC读取，timeline展示summary、tokens before/after和recovery progress；不把内部context markers显示给用户。
 
 输入区上下文圆环与 OpenClaw webchat 使用同一会话行口径：初始值取 `chat.history.sessionInfo`，运行中的更新取 `sessions.changed` 以及 transcript-derived `session.message.session`，只在 session 已有 `totalTokens` 且能确定 context limit 时展示；`totalTokensFresh: false` 以 `~` 标记近似值。Controller 按 session identity 与 `updatedAt` 拒绝陈旧 history/event 快照，同时允许压缩后的 token 数下降；显示层把超过窗口的 provider 值限制为 100%。该链路不再维护独立 estimate cache，也不再通过 Main IPC 轮询 `sessions.describe/list`。

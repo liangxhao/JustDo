@@ -142,6 +142,8 @@ active Goal。
 
 Goal、required child join、queue admission、审批、thinking、compaction/context budget 均使用 v2026.9.2 原生能力。Subagent 列表和终态来自 `task` events 与 `tasks.list/get`；产品层只映射为 `pending/running/done/failed/killed/timeout`，其中 `taskName` 是稳定 task id，`label` 是展示标题。
 
+压缩 watchdog 会随原生执行进展重置，不能把配置的 timeout 当作整体执行时限。Adapter 不再按固定 elapsed 清除 compaction busy 状态或触发 run complete；只在原生压缩终态、会话 reset/delete/new、运行清理或连接清理时释放该状态。Renderer 的手动压缩 RPC 同样不设独立总时限，普通 RPC 的请求超时不受影响。
+
 ## 13. Agent runtime settings
 
 Shared contract 对 delegation mode、命令审批等待时限、全局及单 Server MCP request timeout、subagent concurrency/children/depth/timeout/archive/model/thinking/announce timeout 等字段做默认值、范围和跨字段 normalize。Main IPC 保存后进入 config sync。命令审批预设为无限、10、20、30、60 分钟，并通过受管 Gateway 环境作用于后续原生 exec approval；需要 hard restart 的配置会一直通过原生 suspension 屏障等待活动任务结束，不设置强制中断上限，真正重启前 scheduler 与新 admission 已被冻结；MCP timeout 变化会重建托管 server 配置；subagent 配置通常影响新 spawn/turn，不能承诺正在运行的 subagent 热更新。

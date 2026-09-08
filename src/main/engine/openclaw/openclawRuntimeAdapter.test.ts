@@ -30,11 +30,10 @@ import {
   AskUserQuestionGateway,
   CoworkInteractionIpc,
 } from '../../../shared/openclaw/extensions';
-import { OPENCLAW_COMPACTION_TIMEOUT_SECONDS } from '../../openclaw/config/openclawConfigSync';
 import type { GatewayClientCtor, GatewayClientLike, SessionTurn } from '../gateway/types';
 import { OpenClawRuntimeAdapter } from './openclawRuntimeAdapter';
 
-const COMPACTION_WATCHDOG_MS = OPENCLAW_COMPACTION_TIMEOUT_SECONDS * 1_000 + 60_000;
+const LONG_COMPACTION_DURATION_MS = 2 * 60 * 60 * 1000;
 
 const createPreparedSessionReceipt = (key = 'agent:main:justdo:session-1') => ({
   key,
@@ -3754,7 +3753,7 @@ test.each(['error', 'failed'])('clears manual context compaction on %s', async p
   ).resolves.toMatchObject({ mainRunning: false, running: false });
 });
 
-test('expires manual context compaction when its terminal event is lost', async () => {
+test('keeps healthy long manual compaction running until its native terminal event', async () => {
   vi.useFakeTimers();
   try {
     const { store } = createEmptyStore();
@@ -3770,7 +3769,16 @@ test('expires manual context compaction when its terminal event is lost', async 
       event: 'session.operation',
       payload: { operation: 'compact', phase: 'start', sessionKey },
     });
-    await vi.advanceTimersByTimeAsync(COMPACTION_WATCHDOG_MS);
+    await vi.advanceTimersByTimeAsync(LONG_COMPACTION_DURATION_MS);
+
+    await expect(
+      adapter.getSessionRuntimeStatus('session-1', { forceRefresh: true }),
+    ).resolves.toMatchObject({ mainRunning: true, running: true });
+    expect(request).not.toHaveBeenCalled();
+    adapter.handleGatewayEvent({
+      event: 'session.operation',
+      payload: { operation: 'compact', phase: 'end', sessionKey, completed: true },
+    });
 
     await expect(
       adapter.getSessionRuntimeStatus('session-1', { forceRefresh: true }),
@@ -3779,6 +3787,30 @@ test('expires manual context compaction when its terminal event is lost', async 
   } finally {
     vi.useRealTimers();
   }
+});
+
+test.each([
+  ['session.operation', { operation: 'reset', phase: 'end' }],
+  ['session.operation', { operation: 'delete', phase: 'end' }],
+  ['sessions.changed', { reason: 'reset' }],
+  ['sessions.changed', { reason: 'delete' }],
+  ['sessions.changed', { reason: 'new' }],
+] as const)('clears manual compaction after %s %j', async (event, payload) => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const sessionKey = 'agent:main:justdo:session-1';
+  adapter.rememberSessionKey('session-1', sessionKey);
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
+    request: vi.fn().mockResolvedValue({ sessions: [] }),
+  } as unknown as GatewayClientLike;
+  adapter.handleGatewayEvent({
+    event: 'session.operation',
+    payload: { operation: 'compact', phase: 'start', sessionKey },
+  });
+  adapter.handleGatewayEvent({ event, payload: { ...payload, sessionKey } });
+  await expect(
+    adapter.getSessionRuntimeStatus('session-1', { forceRefresh: true }),
+  ).resolves.toMatchObject({ mainRunning: false, running: false });
 });
 
 test('clears manual context compaction when Gateway state is cleaned up', async () => {
@@ -4156,7 +4188,7 @@ test('settles an internal managed handoff chat error without forwarding it', () 
   expect(error).not.toHaveBeenCalled();
 });
 
-test('compaction timeout resumes the lifecycle end fallback when its end event is lost', () => {
+test('long compaction pauses lifecycle completion until its native end arrives', () => {
   vi.useFakeTimers();
   try {
     const { session, store } = createEmptyStore();
@@ -4187,8 +4219,18 @@ test('compaction timeout resumes the lifecycle end fallback when its end event i
       },
     });
 
-    vi.advanceTimersByTime(COMPACTION_WATCHDOG_MS);
+    vi.advanceTimersByTime(LONG_COMPACTION_DURATION_MS);
     expect(adapter.isSessionActive('session-1')).toBe(true);
+    expect(session.status).toBe('running');
+    adapter.handleGatewayEvent({
+      event: 'agent',
+      payload: {
+        runId: 'run-1',
+        sessionKey: 'agent:main:justdo:session-1',
+        stream: 'compaction',
+        data: { phase: 'end', completed: true, outcome: 'completed' },
+      },
+    });
     vi.advanceTimersByTime(1500);
     expect(adapter.isSessionActive('session-1')).toBe(false);
     expect(session.status).toBe('idle');
