@@ -99,7 +99,6 @@ export const registerCoworkSessionExecutionHandlers = ({
               sessionId: session.id,
               clientTurnId: options.clientTurnId,
               startedAt: options.startedAt!,
-              modelRef: initialModelRef,
             })
           : undefined;
 

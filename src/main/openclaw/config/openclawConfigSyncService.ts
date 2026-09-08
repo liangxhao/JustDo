@@ -1,5 +1,6 @@
 import type { BrowserMode } from '../../../shared/browser';
 import { BuiltinModelSyncReason } from '../../../shared/builtinModels';
+import { matchesModelSelectionIdentity } from '../../../shared/openclaw/modelSelectionIdentity';
 import { ScheduledTaskAgentId } from '../../../shared/scheduledTask/constants';
 import { ManagedDirectoryRuntimeStopAbortedError } from '../../core/managedDirectoryOperations';
 import type { CoworkStore } from '../../data/coworkStore';
@@ -612,9 +613,26 @@ export class OpenClawConfigSyncService {
         const persistedTarget = parseModelReferenceV2026_9_2(
           this.deps.getCoworkStore().getSessionModelRef(match[2]),
         );
+        const availableSelectionRef = persistedTarget
+          ? availableModelRefs.has(persistedTarget.reference)
+            ? persistedTarget.reference
+            : [...availableModelRefs].find(reference =>
+                matchesModelSelectionIdentity(reference, persistedTarget.reference),
+              )
+          : undefined;
+        // Preserve selected aliases only while their catalog route remains
+        // available. Removed models must return to the agent default.
+        if (
+          persistedTarget &&
+          availableSelectionRef &&
+          session.modelProvider === persistedTarget.provider &&
+          session.model === persistedTarget.model
+        ) {
+          continue;
+        }
         const target =
-          persistedTarget && availableModelRefs.has(persistedTarget.reference)
-            ? persistedTarget
+          availableSelectionRef
+            ? parseModelReferenceV2026_9_2(availableSelectionRef)
             : targets.get(match[1]);
         if (!target) continue;
         if (session.modelProvider === target.provider && session.model === target.model) continue;

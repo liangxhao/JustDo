@@ -3,6 +3,20 @@ import { describe, expect, test } from 'vitest';
 import { normalizeMessage } from '@/libs/openclaw-chat/pipeline/message-normalizer';
 
 describe('normalizeMessage image content', () => {
+  test.each(['vendor/model', 'openrouter/auto'])(
+    'keeps provider identity for native model %s',
+    model => {
+      expect(
+        normalizeMessage({
+          role: 'assistant',
+          provider: 'openrouter',
+          model,
+          content: 'answer',
+        }).modelName,
+      ).toBe(`openrouter/${model}`);
+    },
+  );
+
   test('normalizes OpenClaw base64 image blocks in user messages', () => {
     const message = normalizeMessage({
       role: 'user',

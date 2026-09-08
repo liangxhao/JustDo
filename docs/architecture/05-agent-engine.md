@@ -44,6 +44,16 @@ Engine status 至少表达 stopped、starting、running、stopping/error 类 pha
 
 ## 4. 启动前配置同步
 
+消息输入框切换模型时，已有会话先通过 `sessions.patch` 更新，再更新 agent 默认模型。
+`SessionRpc` 按会话串行协调读取、切换和执行等待；仅以 patch 返回的 `resolved`
+确认并保存模型身份，不使用请求值或 `entry.model` 代替 Gateway 结果。查询使用
+`sessions.describe` 的公开会话行：`modelProvider/model` 是所选模型，
+`activeModelProvider/activeModel` 可以描述临时 fallback。`sessions.get` 只读取消息，
+不得用来查询模型配置。选择状态与回复实际模型分开，后者由原生运行事件及消息负责。
+配置同步只在当前 catalog 仍存在对应 route 时保留已确认的 Gateway 别名；
+已删除的模型/provider 回到 agent 默认模型。已知 `builtin_models` 的公开别名
+可映射回原 catalog route，不能对任意 provider 盲目剥掉前缀。
+
 配置同步汇总多个权威源：
 
 - provider models、base URL、API format、auth 与 capability；

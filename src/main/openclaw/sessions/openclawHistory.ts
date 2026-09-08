@@ -1,5 +1,5 @@
 import { isGatewayToolFailureNotice } from '../../../shared/cowork/toolFailureNotice';
-import { normalizeModelRef } from '../../../shared/openclaw/modelRef';
+import { modelRefFromIdentity, normalizeModelRef } from '../../../shared/openclaw/modelRef';
 import {
   parseScheduledReminderPrompt,
   parseSimpleScheduledReminderText,
@@ -97,7 +97,7 @@ const resolveAssistantModelName = (
     metadata?.model,
     metadata?.modelId,
   );
-  return normalizeModelRef(model, provider) ?? undefined;
+  return modelRefFromIdentity(model, provider) ?? undefined;
 };
 
 const extractEmbeddedToolUseEntries = (message: unknown): GatewayHistoryEntry[] => {

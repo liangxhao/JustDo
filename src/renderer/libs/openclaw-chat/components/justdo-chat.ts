@@ -2458,7 +2458,7 @@ export class JustDoChatElement extends LitElement {
                     >
                       <div class="chat-group__avatar" aria-hidden="true"></div>
                       <footer class="active-turn__footer">
-                        ${this.activeTurnFooter(activeTurnFooter, persistedMessages)}
+                        ${this.activeTurnFooter(activeTurnFooter, messages)}
                       </footer>
                     </section>
                   `
@@ -3203,12 +3203,7 @@ export class JustDoChatElement extends LitElement {
     footer: ActiveTurnFooter,
     persistedMessages: GatewayMessage[],
   ): TemplateResult | typeof nothing {
-    const activity = this._controller?.state.runActivity;
-    const model = resolveActiveTurnModel(
-      persistedMessages,
-      footer.modelRef ?? activity?.model,
-      footer.modelRef ? undefined : activity?.provider,
-    );
+    const model = resolveActiveTurnModel(persistedMessages, footer.modelRef);
     return this.renderRunFooter({
       status: footer.status,
       running: footer.running,

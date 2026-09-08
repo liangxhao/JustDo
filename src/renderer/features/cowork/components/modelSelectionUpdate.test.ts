@@ -42,6 +42,19 @@ describe('resolvePersistedSessionModelRefAfterApplyError', () => {
 });
 
 describe('applyModelSelectionUpdate', () => {
+  test('does not update defaults without a confirmed session model', async () => {
+    const setDefaultModel = vi.fn();
+    const onDefaultModelUpdated = vi.fn();
+    await expect(
+      applyModelSelectionUpdate(
+        { sessionId: 'session-1', agentId: 'main', model, onDefaultModelUpdated },
+        { patchSessionModel: vi.fn(async () => ({ success: true })), setDefaultModel },
+      ),
+    ).rejects.toThrow('patchSessionModel returned no confirmed model');
+    expect(setDefaultModel).not.toHaveBeenCalled();
+    expect(onDefaultModelUpdated).not.toHaveBeenCalled();
+  });
+
   test('locks the existing-session model before updating the default', async () => {
     const calls: string[] = [];
     const setDefaultModel = vi.fn(async () => {

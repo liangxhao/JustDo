@@ -27,7 +27,11 @@ import {
 } from '@shared/openclaw/agentEvent';
 import { isBenignCompactionNoopReason } from '@shared/openclaw/compaction';
 import { isInternalManagedSubagentHandoffError } from '@shared/openclaw/internalRunError';
-import { normalizeModelRef } from '@shared/openclaw/modelRef';
+import {
+  isGatewayInjectedModelRef,
+  modelRefFromIdentity,
+  readModelRef,
+} from '@shared/openclaw/modelRef';
 import {
   parseProgressCardChangedEvent,
   parseProgressCardGetResult,
@@ -843,7 +847,7 @@ export class ChatController {
     );
     if (options.provider) activity.provider = options.provider;
     if (options.model) activity.model = options.model;
-    const modelRef = normalizeModelRef(activity.model, activity.provider);
+    const modelRef = modelRefFromIdentity(activity.model, activity.provider);
     const activeTurn = this.state.transcript.activeTurn;
     if (
       modelRef &&
@@ -1274,6 +1278,26 @@ export class ChatController {
         ([, timing]) => timing.status !== 'running',
       )?.[0];
       if (oldestSettledKey) this.turnTimingBySession.delete(oldestSettledKey);
+    }
+  }
+
+  private rememberRunModel(message: unknown, runId?: string | null, terminal = false): void {
+    if (asRecord(message)?.role !== 'assistant' || !runId) return;
+    const modelRef = readModelRef(message);
+    if (!modelRef || isGatewayInjectedModelRef(modelRef)) return;
+    const activity = this.state.runActivity;
+    const turn = this.state.transcript.activeTurn;
+    // An append can describe an earlier model attempt within this same run.
+    // Live progress stays authoritative until the run reaches its terminal event.
+    if (!terminal && this.state.chatSending && turn?.modelRef) return;
+    if (activity?.runId === runId) {
+      activity.model = modelRef;
+      delete activity.provider;
+    }
+    if (turn?.runId === runId) turn.modelRef = modelRef;
+    const cached = this.turnTimingBySession.get(this.state.sessionKey);
+    if (cached?.runId === runId) {
+      this.turnTimingBySession.set(this.state.sessionKey, { ...cached, modelRef });
     }
   }
 
@@ -3524,6 +3548,7 @@ export class ChatController {
             )
           : null;
       if (directApply?.kind === 'applied') {
+        this.rememberRunModel(directApply.message, explicitMessageRunId);
         this.state.transcript.historySource = 'gateway';
         this.setCurrentSessionMessages(directApply.messages);
         if (
@@ -4387,6 +4412,16 @@ export class ChatController {
         this.notify();
         return false;
       }
+      // A history refresh repairs missed native appends, including the actual
+      // model after a fallback. Do not let an optimistic final record replace
+      // that authoritative identity, or borrow metadata from another run.
+      if (!this.state.chatSending) {
+        for (const message of messages) {
+          if (!isLocallyOptimisticHistoryTail(message)) {
+            this.rememberRunModel(message, readExplicitMessageRunId(message));
+          }
+        }
+      }
       messages = reconciliation.messages;
       debugLog('[ChatCtrl] loadHistory APPLY', {
         seq: loadSeq,
@@ -4525,6 +4560,12 @@ export class ChatController {
 
   private handleFinal(payload: NormalizedChatEvent): void {
     this.clearLifecycleEndFallback();
+    for (const message of this.state.chatMessages) {
+      if (!isLocallyOptimisticHistoryTail(message)) {
+        this.rememberRunModel(message, readExplicitMessageRunId(message), true);
+      }
+    }
+    this.rememberRunModel(payload.message, payload.runId, true);
     this.finishCurrentTurnTiming('final', payload.runId);
     const baselineMessageSeq = readLatestOpenClawMessageSeq(this.state.chatMessages);
     const baselineCompleteMessageCount = this.state.chatMessages.filter(

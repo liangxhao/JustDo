@@ -1,8 +1,18 @@
 import { describe, expect, test } from 'vitest';
 
-import { isGatewayInjectedModelRef, normalizeModelRef, readModelRef } from './modelRef';
+import { isGatewayInjectedModelRef, modelRefFromIdentity, normalizeModelRef, readModelRef } from './modelRef';
 
 describe('modelRef', () => {
+  test('preserves the provider when Gateway returns a model ID containing slashes', () => {
+    expect(modelRefFromIdentity('vendor/model', 'openrouter')).toBe('openrouter/vendor/model');
+    expect(readModelRef({ model: 'vendor/model', provider: 'custom-provider' }))
+      .toBe('custom-provider/vendor/model');
+    expect(readModelRef({ modelName: 'custom-provider/vendor/model', provider: 'vendor' }))
+      .toBe('custom-provider/vendor/model');
+    expect(modelRefFromIdentity('openai/acme-model', 'openai')).toBe('openai/openai/acme-model');
+    expect(readModelRef({ modelProvider: 'openrouter', model: 'openrouter/fusion' }))
+      .toBe('openrouter/openrouter/fusion');
+  });
   test('keeps qualified models and qualifies bare models with their provider', () => {
     expect(normalizeModelRef('openai/gpt-5', 'ignored')).toBe('openai/gpt-5');
     expect(normalizeModelRef('gpt-5', 'openai')).toBe('openai/gpt-5');

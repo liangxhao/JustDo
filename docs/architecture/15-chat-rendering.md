@@ -47,6 +47,15 @@
 
 ## 4. 端到端数据流
 
+回复页脚的模型来自 Gateway 本轮 progress / final 消息和当前用户轮次的原生历史。
+Main 的 `SessionRunTiming` 只决定开始、结束与状态；旧记录中发送前保存的
+`modelRef` 不是实际执行证据，不能覆盖 Renderer 本轮的模型。运行中切换或 fallback
+后，final 消息的模型优先于之前的 progress 模型，并随 Renderer turn timing 保留。
+Gateway 分开的 provider/model 字段中，model 本身可以带 `/`，组装引用时必须保留 provider。
+即使 model 自带与 provider 相同的前缀也不能去重，例如 `openrouter` 与
+`openrouter/auto` 组成 `openrouter/openrouter/auto`。页脚查找当前轮次历史时应包含
+尚未持久化的本地用户消息，避免在新轮开始时读取上一轮的回复模型。
+
 ```mermaid
 flowchart LR
   GH[Gateway history]

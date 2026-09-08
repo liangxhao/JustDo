@@ -5,6 +5,7 @@ import './justdo-chat';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
+import { beginAssistantTurn } from '@/libs/openclaw-chat/model/chat-transcript-state';
 
 import type { JustDoChatElement } from './justdo-chat';
 
@@ -83,6 +84,58 @@ afterEach(() => {
 });
 
 describe('justdo-chat assistant stream pacing', () => {
+  test('does not show the previous model while the next prompt is still optimistic', async () => {
+    const frames = createAnimationFrameHarness();
+    const controller = prepareController();
+    controller.state.chatMessages = [
+      { role: 'user', content: 'previous prompt', timestamp: 1_000 },
+      {
+        role: 'assistant',
+        content: 'previous answer',
+        timestamp: 2_000,
+        provider: 'previous-provider',
+        model: 'previous-model',
+      },
+    ];
+    (
+      controller as unknown as {
+        setCurrentSessionMessages(
+          messages: unknown[],
+          options: { resetLoadedHistory: boolean },
+        ): void;
+      }
+    ).setCurrentSessionMessages(controller.state.chatMessages, { resetLoadedHistory: true });
+    const chat = document.createElement('justdo-chat') as JustDoChatElement;
+    chat.controller = controller;
+    document.body.append(chat);
+    await chat.updateComplete;
+    controller.state.pendingUserMessage = {
+      role: 'user',
+      content: [{ type: 'text', text: 'next prompt' }],
+      text: 'next prompt',
+      timestamp: Date.now(),
+    };
+    controller.state.chatSending = true;
+    beginAssistantTurn(
+      controller.state.transcript,
+      { runId: 'run-next' },
+      {
+        now: Date.now,
+        createId: () => 'turn-next',
+      },
+    );
+    notifyController(controller);
+    await chat.updateComplete;
+    await frames.drain(chat);
+
+    expect(controller.state.visibleChatMessages).toEqual(
+      expect.arrayContaining([expect.objectContaining({ model: 'previous-model' })]),
+    );
+    const footer = chat.shadowRoot?.querySelector('.active-turn__footer');
+    expect(footer).not.toBeNull();
+    expect(footer?.textContent).not.toContain('previous-provider/previous-model');
+  });
+
   test('reveals burst snapshots by frame, flushes the terminal snapshot, and avoids history duplication', async () => {
     const frames = createAnimationFrameHarness();
     const controller = prepareController();

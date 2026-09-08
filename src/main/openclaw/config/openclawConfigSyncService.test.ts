@@ -120,6 +120,108 @@ describe('resolveDeferredGatewayRestartAction', () => {
 });
 
 describe('managed session model synchronization', () => {
+  it('prefers an exact configured route over a built-in alias with the same public identity', async () => {
+    const requestGateway = vi.fn(async () => ({
+      sessions: [{ key: 'agent:main:justdo:session-1', modelProvider: 'openai', model: 'gpt-5' }],
+      hasMore: false,
+    }));
+    const service = new OpenClawConfigSyncService({
+      getCoworkStore: () => ({ getSessionModelRef: () => 'hdp/Glm-5.1' }),
+      requestGateway,
+    } as never);
+
+    await (service as unknown as {
+      syncManagedSessionModelsViaGateway: (snapshot: unknown) => Promise<void>;
+    }).syncManagedSessionModelsViaGateway({
+      config: {
+        models: { providers: {
+          builtin_models: { models: [{ id: 'hdp/Glm-5.1' }] },
+          hdp: { models: [{ id: 'Glm-5.1' }] },
+        } },
+        agents: { defaults: { model: { primary: 'openai/gpt-5' } } },
+      },
+    });
+
+    expect(requestGateway).toHaveBeenCalledWith('sessions.patch', {
+      key: 'agent:main:justdo:session-1',
+      model: 'hdp/Glm-5.1',
+    });
+  });
+
+  it.each([
+    ['old-provider', 'old-model'],
+    ['hdp', 'Glm-5.1'],
+  ])('replaces a removed %s/%s selection even when Gateway still reports it', async (provider, model) => {
+    const requestGateway = vi.fn(async () => ({
+      sessions: [{ key: 'agent:main:justdo:session-1', modelProvider: provider, model }],
+      hasMore: false,
+    }));
+    const service = new OpenClawConfigSyncService({
+      getCoworkStore: () => ({ getSessionModelRef: () => `${provider}/${model}` }),
+      requestGateway,
+    } as never);
+
+    await (service as unknown as {
+      syncManagedSessionModelsViaGateway: (snapshot: unknown) => Promise<void>;
+    }).syncManagedSessionModelsViaGateway({
+      config: {
+        models: { providers: { openai: { models: [{ id: 'gpt-5' }] } } },
+        agents: { defaults: { model: { primary: 'openai/gpt-5' } } },
+      },
+    });
+
+    expect(requestGateway).toHaveBeenCalledWith('sessions.patch', {
+      key: 'agent:main:justdo:session-1',
+      model: 'openai/gpt-5',
+    });
+  });
+
+  it('restores a confirmed alias through its available catalog route', async () => {
+    const requestGateway = vi.fn(async () => ({
+      sessions: [{ key: 'agent:main:justdo:session-1', modelProvider: 'openai', model: 'gpt-5' }],
+      hasMore: false,
+    }));
+    const service = new OpenClawConfigSyncService({
+      getCoworkStore: () => ({ getSessionModelRef: () => 'hdp/Glm-5.1' }),
+      requestGateway,
+    } as never);
+
+    await (service as unknown as {
+      syncManagedSessionModelsViaGateway: (snapshot: unknown) => Promise<void>;
+    }).syncManagedSessionModelsViaGateway({
+      config: {
+        models: { providers: { builtin_models: { models: [{ id: 'hdp/Glm-5.1' }] } } },
+        agents: { defaults: { model: { primary: 'openai/gpt-5' } } },
+      },
+    });
+
+    expect(requestGateway).toHaveBeenCalledWith('sessions.patch', {
+      key: 'agent:main:justdo:session-1',
+      model: 'builtin_models/hdp/Glm-5.1',
+    });
+  });
+
+  it('does not overwrite a confirmed Gateway alias absent from the configured catalog', async () => {
+    const requestGateway = vi.fn(async () => ({
+      sessions: [{ key: 'agent:main:justdo:session-1', modelProvider: 'hdp', model: 'Glm-5.1' }],
+      hasMore: false,
+    }));
+    const service = new OpenClawConfigSyncService({
+      getCoworkStore: () => ({ getSessionModelRef: () => 'hdp/Glm-5.1' }),
+      requestGateway,
+    } as never);
+    await (service as unknown as {
+      syncManagedSessionModelsViaGateway: (snapshot: unknown) => Promise<void>;
+    }).syncManagedSessionModelsViaGateway({
+      config: {
+        models: { providers: { builtin_models: { models: [{ id: 'hdp/Glm-5.1' }] } } },
+        agents: { defaults: { model: { primary: 'openai/gpt-5' } } },
+      },
+    });
+    expect(requestGateway).toHaveBeenCalledTimes(1);
+    expect(requestGateway).toHaveBeenCalledWith('sessions.list', { limit: 200, offset: 0 });
+  });
+
   it('preserves an available session-specific model instead of replacing it with the agent model', async () => {
     const requestGateway = vi.fn(async (method: string) => {
       if (method === 'sessions.list') {

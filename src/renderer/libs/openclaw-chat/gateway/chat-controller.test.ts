@@ -548,15 +548,163 @@ test('renders an OpenClaw commentary delta when its snapshot field is blank', ()
   expect(streamListener).toHaveBeenCalledWith('stream');
 });
 
-test('keeps the confirmed run model in the footer timing after final clears activity', async () => {
+test.each([undefined, 'switched-provider/switched-model'])(
+  'keeps the actual model after final clears activity (final model=%s)',
+  async finalModel => {
+    const sessionKey = 'agent:main:justdo:session-1';
+    const request = vi.fn().mockResolvedValue({ runId: 'run-1', status: 'started' });
+    const controller = new ChatController();
+    controller.state.client = { request } as never;
+    controller.state.connected = true;
+    controller.state.sessionKey = sessionKey;
+    await controller.sendMessage('use the newly selected model');
+
+    const handleEvent = (
+      controller as unknown as {
+        handleEvent(event: { event: string; payload: unknown }): void;
+      }
+    ).handleEvent.bind(controller);
+    handleEvent({
+      event: 'agent',
+      payload: {
+        session: sessionKey,
+        runId: 'run-1',
+        seq: 1,
+        stream: 'lifecycle',
+        data: {
+          phase: 'progress',
+          stage: 'waiting_model',
+          provider: 'current-provider',
+          model: 'current-model',
+        },
+      },
+    });
+
+    expect(controller.getCurrentTurnTiming()?.modelRef).toBe('current-provider/current-model');
+
+    handleEvent({
+      event: 'chat',
+      payload: {
+        sessionKey,
+        runId: 'run-1',
+        state: 'final',
+        message: {
+          role: 'assistant',
+          content: 'done',
+          ...(finalModel ? { model: finalModel } : {}),
+        },
+      },
+    });
+
+    expect(controller.state.runActivity).toBeNull();
+    expect(controller.getCurrentTurnTiming()?.modelRef).toBe(
+      finalModel ?? 'current-provider/current-model',
+    );
+    handleEvent({
+      event: 'session.message',
+      payload: {
+        sessionKey,
+        runId: 'run-1',
+        messageSeq: 1,
+        message: {
+          role: 'assistant',
+          content: 'done',
+          provider: 'native-provider',
+          model: 'vendor/model',
+          __openclaw: { id: 'native-final', seq: 1, runId: 'run-1' },
+        },
+      },
+    });
+    expect(controller.getCurrentTurnTiming()?.modelRef).toBe('native-provider/vendor/model');
+    handleEvent({
+      event: 'session.message',
+      payload: {
+        sessionKey,
+        runId: 'older-run',
+        messageSeq: 2,
+        message: {
+          role: 'assistant',
+          content: 'older reply',
+          provider: 'old-provider',
+          model: 'old-model',
+          __openclaw: { id: 'older-final', seq: 2, runId: 'older-run' },
+        },
+      },
+    });
+    expect(controller.getCurrentTurnTiming()?.modelRef).toBe('native-provider/vendor/model');
+  },
+);
+
+test.each([undefined, 'latest/model'])(
+  'keeps live progress ahead of earlier appends and honors terminal metadata (%s)',
+  async finalModel => {
+    const sessionKey = 'agent:main:justdo:session-1';
+    const request = vi.fn().mockResolvedValue({ runId: 'run-1', status: 'started' });
+    const controller = new ChatController();
+    controller.state.client = { request } as never;
+    controller.state.connected = true;
+    controller.state.sessionKey = sessionKey;
+    await controller.sendMessage('switch during a run');
+    const handleEvent = (
+      controller as unknown as {
+        handleEvent(event: { event: string; payload: unknown }): void;
+      }
+    ).handleEvent.bind(controller);
+    handleEvent({
+      event: 'agent',
+      payload: {
+        session: sessionKey,
+        runId: 'run-1',
+        seq: 1,
+        stream: 'lifecycle',
+        data: { phase: 'progress', stage: 'waiting_model', provider: 'latest', model: 'model' },
+      },
+    });
+    const nativeMessage = {
+      role: 'assistant',
+      content: 'earlier output',
+      provider: 'earlier',
+      model: 'model',
+      __openclaw: { id: 'native', seq: 1, runId: 'run-1' },
+    };
+    handleEvent({
+      event: 'session.message',
+      payload: {
+        sessionKey,
+        runId: 'run-1',
+        messageSeq: 1,
+        message: nativeMessage,
+      },
+    });
+    expect(controller.getCurrentTurnTiming()?.modelRef).toBe('latest/model');
+    request.mockResolvedValue({ messages: [nativeMessage] });
+    await controller.loadHistory();
+    expect(controller.getCurrentTurnTiming()?.modelRef).toBe('latest/model');
+    handleEvent({
+      event: 'chat',
+      payload: {
+        sessionKey,
+        runId: 'run-1',
+        state: 'final',
+        message: {
+          role: 'assistant',
+          content: 'done',
+          ...(finalModel ? { model: finalModel } : {}),
+        },
+      },
+    });
+    expect(controller.getCurrentTurnTiming()?.modelRef).toBe(finalModel ?? 'earlier/model');
+  },
+);
+
+test('repairs the cached final model from history when the native append was missed', async () => {
   const sessionKey = 'agent:main:justdo:session-1';
   const request = vi.fn().mockResolvedValue({ runId: 'run-1', status: 'started' });
   const controller = new ChatController();
   controller.state.client = { request } as never;
   controller.state.connected = true;
   controller.state.sessionKey = sessionKey;
-  await controller.sendMessage('use the newly selected model');
-
+  await controller.sendMessage('use fallback');
   const handleEvent = (
     controller as unknown as {
       handleEvent(event: { event: string; payload: unknown }): void;
@@ -569,29 +717,35 @@ test('keeps the confirmed run model in the footer timing after final clears acti
       runId: 'run-1',
       seq: 1,
       stream: 'lifecycle',
-      data: {
-        phase: 'progress',
-        stage: 'waiting_model',
-        provider: 'current-provider',
-        model: 'current-model',
-      },
+      data: { phase: 'progress', stage: 'waiting_model', provider: 'initial', model: 'model' },
     },
   });
-
-  expect(controller.getCurrentTurnTiming()?.modelRef).toBe('current-provider/current-model');
-
   handleEvent({
     event: 'chat',
     payload: {
       sessionKey,
       runId: 'run-1',
       state: 'final',
-      message: { role: 'assistant', content: 'done without model metadata' },
+      message: { role: 'assistant', content: 'done' },
     },
   });
+  expect(controller.getCurrentTurnTiming()?.modelRef).toBe('initial/model');
+  request.mockResolvedValue({
+    messages: [
+      { role: 'user', content: 'use fallback', timestamp: Date.now() - 10 },
+      {
+        role: 'assistant',
+        content: 'done',
+        provider: 'fallback',
+        model: 'actual-model',
+        __openclaw: { id: 'native-final', seq: 2, runId: 'run-1' },
+      },
+    ],
+  });
 
-  expect(controller.state.runActivity).toBeNull();
-  expect(controller.getCurrentTurnTiming()?.modelRef).toBe('current-provider/current-model');
+  await controller.loadHistory();
+
+  expect(controller.getCurrentTurnTiming()?.modelRef).toBe('fallback/actual-model');
 });
 
 test('can display user feedback while sending a combined goal command to the Gateway', async () => {

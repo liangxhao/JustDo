@@ -10,6 +10,15 @@ export function normalizeModelRef(model: unknown, provider?: unknown): string | 
   return normalizedProvider ? `${normalizedProvider}/${normalizedModel}` : normalizedModel;
 }
 
+/** Gateway model/provider fields are separate; a model ID may itself contain '/'. */
+export function modelRefFromIdentity(model: unknown, provider?: unknown): string | null {
+  const modelId = trimmedString(model);
+  const providerId = trimmedString(provider);
+  if (!modelId) return null;
+  if (!providerId) return modelId;
+  return `${providerId}/${modelId}`;
+}
+
 export function isGatewayInjectedModelRef(value: unknown): boolean {
   if (typeof value !== 'string') return false;
   const normalized = value.trim().toLowerCase();
@@ -37,5 +46,5 @@ export function readModelRef(source: unknown): string | null {
     trimmedString(record.modelId) ||
     trimmedString(metadata?.model) ||
     trimmedString(metadata?.modelId);
-  return normalizeModelRef(model, provider);
+  return modelRefFromIdentity(model, provider);
 }

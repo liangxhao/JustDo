@@ -28,6 +28,46 @@ function turn(status: AssistantTurn['status'], items: TurnItem[] = []): Assistan
 }
 
 describe('active turn footer', () => {
+  test.each([true, false])(
+    'keeps actual Gateway model with durable timing (active=%s)',
+    hasActiveTurn => {
+      const live = { ...turn('running'), modelRef: 'new-provider/new-model' };
+      const receipt: SessionRunTiming = {
+        id: 'receipt',
+        sessionId: 'session-1',
+        clientTurnId: 'run-1',
+        startedAt: 900,
+        endedAt: 2_500,
+        state: 'completed',
+        modelRef: 'old-provider/old-model',
+      };
+      expect(projectActiveTurnFooter(selectActiveTurnTiming(live, receipt, hasActiveTurn))).toEqual(
+        {
+          completedAt: 2_500,
+          durationMs: 1_600,
+          running: false,
+          status: 'completed',
+          modelRef: 'new-provider/new-model',
+        },
+      );
+    },
+  );
+
+  test('does not present a saved selection as the model that produced a reply', () => {
+    const receipt: SessionRunTiming = {
+      id: 'receipt',
+      sessionId: 'session-1',
+      clientTurnId: 'run-1',
+      startedAt: 900,
+      state: 'running',
+      modelRef: 'old-provider/old-model',
+    };
+    expect(projectActiveTurnFooter(receipt, 1_000)?.modelRef).toBeUndefined();
+    expect(
+      projectActiveTurnFooter(selectActiveTurnTiming(turn('running'), receipt, true))?.modelRef,
+    ).toBeUndefined();
+  });
+
   test('does not let a stale aborted receipt override a newly resumed turn', () => {
     const resumed = turn('running');
     resumed.runId = 'run-resumed';
@@ -59,7 +99,11 @@ describe('active turn footer', () => {
       state: 'running',
     };
 
-    expect(selectActiveTurnTiming(resumed, currentReceipt, true)).toBe(currentReceipt);
+    expect(selectActiveTurnTiming(resumed, currentReceipt, true)).toMatchObject({
+      runId: 'run-resumed',
+      startedAt: 1_000,
+      status: 'running',
+    });
   });
 
   test('uses newer durable timing when the controller has no active turn', () => {

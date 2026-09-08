@@ -1,4 +1,5 @@
 import { normalizeModelRef, readModelRef } from '../../../shared/openclaw/modelRef';
+import { matchesModelSelectionIdentity } from '../../../shared/openclaw/modelSelectionIdentity';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { GatewayClientLike } from './types';
 
@@ -23,6 +24,22 @@ export interface SessionRpcCallbacks {
   store: CoworkStore;
 }
 
+function isAmbiguousModelPatchFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const failure = error as Error & {
+    gatewayCode?: unknown;
+    code?: unknown;
+    requestSent?: unknown;
+  };
+  // Correlated Gateway rejections are authoritative even if the old selected
+  // identity happens to equal the request.
+  if (typeof failure.gatewayCode === 'string') return false;
+  return (
+    (failure.code === 'CLIENT_TIMEOUT' && failure.requestSent === true) ||
+    /^gateway closed \(\d+\):/.test(failure.message)
+  );
+}
+
 export class SessionRpc {
   private readonly modelUpdateTails = new Map<string, Promise<void>>();
 
@@ -34,7 +51,7 @@ export class SessionRpc {
     return `agent:${effectiveAgentId}:justdo:${sessionId}`;
   }
 
-  private async describeModel(
+  private async readCurrentModel(
     client: GatewayClientLike,
     sessionId: string,
     agentId?: string,
@@ -43,46 +60,9 @@ export class SessionRpc {
       'sessions.describe',
       { key: this.sessionKey(sessionId, agentId) },
     );
-    const session = result.session;
-    if (session && typeof session === 'object') {
-      const override = normalizeModelRef(session.modelOverride, session.providerOverride);
-      if (override) return override;
-    }
-    return readModelRef(session);
-  }
-
-  private async readPersistedModel(
-    client: GatewayClientLike,
-    sessionId: string,
-    agentId?: string,
-  ): Promise<string | null> {
-    const result = await client.request<Record<string, unknown>>('sessions.get', {
-      key: this.sessionKey(sessionId, agentId),
-    });
-    const candidate =
-      result.session && typeof result.session === 'object'
-        ? result.session
-        : result.entry && typeof result.entry === 'object'
-          ? result.entry
-          : result;
-    if (!candidate || typeof candidate !== 'object') return null;
-    const record = candidate as Record<string, unknown>;
-    const override = normalizeModelRef(record.modelOverride, record.providerOverride);
-    return override || readModelRef(record);
-  }
-
-  private async readCurrentModel(
-    client: GatewayClientLike,
-    sessionId: string,
-    agentId?: string,
-  ): Promise<string | null> {
-    try {
-      const persisted = await this.readPersistedModel(client, sessionId, agentId);
-      if (persisted) return persisted;
-    } catch {
-      // Older Gateways may not expose sessions.get; use sessions.describe below.
-    }
-    return this.describeModel(client, sessionId, agentId);
+    // v2026.9.2 projects the selected identity on the public session row.
+    // sessions.get is a transcript API, not a raw session-entry read.
+    return readModelRef(result.session);
   }
 
   private enqueueModelUpdate(
@@ -113,32 +93,37 @@ export class SessionRpc {
   }
 
   async getModel(sessionId: string, agentId?: string): Promise<SessionModelResult> {
-    return this.enqueueModelUpdate(sessionId, async () => {
-      const client = this.callbacks.getGatewayClient();
-      if (client) {
-        try {
-          const modelRef = await this.readCurrentModel(client, sessionId, agentId);
-          if (modelRef) {
-            return { ok: true, modelRef, appliesTo: 'next-turn', source: 'gateway' };
+    return this.enqueueModelUpdate(
+      sessionId,
+      async () => {
+        const client = this.callbacks.getGatewayClient();
+        if (client) {
+          try {
+            const modelRef = await this.readCurrentModel(client, sessionId, agentId);
+            if (modelRef) {
+              return { ok: true, modelRef, appliesTo: 'next-turn', source: 'gateway' };
+            }
+          } catch {
+            // Fall through to the last confirmed local value.
           }
-        } catch {
-          // Fall through to the last confirmed local value.
         }
-      }
 
-      const session = this.callbacks.store.getSession(sessionId);
-      const fallback =
-        session?.modelRef || this.callbacks.store.getAgent(session?.agentId || 'main')?.model;
-      const modelRef = normalizeModelRef(fallback);
-      return modelRef
-        ? {
-            ok: true,
-            modelRef,
-            appliesTo: 'next-turn',
-            source: session?.modelRef ? 'local-cache' : 'agent-default',
-          }
-        : { ok: false, error: 'Session model is not available' };
-    }, false);
+        const session = this.callbacks.store.getSession(sessionId);
+        const fallback =
+          session?.modelRef ||
+          this.callbacks.store.getAgent(agentId || session?.agentId || 'main')?.model;
+        const modelRef = normalizeModelRef(fallback);
+        return modelRef
+          ? {
+              ok: true,
+              modelRef,
+              appliesTo: 'next-turn',
+              source: session?.modelRef ? 'local-cache' : 'agent-default',
+            }
+          : { ok: false, error: 'Session model is not available' };
+      },
+      false,
+    );
   }
 
   async patchModel(
@@ -168,25 +153,31 @@ export class SessionRpc {
       );
 
       try {
-        await client.request('sessions.patch', { key: sessionKey, model: normalizedModel });
-        // `sessions.patch` persists the session override, while the runtime
-        // model reported by `sessions.describe` may remain on the previous
-        // model until the next call starts. Treat a successful patch as the
-        // source of truth for the selection instead of rejecting it because
-        // an immediate read is stale.
-        this.callbacks.store.updateSession(sessionId, { modelRef: normalizedModel });
-        return { ok: true, modelRef: normalizedModel, appliesTo, source: 'gateway' };
+        const result = await client.request<{ resolved?: unknown }>('sessions.patch', {
+          key: sessionKey,
+          model: normalizedModel,
+        });
+        // Use the mutation's resolved identity, including Gateway aliases. The
+        // entry's model fields may still describe the preceding execution.
+        const modelRef = readModelRef(result.resolved);
+        if (!modelRef) throw new Error('sessions.patch returned no resolved model');
+        this.callbacks.store.updateSession(sessionId, { modelRef });
+        return { ok: true, modelRef, appliesTo, source: 'gateway' };
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);
         let currentModelRef: string | undefined;
         try {
           currentModelRef = (await this.readCurrentModel(client, sessionId, agentId)) ?? undefined;
-          // A read can report an automatic fallback. Only persist after an
-          // ambiguous failure when Gateway confirms the exact user-requested
-          // model, otherwise the local selection would turn temporary runtime
-          // fallback state into a permanent user choice.
-          if (currentModelRef === normalizedModel) {
-            this.callbacks.store.updateSession(sessionId, { modelRef: normalizedModel });
+          // Recover a lost mutation response only when the selected identity
+          // confirms the request. Built-in discovery IDs also expose their
+          // provider/model identity without the local catalog wrapper.
+          if (
+            isAmbiguousModelPatchFailure(error) &&
+            currentModelRef &&
+            matchesModelSelectionIdentity(normalizedModel, currentModelRef)
+          ) {
+            this.callbacks.store.updateSession(sessionId, { modelRef: currentModelRef });
+            return { ok: true, modelRef: currentModelRef, appliesTo, source: 'gateway' };
           }
         } catch {
           // The patch failure is already actionable; do not hide it behind recovery errors.

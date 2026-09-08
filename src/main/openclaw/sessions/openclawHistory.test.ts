@@ -65,8 +65,14 @@ describe('openclawHistory', () => {
       role: 'assistant',
       text: 'Final answer',
       thinking: 'I should inspect the saved result.',
-      modelName: 'hdp/MiniMax-M2.7',
+      modelName: 'builtin_models/hdp/MiniMax-M2.7',
     });
+  });
+
+  test('preserves a provider prefix repeated in the native model ID', () => {
+    expect(extractGatewayHistoryEntry({
+      role: 'assistant', provider: 'openrouter', model: 'openrouter/auto', content: 'answer',
+    })).toMatchObject({ modelName: 'openrouter/openrouter/auto' });
   });
 
   test('keeps thinking-only assistant turns before tool calls', () => {

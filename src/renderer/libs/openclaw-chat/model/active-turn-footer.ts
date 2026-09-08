@@ -1,7 +1,7 @@
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import {
   isGatewayInjectedModelRef,
-  normalizeModelRef,
+  modelRefFromIdentity,
   readModelRef,
 } from '@shared/openclaw/modelRef';
 
@@ -21,15 +21,27 @@ export function selectActiveTurnTiming(
   latestRunTiming: SessionRunTiming | null,
   hasActiveTurn: boolean,
 ): AssistantTurnTiming | SessionRunTiming | null {
-  if (!hasActiveTurn) return latestRunTiming ?? controllerTurn;
   if (!controllerTurn) return latestRunTiming;
   if (!latestRunTiming) return controllerTurn;
   if (
     latestRunTiming.rootRunId === controllerTurn.runId ||
     latestRunTiming.clientTurnId === controllerTurn.runId
   ) {
-    return latestRunTiming;
+    // Main owns lifecycle timing. Only Gateway owns the model actually used;
+    // the receipt may contain a selection captured before a live switch.
+    return {
+      ...controllerTurn,
+      startedAt: latestRunTiming.startedAt,
+      endedAt: latestRunTiming.endedAt,
+      status:
+        latestRunTiming.state === 'completed'
+          ? 'final'
+          : latestRunTiming.state === 'failed'
+            ? 'error'
+            : latestRunTiming.state,
+    };
   }
+  if (!hasActiveTurn) return latestRunTiming;
   const controllerRunning = controllerTurn.status === 'running';
   const durableRunning = latestRunTiming.state === 'running';
   if (controllerRunning !== durableRunning)
@@ -47,7 +59,7 @@ export function resolveActiveTurnModel(
   currentModel?: unknown,
   currentProvider?: unknown,
 ): string {
-  const progressModel = normalizeModelRef(currentModel, currentProvider);
+  const progressModel = modelRefFromIdentity(currentModel, currentProvider);
   if (progressModel && !isGatewayInjectedModelRef(progressModel)) return progressModel;
 
   let currentTurnStart = -1;
@@ -96,7 +108,7 @@ export function projectActiveTurnFooter(
     durationMs: Math.max(0, durationEnd - turn.startedAt),
     running,
     status,
-    ...(turn.modelRef ? { modelRef: turn.modelRef } : {}),
+    ...(!('state' in turn) && turn.modelRef ? { modelRef: turn.modelRef } : {}),
   };
 }
 

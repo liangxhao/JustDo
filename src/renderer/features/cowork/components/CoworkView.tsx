@@ -928,7 +928,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             sessionId: currentSession.id,
             clientTurnId,
             startedAt,
-            modelRef: currentSession.modelRef,
           });
           runTimingId = timing.id;
           const chatWrapper = chatWrapperRef.current;

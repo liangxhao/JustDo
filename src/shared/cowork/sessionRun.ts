@@ -13,6 +13,7 @@ export interface SessionRunTiming {
   sessionId: string;
   clientTurnId: string;
   rootRunId?: string;
+  /** Legacy selection snapshot; actual reply models belong to Gateway messages/events. */
   modelRef?: string;
   startedAt: number;
   acceptedAt?: number;

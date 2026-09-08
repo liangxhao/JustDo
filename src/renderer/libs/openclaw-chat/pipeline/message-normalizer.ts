@@ -2,7 +2,7 @@
  * Message normalization utilities for chat rendering.
  */
 
-import { normalizeModelRef } from '@shared/openclaw/modelRef';
+import { modelRefFromIdentity, normalizeModelRef } from '@shared/openclaw/modelRef';
 
 import { stripOpenClawLogHintText } from '@/libs/openclaw-chat/pipeline/system-message-display';
 import { stripInboundMetadata } from '@/libs/openclaw-chat/shims/backend-helpers';
@@ -67,7 +67,7 @@ function resolveMessageModelName(message: Record<string, unknown>): string | nul
     nestedMessage?.modelId,
   );
 
-  return normalizeModelRef(model, provider);
+  return modelRefFromIdentity(model, provider);
 }
 
 function coerceCanvasPreview(

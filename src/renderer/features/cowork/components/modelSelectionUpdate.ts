@@ -88,7 +88,10 @@ export const applyModelSelectionUpdate = async (
         sessionResult.modelRef,
       );
     }
-    sessionModelRef = sessionResult.modelRef || modelRef;
+    sessionModelRef = sessionResult.modelRef?.trim();
+    if (!sessionModelRef) {
+      throw new SessionModelApplyError('patchSessionModel returned no confirmed model');
+    }
   }
 
   let defaultResult: Awaited<ReturnType<ModelSelectionUpdateServices['setDefaultModel']>>;
