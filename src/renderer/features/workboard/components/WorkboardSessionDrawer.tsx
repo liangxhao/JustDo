@@ -1,8 +1,8 @@
 import { StopIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
-import ChatMessageDisplay from '@/features/cowork/components/ChatMessageDisplay';
-import { connectToGateway } from '@/features/cowork/components/JustDoChatWrapper';
+import ChatMessageDisplay from '@/features/cowork/components/chat/ChatMessageDisplay';
+import { connectToGateway } from '@/features/cowork/components/chat/JustDoChatWrapper';
 import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
 import { i18nService } from '@/services/i18n';
 

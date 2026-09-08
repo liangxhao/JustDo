@@ -24,13 +24,13 @@ import {
   upsertPendingApproval,
 } from '@/features/cowork/approvalQueue';
 import { CoworkView, type CoworkViewHandle } from '@/features/cowork/components';
-import CoworkInteractionModal from '@/features/cowork/components/CoworkInteractionModal';
+import ExecApprovalModal from '@/features/cowork/components/approvals/ExecApprovalModal';
+import { runGuardedFilePreviewNavigation } from '@/features/cowork/components/preview/filePreviewNavigation';
+import CoworkInteractionModal from '@/features/cowork/components/questions/CoworkInteractionModal';
 import CoworkQuestionFloatingWindow, {
   shouldShowCoworkQuestionWindow,
-} from '@/features/cowork/components/CoworkQuestionFloatingWindow';
-import EngineStartupStatusBar from '@/features/cowork/components/EngineStartupStatusBar';
-import ExecApprovalModal from '@/features/cowork/components/ExecApprovalModal';
-import { runGuardedFilePreviewNavigation } from '@/features/cowork/components/filePreviewNavigation';
+} from '@/features/cowork/components/questions/CoworkQuestionFloatingWindow';
+import EngineStartupStatusBar from '@/features/cowork/components/status/EngineStartupStatusBar';
 import {
   selectCurrentSessionId,
   selectPendingInteractions,

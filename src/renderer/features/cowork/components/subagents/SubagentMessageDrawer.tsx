@@ -2,13 +2,13 @@ import { DocumentDuplicateIcon, InformationCircleIcon } from '@heroicons/react/2
 import type { SessionDetailStats } from '@shared/cowork/sessionDetails';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
-import ChatMessageDisplay from '@/features/cowork/components/ChatMessageDisplay';
-import { connectToGateway } from '@/features/cowork/components/JustDoChatWrapper';
+import ChatMessageDisplay from '@/features/cowork/components/chat/ChatMessageDisplay';
+import { connectToGateway } from '@/features/cowork/components/chat/JustDoChatWrapper';
 import {
   type Subtask as Subagent,
   SUBTASK_STATUS_I18N_KEYS,
   subtaskStatusStyles,
-} from '@/features/cowork/components/subtaskPresentation';
+} from '@/features/cowork/components/subagents/subtaskPresentation';
 import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/common/Modal';

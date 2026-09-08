@@ -20,34 +20,34 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import { useDispatch, useSelector } from 'react-redux';
 
 import WindowTitleBar from '@/app/shell/window/WindowTitleBar';
-import { resolveAgentModelSelection } from '@/features/cowork/components/agentModelSelection';
-import { submitCoworkMessage } from '@/features/cowork/components/coworkMessageSubmit';
+import JustDoChatWrapper, {
+  type JustDoChatWrapperRef,
+} from '@/features/cowork/components/chat/JustDoChatWrapper';
+import { resolveAgentModelSelection } from '@/features/cowork/components/composer/agentModelSelection';
+import { submitCoworkMessage } from '@/features/cowork/components/composer/coworkMessageSubmit';
 import CoworkPromptInput, {
   type CoworkPromptInputRef,
-} from '@/features/cowork/components/CoworkPromptInput';
-import ExportSessionModal from '@/features/cowork/components/ExportSessionModal';
+} from '@/features/cowork/components/composer/CoworkPromptInput';
+import { inferInitialGoalObjective } from '@/features/cowork/components/goals/goalPendingObjective';
+import type { GoalRunProgress } from '@/features/cowork/components/goals/goalRunProgress';
 import FilePreviewDrawer, {
   type FilePreview,
   type FilePreviewDrawerHandle,
-} from '@/features/cowork/components/FilePreviewDrawer';
-import { isCurrentFilePreviewRequest } from '@/features/cowork/components/filePreviewNavigation';
-import { inferInitialGoalObjective } from '@/features/cowork/components/goalPendingObjective';
-import type { GoalRunProgress } from '@/features/cowork/components/goalRunProgress';
-import JustDoChatWrapper, {
-  type JustDoChatWrapperRef,
-} from '@/features/cowork/components/JustDoChatWrapper';
+} from '@/features/cowork/components/preview/FilePreviewDrawer';
+import { isCurrentFilePreviewRequest } from '@/features/cowork/components/preview/filePreviewNavigation';
+import ExportSessionModal from '@/features/cowork/components/sessions/ExportSessionModal';
 import {
   resolveBackgroundRuntimeDiscoverySessionIds,
   resolveBackgroundRuntimeSessionIds,
   shouldContinueFullRuntimeScan,
-} from '@/features/cowork/components/runtimePolling';
+} from '@/features/cowork/components/status/runtimePolling';
 import SessionProgressCard, {
   type ProgressCardRunState,
-} from '@/features/cowork/components/SessionProgressCard';
-import SubagentMessageDrawer from '@/features/cowork/components/SubagentMessageDrawer';
-import SubtaskListPanel from '@/features/cowork/components/SubtaskListPanel';
-import { isActiveSubtask, type Subtask } from '@/features/cowork/components/subtaskPresentation';
-import { useProgressCardVisibility } from '@/features/cowork/components/useProgressCardVisibility';
+} from '@/features/cowork/components/status/SessionProgressCard';
+import { useProgressCardVisibility } from '@/features/cowork/components/status/useProgressCardVisibility';
+import SubagentMessageDrawer from '@/features/cowork/components/subagents/SubagentMessageDrawer';
+import SubtaskListPanel from '@/features/cowork/components/subagents/SubtaskListPanel';
+import { isActiveSubtask, type Subtask } from '@/features/cowork/components/subagents/subtaskPresentation';
 import {
   selectCoworkConfig,
   selectCoworkSessions,

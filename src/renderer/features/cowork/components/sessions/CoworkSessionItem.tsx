@@ -7,7 +7,7 @@ import {
 } from '@heroicons/react/24/outline';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
-import CoworkSessionDetailsModal from '@/features/cowork/components/CoworkSessionDetailsModal';
+import CoworkSessionDetailsModal from '@/features/cowork/components/sessions/CoworkSessionDetailsModal';
 import type {
   CoworkSessionStatus,
   CoworkSessionSummary,

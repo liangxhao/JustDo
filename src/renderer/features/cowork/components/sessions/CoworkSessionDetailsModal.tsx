@@ -18,9 +18,9 @@ import type { SessionDetailStats } from '@/features/cowork/sessionPresentation';
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/common/Modal';
 
-import QueryingIndicator from './QueryingIndicator';
-import SessionTotalTokenUsageModal from './SessionTotalTokenUsageModal';
-import { useDraggableModal } from './useDraggableModal';
+import QueryingIndicator from '../shared/QueryingIndicator';
+import { useDraggableModal } from '../shared/useDraggableModal';
+import SessionTotalTokenUsageModal from '../status/SessionTotalTokenUsageModal';
 
 interface CoworkSessionDetailsModalProps {
   sessionSummary: CoworkSessionSummary;

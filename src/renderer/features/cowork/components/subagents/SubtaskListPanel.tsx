@@ -12,6 +12,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/common/Modal';
 
+import { useDraggableModal } from '../shared/useDraggableModal';
 import { reconcileSubagentLabel, type SubagentLabelSource } from './subagentLabel';
 import { resolveSubagentPollInterval } from './subagentPolling';
 import SubagentTokenUsage from './SubagentTokenUsage';
@@ -23,7 +24,6 @@ import {
   SUBTASK_STATUS_I18N_KEYS,
   subtaskStatusStyles,
 } from './subtaskPresentation';
-import { useDraggableModal } from './useDraggableModal';
 
 interface SubtaskListPanelProps {
   sessionId: string;

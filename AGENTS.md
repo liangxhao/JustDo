@@ -106,7 +106,7 @@ Key files:
 - Data: `src/main/data/sqliteStore.ts`, `src/main/data/coworkStore.ts`
 - Config/history: `src/main/openclaw/config/openclawConfigSync.ts`, `src/main/openclaw/sessions/`
 - Chat rendering: `src/renderer/libs/openclaw-chat/`
-- Settings/permissions: `src/renderer/features/settings/Settings.tsx`, `src/renderer/features/cowork/components/CoworkPermissionModal.tsx`
+- Settings/permissions: `src/renderer/features/settings/Settings.tsx`, `src/renderer/features/cowork/components/approvals/ExecApprovalModal.tsx`
 - Scheduled tasks: `src/main/scheduler/cronJobService.ts`, `src/main/ipc/scheduledTask/`, `src/shared/scheduledTask/`
 - Plugins: `src/main/plugins/skills/`, `src/main/plugins/mcp/`, `src/main/plugins/hooks/`, `src/main/plugins/extensions/`, `src/main/plugins/marketplace/`
 
@@ -182,6 +182,10 @@ apply the current patch set instead.
 - Strict TypeScript; functional React; 2-space indent, single quotes, semicolons.
 - Renderer aliases: `@/` -> `src/renderer/`, `@shared/` -> `src/shared/`.
 - Organize by feature/domain, not file type.
+- Cowork components use one level of domain folders: `chat`, `composer`,
+  `sessions`, `goals`, `subagents`, `approvals`, `questions`, `preview`, `status`.
+  Keep helpers, tests, and CSS beside their owning components; `shared` is only
+  for UI/helpers reused across these folders. Keep `CoworkView.tsx` at the root.
 - Keep top-level `main.ts` and `preload.ts` thin.
 - Avoid mutation outside intentional Redux Toolkit Immer reducers.
 - Never hardcode user-visible strings; use i18n.

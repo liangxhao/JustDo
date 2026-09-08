@@ -1,6 +1,6 @@
 import React from 'react';
 
-import CoworkSessionItem from '@/features/cowork/components/CoworkSessionItem';
+import CoworkSessionItem from '@/features/cowork/components/sessions/CoworkSessionItem';
 import type { CoworkSessionSummary, SessionGroup } from '@/features/cowork/coworkTypes';
 
 interface SessionGroupPanelProps {

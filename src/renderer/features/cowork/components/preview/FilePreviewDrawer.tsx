@@ -31,7 +31,7 @@ import {
   isFilePreviewCleanAfterSave,
   isValidJsonDocument,
   runFilePreviewSingleFlight,
-} from '@/features/cowork/components/filePreviewEditor';
+} from '@/features/cowork/components/preview/filePreviewEditor';
 import { toSanitizedMarkdownHtml } from '@/libs/openclaw-chat/components/markdown';
 import { renderMermaidSvg } from '@/libs/openclaw-chat/components/mermaidRenderer';
 import { i18nService } from '@/services/i18n';

@@ -5,7 +5,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import React from 'react';
 import { afterEach, expect, test, vi } from 'vitest';
 
-vi.mock('@/features/cowork/components/ChatMessageDisplay', () => ({
+vi.mock('@/features/cowork/components/chat/ChatMessageDisplay', () => ({
   default: () => React.createElement('div', null, 'chat-history'),
 }));
 vi.mock('@/libs/openclaw-chat/pipeline/history-display-normalizer', () => ({

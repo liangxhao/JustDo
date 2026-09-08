@@ -6,9 +6,9 @@ import {
 import React, { useCallback, useEffect, useState } from 'react';
 import { useSelector } from 'react-redux';
 
-import CoworkSearchModal from '@/features/cowork/components/CoworkSearchModal';
-import CoworkSessionList from '@/features/cowork/components/CoworkSessionList';
-import { runGuardedFilePreviewNavigation } from '@/features/cowork/components/filePreviewNavigation';
+import { runGuardedFilePreviewNavigation } from '@/features/cowork/components/preview/filePreviewNavigation';
+import CoworkSearchModal from '@/features/cowork/components/sessions/CoworkSearchModal';
+import CoworkSessionList from '@/features/cowork/components/sessions/CoworkSessionList';
 import {
   selectCoworkSessions,
   selectCurrentSessionId,

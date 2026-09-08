@@ -1,12 +1,12 @@
 import { describe, expect, test, vi } from 'vitest';
 
-import { LatestSerialTaskQueue } from '@/features/cowork/components/latestSerialTaskQueue';
+import { LatestSerialTaskQueue } from '@/features/cowork/components/composer/latestSerialTaskQueue';
 import {
   applyModelSelectionUpdate,
   DefaultModelApplyError,
   resolvePersistedSessionModelRefAfterApplyError,
   SessionModelApplyError,
-} from '@/features/cowork/components/modelSelectionUpdate';
+} from '@/features/cowork/components/composer/modelSelectionUpdate';
 import type { Model } from '@/features/models/modelSlice';
 
 const model: Model = {

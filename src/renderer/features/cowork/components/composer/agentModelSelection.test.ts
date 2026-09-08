@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
-import { resolveAgentModelSelection } from '@/features/cowork/components/agentModelSelection';
+import { resolveAgentModelSelection } from '@/features/cowork/components/composer/agentModelSelection';
 import type { Model } from '@/features/models/modelSlice';
 
 const models: Model[] = [

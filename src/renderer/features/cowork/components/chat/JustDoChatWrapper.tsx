@@ -19,12 +19,12 @@ import {
 } from 'react';
 import { useSelector } from 'react-redux';
 
-import ChatMessageDisplay from '@/features/cowork/components/ChatMessageDisplay';
+import ChatMessageDisplay from '@/features/cowork/components/chat/ChatMessageDisplay';
 import {
   buildGoalRunProgress,
   type GoalRunProgress,
   goalRunProgressKey,
-} from '@/features/cowork/components/goalRunProgress';
+} from '@/features/cowork/components/goals/goalRunProgress';
 import { selectCurrentSession } from '@/features/cowork/coworkSelectors';
 import type { CoworkAttachmentPayload, CoworkSession } from '@/features/cowork/coworkTypes';
 import {

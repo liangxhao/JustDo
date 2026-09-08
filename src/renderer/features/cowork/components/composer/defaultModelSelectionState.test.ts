@@ -2,7 +2,7 @@ import { configureStore } from '@reduxjs/toolkit';
 import { describe, expect, test } from 'vitest';
 
 import agentReducer, { setAgents } from '@/features/agents/agentSlice';
-import { syncDefaultModelSelectionState } from '@/features/cowork/components/defaultModelSelectionState';
+import { syncDefaultModelSelectionState } from '@/features/cowork/components/composer/defaultModelSelectionState';
 import modelReducer, { type Model, setAvailableModels } from '@/features/models/modelSlice';
 
 describe('syncDefaultModelSelectionState', () => {

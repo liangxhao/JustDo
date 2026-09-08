@@ -79,6 +79,8 @@ flowchart TB
 
 没有挂载到 store 的 slice 不能在文档中描述为运行态全局状态。
 
+`features/cowork/components/` 按业务职责分为 `chat`、`composer`、`sessions`、`goals`、`subagents`、`approvals`、`questions`、`preview` 和 `status`。`CoworkView.tsx` 留在根目录负责页面组合；各组就近维护专属辅助逻辑、测试和 CSS，`shared/` 仅承载 cowork 内跨组复用的 UI 和 hooks。目录分组不改变 Gateway 历史与实时事件的消费方式，也不引入新的状态层。
+
 ### 3.3 `src/shared/`
 
 Shared 由两个进程共同编译，适合放：IPC channel 常量、可序列化 interface/type、验证/normalize 函数、稳定 discriminant。禁止放 Electron、Node 内置模块、DOM-only API、环境变量读取和有副作用的单例。

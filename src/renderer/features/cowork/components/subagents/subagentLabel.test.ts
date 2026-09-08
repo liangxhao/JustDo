@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
-import { reconcileSubagentLabel } from '@/features/cowork/components/subagentLabel';
+import { reconcileSubagentLabel } from '@/features/cowork/components/subagents/subagentLabel';
 
 describe('reconcileSubagentLabel', () => {
   test('uses the incoming title when there is no previous snapshot', () => {

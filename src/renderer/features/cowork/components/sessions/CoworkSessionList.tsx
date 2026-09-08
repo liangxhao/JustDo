@@ -12,10 +12,10 @@ import { ChatBubbleLeftRightIcon, ChevronRightIcon } from '@heroicons/react/24/o
 import React, { useEffect, useMemo, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
-import CoworkSessionItem from '@/features/cowork/components/CoworkSessionItem';
-import CreateGroupModal from '@/features/cowork/components/CreateGroupModal';
-import SessionGroupHeader from '@/features/cowork/components/SessionGroupHeader';
-import SessionGroupPanel from '@/features/cowork/components/SessionGroupPanel';
+import CoworkSessionItem from '@/features/cowork/components/sessions/CoworkSessionItem';
+import CreateGroupModal from '@/features/cowork/components/sessions/CreateGroupModal';
+import SessionGroupHeader from '@/features/cowork/components/sessions/SessionGroupHeader';
+import SessionGroupPanel from '@/features/cowork/components/sessions/SessionGroupPanel';
 import {
   selectExpandedGroupIds,
   selectGroups,

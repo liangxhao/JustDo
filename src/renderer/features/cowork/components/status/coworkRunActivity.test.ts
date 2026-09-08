@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import type { GoalRunProgress } from '../goals/goalRunProgress';
 import { canStopCoworkRun, isCoworkRunActive } from './coworkRunActivity';
-import type { GoalRunProgress } from './goalRunProgress';
 
 const compactionProgress: GoalRunProgress = {
   phase: 'compacting',

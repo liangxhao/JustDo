@@ -1,4 +1,4 @@
-import type { GoalRunProgress } from '@/features/cowork/components/goalRunProgress';
+import type { GoalRunProgress } from '@/features/cowork/components/goals/goalRunProgress';
 
 export const isCoworkRunActive = (
   runtimeRunning: boolean,

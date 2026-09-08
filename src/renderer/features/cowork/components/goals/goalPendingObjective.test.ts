@@ -5,7 +5,7 @@ import {
   resolveGoalClearFetch,
   resolvePendingGoalObjectiveOnSessionChange,
   shouldApplyGoalClearResult,
-} from '@/features/cowork/components/goalPendingObjective';
+} from '@/features/cowork/components/goals/goalPendingObjective';
 
 describe('goal pending objective', () => {
   it('infers a goal directly from the pending startup prompt', () => {

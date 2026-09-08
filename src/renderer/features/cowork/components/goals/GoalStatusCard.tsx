@@ -16,7 +16,7 @@ import {
 } from '@shared/sessionGoal';
 import React, { useEffect, useRef, useState } from 'react';
 
-import { getGoalPresentation, type GoalTone } from '@/features/cowork/components/goalPresentation';
+import { getGoalPresentation, type GoalTone } from '@/features/cowork/components/goals/goalPresentation';
 import { i18nService } from '@/services/i18n';
 
 interface GoalStatusCardProps {

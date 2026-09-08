@@ -3,7 +3,7 @@ import { isSilentScheduledTaskResult } from '@shared/scheduledTask/resultPresent
 import type { ScheduledTaskRun, ScheduledTaskSessionHistory } from '@shared/scheduledTask/types';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
-import ChatMessageDisplay from '@/features/cowork/components/ChatMessageDisplay';
+import ChatMessageDisplay from '@/features/cowork/components/chat/ChatMessageDisplay';
 import { normalizeGatewayHistoryForDisplay } from '@/libs/openclaw-chat/pipeline/history-display-normalizer';
 import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 import { i18nService } from '@/services/i18n';

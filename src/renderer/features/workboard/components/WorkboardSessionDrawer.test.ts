@@ -8,11 +8,11 @@ import { i18nService } from '@/services/i18n';
 
 import WorkboardSessionDrawer, { clampWorkboardSessionDrawerWidth } from './WorkboardSessionDrawer';
 
-vi.mock('@/features/cowork/components/ChatMessageDisplay', () => ({
+vi.mock('@/features/cowork/components/chat/ChatMessageDisplay', () => ({
   default: () => null,
 }));
 
-vi.mock('@/features/cowork/components/JustDoChatWrapper', () => ({
+vi.mock('@/features/cowork/components/chat/JustDoChatWrapper', () => ({
   connectToGateway: vi.fn(async () => false),
 }));
 

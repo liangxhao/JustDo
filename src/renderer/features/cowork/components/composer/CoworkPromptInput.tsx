@@ -19,40 +19,17 @@ import {
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
-import { resolveAgentModelSelection } from '@/features/cowork/components/agentModelSelection';
-import AttachmentCard from '@/features/cowork/components/AttachmentCard';
-import ContextUsageIndicator from '@/features/cowork/components/ContextUsageIndicator';
-import {
-  contextUsageMatchesSession,
-  resolveContextUsageDisplay,
-} from '@/features/cowork/components/contextUsageRefresh';
-import {
-  canStopCoworkRun,
-  isCoworkRunActive,
-} from '@/features/cowork/components/coworkRunActivity';
-import { syncDefaultModelSelectionState } from '@/features/cowork/components/defaultModelSelectionState';
-import FolderSelectorPopover from '@/features/cowork/components/FolderSelectorPopover';
-import { runGoalActionSingleFlight } from '@/features/cowork/components/goalActionSingleFlight';
-import {
-  shouldDiscardGoalCompletionFeedback,
-  submitGoalCompletionFeedback,
-} from '@/features/cowork/components/goalCompletionFeedback';
-import { pauseGoalRun } from '@/features/cowork/components/goalPause';
-import {
-  resolveGoalClearFetch,
-  resolvePendingGoalObjectiveOnSessionChange,
-  shouldApplyGoalClearResult,
-} from '@/features/cowork/components/goalPendingObjective';
-import { acceptedGoalResumeRunId } from '@/features/cowork/components/goalResume';
-import type { GoalRunProgress } from '@/features/cowork/components/goalRunProgress';
-import GoalStatusCard from '@/features/cowork/components/GoalStatusCard';
-import { LatestSerialTaskQueue } from '@/features/cowork/components/latestSerialTaskQueue';
+import { resolveAgentModelSelection } from '@/features/cowork/components/composer/agentModelSelection';
+import AttachmentCard from '@/features/cowork/components/composer/AttachmentCard';
+import { syncDefaultModelSelectionState } from '@/features/cowork/components/composer/defaultModelSelectionState';
+import FolderSelectorPopover from '@/features/cowork/components/composer/FolderSelectorPopover';
+import { LatestSerialTaskQueue } from '@/features/cowork/components/composer/latestSerialTaskQueue';
 import {
   applyModelSelectionUpdate,
   DefaultModelApplyError,
   resolvePersistedSessionModelRefAfterApplyError,
-} from '@/features/cowork/components/modelSelectionUpdate';
-import PermissionModeSelector from '@/features/cowork/components/PermissionModeSelector';
+} from '@/features/cowork/components/composer/modelSelectionUpdate';
+import PermissionModeSelector from '@/features/cowork/components/composer/PermissionModeSelector';
 import {
   getHiddenCommandCount,
   getSlashCommandByName,
@@ -61,7 +38,30 @@ import {
   type SlashCommandCategory,
   SlashCommandCategoryLabels,
   type SlashCommandDef,
-} from '@/features/cowork/components/slashCommands';
+} from '@/features/cowork/components/composer/slashCommands';
+import { runGoalActionSingleFlight } from '@/features/cowork/components/goals/goalActionSingleFlight';
+import {
+  shouldDiscardGoalCompletionFeedback,
+  submitGoalCompletionFeedback,
+} from '@/features/cowork/components/goals/goalCompletionFeedback';
+import { pauseGoalRun } from '@/features/cowork/components/goals/goalPause';
+import {
+  resolveGoalClearFetch,
+  resolvePendingGoalObjectiveOnSessionChange,
+  shouldApplyGoalClearResult,
+} from '@/features/cowork/components/goals/goalPendingObjective';
+import { acceptedGoalResumeRunId } from '@/features/cowork/components/goals/goalResume';
+import type { GoalRunProgress } from '@/features/cowork/components/goals/goalRunProgress';
+import GoalStatusCard from '@/features/cowork/components/goals/GoalStatusCard';
+import ContextUsageIndicator from '@/features/cowork/components/status/ContextUsageIndicator';
+import {
+  contextUsageMatchesSession,
+  resolveContextUsageDisplay,
+} from '@/features/cowork/components/status/contextUsageRefresh';
+import {
+  canStopCoworkRun,
+  isCoworkRunActive,
+} from '@/features/cowork/components/status/coworkRunActivity';
 import { selectDraftAttachments, selectDraftPrompts } from '@/features/cowork/coworkSelectors';
 import { coworkService } from '@/features/cowork/coworkService';
 import {

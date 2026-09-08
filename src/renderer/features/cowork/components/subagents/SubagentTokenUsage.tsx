@@ -3,7 +3,7 @@ import React from 'react';
 
 import { i18nService } from '@/services/i18n';
 
-import QueryingIndicator from './QueryingIndicator';
+import QueryingIndicator from '../shared/QueryingIndicator';
 
 interface SubagentTokenUsageProps {
   stats?: SessionDetailStats;
