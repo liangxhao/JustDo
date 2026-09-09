@@ -4656,9 +4656,18 @@ export class ChatController {
       ...this._snap(),
     });
     if (willAppend) {
+      // chat.final may omit model metadata. Keep the Gateway model on the
+      // optimistic message itself before the next run replaces live timing.
+      const turn = this.state.transcript.activeTurn;
+      const modelRef =
+        readModelRef(message) ?? (turn?.runId === payload.runId ? turn.modelRef : undefined);
       const runScopedMessage =
         payload.runId && message && typeof message === 'object' && !Array.isArray(message)
-          ? { ...(message as Record<string, unknown>), runId: payload.runId }
+          ? {
+              ...(message as Record<string, unknown>),
+              runId: payload.runId,
+              ...(modelRef ? { modelName: modelRef } : {}),
+            }
           : message;
       const terminalMessage = markOptimisticHistoryTail(
         liveThinkingText

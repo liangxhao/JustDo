@@ -1,3 +1,4 @@
+import { readModelRef } from '@shared/openclaw/modelRef';
 import { ProgressCardStepStatus } from '@shared/openclaw/progressCard';
 import { buildGoalFollowUpPrompt } from '@shared/prompts/goalFollowUpPrompt';
 import { afterEach, expect, test, vi } from 'vitest';
@@ -703,6 +704,9 @@ test.each([undefined, 'switched-provider/switched-model'])(
     expect(controller.getCurrentTurnTiming()?.modelRef).toBe(
       finalModel ?? 'current-provider/current-model',
     );
+    expect(
+      readModelRef(controller.state.chatMessages[controller.state.chatMessages.length - 1]),
+    ).toBe(finalModel ?? 'current-provider/current-model');
     handleEvent({
       event: 'session.message',
       payload: {
@@ -737,6 +741,53 @@ test.each([undefined, 'switched-provider/switched-model'])(
     expect(controller.getCurrentTurnTiming()?.modelRef).toBe('native-provider/vendor/model');
   },
 );
+
+test('retains each reply model after the next run replaces live timing without a history reload', async () => {
+  const sessionKey = 'agent:main:justdo:session-1';
+  const request = vi.fn();
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+
+  for (const [runId, model] of [
+    ['run-1', 'model-a'],
+    ['run-2', 'model-b'],
+  ]) {
+    request.mockResolvedValue({ runId, status: 'started' });
+    await controller.sendMessage(`use ${model}`);
+    handleEvent({
+      event: 'agent',
+      payload: {
+        session: sessionKey,
+        runId,
+        seq: 1,
+        stream: 'lifecycle',
+        data: { phase: 'progress', stage: 'waiting_model', provider: 'provider', model },
+      },
+    });
+    handleEvent({
+      event: 'chat',
+      payload: {
+        sessionKey,
+        runId,
+        state: 'final',
+        message: { role: 'assistant', content: `reply from ${model}` },
+      },
+    });
+  }
+
+  const replies = controller.state.chatMessages.filter(
+    message => (message as { role?: string }).role === 'assistant',
+  );
+  expect(replies.map(readModelRef)).toEqual(['provider/model-a', 'provider/model-b']);
+  expect(controller.getCurrentTurnTiming()?.modelRef).toBe('provider/model-b');
+});
 
 test.each([undefined, 'latest/model'])(
   'keeps live progress ahead of earlier appends and honors terminal metadata (%s)',
