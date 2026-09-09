@@ -122,7 +122,7 @@ describe('Tool timeline consistency', () => {
         expect(rendered).toContain('process-summary__tool-title');
         expect(rendered).toContain(`process-summary__tool-status--${status}`);
         expect(rendered).toContain('process-summary__tool-detail');
-        expect(rendered).toContain('Bash');
+        expect(rendered).toContain('Exec');
         expect(rendered).toContain('npm test');
         expect(rendered).toContain(output);
         expect(rendered).not.toContain('process-row--tool');

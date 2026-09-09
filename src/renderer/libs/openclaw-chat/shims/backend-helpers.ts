@@ -289,32 +289,3 @@ export function coerceIdentityValue(value: unknown, maxLen = 200): string | unde
   if (!trimmed) return undefined;
   return trimmed.length > maxLen ? trimmed.slice(0, maxLen) : trimmed;
 }
-
-// ─── tool-display-common helpers ────────────────────────────────────────────
-
-export function normalizeToolName(name: unknown): string {
-  if (typeof name !== 'string') return 'unknown';
-  return name.trim() || 'unknown';
-}
-
-export function defaultTitle(toolName: string): string {
-  return toolName
-    .replace(/[_-]/g, ' ')
-    .replace(/([a-z])([A-Z])/g, '$1 $2')
-    .replace(/\b\w/g, c => c.toUpperCase());
-}
-
-export function formatToolDetailText(
-  _toolName: string,
-  _args?: unknown,
-  _mode?: string,
-): string | undefined {
-  return undefined;
-}
-
-export function resolveToolVerbAndDetailForArgs(
-  _toolName: string,
-  _args?: unknown,
-): { verb: string; detail?: string } {
-  return { verb: 'Running' };
-}

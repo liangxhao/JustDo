@@ -258,7 +258,7 @@ describe('justdo-chat assistant stream pacing', () => {
 
     expect(assistantText(chat)).toBe('先完成这段正文');
     expect(chat.shadowRoot?.querySelector('.process-summary__tool-title strong')?.textContent).toBe(
-      'Bash',
+      'Exec',
     );
   });
 

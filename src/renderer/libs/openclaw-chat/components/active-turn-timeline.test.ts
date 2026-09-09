@@ -329,7 +329,7 @@ describe('active turn timeline', () => {
     );
 
     expect(rendered).toContain('process-summary__tool-status--running');
-    expect(rendered).toContain('Sessions yield');
+    expect(rendered).toContain('Yield');
     expect(rendered).not.toContain(
       `<div class="process-summary__detail-label">${i18nService.t('coworkToolResult')}</div>`,
     );
