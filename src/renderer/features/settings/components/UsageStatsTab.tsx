@@ -1,6 +1,7 @@
 import { ArrowPathIcon } from '@heroicons/react/24/outline';
 import {
   type DailyTokenUsage,
+  type DailyTokenUsageResult,
   USAGE_STATS_DAY_OPTIONS,
   type UsageStatsCacheInfo,
   type UsageStatsDays,
@@ -49,14 +50,16 @@ const formatUtcOffset = (): string => {
   return `UTC${sign}${hours}${minutes ? `:${String(minutes).padStart(2, '0')}` : ''}`;
 };
 
-const USAGE_REFRESH_POLL_INTERVAL_MS = 750;
-const USAGE_REFRESH_MAX_ATTEMPTS = 40;
+const USAGE_REFRESH_POLL_INTERVAL_MS = 1500;
+const USAGE_REFRESH_MAX_ATTEMPTS = 12;
 
 export const shouldPollUsageStats = (cacheStatus?: UsageStatsCacheInfo): boolean =>
   cacheStatus !== undefined && cacheStatus.status !== 'fresh';
 
 const UsageStatsTab: React.FC = () => {
   const [days, setDays] = useState<UsageStatsDays>(7);
+  const [snapshot, setSnapshot] = useState<DailyTokenUsageResult | null>(null);
+  const [dimension, setDimension] = useState<'byModel' | 'byProvider' | 'byAgent'>('byModel');
   const [daily, setDaily] = useState<DailyTokenUsage[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -68,17 +71,22 @@ const UsageStatsTab: React.FC = () => {
     setIsLoading(true);
     setError(null);
     setCacheStatus(undefined);
+    setSnapshot(null);
+    setDaily([]);
     try {
       for (let attempt = 0; attempt < USAGE_REFRESH_MAX_ATTEMPTS; attempt += 1) {
+        if (requestGeneration !== requestGenerationRef.current) return;
         const result = await window.electron.openclaw.usage.getDaily({
           days,
           utcOffset: formatUtcOffset(),
+          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         });
         if (requestGeneration !== requestGenerationRef.current) return;
         if (!result.success) {
           throw new Error(result.error || i18nService.t('usageStatsLoadFailed'));
         }
 
+        setSnapshot(result);
         setDaily(fillDailyTokenUsage(result.daily ?? [], days));
         setCacheStatus(result.cacheStatus);
         if (!shouldPollUsageStats(result.cacheStatus)) return;
@@ -89,7 +97,7 @@ const UsageStatsTab: React.FC = () => {
       }
     } catch (loadError) {
       if (requestGeneration !== requestGenerationRef.current) return;
-      setDaily(fillDailyTokenUsage([], days));
+
       setError(
         loadError instanceof Error ? loadError.message : i18nService.t('usageStatsLoadFailed'),
       );
@@ -109,8 +117,8 @@ const UsageStatsTab: React.FC = () => {
 
   const maxTokens = useMemo(() => Math.max(1, ...daily.map(entry => entry.totalTokens)), [daily]);
   const totalTokens = useMemo(
-    () => daily.reduce((total, entry) => total + entry.totalTokens, 0),
-    [daily],
+    () => snapshot?.totalTokens ?? daily.reduce((total, entry) => total + entry.totalTokens, 0),
+    [daily, snapshot],
   );
   const numberFormatter = useMemo(
     () => new Intl.NumberFormat(i18nService.getLanguage() === 'zh' ? 'zh-CN' : 'en-US'),
@@ -121,6 +129,16 @@ const UsageStatsTab: React.FC = () => {
       new Intl.NumberFormat(i18nService.getLanguage() === 'zh' ? 'zh-CN' : 'en-US', {
         notation: 'compact',
         maximumFractionDigits: 1,
+      }),
+    [],
+  );
+  const totalCompactFormatter = useMemo(
+    () =>
+      new Intl.NumberFormat(i18nService.getLanguage() === 'zh' ? 'zh-CN' : 'en-US', {
+        notation: 'compact',
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+        useGrouping: false,
       }),
     [],
   );
@@ -173,12 +191,71 @@ const UsageStatsTab: React.FC = () => {
         </div>
       </div>
 
+      {snapshot && (
+        <div className="space-y-4" aria-live="polite">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {[
+              ['usageStatsSessions', snapshot.activity?.sessionCount],
+              ['usageStatsToolCalls', snapshot.activity?.toolCalls],
+              ['usageStatsErrors', snapshot.activity?.errors],
+              ['usageStatsInput', daily.reduce((sum, row) => sum + row.input, 0)],
+              ['usageStatsOutput', daily.reduce((sum, row) => sum + row.output, 0)],
+              ['usageStatsCacheRead', daily.reduce((sum, row) => sum + row.cacheRead, 0)],
+              ['usageStatsCacheWrite', daily.reduce((sum, row) => sum + row.cacheWrite, 0)],
+              ['usageStatsUserMessages', snapshot.activity?.userMessages],
+              ['usageStatsAssistantMessages', snapshot.activity?.assistantMessages],
+              [
+                'usageStatsLatency',
+                snapshot.activity?.averageLatencyMs === undefined
+                  ? undefined
+                  : (snapshot.activity.averageLatencyMs / 1000).toFixed(2) + ' s',
+              ],
+            ].map(([label, value]) => (
+              <div
+                key={label}
+                className={`rounded-xl border border-border bg-surface p-3 ${label === 'usageStatsAssistantMessages' ? 'sm:col-start-2' : ''}`}
+              >
+                <p className="text-xs text-secondary">{i18nService.t(String(label))}</p>
+                <p className="mt-1 text-lg font-semibold tabular-nums">
+                  {value === undefined
+                    ? '—'
+                    : typeof value === 'number'
+                      ? numberFormatter.format(value)
+                      : value}
+                </p>
+              </div>
+            ))}
+          </div>
+          {snapshot.activityError && (
+            <p role="status" className="text-xs text-amber-600">
+              {i18nService.t('usageStatsActivityUnavailable')}
+            </p>
+          )}
+          {snapshot.updatedAt ? (
+            <p className="text-xs text-secondary">
+              {i18nService.t('usageStatsUpdatedAt')} {new Date(snapshot.updatedAt).toLocaleString()}
+            </p>
+          ) : null}
+        </div>
+      )}
+
       <div className="rounded-xl border border-border bg-surface p-4">
         <div className="mb-5 flex items-end justify-between gap-4">
           <div>
             <div className="text-xs text-secondary">{i18nService.t('usageStatsTotalTokens')}</div>
-            <div className="mt-1 text-2xl font-semibold text-foreground">
-              {numberFormatter.format(totalTokens)}
+            <div className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-1 tabular-nums">
+              <span className="text-2xl font-semibold text-foreground">
+                {snapshot ? numberFormatter.format(totalTokens) : '—'}
+              </span>
+              {snapshot && totalTokens >= (i18nService.getLanguage() === 'zh' ? 10000 : 1000) && (
+                <span className="rounded bg-surface-raised px-1.5 py-0.5 text-xs text-secondary">
+                  ≈{' '}
+                  {totalCompactFormatter
+                    .formatToParts(totalTokens)
+                    .map(part => (part.type === 'compact' ? ` ${part.value}` : part.value))
+                    .join('')}
+                </span>
+              )}
             </div>
           </div>
           <div className="text-xs text-secondary">{i18nService.t('usageStatsUnit')}</div>
@@ -239,6 +316,53 @@ const UsageStatsTab: React.FC = () => {
           </div>
         )}
       </div>
+      {snapshot?.activity && (
+        <div className="space-y-4 rounded-xl border border-border bg-surface p-4">
+          <ThemedSelect
+            id="usage-dimension"
+            value={dimension}
+            onChange={value => setDimension(value as typeof dimension)}
+            options={(['byModel', 'byProvider', 'byAgent'] as const).map(value => ({
+              value,
+              label: i18nService.t('usageStats' + value),
+            }))}
+          />
+          <div className="max-h-72 overflow-auto">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="text-secondary">
+                  <th className="py-2">{i18nService.t('usageStatsName')}</th>
+                  <th className="text-right">{i18nService.t('usageStatsTotalTokens')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {snapshot.activity[dimension].map((row, index) => (
+                  <tr key={index} className="border-t border-border">
+                    <td className="max-w-64 break-words py-2">
+                      {row.name || i18nService.t('usageStatsUnknown')}
+                    </td>
+                    <td className="text-right tabular-nums">
+                      {numberFormatter.format(row.totalTokens)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {snapshot.activity[dimension].length === 0 && (
+              <p className="py-3 text-secondary">{i18nService.t('usageStatsEmpty')}</p>
+            )}
+          </div>
+          <p className="text-xs font-medium">{i18nService.t('usageStatsTools')}</p>
+          <div className="max-h-40 space-y-2 overflow-auto text-xs">
+            {snapshot.activity.tools.map(tool => (
+              <div key={tool.name} className="flex justify-between gap-3">
+                <span className="break-all">{tool.name}</span>
+                <span>{numberFormatter.format(tool.count)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

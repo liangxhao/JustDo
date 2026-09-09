@@ -75,7 +75,7 @@ import {
   SystemPromptReplacementIpc,
   type SystemPromptReplacementRule,
 } from '../shared/openclaw/systemPromptReplacements';
-import { UsageStatsIpc } from '../shared/openclaw/usage';
+import { UsageStatsIpc, type UsageStatsOptions } from '../shared/openclaw/usage';
 import {
   type WorkboardCardInput,
   type WorkboardCardPatch,
@@ -334,8 +334,7 @@ contextBridge.exposeInMainWorld('electron', {
       rebuildIndex: () => ipcRenderer.invoke(MemoryIpc.RebuildIndex),
     },
     usage: {
-      getDaily: (options: { days: number; utcOffset: string }) =>
-        ipcRenderer.invoke(UsageStatsIpc.GetDaily, options),
+      getDaily: (options: UsageStatsOptions) => ipcRenderer.invoke(UsageStatsIpc.GetDaily, options),
     },
   },
   agents: {

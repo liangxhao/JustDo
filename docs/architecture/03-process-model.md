@@ -233,3 +233,11 @@ Handler 在获得 single-instance lock 后统一注册。它们使用 getter 延
 ## 17. IPC Definition of Done
 
 新增接口完成时必须有稳定 channel 常量、运行时输入验证、明确 result/error contract、最小 preload 方法、Renderer declaration、销毁/取消语义和至少一个失败测试。涉及 Gateway 的接口还要定义 starting/disconnected/reconnecting 时行为；涉及写入的接口要定义重复调用和部分失败。
+
+## 18. 使用统计
+
+设置页面通过 `openclaw.usage.getDaily` 获取一次统计快照。Main 使用客户端 IANA 时区计算明确的起止日期，并并发请求 Gateway 的 `usage.cost` 和 `sessions.usage`。两者采用相同日期范围与 `agentScope: all`；后者使用 `groupBy: instance`、`limit: 1`、`includeContextWeight: false`，仅读取限额之前计算的全量 aggregates，不将会话明细或上下文报告传给 Renderer。
+
+Token 日趋势和分类来自 `usage.cost` 接口（仅提取 Token 字段，不传递或展示费用数据）；活跃会话、用户/助手消息、消息错误、工具调用、平均响应耗时和模型/供应商/代理分组来自 sessions 聚合。消息错误不能解释为产品任务失败。统计所有 Gateway 会话，不只包含产品会话列表中的记录。
+
+任一响应的缓存尚未 fresh 时，页面每 1.5 秒重试，最多请求 12 次，随后提示手动刷新。切换周期和卸载会使旧请求失效，等待中的旧轮询不会再发起请求。Gateway 未连接时返回失败；会话聚合单独失败时保留 Token 数据并显示维度不可用。数据只保留在组件内存中，不引入 Main、Redux 或 SQLite transcript/统计缓存。

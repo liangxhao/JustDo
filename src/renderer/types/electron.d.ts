@@ -104,15 +104,6 @@ interface CoworkSession {
   updatedAt: number;
 }
 
-interface DailyTokenUsage {
-  date: string;
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  totalTokens: number;
-}
-
 interface CoworkSessionSummary {
   id: string;
   title: string;
@@ -605,20 +596,9 @@ interface IElectronAPI {
       rebuildIndex: () => Promise<MemoryRebuildResult>;
     };
     usage: {
-      getDaily: (options: { days: number; utcOffset: string }) => Promise<{
-        success: boolean;
-        daily?: DailyTokenUsage[];
-        totalTokens?: number;
-        updatedAt?: number;
-        cacheStatus?: {
-          status: 'fresh' | 'partial' | 'stale' | 'refreshing';
-          cachedFiles: number;
-          pendingFiles: number;
-          staleFiles: number;
-          refreshedAt?: number;
-        };
-        error?: string;
-      }>;
+      getDaily: (
+        options: import('../../shared/openclaw/usage').UsageStatsOptions,
+      ) => Promise<import('../../shared/openclaw/usage').DailyTokenUsageResult>;
     };
   };
   ipcRenderer: {

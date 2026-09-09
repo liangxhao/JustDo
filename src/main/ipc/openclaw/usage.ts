@@ -4,8 +4,10 @@ import {
   type DailyTokenUsage,
   type DailyTokenUsageResult,
   USAGE_STATS_DAY_OPTIONS,
+  type UsageActivity,
   type UsageStatsCacheInfo,
   UsageStatsIpc,
+  type UsageStatsOptions,
 } from '../../../shared/openclaw/usage';
 import type { OpenClawRuntimeAdapter } from '../../engine';
 
@@ -68,12 +70,54 @@ export const normalizeUsageCacheInfo = (value: unknown): UsageStatsCacheInfo | u
 const isSupportedDays = (value: unknown): value is number =>
   typeof value === 'number' && USAGE_STATS_DAY_OPTIONS.some(days => days === value);
 
-export const registerOpenClawUsageHandlers = ({
-  getRuntime,
-}: UsageHandlerDependencies): void => {
+const record = (value: unknown): Record<string, unknown> =>
+  value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+const rows = (value: unknown): Record<string, unknown>[] =>
+  Array.isArray(value) ? value.filter(item => item && typeof item === 'object') : [];
+
+export const normalizeUsageActivity = (value: unknown): UsageActivity => {
+  const source = record(value);
+  const messages = record(source.messages);
+  const tools = record(source.tools);
+  const latency = record(source.latency);
+  const breakdown = (value: unknown, fields: string[]) =>
+    rows(value)
+      .map(row => {
+        const totals = record(row.totals);
+        return {
+          name: fields
+            .map(field => (typeof row[field] === 'string' ? row[field] : ''))
+            .filter(Boolean)
+            .join(' / '),
+          totalTokens: readNonNegativeNumber(totals.totalTokens),
+        };
+      })
+      .sort((a, b) => b.totalTokens - a.totalTokens);
+  return {
+    sessionCount:
+      typeof source.sessionCount === 'number'
+        ? readNonNegativeNumber(source.sessionCount)
+        : undefined,
+    userMessages: readNonNegativeNumber(messages.user),
+    assistantMessages: readNonNegativeNumber(messages.assistant),
+    errors: readNonNegativeNumber(messages.errors),
+    toolCalls: readNonNegativeNumber(tools.totalCalls),
+    averageLatencyMs:
+      readNonNegativeNumber(latency.count) > 0 ? readNonNegativeNumber(latency.avgMs) : undefined,
+    byModel: breakdown(source.byModel, ['provider', 'model']),
+    byProvider: breakdown(source.byProvider, ['provider']),
+    byAgent: breakdown(source.byAgent, ['agentId']),
+    tools: rows(tools.tools)
+      .filter(row => typeof row.name === 'string')
+      .map(row => ({ name: row.name as string, count: readNonNegativeNumber(row.count) }))
+      .sort((a, b) => b.count - a.count),
+  };
+};
+
+export const registerOpenClawUsageHandlers = ({ getRuntime }: UsageHandlerDependencies): void => {
   ipcMain.handle(
     UsageStatsIpc.GetDaily,
-    async (_event, options?: { days?: number; utcOffset?: string }): Promise<DailyTokenUsageResult> => {
+    async (_event, options?: UsageStatsOptions): Promise<DailyTokenUsageResult> => {
       try {
         const runtime = getRuntime();
         const client = runtime?.getGatewayClient();
@@ -82,12 +126,36 @@ export const registerOpenClawUsageHandlers = ({
         }
 
         const days = isSupportedDays(options?.days) ? options.days : USAGE_STATS_DAY_OPTIONS[0];
-        const summary = await client.request<GatewayUsageSummary>('usage.cost', {
-          days,
+        const timeZone = options?.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const parts = new Intl.DateTimeFormat('en-CA', {
+          timeZone,
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+        }).formatToParts(new Date());
+        const part = (type: string) => parts.find(item => item.type === type)!.value;
+        const endDate = `${part('year')}-${part('month')}-${part('day')}`;
+        const start = new Date(`${endDate}T00:00:00Z`);
+        start.setUTCDate(start.getUTCDate() - days + 1);
+        const params = {
+          startDate: start.toISOString().slice(0, 10),
+          endDate,
           agentScope: 'all',
           mode: 'specific',
           utcOffset: options?.utcOffset,
-        });
+          timeZone,
+        };
+        const [tokenResult, activityResult] = await Promise.allSettled([
+          client.request<GatewayUsageSummary>('usage.cost', params),
+          client.request<{ aggregates: unknown; cacheStatus?: unknown }>('sessions.usage', {
+            ...params,
+            groupBy: 'instance',
+            limit: 1,
+            includeContextWeight: false,
+          }),
+        ]);
+        if (tokenResult.status === 'rejected') throw tokenResult.reason;
+        const summary = tokenResult.value;
         const daily = normalizeDailyTokenUsage(summary.daily);
         const totals =
           summary.totals && typeof summary.totals === 'object'
@@ -98,8 +166,20 @@ export const registerOpenClawUsageHandlers = ({
           success: true,
           daily,
           totalTokens: readNonNegativeNumber(totals?.totalTokens),
+          ...(activityResult.status === 'fulfilled'
+            ? {
+                activity: normalizeUsageActivity(activityResult.value.aggregates),
+              }
+            : { activityError: 'Usage activity is unavailable' }),
           updatedAt: readNonNegativeNumber(summary.updatedAt),
-          cacheStatus: normalizeUsageCacheInfo(summary.cacheStatus),
+          cacheStatus:
+            [
+              normalizeUsageCacheInfo(summary.cacheStatus),
+              activityResult.status === 'fulfilled'
+                ? normalizeUsageCacheInfo(activityResult.value.cacheStatus)
+                : undefined,
+            ].find(status => status && status.status !== 'fresh') ??
+            normalizeUsageCacheInfo(summary.cacheStatus),
         };
       } catch (error) {
         return {
