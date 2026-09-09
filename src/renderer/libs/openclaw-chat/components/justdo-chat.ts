@@ -2154,9 +2154,25 @@ export class JustDoChatElement extends LitElement {
         gap: 8px;
         border-radius: 9px;
         padding: 9px 11px;
-        background: rgba(254, 242, 242, 0.86);
         color: #b91c1c;
         font-size: 13px;
+      }
+      .process-terminal--error {
+        width: var(--justdo-assistant-bubble-width, fit-content);
+        max-width: 100%;
+        box-sizing: border-box;
+        padding: var(--justdo-assistant-bubble-padding, 10px 14px);
+        border-radius: var(--justdo-assistant-bubble-radius, 12px 12px 12px 4px);
+        background: color-mix(
+          in srgb,
+          var(--justdo-terminal-error-background, rgba(254, 242, 242, 0.86))
+            var(--justdo-assistant-bubble-background-strength, 100%),
+          transparent
+        );
+      }
+      .process-terminal--error > span {
+        min-width: 0;
+        overflow-wrap: anywhere;
       }
       .process-terminal--aborted {
         width: fit-content;
@@ -2257,8 +2273,10 @@ export class JustDoChatElement extends LitElement {
         stroke-width: 1.8;
       }
       :host(.dark) .process-terminal {
-        background: rgba(127, 29, 29, 0.2);
         color: #fca5a5;
+      }
+      :host(.dark) .process-terminal--error {
+        --justdo-terminal-error-background: rgba(127, 29, 29, 0.2);
       }
       :host(.dark) .process-terminal--aborted {
         background: rgba(127, 29, 29, 0.12);

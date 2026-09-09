@@ -179,7 +179,7 @@ pending promise、同一 session 只允许一个待答请求、timeout/default�
 
 - 从 agent hooks 发布 `preparing`、`waiting_model` 有界进度事件。`model_call_started` 也会出现在成功的工具轮次之后，不是重试信号；插件不再根据同一 run 的调用次数推断 `retrying`；
 - 注册 `justdo-runtime-bridge` remote embedding provider，保留 SSRF policy 与 eligible env proxy。批量响应有 `index` 时按请求顺序恢复向量，并拒绝重复、越界或混用有索引/无索引的响应；完全无索引的响应按位置处理；
-- 注册 `justdoRuntimeBridge.historyDetails` 的 `operator.read` RPC，只按最多 250 个请求 id 从原生 transcript 投影 tool input 和 compaction detail；并注册 `justdoRuntimeBridge.historyMessage`，只接受session key、Gateway给出的message id、transfer id和递增cursor，在`chat.message.get`报告`oversized`或超过frame预算时按不超过1,048,576字符的块返回原生SQLite transcript的active-branch消息。一次transfer固定同一序列化快照且完成后释放；它不读取inactive branch、不列举消息，也不接受文件路径。
+- 注册 `justdoRuntimeBridge.historyDetails` 的 `operator.read` RPC，只按最多 250 个请求 id 从原生 transcript 投影 tool input、compaction detail 和 failure detail。failureMessageIds 只返回确切可见 assistant error 条目的 errorMessage，使用 OpenClaw 内置敏感信息过滤并限制为 2000 字符；多个 ID 与 tool input 共用一次可见 transcript 读取，不返回 diagnostics/errorBody，也不持久化消息缓存；并注册 `justdoRuntimeBridge.historyMessage`，只接受session key、Gateway给出的message id、transfer id和递增cursor，在`chat.message.get`报告`oversized`或超过frame预算时按不超过1,048,576字符的块返回原生SQLite transcript的active-branch消息。一次transfer固定同一序列化快照且完成后释放；它不读取inactive branch、不列举消息，也不接受文件路径。
 
 该 RPC 不是通用文件读取器，不返回 transcript 路径，也不接受任意 session 文件路径。Adapter 先用 `chat.history` 获取原生 display projection，仅对缺失 detail 做补充查询。Renderer 对 tool input 和 compaction detail 均按每批最多 250 个去重 ID 顺序查询；一个批次失败不丢弃历史或其他批次的补全结果。
 

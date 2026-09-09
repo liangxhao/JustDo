@@ -9,8 +9,15 @@ const sdk = vi.hoisted(() => ({
   getSessionEntry: vi.fn(),
   loadTranscriptEventsSync: vi.fn(),
   readVisibleSessionTranscriptMessageEntries: vi.fn(),
+  redactSensitiveText: vi.fn((text: string) =>
+    text.replace(/Bearer secret-token/g, 'Bearer [REDACTED]'),
+  ),
   fetchWithSsrFGuard: vi.fn(),
   ssrfPolicyFromHttpBaseUrlAllowedHostname: vi.fn(() => ({ allowedHostnames: ['example.test'] })),
+}));
+
+vi.mock('openclaw/plugin-sdk/logging-core', () => ({
+  redactSensitiveText: sdk.redactSensitiveText,
 }));
 
 vi.mock('openclaw/plugin-sdk/session-store-runtime', () => ({
@@ -256,7 +263,94 @@ test('reads only requested history details from the specified native session', a
   expect(respond).toHaveBeenCalledWith(true, {
     toolInputs: { 'call-1': { name: 'read', input: { path: 'README.md' } } },
     compactionDetails: { 'compact-1': { summary: 'Earlier work', tokensBefore: 1000 } },
+    failureDetails: {},
   });
+});
+
+test('batches exact visible failure details with tool inputs and redacts only error text', async () => {
+  sdk.getSessionEntry.mockReturnValue({ sessionId: 'native-session-1' });
+  sdk.readVisibleSessionTranscriptMessageEntries.mockResolvedValue([
+    {
+      entryId: 'failure-1',
+      message: {
+        role: 'assistant',
+        stopReason: 'error',
+        errorMessage: ' Connection error. ',
+        diagnostics: 'private',
+        errorBody: 'private',
+      },
+    },
+    {
+      entryId: 'failure-2',
+      message: { role: 'assistant', stopReason: 'error', errorMessage: 'Bearer secret-token' },
+    },
+    {
+      entryId: 'other',
+      message: { role: 'assistant', stopReason: 'error', errorMessage: 'Not requested' },
+    },
+    {
+      entryId: 'user',
+      message: { role: 'user', stopReason: 'error', errorMessage: 'Not assistant' },
+    },
+    {
+      entryId: 'success',
+      message: { role: 'assistant', stopReason: 'stop', errorMessage: 'Not failure' },
+    },
+    {
+      entryId: 'tool',
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'toolCall', id: 'call-1', name: 'read', arguments: { path: 'README.md' } },
+        ],
+      },
+    },
+  ]);
+  const { registerGatewayMethod } = registerPlugin();
+  const handler = registerGatewayMethod.mock.calls[0][1] as HistoryHandler;
+  const respond = vi.fn();
+  await handler({
+    params: {
+      sessionKey: 'session-1',
+      failureMessageIds: ['failure-1', 'failure-2', 'user', 'success', 'missing'],
+      toolCallIds: ['call-1'],
+    },
+    respond,
+  });
+  expect(sdk.readVisibleSessionTranscriptMessageEntries).toHaveBeenCalledExactlyOnceWith({
+    sessionKey: 'session-1',
+    sessionId: 'native-session-1',
+  });
+  expect(sdk.loadTranscriptEventsSync).not.toHaveBeenCalled();
+  expect(sdk.redactSensitiveText).toHaveBeenCalledWith('Bearer secret-token', { mode: 'tools' });
+  expect(respond).toHaveBeenCalledWith(true, {
+    toolInputs: { 'call-1': { name: 'read', input: { path: 'README.md' } } },
+    compactionDetails: {},
+    failureDetails: {
+      'failure-1': { errorMessage: 'Connection error.' },
+      'failure-2': { errorMessage: 'Bearer [REDACTED]' },
+    },
+  });
+});
+
+test('bounds failure lookup batches and returned error text', async () => {
+  sdk.getSessionEntry.mockReturnValue({ sessionId: 'native-session-1' });
+  sdk.readVisibleSessionTranscriptMessageEntries.mockResolvedValue([
+    {
+      entryId: 'failure',
+      message: { role: 'assistant', stopReason: 'error', errorMessage: 'x'.repeat(3000) },
+    },
+  ]);
+  const { registerGatewayMethod } = registerPlugin();
+  const handler = registerGatewayMethod.mock.calls[0][1] as HistoryHandler;
+  const respond = vi.fn();
+  await handler({
+    params: { sessionKey: 'session-1', failureMessageIds: Array(251).fill('failure') },
+    respond,
+  });
+  expect(sdk.readVisibleSessionTranscriptMessageEntries).not.toHaveBeenCalled();
+  await handler({ params: { sessionKey: 'session-1', failureMessageIds: ['failure'] }, respond });
+  expect(respond.mock.calls[1][1].failureDetails.failure.errorMessage).toHaveLength(2000);
 });
 
 test('reads one native transcript message through advancing bounded chunks', async () => {

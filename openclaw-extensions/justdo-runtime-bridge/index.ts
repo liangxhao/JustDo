@@ -1,4 +1,5 @@
 import type { OpenClawPluginApi } from 'openclaw/plugin-sdk';
+import { redactSensitiveText } from 'openclaw/plugin-sdk/logging-core';
 import {
   getSessionEntry,
   loadTranscriptEventsSync,
@@ -12,12 +13,14 @@ import {
 const PLUGIN_ID = 'justdo-runtime-bridge';
 const MAX_DETAIL_IDS = 250;
 const MAX_DETAIL_ID_CHARS = 256;
+const MAX_FAILURE_DETAIL_CHARS = 2000;
 const MAX_HISTORY_MESSAGE_CHUNK_CHARS = 1024 * 1024;
 const MAX_HISTORY_MESSAGE_TRANSFERS = 8;
 const HISTORY_MESSAGE_TRANSFER_TTL_MS = 2 * 60 * 1000;
 
 type UnknownRecord = Record<string, unknown>;
 type ToolInputLookup = Record<string, { name?: string; input: unknown }>;
+type FailureDetailLookup = Record<string, { errorMessage: string }>;
 type CompactionDetailLookup = Record<
   string,
   { summary?: string; tokensBefore?: number; tokensAfter?: number }
@@ -265,25 +268,46 @@ const plugin = {
         const sessionKey = params.sessionKey.trim();
         const entry = getSessionEntry({ sessionKey, readConsistency: 'latest' });
         if (!entry?.sessionId) {
-          respond(true, { toolInputs: {}, compactionDetails: {} });
+          respond(true, { toolInputs: {}, compactionDetails: {}, failureDetails: {} });
           return;
         }
         const toolCallIds = boundedIds(params.toolCallIds);
         const compactionEntryIds = boundedIds(params.compactionEntryIds);
+        const failureMessageIds = boundedIds(params.failureMessageIds);
         const toolInputs: ToolInputLookup = {};
         const compactionDetails: CompactionDetailLookup = {};
-        if (toolCallIds.size > 0) {
+        const failureDetails: FailureDetailLookup = Object.create(null);
+        if (toolCallIds.size > 0 || failureMessageIds.size > 0) {
           const visibleMessages = await readVisibleSessionTranscriptMessageEntries({
             sessionKey,
             sessionId: entry.sessionId,
           });
-          collectHistoryDetails(
-            visibleMessages.map(item => item.message),
-            toolCallIds,
-            new Set(),
-            toolInputs,
-            compactionDetails,
-          );
+          if (toolCallIds.size > 0) {
+            collectHistoryDetails(
+              visibleMessages.map(item => item.message),
+              toolCallIds,
+              new Set(),
+              toolInputs,
+              compactionDetails,
+            );
+          }
+          for (const item of visibleMessages) {
+            if (!failureMessageIds.has(item.entryId) || !isRecord(item.message)) continue;
+            const message = item.message;
+            if (
+              message.role !== 'assistant' ||
+              message.stopReason !== 'error' ||
+              typeof message.errorMessage !== 'string' ||
+              !message.errorMessage.trim()
+            )
+              continue;
+            // Restore only bounded display text, never the raw provider body or
+            // diagnostics. Force built-in redaction even if logging disables it.
+            const errorMessage = redactSensitiveText(message.errorMessage.trim(), {
+              mode: 'tools',
+            }).slice(0, MAX_FAILURE_DETAIL_CHARS);
+            failureDetails[item.entryId] = { errorMessage };
+          }
         }
         if (compactionEntryIds.size > 0) {
           collectHistoryDetails(
@@ -294,7 +318,7 @@ const plugin = {
             compactionDetails,
           );
         }
-        respond(true, { toolInputs, compactionDetails });
+        respond(true, { toolInputs, compactionDetails, failureDetails });
       },
       { scope: 'operator.read' },
     );

@@ -1,3 +1,6 @@
+import { OPENCLAW_HISTORY_DETAIL_MAX_IDS } from '@shared/openclaw/historyIpc';
+
+import { isPersistedFailedAssistantMessage } from '../pipeline/history-display-normalizer';
 import type { GatewayClient } from './client';
 
 export const CHAT_HISTORY_INITIAL_LIMIT = 250;
@@ -64,6 +67,61 @@ const readHistoryMessageId = (message: unknown): string | null => {
   const metadata = asRecord(asRecord(message)?.__openclaw);
   return typeof metadata?.id === 'string' && metadata.id.trim() ? metadata.id.trim() : null;
 };
+
+const needsFailureDetail = (message: unknown): boolean => {
+  const raw = asRecord(message);
+  return (
+    raw !== null &&
+    isPersistedFailedAssistantMessage(raw) &&
+    !(typeof raw.errorMessage === 'string' && raw.errorMessage.trim())
+  );
+};
+
+async function hydrateFailureDetails(
+  client: GatewayClient,
+  messages: unknown[],
+  sessionKey: string,
+): Promise<unknown[]> {
+  const ids = [
+    ...new Set(
+      messages
+        .filter(needsFailureDetail)
+        .map(readHistoryMessageId)
+        .filter((id): id is string => id !== null),
+    ),
+  ];
+  if (ids.length === 0) return messages;
+  const errors = new Map<string, string>();
+  for (let offset = 0; offset < ids.length; offset += OPENCLAW_HISTORY_DETAIL_MAX_IDS) {
+    const batch = ids.slice(offset, offset + OPENCLAW_HISTORY_DETAIL_MAX_IDS);
+    try {
+      // Fetch only selected display-safe errors, in one visible-transcript read
+      // per batch. Do not transfer raw provider diagnostics or response bodies.
+      const response = asRecord(
+        await client.request('justdoRuntimeBridge.historyDetails', {
+          sessionKey,
+          failureMessageIds: batch,
+        }),
+      );
+      const details = asRecord(response?.failureDetails);
+      for (const id of batch) {
+        const detail = asRecord(details?.[id]);
+        if (typeof detail?.errorMessage === 'string' && detail.errorMessage.trim()) {
+          errors.set(id, detail.errorMessage.trim());
+        }
+      }
+    } catch {
+      // Detail lookup is optional; keep the original history on failure.
+    }
+  }
+  if (errors.size === 0) return messages;
+  return messages.map(message => {
+    if (!needsFailureDetail(message)) return message;
+    const id = readHistoryMessageId(message);
+    const errorMessage = id ? errors.get(id) : undefined;
+    return errorMessage ? { ...asRecord(message), errorMessage } : message;
+  });
+}
 
 const retainHistoryIdentity = (message: unknown, placeholder: unknown): unknown => {
   const full = asRecord(message);
@@ -152,7 +210,7 @@ export async function hydrateTruncatedHistoryMessages(
     indices.push(index);
     candidates.set(messageId, indices);
   });
-  if (candidates.size === 0) return messages;
+  if (candidates.size === 0) return hydrateFailureDetails(client, messages, sessionKey);
 
   const replacements = new Map<number, unknown>();
   const duplicateProjectionIndices = new Set<number>();
@@ -186,9 +244,11 @@ export async function hydrateTruncatedHistoryMessages(
       },
     ),
   );
-  return replacements.size === 0
-    ? messages
-    : messages.flatMap((message, index) =>
-        duplicateProjectionIndices.has(index) ? [] : [replacements.get(index) ?? message],
-      );
+  const hydrated =
+    replacements.size === 0
+      ? messages
+      : messages.flatMap((message, index) =>
+          duplicateProjectionIndices.has(index) ? [] : [replacements.get(index) ?? message],
+        );
+  return hydrateFailureDetails(client, hydrated, sessionKey);
 }

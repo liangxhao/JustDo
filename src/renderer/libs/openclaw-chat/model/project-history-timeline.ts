@@ -3,6 +3,7 @@ import { normalizeToolTerminalStatus } from '@shared/openclaw/messageDomain';
 import { isGatewayInjectedModelRef } from '@shared/openclaw/modelRef';
 
 import { getTranscriptMedia } from '@/libs/openclaw-chat/attachments';
+import { collapseRepeatedFailures } from '@/libs/openclaw-chat/pipeline/history-display-normalizer';
 import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 
 import { type ThinkingItem, type ToolItem } from './chat-transcript-state';
@@ -523,7 +524,11 @@ export function projectPersistedTimeline(
     return applied;
   };
 
+  const visibleMessages = collapseRepeatedFailures(messages);
+  let visibleMessageIndex = 0;
   messages.forEach((outerMessage, messageIndex) => {
+    if (visibleMessages[visibleMessageIndex] !== outerMessage) return;
+    visibleMessageIndex += 1;
     const outer = outerMessage as Record<string, unknown>;
     const message = unwrapToolMessage(outerMessage);
     if (!message) return;

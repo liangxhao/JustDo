@@ -2,10 +2,15 @@ import { OPENCLAW_HISTORY_DETAIL_MAX_IDS } from '@shared/openclaw/historyIpc';
 import { buildGoalFollowUpPrompt } from '@shared/prompts/goalFollowUpPrompt';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
+import {
+  FAILED_RUN_MESSAGE_FLAG,
+  FAILED_RUN_MESSAGE_ID,
+} from '@/libs/openclaw-chat/model/failed-run-message';
 import { projectPersistedTimeline } from '@/libs/openclaw-chat/model/project-history-timeline';
 import { prepareVisibleTimelineRows } from '@/libs/openclaw-chat/model/timeline-avatar-state';
 import { readTranscriptIdentity } from '@/libs/openclaw-chat/model/transcript-identity';
 import {
+  collapseRepeatedFailures,
   normalizeGatewayHistoryForDisplay,
   persistFailedRun,
   persistInterruptedMessage,
@@ -74,6 +79,146 @@ describe('projectGatewayHistoryForDisplay', () => {
 });
 
 describe('normalizeGatewayHistoryForDisplay', () => {
+  test('keeps distinct known failed-run identities without native run IDs', () => {
+    const messages = [
+      { role: 'user', content: 'Request' },
+      ...['run-a', 'run-b'].map(id => ({
+        role: 'system',
+        content: 'Connection error.',
+        [FAILED_RUN_MESSAGE_FLAG]: true,
+        [FAILED_RUN_MESSAGE_ID]: id,
+      })),
+    ];
+    expect(collapseRepeatedFailures(messages)).toEqual(messages);
+  });
+
+  test('compares rendered failure text and retains attached tool results', () => {
+    const failure = {
+      role: 'system',
+      runId: 'run-a',
+      [FAILED_RUN_MESSAGE_FLAG]: true,
+      errorMessage: 'Same raw error.',
+    };
+    const messages = [
+      { ...failure, content: 'First visible error.' },
+      { ...failure, content: 'Second visible error.' },
+      {
+        ...failure,
+        content: 'Second visible error.',
+        __justdoAttachedToolMessages: [{ role: 'toolResult', toolCallId: 't1', content: 'Result' }],
+      },
+    ];
+    expect(collapseRepeatedFailures(messages)).toEqual(messages);
+  });
+
+  const normalizeRetryDisplay = async (
+    ...args: Parameters<typeof normalizeGatewayHistoryForDisplay>
+  ) => collapseRepeatedFailures(await normalizeGatewayHistoryForDisplay(...args));
+  const retryFailure = (runId?: string, errorMessage = 'Connection error.') => ({
+    role: 'assistant',
+    content: [],
+    stopReason: 'error',
+    errorMessage,
+    ...(runId ? { runId } : {}),
+  });
+  const retryOptions = { sessionKey: 'agent:main:justdo:retry-display' };
+
+  test('collapses live durable errors only in projection and keeps the history sequence intact', async () => {
+    const input = [
+      { role: 'user', content: 'Request' },
+      ...Array.from({ length: 4 }, (_, index) => ({
+        ...retryFailure('run-1'),
+        __openclaw: { id: `error-${index}`, messageSeq: index + 2 },
+      })),
+      { role: 'user', content: 'Next request' },
+      retryFailure('run-2'),
+    ] as GatewayMessage[];
+    const original = structuredClone(input);
+    expect(collapseRepeatedFailures(input)).toHaveLength(4);
+    const normalized = await normalizeGatewayHistoryForDisplay(input, retryOptions);
+    const projected = projectPersistedTimeline(normalized as GatewayMessage[]);
+    expect(projected.filter(item => item.kind === 'history-message')).toHaveLength(4);
+    expect(input).toEqual(original);
+    expect(input).toHaveLength(7);
+  });
+
+  test.each(['run-1', undefined])(
+    'collapses four identical attempts within a user turn (%s)',
+    async runId => {
+      const input = [
+        { role: 'user', content: 'First request' },
+        ...Array.from({ length: 4 }, (_, index) => ({
+          ...retryFailure(runId),
+          timestamp: 1000 + index,
+        })),
+      ];
+      const original = structuredClone(input);
+      const result = await normalizeRetryDisplay(input, retryOptions);
+      expect(result).toHaveLength(2);
+      expect(result[1]).toMatchObject({ content: 'Connection error.', isError: true });
+      expect(input).toEqual(original);
+      expect(await normalizeRetryDisplay(input, retryOptions)).toEqual(result);
+      expect(await normalizeRetryDisplay(result, retryOptions)).toEqual(result);
+    },
+  );
+
+  test.each(['run-1', undefined])(
+    'preserves later user requests and successful replies (%s)',
+    async runId => {
+      const nextRunId = runId ? 'run-2' : undefined;
+      const result = await normalizeRetryDisplay(
+        [
+          { role: 'user', content: 'First request' },
+          retryFailure(runId),
+          retryFailure(runId),
+          { role: 'user', content: 'Second request' },
+          retryFailure(nextRunId),
+          retryFailure(nextRunId),
+          { role: 'user', content: 'Third request' },
+          { role: 'assistant', content: 'Success', runId: 'run-3' },
+        ],
+        retryOptions,
+      );
+      expect(result.map(message => (message as GatewayMessage).content)).toEqual([
+        'First request',
+        'Connection error.',
+        'Second request',
+        'Connection error.',
+        'Third request',
+        'Success',
+      ]);
+    },
+  );
+
+  test('preserves different runs, changed errors and failures separated by tool output', async () => {
+    const input = [
+      { role: 'user', content: 'Request' },
+      retryFailure('run-1'),
+      retryFailure('run-2'),
+      retryFailure('run-2', 'Authentication failed.'),
+      { role: 'toolResult', content: 'Tool output', toolCallId: 'tool-1' },
+      retryFailure('run-2', 'Authentication failed.'),
+    ];
+    expect(await normalizeRetryDisplay(input, retryOptions)).toHaveLength(input.length);
+  });
+
+  test('does not infer anonymous run identity across a partial history page', async () => {
+    expect(
+      await normalizeRetryDisplay([retryFailure(), retryFailure()], retryOptions),
+    ).toHaveLength(2);
+  });
+
+  test('does not carry deduplication state into another session or snapshot', async () => {
+    const input = [{ role: 'user', content: 'Request' }, retryFailure(), retryFailure()];
+    expect(await normalizeRetryDisplay(input, retryOptions)).toHaveLength(2);
+    expect(
+      await normalizeRetryDisplay(input, {
+        sessionKey: 'agent:main:justdo:another-session',
+      }),
+    ).toHaveLength(2);
+    expect(await normalizeRetryDisplay([retryFailure()], retryOptions)).toHaveLength(1);
+  });
+
   test.each([250, 251, 501])('hydrates %i tool results in bounded batches', async count => {
     const sessionKey = 'agent:main:justdo:large-history';
     const getToolInputs = vi.fn(async (params: { sessionKey: string; toolCallIds: string[] }) => {

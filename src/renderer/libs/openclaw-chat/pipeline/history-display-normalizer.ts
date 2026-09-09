@@ -390,7 +390,7 @@ function isEmptyMessageContent(content: unknown): boolean {
   );
 }
 
-function isPersistedFailedAssistantMessage(message: Record<string, unknown>): boolean {
+export function isPersistedFailedAssistantMessage(message: Record<string, unknown>): boolean {
   if (String(message.role ?? '').toLowerCase() !== 'assistant') return false;
   if (messageText(message.content).trim() === AGENT_RUN_FAILED_BEFORE_REPLY) return true;
   const stopReason = message.stopReason ?? message.stop_reason;
@@ -566,6 +566,65 @@ function normalizeFailedRunMessage(
       : {}),
   };
   return raw === outer ? normalized : { ...outer, message: normalized };
+}
+
+export function collapseRepeatedFailures<T>(messages: T[]): T[] {
+  let hasUserBoundary = false;
+  let previousFailure: { runId: string | null; error: string } | null = null;
+  return messages.filter(message => {
+    const outer = asRecord(message);
+    const raw = asRecord(outer?.message) ?? outer;
+    if (!outer || !raw) {
+      previousFailure = null;
+      return true;
+    }
+    if (String(raw.role ?? '').toLowerCase() === 'user') {
+      hasUserBoundary = true;
+      previousFailure = null;
+      return true;
+    }
+    if (raw[FAILED_RUN_MESSAGE_FLAG] !== true && !isPersistedFailedAssistantMessage(raw)) {
+      previousFailure = null;
+      return true;
+    }
+    // A failure row can also own tool results. Never hide those with its text.
+    if (
+      [outer, raw].some(
+        record =>
+          Array.isArray(record.__justdoAttachedToolMessages) &&
+          record.__justdoAttachedToolMessages.length > 0,
+      )
+    ) {
+      previousFailure = null;
+      return true;
+    }
+    const failureId = [raw[FAILED_RUN_MESSAGE_ID], outer[FAILED_RUN_MESSAGE_ID]].find(
+      value => typeof value === 'string' && value.trim(),
+    );
+    const explicitRunId = messageRunId(outer, raw);
+    const runId = explicitRunId
+      ? `run:${explicitRunId}`
+      : typeof failureId === 'string'
+        ? `failure:${failureId.trim()}`
+        : null;
+    const displayText = messageText(raw.content).trim();
+    const error =
+      raw[FAILED_RUN_MESSAGE_FLAG] === true
+        ? displayText
+        : typeof raw.errorMessage === 'string' && raw.errorMessage.trim()
+          ? raw.errorMessage.trim()
+          : displayText;
+    // Only collapse an uninterrupted block of identical failures. A user,
+    // assistant reply or tool row always starts a new block. Without run IDs,
+    // require a visible user boundary rather than guessing across history pages.
+    const duplicate =
+      Boolean(error) &&
+      previousFailure?.error === error &&
+      previousFailure.runId === runId &&
+      (runId !== null || hasUserBoundary);
+    previousFailure = { runId, error };
+    return !duplicate;
+  });
 }
 
 function hasMeaningfulToolInput(value: unknown): boolean {
