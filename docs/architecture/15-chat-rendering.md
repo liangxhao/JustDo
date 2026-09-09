@@ -155,9 +155,9 @@ Stable transcript identity优先读取Gateway message id/记录标识，再用�
 
 同一物理会话运行期间，history响应中的`activeLeafEntryId`变化不能提前清空已显示历史或active turn：该快照仍须遵守active-run reconciliation约束。替换判断在异步消息补取结束、提交前读取当前运行状态；断线恢复的suspended reconciliation也保留running turn，继续确认远端运行状态。保留原leaf基线，等终态刷新可接管时再替换历史；显式reset与物理session identity轮换仍按各自生命周期处理。
 
-Gateway会把超过单行history预算的消息替换为带`__openclaw.truncated`和message id的结构化占位。Renderer不再嗅探`...(truncated)...`文本：先用原生`chat.message.get`补取完整display message；若原生返回`oversized`或响应超过WebSocket frame预算，再调用受保护的`justdoRuntimeBridge.historyMessage`，按有界字符块从原生SQLite transcript的active branch重组同一message id。Bridge只接受Gateway已经发出的id，不列举消息；一次transfer固定同一份序列化快照，避免逐块重读整个transcript。只有全部块到齐并通过JSON解析后才替换占位，原display identity保留但`truncated/reason`标记被移除。
+Gateway会把超过单行history预算的消息替换为带`__openclaw.truncated`和message id的结构化占位。Renderer不再嗅探`...(truncated)...`文本：先用原生`chat.message.get`补取完整display message；若原生返回`oversized`或响应超过WebSocket frame预算，再调用受保护的`runtimeServices.historyMessage`，按有界字符块从原生SQLite transcript的active branch重组同一message id。Bridge只接受Gateway已经发出的id，不列举消息；一次transfer固定同一份序列化快照，避免逐块重读整个transcript。只有全部块到齐并通过JSON解析后才替换占位，原display identity保留但`truncated/reason`标记被移除。
 
-Tool input lookup先使用原生 `chat.history` display projection，再通过 `justdoRuntimeBridge.historyDetails` 的 `operator.read` RPC 按 session 和 call id 有界补齐，不能跨 transcript 搜相同 call id，也不能直接读取 `sessions.json`。工具参数与 compaction detail 的缺失 ID 均去重后按最多 250 个分批顺序查询；批次失败保留原始消息与其他成功批次的详情。
+Tool input lookup先使用原生 `chat.history` display projection，再通过 `runtimeServices.historyDetails` 的 `operator.read` RPC 按 session 和 call id 有界补齐，不能跨 transcript 搜相同 call id，也不能直接读取 `sessions.json`。工具参数与 compaction detail 的缺失 ID 均去重后按最多 250 个分批顺序查询；批次失败保留原始消息与其他成功批次的详情。
 
 ## 8. History 窗口
 
@@ -298,7 +298,7 @@ Streaming 更新不应抢走键盘焦点或反复触发 screen reader 整页朗�
 
 同一用户轮次中连续且文本相同的失败记录仅在最终 timeline 投影中保留一条。明确的不同 runId 或失败记录 ID 不合并；缺少 runId 时，必须在当前快照中见到用户消息边界才合并连续错误。新用户消息、正常回复、工具记录及不同错误都会打断合并；附带工具结果的失败行始终保留。分页缺少用户边界时保守保留匿名失败。去重状态仅存在于单次投影调用，原始消息数组、messageSeq、Gateway transcript、运行状态与重试行为均保持完整。
 
-Gateway 的 display history 会清除 assistant 错误的 errorMessage。历史 hydration 仅对空失败或通用失败提示且有消息 ID 的行，通过 justdoRuntimeBridge.historyDetails 的 failureMessageIds 批量恢复详情，每批最多 250 个 ID、一次可见 transcript 读取。仅补回经过 OpenClaw 内置敏感信息过滤并限制为 2000 字符的 errorMessage，不复制 diagnostics/errorBody 或替换原消息身份。已有部分回复、工具内容和具体恢复建议不触发读取。详情不可用时保留原提示；不借用其他轮次或当前会话的 lastError。截断行先恢复完整消息，再补充错误详情，最后执行失败消息规范化和展示合并。
+Gateway 的 display history 会清除 assistant 错误的 errorMessage。历史 hydration 仅对空失败或通用失败提示且有消息 ID 的行，通过 runtimeServices.historyDetails 的 failureMessageIds 批量恢复详情，每批最多 250 个 ID、一次可见 transcript 读取。仅补回经过 OpenClaw 内置敏感信息过滤并限制为 2000 字符的 errorMessage，不复制 diagnostics/errorBody 或替换原消息身份。已有部分回复、工具内容和具体恢复建议不触发读取。详情不可用时保留原提示；不借用其他轮次或当前会话的 lastError。截断行先恢复完整消息，再补充错误详情，最后执行失败消息规范化和展示合并。
 
 Renderer 的 pipeline/system-message-display.ts 统一过滤历史消息、实时 Content 及实时/历史终态错误中的内部日志提示：旧版 Log:/Logs: 行、独立命令行，以及新版完整句子 To view logs, run ... in a terminal.。流式输出仅暂扣末尾匹配的提示前缀，完成后保留不完整或无关文本；实际错误原因和恢复建议不变。规则不依赖模型元数据，因为 Gateway 投影可能省略它；用户及工具正文不经过此过滤。原始 Gateway transcript 和诊断日志不改写。
 

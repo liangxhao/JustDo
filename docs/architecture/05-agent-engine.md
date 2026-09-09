@@ -132,7 +132,7 @@ Adapter 在初始会话和后台任务路径调用 `chat.send`，保存 requeste
 
 后台全量历史同步按每页 1000 条循环读取；Renderer 另有分页窗口。扩大单页限制前必须评估内存和二次投影成本。
 
-Adapter 不再读写 OpenClaw `sessions.json`。模型变更在 Gateway ready 后用 `sessions.patch`；历史来自原生分页 `chat.history`；原生 display projection 未公开的 tool input 与 compaction detail 由 `justdo-runtime-bridge` 的受限 `operator.read` RPC 按请求 id 有界补齐。所有 RPC 结果先经过 `v2026.9.2` wire validator，再进入产品 DTO。
+Adapter 不再读写 OpenClaw `sessions.json`。模型变更在 Gateway ready 后用 `sessions.patch`；历史来自原生分页 `chat.history`；原生 display projection 未公开的 tool input 与 compaction detail 由 `runtime-services` 的受限 `operator.read` RPC 按请求 id 有界补齐。所有 RPC 结果先经过 `v2026.9.2` wire validator，再进入产品 DTO。
 
 ## 11. Slash commands
 
@@ -186,7 +186,7 @@ Header proxy 的 CA 使用每次生成唯一的 Subject，启动前验证 CA 自
 `keys/` 重建；Main 不安装、删除或修改 Windows 系统根证书。这样 Gateway 同时启用 system CA 时，
 系统库里的历史同名根证书不会覆盖当前本地代理 CA 并触发 `CERT_SIGNATURE_FAILURE`。
 
-仅提供 CLI 环境并不足以让 OpenClaw 的 guarded fetch 使用代理。内置 `justdo-runtime-bridge`
+仅提供 CLI 环境并不足以让 OpenClaw 的 guarded fetch 使用代理。内置 `runtime-services`
 注册 remote embedding provider，复用 OpenClaw SSRF guard，并只对 eligible URL 使用 env proxy；
 没有 `HTTP(S)_PROXY` 或命中 `NO_PROXY` 时保持原路径。请求到达本地代理后仍由完整 URL 白名单决定
 是否注入业务 Header，未命中请求不会获得自定义 Header。

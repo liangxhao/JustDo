@@ -21,7 +21,7 @@ export const bundledOpenClawExtensions: readonly OpenClawExtensionDescriptor[] =
     }),
   },
   {
-    id: OpenClawExtensionId.JUSTDO_RUNTIME_BRIDGE,
+    id: OpenClawExtensionId.RUNTIME_SERVICES,
     buildEntry: () => ({ enabled: true }),
   },
 ] as const;

@@ -128,7 +128,7 @@ describe('OpenClaw provider config', () => {
 
     expect(buildBuiltinMemorySearchConfig(providers)).toEqual({
       enabled: true,
-      provider: OpenClawExtensionId.JUSTDO_RUNTIME_BRIDGE,
+      provider: OpenClawExtensionId.RUNTIME_SERVICES,
       model: 'embedding-a',
       remote: {
         baseUrl: 'http://127.0.0.1:4000/v1',

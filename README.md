@@ -110,7 +110,7 @@ Python packages.
 | `src/main/engine/`                 | cowork routing, Gateway adapter, runtime forwarding, command safety                        |
 | `src/main/openclaw/`               | Gateway config sync, runtime lifecycle, model/session/slash-command helpers                |
 | `src/main/plugins/`                | skills, MCP, hooks, extensions, and marketplace services                                   |
-| `src/main/scheduler/`              | scheduled task prompt/runtime bridge                                                       |
+| `src/main/scheduler/`              | scheduled task prompt/runtime services                                                       |
 | `src/renderer/features/`           | React feature modules for cowork, agents, models, plugins, scheduled tasks, settings       |
 | `src/renderer/libs/openclaw-chat/` | Lit chat element and message rendering pipeline                                            |
 | `src/shared/`                      | shared contracts for cowork, OpenClaw, providers, plugins, scheduled tasks, slash commands |

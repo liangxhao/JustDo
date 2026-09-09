@@ -38,7 +38,7 @@ Main 中少量确需相同 Header 的确定性调用，应在调用点基于白�
 | 配置解析            | `src/main/core/outboundHeaderPolicyConfig.ts`、`systemProxy.ts` | 白名单、Header 名、系统/自定义代理与 bypass       |
 | 本地代理            | `src/main/core/outboundHeaderProxy.ts`                          | 认证、CONNECT 判别、MITM/raw tunnel、注入         |
 | OpenClaw 环境       | `src/main/core/gatewayNetworkEnvironment.ts`                    | 为 Gateway/opt-in CLI 生成 proxy/CA/NO_PROXY env  |
-| Embedding transport | `justdo-runtime-bridge` extension                               | 让 guarded fetch 使用 eligible env proxy          |
+| Embedding transport | `runtime-services` extension                               | 让 guarded fetch 使用 eligible env proxy          |
 | Manual reindex      | runtime patch `009` + 原生 forced CLI rebuild intent            | 跳过旧向量 cache，确保按钮触发真实 embedding 请求 |
 | Runtime lifecycle   | `openclawEngineManager.ts` / `main.ts`                          | 先起代理、再 spawn Gateway；退出时反序停止        |
 | 用户值来源          | outbound header user-info 文件/cache                            | 只按允许的 headerNames 读取值                     |
@@ -67,7 +67,7 @@ sequenceDiagram
 
 环境只传给 Gateway/后代和显式 opt-in CLI，不写回 Main `process.env`。当前 memory search/index
 opt-in，memory status 保持普通继承环境。CA bundle 通过 Node、Python 等常见环境变量进入受支持
-客户端；OpenClaw embedding provider 由 `justdo-runtime-bridge` 让 guarded fetch 使用 eligible
+客户端；OpenClaw embedding provider 由 `runtime-services` 让 guarded fetch 使用 eligible
 env proxy。未配置代理、命中 `NO_PROXY` 或未命中 Header URL 白名单时，分别保持直连、bypass 或
 不注入业务 Header。
 

@@ -97,7 +97,7 @@ Patch 不适用于主题、分组、未读、窗口布局、产品标题等纯�
 
 ## 9. Config ownership
 
-Gateway 拥有活动 session SQLite store；JustDo 不直接读写 runtime session 文件。模型更新使用 `sessions.patch`，历史使用 `chat.history`，受限 detail 使用 runtime bridge RPC。检测到 legacy `sessions.json` 时必须先完成可确认、可回滚且有 receipt 的原生迁移，Gateway 才能启动。JustDo 可生成受管 `openclaw.json` 区域，但必须保留非受管用户配置，并仅清理自己历史写入的字段。
+Gateway 拥有活动 session SQLite store；JustDo 不直接读写 runtime session 文件。模型更新使用 `sessions.patch`，历史使用 `chat.history`，受限 detail 使用 runtime services RPC。检测到 legacy `sessions.json` 时必须先完成可确认、可回滚且有 receipt 的原生迁移，Gateway 才能启动。JustDo 可生成受管 `openclaw.json` 区域，但必须保留非受管用户配置，并仅清理自己历史写入的字段。
 
 Config sync使用exclusive mutation、last-touched metadata和reload monitor。某字段支持hot reload不代表所有字段支持；restart决策由monitor/service证据决定。
 

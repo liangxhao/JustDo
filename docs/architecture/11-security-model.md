@@ -86,7 +86,7 @@ Preview 只支持 shared allowlist extension，最大 2 MiB。读取流程用 `l
 
 - Skill/Hook/Extension目标必须在精确 managed root，删除前 canonicalize。
 - archive 支持类型有限；解压检查 traversal，Extension 递归拒绝 symlink。
-- built-in/protected item（如受管 runtime bridge、built-in Hook）不可普通覆盖/删除；退役 permission extension 由同步代码定向清理。
+- built-in/protected item（如受管 runtime services、built-in Hook）不可普通覆盖/删除；退役 permission extension 由同步代码定向清理。
 - Extension CLI 有 300 秒 timeout与 64K 输出上限；成功需明确模式和重新列举。
 - Marketplace response 逐字段 allowlist、长度/数量限制，provider error 脱敏；prepared payload finally cleanup。
 - MCP config/remote resource 不进入 DOM 前需 normalize；credential/env 不记录。

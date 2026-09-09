@@ -50,7 +50,7 @@ isolated/user/extension三模式已实现。User模式有Chrome/remote debugging
 
 自定义provider、模型发现/capability/default、qualified model ref和session patch。内置模型启动/手工refresh已实现；login/logout lifecycle已有但完整认证handler/UI尚未接入。
 
-Memory 支持 overview/document/search/rebuild；内置 `justdo-runtime-bridge` 提供 embedding provider，手动 rebuild 以一次性 no-cache 语义重新计算向量。Usage 支持 7/14/30 日 Gateway 聚合/cache 状态。设置还包括 Agent runtime、proxy、system prompt replacement、外观/主题、快捷键、自动启动、防休眠、更新和日志导出。
+Memory 支持 overview/document/search/rebuild；内置 `runtime-services` 提供 embedding provider，手动 rebuild 以一次性 no-cache 语义重新计算向量。Usage 支持 7/14/30 日 Gateway 聚合/cache 状态。设置还包括 Agent runtime、proxy、system prompt replacement、外观/主题、快捷键、自动启动、防休眠、更新和日志导出。
 
 ### 2.9 Packaging
 
@@ -64,7 +64,7 @@ Redux挂载6个slice：model、cowork、skill、mcp、scheduledTask、agent。
 
 ## 4. 当前Runtime Patch
 
-`scripts/patches/v2026.9.2/` 只保留十四个产品缺口：managed Python、Windows 通用 MCP runner、Chrome Windows runner、最终 system prompt replacement、agent request metadata、compaction/reviewer purpose metadata、app-start task recovery boundary、手动 memory reindex no-cache、原生 exec/plugin approval 可配置等待时限、plugin approval reviewer detail 转发、暂停中止后的原生 Goal resume 准入、assistant display block provider replay 过滤，以及可信本地通用 MEDIA 交付。Thinking/history、tool directory、大部分 goal、task queue/join、approval 状态机、compaction/context budget 和 Chrome MCP 早期 stderr 都使用 v2026.9.2 原生能力；progress、embedding 和受限 history detail 迁入 `justdo-runtime-bridge`。
+`scripts/patches/v2026.9.2/` 只保留十四个产品缺口：managed Python、Windows 通用 MCP runner、Chrome Windows runner、最终 system prompt replacement、agent request metadata、compaction/reviewer purpose metadata、app-start task recovery boundary、手动 memory reindex no-cache、原生 exec/plugin approval 可配置等待时限、plugin approval reviewer detail 转发、暂停中止后的原生 Goal resume 准入、assistant display block provider replay 过滤，以及可信本地通用 MEDIA 交付。Thinking/history、tool directory、大部分 goal、task queue/join、approval 状态机、compaction/context budget 和 Chrome MCP 早期 stderr 都使用 v2026.9.2 原生能力；progress、embedding 和受限 history detail 迁入 `runtime-services`。
 
 ## 5. 尚未完整交付/明确限制
 

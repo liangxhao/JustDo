@@ -98,7 +98,7 @@ async function hydrateFailureDetails(
       // Fetch only selected display-safe errors, in one visible-transcript read
       // per batch. Do not transfer raw provider diagnostics or response bodies.
       const response = asRecord(
-        await client.request('justdoRuntimeBridge.historyDetails', {
+        await client.request('runtimeServices.historyDetails', {
           sessionKey,
           failureMessageIds: batch,
         }),
@@ -151,7 +151,7 @@ async function readChunkedHistoryMessage(
       nextCursor?: number;
       complete?: boolean;
       transferId?: string;
-    }>('justdoRuntimeBridge.historyMessage', {
+    }>('runtimeServices.historyMessage', {
       sessionKey,
       messageId,
       cursor,

@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
-import runtimeBridgePlugin from '../../../../openclaw-extensions/justdo-runtime-bridge/index';
+import runtimeServicesPlugin from '../../../../openclaw-extensions/runtime-services/index';
 
 const sdk = vi.hoisted(() => ({
   getSessionEntry: vi.fn(),
@@ -56,7 +56,7 @@ function registerPlugin() {
   const emitAgentEvent = vi.fn((_event: { data: { stage: string } }) => ({ emitted: true }));
   const registerGatewayMethod = vi.fn();
   const registerEmbeddingProvider = vi.fn();
-  runtimeBridgePlugin.register({
+  runtimeServicesPlugin.register({
     config: { memory: { search: { enabled: false } } },
     on: (name: string, hook: Hook) => hooks.set(name, hook),
     agent: { events: { emitAgentEvent } },
@@ -84,23 +84,23 @@ async function createEmbeddingProvider(data: unknown, ok = true) {
 
 beforeEach(() => vi.clearAllMocks());
 
-describe('runtime bridge startup and progress', () => {
+describe('runtime services startup and progress', () => {
   test('declares unconditional startup and registers history with memory search disabled', () => {
     const manifest = JSON.parse(
       fs.readFileSync(
-        path.join(process.cwd(), 'openclaw-extensions/justdo-runtime-bridge/openclaw.plugin.json'),
+        path.join(process.cwd(), 'openclaw-extensions/runtime-services/openclaw.plugin.json'),
         'utf8',
       ),
     );
     expect(manifest.activation.onStartup).toBe(true);
     const { registerGatewayMethod } = registerPlugin();
     expect(registerGatewayMethod).toHaveBeenCalledWith(
-      'justdoRuntimeBridge.historyDetails',
+      'runtimeServices.historyDetails',
       expect.any(Function),
       { scope: 'operator.read' },
     );
     expect(registerGatewayMethod).toHaveBeenCalledWith(
-      'justdoRuntimeBridge.historyMessage',
+      'runtimeServices.historyMessage',
       expect.any(Function),
       { scope: 'operator.read' },
     );
@@ -147,7 +147,7 @@ describe('runtime bridge startup and progress', () => {
   });
 });
 
-describe('runtime bridge embeddings', () => {
+describe('runtime services embeddings', () => {
   test('restores request order for indexed responses while retaining proxy and abort support', async () => {
     const { provider, release } = await createEmbeddingProvider({
       data: [
@@ -362,7 +362,7 @@ test('reads one native transcript message through advancing bounded chunks', asy
   ]);
   const { registerGatewayMethod } = registerPlugin();
   const handler = registerGatewayMethod.mock.calls.find(
-    ([method]) => method === 'justdoRuntimeBridge.historyMessage',
+    ([method]) => method === 'runtimeServices.historyMessage',
   )?.[1] as HistoryHandler;
   const firstRespond = vi.fn();
 

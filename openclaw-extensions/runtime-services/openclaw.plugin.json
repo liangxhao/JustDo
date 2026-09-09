@@ -1,0 +1,17 @@
+{
+  "id": "runtime-services",
+  "name": "Runtime Services",
+  "description": "Provides runtime progress, history detail, and embedding capabilities.",
+  "activation": {
+    "onStartup": true,
+    "onCapabilities": ["hook"]
+  },
+  "contracts": {
+    "embeddingProviders": ["runtime-services"]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

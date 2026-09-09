@@ -13,8 +13,8 @@
 | approvals               | request 生命周期、挂起、恢复和终态清理                           | policy sync、modal、session grant                                                    | 原生；删除旧 022–025                                              |
 | compaction/context      | safeguard、overflow、budget、precheck                            | 配置、进度与 detail 展示                                                             | 原生；只保留 purpose metadata patch                               |
 | cron                    | job/run scheduler                                                | isolated agent、receipt、显式 `delivery: { mode: 'none' }`                           | 原生；删除旧默认 delivery patch                                   |
-| progress                | run/task/compaction 事实                                         | bounded runtime bridge 投影与 UI                                                     | 迁入 `justdo-runtime-bridge`                                      |
-| embeddings              | provider 调用与 memory index                                     | loopback provider、代理与凭证边界                                                    | 迁入 `justdo-runtime-bridge`                                      |
+| progress                | run/task/compaction 事实                                         | bounded runtime services 投影与 UI                                                     | 迁入 `runtime-services`                                      |
+| embeddings              | provider 调用与 memory index                                     | loopback provider、代理与凭证边界                                                    | 迁入 `runtime-services`                                      |
 | Windows/Chrome MCP      | MCP/Browser runtime                                              | bundled runner、Chrome 管理与设置                                                    | 保留 002–003 两个窄补丁                                           |
 | host metadata           | provider request 构造                                            | session/parent/user/purpose metadata                                                 | 保留 006–007                                                      |
 | app-start recovery      | durable task recovery                                            | JustDo app-start epoch                                                               | 保留 008                                                          |
@@ -56,13 +56,13 @@
 | Approvals      | `exec.approval.*`、`plugin.approval.*`、`exec.approvals.get/set`        | fail-closed policy、交互 modal、session grant                                           |
 | Skills         | `skills.status`、`skills.update`                                        | manifest、用户文件和 UI                                                                 |
 | Cron           | `cron.get/list/add/update/remove/run/runs`、config revision、cron event | account policy 隔离、management 分类、增量事件、enqueue receipt、readAt/catch-up        |
-| Runtime bridge | `justdoRuntimeBridge.historyDetails` 与扩展事件/provider                | 有界 `operator.read`、progress、embeddings                                              |
+| Runtime services | `runtimeServices.historyDetails` 与扩展事件/provider                | 有界 `operator.read`、progress、embeddings                                              |
 
 所有 v2026.9.2 专用响应先经过 `src/main/engine/openclaw/wire/v2026_9_2.ts`。Adapter 对 Renderer 只暴露稳定 DTO，不把上游内部的 `succeeded`、`lost`、cursor shape 或 bundle 类型泄漏到 shared contract。
 
 ## 4. Session 存储与旧数据迁移
 
-JustDo 不再直接读写活动 OpenClaw `sessions.json`：模型更新使用 `sessions.patch`，历史使用 `chat.history`，tool input 与 compaction detail 由 runtime bridge 的受限 `operator.read` RPC 获取。
+JustDo 不再直接读写活动 OpenClaw `sessions.json`：模型更新使用 `sessions.patch`，历史使用 `chat.history`，tool input 与 compaction detail 由 runtime services 的受限 `operator.read` RPC 获取。
 
 检测到 legacy `sessions.json` 时，Gateway 启动被 migration coordinator 阻止。流程固定为 dry-run plan → 用户确认 → 无 workspace 的已验证备份 → doctor import → validate/inspect/integrity → receipt。取消或任一步失败都保留旧状态且不启动空 Gateway；成功 receipt 使后续启动不重复导入。
 
@@ -87,7 +87,7 @@ flowchart LR
 
 Config sync 使用原生 safeguard compaction、1800 秒 timeout、关闭 memory flush、启用 mid-turn precheck，其余保持上游默认。旧 Codex-local compaction instructions、context-budget 和 recovery 补丁已删除。
 
-原生事件是最终事实；runtime bridge 只补充 JustDo 所需的安全进度与只读 detail。验收覆盖 pre-turn、mid-turn、manual compact、provider overflow、timeout/auth/network/no-progress 和 abort，不能只检查最后是否出现 summary。
+原生事件是最终事实；runtime services 只补充 JustDo 所需的安全进度与只读 detail。验收覆盖 pre-turn、mid-turn、manual compact、provider overflow、timeout/auth/network/no-progress 和 abort，不能只检查最后是否出现 summary。
 
 ## 7. Tool-call finish reason 边界
 

@@ -17,7 +17,7 @@ describe('openclawExtensionRegistry', () => {
           unrestrictedAgentIds: ['justdo-scheduler'],
         },
       },
-      [OpenClawExtensionId.JUSTDO_RUNTIME_BRIDGE]: {
+      [OpenClawExtensionId.RUNTIME_SERVICES]: {
         enabled: true,
       },
     });

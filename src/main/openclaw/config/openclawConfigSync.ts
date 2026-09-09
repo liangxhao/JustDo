@@ -1537,7 +1537,7 @@ export const buildBuiltinMemorySearchConfig = (
   });
   return {
     enabled: true,
-    provider: OpenClawExtensionId.JUSTDO_RUNTIME_BRIDGE,
+    provider: OpenClawExtensionId.RUNTIME_SERVICES,
     model: selection.sessionModelId,
     remote: {
       baseUrl: selection.providerConfig.baseUrl,

@@ -19,8 +19,8 @@ function createFixture() {
   const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-extension-precompile-'));
   roots.push(repoRoot);
   const runtimeRoot = path.join(repoRoot, 'runtime');
-  const sourceDir = path.join(repoRoot, 'openclaw-extensions', 'justdo-runtime-bridge');
-  const outputDir = path.join(runtimeRoot, 'dist', 'extensions', 'justdo-runtime-bridge');
+  const sourceDir = path.join(repoRoot, 'openclaw-extensions', 'runtime-services');
+  const outputDir = path.join(runtimeRoot, 'dist', 'extensions', 'runtime-services');
   fs.mkdirSync(runtimeRoot, { recursive: true });
   fs.writeFileSync(
     path.join(repoRoot, 'package.json'),
@@ -33,7 +33,7 @@ function createFixture() {
   fs.writeFileSync(path.join(repoRoot, 'resources/openclaw-extension-prune.json'), JSON.stringify({
     version: 1, openclawVersion: '2026.9.2', keep: [], remove: [],
   }));
-  fs.cpSync(path.join(process.cwd(), 'openclaw-extensions/justdo-runtime-bridge'), sourceDir, { recursive: true });
+  fs.cpSync(path.join(process.cwd(), 'openclaw-extensions/runtime-services'), sourceDir, { recursive: true });
   vi.spyOn(console, 'log').mockImplementation(() => undefined);
   return { repoRoot, runtimeRoot, sourceDir, outputDir };
 }

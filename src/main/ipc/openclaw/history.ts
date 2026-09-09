@@ -53,7 +53,7 @@ const requestHistoryDetails = async (
   },
 ) =>
   parseHistoryDetailsResultV2026_9_2(
-    await dependencies.requestGateway('justdoRuntimeBridge.historyDetails', params),
+    await dependencies.requestGateway('runtimeServices.historyDetails', params),
   );
 
 export const registerOpenClawHistoryHandlers = (

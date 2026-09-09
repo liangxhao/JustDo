@@ -10,7 +10,7 @@ import {
   ssrfPolicyFromHttpBaseUrlAllowedHostname,
 } from 'openclaw/plugin-sdk/ssrf-runtime';
 
-const PLUGIN_ID = 'justdo-runtime-bridge';
+const PLUGIN_ID = 'runtime-services';
 const MAX_DETAIL_IDS = 250;
 const MAX_DETAIL_ID_CHARS = 256;
 const MAX_FAILURE_DETAIL_CHARS = 2000;
@@ -167,13 +167,13 @@ const collectHistoryDetails = (
 const toEmbeddingText = (input: unknown): string => {
   if (typeof input === 'string') return input;
   if (!isRecord(input) || typeof input.text !== 'string') {
-    throw new Error('JustDo embeddings only support text input.');
+    throw new Error('Runtime embeddings only support text input.');
   }
   if (!Array.isArray(input.parts) || input.parts.length === 0) return input.text;
   return input.parts
     .map(part => {
       if (!isRecord(part) || part.type !== 'text' || typeof part.text !== 'string') {
-        throw new Error('JustDo embeddings only support text input.');
+        throw new Error('Runtime embeddings only support text input.');
       }
       return part.text;
     })
@@ -182,14 +182,14 @@ const toEmbeddingText = (input: unknown): string => {
 
 const readEmbeddingVectors = (value: unknown, expected: number): number[][] => {
   if (!isRecord(value) || !Array.isArray(value.data) || value.data.length !== expected) {
-    throw new Error('JustDo embedding service returned malformed data.');
+    throw new Error('Runtime embedding service returned malformed data.');
   }
   // Match OpenClaw's indexed/positional response contract without changing the guarded transport.
   const vectors: number[][] = [];
   let indexed: boolean | undefined;
   for (const [position, entry] of value.data.entries()) {
     if (!isRecord(entry) || !Array.isArray(entry.embedding)) {
-      throw new Error(`JustDo embedding result ${position} is malformed.`);
+      throw new Error(`Runtime embedding result ${position} is malformed.`);
     }
     const usesIndex = entry.index !== undefined;
     const vector = entry.embedding;
@@ -198,7 +198,7 @@ const readEmbeddingVectors = (value: unknown, expected: number): number[][] => {
       (indexed !== undefined && indexed !== usesIndex) ||
       !vector.every(item => typeof item === 'number' && Number.isFinite(item))
     ) {
-      throw new Error(`JustDo embedding result ${position} is malformed.`);
+      throw new Error(`Runtime embedding result ${position} is malformed.`);
     }
     indexed = usesIndex;
     const index = usesIndex ? entry.index : position;
@@ -209,7 +209,7 @@ const readEmbeddingVectors = (value: unknown, expected: number): number[][] => {
       index >= expected ||
       vectors[index] !== undefined
     ) {
-      throw new Error(`JustDo embedding result ${position} is malformed.`);
+      throw new Error(`Runtime embedding result ${position} is malformed.`);
     }
     vectors[index] = vector;
   }
@@ -218,8 +218,8 @@ const readEmbeddingVectors = (value: unknown, expected: number): number[][] => {
 
 const plugin = {
   id: PLUGIN_ID,
-  name: 'JustDo Runtime Bridge',
-  description: 'Bounded JustDo integration over supported OpenClaw plugin APIs.',
+  name: 'Runtime Services',
+  description: 'Provides runtime progress, history detail, and embedding capabilities.',
   register(api: OpenClawPluginApi) {
     const historyMessageTransfers = new Map<string, HistoryMessageTransfer>();
     let historyMessageTransferSequence = 0;
@@ -259,7 +259,7 @@ const plugin = {
     });
 
     api.registerGatewayMethod(
-      'justdoRuntimeBridge.historyDetails',
+      'runtimeServices.historyDetails',
       async ({ params, respond }) => {
         if (!isRecord(params) || typeof params.sessionKey !== 'string') {
           respond(false, undefined, { code: 'INVALID_REQUEST', message: 'Missing session key' });
@@ -327,7 +327,7 @@ const plugin = {
     // Preserve that fast path, while allowing JustDo to recover an explicitly
     // selected oversized transcript row through bounded chunks when necessary.
     api.registerGatewayMethod(
-      'justdoRuntimeBridge.historyMessage',
+      'runtimeServices.historyMessage',
       async ({ params, respond }) => {
         if (
           !isRecord(params) ||
@@ -447,12 +447,12 @@ const plugin = {
             },
             ...(signal ? { signal } : {}),
             policy: ssrfPolicyFromHttpBaseUrlAllowedHostname(baseUrl),
-            auditContext: 'justdo-runtime-bridge:embeddings',
+            auditContext: 'runtime-services:embeddings',
             useEnvProxyForEligibleUrls: true,
           });
           try {
             if (!response.ok)
-              throw new Error(`JustDo embedding service returned HTTP ${response.status}.`);
+              throw new Error(`Runtime embedding service returned HTTP ${response.status}.`);
             return readEmbeddingVectors(await response.json(), inputs.length);
           } finally {
             await release();
@@ -474,7 +474,7 @@ const plugin = {
       },
     });
 
-    api.logger.info('[justdo-runtime-bridge] runtime integration enabled.');
+    api.logger.info('[runtime-services] runtime integration enabled.');
   },
 };
 

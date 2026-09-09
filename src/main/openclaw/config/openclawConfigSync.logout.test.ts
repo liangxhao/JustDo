@@ -456,7 +456,7 @@ describe('OpenClaw auth logout config sync', () => {
       'workboard',
       'browser',
       'automation-permission',
-      'justdo-runtime-bridge',
+      'runtime-services',
     ]);
     expect(config.plugins.deny).toBeUndefined();
     expect(config.plugins.entries['ask-user-question']).toEqual({
@@ -548,7 +548,7 @@ describe('OpenClaw auth logout config sync', () => {
       'browser',
       'ask-user-question',
       'automation-permission',
-      'justdo-runtime-bridge',
+      'runtime-services',
     ]);
     expect(config.plugins.deny).toBeUndefined();
   });
@@ -666,7 +666,7 @@ describe('OpenClaw auth logout config sync', () => {
       'browser',
       'ask-user-question',
       'automation-permission',
-      'justdo-runtime-bridge',
+      'runtime-services',
     ]);
     expect(config.plugins.entries.browser).toEqual({ enabled: true });
     expect(config.plugins.bundledDiscovery).toBeUndefined();

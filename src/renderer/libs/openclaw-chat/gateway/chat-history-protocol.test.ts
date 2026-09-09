@@ -95,7 +95,7 @@ describe('OpenClaw chat history protocol', () => {
     });
     expect(request.mock.calls.map(([method]) => method)).toEqual([
       'chat.message.get',
-      'justdoRuntimeBridge.historyDetails',
+      'runtimeServices.historyDetails',
     ]);
   });
 
@@ -115,7 +115,7 @@ describe('OpenClaw chat history protocol', () => {
     const original = structuredClone(input);
     const request = vi.fn(
       async (method: string, params: { failureMessageIds: string[]; sessionKey: string }) => {
-        expect(method).toBe('justdoRuntimeBridge.historyDetails');
+        expect(method).toBe('runtimeServices.historyDetails');
         expect(params.sessionKey).toBe('session-1');
         return {
           failureDetails: Object.fromEntries(
@@ -205,7 +205,7 @@ describe('OpenClaw chat history protocol', () => {
         if (method === 'chat.message.get') {
           return Promise.resolve({ ok: false, unavailableReason: 'oversized' });
         }
-        if (method === 'justdoRuntimeBridge.historyMessage') {
+        if (method === 'runtimeServices.historyMessage') {
           const cursor = params.cursor as number;
           const maxChars = params.maxChars as number;
           if (cursor > 0) expect(params.transferId).toBe('transfer-1');
@@ -241,7 +241,7 @@ describe('OpenClaw chat history protocol', () => {
     ]);
     expect(request.mock.calls.filter(([method]) => method === 'chat.message.get')).toHaveLength(1);
     expect(
-      request.mock.calls.filter(([method]) => method === 'justdoRuntimeBridge.historyMessage')
+      request.mock.calls.filter(([method]) => method === 'runtimeServices.historyMessage')
         .length,
     ).toBeGreaterThan(1);
   });
@@ -255,7 +255,7 @@ describe('OpenClaw chat history protocol', () => {
     const serialized = JSON.stringify(full);
     const request = vi.fn().mockImplementation((method: string) => {
       if (method === 'chat.message.get') return Promise.reject(new Error('frame too large'));
-      if (method === 'justdoRuntimeBridge.historyMessage') {
+      if (method === 'runtimeServices.historyMessage') {
         return Promise.resolve({
           ok: true,
           transferId: 'transfer-2',

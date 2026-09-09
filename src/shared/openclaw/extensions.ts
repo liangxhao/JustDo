@@ -2,7 +2,7 @@ export const OpenClawExtensionId = {
   ASK_USER_QUESTION: 'ask-user-question',
   AUTOMATION_PERMISSION: 'automation-permission',
   BROWSER: 'browser',
-  JUSTDO_RUNTIME_BRIDGE: 'justdo-runtime-bridge',
+  RUNTIME_SERVICES: 'runtime-services',
   WORKBOARD: 'workboard',
 } as const;
 

@@ -52,7 +52,7 @@ v2026.9.2 已原生承担 thinking/history/tool directory/大部分 goal/subagen
 | `014`       | provider replay 排除 display-only assistant blocks                         |
 | `015`       | trusted generic local MEDIA 交付并保留 history 中原始 MEDIA 引用            |
 
-运行进度、embedding proxy 和只读 history detail 已迁入 `justdo-runtime-bridge`，cron 默认无外发由 JustDo config 显式发送 `{mode:'none'}`，均不应重新加入 patch。若新增能力，先证明公共 plugin/Gateway API 不足，并同步总账、source lock、测试和引用。
+运行进度、embedding proxy 和只读 history detail 已迁入 `runtime-services`，cron 默认无外发由 JustDo config 显式发送 `{mode:'none'}`，均不应重新加入 patch。若新增能力，先证明公共 plugin/Gateway API 不足，并同步总账、source lock、测试和引用。
 
 ## 4. 何时允许增加 Patch
 

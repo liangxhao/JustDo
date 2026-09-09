@@ -22,7 +22,7 @@ describe('OpenClaw v2026.9.2 history detail IPC', () => {
     });
   });
 
-  test('loads tool inputs through the restricted runtime bridge', async () => {
+  test('loads tool inputs through the restricted runtime services', async () => {
     const requestGateway = vi.fn().mockResolvedValue({
       toolInputs: { call_1: { name: 'exec', input: { command: 'pwd' } } },
       compactionDetails: {},
@@ -38,13 +38,13 @@ describe('OpenClaw v2026.9.2 history detail IPC', () => {
       success: true,
       inputs: { call_1: { name: 'exec', input: { command: 'pwd' } } },
     });
-    expect(requestGateway).toHaveBeenCalledWith('justdoRuntimeBridge.historyDetails', {
+    expect(requestGateway).toHaveBeenCalledWith('runtimeServices.historyDetails', {
       sessionKey: 'agent:main:justdo:one',
       toolCallIds: ['call_1'],
     });
   });
 
-  test('loads compaction details through the restricted runtime bridge', async () => {
+  test('loads compaction details through the restricted runtime services', async () => {
     const requestGateway = vi.fn().mockResolvedValue({
       toolInputs: {},
       compactionDetails: { compact_1: { summary: 'handoff', tokensBefore: 100 } },

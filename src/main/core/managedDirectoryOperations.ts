@@ -638,7 +638,7 @@ export class ManagedDirectoryOperationCoordinator {
     if (runtimeStopAttempted && runtime) {
       try {
         // `stop()` may fail after partially changing runtime state. Always call
-        // `start()` as an ensure-running/restore operation so the runtime bridge
+        // `start()` as an ensure-running/restore operation so the runtime services
         // is repaired whether the process stopped or survived.
         const restart = await runtime.start(runtimeStopToken);
         runtimeRestarted = restart.running;

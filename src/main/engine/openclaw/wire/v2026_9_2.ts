@@ -228,7 +228,7 @@ export const parseHistoryDetailsResultV2026_9_2 = (
 ): OpenClawHistoryDetailsResultV2026_9_2 => {
   if (!isRecord(value) || !isRecord(value.toolInputs) || !isRecord(value.compactionDetails)) {
     throw new Error(
-      `${OPENCLAW_WIRE_VERSION} justdoRuntimeBridge.historyDetails returned an invalid payload`,
+      `${OPENCLAW_WIRE_VERSION} runtimeServices.historyDetails returned an invalid payload`,
     );
   }
   const toolInputs: OpenClawHistoryDetailsResultV2026_9_2['toolInputs'] = {};
