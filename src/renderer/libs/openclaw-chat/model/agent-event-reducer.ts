@@ -42,6 +42,129 @@ export interface RecoveredPreToolSegment {
 export interface AgentEventReduceOptions {
   /** Allow an in-flight history snapshot to fill an owner absent from newer live state. */
   allowSequenceBackfill?: boolean;
+  /** An independently delivered recovery snapshot, not a consumed live event. */
+  replaySnapshot?: boolean;
+}
+
+export function readPreambleText(data: Record<string, unknown>): string | null {
+  return data.kind === 'preamble' &&
+    typeof data.progressText === 'string' &&
+    data.progressText.trim()
+    ? data.progressText
+    : null;
+}
+
+function snapshotSegmentFirstSeq(event: NormalizedAgentEvent): number | null {
+  const value = event.data.progressSegmentFirstSeq;
+  return typeof value === 'number' &&
+    Number.isSafeInteger(value) &&
+    value >= 0 &&
+    value <= event.agentSeq
+    ? value
+    : null;
+}
+
+function segmentStartedAt(event: NormalizedAgentEvent): number {
+  const value = event.data.progressSegmentStartedAt;
+  return snapshotSegmentFirstSeq(event) !== null &&
+    typeof value === 'number' &&
+    Number.isFinite(value) &&
+    value > 0 &&
+    value <= event.timestamp
+    ? value
+    : event.timestamp;
+}
+
+function agentTailAtSequence(turn: AssistantTurn, seq: number): TurnItem | undefined {
+  let preceding: TurnItem | undefined;
+  for (const item of turn.items) {
+    if (item.firstSeq > seq) break;
+    preceding = item;
+  }
+  return preceding;
+}
+
+function textOwnerForEvent(turn: AssistantTurn, event: NormalizedAgentEvent, backfill: boolean) {
+  const firstSeq = snapshotSegmentFirstSeq(event);
+  if (firstSeq !== null) {
+    const type = event.stream === 'thinking' ? 'thinking' : 'content';
+    const owned = turn.items.find(item => item.type === type && item.firstSeq === firstSeq);
+    if (owned) return owned;
+    // History may have restored an unsequenced pre-Tool segment first. Bind it
+    // within the known Tool sequence or completion boundaries. An assistant
+    // row's model-start timestamp cannot identify the Tool execution boundary.
+    const text = stringValue(event.data.thinking) ?? stringValue(event.data.text);
+    if (!text?.trim()) return undefined;
+    const startedAt = segmentStartedAt(event);
+    const matches = turn.items.filter((item, index) => {
+      if (
+        item.type !== type ||
+        !item.recoveredSnapshotText ||
+        (item.type === 'content' && item.preambleItemId !== undefined)
+      )
+        return false;
+      if (
+        turn.activityEventSeqById?.has(`segment:${JSON.stringify([event.stream, item.firstSeq])}`)
+      )
+        return false;
+      const nextTool = turn.items.slice(index + 1).find(candidate => candidate.type === 'tool');
+      const previousTool = turn.items
+        .slice(0, index)
+        .reverse()
+        .find(candidate => candidate.type === 'tool');
+      if (
+        !nextTool ||
+        (nextTool.agentSequenceUnconfirmed === true &&
+          nextTool.historyCompletedAt !== undefined &&
+          startedAt > nextTool.historyCompletedAt) ||
+        (nextTool.agentSequenceUnconfirmed !== true &&
+          nextTool.agentSequencePending === true &&
+          startedAt > nextTool.startedAt) ||
+        (!nextTool.agentSequencePending &&
+          !nextTool.agentSequenceUnconfirmed &&
+          firstSeq >= nextTool.firstSeq) ||
+        (previousTool &&
+          !previousTool.agentSequencePending &&
+          !previousTool.agentSequenceUnconfirmed &&
+          firstSeq <= previousTool.firstSeq)
+      )
+        return false;
+      return item.recoveredSnapshotText.startsWith(text.trim());
+    });
+    if (matches.length !== 1) return undefined;
+    matches[0].firstSeq = firstSeq;
+    matches[0].startedAt = Math.min(matches[0].startedAt, startedAt);
+    return matches[0];
+  }
+  const tail = backfill ? agentTailAtSequence(turn, event.agentSeq) : activeAgentTail(turn);
+  return tail?.type === 'content' && tail.preambleItemId !== undefined ? undefined : tail;
+}
+
+function finishTextBeforeKnownBoundaries(turn: AssistantTurn): void {
+  for (let index = 0; index < turn.items.length - 1; index += 1) {
+    const item = turn.items[index];
+    const next = turn.items[index + 1];
+    if (item.type === 'thinking' && item.status === 'running') item.status = 'completed';
+    if (item.type === 'content') {
+      if (item.status === 'streaming') item.status = 'completed';
+      if (next.type === 'tool') item.followingToolCallId = next.toolCallId;
+    }
+  }
+}
+
+function preservesRecoveredText(
+  turn: AssistantTurn,
+  item: ThinkingItem | ContentItem,
+  event: NormalizedAgentEvent,
+  text: string,
+): boolean {
+  if (!item.recoveredSnapshotText?.startsWith(text.trim())) return false;
+  const nextTool = turn.items
+    .slice(turn.items.indexOf(item) + 1)
+    .find(candidate => candidate.type === 'tool');
+  // The history repair describes the text before this Tool. Its protected
+  // prefix cannot veto a later authoritative correction of the same owner.
+  return Boolean(nextTool && event.timestamp > 0 && event.timestamp <= nextTool.startedAt);
 }
 
 function stringValue(value: unknown): string | null {
@@ -116,6 +239,10 @@ function eventItemId(data: Record<string, unknown>): string | null {
 }
 
 function activityEventIdentity(event: NormalizedAgentEvent): string {
+  const segmentFirstSeq = snapshotSegmentFirstSeq(event);
+  if (segmentFirstSeq !== null && (event.stream === 'thinking' || event.stream === 'assistant')) {
+    return `segment:${JSON.stringify([event.stream, segmentFirstSeq])}`;
+  }
   if (event.stream === 'tool') {
     const toolCallId = itemToolCallId(event.data);
     if (toolCallId) return `tool:${JSON.stringify(toolCallId)}`;
@@ -145,8 +272,13 @@ function fillsMissingToolInput(turn: AssistantTurn, event: NormalizedAgentEvent)
   if (event.stream !== 'tool' || event.deliveryEvent !== 'session.tool') return false;
   const normalized = normalizeToolEvent(event.data);
   const existing = normalized.toolCallId ? turn.toolById.get(normalized.toolCallId) : undefined;
-  return existing !== undefined && existing.status !== 'running' && existing.input === undefined &&
-    normalized.input !== undefined && normalized.input !== null;
+  return (
+    existing !== undefined &&
+    existing.status !== 'running' &&
+    existing.input === undefined &&
+    normalized.input !== undefined &&
+    normalized.input !== null
+  );
 }
 
 function acceptsBackfillSequence(turn: AssistantTurn, event: NormalizedAgentEvent): boolean {
@@ -167,12 +299,25 @@ function recordActivitySequence(turn: AssistantTurn, event: NormalizedAgentEvent
   sequences.set(ownerIdentity, Math.max(sequences.get(ownerIdentity) ?? -1, event.agentSeq));
   if (isTerminalToolEvent(event)) {
     const terminalIdentity = toolTerminalIdentity(ownerIdentity);
-    sequences.set(terminalIdentity, Math.max(sequences.get(terminalIdentity) ?? -1, event.agentSeq));
+    sequences.set(
+      terminalIdentity,
+      Math.max(sequences.get(terminalIdentity) ?? -1, event.agentSeq),
+    );
   }
 }
 
 function insertAgentItemBySequence(turn: AssistantTurn, item: TurnItem): void {
-  const insertionIndex = turn.items.findIndex(candidate => candidate.firstSeq > item.firstSeq);
+  const insertionIndex = turn.items.findIndex(candidate =>
+    candidate.type === 'tool' && candidate.agentSequencePending === true
+      ? candidate.agentSequenceUnconfirmed === true ||
+        (item.startedAt > 0 && item.startedAt <= candidate.startedAt)
+      : candidate.type === 'tool' &&
+          candidate.agentSequenceUnconfirmed === true &&
+          candidate.historyCompletedAt !== undefined &&
+          item.startedAt > 0
+        ? item.startedAt <= candidate.historyCompletedAt
+        : candidate.firstSeq > item.firstSeq,
+  );
   if (insertionIndex < 0) turn.items.push(item);
   else turn.items.splice(insertionIndex, 0, item);
 }
@@ -182,22 +327,48 @@ export function confirmRecoveredToolSequence(
   tool: ToolItem,
   seq: number,
   timestamp: number,
+  source: 'agent' | 'history' = 'agent',
 ): boolean {
-  if (tool.agentSequencePending !== true) return false;
-  const toolIndex = turn.items.indexOf(tool);
+  if (
+    tool.agentSequencePending !== true &&
+    tool.agentSequenceUnconfirmed !== true &&
+    (source === 'history' || seq >= tool.firstSeq)
+  )
+    return false;
+  let toolIndex = turn.items.indexOf(tool);
+  delete tool.agentSequencePending;
+  if (source === 'history') {
+    tool.agentSequenceUnconfirmed = true;
+  } else {
+    tool.firstSeq = seq;
+    delete tool.agentSequenceUnconfirmed;
+    delete tool.historyCompletedAt;
+    if (toolIndex >= 0) {
+      turn.items.splice(toolIndex, 1);
+      insertAgentItemBySequence(turn, tool);
+      toolIndex = turn.items.indexOf(tool);
+    }
+  }
   const previous = toolIndex > 0 ? turn.items[toolIndex - 1] : undefined;
+  for (const item of turn.items) {
+    if (
+      item.type === 'content' &&
+      item !== previous &&
+      item.followingToolCallId === tool.toolCallId
+    ) {
+      delete item.followingToolCallId;
+    }
+  }
   if (previous?.type === 'thinking' && previous.status === 'running') {
     previous.status = 'completed';
-    previous.lastSeq = seq;
-    previous.updatedAt = timestamp;
-  } else if (previous?.type === 'content' && previous.status === 'streaming') {
-    previous.status = 'completed';
+    previous.lastSeq = Math.max(previous.lastSeq, seq);
+    previous.updatedAt = Math.max(previous.updatedAt, timestamp);
+  } else if (previous?.type === 'content') {
+    if (previous.status === 'streaming') previous.status = 'completed';
     previous.followingToolCallId = tool.toolCallId;
-    previous.lastSeq = seq;
-    previous.updatedAt = timestamp;
+    previous.lastSeq = Math.max(previous.lastSeq, seq);
+    previous.updatedAt = Math.max(previous.updatedAt, timestamp);
   }
-  tool.firstSeq = seq;
-  delete tool.agentSequencePending;
   return true;
 }
 
@@ -339,57 +510,84 @@ export function hydrateToolPrecedingSegments(
   let startIndex = toolIndex;
   while (startIndex > 0 && turn.items[startIndex - 1].type !== 'tool') startIndex -= 1;
   const existing = turn.items.slice(startIndex, toolIndex);
-  const matches =
-    existing.length === normalized.length &&
-    existing.every(
-      (item, index) => item.type === normalized[index].type && item.text === normalized[index].text,
-    );
+  const recoveredItems: Array<ThinkingItem | ContentItem> = [];
+  const normalizedText = (text: string) => text.replace(/\s+/g, ' ').trim();
+  const isPreamble = (item: TurnItem): item is ContentItem =>
+    item.type === 'content' && item.preambleItemId !== undefined;
+  let cursor = 0;
+  let changed = false;
 
-  if (matches) {
-    let changed = false;
-    for (const [index, item] of existing.entries()) {
+  for (const segment of normalized) {
+    // session.message can omit commentary even though the native item stream
+    // already displayed it. Align the fields it does carry, consuming each
+    // existing owner once; absence from this projection is not a deletion.
+    const matchIndex = existing.findIndex(
+      (item, index) =>
+        index >= cursor &&
+        item.type === segment.type &&
+        (!isPreamble(item) || normalizedText(segment.text).startsWith(normalizedText(item.text))),
+    );
+    if (matchIndex >= 0) {
+      for (; cursor < matchIndex; cursor += 1) {
+        const skipped = existing[cursor];
+        if (isPreamble(skipped)) recoveredItems.push(skipped);
+      }
+      const item = existing[cursor++];
       if (item.type !== 'thinking' && item.type !== 'content') continue;
-      if (item.status === 'running' || item.status === 'streaming') {
-        item.status = 'completed';
-        item.recoveredSnapshotText = normalized[index].text;
+      if (item.text !== segment.text) {
+        item.text = segment.text;
+        item.recoveredSnapshotText = segment.text;
         changed = true;
       }
-      item.lastSeq = Math.max(item.lastSeq, seq);
-      item.updatedAt = Math.max(item.updatedAt, timestamp);
-      if (item.type === 'content') {
-        const followingToolCallId = index === existing.length - 1 ? tool.toolCallId : undefined;
-        if (item.followingToolCallId !== followingToolCallId) {
-          if (followingToolCallId) item.followingToolCallId = followingToolCallId;
-          else delete item.followingToolCallId;
-          changed = true;
-        }
+      recoveredItems.push(item);
+    } else {
+      const base = {
+        id: dependencies.createId(`history-${segment.type}`),
+        runId: turn.runId,
+        firstSeq: seq,
+        lastSeq: seq,
+        startedAt: Math.min(timestamp, tool.startedAt),
+        updatedAt: timestamp,
+        status: 'completed' as const,
+        text: segment.text,
+        recoveredSnapshotText: segment.text,
+      };
+      recoveredItems.push(
+        segment.type === 'thinking'
+          ? { ...base, type: 'thinking' }
+          : { ...base, type: 'content', sourceMode: 'snapshot' },
+      );
+    }
+  }
+  for (; cursor < existing.length; cursor += 1) {
+    const remaining = existing[cursor];
+    if (isPreamble(remaining)) recoveredItems.push(remaining);
+  }
+  for (const [index, item] of recoveredItems.entries()) {
+    if (item.status === 'running' || item.status === 'streaming') {
+      item.status = 'completed';
+      item.recoveredSnapshotText = item.text;
+      changed = true;
+    }
+    item.lastSeq = Math.max(item.lastSeq, seq);
+    item.updatedAt = Math.max(item.updatedAt, timestamp);
+    if (item.type === 'content') {
+      const followingToolCallId = index === recoveredItems.length - 1 ? tool.toolCallId : undefined;
+      if (item.followingToolCallId !== followingToolCallId) {
+        if (followingToolCallId) item.followingToolCallId = followingToolCallId;
+        else delete item.followingToolCallId;
+        changed = true;
       }
     }
-    return changed;
   }
-
-  const recoveredItems: Array<ThinkingItem | ContentItem> = normalized.map((segment, index) => {
-    const base = {
-      id: dependencies.createId(`history-${segment.type}`),
-      runId: turn.runId,
-      firstSeq: seq,
-      lastSeq: seq,
-      startedAt: Math.min(timestamp, tool.startedAt),
-      updatedAt: timestamp,
-      status: 'completed' as const,
-      text: segment.text,
-      recoveredSnapshotText: segment.text,
-    };
-    if (segment.type === 'thinking') return { ...base, type: 'thinking' as const };
-    return {
-      ...base,
-      type: 'content' as const,
-      sourceMode: 'snapshot' as const,
-      ...(index === normalized.length - 1 ? { followingToolCallId: tool.toolCallId } : {}),
-    };
-  });
-  turn.items.splice(startIndex, existing.length, ...recoveredItems);
-  return true;
+  if (
+    existing.length !== recoveredItems.length ||
+    existing.some((item, index) => item !== recoveredItems[index])
+  ) {
+    turn.items.splice(startIndex, existing.length, ...recoveredItems);
+    changed = true;
+  }
+  return changed;
 }
 
 function completeRunningThinking(turn: AssistantTurn, seq: number, now: number): void {
@@ -419,9 +617,9 @@ function createBase(
   return {
     id: dependencies.createId(prefix),
     runId: turn.runId,
-    firstSeq: event.agentSeq,
+    firstSeq: snapshotSegmentFirstSeq(event) ?? event.agentSeq,
     lastSeq: event.agentSeq,
-    startedAt: event.timestamp,
+    startedAt: segmentStartedAt(event),
     updatedAt: event.timestamp,
   };
 }
@@ -479,7 +677,7 @@ function reduceThinking(
   const text = isDelta ? delta : (snapshot ?? delta);
   if (text === null) return;
   if (!text.trim()) {
-    const tail = activeAgentTail(turn);
+    const tail = textOwnerForEvent(turn, event, backfill);
     // Empty snapshots are transport/control frames, not process boundaries. A
     // whitespace-only delta can still be meaningful inside an existing stream.
     if (isDelta && tail?.type === 'thinking' && tail.status === 'running' && tail.text) {
@@ -490,12 +688,15 @@ function reduceThinking(
     return;
   }
   const normalizedText = text.trim();
-  const recovered = turn.items.find(
-    (item): item is ThinkingItem =>
-      item.type === 'thinking' &&
-      typeof item.recoveredSnapshotText === 'string' &&
-      item.recoveredSnapshotText.includes(normalizedText),
-  );
+  const recovered =
+    snapshotSegmentFirstSeq(event) === null
+      ? turn.items.find(
+          (item): item is ThinkingItem =>
+            item.type === 'thinking' &&
+            typeof item.recoveredSnapshotText === 'string' &&
+            item.recoveredSnapshotText.includes(normalizedText),
+        )
+      : undefined;
   if (recovered) {
     recovered.lastSeq = Math.max(recovered.lastSeq, event.agentSeq);
     recovered.updatedAt = Math.max(recovered.updatedAt, event.timestamp);
@@ -504,7 +705,8 @@ function reduceThinking(
     }
     return;
   }
-  const recoveredTool = pendingRecoveredTool(turn);
+  const recoveredTool =
+    snapshotSegmentFirstSeq(event) === null ? pendingRecoveredTool(turn) : undefined;
   if (recoveredTool) {
     const existing = thinkingBeforeTool(turn, recoveredTool);
     if (existing) {
@@ -532,12 +734,21 @@ function reduceThinking(
     );
     return;
   }
-  if (!backfill) completeStreamingContent(turn, event.agentSeq, event.timestamp);
-  const tail = activeAgentTail(turn);
-  if (tail?.type === 'thinking' && tail.status === 'running') {
+  const tail = textOwnerForEvent(turn, event, backfill);
+  if (!backfill && tail?.type !== 'thinking')
+    completeStreamingContent(turn, event.agentSeq, event.timestamp);
+  if (
+    tail?.type === 'thinking' &&
+    (tail.status === 'running' || backfill || snapshotSegmentFirstSeq(event) !== null)
+  ) {
     tail.text = isDelta
       ? `${tail.text}${text}`
-      : updateSnapshot(tail.text, text, event.data.replace === true);
+      : updateSnapshot(
+          tail.text,
+          text,
+          event.data.replace === true && !preservesRecoveredText(turn, tail, event, text),
+        );
+    if (!isDelta && tail.recoveredSnapshotText === text.trim()) delete tail.recoveredSnapshotText;
     tail.lastSeq = event.agentSeq;
     tail.updatedAt = event.timestamp;
     return;
@@ -551,8 +762,51 @@ function reduceThinking(
         : 'running',
     text,
   };
-  if (backfill) insertAgentItemBySequence(turn, item);
+  if (backfill || snapshotSegmentFirstSeq(event) !== null) insertAgentItemBySequence(turn, item);
   else appendAgentItem(turn, item);
+}
+
+function reducePreamble(
+  turn: AssistantTurn,
+  event: NormalizedAgentEvent,
+  dependencies: TranscriptReducerDependencies,
+): void {
+  const text = readPreambleText(event.data);
+  if (!text) return;
+  const itemId = eventItemId(event.data);
+  const nativeFirstSeq = snapshotSegmentFirstSeq(event);
+  const existing = turn.items.find(
+    (item): item is ContentItem =>
+      item.type === 'content' &&
+      item.preambleItemId !== undefined &&
+      (itemId !== null
+        ? item.preambleItemId === itemId
+        : nativeFirstSeq !== null
+          ? item.firstSeq === nativeFirstSeq
+          : item.preambleItemId === '' && item.status === 'streaming'),
+  );
+  const content = reduceContent(
+    turn,
+    {
+      ...event,
+      stream: 'assistant',
+      data: {
+        text,
+        replace: true,
+        progressSegmentFirstSeq: existing?.firstSeq ?? nativeFirstSeq ?? event.agentSeq,
+        progressSegmentStartedAt:
+          typeof event.data.progressSegmentStartedAt === 'number'
+            ? event.data.progressSegmentStartedAt
+            : (existing?.startedAt ?? event.timestamp),
+      },
+    },
+    dependencies,
+    true,
+  );
+  if (!content) return;
+  content.preambleItemId = itemId ?? '';
+  if (event.data.phase === 'end') content.status = 'completed';
+  finishTextBeforeKnownBoundaries(turn);
 }
 
 function reduceContent(
@@ -569,7 +823,7 @@ function reduceContent(
   const text = isDelta ? delta : (snapshot ?? delta);
   if (text === null) return null;
   if (!text.trim()) {
-    const tail = activeAgentTail(turn);
+    const tail = textOwnerForEvent(turn, event, backfill);
     if (isDelta && tail?.type === 'content' && tail.status === 'streaming' && tail.text) {
       tail.text += text;
       tail.sourceMode = 'delta';
@@ -579,11 +833,12 @@ function reduceContent(
     }
     return null;
   }
-  if (snapshot !== null && snapshot.trim()) {
+  if (snapshotSegmentFirstSeq(event) === null && snapshot !== null && snapshot.trim()) {
     const normalizedSnapshot = snapshot.trim();
     const recovered = turn.items.find(
       (item): item is ContentItem =>
         item.type === 'content' &&
+        item.preambleItemId === undefined &&
         typeof item.recoveredSnapshotText === 'string' &&
         item.recoveredSnapshotText.startsWith(normalizedSnapshot),
     );
@@ -596,7 +851,8 @@ function reduceContent(
       return recovered;
     }
   }
-  const recoveredTool = pendingRecoveredTool(turn);
+  const recoveredTool =
+    snapshotSegmentFirstSeq(event) === null ? pendingRecoveredTool(turn) : undefined;
   if (recoveredTool) {
     const existing = contentBeforeTool(turn, recoveredTool);
     if (existing) {
@@ -625,16 +881,25 @@ function reduceContent(
     );
     return hydrated ? (contentBeforeTool(turn, recoveredTool) ?? null) : null;
   }
-  if (!backfill) completeRunningThinking(turn, event.agentSeq, event.timestamp);
-  const tail = activeAgentTail(turn);
+  const tail = textOwnerForEvent(turn, event, backfill);
+  if (!backfill && tail?.type !== 'content')
+    completeRunningThinking(turn, event.agentSeq, event.timestamp);
   const replace = event.data.replace === true;
-  if (tail?.type === 'content' && tail.status === 'streaming') {
+  if (
+    tail?.type === 'content' &&
+    (tail.status === 'streaming' || backfill || snapshotSegmentFirstSeq(event) !== null)
+  ) {
     if (isDelta && !replace) {
       tail.text += text;
       tail.sourceMode = 'delta';
     } else {
-      tail.text = updateSnapshot(tail.text, text, replace);
+      tail.text = updateSnapshot(
+        tail.text,
+        text,
+        replace && !preservesRecoveredText(turn, tail, event, text),
+      );
       tail.sourceMode = replace ? 'replaceable' : 'snapshot';
+      if (tail.recoveredSnapshotText === text.trim()) delete tail.recoveredSnapshotText;
     }
     tail.lastSeq = event.agentSeq;
     tail.updatedAt = event.timestamp;
@@ -650,7 +915,7 @@ function reduceContent(
     text,
     sourceMode: replace ? 'replaceable' : isDelta ? 'delta' : 'snapshot',
   };
-  if (backfill) {
+  if (backfill || snapshotSegmentFirstSeq(event) !== null) {
     const followingItem = turn.items.find(candidate => candidate.firstSeq > event.agentSeq);
     if (followingItem?.type === 'tool') item.followingToolCallId = followingItem.toolCallId;
     insertAgentItemBySequence(turn, item);
@@ -835,6 +1100,30 @@ export function reduceAgentEvent(
     terminalRun: Boolean(state.recentRuns.get(event.runId)?.terminalStatus),
   });
   if (admission === 'ignored-session') return 'ignored-session';
+  const lateStartTool =
+    event.stream === 'tool' &&
+    event.data.phase === 'start' &&
+    event.deliveryEvent === 'agent' &&
+    options.allowSequenceBackfill !== true &&
+    options.replaySnapshot !== true &&
+    previousTurn?.runId === event.runId &&
+    admission !== 'ignored-run' &&
+    admission !== 'ignored-terminal'
+      ? previousTurn.toolById.get(itemToolCallId(event.data) ?? '')
+      : undefined;
+  if (
+    lateStartTool &&
+    lateStartTool.status !== 'running' &&
+    lateStartTool.agentSequenceUnconfirmed !== true &&
+    event.agentSeq < lateStartTool.firstSeq
+  ) {
+    // A result can win delivery while its original start is still queued. The
+    // start supplies ordering only; the terminal owner fence still protects
+    // status, output, and all later payload updates.
+    confirmRecoveredToolSequence(previousTurn!, lateStartTool, event.agentSeq, event.timestamp);
+    state.revision += 1;
+    return 'applied';
+  }
   const isSequenceBackfill = admission === 'ignored-sequence';
   if (
     isSequenceBackfill &&
@@ -845,6 +1134,14 @@ export function reduceAgentEvent(
     return 'ignored-sequence';
   }
   if (admission === 'ignored-run' || admission === 'ignored-terminal') return 'ignored-run';
+  // Snapshot owners may be newer than the live transport. Their fences dedupe
+  // that owner's delayed frames, without discarding other owners in between.
+  if (previousTurn?.runId === event.runId && !acceptsBackfillSequence(previousTurn, event)) {
+    if (!options.replaySnapshot) {
+      previousTurn.lastAgentSeq = Math.max(previousTurn.lastAgentSeq, event.agentSeq);
+    }
+    return 'ignored-sequence';
+  }
   const turn = admitTurn(state, event, dependencies, isSequenceBackfill);
   if (!turn) return 'ignored-run';
   if (turn.sessionId && event.sessionId && turn.sessionId !== event.sessionId) {
@@ -857,20 +1154,26 @@ export function reduceAgentEvent(
   ) {
     return 'ignored-run';
   }
+  const insertBySequence =
+    options.replaySnapshot === true ||
+    isSequenceBackfill ||
+    event.agentSeq <= (turn.lastSnapshotAgentSeq ?? -1);
   if (event.stream === 'thinking') {
-    reduceThinking(turn, event, dependencies, isSequenceBackfill);
+    reduceThinking(turn, event, dependencies, insertBySequence);
   } else if (event.stream === 'assistant') {
     const observation = readTerminalGuardObservation(event.data);
     if (observation?.action === 'commit' || observation?.action === 'rollback') {
       applyTerminalGuardObservationDecision(turn, observation);
     } else {
-      const content = reduceContent(turn, event, dependencies, isSequenceBackfill);
+      const content = reduceContent(turn, event, dependencies, insertBySequence);
       if (content && observation?.action === 'update') {
         content.terminalGuardObservationToken = observation.token;
       }
     }
   } else if (event.stream === 'tool') {
-    reduceTool(turn, event, dependencies, isSequenceBackfill);
+    reduceTool(turn, event, dependencies, insertBySequence);
+  } else if (event.stream === 'item' && readPreambleText(event.data) !== null) {
+    reducePreamble(turn, event, dependencies);
   } else if (
     event.stream === 'lifecycle' ||
     event.stream === 'item' ||
@@ -891,7 +1194,14 @@ export function reduceAgentEvent(
   // stale or duplicate events. Agent sequences are ordered but not contiguous:
   // replaceable snapshots may be coalesced or dropped for a slow subscriber.
   recordActivitySequence(turn, event);
-  turn.lastAgentSeq = Math.max(turn.lastAgentSeq, event.agentSeq);
+  if (options.replaySnapshot) {
+    turn.lastSnapshotAgentSeq = Math.max(turn.lastSnapshotAgentSeq ?? -1, event.agentSeq);
+  } else {
+    turn.lastAgentSeq = Math.max(turn.lastAgentSeq, event.agentSeq);
+  }
+  if (insertBySequence || snapshotSegmentFirstSeq(event) !== null) {
+    finishTextBeforeKnownBoundaries(turn);
+  }
   state.revision += 1;
   return 'applied';
 }

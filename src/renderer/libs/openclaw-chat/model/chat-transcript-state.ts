@@ -27,8 +27,12 @@ export interface ToolItem extends BaseTurnItem {
   status: ProcessStatus;
   toolCallId: string;
   name: string;
-  /** History restored the card before its canonical Agent sequence arrived. */
+  /** A recovered Tool still reserves the live tail for its preceding text. */
   agentSequencePending?: boolean;
+  /** A history projection has no canonical Agent sequence, even after its result arrives. */
+  agentSequenceUnconfirmed?: boolean;
+  /** Actual toolResult record time, unlike an assistant message's model-start timestamp. */
+  historyCompletedAt?: number;
   input?: unknown;
   output?: string;
   error?: string;
@@ -39,6 +43,8 @@ export interface ContentItem extends BaseTurnItem {
   status: 'streaming' | 'completed' | 'interrupted';
   text: string;
   sourceMode: 'delta' | 'snapshot' | 'replaceable';
+  /** Native item/preamble commentary owner, separate from assistant reply segments. */
+  preambleItemId?: string;
   followingToolCallId?: string;
   /** Authoritative history text awaiting a matching delayed Agent snapshot. */
   recoveredSnapshotText?: string;
@@ -62,6 +68,8 @@ export interface AssistantTurn {
   sessionKey: string;
   status: TurnStatus;
   lastAgentSeq: number;
+  /** Recovery snapshots are sparse and must never advance the live event fence. */
+  lastSnapshotAgentSeq?: number;
   /**
    * Per projected activity owner sequence fences. A history in-flight snapshot
    * can arrive after a newer live event for another owner, so the run-wide

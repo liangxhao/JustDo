@@ -160,7 +160,7 @@ describe('OpenClaw v2026.9.2 capability patches', () => {
     expect(runtimePatchSetIsCurrent).toBe(true);
   });
 
-  test('contains exactly the fifteen retained capability patches', () => {
+  test('contains exactly the seventeen retained capability patches', () => {
     expect(patchFiles).toEqual([
       '001-managed-pip-config-environment.cjs',
       '002-windows-mcp-package-runner.cjs',
@@ -177,6 +177,8 @@ describe('OpenClaw v2026.9.2 capability patches', () => {
       '014-assistant-display-block-replay.cjs',
       '015-trusted-local-file-media.cjs',
       '016-offline-official-plugin-catalog.cjs',
+      '017-segmented-live-progress-snapshot.cjs',
+      '018-mixed-tool-commentary-order.cjs',
     ]);
   });
 

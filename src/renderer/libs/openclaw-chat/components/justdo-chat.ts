@@ -49,6 +49,10 @@ import {
   projectChatMinimapEntries,
 } from '@/libs/openclaw-chat/model/chat-minimap';
 import {
+  traceTimelineDom,
+  traceTimelineProjection,
+} from '@/libs/openclaw-chat/model/chat-timeline-trace';
+import {
   type AssistantTurn,
   normalizeTranscriptSessionKey,
 } from '@/libs/openclaw-chat/model/chat-transcript-state';
@@ -2380,6 +2384,7 @@ export class JustDoChatElement extends LitElement {
     if (ctrl) {
       const historyTimeline = getHistoryTimeline();
       const activeTimeline = this.projectActiveTimeline(activeTurn);
+      traceTimelineProjection(ctrl.state.sessionKey, historyTimeline, activeTimeline);
       const activeTurnFooter = projectActiveTurnFooter(
         selectActiveTurnTiming(ctrl.getCurrentTurnTiming(), currentRunTiming, activeTurn !== null),
       );
@@ -2636,6 +2641,7 @@ export class JustDoChatElement extends LitElement {
   }
 
   protected updated(changedProperties?: Map<string | number | symbol, unknown>): void {
+    traceTimelineDom(this._controller?.state.sessionKey ?? '', this.shadowRoot);
     this.syncActiveTurnClock();
     if (changedProperties?.has('processSummariesExpanded')) {
       this.openProcessSummaryKey = null;

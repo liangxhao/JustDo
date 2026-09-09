@@ -71,9 +71,11 @@ import type {
 import {
   confirmRecoveredToolSequence,
   hydrateToolPrecedingSegments,
+  readPreambleText,
   reduceAgentEvent,
   reduceChatEvent,
 } from '@/libs/openclaw-chat/model/agent-event-reducer';
+import { traceTimelineController } from '@/libs/openclaw-chat/model/chat-timeline-trace';
 import {
   type AssistantTurn,
   type AssistantTurnTiming,
@@ -308,6 +310,26 @@ type PostFinalHistoryRecovery = {
 type SwitchSessionOptions = {
   promoteFromSessionKey?: string;
 };
+
+function hasStableProgressOwner(event: NormalizedAgentEvent): boolean {
+  // Independent delivery paths can overtake paced text. Only identified text
+  // may bypass the run watermark; the reducer still enforces owner/run fences.
+  if (event.stream === 'item') {
+    return (
+      readPreambleText(event.data) !== null &&
+      typeof event.data.itemId === 'string' &&
+      event.data.itemId.trim().length > 0
+    );
+  }
+  if (event.stream !== 'thinking' && event.stream !== 'assistant') return false;
+  const firstSeq = event.data.progressSegmentFirstSeq;
+  return (
+    typeof firstSeq === 'number' &&
+    Number.isSafeInteger(firstSeq) &&
+    firstSeq >= 0 &&
+    firstSeq <= event.agentSeq
+  );
+}
 
 function getContentImageUrl(value: unknown): string | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -1546,6 +1568,7 @@ export class ChatController {
           startedAt,
           updatedAt: Math.max(startedAt, persistedTool.updatedAt || now),
           agentSequencePending: true,
+          agentSequenceUnconfirmed: true,
         };
         // A transcript append can beat the corresponding Thinking and Tool
         // Agent frames across their independent delivery paths. Every restored
@@ -1585,6 +1608,16 @@ export class ChatController {
           hasToolResultPayload(persistedTool) ||
           persistedTool.status !== 'completed');
       if (
+        liveTool.agentSequenceUnconfirmed === true &&
+        authoritativeToolResultIds.has(toolCallId)
+      ) {
+        const completedAt = persistedTool.updatedAt || persistedTool.startedAt;
+        if (liveTool.historyCompletedAt !== completedAt) {
+          liveTool.historyCompletedAt = completedAt;
+          changed = true;
+        }
+      }
+      if (
         liveTool.agentSequencePending === true &&
         (authoritativeToolResultIds.has(toolCallId) || canApplyPersistedTerminalStatus)
       ) {
@@ -1594,6 +1627,7 @@ export class ChatController {
             liveTool,
             activeTurn.lastAgentSeq,
             persistedTool.updatedAt || this.transcriptDependencies.now(),
+            'history',
           ) || changed;
       }
       if (liveTool.status === 'running' && canApplyPersistedTerminalStatus) {
@@ -3098,7 +3132,10 @@ export class ChatController {
     ) {
       return;
     }
-    const reduceResult = reduceAgentEvent(cached.transcript, event, this.transcriptDependencies);
+    const reduceResult = reduceAgentEvent(cached.transcript, event, this.transcriptDependencies, {
+      allowSequenceBackfill:
+        event.deliveryEvent === 'session.tool' || hasStableProgressOwner(event),
+    });
     if (reduceResult !== 'applied') return;
 
     if (event.stream === 'compaction') {
@@ -3228,6 +3265,15 @@ export class ChatController {
   }
 
   private handleEvent(event: GatewayEventFrame): void {
+    traceTimelineController(event, this.state.transcript, 'before', this.state.chatRunId);
+    try {
+      this.handleTimelineEvent(event);
+    } finally {
+      traceTimelineController(event, this.state.transcript, 'after', this.state.chatRunId);
+    }
+  }
+
+  private handleTimelineEvent(event: GatewayEventFrame): void {
     if (event.event === 'tick') return;
     if (event.event === 'progressCard.changed') {
       this.handleProgressCardChanged(event.payload);
@@ -3719,7 +3765,10 @@ export class ChatController {
       this.transcriptDependencies,
       {
         allowSequenceBackfill:
-          options.replaySnapshot === true || event.deliveryEvent === 'session.tool',
+          options.replaySnapshot === true ||
+          event.deliveryEvent === 'session.tool' ||
+          hasStableProgressOwner(event),
+        replaySnapshot: options.replaySnapshot === true,
       },
     );
     if (reduceResult === 'applied') {
@@ -3835,6 +3884,17 @@ export class ChatController {
     replayEvents.sort((left, right) => left.seq - right.seq);
     for (const replayEvent of replayEvents) {
       if (!replayEvent || replayEvent.runId !== runId) continue;
+      // Recovery is a sparse state snapshot, not a contiguous event log.
+      // Replay only timeline owners; non-display state must not interfere
+      // with queued live Thinking/Content or the separate live sequence fence.
+      if (
+        replayEvent.stream !== 'thinking' &&
+        replayEvent.stream !== 'assistant' &&
+        replayEvent.stream !== 'tool' &&
+        !(replayEvent.stream === 'item' && readPreambleText(replayEvent.data ?? {}) !== null)
+      ) {
+        continue;
+      }
       const normalized = normalizeAgentEvent({
         deliveryEvent: 'agent',
         payload: {
@@ -3848,31 +3908,9 @@ export class ChatController {
       }
     }
 
-    const snapshotText =
-      typeof snapshot.text === 'string' &&
-      snapshot.text.trim() &&
-      !isHiddenOrPendingControlReplyText(snapshot.text)
-        ? snapshot.text
-        : null;
-    const activeContent = collectActiveContentText(this.state.transcript.activeTurn);
-    const mergedText = mergeInFlightAssistantText(snapshotText, activeContent);
-    if (mergedText && mergedText !== activeContent) {
-      reduceChatEvent(
-        this.state.transcript,
-        {
-          runId,
-          sessionKey,
-          sessionId,
-          lifecycleGeneration: this.state.transcript.activeTurn?.lifecycleGeneration ?? null,
-          frameSeq: null,
-          state: 'delta',
-          message: { role: 'assistant', content: mergedText },
-          replace: true,
-        },
-        this.transcriptDependencies,
-      );
-      this.updateRunActivity(runId, 'responding', { modelActivity: true });
-    }
+    // The aggregate text has neither a model-message identity nor an Agent
+    // sequence. Only the native per-segment events can safely restore a live
+    // turn; injecting this string would flatten prior replies into its tail.
     this.notifyStream();
   }
 
@@ -4889,6 +4927,17 @@ export class ChatController {
     }
 
     if (stream === 'item') {
+      if (readPreambleText(data) !== null) {
+        const wasSending = this.state.chatSending;
+        this.state.chatSending = true;
+        this.state.chatRunId = runId;
+        if (!wasSending && !this.hasExpectedInitialHistory()) {
+          this.scheduleDeferredHistoryReload(this.state.sessionKey, 'initial-history-missing');
+        }
+        this.updateRunActivity(runId, 'responding', { modelActivity: true });
+        this.notifyStream();
+        return;
+      }
       debugLog('[ChatCtrl] ▶ item → deferred history reload', {
         sourceEvent,
         runId,
@@ -6023,14 +6072,6 @@ function completeTruncatedTerminalFromActiveTurn(
     recovered.__openclaw = completeMetadata;
   }
   return recovered;
-}
-
-function mergeInFlightAssistantText(snapshot: string | null, live: string | null): string | null {
-  if (!snapshot || live?.startsWith(snapshot)) return live ?? snapshot;
-  if (!live || snapshot.startsWith(live)) return snapshot;
-  // A bounded history snapshot can lag newer live events. Never rewind a
-  // locally longer divergent stream merely because recovery ran concurrently.
-  return live;
 }
 
 function buildInterruptedTurnMessage(

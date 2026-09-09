@@ -15,6 +15,7 @@
 
 import { PRODUCT_NAME } from '@shared/productMetadata';
 
+import { traceTimelineWire } from '../model/chat-timeline-trace';
 import {
   buildGatewayDeviceAuthPayload,
   loadOrCreateGatewayDeviceIdentity,
@@ -236,6 +237,7 @@ export class GatewayClient {
     // Event frame
     if (frame.type === 'event') {
       const event = frame as unknown as GatewayEventFrame;
+      traceTimelineWire(event);
       // Handle challenge
       if (event.event === 'connect.challenge') {
         clearTimeout(this.challengeTimer!);

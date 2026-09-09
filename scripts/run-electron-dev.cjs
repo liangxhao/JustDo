@@ -14,7 +14,11 @@ const start = async () => {
   const releaseRuntimeLease = acquireRuntimeDevLease(resolveRuntimeDevLeaseDir(rootDir));
   process.once('exit', releaseRuntimeLease);
   const devServerPort = await findFreePort(port);
-  const env = { ...process.env, JUSTDO_DEV_SERVER_PORT: String(devServerPort) };
+  const env = {
+    ...process.env,
+    JUSTDO_DEV_SERVER_PORT: String(devServerPort),
+    VITE_DEBUG_CHAT_TIMELINE: process.env.JUSTDO_DEBUG_CHAT_TIMELINE === 'true' ? 'true' : 'false',
+  };
   console.log(`[Electron Dev] Using development server port ${devServerPort}.`);
 
   const commands = [

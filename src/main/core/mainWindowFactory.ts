@@ -22,6 +22,8 @@ type MainWindowFactoryOptions = {
 const DEV_LOAD_MAX_RETRIES = 3;
 const LOAD_RETRY_DELAY_MS = 3_000;
 const LOAD_TIMEOUT_MS = 30_000;
+const CHAT_TIMELINE_TRACE_PREFIX = '[ChatTimelineTrace] ';
+const CHAT_TIMELINE_TRACE_MAX_BYTES = 64 * 1024;
 
 export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWindow => {
   const mainWindow = new BrowserWindow({
@@ -76,6 +78,16 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
     void shell.openExternal(url);
     return { action: 'deny' };
   });
+  if (options.isDev && process.env.JUSTDO_DEBUG_CHAT_TIMELINE === 'true') {
+    mainWindow.webContents.on('console-message', details => {
+      if (
+        details.message.startsWith(CHAT_TIMELINE_TRACE_PREFIX) &&
+        Buffer.byteLength(details.message, 'utf8') <= CHAT_TIMELINE_TRACE_MAX_BYTES
+      ) {
+        console.info(details.message);
+      }
+    });
+  }
 
   const loadTimeout = options.isDev
     ? undefined

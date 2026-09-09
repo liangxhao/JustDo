@@ -2,9 +2,113 @@ import { describe, expect, test } from 'vitest';
 
 import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 
+import { reduceAgentEvent } from './agent-event-reducer';
+import { createChatTranscriptState } from './chat-transcript-state';
 import { projectPersistedTimeline } from './project-history-timeline';
+import { projectTurnItems } from './project-turn-items';
 
 describe('projectPersistedTimeline', () => {
+  test('keeps native mixed commentary history in the same order as its live Thinking and Tool', () => {
+    const thinking = 'Check the returned subagent results.';
+    const commentary = 'All five agents have returned; inspect their messages.';
+    const runId = 'mixed-commentary-run';
+    const state = createChatTranscriptState('mixed-commentary-session', 'session-id');
+    let nextId = 0;
+    const emit = (seq: number, stream: string, data: Record<string, unknown>) => {
+      reduceAgentEvent(
+        state,
+        {
+          runId,
+          sessionKey: 'mixed-commentary-session',
+          sessionId: 'session-id',
+          lifecycleGeneration: null,
+          agentId: 'main',
+          spawnedBy: null,
+          agentSeq: seq,
+          frameSeq: seq,
+          deliveryEvent: 'agent',
+          timestamp: 1_000 + seq,
+          stream,
+          data,
+        },
+        { now: () => 1_000, createId: prefix => `${prefix}-${++nextId}` },
+      );
+    };
+    emit(1, 'thinking', { text: thinking });
+    emit(2, 'item', {
+      kind: 'preamble',
+      phase: 'end',
+      itemId: 'commentary-1',
+      progressText: commentary,
+    });
+    emit(3, 'tool', {
+      phase: 'start',
+      name: 'sessions_history',
+      toolCallId: 'history-1',
+      args: {},
+    });
+    emit(4, 'tool', {
+      phase: 'result',
+      name: 'sessions_history',
+      toolCallId: 'history-1',
+      result: 'Five messages.',
+    });
+    const live = projectTurnItems(state.activeTurn);
+
+    // Patch 018 restores admitted commentary as a plain text block in place.
+    const persisted = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        timestamp: 1_000,
+        __openclaw: { runId, id: 'mixed-assistant' },
+        content: [
+          { type: 'thinking', thinking },
+          { type: 'text', text: commentary },
+          { type: 'toolCall', id: 'history-1', name: 'sessions_history', arguments: {} },
+        ],
+      },
+      {
+        role: 'toolResult',
+        timestamp: 1_004,
+        toolCallId: 'history-1',
+        toolName: 'sessions_history',
+        content: [{ type: 'text', text: 'Five messages.' }],
+      },
+    ]);
+
+    expect(
+      persisted.map(item => (item.kind === 'history-message' ? 'content' : item.kind)),
+    ).toEqual(live.map(item => item.kind));
+    expect(persisted).toMatchObject([
+      {
+        kind: 'process-summary',
+        thinkingCount: 1,
+        toolCount: 0,
+        items: [{ type: 'thinking', text: thinking }],
+      },
+      {
+        kind: 'history-message',
+        message: { role: 'assistant', content: [{ type: 'text', text: commentary }] },
+      },
+      {
+        kind: 'process-summary',
+        thinkingCount: 0,
+        toolCount: 1,
+        items: [
+          { type: 'tool', toolCallId: 'history-1', status: 'completed', output: 'Five messages.' },
+        ],
+      },
+    ]);
+    expect(live).toMatchObject([
+      { kind: 'process-summary', items: [{ type: 'thinking', text: thinking }] },
+      { kind: 'content', item: { text: commentary } },
+      {
+        kind: 'process-summary',
+        items: [{ type: 'tool', toolCallId: 'history-1', status: 'completed' }],
+      },
+    ]);
+  });
+
   test('interrupts an unresolved old tool when a subsequent explicit run has resumed', () => {
     const result = projectPersistedTimeline([
       {

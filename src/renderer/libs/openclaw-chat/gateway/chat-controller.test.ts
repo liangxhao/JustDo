@@ -1591,7 +1591,10 @@ test('adopts and replays a v2026.9.2 in-flight Thinking, Tool, and Content snaps
           stream: 'assistant',
           ts: 1_104,
           sessionKey,
-          data: { text: 'The recovered answer' },
+          data: {
+            text: 'The recovered answer is still streaming.',
+            progressSegmentFirstSeq: 4,
+          },
         },
       ],
     },
@@ -1616,7 +1619,8 @@ test('adopts and replays a v2026.9.2 in-flight Thinking, Tool, and Content snaps
   });
   expect(controller.state.transcript.activeTurn).toMatchObject({
     runId: 'run-live',
-    lastAgentSeq: 4,
+    lastAgentSeq: -1,
+    lastSnapshotAgentSeq: 4,
     items: [
       { type: 'thinking', status: 'completed', text: 'Recovered reasoning' },
       { type: 'tool', status: 'running', toolCallId: 'tool-1', output: 'halfway' },
@@ -1730,6 +1734,63 @@ test('backfills a delayed in-flight snapshot after a newer live event without re
       { type: 'content', status: 'streaming', text: 'newer live answer' },
     ],
   });
+});
+
+test('keeps live reply boundaries when history usage overtakes queued Thinking events', () => {
+  const sessionKey = 'agent:main:justdo:session-1';
+  const controller = new ChatController();
+  controller.state.sessionKey = sessionKey;
+  const internal = controller as unknown as {
+    handleEvent(event: { event: string; payload: unknown }): void;
+    applyInFlightRunSnapshot(
+      snapshot: Record<string, unknown>,
+      sessionKey: string,
+      sessionId: string | null,
+      requestRunId: string | null,
+      sessionInfo: Record<string, unknown>,
+    ): void;
+  };
+  const emit = (seq: number, stream: string, data: Record<string, unknown>) =>
+    internal.handleEvent({
+      event: 'agent',
+      payload: { sessionKey, runId: 'run-live', seq, stream, data },
+    });
+  emit(76, 'assistant', { text: 'Agents dispatched.' });
+  let accumulatedText = 'Agents dispatched.';
+  for (const [seq, thinking, text] of [
+    [78, 'Review the first results.', 'Waiting for the remaining agents.'],
+    [83, 'Compare all results.', 'Two agents returned the same blessing.'],
+  ] as const) {
+    accumulatedText += text;
+    internal.applyInFlightRunSnapshot(
+      {
+        runId: 'run-live',
+        text: accumulatedText,
+        events: [{ runId: 'run-live', seq: seq + 1, stream: 'usage', data: {} }],
+      },
+      sessionKey,
+      null,
+      'run-live',
+      { hasActiveRun: true, activeRunIds: ['run-live'] },
+    );
+    const items = controller.state.transcript.activeTurn?.items ?? [];
+    expect(items[items.length - 1]).not.toMatchObject({ text: accumulatedText });
+    emit(seq, 'thinking', { text: thinking });
+    emit(seq + 2, 'assistant', { text });
+  }
+  expect(
+    controller.state.transcript.activeTurn?.items.map(item => [
+      item.type,
+      'text' in item ? item.text : null,
+    ]),
+  ).toEqual([
+    ['content', 'Agents dispatched.'],
+    ['thinking', 'Review the first results.'],
+    ['content', 'Waiting for the remaining agents.'],
+    ['thinking', 'Compare all results.'],
+    ['content', 'Two agents returned the same blessing.'],
+  ]);
+  controller.disconnect();
 });
 
 test('does not resurrect a terminal run from a stale in-flight snapshot', () => {

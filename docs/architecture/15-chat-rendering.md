@@ -79,13 +79,23 @@ Wrapper切换session时取消旧订阅、建立新generation、请求Gateway原�
 
 临时session转为canonical session必须由创建流程显式登记准确的source/target key。普通的“临时session → 其他已有session”导航不能推断为promotion，也不能迁移消息或sending状态。Live事件先经过shared domain分类，再送controller/reducer；完整final由后续`session.message`直接接管；无消息、带结构化截断标记、订阅未建立或已有持久化失效通知的final继续做有界补查。旧异步history请求即使晚返回，也因generation/session identity/active leaf fence被丢弃。
 
-Gateway外层event sequence只属于单个WebSocket generation；每次连接都清空基线。发现向前缺口时当前socket立即退休，不消费缺口后的可疑帧，重连后重新订阅并加载history。Agent `payload.seq` 只提供run内顺序与去重栅栏，并不保证连续：累积Thinking/Content快照以及其他可替换高频事件可能被Gateway合并或因慢订阅者背压而丢弃，合法跳号不能触发断线。`chat.startup` / `chat.history` 返回的 `inFlightRun` 会重新接管run id/startedAt，按seq回放Thinking、Tool、Content等有界events，再以前缀安全规则合并累计text。这样切页、后台挂起和网络抖动后不依赖已丢失的delta；与请求并发发生的terminal或新run会通过run ownership fence拒绝陈旧snapshot。
+Gateway外层event sequence只属于单个WebSocket generation；每次连接都清空基线。发现向前缺口时当前socket立即退休，不消费缺口后的可疑帧，重连后重新订阅并加载history。Agent `payload.seq` 只提供run内顺序与去重栅栏，并不保证连续：累积Thinking/Content快照以及其他可替换高频事件可能被Gateway合并或因慢订阅者背压而丢弃，合法跳号不能触发断线。
+
+`chat.startup` / `chat.history` 返回的 `inFlightRun` 是稀疏状态快照，不是完整事件日志。v2026.9.2原生已实时发送Thinking，但progress snapshot原本保留Tool、preamble和最新usage等状态；运行时补丁017在同一个原生有界快照中保留Thinking/Content分段（含item/preamble正文），并为快照与实时事件提供相同的 `progressSegmentFirstSeq`。模型消息身份、Thinking/Content切换及Tool等原生边界决定分段，正文权威replace不会改变段落身份。`progressSegmentStartedAt`保留段首时间，事件`ts`保留最新更新时间，避免历史Tool前文本的保护规则阻止后续权威修订。快照最多保留50个事件、128 KiB总量、64 KiB单个事件，超限仍依赖Gateway持久history对账，不新增transcript缓存。
+
+Renderer仅回放Thinking、Tool、Content，分别维护实时高水位与快照高水位，并按各个activity owner独立去重。先返回的未来Tool或文本快照不能使仍在传输的中间Thinking失效；迟到事件按序插入，已被更新快照覆盖的同段旧帧不能回滚文本。无序号和消息身份的累计 `inFlightRun.text` 不再注入当前Content，避免多条回复压平或后续单段更新覆盖先前正文。与请求并发发生的terminal或新run会通过run ownership fence拒绝陈旧snapshot。
+
+实时跨通道交错同样使用上述身份约束：带有效 `progressSegmentFirstSeq` 的Thinking/Content，以及带 `itemId` 的preamble，即使被更高序号的Tool或usage先行覆盖run高水位，仍可补入原来的段落位置。前台和后台会话执行相同规则；同一段的旧快照、无可靠身份的旧文本及已结束run的事件继续拒绝，补入不回退run活动状态。
 
 `session.message` 是transcript append的增量权威通知。Controller先按Gateway message id、messageSeq、idempotency、run id和import provenance判断身份与producer ownership；可证明归属的user/current assistant/previous-run assistant立即去重或按seq插入，不再为每一行重载整段history。当前run的durable assistant保留在权威transcript中，但ActiveTurn存在时由显示投影隐藏，避免与流式Content/Tool双显。身份缺失、foreign/queued user、ambiguous assistant、partial import或截断内容仍回退history。
 
-若对应Agent Tool start帧漏收或晚到，Controller还可在session/run identity和active-turn时间边界均匹配时，用稳定toolCallId恢复该append里的缺失Tool；若通知本身也因背压丢失，后续append暴露的messageSeq缺口会登记unresolved target并触发有界active-tail history追赶。只有权威history追到target并经过安全Tool hydration后才清除缺口，陈旧快照或请求失败会重试。恢复不替换整个live timeline，也不推进Agent sequence；每个新恢复Tool先作为live-tail边界，同一权威assistant row会补全并结束Tool前的Thinking。迟到的同轮Thinking帧只能更新已结束项而不能重新点亮；随后canonical start/result或携带同一toolCallId的Tool item原位确认该卡，无关status/commentary item不能释放边界。
+若对应Agent Tool start帧漏收或晚到，Controller还可在session/run identity和active-turn时间边界均匹配时，用稳定toolCallId恢复该append里的缺失Tool；若通知本身也因背压丢失，后续append暴露的messageSeq缺口会登记unresolved target并触发有界active-tail history追赶。只有权威history追到target并经过安全Tool hydration后才清除缺口，陈旧快照或请求失败会重试。恢复不替换整个live timeline，也不推进Agent sequence；每个新恢复Tool先作为live-tail边界，同一权威assistant row会补全并结束Tool前的Thinking。迟到的同轮Thinking帧只能更新已结束项而不能重新点亮；随后canonical start/result或携带同一toolCallId的Tool item按稳定身份确认该卡并校准顺序，无关status/commentary item不能释放边界。
+
+恢复Tool的“结果已知”与“原生Agent序号已确认”独立记录。history结束等待边界时不能把当前run高水位当作Tool的真实首序号；原生Tool事件确认后按真实序号修正位置。assistant消息时间是模型消息开始时间，不能充当Tool执行边界来把迟到Thinking推到Tool后面；已有原生序号优先用于段落归属，只有真正toolResult的完成时间可用于区分完成后的新文本。测试同时检查Thinking到达后、Tool确认前的中间投影和确认后的顺序。
 
 ## 5. Event admission
+
+开发诊断：在 PowerShell 设置 `$env:JUSTDO_DEBUG_CHAT_TIMELINE='true'` 后启动 `npm run electron:dev`，开发启动器会映射 Renderer 的 `VITE_DEBUG_CHAT_TIMELINE`。`[ChatTimelineTrace]` 串联 WebSocket 接收（在传输序号过滤之前）、Controller 处理前后、历史/活动投影和已更新的 Thinking/Tool DOM 顺序，Main 转发到日常日志及开发终端。只记录白名单身份、序号、状态、文本长度和 hash，不记录正文、参数、结果或认证帧。每条摘要最多保留80项，Main拒绝超过64 KiB的记录；这是有额外时序开销的显式开发诊断，默认及生产构建均关闭。关闭开关后重启即可停止。收到正常广播的服务端日志不足以证明对应界面已处理或显示该事件，应对照上述阶段定位，再增加现场序列回归测试。
 
 Reducer不只检查runId：
 
@@ -122,7 +132,15 @@ Gateway v2026.9.2 原生 required-task join 必须在所有 required child termi
 
 已完成的Thinking/Tool按时间压缩为process summary，默认不把完整输入/输出塞进主DOM。展开summary后仍按原时序展示；每个Tool有自己的detail disclosure。运行中的Thinking/Tool保持独立可见，不被已归档summary吞并。
 
+原生 `item` 中的 `kind: preamble` 是可见的中间正文：Renderer 直接消费 `progressText`，按 `itemId` 更新同一 Content，`phase: end` 完成该段；Thinking、Tool 和下一条 preamble 仍按原生序号独立排列。它与普通 assistant 正文一样触发即时 stream 通知并参与有界 in-flight 恢复，不能仅安排延迟 history 刷新，否则正文会直到运行结束才成批出现。其他非展示 item 继续沿用各自的状态处理。
+
+`session.message` 的展示投影可能省略原生 commentary，即使其 message id 和 run id 完整，也不表示 Tool 前已显示的 preamble 被撤销。恢复同一 toolCallId 的前置段时，应按顺序合并并保留未被通知覆盖的原生 preamble；完整 history 随后补回正文时一对一复用已有段，保留 UI identity 和原生序号。不能用仅含 Thinking/Tool 的追加通知整片替换已显示的 Thinking/Content，否则正文会短暂出现后消失，直到下一次完整 history 才恢复。
+
 ## 7. History reconciliation
+
+最终 history 必须保留原生 assistant 消息内混合 Thinking、Commentary、Tool 块的原始顺序。补丁018只在原生 `includeCommentaryFallbacks` 开启且消息包含 Tool 时，将获准显示的 commentary 按原位置恢复为正文块；不再把独立 commentary fallback 行前置到整条消息之前，否则结束后的历史接管会改变已经正确显示的 Thinking/Tool 次序。恢复沿用原生可见性、清洗和截断规则，不修改持久 transcript 或 provider replay；未启用 commentary recovery 的路径保持原生行为。Renderer 继续消费 Gateway 给出的有序块，不通过文本匹配或时间排序重新推断模型消息顺序。
+
+显式 `display: false` 的消息不生成会丢失该标记的独立 commentary fallback，仍交由原生历史过滤器隐藏。
 
 Stable transcript identity优先读取Gateway message id/记录标识，再用受控fallback。Reconciler：
 
