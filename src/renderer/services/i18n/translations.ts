@@ -934,6 +934,9 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkOpenFolderFailed: '打开文件夹失败',
 
     // Cowork 错误消息
+    coworkBlockedSlashCommandTitle: 'Command unavailable',
+    coworkBlockedSlashCommandMessage:
+      'The /{command} command is managed by the app and cannot be run from chat.',
     coworkErrorSessionStartFailed: '会话启动失败：{error}',
     coworkSessionRuntimeActive: '当前会话仍有任务在运行，请稍后再试',
     coworkSessionRuntimeUnknown: '暂时无法确认会话运行状态，请稍后再试',
@@ -2720,6 +2723,9 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkOpenFolderFailed: 'Failed to open folder',
 
     // Cowork error messages
+    coworkBlockedSlashCommandTitle: 'Command unavailable',
+    coworkBlockedSlashCommandMessage:
+      'The /{command} command is managed by the app and cannot be run from chat.',
     coworkErrorSessionStartFailed: 'Failed to start session: {error}',
     coworkSessionRuntimeActive: 'This session still has active work. Try again shortly.',
     coworkSessionRuntimeUnknown: 'Unable to confirm the session runtime. Try again shortly.',

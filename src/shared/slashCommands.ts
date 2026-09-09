@@ -2,7 +2,7 @@ export const SlashCommandIpc = {
   List: 'slashCommands:list',
 } as const;
 
-const SLASH_COMMAND_PATTERN = /^\/([^\s/]+)(?:\s+([\s\S]*))?$/;
+const SLASH_COMMAND_PATTERN = /^\/([^\s/:]+)(?:(?:\s*:\s*|\s+)([\s\S]*))?$/;
 
 export const SlashCommandExecution = {
   Blocked: 'blocked',
@@ -38,13 +38,23 @@ const DEFAULT_SLASH_COMMAND_BEHAVIOR: Readonly<SlashCommandBehavior> = {
 const MANAGED_SLASH_COMMANDS = new Set([
   'allowlist',
   'approve',
+  'bash',
   'config',
   'cron',
+  'crestodian',
+  'debug',
   'elev',
   'elevated',
   'exec',
+  'login',
+  'mcp',
   'node',
   'nodes',
+  'openclaw',
+  'plugin',
+  'plugins',
+  'restart',
+  'update',
 ]);
 
 /**
@@ -131,9 +141,7 @@ export const parseGoalStartObjective = (value: string): string | null => {
   const actionMatch = /^(\S+)([\s\S]*)$/.exec(argumentsText);
   const action = (actionMatch?.[1] ?? '').toLowerCase();
   if (GOAL_CONTROL_ACTIONS.has(action)) return null;
-  const objectiveText = GOAL_CREATE_ACTIONS.has(action)
-    ? (actionMatch?.[2] ?? '')
-    : argumentsText;
+  const objectiveText = GOAL_CREATE_ACTIONS.has(action) ? (actionMatch?.[2] ?? '') : argumentsText;
   const objective = objectiveText.trim().normalize('NFC');
   return objective || null;
 };
@@ -141,6 +149,7 @@ export const parseGoalStartObjective = (value: string): string | null => {
 export const SlashCommandBlacklist: ReadonlySet<string> = new Set([
   'help',
   'commands',
+  'dashboard',
   'status',
   'tasks',
   'dreaming',
@@ -179,6 +188,7 @@ export const SlashCommandBlacklist: ReadonlySet<string> = new Set([
   'plugins',
   'debug',
   'restart',
+  'update',
   'allowlist',
   'approve',
   'activation',
@@ -186,6 +196,7 @@ export const SlashCommandBlacklist: ReadonlySet<string> = new Set([
   'focus',
   'unfocus',
   'crestodian',
+  'openclaw',
 ]);
 
 export const SlashCommandCategory = {
@@ -219,6 +230,7 @@ export interface SlashCommand {
 
 export interface ListSlashCommandsOptions {
   agentId?: string | null;
+  sessionKey?: string | null;
 }
 
 export interface ListSlashCommandsResult {

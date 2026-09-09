@@ -5149,7 +5149,7 @@ export class ChatController {
       goalStartObjective === null ? resolveSlashCommandBehavior(gatewayMessage) : null;
     if (slashCommand?.execution === SlashCommandExecution.Blocked) {
       const error = new Error(
-        `/${slashCommand.name} is managed by the application and cannot be sent as a chat command.`,
+        `The /${slashCommand.name} command is managed by the app and cannot be run from chat.`,
       );
       this.state.lastError = error.message;
       this.notify();

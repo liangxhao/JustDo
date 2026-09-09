@@ -40,6 +40,30 @@ describe('mapGatewaySlashCommand', () => {
     expect(mapGatewaySlashCommand({ key: 'goal', name: 'goal' })?.category).toBe('session');
   });
 
+  test('uses the text command name with the current Gateway response shape', () => {
+    expect(
+      mapGatewaySlashCommand({
+        name: 'goal',
+        textAliases: ['/goal'],
+        category: 'status',
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        key: 'goal',
+        category: 'session',
+        tier: 'standard',
+      }),
+    );
+
+    expect(
+      mapGatewaySlashCommand({
+        name: 'compact',
+        textAliases: ['/compact'],
+        category: 'session',
+      }),
+    ).toEqual(expect.objectContaining({ tier: 'essential' }));
+  });
+
   test('hides compact arguments that the current sessions.compact RPC cannot forward', () => {
     expect(
       mapGatewaySlashCommand({
@@ -82,7 +106,12 @@ describe('SlashCommandService', () => {
       ],
     });
 
-    await expect(service.list({ agentId: 'researcher' })).resolves.toEqual([
+    await expect(
+      service.list({
+        agentId: 'researcher',
+        sessionKey: 'agent:researcher:justdo:session-1',
+      }),
+    ).resolves.toEqual([
       expect.objectContaining({
         key: 'help',
         description: 'Handled locally',
@@ -90,6 +119,7 @@ describe('SlashCommandService', () => {
     ]);
     expect(request).toHaveBeenCalledWith('commands.list', {
       agentId: 'researcher',
+      sessionKey: 'agent:researcher:justdo:session-1',
       includeArgs: true,
       scope: 'text',
     });

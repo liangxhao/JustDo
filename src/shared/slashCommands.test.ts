@@ -18,12 +18,33 @@ describe('slash command behavior', () => {
       argumentsText: 'start a release',
     });
     expect(parseSlashCommand('not a command')).toBeNull();
+    expect(parseSlashCommand('/CONFIG: set tools.exec.host gateway')).toEqual({
+      name: 'config',
+      argumentsText: 'set tools.exec.host gateway',
+    });
   });
 
   it('defaults new commands to Gateway delivery', () => {
     expect(resolveSlashCommandBehavior('/future-command value')).toMatchObject({
       name: 'future-command',
       argumentsText: 'value',
+      execution: 'gateway',
+    });
+  });
+
+  it.each([
+    '/help',
+    '/commands',
+    '/status',
+    '/tasks',
+    '/models',
+    '/agents',
+    '/subagents list',
+    '/whoami',
+    '/id',
+    '/context',
+  ])('allows read-only command %s to reach the Gateway', value => {
+    expect(resolveSlashCommandBehavior(value)).toMatchObject({
       execution: 'gateway',
     });
   });
@@ -35,15 +56,40 @@ describe('slash command behavior', () => {
     ).toBe(true);
   });
 
-  it.each(['exec', 'elevated', 'elev', 'config', 'allowlist', 'approve', 'cron', 'node', 'nodes'])(
-    'blocks the app-managed /%s command from Gateway delivery',
-    name => {
-      expect(resolveSlashCommandBehavior(`/${name} full`)).toMatchObject({
-        name,
-        execution: 'blocked',
-      });
-    },
-  );
+  it.each([
+    'exec',
+    'elevated',
+    'elev',
+    'bash',
+    'config',
+    'mcp',
+    'plugin',
+    'plugins',
+    'debug',
+    'allowlist',
+    'approve',
+    'login',
+    'cron',
+    'node',
+    'nodes',
+    'crestodian',
+    'openclaw',
+    'restart',
+    'update',
+  ])('blocks the app-managed /%s command from Gateway delivery', name => {
+    expect(resolveSlashCommandBehavior(`/${name} full`)).toMatchObject({
+      name,
+      execution: 'blocked',
+    });
+  });
+
+  it('blocks managed commands written with colon syntax', () => {
+    expect(resolveSlashCommandBehavior('/update: now')).toMatchObject({
+      name: 'update',
+      argumentsText: 'now',
+      execution: 'blocked',
+    });
+  });
 });
 
 describe('parseGoalStartObjective', () => {

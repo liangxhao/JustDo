@@ -68,6 +68,10 @@ const CATEGORY_OVERRIDES: Readonly<Record<string, SlashCommandCategoryValue>> = 
   queue: SlashCommandCategory.Model,
 };
 
+const TIER_OVERRIDES: Readonly<Record<string, SlashCommandTierValue>> = {
+  compact: SlashCommandTier.Essential,
+};
+
 const LOCAL_COMMANDS = new Set([
   'help',
   'new',
@@ -115,8 +119,11 @@ const getArgOptions = (args: GatewayCommandArg[]): string[] | undefined => {
   return options.length > 0 ? options : undefined;
 };
 
-const mapCategory = (entry: GatewayCommandEntry): SlashCommandCategoryValue => {
-  const key = typeof entry.key === 'string' ? normalizeKey(entry.key) : '';
+const mapCategory = (
+  entry: GatewayCommandEntry,
+  commandKey: string,
+): SlashCommandCategoryValue => {
+  const key = normalizeKey(commandKey);
   const override = CATEGORY_OVERRIDES[key];
   if (override) return override;
 
@@ -130,14 +137,17 @@ const mapCategory = (entry: GatewayCommandEntry): SlashCommandCategoryValue => {
   }
 };
 
-const mapTier = (entry: GatewayCommandEntry): SlashCommandTierValue => {
+const mapTier = (
+  entry: GatewayCommandEntry,
+  commandKey: string,
+): SlashCommandTierValue => {
   switch (entry.tier) {
     case SlashCommandTier.Essential:
     case SlashCommandTier.Standard:
     case SlashCommandTier.Power:
       return entry.tier;
     default:
-      return SlashCommandTier.Standard;
+      return TIER_OVERRIDES[commandKey] ?? SlashCommandTier.Standard;
   }
 };
 
@@ -151,11 +161,14 @@ export const mapGatewaySlashCommand = (entry: GatewayCommandEntry): SlashCommand
   if (!name) return null;
 
   const args = Array.isArray(entry.args) ? (entry.args as GatewayCommandArg[]) : [];
+  // commands.list in OpenClaw v2026.9.2 no longer exposes the registry key or
+  // tier. Text command names are canonical for this surface, so use the
+  // normalized primary name when older gateways do not provide a key.
   const key = typeof entry.key === 'string' && entry.key.trim() ? entry.key.trim() : name;
   const normalizedAliases = aliases.map(normalizeAlias).filter(alias => alias && alias !== name);
-  // OpenClaw v2026.6.11 advertises /compact instructions even though its
-  // sessions.compact RPC cannot forward them. Hide that misleading hint while
-  // JustDo uses the RPC path. Re-check this override when upgrading OpenClaw.
+  // OpenClaw v2026.9.2 still advertises /compact instructions even though its
+  // sessions.compact RPC accepts only key, agentId, and maxLines. Keep ignoring
+  // the text argument silently while JustDo uses the RPC path.
   const exposeArgs = key !== 'compact';
 
   return {
@@ -164,10 +177,10 @@ export const mapGatewaySlashCommand = (entry: GatewayCommandEntry): SlashCommand
     ...(normalizedAliases.length > 0 ? { aliases: normalizedAliases } : {}),
     description: typeof entry.description === 'string' ? entry.description : '',
     args: exposeArgs ? formatArgs(args) : undefined,
-    category: mapCategory(entry),
+    category: mapCategory(entry, key),
     executeLocal: LOCAL_COMMANDS.has(key),
     argOptions: exposeArgs ? getArgOptions(args) : undefined,
-    tier: mapTier(entry),
+    tier: mapTier(entry, key),
   };
 };
 
@@ -190,6 +203,7 @@ export class SlashCommandService {
       'commands.list',
       {
         ...(options.agentId ? { agentId: options.agentId } : {}),
+        ...(options.sessionKey ? { sessionKey: options.sessionKey } : {}),
         includeArgs: true,
         scope: 'text',
       },

@@ -13,7 +13,7 @@ import { applyAppearanceConfig } from '@/app/appearance';
 import { defaultConfig, getProviderDisplayName } from '@/app/config';
 import BottomRightStatusStack from '@/app/shell/BottomRightStatusStack';
 import Sidebar from '@/app/shell/Sidebar';
-import Toast from '@/app/shell/Toast';
+import Toast, { type ToastContent } from '@/app/shell/Toast';
 import WindowTitleBar from '@/app/shell/window/WindowTitleBar';
 import { agentService } from '@/features/agents/agentService';
 import {
@@ -67,7 +67,7 @@ const App: React.FC = () => {
   );
   const [isInitialized, setIsInitialized] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toast, setToast] = useState<ToastContent | null>(null);
   const [updateToast, setUpdateToast] = useState<AppUpdateToastState>(null);
   const [, forceLanguageRefresh] = useState(0);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
@@ -449,15 +449,16 @@ const App: React.FC = () => {
     });
   }, [mainView, currentSessionId, requestCoworkNavigation]);
 
-  const showToast = useCallback((message: string) => {
-    setToastMessage(message);
+  const showToast = useCallback((content: string | ToastContent) => {
+    const nextToast = typeof content === 'string' ? { message: content } : content;
+    setToast(nextToast);
     if (toastTimerRef.current) {
       window.clearTimeout(toastTimerRef.current);
     }
     toastTimerRef.current = window.setTimeout(() => {
-      setToastMessage(null);
+      setToast(null);
       toastTimerRef.current = null;
-    }, 2200);
+    }, nextToast.duration ?? 2600);
   }, []);
 
   const handleDownloadAppUpdate = useCallback(async () => {
@@ -622,8 +623,8 @@ const App: React.FC = () => {
   // Listen for toast events from child components
   useEffect(() => {
     const handler = (e: Event) => {
-      const message = (e as CustomEvent<string>).detail;
-      if (message) showToast(message);
+      const detail = (e as CustomEvent<string | ToastContent>).detail;
+      if (typeof detail === 'string' ? detail : detail?.message) showToast(detail);
     };
     window.addEventListener('app:showToast', handler);
     return () => window.removeEventListener('app:showToast', handler);
@@ -784,7 +785,7 @@ const App: React.FC = () => {
           />
         )}
       </BottomRightStatusStack>
-      {toastMessage && <Toast message={toastMessage} onClose={() => setToastMessage(null)} />}
+      {toast && <Toast {...toast} onClose={() => setToast(null)} />}
       <div className="flex flex-1 min-h-0 overflow-hidden">
         {showSettings ? (
           <div className="flex-1 min-w-0 p-1.5">

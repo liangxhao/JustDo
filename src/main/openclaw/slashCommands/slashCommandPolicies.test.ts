@@ -29,4 +29,13 @@ describe('justDoSlashCommandPolicy', () => {
       }),
     ).toBe(false);
   });
+
+  test.each(['dashboard', 'openclaw', 'update'])('hides /%s from the composer', name => {
+    expect(
+      justDoSlashCommandPolicy.include?.(createCommand(name), {
+        options: {},
+        source: {},
+      }),
+    ).toBe(false);
+  });
 });

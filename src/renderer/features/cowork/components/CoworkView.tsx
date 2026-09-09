@@ -1430,6 +1430,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                       showModelSelector={true}
                       sessionId={currentSession.id}
                       modelAgentId={currentSession.agentId}
+                      slashCommandSessionKey={currentGatewaySessionKey ?? undefined}
                       sessionModelRef={currentSession.modelRef}
                       contextUsage={contextUsage}
                       initialGoalObjective={initialGoalObjective}

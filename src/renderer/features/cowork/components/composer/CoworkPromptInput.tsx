@@ -21,6 +21,7 @@ import { useDispatch, useSelector } from 'react-redux';
 
 import { resolveAgentModelSelection } from '@/features/cowork/components/composer/agentModelSelection';
 import AttachmentCard from '@/features/cowork/components/composer/AttachmentCard';
+import { rejectBlockedSlashCommand } from '@/features/cowork/components/composer/blockedSlashCommand';
 import { syncDefaultModelSelectionState } from '@/features/cowork/components/composer/defaultModelSelectionState';
 import FolderSelectorPopover from '@/features/cowork/components/composer/FolderSelectorPopover';
 import { LatestSerialTaskQueue } from '@/features/cowork/components/composer/latestSerialTaskQueue';
@@ -206,6 +207,8 @@ interface CoworkPromptInputProps {
   sessionId?: string;
   /** Agent that owns the session. Defaults to the agent selected on the home screen. */
   modelAgentId?: string;
+  /** Native Gateway session key used to resolve session-scoped commands and skills. */
+  slashCommandSessionKey?: string;
   /** Last Gateway-confirmed model for this session. */
   sessionModelRef?: string;
   /** Context-window usage from chat.history/sessions.changed for this session. */
@@ -254,6 +257,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       showModelSelector = false,
       sessionId,
       modelAgentId,
+      slashCommandSessionKey,
       sessionModelRef,
       contextUsage = null,
       initialGoalObjective = null,
@@ -610,7 +614,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         const seq = ++slashCommandRefreshSeqRef.current;
         slashCommandRefreshPendingRef.current = true;
         void window.electron.slashCommands
-          .list({ agentId: currentAgentId })
+          .list({
+            agentId: effectiveAgentId,
+            ...(slashCommandSessionKey ? { sessionKey: slashCommandSessionKey } : {}),
+          })
           .then(result => {
             if (seq !== slashCommandRefreshSeqRef.current) return;
             if (!result.success || !result.commands?.length) return;
@@ -626,7 +633,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             }
           });
       },
-      [currentAgentId, slashMenuExpanded, updateSlashMenu],
+      [effectiveAgentId, slashCommandSessionKey, slashMenuExpanded, updateSlashMenu],
     );
 
     const commitValue = useCallback(
@@ -729,6 +736,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
     const handleSubmit = useCallback(
       async (promptOverride?: string) => {
+        const promptValue = promptOverride ?? value;
+        const trimmedValue = promptValue.trim();
+        if (rejectBlockedSlashCommand(trimmedValue)) return;
+
         if (showFolderSelector && !workingDirectory?.trim()) {
           setShowFolderRequiredWarning(true);
           if (warningTimerRef.current) clearTimeout(warningTimerRef.current);
@@ -739,8 +750,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           return;
         }
 
-        const promptValue = promptOverride ?? value;
-        const trimmedValue = promptValue.trim();
         const submissionContext = modelSelectionContextRef.current;
         const submittedCompletionFeedback = completionFeedbackRef.current;
         const submissionIsCurrent = () =>

@@ -5744,8 +5744,13 @@ test.each([
   '/exec gateway full off',
   '/elevated full',
   '/config set tools.exec.mode full',
+  '/config: set tools.exec.mode full',
   '/cron list',
   '/nodes',
+  '/openclaw repair',
+  '/plugin list',
+  '/restart',
+  '/update',
 ])('does not send the app-managed command %s to Gateway', async message => {
   const request = vi.fn();
   const controller = new ChatController();
@@ -5753,7 +5758,7 @@ test.each([
   controller.state.connected = true;
   controller.state.sessionKey = 'agent:main:justdo:session-1';
 
-  await expect(controller.sendMessage(message)).rejects.toThrow('managed by the application');
+  await expect(controller.sendMessage(message)).rejects.toThrow('managed by the app');
 
   expect(request).not.toHaveBeenCalled();
   expect(controller.state.chatMessages).toEqual([]);
