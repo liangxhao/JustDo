@@ -50,7 +50,7 @@ isolated/user/extension三模式已实现。User模式有Chrome/remote debugging
 
 自定义provider、模型发现/capability/default、qualified model ref和session patch。内置模型启动/手工refresh已实现；login/logout lifecycle已有但完整认证handler/UI尚未接入。
 
-Memory 支持 overview/document/search/rebuild；内置 `runtime-services` 提供 embedding provider，手动 rebuild 以一次性 no-cache 语义重新计算向量。Usage 支持 7/14/30 日 Gateway 聚合/cache 状态。设置还包括 Agent runtime、proxy、system prompt replacement、外观/主题、快捷键、自动启动、防休眠、更新和日志导出。
+Memory 已从设置迁为侧边栏顶部的轻量入口，不占用主导航；支持用户画像、长期/每日记忆、整理日志的 overview/document 展示，并通过 Gateway `memory.search` 搜索；内置 `runtime-services` 提供 embedding provider，手动 rebuild 以一次性 no-cache 语义重新计算向量。Usage 支持 7/14/30 日 Gateway 聚合/cache 状态。设置还包括 Agent runtime、proxy、system prompt replacement、外观/主题、快捷键、自动启动、防休眠、更新和日志导出。
 
 ### 2.9 Packaging
 

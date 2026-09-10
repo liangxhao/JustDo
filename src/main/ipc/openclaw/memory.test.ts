@@ -31,10 +31,11 @@ afterEach(() => {
 });
 
 describe('scanMemoryDocuments', () => {
-  it('groups long-term, daily, and dreaming Markdown without including unrelated files', () => {
+  it('groups profile, long-term, daily, and dreaming Markdown without including unrelated files', () => {
     const workspace = createTemporaryDirectory();
     fs.mkdirSync(path.join(workspace, 'memory', 'dreaming', 'deep'), { recursive: true });
     fs.writeFileSync(path.join(workspace, 'MEMORY.md'), '# Durable facts\n\n- Prefer TypeScript.');
+    fs.writeFileSync(path.join(workspace, 'USER.md'), '# User profile\n\n- Prefers concise replies.');
     fs.writeFileSync(
       path.join(workspace, 'memory', '2026-07-19-project.md'),
       '# Project update\n\nThe release is ready.',
@@ -49,6 +50,7 @@ describe('scanMemoryDocuments', () => {
 
     expect(documents.map(document => [document.relativePath, document.kind])).toEqual(
       expect.arrayContaining([
+        ['USER.md', 'profile'],
         ['MEMORY.md', 'longTerm'],
         ['memory/2026-07-19-project.md', 'daily'],
         ['memory/dreaming/deep/2026-07-19.md', 'dreaming'],
@@ -65,7 +67,7 @@ describe('scanMemoryDocuments', () => {
 });
 
 describe('resolveMemoryWorkspace', () => {
-  it('prefers the main agent workspace over the default workspace', () => {
+  it('prefers the keyed main agent workspace over legacy and default workspaces', () => {
     const root = createTemporaryDirectory();
     const configPath = path.join(root, 'openclaw.json');
     const mainWorkspace = path.join(root, 'main-workspace');
@@ -74,7 +76,8 @@ describe('resolveMemoryWorkspace', () => {
       JSON.stringify({
         agents: {
           defaults: { workspace: path.join(root, 'default-workspace') },
-          list: [{ id: 'main', workspace: mainWorkspace }],
+          entries: { main: { workspace: mainWorkspace } },
+          list: [{ id: 'main', workspace: path.join(root, 'legacy-workspace') }],
         },
       }),
     );

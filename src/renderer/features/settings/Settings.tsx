@@ -1,7 +1,6 @@
 import {
   ArrowLeftIcon,
   ArrowPathIcon,
-  BookOpenIcon,
   ChartBarIcon,
   CheckCircleIcon,
   Cog6ToothIcon,
@@ -64,7 +63,6 @@ import {
 } from '@/app/config';
 import { APP_NAME } from '@/app/constants/app';
 import WindowTitleBar from '@/app/shell/window/WindowTitleBar';
-import MemoryView from '@/features/memory/MemoryView';
 import {
   BUILTIN_MODELS_UPDATED_EVENT,
   getEnabledProviderModels,
@@ -113,7 +111,6 @@ type TabType =
   | 'model'
   | 'runtime'
   | 'browser'
-  | 'memory'
   | 'im'
   | 'shortcuts'
   | 'help';
@@ -1947,11 +1944,6 @@ const Settings: React.FC<SettingsProps> = ({
       icon: <CpuChipIcon className="h-5 w-5" />,
     },
     {
-      key: 'memory',
-      label: i18nService.t('memoryTitle'),
-      icon: <BookOpenIcon className="h-5 w-5" />,
-    },
-    {
       key: 'browser',
       label: i18nService.t('browserSettings'),
       icon: <GlobeAltIcon className="h-5 w-5" />,
@@ -2894,65 +2886,57 @@ const Settings: React.FC<SettingsProps> = ({
             </div>
           )}
 
-          {activeTab === 'memory' ? (
-            <div className="min-h-0 flex-1 overflow-hidden">
-              <MemoryView />
+          <form onSubmit={handleSubmit} className="flex flex-col flex-1 overflow-hidden">
+            {/* Tab content */}
+            <div
+              ref={contentRef}
+              className="flex-1 overflow-y-auto px-6 py-5"
+              style={{ scrollbarGutter: 'stable' }}
+            >
+              <div className={`mx-auto w-full ${activeTabContentWidth}`}>{renderTabContent()}</div>
             </div>
-          ) : (
-            <form onSubmit={handleSubmit} className="flex flex-col flex-1 overflow-hidden">
-              {/* Tab content */}
-              <div
-                ref={contentRef}
-                className="flex-1 overflow-y-auto px-6 py-5"
-                style={{ scrollbarGutter: 'stable' }}
-              >
-                <div className={`mx-auto w-full ${activeTabContentWidth}`}>
-                  {renderTabContent()}
-                </div>
-              </div>
 
-              {/* Footer buttons */}
-              <div className="flex shrink-0 justify-end gap-2 border-t border-border-subtle px-5 py-3">
-                <button
-                  type="button"
-                  onClick={handleCloseSettings}
-                  className="h-9 rounded-xl border border-border bg-background px-4 text-sm font-medium text-secondary shadow-sm transition-all hover:bg-surface-raised hover:text-foreground active:scale-[0.98]"
-                >
-                  {i18nService.t('cancel')}
-                </button>
-                <button
-                  type="submit"
-                  aria-busy={isSaving}
-                  disabled={
-                    isSaving ||
-                    (activeTab === 'runtime' &&
-                      (agentRuntimeSettingsLoading || !initialAgentRuntimeSettings))
-                  }
-                  className={`inline-flex h-9 min-w-[88px] items-center justify-center gap-1.5 rounded-xl px-5 text-sm font-medium text-white shadow-sm transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 ${
-                    saveSucceeded
-                      ? 'bg-green-600 hover:bg-green-600'
-                      : 'bg-primary hover:bg-primary-hover hover:shadow-card'
-                  }`}
-                >
-                  <span className="inline-flex items-center gap-1.5" aria-live="polite">
-                    {isSaving ? (
-                      <>
-                        <ArrowPathIcon className="h-4 w-4 animate-spin" aria-hidden="true" />
-                        {i18nService.t('saving')}
-                      </>
-                    ) : saveSucceeded ? (
-                      <>
-                        <CheckCircleIcon className="h-4 w-4 animate-scale-in" aria-hidden="true" />
-                        {i18nService.t('settingsSaved')}
-                      </>
-                    ) : (
-                      i18nService.t('save')
-                    )}
-                  </span>
-                </button>
-              </div>
-            </form>
-          )}
+            {/* Footer buttons */}
+            <div className="flex shrink-0 justify-end gap-2 border-t border-border-subtle px-5 py-3">
+              <button
+                type="button"
+                onClick={handleCloseSettings}
+                className="h-9 rounded-xl border border-border bg-background px-4 text-sm font-medium text-secondary shadow-sm transition-all hover:bg-surface-raised hover:text-foreground active:scale-[0.98]"
+              >
+                {i18nService.t('cancel')}
+              </button>
+              <button
+                type="submit"
+                aria-busy={isSaving}
+                disabled={
+                  isSaving ||
+                  (activeTab === 'runtime' &&
+                    (agentRuntimeSettingsLoading || !initialAgentRuntimeSettings))
+                }
+                className={`inline-flex h-9 min-w-[88px] items-center justify-center gap-1.5 rounded-xl px-5 text-sm font-medium text-white shadow-sm transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 ${
+                  saveSucceeded
+                    ? 'bg-green-600 hover:bg-green-600'
+                    : 'bg-primary hover:bg-primary-hover hover:shadow-card'
+                }`}
+              >
+                <span className="inline-flex items-center gap-1.5" aria-live="polite">
+                  {isSaving ? (
+                    <>
+                      <ArrowPathIcon className="h-4 w-4 animate-spin" aria-hidden="true" />
+                      {i18nService.t('saving')}
+                    </>
+                  ) : saveSucceeded ? (
+                    <>
+                      <CheckCircleIcon className="h-4 w-4 animate-scale-in" aria-hidden="true" />
+                      {i18nService.t('settingsSaved')}
+                    </>
+                  ) : (
+                    i18nService.t('save')
+                  )}
+                </span>
+              </button>
+            </div>
+          </form>
         </div>
 
         {isTestResultModalOpen && testResult && (

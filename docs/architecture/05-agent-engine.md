@@ -175,7 +175,7 @@ Exec 和 plugin approval API 分开，pending list 在连接后恢复。session 
 ## 16. 网络环境
 
 Manager 通过 `OutboundHeaderProxy.buildGatewayEnvironment` 为 Gateway child 构造环境，并允许
-需要远端模型访问的 OpenClaw one-shot CLI 显式 opt-in 同一环境。当前 memory search/index CLI
+需要远端模型访问的 OpenClaw one-shot CLI 显式 opt-in 同一环境。当前 memory index CLI
 会 opt-in，使独立 CLI 发出的 embedding 请求也经过 URL 白名单和 Header 注入；status 等纯本地
 命令保持继承环境。CLI 复用当前 capability，不触发 Gateway capability rotation。系统/custom/direct
 proxy 变化会更新 bypass，其中动态加入当前 Gateway loopback 端口，避免本地 RPC 被送到上游代理。

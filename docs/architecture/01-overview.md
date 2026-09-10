@@ -58,7 +58,7 @@ Plugins 页面统一呈现 Skill、MCP server、Hook、Extension 和 Marketplace
 
 定时任务 UI 映射到 OpenClaw 原生 `cron.*` API。Agent-turn 任务固定分配给隔离的 `justdo-scheduler` agent；任务定义和 run history 的权威是 Gateway。JustDo 额外把已观察到的 run 写入本地结果收件箱，提供未读、分页、删除和 session 跳转。
 
-Memory 页面通过 Gateway 管理的 memory API 展示长期、每日、dream/dreaming 文档和索引状态。Usage 页面按 7/14/30 日聚合 token 使用。附件与本地文件预览通过 Main 授权读取；编辑使用短期 token，不允许 Renderer 任意写路径。
+Memory 是独立工作区，不属于设置，也不占用主导航位置；入口与侧边栏顶部的搜索按钮并列。它通过 Gateway `memory.search` 和 Main 的受限文件投影展示 `USER.md` 用户画像、`MEMORY.md` 长期记忆、每日记忆、dream/dreaming 审阅文档和索引状态。Usage 页面按 7/14/30 日聚合 token 使用。附件与本地文件预览通过 Main 授权读取；编辑使用短期 token，不允许 Renderer 任意写路径。
 
 ## 5. 高层架构
 

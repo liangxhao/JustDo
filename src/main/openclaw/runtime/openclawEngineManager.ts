@@ -1278,7 +1278,7 @@ export class OpenClawEngineManager extends EventEmitter {
       `process.stderr.write('[openclaw-launcher] argv=' + JSON.stringify(process.argv) + '\\n');\n` +
       `process.stderr.write('[openclaw-launcher] node=' + process.versions.node + '\\n');\n` +
       `// Only the long-running gateway command needs an explicit event-loop handle.\n` +
-      `// One-shot CLI commands (for example memory search/index/status) must be\n` +
+      `// One-shot CLI commands (for example memory index/status) must be\n` +
       `// allowed to exit after their asynchronous work completes.\n` +
       OPENCLAW_LAUNCHER_KEEP_ALIVE_SOURCE +
       `const t0 = Date.now();\n` +

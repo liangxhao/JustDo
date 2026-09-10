@@ -5,7 +5,7 @@ export const MemoryIpc = {
   RebuildIndex: 'openclaw:memory:rebuildIndex',
 } as const;
 
-export type MemoryDocumentKind = 'longTerm' | 'daily' | 'dream' | 'dreaming';
+export type MemoryDocumentKind = 'profile' | 'longTerm' | 'daily' | 'dream' | 'dreaming';
 
 export interface MemoryDocumentSummary {
   id: string;
@@ -26,6 +26,7 @@ export interface MemoryDocument extends MemoryDocumentSummary {
 
 export interface MemoryDocumentCounts {
   total: number;
+  profile: number;
   longTerm: number;
   daily: number;
   dream: number;

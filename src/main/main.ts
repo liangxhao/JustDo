@@ -44,7 +44,10 @@ import { createTray, destroyTray, updateTrayMenu } from './core/trayManager';
 import { enableSystemCaForCurrentProcess } from './core/trustedCertificates';
 import { BuiltinModelLifecycle } from './cowork/builtinModelLifecycle';
 import { BuiltinModelAccess, syncBuiltinModelProvider } from './cowork/builtinModelProvider';
-import { BUILTIN_MODEL_PROVIDER_CONFIG, getBuiltinModelProviderApiKey } from './cowork/builtinModelProviderConfig';
+import {
+  BUILTIN_MODEL_PROVIDER_CONFIG,
+  getBuiltinModelProviderApiKey,
+} from './cowork/builtinModelProviderConfig';
 import {
   resolveAllEnabledProviderConfigs,
   resolveRawApiConfig,
@@ -865,7 +868,11 @@ if (!gotTheLock) {
   registerOpenClawUsageHandlers({ getRuntime: getOpenClawRuntimeAdapter });
   registerOpenClawWorkboardHandlers({ getRuntime: getOpenClawRuntimeAdapter });
   registerOpenClawApprovalHandlers({ getRuntime: getOpenClawRuntimeAdapter });
-  registerOpenClawMemoryHandlers({ getManager: getOpenClawEngineManager });
+  registerOpenClawMemoryHandlers({
+    getManager: getOpenClawEngineManager,
+    requestGateway: <T>(method: string, params?: unknown) =>
+      getCoworkEngineService().requestGateway<T>(method, params),
+  });
   registerOpenClawModelHandlers({ getRuntime: getOpenClawRuntimeAdapter });
 
   registerSlashCommandHandlers({

@@ -37,6 +37,7 @@ import {
 } from '@/features/cowork/coworkSelectors';
 import { coworkService } from '@/features/cowork/coworkService';
 import type { CoworkInteractionResult } from '@/features/cowork/coworkTypes';
+import MemoryView from '@/features/memory/MemoryView';
 import {
   BUILTIN_MODELS_UPDATED_EVENT,
   getEnabledProviderModels,
@@ -62,9 +63,9 @@ import { RootState, store } from '@/store';
 const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [settingsOptions, setSettingsOptions] = useState<SettingsOpenOptions>({});
-  const [mainView, setMainView] = useState<'cowork' | 'scheduledTasks' | 'workboard' | 'plugins'>(
-    'cowork',
-  );
+  const [mainView, setMainView] = useState<
+    'cowork' | 'scheduledTasks' | 'workboard' | 'memory' | 'plugins'
+  >('cowork');
   const [isInitialized, setIsInitialized] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastContent | null>(null);
@@ -428,6 +429,10 @@ const App: React.FC = () => {
 
   const handleShowPlugins = useCallback(async () => {
     await runGuardedFilePreviewNavigation(requestCoworkNavigation, () => setMainView('plugins'));
+  }, [requestCoworkNavigation]);
+
+  const handleShowMemory = useCallback(async () => {
+    await runGuardedFilePreviewNavigation(requestCoworkNavigation, () => setMainView('memory'));
   }, [requestCoworkNavigation]);
 
   const handleToggleSidebar = useCallback(() => {
@@ -807,6 +812,7 @@ const App: React.FC = () => {
               onShowScheduledTasks={handleShowScheduledTasks}
               onShowWorkboard={handleShowWorkboard}
               showWorkboard={workboardEnabled}
+              onShowMemory={handleShowMemory}
               onShowPlugins={handleShowPlugins}
               onNewChat={handleNewChat}
               onBeforeCoworkNavigation={requestCoworkNavigation}
@@ -830,6 +836,12 @@ const App: React.FC = () => {
                   />
                 ) : mainView === 'plugins' ? (
                   <PluginsView
+                    isSidebarCollapsed={isSidebarCollapsed}
+                    onToggleSidebar={handleToggleSidebar}
+                    onNewChat={handleNewChat}
+                  />
+                ) : mainView === 'memory' ? (
+                  <MemoryView
                     isSidebarCollapsed={isSidebarCollapsed}
                     onToggleSidebar={handleToggleSidebar}
                     onNewChat={handleNewChat}

@@ -1,4 +1,5 @@
 import {
+  BookOpenIcon,
   CommandLineIcon,
   ExclamationTriangleIcon,
   Squares2X2Icon,
@@ -28,11 +29,12 @@ import TrashIcon from '@/shared/components/icons/TrashIcon';
 
 interface SidebarProps {
   onShowSettings: () => void;
-  activeView: 'cowork' | 'scheduledTasks' | 'workboard' | 'plugins';
+  activeView: 'cowork' | 'scheduledTasks' | 'workboard' | 'memory' | 'plugins';
   onShowCowork: () => void;
   onShowScheduledTasks: () => void;
   onShowWorkboard: () => void;
   showWorkboard: boolean;
+  onShowMemory: () => void;
   onShowPlugins: () => void;
   onNewChat: () => void;
   onBeforeCoworkNavigation: () => Promise<boolean>;
@@ -48,6 +50,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   onShowScheduledTasks,
   onShowWorkboard,
   showWorkboard,
+  onShowMemory,
   onShowPlugins,
   onNewChat,
   onBeforeCoworkNavigation,
@@ -261,6 +264,22 @@ const Sidebar: React.FC<SidebarProps> = ({
               aria-label={i18nService.t('search')}
             >
               <SearchIcon className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setIsSearchOpen(false);
+                onShowMemory();
+              }}
+              className={`non-draggable inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
+                activeView === 'memory'
+                  ? 'bg-primary/10 text-primary'
+                  : 'text-secondary hover:bg-surface-raised hover:text-foreground'
+              }`}
+              aria-label={i18nService.t('memoryTitle')}
+              title={i18nService.t('memoryTitle')}
+            >
+              <BookOpenIcon className="h-4 w-4" />
             </button>
           </div>
           <div className="flex items-center gap-1">

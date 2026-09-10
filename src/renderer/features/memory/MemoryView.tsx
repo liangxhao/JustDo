@@ -8,6 +8,7 @@ import {
   DocumentTextIcon,
   ExclamationTriangleIcon,
   FolderOpenIcon,
+  LightBulbIcon,
   MagnifyingGlassIcon,
   SparklesIcon,
   XMarkIcon,
@@ -21,14 +22,17 @@ import type {
 } from '@shared/openclaw/memory';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
+import WindowTitleBar from '@/app/shell/window/WindowTitleBar';
 import { toSanitizedMarkdownHtml } from '@/libs/openclaw-chat/components/markdown';
 import { i18nService } from '@/services/i18n';
+import ComposeIcon from '@/shared/components/icons/ComposeIcon';
+import SidebarToggleIcon from '@/shared/components/icons/SidebarToggleIcon';
 
 type MemoryTab = 'overview' | 'search' | 'timeline' | 'files';
 
 const MEMORY_TABS: MemoryTab[] = ['overview', 'search', 'timeline', 'files'];
 
-const kindOrder: MemoryDocumentKind[] = ['longTerm', 'daily', 'dream', 'dreaming'];
+const kindOrder: MemoryDocumentKind[] = ['profile', 'longTerm', 'daily', 'dream', 'dreaming'];
 
 const formatBytes = (bytes: number): string => {
   if (bytes < 1024) return `${bytes} B`;
@@ -36,7 +40,17 @@ const formatBytes = (bytes: number): string => {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 };
 
-const MemoryView: React.FC = () => {
+interface MemoryViewProps {
+  isSidebarCollapsed: boolean;
+  onToggleSidebar: () => void;
+  onNewChat: () => void;
+}
+
+const MemoryView: React.FC<MemoryViewProps> = ({
+  isSidebarCollapsed,
+  onToggleSidebar,
+  onNewChat,
+}) => {
   const [activeTab, setActiveTab] = useState<MemoryTab>('overview');
   const [overview, setOverview] = useState<MemoryOverview | null>(null);
   const [loading, setLoading] = useState(true);
@@ -51,6 +65,7 @@ const MemoryView: React.FC = () => {
   const [rebuilding, setRebuilding] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const locale = i18nService.getLanguage() === 'zh' ? 'zh-CN' : 'en-US';
+  const isMac = window.electron.platform === 'darwin';
 
   const loadOverview = useCallback(async () => {
     setLoading(true);
@@ -92,10 +107,9 @@ const MemoryView: React.FC = () => {
     }
   }, []);
 
-  const handleSearch = async (event?: React.FormEvent) => {
-    event?.preventDefault();
-    const normalizedQuery = query.trim();
+  const searchMemory = async (normalizedQuery: string) => {
     if (!normalizedQuery || searching || rebuilding) return;
+    setActiveTab('search');
     setSearching(true);
     setHasSearched(true);
     setSearchError(null);
@@ -117,6 +131,16 @@ const MemoryView: React.FC = () => {
     } finally {
       setSearching(false);
     }
+  };
+
+  const handleSearch = (event: React.FormEvent) => {
+    event.preventDefault();
+    void searchMemory(query.trim());
+  };
+
+  const handleSuggestedSearch = (suggestion: string) => {
+    setQuery(suggestion);
+    void searchMemory(suggestion);
   };
 
   const handleRebuild = async () => {
@@ -149,6 +173,7 @@ const MemoryView: React.FC = () => {
   };
 
   const kindLabels: Record<MemoryDocumentKind, string> = {
+    profile: i18nService.t('memoryKindProfile'),
     longTerm: i18nService.t('memoryKindLongTerm'),
     daily: i18nService.t('memoryKindDaily'),
     dream: i18nService.t('memoryKindDream'),
@@ -171,13 +196,16 @@ const MemoryView: React.FC = () => {
     [locale],
   );
 
+  const profileMemory = overview?.documents.find(document => document.kind === 'profile');
   const longTermMemory = overview?.documents.find(document => document.kind === 'longTerm');
   const recentDocuments =
-    overview?.documents.filter(document => document.kind !== 'longTerm').slice(0, 5) || [];
+    overview?.documents
+      .filter(document => document.kind !== 'profile' && document.kind !== 'longTerm')
+      .slice(0, 5) || [];
   const timelineGroups = useMemo(() => {
     const groups = new Map<string, MemoryDocumentSummary[]>();
     for (const document of overview?.documents || []) {
-      if (document.kind === 'longTerm') continue;
+      if (document.kind === 'profile' || document.kind === 'longTerm') continue;
       const sourceDate = document.date
         ? new Date(`${document.date}T00:00:00`)
         : new Date(document.modifiedAt);
@@ -278,6 +306,42 @@ const MemoryView: React.FC = () => {
       : i18nService.t('memoryIndexUnavailable');
     return (
       <div className="space-y-5">
+        <section className="overflow-hidden rounded-2xl border border-primary/15 bg-gradient-to-br from-primary/[0.09] via-surface to-amber-500/[0.06] p-5 shadow-sm">
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary text-white shadow-sm">
+              <LightBulbIcon className="h-5 w-5" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-base font-semibold text-foreground">
+                {i18nService.t('memoryHowItWorksTitle')}
+              </h2>
+              <p className="mt-1 max-w-3xl text-xs leading-5 text-secondary">
+                {i18nService.t('memoryHowItWorksDescription')}
+              </p>
+            </div>
+          </div>
+          <div className="mt-5 grid gap-2.5 md:grid-cols-3">
+            {[
+              ['01', 'memoryFlowCaptureTitle', 'memoryFlowCaptureDescription'],
+              ['02', 'memoryFlowConsolidateTitle', 'memoryFlowConsolidateDescription'],
+              ['03', 'memoryFlowRecallTitle', 'memoryFlowRecallDescription'],
+            ].map(([number, titleKey, descriptionKey]) => (
+              <div
+                key={number}
+                className="rounded-xl border border-border/80 bg-background/70 px-4 py-3 backdrop-blur-sm"
+              >
+                <div className="text-[10px] font-bold tracking-[0.16em] text-primary">{number}</div>
+                <h3 className="mt-1 text-sm font-semibold text-foreground">
+                  {i18nService.t(titleKey)}
+                </h3>
+                <p className="mt-1 text-[11px] leading-4 text-secondary">
+                  {i18nService.t(descriptionKey)}
+                </p>
+              </div>
+            ))}
+          </div>
+        </section>
+
         <section className="grid grid-cols-2 gap-2.5 md:grid-cols-5">
           {stats.map(stat => (
             <div
@@ -328,7 +392,24 @@ const MemoryView: React.FC = () => {
           </div>
         </section>
 
-        <section>
+        <section className="grid gap-4 lg:grid-cols-2">
+          <div>
+            <div className="mb-3">
+              <h2 className="text-base font-semibold text-foreground">
+                {i18nService.t('memoryProfileTitle')}
+              </h2>
+              <p className="mt-0.5 text-xs text-secondary">
+                {i18nService.t('memoryProfileDescription')}
+              </p>
+            </div>
+            {profileMemory
+              ? documentCard(profileMemory)
+              : renderEmpty(
+                  i18nService.t('memoryProfileEmpty'),
+                  i18nService.t('memoryProfileEmptyDescription'),
+                  true,
+                )}
+          </div>
           <div>
             <div className="mb-3 flex items-center justify-between">
               <div>
@@ -384,35 +465,18 @@ const MemoryView: React.FC = () => {
 
   const renderSearch = () => (
     <div className="mx-auto max-w-4xl">
-      <div className="rounded-2xl border border-border bg-surface p-5 shadow-sm">
-        <div className="flex items-center gap-2 text-primary">
-          <SparklesIcon className="h-5 w-5" />
+      <div className="flex items-start gap-3">
+        <SparklesIcon className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
+        <div>
           <h2 className="text-sm font-semibold text-foreground">
-            {i18nService.t('memorySemanticSearchTitle')}
+            {hasSearched
+              ? i18nService.t('memorySearchResultsTitle')
+              : i18nService.t('memorySemanticSearchTitle')}
           </h2>
+          <p className="mt-1 text-xs leading-5 text-secondary">
+            {i18nService.t('memorySemanticSearchDescription')}
+          </p>
         </div>
-        <p className="mt-1 text-xs leading-5 text-secondary">
-          {i18nService.t('memorySemanticSearchDescription')}
-        </p>
-        <form onSubmit={handleSearch} className="mt-4 flex gap-2">
-          <div className="relative min-w-0 flex-1">
-            <MagnifyingGlassIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
-            <input
-              value={query}
-              onChange={event => setQuery(event.target.value)}
-              placeholder={i18nService.t('memorySearchPlaceholder')}
-              className="h-10 w-full rounded-xl border border-border bg-background pl-9 pr-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted focus:border-primary focus:ring-2 focus:ring-primary/15"
-            />
-          </div>
-          <button
-            type="submit"
-            disabled={!query.trim() || searching || rebuilding}
-            className="inline-flex h-10 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-medium text-white transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {searching && <ArrowPathIcon className="h-4 w-4 animate-spin" />}
-            {i18nService.t('memorySearchAction')}
-          </button>
-        </form>
       </div>
 
       <div className="mt-5 space-y-3">
@@ -447,6 +511,13 @@ const MemoryView: React.FC = () => {
             </p>
           </button>
         ))}
+        {searching &&
+          [0, 1, 2].map(item => (
+            <div
+              key={item}
+              className="h-28 animate-pulse rounded-2xl border border-border bg-surface"
+            />
+          ))}
         {hasSearched &&
           !searching &&
           !searchError &&
@@ -465,7 +536,7 @@ const MemoryView: React.FC = () => {
               <button
                 key={key}
                 type="button"
-                onClick={() => setQuery(i18nService.t(key))}
+                onClick={() => handleSuggestedSearch(i18nService.t(key))}
                 className="rounded-xl border border-border bg-surface/60 px-4 py-4 text-left text-xs text-secondary transition-colors hover:border-primary/30 hover:bg-surface"
               >
                 <MagnifyingGlassIcon className="mb-2 h-4 w-4 text-primary" />
@@ -548,79 +619,144 @@ const MemoryView: React.FC = () => {
 
   return (
     <div className="relative flex h-full min-h-0 flex-col">
-      <header className="shrink-0 border-b border-border bg-gradient-to-b from-primary/[0.05] to-transparent px-6 pb-0 pt-2">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <p className="pt-2 text-xs text-secondary">{i18nService.t('memoryDescription')}</p>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => void loadOverview()}
-              disabled={loading || rebuilding || searching}
-              className="inline-flex h-9 items-center gap-2 rounded-xl border border-border bg-surface px-3 text-xs font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:opacity-50"
-            >
-              <ArrowPathIcon className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-              {i18nService.t('memoryRefresh')}
-            </button>
-            <button
-              type="button"
-              onClick={() => void handleRebuild()}
-              disabled={loading || rebuilding || searching}
-              className="inline-flex h-9 items-center gap-2 rounded-xl bg-primary px-3.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <CircleStackIcon className={`h-4 w-4 ${rebuilding ? 'animate-pulse' : ''}`} />
-              {rebuilding ? i18nService.t('memoryRebuilding') : i18nService.t('memoryRebuild')}
-            </button>
-          </div>
+      <div className="draggable relative flex h-12 shrink-0 items-center justify-between border-b border-border px-4">
+        <div className="flex h-8 items-center">
+          {isSidebarCollapsed && (
+            <div className={`non-draggable flex items-center gap-1 ${isMac ? 'pl-[68px]' : ''}`}>
+              <button
+                type="button"
+                onClick={onToggleSidebar}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised"
+                aria-label={i18nService.t('expand')}
+              >
+                <SidebarToggleIcon className="h-4 w-4" isCollapsed />
+              </button>
+              <button
+                type="button"
+                onClick={onNewChat}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised"
+                aria-label={i18nService.t('newChat')}
+              >
+                <ComposeIcon className="h-4 w-4" />
+              </button>
+            </div>
+          )}
         </div>
-        <nav className="mt-5 flex gap-5" aria-label={i18nService.t('memoryTitle')}>
-          {MEMORY_TABS.map(tab => (
+        <WindowTitleBar inline />
+      </div>
+
+      <header className="shrink-0 border-b border-border bg-gradient-to-br from-primary/[0.08] via-background to-amber-500/[0.04] px-6 pb-0 pt-5">
+        <div className="mx-auto max-w-6xl">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                  <BookOpenIcon className="h-5 w-5" />
+                </div>
+                <div>
+                  <h1 className="text-xl font-semibold tracking-tight text-foreground">
+                    {i18nService.t('memoryTitle')}
+                  </h1>
+                  <p className="mt-0.5 text-xs text-secondary">
+                    {i18nService.t('memoryDescription')}
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void loadOverview()}
+                disabled={loading || rebuilding || searching}
+                className="inline-flex h-9 items-center gap-2 rounded-xl border border-border bg-surface px-3 text-xs font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:opacity-50"
+              >
+                <ArrowPathIcon className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+                {i18nService.t('memoryRefresh')}
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleRebuild()}
+                disabled={loading || rebuilding || searching}
+                className="inline-flex h-9 items-center gap-2 rounded-xl border border-border bg-surface px-3.5 text-xs font-medium text-secondary transition-colors hover:border-primary/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <CircleStackIcon className={`h-4 w-4 ${rebuilding ? 'animate-pulse' : ''}`} />
+                {rebuilding ? i18nService.t('memoryRebuilding') : i18nService.t('memoryRebuild')}
+              </button>
+            </div>
+          </div>
+
+          <form onSubmit={handleSearch} className="mt-5 flex max-w-3xl gap-2">
+            <label className="relative min-w-0 flex-1">
+              <MagnifyingGlassIcon className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+              <input
+                value={query}
+                onChange={event => setQuery(event.target.value)}
+                placeholder={i18nService.t('memorySearchPlaceholder')}
+                className="h-11 w-full rounded-xl border border-border bg-surface/90 pl-10 pr-3 text-sm text-foreground shadow-sm outline-none transition-all placeholder:text-muted focus:border-primary focus:ring-2 focus:ring-primary/15"
+              />
+            </label>
             <button
-              key={tab}
-              type="button"
-              onClick={() => setActiveTab(tab)}
-              className={`border-b-2 pb-3 text-sm font-medium transition-colors ${
-                activeTab === tab
-                  ? 'border-primary text-primary'
-                  : 'border-transparent text-secondary hover:text-foreground'
-              }`}
+              type="submit"
+              disabled={!query.trim() || searching || rebuilding}
+              className="inline-flex h-11 items-center gap-2 rounded-xl bg-foreground px-5 text-sm font-semibold text-background shadow-sm transition-all hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              {tabLabels[tab]}
+              {searching && <ArrowPathIcon className="h-4 w-4 animate-spin" />}
+              {i18nService.t('memorySearchAction')}
             </button>
-          ))}
-        </nav>
+          </form>
+
+          <nav className="mt-5 flex gap-1" aria-label={i18nService.t('memoryTitle')}>
+            {MEMORY_TABS.map(tab => (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => setActiveTab(tab)}
+                className={`rounded-t-lg border-b-2 px-3 pb-3 pt-2 text-sm font-medium transition-colors ${
+                  activeTab === tab
+                    ? 'border-primary bg-background/70 text-primary'
+                    : 'border-transparent text-secondary hover:bg-background/40 hover:text-foreground'
+                }`}
+              >
+                {tabLabels[tab]}
+              </button>
+            ))}
+          </nav>
+        </div>
       </header>
 
       <main className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
-        {notice && (
-          <div className="mb-4 flex items-center gap-2 rounded-xl border border-emerald-500/25 bg-emerald-500/5 px-4 py-3 text-xs text-emerald-600 dark:text-emerald-400">
-            <CheckCircleIcon className="h-4 w-4" />
-            {notice}
-          </div>
-        )}
-        {error && (
-          <div className="mb-4 flex items-start gap-2 rounded-xl border border-danger/30 bg-danger/5 px-4 py-3 text-xs text-danger">
-            <ExclamationTriangleIcon className="mt-0.5 h-4 w-4 shrink-0" />
-            <span className="min-w-0 break-words">{error}</span>
-          </div>
-        )}
-        {loading && !overview ? (
-          <div className="grid grid-cols-2 gap-2.5 md:grid-cols-5">
-            {[0, 1, 2, 3, 4].map(item => (
-              <div
-                key={item}
-                className="h-[53px] animate-pulse rounded-xl border border-border bg-surface"
-              />
-            ))}
-          </div>
-        ) : activeTab === 'overview' ? (
-          renderOverview()
-        ) : activeTab === 'search' ? (
-          renderSearch()
-        ) : activeTab === 'timeline' ? (
-          renderTimeline()
-        ) : (
-          renderFiles()
-        )}
+        <div className="mx-auto max-w-6xl">
+          {notice && (
+            <div className="mb-4 flex items-center gap-2 rounded-xl border border-emerald-500/25 bg-emerald-500/5 px-4 py-3 text-xs text-emerald-600 dark:text-emerald-400">
+              <CheckCircleIcon className="h-4 w-4" />
+              {notice}
+            </div>
+          )}
+          {error && (
+            <div className="mb-4 flex items-start gap-2 rounded-xl border border-danger/30 bg-danger/5 px-4 py-3 text-xs text-danger">
+              <ExclamationTriangleIcon className="mt-0.5 h-4 w-4 shrink-0" />
+              <span className="min-w-0 break-words">{error}</span>
+            </div>
+          )}
+          {loading && !overview ? (
+            <div className="grid grid-cols-2 gap-2.5 md:grid-cols-5">
+              {[0, 1, 2, 3, 4].map(item => (
+                <div
+                  key={item}
+                  className="h-[53px] animate-pulse rounded-xl border border-border bg-surface"
+                />
+              ))}
+            </div>
+          ) : activeTab === 'overview' ? (
+            renderOverview()
+          ) : activeTab === 'search' ? (
+            renderSearch()
+          ) : activeTab === 'timeline' ? (
+            renderTimeline()
+          ) : (
+            renderFiles()
+          )}
+        </div>
       </main>
 
       {documentLoading && !selectedDocument && (

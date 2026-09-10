@@ -29,11 +29,11 @@ const MAX_PREVIEW_BYTES = 64 * 1024;
 const MAX_DOCUMENT_BYTES = 2 * 1024 * 1024;
 const MAX_COMMAND_OUTPUT_CHARS = 2 * 1024 * 1024;
 const STATUS_TIMEOUT_MS = 30_000;
-const SEARCH_TIMEOUT_MS = 60_000;
 const REBUILD_TIMEOUT_MS = 15 * 60_000;
 
 interface MemoryHandlerDependencies {
   getManager: () => OpenClawEngineManager;
+  requestGateway: <T>(method: string, params?: unknown) => Promise<T>;
 }
 
 interface CommandResult {
@@ -46,6 +46,7 @@ interface CommandResult {
 type OpenClawConfig = {
   agents?: {
     defaults?: { workspace?: unknown };
+    entries?: Record<string, { workspace?: unknown }>;
     list?: Array<{ id?: unknown; workspace?: unknown }>;
   };
 };
@@ -63,7 +64,9 @@ const readJsonFile = <T>(filePath: string): T | null => {
 
 export const resolveMemoryWorkspace = (manager: OpenClawEngineManager): string => {
   const config = readJsonFile<OpenClawConfig>(manager.getConfigPath());
-  const agent = config?.agents?.list?.find(item => item.id === MEMORY_AGENT_ID);
+  const agent =
+    config?.agents?.entries?.[MEMORY_AGENT_ID] ??
+    config?.agents?.list?.find(item => item.id === MEMORY_AGENT_ID);
   const configured =
     typeof agent?.workspace === 'string'
       ? agent.workspace.trim()
@@ -108,6 +111,7 @@ const extractPreview = (content: string): string => {
 
 const classifyMemoryDocument = (relativePath: string): { kind: MemoryDocumentKind; date?: string } => {
   const normalized = relativePath.replace(/\\/g, '/');
+  if (/^USER\.md$/i.test(normalized)) return { kind: 'profile' };
   if (/^MEMORY\.md$/i.test(normalized)) return { kind: 'longTerm' };
   if (/^DREAMS\.md$/i.test(normalized)) return { kind: 'dream' };
   if (/^memory\/dreaming\//i.test(normalized)) return { kind: 'dreaming' };
@@ -116,7 +120,7 @@ const classifyMemoryDocument = (relativePath: string): { kind: MemoryDocumentKin
 };
 
 const isTopLevelMemoryFile = (fileName: string): boolean =>
-  /^MEMORY\.md$/i.test(fileName) || /^DREAMS\.md$/i.test(fileName);
+  /^USER\.md$/i.test(fileName) || /^MEMORY\.md$/i.test(fileName) || /^DREAMS\.md$/i.test(fileName);
 
 const isAllowedMemoryRelativePath = (relativePath: string): boolean =>
   isTopLevelMemoryFile(relativePath) ||
@@ -172,7 +176,7 @@ const summarizeMemoryFile = (
 
 export const scanMemoryDocuments = (workspaceDir: string): MemoryDocumentSummary[] => {
   const filePaths: string[] = [];
-  for (const fileName of ['MEMORY.md', 'DREAMS.md', 'dreams.md']) {
+  for (const fileName of ['USER.md', 'MEMORY.md', 'DREAMS.md', 'dreams.md']) {
     const filePath = path.join(workspaceDir, fileName);
     try {
       if (fs.statSync(filePath).isFile() && !fs.lstatSync(filePath).isSymbolicLink()) {
@@ -200,6 +204,8 @@ export const scanMemoryDocuments = (workspaceDir: string): MemoryDocumentSummary
       return summary ? [summary] : [];
     })
     .sort((left, right) => {
+      if (left.kind === 'profile' && right.kind !== 'profile') return -1;
+      if (right.kind === 'profile' && left.kind !== 'profile') return 1;
       if (left.kind === 'longTerm' && right.kind !== 'longTerm') return -1;
       if (right.kind === 'longTerm' && left.kind !== 'longTerm') return 1;
       return right.modifiedAt - left.modifiedAt;
@@ -208,6 +214,7 @@ export const scanMemoryDocuments = (workspaceDir: string): MemoryDocumentSummary
 
 const countDocuments = (documents: MemoryDocumentSummary[]): MemoryDocumentCounts => ({
   total: documents.length,
+  profile: documents.filter(document => document.kind === 'profile').length,
   longTerm: documents.filter(document => document.kind === 'longTerm').length,
   daily: documents.filter(document => document.kind === 'daily').length,
   dream: documents.filter(document => document.kind === 'dream').length,
@@ -402,6 +409,7 @@ export const normalizeSearchHits = (value: unknown, workspaceDir: string): Memor
 
 export const registerOpenClawMemoryHandlers = ({
   getManager,
+  requestGateway,
 }: MemoryHandlerDependencies): void => {
   let rebuildPromise: Promise<MemoryRebuildResult> | null = null;
 
@@ -449,25 +457,12 @@ export const registerOpenClawMemoryHandlers = ({
     try {
       const manager = getManager();
       const workspaceDir = resolveMemoryWorkspace(manager);
-      const cli = await buildMemoryCliEnvironment(manager);
-      const result = await runOpenClawCommand(
-        cli,
-        [
-          'memory',
-          'search',
-          '--query',
-          normalizedQuery,
-          '--agent',
-          MEMORY_AGENT_ID,
-          '--max-results',
-          '20',
-          '--json',
-        ],
-        SEARCH_TIMEOUT_MS,
-        workspaceDir,
-      );
-      if (result.exitCode !== 0) return { success: false, error: sanitizeCommandError(result) };
-      return { success: true, hits: normalizeSearchHits(JSON.parse(result.stdout), workspaceDir) };
+      const result = await requestGateway<unknown>('memory.search', {
+        query: normalizedQuery,
+        agentId: MEMORY_AGENT_ID,
+        maxResults: 20,
+      });
+      return { success: true, hits: normalizeSearchHits(result, workspaceDir) };
     } catch (error) {
       return {
         success: false,

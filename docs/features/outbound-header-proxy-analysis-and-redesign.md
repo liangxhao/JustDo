@@ -5,7 +5,7 @@
 ## 1. 功能目的
 
 OpenClaw Gateway、其支持的 tool 子进程，以及显式 opt-in 的 OpenClaw one-shot CLI 访问指定
-远端 URL 时，JustDo 可以注入一组共享校验 Header。当前 memory search/index CLI 会 opt-in，
+远端 URL 时，JustDo 可以注入一组共享校验 Header。当前 memory index CLI 会 opt-in，搜索使用 Gateway RPC，
 使查询和重建索引产生的 embedding 请求与 Gateway 请求使用同一 URL policy。典型用途是让远端
 服务识别来自本地 Agent 环境的授权请求。
 
@@ -71,8 +71,8 @@ sequenceDiagram
 
 策略未启用或白名单为空时 `start()` 返回 null。启用时代理绑定 loopback 随机端口，在用户数据目录创建 CA，并为当前 generation 生成 32 字节随机 base64url capability。新 CA 的 Subject 带有由公钥标识派生的唯一后缀，不再复用 `http-mitm-proxy` 默认的固定 `CN=NodeMITMProxyCA`；否则 Windows 系统证书库中残留的同名旧 CA 可能被 OpenSSL 选为错误签发者，导致 `CERT_SIGNATURE_FAILURE`。启动 preflight 会验证 CA 自签名、CA 与缓存站点证书有效期、公私钥和签发关系，发现旧固定 Subject、不完整文件、尚未生效或过期的证书、密钥不匹配或跨 CA 叶子证书时，只清理应用生成的 `certs/`、`keys/` 后重建，不修改系统证书库。Gateway proxy URL 使用 Basic auth 携带 capability。
 
-环境只传给 Gateway/后代和显式 opt-in CLI，不写回 Main `process.env`。当前 memory search/index
-opt-in，memory status 保持普通继承环境。CA bundle 通过 Node、Python 等常见环境变量进入受支持
+环境只传给 Gateway/后代和显式 opt-in CLI，不写回 Main `process.env`。Memory search 走 Gateway
+原生 RPC，memory index CLI 显式 opt-in，memory status 保持普通继承环境。CA bundle 通过 Node、Python 等常见环境变量进入受支持
 客户端；OpenClaw embedding provider 由 `runtime-services` 让 guarded fetch 使用 eligible
 env proxy。未配置代理、命中 `NO_PROXY` 或未命中 Header URL 白名单时，分别保持直连、bypass 或
 不注入业务 Header。
@@ -212,7 +212,7 @@ Gateway 到本地代理是第一跳；本地代理到目标或企业代理是第
 - TLS：候选 MITM、非候选 raw tunnel、authority mismatch、CA trust；
 - concurrency：同 origin 首次 3/100 并发、不同 origin、慢请求与 stop；
 - upstream：direct、固定 HTTP/HTTPS proxy、NO_PROXY 冲突、代理失败；
-- scope：Main fetch 与 Renderer 不被注入，Gateway 子进程及 memory search/index CLI 被注入；
+- scope：Main fetch 与 Renderer 不被注入，Gateway 子进程及 memory index CLI 被注入；
 - clients：Node fetch/https、curl、bundled Python、OpenClaw network tool；
 - secrets：日志和错误不含 Header 值、密码、capability。
 

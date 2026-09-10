@@ -124,7 +124,8 @@ Gateway token 属于敏感能力。Preload 当前提供受控读取，Renderer c
 ### 5.2 History、Memory、Usage
 
 - History handler 读取 Gateway state/session，并按 session 范围返回工具输入、compaction detail 和分页 history。
-- Memory handler 通过 manager 定位受管 state，限制相对路径并返回结构化结果。
+- Memory handler 按 keyed `agents.entries.main` 定位受管工作区，限制相对路径；搜索委托 Gateway
+  原生 `memory.search`，索引状态与手动强制重建继续使用受管 CLI。
 - Usage 通过 runtime 请求并 normalize 每日数据和 cache 状态，Renderer 不解析任意 Gateway payload。
 
 ### 5.3 Approvals

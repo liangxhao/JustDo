@@ -55,7 +55,7 @@ UI显示 ask/auto/full与审批modal，实际 policy由 Main config sync并通�
 
 ### 4.4 Plugins/cron/memory
 
-Skills状态来自 Gateway，MCP/Hook配置来自 Main stores并同步，Extension安装来自 CLI/registry，cron定义/run来自 Gateway，result unread来自 SQLite，memory来自 Gateway state/API。页面只是这些权威的投影。
+Skills状态来自 Gateway，MCP/Hook配置来自 Main stores并同步，Extension安装来自 CLI/registry，cron定义/run来自 Gateway，result unread来自 SQLite。Memory 是主导航中的工作区：搜索来自 Gateway `memory.search`，可读文档与索引状态来自 Main 的受限投影。页面只是这些权威的投影。
 
 ## 5. 典型边界案例
 
