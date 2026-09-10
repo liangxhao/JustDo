@@ -25,6 +25,7 @@ const resolveConfiguredProxy = async (requestUrl: string): Promise<string | null
 export const MainProcessOutboundHeaderSource = {
   RendererFetch: 'renderer-fetch',
   SessionTitle: 'session-title',
+  McpProbe: 'mcp-probe',
 } as const;
 
 export type MainProcessOutboundHeaderSource =
@@ -147,4 +148,18 @@ export const mainProcessTitleFetch = async (
     MainProcessOutboundHeaderSource.SessionTitle,
   );
   return mainProcessFetch(requestUrl, { ...init, headers });
+};
+
+/** MCP probe fetch with outbound-header policy support and streaming responses. */
+export const mainProcessMcpProbeFetch = async (
+  requestUrl: string | URL,
+  init?: RequestInit,
+): Promise<Response> => {
+  const normalizedUrl = requestUrl.toString();
+  const headers = applyMainProcessOutboundHeaderPolicy(
+    normalizedUrl,
+    init?.headers,
+    MainProcessOutboundHeaderSource.McpProbe,
+  );
+  return globalThis.fetch(requestUrl, { ...init, headers, redirect: 'error' });
 };

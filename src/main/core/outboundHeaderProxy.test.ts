@@ -11,6 +11,7 @@ import { afterEach, expect, test, vi } from 'vitest';
 import {
   applyMainProcessOutboundHeaderPolicy,
   mainProcessFetch,
+  mainProcessMcpProbeFetch,
   MainProcessOutboundHeaderSource,
   mainProcessTitleFetch,
 } from './mainProcessFetch';
@@ -183,6 +184,49 @@ test('injects configured headers only for a whitelisted Main title request', asy
     const { setFixedProxyUrl } = await import('./systemProxy');
     setFixedProxyUrl(null);
     await new Promise<void>(resolve => proxyServer.close(() => resolve()));
+  }
+});
+
+test('injects configured headers into a whitelisted MCP probe fetch', async () => {
+  const userInfoPath = writeUserInfo(JSON.stringify({ 'X-User-Account': 'user-456' }));
+  const configPath = writePolicyConfig({
+    overwrite: false,
+    enabled: true,
+    groups: [
+      {
+        baseUrlWhitelist: ['https://mcp.example/api/'],
+        headerNames: ['X-User-Account'],
+      },
+    ],
+  });
+  updateOutboundHeaderUserInfoCache(userInfoPath, undefined, configPath);
+  const injectionLogSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  const fetchSpy = vi
+    .spyOn(globalThis, 'fetch')
+    .mockResolvedValue(new Response(null, { status: 202 }));
+
+  try {
+    await mainProcessMcpProbeFetch(new URL('https://mcp.example/api/messages'), {
+      method: 'POST',
+      headers: { Authorization: 'Bearer server-token' },
+      redirect: 'follow',
+    });
+
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const [requestUrl, requestInit] = fetchSpy.mock.calls[0];
+    expect(requestUrl.toString()).toBe('https://mcp.example/api/messages');
+    expect(requestInit?.redirect).toBe('error');
+    const requestHeaders = new Headers(requestInit?.headers);
+    expect(requestHeaders.get('authorization')).toBe('Bearer server-token');
+    expect(requestHeaders.get('x-user-account')).toBe('user-456');
+    expect(injectionLogSpy).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /^\[MainProcessOutboundHeaderPolicy\] source=mcp-probe outbound header policy matched requestId=[0-9a-f-]+ origin=https:\/\/mcp\.example matched=true injectedHeaderCount=1$/,
+      ),
+    );
+  } finally {
+    fetchSpy.mockRestore();
+    injectionLogSpy.mockRestore();
   }
 });
 

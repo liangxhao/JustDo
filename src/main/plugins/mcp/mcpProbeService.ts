@@ -5,10 +5,11 @@ import {
   StdioClientTransport,
 } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
+import type { FetchLike, Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 
 import { applyDependencyManagerConfigEnv } from '../../core/dependencyManagerConfig';
+import { mainProcessMcpProbeFetch } from '../../core/mainProcessFetch';
 import type { McpServerRecord } from './mcpStore';
 
 const MCP_PROBE_TIMEOUT_MS = 8_000;
@@ -131,7 +132,7 @@ const listBestEffort = async <T>(
   return items;
 };
 
-const createTransport = (server: McpServerRecord): Transport => {
+const createTransport = (server: McpServerRecord, transportFetch?: FetchLike): Transport => {
   if (server.transportType === 'stdio') {
     if (!server.command) {
       throw new Error('stdio MCP server command is required');
@@ -158,14 +159,16 @@ const createTransport = (server: McpServerRecord): Transport => {
   if (server.transportType === 'sse') {
     return new SSEClientTransport(url, {
       eventSourceInit: {
-        fetch: (input, init) => fetch(input, { ...init, ...requestInit }),
+        fetch: transportFetch ?? fetch,
       },
       requestInit,
+      fetch: transportFetch,
     });
   }
 
   return new StreamableHTTPClientTransport(url, {
     requestInit,
+    fetch: transportFetch,
   });
 };
 
@@ -183,7 +186,7 @@ export const probeMcpServer = async (server: McpServerRecord): Promise<McpProbeR
   const client = new Client({ name: 'justdo-mcp-probe', version: '1.0.0' });
 
   try {
-    transport = createTransport(server);
+    transport = createTransport(server, mainProcessMcpProbeFetch);
     await withTimeout(client.connect(transport), MCP_PROBE_TIMEOUT_MS, 'MCP connection');
     await client.ping({ timeout: MCP_PROBE_REQUEST_TIMEOUT_MS });
 

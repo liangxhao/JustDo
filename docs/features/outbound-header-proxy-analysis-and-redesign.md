@@ -18,7 +18,7 @@ OpenClaw Gateway、其支持的 tool 子进程，以及显式 opt-in 的 OpenCla
 - Gateway 进程树及显式 opt-in CLI 之外的其他程序；
 - 不匹配 URL 白名单的请求 Header 注入。
 
-Main 中少量确需相同 Header 的确定性调用，应在调用点基于白名单显式注入，不得通过全局 `fetch` monkey patch。
+Main 中少量确需相同 Header 的确定性调用（当前包括模型测试、会话标题生成与 MCP“测试”探测）应在调用点基于白名单显式注入，不得通过全局 `fetch` monkey patch。MCP 探测只为 probe transport 注入，普通 resource 读取不因此扩大策略范围；probe fetch 拒绝自动重定向，避免已注入 Header 被带到未重新匹配白名单的目标。
 
 ## 2. 安全不变量
 
