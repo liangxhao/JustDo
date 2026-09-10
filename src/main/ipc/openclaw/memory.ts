@@ -10,6 +10,7 @@ import {
   type MemoryDocumentResult,
   type MemoryDocumentSummary,
   type MemoryIndexStatus,
+  type MemoryIndexStatusResult,
   MemoryIpc,
   type MemoryOverview,
   type MemoryOverviewResult,
@@ -350,14 +351,13 @@ export const buildMemoryRebuildCliEnvironment = async (
   manager: OpenClawEngineManager,
 ): Promise<OpenClawCliEnvironment> => buildMemoryCliEnvironment(manager);
 
-const buildOverview = async (manager: OpenClawEngineManager): Promise<MemoryOverview> => {
+const buildOverview = (manager: OpenClawEngineManager): MemoryOverview => {
   const workspaceDir = resolveMemoryWorkspace(manager);
   const documents = scanMemoryDocuments(workspaceDir);
-  const index = await loadIndexStatus(manager, workspaceDir);
   return {
     documents,
     counts: countDocuments(documents),
-    index,
+    index: { available: false, chunks: 0, dirty: false, loading: true },
     loadedAt: Date.now(),
   };
 };
@@ -415,11 +415,26 @@ export const registerOpenClawMemoryHandlers = ({
 
   ipcMain.handle(MemoryIpc.GetOverview, async (): Promise<MemoryOverviewResult> => {
     try {
-      return { success: true, overview: await buildOverview(getManager()) };
+      return { success: true, overview: buildOverview(getManager()) };
     } catch (error) {
       return {
         success: false,
         error: toPublicMemoryError(error, 'Failed to load memory overview'),
+      };
+    }
+  });
+
+  ipcMain.handle(MemoryIpc.GetIndexStatus, async (): Promise<MemoryIndexStatusResult> => {
+    try {
+      const manager = getManager();
+      return {
+        success: true,
+        index: await loadIndexStatus(manager, resolveMemoryWorkspace(manager)),
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: toPublicMemoryError(error, 'Failed to load memory index status'),
       };
     }
   });

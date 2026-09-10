@@ -10,6 +10,7 @@ import {
   FolderOpenIcon,
   LightBulbIcon,
   MagnifyingGlassIcon,
+  QuestionMarkCircleIcon,
   SparklesIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
@@ -20,7 +21,7 @@ import type {
   MemoryOverview,
   MemorySearchHit,
 } from '@shared/openclaw/memory';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import WindowTitleBar from '@/app/shell/window/WindowTitleBar';
 import { toSanitizedMarkdownHtml } from '@/libs/openclaw-chat/components/markdown';
@@ -64,8 +65,57 @@ const MemoryView: React.FC<MemoryViewProps> = ({
   const [hasSearched, setHasSearched] = useState(false);
   const [rebuilding, setRebuilding] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [showGuide, setShowGuide] = useState(false);
+  const indexRequestRef = useRef(0);
   const locale = i18nService.getLanguage() === 'zh' ? 'zh-CN' : 'en-US';
   const isMac = window.electron.platform === 'darwin';
+
+  const loadIndexStatus = useCallback(async () => {
+    const requestId = ++indexRequestRef.current;
+    setOverview(current =>
+      current ? { ...current, index: { ...current.index, loading: true } } : current,
+    );
+    try {
+      const result = await window.electron.openclaw.memory.getIndexStatus();
+      if (requestId !== indexRequestRef.current) return;
+      setOverview(current =>
+        current
+          ? {
+              ...current,
+              index:
+                result.success && result.index
+                  ? { ...result.index, loading: false }
+                  : {
+                      available: false,
+                      chunks: 0,
+                      dirty: false,
+                      loading: false,
+                      error: result.error,
+                    },
+            }
+          : current,
+      );
+    } catch (statusError) {
+      if (requestId !== indexRequestRef.current) return;
+      setOverview(current =>
+        current
+          ? {
+              ...current,
+              index: {
+                available: false,
+                chunks: 0,
+                dirty: false,
+                loading: false,
+                error:
+                  statusError instanceof Error
+                    ? statusError.message
+                    : i18nService.t('memoryIndexUnavailable'),
+              },
+            }
+          : current,
+      );
+    }
+  }, []);
 
   const loadOverview = useCallback(async () => {
     setLoading(true);
@@ -77,15 +127,19 @@ const MemoryView: React.FC<MemoryViewProps> = ({
         return;
       }
       setOverview(result.overview);
+      void loadIndexStatus();
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : i18nService.t('memoryLoadFailed'));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [loadIndexStatus]);
 
   useEffect(() => {
     void loadOverview();
+    return () => {
+      indexRequestRef.current += 1;
+    };
   }, [loadOverview]);
 
   const openDocument = useCallback(async (relativePath: string) => {
@@ -282,7 +336,7 @@ const MemoryView: React.FC<MemoryViewProps> = ({
       },
       {
         label: i18nService.t('memoryStatChunks'),
-        value: overview.index.chunks,
+        value: overview.index.loading ? '…' : overview.index.chunks,
         detail: i18nService.t('memoryStatChunksDetail'),
         icon: CircleStackIcon,
       },
@@ -299,48 +353,54 @@ const MemoryView: React.FC<MemoryViewProps> = ({
         icon: BookOpenIcon,
       },
     ];
-    const indexStatusDetail = overview.index.available
-      ? overview.index.dirty
-        ? i18nService.t('memoryIndexNeedsRefresh')
-        : i18nService.t('memoryIndexReady')
-      : i18nService.t('memoryIndexUnavailable');
+    const indexStatusDetail = overview.index.loading
+      ? i18nService.t('memoryIndexLoading')
+      : overview.index.available
+        ? overview.index.dirty
+          ? i18nService.t('memoryIndexNeedsRefresh')
+          : i18nService.t('memoryIndexReady')
+        : i18nService.t('memoryIndexUnavailable');
     return (
       <div className="space-y-5">
-        <section className="overflow-hidden rounded-2xl border border-primary/15 bg-gradient-to-br from-primary/[0.09] via-surface to-amber-500/[0.06] p-5 shadow-sm">
-          <div className="flex items-start gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary text-white shadow-sm">
-              <LightBulbIcon className="h-5 w-5" />
-            </div>
-            <div className="min-w-0">
-              <h2 className="text-base font-semibold text-foreground">
-                {i18nService.t('memoryHowItWorksTitle')}
-              </h2>
-              <p className="mt-1 max-w-3xl text-xs leading-5 text-secondary">
-                {i18nService.t('memoryHowItWorksDescription')}
-              </p>
-            </div>
-          </div>
-          <div className="mt-5 grid gap-2.5 md:grid-cols-3">
-            {[
-              ['01', 'memoryFlowCaptureTitle', 'memoryFlowCaptureDescription'],
-              ['02', 'memoryFlowConsolidateTitle', 'memoryFlowConsolidateDescription'],
-              ['03', 'memoryFlowRecallTitle', 'memoryFlowRecallDescription'],
-            ].map(([number, titleKey, descriptionKey]) => (
-              <div
-                key={number}
-                className="rounded-xl border border-border/80 bg-background/70 px-4 py-3 backdrop-blur-sm"
-              >
-                <div className="text-[10px] font-bold tracking-[0.16em] text-primary">{number}</div>
-                <h3 className="mt-1 text-sm font-semibold text-foreground">
-                  {i18nService.t(titleKey)}
-                </h3>
-                <p className="mt-1 text-[11px] leading-4 text-secondary">
-                  {i18nService.t(descriptionKey)}
+        {showGuide && (
+          <section className="overflow-hidden rounded-2xl border border-primary/15 bg-gradient-to-br from-primary/[0.09] via-surface to-amber-500/[0.06] p-5 shadow-sm">
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary text-white shadow-sm">
+                <LightBulbIcon className="h-5 w-5" />
+              </div>
+              <div className="min-w-0">
+                <h2 className="text-base font-semibold text-foreground">
+                  {i18nService.t('memoryHowItWorksTitle')}
+                </h2>
+                <p className="mt-1 max-w-3xl text-xs leading-5 text-secondary">
+                  {i18nService.t('memoryHowItWorksDescription')}
                 </p>
               </div>
-            ))}
-          </div>
-        </section>
+            </div>
+            <div className="mt-5 grid gap-2.5 md:grid-cols-3">
+              {[
+                ['01', 'memoryFlowCaptureTitle', 'memoryFlowCaptureDescription'],
+                ['02', 'memoryFlowConsolidateTitle', 'memoryFlowConsolidateDescription'],
+                ['03', 'memoryFlowRecallTitle', 'memoryFlowRecallDescription'],
+              ].map(([number, titleKey, descriptionKey]) => (
+                <div
+                  key={number}
+                  className="rounded-xl border border-border/80 bg-background/70 px-4 py-3 backdrop-blur-sm"
+                >
+                  <div className="text-[10px] font-bold tracking-[0.16em] text-primary">
+                    {number}
+                  </div>
+                  <h3 className="mt-1 text-sm font-semibold text-foreground">
+                    {i18nService.t(titleKey)}
+                  </h3>
+                  <p className="mt-1 text-[11px] leading-4 text-secondary">
+                    {i18nService.t(descriptionKey)}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         <section className="grid grid-cols-2 gap-2.5 md:grid-cols-5">
           {stats.map(stat => (
@@ -367,12 +427,16 @@ const MemoryView: React.FC<MemoryViewProps> = ({
           <div className="flex min-w-0 items-center gap-3 rounded-xl border border-border bg-surface px-3 py-2.5 shadow-sm">
             <div
               className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
-                overview.index.available
-                  ? 'bg-emerald-500/10 text-emerald-500'
-                  : 'bg-amber-500/10 text-amber-500'
+                overview.index.loading
+                  ? 'bg-primary/10 text-primary'
+                  : overview.index.available
+                    ? 'bg-emerald-500/10 text-emerald-500'
+                    : 'bg-amber-500/10 text-amber-500'
               }`}
             >
-              {overview.index.available ? (
+              {overview.index.loading ? (
+                <ArrowPathIcon className="h-4 w-4 animate-spin" />
+              ) : overview.index.available ? (
                 <CheckCircleIcon className="h-4 w-4" />
               ) : (
                 <ExclamationTriangleIcon className="h-4 w-4" />
@@ -667,7 +731,7 @@ const MemoryView: React.FC<MemoryViewProps> = ({
               <button
                 type="button"
                 onClick={() => void loadOverview()}
-                disabled={loading || rebuilding || searching}
+                disabled={loading || overview?.index.loading || rebuilding || searching}
                 className="inline-flex h-9 items-center gap-2 rounded-xl border border-border bg-surface px-3 text-xs font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:opacity-50"
               >
                 <ArrowPathIcon className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
@@ -676,7 +740,7 @@ const MemoryView: React.FC<MemoryViewProps> = ({
               <button
                 type="button"
                 onClick={() => void handleRebuild()}
-                disabled={loading || rebuilding || searching}
+                disabled={loading || overview?.index.loading || rebuilding || searching}
                 className="inline-flex h-9 items-center gap-2 rounded-xl border border-border bg-surface px-3.5 text-xs font-medium text-secondary transition-colors hover:border-primary/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <CircleStackIcon className={`h-4 w-4 ${rebuilding ? 'animate-pulse' : ''}`} />
@@ -720,6 +784,23 @@ const MemoryView: React.FC<MemoryViewProps> = ({
                 {tabLabels[tab]}
               </button>
             ))}
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('overview');
+                setShowGuide(value => !value);
+              }}
+              className={`ml-auto mb-2 inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
+                showGuide
+                  ? 'bg-primary/10 text-primary'
+                  : 'text-secondary hover:bg-background/60 hover:text-foreground'
+              }`}
+              aria-label={i18nService.t('memoryHowItWorksTitle')}
+              aria-expanded={showGuide}
+              title={i18nService.t('memoryHowItWorksTitle')}
+            >
+              <QuestionMarkCircleIcon className="h-[18px] w-[18px]" />
+            </button>
           </nav>
         </div>
       </header>

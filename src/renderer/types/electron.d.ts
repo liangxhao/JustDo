@@ -316,6 +316,7 @@ interface HookEntryIPC {
 import type { GatewayPortSetErrorCode } from '@shared/openclaw/gatewayPort';
 import type {
   MemoryDocumentResult,
+  MemoryIndexStatusResult,
   MemoryOverviewResult,
   MemoryRebuildResult,
   MemorySearchResult,
@@ -591,6 +592,7 @@ interface IElectronAPI {
     };
     memory: {
       getOverview: () => Promise<MemoryOverviewResult>;
+      getIndexStatus: () => Promise<MemoryIndexStatusResult>;
       getDocument: (relativePath: string) => Promise<MemoryDocumentResult>;
       search: (query: string) => Promise<MemorySearchResult>;
       rebuildIndex: () => Promise<MemoryRebuildResult>;

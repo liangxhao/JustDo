@@ -328,6 +328,7 @@ contextBridge.exposeInMainWorld('electron', {
     },
     memory: {
       getOverview: () => ipcRenderer.invoke(MemoryIpc.GetOverview),
+      getIndexStatus: () => ipcRenderer.invoke(MemoryIpc.GetIndexStatus),
       getDocument: (relativePath: string) =>
         ipcRenderer.invoke(MemoryIpc.GetDocument, relativePath),
       search: (query: string) => ipcRenderer.invoke(MemoryIpc.Search, query),

@@ -1,5 +1,6 @@
 export const MemoryIpc = {
   GetOverview: 'openclaw:memory:getOverview',
+  GetIndexStatus: 'openclaw:memory:getIndexStatus',
   GetDocument: 'openclaw:memory:getDocument',
   Search: 'openclaw:memory:search',
   RebuildIndex: 'openclaw:memory:rebuildIndex',
@@ -37,6 +38,7 @@ export interface MemoryIndexStatus {
   available: boolean;
   chunks: number;
   dirty: boolean;
+  loading?: boolean;
   error?: string;
 }
 
@@ -58,6 +60,12 @@ export interface MemorySearchHit {
 export interface MemoryOverviewResult {
   success: boolean;
   overview?: MemoryOverview;
+  error?: string;
+}
+
+export interface MemoryIndexStatusResult {
+  success: boolean;
+  index?: MemoryIndexStatus;
   error?: string;
 }
 

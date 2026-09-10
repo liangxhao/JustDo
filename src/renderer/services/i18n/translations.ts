@@ -58,6 +58,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     memoryLongTermEmpty: '尚未形成长期记忆',
     memoryLongTermEmptyDescription: '重要的每日记忆经过提炼后，会沉淀到 MEMORY.md。',
     memoryIndexHealth: '索引状态',
+    memoryIndexLoading: '正在后台检查索引，不影响浏览',
     memoryIndexReady: '索引已就绪，可以进行语义搜索',
     memoryIndexNeedsRefresh: '文件发生变化，建议重建索引',
     memoryIndexUnavailable: '索引状态暂时不可用',
@@ -1821,6 +1822,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     memoryLongTermEmptyDescription:
       'Important daily memories can be distilled into MEMORY.md over time.',
     memoryIndexHealth: 'Index status',
+    memoryIndexLoading: 'Checking the index in the background; browsing is ready',
     memoryIndexReady: 'The index is ready for semantic search',
     memoryIndexNeedsRefresh: 'Files have changed; rebuilding is recommended',
     memoryIndexUnavailable: 'Index status is temporarily unavailable',
