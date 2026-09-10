@@ -37,6 +37,12 @@ const LOCAL_PROXY_USERNAME = 'openclaw';
 
 export type OutboundHeaderProxyConfig = {
   enabled: boolean;
+  groups: readonly OutboundHeaderProxyGroup[];
+  baseUrlWhitelist: readonly string[];
+  headerNames: readonly string[];
+};
+
+export type OutboundHeaderProxyGroup = {
   baseUrlWhitelist: readonly string[];
   headerNames: readonly string[];
 };
@@ -47,10 +53,31 @@ export type OutboundHeaderProxyInfo = {
   caBundlePath: string;
 };
 
+const isLoopbackHostname = (hostname: string): boolean => {
+  const normalized = hostname
+    .replace(/^\[|\]$/g, '')
+    .replace(/\.$/, '')
+    .toLowerCase();
+  const mappedIpv4 = normalized.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  const isMappedIpv4Loopback = !!mappedIpv4 && Number.parseInt(mappedIpv4[1], 16) >> 8 === 127;
+  return (
+    normalized === 'localhost' ||
+    normalized.endsWith('.localhost') ||
+    normalized === '::1' ||
+    normalized === '0.0.0.0' ||
+    /^127(?:\.\d{1,3}){3}$/.test(normalized) ||
+    /^::ffff:127(?:\.\d{1,3}){3}$/.test(normalized) ||
+    isMappedIpv4Loopback
+  );
+};
+
 const normalizeBaseUrl = (value: string): string | null => {
   try {
     const url = new URL(value.trim());
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    if (
+      (url.protocol !== 'http:' && url.protocol !== 'https:') ||
+      isLoopbackHostname(url.hostname)
+    ) {
       return null;
     }
     return url.toString();
@@ -59,17 +86,36 @@ const normalizeBaseUrl = (value: string): string | null => {
   }
 };
 
+const dedupeHeaderNames = (headerNames: readonly string[]): string[] => {
+  const seen = new Set<string>();
+  return headerNames.filter(headerName => {
+    const normalized = headerName.toLowerCase();
+    if (seen.has(normalized)) return false;
+    seen.add(normalized);
+    return true;
+  });
+};
+
 export const resolveOutboundHeaderProxyConfig = (
-  policy: OutboundHeaderProxyConfig = getOutboundHeaderPolicyConfig(),
-): OutboundHeaderProxyConfig => ({
-  enabled: policy.enabled,
-  headerNames: policy.headerNames
-    .map(name => name.trim())
-    .filter(name => HTTP_HEADER_NAME_PATTERN.test(name)),
-  baseUrlWhitelist: policy.baseUrlWhitelist
-    .map(normalizeBaseUrl)
-    .filter((value): value is string => value !== null),
-});
+  policy: Pick<OutboundHeaderProxyConfig, 'enabled' | 'groups'> = getOutboundHeaderPolicyConfig(),
+): OutboundHeaderProxyConfig => {
+  const groups = policy.groups.map(group => ({
+    headerNames: dedupeHeaderNames(
+      group.headerNames
+        .map(name => name.trim())
+        .filter(name => HTTP_HEADER_NAME_PATTERN.test(name)),
+    ),
+    baseUrlWhitelist: group.baseUrlWhitelist
+      .map(normalizeBaseUrl)
+      .filter((value): value is string => value !== null),
+  }));
+  return {
+    enabled: policy.enabled,
+    groups,
+    headerNames: dedupeHeaderNames(groups.flatMap(group => group.headerNames)),
+    baseUrlWhitelist: Array.from(new Set(groups.flatMap(group => group.baseUrlWhitelist))),
+  };
+};
 
 export const shouldInjectOutboundHeaders = (
   requestUrl: string,
@@ -81,6 +127,9 @@ export const shouldInjectOutboundHeaders = (
 
   try {
     const request = new URL(requestUrl);
+    if (isLoopbackHostname(request.hostname)) {
+      return false;
+    }
     return baseUrlWhitelist.some(baseUrl => {
       const base = new URL(baseUrl);
       return (
@@ -99,6 +148,18 @@ export const shouldApplyOutboundHeadersForRequest = (
   config: OutboundHeaderProxyConfig,
   requestUrl: string,
 ): boolean => config.enabled && shouldInjectOutboundHeaders(requestUrl, config.baseUrlWhitelist);
+
+export const resolveOutboundHeaderNamesForRequest = (
+  config: OutboundHeaderProxyConfig,
+  requestUrl: string,
+): readonly string[] => {
+  if (!config.enabled) return [];
+  return dedupeHeaderNames(
+    config.groups.flatMap(group =>
+      shouldInjectOutboundHeaders(requestUrl, group.baseUrlWhitelist) ? group.headerNames : [],
+    ),
+  );
+};
 
 export const isOutboundHeaderProxyActive = (config: OutboundHeaderProxyConfig): boolean =>
   config.enabled && config.baseUrlWhitelist.length > 0;
@@ -383,41 +444,27 @@ const parseConnectAuthority = (authority: string | undefined): ConnectAuthority 
   }
 };
 
-const isLoopbackHostname = (hostname: string): boolean => {
-  const normalized = hostname
-    .replace(/^\[|\]$/g, '')
-    .replace(/\.$/, '')
-    .toLowerCase();
-  const mappedIpv4 = normalized.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
-  const isMappedIpv4Loopback = !!mappedIpv4 && Number.parseInt(mappedIpv4[1], 16) >> 8 === 127;
-  return (
-    normalized === 'localhost' ||
-    normalized.endsWith('.localhost') ||
-    normalized === '::1' ||
-    normalized === '0.0.0.0' ||
-    /^127(?:\.\d{1,3}){3}$/.test(normalized) ||
-    /^::ffff:127(?:\.\d{1,3}){3}$/.test(normalized) ||
-    isMappedIpv4Loopback
-  );
-};
-
 const excludeLoopbackWhitelistEntries = (
   config: OutboundHeaderProxyConfig,
   logIgnoredEntries = true,
 ): OutboundHeaderProxyConfig => {
-  const baseUrlWhitelist = config.baseUrlWhitelist.filter(value => {
-    try {
-      return !isLoopbackHostname(new URL(value).hostname);
-    } catch {
-      return true;
-    }
-  });
+  const groups = config.groups.map(group => ({
+    ...group,
+    baseUrlWhitelist: group.baseUrlWhitelist.filter(value => {
+      try {
+        return !isLoopbackHostname(new URL(value).hostname);
+      } catch {
+        return true;
+      }
+    }),
+  }));
+  const baseUrlWhitelist = Array.from(new Set(groups.flatMap(group => group.baseUrlWhitelist)));
   if (logIgnoredEntries && baseUrlWhitelist.length !== config.baseUrlWhitelist.length) {
     console.warn(
       `[OutboundHeaderProxy] Ignored ${config.baseUrlWhitelist.length - baseUrlWhitelist.length} loopback whitelist entry or entries; loopback remains direct.`,
     );
   }
-  return { ...config, baseUrlWhitelist };
+  return { ...config, groups, baseUrlWhitelist };
 };
 
 const isConnectInterceptionCandidate = (
@@ -607,7 +654,7 @@ export class OutboundHeaderProxy {
   private readonly caDirectory: string | null;
 
   constructor(
-    config?: OutboundHeaderProxyConfig,
+    config?: Pick<OutboundHeaderProxyConfig, 'enabled' | 'groups'>,
     resolveUpstreamProxy: (
       targetUrl: string,
     ) => Promise<string | null> = resolveConfiguredUpstreamProxy,
@@ -639,10 +686,15 @@ export class OutboundHeaderProxy {
 
   private getActiveHeaderValues(
     policy: OutboundHeaderProxyConfig,
+    requestUrl: string,
   ): Readonly<Record<string, string>> {
-    return this.configuredPolicy
+    const values = this.configuredPolicy
       ? this.activeHeaderValues
       : getOutboundHeaderUserInfo(this.userInfoPath, policy.headerNames);
+    const headerNames = new Set(resolveOutboundHeaderNamesForRequest(policy, requestUrl));
+    return Object.fromEntries(
+      Object.entries(values).filter(([headerName]) => headerNames.has(headerName)),
+    );
   }
 
   private async resolveGatewayUpstreamProxy(targetUrl: string): Promise<string | null> {
@@ -684,6 +736,14 @@ export class OutboundHeaderProxy {
 
     this.activePolicy = Object.freeze({
       ...config,
+      groups: Object.freeze(
+        config.groups.map(group =>
+          Object.freeze({
+            baseUrlWhitelist: Object.freeze([...group.baseUrlWhitelist]),
+            headerNames: Object.freeze([...group.headerNames]),
+          }),
+        ),
+      ),
       baseUrlWhitelist: Object.freeze([...config.baseUrlWhitelist]),
       headerNames: Object.freeze([...config.headerNames]),
     });
@@ -820,7 +880,7 @@ export class OutboundHeaderProxy {
         }
         const injectedHeaderCount = applyOutboundHeaders(
           upstreamHeaders,
-          this.getActiveHeaderValues(activePolicy),
+          this.getActiveHeaderValues(activePolicy, requestUrl),
         );
         console.log(
           `[OutboundHeaderProxy] outbound header policy matched requestId=${crypto.randomUUID()} origin=${new URL(requestUrl).origin} matched=true injectedHeaderCount=${injectedHeaderCount}`,

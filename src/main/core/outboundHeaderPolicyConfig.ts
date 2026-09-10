@@ -5,6 +5,13 @@ import path from 'path';
 
 import { USER_DATA_DIRECTORY_NAME } from '../../shared/productMetadata';
 
+export type OutboundHeaderPolicyGroup = {
+  /** URLs handled by this group. */
+  baseUrlWhitelist: readonly string[];
+  /** Header names injected when a request matches this group. */
+  headerNames: readonly string[];
+};
+
 export type OutboundHeaderPolicyConfig = {
   /**
    * Whether startup should rewrite this file with the bundled defaults.
@@ -18,7 +25,8 @@ export type OutboundHeaderPolicyConfig = {
    */
   enabled: boolean;
   /**
-   * Only requests matching one of these base URLs receive the configured headers.
+   * Each group independently maps a list of base URLs to a list of headers.
+   * When multiple groups match, their header names are merged in group order.
    *
    * Matching rules:
    * - Every entry must be an absolute URL and must include `http://` or `https://`.
@@ -35,6 +43,10 @@ export type OutboundHeaderPolicyConfig = {
    *   use `/v1/` instead of `/v1` so it cannot accidentally match `/v10/...`.
    * - Query strings and URL fragments are not part of the whitelist prefix check.
    * - Invalid entries, relative paths, and non-HTTP protocols are ignored.
+   * - Local loopback addresses are not supported. Entries such as `localhost`,
+   *   `127.0.0.1` (or any `127.x.x.x` address), `0.0.0.0`, `::1`, and
+   *   IPv4-mapped IPv6 loopback addresses are ignored. Loopback traffic remains
+   *   direct and never receives injected headers.
    * - An empty list disables header injection for every URL.
    *
    * Examples:
@@ -46,22 +58,18 @@ export type OutboundHeaderPolicyConfig = {
    * - To allow two subdomains, add each explicitly:
    *   `https://api.example.com/` and `https://files.example.com/`.
    */
-  baseUrlWhitelist: readonly string[];
-  /**
-   * Header names whose values are read from user_info.json and injected into
-   * matching outbound requests.
-   *
-   * Names must be valid HTTP field names. `X-User-Account` and `X-Cookie` are
-   * the recommended examples, but the `X-` prefix is not enforced.
-   */
-  headerNames: readonly string[];
+  groups: readonly OutboundHeaderPolicyGroup[];
 };
 
 export const DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG: OutboundHeaderPolicyConfig = Object.freeze({
   overwrite: true,
   enabled: true,
-  baseUrlWhitelist: [],
-  headerNames: ['X-User-Account', 'X-Cookie'],
+  groups: Object.freeze([
+    Object.freeze({
+      baseUrlWhitelist: Object.freeze([]),
+      headerNames: Object.freeze(['X-User-Account', 'X-Cookie']),
+    }),
+  ]),
 });
 
 const USER_INFO_RELATIVE_PATH = path.join(USER_DATA_DIRECTORY_NAME, 'huawei', 'user_info.json');
@@ -79,16 +87,18 @@ This file controls outbound header injection.
 
 - \`enabled\`: Enables or disables outbound header injection.
 - \`overwrite\`: Rewrites this file with defaults on startup unless set to \`false\`.
-- \`headerNames\`: Header names to read from \`user_info.json\` and inject.
-- \`baseUrlWhitelist\`: Only matching request URLs receive the configured headers.
+- \`groups\`: Independent URL/Header mappings. Each group has a
+  \`baseUrlWhitelist\` list and a \`headerNames\` list.
 
 ## headerNames requirements
 
 - Use a valid HTTP field name. Examples and recommended custom names start with
   \`X-\`, such as \`X-User-Account\` and \`X-Cookie\`, but this prefix is not
   required.
-- The name in \`headerNames\` must exactly match the corresponding property in
+- A name in a group's \`headerNames\` must exactly match the corresponding property in
   \`user_info.json\`.
+- If a request matches multiple groups, the groups' header lists are merged.
+  Header names are deduplicated case-insensitively; the first spelling wins.
 
 ## baseUrlWhitelist matching
 
@@ -97,6 +107,10 @@ This file controls outbound header injection.
 - Paths are matched by prefix.
 - Query strings and fragments are ignored.
 - Invalid entries are ignored.
+- Local loopback URLs are not supported and are ignored. This includes
+  \`localhost\`, subdomains of \`localhost\`, any \`127.x.x.x\` address,
+  \`0.0.0.0\`, \`::1\`, and IPv4-mapped IPv6 loopback addresses. Loopback
+  requests remain direct and never receive injected headers.
 - An empty list matches no requests.
 - A trailing slash is recommended for directory paths. For example,
   \`https://api.example.com/v1/\` matches \`/v1/models\` without also matching
@@ -108,8 +122,16 @@ Example:
 {
   "overwrite": false,
   "enabled": true,
-  "baseUrlWhitelist": ["https://api.example.com/v1/"],
-  "headerNames": ["X-User-Account", "X-Cookie"]
+  "groups": [
+    {
+      "baseUrlWhitelist": ["https://api-one.example.com/v1/"],
+      "headerNames": ["X-User-Account", "X-Cookie"]
+    },
+    {
+      "baseUrlWhitelist": ["https://api-two.example.com/v1/"],
+      "headerNames": ["X-Tenant-Id", "X-Access-Token"]
+    }
+  ]
 }
 \`\`\`
 `;
@@ -179,24 +201,38 @@ const readOutboundHeaderPolicyConfig = (configPath: string): OutboundHeaderPolic
       return DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG;
     }
 
-    if (
-      typeof config.enabled === 'boolean' &&
-      Array.isArray(config.baseUrlWhitelist) &&
-      Array.isArray(config.headerNames)
-    ) {
+    const rawGroups = Array.isArray(config.groups) ? config.groups : null;
+    if (typeof config.enabled === 'boolean' && rawGroups) {
+      const groups = rawGroups
+        .filter(
+          (value): value is Record<string, unknown> =>
+            !!value && typeof value === 'object' && !Array.isArray(value),
+        )
+        .filter(group => Array.isArray(group.baseUrlWhitelist) && Array.isArray(group.headerNames))
+        .map(group =>
+          Object.freeze({
+            baseUrlWhitelist: Object.freeze(
+              (group.baseUrlWhitelist as unknown[]).filter(
+                (value): value is string => typeof value === 'string',
+              ),
+            ),
+            headerNames: Object.freeze(
+              (group.headerNames as unknown[]).filter(
+                (value): value is string => typeof value === 'string',
+              ),
+            ),
+          }),
+        );
+      if (groups.length !== rawGroups.length) {
+        console.warn(
+          '[OutboundHeaderPolicy] Invalid outbound header policy config; using defaults',
+        );
+        return DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG;
+      }
       return Object.freeze({
         overwrite: false,
         enabled: config.enabled as boolean,
-        baseUrlWhitelist: Object.freeze(
-          (config.baseUrlWhitelist as unknown[]).filter(
-            (value): value is string => typeof value === 'string',
-          ),
-        ),
-        headerNames: Object.freeze(
-          (config.headerNames as unknown[]).filter(
-            (value): value is string => typeof value === 'string',
-          ),
-        ),
+        groups: Object.freeze(groups),
       });
     }
     console.warn('[OutboundHeaderPolicy] Invalid outbound header policy config; using defaults');
@@ -250,7 +286,11 @@ export const updateOutboundHeaderUserInfoCache = (
   configPath = resolveOutboundHeaderPolicyConfigPath(),
 ): Readonly<Record<string, string>> => {
   cachedOutboundHeaderPolicyConfig = readOutboundHeaderPolicyConfig(configPath);
-  const effectiveHeaderNames = headerNames ?? cachedOutboundHeaderPolicyConfig.headerNames;
+  const effectiveHeaderNames =
+    headerNames ??
+    Array.from(
+      new Set(cachedOutboundHeaderPolicyConfig.groups.flatMap(group => group.headerNames)),
+    );
   let userInfo: Record<string, unknown> = {};
   try {
     const parsed: unknown = JSON.parse(fs.readFileSync(userInfoPath, 'utf8'));
@@ -273,7 +313,7 @@ export const updateOutboundHeaderUserInfoCache = (
     ),
   );
   console.log(
-    `[OutboundHeaderPolicy] Cache updated: baseUrlWhitelistCount=${cachedOutboundHeaderPolicyConfig.baseUrlWhitelist.length} headerCount=${Object.keys(cachedOutboundHeaderValues).length}`,
+    `[OutboundHeaderPolicy] Cache updated: baseUrlWhitelistCount=${cachedOutboundHeaderPolicyConfig.groups.reduce((count, group) => count + group.baseUrlWhitelist.length, 0)} headerCount=${Object.keys(cachedOutboundHeaderValues).length}`,
   );
   return cachedOutboundHeaderValues;
 };

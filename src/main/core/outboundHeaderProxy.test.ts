@@ -147,8 +147,12 @@ test('injects configured headers only for a whitelisted Main title request', asy
   const configPath = writePolicyConfig({
     overwrite: false,
     enabled: true,
-    baseUrlWhitelist: ['http://model.example/v1/'],
-    headerNames: ['X-User-Account'],
+    groups: [
+      {
+        baseUrlWhitelist: ['http://model.example/v1/'],
+        headerNames: ['X-User-Account'],
+      },
+    ],
   });
   updateOutboundHeaderUserInfoCache(userInfoPath, undefined, configPath);
 
@@ -182,14 +186,70 @@ test('injects configured headers only for a whitelisted Main title request', asy
   }
 });
 
+test('injects only the headers assigned to each matching policy group', () => {
+  const userInfoPath = writeUserInfo(
+    JSON.stringify({
+      'X-Group-One': 'one',
+      'X-Group-Two': 'two',
+      'X-Shared': 'shared',
+      'x-shared': 'later-shared',
+    }),
+  );
+  const configPath = writePolicyConfig({
+    overwrite: false,
+    enabled: true,
+    groups: [
+      {
+        baseUrlWhitelist: ['https://one.example/v1/', 'https://shared.example/'],
+        headerNames: ['X-Group-One', 'X-Shared'],
+      },
+      {
+        baseUrlWhitelist: ['https://two.example/v1/', 'https://shared.example/'],
+        headerNames: ['X-Group-Two', 'x-shared'],
+      },
+    ],
+  });
+  updateOutboundHeaderUserInfoCache(userInfoPath, undefined, configPath);
+
+  expect(
+    applyMainProcessOutboundHeaderPolicy(
+      'https://one.example/v1/title',
+      undefined,
+      MainProcessOutboundHeaderSource.SessionTitle,
+    ),
+  ).toEqual({ 'X-Group-One': 'one', 'X-Shared': 'shared' });
+  expect(
+    applyMainProcessOutboundHeaderPolicy(
+      'https://two.example/v1/title',
+      undefined,
+      MainProcessOutboundHeaderSource.SessionTitle,
+    ),
+  ).toEqual({ 'X-Group-Two': 'two', 'x-shared': 'later-shared' });
+  expect(
+    applyMainProcessOutboundHeaderPolicy(
+      'https://shared.example/title',
+      undefined,
+      MainProcessOutboundHeaderSource.SessionTitle,
+    ),
+  ).toEqual({
+    'X-Group-One': 'one',
+    'X-Group-Two': 'two',
+    'X-Shared': 'shared',
+  });
+});
+
 test('identifies Main title requests when skipping unsafe outbound header values', () => {
   const warningSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
   const userInfoPath = writeUserInfo(JSON.stringify({ 'X-User-Account': '用户-123' }));
   const configPath = writePolicyConfig({
     overwrite: false,
     enabled: true,
-    baseUrlWhitelist: ['http://model.example/v1/'],
-    headerNames: ['X-User-Account'],
+    groups: [
+      {
+        baseUrlWhitelist: ['http://model.example/v1/'],
+        headerNames: ['X-User-Account'],
+      },
+    ],
   });
   updateOutboundHeaderUserInfoCache(userInfoPath, undefined, configPath);
 
@@ -386,6 +446,17 @@ test('matches no requests when the whitelist is empty', () => {
   expect(shouldInjectOutboundHeaders('https://example.com/a', [])).toBe(false);
 });
 
+test.each([
+  'http://localhost:4000/api/',
+  'http://service.localhost:4000/api/',
+  'http://127.0.0.2:4000/api/',
+  'http://0.0.0.0:4000/api/',
+  'http://[::1]:4000/api/',
+  'http://[::ffff:127.0.0.1]:4000/api/',
+])('never matches a loopback request URL: %s', requestUrl => {
+  expect(shouldInjectOutboundHeaders(requestUrl, [requestUrl])).toBe(false);
+});
+
 test('matches only configured origins and path prefixes', () => {
   const baseUrlWhitelist = ['https://example.com/api/'];
 
@@ -397,11 +468,15 @@ test('matches only configured origins and path prefixes', () => {
 });
 
 test('applies outbound headers only when enabled and the URL is whitelisted', () => {
-  const config = {
+  const config = resolveOutboundHeaderProxyConfig({
     enabled: true,
-    baseUrlWhitelist: ['https://example.com/api/'],
-    headerNames: [HEADER_NAMES.USER_ACCOUNT],
-  };
+    groups: [
+      {
+        baseUrlWhitelist: ['https://example.com/api/'],
+        headerNames: [HEADER_NAMES.USER_ACCOUNT],
+      },
+    ],
+  });
 
   expect(isOutboundHeaderProxyActive(config)).toBe(true);
   expect(shouldApplyOutboundHeadersForRequest(config, 'https://example.com/api/users')).toBe(true);
@@ -494,8 +569,12 @@ test('reloads the outbound header policy together with user info', () => {
   const configPath = writePolicyConfig({
     overwrite: false,
     enabled: false,
-    baseUrlWhitelist: ['https://example.com/api/'],
-    headerNames: ['account_id'],
+    groups: [
+      {
+        baseUrlWhitelist: ['https://example.com/api/'],
+        headerNames: ['account_id'],
+      },
+    ],
   });
 
   expect(updateOutboundHeaderUserInfoCache(userInfoPath, undefined, configPath)).toEqual({
@@ -504,8 +583,12 @@ test('reloads the outbound header policy together with user info', () => {
   expect(getOutboundHeaderPolicyConfig()).toEqual({
     overwrite: false,
     enabled: false,
-    baseUrlWhitelist: ['https://example.com/api/'],
-    headerNames: ['account_id'],
+    groups: [
+      {
+        baseUrlWhitelist: ['https://example.com/api/'],
+        headerNames: ['account_id'],
+      },
+    ],
   });
 });
 
@@ -516,8 +599,12 @@ test('logs refreshed whitelist and header counts without logging values', () => 
   const configPath = writePolicyConfig({
     overwrite: false,
     enabled: true,
-    baseUrlWhitelist: ['https://one.example/api/', 'https://two.example/api/'],
-    headerNames: ['account_id', 'session_id'],
+    groups: [
+      {
+        baseUrlWhitelist: ['https://one.example/api/', 'https://two.example/api/'],
+        headerNames: ['account_id', 'session_id'],
+      },
+    ],
   });
   const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
 
@@ -534,12 +621,40 @@ test('logs refreshed whitelist and header counts without logging values', () => 
   }
 });
 
+test('does not accept the old ungrouped policy format', () => {
+  const userInfoPath = writeUserInfo(JSON.stringify({ legacy_header: 'legacy-value' }));
+  const configPath = writePolicyConfig({
+    overwrite: false,
+    enabled: true,
+    baseUrlWhitelist: ['https://legacy.example/api/'],
+    headerNames: ['legacy_header'],
+  });
+  const warningSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+  try {
+    expect(updateOutboundHeaderUserInfoCache(userInfoPath, undefined, configPath)).toEqual({
+      [HEADER_NAMES.USER_ACCOUNT]: '',
+      [HEADER_NAMES.COOKIE]: '',
+    });
+    expect(getOutboundHeaderPolicyConfig()).toEqual(DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG);
+    expect(warningSpy).toHaveBeenCalledWith(
+      '[OutboundHeaderPolicy] Invalid outbound header policy config; using defaults',
+    );
+  } finally {
+    warningSpy.mockRestore();
+  }
+});
+
 test('rewrites policy config with defaults when overwrite is missing', () => {
   const userInfoPath = writeUserInfo(JSON.stringify({ [HEADER_NAMES.USER_ACCOUNT]: 'user-123' }));
   const configPath = writePolicyConfig({
     enabled: false,
-    baseUrlWhitelist: ['https://example.com/api/'],
-    headerNames: [HEADER_NAMES.USER_ACCOUNT],
+    groups: [
+      {
+        baseUrlWhitelist: ['https://example.com/api/'],
+        headerNames: [HEADER_NAMES.USER_ACCOUNT],
+      },
+    ],
   });
 
   expect(updateOutboundHeaderUserInfoCache(userInfoPath, undefined, configPath)).toEqual({
@@ -557,8 +672,12 @@ test('rewrites policy config with defaults when overwrite is true', () => {
   const configPath = writePolicyConfig({
     overwrite: true,
     enabled: false,
-    baseUrlWhitelist: ['https://example.com/api/'],
-    headerNames: ['custom_header'],
+    groups: [
+      {
+        baseUrlWhitelist: ['https://example.com/api/'],
+        headerNames: ['custom_header'],
+      },
+    ],
   });
 
   expect(updateOutboundHeaderUserInfoCache(userInfoPath, undefined, configPath)).toEqual({
@@ -639,17 +758,27 @@ test('normalizes the static policy and ignores invalid base URLs', () => {
   expect(
     resolveOutboundHeaderProxyConfig({
       enabled: true,
-      headerNames: [
-        ` ${HEADER_NAMES.USER_ACCOUNT} `,
-        '',
-        'invalid header',
-        'bad:header',
-        HEADER_NAMES.COOKIE,
+      groups: [
+        {
+          headerNames: [
+            ` ${HEADER_NAMES.USER_ACCOUNT} `,
+            '',
+            'invalid header',
+            'bad:header',
+            HEADER_NAMES.COOKIE,
+          ],
+          baseUrlWhitelist: ['https://one.example/api/', 'invalid', 'http://two.example/'],
+        },
       ],
-      baseUrlWhitelist: ['https://one.example/api/', 'invalid', 'http://two.example/'],
     }),
   ).toEqual({
     enabled: true,
+    groups: [
+      {
+        headerNames: CONFIGURED_HEADER_NAMES,
+        baseUrlWhitelist: ['https://one.example/api/', 'http://two.example/'],
+      },
+    ],
     headerNames: CONFIGURED_HEADER_NAMES,
     baseUrlWhitelist: ['https://one.example/api/', 'http://two.example/'],
   });
@@ -792,8 +921,12 @@ test('moves remote NO_PROXY entries behind the Gateway local proxy route', async
   const outboundProxy = new OutboundHeaderProxy(
     {
       enabled: true,
-      baseUrlWhitelist: ['https://example.com/api/'],
-      headerNames: [HEADER_NAMES.USER_ACCOUNT],
+      groups: [
+        {
+          baseUrlWhitelist: ['https://example.com/api/'],
+          headerNames: [HEADER_NAMES.USER_ACCOUNT],
+        },
+      ],
     },
     async () => null,
     userInfoPath,
@@ -835,8 +968,12 @@ test('ignores loopback whitelist entries without blocking application startup', 
   const outboundProxy = new OutboundHeaderProxy(
     {
       enabled: true,
-      baseUrlWhitelist: ['http://127.0.0.1:4000/'],
-      headerNames: [HEADER_NAMES.USER_ACCOUNT],
+      groups: [
+        {
+          baseUrlWhitelist: ['http://127.0.0.1:4000/'],
+          headerNames: [HEADER_NAMES.USER_ACCOUNT],
+        },
+      ],
     },
     async () => null,
     path.join(directory, 'user_info.json'),
@@ -857,8 +994,12 @@ test.each(['http://127.0.0.2:4000/', 'http://[::ffff:127.0.0.1]:4000/'])(
     const outboundProxy = new OutboundHeaderProxy(
       {
         enabled: true,
-        baseUrlWhitelist: [baseUrl],
-        headerNames: [HEADER_NAMES.USER_ACCOUNT],
+        groups: [
+          {
+            baseUrlWhitelist: [baseUrl],
+            headerNames: [HEADER_NAMES.USER_ACCOUNT],
+          },
+        ],
       },
       async () => null,
       path.join(directory, 'user_info.json'),
@@ -910,8 +1051,12 @@ test.skipIf(!NON_LOOPBACK_IPV4)(
     const outboundProxy = new OutboundHeaderProxy(
       {
         enabled: true,
-        baseUrlWhitelist: ['http://unrelated.example/protected'],
-        headerNames: [HEADER_NAMES.USER_ACCOUNT],
+        groups: [
+          {
+            baseUrlWhitelist: ['http://unrelated.example/protected'],
+            headerNames: [HEADER_NAMES.USER_ACCOUNT],
+          },
+        ],
       },
       upstreamProxyResolver,
       userInfoPath,
@@ -926,12 +1071,22 @@ test.skipIf(!NON_LOOPBACK_IPV4)(
         outboundProxy as unknown as {
           activePolicy: {
             enabled: boolean;
+            groups: readonly {
+              baseUrlWhitelist: readonly string[];
+              headerNames: readonly string[];
+            }[];
             baseUrlWhitelist: readonly string[];
             headerNames: readonly string[];
           };
         }
       ).activePolicy = Object.freeze({
         enabled: true,
+        groups: Object.freeze([
+          Object.freeze({
+            baseUrlWhitelist: Object.freeze([targetUrl]),
+            headerNames: Object.freeze([HEADER_NAMES.USER_ACCOUNT]),
+          }),
+        ]),
         baseUrlWhitelist: Object.freeze([targetUrl]),
         headerNames: Object.freeze([HEADER_NAMES.USER_ACCOUNT]),
       });
@@ -1001,8 +1156,12 @@ test('keeps the startup enabled state while refreshing the runtime policy', () =
   const configPath = writePolicyConfig({
     overwrite: false,
     enabled: !startupEnabled,
-    baseUrlWhitelist: ['https://refreshed.example/api/'],
-    headerNames: ['refreshed_header'],
+    groups: [
+      {
+        baseUrlWhitelist: ['https://refreshed.example/api/'],
+        headerNames: ['refreshed_header'],
+      },
+    ],
   });
 
   updateOutboundHeaderUserInfoCache(userInfoPath, undefined, configPath);
@@ -1010,8 +1169,12 @@ test('keeps the startup enabled state while refreshing the runtime policy', () =
   expect(getOutboundHeaderPolicyConfig()).toEqual({
     overwrite: false,
     enabled: startupEnabled,
-    baseUrlWhitelist: ['https://refreshed.example/api/'],
-    headerNames: ['refreshed_header'],
+    groups: [
+      {
+        baseUrlWhitelist: ['https://refreshed.example/api/'],
+        headerNames: ['refreshed_header'],
+      },
+    ],
   });
   expect(getOutboundHeaderUserInfo()).toEqual({ refreshed_header: 'refreshed-value' });
 });
@@ -1058,8 +1221,12 @@ test.skipIf(!NON_LOOPBACK_IPV4)(
     const outboundProxy = new OutboundHeaderProxy(
       {
         enabled: true,
-        baseUrlWhitelist: [`http://${targetHost}:${targetAddress.port}/protected`],
-        headerNames: [HEADER_NAMES.USER_ACCOUNT],
+        groups: [
+          {
+            baseUrlWhitelist: [`http://${targetHost}:${targetAddress.port}/protected`],
+            headerNames: [HEADER_NAMES.USER_ACCOUNT],
+          },
+        ],
       },
       async () => null,
       userInfoPath,
@@ -1165,8 +1332,12 @@ test.skipIf(!NON_LOOPBACK_IPV4)(
     const outboundProxy = new OutboundHeaderProxy(
       {
         enabled: true,
-        baseUrlWhitelist: [`https://${targetHost}:${targetAddress.port}/protected`],
-        headerNames: [HEADER_NAMES.USER_ACCOUNT],
+        groups: [
+          {
+            baseUrlWhitelist: [`https://${targetHost}:${targetAddress.port}/protected`],
+            headerNames: [HEADER_NAMES.USER_ACCOUNT],
+          },
+        ],
       },
       async () => null,
       userInfoPath,

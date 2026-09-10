@@ -38,12 +38,18 @@ Main 中少量确需相同 Header 的确定性调用，应在调用点基于白�
 | 配置解析            | `src/main/core/outboundHeaderPolicyConfig.ts`、`systemProxy.ts` | 白名单、Header 名、系统/自定义代理与 bypass       |
 | 本地代理            | `src/main/core/outboundHeaderProxy.ts`                          | 认证、CONNECT 判别、MITM/raw tunnel、注入         |
 | OpenClaw 环境       | `src/main/core/gatewayNetworkEnvironment.ts`                    | 为 Gateway/opt-in CLI 生成 proxy/CA/NO_PROXY env  |
-| Embedding transport | `runtime-services` extension                               | 让 guarded fetch 使用 eligible env proxy          |
+| Embedding transport | `runtime-services` extension                                    | 让 guarded fetch 使用 eligible env proxy          |
 | Manual reindex      | runtime patch `009` + 原生 forced CLI rebuild intent            | 跳过旧向量 cache，确保按钮触发真实 embedding 请求 |
 | Runtime lifecycle   | `openclawEngineManager.ts` / `main.ts`                          | 先起代理、再 spawn Gateway；退出时反序停止        |
 | 用户值来源          | outbound header user-info 文件/cache                            | 只按允许的 headerNames 读取值                     |
 
 `OutboundHeaderProxy` 使用 `http-mitm-proxy`，并针对库的连接错误和内部行为做有限适配。依赖私有 hook 是维护风险，升级库时必须跑真实 TLS 集成测试。
+
+策略文件使用 `groups` 数组表达多组映射；每组的 `baseUrlWhitelist[]` 只对应本组的
+`headerNames[]`。请求只注入所有命中组的 Header；同一请求命中多组时按组顺序合并，并按
+HTTP Header 大小写不敏感语义去重，保留最先出现的名称。
+旧的顶层 `baseUrlWhitelist` / `headerNames` 格式不再接受，因为该文件本来就由启动流程按
+`overwrite` 规则覆写。
 
 ## 4. 启动与环境隔离
 
@@ -98,13 +104,18 @@ CONNECT 首先验证 capability 和 `host:port`。连接建立后读取首个 tu
 
 ## 6. URL 与 Header 策略
 
-白名单是 base URL 集合，匹配必须规范化 scheme、hostname、port 和 path 边界，防止：
+每个分组都有独立的 base URL 白名单与 Header 名列表。白名单匹配必须规范化
+scheme、hostname、port 和 path 边界，防止：
 
 - `example.com.evil.test` 伪装 hostname；
 - `/api2` 误匹配 `/api`；
 - redirect 到不同 origin 后继续携带 Header；
 - CONNECT host 与请求 Host 不一致；
 - 用户 URL 凭证或 fragment 参与错误匹配。
+
+本地 loopback URL 不能加入白名单，包括 `localhost`、`.localhost` 子域、任意
+`127.x.x.x`、`0.0.0.0`、`::1` 和 IPv4-mapped IPv6 loopback 地址；这些条目会被忽略，
+请求保持直连且不会注入 Header，以避免代理递归和扩大本地流量暴露面。
 
 Header 名只需满足 HTTP field-name 语法，不强制 `X-` 前缀。Header 值在注入前检查 CR/LF 等不安全字符。已有同名 header 采用大小写不敏感替换，不能同时存在两个大小写变体。
 
