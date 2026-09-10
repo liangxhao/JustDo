@@ -1,4 +1,5 @@
 import { buildOpenAIJsonRequestHeaders } from '../../shared/cowork/modelRequestHeaders';
+import { resolveBuiltinRequestApiKey } from './builtinModelProviderConfig';
 import {
   buildOpenAIChatCompletionsUrl,
   extractApiErrorSnippet,
@@ -98,7 +99,7 @@ export class SessionTitleGenerator {
           },
         ],
       });
-      const headers = buildOpenAIJsonRequestHeaders(body, apiKey);
+      const headers = buildOpenAIJsonRequestHeaders(body, resolveBuiltinRequestApiKey(apiKey, baseURL));
 
       const response = await (this.callbacks.fetch ?? fetch)(
         buildOpenAIChatCompletionsUrl(baseURL),

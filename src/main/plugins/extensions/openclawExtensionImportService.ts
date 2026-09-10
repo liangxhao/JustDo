@@ -1008,15 +1008,19 @@ export class OpenClawExtensionImportService {
     const manager = this.deps.getOpenClawEngineManager();
     const configPath = manager.getConfigPath();
     const temporaryPath = `${configPath}.tmp-extension-${Date.now()}`;
-    const initialPhase = manager.getStatus().phase;
+    let initialPhase = manager.getStatus().phase;
     const wasRuntimeActive = initialPhase === 'running' || initialPhase === 'starting';
     try {
+      if (initialPhase === 'starting') {
+        initialPhase = (await manager.startGateway()).phase;
+      }
       let config: Record<string, unknown> = {};
       if (fs.existsSync(configPath)) {
         const parsed = JSON5.parse(fs.readFileSync(configPath, 'utf8')) as unknown;
         if (!isRecord(parsed)) throw new Error('OpenClaw configuration is not an object.');
         config = parsed;
       }
+      const previousConfig = JSON.stringify(config);
       const plugins = isRecord(config.plugins) ? config.plugins : {};
       const entries = isRecord(plugins.entries) ? plugins.entries : {};
       const entry = isRecord(entries[extensionId]) ? entries[extensionId] : {};
@@ -1027,11 +1031,21 @@ export class OpenClawExtensionImportService {
       plugins.entries = entries;
       config.plugins = plugins;
 
+      if (JSON.stringify(config) === previousConfig) return { success: true };
+      const reloadGeneration =
+        initialPhase === 'running' ? manager.getGatewayConfigReloadGeneration() : null;
+
       fs.mkdirSync(path.dirname(configPath), { recursive: true });
       fs.writeFileSync(temporaryPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
       fs.renameSync(temporaryPath, configPath);
 
       if (wasRuntimeActive) {
+        if (
+          reloadGeneration !== null &&
+          (await manager.waitForGatewayConfigReload(reloadGeneration))
+        ) {
+          return { success: true };
+        }
         const status = await this.restartGatewayAfterMutation('extension-config-change');
         if (status.phase !== 'running') {
           return {

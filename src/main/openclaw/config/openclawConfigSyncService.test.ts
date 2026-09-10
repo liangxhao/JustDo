@@ -301,6 +301,9 @@ describe('OpenClawConfigSyncService', () => {
     reportedSchedulerMode?: 'ask' | 'auto' | 'full';
     configChanged?: boolean;
     syncError?: string;
+    nativeRestartStatus?: string;
+    secretsChanged?: boolean;
+    secretsReloadFails?: boolean;
   } = {}) => {
     let phase = options.phase ?? 'running';
     let processGeneration = 1;
@@ -324,6 +327,11 @@ describe('OpenClawConfigSyncService', () => {
     const engineManager = {
       getStatus,
       getGatewayConfigReloadGeneration: vi.fn(() => 7),
+      getGatewayLifecycleGeneration: vi.fn(() => 1),
+      waitForGatewayReadyAfter: vi.fn(async () => true),
+      hasPendingGatewayLaunchEnvironmentChanges: vi.fn(() => false),
+      getGatewayPort: vi.fn(() => 18789),
+      getConfiguredGatewayPort: vi.fn(() => 18789),
       waitForGatewayConfigReload: vi.fn(async () => options.waitForReload ?? true),
       getGatewayLaunchEnvVars: vi.fn(() => options.previousSecrets ?? {}),
       setGatewayLaunchEnvVars: vi.fn(),
@@ -353,6 +361,13 @@ describe('OpenClawConfigSyncService', () => {
       },
     };
     const requestGateway = vi.fn(async (method: string, params?: unknown) => {
+      if (method === 'secrets.reload') {
+        if (options.secretsReloadFails) throw new Error('credential reload failed');
+        return { ok: true };
+      }
+      if (method === 'gateway.restart.request' && options.nativeRestartStatus) {
+        return { ok: true, status: options.nativeRestartStatus };
+      }
       if (method === 'gateway.suspend.prepare') {
         if (options.prepareGatewaySuspend) return options.prepareGatewaySuspend();
         return activeWorkloads
@@ -428,9 +443,10 @@ describe('OpenClawConfigSyncService', () => {
           ? { ok: false, error: options.syncError }
           : {
               ok: true,
-              changed: options.configChanged ?? true,
+              changed: (options.configChanged ?? true) || (options.secretsChanged ?? false),
               configChanged: options.configChanged ?? true,
               requiresGatewayRestart: false,
+              secretsChanged: options.secretsChanged ?? false,
               configPath: options.configPath ?? 'openclaw.json',
             },
       ),
@@ -528,7 +544,70 @@ describe('OpenClawConfigSyncService', () => {
     expect(harness.startGateway).not.toHaveBeenCalled();
   });
 
-  it('falls back to a hard restart when native reload fails', async () => {
+  it('refreshes rotated file credentials without restarting or waiting for a config file event', async () => {
+    const harness = createHarness({ configChanged: false, secretsChanged: true });
+    await expect(harness.service.syncConfig({ reason: 'provider-key-change' })).resolves.toMatchObject({ success: true, changed: true });
+    expect(harness.requestGateway).toHaveBeenCalledWith('secrets.reload');
+    expect(harness.engineManager.waitForGatewayConfigReload).not.toHaveBeenCalled();
+    expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when the native credential snapshot cannot refresh', async () => {
+    const harness = createHarness({ configChanged: false, secretsChanged: true, secretsReloadFails: true });
+    await expect(harness.service.syncConfig({ reason: 'provider-key-change' })).resolves.toMatchObject({ success: false });
+    expect(harness.stopGateway).toHaveBeenCalledOnce();
+  });
+
+  it('uses the config watcher for a newly added provider and its credential', async () => {
+    const harness = createHarness({ configChanged: true, secretsChanged: true });
+    await expect(harness.service.syncConfig({ reason: 'provider-add' })).resolves.toMatchObject({ success: true });
+    expect(harness.engineManager.waitForGatewayConfigReload).toHaveBeenCalledOnce();
+    expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+  });
+
+  it('does not restart for reordered provider environment variables', async () => {
+    const harness = createHarness({
+      previousSecrets: { FIRST: 'one', SECOND: 'two' },
+      nextSecrets: { SECOND: 'two', FIRST: 'one' },
+    });
+    await expect(harness.service.syncConfig({ reason: 'providers' })).resolves.toMatchObject({ success: true });
+    expect(harness.engineManager.waitForGatewayConfigReload).toHaveBeenCalledOnce();
+    expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+  });
+
+  it('hot-reloads settings saved during startup after that startup completes', async () => {
+    const harness = createHarness({ phase: 'starting' });
+    await expect(harness.service.syncConfig({ reason: 'settings' })).resolves.toMatchObject({ success: true });
+    expect(harness.startGateway).toHaveBeenCalledOnce();
+    expect(harness.engineManager.waitForGatewayConfigReload).toHaveBeenCalledOnce();
+    expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+  });
+
+  it('restores the approval bridge after an extension configuration warm restart', async () => {
+    const harness = createHarness({ nativeRestartStatus: 'scheduled' });
+    await expect(harness.service.restartGatewayAfterExclusiveMutation('extension-config-change'))
+      .resolves.toMatchObject({ phase: 'running' });
+    expect(harness.connectGatewayClient).toHaveBeenCalledOnce();
+    expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+  });
+
+  it('keeps proxy changes on the cold restart path', async () => {
+    const harness = createHarness({ nativeRestartStatus: 'scheduled' });
+    await harness.service.restartGatewayAfterExclusiveMutation('proxy-change');
+    expect(harness.engineManager.restartGateway).toHaveBeenCalledOnce();
+    expect(harness.requestGateway).not.toHaveBeenCalledWith('gateway.restart.request', expect.anything());
+  });
+
+  it.each(['scheduled', 'deferred', 'coalesced'])('uses a %s native restart after reload failure', async nativeRestartStatus => {
+    const harness = createHarness({ waitForReload: false, nativeRestartStatus });
+    await expect(harness.service.syncConfig({ reason: 'test' })).resolves.toMatchObject({ success: true });
+    expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+    expect(harness.requestGateway).not.toHaveBeenCalledWith('gateway.suspend.prepare', expect.anything());
+    if (nativeRestartStatus === 'scheduled') expect(harness.connectGatewayClient).toHaveBeenCalledOnce();
+  });
+
+  it('falls back to a hard restart when both native reload and restart RPC fail', async () => {
     const harness = createHarness({ waitForReload: false });
 
     await expect(harness.service.syncConfig({ reason: 'test' })).resolves.toMatchObject({

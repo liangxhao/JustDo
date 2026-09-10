@@ -1,10 +1,11 @@
 import Database from 'better-sqlite3';
-import { app } from 'electron';
+import { app, safeStorage } from 'electron';
 import { EventEmitter } from 'events';
 import fs from 'fs';
 import path from 'path';
 
 import { DB_FILENAME } from '../core/appConstants';
+import { transformAppConfigCredentials } from './appConfigCredentials';
 
 type ChangePayload<T = unknown> = {
   key: string;
@@ -56,7 +57,27 @@ export class SqliteStore {
 
     const store = new SqliteStore(db, dbPath);
     store.initializeTables(basePath);
+    try {
+      store.protectLegacyAppConfigCredentials();
+    } catch (error) {
+      db.close();
+      throw error;
+    }
     return store;
+  }
+
+  private protectLegacyAppConfigCredentials(): void {
+    const row = this.db.prepare('SELECT value FROM kv WHERE key = ?').get('app_config') as
+      { value: string } | undefined;
+    if (!row) return;
+    let config: unknown;
+    try { config = JSON.parse(row.value); } catch { return; }
+    const protectedConfig = transformAppConfigCredentials(config, 'encrypt', safeStorage);
+    if (JSON.stringify(config) === JSON.stringify(protectedConfig)) return;
+    this.db.pragma('secure_delete = ON');
+    this.db.prepare('UPDATE kv SET value = ?, updated_at = ? WHERE key = ?')
+      .run(JSON.stringify(protectedConfig), Date.now(), 'app_config');
+    this.db.pragma('wal_checkpoint(TRUNCATE)');
   }
 
   private static deleteLegacyDatabase(dbPath: string): void {
@@ -342,16 +363,23 @@ export class SqliteStore {
     const row = this.db.prepare('SELECT value FROM kv WHERE key = ?').get(key) as
       { value: string } | undefined;
     if (!row) return undefined;
+    let value: unknown;
     try {
-      return JSON.parse(row.value) as T;
-    } catch (error) {
-      console.warn(`Failed to parse store value for ${key}`, error);
+      value = JSON.parse(row.value);
+    } catch {
+      console.warn(`[SqliteStore] Failed to parse stored JSON for ${key}`);
       return undefined;
     }
+    return (key === 'app_config'
+      ? transformAppConfigCredentials(value, 'decrypt', safeStorage)
+      : value) as T;
   }
 
   set<T = unknown>(key: string, value: T): void {
     const oldValue = this.get<T>(key);
+    const persistedValue = key === 'app_config'
+      ? transformAppConfigCredentials(value, 'encrypt', safeStorage)
+      : value;
     const now = Date.now();
     this.db
       .prepare(
@@ -363,7 +391,7 @@ export class SqliteStore {
         updated_at = excluded.updated_at
     `,
       )
-      .run(key, JSON.stringify(value), now);
+      .run(key, JSON.stringify(persistedValue), now);
     this.emitter.emit('change', { key, newValue: value, oldValue } as ChangePayload<T>);
   }
 

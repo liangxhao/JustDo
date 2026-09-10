@@ -3,6 +3,16 @@ import { describe, expect, it } from 'vitest';
 import { buildGatewayLaunchArgs, buildGatewayLaunchEnvironment } from './gatewayLaunchArgs';
 
 describe('buildGatewayLaunchEnvironment', () => {
+  it('strips inherited built-in credentials regardless of Windows casing', () => {
+    const env = buildGatewayLaunchEnvironment({
+      JUSTDO_APIKEY_BUILTIN_MODELS: 'old-secret',
+      justdo_apikey_builtin_models: 'old-secret',
+      PATH: 'runtime-bin',
+    }, { appStartedAtMs: 1 });
+    expect(Object.keys(env).some(key => key.toUpperCase() === 'JUSTDO_APIKEY_BUILTIN_MODELS')).toBe(false);
+    expect(env.PATH).toBe('runtime-bin');
+  });
+
   it('preserves the base environment without legacy browser startup flags', () => {
     expect(
       buildGatewayLaunchEnvironment(

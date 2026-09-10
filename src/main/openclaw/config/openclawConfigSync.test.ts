@@ -119,7 +119,7 @@ describe('OpenClaw provider config', () => {
       {
         providerName: ProviderName.BuiltinModels,
         baseURL: 'http://127.0.0.1:4000/v1',
-        apiKey: 'sk-local',
+        apiKey: 'justdo-builtin-credential',
         apiType: 'openai',
         models: [{ id: 'chat-model' }],
         embeddingModels: [{ id: 'embedding-z' }, { id: 'embedding-a' }],
@@ -132,7 +132,7 @@ describe('OpenClaw provider config', () => {
       model: 'embedding-a',
       remote: {
         baseUrl: 'http://127.0.0.1:4000/v1',
-        apiKey: '${JUSTDO_APIKEY_BUILTIN_MODELS}',
+        apiKey: 'justdo-builtin-credential',
         headers: {
           'User-Agent': 'OpenAI/JS 6.39.1',
         },

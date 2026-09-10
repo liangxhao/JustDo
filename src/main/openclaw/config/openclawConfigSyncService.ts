@@ -15,6 +15,7 @@ import type {
 import type { OpenClawHookStore } from '../../plugins/hooks';
 import type { McpStore } from '../../plugins/mcp';
 import { discoverOpenClawManagedMcpServers } from '../../plugins/mcp';
+import { GatewayConfigRestartOutcome, requestGatewayConfigRestart } from '../runtime/gatewayConfigRestart';
 import {
   OPENCLAW_FALLBACK_EXEC_MODE,
   OPENCLAW_FALLBACK_FS_WORKSPACE_ONLY,
@@ -209,6 +210,25 @@ export class OpenClawConfigSyncService {
   }
 
   async restartGatewayAfterExclusiveMutation(reason: string): Promise<OpenClawEngineStatus> {
+    const engineManager = this.deps.getOpenClawEngineManager();
+    if (reason === 'extension-config-change' || reason === 'extension-status-change') {
+      const nativeRestart = await requestGatewayConfigRestart(
+        engineManager, this.deps.requestGateway, reason,
+      );
+      if (nativeRestart === GatewayConfigRestartOutcome.Ready) {
+        const restored = await this.restoreGatewayBridgeOrFailClosed({
+          success: true,
+          changed: true,
+          configSynced: true,
+          status: engineManager.getStatus(),
+        });
+        const verified = restored.success
+          ? await this.verifySuccessfulConfigApplication(restored)
+          : restored;
+        return verified.status ?? engineManager.getStatus();
+      }
+      if (nativeRestart === GatewayConfigRestartOutcome.Pending) return engineManager.getStatus();
+    }
     const result = await this.restartGatewayOrDefer(reason, true, true);
     return result.status ?? this.deps.getOpenClawEngineManager().getStatus();
   }
@@ -380,6 +400,15 @@ export class OpenClawConfigSyncService {
         );
       }
     }
+    // Do not write into a startup snapshot and then unconditionally discard
+    // the process that just finished loading. Once ready, its watcher can
+    // apply ordinary settings without a second cold startup.
+    if (
+      options.reason !== BuiltinModelSyncReason.AuthLogout &&
+      engineManager.getStatus().phase === 'starting'
+    ) {
+      await engineManager.startGateway();
+    }
     const statusBeforeSync = engineManager.getStatus();
     const reloadGeneration = engineManager.getGatewayConfigReloadGeneration();
     let fallbackExecPolicyVerified = false;
@@ -439,9 +468,26 @@ export class OpenClawConfigSyncService {
     const nextGatewayLaunchEnvVars = this.getConfigSync().collectGatewayLaunchEnvVars();
     const previousGatewayLaunchEnvVars = engineManager.getGatewayLaunchEnvVars();
     const gatewayLaunchEnvVarsChanged =
-      JSON.stringify(nextGatewayLaunchEnvVars) !==
-      JSON.stringify(previousGatewayLaunchEnvVars);
+      Object.keys(nextGatewayLaunchEnvVars).length !==
+        Object.keys(previousGatewayLaunchEnvVars).length ||
+      Object.entries(nextGatewayLaunchEnvVars).some(
+        ([key, value]) => previousGatewayLaunchEnvVars[key] !== value,
+      );
     engineManager.setGatewayLaunchEnvVars(nextGatewayLaunchEnvVars);
+
+    // Key rotation does not change the stable file reference in openclaw.json,
+    // so the config watcher has nothing to observe. Refresh the native secret
+    // snapshot explicitly and fail closed if the new credential cannot load.
+    if (syncResult.secretsChanged && !syncResult.configChanged && statusBeforeSync.phase === 'running') {
+      try {
+        const reloaded = await this.deps.requestGateway<{ ok?: boolean }>('secrets.reload');
+        if (reloaded.ok !== true) throw new Error('Secret snapshot was not refreshed.');
+      } catch {
+        return this.failClosedConfigApplication({
+          success: false, changed: true, configSynced: true, status: engineManager.getStatus(),
+        }, 'Failed to refresh managed model provider credentials.');
+      }
+    }
 
     const isAuthLogout = options.reason === BuiltinModelSyncReason.AuthLogout;
     const applyMode = isAuthLogout
@@ -498,8 +544,24 @@ export class OpenClawConfigSyncService {
         }, 'OpenClaw config was written, but native reload did not complete.');
       }
       console.warn(
-        `[OpenClaw] syncOpenClawConfig: native reload did not complete; falling back to a hard restart (reason: ${options.reason})`,
+        `[OpenClaw] syncOpenClawConfig: native reload did not complete; requesting an in-process restart (reason: ${options.reason})`,
       );
+      const nativeRestart = await requestGatewayConfigRestart(
+        engineManager, this.deps.requestGateway, options.reason,
+      );
+      if (nativeRestart !== GatewayConfigRestartOutcome.Unavailable) {
+        const result = {
+          success: true,
+          changed: syncResult.changed,
+          configSynced: true,
+          status: engineManager.getStatus(),
+        };
+        if (nativeRestart === GatewayConfigRestartOutcome.Ready) {
+          const restored = await this.restoreGatewayBridgeOrFailClosed(result);
+          return restored.success ? this.verifySuccessfulConfigApplication(restored) : restored;
+        }
+        return result;
+      }
     }
 
     if (applyMode === 'hard-restart' && options.restartGatewayIfRunning === false) {

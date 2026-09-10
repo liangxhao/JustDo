@@ -232,7 +232,15 @@ npm test
 
 Gateway start/restart/stop 不是三个互不相关的按钮。Manager 需要共享启动与完整重启 promise、shutdown flag、child identity 和 readiness wait：并发 ensure 复用同一启动；同一 generation 的并发 hard restart 复用同一 stop/start，禁止通过 `afterCurrent` 给新进程排入未获取 suspension 的 trailing restart。若当前 start/restart 的启动快照之后又发生 secrets、代理或扩展等启动输入变化，上层必须等当前 generation 完成后，针对新 generation 重新获取原生 suspension 再执行下一轮。ready lease 返回后还要再次核对 phase 与 process generation，旧 lease 不能作用于新进程。shutdown 让 readiness/retry loop 尽快退出；stop 有超时兜底，不能永久阻塞应用退出。
 
-设置页的手动 restart 优先请求 Gateway 的 `gateway.restart.request`，并以当前受管进程日志中的下一次 `[gateway] ready` 作为完成边界。受管 Gateway 设置 `OPENCLAW_NO_RESPAWN=1`，因此该请求复用当前 Node 进程和已加载模块，避免重新解析 runtime bundle。若 RPC 不可用、进程退出、ready 超时或 Gateway 因 cooldown 给出较长延迟，Main 回退到有序 stop/start。端口属于 launch argument；配置端口与当前监听端口不同时必须直接走完整重启。Secrets 等启动环境有尚未应用的变更时同样必须完整重启，避免进程内 restart 继续使用旧环境。
+设置页的手动 restart 优先请求 Gateway 的 `gateway.restart.request`，并以当前受管进程日志中的下一次 `[gateway] ready` 作为完成边界。受管 Gateway 设置 `OPENCLAW_NO_RESPAWN=1`，因此该请求复用当前 Node 进程和已加载模块，避免重新解析 runtime bundle。若 RPC 不可用、进程退出、ready 超时或 Gateway 因 cooldown 给出较长延迟，手动 restart 回退到有序 stop/start。端口属于 launch argument；配置端口与当前监听端口不同时必须直接走完整重启。Secrets 等启动环境有尚未应用的变更时同样必须完整重启，避免进程内 restart 继续使用旧环境。
+
+配置保存采用更保守的自动恢复路径：启动中的 Gateway 先完成当前启动，再写配置并等待原生热更新，避免因启动快照竞争直接再冷启动一次。环境变量比较忽略 key 的排列顺序。扩展配置内容未变时不写文件；改变时先等待 watcher 完成热更新。原生热更新失败、扩展配置恢复或扩展启停明确返回 restartRequired 时，启动环境与端口未变则请求 `gateway.restart.request({skipDeferral:false})`。scheduled 等待下一次 ready 后恢复桥接并验证权限；deferred/coalesced 或已接受但尚未 ready 的请求由原生 coordinator 持有，不能仅因等待超时再发起竞争的冷重启。RPC 不可用时才回到已有 suspension 屏障和冷重启路径。扩展代码导入/删除、目录操作和代理环境变化仍保留进程替换。
+
+Windows bundle launcher 每 5 秒 best-effort flush V8 compile cache，timer 不保持 CLI 进程存活。Gateway 的顶层 await 可能令 `import()` 在整个服务生命周期都不 resolve，因此不能只在 import 完成或正常退出时落盘；Windows 终止进程前已落盘的缓存可被后续冷启动复用。该优化减少重复编译，不能省去插件、数据库和 Gateway 服务初始化。
+
+自定义模型供应商的 API Key 不再注入 Gateway launch environment。同步先将凭据原子写入 `<stateDir>/model-provider-secrets.json`，再将 `models.providers.*.apiKey` 写成原生 file SecretRef；`secrets.providers.justdo-model-providers` 声明该 JSON 文件。新增供应商由 config watcher 加载配置及凭据，启动环境不变，因此不触发冷重启。只修改 Key 时引用及配置文件不变，Main 显式调用 `secrets.reload` 刷新原生快照，并在失败时停止 Gateway，避免把旧凭据状态报告为已更新。凭据标识保持原始供应商 key，显示名变化不会改变凭据归属。
+
+内置模型（含 memory embedding）使用 `justdo-builtin` 原生 exec SecretRef，凭据在 `<stateDir>/credentials/credentials.bin` 中加密保存。Gateway 在启动或凭据刷新时一次性调用解密程序，通过管道取得 Key；JSON 只保存引用，`models.json` 由原生来源快照机制写入 `secretref-managed` 标记，环境变量及命令行不携带 Key。没有新增本地代理、监听端口或常驻解密进程，模型请求继续由 Gateway 直接发往原上游，现有出站请求头代理未改变。Main 的模型发现、标题生成和就绪探测在各自直接请求边界解析内置引用，不将真实值回写产品配置。退出登录通过既有强制失效流程停止旧 Gateway，并移除不再引用的二进制凭据；Key 轮换可 `secrets.reload`，无需冷重启。当前加密只满足防直接查看，不替代后续服务端 JWT。
 
 `phase=running` 只表示受管进程/readiness 达标，不保证每个 adapter consumer 的 WebSocket 仍健康。配置、代理以及 extension 配置/启停/导入/删除触发的自动 hard restart 都进入 `OpenClawConfigSyncService` 的 exclusive queue 与原生 suspension 屏障，由同一路径 disconnect 旧 client、restart Gateway、再 connect Cowork service；最后一步失败时停止 Gateway，避免留下假健康状态。Skill/Extension 的 Windows 目录锁恢复也在同一 exclusive queue 中，只有原生 suspension 返回 ready 才能 stop/mutate/start；Gateway 忙碌时操作失败并提示稍后重试，不能直接中断 active run。
 

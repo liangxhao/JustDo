@@ -622,6 +622,10 @@ export class OpenClawEngineManager extends EventEmitter {
       ...this.gatewayLaunchEnvVars,
       JUSTDO_SYSTEM_PROMPT_REPLACEMENTS_PATH: this.systemPromptReplacementRulesPath,
     };
+    // Also strip legacy values inherited from a parent process or old launcher.
+    for (const key of Object.keys(env)) {
+      if (key.toUpperCase() === 'JUSTDO_APIKEY_BUILTIN_MODELS') delete env[key];
+    }
 
     if (!env.TZ) {
       const hostTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;

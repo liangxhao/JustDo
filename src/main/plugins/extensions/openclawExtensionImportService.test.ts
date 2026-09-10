@@ -1091,7 +1091,7 @@ describe('OpenClawExtensionImportService', () => {
     expect(service.listInstalled()[0].missingRequirements).toEqual([]);
   });
 
-  it('updates declared extension configuration without exposing or replacing unrelated config', async () => {
+  it.each([true, false])('updates declared extension configuration with native reload result %s', async (reloaded) => {
     const stateDir = path.join(fixtureRoot, 'state');
     const configPath = path.join(stateDir, 'openclaw.json');
     const installedDir = path.join(stateDir, 'extensions', 'brave');
@@ -1126,6 +1126,8 @@ describe('OpenClawExtensionImportService', () => {
       getStateDir: vi.fn().mockReturnValue(stateDir),
       getBaseDir: vi.fn().mockReturnValue(path.join(fixtureRoot, 'openclaw-home')),
       getConfigPath: vi.fn().mockReturnValue(configPath),
+      getGatewayConfigReloadGeneration: vi.fn(() => 7),
+      waitForGatewayConfigReload: vi.fn(async () => reloaded),
       getStatus: vi.fn().mockReturnValue({ phase: 'running' }),
       restartGateway,
     } as unknown as OpenClawEngineManager;
@@ -1155,7 +1157,12 @@ describe('OpenClawExtensionImportService', () => {
       ],
     });
     expect((Object.prototype as Record<string, unknown>).polluted).toBeUndefined();
-    expect(restartGateway).toHaveBeenCalledOnce();
+    expect(manager.waitForGatewayConfigReload).toHaveBeenCalledWith(7);
+    expect(restartGateway).toHaveBeenCalledTimes(reloaded ? 0 : 1);
+    await expect(service.updateConfiguration('brave', { 'webSearch.apiKey': 'secret-key' }))
+      .resolves.toEqual({ success: true });
+    expect(manager.waitForGatewayConfigReload).toHaveBeenCalledTimes(1);
+    expect(restartGateway).toHaveBeenCalledTimes(reloaded ? 0 : 1);
   });
 
   it('uninstalls an extension and restarts a Gateway that was still starting', async () => {

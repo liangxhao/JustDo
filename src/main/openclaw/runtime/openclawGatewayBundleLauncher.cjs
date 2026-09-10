@@ -41,6 +41,11 @@ function buildOpenClawGatewayBundleLauncherSource() {
     `  ? setInterval(() => {}, 30000)\n` +
     `  : undefined;\n` +
     `const bundleUrl = pathToFileURL(bundlePath).href;\n` +
+    `// Gateway top-level await can keep import() pending for its entire life.\n` +
+    `// Persist compiled modules before Windows terminates the process.\n` +
+    `const _flushCache = () => { try { require('node:module').flushCompileCache(); } catch (_) {} };\n` +
+    `const _cacheFlushTimer = _keepAlive ? setInterval(_flushCache, 5000) : undefined;\n` +
+    `_cacheFlushTimer?.unref();\n` +
     `_log('loading bundle (' + _elapsed() + ')');\n` +
     `import(bundleUrl).then(() => {\n` +
     `  _log('import ok (' + _elapsed() + ')');\n` +

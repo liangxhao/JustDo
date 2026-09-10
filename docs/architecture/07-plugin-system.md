@@ -151,6 +151,8 @@ OpenClaw CLI 都通过 `OPENCLAW_BUNDLED_PLUGINS_DIR` 固定到该目录，不�
 - `automation-permission` 是受保护的内置安全 extension，不能从通用扩展页重配置、禁用或删除；Gateway 每次连接都必须验证其 trusted policy 已加载；
 - 安装成功后重启 Gateway，再由 `plugins.list` 重新列举；CLI 输出或目录存在都不能替代 Gateway 最终状态。
 
+扩展配置表单保存相同值时不重写文件、不重启。内容变化后优先等待原生配置 watcher 热更新；启动中保存则先等待本次启动完成。热更新失败或启停 RPC 明确返回 `restartRequired` 时，优先由原生安全重启 coordinator 执行进程内重启，保留活动工作 deferral；环境/端口变化、代码导入/删除与目录释放仍走受管冷重启路径。配置重启策略和编译缓存见 `05-agent-engine.md`。
+
 旧版 Extension 与 Hook 不提供迁移保证；升级后按 v2026.9.2 当前 inventory 清理失效的 `entries/installs/allow/deny/slots`，用户可从内网市场重新安装。用户 Skill 文件目录和 SQLite 中的 MCP server 记录属于必须保留的数据，配置同步只能做当前 schema 所需的字段映射，不能删除这些数据。对话中由 OpenClaw 自行安装的 Extension/Skill 由 Gateway 原生 inventory/skill status 重新列举；MCP 则先从原生配置回流 SQLite，因此三者在刷新插件页和重启后都能恢复显示。
 
 ## 9. AskUserQuestion Extension

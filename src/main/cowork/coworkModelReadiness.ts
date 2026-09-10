@@ -1,3 +1,4 @@
+import { resolveBuiltinRequestApiKey } from './builtinModelProviderConfig';
 import { buildOpenAIChatCompletionsUrl, extractApiErrorSnippet } from './coworkModelApi';
 import { resolveCurrentApiConfig } from './providerApiConfig';
 
@@ -50,7 +51,7 @@ export async function probeCoworkModelReadiness(
       'Content-Type': 'application/json',
     };
     if (config.apiKey) {
-      headers.Authorization = `Bearer ${config.apiKey}`;
+      headers.Authorization = `Bearer ${resolveBuiltinRequestApiKey(config.apiKey, config.baseURL)}`;
     }
 
     const response = await fetch(url, {

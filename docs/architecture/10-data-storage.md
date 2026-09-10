@@ -18,7 +18,15 @@
 
 数据库只在 `app.whenReady()` 后初始化；退出时在 Gateway 停止后关闭，以 flush WAL 和释放文件锁。
 
+模型供应商配置仍以 SQLite `kv.app_config` 为产品来源。供 OpenClaw 读取的自定义供应商凭据派生为 `<openclawStateDir>/model-provider-secrets.json`；`openclaw.json` 只保存原生 file SecretRef，不包含这些 Key 的值。文件先通过独占临时文件设置权限，再写入并原子替换：POSIX 使用 `0600`，Windows 移除继承 ACL，仅授予当前用户、SYSTEM 和 Administrators。它是敏感派生文件，不应作为普通诊断配置导出或记录日志；供应商目录正常同步时移除不再引用的凭据。Key 内容变更通过 `secrets.reload` 刷新运行时，不要求重启进程，也不新增 SQLite 表。
+
 ## 2. SQLite 参数
+
+`SqliteStore` 将 `app_config.providers.builtin_models.apiKey` 规范化为非秘密凭据引用，legacy `app_config.api.key` 若与旧内置值相同也一并改为引用。无关的用户自定义 legacy API Key 保持原有存储契约，不新增 OS 密钥服务依赖，避免没有系统密钥库的 Linux 用户无法启动。读取此前已保存的 OS 加密 legacy 记录仍需 Electron `safeStorage`，解密不可用时明确报错；不把密文当作 Key 使用。打开已有数据库时转换内置旧值，并尝试通过 secure-delete 和 WAL truncate 清理本次转换的数据库残留；历史备份、旧导出及存储介质残留不在该保证内。
+
+内置模型不增加本地转发服务。真实 Key 派生为 `<openclawStateDir>/credentials/credentials.bin`，采用带版本头、随机 nonce 和认证标签的 AES-256-GCM 二进制格式，设置与上文相同的私有文件权限。app config 仅存 `justdo-builtin-credential` 非秘密引用，Gateway JSON 仅存原生 exec SecretRef，不存 Key 或密文；历史数据库真实凭据仍受上述 OS 加密保护。原生解析器在启动/刷新时通过 stdin/stdout 调用私有目录中的解密程序，Key 仅在管道和运行时内存中使用，不进入环境变量或命令行。Windows 通过系统 PowerShell 启动 Electron Node 模式以兼容原生 ACL 检查及中文路径，POSIX 使用当前用户拥有的受限启动脚本；没有常驻进程或网络端口。真实运行包测试验证 `models.json` 写入 `secretref-managed` 而非解析后的 Key。退出时不再引用内置凭据会删除二进制文件；凭据轮换保持 JSON 引用稳定，通过 `secrets.reload` 生效。
+
+随包引导凭据和二进制文件的包装材料均可由客户端代码推导，仅用于避免直接打开文件看到明文，不构成防逆向安全边界。未来应由服务端 JWT 替代共享静态凭据；历史备份和旧版本安装包不在本次清理范围内。
 
 | PRAGMA               | 当前值   | 目的                           |
 | -------------------- | -------- | ------------------------------ |

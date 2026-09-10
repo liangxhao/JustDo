@@ -44,7 +44,7 @@ import { createTray, destroyTray, updateTrayMenu } from './core/trayManager';
 import { enableSystemCaForCurrentProcess } from './core/trustedCertificates';
 import { BuiltinModelLifecycle } from './cowork/builtinModelLifecycle';
 import { BuiltinModelAccess, syncBuiltinModelProvider } from './cowork/builtinModelProvider';
-import { BUILTIN_MODEL_PROVIDER_CONFIG } from './cowork/builtinModelProviderConfig';
+import { BUILTIN_MODEL_PROVIDER_CONFIG, getBuiltinModelProviderApiKey } from './cowork/builtinModelProviderConfig';
 import {
   resolveAllEnabledProviderConfigs,
   resolveRawApiConfig,
@@ -1179,7 +1179,7 @@ if (!gotTheLock) {
 
     if (BUILTIN_MODEL_PROVIDER_CONFIG.enabled) {
       customerRegistrationService = new CustomerRegistrationService({
-        apiKey: BUILTIN_MODEL_PROVIDER_CONFIG.apiKey.trim(),
+        apiKey: getBuiltinModelProviderApiKey(),
         baseUrl: BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl,
         productName: packageJson.productName,
         version: packageJson.version,

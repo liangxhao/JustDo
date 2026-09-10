@@ -25,6 +25,7 @@ import {
   ProviderName,
 } from '../../../shared/providers';
 import { ScheduledTaskAgentId } from '../../../shared/scheduledTask/constants';
+import { BUILTIN_CREDENTIAL_MARKER, getBuiltinModelProviderApiKey } from '../../cowork/builtinModelProviderConfig';
 import type { ProviderRawConfig } from '../../cowork/providerApiConfig';
 import {
   getProviderDisplayNameMap,
@@ -50,6 +51,9 @@ import {
   buildAgentEntry,
   buildManagedAgentEntries,
 } from '../models/openclawAgentModels';
+import { getElectronNodeRuntimePath } from '../runtime/electronNodeRuntime';
+import { syncBuiltinCredentialFile } from './builtinCredentialFile';
+import { providerSecretIdentity, syncProviderSecretFile } from './providerSecretFile';
 
 export const buildOpenClawMcpServers = (
   servers: McpServerRecord[],
@@ -335,6 +339,7 @@ const containsBuiltinModelRef = (value: unknown): boolean => {
 const BUILTIN_MODELS_API_KEY_PLACEHOLDER = '${JUSTDO_APIKEY_BUILTIN_MODELS}';
 
 const containsBuiltinMemorySearchRef = (value: unknown): boolean =>
+  (isRecord(value) && value.provider === OpenClawExtensionId.RUNTIME_SERVICES) ||
   containsBuiltinModelRef(value) ||
   (typeof value === 'string'
     ? value.includes(BUILTIN_MODELS_API_KEY_PLACEHOLDER)
@@ -658,8 +663,7 @@ const buildAuthScopedOpenClawConfig = (
     if (existingProviderId === OpenClawProviderId.BuiltinModels || !isRecord(existingProvider)) {
       continue;
     }
-    const existingApiKey =
-      typeof existingProvider.apiKey === 'string' ? existingProvider.apiKey : '';
+    const existingApiKey = providerSecretIdentity(existingProvider.apiKey);
     const managedMatch = managedCustomProviders.find(([, managedProvider]) => {
       if (!isRecord(managedProvider) || typeof managedProvider.apiKey !== 'string') return false;
       return managedProvider.apiKey === existingApiKey;
@@ -1448,8 +1452,10 @@ export const buildProviderSelection = (options: {
   let baseUrl =
     descriptor.resolveRuntimeBaseUrl?.() ?? descriptor.normalizeBaseUrl(options.baseURL);
   const api = OpenClawApiConst.OpenAICompletions as OpenClawProviderApi;
-  // apiKey placeholder still uses original providerName for env var consistency
-  const apiKey = descriptor.resolveApiKey
+  // Custom credential identities retain the original provider name across renames.
+  const apiKey = providerName === ProviderName.BuiltinModels
+    ? BUILTIN_CREDENTIAL_MARKER
+    : descriptor.resolveApiKey
     ? descriptor.resolveApiKey({ apiKey: options.apiKey, providerName })
     : `\${${providerApiKeyEnvVar(providerName)}}`;
   const sessionModelId = descriptor.resolveSessionModelId
@@ -1606,6 +1612,7 @@ export type OpenClawConfigSyncResult = {
   configPath: string;
   error?: string;
   agentsMdWarning?: string;
+  secretsChanged?: boolean;
 };
 
 const buildVerifiedConfigSyncResult = (
@@ -1983,10 +1990,31 @@ export class OpenClawConfigSync {
 
     // IM channel config syncing removed — channels disabled pending future adaptation
 
-    const configToPersist =
+    const scopedConfig =
       isAuthLifecycleSync && existingConfig
         ? buildAuthScopedOpenClawConfig(existingConfig, managedConfig, reason)
         : managedConfig;
+    let preparedSecrets: ReturnType<typeof syncProviderSecretFile>;
+    try {
+      preparedSecrets = syncProviderSecretFile(
+        { ...scopedConfig, secrets: scopedConfig.secrets ?? existingConfig?.secrets },
+        this.engineManager.getStateDir(), resolveAllProviderApiKeys(),
+      );
+      const builtinSecrets = syncBuiltinCredentialFile(
+        preparedSecrets.config, this.engineManager.getStateDir(),
+        getBuiltinModelProviderApiKey, getElectronNodeRuntimePath(),
+      );
+      preparedSecrets = {
+        config: builtinSecrets.config,
+        secretsChanged: preparedSecrets.secretsChanged || builtinSecrets.secretsChanged,
+      };
+    } catch {
+      return {
+        ok: false, changed: false, configChanged: false, requiresGatewayRestart: false,
+        configPath, error: 'Failed to prepare managed model provider credentials.',
+      };
+    }
+    const configToPersist = preparedSecrets.config;
     const nextContent = `${JSON.stringify(configToPersist, null, 2)}\n`;
     const configChanged = hasOpenClawConfigChanged(currentContent, configToPersist);
     if (configChanged) {
@@ -2026,7 +2054,8 @@ export class OpenClawConfigSync {
 
     return {
       ok: true,
-      changed: configChanged,
+      changed: configChanged || preparedSecrets.secretsChanged,
+      secretsChanged: preparedSecrets.secretsChanged,
       configChanged,
       requiresGatewayRestart: false,
       configPath,
@@ -2041,12 +2070,8 @@ export class OpenClawConfigSync {
   collectGatewayLaunchEnvVars(): Record<string, string> {
     const env: Record<string, string> = {};
 
-    // Provider API Keys — one per configured provider so switching models
-    // never changes env vars and avoids gateway process restarts.
-    const allApiKeys = resolveAllProviderApiKeys();
-    for (const [envSuffix, apiKey] of Object.entries(allApiKeys)) {
-      env[`JUSTDO_APIKEY_${envSuffix}`] = apiKey;
-    }
+    // Custom keys use file SecretRefs; built-in keys use encrypted exec SecretRefs.
+    // No provider API key belongs in the Gateway launch environment.
 
     env.JUSTDO_EXEC_APPROVAL_TIMEOUT_MS = String(
       resolveApprovalWaitTimeoutMs(this.getAgentRuntimeSettings().approvals.timeoutMinutes),

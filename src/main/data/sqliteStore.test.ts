@@ -8,6 +8,12 @@ import { DB_FILENAME } from '../core/appConstants';
 
 vi.mock('electron', () => ({
   app: { getPath: () => os.tmpdir() },
+  safeStorage: {
+    isEncryptionAvailable: () => true,
+    getSelectedStorageBackend: () => 'gnome_libsecret',
+    encryptString: (value: string) => Buffer.from(`test-cipher:${value}`),
+    decryptString: (value: Buffer) => value.toString().replace(/^test-cipher:/, ''),
+  },
 }));
 
 import { CoworkStore } from './coworkStore';
@@ -20,6 +26,33 @@ function createTempDir(): string {
   tempDirs.push(dir);
   return dir;
 }
+
+test('persists builtin references without changing unrelated legacy credentials', () => {
+  const store = SqliteStore.create(createTempDir());
+  try {
+    const config = { providers: { builtin_models: { apiKey: 'builtin-fixture-key' } }, api: { key: 'legacy-fixture-key' } };
+    store.set('app_config', config);
+    const row = store.getDatabase().prepare('SELECT value FROM kv WHERE key = ?').get('app_config') as { value: string };
+    expect(row.value).not.toContain('builtin-fixture-key');
+    expect(row.value).toContain('legacy-fixture-key');
+    expect(store.get('app_config')).toEqual({ ...config, providers: { builtin_models: { apiKey: 'justdo-builtin-credential' } } });
+  } finally { store.close(); }
+});
+
+test('converts existing plaintext credentials when opening a database', () => {
+  const directory = createTempDir();
+  const initial = SqliteStore.create(directory);
+  const config = { providers: { builtin_models: { apiKey: 'legacy-builtin-fixture' } } };
+  initial.getDatabase().prepare('INSERT INTO kv (key, value, updated_at) VALUES (?, ?, ?)')
+    .run('app_config', JSON.stringify(config), Date.now());
+  initial.close();
+  const reopened = SqliteStore.create(directory);
+  try {
+    const row = reopened.getDatabase().prepare('SELECT value FROM kv WHERE key = ?').get('app_config') as { value: string };
+    expect(row.value).not.toContain('legacy-builtin-fixture');
+    expect(reopened.get('app_config')).toEqual({ providers: { builtin_models: { apiKey: 'justdo-builtin-credential' } } });
+  } finally { reopened.close(); }
+});
 
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {

@@ -8,7 +8,7 @@ import {
   parseProviderModelsResponse,
 } from '../../shared/providers/modelDiscovery';
 import type { SqliteStore } from '../data/sqliteStore';
-import { BUILTIN_MODEL_PROVIDER_CONFIG } from './builtinModelProviderConfig';
+import { BUILTIN_CREDENTIAL_MARKER, BUILTIN_MODEL_PROVIDER_CONFIG, getBuiltinModelProviderApiKey } from './builtinModelProviderConfig';
 
 type ProviderModel = {
   id: string;
@@ -85,7 +85,7 @@ const isCurrentBuiltinModelSync = (store: SqliteStore, state: BuiltinModelSyncSt
 export function readBuiltinModelProviderFile(): BuiltinProviderFile | null {
   return {
     enabled: BUILTIN_MODEL_PROVIDER_CONFIG.enabled,
-    apiKey: BUILTIN_MODEL_PROVIDER_CONFIG.apiKey.trim(),
+    apiKey: getBuiltinModelProviderApiKey(),
     baseUrl: normalizeModelProviderBaseUrl(BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl),
   };
 }
@@ -183,7 +183,7 @@ export async function syncBuiltinModelProvider(
 
   providers[ProviderName.BuiltinModels] = {
     enabled: true,
-    apiKey: fileConfig.apiKey ?? '',
+    apiKey: BUILTIN_CREDENTIAL_MARKER,
     baseUrl: fileConfig.baseUrl,
     apiFormat: 'openai',
     readonly: true,
@@ -201,8 +201,10 @@ export async function syncBuiltinModelProvider(
     ...appConfig,
     api: {
       ...appConfig.api,
-      key: appConfig.api?.key || fileConfig.apiKey || '',
-      baseUrl: appConfig.api?.baseUrl || fileConfig.baseUrl,
+      key: !appConfig.api?.key || appConfig.api.key === fileConfig.apiKey || appConfig.api.key.startsWith('justdo-local-')
+        ? BUILTIN_CREDENTIAL_MARKER : appConfig.api.key,
+      baseUrl: !appConfig.api?.key || appConfig.api.key === fileConfig.apiKey || appConfig.api.key.startsWith('justdo-local-') || appConfig.api.key === BUILTIN_CREDENTIAL_MARKER
+        ? fileConfig.baseUrl : appConfig.api.baseUrl || fileConfig.baseUrl,
     },
     model: nextModel,
     providers,

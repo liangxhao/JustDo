@@ -3,6 +3,12 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import type { SqliteStore } from '../data/sqliteStore';
 import { BuiltinModelAccess, syncBuiltinModelProvider } from './builtinModelProvider';
 
+vi.mock('./builtinModelProviderConfig', () => ({
+  BUILTIN_CREDENTIAL_MARKER: 'justdo-builtin-credential',
+  BUILTIN_MODEL_PROVIDER_CONFIG: { enabled: true, baseUrl: 'http://127.0.0.1:9108/v1' },
+  getBuiltinModelProviderApiKey: () => 'builtin-fixture-secret',
+}));
+
 describe('syncBuiltinModelProvider', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -69,6 +75,13 @@ describe('syncBuiltinModelProvider', () => {
     await syncBuiltinModelProvider(store, { access: BuiltinModelAccess.Enabled });
 
     const savedConfig = set.mock.calls[0]?.[1];
+    expect(savedConfig.providers.builtin_models.apiKey).toBe('justdo-builtin-credential');
+    expect(savedConfig.api.key).toBe('justdo-builtin-credential');
+    expect(savedConfig.providers.builtin_models.baseUrl).toBe('http://127.0.0.1:9108/v1');
+    expect(JSON.stringify(savedConfig)).not.toContain('builtin-fixture-secret');
+    expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:9108/v1/models', expect.objectContaining({
+      headers: { Authorization: 'Bearer builtin-fixture-secret' },
+    }));
     expect(savedConfig.providers.builtin_models.models).toEqual([
       expect.objectContaining({ id: 'chat-model' }),
     ]);

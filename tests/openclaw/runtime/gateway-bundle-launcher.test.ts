@@ -96,4 +96,23 @@ describe('OpenClaw gateway bundle launcher', () => {
       /gateway bundle not found/,
     );
   });
+
+  test('flushes compile cache while the Gateway module import remains pending', () => {
+    const runtimeRoot = createRuntime();
+    fs.writeFileSync(path.join(runtimeRoot, 'gateway-bundle.mjs'), [
+      "import { getCompileCacheDir } from 'node:module';",
+      "import { readdirSync } from 'node:fs';",
+      'await new Promise(resolve => setTimeout(resolve, 5500));',
+      'process.stdout.write(JSON.stringify(readdirSync(getCompileCacheDir()).length));',
+      'process.exit(0);',
+    ].join('\n'));
+    const { launcherPath } = ensureOpenClawGatewayBundleLauncher(runtimeRoot);
+    const env = { ...process.env, OPENCLAW_STATE_DIR: runtimeRoot };
+    delete env.NODE_DISABLE_COMPILE_CACHE;
+    const output = execFileSync(process.execPath, [launcherPath, 'gateway'], {
+      encoding: 'utf8', timeout: 9000,
+      env,
+    });
+    expect(JSON.parse(output)).toBeGreaterThan(0);
+  }, 10_000);
 });

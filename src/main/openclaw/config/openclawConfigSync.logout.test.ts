@@ -1092,12 +1092,12 @@ describe('OpenClaw auth logout config sync', () => {
 
     expect(result.ok).toBe(true);
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    expect(config.models.providers.builtin_models.apiKey).toBe(
-      '${JUSTDO_APIKEY_BUILTIN_MODELS}',
-    );
-    expect(config.models.providers['custom-provider'].apiKey).toBe(
-      '${JUSTDO_APIKEY_CUSTOM_1}',
-    );
+    expect(config.models.providers.builtin_models.apiKey).toEqual({
+      source: 'exec', provider: 'justdo-builtin', id: 'model-api-key',
+    });
+    expect(config.models.providers['custom-provider'].apiKey).toEqual({
+      source: 'file', provider: 'justdo-model-providers', id: '/CUSTOM_1',
+    });
     expect(config.models.providers.custom_1).toBeUndefined();
     expect(config.models).not.toHaveProperty('pricing');
     expect(config.agents.defaults.model.primary).toBe('custom-provider/custom-model');
@@ -1106,5 +1106,38 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.agents.defaults.compaction).not.toHaveProperty('keepRecentTokens');
     expect(config.gateway).toEqual({ mode: 'local', customSetting: 'keep-me' });
     expect(config.customFeature).toEqual({ enabled: true });
+
+    // Ordinary sync establishes the steady-state config. Adding another
+    // supplier must change only the native config/secret file, not launch env.
+    expect(sync.sync('settings').ok).toBe(true);
+    const launchEnvironment = sync.collectGatewayLaunchEnvVars();
+    expect(launchEnvironment).not.toHaveProperty('JUSTDO_APIKEY_CUSTOM_1');
+    const providersWithSecond = {
+      ...appConfig.providers,
+      custom_2: {
+        ...appConfig.providers.custom_1,
+        displayName: 'Second-Provider',
+        apiKey: 'second-provider-fixture-key',
+      },
+    };
+    setStoreGetter(() => ({ get: () => ({ ...appConfig, providers: providersWithSecond }) }) as never);
+    expect(sync.sync('provider-add')).toMatchObject({
+      ok: true, configChanged: true, secretsChanged: true, requiresGatewayRestart: false,
+    });
+    expect(sync.collectGatewayLaunchEnvVars()).toEqual(launchEnvironment);
+
+    providersWithSecond.custom_2.apiKey = 'rotated-provider-fixture-key';
+    expect(sync.sync('provider-key-change')).toMatchObject({
+      ok: true, changed: true, configChanged: false, secretsChanged: true,
+    });
+    expect(sync.collectGatewayLaunchEnvVars()).toEqual(launchEnvironment);
+
+    providersWithSecond.custom_1.displayName = 'Renamed-Provider';
+    expect(sync.sync(BuiltinModelSyncReason.AuthLogin).ok).toBe(true);
+    const renamed = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(renamed.models.providers['custom-provider']).toBeUndefined();
+    expect(renamed.models.providers['renamed-provider'].apiKey).toEqual({
+      source: 'file', provider: 'justdo-model-providers', id: '/CUSTOM_1',
+    });
   });
 });
