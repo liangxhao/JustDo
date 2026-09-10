@@ -20,13 +20,14 @@ test('relies on the npm predist:win lifecycle without invoking it twice', () => 
   expect(packageJson.scripts['dist:win']).not.toContain('npm run predist:win');
 });
 
-test('keeps Electron readiness probes quiet and allows slow cold builds', () => {
+test('starts Electron as soon as the quiet readiness probes succeed', () => {
   const devRunner = fs.readFileSync(
     path.resolve(__dirname, '../../scripts/run-electron-dev.cjs'),
     'utf8',
   );
 
-  expect(devRunner).toContain('wait-on -t 300000 -d 20000 --simultaneous 1');
+  expect(devRunner).toContain('wait-on -t 300000 --simultaneous 1');
+  expect(devRunner).not.toMatch(/wait-on[^\n]*\s-d\s/);
   expect(devRunner).not.toContain('wait-on -v');
 });
 
@@ -104,6 +105,9 @@ test('rewrites and packages the OpenClaw audit writer companion', () => {
 });
 
 test('uses a target-aware and runtime-verified Electron-native rebuild', () => {
+  const packageJson = JSON.parse(
+    fs.readFileSync(path.resolve(__dirname, '../../package.json'), 'utf8'),
+  ) as { scripts: Record<string, string> };
   const rebuildScript = fs.readFileSync(
     path.resolve(__dirname, '../../scripts/rebuild-electron-native.cjs'),
     'utf8',
@@ -114,8 +118,13 @@ test('uses a target-aware and runtime-verified Electron-native rebuild', () => {
   );
 
   expect(electronBuilderConfig.npmRebuild).toBe(false);
+  expect(packageJson.scripts['precompile:electron']).toBe('npm run rebuild:electron-native');
   expect(rebuildScript).toContain("'--platform'");
   expect(rebuildScript).toContain("'--arch'");
+  expect(rebuildScript).toContain("process.argv.includes('--force')");
+  expect(rebuildScript).toContain("const verificationMarker = 'JUSTDO_ELECTRON_ABI:'");
+  expect(rebuildScript).toContain('/^\\d+$/.test(electronAbi)');
+  expect(rebuildScript).toContain('already compatible with Electron ABI');
   expect(rebuildScript).toContain("ELECTRON_RUN_AS_NODE: '1'");
   expect(rebuildScript).toContain("new Database(':memory:')");
   expect(rebuildScript).toContain('Failed to rebuild better-sqlite3 for Electron.');

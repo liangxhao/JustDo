@@ -1,41 +1,31 @@
 import os from 'os';
 import { describe, expect, it, vi } from 'vitest';
 
-import {
-  lowerGatewayProcessPriority,
-  restoreGatewayProcessPriority,
-} from './gatewayProcessPriority';
+import { ensureGatewayStartupPriority } from './gatewayProcessPriority';
 
-describe('lowerGatewayProcessPriority', () => {
-  it('moves a valid gateway process below foreground priority', () => {
+describe('ensureGatewayStartupPriority', () => {
+  it('keeps a valid gateway process at normal priority during startup', () => {
     const setPriority = vi.fn();
 
-    expect(lowerGatewayProcessPriority(1234, 'win32', setPriority)).toBe(true);
+    expect(ensureGatewayStartupPriority(1234, 'win32', setPriority)).toBe(true);
     expect(setPriority).toHaveBeenCalledWith(
       1234,
-      os.constants.priority.PRIORITY_BELOW_NORMAL,
+      os.constants.priority.PRIORITY_NORMAL,
     );
   });
 
   it.each([undefined, null, 0, -1, 1.5])('ignores an invalid process id: %s', pid => {
     const setPriority = vi.fn();
 
-    expect(lowerGatewayProcessPriority(pid, 'win32', setPriority)).toBe(false);
+    expect(ensureGatewayStartupPriority(pid, 'win32', setPriority)).toBe(false);
     expect(setPriority).not.toHaveBeenCalled();
   });
 
   it('does not change process priority outside Windows', () => {
     const setPriority = vi.fn();
 
-    expect(lowerGatewayProcessPriority(1234, 'darwin', setPriority)).toBe(false);
+    expect(ensureGatewayStartupPriority(1234, 'darwin', setPriority)).toBe(false);
     expect(setPriority).not.toHaveBeenCalled();
-  });
-
-  it('restores normal priority after startup', () => {
-    const setPriority = vi.fn();
-
-    expect(restoreGatewayProcessPriority(1234, 'win32', setPriority)).toBe(true);
-    expect(setPriority).toHaveBeenCalledWith(1234, os.constants.priority.PRIORITY_NORMAL);
   });
 
   it('keeps startup running when the operating system rejects the priority change', () => {
@@ -43,6 +33,6 @@ describe('lowerGatewayProcessPriority', () => {
       throw new Error('access denied');
     });
 
-    expect(lowerGatewayProcessPriority(1234, 'win32', setPriority)).toBe(false);
+    expect(ensureGatewayStartupPriority(1234, 'win32', setPriority)).toBe(false);
   });
 });

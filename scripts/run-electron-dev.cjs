@@ -23,7 +23,7 @@ const start = async () => {
 
   const commands = [
     `vite --port ${devServerPort}`,
-    `wait-on -t 300000 -d 20000 --simultaneous 1 http://localhost:${devServerPort} dist-electron/.electron-ready && npm run start:electron`,
+    `wait-on -t 300000 --simultaneous 1 http://localhost:${devServerPort} dist-electron/.electron-ready && npm run start:electron`,
   ];
   const concurrentlyPackagePath = require.resolve('concurrently/package.json');
   const concurrentlyPackage = require(concurrentlyPackagePath);

@@ -18,6 +18,7 @@ function readOption(name, fallback) {
 
 const targetPlatform = readOption('--platform', process.platform);
 const targetArch = readOption('--arch', process.arch);
+const forceRebuild = process.argv.includes('--force');
 
 // Get Electron version from its package.json
 let electronVersion;
@@ -31,15 +32,52 @@ try {
   process.exit(1);
 }
 
-console.log(
-  `Rebuilding native modules for Electron v${electronVersion} (${targetPlatform}-${targetArch})...`,
-);
-
 // Check if better-sqlite3 exists
 if (!fs.existsSync(betterSqlite3Path)) {
   console.log('better-sqlite3 not found, skipping rebuild.');
   process.exit(0);
 }
+
+const isHostTarget = targetPlatform === process.platform && targetArch === process.arch;
+const electronExecutable = isHostTarget ? require('electron') : null;
+const verificationMarker = 'JUSTDO_ELECTRON_ABI:';
+const verificationScript = [
+  `const Database=require(${JSON.stringify(betterSqlite3Path)});`,
+  "const database=new Database(':memory:');",
+  'database.close();',
+  `process.stdout.write(${JSON.stringify(verificationMarker)}+(process.versions.modules||'unknown'));`,
+].join('');
+
+const verifyHostBinary = () => {
+  if (!electronExecutable) return null;
+  try {
+    const output = execFileSync(electronExecutable, ['-e', verificationScript], {
+      encoding: 'utf8',
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const markerIndex = output.lastIndexOf(verificationMarker);
+    if (markerIndex === -1) return null;
+    const electronAbi = output.slice(markerIndex + verificationMarker.length).trim();
+    return /^\d+$/.test(electronAbi) ? electronAbi : null;
+  } catch {
+    return null;
+  }
+};
+
+if (!forceRebuild && isHostTarget) {
+  const existingElectronAbi = verifyHostBinary();
+  if (existingElectronAbi) {
+    console.log(
+      `better-sqlite3 is already compatible with Electron ABI ${existingElectronAbi}; skipping rebuild.`,
+    );
+    process.exit(0);
+  }
+}
+
+console.log(
+  `Rebuilding native modules for Electron v${electronVersion} (${targetPlatform}-${targetArch})...`,
+);
 
 // Rebuild better-sqlite3 using prebuild-install
 console.log('Downloading prebuilt binary for better-sqlite3...');
@@ -66,20 +104,13 @@ try {
   throw error;
 }
 
-if (targetPlatform === process.platform && targetArch === process.arch) {
+if (isHostTarget) {
   // better-sqlite3 loads its native binding lazily, so creating a database is
   // required to verify the downloaded binary rather than only its JS entry.
-  const electronExecutable = require('electron');
-  const verificationScript = [
-    `const Database=require(${JSON.stringify(betterSqlite3Path)});`,
-    "const database=new Database(':memory:');",
-    'database.close();',
-    "process.stdout.write(process.versions.modules || 'unknown');",
-  ].join('');
-  const electronAbi = execFileSync(electronExecutable, ['-e', verificationScript], {
-    encoding: 'utf8',
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-  }).trim();
+  const electronAbi = verifyHostBinary();
+  if (!electronAbi) {
+    throw new Error('Downloaded better-sqlite3 failed Electron runtime verification.');
+  }
   console.log(`Verified better-sqlite3 with Electron ABI ${electronAbi}.`);
 } else {
   console.log(

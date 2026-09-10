@@ -35,7 +35,7 @@
     "pretest": "npm rebuild better-sqlite3",
     "preview": "vite preview",
     "compile:electron": "tsc --project electron-tsconfig.json",
-    "precompile:electron": "electron-builder install-app-deps && npm run rebuild:electron-native",
+    "precompile:electron": "npm run rebuild:electron-native",
     "rebuild:electron-native": "node scripts/rebuild-electron-native.cjs",
     "prestart:electron": "npm run browser-extension:prepare",
     "start:electron": "node scripts/launch-electron.cjs",

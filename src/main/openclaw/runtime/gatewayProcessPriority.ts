@@ -22,21 +22,18 @@ const setGatewayProcessPriority = (
   }
 };
 
-export const lowerGatewayProcessPriority = (
+export const ensureGatewayStartupPriority = (
   pid: number | null | undefined,
   platform: NodeJS.Platform = process.platform,
   setPriority?: SetProcessPriority,
 ): boolean =>
   setGatewayProcessPriority(
     pid,
-    os.constants.priority.PRIORITY_BELOW_NORMAL,
+    // Gateway startup is dominated by ESM loading, compile-cache I/O, and
+    // short-lived Windows helper processes. BELOW_NORMAL can starve all three
+    // behind foreground work and turn an otherwise bounded cold start into a
+    // minute-long one. Keep the child at normal priority from the outset.
+    os.constants.priority.PRIORITY_NORMAL,
     platform,
     setPriority,
   );
-
-export const restoreGatewayProcessPriority = (
-  pid: number | null | undefined,
-  platform: NodeJS.Platform = process.platform,
-  setPriority?: SetProcessPriority,
-): boolean =>
-  setGatewayProcessPriority(pid, os.constants.priority.PRIORITY_NORMAL, platform, setPriority);

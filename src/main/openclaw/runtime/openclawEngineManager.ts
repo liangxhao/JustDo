@@ -34,10 +34,7 @@ import {
 import { GatewayConfigReloadMonitor } from './gatewayConfigReloadMonitor';
 import { buildGatewayLaunchArgs, buildGatewayLaunchEnvironment } from './gatewayLaunchArgs';
 import { GatewayStdoutLogFilter } from './gatewayLogFilter';
-import {
-  lowerGatewayProcessPriority,
-  restoreGatewayProcessPriority,
-} from './gatewayProcessPriority';
+import { ensureGatewayStartupPriority } from './gatewayProcessPriority';
 import { findAvailableLoopbackPort, isLoopbackPortAvailable } from './loopbackPort';
 import { ensureOpenClawGatewayBundleLauncher } from './openclawGatewayBundleLauncher.cjs';
 import { OPENCLAW_LAUNCHER_KEEP_ALIVE_SOURCE } from './openclawLauncher';
@@ -882,9 +879,9 @@ export class OpenClawEngineManager extends EventEmitter {
 
     // Wait for the spawn event to confirm the process started (pid becomes available).
     child.once('spawn', () => {
-      const usesStartupPriority = lowerGatewayProcessPriority(child.pid);
+      const usesStartupPriority = ensureGatewayStartupPriority(child.pid);
       console.log(
-        `[OpenClaw] gateway process spawned (${elapsed()}), pid=${child.pid}, startupPriority=${usesStartupPriority}`,
+        `[OpenClaw] gateway process spawned (${elapsed()}), pid=${child.pid}, startupPriority=normal, applied=${usesStartupPriority}`,
       );
     });
 
@@ -904,12 +901,6 @@ export class OpenClawEngineManager extends EventEmitter {
     }
 
     console.log(`[OpenClaw] startGateway: gateway is running, total startup time: ${elapsed()}`);
-    const restoredNormalPriority = restoreGatewayProcessPriority(child.pid);
-    if (process.platform === 'win32') {
-      console.log(
-        `[OpenClaw] gateway process startup priority restored, pid=${child.pid}, success=${restoredNormalPriority}`,
-      );
-    }
     // Reset restart counter on successful start — gateway is healthy
     this.gatewayRestartAttempt = 0;
     this.setStatus({
