@@ -4,7 +4,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
+vi.mock('electron', () => ({ app: { getName: () => 'JustDo', getPath: () => '', isPackaged: false } }));
+import { buildWindowsChildProcessPreload } from '../../../src/main/openclaw/runtime/electronNodeRuntime';
 
 import { syncProviderSecretFile } from '../../../src/main/openclaw/config/providerSecretFile';
 
@@ -13,6 +15,8 @@ const dist = path.resolve('vendor/openclaw-runtime/current/dist');
 test.skipIf(!fs.existsSync(dist))('the bundled OpenClaw resolves managed file credentials without provider environment variables', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-native-provider-secret-'));
   try {
+    const preload = path.join(directory, 'hide-child-process-windows.cjs');
+    fs.writeFileSync(preload, buildWindowsChildProcessPreload());
     const resolver = fs.readdirSync(dist).filter(name => /^resolve-.*\.js$/.test(name)).find(name =>
       fs.readFileSync(path.join(dist, name), 'utf8').includes(
         'export { isMissingSecretRefResolutionError, isProviderScopedSecretResolutionError, resolveSecretRefString,',
@@ -29,7 +33,7 @@ test.skipIf(!fs.existsSync(dist))('the bundled OpenClaw resolves managed file cr
       if (value !== 'native-fixture-key') throw new Error('Native secret resolution mismatch');
       process.stdout.write('resolved');
     `;
-    expect(execFileSync(process.execPath, ['--input-type=module', '-e', script], {
+    expect(execFileSync(process.execPath, ['--require', preload, '--input-type=module', '-e', script], {
       encoding: 'utf8', timeout: 20_000,
     })).toBe('resolved');
   } finally {

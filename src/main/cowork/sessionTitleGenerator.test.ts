@@ -1,10 +1,34 @@
 import { afterEach, expect, test, vi } from 'vitest';
 
+import { BUILTIN_CREDENTIAL_MARKER, BUILTIN_MODEL_PROVIDER_CONFIG, getBuiltinModelProviderApiKey } from './builtinModelProviderConfig';
 import { SessionTitleGenerator } from './sessionTitleGenerator';
 
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+});
+
+test('materializes the builtin credential for title requests without sending the marker', async () => {
+  let correctCredential = false;
+  const handler = new SessionTitleGenerator({
+    resolveApiConfig: () => ({config: {apiKey: BUILTIN_CREDENTIAL_MARKER, baseURL: BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl, model: 'fixture'}}),
+    fetch: async (_url, init) => {
+      correctCredential = new Headers(init?.headers).get('authorization') === `Bearer ${getBuiltinModelProviderApiKey()}`;
+      return new Response(JSON.stringify({choices: [{message: {content: '测试标题'}}]}));
+    },
+  });
+  expect(await handler.generateTitle('检查模型连接')).toBe('测试标题');
+  expect(correctCredential).toBe(true);
+});
+
+test('does not send a builtin title credential to another upstream', async () => {
+  const fetchMock = vi.fn();
+  const handler = new SessionTitleGenerator({
+    resolveApiConfig: () => ({config: {apiKey: BUILTIN_CREDENTIAL_MARKER, baseURL: 'https://untrusted.invalid/v1', model: 'fixture'}}),
+    fetch: fetchMock,
+  });
+  expect(await handler.generateTitle('检查模型连接')).toBe('检查模型连接');
+  expect(fetchMock).not.toHaveBeenCalled();
 });
 
 test('generateTitle sends the Gateway session ID as LiteLLM metadata', async () => {

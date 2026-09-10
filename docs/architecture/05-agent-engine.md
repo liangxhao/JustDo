@@ -244,6 +244,8 @@ Windows bundle launcher 每 5 秒 best-effort flush V8 compile cache，timer 不
 
 `phase=running` 只表示受管进程/readiness 达标，不保证每个 adapter consumer 的 WebSocket 仍健康。配置、代理以及 extension 配置/启停/导入/删除触发的自动 hard restart 都进入 `OpenClawConfigSyncService` 的 exclusive queue 与原生 suspension 屏障，由同一路径 disconnect 旧 client、restart Gateway、再 connect Cowork service；最后一步失败时停止 Gateway，避免留下假健康状态。Skill/Extension 的 Windows 目录锁恢复也在同一 exclusive queue 中，只有原生 suspension 返回 ready 才能 stop/mutate/start；Gateway 忙碌时操作失败并提示稍后重试，不能直接中断 active run。
 
+设置页“测试连接”通过既有 `api:fetch` IPC 发起请求。Renderer 仅提供内置凭据占位符；Main 在出站请求头策略之后、实际发送之前解析它，仅允许指定内置上游的 `POST /chat/completions`，并禁止该请求自动重定向。真实 Key 不回写输入对象或产品配置。自定义 Key 的请求路径保持不变；标题生成在自己的 Main 请求边界解析内置引用。
+
 ## 20. 启动失败分层
 
 | 阶段               | 失败示例                 | 处理                                                   |

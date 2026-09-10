@@ -31,6 +31,7 @@ vi.mock('../../core/mainProcessFetch', () => ({
   },
 }));
 
+import { BUILTIN_CREDENTIAL_MARKER, BUILTIN_MODEL_PROVIDER_CONFIG, getBuiltinModelProviderApiKey } from '../../cowork/builtinModelProviderConfig';
 import { registerNetworkHandlers } from './network';
 
 type ApiFetchHandler = (
@@ -46,6 +47,38 @@ type ApiFetchHandler = (
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+test.each(['authorization', 'Authorization'])('resolves builtin %s only in Main and refuses redirects', async (headerName) => {
+  mocks.applyMainProcessOutboundHeaderPolicy.mockImplementation((_url, headers) => headers);
+  let correctCredential = false;
+  let refusesRedirects = false;
+  mocks.fetch.mockImplementation(async (_url, init) => {
+    correctCredential = init.headers[headerName] === `Bearer ${getBuiltinModelProviderApiKey()}`;
+    refusesRedirects = init.redirect === 'error';
+    return new Response('{"choices":[]}', { headers: { 'content-type': 'application/json' } });
+  });
+  registerNetworkHandlers();
+  const handler = mocks.handle.mock.calls.find(([channel]) => channel === 'api:fetch')![1] as ApiFetchHandler;
+  const headers = { [headerName]: `Bearer ${BUILTIN_CREDENTIAL_MARKER}` };
+  const result = await handler({}, {url: `${BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl}/chat/completions`, method: 'POST', headers});
+  // Never include a real credential in assertion output.
+  mocks.fetch.mockClear();
+  expect(correctCredential).toBe(true);
+  expect(refusesRedirects).toBe(true);
+  expect(headers[headerName]).toBe(`Bearer ${BUILTIN_CREDENTIAL_MARKER}`);
+  expect(result).toMatchObject({ok: true});
+});
+
+test('does not send builtin credentials to another origin or endpoint', async () => {
+  mocks.applyMainProcessOutboundHeaderPolicy.mockImplementation((_url, headers) => headers);
+  registerNetworkHandlers();
+  const handler = mocks.handle.mock.calls.find(([channel]) => channel === 'api:fetch')![1] as ApiFetchHandler;
+  for (const url of ['https://untrusted.invalid/chat/completions', `${BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl}/other`]) {
+    expect(await handler({}, {url, method: 'POST', headers: {Authorization: `Bearer ${BUILTIN_CREDENTIAL_MARKER}`}})).toMatchObject({ok: false});
+  }
+  expect(await handler({}, {url: `${BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl}/chat/completions`, method: 'GET', headers: {Authorization: `Bearer ${BUILTIN_CREDENTIAL_MARKER}`}})).toMatchObject({ok: false});
+  expect(mocks.fetch).not.toHaveBeenCalled();
 });
 
 test('applies the outbound-header policy to API fetch requests', async () => {

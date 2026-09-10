@@ -4,7 +4,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
+vi.mock('electron', () => ({ app: { getName: () => 'JustDo', getPath: () => '', isPackaged: false } }));
+import { buildWindowsChildProcessPreload } from '../../../src/main/openclaw/runtime/electronNodeRuntime';
 
 import { BUILTIN_CREDENTIAL_MARKER } from '../../../src/main/cowork/builtinModelProviderConfig';
 import { syncBuiltinCredentialFile } from '../../../src/main/openclaw/config/builtinCredentialFile';
@@ -13,6 +15,8 @@ const dist = path.resolve('vendor/openclaw-runtime/current/dist');
 test.skipIf(!fs.existsSync(dist))('native exec resolution and models cache never persist the resolved builtin key', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-native-builtin 测试 '));
   try {
+    const preload = path.join(directory, 'hide-child-process-windows.cjs');
+    fs.writeFileSync(preload, buildWindowsChildProcessPreload());
     const resolver = fs.readdirSync(dist).filter(name => /^resolve-.*\.js$/.test(name)).find(name =>
       fs.readFileSync(path.join(dist, name), 'utf8').includes(
         'export { isMissingSecretRefResolutionError, isProviderScopedSecretResolutionError, resolveSecretRefString,',
@@ -31,9 +35,15 @@ test.skipIf(!fs.existsSync(dist))('native exec resolution and models cache never
     const script = `
       import fs from 'node:fs';
       import { resolveSecretRefString } from ${url(resolver!)};
+      import { validateConfigObjectRaw } from ${url('config/config.js')};
       import { setRuntimeConfigSnapshot } from ${url('plugin-sdk/runtime-config-snapshot.js')};
       import { ensureOpenClawModelsJson } from ${url('agents/models-config.runtime.js')};
       const source = ${JSON.stringify(config)};
+      const validation = validateConfigObjectRaw(source);
+      if (!validation.ok) throw new Error(JSON.stringify(validation.issues));
+      const invalid = structuredClone(source);
+      invalid.secrets.providers['justdo-builtin'].passEnv = ['SystemRoot'];
+      if (validateConfigObjectRaw(invalid).ok) throw new Error('Invalid mixed-case passEnv was accepted');
       const key = await resolveSecretRefString(source.models.providers.builtin_models.apiKey, {config: source, env: process.env});
       if (key !== 'native-builtin-fixture') throw new Error('Resolution mismatch');
       const runtime = structuredClone(source);
@@ -47,7 +57,7 @@ test.skipIf(!fs.existsSync(dist))('native exec resolution and models cache never
       if (marker !== 'secretref-managed') throw new Error('Unexpected cache marker');
       process.stdout.write('verified');
     `;
-    const output = execFileSync(process.execPath, ['--input-type=module', '-e', script], {
+    const output = execFileSync(process.execPath, ['--require', preload, '--input-type=module', '-e', script], {
       encoding: 'utf8', timeout: 30_000, windowsHide: true,
       env: { ...process.env, OPENCLAW_STATE_DIR: directory, OPENCLAW_CONFIG_PATH: path.join(directory, 'openclaw.json') },
     });

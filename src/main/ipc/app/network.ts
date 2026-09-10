@@ -1,10 +1,12 @@
 import { ipcMain, type IpcMainInvokeEvent, session, type WebContents } from 'electron';
 
 import { type ApiFetchOptions, NetworkIpc } from '../../../shared/network';
+import { t } from '../../core/i18n';
 import {
   applyMainProcessOutboundHeaderPolicy,
   MainProcessOutboundHeaderSource,
 } from '../../core/mainProcessFetch';
+import { BUILTIN_CREDENTIAL_MARKER, BUILTIN_MODEL_PROVIDER_CONFIG, resolveBuiltinRequestApiKey } from '../../cowork/builtinModelProviderConfig';
 
 interface PendingFetch {
   controller: AbortController;
@@ -52,9 +54,23 @@ export const registerNetworkHandlers = (): void => {
     }
 
     const doFetch = async (headers: Record<string, string>) => {
+      const requestHeaders = { ...headers };
+      const builtinAuth = Object.keys(requestHeaders).filter(name =>
+        name.toLowerCase() === 'authorization' && requestHeaders[name] === `Bearer ${BUILTIN_CREDENTIAL_MARKER}`,
+      );
+      if (builtinAuth.length) {
+        const baseUrl = BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl.replace(/\/+$/, '');
+        if (options.method !== 'POST' || options.url !== `${baseUrl}/chat/completions`) {
+          throw new Error(t('builtinCredentialTargetMismatch'));
+        }
+        for (const name of builtinAuth) {
+          requestHeaders[name] = `Bearer ${resolveBuiltinRequestApiKey(BUILTIN_CREDENTIAL_MARKER, baseUrl)}`;
+        }
+      }
       const response = await session.defaultSession.fetch(options.url, {
         method: options.method,
-        headers,
+        headers: requestHeaders,
+        ...(builtinAuth.length ? { redirect: 'error' as const } : {}),
         body: options.body,
         signal: controller?.signal,
       });

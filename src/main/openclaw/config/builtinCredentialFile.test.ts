@@ -61,7 +61,7 @@ describe('encrypted binary builtin credentials', () => {
       command: string; args: string[]; env: Record<string, string>;
     }> }).providers[BUILTIN_SECRET_SOURCE];
     const run = (ids: string[]) => spawnSync(provider.command, provider.args, {
-      env: { ...provider.env, SystemRoot: process.env.SystemRoot },
+      env: provider.env,
       windowsHide: true, encoding: 'utf8', timeout: 5000,
       input: JSON.stringify({ protocolVersion: 1, provider: BUILTIN_SECRET_SOURCE, ids }),
     });

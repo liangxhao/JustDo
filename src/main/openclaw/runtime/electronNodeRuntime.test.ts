@@ -1,3 +1,5 @@
+import { execFileSync } from 'node:child_process';
+
 import path from 'path';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -89,5 +91,29 @@ describe('Electron Node runtime', () => {
       '--use-system-ca --require="C:/Users/Test User/hide-child-process-windows.cjs"',
     );
     expect(second).toBe(first);
+  });
+
+  it('preserves promisified stdout, stderr, child handles and failure output', () => {
+    const script = `
+      ${buildWindowsChildProcessPreload()}
+      const assert = require('node:assert/strict');
+      (async () => {
+        const run = promisify(childProcess.execFile);
+        const pending = run(process.execPath, ['-e', 'process.stdout.write("out");process.stderr.write("err")']);
+        assert.ok(pending.child.pid);
+        assert.deepEqual(await pending, { stdout: 'out', stderr: 'err' });
+        const buffers = await run(process.execPath, ['-e', 'process.stdout.write("out")'], {encoding: 'buffer'});
+        assert.ok(Buffer.isBuffer(buffers.stdout));
+        await assert.rejects(run(process.execPath, ['-e', 'process.stdout.write("out");process.stderr.write("err");process.exit(7)']),
+          error => error.code === 7 && error.stdout === 'out' && error.stderr === 'err');
+        const shell = promisify(childProcess.exec)('echo fixture');
+        assert.ok(shell.child.pid);
+        assert.equal((await shell).stdout.trim(), 'fixture');
+        assert.equal((await promisify(childProcess.exec)('echo fixture', {encoding:'utf8'})).stderr, '');
+      })().catch(error => { console.error(error); process.exitCode = 1; });
+    `;
+    execFileSync(process.execPath, ['-e', script], {
+      windowsHide: true, timeout: 15_000, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    });
   });
 });

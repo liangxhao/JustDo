@@ -153,9 +153,12 @@ export function syncBuiltinCredentialFile(
           ...(process.platform === 'win32' ? {
             JUSTDO_CREDENTIAL_RUNTIME: runtimePath, JUSTDO_CREDENTIAL_RESOLVER: resolver,
             PATHEXT: '.EXE;.COM',
+            // Native config requires uppercase names; supply explicitly because
+            // inherited environment snapshots may contain mixed-case SystemRoot.
+            SYSTEMROOT: process.env.SystemRoot || 'C:\\Windows',
           } : {}),
         },
-        passEnv: process.platform === 'win32' ? ['SystemRoot'] : [],
+        passEnv: [],
         timeoutMs: 5000, maxOutputBytes: 65_536, jsonOnly: true,
       },
     },

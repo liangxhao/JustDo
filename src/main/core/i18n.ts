@@ -18,6 +18,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
     credentialStorageUnavailable: '操作系统安全凭据存储不可用，无法安全保存内置凭据。',
     credentialDecryptionFailed: '无法使用当前操作系统账户解密应用凭据。',
+    builtinCredentialTargetMismatch: '内置模型凭据只能用于指定的模型请求地址。',
     // Tray menu
     trayShowWindow: `打开 ${PRODUCT_NAME}`,
     trayNewTask: '新建任务',
@@ -53,6 +54,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
   en: {
     credentialStorageUnavailable: 'Secure operating-system credential storage is unavailable.',
     credentialDecryptionFailed: 'Failed to unlock the application credential with this operating-system account.',
+    builtinCredentialTargetMismatch: 'Built-in model credentials can only be used with the designated model request URL.',
     // Tray menu
     trayShowWindow: `Open ${PRODUCT_NAME}`,
     trayNewTask: 'New Task',
