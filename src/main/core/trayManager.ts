@@ -27,11 +27,16 @@ function getTrayIconPath(): string {
   return path.join(basePath, 'tray-icon.png');
 }
 
-function getLabels(): { showWindow: string; newTask: string; settings: string; quit: string } {
+function getLabels(): {
+  startConversation: string;
+  settings: string;
+  restart: string;
+  quit: string;
+} {
   return {
-    showWindow: t('trayShowWindow'),
-    newTask: t('trayNewTask'),
+    startConversation: t('trayStartConversation'),
     settings: t('traySettings'),
+    restart: t('trayRestart'),
     quit: t('trayQuit'),
   };
 }
@@ -41,17 +46,7 @@ function buildContextMenu(getWindow: () => BrowserWindow | null): Menu {
 
   return Menu.buildFromTemplate([
     {
-      label: labels.showWindow,
-      click: () => {
-        const win = getWindow();
-        if (win && !win.isDestroyed()) {
-          if (!win.isVisible()) win.show();
-          if (!win.isFocused()) win.focus();
-        }
-      },
-    },
-    {
-      label: labels.newTask,
+      label: labels.startConversation,
       click: () => {
         const win = getWindow();
         if (win && !win.isDestroyed()) {
@@ -74,6 +69,13 @@ function buildContextMenu(getWindow: () => BrowserWindow | null): Menu {
       },
     },
     { type: 'separator' },
+    {
+      label: labels.restart,
+      click: () => {
+        app.relaunch();
+        app.quit();
+      },
+    },
     {
       label: labels.quit,
       click: () => {

@@ -7,7 +7,7 @@
  * Usage:
  *   import { t, setLanguage } from './i18n';
  *   setLanguage('en');
- *   const label = t('trayShowWindow'); // "Open JustDo"
+ *   const label = t('trayStartConversation'); // "Start Conversation"
  */
 
 import { PRODUCT_NAME } from '../../shared/productMetadata';
@@ -20,9 +20,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     credentialDecryptionFailed: '无法使用当前操作系统账户解密应用凭据。',
     builtinCredentialTargetMismatch: '内置模型凭据只能用于指定的模型请求地址。',
     // Tray menu
-    trayShowWindow: `打开 ${PRODUCT_NAME}`,
-    trayNewTask: '新建任务',
+    trayStartConversation: '发起对话',
     traySettings: '设置',
+    trayRestart: '重启软件',
     trayQuit: '退出',
     attachmentMenuOpen: '打开',
     attachmentMenuOpenWithSystem: '使用系统工具打开',
@@ -56,9 +56,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     credentialDecryptionFailed: 'Failed to unlock the application credential with this operating-system account.',
     builtinCredentialTargetMismatch: 'Built-in model credentials can only be used with the designated model request URL.',
     // Tray menu
-    trayShowWindow: `Open ${PRODUCT_NAME}`,
-    trayNewTask: 'New Task',
+    trayStartConversation: 'Start Conversation',
     traySettings: 'Settings',
+    trayRestart: 'Restart',
     trayQuit: 'Quit',
     attachmentMenuOpen: 'Open',
     attachmentMenuOpenWithSystem: 'Open with System Tool',
