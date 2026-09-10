@@ -1,3 +1,5 @@
+import { normalizeOpenClawProviderId } from '@shared/providers';
+
 import {
   type AppConfig,
   getCustomProviderDefaultName,
@@ -15,7 +17,7 @@ export const PROVIDERS_EXPORT_VERSION = 3;
 
 export type SerializedProviderConfig = Omit<
   ProviderConfig,
-  'apiKey' | 'displayName' | 'readonly'
+  'apiKey' | 'displayName' | 'identity' | 'readonly'
 > & {
   apiKey: PasswordEncryptedPayload | string;
   displayName: string;
@@ -55,7 +57,7 @@ const parseProviderConfig = (
     throw new Error('Invalid provider configuration');
   }
 
-  const { readonly: _readonly, ...config } = value;
+  const { identity: _identity, readonly: _readonly, ...config } = value;
   return {
     ...(config as Omit<SerializedProviderConfig, 'displayName'>),
     displayName,
@@ -68,7 +70,7 @@ export const createProvidersExportPayload = (
   type: EXPORT_FORMAT_TYPE,
   version: PROVIDERS_EXPORT_VERSION,
   providers: providers.map(({ key, config, apiKey }) => {
-    const { readonly: _readonly, ...exportedConfig } = config;
+    const { identity: _identity, readonly: _readonly, ...exportedConfig } = config;
     return {
       ...exportedConfig,
       apiKey,
@@ -112,7 +114,6 @@ export const mergeImportedProviders = (
   importedProviders: ProviderConfig[],
 ): ProvidersConfig => {
   const mergedProviders = { ...existingProviders };
-  const usedKeys = new Set(Object.keys(existingProviders));
   const providerKeyByName = new Map<string, string>();
 
   for (const [key, config] of Object.entries(existingProviders)) {
@@ -121,24 +122,18 @@ export const mergeImportedProviders = (
     }
   }
 
-  const allocateProviderKey = (): string => {
-    let index = 0;
-    while (usedKeys.has(`custom_${index}`)) {
-      index += 1;
-    }
-    const key = `custom_${index}`;
-    usedKeys.add(key);
-    return key;
-  };
-
   for (const config of importedProviders) {
     const displayName = config.displayName?.trim();
     if (!displayName) {
       throw new Error('Imported provider display name is required');
     }
     const normalizedName = normalizeDisplayName(displayName);
-    const key = providerKeyByName.get(normalizedName) ?? allocateProviderKey();
-    mergedProviders[key] = { ...config, displayName };
+    const key = providerKeyByName.get(normalizedName) ?? normalizeOpenClawProviderId(displayName);
+    mergedProviders[key] = {
+      ...config,
+      displayName,
+      identity: mergedProviders[key]?.identity ?? crypto.randomUUID(),
+    };
     providerKeyByName.set(normalizedName, key);
   }
 

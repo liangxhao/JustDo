@@ -5,6 +5,7 @@ import { defaultConfig } from '@/app/config';
 import {
   buildSettingsAppConfigUpdate,
   persistSettingsInOrder,
+  resolveProviderKeyAfterRename,
   resolveSubagentModelAfterProviderChange,
 } from '@/features/settings/settingsPersistence';
 
@@ -77,6 +78,32 @@ describe('settings app config updates', () => {
       useSystemProxy: !defaultConfig.useSystemProxy,
       proxy: defaultConfig.proxy,
     });
+  });
+});
+
+describe('provider rename persistence', () => {
+  test('resolves the renamed key by stable provider identity', () => {
+    expect(
+      resolveProviderKeyAfterRename(
+        'acmeproxy',
+        {
+          acmeproxy: {
+            enabled: true,
+            apiKey: 'secret',
+            baseUrl: 'https://old.example.test/v1',
+            identity: 'provider-id',
+          },
+        },
+        {
+          newproxy: {
+            enabled: true,
+            apiKey: 'secret',
+            baseUrl: 'https://new.example.test/v1',
+            identity: 'provider-id',
+          },
+        },
+      ),
+    ).toBe('newproxy');
   });
 });
 

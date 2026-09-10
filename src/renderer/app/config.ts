@@ -39,6 +39,8 @@ export interface AppConfig {
       baseUrl: string;
       apiFormat?: 'openai';
       displayName?: string;
+      /** Stable local identity used only to correlate provider renames. */
+      identity?: string;
       readonly?: boolean;
       models?: Array<{
         id: string;
@@ -161,7 +163,7 @@ export const CONFIG_KEYS = {
 };
 
 export const getVisibleProviders = (_language: 'zh' | 'en'): readonly string[] => {
-  // Custom providers (custom_0...custom_9) are handled separately
+  // User-defined providers are appended from the persisted provider map.
   return [BUILTIN_MODELS_PROVIDER_KEY];
 };
 
@@ -169,12 +171,13 @@ export const isBuiltinModelsProvider = (key: string): boolean =>
   key === BUILTIN_MODELS_PROVIDER_KEY;
 
 /**
- * 判断 provider key 是否为自定义提供商（custom_0, custom_1, ...）
+ * A provider key is either the managed built-in key or a user-selected,
+ * normalized OpenClaw provider name.
  */
-export const isCustomProvider = (key: string): boolean => key.startsWith('custom_');
+export const isCustomProvider = (key: string): boolean => !!key && !isBuiltinModelsProvider(key);
 
 /**
- * 从 custom_N key 中提取默认显示名称（如 custom_0 → "Custom0"）
+ * Compatibility fallback for configurations written before named keys.
  */
 export const getCustomProviderDefaultName = getDefaultCustomProviderDisplayName;
 
@@ -211,11 +214,16 @@ export const isReservedProviderDisplayName = isReservedOpenClawProviderId;
  * - 允许字母、数字、下划线、中划线、句点、空格
  * - 长度限制：1-32 字符
  * - 不能与 JustDo 管理的 OpenClaw provider ID 冲突
- * - displayName 为空时允许，会回退到对应的 CustomN 默认名称
+ * - displayName 不能为空
  */
 export const validateDisplayName = (name: string): { valid: boolean; error?: string } => {
   const trimmed = name.trim();
-  if (!trimmed) return { valid: true }; // 空 name 允许，回退到 custom_0
+  if (!trimmed) {
+    return {
+      valid: false,
+      error: 'Provider name is required',
+    };
+  }
   const validation = validateCustomProviderDisplayName(trimmed);
   if (!validation.valid && validation.reason === 'reserved') {
     return { valid: false, error: 'Cannot use application-reserved provider name' };

@@ -44,11 +44,6 @@ import {
   sanitizeOpenClawV2026_9_2Config,
 } from './openclawConfigSync';
 
-const providerApiKeyEnvVar = (providerName: string): string => {
-  const envName = providerName.toUpperCase().replace(/[^A-Z0-9]/g, '_');
-  return `JUSTDO_APIKEY_${envName}`;
-};
-
 const stripChatCompletionsSuffix = (rawBaseUrl: string): string => {
   const normalized = rawBaseUrl.trim().replace(/\/+$/, '');
   if (normalized.endsWith('/chat/completions')) {
@@ -61,18 +56,6 @@ const resolveDescriptor = (providerName: string) => ({
   providerId: providerName || OpenClawProviderId.JustDo,
   api: OpenClawApi.OpenAICompletions,
   normalizeBaseUrl: stripChatCompletionsSuffix,
-});
-
-describe('provider API key environment variables', () => {
-  test('normalizes custom provider identifiers', () => {
-    expect(providerApiKeyEnvVar(ProviderName.Custom)).toBe('JUSTDO_APIKEY_CUSTOM');
-    expect(providerApiKeyEnvVar('custom_5')).toBe('JUSTDO_APIKEY_CUSTOM_5');
-    expect(providerApiKeyEnvVar('my-provider')).toBe('JUSTDO_APIKEY_MY_PROVIDER');
-  });
-
-  test('uses the server environment variable convention', () => {
-    expect(providerApiKeyEnvVar('server')).toBe('JUSTDO_APIKEY_SERVER');
-  });
 });
 
 describe('provider registry', () => {
@@ -167,6 +150,11 @@ describe('OpenClaw provider config', () => {
 
     expect(selection.providerId).toBe('acmeproxy');
     expect(selection.primaryModel).toBe('acmeproxy/usage-aware-model');
+    expect(selection.providerConfig.apiKey).toEqual({
+      source: 'file',
+      provider: 'justdo-model-providers',
+      id: '/acmeproxy',
+    });
     expect(selection.providerConfig.models).toHaveLength(1);
     expect(selection.providerConfig.models[0]?.compat).toEqual({
       supportsUsageInStreaming: true,
@@ -179,7 +167,7 @@ describe('OpenClaw provider config', () => {
       baseURL: 'https://api.example.com/v1',
       modelId: 'deepseek-v4-flash',
       apiType: 'openai',
-      providerName: ProviderName.Custom,
+      providerName: 'custom',
     });
 
     expect(selection.providerConfig.timeoutSeconds).toBe(OPENCLAW_MODEL_PROVIDER_TIMEOUT_SECONDS);

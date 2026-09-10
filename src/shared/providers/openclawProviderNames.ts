@@ -4,13 +4,10 @@
  * `models.providers.<id>` entry is a supported route override, and blocking
  * those IDs prevents users from giving a custom endpoint its natural name.
  */
-export const JUSTDO_RESERVED_OPENCLAW_PROVIDER_IDS = [
-  'builtin_models',
-  'justdo',
-] as const;
+export const JUSTDO_RESERVED_OPENCLAW_PROVIDER_IDS = ['builtin_models', 'justdo'] as const;
 
 const RESERVED_PROVIDER_IDS = new Set<string>(JUSTDO_RESERVED_OPENCLAW_PROVIDER_IDS);
-const INTERNAL_CUSTOM_PROVIDER_ID_PATTERN = /^custom_\d+$/;
+const LEGACY_CUSTOM_PROVIDER_ID_PATTERN = /^custom_\d+$/i;
 const VALID_CUSTOM_PROVIDER_DISPLAY_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9_. -]{0,31}$/;
 
 export type CustomProviderDisplayNameValidation =
@@ -21,15 +18,20 @@ export const normalizeOpenClawProviderId = (name: string): string => name.trim()
 export const isReservedOpenClawProviderId = (name: string): boolean => {
   const normalized = normalizeOpenClawProviderId(name);
   return (
-    RESERVED_PROVIDER_IDS.has(normalized) || INTERNAL_CUSTOM_PROVIDER_ID_PATTERN.test(normalized)
+    RESERVED_PROVIDER_IDS.has(normalized) || LEGACY_CUSTOM_PROVIDER_ID_PATTERN.test(normalized)
   );
 };
 
 export const isJustDoCustomProviderKey = (providerKey: string): boolean =>
-  providerKey.startsWith('custom_');
+  !!providerKey && providerKey !== 'builtin_models';
+
+export const isLegacyCustomProviderKey = (providerKey: string): boolean =>
+  LEGACY_CUSTOM_PROVIDER_ID_PATTERN.test(providerKey);
 
 export const getDefaultCustomProviderDisplayName = (providerKey: string): string =>
-  `Custom${providerKey.replace('custom_', '')}`;
+  isLegacyCustomProviderKey(providerKey)
+    ? `Custom${providerKey.replace(/^custom_?/, '')}`
+    : providerKey;
 
 export const getEffectiveCustomProviderDisplayName = (
   providerKey: string,
@@ -40,6 +42,7 @@ export const getEffectiveCustomProviderDisplayName = (
 
 type CustomProviderConfigLike = {
   displayName?: unknown;
+  identity?: unknown;
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -57,11 +60,19 @@ export const buildCustomProviderRenameAliases = (
   if (!isRecord(previousProviders) || !isRecord(nextProviders)) return {};
 
   const aliases: Record<string, string> = {};
+  const nextEntries = Object.entries(nextProviders);
   for (const [providerKey, previousValue] of Object.entries(previousProviders)) {
-    if (!isJustDoCustomProviderKey(providerKey) || !(providerKey in nextProviders)) continue;
-
+    if (!isJustDoCustomProviderKey(providerKey)) continue;
     const previousConfig: CustomProviderConfigLike = isRecord(previousValue) ? previousValue : {};
-    const nextValue = nextProviders[providerKey];
+    const matchingEntry = nextEntries.find(([nextKey, nextValue]) => {
+      if (!isJustDoCustomProviderKey(nextKey) || !isRecord(nextValue)) return false;
+      if (typeof previousConfig.identity === 'string' && typeof nextValue.identity === 'string') {
+        return previousConfig.identity === nextValue.identity;
+      }
+      return nextKey === providerKey;
+    });
+    if (!matchingEntry) continue;
+    const [nextProviderKey, nextValue] = matchingEntry;
     const nextConfig: CustomProviderConfigLike = isRecord(nextValue) ? nextValue : {};
     const previousName = getEffectiveCustomProviderDisplayName(
       providerKey,
@@ -78,6 +89,9 @@ export const buildCustomProviderRenameAliases = (
     const previousId = normalizeOpenClawProviderId(previousName);
     const nextId = normalizeOpenClawProviderId(nextName);
     if (previousId !== nextId) aliases[previousId] = nextId;
+    if (normalizeOpenClawProviderId(nextProviderKey) !== nextId) {
+      aliases[normalizeOpenClawProviderId(nextProviderKey)] = nextId;
+    }
   }
   return aliases;
 };

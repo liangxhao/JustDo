@@ -90,9 +90,7 @@ describe('provider transfer format', () => {
       parseProvidersImportPayload({
         type: EXPORT_FORMAT_TYPE,
         version: PROVIDERS_EXPORT_VERSION,
-        providers: [
-          { ...providerConfig, apiKey: encryptedApiKey, displayName: 'JustDo' },
-        ],
+        providers: [{ ...providerConfig, apiKey: encryptedApiKey, displayName: 'JustDo' }],
       }),
     ).toThrow('Invalid provider display name');
   });
@@ -102,9 +100,7 @@ describe('provider transfer format', () => {
       parseProvidersImportPayload({
         type: EXPORT_FORMAT_TYPE,
         version: PROVIDERS_EXPORT_VERSION,
-        providers: [
-          { ...providerConfig, apiKey: encryptedApiKey, displayName: 'OpenCode' },
-        ],
+        providers: [{ ...providerConfig, apiKey: encryptedApiKey, displayName: 'OpenCode' }],
       }),
     ).toHaveLength(1);
   });
@@ -122,10 +118,10 @@ describe('mergeImportedProviders', () => {
     ]);
 
     expect(merged.custom_3.baseUrl).toBe('https://new.example.com');
-    expect(merged.custom_0).toBeUndefined();
+    expect(merged.acmeproxy).toBeUndefined();
   });
 
-  test('allocates the first unused internal key for a new display name', () => {
+  test('uses the normalized display name as the key for a new provider', () => {
     const existing = {
       custom_0: { ...providerConfig, displayName: 'Existing' },
       custom_2: { ...providerConfig, displayName: 'Another' },
@@ -135,7 +131,8 @@ describe('mergeImportedProviders', () => {
       { ...providerConfig, displayName: 'AcmeProxy' },
     ]);
 
-    expect(merged.custom_1.displayName).toBe('AcmeProxy');
+    expect(merged.acmeproxy.displayName).toBe('AcmeProxy');
+    expect(merged.acmeproxy.identity).toEqual(expect.any(String));
     expect(merged.custom_0.displayName).toBe('Existing');
   });
 });

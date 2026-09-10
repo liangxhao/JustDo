@@ -30,7 +30,7 @@ import type { ProviderRawConfig } from '../../cowork/providerApiConfig';
 import {
   getProviderDisplayNameMap,
   resolveAllEnabledProviderConfigs,
-  resolveAllProviderApiKeys,
+  resolveAllProviderSecrets,
   resolveRawApiConfig,
   validateConfiguredOpenClawProviderNames,
 } from '../../cowork/providerApiConfig';
@@ -53,7 +53,12 @@ import {
 } from '../models/openclawAgentModels';
 import { getElectronNodeRuntimePath } from '../runtime/electronNodeRuntime';
 import { syncBuiltinCredentialFile } from './builtinCredentialFile';
-import { providerSecretIdentity, syncProviderSecretFile } from './providerSecretFile';
+import {
+  MANAGED_PROVIDER_SECRET_SOURCE,
+  managedProviderSecretRef,
+  providerSecretIdentity,
+  syncProviderSecretFile,
+} from './providerSecretFile';
 
 export const buildOpenClawMcpServers = (
   servers: McpServerRecord[],
@@ -608,6 +613,12 @@ const rewriteProviderAliasInModel = (
   };
 };
 
+const getModelProviderId = (model: unknown): string => {
+  if (!isRecord(model) || typeof model.primary !== 'string') return '';
+  const separator = model.primary.indexOf('/');
+  return separator > 0 ? model.primary.slice(0, separator).toLowerCase() : '';
+};
+
 const mergeAgentEntriesWithManagedMainSettings = (
   managedEntries: Record<string, unknown>,
   existingEntries: Record<string, unknown>,
@@ -630,6 +641,12 @@ const mergeAgentEntriesWithManagedMainSettings = (
     };
   }
   return entries;
+};
+
+const providerRouteIdentity = (provider: unknown): string => {
+  if (!isRecord(provider)) return '';
+  const { apiKey: _apiKey, ...route } = provider;
+  return JSON.stringify(route);
 };
 
 const buildAuthScopedOpenClawConfig = (
@@ -656,6 +673,8 @@ const buildAuthScopedOpenClawConfig = (
   const providers = { ...existingProviders };
   delete providers[OpenClawProviderId.BuiltinModels];
   const providerAliases = new Map<string, string>();
+  const matchedManagedProviderIds = new Set<string>();
+  const removedManagedProviderIds = new Set<string>();
   const managedCustomProviders = Object.entries(managedProviders).filter(
     ([providerId]) => providerId !== OpenClawProviderId.BuiltinModels,
   );
@@ -664,12 +683,35 @@ const buildAuthScopedOpenClawConfig = (
       continue;
     }
     const existingApiKey = providerSecretIdentity(existingProvider.apiKey);
-    const managedMatch = managedCustomProviders.find(([, managedProvider]) => {
-      if (!isRecord(managedProvider) || typeof managedProvider.apiKey !== 'string') return false;
-      return managedProvider.apiKey === existingApiKey;
+    let managedMatch = managedCustomProviders.find(([managedProviderId, managedProvider]) => {
+      if (matchedManagedProviderIds.has(managedProviderId)) return false;
+      if (!isRecord(managedProvider)) return false;
+      return providerSecretIdentity(managedProvider.apiKey) === existingApiKey;
     });
-    if (!managedMatch) continue;
+    if (
+      !managedMatch &&
+      existingApiKey.startsWith(`${MANAGED_PROVIDER_SECRET_SOURCE}:/`)
+    ) {
+      const routeIdentity = providerRouteIdentity(existingProvider);
+      const routeMatches = managedCustomProviders.filter(
+        ([managedProviderId, managedProvider]) =>
+          !matchedManagedProviderIds.has(managedProviderId) &&
+          providerRouteIdentity(managedProvider) === routeIdentity,
+      );
+      if (routeIdentity && routeMatches.length === 1) managedMatch = routeMatches[0];
+    }
+    if (!managedMatch) {
+      if (
+        (existingApiKey.startsWith(`${MANAGED_PROVIDER_SECRET_SOURCE}:/`) ||
+          /^\$\{JUSTDO_APIKEY_CUSTOM(?:_\d+)?\}$/.test(existingApiKey))
+      ) {
+        delete providers[existingProviderId];
+        removedManagedProviderIds.add(existingProviderId.toLowerCase());
+      }
+      continue;
+    }
     const [canonicalProviderId] = managedMatch;
+    matchedManagedProviderIds.add(canonicalProviderId);
     if (canonicalProviderId === existingProviderId) continue;
     delete providers[existingProviderId];
     providerAliases.set(existingProviderId.toLowerCase(), canonicalProviderId);
@@ -748,6 +790,13 @@ const buildAuthScopedOpenClawConfig = (
     : undefined;
   const managedDefaultPrimary =
     typeof managedDefaultModel?.primary === 'string' ? managedDefaultModel.primary : '';
+  const managedDefaultProviderId = managedDefaultPrimary.split('/', 1)[0];
+  if (
+    managedDefaultModel &&
+    managedCustomProviders.some(([providerId]) => providerId === managedDefaultProviderId)
+  ) {
+    defaults.model = managedDefaultModel;
+  }
   const existingFallbackModel =
     isRecord(defaults.model) && !containsBuiltinModelRef(defaults.model)
       ? defaults.model
@@ -768,6 +817,16 @@ const buildAuthScopedOpenClawConfig = (
       } else {
         delete defaults.model;
       }
+    }
+  }
+  if (removedManagedProviderIds.has(getModelProviderId(defaults.model))) {
+    if (
+      managedDefaultModel &&
+      Object.prototype.hasOwnProperty.call(providers, getModelProviderId(managedDefaultModel))
+    ) {
+      defaults.model = managedDefaultModel;
+    } else {
+      delete defaults.model;
     }
   }
 
@@ -800,10 +859,30 @@ const buildAuthScopedOpenClawConfig = (
   }
   for (const [id, entry] of Object.entries(agentEntries)) {
     if (!isRecord(entry) || !Object.prototype.hasOwnProperty.call(entry, 'model')) continue;
-    agentEntries[id] = {
+    const rewrittenEntry = {
       ...entry,
       model: rewriteProviderAliasInModel(entry.model, providerAliases),
     };
+    if (!removedManagedProviderIds.has(getModelProviderId(rewrittenEntry.model))) {
+      agentEntries[id] = rewrittenEntry;
+      continue;
+    }
+    const managedEntry = isRecord(managedEntries[id]) ? managedEntries[id] : undefined;
+    const managedEntryModel = managedEntry?.model;
+    const fallbackModel = Object.prototype.hasOwnProperty.call(
+      providers,
+      getModelProviderId(managedEntryModel),
+    )
+      ? managedEntryModel
+      : Object.prototype.hasOwnProperty.call(providers, getModelProviderId(managedDefaultModel))
+        ? managedDefaultModel
+        : undefined;
+    if (fallbackModel) {
+      rewrittenEntry.model = fallbackModel;
+    } else {
+      delete rewrittenEntry.model;
+    }
+    agentEntries[id] = rewrittenEntry;
   }
 
   const existingMemory = isRecord(canonicalExistingConfig.memory)
@@ -1326,15 +1405,6 @@ const resolveModelDisplayName = (modelId: string, userModelName?: string): strin
   return normalizeModelName(modelId);
 };
 
-/**
- * Build the env var name for a provider's apiKey.
- * Must match the key format produced by resolveAllProviderApiKeys() in providerApiConfig.ts.
- */
-const providerApiKeyEnvVar = (providerName: string): string => {
-  const envName = providerName.toUpperCase().replace(/[^A-Z0-9]/g, '_');
-  return `JUSTDO_APIKEY_${envName}`;
-};
-
 type OpenClawProviderApi = 'openai-completions';
 
 type OpenClawProviderSelection = {
@@ -1345,7 +1415,7 @@ type OpenClawProviderSelection = {
   providerConfig: {
     baseUrl: string;
     api: OpenClawProviderApi;
-    apiKey: string;
+    apiKey: unknown;
     auth: 'api-key';
     timeoutSeconds: number;
     models: Array<{
@@ -1452,12 +1522,11 @@ export const buildProviderSelection = (options: {
   let baseUrl =
     descriptor.resolveRuntimeBaseUrl?.() ?? descriptor.normalizeBaseUrl(options.baseURL);
   const api = OpenClawApiConst.OpenAICompletions as OpenClawProviderApi;
-  // Custom credential identities retain the original provider name across renames.
   const apiKey = providerName === ProviderName.BuiltinModels
     ? BUILTIN_CREDENTIAL_MARKER
     : descriptor.resolveApiKey
     ? descriptor.resolveApiKey({ apiKey: options.apiKey, providerName })
-    : `\${${providerApiKeyEnvVar(providerName)}}`;
+    : managedProviderSecretRef(effectiveProviderId);
   const sessionModelId = descriptor.resolveSessionModelId
     ? descriptor.resolveSessionModelId(options.modelId)
     : options.modelId;
@@ -1541,6 +1610,9 @@ export const buildBuiltinMemorySearchConfig = (
     modelName: model.name,
     displayName: provider.displayName,
   });
+  if (typeof selection.providerConfig.apiKey !== 'string') {
+    throw new Error('Built-in memory search requires a string credential reference.');
+  }
   return {
     enabled: true,
     provider: OpenClawExtensionId.RUNTIME_SERVICES,
@@ -1743,7 +1815,8 @@ export class OpenClawConfigSync {
       return result;
     }
 
-    let allProvidersMap: Record<string, OpenClawProviderSelection['providerConfig']> = {};
+    const allProvidersMap: Record<string, OpenClawProviderSelection['providerConfig']> =
+      Object.create(null) as Record<string, OpenClawProviderSelection['providerConfig']>;
     let primaryModel = '';
     let providerSelection: OpenClawProviderSelection | null = null;
     let memorySearchConfig: ManagedMemorySearchConfig = { enabled: false };
@@ -1998,7 +2071,7 @@ export class OpenClawConfigSync {
     try {
       preparedSecrets = syncProviderSecretFile(
         { ...scopedConfig, secrets: scopedConfig.secrets ?? existingConfig?.secrets },
-        this.engineManager.getStateDir(), resolveAllProviderApiKeys(),
+        this.engineManager.getStateDir(), resolveAllProviderSecrets(),
       );
       const builtinSecrets = syncBuiltinCredentialFile(
         preparedSecrets.config, this.engineManager.getStateDir(),

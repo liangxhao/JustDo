@@ -27,15 +27,21 @@ export function restrictCredentialFile(filePath: string): void {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 
-/** Compare provider identities across the managed env and native file representations. */
+/** Compare provider credential references without reading their secret values. */
 export function providerSecretIdentity(value: unknown): string {
   if (typeof value === 'string') return value;
   if (
     isRecord(value) && value.source === 'file' &&
     value.provider === MANAGED_PROVIDER_SECRET_SOURCE && typeof value.id === 'string'
-  ) return `\${JUSTDO_APIKEY_${value.id.slice(1)}}`;
+  ) return `${MANAGED_PROVIDER_SECRET_SOURCE}:${value.id}`;
   return '';
 }
+
+export const managedProviderSecretRef = (providerId: string): Record<string, string> => ({
+  source: 'file',
+  provider: MANAGED_PROVIDER_SECRET_SOURCE,
+  id: `/${providerId}`,
+});
 
 /** Publish credentials before the config that references them; never put values in config. */
 export function syncProviderSecretFile(
@@ -49,12 +55,13 @@ export function syncProviderSecretFile(
   const keys: Record<string, string> = {};
   for (const provider of Object.values(providers)) {
     if (!isRecord(provider)) continue;
-    const match = /^\$\{JUSTDO_APIKEY_([A-Z0-9_]+)\}$/.exec(providerSecretIdentity(provider.apiKey));
-    if (!match || match[1] === BUILTIN_KEY) continue;
-    const id = match[1];
+    const identity = providerSecretIdentity(provider.apiKey);
+    const filePrefix = `${MANAGED_PROVIDER_SECRET_SOURCE}:/`;
+    const id = identity.startsWith(filePrefix) ? identity.slice(filePrefix.length) : undefined;
+    if (!id || id === BUILTIN_KEY) continue;
     if (!apiKeys[id]) throw new Error('A managed model provider credential is unavailable.');
     keys[id] = apiKeys[id];
-    provider.apiKey = { source: 'file', provider: MANAGED_PROVIDER_SECRET_SOURCE, id: `/${id}` };
+    provider.apiKey = managedProviderSecretRef(id);
   }
 
   const filePath = path.join(stateDir, SECRET_FILE_NAME);

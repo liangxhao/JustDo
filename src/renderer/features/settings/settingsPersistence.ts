@@ -23,6 +23,20 @@ interface SettingsAppConfigDraft {
 const hasConfigValueChanged = (current: unknown, next: unknown): boolean =>
   JSON.stringify(current) !== JSON.stringify(next);
 
+export const resolveProviderKeyAfterRename = (
+  providerKey: string | undefined,
+  currentProviders: AppConfig['providers'],
+  nextProviders: AppConfig['providers'],
+): string | undefined => {
+  if (!providerKey || !currentProviders || !nextProviders) return providerKey;
+  const identity = currentProviders[providerKey]?.identity;
+  if (!identity) return providerKey;
+  return (
+    Object.entries(nextProviders).find(([, provider]) => provider.identity === identity)?.[0] ??
+    providerKey
+  );
+};
+
 /** Persist only changed settings so visual-only saves do not rewrite runtime-facing config. */
 export const buildSettingsAppConfigUpdate = (
   current: AppConfig,

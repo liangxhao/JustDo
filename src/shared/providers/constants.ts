@@ -1,6 +1,5 @@
 export const ProviderName = {
   BuiltinModels: 'builtin_models',
-  Custom: 'custom',
 } as const;
 export type ProviderName = (typeof ProviderName)[keyof typeof ProviderName];
 

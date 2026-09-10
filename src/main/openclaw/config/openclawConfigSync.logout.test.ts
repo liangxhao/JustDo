@@ -775,32 +775,27 @@ describe('OpenClaw auth logout config sync', () => {
     });
   });
 
-  test('minimal logout removes only built-in model config and preserves custom selections', () => {
+  test('minimal logout removes obsolete legacy custom provider config', () => {
     const configPath = writeExistingMixedProviderConfig();
 
     const result = writeMinimalConfig(configPath, BuiltinModelSyncReason.AuthLogout);
 
     expect(result.ok).toBe(true);
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    expect(config.models.providers).toEqual({
-      'custom-provider': {
-        apiKey: '${JUSTDO_APIKEY_CUSTOM_1}',
-        models: [{ id: 'custom-model' }],
-      },
-    });
+    expect(config.models.providers).toBeUndefined();
     expect(config.models).not.toHaveProperty('pricing');
-    expect(config.agents.defaults.model.primary).toBe('custom-provider/custom-model');
+    expect(config.agents.defaults.model).toBeUndefined();
     expect(config.agents.defaults.timeoutSeconds).toBe(
       createDefaultAgentRuntimeSettings().agent.runTimeoutSeconds,
     );
-    expect(config.agents.entries.main.model.primary).toBe('custom-provider/custom-model');
-    expect(config.agents.entries.worker.model.primary).toBe('custom-provider/custom-model');
+    expect(config.agents.entries.main.model).toBeUndefined();
+    expect(config.agents.entries.worker.model).toBeUndefined();
     expect(config.gateway).toEqual({ mode: 'local', customSetting: 'keep-me' });
     expect(config.customFeature).toEqual({ enabled: true });
     expect(verifyLoggedOutOpenClawConfig(configPath)).toEqual({ ok: true });
   });
 
-  test('minimal login without fetched models preserves custom config and removes stale built-in refs', () => {
+  test('minimal login without fetched models removes obsolete provider refs', () => {
     const configPath = writeExistingMixedProviderConfig();
     const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     existing.agents.defaults.model = { primary: 'builtin_models/builtin-model' };
@@ -810,15 +805,10 @@ describe('OpenClaw auth logout config sync', () => {
 
     expect(result.ok).toBe(true);
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    expect(config.models.providers).toEqual({
-      'custom-provider': {
-        apiKey: '${JUSTDO_APIKEY_CUSTOM_1}',
-        models: [{ id: 'custom-model' }],
-      },
-    });
+    expect(config.models.providers).toBeUndefined();
     expect(config.models).not.toHaveProperty('pricing');
     expect(config.agents.defaults.model).toBeUndefined();
-    expect(config.agents.entries.main.model.primary).toBe('custom-provider/custom-model');
+    expect(config.agents.entries.main.model).toBeUndefined();
     expect(config.agents.entries.worker.model).toBeUndefined();
     expect(config.gateway).toEqual({ mode: 'local', customSetting: 'keep-me' });
     expect(config.customFeature).toEqual({ enabled: true });
@@ -1048,7 +1038,7 @@ describe('OpenClaw auth logout config sync', () => {
     const appConfig = {
       model: {
         defaultModel: 'custom-model',
-        defaultModelProvider: 'custom_1',
+        defaultModelProvider: 'custom-provider',
       },
       providers: {
         builtin_models: {
@@ -1058,12 +1048,13 @@ describe('OpenClaw auth logout config sync', () => {
           apiFormat: 'openai' as const,
           models: [{ id: 'builtin-model', name: 'Built-in Model' }],
         },
-        custom_1: {
+        'custom-provider': {
           enabled: true,
           apiKey: 'custom-secret',
           baseUrl: 'https://custom.example/v1',
           apiFormat: 'openai' as const,
           displayName: 'Custom-Provider',
+          identity: 'custom-provider-identity',
           models: [{ id: 'custom-model', name: 'Custom Model' }],
         },
       },
@@ -1096,7 +1087,7 @@ describe('OpenClaw auth logout config sync', () => {
       source: 'exec', provider: 'justdo-builtin', id: 'model-api-key',
     });
     expect(config.models.providers['custom-provider'].apiKey).toEqual({
-      source: 'file', provider: 'justdo-model-providers', id: '/CUSTOM_1',
+      source: 'file', provider: 'justdo-model-providers', id: '/custom-provider',
     });
     expect(config.models.providers.custom_1).toBeUndefined();
     expect(config.models).not.toHaveProperty('pricing');
@@ -1114,10 +1105,12 @@ describe('OpenClaw auth logout config sync', () => {
     expect(launchEnvironment).not.toHaveProperty('JUSTDO_APIKEY_CUSTOM_1');
     const providersWithSecond = {
       ...appConfig.providers,
-      custom_2: {
-        ...appConfig.providers.custom_1,
+      'second-provider': {
+        ...appConfig.providers['custom-provider'],
         displayName: 'Second-Provider',
+        identity: 'second-provider-identity',
         apiKey: 'second-provider-fixture-key',
+        baseUrl: 'https://second.example/v1',
       },
     };
     setStoreGetter(() => ({ get: () => ({ ...appConfig, providers: providersWithSecond }) }) as never);
@@ -1126,18 +1119,60 @@ describe('OpenClaw auth logout config sync', () => {
     });
     expect(sync.collectGatewayLaunchEnvVars()).toEqual(launchEnvironment);
 
-    providersWithSecond.custom_2.apiKey = 'rotated-provider-fixture-key';
+    providersWithSecond['second-provider'].apiKey = 'rotated-provider-fixture-key';
     expect(sync.sync('provider-key-change')).toMatchObject({
       ok: true, changed: true, configChanged: false, secretsChanged: true,
     });
     expect(sync.collectGatewayLaunchEnvVars()).toEqual(launchEnvironment);
 
-    providersWithSecond.custom_1.displayName = 'Renamed-Provider';
+    const beforeRename = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    beforeRename.agents.entries.worker = {
+      id: 'worker',
+      model: { primary: 'custom-provider/custom-model' },
+    };
+    fs.writeFileSync(configPath, JSON.stringify(beforeRename), 'utf8');
+    const { ['custom-provider']: renamedProvider, ...providersWithoutRenamed } =
+      providersWithSecond;
+    const renamedProviders = {
+      ...providersWithoutRenamed,
+      'renamed-provider': { ...renamedProvider, displayName: 'Renamed-Provider' },
+    };
+    setStoreGetter(
+      () =>
+        ({
+          get: () => ({
+            ...appConfig,
+            model: { ...appConfig.model, defaultModelProvider: 'renamed-provider' },
+            providers: renamedProviders,
+          }),
+        }) as never,
+    );
     expect(sync.sync(BuiltinModelSyncReason.AuthLogin).ok).toBe(true);
     const renamed = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     expect(renamed.models.providers['custom-provider']).toBeUndefined();
     expect(renamed.models.providers['renamed-provider'].apiKey).toEqual({
-      source: 'file', provider: 'justdo-model-providers', id: '/CUSTOM_1',
+      source: 'file', provider: 'justdo-model-providers', id: '/renamed-provider',
     });
+    expect(renamed.agents.defaults.model.primary).toBe('renamed-provider/custom-model');
+    expect(renamed.agents.entries.worker.model.primary).toBe(
+      'renamed-provider/custom-model',
+    );
+
+    setStoreGetter(
+      () =>
+        ({
+          get: () => ({
+            ...appConfig,
+            model: { defaultModel: 'builtin-model', defaultModelProvider: 'builtin_models' },
+            providers: { builtin_models: appConfig.providers.builtin_models },
+          }),
+        }) as never,
+    );
+    expect(sync.sync(BuiltinModelSyncReason.AuthLogin).ok).toBe(true);
+    const customProvidersRemoved = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(Object.keys(customProvidersRemoved.models.providers)).toEqual(['builtin_models']);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(stateDir, 'model-provider-secrets.json'), 'utf8')),
+    ).toEqual({});
   });
 });

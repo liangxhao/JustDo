@@ -94,6 +94,7 @@ import { mergeRefreshedBuiltinProvider } from '@/features/settings/modelSettings
 import {
   buildSettingsAppConfigUpdate,
   persistSettingsInOrder,
+  resolveProviderKeyAfterRename,
   resolveSubagentModelAfterProviderChange,
 } from '@/features/settings/settingsPersistence';
 import { createSettingsPreviewRestore } from '@/features/settings/settingsPreviewRestore';
@@ -321,7 +322,11 @@ const normalizeProvidersForSettings = (providers: ProvidersConfig): ProvidersCon
 const normalizeProvidersForSave = (providers: ProvidersConfig): ProvidersConfig =>
   Object.fromEntries(
     Object.entries(providers).map(([providerKey, providerConfig]) => [
-      providerKey,
+      isCustomProvider(providerKey)
+        ? normalizeOpenClawProviderId(
+            providerConfig.displayName?.trim() || getCustomProviderDefaultName(providerKey),
+          )
+        : providerKey,
       {
         ...providerConfig,
         displayName:
@@ -345,24 +350,21 @@ const getDefaultActiveProvider = (): ProviderType => {
 const getSortedCustomProviderKeys = (providers: ProvidersConfig): string[] =>
   Object.keys(providers)
     .filter(isCustomProvider)
-    .sort((a, b) => {
-      const aIndex = Number(a.replace('custom_', ''));
-      const bIndex = Number(b.replace('custom_', ''));
-      const aIsNumber = Number.isFinite(aIndex);
-      const bIsNumber = Number.isFinite(bIndex);
-      if (aIsNumber && bIsNumber) return aIndex - bIndex;
-      if (aIsNumber) return -1;
-      if (bIsNumber) return 1;
-      return a.localeCompare(b);
-    });
+    .sort((a, b) =>
+      getProviderDisplayName(a, providers[a]).localeCompare(
+        getProviderDisplayName(b, providers[b]),
+      ),
+    );
 
-const getNextCustomProviderKey = (providers: ProvidersConfig): string => {
+const getNextCustomProvider = (providers: ProvidersConfig): { key: string; name: string } => {
   const usedKeys = new Set(Object.keys(providers));
-  let index = 0;
-  while (usedKeys.has(`custom_${index}`)) {
+  let index = 1;
+  while (true) {
+    const name = index === 1 ? 'Custom' : `Custom ${index}`;
+    const key = normalizeOpenClawProviderId(name);
+    if (!usedKeys.has(key)) return { key, name };
     index += 1;
   }
-  return `custom_${index}`;
 };
 
 const Settings: React.FC<SettingsProps> = ({
@@ -847,7 +849,7 @@ const Settings: React.FC<SettingsProps> = ({
     return unsubscribe;
   }, [noticeI18nKey, noticeExtra]);
 
-  // Compute visible providers based on language, including active custom_N entries
+  // Compute visible providers based on language, including user-defined entries.
   const visibleProviders = useMemo(() => {
     const visibleKeys = getVisibleProviders(language);
     const filtered: Partial<ProvidersConfig> = {};
@@ -856,7 +858,7 @@ const Settings: React.FC<SettingsProps> = ({
         filtered[key as keyof ProvidersConfig] = providers[key as keyof ProvidersConfig];
       }
     }
-    // Append custom providers that exist in state, sorted by numeric suffix
+    // Append custom providers that exist in state, sorted by display name.
     for (const key of getSortedCustomProviderKeys(providers)) {
       if (providers[key]) {
         filtered[key] = providers[key];
@@ -880,7 +882,7 @@ const Settings: React.FC<SettingsProps> = ({
     modelDiscoveryGenerationRef.current += 1;
     setIsDetectingModels(false);
     setModelDiscoveryMessage(null);
-    const newKey = getNextCustomProviderKey(providers);
+    const { key: newKey, name: displayName } = getNextCustomProvider(providers);
     setProviders(prev => ({
       ...prev,
       [newKey]: {
@@ -889,7 +891,8 @@ const Settings: React.FC<SettingsProps> = ({
         baseUrl: '',
         apiFormat: 'openai' as const,
         models: [],
-        displayName: undefined,
+        displayName,
+        identity: crypto.randomUUID(),
       },
     }));
     setActiveProvider(newKey);
@@ -1204,6 +1207,12 @@ const Settings: React.FC<SettingsProps> = ({
 
     try {
       const normalizedProviders = normalizeProvidersForSave(providers);
+      const normalizedActiveProvider = isCustomProvider(activeProvider)
+        ? normalizeOpenClawProviderId(
+            providers[activeProvider]?.displayName?.trim() ||
+              getCustomProviderDefaultName(activeProvider),
+          )
+        : activeProvider;
 
       // Find the first enabled provider to use as the primary API
       const firstEnabledProvider = Object.entries(normalizedProviders).find(
@@ -1212,7 +1221,7 @@ const Settings: React.FC<SettingsProps> = ({
 
       const primaryProvider = firstEnabledProvider
         ? firstEnabledProvider[1]
-        : normalizedProviders[activeProvider];
+        : normalizedProviders[normalizedActiveProvider];
       const normalizedProxy = {
         mode: proxyMode,
         custom: {
@@ -1299,6 +1308,17 @@ const Settings: React.FC<SettingsProps> = ({
             developerMode,
             shortcuts,
           });
+          const renamedDefaultProvider = resolveProviderKeyAfterRename(
+            currentConfig.model.defaultModelProvider,
+            currentConfig.providers,
+            normalizedProviders,
+          );
+          if (renamedDefaultProvider !== currentConfig.model.defaultModelProvider) {
+            update.model = {
+              ...currentConfig.model,
+              defaultModelProvider: renamedDefaultProvider,
+            };
+          }
           if (Object.keys(update).length > 0) {
             await configService.updateConfig(update);
           }
@@ -1316,6 +1336,9 @@ const Settings: React.FC<SettingsProps> = ({
 
       // 应用语言
       i18nService.setLanguage(language, { persist: false });
+
+      setProviders(normalizedProviders);
+      setActiveProvider(normalizedActiveProvider);
 
       // 更新 Redux store 中的可用模型列表
       const allModels: {

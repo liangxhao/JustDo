@@ -29,20 +29,20 @@ test('isCustomProvider: custom_99 is custom', () => {
   expect(isCustomProvider('custom_99')).toBe(true);
 });
 
-test('isCustomProvider: openai is not custom', () => {
-  expect(isCustomProvider('openai')).toBe(false);
+test('isCustomProvider: a named OpenAI route is custom', () => {
+  expect(isCustomProvider('openai')).toBe(true);
 });
 
-test('isCustomProvider: deepseek is not custom', () => {
-  expect(isCustomProvider('deepseek')).toBe(false);
+test('isCustomProvider: a named DeepSeek route is custom', () => {
+  expect(isCustomProvider('deepseek')).toBe(true);
 });
 
 test('isCustomProvider: empty string is not custom', () => {
   expect(isCustomProvider('')).toBe(false);
 });
 
-test('isCustomProvider: "custom" without underscore is not custom', () => {
-  expect(isCustomProvider('custom')).toBe(false);
+test('isCustomProvider: named custom provider is custom', () => {
+  expect(isCustomProvider('custom')).toBe(true);
 });
 
 test('getCustomProviderDefaultName: custom_0 -> Custom0', () => {
@@ -57,12 +57,12 @@ test('getCustomProviderDefaultName: custom_42 -> Custom42', () => {
   expect(getCustomProviderDefaultName('custom_42')).toBe('Custom42');
 });
 
-test('getProviderDisplayName: built-in provider capitalizes first letter', () => {
-  expect(getProviderDisplayName('openai')).toBe('Openai');
+test('getProviderDisplayName: named provider uses its key as fallback', () => {
+  expect(getProviderDisplayName('openai')).toBe('openai');
 });
 
-test('getProviderDisplayName: built-in provider with no config', () => {
-  expect(getProviderDisplayName('deepseek')).toBe('Deepseek');
+test('getProviderDisplayName: another named provider uses its key as fallback', () => {
+  expect(getProviderDisplayName('deepseek')).toBe('deepseek');
 });
 
 test('getProviderDisplayName: custom provider without config uses default name', () => {
@@ -82,16 +82,14 @@ test('getProviderDisplayName: custom provider with undefined displayName uses de
 });
 
 // validateDisplayName tests
-test('validateDisplayName: empty string is valid (fallback to custom_0)', () => {
-  expect(validateDisplayName('')).toEqual({ valid: true });
+test('validateDisplayName: empty string is invalid', () => {
+  expect(validateDisplayName('')).toEqual({
+    valid: false,
+    error: 'Provider name is required',
+  });
 });
 
-test.each([
-  'builtin_models',
-  'BUILTIN_MODELS',
-  'JustDo',
-  'custom_12',
-])(
+test.each(['builtin_models', 'BUILTIN_MODELS', 'JustDo', 'custom_12'])(
   'validateDisplayName: application-reserved provider name %s is invalid',
   name => {
     expect(validateDisplayName(name)).toEqual({

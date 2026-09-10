@@ -53,6 +53,15 @@ describe('custom provider wire ID renames', () => {
         { custom_0: { displayName: 'AcmeProxy' } },
         { custom_0: { displayName: 'NewProxy' } },
       ),
+    ).toEqual({ acmeproxy: 'newproxy', custom_0: 'newproxy' });
+  });
+
+  test('matches renamed named providers by stable identity', () => {
+    expect(
+      buildCustomProviderRenameAliases(
+        { acmeproxy: { identity: 'provider-id', displayName: 'AcmeProxy' } },
+        { newproxy: { identity: 'provider-id', displayName: 'NewProxy' } },
+      ),
     ).toEqual({ acmeproxy: 'newproxy' });
   });
 

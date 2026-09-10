@@ -4,6 +4,7 @@ import type { SqliteStore } from '../data/sqliteStore';
 import {
   getProviderDisplayNameMap,
   resolveAllEnabledProviderConfigs,
+  resolveAllProviderSecrets,
   resolveRawApiConfig,
   setStoreGetter,
   validateConfiguredOpenClawProviderNames,
@@ -113,6 +114,28 @@ describe('OpenClaw custom provider names', () => {
       custom_0: 'AcmeProxy',
       custom_1: 'Custom1',
     });
+  });
+
+  it('keys new provider secrets by canonical provider name', () => {
+    setStoreGetter(
+      () =>
+        ({
+          get: () => ({
+            providers: {
+              acmeproxy: {
+                enabled: true,
+                apiKey: 'secret-key',
+                baseUrl: 'https://example.test/v1',
+                displayName: 'AcmeProxy',
+                identity: 'provider-id',
+              },
+            },
+          }),
+        }) as unknown as SqliteStore,
+    );
+
+    expect(resolveAllProviderSecrets()).toEqual({ acmeproxy: 'secret-key' });
+    expect(getProviderDisplayNameMap()).toEqual({ acmeproxy: 'AcmeProxy' });
   });
 });
 

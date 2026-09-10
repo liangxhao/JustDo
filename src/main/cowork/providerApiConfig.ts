@@ -266,7 +266,7 @@ export function resolveRawApiConfig(): ApiConfigResolution {
   };
 }
 
-export function resolveAllProviderApiKeys(): Record<string, string> {
+export function resolveAllProviderSecrets(): Record<string, string> {
   const result: Record<string, string> = {};
   const sqliteStore = getStore();
   if (!sqliteStore) return result;
@@ -277,8 +277,12 @@ export function resolveAllProviderApiKeys(): Record<string, string> {
     if (!providerConfig?.enabled) continue;
     const apiKey = providerConfig.apiKey?.trim();
     if (!apiKey && providerRequiresApiKey(providerName)) continue;
-    const envName = providerName.toUpperCase().replace(/[^A-Z0-9]/g, '_');
-    result[envName] = apiKey || 'sk-justdo-local';
+    const providerId = isJustDoCustomProviderKey(providerName)
+      ? normalizeOpenClawProviderId(
+          getEffectiveCustomProviderDisplayName(providerName, providerConfig.displayName),
+        )
+      : providerName;
+    result[providerId] = apiKey || 'sk-justdo-local';
   }
 
   return result;

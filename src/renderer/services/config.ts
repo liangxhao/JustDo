@@ -1,3 +1,4 @@
+import { isLegacyCustomProviderKey } from '@shared/providers';
 import { ProxyMode, ProxyProtocol } from '@shared/proxy';
 
 import { normalizeAppearanceConfig } from '@/app/appearance';
@@ -13,10 +14,30 @@ import { localStore } from '@/services/store';
 const SUPPORTED_BUILTIN_PROVIDERS = new Set(['builtin_models']);
 type ProviderConfig = NonNullable<AppConfig['providers']>[string];
 
-const isSupportedProvider = (providerKey: string): boolean =>
+const isSupportedProvider = (providerKey: string, providerConfig?: ProviderConfig): boolean =>
   SUPPORTED_BUILTIN_PROVIDERS.has(providerKey) ||
   isBuiltinModelsProvider(providerKey) ||
-  isCustomProvider(providerKey);
+  (isCustomProvider(providerKey) &&
+    !isLegacyCustomProviderKey(providerKey) &&
+    typeof providerConfig?.identity === 'string');
+
+const normalizeModelSelection = (
+  model: AppConfig['model'],
+  providers: AppConfig['providers'],
+): { model: AppConfig['model']; reset: boolean } => {
+  const providerKey = model.defaultModelProvider;
+  if (!providerKey || isSupportedProvider(providerKey, providers?.[providerKey])) {
+    return { model, reset: false };
+  }
+  return {
+    model: {
+      ...model,
+      defaultModel: defaultConfig.model.defaultModel,
+      defaultModelProvider: defaultConfig.model.defaultModelProvider,
+    },
+    reset: true,
+  };
+};
 
 const normalizeProviderBaseUrl = (baseUrl: unknown): string => {
   if (typeof baseUrl !== 'string') {
@@ -33,7 +54,7 @@ const normalizeProvidersConfig = (providers: AppConfig['providers']): AppConfig[
 
   return Object.fromEntries(
     Object.entries(providers)
-      .filter(([providerKey]) => isSupportedProvider(providerKey))
+      .filter(([providerKey, providerConfig]) => isSupportedProvider(providerKey, providerConfig))
       .map(([providerKey, providerConfig]) => [
         providerKey,
         {
@@ -67,33 +88,18 @@ const normalizeProxyConfig = (
   };
 };
 
-/**
- * Migrate legacy single `custom` provider to `custom_0`.
- */
-const migrateCustomProviders = (config: AppConfig): AppConfig => {
-  const providers = config.providers;
-  if (!providers) return config;
-
-  // Migrate legacy `custom` key (without underscore) to `custom_0`
-  if ('custom' in providers && !isCustomProvider('custom')) {
-    const legacyCustom = providers['custom'];
-    if (legacyCustom) {
-      const updatedProviders = { ...providers } as Record<string, ProviderConfig>;
-      updatedProviders['custom_0'] = { ...legacyCustom };
-      delete updatedProviders['custom'];
-      return {
-        ...config,
-        providers: updatedProviders as AppConfig['providers'],
-      };
-    }
-  }
-
-  return config;
-};
-
 export class ConfigService {
   private config: AppConfig = defaultConfig;
   private updateConfigQueue: Promise<void> = Promise.resolve();
+
+  private enqueueConfigPersistence(config: AppConfig): void {
+    const update = this.updateConfigQueue.then(() =>
+      localStore.setItem(CONFIG_KEYS.APP_CONFIG, config),
+    );
+    this.updateConfigQueue = update.catch(error => {
+      console.error('Failed to persist normalized config:', error);
+    });
+  }
 
   async init() {
     try {
@@ -105,7 +111,9 @@ export class ConfigService {
                 ...(defaultConfig.providers ?? {}),
                 ...storedConfig.providers,
               })
-                .filter(([providerKey]) => isSupportedProvider(providerKey))
+                .filter(([providerKey, providerConfig]) =>
+                  isSupportedProvider(providerKey, providerConfig),
+                )
                 .map(([providerKey, providerConfig]) => {
                   const mergedProvider = {
                     ...(defaultConfig.providers as Record<string, ProviderConfig> | undefined)?.[
@@ -125,23 +133,20 @@ export class ConfigService {
             )
           : defaultConfig.providers;
 
-        const migratedModel = { ...defaultConfig.model, ...storedConfig.model };
-        if (
-          migratedModel.defaultModelProvider &&
-          !isSupportedProvider(migratedModel.defaultModelProvider)
-        ) {
-          migratedModel.defaultModel = defaultConfig.model.defaultModel;
-          migratedModel.defaultModelProvider = defaultConfig.model.defaultModelProvider;
-        }
+        const normalizedModel = normalizeModelSelection(
+          { ...defaultConfig.model, ...storedConfig.model },
+          mergedProviders as AppConfig['providers'],
+        );
 
-        this.config = migrateCustomProviders({
+        const mergedConfig = {
           ...defaultConfig,
           ...storedConfig,
           api: {
-            ...defaultConfig.api,
-            ...storedConfig.api,
+            ...(normalizedModel.reset
+              ? defaultConfig.api
+              : { ...defaultConfig.api, ...storedConfig.api }),
           },
-          model: migratedModel,
+          model: normalizedModel.model,
           app: {
             ...defaultConfig.app,
             ...storedConfig.app,
@@ -153,7 +158,14 @@ export class ConfigService {
             ...(storedConfig.shortcuts ?? {}),
           } as AppConfig['shortcuts'],
           providers: mergedProviders as AppConfig['providers'],
-        });
+        };
+        this.config = mergedConfig;
+        if (
+          normalizedModel.reset ||
+          JSON.stringify(storedConfig.providers) !== JSON.stringify(mergedProviders)
+        ) {
+          this.enqueueConfigPersistence(this.config);
+        }
       }
     } catch (error) {
       console.error('Failed to load config:', error);
@@ -171,17 +183,20 @@ export class ConfigService {
     }
 
     const normalizedProviders = normalizeProvidersConfig(storedConfig.providers);
-    this.config = migrateCustomProviders({
+    const effectiveProviders = normalizedProviders ?? this.config.providers;
+    const normalizedModel = normalizeModelSelection(
+      { ...this.config.model, ...storedConfig.model },
+      effectiveProviders,
+    );
+    const mergedConfig = {
       ...this.config,
       ...storedConfig,
       api: {
-        ...this.config.api,
-        ...storedConfig.api,
+        ...(normalizedModel.reset
+          ? defaultConfig.api
+          : { ...this.config.api, ...storedConfig.api }),
       },
-      model: {
-        ...this.config.model,
-        ...storedConfig.model,
-      },
+      model: normalizedModel.model,
       app: {
         ...this.config.app,
         ...storedConfig.app,
@@ -193,7 +208,14 @@ export class ConfigService {
         ...(storedConfig.shortcuts ?? {}),
       } as AppConfig['shortcuts'],
       ...(normalizedProviders ? { providers: normalizedProviders } : {}),
-    });
+    };
+    this.config = mergedConfig;
+    if (
+      normalizedModel.reset ||
+      JSON.stringify(storedConfig.providers) !== JSON.stringify(normalizedProviders)
+    ) {
+      this.enqueueConfigPersistence(this.config);
+    }
     window.dispatchEvent(new CustomEvent('config-updated'));
     return this.config;
   }

@@ -8,7 +8,10 @@ import { expect, test, vi } from 'vitest';
 vi.mock('electron', () => ({ app: { getName: () => 'JustDo', getPath: () => '', isPackaged: false } }));
 import { buildWindowsChildProcessPreload } from '../../../src/main/openclaw/runtime/electronNodeRuntime';
 
-import { syncProviderSecretFile } from '../../../src/main/openclaw/config/providerSecretFile';
+import {
+  managedProviderSecretRef,
+  syncProviderSecretFile,
+} from '../../../src/main/openclaw/config/providerSecretFile';
 
 const dist = path.resolve('vendor/openclaw-runtime/current/dist');
 
@@ -24,12 +27,12 @@ test.skipIf(!fs.existsSync(dist))('the bundled OpenClaw resolves managed file cr
     );
     expect(resolver).toBeDefined();
     const { config } = syncProviderSecretFile({
-      models: { providers: { custom: { apiKey: '${JUSTDO_APIKEY_CUSTOM_1}' } } },
-    }, directory, { CUSTOM_1: 'native-fixture-key' });
+      models: { providers: { acme: { apiKey: managedProviderSecretRef('acme') } } },
+    }, directory, { acme: 'native-fixture-key' });
     const script = `
       import { resolveSecretRefString } from ${JSON.stringify(pathToFileURL(path.join(dist, resolver!)).href)};
       const config = ${JSON.stringify(config)};
-      const value = await resolveSecretRefString(config.models.providers.custom.apiKey, { config, env: {} });
+      const value = await resolveSecretRefString(config.models.providers.acme.apiKey, { config, env: {} });
       if (value !== 'native-fixture-key') throw new Error('Native secret resolution mismatch');
       process.stdout.write('resolved');
     `;

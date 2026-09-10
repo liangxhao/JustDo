@@ -37,6 +37,106 @@ describe('appearance config persistence', () => {
     expect(service.getConfig().appearance).toEqual(defaultAppearanceConfig);
   });
 
+  test('deletes unsupported numbered custom provider configs', async () => {
+    storeMocks.getItem.mockResolvedValue({
+      ...defaultConfig,
+      api: { key: 'obsolete-secret', baseUrl: 'https://api.example.test/v1' },
+      model: {
+        ...defaultConfig.model,
+        defaultModel: 'model-1',
+        defaultModelProvider: 'custom_0',
+      },
+      providers: {
+        ...defaultConfig.providers,
+        custom_0: {
+          enabled: true,
+          apiKey: 'secret',
+          baseUrl: 'https://api.example.test/v1',
+          displayName: 'AcmeProxy',
+          identity: 'obsolete-numbered-provider',
+          models: [{ id: 'model-1', name: 'Model 1' }],
+        },
+      },
+    });
+    const service = new ConfigService();
+
+    await service.init();
+
+    expect(service.getConfig().providers).not.toHaveProperty('custom_0');
+    expect(service.getConfig().providers).not.toHaveProperty('acmeproxy');
+    expect(service.getConfig().model.defaultModelProvider).toBe(
+      defaultConfig.model.defaultModelProvider,
+    );
+    expect(service.getConfig().model.defaultModel).toBe(defaultConfig.model.defaultModel);
+    expect(service.getConfig().api).toEqual(defaultConfig.api);
+    expect(storeMocks.setItem).toHaveBeenCalledWith(
+      'app_config',
+      expect.objectContaining({
+        providers: expect.not.objectContaining({ custom_0: expect.anything() }),
+      }),
+    );
+  });
+
+  test('does not block initialization while obsolete provider removal is applied by Main', async () => {
+    storeMocks.getItem.mockResolvedValue({
+      ...defaultConfig,
+      providers: {
+        ...defaultConfig.providers,
+        custom_0: {
+          enabled: true,
+          apiKey: 'secret',
+          baseUrl: 'https://api.example.test/v1',
+          displayName: 'AcmeProxy',
+          models: [],
+        },
+      },
+    });
+    storeMocks.setItem.mockReturnValue(new Promise<void>(() => undefined));
+    const service = new ConfigService();
+
+    await service.init();
+
+    expect(service.getConfig().providers).not.toHaveProperty('custom_0');
+    expect(storeMocks.setItem).toHaveBeenCalledOnce();
+  });
+
+  test('reload removes obsolete providers and resets their default model selection', async () => {
+    storeMocks.getItem
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        ...defaultConfig,
+        api: { key: 'obsolete-secret', baseUrl: 'https://api.example.test/v1' },
+        model: {
+          ...defaultConfig.model,
+          defaultModel: 'model-1',
+          defaultModelProvider: 'custom_0',
+        },
+        providers: {
+          ...defaultConfig.providers,
+          custom_0: {
+            enabled: true,
+            apiKey: 'secret',
+            baseUrl: 'https://api.example.test/v1',
+            displayName: 'AcmeProxy',
+            identity: 'obsolete-numbered-provider',
+            models: [{ id: 'model-1', name: 'Model 1' }],
+          },
+        },
+      });
+    const service = new ConfigService();
+    await service.init();
+
+    const config = await service.reloadFromStore();
+
+    expect(config.providers).not.toHaveProperty('custom_0');
+    expect(config.model).toMatchObject({
+      defaultModel: defaultConfig.model.defaultModel,
+      defaultModelProvider: defaultConfig.model.defaultModelProvider,
+    });
+    expect(config.api).toEqual(defaultConfig.api);
+    expect(storeMocks.setItem).toHaveBeenCalledOnce();
+  });
+
   test('normalizes appearance values before persisting an update', async () => {
     storeMocks.getItem.mockResolvedValue(null);
     const service = new ConfigService();

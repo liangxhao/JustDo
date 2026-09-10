@@ -18,7 +18,7 @@
 
 数据库只在 `app.whenReady()` 后初始化；退出时在 Gateway 停止后关闭，以 flush WAL 和释放文件锁。
 
-模型供应商配置仍以 SQLite `kv.app_config` 为产品来源。供 OpenClaw 读取的自定义供应商凭据派生为 `<openclawStateDir>/model-provider-secrets.json`；`openclaw.json` 只保存原生 file SecretRef，不包含这些 Key 的值。文件先通过独占临时文件设置权限，再写入并原子替换：POSIX 使用 `0600`，Windows 移除继承 ACL，仅授予当前用户、SYSTEM 和 Administrators。它是敏感派生文件，不应作为普通诊断配置导出或记录日志；供应商目录正常同步时移除不再引用的凭据。Key 内容变更通过 `secrets.reload` 刷新运行时，不要求重启进程，也不新增 SQLite 表。
+模型供应商配置仍以 SQLite `kv.app_config` 为产品来源。自定义供应商使用规范化展示名作为 `providers` key，并保存一个仅用于可靠识别改名操作的本地 UUID identity；不再支持的旧 `custom_N` 配置会在 Renderer 加载时删除，用户需要重新添加对应供应商。供 OpenClaw 读取的自定义供应商凭据按规范化名称派生为 `<openclawStateDir>/model-provider-secrets.json`；`openclaw.json` 只保存同名原生 file SecretRef，不包含这些 Key 的值。文件先通过独占临时文件设置权限，再写入并原子替换：POSIX 使用 `0600`，Windows 移除继承 ACL，仅授予当前用户、SYSTEM 和 Administrators。它是敏感派生文件，不应作为普通诊断配置导出或记录日志；供应商目录正常同步时移除不再引用的凭据。Key 内容变更通过 `secrets.reload` 刷新运行时，不要求重启进程，也不新增 SQLite 表。
 
 ## 2. SQLite 参数
 
