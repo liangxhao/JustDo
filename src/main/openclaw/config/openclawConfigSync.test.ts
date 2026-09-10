@@ -662,6 +662,59 @@ describe('OpenClaw plugin config merging', () => {
       entries: { openviking: { enabled: true } },
     });
   });
+
+  test('removes empty config residue from disabled plugin entries', () => {
+    expect(
+      mergeOpenClawPluginConfig(
+        {
+          entries: {
+            'llm-task': {
+              enabled: false,
+              llm: {
+                allowModelOverride: false,
+                allowAuthProfileOverride: false,
+              },
+              config: {},
+            },
+          },
+        },
+        {},
+      ),
+    ).toEqual({
+      entries: {
+        'llm-task': {
+          enabled: false,
+          llm: {
+            allowModelOverride: false,
+            allowAuthProfileOverride: false,
+          },
+        },
+      },
+    });
+  });
+
+  test('preserves non-empty config on disabled plugin entries', () => {
+    expect(
+      mergeOpenClawPluginConfig(
+        {
+          entries: {
+            configurable: {
+              enabled: false,
+              config: { endpoint: 'http://127.0.0.1:1933' },
+            },
+          },
+        },
+        {},
+      ),
+    ).toEqual({
+      entries: {
+        configurable: {
+          enabled: false,
+          config: { endpoint: 'http://127.0.0.1:1933' },
+        },
+      },
+    });
+  });
 });
 
 describe('OpenClaw skill config merging', () => {

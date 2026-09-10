@@ -36,6 +36,7 @@ const EXPECTED_PATCH_FILES = [
   '016-offline-official-plugin-catalog.cjs',
   '017-segmented-live-progress-snapshot.cjs',
   '018-mixed-tool-commentary-order.cjs',
+  '019-disable-configured-plugin-auto-install.cjs',
 ] as const;
 
 const UPSTREAM_CONTRACTS = [

@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { buildSync } from 'esbuild';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 
 const { buildOpenClawPatchSetFingerprint } = require('../../../../scripts/verify-openclaw-runtime-patches.cjs') as {
   buildOpenClawPatchSetFingerprint: (repoRoot: string, version: string) => string;
@@ -160,7 +160,7 @@ describe('OpenClaw v2026.9.2 capability patches', () => {
     expect(runtimePatchSetIsCurrent).toBe(true);
   });
 
-  test('contains exactly the seventeen retained capability patches', () => {
+  test('contains exactly the eighteen retained capability patches', () => {
     expect(patchFiles).toEqual([
       '001-managed-pip-config-environment.cjs',
       '002-windows-mcp-package-runner.cjs',
@@ -179,6 +179,7 @@ describe('OpenClaw v2026.9.2 capability patches', () => {
       '016-offline-official-plugin-catalog.cjs',
       '017-segmented-live-progress-snapshot.cjs',
       '018-mixed-tool-commentary-order.cjs',
+      '019-disable-configured-plugin-auto-install.cjs',
     ]);
   });
 
@@ -234,6 +235,182 @@ describe('OpenClaw v2026.9.2 capability patches', () => {
         'historical-management-catalog.js',
       ),
     ).toThrow('historical or partial');
+  });
+
+  test('disables configured plugin package repair while preserving install records', async () => {
+    const testing = patches.get('019')?.__testing as {
+      MARKER: string;
+      transform: (content: string, filePath: string) => string;
+    };
+    const source = [
+      'async function repairMissingPluginInstallsWithLease(params) {',
+      '  const env4 = params.env ?? process.env;',
+      '  const { records } = await resolveConfiguredPluginInstallContext({ cfg: params.cfg, env: env4 });',
+      '  await updateNpmInstalledPlugins(records);',
+      '  await writePersistedInstalledPluginIndexInstallRecords(records, { config: params.cfg, env: env4 });',
+      '  return { changes: ["installed"], warnings: [], records };',
+      '}',
+    ].join('\n');
+
+    const patched = testing.transform(source, 'missing-configured-plugin-install.js');
+    expect(patched).toContain(
+      `return { changes: [], warnings: [], records: persistedRecords };/*${testing.MARKER}*/`,
+    );
+    expect(patched).not.toContain('updateNpmInstalledPlugins(records)');
+    expect(testing.transform(patched, 'missing-configured-plugin-install.js')).toBe(patched);
+
+    const persistedRecords = { opencode: { source: 'npm' } };
+    const resolveConfiguredPluginInstallContext = vi.fn(
+      async (params: { baselineRecords?: Record<string, unknown> }) => ({
+        records: {},
+        persistedRecords: params.baselineRecords ?? persistedRecords,
+      }),
+    );
+    const writePersistedInstalledPluginIndexInstallRecords = vi.fn();
+    const repair = new Function(
+      'resolveConfiguredPluginInstallContext',
+      'writePersistedInstalledPluginIndexInstallRecords',
+      `${patched}; return repairMissingPluginInstallsWithLease;`,
+    )(
+      resolveConfiguredPluginInstallContext,
+      writePersistedInstalledPluginIndexInstallRecords,
+    ) as (params: object) => Promise<{
+      changes: string[];
+      warnings: string[];
+      records: Record<string, unknown>;
+    }>;
+    await expect(
+      repair({ cfg: {}, pluginIds: new Set(['opencode']), channelIds: new Set() }),
+    ).resolves.toEqual({
+      changes: [],
+      warnings: [],
+      records: persistedRecords,
+    });
+    expect(writePersistedInstalledPluginIndexInstallRecords).not.toHaveBeenCalled();
+
+    const beforePersistentEffect = vi.fn();
+    const baselineRecords = { synced: { source: 'npm' } };
+    await expect(
+      repair({
+        cfg: {},
+        pluginIds: new Set(),
+        channelIds: new Set(),
+        baselineRecords,
+        beforePersistentEffect,
+      }),
+    ).resolves.toEqual({
+      changes: [],
+      warnings: [],
+      records: baselineRecords,
+    });
+    expect(beforePersistentEffect).toHaveBeenCalledOnce();
+    expect(writePersistedInstalledPluginIndexInstallRecords).toHaveBeenCalledWith(
+      baselineRecords,
+      { config: {}, env: process.env },
+    );
+
+    const bundled = testing.transform(source, 'gateway-bundle.mjs');
+    expect(bundled).toContain(
+      'return { changes: [], warnings: [], records: persistedRecords };',
+    );
+    expect(bundled).not.toContain(testing.MARKER);
+    expect(testing.transform(bundled, 'gateway-bundle.mjs')).toBe(bundled);
+
+    const esbuildRenamedBundle = bundled
+      .replace('const env = params.env', 'const env4 = params.env')
+      .replace(/\benv,\n/g, 'env: env4,\n')
+      .replace(/\benv\n/g, 'env: env4\n');
+    expect(esbuildRenamedBundle).toContain('env: env4');
+    expect(testing.transform(esbuildRenamedBundle, 'gateway-bundle.mjs')).toBe(
+      esbuildRenamedBundle,
+    );
+
+    const generatedBundle = buildSync({
+      stdin: {
+        contents: [
+          'async function resolveConfiguredPluginInstallContext() { return { persistedRecords: {} }; }',
+          'async function writePersistedInstalledPluginIndexInstallRecords() {}',
+          patched,
+          'export { repairMissingPluginInstallsWithLease };',
+        ].join('\n'),
+        loader: 'js',
+      },
+      bundle: true,
+      format: 'esm',
+      platform: 'node',
+      write: false,
+    }).outputFiles[0].text;
+    const normalizedGeneratedBundle = testing.transform(
+      generatedBundle,
+      'gateway-bundle.mjs',
+    );
+    expect(normalizedGeneratedBundle).not.toContain(testing.MARKER);
+    expect(testing.transform(normalizedGeneratedBundle, 'gateway-bundle.mjs')).toBe(
+      normalizedGeneratedBundle,
+    );
+
+    expect(() =>
+      testing.transform(
+        patched.replace(testing.MARKER, testing.MARKER.replace('9_2', '8_2')),
+        'historical-missing-configured-plugin-install.js',
+      ),
+    ).toThrow('historical or partial');
+    expect(() =>
+      testing.transform(
+        [
+          `const unrelated = () => ({ changes: [], warnings: [], records: persistedRecords });/*${testing.MARKER}*/`,
+          source,
+        ].join('\n'),
+        'partial-missing-configured-plugin-install.js',
+      ),
+    ).toThrow('historical or partial');
+    expect(() =>
+      testing.transform(
+        patched.replace(
+          '  if (params.baselineRecords) {',
+          '  await updateNpmInstalledPlugins({});\n  if (params.baselineRecords) {',
+        ),
+        'side-effect-missing-configured-plugin-install.js',
+      ),
+    ).toThrow('historical or partial');
+  });
+
+  test('applies configured plugin auto-install policy to both source chunks and the Gateway bundle', () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-plugin-auto-install-'));
+    const distRoot = path.join(fixtureRoot, 'dist');
+    const workerRoot = path.join(distRoot, 'worker');
+    fs.mkdirSync(workerRoot, { recursive: true });
+    const source = [
+      'async function repairMissingPluginInstallsWithLease(params) {',
+      '  const env = params.env ?? process.env;',
+      '  const { records } = await resolveConfiguredPluginInstallContext({ cfg: params.cfg, env });',
+      '  await updateNpmInstalledPlugins(records);',
+      '  await writePersistedInstalledPluginIndexInstallRecords(records, { config: params.cfg, env });',
+      '  return { changes: ["installed"], warnings: [], records };',
+      '}',
+    ].join('\n');
+    const sourcePath = path.join(distRoot, 'missing-configured-plugin-install.js');
+    const workerPath = path.join(workerRoot, 'worker.mjs');
+    const bundlePath = path.join(fixtureRoot, 'gateway-bundle.mjs');
+
+    try {
+      fs.writeFileSync(sourcePath, source);
+      fs.writeFileSync(workerPath, source);
+      const patch = patches.get('019')!;
+      expect(patch.applyPatch(fixtureRoot)).toEqual([
+        path.join('dist', 'missing-configured-plugin-install.js'),
+        path.join('dist', 'worker', 'worker.mjs'),
+      ]);
+      expect(() => patch.verifyPatch(fixtureRoot)).not.toThrow();
+      expect(patch.applyPatch(fixtureRoot)).toEqual([]);
+
+      fs.writeFileSync(bundlePath, source);
+      expect(patch.applyPatch(fixtureRoot)).toEqual(['gateway-bundle.mjs']);
+      expect(() => patch.verifyPatch(fixtureRoot)).not.toThrow();
+      expect(patch.applyPatch(fixtureRoot)).toEqual([]);
+    } finally {
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
+    }
   });
 
   test('rejects historical v2026.8.2 contracts in retained patch families', () => {

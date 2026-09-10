@@ -1028,10 +1028,22 @@ export const mergeOpenClawPluginConfig = (
         ...managedIds,
       ])
     : existingRegistrations;
-  const mergedEntries = {
+  const mergedEntries = Object.fromEntries(Object.entries({
     ...(isRecord(sourcePlugins.entries) ? sourcePlugins.entries : {}),
     ...managedEntries,
-  };
+  }).map(([pluginId, value]) => {
+    if (!isRecord(value) || value.enabled !== false || !isRecord(value.config)) {
+      return [pluginId, value];
+    }
+    if (Object.keys(value.config).length > 0) return [pluginId, value];
+
+    // OpenClaw warns when a disabled plugin has a config property, even when
+    // schema normalization left only an empty object behind. Drop that inert
+    // residue while retaining user-owned non-empty config and sibling fields.
+    const cleanedEntry = { ...value };
+    delete cleanedEntry.config;
+    return [pluginId, cleanedEntry];
+  }));
   const trustedIds = [
     ...new Set(
       trustedInstalledExtensionIds
