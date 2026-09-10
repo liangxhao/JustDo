@@ -160,11 +160,7 @@ const ModelSettingsTab: React.FC<Props> = ({
   const modelActionDisabledReason = !actionAvailability.credentialsReady
     ? i18nService.t('modelActionsRequireCredentials')
     : undefined;
-  const sortedProviders = Object.entries(providers).sort(([leftKey], [rightKey]) => {
-    if (leftKey === 'builtin_models') return -1;
-    if (rightKey === 'builtin_models') return 1;
-    return leftKey.localeCompare(rightKey);
-  });
+  const providerEntries = Object.entries(providers);
 
   const handleExport = async () => {
     setError(null);
@@ -257,7 +253,7 @@ const ModelSettingsTab: React.FC<Props> = ({
           </div>
         </div>
 
-        {sortedProviders.map(([provider, config]) => {
+        {providerEntries.map(([provider, config]) => {
           const providerKey = provider as ProviderType;
           const isCustom = isCustomProvider(provider);
           const readOnlyProviderRow = isProviderReadOnly(providerKey, config);

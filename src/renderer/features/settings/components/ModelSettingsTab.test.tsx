@@ -30,14 +30,19 @@ const providers: NonNullable<AppConfig['providers']> = {
   },
 };
 
-const renderTab = (options: { displayNameError?: string | null } = {}) => {
+const renderTab = (
+  options: {
+    displayNameError?: string | null;
+    providers?: NonNullable<AppConfig['providers']>;
+  } = {},
+) => {
   const handleProviderConfigChange = vi.fn();
   const setDisplayNameError = vi.fn();
 
   render(
     <ModelSettingsTab
       activeProvider="custom_0"
-      providers={providers}
+      providers={options.providers ?? providers}
       isTesting={false}
       displayNameError={options.displayNameError ?? null}
       providerRequiresApiKey={() => true}
@@ -70,7 +75,7 @@ const renderTab = (options: { displayNameError?: string | null } = {}) => {
   return { handleProviderConfigChange, setDisplayNameError };
 };
 
-describe('ModelSettingsTab provider name input', () => {
+describe('ModelSettingsTab', () => {
   afterEach(cleanup);
 
   test('reveals and hides the API key without changing its value', () => {
@@ -105,5 +110,33 @@ describe('ModelSettingsTab provider name input', () => {
     expect(input.getAttribute('aria-invalid')).toBe('true');
     expect(input.getAttribute('aria-describedby')).toBe('custom_0-displayName-error');
     expect(screen.getByRole('alert').textContent).toBe('providerNameInvalid');
+  });
+
+  test('keeps newly appended providers at the end instead of sorting them alphabetically', () => {
+    renderTab({
+      providers: {
+        ...providers,
+        zulu: {
+          enabled: false,
+          apiKey: '',
+          baseUrl: '',
+          apiFormat: 'openai',
+          displayName: 'Zulu',
+          models: [],
+        },
+        alpha: {
+          enabled: false,
+          apiKey: '',
+          baseUrl: '',
+          apiFormat: 'openai',
+          displayName: 'Alpha',
+          models: [],
+        },
+      },
+    });
+
+    const zulu = screen.getByText('Zulu');
+    const alpha = screen.getByText('Alpha');
+    expect(zulu.compareDocumentPosition(alpha) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });

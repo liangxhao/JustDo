@@ -347,14 +347,8 @@ const getDefaultActiveProvider = (): ProviderType => {
   return firstEnabledProvider ?? 'builtin_models';
 };
 
-const getSortedCustomProviderKeys = (providers: ProvidersConfig): string[] =>
-  Object.keys(providers)
-    .filter(isCustomProvider)
-    .sort((a, b) =>
-      getProviderDisplayName(a, providers[a]).localeCompare(
-        getProviderDisplayName(b, providers[b]),
-      ),
-    );
+const getCustomProviderKeysInOrder = (providers: ProvidersConfig): string[] =>
+  Object.keys(providers).filter(isCustomProvider);
 
 const getNextCustomProvider = (providers: ProvidersConfig): { key: string; name: string } => {
   const usedKeys = new Set(Object.keys(providers));
@@ -858,8 +852,8 @@ const Settings: React.FC<SettingsProps> = ({
         filtered[key as keyof ProvidersConfig] = providers[key as keyof ProvidersConfig];
       }
     }
-    // Append custom providers that exist in state, sorted by display name.
-    for (const key of getSortedCustomProviderKeys(providers)) {
+    // Preserve persisted insertion order so newly added providers stay at the end.
+    for (const key of getCustomProviderKeysInOrder(providers)) {
       if (providers[key]) {
         filtered[key] = providers[key];
       }
@@ -886,7 +880,7 @@ const Settings: React.FC<SettingsProps> = ({
     setProviders(prev => ({
       ...prev,
       [newKey]: {
-        enabled: false,
+        enabled: true,
         apiKey: '',
         baseUrl: '',
         apiFormat: 'openai' as const,
