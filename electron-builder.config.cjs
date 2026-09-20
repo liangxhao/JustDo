@@ -9,6 +9,9 @@ process.env.ELECTRON_BUILDER_7Z_FILTER = 'BCJ';
 
 const baseConfig = require('./electron-builder.json');
 const packageJson = require('./package.json');
+const { existsSync, readFileSync } = require('fs');
+const path = require('path');
+const { createBuildInfo } = require('./scripts/generate-build-info.cjs');
 const {
   resolveBuilderProductMetadata,
 } = require('./scripts/electron-builder-product-metadata.cjs');
@@ -16,6 +19,10 @@ const { readWindowsUpdateConfig } = require('./scripts/windows-update-config.cjs
 
 const { appId, productName } = resolveBuilderProductMetadata(packageJson.productName);
 const windowsUpdateConfig = readWindowsUpdateConfig();
+const buildInfoPath = path.join(__dirname, 'resources', 'build-info.json');
+const buildInfo = existsSync(buildInfoPath)
+  ? JSON.parse(readFileSync(buildInfoPath, 'utf8'))
+  : createBuildInfo();
 const openClawNodeModulesResource = {
   from: 'vendor/openclaw-runtime/current/node_modules',
   to: 'cfmind/node_modules',
@@ -57,6 +64,7 @@ module.exports = {
   win: {
     ...baseConfig.win,
     verifyUpdateCodeSignature: false,
+    artifactName: `${productName} Setup ${packageJson.version.replace(/^v/, '')}-${buildInfo.buildId}.\${ext}`,
   },
   linux: {
     ...baseConfig.linux,

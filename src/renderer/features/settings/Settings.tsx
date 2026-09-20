@@ -15,6 +15,7 @@ import {
   XCircleIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
+import { type BuildInfo, UNKNOWN_BUILD_INFO } from '@shared/buildInfo';
 import { buildOpenAIJsonRequestHeaders } from '@shared/cowork/modelRequestHeaders';
 import {
   type AgentRuntimeSettings,
@@ -380,6 +381,7 @@ const Settings: React.FC<SettingsProps> = ({
   const [pendingDeleteProvider, setPendingDeleteProvider] = useState<ProviderType | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState(220);
   const [appVersion, setAppVersion] = useState<string>('unknown');
+  const [buildInfo, setBuildInfo] = useState<BuildInfo>(UNKNOWN_BUILD_INFO);
   const initialThemeRef = useRef<'light' | 'dark' | 'system'>(themeService.getTheme());
   const initialThemeIdRef = useRef<string>(themeService.getThemeId());
   const initialAppearanceRef = useRef<AppearanceConfig>(appearance);
@@ -429,6 +431,7 @@ const Settings: React.FC<SettingsProps> = ({
   useEffect(() => {
     if (activeTab === 'help') {
       window.electron.appInfo.getVersion().then(setAppVersion);
+      window.electron.appInfo.getBuildInfo().then(setBuildInfo);
     }
   }, [activeTab]);
 
@@ -2756,6 +2759,12 @@ const Settings: React.FC<SettingsProps> = ({
                     </div>
                     <p className="mt-1.5 text-sm leading-6 text-secondary">
                       {i18nService.t('appAboutDescription')}
+                    </p>
+                    <p className="mt-1 font-mono text-xs text-tertiary">
+                      {i18nService.t('appBuild')}: {buildInfo.buildId} · {buildInfo.branch}
+                      {buildInfo.builtAt
+                        ? ` · ${new Date(buildInfo.builtAt).toLocaleString()}`
+                        : ''}
                     </p>
                   </div>
                 </div>

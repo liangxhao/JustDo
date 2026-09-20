@@ -25,8 +25,9 @@
   },
   "scripts": {
     "dev": "vite",
-    "prebuild": "npm run validate:product-metadata",
+    "prebuild": "npm run validate:product-metadata && npm run build:info",
     "build": "tsc && vite build",
+    "build:info": "node scripts/generate-build-info.cjs",
     "validate:product-metadata": "node scripts/validate-product-metadata.cjs",
     "verify:windows-update-artifacts": "node scripts/verify-windows-update-artifacts.cjs release",
     "lint": "eslint src/",

@@ -991,6 +991,7 @@ interface IElectronAPI {
   };
   appInfo: {
     getVersion: () => Promise<string>;
+    getBuildInfo: () => Promise<import('../../shared/buildInfo').BuildInfo>;
     getOpenclawVersion: () => Promise<string>;
     getSystemLocale: () => Promise<string>;
   };

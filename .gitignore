@@ -28,6 +28,7 @@ resources/python-win/
 resources/python-*.zip
 resources/dependency-config/.npmrc
 resources/dependency-config/pip.ini
+resources/build-info.json
 !resources/dependency-config/README.md
 
 

@@ -2,6 +2,7 @@ import { app, ipcMain, powerSaveBlocker } from 'electron';
 import fs from 'fs';
 import path from 'path';
 
+import { type BuildInfo, UNKNOWN_BUILD_INFO } from '../../../shared/buildInfo';
 import { type DeveloperConfig, DeveloperConfigIpc } from '../../../shared/developerConfig';
 import { getAutoLaunchEnabled, setAutoLaunchEnabled } from '../../core/autoLaunchManager';
 import type { SqliteStore } from '../../data/sqliteStore';
@@ -72,6 +73,25 @@ export const registerAppHandlers = ({
   });
 
   ipcMain.handle('app:getVersion', () => app.getVersion());
+  ipcMain.handle('app:getBuildInfo', (): BuildInfo => {
+    const buildInfoPath = app.isPackaged
+      ? path.join(process.resourcesPath, 'build-info.json')
+      : path.join(app.getAppPath(), 'resources', 'build-info.json');
+    try {
+      const value = JSON.parse(fs.readFileSync(buildInfoPath, 'utf8')) as Partial<BuildInfo>;
+      if (
+        value.schemaVersion !== 1 ||
+        typeof value.buildId !== 'string' ||
+        typeof value.commit !== 'string' ||
+        typeof value.builtAt !== 'string'
+      ) {
+        return UNKNOWN_BUILD_INFO;
+      }
+      return { ...UNKNOWN_BUILD_INFO, ...value };
+    } catch {
+      return UNKNOWN_BUILD_INFO;
+    }
+  });
   ipcMain.handle('app:getOpenclawVersion', () => {
     try {
       const packagePath = path.join(app.getAppPath(), 'package.json');

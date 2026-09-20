@@ -7,8 +7,28 @@ const electronBuilderConfig = require('../../electron-builder.config.cjs') as {
   asarUnpack?: string[];
   files?: Array<string | { from: string; filter: string[] }>;
   linux?: { extraResources?: Array<{ from: string; to: string }> };
+  win?: { artifactName?: string };
   npmRebuild?: boolean;
 };
+
+test('embeds a traceable build identifier in Windows artifacts and packaged resources', () => {
+  const packageJson = JSON.parse(
+    fs.readFileSync(path.resolve(__dirname, '../..', 'package.json'), 'utf8'),
+  ) as { scripts: Record<string, string> };
+  const baseBuilderConfig = JSON.parse(
+    fs.readFileSync(path.resolve(__dirname, '../../electron-builder.json'), 'utf8'),
+  ) as { extraResources: Array<{ from: string; to: string }> };
+
+  expect(packageJson.scripts.prebuild).toContain('npm run build:info');
+  expect(packageJson.scripts['build:info']).toBe('node scripts/generate-build-info.cjs');
+  expect(electronBuilderConfig.win?.artifactName).toMatch(
+    /^JustDo Setup 2026\.8\.27-[0-9a-f]{8}(?:-dirty)?\.\$\{ext\}$/,
+  );
+  expect(baseBuilderConfig.extraResources).toContainEqual({
+    from: 'resources/build-info.json',
+    to: 'build-info.json',
+  });
+});
 
 test('relies on the npm predist:win lifecycle without invoking it twice', () => {
   const packageJson = JSON.parse(

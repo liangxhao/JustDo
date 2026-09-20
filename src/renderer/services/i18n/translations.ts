@@ -312,6 +312,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     about: '关于',
     appName: '软件名称',
     appVersion: '软件版本',
+    appBuild: '构建标识',
     appAboutDescription: '本地优先、安全可靠的智能桌面助手',
     appUpdateTitle: '软件更新',
     appUpdateDescription: '自动检查由通用设置中的频率控制，也可以在这里手动检查',
@@ -1666,6 +1667,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     about: 'About',
     appName: 'App Name',
     appVersion: 'App Version',
+    appBuild: 'Build',
     appAboutDescription: 'A local-first, secure, and reliable intelligent desktop assistant',
     appUpdateTitle: 'Software Update',
     appUpdateDescription:

@@ -49,6 +49,10 @@
   ],
   "extraResources": [
     {
+      "from": "resources/build-info.json",
+      "to": "build-info.json"
+    },
+    {
       "from": "resources/tray",
       "to": "tray",
       "filter": ["**/*"]
