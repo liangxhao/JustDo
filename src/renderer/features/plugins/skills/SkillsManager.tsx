@@ -33,6 +33,8 @@ import TrashIcon from '@/shared/components/icons/TrashIcon';
 import Tooltip from '@/shared/components/ui/Tooltip';
 import { RootState } from '@/store';
 
+import SkillWorkshopPanel from './SkillWorkshopPanel';
+
 interface SkillsManagerProps extends PluginHubManagerProps {
   readOnly?: boolean;
   onCreateByChat?: () => void;
@@ -115,6 +117,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
     i18nService.t(`pluginScope.${scope || PluginHubScope.OTHER}`);
   const getSourceLabel = (skill: Skill) => {
     switch (skill.source) {
+      case 'openclaw-workshop':
       case 'openclaw-workspace':
       case 'agents-skills-project':
       case 'agents-skills-personal':
@@ -423,7 +426,20 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                     key={group.id}
                     title={i18nService.t(`pluginGroup.${group.id}.label`)}
                     count={group.skills.length}
-                    action={group.id === 'user' ? importSkillAction : undefined}
+                    action={
+                      group.id === 'user' ? (
+                        <div className="flex items-center gap-1">
+                          {importSkillAction}
+                          {!readOnly && (
+                            <SkillWorkshopPanel
+                              onSkillsChanged={async () => {
+                                dispatch(setSkills(await skillService.loadSkills()));
+                              }}
+                            />
+                          )}
+                        </div>
+                      ) : undefined
+                    }
                     collapsible={group.id === 'system'}
                     defaultExpanded={group.id !== 'system'}
                     forceExpanded={Boolean(skillSearchQuery.trim())}

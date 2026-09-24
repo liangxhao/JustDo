@@ -1,3 +1,4 @@
+import { MAIN_USER_AGENT_ID } from '../../../shared/agents/agents';
 import type { GatewaySkillStatus, SkillRpcResult, SkillUpdateParams } from '../../engine/types';
 
 export interface OpenClawSkillGateway {
@@ -9,7 +10,7 @@ export type OpenClawSkillGatewayResolver = () => OpenClawSkillGateway | null;
 export class OpenClawSkillService {
   constructor(private readonly resolveGateway: OpenClawSkillGatewayResolver) {}
 
-  getStatus(agentId?: string): Promise<GatewaySkillStatus> {
+  getStatus(agentId: string = MAIN_USER_AGENT_ID): Promise<GatewaySkillStatus> {
     return this.requireGateway().requestGateway('skills.status', { agentId });
   }
 

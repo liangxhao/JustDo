@@ -151,6 +151,7 @@ import {
   registerSpeechSynthesisHandlers,
 } from './ipc/openclaw';
 import { readOpenClawAssistantMedia } from './ipc/openclaw/engine';
+import { registerSkillWorkshopHandlers } from './ipc/openclaw/skillWorkshop';
 import {
   getCronJobService,
   getScheduledTaskResultStore,
@@ -186,6 +187,7 @@ import {
   PluginInstallationService,
   PluginManager,
 } from './plugins';
+import { SkillWorkshopService } from './plugins/skills/skillWorkshopService';
 import {
   getBuiltinModelAuthConfig,
   resolveBuiltinModelDevelopmentApiKey,
@@ -1371,6 +1373,10 @@ if (multicaBridgeArgv) {
     getGatewayClient: () => getOpenClawRuntimeAdapter()?.getGatewayClient() ?? null,
     policies: [justDoSlashCommandPolicy],
   });
+  const skillWorkshopService = new SkillWorkshopService(
+    <T>(method: string, params?: unknown) => getCoworkEngineService().requestGateway<T>(method, params),
+  );
+  registerSkillWorkshopHandlers(skillWorkshopService);
   registerSkillHandlers({
     skillService: openClawSkillService,
     skillFileService: getOpenClawSkillFiles(),

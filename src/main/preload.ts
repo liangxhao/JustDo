@@ -152,6 +152,7 @@ import {
   type MarketplaceUpdateCheckRequest,
 } from '../shared/plugins/marketplace';
 import type { OpenClawSkillSource } from '../shared/plugins/skills';
+import { type SkillWorkshopDecision, SkillWorkshopIpc } from '../shared/plugins/skillWorkshop';
 import {
   type FilePreviewEditAuthorizationRequest,
   type FilePreviewEditAuthorizationResult,
@@ -234,6 +235,12 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(MarketplaceIpc.Detail, request),
     install: (request: MarketplaceInstallRequest) =>
       ipcRenderer.invoke(MarketplaceIpc.Install, request),
+  },
+  skillWorkshop: {
+    list: (agentId: string) => ipcRenderer.invoke(SkillWorkshopIpc.List, agentId),
+    inspect: (agentId: string, proposalId: string) =>
+      ipcRenderer.invoke(SkillWorkshopIpc.Inspect, agentId, proposalId),
+    decide: (input: SkillWorkshopDecision) => ipcRenderer.invoke(SkillWorkshopIpc.Decide, input),
   },
   skills: {
     list: () => ipcRenderer.invoke('skills:list'),

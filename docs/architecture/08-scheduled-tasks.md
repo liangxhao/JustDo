@@ -109,6 +109,19 @@ flowchart LR
 
 ## 9. 修改与验证入口
 
+### 技能库自动整理的系统任务
+
+OpenClaw v2026.9.6 按 Agent 投影每周整理任务，使用 `agentTurn` payload 和
+`skill-collection-review:<agentId>` declaration key。Main 在 ScheduledTask 中透传
+`declarationKey`，Renderer 按系统归属识别成员，不按可编辑的名称或 prompt 匹配。
+所有成员合成一张“技能库自动整理”卡片；展开后仍用各原生 job ID 查看详情与历史，
+保留真实 payload、Agent、运行状态及失败信息。聚合 ID 仅用于界面，不发送给 cron mutation。
+
+统一开关通过 `config.patch` 修改 `skills.workshop.autonomous.mode`（开启 `auto`，关闭 `off`）。
+原生禁止 cron 客户端删除这些系统监控任务；关闭后原生仍保留禁用的任务，界面继续聚合。
+应用配置同步在未设置 mode 时显式写入 `off`，并保留已有显式选择，因此不依赖上游默认的 `auto`。
+手动从历史提炼技能是独立的一次学习会话，其接入与审核流程见功能接入计划，不由该卡片创建。
+
 主要代码位于 `src/main/scheduler/`、`src/main/ipc/scheduledTask/`、`src/main/data/scheduledTaskResultStore.ts`、`src/shared/scheduledTask/` 和 Renderer scheduled-tasks feature。
 
 回归需覆盖 schedule 与时区、原生 owner 保留、默认 delivery、基线不泛滥未读、超过一页的追赶、中断重启、readAt 保留、删除和 reconcile 竞争、tombstone 幂等及原生历史缺失。测试应验证用户看到的结果，不只比对请求对象字段。

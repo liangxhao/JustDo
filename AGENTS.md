@@ -189,6 +189,10 @@ apply the current patch set instead.
 - JustDo owns UX, persistence, permissions, packaging, app shell, and product flows.
 - OpenClaw owns agent execution, Gateway capabilities, tool semantics, and skill runtime behavior.
 - `openclawSkillService.ts` talks to Gateway skill APIs.
+- Skill proposal review lives in `skillWorkshopService.ts` / `SkillWorkshopPanel.tsx`:
+  main-owned native proposals, revision-bound decisions, no app transcript/proposal cache.
+  Learning uses `/learn` directly in normal chat; the review dialog neither starts
+  sessions nor changes global learning or publication policy.
 - `openclawSkillFiles.ts` only extracts/copies/removes user-imported local skill files; it is not skill metadata authority.
 - Browser-extension pairing/relay code lives in the OpenClaw-owned `openclaw/` baseline; side-panel chat lives in the separate `conversation-overlay/`. Keep their changes separate according to `docs/features/browser-settings-design.md`. OpenClaw upgrades replace the pairing baseline first, then reapply and review only the explicit build-time integration seams; do not fold chat behavior into relay modules.
 

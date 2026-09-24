@@ -509,6 +509,7 @@ interface IElectronAPI {
     detail: (request: MarketplaceDetailRequest) => Promise<MarketplaceDetailResponse>;
     install: (request: MarketplaceInstallRequest) => Promise<MarketplaceInstallResponse>;
   };
+  skillWorkshop: import('../../shared/plugins/skillWorkshop').SkillWorkshopApi;
   skills: {
     list: () => Promise<{
       success: boolean;

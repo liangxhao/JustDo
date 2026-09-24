@@ -24,6 +24,7 @@ export const getSkillScope = (
     case 'openclaw-bundled':
     case 'openclaw-custodian':
       return Scope.SYSTEM;
+    case 'openclaw-workshop':
     case 'openclaw-managed':
     case 'agents-skills-personal':
       return Scope.PERSONAL;

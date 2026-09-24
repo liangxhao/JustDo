@@ -7,9 +7,11 @@ import { getHomeGreetingTranslations } from './homeGreetings';
 import { pluginsTranslations } from './pluginsTranslations';
 import { scheduledTaskTranslations } from './scheduledTaskTranslations';
 import { settingsTranslations } from './settingsTranslations';
+import { skillWorkshopTranslations } from './skillWorkshopTranslations';
 
 export const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
+    ...skillWorkshopTranslations.zh,
     ...browserRecordingTranslations.zh,
     ...getHomeGreetingTranslations('zh'),
     ...appTranslations.zh,
@@ -19,6 +21,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     ...scheduledTaskTranslations.zh,
   },
   en: {
+    ...skillWorkshopTranslations.en,
     ...browserRecordingTranslations.en,
     ...getHomeGreetingTranslations('en'),
     ...appTranslations.en,

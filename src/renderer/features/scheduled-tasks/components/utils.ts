@@ -21,6 +21,7 @@ const WEEKDAY_KEYS = [
 ] as const;
 
 const MEMORY_DREAMING_TRIGGER = '__openclaw_memory_core_short_term_promotion_dream__';
+const SKILL_COLLECTION_REVIEW_DECLARATION_PREFIX = 'skill-collection-review:';
 
 export function isMemoryDreamingTask(task: Pick<ScheduledTask, 'management' | 'payload'>): boolean {
   if (task.management !== 'managed') return false;
@@ -34,13 +35,20 @@ export function isMemoryDreamingTask(task: Pick<ScheduledTask, 'management' | 'p
 }
 
 export function isSkillCollectionReviewTask(
-  task: Pick<ScheduledTask, 'management' | 'payload'>,
+  task: Pick<ScheduledTask, 'management' | 'payload' | 'declarationKey'>,
 ): boolean {
-  return task.management === 'managed' && task.payload.kind === 'skillCollectionReview';
+  if (task.management !== 'managed') return false;
+  // v2026.9.6 uses agentTurn for execution; only the native declaration owns the feature.
+  // Keep the payload marker for the renderer-only aggregate card.
+  return (
+    task.payload.kind === 'skillCollectionReview' ||
+    (task.declarationKey?.startsWith(SKILL_COLLECTION_REVIEW_DECLARATION_PREFIX) === true &&
+      task.declarationKey.length > SKILL_COLLECTION_REVIEW_DECLARATION_PREFIX.length)
+  );
 }
 
 export function getKnownSystemTaskPresentation(
-  task: Pick<ScheduledTask, 'management' | 'payload'>,
+  task: Pick<ScheduledTask, 'management' | 'payload' | 'declarationKey'>,
 ): { name: string; description: string; managedHint: string } | null {
   if (isMemoryDreamingTask(task)) {
     return {

@@ -130,6 +130,8 @@ export interface ScheduledTask {
   sessionKey: string | null;
   /** Whether JustDo can safely round-trip edits for this native OpenClaw job. */
   management: ScheduledTaskManagement;
+  /** Native config ownership; independent of the execution payload or display name. */
+  declarationKey?: string | null;
   /** Native features intentionally preserved outside JustDo's basic editor. */
   advancedFeatures?: ScheduledTaskAdvancedFeature[];
   /** Opaque OpenClaw revision used to reject stale destructive confirmations. */

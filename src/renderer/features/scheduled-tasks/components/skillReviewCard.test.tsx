@@ -16,6 +16,7 @@ import { afterEach, expect, test, vi } from 'vitest';
 import { CronJobCard } from './CronView';
 import { useMemoryDreamingControl, withMemoryDreamingCard } from './memoryDreamingControl';
 import { SKILL_REVIEW_CARD_ID, withSkillReviewCard } from './skillReviewCard';
+import { isSkillCollectionReviewTask } from './utils';
 
 const settings: SystemTaskSettings = {
   memoryDreamingEnabled: true,
@@ -28,9 +29,32 @@ const member = (id: string): ScheduledTask => ({
   id,
   agentId: id,
   enabled: true,
-  payload: { kind: 'skillCollectionReview' },
+  declarationKey: `skill-collection-review:${id}`,
+  payload: { kind: 'agentTurn', message: 'Audit the Workshop collection.' },
 });
 afterEach(cleanup);
+
+test('groups six native agentTurn monitors without absorbing lookalike user or other managed jobs', () => {
+  const members = Array.from({ length: 6 }, (_, index) => member(`agent-${index}`));
+  const lookalikes = [undefined, 'heartbeat:main', 'skill-collection-review:', 'custom:review'].map(
+    declarationKey => ({
+      ...member('user-job'),
+      declarationKey,
+      name: 'Skill collection review (main)',
+    }),
+  );
+  const result = withSkillReviewCard([...members, ...lookalikes], null);
+  expect(result).toHaveLength(5);
+  expect(result.slice(0, 4)).toEqual(lookalikes);
+  expect(result[4]).toMatchObject({
+    id: SKILL_REVIEW_CARD_ID,
+    declarationKey: null,
+    enabled: true,
+  });
+  expect(isSkillCollectionReviewTask(result[4])).toBe(true);
+  expect(isSkillCollectionReviewTask({ ...members[0], management: 'editable' })).toBe(false);
+  expect(members[0].payload.kind).toBe('agentTurn');
+});
 
 test('groups all skill monitors into one disabled card while preserving native jobs and other tasks', () => {
   const first = member('main');

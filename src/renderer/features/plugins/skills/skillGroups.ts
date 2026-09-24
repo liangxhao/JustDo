@@ -22,6 +22,7 @@ export interface SkillGroup {
 }
 
 const sourceToGroup: Record<SkillSource, SkillGroupId> = {
+  'openclaw-workshop': SkillGroupId.MANAGED,
   'openclaw-workspace': SkillGroupId.WORKSPACE,
   'agents-skills-project': SkillGroupId.AGENTS_PROJECT,
   'agents-skills-personal': SkillGroupId.AGENTS_PERSONAL,

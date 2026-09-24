@@ -14,6 +14,7 @@ describe('skill management projection', () => {
     ['openclaw-bundled', PluginHubScope.SYSTEM],
     ['openclaw-custodian', PluginHubScope.SYSTEM],
     ['openclaw-managed', PluginHubScope.PERSONAL],
+    ['openclaw-workshop', PluginHubScope.PERSONAL],
     ['agents-skills-personal', PluginHubScope.PERSONAL],
     ['agents-skills-project', PluginHubScope.PROJECT],
     ['openclaw-workspace', PluginHubScope.PROJECT],
@@ -33,6 +34,24 @@ describe('skill management projection', () => {
 
     expect(capabilities.remove.allowed).toBe(true);
     expect(capabilities.enable.allowed).toBe(true);
+  });
+
+  test('keeps native workshop skills out of imported skill deletion while allowing toggles', () => {
+    const capabilities = getSkillManagementCapabilities({
+      source: 'openclaw-workshop',
+      bundled: false,
+      eligible: true,
+      hasPath: true,
+      filePath: 'C:/state/agents/main/agent/workshop-skills/procedure/SKILL.md',
+    });
+
+    expect(capabilities.remove).toEqual({
+      allowed: false,
+      reason: PluginActionReason.READ_ONLY_SOURCE,
+    });
+    expect(capabilities.enable.allowed).toBe(true);
+    expect(capabilities.disable.allowed).toBe(true);
+    expect(capabilities.revealInFolder.allowed).toBe(true);
   });
 
   test('distinguishes plugin-managed skills from ordinary extra directories', () => {

@@ -28,6 +28,7 @@ export function withSkillReviewCard(
     description: '',
     agentId: null,
     sessionKey: null,
+    declarationKey: null,
     management: 'managed',
     payload: { kind: 'skillCollectionReview' },
     enabled,

@@ -1,4 +1,5 @@
 export type OpenClawSkillSource =
+  | 'openclaw-workshop'
   | 'openclaw-workspace'
   | 'agents-skills-project'
   | 'agents-skills-personal'

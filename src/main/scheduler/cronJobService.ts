@@ -530,6 +530,7 @@ export function mapGatewayJob(job: GatewayJob): ScheduledTask {
     agentId: job.agentId ?? null,
     sessionKey: job.sessionKey ?? null,
     management: resolveGatewayJobManagement(job),
+    declarationKey: job.declarationKey ?? null,
     ...(advancedFeatures.length > 0 ? { advancedFeatures } : {}),
     configRevision: job.configRevision ?? null,
     state: mapGatewayTaskState(job.state),

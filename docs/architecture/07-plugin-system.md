@@ -47,6 +47,36 @@ Extension 发布技能的 scope 表示父插件管理，ownershipScope 表示产
 
 Windows 文件被占用时，ManagedDirectoryOperationCoordinator 识别受管进程，必要时取得配置 mutation 中的原生 suspension，再 stop/mutate/start。不能因为文件锁就杀任意进程；恢复失败必须可诊断。
 
+### 技能提案审核
+
+学习直接使用现有聊天中的原生 `/learn`，遵循原生工具能力、会话权限与技能配置。
+JustDo 不再提供独立学习启动流程，也不通过审核入口修改全局学习或发布策略。
+技能页仅保留“技能提案”低频入口，独立模态弹窗打开后才读取和轮询主助手（main）的提案。
+技能列表默认显式查询 main，`openclaw-workshop` 来源展示为助手提炼技能，不走导入目录删除逻辑。
+
+```mermaid
+sequenceDiagram
+  participant C as 现有聊天
+  participant U as 技能提案弹窗
+  participant M as Main / SkillWorkshopService
+  participant G as OpenClaw
+  C->>G: 用户发起 /learn
+  G-->>C: 学习进展与结果
+  U->>M: 读取主助手提案
+  M->>G: skills.proposals.list
+  U->>M: 查看提案
+  M->>G: skills.proposals.inspect / skills.workshop.read
+  U->>M: 批准或拒绝（expectedRevisionHash）
+  M->>G: skills.proposals.apply / reject
+  U->>M: 重新读取提案与有效技能清单
+```
+
+审核页对更新提案并列显示完整当前指令与提案指令；新建提案只显示新指令，并展示完整支持文件及原生状态。
+更新提案读取当前技能并核对原生目标哈希；无法读取或目标变化时禁止批准。Main 校验 main 归属、pending 状态、
+expectedRevisionHash，按提案序列化并发决定，再调用原生审核 API。原生负责最终目标冲突、扫描与原子发布。
+超时不重放写操作；清除旧审核快照，刷新权威状态后要求重新打开提案。弹窗关闭/卸载停止轮询，
+重新打开从原生恢复；写入期间禁用关闭，切换筛选清空旧详情。学习执行和提案持久化仍由原生负责。
+
 ## 4. MCP：配置与原生发现的汇合
 
 用户 MCP 保存在 mcp_servers。新增、改名、删除和启停通过串行配置同步生成原生 mcp.servers；原生新增的 server 可在列表刷新和非 MCP mutation 同步前导入缺失 name。

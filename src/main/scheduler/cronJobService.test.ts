@@ -127,6 +127,32 @@ describe('mapGatewayRun', () => {
 });
 
 describe('mapGatewayJob', () => {
+  test('preserves native skill monitor ownership independently of its agentTurn payload', () => {
+    const payload = { kind: 'agentTurn' as const, message: 'Audit Workshop', toolsAllow: ['read'] };
+    const job = mapGatewayJob({
+      id: 'review-research',
+      name: 'Renamed monitor',
+      declarationKey: 'skill-collection-review:research',
+      agentId: 'research',
+      enabled: false,
+      schedule: { kind: 'every', everyMs: 604800000 },
+      sessionTarget: 'isolated',
+      wakeMode: 'next-heartbeat',
+      payload,
+      state: {},
+      createdAtMs: 1,
+      updatedAtMs: 2,
+    });
+    expect(job).toMatchObject({
+      id: 'review-research',
+      agentId: 'research',
+      declarationKey: 'skill-collection-review:research',
+      management: 'managed',
+      payload,
+      enabled: false,
+    });
+  });
+
   test('keeps native cron fields without legacy wrappers', () => {
     const job = mapGatewayJob({
       id: 'job-1',
