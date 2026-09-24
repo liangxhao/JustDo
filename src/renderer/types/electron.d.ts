@@ -3,7 +3,7 @@ import type {
   AgentFileSnapshot,
   AgentProfileInput,
   AgentResult,
-} from '../../shared/agents';
+} from '../../shared/agents/agents';
 type SessionRunUnknownInput = import('../../shared/cowork/sessionRun').SessionRunUnknownInput;
 type BrowserRecordingLease = import('../../shared/browser/browserRecording').BrowserRecordingLease;
 type CoworkAttachmentPayload = import('../../shared/cowork/attachments').CoworkAttachmentPayload;
@@ -149,7 +149,7 @@ interface CoworkSession {
   activeSkillIds: string[];
   agentId: string;
   modelRef?: string;
-  handoffSource?: import('../../shared/agents').AgentHandoffSource;
+  handoffSource?: import('../../shared/agents/agents').AgentHandoffSource;
   forkSource?: {
     sessionId?: string;
     title: string;
@@ -423,7 +423,7 @@ import type {
 } from '@shared/scheduledTask/types';
 
 import type { Agent } from '@/features/agents/agentTypes';
-import type { McpServerFormData } from '@/features/plugins/types/mcp';
+import type { McpServerFormData } from '@/features/plugins/mcp/mcp';
 
 interface IElectronAPI {
   multica: {

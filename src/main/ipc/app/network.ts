@@ -11,7 +11,7 @@ import {
   applyMainProcessOutboundHeaderPolicy,
   MainProcessOutboundHeaderSource,
 } from '../../core/network/mainProcessFetch';
-import { getBuiltinModelRequestHeaders } from '../../cowork/builtinModelCredential';
+import { getBuiltinModelRequestHeaders } from '../../providers/builtinModelCredential';
 
 interface PendingFetch {
   controller: AbortController;

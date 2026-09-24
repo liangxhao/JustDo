@@ -46,15 +46,15 @@ import {
   getEnabledProviderModels,
 } from '@/features/models/modelConfig';
 import { setAvailableModels, setSelectedModel } from '@/features/models/modelSlice';
-import PluginsView from '@/features/plugins/components/PluginsView';
+import PluginsView from '@/features/plugins/PluginsView';
 import { CronView } from '@/features/scheduled-tasks/components';
 import { scheduledTaskService } from '@/features/scheduled-tasks/scheduledTaskService';
+import Settings, { type SettingsOpenOptions } from '@/features/settings/Settings';
+import AppUpdateToast from '@/features/settings/updates/AppUpdateToast';
 import {
   type AppUpdateToastState,
   selectAppUpdateToastState,
-} from '@/features/settings/appUpdateToastState';
-import AppUpdateToast from '@/features/settings/components/AppUpdateToast';
-import Settings, { type SettingsOpenOptions } from '@/features/settings/Settings';
+} from '@/features/settings/updates/appUpdateToastState';
 import WorkboardView from '@/features/workboard/components/WorkboardView';
 import { useWorkboardAvailability } from '@/features/workboard/useWorkboardAvailability';
 import { configService } from '@/services/config';

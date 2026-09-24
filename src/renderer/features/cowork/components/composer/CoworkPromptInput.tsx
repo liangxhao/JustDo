@@ -1,6 +1,6 @@
 import { ChevronDownIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { FolderIcon } from '@heroicons/react/24/solid';
-import { MAIN_USER_AGENT_ID } from '@shared/agents';
+import { MAIN_USER_AGENT_ID } from '@shared/agents/agents';
 import { composeBrowserGatewayPrompt } from '@shared/browser/browser';
 import { recordingImagesInStepOrder } from '@shared/browser/browserRecording';
 import {
@@ -106,7 +106,7 @@ import {
   matchesOpenClawModelRef,
   resolveOpenClawModelRef,
 } from '@/features/models/openclawModelRef';
-import { ActiveSkillBadge } from '@/features/plugins/components/skills';
+import { ActiveSkillBadge } from '@/features/plugins/skills';
 import type { ChatContextUsageSnapshot } from '@/libs/openclaw-chat/gateway/chat-controller';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';

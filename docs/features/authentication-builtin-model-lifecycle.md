@@ -187,9 +187,9 @@ LiteLLM PostgreSQL 会保存这一枚 legacy Virtual Key 的哈希和过期时�
 
 | 层       | 文件                                               | 责任                             |
 | -------- | -------------------------------------------------- | -------------------------------- |
-| 凭据     | `src/main/cowork/builtinModelCredential.ts`        | 结构校验、Main 内存持有、清除    |
-| 轮换     | `src/main/cowork/builtinModelCredentialMonitor.ts` | 文件监听、到期复核与串行刷新     |
-| Provider | `src/main/cowork/builtinModelProvider.ts`          | 认证发现、无凭据投影、并发收敛   |
+| 凭据     | `src/main/providers/builtinModelCredential.ts`        | 结构校验、Main 内存持有、清除    |
+| 轮换     | `src/main/providers/builtinModelCredentialMonitor.ts` | 文件监听、到期复核与串行刷新     |
+| Provider | `src/main/providers/builtinModelProvider.ts`          | 认证发现、无凭据投影、并发收敛   |
 | OpenClaw | `src/main/openclaw/config/openclawConfigSync.ts`   | exec SecretRef 与 logout 清理    |
 | JWT Hook | `deploy/litellm/hooks/jwt_auth/handler.py`                    | JWKS 认证和持久 Team 权限投影    |
 | 认证适配 | `deploy/litellm/hooks/jwt_auth/dispatch.py`           | 单实例 JWT/原生 Key 认证分派     |

@@ -60,13 +60,16 @@ flowchart TB
 | `core/`      | 按 app/window/network/runtime/filesystem/development 分组的主进程基础能力 | `window/mainWindowFactory.ts`、`network/outboundHeaderProxy.ts` |
 | `data/`      | SQLite schema 和面向领域的 store                                    | `sqliteStore.ts`、`coworkStore.ts`、`groupStore.ts`      |
 | `engine/`    | Cowork router、Gateway adapter、事件转发、命令安全                  | `coworkEngineRouter.ts`、`openclawRuntimeAdapter.ts`     |
-| `cowork/`    | provider 配置、内置模型、日志、模型 API/readiness                   | `providerApiConfig.ts`、`builtinModelLifecycle.ts`       |
+| `cowork/`    | 会话配置、日志、模型 API/readiness、标题生成、已批准计划             | `coworkModelReadiness.ts`、`sessionTitleGenerator.ts`     |
+| `providers/` | 供应商 API 配置、内置模型凭据、换证、认证协调与生命周期             | `providerApiConfig.ts`、`builtinModelLifecycle.ts`       |
 | `ipc/`       | 按 app/cowork/openclaw/scheduledTask 注册 handler                   | 各目录 `index.ts` 与 handler 文件                        |
 | `openclaw/`  | config sync、runtime、models、permissions、sessions、slash commands | `openclawEngineManager.ts`、config sync service          |
 | `plugins/`   | Marketplace、Skill/MCP/Hook/Extension 文件与配置                    | `pluginManager.ts`、各 service/store                     |
 | `scheduler/` | Gateway cron 映射、轮询、结果同步和本地 receipt                     | `cronJobService.ts`、`scheduledTaskResultSyncService.ts` |
 
 `src/main/main.ts` 仅是 composition root：创建单例、注入依赖、注册 handler、绑定事件和管理应用生命周期。新增领域逻辑不应继续堆入该文件。
+
+`providers/` 拥有应用侧的供应商配置和认证能力，供启动流程、网络 IPC、会话模型准备和 OpenClaw 配置同步调用。它不属于某个聊天页面，也不负责 Gateway 的原生配置投影；投影仍由 `openclaw/config/` 完成。本轮只调整源码归属，不改变凭据保存方式、认证生命周期或调用关系。
 
 `core/` 按职责保留一层分组，测试与所属模块同目录：
 
@@ -92,7 +95,30 @@ flowchart TB
 - `shared/components/`：跨 feature UI 原语。
 - `store/index.ts`：只挂载 `model`、`cowork`、`skill`、`mcp`、`scheduledTask`、`agent` 六个 slice。
 
+应用常量直接放在 `app/constants.ts`，不额外套一层仅含 `app.ts` 的目录。`theme/` 保留主题 token、主题定义、CSS 和浏览器运行时；离线生成脚本及 Tailwind 插件统一放在仓库的 `scripts/theme/`。Tailwind 配置直接引用该插件，生成脚本的输出仍是 `src/renderer/theme/css/themes.css`。
+
+`store/` 是跨 feature 的 Redux 组合入口，`types/` 是 Renderer 的环境声明边界；即便当前各只有一个文件，也保留明确的入口与所有权。`features/memory/` 是独立功能，不为了减少单文件目录而混入通用 UI。主进程的 `types/` 和共享的 `integrations/` 同样分别保留编译环境与跨进程集成合约边界。
+
 没有挂载到 store 的 slice 不能在文档中描述为运行态全局状态。
+
+`features/settings/` 按设置领域组织，组件、专属辅助函数和测试位于同一目录：
+
+| 分组 | 职责 |
+| --- | --- |
+| `models/` | 语言及非语言模型配置、供应商导入导出、连接测试、表单验证 |
+| `browser/` | 浏览器连接验证、设置、下载与历史管理页面 |
+| `speech/` | 语音设置与输入输出诊断 |
+| `updates/` | 更新设置、更新状态与更新提示 |
+| `integrations/` | 外部助手、应用接入与 Multica 集成设置 |
+| `preferences/` | 外观和快捷键偏好 |
+| `runtime/` | Agent 运行参数与 Windows 沙箱设置 |
+| `usage/` | 用量统计 |
+
+根目录的 `Settings.tsx` 负责页面组合；`settingsPersistence` 和 `settingsPreviewRestore` 协调跨页签的保存、取消与预览恢复。`settings/models/` 管理设置编辑流程，`features/models/` 继续管理运行中的模型目录、选择器和 Redux 状态，两者不因名称相似而合并。
+
+`features/plugins/` 按 `skills/`、`mcp/`、`hooks/`、`extensions/` 和 `marketplace/` 组织，每种能力就近维护组件、服务、类型、数据和 slice。`PluginsView.tsx` 负责页面组合，`shared/` 放置跨插件能力复用的展示组件。Renderer 服务仍通过原有 preload/Gateway 接口调用，Redux 的挂载位置及状态名称保持不变。
+
+目录规模不是硬性配额：领域边界清楚的小目录保留，只有职责混杂或同一功能散落在多处时才重新分组。独立的 `image-preview/` 入口和聊天显示库保持自身边界。本轮分析及后续候选见 [源码目录重构记录](../features/src-directory-refactor.md)。
 
 `features/cowork/components/` 按业务职责分为 `chat`、`composer`、`sessions`、`goals`、`subagents`、`approvals`、`questions`、`preview` 和 `status`。`CoworkView.tsx` 留在根目录负责页面组合；各组就近维护专属辅助逻辑、测试和 CSS，`shared/` 仅承载 cowork 内跨组复用的 UI 和 hooks。目录分组不改变 Gateway 历史与实时事件的消费方式，也不引入新的状态层。
 
@@ -104,6 +130,7 @@ Shared 由两个进程共同编译，适合放：IPC channel 常量、可序列�
 
 | 分组 | 共享职责 |
 | --- | --- |
+| `agents/` | 产品侧助手档案、角色文件与管理 IPC 合约 |
 | `app/` | 应用更新及配置、开发配置、对话框、日志、快捷键、终端和媒体捕获 IPC |
 | `browser/` | 浏览器合约与扩展流事件 |
 | `cowork/` | 会话、附件、计划、目标、斜杠命令和展示标签保留策略 |

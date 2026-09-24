@@ -80,7 +80,6 @@ import { PRODUCT_NAME } from '../../../shared/productMetadata';
 import type { ScheduledTaskSessionHistory } from '../../../shared/scheduledTask/types';
 import type { ApprovedPlanArtifactStore } from '../../cowork/approvedPlans/approvedPlanArtifactStore';
 import { coworkLog } from '../../cowork/coworkLogger';
-import { resolveRawApiConfig } from '../../cowork/providerApiConfig';
 import {
   type SessionTitleFetch,
   SessionTitleGenerator,
@@ -104,6 +103,7 @@ import {
   isManagedSessionKey,
   parseManagedSessionKey,
 } from '../../openclaw/sessions/openclawSessionKeys';
+import { resolveRawApiConfig } from '../../providers/providerApiConfig';
 import { readScheduledTaskSessionHistory } from '../../scheduler/scheduledTaskSessionHistory';
 import {
   GATEWAY_READY_TIMEOUT_MS,

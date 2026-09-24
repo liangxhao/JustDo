@@ -14,7 +14,7 @@ import {
   XCircleIcon,
 } from '@heroicons/react/24/outline';
 import { PauseCircleIcon as PauseCircleSolidIcon } from '@heroicons/react/24/solid';
-import { MAIN_USER_AGENT_ID } from '@shared/agents';
+import { MAIN_USER_AGENT_ID } from '@shared/agents/agents';
 import { SaveTextFileErrorCode } from '@shared/app/dialogIpc';
 import {
   BROWSER_AGENT_INTERACTION_ACK_TIMEOUT_MS,
@@ -164,7 +164,7 @@ import {
   COWORK_SESSION_LIST_ACTION_EVENT,
   type CoworkSessionListActionDetail,
 } from '@/features/cowork/sessionListActions';
-import { clearActiveSkills } from '@/features/plugins/slices/skillSlice';
+import { clearActiveSkills } from '@/features/plugins/skills/skillSlice';
 import type { SettingsOpenOptions } from '@/features/settings/Settings';
 import type {
   ChatContextUsageSnapshot,

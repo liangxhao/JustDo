@@ -78,7 +78,7 @@ import {
   isReservedProviderDisplayName,
   validateDisplayName,
 } from '@/app/config';
-import { APP_NAME } from '@/app/constants/app';
+import { APP_NAME } from '@/app/constants';
 import WindowHeader from '@/app/shell/window/WindowHeader';
 import AgentManager from '@/features/agents/AgentManager';
 import { updateConfig as updateCoworkConfig } from '@/features/cowork/coworkSlice';
@@ -88,16 +88,21 @@ import {
 } from '@/features/models/modelConfig';
 import { setAvailableModels } from '@/features/models/modelSlice';
 import { toOpenClawModelRef } from '@/features/models/openclawModelRef';
-import AgentRuntimeSettingsTab from '@/features/settings/components/AgentRuntimeSettingsTab';
-import AppearanceSettingsTab from '@/features/settings/components/AppearanceSettingsTab';
-import AppUpdateFrequencySetting from '@/features/settings/components/AppUpdateFrequencySetting';
-import AppUpdateSection from '@/features/settings/components/AppUpdateSection';
-import BrowserSettingsTab from '@/features/settings/components/BrowserSettingsTab';
+import BrowserSettingsTab from '@/features/settings/browser/BrowserSettingsTab';
 import IntegrationSettingsTab, {
   IntegrationSettingsView,
   type IntegrationSettingsViewId,
-} from '@/features/settings/components/IntegrationSettingsTab';
-import ModelSettingsTab, { type ModelKind } from '@/features/settings/components/ModelSettingsTab';
+} from '@/features/settings/integrations/IntegrationSettingsTab';
+import { hasConfirmedModelCapabilities } from '@/features/settings/models/modelCapabilityState';
+import {
+  buildModelConnectionTestRequestBody,
+  MODEL_CONNECTION_TEST_TIMEOUT_MS,
+  selectModelsForConnectionTest,
+  withModelConnectionTestTimeout,
+} from '@/features/settings/models/modelConnectionTest';
+import { validateModelForm } from '@/features/settings/models/modelFormValidation';
+import { mergeRefreshedBuiltinProvider } from '@/features/settings/models/modelSettingsRefresh';
+import ModelSettingsTab, { type ModelKind } from '@/features/settings/models/ModelSettingsTab';
 import {
   commitNonLanguageModelConfigurations,
   createEmptyNonLanguageModelCategory,
@@ -105,25 +110,16 @@ import {
   NON_LANGUAGE_MODEL_KINDS,
   type NonLanguageModelCategory,
   type NonLanguageModelProviders,
-} from '@/features/settings/components/nonLanguageModelConfig';
-import type { NonLanguageModelKind } from '@/features/settings/components/NonLanguageModelSettings';
+} from '@/features/settings/models/nonLanguageModelConfig';
+import type { NonLanguageModelKind } from '@/features/settings/models/NonLanguageModelSettings';
+import AppearanceSettingsTab from '@/features/settings/preferences/AppearanceSettingsTab';
 import ShortcutsSettings, {
   findShortcutConflict,
   shortcutLabelMap,
   type ShortcutSettingsValue,
-} from '@/features/settings/components/ShortcutsSettings';
-import UsageStatsTab from '@/features/settings/components/UsageStatsTab';
-import VoiceSettingsTab from '@/features/settings/components/VoiceSettingsTab';
-import WindowsSandboxSettingsTab from '@/features/settings/components/WindowsSandboxSettingsTab';
-import { hasConfirmedModelCapabilities } from '@/features/settings/modelCapabilityState';
-import {
-  buildModelConnectionTestRequestBody,
-  MODEL_CONNECTION_TEST_TIMEOUT_MS,
-  selectModelsForConnectionTest,
-  withModelConnectionTestTimeout,
-} from '@/features/settings/modelConnectionTest';
-import { validateModelForm } from '@/features/settings/modelFormValidation';
-import { mergeRefreshedBuiltinProvider } from '@/features/settings/modelSettingsRefresh';
+} from '@/features/settings/preferences/ShortcutsSettings';
+import AgentRuntimeSettingsTab from '@/features/settings/runtime/AgentRuntimeSettingsTab';
+import WindowsSandboxSettingsTab from '@/features/settings/runtime/WindowsSandboxSettingsTab';
 import {
   buildSettingsAppConfigUpdate,
   persistSettingsInOrder,
@@ -131,6 +127,10 @@ import {
   resolveSubagentModelAfterProviderChange,
 } from '@/features/settings/settingsPersistence';
 import { createSettingsPreviewRestore } from '@/features/settings/settingsPreviewRestore';
+import VoiceSettingsTab from '@/features/settings/speech/VoiceSettingsTab';
+import AppUpdateFrequencySetting from '@/features/settings/updates/AppUpdateFrequencySetting';
+import AppUpdateSection from '@/features/settings/updates/AppUpdateSection';
+import UsageStatsTab from '@/features/settings/usage/UsageStatsTab';
 import { configService } from '@/services/config';
 import { i18nService, LanguageType } from '@/services/i18n';
 import { themeService } from '@/services/theme';

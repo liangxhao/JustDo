@@ -4,7 +4,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 import type Database from 'better-sqlite3';
 
-import { parseAssistantCreate } from '../../../shared/agents';
+import { parseAssistantCreate } from '../../../shared/agents/agents';
 import type { CoworkStore } from '../../data/coworkStore';
 import { resolveManagedAgentWorkspace } from './agentWorkspace';
 

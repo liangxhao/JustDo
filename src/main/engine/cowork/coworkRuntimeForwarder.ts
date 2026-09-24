@@ -1,7 +1,7 @@
 import { BrowserWindow } from 'electron';
 
-import { resolveCurrentApiConfig } from '../../cowork/providerApiConfig';
 import type { CoworkStore } from '../../data/coworkStore';
+import { resolveCurrentApiConfig } from '../../providers/providerApiConfig';
 import type { CoworkEngineRouter } from './coworkEngineRouter';
 
 const broadcast = (channel: string, payload: unknown): void => {

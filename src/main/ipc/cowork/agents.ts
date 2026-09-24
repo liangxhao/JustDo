@@ -7,7 +7,7 @@ import {
   AgentIpc,
   type AgentResult,
   parseAgentProfile,
-} from '../../../shared/agents';
+} from '../../../shared/agents/agents';
 import type { CoworkStore } from '../../data/coworkStore';
 import { listPersistedGatewaySessions } from '../../engine/openclaw/subagentGateway';
 

@@ -1,8 +1,8 @@
 import { ProviderName } from '../../shared/providers';
 import { mergeModelProviderHeaders } from '../../shared/providers/modelProviderHeaders';
-import { getBuiltinModelRequestHeaders } from './builtinModelCredential';
+import { getBuiltinModelRequestHeaders } from '../providers/builtinModelCredential';
+import { resolveCurrentApiConfig } from '../providers/providerApiConfig';
 import { buildOpenAIChatCompletionsUrl, extractApiErrorSnippet } from './coworkModelApi';
-import { resolveCurrentApiConfig } from './providerApiConfig';
 
 const COWORK_MODEL_PROBE_TIMEOUT_MS = 20_000;
 

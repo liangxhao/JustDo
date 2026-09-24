@@ -4,7 +4,7 @@ const mocks = vi.hoisted(() => ({
   resolveCurrentApiConfig: vi.fn(),
 }));
 
-vi.mock('./providerApiConfig', () => ({
+vi.mock('../providers/providerApiConfig', () => ({
   resolveCurrentApiConfig: mocks.resolveCurrentApiConfig,
 }));
 

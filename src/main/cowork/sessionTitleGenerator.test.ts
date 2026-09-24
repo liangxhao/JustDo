@@ -4,7 +4,7 @@ import { ProviderName } from '../../shared/providers';
 import {
   clearActiveBuiltinModelCredential,
   setActiveBuiltinModelCredential,
-} from './builtinModelCredential';
+} from '../providers/builtinModelCredential';
 import { SessionTitleGenerator } from './sessionTitleGenerator';
 
 afterEach(() => {

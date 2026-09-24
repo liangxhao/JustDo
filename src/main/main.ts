@@ -76,26 +76,6 @@ import { ensurePythonRuntimeReady } from './core/runtime/pythonRuntime';
 import { registerContentSecurityPolicy } from './core/window/contentSecurityPolicy';
 import { registerLocalFileProtocol } from './core/window/localFileProtocol';
 import { createMainWindow } from './core/window/mainWindowFactory';
-import {
-  getBuiltinModelAuthConfig,
-  resolveBuiltinModelDevelopmentApiKey,
-} from './cowork/builtinModelAuthConfig';
-import { BuiltinModelAuthCoordinator } from './cowork/builtinModelAuthCoordinator';
-import {
-  type BuiltinModelCredential,
-  clearActiveBuiltinModelCredential,
-  getActiveBuiltinModelCredential,
-} from './cowork/builtinModelCredential';
-import { BuiltinModelCredentialMonitor } from './cowork/builtinModelCredentialMonitor';
-import { BuiltinModelLifecycle } from './cowork/builtinModelLifecycle';
-import { BuiltinModelAccess, syncBuiltinModelProvider } from './cowork/builtinModelProvider';
-import { BuiltinModelTokenExchange } from './cowork/builtinModelTokenExchange';
-import {
-  resolveAllEnabledProviderConfigs,
-  resolveRawApiConfig,
-  setStoreGetter,
-  validateConfiguredOpenClawProviderNames,
-} from './cowork/providerApiConfig';
 import { CoworkStore } from './data/coworkStore';
 import { GroupStore } from './data/groupStore';
 import { SqliteStore } from './data/sqliteStore';
@@ -206,6 +186,26 @@ import {
   PluginInstallationService,
   PluginManager,
 } from './plugins';
+import {
+  getBuiltinModelAuthConfig,
+  resolveBuiltinModelDevelopmentApiKey,
+} from './providers/builtinModelAuthConfig';
+import { BuiltinModelAuthCoordinator } from './providers/builtinModelAuthCoordinator';
+import {
+  type BuiltinModelCredential,
+  clearActiveBuiltinModelCredential,
+  getActiveBuiltinModelCredential,
+} from './providers/builtinModelCredential';
+import { BuiltinModelCredentialMonitor } from './providers/builtinModelCredentialMonitor';
+import { BuiltinModelLifecycle } from './providers/builtinModelLifecycle';
+import { BuiltinModelAccess, syncBuiltinModelProvider } from './providers/builtinModelProvider';
+import { BuiltinModelTokenExchange } from './providers/builtinModelTokenExchange';
+import {
+  resolveAllEnabledProviderConfigs,
+  resolveRawApiConfig,
+  setStoreGetter,
+  validateConfiguredOpenClawProviderNames,
+} from './providers/providerApiConfig';
 import { WindowsSandboxService } from './security/windowsSandboxService';
 import { LocalSpeechModelService } from './speech/localSpeechModelService';
 

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { AgentIpc } from '../../../shared/agents';
+import { AgentIpc } from '../../../shared/agents/agents';
 import type { CoworkStore } from '../../data/coworkStore';
 const handlers = vi.hoisted(() => new Map<string, (...args: unknown[]) => Promise<unknown>>());
 vi.mock('electron', () => ({

@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import { ipcMain } from 'electron';
 
-import type { AgentResult } from '../../../shared/agents';
+import type { AgentResult } from '../../../shared/agents/agents';
 import {
   COLLABORATION_MAX_MEMBERS,
   CollaborationGateway,

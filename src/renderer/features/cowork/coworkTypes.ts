@@ -64,7 +64,7 @@ export interface CoworkSession {
   activeSkillIds: string[];
   agentId: string;
   modelRef?: string;
-  handoffSource?: import('../../../shared/agents').AgentHandoffSource;
+  handoffSource?: import('../../../shared/agents/agents').AgentHandoffSource;
   forkSource?: {
     sessionId?: string;
     title: string;

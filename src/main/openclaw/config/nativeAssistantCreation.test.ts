@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { AgentProfileInput } from '../../../shared/agents';
+import type { AgentProfileInput } from '../../../shared/agents/agents';
 import type { CoworkStore } from '../../data/coworkStore';
 import { NativeAssistantCreation } from './nativeAssistantCreation';
 

@@ -2,7 +2,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID }
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { type BuiltinModelCredential } from '../../cowork/builtinModelCredential';
+import { type BuiltinModelCredential } from '../../providers/builtinModelCredential';
 import { restrictCredentialFile } from './providerSecretFile';
 
 export const BUILTIN_SECRET_SOURCE = 'justdo_login';

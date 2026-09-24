@@ -3,7 +3,7 @@ import os from 'os';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 
-import type { AgentProfileInput } from '../../shared/agents';
+import type { AgentProfileInput } from '../../shared/agents/agents';
 import {
   DEFAULT_MAX_RETAINED_DISPLAY_TABS,
   normalizeMaxRetainedDisplayTabs,
@@ -128,7 +128,7 @@ export interface CoworkSession {
   activeSkillIds: string[];
   agentId: string;
   modelRef?: string;
-  handoffSource?: import('../../shared/agents').AgentHandoffSource;
+  handoffSource?: import('../../shared/agents/agents').AgentHandoffSource;
   forkSource?: CoworkSessionForkSource;
   external?: ExternalSessionMetadata;
   createdAt: number;

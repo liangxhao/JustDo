@@ -34,7 +34,7 @@ vi.mock('../../core/network/mainProcessFetch', () => ({
 }));
 
 import { BUILTIN_MODEL_PROVIDER_CONFIG } from '../../../config/builtinModels';
-import { clearActiveBuiltinModelCredential, setActiveBuiltinModelCredential } from '../../cowork/builtinModelCredential';
+import { clearActiveBuiltinModelCredential, setActiveBuiltinModelCredential } from '../../providers/builtinModelCredential';
 import { registerNetworkHandlers } from './network';
 
 type ApiFetchHandler = (event: unknown, options: ApiFetchOptions) => Promise<unknown>;

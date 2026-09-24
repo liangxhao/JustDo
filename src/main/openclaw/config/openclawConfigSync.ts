@@ -37,20 +37,6 @@ import {
 import { BuiltinModelSyncReason } from '../../../shared/providers/builtinModels';
 import { WINDOWS_SANDBOX_BACKEND_ID } from '../../../shared/security/windowsSandbox';
 import { LOCAL_TTS_PROVIDER_ID } from '../../../shared/speech/localTts';
-import {
-  BUILTIN_MODEL_JWT_FIELD,
-  BUILTIN_MODEL_USER_ACCOUNT_FIELD,
-  getActiveBuiltinModelCredential,
-  isActiveBuiltinModelDevelopmentApiKey,
-} from '../../cowork/builtinModelCredential';
-import type { ProviderRawConfig } from '../../cowork/providerApiConfig';
-import {
-  getProviderDisplayNameMap,
-  resolveAllEnabledProviderConfigs,
-  resolveAllProviderSecrets,
-  resolveRawApiConfig,
-  validateConfiguredOpenClawProviderNames,
-} from '../../cowork/providerApiConfig';
 import type { Agent, CoworkConfig, CoworkExecutionMode } from '../../data/coworkStore';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import {
@@ -64,6 +50,20 @@ import {
 } from '../../plugins/extensions';
 import type { OpenClawHookRecord } from '../../plugins/hooks';
 import type { McpServerRecord } from '../../plugins/mcp';
+import {
+  BUILTIN_MODEL_JWT_FIELD,
+  BUILTIN_MODEL_USER_ACCOUNT_FIELD,
+  getActiveBuiltinModelCredential,
+  isActiveBuiltinModelDevelopmentApiKey,
+} from '../../providers/builtinModelCredential';
+import type { ProviderRawConfig } from '../../providers/providerApiConfig';
+import {
+  getProviderDisplayNameMap,
+  resolveAllEnabledProviderConfigs,
+  resolveAllProviderSecrets,
+  resolveRawApiConfig,
+  validateConfiguredOpenClawProviderNames,
+} from '../../providers/providerApiConfig';
 import {
   buildAgentEntry,
   buildManagedAgentEntries,

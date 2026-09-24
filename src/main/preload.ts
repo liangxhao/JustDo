@@ -5,7 +5,7 @@ import {
   type AgentFileSnapshot,
   AgentIpc,
   type AgentProfileInput,
-} from '../shared/agents';
+} from '../shared/agents/agents';
 import {
   type AppReleaseHistoryResult,
   type AppUpdateCheckFrequency,

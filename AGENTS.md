@@ -85,6 +85,8 @@ flowchart LR
 - `src/renderer/`: browser-only React/Redux UI. No Node/Electron imports.
 - `src/shared/`: pure cross-process contracts/utilities only.
 - `resources/`: bundled skills, tray icons, runtime assets, manifests.
+- `scripts/theme/`: offline theme CSS generation and the Tailwind build plugin;
+  Renderer theme tokens, definitions, CSS, and browser runtime stay in `src/renderer/theme/`.
 
 Main-process domains:
 
@@ -95,7 +97,9 @@ Main-process domains:
 - `data/`: SQLite wrapper/stores (`sqliteStore.ts`, `coworkStore.ts`, `groupStore.ts`).
 - `ipc/`: app/openclaw/scheduled-task IPC handlers.
 - `engine/`: cowork router, OpenClaw adapter, command safety, gateway types.
-- `cowork/`: config, model API/readiness, provider config, logging.
+- `cowork/`: conversation config, model API/readiness, title generation, logging, approved plans.
+- `providers/`: provider API configuration and built-in model credentials, token exchange,
+  authentication coordination, and lifecycle. Gateway config projection stays in `openclaw/config/`.
 - `openclaw/`: config sync, runtime, models, sessions, slash commands.
 - `plugins/`: skills, MCP, hooks, extensions, marketplace.
 - `scheduler/`: cron runtime and OpenClaw prompt support.
@@ -178,7 +182,7 @@ apply the current patch set instead.
 - Main may use Node, Electron main APIs, filesystem, SQLite, child processes.
 - Renderer must use the preload bridge only. No privileged imports.
 - Shared code must not import Electron, Node built-ins, DOM-only APIs, or process state.
-- Shared contracts are grouped by domain: `app/`, `browser/`, `cowork/`,
+- Shared contracts are grouped by domain: `agents/`, `app/`, `browser/`, `cowork/`,
   `integrations/`, `network/`, `openclaw/`, `plugins/`, `preview/`, `prompts/`,
   `providers/`, `scheduledTask/`, `security/`, and `speech/`. Keep tests and JSON
   config beside their owning modules; only product metadata stays at the root.
@@ -193,6 +197,17 @@ apply the current patch set instead.
 - Strict TypeScript; functional React; 2-space indent, single quotes, semicolons.
 - Renderer aliases: `@/` -> `src/renderer/`, `@shared/` -> `src/shared/`.
 - Organize by feature/domain, not file type.
+- Settings use `models/`, `browser/`, `speech/`, `updates/`, `integrations/`,
+  `preferences/`, `runtime/`, and `usage/`; keep each area's UI, helpers, and
+  tests together. `Settings.tsx` and cross-tab persistence/preview helpers stay at the root.
+- Renderer plugins use `skills/`, `mcp/`, `hooks/`, `extensions/`, and
+  `marketplace/`; co-locate services, types, slices, components, and tests by
+  capability. `PluginsView.tsx` composes the page; `shared/` holds plugin-wide UI.
+- Do not split or merge directories solely to equalize file counts. Preserve
+  process boundaries and independent entry points; small cohesive domains are valid.
+- Application constants live in `src/renderer/app/constants.ts`; avoid a singleton
+  file-type directory around them. Keep `store/index.ts`, process-local `types/`,
+  and single-file feature/contract domains when they define a real ownership boundary.
 - Cowork components use one level of domain folders: `chat`, `composer`,
   `sessions`, `goals`, `subagents`, `approvals`, `questions`, `preview`, `status`.
   Keep helpers, tests, and CSS beside their owning components; `shared` is only

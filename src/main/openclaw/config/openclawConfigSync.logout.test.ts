@@ -9,8 +9,8 @@ import { BuiltinModelSyncReason } from '../../../shared/providers/builtinModels'
 import {
   clearActiveBuiltinModelCredential,
   setActiveBuiltinModelCredential,
-} from '../../cowork/builtinModelCredential';
-import { setStoreGetter } from '../../cowork/providerApiConfig';
+} from '../../providers/builtinModelCredential';
+import { setStoreGetter } from '../../providers/providerApiConfig';
 import {
   listManagedOpenClawPluginIds,
   OpenClawConfigSync,

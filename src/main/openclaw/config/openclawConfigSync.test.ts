@@ -17,8 +17,8 @@ import {
 import {
   clearActiveBuiltinModelCredential,
   setActiveBuiltinModelDevelopmentApiKey,
-} from '../../cowork/builtinModelCredential';
-import type { ProviderRawConfig } from '../../cowork/providerApiConfig';
+} from '../../providers/builtinModelCredential';
+import type { ProviderRawConfig } from '../../providers/providerApiConfig';
 import {
   applyDefaultOpenClawPluginEntries,
   applyManagedOpenClawHeartbeatConfig,

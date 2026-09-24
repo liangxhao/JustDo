@@ -1,5 +1,5 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
-import { MAIN_USER_AGENT_ID } from '@shared/agents';
+import { MAIN_USER_AGENT_ID } from '@shared/agents/agents';
 
 interface AgentSummary {
   id: string;

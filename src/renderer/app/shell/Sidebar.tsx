@@ -1,5 +1,5 @@
 import { BookOpenIcon, ExclamationTriangleIcon, Squares2X2Icon } from '@heroicons/react/24/outline';
-import { MAIN_USER_AGENT_ID } from '@shared/agents';
+import { MAIN_USER_AGENT_ID } from '@shared/agents/agents';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 

@@ -1,6 +1,6 @@
 import { BrowserWindow, ipcMain } from 'electron';
 
-import { MAIN_USER_AGENT_ID } from '../../../shared/agents';
+import { MAIN_USER_AGENT_ID } from '../../../shared/agents/agents';
 import type { CoworkAttachmentPayload } from '../../../shared/cowork/attachments';
 import { hasMessageInput } from '../../../shared/cowork/messageInput';
 import { type CancelSessionStartInput, SessionStartIpc } from '../../../shared/cowork/sessionStart';

@@ -194,8 +194,8 @@ externalAgentsExampleDescription: 'Example Agent.',
 
 需要同步修改：
 
-- `src/renderer/features/settings/components/ExternalAgentBrandIcon.tsx`
-- `src/renderer/features/settings/components/ExternalAgentsSettingsSection.tsx` 中的
+- `src/renderer/features/settings/integrations/ExternalAgentBrandIcon.tsx`
+- `src/renderer/features/settings/integrations/ExternalAgentsSettingsSection.tsx` 中的
   `AGENT_ICON_STYLES`
 
 请使用该 Agent 的官方图标或品牌方允许使用的图标，不要用首字母临时代替。SVG 应使用
@@ -376,7 +376,7 @@ Skill，需要单独设计显式的、安全的适配流程，不能把“已打
 - `src/shared/openclaw/externalAgents.test.ts`
 - `src/main/openclaw/config/openclawConfigSync.test.ts`
 - `src/main/ipc/cowork/config.test.ts`
-- `src/renderer/features/settings/components/ExternalAgentsSettingsSection.test.tsx`
+- `src/renderer/features/settings/integrations/ExternalAgentsSettingsSection.test.tsx`
 - `tests/openclaw/runtime/acpx-plugin-contract.test.ts`
 - `tests/openclaw/runtime/acpx-command-tokens.test.ts`
 - `tests/scripts/sync-openclaw-runtime-resources.test.ts`

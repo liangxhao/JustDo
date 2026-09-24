@@ -1,7 +1,7 @@
 import { buildOpenAIJsonRequestHeaders } from '../../shared/cowork/modelRequestHeaders';
 import { ProviderName } from '../../shared/providers';
 import { mergeModelProviderHeaders } from '../../shared/providers/modelProviderHeaders';
-import { getBuiltinModelRequestHeaders } from './builtinModelCredential';
+import { getBuiltinModelRequestHeaders } from '../providers/builtinModelCredential';
 import {
   buildOpenAIChatCompletionsUrl,
   extractApiErrorSnippet,

@@ -14,7 +14,7 @@ import {
   AgentFiles,
   type AgentFileSnapshot,
   type AgentProfileInput,
-} from '@shared/agents';
+} from '@shared/agents/agents';
 import { type MutableRefObject, useEffect, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 

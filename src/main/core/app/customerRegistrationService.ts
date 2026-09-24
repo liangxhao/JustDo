@@ -6,7 +6,7 @@ import { ACTIVITY_REPORTING_CONFIG } from '../../../config/activityReporting';
 import {
   buildBuiltinModelRequestHeaders,
   type BuiltinModelCredential,
-} from '../../cowork/builtinModelCredential';
+} from '../../providers/builtinModelCredential';
 import { mainProcessFetch } from '../network/mainProcessFetch';
 
 const DEFAULT_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;

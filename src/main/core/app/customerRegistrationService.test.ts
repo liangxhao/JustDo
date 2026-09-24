@@ -3,7 +3,7 @@ import os from 'os';
 import path from 'path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
-import type { BuiltinModelCredential } from '../../cowork/builtinModelCredential';
+import type { BuiltinModelCredential } from '../../providers/builtinModelCredential';
 import { buildCustomerApiBaseUrl, CustomerRegistrationService } from './customerRegistrationService';
 
 const directories: string[] = [];

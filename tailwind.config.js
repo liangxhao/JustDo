@@ -102,6 +102,6 @@ export default {
   },
   plugins: [
     require('@tailwindcss/typography'),
-    require('./src/renderer/theme/tailwind/plugin.cjs'),
+    require('./scripts/theme/plugin.cjs'),
   ],
 }
