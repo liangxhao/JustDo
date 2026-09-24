@@ -346,13 +346,13 @@ test('deduplicates concurrent full Gateway restarts', async () => {
     restartGatewayPromise: Promise<unknown> | null;
     gatewayRestartAttempt: number;
     stopGateway: () => Promise<void>;
-    startGateway: () => Promise<typeof runningStatus>;
-    restartGateway: (options?: { afterCurrent?: boolean }) => Promise<typeof runningStatus>;
+    startGatewayOnce: () => Promise<typeof runningStatus>;
+    restartGatewayOnce: (options?: { afterCurrent?: boolean }) => Promise<typeof runningStatus>;
   };
   manager.restartGatewayPromise = null;
   manager.gatewayRestartAttempt = 0;
   manager.stopGateway = stopGateway;
-  manager.startGateway = startGateway;
+  manager.startGatewayOnce = startGateway;
   vi.spyOn(console, 'log').mockImplementation(() => undefined);
 
   const first = manager.restartGateway();
@@ -389,13 +389,13 @@ test('queues a trailing restart when new launch inputs arrive during restart', a
     restartGatewayPromise: Promise<unknown> | null;
     gatewayRestartAttempt: number;
     stopGateway: () => Promise<void>;
-    startGateway: () => Promise<typeof runningStatus>;
-    restartGateway: (options?: { afterCurrent?: boolean }) => Promise<typeof runningStatus>;
+    startGatewayOnce: () => Promise<typeof runningStatus>;
+    restartGatewayOnce: (options?: { afterCurrent?: boolean }) => Promise<typeof runningStatus>;
   };
   manager.restartGatewayPromise = null;
   manager.gatewayRestartAttempt = 0;
   manager.stopGateway = stopGateway;
-  manager.startGateway = startGateway;
+  manager.startGatewayOnce = startGateway;
   vi.spyOn(console, 'log').mockImplementation(() => undefined);
 
   const current = manager.restartGateway();
@@ -428,14 +428,14 @@ test('queues a trailing restart after an independent Gateway start', async () =>
     restartGatewayPromise: Promise<unknown> | null;
     gatewayRestartAttempt: number;
     stopGateway: () => Promise<void>;
-    startGateway: () => Promise<typeof runningStatus>;
-    restartGateway: (options?: { afterCurrent?: boolean }) => Promise<typeof runningStatus>;
+    startGatewayOnce: () => Promise<typeof runningStatus>;
+    restartGatewayOnce: (options?: { afterCurrent?: boolean }) => Promise<typeof runningStatus>;
   };
   manager.startGatewayPromise = activeStart;
   manager.restartGatewayPromise = null;
   manager.gatewayRestartAttempt = 0;
   manager.stopGateway = stopGateway;
-  manager.startGateway = startGateway;
+  manager.startGatewayOnce = startGateway;
   vi.spyOn(console, 'log').mockImplementation(() => undefined);
 
   const trailing = manager.restartGateway({ afterCurrent: true });
@@ -446,4 +446,78 @@ test('queues a trailing restart after an independent Gateway start', async () =>
   expect(stopGateway).toHaveBeenCalledOnce();
   expect(startGateway).toHaveBeenCalledOnce();
   expect(manager.restartGatewayPromise).toBeNull();
+});
+
+type LifecycleStatus = { phase: 'running' | 'ready'; version: string; canRetry: boolean };
+
+function createDeferredGatewayLifecycle() {
+  const initial = Promise.withResolvers<LifecycleStatus>();
+  const restarted = Promise.withResolvers<LifecycleStatus>();
+  const stopped: LifecycleStatus = { phase: 'ready', version: 'test', canRetry: false };
+  const manager = Object.create(OpenClawEngineManager.prototype) as {
+    startGatewayPromise: Promise<LifecycleStatus> | null;
+    restartGatewayPromise: Promise<LifecycleStatus> | null;
+    shutdownRequested: boolean;
+    gatewayRestartAttempt: number;
+    doStartGateway: () => Promise<LifecycleStatus>;
+    stopGateway: () => Promise<void>;
+    getStatus: () => LifecycleStatus;
+    startGateway: () => Promise<LifecycleStatus>;
+    restartGateway: (options?: { afterCurrent?: boolean }) => Promise<LifecycleStatus>;
+  };
+  manager.startGatewayPromise = null;
+  manager.restartGatewayPromise = null;
+  manager.shutdownRequested = false;
+  manager.gatewayRestartAttempt = 0;
+  manager.getStatus = () => stopped;
+  const stop = vi.fn(async () => { manager.shutdownRequested = true; });
+  manager.stopGateway = stop;
+  const launch = vi.fn()
+    .mockImplementationOnce(() => { manager.shutdownRequested = false; return initial.promise; })
+    .mockImplementationOnce(() => { manager.shutdownRequested = false; return restarted.promise; });
+  manager.doStartGateway = launch;
+  vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  return { manager, initial, restarted, stopped, stop, launch };
+}
+
+test.each([undefined, { afterCurrent: true }])(
+  'keeps readiness callers waiting for a restart queued during environment preparation (%j)',
+  async options => {
+    const { manager, initial, restarted, stop, launch } = createDeferredGatewayLifecycle();
+    const firstReady = vi.fn();
+    const start = manager.startGateway().then(status => { firstReady(); return status; });
+    const restart = manager.restartGateway(options);
+    const concurrentStart = manager.startGateway();
+    expect(stop).not.toHaveBeenCalled();
+    expect(manager.shutdownRequested).toBe(false);
+    initial.resolve({ phase: 'running', version: 'old-environment', canRetry: false });
+    await vi.waitFor(() => expect(launch).toHaveBeenCalledTimes(2));
+    expect(firstReady).not.toHaveBeenCalled();
+    const final: LifecycleStatus = { phase: 'running', version: 'new-environment', canRetry: false };
+    restarted.resolve(final);
+    await expect(Promise.all([start, restart, concurrentStart])).resolves.toEqual([final, final, final]);
+    expect(stop).toHaveBeenCalledOnce();
+  },
+);
+
+test('preserves an explicit stop while a configuration restart waits for startup', async () => {
+  const { manager, initial, stopped, launch, stop } = createDeferredGatewayLifecycle();
+  const start = manager.startGateway();
+  const restart = manager.restartGateway();
+  await manager.stopGateway();
+  initial.resolve(stopped);
+  await expect(Promise.all([start, restart])).resolves.toEqual([stopped, stopped]);
+  expect(launch).toHaveBeenCalledOnce();
+  expect(stop).toHaveBeenCalledOnce();
+});
+
+test('allows a queued restart to recover a failed startup for existing readiness callers', async () => {
+  const { manager, initial, restarted, launch } = createDeferredGatewayLifecycle();
+  const start = manager.startGateway();
+  const restart = manager.restartGateway();
+  initial.reject(new Error('initial launch failed'));
+  await vi.waitFor(() => expect(launch).toHaveBeenCalledTimes(2));
+  const final: LifecycleStatus = { phase: 'running', version: 'recovered', canRetry: false };
+  restarted.resolve(final);
+  await expect(Promise.all([start, restart])).resolves.toEqual([final, final]);
 });

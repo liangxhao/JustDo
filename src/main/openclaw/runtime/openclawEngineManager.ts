@@ -620,6 +620,22 @@ export class OpenClawEngineManager extends EventEmitter {
   }
 
   async startGateway(): Promise<OpenClawEngineStatus> {
+    // Consumers need the final lifecycle result, including configuration restarts
+    // queued while a cold start is preparing its environment.
+    let status: OpenClawEngineStatus;
+    try {
+      status = await (this.restartGatewayPromise ?? this.startGatewayOnce());
+    } catch (error) {
+      if (!this.restartGatewayPromise) throw error;
+      status = await this.restartGatewayPromise;
+    }
+    while (this.restartGatewayPromise) {
+      status = await this.restartGatewayPromise;
+    }
+    return status;
+  }
+
+  private startGatewayOnce(): Promise<OpenClawEngineStatus> {
     if (this.startGatewayPromise) {
       console.log('[OpenClaw] startGateway: already in progress, reusing existing promise');
       return this.startGatewayPromise;
@@ -1225,14 +1241,16 @@ export class OpenClawEngineManager extends EventEmitter {
       );
       return this.trackGatewayRestart(trailingRestart);
     }
-    if (options.afterCurrent && this.startGatewayPromise) {
+    if (this.startGatewayPromise) {
       console.log(
         '[OpenClaw] restartGateway: queuing one restart after the current start',
       );
       const activeStart = this.startGatewayPromise;
+      const restartAfterStart = () =>
+        this.shutdownRequested ? this.getStatus() : this.performGatewayRestart();
       const trailingRestart = activeStart.then(
-        () => this.performGatewayRestart(),
-        () => this.performGatewayRestart(),
+        restartAfterStart,
+        restartAfterStart,
       );
       return this.trackGatewayRestart(trailingRestart);
     }
@@ -1257,7 +1275,8 @@ export class OpenClawEngineManager extends EventEmitter {
     // Reset restart counter on manual restart so user can always retry
     this.gatewayRestartAttempt = 0;
     console.log('[OpenClaw] restartGateway: starting gateway with new env...');
-    return this.startGateway();
+    // Do not wait on the restart Promise owned by this very operation.
+    return this.startGatewayOnce();
   }
 
   private resolveRuntimeMetadata(): RuntimeMetadata {
