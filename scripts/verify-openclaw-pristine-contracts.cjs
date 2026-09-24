@@ -6,9 +6,9 @@ const {
   beginRuntimePatchPhase,
   endRuntimePatchPhase,
   readRuntimeTextFile,
-} = require('./patches/v2026.9.2/_patch-utils.js');
+} = require('./patches/v2026.9.6/_patch-utils.js');
 
-const TARGET_VERSION = '2026.9.2';
+const TARGET_VERSION = '2026.9.6';
 
 function walkJavaScriptFiles(dir, output = []) {
   if (!fs.existsSync(dir)) return output;
@@ -48,8 +48,8 @@ function verifyNativeSessionStopContracts(runtimeDir) {
       label: 'session Stop clears queues and enables descendant cancellation',
       fragments: [
         '"sessions.abort":',
-        'if (clearQueued)',
-        'clearSessionQueues([',
+        'if (clearQueued && canonicalKey !== "global")',
+        'clearSessionQueues(queueKeys)',
         '!requestedRunId ? { cascadeDescendants: true }',
       ],
     },
@@ -87,7 +87,7 @@ function verifyNativeSessionStopContracts(runtimeDir) {
     },
     {
       label: 'run Stop connects native approval cancellation',
-      fragments: ['function createChatAbortOps', 'onRunAborted: context.cancelRunBoundApprovals'],
+      fragments: ['function createChatAbortOps', 'context.cancelRunBoundApprovals?.(runId).catch'],
     },
     {
       label: 'native Stop cancels both delegated and legacy run-bound approvals',
@@ -165,7 +165,7 @@ function verifyPristineOpenClawContracts(runtimeDir, options = {}) {
         [
           'evtType === "thinking_start"',
           'evtType === "thinking_delta"',
-          'ctx.emitReasoningStream(partialThinking || thinkingContent || thinkingDelta)',
+          'ctx.emitReasoningStream(',
         ],
         'incremental thinking deltas are published through the reasoning stream',
       ),

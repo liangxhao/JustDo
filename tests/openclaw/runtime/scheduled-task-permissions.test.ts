@@ -15,7 +15,7 @@ const available = fs.existsSync(dist);
 async function loadNativeToolPolicy() {
   const file = fs
     .readdirSync(dist)
-    .find(name => /^attempt-tool-construction-plan-.*\.js$/u.test(name));
+    .find(name => /^attempt-tool-construction-plan-.*\.m?js$/u.test(name));
   if (!file) throw new Error('Native attempt tool construction policy module is missing');
   const source = fs.readFileSync(path.join(dist, file), 'utf8');
   const filterExport = source.match(/applyEmbeddedAttemptToolsAllow as (\w+)/u)?.[1];

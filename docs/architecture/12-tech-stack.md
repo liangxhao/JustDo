@@ -7,9 +7,9 @@
 | 项目     | 声明/锁定                            | 解释                            |
 | -------- | ------------------------------------ | ------------------------------- |
 | 应用     | v2026.8.27                           | package.json 与 lockfile 根版本 |
-| Node     | .nvmrc 24.21.0；engine >=24.15.0 <25 | 开发工具与原生构建环境          |
+| Node     | .nvmrc 24.21.0；engine >=24.16.0 <25 | 开发工具与原生构建环境          |
 | Electron | 声明 ^42.6.2；lockfile 42.7.0        | 桌面运行时与 Electron ABI       |
-| OpenClaw | v2026.9.2                            | 独立锁定 pristine runtime       |
+| OpenClaw | v2026.9.6                            | 独立锁定 pristine runtime       |
 | 包管理   | npm、package-lock.json               | 应用依赖解析                    |
 
 package.json 范围、lockfile 实际版本与最终 bundle manifest 不能混为一谈。运行时还有自己的依赖树；主应用 dependencies 列表不是全部随包工具清单。
@@ -58,7 +58,7 @@ Builder 显式 npmRebuild=false，是因为项目自己准备 SQLite，node-pty 
 
 运行时从 source-lock 固定的 npm 包及完整性开始，验证 pristine contracts，再应用当前补丁。构建 recipe 变化会使冻结快照失效；同版本修改也需重建。历史/部分补丁形态明确拒绝，不做就地修补。
 
-平台脚本执行安装、current 同步、Gateway bundle、官方插件、产品资源、扩展预编译和裁剪。必须对最终 bundle 验证能力，不能只验证邻近源码仓库。当前补丁职责、依赖和上游删除条件只维护在[版本目录](../../scripts/patches/v2026.9.2/README.md)。
+平台脚本执行安装、current 同步、Gateway bundle、官方插件、产品资源、扩展预编译和裁剪。必须对最终 bundle 验证能力，不能只验证邻近源码仓库。当前补丁职责、依赖和上游删除条件只维护在[版本目录](../../scripts/patches/v2026.9.6/README.md)。
 
 ## 6. 平台资源和安装器
 

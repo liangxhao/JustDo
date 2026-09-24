@@ -119,6 +119,7 @@ export interface JustDoChatWrapperRef {
   beginGoalResume: (sessionKey: string, runId: string) => void;
   /** Clear the current card only if its completed revision is still current. */
   dismissProgressCard: () => Promise<boolean>;
+  refreshProgressCard: () => Promise<boolean>;
   rewindToUserMessage: (entryId: string) => Promise<RewindEditorDraft>;
   revealMessage: (entryId: string) => Promise<boolean>;
   sendSideQuestion: (question: string, runId: string) => Promise<string>;
@@ -267,6 +268,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         beginGoalResume: (sessionKey: string, runId: string) => {
           controllerRef.current?.beginGoalResume(sessionKey, runId);
         },
+        refreshProgressCard: async () => controllerRef.current?.refreshProgressCard() ?? false,
         dismissProgressCard: async () => controllerRef.current?.dismissProgressCard() ?? false,
         rewindToUserMessage: async entryId => {
           const controller = controllerRef.current;

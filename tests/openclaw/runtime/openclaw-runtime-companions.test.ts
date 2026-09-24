@@ -19,7 +19,23 @@ const {
 };
 
 describe('OpenClaw runtime companions', () => {
-  it('anchors the shared v2026.9.2 process entrypoints module to its dist location', () => {
+  it('resolves the native launcher from the original entry location after bundling', () => {
+    const source = 'await import(new URL("../node-host-launcher.mjs", import.meta.url).href);';
+    expect(hasStaleRuntimeWorkerImportMetaUrl(source)).toBe(true);
+    const rewritten = rewriteRuntimeWorkerImportMetaUrls(
+      source,
+      'new URL("./dist/entry.js", import.meta.url).href',
+    );
+    expect(hasStaleRuntimeWorkerImportMetaUrl(rewritten)).toBe(false);
+    expect(rewritten).toContain(
+      'new URL("../node-host-launcher.mjs", new URL("./dist/entry.js", import.meta.url).href)',
+    );
+    expect(getRuntimeCompanionPathsReferencedByBundle(rewritten)).toEqual([
+      'node-host-launcher.mjs',
+    ]);
+  });
+
+  it('anchors the shared v2026.9.6 process entrypoints module to its dist location', () => {
     const source = `
       const currentModuleUrl = import.meta.url;
       const runtimeProcessEntrypoints = {
@@ -84,7 +100,7 @@ describe('OpenClaw runtime companions', () => {
     );
   });
 
-  it('requires every companion referenced by the v2026.9.2 bundle', () => {
+  it('requires every companion referenced by the v2026.9.6 bundle', () => {
     const bundle = `
       distWorkerPath: 'infra/sqlite-readonly-location.worker.js';
       distWorkerPath: 'agents/model-provider-auth.worker.js';
@@ -132,9 +148,9 @@ describe('OpenClaw runtime companions', () => {
       expect(fs.readFileSync(path.join(runtimeRoot, 'web-tree-sitter.wasm'))).toEqual(
         fs.readFileSync(sourcePath),
       );
-      expect(
-        getRuntimeCompanionPathsReferencedByBundle('load web-tree-sitter.wasm'),
-      ).toContain('web-tree-sitter.wasm');
+      expect(getRuntimeCompanionPathsReferencedByBundle('load web-tree-sitter.wasm')).toContain(
+        'web-tree-sitter.wasm',
+      );
     } finally {
       fs.rmSync(runtimeRoot, { recursive: true, force: true });
     }

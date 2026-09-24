@@ -1,6 +1,6 @@
 {
   "version": 3,
-  "openclawVersion": "2026.9.2",
+  "openclawVersion": "2026.9.6",
   "runtimeExtensionsPath": "vendor/openclaw-runtime/{platform}/dist/extensions",
   "description": "Version-scoped allowlist for OpenClaw-managed bundled extensions. Every upstream extension must be declared in keep or remove; unknown extensions fail pruning for review. JustDo-owned custom extensions are protected separately.",
   "keep": [
@@ -21,7 +21,9 @@
     "policy",
     "tts-local-cli",
     "web-readability",
-    "workboard"
+    "workboard",
+    "code-mode-quickjs",
+    "github"
   ],
   "remove": [
     {
@@ -42,13 +44,17 @@
         "reef",
         "telegram",
         "vault",
-        "webhooks"
+        "webhooks",
+        "session-share"
       ]
     },
     {
       "category": "migration-tools",
       "reason": "One-time third-party import helpers are not required for normal JustDo startup or the native session SQLite migration.",
-      "extensions": ["migrate-claude", "migrate-hermes"]
+      "extensions": [
+        "migrate-claude",
+        "migrate-hermes"
+      ]
     },
     {
       "category": "optional-speech-and-media",
@@ -85,7 +91,8 @@
         "sglang",
         "together",
         "vllm",
-        "xai"
+        "xai",
+        "apple-fm"
       ]
     }
   ]

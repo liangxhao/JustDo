@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import type { OpenClawPluginApi } from 'openclaw/plugin-sdk';
+import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
 import { resolveStorePath } from 'openclaw/plugin-sdk/session-store-paths';
 import { resolveTranscriptSessionKeyBySessionId } from 'openclaw/plugin-sdk/session-store-runtime';
 import { readVisibleSessionTranscriptMessageEntries } from 'openclaw/plugin-sdk/session-transcript-runtime';

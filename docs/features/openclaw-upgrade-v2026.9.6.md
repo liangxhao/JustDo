@@ -1,0 +1,60 @@
+# OpenClaw 2026.9.2 → 2026.9.6 升级审计
+
+依据是同级 `../openclaw` 仓库的 `v2026.9.2..v2026.9.6` 标签、各版本 CHANGELOG、
+协议与实现源码，以及正式 npm 包；不使用开发分支推测发布行为。
+
+## 各版本变化及产品接入
+
+| 版本 | 主要变化 | 本软件的处理 |
+| --- | --- | --- |
+| 9.3 | Node 最低 24.16；Workshop 改为 Agent 所有；SDK 与文件工具结构化结果变更；Code Mode 持续环境与文本编码；缓存、内存、队列修复 | engine 下限提高，现有 Node 24.21 满足；技能仍通过 Gateway API 管理，不复制原生所有权；本地扩展使用明确 SDK 子路径；执行改进随原生运行时交付 |
+| 9.4 | 技能提炼流程、插件发现、GPT Image 2.5、终端交互问题、内存及更新修复 | 继承原生技能与媒体执行能力；应用继续使用已有技能市场、媒体配置、问答 UI；不嵌入另一套 Control UI |
+| 9.5 | 原子升级、插件热加载、会话归档、浏览器协作、会议实时语音、专家团队引导 | 插件和执行修复随 Gateway 交付；应用继续锁定、打包完整运行时，禁用原生自行升级；会话、助手和浏览器遵循现有产品流程 |
+| 9.6 | 无可见消息的进度刷新；QuickJS/Tool Search；GitHub reader；GPT-6 Sol/Luna、Opus 5.5；恢复、配置重载与主线程性能改进；acpx 0.19.1 | 新增进度卡刷新按钮；打包并允许 QuickJS/GitHub 插件，保留显式禁用；原生模型发现与执行直接使用新版能力；升级 ACP 及 Claude/Codex 适配器依赖 |
+
+### 直接可用的变化
+
+- 进度卡刷新调用 `progressCard.refresh`，为当前会话和已保存 revision 创建幂等意图；不确定重试复用，原生确认终止失败后允许新意图。
+  接受后保留原卡与输入草稿，等待原生 `progressCard.changed` 和保存的新 revision；
+  失败或超时显示重试入口。不会发送伪造用户消息或建立 Main/Redux 正文缓存。
+- 浏览器扩展原生基线升级到 2.3.0，重新锁定文件哈希。自动配对、连接恢复、
+  页面来源及 relay 修复保留在原生层；侧栏聊天仍是独立 overlay。
+  原生自动配对依赖 `ai.openclaw.browser_bootstrap`，与应用侧栏使用的 native host
+  是两个协议；没有该原生 host 时仍可用 Settings → Browser 的手动配对。
+- Tool Search 继续使用应用已有的显式 directory 配置，不覆盖用户配置去追随默认值变化。
+  QuickJS 执行器作为独立原生插件保留，Node Code Mode worker 路径同步更新。
+- GitHub 插件提供原生公开链接读取 RPC；本次不声称已经移植上游 Control UI 的专用 reader 面板。
+- MXC 插件升级到 2026.9.6、SDK 0.8.0；x64/ARM64 的 wxc-exec 与 wxc-host-prep
+  重新计算哈希并验证 Microsoft 签名。继续使用应用已有原生沙箱策略。
+- 本地 ACP 产品适配层继续保留独立 doctor、离线固定命令、目录隔离和权限逻辑；
+  依赖更新为 acpx 0.19.1、Claude ACP 0.76.0、Codex ACP 1.11.0。
+  不把整个上游 native-agent 模型选择器视为已经移植。
+
+### 保持产品边界的上游功能
+
+远程节点/云机器、公网会话发布、会议/FaceTime、TypeSafe/ONNX 决策服务、移动端、
+Mac/Tauri 壳功能需要独立产品流程或外部服务，不在本地 Electron 升级中默认启用。
+团队仍使用现有可选 agent-team 扩展；模型和技能的原生执行能力不另写一套宿主实现。
+原生自动更新不能替代应用的锁定 npm → 补丁 → 打包验证流程。
+
+## 补丁结论
+
+旧版 25 项中保留 23 项能力；009 强制内存重建、024 ACP 白名单热更新由新版覆盖。
+新加 031 处理 Windows 系统凭据执行器的 TrustedInstaller ACL 误判；只接受固定
+系统路径、固定内置凭据提供方和验证过的服务 SID，其他不可信写者仍拒绝。
+完整的 24 项清单、实现接点与退出条件见
+[版本补丁清单](../../scripts/patches/v2026.9.6/README.md)。
+
+源码 `.mjs`、主 worker、SQLite worker 和 esbuild bundle 分别按当前产物校验。
+旧补丁标记、部分应用或构建指纹不匹配一律失败，必须从锁定原包重建。
+
+## 打包与验证边界
+
+- Node engine 下限为 24.16；开发 Node 24.21 与 Electron 42.7.0 内置 Node 24.18 均满足要求。
+- 新增 node-host launcher 的相对路径按原始 dist 入口解析；Windows SQLite 快照检查需要 Koffi，运行时裁剪必须保留其加载器与原生模块。
+- 补丁写入产物证明前检查 Gateway 与两个 worker 的 JavaScript 语法，失败回滚；专门测试覆盖打包去注释、变量改名、worker 内重复导入及语法失败。
+- Windows x64 验证包含从锁定包重建、8 个本地扩展预编译、Gateway 独立临时状态启动和原生 RPC 握手。模型推理、真实账户调用及 macOS/Linux 安装包需在相应环境另行验收。
+
+完成 `npm run openclaw:runtime:host` 后可运行 `node tests/openclaw/runtime/gateway-smoke.cjs`，或传入目标运行时目录。脚本为 HOME、状态、配置和工作区创建独立临时目录，仅调用健康、会话创建和进度读取 RPC，不发起模型请求；测试日志保留在输出的临时目录。
+
+本次最终验证：`npm run lint`、`npm run build`、24 项 runtime patch proof 均通过；`npm test` 为 548 个文件 / 5,332 项通过，42 项条件跳过。正式 Windows x64 产物使用 Electron 内置 Node 启动成功，协议 4、475 个注册方法、会话创建与进度读取通过。一次并发验证出现技能 CLI 30 秒超时，单独复核及完整重跑均通过。

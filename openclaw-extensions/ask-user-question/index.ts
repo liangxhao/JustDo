@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type { OpenClawPluginApi, OpenClawPluginGatewayEvents } from 'openclaw/plugin-sdk';
+import type { OpenClawPluginApi, OpenClawPluginGatewayEvents } from 'openclaw/plugin-sdk/core';
 import { Type } from 'typebox';
 
 export const ASK_USER_TIMEOUT_MINUTES = 10;

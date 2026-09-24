@@ -1,6 +1,7 @@
 'use strict';
 
 const fs = require('fs');
+const { execFileSync } = require('node:child_process');
 const path = require('path');
 const {
   buildOpenClawPatchManifest,
@@ -174,6 +175,17 @@ function patchOpenClawRuntime(runtimeDir, options = {}) {
       console.log(`[${label}] Patch directory is empty for ${version}.`);
     }
 
+    // Both native workers embed patched code independently of the Gateway bundle.
+    for (const name of ['worker.mjs', 'sqlite-store.worker.mjs']) {
+      const workerPath = path.join(runtimeDir, 'dist', 'worker', name);
+      if (fs.existsSync(workerPath)) {
+        execFileSync(process.execPath, ['--check', workerPath], {
+          windowsHide: true, timeout: 60_000, stdio: 'pipe',
+          env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+        });
+      }
+    }
+
     const gatewayBundlePath = path.join(runtimeDir, 'gateway-bundle.mjs');
     if (patchFiles.length > 0 && fs.existsSync(gatewayBundlePath)) {
       for (const { patchLabel, patchModule } of loadedPatches) {
@@ -185,6 +197,13 @@ function patchOpenClawRuntime(runtimeDir, options = {}) {
         });
       }
 
+      // Validate transformed output before recording a successful artifact proof.
+      if (options.freshBundlePass === true) {
+        execFileSync(process.execPath, ['--check', gatewayBundlePath], {
+          windowsHide: true, timeout: 60_000, stdio: 'pipe',
+          env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+        });
+      }
       if (options.writeManifest !== false) {
         const { manifestPath } = writeOpenClawPatchManifest(runtimeDir, { repoRoot, version });
         if (options.verbose) {

@@ -20,6 +20,10 @@ export function createPopupMessageHandler({
   getConfig,
   getRelayState,
   getRelayStatusHint,
+  getNativeBootstrapStatus,
+  enableNativeBootstrap,
+  onManualPairing,
+  onUnpairStart,
   isRetiredCopilotCustodyBlocked,
   requireAutomationAllowed,
   discardRetiredCopilotCustody,
@@ -42,14 +46,23 @@ export function createPopupMessageHandler({
 }) {
   let pairingGeneration = 0;
 
-  const assertPairingCurrent = generation => {
+  const assertPairingCurrent = (generation) => {
     if (generation !== pairingGeneration) {
       throw new Error("Pairing was superseded by a newer request.");
     }
   };
 
-  async function applyPairing({ pairing, pairingString, accessMode, source = "manual" }) {
+  async function applyPairing({
+    pairing,
+    pairingString,
+    accessMode,
+    source = "manual",
+    isCurrent = () => true,
+  }) {
     await requireAutomationAllowed();
+    if (!isCurrent()) {
+      return { ok: false };
+    }
     const parsed = pairing ?? parsePairingString(pairingString);
     if (!parsed) {
       return { ok: false, error: "Invalid pairing string." };
@@ -57,16 +70,39 @@ export function createPopupMessageHandler({
     if (source === "native" && (await getConfig()).relayUrl) {
       return { ok: false, existing: true };
     }
+    if (source === "manual") {
+      await onManualPairing();
+    }
+    if (!isCurrent()) {
+      return { ok: false };
+    }
     const generation = ++pairingGeneration;
+    const pairingIsCurrent = () => generation === pairingGeneration && isCurrent();
+    const assertCurrent = () => {
+      assertPairingCurrent(generation);
+      if (!isCurrent()) {
+        throw new Error("Automatic pairing was canceled.");
+      }
+    };
     suspendRelayConnections();
     closeRelaySocket();
     await accessReady;
+    if (!isCurrent()) {
+      return { ok: false };
+    }
     assertPairingCurrent(generation);
-    await runAccessMutation(async () => {
+    return await runAccessMutation(async () => {
+      if (!isCurrent()) {
+        return { ok: false };
+      }
       assertPairingCurrent(generation);
       if (source === "native" && (await getConfig()).relayUrl) {
-        return;
+        return { ok: false, existing: true };
       }
+      if (!isCurrent()) {
+        return { ok: false };
+      }
+      assertPairingCurrent(generation);
       suspendRelayConnections();
       closeRelaySocket();
       const normalizedMode =
@@ -78,31 +114,40 @@ export function createPopupMessageHandler({
       }
       try {
         await pairingConfigStore.save(parsed, nearestGroupColor(), normalizedMode);
-        assertPairingCurrent(generation);
+        assertCurrent();
         await reconcileAccessMode(normalizedMode, { transitioning: downgrading });
-        assertPairingCurrent(generation);
+        assertCurrent();
         policy.setEnabled(true);
+        resetRelayState();
+        resumeRelayConnections();
+        await connectRelay(pairingIsCurrent);
+        if (!pairingIsCurrent()) {
+          closeRelaySocket();
+          setBadge("off");
+          assertCurrent();
+        }
       } catch (error) {
         if (downgrading) {
           policy.endTransition();
         }
+        if (source === "native" && !isCurrent()) {
+          // A dispatched storage write can finish after opt-out. This serialized
+          // transaction still owns that unadopted pairing, so remove it before exit.
+          policy.setEnabled(false);
+          closeRelaySocket();
+          setBadge("off");
+          await pairingConfigStore.clear();
+          return { ok: false };
+        }
         throw error;
       }
-      resetRelayState();
-      assertPairingCurrent(generation);
-      resumeRelayConnections();
-      await connectRelay(() => generation === pairingGeneration);
-      if (generation !== pairingGeneration) {
-        closeRelaySocket();
-        setBadge("off");
-        assertPairingCurrent(generation);
-      }
+      return { ok: true };
     });
-    return { ok: true };
   }
 
   async function unpair() {
     pairingGeneration += 1;
+    const disabledPersisted = onUnpairStart();
     policy.setEnabled(false);
     policy.invalidateAll();
     suspendRelayConnections();
@@ -118,6 +163,7 @@ export function createPopupMessageHandler({
       policy.setEnabled(false);
       const detaching = detachAllDebuggerSessions();
       await syncTabsToRelay();
+      await disabledPersisted;
       await pairingConfigStore.clear();
       await policy.clearDenied();
       await detaching;
@@ -131,7 +177,7 @@ export function createPopupMessageHandler({
 
   const handler = (msg, reply) => {
     let settled = false;
-    const sendResponse = response => {
+    const sendResponse = (response) => {
       if (!settled) {
         settled = true;
         reply(response);
@@ -143,6 +189,7 @@ export function createPopupMessageHandler({
           case "getStatus": {
             await accessReady;
             const retiredCopilotCustodyBlocked = isRetiredCopilotCustodyBlocked();
+            const nativeBootstrap = await getNativeBootstrapStatus();
             const { relayUrl, accessMode } = await getConfig();
             await reconcilePairingInvalidation();
             const accessible = await policy.listAccessibleTabs();
@@ -153,6 +200,7 @@ export function createPopupMessageHandler({
               accessMode,
               accessibleTabCount: accessible.length,
               relayUrl: relayUrl ?? "",
+              nativeBootstrap,
               retiredCopilotCustodyBlocked,
               ...(hint ? { hint } : {}),
             });
@@ -169,6 +217,13 @@ export function createPopupMessageHandler({
             return;
           case "unpair":
             sendResponse(await unpair());
+            return;
+          case "setNativeBootstrapEnabled":
+            if (typeof msg.enabled !== "boolean") {
+              sendResponse({ ok: false, error: "Invalid automatic setup setting." });
+              return;
+            }
+            sendResponse({ ok: true, result: await enableNativeBootstrap(msg.enabled) });
             return;
           case "setAccessMode": {
             if (msg.accessMode !== ACCESS_MODE_ALL && msg.accessMode !== ACCESS_MODE_SELECTED) {

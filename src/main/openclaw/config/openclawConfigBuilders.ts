@@ -1538,7 +1538,7 @@ export const buildManagedOpenClawConnectivityConfig = (
   },
   tools: {
     updatePlan: true,
-    // OpenClaw v2026.9.2 owns native tool-directory discovery and hydration.
+    // OpenClaw v2026.9.6 owns native tool-directory discovery and hydration.
     toolSearch: {
       enabled: true,
       mode: 'directory',
@@ -1981,6 +1981,8 @@ export const buildDefaultOpenClawPluginEntries = (
         // The prepared agent runtime rejects a selected memory plugin omitted from
         // an explicit allowlist, even if Gateway startup already loaded its service.
         [OpenClawExtensionId.MEMORY_CORE, true],
+        [OpenClawExtensionId.CODE_MODE_QUICKJS, true],
+        [OpenClawExtensionId.GITHUB, true],
       ] as const
     )
       .filter(([id]) => isAvailable(id))

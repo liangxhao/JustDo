@@ -1633,7 +1633,7 @@ export class OpenClawEngineManager extends EventEmitter {
 
       const candidates = fs
         .readdirSync(distRoot)
-        .filter(name => /^client(?:-.*)?\.js$/i.test(name))
+        .filter(name => /^client(?:-.*)?\.m?js$/i.test(name))
         .sort();
 
       // v2026.4.11+ bundles multiple client modules (Slack, Gateway, etc.)

@@ -117,3 +117,11 @@ Extension 可用 outbound-header-policy.json 声明 HTTPS 目标、Header 名称
 ## 10. 测试与维护
 
 从 `src/main/plugins/` 的文件事务、MCP/Hook 同步、Extension import/conversion 和 registry 测试检查产品层；从 `tests/openclaw/extensions/` 与 skill-resolution runtime contract 检查最终原生能力。市场增加 kind 前需完成安装、更新、启停、删除与状态对账闭环，详见[市场适配](16-skill-marketplace-adapter.md)。
+
+## OpenClaw 2026.9.6 integration
+
+The runtime retains the native QuickJS Code Mode executor and GitHub reader plugins,
+including explicit allowlist membership while preserving user disable state. Local
+extensions import named SDK subpaths. Agent-owned Workshop collections remain
+Gateway-owned; the application does not recreate workspace-based skill ownership.
+See [upgrade audit](../features/openclaw-upgrade-v2026.9.6.md).

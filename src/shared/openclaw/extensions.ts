@@ -5,6 +5,8 @@ export const OpenClawExtensionId = {
   RUNTIME_SERVICES: 'runtime-services',
   WORKBOARD: 'workboard',
   MEMORY_CORE: 'memory-core',
+  CODE_MODE_QUICKJS: 'code-mode-quickjs',
+  GITHUB: 'github',
   PLAN_MODE: 'plan-mode',
   AGENT_TEAM: 'agent-team',
   EMBEDDED_BROWSER: 'embedded-browser',

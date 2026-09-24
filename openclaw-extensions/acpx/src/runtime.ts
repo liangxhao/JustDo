@@ -72,7 +72,8 @@ type OpenClawRuntimeTurnInput = Parameters<NonNullable<AcpRuntime['startTurn']>>
 type OpenClawRuntimeEnsureInput = Parameters<AcpRuntime['ensureSession']>[0];
 type OpenClawRuntimeHandle = Awaited<ReturnType<AcpRuntime['ensureSession']>>;
 type AcpxDelegateEnsureInput = Parameters<BaseAcpxRuntime['ensureSession']>[0];
-type AcpxMcpServer = NonNullable<AcpRuntimeOptions['mcpServers']>[number];
+type AcpxMcpServers = Extract<NonNullable<AcpRuntimeOptions['mcpServers']>, unknown[]>;
+type AcpxMcpServer = AcpxMcpServers[number];
 type AcpxAgentCommand = ReturnType<AcpAgentRegistry['resolve']>;
 
 const ACPX_PLUGIN_TOOLS_MCP_SERVER_NAME = 'openclaw-plugin-tools';
@@ -786,6 +787,12 @@ function withManagedToolsMcpSessionEnv(params: {
   sessionKey: string;
   agentId?: string;
 }): AcpRuntimeOptions['mcpServers'] {
+  if (typeof params.mcpServers === 'function') {
+    const resolveServers = params.mcpServers;
+    return context => withManagedToolsMcpSessionEnv({
+      ...params, mcpServers: resolveServers(context),
+    }) as AcpxMcpServers;
+  }
   const sessionKey = params.sessionKey.trim();
   if (
     (!params.pluginToolsEnabled && !params.openclawToolsEnabled) ||

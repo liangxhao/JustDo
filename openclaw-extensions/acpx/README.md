@@ -35,4 +35,9 @@ with read-only permissions. The complete extension template is documented in
 
 - Plugin id: `acpx`
 - Source baseline: OpenClaw `v2026.9.2`
-- Minimum plugin API: `2026.9.2`
+- Minimum plugin API: `2026.9.6`
+
+The desktop adapter retains its product-specific source fork. With OpenClaw 2026.9.6,
+it uses acpx 0.19.1, Claude ACP 0.76.0 and Codex ACP 1.11.0.
+The upstream native-agent model picker/harness registration is not enabled by
+this product: the managed external-agent catalog still owns admission and diagnostics.

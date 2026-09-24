@@ -27,7 +27,6 @@ const EXPECTED_PATCH_FILES = [
   '006-agent-request-metadata.cjs',
   '007-request-purpose-metadata.cjs',
   '008-app-startup-task-recovery-boundary.cjs',
-  '009-memory-force-reembed-opt-in.cjs',
   '013-goal-resume-after-pause.cjs',
   '014-assistant-display-block-replay.cjs',
   '015-trusted-local-file-media.cjs',
@@ -39,12 +38,12 @@ const EXPECTED_PATCH_FILES = [
   '021-isolated-openai-compatible-media-providers.cjs',
   '022-justdo-reset-display-history.cjs',
   '023-managed-session-fork-target-key.cjs',
-  '024-acp-allowed-agents-hot-reload.cjs',
   '025-mxc-external-skill-paths.cjs',
   '026-private-untrusted-context.cjs',
   '027-shared-session-access-registry.cjs',
   '028-admin-session-cwd.cjs',
   '030-cron-session-permission.cjs',
+  '031-windows-servicing-credential-launcher.cjs',
 ] as const;
 
 const UPSTREAM_CONTRACTS = [
@@ -62,7 +61,7 @@ const UPSTREAM_CONTRACTS = [
 ] as const;
 
 const NATIVE_STOP_FIXTURES = {
-  'session-stop.js': '"sessions.abort": if (clearQueued) clearSessionQueues([key]); ' +
+  'session-stop.js': '"sessions.abort": if (clearQueued && canonicalKey !== "global") clearSessionQueues(queueKeys); ' +
     '!requestedRunId ? { cascadeDescendants: true } : {};',
   'session-stop-cascade.js': 'if (params.cascadeDescendants && plan.canCascade) ' +
     'descendants = await abortControlledSubagents({ beforeKill() { result = plan.abort(); } }); ' +
@@ -75,7 +74,7 @@ const NATIVE_STOP_FIXTURES = {
     'ops.onRunAborted?.(runId); active.controller.abort(createChatAbortSignalReason(stopReason)); ' +
     'broadcastChatAborted(ops); status: "cancelled"; }',
   'session-stop-ops.js': 'function createChatAbortOps() { ' +
-    'onRunAborted: context.cancelRunBoundApprovals; }',
+    'context.cancelRunBoundApprovals?.(runId).catch; }',
   'session-stop-approvals.js': 'function cancelAgentRuntimeBoundApprovals() {} ' +
     'function cancelUnboundRunApprovals() {} ' +
     'params.manager.forceDenyDetailed(pending.id, "run-aborted"); ' +
@@ -92,7 +91,7 @@ function createPristineFixture(): string {
   fs.mkdirSync(path.join(root, 'dist'), { recursive: true });
   fs.writeFileSync(
     path.join(root, 'package.json'),
-    JSON.stringify({ name: 'openclaw', version: '2026.9.2' }),
+    JSON.stringify({ name: 'openclaw', version: '2026.9.6' }),
   );
   writeDistFile(
     root,
@@ -233,14 +232,14 @@ describe('OpenClaw pristine artifact contracts', () => {
   test('does not combine disconnected native Stop wiring into evidence', () => {
     const root = createPristineFixture();
     writeDistFile(root, 'session-stop-ops.js', 'function createChatAbortOps() {}');
-    writeDistFile(root, 'unrelated-stop.js', 'onRunAborted: context.cancelRunBoundApprovals');
+    writeDistFile(root, 'unrelated-stop.js', 'context.cancelRunBoundApprovals?.(runId).catch');
 
     expect(() => verifyNativeSessionStopContracts(root))
       .toThrow(/run Stop connects native approval cancellation/);
   });
 
-  test('keeps the independently auditable v2026.9.2 patch inventory exact', () => {
-    const patchDir = path.resolve('scripts', 'patches', 'v2026.9.2');
+  test('keeps the independently auditable v2026.9.6 patch inventory exact', () => {
+    const patchDir = path.resolve('scripts', 'patches', 'v2026.9.6');
     const patchFiles = fs
       .readdirSync(patchDir)
       .filter(name => /^\d.*\.cjs$/.test(name))
@@ -263,7 +262,7 @@ describe('OpenClaw pristine artifact contracts', () => {
       patchFiles: [writePatch(root, false)],
     });
 
-    expect(result.version).toBe('2026.9.2');
+    expect(result.version).toBe('2026.9.6');
     expect(Object.keys(result.upstream)).toEqual(UPSTREAM_CONTRACTS);
     expect(result.retainedGaps).toEqual(['required.cjs']);
   });

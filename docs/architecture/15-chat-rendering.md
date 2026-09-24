@@ -122,3 +122,11 @@ stream-render-scheduler 合并 frame 更新，assistant pacer 平滑揭示文本
 | 安全与视觉更新    | components/markdown、justdo-chat、controllers                           |
 
 至少验证：同文重复提交、重连时 live/history 交错、工具前后多段正文、终态后迟到 delta、取消早于 admission、超大工具结果、Plan reset 后 rewind 门禁、Goal 操作 fence、后台会话停止、历史窗口移位与滚动锚点。领域测试与真实模型交互检查分别记录，不以一次截图替代协议验证。
+
+## Durable progress refresh
+
+The progress card requests `progressCard.refresh` directly through the Gateway
+client. Acceptance does not replace the saved card or input draft. A native
+`progressCard.changed` event triggers a read of the saved revision. The refresh
+intent is reused for uncertain delivery, while confirmed terminal failure permits a new intent. Retries also read the saved card to recover missed events. Stale acknowledgements after a session
+switch are ignored. No application transcript or synthetic user turn is created.

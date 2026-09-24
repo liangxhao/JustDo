@@ -1,4 +1,4 @@
-import type { OpenClawPluginApi } from 'openclaw/plugin-sdk';
+import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
 import { withCodexSessionTranscriptMirrorWriteLock } from 'openclaw/plugin-sdk/codex-session-transcript-runtime';
 import { isSubagentSessionKey } from 'openclaw/plugin-sdk/routing';
 import { getSessionEntry } from 'openclaw/plugin-sdk/session-store-runtime';

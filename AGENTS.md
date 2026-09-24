@@ -10,8 +10,8 @@ tasks through OpenClaw Gateway, with durable state in SQLite and bundled skills.
 
 - App: `v2026.8.27`
 - Electron: `42.7.0`
-- OpenClaw: `v2026.9.2`
-- Node: `24.21.0` via `.nvmrc`; engine `>=24.15.0 <25`
+- OpenClaw: `v2026.9.6`
+- Node: `24.21.0` via `.nvmrc`; engine `>=24.16.0 <25`
 - Package manager: npm
 - Dev server port: `43127`
 - License: MIT
@@ -139,7 +139,7 @@ Main keeps only product lifecycle, run identity, approval, and goal state.
 Built-in skills are declared in `resources/builtin-skills.json`: **8 skills**,
 all **8 enabled** by default.
 
-OpenClaw runtime patches live in `scripts/patches/v2026.9.2/`. They are
+OpenClaw runtime patches live in `scripts/patches/v2026.9.6/`. They are
 new-version capability patches, not migrations of the historical
 `scripts/patches/v2026.8.2/` files. The target directory README is the
 authoritative capability-to-patch and upstream-disposition inventory.

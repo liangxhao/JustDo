@@ -24,15 +24,15 @@ test('installs for a missing target, target-version change, or explicit force', 
       forceInstall: false,
       targetExists: true,
       currentVersion: 'v2026.8.2',
-      targetVersion: 'v2026.9.2',
+      targetVersion: 'v2026.9.6',
     }),
   ).toBe('install');
   expect(
     decideRuntimeInstall({
       forceInstall: false,
       targetExists: true,
-      currentVersion: 'v2026.9.2',
-      targetVersion: 'v2026.9.2',
+      currentVersion: 'v2026.9.6',
+      targetVersion: 'v2026.9.6',
     }),
   ).toBe('verify-frozen');
 });

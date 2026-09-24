@@ -1,20 +1,19 @@
 import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
-const {
-  pruneRuntimeExtensions,
-  shouldPreserveExtensionLegalFiles,
-} = require('../../../scripts/prune-openclaw-runtime.cjs') as {
-  pruneRuntimeExtensions: (
-    runtimeRoot: string,
-    stats: { extensionDirsRemoved: number; bytesFreed: number },
-    options: { repoRoot: string; label: string },
-  ) => { kept: string[]; protected: string[]; removed: string[] };
-  shouldPreserveExtensionLegalFiles: (extensionId: string) => boolean;
-};
+const { pruneRuntimeExtensions, shouldPreserveExtensionLegalFiles } =
+  require('../../../scripts/prune-openclaw-runtime.cjs') as {
+    pruneRuntimeExtensions: (
+      runtimeRoot: string,
+      stats: { extensionDirsRemoved: number; bytesFreed: number },
+      options: { repoRoot: string; label: string },
+    ) => { kept: string[]; protected: string[]; removed: string[] };
+    shouldPreserveExtensionLegalFiles: (extensionId: string) => boolean;
+  };
 
 const temporaryRoots: string[] = [];
 
@@ -27,7 +26,7 @@ function createFixture(remove: string[]) {
   fs.mkdirSync(path.join(repoRoot, 'openclaw-extensions', 'custom'), { recursive: true });
   fs.writeFileSync(
     path.join(repoRoot, 'package.json'),
-    JSON.stringify({ openclaw: { version: 'v2026.9.2' } }),
+    JSON.stringify({ openclaw: { version: 'v2026.9.6' } }),
   );
   for (const extensionId of ['core', 'optional', 'custom']) {
     fs.mkdirSync(path.join(extensionsRoot, extensionId), { recursive: true });
@@ -36,7 +35,7 @@ function createFixture(remove: string[]) {
     path.join(repoRoot, 'resources', 'openclaw-extension-prune.json'),
     JSON.stringify({
       version: 1,
-      openclawVersion: '2026.9.2',
+      openclawVersion: '2026.9.6',
       keep: ['core'],
       remove: [{ category: 'optional', reason: 'fixture', extensions: remove }],
     }),
@@ -52,6 +51,25 @@ afterEach(() => {
 });
 
 describe('OpenClaw runtime extension pruning', () => {
+  test('preserves Koffi runtime code and native binaries needed by Windows SQLite', () => {
+    const { runtimeRoot } = createFixture([]);
+    const loader = path.join(runtimeRoot, 'node_modules/koffi/index.js');
+    const binary = path.join(
+      runtimeRoot,
+      'node_modules/@koromix/koffi-win32-x64/win32_x64/koffi.node',
+    );
+    fs.mkdirSync(path.dirname(loader), { recursive: true });
+    fs.mkdirSync(path.dirname(binary), { recursive: true });
+    fs.writeFileSync(loader, 'module.exports = { load() {} };');
+    fs.writeFileSync(binary, 'native fixture');
+    execFileSync(process.execPath, [
+      path.resolve('scripts/prune-openclaw-runtime.cjs'),
+      runtimeRoot,
+    ]);
+    expect(fs.readFileSync(loader, 'utf8')).toBe('module.exports = { load() {} };');
+    expect(fs.readFileSync(binary, 'utf8')).toBe('native fixture');
+  });
+
   test('preserves legal metadata for extensions redistributed with native executables', () => {
     expect(shouldPreserveExtensionLegalFiles('acpx')).toBe(true);
     expect(shouldPreserveExtensionLegalFiles('mxc')).toBe(true);
@@ -93,7 +111,7 @@ describe('OpenClaw runtime extension pruning', () => {
     const stats = { extensionDirsRemoved: 0, bytesFreed: 0 };
 
     expect(() => pruneRuntimeExtensions(runtimeRoot, stats, { repoRoot, label: 'test' })).toThrow(
-      'Extension prune policy targets OpenClaw 2026.8.2, expected 2026.9.2',
+      'Extension prune policy targets OpenClaw 2026.8.2, expected 2026.9.6',
     );
     expect(fs.existsSync(path.join(extensionsRoot, 'optional'))).toBe(true);
     expect(stats.extensionDirsRemoved).toBe(0);

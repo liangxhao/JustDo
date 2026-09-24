@@ -51,7 +51,7 @@ OpenClaw 的 Docker 风格 Skill 物化默认可能形成“可写工作区内�
 
 ## 6. 构建和升级责任
 
-Windows runtime 携带 @openclaw/mxc-sandbox@2026.9.2 与锁定 SDK 0.7.0。需检查插件 ID、backend 注册、执行器、host-prep、launcher、目标架构 node-pty 和第三方许可证。二进制清单在 shared/security/mxcNativeBinaries.json。
+Windows runtime 携带 @openclaw/mxc-sandbox@2026.9.6 与锁定 SDK 0.8.0。需检查插件 ID、backend 注册、执行器、host-prep、launcher、目标架构 node-pty 和第三方许可证。二进制清单在 shared/security/mxcNativeBinaries.json。
 
 运行时从 pristine 包构建并应用当前 skill path 补丁；不能在历史补丁产物上补字符串。macOS/Linux 不携带或启用 mxc，文档和 UI 不应显示跨平台通用沙盒承诺。
 

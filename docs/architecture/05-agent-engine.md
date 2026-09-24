@@ -1,6 +1,6 @@
 # 执行引擎：配置、准入与 Gateway 恢复
 
-当前 Cowork 执行引擎是 OpenClaw。Router 提供稳定产品接口，Adapter 隔离原生 wire 与生命周期，Manager 托管运行时进程。本文按当前 v2026.9.2 集成组织，运行时补丁清单只维护在[版本目录](../../scripts/patches/v2026.9.2/README.md)。
+当前 Cowork 执行引擎是 OpenClaw。Router 提供稳定产品接口，Adapter 隔离原生 wire 与生命周期，Manager 托管运行时进程。本文按当前 v2026.9.6 集成组织，运行时补丁清单只维护在[版本目录](../../scripts/patches/v2026.9.6/README.md)。
 
 ## 1. 三层控制各管什么
 
@@ -79,7 +79,7 @@ sequenceDiagram
 
 Adapter 接收产品会话身份，准备原生 session、模型和权限，再提交 chat 请求并绑定原生 run。用户后续直接聊天发送也需要先完成同样的产品准备。
 
-原生 WS 中的文本流由 Renderer 消费；Adapter 只将运行状态、交互、审批、Goal 和会话变化映射为产品事件。wire validator 固定到 v2026.9.2，未知或不合法字段不能在各调用方随意猜测。
+原生 WS 中的文本流由 Renderer 消费；Adapter 只将运行状态、交互、审批、Goal 和会话变化映射为产品事件。wire validator 固定到 v2026.9.6，未知或不合法字段不能在各调用方随意猜测。
 
 网络超时可能发生在原生接收之后。run receipt 需要保留未知状态并查询原生事实；无条件重发将造成重复工具副作用。工具错误不必然是运行终态，late terminal 也不能结束新的 generation。
 

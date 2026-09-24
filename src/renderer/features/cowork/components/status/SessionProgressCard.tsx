@@ -26,6 +26,7 @@ interface SessionProgressCardProps {
   card: ProgressCard;
   runState: ProgressCardRunState;
   onClose: () => void;
+  onRefresh?: () => Promise<boolean>;
 }
 
 export type ProgressCardRunState = SessionRunState | 'idle';
@@ -64,7 +65,7 @@ const stepStatusLabel = (
   return i18nService.t('coworkProgressCardPending');
 };
 
-const SessionProgressCard = ({ card, runState, onClose }: SessionProgressCardProps) => {
+const SessionProgressCard = ({ card, runState, onClose, onRefresh }: SessionProgressCardProps) => {
   const complete = progressCardIsComplete(card);
   const steps = card.steps ?? [];
   const completedCount = steps.filter(
@@ -73,6 +74,27 @@ const SessionProgressCard = ({ card, runState, onClose }: SessionProgressCardPro
   const current = currentProgressStep(steps);
   const initialSessionKeyRef = useRef(card.sessionKey);
   const [expanded, setExpanded] = useState(true);
+  const [refreshState, setRefreshState] = useState<'idle' | 'pending' | 'failed'>('idle');
+  const refreshGeneration = useRef(0);
+  useEffect(() => {
+    refreshGeneration.current += 1;
+    setRefreshState('idle');
+    return () => {
+      refreshGeneration.current += 1;
+    };
+  }, [card.sessionKey, card.revision]);
+  useEffect(() => {
+    if (refreshState !== 'pending') return;
+    const timer = window.setTimeout(() => setRefreshState('failed'), 60_000);
+    return () => window.clearTimeout(timer);
+  }, [refreshState]);
+  const refresh = async () => {
+    if (!onRefresh || refreshState === 'pending') return;
+    const generation = ++refreshGeneration.current;
+    setRefreshState('pending');
+    const accepted = await onRefresh().catch(() => false);
+    if (!accepted && generation === refreshGeneration.current) setRefreshState('failed');
+  };
   const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
@@ -183,6 +205,18 @@ const SessionProgressCard = ({ card, runState, onClose }: SessionProgressCardPro
             aria-hidden="true"
           />
         </button>
+        {onRefresh && (
+          <button
+            type="button"
+            className="cowork-progress-card__dismiss"
+            disabled={refreshState === 'pending'}
+            onClick={() => void refresh()}
+            aria-label={i18nService.t('coworkProgressCardRefresh')}
+            title={i18nService.t('coworkProgressCardRefresh')}
+          >
+            <ArrowPathIcon className={refreshState === 'pending' ? 'animate-spin' : ''} />
+          </button>
+        )}
         <button
           type="button"
           className="cowork-progress-card__dismiss"
@@ -194,6 +228,11 @@ const SessionProgressCard = ({ card, runState, onClose }: SessionProgressCardPro
         </button>
       </div>
 
+      {refreshState === 'failed' && (
+        <p className="cowork-progress-card__refresh-error" role="status">
+          {i18nService.t('coworkProgressCardRefreshFailed')}
+        </p>
+      )}
       {expanded && (
         <div id={bodyId} className="cowork-progress-card__body">
           {markdownHtml && (

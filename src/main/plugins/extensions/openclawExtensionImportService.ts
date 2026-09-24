@@ -114,7 +114,7 @@ if (!runtimeRoot || !pluginDirectory || !sourcePath || !configSnapshotPath) thro
 const config = JSON.parse(fs.readFileSync(configSnapshotPath, 'utf8'));
 const dist = path.join(runtimeRoot, 'dist');
 const loadChunk = async (prefix, functionName) => {
-  const files = fs.readdirSync(dist).filter(name => name.startsWith(prefix) && name.endsWith('.js'));
+  const files = fs.readdirSync(dist).filter(name => name.startsWith(prefix) && /\.m?js$/u.test(name));
   if (files.length === 0) throw new Error('OpenClaw capability review module is missing: ' + prefix);
   for (const file of files) {
     const module = await import(pathToFileURL(path.join(dist, file)).href);
@@ -802,23 +802,28 @@ export class OpenClawExtensionImportService {
       }
       const manager = this.deps.getOpenClawEngineManager();
       const cli = await manager.buildCliEnvironment();
-      const result = await this.runCommand(process.execPath, [
-        cli.openclawEntry,
-        'config',
-        'set',
-        'skills.entries.agent-team.enabled',
-        String(enabled),
-        '--strict-json',
-      ], {
-        cwd: cli.runtimeRoot,
-        env: { ...cli.env, OPENCLAW_HOME: manager.getBaseDir(), ELECTRON_RUN_AS_NODE: '1' },
-      });
+      const result = await this.runCommand(
+        process.execPath,
+        [
+          cli.openclawEntry,
+          'config',
+          'set',
+          'skills.entries.agent-team.enabled',
+          String(enabled),
+          '--strict-json',
+        ],
+        {
+          cwd: cli.runtimeRoot,
+          env: { ...cli.env, OPENCLAW_HOME: manager.getBaseDir(), ELECTRON_RUN_AS_NODE: '1' },
+        },
+      );
       if (result.exitCode !== 0) throw new Error('Skill update rejected');
       const config = readJsonRecord(manager.getConfigPath());
       const skills = isRecord(config.skills) ? config.skills : {};
       const entries = isRecord(skills.entries) ? skills.entries : {};
       const entry = entries[OpenClawExtensionId.AGENT_TEAM];
-      if (!isRecord(entry) || entry.enabled !== enabled) throw new Error('Skill update not persisted');
+      if (!isRecord(entry) || entry.enabled !== enabled)
+        throw new Error('Skill update not persisted');
     } catch {
       // The plugin write may already have committed. The same toggle is safe to
       // retry and must repair the skill even if the plugin already has that state.
@@ -1523,7 +1528,8 @@ export class OpenClawExtensionImportService {
         };
       }
 
-      if (extensionId === OpenClawExtensionId.AGENT_TEAM) await this.syncAgentTeamSkill(enabled, false);
+      if (extensionId === OpenClawExtensionId.AGENT_TEAM)
+        await this.syncAgentTeamSkill(enabled, false);
       const convergenceError = await convergeColdState(wasRuntimeActive);
       return convergenceError ? { success: false, error: convergenceError } : { success: true };
     } catch (error) {

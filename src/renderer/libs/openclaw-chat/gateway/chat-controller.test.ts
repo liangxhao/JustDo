@@ -2524,3 +2524,84 @@ test('fences a confirmed Main-started run stopped before its first stream frame'
   });
   expect(controller.state.chatMessages).toEqual([]);
 });
+
+test('refreshes progress without replacing the saved card, draft, or transcript', async () => {
+  const controller = new ChatController();
+  const sessionKey = 'agent:main:justdo:refresh';
+  const request = vi
+    .fn()
+    .mockResolvedValue({ status: 'accepted', runId: 'refresh-run', revision: 7 });
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+  controller.state.hello = {
+    type: 'hello-ok',
+    protocol: 4,
+    features: { methods: ['progressCard.refresh'] },
+  };
+  const card = { sessionKey, revision: 7, updatedAt: 2000, markdown: 'Saved progress' };
+  controller.state.progressCard = card;
+  const before = controller.state.chatMessages;
+  await expect(controller.refreshProgressCard()).resolves.toBe(true);
+  await expect(controller.refreshProgressCard()).resolves.toBe(true);
+  expect(request).toHaveBeenNthCalledWith(1, 'progressCard.refresh', {
+    sessionKey,
+    idempotencyKey: expect.any(String),
+  });
+  expect(request.mock.calls[1]).toEqual(request.mock.calls[0]);
+  expect(controller.state.progressCard).toBe(card);
+  expect(controller.state.chatMessages).toBe(before);
+});
+
+test('ignores a progress refresh acknowledgement after switching sessions', async () => {
+  const controller = new ChatController();
+  let resolve!: (value: unknown) => void;
+  controller.state.client = {
+    request: vi.fn(
+      () =>
+        new Promise(done => {
+          resolve = done;
+        }),
+    ),
+  } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:refresh';
+  controller.state.hello = {
+    type: 'hello-ok',
+    protocol: 4,
+    features: { methods: ['progressCard.refresh'] },
+  };
+  controller.state.progressCard = {
+    sessionKey: controller.state.sessionKey,
+    revision: 7,
+    updatedAt: 2000,
+  };
+  const pending = controller.refreshProgressCard();
+  controller.state.sessionKey = 'agent:main:justdo:other';
+  resolve({ status: 'accepted', runId: 'refresh-run', revision: 7 });
+  await expect(pending).resolves.toBe(false);
+});
+
+test('reuses uncertain progress refreshes but replaces a confirmed failed intent', async () => {
+  const controller = new ChatController();
+  const sessionKey = 'agent:main:justdo:refresh-retry';
+  const request = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('lost acknowledgement'))
+    .mockRejectedValueOnce({ details: { code: 'PROGRESS_CARD_REFRESH_TERMINAL' } })
+    .mockResolvedValue({ status: 'accepted', runId: 'retry-run', revision: 7 });
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+  controller.state.hello = {
+    type: 'hello-ok',
+    protocol: 4,
+    features: { methods: ['progressCard.refresh'] },
+  };
+  controller.state.progressCard = { sessionKey, revision: 7, updatedAt: 2000 };
+  await expect(controller.refreshProgressCard()).resolves.toBe(false);
+  await expect(controller.refreshProgressCard()).resolves.toBe(false);
+  await expect(controller.refreshProgressCard()).resolves.toBe(true);
+  expect(request.mock.calls[1]).toEqual(request.mock.calls[0]);
+  expect(request.mock.calls[2][1].idempotencyKey).not.toBe(request.mock.calls[0][1].idempotencyKey);
+});

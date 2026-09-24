@@ -326,3 +326,15 @@
     transform: translateY(0) scale(1);
   }
 }
+
+.cowork-progress-card__dismiss:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.cowork-progress-card__refresh-error {
+  margin: 0;
+  padding: 0 12px 10px;
+  color: var(--justdo-destructive);
+  font-size: 12px;
+}

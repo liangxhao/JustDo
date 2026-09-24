@@ -40,12 +40,13 @@ const {
     options: { repoRoot: string },
   ) => { manifestPath: string };
 };
-const { verifyPackagedOpenClawRuntime } = require('../../../scripts/electron-builder-hooks.cjs') as {
-  verifyPackagedOpenClawRuntime: (context: {
-    appOutDir: string;
-    electronPlatformName: string;
-  }) => Promise<void>;
-};
+const { verifyPackagedOpenClawRuntime } =
+  require('../../../scripts/electron-builder-hooks.cjs') as {
+    verifyPackagedOpenClawRuntime: (context: {
+      appOutDir: string;
+      electronPlatformName: string;
+    }) => Promise<void>;
+  };
 const { compressTarArchive } = require('../../../scripts/pack-openclaw-tar.cjs') as {
   compressTarArchive: (sourceTar: string, outputArchive: string) => Promise<void>;
 };
@@ -142,7 +143,10 @@ function createFixture() {
     '// fixture\n',
   );
   fs.mkdirSync(path.join(repoRoot, 'src', 'shared', 'security'), { recursive: true });
-  fs.writeFileSync(path.join(repoRoot, 'src', 'shared', 'security', 'mxcNativeBinaries.json'), '{}\n');
+  fs.writeFileSync(
+    path.join(repoRoot, 'src', 'shared', 'security', 'mxcNativeBinaries.json'),
+    '{}\n',
+  );
   fs.mkdirSync(path.join(repoRoot, 'resources'), { recursive: true });
   fs.writeFileSync(path.join(repoRoot, 'resources', 'openclaw-extension-prune.json'), '{}\n');
   fs.writeFileSync(path.join(repoRoot, 'resources', 'builtin-skills.json'), '{}\n');
@@ -264,9 +268,9 @@ describe('OpenClaw runtime patch manifest', () => {
     expect(() =>
       verifyFrozenOpenClawRuntime(runtimeRoot, {
         expectedTarget: 'win-x64',
-        expectedVersion: 'v2026.9.2',
+        expectedVersion: 'v2026.9.6',
       }),
-    ).toThrow(/OpenClaw version is v2026\.6\.11, expected v2026\.9\.2/);
+    ).toThrow(/OpenClaw version is v2026\.6\.11, expected v2026\.9\.6/);
   });
 
   test('rejects a frozen runtime with a missing patch proof or tampered bundle', () => {
@@ -323,7 +327,7 @@ describe('OpenClaw runtime patch manifest', () => {
       '../../..',
       'scripts',
       'patches',
-      'v2026.9.2',
+      'v2026.9.6',
       '_patch-utils.js',
     );
     fs.writeFileSync(
@@ -422,6 +426,32 @@ module.exports = { applyPatch, verifyPatch };
     );
     expect(fs.existsSync(path.join(runtimeRoot, PATCH_MANIFEST_FILENAME))).toBe(false);
     expect(fs.readFileSync(bundlePath)).toEqual(originalBundle);
+  });
+
+  test.each([
+    'gateway-bundle.mjs',
+    'dist/worker/worker.mjs',
+    'dist/worker/sqlite-store.worker.mjs',
+  ])('rolls back invalid JavaScript in %s before writing proof', target => {
+    const { patchRoot, repoRoot, runtimeRoot } = createFixture();
+    const targetPath = path.join(runtimeRoot, target);
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+    if (!fs.existsSync(targetPath)) fs.writeFileSync(targetPath, 'const original = true;\n');
+    const original = fs.readFileSync(targetPath);
+    fs.writeFileSync(
+      path.join(patchRoot, '002-example.cjs'),
+      `
+        const fs = require('fs'); const path = require('path');
+        module.exports = {
+          applyPatch(root) { fs.appendFileSync(path.join(root, '${target}'), '\\nconst duplicate = 1; const duplicate = 2;'); },
+          verifyPatch() {},
+        };
+      `,
+    );
+    writeFixtureBuildInfo(repoRoot, runtimeRoot);
+    expect(() => patchOpenClawRuntime(runtimeRoot, { repoRoot, freshBundlePass: true })).toThrow();
+    expect(fs.readFileSync(targetPath)).toEqual(original);
+    expect(fs.existsSync(path.join(runtimeRoot, PATCH_MANIFEST_FILENAME))).toBe(false);
   });
 
   test('rejects a silent no-op patch without applied-state evidence', () => {
@@ -662,7 +692,7 @@ module.exports = { applyPatch, verifyPatch };
 
   test('verifies the patch proof copied into the packaged Windows runtime archive', async () => {
     const repositoryRoot = path.resolve(__dirname, '../../..');
-    const sourceLock = readOpenClawSourceLock(repositoryRoot, 'v2026.9.2');
+    const sourceLock = readOpenClawSourceLock(repositoryRoot, 'v2026.9.6');
     const appOutDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-packaged-patch-test-'));
     temporaryRoots.push(appOutDir);
     const archiveRoot = path.join(appOutDir, 'archive-source');
@@ -714,14 +744,14 @@ module.exports = { applyPatch, verifyPatch };
     fs.writeFileSync(
       path.join(runtimeRoot, 'runtime-build-info.json'),
       JSON.stringify({
-        openclawVersion: 'v2026.9.2',
+        openclawVersion: 'v2026.9.6',
         installMethod: 'npm-package',
         target: 'win-x64',
         npmPackageVersion: sourceLock.version,
         npmIntegrity: sourceLock.integrity,
         npmTarballSha256: sourceLock.tarballSha256,
-        patchSetSha256: buildOpenClawPatchSetFingerprint(repositoryRoot, 'v2026.9.2'),
-        buildRecipeSha256: buildOpenClawBuildRecipeFingerprint(repositoryRoot, 'v2026.9.2'),
+        patchSetSha256: buildOpenClawPatchSetFingerprint(repositoryRoot, 'v2026.9.6'),
+        buildRecipeSha256: buildOpenClawBuildRecipeFingerprint(repositoryRoot, 'v2026.9.6'),
         gatewayAsarSha256: crypto
           .createHash('sha256')
           .update(fs.readFileSync(path.join(runtimeRoot, 'gateway.asar')))
@@ -741,10 +771,7 @@ module.exports = { applyPatch, verifyPatch };
     fs.rmSync(path.join(runtimeRoot, 'gateway.asar'));
 
     const tar = require('tar') as {
-      create: (
-        options: { cwd: string; file: string; sync: boolean },
-        paths: string[],
-      ) => void;
+      create: (options: { cwd: string; file: string; sync: boolean }, paths: string[]) => void;
     };
     const tarPath = path.join(resourcesRoot, 'win-resources.tar');
     const archivePath = path.join(resourcesRoot, 'win-resources.tar.zst');

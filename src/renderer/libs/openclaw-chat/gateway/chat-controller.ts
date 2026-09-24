@@ -459,6 +459,10 @@ export class ChatController {
   }
 
   /** Safely dismiss an unchanged, fully completed progress card. */
+  refreshProgressCard(): Promise<boolean> {
+    return chatControllerProgress.refreshProgressCard.call(this.chatControllerProgressContext);
+  }
+
   dismissProgressCard(): Promise<boolean> {
     return chatControllerProgress.dismissProgressCard.call(this.chatControllerProgressContext);
   }

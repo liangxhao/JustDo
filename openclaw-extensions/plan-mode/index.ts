@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type { OpenClawPluginApi, OpenClawPluginGatewayEvents } from 'openclaw/plugin-sdk';
+import type { OpenClawPluginApi, OpenClawPluginGatewayEvents } from 'openclaw/plugin-sdk/core';
 import { isReplaySafeToolCall } from 'openclaw/plugin-sdk/agent-harness-runtime';
 import { getSessionEntry } from 'openclaw/plugin-sdk/session-store-runtime';
 import { Type } from 'typebox';

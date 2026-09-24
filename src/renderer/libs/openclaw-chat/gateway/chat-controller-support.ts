@@ -328,6 +328,7 @@ export const DEFAULT_INITIAL_HISTORY_RETRY_DELAYS_MS = [100, 300, 900] as const;
 export const PROGRESS_CARD_GET_METHOD = 'progressCard.get';
 
 export const PROGRESS_CARD_PUT_METHOD = 'progressCard.put';
+export const PROGRESS_CARD_REFRESH_METHOD = 'progressCard.refresh';
 
 export const PROGRESS_CARD_CACHE_LIMIT = 100;
 

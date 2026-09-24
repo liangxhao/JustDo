@@ -72,7 +72,7 @@ Extension 运行于 Gateway 信任域；如果目标是限制恶意第三方代�
 
 必须先证明锁定 pristine 产物缺少所需行为，且 Adapter/config/公开插件 API 不能正确实现。补丁需要精确 anchor、原子写入、当前形态幂等、pristine contract、行为测试与上游移除条件。
 
-历史或部分 JustDo marker 要失败，不编写兼容旧修订的原地转换。编号仅代表当前构建顺序，不是长期能力 ID；唯一清单在[版本 README](../../scripts/patches/v2026.9.2/README.md)。
+历史或部分 JustDo marker 要失败，不编写兼容旧修订的原地转换。编号仅代表当前构建顺序，不是长期能力 ID；唯一清单在[版本 README](../../scripts/patches/v2026.9.6/README.md)。
 
 升级时以新原生能力重新判断 owner。上游已经拥有的 task/history/approval 不能因为旧补丁曾实现过就继续保留。
 

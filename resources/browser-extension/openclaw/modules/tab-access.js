@@ -78,10 +78,10 @@ export function createTabAccessPolicy({ chromeApi = chrome, isSelectedTab, getGr
       root = documents.rootRevision(tabId);
       tab = await chromeApi.tabs.get(tabId);
     } while (root !== documents.rootRevision(tabId));
-    return tab;
+    return documents.resolveTabSnapshot(tabId, tab);
   }
 
-  const mutateStorage = task => {
+  const mutateStorage = (task) => {
     const pending = storageChain.then(task, task);
     storageChain = pending.catch(() => undefined);
     return pending;
@@ -217,9 +217,6 @@ export function createTabAccessPolicy({ chromeApi = chrome, isSelectedTab, getGr
       (typeof tab?.pendingUrl === "string" && !eligibilityForTab(tab).eligible);
     const created = createdTabs.get(tabId);
     if (!created) {
-      if (mode === ACCESS_MODE_SELECTED && typeof change.groupId === "number") {
-        invalidateTab(tabId);
-      }
       return accessChanged;
     }
     if (typeof change.url === "string") {
@@ -466,15 +463,18 @@ export function createTabAccessPolicy({ chromeApi = chrome, isSelectedTab, getGr
     invalidateTab(tabId);
   }
 
-  function renewTabAccess(tabId, attachedEpoch, tab) {
+  function renewTabAccess(tabId, attachedEpoch, observedTab, change) {
+    const tab = documents.resolveTabUpdate(tabId, observedTab, change);
+    const selectedGroupChange = mode === ACCESS_MODE_SELECTED && typeof change.groupId === "number";
     const blankObservers =
+      !selectedGroupChange &&
       !attachedEpoch &&
       tab?.id === tabId &&
       initialBlankDocument(tab) &&
       !tab.incognito &&
       (!tab.pendingUrl || tab.pendingUrl === "about:blank")
         ? [...pendingCreations].filter(
-            pending =>
+            (pending) =>
               !pending.changedDocuments.has(tabId) &&
               ((tabRevisions.get(tabId)?.access ?? 0) <= pending.started ||
                 pending.blankRevisions.get(tabId) === tabRevisions.get(tabId)?.access),
@@ -490,7 +490,7 @@ export function createTabAccessPolicy({ chromeApi = chrome, isSelectedTab, getGr
     // An allowed document change retires page reads/actions, not tab authority.
     // Only an already-proven attachment gets synchronous event renewal. Without
     // an attachment, an eligible initial HTTP commit can precede create's callback.
-    if (!eligibilityForTab(tab).eligible || (attachedEpoch && !canRenew)) {
+    if (!eligibilityForTab(tab).eligible || (!canRenew && (attachedEpoch || selectedGroupChange))) {
       invalidateTab(tabId);
     } else {
       tabRevisions.set(tabId, {
@@ -610,15 +610,15 @@ export function createTabAccessPolicy({ chromeApi = chrome, isSelectedTab, getGr
       throw new Error(`tab ${tabId} access was revoked`);
     }
     if (state.reason === "paused") {
-      throw new Error(`tab ${tabId} is paused for __PRODUCT_NAME__`);
+      throw new Error(`tab ${tabId} is paused for OpenClaw`);
     }
     if (state.reason === "not-selected") {
-      throw new Error(`tab ${tabId} is not in the __PRODUCT_NAME__ tab group`);
+      throw new Error(`tab ${tabId} is not in the OpenClaw tab group`);
     }
     if (state.reason === "incognito") {
-      throw new Error(`tab ${tabId} is incognito and unavailable to __PRODUCT_NAME__`);
+      throw new Error(`tab ${tabId} is incognito and unavailable to OpenClaw`);
     }
-    throw new Error(`tab ${tabId} is restricted or unavailable to __PRODUCT_NAME__`);
+    throw new Error(`tab ${tabId} is restricted or unavailable to OpenClaw`);
   }
 
   async function listAccessibleTabs({ allowDuringTransition = false } = {}) {
@@ -633,10 +633,11 @@ export function createTabAccessPolicy({ chromeApi = chrome, isSelectedTab, getGr
         continue;
       }
       const accessible = [];
-      for (const tab of tabs) {
+      for (const snapshot of tabs) {
         if (listRevision !== discoveryRevision) {
           break;
         }
+        const tab = documents.resolveTabSnapshot(snapshot.id, snapshot);
         if (tabIsRevoking(tab.id) || !eligibilityForTab(tab).eligible) {
           continue;
         }
@@ -658,7 +659,7 @@ export function createTabAccessPolicy({ chromeApi = chrome, isSelectedTab, getGr
     const controlledBlank =
       documents.get(tabId)?.controlledBlank === true ||
       [...revocationBarriers.values()].some(
-        barrier => barrier.tabId === tabId && barrier.controlledBlank,
+        (barrier) => barrier.tabId === tabId && barrier.controlledBlank,
       );
     // Revoke synchronously: Chrome lookup and session persistence may yield,
     // but newly arriving authority must already fail closed.
@@ -675,7 +676,7 @@ export function createTabAccessPolicy({ chromeApi = chrome, isSelectedTab, getGr
     if (!eligibilityForTab(tab, controlledBlank).eligible) {
       deniedTabIds.delete(tabId);
       invalidateTab(tabId);
-      throw new Error(`tab ${tabId} is restricted or unavailable to __PRODUCT_NAME__`);
+      throw new Error(`tab ${tabId} is restricted or unavailable to OpenClaw`);
     }
     await mutateStorage(persistDeniedIds);
   }
@@ -761,12 +762,12 @@ export function createTabAccessPolicy({ chromeApi = chrome, isSelectedTab, getGr
     requireTab,
     requireTabAfterNavigation: (tabId, epoch) => requireTab(tabId, epoch, true),
     listAccessibleTabs,
-    canPublishTab: tabId => !createdTabs.has(tabId) || createdTabs.get(tabId).handedOff,
+    canPublishTab: (tabId) => !createdTabs.has(tabId) || createdTabs.get(tabId).handedOff,
     pause,
     allow,
     forgetTab,
     replaceTab,
     clearDenied,
-    isDenied: tabId => deniedTabIds.has(tabId),
+    isDenied: (tabId) => deniedTabIds.has(tabId),
   };
 }

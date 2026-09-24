@@ -17,7 +17,7 @@ test.skipIf(!fs.existsSync(dist))('native JWT exec references validate, rotate a
   try {
     const preload = path.join(directory, 'hide-child-process-windows.cjs');
     fs.writeFileSync(preload, buildWindowsChildProcessPreload());
-    const resolver = fs.readdirSync(dist).filter(name => /^resolve-.*\.js$/.test(name)).find(name =>
+    const resolver = fs.readdirSync(dist).filter(name => /^resolve-.*\.m?js$/.test(name)).find(name =>
       fs.readFileSync(path.join(dist, name), 'utf8').includes(
         'export { isMissingSecretRefResolutionError, isProviderScopedSecretResolutionError, resolveSecretRefString,',
       ),

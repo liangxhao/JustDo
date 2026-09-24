@@ -39,7 +39,7 @@ Renderer (React + Redux + Lit)
 
 ## 快速开始
 
-项目使用 Node.js 24，`package.json` 限制为 `>=24.15.0 <25`。
+项目使用 Node.js 24，`package.json` 限制为 `>=24.16.0 <25`。
 
 ```bash
 nvm use 24
@@ -148,7 +148,7 @@ OpenClaw 集成在 `package.json` 中声明：
 {
   "version": "v2026.8.27",
   "openclaw": {
-    "version": "v2026.9.2",
+    "version": "v2026.9.6",
     "repo": "https://github.com/openclaw/openclaw.git"
   },
   "devServer": {

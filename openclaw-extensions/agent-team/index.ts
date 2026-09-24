@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type { OpenClawPluginApi, OpenClawPluginGatewayEvents } from 'openclaw/plugin-sdk';
+import type { OpenClawPluginApi, OpenClawPluginGatewayEvents } from 'openclaw/plugin-sdk/core';
 import { isSubagentSessionKey } from 'openclaw/plugin-sdk/routing';
 import { getSessionEntry } from 'openclaw/plugin-sdk/session-store-runtime';
 import { createSessionVisibilityChecker } from 'openclaw/plugin-sdk/session-visibility';

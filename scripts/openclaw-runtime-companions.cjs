@@ -5,6 +5,10 @@ const path = require('path');
 
 const RUNTIME_COMPANION_CHECKS = [
   {
+    marker: 'node-host-launcher.mjs',
+    path: 'node-host-launcher.mjs',
+  },
+  {
     marker: 'subagent-registry.runtime',
     path: 'dist/subagent-registry.runtime.js',
   },
@@ -17,8 +21,8 @@ const RUNTIME_COMPANION_CHECKS = [
     path: 'dist/agents/compaction-planning.worker.js',
   },
   {
-    marker: 'code-mode.worker.js',
-    path: 'dist/agents/code-mode.worker.js',
+    marker: 'code-mode-node.worker.js',
+    path: 'dist/agents/code-mode-node.worker.js',
   },
   {
     marker: 'audit-event-writer.worker.js',
@@ -71,6 +75,7 @@ const RUNTIME_BUNDLED_ASSET_COPIES = [
 ];
 
 const STALE_RUNTIME_WORKER_URL_PATTERNS = [
+  /new URL\(["']\.\.\/node-host-launcher\.mjs["'],\s*import\.meta\.url\)/,
   /resolveRuntimeWorkerUrl\(\s*\{\s*currentModuleUrl:\s*import\.meta\.url,/,
   /resolveDatabaseVerifyWorkerUrl\(\s*currentModuleUrl\s*=\s*import\.meta\.url\s*\)/,
   /(?:const\s+)?currentModuleUrl\s*=\s*import\.meta\.url;\s*(?:const\s+)?runtimeProcessEntrypoints\s*=/,
@@ -78,6 +83,9 @@ const STALE_RUNTIME_WORKER_URL_PATTERNS = [
 
 function rewriteRuntimeWorkerImportMetaUrls(source, replacement) {
   return source
+    .replace(/new URL\((["'])\.\.\/node-host-launcher\.mjs\1,\s*import\.meta\.url\)/g,
+      match => match.replace('import.meta.url', replacement),
+    )
     .replace(/const currentModuleUrl\s*=\s*import\.meta\.url\s*;/g, match =>
       match.replace('import.meta.url', replacement),
     )

@@ -46,7 +46,7 @@ describe.skipIf(!fs.existsSync(distRoot))('native memory plugin runtime selectio
   beforeAll(() => {
     const runtimeFile = fs
       .readdirSync(distRoot)
-      .filter(name => /^runtime-plugin-load-plan-.*\.js$/u.test(name))
+      .filter(name => /^runtime-plugin-load-plan-.*\.m?js$/u.test(name))
       .map(name => path.join(distRoot, name))
       .find(filename =>
         fs.readFileSync(filename, 'utf8').includes('function resolveAgentRuntimePluginLoadPlan('),

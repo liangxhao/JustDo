@@ -77,9 +77,9 @@ const DIRS_TO_DELETE = new Set([
 // The stub allows require/import to succeed but throws when actually called.
 // Callers already have try-catch protection.
 
-const PACKAGES_TO_STUB = [
-  'koffi', // Windows FFI for terminal PTY — not needed in gateway mode
-];
+// OpenClaw 2026.9.6 also uses Koffi for Windows SQLite snapshot filesystem checks.
+// Keep its loader and platform native package even in headless Gateway builds.
+const PACKAGES_TO_STUB = [];
 
 const GENERIC_STUB_INDEX_CJS = `// Stub (CJS): this package is not needed for headless gateway operation.
 module.exports = new Proxy({}, {

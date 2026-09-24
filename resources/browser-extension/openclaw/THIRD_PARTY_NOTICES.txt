@@ -1,5 +1,5 @@
 This directory contains a browser extension derived from the OpenClaw extension
-shipped with the OpenClaw v2026.9.2 runtime. __PRODUCT_NAME__ customizes the
+shipped with the OpenClaw v2026.9.6 runtime. __PRODUCT_NAME__ customizes the
 user-facing product identity and setup flow while preserving relay protocol
 compatibility.
 Upstream: https://github.com/openclaw/openclaw

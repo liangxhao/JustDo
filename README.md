@@ -41,7 +41,7 @@ The main rule is process isolation:
 
 ## Quick Start
 
-Use Node.js 24. The project is engine-strict and expects `>=24.15.0 <25`.
+Use Node.js 24. The project is engine-strict and expects `>=24.16.0 <25`.
 
 ```bash
 nvm use 24
@@ -162,7 +162,7 @@ OpenClaw integration is declared in `package.json`:
 {
   "version": "v2026.8.27",
   "openclaw": {
-    "version": "v2026.9.2",
+    "version": "v2026.9.6",
     "repo": "https://github.com/openclaw/openclaw.git"
   },
   "devServer": {

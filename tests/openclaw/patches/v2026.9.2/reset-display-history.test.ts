@@ -37,7 +37,7 @@ function restorePristineFixture(content: string): string {
     .replace(windowCapability, 'return $1;');
 }
 
-describe('JustDo reset display-history patch', () => {
+describe.skipIf(JSON.parse(fs.readFileSync(path.resolve('package.json'), 'utf8')).openclaw.version !== 'v2026.9.2')('JustDo reset display-history patch', () => {
   test.each([
     'function resolveVisibleHistoryProjection(',
     'function readLatestActiveBoundaryMetadata(',

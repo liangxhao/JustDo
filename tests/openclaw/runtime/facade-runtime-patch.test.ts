@@ -21,12 +21,12 @@ const liveRuntimeHasContract = (() => {
       fs.readFileSync(path.join(runtimeRoot, 'runtime-build-info.json'), 'utf8'),
     ) as { openclawVersion?: string };
     return (
-      info.openclawVersion === 'v2026.9.2' &&
+      info.openclawVersion === 'v2026.9.6' &&
       fs
         .readdirSync(path.join(runtimeRoot, 'dist'))
         .some(
           name =>
-            /^facade-runtime-.*\.js$/u.test(name) &&
+            /^facade-runtime-.*\.m?js$/u.test(name) &&
             fs.readFileSync(path.join(runtimeRoot, 'dist', name), 'utf8').includes(CONTRACT),
         )
     );
@@ -55,7 +55,7 @@ function pristineFacadeFixture(): string {
     '  return nodeRequire(FACADE_ACTIVATION_CHECK_RUNTIME_CANDIDATES[0]);',
     '}',
     'function loadFacadeActivationCheckRuntime() {',
-    '  return loadFacadeActivationCheckRuntimeFromCandidates();',
+    '  throw new Error("Host facade activation runtime requires native loading:");',
     '}',
     'async function loadFacadeActivationCheckRuntimeAsync() {',
     '  return loadFacadeActivationCheckRuntimeFromCandidates();',
@@ -71,22 +71,22 @@ function pristineFacadeFixture(): string {
 }
 
 describe('OpenClaw facade runtime packaging transform', () => {
-  test('rewrites the v2026.9.2 loader shape, verifies it, and rejects historical markers', () => {
+  test('rewrites the v2026.9.6 loader shape, verifies it, and rejects historical markers', () => {
     const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-facade-runtime-'));
     const distRoot = path.join(fixtureRoot, 'dist');
-    const facadePath = path.join(distRoot, 'facade-runtime-fixture.js');
+    const facadePath = path.join(distRoot, 'facade-runtime-fixture.mjs');
     fs.mkdirSync(distRoot, { recursive: true });
     try {
       fs.writeFileSync(facadePath, pristineFacadeFixture());
       expect(patchFacadeRuntime(fixtureRoot)).toEqual([
-        path.join('dist', 'facade-runtime-fixture.js'),
+        path.join('dist', 'facade-runtime-fixture.mjs'),
       ]);
       expect(() => verifyFacadeRuntime(fixtureRoot)).not.toThrow();
       expect(patchFacadeRuntime(fixtureRoot)).toEqual([]);
 
       fs.writeFileSync(
         facadePath,
-        fs.readFileSync(facadePath, 'utf8').replace(CONTRACT, CONTRACT.replace('9_2', '8_2')),
+        fs.readFileSync(facadePath, 'utf8').replace(CONTRACT, CONTRACT.replace('9_6', '9_2')),
       );
       expect(() => verifyFacadeRuntime(fixtureRoot)).toThrow('historical or partial');
       expect(() => patchFacadeRuntime(fixtureRoot)).toThrow('historical or partial');

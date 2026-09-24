@@ -2586,6 +2586,9 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                     card={progressCard}
                     runState={progressCardRunState}
                     onClose={progressCardVisibility.hide}
+                    onRefresh={() =>
+                      chatWrapperRef.current?.refreshProgressCard() ?? Promise.resolve(false)
+                    }
                   />
                 </div>
               </div>

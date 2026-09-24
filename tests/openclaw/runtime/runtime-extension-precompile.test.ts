@@ -24,14 +24,14 @@ function createFixture() {
   fs.mkdirSync(runtimeRoot, { recursive: true });
   fs.writeFileSync(
     path.join(repoRoot, 'package.json'),
-    JSON.stringify({ openclaw: { version: 'v2026.9.2' } }),
+    JSON.stringify({ openclaw: { version: 'v2026.9.6' } }),
   );
   for (const relative of ['reference/templates', 'channels', 'gateway']) {
     fs.mkdirSync(path.join(repoRoot, 'resources', 'docs', relative), { recursive: true });
   }
   fs.writeFileSync(path.join(repoRoot, 'resources/docs/gateway/config-channels.md'), 'fixture');
   fs.writeFileSync(path.join(repoRoot, 'resources/openclaw-extension-prune.json'), JSON.stringify({
-    version: 1, openclawVersion: '2026.9.2', keep: [], remove: [],
+    version: 1, openclawVersion: '2026.9.6', keep: [], remove: [],
   }));
   fs.cpSync(path.join(process.cwd(), 'openclaw-extensions/runtime-services'), sourceDir, { recursive: true });
   vi.spyOn(console, 'log').mockImplementation(() => undefined);

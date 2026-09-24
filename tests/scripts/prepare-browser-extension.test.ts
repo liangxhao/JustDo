@@ -101,7 +101,7 @@ describe('browser extension preparation', () => {
       expect(second.productName).toBe(projectProductName);
       expect(manifest).toMatchObject({
         name: projectProductName,
-        version: '2.2.0',
+        version: '2.3.0',
         action: { default_title: projectProductName },
       });
       expect(manifest.description).toContain(projectProductName);
@@ -122,17 +122,10 @@ describe('browser extension preparation', () => {
       expect(relayCore).toContain('authVersion');
       expect(fs.existsSync(path.join(second.outputDir, 'modules', 'relay-auth-v2.js'))).toBe(true);
       expect(fs.existsSync(path.join(second.outputDir, 'options.html'))).toBe(true);
-      expect(optionsHtml).not.toContain('<h2>Diagnostics</h2>');
-      expect(optionsHtml).toContain('id="pairingForm" class="connection-form hidden"');
-      expect(optionsHtml).toMatch(
-        /<section id="connection">[\s\S]*id="pair"[\s\S]*id="disconnect"[\s\S]*<\/section>/,
-      );
-      expect(optionsHtml).toContain(
-        'id="pairedActions" class="connection-actions paired-actions hidden"',
-      );
-      expect(optionsJs).not.toContain('Paired; JustDo unavailable');
+      expect(optionsHtml).toContain('id="automaticSetup"');
+      expect(optionsHtml).toContain('id="useLocal"');
+      expect(optionsJs).toContain('setNativeBootstrapEnabled');
       expect(optionsJs).toContain('status.state === "connecting"');
-      expect(optionsJs).toContain('pairingForm.classList.toggle("hidden", status.paired');
       expect(optionsJs).toContain('if (succeeded) pairingString.value = ""');
       expect(optionsJs).toContain('"Pairing saved."');
       expect(optionsJs).toContain('setInterval(() =>');
@@ -172,10 +165,10 @@ describe('browser extension preparation', () => {
       expect(manifest.description).toContain('Acme');
       expect(optionsHtml).toContain('Connect to Acme');
       expect(optionsHtml).not.toContain('Use local OpenClaw');
-      expect(optionsHtml).not.toContain('automaticSetup');
-      expect(optionsHtml).not.toContain('openclaw browser');
+      expect(optionsHtml).toContain('automaticSetup');
+      expect(optionsHtml).toContain('openclaw browser');
       expect(popupHtml).toContain('Acme Browser');
-      expect(popupJs).toContain('Open Acme to finish setup');
+      expect(popupJs).toContain('Waiting for local Acme');
       expect(() => verifyBrowserExtension(outputDir, { repoRoot })).not.toThrow();
     } finally {
       fs.rmSync(repoRoot, { recursive: true, force: true });

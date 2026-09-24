@@ -1,7 +1,10 @@
 const connectionStatus = document.getElementById("connectionStatus");
+const bootstrapStatus = document.getElementById("bootstrapStatus");
+const automaticSetup = document.getElementById("automaticSetup");
 const accessMode = document.getElementById("accessMode");
 const pairingString = document.getElementById("pairingString");
 const pair = document.getElementById("pair");
+const useLocal = document.getElementById("useLocal");
 const disconnect = document.getElementById("disconnect");
 const message = document.getElementById("message");
 const retiredCustody = document.getElementById("retiredCustody");
@@ -15,9 +18,21 @@ async function refresh() {
       ? "Paired; automation paused"
       : status.state === "on"
         ? "Connected"
-        : "Paired; __PRODUCT_NAME__ unavailable"
+        : "Paired; relay unavailable"
     : "Not paired";
+  automaticSetup.checked = !status.nativeBootstrap?.disabled && !custodyBlocked;
+  bootstrapStatus.textContent = custodyBlocked
+    ? "Retired recovery state requires confirmation"
+    : status.nativeBootstrap?.disabled
+      ? "Automatic setup disabled"
+      : status.nativeBootstrap?.state === "manual_required"
+        ? `Manual setup required (${status.nativeBootstrap.failureCode ?? "unsupported topology"})`
+        : status.nativeBootstrap?.state === "retrying"
+          ? "Waiting for the local native host"
+          : "Automatic bootstrap ready";
   accessMode.value = status.accessMode === "selected" ? "selected" : "all";
+  automaticSetup.disabled = custodyBlocked;
+  useLocal.disabled = custodyBlocked;
   accessMode.disabled = !status.paired || custodyBlocked;
   pairingString.disabled = custodyBlocked;
   pair.disabled = custodyBlocked;
@@ -37,6 +52,22 @@ async function showResult(task, success) {
   await refresh();
 }
 
+automaticSetup.addEventListener("change", () => {
+  void showResult(
+    () =>
+      chrome.runtime.sendMessage({
+        type: "setNativeBootstrapEnabled",
+        enabled: automaticSetup.checked,
+      }),
+    automaticSetup.checked ? "Automatic setup enabled." : "Automatic setup disabled.",
+  );
+});
+useLocal.addEventListener("click", () => {
+  void showResult(
+    () => chrome.runtime.sendMessage({ type: "setNativeBootstrapEnabled", enabled: true }),
+    "Looking for local OpenClaw…",
+  );
+});
 accessMode.addEventListener("change", () => {
   void showResult(
     () => chrome.runtime.sendMessage({ type: "setAccessMode", accessMode: accessMode.value }),
@@ -51,11 +82,14 @@ pair.addEventListener("click", () => {
         pairingString: pairingString.value,
         accessMode: accessMode.value,
       }),
-    "Connected to __PRODUCT_NAME__.",
+    "Manual pairing saved.",
   );
 });
 disconnect.addEventListener("click", () => {
-  void showResult(() => chrome.runtime.sendMessage({ type: "unpair" }), "Disconnected.");
+  void showResult(
+    () => chrome.runtime.sendMessage({ type: "unpair" }),
+    "Disconnected. Automatic setup is disabled.",
+  );
 });
 
 void refresh();

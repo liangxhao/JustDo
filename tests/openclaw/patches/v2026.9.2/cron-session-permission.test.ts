@@ -179,7 +179,7 @@ function buildPayloadFromPatch(patch) {
 });
 
 const runtimeDir = path.resolve('vendor/openclaw-runtime/current/dist');
-describe.skipIf(!fs.existsSync(runtimeDir))('installed native exec policy integration', () => {
+describe.skipIf(!fs.existsSync(runtimeDir) || JSON.parse(fs.readFileSync(path.resolve('package.json'), 'utf8')).openclaw.version !== 'v2026.9.2')('installed native exec policy integration', () => {
   it('Full permits file changes outside the workspace and bypasses host approval floors', async () => {
     const file = fs.readdirSync(runtimeDir).find(name => name.startsWith('session-permission-exec-mode-') && name.endsWith('.js'))!;
     const runtime = await import(/* @vite-ignore */ pathToFileURL(path.join(runtimeDir, file)).href);

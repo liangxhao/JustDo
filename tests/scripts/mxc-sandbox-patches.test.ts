@@ -12,7 +12,7 @@ const pluginPatch = require('../../scripts/patch-mxc-sandbox-plugin.cjs') as {
   };
 };
 const runtimePatch =
-  require('../../scripts/patches/v2026.9.2/025-mxc-external-skill-paths.cjs') as {
+  require('../../scripts/patches/v2026.9.6/025-mxc-external-skill-paths.cjs') as {
     __testing: {
       MARKER: string;
       transformSkillRuntimePaths: (content: string, filePath: string) => string;

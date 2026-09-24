@@ -1408,3 +1408,13 @@ test('disables missed-job catch-up by default while preserving an explicit opt-i
   expect(buildManagedOpenClawCronConfig({ enabled: true }).skipMissedJobs).toBe(true);
   expect(buildManagedOpenClawCronConfig({ skipMissedJobs: false }).skipMissedJobs).toBe(false);
 });
+
+  test.each([OpenClawExtensionId.CODE_MODE_QUICKJS, OpenClawExtensionId.GITHUB])('retains %s in explicit allowlists while preserving disable', id => {
+    const defaults = buildDefaultOpenClawPluginEntries(candidate => candidate === id);
+    const merged = mergeOpenClawPluginConfig(
+      applyDefaultOpenClawPluginEntries({ allow: [], entries: { [id]: { enabled: false } } }, defaults),
+      {}, Object.keys(defaults),
+    );
+    expect(merged.allow).toContain(id);
+    expect(merged.entries).toEqual({ [id]: { enabled: false } });
+  });

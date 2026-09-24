@@ -1,6 +1,6 @@
 'use strict';
 
-// OpenClaw 2026.9.2 maps materialized skills back under the writable workspace
+// OpenClaw 2026.9.6 maps materialized skills back under the writable workspace
 // for Docker-style mounts. Windows ProcessContainer does not support path
 // remapping and correctly rejects that nested read-only/write overlap. JustDo
 // keeps the materialized skill copy outside the workspace and grants only that
@@ -13,8 +13,8 @@ const crypto = require('crypto');
 const nativeBinaries = require('../src/shared/security/mxcNativeBinaries.json');
 
 const SUPPORTED_VERSION = nativeBinaries.pluginVersion;
-const MARKER = 'JUSTDO_MXC_EXTERNAL_READONLY_SKILLS_V2026_9_2';
-const HOST_PREP_MARKER = 'JUSTDO_MXC_CAPABILITY_SID_HOST_PREP_V2026_9_2';
+const MARKER = 'JUSTDO_MXC_EXTERNAL_READONLY_SKILLS_V2026_9_6';
+const HOST_PREP_MARKER = 'JUSTDO_MXC_CAPABILITY_SID_HOST_PREP_V2026_9_6';
 const ORIGINAL = `\treturn [
 \t\t{
 \t\t\thostPath: path.join(params.agentWorkspaceDir, "skills"),

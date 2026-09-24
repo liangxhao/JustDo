@@ -11,38 +11,32 @@ const BROWSER_EXTENSION_ID = 'jboajogplelmaahjbomgflnfngpolgcb';
 const BROWSER_EXTENSION_PUBLIC_KEY =
   'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAskQFUZFtJ36I7FXfGPJj+twgXrJgQDKju1ZFrXBQo+UgapYI3c+kcVgBbq+nNbivgYHHV30B/5iI7AxJcJSa1xxa5h34AzKrmg5CoFjdykj3qWZUyDLtueEiJVIKSKLZTdpphy6yqE8IIu7b5l5ZhRwFBio17S+Fo+M/oRzearW+qxYWioIrdF4qRu7KSdKYSHE1grVLI1PCl0g04rY22ITyuBLup13NlJM8w2I20O+Alk4Pe/uO2nxBnaKwB+LrDgQ7U8P6/AO5D/hN+xNVQLgS/gMhEf+W7WpQXjpCadi8xOdpb5YlKXfQtcg9jvDzbSvqNaWIqKlPup54R8hR0wIDAQAB';
 const LOCKED_OPENCLAW_FILES = {
-  'THIRD_PARTY_NOTICES.txt': '63d37cb89bd2720875b6f196218f6800e6d12b7ac0f376b7a45af63e53b56053',
-  'background.js': 'd1fc72415c17ddc54845ff7f820ce8982ca02d26ae148c91737da11a32656f52',
-  'icons/icon128.png': '8f90c97fd5ac448444734af4bb203b8cbf9289d0c7f0f9e98d5b08d0c9b2b628',
-  'icons/icon16.png': '784551a58eb2f3fbbbabb8f417034c487af92e0514d278935ad7dcae900d3770',
-  'icons/icon32.png': '7466945442fa137cc0b8d11a15e6ddb57e3853e48548fd692c54cac2146753a9',
-  'icons/icon48.png': '9c2791a5fe13c847aeccd747a2a25fcd385de11075058dc8c5187a23feea523b',
-  'manifest.json': 'c490253b4e576959cc2db00bcb5479fb4a9f1f941b593b59486c95e6ccf59bfe',
-  'modules/native-bootstrap.js': '5965e593339eb1e94d187af27b783af1a5bb03502b5fd5991a8ef5772cd45f72',
-  'modules/popup-background.js': '2b8bf6741667558bc78cf0e76da54dc2ca0f073e367b08e106980392e1341fe8',
-  'modules/relay-auth-v2-crypto.js':
-    '207b3bd5f4cb376cd83ab4f6b4284e531a1aff7e0f737d844534ede5fd37ece1',
-  'modules/relay-auth-v2.js': 'a60cc11e197df11765c45dca3ca22f960683d34c95e2a047bac21ca580fc8b42',
-  'modules/relay-command-handler.js':
-    'a6f8c30560c43df77692d46e13cfe2707e4afef73ecd22edc529df7dfc9f4544',
-  'modules/relay-connection.js': '845940f4602b16dc7196a6ce951e21cfaddd5223c9c75f5fe819e9a19ff66d43',
-  'modules/relay-core.js': '3af45365b6007454645bbeaeaeb5cc2face87872341368309313369ec9cbef60',
-  'modules/relay-debugger.js': 'd6d2352bec8482d4a308aa53976789c750d28f216ad321a7ae66eb163e3509d6',
-  'modules/relay-tab-groups.js': 'dd355dd039431579f11a64893412e8c33f1d80a0f1c2e447eaa9971441c5403f',
-  'modules/tab-access-command-scope.js':
-    '0ec625b939845f1f35c33695a1117dca54b670e0db10f2350b4f9ceddd1aef61',
-  'modules/tab-access-events.js':
-    '60fcd8d5c5e09c57dffe7c7f22c6ca624ac41b67f4c12465510f06326380181b',
-  'modules/tab-access.js': 'a51e6ebd1726be757e950c1a2442123d17f43d3b61ce441278c581b263c5d374',
-  'modules/tab-document-provenance.js':
-    '84c9c39dc1c7feb19c29ac70db6c437bbbd7f0691c9f8e95fdb05f9c5fa70660',
-  'modules/tab-eligibility.js': '2d0f27e514014ed5e113510d35db6a1c5fc702783c3fe49706dd019c975a7e21',
-  'modules/tab-group-revocations.js':
-    '341b9489b8188d734fd19e622b7fb1f1844e4ffc6dcf119fbc34107bdc978936',
-  'options.html': 'b8441f94f67ff61a0c19bcf51b6530bc74503d8411a1cc649bfd281b9ee6aa8a',
-  'options.js': 'e786144dba7d79bfeab7e0aed94a248be2854123fefd815641c2f23d1c418922',
-  'popup.html': 'dfb8700f0674b14a68803dae8e35491da59067544a60298c583c3c1afc59ef12',
-  'popup.js': 'cd3a28916fe60ce627d46f2ba11f6e77aa92c67b95199e8bd3af2de69eae04d9',
+"THIRD_PARTY_NOTICES.txt": "aaef41044f3a3841c8c17351113c5f4f577845d82a5ba4f1650089b99323a2c7",
+"background.js": "f98b65adcc5cfcb1bd4ffb3b30f460bc5cf068c0bc7d2e1bd98748de79b13a29",
+"icons/icon128.png": "a745c50e0ecc40e1b0ef9c0e841ed7c968078c218a5ef15818ba661c7310a04d",
+"icons/icon16.png": "f374c44036f3ac0a30b9e5f99d6e902548616f7b11886bef18d20b8b8ce084a0",
+"icons/icon32.png": "092aea24a5edfc1907cf7964a5aaef7dbc5ae3b6c1fc581a7b4987f74a068268",
+"icons/icon48.png": "02619a3803614f185ccee73b7860dc8123d7074ce81f929125bc63bd3737d6d4",
+"manifest.json": "dcdea285b73e8541b88ad313b402a8a1752de3859a67531789073324d735c1da",
+"modules/native-bootstrap.js": "279029948909215bd7caebe3b2e43862140d2ff5b5459e1c111b07831f93aa2f",
+"modules/popup-background.js": "07cecec0f82f1025fc613a2ace1e6875943b4de1e515faebe1173271ce9b6162",
+"modules/relay-auth-v2-crypto.js": "207b3bd5f4cb376cd83ab4f6b4284e531a1aff7e0f737d844534ede5fd37ece1",
+"modules/relay-auth-v2.js": "a60cc11e197df11765c45dca3ca22f960683d34c95e2a047bac21ca580fc8b42",
+"modules/relay-command-handler.js": "cbc0ccef42e8aa2954fe2bc7210bed222a24a126c8ca054b5595ec66cfbbcb92",
+"modules/relay-connection.js": "845940f4602b16dc7196a6ce951e21cfaddd5223c9c75f5fe819e9a19ff66d43",
+"modules/relay-core.js": "068f371f0d6183cfb03f38166f0436ff3e4043735d1ca2c4c30c222a128b6373",
+"modules/relay-debugger.js": "d6d2352bec8482d4a308aa53976789c750d28f216ad321a7ae66eb163e3509d6",
+"modules/relay-tab-groups.js": "dd355dd039431579f11a64893412e8c33f1d80a0f1c2e447eaa9971441c5403f",
+"modules/tab-access-command-scope.js": "0ec625b939845f1f35c33695a1117dca54b670e0db10f2350b4f9ceddd1aef61",
+"modules/tab-access-events.js": "b0e572d8c2731753bcd21654741d2bff3d0eaafa98450252e3bd3d74a9d939c4",
+"modules/tab-access.js": "d5ddc87962ac118cc127be0d2deebcef36ec5e921a95142a807e1db3049287a6",
+"modules/tab-document-provenance.js": "ef9b98cae4d8ab536a565def6bf315774ee43806f07582f187ca9cad7a40bb12",
+"modules/tab-eligibility.js": "2d0f27e514014ed5e113510d35db6a1c5fc702783c3fe49706dd019c975a7e21",
+"modules/tab-group-revocations.js": "341b9489b8188d734fd19e622b7fb1f1844e4ffc6dcf119fbc34107bdc978936",
+"options.html": "39a2f3e94151c0eeca125412e0b2dee951edd37ab39a931242ce439967037ca5",
+"options.js": "91f3f74b307c834ad3537d87ea81a44350228bf4ac0c069591c7219dbc02b763",
+"popup.html": "aeece4f271f407d4604cb8b0b0ea8223decb4a829f2cb74291f3357ed7fea321",
+"popup.js": "4900edd5e7e1995a3cf6bfcaf55428d05fa0385a47c0b2154a69db7e8f460c81"
 };
 const CONVERSATION_OVERLAY_FILES = [
   'THIRD_PARTY_NOTICES.append.txt',
@@ -146,6 +140,9 @@ function applyBackgroundOverlay(value) {
 
 function applyManifestOverlay(value) {
   const manifest = JSON.parse(value);
+  manifest.name = PRODUCT_NAME_TOKEN;
+  manifest.action.default_title = PRODUCT_NAME_TOKEN;
+  manifest.description = manifest.description.replaceAll("OpenClaw", PRODUCT_NAME_TOKEN);
   manifest.key = BROWSER_EXTENSION_PUBLIC_KEY;
   manifest.optional_host_permissions = ['http://*/*', 'https://*/*'];
   manifest.permissions = [
@@ -161,162 +158,25 @@ function applyManifestOverlay(value) {
 }
 
 function applyPairingLayoutOverlay(value) {
-  let result = replaceIntegrationAnchor(
-    value,
-    `      h2 {
-        font-size: 15px;
-        margin: 0 0 10px;
-      }`,
-    `      h2,
-      h3 {
-        margin: 0 0 10px;
-      }
-      h2 {
-        font-size: 15px;
-      }
-      h3 {
-        font-size: 14px;
-      }`,
-    'pairing headings',
-  );
-  result = replaceIntegrationAnchor(
-    result,
-    `      .status {
-        margin: 8px 0 0;
-      }`,
-    `      .status {
-        margin: 8px 0 0;
-      }
-      .connection-form {
-        margin-top: 16px;
-        padding-top: 16px;
-        border-top: 1px solid #343941;
-      }
-      .connection-actions {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-      }
-      .connection-actions button {
-        margin-right: 0;
-      }
-      .paired-actions {
-        margin-top: 16px;
-        padding-top: 16px;
-        border-top: 1px solid #343941;
-      }`,
-    'pairing connection styles',
-  );
-  result = replaceIntegrationAnchor(
-    result,
-    `    <section>
-      <h2>Connection</h2>
-      <p id="connectionStatus" class="status">Checking…</p>
-    </section>`,
-    `    <section id="connection">
-      <h2>Connection</h2>
-      <p id="connectionStatus" class="status">Checking…</p>
-      <div id="pairingForm" class="connection-form hidden">
-        <h3>Connect to __PRODUCT_NAME__</h3>
-        <p class="muted">
-          In __PRODUCT_NAME__, open Settings &gt; Browser, copy the extension pairing information,
-          then paste it below.
-        </p>
-        <textarea
-          id="pairingString"
-          spellcheck="false"
-          placeholder="Paste the pairing string"
-        ></textarea>
-        <div class="connection-actions">
-          <button id="pair" class="primary" type="button">Connect</button>
-        </div>
-      </div>
-      <div id="pairedActions" class="connection-actions paired-actions hidden">
-        <button id="disconnect" class="danger" type="button">Disconnect</button>
-      </div>
-      <p id="message" class="status" aria-live="polite"></p>
-    </section>`,
-    'connection section',
-  );
-  result = replaceIntegrationAnchor(
-    result,
-    `
-    <section>
-      <h2>Connect to __PRODUCT_NAME__</h2>
-      <p class="muted">
-        In __PRODUCT_NAME__, open Settings &gt; Browser, copy the extension pairing information,
-        then paste it below.
-      </p>
-      <textarea
-        id="pairingString"
-        spellcheck="false"
-        placeholder="Paste the pairing string"
-      ></textarea>
-      <button id="pair" class="primary" type="button">Connect</button>
-    </section>
-
-    <section>
-      <h2>Diagnostics</h2>
-      <button id="disconnect" class="danger" type="button">Disconnect</button>
-    </section>
-    <p id="message" class="status"></p>`,
-    '',
-    'legacy connection sections',
-  );
-  result = replaceIntegrationAnchor(
-    result,
+  let result = replaceIntegrationAnchor(value,
+    '<h2>Advanced manual pairing</h2>',
+    '<h2>Connect to __PRODUCT_NAME__</h2>', 'manual pairing title');
+  result = replaceIntegrationAnchor(result,
+    'Use this only for a direct remote Gateway or when automatic setup reports that manual action\n        is required.',
+    'In __PRODUCT_NAME__, open Settings &gt; Browser, copy the extension pairing information,\n        then paste it below.', 'manual pairing instructions');
+  return replaceIntegrationAnchor(result,
     '<script type="module" src="options.js"></script>',
     '<link rel="stylesheet" href="appearance.css" />\n' +
       '    <script type="module" src="modules/appearance-settings.js"></script>\n' +
       '    <script type="module" src="options.js"></script>',
-    'conversation appearance settings',
-  );
-  return result;
+    'conversation appearance settings');
 }
 
 function applyPairingBehaviorOverlay(value) {
-  let result = replaceIntegrationAnchor(
-    value,
-    'const pairingString = document.getElementById("pairingString");',
-    'const pairingString = document.getElementById("pairingString");\n' +
-      'const pairingForm = document.getElementById("pairingForm");\n' +
-      'const pairedActions = document.getElementById("pairedActions");',
-    'pairing controls',
-  );
-  result = replaceIntegrationAnchor(
-    result,
-    `  connectionStatus.textContent = status.paired
-    ? custodyBlocked
-      ? "Paired; automation paused"
-      : status.state === "on"
-        ? "Connected"
-        : "Paired; __PRODUCT_NAME__ unavailable"
-    : "Not paired";
-  accessMode.value = status.accessMode === "selected" ? "selected" : "all";
-  accessMode.disabled = !status.paired || custodyBlocked;
-  pairingString.disabled = custodyBlocked;
-  pair.disabled = custodyBlocked;
-  disconnect.disabled = !status.paired && !custodyBlocked;`,
-    `  connectionStatus.textContent = !status.paired
-    ? "Not paired"
-    : custodyBlocked
-      ? "Paired; automation paused"
-      : status.state === "on"
-        ? "Connected"
-        : status.state === "connecting"
-          ? "Connecting…"
-          : status.state === "error"
-            ? (status.hint ?? "Connection unavailable")
-            : "Paired; waiting to connect…";
-  accessMode.value = status.accessMode === "selected" ? "selected" : "all";
-  accessMode.disabled = !status.paired || custodyBlocked;
-  pairingForm.classList.toggle("hidden", status.paired || custodyBlocked);
-  pairedActions.classList.toggle("hidden", !status.paired && !custodyBlocked);
-  pairingString.disabled = custodyBlocked;
-  pair.disabled = custodyBlocked;
-  disconnect.disabled = !status.paired && !custodyBlocked;`,
-    'pairing status projection',
-  );
+  let result = replaceIntegrationAnchor(value,
+    ': "Paired; relay unavailable"',
+    ': status.state === "connecting" ? "Connecting…" : "Paired; relay unavailable"',
+    'pairing connection state');
   result = replaceIntegrationAnchor(
     result,
     `async function showResult(task, success) {
@@ -358,7 +218,7 @@ function applyPairingBehaviorOverlay(value) {
         pairingString: pairingString.value,
         accessMode: accessMode.value,
       }),
-    "Connected to __PRODUCT_NAME__.",
+    "Manual pairing saved.",
   );
 });`,
     `pair.addEventListener("click", () => {
@@ -438,7 +298,10 @@ function buildExpectedExtensionFiles(repoRoot, productName) {
 
   for (const [relativePath, content] of files) {
     if (relativePath.endsWith('.png')) continue;
-    files.set(relativePath, Buffer.from(renderProductName(content.toString('utf8'), productName)));
+    const text = ['options.html', 'options.js', 'popup.html', 'popup.js'].includes(relativePath)
+      ? content.toString('utf8').replaceAll('OpenClaw', PRODUCT_NAME_TOKEN)
+      : content.toString('utf8');
+    files.set(relativePath, Buffer.from(renderProductName(text, productName)));
   }
   return { files, openClawDir, overlayDir };
 }
@@ -465,7 +328,7 @@ function verifyBrowserExtension(extensionDir, options = {}) {
   if (manifest.name !== productName || manifest.action?.default_title !== productName) {
     throw new Error('Browser extension identity must match package.json productName.');
   }
-  if (manifest.version !== '2.2.0') {
+  if (manifest.version !== '2.3.0') {
     throw new Error(`Unsupported OpenClaw browser extension version: ${manifest.version}.`);
   }
 

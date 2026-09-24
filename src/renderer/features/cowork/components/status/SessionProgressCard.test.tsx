@@ -153,3 +153,37 @@ describe('SessionProgressCard', () => {
     },
   );
 });
+
+it('keeps the saved card while refreshing and unlocks after a new saved revision', async () => {
+  const card: ProgressCard = {
+    sessionKey: 'agent:main:justdo:refresh',
+    revision: 7,
+    updatedAt: Date.now(),
+    markdown: 'Saved status',
+  };
+  const onRefresh = vi.fn().mockResolvedValue(true);
+  const { rerender } = render(
+    <SessionProgressCard card={card} runState="idle" onClose={vi.fn()} onRefresh={onRefresh} />,
+  );
+  const button = screen.getByRole('button', { name: i18nService.t('coworkProgressCardRefresh') });
+  fireEvent.click(button);
+  await waitFor(() => expect(onRefresh).toHaveBeenCalledOnce());
+  expect((button as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.getByText('Saved status')).toBeTruthy();
+  rerender(
+    <SessionProgressCard
+      card={{ ...card, revision: 8, markdown: 'New status' }}
+      runState="idle"
+      onClose={vi.fn()}
+      onRefresh={onRefresh}
+    />,
+  );
+  expect(
+    (
+      screen.getByRole('button', {
+        name: i18nService.t('coworkProgressCardRefresh'),
+      }) as HTMLButtonElement
+    ).disabled,
+  ).toBe(false);
+  expect(screen.getByText('New status')).toBeTruthy();
+});
