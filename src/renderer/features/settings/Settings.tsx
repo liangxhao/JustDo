@@ -10,7 +10,6 @@ import {
   GlobeAltIcon,
   MicrophoneIcon,
   PaintBrushIcon,
-  PencilSquareIcon,
   PuzzlePieceIcon,
   ShieldCheckIcon,
   XCircleIcon,
@@ -20,18 +19,12 @@ import {
   DEFAULT_MAX_RETAINED_DISPLAY_TABS,
   normalizeMaxRetainedDisplayTabs,
 } from '@shared/cowork/displayTabRetention';
-import { buildOpenAIJsonRequestHeaders } from '@shared/cowork/modelRequestHeaders';
 import {
   DEFAULT_MAX_GOAL_CONTINUATION_TURNS,
   normalizeMaxGoalContinuationTurns,
 } from '@shared/cowork/sessionGoal';
 import { NetworkFetchPurpose } from '@shared/network/network';
-import {
-  type CustomProxyConfig,
-  defaultCustomProxyConfig,
-  ProxyMode,
-  ProxyProtocol,
-} from '@shared/network/proxy';
+import { type CustomProxyConfig, defaultCustomProxyConfig, ProxyMode } from '@shared/network/proxy';
 import {
   type AgentRuntimeSettings,
   createDefaultAgentRuntimeSettings,
@@ -94,12 +87,7 @@ import IntegrationSettingsTab, {
   type IntegrationSettingsViewId,
 } from '@/features/settings/integrations/IntegrationSettingsTab';
 import { hasConfirmedModelCapabilities } from '@/features/settings/models/modelCapabilityState';
-import {
-  buildModelConnectionTestRequestBody,
-  MODEL_CONNECTION_TEST_TIMEOUT_MS,
-  selectModelsForConnectionTest,
-  withModelConnectionTestTimeout,
-} from '@/features/settings/models/modelConnectionTest';
+import { MODEL_CONNECTION_TEST_TIMEOUT_MS } from '@/features/settings/models/modelConnectionTest';
 import { validateModelForm } from '@/features/settings/models/modelFormValidation';
 import { mergeRefreshedBuiltinProvider } from '@/features/settings/models/modelSettingsRefresh';
 import ModelSettingsTab, { type ModelKind } from '@/features/settings/models/ModelSettingsTab';
@@ -112,7 +100,6 @@ import {
   type NonLanguageModelProviders,
 } from '@/features/settings/models/nonLanguageModelConfig';
 import type { NonLanguageModelKind } from '@/features/settings/models/NonLanguageModelSettings';
-import AppearanceSettingsTab from '@/features/settings/preferences/AppearanceSettingsTab';
 import ShortcutsSettings, {
   findShortcutConflict,
   shortcutLabelMap,
@@ -128,16 +115,34 @@ import {
 } from '@/features/settings/settingsPersistence';
 import { createSettingsPreviewRestore } from '@/features/settings/settingsPreviewRestore';
 import VoiceSettingsTab from '@/features/settings/speech/VoiceSettingsTab';
-import AppUpdateFrequencySetting from '@/features/settings/updates/AppUpdateFrequencySetting';
 import AppUpdateSection from '@/features/settings/updates/AppUpdateSection';
 import UsageStatsTab from '@/features/settings/usage/UsageStatsTab';
 import { configService } from '@/services/config';
 import { i18nService, LanguageType } from '@/services/i18n';
 import { themeService } from '@/services/theme';
 import ErrorMessage from '@/shared/components/ErrorMessage';
-import ThemedSelect from '@/shared/components/ui/ThemedSelect';
 
 import appLogoUrl from '../../../../resources/logo.png';
+import { createModelConnectionTestActions } from './models/modelConnectionTestActions';
+import {
+  getConnectivityErrorMessage,
+  getCustomProviderKeysInOrder,
+  getDefaultActiveProvider,
+  getDefaultProviders,
+  getNextCustomProvider,
+  getProviderDefaultBaseUrl,
+  isProviderReadOnly,
+  ModelConnectionTestStatus,
+  normalizeProvidersForSave,
+  normalizeProvidersForSettings,
+  ProviderConnectionTestResult,
+  providerRequiresApiKey,
+  ProvidersConfig,
+  ProviderType,
+  toConnectivityRecord,
+} from './models/providerSettingsConfig';
+import { AppearancePreferences } from './preferences/AppearancePreferences';
+import { GeneralSettingsPage } from './preferences/GeneralSettingsPage';
 
 type TabType =
   | 'agents'
@@ -169,51 +174,8 @@ export type SettingsOpenOptions = {
 interface SettingsProps extends SettingsOpenOptions {
   onClose: () => void;
 }
-
-type ProviderType = string;
-type ProvidersConfig = NonNullable<AppConfig['providers']>;
-type ProviderConfig = ProvidersConfig[string];
-type ProviderConnectionTestResult = {
-  success: boolean;
-  message: string;
-  provider: ProviderType;
-  providerName: string;
-  baseUrl?: string;
-  modelLabel?: string;
-  modelId?: string;
-  log?: string;
-  isRunning?: boolean;
-  modelResults?: ModelConnectionTestResult[];
-};
-
-type ModelConnectionTestResult = {
-  success: boolean;
-  modelLabel: string;
-  modelId: string;
-  detail: string;
-  log?: string;
-  status?: 'pending' | 'testing' | 'success' | 'failed';
-};
-type ModelConnectionTestStatus = 'success' | 'failed';
-
-const providerRequiresApiKey = (provider: ProviderType) => provider !== 'builtin_models';
-const isProviderReadOnly = (provider: ProviderType, config?: ProviderConfig): boolean =>
-  provider === 'builtin_models' || config?.readonly === true;
-const getProviderDefaultBaseUrl = (provider: ProviderType): string | null =>
-  defaultConfig.providers?.[provider]?.baseUrl ?? null;
-const resolveBaseUrl = (provider: ProviderType, baseUrl: string): string => {
-  if (baseUrl.trim()) {
-    return baseUrl;
-  }
-  return getProviderDefaultBaseUrl(provider) || '';
-};
-const CONNECTIVITY_TEST_TOKEN_BUDGET = 64;
 const MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
 const SAVE_SUCCESS_FEEDBACK_DURATION_MS = 1_800;
-const APPEARANCE_PREVIEW_CARD_CLASS_NAME =
-  'flex flex-col items-center rounded-xl border-2 p-2 transition-colors cursor-pointer';
-const APPEARANCE_PREVIEW_CLASS_NAME = 'mb-1.5 h-auto w-full overflow-hidden rounded-md';
-const APPEARANCE_PREVIEW_LABEL_CLASS_NAME = 'w-full truncate text-center text-xs font-medium';
 const buildModelDiscoveryHeaders = (
   apiKey: string,
   customHeaders?: Record<string, string>,
@@ -237,174 +199,6 @@ const withTimeout = <T,>(promise: Promise<T>, timeoutMs: number, message: string
       },
     );
   });
-
-const waitForNextPaint = () =>
-  new Promise<void>(resolve => {
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => resolve());
-    });
-  });
-
-const hideBuiltinModelUrlFromLog = (log?: string): string | undefined => {
-  if (!log) {
-    return log;
-  }
-  return log
-    .split('\n')
-    .filter(line => !line.startsWith(`${i18nService.t('testRequestUrl')}:`))
-    .join('\n');
-};
-
-const hideBuiltinModelUrlFromResult = (
-  result: ModelConnectionTestResult,
-): ModelConnectionTestResult => ({
-  ...result,
-  log: hideBuiltinModelUrlFromLog(result.log),
-});
-
-const stringifyConnectivityLogValue = (value: unknown): string => {
-  if (typeof value === 'string') {
-    return value;
-  }
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-};
-
-const toConnectivityRecord = (value: unknown): Record<string, unknown> | null =>
-  value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-
-const getConnectivityErrorMessage = (data: unknown): string | null => {
-  const record = toConnectivityRecord(data);
-  if (!record) {
-    return typeof data === 'string' && data.trim() ? data : null;
-  }
-
-  const error = toConnectivityRecord(record.error);
-  if (typeof error?.message === 'string' && error.message.trim()) {
-    return error.message;
-  }
-
-  if (typeof record.message === 'string' && record.message.trim()) {
-    return record.message;
-  }
-
-  return null;
-};
-
-const isValidConnectivityResponse = (data: unknown): boolean => {
-  const record = toConnectivityRecord(data);
-  if (!record || record.error) {
-    return false;
-  }
-
-  const choices = Array.isArray(record.choices) ? record.choices : [];
-  return choices.some(choice => {
-    const choiceRecord = toConnectivityRecord(choice);
-    if (!choiceRecord) {
-      return false;
-    }
-
-    const message = toConnectivityRecord(choiceRecord.message);
-    const delta = toConnectivityRecord(choiceRecord.delta);
-    const hasContent =
-      (typeof message?.content === 'string' && message.content.length > 0) ||
-      (typeof message?.reasoning_content === 'string' && message.reasoning_content.length > 0) ||
-      (typeof delta?.content === 'string' && delta.content.length > 0) ||
-      (typeof delta?.reasoning_content === 'string' && delta.reasoning_content.length > 0) ||
-      (typeof choiceRecord.text === 'string' && choiceRecord.text.length > 0);
-    const hasToolCalls =
-      Array.isArray(message?.tool_calls) ||
-      Array.isArray(delta?.tool_calls) ||
-      typeof message?.function_call === 'object';
-    const reachedTokenLimit = choiceRecord.finish_reason === 'length';
-
-    return hasContent || hasToolCalls || reachedTokenLimit;
-  });
-};
-
-const getDefaultProviders = (): ProvidersConfig => {
-  const providers = (defaultConfig.providers ?? {}) as ProvidersConfig;
-  const entries = Object.entries(providers) as Array<[string, ProviderConfig]>;
-  const secureSuffix = i18nService.t('modelSuffixSecure');
-  return Object.fromEntries(
-    entries.map(([providerKey, providerConfig]) => [
-      providerKey,
-      {
-        ...providerConfig,
-        models: providerConfig.models?.map(model => ({
-          ...model,
-          name: model.name.replace('(Secure)', secureSuffix),
-          enabled: model.enabled ?? true,
-          supportsImage: model.supportsImage ?? false,
-        })),
-      },
-    ]),
-  ) as ProvidersConfig;
-};
-
-const normalizeProvidersForSettings = (providers: ProvidersConfig): ProvidersConfig =>
-  Object.fromEntries(
-    Object.entries(providers).map(([providerKey, providerConfig]) => [
-      providerKey,
-      {
-        ...providerConfig,
-        apiFormat: 'openai',
-        models: providerConfig.models?.map(model => ({
-          ...model,
-          enabled: model.enabled ?? true,
-          supportsImage: model.supportsImage ?? false,
-        })),
-      },
-    ]),
-  ) as ProvidersConfig;
-
-const normalizeProvidersForSave = (providers: ProvidersConfig): ProvidersConfig =>
-  Object.fromEntries(
-    Object.entries(providers).map(([providerKey, providerConfig]) => [
-      isCustomProvider(providerKey)
-        ? normalizeOpenClawProviderId(
-            providerConfig.displayName?.trim() || getCustomProviderDefaultName(providerKey),
-          )
-        : providerKey,
-      {
-        ...providerConfig,
-        ...(isBuiltinModelsProvider(providerKey) ? { headers: undefined } : {}),
-        displayName:
-          isCustomProvider(providerKey) && !providerConfig.displayName?.trim()
-            ? getCustomProviderDefaultName(providerKey)
-            : providerConfig.displayName?.trim(),
-        apiFormat: 'openai',
-        baseUrl: resolveBaseUrl(providerKey, providerConfig.baseUrl),
-      },
-    ]),
-  ) as ProvidersConfig;
-
-const getDefaultActiveProvider = (): ProviderType => {
-  const providers = (defaultConfig.providers ?? {}) as ProvidersConfig;
-  const firstEnabledProvider = Object.keys(providers).find(
-    providerKey => providers[providerKey]?.enabled,
-  );
-  return firstEnabledProvider ?? 'builtin_models';
-};
-
-const getCustomProviderKeysInOrder = (providers: ProvidersConfig): string[] =>
-  Object.keys(providers).filter(isCustomProvider);
-
-const getNextCustomProvider = (providers: ProvidersConfig): { key: string; name: string } => {
-  const usedKeys = new Set(Object.keys(providers));
-  let index = 1;
-  while (true) {
-    const name = index === 1 ? 'Custom' : `Custom ${index}`;
-    const key = normalizeOpenClawProviderId(name);
-    if (!usedKeys.has(key)) return { key, name };
-    index += 1;
-  }
-};
 
 const Settings: React.FC<SettingsProps> = ({
   onClose,
@@ -1816,24 +1610,19 @@ const Settings: React.FC<SettingsProps> = ({
     }
   };
 
-  const showTestResultModal = (
-    result: Omit<ProviderConnectionTestResult, 'provider' | 'providerName'>,
-    provider: ProviderType,
-  ) => {
-    const providerConfig = providers[provider];
-    const shouldHideUrl = isBuiltinModelsProvider(provider);
-    setTestResult({
-      ...result,
-      baseUrl: shouldHideUrl ? undefined : result.baseUrl,
-      log: shouldHideUrl ? hideBuiltinModelUrlFromLog(result.log) : result.log,
-      modelResults: shouldHideUrl
-        ? result.modelResults?.map(hideBuiltinModelUrlFromResult)
-        : result.modelResults,
-      provider,
-      providerName: getProviderDisplayName(provider, providerConfig),
-    });
-    setIsTestResultModalOpen(true);
-  };
+  const { handleTestConnection } = createModelConnectionTestActions({
+    providers,
+    setTestResult,
+    setIsTestResultModalOpen,
+    setModelConnectionTestStatuses,
+    setProviders,
+    cancelConnectionTest,
+    activeProvider,
+    connectionTestRef,
+    setIsTesting,
+    isDetectingModels,
+    enableProvider,
+  });
 
   const handleProxyModeChange = (mode: ProxyMode) => {
     setProxyMode(mode);
@@ -1846,316 +1635,7 @@ const Settings: React.FC<SettingsProps> = ({
     }));
   };
 
-  const updateConnectionTestModelResult = (
-    modelId: string,
-    nextResult: ModelConnectionTestResult,
-  ) => {
-    setTestResult(current => {
-      if (!current) {
-        return current;
-      }
-
-      return {
-        ...current,
-        modelResults: current.modelResults?.map(result =>
-          result.modelId === modelId
-            ? current.provider === 'builtin_models'
-              ? hideBuiltinModelUrlFromResult(nextResult)
-              : nextResult
-            : result,
-        ),
-      };
-    });
-  };
-
-  const applyModelConnectionTestOutcome = (
-    provider: ProviderType,
-    result: ModelConnectionTestResult,
-  ) => {
-    const status: ModelConnectionTestStatus = result.success ? 'success' : 'failed';
-    setModelConnectionTestStatuses(current => ({
-      ...current,
-      [provider]: {
-        ...current[provider],
-        [result.modelId]: status,
-      },
-    }));
-    if (!result.success) {
-      setProviders(current => ({
-        ...current,
-        [provider]: {
-          ...current[provider],
-          models: (current[provider].models ?? []).map(model =>
-            model.id === result.modelId ? { ...model, enabled: false } : model,
-          ),
-        },
-      }));
-    }
-  };
-
   // 测试 API 连接
-  const handleTestConnection = async (modelId?: string) => {
-    cancelConnectionTest();
-    const testingProvider = activeProvider;
-    const providerConfig = providers[testingProvider];
-    const testGeneration = connectionTestRef.current.generation;
-    const isCurrentTest = () => connectionTestRef.current.generation === testGeneration;
-    setIsTesting(true);
-    setTestResult(null);
-    setModelConnectionTestStatuses(current => ({
-      ...current,
-      [testingProvider]: modelId
-        ? Object.fromEntries(
-            Object.entries(current[testingProvider] ?? {}).filter(
-              ([testedModelId]) => testedModelId !== modelId,
-            ),
-          )
-        : {},
-    }));
-
-    // Check if provider has valid authentication
-    if (
-      (providerRequiresApiKey(testingProvider) &&
-        (!providerConfig.apiKey.trim() || !providerConfig.baseUrl.trim())) ||
-      isDetectingModels
-    ) {
-      setIsTesting(false);
-      connectionTestRef.current.requestId = null;
-      return;
-    }
-
-    const originalModels = providerConfig.models ?? [];
-    if (originalModels.length === 0) {
-      showTestResultModal(
-        { success: false, message: i18nService.t('noModelsConfigured') },
-        testingProvider,
-      );
-      setIsTesting(false);
-      connectionTestRef.current.requestId = null;
-      return;
-    }
-
-    const modelsToTest = selectModelsForConnectionTest(originalModels, modelId).map(model => ({
-      ...model,
-    }));
-    if (modelsToTest.length === 0) {
-      setIsTesting(false);
-      connectionTestRef.current.requestId = null;
-      return;
-    }
-
-    try {
-      const effectiveBaseUrl = resolveBaseUrl(testingProvider, providerConfig.baseUrl);
-      const normalizedBaseUrl = effectiveBaseUrl.replace(/\/+$/, '');
-      const effectiveApiKey = providerConfig.apiKey;
-      const openaiUrl = `${normalizedBaseUrl}/chat/completions`;
-      showTestResultModal(
-        {
-          success: false,
-          isRunning: true,
-          message: i18nService.t('testing'),
-          baseUrl: normalizedBaseUrl,
-          modelResults: modelsToTest.map(model => ({
-            success: false,
-            status: 'pending',
-            modelLabel: model.name?.trim() || model.id,
-            modelId: model.id,
-            detail: i18nService.t('connectionTestPending'),
-          })),
-        },
-        testingProvider,
-      );
-
-      const results: ModelConnectionTestResult[] = [];
-      for (const model of modelsToTest) {
-        if (!isCurrentTest()) {
-          return;
-        }
-        const modelLabel = model.name?.trim() || model.id;
-        updateConnectionTestModelResult(model.id, {
-          success: false,
-          status: 'testing',
-          modelLabel,
-          modelId: model.id,
-          detail: i18nService.t('connectionTestRunning'),
-        });
-        await waitForNextPaint();
-        if (!isCurrentTest()) {
-          return;
-        }
-
-        const requestBody = buildModelConnectionTestRequestBody(
-          model.id,
-          CONNECTIVITY_TEST_TOKEN_BUDGET,
-          isBuiltinModelsProvider(testingProvider),
-        );
-        const headers = mergeModelProviderHeaders(
-          buildOpenAIJsonRequestHeaders(requestBody, effectiveApiKey, {
-            includeContentLength: false,
-          }),
-          isBuiltinModelsProvider(testingProvider) ? undefined : providerConfig.headers,
-        );
-        const requestId = `model-connection-test-${crypto.randomUUID()}`;
-        connectionTestRef.current.requestId = requestId;
-
-        try {
-          const response = await withModelConnectionTestTimeout(
-            window.electron.api.fetch({
-              url: openaiUrl,
-              method: 'POST',
-              headers,
-              body: requestBody,
-              requestId,
-              purpose: NetworkFetchPurpose.ModelConnectionTest,
-            }),
-            () => window.electron.api.cancelFetch(requestId),
-            i18nService
-              .t('connectionTestTimeout')
-              .replace('{seconds}', String(MODEL_CONNECTION_TEST_TIMEOUT_MS / 1000)),
-          );
-          if (!isCurrentTest()) {
-            return;
-          }
-          if (connectionTestRef.current.requestId === requestId) {
-            connectionTestRef.current.requestId = null;
-          }
-          const data = response.data || {};
-          if (response.ok && isValidConnectivityResponse(data)) {
-            const nextResult: ModelConnectionTestResult = {
-              success: true,
-              status: 'success',
-              modelLabel,
-              modelId: model.id,
-              detail: i18nService.t('connectionSuccess'),
-            };
-            results.push(nextResult);
-            updateConnectionTestModelResult(model.id, nextResult);
-            applyModelConnectionTestOutcome(testingProvider, nextResult);
-            continue;
-          }
-
-          const errorMessage =
-            getConnectivityErrorMessage(data) ||
-            (response.ok
-              ? i18nService.t('connectionInvalidResponse')
-              : `${i18nService.t('connectionFailed')}: ${response.status}`);
-          const recovered =
-            !response.ok &&
-            typeof errorMessage === 'string' &&
-            errorMessage.toLowerCase().includes('model output limit was reached');
-
-          const nextResult: ModelConnectionTestResult = {
-            success: recovered,
-            status: recovered ? 'success' : 'failed',
-            modelLabel,
-            modelId: model.id,
-            detail: recovered ? i18nService.t('connectionSuccess') : errorMessage,
-            log: [
-              `${i18nService.t('testRequestUrl')}: ${openaiUrl}`,
-              `${i18nService.t('testModel')}: ${modelLabel} (${model.id})`,
-              `${i18nService.t('testStatus')}: ${response.status}`,
-              `${i18nService.t('testResponse')}: ${stringifyConnectivityLogValue(data)}`,
-            ].join('\n'),
-          };
-          results.push(nextResult);
-          updateConnectionTestModelResult(model.id, nextResult);
-          applyModelConnectionTestOutcome(testingProvider, nextResult);
-        } catch (err) {
-          if (!isCurrentTest()) {
-            return;
-          }
-          if (connectionTestRef.current.requestId === requestId) {
-            connectionTestRef.current.requestId = null;
-          }
-          const nextResult: ModelConnectionTestResult = {
-            success: false,
-            status: 'failed',
-            modelLabel,
-            modelId: model.id,
-            detail: err instanceof Error ? err.message : i18nService.t('connectionFailed'),
-            log: [
-              `${i18nService.t('testRequestUrl')}: ${openaiUrl}`,
-              `${i18nService.t('testModel')}: ${modelLabel} (${model.id})`,
-              `${i18nService.t('testError')}: ${
-                err instanceof Error ? err.stack || err.message : stringifyConnectivityLogValue(err)
-              }`,
-            ].join('\n'),
-          };
-          results.push(nextResult);
-          updateConnectionTestModelResult(model.id, nextResult);
-          applyModelConnectionTestOutcome(testingProvider, nextResult);
-        }
-      }
-
-      if (!isCurrentTest()) {
-        return;
-      }
-
-      const passedCount = results.filter(result => result.success).length;
-      const allPassed = passedCount === results.length;
-      if (allPassed) {
-        enableProvider(testingProvider);
-      }
-
-      showTestResultModal(
-        {
-          success: allPassed,
-          message: `${i18nService
-            .t('connectionTestSummary')
-            .replace('{passed}', String(passedCount))
-            .replace(
-              '{total}',
-              String(results.length),
-            )}${allPassed ? `\n${i18nService.t('connectionSuccess')}` : ''}`,
-          baseUrl: normalizedBaseUrl,
-          isRunning: false,
-          modelResults: results,
-          log: results
-            .map(result =>
-              [
-                `${result.success ? 'PASS' : 'FAIL'} ${result.modelLabel} (${result.modelId})`,
-                result.detail,
-                result.log ? result.log : null,
-              ]
-                .filter(Boolean)
-                .join('\n'),
-            )
-            .join('\n\n'),
-        },
-        testingProvider,
-      );
-    } catch (err) {
-      if (!isCurrentTest()) {
-        return;
-      }
-      const effectiveBaseUrl = resolveBaseUrl(testingProvider, providerConfig.baseUrl).replace(
-        /\/+$/,
-        '',
-      );
-      showTestResultModal(
-        {
-          success: false,
-          message: err instanceof Error ? err.message : i18nService.t('connectionFailed'),
-          baseUrl: effectiveBaseUrl,
-          modelLabel: modelsToTest[0]?.name?.trim() || modelsToTest[0]?.id,
-          modelId: modelsToTest[0]?.id,
-          log: [
-            `${i18nService.t('testRequestUrl')}: ${effectiveBaseUrl}/chat/completions`,
-            `${i18nService.t('testModel')}: ${modelsToTest[0]?.name?.trim() || modelsToTest[0]?.id} (${modelsToTest[0]?.id})`,
-            `${i18nService.t('testError')}: ${
-              err instanceof Error ? err.stack || err.message : stringifyConnectivityLogValue(err)
-            }`,
-          ].join('\n'),
-        },
-        testingProvider,
-      );
-    } finally {
-      if (isCurrentTest()) {
-        connectionTestRef.current.requestId = null;
-        setIsTesting(false);
-      }
-    }
-  };
 
   // 渲染标签页
   const sidebarTabs: { key: TabType; label: string; icon: React.ReactNode }[] = [
@@ -2297,630 +1777,54 @@ const Settings: React.FC<SettingsProps> = ({
         return <AgentManager leaveGuard={agentLeaveGuard} />;
       case 'general':
         return (
-          <div className="space-y-8">
-            {/* Language Section */}
-            <div className="flex items-center justify-between">
-              <h4 className="text-sm font-medium text-foreground">{i18nService.t('language')}</h4>
-              <div className="w-[140px] shrink-0">
-                <ThemedSelect
-                  id="language"
-                  value={language}
-                  onChange={value => {
-                    const nextLanguage = value as LanguageType;
-                    setLanguage(nextLanguage);
-                    i18nService.setLanguage(nextLanguage, { persist: false });
-                  }}
-                  options={[
-                    { value: 'zh', label: i18nService.t('chinese') },
-                    { value: 'en', label: i18nService.t('english') },
-                  ]}
-                />
-              </div>
-            </div>
-
-            {/* Auto-launch Section */}
-            <div>
-              <h4 className="text-sm font-medium text-foreground mb-3">
-                {i18nService.t('autoLaunch')}
-              </h4>
-              <label className="flex items-center justify-between cursor-pointer">
-                <span className="text-sm text-secondary">
-                  {i18nService.t('autoLaunchDescription')}
-                </span>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={autoLaunch}
-                  onClick={async () => {
-                    if (isUpdatingAutoLaunch) return;
-                    const next = !autoLaunch;
-                    setIsUpdatingAutoLaunch(true);
-                    try {
-                      const result = await window.electron.autoLaunch.set(next);
-                      if (result.success) {
-                        setAutoLaunchState(next);
-                      } else {
-                        setError(result.error || 'Failed to update auto-launch setting');
-                      }
-                    } catch (err) {
-                      console.error('Failed to set auto-launch:', err);
-                      setError('Failed to update auto-launch setting');
-                    } finally {
-                      setIsUpdatingAutoLaunch(false);
-                    }
-                  }}
-                  disabled={isUpdatingAutoLaunch}
-                  className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${
-                    isUpdatingAutoLaunch ? 'opacity-50 cursor-not-allowed' : ''
-                  } ${autoLaunch ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-600'}`}
-                >
-                  <span
-                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                      autoLaunch ? 'translate-x-6' : 'translate-x-1'
-                    }`}
-                  />
-                </button>
-              </label>
-            </div>
-
-            {/* Prevent Sleep Section */}
-            <div>
-              <h4 className="text-sm font-medium text-foreground mb-3">
-                {i18nService.t('preventSleep')}
-              </h4>
-              <label className="flex items-center justify-between cursor-pointer">
-                <span className="text-sm text-secondary">
-                  {i18nService.t('preventSleepDescription')}
-                </span>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={preventSleep}
-                  onClick={async () => {
-                    if (isUpdatingPreventSleep) return;
-                    const next = !preventSleep;
-                    setIsUpdatingPreventSleep(true);
-                    try {
-                      const result = await window.electron.preventSleep.set(next);
-                      if (result.success) {
-                        setPreventSleepState(next);
-                      } else {
-                        setError(result.error || 'Failed to update prevent-sleep setting');
-                      }
-                    } catch (err) {
-                      console.error('Failed to set prevent-sleep:', err);
-                      setError('Failed to update prevent-sleep setting');
-                    } finally {
-                      setIsUpdatingPreventSleep(false);
-                    }
-                  }}
-                  disabled={isUpdatingPreventSleep}
-                  className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${
-                    isUpdatingPreventSleep ? 'opacity-50 cursor-not-allowed' : ''
-                  } ${preventSleep ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-600'}`}
-                >
-                  <span
-                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                      preventSleep ? 'translate-x-6' : 'translate-x-1'
-                    }`}
-                  />
-                </button>
-              </label>
-            </div>
-
-            <AppUpdateFrequencySetting />
-
-            {/* Developer Mode Section */}
-            {developerModeAvailable && (
-              <div>
-                <h4 className="text-sm font-medium text-foreground mb-3">
-                  {i18nService.t('developerMode')}
-                </h4>
-                <label className="flex items-center justify-between cursor-pointer">
-                  <span className="text-sm text-secondary">
-                    {i18nService.t('developerModeDescription')}
-                  </span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={developerMode}
-                    onClick={() => {
-                      setDeveloperMode(prev => !prev);
-                    }}
-                    className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${
-                      developerMode ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-600'
-                    }`}
-                  >
-                    <span
-                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                        developerMode ? 'translate-x-6' : 'translate-x-1'
-                      }`}
-                    />
-                  </button>
-                </label>
-              </div>
-            )}
-
-            {developerModeAvailable && developerMode && (
-              <>
-                {/* Proxy Settings Section */}
-                <div className="space-y-4 rounded-xl border px-4 py-4 border-border">
-                  <h4 className="text-sm font-medium text-foreground mb-3">
-                    {i18nService.t('proxySettings')}
-                  </h4>
-                  <div className="space-y-3">
-                    <label className="flex items-start gap-3 cursor-pointer">
-                      <input
-                        type="radio"
-                        name="proxyMode"
-                        value={ProxyMode.DIRECT}
-                        checked={proxyMode === ProxyMode.DIRECT}
-                        onChange={() => handleProxyModeChange(ProxyMode.DIRECT)}
-                        className="mt-0.5 h-4 w-4 text-primary focus:ring-primary bg-surface border-border"
-                      />
-                      <span>
-                        <span className="block text-sm font-medium text-foreground">
-                          {i18nService.t('noProxy')}
-                        </span>
-                        <span className="block text-xs text-secondary mt-1">
-                          {i18nService.t('noProxyDescription')}
-                        </span>
-                      </span>
-                    </label>
-
-                    <label className="flex items-start gap-3 cursor-pointer">
-                      <input
-                        type="radio"
-                        name="proxyMode"
-                        value={ProxyMode.SYSTEM}
-                        checked={proxyMode === ProxyMode.SYSTEM}
-                        onChange={() => handleProxyModeChange(ProxyMode.SYSTEM)}
-                        className="mt-0.5 h-4 w-4 text-primary focus:ring-primary bg-surface border-border"
-                      />
-                      <span>
-                        <span className="block text-sm font-medium text-foreground">
-                          {i18nService.t('useSystemProxy')}
-                        </span>
-                        <span className="block text-xs text-secondary mt-1">
-                          {i18nService.t('useSystemProxyDescription')}
-                        </span>
-                      </span>
-                    </label>
-
-                    <label className="flex items-start gap-3 cursor-pointer">
-                      <input
-                        type="radio"
-                        name="proxyMode"
-                        value={ProxyMode.CUSTOM}
-                        checked={proxyMode === ProxyMode.CUSTOM}
-                        onChange={() => handleProxyModeChange(ProxyMode.CUSTOM)}
-                        className="mt-0.5 h-4 w-4 text-primary focus:ring-primary bg-surface border-border"
-                      />
-                      <span>
-                        <span className="block text-sm font-medium text-foreground">
-                          {i18nService.t('customProxy')}
-                        </span>
-                        <span className="block text-xs text-secondary mt-1">
-                          {i18nService.t('customProxyDescription')}
-                        </span>
-                      </span>
-                    </label>
-                  </div>
-
-                  {proxyMode === ProxyMode.CUSTOM && (
-                    <div className="space-y-3 pl-7 max-w-[640px]">
-                      <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_8rem]">
-                        <div>
-                          <label className="block text-xs font-medium text-secondary mb-1">
-                            {i18nService.t('proxyHost')}
-                          </label>
-                          <div className="flex w-full overflow-hidden rounded-xl border border-border bg-surface-inset focus-within:border-primary focus-within:ring-1 focus-within:ring-primary/30">
-                            <select
-                              id="proxyProtocol"
-                              value={customProxy.protocol}
-                              onChange={e =>
-                                handleCustomProxyChange(
-                                  'protocol',
-                                  e.target.value as CustomProxyConfig['protocol'],
-                                )
-                              }
-                              aria-label={i18nService.t('proxyProtocol')}
-                              className="w-28 shrink-0 border-0 border-r border-border bg-surface px-3 py-2 text-sm font-medium text-foreground focus:outline-none"
-                            >
-                              <option value={ProxyProtocol.HTTP}>HTTP</option>
-                              <option value={ProxyProtocol.HTTPS}>HTTPS</option>
-                            </select>
-                            <input
-                              type="text"
-                              value={customProxy.host}
-                              onChange={e => handleCustomProxyChange('host', e.target.value)}
-                              className="block min-w-0 flex-1 border-0 bg-transparent px-3 py-2 text-sm text-foreground focus:outline-none"
-                              placeholder="127.0.0.1"
-                            />
-                          </div>
-                        </div>
-                        <div>
-                          <label className="block text-xs font-medium text-secondary mb-1">
-                            {i18nService.t('proxyPort')}
-                          </label>
-                          <input
-                            type="number"
-                            min={1}
-                            max={65535}
-                            value={customProxy.port}
-                            onChange={e => handleCustomProxyChange('port', e.target.value)}
-                            className="block w-full rounded-xl bg-surface-inset border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-2 text-sm"
-                            placeholder="7890"
-                          />
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                        <div>
-                          <label className="block text-xs font-medium text-secondary mb-1">
-                            {i18nService.t('proxyUsername')}
-                          </label>
-                          <input
-                            type="text"
-                            value={customProxy.username ?? ''}
-                            onChange={e => handleCustomProxyChange('username', e.target.value)}
-                            className="block w-full rounded-xl bg-surface-inset border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-2 text-sm"
-                            placeholder={i18nService.t('optional')}
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-xs font-medium text-secondary mb-1">
-                            {i18nService.t('proxyPassword')}
-                          </label>
-                          <input
-                            type="password"
-                            value={customProxy.password ?? ''}
-                            onChange={e => handleCustomProxyChange('password', e.target.value)}
-                            className="block w-full rounded-xl bg-surface-inset border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-2 text-sm"
-                            placeholder={i18nService.t('optional')}
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="flex justify-end pl-7 max-w-[640px]">
-                    <button
-                      type="submit"
-                      disabled={isSaving}
-                      className="px-4 py-2 bg-primary hover:bg-primary-hover text-white rounded-xl transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98]"
-                    >
-                      {isSaving ? i18nService.t('saving') : i18nService.t('confirm')}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Gateway Port Configuration */}
-                <div className="space-y-3 rounded-xl border px-4 py-4 border-border">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex flex-wrap items-center gap-3">
-                      <div className="text-sm font-medium text-foreground">
-                        {i18nService.t('openclawGatewayPortTitle')}
-                      </div>
-                      <input
-                        ref={openClawGatewayPortInputRef}
-                        type="text"
-                        inputMode="numeric"
-                        pattern="[0-9]*"
-                        value={openClawGatewayPortInput}
-                        readOnly={!openClawGatewayPortEditing}
-                        onDoubleClick={() => {
-                          setOpenClawGatewayPortEditing(true);
-                          setOpenClawGatewayPortError(null);
-                        }}
-                        onChange={e => {
-                          setOpenClawGatewayPortInput(e.target.value);
-                          setOpenClawGatewayPortError(null);
-                        }}
-                        onKeyDown={event => {
-                          if (event.key === 'Enter' && openClawGatewayPortValidation.valid) {
-                            event.preventDefault();
-                            void handleSaveOpenClawGatewayPort();
-                          } else if (event.key === 'Escape') {
-                            event.preventDefault();
-                            cancelOpenClawGatewayPortEditing();
-                          }
-                        }}
-                        aria-invalid={
-                          openClawGatewayPortEditing && Boolean(openClawGatewayPortValidationError)
-                        }
-                        aria-describedby="openclaw-gateway-port-help"
-                        className={`w-32 rounded-lg border px-3 py-1.5 text-center text-sm font-mono bg-surface ${
-                          openClawGatewayPortEditing && openClawGatewayPortValidationError
-                            ? 'border-danger text-foreground'
-                            : 'border-border'
-                        } ${
-                          openClawGatewayPortEditing
-                            ? 'text-foreground'
-                            : 'cursor-default text-secondary'
-                        }`}
-                        disabled={openClawGatewayPortSaving}
-                      />
-                      {openClawGatewayPortEditing && (
-                        <div className="flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => void handleSaveOpenClawGatewayPort()}
-                            disabled={
-                              openClawGatewayPortSaving || !openClawGatewayPortValidation.valid
-                            }
-                            className="flex h-8 w-8 items-center justify-center rounded-lg text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
-                            aria-label={i18nService.t('save')}
-                          >
-                            <CheckCircleIcon className="h-5 w-5" aria-hidden="true" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={cancelOpenClawGatewayPortEditing}
-                            className="flex h-8 w-8 items-center justify-center rounded-lg text-secondary hover:bg-surface-raised transition-colors"
-                            aria-label={i18nService.t('cancel')}
-                          >
-                            <XCircleIcon className="h-5 w-5" aria-hidden="true" />
-                          </button>
-                        </div>
-                      )}
-                      {!openClawGatewayPortEditing && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setOpenClawGatewayPortEditing(true);
-                            setOpenClawGatewayPortError(null);
-                          }}
-                          className="flex h-8 w-8 items-center justify-center rounded-lg text-secondary hover:bg-surface-raised transition-colors"
-                          aria-label={i18nService.t('openclawGatewayPortEdit')}
-                          title={i18nService.t('openclawGatewayPortEdit')}
-                        >
-                          <PencilSquareIcon className="h-4 w-4" aria-hidden="true" />
-                        </button>
-                      )}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => void handleRestartOpenClawGateway()}
-                      disabled={
-                        isRestartingOpenClawGateway ||
-                        openClawGatewayPortEditing ||
-                        openClawGatewayPortSaving
-                      }
-                      className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium border-border text-secondary hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
-                      title={i18nService.t('openclawGatewayRestartHint')}
-                    >
-                      <ArrowPathIcon
-                        className={`h-4 w-4 ${isRestartingOpenClawGateway ? 'animate-spin' : ''}`}
-                        aria-hidden="true"
-                      />
-                      {isRestartingOpenClawGateway
-                        ? i18nService.t('openclawGatewayRestarting')
-                        : i18nService.t('coworkOpenClawRestartGateway')}
-                    </button>
-                  </div>
-                  <div id="openclaw-gateway-port-help" className="space-y-1 text-xs">
-                    <p className="text-secondary">{i18nService.t('openclawGatewayPortHint')}</p>
-                    {openClawGatewayPortEditing && openClawGatewayPortValidationError && (
-                      <p className="text-danger" role="alert">
-                        {openClawGatewayPortValidationError}
-                      </p>
-                    )}
-                    {openClawGatewayPortEditing &&
-                      openClawGatewayPortValidation.valid &&
-                      openClawGatewayPortValidation.usesEphemeralRange && (
-                        <p className="text-warning">
-                          {i18nService.t('openclawGatewayPortEphemeralWarning')}
-                        </p>
-                      )}
-                    {openClawGatewayPortError && (
-                      <p className="text-danger" role="alert">
-                        {openClawGatewayPortError}
-                      </p>
-                    )}
-                    {openClawGatewayPortRestartRequired && (
-                      <p className="text-warning" role="status">
-                        {i18nService.t('openclawGatewayPortRestartRequired')}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
+          <GeneralSettingsPage
+            language={language}
+            setLanguage={setLanguage}
+            autoLaunch={autoLaunch}
+            isUpdatingAutoLaunch={isUpdatingAutoLaunch}
+            setIsUpdatingAutoLaunch={setIsUpdatingAutoLaunch}
+            setAutoLaunchState={setAutoLaunchState}
+            setError={setError}
+            preventSleep={preventSleep}
+            isUpdatingPreventSleep={isUpdatingPreventSleep}
+            setIsUpdatingPreventSleep={setIsUpdatingPreventSleep}
+            setPreventSleepState={setPreventSleepState}
+            developerModeAvailable={developerModeAvailable}
+            developerMode={developerMode}
+            setDeveloperMode={setDeveloperMode}
+            proxyMode={proxyMode}
+            handleProxyModeChange={handleProxyModeChange}
+            customProxy={customProxy}
+            handleCustomProxyChange={handleCustomProxyChange}
+            isSaving={isSaving}
+            openClawGatewayPortInputRef={openClawGatewayPortInputRef}
+            openClawGatewayPortInput={openClawGatewayPortInput}
+            openClawGatewayPortEditing={openClawGatewayPortEditing}
+            setOpenClawGatewayPortEditing={setOpenClawGatewayPortEditing}
+            setOpenClawGatewayPortError={setOpenClawGatewayPortError}
+            setOpenClawGatewayPortInput={setOpenClawGatewayPortInput}
+            openClawGatewayPortValidation={openClawGatewayPortValidation}
+            handleSaveOpenClawGatewayPort={handleSaveOpenClawGatewayPort}
+            cancelOpenClawGatewayPortEditing={cancelOpenClawGatewayPortEditing}
+            openClawGatewayPortValidationError={openClawGatewayPortValidationError}
+            openClawGatewayPortSaving={openClawGatewayPortSaving}
+            handleRestartOpenClawGateway={handleRestartOpenClawGateway}
+            isRestartingOpenClawGateway={isRestartingOpenClawGateway}
+            openClawGatewayPortError={openClawGatewayPortError}
+            openClawGatewayPortRestartRequired={openClawGatewayPortRestartRequired}
+          />
         );
 
       case 'appearance':
         return (
-          <div className="space-y-8">
-            <AppearanceSettingsTab value={appearance} onChange={setAppearance} />
-
-            {/* Appearance Section — mode selector + theme gallery */}
-            <div>
-              <h4
-                className="text-sm font-medium mb-3"
-                style={{ color: 'var(--justdo-text-primary)' }}
-              >
-                {i18nService.t('appearanceMode')}
-              </h4>
-
-              {/* Level 1: Mode selector */}
-              <div className="mx-auto mb-4 grid max-w-[480px] grid-cols-3 gap-2.5">
-                {(['light', 'dark', 'system'] as const).map(mode => {
-                  const isSelected = theme === mode;
-                  return (
-                    <button
-                      key={mode}
-                      type="button"
-                      onClick={() => {
-                        setTheme(mode);
-                        themeService.setTheme(mode);
-                        setThemeId(themeService.getThemeId());
-                      }}
-                      className={APPEARANCE_PREVIEW_CARD_CLASS_NAME}
-                      style={{
-                        borderColor: isSelected ? 'var(--justdo-primary)' : 'var(--justdo-border)',
-                        backgroundColor: isSelected ? 'var(--justdo-primary-muted)' : undefined,
-                      }}
-                    >
-                      <svg
-                        viewBox="0 0 120 80"
-                        className={APPEARANCE_PREVIEW_CLASS_NAME}
-                        xmlns="http://www.w3.org/2000/svg"
-                      >
-                        {mode === 'light' && (
-                          <>
-                            <rect width="120" height="80" fill="#F8F9FB" />
-                            <rect x="0" y="0" width="30" height="80" fill="#EBEDF0" />
-                            <rect x="4" y="8" width="22" height="4" rx="2" fill="#C8CBD0" />
-                            <rect x="4" y="16" width="18" height="3" rx="1.5" fill="#D5D7DB" />
-                            <rect x="4" y="22" width="20" height="3" rx="1.5" fill="#D5D7DB" />
-                            <rect x="4" y="28" width="16" height="3" rx="1.5" fill="#D5D7DB" />
-                            <rect x="36" y="8" width="78" height="64" rx="4" fill="#FFFFFF" />
-                            <rect x="42" y="16" width="50" height="4" rx="2" fill="#D5D7DB" />
-                            <rect x="42" y="24" width="66" height="3" rx="1.5" fill="#E2E4E7" />
-                            <rect x="42" y="30" width="60" height="3" rx="1.5" fill="#E2E4E7" />
-                            <rect x="42" y="36" width="55" height="3" rx="1.5" fill="#E2E4E7" />
-                            <rect x="42" y="46" width="40" height="4" rx="2" fill="#D5D7DB" />
-                            <rect x="42" y="54" width="66" height="3" rx="1.5" fill="#E2E4E7" />
-                            <rect x="42" y="60" width="58" height="3" rx="1.5" fill="#E2E4E7" />
-                          </>
-                        )}
-                        {mode === 'dark' && (
-                          <>
-                            <rect width="120" height="80" fill="#0F1117" />
-                            <rect x="0" y="0" width="30" height="80" fill="#151820" />
-                            <rect x="4" y="8" width="22" height="4" rx="2" fill="#3A3F4B" />
-                            <rect x="4" y="16" width="18" height="3" rx="1.5" fill="#2A2F3A" />
-                            <rect x="4" y="22" width="20" height="3" rx="1.5" fill="#2A2F3A" />
-                            <rect x="4" y="28" width="16" height="3" rx="1.5" fill="#2A2F3A" />
-                            <rect x="36" y="8" width="78" height="64" rx="4" fill="#1A1D27" />
-                            <rect x="42" y="16" width="50" height="4" rx="2" fill="#3A3F4B" />
-                            <rect x="42" y="24" width="66" height="3" rx="1.5" fill="#252930" />
-                            <rect x="42" y="30" width="60" height="3" rx="1.5" fill="#252930" />
-                            <rect x="42" y="36" width="55" height="3" rx="1.5" fill="#252930" />
-                            <rect x="42" y="46" width="40" height="4" rx="2" fill="#3A3F4B" />
-                            <rect x="42" y="54" width="66" height="3" rx="1.5" fill="#252930" />
-                            <rect x="42" y="60" width="58" height="3" rx="1.5" fill="#252930" />
-                          </>
-                        )}
-                        {mode === 'system' && (
-                          <>
-                            <defs>
-                              <clipPath id="left-half">
-                                <rect x="0" y="0" width="60" height="80" />
-                              </clipPath>
-                              <clipPath id="right-half">
-                                <rect x="60" y="0" width="60" height="80" />
-                              </clipPath>
-                            </defs>
-                            <g clipPath="url(#left-half)">
-                              <rect width="120" height="80" fill="#F8F9FB" />
-                              <rect x="0" y="0" width="30" height="80" fill="#EBEDF0" />
-                              <rect x="4" y="8" width="22" height="4" rx="2" fill="#C8CBD0" />
-                              <rect x="4" y="16" width="18" height="3" rx="1.5" fill="#D5D7DB" />
-                              <rect x="4" y="22" width="20" height="3" rx="1.5" fill="#D5D7DB" />
-                              <rect x="4" y="28" width="16" height="3" rx="1.5" fill="#D5D7DB" />
-                              <rect x="36" y="8" width="78" height="64" rx="4" fill="#FFFFFF" />
-                              <rect x="42" y="16" width="50" height="4" rx="2" fill="#D5D7DB" />
-                              <rect x="42" y="24" width="66" height="3" rx="1.5" fill="#E2E4E7" />
-                              <rect x="42" y="30" width="60" height="3" rx="1.5" fill="#E2E4E7" />
-                              <rect x="42" y="36" width="55" height="3" rx="1.5" fill="#E2E4E7" />
-                              <rect x="42" y="46" width="40" height="4" rx="2" fill="#D5D7DB" />
-                              <rect x="42" y="54" width="66" height="3" rx="1.5" fill="#E2E4E7" />
-                            </g>
-                            <g clipPath="url(#right-half)">
-                              <rect width="120" height="80" fill="#0F1117" />
-                              <rect x="0" y="0" width="30" height="80" fill="#151820" />
-                              <rect x="4" y="8" width="22" height="4" rx="2" fill="#3A3F4B" />
-                              <rect x="4" y="16" width="18" height="3" rx="1.5" fill="#2A2F3A" />
-                              <rect x="4" y="22" width="20" height="3" rx="1.5" fill="#2A2F3A" />
-                              <rect x="4" y="28" width="16" height="3" rx="1.5" fill="#2A2F3A" />
-                              <rect x="36" y="8" width="78" height="64" rx="4" fill="#1A1D27" />
-                              <rect x="42" y="16" width="50" height="4" rx="2" fill="#3A3F4B" />
-                              <rect x="42" y="24" width="66" height="3" rx="1.5" fill="#252930" />
-                              <rect x="42" y="30" width="60" height="3" rx="1.5" fill="#252930" />
-                              <rect x="42" y="36" width="55" height="3" rx="1.5" fill="#252930" />
-                              <rect x="42" y="46" width="40" height="4" rx="2" fill="#3A3F4B" />
-                              <rect x="42" y="54" width="66" height="3" rx="1.5" fill="#252930" />
-                            </g>
-                            <line x1="60" y1="0" x2="60" y2="80" stroke="#888" strokeWidth="0.5" />
-                          </>
-                        )}
-                      </svg>
-                      <span
-                        className={APPEARANCE_PREVIEW_LABEL_CLASS_NAME}
-                        style={{
-                          color: isSelected
-                            ? 'var(--justdo-primary)'
-                            : 'var(--justdo-text-primary)',
-                        }}
-                      >
-                        {i18nService.t(mode)}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Theme color gallery — all themes */}
-              <h4
-                className="text-sm font-medium mb-3 mt-5"
-                style={{ color: 'var(--justdo-text-primary)' }}
-              >
-                {i18nService.t('themeColor')}
-              </h4>
-              {(() => {
-                const allThemes = themeService.getAllThemes();
-                const renderTile = (t: import('@/theme').ThemeDefinition) => {
-                  const isSelected = themeId === t.meta.id;
-                  const [bg, c1, c2, c3] = t.meta.preview;
-                  return (
-                    <button
-                      key={t.meta.id}
-                      type="button"
-                      onClick={() => {
-                        themeService.setThemeById(t.meta.id);
-                        setThemeId(t.meta.id);
-                        setTheme(t.meta.appearance as 'light' | 'dark');
-                      }}
-                      className={`${APPEARANCE_PREVIEW_CARD_CLASS_NAME} w-[calc(160px_-_0.416667rem)] max-w-[calc(33.333333%_-_0.416667rem)] min-w-0 shrink-0`}
-                      style={{
-                        borderColor: isSelected ? 'var(--justdo-primary)' : 'var(--justdo-border)',
-                        backgroundColor: isSelected ? 'var(--justdo-primary-muted)' : undefined,
-                      }}
-                    >
-                      <svg
-                        viewBox="0 0 120 80"
-                        className={APPEARANCE_PREVIEW_CLASS_NAME}
-                        xmlns="http://www.w3.org/2000/svg"
-                      >
-                        <rect width="120" height="80" fill={bg} />
-                        <rect x="6" y="10" width="30" height="60" rx="4" fill={c1} opacity="0.7" />
-                        <rect x="42" y="10" width="72" height="60" rx="4" fill={c2} opacity="0.5" />
-                        <circle cx="78" cy="40" r="12" fill={c3} opacity="0.8" />
-                        <rect x="48" y="56" width="60" height="6" rx="3" fill={c1} opacity="0.6" />
-                      </svg>
-                      <span
-                        className={APPEARANCE_PREVIEW_LABEL_CLASS_NAME}
-                        style={{
-                          color: isSelected
-                            ? 'var(--justdo-primary)'
-                            : 'var(--justdo-text-primary)',
-                        }}
-                      >
-                        {t.meta.name}
-                      </span>
-                    </button>
-                  );
-                };
-                return (
-                  <div className="flex flex-wrap justify-center gap-2.5">
-                    {allThemes.map(renderTile)}
-                  </div>
-                );
-              })()}
-            </div>
-          </div>
+          <AppearancePreferences
+            appearance={appearance}
+            setAppearance={setAppearance}
+            theme={theme}
+            setTheme={setTheme}
+            setThemeId={setThemeId}
+            themeId={themeId}
+          />
         );
 
       case 'model':

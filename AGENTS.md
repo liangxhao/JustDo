@@ -213,6 +213,17 @@ apply the current patch set instead.
   Keep helpers, tests, and CSS beside their owning components; `shared` is only
   for UI/helpers reused across these folders. Keep `CoworkView.tsx` at the root.
 - Keep top-level `main.ts` and `preload.ts` thin.
+- Large controllers keep lifecycle/state ownership in the entry class and delegate
+  domain operations through explicit typed contexts. `shared/app/propertyContext.ts`
+  provides live accessors: never replace them with copied state or pass the whole
+  controller to a domain module. Contexts are created once per controller instance.
+- Chat controller domains live beside `gateway/chat-controller.ts`; chat styles
+  live in `components/justdo-chat.styles.ts`. Runtime adapter domains live beside
+  `main/engine/openclaw/openclawRuntimeAdapter.ts`. Keep their behavior tests grouped
+  by domain and their public entry points stable.
+- Translation dictionaries in `renderer/services/i18n/` are grouped by domain,
+  with both languages together; `translations.ts` only composes them. Keep key/value
+  parity when moving entries. See `docs/features/src-large-file-refactor.md`.
 - Avoid mutation outside intentional Redux Toolkit Immer reducers.
 - Never hardcode user-visible strings; use i18n.
 - Add i18n keys to both `zh` and `en`.

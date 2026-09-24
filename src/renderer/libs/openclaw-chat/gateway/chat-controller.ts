@@ -1,3 +1,66 @@
+import { createPropertyContext } from '@shared/app/propertyContext';
+
+import * as chatControllerCompaction from './chat-controller-compaction';
+import { type ChatControllerCompactionContext } from './chat-controller-compaction';
+import * as chatControllerHistory from './chat-controller-history';
+import { type ChatControllerHistoryContext } from './chat-controller-history';
+import * as chatControllerProgress from './chat-controller-progress';
+import { type ChatControllerProgressContext } from './chat-controller-progress';
+import * as chatControllerRecovery from './chat-controller-recovery';
+import { type ChatControllerRecoveryContext } from './chat-controller-recovery';
+import * as chatControllerSession from './chat-controller-session';
+import { type ChatControllerSessionContext } from './chat-controller-session';
+import {
+  appendTerminalMessage,
+  asRecord,
+  assistantEventText,
+  buildInterruptedTurnMessage,
+  ChatControllerOptions,
+  ChatHistorySnapshot,
+  ChatState,
+  ChatStateListener,
+  ChatStreamListener,
+  ChatStreamUpdateKind,
+  cloneAssistantTurn,
+  collectActiveContentText,
+  collectActiveThinkingText,
+  CompactionCheckpoint,
+  contextUsageSnapshotsEqual,
+  debugLog,
+  DEFAULT_INITIAL_HISTORY_RETRY_DELAYS_MS,
+  DEFAULT_INITIAL_MESSAGE_SUBSCRIPTION_BARRIER_TIMEOUT_MS,
+  hasStableProgressOwner,
+  InFlightRunSnapshot,
+  isHiddenOrPendingControlReplyText,
+  LocalCompactionStatus,
+  normalizeSessionId,
+  PostFinalHistoryRecovery,
+  readChatContextUsageSnapshot,
+  readNonBlankString,
+  readStringList,
+  RewindEditorDraft,
+  SessionLiveState,
+  SideChatResult,
+  SideChatResultListener,
+  SideChatStreamListener,
+  SideChatStreamUpdate,
+  summarizeMessagesForDebug,
+  SwitchSessionOptions,
+  withThinkingContent,
+} from './chat-controller-support';
+export type {
+  ChatContextUsageSnapshot,
+  ChatControllerOptions,
+  ChatState,
+  ChatStateListener,
+  ChatStreamListener,
+  ChatStreamUpdateKind,
+  RewindEditorDraft,
+  SideChatResult,
+  SideChatResultListener,
+  SideChatStreamListener,
+  SideChatStreamUpdate,
+} from './chat-controller-support';
 /**
  * Chat controller — manages chat state and gateway interaction.
  * Simplified version of OpenClaw's controllers/chat.ts.
@@ -15,7 +78,6 @@
 
 import { parseBrowserAnnotationPrompt } from '@shared/browser/browser';
 import { type CoworkAttachmentPayload, toGatewayAttachment } from '@shared/cowork/attachments';
-import { isPresentPlanToolName } from '@shared/cowork/planPreview';
 import {
   isDefinitiveSessionGoalGatewayError,
   normalizeSessionGoal,
@@ -30,50 +92,24 @@ import {
 } from '@shared/cowork/slashCommands';
 import {
   normalizeAgentEvent,
-  normalizeChatEvent,
   type NormalizedAgentEvent,
   type NormalizedChatEvent,
   readTerminalGuardObservation,
 } from '@shared/openclaw/agentEvent';
-import { isBenignCompactionNoopReason } from '@shared/openclaw/compaction';
 import { isInternalManagedSubagentHandoffError } from '@shared/openclaw/internalRunError';
-import {
-  isGatewayInjectedModelRef,
-  modelRefFromIdentity,
-  readModelRef,
-} from '@shared/openclaw/modelRef';
-import {
-  parseProgressCardChangedEvent,
-  parseProgressCardGetResult,
-  type ProgressCard,
-  progressCardIsComplete,
-} from '@shared/openclaw/progressCard';
+import { modelRefFromIdentity } from '@shared/openclaw/modelRef';
+import { type ProgressCard } from '@shared/openclaw/progressCard';
 import { extractGoalFollowUpRequest } from '@shared/prompts/goalFollowUpPrompt';
 import type { LocalTtsSpeakResult } from '@shared/speech/localTts';
 
-import {
-  getTranscriptMedia,
-  isTranscriptImage,
-  toAttachmentContentBlocks,
-} from '@/libs/openclaw-chat/attachments';
-import {
-  CHAT_HISTORY_INITIAL_LIMIT,
-  CHAT_HISTORY_MAX_CHARS,
-  CHAT_HISTORY_OLDER_PAGE_LIMIT,
-  type ChatHistoryPage,
-  decodeHistoryOffsetCursor,
-  hydrateTruncatedHistoryMessages,
-  isTruncatedHistoryMessage,
-  parseChatHistoryPage,
-} from '@/libs/openclaw-chat/gateway/chat-history-protocol';
+import { toAttachmentContentBlocks } from '@/libs/openclaw-chat/attachments';
+import { type ChatHistoryPage } from '@/libs/openclaw-chat/gateway/chat-history-protocol';
 import type {
   GatewayClient,
   GatewayEventFrame,
   GatewayHelloOk,
 } from '@/libs/openclaw-chat/gateway/client';
 import {
-  confirmRecoveredToolSequence,
-  hydrateToolPrecedingSegments,
   readPreambleText,
   reduceAgentEvent,
   reduceChatEvent,
@@ -91,517 +127,23 @@ import {
   normalizeTranscriptSessionKey,
   pruneRecentRuns,
   RECENT_RUN_RETENTION_MS,
-  resetChatTranscriptState,
-  type ToolItem,
   type TranscriptReducerDependencies,
 } from '@/libs/openclaw-chat/model/chat-transcript-state';
 import { ChunkedMessageHistory } from '@/libs/openclaw-chat/model/chunked-message-history';
-import {
-  type EditorDraftPayload,
-  parseEditorDraftPayload,
-} from '@/libs/openclaw-chat/model/editor-draft';
-import { reconcileHistory } from '@/libs/openclaw-chat/model/history-reconciler';
-import {
-  latestHistoryWindow,
-  shiftHistoryWindowNewer,
-  shiftHistoryWindowOlder,
-} from '@/libs/openclaw-chat/model/history-window';
-import {
-  isLocallyOptimisticHistoryTail,
-  markOptimisticHistoryTail,
-  retireSettledActiveTurn,
-} from '@/libs/openclaw-chat/model/optimistic-history-tail';
-import { isPendingUserMessageMatch } from '@/libs/openclaw-chat/model/optimistic-user-message';
-import { projectPersistedTimeline } from '@/libs/openclaw-chat/model/project-history-timeline';
+import { markOptimisticHistoryTail } from '@/libs/openclaw-chat/model/optimistic-history-tail';
 import {
   normalizeRunRetryReason,
   RUN_PROBE_INTERVAL_MS,
   RUN_STALL_NOTICE_MS,
-  type RunActivity,
   type RunProgressStage,
 } from '@/libs/openclaw-chat/model/run-activity';
-import { applySessionMessagePayload } from '@/libs/openclaw-chat/model/session-message-apply';
 import {
-  hasToolResultPayload,
-  isSessionsYieldTool,
-} from '@/libs/openclaw-chat/model/tool-lifecycle';
-import {
-  asToolRecord,
-  attachedToolMessages,
-  isToolCallRecord,
-  isToolResultType,
-  readToolCallId,
-  unwrapToolMessage,
-} from '@/libs/openclaw-chat/model/tool-message-adapter';
-import {
-  isEntryAfterLatestPlanImplementationReset,
-  readTranscriptIdentity,
-} from '@/libs/openclaw-chat/model/transcript-identity';
-import { stripHeartbeatTokenForDisplay } from '@/libs/openclaw-chat/pipeline/heartbeat-display';
-import {
-  hydrateGatewayHistoryForDisplay,
   persistFailedRun,
-  persistInterruptedMessage,
   projectGatewayHistoryForDisplay,
   shouldHideMessage,
   stripAssistantSilentReplySuffix,
 } from '@/libs/openclaw-chat/pipeline/history-display-normalizer';
-import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 import { i18nService } from '@/services/i18n';
-
-// ─── Types ──────────────────────────────────────────────────────────────────
-
-export interface ChatState {
-  client: GatewayClient | null;
-  connected: boolean;
-  transportStatus: 'disconnected' | 'connected' | 'reconnecting';
-  sessionKey: string;
-  /** Backing OpenClaw session id returned by chat.startup/chat.history. */
-  currentSessionId: string | null;
-  /** True after the selected session's first subscribed history snapshot settles. */
-  initialHistoryReady: boolean;
-  chatLoading: boolean;
-  historyLoadingOlder: boolean;
-  historyHasMore: boolean;
-  historyNextCursor: string | null;
-  /** Total messages reachable through the chunked loaded-history store. */
-  loadedMessageCount: number;
-  /** Recent authoritative snapshot used for reconciliation and live tail updates. */
-  chatMessages: unknown[];
-  visibleChatMessages: unknown[];
-  historyWindowStart: number;
-  historyWindowEnd: number;
-  chatSending: boolean;
-  compactionInFlight: boolean;
-  chatRunId: string | null;
-  lastError: string | null;
-  hello: GatewayHelloOk | null;
-  /** Ephemeral activity used only for delayed, non-persisted waiting notices. */
-  runActivity: RunActivity | null;
-  /** Selected Gateway session's authoritative context-window snapshot. */
-  contextUsage: ChatContextUsageSnapshot | null;
-  /** Gateway-owned durable status card for the selected session. */
-  progressCard: ProgressCard | null;
-  progressCardLoading: boolean;
-  progressCardAvailable: boolean;
-  progressCardError: 'access-denied' | 'unavailable' | null;
-  /** Optimistic user message shown until gateway history loads */
-  pendingUserMessage: {
-    role: string;
-    content: string | unknown[];
-    text: string;
-    timestamp: number;
-  } | null;
-  /** Canonical, sequence-ordered live display state. */
-  transcript: ChatTranscriptState;
-}
-
-export interface ChatContextUsageSnapshot {
-  sessionKey: string;
-  sessionId: string | null;
-  totalTokens: number;
-  contextTokens: number | null;
-  totalTokensFresh: boolean;
-  updatedAt: number | null;
-  modelRef: string | null;
-}
-
-export type RewindEditorDraft = EditorDraftPayload;
-
-export type ChatStateListener = (state: ChatState) => void;
-export type ChatStreamUpdateKind = 'stream' | 'tool-partial' | 'terminal';
-export type ChatStreamListener = (kind: ChatStreamUpdateKind) => void;
-
-export interface SideChatResult {
-  runId: string;
-  sessionKey: string;
-  question: string;
-  text: string;
-  isError: boolean;
-}
-
-export type SideChatResultListener = (result: SideChatResult) => void;
-
-export interface SideChatStreamUpdate {
-  runId: string;
-  sessionKey: string;
-  turn: AssistantTurn | null;
-  kind: ChatStreamUpdateKind;
-}
-
-export type SideChatStreamListener = (update: SideChatStreamUpdate) => void;
-
-export interface ChatControllerOptions {
-  /** Subagent transcripts are expected to contain their originating user/task turn. */
-  expectInitialHistory?: boolean;
-  /** Isolated external runs may use their first user row directly instead of a subagent envelope. */
-  expectInitialUserMessage?: boolean;
-  /** Maximum time to hold the first history snapshot behind message subscription setup. */
-  initialMessageSubscriptionBarrierTimeoutMs?: number;
-  /** Test seam and bounded persistence catch-up policy. */
-  initialHistoryRetryDelaysMs?: readonly number[];
-}
-
-type CompactionTranscriptReference = {
-  leafId?: string;
-  entryId?: string;
-};
-
-type CompactionCheckpoint = {
-  checkpointId?: string;
-  summary?: string;
-  tokensBefore?: number;
-  tokensAfter?: number;
-  createdAt?: number;
-  postCompaction?: CompactionTranscriptReference;
-};
-
-type LocalCompactionStatus = {
-  id: string;
-  eventId?: string;
-  authoritativeMarkerSeen?: boolean;
-  markerFingerprintsBefore: Set<string>;
-  message: {
-    role: 'system';
-    timestamp: number;
-    __openclaw: {
-      kind: 'compaction-status';
-      id: string;
-      phase: 'in-progress' | 'completed' | 'failed' | 'skipped' | 'aborted';
-      reason?: string;
-      summary?: string;
-      tokensBefore?: number;
-      tokensAfter?: number;
-    };
-  };
-};
-
-type InFlightRunSnapshot = {
-  runId: string;
-  text?: string;
-  startedAt?: number;
-  sessionAbortable?: boolean;
-  events?: Array<{
-    runId: string;
-    seq: number;
-    stream: string;
-    ts: number;
-    sessionKey?: string;
-    agentId?: string;
-    data: Record<string, unknown>;
-  }>;
-};
-
-type ChatHistorySnapshot = {
-  messages?: unknown[];
-  hasMore?: boolean;
-  nextOffset?: number;
-  sessionId?: string;
-  sessionInfo?: {
-    key?: string;
-    sessionId?: string;
-    updatedAt?: number;
-    totalTokens?: number;
-    totalTokensFresh?: boolean;
-    contextTokens?: number;
-    modelProvider?: string;
-    model?: string;
-    hasActiveRun?: boolean;
-    activeRunIds?: string[];
-    activeLeafEntryId?: string | null;
-    status?: string;
-  };
-  inFlightRun?: InFlightRunSnapshot;
-};
-
-type SessionLiveState = Pick<
-  ChatState,
-  | 'currentSessionId'
-  | 'chatSending'
-  | 'compactionInFlight'
-  | 'chatRunId'
-  | 'lastError'
-  | 'runActivity'
-  | 'contextUsage'
-  | 'pendingUserMessage'
-  | 'transcript'
-> & {
-  terminalLifecycleSeen: boolean;
-  assistantSnapshotRunId: string | null;
-  ignoredDeltaAfterAssistantSnapshotCount: number;
-};
-
-type PostFinalHistoryRecovery = {
-  sessionKey: string;
-  sessionId: string | null;
-  historyGeneration: number;
-  runId: string | null;
-  baselineMessageSeq: number | null;
-  baselineCompleteMessageCount: number;
-  attempt: number;
-};
-
-type SwitchSessionOptions = {
-  promoteFromSessionKey?: string;
-};
-
-function hasStableProgressOwner(event: NormalizedAgentEvent): boolean {
-  // Independent delivery paths can overtake paced text. Only identified text
-  // may bypass the run watermark; the reducer still enforces owner/run fences.
-  if (event.stream === 'item') {
-    return (
-      readPreambleText(event.data) !== null &&
-      typeof event.data.itemId === 'string' &&
-      event.data.itemId.trim().length > 0
-    );
-  }
-  if (event.stream !== 'thinking' && event.stream !== 'assistant') return false;
-  const firstSeq = event.data.progressSegmentFirstSeq;
-  return (
-    typeof firstSeq === 'number' &&
-    Number.isSafeInteger(firstSeq) &&
-    firstSeq >= 0 &&
-    firstSeq <= event.agentSeq
-  );
-}
-
-function cloneAssistantTurn(turn: AssistantTurn): AssistantTurn {
-  const items = turn.items.map(item => ({ ...item }));
-  const toolById = new Map<string, ToolItem>();
-  for (const item of items) {
-    if (item.type === 'tool') toolById.set(item.toolCallId, item);
-  }
-  return {
-    ...turn,
-    items,
-    toolById,
-    ...(turn.activityEventSeqById
-      ? { activityEventSeqById: new Map(turn.activityEventSeqById) }
-      : {}),
-  };
-}
-
-function getContentImageUrl(value: unknown): string | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const block = value as Record<string, unknown>;
-  if (block.type === 'image' && typeof block.url === 'string') return block.url;
-  if (
-    block.type === 'attachment' &&
-    block.attachment &&
-    typeof block.attachment === 'object' &&
-    !Array.isArray(block.attachment)
-  ) {
-    const attachment = block.attachment as Record<string, unknown>;
-    if (attachment.kind === 'image' && typeof attachment.url === 'string') {
-      return attachment.url;
-    }
-  }
-  return null;
-}
-
-function getImageUrlIdentity(url: string): string {
-  const commaIndex = url.indexOf(',');
-  if (
-    commaIndex > 0 &&
-    url.slice(0, commaIndex).toLowerCase().startsWith('data:image/') &&
-    url.slice(0, commaIndex).toLowerCase().includes(';base64')
-  ) {
-    // The Gateway may normalize an image MIME (for example image/jpg to
-    // image/jpeg) while preserving the exact bytes. Compare the payload so
-    // the optimistic preview and durable media fact still occupy one slot.
-    return `data:image;base64,${url.slice(commaIndex + 1)}`;
-  }
-  return url;
-}
-
-// ─── Constants ──────────────────────────────────────────────────────────────
-
-const SILENT_REPLY_PATTERN = /^\s*NO_REPLY\s*$/;
-// Current OpenClaw can publish a message-less terminal frame before its final
-// transcript row is queryable. These delays match that one persistence race;
-// visible finals are completed by their subscribed session.message row.
-const MISSING_TERMINAL_HISTORY_RETRY_DELAYS_MS = [100, 400, 1500, 3000] as const;
-// Ambiguous or broad transcript invalidations and sessions_yield repair remain
-// JustDo-specific catch-up cases. They never cap history pages or message data.
-const DEFERRED_HISTORY_RELOAD_DELAY_MS = 1200;
-const ACTIVE_TOOL_HISTORY_CATCHUP_DELAY_MS = 150;
-const MAX_DEFERRED_HISTORY_CATCHUP_ATTEMPTS = 5;
-const MAX_ACTIVE_TOOL_HISTORY_CATCHUP_ATTEMPTS = 4;
-// Subscribe-before-snapshot closes the initial race. The timeout only prevents
-// a stalled subscription RPC from blocking the session UI indefinitely.
-const DEFAULT_INITIAL_MESSAGE_SUBSCRIPTION_BARRIER_TIMEOUT_MS = 3000;
-const MANUAL_COMPACTION_STOP_RETRY_WINDOW_MS = 30_000;
-const DEFAULT_INITIAL_HISTORY_RETRY_DELAYS_MS = [100, 300, 900] as const;
-const PROGRESS_CARD_GET_METHOD = 'progressCard.get';
-const PROGRESS_CARD_PUT_METHOD = 'progressCard.put';
-const PROGRESS_CARD_CACHE_LIMIT = 100;
-const DEBUG_CHAT_CONTROLLER =
-  typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEBUG_CHAT_CONTROLLER === 'true';
-
-function normalizeSessionId(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
-}
-
-function debugLog(...args: unknown[]): void {
-  if (DEBUG_CHAT_CONTROLLER) {
-    console.debug(...args);
-  }
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
-function readNonNegativeFiniteNumber(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
-}
-
-function readChatContextUsageSnapshot(
-  value: unknown,
-  fallbackSessionKey: string,
-): ChatContextUsageSnapshot | null {
-  const row = asRecord(value);
-  const totalTokens = readNonNegativeFiniteNumber(row?.totalTokens);
-  if (!row || totalTokens === null) return null;
-  const sessionKey =
-    (typeof row.sessionKey === 'string' && row.sessionKey.trim()) ||
-    (typeof row.key === 'string' && row.key.trim()) ||
-    fallbackSessionKey;
-  const provider = typeof row.modelProvider === 'string' ? row.modelProvider.trim() : '';
-  const model = typeof row.model === 'string' ? row.model.trim() : '';
-  return {
-    sessionKey,
-    sessionId: normalizeSessionId(row.sessionId),
-    totalTokens,
-    contextTokens: readNonNegativeFiniteNumber(row.contextTokens),
-    totalTokensFresh: row.totalTokensFresh !== false,
-    updatedAt: readNonNegativeFiniteNumber(row.updatedAt),
-    modelRef: model ? (provider ? `${provider}/${model}` : model) : null,
-  };
-}
-
-function contextUsageSnapshotsEqual(
-  left: ChatContextUsageSnapshot | null,
-  right: ChatContextUsageSnapshot,
-): boolean {
-  return (
-    left !== null &&
-    left.sessionKey === right.sessionKey &&
-    left.sessionId === right.sessionId &&
-    left.totalTokens === right.totalTokens &&
-    left.contextTokens === right.contextTokens &&
-    left.totalTokensFresh === right.totalTokensFresh &&
-    left.updatedAt === right.updatedAt &&
-    left.modelRef === right.modelRef
-  );
-}
-
-function isSubagentTaskHistoryMessage(message: unknown): boolean {
-  const record = asRecord(message);
-  if (String(record?.role ?? '').toLowerCase() !== 'user') return false;
-  const text = extractSnapshotText(message);
-  return (
-    typeof text === 'string' &&
-    text.trimStart().startsWith('[Subagent Context] You are running as a subagent (depth ') &&
-    /(?:^|\r?\n)\[Subagent Task\](?:\r?\n|$)/.test(text)
-  );
-}
-
-function sliceActiveSubagentHistoryPrefix(messages: unknown[]): unknown[] {
-  let lastUserIndex = -1;
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (String(asRecord(messages[index])?.role ?? '').toLowerCase() === 'user') {
-      lastUserIndex = index;
-      break;
-    }
-  }
-  return lastUserIndex >= 0 ? messages.slice(0, lastUserIndex + 1) : messages;
-}
-
-function readPositiveSafeInteger(value: unknown): number | null {
-  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) return null;
-  return value;
-}
-
-function readOpenClawMessageSeq(message: unknown): number | null {
-  const record = asRecord(message);
-  const marker = asRecord(record?.__openclaw);
-  return readPositiveSafeInteger(marker?.seq) ?? readPositiveSafeInteger(record?.seq);
-}
-
-function readLatestOpenClawMessageSeq(messages: readonly unknown[]): number | null {
-  let latest: number | null = null;
-  for (const message of messages) {
-    const seq = readOpenClawMessageSeq(message);
-    if (seq !== null && (latest === null || seq > latest)) latest = seq;
-  }
-  return latest;
-}
-
-function readStringList(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap(item => {
-    const normalized = readNonBlankString(item);
-    return normalized ? [normalized] : [];
-  });
-}
-
-function readExplicitMessageRunId(value: unknown): string | undefined {
-  const outer = asRecord(value);
-  if (!outer) return undefined;
-  const message = asRecord(outer.message) ?? outer;
-  const messageMetadata = asRecord(message.metadata);
-  const outerMetadata = asRecord(outer.metadata);
-  const messageOpenClaw = asRecord(message.__openclaw);
-  const outerOpenClaw = asRecord(outer.__openclaw);
-  for (const candidate of [
-    message.runId,
-    message.run_id,
-    messageOpenClaw?.runId,
-    messageOpenClaw?.run_id,
-    messageMetadata?.runId,
-    messageMetadata?.run_id,
-    outer.runId,
-    outer.run_id,
-    outerOpenClaw?.runId,
-    outerOpenClaw?.run_id,
-    outerMetadata?.runId,
-    outerMetadata?.run_id,
-  ]) {
-    const runId = readNonBlankString(candidate);
-    if (runId) return runId;
-  }
-  return undefined;
-}
-
-function retainOriginalOpenClawIdentity(fullMessage: unknown, originalMessage: unknown): unknown {
-  const full = asRecord(fullMessage);
-  const original = asRecord(originalMessage);
-  if (!full || asRecord(full.__openclaw) || !asRecord(original?.__openclaw)) {
-    return fullMessage;
-  }
-  return {
-    ...full,
-    __openclaw: original?.__openclaw,
-  };
-}
-
-function mergeRefreshedHistoryWindow(current: unknown[], recent: unknown[]): unknown[] {
-  if (current.length <= recent.length || recent.length === 0) return recent;
-  const firstIdentity = readTranscriptIdentity(recent[0]);
-  if (!firstIdentity) return recent;
-  const overlapIndex = current.findIndex(message => {
-    const identity = readTranscriptIdentity(message);
-    return identity?.kind === firstIdentity.kind && identity.value === firstIdentity.value;
-  });
-  return overlapIndex > 0 ? [...current.slice(0, overlapIndex), ...recent] : recent;
-}
-
-function readNonBlankString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value : undefined;
-}
 
 // ─── ChatController ─────────────────────────────────────────────────────────
 
@@ -855,7 +397,8 @@ export class ChatController {
           sessionId: live.currentSessionId,
           lifecycleGeneration: null,
           lastAgentSeq: -1,
-          terminalStatus: state === 'completed' ? 'final' : state === 'failed' ? 'error' : 'aborted',
+          terminalStatus:
+            state === 'completed' ? 'final' : state === 'failed' ? 'error' : 'aborted',
           expiresAt: this.transcriptDependencies.now() + RECENT_RUN_RETENTION_MS,
         });
         pruneRecentRuns(live.transcript, this.transcriptDependencies.now());
@@ -916,55 +459,8 @@ export class ChatController {
   }
 
   /** Safely dismiss an unchanged, fully completed progress card. */
-  async dismissProgressCard(): Promise<boolean> {
-    const card = this.state.progressCard;
-    const client = this.state.client;
-    if (
-      !card ||
-      !client ||
-      !this.state.connected ||
-      !progressCardIsComplete(card) ||
-      !this.isGatewayMethodAdvertised(PROGRESS_CARD_PUT_METHOD)
-    ) {
-      return false;
-    }
-
-    const sessionKey = this.state.sessionKey;
-    const generation = ++this.progressCardLoadGeneration;
-    try {
-      const response = await client.request(PROGRESS_CARD_PUT_METHOD, {
-        sessionKey,
-        expectedRevision: card.revision,
-      });
-      const nextCard = parseProgressCardGetResult(response, sessionKey);
-      if (nextCard === undefined) throw new Error('invalid progress card response');
-      if (client !== this.state.client || sessionKey !== this.state.sessionKey) {
-        return false;
-      }
-      // The Gateway broadcasts progressCard.changed before returning from put.
-      // A matching clear event therefore invalidates the load generation first;
-      // it is still a successful dismissal when the authoritative response and
-      // selected state both confirm that the card is gone.
-      if (generation !== this.progressCardLoadGeneration) {
-        return nextCard === null && this.state.progressCard === null;
-      }
-      this.rememberProgressCard(sessionKey, nextCard);
-      this.state.progressCard = nextCard;
-      this.state.progressCardLoading = false;
-      this.state.progressCardError = null;
-      this.notify();
-      return nextCard === null;
-    } catch {
-      if (
-        generation === this.progressCardLoadGeneration &&
-        client === this.state.client &&
-        sessionKey === this.state.sessionKey
-      ) {
-        this.state.progressCardError = 'unavailable';
-        this.notify();
-      }
-      return false;
-    }
+  dismissProgressCard(): Promise<boolean> {
+    return chatControllerProgress.dismissProgressCard.call(this.chatControllerProgressContext);
   }
 
   /** Subscribe to state changes */
@@ -1228,182 +724,58 @@ export class ChatController {
     sessionKey: string,
     history: ChunkedMessageHistory = this.currentMessageHistory,
   ): void {
-    if (!sessionKey) return;
-    this.chatMessagesBySession.delete(sessionKey);
-    this.chatMessagesBySession.set(sessionKey, history);
-    this.historySourceBySession.set(sessionKey, this.state.transcript.historySource);
-    if (this.chatMessagesBySession.size > 20) {
-      const oldestKey = this.chatMessagesBySession.keys().next().value;
-      if (typeof oldestKey === 'string') {
-        this.chatMessagesBySession.delete(oldestKey);
-        this.historySourceBySession.delete(oldestKey);
-      }
-    }
+    return chatControllerSession.cacheSessionMessages.call(
+      this.chatControllerSessionContext,
+      sessionKey,
+      history,
+    );
   }
 
   private findLiveSessionState(
     sessionKey: string | null | undefined,
     sessionId?: string | null,
   ): [string, SessionLiveState] | null {
-    if (sessionKey) {
-      const exact = this.liveStateBySession.get(sessionKey);
-      if (exact) return [sessionKey, exact];
-      const normalized = normalizeTranscriptSessionKey(sessionKey);
-      for (const entry of this.liveStateBySession) {
-        if (normalizeTranscriptSessionKey(entry[0]) === normalized) return entry;
-      }
-    }
-    if (sessionId) {
-      for (const entry of this.liveStateBySession) {
-        if (
-          entry[1].currentSessionId === sessionId ||
-          entry[1].transcript.sessionId === sessionId
-        ) {
-          return entry;
-        }
-      }
-    }
-    return null;
+    return chatControllerSession.findLiveSessionState.call(
+      this.chatControllerSessionContext,
+      sessionKey,
+      sessionId,
+    );
   }
 
   private cacheCurrentLiveState(sessionKey: string): void {
-    if (!sessionKey) return;
-    this.clearRunActivityTimer();
-    this.runProbeToken = null;
-    this.cacheCurrentTurnTiming();
-    this.state.transcript.historyGeneration += 1;
-    this.state.transcript.revision += 1;
-    const hasUnsettledTurn =
-      this.state.chatSending ||
-      this.state.pendingUserMessage !== null ||
-      this.state.transcript.activeTurn?.status === 'running';
-    if (!hasUnsettledTurn && this.state.transcript.activeTurn) {
-      this.state.transcript.activeTurn = null;
-      this.state.transcript.revision += 1;
-    }
-    this.liveStateBySession.delete(sessionKey);
-    this.liveStateBySession.set(sessionKey, {
-      currentSessionId: this.state.currentSessionId,
-      chatSending: this.state.chatSending,
-      compactionInFlight: this.state.compactionInFlight,
-      chatRunId: this.state.chatRunId,
-      lastError: this.state.lastError,
-      runActivity: this.state.runActivity,
-      contextUsage: this.state.contextUsage,
-      pendingUserMessage: this.state.pendingUserMessage,
-      transcript: this.state.transcript,
-      terminalLifecycleSeen: this.terminalLifecycleSeen,
-      assistantSnapshotRunId: this.assistantSnapshotRunId,
-      ignoredDeltaAfterAssistantSnapshotCount: this.ignoredDeltaAfterAssistantSnapshotCount,
-    });
-    if (this.liveStateBySession.size > 20) {
-      const oldestSettledKey = [...this.liveStateBySession].find(
-        ([, live]) => !live.chatSending && live.transcript.activeTurn?.status !== 'running',
-      )?.[0];
-      if (oldestSettledKey) this.liveStateBySession.delete(oldestSettledKey);
-    }
+    return chatControllerSession.cacheCurrentLiveState.call(
+      this.chatControllerSessionContext,
+      sessionKey,
+    );
   }
 
   private restoreLiveState(sessionKey: string): boolean {
-    const cachedEntry = this.findLiveSessionState(sessionKey);
-    if (!cachedEntry) {
-      this.state.currentSessionId = null;
-      this.state.chatSending = false;
-      this.state.compactionInFlight = false;
-      this.state.chatRunId = null;
-      this.state.lastError = null;
-      this.state.runActivity = null;
-      this.state.contextUsage = null;
-      this.state.pendingUserMessage = null;
-      this.state.transcript = createChatTranscriptState(sessionKey, null);
-      this.terminalLifecycleSeen = false;
-      this.resetAssistantSnapshotSource();
-      return false;
-    }
-
-    const [cachedKey, cached] = cachedEntry;
-    if (cachedKey !== sessionKey) {
-      this.liveStateBySession.delete(cachedKey);
-      this.liveStateBySession.set(sessionKey, cached);
-    }
-    cached.transcript.sessionKey = sessionKey;
-    if (cached.transcript.activeTurn) cached.transcript.activeTurn.sessionKey = sessionKey;
-    this.state.currentSessionId = cached.currentSessionId;
-    this.state.chatSending = cached.chatSending;
-    this.state.compactionInFlight = cached.compactionInFlight;
-    this.state.chatRunId = cached.chatRunId;
-    this.state.lastError = cached.lastError;
-    this.state.runActivity = cached.runActivity;
-    this.state.contextUsage = cached.contextUsage;
-    this.state.pendingUserMessage = cached.pendingUserMessage;
-    this.state.transcript = cached.transcript;
-    this.terminalLifecycleSeen = cached.terminalLifecycleSeen;
-    this.assistantSnapshotRunId = cached.assistantSnapshotRunId;
-    this.ignoredDeltaAfterAssistantSnapshotCount = cached.ignoredDeltaAfterAssistantSnapshotCount;
-    if (this.state.chatSending && this.state.runActivity) this.scheduleRunActivityCheck();
-    if (this.terminalLifecycleSeen && this.state.chatSending && !this.state.compactionInFlight) {
-      this.scheduleChatLifecycleEndFallback();
-    }
-    return true;
+    return chatControllerSession.restoreLiveState.call(
+      this.chatControllerSessionContext,
+      sessionKey,
+    );
   }
 
   private isSelectedSession(sessionKey: string): boolean {
-    return (
-      normalizeTranscriptSessionKey(sessionKey) ===
-      normalizeTranscriptSessionKey(this.state.sessionKey)
+    return chatControllerSession.isSelectedSession.call(
+      this.chatControllerSessionContext,
+      sessionKey,
     );
   }
 
   private promoteCachedSessionState(sourceSessionKey: string, targetSessionKey: string): void {
-    const sourceHistory = this.chatMessagesBySession.get(sourceSessionKey);
-    this.chatMessagesBySession.delete(sourceSessionKey);
-    if (sourceHistory) this.chatMessagesBySession.set(targetSessionKey, sourceHistory);
-
-    const sourceHistorySource = this.historySourceBySession.get(sourceSessionKey);
-    this.historySourceBySession.delete(sourceSessionKey);
-    if (sourceHistorySource) {
-      this.historySourceBySession.set(targetSessionKey, sourceHistorySource);
-    }
-
-    const sourcePagination = this.historyPaginationBySession.get(sourceSessionKey);
-    this.historyPaginationBySession.delete(sourceSessionKey);
-    if (sourcePagination) {
-      this.historyPaginationBySession.set(targetSessionKey, sourcePagination);
-    }
-    const sourceLeafKey = normalizeTranscriptSessionKey(sourceSessionKey);
-    const targetLeafKey = normalizeTranscriptSessionKey(targetSessionKey);
-    if (this.displayedHistoryLeafBySession.has(sourceLeafKey)) {
-      const sourceLeaf = this.displayedHistoryLeafBySession.get(sourceLeafKey) ?? null;
-      this.displayedHistoryLeafBySession.delete(sourceLeafKey);
-      this.displayedHistoryLeafBySession.set(targetLeafKey, sourceLeaf);
-    }
-
-    const sourceLiveEntry = this.findLiveSessionState(sourceSessionKey);
-    if (!sourceLiveEntry) return;
-    const [sourceLiveKey, sourceLiveState] = sourceLiveEntry;
-    this.liveStateBySession.delete(sourceLiveKey);
-    sourceLiveState.currentSessionId = null;
-    if (sourceLiveState.contextUsage) {
-      sourceLiveState.contextUsage = {
-        ...sourceLiveState.contextUsage,
-        sessionKey: targetSessionKey,
-        sessionId: null,
-      };
-    }
-    sourceLiveState.transcript.sessionKey = targetSessionKey;
-    sourceLiveState.transcript.sessionId = null;
-    sourceLiveState.transcript.historyGeneration += 1;
-    if (sourceLiveState.transcript.activeTurn) {
-      sourceLiveState.transcript.activeTurn.sessionKey = targetSessionKey;
-      sourceLiveState.transcript.activeTurn.sessionId = null;
-    }
-    sourceLiveState.transcript.revision += 1;
-    this.liveStateBySession.set(targetSessionKey, sourceLiveState);
+    return chatControllerSession.promoteCachedSessionState.call(
+      this.chatControllerSessionContext,
+      sourceSessionKey,
+      targetSessionKey,
+    );
   }
 
   private getSessionRunId(sessionKey: string): string | null {
-    if (this.isSelectedSession(sessionKey)) return this.state.chatRunId;
-    return this.findLiveSessionState(sessionKey)?.[1].chatRunId ?? null;
+    return chatControllerSession.getSessionRunId.call(
+      this.chatControllerSessionContext,
+      sessionKey,
+    );
   }
 
   private bindAcknowledgedRun(
@@ -1411,23 +783,12 @@ export class ChatController {
     provisionalRunId: string,
     acknowledgedRunId: string,
   ): void {
-    if (this.isSelectedSession(sessionKey)) {
-      if (this.state.chatRunId !== provisionalRunId) return;
-      this.state.chatRunId = acknowledgedRunId;
-      if (this.state.runActivity?.runId === provisionalRunId) {
-        this.state.runActivity.runId = acknowledgedRunId;
-      }
-      bindAssistantTurnRunId(this.state.transcript, provisionalRunId, acknowledgedRunId);
-      return;
-    }
-
-    const cached = this.findLiveSessionState(sessionKey)?.[1];
-    if (!cached || cached.chatRunId !== provisionalRunId) return;
-    cached.chatRunId = acknowledgedRunId;
-    if (cached.runActivity?.runId === provisionalRunId) {
-      cached.runActivity.runId = acknowledgedRunId;
-    }
-    bindAssistantTurnRunId(cached.transcript, provisionalRunId, acknowledgedRunId);
+    return chatControllerSession.bindAcknowledgedRun.call(
+      this.chatControllerSessionContext,
+      sessionKey,
+      provisionalRunId,
+      acknowledgedRunId,
+    );
   }
 
   private persistRunFailure(
@@ -1510,64 +871,24 @@ export class ChatController {
   }
 
   private settleCompactionRequest(sessionKey: string, errorMessage?: string): void {
-    if (this.isSelectedSession(sessionKey)) {
-      this.state.chatSending = false;
-      this.state.compactionInFlight = false;
-      if (errorMessage) this.state.lastError = errorMessage;
-      return;
-    }
-    const cached = this.findLiveSessionState(sessionKey)?.[1];
-    if (!cached) return;
-    cached.chatSending = false;
-    cached.compactionInFlight = false;
-    if (errorMessage) cached.lastError = errorMessage;
+    return chatControllerCompaction.settleCompactionRequest.call(
+      this.chatControllerCompactionContext,
+      sessionKey,
+      errorMessage,
+    );
   }
 
   private cacheCurrentTurnTiming(): void {
-    const turn = this.state.transcript.activeTurn;
-    const sessionKey = turn?.sessionKey || this.state.transcript.sessionKey;
-    if (!turn || !sessionKey) return;
-    const existing = this.turnTimingBySession.get(sessionKey);
-    const startedAt =
-      existing?.runId === turn.runId
-        ? Math.min(existing.startedAt, turn.startedAt)
-        : turn.startedAt;
-    this.turnTimingBySession.delete(sessionKey);
-    this.turnTimingBySession.set(sessionKey, {
-      runId: turn.runId,
-      status: turn.status,
-      startedAt,
-      ...(turn.endedAt !== undefined ? { endedAt: turn.endedAt } : {}),
-      ...(turn.modelRef || (existing?.runId === turn.runId && existing.modelRef)
-        ? { modelRef: turn.modelRef ?? existing?.modelRef }
-        : {}),
-    });
-    if (this.turnTimingBySession.size > 20) {
-      const oldestSettledKey = [...this.turnTimingBySession].find(
-        ([, timing]) => timing.status !== 'running',
-      )?.[0];
-      if (oldestSettledKey) this.turnTimingBySession.delete(oldestSettledKey);
-    }
+    return chatControllerSession.cacheCurrentTurnTiming.call(this.chatControllerSessionContext);
   }
 
   private rememberRunModel(message: unknown, runId?: string | null, terminal = false): void {
-    if (asRecord(message)?.role !== 'assistant' || !runId) return;
-    const modelRef = readModelRef(message);
-    if (!modelRef || isGatewayInjectedModelRef(modelRef)) return;
-    const activity = this.state.runActivity;
-    const turn = this.state.transcript.activeTurn;
-    // An append can describe an earlier model attempt within this same run.
-    // Live progress stays authoritative until the run reaches its terminal event.
-    if (!terminal && this.state.chatSending && turn?.modelRef) return;
-    if (activity?.runId === runId) {
-      activity.model = modelRef;
-      delete activity.provider;
-    }
-    if (turn?.runId === runId) turn.modelRef = modelRef;
-    const cached = this.turnTimingBySession.get(this.state.sessionKey);
-    if (cached?.runId === runId) {
-      this.turnTimingBySession.set(this.state.sessionKey, { ...cached, modelRef });
-    }
+    return chatControllerSession.rememberRunModel.call(
+      this.chatControllerSessionContext,
+      message,
+      runId,
+      terminal,
+    );
   }
 
   private resetTranscriptForSession(
@@ -1575,26 +896,23 @@ export class ChatController {
     sessionId: string | null,
     preserveTiming = true,
   ): void {
-    this.pendingAnnounceEvents.clear();
-    this.observedSessionMessageSeqBySession.delete(
-      normalizeTranscriptSessionKey(this.state.transcript.sessionKey || sessionKey),
+    return chatControllerSession.resetTranscriptForSession.call(
+      this.chatControllerSessionContext,
+      sessionKey,
+      sessionId,
+      preserveTiming,
     );
-    if (preserveTiming) {
-      this.cacheCurrentTurnTiming();
-    } else {
-      this.turnTimingBySession.delete(this.state.transcript.sessionKey || sessionKey);
-      this.turnTimingBySession.delete(sessionKey);
-    }
-    resetChatTranscriptState(this.state.transcript, sessionKey, sessionId);
   }
 
   private finishCurrentTurnTiming(
     status: Exclude<AssistantTurnTiming['status'], 'running'>,
     runId?: string | null,
   ): void {
-    const activeTurn = this.state.transcript.activeTurn;
-    if (activeTurn?.status !== 'running') this.cacheCurrentTurnTiming();
-    this.finishTurnTimingForSession(this.state.sessionKey, status, runId, activeTurn?.endedAt);
+    return chatControllerSession.finishCurrentTurnTiming.call(
+      this.chatControllerSessionContext,
+      status,
+      runId,
+    );
   }
 
   private finishTurnTimingForSession(
@@ -1603,108 +921,28 @@ export class ChatController {
     runId?: string | null,
     endedAt = Date.now(),
   ): void {
-    const timingKey = this.turnTimingBySession.has(sessionKey)
-      ? sessionKey
-      : [...this.turnTimingBySession.keys()].find(
-          key => normalizeTranscriptSessionKey(key) === normalizeTranscriptSessionKey(sessionKey),
-        );
-    if (!timingKey) return;
-    const cached = this.turnTimingBySession.get(timingKey);
-    if (!cached || cached.status !== 'running') return;
-    if (runId && cached.runId !== runId && !cached.runId.startsWith('justdo-')) return;
-    this.turnTimingBySession.set(timingKey, {
-      ...cached,
+    return chatControllerSession.finishTurnTimingForSession.call(
+      this.chatControllerSessionContext,
+      sessionKey,
       status,
+      runId,
       endedAt,
-    });
+    );
   }
 
   getCurrentTurnTiming(): AssistantTurnTiming | null {
-    const activeTurn = this.state.transcript.activeTurn;
-    const cached = this.turnTimingBySession.get(this.state.sessionKey);
-    if (!activeTurn) {
-      if (!cached || this.state.historyWindowEnd < this.state.loadedMessageCount) return null;
-      const latestUserTimestamp = this.state.chatMessages.reduce<number | null>(
-        (latest, message) => {
-          const record = asRecord(message);
-          if (String(record?.role ?? '').toLowerCase() !== 'user') return latest;
-          const timestamp = messageTimestampMs(message);
-          return timestamp === null || (latest !== null && timestamp <= latest)
-            ? latest
-            : timestamp;
-        },
-        null,
-      );
-      if (
-        cached.status !== 'running' &&
-        cached.endedAt !== undefined &&
-        latestUserTimestamp !== null &&
-        latestUserTimestamp > cached.endedAt
-      ) {
-        return null;
-      }
-      return cached;
-    }
-
-    const canResumeCachedStart = cached?.status === 'running' && cached.runId === activeTurn.runId;
-    return {
-      runId: activeTurn.runId,
-      status: activeTurn.status,
-      startedAt: canResumeCachedStart
-        ? Math.min(cached.startedAt, activeTurn.startedAt)
-        : activeTurn.startedAt,
-      ...(activeTurn.endedAt !== undefined ? { endedAt: activeTurn.endedAt } : {}),
-      ...(activeTurn.modelRef || (canResumeCachedStart && cached.modelRef)
-        ? { modelRef: activeTurn.modelRef ?? cached?.modelRef }
-        : {}),
-    };
+    return chatControllerSession.getCurrentTurnTiming.call(this.chatControllerSessionContext);
   }
 
   private setCurrentSessionMessages(
     messages: unknown[],
     options: { resetLoadedHistory?: boolean } = {},
   ): void {
-    if (options.resetLoadedHistory) {
-      this.currentMessageHistory.reset(messages);
-      const nextWindow = latestHistoryWindow(messages.length);
-      this.state.chatMessages = messages;
-      this.state.loadedMessageCount = messages.length;
-      this.state.historyWindowStart = nextWindow.start;
-      this.state.historyWindowEnd = nextWindow.end;
-      this.state.visibleChatMessages = this.currentMessageHistory.slice(
-        nextWindow.start,
-        nextWindow.end,
-      );
-      this.state.transcript.persistedMessages = messages;
-      retireSettledActiveTurn(this.state.transcript, messages);
-      this.cacheSessionMessages(this.state.sessionKey);
-      return;
-    }
-    const previousMessages = this.state.chatMessages;
-    if (this.currentMessageHistory.recentMessages !== previousMessages) {
-      this.currentMessageHistory.reset(previousMessages);
-    }
-    const previousTotal = this.currentMessageHistory.length;
-    const wasAtLatest = this.state.historyWindowEnd >= previousTotal;
-    this.currentMessageHistory.replaceRecent(messages);
-    const nextTotal = this.currentMessageHistory.length;
-    const nextWindow = wasAtLatest
-      ? latestHistoryWindow(nextTotal)
-      : {
-          start: Math.min(this.state.historyWindowStart, nextTotal),
-          end: Math.min(this.state.historyWindowEnd, nextTotal),
-        };
-    this.state.chatMessages = messages;
-    this.state.loadedMessageCount = nextTotal;
-    this.state.historyWindowStart = nextWindow.start;
-    this.state.historyWindowEnd = nextWindow.end;
-    this.state.visibleChatMessages = this.currentMessageHistory.slice(
-      nextWindow.start,
-      nextWindow.end,
+    return chatControllerHistory.setCurrentSessionMessages.call(
+      this.chatControllerHistoryContext,
+      messages,
+      options,
     );
-    this.state.transcript.persistedMessages = messages;
-    retireSettledActiveTurn(this.state.transcript, messages);
-    this.cacheSessionMessages(this.state.sessionKey);
   }
 
   /**
@@ -1720,140 +958,17 @@ export class ChatController {
       backfillMissingToolsFromAppend?: boolean;
     } = {},
   ): boolean {
-    const activeTurn = this.state.transcript.activeTurn;
-    if (!activeTurn) return false;
-
-    const activeRunMessages = messages.filter(message => {
-      const explicitRunId = readExplicitMessageRunId(message);
-      return !explicitRunId || explicitRunId === activeTurn.runId;
-    });
-    const persistedTools = new Map<string, ToolItem>(
-      projectPersistedTimeline(activeRunMessages as GatewayMessage[])
-        .flatMap(item =>
-          item.kind === 'process-summary'
-            ? item.items.filter(process => process.type === 'tool')
-            : item.kind === 'live-process' && item.item.type === 'tool'
-              ? [item.item]
-              : item.kind === 'progress-receipt'
-                ? [item.item]
-                : item.kind === 'plan-presentation'
-                  ? [item.item]
-                  : [],
-        )
-        .map(tool => [tool.toolCallId, tool] as const),
+    return chatControllerHistory.hydrateActiveToolItemsFromHistory.call(
+      this.chatControllerHistoryContext,
+      messages,
+      options,
     );
-    const authoritativeSegmentsByToolId = precedingSegmentsByToolCallId(activeRunMessages);
-    const authoritativeToolResultIds = toolResultCallIds(activeRunMessages);
-    let changed = false;
-    for (const [toolCallId, persistedTool] of persistedTools) {
-      let liveTool = activeTurn.toolById.get(toolCallId);
-      if (!liveTool) {
-        const timestampMatchesActiveTurn =
-          persistedTool.startedAt > 0 && persistedTool.startedAt >= activeTurn.startedAt;
-        const canBackfillMissingTool =
-          options.backfillMissingToolsFromAppend === true ||
-          (options.backfillMissingSessionsYield === true &&
-            isSessionsYieldTool(persistedTool.name));
-        if (
-          !canBackfillMissingTool ||
-          activeTurn.status !== 'running' ||
-          !this.state.chatSending ||
-          !timestampMatchesActiveTurn
-        ) {
-          continue;
-        }
-        const now = this.transcriptDependencies.now();
-        const startedAt = persistedTool.startedAt > 0 ? persistedTool.startedAt : now;
-        liveTool = {
-          ...persistedTool,
-          id: this.transcriptDependencies.createId('history-tool'),
-          runId: activeTurn.runId,
-          firstSeq: activeTurn.lastAgentSeq,
-          lastSeq: activeTurn.lastAgentSeq,
-          startedAt,
-          updatedAt: Math.max(startedAt, persistedTool.updatedAt || now),
-          agentSequencePending: true,
-          agentSequenceUnconfirmed: true,
-        };
-        // A transcript append can beat the corresponding Thinking and Tool
-        // Agent frames across their independent delivery paths. Every restored
-        // Tool starts as a live-tail boundary, even when the first observed row
-        // is already terminal; terminal evidence below releases it immediately.
-        activeTurn.items.push(liveTool);
-        activeTurn.toolById.set(toolCallId, liveTool);
-        changed = true;
-      }
-      const authoritativeSegments = authoritativeSegmentsByToolId.get(toolCallId);
-      if (authoritativeSegments) {
-        changed =
-          hydrateToolPrecedingSegments(
-            activeTurn,
-            liveTool,
-            authoritativeSegments,
-            activeTurn.lastAgentSeq,
-            persistedTool.updatedAt || this.transcriptDependencies.now(),
-            this.transcriptDependencies,
-          ) || changed;
-      }
-      if (liveTool.input === undefined && persistedTool.input !== undefined) {
-        liveTool.input = persistedTool.input;
-        changed = true;
-      }
-      if (liveTool.output === undefined && persistedTool.output !== undefined) {
-        liveTool.output = persistedTool.output;
-        changed = true;
-      }
-      if (liveTool.error === undefined && persistedTool.error !== undefined) {
-        liveTool.error = persistedTool.error;
-        changed = true;
-      }
-      const canApplyPersistedTerminalStatus =
-        persistedTool.status !== 'running' &&
-        (!isSessionsYieldTool(liveTool.name) ||
-          hasToolResultPayload(persistedTool) ||
-          persistedTool.status !== 'completed');
-      if (
-        liveTool.agentSequenceUnconfirmed === true &&
-        authoritativeToolResultIds.has(toolCallId)
-      ) {
-        const completedAt = persistedTool.updatedAt || persistedTool.startedAt;
-        if (liveTool.historyCompletedAt !== completedAt) {
-          liveTool.historyCompletedAt = completedAt;
-          changed = true;
-        }
-      }
-      if (
-        liveTool.agentSequencePending === true &&
-        (authoritativeToolResultIds.has(toolCallId) || canApplyPersistedTerminalStatus)
-      ) {
-        changed =
-          confirmRecoveredToolSequence(
-            activeTurn,
-            liveTool,
-            activeTurn.lastAgentSeq,
-            persistedTool.updatedAt || this.transcriptDependencies.now(),
-            'history',
-          ) || changed;
-      }
-      if (liveTool.status === 'running' && canApplyPersistedTerminalStatus) {
-        liveTool.status = persistedTool.status;
-        changed = true;
-      }
-    }
-    if (changed) this.state.transcript.revision += 1;
-    return changed;
   }
 
   private publishActiveToolHistoryRepair(): void {
-    const activeTurn = this.state.transcript.activeTurn;
-    if (!activeTurn) return;
-    const hasRunningTool = [...activeTurn.toolById.values()].some(
-      tool => tool.status === 'running',
+    return chatControllerHistory.publishActiveToolHistoryRepair.call(
+      this.chatControllerHistoryContext,
     );
-    this.updateRunActivity(activeTurn.runId, hasRunningTool ? 'running-tool' : 'waiting-model');
-    // Tool starts and terminal history rows must bypass streaming throttling
-    // so the repaired card and its waiting status change appear together.
-    this.notifyStream('terminal');
   }
 
   private updateLocalCompactionMessage(
@@ -1861,122 +976,42 @@ export class ChatController {
     statusId: string,
     replacement: unknown | null,
   ): void {
-    const history =
-      this.state.sessionKey === sessionKey
-        ? this.state.chatMessages
-        : this.chatMessagesBySession.get(sessionKey)?.recentMessages;
-    if (!history) return;
-    const nextMessages = history.flatMap(message =>
-      isLocalCompactionStatus(message, statusId)
-        ? replacement === null
-          ? []
-          : [replacement]
-        : [message],
+    return chatControllerCompaction.updateLocalCompactionMessage.call(
+      this.chatControllerCompactionContext,
+      sessionKey,
+      statusId,
+      replacement,
     );
-    if (this.state.sessionKey === sessionKey) {
-      this.setCurrentSessionMessages(nextMessages);
-      return;
-    }
-    this.chatMessagesBySession.get(sessionKey)?.replaceRecent(nextMessages);
   }
 
   private projectLocalCompactionStatus(sessionKey: string, messages: unknown[]): unknown[] {
-    const status = this.localCompactionStatusBySession.get(sessionKey);
-    if (!status) return messages;
-    const hasAuthoritativeMarker = messages.some(message => {
-      const fingerprint = readCompactionMarkerFingerprint(message);
-      if (fingerprint === null || status.markerFingerprintsBefore.has(fingerprint)) return false;
-      // The transcript entry id and compaction item id are distinct. A delayed
-      // marker from the preceding operation must not replace the current status.
-      if (status.eventId?.startsWith('item:')) {
-        const marker = (message as Record<string, unknown>).__openclaw as Record<string, unknown>;
-        return marker.itemId === status.eventId.slice('item:'.length);
-      }
-      return true;
-    });
-    if (hasAuthoritativeMarker) status.authoritativeMarkerSeen = true;
-    const phase = status.message.__openclaw.phase;
-    if (status.authoritativeMarkerSeen && (phase === 'in-progress' || phase === 'completed')) {
-      // A transcript commit precedes the native terminal event. Hide the local
-      // card, but retain its identity until that event can settle the operation.
-      if (phase === 'completed') this.localCompactionStatusBySession.delete(sessionKey);
-      this.deferredHistoryReloadAttempts.delete(sessionKey);
-      return messages.filter(message => !isLocalCompactionStatus(message, status.id));
-    }
-    return [
-      ...messages.filter(message => !isLocalCompactionStatus(message, status.id)),
-      status.message,
-    ];
+    return chatControllerCompaction.projectLocalCompactionStatus.call(
+      this.chatControllerCompactionContext,
+      sessionKey,
+      messages,
+    );
   }
 
   private beginLocalCompactionStatus(
     sessionKey: string,
     options: { forceNew?: boolean; eventId?: string } = {},
   ): LocalCompactionStatus {
-    const existing = this.localCompactionStatusBySession.get(sessionKey);
-    const sameOperation =
-      (options.eventId && options.eventId === existing?.eventId) ||
-      ((!options.eventId || !existing?.eventId) &&
-        existing?.message.__openclaw.phase === 'in-progress');
-    if (existing && sameOperation && !options.forceNew) {
-      existing.eventId ??= options.eventId;
-      return existing;
-    }
-    if (existing) {
-      this.updateLocalCompactionMessage(sessionKey, existing.id, null);
-    }
-    const startedAt = Date.now();
-    const id = `local-compaction-${startedAt}-${this.transcriptIdSequence++}`;
-    const status: LocalCompactionStatus = {
-      id,
-      eventId: options.eventId,
-      markerFingerprintsBefore: new Set(
-        (this.isSelectedSession(sessionKey)
-          ? this.state.chatMessages
-          : (this.chatMessagesBySession.get(sessionKey)?.recentMessages ?? [])
-        )
-          .map(readCompactionMarkerFingerprint)
-          .filter((fingerprint): fingerprint is string => fingerprint !== null),
-      ),
-      message: {
-        role: 'system',
-        timestamp: startedAt,
-        __openclaw: {
-          kind: 'compaction-status',
-          id,
-          phase: 'in-progress',
-        },
-      },
-    };
-    this.deferredHistoryReloadAttempts.delete(sessionKey);
-    this.localCompactionStatusBySession.set(sessionKey, status);
-    if (this.state.sessionKey === sessionKey) {
-      this.setCurrentSessionMessages([...this.state.chatMessages, status.message]);
-    } else {
-      const history = this.chatMessagesBySession.get(sessionKey) ?? new ChunkedMessageHistory();
-      history.replaceRecent([...history.recentMessages, status.message]);
-      this.chatMessagesBySession.set(sessionKey, history);
-    }
-    return status;
+    return chatControllerCompaction.beginLocalCompactionStatus.call(
+      this.chatControllerCompactionContext,
+      sessionKey,
+      options,
+    );
   }
 
   private completeLocalCompactionStatus(
     sessionKey: string,
     tokens?: { before?: number; after?: number },
   ): LocalCompactionStatus | null {
-    const status = this.localCompactionStatusBySession.get(sessionKey);
-    if (!status) return null;
-    status.message = {
-      ...status.message,
-      __openclaw: {
-        ...status.message.__openclaw,
-        phase: 'completed',
-        tokensBefore: tokens?.before ?? status.message.__openclaw.tokensBefore,
-        tokensAfter: tokens?.after ?? status.message.__openclaw.tokensAfter,
-      },
-    };
-    this.updateLocalCompactionMessage(sessionKey, status.id, status.message);
-    return status;
+    return chatControllerCompaction.completeLocalCompactionStatus.call(
+      this.chatControllerCompactionContext,
+      sessionKey,
+      tokens,
+    );
   }
 
   private updateLocalCompactionSummary(
@@ -1984,105 +1019,61 @@ export class ChatController {
     status: LocalCompactionStatus,
     data: Record<string, unknown>,
   ): void {
-    const currentSummary = status.message.__openclaw.summary ?? '';
-    const accumulated =
-      typeof data.text === 'string'
-        ? data.text
-        : typeof data.summary === 'string'
-          ? data.summary
-          : undefined;
-    const delta = typeof data.delta === 'string' ? data.delta : '';
-    const summary = accumulated ?? `${currentSummary}${delta}`;
-    if (!summary || summary === currentSummary) return;
-    status.message = {
-      ...status.message,
-      __openclaw: {
-        ...status.message.__openclaw,
-        summary,
-      },
-    };
-    this.updateLocalCompactionMessage(sessionKey, status.id, status.message);
+    return chatControllerCompaction.updateLocalCompactionSummary.call(
+      this.chatControllerCompactionContext,
+      sessionKey,
+      status,
+      data,
+    );
   }
 
   private clearLocalCompactionStatus(sessionKey: string): void {
-    const status = this.localCompactionStatusBySession.get(sessionKey);
-    if (!status) return;
-    this.localCompactionStatusBySession.delete(sessionKey);
-    this.deferredHistoryReloadAttempts.delete(sessionKey);
-    this.updateLocalCompactionMessage(sessionKey, status.id, null);
+    return chatControllerCompaction.clearLocalCompactionStatus.call(
+      this.chatControllerCompactionContext,
+      sessionKey,
+    );
   }
 
   private applyHistoryWindow(window: { start: number; end: number }): boolean {
-    if (
-      window.start === this.state.historyWindowStart &&
-      window.end === this.state.historyWindowEnd
-    ) {
-      return false;
-    }
-    this.state.historyWindowStart = window.start;
-    this.state.historyWindowEnd = window.end;
-    this.state.visibleChatMessages = this.currentMessageHistory.slice(window.start, window.end);
-    this.state.transcript.revision += 1;
-    this.notify();
-    return true;
+    return chatControllerHistory.applyHistoryWindow.call(this.chatControllerHistoryContext, window);
   }
 
   private rememberHistoryPagination(sessionKey: string): void {
-    if (!sessionKey) return;
-    this.historyPaginationBySession.set(sessionKey, {
-      hasMore: this.state.historyHasMore,
-      nextCursor: this.state.historyNextCursor,
-      advanced: this.historyPaginationAdvanced,
-    });
+    return chatControllerHistory.rememberHistoryPagination.call(
+      this.chatControllerHistoryContext,
+      sessionKey,
+    );
   }
 
   private restoreHistoryPagination(sessionKey: string): void {
-    const cached = this.historyPaginationBySession.get(sessionKey);
-    this.historyPaginationAdvanced = cached?.advanced ?? false;
-    this.state.historyHasMore = cached?.hasMore ?? false;
-    this.state.historyNextCursor = cached?.nextCursor ?? null;
+    return chatControllerHistory.restoreHistoryPagination.call(
+      this.chatControllerHistoryContext,
+      sessionKey,
+    );
   }
 
   private resetHistoryPagination(sessionKey: string): void {
-    this.historyPaginationAdvanced = false;
-    this.state.historyHasMore = false;
-    this.state.historyNextCursor = null;
-    if (sessionKey) this.historyPaginationBySession.delete(sessionKey);
+    return chatControllerHistory.resetHistoryPagination.call(
+      this.chatControllerHistoryContext,
+      sessionKey,
+    );
   }
 
-  async showOlderHistory(): Promise<boolean> {
-    const shifted = shiftHistoryWindowOlder(
-      {
-        start: this.state.historyWindowStart,
-        end: this.state.historyWindowEnd,
-      },
-      this.currentMessageHistory.length,
-    );
-    if (this.applyHistoryWindow(shifted)) return true;
-    return this.loadOlderHistory();
+  showOlderHistory(): Promise<boolean> {
+    return chatControllerHistory.showOlderHistory.call(this.chatControllerHistoryContext);
   }
 
   showNewerHistory(): boolean {
-    this.newerHistoryNavigationRevision += 1;
-    return this.applyHistoryWindow(
-      shiftHistoryWindowNewer(
-        {
-          start: this.state.historyWindowStart,
-          end: this.state.historyWindowEnd,
-        },
-        this.currentMessageHistory.length,
-      ),
-    );
+    return chatControllerHistory.showNewerHistory.call(this.chatControllerHistoryContext);
   }
 
   showLatestHistory(): boolean {
-    this.newerHistoryNavigationRevision += 1;
-    return this.applyHistoryWindow(latestHistoryWindow(this.currentMessageHistory.length));
+    return chatControllerHistory.showLatestHistory.call(this.chatControllerHistoryContext);
   }
 
   /** Materialize every loaded page only for explicit whole-history consumers such as export. */
   getLoadedMessages(): unknown[] {
-    return this.currentMessageHistory.toArray();
+    return chatControllerHistory.getLoadedMessages.call(this.chatControllerHistoryContext);
   }
 
   preparePlanImplementationReset(request: {
@@ -2100,142 +1091,24 @@ export class ChatController {
   }
 
   /** Repoint the current transcript to the state before one persisted user message. */
-  async rewindToUserMessage(entryId: string): Promise<RewindEditorDraft> {
-    const normalizedEntryId = entryId.trim();
-    const client = this.state.client;
-    if (!normalizedEntryId) throw new Error('A persisted user message is required');
-    if (!client || !this.state.connected) throw new Error('OpenClaw gateway is not connected');
-    if (
-      this.state.chatSending ||
-      this.state.compactionInFlight ||
-      this.state.chatLoading ||
-      this.state.historyLoadingOlder ||
-      this.state.pendingUserMessage !== null
-    ) {
-      throw new Error('Wait for the current session activity to finish');
-    }
-
-    const persistedMessages = this.currentMessageHistory.toArray() as GatewayMessage[];
-    const latestUserEntryId = (() => {
-      const messages = persistedMessages;
-      for (let index = messages.length - 1; index >= 0; index -= 1) {
-        const message = messages[index];
-        if (message?.role?.toLowerCase() !== 'user') continue;
-        const marker = message.__openclaw;
-        if (marker?.kind === 'pending-send') return null;
-        const id = typeof marker?.id === 'string' ? marker.id.trim() : '';
-        return id || null;
-      }
-      return null;
-    })();
-    if (latestUserEntryId !== normalizedEntryId) {
-      throw new Error('Only the latest persisted user message can be updated');
-    }
-    if (!isEntryAfterLatestPlanImplementationReset(persistedMessages, normalizedEntryId)) {
-      throw new Error('Planning messages cannot be updated after implementation has started');
-    }
-
-    const sessionKey = this.state.sessionKey;
-    const described = await client.request<{ session?: { goal?: unknown } | null }>(
-      'sessions.describe',
-      { key: sessionKey },
+  rewindToUserMessage(entryId: string): Promise<RewindEditorDraft> {
+    return chatControllerHistory.rewindToUserMessage.call(
+      this.chatControllerHistoryContext,
+      entryId,
     );
-    if (described.session?.goal !== undefined && described.session.goal !== null) {
-      throw new Error('Messages cannot be updated while the session has a Goal');
-    }
-    const sessionId = this.state.currentSessionId;
-    this.state.chatLoading = true;
-    this.notify();
-    try {
-      const result = await client.request<{
-        editorText?: unknown;
-        editorAttachments?: Array<{ mimeType?: unknown; data?: unknown }>;
-      }>('sessions.rewind', { sessionKey, entryId: normalizedEntryId });
-      const draft = parseEditorDraftPayload(result.editorText, result.editorAttachments);
-      if (this.state.sessionKey !== sessionKey) {
-        this.chatMessagesBySession.delete(sessionKey);
-        this.historySourceBySession.delete(sessionKey);
-        this.historyPaginationBySession.delete(sessionKey);
-        this.displayedHistoryLeafBySession.delete(normalizeTranscriptSessionKey(sessionKey));
-        return draft;
-      }
-
-      this.historyPagingGeneration += 1;
-      this.resetHistoryPagination(sessionKey);
-      this.displayedHistoryLeafBySession.delete(normalizeTranscriptSessionKey(sessionKey));
-      this.resetTranscriptForSession(sessionKey, this.state.currentSessionId ?? sessionId, false);
-      this.setCurrentSessionMessages([], { resetLoadedHistory: true });
-      this.state.pendingUserMessage = null;
-      this.state.lastError = null;
-      this.state.chatLoading = false;
-      this.notify();
-
-      try {
-        const loaded = await this.loadHistory();
-        if (!loaded && this.state.sessionKey === sessionKey) {
-          this.scheduleDeferredHistoryReload(sessionKey, 'rewind-reload-failed');
-        }
-      } catch {
-        if (this.state.sessionKey === sessionKey) {
-          this.scheduleDeferredHistoryReload(sessionKey, 'rewind-reload-failed');
-        }
-      }
-      return draft;
-    } finally {
-      if (this.state.sessionKey === sessionKey && this.state.chatLoading) {
-        this.state.chatLoading = false;
-        this.notify();
-      }
-    }
   }
 
   private ensureTranscriptSessionIdentity(): void {
-    if (this.state.transcript.sessionKey === this.state.sessionKey) return;
-    this.resetTranscriptForSession(this.state.sessionKey, this.state.currentSessionId);
-    this.state.transcript.persistedMessages = this.state.chatMessages;
+    return chatControllerSession.ensureTranscriptSessionIdentity.call(
+      this.chatControllerSessionContext,
+    );
   }
 
-  private async syncMessageSessionSubscription(sessionKey: string): Promise<boolean> {
-    const client = this.state.client;
-    if (!client || !this.state.connected || !sessionKey) return false;
-
-    const previousSessionKey = this.subscribedMessageSessionKey;
-    if (previousSessionKey === sessionKey) return true;
-    const subscriptionSeq = ++this.messageSubscriptionSeq;
-
-    if (previousSessionKey) {
-      await client
-        .request('sessions.messages.unsubscribe', { key: previousSessionKey })
-        .catch(() => {});
-    }
-    if (
-      this.state.client !== client ||
-      !this.state.connected ||
-      subscriptionSeq !== this.messageSubscriptionSeq
-    ) {
-      return false;
-    }
-    try {
-      await client.request('sessions.messages.subscribe', { key: sessionKey });
-      if (
-        this.state.client === client &&
-        this.state.connected &&
-        subscriptionSeq === this.messageSubscriptionSeq
-      ) {
-        this.subscribedMessageSessionKey = sessionKey;
-        return true;
-      } else {
-        // OpenClaw subscriptions are many-to-many. A stale subscribe can
-        // succeed after a newer session transition, so undo it explicitly.
-        await client.request('sessions.messages.unsubscribe', { key: sessionKey }).catch(() => {});
-        return false;
-      }
-    } catch {
-      if (subscriptionSeq === this.messageSubscriptionSeq) {
-        this.subscribedMessageSessionKey = null;
-      }
-      return false;
-    }
+  private syncMessageSessionSubscription(sessionKey: string): Promise<boolean> {
+    return chatControllerSession.syncMessageSessionSubscription.call(
+      this.chatControllerSessionContext,
+      sessionKey,
+    );
   }
 
   private isConnectionInitializationCurrent(params: {
@@ -2243,167 +1116,66 @@ export class ChatController {
     sessionKey: string;
     initializationSeq: number;
   }): boolean {
-    return (
-      this.state.client === params.client &&
-      this.state.connected &&
-      this.state.sessionKey === params.sessionKey &&
-      this.connectionInitializationSeq === params.initializationSeq
+    return chatControllerSession.isConnectionInitializationCurrent.call(
+      this.chatControllerSessionContext,
+      params,
     );
   }
 
-  private async waitForInitialHistoryRetry(
+  private waitForInitialHistoryRetry(
     delayMs: number,
     params: { client: GatewayClient; sessionKey: string; initializationSeq: number },
   ): Promise<boolean> {
-    if (delayMs > 0) {
-      await new Promise<void>(resolve => setTimeout(resolve, delayMs));
-    } else {
-      await Promise.resolve();
-    }
-    return this.isConnectionInitializationCurrent(params);
+    return chatControllerSession.waitForInitialHistoryRetry.call(
+      this.chatControllerSessionContext,
+      delayMs,
+      params,
+    );
   }
 
-  private async loadInitialHistory(params: {
+  private loadInitialHistory(params: {
     client: GatewayClient;
     sessionKey: string;
     initializationSeq: number;
   }): Promise<void> {
-    let initialHistoryError: string | null = null;
-    try {
-      const initialLoadSucceeded = await this.loadHistory(true, { preferStartup: true });
-      if (!initialLoadSucceeded) initialHistoryError = this.state.lastError;
-      if (this.hasExpectedInitialHistory()) return;
-
-      // A subagent's originating task can be older than the recent startup
-      // page. Follow the native offset chain before treating the missing row
-      // as a persistence race and retrying the tail snapshot.
-      while (this.state.historyHasMore && this.state.historyNextCursor) {
-        const cursor = this.state.historyNextCursor;
-        await this.loadOlderHistory();
-        if (this.hasExpectedInitialHistory()) return;
-        if (this.state.historyNextCursor === cursor) break;
-      }
-
-      for (const delayMs of this.initialHistoryRetryDelaysMs) {
-        if (!(await this.waitForInitialHistoryRetry(delayMs, params))) return;
-        const retrySucceeded = await this.loadHistory(false);
-        if (retrySucceeded) {
-          if (initialHistoryError !== null && this.state.lastError === initialHistoryError) {
-            this.state.lastError = null;
-          }
-          initialHistoryError = null;
-        } else {
-          initialHistoryError = this.state.lastError;
-        }
-        if (this.hasExpectedInitialHistory()) return;
-      }
-    } finally {
-      if (this.isConnectionInitializationCurrent(params)) {
-        this.state.initialHistoryReady = true;
-        this.notify();
-      }
-    }
+    return chatControllerSession.loadInitialHistory.call(this.chatControllerSessionContext, params);
   }
 
   private hasExpectedInitialHistory(): boolean {
-    if (!this.expectInitialHistory) return true;
-    return this.findExpectedInitialHistoryIndex(this.state.chatMessages) >= 0;
+    return chatControllerSession.hasExpectedInitialHistory.call(this.chatControllerSessionContext);
   }
 
   private isExpectedInitialHistoryMessage(message: unknown): boolean {
-    if (isSubagentTaskHistoryMessage(message)) return true;
-    return (
-      this.expectInitialUserMessage &&
-      String(asRecord(message)?.role ?? '').toLowerCase() === 'user'
+    return chatControllerSession.isExpectedInitialHistoryMessage.call(
+      this.chatControllerSessionContext,
+      message,
     );
   }
 
   private findExpectedInitialHistoryIndex(messages: readonly unknown[]): number {
-    return messages.findIndex(message => this.isExpectedInitialHistoryMessage(message));
+    return chatControllerSession.findExpectedInitialHistoryIndex.call(
+      this.chatControllerSessionContext,
+      messages,
+    );
   }
 
   private admitExpectedInitialHistoryMessage(message: unknown): boolean {
-    if (
-      !this.expectInitialHistory ||
-      this.hasExpectedInitialHistory() ||
-      !this.isExpectedInitialHistoryMessage(message)
-    ) {
-      return false;
-    }
-    const projected = projectGatewayHistoryForDisplay([message]);
-    if (projected.length !== 1 || !this.isExpectedInitialHistoryMessage(projected[0])) return false;
-    const authoritativeMessage = projected[0] as GatewayMessage;
-    const pendingMessage = this.state.pendingUserMessage;
-    const admittedMessage =
-      pendingMessage &&
-      Array.isArray(pendingMessage.content) &&
-      isPendingUserMessageMatch(authoritativeMessage, pendingMessage as unknown as GatewayMessage)
-        ? { ...authoritativeMessage, content: pendingMessage.content }
-        : authoritativeMessage;
-    const admittedMessages = [admittedMessage];
-
-    // session.message is emitted after OpenClaw appends the transcript row and
-    // carries that authoritative row. Admit the task immediately instead of
-    // waiting for a second history read, which can still observe an older
-    // paged snapshot. Keep the optimistic attachment blocks until canonical
-    // media hydration finishes, so the first durable row cannot flash the
-    // image away. Forked parent context and assistant-only in-flight tails are
-    // intentionally excluded from the subagent's own visible timeline.
-    this.state.transcript.historySource = 'gateway';
-    this.pendingHistoryReload = true;
-    this.setCurrentSessionMessages(admittedMessages, { resetLoadedHistory: true });
-    this.state.lastError = null;
-    this.state.initialHistoryReady = true;
-    this.notify();
-    this.hydrateCurrentSessionImages(admittedMessages, this.state.sessionKey);
-    return true;
+    return chatControllerSession.admitExpectedInitialHistoryMessage.call(
+      this.chatControllerSessionContext,
+      message,
+    );
   }
 
-  private async initializeConnectedSession(params: {
+  private initializeConnectedSession(params: {
     client: GatewayClient;
     sessionKey: string;
     initializationSeq: number;
     resumedTransport: boolean;
   }): Promise<void> {
-    void this.loadProgressCard(params.sessionKey, true);
-    // Establish the durable notification edge before taking the snapshot. Any
-    // write racing the snapshot then either appears in history or queues a
-    // session.message catch-up reload.
-    const subscription = this.syncMessageSessionSubscription(params.sessionKey);
-    let barrierTimer: ReturnType<typeof setTimeout> | null = null;
-    const barrierTimedOut = Symbol('message-subscription-barrier-timeout');
-    const subscriptionResult = await Promise.race([
-      subscription,
-      new Promise<typeof barrierTimedOut>(resolve => {
-        barrierTimer = setTimeout(
-          () => resolve(barrierTimedOut),
-          this.initialMessageSubscriptionBarrierTimeoutMs,
-        );
-      }),
-    ]);
-    if (barrierTimer !== null) clearTimeout(barrierTimer);
-    if (subscriptionResult === barrierTimedOut) {
-      // A local Gateway should normally acknowledge immediately. Do not leave
-      // the drawer blank for the client's full RPC timeout if it does not;
-      // once the late subscription succeeds, force a catch-up snapshot to
-      // close the temporary notification gap.
-      void subscription.then(subscribed => {
-        if (subscribed && this.isConnectionInitializationCurrent(params)) {
-          void this.loadHistory(true);
-        }
-      });
-    }
-    if (!this.isConnectionInitializationCurrent(params)) return;
-
-    if (params.resumedTransport && this.suspendedRunId) {
-      await this.reconcileSuspendedRun();
-      if (!this.state.initialHistoryReady && this.isConnectionInitializationCurrent(params)) {
-        this.state.initialHistoryReady = true;
-        this.notify();
-      }
-      return;
-    }
-    await this.loadInitialHistory(params);
+    return chatControllerSession.initializeConnectedSession.call(
+      this.chatControllerSessionContext,
+      params,
+    );
   }
 
   private acceptRunId(runId: string | undefined | null, allowProvisionalBinding = true): boolean {
@@ -2468,132 +1240,37 @@ export class ChatController {
     sessionKey = this.state.sessionKey,
     data: Record<string, unknown> = {},
   ): void {
-    const isCurrentSession = this.isSelectedSession(sessionKey);
-    const eventId =
-      typeof data.operationId === 'string'
-        ? `operation:${data.operationId}`
-        : typeof data.itemId === 'string'
-          ? `item:${data.itemId}`
-          : undefined;
-    const settledKey = eventId ? JSON.stringify([sessionKey, eventId]) : undefined;
-    if (settledKey && this.settledCompactionEventIds.has(settledKey)) return;
-    const existing = this.localCompactionStatusBySession.get(sessionKey);
-    // A late terminal/update from the preceding compaction must not settle its successor.
-    if (phase !== 'start' && eventId && existing?.eventId && existing.eventId !== eventId) {
-      return;
-    }
-    if (phase === 'start' || phase === 'update') {
-      const status = this.beginLocalCompactionStatus(sessionKey, { eventId });
-      if (status.message.__openclaw.phase !== 'in-progress') return;
-      this.updateLocalCompactionSummary(sessionKey, status, data);
-      if (!isCurrentSession) {
-        const cached = this.findLiveSessionState(sessionKey)?.[1];
-        if (cached) cached.compactionInFlight = true;
-        return;
-      }
-      this.state.compactionInFlight = true;
-      this.clearLifecycleEndFallback();
-      this.notifyStream();
-      this.notify();
-      return;
-    }
-    if (phase !== 'end' && phase !== 'error' && phase !== 'failed') return;
-    if (settledKey) {
-      this.settledCompactionEventIds.add(settledKey);
-      if (this.settledCompactionEventIds.size > 256) {
-        this.settledCompactionEventIds.delete(
-          this.settledCompactionEventIds.values().next().value!,
-        );
-      }
-    }
-    const unsuccessful =
-      phase !== 'end' ||
-      data.completed === false ||
-      data.outcome === 'failed' ||
-      data.outcome === 'skipped' ||
-      data.outcome === 'aborted';
-    const wasInProgress =
-      this.localCompactionStatusBySession.get(sessionKey)?.message.__openclaw.phase ===
-      'in-progress';
-    const inProgressStatus = this.localCompactionStatusBySession.get(sessionKey);
-    if (inProgressStatus) this.updateLocalCompactionSummary(sessionKey, inProgressStatus, data);
-    const status = unsuccessful
-      ? inProgressStatus
-      : this.completeLocalCompactionStatus(sessionKey, {
-          before: typeof data.tokensBefore === 'number' ? data.tokensBefore : undefined,
-          after: typeof data.tokensAfter === 'number' ? data.tokensAfter : undefined,
-        });
-    if (unsuccessful && status) {
-      status.message = {
-        ...status.message,
-        __openclaw: {
-          ...status.message.__openclaw,
-          phase: data.outcome === 'skipped' || data.outcome === 'aborted' ? data.outcome : 'failed',
-          reason: readNonBlankString(data.reason) ?? readNonBlankString(data.error),
-        },
-      };
-      this.updateLocalCompactionMessage(sessionKey, status.id, status.message);
-      this.deferredHistoryReloadAttempts.delete(sessionKey);
-    }
-    if (status?.authoritativeMarkerSeen) {
-      if (unsuccessful) {
-        // An extension can fail after the transcript commit. Preserve both the
-        // committed marker and the terminal diagnostic in that case.
-        const messages = isCurrentSession
-          ? this.state.chatMessages
-          : (this.chatMessagesBySession.get(sessionKey)?.recentMessages ?? []);
-        const projected = this.projectLocalCompactionStatus(sessionKey, messages);
-        if (isCurrentSession) this.setCurrentSessionMessages(projected);
-        else this.chatMessagesBySession.get(sessionKey)?.replaceRecent(projected);
-      } else {
-        this.localCompactionStatusBySession.delete(sessionKey);
-        this.deferredHistoryReloadAttempts.delete(sessionKey);
-      }
-    }
-    if (!isCurrentSession) {
-      const cached = this.findLiveSessionState(sessionKey)?.[1];
-      if (cached) cached.compactionInFlight = false;
-      return;
-    }
-    this.state.compactionInFlight = false;
-    if (this.terminalLifecycleSeen) this.scheduleChatLifecycleEndFallback();
-    if (status && wasInProgress && !unsuccessful && !status.authoritativeMarkerSeen) {
-      this.scheduleDeferredHistoryReload(sessionKey, 'compaction-marker-pending');
-    }
-    this.notifyStream();
-    this.notify();
+    return chatControllerCompaction.handleCompactionPhase.call(
+      this.chatControllerCompactionContext,
+      phase,
+      sessionKey,
+      data,
+    );
   }
 
   private clearPostFinalHistoryReload(): void {
-    if (this.postFinalHistoryReloadTimer) {
-      clearTimeout(this.postFinalHistoryReloadTimer);
-      this.postFinalHistoryReloadTimer = null;
-    }
-    this.postFinalHistoryRecovery = null;
+    return chatControllerRecovery.clearPostFinalHistoryReload.call(
+      this.chatControllerRecoveryContext,
+    );
   }
 
   private clearDeferredHistoryReload(): void {
-    if (!this.deferredHistoryReloadTimer) return;
-    clearTimeout(this.deferredHistoryReloadTimer);
-    this.deferredHistoryReloadTimer = null;
+    return chatControllerRecovery.clearDeferredHistoryReload.call(
+      this.chatControllerRecoveryContext,
+    );
   }
 
   private clearActiveToolHistoryCatchUp(): void {
-    if (!this.activeToolHistoryCatchUpTimer) return;
-    clearTimeout(this.activeToolHistoryCatchUpTimer);
-    this.activeToolHistoryCatchUpTimer = null;
+    return chatControllerRecovery.clearActiveToolHistoryCatchUp.call(
+      this.chatControllerRecoveryContext,
+    );
   }
 
   private resetActiveToolHistoryCatchUpForRun(sessionKey: string): void {
-    this.clearActiveToolHistoryCatchUp();
-    const entry = this.observedSessionMessageSeqBySession.get(
-      normalizeTranscriptSessionKey(sessionKey),
+    return chatControllerRecovery.resetActiveToolHistoryCatchUpForRun.call(
+      this.chatControllerRecoveryContext,
+      sessionKey,
     );
-    if (!entry) return;
-    entry.pendingCatchUp = false;
-    entry.catchUpTargetSeq = null;
-    entry.catchUpAttempts = 0;
-    entry.unsequencedCatchUpCompleted = false;
   }
 
   private observeSessionMessageSeq(
@@ -2602,56 +1279,13 @@ export class ChatController {
     incomingSeq: number | null,
     loadedSeq: number | null,
   ): boolean {
-    const normalizedSessionKey = normalizeTranscriptSessionKey(sessionKey);
-    const stored = this.observedSessionMessageSeqBySession.get(normalizedSessionKey);
-    const previousMatchesSession =
-      !stored?.sessionId || !sessionId || stored.sessionId === sessionId;
-    const previous = previousMatchesSession ? stored : undefined;
-    const previousSeq = previous?.seq ?? null;
-    const baselineSeq =
-      previousSeq === null
-        ? loadedSeq
-        : loadedSeq === null
-          ? previousSeq
-          : Math.max(previousSeq, loadedSeq);
-    const gapDetected =
-      incomingSeq !== null && baselineSeq !== null && incomingSeq > baselineSeq + 1;
-    const cursorWasUninitialized = incomingSeq !== null && baselineSeq === null;
-    const needsUnsequencedFallback =
-      incomingSeq === null &&
-      baselineSeq === null &&
-      previous?.unsequencedCatchUpCompleted !== true;
-    const startsCatchUp = gapDetected || cursorWasUninitialized || needsUnsequencedFallback;
-    const incomingAdvancesCursor =
-      incomingSeq !== null && (previousSeq === null || incomingSeq > previousSeq);
-    const nextSeq =
-      incomingSeq === null
-        ? baselineSeq
-        : baselineSeq === null
-          ? incomingSeq
-          : Math.max(baselineSeq, incomingSeq);
-    const previousTarget = previous?.catchUpTargetSeq ?? null;
-    const catchUpTargetSeq =
-      gapDetected || cursorWasUninitialized
-        ? previousTarget === null
-          ? incomingSeq
-          : incomingSeq === null
-            ? previousTarget
-            : Math.max(previousTarget, incomingSeq)
-        : previousTarget;
-    const pendingCatchUp = previous?.pendingCatchUp === true || startsCatchUp;
-    this.observedSessionMessageSeqBySession.set(normalizedSessionKey, {
-      sessionId: sessionId ?? previous?.sessionId ?? null,
-      seq: nextSeq,
-      pendingCatchUp,
-      catchUpTargetSeq,
-      catchUpAttempts:
-        startsCatchUp || (pendingCatchUp && incomingAdvancesCursor)
-          ? 0
-          : (previous?.catchUpAttempts ?? 0),
-      unsequencedCatchUpCompleted: previous?.unsequencedCatchUpCompleted === true,
-    });
-    return pendingCatchUp;
+    return chatControllerRecovery.observeSessionMessageSeq.call(
+      this.chatControllerRecoveryContext,
+      sessionKey,
+      sessionId,
+      incomingSeq,
+      loadedSeq,
+    );
   }
 
   private recordLoadedSessionMessageSeq(
@@ -2660,241 +1294,62 @@ export class ChatController {
     loadedSeq: number | null,
     resolvePendingCatchUp: boolean,
   ): void {
-    const normalizedSessionKey = normalizeTranscriptSessionKey(sessionKey);
-    const stored = this.observedSessionMessageSeqBySession.get(normalizedSessionKey);
-    const storedMatchesSession = !stored?.sessionId || !sessionId || stored.sessionId === sessionId;
-    const previous = storedMatchesSession ? stored : undefined;
-    const nextSeq =
-      previous?.seq === null || previous?.seq === undefined
-        ? loadedSeq
-        : loadedSeq === null
-          ? previous.seq
-          : Math.max(previous.seq, loadedSeq);
-    const targetSatisfied =
-      resolvePendingCatchUp &&
-      previous?.pendingCatchUp === true &&
-      (previous.catchUpTargetSeq === null ||
-        (loadedSeq !== null && loadedSeq >= previous.catchUpTargetSeq));
-    if (!previous && nextSeq === null) return;
-    this.observedSessionMessageSeqBySession.set(normalizedSessionKey, {
-      sessionId: sessionId ?? previous?.sessionId ?? null,
-      seq: nextSeq,
-      pendingCatchUp: targetSatisfied ? false : (previous?.pendingCatchUp ?? false),
-      catchUpTargetSeq: targetSatisfied ? null : (previous?.catchUpTargetSeq ?? null),
-      catchUpAttempts: targetSatisfied ? 0 : (previous?.catchUpAttempts ?? 0),
-      unsequencedCatchUpCompleted:
-        previous?.unsequencedCatchUpCompleted === true ||
-        (targetSatisfied && previous?.catchUpTargetSeq === null),
-    });
+    return chatControllerRecovery.recordLoadedSessionMessageSeq.call(
+      this.chatControllerRecoveryContext,
+      sessionKey,
+      sessionId,
+      loadedSeq,
+      resolvePendingCatchUp,
+    );
   }
 
   private claimActiveToolHistoryCatchUp(sessionKey: string, sessionId: string | null): boolean {
-    const entry = this.observedSessionMessageSeqBySession.get(
-      normalizeTranscriptSessionKey(sessionKey),
+    return chatControllerRecovery.claimActiveToolHistoryCatchUp.call(
+      this.chatControllerRecoveryContext,
+      sessionKey,
+      sessionId,
     );
-    if (
-      !entry?.pendingCatchUp ||
-      (entry.sessionId && sessionId && entry.sessionId !== sessionId) ||
-      entry.catchUpAttempts >= MAX_ACTIVE_TOOL_HISTORY_CATCHUP_ATTEMPTS
-    ) {
-      return false;
-    }
-    entry.catchUpAttempts += 1;
-    return true;
   }
 
   private hasPendingActiveToolHistoryCatchUp(
     sessionKey: string,
     sessionId: string | null,
   ): boolean {
-    const entry = this.observedSessionMessageSeqBySession.get(
-      normalizeTranscriptSessionKey(sessionKey),
-    );
-    return Boolean(
-      entry?.pendingCatchUp &&
-      (!entry.sessionId || !sessionId || entry.sessionId === sessionId) &&
-      entry.catchUpAttempts < MAX_ACTIVE_TOOL_HISTORY_CATCHUP_ATTEMPTS,
+    return chatControllerRecovery.hasPendingActiveToolHistoryCatchUp.call(
+      this.chatControllerRecoveryContext,
+      sessionKey,
+      sessionId,
     );
   }
 
   private scheduleActiveToolHistoryCatchUp(sessionKey: string, runId: string): void {
-    if (this.activeToolHistoryCatchUpTimer) return;
-    this.activeToolHistoryCatchUpTimer = setTimeout(() => {
-      this.activeToolHistoryCatchUpTimer = null;
-      const activeTurn = this.state.transcript.activeTurn;
-      if (
-        this.state.sessionKey !== sessionKey ||
-        !this.state.connected ||
-        !this.state.chatSending ||
-        activeTurn?.status !== 'running' ||
-        activeTurn.runId !== runId
-      ) {
-        return;
-      }
-      if (this.historyLoadsInFlight.has(sessionKey)) {
-        this.scheduleActiveToolHistoryCatchUp(sessionKey, runId);
-        return;
-      }
-      const sessionId = this.state.currentSessionId ?? this.state.transcript.sessionId;
-      if (!this.claimActiveToolHistoryCatchUp(sessionKey, sessionId)) return;
-      void this.loadHistory(false, { backfillActiveSessionsYield: true }).finally(() => {
-        if (this.hasPendingActiveToolHistoryCatchUp(sessionKey, sessionId)) {
-          this.scheduleActiveToolHistoryCatchUp(sessionKey, runId);
-        }
-      });
-    }, ACTIVE_TOOL_HISTORY_CATCHUP_DELAY_MS);
+    return chatControllerRecovery.scheduleActiveToolHistoryCatchUp.call(
+      this.chatControllerRecoveryContext,
+      sessionKey,
+      runId,
+    );
   }
 
   private scheduleDeferredHistoryReload(sessionKey: string, reason: string): void {
-    if (reason === 'agent-item') {
-      this.deferredHistoryReloadAttempts.delete(sessionKey);
-    }
-    if (
-      reason === 'stale-history' ||
-      reason === 'regressive-history' ||
-      reason === 'empty-history-snapshot'
-    ) {
-      const attempts = (this.deferredHistoryReloadAttempts.get(sessionKey) ?? 0) + 1;
-      if (attempts > MAX_DEFERRED_HISTORY_CATCHUP_ATTEMPTS) {
-        debugLog('[ChatCtrl] deferred history reload suppressed after catchup limit', {
-          sessionKey,
-          reason,
-          attempts,
-          ...this._snap(),
-        });
-        return;
-      }
-      this.deferredHistoryReloadAttempts.set(sessionKey, attempts);
-    }
-    this.historyReloadRequested.add(sessionKey);
-    if (this.deferredHistoryReloadTimer) {
-      debugLog('[ChatCtrl] deferred history reload already scheduled', {
-        sessionKey,
-        reason,
-        ...this._snap(),
-      });
-      return;
-    }
-
-    this.deferredHistoryReloadTimer = setTimeout(() => {
-      this.deferredHistoryReloadTimer = null;
-      if (this.state.sessionKey !== sessionKey || !this.state.connected) {
-        this.historyReloadRequested.delete(sessionKey);
-        this.deferredHistoryReloadAttempts.delete(sessionKey);
-        debugLog('[ChatCtrl] deferred history reload skipped', {
-          sessionKey,
-          reason,
-          ...this._snap(),
-        });
-        return;
-      }
-      // A subagent's originating task can be persisted after its live stream
-      // has already started. Admit that missing history prefix without waiting
-      // for the whole run to finish; ordinary active-run refreshes stay gated.
-      const canCatchUpMissingInitialHistory = !this.hasExpectedInitialHistory();
-      if (
-        (this.state.chatSending && !canCatchUpMissingInitialHistory) ||
-        this.historyLoadsInFlight.has(sessionKey)
-      ) {
-        debugLog('[ChatCtrl] deferred history reload waiting', {
-          sessionKey,
-          reason,
-          ...this._snap(),
-        });
-        this.scheduleDeferredHistoryReload(sessionKey, reason);
-        return;
-      }
-
-      if (reason === 'compaction-marker-pending') {
-        const attempts = (this.deferredHistoryReloadAttempts.get(sessionKey) ?? 0) + 1;
-        if (attempts > MAX_DEFERRED_HISTORY_CATCHUP_ATTEMPTS) {
-          this.historyReloadRequested.delete(sessionKey);
-          debugLog('[ChatCtrl] compaction marker reload suppressed after retry limit', {
-            sessionKey,
-            attempts,
-            ...this._snap(),
-          });
-          return;
-        }
-        this.deferredHistoryReloadAttempts.set(sessionKey, attempts);
-      }
-      this.historyReloadRequested.delete(sessionKey);
-      debugLog('[ChatCtrl] deferred history reload → loadHistory', {
-        sessionKey,
-        reason,
-        ...this._snap(),
-      });
-      void this.loadHistory(true);
-    }, DEFERRED_HISTORY_RELOAD_DELAY_MS);
+    return chatControllerRecovery.scheduleDeferredHistoryReload.call(
+      this.chatControllerRecoveryContext,
+      sessionKey,
+      reason,
+    );
   }
 
   private postFinalHistoryHasCaughtUp(recovery: PostFinalHistoryRecovery): boolean {
-    const messages = this.state.chatMessages.filter(
-      message => !isLocallyOptimisticHistoryTail(message) && !isTruncatedHistoryMessage(message),
+    return chatControllerRecovery.postFinalHistoryHasCaughtUp.call(
+      this.chatControllerRecoveryContext,
+      recovery,
     );
-    if (
-      recovery.runId &&
-      messages.some(message => readExplicitMessageRunId(message) === recovery.runId)
-    ) {
-      return true;
-    }
-    const latestMessageSeq = readLatestOpenClawMessageSeq(messages);
-    if (
-      recovery.baselineMessageSeq !== null &&
-      latestMessageSeq !== null &&
-      latestMessageSeq > recovery.baselineMessageSeq
-    ) {
-      return true;
-    }
-    return messages.length > recovery.baselineCompleteMessageCount;
   }
 
   private scheduleNextPostFinalHistoryReload(recovery: PostFinalHistoryRecovery): void {
-    const delay = MISSING_TERMINAL_HISTORY_RETRY_DELAYS_MS[recovery.attempt];
-    if (delay === undefined) {
-      if (this.postFinalHistoryRecovery === recovery) this.postFinalHistoryRecovery = null;
-      return;
-    }
-    this.postFinalHistoryReloadTimer = setTimeout(() => {
-      this.postFinalHistoryReloadTimer = null;
-      const currentSessionId = this.state.currentSessionId ?? this.state.transcript.sessionId;
-      if (
-        this.postFinalHistoryRecovery !== recovery ||
-        this.state.sessionKey !== recovery.sessionKey ||
-        this.state.transcript.historyGeneration !== recovery.historyGeneration ||
-        (recovery.sessionId && currentSessionId && recovery.sessionId !== currentSessionId) ||
-        !this.state.connected ||
-        this.state.chatSending
-      ) {
-        debugLog('[ChatCtrl] post-final history reload skipped', {
-          sessionKey: recovery.sessionKey,
-          runId: recovery.runId,
-          attempt: recovery.attempt + 1,
-          ...this._snap(),
-        });
-        if (this.postFinalHistoryRecovery === recovery) this.postFinalHistoryRecovery = null;
-        return;
-      }
-      if (this.postFinalHistoryHasCaughtUp(recovery)) {
-        this.postFinalHistoryRecovery = null;
-        return;
-      }
-      debugLog('[ChatCtrl] post-final history reload → loadHistory', {
-        sessionKey: recovery.sessionKey,
-        runId: recovery.runId,
-        attempt: recovery.attempt + 1,
-        ...this._snap(),
-      });
-      void this.loadHistory(true).finally(() => {
-        if (this.postFinalHistoryRecovery !== recovery) return;
-        if (this.postFinalHistoryHasCaughtUp(recovery)) {
-          this.postFinalHistoryRecovery = null;
-          return;
-        }
-        recovery.attempt += 1;
-        this.scheduleNextPostFinalHistoryReload(recovery);
-      });
-    }, delay);
+    return chatControllerRecovery.scheduleNextPostFinalHistoryReload.call(
+      this.chatControllerRecoveryContext,
+      recovery,
+    );
   }
 
   private schedulePostFinalHistoryReload(
@@ -2905,18 +1360,11 @@ export class ChatController {
       baselineCompleteMessageCount: number;
     },
   ): void {
-    this.clearPostFinalHistoryReload();
-    const recovery: PostFinalHistoryRecovery = {
+    return chatControllerRecovery.schedulePostFinalHistoryReload.call(
+      this.chatControllerRecoveryContext,
       sessionKey,
-      sessionId: this.state.currentSessionId ?? this.state.transcript.sessionId,
-      historyGeneration: this.state.transcript.historyGeneration,
-      runId: options.runId,
-      baselineMessageSeq: options.baselineMessageSeq,
-      baselineCompleteMessageCount: options.baselineCompleteMessageCount,
-      attempt: 0,
-    };
-    this.postFinalHistoryRecovery = recovery;
-    this.scheduleNextPostFinalHistoryReload(recovery);
+      options,
+    );
   }
 
   private resetAssistantSnapshotSource(): void {
@@ -2930,125 +1378,26 @@ export class ChatController {
   }
 
   private rememberProgressCard(sessionKey: string, card: ProgressCard | null): void {
-    this.progressCardCache.delete(sessionKey);
-    this.progressCardCache.set(sessionKey, card);
-    while (this.progressCardCache.size > PROGRESS_CARD_CACHE_LIMIT) {
-      const oldestSessionKey = this.progressCardCache.keys().next().value as string | undefined;
-      if (!oldestSessionKey) break;
-      this.progressCardCache.delete(oldestSessionKey);
-    }
+    return chatControllerProgress.rememberProgressCard.call(
+      this.chatControllerProgressContext,
+      sessionKey,
+      card,
+    );
   }
 
-  private async loadProgressCard(sessionKey: string, force = false): Promise<void> {
-    const client = this.state.client;
-    const available =
-      !!client && this.state.connected && this.isGatewayMethodAdvertised(PROGRESS_CARD_GET_METHOD);
-    if (this.state.sessionKey === sessionKey) {
-      this.state.progressCardAvailable = available;
-    }
-    if (!client || !available) {
-      if (this.state.sessionKey === sessionKey) {
-        this.state.progressCard = null;
-        this.state.progressCardLoading = false;
-        this.state.progressCardError = null;
-        this.notify();
-      }
-      return;
-    }
-
-    if (!force && this.progressCardCache.has(sessionKey)) {
-      if (this.state.sessionKey === sessionKey) {
-        const cachedCard = this.progressCardCache.get(sessionKey) ?? null;
-        this.rememberProgressCard(sessionKey, cachedCard);
-        this.state.progressCard = cachedCard;
-        this.state.progressCardLoading = false;
-        this.state.progressCardError = null;
-        this.notify();
-      }
-      return;
-    }
-
-    const generation = ++this.progressCardLoadGeneration;
-    if (this.state.sessionKey === sessionKey) {
-      if (force) this.state.progressCard = null;
-      this.state.progressCardLoading = true;
-      this.state.progressCardError = null;
-      this.notify();
-    }
-    try {
-      const response = await client.request(PROGRESS_CARD_GET_METHOD, { sessionKey });
-      if (
-        generation !== this.progressCardLoadGeneration ||
-        client !== this.state.client ||
-        sessionKey !== this.state.sessionKey
-      ) {
-        return;
-      }
-      const card = parseProgressCardGetResult(response, sessionKey);
-      if (card === undefined) throw new Error('invalid progress card response');
-      this.rememberProgressCard(sessionKey, card);
-      this.state.progressCard = card;
-      this.state.progressCardLoading = false;
-      this.state.progressCardError = null;
-      this.notify();
-    } catch (error) {
-      if (
-        generation !== this.progressCardLoadGeneration ||
-        client !== this.state.client ||
-        sessionKey !== this.state.sessionKey
-      ) {
-        return;
-      }
-      const gatewayCode =
-        error && typeof error === 'object' && 'gatewayCode' in error
-          ? (error as { gatewayCode?: unknown }).gatewayCode
-          : undefined;
-      const details =
-        error && typeof error === 'object' && 'details' in error
-          ? (error as { details?: unknown }).details
-          : undefined;
-      const detailCode =
-        details && typeof details === 'object' && !Array.isArray(details) && 'code' in details
-          ? (details as { code?: unknown }).code
-          : undefined;
-      this.progressCardCache.delete(sessionKey);
-      this.state.progressCard = null;
-      this.state.progressCardLoading = false;
-      this.state.progressCardError =
-        gatewayCode === 'SESSION_PARTICIPATION_REQUIRED' ||
-        detailCode === 'SESSION_PARTICIPATION_REQUIRED'
-          ? 'access-denied'
-          : 'unavailable';
-      this.notify();
-    }
+  private loadProgressCard(sessionKey: string, force = false): Promise<void> {
+    return chatControllerProgress.loadProgressCard.call(
+      this.chatControllerProgressContext,
+      sessionKey,
+      force,
+    );
   }
 
   private handleProgressCardChanged(payload: unknown): void {
-    const changed = parseProgressCardChangedEvent(payload);
-    if (!changed) return;
-
-    const targetsSelectedSession =
-      normalizeTranscriptSessionKey(changed.sessionKey) ===
-      normalizeTranscriptSessionKey(this.state.sessionKey);
-    const cached = this.progressCardCache.get(changed.sessionKey);
-    if (changed.revision === null) {
-      this.rememberProgressCard(changed.sessionKey, null);
-      if (targetsSelectedSession) {
-        this.progressCardLoadGeneration += 1;
-        this.state.progressCard = null;
-        this.state.progressCardLoading = false;
-        this.state.progressCardError = null;
-        this.notify();
-      }
-      return;
-    }
-    if (cached?.revision === changed.revision) return;
-
-    this.progressCardCache.delete(changed.sessionKey);
-    if (targetsSelectedSession) {
-      this.state.progressCard = null;
-      void this.loadProgressCard(this.state.sessionKey, true);
-    }
+    return chatControllerProgress.handleProgressCardChanged.call(
+      this.chatControllerProgressContext,
+      payload,
+    );
   }
 
   // ─── Connection ───────────────────────────────────────────────────────
@@ -3057,323 +1406,41 @@ export class ChatController {
    * Connect to the gateway and load chat history for the given session.
    * This replicates the webchat's connectGateway + loadChatHistory flow.
    */
-  async connect(url: string, token: string, sessionKey: string): Promise<void> {
-    for (const key of this.manualCompactionRequestIdsBySession.keys()) {
-      this.settleCompactionRequest(key);
-      this.clearLocalCompactionStatus(key);
-    }
-    this.manualCompactionRequestIdsBySession.clear();
-    this.rememberHistoryPagination(this.state.sessionKey);
-    // Stop existing client
-    this.state.client?.stop();
-    this.messageSubscriptionSeq += 1;
-    this.connectionInitializationSeq += 1;
-    this.subscribedMessageSessionKey = null;
-    this.progressCardLoadGeneration += 1;
-    this.progressCardCache.clear();
-
-    this.state.sessionKey = sessionKey;
-    this.historyPagingGeneration += 1;
-    this.state.currentSessionId = null;
-    this.state.initialHistoryReady = false;
-    this.state.historyLoadingOlder = false;
-    this.restoreHistoryPagination(sessionKey);
-    this.resetTranscriptForSession(sessionKey, null);
-    this.state.chatLoading = true;
-    this.currentMessageHistory =
-      this.chatMessagesBySession.get(sessionKey) ?? new ChunkedMessageHistory();
-    this.state.chatMessages = this.currentMessageHistory.recentMessages;
-    this.state.loadedMessageCount = this.currentMessageHistory.length;
-    const initialWindow = latestHistoryWindow(this.currentMessageHistory.length);
-    this.state.historyWindowStart = initialWindow.start;
-    this.state.historyWindowEnd = initialWindow.end;
-    this.state.visibleChatMessages = this.currentMessageHistory.slice(
-      initialWindow.start,
-      initialWindow.end,
-    );
-    this.state.transcript.persistedMessages = this.state.chatMessages;
-    this.state.transcript.historySource =
-      this.historySourceBySession.get(sessionKey) ?? 'optimistic';
-    this.state.chatRunId = null;
-    if (this.state.chatSending && this.state.pendingUserMessage) {
-      this.beginRunActivity(`justdo-pending-${Date.now()}`);
-    } else {
-      this.clearRunActivity();
-    }
-    this.state.compactionInFlight = false;
-    this.terminalLifecycleSeen = false;
-    this.suspendedRunId = null;
-    this.state.lastError = null;
-    this.state.progressCard = null;
-    this.state.progressCardLoading = false;
-    this.state.progressCardAvailable = false;
-    this.state.progressCardError = null;
-    this.resetAssistantSnapshotSource();
-    this.notify();
-
-    const { GatewayClient } = await import('./client');
-    const client = new GatewayClient({
+  connect(url: string, token: string, sessionKey: string): Promise<void> {
+    return chatControllerSession.connect.call(
+      this.chatControllerSessionContext,
       url,
       token,
-      onHello: hello => this.handleHello(hello),
-      onEvent: event => this.handleEvent(event),
-      onGap: ({ expected, received }) => {
-        debugLog('[ChatCtrl] Gateway event sequence gap; reconnecting for history recovery', {
-          expected,
-          received,
-          sessionKey: this.state.sessionKey,
-        });
-      },
-      onClose: () => this.handleClose(),
-    });
-
-    this.state.client = client;
-    client.start();
+      sessionKey,
+    );
   }
 
   /** Switch to a different session */
-  async switchSession(sessionKey: string, options: SwitchSessionOptions = {}): Promise<void> {
-    const previousSessionKey = this.state.sessionKey;
-    if (
-      this.expectedPlanImplementationReset &&
-      normalizeTranscriptSessionKey(this.expectedPlanImplementationReset.sessionKey) !==
-        normalizeTranscriptSessionKey(sessionKey)
-    ) {
-      this.expectedPlanImplementationReset = null;
-    }
-    const promotionSource = options.promoteFromSessionKey?.trim() || null;
-    const isTempSessionPromotion = Boolean(
-      promotionSource &&
-      isTempJustDoSessionKey(promotionSource) &&
-      !isTempJustDoSessionKey(sessionKey),
+  switchSession(sessionKey: string, options: SwitchSessionOptions = {}): Promise<void> {
+    return chatControllerSession.switchSession.call(
+      this.chatControllerSessionContext,
+      sessionKey,
+      options,
     );
-    debugLog('[ChatCtrl] switchSession:', sessionKey, {
-      hadPendingUserMsg: !!this.state.pendingUserMessage,
-      chatSending: this.state.chatSending,
-      msgCount: this.state.chatMessages.length,
-      previousSessionKey,
-      promotionSource,
-      isTempSessionPromotion,
-    });
-    this.clearLifecycleEndFallback();
-    if (!isTempSessionPromotion || previousSessionKey !== promotionSource) {
-      this.pendingAnnounceEvents.clear();
-    }
-    this.cacheCurrentLiveState(previousSessionKey);
-    this.rememberHistoryPagination(previousSessionKey);
-    if (isTempSessionPromotion && promotionSource) {
-      this.promoteCachedSessionState(promotionSource, sessionKey);
-    }
-    this.state.sessionKey = sessionKey;
-    this.historyPagingGeneration += 1;
-    this.progressCardLoadGeneration += 1;
-    this.state.progressCard = this.progressCardCache.get(sessionKey) ?? null;
-    this.state.progressCardLoading = false;
-    this.state.progressCardError = null;
-    this.state.initialHistoryReady = false;
-    this.state.historyLoadingOlder = false;
-    this.restoreHistoryPagination(sessionKey);
-    this.restoreLiveState(sessionKey);
-    this.currentMessageHistory =
-      this.chatMessagesBySession.get(sessionKey) ?? new ChunkedMessageHistory();
-    this.state.chatMessages = this.currentMessageHistory.recentMessages;
-    this.state.loadedMessageCount = this.currentMessageHistory.length;
-    const initialWindow = latestHistoryWindow(this.currentMessageHistory.length);
-    this.state.historyWindowStart = initialWindow.start;
-    this.state.historyWindowEnd = initialWindow.end;
-    this.state.visibleChatMessages = this.currentMessageHistory.slice(
-      initialWindow.start,
-      initialWindow.end,
-    );
-    this.state.transcript.persistedMessages = this.state.chatMessages;
-    this.state.transcript.historySource =
-      this.historySourceBySession.get(sessionKey) ?? 'optimistic';
-    this.suspendedRunId = null;
-    this.state.chatLoading = true;
-    this.pendingHistoryReload = false;
-    this.observedSessionMessageSeqBySession.clear();
-    this.clearPostFinalHistoryReload();
-    this.clearDeferredHistoryReload();
-    this.clearActiveToolHistoryCatchUp();
-    this.notify();
-
-    const client = this.state.client;
-    if (client && this.state.connected) {
-      const initializationSeq = ++this.connectionInitializationSeq;
-      await this.initializeConnectedSession({
-        client,
-        sessionKey,
-        initializationSeq,
-        resumedTransport: false,
-      });
-    }
   }
 
   /** Disconnect and clean up */
   disconnect(): void {
-    this.manualCompactionRequestIdsBySession.clear();
-    this.settledCompactionEventIds.clear();
-    this.clearLifecycleEndFallback();
-    this.clearPostFinalHistoryReload();
-    this.clearDeferredHistoryReload();
-    this.clearActiveToolHistoryCatchUp();
-    for (const sessionKey of [...this.localCompactionStatusBySession.keys()]) {
-      this.clearLocalCompactionStatus(sessionKey);
-    }
-    this.state.client?.stop();
-    this.state.client = null;
-    this.state.connected = false;
-    this.state.transportStatus = 'disconnected';
-    this.state.chatSending = false;
-    this.clearRunActivity();
-    this.state.compactionInFlight = false;
-    this.terminalLifecycleSeen = false;
-    this.suspendedRunId = null;
-    this.pendingAnnounceEvents.clear();
-    this.clearAllSideChatRuns();
-    this.observedSessionMessageSeqBySession.clear();
-    this.historyReloadRequested.clear();
-    this.immediateHistoryReloadRequested.clear();
-    this.connectionInitializationSeq += 1;
-    this.messageSubscriptionSeq += 1;
-    this.subscribedMessageSessionKey = null;
-    this.progressCardLoadGeneration += 1;
-    this.progressCardCache.clear();
-    this.state.progressCard = null;
-    this.state.progressCardLoading = false;
-    this.state.progressCardAvailable = false;
-    this.state.progressCardError = null;
-    this.notify();
+    return chatControllerSession.disconnect.call(this.chatControllerSessionContext);
   }
 
   // ─── Gateway Callbacks ────────────────────────────────────────────────
 
   private handleHello(hello: GatewayHelloOk): void {
-    debugLog('[ChatCtrl] handleHello — connected, sessionKey:', this.state.sessionKey);
-    const resumedTransport = this.state.transportStatus === 'reconnecting';
-    this.state.connected = true;
-    this.state.transportStatus = 'connected';
-    this.messageSubscriptionSeq += 1;
-    this.subscribedMessageSessionKey = null;
-    this.state.hello = hello;
-    this.state.lastError = null;
-    this.state.progressCardAvailable = this.isGatewayMethodAdvertised(PROGRESS_CARD_GET_METHOD);
-    this.notify();
-
-    // Subscribe to session events (matches webchat: subscribeSessions + syncSelectedSessionMessageSubscription)
-    this.state.client?.request('sessions.subscribe', {}).catch(() => {});
-    const client = this.state.client;
-    if (!client) return;
-    const sessionKey = this.state.sessionKey;
-    const initializationSeq = ++this.connectionInitializationSeq;
-    void this.initializeConnectedSession({
-      client,
-      sessionKey,
-      initializationSeq,
-      resumedTransport,
-    });
+    return chatControllerSession.handleHello.call(this.chatControllerSessionContext, hello);
   }
 
   private handleClose(): void {
-    for (const runId of this.pendingSideChats.keys()) {
-      this.publishSideChatFailure(runId);
-      this.retainSideChatTombstone(runId);
-    }
-    // Progress observed on the lost transport is no longer an active fact.
-    // Fresh native events/history can restore it; an unobserved failure must
-    // not leave a permanent local "compacting" card after reconnection.
-    for (const [sessionKey, status] of this.localCompactionStatusBySession) {
-      if (status.message.__openclaw.phase !== 'in-progress') continue;
-      this.clearLocalCompactionStatus(sessionKey);
-      const cached = this.findLiveSessionState(sessionKey)?.[1];
-      if (cached) cached.compactionInFlight = false;
-    }
-    const runInProgress =
-      this.state.transcript.activeTurn?.status === 'running' ||
-      (this.state.chatSending && this.state.runActivity !== null);
-    this.suspendedRunId =
-      this.state.transcript.activeTurn?.status === 'running'
-        ? this.state.transcript.activeTurn.runId
-        : this.state.chatSending
-          ? (this.state.chatRunId ?? this.state.runActivity?.runId ?? null)
-          : null;
-    this.state.connected = false;
-    this.state.transportStatus =
-      this.state.client && runInProgress ? 'reconnecting' : 'disconnected';
-    // A transport interruption is not a terminal run event. Preserve the
-    // active turn and sending state until history or Gateway events establish
-    // the business outcome.
-    this.state.compactionInFlight = false;
-    this.terminalLifecycleSeen = false;
-    this.messageSubscriptionSeq += 1;
-    this.subscribedMessageSessionKey = null;
-    this.progressCardLoadGeneration += 1;
-    this.state.progressCard = null;
-    this.state.progressCardLoading = false;
-    this.state.progressCardAvailable = false;
-    this.notify();
+    return chatControllerSession.handleClose.call(this.chatControllerSessionContext);
   }
 
-  private async reconcileSuspendedRun(): Promise<void> {
-    const suspendedRunId = this.suspendedRunId;
-    if (!suspendedRunId) return;
-    await this.loadHistory(false, { preferStartup: true, reconcileSuspended: true });
-    if (
-      this.suspendedRunId !== suspendedRunId ||
-      this.state.transcript.activeTurn?.runId !== suspendedRunId ||
-      this.state.transcript.activeTurn.status !== 'running'
-    ) {
-      if (this.suspendedRunId === suspendedRunId && !this.state.transcript.activeTurn) {
-        this.state.chatSending = false;
-        this.state.chatRunId = null;
-        this.clearRunActivity();
-        this.notify();
-      }
-      this.suspendedRunId = null;
-      return;
-    }
-
-    try {
-      const result = await this.state.client?.request<{ sessions?: unknown[] }>(
-        'sessions.list',
-        {},
-      );
-      const selected = (result?.sessions ?? []).map(asRecord).find(row => {
-        const key =
-          typeof row?.key === 'string'
-            ? row.key
-            : typeof row?.sessionKey === 'string'
-              ? row.sessionKey
-              : '';
-        return (
-          normalizeTranscriptSessionKey(key) ===
-          normalizeTranscriptSessionKey(this.state.sessionKey)
-        );
-      });
-      if (selected?.hasActiveRun !== false) return;
-
-      const event: NormalizedChatEvent = {
-        runId: suspendedRunId,
-        sessionKey: this.state.sessionKey,
-        sessionId: this.state.currentSessionId,
-        lifecycleGeneration: this.state.transcript.activeTurn.lifecycleGeneration,
-        frameSeq: null,
-        state: 'aborted',
-        replace: false,
-        errorMessage: i18nService.t('coworkConnectionInterrupted'),
-      };
-      if (
-        reduceChatEvent(this.state.transcript, event, this.transcriptDependencies) === 'applied'
-      ) {
-        this.handleAborted(event);
-      }
-      this.suspendedRunId = null;
-    } catch (error) {
-      debugLog('[ChatCtrl] suspended run status unavailable after reconnect', {
-        runId: suspendedRunId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
+  private reconcileSuspendedRun(): Promise<void> {
+    return chatControllerRecovery.reconcileSuspendedRun.call(this.chatControllerRecoveryContext);
   }
 
   private applyBackgroundChatEvent(
@@ -3553,46 +1620,10 @@ export class ChatController {
    * item, so only the exact selected-session/run owner may retire the socket.
    */
   private recoverFromInternalAgentSequenceGap(payloadValue: unknown): boolean {
-    const payload = asRecord(payloadValue);
-    const data = asRecord(payload?.data);
-    if (
-      payload?.stream !== 'error' ||
-      readNonBlankString(data?.reason)?.toLowerCase() !== 'seq gap'
-    ) {
-      return false;
-    }
-    const runId = readNonBlankString(payload?.runId ?? payload?.run_id);
-    const sessionKey = readNonBlankString(payload?.sessionKey ?? payload?.session);
-    const sessionId = normalizeSessionId(payload?.sessionId ?? payload?.session_id);
-    const lifecycleGeneration = readNonBlankString(
-      payload?.lifecycleGeneration ?? payload?.lifecycle_generation,
+    return chatControllerRecovery.recoverFromInternalAgentSequenceGap.call(
+      this.chatControllerRecoveryContext,
+      payloadValue,
     );
-    const activeTurn = this.state.transcript.activeTurn;
-    const activeSessionId =
-      this.state.currentSessionId ?? this.state.transcript.sessionId ?? activeTurn?.sessionId;
-    const ownsGap = Boolean(
-      runId &&
-      sessionKey &&
-      this.isSelectedSession(sessionKey) &&
-      this.state.chatSending &&
-      activeTurn?.status === 'running' &&
-      activeTurn.runId === runId &&
-      (!this.state.chatRunId || this.state.chatRunId === runId) &&
-      (!sessionId || !activeSessionId || sessionId === activeSessionId) &&
-      (!lifecycleGeneration ||
-        !activeTurn.lifecycleGeneration ||
-        lifecycleGeneration === activeTurn.lifecycleGeneration),
-    );
-    if (!ownsGap) return false;
-
-    debugLog('[ChatCtrl] recovering selected run after internal Agent sequence gap', {
-      sessionKey,
-      runId,
-      expected: data?.expected ?? null,
-      received: data?.received ?? null,
-    });
-    this.state.client?.recoverFromGap('agent stream sequence gap');
-    return true;
   }
 
   private handleEvent(event: GatewayEventFrame): void {
@@ -3605,623 +1636,10 @@ export class ChatController {
   }
 
   private handleTimelineEvent(event: GatewayEventFrame): void {
-    if (event.event === 'tick') return;
-    if (event.event === 'chat.side_result') {
-      const payload = asRecord(event.payload);
-      const runId = readNonBlankString(payload?.runId);
-      const sessionKey = readNonBlankString(payload?.sessionKey);
-      const question = readNonBlankString(payload?.question);
-      const text = readNonBlankString(payload?.text);
-      if (
-        payload?.kind !== 'btw' ||
-        !runId ||
-        !sessionKey ||
-        !question ||
-        !text ||
-        !this.localSideChatRunIds.has(runId) ||
-        !this.pendingSideChats.has(runId) ||
-        normalizeTranscriptSessionKey(sessionKey) !==
-          normalizeTranscriptSessionKey(this.state.sessionKey)
-      ) {
-        return;
-      }
-      const result: SideChatResult = {
-        runId,
-        sessionKey,
-        question,
-        text,
-        isError: payload.isError === true,
-      };
-      for (const listener of this.sideChatResultListeners) listener(result);
-      this.pendingSideChats.delete(runId);
-      this.clearSideChatTranscript(runId, sessionKey);
-      return;
-    }
-    if (event.event === 'progressCard.changed') {
-      this.handleProgressCardChanged(event.payload);
-      return;
-    }
-    if (event.event === 'chat') {
-      const normalizedPayload = normalizeChatEvent({ payload: event.payload, frameSeq: event.seq });
-      if (normalizedPayload) {
-        if (normalizedPayload.runId && this.localSideChatRunIds.has(normalizedPayload.runId)) {
-          const pending = this.pendingSideChats.get(normalizedPayload.runId);
-          const transcript = this.sideChatTranscripts.get(normalizedPayload.runId);
-          if (
-            normalizedPayload.state === 'delta' &&
-            this.sideChatAssistantSnapshotRunIds.has(normalizedPayload.runId)
-          ) {
-            return;
-          }
-          if (pending && transcript) {
-            const reduceResult = reduceChatEvent(
-              transcript,
-              normalizedPayload,
-              this.transcriptDependencies,
-            );
-            if (reduceResult === 'applied') {
-              this.publishSideChatStream(
-                normalizedPayload.runId,
-                pending.sessionKey,
-                normalizedPayload.state === 'delta' ? 'stream' : 'terminal',
-              );
-            }
-          }
-          if (
-            normalizedPayload.state === 'final' ||
-            normalizedPayload.state === 'aborted' ||
-            normalizedPayload.state === 'error'
-          ) {
-            this.publishSideChatFailure(
-              normalizedPayload.runId,
-              normalizedPayload.errorMessage ?? '',
-            );
-            this.pendingSideChats.delete(normalizedPayload.runId);
-            this.retainSideChatTombstone(normalizedPayload.runId);
-          }
-          return;
-        }
-        let payload = normalizedPayload;
-        const failedErrorMessage =
-          normalizedPayload.state === 'error'
-            ? (normalizedPayload.errorMessage ?? 'Unknown error')
-            : null;
-        if (
-          normalizedPayload.state === 'error' &&
-          isInternalManagedSubagentHandoffError(normalizedPayload.errorMessage)
-        ) {
-          payload = {
-            runId: normalizedPayload.runId,
-            sessionKey: normalizedPayload.sessionKey,
-            sessionId: normalizedPayload.sessionId,
-            lifecycleGeneration: normalizedPayload.lifecycleGeneration,
-            frameSeq: normalizedPayload.frameSeq,
-            state: 'final',
-            replace: false,
-          };
-          debugLog('[ChatCtrl] suppressed internal managed handoff run error', {
-            runId: payload.runId,
-            sessionKey: payload.sessionKey,
-          });
-        }
-        this.ensureTranscriptSessionIdentity();
-        const matchesSelectedSession =
-          normalizeTranscriptSessionKey(payload.sessionKey) ===
-          normalizeTranscriptSessionKey(this.state.sessionKey);
-        if (!matchesSelectedSession) {
-          this.applyBackgroundChatEvent(payload, failedErrorMessage ?? undefined);
-          return;
-        }
-        if (
-          matchesSelectedSession &&
-          payload.runId &&
-          isDormantAnnounceRun(payload.runId, this.state.transcript.activeTurn)
-        ) {
-          if (payload.state === 'delta') {
-            const snapshotText = extractSnapshotText(payload.message) ?? payload.deltaText ?? '';
-            if (!snapshotText || isHiddenOrPendingControlReplyText(snapshotText)) return;
-            this.flushPendingAnnounceEvents(payload.runId);
-          } else if (payload.state === 'final') {
-            const message = stripAssistantSilentReplySuffix(payload.message);
-            if (!message || shouldHideMessage(message)) {
-              this.pendingAnnounceEvents.delete(payload.runId);
-              return;
-            }
-            this.flushPendingAnnounceEvents(payload.runId);
-          } else {
-            this.pendingAnnounceEvents.delete(payload.runId);
-          }
-        }
-        if (
-          payload.state === 'delta' &&
-          this.assistantSnapshotRunId &&
-          (!payload.runId || payload.runId === this.assistantSnapshotRunId)
-        ) {
-          this.ignoredDeltaAfterAssistantSnapshotCount += 1;
-          if (this.ignoredDeltaAfterAssistantSnapshotCount === 1) {
-            debugLog('[ChatCtrl] chat.delta ignored after canonical assistant snapshot', {
-              runId: payload.runId ?? null,
-              assistantSnapshotRunId: this.assistantSnapshotRunId,
-            });
-          }
-          return;
-        }
-        if (
-          matchesSelectedSession &&
-          !this.state.transcript.activeTurn &&
-          this.state.chatSending &&
-          this.state.chatRunId &&
-          (!payload.runId || payload.runId === this.state.chatRunId)
-        ) {
-          beginAssistantTurn(
-            this.state.transcript,
-            {
-              runId: payload.runId ?? this.state.chatRunId,
-              sessionId: payload.sessionId,
-              lifecycleGeneration: payload.lifecycleGeneration,
-            },
-            this.transcriptDependencies,
-          );
-        }
-        // Both chat.final delivery paths use OpenClaw's display projection and
-        // can therefore carry only an 8K preview. Do not let that preview
-        // rewind the complete assistant snapshot already accumulated live.
-        const reducerPayload =
-          payload.state === 'final' && isTruncatedHistoryMessage(payload.message)
-            ? { ...payload, message: undefined }
-            : payload;
-        const reduceResult = reduceChatEvent(
-          this.state.transcript,
-          reducerPayload,
-          this.transcriptDependencies,
-        );
-        const externalFinal =
-          reduceResult === 'ignored-run' &&
-          payload.state === 'final' &&
-          !(payload.runId && isTerminalRun(this.state.transcript, payload.runId)) &&
-          this.state.transcript.activeTurn === null &&
-          this.state.chatRunId === null &&
-          normalizeTranscriptSessionKey(payload.sessionKey) ===
-            normalizeTranscriptSessionKey(this.state.sessionKey) &&
-          (!payload.sessionId ||
-            !this.state.currentSessionId ||
-            payload.sessionId === this.state.currentSessionId);
-        if (reduceResult === 'applied' || externalFinal) {
-          if (failedErrorMessage) {
-            this.persistRunFailure(
-              this.state.sessionKey,
-              normalizedPayload.sessionId,
-              normalizedPayload.runId,
-              failedErrorMessage,
-            );
-          }
-          this.handleChatEvent(payload);
-        } else {
-          debugLog('[ChatCtrl] chat event ignored by transcript reducer', {
-            runId: payload.runId ?? null,
-            state: payload.state,
-            result: reduceResult,
-          });
-        }
-      }
-      return;
-    }
-
-    // Agent / session.tool events — handle tool streams AND assistant streaming
-    if (event.event === 'agent' || event.event === 'session.tool') {
-      this.ensureTranscriptSessionIdentity();
-      const normalized = normalizeAgentEvent({
-        deliveryEvent: event.event,
-        payload: event.payload,
-        frameSeq: event.seq,
-      });
-      if (!normalized.event) {
-        if (
-          normalized.reason === 'missing-sequence' &&
-          this.recoverFromInternalAgentSequenceGap(event.payload)
-        ) {
-          return;
-        }
-        debugLog('[ChatCtrl] Agent event rejected during normalization', {
-          reason: normalized.reason,
-          frameSeq: event.seq ?? null,
-        });
-        return;
-      }
-      if (normalized.event.runId && this.localSideChatRunIds.has(normalized.event.runId)) {
-        const pending = this.pendingSideChats.get(normalized.event.runId);
-        const transcript = this.sideChatTranscripts.get(normalized.event.runId);
-        if (pending && transcript) {
-          const reduceResult = reduceAgentEvent(
-            transcript,
-            normalized.event,
-            this.transcriptDependencies,
-            {
-              allowSequenceBackfill:
-                normalized.event.deliveryEvent === 'session.tool' ||
-                hasStableProgressOwner(normalized.event),
-            },
-          );
-          if (reduceResult === 'applied') {
-            if (normalized.event.stream === 'assistant') {
-              const observation = readTerminalGuardObservation(normalized.event.data);
-              if (observation?.action === 'rollback') {
-                this.sideChatAssistantSnapshotRunIds.delete(normalized.event.runId);
-              } else {
-                this.sideChatAssistantSnapshotRunIds.add(normalized.event.runId);
-              }
-            }
-            const phase = normalized.event.data.phase;
-            const terminal =
-              normalized.event.stream === 'lifecycle' && (phase === 'end' || phase === 'error');
-            const toolPartial =
-              normalized.event.stream === 'tool' &&
-              normalized.event.data.partialResult !== undefined &&
-              !terminal;
-            this.publishSideChatStream(
-              normalized.event.runId,
-              pending.sessionKey,
-              terminal ? 'terminal' : toolPartial ? 'tool-partial' : 'stream',
-            );
-          }
-        }
-        return;
-      }
-      const cachedEventSession = this.findLiveSessionState(
-        normalized.event.sessionKey,
-        normalized.event.sessionId,
-      );
-      const eventTargetsBackgroundSession = normalized.event.sessionKey
-        ? normalizeTranscriptSessionKey(normalized.event.sessionKey) !==
-          normalizeTranscriptSessionKey(this.state.sessionKey)
-        : cachedEventSession !== null &&
-          normalizeTranscriptSessionKey(cachedEventSession[0]) !==
-            normalizeTranscriptSessionKey(this.state.sessionKey);
-      if (eventTargetsBackgroundSession) {
-        this.applyBackgroundAgentEvent(normalized.event);
-        return;
-      }
-      const normalizedAssistantText = assistantEventText(normalized.event.data);
-      if (
-        normalized.event.stream === 'assistant' &&
-        normalizedAssistantText !== null &&
-        isHiddenOrPendingControlReplyText(normalizedAssistantText)
-      ) {
-        if (
-          isDormantAnnounceRun(normalized.event.runId, this.state.transcript.activeTurn) &&
-          SILENT_REPLY_PATTERN.test(normalizedAssistantText.trim())
-        ) {
-          this.pendingAnnounceEvents.delete(normalized.event.runId);
-        }
-        debugLog('[ChatCtrl] hidden assistant snapshot ignored', {
-          runId: normalized.event.runId,
-          agentSeq: normalized.event.agentSeq,
-        });
-        return;
-      }
-      if (isDormantAnnounceControlEvent(normalized.event, this.state.transcript.activeTurn)) {
-        const phase =
-          normalized.event.stream === 'lifecycle' && typeof normalized.event.data.phase === 'string'
-            ? normalized.event.data.phase
-            : '';
-        if (phase === 'end' && normalized.event.data.aborted !== true) {
-          this.pendingAnnounceEvents.delete(normalized.event.runId);
-        } else if (phase === 'error' || normalized.event.data.aborted === true) {
-          this.flushPendingAnnounceEvents(normalized.event.runId);
-          this.applyNormalizedAgentEvent(normalized.event);
-        } else {
-          this.bufferPendingAnnounceEvent(normalized.event);
-        }
-        debugLog('[ChatCtrl] dormant announce control event deferred', {
-          runId: normalized.event.runId,
-          agentSeq: normalized.event.agentSeq,
-          stream: normalized.event.stream,
-          phase,
-        });
-        return;
-      }
-      if (isDormantAnnounceRun(normalized.event.runId, this.state.transcript.activeTurn)) {
-        this.flushPendingAnnounceEvents(normalized.event.runId);
-      }
-      this.applyNormalizedAgentEvent(normalized.event);
-      return;
-    }
-
-    // Session metadata and durable transcript notifications for the selected session.
-    if (event.event === 'sessions.changed') {
-      const payload = asRecord(event.payload);
-      const sessionSnapshot = asRecord(payload?.session);
-      const eventSessionKey =
-        typeof payload?.sessionKey === 'string'
-          ? payload.sessionKey.trim()
-          : typeof sessionSnapshot?.key === 'string'
-            ? sessionSnapshot.key.trim()
-            : '';
-      if (
-        !eventSessionKey ||
-        normalizeTranscriptSessionKey(eventSessionKey) !==
-          normalizeTranscriptSessionKey(this.state.sessionKey)
-      ) {
-        return;
-      }
-      const reason = typeof payload?.reason === 'string' ? payload.reason.trim().toLowerCase() : '';
-      const nextSessionId = normalizeSessionId(payload?.sessionId ?? sessionSnapshot?.sessionId);
-      const currentSessionId = this.state.currentSessionId ?? this.state.transcript.sessionId;
-      const rotatesSessionIdentity = Boolean(
-        nextSessionId && currentSessionId && nextSessionId !== currentSessionId,
-      );
-      if (rotatesSessionIdentity) {
-        const explicitIdentityChange =
-          reason === 'new' || reason === 'reset' || reason === 'delete';
-        const managedSession = /^agent:[^:]+:justdo:[^:]+$/i.test(this.state.sessionKey);
-        if (managedSession && !explicitIdentityChange) {
-          debugLog('[ChatCtrl] rejected unexpected managed session id rotation', {
-            sessionKey: this.state.sessionKey,
-            currentSessionId,
-            nextSessionId,
-            reason,
-          });
-          return;
-        }
-        this.resetTranscriptForSession(this.state.sessionKey, nextSessionId, false);
-        this.historyPagingGeneration += 1;
-        this.resetHistoryPagination(this.state.sessionKey);
-        this.displayedHistoryLeafBySession.delete(
-          normalizeTranscriptSessionKey(this.state.sessionKey),
-        );
-        this.state.currentSessionId = nextSessionId;
-        this.state.chatRunId = null;
-        this.state.chatSending = false;
-        this.clearRunActivity();
-        this.pendingHistoryReload = false;
-        this.scheduleDeferredHistoryReload(this.state.sessionKey, 'session-identity-rotation');
-      } else if (reason === 'reset') {
-        const managedSession = /^agent:[^:]+:justdo:[^:]+$/i.test(this.state.sessionKey);
-        const resetSessionId = nextSessionId ?? currentSessionId;
-        const planImplementation = this.expectedPlanImplementationReset;
-        this.expectedPlanImplementationReset = null;
-        this.historyPagingGeneration += 1;
-        this.resetHistoryPagination(this.state.sessionKey);
-        this.displayedHistoryLeafBySession.delete(
-          normalizeTranscriptSessionKey(this.state.sessionKey),
-        );
-        if (managedSession) {
-          // OpenClaw keeps the same public session identity for the Plan handoff.
-          // Preserve the loaded display transcript while retiring the planning
-          // turn, and project an immediate reset boundary. Patch 022 makes the
-          // authoritative history snapshot return the same pre-reset rows later.
-          let loadedMessages = this.currentMessageHistory.toArray();
-          let latestResetIndex = -1;
-          loadedMessages.forEach((message, index) => {
-            if (asRecord(asRecord(message)?.__openclaw)?.kind === 'reset') {
-              latestResetIndex = index;
-            }
-          });
-          const hasPersistedPlan = projectPersistedTimeline(
-            loadedMessages.slice(latestResetIndex + 1) as GatewayMessage[],
-          ).some(item => item.kind === 'plan-presentation');
-          if (planImplementation && !hasPersistedPlan) {
-            const livePlanTool = this.state.transcript.activeTurn?.items.find(
-              item => item.type === 'tool' && isPresentPlanToolName(item.name),
-            );
-            loadedMessages = [
-              ...loadedMessages,
-              {
-                role: 'assistant',
-                runId: this.state.transcript.activeTurn?.runId,
-                timestamp: livePlanTool?.startedAt ?? Date.now(),
-                content: [
-                  {
-                    type: 'toolcall',
-                    toolCallId:
-                      livePlanTool?.type === 'tool'
-                        ? livePlanTool.toolCallId
-                        : `plan-${planImplementation.requestId}`,
-                    name: planImplementation.toolName,
-                    input: planImplementation.toolInput,
-                  },
-                ],
-              },
-            ];
-          }
-          const tailMarker = asRecord(loadedMessages[loadedMessages.length - 1])?.__openclaw;
-          const tailMarkerRecord = asRecord(tailMarker);
-          const messages =
-            tailMarkerRecord?.kind === 'reset'
-              ? loadedMessages
-              : [
-                  ...loadedMessages,
-                  {
-                    role: 'system',
-                    content: 'Reset',
-                    timestamp: Date.now(),
-                    __openclaw: {
-                      kind: 'reset',
-                      id: `justdo-live-reset-${Date.now()}`,
-                      ...(planImplementation ? { planImplementation: true } : {}),
-                    },
-                  },
-                ];
-          this.resetTranscriptForSession(this.state.sessionKey, resetSessionId, false);
-          this.setCurrentSessionMessages(messages, { resetLoadedHistory: true });
-        } else {
-          // Native sessions retain OpenClaw's normal reset behavior.
-          this.resetTranscriptForSession(this.state.sessionKey, resetSessionId, false);
-          this.setCurrentSessionMessages([], { resetLoadedHistory: true });
-        }
-        this.state.chatRunId = null;
-        this.state.chatSending = false;
-        this.clearRunActivity();
-        this.pendingHistoryReload = false;
-        this.scheduleDeferredHistoryReload(this.state.sessionKey, 'session-reset');
-      }
-      if (this.applySessionContextUsage(sessionSnapshot ?? payload, eventSessionKey)) this.notify();
-      if (payload?.phase === 'message') {
-        // New OpenClaw emits this invalidation when a committed batch,
-        // rewrite, or suppressed row has no single session.message payload.
-        // During a run the snapshot may repair Tool boundaries but cannot
-        // replace the live turn; terminal reconciliation will finish it.
-        this.pendingHistoryReload = true;
-        if (this.state.chatSending && this.state.transcript.activeTurn?.status === 'running') {
-          void this.loadHistory(true, { backfillActiveSessionsYield: true });
-        } else {
-          this.scheduleDeferredHistoryReload(this.state.sessionKey, 'sessions-changed-message');
-        }
-      }
-      return;
-    }
-
-    if (event.event === 'session.message') {
-      const payload = asRecord(event.payload);
-      const eventSessionKey =
-        typeof payload?.sessionKey === 'string' ? payload.sessionKey.trim() : '';
-      if (
-        eventSessionKey &&
-        normalizeTranscriptSessionKey(eventSessionKey) !==
-          normalizeTranscriptSessionKey(this.state.sessionKey)
-      ) {
-        return;
-      }
-      if (this.admitExpectedInitialHistoryMessage(payload?.message)) return;
-      const sessionSnapshot = asRecord(payload?.session);
-      if (
-        this.applySessionContextUsage(
-          sessionSnapshot ?? payload,
-          eventSessionKey || this.state.sessionKey,
-        )
-      ) {
-        this.notify();
-      }
-      const eventSessionId = normalizeSessionId(payload?.sessionId ?? sessionSnapshot?.sessionId);
-      const activeTurn = this.state.transcript.activeTurn;
-      const activeSessionId =
-        this.state.currentSessionId ?? this.state.transcript.sessionId ?? activeTurn?.sessionId;
-      const sessionIdentityMatches =
-        !eventSessionId || !activeSessionId || eventSessionId === activeSessionId;
-      const activeRunIds = readStringList(payload?.activeRunIds ?? sessionSnapshot?.activeRunIds);
-      const expectedRunIds = new Set(
-        [activeTurn?.runId, this.state.chatRunId].filter(
-          (value): value is string => typeof value === 'string' && value.length > 0,
-        ),
-      );
-      const explicitMessageRunId = readExplicitMessageRunId(payload);
-      const runActiveValue = payload?.hasActiveRun ?? sessionSnapshot?.hasActiveRun;
-      const runActive = typeof runActiveValue === 'boolean' ? runActiveValue : undefined;
-      const runIdentityMatches =
-        (explicitMessageRunId === undefined || expectedRunIds.has(explicitMessageRunId)) &&
-        (activeRunIds.length === 0 || activeRunIds.some(runId => expectedRunIds.has(runId))) &&
-        runActive !== false;
-      const repairedActiveTail =
-        payload?.message !== undefined &&
-        !isTruncatedHistoryMessage(payload.message) &&
-        sessionIdentityMatches &&
-        runIdentityMatches &&
-        this.hydrateActiveToolItemsFromHistory([payload.message], {
-          backfillMissingSessionsYield: true,
-          backfillMissingToolsFromAppend: true,
-        });
-      if (repairedActiveTail) this.publishActiveToolHistoryRepair();
-      const loadedMessageSeq = readLatestOpenClawMessageSeq(this.state.chatMessages);
-      const projectedAppend =
-        payload?.message === undefined ? [] : projectGatewayHistoryForDisplay([payload.message]);
-      const appendIsTruncated =
-        projectedAppend.length === 1 && isTruncatedHistoryMessage(projectedAppend[0]);
-      const directApply =
-        sessionIdentityMatches && projectedAppend.length === 1 && !appendIsTruncated
-          ? applySessionMessagePayload(
-              this.state.chatMessages,
-              { ...payload, message: projectedAppend[0] },
-              {
-                activeRunId:
-                  activeTurn?.status === 'running' ? activeTurn.runId : this.state.chatRunId,
-                runActive,
-                isRecentTerminalRun: runId => isTerminalRun(this.state.transcript, runId),
-              },
-            )
-          : null;
-      if (directApply?.kind === 'applied') {
-        this.rememberRunModel(directApply.message, explicitMessageRunId);
-        this.state.transcript.historySource = 'gateway';
-        this.setCurrentSessionMessages(directApply.messages);
-        if (
-          directApply.role === 'user' &&
-          this.state.pendingUserMessage &&
-          isPendingUserMessageMatch(
-            directApply.message as GatewayMessage,
-            this.state.pendingUserMessage as unknown as GatewayMessage,
-          )
-        ) {
-          this.state.pendingUserMessage = null;
-        }
-        this.notify();
-        this.hydrateCurrentSessionImages(directApply.messages, this.state.sessionKey);
-      }
-      const messageSeq =
-        readPositiveSafeInteger(payload?.messageSeq) ?? readOpenClawMessageSeq(payload?.message);
-      // Compare against the snapshot that preceded this append. Including the
-      // just-applied row in the baseline would hide a real dropped-message gap.
-      const activeTailCatchUpPending =
-        sessionIdentityMatches &&
-        this.observeSessionMessageSeq(
-          this.state.sessionKey,
-          eventSessionId ?? activeSessionId ?? null,
-          messageSeq,
-          loadedMessageSeq,
-        );
-      if (
-        activeTurn?.status === 'running' &&
-        this.state.chatSending &&
-        sessionIdentityMatches &&
-        activeTailCatchUpPending
-      ) {
-        // A targeted append can be absent while a later append/messageSeq is
-        // the first evidence that a Tool row was missed. Fetch the active tail
-        // without allowing history to replace the live turn.
-        this.scheduleActiveToolHistoryCatchUp(this.state.sessionKey, activeTurn.runId);
-      }
-      const appendWasHidden = payload?.message !== undefined && projectedAppend.length === 0;
-      const needsHistoryFallback =
-        !sessionIdentityMatches ||
-        (!appendWasHidden && directApply?.kind !== 'applied') ||
-        activeTailCatchUpPending ||
-        (directApply?.kind === 'applied' && isTruncatedHistoryMessage(directApply.message));
-      if (!needsHistoryFallback && !this.pendingHistoryReload) return;
-      if (this.state.chatSending || this.pendingHistoryReload) {
-        debugLog('[ChatCtrl] session.message DEFERRED:', this.state.sessionKey, {
-          eventKeys: Object.keys((event.payload as Record<string, unknown> | undefined) ?? {}),
-          chatSending: this.state.chatSending,
-          pendingReload: this.pendingHistoryReload,
-          ...this._snap(),
-        });
-        this.pendingHistoryReload = true;
-        if (!this.hasExpectedInitialHistory()) {
-          this.scheduleDeferredHistoryReload(this.state.sessionKey, 'initial-history-missing');
-        }
-      } else {
-        debugLog('[ChatCtrl] session.message → loadHistory:', this.state.sessionKey, {
-          eventKeys: Object.keys((event.payload as Record<string, unknown> | undefined) ?? {}),
-          ...this._snap(),
-        });
-        this.scheduleDeferredHistoryReload(this.state.sessionKey, 'session-message');
-      }
-      return;
-    }
-
-    if (event.event === 'session.operation') {
-      const payload = asRecord(event.payload);
-      if (payload?.operation !== 'compact') {
-        return;
-      }
-      const eventSessionKey =
-        typeof payload.sessionKey === 'string' ? payload.sessionKey.trim() : '';
-      const targetsSelectedSession = !eventSessionKey || this.isSelectedSession(eventSessionKey);
-      const sessionKey = targetsSelectedSession ? this.state.sessionKey : eventSessionKey;
-      if (!targetsSelectedSession && !this.localCompactionStatusBySession.has(sessionKey)) {
-        return;
-      }
-      const phase = typeof payload.phase === 'string' ? payload.phase : '';
-      this.handleCompactionPhase(phase, sessionKey, payload);
-    }
+    return chatControllerRecovery.handleTimelineEvent.call(
+      this.chatControllerRecoveryContext,
+      event,
+    );
   }
 
   private bufferPendingAnnounceEvent(event: NormalizedAgentEvent): void {
@@ -4413,297 +1831,53 @@ export class ChatController {
   private historyReloadRequested = new Set<string>();
   private immediateHistoryReloadRequested = new Set<string>();
 
-  private async resolveTranscriptImageUrl(
-    mediaPath: string,
-    sessionKey: string,
-  ): Promise<string | null> {
-    const trimmedPath = mediaPath.trim();
-    if (/^(?:data|blob|https?):/iu.test(trimmedPath)) return trimmedPath;
-
-    const managedInbound = /^media:\/\/inbound\/[^/?#]+$/iu.test(trimmedPath);
-    const cacheKey = managedInbound ? `${sessionKey}\0${trimmedPath}` : trimmedPath;
-    const cached = this.transcriptImageCache.get(cacheKey);
-    if (cached) return cached;
-
-    const pending = (async () => {
-      if (this.transcriptImageReadsActive >= 4) {
-        await new Promise<void>(resolve => this.transcriptImageReadWaiters.push(resolve));
-      }
-      this.transcriptImageReadsActive += 1;
-      try {
-        if (managedInbound) {
-          const result = await window.electron.openclaw.engine.readAssistantMediaDataUrl({
-            source: trimmedPath,
-            sessionKey,
-          });
-          return result.success ? result.dataUrl : null;
-        }
-        const dialog = (
-          window as unknown as {
-            electron?: {
-              dialog?: {
-                readFileAsDataUrl?: (
-                  path: string,
-                ) => Promise<{ success: boolean; dataUrl?: string }>;
-              };
-            };
-          }
-        ).electron?.dialog;
-        const result = await dialog?.readFileAsDataUrl?.(trimmedPath);
-        return result?.success && result.dataUrl ? result.dataUrl : null;
-      } catch (error) {
-        console.warn('[ChatCtrl] Failed to load transcript image', error);
-        return null;
-      } finally {
-        this.transcriptImageReadsActive -= 1;
-        this.transcriptImageReadWaiters.shift()?.();
-      }
-    })();
-
-    this.transcriptImageCache.set(cacheKey, pending);
-    void pending.then(value => {
-      if (value === null && this.transcriptImageCache.get(cacheKey) === pending) {
-        this.transcriptImageCache.delete(cacheKey);
-      }
-    });
-    if (this.transcriptImageCache.size > 64) {
-      const oldestPath = this.transcriptImageCache.keys().next().value;
-      if (typeof oldestPath === 'string') this.transcriptImageCache.delete(oldestPath);
-    }
-    return pending;
+  private resolveTranscriptImageUrl(mediaPath: string, sessionKey: string): Promise<string | null> {
+    return chatControllerHistory.resolveTranscriptImageUrl.call(
+      this.chatControllerHistoryContext,
+      mediaPath,
+      sessionKey,
+    );
   }
 
-  private async resolveManagedHistoryImages(
-    messages: unknown[],
-    sessionKey: string,
-  ): Promise<unknown[]> {
-    return Promise.all(
-      messages.map(async message => {
-        const record = asRecord(message);
-        if (!record) return message;
-        const originalContent = Array.isArray(record.content)
-          ? record.content
-          : typeof record.content === 'string'
-            ? [{ type: 'text', text: record.content }]
-            : [];
-        const content = await Promise.all(
-          originalContent.map(async value => {
-            if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
-            const block = value as Record<string, unknown>;
-            const source = typeof block.url === 'string' ? block.url : '';
-            if (block.type !== 'image' || !source.startsWith('/api/chat/media/outgoing/')) {
-              return value;
-            }
-            try {
-              const result = await window.electron.openclaw.engine.readAssistantMediaDataUrl({
-                source,
-                sessionKey,
-              });
-              return result.success ? { ...block, url: result.dataUrl } : value;
-            } catch (error) {
-              console.warn('[ChatCtrl] Failed to load managed outgoing image', error);
-              return value;
-            }
-          }),
-        );
-        const transcriptImages = await Promise.all(
-          getTranscriptMedia(record).map(async media => {
-            if (!isTranscriptImage(media)) return null;
-            try {
-              const imageUrl = await this.resolveTranscriptImageUrl(media.path, sessionKey);
-              if (!imageUrl) return null;
-              return {
-                type: 'image',
-                url: imageUrl,
-                alt: media.fileName || media.path.split(/[\\/]/).pop() || 'Image',
-                ...(media.mimeType ? { mimeType: media.mimeType } : {}),
-              };
-            } catch (error) {
-              console.warn('[ChatCtrl] Failed to load transcript image', error);
-              return null;
-            }
-          }),
-        );
-        const imageBlocks = transcriptImages.filter(
-          (value): value is NonNullable<typeof value> => value !== null,
-        );
-        const existingImageUrlCounts = new Map<string, number>();
-        for (const url of content
-          .map(getContentImageUrl)
-          .filter((value): value is string => value !== null)) {
-          const identity = getImageUrlIdentity(url);
-          existingImageUrlCounts.set(identity, (existingImageUrlCounts.get(identity) ?? 0) + 1);
-        }
-        const uniqueImageBlocks = imageBlocks.filter(block => {
-          const identity = getImageUrlIdentity(block.url);
-          const existingCount = existingImageUrlCounts.get(identity) ?? 0;
-          if (existingCount > 0) {
-            existingImageUrlCounts.set(identity, existingCount - 1);
-            return false;
-          }
-          return true;
-        });
-        if (uniqueImageBlocks.length === 0 && !Array.isArray(record.content)) return message;
-        return { ...record, content: [...content, ...uniqueImageBlocks] };
-      }),
+  private resolveManagedHistoryImages(messages: unknown[], sessionKey: string): Promise<unknown[]> {
+    return chatControllerHistory.resolveManagedHistoryImages.call(
+      this.chatControllerHistoryContext,
+      messages,
+      sessionKey,
     );
   }
 
   private hydrateCurrentSessionImages(messages: unknown[], sessionKey: string): void {
-    void this.resolveManagedHistoryImages(messages, sessionKey).then(resolvedMessages => {
-      if (this.state.sessionKey !== sessionKey || this.state.chatMessages !== messages) return;
-      this.setCurrentSessionMessages(resolvedMessages);
-      this.notify();
-    });
-  }
-
-  private async loadOlderHistoryPage(sessionKey: string, cursor: string): Promise<ChatHistoryPage> {
-    const client = this.state.client;
-    if (!client) throw new Error('OpenClaw Gateway is not connected');
-    return parseChatHistoryPage(
-      await client.request('chat.history', {
-        sessionKey,
-        limit: CHAT_HISTORY_OLDER_PAGE_LIMIT,
-        maxChars: CHAT_HISTORY_MAX_CHARS,
-        offset: decodeHistoryOffsetCursor(cursor),
-      }),
+    return chatControllerHistory.hydrateCurrentSessionImages.call(
+      this.chatControllerHistoryContext,
+      messages,
+      sessionKey,
     );
   }
 
-  private async normalizeHistoryPage(messages: unknown[], sessionKey: string): Promise<unknown[]> {
-    const projected = projectGatewayHistoryForDisplay(messages);
-    const client = this.state.client;
-    const hydratedFullMessages = client
-      ? await hydrateTruncatedHistoryMessages(client, projected, sessionKey)
-      : projected;
-    const normalized = await hydrateGatewayHistoryForDisplay(hydratedFullMessages, {
+  private loadOlderHistoryPage(sessionKey: string, cursor: string): Promise<ChatHistoryPage> {
+    return chatControllerHistory.loadOlderHistoryPage.call(
+      this.chatControllerHistoryContext,
       sessionKey,
-      sessionId: this.state.transcript.sessionId,
-      lastError: this.state.lastError,
-      includeFailedRunOverlays: false,
-      includeInterruptedOverlays: false,
-      enrichCompactionMarkers: (projectedMessages, key) =>
-        this.enrichCompactionMarkers(projectedMessages, key),
-    });
-    return this.resolveManagedHistoryImages(normalized, sessionKey);
+      cursor,
+    );
   }
 
-  async loadOlderHistory(): Promise<boolean> {
-    const sessionKey = this.state.sessionKey;
-    const initialCursor = this.state.historyNextCursor;
-    if (!sessionKey || !initialCursor || this.state.historyLoadingOlder) return false;
+  private normalizeHistoryPage(messages: unknown[], sessionKey: string): Promise<unknown[]> {
+    return chatControllerHistory.normalizeHistoryPage.call(
+      this.chatControllerHistoryContext,
+      messages,
+      sessionKey,
+    );
+  }
 
-    const historyGeneration = this.state.transcript.historyGeneration;
-    const sessionId = this.state.transcript.sessionId;
-    const pagingGeneration = this.historyPagingGeneration;
-    const requestedWindow = {
-      start: this.state.historyWindowStart,
-      end: this.state.historyWindowEnd,
-    };
-    const requestedNewerNavigationRevision = this.newerHistoryNavigationRevision;
-    const seenCursors = new Set<string>();
-    let cursor: string | null = initialCursor;
-    this.state.historyLoadingOlder = true;
-    this.notify();
-    try {
-      while (cursor && !seenCursors.has(cursor)) {
-        seenCursors.add(cursor);
-        const page = await this.loadOlderHistoryPage(sessionKey, cursor);
-        if (
-          !page ||
-          this.state.sessionKey !== sessionKey ||
-          this.state.transcript.historyGeneration !== historyGeneration ||
-          this.state.transcript.sessionId !== sessionId ||
-          this.historyPagingGeneration !== pagingGeneration
-        ) {
-          return false;
-        }
-        const normalized = await this.normalizeHistoryPage(page.messages, sessionKey);
-        if (
-          this.state.sessionKey !== sessionKey ||
-          this.state.transcript.historyGeneration !== historyGeneration ||
-          this.state.transcript.sessionId !== sessionId ||
-          this.historyPagingGeneration !== pagingGeneration
-        ) {
-          return false;
-        }
-        this.historyPaginationAdvanced = true;
-        const subagentTaskPageIndex = this.findExpectedInitialHistoryIndex(normalized);
-        if (this.expectInitialHistory && subagentTaskPageIndex >= 0) {
-          const taskBoundedPage = normalized.slice(subagentTaskPageIndex);
-          const boundedHistory = [...taskBoundedPage, ...this.currentMessageHistory.recentMessages];
-          const messages = this.state.chatSending
-            ? sliceActiveSubagentHistoryPrefix(boundedHistory)
-            : boundedHistory;
-          this.state.transcript.historySource = 'gateway';
-          this.state.historyHasMore = false;
-          this.state.historyNextCursor = null;
-          this.rememberHistoryPagination(sessionKey);
-          this.setCurrentSessionMessages(messages, { resetLoadedHistory: true });
-          this.state.transcript.revision += 1;
-          this.notify();
-          return true;
-        }
-        const addedCount = this.currentMessageHistory.prepend(normalized);
-        const changed = addedCount > 0;
-        const repeatedCursor: boolean =
-          page.nextCursor === cursor ||
-          (page.nextCursor !== null && seenCursors.has(page.nextCursor));
-        this.state.historyHasMore = page.hasMore && !repeatedCursor;
-        this.state.historyNextCursor = this.state.historyHasMore ? page.nextCursor : null;
-        this.rememberHistoryPagination(sessionKey);
-        if (!changed) {
-          if (!this.state.historyHasMore || !this.state.historyNextCursor) {
-            this.notify();
-            return false;
-          }
-          cursor = this.state.historyNextCursor;
-          continue;
-        }
-
-        this.state.loadedMessageCount = this.currentMessageHistory.length;
-        const shouldShiftRequestedWindowOlder =
-          this.state.historyWindowStart === requestedWindow.start &&
-          this.state.historyWindowEnd === requestedWindow.end &&
-          this.newerHistoryNavigationRevision === requestedNewerNavigationRevision;
-        const preservedWindow = {
-          start: this.state.historyWindowStart + addedCount,
-          end: this.state.historyWindowEnd + addedCount,
-        };
-        this.state.historyWindowStart = preservedWindow.start;
-        this.state.historyWindowEnd = preservedWindow.end;
-        this.applyHistoryWindow(
-          shouldShiftRequestedWindowOlder
-            ? shiftHistoryWindowOlder(preservedWindow, this.currentMessageHistory.length)
-            : preservedWindow,
-        );
-        this.state.transcript.revision += 1;
-        this.notify();
-        return true;
-      }
-      this.state.historyHasMore = false;
-      this.state.historyNextCursor = null;
-      this.rememberHistoryPagination(sessionKey);
-      this.notify();
-      return false;
-    } catch (error) {
-      debugLog('[ChatCtrl] older history page unavailable', {
-        sessionKey,
-        cursor,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return false;
-    } finally {
-      if (this.state.sessionKey === sessionKey) {
-        this.state.historyLoadingOlder = false;
-        this.notify();
-      }
-    }
+  loadOlderHistory(): Promise<boolean> {
+    return chatControllerHistory.loadOlderHistory.call(this.chatControllerHistoryContext);
   }
 
   // ─── History Loading ──────────────────────────────────────────────────
 
-  async loadHistory(
+  loadHistory(
     queueIfBusy = false,
     options: {
       preferStartup?: boolean;
@@ -4711,633 +1885,33 @@ export class ChatController {
       backfillActiveSessionsYield?: boolean;
     } = {},
   ): Promise<boolean> {
-    const client = this.state.client;
-    if (!client || !this.state.connected) return false;
-
-    const sessionKey = this.state.sessionKey;
-    this.ensureTranscriptSessionIdentity();
-    if (this.historyLoadsInFlight.has(sessionKey)) {
-      if (queueIfBusy) {
-        this.historyReloadRequested.add(sessionKey);
-        this.immediateHistoryReloadRequested.add(sessionKey);
-      }
-      debugLog('[ChatCtrl] loadHistory SKIP busy', {
-        sessionKey,
-        queueIfBusy,
-        queued: this.historyReloadRequested.has(sessionKey),
-        inFlightSessions: [...this.historyLoadsInFlight],
-        ...this._snap(),
-      });
-      return false;
-    }
-    const pagingGeneration = ++this.historyPagingGeneration;
-    const loadSeq = ++this.historyLoadSeq;
-    let transcriptHistoryGeneration = this.state.transcript.historyGeneration;
-    let requestedSessionId = this.state.transcript.sessionId;
-    this.historyLoadsInFlight.add(sessionKey);
-    const previousMessages = this.state.chatMessages;
-    const requestRunId = this.state.chatRunId;
-    debugLog('[ChatCtrl] loadHistory START', {
-      seq: loadSeq,
-      sessionKey,
-      chatSending: this.state.chatSending,
-      pendingUserMsg: !!this.state.pendingUserMessage,
-      chatRunId: this.state.chatRunId,
-      previousSummary: summarizeHistoryForDebug(previousMessages),
-      currentSummary: summarizeHistoryForDebug(this.state.chatMessages),
-    });
-    this.state.chatLoading = true;
-    this.notify();
-
-    try {
-      // The UI and Gateway ship at the same OpenClaw version. One native RPC
-      // owns both the recent page and its offset cursor; no REST/IPC fallback or
-      // second independently timed snapshot is needed.
-      const method = options.preferStartup ? 'chat.startup' : 'chat.history';
-      const result = await client.request<ChatHistorySnapshot>(method, {
-        sessionKey,
-        limit: CHAT_HISTORY_INITIAL_LIMIT,
-        maxChars: CHAT_HISTORY_MAX_CHARS,
-      });
-      const pagedHistory = parseChatHistoryPage(result);
-      debugLog('[ChatCtrl] loadHistory RPC OK', {
-        seq: loadSeq,
-        method,
-        sessionKey,
-        rpcCount: pagedHistory.messages.length,
-        rpcSessionId: result?.sessionId ?? null,
-        rpcSummary: summarizeHistoryForDebug(pagedHistory.messages),
-      });
-
-      if (this.state.sessionKey !== sessionKey) {
-        debugLog('[ChatCtrl] loadHistory ABORT session changed after RPC', {
-          seq: loadSeq,
-          requestedSessionKey: sessionKey,
-          currentSessionKey: this.state.sessionKey,
-        });
-        return false;
-      }
-
-      const loadedSessionId = normalizeSessionId(
-        result?.sessionInfo?.sessionId ?? result?.sessionId,
-      );
-      const normalizedSessionKey = normalizeTranscriptSessionKey(sessionKey);
-      const responseHasActiveLeaf = Object.prototype.hasOwnProperty.call(
-        result?.sessionInfo ?? {},
-        'activeLeafEntryId',
-      );
-      const loadedActiveLeaf = responseHasActiveLeaf
-        ? normalizeSessionId(result?.sessionInfo?.activeLeafEntryId)
-        : undefined;
-      const previousActiveLeafKnown = this.displayedHistoryLeafBySession.has(normalizedSessionKey);
-      const previousActiveLeaf = this.displayedHistoryLeafBySession.get(normalizedSessionKey);
-      const rotatesSessionIdentity = Boolean(
-        loadedSessionId &&
-        this.state.transcript.sessionId &&
-        loadedSessionId !== this.state.transcript.sessionId,
-      );
-      const switchesHistoryBranch = Boolean(
-        responseHasActiveLeaf && previousActiveLeafKnown && previousActiveLeaf !== loadedActiveLeaf,
-      );
-      const authoritativeSessionId = loadedSessionId ?? this.state.transcript.sessionId;
-      if (!rotatesSessionIdentity) {
-        requestedSessionId = authoritativeSessionId;
-        this.state.currentSessionId = authoritativeSessionId;
-        this.state.transcript.sessionId = authoritativeSessionId;
-      }
-      const requestStillCurrent = (): boolean =>
-        this.state.sessionKey === sessionKey &&
-        this.historyPagingGeneration === pagingGeneration &&
-        this.state.transcript.historyGeneration === transcriptHistoryGeneration &&
-        this.state.transcript.sessionId === requestedSessionId;
-
-      const rawMessages = pagedHistory.messages;
-      debugLog('[ChatCtrl] loadHistory AFTER-AWAIT', {
-        seq: loadSeq,
-        sessionKey,
-        source: 'rpc',
-        rawMsgCount: rawMessages.length,
-        rawSummary: summarizeHistoryForDebug(rawMessages),
-        ...this._snap(),
-      });
-      // Remove stream-fallback messages — the real persisted message from the
-      // gateway will replace them, preventing content duplication.
-      const projectedMessages = projectGatewayHistoryForDisplay(rawMessages);
-      debugLog('[ChatCtrl] loadHistory PROJECTED', {
-        seq: loadSeq,
-        sessionKey,
-        rawCount: rawMessages.length,
-        projectedCount: projectedMessages.length,
-        hiddenCount: rawMessages.length - projectedMessages.length,
-        projectedSummary: summarizeHistoryForDebug(projectedMessages),
-      });
-      const hydratedFullMessages = await hydrateTruncatedHistoryMessages(
-        client,
-        projectedMessages,
-        sessionKey,
-      );
-      const hydratedMessages = await hydrateGatewayHistoryForDisplay(hydratedFullMessages, {
-        sessionKey,
-        sessionId: authoritativeSessionId,
-        lastError: this.state.lastError,
-        enrichCompactionMarkers: (messages, key) => this.enrichCompactionMarkers(messages, key),
-      });
-      if (!requestStillCurrent()) {
-        debugLog('[ChatCtrl] loadHistory ABORT identity changed during normalization', {
-          seq: loadSeq,
-          requestedSessionKey: sessionKey,
-          currentSessionKey: this.state.sessionKey,
-        });
-        return false;
-      }
-      // Commit owns pagination from this point. Any older-page request that
-      // started while the tail snapshot was being hydrated must not mutate the
-      // new cursor or mix a prior branch into it.
-      this.historyPagingGeneration += 1;
-      // Hydration awaits can span a run starting or finishing. Decide at commit
-      // time, and retain a running turn even during suspended reconciliation:
-      // that path still needs it to recover the remote run's lifecycle.
-      const deferHistoryBranchReplacement = switchesHistoryBranch && this.state.chatSending;
-      const replacesHistoryProjection =
-        rotatesSessionIdentity || (switchesHistoryBranch && !deferHistoryBranchReplacement);
-      const preserveLoadedPaginationDepth =
-        !replacesHistoryProjection && this.historyPaginationAdvanced;
-      // Hydrating oversized rows and compaction details can take multiple RPCs.
-      // Keep the previous physical session visible until the replacement
-      // snapshot is complete, then swap identity and messages in one render.
-      // Clearing here used to expose a transient empty transcript whenever a
-      // reset/rotation coincided with a large history response.
-      if (replacesHistoryProjection) {
-        this.resetTranscriptForSession(sessionKey, authoritativeSessionId, false);
-        this.resetHistoryPagination(sessionKey);
-        this.displayedHistoryLeafBySession.delete(normalizedSessionKey);
-        this.currentMessageHistory.reset();
-        this.state.chatMessages = [];
-        this.state.loadedMessageCount = 0;
-        this.state.visibleChatMessages = [];
-        this.state.historyWindowStart = 0;
-        this.state.historyWindowEnd = 0;
-        transcriptHistoryGeneration = this.state.transcript.historyGeneration;
-        requestedSessionId = authoritativeSessionId;
-      }
-      this.state.currentSessionId = authoritativeSessionId;
-      this.state.transcript.sessionId = authoritativeSessionId;
-      this.applySessionContextUsage(result?.sessionInfo, sessionKey);
-      let messages = this.projectLocalCompactionStatus(sessionKey, hydratedMessages);
-      messages = mergeRefreshedHistoryWindow(
-        replacesHistoryProjection ? [] : previousMessages,
-        messages,
-      );
-      debugLog('[ChatCtrl] loadHistory NORMALIZED', {
-        seq: loadSeq,
-        sessionKey,
-        hydratedCount: hydratedMessages.length,
-        normalizedSummary: summarizeHistoryForDebug(messages),
-      });
-      const loadedMessageSeq = readLatestOpenClawMessageSeq(messages);
-      this.recordLoadedSessionMessageSeq(
-        sessionKey,
-        authoritativeSessionId,
-        loadedMessageSeq,
-        false,
-      );
-
-      // During a live subagent run, history can already contain assistant/tool
-      // artifacts from the same turn by the time its delayed first user turn
-      // becomes readable. Only admit the authoritative prefix through that
-      // user turn; the active transcript remains the sole owner of live output.
-      const subagentTaskHistoryIndex = this.findExpectedInitialHistoryIndex(messages);
-      const previousHasSubagentTask = this.findExpectedInitialHistoryIndex(previousMessages) >= 0;
-      const currentHasSubagentTask =
-        this.findExpectedInitialHistoryIndex(this.state.chatMessages) >= 0;
-      if (currentHasSubagentTask && subagentTaskHistoryIndex < 0) {
-        debugLog('[ChatCtrl] rejected history snapshot older than live subagent task event', {
-          seq: loadSeq,
-          sessionKey,
-          ...this._snap(),
-        });
-        this.state.chatLoading = false;
-        this.notify();
-        return false;
-      }
-      if (this.expectInitialHistory && subagentTaskHistoryIndex > 0) {
-        messages = messages.slice(subagentTaskHistoryIndex);
-      }
-      const catchesUpMissingInitialHistory =
-        this.expectInitialHistory &&
-        this.state.chatSending &&
-        !previousHasSubagentTask &&
-        subagentTaskHistoryIndex >= 0;
-      if (catchesUpMissingInitialHistory) {
-        messages = sliceActiveSubagentHistoryPrefix(messages);
-      }
-
-      if (!replacesHistoryProjection && messages.length === 0 && previousMessages.length > 0) {
-        // A tail read can briefly observe the SQLite write/rewrite boundary.
-        // An empty response is not proof that a stable displayed projection
-        // disappeared; retain it and retry. Explicit reset/session/leaf scope
-        // changes take the replacement path above and are still allowed empty.
-        this.state.chatLoading = false;
-        this.scheduleDeferredHistoryReload(sessionKey, 'empty-history-snapshot');
-        this.notify();
-        return false;
-      }
-
-      // Active-run history is not allowed to replace the live timeline, but it
-      // can safely hydrate the same Tool boundary by its stable call ID. This is
-      // especially important for long sessions_yield joins whose live result
-      // event may contain only a short summary or no renderable output.
-      const repairedActiveTail = this.hydrateActiveToolItemsFromHistory(messages, {
-        backfillMissingSessionsYield: options.backfillActiveSessionsYield,
-      });
-      if (repairedActiveTail) this.publishActiveToolHistoryRepair();
-      if (options.backfillActiveSessionsYield) {
-        // Resolve the transcript-level gap only after the same authoritative
-        // snapshot has passed the identity/time-limited Tool hydration step.
-        this.recordLoadedSessionMessageSeq(
-          sessionKey,
-          authoritativeSessionId,
-          loadedMessageSeq,
-          true,
-        );
-      }
-
-      // Only clear pendingUserMessage if the user message is actually in the
-      // loaded history.  For brand-new sessions the gateway may not have
-      // persisted it yet — keep showing the optimistic bubble.
-      let pendingUserMessageFoundIndex = -1;
-      if (this.state.pendingUserMessage) {
-        const p = this.state.pendingUserMessage;
-        pendingUserMessageFoundIndex = messages.findIndex((message: unknown) =>
-          isPendingUserMessageMatch(message as GatewayMessage, p as unknown as GatewayMessage),
-        );
-        if (pendingUserMessageFoundIndex >= 0 && Array.isArray(p.content)) {
-          messages = messages.map((historyMessage, index) =>
-            index === pendingUserMessageFoundIndex
-              ? {
-                  ...(historyMessage as Record<string, unknown>),
-                  content: p.content,
-                }
-              : historyMessage,
-          );
-        }
-      }
-
-      const reconciliation = reconcileHistory(this.state.transcript, {
-        request: {
-          sessionKey,
-          sessionId: requestedSessionId,
-          historyGeneration: transcriptHistoryGeneration,
-        },
-        source: 'gateway',
-        messages,
-        requestStartMessages: previousMessages,
-        currentMessages: this.state.chatMessages,
-        activeRun:
-          this.state.chatSending && !options.reconcileSuspended && !catchesUpMissingInitialHistory,
-        isVisibleMessage: message => !shouldHideMessage(message),
-      });
-      if (!reconciliation.accepted) {
-        debugLog('[ChatCtrl] loadHistory rejected by transcript reconciler', {
-          seq: loadSeq,
-          sessionKey,
-          reason: reconciliation.reason,
-          catchUp: reconciliation.catchUp,
-          loadedSummary: summarizeHistoryForDebug(messages),
-          previousSummary: summarizeHistoryForDebug(previousMessages),
-          currentSummary: summarizeHistoryForDebug(this.state.chatMessages),
-        });
-        if (reconciliation.catchUp === 'deferred') {
-          this.scheduleDeferredHistoryReload(
-            sessionKey,
-            reconciliation.reason ?? 'history-catch-up',
-          );
-        }
-        if (reconciliation.reason === 'active-run') {
-          // Persisted history must not replace a live turn, but the same RPC's
-          // in-flight activity snapshot is designed to repair events missed
-          // before reconnect. It has independent run/sequence ownership.
-          this.applyInFlightRunSnapshot(
-            result?.inFlightRun,
-            sessionKey,
-            authoritativeSessionId,
-            requestRunId,
-            result?.sessionInfo,
-          );
-        }
-        this.state.chatLoading = false;
-        this.notify();
-        return false;
-      }
-      // A history refresh repairs missed native appends, including the actual
-      // model after a fallback. Do not let an optimistic final record replace
-      // that authoritative identity, or borrow metadata from another run.
-      if (!this.state.chatSending) {
-        for (const message of messages) {
-          if (!isLocallyOptimisticHistoryTail(message)) {
-            this.rememberRunModel(message, readExplicitMessageRunId(message));
-          }
-        }
-      }
-      messages = reconciliation.messages;
-      debugLog('[ChatCtrl] loadHistory APPLY', {
-        seq: loadSeq,
-        sessionKey,
-        beforeSummary: summarizeHistoryForDebug(this.state.chatMessages),
-        nextSummary: summarizeHistoryForDebug(messages),
-        preservedOptimisticTailCount: reconciliation.preservedOptimisticTailCount,
-        activeTurnTakeover: reconciliation.activeTurnTakeover,
-      });
-      this.state.chatLoading = false;
-      if (!preserveLoadedPaginationDepth) {
-        this.state.historyHasMore =
-          this.expectInitialHistory && subagentTaskHistoryIndex >= 0 ? false : pagedHistory.hasMore;
-        this.state.historyNextCursor = this.state.historyHasMore ? pagedHistory.nextCursor : null;
-      }
-      this.rememberHistoryPagination(sessionKey);
-      if (responseHasActiveLeaf && !deferHistoryBranchReplacement) {
-        this.displayedHistoryLeafBySession.set(normalizedSessionKey, loadedActiveLeaf ?? null);
-      }
-      if (this.state.pendingUserMessage && pendingUserMessageFoundIndex >= 0) {
-        debugLog('[ChatCtrl] loadHistory OK — pendingUserMessage found in history, clearing', {
-          seq: loadSeq,
-          sessionKey,
-          foundIndex: pendingUserMessageFoundIndex,
-        });
-        this.state.pendingUserMessage = null;
-      }
-      this.setCurrentSessionMessages(messages, {
-        resetLoadedHistory: this.expectInitialHistory && subagentTaskHistoryIndex >= 0,
-      });
-      this.applyInFlightRunSnapshot(
-        result?.inFlightRun,
-        sessionKey,
-        authoritativeSessionId,
-        requestRunId,
-        result?.sessionInfo,
-      );
-      const pendingCompaction = this.localCompactionStatusBySession.get(sessionKey);
-      if (pendingCompaction?.message.__openclaw.phase === 'completed') {
-        this.scheduleDeferredHistoryReload(sessionKey, 'compaction-marker-pending');
-      } else {
-        this.deferredHistoryReloadAttempts.delete(sessionKey);
-      }
-      this.hydrateCurrentSessionImages(messages, sessionKey);
-      this.notify();
-      return true;
-    } catch (err) {
-      if (this.state.sessionKey !== sessionKey) return false;
-      this.state.chatLoading = false;
-      this.state.lastError = (err as Error).message;
-      console.error('[ChatCtrl] loadHistory FAILED:', (err as Error).message);
-      debugLog('[ChatCtrl] loadHistory FAILED', {
-        seq: loadSeq,
-        sessionKey,
-        error: err instanceof Error ? err.message : String(err),
-        ...this._snap(),
-      });
-      if (
-        this.localCompactionStatusBySession.get(sessionKey)?.message.__openclaw.phase ===
-        'completed'
-      ) {
-        this.scheduleDeferredHistoryReload(sessionKey, 'compaction-marker-pending');
-      }
-      this.notify();
-      return false;
-    } finally {
-      this.historyLoadsInFlight.delete(sessionKey);
-      const reloadRequested = this.historyReloadRequested.delete(sessionKey);
-      const immediateReloadRequested = this.immediateHistoryReloadRequested.delete(sessionKey);
-      if (reloadRequested && immediateReloadRequested && this.state.sessionKey === sessionKey) {
-        debugLog('[ChatCtrl] loadHistory QUEUED reload starting', {
-          seq: loadSeq,
-          sessionKey,
-          nextSeq: this.historyLoadSeq + 1,
-        });
-        // A→B→A can leave the original A request in flight while the second A
-        // initialization queues behind it. Start its replacement immediately
-        // after releasing ownership; a generic debounce would leave the pane
-        // visibly empty for another 1.2 seconds.
-        void Promise.resolve().then(() => this.loadHistory(true));
-      } else {
-        debugLog('[ChatCtrl] loadHistory FINISH', {
-          seq: loadSeq,
-          sessionKey,
-          queued: this.historyReloadRequested.has(sessionKey),
-          ...this._snap(),
-        });
-      }
-    }
+    return chatControllerHistory.loadHistory.call(
+      this.chatControllerHistoryContext,
+      queueIfBusy,
+      options,
+    );
   }
 
   // ─── Chat Event Handling ──────────────────────────────────────────────
 
   private handleChatEvent(payload: NormalizedChatEvent): void {
-    // Only handle events for our session
-    if (!this.isSelectedSession(payload.sessionKey)) return;
-    if (!this.acceptRunId(payload.runId)) {
-      debugLog('[ChatCtrl] chat event ignored (run mismatch)', {
-        eventRunId: payload.runId ?? null,
-        chatRunId: this.state.chatRunId,
-        state: payload.state,
-      });
-      return;
-    }
-
-    switch (payload.state) {
-      case 'delta':
-        this.handleDelta(payload);
-        break;
-      case 'final':
-        this.handleFinal(payload);
-        break;
-      case 'aborted':
-        this.handleAborted(payload);
-        break;
-      case 'error':
-        this.handleError(payload);
-        break;
-    }
+    return chatControllerRecovery.handleChatEvent.call(this.chatControllerRecoveryContext, payload);
   }
 
   private handleDelta(payload: NormalizedChatEvent): void {
-    debugLog('[ChatCtrl] ▶ chat.delta admitted', {
-      runId: payload.runId ?? null,
-      textLen: payload.deltaText?.length ?? 0,
-    });
-    if (payload.runId && payload.deltaText) {
-      this.updateRunActivity(payload.runId, 'responding', { modelActivity: true });
-    }
-    this.notifyStream();
+    return chatControllerRecovery.handleDelta.call(this.chatControllerRecoveryContext, payload);
   }
 
   private handleFinal(payload: NormalizedChatEvent): void {
-    this.clearLifecycleEndFallback();
-    for (const message of this.state.chatMessages) {
-      if (!isLocallyOptimisticHistoryTail(message)) {
-        this.rememberRunModel(message, readExplicitMessageRunId(message), true);
-      }
-    }
-    this.rememberRunModel(payload.message, payload.runId, true);
-    this.finishCurrentTurnTiming('final', payload.runId);
-    const baselineMessageSeq = readLatestOpenClawMessageSeq(this.state.chatMessages);
-    const baselineCompleteMessageCount = this.state.chatMessages.filter(
-      candidate =>
-        !isLocallyOptimisticHistoryTail(candidate) && !isTruncatedHistoryMessage(candidate),
-    ).length;
-    const projectedMessage = stripAssistantSilentReplySuffix(payload.message);
-    const terminalNeedsHydration = isTruncatedHistoryMessage(projectedMessage);
-    const message = terminalNeedsHydration
-      ? completeTruncatedTerminalFromActiveTurn(projectedMessage, this.state.transcript.activeTurn)
-      : projectedMessage;
-    const willAppend =
-      message && !isTruncatedHistoryMessage(message) && !shouldHideMessage(message);
-    const liveThinkingText = collectActiveThinkingText(this.state.transcript.activeTurn);
-    debugLog('[ChatCtrl] ▶ chat.final', {
-      hasMessage: !!message,
-      willAppend,
-      msgRole: (message as Record<string, unknown>)?.role,
-      finalContentType: Array.isArray((message as Record<string, unknown>)?.content)
-        ? 'array'
-        : typeof (message as Record<string, unknown>)?.content,
-      finalMessage: summarizeMessageForDebug(message),
-      liveThinkingLen: liveThinkingText?.length ?? 0,
-      ...this._snap(),
-    });
-    if (willAppend) {
-      // chat.final may omit model metadata. Keep the Gateway model on the
-      // optimistic message itself before the next run replaces live timing.
-      const turn = this.state.transcript.activeTurn;
-      const modelRef =
-        readModelRef(message) ?? (turn?.runId === payload.runId ? turn.modelRef : undefined);
-      const runScopedMessage =
-        payload.runId && message && typeof message === 'object' && !Array.isArray(message)
-          ? {
-              ...(message as Record<string, unknown>),
-              runId: payload.runId,
-              ...(modelRef ? { modelName: modelRef } : {}),
-            }
-          : message;
-      const terminalMessage = markOptimisticHistoryTail(
-        liveThinkingText
-          ? withThinkingContent(runScopedMessage, liveThinkingText)
-          : runScopedMessage,
-      );
-      this.setCurrentSessionMessages(
-        appendTerminalMessage(
-          this.state.chatMessages,
-          terminalMessage,
-          this.state.transcript.activeTurn?.runId === payload.runId
-            ? this.state.transcript.activeTurn.startedAt
-            : null,
-        ),
-      );
-      debugLog('[ChatCtrl] ▶ chat.final appended terminal', {
-        terminalMessage: summarizeMessageForDebug(terminalMessage),
-        afterSummary: summarizeHistoryForDebug(this.state.chatMessages),
-      });
-    }
-    this.state.chatSending = false;
-    this.state.compactionInFlight = false;
-    this.state.chatRunId = null;
-    this.clearRunActivity();
-    this.suspendedRunId = null;
-    this.terminalLifecycleSeen = false;
-    this.resetAssistantSnapshotSource();
-    // A visible final is already complete and its subscribed session.message
-    // row will replace the optimistic tail. Only message-less finals need the
-    // bounded persistence catch-up used by the current OpenClaw UI.
-    const needsPersistenceRecovery =
-      !willAppend ||
-      terminalNeedsHydration ||
-      this.pendingHistoryReload ||
-      (this.messageSubscriptionSeq > 0 &&
-        this.subscribedMessageSessionKey !== this.state.sessionKey);
-    this.pendingHistoryReload = false;
-    if (!needsPersistenceRecovery) {
-      this.clearPostFinalHistoryReload();
-    } else {
-      this.schedulePostFinalHistoryReload(this.state.sessionKey, {
-        runId: payload.runId?.trim() || null,
-        baselineMessageSeq,
-        baselineCompleteMessageCount,
-      });
-    }
-    debugLog('[ChatCtrl] ▶ chat.final (done)', this._snap());
-    this.notify();
+    return chatControllerRecovery.handleFinal.call(this.chatControllerRecoveryContext, payload);
   }
 
   private handleAborted(payload: NormalizedChatEvent): void {
-    const abortedRunId = payload.runId?.trim() || null;
-    this.clearLifecycleEndFallback();
-    this.finishCurrentTurnTiming('aborted', payload.runId);
-    const liveThinkingText = collectActiveThinkingText(this.state.transcript.activeTurn);
-    const liveContentText = collectActiveContentText(this.state.transcript.activeTurn);
-    const interruptedMessage = payload.message
-      ? liveThinkingText
-        ? withThinkingContent(payload.message, liveThinkingText)
-        : payload.message
-      : buildInterruptedTurnMessage(liveThinkingText, liveContentText, abortedRunId);
-    const message =
-      interruptedMessage && abortedRunId && typeof interruptedMessage === 'object'
-        ? { ...(interruptedMessage as Record<string, unknown>), runId: abortedRunId }
-        : interruptedMessage;
-    const renderable = Boolean(message && !shouldHideMessage(message));
-    const persistedMessage = renderable
-      ? persistInterruptedMessage(this.state.sessionKey, payload.runId, message)
-      : null;
-    const willAppend = Boolean(persistedMessage);
-    debugLog('[ChatCtrl] ▶ chat.aborted', {
-      hasMessage: !!message,
-      liveThinkingLen: liveThinkingText?.length ?? 0,
-      liveContentLen: liveContentText?.length ?? 0,
-      ...this._snap(),
-    });
-    if (willAppend) {
-      const retainedMessages = this.state.chatMessages.filter(existingMessage => {
-        if (!abortedRunId || !existingMessage || typeof existingMessage !== 'object') return true;
-        const existing = existingMessage as Record<string, unknown>;
-        return !(
-          existing.runId === abortedRunId &&
-          (existing.__justdoOptimisticHistoryTail === true || existing.interrupted === true)
-        );
-      });
-      this.setCurrentSessionMessages([
-        ...retainedMessages,
-        markOptimisticHistoryTail(persistedMessage),
-      ]);
-    }
-    this.state.chatSending = false;
-    this.state.compactionInFlight = false;
-    this.state.chatRunId = null;
-    this.clearRunActivity();
-    this.suspendedRunId = null;
-    this.terminalLifecycleSeen = false;
-    this.resetAssistantSnapshotSource();
-    if (willAppend) {
-      // Gateway history often has no assistant message for an interrupted
-      // thinking-only turn. Keep the optimistic truncated projection instead of
-      // immediately replacing it with that shorter authoritative history.
-      this.pendingHistoryReload = false;
-    } else {
-      this.flushPendingHistoryReload();
-    }
-    this.notify();
+    return chatControllerRecovery.handleAborted.call(this.chatControllerRecoveryContext, payload);
   }
 
   private handleError(payload: NormalizedChatEvent): void {
-    this.clearLifecycleEndFallback();
-    this.finishCurrentTurnTiming('error', payload.runId);
-    this.state.lastError = payload.errorMessage ?? 'Unknown error';
-    this.state.chatSending = false;
-    this.state.compactionInFlight = false;
-    this.state.chatRunId = null;
-    this.clearRunActivity();
-    this.suspendedRunId = null;
-    this.terminalLifecycleSeen = false;
-    this.resetAssistantSnapshotSource();
-    this.flushPendingHistoryReload();
-    this.notify();
+    return chatControllerRecovery.handleError.call(this.chatControllerRecoveryContext, payload);
   }
 
   private flushPendingHistoryReload(): void {
@@ -5354,277 +1928,10 @@ export class ChatController {
 
   /** Apply controller effects after the canonical transcript admitted an Agent event. */
   private handleAgentEvent(payload: NormalizedAgentEvent): void {
-    this.ensureTranscriptSessionIdentity();
-    const sourceEvent = payload.deliveryEvent;
-    const stream = payload.stream;
-    const runId = payload.runId;
-    const agentSeq = payload.agentSeq;
-    const data = payload.data;
-
-    const eventSession = payload.sessionKey ?? '';
-    if (!this.acceptRunId(runId, Boolean(eventSession))) {
-      debugLog('[ChatCtrl] ▶ event ignored (run mismatch)', {
-        sourceEvent,
-        stream,
-        runId,
-        chatRunId: this.state.chatRunId,
-        eventSession,
-      });
-      return;
-    }
-
-    if (stream === 'thinking') {
-      const wasSending = this.state.chatSending;
-      if (!this.state.chatSending) {
-        this.state.chatSending = true;
-        this.state.chatRunId = runId;
-      }
-      if (!wasSending && !this.hasExpectedInitialHistory()) {
-        this.scheduleDeferredHistoryReload(this.state.sessionKey, 'initial-history-missing');
-      }
-      this.updateRunActivity(runId, 'thinking', { modelActivity: true });
-      debugLog('[ChatCtrl] ▶ thinking', {
-        sourceEvent,
-        runId,
-        agentSeq,
-        textLen:
-          typeof data.thinking === 'string'
-            ? data.thinking.length
-            : typeof data.text === 'string'
-              ? data.text.length
-              : 0,
-        wasSending,
-        ...this._snap(),
-      });
-      this.notifyStream();
-      return;
-    }
-
-    if (stream === 'assistant') {
-      const terminalGuardObservation = readTerminalGuardObservation(data);
-      if (terminalGuardObservation?.action === 'rollback') {
-        this.resetAssistantSnapshotSource();
-        this.updateRunActivity(runId, 'waiting-model');
-        this.notifyStream('terminal');
-        return;
-      }
-      if (terminalGuardObservation?.action === 'commit') return;
-      const text = assistantEventText(data);
-      if (!text) return;
-
-      const wasSending = this.state.chatSending;
-      if (!this.state.chatSending) {
-        this.state.chatSending = true;
-        this.state.chatRunId = runId;
-      }
-      if (!wasSending && !this.hasExpectedInitialHistory()) {
-        this.scheduleDeferredHistoryReload(this.state.sessionKey, 'initial-history-missing');
-      }
-
-      this.assistantSnapshotRunId = runId ?? this.state.chatRunId;
-      this.updateRunActivity(runId, 'responding', { modelActivity: true });
-
-      debugLog('[ChatCtrl] ▶ assistant', {
-        sourceEvent,
-        runId,
-        agentSeq,
-        wasSending,
-        textLen: text.length,
-        textTail: text.slice(-40),
-        ...this._snap(),
-      });
-      this.notifyStream();
-      return;
-    }
-
-    if (stream === 'item') {
-      if (readPreambleText(data) !== null) {
-        const wasSending = this.state.chatSending;
-        this.state.chatSending = true;
-        this.state.chatRunId = runId;
-        if (!wasSending && !this.hasExpectedInitialHistory()) {
-          this.scheduleDeferredHistoryReload(this.state.sessionKey, 'initial-history-missing');
-        }
-        this.updateRunActivity(runId, 'responding', { modelActivity: true });
-        this.notifyStream();
-        return;
-      }
-      debugLog('[ChatCtrl] ▶ item → deferred history reload', {
-        sourceEvent,
-        runId,
-        agentSeq,
-        ...this._snap(),
-      });
-      this.scheduleDeferredHistoryReload(this.state.sessionKey, 'agent-item');
-      return;
-    }
-
-    // ── Lifecycle events ─────────────────────────────────────────────────
-    if (stream === 'lifecycle') {
-      const phase = typeof data.phase === 'string' ? data.phase : '';
-      debugLog('[ChatCtrl] lifecycle:', phase, this.state.sessionKey, {
-        chatSending: this.state.chatSending,
-        pendingReload: this.pendingHistoryReload,
-      });
-      if (phase === 'start') {
-        const wasSending = this.state.chatSending;
-        if (!wasSending) this.resetActiveToolHistoryCatchUpForRun(this.state.sessionKey);
-        this.terminalLifecycleSeen = false;
-        this.clearLifecycleEndFallback();
-        if (!this.state.chatSending) {
-          this.state.chatSending = true;
-        }
-        if (runId && !this.state.chatRunId) {
-          this.state.chatRunId = runId;
-        }
-        if (!wasSending && !this.hasExpectedInitialHistory()) {
-          this.scheduleDeferredHistoryReload(this.state.sessionKey, 'initial-history-missing');
-        }
-        this.updateRunActivity(runId, 'starting', { at: payload.timestamp });
-        this.notifyStream();
-      }
-      if (phase === 'progress') {
-        const progressStage = typeof data.stage === 'string' ? data.stage : '';
-        const mappedStage: RunProgressStage | null =
-          progressStage === 'queued'
-            ? 'queued'
-            : progressStage === 'preparing'
-              ? 'preparing'
-              : progressStage === 'waiting_model'
-                ? 'waiting-model'
-                : progressStage === 'retrying'
-                  ? 'retrying'
-                  : null;
-        if (mappedStage) {
-          this.updateRunActivity(runId, mappedStage, {
-            provider: typeof data.provider === 'string' ? data.provider : undefined,
-            model: typeof data.model === 'string' ? data.model : undefined,
-            retryReason: mappedStage === 'retrying' ? data.reason : undefined,
-            at: typeof data.at === 'number' ? data.at : payload.timestamp,
-          });
-          this.notifyStream();
-        }
-      }
-      if (phase === 'fallback_step' && data.fallbackStepFinalOutcome === 'next_fallback') {
-        this.updateRunActivity(runId, 'retrying', {
-          retryReason: data.fallbackStepFromFailureReason,
-          at: payload.timestamp,
-        });
-        this.notifyStream();
-      }
-      if (phase === 'finishing') {
-        // The gateway can emit lifecycle:finishing before the final chat event,
-        // and sometimes before the last thinking/assistant deltas. Keep the
-        // canonical active turn intact; chat.final or the fallback below will reconcile.
-        if (runId && !this.state.chatRunId) {
-          this.state.chatRunId = runId;
-        }
-        this.notifyStream();
-      }
-      if (phase === 'end') {
-        if (data.aborted === true) {
-          const abortedEvent: NormalizedChatEvent = {
-            runId,
-            sessionKey: this.state.sessionKey,
-            sessionId: this.state.currentSessionId,
-            lifecycleGeneration: this.state.transcript.activeTurn?.lifecycleGeneration ?? null,
-            frameSeq: null,
-            state: 'aborted',
-            replace: false,
-          };
-          reduceChatEvent(this.state.transcript, abortedEvent, this.transcriptDependencies);
-          // The lifecycle reducer may already have marked the turn terminal.
-          // Still reconcile the visible partial output: thinking-only aborted
-          // runs do not necessarily produce a later chat.aborted frame.
-          this.handleAborted(abortedEvent);
-          return;
-        }
-        this.terminalLifecycleSeen = true;
-        // Do not retire the canonical active turn here. chat.final is the
-        // authoritative terminal event; lifecycle:end may arrive while more
-        // visible deltas are still in flight. Use a short fallback for older
-        // gateways or interrupted streams that never send chat.final.
-        if (this.state.chatSending && !this.state.compactionInFlight) {
-          if (runId && !this.state.chatRunId) {
-            this.state.chatRunId = runId;
-          }
-          this.scheduleChatLifecycleEndFallback();
-        }
-      }
-      if (phase === 'error') {
-        const errorMessage =
-          typeof data.error === 'string' && data.error.trim() ? data.error.trim() : 'Unknown error';
-        this.persistRunFailure(this.state.sessionKey, payload.sessionId, runId, errorMessage);
-        if (isInternalManagedSubagentHandoffError(errorMessage)) {
-          const finalEvent: NormalizedChatEvent = {
-            runId,
-            sessionKey: this.state.sessionKey,
-            sessionId: payload.sessionId,
-            lifecycleGeneration: payload.lifecycleGeneration,
-            frameSeq: payload.frameSeq,
-            state: 'final',
-            replace: false,
-          };
-          reduceChatEvent(this.state.transcript, finalEvent, this.transcriptDependencies);
-          this.handleFinal(finalEvent);
-          return;
-        }
-        this.clearLifecycleEndFallback();
-        this.state.lastError = errorMessage;
-        reduceChatEvent(
-          this.state.transcript,
-          {
-            runId,
-            sessionKey: this.state.sessionKey,
-            sessionId: payload.sessionId,
-            lifecycleGeneration: payload.lifecycleGeneration,
-            frameSeq: payload.frameSeq,
-            state: 'error',
-            replace: false,
-            errorMessage,
-          },
-          this.transcriptDependencies,
-        );
-        this.finishCurrentTurnTiming('error', runId);
-        this.state.chatSending = false;
-        this.state.compactionInFlight = false;
-        this.clearLocalCompactionStatus(this.state.sessionKey);
-        this.terminalLifecycleSeen = false;
-        this.state.chatRunId = null;
-        this.clearRunActivity();
-        this.resetAssistantSnapshotSource();
-        this.pendingHistoryReload = true;
-        this.flushPendingHistoryReload();
-        this.notify();
-      }
-      return;
-    }
-
-    if (stream === 'compaction') {
-      const phase = typeof data.phase === 'string' ? data.phase : '';
-      this.handleCompactionPhase(phase, this.state.sessionKey, data);
-      return;
-    }
-
-    if (stream !== 'tool') return;
-
-    const phase = typeof data.phase === 'string' ? data.phase : '';
-    debugLog('[ChatCtrl] ▶ tool', {
-      sourceEvent,
-      runId,
-      agentSeq,
-      phase,
-    });
-    const hasPartialResult = data.partialResult !== undefined;
-    const isNonTerminalToolEvent = isNonTerminalToolPhase(phase);
-    const isTerminalToolEvent = !isNonTerminalToolEvent && isTerminalToolPhase(phase);
-    const hasRunningTool = [...(this.state.transcript.activeTurn?.toolById.values() ?? [])].some(
-      tool => tool.status === 'running',
+    return chatControllerRecovery.handleAgentEvent.call(
+      this.chatControllerRecoveryContext,
+      payload,
     );
-    this.updateRunActivity(runId, hasRunningTool ? 'running-tool' : 'waiting-model', {
-      modelActivity: true,
-    });
-    this.notifyStream(hasPartialResult && !isTerminalToolEvent ? 'tool-partial' : 'terminal');
   }
 
   // ─── Send Message ─────────────────────────────────────────────────────
@@ -5985,329 +2292,38 @@ export class ChatController {
     if (this.state.sessionKey === sessionKey) this.state.currentSessionId = sessionId;
   }
 
-  async cancelManualCompaction(sessionKey: string): Promise<void> {
-    const operations = [...this.manualCompactionOperations.values()].filter(
-      operation => operation.sessionKey === sessionKey,
-    );
-    for (const operation of operations) operation.cancelled = true;
-    // The native cancellation handle is registered after async preparation.
-    // A no-active-run reply during that preparation is not completion proof.
-    const needsConfirmation = (operation: (typeof operations)[number]) =>
-      !operation.settled ||
-      Boolean(operation.error && !isDefinitiveSessionGoalGatewayError(operation.error));
-    const retryDeadline = Date.now() + MANUAL_COMPACTION_STOP_RETRY_WINDOW_MS;
-    while (operations.some(needsConfirmation)) {
-      // Preparation may never register a native handle. Keep its admission
-      // uncertain, but release the Stop control so the user can retry instead
-      // of polling forever behind a disabled button. Each RPC is also bounded
-      // by the Gateway client's transport timeout.
-      if (Date.now() >= retryDeadline) throw new Error(i18nService.t('coworkStopFailed'));
-      const operation = operations.find(needsConfirmation)!;
-      const client =
-        this.state.connected && this.state.client ? this.state.client : operation.client;
-      const result = await client.request<{ ok?: boolean; status?: string }>('sessions.abort', {
-        key: sessionKey,
-        clearQueued: true,
-      });
-      if (result.ok !== true || !['aborted', 'no-active-run'].includes(result.status ?? '')) {
-        throw new Error('Gateway did not confirm compaction cancellation');
-      }
-      if (
-        operation.settled &&
-        operation.error &&
-        !isDefinitiveSessionGoalGatewayError(operation.error)
-      ) {
-        if (result.status !== 'aborted') throw operation.error;
-        operation.error = undefined;
-      }
-      if (operations.some(candidate => !candidate.settled)) {
-        await new Promise(resolve => setTimeout(resolve, 250));
-      }
-    }
-    const uncertain = operations.find(
-      operation => operation.error && !isDefinitiveSessionGoalGatewayError(operation.error),
-    );
-    if (uncertain) throw uncertain.error;
-    for (const [id, operation] of this.manualCompactionOperations) {
-      if (operations.includes(operation)) this.manualCompactionOperations.delete(id);
-    }
-    if (operations.length > 0) {
-      this.settleCompactionRequest(sessionKey);
-      if (this.isSelectedSession(sessionKey)) {
-        this.notifyStream();
-        this.notify();
-      }
-    }
-  }
-
-  private async compactSession(_argumentsText = ''): Promise<void> {
-    const client = this.state.client;
-    if (!client || !this.state.connected) throw new Error('not connected');
-    const sessionKey = this.state.sessionKey;
-    if (
-      [...this.manualCompactionOperations.values()].some(
-        operation =>
-          operation.sessionKey === sessionKey &&
-          operation.cancelled &&
-          (!operation.settled || operation.error),
-      )
-    ) {
-      throw new Error('The session is still stopping');
-    }
-    // v2026.9.2 sessions.compact accepts key, agentId and maxLines only.
-    // Inline instructions cannot be forwarded by this RPC.
-    const localStatus = this.beginLocalCompactionStatus(sessionKey, { forceNew: true });
-    const statusId = localStatus.id;
-    const markerFingerprintsBefore = localStatus.markerFingerprintsBefore;
-    const operation = {
+  cancelManualCompaction(sessionKey: string): Promise<void> {
+    return chatControllerCompaction.cancelManualCompaction.call(
+      this.chatControllerCompactionContext,
       sessionKey,
-      client,
-      cancelled: false,
-      settled: false,
-      error: undefined as unknown,
-    };
-    this.manualCompactionOperations.set(statusId, operation);
-    this.manualCompactionRequestIdsBySession.set(sessionKey, statusId);
-    const requestStillCurrent = (): boolean =>
-      this.state.client === client &&
-      this.manualCompactionRequestIdsBySession.get(sessionKey) === statusId;
-
-    this.state.chatSending = true;
-    this.state.compactionInFlight = true;
-    this.state.lastError = null;
-    this.notifyStream();
-    this.notify();
-
-    try {
-      const result = await client.request<{
-        ok?: boolean;
-        compacted?: boolean;
-        reason?: string;
-        result?: { tokensBefore?: number; tokensAfter?: number };
-      }>('sessions.compact', { key: sessionKey });
-      operation.settled = true;
-      if (!requestStillCurrent()) return;
-      if (operation.cancelled) {
-        this.updateLocalCompactionMessage(sessionKey, statusId, {
-          ...localStatus.message,
-          __openclaw: { ...localStatus.message.__openclaw, phase: 'aborted' },
-        });
-        this.localCompactionStatusBySession.delete(sessionKey);
-        this.settleCompactionRequest(sessionKey);
-        if (this.isSelectedSession(sessionKey)) {
-          this.notifyStream();
-          this.notify();
-        }
-        return;
-      }
-      if (result?.ok === false && !isBenignCompactionNoopReason(result.reason)) {
-        throw new Error(result.reason || i18nService.t('coworkCompactUnknownError'));
-      }
-      const before = result?.result?.tokensBefore;
-      const after = result?.result?.tokensAfter;
-      if (result?.compacted) {
-        this.completeLocalCompactionStatus(sessionKey, { before, after });
-        this.settleCompactionRequest(sessionKey);
-        if (!this.isSelectedSession(sessionKey)) return;
-        this.notifyStream();
-        this.notify();
-        const historyLoaded = await this.loadHistory();
-        if (!requestStillCurrent() || !this.isSelectedSession(sessionKey)) return;
-        if (!historyLoaded) {
-          // A history read failure cannot undo the acknowledged compaction.
-          // Keep its success visible while waiting for the durable marker.
-          this.scheduleDeferredHistoryReload(sessionKey, 'compaction-marker-pending');
-          return;
-        }
-        let newMarkerIndex = -1;
-        for (let index = this.state.chatMessages.length - 1; index >= 0; index--) {
-          const message = this.state.chatMessages[index];
-          if (!isCompactionMarker(message)) continue;
-          const fingerprint = readCompactionMarkerFingerprint(message);
-          if (fingerprint && !markerFingerprintsBefore.has(fingerprint)) {
-            newMarkerIndex = index;
-            break;
-          }
-        }
-        if (newMarkerIndex < 0) {
-          return;
-        }
-        this.setCurrentSessionMessages(
-          this.state.chatMessages.map((message, index) => {
-            if (index !== newMarkerIndex) return message;
-            const record = message as Record<string, unknown>;
-            const marker = record.__openclaw as Record<string, unknown>;
-            return {
-              ...record,
-              __openclaw: {
-                ...marker,
-                tokensBefore: marker.tokensBefore ?? before,
-                tokensAfter: marker.tokensAfter ?? after,
-              },
-            };
-          }),
-        );
-        this.notify();
-        return;
-      }
-      this.localCompactionStatusBySession.delete(sessionKey);
-      this.deferredHistoryReloadAttempts.delete(sessionKey);
-      const skippedMessage = {
-        role: 'system',
-        timestamp: localStatus.message.timestamp,
-        __openclaw: {
-          kind: 'compaction-skipped',
-          reason: result?.reason,
-        },
-      };
-      this.updateLocalCompactionMessage(sessionKey, statusId, skippedMessage);
-      this.settleCompactionRequest(sessionKey);
-      if (!this.isSelectedSession(sessionKey)) return;
-      this.notifyStream();
-      this.notify();
-    } catch (err) {
-      operation.error = err;
-      operation.settled = true;
-      if (!requestStillCurrent()) return;
-      if (operation.cancelled && !isDefinitiveSessionGoalGatewayError(err)) {
-        if (this.isSelectedSession(sessionKey)) {
-          this.state.lastError = (err as Error).message;
-          this.notify();
-        }
-        return;
-      }
-      this.localCompactionStatusBySession.delete(sessionKey);
-      this.deferredHistoryReloadAttempts.delete(sessionKey);
-      const errorMessage = (err as Error).message;
-      this.updateLocalCompactionMessage(sessionKey, statusId, {
-        role: 'system',
-        content: formatI18n('coworkCompactFailed', { error: errorMessage }),
-        timestamp: localStatus.message.timestamp,
-      });
-      this.settleCompactionRequest(sessionKey, errorMessage);
-      if (!this.isSelectedSession(sessionKey)) return;
-      this.notifyStream();
-      this.notify();
-    } finally {
-      operation.settled = true;
-      // Retain an uncertain cancelled request so a retry cannot silently claim
-      // success after its transport has disappeared during native preparation.
-      if (
-        !operation.cancelled ||
-        !operation.error ||
-        isDefinitiveSessionGoalGatewayError(operation.error)
-      ) {
-        this.manualCompactionOperations.delete(statusId);
-      }
-      if (this.manualCompactionRequestIdsBySession.get(sessionKey) === statusId) {
-        this.manualCompactionRequestIdsBySession.delete(sessionKey);
-      }
-    }
+    );
   }
 
-  private async loadCompactionCheckpoints(
+  private compactSession(_argumentsText = ''): Promise<void> {
+    return chatControllerCompaction.compactSession.call(
+      this.chatControllerCompactionContext,
+      _argumentsText,
+    );
+  }
+
+  private loadCompactionCheckpoints(
     sessionKey = this.state.sessionKey,
   ): Promise<CompactionCheckpoint[]> {
-    const client = this.state.client;
-    if (!client) return [];
-    try {
-      const response = await client.request<{
-        checkpoints?: CompactionCheckpoint[];
-      }>('sessions.compaction.list', { key: sessionKey });
-      return response?.checkpoints ?? [];
-    } catch (err) {
-      console.warn(
-        '[ChatController] Failed to load compaction checkpoints',
-        (err as Error).message,
-      );
-      return [];
-    }
+    return chatControllerCompaction.loadCompactionCheckpoints.call(
+      this.chatControllerCompactionContext,
+      sessionKey,
+    );
   }
 
-  private async enrichCompactionMarkers(
+  private enrichCompactionMarkers(
     messages: unknown[],
     sessionKey = this.state.sessionKey,
   ): Promise<unknown[]> {
-    const markerIndexes = messages.flatMap((message, index) =>
-      isCompactionMarker(message) ? [index] : [],
+    return chatControllerCompaction.enrichCompactionMarkers.call(
+      this.chatControllerCompactionContext,
+      messages,
+      sessionKey,
     );
-    if (markerIndexes.length === 0) return messages;
-
-    const checkpoints = await this.loadCompactionCheckpoints(sessionKey);
-    if (checkpoints.length === 0) return messages;
-    const checkpointsByTranscriptId = new Map<string, CompactionCheckpoint>();
-    const checkpointsById = new Map<string, CompactionCheckpoint>();
-    for (const checkpoint of checkpoints) {
-      if (checkpoint.checkpointId) checkpointsById.set(checkpoint.checkpointId, checkpoint);
-      for (const id of [checkpoint.postCompaction?.entryId, checkpoint.postCompaction?.leafId]) {
-        if (id) checkpointsByTranscriptId.set(id, checkpoint);
-      }
-    }
-    const checkpointsNewestFirst = [...checkpoints].sort(
-      (left, right) => (right.createdAt ?? 0) - (left.createdAt ?? 0),
-    );
-    const checkpointByMarkerIndex = new Map<number, (typeof checkpoints)[number]>();
-    const assignedCheckpointIds = new Set<string>();
-
-    for (const markerIndex of markerIndexes) {
-      const marker = (messages[markerIndex] as Record<string, unknown>).__openclaw as Record<
-        string,
-        unknown
-      >;
-      const markerId = typeof marker.id === 'string' ? marker.id : undefined;
-      const exactCheckpoint = markerId
-        ? (checkpointsByTranscriptId.get(markerId) ?? checkpointsById.get(markerId))
-        : undefined;
-      if (!exactCheckpoint) continue;
-      checkpointByMarkerIndex.set(markerIndex, exactCheckpoint);
-      if (exactCheckpoint.checkpointId) assignedCheckpointIds.add(exactCheckpoint.checkpointId);
-    }
-
-    // OpenClaw transcript markers carry the compaction-entry id, while the
-    // checkpoint API exposes a separately generated checkpoint UUID. Align the
-    // remaining records newest-to-newest so each historical marker receives at
-    // most one checkpoint instead of reusing the latest checkpoint for all of them.
-    const unmatchedMarkerIndexesNewestFirst = markerIndexes
-      .filter(markerIndex => !checkpointByMarkerIndex.has(markerIndex))
-      .reverse();
-    const unassignedCheckpointsNewestFirst = checkpointsNewestFirst.filter(checkpoint => {
-      const hasTranscriptPosition = Boolean(
-        checkpoint.postCompaction?.entryId || checkpoint.postCompaction?.leafId,
-      );
-      return (
-        !hasTranscriptPosition &&
-        (!checkpoint.checkpointId || !assignedCheckpointIds.has(checkpoint.checkpointId))
-      );
-    });
-    for (
-      let index = 0;
-      index <
-      Math.min(unmatchedMarkerIndexesNewestFirst.length, unassignedCheckpointsNewestFirst.length);
-      index++
-    ) {
-      checkpointByMarkerIndex.set(
-        unmatchedMarkerIndexesNewestFirst[index],
-        unassignedCheckpointsNewestFirst[index],
-      );
-    }
-
-    return messages.map((message, index) => {
-      if (!isCompactionMarker(message)) return message;
-      const record = message as Record<string, unknown>;
-      const marker = record.__openclaw as Record<string, unknown>;
-      const checkpoint = checkpointByMarkerIndex.get(index);
-      if (!checkpoint) return message;
-      return {
-        ...record,
-        __openclaw: {
-          ...marker,
-          checkpointId: checkpoint.checkpointId,
-          summary: readNonBlankString(checkpoint.summary) ?? readNonBlankString(marker.summary),
-          tokensBefore: checkpoint.tokensBefore ?? marker.tokensBefore,
-          tokensAfter: checkpoint.tokensAfter ?? marker.tokensAfter,
-        },
-      };
-    });
   }
 
   /** Abort the current run */
@@ -6323,595 +2339,460 @@ export class ChatController {
       // Ignore abort errors
     }
   }
-}
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
-
-function formatI18n(key: string, params: Record<string, string>): string {
-  return Object.entries(params).reduce(
-    (text, [name, value]) => text.replace(`{${name}}`, value),
-    i18nService.t(key),
-  );
-}
-
-function summarizeHistoryForDebug(messages: unknown[]): Record<string, unknown> {
-  const roleCounts: Record<string, number> = {};
-  let textLen = 0;
-  let thinkingLen = 0;
-  let toolBlockCount = 0;
-  let localOptimisticTailCount = 0;
-  let streamFallbackCount = 0;
-
-  for (const message of messages) {
-    const record = asRecord(message);
-    const role = typeof record?.role === 'string' ? record.role : '?';
-    roleCounts[role] = (roleCounts[role] ?? 0) + 1;
-    textLen += extractSnapshotText(message)?.length ?? 0;
-    thinkingLen += thinkingLengthForDebug(message);
-    toolBlockCount += toolBlockCountForDebug(message);
-    if (isLocallyOptimisticHistoryTail(message)) localOptimisticTailCount += 1;
-    if (record?.__openclawStreamFallback) streamFallbackCount += 1;
-  }
-
-  return {
-    count: messages.length,
-    roleCounts,
-    textLen,
-    thinkingLen,
-    toolBlockCount,
-    localOptimisticTailCount,
-    streamFallbackCount,
-    first: summarizeMessageForDebug(messages[0]),
-    last: summarizeMessageForDebug(messages[messages.length - 1]),
-    tail: summarizeMessagesForDebug(messages, 5),
-  };
-}
-
-function summarizeMessagesForDebug(messages: unknown[], count: number): unknown[] {
-  return messages.slice(-count).map(message => summarizeMessageForDebug(message));
-}
-
-function summarizeMessageForDebug(message: unknown): Record<string, unknown> | null {
-  const record = asRecord(message);
-  if (!record) return null;
-  const text = extractSnapshotText(message) ?? '';
-  const signature = messageDisplaySignature(message);
-  return {
-    role: typeof record.role === 'string' ? record.role : null,
-    timestamp: messageTimestampMs(message),
-    stopReason: typeof record.stopReason === 'string' ? record.stopReason : null,
-    contentKind: Array.isArray(record.content) ? 'array' : typeof record.content,
-    contentTypes: contentTypesForDebug(record.content),
-    textLen: text.length,
-    textPreview: previewForDebug(text),
-    textHash: hashTextForDebug(text),
-    thinkingLen: thinkingLengthForDebug(message),
-    toolBlockCount: toolBlockCountForDebug(message),
-    hidden: shouldHideMessage(message),
-    localOptimisticTail: isLocallyOptimisticHistoryTail(message),
-    streamFallback: Boolean(record.__openclawStreamFallback),
-    signatureHash: signature ? hashTextForDebug(signature) : null,
-  };
-}
-
-function contentTypesForDebug(content: unknown): string[] {
-  if (!Array.isArray(content)) return [];
-  return content.map(block => {
-    const record = asRecord(block);
-    return typeof record?.type === 'string' ? record.type : typeof block;
-  });
-}
-
-function thinkingLengthForDebug(message: unknown): number {
-  const content = asRecord(message)?.content;
-  if (!Array.isArray(content)) return 0;
-  return content.reduce((total, block) => {
-    const record = asRecord(block);
-    const thinking = typeof record?.thinking === 'string' ? record.thinking : '';
-    const reasoning = typeof record?.reasoning === 'string' ? record.reasoning : '';
-    return total + thinking.length + reasoning.length;
-  }, 0);
-}
-
-function precedingSegmentsByToolCallId(
-  messages: unknown[],
-): Map<string, Array<{ type: 'thinking' | 'content'; text: string }>> {
-  const result = new Map<string, Array<{ type: 'thinking' | 'content'; text: string }>>();
-  const append = (
-    segments: Array<{ type: 'thinking' | 'content'; text: string }>,
-    type: 'thinking' | 'content',
-    text: string,
-  ) => {
-    const normalized = text.trim();
-    if (!normalized) return;
-    const tail = segments[segments.length - 1];
-    if (tail?.type === type) {
-      tail.text += type === 'thinking' ? `\n${normalized}` : normalized;
-    } else {
-      segments.push({ type, text: normalized });
-    }
-  };
-  for (const value of messages) {
-    const message = unwrapToolMessage(value);
-    if (!message || String(message.role ?? '').toLowerCase() !== 'assistant') continue;
-    if (typeof message.content === 'string' && message.content.trim()) {
-      const toolCallId = firstAttachedToolCallId(value);
-      if (toolCallId) result.set(toolCallId, [{ type: 'content', text: message.content.trim() }]);
-      continue;
-    }
-    if (!Array.isArray(message.content)) continue;
-    const segments: Array<{ type: 'thinking' | 'content'; text: string }> = [];
-    for (const value of message.content) {
-      if (typeof value === 'string') {
-        append(segments, 'content', value);
-        continue;
-      }
-      const block = asToolRecord(value);
-      if (!block) continue;
-      if (isToolCallRecord(block)) {
-        const toolCallId = readToolCallId(block);
-        if (toolCallId && segments.length > 0) {
-          result.set(
-            toolCallId,
-            segments.map(segment => ({ ...segment })),
-          );
-        }
-        segments.length = 0;
-        continue;
-      }
-      const type = typeof block.type === 'string' ? block.type.toLowerCase() : '';
-      if (type === 'text' && typeof block.text === 'string' && block.text.trim()) {
-        append(segments, 'content', block.text);
-      } else if (type === 'thinking' || type === 'reasoning') {
-        const text = [block.thinking, block.text, block.reasoning].find(
-          candidate => typeof candidate === 'string' && candidate.trim(),
-        );
-        if (typeof text === 'string') append(segments, 'thinking', text);
-      }
-    }
-  }
-  return result;
-}
-
-function firstAttachedToolCallId(value: unknown): string | null {
-  const outer = asToolRecord(value);
-  const message = unwrapToolMessage(value);
-  if (!outer || !message) return null;
-  const attachments = [
-    ...attachedToolMessages(message),
-    ...(message === outer ? [] : attachedToolMessages(outer)),
-  ];
-  for (const attachment of attachments) {
-    const source = unwrapToolMessage(attachment);
-    if (!source) continue;
-    if (isToolCallRecord(source)) return readToolCallId(source);
-    if (!Array.isArray(source.content)) continue;
-    for (const value of source.content) {
-      const block = asToolRecord(value);
-      if (block && isToolCallRecord(block)) return readToolCallId(block);
-    }
-  }
-  return null;
-}
-
-function toolResultCallIds(messages: unknown[]): Set<string> {
-  const result = new Set<string>();
-  for (const value of messages) {
-    const message = unwrapToolMessage(value);
-    if (!message) continue;
-    const role = typeof message.role === 'string' ? message.role.toLowerCase() : '';
-    if (role === 'tool' || role === 'toolresult' || role === 'tool_result' || role === 'function') {
-      const toolCallId = readToolCallId(message);
-      if (toolCallId) result.add(toolCallId);
-    }
-    if (!Array.isArray(message.content)) continue;
-    for (const value of message.content) {
-      const block = asToolRecord(value);
-      if (!block || !isToolResultType(block.type)) continue;
-      const toolCallId = readToolCallId(block);
-      if (toolCallId) result.add(toolCallId);
-    }
-  }
-  return result;
-}
-
-function toolBlockCountForDebug(message: unknown): number {
-  const content = asRecord(message)?.content;
-  if (!Array.isArray(content)) return 0;
-  return content.filter(block => {
-    const type = asRecord(block)?.type;
-    return type === 'toolcall' || type === 'toolresult';
-  }).length;
-}
-
-function previewForDebug(text: string): string {
-  const normalized = text.replace(/\s+/g, ' ').trim();
-  if (normalized.length <= 120) return normalized;
-  return `${normalized.slice(0, 80)} ... ${normalized.slice(-32)}`;
-}
-
-function hashTextForDebug(text: string): string {
-  let hash = 2166136261;
-  for (let index = 0; index < text.length; index += 1) {
-    hash ^= text.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0).toString(16).padStart(8, '0');
-}
-
-function isTempJustDoSessionKey(sessionKey: string): boolean {
-  return /:justdo:temp-[^:]+$/.test(sessionKey);
-}
-
-function extractSnapshotText(message: unknown): string | null {
-  if (!message || typeof message !== 'object') return null;
-  const m = message as Record<string, unknown>;
-  if (typeof m.text === 'string') return m.text;
-  if (typeof m.content === 'string') return m.content;
-  if (Array.isArray(m.content)) {
-    const texts = m.content
-      .filter((b: unknown) => {
-        const block = b as Record<string, unknown>;
-        return block.type === 'text' && typeof block.text === 'string';
-      })
-      .map((b: unknown) => (b as Record<string, unknown>).text as string);
-    return texts.length > 0 ? texts.join('') : null;
-  }
-  return null;
-}
-
-function collectActiveThinkingText(turn: AssistantTurn | null): string | null {
-  const text = (turn?.items ?? [])
-    .filter(item => item.type === 'thinking')
-    .map(item => item.text)
-    .filter(Boolean)
-    .join('\n')
-    .trim();
-  return text || null;
-}
-
-function collectActiveContentText(turn: AssistantTurn | null): string | null {
-  const text = (turn?.items ?? [])
-    .filter(item => item.type === 'content')
-    .map(item => item.text)
-    .filter(Boolean)
-    .join('')
-    .trim();
-  return text || null;
-}
-
-const OPENCLAW_DISPLAY_TRUNCATION_SUFFIX = '\n...(truncated)...';
-
-function recoverTruncatedText(value: unknown, candidates: readonly string[]): unknown {
-  if (typeof value !== 'string' || !value.endsWith(OPENCLAW_DISPLAY_TRUNCATION_SUFFIX)) {
-    return value;
-  }
-  const prefix = value.slice(0, -OPENCLAW_DISPLAY_TRUNCATION_SUFFIX.length);
-  return (
-    [...candidates]
-      .reverse()
-      .find(candidate => candidate.length > prefix.length && candidate.startsWith(prefix)) ?? value
-  );
-}
-
-function containsDisplayTruncationMarker(value: unknown, seen = new Set<object>()): boolean {
-  if (typeof value === 'string') return value.includes('...(truncated)...');
-  if (!value || typeof value !== 'object' || seen.has(value)) return false;
-  seen.add(value);
-  return Object.values(value).some(candidate => containsDisplayTruncationMarker(candidate, seen));
-}
-
-/**
- * A terminal display frame may be capped even though the live agent stream
- * already owns the complete current model segment. Recover only prefix-proven
- * text; otherwise leave the structured marker in place so history hydration
- * remains mandatory.
- */
-function completeTruncatedTerminalFromActiveTurn(
-  message: unknown,
-  turn: AssistantTurn | null,
-): unknown {
-  if (!isTruncatedHistoryMessage(message) || !message || typeof message !== 'object') {
-    return message;
-  }
-  const contentCandidates = (turn?.items ?? [])
-    .filter(item => item.type === 'content')
-    .map(item => item.text);
-  const thinkingCandidates = (turn?.items ?? [])
-    .filter(item => item.type === 'thinking')
-    .map(item => item.text);
-  if (contentCandidates.length === 0 && thinkingCandidates.length === 0) return message;
-
-  const record = message as Record<string, unknown>;
-  const recoverBlock = (value: unknown): unknown => {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
-    const block = value as Record<string, unknown>;
-    return {
-      ...block,
-      ...(typeof block.text === 'string'
-        ? { text: recoverTruncatedText(block.text, contentCandidates) }
-        : {}),
-      ...(typeof block.content === 'string'
-        ? { content: recoverTruncatedText(block.content, contentCandidates) }
-        : {}),
-      ...(typeof block.thinking === 'string'
-        ? { thinking: recoverTruncatedText(block.thinking, thinkingCandidates) }
-        : {}),
-    };
-  };
-  const recovered: Record<string, unknown> = {
-    ...record,
-    ...(typeof record.text === 'string'
-      ? { text: recoverTruncatedText(record.text, contentCandidates) }
-      : {}),
-    ...(typeof record.content === 'string'
-      ? { content: recoverTruncatedText(record.content, contentCandidates) }
-      : Array.isArray(record.content)
-        ? { content: record.content.map(recoverBlock) }
-        : {}),
-  };
-  if (containsDisplayTruncationMarker(recovered)) return recovered;
-
-  const metadata = asRecord(recovered.__openclaw);
-  if (metadata) {
-    const { truncated: _truncated, reason: _reason, ...completeMetadata } = metadata;
-    recovered.__openclaw = completeMetadata;
-  }
-  return recovered;
-}
-
-function buildInterruptedTurnMessage(
-  thinkingText: string | null,
-  contentText: string | null,
-  runId: string | null,
-): unknown | null {
-  if (!thinkingText && !contentText) return null;
-  return {
-    role: 'assistant',
-    content: [
-      ...(thinkingText ? [{ type: 'thinking', thinking: thinkingText }] : []),
-      ...(contentText ? [{ type: 'text', text: contentText, interrupted: true }] : []),
-    ],
-    timestamp: Date.now(),
-    interrupted: true,
-    ...(runId ? { runId } : {}),
-  };
-}
-
-function withThinkingContent(message: unknown, thinkingText: string): unknown {
-  if (!message || typeof message !== 'object' || !thinkingText.trim()) return message;
-  const record = message as Record<string, unknown>;
-  const content = record.content;
-  const thinkingBlock = { type: 'thinking', thinking: thinkingText.trim() };
-
-  if (Array.isArray(content)) {
-    const alreadyHasThinking = content.some(item => {
-      const block = item as Record<string, unknown>;
-      return (
-        block.type === 'thinking' && typeof block.thinking === 'string' && block.thinking.trim()
-      );
+  // Resolve dependencies at call time so cancellation, session changes, and teardown stay authoritative.
+  private readonly chatControllerHistoryContext: ChatControllerHistoryContext =
+    createPropertyContext<ChatControllerHistoryContext>({
+      currentMessageHistory: { get: () => this.currentMessageHistory },
+      state: { get: () => this.state },
+      cacheSessionMessages: { get: () => this.cacheSessionMessages.bind(this) },
+      transcriptDependencies: { get: () => this.transcriptDependencies },
+      updateRunActivity: { get: () => this.updateRunActivity.bind(this) },
+      notifyStream: { get: () => this.notifyStream.bind(this) },
+      notify: { get: () => this.notify.bind(this) },
+      historyPaginationBySession: { get: () => this.historyPaginationBySession },
+      historyPaginationAdvanced: {
+        get: () => this.historyPaginationAdvanced,
+        set: value => {
+          this.historyPaginationAdvanced = value;
+        },
+      },
+      applyHistoryWindow: { get: () => this.applyHistoryWindow.bind(this) },
+      loadOlderHistory: { get: () => this.loadOlderHistory.bind(this) },
+      newerHistoryNavigationRevision: {
+        get: () => this.newerHistoryNavigationRevision,
+        set: value => {
+          this.newerHistoryNavigationRevision = value;
+        },
+      },
+      chatMessagesBySession: { get: () => this.chatMessagesBySession },
+      historySourceBySession: { get: () => this.historySourceBySession },
+      displayedHistoryLeafBySession: { get: () => this.displayedHistoryLeafBySession },
+      historyPagingGeneration: {
+        get: () => this.historyPagingGeneration,
+        set: value => {
+          this.historyPagingGeneration = value;
+        },
+      },
+      resetHistoryPagination: { get: () => this.resetHistoryPagination.bind(this) },
+      resetTranscriptForSession: { get: () => this.resetTranscriptForSession.bind(this) },
+      setCurrentSessionMessages: { get: () => this.setCurrentSessionMessages.bind(this) },
+      loadHistory: { get: () => this.loadHistory.bind(this) },
+      scheduleDeferredHistoryReload: { get: () => this.scheduleDeferredHistoryReload.bind(this) },
+      transcriptImageCache: { get: () => this.transcriptImageCache },
+      transcriptImageReadsActive: {
+        get: () => this.transcriptImageReadsActive,
+        set: value => {
+          this.transcriptImageReadsActive = value;
+        },
+      },
+      transcriptImageReadWaiters: { get: () => this.transcriptImageReadWaiters },
+      resolveTranscriptImageUrl: { get: () => this.resolveTranscriptImageUrl.bind(this) },
+      resolveManagedHistoryImages: { get: () => this.resolveManagedHistoryImages.bind(this) },
+      enrichCompactionMarkers: { get: () => this.enrichCompactionMarkers.bind(this) },
+      loadOlderHistoryPage: { get: () => this.loadOlderHistoryPage.bind(this) },
+      normalizeHistoryPage: { get: () => this.normalizeHistoryPage.bind(this) },
+      findExpectedInitialHistoryIndex: {
+        get: () => this.findExpectedInitialHistoryIndex.bind(this),
+      },
+      expectInitialHistory: { get: () => this.expectInitialHistory },
+      rememberHistoryPagination: { get: () => this.rememberHistoryPagination.bind(this) },
+      ensureTranscriptSessionIdentity: {
+        get: () => this.ensureTranscriptSessionIdentity.bind(this),
+      },
+      historyLoadsInFlight: { get: () => this.historyLoadsInFlight },
+      historyReloadRequested: { get: () => this.historyReloadRequested },
+      immediateHistoryReloadRequested: { get: () => this.immediateHistoryReloadRequested },
+      _snap: { get: () => this._snap.bind(this) },
+      historyLoadSeq: {
+        get: () => this.historyLoadSeq,
+        set: value => {
+          this.historyLoadSeq = value;
+        },
+      },
+      applySessionContextUsage: { get: () => this.applySessionContextUsage.bind(this) },
+      projectLocalCompactionStatus: { get: () => this.projectLocalCompactionStatus.bind(this) },
+      recordLoadedSessionMessageSeq: { get: () => this.recordLoadedSessionMessageSeq.bind(this) },
+      hydrateActiveToolItemsFromHistory: {
+        get: () => this.hydrateActiveToolItemsFromHistory.bind(this),
+      },
+      publishActiveToolHistoryRepair: { get: () => this.publishActiveToolHistoryRepair.bind(this) },
+      applyInFlightRunSnapshot: { get: () => this.applyInFlightRunSnapshot.bind(this) },
+      rememberRunModel: { get: () => this.rememberRunModel.bind(this) },
+      localCompactionStatusBySession: { get: () => this.localCompactionStatusBySession },
+      deferredHistoryReloadAttempts: { get: () => this.deferredHistoryReloadAttempts },
+      hydrateCurrentSessionImages: { get: () => this.hydrateCurrentSessionImages.bind(this) },
     });
-    return alreadyHasThinking
-      ? message
-      : {
-          ...record,
-          content: [thinkingBlock, ...content],
-        };
-  }
 
-  if (typeof content === 'string') {
-    return {
-      ...record,
-      content: [thinkingBlock, { type: 'text', text: content }],
-    };
-  }
+  // Resolve dependencies at call time so cancellation, session changes, and teardown stay authoritative.
+  private readonly chatControllerCompactionContext: ChatControllerCompactionContext =
+    createPropertyContext<ChatControllerCompactionContext>({
+      isSelectedSession: { get: () => this.isSelectedSession.bind(this) },
+      state: { get: () => this.state },
+      findLiveSessionState: { get: () => this.findLiveSessionState.bind(this) },
+      chatMessagesBySession: { get: () => this.chatMessagesBySession },
+      setCurrentSessionMessages: { get: () => this.setCurrentSessionMessages.bind(this) },
+      localCompactionStatusBySession: { get: () => this.localCompactionStatusBySession },
+      deferredHistoryReloadAttempts: { get: () => this.deferredHistoryReloadAttempts },
+      updateLocalCompactionMessage: { get: () => this.updateLocalCompactionMessage.bind(this) },
+      transcriptIdSequence: {
+        get: () => this.transcriptIdSequence,
+        set: value => {
+          this.transcriptIdSequence = value;
+        },
+      },
+      settledCompactionEventIds: { get: () => this.settledCompactionEventIds },
+      beginLocalCompactionStatus: { get: () => this.beginLocalCompactionStatus.bind(this) },
+      updateLocalCompactionSummary: { get: () => this.updateLocalCompactionSummary.bind(this) },
+      clearLifecycleEndFallback: { get: () => this.clearLifecycleEndFallback.bind(this) },
+      notifyStream: { get: () => this.notifyStream.bind(this) },
+      notify: { get: () => this.notify.bind(this) },
+      completeLocalCompactionStatus: { get: () => this.completeLocalCompactionStatus.bind(this) },
+      projectLocalCompactionStatus: { get: () => this.projectLocalCompactionStatus.bind(this) },
+      terminalLifecycleSeen: { get: () => this.terminalLifecycleSeen },
+      scheduleChatLifecycleEndFallback: {
+        get: () => this.scheduleChatLifecycleEndFallback.bind(this),
+      },
+      scheduleDeferredHistoryReload: { get: () => this.scheduleDeferredHistoryReload.bind(this) },
+      manualCompactionOperations: { get: () => this.manualCompactionOperations },
+      settleCompactionRequest: { get: () => this.settleCompactionRequest.bind(this) },
+      manualCompactionRequestIdsBySession: { get: () => this.manualCompactionRequestIdsBySession },
+      loadHistory: { get: () => this.loadHistory.bind(this) },
+      loadCompactionCheckpoints: { get: () => this.loadCompactionCheckpoints.bind(this) },
+    });
 
-  if (typeof record.text === 'string') {
-    return {
-      ...record,
-      content: [thinkingBlock, { type: 'text', text: record.text }],
-    };
-  }
+  // Resolve dependencies at call time so cancellation, session changes, and teardown stay authoritative.
+  private readonly chatControllerRecoveryContext: ChatControllerRecoveryContext =
+    createPropertyContext<ChatControllerRecoveryContext>({
+      postFinalHistoryReloadTimer: {
+        get: () => this.postFinalHistoryReloadTimer,
+        set: value => {
+          this.postFinalHistoryReloadTimer = value;
+        },
+      },
+      postFinalHistoryRecovery: {
+        get: () => this.postFinalHistoryRecovery,
+        set: value => {
+          this.postFinalHistoryRecovery = value;
+        },
+      },
+      deferredHistoryReloadTimer: {
+        get: () => this.deferredHistoryReloadTimer,
+        set: value => {
+          this.deferredHistoryReloadTimer = value;
+        },
+      },
+      activeToolHistoryCatchUpTimer: {
+        get: () => this.activeToolHistoryCatchUpTimer,
+        set: value => {
+          this.activeToolHistoryCatchUpTimer = value;
+        },
+      },
+      clearActiveToolHistoryCatchUp: { get: () => this.clearActiveToolHistoryCatchUp.bind(this) },
+      observedSessionMessageSeqBySession: { get: () => this.observedSessionMessageSeqBySession },
+      state: { get: () => this.state },
+      historyLoadsInFlight: { get: () => this.historyLoadsInFlight },
+      scheduleActiveToolHistoryCatchUp: {
+        get: () => this.scheduleActiveToolHistoryCatchUp.bind(this),
+      },
+      claimActiveToolHistoryCatchUp: { get: () => this.claimActiveToolHistoryCatchUp.bind(this) },
+      loadHistory: { get: () => this.loadHistory.bind(this) },
+      hasPendingActiveToolHistoryCatchUp: {
+        get: () => this.hasPendingActiveToolHistoryCatchUp.bind(this),
+      },
+      deferredHistoryReloadAttempts: { get: () => this.deferredHistoryReloadAttempts },
+      _snap: { get: () => this._snap.bind(this) },
+      historyReloadRequested: { get: () => this.historyReloadRequested },
+      hasExpectedInitialHistory: { get: () => this.hasExpectedInitialHistory.bind(this) },
+      scheduleDeferredHistoryReload: { get: () => this.scheduleDeferredHistoryReload.bind(this) },
+      postFinalHistoryHasCaughtUp: { get: () => this.postFinalHistoryHasCaughtUp.bind(this) },
+      scheduleNextPostFinalHistoryReload: {
+        get: () => this.scheduleNextPostFinalHistoryReload.bind(this),
+      },
+      clearPostFinalHistoryReload: { get: () => this.clearPostFinalHistoryReload.bind(this) },
+      suspendedRunId: {
+        get: () => this.suspendedRunId,
+        set: value => {
+          this.suspendedRunId = value;
+        },
+      },
+      clearRunActivity: { get: () => this.clearRunActivity.bind(this) },
+      notify: { get: () => this.notify.bind(this) },
+      transcriptDependencies: { get: () => this.transcriptDependencies },
+      handleAborted: { get: () => this.handleAborted.bind(this) },
+      isSelectedSession: { get: () => this.isSelectedSession.bind(this) },
+      localSideChatRunIds: { get: () => this.localSideChatRunIds },
+      pendingSideChats: { get: () => this.pendingSideChats },
+      sideChatResultListeners: { get: () => this.sideChatResultListeners },
+      clearSideChatTranscript: { get: () => this.clearSideChatTranscript.bind(this) },
+      handleProgressCardChanged: { get: () => this.handleProgressCardChanged.bind(this) },
+      sideChatTranscripts: { get: () => this.sideChatTranscripts },
+      sideChatAssistantSnapshotRunIds: { get: () => this.sideChatAssistantSnapshotRunIds },
+      publishSideChatStream: { get: () => this.publishSideChatStream.bind(this) },
+      publishSideChatFailure: { get: () => this.publishSideChatFailure.bind(this) },
+      retainSideChatTombstone: { get: () => this.retainSideChatTombstone.bind(this) },
+      ensureTranscriptSessionIdentity: {
+        get: () => this.ensureTranscriptSessionIdentity.bind(this),
+      },
+      applyBackgroundChatEvent: { get: () => this.applyBackgroundChatEvent.bind(this) },
+      flushPendingAnnounceEvents: { get: () => this.flushPendingAnnounceEvents.bind(this) },
+      pendingAnnounceEvents: { get: () => this.pendingAnnounceEvents },
+      assistantSnapshotRunId: {
+        get: () => this.assistantSnapshotRunId,
+        set: value => {
+          this.assistantSnapshotRunId = value;
+        },
+      },
+      ignoredDeltaAfterAssistantSnapshotCount: {
+        get: () => this.ignoredDeltaAfterAssistantSnapshotCount,
+        set: value => {
+          this.ignoredDeltaAfterAssistantSnapshotCount = value;
+        },
+      },
+      persistRunFailure: { get: () => this.persistRunFailure.bind(this) },
+      handleChatEvent: { get: () => this.handleChatEvent.bind(this) },
+      recoverFromInternalAgentSequenceGap: {
+        get: () => this.recoverFromInternalAgentSequenceGap.bind(this),
+      },
+      findLiveSessionState: { get: () => this.findLiveSessionState.bind(this) },
+      applyBackgroundAgentEvent: { get: () => this.applyBackgroundAgentEvent.bind(this) },
+      applyNormalizedAgentEvent: { get: () => this.applyNormalizedAgentEvent.bind(this) },
+      bufferPendingAnnounceEvent: { get: () => this.bufferPendingAnnounceEvent.bind(this) },
+      resetTranscriptForSession: { get: () => this.resetTranscriptForSession.bind(this) },
+      historyPagingGeneration: {
+        get: () => this.historyPagingGeneration,
+        set: value => {
+          this.historyPagingGeneration = value;
+        },
+      },
+      resetHistoryPagination: { get: () => this.resetHistoryPagination.bind(this) },
+      displayedHistoryLeafBySession: { get: () => this.displayedHistoryLeafBySession },
+      pendingHistoryReload: {
+        get: () => this.pendingHistoryReload,
+        set: value => {
+          this.pendingHistoryReload = value;
+        },
+      },
+      expectedPlanImplementationReset: {
+        get: () => this.expectedPlanImplementationReset,
+        set: value => {
+          this.expectedPlanImplementationReset = value;
+        },
+      },
+      currentMessageHistory: { get: () => this.currentMessageHistory },
+      setCurrentSessionMessages: { get: () => this.setCurrentSessionMessages.bind(this) },
+      applySessionContextUsage: { get: () => this.applySessionContextUsage.bind(this) },
+      admitExpectedInitialHistoryMessage: {
+        get: () => this.admitExpectedInitialHistoryMessage.bind(this),
+      },
+      hydrateActiveToolItemsFromHistory: {
+        get: () => this.hydrateActiveToolItemsFromHistory.bind(this),
+      },
+      publishActiveToolHistoryRepair: { get: () => this.publishActiveToolHistoryRepair.bind(this) },
+      rememberRunModel: { get: () => this.rememberRunModel.bind(this) },
+      hydrateCurrentSessionImages: { get: () => this.hydrateCurrentSessionImages.bind(this) },
+      observeSessionMessageSeq: { get: () => this.observeSessionMessageSeq.bind(this) },
+      localCompactionStatusBySession: { get: () => this.localCompactionStatusBySession },
+      handleCompactionPhase: { get: () => this.handleCompactionPhase.bind(this) },
+      acceptRunId: { get: () => this.acceptRunId.bind(this) },
+      handleDelta: { get: () => this.handleDelta.bind(this) },
+      handleFinal: { get: () => this.handleFinal.bind(this) },
+      handleError: { get: () => this.handleError.bind(this) },
+      updateRunActivity: { get: () => this.updateRunActivity.bind(this) },
+      notifyStream: { get: () => this.notifyStream.bind(this) },
+      clearLifecycleEndFallback: { get: () => this.clearLifecycleEndFallback.bind(this) },
+      finishCurrentTurnTiming: { get: () => this.finishCurrentTurnTiming.bind(this) },
+      terminalLifecycleSeen: {
+        get: () => this.terminalLifecycleSeen,
+        set: value => {
+          this.terminalLifecycleSeen = value;
+        },
+      },
+      resetAssistantSnapshotSource: { get: () => this.resetAssistantSnapshotSource.bind(this) },
+      messageSubscriptionSeq: { get: () => this.messageSubscriptionSeq },
+      subscribedMessageSessionKey: { get: () => this.subscribedMessageSessionKey },
+      schedulePostFinalHistoryReload: { get: () => this.schedulePostFinalHistoryReload.bind(this) },
+      flushPendingHistoryReload: { get: () => this.flushPendingHistoryReload.bind(this) },
+      resetActiveToolHistoryCatchUpForRun: {
+        get: () => this.resetActiveToolHistoryCatchUpForRun.bind(this),
+      },
+      scheduleChatLifecycleEndFallback: {
+        get: () => this.scheduleChatLifecycleEndFallback.bind(this),
+      },
+      clearLocalCompactionStatus: { get: () => this.clearLocalCompactionStatus.bind(this) },
+    });
 
-  return {
-    ...record,
-    content: [thinkingBlock],
-  };
-}
+  // Resolve dependencies at call time so cancellation, session changes, and teardown stay authoritative.
+  private readonly chatControllerSessionContext: ChatControllerSessionContext =
+    createPropertyContext<ChatControllerSessionContext>({
+      chatMessagesBySession: { get: () => this.chatMessagesBySession },
+      historySourceBySession: { get: () => this.historySourceBySession },
+      state: { get: () => this.state },
+      liveStateBySession: { get: () => this.liveStateBySession },
+      clearRunActivityTimer: { get: () => this.clearRunActivityTimer.bind(this) },
+      runProbeToken: {
+        get: () => this.runProbeToken,
+        set: value => {
+          this.runProbeToken = value;
+        },
+      },
+      cacheCurrentTurnTiming: { get: () => this.cacheCurrentTurnTiming.bind(this) },
+      terminalLifecycleSeen: {
+        get: () => this.terminalLifecycleSeen,
+        set: value => {
+          this.terminalLifecycleSeen = value;
+        },
+      },
+      assistantSnapshotRunId: {
+        get: () => this.assistantSnapshotRunId,
+        set: value => {
+          this.assistantSnapshotRunId = value;
+        },
+      },
+      ignoredDeltaAfterAssistantSnapshotCount: {
+        get: () => this.ignoredDeltaAfterAssistantSnapshotCount,
+        set: value => {
+          this.ignoredDeltaAfterAssistantSnapshotCount = value;
+        },
+      },
+      findLiveSessionState: { get: () => this.findLiveSessionState.bind(this) },
+      resetAssistantSnapshotSource: { get: () => this.resetAssistantSnapshotSource.bind(this) },
+      scheduleRunActivityCheck: { get: () => this.scheduleRunActivityCheck.bind(this) },
+      scheduleChatLifecycleEndFallback: {
+        get: () => this.scheduleChatLifecycleEndFallback.bind(this),
+      },
+      historyPaginationBySession: { get: () => this.historyPaginationBySession },
+      displayedHistoryLeafBySession: { get: () => this.displayedHistoryLeafBySession },
+      isSelectedSession: { get: () => this.isSelectedSession.bind(this) },
+      turnTimingBySession: { get: () => this.turnTimingBySession },
+      pendingAnnounceEvents: { get: () => this.pendingAnnounceEvents },
+      observedSessionMessageSeqBySession: { get: () => this.observedSessionMessageSeqBySession },
+      finishTurnTimingForSession: { get: () => this.finishTurnTimingForSession.bind(this) },
+      resetTranscriptForSession: { get: () => this.resetTranscriptForSession.bind(this) },
+      subscribedMessageSessionKey: {
+        get: () => this.subscribedMessageSessionKey,
+        set: value => {
+          this.subscribedMessageSessionKey = value;
+        },
+      },
+      messageSubscriptionSeq: {
+        get: () => this.messageSubscriptionSeq,
+        set: value => {
+          this.messageSubscriptionSeq = value;
+        },
+      },
+      connectionInitializationSeq: {
+        get: () => this.connectionInitializationSeq,
+        set: value => {
+          this.connectionInitializationSeq = value;
+        },
+      },
+      isConnectionInitializationCurrent: {
+        get: () => this.isConnectionInitializationCurrent.bind(this),
+      },
+      loadHistory: { get: () => this.loadHistory.bind(this) },
+      hasExpectedInitialHistory: { get: () => this.hasExpectedInitialHistory.bind(this) },
+      loadOlderHistory: { get: () => this.loadOlderHistory.bind(this) },
+      initialHistoryRetryDelaysMs: { get: () => this.initialHistoryRetryDelaysMs },
+      waitForInitialHistoryRetry: { get: () => this.waitForInitialHistoryRetry.bind(this) },
+      notify: { get: () => this.notify.bind(this) },
+      expectInitialHistory: { get: () => this.expectInitialHistory },
+      findExpectedInitialHistoryIndex: {
+        get: () => this.findExpectedInitialHistoryIndex.bind(this),
+      },
+      expectInitialUserMessage: { get: () => this.expectInitialUserMessage },
+      isExpectedInitialHistoryMessage: {
+        get: () => this.isExpectedInitialHistoryMessage.bind(this),
+      },
+      pendingHistoryReload: {
+        get: () => this.pendingHistoryReload,
+        set: value => {
+          this.pendingHistoryReload = value;
+        },
+      },
+      setCurrentSessionMessages: { get: () => this.setCurrentSessionMessages.bind(this) },
+      hydrateCurrentSessionImages: { get: () => this.hydrateCurrentSessionImages.bind(this) },
+      loadProgressCard: { get: () => this.loadProgressCard.bind(this) },
+      syncMessageSessionSubscription: { get: () => this.syncMessageSessionSubscription.bind(this) },
+      initialMessageSubscriptionBarrierTimeoutMs: {
+        get: () => this.initialMessageSubscriptionBarrierTimeoutMs,
+      },
+      suspendedRunId: {
+        get: () => this.suspendedRunId,
+        set: value => {
+          this.suspendedRunId = value;
+        },
+      },
+      reconcileSuspendedRun: { get: () => this.reconcileSuspendedRun.bind(this) },
+      loadInitialHistory: { get: () => this.loadInitialHistory.bind(this) },
+      manualCompactionRequestIdsBySession: { get: () => this.manualCompactionRequestIdsBySession },
+      settleCompactionRequest: { get: () => this.settleCompactionRequest.bind(this) },
+      clearLocalCompactionStatus: { get: () => this.clearLocalCompactionStatus.bind(this) },
+      rememberHistoryPagination: { get: () => this.rememberHistoryPagination.bind(this) },
+      progressCardLoadGeneration: {
+        get: () => this.progressCardLoadGeneration,
+        set: value => {
+          this.progressCardLoadGeneration = value;
+        },
+      },
+      progressCardCache: { get: () => this.progressCardCache },
+      historyPagingGeneration: {
+        get: () => this.historyPagingGeneration,
+        set: value => {
+          this.historyPagingGeneration = value;
+        },
+      },
+      restoreHistoryPagination: { get: () => this.restoreHistoryPagination.bind(this) },
+      currentMessageHistory: {
+        get: () => this.currentMessageHistory,
+        set: value => {
+          this.currentMessageHistory = value;
+        },
+      },
+      beginRunActivity: { get: () => this.beginRunActivity.bind(this) },
+      clearRunActivity: { get: () => this.clearRunActivity.bind(this) },
+      handleHello: { get: () => this.handleHello.bind(this) },
+      handleEvent: { get: () => this.handleEvent.bind(this) },
+      handleClose: { get: () => this.handleClose.bind(this) },
+      expectedPlanImplementationReset: {
+        get: () => this.expectedPlanImplementationReset,
+        set: value => {
+          this.expectedPlanImplementationReset = value;
+        },
+      },
+      clearLifecycleEndFallback: { get: () => this.clearLifecycleEndFallback.bind(this) },
+      cacheCurrentLiveState: { get: () => this.cacheCurrentLiveState.bind(this) },
+      promoteCachedSessionState: { get: () => this.promoteCachedSessionState.bind(this) },
+      restoreLiveState: { get: () => this.restoreLiveState.bind(this) },
+      clearPostFinalHistoryReload: { get: () => this.clearPostFinalHistoryReload.bind(this) },
+      clearDeferredHistoryReload: { get: () => this.clearDeferredHistoryReload.bind(this) },
+      clearActiveToolHistoryCatchUp: { get: () => this.clearActiveToolHistoryCatchUp.bind(this) },
+      initializeConnectedSession: { get: () => this.initializeConnectedSession.bind(this) },
+      settledCompactionEventIds: { get: () => this.settledCompactionEventIds },
+      localCompactionStatusBySession: { get: () => this.localCompactionStatusBySession },
+      clearAllSideChatRuns: { get: () => this.clearAllSideChatRuns.bind(this) },
+      historyReloadRequested: { get: () => this.historyReloadRequested },
+      immediateHistoryReloadRequested: { get: () => this.immediateHistoryReloadRequested },
+      isGatewayMethodAdvertised: { get: () => this.isGatewayMethodAdvertised.bind(this) },
+      pendingSideChats: { get: () => this.pendingSideChats },
+      publishSideChatFailure: { get: () => this.publishSideChatFailure.bind(this) },
+      retainSideChatTombstone: { get: () => this.retainSideChatTombstone.bind(this) },
+    });
 
-function isCompactionMarker(message: unknown): boolean {
-  if (!message || typeof message !== 'object') return false;
-  const marker = (message as Record<string, unknown>).__openclaw;
-  return (
-    Boolean(marker) &&
-    typeof marker === 'object' &&
-    (marker as Record<string, unknown>).kind === 'compaction'
-  );
-}
-
-function readCompactionMarkerFingerprint(message: unknown): string | null {
-  if (!isCompactionMarker(message)) return null;
-  const record = message as Record<string, unknown>;
-  const marker = record.__openclaw as Record<string, unknown>;
-  if (typeof marker.id === 'string' && marker.id) return `id:${marker.id}`;
-  const timestamp =
-    typeof record.timestamp === 'number' || typeof record.timestamp === 'string'
-      ? String(record.timestamp)
-      : '';
-  return `legacy:${timestamp}`;
-}
-
-function isLocalCompactionStatus(message: unknown, id: string): boolean {
-  if (!message || typeof message !== 'object') return false;
-  const marker = (message as Record<string, unknown>).__openclaw;
-  return (
-    Boolean(marker) &&
-    typeof marker === 'object' &&
-    (marker as Record<string, unknown>).kind === 'compaction-status' &&
-    (marker as Record<string, unknown>).id === id
-  );
-}
-
-function isHiddenOrPendingControlReplyText(text: string): boolean {
-  const trimmed = text.trim();
-  const upper = trimmed.toUpperCase();
-  return (
-    SILENT_REPLY_PATTERN.test(trimmed) ||
-    (upper.length > 0 && 'NO_REPLY'.startsWith(upper)) ||
-    stripHeartbeatTokenForDisplay(trimmed).shouldSkip
-  );
-}
-
-function assistantEventText(data: Record<string, unknown>): string | null {
-  const snapshot = typeof data.text === 'string' ? data.text : null;
-  if (snapshot?.trim()) return snapshot;
-  const delta = typeof data.delta === 'string' ? data.delta : null;
-  return delta?.trim() ? delta : null;
-}
-
-function isDormantAnnounceControlEvent(
-  event: NormalizedAgentEvent,
-  activeTurn: AssistantTurn | null,
-): boolean {
-  if (!event.runId.startsWith('announce:v1:')) return false;
-  if (activeTurn?.runId === event.runId) return false;
-  // A lifecycle-only announce can still resolve to NO_REPLY, so keep its
-  // empty shell dormant. Thinking is user-visible output and must start the
-  // same incremental rendering path as an ordinary run immediately.
-  return event.stream === 'lifecycle';
-}
-
-function isDormantAnnounceRun(runId: string, activeTurn: AssistantTurn | null): boolean {
-  return runId.startsWith('announce:v1:') && activeTurn?.runId !== runId;
-}
-
-function appendTerminalMessage(
-  messages: unknown[],
-  terminal: unknown,
-  activeRunStartedAt: number | null = null,
-): unknown[] {
-  // Find and replace any stream-fallback message that matches
-  const terminalText = extractSnapshotText(terminal);
-  const result: unknown[] = [];
-
-  for (const msg of messages) {
-    const m = msg as Record<string, unknown>;
-    // Skip stream-fallback messages that the terminal replaces
-    if ((m as Record<string, unknown>).__openclawStreamFallback) {
-      const fallbackText = (m as Record<string, unknown>).replacementText as string | undefined;
-      if (terminalText && fallbackText && terminalText.startsWith(fallbackText)) {
-        continue; // Replace this fallback
-      }
-    }
-    result.push(msg);
-  }
-
-  const last = result[result.length - 1];
-  if (hasSameTerminalIdentity(last, terminal, activeRunStartedAt)) {
-    return [...result.slice(0, -1), retainOriginalOpenClawIdentity(terminal, last)];
-  }
-
-  result.push(terminal);
-  return result;
-}
-
-function messageTimestampMs(message: unknown): number | null {
-  if (!message || typeof message !== 'object') return null;
-  const record = message as { timestamp?: unknown; ts?: unknown };
-  if (typeof record.timestamp === 'number' && Number.isFinite(record.timestamp)) {
-    return record.timestamp;
-  }
-  if (typeof record.ts === 'number' && Number.isFinite(record.ts)) {
-    return record.ts;
-  }
-  return null;
-}
-
-function messageDisplaySignature(message: unknown): string | null {
-  if (!message || typeof message !== 'object') return null;
-  const record = message as Record<string, unknown>;
-  const role = typeof record.role === 'string' ? record.role : '';
-  if (!role) return null;
-  const text = extractSnapshotText(message);
-  if (typeof text === 'string' && text.trim()) {
-    return `${role}:text:${text.trim()}`;
-  }
-  try {
-    return `${role}:content:${JSON.stringify(record.content ?? record.text ?? null)}`;
-  } catch {
-    return null;
-  }
-}
-
-function messageRunId(message: unknown): string | null {
-  if (!message || typeof message !== 'object') return null;
-  const record = message as Record<string, unknown>;
-  const openClaw = asRecord(record.__openclaw);
-  for (const value of [
-    record.runId,
-    record.run_id,
-    openClaw?.runId,
-    openClaw?.run_id,
-    asRecord(record.metadata)?.runId,
-    asRecord(record.metadata)?.run_id,
-  ]) {
-    if (typeof value === 'string' && value.trim()) return value.trim();
-  }
-  return null;
-}
-
-function hasSameTerminalIdentity(
-  left: unknown,
-  right: unknown,
-  activeRunStartedAt: number | null,
-): boolean {
-  const leftRole = readNonBlankString(asRecord(left)?.role)?.toLowerCase();
-  const rightRole = readNonBlankString(asRecord(right)?.role)?.toLowerCase();
-  if (leftRole && rightRole && leftRole !== rightRole) return false;
-  const leftIdentity = readTranscriptIdentity(left);
-  const rightIdentity = readTranscriptIdentity(right);
-  if (leftIdentity && rightIdentity && leftIdentity.kind === rightIdentity.kind) {
-    return leftIdentity.value === rightIdentity.value;
-  }
-  if (leftIdentity && rightIdentity) return false;
-  const leftRunId = messageRunId(left);
-  const rightRunId = messageRunId(right);
-  if (leftRunId && rightRunId) return leftRunId === rightRunId;
-  const leftTimestamp = messageTimestampMs(left);
-  const rightTimestamp = messageTimestampMs(right);
-  const leftSignature = messageDisplaySignature(left);
-  const rightSignature = messageDisplaySignature(right);
-  const sameDisplaySignature =
-    leftSignature !== null && rightSignature !== null && leftSignature === rightSignature;
-  return (
-    sameDisplaySignature &&
-    ((leftTimestamp !== null && rightTimestamp !== null && leftTimestamp === rightTimestamp) ||
-      (activeRunStartedAt !== null &&
-        leftTimestamp !== null &&
-        leftTimestamp >= activeRunStartedAt))
-  );
-}
-
-function isTerminalToolPhase(phase: string): boolean {
-  return [
-    'end',
-    'complete',
-    'completed',
-    'done',
-    'finish',
-    'finished',
-    'result',
-    'error',
-    'failed',
-    'cancel',
-    'cancelled',
-    'canceled',
-    'aborted',
-  ].includes(phase.toLowerCase());
-}
-
-function isNonTerminalToolPhase(phase: string): boolean {
-  return ['start', 'delta', 'partial', 'progress', 'update', 'streaming'].includes(
-    phase.toLowerCase(),
-  );
+  // Resolve dependencies at call time so cancellation, session changes, and teardown stay authoritative.
+  private readonly chatControllerProgressContext: ChatControllerProgressContext =
+    createPropertyContext<ChatControllerProgressContext>({
+      state: { get: () => this.state },
+      isGatewayMethodAdvertised: { get: () => this.isGatewayMethodAdvertised.bind(this) },
+      progressCardLoadGeneration: {
+        get: () => this.progressCardLoadGeneration,
+        set: value => {
+          this.progressCardLoadGeneration = value;
+        },
+      },
+      rememberProgressCard: { get: () => this.rememberProgressCard.bind(this) },
+      notify: { get: () => this.notify.bind(this) },
+      progressCardCache: { get: () => this.progressCardCache },
+      loadProgressCard: { get: () => this.loadProgressCard.bind(this) },
+    });
 }
