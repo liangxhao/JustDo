@@ -16,8 +16,8 @@ desktop app available in the background.
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | AI work sessions    | OpenClaw Gateway is the execution engine. JustDo manages the desktop shell, UI state, permissions, and product metadata.  |
 | Chat UI             | React owns the application shell; `<justdo-chat>` is a Lit custom element backed by the local OpenClaw Gateway WebSocket. |
-| Local storage       | `better-sqlite3` stores app settings, agents, MCP servers, hooks, session groups, cowork metadata, and run receipts.     |
-| Skills              | 8 bundled skills are listed in `resources/builtin-skills.json`; all 8 are enabled by default.                            |
+| Local storage       | `better-sqlite3` stores app settings, agents, MCP servers, hooks, session groups, cowork metadata, and run receipts.      |
+| Skills              | 8 bundled skills are listed in `resources/builtin-skills.json`; all 8 are enabled by default.                             |
 | MCP and hooks       | Managed from the Plugins screen, persisted locally, then synced into OpenClaw configuration.                              |
 | Scheduled tasks     | UI CRUD and polling are handled by JustDo; execution is delegated to the OpenClaw cron runtime.                           |
 | Desktop integration | Tray, auto launch, prevent sleep, local file preview, logs, proxy handling, and packaged platform resources.              |
@@ -110,7 +110,7 @@ Python packages.
 | `src/main/engine/`                 | cowork routing, Gateway adapter, runtime forwarding, command safety                        |
 | `src/main/openclaw/`               | Gateway config sync, runtime lifecycle, model/session/slash-command helpers                |
 | `src/main/plugins/`                | skills, MCP, hooks, extensions, and marketplace services                                   |
-| `src/main/scheduler/`              | scheduled task prompt/runtime services                                                       |
+| `src/main/scheduler/`              | scheduled task prompt/runtime services                                                     |
 | `src/renderer/features/`           | React feature modules for cowork, agents, models, plugins, scheduled tasks, settings       |
 | `src/renderer/libs/openclaw-chat/` | Lit chat element and message rendering pipeline                                            |
 | `src/shared/`                      | shared contracts for cowork, OpenClaw, providers, plugins, scheduled tasks, slash commands |
@@ -133,7 +133,9 @@ store; deletion state now lives with the cowork feature code.
 
 ## Data Storage
 
-The app database is `justdo.sqlite` under Electron `userData` for `JustDo`.
+The app database is `<appData>/<productName>/justdo.sqlite`, under Electron's
+`app.getPath('userData')`. The 20 core product tables are documented in
+[Data storage](docs/architecture/10-data-storage.md).
 Core tables include:
 
 - `kv`
@@ -174,8 +176,12 @@ in `docs/patches/openclaw-patch-guide.md`.
 
 ## Documentation
 
-Start with [docs/README.md](docs/README.md). The architecture documents describe
-the current implementation rather than an aspirational design.
+Start with [docs/README.md](docs/README.md). Current architecture, dated audits
+and archived proposals are identified separately.
+Development startup and log triage: [development guide](docs/development.md).
+Current capabilities and limits: [implementation status](docs/features/current-state-v2026.8.10.md).
+Persistent assistants are managed in Settings; ordinary conversations belong to main.
+Peer collaboration uses the optional agent-team extension, disabled by default.
 
 ## Contributing
 

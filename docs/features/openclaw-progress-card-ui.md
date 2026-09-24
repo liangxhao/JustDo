@@ -1,42 +1,41 @@
-# OpenClaw Progress Card UI
+# 任务进度卡：原生状态与本地显示
 
-JustDo 使用 OpenClaw v2026.9.2 的会话级 `progress_card` 作为复杂任务进度的唯一真实来源。卡片不属于消息 transcript，Renderer 不从 Tool input、历史消息或兼容期 plan stream 重建当前状态。
+进度卡使用 OpenClaw 会话级 progress_card。它不是一条消息，也不是 Renderer 从工具或历史推导出的计划；当前卡片的原生持久状态与用户是否展开它分别管理。
 
-## 状态流
+## 1. 更新流程
 
 ```mermaid
 sequenceDiagram
-  participant Agent
-  participant Gateway
-  participant ChatController
-  participant CoworkView
-
-  Agent->>Gateway: progress_card({ plan?, markdown? })
-  Gateway->>Gateway: replace session_progress_cards row
-  Gateway-->>ChatController: progressCard.changed(sessionKey, revision)
-  ChatController->>Gateway: progressCard.get(sessionKey)
-  Gateway-->>ChatController: current card or null
-  ChatController-->>CoworkView: ProgressCardViewState
-  CoworkView-->>CoworkView: render exactly one card
+  participant A as Agent
+  participant G as Gateway
+  participant C as ChatController
+  participant U as Cowork UI
+  A->>G: progress_card 更新
+  G->>G: 保存会话当前卡与 revision
+  G-->>C: progressCard.changed
+  C->>G: progressCard.get
+  G-->>C: 卡片或 null
+  C-->>U: 当前会话显示状态
 ```
 
-- Gateway Hello 必须声明 `progressCard.get` 后才读取。
-- 切换会话、重连或 revision 变化时重新读取；延迟响应不能覆盖新会话。
-- Renderer 仅保留最多 100 个会话的 LRU 内存缓存，OpenClaw 每个 Agent 的 SQLite 是持久化权威。
-- revision 变化、断线或权威读取失败时立即移除旧卡，不把过期内容继续显示为实时进度。
-- 完成后的自动隐藏和用户关闭都是 Renderer 本地显示状态，不调用 `progressCard.put`，因此仍可从标题栏重新查看 Gateway 保存的最近一张卡片。
+Gateway Hello 必须声明读取能力，才发起查询。切换会话、重连和 revision 更新触发读取；迟到响应要与当前 session/generation 匹配。
 
-## 显示
+## 2. 过期状态如何处理
 
-- 卡片绝对定位在消息区右上方，不参与 Flex 布局，不压缩消息区，也不占用输入框上方空间；窄窗口下使用消息区内可用宽度。
-- 打开子任务、文件预览或 Subagent 抽屉不会改变进度卡的展开状态；折叠与隐藏始终由用户控制。
-- 执行中默认显示并展开。用户手动隐藏后，普通 revision 更新不会反复打扰；上一张卡片完成后出现的新任务会重新显示。
-- 进度刚完成时短暂显示完成结果，然后自动隐藏。恢复会话时，已经完成的卡片默认隐藏。
-- 标题栏的进度按钮始终反映最近一张卡片的状态，用户可用它重新打开或隐藏悬浮卡。
-- 步骤依据卡片更新时间所属的 run 显示运行、等待继续、暂停、失败或停止；run 正常结束但计划未全部完成时显示“等待继续”，不会推断为计划完成。只有 Gateway 卡片中的全部步骤明确完成后才显示“已完成”并自动隐藏。
-- Markdown 使用单独启用的 `<progress value max>` 清洗策略；模型内容中的进度条只保留 `value` 与 `max`，无障碍名称由 Renderer 可信地注入。
-- 消息时间线中的 `progress_card` 只显示一行更新回执，避免和唯一实时卡重复。
+Renderer 只保留有界 LRU 内存投影，当前上限 100 个会话，持久权威仍在原生 Agent SQLite。revision 变化、断线或权威查询失败时移除旧实时卡，不能继续标为最新进度。
 
-## 历史边界
+原生返回 null 表示当前无卡，不能从上一条 tool input 重建。完成隐藏与用户关闭是本地显示状态，不调用 put 删除原生内容；用户可通过会话入口重新查看最近卡片。
 
-OpenClaw v2026.9.2 的 Gateway 只提供每个会话最新的进度卡，没有 revision 历史查询接口。因此标题栏可恢复的是当前会话最近一张卡片，不从 Tool input 或 transcript 重建更早的卡片。若未来需要完整历史，应由 OpenClaw 提供权威的 `progressCard.list` 或等价接口。
+## 3. UI 行为
+
+当前卡在消息区独立展示，不进入 transcript、搜索结果或导出消息。计划条目与 Markdown 来自原生卡片，按同一内容安全边界渲染；卡片不能遮挡主要输入或在后台任务更新时抢当前会话。
+
+卡片完成不等于整个会话完成，运行状态仍看主运行、子任务与 Goal。用户关闭卡片也不暂停 Agent。
+
+## 4. 与其他计划能力的区别
+
+PresentPlan 是需要用户审核的交互并带持久计划 artifact；Goal 是原生目标及预算；progress_card 是执行中的状态说明。三者不能通过统一一个“计划 JSON”互相替代。
+
+## 5. 维护与回归
+
+代码位于 chat-controller-progress 及相关 UI/共享 progressCard 合约。验证无能力声明、null 卡、连续 revision、跨会话迟到响应、断线、失败读取、用户关闭和重新打开。不得新增 Main 消息缓存或扫描历史的兼容恢复逻辑。

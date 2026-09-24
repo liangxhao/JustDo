@@ -1,116 +1,60 @@
-# OpenClaw Gateway Capability Matrix
+# Gateway 能力归属与升级核对矩阵
 
-本文以 OpenClaw `v2026.9.2`、当前 adapter/config sync、`scripts/patches/v2026.9.2/README.md` 和 runtime tests 为基线。矩阵用于判定能力 owner 与升级漂移；“Patch”只表示锁定 pristine npm 产物仍缺少 JustDo 所需语义，不表示 Renderer 拥有 Gateway 行为。
+基线：锁定 OpenClaw v2026.9.2 与当前产品注册代码。本页帮助判断升级需要核对哪些原生契约；逐补丁清单与上游处置统一在[版本目录 README](../../scripts/patches/v2026.9.2/README.md)，不在此复制编号表。
 
-## 1. 当前能力归属
+## 1. 能力与产品消费方
 
-| 能力                    | Gateway/上游                                                     | JustDo App                                                                           | v2026.9.2 处置                                                    |
-| ----------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
-| chat、history、thinking | 执行、transcript、实时与历史 display projection                  | wire 校验、identity、reconcile、timeline                                             | 原生；删除旧 002–004                                              |
-| session、goal、model    | session/goal 权威 RPC；session tool visibility                   | managed key、产品 metadata、ready 后 `sessions.patch`；用户设置访问范围，默认 `tree` | 原生；Goal pause 后 resume 保留 013；不读写运行中 `sessions.json` |
-| tool directory          | tool schema、搜索和执行                                          | permission 与结构化卡片                                                              | 原生；删除旧 009                                                  |
-| subagent/task           | admission、排队、timeout、required-child join、task ledger/event | `tasks.list/get` 映射、父子展示、stop                                                | 原生；删除旧 013–021、049                                         |
-| approvals               | request 生命周期、挂起、恢复和终态清理                           | policy sync、modal、session grant                                                    | 原生；删除旧 022–025                                              |
-| compaction/context      | safeguard、overflow、budget、precheck                            | 配置、进度与 detail 展示                                                             | 原生；只保留 purpose metadata patch                               |
-| cron                    | job/run scheduler                                                | isolated agent、receipt、显式 `delivery: { mode: 'none' }`                           | 原生；删除旧默认 delivery patch                                   |
-| progress                | run/task/compaction 事实                                         | bounded runtime services 投影与 UI                                                   | 迁入 `runtime-services`                                           |
-| embeddings              | provider 调用与 memory index                                     | loopback provider、代理与凭证边界                                                    | 迁入 `runtime-services`                                           |
-| Windows/Chrome MCP      | MCP/Browser runtime                                              | bundled runner、Chrome 管理与设置                                                    | 保留 002–003 两个窄补丁                                           |
-| host metadata           | provider request 构造                                            | session/parent/user/purpose metadata                                                 | 保留 006–007                                                      |
-| app-start recovery      | main session 与 durable task recovery                            | JustDo app-start epoch                                                               | 保留 008                                                          |
-| manual reindex          | memory index/cache                                               | 一次性用户意图                                                                       | 保留 009                                                          |
+| 能力          | 原生权威                        | 产品职责                 | 升级关键检查                             |
+| ------------- | ------------------------------- | ------------------------ | ---------------------------------------- |
+| chat/history  | transcript、实时与历史协议      | 身份准入、分页、渲染     | delta/snapshot、entry identity、可见分支 |
+| session/model | 原生身份和模型设置              | 产品 key、选择与准入     | create/describe/patch、provider/model    |
+| Goal          | 内容、状态、预算与原生变更      | 自动续跑 phase、卡片     | 六状态、resume 预算、goalId fence        |
+| task/Subagent | admission、queue、join、ledger  | 父子状态、详情与停止     | 分页、blocked outcome、后代取消          |
+| approval      | pending、期限、终态与撤销       | modal、选择校验          | stop/restart 及迟到回复                  |
+| compaction    | context budget、压缩和恢复      | 进度、取消与详情         | admission 竞态、历史可见性               |
+| progress_card | session 当前进度                | 原样展示                 | revision、scope、clear                   |
+| cron          | job/run、调度与 delivery        | CRUD、结果 receipt       | owner 保留、默认 delivery、分页          |
+| Skill         | 解析赢家、资格与启停            | 文件事务、来源提示       | 同名 fallback、extension scope           |
+| Extension     | inventory、启停、卸载与能力审查 | 导入入口、保护和 UI      | installed-index、reviewToken             |
+| peer send     | 原生 sessions_send              | 成员/轮次准入、回执      | 精确目标、可信 provenance、未知接收      |
+| Agent files   | 原生角色文件                    | 档案管理与冲突检测       | 工作区/文件身份，删除保留历史            |
+| browser       | 原生协议与工具语义              | 模式、guest bridge、配对 | action 对齐、profile、取消与导航         |
 
-窗口、tray、update、主题、i18n、session 分组/cwd、SQLite 产品数据、Marketplace、文件 preview 和代理 UI 都属于 JustDo，不应要求 Gateway patch。
+窗口、更新、托盘、分组、未读、文件授权和市场 SDK 适配属于产品，不应为 UI 方便增加 Gateway patch。
 
-## 2. 十九个保留补丁
+## 2. 公开 API、Extension 与补丁
 
-| 编号 | 能力                                              | 移除条件                                               |
-| ---- | ------------------------------------------------- | ------------------------------------------------------ |
-| 001  | value-bound managed Python 环境注入               | 上游提供可信 host Python 环境 API                      |
-| 002  | Windows 通用 npm/npx MCP runner                   | 上游 runner 在 Electron/Windows 下等价可靠             |
-| 003  | Chrome MCP Windows Electron-safe package runner   | 上游提供等价 Windows 启动                              |
-| 005  | 最终 system-prompt-only replacements              | 上游提供 final、cache-safe prompt hook                 |
-| 006  | agent session/parent/user-initiated metadata      | 上游提供等价 provider metadata                         |
-| 007  | compaction/reviewer purpose metadata              | 上游为两类请求提供等价 metadata                        |
-| 008  | JustDo app-start session/task recovery boundary   | 上游 durable session/task 支持 host-instance epoch     |
-| 009  | forced CLI memory reindex 绕过 embedding cache    | 上游 forced CLI 原生包含 cache bypass                  |
-| 013  | 暂停中止后的原生 Goal resume 准入                 | 上游原生接受空闲 paused session 的该状态               |
-| 014  | provider replay 排除 display-only assistant block | 上游 provider replay 过滤非 provider assistant content |
-| 015  | trusted local generic MEDIA 与原始引用保留        | 上游支持 trusted generic MEDIA 并暴露原始引用          |
-| 016  | 离线官方插件目录                                  | 上游目录读取无需网络或可由 host 注入                   |
-| 017  | 分段 live progress snapshot                       | 上游提供等价的有界分段快照                             |
-| 018  | mixed tool/commentary 顺序                        | 上游稳定保留交错内容块顺序                             |
-| 019  | 禁止配置驱动的插件自动安装                        | 上游提供等价的 host 安装策略                           |
-| 020  | OpenAI realtime transcription 自定义 base URL     | 上游原生支持兼容 provider 的 realtime URL              |
-| 021  | OpenAI-compatible 媒体 provider 隔离              | 上游按能力隔离语言、图像与视频配置                     |
-| 022  | reset 后保留 JustDo display history               | 上游支持 context-only reset 与展示历史独立控制         |
-| 023  | 受管 session fork 目标 key 与 assistant cut       | 上游 `sessions.fork` 提供等价授权与生命周期 fencing    |
+先使用公开 Gateway/SDK。需要原生 tool/hook/session extension 时通过受控 Extension；只有锁定 pristine 包缺少且公开能力不能表达的语义才评估补丁。
 
-当前目录只对 pristine `openclaw@2026.9.2` 有效。旧 marker、历史补丁或部分应用状态必须明确失败；处理方式是从 source lock 重建，而不是原地迁移。
+当前 Runtime Services 提供受限 history detail、回执和进度等投影；AskUserQuestion/Plan/automation/agent-team 等承担各自运行时能力。它们不建立第二份 transcript 或调度器。
 
-## 3. Gateway API 与 wire 边界
+同一个功能可能同时依赖原生契约和窄补丁，例如原生 history 加产品 display-history 边界。不能标成“全部由补丁实现”，也不能因为主 API 原生存在就忽略打包后的补充契约。
 
-| 域               | 当前方法/事件                                                           | JustDo 稳定化                                                                           |
-| ---------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| Chat             | `chat.send`、`chat.history`、chat/agent/tool/lifecycle events           | session/run/generation、history takeover、thinking/tool timeline                        |
-| Sessions         | `sessions.subscribe/list/get/describe/resolve/patch/abort/delete`       | managed identity、model patch、分页与终态映射                                           |
-| Tasks            | `tasks.list`、`tasks.get`、`task` event                                 | `pending/running/done/failed/killed/timeout` DTO；`taskName` 是机器标识，`label` 是标题 |
-| Approvals        | `exec.approval.*`、`plugin.approval.*`、`exec.approvals.get/set`        | fail-closed policy、交互 modal、session grant                                           |
-| Skills           | `skills.status`、`skills.update`                                        | manifest、用户文件和 UI                                                                 |
-| Cron             | `cron.get/list/add/update/remove/run/runs`、config revision、cron event | account policy 隔离、management 分类、增量事件、enqueue receipt、readAt/catch-up        |
-| Runtime services | `runtimeServices.historyDetails` 与扩展事件/provider                    | 有界 `operator.read`、progress、embeddings                                              |
-| Plan mode        | `planMode.list/resolve`、`plugin.plan-mode.requested/resolved`          | pending 交互恢复、批准前持久化关闭模式                                                  |
+## 3. 身份与终态核对
 
-所有 v2026.9.2 专用响应先经过 `src/main/engine/openclaw/wire/v2026_9_2.ts`。Adapter 对 Renderer 只暴露稳定 DTO，不把上游内部的 `succeeded`、`lost`、cursor shape 或 bundle 类型泄漏到 shared contract。
+原生 session key、实例 ID、run ID、task ID、entry ID 和产品 sessionId 各有用途。升级重点不是名字没变，而是返回值是否仍能证明目标身份、分支和 generation。
 
-## 4. Session 存储与旧数据迁移
+Stop 需覆盖 native queue、已完成祖先下的活动后代、部分取消失败、立即终态与审批撤销。required-child join 不能由 Renderer “还有子任务”提示替代。completed+blocked 必须保持 blocked。
 
-JustDo 不再直接读写活动 OpenClaw `sessions.json`：模型更新使用 `sessions.patch`，历史使用 `chat.history`，tool input 与 compaction detail 由 runtime services 的受限 `operator.read` RPC 获取。
+tool_calls finish reason 不能被当作最终回答完成；一次 tool error 也不是 run terminal。实时、回执、历史和恢复 snapshot 必须对同一身份收敛。
 
-检测到 legacy `sessions.json` 时，Gateway 启动被 migration coordinator 阻止。流程固定为 dry-run plan → 用户确认 → 无 workspace 的已验证备份 → doctor import → validate/inspect/integrity → receipt。取消或任一步失败都保留旧状态且不启动空 Gateway；成功 receipt 使后续启动不重复导入。
+## 4. 持久数据与恢复
 
-## 5. Subagent 与 task 不变量
+原生 SQLite transcript 是消息权威，产品只保留索引与回执。完整应用重启与同进程 Gateway 重启通过 app-start 边界区分；计划审核恢复、Goal 恢复和协作未知状态分别处理，不自动重放副作用。
 
-```mermaid
-flowchart LR
-  S[spawn accepted] --> Q[pending queue]
-  Q --> R[running slot]
-  R --> T[terminal task]
-  T --> J[required-child native join]
-  J --> P[parent continuation]
-```
+升级读取历史要验证 reset 前后 display/model-context、分页 offset、超大行补取、工具输入和失败 detail。不能只检查新会话第一条回复。
 
-- `maxConcurrent` 限制 running，不把已接受的 queued child 变成错误；run timeout 从真正 running 开始。
-- 父 agent 在所有 required child 终态被消费前不能提交最终结束；fire-and-forget 不形成该 obligation。
-- Task ledger/event 是事实源。`tasks.list/get` 的 cursor、status 与 terminal projection 由版本化 validator 校验。
-- 同一 JustDo 进程中的 Gateway 重启可恢复 task；完整 app 重启通过 patch 008 终止旧 app-start 接受的 task。
-- UI 的 active 聚合与 stop 递归是产品投影，不替代 Gateway 原生 queue/join 状态机。
+## 5. 验证步骤
 
-## 6. Compaction、context 与 progress
+1. 确认 package/source-lock 与 pristine npm 产物一致。
+2. 运行原生契约检查，识别已上游化能力和新增差异。
+3. 对照补丁总账决定保留/删除/重写，从 pristine 重建。
+4. 验证 SDK 动态加载与 Gateway bundle 共享能力注册，尤其 scoped access。
+5. 运行 Adapter wire、Extension、controller/history 和打包资源测试。
+6. 用最终目标运行时检查启动、发送、审批、停止、重连、历史和平台工具。
 
-Config sync 使用原生 safeguard compaction、1800 秒 timeout、关闭 memory flush、启用 mid-turn precheck，其余保持上游默认。旧 Codex-local compaction instructions、context-budget 和 recovery 补丁已删除。
+## 6. 证据如何记录
 
-原生事件是最终事实；runtime services 只补充 JustDo 所需的安全进度与只读 detail。验收覆盖 pre-turn、mid-turn、manual compact、provider overflow、timeout/auth/network/no-progress 和 abort，不能只检查最后是否出现 summary。
+契约测试证明产物形态或协议；行为测试证明指定场景；真实模型测试证明该次交互；安装包验证证明对应平台与资源。四者不能互相替代。
 
-## 7. Tool-call finish reason 边界
-
-JustDo 内置 loopback 模型服务必须遵守响应契约：存在完整、结构化且工具名已知的 `tool_calls` 时，最终 `finish_reason` 必须为 `tool_calls`。普通可见文本、不完整参数或未知工具不得被 JustDo 推断为调用。
-
-第三方 provider 继续使用 OpenClaw v2026.9.2 上游安全规则；尤其不能恢复旧 patch 045 去放宽“可见文本 + `finish_reason=stop`”响应。Pristine contract tests 验证该安全边界。
-
-## 8. 升级与测试证据
-
-每次升级对每个 RPC/event/patch 分别检查 Native、Patched、Adapted、Presented 四层：
-
-| 层        | 证据                                                                  |
-| --------- | --------------------------------------------------------------------- |
-| Native    | 锁定 tarball、上游源码/schema、pristine contract test                 |
-| Patched   | 唯一 anchor、首次 apply、二次字节不变、source/bundle verify、歧义失败 |
-| Adapted   | wire validator、adapter/config/scheduler/IPC tests                    |
-| Presented | preload、Renderer reducer/controller/component 行为测试               |
-
-运行时 manifest 绑定 npm integrity、tarball SHA-256、Node major、构建 recipe 和最终 bundle。开发 runtime 是冻结快照；目标版本变化时自动从锁定 pristine 包重建，同版本强制重建需显式 force install。
-
-最低验收场景包括：thinking 实时与历史一致；多个 subagent 在 `maxConcurrent=1` 排队且父 agent 等待；审批到期/恢复；compaction overflow；cron 无外发；embedding proxy；manual reindex；Windows MCP/Chrome launch；迁移取消和各失败点；同进程 Gateway restart 与完整 app restart 的不同 task 边界。
-
-新增或移除 Gateway 调用、patch 或 bridge method 时，同步本矩阵、`05-agent-engine.md`、patch README、patch guide 和对应行为测试。
+报告失败时保留阶段、原生/产品身份和脱敏错误，不复制 raw transcript 或凭据。发现缺口写成明确限制，不通过恢复旧消息缓存、扩大权限或盲目重试把 UI 暂时修成绿色。

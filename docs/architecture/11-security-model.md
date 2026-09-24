@@ -1,236 +1,106 @@
-# 安全模型
+# 安全模型：能力边界与剩余风险
 
-Extension 的 outbound-header 能力只能通过根目录 `outbound-header-policy.json` 声明。Main 对文件
-位置、大小、schema、HTTPS target、loopback、Header 名称和 `user-info` 引用做 fail-closed
-校验；安装前检查用于尽早拒绝无效包，安装后以 canonical installed path 的严格 readback 为
-运行时权威。声明只保存在 Extension 目录中，Header 值仍来自受管 user-info。Extension、Hook
-与 Gateway runtime 都不能写永久
-保留的手工 `outbound-header-proxy/config.json`。Proxy capability 不通过 Renderer/Extension API
-下发，但 Gateway 同进程内的 Node Extension 可以读取 Gateway 环境变量，因此 sidecar 是协作式
-配置声明，不是恶意插件的进程级网络沙箱。安装并启用 Extension 后规则自动生效，不另建审批
-token、授权记录或 SQLite 表；本地与 Marketplace 来源使用相同校验。
+本页描述当前代码实施的控制，不把配置声明当成所有平台的实测保证。安全目标是让外部内容、模型参数、Renderer 请求和插件包只能通过明确能力访问用户资源；已有边界也有可见限制。
 
-本文按 `v2026.8.12` 的 Electron window、preload/IPC、权限 coordinator、文件/网络服务、plugin import、Gateway manager 和测试重写。它记录当前防线，也明确仍需关注的风险。
+## 1. 威胁与资产
 
-## 1. 资产与攻击面
-
-需要保护：模型/API 凭证、Gateway/extension/browser relay token、用户文件与 workspace、SQLite 会话内容、OpenClaw state/transcript、系统代理凭证、工具执行权限和无人值守 cron 权限。
-
-主要不可信输入：Renderer payload、模型生成的 tool 参数、Gateway/extension/Marketplace/MCP 响应、用户选择的目录/压缩包、remote URL/redirect、历史 transcript、外部页面和本地其他进程。
-
-## 2. 信任边界
+需要保护的资产包括用户项目、原生历史、模型与代理凭据、浏览器状态、工具执行权限和无人值守任务。输入来自模型、网页、附件、MCP、Marketplace、外部客户端及可能失陷的 Renderer，不能因“运行在本机”而免除验证。
 
 ```mermaid
 flowchart LR
-  R[Renderer\nuntrusted web boundary]
-  P[Preload\ncapability bridge]
-  M[Main\npolicy authority]
-  G[Gateway\nmanaged local process]
-  X[Extensions/MCP/tools]
-  F[Filesystem/SQLite]
-  N[Network/providers]
-  R --> P --> M
-  M <--> G
-  G --> X
-  M --> F
-  M --> N
-  G --> N
+  External[网页 / 模型参数 / 插件包] --> UI[Renderer / guest]
+  UI --> Bridge[最小 preload / guest bridge]
+  Bridge --> Main[Main 校验与授权]
+  Main --> Files[文件 / SQLite / 系统 API]
+  Main --> Gateway[受管 Gateway]
+  Gateway --> Tools[工具 / MCP / Extension]
+  Gateway --> Sandbox[可选 MXC 命令沙盒]
 ```
 
-Gateway 是受管组件但其 event/payload 仍需运行时验证；extension/Marketplace/MCP 更不能默认可信。
+Gateway 是受管组件，但其可加载的 Node Extension 与宿主工具仍有高权限。插件声明、提示词和“只读”文案不能代替实际运行时策略。
 
-Renderer 的通用 fetch IPC 不具备 outbound-header 注入能力。模型 discovery/test 通过显式 purpose
-进入 Main，且必须匹配允许的 method、endpoint、header 与 body；连接测试的固定消息和 token 上限
-由 Main 校验并重建，不能借此发送任意模型请求。标题生成和 MCP probe 走各自的 Main 内部入口。
+## 2. Electron 与网页隔离
 
-## 3. Electron 防线
+主窗口启用 nodeIntegration=false、contextIsolation=true、sandbox=true 和 webSecurity；图片预览也是独立沙箱窗口。外部 guest 由 Main 强制固定 preload、合法 partition、无 Node 和导航策略。普通网页不能继承主 Renderer 的 window.electron。
 
-`mainWindowFactory` 当前设置：`nodeIntegration:false`、`contextIsolation:true`、`sandbox:true`、`webSecurity:true`、生产禁用 DevTools、禁 WebSQL、禁页面 dialogs、禁 drag-drop navigation。Preload 是唯一系统桥。
+当前生产源码没有主动追加 no-sandbox。发布检查仍需查看实际启动参数和平台环境，不能仅凭 BrowserWindow preference 宣称 OS 级隔离始终可用。
 
-OpenClaw 命令执行另有可选的 Windows 原生任务沙盒。它使用 MXC Windows
-ProcessContainer、显式文件系统根和默认阻断的网络 capability 限制命令进程，和 Chromium
-Renderer sandbox 是两条不同的安全边界；具体威胁模型和生命周期见
-`17-windows-native-sandbox.md`。
+应用 CSP 针对应用 origin/file 页面生效，允许 PDF.js 所需 wasm-unsafe-eval，生产不允许普通 JS eval；style 保留 inline，connect-src 仍为 self + 通配，frame 允许 self/http/https。它不是网络访问白名单。Markdown、Mermaid 和公式输出仍需统一清洗。
 
-新窗口通过 `setWindowOpenHandler` 拒绝内嵌创建并交给 `shell.openExternal`。这里仍要求调用方/handler限制允许协议；不能把任意 `file:`、自定义 scheme 或 credential URL 当安全外链。
+外链、guest 导航、子 frame、下载和权限请求分别验证。应用自己的认证弹窗不能被网页或 Agent 输入锁劫持；导航、超时和窗口销毁应取消所属请求。
 
-Main 在 Linux/Windows启动参数中加入 `no-sandbox` 以处理平台/管理员 GPU 降权问题，这与 BrowserWindow 的 sandbox preference 存在平台实际差异。威胁模型不能宣称 OS sandbox 在这些平台始终有效，因此 IPC 最小化和输入验证尤为关键。
+## 3. IPC 与资源所有者
 
-## 4. CSP
+Main 将 payload 当 unknown 处理，验证类型、枚举、大小、长度、路径、URL、调用来源和资源归属。TypeScript 只能约束编译期，不能证明请求安全。
 
-生产 CSP：default/script self；style self + inline；image self/data/http/https/localfile；font self/data；media self；worker self/blob；frame self。开发 script 额外允许本地 Vite/HMR。
+网络取消、PDF 读取、编辑 grant 等按 sender/request 绑定；另一个窗口不能凭同名 requestId 使用资源。浏览器 webContentsId 需同时满足窗口归属、类型、partition 和真实 storage path，不能只检查 ID 存在。
 
-当前 `connect-src *` 为 provider/Gateway/插件连接提供广泛网络能力，是明确剩余风险；CSP 不能代替 Main network policy。Markdown HTML 仍必须 DOMPurify 清洗，Mermaid/KaTeX output也不能绕过 sanitizer。
+preload 只暴露具体方法和可解除订阅，兼容 IPC 也限白名单。返回数据只包含 UI 所需内容，不返回任意文件句柄、完整配置或 credential object。
 
-## 5. Preload 与 IPC
+## 4. 四种不同权限控制
 
-- 只暴露语义 namespace；禁止通用 invoke/send。
-- 订阅封装 handler 并返回 unsubscribe，避免旧页面 listener 接收敏感事件。
-- Main 将 payload 视为 unknown：枚举、长度、数量、URL、path、numeric range 和 record shape 均校验。
-- 返回值只包含 UI 需要字段；Error、child process、DB handle、完整 config 不跨边界。
-- request cancellation 绑定 `event.sender.id`，另一个 Renderer 不能取消其请求。
-- preview authorization 和 pending operations 绑定 sender；sender destroyed 自动取消/撤销。
+| 控制面                             | 决定什么                  | 不能替代什么               |
+| ---------------------------------- | ------------------------- | -------------------------- |
+| Session permissionMode/root        | 当前会话文件/命令执行策略 | 其他会话或全局授权         |
+| Exec/plugin approval               | 某次或受限范围的原生授权  | UI 关闭不代表允许          |
+| Session visibility / scoped access | 跨会话读取和发送范围      | 文件沙盒                   |
+| Windows MXC sandbox                | 工具子进程可见文件和网络  | Main、模型 API、浏览器隔离 |
 
-## 6. Agent 权限
+ask/auto/full 映射原生 guarded/workspace/full。权限期望先保存产品会话，活跃期间延迟应用，下一 turn 必须回读核对 mode/root 成功；失败不提升全局权限兜底。
 
-产品模式 ask/auto/full 映射为 OpenClaw 原生 session `guarded/workspace/full`。每个 turn 前以 `sessions.create` 幂等写入并核对 `permissionMode` 与规范化 `sessionRoot`。显式切换先把用户期望值写入 SQLite；空闲时立即同步，run 活跃时允许操作并延迟到终态后台应用。同步失败保留待应用状态，不恢复旧权限；下一 turn 必须严格收敛成功才能发送。全局 config 固定 restricted fallback，不能因某个会话选择 Full 而提升其他会话。
+审批由原生请求生命周期拥有，Main 检查 kind、允许决策和请求身份。期限到达、停止、撤销与重复回复均要收敛，不能因为 Renderer 没收到 dismiss 就继续接受许可。计划模式和 scheduled-task mutation 另有原生扩展门禁。
 
-Exec 与 plugin approval 分开。allow-once/allow-session/allow-always/deny 只有 Gateway/shared contract允许的组合可提交；session grant 绑定 session key并在 terminal/stop/delete 清理。UI modal 关闭不能等同允许。
+协作发送使用可信调用上下文与精确目标实例，限定任务成员、轮次和有效期。助手禁用/删除是产品入口限制，不等于撤销所有原生或外部客户端授权。
 
-命令与插件审批使用 OpenClaw 原生等待机制；计划任务变更可在原生上限内选择 2/5/10 分钟，不影响 exec 或其他插件。UI 只展示 Gateway 给出的期限，不自行延长后端请求。
+## 5. 文件读取、编辑与产物
 
-OpenClaw 原生 session mode 同时约束管理型文件工具与 exec reviewer。受保护的 `automation-permission` extension 直接读取原生 session mode，补足 scheduled-task mutation 门禁；它不保存独立模式，缺失时 Gateway readiness 失败。定时任务不创建额外的信任域，也不按助手身份或 cron-run session key 豁免审批。
+文件预览不是通用 fs API。扩展名、普通文件、symlink、realpath、大小和文件身份需在读取边界检查。编辑 token 绑定 canonical path、owner、版本摘要和期限；真正写入重新验证，采用同目录临时文件与原子替换，冲突显式返回。
 
-`tools.sessions.visibility` 是独立的跨会话读取与消息范围，不等同于文件/命令 permission mode。它由“设置 → 配置”的 `self/tree/agent/all` 选择生成，默认 `tree`；旧 `agentRuntimeSettings:v1` 缺少字段时同样回填 `tree`，避免升级后静默扩大到同 Agent 的全部会话。OpenClaw 默认对沙盒会话施加 spawned-only clamp，有效范围统一为当前任务树；这会收窄 `agent/all`，但也意味着沙盒内的 `self` 不能被产品文案描述为绝对的单会话安全边界。
+浏览器 Agent 上传限任务工作区内真实普通文件；PDF/下载目标验证真实父目录、拒绝覆盖并做 canonical reservation，防止并发争抢同一产物。取消和窗口销毁释放 reservation 并清理部分文件。
 
-## 7. 命令与工具
+`localfile://` 当前转换成 net.fetch(file://...)，保留文件名转义和 UNC host，只规范化 Windows 盘符分隔符；没有内建 allow-root/token。它是敏感展示入口，不能描述成通用安全文件服务器。
 
-命令安全属于 Main/Gateway policy，不在 Renderer字符串过滤。工具名必须使用声明的 core contract，不猜 alias；参数审批展示实际 command/path/action。高危动作不能因模型声称“用户已同意”而跳过。
+## 6. 插件包与代码信任
 
-Extension/MCP stdio 会启动子进程：command、args、env、cwd 来源需验证，secret 环境不可打印。受管目录锁诊断只终止可证明属于应用/Gateway 的 PID，不能杀任意系统进程。
+解包拒绝 traversal、绝对/别名路径、symlink、特殊文件、重复项和过大展开。目标必须位于精确受管根；删除系统或父 Extension 托管项不能由 UI 任意构造 path 完成。
 
-## 8. 文件读取与预览编辑
+Extension 导入审查 capability surface、operator grants、来源和 integrity，再以 reviewToken 绑定同一内容。审查后重新校验，包变化就失效。已安装 inventory 才是运行态事实。
 
-Preview 只支持 shared allowlist extension，最大 2 MiB。读取流程用 `lstat` 拒绝 symlink/非普通文件，realpath 后再次核对 extension、device/inode、size/mtime，防 TOCTOU。
+这些检查减少安装错误和未授权能力，不把 Node Extension 变成恶意代码沙盒。它可能读取 Gateway 进程环境；安装可信代码仍是重要信任决定。
 
-读取生成随机 edit token，绑定 canonical path、file identity、SHA-256 version、Renderer owner 和 30 分钟 TTL；最多 128 个 grant。真正编辑需二次 authorize，写入时再次核对 owner、version/identity与大小。写采用同目录 `wx` 临时文件、flush、最终核对后原子 rename；冲突由用户选择 cancel/overwrite/reload。Drawer 关闭会 revoke。
+## 7. 凭据与认证
 
-`shell.openPath/showItemInFolder` 与 preview read 分离；相对路径按明确 cwd 解析。用户选择 dialog 是授权信号，但后续用途仍需验证。
+| 载体                         | 当前保护与限制                                                 |
+| ---------------------------- | -------------------------------------------------------------- |
+| Gateway token                | 本地认证能力，只交集中式聊天 client；不进入日志/Redux          |
+| Chrome app-server capability | 每进程随机，连同 path/Origin 验证；与 relay/Gateway token 分离 |
+| Multica bridge token         | 当前用户受限发现文件与认证管道                                 |
+| 内置模型 JWT                 | 短期、账号绑定、派生快照与 exec SecretRef；退出/到期清理       |
+| 自定义模型秘密               | 产品配置来源及受限权限派生 file SecretRef；不宣称全部 OS 加密  |
+| 导入浏览器密码               | browser-import.sqlite 内 safeStorage 密文，Renderer 不读取     |
 
-内置浏览器的上传在实际注入前重新解析任务工作区内的真实普通文件。Agent PDF 与下载目标除 canonical workspace 校验和拒绝覆盖外，还按真实父目录建立进程级 reservation；同一 canonical 目标的并发 claim 失败，完成、取消、超时或 Tab 关闭时释放。PDF 使用 `wx` 创建，下载只把已占用的 canonical 路径交给匹配 guest 的 Chromium 下载事件。
+appConfigCredentials 当前兼容读取早期 OS 加密记录并清空旧 builtin 引用，不统一加密新的自定义 key。数据库整体也没有全库加密。二进制 JWT 包装不能防同用户逆向，bearer token 在有效期内仍有重放风险。
 
-## 9. `localfile://` 风险
+内置模型服务端校验 JWT 签名与 Team 授权，X-User-Account 不能独立授权；客户端不持有服务端 master key。登录交接、模型发现、SecretRef 解析及服务端拒绝要分别诊断。
 
-当前 protocol handler把 URL pathname decode 后交给 `net.fetch(file://...)`，用于本地图片展示，但代码本身没有 allow-root/token检查。安全性依赖只有受信 UI 生成 URL、CSP 和 Renderer 无任意导航。它应被视为敏感攻击面；新增使用时必须限制来源，不能把它描述成通用安全文件服务器。
+## 8. 网络请求与出站请求头
 
-## 10. Plugin 文件安全
+Electron session、Main fetch 和 Gateway 子进程是三个作用域。代理切换按 generation 串行处理，避免旧连接和全局 env 污染。模型连接测试通过受限 purpose 入口校验 method/endpoint/body，通用 fetch 不拥有任意请求头注入权。
 
-- Skill/Hook/Extension目标必须在精确 managed root，删除前 canonicalize。
-- archive 支持类型有限；ZIP 逐 entry 在写入前拒绝 traversal、绝对/Windows 别名路径、symlink、特殊文件和重复项，并限制展开规模；解压后的递归 symlink 检查作为纵深防御。
-- built-in/protected item（如受管 runtime services、built-in Hook）不可普通覆盖/删除；退役 permission extension 由同步代码定向清理。
-- Extension CLI 有 300 秒 timeout与 64K 输出上限；成功需明确模式和重新列举。
-- Marketplace response 逐字段 allowlist、长度/数量限制，provider error 脱敏；prepared payload finally cleanup。
-- MCP config/remote resource 不进入 DOM 前需 normalize；credential/env 不记录。
+Extension sidecar 只声明 HTTPS 目标、Header 名称和受管 user-info 引用，不包含值，不写永久手工配置。安装后 canonical readback 决定有效声明；代理选择性注入，不把凭据下发 UI。此机制是合作式配置，不是阻止恶意 Gateway 插件读取环境的沙盒。
 
-## 11. 网络与代理
+远程 URL、redirect、loopback 及内网访问按具体服务校验，不因 CSP 通配而免除 SSRF 防线。原生网络工具与浏览器网页内容仍作为不可信模型输入。
 
-网络分三条作用域：Electron session、Main fetch、Gateway child。系统/custom/direct preference 串行应用 generation，Electron切换后 `closeAllConnections`；custom URL 写入 env 时可能含 credential，日志只说已启用，不输出 URL。
+## 9. 日志、更新与剩余风险
 
-Main `api.fetch` 使用 Electron session，取消键绑定 sender/request id；outbound header policy 只对 allowlisted origin/name匹配时注入，并拒绝不安全值。日志记录 source、origin、随机 request id 和注入数量，不记录值。
+日志记录状态、计数、脱敏来源和必要身份，不记录 token、原始认证头、完整配置及用户内容。Gateway 摘要会省略事件；排障原生 JSON 时先检查上下文隐私，不能直接提交到仓库。
 
-Gateway child 与显式 opt-in 的 OpenClaw one-shot CLI 通过 selective outbound header proxy 和独立
-env；当前 memory index CLI 属于 opt-in consumer，memory search 使用 Gateway RPC。动态 bypass 当前本地 Gateway port，避免
-loopback RPC 被系统代理。代理是本机网络边界，需防任意本地调用者、过宽 MITM 与全局 env 竞态；
-详见功能审计文档。
+Windows updater 当前 verifyUpdateCodeSignature=false。构建的 hash/更新 artifact 校验不能被宣传为已完成发布者签名验证。runtime source lock、补丁和二进制 hash 校验也不能取代安装渠道的信任。
 
-## 12. Token 与 Secrets
+剩余风险至少包括：广泛 connect-src、localfile 缺少 token/root 授权、同用户本地凭据可访问面、可信 Node 插件、共享项目写冲突，以及不同平台实际隔离差异。文档不能用“本地优先”隐藏这些边界。
 
-- Gateway token 是随机 24-byte hex，存 state `gateway-token`，通过 child env/launch arg 使用；不得写日志。
-- Browser extension relay token 是 32-byte hex，host-local 文件用 exclusive create 和 `0600`，配对复制到剪贴板但 status API不回 token。
-- 新版内置模型不使用长期客户端 key。Main 从登录组件维护的 `user_info.json` 读取 mtoken 与 `X-User-Account`，向显式配置的 mtoken2jwt 地址申请非对称签名 JWT，要求 JWT `sub` 匹配账号；`X-Cookie` 留给既有登录/工具权限链路。SQLite 中的 builtin provider 始终写空 `apiKey`，OpenClaw 配置仅保存 `justdo_login` exec SecretRef，Main 将已校验的 JWT/account 写入受限权限的二进制派生快照，Gateway 通过管道解析到内存，Gateway env 与 Renderer 不含 JWT。文件轮换调用 `secrets.reload`；logout、临近过期与 shutdown 均 fail closed。JWT 仍可在剩余有效期内重放；彻底防重放需设备密钥绑定。
-- LiteLLM master key 只留在服务端管理面。新版数据面以自定义 Hook 校验 JWT，再从 PostgreSQL 解析唯一 JustDo-managed Team；Team 长期执行模型白名单、blocked、预算和限流，不为新用户创建 Virtual Key。`X-User-Account` 继续映射为 Customer/EndUser，但不能单独授权。历史共享值只在独立 legacy 数据面注册为一枚受限、不可续期的 30 天 Virtual Key，且迁移前必须旋转旧 master key；到期后未升级客户端停止模型服务。
-- `AskUserQuestion` 只通过已认证 Gateway 的 scoped `plugin.ask-user-question.*` event、`askUserQuestion.*` RPC 与固定 Electron IPC 流转；Main 和 extension 都按稳定 id 校验 Renderer 回传，extension pending record 是最终权威。该链路没有额外 HTTP listener、callback secret 或开放端口。
-- Provider API key、proxy password、MCP env、Marketplace内部字段和 auth header 不输出。
-- Renderer encryption helper不能被当作强 secret vault；真正凭证的落盘/传输边界由 Main/provider config负责。
+## 10. 安全回归按攻击路径组织
 
-## 13. 日志与隐私
+验证恶意 IPC payload、跨窗口 resource ID、symlink/路径别名、解包逃逸、审查后换包、凭据轮换、取消后的迟到请求、跨任务 send、审批过期和禁用扩展后的残留入口。测试位置包括 Main window/network/filesystem、IPC、permission coordinator、插件 import 和 runtime extension tests。
 
-Main log 使用模块 prefix；只记录 ids/fingerprint/计数/状态和脱敏 origin。不得记录 prompt全文、tool credential、Authorization、完整 session key、用户 header 值或原始 Marketplace error。
-
-Gateway condensed log刻意省略高频/敏感细节。native JSON log可能包含用户内容，只用于本地排障，不加入 commit；分享片段前检查上下文。日志导出 zip 是显式用户动作，也应限制到受管 log目录。
-
-## 14. 数据库与本地状态
-
-SQLite 和 OpenClaw state含敏感会话/路径/配置，依赖 OS 用户目录权限；当前没有全库加密。删除 session/result 时应清对应 transcript/artifact，但备份/WAL/上游 provider 已接收数据无法由本地删除保证抹除。
-
-Legacy schema destructive reset只有严格列缺失检测才执行；误判是数据可用性风险。插件/结果清理必须失败保留可恢复记录，不制造半删除。
-
-## 15. Browser 模式
-
-isolated、user、extension、embedded 四种模式具有不同 cookie/profile/人工确认边界，且任一时刻只启用一个 `browser` Tool 提供方。Extension relay只监听 loopback并要求 token；打开 remote debugging/extension management 是显式用户动作。embedded 仅操作应用内 `persist:justdo-browser`、隔离的 `persist:justdo-browser-imported` 及经严格名称校验后创建的本地命名 partition，不连接外部 Chrome；注册 guest 时以 Electron session 的真实 storage path 复核 partition，不能信任 Renderer 声明。Tool 路由固定为当前桌面 `host`，不接受 node 或 sandbox 拓扑。无人值守用户浏览器不能宣称绕过 Chrome 的首次安装/授权安全提示。
-
-当前扩展仅在 `attach` 时强制校验tab group membership；`cdp`、`closeTab`、`activateTab` 没有同等级校验，Unpair也只清配对storage/socket而不主动detach既有debugger attachment或清理group。因此tab group目前是可见授权信号，但还不是完整的命令级capability边界；修复前不得宣称组外tab绝对不可控制或撤销立即释放全部调试权限。
-
-## 16. 更新与供应链
-
-依赖由 lockfile固定；OpenClaw runtime按版本、patch manifest、freeze/prune tests验证；Windows打包包含固定 MinGit/Python与 hashed Python requirements。Extension/Marketplace 安装仍是执行第三方代码的供应链入口，需要显示来源/版本/权限并支持失败清理。
-
-Auto update仅在受支持的已安装 Windows构建启用。当前 builder `verifyUpdateCodeSignature:false` 是明确风险，需要由可信 HTTPS feed、artifact manifest/发布流程补偿；不能在文档中声称客户端执行了代码签名验证。
-
-## 17. 已知限制
-
-- Linux/Windows进程级 `no-sandbox` 降低 Chromium OS sandbox保障。
-- CSP `connect-src *` 过宽。
-- `localfile://` handler没有内建 allow-root/token。
-- SQLite/OpenClaw state未全盘加密。
-- Gateway token目前可经受控 preload API供本地 chat连接，扩大了 Renderer被攻陷后的影响面。
-- 通用 `api.fetch` 的 URL/method/header/response size约束仍应持续加强。
-- Windows updater禁用了客户端签名验证。
-
-这些不是移除现有防线的理由；涉及这些区域的变更必须单独 threat review。
-
-## 18. 安全评审清单
-
-1. 输入是否来自 Renderer/model/Gateway/第三方？运行时如何验证？
-2. 是否新增路径、URL、command、archive 或 credential？边界和上限是什么？
-3. 是否可能跨 session/run/Renderer owner 混淆授权？
-4. config sync失败是否 fail closed？scheduler 是否仍无人值守安全？
-5. 是否记录了 secret、用户正文、完整 key/path或第三方原始错误？
-6. 删除/覆盖是否 canonicalize目标、处理 symlink/TOCTOU并可恢复？
-7. 事件乱序/重连/重复是否可能绕过审批或生成假终态？
-8. 新依赖/patch/runtime资产如何锁定和验证？
-9. 是否补充失败、跨 owner、超限、竞态和回滚测试？
-10. 是否同步安全、IPC、数据或插件文档？
-
-## 19. 威胁到控制映射
-
-| 威胁                          | 主要控制                                               | 剩余风险                                  |
-| ----------------------------- | ------------------------------------------------------ | ----------------------------------------- |
-| Renderer XSS 获得特权         | context isolation、无 Node、专用 preload、DOMPurify    | preload 中 token/通用接口仍扩大影响面     |
-| 恶意 Gateway/model payload    | shared normalize、domain admission、Markdown 清洗      | 新 event/schema 若绕过统一 pipeline       |
-| 路径 traversal/symlink escape | Main canonicalize、managed root、archive validation    | TOCTOU 与 `localfile://` 全局边界仍需收紧 |
-| 命令越权                      | command safety、exec approval、session grant           | full/unattended policy 本身具有高权限     |
-| Credential 泄露               | Main-only storage、日志脱敏、公开字段投影              | 本地明文 state/剪贴板 pairing token       |
-| SSRF/任意网络访问             | Main fetch validation、proxy policy                    | `connect-src *` 与通用 fetch 面仍较宽     |
-| 供应链篡改                    | lock/hash、fixed runtime、patch verify、artifact tests | updater 客户端签名验证当前关闭            |
-| 跨 session 授权混淆           | session/run owner、终态 grant cleanup                  | 乱序/错误映射需持续回归测试               |
-
-## 20. Approval 生命周期
-
-```mermaid
-stateDiagram-v2
-  [*] --> Requested
-  Requested --> AllowedOnce: explicit allow
-  Requested --> AllowedSession: scoped grant
-  Requested --> Denied
-  Requested --> Cancelled: session stop/shutdown
-  AllowedSession --> Cleared: terminal/delete/disconnect cleanup
-  AllowedOnce --> [*]
-  Denied --> [*]
-  Cancelled --> [*]
-  Cleared --> [*]
-```
-
-批准必须绑定 kind、session key、run/request identity；exec 与 plugin approval 不共享泛化 grant。UI modal 关闭不等于批准或拒绝，Main/Gateway 的 resolve 结果才是权威。Scheduler 不走等待交互的生命周期，而使用受管无人值守策略。
-
-## 21. 文件操作检查顺序
-
-1. 验证输入类型、长度和禁止字符。
-2. 解析为绝对 canonical target，验证位于明确 allow root。
-3. 对现存对象检查 symlink/reparse point；archive 对每个 entry 检查 traversal。
-4. 在覆盖/删除前展示精确目标并取得所需授权。
-5. 使用最小权限 API执行，避免 shell 字符串拼接。
-6. 处理检查与使用之间的变化，必要时重新验证 parent/target。
-7. 返回稳定结果，日志不输出用户内容/secret；临时目录在 finally 清理。
-
-## 22. 安全日志规则
-
-允许记录模块、操作类型、稳定 error code、耗时、脱敏 id 和必要路径类别；禁止记录 token、API key、Authorization、完整 credential/config、原始 prompt、未清洗第三方响应。Gateway condensed log 仍可能含 80 字内容预览，分享前必须人工审查；native JSON log 不得加入仓库。
-
-## 23. 安全测试要求
-
-高风险 handler 至少测试空/超长/错误 enum、路径越界、symlink/archive traversal、重复/乱序 approval、session owner 不匹配、shutdown pending cleanup、日志脱敏和失败回滚。网络路径测试 loopback、代理 bypass、redirect、timeout/size；渲染路径测试 script/event handler/危险 URL/超大 Mermaid/KaTeX。
-
-## 24. 剩余风险治理
-
-已知限制应有 owner、缓解控制和收紧时的兼容计划。收紧 CSP/localfile/token API 可能影响 chat media 或本地连接，必须先枚举 consumer；恢复 Chromium sandbox 需验证 native/runtime/平台启动；启用 updater 签名验证需与实际签名发布链一起交付，不能孤立切开关后让所有更新失败。
+只运行正常安装和正常发送无法证明边界成立；新能力应明确最小权限、所有者、销毁点及失败关闭方式。Windows 工具隔离细节见[原生沙盒](17-windows-native-sandbox.md)。

@@ -1,512 +1,119 @@
-# Plugin 系统
+# 插件系统：管理状态、文件事务与运行能力
 
-OpenClaw Extension 可以在根目录携带 `outbound-header-policy.json`，声明由 JustDo 托管的
-outbound-header 规则。该文件只能包含 HTTPS 目标、Header 名称和同名 `user-info` 引用，不能
-包含凭据字面值或可执行 Hook。已安装、已启用且 sidecar 校验通过的 Extension 自动贡献
-effective policy；本功能没有独立权限弹窗、审批 token 或 SQLite 状态。
+插件页组合多种能力，但它们不是同一种安装单元。本文以 Main 插件服务、原生 API、配置同步和 Extension 注册为依据，说明读取、启停、安装和恢复各由谁负责。
 
-Main 将产品默认、永久保留的手工 `outbound-header-proxy/config.json` 和 Extension 贡献
-合并为统一策略；Extension 永远不能写手工配置文件。Gateway generation 通过本地 Proxy 获得
-策略，标题生成、模型测试和 MCP 测试继续通过 Main 的共享 matcher 显式 opt-in。手工文件的
-`enabled: false` 是保留的全局 kill switch，会同时停用 manual 与 Extension 贡献。
+## 1. 类型与所有权
 
-安装前校验来源 sidecar，安装后从最终目录重新读取；最终安装目录是运行时权威。effective policy
-digest 只用于判断是否刷新运行时，不是来源完整性或授权凭据。本地导入与 Marketplace 安装遵守
-同一规则。
+| 类型        | 运行权威                          | 产品负责                              | 主要限制                                   |
+| ----------- | --------------------------------- | ------------------------------------- | ------------------------------------------ |
+| Skill       | Gateway skills.status/update      | 用户文件导入删除、列表投影            | 文件存在不等于 eligible                    |
+| MCP         | 原生连接与工具调用                | 用户配置 Store、发现与配置同步、probe | Extension 提供项是只读来源                 |
+| Hook        | 原生 hook runtime                 | 本地包、产品开关和受管同步            | 与 Extension 的 hook capability 不混为一项 |
+| Extension   | plugins.list/setEnabled/uninstall | 审查、受控导入、产品保护规则          | 运行代码进入 Gateway 信任域                |
+| Marketplace | 各类型安装器及 inventory          | 公司 SDK 适配、来源/版本身份          | 不是另一份运行态清单                       |
 
-本文按 OpenClaw `v2026.9.2` 的 Gateway plugin control plane、plugin installed index、plugin bundle contract、plugin IPC/UI、shared contracts、OpenClaw config sync 和内置 manifest 重写。JustDo 中“Plugin”是产品聚合概念，包含 Skill、MCP、Hook、Extension 与 Marketplace；它们没有统一的数据权威或安装方式。
+Plugin Hub 有四类插件概念；市场当前只开放 extension、skill、mcp 三种 catalog kind。共享 PluginKind 中有 hook，不代表 Marketplace 也支持安装 Hook。仓库默认未注册业务市场 provider。
 
-Plugin Hub 的统一信息架构、权限模型、推荐策略和同名 Skill 交互依据见
-[`plugin-hub-experience-plan`](../features/plugin-hub-experience-plan.md)。基础页面与 action
-capability contract 已落地；shadowed Skill 高级视图仍取决于未来 Gateway contract。
-
-## 1. 能力与所有权
-
-浏览器设置以互斥的 `plugins.entries.browser.enabled` 与
-`plugins.entries.embedded-browser.enabled` 选择唯一的 `browser` 工具提供方。
-切换复用 Gateway 原生插件热重载，由其替换工具注册、Gateway 方法、hook 和 service；
-根 `browser.enabled` 固定为 `true`，避免根开关触发重启。内置插件声明
-`browser.profiles` 与 `browser.defaultProfile` 热更新，以支持切回 Chrome。
-配置服务等待原生重载完成，失败时保留重启兜底；运行中任务仍禁止切换。
-详见[浏览器设置设计](../features/browser-settings-design.md)。
-
-| 类型        | 运行时权威                            | JustDo 持久化/文件职责                            | 用户操作                            |
-| ----------- | ------------------------------------- | ------------------------------------------------- | ----------------------------------- |
-| Skill       | Gateway `skills.status/update`        | bundled manifest；用户 Skill 目录导入/删除        | 查看、启停、导入、删除、安装依赖    |
-| MCP server  | OpenClaw config/runtime               | SQLite `mcp_servers`；extension-provided 只读发现 | CRUD、启停、probe、resource read    |
-| Hook        | Gateway `hooks.status`                | SQLite `openclaw_hooks` + 用户 Hook 文件          | 导入、启停、删除                    |
-| Extension   | Gateway `plugins.*` + installed index | 本地导入时桥接 OpenClaw CLI                       | import、启停、配置、删除            |
-| Marketplace | provider adapter                      | 默认无 provider；不保存第三方响应秘密             | source/search/detail/install/update |
-
-不能把 Skill file scanner 当元数据权威，也不能把 Marketplace item 当安装完成的证明。实际状态必须回到对应 runtime/store 查询。
-
-## 2. 架构
+## 2. 从页面到运行时
 
 ```mermaid
 flowchart LR
-  UI[Plugins UI]
-  Preload[Preload namespaces]
-  IPC[Plugin IPC]
-  PM[PluginManager]
-  Market[Marketplace providers]
-  Install[PluginInstallationService]
-  Skill[Skill services]
-  MCP[MCP services/store]
-  Hook[Hook services/store]
-  Ext[Extension Gateway control plane]
-  Sync[OpenClaw config sync]
-  GW[Gateway]
-  FS[Managed directories]
-  DB[(SQLite)]
-  UI --> Preload --> IPC
-  IPC --> PM --> Market
-  Market --> Install
-  Install --> Skill
-  Install --> MCP
-  Install --> Hook
-  Install --> Ext
-  Skill --> GW
-  Skill --> FS
-  MCP --> DB
-  Hook --> DB
-  MCP --> Sync
-  Hook --> Sync
-  Ext --> GW
-  Sync --> GW
+  UI[PluginsView 与领域面板] --> Preload[显式插件 IPC]
+  Preload --> Service[Skill / MCP / Hook / Extension 服务]
+  Service --> Files[受管文件事务]
+  Service --> Store[(产品配置 / 安装身份)]
+  Service --> Sync[配置同步]
+  Service <--> Gateway[原生管理 API]
+  Sync --> Gateway
+  Gateway --> Inventory[有效 inventory]
+  Inventory --> UI
 ```
 
-## 3. Shared 合约
+Renderer 显示 loading/error、操作能力和运行结果；不能通过自行扫描目录决定安装状态。启停成功后重新读取 inventory；同名条目的来源变化也需要呈现，不能只把旧卡片布尔值翻转。
 
-`src/shared/plugins/marketplace.ts` 定义：
+## 3. Skill：有效赢家与文件来源
 
-- `PluginKind`: `extension`、`skill`、`mcp`、`hook`；
-- 稳定 error code：invalid request/response、source not found、unsupported kind、provider/install failure 等；
-- source、summary、detail、query/cursor、install request/response；
-- install state `available`、`installed`、`update-available`、`unavailable` 和 operation
-  `install`、`update`。
+内置 manifest 有 8 个默认启用项：data-analysis、diagram-design、frontend-design、docx、pdf、pptx、skill-creator、xlsx，并关闭 OpenClaw 默认技能集。打包资源必须与 manifest 一致；数量不应散落在 UI 常量中。
 
-`src/shared/plugins/skills.ts` 定义 Gateway skill source 及哪些 source 是用户拥有，其中包含
-`openclaw-custodian` 并允许未知来源降级显示。`src/shared/plugins/management.ts` 定义统一的
-scope、action capability 和稳定 reason code。Main 在列表响应中投影这些管理事实，并在写
-IPC 中重新校验；Renderer 不能凭 UI 分组或路径字符串猜测权限。
+skills.status 提供 effective source、eligibility、disabled、缺失依赖和安装选项。产品文件服务只管理用户导入目录；它不能从 SKILL.md 自行重建运行元数据。受管根使用原生 stateDir/skills，避免重复 extraDirs 引入同一路径。
 
-## 4. 内置 Skills
+同名技能遵循原生解析赢家。关闭赢家不等于自动切换到下一来源；赢家目录删除后的 fallback 是另一种变化。没有原生 variants contract 时，UI 不展示臆测的 shadowed 数量或逐来源 toggle。
 
-`resources/builtin-skills.json` 是当前内置集合的权威：
+Extension 发布技能的 scope 表示父插件管理，ownershipScope 表示产品展示归属；两者不能合并推导删除能力。系统内置与用户 Extension 的技能均可能由父插件托管。
 
-| ID                  | 默认状态 |
-| ------------------- | -------- |
-| `data-analysis`     | enabled  |
-| `diagram-generator` | enabled  |
-| `frontend-design`   | enabled  |
-| `docx`              | enabled  |
-| `pdf`               | enabled  |
-| `pptx`              | enabled  |
-| `skill-creator`     | enabled  |
-| `xlsx`              | enabled  |
+### 用户文件变更
 
-manifest 的 `disableOpenClawDefaults: true` 表示只使用 JustDo 声明的 bundled defaults；不要在文档或 UI 中硬编码数量。打包同步测试验证 manifest 与实际 resources。
+导入验证结构与精确目标，复制到受管根。删除先原子移入同卷 `.justdo-skill-trash/delete-*`，避免递归删除中途留下半残 live skill。机会式清理仅处理已知 trash 子目录，不能扫描删除未知项目。
 
-`docx`、`pptx` 与 `xlsx` 使用 MIT-0 的 instruction-only 内网版本。它们不假定 Pandoc、LibreOffice、MarkItDown、`pptxgenjs`、`python-pptx` 或 `python-docx` 已存在。`xlsx` 以 Windows Python runtime 随附的 `openpyxl` 为基线能力。
+Windows 文件被占用时，ManagedDirectoryOperationCoordinator 识别受管进程，必要时取得配置 mutation 中的原生 suspension，再 stop/mutate/start。不能因为文件锁就杀任意进程；恢复失败必须可诊断。
 
-`pdf` 保留完整的本地参考文档和辅助脚本，并以 Windows Python runtime 随附的 `pypdf` 为基线能力。其他 PDF 能力可按需安装 Python 包，但不依赖 LibreOffice、Poppler、qpdf、pdftk、Tesseract 或 ImageMagick 等外部系统程序。Skill 只能声明实际执行和验证过的能力。
+## 4. MCP：配置与原生发现的汇合
 
-## 5. Skill 系统
+用户 MCP 保存在 mcp_servers。新增、改名、删除和启停通过串行配置同步生成原生 mcp.servers；原生新增的 server 可在列表刷新和非 MCP mutation 同步前导入缺失 name。
 
-与 Skill 路径相关的 Gateway 启动环境只显式固定 `OPENCLAW_STATE_DIR`、
-`OPENCLAW_CONFIG_PATH` 与 `OPENCLAW_BUNDLED_SKILLS_DIR`。OpenClaw 原生把
-`<stateDir>/skills` 作为 shared managed Skill root，JustDo 不再引入单独的用户 Skill root
-环境别名，也不再把同一路径重复写入 `skills.load.extraDirs`。
+发现只增加缺失项，不因原生配置暂时缺失就删除产品记录。产品主动删除/改名后不能先读旧原生配置，否则会复活旧 name。未被表单建模的 cwd、OAuth、TLS、tool filter 等字段需要保留合并，不能保存一次表单就丢失。
 
-### 5.1 状态查询与启用
+请求 timeout 按单 server override 优先于全局默认投影为 requestTimeoutMs；连接建立 timeout 是另一概念。Extension 自带 MCP 的配置由父插件拥有，不套用户 server 的默认设置。
 
-`OpenClawSkillService` 通过 adapter 调用 `skills.status`，返回 workspace/managed dir 和每个 Skill 的 source、eligibility、disabled/allowlist、missing requirements、install options 与 config checks。启停用 `skills.update`，Gateway 返回值是最终成功依据。
+probe/readResource 在 Main 使用真实 transport。HTTP/SSE probe 保持流式响应、禁止自动重定向并使用网络策略；stdio command/env 属于执行输入，敏感值不能进入 UI 诊断或日志。
 
-Renderer 的 `skillSlice` 只是列表/loading/error 缓存。主列表只展示 Gateway 返回的当前有效
-Skill，不再按 workspace/personal/managed/bundled 等底层来源分组；来源被归一为系统、我的、
-当前项目或其他徽标。`skillRequirements` 只负责展示缺失项，不决定运行资格。
+## 5. Hook：文件、数据库与配置共同提交
 
-插件发布到 `<stateDir>/plugin-skills` 的 Skill 同时具有两个维度：`scope=extension` 表示启停、
-删除等操作由父 Extension 托管；`ownershipScope` 只负责顶层展示分组。Main 解析生成链接及
-OpenClaw runtime 的真实路径：父 Extension 位于 bundled runtime 时归入“系统与内置”，其他
-Extension 提供的 Skill 归入“用户安装”。Renderer 不得再用管理 `scope` 推断安装归属。
+独立 Hook 包包含 HOOK.md 和受支持入口，导入支持限定压缩格式。ID 和路径先规范化，内置与已有目标不能普通覆盖。bundle 环境通过 OPENCLAW_BUNDLED_HOOKS_DIR 指向实际产物。
 
-Skill 启停或删除完成后，Renderer 会比较操作前后的 name、source 与路径。若 Gateway 仍返回
-同名 Skill 但有效来源变化，提示“当前来源从 A 切换为 B”；若同名项消失则提示当前不可用。
-没有 authoritative variants contract 时，不显示 shadowed 数量，也不提供逐来源 toggle。
-`tests/openclaw/runtime/skill-resolution-contract.test.ts` 直接调用锁定的打包 Runtime，验证
-禁用不切换当前赢家、赢家目录消失后才回退，以及不同 workspace 独立解析同名 Skill。
+删除先隔离目录，再修改 Store 和同步配置；同步失败恢复记录与目录，成功后清理隔离区。SQLite transaction 只保护本地行，无法回滚原生 reload，必须保留跨边界补偿语义。
 
-### 5.2 文件导入与删除
+## 6. Extension：审查与运行态对账
 
-`OpenClawSkillFiles` 只处理用户文件：读取 Skill 目录/压缩包、验证结构、复制到 `<stateDir>/skills`、拒绝目标逃逸或覆盖受保护来源。`OpenClawSkillFileService` 把操作包在 `ManagedDirectoryOperationCoordinator` 中：
+列表、启停和卸载使用原生 plugins API。可删除能力由原生 inventory 与产品保护共同决定，不能由一个“用户安装”标签猜测。bundled plugin 目录固定到 runtime/dist/extensions。
 
-1. 解析准确目标；
-2. 执行导入/删除；
-3. 遇 Windows lock 时识别锁定进程；若仅由受管 Gateway 占用，必须先在 config mutation queue 中取得原生 suspension，才可 stop/mutate/start；
-4. 必要时只停止属于应用/Gateway 的进程；
-5. 重试并恢复先前 runtime 状态；
-6. 返回结构化 code/syscall/path 的本地化错误。
-
-删除先把 live Skill 原子移动到对应 skill root 同卷的 `.justdo-skill-trash/delete-*` 事务目录，避免递归删除被占用时留下半残目录。`OpenClawSkillFiles` 初始化及后续文件操作会机会式重试清理已知 trash root；清扫只处理该 root 的直接 `delete-*` 子目录，未知条目和 live skills 不受影响，单项清理失败也不能阻断正常 Skill 操作。
-
-它不负责列举所有 Skill 或修改运行态 metadata。
-
-## 6. MCP
-
-用户 MCP 记录存在 `mcp_servers`：id、唯一 name、description、enabled、transport type、config JSON 和时间戳。`McpStore` 负责数据库，`McpConfigSyncService` 将记录写进 OpenClaw config，并保留 `enabled` 状态。若用户在对话中让 OpenClaw 通过原生能力新增 `mcp.servers`，Main 会在插件列表刷新和非 MCP mutation 的配置同步前发现尚未入库的 server，保存到 `mcp_servers` 后再参与同步；JustDo 自己执行 create/update/delete/setEnabled 后的同步不读取尚未改写的旧配置，避免撤销删除或在重命名后复活旧名称。发现逻辑只新增缺失 name，不以配置文件缺失为由删除数据库记录。原生配置中 JustDo 表单尚未建模的 `cwd`、OAuth、TLS、tool filter 等字段也随记录保存并合并回配置，避免重启后降级。
-
-“设置 → 配置”提供用户 MCP Server 的默认单请求 timeout，单位为秒，默认 60，范围 1–86400。该值保存在 `agentRuntimeSettings:v1`；“编辑 MCP 服务”在表单末尾显示当前 Server 的覆盖值，未配置覆盖时直接显示当前全局值。仅在用户改为不同值时写入该记录的 `config_json.requestTimeoutSeconds`，未修改则继续继承全局配置。配置同步按“单 Server 覆盖 → 全局默认”的优先级换算为毫秒并写入 `mcp.servers.<name>.requestTimeoutMs`；它控制已连接 Server 的请求等待，不等于 `connectionTimeoutMs`。Extension 自带的只读 MCP Server 由 Extension 配置负责，不套用此用户 Server 默认值。
-
-HTTP/SSE MCP 的“测试”探测由 Main 发起，使用当前系统/自定义代理设置并保持响应流式传递，以兼容 SSE 与 Streamable HTTP；探测拒绝自动重定向，出站 Header 仍只按白名单在每次请求时注入。
-
-主要能力：
-
-- create/update/delete/setEnabled 后触发串行 config sync；
-- `probe` 以真实 transport 检查连接和 tools/resources；
-- `readResource` 通过 Main/SDK 读取，Renderer 不直接连接 server；
-- `discoverExtensionMcpServers` 读取已启用 extension 提供的 server，作为只读来源，不能重复保存为用户 row。
-
-stdio command、args、env 与 remote URL 都是高风险输入：UI 隐藏不是安全措施，Main 必须 validate；credential 不进入日志或 marketplace response。
-
-## 7. Hooks
-
-Hook 元数据/启用状态在 `openclaw_hooks`，文件位于受管目录。一个本地 Hook 至少包含 `HOOK.md`，入口支持 `handler.ts`、`handler.js`、`index.ts`、`index.js`；支持 `.zip`、`.tar`、`.tar.gz`、`.tgz` 导入。
-
-JustDo 的 Gateway 是单文件 bundle，无法依靠 `import.meta.url` 推导 OpenClaw 内置 Hook 目录；启动环境显式设置 `OPENCLAW_BUNDLED_HOOKS_DIR=<runtime>/dist/bundled`。
-
-文件层规范化 hook id、拒绝路径逃逸、拒绝覆盖 built-in 或已安装 Hook；config sync service 只把 store 中已启用且可用的 hook 映射到 OpenClaw。启停和删除都进入 config mutation queue。删除先把目录原子移动到受管根目录之外的隔离区，再修改 SQLite 并同步；同步失败时恢复数据库记录和目录，成功后清理隔离区。
-
-## 8. Extensions
-
-Extension 列表、启停和卸载以 Gateway `plugins.list`、`plugins.setEnabled`、`plugins.uninstall` 为唯一运行态权威；JustDo 不再从目录或 `plugins.entries` 推断最终状态。列表同时投影 bundled、installed-index 和错误状态，只有 Gateway 标为 removable 的非产品托管插件才显示删除操作。
-
-裁剪和预编译后的 bundled extension 根位于运行时的 `dist/extensions`；Gateway 与受管
-OpenClaw CLI 都通过 `OPENCLAW_BUNDLED_PLUGINS_DIR` 固定到该目录，不能指向源码布局的
-`<runtime>/extensions` 并依赖 OpenClaw 的回退扫描。
-
-本地导入是 Gateway 当前未提供 path/archive mutation 的唯一例外，因此通过受管 OpenClaw CLI 执行 `plugins install`。安装前由锁定版本运行时的 `capability-artifact` 与 `capability-summary` 模块扫描暂存内容，Renderer 展示完整 declared surface、operator grants、source/integrity 与 trust；只有用户提交本次 surface 的 `reviewToken` 且复查结果仍一致，CLI 才使用 `--accept-capabilities` 提交安装。OpenClaw `v2026.9.2` 同时支持原生 code plugin、Codex/Claude/Cursor bundle、Agent Plugins manifest 及允许的 manifestless bundle；JustDo 在共用 importPath 中先调用 extensionConversion.prepareExtensionForInstall：目录导入和市场下载目录直接进入模块，压缩包先安全解包并定位根目录。存在 openclaw.plugin.json 时按原生格式原样放行（包括交由安装器报告的无效原生 manifest）；其他格式统一进入待实现的转换分支，当前返回双语提示并停止安装，不准备运行时、不执行 CLI。未来转换输出的目录用于审查，输出 sourcePath 用于 CLI 安装。最终 schema、capability 和 installed-index 事务仍由 OpenClaw 安装器负责。
-
-安全与事务约束：
-
-- archive 必须是 OpenClaw CLI 支持的 ZIP、TAR、TAR.GZ 或 TGZ；临时解包仅用于安全检查和结果 id 提示，完整合法性由 OpenClaw installer 决定；
-- code plugin 使用 `openclaw.plugin.json`；bundle id 按 OpenClaw 的 name/目录 slug 规则投影，不能要求所有包都存在 native manifest；
-- 命令 cwd/env 来自 manager，timeout 为 300 秒，输出最多保留 64K；
-- 所有 config mutation 进入 exclusive queue；目录锁处理复用 coordinator；
-- Gateway transport 不可用时，列表回退到本地已安装目录，启停/卸载回退到冷态 CLI，以便修复导致 Gateway 无法启动的第三方插件；Gateway 返回的 policy/validation 错误不能触发该回退；
-- `plugins.uninstall` 返回 v2026.9.2 明确的“目录仍存在且插件保持 disabled/tracked”状态或底层 EACCES/EPERM/EBUSY 时，先核对 Gateway inventory 与操作前保存的本地路径：已提交删除则禁止重复卸载，只恢复 Gateway；仍安装则沿用该路径进入 lock-aware 冷态 CLI，报告外部占用者，或在仅 Gateway 持锁时安全 stop/retry/start。普通 `UNAVAILABLE` 不得被猜测成目录锁；
-- `plugins.setEnabled` 要求能力同意时，Renderer 展示 `plugins.inspect` 返回的完整声明、新增能力和 trust 原因，并仅用该次 `reviewToken` 重试；Gateway warnings 必须传回 UI；
-- `ask-user-question` 是受保护的内置交互 extension；其启用状态与等待时限由 config sync 管理，不能从通用扩展页禁用或删除；
-- `automation-permission` 是受保护的内置安全 extension，不能从通用扩展页重配置、禁用或删除；Gateway 每次连接都必须验证其 trusted policy 已加载；
-- `plan-mode` 是受保护的内置工作流 extension，持有会话级 Plan 状态、规划提示、明确 mutation 拦截和计划审核请求，不能从通用扩展页禁用或删除；
-- `acpx` 是受保护的内置 ACP runtime extension；源码固定在 `openclaw-extensions/acpx`，与其他本地 extension 一样由资源同步流程装配；其锁定的生产依赖只在临时 staging 中安装，然后随 extension 复制并预编译进 runtime，不使用 `vendor/openclaw-plugins` 持久缓存，已安装应用不执行在线插件安装；
-- 安装成功后重启 Gateway，再由 `plugins.list` 重新列举；CLI 输出或目录存在都不能替代 Gateway 最终状态。
-
-扩展配置表单保存相同值时不重写文件、不重启。内容变化后优先等待原生配置 watcher 热更新；启动中保存则先等待本次启动完成。热更新失败或启停 RPC 明确返回 `restartRequired` 时，优先由原生安全重启 coordinator 执行进程内重启，保留活动工作 deferral；环境/端口变化、代码导入/删除与目录释放仍走受管冷重启路径。配置重启策略和编译缓存见 `05-agent-engine.md`。
-
-旧版 Extension 与 Hook 不提供迁移保证；升级后按 v2026.9.2 当前 inventory 清理失效的 `entries/installs/allow/deny/slots`，用户可从内网市场重新安装。用户 Skill 文件目录和 SQLite 中的 MCP server 记录属于必须保留的数据，配置同步只能做当前 schema 所需的字段映射，不能删除这些数据。对话中由 OpenClaw 自行安装的 Extension/Skill 由 Gateway 原生 inventory/skill status 重新列举；MCP 则先从原生配置回流 SQLite，因此三者在刷新插件页和重启后都能恢复显示。
-
-## 9. AskUserQuestion Extension
-
-JustDo 使用内置 `ask-user-question` extension 注册模型工具 `AskUserQuestion`，并在受管 `tools.deny` 中关闭 OpenClaw 原生 `ask_user`，避免同一会话出现两套相近但不兼容的协议。工具描述沿用原生能力最重要的决策边界：只有当模型已被一个确实属于用户、且无法从请求、代码、上下文或合理默认值判断的决定阻塞时才能提问；禁止询问是否继续、是否执行下一步或要求确认模型自己的计划；除非多个答案必须一起提交，否则优先一次只问一题。
-
-extension 保留产品原有的丰富结构：一次 1–8 题、每题 2–4 个稳定 id 选项、单选/多选、Other、选项附带必填输入、默认项以及逐题跳过。`timeoutEnabled` 默认关闭，此时必须等待用户；显式开启后使用 runtime settings 中的分钟数。所有题都有默认项时超时自动选默认值，否则把控制权交还模型自行判断。
-
-交互完全使用 OpenClaw plugin API，不再存在 callback server、host controller、共享 secret、端口或额外 HTTP transport：
+本地 path/archive 安装通过受管 CLI。安装前解析能力 surface、operator grants、来源和 integrity，向 UI 返回审查数据；提交时要求匹配本次 surface 的 reviewToken，重新核对后才调用安装器接受能力。包在审查后变化，旧 token 不能继续安装。
 
 ```mermaid
 flowchart LR
-  Tool[AskUserQuestion tool] --> State[Extension pending Map]
-  State -->|plugin.* requested/resolved| Adapter[Main adapter]
-  Adapter -->|既有 interaction IPC| UI[Renderer wizard]
-  UI -->|answer ids| Adapter
-  Adapter -->|askUserQuestion.resolve RPC| State
-  Adapter -->|askUserQuestion.list RPC| State
+  Source[目录 / 压缩包 / 市场下载] --> Validate[安全解包与格式判断]
+  Validate --> Review[能力审查与 reviewToken]
+  Review --> Recheck[再次校验同一内容]
+  Recheck --> Install[受管原生 CLI 安装]
+  Install --> Readback[原生 inventory / installed-index]
+  Readback --> Result[结果与配置更新]
 ```
 
-pending promise、同一 session 只允许一个待答请求、timeout/default、run abort 和最终答案校验都由 extension 自己负责；Gateway service 停止时会取消全部等待。它通过 `gatewayEvents.emit` 发布 `plugin.ask-user-question.requested/resolved`，并提供 `askUserQuestion.list/resolve` 两个有 scope 的 Gateway RPC。Main 只负责严格解析、session 投影、Renderer IPC 和提交前的本地校验，不保存第二份权威状态。adapter 在连接恢复后用 `list` 找回同一 Gateway 进程中的等待项，Renderer reload 再通过 interaction replay 获取投影。
+原生 openclaw.plugin.json 包交由原生安装器验证。其他 bundle 格式虽可能被上游识别，产品共用 conversion 入口当前仍会提示未支持并停止；不能把上游格式能力直接宣传为产品已完成转换。临时目录始终清理，CLI 输出和 timeout 有界，失败不伪造 runtime id。
 
-文件范围与 exec reviewer 使用 OpenClaw v2026.9.2 原生 session permission mode。`automation-permission` 只补足原生 session mode 尚未覆盖的模型可见 scheduled-task mutation，并在每次调用时读取原生会话值，不维护第二份权限状态。第三方插件若使用 `plugin.approval.*`，仍作为独立风险域展示和解决，不能复用 exec grant。
+## 7. 产品扩展各有生命周期
 
-`runtime-services` 是随产品安装并受保护的内置 OpenClaw extension。manifest 显式声明 `activation.onStartup: true` 和 hook capability，确保未配置 embedding 或关闭 memory search 时，历史 RPC 与进度 hooks 仍进入 Gateway 的活动插件注册表。仅有 `plugins.entries.<id>.enabled: true` 或能力探测期间的初始化日志不能证明启动激活。它只使用 v2026.9.2 支持的 plugin API，承担以下不应继续做 runtime patch 的集成：
+| 扩展/能力             | 持有的状态                           | 产品桥接                     |
+| --------------------- | ------------------------------------ | ---------------------------- |
+| Runtime Services      | 原生历史、进度、回执的受限读取       | Main/Renderer 查询投影       |
+| AskUserQuestion       | pending、期限、默认及取消            | 问答 event/RPC、UI replay    |
+| Plan mode             | 原生 session mode、待审核交互        | Main 计划文件与 handoff      |
+| Automation permission | 按原生 session mode 进行任务变更审批 | 使用原生 plugin approval     |
+| Embedded browser      | 原生 browser 工具桥                  | Main guest 所有权与动作执行  |
+| agent-team            | 可选工具、技能与原生发送 hooks       | Main 成员、轮次及接收元数据  |
+| stt-local-cli         | 本地附件转录工具                     | 已安装 Sherpa 路径及文件策略 |
 
-- 从 agent hooks 发布 `preparing`、`waiting_model` 有界进度事件。`model_call_started` 也会出现在成功的工具轮次之后，不是重试信号；插件不再根据同一 run 的调用次数推断 `retrying`；
-- 注册 `runtime-services` remote embedding provider，保留 SSRF policy 与 eligible env proxy。批量响应有 `index` 时按请求顺序恢复向量，并拒绝重复、越界或混用有索引/无索引的响应；完全无索引的响应按位置处理；
-- 注册 `runtimeServices.historyDetails` 的 `operator.read` RPC，只按最多 250 个请求 id 从原生 transcript 投影 tool input、compaction detail 和 failure detail。failureMessageIds 只返回确切可见 assistant error 条目的 errorMessage，使用 OpenClaw 内置敏感信息过滤并限制为 2000 字符；多个 ID 与 tool input 共用一次可见 transcript 读取，不返回 diagnostics/errorBody，也不持久化消息缓存；并注册 `runtimeServices.historyMessage`，只接受session key、Gateway给出的message id、transfer id和递增cursor，在`chat.message.get`报告`oversized`或超过frame预算时按不超过1,048,576字符的块返回原生SQLite transcript的active-branch消息。一次transfer固定同一序列化快照且完成后释放；它不读取inactive branch、不列举消息，也不接受文件路径。
+agent-team 默认关闭，禁用保留历史；Runtime Services 仍读回执并阻止受管 peer send。stt-local-cli 保留显式 disable，附件转录独立于麦克风开关；sandboxed session 不注册该 host tool，文件访问遵循有效 fs policy，无云端 fallback。
 
-- 注册 `runtimeServices.scheduledTaskHistory` 的 `operator.admin` RPC，按精确 cron-run key 与物理 sessionId 读取原生历史窗口。原生 SDK 解析归属 key 后只接受同一任务主 key 或精确 run key，读后复核归属；不恢复删除归档。可见分支消息以 256 Ki 字符分块传输，每块校验快照哈希，不缓存消息；明确区分在线窗口不存在与窗口没有消息。见 `08-scheduled-tasks.md`。
+插件可拥有工具或钩子，但不能建立第二份产品会话 transcript。角色文件也归原生 agents.files，不把长期助手实现成 Skill 目录的另一套编辑器。
 
-这些 RPC 不是通用文件读取器，不返回 transcript 路径，也不接受任意 session 文件路径。普通会话 Adapter 先用 `chat.history` 获取原生 display projection，仅对缺失 detail 做补充查询。Renderer 对 tool input 和 compaction detail 均按每批最多 250 个去重 ID 顺序查询；一个批次失败不丢弃历史或其他批次的补全结果。
+## 8. 请求头 sidecar 与信任
 
-本地扩展在资源同步后预编译到 `dist/extensions`，`package.json` 的入口同时改为 JavaScript。`beforePack` 会重新同步最新源码，因此必须再次等待预编译完成；此阶段编译失败会阻止打包，避免交付陈旧代码或重新依赖 TypeScript 即时编译。
+Extension 可用 outbound-header-policy.json 声明 HTTPS 目标、Header 名称和受管 user-info 引用。声明不含凭据值，安装前校验、安装后 canonical path 回读，启用状态参与有效策略合并。
 
-### 9.1 ACPX 外部 Agent runtime
+它不能写永久手工 config，也不提供任意凭据 API。Gateway 同进程 Node Extension 仍处于可信代码边界，sidecar 并不是恶意插件网络沙盒。详细规范见[出站指南](../outbound-header-guide/README.md)。
 
-OpenClaw v2026.9.2 原生拥有 ACP 调度、`runtime=acp` task ledger、child session 与恢复流程；JustDo 不建立第二套任务表、session key 协议或父子关系缓存。受管配置只写 `acp.enabled/dispatch/backend/allowedAgents/defaultAgent`，后端固定为内置 `acpx`。外部任务和原生 Subagent 都由同一 `tasks.list/get` 与 `task` event 投影到子任务 UI。
+## 9. 故障不能只显示“未安装”
 
-`acpx` 源码从匹配的 OpenClaw tag vendored 到仓库，仓库声明锁定版本的 Claude/Codex ACP adapter，并为原生支持 ACP 的 OpenCode、DeepSeek Harness、Hermes 注册结构化启动命令；构建时按目标平台安装并通过 target/fingerprint manifest 复用，已安装应用不会在线下载。全新源码构建仍须使用获准 npm registry 或预热 cache。设置页只允许启用产品已经交付的 Agent 和选择权限，不接收适配器命令、路径或参数；这些信息由 `src/shared/openclaw/externalAgentCatalog.ts` 在构建时注册。新增 Agent 时同时补充 catalog、双语文案、adapter 依赖与 lockfile，并按 `docs/features/external-agent-adapters.md` 的模板完成协议和产物测试。catalog 支持 `${NODE_EXECUTABLE}`、`${ACPX_PLUGIN_ROOT}`、`${OPENCLAW_ROOT}` 占位符，ACPX 启动时展开为受管路径。启动 probe 默认关闭，避免未安装或未登录的可选工具让整个后端进入 unhealthy；实际任务启动失败仍由原生 task 记录为失败。
+| 阶段           | 失败意义                  | 恢复要求                   |
+| -------------- | ------------------------- | -------------------------- |
+| 下载/解包      | 尚无有效安装输入          | 清理临时目录，保留原安装   |
+| 格式转换       | 产品尚不支持或输入非法    | 明确停止，不调用 CLI       |
+| 能力审查       | 内容或授权不匹配          | 重新审查                   |
+| 文件变更       | 路径、锁或权限失败        | 保留事务/隔离区证据        |
+| 配置应用       | 磁盘与 runtime 可能不一致 | 领域回滚或明确待恢复       |
+| inventory 读取 | 无法确认当前状态          | 显示查询失败，不能猜未安装 |
 
-ACP 权限是独立的版本化产品设置：禁止受控操作映射到 `deny-all + deny`，只读映射到 `approve-reads` 并允许用户选择越权请求是 `deny` 后继续还是 `fail` 终止任务，完全访问映射到 `approve-all + fail`。同一设置还管理 ACP 启动与控制操作超时；任务总时长仍由 OpenClaw 的 subagent run timeout 管理。外部 Agent 位于“设置 → 集成 → Agent 委派”，复用页面右下角的统一保存流程；同级“应用接入”展示 Multica 等外部工具调用本应用的设置。Multica 的启用、禁用和状态刷新通过专用 IPC 立即执行，不与 Agent 委派的草稿配置和统一保存事务耦合。每个 Agent 的“测试”通过 Main 的 catalog allowlist 调用 Gateway `acpx.agent.doctor`，实际启动已注册命令并完成 ACP initialize probe；测试结果只保存在 Renderer 状态中，不改变启用项，也不触发保存。为支持测试未启用的 Agent，ACPX backend 始终以 lazy plugin 启用，但 `acp.enabled/dispatch` 仍严格由已保存的 allowed Agents 决定。工具访问分为插件工具桥接、OpenClaw 内置工具桥接和已配置 MCP Server 共享，三者默认关闭并随统一保存生效；前两者使用 ACPX 的 session-scoped bridge，后者只投影已启用的 stdio Server，因为当前内置 ACPX schema 尚不接受 HTTP/SSE bootstrap。保留名 `openclaw-plugin-tools` 与 `openclaw-tools` 不进入用户 Server 投影，避免覆盖内置桥接。配置保存在 `cowork_config.externalAgentSettings:v1`；同版本旧 payload 缺失新增字段时补齐安全默认值，catalog 新增项也按其安全默认值补齐，已移除项会被丢弃，同步失败时数据库与 Gateway 配置一起回滚。
+## 10. 测试与维护
 
-## 10. Plan mode Extension
-
-`plan-mode` extension 通过 session extension 的 `justdoPlanMode` 投影读取持久化模式，通过 `agent_turn_prepare` 注入只读规划规则，并注册 `PresentPlan` 阻塞工具。计划审核 pending promise 留在 extension 内；Main 把 `plugin.plan-mode.requested/resolved` 转成既有 interaction IPC，并把计划持久化到当前 workspace 中由 productName 小写派生的隐藏目录。Main 只有在 artifact、handoff 和同一 extension state 中的 `awaitingReview` 标记都已落盘后才展示侧栏。批准时 `planMode.resolve` 只让规划 run 安全结束；Main 随后用原生 `sessions.reset` 在同一 session transcript 中建立上下文边界，再注入隐藏的 `Implement the plan.`、相对文件路径和完整计划正文。该设计不复制 OpenClaw 消息，也不拥有专用的 Gateway restart-recovery patch；完整应用重启按通用 app-start boundary 中断旧 run，持久 artifact 和 handoff 仍可恢复侧栏。
-
-## 11. Marketplace Adapter
-
-当前 `createPluginMarketplaceService` 传入空 provider 数组，因此开源构建默认没有 marketplace source。企业构建通过公司 SDK Provider 接入，目前只声明 Extension、Skill、MCP；Hook 不属于 Marketplace contract。Gateway `plugins.list` 只以离线模式读取随 OpenClaw 打包的官方目录元数据，不刷新其默认 ClawHub feed；生成的 OpenClaw 配置也关闭默认远程模型目录刷新。外部目录网络访问只能由显式注册或配置的 product provider 发起。
-
-Provider contract：source metadata、search、detail、prepareInstall。Service 的防御性规则包括：
-
-- source id/name 非空且不超过 256，supportedKinds 只能是 Extension、Skill、MCP，id 不可重复；企业 Provider 只声明实际支持的 kind；
-- query limit 默认 20、范围 1..100；cursor 仅允许恰好一个 source；
-- item 的 kind、必填/可选字符串、tags、install state、readme（最大 1,000,000）和 requirements 均验证；
-- provider 可返回与市场目录 id 不同的 `runtimeId`，Renderer 用它与实际安装列表对账，安装请求仍使用 provider 的目录 id；
-- 跨 source 的同 kind/plugin id 不可重复；
-- provider 异常转换为稳定、脱敏的 `MarketplaceError`；
-- response 只投影公开字段，丢弃 token/internal URL 等多余属性。
-
-安装流程：公司 SDK 把 Extension/Skill 下载到本地目录，provider `prepareInstall` 返回匹配 kind 的 `sourcePath` 和可选 cleanup；MCP 返回结构化配置。`PluginInstallationService` 再调用对应 OpenClaw/本地配置导入接口。通用层不限制 Extension 目录内容，也不兼容旧 Extension/Hook 市场数据；Extension 统一经过 extensionConversion 格式判断与转换入口，原生格式的最终校验由 OpenClaw 安装器完成。无论安装成功或失败都尝试 cleanup 临时目录。
-
-Marketplace 返回的 `installState` 只描述目录侧状态，不能覆盖 OpenClaw/JustDo 的实际安装 inventory。安装完成后 UI 先等待目标 kind 重新列举；只有 `runtimeId`（缺失时用目录 id）出现在实际 inventory 中才显示为已安装，刷新失败不能保留乐观的“已安装”状态。
-
-## 11. Workboard
-
-OpenClaw v2026.9.2 的 bundled `workboard` extension 保留在桌面 runtime prune allowlist 中，并由 JustDo config sync 在用户尚未做出选择时默认启用。它不是 JustDo 运行所必需的受管理扩展：用户可以在“插件 / 扩展”中关闭或重新开启，config sync 必须保留该选择；主页侧栏的任务看板入口只在扩展启用时显示。Gateway plugin 自己的 SQLite 是看板、卡片和执行关联的唯一权威；JustDo 不复制 Workboard 表，也不把卡片写入 Redux。
-
-v2026.9.2 将官方 Workboard 页面迁入 extension 自带的 `controlUi` browser bundle，但该 bundle 依赖 OpenClaw Control UI plugin host。JustDo Renderer 不实现或注入该宿主，也不直接执行 runtime extension 的浏览器代码；桌面端保持 React 产品页面和最小 preload bridge，同时复用同一组稳定的 Gateway RPC 与变更事件。
-
-主页侧栏在“定时任务”下方提供 Workboard 入口。Renderer 通过受限的 `window.electron.workboard` namespace 调用 Main，Main 只映射卡片 list/create/update/move/delete/archive/comment/start/stop、board list、dispatch 与有界的 session resolution，不开放任意 Gateway method。编辑请求携带 Gateway 返回的 `expectedUpdatedAt`，让 plugin 的并发冲突检查继续生效。
-
-卡片点击先进入详情抽屉，编辑是独立动作。详情展示状态、Agent、Task/Run/Session、claim、执行尝试、评论、证明、产物、附件、诊断、worker 日志/协议、自动化信息和事件，并承载移动、归档、停止、删除和添加操作备注。
-
-看板首屏提供可收起的中英文使用引导，用产品语义解释“待梳理→准备→执行→验收”流程，不要将 upstream 的 `triage` 等内部状态名直译给用户。九个状态列始终使用同一套 `minmax` 响应式网格：宽窗口自动等分并显示全部列，窄窗口中列宽随容器收缩，只有达到最小可读宽度后才产生横向滚动。不得为普通窗口回退到比宽窗口更大的固定列宽。
-
-卡片的 `sessionKey`/`execution.sessionKey` 指向 OpenClaw 原生执行会话，不进入 JustDo 普通会话列表。Renderer 对已关联卡片在卡面和详情中都提供明确的“查看会话”入口，先将 provisional key 有界解析为 canonical key，再通过既有 Gateway chat transport 读取历史。Workboard 使用独立 Worker 指令作为首条 user message，而不是标准 `[Subagent Task]` envelope；会话抽屉收到这条权威 `session.message` 后必须立即解除初始加载态，使用户消息与后续增量输出同时可见。启动 RPC 返回的 session key 会被保留，并立即打开该会话。
-
-卡片详情和会话抽屉按卡片执行状态提供“停止执行”，请求携带所查看执行的 session/run/task 身份。Main 在停止前核对身份，避免旧抽屉误停新关联执行；已结束的卡片不再改写。只有所有关联 task 和 session 均已停止或确认不活跃后，才以 `expectedUpdatedAt` 将卡片转为 blocked，不通过强制 release 伪造停止结果。应用重启后的陈旧 running 记录，需要 task 已终止或不存在且 `sessions.list.hasActiveRun` 明确为 `false` 才能收敛；未知 task 状态不视为终态。
-
-主页入口读取插件启用状态，异步目录查询不得覆盖更新的用户开关操作；成功查询发现插件不再存在时隐藏入口，连接暂不可用时保留上次状态。
-
-只有处于 backlog/todo/ready、没有 session/task link 且没有未过期 claim 的卡片才显示“启动”，避免对 triage、review 或已领取卡片发送必然失败的 start 请求。已关联卡片若要重做，必须在编辑中明确解除旧 session link，再移到可启动状态。
-
-```mermaid
-flowchart LR
-  View[React WorkboardView] --> Preload[workboard preload namespace]
-  Preload --> IPC[OpenClaw Workboard IPC]
-  IPC --> RPC[Gateway workboard.* RPC]
-  RPC --> Plugin[Bundled workboard extension]
-  Plugin --> Store[(workboard plugin SQLite)]
-  Plugin -->|plugin.workboard.changed| Adapter[Runtime adapter]
-  Adapter -->|revision invalidation| View
-  View -->|canonical reload| RPC
-```
-
-变更事件只转发 epoch/revision 失效信号；Renderer 收到后重新读取 canonical snapshot。Gateway 客户端重新握手成功时 adapter 也发送一次不带 revision 的失效信号，用于清除断线期间留下的错误并恢复页面数据。编辑、拖拽或写操作进行中时延迟刷新，结束后补一次读取，避免实时事件覆盖本地交互。插件不可用、Gateway 未连接或 RPC 失败时页面显示可恢复错误，不创建本地伪数据。
-
-## 12. Renderer
-
-`PluginsView` 是单页入口，顶部提供 sticky 的统一搜索以及
-Extension/Skill/MCP/Hook 紧凑类型选择。按最终产品决策不显示“全部类型”，也不显示
-“全部/已安装/可安装”状态筛选。统一搜索值同时传给当前本地 inventory 和 Marketplace；
-子页面不再重复渲染搜索框。Marketplace 分别复用同一 Provider-neutral 组件；Hook 只提供
-本地导入。“热门推荐”区始终保留；没有对应 Provider 时显示市场未配置状态，Provider 的空关键词
-结果为空时显示空状态。
-Skill 与 MCP 有已挂载 Redux slice；Hook/Extension/Marketplace 主要由组件/service 局部状态
-管理。文档不能把未 mount 的状态描述为全局 store。
-
-永久受管项显示锁与原因，不显示假的 disabled switch；Gateway 离线、安装中等暂时状态才
-保留 disabled control。下载量按应用语言格式化，Marketplace skeleton 使用 `aria-busy` 和
-live status。空搜索标题为“热门推荐”，仅保留 Provider 顺序，不宣称个性化。
-Gateway 离线时 Skill 目录搜索仍可见，只把安装动作标记为运行时离线；本地 inventory 与市场
-错误彼此隔离。
-
-UI 应显示 source、eligible/missing、install state 和操作结果；破坏性删除需要明确目标。安装进行中禁用重复提交，extension progress 允许刷新后重新列举实际状态。
-
-## 13. 安全模型
-
-- 只允许 Main 接触受管路径、archive、子进程、MCP transport 与 config 文件。
-- Skill、Hook、Extension 的 ZIP 统一经 `safeZipExtractor` 逐项解包：写入前拒绝 traversal、绝对/Windows 别名路径、symlink、特殊文件和重复 entry，并限制 entry 数、单文件及总展开大小；所有 delete 验证 resolved target 位于确切 managed root。
-- 不自动安装任意 Skill 声明的 shell script；安装选项先展示来源和风险。
-- Marketplace provider 是不可信输入；响应 normalize 后才进 Renderer。
-- MCP env、Extension config、Skill API key 是 secret，不输出完整 config。
-- runtime 在目录操作期间被停止时必须在 finally 路径按原状态恢复。
-
-## 14. 变更与测试
-
-新增 plugin kind 或 provider 时同步 shared union、installer 注册、IPC/preload/declaration、UI、config owner、删除语义和测试。现有测试覆盖 marketplace validation/cleanup/redaction、安装器冲突、Skill/Hook archive/path/lock、extension import/registry、`AskUserQuestion` 状态机与 MCP discovery/probe。运行时行为变化还要更新 capability matrix 与 patch tests。
-
-消息分叉仍由 OpenClaw 的原生 transcript DAG 和 `forkSource` 元数据负责。锁定的 v2026.9.2
-runtime Patch 023 只补宿主分叉集成缺口：`sessions.fork` 接受可选 `targetKey` 和受限的 `includeEntry`，但仅 `operator.admin`
-可指定与源 agent 相同的 `agent:<agent>:justdo:*` key，并且目标已存在时必须失败。未传该字段
-时继续使用 OpenClaw 原生 dashboard key；JustDo 不复制 transcript，也不另建分支来源权威。
-
-## 15. 各类型生命周期对照
-
-| Kind        | 发现/列表                    | 安装或导入                       | Enable           | 删除                   | Runtime 生效               |
-| ----------- | ---------------------------- | -------------------------------- | ---------------- | ---------------------- | -------------------------- |
-| Skill       | Gateway skill API            | 受管 skill 文件事务              | Gateway update   | 验证 user-owned 后移除 | Gateway skill refresh/API  |
-| MCP         | SQLite + extension discovery | 表单/配置记录                    | SQLite flag      | 删除 user-owned row    | config sync + probe        |
-| Hook        | Gateway `hooks.status`       | archive/目录导入                 | SQLite flag      | path-safe 删除         | config sync/runtime reload |
-| Extension   | Gateway `plugins.list`       | OpenClaw CLI path/archive import | Gateway mutation | Gateway uninstall      | Gateway reload/restart     |
-| Marketplace | provider 聚合                | prepare payload → kind installer | 由目标 kind 决定 | 由目标 kind 决定       | 安装后重新查询目标权威     |
-
-统一 UI 不代表统一生命周期；尤其不能实现一个“删除 plugin”通用 handler 接收任意 kind/path。
-
-## 16. 文件事务状态机
-
-```mermaid
-stateDiagram-v2
-  [*] --> Validate
-  Validate --> Stage: source/archive valid
-  Validate --> Failed: invalid/traversal/unsupported
-  Stage --> Quiesce: target needs runtime stop
-  Quiesce --> Commit
-  Commit --> Refresh
-  Refresh --> Restore
-  Restore --> Done
-  Commit --> Rollback: write/install failed
-  Rollback --> Restore
-  Restore --> Failed: operation failed
-```
-
-临时目录 cleanup 和 runtime 恢复放在 `finally` 语义中。ZIP entry 必须在创建目录或文件前完成 path、类型、重复项和容量校验，不能依赖解压后的 symlink 扫描作为第一道边界；解压后仍再次 canonicalize 目标。已有同名项的 replace/冲突语义必须由具体 manager 明确，不能靠文件覆盖默认决定。
-
-## 17. Secret 与配置投影
-
-MCP env、Extension configuration、Skill credential 和 Marketplace provider 内部字段不得原样返回 UI/log。Renderer 需要的是是否配置、缺失字段名或稳定错误码，而不是 secret value。Config sync 只写 JustDo 管理区域并保持其他用户配置；probe 错误需脱敏后再进入 UI。
-
-## 18. 故障与恢复
-
-| 故障                         | 恢复原则                                              |
-| ---------------------------- | ----------------------------------------------------- |
-| Archive 验证失败             | 未进入 managed root，不改变 runtime                   |
-| Commit 中断                  | 回滚 staging/目标，保留可诊断错误                     |
-| Runtime stop 后安装失败      | 恢复原运行状态，不能让 cleanup error 覆盖主错误       |
-| Config sync 失败             | 产品记录可保留为未生效/错误，UI 不宣告 runtime ready  |
-| AskUserQuestion 事件连接中断 | adapter 重连后用 `askUserQuestion.list` 恢复 pending  |
-| Marketplace provider 异常    | 隔离 source、返回脱敏稳定错误，不污染其他 source 结果 |
-
-## 19. Plugin Definition of Done
-
-新增能力必须证明 source ownership、manifest/schema validation、managed path、冲突/replace、enable 与 runtime apply、删除/rollback、secret redaction、IPC/preload/UI consumer 和打包资源。若 Marketplace 只是新增 provider adapter但没有 composition 注册，文档与 UI 必须继续显示“未配置”，不能写成已有目录内容。
-
-## Independent Agent role files
-
-The sidebar Agent manager edits AGENTS.md, SOUL.md and IDENTITY.md through native
-agents.files APIs. Role instructions are not copied into session projects or
-mirrored into profile system_prompt fields. Non-main managed roles have stable
-stateDir/agent-workspaces/<id> directories; main retains its existing workspace.
-See [independent agents](../features/multi-agent.md) for ownership and limitations.
-
-## 平级协作原生扩展
-
-内置 `collaboration` 扩展随本地运行时装配并默认启用，仅向受管 JustDo 原生会话提供
-`task_assistants` 和 `assistants_create`，Subagent key 不提供这两个工具。
-`before_tool_call` 的可信身份在 Gateway 方法中短期绑定，工具执行消费绑定后发送
-`plugin.collaboration.requested` 事件；Main 验证后通过 `collaboration.resolve` 返回回执。
-hook 与工具工厂可能属于不同注册实例，不能用实例内 Map 传递调用身份。
-计划模式在通用变更工具策略与原生 session 状态校验两处阻止协作发送。
-扩展不更改全局 agentToAgent / sessions.visibility 策略。
-
-
-模型先通过 task_assistants 查询/准备成员，再调用 OpenClaw 原生 sessions_send。发送前 hook 将精确任务目标交给宿主校验，并通过原生 scoped-access provider 临时授权该源/目标的 send 操作和目标 sessionId；不授权 history/list，也不改变全局 visibility。发送强制异步，原生 scoped-session 路径关闭自动 ping-pong，模型通过显式 sessions_send 回传。after_tool_call 记录实际原生 runId 和状态并撤销临时授权。Patch 025 只共享 Gateway bundle 与动态 SDK 的原生 scoped-access 注册表，避免同进程模块副本隔离；不另行实现消息执行器。
-
-### 长期助手创建工具
-
-collaboration 扩展声明并注册 assistants_create，复用 before_tool_call 的可信 session/run/toolCall 绑定及宿主请求通道。仅允许当前主会话用户运行创建，Plan 模式禁止写入。输入限于名称、职责、AGENTS.md 指令与可选模型；不开放任意 Gateway RPC、文件路径或权限参数。Main 的 NativeAssistantCreation 调用原生 agents.create/update/files.get/files.set，以读取校验后的真实状态返回 created/existing/incomplete。创建请求期限为 60 秒，普通协作请求仍为 8 秒。现有 sessions-changed 通知刷新助手列表，不新增界面或消息正文缓存。
-
-
-### Optional Agent Team extension
-
-`openclaw-extensions/agent-team` owns the persistent-peer tools
-`task_assistants` and `assistants_create`, and the before/after native
-`sessions_send` hooks that admit task-scoped sends and record receipts. Its
-bundled `skills/agent-team/SKILL.md` describes discovery, preparation, asynchronous
-replies and persistent profile creation. There is no per-turn roster or
-collaboration instruction injection. Models obtain current membership and
-available profile descriptions through the query tool when needed.
-
-Agent Team defaults to disabled and can be enabled or disabled in the existing
-Extensions manager through native `plugins.setEnabled`. It is not an
-application-managed mandatory plugin. Configuration synchronization applies a
-missing-entry default only, preserving explicit enabled/disabled choices.
-Native plugin lifecycle controls skill discovery, tool registration and scoped
-send grants together; existing extension mutations handle Gateway restart.
-
-The always-on Runtime Services extension owns the read-only
-`collaboration.messages` receipt lookup. Disabling Agent Team does not remove
-assistant profiles, task metadata or historical message visibility. Runtime Services
-also blocks native peer sends from managed sessions while Agent Team is disabled,
-so stale session keys cannot bypass the switch through broad session visibility. Message
-bodies continue to live exclusively in the native transcript store. The
-application bridge listens for `plugin.agent-team.requested`; existing
-`collaboration.*` RPC names and database identities are unchanged.
-
-
-Agent Team's switch also synchronizes its bundled `agent-team` skill through
-native `skills.update` (cold recovery uses native `config set`). This intentionally
-makes the extension one feature switch and invalidates existing session skill
-snapshots even with `skills.load.watch=false`. A partial skill write failure is
-reported and the same requested state can be retried; it never reports full
-success just because the plugin entry was already updated. Native per-agent and
-per-session skill allowlists remain authoritative.
-
-Native SubAgent session keys bypass the team send hooks and remain subject to
-OpenClaw's ownership/visibility checks; they do not consume peer message budget.
-Ambiguous label/physical-ID targets are not used to bypass the disabled peer
-boundary. Scoped peer access providers are acquired on service start and released
-on stop, including cached-registry stop/start cycles.
-
-
-## 本地音频转写工具
-
-`openclaw-extensions/stt-local-cli` 提供 `transcribe_audio`，由模型按需调用，
-不在消息发送前自动识别。它与 `tts-local-cli` 分别负责识别和合成。
-
-```mermaid
-sequenceDiagram
-  participant UI as 消息输入框
-  participant Main as Electron Main
-  participant Agent as OpenClaw Agent
-  participant STT as stt-local-cli
-  participant CLI as 本地 FFmpeg / Sherpa ONNX
-  UI->>Main: 将工作区外的音频附件复制到当前工作区
-  Main-->>UI: 工作区内的附件路径
-  UI->>Agent: 用户消息与 MEDIA 文件路径
-  Agent->>STT: transcribe_audio(audio_path)
-  STT->>CLI: 解码为 16 kHz 单声道 WAV，按 30 秒分段识别
-  CLI-->>STT: 各段文字
-  STT-->>Agent: 文字、分段起点、模型和语言
-```
-
-应用配置同步器管理识别程序绝对路径、模型参数、语言和线程数；工具复用已安装的
-SenseVoice / Whisper ONNX 模型，不下载模型、不调用云端服务。
-文件转写独立于麦克风输入开关和在线录音模式。扩展默认启用，用户在插件页显式禁用后，
-后续配置同步保留禁用状态。模型未就绪时不注册工具。模型安装、移除或语音设置变更
-沿用现有配置同步流程更新扩展配置。
-
-扩展只在非沙箱会话注册工具，并遵守当前工具上下文的 workspaceOnly/root 策略。
-输入必须是本地文件；不接受 URL、网络共享和播放列表。对工作区外的音频/视频附件，
-输入框发送时通过 `local-asr:stage-attachment` 将副本放到项目内的 `.justdo-audio-*`
-目录，原文件不变，副本保留供历史对话再次引用，可随项目手动清理。
-此 IPC 属于用户界面附件导入，不暴露给模型。
-
-支持 WAV、MP3、M4A、AAC、OGG、Opus、FLAC、WebM、MP4、MOV、MKV（文件须有可解码音轨）。
-上限为 256 MiB / 1 小时；每次命令限时 120 秒，整次调用限时 15 分钟，同一扩展实例
-只允许一个转写。取消会终止当前子进程并清理临时解码文件；超限、无语音或失败均不返回
-伪装为成功的部分转写。分段起点为切片偏移，不代表词级时间戳或说话人分离。
-
-FFmpeg 由扩展的锁定依赖 `@ffmpeg-installer/ffmpeg` 提供，随目标平台安装，
-运行时通过 createRequire 延迟加载以维持二进制定位；打包保留依赖许可文件。
-当前应用管理的 Sherpa 运行时仅支持 Windows x64，其余平台不注册此工具。
-
-### Local speech UI and agent extension switches
-
-The microphone and local file import use the main-process ASR module. Chat read-aloud and voice preview share the speech-synthesis preload bridge: local mode executes Sherpa directly in `localTtsService`, while online mode requests Gateway `tts.speak`. Local synthesis uses the existing model/voice/rate settings, bounded execution, and disposable WAV output. Neither local UI path depends on the STT/TTS extension being enabled or Gateway connectivity.
-
-Config sync preserves explicit disabled states for both `stt-local-cli` and `tts-local-cli`. These extension switches control OpenClaw capabilities; application voice input/output switches independently control the UI features.
-
-### 记忆维护任务与运行时白名单
-
-`memory-core` 必须同时进入 Gateway 和 Agent 执行阶段的插件集合。配置同步将已安装的内置 `memory-core` 作为默认启用项加入受信任白名单，但保留显式 `enabled: false`、deny 和 memory slot 选择。仅在 Gateway 启动时加载插件不足以保证记忆整理执行：OpenClaw 的 prepared runtime 会排除未列入显式 allowlist 的 memory slot 插件，使 `before_agent_reply` 无法接管内部 dreaming 标记。同步的完整配置与无模型最小配置都必须包含该默认项。
+从 `src/main/plugins/` 的文件事务、MCP/Hook 同步、Extension import/conversion 和 registry 测试检查产品层；从 `tests/openclaw/extensions/` 与 skill-resolution runtime contract 检查最终原生能力。市场增加 kind 前需完成安装、更新、启停、删除与状态对账闭环，详见[市场适配](16-skill-marketplace-adapter.md)。

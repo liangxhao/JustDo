@@ -14,9 +14,10 @@ JustDo 是一个基于 Electron、React、SQLite 和 OpenClaw Gateway 的桌面 
 | AI 工作会话  | OpenClaw Gateway 是执行引擎。JustDo 负责桌面壳、UI 状态、权限和产品元数据。                  |
 | 聊天 UI      | React 负责应用外壳；`<justdo-chat>` 是 Lit 自定义元素，直连本地 OpenClaw Gateway WebSocket。 |
 | 本地存储     | `better-sqlite3` 保存应用设置、Agent、MCP、hooks、会话分组、cowork 元数据和 run receipt。    |
-| Skills       | `resources/builtin-skills.json` 声明 8 个内置技能，全部默认启用。                           |
+| Skills       | `resources/builtin-skills.json` 声明 8 个内置技能，全部默认启用。                            |
 | MCP 与 hooks | 在 Plugins 页面管理，本地持久化后同步到 OpenClaw 配置。                                      |
 | 定时任务     | JustDo 负责 UI CRUD 和轮询；任务执行交给 OpenClaw cron runtime。                             |
+| 助手与协作   | 设置中管理长期助手；用户会话归属 main，可选 agent-team 扩展默认关闭，启用后使用原生协作。    |
 | 桌面集成     | 托盘、开机启动、防休眠、本地文件预览、日志、代理处理和平台打包资源。                         |
 
 ## 架构概览
@@ -124,7 +125,7 @@ Renderer Redux store 当前有 6 个 slice：
 
 ## 数据存储
 
-应用数据库是 Electron `userData/JustDo` 下的 `justdo.sqlite`。核心表包括：
+应用数据库位于 Electron `app.getPath('userData')` 下，默认路径为 `<appData>/<productName>/justdo.sqlite`。核心产品表共 20 张；下列是主要表，完整清单见[数据存储](docs/architecture/10-data-storage.md)：
 
 - `kv`
 - `cowork_config`
@@ -160,7 +161,7 @@ Runtime patch 策略见 `scripts/patches/README.md`，当前 patch 摘要见 `do
 
 ## 文档
 
-从 [docs/README.md](docs/README.md) 开始阅读。架构文档描述当前实现状态，而不是历史迁移计划。
+从[文档导航](docs/README.md)开始阅读；开发启动与日志定位见[开发与排障](docs/development.md)，能力与限制见[当前实现状态](docs/features/current-state-v2026.8.10.md)。现行架构、阶段审计和历史方案分别标注，发布记录保持原版本事实。
 
 ## 贡献约定
 

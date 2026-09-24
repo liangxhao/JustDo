@@ -1,126 +1,54 @@
-# OpenClaw 会话权限管理
+# 会话权限：保存、应用与执行准入
 
-> 文件名保留 `remediation-plan` 以兼容旧链接。本文按 JustDo `v2026.8.27` 和 OpenClaw `v2026.9.2` 维护。
+权限链路已使用 OpenClaw 原生 session permissionMode/sessionRoot。本文保留旧文件名，但按当前 coordinator 与发送流程说明，不再作为历史 remediation 待办。
 
-## 1. 结论
+## 1. 用户选择对应什么
 
-OpenClaw v2026.9.2 已提供原生的会话级 `permissionMode` 和 `sessionRoot`。JustDo 的三档产品模式继续有效，但实现必须映射到这个原生模型，而不是修改全局 `tools.exec.mode`、修改 Agent workspace，或用自定义插件再次拦截文件工具。
+| 产品模式 | 原生模式  | 范围                     |
+| -------- | --------- | ------------------------ |
+| ask      | guarded   | 原生受保护执行与审批     |
+| auto     | workspace | 工作区策略及原生自动审查 |
+| full     | full      | 当前会话的完整权限语义   |
 
-| JustDo | OpenClaw session mode | 文件范围               | 命令审核                           |
-| ------ | --------------------- | ---------------------- | ---------------------------------- |
-| `ask`  | `guarded`             | 仅 `sessionRoot`       | allowlist 快速通过，其余由用户批准 |
-| `auto` | `workspace`           | 仅 `sessionRoot`       | LLM 审核，无法决定时回退用户批准   |
-| `full` | `full`                | 不限制到 `sessionRoot` | 不需要审批                         |
+三种模式都属于当前 session。默认值只影响新会话；不能因为一个会话选 full 就改全局 tools.exec.mode。全局仍保持 restricted fallback。
 
-OpenClaw 还支持 `read-only`，但 JustDo 当前没有对应的第四档产品模式。不要把 `ask` 映射成 `read-only`，因为 Ask 仍允许任务目录内的文件修改。
+## 2. 保存和应用是两个时点
 
-`DEFAULT_PERMISSION_MODE` 仍是 `full`，只表示新会话的产品默认值，不是推荐安全级别。打开既有会话后，选择器显示并修改该会话自己的模式；关闭会话后，选择器修改新会话默认值。
-
-## 2. 权威状态
-
-权限状态分为三层，职责不可混用：
-
-- OpenClaw session entry 中的 `permissionMode` 与规范化 `sessionRoot` 是当前 run 的执行时权威。
-- `cowork_sessions.permission_mode` 和 `cwd` 是用户期望状态的耐久产品投影，用于恢复 UI、延迟切换并在每次 turn 前重新声明。
-- `cowork_config.permission_mode` 只作为新会话默认值。
-
-每次初始发送、继续发送和斜杠命令发送前，Main 都调用幂等的 `sessions.create({ key, cwd, permissionMode })`。v2026.9.2 会创建、采用或更新同 key 的 session entry。JustDo 必须回读并核对 `sessionId`、`entry.permissionMode` 和 `entry.sessionRoot`；任何字段缺失或不匹配都阻止发送。显式切换若发生在空闲期会立即执行同一同步；若当前 run 活跃，则先保存期望值并在终态后台应用。
-
-既有本地会话不需要单独迁移。它们在下一次发送或模式切换时按当前 SQLite 投影写入原生 session entry。项目约束禁止为旧 JustDo runtime patch 形状增加原地兼容逻辑。
-
-## 3. 数据流
+用户切换权限后先将期望值写入 cowork_sessions。会话空闲时立即准备原生 session 并回读核对；仍有运行时先记录 pending，终态后重试应用。UI 可以显示已保存但待应用，不能把它描述成旧 run 已立即换权限。
 
 ```mermaid
-sequenceDiagram
-  participant U as User
-  participant R as Renderer
-  participant M as Main coordinator
-  participant G as OpenClaw Gateway
-  participant D as SQLite
-
-  U->>R: select ask/auto/full
-  R->>M: setSessionPermissionMode(sessionId, mode)
-  M->>D: persist desired session mode
-  alt run is active
-    M-->>R: success + deferred
-    R->>R: show selected mode
-    M->>G: after terminal, sessions.create + verify
-  else session is idle
-    M->>G: sessions.create + verify
-    G-->>M: sessionId + entry
-    M-->>R: success
-  end
+flowchart LR
+  Select[用户选择] --> Store[持久化期望 mode]
+  Store --> Active{会话仍活动}
+  Active -->|是| Pending[等待终态 / 有界重试]
+  Active -->|否| Prepare[原生 session prepare]
+  Pending --> Prepare
+  Prepare --> Verify[核对 mode 与 root]
+  Verify --> Send[下一 turn 准入]
 ```
 
-同一会话的显式切换由 `SessionPermissionModeCoordinator` 串行化。SQLite 必须先保存用户选择，之后才允许修改 Gateway；因此数据库失败不会产生需要恢复的“旧原生模式”。活跃 run 不禁用选择器，也不改变该 run 已捕获的权限边界；coordinator 记录待应用会话，在 `complete/sessionStopped/error` 信号后再次确认 run 已不活跃，再读取最新 SQLite 值同步。即时同步失败同样保留期望值为 pending，不回滚旧值。
+SessionPermissionModeCoordinator 按 session 串行，而非全局阻塞所有任务。失败保留待应用状态，不擅自恢复旧期望；prepareSessionForRun 必须严格成功才允许下一次发送。
 
-发送前 `OpenClawRuntimeAdapter.prepareSession` 再执行同一幂等写入与验证，因此 UI 之外的合法 Main 调用也不能绕过 session 权限准备。Renderer 不能提交初始会话的可信 `permissionMode`；Main 从持久化的新会话默认值创建 session。
+## 3. 工作目录是权限的一部分
 
-## 4. 全局配置与 Host approvals
+sessionRoot 来自产品任务 cwd，并规范化验证。变更项目路径、模型或恢复旧会话时仍需准备，不能只比较模式字符串。原生身份与 root 不匹配就拒绝发送，不能用修改助手角色 workspace 代替任务权限。
 
-原生 session mode 是主路径，但无显式 session mode 的 OpenClaw 调用仍需要安全兜底。因此生成的全局配置包含：
+## 4. 与其他控制面的关系
 
-- `tools.exec.mode: "ask"`；
-- `tools.fs.workspaceOnly: true`；
-- `tools.sessions.visibility` 来自“设置 → 配置”的会话访问范围，默认 `"tree"`；
-- host approval defaults 为 `allowlist` / `on-miss` / `deny`。
+计划模式限制当前规划工作流，automation-permission 控制定时任务变更，session visibility 控制跨会话访问，MXC 控制工具进程隔离。它们各自生效，不因 permissionMode 显示 full 就全部关闭。
 
-exec、fs 与 host approval fallback 不随会话权限选择器切换。v2026.9.2 的 session tool 隐式可见范围是 `all`，跨 Agent 访问再受 `tools.agentToAgent` 约束；JustDo 用显式设置覆盖该默认值，初始采用 `tree`，用户也可选择 `self/agent/all`。修改新会话默认权限只写 `cowork_config`，不会重载 Gateway；修改会话访问范围则通过 `agentRuntimeSettings:v1` 同步全局配置。这样多个会话可以同时使用不同执行权限，也不会因一个会话切换 Full 而短暂提升其他会话。
+原生 exec/plugin approval 有独立 pending、期限和 decision 集合。Main 验证响应属于有效请求；关弹窗、页面卸载、断线不表示允许。session grant 在原生终态/停止/删除语义中清理。
 
-OpenClaw 对非 Full session mode 继续应用 host approval file 的限制；显式 `full` 是需要 `operator.admin` 的原生例外。JustDo Gateway client 具备该 scope。普通 session 仍通过 `exec.approval.*` 展示与解决人工审批，且“本会话允许相同命令”的 grant 只绑定对应 session 和命令身份。
+## 5. 拒绝和延迟如何反馈
 
-Exec 与 plugin approval 使用 OpenClaw 原生 request/wait 机制，包括 CLI native tool、native hook relay 和计划任务变更审批。JustDo 不再覆盖 exec 或全局 plugin 审批时限，也不提供无限等待；设置页只为 automation-permission 的计划任务变更选择原生支持的 2/5/10 分钟。
+| 情况             | 行为                         |
+| ---------------- | ---------------------------- |
+| 保存失败         | 返回失败，不显示已保存       |
+| 旧 run 仍活动    | 待应用；发送准备不能绕过     |
+| Gateway 无法核对 | 保留期望并拒绝新 turn        |
+| 用户快速连续切换 | 串行收敛到最终持久期望       |
+| 已删除会话的重试 | 清 pending/timer，不重建会话 |
 
-## 5. Scheduler
+## 6. 代码与测试
 
-定时任务复用现有助手及原生权限策略，不再额外注册执行身份、固定 Full 策略或审批豁免。任务选择的工具权限不能绕过助手及 host approval 限制。
-
-三档会话权限只约束 OpenClaw 管理的文件与 exec 工具。Browser、MCP、Marketplace、第三方插件和消息渠道仍遵守各自 policy。通用 `plugin.approval.*` transport 保留，但不能把第三方插件批准等同于 exec 批准。
-
-## 6. 已删除的旧实现
-
-以下实现与 v2026.9.2 原生模型冲突，已彻底移除：
-
-- 把 UI 选择投影到全局 `tools.exec.mode` / `tools.fs.workspaceOnly`；
-- 每个 turn 修改 Agent workspace 的 admission 逻辑；
-- 将旧 session `permission_mode` 解释为无执行意义的兼容快照；
-- 清空当前会话时强制把默认权限重置为 Full。
-
-## 7. Fail-closed 规则
-
-- `sessions.create` 失败、无 `sessionId`、mode 不匹配或 root 不匹配：不发送 turn。
-- SQLite 保存失败：不修改 Gateway，也不更新 Renderer 选择。
-- 空闲期原生同步失败：SQLite 保留用户期望值并标记待应用；发送前仍需严格同步成功，否则不发送 turn。
-- 全局 fallback 或 scheduler 隔离的 active config 回读失败：config sync 按现有流程停止 Gateway。
-- approval UI 关闭、run 停止、Gateway generation 改变或重复/迟到响应：不得解释为允许。
-- 活跃 run 期间允许切换；当前 run 保持已有边界，新值在终态后台应用，并在下一 turn 前再次强制核对。
-
-## 8. 测试与验收
-
-自动测试至少覆盖：
-
-- `ask -> guarded`、`auto -> workspace`、`full -> full` 的精确映射；
-- session root/mode 回读验证及不匹配拒绝；
-- 相同模式仍重放、同 session 切换串行、运行中延迟应用、同步失败不恢复旧值；
-- turn 在 session 准备期间停止或被新 turn 取代时不误发；
-- 新会话忽略 Renderer 伪造的 mode，并采用 Main 的默认值；
-- 旧扩展目录与 config registration 清理；
-- 全局 fallback 和 scheduler Full 的 active runtime 验证。
-
-每次 OpenClaw 升级还应对真实 packaged runtime 做 smoke：
-
-1. Ask 在任务目录内读写、命令 allowlist 与人工允许/拒绝。
-2. Auto 的 LLM 允许、拒绝、转人工和 reviewer 失败路径。
-3. Ask/Auto 对目录逃逸、symlink 逃逸和外部绝对路径的拒绝。
-4. Full 的外部文件与命令，以及切回 Ask 后下一 turn 立即收紧。
-5. 两个并存会话采用不同模式时互不影响。
-6. Gateway 重启后既有会话在下一 turn 正确恢复 mode/root。
-7. scheduler 无 UI 运行且普通会话不继承其 Full。
-
-## 9. 变更规则
-
-1. 新权限模式先核对 OpenClaw 的 session protocol 与 core mapping，再更新 shared 映射、Main、preload、Renderer、中英文 i18n 和测试。
-2. 不在 Renderer 复制 `security` / `ask` 策略，也不以 session key 自行模拟授权。
-3. 不为 OpenClaw 已有的 session 文件策略再增加 before-tool 插件。
-4. 新工具必须明确属于 native session permission、exec approval、plugin approval 或独立权限域；未知能力不得默认允许。
-5. Full 的 UI 二次确认必须保留；任何自动允许路径均需明确 owner、scope 和失败行为。
+主入口是 `src/main/openclaw/permissions/sessionPermissionModeCoordinator.ts`，发送由 Cowork handler/Router 复用，合约位于 shared/openclaw。测试应覆盖活动期间变更、失败重试、快速切换、删除与新 turn 同步，而不是只断言生成的 JSON 有某字段。
