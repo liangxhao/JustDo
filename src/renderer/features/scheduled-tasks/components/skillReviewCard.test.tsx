@@ -15,7 +15,11 @@ import { afterEach, expect, test, vi } from 'vitest';
 
 import { CronJobCard } from './CronView';
 import { useMemoryDreamingControl, withMemoryDreamingCard } from './memoryDreamingControl';
-import { SKILL_REVIEW_CARD_ID, withSkillReviewCard } from './skillReviewCard';
+import {
+  excludeDeletedSkillReviewTasks,
+  SKILL_REVIEW_CARD_ID,
+  withSkillReviewCard,
+} from './skillReviewCard';
 import { isSkillCollectionReviewTask } from './utils';
 
 const settings: SystemTaskSettings = {
@@ -33,6 +37,37 @@ const member = (id: string): ScheduledTask => ({
   payload: { kind: 'agentTurn', message: 'Audit the Workshop collection.' },
 });
 afterEach(cleanup);
+
+test('excludes deleted assistants from current skill members and aggregate state without removing history', () => {
+  const deleted = member('deleted');
+  deleted.state = { ...deleted.state, lastStatus: 'error', lastRunAtMs: 100, nextRunAtMs: 200 };
+  const active = member('main');
+  active.state = { ...active.state, lastStatus: 'success', lastRunAtMs: 50, nextRunAtMs: 500 };
+  const disabled = member('disabled');
+  disabled.enabled = false;
+  const unknown = member('native-only');
+  unknown.enabled = false;
+  const userTask = { ...deleted, id: 'user-task', management: 'editable' as const };
+  const tasks = [deleted, active, disabled, unknown, userTask];
+  const visible = excludeDeletedSkillReviewTasks(tasks, [
+    { id: 'deleted', deletedAt: 123 },
+    { id: 'main' },
+    { id: 'disabled' },
+  ]);
+  expect(visible).toEqual([active, disabled, unknown, userTask]);
+  const card = withSkillReviewCard(visible, { ...settings, skillMode: 'auto' }).find(
+    task => task.id === SKILL_REVIEW_CARD_ID,
+  )!;
+  expect(card.state).toMatchObject({ lastStatus: 'success', nextRunAtMs: 500 });
+  expect(tasks[0]).toBe(deleted);
+  expect(excludeDeletedSkillReviewTasks(tasks, [])).toEqual(tasks);
+  expect(
+    withSkillReviewCard(
+      excludeDeletedSkillReviewTasks([deleted], [{ id: 'deleted', deletedAt: 123 }]),
+      settings,
+    )[0].state.nextRunAtMs,
+  ).toBeNull();
+});
 
 test('groups six native agentTurn monitors without absorbing lookalike user or other managed jobs', () => {
   const members = Array.from({ length: 6 }, (_, index) => member(`agent-${index}`));

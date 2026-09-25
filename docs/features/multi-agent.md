@@ -69,6 +69,9 @@ The profile header offers deletion for non-main, non-default assistants. The
 confirmation describes the retained history and role files. Active native work
 blocks deletion. Deleted profiles disappear from Settings and cannot receive
 product task invitations or be edited, while historical graphs keep their names.
+The scheduled-task skill collection review card excludes deleted assistants from
+its current members, search and aggregate status. Native jobs and historical
+results remain intact; this display filter does not revoke native execution.
 The native profile is retained for transcript ownership; this does not invoke
 OpenClaw's destructive agent deletion or delete user files. Recreating the same
 name creates a distinct assistant. Retrying an interrupted creation for a deleted

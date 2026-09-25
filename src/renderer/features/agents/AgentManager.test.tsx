@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { configureStore } from '@reduxjs/toolkit';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -95,23 +95,80 @@ describe('independent Agent manager', () => {
     expect(screen.getByRole('button', { name: 'save' })).toHaveProperty('disabled', true);
     expect(writeFile).not.toHaveBeenCalled();
   });
-  it('requires confirmation before deletion and retains edits on failure', async () => {
+  it('uses an application dialog when native confirmations are disabled and retains edits on failure', async () => {
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     mount();
-    await waitFor(() => expect(readFile).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByRole('textbox', { name: 'AGENTS.md' })).toHaveProperty(
+        'value',
+        'Read only',
+      ),
+    );
+    fireEvent.change(screen.getByRole('textbox', { name: 'agentName' }), {
+      target: { value: 'Unsaved name' },
+    });
+    fireEvent.change(screen.getByRole('textbox', { name: 'AGENTS.md' }), {
+      target: { value: 'Unsaved rules' },
+    });
     fireEvent.click(screen.getByRole('button', { name: 'agentDelete' }));
+    expect(screen.getByRole('dialog', { name: 'agentDelete' })).toBeTruthy();
     expect(deleteAgent).not.toHaveBeenCalled();
-    confirm.mockReturnValue(true);
+    fireEvent.click(screen.getByRole('button', { name: 'cancel' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(deleteAgent).not.toHaveBeenCalled();
+
     deleteAgent.mockResolvedValueOnce({ success: false, error: 'agentBusy' });
     fireEvent.click(screen.getByRole('button', { name: 'agentDelete' }));
+    fireEvent.click(
+      within(screen.getByRole('dialog')).getByRole('button', { name: 'agentDelete' }),
+    );
     expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'agentBusy');
-    expect(screen.getByRole('textbox', { name: 'agentName' })).toHaveProperty('value', 'Reviewer');
+    expect(screen.getByRole('textbox', { name: 'agentName' })).toHaveProperty(
+      'value',
+      'Unsaved name',
+    );
+    expect(screen.getByRole('textbox', { name: 'AGENTS.md' })).toHaveProperty(
+      'value',
+      'Unsaved rules',
+    );
+
     deleteAgent.mockResolvedValueOnce({ success: true });
     fireEvent.click(screen.getByRole('button', { name: 'agentDelete' }));
-    await waitFor(() =>
-      expect(screen.getByRole('textbox', { name: 'agentName' })).toHaveProperty('value', ''),
+    fireEvent.click(
+      within(screen.getByRole('dialog')).getByRole('button', { name: 'agentDelete' }),
     );
+    expect(await screen.findByText('agentDeleted')).toBeTruthy();
+    expect(screen.getByRole('textbox', { name: 'agentName' })).toHaveProperty('value', '');
     expect(deleteAgent).toHaveBeenLastCalledWith('review');
+    expect(confirm).not.toHaveBeenCalled();
+  });
+  it('cancels deletion with Escape and blocks closing or resubmitting while deletion is pending', async () => {
+    let finish!: (result: { success: boolean }) => void;
+    deleteAgent.mockReturnValueOnce(
+      new Promise(resolve => {
+        finish = resolve;
+      }),
+    );
+    const { leaveGuard } = mount();
+    await waitFor(() => expect(readFile).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole('button', { name: 'agentDelete' }));
+    expect(leaveGuard.current?.()).toBe(false);
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(deleteAgent).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'agentDelete' }));
+    const dialog = screen.getByRole('dialog');
+    const submit = within(dialog).getByRole('button', { name: 'agentDelete' });
+    fireEvent.click(submit);
+    expect(submit).toHaveProperty('disabled', true);
+    expect(within(dialog).getByRole('button', { name: 'cancel' })).toHaveProperty('disabled', true);
+    fireEvent.click(submit);
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    expect(deleteAgent).toHaveBeenCalledTimes(1);
+    finish({ success: true });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
   it('hides deleted profiles without removing their historical identity from the roster', async () => {
     mount([

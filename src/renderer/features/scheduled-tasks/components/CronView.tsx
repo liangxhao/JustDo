@@ -66,7 +66,11 @@ import {
   withMemoryDreamingCard,
 } from './memoryDreamingControl';
 import SchedulerSettingsDialog from './SchedulerSettingsDialog';
-import { SKILL_REVIEW_CARD_ID, withSkillReviewCard } from './skillReviewCard';
+import {
+  excludeDeletedSkillReviewTasks,
+  SKILL_REVIEW_CARD_ID,
+  withSkillReviewCard,
+} from './skillReviewCard';
 
 // ── Schedule Builder Types ─────────────────────────────────────────
 
@@ -1785,7 +1789,12 @@ export const CronView: React.FC<CronViewProps> = ({
 }) => {
   const t = i18nService.t.bind(i18nService);
 
-  const nativeTasks = useSelector((s: RootState) => s.scheduledTask.tasks);
+  const allNativeTasks = useSelector((s: RootState) => s.scheduledTask.tasks);
+  const agents = useSelector((s: RootState) => s.agent.agents);
+  const nativeTasks = useMemo(
+    () => excludeDeletedSkillReviewTasks(allNativeTasks, agents),
+    [allNativeTasks, agents],
+  );
   const memoryControl = useMemoryDreamingControl(nativeTasks);
   const toggleMemoryDreaming = memoryControl.toggle;
   const toggleSkills = memoryControl.toggleSkills;
@@ -1801,7 +1810,6 @@ export const CronView: React.FC<CronViewProps> = ({
       ),
     [nativeTasks, memoryControl.settings],
   );
-  const agents = useSelector((s: RootState) => s.agent.agents);
   const loading = useSelector((s: RootState) => s.scheduledTask.loading);
   const error = useSelector((s: RootState) => s.scheduledTask.error);
   const unreadResultCount = useSelector((s: RootState) => s.scheduledTask.unreadResultCount);
@@ -2113,7 +2121,10 @@ export const CronView: React.FC<CronViewProps> = ({
             </button>
           </div>
           {schedulerEnabled === false && (
-            <p role="status" className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-foreground">
+            <p
+              role="status"
+              className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-foreground"
+            >
               {t('schedulerSettingsPaused')}
             </p>
           )}

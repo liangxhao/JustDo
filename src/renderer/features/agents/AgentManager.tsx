@@ -16,10 +16,13 @@ import {
   type AgentProfileInput,
 } from '@shared/agents/agents';
 import { type MutableRefObject, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useSelector } from 'react-redux';
 
+import { useDialogFocusTrap } from '@/features/cowork/components/shared/useDialogFocusTrap';
 import { toOpenClawModelRef } from '@/features/models/openclawModelRef';
 import { i18nService } from '@/services/i18n';
+import Modal from '@/shared/components/common/Modal';
 import type { RootState } from '@/store';
 
 import { agentService } from './agentService';
@@ -49,6 +52,10 @@ export default function AgentManager({
   const [snapshot, setSnapshot] = useState<AgentFileSnapshot | null>(null);
   const [content, setContent] = useState('');
   const [busy, setBusy] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const deleteDialogRef = useRef<HTMLDivElement>(null);
+  const cancelDeleteRef = useRef<HTMLButtonElement>(null);
+  useDialogFocusTrap(deleteDialogRef, cancelDeleteRef, 'delete-agent', true, confirmDelete);
   const [loadingFile, setLoadingFile] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -60,7 +67,8 @@ export default function AgentManager({
   const profileDirty = JSON.stringify(profile) !== original;
   const fileDirty = snapshot !== null && snapshot.content !== content;
   const dirty = profileDirty || fileDirty;
-  const canLeave = () => !busy && (!dirty || window.confirm(t('agentDiscardChanges')));
+  const canLeave = () =>
+    !busy && !confirmDelete && (!dirty || window.confirm(t('agentDiscardChanges')));
   useEffect(() => {
     leaveGuard.current = canLeave;
     return () => {
@@ -194,9 +202,7 @@ export default function AgentManager({
     }
   };
   const deleteProfile = async () => {
-    if (!profile.id || profile.id === 'main' || profile.isDefault || busy) return;
-    const savedName = agents.find(agent => agent.id === profile.id)?.name ?? profile.name;
-    if (!window.confirm(t('agentDeleteConfirm').replace('{name}', savedName))) return;
+    if (!confirmDelete || !profile.id || profile.id === 'main' || profile.isDefault || busy) return;
     setBusy(true);
     setError('');
     setNotice('');
@@ -216,6 +222,7 @@ export default function AgentManager({
     } catch {
       setError('agentDeleteFailed');
     } finally {
+      setConfirmDelete(false);
       setBusy(false);
     }
   };
@@ -419,7 +426,7 @@ export default function AgentManager({
                 <button
                   type="button"
                   disabled={busy}
-                  onClick={() => void deleteProfile()}
+                  onClick={() => setConfirmDelete(true)}
                   aria-label={t('agentDelete')}
                   title={t('agentDelete')}
                   className="rounded-lg p-2 text-secondary hover:bg-red-500/10 hover:text-red-600 disabled:opacity-50"
@@ -606,6 +613,58 @@ export default function AgentManager({
           )}
         </div>
       </div>
+      {confirmDelete &&
+        createPortal(
+          <Modal
+            onClose={() => {
+              if (!busy) setConfirmDelete(false);
+            }}
+            className="w-full max-w-sm rounded-2xl border border-border bg-surface p-5 shadow-modal"
+          >
+            <div
+              ref={deleteDialogRef}
+              role="dialog"
+              aria-modal="true"
+              aria-label={t('agentDelete')}
+              aria-busy={busy}
+              tabIndex={-1}
+              onKeyDown={event => {
+                if (event.key === 'Escape') {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (!busy) setConfirmDelete(false);
+                }
+              }}
+            >
+              <p className="text-sm leading-relaxed text-foreground">
+                {t('agentDeleteConfirm').replace(
+                  '{name}',
+                  agents.find(agent => agent.id === profile.id)?.name ?? profile.name,
+                )}
+              </p>
+              <div className="mt-5 flex justify-end gap-2">
+                <button
+                  ref={cancelDeleteRef}
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setConfirmDelete(false)}
+                  className="rounded-lg border border-border px-3 py-2 text-sm text-foreground hover:bg-surface-raised disabled:opacity-50"
+                >
+                  {t('cancel')}
+                </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void deleteProfile()}
+                  className="rounded-lg bg-red-500 px-3 py-2 text-sm text-white hover:bg-red-600 disabled:opacity-50"
+                >
+                  {t('agentDelete')}
+                </button>
+              </div>
+            </div>
+          </Modal>,
+          document.body,
+        )}
     </section>
   );
 }

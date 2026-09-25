@@ -5,6 +5,18 @@ import { isSkillCollectionReviewTask } from './utils';
 
 // Renderer-only aggregate. All mutations target feature config or real member IDs.
 export const SKILL_REVIEW_CARD_ID = 'skill-review-feature';
+
+export function excludeDeletedSkillReviewTasks(
+  tasks: ScheduledTask[],
+  agents: readonly { id: string; deletedAt?: number }[],
+): ScheduledTask[] {
+  // Native profiles and jobs remain available for history ownership after deletion.
+  const deletedIds = new Set(agents.filter(agent => agent.deletedAt).map(agent => agent.id));
+  return tasks.filter(
+    task => !isSkillCollectionReviewTask(task) || !task.agentId || !deletedIds.has(task.agentId),
+  );
+}
+
 export function withSkillReviewCard(
   tasks: ScheduledTask[],
   settings: SystemTaskSettings | null,
