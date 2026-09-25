@@ -218,7 +218,6 @@ const probeMxcProcessContainer = async (
     ui: { disable: true, clipboard: 'none', injection: false },
     network: { defaultPolicy: 'block', enforcementMode: 'capabilities' },
     processContainer: {
-      name: `justdo-mxc-probe-${process.pid}`,
       leastPrivilege: true,
       capabilities: [] as string[],
       ui: {

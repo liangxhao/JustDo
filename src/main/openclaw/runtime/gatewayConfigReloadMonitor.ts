@@ -205,7 +205,7 @@ export class GatewayConfigReloadMonitor {
     }
   }
 
-  waitForReloadAfter(generation: number, timeoutMs = 15_000): Promise<boolean> {
+  waitForReloadAfter(generation: number, timeoutMs = 30_000): Promise<boolean> {
     const getCurrentRecord = (): ReloadRecord | undefined =>
       this.records.find(candidate => candidate.generation > generation);
     const resolveCurrent = (): boolean | null => {
@@ -220,6 +220,7 @@ export class GatewayConfigReloadMonitor {
 
     return new Promise(resolve => {
       let settled = false;
+      let usingCompletionTimeout = false;
       let usingRestartTimeout = false;
       let timer: ReturnType<typeof setTimeout>;
       const finish = (result: boolean) => {
@@ -243,6 +244,12 @@ export class GatewayConfigReloadMonitor {
         if (!usingRestartTimeout && getCurrentRecord()?.restartAccepted) {
           usingRestartTimeout = true;
           armTimer(GATEWAY_RESTART_COMPLETION_TIMEOUT_MS);
+        } else if (!usingRestartTimeout && !usingCompletionTimeout && getCurrentRecord()) {
+          // Detecting the change can take most of the initial budget (for
+          // example, while resolving credentials on Windows). Give the reload
+          // its own bounded completion window before requesting a restart.
+          usingCompletionTimeout = true;
+          armTimer(timeoutMs);
         }
       };
       armTimer(timeoutMs);

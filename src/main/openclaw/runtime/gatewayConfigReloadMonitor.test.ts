@@ -84,6 +84,72 @@ describe('GatewayConfigReloadMonitor', () => {
     await expect(Promise.all([first, second])).resolves.toEqual([true, true]);
   });
 
+  it('allows a delayed sandbox reload to finish without triggering a competing restart', async () => {
+    vi.useFakeTimers();
+    const monitor = new GatewayConfigReloadMonitor();
+    const result = monitor.waitForReloadAfter(monitor.getGeneration(), 15_000);
+    const settled = vi.fn();
+    void result.then(settled);
+
+    await vi.advanceTimersByTimeAsync(9_000);
+    monitor.observeLine(
+      '[reload] config change detected; evaluating reload (agents.defaults.sandbox.mode, plugins.entries.mxc.enabled)',
+    );
+    await vi.advanceTimersByTimeAsync(9_000);
+    expect(settled).not.toHaveBeenCalled();
+    monitor.observeLine(
+      '[reload] config hot reload applied (agents.defaults.sandbox.mode, plugins.entries.mxc.enabled)',
+    );
+
+    await expect(result).resolves.toBe(true);
+  });
+
+  it('allows slow change detection before starting the default completion window', async () => {
+    vi.useFakeTimers();
+    const monitor = new GatewayConfigReloadMonitor();
+    const result = monitor.waitForReloadAfter(monitor.getGeneration());
+    const settled = vi.fn();
+    void result.then(settled);
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(settled).not.toHaveBeenCalled();
+    monitor.observeLine(
+      '[reload] config change detected; evaluating reload (plugins.entries.mxc.enabled)',
+    );
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(settled).not.toHaveBeenCalled();
+    monitor.observeLine('[reload] config hot reload applied (plugins.entries.mxc.enabled)');
+
+    await expect(result).resolves.toBe(true);
+  });
+
+  it('bounds an unfinished reload even when unrelated lifecycle events keep arriving', async () => {
+    vi.useFakeTimers();
+    const monitor = new GatewayConfigReloadMonitor();
+    const result = monitor.waitForReloadAfter(monitor.getGeneration(), 100);
+    await vi.advanceTimersByTimeAsync(90);
+    monitor.observeLine(
+      '[reload] config change detected; evaluating reload (agents.defaults.sandbox.mode)',
+    );
+    await vi.advanceTimersByTimeAsync(90);
+    monitor.observeLine('[gateway] ready');
+    await vi.advanceTimersByTimeAsync(10);
+
+    await expect(result).resolves.toBe(false);
+  });
+
+  it('reports a failed reload immediately during the completion window', async () => {
+    vi.useFakeTimers();
+    const monitor = new GatewayConfigReloadMonitor();
+    const result = monitor.waitForReloadAfter(monitor.getGeneration(), 100);
+    await vi.advanceTimersByTimeAsync(90);
+    monitor.observeLine(
+      '[reload] config change detected; evaluating reload (agents.defaults.sandbox.mode)',
+    );
+    monitor.observeLine('[reload] config reload failed: sandbox unavailable');
+
+    await expect(result).resolves.toBe(false);
+  });
+
   it('matches interleaved hot and restart completions to their own generations', async () => {
     vi.useFakeTimers();
     const monitor = new GatewayConfigReloadMonitor();

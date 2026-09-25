@@ -132,6 +132,53 @@ describe('Windows MXC sandbox resource discovery', () => {
 });
 
 describe('Windows MXC sandbox readiness', () => {
+  it('uses containerId for both native probes without the unsupported ProcessContainer name', async () => {
+    const appPath = makeTemporaryDirectory();
+    makePlugin(appPath);
+    const statSync = fs.statSync;
+    vi.spyOn(fs, 'statSync').mockImplementation((...args) => {
+      if (args[0] === 'C:\\Windows\\System32\\cmd.exe') {
+        return { isFile: () => true } as fs.Stats;
+      }
+      return statSync(...args);
+    });
+    const runFile = vi.fn(async (_executable: string, _args: readonly string[]) => ({
+      stdout: '',
+      stderr: '',
+    }));
+    const service = new WindowsSandboxService({
+      platform: 'win32',
+      arch: 'x64',
+      isPackaged: false,
+      appPath,
+      resourcesPath: makeTemporaryDirectory(),
+      systemRoot: 'C:\\Windows',
+      systemDrive: 'C:',
+      nativeBinaryVerifier: sandboxRuntimeChecks().nativeBinaryVerifier,
+      execFile: runFile,
+    });
+
+    await expect(service.getStatus()).resolves.toMatchObject({ code: 'ready', ready: true });
+    const probeCalls = runFile.mock.calls.filter(([executable]) =>
+      executable.endsWith('wxc-exec.exe'),
+    );
+    expect(probeCalls).toHaveLength(2);
+    const configs = probeCalls.map(([, args]) => {
+      expect(args[0]).toBe('--config-base64');
+      return JSON.parse(Buffer.from(args[1], 'base64').toString('utf8'));
+    });
+    for (const config of configs) {
+      expect(config.containerId).toMatch(/^justdo-mxc-probe-[a-f0-9]+$/);
+      expect(config.containment).toBe('processcontainer');
+      expect(config.processContainer).not.toHaveProperty('name');
+      expect(config.processContainer.leastPrivilege).toBe(true);
+      expect(config.network.defaultPolicy).toBe('block');
+    }
+    expect(configs[0].containerId).not.toBe(configs[1].containerId);
+    expect(configs[0].process.commandLine).toContain('/d /c exit 0');
+    expect(configs[1].process.commandLine).toContain('/d /c dir C:\\ >nul');
+  });
+
   it('rejects a tampered version-pinned native helper', () => {
     const appPath = makeTemporaryDirectory();
     const pluginDirectory = makePlugin(appPath);

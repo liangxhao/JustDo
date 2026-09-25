@@ -20,6 +20,7 @@ const WindowsSandboxSettingsTab: React.FC = () => {
   const [executionMode, setExecutionMode] = useState<ExecutionMode>('local');
   const [sandboxNetworkEnabled, setSandboxNetworkEnabled] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [switching, setSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -43,31 +44,33 @@ const WindowsSandboxSettingsTab: React.FC = () => {
 
   const updateMode = async (nextMode: ExecutionMode) => {
     if (nextMode === 'sandbox' && !status?.ready) return;
+    setSwitching(true);
     setBusy(true);
     setError(null);
     try {
       const result = await window.electron.cowork.setConfig({ executionMode: nextMode });
       if (!result.success) throw new Error(result.error || i18nService.t('saveFailed'));
       setExecutionMode(nextMode);
-      await refresh();
     } catch (updateError) {
       setError(updateError instanceof Error ? updateError.message : String(updateError));
     } finally {
+      setSwitching(false);
       setBusy(false);
     }
   };
 
   const updateNetworkAccess = async (enabled: boolean) => {
+    setSwitching(true);
     setBusy(true);
     setError(null);
     try {
       const result = await window.electron.cowork.setConfig({ sandboxNetworkEnabled: enabled });
       if (!result.success) throw new Error(result.error || i18nService.t('saveFailed'));
       setSandboxNetworkEnabled(enabled);
-      await refresh();
     } catch (updateError) {
       setError(updateError instanceof Error ? updateError.message : String(updateError));
     } finally {
+      setSwitching(false);
       setBusy(false);
     }
   };
@@ -107,6 +110,12 @@ const WindowsSandboxSettingsTab: React.FC = () => {
         <p className="mt-1 text-sm leading-6 text-secondary">
           {i18nService.t('windowsSandboxExecutionModeDescription')}
         </p>
+        {switching && (
+          <div role="status" className="mt-2 flex items-center gap-2 text-xs text-secondary">
+            <ArrowPathIcon className="h-4 w-4 animate-spin" />
+            {i18nService.t('windowsSandboxSwitching')}
+          </div>
+        )}
 
         <label
           className={`mt-4 flex cursor-pointer items-start gap-3 rounded-xl border p-4 transition-colors ${

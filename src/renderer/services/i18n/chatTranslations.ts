@@ -134,6 +134,7 @@ export const chatTranslations = {
     windowsSandboxInitialize: '准备系统盘',
     windowsSandboxInitializing: '准备中…',
     windowsSandboxExecutionMode: '任务执行方式',
+    windowsSandboxSwitching: '切换中，请稍等...',
     windowsSandboxExecutionModeDescription: '选择任务中的命令在本机还是隔离环境中运行。',
     windowsSandboxLocalMode: '本机执行',
     windowsSandboxLocalModeDescription: '直接在本机运行，兼容性更好，并使用当前用户权限。',
@@ -668,6 +669,7 @@ export const chatTranslations = {
     windowsSandboxInitialize: 'Prepare system drive',
     windowsSandboxInitializing: 'Preparing…',
     windowsSandboxExecutionMode: 'Task execution mode',
+    windowsSandboxSwitching: 'Switching, please wait...',
     windowsSandboxExecutionModeDescription:
       'Choose whether task commands run locally or in an isolated environment.',
     windowsSandboxLocalMode: 'Run locally',
