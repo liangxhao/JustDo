@@ -32,6 +32,7 @@ import {
   BROWSER_GUEST_CREDENTIALS_FILL_CHANNEL,
   BROWSER_GUEST_CREDENTIALS_OFFER_CHANNEL,
   BROWSER_GUEST_ZOOM_CHANNEL,
+  BrowserMode,
   browserPartitionForProfile,
   isBrowserGuestCommand,
   isBrowserGuestZoomDirection,
@@ -41,6 +42,7 @@ import {
   resolveBrowserPanelShortcutAction,
   stepBrowserZoomFactor,
 } from '@shared/browser/browser';
+import type { BrowserContinueResult } from '@shared/browser/browserIntervention';
 import { RecordingStatus } from '@shared/browser/browserRecording';
 import React, {
   forwardRef,
@@ -85,6 +87,7 @@ import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 import Tooltip from '@/shared/components/ui/Tooltip';
 
+import { BrowserInterventionBar } from './BrowserInterventionBar';
 import { BrowserRecordingControls } from './BrowserRecordingControls';
 import { useBrowserRecording } from './useBrowserRecording';
 
@@ -289,7 +292,7 @@ export interface BrowserPanelHandle {
     y: number,
     closeActions?: BrowserTabCloseActions,
   ) => void;
-  openTab: (url?: string, options?: Omit<BrowserOpenTabOptions, 'insertAfterTargetId'>) => void;
+  openTab: (url?: string, options?: Omit<BrowserOpenTabOptions, 'insertAfterTargetId'>) => boolean;
 }
 
 export interface BrowserTabCloseActions {
@@ -311,6 +314,9 @@ interface BrowserPanelProps {
   onActiveTargetChange: (targetId: string | null) => void;
   onAddAnnotation: (annotation: BrowserAnnotationDraft) => boolean;
   onRequestBrowserSettings?: (page?: 'history' | 'downloads') => void;
+  onStopTask?: () => Promise<boolean>;
+  onCheckTaskStopped?: () => Promise<boolean>;
+  onContinueTask?: (prompt: string) => Promise<BrowserContinueResult>;
   onTabsChange?: (tabs: BrowserPanelTab[]) => void;
   onRecordingRetentionChange?: (retained: boolean) => void;
   initialTabs?: readonly BrowserPanelTab[];
@@ -330,6 +336,9 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     onActiveTargetChange,
     onAddAnnotation,
     onRequestBrowserSettings,
+    onStopTask,
+    onCheckTaskStopped,
+    onContinueTask,
     onTabsChange,
     onRecordingRetentionChange,
     initialTabs,
@@ -354,6 +363,20 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   const [urlDraft, setUrlDraft] = useState('');
   const [loadingTargets, setLoadingTargets] = useState<Set<string>>(() => new Set());
   const [agentBusyTargets, setAgentBusyTargets] = useState<Set<string>>(() => new Set());
+  const [interventionBlocked, setInterventionBlocked] = useState(false);
+  const [interventionDetailsHost, setInterventionDetailsHost] = useState<HTMLDivElement | null>(
+    null,
+  );
+  const [browserMode, setBrowserMode] = useState(() => configService.getConfig().browserMode);
+  useEffect(() => {
+    const changed = () => setBrowserMode(configService.getConfig().browserMode);
+    window.addEventListener('config-updated', changed);
+    return () => window.removeEventListener('config-updated', changed);
+  }, []);
+  useEffect(() => {
+    if (browserMode !== BrowserMode.Embedded || !onStopTask || !onContinueTask)
+      setInterventionBlocked(false);
+  }, [browserMode, onStopTask, onContinueTask]);
   const pendingAgentInteractionAcksRef = useRef(
     new Map<
       string,
@@ -620,12 +643,12 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   const userInteractionLocked = Boolean(
     isOpen && activeTabTargetId && (mode !== 'interact' || isCommentComposerOpen || isCapturing),
   );
-  const agentInteractionLocked = Boolean(
-    !userInteractionLocked &&
-    (externalAgentBusyTargets.has(BROWSER_AGENT_PANEL_TARGET_ID) ||
-      agentBusyTargets.has(BROWSER_AGENT_PANEL_TARGET_ID) ||
-      (activeTabTargetId && agentBusyTargets.has(activeTabTargetId))),
+  const browserOperationRunning = Boolean(
+    externalAgentBusyTargets.has(BROWSER_AGENT_PANEL_TARGET_ID) ||
+    agentBusyTargets.has(BROWSER_AGENT_PANEL_TARGET_ID) ||
+    (activeTabTargetId && agentBusyTargets.has(activeTabTargetId)),
   );
+  const agentInteractionLocked = !userInteractionLocked && browserOperationRunning;
   useLayoutEffect(() => {
     if (userInteractionLocked) return;
     const externalOperationIds = new Set(
@@ -761,8 +784,11 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
 
   const openTab = useCallback(
     (rawUrl = 'about:blank', options?: BrowserOpenTabOptions) => {
+      if (options?.targetId && tabsRef.current.some(tab => tab.targetId === options.targetId)) {
+        return true;
+      }
       const url = normalizeUrl(rawUrl);
-      if (!url || tabsRef.current.length >= 8) return;
+      if (!url || tabsRef.current.length >= 8) return false;
       const tab = createBrowserPanelTab(url, options);
       initialUrlsRef.current.set(tab.targetId, tab.url);
       const insertionIndex = options?.insertAfterTargetId
@@ -784,6 +810,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           addressInputRef.current?.select();
         });
       }
+      return true;
     },
     [clearAnnotations, onActiveTargetChange],
   );
@@ -2050,10 +2077,10 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       onKeyDownCapture={event => {
         if (
           event.target instanceof Element &&
-          event.target.closest('[data-browser-http-auth-dialog]')
+          event.target.closest('[data-browser-http-auth-dialog], [data-browser-intervention]')
         )
           return;
-        if (agentInteractionLocked) {
+        if (agentInteractionLocked || interventionBlocked) {
           event.preventDefault();
           event.stopPropagation();
           return;
@@ -2089,7 +2116,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         runBrowserCommand(command);
       }}
     >
-      {agentInteractionLocked && (
+      {(agentInteractionLocked || interventionBlocked) && (
         <div
           className="absolute inset-0 z-[100] cursor-wait"
           aria-label={i18nService.t('browserPanelAgentControlling')}
@@ -2449,6 +2476,29 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
             </button>
           </Tooltip>
         </div>
+        {browserMode === BrowserMode.Embedded &&
+          onStopTask &&
+          onContinueTask &&
+          !draftKey.startsWith('temp-') && (
+            <BrowserInterventionBar
+              reference={{
+                sessionId: draftKey,
+                targetId: activeTab?.targetId ?? BROWSER_AGENT_PANEL_TARGET_ID,
+                profile: activeTab?.profile ?? 'embedded',
+              }}
+              buttonClassName={modeButton(false)}
+              detailsHost={interventionDetailsHost}
+              active={isOpen}
+              browserOperationRunning={
+                browserOperationRunning &&
+                Boolean(activeTab?.url.trim() && activeTab.url !== 'about:blank')
+              }
+              onStop={onStopTask}
+              onCheckStopped={onCheckTaskStopped}
+              onContinue={onContinueTask}
+              onBlockedChange={setInterventionBlocked}
+            />
+          )}
         <Tooltip
           content={i18nService.t('browserMenuOpen')}
           position="bottom"
@@ -2594,6 +2644,10 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           ref={stageRef}
           className="relative h-full w-full overflow-hidden rounded border border-border bg-white"
         >
+          <div
+            ref={setInterventionDetailsHost}
+            className="pointer-events-none absolute inset-0 z-[110]"
+          />
           {tabs.map(tab => (
             <webview
               key={`${tab.targetId}:${BROWSER_WEBVIEW_CAPABILITY_VERSION}`}
@@ -2753,7 +2807,13 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           anchor={overflowMenuAnchor}
           zoomFactor={zoomFactor}
           pdfCompatibilityMode={detectedPdfUrl ? Boolean(activePdfUrl) : undefined}
-          disabledActions={activePdfUrl ? ['find', 'print', 'screenshot', 'device-tools'] : detectedPdfUrl ? ['print'] : []}
+          disabledActions={
+            activePdfUrl
+              ? ['find', 'print', 'screenshot', 'device-tools']
+              : detectedPdfUrl
+                ? ['print']
+                : []
+          }
           disabledActionHint={activePdfUrl ? undefined : i18nService.t('browserPdfUseToolbar')}
           onAction={action => void handleOverflowAction(action)}
           onZoomChange={changeZoom}

@@ -203,6 +203,16 @@ export function useCoworkBrowserPanels({
         customTitle: event.label,
         profile: event.profile,
       });
+      // initialTabs only seeds an empty panel. An already mounted panel owns
+      // its live tabs and must create the requested guest through its handle.
+      const created = browserPanelRefs.current.get(event.sessionId)?.openTab(tab.url, {
+        targetId: tab.targetId,
+        customTitle: event.label,
+        profile: event.profile,
+      });
+      // A mounted panel may reject creation at its capacity limit. Keep the
+      // current selection and parent state aligned with its actual guests.
+      if (created === false) return;
       setSessionField(event.sessionId, 'browserTabs', current => {
         const existingTab = event.targetId
           ? current.find(candidate => candidate.targetId === event.targetId)

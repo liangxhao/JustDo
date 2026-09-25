@@ -34,6 +34,10 @@ vi.mock('electron', () => ({
 }));
 
 import { BROWSER_AGENT_PANEL_TARGET_ID, BrowserIpc } from '../../shared/browser/browser';
+import {
+  BrowserInterventionIpc,
+  type BrowserInterventionResult,
+} from '../../shared/browser/browserIntervention';
 import { BrowserRecordingChannel } from '../../shared/browser/browserRecording';
 import { BrowserAgentBridge } from './browserAgentBridge';
 
@@ -587,6 +591,203 @@ test('locks the live page while navigation is in progress', async () => {
       operationId: panelInteraction.operationId,
     }),
   );
+});
+
+test('manual handoff waits for navigation to settle and rejects stale or foreign releases', async () => {
+  let finish!: () => void;
+  const navigation = new Promise<void>(resolve => {
+    finish = resolve;
+  });
+  const loadURL = vi.fn(() => navigation);
+  const stop = vi.fn();
+  bridge = new BrowserAgentBridge(vi.fn(), id => id === 10);
+  bridge.registerIpc();
+  electron.guests.set(7, {
+    id: 7,
+    getType: () => 'webview',
+    isDestroyed: () => false,
+    session: electron.partition,
+    hostWebContents: { id: 10 },
+    getTitle: () => 'Example',
+    getURL: () => 'https://example.com/',
+    loadURL,
+    stop,
+  });
+  registerGuest(7);
+  const invoke = (action: string, token?: string, sender = 10) =>
+    electron.handlers.get(BrowserInterventionIpc)!(trustedEvent(sender), {
+      action,
+      token,
+      sessionId: 'session-1',
+      targetId: 'embedded-1',
+      profile: 'embedded',
+    }) as unknown as BrowserInterventionResult;
+  const pending = bridge.executeCommand('justdo:session-1', {
+    action: 'navigate',
+    url: 'https://example.com/next',
+  });
+  const rejected = expect(pending).rejects.toThrow('cancelled');
+  await vi.waitFor(() => expect(loadURL).toHaveBeenCalledOnce());
+  expect(invoke('begin', undefined, 99).success).toBe(false);
+  const hold = invoke('begin');
+  if (!hold.success || !hold.value) throw new Error('missing hold');
+  await rejected;
+  expect(stop).toHaveBeenCalledOnce();
+  const token = hold.value.token;
+  expect(invoke('confirmStop', token)).toMatchObject({ value: { phase: 'stopping' } });
+  expect(invoke('resume', token)).toEqual({ success: false, error: 'busy' });
+  await expect(bridge.executeCommand('justdo:session-1', { action: 'tabs' })).rejects.toThrow(
+    'manually operating',
+  );
+  finish();
+  await vi.waitFor(() => expect(invoke('read')).toMatchObject({ value: { phase: 'manual' } }));
+  expect(invoke('resume', 'old-token')).toEqual({ success: false, error: 'stale' });
+  expect(invoke('resume', token)).toMatchObject({ value: { phase: 'resuming' } });
+  expect(invoke('resume', token)).toEqual({ success: false, error: 'busy' });
+  expect(invoke('complete', token)).toEqual({ success: true, value: null });
+});
+
+test('the owning renderer can recover a hold after its last guest closes', () => {
+  bridge = new BrowserAgentBridge(vi.fn(), () => true);
+  bridge.registerIpc();
+  electron.guests.set(7, {
+    id: 7,
+    getType: () => 'webview',
+    isDestroyed: () => false,
+    session: electron.partition,
+    hostWebContents: { id: 10 },
+    getTitle: () => 'Example',
+    getURL: () => 'https://example.com/',
+  });
+  registerGuest(7);
+  const invoke = (action: string, token?: string, sender = 10, targetId = 'embedded-1') =>
+    electron.handlers.get(BrowserInterventionIpc)!(trustedEvent(sender), {
+      action,
+      token,
+      sessionId: 'session-1',
+      targetId,
+      profile: 'embedded',
+    }) as unknown as BrowserInterventionResult;
+  const first = invoke('begin');
+  if (!first.success || !first.value) throw new Error('missing hold');
+  electron.guests.delete(7);
+  const target = BROWSER_AGENT_PANEL_TARGET_ID;
+  expect(invoke('read', undefined, 10, target)).toMatchObject({ value: first.value });
+  for (const action of ['read', 'begin', 'confirmStop', 'resume', 'complete']) {
+    expect(invoke(action, first.value.token, 99, target)).toEqual({
+      success: false,
+      error: 'unavailable',
+    });
+  }
+  const renewed = invoke('begin', undefined, 10, target);
+  if (!renewed.success || !renewed.value) throw new Error('missing renewed hold');
+  expect(invoke('confirmStop', first.value.token, 10, target)).toEqual({
+    success: false,
+    error: 'stale',
+  });
+  const token = renewed.value.token;
+  expect(invoke('confirmStop', token, 10, target)).toMatchObject({ value: { phase: 'manual' } });
+  expect(invoke('resume', token, 10, target)).toMatchObject({ value: { phase: 'resuming' } });
+  expect(invoke('complete', token, 10, target)).toEqual({ success: true, value: null });
+  expect(invoke('read', undefined, 10, target)).toEqual({ success: true, value: null });
+  expect(invoke('begin', undefined, 10, target)).toEqual({ success: false, error: 'unavailable' });
+});
+
+test('a replacement window can recover a hold only after its former owner is destroyed', () => {
+  bridge = new BrowserAgentBridge(vi.fn(), () => true);
+  bridge.registerIpc();
+  let ownerDestroyed = false;
+  electron.guests.set(10, { isDestroyed: () => ownerDestroyed });
+  electron.guests.set(99, { isDestroyed: () => false });
+  electron.guests.set(7, {
+    id: 7,
+    getType: () => 'webview',
+    isDestroyed: () => false,
+    session: electron.partition,
+    hostWebContents: { id: 10 },
+    getTitle: () => 'Example',
+    getURL: () => 'https://example.com/',
+  });
+  registerGuest(7);
+  const invoke = (action: string, sender = 10, targetId = 'embedded-1') =>
+    electron.handlers.get(BrowserInterventionIpc)!(trustedEvent(sender), {
+      action,
+      sessionId: 'session-1',
+      targetId,
+      profile: 'embedded',
+    }) as unknown as BrowserInterventionResult;
+  const hold = invoke('begin');
+  electron.guests.set(8, {
+    ...electron.guests.get(7),
+    id: 8,
+    hostWebContents: { id: 99 },
+  });
+  electron.handlers.get(BrowserIpc.AgentRegisterTab)!(trustedEvent(99), {
+    sessionId: 'session-1',
+    targetId: 'replacement',
+    webContentsId: 8,
+    profile: 'embedded',
+  });
+  expect(invoke('read', 99, 'replacement')).toEqual({ success: false, error: 'unavailable' });
+  ownerDestroyed = true;
+  expect(invoke('read', 99, BROWSER_AGENT_PANEL_TARGET_ID)).toEqual({
+    success: false,
+    error: 'unavailable',
+  });
+  expect(invoke('read', 99, 'replacement')).toEqual(hold);
+  expect(invoke('read', 10)).toEqual({ success: false, error: 'unavailable' });
+});
+
+test('cleanup failure cannot retain a finished browser operation in the intervention drain', async () => {
+  let finish!: () => void;
+  const navigation = new Promise<void>(resolve => {
+    finish = resolve;
+  });
+  const loadURL = vi.fn(() => navigation);
+  bridge = new BrowserAgentBridge(vi.fn(), () => true);
+  bridge.registerIpc();
+  electron.guests.set(7, {
+    id: 7,
+    getType: () => 'webview',
+    isDestroyed: () => false,
+    session: electron.partition,
+    hostWebContents: { id: 10 },
+    getTitle: () => 'Example',
+    getURL: () => 'https://example.com/',
+    loadURL,
+    stop: vi.fn(),
+  });
+  registerGuest(7);
+  const invoke = (action: string, token?: string) =>
+    electron.handlers.get(BrowserInterventionIpc)!(trustedEvent(), {
+      action,
+      token,
+      sessionId: 'session-1',
+      targetId: 'embedded-1',
+      profile: 'embedded',
+    }) as unknown as BrowserInterventionResult;
+  const pending = bridge.executeCommand('justdo:session-1', {
+    action: 'navigate',
+    url: 'https://example.com/next',
+  });
+  const rejection = expect(pending).rejects.toThrow('cancelled');
+  await vi.waitFor(() => expect(loadURL).toHaveBeenCalledOnce());
+  const cleanup = vi
+    .spyOn(
+      bridge as unknown as { clearInterventionActions: () => void },
+      'clearInterventionActions',
+    )
+    .mockImplementation(() => {
+      throw new Error('guest cleanup failed');
+    });
+  expect(invoke('begin').success).toBe(false);
+  await rejection;
+  const hold = invoke('read');
+  if (!hold.success || !hold.value) throw new Error('missing hold');
+  invoke('confirmStop', hold.value.token);
+  finish();
+  await vi.waitFor(() => expect(invoke('read')).toMatchObject({ value: { phase: 'manual' } }));
+  cleanup.mockRestore();
 });
 
 test('cancels an in-flight page action without committing its result', async () => {

@@ -83,6 +83,8 @@ HTTP auth challenge 绑定随机 request 与 guest，只有主窗口主 frame �
 
 ## 9. 故障与后续范围
 
+
+
 | 症状                          | 优先核对                                      |
 | ----------------------------- | --------------------------------------------- |
 | 模型找不到 browser 或出现两个 | 模式配置与互斥提供方                          |
@@ -93,3 +95,5 @@ HTTP auth challenge 绑定随机 request 与 guest，只有主窗口主 frame �
 | 侧栏连不上但自动化可用        | Native host/app-server，不重配 relay 冒充修复 |
 
 WebContentsView 迁移需单独验证 DPI/bounds、焦点、输入、实时标注、profile 和销毁，不能退化成截图遥控。当前验证重点包括 bridge action/schema、页面安全、lease 竞争、文件边界、PDF 和扩展组装测试；真实浏览器与平台验收另行记录。
+
+阶段 2 以内置浏览器真实网页为唯一新增交互入口；独立“查看任务页面”及外部镜像采集方案已撤回。停止、人工操作与继续的首版流程已实现，真实模型验收待完成，见[内置浏览器介入方案](browser-live-view-intervention-plan.md)。

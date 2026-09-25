@@ -14,6 +14,12 @@ import {
   browserPartitionForProfile,
   isBrowserAgentProfile,
 } from '../../shared/browser/browser';
+import {
+  BrowserInterventionAction,
+  BrowserInterventionIpc,
+  BrowserInterventionPhase,
+  type BrowserInterventionResult,
+} from '../../shared/browser/browserIntervention';
 import { BrowserRecordingChannel } from '../../shared/browser/browserRecording';
 import { t } from '../core/i18n';
 import { registerBrowserProxySession } from '../core/network/systemProxyPreference';
@@ -63,8 +69,11 @@ import {
   recordImportedBrowserProfile,
 } from './browserDataImportService';
 import { sanitizeBrowserUrl as sanitizeUrlForModel } from './browserDataSanitizers';
+import { BrowserIntervention } from './browserIntervention';
 
 export class BrowserAgentBridge {
+  private readonly intervention = new BrowserIntervention();
+  private readonly interventionOwners = new Map<string, number>();
   private readonly tabsBySession = new Map<string, Map<string, RegisteredTab>>();
   private readonly activeTargets = new Map<string, string>();
   private readonly labelsBySession = new Map<string, Map<string, string>>();
@@ -138,6 +147,68 @@ export class BrowserAgentBridge {
   }
 
   registerIpc(): void {
+    ipcMain.handle(BrowserInterventionIpc, (event, value: unknown): BrowserInterventionResult => {
+      if (!this.isTrustedIpcSender(event)) return { success: false, error: 'unavailable' };
+      const reference = this.parseReference(value);
+      const candidate = asRecord(value);
+      const scope = reference ? this.resolveReferenceScope(reference, event.sender.id) : null;
+      const tab =
+        reference && scope ? this.tabsBySession.get(scope)?.get(reference.targetId) : null;
+      if (!reference) return { success: false, error: 'unavailable' };
+      const hold = this.intervention.read(reference.sessionId);
+      const ownerId = this.interventionOwners.get(reference.sessionId);
+      let ownsHold = ownerId === event.sender.id;
+      const ownsLiveTab = Boolean(
+        tab && tab.ownerId === event.sender.id && this.isRegisteredGuestAvailable(tab),
+      );
+      if (hold && !ownsHold && ownsLiveTab && ownerId !== undefined) {
+        const previousOwner = webContents.fromId(ownerId);
+        if (!previousOwner || previousOwner.isDestroyed()) {
+          // macOS can recreate the window while the main process and hold survive.
+          this.interventionOwners.set(reference.sessionId, event.sender.id);
+          ownsHold = true;
+        }
+      }
+      // A hold belongs to its renderer even when its last guest closes or crashes.
+      // Reading an absent hold is harmless; existing holds remain owner-scoped.
+      if (hold && !ownsHold) return { success: false, error: 'unavailable' };
+      try {
+        if (candidate?.action === BrowserInterventionAction.Read)
+          return { success: true, value: hold };
+        if (candidate?.action === BrowserInterventionAction.Begin) {
+          if (!ownsLiveTab && !ownsHold) return { success: false, error: 'unavailable' };
+          this.interventionOwners.set(reference.sessionId, event.sender.id);
+          const snapshot = this.intervention.begin(
+            reference.sessionId,
+            ownsLiveTab ? reference.targetId : hold!.targetId,
+          );
+          this.clearInterventionActions(reference.sessionId);
+          return { success: true, value: snapshot };
+        }
+        if (
+          candidate?.action !== BrowserInterventionAction.ConfirmStop &&
+          candidate?.action !== BrowserInterventionAction.Resume &&
+          candidate?.action !== BrowserInterventionAction.Complete
+        )
+          return { success: false, error: 'unavailable' };
+        if (!ownsHold) return { success: false, error: 'unavailable' };
+        const next = this.intervention.change(
+          reference.sessionId,
+          typeof candidate.token === 'string' ? candidate.token : undefined,
+          candidate.action,
+        );
+        if (candidate.action === BrowserInterventionAction.Resume)
+          this.clearInterventionActions(reference.sessionId);
+        if (candidate.action === BrowserInterventionAction.Complete)
+          this.interventionOwners.delete(reference.sessionId);
+        return { success: true, value: next };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error && error.message === 'busy' ? 'busy' : 'stale',
+        };
+      }
+    });
     ipcMain.on(BrowserIpc.AgentRegisterTab, (event, value: unknown) => {
       const registration = this.validateRegistration(event, value);
       if (!registration) return;
@@ -927,6 +998,9 @@ export class BrowserAgentBridge {
         throw new Error('The user is annotating the browser. Retry after they finish.');
       }
     };
+    const interventionSessionId = normalizeSessionId(command.sessionKey);
+    const tracked = this.intervention.track(interventionSessionId);
+    signal = signal ? AbortSignal.any([signal, tracked.signal]) : tracked.signal;
     const operation = (async () => {
       const sessionId = normalizeSessionId(command.sessionKey);
       if (!sessionId) throw new Error('This browser tool is only available in desktop tasks.');
@@ -1312,7 +1386,16 @@ export class BrowserAgentBridge {
             })
           : executeOnGuest();
       });
-    })();
+    })().finally(() => {
+      try {
+        if (
+          this.intervention.read(interventionSessionId)?.phase === BrowserInterventionPhase.Stopping
+        )
+          this.clearInterventionActions(interventionSessionId);
+      } finally {
+        tracked.finish();
+      }
+    });
     return this.withCommandDeadline(
       operation,
       error => {
@@ -1330,6 +1413,24 @@ export class BrowserAgentBridge {
       signal,
       requestedTimeoutMs,
     );
+  }
+
+  private clearInterventionActions(sessionId: string): void {
+    for (const tabs of this.tabsBySession.values()) {
+      for (const tab of tabs.values()) {
+        if (tab.sessionId !== sessionId) continue;
+        this.clearArmedDialog(tab.webContentsId);
+        this.clearArmedUpload(
+          tab.webContentsId,
+          webContents.fromId(tab.webContentsId) ?? undefined,
+        );
+        cancelBrowserAgentDownloadsForWebContents(tab.webContentsId);
+        this.snapshots.delete(tab.webContentsId);
+        this.ariaRefState.delete(tab.webContentsId);
+        this.snapshotLabelAnnotations.delete(tab.webContentsId);
+        this.snapshotDeltaState.delete(tab.webContentsId);
+      }
+    }
   }
 
   private withCommandDeadline<T>(

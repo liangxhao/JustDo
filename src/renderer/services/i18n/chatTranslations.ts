@@ -135,7 +135,8 @@ export const chatTranslations = {
     windowsSandboxInitializing: '准备中…',
     windowsSandboxExecutionMode: '任务执行方式',
     windowsSandboxSwitching: '切换中，请稍等...',
-    windowsSandboxExecutionModeDescription: '选择任务中的命令在本机还是隔离环境中运行。',
+    windowsSandboxExecutionModeDescription:
+      '选择任务在本机还是隔离环境中运行。沙箱默认不提供浏览器自动化等宿主工具；打开网页面板不会改变这一限制。',
     windowsSandboxLocalMode: '本机执行',
     windowsSandboxLocalModeDescription: '直接在本机运行，兼容性更好，并使用当前用户权限。',
     windowsSandboxMode: '沙盒执行',
@@ -671,7 +672,7 @@ export const chatTranslations = {
     windowsSandboxExecutionMode: 'Task execution mode',
     windowsSandboxSwitching: 'Switching, please wait...',
     windowsSandboxExecutionModeDescription:
-      'Choose whether task commands run locally or in an isolated environment.',
+      'Choose whether tasks run locally or in an isolated environment. Sandbox policy does not provide host tools such as browser automation by default; opening a page panel does not change this.',
     windowsSandboxLocalMode: 'Run locally',
     windowsSandboxLocalModeDescription:
       'Runs directly on this PC with the current user permissions.',

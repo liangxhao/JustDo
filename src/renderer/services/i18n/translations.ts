@@ -1,3 +1,4 @@
+import { browserInterventionTranslations } from '@/features/browser/browserInterventionTranslations';
 import { browserRecordingTranslations } from '@/features/browser/browserRecordingTranslations';
 import type { LanguageType } from '@/services/i18n';
 
@@ -11,6 +12,7 @@ import { skillWorkshopTranslations } from './skillWorkshopTranslations';
 
 export const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
+    ...browserInterventionTranslations.zh,
     ...skillWorkshopTranslations.zh,
     ...browserRecordingTranslations.zh,
     ...getHomeGreetingTranslations('zh'),
@@ -21,6 +23,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     ...scheduledTaskTranslations.zh,
   },
   en: {
+    ...browserInterventionTranslations.en,
     ...skillWorkshopTranslations.en,
     ...browserRecordingTranslations.en,
     ...getHomeGreetingTranslations('en'),

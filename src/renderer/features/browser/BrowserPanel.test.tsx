@@ -13,6 +13,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { type ComponentProps, StrictMode, useEffect, useRef, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 
 import BrowserPanel, { type BrowserPanelHandle, getBrowserTabAddress } from './BrowserPanel';
@@ -65,10 +66,12 @@ const setZoomFactor = vi.fn();
 const openDevTools = vi.fn();
 const guestSend = vi.fn(function (this: HTMLElement, channel: string, requestId?: unknown) {
   if (channel === BrowserRecordingChannel.Control) {
-    this.dispatchEvent(Object.assign(new Event('ipc-message'), {
-      channel: BrowserRecordingChannel.Ready,
-      args: [{ ...(requestId as object), documentId: 'recording-document' }],
-    }));
+    this.dispatchEvent(
+      Object.assign(new Event('ipc-message'), {
+        channel: BrowserRecordingChannel.Ready,
+        args: [{ ...(requestId as object), documentId: 'recording-document' }],
+      }),
+    );
     return;
   }
   if (channel !== 'justdo-browser-inspect') return;
@@ -145,6 +148,8 @@ function BrowserPanelHarness({
   initialTabs,
   retainedTargetIds,
   agentInteractionStates,
+  onStopTask,
+  onContinueTask,
 }: {
   draftKey?: string;
   embedded?: boolean;
@@ -157,6 +162,8 @@ function BrowserPanelHarness({
   initialTabs?: readonly BrowserPanelTab[];
   retainedTargetIds?: readonly string[];
   agentInteractionStates?: readonly BrowserAgentInteractionState[];
+  onStopTask?: ComponentProps<typeof BrowserPanel>['onStopTask'];
+  onContinueTask?: ComponentProps<typeof BrowserPanel>['onContinueTask'];
 }) {
   const [activeTargetId, setActiveTargetId] = useState<string | null>(null);
   return (
@@ -176,6 +183,8 @@ function BrowserPanelHarness({
       initialTabs={initialTabs}
       retainedTargetIds={retainedTargetIds}
       agentInteractionStates={agentInteractionStates}
+      onStopTask={onStopTask}
+      onContinueTask={onContinueTask}
       embedded={embedded}
     />
   );
@@ -733,6 +742,187 @@ describe('BrowserPanel embedded webview', () => {
     expect(document.activeElement).toBe(screen.getByLabelText('Browser address'));
   });
 
+  it('keeps idle blank pages free of task controls while checking for an existing hold', async () => {
+    const config = configService.getConfig();
+    vi.spyOn(configService, 'getConfig').mockReturnValue({ ...config, browserMode: 'embedded' });
+    const intervention = vi.fn().mockResolvedValue({ success: true, value: null });
+    window.electron.browser.intervention = intervention;
+    const stop = vi.fn(async () => true);
+    render(
+      <BrowserPanelHarness
+        draftKey="blank-task"
+        embedded
+        initialTabs={[{ id: 'blank', targetId: 'blank', title: '', url: 'about:blank' }]}
+        onStopTask={stop}
+        onContinueTask={async () => 'sent'}
+      />,
+    );
+    expect(screen.queryByTestId('browser-intervention-bar')).toBeNull();
+    expect(screen.queryByTestId('browser-agent-interaction-lock')).toBeNull();
+    await waitFor(() =>
+      expect(intervention).toHaveBeenCalledWith(expect.objectContaining({ action: 'read' })),
+    );
+    expect(stop).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText('Browser address'), {
+      target: { value: 'example.com' },
+    });
+    expect(screen.getByLabelText('Browser address')).toHaveProperty('value', 'example.com');
+  });
+
+  it('preserves manual notes and the continue action when switching to a blank tab', async () => {
+    const config = configService.getConfig();
+    vi.spyOn(configService, 'getConfig').mockReturnValue({ ...config, browserMode: 'embedded' });
+    window.electron.browser.intervention = vi
+      .fn()
+      .mockResolvedValue({
+        success: true,
+        value: { token: 'hold', targetId: 'manual-page', phase: 'manual', stopConfirmed: true },
+      });
+    render(
+      <BrowserPanelHarness
+        draftKey="manual-tab-change"
+        initialTabs={[
+          { id: 'manual-page', targetId: 'manual-page', title: '', url: 'https://example.com' },
+        ]}
+        onStopTask={async () => true}
+        onContinueTask={async () => 'sent'}
+      />,
+    );
+    const note = await screen.findByRole('textbox', { name: 'Optional note, e.g. signed in' });
+    fireEvent.change(note, { target: { value: 'Finished signing in' } });
+    fireEvent.click(screen.getByLabelText('New tab'));
+    expect(screen.getByRole('textbox', { name: 'Optional note, e.g. signed in' })).toHaveProperty(
+      'value',
+      'Finished signing in',
+    );
+    expect(screen.getByRole('button', { name: 'Done, continue task' })).toHaveProperty(
+      'disabled',
+      false,
+    );
+  });
+
+  it('shows intervention on the real embedded page and removes it in external browser mode', async () => {
+    const config = configService.getConfig();
+    const getConfig = vi
+      .spyOn(configService, 'getConfig')
+      .mockReturnValue({ ...config, browserMode: 'embedded' });
+    window.electron.browser.intervention = vi
+      .fn()
+      .mockResolvedValue({ success: true, value: null });
+    const { container } = render(
+      <BrowserPanelHarness
+        draftKey="intervention-session"
+        embedded
+        initialTabs={[{ id: 'page', targetId: 'page', title: '', url: 'https://example.com' }]}
+        onStopTask={async () => true}
+        onContinueTask={async () => 'sent'}
+      />,
+    );
+    expect(container.querySelectorAll('webview')).toHaveLength(1);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.queryByTestId('browser-intervention-bar')).toBeNull();
+    act(() =>
+      agentInteractionListener?.({ sessionId: 'other-session', targetId: 'page', busy: true }),
+    );
+    expect(screen.queryByTestId('browser-intervention-bar')).toBeNull();
+    act(() =>
+      agentInteractionListener?.({
+        sessionId: 'intervention-session',
+        targetId: 'other-page',
+        busy: true,
+      }),
+    );
+    expect(screen.queryByTestId('browser-intervention-bar')).toBeNull();
+    act(() =>
+      agentInteractionListener?.({
+        sessionId: 'intervention-session',
+        targetId: 'page',
+        busy: true,
+      }),
+    );
+    expect(screen.getByRole('button', { name: 'Stop task and interact manually' })).toBeTruthy();
+    act(() =>
+      agentInteractionListener?.({
+        sessionId: 'intervention-session',
+        targetId: 'page',
+        busy: false,
+      }),
+    );
+    expect(screen.queryByTestId('browser-intervention-bar')).toBeNull();
+    act(() =>
+      agentInteractionListener?.({
+        sessionId: 'intervention-session',
+        targetId: 'page',
+        busy: true,
+      }),
+    );
+    getConfig.mockReturnValue({ ...config, browserMode: 'isolated' });
+    act(() => window.dispatchEvent(new CustomEvent('config-updated')));
+    expect(screen.queryByTestId('browser-intervention-bar')).toBeNull();
+    expect(container.querySelectorAll('webview')).toHaveLength(1);
+  });
+
+  it('creates a requested agent target beside an existing page only once', async () => {
+    let panelHandle: BrowserPanelHandle | null = null;
+    let latestTabs: BrowserPanelTab[] = [];
+    const { container } = render(
+      <BrowserPanelHarness
+        draftKey="agent-open-existing"
+        embedded
+        initialTabs={[
+          { id: 'existing', targetId: 'existing', title: '', url: 'https://one.example' },
+        ]}
+        onTabsChange={tabs => {
+          latestTabs = tabs;
+        }}
+        panelRef={instance => {
+          panelHandle = instance;
+        }}
+      />,
+    );
+    act(() => {
+      panelHandle?.openTab('https://two.example', { targetId: 'requested', profile: 'embedded' });
+      panelHandle?.openTab('https://two.example', { targetId: 'requested', profile: 'embedded' });
+    });
+    await waitFor(() =>
+      expect(latestTabs.map(tab => tab.targetId)).toEqual(['existing', 'requested']),
+    );
+    expect(container.querySelectorAll('webview')).toHaveLength(2);
+  });
+
+  it('reports rejected creation at capacity without selecting a nonexistent guest', () => {
+    let panelHandle: BrowserPanelHandle | null = null;
+    const initialTabs = Array.from({ length: 8 }, (_, index) => ({
+      id: `page-${index}`,
+      targetId: `page-${index}`,
+      title: '',
+      url: `https://example.com/${index}`,
+    }));
+    const onTabsChange = vi.fn();
+    const { container } = render(
+      <BrowserPanelHarness
+        embedded
+        initialTabs={initialTabs}
+        draftKey="agent-open-capacity"
+        onTabsChange={onTabsChange}
+        panelRef={instance => {
+          panelHandle = instance;
+        }}
+      />,
+    );
+    onTabsChange.mockClear();
+    act(() => {
+      expect(panelHandle?.openTab('https://example.com/overflow', { targetId: 'overflow' })).toBe(
+        false,
+      );
+      expect(panelHandle?.openTab('https://example.com/0', { targetId: 'page-0' })).toBe(true);
+    });
+    expect(container.querySelectorAll('webview')).toHaveLength(8);
+    expect(onTabsChange).not.toHaveBeenCalled();
+  });
+
   it('focuses the address bar when a shortcut opens a blank embedded tab', async () => {
     let panelHandle: BrowserPanelHandle | null = null;
     const onTabsChange = vi.fn();
@@ -1037,30 +1227,53 @@ describe('BrowserPanel embedded webview', () => {
 
   it('ignores iframe navigation in the top-level address and recording steps', async () => {
     const retain = vi.fn();
-    const view = render(<BrowserPanelHarness onRecordingRetentionChange={retain} initialTabs={[{
-      targetId: 'recording-page', id: 'recording-page',
-      url: 'https://example.com/', title: 'Example',
-    }]} />);
+    const view = render(
+      <BrowserPanelHarness
+        onRecordingRetentionChange={retain}
+        initialTabs={[
+          {
+            targetId: 'recording-page',
+            id: 'recording-page',
+            url: 'https://example.com/',
+            title: 'Example',
+          },
+        ]}
+      />,
+    );
     const guest = view.container.querySelector('webview')!;
     act(() => guest.dispatchEvent(new Event('dom-ready')));
     fireEvent.click(screen.getByRole('button', { name: 'Record actions' }));
     await screen.findByRole('button', { name: 'Pause recording' });
     expect(retain).toHaveBeenLastCalledWith(true);
     expect(screen.getByText('1')).toBeTruthy();
-    act(() => guest.dispatchEvent(Object.assign(new Event('did-navigate-in-page'), {
-      isMainFrame: false, url: 'https://example.com/frame#changed',
-    })));
-    expect((screen.getByLabelText('Browser address') as HTMLInputElement).value)
-      .toBe('https://example.com/');
+    act(() =>
+      guest.dispatchEvent(
+        Object.assign(new Event('did-navigate-in-page'), {
+          isMainFrame: false,
+          url: 'https://example.com/frame#changed',
+        }),
+      ),
+    );
+    expect((screen.getByLabelText('Browser address') as HTMLInputElement).value).toBe(
+      'https://example.com/',
+    );
     expect(screen.getByText('1')).toBeTruthy();
-    act(() => guest.dispatchEvent(Object.assign(new Event('did-navigate-in-page'), {
-      isMainFrame: true, url: 'https://example.com/#changed',
-    })));
+    act(() =>
+      guest.dispatchEvent(
+        Object.assign(new Event('did-navigate-in-page'), {
+          isMainFrame: true,
+          url: 'https://example.com/#changed',
+        }),
+      ),
+    );
     expect(screen.getByText('2')).toBeTruthy();
     view.rerender(<BrowserPanelHarness isOpen={false} onRecordingRetentionChange={retain} />);
-    await waitFor(() => expect(guestSend).toHaveBeenLastCalledWith(
-      BrowserRecordingChannel.Control, expect.objectContaining({ active: false }),
-    ));
+    await waitFor(() =>
+      expect(guestSend).toHaveBeenLastCalledWith(
+        BrowserRecordingChannel.Control,
+        expect.objectContaining({ active: false }),
+      ),
+    );
     expect(retain).toHaveBeenLastCalledWith(true);
   });
 

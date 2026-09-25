@@ -43,22 +43,26 @@ type PluginService = {
   stop: () => void;
 };
 
-type AgentTurnPrepareHandler = (
+type BeforePromptBuildHandler = (
   event: unknown,
-  context: { sessionKey?: string },
+  context: {
+    sessionKey?: string;
+    toolAuthority?: { allows: (name: string) => boolean; assertActive: () => void };
+  },
 ) => { prependContext?: string } | undefined;
 
 const registrations = (emit = vi.fn()) => {
   let factory: ToolFactory | undefined;
   let gatewayMethod: GatewayMethod | undefined;
   let service: PluginService | undefined;
-  let agentTurnPrepare: AgentTurnPrepareHandler | undefined;
+  let beforePromptBuild: BeforePromptBuildHandler | undefined;
   let methodName = '';
   const logger = { warn: vi.fn() };
 
   embeddedBrowserPlugin.register({
-    on: (hookName: string, handler: AgentTurnPrepareHandler) => {
-      if (hookName === 'agent_turn_prepare') agentTurnPrepare = handler;
+    on: (hookName: string, handler: BeforePromptBuildHandler, options: unknown) => {
+      expect(options).toEqual({ requiresToolAuthority: true });
+      if (hookName === 'before_prompt_build') beforePromptBuild = handler;
     },
     registerTool: (candidate: ToolFactory) => {
       factory = candidate;
@@ -72,11 +76,11 @@ const registrations = (emit = vi.fn()) => {
     },
     logger,
   } as never);
-  if (!factory || !gatewayMethod || !service || !agentTurnPrepare) {
+  if (!factory || !gatewayMethod || !service || !beforePromptBuild) {
     throw new Error('Plugin registration is incomplete.');
   }
   service.start({ gatewayEvents: { emit } });
-  return { agentTurnPrepare, emit, factory, gatewayMethod, logger, methodName, service };
+  return { beforePromptBuild, emit, factory, gatewayMethod, logger, methodName, service };
 };
 
 const requestedEnvelope = (emit: ReturnType<typeof vi.fn>) => {
@@ -142,16 +146,41 @@ describe('Embedded browser extension', () => {
   });
 
   test('is only exposed to desktop sessions', () => {
-    const { agentTurnPrepare, factory, service } = registrations();
+    const { beforePromptBuild, factory, service } = registrations();
 
     expect(factory({ sessionKey: 'agent:main:other:session-1' })).toBeNull();
     expect(factory({ sessionKey: 'agent:main:justdo:session-1' })).not.toBeNull();
-    expect(agentTurnPrepare({}, { sessionKey: 'agent:main:other:session-1' })).toBeUndefined();
+    expect(beforePromptBuild({}, { sessionKey: 'agent:main:other:session-1' })).toBeUndefined();
     expect(
-      agentTurnPrepare({}, { sessionKey: 'agent:main:justdo:session-1' })?.prependContext,
+      beforePromptBuild(
+        {},
+        {
+          sessionKey: 'agent:main:justdo:session-1',
+          toolAuthority: { allows: name => name === 'browser', assertActive: vi.fn() },
+        },
+      )?.prependContext,
     ).toMatch(
       /Do not launch Chrome.*screenshot action may be used for Agent observation.*explicitly asks to see a screenshot.*exact sanitized outbound copy path/,
     );
+    service.stop();
+  });
+
+  test('explains denied browser access without sending a request or suggesting repeated discovery', () => {
+    const { beforePromptBuild, emit, service } = registrations();
+    const assertActive = vi.fn();
+    const result = beforePromptBuild(
+      {},
+      {
+        sessionKey: 'agent:main:justdo:session-1',
+        toolAuthority: { allows: () => false, assertActive },
+      },
+    );
+    expect(assertActive).toHaveBeenCalledOnce();
+    expect(result?.prependContext).toContain('not available in this turn');
+    expect(result?.prependContext).toContain('Do not repeatedly search');
+    expect(result?.prependContext).toContain('Do not change execution mode');
+    expect(result?.prependContext).not.toContain('Use the browser tool exclusively');
+    expect(emit).not.toHaveBeenCalled();
     service.stop();
   });
 
@@ -186,8 +215,7 @@ describe('Embedded browser extension', () => {
     const { emit, factory, gatewayMethod, service } = registrations();
     const tool = factory({ sessionKey: 'justdo:session-1' })!;
     const screenshot = Buffer.from('png');
-    const outboundPath =
-      'C:\\openclaw-media\\outbound\\embedded-browser-screenshot---test.png';
+    const outboundPath = 'C:\\openclaw-media\\outbound\\embedded-browser-screenshot---test.png';
 
     const pending = tool.execute('call-1', { action: 'screenshot', targetId: 'embedded-1' });
     const request = requestedEnvelope(emit);
@@ -282,7 +310,11 @@ describe('Embedded browser extension', () => {
         ok: true,
         result: {
           content: [
-            { type: 'image', data: Buffer.from('labels').toString('base64'), mimeType: 'image/png' },
+            {
+              type: 'image',
+              data: Buffer.from('labels').toString('base64'),
+              mimeType: 'image/png',
+            },
           ],
           details: { media: { outbound: false } },
         },

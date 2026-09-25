@@ -465,6 +465,7 @@ interface IElectronAPI {
     setUserInteractionState: (state: BrowserAgentInteractionState) => void;
     setRecordingLease: (state: BrowserRecordingLease) => Promise<boolean>;
     acknowledgeAgentInteraction: (state: BrowserAgentInteractionReady) => void;
+    intervention: (input: import('../../shared/browser/browserIntervention').BrowserInterventionRequest) => Promise<import('../../shared/browser/browserIntervention').BrowserInterventionResult>;
     onAgentEnsureTab: (callback: (event: BrowserAgentSessionEvent) => void) => () => void;
     onAgentFocusTab: (callback: (event: BrowserAgentTabReference) => void) => () => void;
     onAgentCloseTab: (callback: (event: BrowserAgentTabReference) => void) => () => void;

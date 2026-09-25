@@ -4,6 +4,7 @@
 
 ## 1. 从原生事件到屏幕
 
+
 ```mermaid
 flowchart LR
   Gateway[Gateway WS / history] --> Client[GatewayClient]
@@ -147,3 +148,9 @@ client. Acceptance does not replace the saved card or input draft. A native
 `progressCard.changed` event triggers a read of the saved revision. The refresh
 intent is reused for uncertain delivery, while confirmed terminal failure permits a new intent. Retries also read the saved card to recover missed events. Stale acknowledgements after a session
 switch are ignored. No application transcript or synthetic user turn is created.
+
+## 内置浏览器的新标签请求
+
+`AgentEnsureTab` 必须在当前任务对应的已挂载 `BrowserPanel` 上调用 `openTab`，保留 Main 分配的 targetId 和 profile，再同步展示状态。`initialTabs` 仅用于空面板初始化，不能通过修改外层标签列表为已有面板创建 guest。面板未挂载时以该列表初始化；重复 targetId 不重复创建。已挂载面板因容量限制拒绝创建时，保留原选择和外层标签列表，避免形成没有 guest 的目标。否则 Main 会等待新目标注册超时，即使任务已有可见网页也会报面板不可用。
+
+阶段 2 以内置浏览器真实网页为唯一新增交互入口；独立“查看任务页面”及外部镜像采集方案已撤回。停止、人工操作与继续的首版流程已实现，真实模型验收待完成，见[内置浏览器介入方案](../features/browser-live-view-intervention-plan.md)。

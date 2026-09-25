@@ -120,3 +120,9 @@ HTTP 登录请求、媒体权限、PDF 读取各有独立超时和销毁语义�
 先在 shared 定义 channel、请求和返回契约；Main 边界验证并调用领域服务；preload 暴露最小方法；Renderer 声明与消费方同步；最后覆盖不合法参数、取消、销毁、迟到响应和重复请求。
 
 高风险接口还要验证来源身份和资源归属。不能只给 TypeScript interface 加字段就认定运行时边界成立。已有测试可从 `ipc/cowork/sessionExecution`、`ipc/app`、browser server 和聊天 controller 的领域测试开始定位。
+
+## 内置浏览器人工介入
+
+主窗口通过显式 `browser:intervention` IPC 请求 begin/read/confirmStop/resume/complete。Main 校验主 frame 和窗口所有权，首次介入要求真实注册 guest；既有介入绑定窗口，网页关闭后仍允许原窗口恢复。原窗口销毁后，只有持有同会话真实 guest 的新可信窗口可接管。BrowserAgentBridge 的会话级介入状态阻止新 browser 调用；取消信号与实际操作结束分别跟踪。Renderer 复用任务停止与运行状态核对，不能仅凭取消 RPC 返回开放人工输入。介入 token 限制重复或过期的继续请求，状态保留于 Main 内存，Renderer 重载不会自动释放。没有 SQLite 迁移或消息缓存。真实网页和会话回执仍由既有系统负责。
+
+停止回执与运行状态更新可以先后到达。Renderer 在介入 `stopping` 且 `stopConfirmed=false` 时每两秒复查会话及子任务的权威运行状态，并等待待发送任务取消完成；确认空闲后以原 token 补交停止确认。Main 分别保留停止确认和原始浏览器动作收尾状态，后者未完成时继续阻止人工交互。面板重新打开会恢复核对，过期异步结果不能更新新介入，不自动重发停止或继续请求。

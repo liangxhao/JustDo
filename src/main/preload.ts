@@ -63,6 +63,7 @@ import {
   normalizeBrowserPanelOpenTabEvent,
   normalizeBrowserPanelPdfDetectedEvent,
 } from '../shared/browser/browser';
+import { BrowserInterventionIpc, type BrowserInterventionRequest } from '../shared/browser/browserIntervention';
 import { BrowserRecordingChannel, type BrowserRecordingLease } from '../shared/browser/browserRecording';
 import type { CoworkAttachmentPayload } from '../shared/cowork/attachments';
 import { CollaborationIpc } from '../shared/cowork/collaboration';
@@ -396,6 +397,7 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(BrowserRecordingChannel.Lease, state),
     acknowledgeAgentInteraction: (state: BrowserAgentInteractionReady) =>
       ipcRenderer.send(BrowserIpc.AgentInteractionReady, state),
+    intervention: (input: BrowserInterventionRequest) => ipcRenderer.invoke(BrowserInterventionIpc, input),
     onAgentEnsureTab: (callback: (event: BrowserAgentSessionEvent) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, data: BrowserAgentSessionEvent) =>
         callback(data);

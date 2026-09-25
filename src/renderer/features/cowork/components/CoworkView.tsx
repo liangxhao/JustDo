@@ -64,6 +64,7 @@ import {
   promotePendingBrowserPanelItems,
 } from '@/features/browser/browserPanelRetention';
 import { recordingSubmissionIssue } from '@/features/browser/browserRecordingSubmission';
+import { browserTaskStopped } from '@/features/browser/browserTaskStopped';
 import JustDoChatWrapper, {
   type JustDoChatWrapperRef,
 } from '@/features/cowork/components/chat/JustDoChatWrapper';
@@ -407,6 +408,14 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const sessionSearchInputRef = useRef<HTMLInputElement>(null);
   const sessionSearchPanelRef = useRef<HTMLDivElement>(null);
   const browserPanelRefs = useRef(new Map<string, BrowserPanelHandle>());
+  const continueBrowserTaskRef = useRef<
+    | ((
+        sessionId: string,
+        prompt: string,
+      ) => Promise<import('@shared/browser/browserIntervention').BrowserContinueResult>)
+    | null
+  >(null);
+  continueBrowserTaskRef.current = null;
   const [browserAgentPanelStates, setBrowserAgentPanelStates] = useState(
     () => new Map<string, Map<string, BrowserAgentInteractionState>>(),
   );
@@ -1596,6 +1605,41 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                 }}
                 key={`browser-runtime:${displayState.runtimeId}`}
                 draftKey={sessionKey}
+                onStopTask={
+                  sessionKey === HOME_DISPLAY_SESSION_KEY
+                    ? undefined
+                    : async () => {
+                        if (
+                          currentSessionIdRef.current !== sessionKey ||
+                          currentSession?.external?.readOnly
+                        )
+                          return false;
+                        if (!(await handleStopSession())) return false;
+                        return browserTaskStopped(
+                          () => pendingMessageSubmissionsRef.current.has(sessionKey),
+                          () =>
+                            coworkService.getSessionRuntimeStatus(sessionKey, {
+                              includeSubagents: true,
+                              forceRefresh: true,
+                              fullScan: true,
+                            }),
+                        );
+                      }
+                }
+                onCheckTaskStopped={() =>
+                  browserTaskStopped(
+                    () => pendingMessageSubmissionsRef.current.has(sessionKey),
+                    () =>
+                      coworkService.getSessionRuntimeStatus(sessionKey, {
+                        includeSubagents: true,
+                        forceRefresh: true,
+                        fullScan: true,
+                      }),
+                  )
+                }
+                onContinueTask={prompt =>
+                  continueBrowserTaskRef.current?.(sessionKey, prompt) ?? Promise.resolve('failed')
+                }
                 isOpen={isDisplayPanelOpen && browserVisible && !sessionKey.startsWith('temp-')}
                 width={displayState.browserPanelWidth}
                 activeTargetId={displayState.browserPanelTargetId}
@@ -1741,6 +1785,24 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
           pendingMessageSubmissionsRef.current.delete(currentSession.id);
         }
       });
+    };
+
+    continueBrowserTaskRef.current = async (sessionId, prompt) => {
+      if (currentSessionIdRef.current !== sessionId || currentSession.id !== sessionId)
+        return 'failed';
+      const stopped = await browserTaskStopped(
+        () => pendingMessageSubmissionsRef.current.has(sessionId),
+        () =>
+          coworkService.getSessionRuntimeStatus(sessionId, {
+            includeSubagents: true,
+            forceRefresh: true,
+            fullScan: true,
+          }),
+      );
+      if (!stopped || currentSessionIdRef.current !== sessionId) return 'failed';
+      const sent = await handleSendMessage(prompt);
+      if (pendingMessageSubmissionsRef.current.get(sessionId)?.unknown) return 'unknown';
+      return sent ? 'sent' : 'failed';
     };
 
     const handleAssistantMessageFork = async (entryId: string): Promise<boolean> => {
