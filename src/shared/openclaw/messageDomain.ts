@@ -59,7 +59,9 @@ export function classifyAgentEvent(params: {
   if (!activeRun) return canStartSelectedRun ? 'start-run' : 'ignored-run';
   if (activeRun.runId !== event.runId) {
     if (activeRun.status !== 'running') return canStartSelectedRun ? 'start-run' : 'ignored-run';
-    return activeRun.runId.startsWith('justdo-') ? 'bind-provisional-run' : 'ignored-run';
+    return canStartSelectedRun && activeRun.runId.startsWith('justdo-')
+      ? 'bind-provisional-run'
+      : 'ignored-run';
   }
   if (activeRun.sessionId && event.sessionId && activeRun.sessionId !== event.sessionId) {
     return 'ignored-session';

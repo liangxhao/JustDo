@@ -13,12 +13,12 @@
  * omits from bounded history payloads.
  */
 
-import { type NormalizedAgentEvent } from '@shared/openclaw/agentEvent';
+import { type NormalizedAgentEvent, type NormalizedChatEvent } from '@shared/openclaw/agentEvent';
 import { type ProgressCard } from '@shared/openclaw/progressCard';
 
 import { isTruncatedHistoryMessage } from '@/libs/openclaw-chat/gateway/chat-history-protocol';
 import type { GatewayClient, GatewayHelloOk } from '@/libs/openclaw-chat/gateway/client';
-import { readPreambleText } from '@/libs/openclaw-chat/model/agent-event-reducer';
+import { readPreambleText, readToolProgressText } from '@/libs/openclaw-chat/model/agent-event-reducer';
 import {
   type AssistantTurn,
   type ChatTranscriptState,
@@ -243,7 +243,7 @@ export function hasStableProgressOwner(event: NormalizedAgentEvent): boolean {
   // may bypass the run watermark; the reducer still enforces owner/run fences.
   if (event.stream === 'item') {
     return (
-      readPreambleText(event.data) !== null &&
+      (readPreambleText(event.data) !== null || readToolProgressText(event.data) !== null) &&
       typeof event.data.itemId === 'string' &&
       event.data.itemId.trim().length > 0
     );
@@ -734,6 +734,14 @@ export function extractSnapshotText(message: unknown): string | null {
     return texts.length > 0 ? texts.join('') : null;
   }
   return null;
+}
+
+export function isChatTextRetraction(event: NormalizedChatEvent): boolean {
+  return (
+    event.state === 'delta' &&
+    event.replace &&
+    (extractSnapshotText(event.message) ?? event.deltaText) === ''
+  );
 }
 
 export function collectActiveThinkingText(turn: AssistantTurn | null): string | null {

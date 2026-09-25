@@ -63,22 +63,312 @@ function chat(
 }
 
 describe('agent event reducer', () => {
+  test.each(['thinking', 'tool'])('retracts reply owners across a newer %s boundary', stream => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    reduceAgentEvent(
+      state,
+      agent(1, 'assistant', { text: 'obsolete', progressSegmentFirstSeq: 1 }),
+      dependencies,
+    );
+    reduceAgentEvent(
+      state,
+      agent(
+        3,
+        stream,
+        stream === 'thinking'
+          ? { text: 'reasoning', progressSegmentFirstSeq: 3 }
+          : { name: 'read', toolCallId: 'tool-1', phase: 'start' },
+      ),
+      dependencies,
+    );
+    reduceAgentEvent(
+      state,
+      agent(4, 'item', {
+        kind: 'preamble',
+        itemId: 'commentary-1',
+        progressText: 'Checking',
+        phase: 'end',
+      }),
+      dependencies,
+    );
+    reduceAgentEvent(
+      state,
+      agent(5, 'assistant', { text: 'new answer', progressSegmentFirstSeq: 5 }),
+      dependencies,
+    );
+    expect(
+      reduceChatEvent(
+        state,
+        chat('delta', {
+          message: { content: '' },
+          replace: true,
+          sourceSeq: 2,
+        }),
+        dependencies,
+      ),
+    ).toBe('applied');
+    expect(
+      state.activeTurn?.items.filter(item => item.type === 'content').map(item => item.text),
+    ).toEqual(['', 'Checking', 'new answer']);
+    expect(
+      reduceAgentEvent(
+        state,
+        agent(2, 'assistant', {
+          text: 'late obsolete',
+          progressSegmentFirstSeq: 1,
+        }),
+        dependencies,
+        { allowSequenceBackfill: true },
+      ),
+    ).toBe('ignored-sequence');
+    expect(
+      reduceAgentEvent(
+        state,
+        agent(6, 'assistant', {
+          text: 'new answer continued',
+          progressSegmentFirstSeq: 5,
+        }),
+        dependencies,
+      ),
+    ).toBe('applied');
+  });
+
+  test('retains chat suppression before the assistant owner arrives without fencing other streams', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    reduceChatEvent(
+      state,
+      chat('delta', { message: { content: '' }, replace: true, sourceSeq: 3 }),
+      dependencies,
+    );
+    expect(
+      reduceAgentEvent(
+        state,
+        agent(1, 'assistant', {
+          text: 'obsolete',
+          progressSegmentFirstSeq: 1,
+        }),
+        dependencies,
+        { replaySnapshot: true, allowSequenceBackfill: true },
+      ),
+    ).toBe('ignored-sequence');
+    expect(
+      reduceAgentEvent(
+        state,
+        agent(2, 'thinking', {
+          text: 'reasoning',
+          progressSegmentFirstSeq: 2,
+        }),
+        dependencies,
+      ),
+    ).toBe('applied');
+    expect(
+      reduceChatEvent(state, chat('delta', { deltaText: 'old chat', sourceSeq: 2 }), dependencies),
+    ).toBe('ignored-sequence');
+    expect(
+      reduceAgentEvent(
+        state,
+        agent(4, 'assistant', {
+          text: 'new reply',
+          progressSegmentFirstSeq: 1,
+        }),
+        dependencies,
+      ),
+    ).toBe('applied');
+    expect(
+      state.activeTurn?.items.filter(item => item.type === 'content').map(item => item.text),
+    ).toEqual(['new reply']);
+  });
+
+  test('preserves newer typed progress against old partials while admitting terminal and input backfill', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    reduceAgentEvent(
+      state,
+      agent(1, 'tool', { phase: 'start', name: 'read', toolCallId: 'tool-1' }),
+      dependencies,
+    );
+    reduceAgentEvent(
+      state,
+      agent(5, 'item', {
+        kind: 'tool',
+        phase: 'update',
+        itemId: 'tool:tool-1',
+        toolCallId: 'tool-1',
+        progressText: 'Reading 90%',
+      }),
+      dependencies,
+    );
+    reduceAgentEvent(
+      state,
+      agent(
+        3,
+        'tool',
+        {
+          phase: 'update',
+          name: 'read',
+          toolCallId: 'tool-1',
+          partialResult: 'old partial',
+        },
+        { deliveryEvent: 'session.tool' },
+      ),
+      dependencies,
+      { allowSequenceBackfill: true },
+    );
+    const tool = state.activeTurn!.toolById.get('tool-1')!;
+    expect(tool.progressText).toBe('Reading 90%');
+    expect(tool.output).toBeUndefined();
+    reduceAgentEvent(
+      state,
+      agent(
+        4,
+        'tool',
+        {
+          phase: 'result',
+          name: 'read',
+          toolCallId: 'tool-1',
+          result: 'complete',
+        },
+        { deliveryEvent: 'session.tool' },
+      ),
+      dependencies,
+      { allowSequenceBackfill: true },
+    );
+    expect(tool).toMatchObject({ status: 'completed', output: 'complete' });
+    expect(tool.progressText).toBeUndefined();
+    reduceAgentEvent(
+      state,
+      agent(
+        1,
+        'tool',
+        {
+          phase: 'start',
+          name: 'read',
+          toolCallId: 'tool-1',
+          args: { path: 'file.txt' },
+        },
+        { deliveryEvent: 'session.tool' },
+      ),
+      dependencies,
+      { allowSequenceBackfill: true },
+    );
+    expect(tool.input).toEqual({ path: 'file.txt' });
+  });
+
+  test('replays an empty preamble replacement and rejects its older snapshot', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    const preamble = (seq: number, progressText: string, replace = false) =>
+      agent(seq, 'item', {
+        kind: 'preamble',
+        itemId: 'commentary-1',
+        phase: 'update',
+        progressText,
+        replace,
+      });
+    reduceAgentEvent(state, preamble(1, 'obsolete commentary'), dependencies);
+    reduceAgentEvent(state, preamble(3, '', true), dependencies, { replaySnapshot: true });
+    expect(state.activeTurn?.items).toMatchObject([{ type: 'content', text: '' }]);
+    expect(reduceAgentEvent(state, preamble(2, 'old commentary'), dependencies)).toBe(
+      'ignored-sequence',
+    );
+    reduceAgentEvent(state, preamble(4, 'new commentary'), dependencies);
+    expect(state.activeTurn?.items).toMatchObject([{ type: 'content', text: 'new commentary' }]);
+  });
+
+  test.each(['thinking', 'assistant'])(
+    'honors empty and delta-only replacements in %s streams',
+    stream => {
+      const state = createChatTranscriptState('session-1', 'sid-1');
+      const emit = (seq: number, data: Record<string, unknown>) =>
+        reduceAgentEvent(
+          state,
+          agent(seq, stream, { progressSegmentFirstSeq: 1, ...data }),
+          dependencies,
+        );
+      emit(1, { text: 'obsolete', delta: 'obsolete' });
+      const owner = state.activeTurn!.items[0];
+      emit(2, { delta: 'corrected', replace: true });
+      expect(owner).toMatchObject({ text: 'corrected' });
+      emit(3, { text: '', delta: 'must not append', replace: true });
+      expect(owner).toMatchObject({ text: '', lastSeq: 3 });
+      emit(4, { delta: 'new answer' });
+      expect(state.activeTurn!.items).toHaveLength(1);
+      expect(owner).toMatchObject({ text: 'new answer' });
+      expect(emit(3, { text: 'late obsolete snapshot', replace: true })).toBe('ignored-sequence');
+      expect(owner).toMatchObject({ text: 'new answer' });
+    },
+  );
+
+  test('clears the current content on a native chat retraction without removing earlier tool output', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    reduceAgentEvent(
+      state,
+      agent(1, 'tool', {
+        phase: 'result',
+        toolCallId: 'call-1',
+        name: 'exec',
+        result: 'done',
+      }),
+      dependencies,
+    );
+    reduceChatEvent(state, chat('delta', { deltaText: 'obsolete answer' }), dependencies);
+    reduceChatEvent(
+      state,
+      chat('delta', { message: { content: '' }, replace: true }),
+      dependencies,
+    );
+    expect(state.activeTurn!.items).toMatchObject([
+      { type: 'tool', output: 'done', status: 'completed' },
+      { type: 'content', text: '' },
+    ]);
+  });
+
   test('fills delayed tool input without replacing its result or rewinding sequence ownership', () => {
     const state = createChatTranscriptState('session-1', 'sid-1');
-    reduceAgentEvent(state, agent(12, 'tool', {
-      phase: 'result', toolCallId: 'write-1', name: 'write', result: 'Written',
-    }), dependencies);
-    const start = agent(10, 'tool', {
-      phase: 'start', toolCallId: 'write-1', name: 'write', args: { path: 'a.txt' },
-    }, { deliveryEvent: 'session.tool' });
-    expect(reduceAgentEvent(state, start, dependencies, { allowSequenceBackfill: true })).toBe('applied');
+    reduceAgentEvent(
+      state,
+      agent(12, 'tool', {
+        phase: 'result',
+        toolCallId: 'write-1',
+        name: 'write',
+        result: 'Written',
+      }),
+      dependencies,
+    );
+    const start = agent(
+      10,
+      'tool',
+      {
+        phase: 'start',
+        toolCallId: 'write-1',
+        name: 'write',
+        args: { path: 'a.txt' },
+      },
+      { deliveryEvent: 'session.tool' },
+    );
+    expect(reduceAgentEvent(state, start, dependencies, { allowSequenceBackfill: true })).toBe(
+      'applied',
+    );
     expect(state.activeTurn?.toolById.get('write-1')).toMatchObject({
-      input: { path: 'a.txt' }, output: 'Written', status: 'completed', lastSeq: 12,
+      input: { path: 'a.txt' },
+      output: 'Written',
+      status: 'completed',
+      lastSeq: 12,
     });
-    expect(reduceAgentEvent(state, agent(11, 'tool', {
-      phase: 'result', toolCallId: 'write-1', name: 'write', result: 'stale',
-    }), dependencies, { allowSequenceBackfill: true })).toBe('ignored-sequence');
-    expect(reduceAgentEvent(state, start, dependencies, { allowSequenceBackfill: true })).toBe('ignored-sequence');
+    expect(
+      reduceAgentEvent(
+        state,
+        agent(11, 'tool', {
+          phase: 'result',
+          toolCallId: 'write-1',
+          name: 'write',
+          result: 'stale',
+        }),
+        dependencies,
+        { allowSequenceBackfill: true },
+      ),
+    ).toBe('ignored-sequence');
+    expect(reduceAgentEvent(state, start, dependencies, { allowSequenceBackfill: true })).toBe(
+      'ignored-sequence',
+    );
     expect(state.activeTurn?.lastAgentSeq).toBe(12);
   });
 
@@ -907,7 +1197,6 @@ describe('agent event reducer', () => {
   });
 });
 
-
 test.each(['aborted', 'error'] as const)(
   'merges repeated %s frames into one stable terminal row',
   outcome => {
@@ -960,25 +1249,42 @@ test.each([false, true])(
   },
 );
 
-
-test.each(['expired', 'capacity'] as const)('never resurrects stopped tools after terminal metadata is %s', eviction => {
-  const state = createChatTranscriptState('session-1', 'sid-1');
-  reduceAgentEvent(state, agent(1, 'tool', { phase: 'start', toolCallId: 'stopped-tool', name: 'exec' }), dependencies);
-  reduceChatEvent(state, chat('aborted'), dependencies);
-  if (eviction === 'expired') now += 6 * 60 * 1000;
-  for (let index = 0; index < (eviction === 'capacity' ? 25 : 1); index += 1) {
-    const runId = `replacement-${index}`;
-    reduceAgentEvent(state, agent(1, 'assistant', { text: 'new answer' }, { runId }), dependencies);
-    reduceChatEvent(state, chat('final', { runId }), dependencies);
-  }
-  expect(state.recentRuns.has('run-1')).toBe(false);
-  const replacement = state.activeTurn;
-  expect(reduceAgentEvent(state, agent(2, 'tool', { phase: 'start', toolCallId: 'late-tool', name: 'exec' }), dependencies)).toBe('ignored-run');
-  expect(reduceChatEvent(state, chat('delta', { deltaText: 'late words' }), dependencies)).toBe('ignored-run');
-  expect(state.activeTurn).toBe(replacement);
-  expect(state.activeTurn?.status).toBe('final');
-});
-
+test.each(['expired', 'capacity'] as const)(
+  'never resurrects stopped tools after terminal metadata is %s',
+  eviction => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    reduceAgentEvent(
+      state,
+      agent(1, 'tool', { phase: 'start', toolCallId: 'stopped-tool', name: 'exec' }),
+      dependencies,
+    );
+    reduceChatEvent(state, chat('aborted'), dependencies);
+    if (eviction === 'expired') now += 6 * 60 * 1000;
+    for (let index = 0; index < (eviction === 'capacity' ? 25 : 1); index += 1) {
+      const runId = `replacement-${index}`;
+      reduceAgentEvent(
+        state,
+        agent(1, 'assistant', { text: 'new answer' }, { runId }),
+        dependencies,
+      );
+      reduceChatEvent(state, chat('final', { runId }), dependencies);
+    }
+    expect(state.recentRuns.has('run-1')).toBe(false);
+    const replacement = state.activeTurn;
+    expect(
+      reduceAgentEvent(
+        state,
+        agent(2, 'tool', { phase: 'start', toolCallId: 'late-tool', name: 'exec' }),
+        dependencies,
+      ),
+    ).toBe('ignored-run');
+    expect(reduceChatEvent(state, chat('delta', { deltaText: 'late words' }), dependencies)).toBe(
+      'ignored-run',
+    );
+    expect(state.activeTurn).toBe(replacement);
+    expect(state.activeTurn?.status).toBe('final');
+  },
+);
 
 test('releases terminal identity fences when the session projection is reset', () => {
   const state = createChatTranscriptState('session-1', 'sid-1');

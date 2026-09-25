@@ -107,6 +107,19 @@ function refreshedSummary(failed = false): ProcessSummaryTimelineItem {
 }
 
 describe('Tool timeline consistency', () => {
+  test('shows typed progress only while a tool is running', () => {
+    const summary = incrementalSummary();
+    const tool = summary.items.find(item => item.type === 'tool')!;
+    if (tool.type !== 'tool') throw new Error('Expected tool');
+    tool.status = 'running';
+    tool.progressText = 'Reading 50%';
+    expect(flatten(renderTimelineItem(summary, 3, true))).toContain('Reading 50%');
+    tool.status = 'completed';
+    const completed = flatten(renderTimelineItem(summary, 3, true));
+    expect(completed).not.toContain('Reading 50%');
+    expect(completed).toContain('761 tests passed');
+  });
+
   test.each([
     ['completed', false, '761 tests passed'],
     ['failed', true, 'Process exited with code 1'],

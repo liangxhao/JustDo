@@ -7,7 +7,7 @@ markers must fail. Original v2026.9.2 files remain historical evidence only.
 
 ## Audit disposition
 
-Of the 25 previous capabilities, 23 still need product integration. Two are
+Of the 25 previous capabilities, 22 still need product integration. Two are
 provided natively and have no replacement patch:
 
 - **009, forced memory reembedding:** the new memory index uses a shadow database
@@ -17,7 +17,13 @@ provided natively and have no replacement patch:
 - **024, ACP admission hot reload:** `acp.allowedAgents` is now a native hot
   operation-policy update. The native config reload tests cover this boundary.
 
-One newly exposed Windows integration gap requires patch 031. There are **24**
+The former **017 segmented live recovery snapshot** enhancement is retired.
+Native `chat.history` already returns persisted display messages, buffered
+`inFlightRun.text`, and tool/item progress events. Exact replay of unfinished
+Thinking/Content segments is not a prerequisite for reply recovery. The Renderer
+uses the native snapshot and does not require injected segment identifiers.
+
+One newly exposed Windows integration gap requires patch 031. There are **23**
 patches in this version. They are not a migration of the old runtime.
 
 | Patch | Capability retained | 2026.9.6 implementation boundary |
@@ -33,7 +39,6 @@ patches in this version. They are not a migration of the old runtime.
 | 014 | Provider-safe replay | Native assistant transport projection |
 | 015 | Trusted local file delivery | Managed attachment MIME fallback and display media references; native disposition retained |
 | 016 | Offline official plugin catalog | Native catalog loader with offline intent |
-| 017 | Segmented live recovery snapshot | Native thinking/item/content emitters and recovery projection |
 | 018 | Mixed commentary ordering | Native grouped commentary fallbacks and sanitization |
 | 019 | No automatic plugin repair downloads | Installed-index lease writer; explicit installs remain native |
 | 020 | Configured realtime ASR URL | Native OpenAI realtime provider factory |
@@ -50,6 +55,10 @@ patches in this version. They are not a migration of the old runtime.
 All patches are temporary product integration seams, with their removal conditions,
 scope and safety constraints in the module headers. No upstream issue number is
 claimed where no issue has been filed. Re-audit each capability on the next upgrade.
+
+Removing 017 requires a rebuild from the locked pristine artifact. Do not undo
+injections in an existing runtime or rewrite its proof manifest. See
+`docs/features/openclaw-2026.9.6-message-sync.md` for the native recovery audit.
 
 The npm artifact has hashed `.mjs` modules plus two worker bundles. Target counts
 include the relevant worker copies and the generated Gateway bundle; esbuild may

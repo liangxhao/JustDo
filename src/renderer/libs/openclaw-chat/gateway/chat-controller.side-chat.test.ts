@@ -178,6 +178,47 @@ test('publishes side-chat Thinking, Tool, and Content through an isolated transc
   expect(controller.state.chatSending).toBe(false);
 });
 
+test('retracts side-chat content across a newer tool without reviving delayed snapshots', async () => {
+  const sessionKey = 'agent:main:justdo:session-1';
+  const runId = 'btw-run-1';
+  const controller = new ChatController();
+  controller.state.client = {
+    stop: vi.fn(),
+    request: vi.fn().mockResolvedValue({ runId, status: 'accepted' }),
+  } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+  const streamListener = vi.fn();
+  controller.onSideChatStream(streamListener);
+  await controller.sendSideQuestion('what changed?', runId);
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+  const emit = (seq: number, stream: string, data: Record<string, unknown>) =>
+    handleEvent({ event: 'agent', payload: { sessionKey, runId, seq, stream, data } });
+  emit(1, 'assistant', { text: 'obsolete answer', progressSegmentFirstSeq: 1 });
+  emit(3, 'tool', { phase: 'start', toolCallId: 'read-1', name: 'read' });
+  handleEvent({
+    event: 'chat',
+    payload: { sessionKey, runId, seq: 2, state: 'delta', deltaText: '', replace: true },
+  });
+  emit(2, 'assistant', { text: 'obsolete answer', progressSegmentFirstSeq: 1 });
+
+  expect(streamListener.mock.lastCall?.[0]).toMatchObject({
+    runId,
+    turn: {
+      items: [
+        { type: 'content', text: '' },
+        { type: 'tool', toolCallId: 'read-1', status: 'running' },
+      ],
+    },
+  });
+  expect(controller.state.transcript.activeTurn).toBeNull();
+  controller.disconnect();
+});
+
 test.each(['error', 'aborted', 'final'] as const)(
   'settles a side question when chat.%s arrives without a side result',
   async state => {

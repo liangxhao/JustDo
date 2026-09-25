@@ -700,9 +700,18 @@ export async function normalizeHistoryPage(
 ): Promise<unknown[]> {
   const projected = projectGatewayHistoryForDisplay(messages);
   const client = this.state.client;
+  const historyGeneration = this.state.transcript.historyGeneration;
+  const pagingGeneration = this.historyPagingGeneration;
+  const isCurrent = () =>
+    this.state.client === client &&
+    this.state.connected &&
+    this.state.sessionKey === sessionKey &&
+    this.state.transcript.historyGeneration === historyGeneration &&
+    this.historyPagingGeneration === pagingGeneration;
   const hydratedFullMessages = client
-    ? await hydrateTruncatedHistoryMessages(client, projected, sessionKey)
+    ? await hydrateTruncatedHistoryMessages(client, projected, sessionKey, isCurrent)
     : projected;
+  if (!isCurrent()) return projected;
   const normalized = await hydrateGatewayHistoryForDisplay(hydratedFullMessages, {
     sessionKey,
     sessionId: this.state.transcript.sessionId,
@@ -758,7 +767,8 @@ export async function loadOlderHistory(this: ChatControllerHistoryContext): Prom
       const subagentTaskPageIndex = this.findExpectedInitialHistoryIndex(normalized);
       if (this.expectInitialHistory && subagentTaskPageIndex >= 0) {
         const taskBoundedPage = normalized.slice(subagentTaskPageIndex);
-        const boundedHistory = [...taskBoundedPage, ...this.currentMessageHistory.recentMessages];
+        this.currentMessageHistory.prepend(taskBoundedPage);
+        const boundedHistory = this.currentMessageHistory.toArray();
         const messages = this.state.chatSending
           ? sliceActiveSubagentHistoryPrefix(boundedHistory)
           : boundedHistory;
@@ -895,8 +905,14 @@ export async function loadHistory(
       rpcSummary: summarizeHistoryForDebug(pagedHistory.messages),
     });
 
-    if (this.state.sessionKey !== sessionKey) {
-      debugLog('[ChatCtrl] loadHistory ABORT session changed after RPC', {
+    if (
+      this.state.sessionKey !== sessionKey ||
+      this.state.client !== client ||
+      !this.state.connected ||
+      this.historyPagingGeneration !== pagingGeneration ||
+      this.state.transcript.historyGeneration !== transcriptHistoryGeneration
+    ) {
+      debugLog('[ChatCtrl] loadHistory ABORT identity changed after RPC', {
         seq: loadSeq,
         requestedSessionKey: sessionKey,
         currentSessionKey: this.state.sessionKey,
@@ -914,14 +930,46 @@ export async function loadHistory(
       ? normalizeSessionId(result?.sessionInfo?.activeLeafEntryId)
       : undefined;
     const previousActiveLeafKnown = this.displayedHistoryLeafBySession.has(normalizedSessionKey);
-    const previousActiveLeaf = this.displayedHistoryLeafBySession.get(normalizedSessionKey);
+    let previousActiveLeaf = this.displayedHistoryLeafBySession.get(normalizedSessionKey);
+    // Durable session.message appends can advance the displayed transcript
+    // without another history load. Compare against those descendants too:
+    // rewinding to an intermediate append must not look like an advance from
+    // the older leaf remembered by the last history RPC.
+    const rememberedLeafIndex = previousActiveLeaf
+      ? previousMessages.findIndex(
+          message => asRecord(asRecord(message)?.__openclaw)?.id === previousActiveLeaf,
+        )
+      : -1;
+    if (rememberedLeafIndex >= 0) {
+      for (const message of previousMessages.slice(rememberedLeafIndex + 1)) {
+        if (isLocallyOptimisticHistoryTail(message)) continue;
+        const messageId = normalizeSessionId(asRecord(asRecord(message)?.__openclaw)?.id);
+        if (messageId) previousActiveLeaf = messageId;
+      }
+    }
+    // The native leaf also advances on ordinary appends. A tail that still
+    // contains the previous leaf proves continuity, not a rewind/fork.
+    const previousLeafIndex = previousActiveLeaf
+      ? pagedHistory.messages.findIndex(
+          message => asRecord(asRecord(message)?.__openclaw)?.id === previousActiveLeaf,
+        )
+      : -1;
+    const loadedLeafIndex = loadedActiveLeaf
+      ? pagedHistory.messages.findIndex(
+          message => asRecord(asRecord(message)?.__openclaw)?.id === loadedActiveLeaf,
+        )
+      : -1;
+    const advancesHistoryBranch = previousLeafIndex >= 0 && loadedLeafIndex > previousLeafIndex;
     const rotatesSessionIdentity = Boolean(
       loadedSessionId &&
       this.state.transcript.sessionId &&
       loadedSessionId !== this.state.transcript.sessionId,
     );
     const switchesHistoryBranch = Boolean(
-      responseHasActiveLeaf && previousActiveLeafKnown && previousActiveLeaf !== loadedActiveLeaf,
+      responseHasActiveLeaf &&
+      previousActiveLeafKnown &&
+      previousActiveLeaf !== loadedActiveLeaf &&
+      !advancesHistoryBranch,
     );
     const authoritativeSessionId = loadedSessionId ?? this.state.transcript.sessionId;
     if (!rotatesSessionIdentity) {
@@ -930,6 +978,8 @@ export async function loadHistory(
       this.state.transcript.sessionId = authoritativeSessionId;
     }
     const requestStillCurrent = (): boolean =>
+      this.state.client === client &&
+      this.state.connected &&
       this.state.sessionKey === sessionKey &&
       this.historyPagingGeneration === pagingGeneration &&
       this.state.transcript.historyGeneration === transcriptHistoryGeneration &&
@@ -959,7 +1009,9 @@ export async function loadHistory(
       client,
       projectedMessages,
       sessionKey,
+      requestStillCurrent,
     );
+    if (!requestStillCurrent()) return false;
     const hydratedMessages = await hydrateGatewayHistoryForDisplay(hydratedFullMessages, {
       sessionKey,
       sessionId: authoritativeSessionId,

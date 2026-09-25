@@ -1,12 +1,37 @@
 import { afterEach, expect, test, vi } from 'vitest';
 
 import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
+import { postFinalHistoryHasCaughtUp } from '@/libs/openclaw-chat/gateway/chat-controller-recovery';
 import { beginAssistantTurn } from '@/libs/openclaw-chat/model/chat-transcript-state';
 
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
+
+test.each([
+  { content: [{ type: 'thinking', thinking: 'Still reasoning' }] },
+  { content: 'Still working', phase: 'commentary' },
+  { content: 'Still working', openclawStreamFallback: { source: 'segment', itemId: 'progress-1' } },
+])(
+  'does not treat persisted reasoning or commentary as recovered terminal content: %j',
+  projection => {
+    const controller = new ChatController();
+    controller.state.chatMessages = [
+      {
+        role: 'assistant',
+        ...projection,
+        __openclaw: { id: 'progress-1', seq: 2, runId: 'run-1' },
+      },
+    ];
+    expect(
+      postFinalHistoryHasCaughtUp.call(
+        controller as never,
+        { runId: 'run-1', baselineMessageSeq: 1, baselineCompleteMessageCount: 0 } as never,
+      ),
+    ).toBe(false);
+  },
+);
 
 test('publishes matching side results and keeps their final event out of the transcript', async () => {
   const controller = new ChatController();
@@ -1085,7 +1110,7 @@ test('replays deferred session.message reload after silent final message', async
   });
 });
 
-test('retries a message-less final until terminal persistence catches up', async () => {
+test('bounds missing-final recovery when history only gains a tool result', async () => {
   vi.useFakeTimers();
   const persistedUser = {
     role: 'user',
@@ -1134,8 +1159,72 @@ test('retries a message-less final until terminal persistence catches up', async
   expect(controller.state.chatMessages).toEqual([persistedUser, persistedTool]);
 
   await vi.advanceTimersByTimeAsync(3000);
-  expect(request).toHaveBeenCalledTimes(3);
+  expect(request).toHaveBeenCalledTimes(4);
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(request).toHaveBeenCalledTimes(4);
 });
+
+test.each([true, false])(
+  'recovers a missing final despite matching user and intermediate tool run identities (final runId=%s)',
+  async hasFinalRunId => {
+    vi.useFakeTimers();
+    const user = {
+      role: 'user',
+      content: 'Request',
+      __openclaw: { id: 'user-1', seq: 1, runId: 'run-1' },
+    };
+    const tool = {
+      role: 'toolResult',
+      content: 'Tool output',
+      __openclaw: { id: 'tool-1', seq: 2, runId: 'run-1' },
+    };
+    const intermediate = {
+      role: 'assistant',
+      stopReason: 'toolUse',
+      content: [
+        { type: 'text', text: 'Working' },
+        { type: 'toolCall', id: 'call-1', name: 'read', arguments: {} },
+      ],
+      __openclaw: { id: 'intermediate-1', seq: 3, runId: 'run-1' },
+    };
+    const final = {
+      role: 'assistant',
+      content: 'Recovered answer',
+      stopReason: 'stop',
+      __openclaw: { id: 'final-1', seq: 4, ...(hasFinalRunId ? { runId: 'run-1' } : {}) },
+    };
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({ messages: [user] })
+      .mockResolvedValueOnce({ messages: [user, tool] })
+      .mockResolvedValueOnce({ messages: [user, tool, intermediate] })
+      .mockResolvedValue({ messages: [user, tool, intermediate, final] });
+    const controller = new ChatController();
+    controller.state.client = { request } as never;
+    controller.state.connected = true;
+    controller.state.sessionKey = 'agent:main:justdo:session-1';
+    controller.state.chatMessages = [user];
+    controller.state.transcript.persistedMessages = controller.state.chatMessages;
+    controller.state.chatSending = true;
+    controller.state.chatRunId = 'run-1';
+    (
+      controller as unknown as {
+        handleEvent(event: { event: string; payload: unknown }): void;
+      }
+    ).handleEvent({
+      event: 'chat',
+      payload: { sessionKey: controller.state.sessionKey, runId: 'run-1', state: 'final' },
+    });
+
+    for (const [index, delay] of [100, 400, 1500, 3000].entries()) {
+      await vi.advanceTimersByTimeAsync(delay);
+      expect(request).toHaveBeenCalledTimes(index + 1);
+    }
+    expect(controller.state.chatMessages).toEqual([user, tool, intermediate, final]);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(request).toHaveBeenCalledTimes(4);
+  },
+);
 
 test('does not retain NO_REPLY assistant streams for later lifecycle renders', () => {
   const controller = new ChatController();

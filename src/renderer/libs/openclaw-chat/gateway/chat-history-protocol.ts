@@ -68,6 +68,23 @@ const readHistoryMessageId = (message: unknown): string | null => {
   return typeof metadata?.id === 'string' && metadata.id.trim() ? metadata.id.trim() : null;
 };
 
+const isCommentaryProjection = (message: unknown): boolean =>
+  asRecord(asRecord(message)?.openclawStreamFallback)?.source === 'segment';
+
+const hasMixedAssistantTextAndTools = (message: unknown): boolean => {
+  const record = asRecord(message);
+  if (record?.role !== 'assistant' || !Array.isArray(record.content)) return false;
+  const types = record.content.map(block =>
+    String(asRecord(block)?.type ?? '')
+      .toLowerCase()
+      .replace(/_/g, ''),
+  );
+  return (
+    types.some(type => type === 'text' || type === 'outputtext') &&
+    types.some(type => ['toolcall', 'tooluse', 'toolresult', 'functioncall'].includes(type))
+  );
+};
+
 const needsFailureDetail = (message: unknown): boolean => {
   const raw = asRecord(message);
   return (
@@ -81,6 +98,7 @@ async function hydrateFailureDetails(
   client: GatewayClient,
   messages: unknown[],
   sessionKey: string,
+  isCurrent: () => boolean,
 ): Promise<unknown[]> {
   const ids = [
     ...new Set(
@@ -93,6 +111,7 @@ async function hydrateFailureDetails(
   if (ids.length === 0) return messages;
   const errors = new Map<string, string>();
   for (let offset = 0; offset < ids.length; offset += OPENCLAW_HISTORY_DETAIL_MAX_IDS) {
+    if (!isCurrent()) return messages;
     const batch = ids.slice(offset, offset + OPENCLAW_HISTORY_DETAIL_MAX_IDS);
     try {
       // Fetch only selected display-safe errors, in one visible-transcript read
@@ -140,11 +159,13 @@ async function readChunkedHistoryMessage(
   client: GatewayClient,
   sessionKey: string,
   messageId: string,
+  isCurrent: () => boolean,
 ): Promise<unknown | null> {
   let cursor = 0;
   let transferId: string | undefined;
   const chunks: string[] = [];
   for (;;) {
+    if (!isCurrent()) return null;
     const result = await client.request<{
       ok?: boolean;
       chunk?: string;
@@ -158,7 +179,7 @@ async function readChunkedHistoryMessage(
       maxChars: HISTORY_MESSAGE_CHUNK_CHARS,
       ...(transferId ? { transferId } : {}),
     });
-    if (!result?.ok || typeof result.chunk !== 'string') return null;
+    if (!isCurrent() || !result?.ok || typeof result.chunk !== 'string') return null;
     chunks.push(result.chunk);
     if (typeof result.transferId === 'string') transferId = result.transferId;
     if (result.complete === true) break;
@@ -175,6 +196,8 @@ async function readCompleteHistoryMessage(
   client: GatewayClient,
   sessionKey: string,
   messageId: string,
+  isCurrent: () => boolean,
+  allowSourceFallback = true,
 ): Promise<unknown | null> {
   let native: { ok?: boolean; message?: unknown; unavailableReason?: string } | undefined;
   try {
@@ -187,30 +210,53 @@ async function readCompleteHistoryMessage(
     // A response can exceed the WebSocket frame budget before OpenClaw is able
     // to return its explicit `oversized` result. The bounded bridge is also the
     // recovery path for that transport failure.
-    return readChunkedHistoryMessage(client, sessionKey, messageId);
+    return allowSourceFallback
+      ? readChunkedHistoryMessage(client, sessionKey, messageId, isCurrent)
+      : null;
   }
+  if (!isCurrent()) return null;
   if (native?.ok && native.message !== undefined && !isTruncatedHistoryMessage(native.message)) {
     return native.message;
   }
   if (native?.unavailableReason !== 'oversized' && native?.ok !== true) return null;
-  return readChunkedHistoryMessage(client, sessionKey, messageId);
+  return allowSourceFallback
+    ? readChunkedHistoryMessage(client, sessionKey, messageId, isCurrent)
+    : null;
 }
 
 export async function hydrateTruncatedHistoryMessages(
   client: GatewayClient,
   messages: unknown[],
   sessionKey: string,
+  isCurrent: () => boolean = () => true,
 ): Promise<unknown[]> {
+  if (!isCurrent()) return messages;
   const candidates = new Map<string, number[]>();
+  const commentarySourceIds = new Set<string>();
+  const mixedSourceIds = new Set<string>();
+  for (const message of messages) {
+    const messageId = readHistoryMessageId(message);
+    if (!messageId) continue;
+    if (isCommentaryProjection(message)) {
+      commentarySourceIds.add(messageId);
+      continue;
+    }
+    if (hasMixedAssistantTextAndTools(message)) mixedSourceIds.add(messageId);
+    if (isTruncatedHistoryMessage(message)) candidates.set(messageId, []);
+  }
+  // Patch 018 admits commentary in place among tools and removes its original
+  // phase signatures. chat.message.get uses a different projection and may
+  // omit that text. Without block identity, retain the admitted capped row.
+  for (const messageId of mixedSourceIds) candidates.delete(messageId);
+  // The native single-message projection covers main siblings, but not the
+  // separate commentary projections admitted by history. Never consume those.
   messages.forEach((message, index) => {
-    if (!isTruncatedHistoryMessage(message)) return;
+    if (isCommentaryProjection(message)) return;
     const messageId = readHistoryMessageId(message);
     if (!messageId) return;
-    const indices = candidates.get(messageId) ?? [];
-    indices.push(index);
-    candidates.set(messageId, indices);
+    candidates.get(messageId)?.push(index);
   });
-  if (candidates.size === 0) return hydrateFailureDetails(client, messages, sessionKey);
+  if (candidates.size === 0) return hydrateFailureDetails(client, messages, sessionKey, isCurrent);
 
   const replacements = new Map<number, unknown>();
   const duplicateProjectionIndices = new Set<number>();
@@ -220,11 +266,21 @@ export async function hydrateTruncatedHistoryMessages(
       { length: Math.min(HISTORY_MESSAGE_HYDRATION_CONCURRENCY, pending.length) },
       async () => {
         for (;;) {
+          if (!isCurrent()) return;
           const candidate = pending.shift();
           if (!candidate) return;
           const [messageId, indices] = candidate;
           try {
-            const fullMessage = await readCompleteHistoryMessage(client, sessionKey, messageId);
+            const fullMessage = await readCompleteHistoryMessage(
+              client,
+              sessionKey,
+              messageId,
+              isCurrent,
+              // A raw source can contain phased text suppressed by the native
+              // display policy. It cannot safely replace a main projection
+              // while its separately admitted commentary siblings remain.
+              !commentarySourceIds.has(messageId),
+            );
             if (fullMessage === null) continue;
             const firstIndex = indices[0];
             if (firstIndex !== undefined) {
@@ -250,5 +306,5 @@ export async function hydrateTruncatedHistoryMessages(
       : messages.flatMap((message, index) =>
           duplicateProjectionIndices.has(index) ? [] : [replacements.get(index) ?? message],
         );
-  return hydrateFailureDetails(client, hydrated, sessionKey);
+  return hydrateFailureDetails(client, hydrated, sessionKey, isCurrent);
 }

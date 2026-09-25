@@ -2020,10 +2020,11 @@ test('keeps a live run suspended across transport loss and accepts later updates
 
 test('creates one interruption only after reconnect confirms the run is inactive', async () => {
   const request = vi.fn().mockImplementation((method: string) => {
-    if (method === 'chat.history') return Promise.resolve({ messages: [] });
-    if (method === 'sessions.list') {
+    if (method === 'chat.history' || method === 'chat.startup')
+      return Promise.resolve({ messages: [] });
+    if (method === 'sessions.describe') {
       return Promise.resolve({
-        sessions: [{ key: 'agent:main:justdo:session-1', hasActiveRun: false }],
+        session: { key: 'agent:main:justdo:session-1', hasActiveRun: false },
       });
     }
     return Promise.resolve({});
@@ -2041,6 +2042,16 @@ test('creates one interruption only after reconnect confirms the run is inactive
     { now: () => 100, createId: prefix => `${prefix}-1` },
   );
 
+  (controller as unknown as { handleEvent(event: unknown): void }).handleEvent({
+    event: 'agent',
+    payload: {
+      sessionKey: controller.state.sessionKey,
+      runId: 'run-1',
+      seq: 1,
+      stream: 'thinking',
+      data: { text: 'in progress' },
+    },
+  });
   (controller as unknown as { handleClose(): void }).handleClose();
   controller.state.connected = true;
   await (
@@ -2063,6 +2074,11 @@ test('lets reconnect history settle a first turn that disconnected before run bi
     { role: 'assistant', content: 'finished while offline', __openclaw: { seq: 2 } },
   ];
   const request = vi.fn().mockImplementation((method: string) => {
+    if (method === 'sessions.describe') {
+      return Promise.resolve({
+        session: { key: 'agent:main:justdo:session-1', hasActiveRun: false },
+      });
+    }
     if (method === 'chat.startup') {
       return Promise.resolve({
         messages: persistedMessages,

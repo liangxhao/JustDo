@@ -13,6 +13,7 @@ import { isTruncatedHistoryMessage } from '@/libs/openclaw-chat/gateway/chat-his
 import type { GatewayEventFrame } from '@/libs/openclaw-chat/gateway/client';
 import {
   readPreambleText,
+  readToolProgressText,
   reduceAgentEvent,
   reduceChatEvent,
 } from '@/libs/openclaw-chat/model/agent-event-reducer';
@@ -58,6 +59,7 @@ import {
   DEFERRED_HISTORY_RELOAD_DELAY_MS,
   extractSnapshotText,
   hasStableProgressOwner,
+  isChatTextRetraction,
   isDormantAnnounceControlEvent,
   isDormantAnnounceRun,
   isHiddenOrPendingControlReplyText,
@@ -66,6 +68,7 @@ import {
   LocalCompactionStatus,
   MAX_ACTIVE_TOOL_HISTORY_CATCHUP_ATTEMPTS,
   MAX_DEFERRED_HISTORY_CATCHUP_ATTEMPTS,
+  messageTimestampMs,
   MISSING_TERMINAL_HISTORY_RETRY_DELAYS_MS,
   normalizeSessionId,
   PostFinalHistoryRecovery,
@@ -545,21 +548,43 @@ export function postFinalHistoryHasCaughtUp(
   const messages = this.state.chatMessages.filter(
     message => !isLocallyOptimisticHistoryTail(message) && !isTruncatedHistoryMessage(message),
   );
-  if (
-    recovery.runId &&
-    messages.some(message => readExplicitMessageRunId(message) === recovery.runId)
-  ) {
-    return true;
-  }
-  const latestMessageSeq = readLatestOpenClawMessageSeq(messages);
-  if (
-    recovery.baselineMessageSeq !== null &&
-    latestMessageSeq !== null &&
-    latestMessageSeq > recovery.baselineMessageSeq
-  ) {
-    return true;
-  }
-  return messages.length > recovery.baselineCompleteMessageCount;
+  return messages.some((message, index) => {
+    const record = asRecord(message);
+    if (record?.role !== 'assistant' || shouldHideMessage(message)) return false;
+    if (
+      record.phase === 'commentary' ||
+      asRecord(record.openclawStreamFallback)?.source === 'segment'
+    )
+      return false;
+    const blocks = Array.isArray(record.content) ? record.content : [];
+    const blockTypes = blocks.map(block =>
+      String(asRecord(block)?.type ?? '')
+        .toLowerCase()
+        .replace(/_/g, ''),
+    );
+    // User custody and intermediate tool work share the run identity. Neither
+    // proves that a missing terminal answer has reached the display transcript.
+    const stopReason = String(record.stopReason ?? '')
+      .toLowerCase()
+      .replace(/_/g, '');
+    if (
+      stopReason === 'tooluse' ||
+      stopReason === 'toolcalls' ||
+      blockTypes.some(type => ['toolcall', 'tooluse', 'functioncall'].includes(type))
+    )
+      return false;
+    const hasVisibleContent =
+      Boolean(extractSnapshotText(message)?.trim()) ||
+      blockTypes.some(type => ['image', 'audio', 'video', 'attachment'].includes(type));
+    if (!hasVisibleContent) return false;
+    const messageRunId = readExplicitMessageRunId(message);
+    if (recovery.runId && messageRunId) return messageRunId === recovery.runId;
+    const messageSeq = readOpenClawMessageSeq(message);
+    if (recovery.baselineMessageSeq !== null && messageSeq !== null) {
+      return messageSeq > recovery.baselineMessageSeq;
+    }
+    return index >= recovery.baselineCompleteMessageCount;
+  });
 }
 
 export function scheduleNextPostFinalHistoryReload(
@@ -639,36 +664,162 @@ export function schedulePostFinalHistoryReload(
 export async function reconcileSuspendedRun(this: ChatControllerRecoveryContext): Promise<void> {
   const suspendedRunId = this.suspendedRunId;
   if (!suspendedRunId) return;
-  await this.loadHistory(false, { preferStartup: true, reconcileSuspended: true });
+  const sessionKey = this.state.sessionKey;
+  const client = this.state.client;
+  const pendingMessage = this.state.pendingUserMessage;
+  const startedAt =
+    this.state.runActivity?.startedAt ?? this.state.transcript.activeTurn?.startedAt;
+  const loaded = await this.loadHistory(false, { preferStartup: true, reconcileSuspended: true });
+  // A failed/stale snapshot is not a terminal observation. In particular,
+  // Main-started preparation may still have no renderer transcript owner.
+  if (!loaded || this.state.sessionKey !== sessionKey || this.state.client !== client) return;
   if (
     this.suspendedRunId !== suspendedRunId ||
-    this.state.transcript.activeTurn?.runId !== suspendedRunId ||
-    this.state.transcript.activeTurn.status !== 'running'
+    (this.state.transcript.activeTurn &&
+      (this.state.transcript.activeTurn.runId !== suspendedRunId ||
+        this.state.transcript.activeTurn.status !== 'running')) ||
+    (this.state.chatRunId && this.state.chatRunId !== suspendedRunId)
   ) {
-    if (this.suspendedRunId === suspendedRunId && !this.state.transcript.activeTurn) {
-      this.state.chatSending = false;
-      this.state.chatRunId = null;
-      this.clearRunActivity();
-      this.notify();
-    }
-    this.suspendedRunId = null;
+    if (this.suspendedRunId === suspendedRunId) this.suspendedRunId = null;
     return;
   }
 
   try {
-    const result = await this.state.client?.request<{ sessions?: unknown[] }>('sessions.list', {});
-    const selected = (result?.sessions ?? []).map(asRecord).find(row => {
-      const key =
-        typeof row?.key === 'string'
-          ? row.key
-          : typeof row?.sessionKey === 'string'
-            ? row.sessionKey
-            : '';
-      return (
-        normalizeTranscriptSessionKey(key) === normalizeTranscriptSessionKey(this.state.sessionKey)
-      );
+    const result = await client?.request<{ session?: unknown }>('sessions.describe', {
+      key: sessionKey,
     });
-    if (selected?.hasActiveRun !== false) return;
+    const selected = asRecord(result?.session);
+    if (
+      this.state.sessionKey !== sessionKey ||
+      this.state.client !== client ||
+      this.suspendedRunId !== suspendedRunId ||
+      (this.state.chatRunId && this.state.chatRunId !== suspendedRunId)
+    )
+      return;
+    if (
+      selected?.hasActiveRun === true ||
+      (selected?.status === 'running' && selected.lastRunId === suspendedRunId)
+    ) {
+      this.suspendedRunId = null;
+      return;
+    }
+    const confirmedTerminal =
+      selected?.lastRunId === suspendedRunId
+        ? selected.status === 'done'
+          ? 'final'
+          : selected.status === 'failed'
+            ? 'error'
+            : selected.status === 'killed'
+              ? 'aborted'
+              : null
+        : null;
+    if (selected?.hasActiveRun !== false && confirmedTerminal === null) return;
+
+    const messages = this.state.chatMessages;
+    const lastMessage = messages[messages.length - 1];
+    const lastRecord = asRecord(lastMessage);
+    let ownUserIndex = -1;
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (asRecord(message)?.role !== 'user') continue;
+      const timestamp = messageTimestampMs(message);
+      const matches = pendingMessage
+        ? isPendingUserMessageMatch(
+            message as GatewayMessage,
+            pendingMessage as unknown as GatewayMessage,
+          )
+        : startedAt !== undefined && timestamp !== null && timestamp >= startedAt;
+      if (matches) {
+        ownUserIndex = index;
+        break;
+      }
+    }
+    const replyRunId = readExplicitMessageRunId(lastMessage);
+    const hasVisibleReply =
+      Boolean(extractSnapshotText(lastMessage)?.trim()) ||
+      (Array.isArray(lastRecord?.content) &&
+        lastRecord.content.some(block =>
+          ['image', 'audio', 'video', 'attachment'].includes(
+            String(asRecord(block)?.type ?? '').toLowerCase(),
+          ),
+        ));
+    const completeReply =
+      lastRecord?.role === 'assistant' &&
+      (!replyRunId || replyRunId === suspendedRunId) &&
+      !shouldHideMessage(lastMessage) &&
+      hasVisibleReply &&
+      asRecord(lastRecord.openclawStreamFallback)?.source !== 'segment' &&
+      lastRecord.phase !== 'commentary' &&
+      lastRecord.channel !== 'commentary' &&
+      !isTruncatedHistoryMessage(lastMessage) &&
+      !['toolUse', 'tool_use', 'tool_calls', 'error', 'aborted'].includes(
+        String(lastRecord.stopReason ?? ''),
+      ) &&
+      !(
+        Array.isArray(lastRecord.content) &&
+        lastRecord.content.some(block =>
+          ['toolCall', 'tool_use', 'toolcall'].includes(String(asRecord(block)?.type ?? '')),
+        )
+      ) &&
+      (replyRunId === suspendedRunId || (ownUserIndex >= 0 && ownUserIndex < messages.length - 1));
+    if (completeReply || confirmedTerminal !== null) {
+      if (!this.state.transcript.activeTurn) {
+        beginAssistantTurn(
+          this.state.transcript,
+          {
+            runId: suspendedRunId,
+            sessionId: this.state.currentSessionId,
+            startedAt,
+          },
+          this.transcriptDependencies,
+        );
+      }
+      const terminal: NormalizedChatEvent = {
+        runId: suspendedRunId,
+        sessionKey,
+        sessionId: this.state.currentSessionId,
+        lifecycleGeneration: this.state.transcript.activeTurn?.lifecycleGeneration ?? null,
+        frameSeq: null,
+        state: confirmedTerminal ?? 'final',
+        replace: false,
+        ...(completeReply && (confirmedTerminal === null || confirmedTerminal === 'final')
+          ? { message: lastMessage }
+          : {}),
+        ...(confirmedTerminal === 'error'
+          ? { errorMessage: i18nService.t('coworkProgressCardFailed') }
+          : {}),
+      };
+      reduceChatEvent(this.state.transcript, terminal, this.transcriptDependencies);
+      if (terminal.state === 'error') {
+        this.handleError(terminal);
+        this.suspendedRunId = null;
+        return;
+      }
+      if (terminal.state === 'aborted') {
+        this.handleAborted(terminal);
+        this.suspendedRunId = null;
+        return;
+      }
+      if (!completeReply) {
+        // Native lifecycle is authoritative even for silent/tool-only output.
+        // Settle the run now; existing bounded final recovery hydrates any
+        // transcript rows whose persistence trails the terminal receipt.
+        this.handleFinal(terminal);
+        return;
+      }
+      this.finishCurrentTurnTiming('final', suspendedRunId);
+      this.state.transcript.activeTurn = null;
+      this.state.chatSending = false;
+      this.state.chatRunId = null;
+      this.clearRunActivity();
+      this.suspendedRunId = null;
+      this.notify();
+      return;
+    }
+    // Inactive before Main dispatch is not cancellation. Only an observed
+    // native run may become interrupted without a persisted final reply.
+    if (!this.state.transcript.activeTurn || this.state.transcript.activeTurn.lastAgentSeq < 0)
+      return;
 
     const event: NormalizedChatEvent = {
       runId: suspendedRunId,
@@ -786,6 +937,7 @@ export function handleTimelineEvent(
         const transcript = this.sideChatTranscripts.get(normalizedPayload.runId);
         if (
           normalizedPayload.state === 'delta' &&
+          !isChatTextRetraction(normalizedPayload) &&
           this.sideChatAssistantSnapshotRunIds.has(normalizedPayload.runId)
         ) {
           return;
@@ -871,6 +1023,7 @@ export function handleTimelineEvent(
       }
       if (
         payload.state === 'delta' &&
+        !isChatTextRetraction(payload) &&
         this.assistantSnapshotRunId &&
         (!payload.runId || payload.runId === this.assistantSnapshotRunId)
       ) {
@@ -1638,7 +1791,10 @@ export function handleAgentEvent(
     }
     if (terminalGuardObservation?.action === 'commit') return;
     const text = assistantEventText(data);
-    if (!text) return;
+    if (!text) {
+      if (data.replace === true) this.notifyStream('terminal');
+      return;
+    }
 
     const wasSending = this.state.chatSending;
     if (!this.state.chatSending) {
@@ -1666,6 +1822,14 @@ export function handleAgentEvent(
   }
 
   if (stream === 'item') {
+    if (
+      readToolProgressText(data) !== null &&
+      typeof data.toolCallId === 'string' &&
+      this.state.transcript.activeTurn?.toolById.has(data.toolCallId)
+    ) {
+      this.notifyStream('tool-partial');
+      return;
+    }
     if (readPreambleText(data) !== null) {
       const wasSending = this.state.chatSending;
       this.state.chatSending = true;

@@ -8,8 +8,8 @@ test('preserves a suspended live turn when reconnect history advances its leaf',
   const messages = [{ role: 'user', content: 'continue working', __openclaw: { id: 'user-1' } }];
   let leaf = 'initial-leaf';
   const request = vi.fn().mockImplementation((method: string) => {
-    if (method === 'sessions.list') {
-      return Promise.resolve({ sessions: [{ key: sessionKey, hasActiveRun: true }] });
+    if (method === 'sessions.describe') {
+      return Promise.resolve({ session: { key: sessionKey, hasActiveRun: true } });
     }
     return Promise.resolve({
       messages,
@@ -44,7 +44,7 @@ test('preserves a suspended live turn when reconnect history advances its leaf',
   expect(controller.state.chatSending).toBe(true);
   expect(controller.state.chatRunId).toBe('run-1');
   expect(controller.state.visibleChatMessages).toEqual(messages);
-  expect(request).toHaveBeenCalledWith('sessions.list', {});
+  expect(request).toHaveBeenCalledWith('sessions.describe', { key: sessionKey });
 
   const generation = controller.state.transcript.historyGeneration;
   activeTurn.status = 'final';

@@ -11,6 +11,169 @@ import {
 import type { GatewayClient } from './client';
 
 describe('OpenClaw chat history protocol', () => {
+  test.each([false, true])(
+    'preserves native commentary siblings when hydrating the main projection (capped=%s)',
+    async capped => {
+      const commentary = {
+        role: 'assistant',
+        content: [{ type: 'text', text: capped ? 'Progress\n...(truncated)...' : 'Progress' }],
+        openclawStreamFallback: { source: 'segment', itemId: 'progress-1' },
+        __openclaw: { id: 'm1', seq: 1, ...(capped ? { truncated: true } : {}) },
+      };
+      const preview = {
+        role: 'assistant',
+        content: 'Answer preview',
+        __openclaw: { id: 'm1', seq: 1, truncated: true },
+      };
+      const full = { role: 'assistant', content: [{ type: 'text', text: 'Complete answer' }] };
+      const request = vi.fn().mockResolvedValue({ ok: true, message: full });
+
+      const hydrated = await hydrateTruncatedHistoryMessages(
+        { request } as unknown as GatewayClient,
+        [commentary, preview],
+        'session-1',
+      );
+
+      expect(hydrated).toEqual([commentary, { ...full, __openclaw: { id: 'm1', seq: 1 } }]);
+      expect(request.mock.calls.map(([method]) => method)).toEqual(['chat.message.get']);
+    },
+  );
+
+  test('retains mixed admitted commentary when no complete matching display projection exists', async () => {
+    const mixed = {
+      role: 'assistant',
+      content: [
+        { type: 'thinking', thinking: 'Thought' },
+        { type: 'text', text: 'Admitted progress\n...(truncated)...' },
+        { type: 'toolCall', id: 'tool-1', name: 'read', arguments: {} },
+      ],
+      __openclaw: { id: 'mixed-1', seq: 1, truncated: true, reason: 'display-cap' },
+    };
+    const raw = {
+      ...mixed,
+      content: [
+        ...mixed.content,
+        { type: 'text', text: 'NO_REPLY', textSignature: '{"v":1,"phase":"commentary"}' },
+      ],
+      errorMessage: 'private provider diagnostics',
+    };
+    const request = vi
+      .fn()
+      .mockResolvedValue({ ok: true, chunk: JSON.stringify(raw), complete: true });
+
+    const hydrated = await hydrateTruncatedHistoryMessages(
+      { request } as unknown as GatewayClient,
+      [mixed],
+      'session-1',
+    );
+
+    expect(hydrated).toEqual([mixed]);
+    expect(request).not.toHaveBeenCalled();
+    expect(JSON.stringify(hydrated)).not.toContain('private provider diagnostics');
+    expect(JSON.stringify(hydrated)).not.toContain('NO_REPLY');
+  });
+
+  test('keeps admitted sibling placeholders if native get cannot return a complete display row', async () => {
+    const messages = [
+      {
+        role: 'assistant',
+        content: 'Progress',
+        openclawStreamFallback: { source: 'segment', itemId: 'progress-1' },
+        __openclaw: { id: 'm1', seq: 1 },
+      },
+      { role: 'assistant', content: 'Preview', __openclaw: { id: 'm1', seq: 1, truncated: true } },
+    ];
+    const request = vi.fn().mockResolvedValue({ ok: false, unavailableReason: 'oversized' });
+
+    expect(
+      await hydrateTruncatedHistoryMessages(
+        { request } as unknown as GatewayClient,
+        messages,
+        'session-1',
+      ),
+    ).toEqual(messages);
+    expect(request.mock.calls.map(([method]) => method)).toEqual(['chat.message.get']);
+  });
+
+  test('does not replace a standalone capped commentary projection with the main answer', async () => {
+    const messages = [
+      {
+        role: 'assistant',
+        content: 'Progress\n...(truncated)...',
+        openclawStreamFallback: { source: 'segment', itemId: 'progress-1' },
+        __openclaw: { id: 'm1', truncated: true },
+      },
+    ];
+    const request = vi
+      .fn()
+      .mockResolvedValue({ ok: true, message: { role: 'assistant', content: 'Answer' } });
+
+    expect(
+      await hydrateTruncatedHistoryMessages(
+        { request } as unknown as GatewayClient,
+        messages,
+        'session-1',
+      ),
+    ).toEqual(messages);
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  test('replaces both capped and uncapped sibling projections with one complete native message', async () => {
+    const thought = { type: 'thinking', thinking: 'complete thought' };
+    const answer = { type: 'text', text: 'complete answer' };
+    const request = vi.fn().mockResolvedValue({
+      ok: true,
+      message: {
+        role: 'assistant',
+        content: [thought, answer],
+      },
+    });
+    const hydrated = await hydrateTruncatedHistoryMessages(
+      { request } as unknown as GatewayClient,
+      [
+        { role: 'assistant', content: [thought], __openclaw: { id: 'm1', seq: 1 } },
+        {
+          role: 'assistant',
+          content: 'answer preview',
+          __openclaw: { id: 'm1', seq: 1, truncated: true },
+        },
+        { role: 'user', content: 'next', __openclaw: { id: 'm2', seq: 2 } },
+      ],
+      'session-1',
+    );
+    expect(hydrated).toEqual([
+      { role: 'assistant', content: [thought, answer], __openclaw: { id: 'm1', seq: 1 } },
+      { role: 'user', content: 'next', __openclaw: { id: 'm2', seq: 2 } },
+    ]);
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  test('stops queued hydration and chunk reads when the selected history changes', async () => {
+    let current = true;
+    const messages = Array.from({ length: 8 }, (_, index) => ({
+      role: 'assistant',
+      content: 'preview',
+      __openclaw: { id: `m${index}`, truncated: true },
+    }));
+    const request = vi.fn(async (method: string) => {
+      if (method === 'chat.message.get') return { ok: false, unavailableReason: 'oversized' };
+      current = false;
+      return { ok: true, chunk: '{', nextCursor: 1, complete: false, transferId: 'transfer-1' };
+    });
+    expect(
+      await hydrateTruncatedHistoryMessages(
+        { request } as unknown as GatewayClient,
+        messages,
+        'session-1',
+        () => current,
+      ),
+    ).toEqual(messages);
+    expect(request.mock.calls.filter(([method]) => method === 'chat.message.get')).toHaveLength(4);
+    expect(
+      request.mock.calls.filter(([method]) => method === 'runtimeServices.historyMessage'),
+    ).toHaveLength(1);
+  });
+
   test('does not fetch details for partial replies, tool blocks or actionable provider guidance', async () => {
     const messages = [
       'Partial answer before the failure',
@@ -241,8 +404,7 @@ describe('OpenClaw chat history protocol', () => {
     ]);
     expect(request.mock.calls.filter(([method]) => method === 'chat.message.get')).toHaveLength(1);
     expect(
-      request.mock.calls.filter(([method]) => method === 'runtimeServices.historyMessage')
-        .length,
+      request.mock.calls.filter(([method]) => method === 'runtimeServices.historyMessage').length,
     ).toBeGreaterThan(1);
   });
 

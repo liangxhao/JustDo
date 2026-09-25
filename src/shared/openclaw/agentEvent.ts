@@ -28,6 +28,8 @@ export interface NormalizedChatEvent {
   sessionId: string | null;
   lifecycleGeneration: string | null;
   frameSeq: number | null;
+  /** Native run sequence carried by the chat payload, never the WS frame sequence. */
+  sourceSeq?: number;
   state: 'delta' | 'final' | 'aborted' | 'error';
   message?: unknown;
   deltaText?: string;
@@ -147,6 +149,7 @@ export function normalizeChatEvent(params: {
   }
   const sessionKey = nonEmptyString(payload.sessionKey);
   if (!sessionKey) return null;
+  const sourceSeq = safeInteger(payload.seq);
 
   return {
     runId: nonEmptyString(payload.runId),
@@ -158,6 +161,7 @@ export function normalizeChatEvent(params: {
     ),
     frameSeq: safeInteger(params.frameSeq),
     state,
+    ...(sourceSeq !== null ? { sourceSeq } : {}),
     ...(payload.message !== undefined ? { message: payload.message } : {}),
     ...(typeof payload.deltaText === 'string' ? { deltaText: payload.deltaText } : {}),
     replace: payload.replace === true,

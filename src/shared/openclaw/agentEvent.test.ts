@@ -49,6 +49,12 @@ describe('normalizeAgentEvent', () => {
 });
 
 describe('normalizeChatEvent', () => {
+  test('keeps a native retraction sequence separate from its transport frame', () => {
+    expect(normalizeChatEvent({ frameSeq: 90, payload: {
+      runId: 'run-1', sessionKey: 'session-1', state: 'delta', seq: 7, replace: true, deltaText: '',
+    } })).toMatchObject({ sourceSeq: 7, frameSeq: 90, replace: true, deltaText: '' });
+  });
+
   test('does not reinterpret a chat frame sequence as an Agent sequence', () => {
     expect(
       normalizeChatEvent({

@@ -31,6 +31,7 @@ import {
   DEFAULT_INITIAL_MESSAGE_SUBSCRIPTION_BARRIER_TIMEOUT_MS,
   hasStableProgressOwner,
   InFlightRunSnapshot,
+  isChatTextRetraction,
   isHiddenOrPendingControlReplyText,
   LocalCompactionStatus,
   normalizeSessionId,
@@ -111,8 +112,10 @@ import type {
 } from '@/libs/openclaw-chat/gateway/client';
 import {
   readPreambleText,
+  readToolProgressText,
   reduceAgentEvent,
   reduceChatEvent,
+  restoreInFlightContent,
 } from '@/libs/openclaw-chat/model/agent-event-reducer';
 import { traceTimelineController } from '@/libs/openclaw-chat/model/chat-timeline-trace';
 import {
@@ -1462,6 +1465,7 @@ export class ChatController {
     const [sessionKey, cached] = cachedEntry;
     if (
       payload.state === 'delta' &&
+      !isChatTextRetraction(payload) &&
       cached.assistantSnapshotRunId &&
       (!payload.runId || payload.runId === cached.assistantSnapshotRunId)
     ) {
@@ -1807,7 +1811,11 @@ export class ChatController {
         replayEvent.stream !== 'thinking' &&
         replayEvent.stream !== 'assistant' &&
         replayEvent.stream !== 'tool' &&
-        !(replayEvent.stream === 'item' && readPreambleText(replayEvent.data ?? {}) !== null)
+        !(
+          replayEvent.stream === 'item' &&
+          (readPreambleText(replayEvent.data ?? {}) !== null ||
+            readToolProgressText(replayEvent.data ?? {}) !== null)
+        )
       ) {
         continue;
       }
@@ -1824,9 +1832,26 @@ export class ChatController {
       }
     }
 
-    // The aggregate text has neither a model-message identity nor an Agent
-    // sequence. Only the native per-segment events can safely restore a live
-    // turn; injecting this string would flatten prior replies into its tail.
+    // Native snapshots retain Tool/Preamble events; the Chat buffer owns reply
+    // text. Restore that buffer without inventing an Agent event or consuming
+    // its live sequence watermark. A suppression is not undone by an unversioned
+    // buffer from a delayed read.
+    const restoredTurn = this.state.transcript.activeTurn;
+    const text = typeof snapshot.text === 'string' ? snapshot.text : '';
+    if (
+      restoredTurn &&
+      restoredTurn.assistantSuppressionSeq === undefined &&
+      (this.suspendedRunId === runId ||
+        !restoredTurn.items.some(
+          item => item.type === 'content' && item.preambleItemId === undefined &&
+            item.text && item.recoveredSnapshotText !== item.text,
+        )) &&
+      text.trim() &&
+      !isHiddenOrPendingControlReplyText(text) &&
+      restoreInFlightContent(this.state.transcript, text, this.transcriptDependencies)
+    ) {
+      this.updateRunActivity(runId, 'responding', { modelActivity: true });
+    }
     this.notifyStream();
   }
 

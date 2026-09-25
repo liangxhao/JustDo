@@ -752,8 +752,23 @@ export async function initializeConnectedSession(
   }
   if (!this.isConnectionInitializationCurrent(params)) return;
 
-  if (params.resumedTransport && this.suspendedRunId) {
+  // Main can start a run while the renderer transport is offline. A close
+  // observed while idle has no suspended ID, so capture the current owner at
+  // initialization as well instead of trusting the old transport label.
+  const pendingRunId =
+    this.state.transcript.activeTurn?.status === 'running'
+      ? this.state.transcript.activeTurn.runId
+      : this.state.chatSending
+        ? (this.state.chatRunId ?? this.state.runActivity?.runId ?? null)
+        : null;
+  if (pendingRunId || (params.resumedTransport && this.suspendedRunId)) {
+    this.suspendedRunId = pendingRunId ?? this.suspendedRunId;
     await this.reconcileSuspendedRun();
+    for (const delayMs of this.initialHistoryRetryDelaysMs) {
+      if (!this.suspendedRunId || !this.state.chatSending) break;
+      if (!(await this.waitForInitialHistoryRetry(delayMs, params))) return;
+      await this.reconcileSuspendedRun();
+    }
     if (!this.state.initialHistoryReady && this.isConnectionInitializationCurrent(params)) {
       this.state.initialHistoryReady = true;
       this.notify();

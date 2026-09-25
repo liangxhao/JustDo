@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from 'vitest';
+import { afterEach, expect, test, vi } from 'vitest';
 
 import { ChatController } from './chat-controller';
 
@@ -30,6 +30,130 @@ function setup() {
 
 afterEach(() => {
   for (const controller of controllers.splice(0)) controller.disconnect();
+});
+
+test('publishes an empty assistant replacement immediately', () => {
+  const { controller, emit } = setup();
+  const notify = vi.spyOn(
+    controller as never as { notifyStream(kind?: string): void },
+    'notifyStream',
+  );
+  emit('agent', 1, 'assistant', { text: 'obsolete', progressSegmentFirstSeq: 1 });
+  notify.mockClear();
+  emit('agent', 2, 'assistant', { text: '', replace: true, progressSegmentFirstSeq: 1 });
+  expect(controller.state.transcript.activeTurn?.items[0]).toMatchObject({ text: '' });
+  expect(notify).toHaveBeenCalledWith('terminal');
+});
+
+test.each([false, true])(
+  'honors native chat suppression after assistant snapshots (background: %s)',
+  async background => {
+    const { controller, emit } = setup();
+    emit('agent', 1, 'assistant', { text: 'obsolete', progressSegmentFirstSeq: 1 });
+    if (background) await controller.switchSession('agent:main:justdo:other');
+    const retract = (seq: number) =>
+      (
+        controller as unknown as {
+          handleEvent(event: { event: string; payload: unknown }): void;
+        }
+      ).handleEvent({
+        event: 'chat',
+        payload: {
+          sessionKey,
+          runId,
+          seq,
+          state: 'delta',
+          deltaText: '',
+          replace: true,
+          message: { role: 'assistant', content: [{ type: 'text', text: '' }] },
+        },
+      });
+    retract(2);
+    if (background) await controller.switchSession(sessionKey);
+    expect(controller.state.transcript.activeTurn?.items[0]).toMatchObject({ text: '' });
+    emit('agent', 2, 'assistant', { text: 'delayed obsolete', progressSegmentFirstSeq: 1 });
+    expect(controller.state.transcript.activeTurn?.items[0]).toMatchObject({ text: '' });
+    emit('agent', 3, 'assistant', { text: 'new answer', progressSegmentFirstSeq: 1 });
+    retract(2);
+    expect(controller.state.transcript.activeTurn?.items[0]).toMatchObject({ text: 'new answer' });
+  },
+);
+
+test.each([false, true])(
+  'retracts content behind a newer tool (background: %s)',
+  async background => {
+    const { controller, emit } = setup();
+    emit('agent', 1, 'assistant', { text: 'obsolete', progressSegmentFirstSeq: 1 });
+    emit('session.tool', 3, 'tool', { phase: 'start', name: 'read', toolCallId: 'tool-1' });
+    if (background) await controller.switchSession('agent:main:justdo:other');
+    (
+      controller as unknown as {
+        handleEvent(event: { event: string; payload: unknown }): void;
+      }
+    ).handleEvent({
+      event: 'chat',
+      payload: {
+        sessionKey,
+        runId,
+        seq: 2,
+        state: 'delta',
+        replace: true,
+        deltaText: '',
+        message: { content: '' },
+      },
+    });
+    emit('agent', 2, 'assistant', { text: 'late obsolete', progressSegmentFirstSeq: 1 });
+    if (background) await controller.switchSession(sessionKey);
+    expect(controller.state.transcript.activeTurn?.items).toMatchObject([
+      { type: 'content', text: '' },
+      { type: 'tool', status: 'running' },
+    ]);
+    emit('agent', 4, 'assistant', { text: 'new answer', progressSegmentFirstSeq: 4 });
+    const items = controller.state.transcript.activeTurn!.items;
+    expect(items[items.length - 1]).toMatchObject({
+      text: 'new answer',
+    });
+  },
+);
+
+test('renders typed tool progress without history polling and lets the result replace it', () => {
+  const { controller, emit } = setup();
+  const reload = vi.spyOn(
+    controller as never as {
+      scheduleDeferredHistoryReload(sessionKey: string, reason: string): void;
+    },
+    'scheduleDeferredHistoryReload',
+  );
+  emit('agent', 1, 'tool', { name: 'read', phase: 'start', toolCallId: 'tool-1' });
+  reload.mockClear();
+  emit('agent', 3, 'usage', { inputTokens: 20 });
+  emit('agent', 2, 'item', {
+    kind: 'tool',
+    phase: 'update',
+    itemId: 'tool:tool-1',
+    toolCallId: 'tool-1',
+    progressText: 'Reading 50%',
+  });
+  const tool = controller.state.transcript.activeTurn!.toolById.get('tool-1')!;
+  expect(tool).toMatchObject({ status: 'running', progressText: 'Reading 50%' });
+  expect(tool.output).toBeUndefined();
+  expect(reload).not.toHaveBeenCalled();
+  emit('session.tool', 4, 'tool', {
+    phase: 'result',
+    toolCallId: 'tool-1',
+    result: 'complete file',
+  });
+  expect(tool).toMatchObject({ status: 'completed', output: 'complete file' });
+  expect(tool.progressText).toBeUndefined();
+  emit('agent', 5, 'item', {
+    kind: 'tool',
+    phase: 'update',
+    itemId: 'tool:tool-1',
+    toolCallId: 'tool-1',
+    progressText: 'late progress',
+  });
+  expect(tool.progressText).toBeUndefined();
+  expect(tool.output).toBe('complete file');
 });
 
 test('renders earlier Thinking and native commentary after a session.tool delivery overtakes them', () => {

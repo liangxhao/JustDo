@@ -35,6 +35,10 @@ export interface ToolItem extends BaseTurnItem {
   historyCompletedAt?: number;
   input?: unknown;
   output?: string;
+  /** Sanitized native item progress; separate from the authoritative result. */
+  progressText?: string;
+  /** Typed progress has a distinct delivery lane from raw Tool partials. */
+  progressSeq?: number;
   error?: string;
 }
 
@@ -43,6 +47,8 @@ export interface ContentItem extends BaseTurnItem {
   status: 'streaming' | 'completed' | 'interrupted';
   text: string;
   sourceMode: 'delta' | 'snapshot' | 'replaceable';
+  /** Last text update; lastSeq may also advance when a Tool closes this segment. */
+  lastTextSeq?: number;
   /** Native item/preamble commentary owner, separate from assistant reply segments. */
   preambleItemId?: string;
   followingToolCallId?: string;
@@ -70,6 +76,8 @@ export interface AssistantTurn {
   lastAgentSeq: number;
   /** Recovery snapshots are sparse and must never advance the live event fence. */
   lastSnapshotAgentSeq?: number;
+  /** Empty cumulative chat snapshots suppress older assistant owners, including unseen ones. */
+  assistantSuppressionSeq?: number;
   /**
    * Per projected activity owner sequence fences. A history in-flight snapshot
    * can arrive after a newer live event for another owner, so the run-wide

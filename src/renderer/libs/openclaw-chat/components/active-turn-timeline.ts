@@ -59,13 +59,19 @@ function readableValue(value: unknown): string {
 }
 
 function toolResult(tool: ToolItem): string {
+  if (tool.status === 'running' && tool.progressText) return tool.progressText;
   if (tool.output !== undefined) return readableValue(tool.output);
   if (tool.error !== undefined) return readableValue(tool.error);
   return i18nService.t('coworkToolNoOutput');
 }
 
 function hasToolResult(tool: ToolItem): boolean {
-  return tool.status !== 'running' || tool.output !== undefined || tool.error !== undefined;
+  return (
+    tool.status !== 'running' ||
+    tool.output !== undefined ||
+    tool.error !== undefined ||
+    Boolean(tool.progressText)
+  );
 }
 
 function toolSummaryInput(value: unknown): string {

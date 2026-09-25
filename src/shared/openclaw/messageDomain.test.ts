@@ -269,6 +269,17 @@ describe('shared OpenClaw message-domain corpus', () => {
     };
 
     expect(classifyAgentEvent({ selected, activeRun: null, event })).toBe('ignored-run');
+    const activeRun: MessageDomainRun = {
+      runId: 'justdo-provisional-parent',
+      sessionId: selected.sessionId,
+      lifecycleGeneration: null,
+      lastAgentSeq: -1,
+      status: 'running',
+    };
+    expect(classifyAgentEvent({ selected, activeRun, event })).toBe('ignored-run');
+    expect(classifyAgentEvent({
+      selected, activeRun, event: { ...event, sessionKey: selected.sessionKey },
+    })).toBe('bind-provisional-run');
   });
 });
 

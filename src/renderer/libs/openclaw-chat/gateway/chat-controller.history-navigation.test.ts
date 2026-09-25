@@ -20,6 +20,51 @@ function seedControllerMessages(controller: ChatController, messages: unknown[])
   ).setCurrentSessionMessages(messages, { resetLoadedHistory: true });
 }
 
+test.each(['a', 'b'])(
+  'accepts a rewind to %s after durable appends advance beyond the last loaded leaf',
+  async leaf => {
+    const controller = new ChatController();
+    const sessionKey = 'agent:main:justdo:live-rewind';
+    const sessionId = 'native-live-rewind';
+    const messages = ['a', 'b', 'c'].map((id, index) => ({
+      role: 'user',
+      content: id,
+      __openclaw: { id, seq: index + 1 },
+    }));
+    let response = messages.slice(0, 1);
+    const request = vi.fn(async () => ({
+      messages: response,
+      sessionId,
+      sessionInfo: { sessionId, activeLeafEntryId: response[response.length - 1]?.__openclaw.id },
+    }));
+    controller.state.client = { request } as never;
+    controller.state.connected = true;
+    controller.state.sessionKey = sessionKey;
+    await expect(controller.loadHistory()).resolves.toBe(true);
+    const generation = controller.state.transcript.historyGeneration;
+    const handleEvent = (
+      controller as unknown as {
+        handleEvent(event: { event: string; payload: unknown }): void;
+      }
+    ).handleEvent.bind(controller);
+    for (const message of messages.slice(1)) {
+      handleEvent({
+        event: 'session.message',
+        payload: { sessionKey, sessionId, message, messageSeq: message.__openclaw.seq },
+      });
+    }
+    expect(controller.state.chatMessages).toEqual(messages);
+    response = messages.slice(0, leaf === 'a' ? 1 : 2);
+
+    await expect(controller.loadHistory()).resolves.toBe(true);
+
+    expect(controller.state.chatMessages).toEqual(response);
+    expect(controller.state.transcript.historyGeneration).toBeGreaterThan(generation);
+    await expect(controller.loadHistory()).resolves.toBe(true);
+    expect(controller.state.chatMessages).toEqual(response);
+  },
+);
+
 test('rewinds a persisted user message and reloads the authoritative branch', async () => {
   const controller = new ChatController();
   const request = vi.fn(async (method: string) => {
@@ -460,48 +505,67 @@ test('loads the latest history page first and prepends older history on demand',
   expect(controller.state.historyHasMore).toBe(false);
 });
 
-test('follows native older-page offsets until the initial subagent task is found', async () => {
-  const sessionKey = 'agent:main:subagent:child-paged';
-  const taskMessage = {
-    role: 'user',
-    content:
-      '[Subagent Context] You are running as a subagent (depth 1/1). Results auto-announce to your requester; do not busy-poll for status.\n\n[Subagent Task]\n\nInspect all pages.',
-    __openclaw: { id: 'task-1', seq: 1 },
-  };
-  const assistantTail = {
-    role: 'assistant',
-    content: 'working',
-    __openclaw: { id: 'assistant-1', seq: 2 },
-  };
-  const request = vi.fn().mockImplementation((method: string, params: { offset?: number }) => {
-    if (method === 'chat.startup') {
-      return Promise.resolve({ messages: [assistantTail], hasMore: true, nextOffset: 1 });
-    }
-    if (method === 'chat.history' && params.offset === 1) {
-      return Promise.resolve({ messages: [taskMessage], hasMore: false });
-    }
-    return Promise.resolve({});
-  });
-  const controller = new ChatController({ expectInitialHistory: true });
-  controller.state.client = { request } as never;
-  controller.state.sessionKey = sessionKey;
+test.each([0, 3])(
+  'preserves %i intermediate pages when finding the initial subagent task',
+  async intermediateCount => {
+    const sessionKey = 'agent:main:subagent:child-paged';
+    const taskMessage = {
+      role: 'user',
+      content:
+        '[Subagent Context] You are running as a subagent (depth 1/1). Results auto-announce to your requester; do not busy-poll for status.\n\n[Subagent Task]\n\nInspect all pages.',
+      __openclaw: { id: 'task-1', seq: 1 },
+    };
+    const assistantTail = {
+      role: 'assistant',
+      content: 'working',
+      __openclaw: { id: 'assistant-1', seq: 2 },
+    };
+    const intermediate = Array.from({ length: intermediateCount }, (_, index) => ({
+      role: 'assistant',
+      content: `intermediate-${index}`,
+      __openclaw: { id: `intermediate-${index}`, seq: index + 2 },
+    }));
+    const request = vi.fn().mockImplementation((method: string, params: { offset?: number }) => {
+      if (method === 'chat.startup') {
+        return Promise.resolve({ messages: [assistantTail], hasMore: true, nextOffset: 1 });
+      }
+      if (
+        method === 'chat.history' &&
+        params.offset !== undefined &&
+        params.offset <= intermediateCount
+      ) {
+        return Promise.resolve({
+          messages: [intermediate[intermediateCount - params.offset]],
+          hasMore: true,
+          nextOffset: params.offset + 1,
+        });
+      }
+      if (method === 'chat.history' && params.offset === intermediateCount + 1) {
+        return Promise.resolve({ messages: [taskMessage], hasMore: false });
+      }
+      return Promise.resolve({});
+    });
+    const controller = new ChatController({ expectInitialHistory: true });
+    controller.state.client = { request } as never;
+    controller.state.sessionKey = sessionKey;
 
-  (
-    controller as unknown as {
-      handleHello(hello: Record<string, unknown>): void;
-    }
-  ).handleHello({});
+    (
+      controller as unknown as {
+        handleHello(hello: Record<string, unknown>): void;
+      }
+    ).handleHello({});
 
-  await vi.waitFor(() => expect(controller.state.initialHistoryReady).toBe(true));
-  expect(request).toHaveBeenCalledWith('chat.history', {
-    sessionKey,
-    limit: 250,
-    maxChars: 500_000,
-    offset: 1,
-  });
-  expect(controller.state.chatMessages).toEqual([taskMessage, assistantTail]);
-  expect(controller.state.historyHasMore).toBe(false);
-});
+    await vi.waitFor(() => expect(controller.state.initialHistoryReady).toBe(true));
+    expect(request).toHaveBeenCalledWith('chat.history', {
+      sessionKey,
+      limit: 250,
+      maxChars: 500_000,
+      offset: 1,
+    });
+    expect(controller.state.chatMessages).toEqual([taskMessage, ...intermediate, assistantTail]);
+    expect(controller.state.historyHasMore).toBe(false);
+  },
+);
 
 test('preserves a newer window selected while an older page is loading', async () => {
   const recent = Array.from({ length: 1_000 }, (_, index) => ({
@@ -942,6 +1006,35 @@ test('does not duplicate optimistic terminal content when persisted timestamp is
   await controller.loadHistory();
 
   expect(controller.state.chatMessages).toEqual([userMessage, persistedTerminalMessage]);
+});
+
+test('retains loaded older pages when the native leaf advances along the same branch', async () => {
+  const first = { role: 'assistant', content: 'first', __openclaw: { id: 'leaf-1', seq: 2 } };
+  const next = { role: 'assistant', content: 'next', __openclaw: { id: 'leaf-2', seq: 3 } };
+  const older = { role: 'user', content: 'older', __openclaw: { id: 'root', seq: 1 } };
+  let reads = 0;
+  const request = vi.fn(async (_method: string, params: { offset?: number }) => {
+    if (params.offset !== undefined) return { messages: [older], hasMore: false };
+    reads += 1;
+    return {
+      messages: reads === 1 ? [first] : [first, next],
+      hasMore: true,
+      nextOffset: reads,
+      sessionId: 'sid-1',
+      sessionInfo: { sessionId: 'sid-1', activeLeafEntryId: reads === 1 ? 'leaf-1' : 'leaf-2' },
+    };
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:leaf-advance';
+  await controller.loadHistory();
+  await controller.loadOlderHistory();
+  await controller.loadHistory();
+  expect(controller.getLoadedMessages()).toEqual([older, first, next]);
+  expect(controller.state.historyHasMore).toBe(false);
+  controller.state.client = null;
+  controller.disconnect();
 });
 
 test('replaces loaded pages when activeLeafEntryId selects another branch', async () => {
