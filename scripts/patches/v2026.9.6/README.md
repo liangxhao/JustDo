@@ -7,7 +7,7 @@ markers must fail. Original v2026.9.2 files remain historical evidence only.
 
 ## Audit disposition
 
-Of the 25 previous capabilities, 22 still need product integration. Two are
+Of the 25 previous capabilities, 21 still need product integration. Two are
 provided natively and have no replacement patch:
 
 - **009, forced memory reembedding:** the new memory index uses a shadow database
@@ -23,7 +23,12 @@ Native `chat.history` already returns persisted display messages, buffered
 Thinking/Content segments is not a prerequisite for reply recovery. The Renderer
 uses the native snapshot and does not require injected segment identifiers.
 
-One newly exposed Windows integration gap requires patch 031. There are **23**
+The former **018 mixed commentary ordering** enhancement is also retired.
+History uses native commentary fallback projection, which may place commentary
+before the remaining Thinking/Tool blocks. Exact agreement with live block order
+is no longer required; the Renderer preserves the native history order.
+
+One newly exposed Windows integration gap requires patch 031. There are **22**
 patches in this version. They are not a migration of the old runtime.
 
 | Patch | Capability retained | 2026.9.6 implementation boundary |
@@ -39,7 +44,6 @@ patches in this version. They are not a migration of the old runtime.
 | 014 | Provider-safe replay | Native assistant transport projection |
 | 015 | Trusted local file delivery | Managed attachment MIME fallback and display media references; native disposition retained |
 | 016 | Offline official plugin catalog | Native catalog loader with offline intent |
-| 018 | Mixed commentary ordering | Native grouped commentary fallbacks and sanitization |
 | 019 | No automatic plugin repair downloads | Installed-index lease writer; explicit installs remain native |
 | 020 | Configured realtime ASR URL | Native OpenAI realtime provider factory |
 | 021 | Independent image/video providers | Capability-scoped config with native authentication dependencies |
@@ -56,7 +60,7 @@ All patches are temporary product integration seams, with their removal conditio
 scope and safety constraints in the module headers. No upstream issue number is
 claimed where no issue has been filed. Re-audit each capability on the next upgrade.
 
-Removing 017 requires a rebuild from the locked pristine artifact. Do not undo
+Removing 017 or 018 requires a rebuild from the locked pristine artifact. Do not undo
 injections in an existing runtime or rewrite its proof manifest. See
 `docs/features/openclaw-2026.9.6-message-sync.md` for the native recovery audit.
 

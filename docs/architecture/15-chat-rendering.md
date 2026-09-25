@@ -55,6 +55,10 @@ in-flight recovery snapshot 是稀疏数据，不提升 live event fence。活�
 
 ## 4. 历史加载与有界展示
 
+混合工具消息使用 OpenClaw 原生 commentary fallback 投影；commentary 可先于剩余
+Thinking/Tool 块返回。Renderer 保留原生历史顺序，不要求重新加载后的块顺序与实时
+事件完全一致，也不额外重排。当前运行时不再应用 018 顺序增强补丁。
+
 chat-history-protocol 的初始及旧页大小为 250，字符预算 500000。分页使用原生 offset/nextOffset，hasMore=true 时必须有合法 cursor。UI DOM 窗口最多 750 条，每次前后移动 250；这些是传输/展示预算，不是原生历史保留上限。
 
 超大行通过结构化 truncated 标记及原生 entry id 识别，使用 message get 或分块桥补取。当前完整消息请求与分块读取各有独立大小和并发限制，不能从一段“已截断”可见文本猜原文。

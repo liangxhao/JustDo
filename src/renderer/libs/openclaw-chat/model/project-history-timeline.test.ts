@@ -8,7 +8,7 @@ import { projectPersistedTimeline } from './project-history-timeline';
 import { projectTurnItems } from './project-turn-items';
 
 describe('projectPersistedTimeline', () => {
-  test('keeps native mixed commentary history in the same order as its live Thinking and Tool', () => {
+  test('preserves native commentary fallback order even when live block order differs', () => {
     const thinking = 'Check the returned subagent results.';
     const commentary = 'All five agents have returned; inspect their messages.';
     const runId = 'mixed-commentary-run';
@@ -55,15 +55,20 @@ describe('projectPersistedTimeline', () => {
     });
     const live = projectTurnItems(state.activeTurn);
 
-    // Patch 018 restores admitted commentary as a plain text block in place.
+    // Native history emits commentary fallbacks before the remaining mixed message.
     const persisted = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        timestamp: 1_000,
+        openclawStreamFallback: { itemId: 'commentary-1' },
+        content: [{ type: 'text', text: commentary }],
+      },
       {
         role: 'assistant',
         timestamp: 1_000,
         __openclaw: { runId, id: 'mixed-assistant' },
         content: [
           { type: 'thinking', thinking },
-          { type: 'text', text: commentary },
           { type: 'toolCall', id: 'history-1', name: 'sessions_history', arguments: {} },
         ],
       },
@@ -76,25 +81,17 @@ describe('projectPersistedTimeline', () => {
       },
     ]);
 
-    expect(
-      persisted.map(item => (item.kind === 'history-message' ? 'content' : item.kind)),
-    ).toEqual(live.map(item => item.kind));
     expect(persisted).toMatchObject([
-      {
-        kind: 'process-summary',
-        thinkingCount: 1,
-        toolCount: 0,
-        items: [{ type: 'thinking', text: thinking }],
-      },
       {
         kind: 'history-message',
         message: { role: 'assistant', content: [{ type: 'text', text: commentary }] },
       },
       {
         kind: 'process-summary',
-        thinkingCount: 0,
+        thinkingCount: 1,
         toolCount: 1,
         items: [
+          { type: 'thinking', text: thinking },
           { type: 'tool', toolCallId: 'history-1', status: 'completed', output: 'Five messages.' },
         ],
       },
