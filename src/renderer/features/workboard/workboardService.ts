@@ -4,10 +4,14 @@ import type {
   WorkboardStatus,
   WorkboardStopIdentity,
 } from '@shared/openclaw/workboard';
+import { WorkboardErrorCode } from '@shared/openclaw/workboard';
 
 import { i18nService } from '@/services/i18n';
 
 export const workboardErrorMessage = (error?: string): string => {
+  if (error === WorkboardErrorCode.STALE_CARD) return i18nService.t('workboardCardChanged');
+  if (error === WorkboardErrorCode.ACTIVE_EXECUTION)
+    return i18nService.t('workboardStopBeforeChanging');
   if (
     error &&
     /gateway(?: client)? (?:is )?(?:not connected|unavailable|disconnected)/i.test(error)
@@ -30,8 +34,8 @@ export const workboardService = {
   createCard: (input: WorkboardCardInput) => unwrap(window.electron.workboard.createCard(input)),
   updateCard: (id: string, patch: WorkboardCardPatch, expectedUpdatedAt: number) =>
     unwrap(window.electron.workboard.updateCard(id, patch, expectedUpdatedAt)),
-  moveCard: (id: string, status: WorkboardStatus, position: number) =>
-    unwrap(window.electron.workboard.moveCard(id, status, position)),
+  moveCard: (id: string, status: WorkboardStatus, position: number, expectedUpdatedAt: number) =>
+    unwrap(window.electron.workboard.moveCard(id, status, position, expectedUpdatedAt)),
   deleteCard: (id: string) => unwrap(window.electron.workboard.deleteCard(id)),
   archiveCard: (id: string, archived: boolean) =>
     unwrap(window.electron.workboard.archiveCard(id, archived)),

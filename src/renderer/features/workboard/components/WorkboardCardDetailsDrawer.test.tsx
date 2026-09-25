@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import type { WorkboardCard } from '@shared/openclaw/workboard';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { i18nService } from '@/services/i18n';
@@ -165,4 +165,77 @@ describe('WorkboardCardDetailsDrawer', () => {
     expect(technicalDetails?.textContent).toContain('workboard:card-1:run-1');
     expect(container.querySelector('details')).toBeTruthy();
   });
+});
+
+it('offers explicit completion and requeue actions for review without an arbitrary status selector', () => {
+  i18nService.setLanguage('zh', { persist: false });
+  render(<WorkboardCardDetailsDrawer card={card()} busy={false} {...handlers} />);
+  expect(screen.queryByRole('combobox')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: i18nService.t('workboardConfirmDone') }));
+  expect(handlers.onMove).toHaveBeenCalledWith('done');
+  fireEvent.click(screen.getByRole('button', { name: i18nService.t('workboardRequeue') }));
+  expect(handlers.onMove).toHaveBeenCalledWith('todo');
+});
+
+it('does not let a running execution be completed or requeued through details', () => {
+  render(
+    <WorkboardCardDetailsDrawer card={card({ status: 'running' })} busy={false} {...handlers} />,
+  );
+  expect(screen.queryByRole('button', { name: i18nService.t('workboardConfirmDone') })).toBeNull();
+  expect(screen.queryByRole('button', { name: i18nService.t('workboardRequeue') })).toBeNull();
+});
+
+it.each(['review', 'blocked', 'done'] as const)(
+  'describes live execution even when the card status is %s',
+  status => {
+    render(
+      <WorkboardCardDetailsDrawer
+        card={card({
+          status,
+          execution: {
+            id: 'execution-1',
+            kind: 'agent-session',
+            mode: 'manual',
+            status: 'running',
+            sessionKey: 'session-1',
+            startedAt: 1,
+            updatedAt: 2,
+          },
+        })}
+        busy={false}
+        {...handlers}
+      />,
+    );
+    expect(screen.getByText(i18nService.t('workboardSummaryRunning'))).toBeTruthy();
+    expect(screen.getByRole('button', { name: i18nService.t('workboardStop') })).toBeTruthy();
+    expect(
+      screen.queryByRole('button', { name: i18nService.t('workboardConfirmDone') }),
+    ).toBeNull();
+    expect(screen.queryByRole('button', { name: i18nService.t('workboardRequeue') })).toBeNull();
+  },
+);
+
+it('shows the scheduled time without instructing users to use an unavailable requeue action', () => {
+  const scheduledAt = Date.UTC(2030, 0, 1, 12);
+  render(
+    <WorkboardCardDetailsDrawer
+      card={card({
+        status: 'scheduled',
+        sessionKey: 'previous-session',
+        metadata: { automation: { scheduledAt } },
+      })}
+      busy={false}
+      {...handlers}
+    />,
+  );
+  expect(
+    screen.getByText(
+      i18nService
+        .t('workboardScheduledHint')
+        .replace('{time}', new Date(scheduledAt).toLocaleString()),
+    ),
+  ).toBeTruthy();
+  expect(screen.queryByText(i18nService.t('workboardStartStatusHint'))).toBeNull();
+  expect(screen.queryByText(i18nService.t('workboardExistingExecutionHint'))).toBeNull();
+  expect(screen.queryByRole('button', { name: i18nService.t('workboardRequeue') })).toBeNull();
 });

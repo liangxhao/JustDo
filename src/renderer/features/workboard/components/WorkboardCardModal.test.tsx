@@ -29,6 +29,8 @@ describe('WorkboardCardModal', () => {
     const onSave = vi.fn().mockResolvedValue(undefined);
     render(<WorkboardCardModal card={linkedCard} agents={[]} onClose={vi.fn()} onSave={onSave} />);
 
+    fireEvent.click(screen.getByText('更多设置'));
+    screen.getByText('更多设置').closest('details')!.open = true;
     fireEvent.click(screen.getByRole('button', { name: '解除关联' }));
     fireEvent.click(screen.getByRole('button', { name: '保存' }));
 
@@ -42,3 +44,28 @@ describe('WorkboardCardModal', () => {
     );
   });
 });
+
+it.each(['triage', 'scheduled', 'review', 'blocked'] as const)(
+  'preserves native %s state when editing task text',
+  async status => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(
+      <WorkboardCardModal
+        card={{ ...linkedCard, status }}
+        agents={[]}
+        onClose={vi.fn()}
+        onSave={onSave}
+      />,
+    );
+    expect(screen.queryByRole('combobox', { name: i18nService.t('workboardStatus') })).toBeNull();
+    expect(screen.getByText(i18nService.t('workboardMoreSettings')).closest('details')!.open).toBe(
+      false,
+    );
+    fireEvent.click(screen.getByRole('button', { name: i18nService.t('save') }));
+    await waitFor(() =>
+      expect(onSave).toHaveBeenCalledWith(
+        expect.objectContaining({ status, sessionKey: linkedCard.sessionKey }),
+      ),
+    );
+  },
+);

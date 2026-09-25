@@ -2,7 +2,6 @@ import {
   ArrowPathIcon,
   BoltIcon,
   ChatBubbleLeftRightIcon,
-  ChevronDownIcon,
   ExclamationTriangleIcon,
   EyeIcon,
   EyeSlashIcon,
@@ -33,6 +32,7 @@ import ComposeIcon from '@/shared/components/icons/ComposeIcon';
 import SidebarToggleIcon from '@/shared/components/icons/SidebarToggleIcon';
 import type { RootState } from '@/store';
 
+import { WORKBOARD_COLUMNS, type WorkboardColumn, workboardColumn } from '../workboardPresentation';
 import { workboardService } from '../workboardService';
 import WorkboardCardDetailsDrawer from './WorkboardCardDetailsDrawer';
 import WorkboardCardModal from './WorkboardCardModal';
@@ -57,24 +57,6 @@ const priorityClasses: Record<WorkboardCard['priority'], string> = {
   urgent: 'bg-red-500/10 text-red-500',
 };
 
-const guideStatusGroups: readonly (readonly WorkboardStatus[])[] = [
-  ['triage', 'backlog', 'todo'],
-  ['scheduled', 'ready'],
-  ['running', 'review', 'blocked', 'done'],
-];
-
-const guideStatusClasses: Record<WorkboardStatus, string> = {
-  triage: 'border-slate-500/20 bg-slate-500/10 text-slate-600 dark:text-slate-300',
-  backlog: 'border-border bg-surface-raised text-foreground',
-  todo: 'border-blue-500/20 bg-blue-500/10 text-blue-600 dark:text-blue-300',
-  scheduled: 'border-violet-500/20 bg-violet-500/10 text-violet-600 dark:text-violet-300',
-  ready: 'border-cyan-500/20 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300',
-  running: 'border-primary/20 bg-primary/10 text-primary',
-  review: 'border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300',
-  blocked: 'border-red-500/20 bg-red-500/10 text-red-600 dark:text-red-300',
-  done: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
-};
-
 const WorkboardView: React.FC<Props> = ({ isSidebarCollapsed, onToggleSidebar, onNewChat }) => {
   const [snapshot, setSnapshot] = useState(EMPTY_SNAPSHOT);
   const [loading, setLoading] = useState(true);
@@ -84,7 +66,6 @@ const WorkboardView: React.FC<Props> = ({ isSidebarCollapsed, onToggleSidebar, o
   const [boardId, setBoardId] = useState('all');
   const [editingCard, setEditingCard] = useState<WorkboardCard | null | undefined>(undefined);
   const [dispatchSummary, setDispatchSummary] = useState<WorkboardDispatchSummary | null>(null);
-  const [draggedCardId, setDraggedCardId] = useState<string | null>(null);
   const [detailCardId, setDetailCardId] = useState<string | null>(null);
   const [sessionSelection, setSessionSelection] = useState<{
     card: WorkboardCard;
@@ -136,25 +117,20 @@ const WorkboardView: React.FC<Props> = ({ isSidebarCollapsed, onToggleSidebar, o
 
   useEffect(() => {
     const stop = workboardService.onChanged(() => {
-      if (busyRef.current || editingCard !== undefined || draggedCardId) {
+      if (busyRef.current || editingCard !== undefined) {
         refreshPendingRef.current = true;
         return;
       }
       void load(true);
     });
-    if (
-      !busyRef.current &&
-      editingCard === undefined &&
-      !draggedCardId &&
-      refreshPendingRef.current
-    ) {
+    if (!busyRef.current && editingCard === undefined && refreshPendingRef.current) {
       refreshPendingRef.current = false;
       void load(true);
     }
     return () => {
       stop();
     };
-  }, [draggedCardId, editingCard, load]);
+  }, [editingCard, load]);
 
   const mutate = useCallback(
     async (operation: () => Promise<unknown>, reload = true) => {
@@ -196,12 +172,12 @@ const WorkboardView: React.FC<Props> = ({ isSidebarCollapsed, onToggleSidebar, o
   }, [boardId, query, showArchived, snapshot.cards]);
 
   const cardsByStatus = useMemo(() => {
-    const result = new Map<WorkboardStatus, WorkboardCard[]>();
-    snapshot.statuses.forEach(status => result.set(status, []));
-    visibleCards.forEach(card => result.get(card.status)?.push(card));
+    const result = new Map<WorkboardColumn, WorkboardCard[]>();
+    WORKBOARD_COLUMNS.forEach(status => result.set(status, []));
+    visibleCards.forEach(card => result.get(workboardColumn(card))?.push(card));
     result.forEach(cards => cards.sort((left, right) => left.position - right.position));
     return result;
-  }, [snapshot.statuses, visibleCards]);
+  }, [visibleCards]);
 
   const selectedBoardId = boardId === 'all' ? undefined : boardId;
   const saveCard = async (input: WorkboardCardInput) => {
@@ -213,14 +189,19 @@ const WorkboardView: React.FC<Props> = ({ isSidebarCollapsed, onToggleSidebar, o
     await mutate(() => workboardService.createCard(input));
   };
 
-  const moveCard = async (status: WorkboardStatus, droppedCardId?: string) => {
-    const cardId = droppedCardId || draggedCardId;
+  const moveCard = async (status: WorkboardStatus, cardId: string) => {
     const card = snapshot.cards.find(candidate => candidate.id === cardId);
-    setDraggedCardId(null);
-    if (!card || card.metadata?.archivedAt || card.status === status) return;
-    const cards = cardsByStatus.get(status) ?? [];
-    const position = (cards[cards.length - 1]?.position ?? 0) + 1024;
-    await mutate(() => workboardService.moveCard(card.id, status, position));
+    if (
+      !card ||
+      busyRef.current ||
+      card.metadata?.archivedAt ||
+      workboardCardHasLiveExecution(card) ||
+      card.status === status
+    )
+      return;
+    const cards = snapshot.cards.filter(candidate => candidate.status === status);
+    const position = Math.max(0, ...cards.map(candidate => candidate.position)) + 1024;
+    await mutate(() => workboardService.moveCard(card.id, status, position, card.updatedAt));
   };
 
   const dispatch = async () => {
@@ -410,146 +391,15 @@ const WorkboardView: React.FC<Props> = ({ isSidebarCollapsed, onToggleSidebar, o
           </button>
         </div>
         {showGuide && (
-          <section
-            className="mt-3 min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-2xl border border-primary/15 bg-gradient-to-br from-primary/[0.07] via-surface to-surface-raised/50 text-xs leading-5 text-secondary shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/30"
-            aria-label={i18nService.t('workboardHowToUse')}
-            tabIndex={0}
-            style={{ scrollbarGutter: 'stable' }}
-          >
-            <div className="mx-auto max-w-[96rem] p-4 lg:p-5">
-              <div className="flex items-start gap-3">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary ring-1 ring-primary/15">
-                  <QuestionMarkCircleIcon className="h-5 w-5" />
-                </div>
-                <div className="min-w-0">
-                  <h2 className="text-sm font-semibold text-foreground">
-                    {i18nService.t('workboardGuideTitle')}
-                  </h2>
-                  <p className="mt-0.5 text-[13px] text-foreground/80">
-                    {i18nService.t('workboardGuideIntro')}
-                  </p>
-                  <p className="mt-0.5 text-xs text-secondary">
-                    {i18nService.t('workboardGuideUseCase')}
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-4 flex items-center gap-2">
-                <h3 className="font-semibold text-foreground">
-                  {i18nService.t('workboardGuideWorkflowTitle')}
-                </h3>
-                <div className="h-px flex-1 bg-border/70" />
-              </div>
-              <ol className="mt-2 grid gap-2 sm:grid-cols-2 2xl:grid-cols-4">
-                {(['Capture', 'Prepare', 'Run', 'Review'] as const).map((step, index) => (
-                  <li
-                    key={step}
-                    className="flex gap-2.5 rounded-xl border border-border/70 bg-surface/80 p-3 shadow-sm"
-                  >
-                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-white shadow-sm shadow-primary/20">
-                      {index + 1}
-                    </span>
-                    <div className="min-w-0">
-                      <h4 className="font-medium text-foreground">
-                        {i18nService.t(`workboardGuide${step}Title`)}
-                      </h4>
-                      <p className="mt-0.5 text-xs leading-[1.55]">
-                        {i18nService.t(`workboardGuide${step}`)}
-                      </p>
-                    </div>
-                  </li>
-                ))}
-              </ol>
-
-              <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1.35fr)_minmax(26rem,0.65fr)]">
-                <div className="rounded-xl bg-surface/75 p-3.5 ring-1 ring-border/70">
-                  <h3 className="font-semibold text-foreground">
-                    {i18nService.t('workboardGuideStatusesTitle')}
-                  </h3>
-                  <div className="mt-2 grid gap-3 md:grid-cols-3 md:gap-0">
-                    {guideStatusGroups.map((group, groupIndex) => (
-                      <div
-                        key={group.join('-')}
-                        className={`space-y-2 ${groupIndex > 0 ? 'md:border-l md:border-border/70 md:pl-3' : ''} ${groupIndex < guideStatusGroups.length - 1 ? 'md:pr-3' : ''}`}
-                      >
-                        {group.map(status => (
-                          <div key={status} className="flex items-start gap-2">
-                            <span
-                              className={`min-w-14 shrink-0 rounded-md border px-1.5 py-0.5 text-center font-medium ${guideStatusClasses[status]}`}
-                            >
-                              {i18nService.t(`workboardStatus_${status}`)}
-                            </span>
-                            <p className="pt-0.5 text-xs leading-[1.45]">
-                              {i18nService.t(`workboardGuideStatus_${status}`)}
-                            </p>
-                          </div>
-                        ))}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <div className="rounded-xl bg-surface/75 p-3.5 ring-1 ring-border/70">
-                  <h3 className="font-semibold text-foreground">
-                    {i18nService.t('workboardGuideActionsTitle')}
-                  </h3>
-                  <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
-                    {[
-                      ['Start', PlayIcon],
-                      ['Dispatch', BoltIcon],
-                      ['Details', InformationCircleIcon],
-                      ['Session', ChatBubbleLeftRightIcon],
-                    ].map(([action, Icon]) => (
-                      <div key={action as string} className="flex gap-2.5 py-1">
-                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                          <Icon className="h-4 w-4" />
-                        </span>
-                        <div className="min-w-0">
-                          <h4 className="font-medium text-foreground">
-                            {i18nService.t(`workboardGuideAction${action}Title`)}
-                          </h4>
-                          <p className="text-xs leading-[1.45]">
-                            {i18nService.t(`workboardGuideAction${action}`)}
-                          </p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              <details className="group mt-3 overflow-hidden rounded-xl border border-amber-500/20 bg-amber-500/[0.06]">
-                <summary className="flex cursor-pointer list-none items-center gap-2 px-3.5 py-2.5 text-amber-700 outline-none marker:hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-500/40 dark:text-amber-300">
-                  <ExclamationTriangleIcon className="h-4 w-4 shrink-0" />
-                  <span className="font-medium">
-                    {i18nService.t('workboardGuideProblemsTitle')}
-                  </span>
-                  <span className="hidden truncate text-xs opacity-75 sm:inline">
-                    {i18nService.t('workboardGuideProblemsHint')}
-                  </span>
-                  <ChevronDownIcon className="ml-auto h-4 w-4 shrink-0 transition-transform group-open:rotate-180" />
-                </summary>
-                <div className="grid gap-2 border-t border-amber-500/15 p-3 md:grid-cols-3">
-                  {(['CannotStart', 'Claimed', 'Blocked'] as const).map(problem => (
-                    <div key={problem} className="border-l-2 border-amber-500/25 px-2.5 py-1">
-                      <h4 className="font-medium text-foreground">
-                        {i18nService.t(`workboardGuideProblem${problem}Title`)}
-                      </h4>
-                      <p className="mt-0.5 text-xs leading-[1.5] text-secondary">
-                        {i18nService.t(`workboardGuideProblem${problem}`)}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </details>
-            </div>
-          </section>
+          <div className="mt-3 rounded-xl bg-primary/5 p-4 text-sm leading-6 text-secondary">
+            {i18nService.t('workboardSimpleGuide')}
+          </div>
         )}
         {dispatchSummary && (
           <div className="mt-3 shrink-0 rounded-lg bg-primary/10 px-3 py-2 text-sm text-primary">
             {i18nService
               .t('workboardDispatchSummary')
               .replace('{started}', String(dispatchSummary.started))
-              .replace('{promoted}', String(dispatchSummary.promoted))
               .replace('{blocked}', String(dispatchSummary.blocked))
               .replace('{failures}', String(dispatchSummary.failures))}
           </div>
@@ -568,24 +418,18 @@ const WorkboardView: React.FC<Props> = ({ isSidebarCollapsed, onToggleSidebar, o
             {i18nService.t('loading')}
           </div>
         ) : (
-          <div className="grid h-full w-full grid-cols-[repeat(9,minmax(7rem,1fr))] gap-2">
-            {snapshot.statuses.map(status => {
+          <div className="grid h-full w-full min-w-[48rem] grid-cols-4 gap-3">
+            {WORKBOARD_COLUMNS.map(status => {
               const cards = cardsByStatus.get(status) ?? [];
               return (
                 <section
                   key={status}
+                  aria-label={i18nService.t(`workboardColumn_${status}`)}
                   className="flex h-full min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-surface-raised/55"
-                  onDragOver={event => event.preventDefault()}
-                  onDrop={event => {
-                    event.preventDefault();
-                    void moveCard(status, event.dataTransfer.getData('text/plain')).catch(
-                      () => undefined,
-                    );
-                  }}
                 >
                   <div className="flex shrink-0 items-center justify-between gap-1 border-b border-border px-2.5 py-2.5">
                     <h2 className="min-w-0 truncate text-sm font-semibold text-foreground">
-                      {i18nService.t(`workboardStatus_${status}`)}
+                      {i18nService.t(`workboardColumn_${status}`)}
                     </h2>
                     <span className="rounded-full bg-surface px-2 py-0.5 text-xs tabular-nums text-secondary">
                       {cards.length}
@@ -602,17 +446,8 @@ const WorkboardView: React.FC<Props> = ({ isSidebarCollapsed, onToggleSidebar, o
                         return (
                           <article
                             key={card.id}
-                            draggable={!busy && !card.metadata?.archivedAt}
-                            onDragStart={event => {
-                              setDraggedCardId(card.id);
-                              event.dataTransfer.effectAllowed = 'move';
-                              event.dataTransfer.setData('text/plain', card.id);
-                            }}
-                            onDragEnd={() => setDraggedCardId(null)}
                             onClick={() => setDetailCardId(card.id)}
-                            className={`cursor-pointer rounded-xl border border-border bg-background p-2 shadow-sm transition hover:border-primary/40 hover:shadow-md ${
-                              draggedCardId === card.id ? 'opacity-50' : ''
-                            } ${card.metadata?.archivedAt ? 'opacity-60' : ''}`}
+                            className={`cursor-pointer rounded-xl border border-border bg-background p-2 shadow-sm transition hover:border-primary/40 hover:shadow-md ${card.metadata?.archivedAt ? 'opacity-60' : ''}`}
                           >
                             <div className="flex items-start gap-2">
                               <h3 className="min-w-0 flex-1 break-words text-sm font-semibold leading-5 text-foreground">
@@ -624,6 +459,14 @@ const WorkboardView: React.FC<Props> = ({ isSidebarCollapsed, onToggleSidebar, o
                                 {i18nService.t(`workboardPriority_${card.priority}`)}
                               </span>
                             </div>
+                            {!workboardCardHasLiveExecution(card) &&
+                              ['triage', 'scheduled', 'review', 'blocked'].includes(
+                                card.status,
+                              ) && (
+                                <p className="mt-2 text-xs text-secondary">
+                                  {i18nService.t(`workboardReason_${card.status}`)}
+                                </p>
+                              )}
                             {card.notes && (
                               <p className="mt-2 line-clamp-3 whitespace-pre-wrap text-xs leading-5 text-secondary">
                                 {card.notes}
@@ -683,11 +526,12 @@ const WorkboardView: React.FC<Props> = ({ isSidebarCollapsed, onToggleSidebar, o
                                     void startCard(card).catch(() => undefined);
                                   }}
                                   disabled={busy}
-                                  className="inline-flex h-6 w-5 shrink-0 items-center justify-center rounded text-primary hover:bg-primary/10 disabled:opacity-50"
+                                  className="inline-flex h-7 shrink-0 items-center justify-center gap-1 rounded-md bg-primary/10 px-2 text-primary hover:bg-primary/20 disabled:opacity-50"
                                   aria-label={i18nService.t('workboardStart')}
                                   title={i18nService.t('workboardStart')}
                                 >
                                   <PlayIcon className="h-3.5 w-3.5" />
+                                  {i18nService.t('workboardStart')}
                                 </button>
                               )}
                             </div>

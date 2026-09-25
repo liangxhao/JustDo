@@ -1,64 +1,34 @@
 export const scheduledTaskTranslations = {
   zh: {
+    workboardCardChanged: '任务已发生变化，请刷新并检查最新结果后再操作。',
+    workboardStopBeforeChanging: '任务已经开始执行，请刷新查看进度；如需调整状态，请先停止执行。',
+    workboardMoreSettings: '更多设置',
+    workboardColumn_pending: '待执行',
+    workboardColumn_running: '执行中',
+    workboardColumn_attention: '需处理',
+    workboardColumn_done: '已完成',
+    workboardConfirmDone: '确认完成',
+    workboardRequeue: '放回待执行',
+    workboardReason_triage: '请补充任务要求，再放回待执行',
+    workboardReason_scheduled: '等待安排或预定时间',
+    workboardScheduledHint: '预定时间：{time}。到时后可通过“批量启动”安排执行。',
+    workboardReason_review: '执行结束，请检查结果',
+    workboardReason_blocked: '遇到问题，请查看详情',
+    workboardSimpleGuide:
+      '新建任务，写清要求，点击“启动”。执行结束后查看结果，在详情中确认完成；遇到问题可补充说明，再放回待执行。执行状态会自动更新，无需手动切换阶段。',
+
     // 定时任务
     scheduledTasks: '定时任务',
     workboard: '任务看板',
     workboardHowToUse: '怎么使用',
-    workboardGuideTitle: '从一张卡片开始',
-    workboardGuideIntro: '把工作交给 AI 助手，并在一个地方持续跟踪任务状态、执行会话和验收结果。',
-    workboardGuideUseCase:
-      '适合执行时间较长、可以并行或需要人工验收的工作；固定时间重复运行请使用“定时任务”。状态可按需跳转，不必逐列经过。',
-    workboardGuideWorkflowTitle: '推荐流程',
-    workboardGuideCaptureTitle: '记录任务',
-    workboardGuideCapture: '新建卡片并写清标题；还没想清楚的事项先放“待梳理”。',
-    workboardGuidePrepareTitle: '写清要求',
-    workboardGuidePrepare:
-      '在说明中补充目标、背景、限制、验收标准和期望的结果证明，并按需选择执行助手。',
-    workboardGuideRunTitle: '安排执行',
-    workboardGuideRun: '立即做的卡片移到“待处理”或“可启动”；手动启动一张，或用“自动安排”批量处理。',
-    workboardGuideReviewTitle: '查看与验收',
-    workboardGuideReview:
-      '通过详情和会话跟踪过程；在“待验收”确认结果，合格后完成，不合格则备注原因并重新安排。',
-    workboardGuideStatusesTitle: '每一列表示什么',
-    workboardGuideStatus_triage: '需求还没想清楚；补全后再移出，不能从这里启动。',
-    workboardGuideStatus_backlog: '需求已明确但暂不优先；需要时可以手动启动。',
-    workboardGuideStatus_todo: '已经进入近期工作队列；可以手动启动。',
-    workboardGuideStatus_scheduled:
-      '暂缓到以后；有自动时间时到期会推进，否则需手动移出。不能直接启动。',
-    workboardGuideStatus_ready: '执行条件已满足；可手动启动，也可交给“自动安排”。',
-    workboardGuideStatus_running: '助手正在处理；通过会话查看实时过程。',
-    workboardGuideStatus_review: '本次执行已结束；请检查结果并决定完成或重做。',
-    workboardGuideStatus_blocked: '执行失败或缺少条件；先查看详情并解决原因。',
-    workboardGuideStatus_done: '工作已经结束；仍可查看会话和验收记录。',
-    workboardGuideActionsTitle: '按钮与图标',
-    workboardGuideActionStartTitle: '启动',
-    workboardGuideActionStart: '执行当前卡片，并创建关联会话。',
-    workboardGuideActionDispatchTitle: '自动安排',
-    workboardGuideActionDispatch: '推进符合条件的卡片，并按可用容量启动任务。',
-    workboardGuideActionDetailsTitle: '详情',
-    workboardGuideActionDetails: '查看状态原因、执行记录、诊断和结果证明。',
-    workboardGuideActionSessionTitle: '会话',
-    workboardGuideActionSession: '打开关联的助手对话，查看过程或继续沟通。',
-    workboardGuideProblemsTitle: '常见问题与处理',
-    workboardGuideProblemsHint: '启动不了、已被占用或进入受阻时点此查看',
-    workboardGuideProblemCannotStartTitle: '没有“启动”按钮',
-    workboardGuideProblemCannotStart:
-      '先确认卡片位于“待安排”“待处理”或“可启动”，并且未归档、没有已关联的执行。',
-    workboardGuideProblemClaimedTitle: '提示“已被占用”',
-    workboardGuideProblemClaimed:
-      '说明已有助手接手，不要重复启动；请打开会话查看进度，必要时先停止现有执行。卡片上的“@main”仅表示指定的执行助手，不代表正在执行。',
-    workboardGuideProblemBlockedTitle: '卡片变成“受阻”',
-    workboardGuideProblemBlocked:
-      '打开详情查看诊断和操作备注，补齐要求、权限、工作目录或其他缺失条件；处理后移回“待处理”或“可启动”再试。',
     workboardSearch: '搜索卡片…',
     workboardBoard: '看板',
     workboardAllBoards: '全部看板',
     workboardRefresh: '刷新',
-    workboardDispatch: '自动安排',
-    workboardDispatchSummary:
-      '自动安排完成：启动 {started}，推进 {promoted}，受阻 {blocked}，失败 {failures}',
-    workboardNewCard: '新建卡片',
-    workboardEditCard: '编辑卡片',
+    workboardDispatch: '批量启动',
+    workboardDispatchSummary: '已启动 {started} 个任务，受阻 {blocked} 个，启动失败 {failures} 个',
+    workboardNewCard: '新建任务',
+    workboardEditCard: '编辑任务',
     workboardCardTitle: '标题',
     workboardCardNotes: '说明',
     workboardStatus: '状态',
@@ -71,8 +41,7 @@ export const scheduledTaskTranslations = {
     workboardNoLinkedSession: '无关联会话',
     workboardClearSession: '解除关联',
     workboardRestoreSession: '恢复关联',
-    workboardClearSessionHint:
-      '保存后将解除旧会话关联；如需重做，再把卡片移到“待处理”或“可启动”后启动。',
+    workboardClearSessionHint: '保存后解除关联，不会删除历史会话。重做任务无需解除关联。',
     workboardOpenSession: '查看会话',
     workboardSessionTitle: '执行会话：{title}',
     workboardSessionEmpty: '这条会话暂无消息',
@@ -81,9 +50,9 @@ export const scheduledTaskTranslations = {
     workboardDetailsResize: '拖动调整卡片详情侧边栏宽度',
     workboardCardDetails: '卡片详情',
     workboardViewDetails: '详情',
-    workboardStartStatusHint: '这个状态不能直接启动；请先移到“待安排”、“待处理”或“可启动”。',
+    workboardStartStatusHint: '请先补充要求或调整安排，再点击“放回待执行”。',
     workboardExistingExecutionHint:
-      '这张卡片已有执行记录。请先查看现有会话；需要重做时，在编辑中解除旧会话关联。',
+      '任务仍有关联执行或被助手占用，请先查看会话并等待或停止当前执行。',
     workboardDefaultAgent: '默认助手',
     workboardValueUnavailable: '暂无',
     workboardUpdatedAt: '更新时间',
@@ -119,7 +88,7 @@ export const scheduledTaskTranslations = {
     workboardDiagnostic_archived_but_active_title: '已归档的卡片仍在执行',
     workboardDiagnostic_archived_but_active_detail: '该卡片已归档，但执行记录仍处于活动状态。',
     workboardSummaryRunning: '助手正在处理这张卡片，可以打开会话查看进度。',
-    workboardSummaryReview: '执行已结束，请打开会话检查结果；满意后移到“已完成”。',
+    workboardSummaryReview: '执行已结束，请打开会话检查结果；满意后点击“确认完成”。',
     workboardSummaryDone: '任务已完成，可以打开会话回看执行过程。',
     workboardSummaryDoneMissingProof:
       '卡片已标记为完成，但还没有记录验收依据。请打开会话确认结果，并可在“操作备注”中写下验收结论。',
@@ -667,74 +636,38 @@ export const scheduledTaskTranslations = {
     cronToastDeliveryChannelRequired: '请选择一个外部通知通道。',
   },
   en: {
+    workboardCardChanged: 'This task has changed. Refresh and review its latest result before trying again.',
+    workboardStopBeforeChanging:
+      'This task has started. Refresh to see its progress; stop execution before changing its status.',
+    workboardMoreSettings: 'More settings',
+    workboardColumn_pending: 'To do',
+    workboardColumn_running: 'In progress',
+    workboardColumn_attention: 'Needs attention',
+    workboardColumn_done: 'Done',
+    workboardConfirmDone: 'Confirm completion',
+    workboardRequeue: 'Return to to do',
+    workboardReason_triage: 'Add requirements, then return to to do',
+    workboardReason_scheduled: 'Waiting for scheduling or its scheduled time',
+    workboardScheduledHint:
+      'Scheduled for {time}. Once due, use Start queued tasks to arrange execution.',
+    workboardReason_review: 'Run finished. Review the result',
+    workboardReason_blocked: 'Needs your help. Open details',
+    workboardSimpleGuide:
+      'Create a task, describe what you need, and select Start. Review the result and confirm completion in its details. If something needs fixing, add instructions and return it to To do. Execution status updates automatically.',
+
     // Scheduled Tasks
     scheduledTasks: 'Scheduled Tasks',
     workboard: 'Workboard',
     workboardHowToUse: 'How to use',
-    workboardGuideTitle: 'Start with one card',
-    workboardGuideIntro:
-      'Hand work to an AI agent and track task status, execution sessions, and review results in one place.',
-    workboardGuideUseCase:
-      'Best for longer, parallel, or human-reviewed work. Use Scheduled Tasks for fixed-time recurring jobs. Cards can skip columns when appropriate.',
-    workboardGuideWorkflowTitle: 'Recommended workflow',
-    workboardGuideCaptureTitle: 'Capture the task',
-    workboardGuideCapture:
-      'Create a card with a clear title. Keep ideas that still need clarification in Triage.',
-    workboardGuidePrepareTitle: 'Define the outcome',
-    workboardGuidePrepare:
-      'Add the goal, context, constraints, acceptance criteria, and expected proof, then choose an agent if needed.',
-    workboardGuideRunTitle: 'Schedule execution',
-    workboardGuideRun:
-      'Move near-term work to To do or Ready. Start one card manually, or use Dispatch for eligible work.',
-    workboardGuideReviewTitle: 'Follow and review',
-    workboardGuideReview:
-      'Follow progress in Details and Session. Accept work in Review, or leave a reason and queue another attempt.',
-    workboardGuideStatusesTitle: 'What each column means',
-    workboardGuideStatus_triage:
-      'The request is still unclear. Define it and move it out before starting.',
-    workboardGuideStatus_backlog:
-      'The request is defined but not a current priority. It can be started manually.',
-    workboardGuideStatus_todo: 'Selected for near-term work. It can be started manually.',
-    workboardGuideStatus_scheduled:
-      'Deferred until later. A timed card advances when due; otherwise move it out manually. It cannot start here.',
-    workboardGuideStatus_ready: 'All conditions are met. Start it manually or use Dispatch.',
-    workboardGuideStatus_running: 'An agent is working. Open Session to follow progress.',
-    workboardGuideStatus_review:
-      'This run has ended. Check the result and decide whether to finish or retry.',
-    workboardGuideStatus_blocked:
-      'Execution failed or needs a prerequisite. Open Details and resolve the cause first.',
-    workboardGuideStatus_done: 'Work has ended. Its session and review record remain available.',
-    workboardGuideActionsTitle: 'Buttons and icons',
-    workboardGuideActionStartTitle: 'Start',
-    workboardGuideActionStart: 'Run this card and create its linked session.',
-    workboardGuideActionDispatchTitle: 'Dispatch',
-    workboardGuideActionDispatch:
-      'Promote eligible cards and start work within available capacity.',
-    workboardGuideActionDetailsTitle: 'Details',
-    workboardGuideActionDetails: 'See status reasons, attempts, diagnostics, and proof.',
-    workboardGuideActionSessionTitle: 'Session',
-    workboardGuideActionSession:
-      'Open the linked agent conversation to follow progress or continue.',
-    workboardGuideProblemsTitle: 'Common problems and fixes',
-    workboardGuideProblemsHint: 'Open when Start is missing, a card is claimed, or work is blocked',
-    workboardGuideProblemCannotStartTitle: 'No Start button',
-    workboardGuideProblemCannotStart:
-      'Make sure the card is in Backlog, To do, or Ready, is not archived, and has no existing linked execution.',
-    workboardGuideProblemClaimedTitle: 'Card is already claimed',
-    workboardGuideProblemClaimed:
-      'An agent already owns the card. Do not start it again; open its session to check progress, or stop the current execution first. “@main” only identifies the assigned agent; it does not mean the card is running.',
-    workboardGuideProblemBlockedTitle: 'Card becomes Blocked',
-    workboardGuideProblemBlocked:
-      'Open Details and read Diagnostics and operator notes. Fix missing requirements, permissions, workspace access, or other prerequisites, then move it to To do or Ready and retry.',
     workboardSearch: 'Search cards…',
     workboardBoard: 'Board',
     workboardAllBoards: 'All boards',
     workboardRefresh: 'Refresh',
-    workboardDispatch: 'Dispatch',
+    workboardDispatch: 'Start queued tasks',
     workboardDispatchSummary:
-      'Dispatch complete: {started} started, {promoted} promoted, {blocked} blocked, {failures} failed',
-    workboardNewCard: 'New card',
-    workboardEditCard: 'Edit card',
+      '{started} tasks started, {blocked} blocked, {failures} failed to start',
+    workboardNewCard: 'New task',
+    workboardEditCard: 'Edit task',
     workboardCardTitle: 'Title',
     workboardCardNotes: 'Notes',
     workboardStatus: 'Status',
@@ -748,7 +681,7 @@ export const scheduledTaskTranslations = {
     workboardClearSession: 'Clear link',
     workboardRestoreSession: 'Restore link',
     workboardClearSessionHint:
-      'Saving clears the old session link. To rework the card, then move it to To do or Ready and start it.',
+      'Saving removes the link without deleting session history. You do not need to unlink a session to run the task again.',
     workboardOpenSession: 'Open session',
     workboardSessionTitle: 'Execution session: {title}',
     workboardSessionEmpty: 'This session has no messages',
@@ -757,10 +690,9 @@ export const scheduledTaskTranslations = {
     workboardDetailsResize: 'Drag to resize the card details drawer',
     workboardCardDetails: 'Card details',
     workboardViewDetails: 'Details',
-    workboardStartStatusHint:
-      'This status cannot start directly. Move the card to Backlog, To do, or Ready first.',
+    workboardStartStatusHint: 'Update the requirements or schedule, then select Return to to do.',
     workboardExistingExecutionHint:
-      'This card already has a task, session, or claim. Open the existing session; to rework it, clear the old session link in Edit.',
+      'This task still has an execution or worker claim. Open its session and wait for or stop the current execution.',
     workboardDefaultAgent: 'Default agent',
     workboardValueUnavailable: 'Unavailable',
     workboardUpdatedAt: 'Updated',
@@ -801,7 +733,7 @@ export const scheduledTaskTranslations = {
     workboardSummaryRunning:
       'The agent is working on this card. Open the session to follow progress.',
     workboardSummaryReview:
-      'Execution has finished. Open the session to review the result, then move accepted work to Done.',
+      'Execution has finished. Review the result in its session, then select Confirm completion.',
     workboardSummaryDone:
       'The task is complete. You can open the session to review how it was done.',
     workboardSummaryDoneMissingProof:

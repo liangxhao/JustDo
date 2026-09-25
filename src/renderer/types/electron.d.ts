@@ -1386,6 +1386,7 @@ interface IElectronAPI {
       id: string,
       status: WorkboardStatus,
       position: number,
+      expectedUpdatedAt: number,
     ) => Promise<WorkboardResult<WorkboardCard>>;
     deleteCard: (id: string) => Promise<WorkboardResult>;
     archiveCard: (id: string, archived: boolean) => Promise<WorkboardResult<WorkboardCard>>;

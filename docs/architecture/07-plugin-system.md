@@ -163,3 +163,30 @@ See [upgrade audit](../features/openclaw-upgrade-v2026.9.6.md).
 `embedded-browser` 的浏览器指导在 `before_prompt_build` 中以 `requiresToolAuthority: true` 注册，读取本轮策略过滤后的 `toolAuthority`。只有实际允许 `browser` 时才注入操作指导；工具不可用时说明执行策略限制，禁止重复发现、通过 shell 绕开限制或自行放宽执行权限。工作区网页可见不代表 Agent 获得操作权限。
 
 默认沙箱策略不提供宿主 `browser` 工具。用户可在“设置 → 安全 → 任务执行方式”选择本机执行，应用不因打开网页而修改策略。内置模式禁用原生 browser 插件，由桌面扩展提供工具，因此 OpenClaw Control UI 的原生 browser.request 查看入口不适用于该模式。
+## Workboard：四栏展示与原生执行
+
+Workboard 仍使用 OpenClaw 插件的 `workboard.cards.*` / `workboard.boards.*`
+接口和原生 SQLite。Renderer 的四栏是展示投影，不改写持久化状态：
+
+| 展示列 | 原生状态 |
+| --- | --- |
+| 待执行 | triage、backlog、todo、scheduled、ready |
+| 执行中 | running；存在 running execution 时优先显示在此列 |
+| 需处理 | review、blocked |
+| 已完成 | done |
+
+新建任务默认 todo；编辑描述保留原生状态。详情提供“确认完成”和“放回待执行”，
+取消任意状态拖放和九状态选择器，执行中任务必须先停止。已排期任务保留原生时间约束；
+没有具体时间的旧 scheduled 卡片允许重新加入待执行。
+
+单任务启动继续调用 `workboard.cards.start`。已结束的历史 session 关联不阻止重做；
+活动 execution、claim、独立 task 仍限制启动。批量启动先为可执行卡片补默认助手，
+将无未来排期、无前置依赖的 todo/backlog 卡片以 `expectedUpdatedAt` 转为 ready，再调用
+原生 dispatch；依赖、时间和 owner 并发容量仍由上游检查。停止操作确认 task/session
+已停止后，以版本校验更新 blocked、释放 claim，并清除已停止的独立 task 关联，保留会话历史。
+手动状态操作从 Renderer 传入所见卡片版本，Main 再读当前卡片并拒绝活动执行或过期版本，
+原生写入继续携带同一版本，避免旧的验收操作覆盖新结果。停止后的对账重新读取卡片，
+校验 session/run/task 身份；只对已确认停止的同一次执行释放占用，保留已经到达的完成或审核状态。
+已知 runId 的定向停止失败时，不降级为整个 session 的停止，避免误停后来启动的任务。
+
+接口核对与可复现验证见 [Workboard 简化与契约验证](../features/workboard-simplification.md)。

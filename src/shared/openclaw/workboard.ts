@@ -305,6 +305,11 @@ export type WorkboardChangedEvent = {
   revision?: number;
 };
 
+export const WorkboardErrorCode = {
+  ACTIVE_EXECUTION: 'workboard_active_execution',
+  STALE_CARD: 'workboard_stale_card',
+} as const;
+
 export const WorkboardIpc = {
   GetSnapshot: 'openclaw:workboard:getSnapshot',
   CreateCard: 'openclaw:workboard:createCard',
@@ -332,7 +337,7 @@ export const canStartWorkboardCard = (card: WorkboardCard, now = Date.now()): bo
   return (
     !card.metadata?.archivedAt &&
     (card.status === 'backlog' || card.status === 'todo' || card.status === 'ready') &&
-    !workboardCardSessionKey(card) &&
+    !workboardCardHasLiveExecution(card) &&
     !card.taskId?.trim() &&
     !hasActiveClaim
   );

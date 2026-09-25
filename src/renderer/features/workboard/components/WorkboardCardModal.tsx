@@ -1,7 +1,6 @@
 import { ChatBubbleLeftRightIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import {
   WORKBOARD_PRIORITIES,
-  WORKBOARD_STATUSES,
   type WorkboardCard,
   type WorkboardCardInput,
   workboardCardSessionKey,
@@ -32,7 +31,6 @@ const WorkboardCardModal: React.FC<Props> = ({
 }) => {
   const [title, setTitle] = useState('');
   const [notes, setNotes] = useState('');
-  const [status, setStatus] = useState<WorkboardCardInput['status']>('todo');
   const [priority, setPriority] = useState<WorkboardCardInput['priority']>('normal');
   const [labels, setLabels] = useState('');
   const [agentId, setAgentId] = useState('');
@@ -43,7 +41,6 @@ const WorkboardCardModal: React.FC<Props> = ({
   useEffect(() => {
     setTitle(card?.title ?? '');
     setNotes(card?.notes ?? '');
-    setStatus(card?.status ?? 'todo');
     setPriority(card?.priority ?? 'normal');
     setLabels(card?.labels.join(', ') ?? '');
     setAgentId(card?.agentId ?? '');
@@ -60,7 +57,7 @@ const WorkboardCardModal: React.FC<Props> = ({
       await onSave({
         title: normalizedTitle,
         notes: notes.trim(),
-        status,
+        status: card?.status ?? 'todo',
         priority,
         labels: [
           ...new Set(
@@ -142,95 +139,92 @@ const WorkboardCardModal: React.FC<Props> = ({
             className={`${fieldClass} resize-y`}
           />
         </label>
-        <div className="grid grid-cols-2 gap-4">
-          <label className="block space-y-1.5 text-sm text-secondary">
-            <span>{i18nService.t('workboardStatus')}</span>
-            <select
-              value={status}
-              onChange={event => setStatus(event.target.value as WorkboardCardInput['status'])}
-              className={fieldClass}
-            >
-              {WORKBOARD_STATUSES.map(value => (
-                <option key={value} value={value}>
-                  {i18nService.t(`workboardStatus_${value}`)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="block space-y-1.5 text-sm text-secondary">
-            <span>{i18nService.t('workboardPriority')}</span>
-            <select
-              value={priority}
-              onChange={event => setPriority(event.target.value as WorkboardCardInput['priority'])}
-              className={fieldClass}
-            >
-              {WORKBOARD_PRIORITIES.map(value => (
-                <option key={value} value={value}>
-                  {i18nService.t(`workboardPriority_${value}`)}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <label className="block space-y-1.5 text-sm text-secondary">
-          <span>{i18nService.t('workboardLabels')}</span>
-          <input
-            value={labels}
-            onChange={event => setLabels(event.target.value)}
-            placeholder={i18nService.t('workboardLabelsPlaceholder')}
-            className={fieldClass}
-          />
-        </label>
-        <label className="block space-y-1.5 text-sm text-secondary">
-          <span>{i18nService.t('workboardAgent')}</span>
-          <select
-            value={agentId}
-            onChange={event => setAgentId(event.target.value)}
-            className={fieldClass}
-          >
-            <option value="">{i18nService.t('workboardAgentPlaceholder')}</option>
-            {card?.agentId && !agents.some(agent => agent.id === card.agentId) && (
-              <option value={card.agentId}>{card.agentId}</option>
-            )}
-            {agents.map(agent => (
-              <option key={agent.id} value={agent.id}>
-                {agent.name || agent.id}
-              </option>
-            ))}
-          </select>
-        </label>
-        {card && (
-          <div className="space-y-1.5 text-sm text-secondary">
-            <span>{i18nService.t('workboardLinkedSession')}</span>
-            <div className="flex items-center gap-2 rounded-lg bg-surface-raised px-3 py-2">
-              <span className="min-w-0 flex-1 break-all text-xs text-foreground">
-                {sessionKey || i18nService.t('workboardNoLinkedSession')}
-              </span>
-              {sessionKey ? (
-                <button
-                  type="button"
-                  onClick={() => setSessionKey('')}
-                  disabled={saving}
-                  className="shrink-0 rounded-md px-2 py-1 text-xs font-medium text-red-500 hover:bg-red-500/10 disabled:opacity-50"
+        <details className="rounded-xl border border-border p-3">
+          <summary className="cursor-pointer text-sm text-secondary">
+            {i18nService.t('workboardMoreSettings')}
+          </summary>
+          <div className="mt-3 space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <label className="block space-y-1.5 text-sm text-secondary">
+                <span>{i18nService.t('workboardPriority')}</span>
+                <select
+                  value={priority}
+                  onChange={event =>
+                    setPriority(event.target.value as WorkboardCardInput['priority'])
+                  }
+                  className={fieldClass}
                 >
-                  {i18nService.t('workboardClearSession')}
-                </button>
-              ) : workboardCardSessionKey(card) ? (
-                <button
-                  type="button"
-                  onClick={() => setSessionKey(workboardCardSessionKey(card) ?? '')}
-                  disabled={saving}
-                  className="shrink-0 rounded-md px-2 py-1 text-xs font-medium text-primary hover:bg-primary/10 disabled:opacity-50"
-                >
-                  {i18nService.t('workboardRestoreSession')}
-                </button>
-              ) : null}
+                  {WORKBOARD_PRIORITIES.map(value => (
+                    <option key={value} value={value}>
+                      {i18nService.t(`workboardPriority_${value}`)}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </div>
-            {workboardCardSessionKey(card) && !sessionKey && (
-              <p className="text-xs text-amber-500">{i18nService.t('workboardClearSessionHint')}</p>
+            <label className="block space-y-1.5 text-sm text-secondary">
+              <span>{i18nService.t('workboardLabels')}</span>
+              <input
+                value={labels}
+                onChange={event => setLabels(event.target.value)}
+                placeholder={i18nService.t('workboardLabelsPlaceholder')}
+                className={fieldClass}
+              />
+            </label>
+            <label className="block space-y-1.5 text-sm text-secondary">
+              <span>{i18nService.t('workboardAgent')}</span>
+              <select
+                value={agentId}
+                onChange={event => setAgentId(event.target.value)}
+                className={fieldClass}
+              >
+                <option value="">{i18nService.t('workboardAgentPlaceholder')}</option>
+                {card?.agentId && !agents.some(agent => agent.id === card.agentId) && (
+                  <option value={card.agentId}>{card.agentId}</option>
+                )}
+                {agents.map(agent => (
+                  <option key={agent.id} value={agent.id}>
+                    {agent.name || agent.id}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {card && (
+              <div className="space-y-1.5 text-sm text-secondary">
+                <span>{i18nService.t('workboardLinkedSession')}</span>
+                <div className="flex items-center gap-2 rounded-lg bg-surface-raised px-3 py-2">
+                  <span className="min-w-0 flex-1 break-all text-xs text-foreground">
+                    {sessionKey || i18nService.t('workboardNoLinkedSession')}
+                  </span>
+                  {sessionKey ? (
+                    <button
+                      type="button"
+                      onClick={() => setSessionKey('')}
+                      disabled={saving}
+                      className="shrink-0 rounded-md px-2 py-1 text-xs font-medium text-red-500 hover:bg-red-500/10 disabled:opacity-50"
+                    >
+                      {i18nService.t('workboardClearSession')}
+                    </button>
+                  ) : workboardCardSessionKey(card) ? (
+                    <button
+                      type="button"
+                      onClick={() => setSessionKey(workboardCardSessionKey(card) ?? '')}
+                      disabled={saving}
+                      className="shrink-0 rounded-md px-2 py-1 text-xs font-medium text-primary hover:bg-primary/10 disabled:opacity-50"
+                    >
+                      {i18nService.t('workboardRestoreSession')}
+                    </button>
+                  ) : null}
+                </div>
+                {workboardCardSessionKey(card) && !sessionKey && (
+                  <p className="text-xs text-amber-500">
+                    {i18nService.t('workboardClearSessionHint')}
+                  </p>
+                )}
+              </div>
             )}
           </div>
-        )}
+        </details>
         {onOpenSession && (
           <button
             type="button"

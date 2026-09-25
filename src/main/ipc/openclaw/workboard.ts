@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 
 import {
+  canStartWorkboardCard,
   isValidWorkboardBoardId,
   isWorkboardPriority,
   isWorkboardStatus,
@@ -11,6 +12,7 @@ import {
   type WorkboardCardInput,
   type WorkboardCardPatch,
   type WorkboardDispatchSummary,
+  WorkboardErrorCode,
   WorkboardIpc,
   type WorkboardResult,
   type WorkboardSessionResolution,
@@ -229,28 +231,30 @@ export const registerOpenClawWorkboardHandlers = ({
     if (!result.card) throw new Error('Gateway returned no assigned Workboard card');
     return result.card;
   };
-  const prepareDefaultAgentAssignments = async (boardId?: string): Promise<void> => {
+  const prepareDispatch = async (boardId?: string): Promise<void> => {
     const listed = await request<GatewayListResult>('workboard.cards.list');
-    const candidates = (listed.cards ?? []).filter(card => {
-      const candidateBoardId = card.metadata?.automation?.boardId?.trim() || 'default';
-      return (
-        !card.agentId?.trim() &&
-        !card.metadata?.archivedAt &&
-        (card.status === 'backlog' || card.status === 'todo' || card.status === 'ready') &&
-        (!boardId || candidateBoardId === boardId)
-      );
-    });
-    if (candidates.length === 0) return;
-    const agentId = defaultAgentIdFromGateway(await request<GatewayAgentsResult>('agents.list'));
-    if (!agentId) {
-      throw new Error('No default execution agent is available for Workboard dispatch');
-    }
+    const candidates = (listed.cards ?? []).filter(
+      card =>
+        canStartWorkboardCard(card) &&
+        (!boardId || (card.metadata?.automation?.boardId?.trim() || 'default') === boardId),
+    );
     for (const card of candidates) {
-      await request<GatewayCardResult>('workboard.cards.update', {
-        id: card.id,
-        expectedUpdatedAt: card.updatedAt,
-        patch: { agentId },
-      });
+      const assigned = await assignDefaultAgent(card);
+      const hasDependencies = assigned.metadata?.links?.some(
+        link => link.type === 'parent' && link.targetCardId,
+      );
+      const scheduledAt = assigned.metadata?.automation?.scheduledAt;
+      const hasSchedule = typeof scheduledAt === 'number' && scheduledAt > Date.now();
+      if (assigned.status !== 'ready' && !hasDependencies && !hasSchedule) {
+        // Dispatch promotes dependency/schedule-controlled cards itself. Plain todo/backlog
+        // cards need an explicit ready transition before its scheduled-mode selection.
+        await request<GatewayCardResult>('workboard.cards.move', {
+          id: assigned.id,
+          status: 'ready',
+          position: assigned.position,
+          expectedUpdatedAt: assigned.updatedAt,
+        });
+      }
     }
   };
   const resolveSession = async (
@@ -353,21 +357,39 @@ export const registerOpenClawWorkboardHandlers = ({
 
   ipcMain.handle(
     WorkboardIpc.MoveCard,
-    (_event, rawId: unknown, rawStatus: unknown, rawPosition: unknown) =>
+    (
+      _event,
+      rawId: unknown,
+      rawStatus: unknown,
+      rawPosition: unknown,
+      rawExpectedUpdatedAt: unknown,
+    ) =>
       run<WorkboardCard>(async () => {
         const id = normalizeId(rawId);
         if (
           !id ||
           !isWorkboardStatus(rawStatus) ||
           typeof rawPosition !== 'number' ||
-          !Number.isFinite(rawPosition)
+          !Number.isFinite(rawPosition) ||
+          typeof rawExpectedUpdatedAt !== 'number' ||
+          !Number.isFinite(rawExpectedUpdatedAt)
         ) {
           throw new Error('Invalid Workboard card move');
+        }
+        const listed = await request<GatewayListResult>('workboard.cards.list');
+        const current = listed.cards?.find(card => card.id === id);
+        if (!current) throw new Error('Workboard card is unavailable');
+        if (workboardCardHasLiveExecution(current)) {
+          throw new Error(WorkboardErrorCode.ACTIVE_EXECUTION);
+        }
+        if (current.updatedAt !== rawExpectedUpdatedAt) {
+          throw new Error(WorkboardErrorCode.STALE_CARD);
         }
         const result = await request<GatewayCardResult>('workboard.cards.move', {
           id,
           status: rawStatus,
           position: rawPosition,
+          expectedUpdatedAt: rawExpectedUpdatedAt,
         });
         if (!result.card) throw new Error('Gateway returned no Workboard card');
         return result.card;
@@ -499,13 +521,6 @@ export const registerOpenClawWorkboardHandlers = ({
             ...(runId ? { runId } : {}),
           });
           sessionAborted = chatRunWasAborted(targeted);
-          if (!sessionAborted && runId) {
-            sessionAborted = chatRunWasAborted(
-              await request<GatewayChatAbortResult>('chat.abort', {
-                sessionKey: session.sessionKey,
-              }),
-            );
-          }
           if (!sessionAborted) {
             sessionAlreadyInactive =
               (await resolveSession(session.sessionKey)).hasActiveRun === false;
@@ -519,19 +534,56 @@ export const registerOpenClawWorkboardHandlers = ({
         throw new Error('Gateway did not stop the linked Workboard execution');
       }
 
-      const execution = card.execution
-        ? { ...card.execution, status: 'blocked' as const, updatedAt: Date.now() }
-        : undefined;
-      const updated = await request<GatewayCardResult>('workboard.cards.update', {
-        id,
-        expectedUpdatedAt: card.updatedAt,
-        patch: {
-          status: 'blocked',
-          ...(execution ? { execution } : {}),
-        },
-      });
-      if (!updated.card) throw new Error('Gateway returned no stopped Workboard card');
-      return updated.card;
+      // Terminal hooks and worker heartbeats may update the card while abort is in flight.
+      // Reconcile only the execution we stopped, using the latest revision each time.
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const refreshed = await request<GatewayListResult>('workboard.cards.list');
+        const latest = refreshed.cards?.find(candidate => candidate.id === id);
+        if (!latest) throw new Error('Workboard card is unavailable');
+        const latestSessionKey = latest.sessionKey?.trim() || latest.execution?.sessionKey?.trim();
+        const latestRunId = latest.runId?.trim() || latest.execution?.runId?.trim();
+        // Gateway redacts claim tokens; owner and claim time also identify a replacement
+        // claim acquired before the dispatcher has stored its new run ID.
+        if (
+          latestSessionKey !== linkedSessionKey ||
+          latestRunId !== runId ||
+          (latest.metadata?.claim &&
+            (latest.metadata.claim.token !== card.metadata?.claim?.token ||
+              latest.metadata.claim.ownerId !== card.metadata?.claim?.ownerId ||
+              latest.metadata.claim.claimedAt !== card.metadata?.claim?.claimedAt)) ||
+          (latest.taskId?.trim() && latest.taskId.trim() !== taskId)
+        ) {
+          throw new Error('Workboard execution changed; refresh its session before stopping');
+        }
+        const status =
+          latest.status === 'done' || latest.status === 'review' ? latest.status : 'blocked';
+        const execution =
+          latest.execution?.status === 'running'
+            ? { ...latest.execution, status: 'blocked' as const, updatedAt: Date.now() }
+            : undefined;
+        try {
+          const updated = await request<GatewayCardResult>('workboard.cards.update', {
+            id,
+            expectedUpdatedAt: latest.updatedAt,
+            patch: {
+              status,
+              metadata: { claim: null },
+              ...(latest.taskId?.trim() ? { taskId: null } : {}),
+              ...(execution ? { execution } : {}),
+            },
+          });
+          if (!updated.card) throw new Error('Gateway returned no stopped Workboard card');
+          return updated.card;
+        } catch (error) {
+          if (
+            attempt === 2 ||
+            !(error instanceof Error) ||
+            !error.message.includes('Card changed while you were editing.')
+          )
+            throw error;
+        }
+      }
+      throw new Error('Workboard card kept changing while stopping');
     }),
   );
 
@@ -550,7 +602,7 @@ export const registerOpenClawWorkboardHandlers = ({
       ) {
         throw new Error('Invalid Workboard board id');
       }
-      await prepareDefaultAgentAssignments(boardId || undefined);
+      await prepareDispatch(boardId || undefined);
       const result = await request<GatewayDispatchResult>(
         'workboard.cards.dispatch',
         boardId ? { boardId } : {},

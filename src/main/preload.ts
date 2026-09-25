@@ -1067,8 +1067,13 @@ contextBridge.exposeInMainWorld('electron', {
     createCard: (input: WorkboardCardInput) => ipcRenderer.invoke(WorkboardIpc.CreateCard, input),
     updateCard: (id: string, patch: WorkboardCardPatch, expectedUpdatedAt: number) =>
       ipcRenderer.invoke(WorkboardIpc.UpdateCard, id, patch, expectedUpdatedAt),
-    moveCard: (id: string, status: WorkboardCardInput['status'], position: number) =>
-      ipcRenderer.invoke(WorkboardIpc.MoveCard, id, status, position),
+    moveCard: (
+      id: string,
+      status: WorkboardCardInput['status'],
+      position: number,
+      expectedUpdatedAt: number,
+    ) =>
+      ipcRenderer.invoke(WorkboardIpc.MoveCard, id, status, position, expectedUpdatedAt),
     deleteCard: (id: string) => ipcRenderer.invoke(WorkboardIpc.DeleteCard, id),
     archiveCard: (id: string, archived: boolean) =>
       ipcRenderer.invoke(WorkboardIpc.ArchiveCard, id, archived),

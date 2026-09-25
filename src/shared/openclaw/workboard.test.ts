@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  canStartWorkboardCard,
-  type WorkboardCard,
-  workboardCardSessionKey,
-} from './workboard';
+import { canStartWorkboardCard, type WorkboardCard, workboardCardSessionKey } from './workboard';
 
 const card = (patch: Partial<WorkboardCard> = {}): WorkboardCard => ({
   id: 'card-1',
@@ -51,8 +47,8 @@ describe('workboard card execution state', () => {
     },
   );
 
-  it('does not offer start when an execution link, task, or active claim exists', () => {
-    expect(canStartWorkboardCard(card({ sessionKey: 'agent:main:subagent:one' }), 100)).toBe(false);
+  it('allows a historical session link but rejects a task or active claim', () => {
+    expect(canStartWorkboardCard(card({ sessionKey: 'agent:main:subagent:one' }), 100)).toBe(true);
     expect(canStartWorkboardCard(card({ taskId: 'task-1' }), 100)).toBe(false);
     expect(
       canStartWorkboardCard(

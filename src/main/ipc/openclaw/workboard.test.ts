@@ -10,7 +10,13 @@ vi.mock('electron', () => ({
   },
 }));
 
-import { WORKBOARD_STATUSES, WorkboardIpc } from '../../../shared/openclaw/workboard';
+import {
+  canStartWorkboardCard,
+  WORKBOARD_STATUSES,
+  type WorkboardCard,
+  WorkboardErrorCode,
+  WorkboardIpc,
+} from '../../../shared/openclaw/workboard';
 import {
   normalizeWorkboardCardInput,
   normalizeWorkboardCardPatch,
@@ -89,6 +95,39 @@ describe('Workboard IPC gateway routing', () => {
     expect(result).toMatchObject({
       success: true,
       data: { cards: [], statuses: WORKBOARD_STATUSES, boards: [{ id: 'default' }] },
+    });
+  });
+
+  test('refuses a status change when an execution started after the view loaded', async () => {
+    request.mockResolvedValue({ cards: [{ id: 'card-1', status: 'running', updatedAt: 3 }] });
+    const result = await handlers.get(WorkboardIpc.MoveCard)?.({}, 'card-1', 'done', 1024, 2);
+    expect(result).toMatchObject({
+      success: false,
+      error: WorkboardErrorCode.ACTIVE_EXECUTION,
+    });
+    expect(request).not.toHaveBeenCalledWith('workboard.cards.move', expect.anything());
+  });
+
+  test('rejects an old review action after a newer execution has already finished', async () => {
+    request.mockResolvedValue({ cards: [{ id: 'card-1', status: 'review', updatedAt: 4 }] });
+    const result = await handlers.get(WorkboardIpc.MoveCard)?.({}, 'card-1', 'done', 1024, 2);
+    expect(result).toMatchObject({ success: false, error: WorkboardErrorCode.STALE_CARD });
+    expect(request).not.toHaveBeenCalledWith('workboard.cards.move', expect.anything());
+  });
+
+  test('uses the displayed version for the native status mutation', async () => {
+    request.mockImplementation((method: string) =>
+      method === 'workboard.cards.list'
+        ? { cards: [{ id: 'card-1', status: 'review', updatedAt: 4 }] }
+        : { card: { id: 'card-1', status: 'done', updatedAt: 5 } },
+    );
+    const result = await handlers.get(WorkboardIpc.MoveCard)?.({}, 'card-1', 'done', 1024, 4);
+    expect(result).toMatchObject({ success: true });
+    expect(request).toHaveBeenCalledWith('workboard.cards.move', {
+      id: 'card-1',
+      status: 'done',
+      position: 1024,
+      expectedUpdatedAt: 4,
     });
   });
 
@@ -264,7 +303,9 @@ describe('Workboard IPC gateway routing', () => {
         };
       }
       if (method === 'agents.list') return { defaultId: 'writer', agents: [{ id: 'writer' }] };
-      if (method === 'workboard.cards.update') return { card: { id: 'card-1' } };
+      if (method === 'workboard.cards.update')
+        return { card: { id: 'card-1', status: 'todo', position: 1, updatedAt: 3 } };
+      if (method === 'workboard.cards.move') return { card: { id: 'card-1', status: 'ready' } };
       if (method === 'workboard.cards.dispatch') {
         return { started: [], promoted: [], blocked: [], startFailures: [] };
       }
@@ -278,11 +319,47 @@ describe('Workboard IPC gateway routing', () => {
       expectedUpdatedAt: 2,
       patch: { agentId: 'writer' },
     });
-    expect(request).toHaveBeenNthCalledWith(4, 'workboard.cards.dispatch', {
+    expect(request).toHaveBeenNthCalledWith(4, 'workboard.cards.move', {
+      id: 'card-1',
+      status: 'ready',
+      position: 1,
+      expectedUpdatedAt: 3,
+    });
+    expect(request).toHaveBeenNthCalledWith(5, 'workboard.cards.dispatch', {
       boardId: 'default',
     });
     expect(result).toMatchObject({ success: true, data: { started: 0, failures: 0 } });
   });
+
+  test.each(['todo', 'backlog'])(
+    'prepares a %s card with an elapsed schedule for batch dispatch',
+    async status => {
+      const card = {
+        id: 'card-1',
+        status,
+        agentId: 'main',
+        position: 1,
+        updatedAt: 2,
+        metadata: { automation: { scheduledAt: Date.now() - 1_000 } },
+      };
+      request.mockImplementation((method: string) => {
+        if (method === 'workboard.cards.list') return { cards: [card] };
+        if (method === 'workboard.cards.move') return { card: { ...card, status: 'ready' } };
+        if (method === 'workboard.cards.dispatch') return { started: [{ cardId: card.id }] };
+        throw new Error(`unexpected method: ${method}`);
+      });
+
+      const result = await handlers.get(WorkboardIpc.Dispatch)?.({}, 'default');
+
+      expect(request).toHaveBeenNthCalledWith(2, 'workboard.cards.move', {
+        id: card.id,
+        status: 'ready',
+        position: card.position,
+        expectedUpdatedAt: card.updatedAt,
+      });
+      expect(result).toMatchObject({ success: true, data: { started: 1 } });
+    },
+  );
 
   test('resolves an agentless Workboard session link to one canonical session', async () => {
     request.mockResolvedValue({
@@ -375,7 +452,7 @@ describe('Workboard IPC gateway routing', () => {
     expect(request).toHaveBeenCalledWith('workboard.cards.update', {
       id: 'card-1',
       expectedUpdatedAt: 2,
-      patch: { status: 'blocked' },
+      patch: { status: 'blocked', metadata: { claim: null } },
     });
     expect(result).toMatchObject({ success: true, data: { status: 'blocked' } });
   });
@@ -436,7 +513,7 @@ describe('Workboard IPC gateway routing', () => {
     expect(request).toHaveBeenCalledWith('workboard.cards.update', {
       id: 'card-1',
       expectedUpdatedAt: 2,
-      patch: { status: 'blocked' },
+      patch: { status: 'blocked', metadata: { claim: null }, taskId: null },
     });
     expect(result).toMatchObject({ success: true, data: { status: 'blocked' } });
   });
@@ -478,7 +555,12 @@ describe('Workboard IPC gateway routing', () => {
 
     const result = await handlers.get(WorkboardIpc.StopCard)?.({}, 'card-1');
 
-    expect(request.mock.calls.filter(([method]) => method === 'chat.abort')).toHaveLength(2);
+    expect(request.mock.calls.filter(([method]) => method === 'chat.abort')).toEqual([
+      [
+        'chat.abort',
+        { sessionKey: 'agent:main:subagent:workboard-default-card-1', runId: 'run-1' },
+      ],
+    ]);
     expect(request).not.toHaveBeenCalledWith('workboard.cards.update', expect.anything());
     expect(result).toEqual({
       success: false,
@@ -620,6 +702,74 @@ describe('Workboard IPC gateway routing', () => {
       expect(result).toMatchObject({ success: expectedSessionKey !== 'agent:main:old' });
       if (expectedSessionKey === 'agent:main:old') {
         expect(request).not.toHaveBeenCalledWith('tasks.cancel', expect.anything());
+      }
+    },
+  );
+
+  test.each(['blocked', 'done', 'review', 'replacement', 'targeted-miss', 'conflict'])(
+    'reconciles %s lifecycle changes during abort without touching a replacement run',
+    async outcome => {
+      let card = {
+        id: 'card-1',
+        status: 'running',
+        updatedAt: 2,
+        sessionKey: 'agent:main:workboard-card-1',
+        runId: 'run-1',
+        execution: { status: 'running', runId: 'run-1' },
+        metadata: { claim: { ownerId: 'main', expiresAt: Date.now() + 60_000 } },
+      };
+      let updates = 0;
+      request.mockImplementation(
+        (method: string, params: { expectedUpdatedAt?: number; patch?: { status: string } }) => {
+          if (method === 'workboard.cards.list') return { cards: [card] };
+          if (method === 'sessions.list')
+            return { sessions: [{ key: card.sessionKey, hasActiveRun: true }] };
+          if (method === 'chat.abort') {
+            const status = ['done', 'review'].includes(outcome) ? outcome : 'blocked';
+            card = { ...card, status, updatedAt: 3, execution: { ...card.execution, status } };
+            if (outcome === 'replacement' || outcome === 'targeted-miss')
+              card = { ...card, status: 'running', runId: 'run-2' };
+            return { aborted: outcome !== 'targeted-miss' };
+          }
+          if (method === 'workboard.cards.update') {
+            updates += 1;
+            expect(params.expectedUpdatedAt).toBe(card.updatedAt);
+            if (outcome === 'conflict' && updates === 1) {
+              card = { ...card, updatedAt: 4 };
+              throw new Error(
+                'Card changed while you were editing. Review the latest values and retry.',
+              );
+            }
+            return { card: { ...card, metadata: {}, status: params.patch?.status } };
+          }
+          throw new Error(`unexpected method: ${method}`);
+        },
+      );
+
+      const result = await handlers.get(WorkboardIpc.StopCard)?.({}, card.id);
+
+      expect(result).toMatchObject({
+        success: !['replacement', 'targeted-miss'].includes(outcome),
+      });
+      expect(request.mock.calls.filter(([method]) => method === 'chat.abort')).toEqual([
+        ['chat.abort', { sessionKey: card.sessionKey, runId: 'run-1' }],
+      ]);
+      if (outcome === 'replacement' || outcome === 'targeted-miss') expect(updates).toBe(0);
+      else {
+        expect(updates).toBe(outcome === 'conflict' ? 2 : 1);
+        expect(request).toHaveBeenCalledWith(
+          'workboard.cards.update',
+          expect.objectContaining({
+            patch: expect.objectContaining({ metadata: { claim: null } }),
+          }),
+        );
+        if (outcome === 'done' || outcome === 'review') {
+          expect(result).toMatchObject({
+            data: { status: outcome, execution: { status: outcome } },
+          });
+          const stopped = result as { data: WorkboardCard };
+          expect(canStartWorkboardCard({ ...stopped.data, status: 'todo' })).toBe(true);
+        }
       }
     },
   );

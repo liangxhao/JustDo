@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { WORKBOARD_STATUSES, type WorkboardCard } from '@shared/openclaw/workboard';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { createElement } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -27,6 +27,7 @@ vi.mock('../workboardService', () => ({
     onChanged: vi.fn(() => vi.fn()),
     resolveSession: vi.fn(),
     stopCard: vi.fn(),
+    moveCard: vi.fn(),
   },
 }));
 
@@ -136,5 +137,72 @@ describe('Workboard session selection', () => {
     await waitFor(() => expect(screen.queryByRole('button', { name: 'stop-session' })).toBeNull());
     expect(screen.getByTestId('session').textContent).toBe('canonical-a');
     expect(workboardService.stopCard).not.toHaveBeenCalled();
+  });
+});
+
+describe('simplified workboard', () => {
+  it('submits the displayed card version when confirming a result', async () => {
+    const reviewed = { ...card('reviewed'), status: 'review' as const, updatedAt: 42 };
+    vi.mocked(workboardService.getSnapshot).mockResolvedValue(snapshot([reviewed]));
+    vi.mocked(workboardService.moveCard).mockResolvedValue({ ...reviewed, status: 'done' });
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: i18nService.t('workboardViewDetails') }));
+    fireEvent.click(screen.getByRole('button', { name: i18nService.t('workboardConfirmDone') }));
+    await waitFor(() => expect(workboardService.moveCard).toHaveBeenCalledWith('reviewed', 'done', 1024, 42));
+  });
+
+  it('keeps live review cards in progress without saying that the run has finished', async () => {
+    vi.mocked(workboardService.getSnapshot).mockResolvedValue(
+      snapshot([
+        {
+          ...card('live-review'),
+          status: 'review',
+          execution: {
+            id: 'execution-1',
+            kind: 'agent-session',
+            mode: 'manual',
+            status: 'running',
+            startedAt: 1,
+            updatedAt: 2,
+          },
+        },
+      ]),
+    );
+    mount();
+    await screen.findByRole('heading', { name: 'live-review' });
+    const running = screen.getByRole('region', {
+      name: i18nService.t('workboardColumn_running'),
+    });
+    expect(within(running).getByRole('heading', { name: 'live-review' })).toBeTruthy();
+    expect(screen.queryByText(i18nService.t('workboardReason_review'))).toBeNull();
+  });
+
+  it('groups all native states into four columns without hiding cards or exposing fake execution moves', async () => {
+    vi.mocked(workboardService.getSnapshot).mockResolvedValue(
+      snapshot(
+        WORKBOARD_STATUSES.map(status => ({
+          ...card(status),
+          status,
+          sessionKey: undefined,
+          runId: undefined,
+        })),
+      ),
+    );
+    mount();
+    await screen.findByRole('heading', { name: 'todo' });
+    const groups = {
+      pending: ['triage', 'backlog', 'todo', 'scheduled', 'ready'],
+      running: ['running'],
+      attention: ['review', 'blocked'],
+      done: ['done'],
+    };
+    for (const [column, statuses] of Object.entries(groups)) {
+      const region = screen.getByRole('region', {
+        name: i18nService.t(`workboardColumn_${column}`),
+      });
+      for (const status of statuses)
+        expect(within(region).getByRole('heading', { name: status })).toBeTruthy();
+    }
+    expect(document.querySelector('[draggable="true"]')).toBeNull();
   });
 });

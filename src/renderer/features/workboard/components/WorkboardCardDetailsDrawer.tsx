@@ -10,7 +10,6 @@ import {
 } from '@heroicons/react/24/outline';
 import {
   canStartWorkboardCard,
-  WORKBOARD_STATUSES,
   type WorkboardCard,
   workboardCardHasLiveExecution,
   workboardCardSessionKey,
@@ -21,6 +20,12 @@ import {
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
+
+import {
+  canCompleteWorkboardCard,
+  canRequeueWorkboardCard,
+  workboardColumn,
+} from '../workboardPresentation';
 
 type Props = {
   card: WorkboardCard;
@@ -162,7 +167,12 @@ const WorkboardCardDetailsDrawer: React.FC<Props> = ({
   const latestAttemptSucceeded = attempts[attempts.length - 1]?.status === 'succeeded';
   const isLive = workboardCardHasLiveExecution(card);
   const summary = (() => {
-    if (card.status === 'running') return i18nService.t('workboardSummaryRunning');
+    if (isLive) return i18nService.t('workboardSummaryRunning');
+    if (card.status === 'scheduled' && automation?.scheduledAt) {
+      return i18nService
+        .t('workboardScheduledHint')
+        .replace('{time}', formatDate(automation.scheduledAt));
+    }
     if (card.status === 'review') return i18nService.t('workboardSummaryReview');
     if (card.status === 'done') {
       return i18nService.t(
@@ -183,8 +193,9 @@ const WorkboardCardDetailsDrawer: React.FC<Props> = ({
     }
     return null;
   })();
-  const summaryTone =
-    hasMissingProof || card.status === 'blocked'
+  const summaryTone = isLive
+    ? 'bg-primary/10 text-primary'
+    : hasMissingProof || card.status === 'blocked'
       ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
       : card.status === 'done'
         ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
@@ -327,20 +338,33 @@ const WorkboardCardDetailsDrawer: React.FC<Props> = ({
       <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4">
         <section className="grid grid-cols-[7rem_minmax(0,1fr)] gap-x-3 gap-y-2 rounded-xl bg-surface-raised p-3 text-sm">
           <span className="text-secondary">{i18nService.t('workboardStatus')}</span>
-          <select
-            value={card.status}
-            onChange={event =>
-              void onMove(event.target.value as WorkboardStatus).catch(() => undefined)
-            }
-            disabled={busy || archived}
-            className="min-w-0 rounded-md border border-border bg-surface px-2 py-1 text-foreground outline-none focus:border-primary disabled:opacity-50"
-          >
-            {WORKBOARD_STATUSES.map(status => (
-              <option key={status} value={status}>
-                {i18nService.t(`workboardStatus_${status}`)}
-              </option>
-            ))}
-          </select>
+          <div className="space-y-2">
+            <strong className="font-medium">
+              {i18nService.t(`workboardColumn_${workboardColumn(card)}`)}
+            </strong>
+            <div className="flex flex-wrap gap-2">
+              {canCompleteWorkboardCard(card) && (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void onMove('done').catch(() => undefined)}
+                  className="rounded-lg bg-primary px-3 py-1.5 text-white disabled:opacity-50"
+                >
+                  {i18nService.t('workboardConfirmDone')}
+                </button>
+              )}
+              {canRequeueWorkboardCard(card) && (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void onMove('todo').catch(() => undefined)}
+                  className="rounded-lg border border-border px-3 py-1.5 disabled:opacity-50"
+                >
+                  {i18nService.t('workboardRequeue')}
+                </button>
+              )}
+            </div>
+          </div>
           <span className="text-secondary">{i18nService.t('workboardAgent')}</span>
           <strong className="break-all font-medium text-foreground">
             {card.agentId || i18nService.t('workboardDefaultAgent')}
