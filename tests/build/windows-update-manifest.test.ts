@@ -11,7 +11,7 @@ const {
   hasWindowsInstallerTarget,
   verifyWindowsInstallerArchive,
   verifyWindowsInstallerArchiveListing,
-} = require('../../scripts/electron-builder-hooks.cjs') as {
+} = require('../../scripts/packaging/electron-builder-hooks.cjs') as {
   buildWindowsUpdateManifest: (options: {
     artifactPaths: string[];
     outDir: string;
@@ -39,7 +39,7 @@ const {
   verifyWindowsInstallerArchiveListing: (listing: string, productFilename: string) => void;
 };
 
-const { validateReleaseHistory } = require('../../scripts/verify-windows-update-artifacts.cjs') as {
+const { validateReleaseHistory } = require('../../scripts/packaging/verify-windows-update-artifacts.cjs') as {
   validateReleaseHistory: (history: unknown, manifest: Record<string, unknown>) => boolean;
 };
 

@@ -35,7 +35,7 @@ test('preinstalls the official MXC sandbox only for Windows runtimes', () => {
 
 test('starts Electron as soon as the quiet readiness probes succeed', () => {
   const devRunner = fs.readFileSync(
-    path.resolve(__dirname, '../../scripts/run-electron-dev.cjs'),
+    path.resolve(__dirname, '../../scripts/electron/run-electron-dev.cjs'),
     'utf8',
   );
 
@@ -69,7 +69,7 @@ test('uses Vite native Monaco workers without emitting the legacy duplicate bund
 
 test('uses supported npm target options for OpenClaw runtime dependencies', () => {
   const runtimeInstaller = fs.readFileSync(
-    path.resolve(__dirname, '../../scripts/install-openclaw-runtime.cjs'),
+    path.resolve(__dirname, '../../scripts/openclaw/install-openclaw-runtime.cjs'),
     'utf8',
   );
 
@@ -80,7 +80,7 @@ test('uses supported npm target options for OpenClaw runtime dependencies', () =
 
 test('defines the JSON reader used to validate the downloaded OpenClaw package', () => {
   const runtimeInstaller = fs.readFileSync(
-    path.resolve(__dirname, '../../scripts/install-openclaw-runtime.cjs'),
+    path.resolve(__dirname, '../../scripts/openclaw/install-openclaw-runtime.cjs'),
     'utf8',
   );
 
@@ -92,7 +92,7 @@ test('defines the JSON reader used to validate the downloaded OpenClaw package',
 
 test('packages the complete OpenClaw CLI bootstrap into the runtime archive', () => {
   const runtimeInstaller = fs.readFileSync(
-    path.resolve(__dirname, '../../scripts/install-openclaw-runtime.cjs'),
+    path.resolve(__dirname, '../../scripts/openclaw/install-openclaw-runtime.cjs'),
     'utf8',
   );
 
@@ -103,7 +103,7 @@ test('packages the complete OpenClaw CLI bootstrap into the runtime archive', ()
   expect(runtimeInstaller).toContain("entries.has('/package.json')");
 
   const builderHooks = fs.readFileSync(
-    path.resolve(__dirname, '../../scripts/electron-builder-hooks.cjs'),
+    path.resolve(__dirname, '../../scripts/packaging/electron-builder-hooks.cjs'),
     'utf8',
   );
   expect(builderHooks).toContain("entries.has('/node-version.mjs')");
@@ -113,7 +113,7 @@ test('packages the complete OpenClaw CLI bootstrap into the runtime archive', ()
   expect(builderHooks).toContain('verifyBareOpenClawCliRuntime(');
 
   const runtimeSync = fs.readFileSync(
-    path.resolve(__dirname, '../../scripts/sync-openclaw-runtime-current.cjs'),
+    path.resolve(__dirname, '../../scripts/openclaw/sync-openclaw-runtime-current.cjs'),
     'utf8',
   );
   expect(runtimeSync).toContain('!hasBareDistEntry');
@@ -122,11 +122,11 @@ test('packages the complete OpenClaw CLI bootstrap into the runtime archive', ()
 
 test('keeps an installed OpenClaw runtime frozen unless force install is requested', () => {
   const runtimeInstaller = fs.readFileSync(
-    path.resolve(__dirname, '../../scripts/install-openclaw-runtime.cjs'),
+    path.resolve(__dirname, '../../scripts/openclaw/install-openclaw-runtime.cjs'),
     'utf8',
   );
   const bundleScript = fs.readFileSync(
-    path.resolve(__dirname, '../../scripts/bundle-openclaw-gateway.cjs'),
+    path.resolve(__dirname, '../../scripts/openclaw/bundle-openclaw-gateway.cjs'),
     'utf8',
   );
 
@@ -142,15 +142,15 @@ test('keeps an installed OpenClaw runtime frozen unless force install is request
 
 test('rewrites and packages the OpenClaw audit writer companion', () => {
   const bundleScript = fs.readFileSync(
-    path.resolve(__dirname, '../../scripts/bundle-openclaw-gateway.cjs'),
+    path.resolve(__dirname, '../../scripts/openclaw/bundle-openclaw-gateway.cjs'),
     'utf8',
   );
   const builderHooks = fs.readFileSync(
-    path.resolve(__dirname, '../../scripts/electron-builder-hooks.cjs'),
+    path.resolve(__dirname, '../../scripts/packaging/electron-builder-hooks.cjs'),
     'utf8',
   );
   const runtimeCompanions = fs.readFileSync(
-    path.resolve(__dirname, '../../scripts/openclaw-runtime-companions.cjs'),
+    path.resolve(__dirname, '../../scripts/openclaw/openclaw-runtime-companions.cjs'),
     'utf8',
   );
 
@@ -164,17 +164,17 @@ test('uses a target-aware and runtime-verified Electron-native rebuild', () => {
     fs.readFileSync(path.resolve(__dirname, '../../package.json'), 'utf8'),
   ) as { scripts: Record<string, string> };
   const rebuildScript = fs.readFileSync(
-    path.resolve(__dirname, '../../scripts/rebuild-electron-native.cjs'),
+    path.resolve(__dirname, '../../scripts/electron/rebuild-electron-native.cjs'),
     'utf8',
   );
   const builderHooks = fs.readFileSync(
-    path.resolve(__dirname, '../../scripts/electron-builder-hooks.cjs'),
+    path.resolve(__dirname, '../../scripts/packaging/electron-builder-hooks.cjs'),
     'utf8',
   );
 
   expect(electronBuilderConfig.npmRebuild).toBe(false);
   expect(packageJson.scripts.postinstall).toBe(
-    'node scripts/patch-http-mitm-proxy.cjs && npm run rebuild:electron-native',
+    'node scripts/runtime/patch-http-mitm-proxy.cjs && npm run rebuild:electron-native',
   );
   expect(packageJson.scripts.postinstall).not.toContain('electron-builder install-app-deps');
   expect(packageJson.scripts['precompile:electron']).toBe('npm run rebuild:electron-native');
@@ -206,14 +206,14 @@ test('restores Electron native modules after tests even when Vitest fails', () =
     fs.readFileSync(path.resolve(__dirname, '../..', 'package.json'), 'utf8'),
   ) as { scripts: Record<string, string> };
   const testRunner = fs.readFileSync(
-    path.resolve(__dirname, '../../scripts/run-tests.cjs'),
+    path.resolve(__dirname, '../../scripts/test/run-tests.cjs'),
     'utf8',
   );
 
-  expect(packageJson.scripts.test).toBe('node scripts/run-tests.cjs');
+  expect(packageJson.scripts.test).toBe('node scripts/test/run-tests.cjs');
   expect(packageJson.scripts).not.toHaveProperty('pretest');
   expect(testRunner).toContain("['rebuild', 'better-sqlite3']");
-  expect(testRunner).toContain("path.join(__dirname, 'rebuild-electron-native.cjs')");
+  expect(testRunner).toContain("path.join(__dirname, '../electron/rebuild-electron-native.cjs')");
   expect(testRunner).toContain('finally');
 });
 

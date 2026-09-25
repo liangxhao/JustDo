@@ -6,7 +6,7 @@ import path from 'node:path';
 import { afterEach, expect, test } from 'vitest';
 
 const require = createRequire(import.meta.url);
-const { patchHttpMitmProxy } = require('../scripts/patch-http-mitm-proxy.cjs') as {
+const { patchHttpMitmProxy } = require('../scripts/runtime/patch-http-mitm-proxy.cjs') as {
   patchHttpMitmProxy: (packageRoot?: string) => void;
 };
 

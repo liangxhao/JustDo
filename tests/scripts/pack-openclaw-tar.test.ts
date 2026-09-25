@@ -8,7 +8,7 @@ import { list as listTar } from 'tar';
 import { expect, test } from 'vitest';
 
 const { compressTarArchive, packMultipleSources } =
-  require('../../scripts/pack-openclaw-tar.cjs') as {
+  require('../../scripts/openclaw/pack-openclaw-tar.cjs') as {
     compressTarArchive: (sourceTar: string, outputArchive: string) => Promise<void>;
     packMultipleSources: (
       sources: Array<{

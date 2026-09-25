@@ -6,22 +6,22 @@
       - any-glob-to-any-file:
           - "build/icons/mac/**"
           - "build/entitlements.mac.plist"
-          - "scripts/*mac*"
-          - "scripts/notarize.js"
+          - "scripts/**/*mac*"
+          - "scripts/packaging/notarize.js"
 
 "platform: windows":
   - changed-files:
       - any-glob-to-any-file:
           - "build/icons/win/**"
-          - "scripts/*win*"
-          - "scripts/setup-python-runtime.js"
-          - "scripts/nsis-installer.nsh"
+          - "scripts/**/*win*"
+          - "scripts/runtime/setup-python-runtime.js"
+          - "scripts/packaging/nsis-installer.nsh"
 
 "platform: linux":
   - changed-files:
       - any-glob-to-any-file:
           - "build/icons/png/**"
-          - "scripts/*linux*"
+          - "scripts/**/*linux*"
 
 "area: renderer":
   - changed-files:
@@ -42,9 +42,8 @@
   - changed-files:
       - any-glob-to-any-file:
           - "src/main/libs/*openclaw*"
-          - "scripts/*openclaw*"
-          - "scripts/ensure-openclaw-version.cjs"
-          - "scripts/apply-openclaw-patches.cjs"
+          - "scripts/openclaw/**"
+          - "scripts/patches/**"
 
 "area: skills":
   - changed-files:
@@ -76,8 +75,8 @@
       - any-glob-to-any-file:
           - ".github/workflows/**"
           - "electron-builder.json"
-          - "scripts/build*.js"
-          - "scripts/*build*"
+          - "scripts/build/**"
+          - "scripts/packaging/**"
 
 "area: docs":
   - changed-files:

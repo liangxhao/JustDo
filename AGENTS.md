@@ -60,7 +60,7 @@ Before non-trivial pushes, prefer `npm run lint && npm run build && npm test`.
 For docs-only changes, run `git diff --check`.
 
 Windows packaging uses bundled MinGit/Python runtime assets via
-`scripts/setup-mingit.js` and `scripts/setup-python-runtime.js`.
+`scripts/runtime/setup-mingit.js` and `scripts/runtime/setup-python-runtime.js`.
 The Windows Python runtime also installs the hashed lock in
 `resources/python-requirements.txt` into `Lib/bundled-site-packages`.
 
@@ -85,6 +85,8 @@ flowchart LR
 - `src/renderer/`: browser-only React/Redux UI. No Node/Electron imports.
 - `src/shared/`: pure cross-process contracts/utilities only.
 - `resources/`: bundled skills, tray icons, runtime assets, manifests.
+- `scripts/`: build/development tooling grouped by responsibility; see `scripts/README.md`.
+  Keep new scripts in the owning module and npm command names stable.
 - `scripts/theme/`: offline theme CSS generation and the Tailwind build plugin;
   Renderer theme tokens, definitions, CSS, and browser runtime stay in `src/renderer/theme/`.
 

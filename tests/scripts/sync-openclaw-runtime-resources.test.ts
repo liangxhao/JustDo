@@ -10,7 +10,7 @@ const {
   syncDocChannels,
   syncGatewayConfigChannels,
   syncLocalExtensions,
-} = require('../../scripts/sync-openclaw-runtime-resources.cjs') as {
+} = require('../../scripts/openclaw/sync-openclaw-runtime-resources.cjs') as {
   renameExtensionIntoPlace: (
     sourceDir: string,
     targetDir: string,

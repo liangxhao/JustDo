@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest';
 
 const { decideRuntimeBundle, decideRuntimeInstall } =
-  require('../../../scripts/openclaw-runtime-freeze.cjs') as {
+  require('../../../scripts/openclaw/openclaw-runtime-freeze.cjs') as {
     decideRuntimeInstall: (state: {
       forceInstall: boolean;
       targetExists: boolean;

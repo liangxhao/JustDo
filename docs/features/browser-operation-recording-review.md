@@ -28,7 +28,7 @@
 
 用户实测为 14 步 / 3 页面 / 0 截图，随后明确要求仅密码脱敏。以下首轮审查中的验证码、支付字段及嵌入内容整页拒绝策略已被替换：仅可识别密码字段隐藏；普通查询参数和 fragment 保留；iframe/canvas/video 不阻止截图；隐藏登录框允许截图，密码相关 DOM 变化仍使在途截图失效。编辑页新增精简 HTML/层级选择器与逐步截图失败原因。URL 形式的过渡标题也使用密码参数清洗，导航不继承前一页标题。
 
-`node scripts/browser-recording-smoke.cjs` 使用独立临时 profile 和本地测试网页，验证 sandbox guest 的原生截图、可信点击/HTML、动态页面、普通 URL 参数保留及可见/已显示密码的截图保护；不会操作用户正在运行的应用或会话。图片仍为可视区域截图，不包含元素局部裁剪。详见最新[采集策略](browser-operation-recording.md)。
+`node scripts/test/browser-recording-smoke.cjs` 使用独立临时 profile 和本地测试网页，验证 sandbox guest 的原生截图、可信点击/HTML、动态页面、普通 URL 参数保留及可见/已显示密码的截图保护；不会操作用户正在运行的应用或会话。图片仍为可视区域截图，不包含元素局部裁剪。详见最新[采集策略](browser-operation-recording.md)。
 
 审查范围：`feat/browser-operation-recording` worktree 中的全部未提交实现，包括 guest 采集、Main 互斥、Renderer controller、编辑 Tab、Composer、历史恢复及测试。三个 Agent 分域审查，主 Agent 负责整合；修复后对 UI 与录制生命周期进行交叉复查。
 

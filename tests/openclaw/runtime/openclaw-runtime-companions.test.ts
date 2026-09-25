@@ -11,7 +11,7 @@ const {
   hasStaleRuntimeWorkerImportMetaUrl,
   rewriteRuntimeWorkerImportMetaUrls,
   syncRuntimeBundledAssets,
-} = require('../../../scripts/openclaw-runtime-companions.cjs') as {
+} = require('../../../scripts/openclaw/openclaw-runtime-companions.cjs') as {
   getRuntimeCompanionPathsReferencedByBundle: (bundle: string) => string[];
   hasStaleRuntimeWorkerImportMetaUrl: (bundle: string) => boolean;
   rewriteRuntimeWorkerImportMetaUrls: (source: string, replacement: string) => string;

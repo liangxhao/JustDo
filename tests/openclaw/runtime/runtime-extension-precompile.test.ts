@@ -4,10 +4,10 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
-const { syncOpenClawRuntimeResources } = require('../../../scripts/sync-openclaw-runtime-resources.cjs') as {
+const { syncOpenClawRuntimeResources } = require('../../../scripts/openclaw/sync-openclaw-runtime-resources.cjs') as {
   syncOpenClawRuntimeResources: (runtimeRoot: string, options: { repoRoot: string }) => void;
 };
-const { precompileOpenClawExtensions } = require('../../../scripts/precompile-openclaw-extensions.cjs') as {
+const { precompileOpenClawExtensions } = require('../../../scripts/openclaw/precompile-openclaw-extensions.cjs') as {
   precompileOpenClawExtensions: (runtimeRoot: string, options: { required: boolean }) => Promise<{
     compiled: number; skipped: number; errors: number;
   }>;

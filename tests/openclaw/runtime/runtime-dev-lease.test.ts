@@ -10,7 +10,7 @@ const {
   findActiveRuntimeDevLeases,
   LEASE_STALE_AFTER_MS,
   resolveRuntimeDevLeaseDir,
-} = require('../../../scripts/openclaw-runtime-dev-lease.cjs') as {
+} = require('../../../scripts/openclaw/openclaw-runtime-dev-lease.cjs') as {
   acquireRuntimeDevLease: (
     runtimeBaseDir: string,
     options?: { heartbeatMs?: number; isProcessAlive?: (pid: number) => boolean; pid?: number },

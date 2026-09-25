@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { expect, test } from 'vitest';
 
-const { syncBundledSkills } = require('../../scripts/sync-bundled-skills.cjs') as {
+const { syncBundledSkills } = require('../../scripts/runtime/sync-bundled-skills.cjs') as {
   syncBundledSkills: (repoRoot: string, runtimeRoot: string, label?: string) => string[];
 };
 

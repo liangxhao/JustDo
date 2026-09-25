@@ -5,7 +5,7 @@ import path from 'node:path';
 import { expect, test } from 'vitest';
 
 const { buildManagedPipInstallArgs, enableSitePackages } =
-  require('../../scripts/setup-python-runtime.js') as {
+  require('../../scripts/runtime/setup-python-runtime.js') as {
     buildManagedPipInstallArgs: (targetDir: string, requirementsPath: string) => string[];
     enableSitePackages: (rootDir: string) => void;
   };
@@ -73,7 +73,7 @@ test('adds managed site-packages after the runtime pip directory idempotently', 
 
 test('setup replaces the managed package directory instead of retaining stale files', () => {
   const setupScript = fs.readFileSync(
-    path.resolve(__dirname, '../../scripts/setup-python-runtime.js'),
+    path.resolve(__dirname, '../../scripts/runtime/setup-python-runtime.js'),
     'utf8',
   );
 
@@ -89,7 +89,7 @@ test('bundles sitecustomize support for skill PYTHONPATH and persistent user pac
     'utf8',
   );
   const setupScript = fs.readFileSync(
-    path.resolve(__dirname, '../../scripts/setup-python-runtime.js'),
+    path.resolve(__dirname, '../../scripts/runtime/setup-python-runtime.js'),
     'utf8',
   );
 

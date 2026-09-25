@@ -1,0 +1,59 @@
+const { spawn } = require('child_process');
+const path = require('path');
+const {
+  devServer: { port },
+} = require('../../package.json');
+const { findFreePort } = require('./find-free-port.cjs');
+const { prepareBrowserExtensionDevHost } = require('../browser/prepare-browser-extension-dev-host.cjs');
+
+const start = async () => {
+  const devServerPort = await findFreePort(port);
+  const devServerUrl = `http://localhost:${devServerPort}`;
+  const nativeHost = prepareBrowserExtensionDevHost({ devServerUrl });
+  if (nativeHost) {
+    console.log(`[Electron Dev] Registered browser native host: ${nativeHost.manifestPath}`);
+  }
+  const env = {
+    ...process.env,
+    JUSTDO_DEV_SERVER_PORT: String(devServerPort),
+    VITE_DEBUG_CHAT_TIMELINE: process.env.JUSTDO_DEBUG_CHAT_TIMELINE === 'true' ? 'true' : 'false',
+  };
+  console.log(`[Electron Dev] Using development server port ${devServerPort}.`);
+
+  const commands = [
+    `vite --port ${devServerPort}`,
+    `wait-on -t 300000 --simultaneous 1 ${devServerUrl} dist-electron/.electron-ready && npm run start:electron`,
+  ];
+  const concurrentlyPackagePath = require.resolve('concurrently/package.json');
+  const concurrentlyPackage = require(concurrentlyPackagePath);
+  const concurrentlyBin =
+    typeof concurrentlyPackage.bin === 'string'
+      ? concurrentlyPackage.bin
+      : concurrentlyPackage.bin?.concurrently;
+
+  if (!concurrentlyBin) {
+    console.error('[Electron Dev] The concurrently package does not expose a CLI binary.');
+    process.exit(1);
+  }
+
+  const concurrentlyPath = path.resolve(path.dirname(concurrentlyPackagePath), concurrentlyBin);
+  const child = spawn(process.execPath, [concurrentlyPath, ...commands], {
+    cwd: process.cwd(),
+    env,
+    stdio: 'inherit',
+  });
+
+  child.on('error', error => {
+    console.error('[Electron Dev] Failed to start development processes:', error);
+    process.exit(1);
+  });
+
+  child.on('close', code => {
+    process.exit(code ?? 1);
+  });
+};
+
+start().catch(error => {
+  console.error('[Electron Dev] Failed to start development processes:', error);
+  process.exit(1);
+});

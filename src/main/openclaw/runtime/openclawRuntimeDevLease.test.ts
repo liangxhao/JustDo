@@ -22,7 +22,7 @@ describe('OpenClaw runtime development lease', () => {
     });
 
     expect(loadLeaseModule).toHaveBeenCalledWith(
-      path.join(appPath, 'scripts', 'openclaw-runtime-dev-lease.cjs'),
+      path.join(appPath, 'scripts', 'openclaw', 'openclaw-runtime-dev-lease.cjs'),
     );
     expect(resolveRuntimeDevLeaseDir).toHaveBeenCalledWith(appPath);
     expect(acquireRuntimeDevLease).toHaveBeenCalledWith('runtime-lease-dir');

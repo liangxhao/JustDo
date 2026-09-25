@@ -14,7 +14,7 @@ const {
   verifyFrozenOpenClawRuntime,
   verifyOpenClawPatchManifest,
   writeOpenClawPatchManifest,
-} = require('../../../scripts/verify-openclaw-runtime-patches.cjs') as {
+} = require('../../../scripts/openclaw/verify-openclaw-runtime-patches.cjs') as {
   PATCH_MANIFEST_FILENAME: string;
   buildOpenClawBuildRecipeFingerprint: (repoRoot: string, version: string) => string;
   buildOpenClawPatchSetFingerprint: (repoRoot: string, version: string) => string;
@@ -41,17 +41,17 @@ const {
   ) => { manifestPath: string };
 };
 const { verifyPackagedOpenClawRuntime } =
-  require('../../../scripts/electron-builder-hooks.cjs') as {
+  require('../../../scripts/packaging/electron-builder-hooks.cjs') as {
     verifyPackagedOpenClawRuntime: (context: {
       appOutDir: string;
       electronPlatformName: string;
     }) => Promise<void>;
   };
-const { compressTarArchive } = require('../../../scripts/pack-openclaw-tar.cjs') as {
+const { compressTarArchive } = require('../../../scripts/openclaw/pack-openclaw-tar.cjs') as {
   compressTarArchive: (sourceTar: string, outputArchive: string) => Promise<void>;
 };
 const { ensureOpenClawRuntimePatches, patchOpenClawRuntime } =
-  require('../../../scripts/patch-openclaw-runtime.cjs') as {
+  require('../../../scripts/openclaw/patch-openclaw-runtime.cjs') as {
     ensureOpenClawRuntimePatches: (
       runtimeRoot: string,
       options: { repoRoot: string },
@@ -135,7 +135,13 @@ function createFixture() {
     'prune-openclaw-runtime.cjs',
     'pack-openclaw-tar.cjs',
   ]) {
-    fs.writeFileSync(path.join(repoRoot, 'scripts', scriptName), `// ${scriptName}\n`);
+    const scriptDir = path.join(
+      repoRoot,
+      'scripts',
+      scriptName === 'electron-builder-hooks.cjs' ? 'packaging' : 'openclaw',
+    );
+    fs.mkdirSync(scriptDir, { recursive: true });
+    fs.writeFileSync(path.join(scriptDir, scriptName), `// ${scriptName}\n`);
   }
   fs.mkdirSync(path.join(repoRoot, 'src', 'main', 'openclaw', 'runtime'), { recursive: true });
   fs.writeFileSync(
@@ -194,7 +200,7 @@ afterEach(() => {
 describe('OpenClaw runtime patch manifest', () => {
   test('packaging relies on the target-version manifest instead of legacy patch strings', () => {
     const hookSource = fs.readFileSync(
-      path.resolve(__dirname, '../../..', 'scripts', 'electron-builder-hooks.cjs'),
+      path.resolve(__dirname, '../../..', 'scripts', 'packaging', 'electron-builder-hooks.cjs'),
       'utf8',
     );
 
@@ -205,7 +211,7 @@ describe('OpenClaw runtime patch manifest', () => {
 
   test('an mtime-fresh bundle is skipped only when its patch proof is current', () => {
     const bundleSource = fs.readFileSync(
-      path.resolve(__dirname, '../../..', 'scripts', 'bundle-openclaw-gateway.cjs'),
+      path.resolve(__dirname, '../../..', 'scripts', 'openclaw', 'bundle-openclaw-gateway.cjs'),
       'utf8',
     );
     const freshnessCheck = bundleSource.indexOf('bundleStat.mtimeMs >');
@@ -246,7 +252,7 @@ describe('OpenClaw runtime patch manifest', () => {
     const { repoRoot, runtimeRoot } = createFixture();
     patchOpenClawRuntime(runtimeRoot, { repoRoot, freshBundlePass: true });
     fs.appendFileSync(
-      path.join(repoRoot, 'scripts', 'bundle-openclaw-gateway.cjs'),
+      path.join(repoRoot, 'scripts', 'openclaw', 'bundle-openclaw-gateway.cjs'),
       '// changed\n',
     );
 
@@ -575,7 +581,7 @@ module.exports = { applyPatch, verifyPatch };
     writeOpenClawPatchManifest(runtimeRoot, { repoRoot });
 
     fs.appendFileSync(
-      path.join(repoRoot, 'scripts', 'bundle-openclaw-gateway.cjs'),
+      path.join(repoRoot, 'scripts', 'openclaw', 'bundle-openclaw-gateway.cjs'),
       '// changed\n',
     );
 
@@ -589,7 +595,7 @@ module.exports = { applyPatch, verifyPatch };
     writeOpenClawPatchManifest(runtimeRoot, { repoRoot });
 
     fs.appendFileSync(
-      path.join(repoRoot, 'scripts', 'patch-mxc-sandbox-plugin.cjs'),
+      path.join(repoRoot, 'scripts', 'openclaw', 'patch-mxc-sandbox-plugin.cjs'),
       '// changed\n',
     );
 

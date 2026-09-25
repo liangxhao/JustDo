@@ -61,7 +61,7 @@ Main 的 `BrowserIntervention` 按产品 sessionId 关闭新的 browser 调用�
 
 该保护覆盖当前任务通过应用内置 browser bridge 发出的动作，不承诺暂停操作系统、其他任务的独立网页、外部 Chrome 或任意网页自身脚本。任务/子代理仍在运行或状态未知时保持等待状态。并不保留模型执行栈，继续是基于当前页面的新一轮任务。
 
-已通过 Bridge/Renderer 行为测试，以及 `node scripts/browser-intervention-smoke.cjs`：独立 Electron profile、真实 guest、真实 IPC，验证取消收敛、人工阶段拒绝自动调用、原网页输入保留和重复继续拒绝。该测试不调用 Gateway 或模型，不等同于企业登录、真实模型端到端验收。
+已通过 Bridge/Renderer 行为测试，以及 `node scripts/test/browser-intervention-smoke.cjs`：独立 Electron profile、真实 guest、真实 IPC，验证取消收敛、人工阶段拒绝自动调用、原网页输入保留和重复继续拒绝。该测试不调用 Gateway 或模型，不等同于企业登录、真实模型端到端验收。
 
 构建、lint、Renderer/Main TypeScript 检查通过。标准 `npm test` 的本机 SQLite 模块为 Electron ABI 146，而 Node 24 需要 ABI 137；原文件被运行中的程序占用，直接重建会报 EBUSY。2026-09-26 使用相同版本 better-sqlite3 的独立 Node ABI 137 副本、Vitest 模块别名及 4 个 worker 验证全量用例：559 个测试文件通过、2 个跳过，5459 项通过、42 项跳过。工作区原生模块仍保持 Electron ABI 146。最终变更的 8 个相关文件共 158 项测试通过；真实 Electron smoke 通过。
 

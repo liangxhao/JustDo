@@ -5,7 +5,7 @@ import path from 'node:path';
 import { buildSync } from 'esbuild';
 import { describe, expect, test } from 'vitest';
 
-const { buildOpenClawPatchSetFingerprint } = require('../../../../scripts/verify-openclaw-runtime-patches.cjs') as {
+const { buildOpenClawPatchSetFingerprint } = require('../../../../scripts/openclaw/verify-openclaw-runtime-patches.cjs') as {
   buildOpenClawPatchSetFingerprint: (repoRoot: string, version: string) => string;
 };
 

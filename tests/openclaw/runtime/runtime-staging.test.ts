@@ -5,7 +5,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, test } from 'vitest';
 
 const { commitStagedRuntime, prepareStagedRuntimeForCommit } =
-  require('../../../scripts/openclaw-runtime-staging.cjs') as {
+  require('../../../scripts/openclaw/openclaw-runtime-staging.cjs') as {
     commitStagedRuntime: (
       stagedDir: string,
       targetDir: string,

@@ -17,11 +17,11 @@ import { create as createTar } from 'tar';
 import { afterEach, describe, expect, it } from 'vitest';
 
 const nsisScript = readFileSync(
-  path.resolve(__dirname, '../../scripts/nsis-installer.nsh'),
+  path.resolve(__dirname, '../../scripts/packaging/nsis-installer.nsh'),
   'utf8',
 ).replaceAll('\r\n', '\n');
 const builderHook = readFileSync(
-  path.resolve(__dirname, '../../scripts/electron-builder-hooks.cjs'),
+  path.resolve(__dirname, '../../scripts/packaging/electron-builder-hooks.cjs'),
   'utf8',
 );
 const executableBuilderConfig = readFileSync(
@@ -44,14 +44,14 @@ const builderConfig = JSON.parse(
   };
   win?: { extraResources?: Array<{ from?: string; to?: string }> };
 };
-const unpackScriptPath = path.resolve(__dirname, '../../scripts/unpack-cfmind.cjs');
+const unpackScriptPath = path.resolve(__dirname, '../../scripts/packaging/unpack-cfmind.cjs');
 const unpackScript = readFileSync(unpackScriptPath, 'utf8');
-const processHelperPath = path.resolve(__dirname, '../../scripts/nsis-process-helper.ps1');
+const processHelperPath = path.resolve(__dirname, '../../scripts/packaging/nsis-process-helper.ps1');
 const processHelper = readFileSync(processHelperPath, 'utf8').replaceAll('\r\n', '\n');
-const userDataHelperPath = path.resolve(__dirname, '../../scripts/nsis-user-data-helper.ps1');
+const userDataHelperPath = path.resolve(__dirname, '../../scripts/packaging/nsis-user-data-helper.ps1');
 const userDataHelper = readFileSync(userDataHelperPath, 'utf8').replaceAll('\r\n', '\n');
 const tempDirs: string[] = [];
-const { compressTarArchive } = require('../../scripts/pack-openclaw-tar.cjs') as {
+const { compressTarArchive } = require('../../scripts/openclaw/pack-openclaw-tar.cjs') as {
   compressTarArchive: (sourceTar: string, outputArchive: string) => Promise<void>;
 };
 
@@ -553,7 +553,7 @@ describe('Windows installer process handling', () => {
     expect(builderHook).toContain('totalEntries: tarEntries.length');
     expect(builderHook).toContain("process.env.ELECTRON_BUILDER_7Z_FILTER = 'BCJ'");
     expect(executableBuilderConfig).toContain("process.env.ELECTRON_BUILDER_7Z_FILTER = 'BCJ'");
-    expect(builderConfig.artifactBuildCompleted).toBe('./scripts/electron-builder-hooks.cjs');
+    expect(builderConfig.artifactBuildCompleted).toBe('./scripts/packaging/electron-builder-hooks.cjs');
   });
 
   it('does not retain old Git files or OpenClaw skills in an upgraded installation', async () => {

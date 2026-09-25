@@ -132,8 +132,8 @@ For an npm adapter:
 3. Add licenses and notices to `openclaw-extensions/acpx/THIRD_PARTY_NOTICES.md`.
 4. If it has platform packages or native executables, extend
    `resolveAcpxRequiredRelativePaths` in
-   `scripts/sync-openclaw-runtime-resources.cjs` and the artifact verification
-   in `scripts/electron-builder-hooks.cjs`.
+   `scripts/openclaw/sync-openclaw-runtime-resources.cjs` and the artifact verification
+   in `scripts/packaging/electron-builder-hooks.cjs`.
 5. Rebuild each supported runtime target. Do not copy a `node_modules` tree
    produced for one OS/architecture into another target.
 

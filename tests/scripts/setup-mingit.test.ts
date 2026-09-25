@@ -6,7 +6,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 const require = createRequire(import.meta.url);
-const { validatePreparedMinGit } = require('../../scripts/setup-mingit.js') as {
+const { validatePreparedMinGit } = require('../../scripts/runtime/setup-mingit.js') as {
   validatePreparedMinGit: (
     baseDir: string,
     options?: { platform?: NodeJS.Platform },

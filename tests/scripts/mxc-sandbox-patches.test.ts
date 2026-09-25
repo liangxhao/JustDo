@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-const pluginPatch = require('../../scripts/patch-mxc-sandbox-plugin.cjs') as {
+const pluginPatch = require('../../scripts/openclaw/patch-mxc-sandbox-plugin.cjs') as {
   MARKER: string;
   HOST_PREP_MARKER: string;
   transformMxcPlugin: (content: string, filePath?: string) => string;

@@ -2,7 +2,7 @@ import net from 'node:net';
 import { createRequire } from 'node:module';
 import { expect, test } from 'vitest';
 const require = createRequire(import.meta.url);
-const { findFreePort } = require('../../scripts/find-free-port.cjs');
+const { findFreePort } = require('../../scripts/electron/find-free-port.cjs');
 
 test('avoids a port occupied on IPv6 and returns a real ephemeral port', async () => {
   const server = net.createServer();

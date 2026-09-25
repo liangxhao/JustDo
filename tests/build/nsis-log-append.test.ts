@@ -20,7 +20,7 @@ it.runIf(process.platform === 'win32' && Boolean(compiler))(
     const root = mkdtempSync(path.join(os.tmpdir(), 'justdo-nsis-append-'));
     try {
       const installerScript = readFileSync(
-        path.resolve(__dirname, '../../scripts/nsis-installer.nsh'),
+        path.resolve(__dirname, '../../scripts/packaging/nsis-installer.nsh'),
         'utf8',
       );
       const appendMacro = installerScript.match(/!macro JustDoOpenAppendLog[^]*?!macroend/);
@@ -80,7 +80,7 @@ it.runIf(process.platform === 'win32' && Boolean(compiler))(
     const root = mkdtempSync(path.join(os.tmpdir(), 'justdo-nsis-session-end-'));
     try {
       const installerScript = readFileSync(
-        path.resolve(__dirname, '../../scripts/nsis-installer.nsh'),
+        path.resolve(__dirname, '../../scripts/packaging/nsis-installer.nsh'),
         'utf8',
       );
       const appendMacro = installerScript.match(/!macro JustDoOpenAppendLog[^]*?!macroend/);

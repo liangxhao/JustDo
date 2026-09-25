@@ -11,7 +11,7 @@ on:
       - 'resources/builtin-skills.json'
       - 'resources/openclaw-extension-prune.json'
       - 'src/main/openclaw/runtime/openclawGatewayBundleLauncher.cjs'
-      - 'scripts/**openclaw*'
+      - 'scripts/openclaw/**'
       - 'scripts/patches/**'
       - 'tests/openclaw/**'
   pull_request:
@@ -24,7 +24,7 @@ on:
       - 'resources/builtin-skills.json'
       - 'resources/openclaw-extension-prune.json'
       - 'src/main/openclaw/runtime/openclawGatewayBundleLauncher.cjs'
-      - 'scripts/**openclaw*'
+      - 'scripts/openclaw/**'
       - 'scripts/patches/**'
       - 'tests/openclaw/**'
 
@@ -121,16 +121,16 @@ jobs:
       - name: Check OpenClaw Scripts Exist
         run: |
           SCRIPTS=(
-            "scripts/install-openclaw-runtime.cjs"
-            "scripts/patch-openclaw-runtime.cjs"
-            "scripts/verify-openclaw-pristine-contracts.cjs"
-            "scripts/verify-openclaw-runtime-patches.cjs"
-            "scripts/bundle-openclaw-gateway.cjs"
-            "scripts/ensure-openclaw-plugins.cjs"
-            "scripts/sync-openclaw-runtime-resources.cjs"
-            "scripts/precompile-openclaw-extensions.cjs"
-            "scripts/prune-openclaw-runtime.cjs"
-            "scripts/sync-openclaw-runtime-current.cjs"
+            "scripts/openclaw/install-openclaw-runtime.cjs"
+            "scripts/openclaw/patch-openclaw-runtime.cjs"
+            "scripts/openclaw/verify-openclaw-pristine-contracts.cjs"
+            "scripts/openclaw/verify-openclaw-runtime-patches.cjs"
+            "scripts/openclaw/bundle-openclaw-gateway.cjs"
+            "scripts/openclaw/ensure-openclaw-plugins.cjs"
+            "scripts/openclaw/sync-openclaw-runtime-resources.cjs"
+            "scripts/openclaw/precompile-openclaw-extensions.cjs"
+            "scripts/openclaw/prune-openclaw-runtime.cjs"
+            "scripts/openclaw/sync-openclaw-runtime-current.cjs"
           )
 
           MISSING=0
@@ -166,13 +166,13 @@ jobs:
         env:
           OPENCLAW_FORCE_INSTALL: '1'
         run: |
-          node scripts/install-openclaw-runtime.cjs "${{ matrix.target }}"
-          node scripts/sync-openclaw-runtime-current.cjs "${{ matrix.target }}"
-          node scripts/bundle-openclaw-gateway.cjs
-          node scripts/verify-openclaw-runtime-patches.cjs
+          node scripts/openclaw/install-openclaw-runtime.cjs "${{ matrix.target }}"
+          node scripts/openclaw/sync-openclaw-runtime-current.cjs "${{ matrix.target }}"
+          node scripts/openclaw/bundle-openclaw-gateway.cjs
+          node scripts/openclaw/verify-openclaw-runtime-patches.cjs
           BEFORE=$(node -e "const c=require('crypto'),f=require('fs');process.stdout.write(c.createHash('sha256').update(f.readFileSync('vendor/openclaw-runtime/current/gateway-bundle.mjs')).digest('hex'))")
-          node scripts/patch-openclaw-runtime.cjs vendor/openclaw-runtime/current
-          node scripts/verify-openclaw-runtime-patches.cjs
+          node scripts/openclaw/patch-openclaw-runtime.cjs vendor/openclaw-runtime/current
+          node scripts/openclaw/verify-openclaw-runtime-patches.cjs
           AFTER=$(node -e "const c=require('crypto'),f=require('fs');process.stdout.write(c.createHash('sha256').update(f.readFileSync('vendor/openclaw-runtime/current/gateway-bundle.mjs')).digest('hex'))")
           test "$BEFORE" = "$AFTER" || { echo "❌ Second patch pass changed bundle bytes"; exit 1; }
 

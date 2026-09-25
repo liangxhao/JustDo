@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 const {
   readBuiltinModelDevelopmentAuthConfig,
   verifyPackagedBuiltinModelAuthConfig,
-} = require('../../scripts/electron-builder-hooks.cjs') as {
+} = require('../../scripts/packaging/electron-builder-hooks.cjs') as {
   readBuiltinModelDevelopmentAuthConfig: (projectDir: string) => {
     developmentAuthMode: string;
     developmentApiKey: string;

@@ -47,7 +47,7 @@ sequenceDiagram
 ```
 
 Windows launcher is a small native executable built from
-`scripts/multica-agent-launcher.cs`; it prevents Electron console/runtime behavior from corrupting
+`scripts/multica/multica-agent-launcher.cs`; it prevents Electron console/runtime behavior from corrupting
 stdout. macOS/Linux use an owned user-local shell launcher. Packaging builds the Windows launcher
 next to the packaged executable; development can generate one with `npm run multica:dev-agent`.
 

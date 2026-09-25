@@ -5,7 +5,7 @@ import path from 'node:path';
 import { describe, expect, test } from 'vitest';
 
 const { prepareBrowserExtension, verifyBrowserExtension } =
-  require('../../scripts/prepare-browser-extension.cjs') as {
+  require('../../scripts/browser/prepare-browser-extension.cjs') as {
     prepareBrowserExtension: (options: {
       outputDir?: string;
       productName?: string;

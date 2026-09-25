@@ -9,8 +9,8 @@ on:
       - 'electron-builder.config.cjs'
       - 'electron-builder.json'
       - 'package.json'
-      - 'scripts/nsis-installer.nsh'
-      - 'scripts/validate-product-metadata.cjs'
+      - 'scripts/packaging/nsis-installer.nsh'
+      - 'scripts/packaging/validate-product-metadata.cjs'
       - 'vite.config.ts'
 
 env:

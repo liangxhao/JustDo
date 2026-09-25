@@ -6,7 +6,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 const { pruneRuntimeExtensions, shouldPreserveExtensionLegalFiles } =
-  require('../../../scripts/prune-openclaw-runtime.cjs') as {
+  require('../../../scripts/openclaw/prune-openclaw-runtime.cjs') as {
     pruneRuntimeExtensions: (
       runtimeRoot: string,
       stats: { extensionDirsRemoved: number; bytesFreed: number },
@@ -63,7 +63,7 @@ describe('OpenClaw runtime extension pruning', () => {
     fs.writeFileSync(loader, 'module.exports = { load() {} };');
     fs.writeFileSync(binary, 'native fixture');
     execFileSync(process.execPath, [
-      path.resolve('scripts/prune-openclaw-runtime.cjs'),
+      path.resolve('scripts/openclaw/prune-openclaw-runtime.cjs'),
       runtimeRoot,
     ]);
     expect(fs.readFileSync(loader, 'utf8')).toBe('module.exports = { load() {} };');

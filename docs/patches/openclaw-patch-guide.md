@@ -99,7 +99,7 @@ Thinking/history、工具发现、原生 task queue/join、审批和 compaction 
 
 ## 8. 原子应用与回滚
 
-`scripts/patch-openclaw-runtime.cjs`：
+`scripts/openclaw/patch-openclaw-runtime.cjs`：
 
 1. 验证 runtime provenance；
 2. 列出按编号排序的 patch；
@@ -252,8 +252,8 @@ Patch 失败时保留完整错误中的 patch label、target file、anchor count
 
 | 阶段                  | 实现入口                                                         | 证明内容                                          |
 | --------------------- | ---------------------------------------------------------------- | ------------------------------------------------- |
-| Pristine contract     | `scripts/verify-openclaw-pristine-contracts.cjs`                 | provenance、上游已吸收能力、保留patch在原包未生效 |
-| Patch transaction     | `scripts/patch-openclaw-runtime.cjs`                             | 顺序、快照、apply/verify、失败回滚、manifest写入  |
+| Pristine contract     | `scripts/openclaw/verify-openclaw-pristine-contracts.cjs`                 | provenance、上游已吸收能力、保留patch在原包未生效 |
+| Patch transaction     | `scripts/openclaw/patch-openclaw-runtime.cjs`                             | 顺序、快照、apply/verify、失败回滚、manifest写入  |
 | Patch utilities       | `scripts/patches/v2026.9.2/_patch-utils.js`                      | 唯一anchor、write-if-changed、索引一致性          |
 | Runtime install/stage | `install-openclaw-runtime.cjs`、`openclaw-runtime-staging.cjs`   | 固定source到目标platform staging                  |
 | Gateway bundle        | `bundle-openclaw-gateway.cjs`、`openclaw-runtime-companions.cjs` | 固定 worker/module companion URL 并验证产物完整性 |

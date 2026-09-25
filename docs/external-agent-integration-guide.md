@@ -287,8 +287,8 @@ Skill，需要单独设计显式的、安全的适配流程，不能把“已打
    `package-lock.json`；
 3. 在 `openclaw-extensions/acpx/THIRD_PARTY_NOTICES.md` 中补充许可证和声明；
 4. 如果包包含原生文件或平台可选依赖，更新
-   `scripts/sync-openclaw-runtime-resources.cjs` 的目标依赖/必需文件检查；
-5. 更新 `scripts/electron-builder-hooks.cjs` 的目录与安装包归档校验，使缺少 adapter 时构建
+   `scripts/openclaw/sync-openclaw-runtime-resources.cjs` 的目标依赖/必需文件检查；
+5. 更新 `scripts/packaging/electron-builder-hooks.cjs` 的目录与安装包归档校验，使缺少 adapter 时构建
    直接失败；
 6. 为上述校验补充 `tests/scripts/` 下的测试。
 

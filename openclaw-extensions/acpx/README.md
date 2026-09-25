@@ -14,7 +14,7 @@ adapter processes, isolated adapter state, and permission mediation.
   does not mark the entire ACP backend unhealthy.
 - The product catalog selects which adapters are shipped. Adapter commands are
   build-time definitions and are never accepted from desktop settings.
-- All local extensions use `scripts/sync-openclaw-runtime-resources.cjs`.
+- All local extensions use `scripts/openclaw/sync-openclaw-runtime-resources.cjs`.
   Extensions with production dependencies are installed from their lockfile for
   the runtime target, then reused by later packaging passes through a verified
   target/fingerprint manifest. The first install allows 20 minutes by default;

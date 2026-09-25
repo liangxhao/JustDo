@@ -1,0 +1,354 @@
+'use strict';
+
+/**
+ * pack-openclaw-tar.cjs
+ *
+ * Packs directories into a single .tar file for Windows distribution.
+ * NSIS installs thousands of small files very slowly on NTFS; shipping one
+ * tar archive and extracting it post-install is dramatically faster.
+ *
+ * Used by electron-builder-hooks beforePack to pack:
+ *   - OpenClaw runtime (vendor/openclaw-runtime/current -> cfmind/)
+ *   - Custom skills already synchronized into the OpenClaw runtime
+ *   - Python runtime (resources/python-win -> python-win/)
+ *
+ * Usage:
+ *   Single dir:      node scripts/openclaw/pack-openclaw-tar.cjs [sourceDir] [outputTar]
+ *   Windows combined: node scripts/openclaw/pack-openclaw-tar.cjs --win-combined
+ *
+ * Uses npm `tar` package for reliable handling of long paths, Unicode, etc.
+ */
+
+const fs = require('fs');
+const path = require('path');
+const { pipeline } = require('stream/promises');
+const tar = require('tar');
+const { constants: zlibConstants, createZstdCompress } = require('zlib');
+
+const WINDOWS_RUNTIME_ZSTD_LEVEL = 10;
+
+// ── File/dir exclusion rules (same as electron-builder.json filters) ─────────
+
+const EXCLUDED_FILE_PATTERNS = [
+  /\.map$/i,
+  /\.d\.ts$/i,
+  /\.d\.cts$/i,
+  /\.d\.mts$/i,
+  /^readme(\.(md|txt|rst))?$/i,
+  /^changelog(\.(md|txt|rst))?$/i,
+  /^history(\.(md|txt|rst))?$/i,
+  /^license(\.(md|txt))?$/i,
+  /^licence(\.(md|txt))?$/i,
+  /^authors(\.(md|txt))?$/i,
+  /^contributors(\.(md|txt))?$/i,
+  /^\.eslintrc/i,
+  /^\.prettierrc/i,
+  /^\.editorconfig$/i,
+  /^\.npmignore$/i,
+  /^\.gitignore$/i,
+  /^\.gitattributes$/i,
+  /^tsconfig(\..+)?\.json$/i,
+  /^jest\.config/i,
+  /^vitest\.config/i,
+  /^\.babelrc/i,
+  /^babel\.config/i,
+  /\.test\.\w+$/i,
+  /\.spec\.\w+$/i,
+];
+
+const EXCLUDED_DIRS = new Set([
+  'test',
+  'tests',
+  '__tests__',
+  '__mocks__',
+  '.github',
+  'example',
+  'examples',
+  'coverage',
+  '.venv',
+  '.bin', // node_modules/.bin contains symlinks that break tar on cross-platform builds
+]);
+
+const EXCLUDED_ENVFILE = /^\.env(\..+)?$/i;
+
+function shouldExclude(entryPath) {
+  const basename = path.basename(entryPath);
+  const normalized = entryPath.replace(/\\/g, '/');
+  const isAcpxLegalMetadata =
+    normalized.includes('dist/extensions/acpx/') &&
+    /^(?:license|licence|notice|third[_-]party[_-]notices?|readme)(?:\..+)?$/i.test(basename);
+  if (isAcpxLegalMetadata) return false;
+
+  // Check dir exclusion
+  const segments = entryPath.split(/[/\\]/);
+  for (const seg of segments) {
+    if (EXCLUDED_DIRS.has(seg.toLowerCase())) return true;
+  }
+
+  // Check file exclusion
+  if (EXCLUDED_ENVFILE.test(basename)) return true;
+  if (EXCLUDED_FILE_PATTERNS.some(p => p.test(basename))) return true;
+
+  return false;
+}
+
+function isPythonDistributionLicense(entryPath) {
+  const normalized = entryPath.replace(/\\/g, '/');
+  const basename = path.basename(normalized);
+  const isLicenseName = /^(license|licence|copying|notice|authors)(\.(md|txt|rst))?$/i.test(
+    basename,
+  );
+  return (
+    (!normalized.includes('/') && isLicenseName) ||
+    /\.dist-info\/licenses\//i.test(normalized) ||
+    (/\.dist-info\//i.test(normalized) && isLicenseName)
+  );
+}
+
+function shouldExcludeForSource(entryPath, preservePythonLicenses) {
+  return preservePythonLicenses && isPythonDistributionLicense(entryPath)
+    ? false
+    : shouldExclude(entryPath);
+}
+
+function shouldExcludeFromSource(entryPath, excludedPaths = []) {
+  const normalized = entryPath.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/$/, '');
+  return excludedPaths.some(excludedPath => {
+    const excluded = excludedPath.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/$/, '');
+    return normalized === excluded || normalized.startsWith(`${excluded}/`);
+  });
+}
+
+// ── Pack functions ───────────────────────────────────────────────────────────
+
+/**
+ * Pack a single source directory into a tar file.
+ * The directory contents are stored under `prefix/` in the tar.
+ */
+function packSingleSource(sourceDir, outputTar, prefix) {
+  const entries = [];
+  let skipped = 0;
+
+  // Collect entries, applying exclusion filter
+  function walk(dir, relPrefix) {
+    const items = fs.readdirSync(dir, { withFileTypes: true });
+    items.sort((a, b) => a.name.localeCompare(b.name));
+
+    for (const item of items) {
+      if (item.isSymbolicLink()) continue;
+      const fullPath = path.join(dir, item.name);
+      const relPath = relPrefix ? `${relPrefix}/${item.name}` : item.name;
+
+      if (item.isDirectory()) {
+        if (EXCLUDED_DIRS.has(item.name.toLowerCase())) {
+          skipped++;
+          continue;
+        }
+        walk(fullPath, relPath);
+      } else if (item.isFile()) {
+        if (shouldExclude(item.name)) {
+          skipped++;
+          continue;
+        }
+        entries.push(relPath);
+      }
+    }
+  }
+
+  walk(sourceDir, '');
+
+  // Use npm tar to create the archive
+  tar.create(
+    {
+      file: outputTar,
+      cwd: sourceDir,
+      prefix: prefix || '',
+      sync: true,
+      // Follow symlinks instead of storing them (avoids Windows issues)
+      follow: true,
+      filter: filePath => !shouldExclude(filePath),
+    },
+    // Pack all top-level entries (tar will recurse)
+    fs.readdirSync(sourceDir).filter(name => {
+      if (EXCLUDED_DIRS.has(name.toLowerCase())) return false;
+      return true;
+    }),
+  );
+
+  return { totalFiles: entries.length, skipped };
+}
+
+/**
+ * Pack multiple source directories into a single tar file.
+ * Each source gets its own prefix (root directory name) in the tar.
+ */
+function packMultipleSources(sources, outputTar) {
+  let totalFiles = 0;
+  let totalSkipped = 0;
+
+  // Pack first source (creates the tar)
+  let first = true;
+  for (const { dir, prefix, exclude = [], preservePythonLicenses = false } of sources) {
+    if (!fs.existsSync(dir)) {
+      console.log(`[pack-openclaw-tar]   Skipping ${prefix}: ${dir} not found`);
+      continue;
+    }
+
+    console.log(`[pack-openclaw-tar]   Adding ${prefix} ← ${dir}`);
+
+    const entries = [];
+    function countFiles(d, relativeDir = '') {
+      for (const item of fs.readdirSync(d, { withFileTypes: true })) {
+        if (item.isSymbolicLink()) continue;
+        const fullPath = path.join(d, item.name);
+        const relativePath = relativeDir ? `${relativeDir}/${item.name}` : item.name;
+        if (shouldExcludeFromSource(relativePath, exclude)) {
+          totalSkipped++;
+          continue;
+        }
+        if (item.isDirectory()) {
+          if (!EXCLUDED_DIRS.has(item.name.toLowerCase())) countFiles(fullPath, relativePath);
+        } else if (item.isFile()) {
+          if (!shouldExcludeForSource(relativePath, preservePythonLicenses))
+            entries.push(item.name);
+          else totalSkipped++;
+        }
+      }
+    }
+    countFiles(dir);
+    totalFiles += entries.length;
+
+    const opts = {
+      file: outputTar,
+      cwd: dir,
+      prefix,
+      sync: true,
+      follow: true,
+      filter: filePath =>
+        !shouldExcludeForSource(filePath, preservePythonLicenses) &&
+        !shouldExcludeFromSource(filePath, exclude),
+    };
+
+    if (first) {
+      // Create new tar
+      tar.create(
+        opts,
+        fs
+          .readdirSync(dir)
+          .filter(n => !EXCLUDED_DIRS.has(n.toLowerCase()) && !shouldExcludeFromSource(n, exclude)),
+      );
+      first = false;
+    } else {
+      // Append to existing tar (replace creates new, we need to use a different approach)
+      // npm tar doesn't support append directly, so we use replace with gzip:false
+      tar.replace(
+        opts,
+        fs
+          .readdirSync(dir)
+          .filter(n => !EXCLUDED_DIRS.has(n.toLowerCase()) && !shouldExcludeFromSource(n, exclude)),
+      );
+    }
+  }
+
+  return { totalFiles, skipped: totalSkipped };
+}
+
+/**
+ * Compress the staging tar before electron-builder embeds it. Zstandard keeps
+ * the archive small while remaining fast to decode into Windows' native tar
+ * process during installation. NSIS stores this extraResource without trying
+ * to recompress it.
+ */
+async function compressTarArchive(sourceTar, outputArchive) {
+  await pipeline(
+    fs.createReadStream(sourceTar),
+    createZstdCompress({
+      params: {
+        [zlibConstants.ZSTD_c_compressionLevel]: WINDOWS_RUNTIME_ZSTD_LEVEL,
+      },
+    }),
+    fs.createWriteStream(outputArchive),
+  );
+}
+
+// ── Main ────────────────────────────────────────────────────────────────────
+
+function main() {
+  const projectRoot = path.join(__dirname, '../..');
+  const isWinCombined = process.argv.includes('--win-combined');
+
+  if (isWinCombined) {
+    const outputTar = path.join(projectRoot, 'build-tar', 'win-resources.tar');
+    fs.mkdirSync(path.dirname(outputTar), { recursive: true });
+
+    // Remove old tar if exists
+    if (fs.existsSync(outputTar)) fs.unlinkSync(outputTar);
+
+    const sources = [
+      {
+        dir: path.join(projectRoot, 'vendor', 'openclaw-runtime', 'current'),
+        prefix: 'cfmind',
+        exclude: ['gateway.asar'],
+      },
+      {
+        dir: path.join(projectRoot, 'resources', 'python-win'),
+        prefix: 'python-win',
+        preservePythonLicenses: true,
+      },
+      {
+        dir: path.join(projectRoot, 'resources', 'local-tts'),
+        prefix: 'local-tts',
+        preservePythonLicenses: true,
+        exclude: [
+          'win-x64/kokoro-int8-multi-lang-v1_1',
+          'win-x64/sherpa-onnx-whisper-tiny',
+          'win-x64/KOKORO-LICENSE.txt',
+          'win-x64/WHISPER-LICENSE.txt',
+          'win-x64/.justdo-local-tts-version',
+        ],
+      },
+    ];
+
+    console.log(`[pack-openclaw-tar] Packing combined Windows tar: ${outputTar}`);
+    const t0 = Date.now();
+    const { totalFiles, skipped } = packMultipleSources(sources, outputTar);
+    const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+    const sizeMB = (fs.statSync(outputTar).size / (1024 * 1024)).toFixed(1);
+    console.log(
+      `[pack-openclaw-tar] Done in ${elapsed}s: ${totalFiles} files, ${skipped} skipped, ${sizeMB} MB`,
+    );
+    return;
+  }
+
+  // Single directory mode
+  const sourceDir =
+    process.argv[2] || path.join(projectRoot, 'vendor', 'openclaw-runtime', 'current');
+  const outputTar =
+    process.argv[3] || path.join(projectRoot, 'vendor', 'openclaw-runtime', 'cfmind.tar');
+
+  if (!fs.existsSync(sourceDir)) {
+    console.error(`[pack-openclaw-tar] Source directory not found: ${sourceDir}`);
+    process.exit(1);
+  }
+
+  // Remove old tar if exists
+  if (fs.existsSync(outputTar)) fs.unlinkSync(outputTar);
+
+  console.log(`[pack-openclaw-tar] Packing: ${sourceDir}`);
+  console.log(`[pack-openclaw-tar] Output:  ${outputTar}`);
+
+  const t0 = Date.now();
+  const basename = path.basename(outputTar, '.tar');
+  const { totalFiles, skipped } = packSingleSource(sourceDir, outputTar, basename);
+  const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+  const sizeMB = (fs.statSync(outputTar).size / (1024 * 1024)).toFixed(1);
+  console.log(
+    `[pack-openclaw-tar] Done in ${elapsed}s: ${totalFiles} files, ${skipped} skipped, ${sizeMB} MB`,
+  );
+}
+
+if (require.main === module) {
+  main();
+}
+
+module.exports = { compressTarArchive, packSingleSource, packMultipleSources };

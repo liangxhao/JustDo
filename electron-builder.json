@@ -3,10 +3,10 @@
     "output": "release"
   },
   "electronLanguages": ["en-US", "zh-CN"],
-  "beforePack": "./scripts/electron-builder-hooks.cjs",
-  "afterPack": "./scripts/electron-builder-hooks.cjs",
-  "artifactBuildCompleted": "./scripts/electron-builder-hooks.cjs",
-  "afterAllArtifactBuild": "./scripts/electron-builder-hooks.cjs",
+  "beforePack": "./scripts/packaging/electron-builder-hooks.cjs",
+  "afterPack": "./scripts/packaging/electron-builder-hooks.cjs",
+  "artifactBuildCompleted": "./scripts/packaging/electron-builder-hooks.cjs",
+  "afterAllArtifactBuild": "./scripts/packaging/electron-builder-hooks.cjs",
   "files": [
     "package.json",
     {
@@ -105,7 +105,7 @@
   "dmg": {
     "sign": false
   },
-  "afterSign": "scripts/notarize.js",
+  "afterSign": "scripts/packaging/notarize.js",
   "win": {
     "target": ["nsis"],
     "icon": "resources/icons/win/icon.ico",
@@ -125,7 +125,7 @@
         "to": "win-resources-metadata.json"
       },
       {
-        "from": "scripts/unpack-cfmind.cjs",
+        "from": "scripts/packaging/unpack-cfmind.cjs",
         "to": "unpack-cfmind.cjs"
       }
     ]
@@ -172,7 +172,7 @@
     "allowToChangeInstallationDirectory": true,
     "runAfterFinish": true,
     "deleteAppDataOnUninstall": false,
-    "include": "scripts/nsis-installer.nsh",
+    "include": "scripts/packaging/nsis-installer.nsh",
     "differentialPackage": false,
     "preCompressedFileExtensions": [".zst"]
   },

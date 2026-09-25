@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
-const { verifyAcpxArtifactEntryPaths } = require('../../scripts/electron-builder-hooks.cjs') as {
+const { verifyAcpxArtifactEntryPaths } = require('../../scripts/packaging/electron-builder-hooks.cjs') as {
   verifyAcpxArtifactEntryPaths: (
     entryPaths: Set<string>,
     prefix: string,

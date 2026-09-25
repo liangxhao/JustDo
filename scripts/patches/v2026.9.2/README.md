@@ -103,7 +103,7 @@ product no longer needs its behavior or replaces it outside the runtime; those d
 documented by source review rather than inferred from verifier failures.
 
 The installer also applies one audited packaging-only transform from
-`scripts/openclaw-facade-runtime-patch.cjs`. It replaces the v2026.9.2 facade activation
+`scripts/openclaw/openclaw-facade-runtime-patch.cjs`. It replaces the v2026.9.2 facade activation
 source-loader fallback with a static dist import so esbuild includes that runtime in the packaged
 Gateway. It has an exact-version marker plus portable and built-runtime shape tests, and is not
 counted as a product capability patch because it does not change the OpenClaw API or agent behavior.

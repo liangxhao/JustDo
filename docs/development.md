@@ -21,7 +21,7 @@ npm run electron:dev:openclaw
 | `npm run electron:dev:openclaw` | 先准备 host OpenClaw runtime，再启动开发应用                  |
 | `npm run electron:dev:isolated` | 使用隔离开发配置；host runtime 仍需先准备                     |
 
-默认 Vite 端口是 43127。隔离预览的目录及启动参数由 `scripts/run-isolated-dev.cjs` 管理；不要把真实用户数据库、凭据或原生日志复制进仓库。
+默认 Vite 端口是 43127。隔离预览的目录及启动参数由 `scripts/electron/run-isolated-dev.cjs` 管理；不要把真实用户数据库、凭据或原生日志复制进仓库。
 
 ## 2. 更新运行时
 

@@ -11,8 +11,8 @@ const baseConfig = require('./electron-builder.json');
 const packageJson = require('./package.json');
 const {
   resolveBuilderProductMetadata,
-} = require('./scripts/electron-builder-product-metadata.cjs');
-const { readWindowsUpdateConfig } = require('./scripts/windows-update-config.cjs');
+} = require('./scripts/packaging/electron-builder-product-metadata.cjs');
+const { readWindowsUpdateConfig } = require('./scripts/packaging/windows-update-config.cjs');
 
 const { appId, productName } = resolveBuilderProductMetadata(packageJson.productName);
 const windowsUpdateConfig = readWindowsUpdateConfig();

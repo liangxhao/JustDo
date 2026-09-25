@@ -2,7 +2,7 @@ import path from 'node:path';
 
 import { describe, expect, test, vi } from 'vitest';
 
-const { DEV_SHUTDOWN_SWITCH, requestActiveRuntimeDevShutdown } = require('../../../scripts/openclaw-runtime-dev-shutdown.cjs') as {
+const { DEV_SHUTDOWN_SWITCH, requestActiveRuntimeDevShutdown } = require('../../../scripts/openclaw/openclaw-runtime-dev-shutdown.cjs') as {
   DEV_SHUTDOWN_SWITCH: string;
   requestActiveRuntimeDevShutdown: (
     repoRoot: string,

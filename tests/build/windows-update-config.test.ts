@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
-const { readWindowsUpdateConfig } = require('../../scripts/windows-update-config.cjs') as {
+const { readWindowsUpdateConfig } = require('../../scripts/packaging/windows-update-config.cjs') as {
   readWindowsUpdateConfig: () => { feedUrl: string };
 };
 

@@ -8,7 +8,7 @@ const {
   CONTRACT,
   patchFacadeRuntime,
   verifyFacadeRuntime,
-} = require('../../../scripts/openclaw-facade-runtime-patch.cjs') as {
+} = require('../../../scripts/openclaw/openclaw-facade-runtime-patch.cjs') as {
   CONTRACT: string;
   patchFacadeRuntime: (runtimeDir: string) => string[];
   verifyFacadeRuntime: (runtimeDir: string) => string;

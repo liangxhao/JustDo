@@ -73,7 +73,7 @@ describe('Windows NSIS template compilation', () => {
             '!define MULTIUSER_INSTALLMODE_ALLOW_ELEVATION',
             '!define allowToChangeInstallationDirectory',
             generator.build(),
-            `!include "${path.join(repoRoot, 'scripts/nsis-installer.nsh')}"`,
+            `!include "${path.join(repoRoot, 'scripts/packaging/nsis-installer.nsh')}"`,
             readFileSync(path.join(templates, 'installer.nsi'), 'utf8'),
           ].join('\n');
           const result = spawnSync(makensis, ['/WX', '/INPUTCHARSET', 'UTF8', '-'], {

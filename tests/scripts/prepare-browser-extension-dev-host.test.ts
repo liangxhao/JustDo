@@ -9,7 +9,7 @@ const {
   buildDevNativeHostPlan,
   compileBrowserExtensionNativeHost,
   prepareBrowserExtensionDevHost,
-} = require('../../scripts/prepare-browser-extension-dev-host.cjs') as {
+} = require('../../scripts/browser/prepare-browser-extension-dev-host.cjs') as {
   buildDevNativeHostConfig: (
     plan: { manifestPath: string; repoRoot: string },
     electronPath: string,
@@ -41,10 +41,10 @@ describe('browser extension development native host', () => {
       JSON.stringify({ productName: 'Acme' }),
       'utf8',
     );
-    fs.mkdirSync(path.join(repoRoot, 'scripts'));
+    fs.mkdirSync(path.join(repoRoot, 'scripts', 'browser'), { recursive: true });
     fs.copyFileSync(
-      path.join(projectRoot, 'scripts', 'browser-extension-native-host.cs'),
-      path.join(repoRoot, 'scripts', 'browser-extension-native-host.cs'),
+      path.join(projectRoot, 'scripts', 'browser', 'browser-extension-native-host.cs'),
+      path.join(repoRoot, 'scripts', 'browser', 'browser-extension-native-host.cs'),
     );
 
     try {

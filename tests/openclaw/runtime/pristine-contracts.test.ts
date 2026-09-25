@@ -5,7 +5,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, test } from 'vitest';
 
 const { verifyPristineOpenClawContracts, verifyNativeSessionStopContracts } =
-  require('../../../scripts/verify-openclaw-pristine-contracts.cjs') as {
+  require('../../../scripts/openclaw/verify-openclaw-pristine-contracts.cjs') as {
     verifyNativeSessionStopContracts: (runtimeDir: string) => string[];
     verifyPristineOpenClawContracts: (
       runtimeDir: string,

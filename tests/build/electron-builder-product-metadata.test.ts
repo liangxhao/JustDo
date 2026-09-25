@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 const require = createRequire(import.meta.url);
 const {
   resolveBuilderProductMetadata,
-} = require('../../scripts/electron-builder-product-metadata.cjs');
+} = require('../../scripts/packaging/electron-builder-product-metadata.cjs');
 
 describe('electron-builder product metadata', () => {
   it.each([

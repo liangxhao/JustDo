@@ -17,7 +17,7 @@ vendor/openclaw-plugins/
 build-tar/
 build-speech-models/
 
-# Bundled MinGit for Windows builds (downloaded via scripts/setup-mingit.js)
+# Bundled MinGit for Windows builds (downloaded via scripts/runtime/setup-mingit.js)
 resources/mingit/
 resources/MinGit-*.zip
 # Ignore stale archives left by builds before the MinGit migration.

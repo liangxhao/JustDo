@@ -19,7 +19,7 @@ export const acquireOpenClawRuntimeDevLease = ({
   if (isPackaged) return () => {};
 
   const repoRoot = path.resolve(appPath);
-  const modulePath = path.join(repoRoot, 'scripts', 'openclaw-runtime-dev-lease.cjs');
+  const modulePath = path.join(repoRoot, 'scripts', 'openclaw', 'openclaw-runtime-dev-lease.cjs');
   const leaseModule = loadLeaseModule(modulePath);
   return leaseModule.acquireRuntimeDevLease(leaseModule.resolveRuntimeDevLeaseDir(repoRoot));
 };
