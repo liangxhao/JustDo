@@ -60,6 +60,23 @@ All patches are temporary product integration seams, with their removal conditio
 scope and safety constraints in the module headers. No upstream issue number is
 claimed where no issue has been filed. Re-audit each capability on the next upgrade.
 
+## MXC plugin build patch
+
+`scripts/openclaw/patch-mxc-sandbox-plugin.cjs` separately patches the locked
+`@openclaw/mxc-sandbox@2026.9.6` plugin. Alongside external read-only skill paths
+and capability-SID host preparation detection, it fixes native configuration for
+`@microsoft/mxc-sdk@0.8.0`: `filesystem.clearPolicyOnExit` is a SandboxPolicy field,
+not a native ContainerConfig field. Remove it and emit
+`lifecycle: { destroyOnExit: true, preservePolicy: false }`. Filesystem permission
+lists remain unchanged. This prevents native configuration parsing from failing
+before sandbox execution while preserving policy cleanup on exit.
+
+Remove this workaround when the locked upstream plugin emits valid native lifecycle
+configuration. Verification requires the complete current patch; older or partial
+plugin patches fail and must not be upgraded in place. Rebuild from pristine
+packages with `OPENCLAW_FORCE_INSTALL=1` and refresh the plugin cache with
+`OPENCLAW_FORCE_PLUGIN_INSTALL=1` when running `npm run openclaw:runtime:host`.
+
 Removing 017 or 018 requires a rebuild from the locked pristine artifact. Do not undo
 injections in an existing runtime or rewrite its proof manifest. See
 `docs/features/openclaw-2026.9.6-message-sync.md` for the native recovery audit.

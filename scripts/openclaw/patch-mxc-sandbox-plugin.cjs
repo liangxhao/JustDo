@@ -15,6 +15,13 @@ const nativeBinaries = require('../../src/shared/security/mxcNativeBinaries.json
 const SUPPORTED_VERSION = nativeBinaries.pluginVersion;
 const MARKER = 'JUSTDO_MXC_EXTERNAL_READONLY_SKILLS_V2026_9_6';
 const HOST_PREP_MARKER = 'JUSTDO_MXC_CAPABILITY_SID_HOST_PREP_V2026_9_6';
+const LIFECYCLE_MARKER = 'JUSTDO_MXC_NATIVE_POLICY_LIFECYCLE_V2026_9_6';
+// clearPolicyOnExit belongs to SandboxPolicy, not native ContainerConfig.
+// Remove when upstream emits lifecycle.preservePolicy for SDK 0.8.0+.
+const LIFECYCLE_ORIGINAL = 'lifecycle: { destroyOnExit: true },';
+const LIFECYCLE_REPLACEMENT = `lifecycle: { destroyOnExit: true, preservePolicy: false }, /*${LIFECYCLE_MARKER}*/`;
+const FILESYSTEM_ORIGINAL = '\t\treadwritePaths,\n\t\tclearPolicyOnExit: true';
+const FILESYSTEM_REPLACEMENT = '\t\treadwritePaths';
 const ORIGINAL = `\treturn [
 \t\t{
 \t\t\thostPath: path.join(params.agentWorkspaceDir, "skills"),
@@ -60,11 +67,17 @@ function transformMxcPlugin(content, filePath = 'dist/index.js') {
   const markerCount = content.split(MARKER).length - 1;
   const hostPrepMarkerCount = content.split(HOST_PREP_MARKER).length - 1;
   const skillsPatched = markerCount === 1 && content.includes(REPLACEMENT);
-  const hostPrepPatched =
-    hostPrepMarkerCount === 1 && content.includes(HOST_PREP_REPLACEMENT);
-  if (skillsPatched && hostPrepPatched) return content;
-  if ((markerCount !== 0 && !skillsPatched) || (hostPrepMarkerCount !== 0 && !hostPrepPatched)) {
-    throw new Error(`${filePath}: partial or historical MXC skill path patch detected.`);
+  const hostPrepPatched = hostPrepMarkerCount === 1 && content.includes(HOST_PREP_REPLACEMENT);
+  const lifecycleMarkerCount = content.split(LIFECYCLE_MARKER).length - 1;
+  const lifecyclePatched =
+    lifecycleMarkerCount === 1 &&
+    content.includes(LIFECYCLE_REPLACEMENT) &&
+    !content.includes('clearPolicyOnExit');
+  if (skillsPatched && hostPrepPatched && lifecyclePatched) return content;
+  if (markerCount !== 0 || hostPrepMarkerCount !== 0 || lifecycleMarkerCount !== 0) {
+    throw new Error(
+      `${filePath}: partial or historical MXC patch detected; rebuild from pristine packages.`,
+    );
   }
   let updated = content;
   if (!skillsPatched) {
@@ -82,6 +95,19 @@ function transformMxcPlugin(content, filePath = 'dist/index.js') {
       );
     }
     updated = updated.replace(HOST_PREP_ORIGINAL, HOST_PREP_REPLACEMENT);
+  }
+  for (const [original, replacement] of [
+    [LIFECYCLE_ORIGINAL, LIFECYCLE_REPLACEMENT],
+    [FILESYSTEM_ORIGINAL, FILESYSTEM_REPLACEMENT],
+  ]) {
+    const count = updated.split(original).length - 1;
+    if (count !== 1) {
+      throw new Error(`${filePath}: expected one MXC native policy anchor, found ${count}.`);
+    }
+    updated = updated.replace(original, replacement);
+  }
+  if (updated.includes('clearPolicyOnExit')) {
+    throw new Error(`${filePath}: unexpected MXC clearPolicyOnExit field remains.`);
   }
   return updated;
 }
@@ -101,9 +127,14 @@ function verifyMxcSandboxPlugin(pluginDirectory) {
     !content.includes(REPLACEMENT) ||
     content.split(MARKER).length - 1 !== 1 ||
     !content.includes(HOST_PREP_REPLACEMENT) ||
-    content.split(HOST_PREP_MARKER).length - 1 !== 1
+    content.split(HOST_PREP_MARKER).length - 1 !== 1 ||
+    !content.includes(LIFECYCLE_REPLACEMENT) ||
+    content.split(LIFECYCLE_MARKER).length - 1 !== 1 ||
+    content.includes('clearPolicyOnExit')
   ) {
-    throw new Error(`${entryPath}: JustDo MXC external skill path patch is missing.`);
+    throw new Error(
+      `${entryPath}: JustDo MXC patch is missing or incomplete; rebuild from pristine packages.`,
+    );
   }
 }
 
@@ -180,5 +211,13 @@ module.exports = {
   verifyMxcNativeBinaries,
   transformMxcPlugin,
   verifyMxcSandboxPlugin,
-  __testing: { HOST_PREP_ORIGINAL, HOST_PREP_REPLACEMENT, ORIGINAL, REPLACEMENT },
+  __testing: {
+    HOST_PREP_ORIGINAL,
+    HOST_PREP_REPLACEMENT,
+    ORIGINAL,
+    REPLACEMENT,
+    LIFECYCLE_ORIGINAL,
+    LIFECYCLE_REPLACEMENT,
+    FILESYSTEM_ORIGINAL,
+  },
 };
