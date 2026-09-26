@@ -184,7 +184,7 @@
     "pdfjs-dist": "^6.3.289",
     "postcss": "^8.5.28",
     "prettier": "^3.8.1",
-    "proxy-agent": "^6.5.0",
+    "proxy-agent": "^8.0.2",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-redux": "^9.1.0",
