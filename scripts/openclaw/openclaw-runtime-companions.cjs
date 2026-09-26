@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 const RUNTIME_COMPANION_CHECKS = [
+  { marker: 'legacy-config-binding-repair.runtime', path: 'dist/legacy-config-binding-repair.runtime.js' },
   {
     marker: 'node-host-launcher.mjs',
     path: 'node-host-launcher.mjs',
@@ -75,6 +76,7 @@ const RUNTIME_BUNDLED_ASSET_COPIES = [
 ];
 
 const STALE_RUNTIME_WORKER_URL_PATTERNS = [
+  /new URL\([^\n;]*["']\.\/legacy-config-binding-repair\.runtime\.js["'],\s*import\.meta\.url\)/,
   /new URL\(["']\.\.\/node-host-launcher\.mjs["'],\s*import\.meta\.url\)/,
   /resolveRuntimeWorkerUrl\(\s*\{\s*currentModuleUrl:\s*import\.meta\.url,/,
   /resolveDatabaseVerifyWorkerUrl\(\s*currentModuleUrl\s*=\s*import\.meta\.url\s*\)/,
@@ -83,6 +85,9 @@ const STALE_RUNTIME_WORKER_URL_PATTERNS = [
 
 function rewriteRuntimeWorkerImportMetaUrls(source, replacement) {
   return source
+    .replace(/new URL\(([^\n;]*["']\.\/legacy-config-binding-repair\.runtime\.js["']),\s*import\.meta\.url\)/g,
+      (_match, args) => `new URL(${args}, ${replacement})`,
+    )
     .replace(/new URL\((["'])\.\.\/node-host-launcher\.mjs\1,\s*import\.meta\.url\)/g,
       match => match.replace('import.meta.url', replacement),
     )

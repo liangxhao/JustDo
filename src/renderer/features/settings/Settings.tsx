@@ -116,7 +116,7 @@ import {
 import { createSettingsPreviewRestore } from '@/features/settings/settingsPreviewRestore';
 import VoiceSettingsTab from '@/features/settings/speech/VoiceSettingsTab';
 import AppUpdateSection from '@/features/settings/updates/AppUpdateSection';
-import UsageStatsTab from '@/features/settings/usage/UsageStatsTab';
+import UsageAndStorageSettings from '@/features/settings/usage/UsageAndStorageSettings';
 import { configService } from '@/services/config';
 import { i18nService, LanguageType } from '@/services/i18n';
 import { themeService } from '@/services/theme';
@@ -1681,7 +1681,7 @@ const Settings: React.FC<SettingsProps> = ({
     },
     {
       key: 'usage',
-      label: i18nService.t('usageStats'),
+      label: i18nService.t('usageAndStorage'),
       icon: <ChartBarIcon className="h-5 w-5" />,
     },
     {
@@ -1871,7 +1871,7 @@ const Settings: React.FC<SettingsProps> = ({
         );
 
       case 'usage':
-        return <UsageStatsTab />;
+        return <UsageAndStorageSettings />;
 
       case 'runtime':
         return (

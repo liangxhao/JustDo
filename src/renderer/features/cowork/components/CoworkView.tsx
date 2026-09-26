@@ -472,6 +472,13 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const promptInputRef = useRef<CoworkPromptInputRef>(null);
   // Ref for JustDoChatWrapper (to call sendMessage)
   const chatWrapperRef = useRef<JustDoChatWrapperRef>(null);
+  const [historyReadiness, setHistoryReadiness] = useState<{
+    sessionKey: string;
+    ready: boolean;
+  } | null>(null);
+  const handleHistoryReadyChange = useCallback((sessionKey: string, ready: boolean) => {
+    setHistoryReadiness({ sessionKey, ready });
+  }, []);
   const pendingMessageSubmissionsRef = useRef(new Map<string, SessionSubmission>());
   // Buffer for pending user message when JustDoChatWrapper isn't mounted yet
   const pendingPromptRef = useRef<string | null>(null);
@@ -2540,6 +2547,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             {/* Messages */}
             <JustDoChatWrapper
               ref={chatWrapperRef}
+              onHistoryReadyChange={handleHistoryReadyChange}
               className="flex-1 min-h-0"
               assistantName={assistantName}
               workingDirectory={currentSessionFolderPath}
@@ -2597,6 +2605,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                         disabled={
                           !isEngineReady ||
                           isQuestionInputBlocked ||
+                          !historyReadiness?.ready ||
+                          historyReadiness.sessionKey !== currentGatewaySessionKey ||
                           currentSessionAgent?.enabled === false
                         }
                         placeholder={i18nService.t(

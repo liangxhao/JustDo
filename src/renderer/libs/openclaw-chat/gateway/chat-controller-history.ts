@@ -866,7 +866,7 @@ export async function loadHistory(
     });
     return false;
   }
-  const pagingGeneration = ++this.historyPagingGeneration;
+  let pagingGeneration = ++this.historyPagingGeneration;
   const loadSeq = ++this.historyLoadSeq;
   let transcriptHistoryGeneration = this.state.transcript.historyGeneration;
   let requestedSessionId = this.state.transcript.sessionId;
@@ -1029,7 +1029,7 @@ export async function loadHistory(
     // Commit owns pagination from this point. Any older-page request that
     // started while the tail snapshot was being hydrated must not mutate the
     // new cursor or mix a prior branch into it.
-    this.historyPagingGeneration += 1;
+    pagingGeneration = ++this.historyPagingGeneration;
     // Hydration awaits can span a run starting or finishing. Decide at commit
     // time, and retain a running turn even during suspended reconciliation:
     // that path still needs it to recover the remote run's lifecycle.
@@ -1251,11 +1251,21 @@ export async function loadHistory(
       this.deferredHistoryReloadAttempts.delete(sessionKey);
     }
     this.hydrateCurrentSessionImages(messages, sessionKey);
+    if (this.state.historyReadFailed) this.state.lastError = null;
+    this.state.historyReadFailed = false;
+    if (!this.expectInitialHistory) this.state.initialHistoryReady = true;
     this.notify();
     return true;
   } catch (err) {
-    if (this.state.sessionKey !== sessionKey) return false;
+    if (
+      this.state.sessionKey !== sessionKey ||
+      this.state.client !== client ||
+      this.historyPagingGeneration !== pagingGeneration ||
+      this.state.transcript.historyGeneration !== transcriptHistoryGeneration
+    )
+      return false;
     this.state.chatLoading = false;
+    this.state.historyReadFailed = true;
     this.state.lastError = (err as Error).message;
     console.error('[ChatCtrl] loadHistory FAILED:', (err as Error).message);
     debugLog('[ChatCtrl] loadHistory FAILED', {

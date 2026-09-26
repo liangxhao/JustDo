@@ -37,6 +37,7 @@ import {
   type SideChatStreamUpdate,
 } from '@/libs/openclaw-chat/gateway/chat-controller';
 import type { UserMessageHistoryAction } from '@/libs/openclaw-chat/types';
+import { i18nService } from '@/services/i18n';
 
 const DEBUG_CHAT_WRAPPER =
   typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEBUG_CHAT_WRAPPER === 'true';
@@ -60,6 +61,7 @@ interface JustDoChatWrapperProps {
   onActivityChange?: (progress: GoalRunProgress | null) => void;
   onContextUsageChange?: (usage: ChatContextUsageSnapshot | null) => void;
   onProgressCardChange?: (state: ProgressCardViewState | null) => void;
+  onHistoryReadyChange?: (sessionKey: string, ready: boolean) => void;
   onSessionKeyChange?: (sessionKey: string) => void;
   runTimings?: SessionRunTiming[];
   onLastUserMessageAction?: (
@@ -141,6 +143,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       onContextUsageChange,
       onProgressCardChange,
       onSessionKeyChange,
+      onHistoryReadyChange,
       onLastUserMessageAction,
       onAssistantMessageFork,
       onSideChatResult,
@@ -165,6 +168,9 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     const handleChatElementChange = useCallback((element: JustDoChatElement | null) => {
       chatElementRef.current = element;
     }, []);
+    const historyReadyCallback = useRef(onHistoryReadyChange);
+    historyReadyCallback.current = onHistoryReadyChange;
+    const [historyStatus, setHistoryStatus] = useState<'loading' | 'error' | 'ready'>('loading');
     const [controller, setController] = useState<ChatController | null>(null);
     const connectedRef = useRef(false);
     const onActivityChangeRef = useRef(onActivityChange);
@@ -215,7 +221,11 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
             messages: controller ? [...controller.getLoadedMessages()] : [],
             runtimeSessionId: controller?.state.currentSessionId ?? null,
             sessionKey: controller?.state.sessionKey ?? null,
-            isLoading: !controller?.state.connected || controller.state.chatLoading,
+            isLoading:
+              !controller?.state.connected ||
+              !controller.state.initialHistoryReady ||
+              controller.state.chatLoading ||
+              controller.state.historyReadFailed === true,
           };
         },
         preparePlanImplementationReset: request => {
@@ -227,6 +237,9 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         sendMessage: async (text: string, attachments = [], gatewayMessage, options) => {
           const controller = controllerRef.current;
           if (!controller) throw new Error('Controller not initialized');
+          if (!controller.state.initialHistoryReady || controller.state.historyReadFailed) {
+            throw new Error(i18nService.t('storageHistoryFailed'));
+          }
           await controller.sendMessage(text, attachments, gatewayMessage, options);
         },
         setPendingUserMessage: (text: string, attachments = [], gatewayMessage) => {
@@ -297,6 +310,9 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         sendSideQuestion: async (question, runId) => {
           const controller = controllerRef.current;
           if (!controller) throw new Error('Controller not initialized');
+          if (!controller.state.initialHistoryReady || controller.state.historyReadFailed) {
+            throw new Error(i18nService.t('storageHistoryFailed'));
+          }
           return controller.sendSideQuestion(question, runId);
         },
       }),
@@ -309,7 +325,26 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       controllerRef.current = controller;
       setController(controller);
 
+      let lastHistoryReady = '';
       const publishActivity = () => {
+        const ready =
+          controller.state.connected &&
+          controller.state.initialHistoryReady &&
+          !controller.state.historyReadFailed;
+        const readyKey = `${controller.state.sessionKey}:${ready}`;
+        if (readyKey !== lastHistoryReady) {
+          lastHistoryReady = readyKey;
+          historyReadyCallback.current?.(controller.state.sessionKey, ready);
+        }
+        setHistoryStatus(
+          controller.state.historyReadFailed
+            ? controller.state.chatLoading
+              ? 'loading'
+              : 'error'
+            : !controller.state.initialHistoryReady
+              ? 'loading'
+              : 'ready',
+        );
         if (controller.state.sessionKey !== lastReportedSessionKeyRef.current) {
           lastReportedSessionKeyRef.current = controller.state.sessionKey;
           onSessionKeyChangeRef.current?.(controller.state.sessionKey);
@@ -510,22 +545,43 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     }
 
     return (
-      <ChatMessageDisplay
-        className={className}
-        controller={controller}
-        assistantName={assistantName}
-        workingDirectory={workingDirectory}
-        searchQuery={searchQuery}
-        searchCaseSensitive={searchCaseSensitive}
-        searchNavigationToken={searchNavigationToken}
-        searchNavigationDirection={searchNavigationDirection}
-        processSummariesExpanded={processSummariesExpanded}
-        onSearchMatchCountChange={onSearchMatchCountChange}
-        runTimings={runTimings}
-        onLastUserMessageAction={onLastUserMessageAction}
-        onAssistantMessageFork={onAssistantMessageFork}
-        onChatElementChange={handleChatElementChange}
-      />
+      <div className={`${className ?? ''} flex min-h-0 flex-col`}>
+        {historyStatus !== 'ready' && (
+          <div
+            className="p-3 text-sm text-secondary"
+            role={historyStatus === 'error' ? 'alert' : 'status'}
+          >
+            {i18nService.t(
+              historyStatus === 'error' ? 'storageHistoryFailed' : 'storageHistoryLoading',
+            )}
+            {historyStatus === 'error' && (
+              <button
+                type="button"
+                className="ml-2 underline"
+                onClick={() => void controller?.loadHistory(true)}
+              >
+                {i18nService.t('storageHistoryRetry')}
+              </button>
+            )}
+          </div>
+        )}
+        <ChatMessageDisplay
+          className="flex-1 min-h-0"
+          controller={controller}
+          assistantName={assistantName}
+          workingDirectory={workingDirectory}
+          searchQuery={searchQuery}
+          searchCaseSensitive={searchCaseSensitive}
+          searchNavigationToken={searchNavigationToken}
+          searchNavigationDirection={searchNavigationDirection}
+          processSummariesExpanded={processSummariesExpanded}
+          onSearchMatchCountChange={onSearchMatchCountChange}
+          runTimings={runTimings}
+          onLastUserMessageAction={onLastUserMessageAction}
+          onAssistantMessageFork={onAssistantMessageFork}
+          onChatElementChange={handleChatElementChange}
+        />
+      </div>
     );
   },
 );

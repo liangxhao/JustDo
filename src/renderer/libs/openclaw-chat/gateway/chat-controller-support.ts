@@ -51,6 +51,8 @@ export interface ChatState {
   currentSessionId: string | null;
   /** True after the selected session's first subscribed history snapshot settles. */
   initialHistoryReady: boolean;
+  /** Last selected-session history read failed; do not treat failure as empty history. */
+  historyReadFailed?: boolean;
   chatLoading: boolean;
   historyLoadingOlder: boolean;
   historyHasMore: boolean;

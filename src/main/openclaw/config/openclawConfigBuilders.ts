@@ -1312,12 +1312,14 @@ export const OPENCLAW_SESSION_PRUNE_AFTER = '365d';
 
 export const OPENCLAW_SESSION_MAX_ENTRIES = 500;
 
-export const buildManagedOpenClawSessionConfig = () => ({
+export const buildManagedOpenClawSessionConfig = (existing?: unknown) => ({
+  ...(isRecord(existing) ? existing : {}),
   dmScope: 'per-account-channel-peer',
   reset: {
     mode: 'none',
   },
   maintenance: {
+    ...(isRecord(existing) && isRecord(existing.maintenance) ? existing.maintenance : {}),
     mode: 'enforce',
     pruneAfter: OPENCLAW_SESSION_PRUNE_AFTER,
     maxEntries: OPENCLAW_SESSION_MAX_ENTRIES,

@@ -1969,6 +1969,9 @@ export class ChatController {
   async sendSideQuestion(question: string, runId: string): Promise<string> {
     const client = this.state.client;
     if (!client || !this.state.connected) throw new Error('not connected');
+    if (this.state.historyReadFailed) {
+      throw new Error(i18nService.t('storageHistoryFailed'));
+    }
     const normalizedQuestion = question.trim().replace(/\s*[\r\n]+\s*/g, ' ');
     const proposedRunId = runId.trim();
     if (!normalizedQuestion) throw new Error('Side chat question is required');
@@ -2044,6 +2047,9 @@ export class ChatController {
   ): Promise<void> {
     const client = this.state.client;
     if (!client || !this.state.connected) throw new Error('not connected');
+    if (this.state.historyReadFailed) {
+      throw new Error(i18nService.t('storageHistoryFailed'));
+    }
     if (
       options.isCancelled?.() ||
       (options.expectedSessionKey && options.expectedSessionKey !== this.state.sessionKey)

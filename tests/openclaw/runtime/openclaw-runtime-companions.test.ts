@@ -156,3 +156,14 @@ describe('OpenClaw runtime companions', () => {
     }
   });
 });
+
+
+it('anchors the dynamically loaded binding repair companion to dist after bundling', () => {
+  const source = 'const modulePath = new URL(source ? "./legacy-config-binding-repair.runtime.ts" : "./legacy-config-binding-repair.runtime.js", import.meta.url);';
+  const replacement = 'new URL("./dist/io.snapshot.mjs", import.meta.url).href';
+  expect(hasStaleRuntimeWorkerImportMetaUrl(source)).toBe(true);
+  const rewritten = rewriteRuntimeWorkerImportMetaUrls(source, replacement);
+  expect(hasStaleRuntimeWorkerImportMetaUrl(rewritten)).toBe(false);
+  expect(rewritten).toContain('"./legacy-config-binding-repair.runtime.js", ' + replacement);
+  expect(getRuntimeCompanionPathsReferencedByBundle(rewritten)).toContain('dist/legacy-config-binding-repair.runtime.js');
+});

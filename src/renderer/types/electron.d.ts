@@ -4,6 +4,7 @@ import type {
   AgentProfileInput,
   AgentResult,
 } from '../../shared/agents/agents';
+import type { SessionStorageApi } from '../../shared/openclaw/sessionStorage';
 type SessionRunUnknownInput = import('../../shared/cowork/sessionRun').SessionRunUnknownInput;
 type BrowserRecordingLease = import('../../shared/browser/browserRecording').BrowserRecordingLease;
 type CoworkAttachmentPayload = import('../../shared/cowork/attachments').CoworkAttachmentPayload;
@@ -985,6 +986,7 @@ interface IElectronAPI {
     setConfig: (
       config: CoworkConfigUpdate,
     ) => Promise<{ success: boolean; error?: string; engineStatus?: OpenClawEngineStatus }>;
+    sessionStorage: SessionStorageApi;
     getAgentRuntimeSettings: () => Promise<{
       success: boolean;
       settings?: AgentRuntimeSettings;

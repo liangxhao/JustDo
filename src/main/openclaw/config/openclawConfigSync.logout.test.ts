@@ -245,6 +245,19 @@ const writeMinimalConfig = (
   ).writeMinimalConfig(configPath, reason);
 };
 
+test.each([true, false])('preserves cold storage through minimal startup and subsequent runtime saves (enabled=%s)', enabled => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-storage-config-'));
+  temporaryDirectories.push(directory);
+  const configPath = path.join(directory, 'openclaw.json');
+  const maintenance = { coldStorage: { enabled, afterDays: 47 }, maxDiskBytes: 104857600 };
+  fs.writeFileSync(configPath, JSON.stringify({ session: { maintenance } }));
+  for (const reason of ['startup', 'agent-runtime-settings-change', BuiltinModelSyncReason.AuthLogout]) {
+    const result = writeMinimalConfig(configPath, reason);
+    expect(result.ok).toBe(true);
+    expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).session.maintenance).toMatchObject(maintenance);
+  }
+});
+
 describe('OpenClaw auth logout config sync', () => {
   test.each(['full', 'minimal'] as const)(
     '%s sync refreshes local STT configuration without overriding speech extension toggles',

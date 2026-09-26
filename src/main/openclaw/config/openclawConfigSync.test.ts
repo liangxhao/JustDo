@@ -1418,3 +1418,13 @@ test('disables missed-job catch-up by default while preserving an explicit opt-i
     expect(merged.allow).toContain(id);
     expect(merged.entries).toEqual({ [id]: { enabled: false } });
   });
+
+
+describe('native session cold storage configuration ownership', () => {
+  test.each([true, false])('preserves explicit enabled=%s and unrelated native maintenance fields', enabled => {
+    const existing = { maintenance: { coldStorage: { enabled, afterDays: 47 }, maxDiskBytes: 123456 }, custom: 'retained' };
+    expect(buildManagedOpenClawSessionConfig(existing)).toMatchObject(existing);
+    expect(existing.maintenance.coldStorage.afterDays).toBe(47);
+    expect(buildManagedOpenClawSessionConfig().maintenance).not.toHaveProperty('coldStorage');
+  });
+});

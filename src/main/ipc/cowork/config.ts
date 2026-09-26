@@ -13,12 +13,14 @@ import {
   type ExternalAgentTestResult,
   validateExternalAgentSettings,
 } from '../../../shared/openclaw/externalAgents';
+import { SessionStorageIpc } from '../../../shared/openclaw/sessionStorage';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkAgentEngine, CoworkEngineRouter } from '../../engine';
 import type {
   OpenClawEngineManager,
   OpenClawEngineStatus,
 } from '../../openclaw/runtime/openclawEngineManager';
+import { SessionStorageService } from '../../openclaw/sessions/sessionStorageService';
 import type { WindowsSandboxService } from '../../security/windowsSandboxService';
 
 interface SyncResult {
@@ -66,6 +68,12 @@ export const registerCoworkConfigHandlers = ({
   getWindowsSandboxService,
   engineNotReadyCode,
 }: Dependencies): void => {
+  const storage = new SessionStorageService(requestGateway);
+  ipcMain.handle(SessionStorageIpc.Status, () => storage.getStatus());
+  ipcMain.handle(SessionStorageIpc.Policy, () => storage.getPolicy());
+  ipcMain.handle(SessionStorageIpc.Save, (_event, input: unknown) => storage.savePolicy(input));
+  ipcMain.handle(SessionStorageIpc.Run, () => storage.run());
+
   ipcMain.handle('cowork:config:get', async () => {
     try {
       return { success: true, config: getCoworkStore().getConfig() };

@@ -90,6 +90,7 @@ const ExportSessionModal: React.FC<ExportSessionModalProps> = ({
                 {i18nService.t('collaborationExportMain')}
               </h2>
               <p className="mt-0.5 truncate text-xs text-muted">{sessionTitle}</p>
+              <p className="mt-1 text-xs text-muted">{i18nService.t('storageExportScope')}</p>
             </div>
           </div>
           <button

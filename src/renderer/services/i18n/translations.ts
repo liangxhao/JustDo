@@ -7,11 +7,13 @@ import { chatTranslations } from './chatTranslations';
 import { getHomeGreetingTranslations } from './homeGreetings';
 import { pluginsTranslations } from './pluginsTranslations';
 import { scheduledTaskTranslations } from './scheduledTaskTranslations';
+import { sessionStorageTranslations } from './sessionStorageTranslations';
 import { settingsTranslations } from './settingsTranslations';
 import { skillWorkshopTranslations } from './skillWorkshopTranslations';
 
 export const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
+    ...sessionStorageTranslations.zh,
     ...browserInterventionTranslations.zh,
     ...skillWorkshopTranslations.zh,
     ...browserRecordingTranslations.zh,
@@ -23,6 +25,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     ...scheduledTaskTranslations.zh,
   },
   en: {
+    ...sessionStorageTranslations.en,
     ...browserInterventionTranslations.en,
     ...skillWorkshopTranslations.en,
     ...browserRecordingTranslations.en,

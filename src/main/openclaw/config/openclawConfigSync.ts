@@ -435,7 +435,7 @@ export class OpenClawConfigSync {
         ),
       },
       acp: buildManagedOpenClawAcpConfig(externalAgentSettings),
-      session: buildManagedOpenClawSessionConfig(),
+      session: buildManagedOpenClawSessionConfig(existingConfig?.session),
       ...(managedTtsConfig ? { tts: managedTtsConfig } : {}),
       commands: {
         // Internal `chat.send` turns identify the sender as bare `gateway-client`.
@@ -849,13 +849,23 @@ export class OpenClawConfigSync {
       { enabled: false },
     );
 
-    const nextContent = `${JSON.stringify(minimalConfig, null, 2)}\n`;
     let currentContent = '';
     try {
       currentContent = fs.readFileSync(configPath, 'utf8');
     } catch {
       currentContent = '';
     }
+    if (currentContent) {
+      try {
+        const previous = JSON.parse(currentContent);
+        if (isRecord(previous)) {
+          minimalConfig.session = buildManagedOpenClawSessionConfig(previous.session);
+        }
+      } catch {
+        // Invalid JSON follows the existing minimal-config recovery path.
+      }
+    }
+    const nextContent = `${JSON.stringify(minimalConfig, null, 2)}\n`;
     const buildMinimalSyncResult = (
       expectedConfig: Record<string, unknown>,
       changed: boolean,
@@ -993,7 +1003,7 @@ export class OpenClawConfigSync {
                     ),
                   },
                   acp: buildManagedOpenClawAcpConfig(externalAgentSettings),
-                  session: buildManagedOpenClawSessionConfig(),
+                  session: buildManagedOpenClawSessionConfig(canonicalExisting.session),
                   mcp: {
                     servers: mcpServers,
                   },

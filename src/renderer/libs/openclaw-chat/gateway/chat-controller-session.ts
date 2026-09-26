@@ -644,7 +644,7 @@ export async function loadInitialHistory(
       if (this.hasExpectedInitialHistory()) return;
     }
   } finally {
-    if (this.isConnectionInitializationCurrent(params)) {
+    if (this.isConnectionInitializationCurrent(params) && !this.state.chatLoading) {
       this.state.initialHistoryReady = true;
       this.notify();
     }
@@ -802,6 +802,7 @@ export async function connect(
   this.historyPagingGeneration += 1;
   this.state.currentSessionId = null;
   this.state.initialHistoryReady = false;
+  this.state.historyReadFailed = false;
   this.state.historyLoadingOlder = false;
   this.restoreHistoryPagination(sessionKey);
   this.resetTranscriptForSession(sessionKey, null);
@@ -899,6 +900,7 @@ export async function switchSession(
   this.state.progressCardLoading = false;
   this.state.progressCardError = null;
   this.state.initialHistoryReady = false;
+  this.state.historyReadFailed = false;
   this.state.historyLoadingOlder = false;
   this.restoreHistoryPagination(sessionKey);
   this.restoreLiveState(sessionKey);
@@ -999,6 +1001,11 @@ export function handleHello(this: ChatControllerSessionContext, hello: GatewayHe
 }
 
 export function handleClose(this: ChatControllerSessionContext): void {
+  // A reconnected socket must establish authoritative history again. Invalidate
+  // requests on this transport even when GatewayClient reuses its identity.
+  this.state.initialHistoryReady = false;
+  this.connectionInitializationSeq += 1;
+  this.historyPagingGeneration += 1;
   for (const runId of this.pendingSideChats.keys()) {
     this.publishSideChatFailure(runId);
     this.retainSideChatTombstone(runId);

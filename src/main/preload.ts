@@ -131,6 +131,7 @@ import {
   OpenClawSessionMigrationIpc,
   type OpenClawSessionMigrationProgress,
 } from '../shared/openclaw/sessionMigration';
+import { SessionStorageIpc, type SessionStoragePolicyInput } from '../shared/openclaw/sessionStorage';
 import {
   SystemPromptReplacementIpc,
   type SystemPromptReplacementRule,
@@ -727,6 +728,12 @@ contextBridge.exposeInMainWorld('electron', {
       maxGoalContinuationTurns?: number;
       maxRetainedDisplayTabs?: number;
     }) => ipcRenderer.invoke('cowork:config:set', config),
+    sessionStorage: {
+      getStatus: () => ipcRenderer.invoke(SessionStorageIpc.Status),
+      getPolicy: () => ipcRenderer.invoke(SessionStorageIpc.Policy),
+      savePolicy: (policy: SessionStoragePolicyInput) => ipcRenderer.invoke(SessionStorageIpc.Save, policy),
+      run: () => ipcRenderer.invoke(SessionStorageIpc.Run),
+    },
     getAgentRuntimeSettings: () => ipcRenderer.invoke(AgentRuntimeSettingsIpc.Get),
     setAgentRuntimeSettings: (settings: AgentRuntimeSettings) =>
       ipcRenderer.invoke(AgentRuntimeSettingsIpc.Set, settings),
