@@ -21,7 +21,9 @@ const bytes = (value: number) => {
   return `${(value / 1024 / 1024).toFixed(2)} MiB`;
 };
 const buttonClass =
-  'rounded-lg border border-border px-3 py-1.5 text-sm disabled:opacity-40 hover:bg-surface-raised';
+  'inline-flex min-h-9 items-center justify-center rounded-lg border border-border bg-surface px-3 text-sm font-medium text-foreground transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:border-border disabled:bg-surface-raised disabled:text-secondary disabled:hover:bg-surface-raised';
+const primaryButtonClass =
+  'inline-flex min-h-9 items-center justify-center rounded-lg border border-primary bg-primary px-3 text-sm font-medium text-white transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:border-border disabled:bg-surface-raised disabled:text-secondary';
 
 export default function SessionStorageCard() {
   const agents = useSelector((state: RootState) => state.agent.agents);
@@ -188,14 +190,16 @@ export default function SessionStorageCard() {
         ['storageArchive', status.agents.reduce((n, a) => n + a.archiveBytes, 0)],
       ] as const)
     : [];
+  const hotCount = status?.agents.reduce((n, a) => n + a.hotTranscripts, 0) ?? 0;
+  const coldCount = status?.agents.reduce((n, a) => n + a.coldTranscripts, 0) ?? 0;
 
   return (
-    <section
-      className="space-y-4 rounded-xl border border-border bg-surface p-4"
-      aria-label={t('storageTitle')}
-    >
-      <div className="flex items-center justify-between gap-3">
-        <h3 className="font-medium">{t('storageTitle')}</h3>
+    <section className="space-y-5" aria-label={t('storageTitle')}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="text-base font-semibold text-foreground">{t('storageTitle')}</h3>
+          <p className="mt-1 text-xs text-secondary">{t('storageScope')}</p>
+        </div>
         <button
           type="button"
           className={buttonClass}
@@ -205,52 +209,116 @@ export default function SessionStorageCard() {
           {t(checking ? 'storageRefreshing' : 'storageRefresh')}
         </button>
       </div>
-      <p className="text-xs text-secondary">{t('storageScope')}</p>
       {error && (
-        <p role="alert">
+        <p
+          role="alert"
+          className="rounded-lg border border-border bg-surface-raised px-4 py-3 text-sm"
+        >
           {t(`storageError_${error}`)} {updatedAt && t('storageStale')}
         </p>
       )}
       {!status && !error && <p role="status">{t('storageLoading')}</p>}
       {policyError && (
-        <p role="alert">
+        <p
+          role="alert"
+          className="rounded-lg border border-border bg-surface-raised px-4 py-3 text-sm"
+        >
           {t('storagePolicyReadFailed')} {t(`storageError_${policyError}`)}
         </p>
       )}
-      {policy && !policy.applied && <p role="status">{t('storageError_pending')}</p>}
       {status && (
-        <>
-          <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="space-y-4 rounded-xl border border-border bg-surface p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h4 className="text-sm font-semibold">{t('storageOverview')}</h4>
+            {updatedAt && (
+              <span className="text-xs text-secondary">
+                {t('storageUpdated')}: {new Date(updatedAt).toLocaleString()}
+              </span>
+            )}
+          </div>
+          <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {metrics.map(([key, value]) => (
-              <div key={key}>
+              <div key={key} className="rounded-lg bg-surface-raised px-3 py-3">
                 <dt className="text-xs text-secondary">{t(key)}</dt>
-                <dd>{bytes(value)}</dd>
+                <dd className="mt-1 text-lg font-semibold tabular-nums text-foreground">
+                  {bytes(value)}
+                </dd>
               </div>
             ))}
           </dl>
-          <p className="text-sm">
-            {t('storageHot')}: {status.agents.reduce((n, a) => n + a.hotTranscripts, 0)} ·{' '}
-            {t('storageCold')}: {status.agents.reduce((n, a) => n + a.coldTranscripts, 0)}
-          </p>
-          <details>
-            <summary className="cursor-pointer text-sm">{t('storageAgents')}</summary>
-            {status.agents.map(agent => (
-              <div key={agent.agentId} className="mt-2 border-t border-border pt-2 text-xs">
-                <strong>{agents.find(a => a.id === agent.agentId)?.name ?? agent.agentId}</strong>
-                <p>
-                  {t('storageDatabase')}: {bytes(agent.databaseBytes)} · {t('storageWal')}:{' '}
-                  {bytes(agent.walBytes)} · {t('storageArchive')}: {bytes(agent.archiveBytes)}
-                </p>
-                <p>
-                  {t('storageHot')}: {agent.hotTranscripts} · {t('storageCold')}:{' '}
-                  {agent.coldTranscripts} · {t('storageEmbedded')}:{' '}
-                  {bytes(agent.embeddedArchiveBytes)}
-                </p>
-              </div>
-            ))}
+          <div className="flex flex-wrap gap-x-6 gap-y-1 border-t border-border pt-3 text-sm">
+            <span>
+              {t('storageHot')}: <strong className="tabular-nums">{hotCount}</strong>
+            </span>
+            <span>
+              {t('storageCold')}: <strong className="tabular-nums">{coldCount}</strong>
+            </span>
+          </div>
+          <details className="border-t border-border pt-3">
+            <summary className="cursor-pointer text-sm font-medium">{t('storageAgents')}</summary>
+            <div className="mt-3 overflow-x-auto rounded-lg border border-border">
+              <table className="w-full min-w-[760px] border-collapse text-xs">
+                <thead className="bg-surface-raised text-secondary">
+                  <tr>
+                    {[
+                      'storageAssistant',
+                      'storageDatabase',
+                      'storageWal',
+                      'storageArchive',
+                      'storageHot',
+                      'storageCold',
+                      'storageEmbedded',
+                    ].map((key, index) => (
+                      <th
+                        key={key}
+                        scope="col"
+                        className={`px-3 py-2.5 font-medium ${index === 0 ? 'text-left' : 'text-right'}`}
+                      >
+                        {t(key)}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {status.agents.map(agent => (
+                    <tr key={agent.agentId} className="border-t border-border">
+                      <th scope="row" className="px-3 py-2.5 text-left font-medium text-foreground">
+                        {agents.find(a => a.id === agent.agentId)?.name ?? agent.agentId}
+                      </th>
+                      {[
+                        bytes(agent.databaseBytes),
+                        bytes(agent.walBytes),
+                        bytes(agent.archiveBytes),
+                        agent.hotTranscripts,
+                        agent.coldTranscripts,
+                        bytes(agent.embeddedArchiveBytes),
+                      ].map((value, index) => (
+                        <td
+                          key={index}
+                          className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums"
+                        >
+                          {value}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </details>
-          <div className="text-xs" role="status">
-            {status.maintenance.running ? (
+        </div>
+      )}
+      <div className="overflow-hidden rounded-xl border border-border bg-surface">
+        <div className="border-b border-border bg-surface-raised px-4 py-3">
+          <h4 className="text-sm font-semibold">{t('storageManagement')}</h4>
+          <p className="mt-1 text-xs text-secondary">{t('storageIndependent')}</p>
+        </div>
+        <div className="space-y-4 p-4">
+          <div className="text-sm" role="status">
+            <span className="font-medium">{t('storageMaintenance')}：</span>{' '}
+            {!status ? (
+              t('storageLoading')
+            ) : status.maintenance.running ? (
               t('storageRunning')
             ) : status.maintenance.lastCompletedAt ? (
               <>
@@ -262,82 +330,92 @@ export default function SessionStorageCard() {
             ) : (
               t('storageNoRun')
             )}
-            {status.maintenance.lastError && <p role="alert">{t('storageMaintenanceFailed')}</p>}
+            {status?.maintenance.lastError && (
+              <p role="alert" className="mt-2 text-sm">
+                {t('storageMaintenanceFailed')}
+              </p>
+            )}
           </div>
-        </>
-      )}
-      {updatedAt && (
-        <p className="text-xs text-secondary">
-          {t('storageUpdated')}: {new Date(updatedAt).toLocaleString()}
-        </p>
-      )}
-      <fieldset
-        disabled={!policy || busy || !!status?.maintenance.running}
-        className="space-y-3 border-t border-border pt-3"
-      >
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={enabled}
-            onChange={event => setEnabled(event.target.checked)}
-          />
-          {t('storageEnabled')}
-        </label>
-        <p className="text-xs text-secondary">{t('storageEnableHelp')}</p>
-        <div className="flex flex-wrap items-center gap-2">
-          <label className="text-sm">
-            {t('storageDays')}{' '}
-            <input
-              type="number"
-              min="1"
-              step="1"
-              value={days}
-              onChange={event => setDays(event.target.value)}
-              className="w-24 rounded border border-border bg-surface-inset px-2 py-1"
-            />
-          </label>
-          {[30, 60, 90].map(day => (
+          {policy && !policy.applied && (
+            <p role="status" className="rounded-lg bg-surface-raised p-3 text-sm">
+              {t('storageError_pending')}
+            </p>
+          )}
+          <fieldset
+            disabled={!policy || busy || !!status?.maintenance.running}
+            className="space-y-4 border-t border-border pt-4"
+          >
+            <label className="flex items-start gap-3 text-sm">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 accent-primary"
+                checked={enabled}
+                onChange={event => setEnabled(event.target.checked)}
+              />
+              <span>
+                <span className="font-medium">{t('storageEnabled')}</span>
+                <span className="mt-1 block text-xs leading-relaxed text-secondary">
+                  {t('storageEnableHelp')}
+                </span>
+              </span>
+            </label>
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="flex items-center gap-2 text-sm font-medium">
+                {t('storageDays')}
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={days}
+                  onChange={event => setDays(event.target.value)}
+                  className="h-9 w-24 rounded-lg border border-border bg-surface-inset px-2 text-sm font-normal tabular-nums"
+                />
+              </label>
+              <div className="flex gap-1.5">
+                {[30, 60, 90].map(day => (
+                  <button
+                    type="button"
+                    className={`${buttonClass} ${days === String(day) ? 'border-primary text-primary' : ''}`}
+                    key={day}
+                    onClick={() => setDays(String(day))}
+                  >
+                    {day}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {!validDays && <p role="alert">{t('storageError_invalid')}</p>}
+          </fieldset>
+          <div className="flex flex-wrap gap-2 border-t border-border pt-4">
+            <button
+              type="button"
+              className={primaryButtonClass}
+              disabled={!!unavailable || !dirty || !validDays}
+              onClick={() => void write(true)}
+            >
+              {t('storageSave')}
+            </button>
             <button
               type="button"
               className={buttonClass}
-              key={day}
-              onClick={() => setDays(String(day))}
+              disabled={!!unavailable || dirty || !validDays || !policy?.enabled || !policy.applied}
+              onClick={() => void write(false)}
             >
-              {day}
+              {t('storageRun')}
             </button>
-          ))}
+          </div>
+          {!policy?.enabled && (
+            <p className="text-xs text-secondary">{t('storageRunRequiresEnabled')}</p>
+          )}
+          {uncertain && <p role="status">{t('storageConfirming')}</p>}
+          {writeError && (
+            <p role="alert" className="rounded-lg bg-surface-raised p-3 text-sm">
+              {t(`storageError_${writeError}`)} {t('storageWriteNotReplayed')}
+            </p>
+          )}
         </div>
-        {!validDays && <p role="alert">{t('storageError_invalid')}</p>}
-      </fieldset>
-      <p className="text-xs text-secondary">{t('storageIndependent')}</p>
-      <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          className={buttonClass}
-          disabled={!!unavailable || !dirty || !validDays}
-          onClick={() => void write(true)}
-        >
-          {t('storageSave')}
-        </button>
-        <button
-          type="button"
-          className={buttonClass}
-          disabled={!!unavailable || dirty || !validDays || !policy?.enabled || !policy.applied}
-          onClick={() => void write(false)}
-        >
-          {t('storageRun')}
-        </button>
       </div>
-      {!policy?.enabled && (
-        <p className="text-xs text-secondary">{t('storageRunRequiresEnabled')}</p>
-      )}
-      {uncertain && <p role="status">{t('storageConfirming')}</p>}
-      {writeError && (
-        <p role="alert">
-          {t(`storageError_${writeError}`)} {t('storageWriteNotReplayed')}
-        </p>
-      )}
-      <p className="text-xs text-secondary">{t('storageRetention')}</p>
+      <p className="px-1 text-xs leading-relaxed text-secondary">{t('storageRetention')}</p>
     </section>
   );
 }
