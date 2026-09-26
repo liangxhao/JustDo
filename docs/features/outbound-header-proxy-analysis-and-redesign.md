@@ -1,6 +1,6 @@
 # Outbound Header Proxy 架构、实现与风险
 
-> 本文按 JustDo `v2026.8.27`、OpenClaw `v2026.9.2` 当前代码重新审计。历史上的作用域隔离、CONNECT 选择性拦截、本地 capability、上游代理和关闭顺序问题已大体完成整改；PAC 多候选、SOCKS、任意客户端强制代理与完整热重载仍不是现有能力。
+> 本文记录 JustDo `v2026.8.27`、OpenClaw `v2026.9.2` 基线的审计结论。作用域隔离、CONNECT 选择性拦截、本地 capability、上游代理和关闭顺序问题在该基线已大体完成整改；后续运行时变更应重新核对具体行为。
 
 ## 1. 功能目的
 
@@ -38,8 +38,8 @@ method、允许的模型 endpoint、header 与 body，并重建固定的连接�
 | 组件                | 代码                                                               | 职责                                              |
 | ------------------- | ------------------------------------------------------------------ | ------------------------------------------------- |
 | 配置解析            | `outboundHeaderPolicyConfig.ts` / `outboundHeaderPolicyService.ts` | 合并手工配置与已启用 Extension 声明               |
-| 本地代理            | `src/main/core/network/outboundHeaderProxy.ts`                             | 认证、CONNECT 判别、MITM/raw tunnel、注入         |
-| OpenClaw 环境       | `src/main/core/network/gatewayNetworkEnvironment.ts`                       | 为 Gateway/opt-in CLI 生成 proxy/CA/NO_PROXY env  |
+| 本地代理            | `src/main/core/network/outboundHeaderProxy.ts`                     | 认证、CONNECT 判别、MITM/raw tunnel、注入         |
+| OpenClaw 环境       | `src/main/core/network/gatewayNetworkEnvironment.ts`               | 为 Gateway/opt-in CLI 生成 proxy/CA/NO_PROXY env  |
 | Embedding transport | `runtime-services` extension                                       | 让 guarded fetch 使用 eligible env proxy          |
 | Manual reindex      | runtime patch `009` + 原生 forced CLI rebuild intent               | 跳过旧向量 cache，确保按钮触发真实 embedding 请求 |
 | Runtime lifecycle   | `openclawEngineManager.ts` / `main.ts`                             | 先起代理、再 spawn Gateway；退出时反序停止        |

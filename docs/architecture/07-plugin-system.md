@@ -133,7 +133,7 @@ agent-team 默认关闭，禁用保留历史；Runtime Services 仍读回执并�
 
 Extension 可用 outbound-header-policy.json 声明 HTTPS 目标、Header 名称和受管 user-info 引用。声明不含凭据值，安装前校验、安装后 canonical path 回读，启用状态参与有效策略合并。
 
-它不能写永久手工 config，也不提供任意凭据 API。Gateway 同进程 Node Extension 仍处于可信代码边界，sidecar 并不是恶意插件网络沙盒。详细规范见[出站指南](../outbound-header-guide/README.md)。
+它不能写永久手工 config，也不提供任意凭据 API。Gateway 同进程 Node Extension 仍处于可信代码边界，sidecar 并不是恶意插件网络沙盒。详细规范见[出站指南](../developer-integration/outbound-headers/README.md)。
 
 ## 9. 故障不能只显示“未安装”
 
@@ -156,24 +156,25 @@ The runtime retains the native QuickJS Code Mode executor and GitHub reader plug
 including explicit allowlist membership while preserving user disable state. Local
 extensions import named SDK subpaths. Agent-owned Workshop collections remain
 Gateway-owned; the application does not recreate workspace-based skill ownership.
-See [upgrade audit](../features/openclaw-upgrade-v2026.9.6.md).
+See [upgrade audit](../openclaw-upgrades/v2026.9.6.md).
 
 ## 内置浏览器与执行策略
 
 `embedded-browser` 的浏览器指导在 `before_prompt_build` 中以 `requiresToolAuthority: true` 注册，读取本轮策略过滤后的 `toolAuthority`。只有实际允许 `browser` 时才注入操作指导；工具不可用时说明执行策略限制，禁止重复发现、通过 shell 绕开限制或自行放宽执行权限。工作区网页可见不代表 Agent 获得操作权限。
 
 默认沙箱策略不提供宿主 `browser` 工具。用户可在“设置 → 安全 → 任务执行方式”选择本机执行，应用不因打开网页而修改策略。内置模式禁用原生 browser 插件，由桌面扩展提供工具，因此 OpenClaw Control UI 的原生 browser.request 查看入口不适用于该模式。
+
 ## Workboard：四栏展示与原生执行
 
 Workboard 仍使用 OpenClaw 插件的 `workboard.cards.*` / `workboard.boards.*`
 接口和原生 SQLite。Renderer 的四栏是展示投影，不改写持久化状态：
 
-| 展示列 | 原生状态 |
-| --- | --- |
-| 待执行 | triage、backlog、todo、scheduled、ready |
+| 展示列 | 原生状态                                         |
+| ------ | ------------------------------------------------ |
+| 待执行 | triage、backlog、todo、scheduled、ready          |
 | 执行中 | running；存在 running execution 时优先显示在此列 |
-| 需处理 | review、blocked |
-| 已完成 | done |
+| 需处理 | review、blocked                                  |
+| 已完成 | done                                             |
 
 新建任务默认 todo；编辑描述保留原生状态。详情提供“确认完成”和“放回待执行”，
 取消任意状态拖放和九状态选择器，执行中任务必须先停止。已排期任务保留原生时间约束；
@@ -189,4 +190,4 @@ Workboard 仍使用 OpenClaw 插件的 `workboard.cards.*` / `workboard.boards.*
 校验 session/run/task 身份；只对已确认停止的同一次执行释放占用，保留已经到达的完成或审核状态。
 已知 runId 的定向停止失败时，不降级为整个 session 的停止，避免误停后来启动的任务。
 
-接口核对与可复现验证见 [Workboard 简化与契约验证](../features/workboard-simplification.md)。
+接口核对与可复现验证见 [Workboard 操作契约](../features/workboard.md)。

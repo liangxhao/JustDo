@@ -94,7 +94,7 @@ PresentPlan 将规范化计划作为工作区内受控文件持久化，并保�
 
 子任务以 `tasks.list/get` 与 task event 为权威，Subagent 和 ACP 执行共用原生 ledger。详情按 taskId 核对 session 身份，再组合 session lifecycle 与 usage；查询失败不能退回未经核验的任意 sessionKey。completed 的 blocked outcome 仍显示 blocked，不能显示成功。
 
-平级协作由默认关闭的 agent-team 扩展提供。模型准备成员后使用原生 sessions_send，侧栏只显示锚点任务，详情按成员读取原生历史。任务成员不是 Subagent 树节点，accepted 投递也不是任务完成。完整预算与删除协议见[协作机制](../features/multi-agent-collaboration.md)。
+平级协作由默认关闭的 agent-team 扩展提供。模型准备成员后使用原生 sessions_send，侧栏只显示锚点任务，详情按成员读取原生历史。任务成员不是 Subagent 树节点，accepted 投递也不是任务完成。完整预算与删除协议见[协作机制](../features/assistants-and-collaboration.md)。
 
 ## 9. 历史、分支、复制与删除
 

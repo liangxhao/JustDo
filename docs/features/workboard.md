@@ -1,4 +1,4 @@
-# Workboard 简化与契约验证
+# Workboard：操作契约与验证
 
 ## 范围
 
@@ -50,9 +50,9 @@ node node_modules/vitest/vitest.mjs run src/renderer/features/workboard src/shar
 无需连接用户 Gateway，不发送模型请求）：
 
 ```powershell
-$env:OPENCLAW_SOURCE = 'E:/workspace/openclaw'
+$env:OPENCLAW_SOURCE = (Resolve-Path ../openclaw).Path
 # 可选：源码 node_modules 不完整时，使用同版本已准备运行时的 SDK/第三方依赖。
-$env:OPENCLAW_RUNTIME = 'E:/workspace/JustDo/vendor/openclaw-runtime/win-x64'
+$env:OPENCLAW_RUNTIME = (Resolve-Path vendor/openclaw-runtime/win-x64).Path
 node node_modules/vitest/vitest.mjs run --config scripts/workboard-upstream.vitest.config.mts
 ```
 

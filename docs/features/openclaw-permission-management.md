@@ -1,6 +1,6 @@
 # 会话权限：保存、应用与执行准入
 
-权限链路已使用 OpenClaw 原生 session permissionMode/sessionRoot。本文保留旧文件名，但按当前 coordinator 与发送流程说明，不再作为历史 remediation 待办。
+权限链路已使用 OpenClaw 原生 session permissionMode/sessionRoot。本文按当前 coordinator 与发送流程说明。
 
 ## 1. 用户选择对应什么
 

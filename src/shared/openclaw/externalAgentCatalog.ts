@@ -38,7 +38,7 @@ const AGENT_ID_PATTERN = /^[a-z][a-z0-9-]{0,63}$/u;
  * as a bundled Node module, use NodeExecutable as the command and an
  * AcpxPluginRoot-relative entry file as the first argument. Then add the
  * package to openclaw-extensions/acpx/package.json and its display strings to
- * both translation tables. See docs/features/external-agent-adapters.md.
+ * both translation tables. See docs/external-agent-integration-guide.md.
  */
 export const defineExternalAgentCatalog = <const T extends readonly ExternalAgentDefinition[]>(
   definitions: T,

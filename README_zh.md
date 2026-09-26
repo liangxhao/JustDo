@@ -157,11 +157,11 @@ OpenClaw 集成在 `package.json` 中声明：
 }
 ```
 
-Runtime patch 策略见 `scripts/patches/README.md`，当前 patch 摘要见 `docs/patches/openclaw-patch-guide.md`。
+Runtime patch 策略见 `scripts/patches/README.md`，开发指南见 `docs/openclaw-runtime-patches.md`。
 
 ## 文档
 
-从[文档导航](docs/README.md)开始阅读；开发启动与日志定位见[开发与排障](docs/development.md)，能力与限制见[当前实现状态](docs/features/current-state-v2026.8.10.md)。现行架构、阶段审计和历史方案分别标注，发布记录保持原版本事实。
+从[文档导航](docs/README.md)开始阅读；开发启动与日志定位见[开发与排障](docs/development.md)，能力与限制见[产品与系统总览](docs/architecture/01-overview.md)。发布记录保持原版本事实。
 
 ## 贡献约定
 

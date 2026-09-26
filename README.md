@@ -172,14 +172,13 @@ OpenClaw integration is declared in `package.json`:
 ```
 
 Runtime patch policy is documented in `scripts/patches/README.md` and summarized
-in `docs/patches/openclaw-patch-guide.md`.
+in `docs/openclaw-runtime-patches.md`.
 
 ## Documentation
 
-Start with [docs/README.md](docs/README.md). Current architecture, dated audits
-and archived proposals are identified separately.
+Start with [docs/README.md](docs/README.md) for architecture and feature guides.
 Development startup and log triage: [development guide](docs/development.md).
-Current capabilities and limits: [implementation status](docs/features/current-state-v2026.8.10.md).
+Capabilities and limits: [system overview](docs/architecture/01-overview.md).
 Persistent assistants are managed in Settings; ordinary conversations belong to main.
 Peer collaboration uses the optional agent-team extension, disabled by default.
 

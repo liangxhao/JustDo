@@ -17,8 +17,8 @@
 | 修改真实 Header 值                                | 修改本机 `user_info.json`                             |
 | 临时关闭所有自动请求头                            | 把手工 `config.json` 的 `enabled` 改为 `false`        |
 
-两种方式可以同时使用。应用会在内存中合并手工规则和所有“已安装且已启用”的 Extension 规则，
-不会把 Extension 规则写进或覆盖手工 `config.json`。
+两种方式可以同时使用。应用按代码预定义规则、手工规则、所有“已安装且已启用”的 Extension
+规则的顺序在内存中合并。预定义规则和 Extension 规则都不会写入手工 `config.json`。
 
 ## 2. 手工配置快速开始
 
@@ -50,13 +50,12 @@
 5. 重新启动应用。
 6. 通过服务器日志或对应功能的连接测试确认 Header 已收到。
 
-手工文件没有实时监听。运行中修改后，请完整退出并重新启动应用。不要只刷新设置页面。
+请求头配置没有实时监听。手工修改后，完整退出并重新启动应用即可生效；其他刷新时机见第 7 节。
 
 ### 2.3 `config.json` 字段
 
 ```json
 {
-  "overwrite": false,
   "enabled": true,
   "groups": [
     {
@@ -67,17 +66,21 @@
 }
 ```
 
-- `enabled`：全局开关。设为 `false` 时，手工规则和 Extension 规则都会停止生效。
+- `enabled`：全局开关。设为 `false` 时，代码预定义规则、手工规则和 Extension 规则都会停止生效。
 - `groups`：URL 与 Header 名称的映射，可以配置多组。
 - `baseUrlWhitelist`：允许注入请求头的 URL 前缀。
 - `headerNames`：命中该组时需要注入的 Header 名称。
-- `overwrite`：历史兼容字段，当前被忽略。应用和 Extension 都不会覆盖现有手工文件。
 
 如果一个请求同时命中多个 group，会合并这些 group 的 Header 名称。同名 Header
 不区分大小写地去重，策略提供的值会替换请求中原有的同名 Header。
 
-首次运行且文件不存在时，应用会创建一个没有 URL 的默认文件，因此不会向任何地址注入 Header。
-如果 JSON 损坏或结构无效，系统会 fail closed：本轮手工规则和 Extension 规则都不生效。手工文件是
+文件不存在时，应用会创建 `{"enabled": true, "groups": []}`。如果 JSON 损坏或结构无效，
+包括旧版没有 `groups` 的格式，也会重写为这个空默认配置。`enabled` 必须为布尔值，`groups`
+必须为数组，每个组的两个字段必须为字符串数组。空手工配置仍会合并代码预定义规则和启用扩展的规则。
+
+代码中，空默认配置名为 `DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG`，预定义规则名为
+`PREDEFINED_OUTBOUND_HEADER_POLICY_CONFIG`，均定义于 `src/config/outboundHeaders.ts`。
+与预定义组完全相同的手工组在合并时去重。手工文件是
 本机受信的高级配置，不具备 Extension sidecar 的全部限制；请勿手工配置 `Host`、`Content-Length`、
 `Connection`、`Proxy-Authorization` 等传输层 Header，以免破坏请求。
 
@@ -209,15 +212,23 @@ HTTP(S) 请求经过 Gateway 网络环境，仍按第一行的本地代理规则
 
 ## 7. 规则何时刷新
 
-| 变更                                       | 刷新方式                             |
-| ------------------------------------------ | ------------------------------------ |
-| 修改手工 `config.json` 或 `user_info.json` | 完全退出并重启应用                   |
-| 安装或更新带 sidecar 的 Extension          | 安装流程自动刷新；必要时重启 Gateway |
-| 启用或禁用 Extension                       | 自动刷新；必要时重启 Gateway         |
-| 卸载 Extension                             | 自动移除规则；必要时重启 Gateway     |
-| Gateway 自身重新启动                       | 启动前重新读取并合并规则             |
+| 变更                              | 刷新方式                                                              |
+| --------------------------------- | --------------------------------------------------------------------- |
+| 修改手工 `config.json`            | 下次策略合并时读取；重启应用可确保生效                                |
+| 手工修改 `user_info.json`         | 重启应用，或由 Main 进程显式调用值刷新接口                            |
+| 登录、退出或定时更新 Cookie       | 登录模块完成文件写入/清理后调用 `updateOutboundHeaderUserInfoCache()` |
+| 安装或更新带 sidecar 的 Extension | 安装流程自动刷新；必要时重启 Gateway                                  |
+| 启用或禁用 Extension              | 自动刷新；必要时重启 Gateway                                          |
+| 卸载 Extension                    | 自动移除规则；必要时重启 Gateway                                      |
+| Gateway 自身重新启动              | 启动前重新读取并合并规则                                              |
 
-`config.json` 的 `enabled:false` 是紧急总开关，会同时关闭 Extension 贡献。若只想停用某个
+每次策略合并都会重新读取 `config.json` 和扩展策略文件，并读取一次 `user_info.json` 初始化值。
+值刷新接口只读取 `user_info.json`，保留当前规则，不重读策略文件或重启代理。
+凭据监控的 30 秒重试、到期刷新、文件变化回调，以及设置页手动刷新模型，不直接调用此接口；
+若模型配置变化引发 Gateway 重启，则仍会执行上述策略合并。
+登录模块接入细节见[值刷新接口文档](../outbound-header-user-info-refresh-api.md)。
+
+`config.json` 的 `enabled:false` 在下次策略合并后生效，会关闭全部自动注入。若只想停用某个
 Extension 的规则，请禁用或卸载该 Extension，不要关闭全局开关。
 
 ## 8. 常见问题
@@ -243,9 +254,10 @@ Extension 的规则，请禁用或卸载该 Extension，不要关闭全局开关
 
 不能。sidecar 只声明 URL 和 Header 名称。真实值固定从本机 `user_info.json` 的同名属性读取。
 
-### `overwrite` 是否控制覆盖同名 Header
+### 如何处理请求中已有的同名 Header
 
-不控制。它只是保留的历史字段。命中规则后，策略值会替换请求中已有的同名 Header。
+命中规则后，策略值会替换请求中已有的同名 Header。`overwrite` 字段已移除，无需配置；
+旧手工文件中残留的该字段会被忽略。
 
 ## 9. 分发前检查清单
 

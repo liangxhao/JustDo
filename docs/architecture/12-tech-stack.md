@@ -66,7 +66,7 @@ Windows 准备 MinGit、便携 Python 和 hashed requirements，依赖装入 bun
 
 MXC 是 Windows 专属 OpenClaw 插件，SDK、执行器与提权 helper 有固定 hash 和签名验证。macOS/Linux 不携带或启用这个后端。
 
-Windows 使用 NSIS，macOS 使用 DMG，Linux 使用 AppImage/deb。NSIS archive 固定 BCJ 过滤以兼容安装时解码器，包括 prepackaged 路径；不要删除这一构建约束后只验证 7za 本机能解压。具体安装故障处理见[安装器说明](../features/windows-installer-resilience.md)。
+Windows 使用 NSIS，macOS 使用 DMG，Linux 使用 AppImage/deb。NSIS archive 固定 BCJ 过滤以兼容安装时解码器，包括 prepackaged 路径；不要删除这一构建约束后只验证 7za 本机能解压。具体安装故障处理见[安装器说明](../windows-installer.md)。
 
 ## 7. 品牌、更新与发布身份
 

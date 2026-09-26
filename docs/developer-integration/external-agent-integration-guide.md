@@ -2,7 +2,7 @@
 
 > 适用对象：需要为本应用增加一种外部 Agent 的适配开发者、构建人员和验收人员。
 >
-> 适用基线：应用 `v2026.8.27`、Agent Runtime `v2026.9.2`、Node.js `>=24.15.0 <25`。
+> 运行版本以 `package.json` 和锁文件为准。
 >
 > 文档目标：完成接入后，新 Agent 能出现在“设置 → 外部集成 → Agent 委派”中，可独立测试、启用并接受主 Agent 的任务委派；正式安装包在无网络安装依赖的情况下仍可运行。
 
@@ -23,6 +23,8 @@
 
 接入外部 Agent 使用 ACP（Agent Client Protocol）。应用通过标准输入和标准输出与 Agent
 进程通信，并由内置 ACPX 运行层管理会话、取消、关闭、权限请求和可选的 MCP 工具。
+
+当前 ACPX 运行层只接收 stdio MCP 启动项；配置投影会排除 HTTP/SSE、已禁用或无命令的 Server，以及保留的 `openclaw-plugin-tools`、`openclaw-tools` 桥名称。支持其他传输需要先更新运行时协议与 Agent 能力验证，不能仅增加设置开关。
 
 ## 2. 选择接入方式
 
@@ -173,7 +175,7 @@ adapter: {
 
 ### 5.1 文案
 
-在 `src/renderer/services/i18n/translations.ts` 的中文和英文对象中分别增加
+在 `src/renderer/services/i18n/settingsTranslations.ts` 的中文和英文对象中分别增加
 `descriptionKey` 对应的键。
 
 ```ts
@@ -312,6 +314,8 @@ Skill，需要单独设计显式的、安全的适配流程，不能把“已打
 - 发布验收环境与最终使用环境一致。
 
 如果无法保证这些条件，应把 CLI 或 adapter 随应用打包。
+
+移除一个已交付的 Agent 时，需同时清理产品目录、adapter 包及锁文件、第三方声明、目标平台产物检查和聚焦测试。只在设置中停用会阻止调度，但不会从安装包移除文件。
 
 ## 9. 测试入口及其含义
 

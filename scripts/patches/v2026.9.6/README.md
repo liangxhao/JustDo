@@ -77,9 +77,10 @@ plugin patches fail and must not be upgraded in place. Rebuild from pristine
 packages with `OPENCLAW_FORCE_INSTALL=1` and refresh the plugin cache with
 `OPENCLAW_FORCE_PLUGIN_INSTALL=1` when running `npm run openclaw:runtime:host`.
 
-Removing 017 or 018 requires a rebuild from the locked pristine artifact. Do not undo
-injections in an existing runtime or rewrite its proof manifest. See
-`docs/features/openclaw-2026.9.6-message-sync.md` for the native recovery audit.
+The retired 017/018 recovery patches must not be removed from an existing runtime
+by undoing injections or rewriting its proof manifest. Rebuild from the locked
+pristine artifact. Current history and recovery behavior is documented in
+`docs/architecture/15-chat-rendering.md`.
 
 The npm artifact has hashed `.mjs` modules plus two worker bundles. Target counts
 include the relevant worker copies and the generated Gateway bundle; esbuild may

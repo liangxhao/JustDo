@@ -1,4 +1,4 @@
-# Agent 运行参数：默认值、投影与限制
+# Agent 运行参数
 
 设置使用版本化 AgentRuntimeSettings，保存在产品配置中再投影到原生配置。本文按 shared/openclaw/agentRuntimeSettings.ts 说明当前默认值；UI 文案不能把 null、0 与固定值混为一谈。
 

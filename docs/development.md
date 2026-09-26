@@ -4,7 +4,7 @@
 
 ## 1. 准备环境
 
-使用 `.nvmrc` 的 Node.js 24.21.0，支持范围为 `>=24.15.0 <25`，包管理器为 npm。Electron 的实际锁定版本是 42.7.0；不要把 package.json 的 `^42.6.2` 范围当成已安装版本。
+使用 `.nvmrc` 的 Node.js 24.21.0，支持范围为 `>=24.16.0 <25`，包管理器为 npm。Electron 的实际锁定版本是 42.7.0；不要把 package.json 的 `^42.6.2` 范围当成已安装版本。
 
 ```bash
 nvm use 24
@@ -57,7 +57,7 @@ npm run compile:electron
 npm test
 ```
 
-`npm test` 的包装脚本切换 better-sqlite3 到 Node ABI，结束后恢复 Electron ABI；不要与 Electron 原生重建或依赖该模块的开发会话并行执行。运行时变更还需按[补丁指南](patches/openclaw-patch-guide.md)验证锁定产物。
+`npm test` 的包装脚本切换 better-sqlite3 到 Node ABI，结束后恢复 Electron ABI；不要与 Electron 原生重建或依赖该模块的开发会话并行执行。运行时变更还需按[补丁指南](openclaw-runtime-patches.md)验证锁定产物。
 
 文档修改运行 `git diff --check`，并只对改动文件执行格式检查。不要用全库格式化夹带无关变更。
 

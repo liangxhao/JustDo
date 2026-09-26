@@ -1,21 +1,20 @@
 # 工程文档
 
-本目录面向产品维护、开发和排障。当前代码基线为应用 `v2026.8.27`、OpenClaw `v2026.9.2`；2026-09-24 按现行代码重写架构，以及聊天、权限、子任务、插件、定时任务、浏览器、认证和语音专题；分别说明数据权威、调用流程、失败恢复与当前限制。文档中的历史测试结果只适用于对应提交，不代表本轮或当前安装包的验收结果。
+本目录面向产品维护、开发和排障。版本以 `package.json` 和锁文件为准；能力从[产品与系统总览](architecture/01-overview.md)进入，并以各专题及代码核对。历史测试结果只适用于对应提交。
 
 ## 从哪里开始
 
 1. [产品与系统总览](architecture/01-overview.md)：任务如何执行，数据由谁负责。
-2. [当前实现状态](features/current-state-v2026.8.10.md)：能力、版本、数量及已知限制。
-3. [开发与排障](development.md)：启动、运行时重建、验证和日志定位。
-4. [系统架构](architecture/02-architecture.md)与[进程模型](architecture/03-process-model.md)：模块、进程、IPC 和启动退出顺序。
+2. [开发与排障](development.md)：启动、运行时重建、验证和日志定位。
+3. [系统架构](architecture/02-architecture.md)与[进程模型](architecture/03-process-model.md)：模块、进程、IPC 和启动退出顺序。
 
 ## 文档类型
 
 - `architecture/`：持续维护的架构与数据契约，说明权威、调用链和失败语义。
-- `features/`：领域实现说明，以及明确标注日期的审计与重构记录。文件名含 plan 不代表尚未实现，以开头状态和现行专题为准。
-- `archive/`：已退出产品的交互和早期方案，仅用于理解历史决策。
+- `features/`：领域实现说明，以及仍在推进的方案；方案开头应标明已完成部分与待验证事项。
 - `releases/`：不可按当前源码改写的发布记录。
-- 接口和分发指南：面向扩展、适配器或部署使用者，可独立阅读。
+- `openclaw-upgrades/`：按版本保存 OpenClaw 升级审计；不作为现行能力清单。
+- `developer-integration/`：模块接口接入、外部 Agent 适配，以及可分发的 Extension 配置指南与示例。
 
 ## 架构专题
 
@@ -29,7 +28,7 @@
 | [安全模型](architecture/11-security-model.md)                          | IPC、文件、网络、凭据与剩余风险              |
 | [构建与发布](architecture/12-tech-stack.md)                            | 依赖、平台资源、ABI 和打包链路               |
 | [薄前端设计](architecture/13-pure-frontend-design.md)                  | 显示状态与执行状态的区别                     |
-| [所有权判定](architecture/14-openclaw-frontend-boundary-plan.md)       | 新能力应该落在哪一层                         |
+| [所有权判定](architecture/14-openclaw-frontend-boundary.md)            | 新能力应该落在哪一层                         |
 | [聊天渲染](architecture/15-chat-rendering.md)                          | 历史、实时流、恢复、工具卡和 Markdown        |
 | [市场适配](architecture/16-skill-marketplace-adapter.md)               | Provider contract 与安装事务                 |
 | [Windows 原生沙盒](architecture/17-windows-native-sandbox.md)          | 工具进程隔离及平台限制                       |
@@ -41,43 +40,39 @@
 
 ### 助手与协作
 
-[助手管理](features/multi-agent.md)说明设置、角色文件和历史保留；[协作机制](features/multi-agent-collaboration.md)说明启用、准备成员、原生发送、预算与恢复；[任务内协作](features/task-scoped-agent-collaboration.md)记录当前设计与早期方案的差异；[原生验证](features/native-collaboration-verification.md)提供手动检查步骤。
-
-相关实施记录：[模型创建助手](features/conversation-agent-creation-plan.md)、[会话菜单](features/collaboration-session-menu-plan.md)、[协作展示](features/collaboration-display-implementation.md)。历史说明不得覆盖现行机制。
+[长期助手与任务内协作](features/assistants-and-collaboration.md)说明档案管理、成员准备、原生发送、预算、恢复与验证。
 
 ### 对话、目标与运行权限
 
-- [消息链路](features/chat-message-flow-review-2026-07-26.md)、[时间线](features/chat-message-timeline-refactor-plan.md)、[Thinking](features/thinking-stream-implementation.md)、[进度卡](features/openclaw-progress-card-ui.md)。
-- [会话权限](features/openclaw-permission-management-remediation-plan.md)、[运行参数](features/subagent-runtime-settings-audit.md)、[子任务恢复](features/subagent-model-retry-and-announce-consistency-plan.md)。
-- [定时任务结果](features/scheduled-task-in-app-results-implementation-plan.md)、[薄前端状态](features/openclaw-thin-frontend-refactor-plan.md)。
+- [聊天渲染](architecture/15-chat-rendering.md)：发送、时间线、Thinking、进度卡和恢复。
+- [会话权限](features/openclaw-permission-management.md)、[运行参数](features/agent-runtime-settings.md)、[执行引擎与子任务](architecture/05-agent-engine.md)。
+- [定时任务结果](architecture/08-scheduled-tasks.md)、[薄前端状态](architecture/13-pure-frontend-design.md)。
 
 ### 模型、网络、插件与集成
 
 - [模型管理](features/model-management.md)、[内置模型认证](features/authentication-builtin-model-lifecycle.md)、[语音](features/local-tts.md)。
-- [Plugin Hub](features/plugin-hub-experience-plan.md)、[Extension 请求头声明](features/extension-contributed-outbound-header-policy-plan.md)、[出站代理](features/outbound-header-proxy-analysis-and-redesign.md)。
-- [外部 Agent](features/external-agent-adapters.md)、[Multica](features/multica-integration.md)。
+- [Plugin Hub](features/plugin-hub-experience.md)、[Extension 请求头声明](features/extension-contributed-outbound-header-policy.md)、[出站代理](features/outbound-header-proxy-analysis-and-redesign.md)。
+- [Multica](features/multica-integration.md)。
 
 ### 浏览器与桌面
 
 - [浏览器设计](features/browser-settings-design.md)、[扩展侧栏聊天](features/browser-extension-side-chat.md)、[操作演示](features/browser-operation-recording.md)。
-- [Windows 安装器](features/windows-installer-resilience.md)。
+- [Workboard](features/workboard.md)：操作契约与验证。
 
 ## 接口与分发指南
 
 - [浏览器扩展接口](browser-extension-api/README.md)：Native Messaging、app-server、数据模型、错误和兼容边界。
-- [出站请求头配置](outbound-header-guide/README.md)：可分发配置说明及 Extension 样例。
-- [外部 Agent 接入](external-agent-integration-guide.md)：适配器、认证、离线资源与发布检查。
-- [运行时补丁指南](patches/openclaw-patch-guide.md)：构建、验证和升级流程；能力清单以[版本目录](../scripts/patches/v2026.9.2/README.md)为准。
+- [出站请求头配置](developer-integration/outbound-headers/README.md)：可分发配置说明及 Extension 样例。
+- [开发接入接口索引](developer-integration/README.md)：后续模块需要适配的接口与调用要求。
+- [外部 Agent 接入](developer-integration/external-agent-integration-guide.md)：适配器、认证、离线资源与发布检查。
+- [运行时补丁指南](openclaw-runtime-patches.md)：构建、验证和升级流程；能力清单以[当前版本目录](../scripts/patches/v2026.9.6/README.md)为准。
+- [Windows 安装器](windows-installer.md)：平台故障、数据归属和验证。
 
-## 历史、审计与重构记录
+运行时版本升级记录见[OpenClaw 升级目录](openclaw-upgrades/README.md)。
 
-以下记录保留当时的发现和测试范围，不能据此认定当前代码仍存在同一问题或已经通过全部验证：
+发布历史见[发布记录](releases/README.md)；其中的验证结论只适用于对应版本。
 
-- [2026-09-08 发送与停止审计](features/message-send-stop-review-2026-09-08.md)。
-- [浏览器操作演示审查](features/browser-operation-recording-review.md)。
-- [源码目录重构](features/src-directory-refactor.md)、[大文件拆分](features/src-large-file-refactor.md)。
-- [早期助手与 Handoff](archive/assistant-profiles-early-implementation.md)、[早期任务协作提案](archive/task-scoped-collaboration-proposal.md)。
-- [发布记录](releases/README.md)。
+仍待完成的真实环境验证集中在[内网功能验收](features/intranet-feature-acceptance.md)。
 
 ## 维护规则
 

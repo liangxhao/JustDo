@@ -1,6 +1,6 @@
 # 产品与系统总览
 
-本页按 2026-09-24 的源码组织现行架构。应用版本 `v2026.8.27`，OpenClaw `v2026.9.6`；依赖版本、数量和能力摘要集中维护在[当前实现状态](../features/current-state-v2026.8.10.md)。
+本页说明产品能力、系统边界与关键限制。具体版本与依赖以 `package.json`、锁文件及[构建说明](12-tech-stack.md)为准；功能细节以各专题和代码为准。
 
 ## 1. 产品如何工作
 
@@ -9,6 +9,10 @@
 普通用户会话固定归属 main。设置中的长期助手提供可复用身份及角色文件；启用可选协作扩展后，模型可为当前任务准备助手会话。子任务委派、平级协作、定时任务属于不同执行关系，界面分别展示。
 
 “本地优先”表示桌面壳、产品数据库、配置、项目与受管运行时在本机。它不保证离线推理：模型、MCP、插件和工具的联网行为取决于用户配置与权限。
+
+已接入的主要流程包括对话与计划审核、持续目标、定时任务、插件管理、四种浏览器模式、模型与认证、语音及外部 Agent。相应行为与限制见 [Cowork](04-cowork-system.md)、[定时任务](08-scheduled-tasks.md)、[插件系统](07-plugin-system.md)、[浏览器设计](../features/browser-settings-design.md)、[模型管理](../features/model-management.md)、[语音](../features/local-tts.md)和[外部 Agent 接入](../developer-integration/external-agent-integration-guide.md)。Memory 经 Gateway 搜索及受限文件接口读取；Usage 展示 Gateway 用量投影，二者都不另建消息或执行权威。
+
+长期助手、任务内协作成员和原生 Subagent 是不同身份。可选协作扩展默认关闭；启用后每任务最多 12 名成员、每用户轮次最多 16 次投递。原生接收回执不代表业务完成，成员共享项目文件时也没有自动 worktree 或写冲突隔离。详见[长期助手与任务内协作](../features/assistants-and-collaboration.md)。
 
 ## 2. 进程与通信
 

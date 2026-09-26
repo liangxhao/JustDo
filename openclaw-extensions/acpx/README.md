@@ -29,7 +29,7 @@ agent from a product also requires removing its packages from this manifest and
 lockfile before assembling the runtime; disabling it in settings prevents
 execution but does not remove packaged files. External agents start disabled
 with read-only permissions. The complete extension template is documented in
-`docs/features/external-agent-adapters.md`.
+`docs/developer-integration/external-agent-integration-guide.md`.
 
 ## Compatibility
 

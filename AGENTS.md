@@ -229,7 +229,7 @@ apply the current patch set instead.
   by domain and their public entry points stable.
 - Translation dictionaries in `renderer/services/i18n/` are grouped by domain,
   with both languages together; `translations.ts` only composes them. Keep key/value
-  parity when moving entries. See `docs/features/src-large-file-refactor.md`.
+  parity when moving entries.
 - Avoid mutation outside intentional Redux Toolkit Immer reducers.
 - Never hardcode user-visible strings; use i18n.
 - Add i18n keys to both `zh` and `en`.
@@ -282,7 +282,7 @@ when they clarify ownership, flow, or lifecycle.
 
 - Architecture docs: `docs/architecture/`
 - Feature notes: `docs/features/`
-- Patch docs: `docs/patches/`
+- Runtime patch developer guide: `docs/openclaw-runtime-patches.md`
 - User READMEs: `README.md`, `README_zh.md`
 
 When architecture/data flow changes, update the relevant doc in the same change:
@@ -325,7 +325,7 @@ uses Gateway agents.create/update. The application stores product-facing profile
 mappings, and user conversations always belong to main. Native agents.files APIs own role-file text.
 Empty profile models inherit the application default. Disable is an application
 chat-entry restriction, not native authorization revocation. See
-`docs/features/multi-agent.md` for the current P0/P1 scope and limitations.
+`docs/features/assistants-and-collaboration.md` for the current P0/P1 scope and limitations.
 
 Deleted assistant profiles retain `agents.deleted_at`, disabled identity rows and
 native ownership for historical transcripts. Hide them from Settings and reject

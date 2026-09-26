@@ -1,8 +1,12 @@
 # 登录模块调用：刷新 outbound header 值
 
+适用调用方：后续登录模块、退出登录流程和 Cookie 定时续期任务。接口在 Main 进程执行。
+
 ## 接口
 
 Main 进程从 `src/main/core/network/outboundHeaderPolicyConfig.ts` 导入：
+
+以下相对导入路径以 `src/main/main.ts` 为例，其他模块按所在目录调整。
 
 ```ts
 import { updateOutboundHeaderUserInfoCache } from './core/network/outboundHeaderPolicyConfig';
@@ -29,6 +33,9 @@ updateOutboundHeaderUserInfoCache();
 中的显式登录/退出入口 `refreshAfterLogin` 和 `refreshAfterLogout`；定时 Cookie 更新完成后
 可直接调用本接口，无需执行完整登录流程。
 
+如果登录模块已经调用上述 `refreshAfterLogin` 或 `refreshAfterLogout`，它们内部已调用
+值刷新接口，无需重复调用。文件写入失败时，不应调用刷新接口；异步写入必须等待完成。
+
 ## 边界与返回值
 
 - 只读取 `user_info.json`，不会读取或改写 `outbound-header-proxy/config.json`，也不会读取
@@ -49,3 +56,12 @@ updateOutboundHeaderUserInfoCache();
 等到上述合并时机才生效。内置模型凭据监控的重试、到期刷新和文件变化回调不调用本接口。
 请求头值由登录模块在登录、退出或 Cookie 更新完成后显式刷新；策略激活时也会读取一次，
 以初始化当前策略所需的请求头值。
+
+## 接入验证
+
+- 登录成功：写入值后调用接口，后续匹配规则的请求使用新值。
+- Cookie 续期：只调用值刷新接口，确认规则不变、请求使用新值且代理不重启。
+- 退出登录：清理文件中的凭据后调用接口，确认缓存中不再保留旧值。
+- 文件损坏或缺失：调用后使用空值，不保留旧凭据；日志不包含文件内容。
+
+验证时使用合成凭据，不记录真实 Cookie 或接口返回对象。

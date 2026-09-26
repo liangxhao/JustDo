@@ -99,6 +99,8 @@ Plan-mode 通过原生 session extension、turn hook、工具和 scoped RPC 实�
 
 子任务查询使用 tasks.list/get 和 task event。原生负责 admission、队列、required-child join 与完成通知；Main 合并状态用于父会话展示，不通过查询工具循环代替 task ledger。平级协作的发送也交给原生 sessions_send，产品只负责任务范围和回执。
 
+展示时保留 accepted、queued、running 与终态的区别；`completed` 且 `terminalOutcome=blocked` 应显示为 blocked。详情用 taskId 核对原生 session，再读取累计 usage/runtime，不从调用者 sessionKey 猜测。主模型结束或 UI busy 消失不证明 required child 已被父运行消费。完成通知丢失或请求结果不确定时先查原生任务与运行身份，不能重发整个子任务；它可能已经产生文件、网络或 spawn 副作用。产品未提供通用的模型请求自动重试承诺。
+
 ## 8. 重启的两种边界
 
 Manager 将配置触发的重启排在正在进行的启动之后，不能先停止再复用旧启动 Promise。对外的 `startGateway` 等待已排队重启的最终结果，交互恢复与扩展读取不会收到中间的 stopped 状态；重启内部使用独立的单次启动操作，避免等待自身。等待期间的显式停止取消后续排队启动。

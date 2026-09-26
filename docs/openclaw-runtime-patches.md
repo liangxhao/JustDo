@@ -7,20 +7,20 @@ JustDo 是 OpenClaw 的桌面前端和运行时宿主，不是 OpenClaw 的长�
 当前版本来自 `package.json.openclaw.version`：
 
 ```text
-v2026.9.2
+v2026.9.6
 ```
 
 当前 patch 目录：
 
 ```text
-scripts/patches/v2026.9.2/
+scripts/patches/v2026.9.6/
 ```
 
 该目录的 `README.md` 是能力、上游原始证据、依赖关系、测试和删除条件的唯一权威总账。本文只说明工程流程，不能维护另一份逐文件行为副本。
 
 ## 2. 当前锁定供应链
 
-目标是未经修改的 `openclaw@2026.9.2` npm 产物。`source-lock.json` 记录精确 npm integrity 与 tarball SHA-256。运行时要求 Node `24.15.0`，项目支持范围为 `>=24.15.0 <25`。
+目标是未经修改的 `openclaw@2026.9.6` npm 产物。`source-lock.json` 记录精确 npm integrity 与 tarball SHA-256。项目 Node 支持范围为 `>=24.16.0 <25`。
 
 Patch 工具拒绝：
 
@@ -34,7 +34,7 @@ Patch 工具拒绝：
 
 ## 3. 当前补丁清单
 
-能力、上游原生证据、补丁文件和移除条件统一见[当前版本目录 README](../../scripts/patches/v2026.9.2/README.md)。这里不再维护第二份逐文件清单，避免新增补丁后留下不完整的数量和能力声明。
+能力、上游原生证据、补丁文件和移除条件统一见[当前版本目录 README](../scripts/patches/v2026.9.6/README.md)。这里不再维护第二份逐文件清单，避免新增补丁后留下不完整的数量和能力声明。
 
 Thinking/history、工具发现、原生 task queue/join、审批和 compaction 等能力优先使用锁定版本的原生契约；Runtime Services 承接产品需要的受限读取和投影。新增缺口前先核对公开 plugin/Gateway API，再判断是否确实需要补丁。
 
@@ -160,7 +160,7 @@ Patch 修改至少执行：
 1. 对锁定 pristine runtime 的首次应用；
 2. 对已 patch runtime 的第二次应用，确认零字节变化；
 3. `npm run openclaw:patches:verify`；
-4. 对应 `tests/openclaw/patches/v2026.9.2/` focused tests；
+4. 对应 `tests/openclaw/patches/v2026.9.6/` focused tests；
 5. 受影响 Main Adapter/Renderer tests；
 6. 真实 runtime smoke；
 7. 若涉及平台兼容，至少目标平台的打包/启动 smoke；
@@ -240,11 +240,11 @@ Patch 失败时保留完整错误中的 patch label、target file、anchor count
 
 ## 17. 文档责任
 
-- `scripts/patches/v2026.9.2/README.md`：当前能力事实与逐 patch总账；
+- `scripts/patches/v2026.9.6/README.md`：当前能力事实与逐 patch 总账；
 - 本文：通用生命周期与操作规范；
 - `docs/architecture/openclaw-gateway-capability-matrix.md`：App 与 Gateway 能力边界；
 - feature docs：用户可见行为与维护约束；
-- `docs/patches/` 不保存旧 patch 清单副本。
+- 本指南不保存旧 patch 清单副本。
 
 任何 patch 增删、编号、职责或删除条件变化，都必须在同一变更中同步这些受影响文档。
 
@@ -252,9 +252,9 @@ Patch 失败时保留完整错误中的 patch label、target file、anchor count
 
 | 阶段                  | 实现入口                                                         | 证明内容                                          |
 | --------------------- | ---------------------------------------------------------------- | ------------------------------------------------- |
-| Pristine contract     | `scripts/openclaw/verify-openclaw-pristine-contracts.cjs`                 | provenance、上游已吸收能力、保留patch在原包未生效 |
-| Patch transaction     | `scripts/openclaw/patch-openclaw-runtime.cjs`                             | 顺序、快照、apply/verify、失败回滚、manifest写入  |
-| Patch utilities       | `scripts/patches/v2026.9.2/_patch-utils.js`                      | 唯一anchor、write-if-changed、索引一致性          |
+| Pristine contract     | `scripts/openclaw/verify-openclaw-pristine-contracts.cjs`        | provenance、上游已吸收能力、保留patch在原包未生效 |
+| Patch transaction     | `scripts/openclaw/patch-openclaw-runtime.cjs`                    | 顺序、快照、apply/verify、失败回滚、manifest写入  |
+| Patch utilities       | `scripts/patches/v2026.9.6/_patch-utils.js`                      | 唯一anchor、write-if-changed、索引一致性          |
 | Runtime install/stage | `install-openclaw-runtime.cjs`、`openclaw-runtime-staging.cjs`   | 固定source到目标platform staging                  |
 | Gateway bundle        | `bundle-openclaw-gateway.cjs`、`openclaw-runtime-companions.cjs` | 固定 worker/module companion URL 并验证产物完整性 |
 | Freeze                | `openclaw-runtime-freeze.cjs`                                    | 构建输入和immutable artifact指纹                  |

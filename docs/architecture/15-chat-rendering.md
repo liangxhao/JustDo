@@ -8,7 +8,6 @@
 
 ## 1. 从原生事件到屏幕
 
-
 ```mermaid
 flowchart LR
   Gateway[Gateway WS / history] --> Client[GatewayClient]
@@ -25,6 +24,8 @@ flowchart LR
 ```
 
 Main 只提供连接准备、权限、产品生命周期和受限详情读取，不复制 Thinking/Tool/Content。Redux 也不保存 transcript。原生历史丢失时不能用产品消息缓存冒充恢复。
+
+Composer 提交前只是草稿；Main 建立产品会话与 `clientTurnId`，并准备模型、权限和项目根目录。首轮可由 Router 发送，后续回合由集中式聊天 client 发送。产品 receipt 只证明身份已建立，原生 admission 只证明执行已被接收，live final 也不能单独证明后代任务与 Goal 已全部结束。排障时先查原生 history 和完整 event，再查 admission、reducer 与渲染 pipeline；Main 的摘要日志缺少中间帧不能证明原生事件未发生。
 
 ## 2. 控制器和状态归属
 
@@ -46,6 +47,8 @@ activeTurn 记录原生 run/session/lifecycle generation 与序列。最近 24 �
 连接 generation 防旧 socket，session 身份防切换串消息，run/lifecycle 防旧运行，sequence 防重复和乱序。不能只用时间戳或“当前页面是否忙”判断。
 
 原生 Agent 事件与 Chat 持久消息事件可能交错。reducer 归一化 delta、累计 snapshot 和可替换段，不能把 snapshot 再 append 一遍，也不能用一个全局 latestSeq 拒绝另一个 owner 的缺口恢复。
+
+run、toolCallId、entry id、preamble owner 和 sequence 共同决定时间线归属；时间戳不能独自决定工具完成顺序。Thinking 来自原生 reasoning/redacted-thinking 投影，可能因模型能力或 provider 配置而缺失；UI 不推测模型未返回的内容。Thinking 与正文、工具前说明分别保留 item 和 owner。展开、折叠与平滑揭示只是本地显示状态，不能改变原生段边界或历史。
 
 `replace: true` 优先于 delta 追加语义，包括空字符串撤回。累计 chat 空替换按原生源序号撤回覆盖范围内的 assistant 文本，并阻止尚未到达的旧 owner 复活；Thinking、Tool 和独立 preamble 不受此水位影响。文本更新序号独立于 Tool 关闭段时的边界序号。普通空快照仍不构成段边界。
 
@@ -107,6 +110,10 @@ Plan 规划和实施共用 canonical transcript，原生 reset 切断模型上�
 
 Goal 卡保留六种原生状态，Main 只提供自动续跑阶段。progress_card 从原生 session 读取，不能扫描工具参数或模型文字重建“当前计划”。压缩进度与历史摘要也使用对应原生状态，不当作普通用户消息。
 
+`progressCard.changed` 携带 revision，Renderer 在 Gateway 声明读取能力后调用 `progressCard.get`，并核对 session 与连接 generation。当前卡只保留有界内存投影；原生返回 null、读取失败或 revision 失效时不能沿用旧卡冒充最新状态。关闭卡片和完成后隐藏属于 UI 状态，不删除原生卡。progress_card 是执行进度，PresentPlan 是待审核 artifact，Goal 是目标与预算；三者的生命周期不可混用。
+
+用户刷新卡片时，聊天 client 直接发送 `progressCard.refresh`。接收回执不替换已保存卡或输入草稿；后续 `progressCard.changed` 触发按 revision 读取。结果不确定时复用原刷新意图并查询原生卡，明确终态失败后才创建新意图。切换会话后的迟到回执不修改当前显示，也不生成合成用户消息。
+
 ## 8. 模型、时长和用量
 
 回复模型来自本轮原生 progress/final 与历史；Main run receipt 的 modelRef 是发送前选择，不证明实际模型。fallback 或运行中切换后，final 模型优先；provider/model 拼接保留 model 内部斜杠，不能因前缀相同擅自去重。
@@ -144,17 +151,3 @@ stream-render-scheduler 合并 frame 更新，assistant pacer 平滑揭示文本
 | 安全与视觉更新    | components/markdown、justdo-chat、controllers                           |
 
 至少验证：同文重复提交、重连时 live/history 交错、工具前后多段正文、终态后迟到 delta、取消早于 admission、超大工具结果、Plan reset 后 rewind 门禁、Goal 操作 fence、后台会话停止、历史窗口移位与滚动锚点。领域测试与真实模型交互检查分别记录，不以一次截图替代协议验证。
-
-## Durable progress refresh
-
-The progress card requests `progressCard.refresh` directly through the Gateway
-client. Acceptance does not replace the saved card or input draft. A native
-`progressCard.changed` event triggers a read of the saved revision. The refresh
-intent is reused for uncertain delivery, while confirmed terminal failure permits a new intent. Retries also read the saved card to recover missed events. Stale acknowledgements after a session
-switch are ignored. No application transcript or synthetic user turn is created.
-
-## 内置浏览器的新标签请求
-
-`AgentEnsureTab` 必须在当前任务对应的已挂载 `BrowserPanel` 上调用 `openTab`，保留 Main 分配的 targetId 和 profile，再同步展示状态。`initialTabs` 仅用于空面板初始化，不能通过修改外层标签列表为已有面板创建 guest。面板未挂载时以该列表初始化；重复 targetId 不重复创建。已挂载面板因容量限制拒绝创建时，保留原选择和外层标签列表，避免形成没有 guest 的目标。否则 Main 会等待新目标注册超时，即使任务已有可见网页也会报面板不可用。
-
-阶段 2 以内置浏览器真实网页为唯一新增交互入口；独立“查看任务页面”及外部镜像采集方案已撤回。停止、人工操作与继续的首版流程已实现，真实模型验收待完成，见[内置浏览器介入方案](../features/browser-live-view-intervention-plan.md)。
