@@ -207,7 +207,7 @@ const ModelSettingsTab: React.FC<ModelSettingsTabProps> = ({
 
   return (
     <div className="space-y-5">
-      <div className="flex justify-end gap-1">
+      <div className="flex items-center gap-2 border-b border-border">
         <input
           ref={importInputRef}
           type="file"
@@ -215,11 +215,31 @@ const ModelSettingsTab: React.FC<ModelSettingsTabProps> = ({
           className="hidden"
           onChange={handleImport}
         />
+        <div className="min-w-0 flex-1 overflow-x-auto" role="tablist">
+          <div className="flex w-max min-w-full justify-center gap-1">
+            {kinds.map(kind => (
+              <button
+                key={kind.id}
+                type="button"
+                role="tab"
+                aria-selected={activeKind === kind.id}
+                onClick={() => onKindChange(kind.id)}
+                className={`shrink-0 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${
+                  activeKind === kind.id
+                    ? 'border-primary text-primary'
+                    : 'border-transparent text-secondary hover:text-foreground'
+                }`}
+              >
+                {kind.label}
+              </button>
+            ))}
+          </div>
+        </div>
         <button
           type="button"
           onClick={() => importInputRef.current?.click()}
           disabled={isImporting || isExporting || isModelActionBusy}
-          className="inline-flex h-7 items-center rounded-lg border border-border-input !bg-white px-2.5 text-xs font-medium text-foreground shadow-sm transition-all hover:border-foreground/25 hover:!bg-surface-raised/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/15 disabled:cursor-not-allowed disabled:text-muted disabled:opacity-40 dark:!bg-surface dark:hover:!bg-surface-raised/60"
+          className="inline-flex h-7 shrink-0 items-center rounded-lg border border-border-input !bg-white px-2.5 text-xs font-medium text-foreground shadow-sm transition-all hover:border-foreground/25 hover:!bg-surface-raised/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/15 disabled:cursor-not-allowed disabled:text-muted disabled:opacity-40 dark:!bg-surface dark:hover:!bg-surface-raised/60"
         >
           {i18nService.t('import')}
         </button>
@@ -227,30 +247,10 @@ const ModelSettingsTab: React.FC<ModelSettingsTabProps> = ({
           type="button"
           onClick={handleExport}
           disabled={isImporting || isExporting || isModelActionBusy}
-          className="inline-flex h-7 items-center rounded-lg border border-border-input !bg-white px-2.5 text-xs font-medium text-foreground shadow-sm transition-all hover:border-foreground/25 hover:!bg-surface-raised/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/15 disabled:cursor-not-allowed disabled:text-muted disabled:opacity-40 dark:!bg-surface dark:hover:!bg-surface-raised/60"
+          className="inline-flex h-7 shrink-0 items-center rounded-lg border border-border-input !bg-white px-2.5 text-xs font-medium text-foreground shadow-sm transition-all hover:border-foreground/25 hover:!bg-surface-raised/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/15 disabled:cursor-not-allowed disabled:text-muted disabled:opacity-40 dark:!bg-surface dark:hover:!bg-surface-raised/60"
         >
           {i18nService.t('export')}
         </button>
-      </div>
-      <div className="overflow-x-auto border-b border-border" role="tablist">
-        <div className="flex w-max min-w-full justify-center gap-1">
-          {kinds.map(kind => (
-            <button
-              key={kind.id}
-              type="button"
-              role="tab"
-              aria-selected={activeKind === kind.id}
-              onClick={() => onKindChange(kind.id)}
-              className={`shrink-0 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${
-                activeKind === kind.id
-                  ? 'border-primary text-primary'
-                  : 'border-transparent text-secondary hover:text-foreground'
-              }`}
-            >
-              {kind.label}
-            </button>
-          ))}
-        </div>
       </div>
 
       <div role="tabpanel">
