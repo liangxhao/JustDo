@@ -56,20 +56,24 @@ outbound-header-policy.json
 
 `OutboundHeaderPolicyService` 每次 reconcile 都重新读取：
 
-1. 用户手工 `config.json`；
-2. 当前安装清单；
-3. 每个已启用 Extension 的合法 sidecar；
-4. `user_info.json` 中对应的值。
+1. 代码中的默认策略；
+2. 用户手工 `config.json`（缺失时自动创建空默认配置）；
+3. 当前安装清单；
+4. 每个已启用 Extension 的合法 sidecar；
+5. `user_info.json` 中对应的值。
 
 等价规则为：
 
 ```text
 effective = manual.enabled
-  ? manual.groups + enabledExtensions.validSidecarGroups
+  ? builtIn.groups + manual.groups + enabledExtensions.validSidecarGroups
   : []
 ```
 
-`config.json` 的全局 `enabled` 仍是总开关。`overwrite`、同名头冲突和 URL 匹配继续沿用现有
+缺少 `config.json` 时创建空的 `DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG`。无效文件（包括旧版无 `groups`
+的格式）会重写为 `DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG`，其 `groups` 为空。预定义组只存在于
+代码中，不写入文件。旧版本写入的预定义组在合并时去重。
+`config.json` 的全局 `enabled` 仍是总开关。同名头冲突和 URL 匹配继续沿用现有
 代理语义。Extension 规则带 owner id 仅用于诊断，不单独持久化。
 
 服务生成 canonical digest，用于判断有效策略是否变化以及是否需要刷新运行时。digest 不是
@@ -103,17 +107,25 @@ Main 在启动 Gateway 前 reconcile 策略。若存在有效规则，则确保�
 ```mermaid
 flowchart LR
   Manual[config.json]
+  BuiltIn[代码预定义组]
   Ext[enabled Extension sidecars]
   Policy[OutboundHeaderPolicyService]
   Values[user_info.json]
+  Refresh[updateOutboundHeaderUserInfoCache]
+  Login[登录 / 退出 / Cookie 续期]
   Proxy[Gateway-local proxy]
   MainFetch[Main request wrapper]
   Gateway[OpenClaw Gateway and children]
   MainCalls[title / model test / MCP test]
 
   Manual --> Policy
+  BuiltIn --> Policy
   Ext --> Policy
-  Values --> Policy
+  Login --> Refresh
+  Policy --> Refresh
+  Values --> Refresh
+  Refresh --> Proxy
+  Refresh --> MainFetch
   Policy --> Proxy
   Policy --> MainFetch
   Gateway --> Proxy
@@ -133,9 +145,9 @@ Main 再校验 method、模型 endpoint、header 与 body，并重建固定的�
 
 标题生成、模型探测和 MCP 探测都拒绝自动重定向，避免任何已注入 Header 被带到第二个目标。
 
-以下情况 fail closed：
+失败处理策略：
 
-- 手工配置无法解析：本轮不激活任何规则；
+- 手工配置无法解析或结构非法：重写为空默认配置，继续合并代码预定义组和已启用扩展组；
 - 导入来源的 sidecar 无效：导入失败；
 - 已安装 Extension 的 sidecar 后续损坏：排除该 Extension 的全部规则；
 - 已安装 Extension 清单无法可靠读取：不沿用可能过期的 Extension 贡献；

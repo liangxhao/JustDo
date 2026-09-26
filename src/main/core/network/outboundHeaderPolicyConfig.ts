@@ -6,6 +6,7 @@ import path from 'path';
 import {
   DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG,
   type OutboundHeaderPolicyConfig,
+  PREDEFINED_OUTBOUND_HEADER_POLICY_CONFIG,
 } from '../../../config/outboundHeaders';
 import { USER_DATA_DIRECTORY_NAME } from '../../../shared/productMetadata';
 
@@ -13,12 +14,6 @@ export type {
   OutboundHeaderPolicyConfig,
   OutboundHeaderPolicyGroup,
 } from '../../../config/outboundHeaders';
-
-const DISABLED_OUTBOUND_HEADER_POLICY_CONFIG: OutboundHeaderPolicyConfig = Object.freeze({
-  overwrite: false,
-  enabled: false,
-  groups: Object.freeze([]),
-});
 
 const USER_INFO_RELATIVE_PATH = path.join(USER_DATA_DIRECTORY_NAME, 'huawei', 'user_info.json');
 const POLICY_CONFIG_RELATIVE_PATH = path.join(
@@ -34,10 +29,10 @@ const POLICY_CONFIG_README_CONTENT = `# config.json
 This file controls outbound header injection.
 
 - \`enabled\`: Enables or disables outbound header injection.
-- \`overwrite\`: Deprecated compatibility field. It is ignored; existing manual
-  files are never overwritten by JustDo or Extensions.
 - \`groups\`: Independent URL/Header mappings. Each group has a
   \`baseUrlWhitelist\` list and a \`headerNames\` list.
+- Built-in groups are always loaded from the application code when enabled;
+  this file only adds manual groups. A missing file is created with empty groups.
 
 ## headerNames requirements
 
@@ -67,7 +62,6 @@ Example:
 
 \`\`\`json
 {
-  "overwrite": false,
   "enabled": true,
   "groups": [
     {
@@ -84,7 +78,7 @@ Example:
 `;
 
 let cachedOutboundHeaderValues: Readonly<Record<string, string>> | null = null;
-let cachedOutboundHeaderPolicyConfig = DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG;
+let cachedOutboundHeaderPolicyConfig = PREDEFINED_OUTBOUND_HEADER_POLICY_CONFIG;
 
 const normalizeHeaderValue = (value: unknown): string => {
   if (value === null || value === undefined) {
@@ -118,11 +112,16 @@ export const readOutboundHeaderPolicyConfig = (configPath: string): OutboundHead
   const readmePath = path.join(configDirectory, POLICY_CONFIG_README_FILE_NAME);
   const writeDefaultConfig = (): void => {
     fs.mkdirSync(configDirectory, { recursive: true });
-    fs.writeFileSync(
-      configPath,
-      `${JSON.stringify(DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG, null, 2)}\n`,
-      'utf8',
-    );
+    fs.writeFileSync(configPath, `${JSON.stringify(DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG, null, 2)}\n`, 'utf8');
+  };
+  const replaceInvalidConfig = (): OutboundHeaderPolicyConfig => {
+    console.warn('[OutboundHeaderPolicy] Invalid outbound header policy config; resetting to default');
+    try {
+      writeDefaultConfig();
+    } catch (error) {
+      console.warn('[OutboundHeaderPolicy] Failed to reset invalid policy config:', error);
+    }
+    return DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG;
   };
   try {
     fs.mkdirSync(configDirectory, { recursive: true });
@@ -137,10 +136,7 @@ export const readOutboundHeaderPolicyConfig = (configPath: string): OutboundHead
     const parsed: unknown = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     const config = parsed as Record<string, unknown>;
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      console.warn(
-        '[OutboundHeaderPolicy] Invalid outbound header policy config; disabling policy',
-      );
-      return DISABLED_OUTBOUND_HEADER_POLICY_CONFIG;
+      return replaceInvalidConfig();
     }
 
     const rawGroups = Array.isArray(config.groups) ? config.groups : null;
@@ -150,7 +146,12 @@ export const readOutboundHeaderPolicyConfig = (configPath: string): OutboundHead
           (value): value is Record<string, unknown> =>
             !!value && typeof value === 'object' && !Array.isArray(value),
         )
-        .filter(group => Array.isArray(group.baseUrlWhitelist) && Array.isArray(group.headerNames))
+        .filter(group =>
+          Array.isArray(group.baseUrlWhitelist) &&
+          group.baseUrlWhitelist.every(value => typeof value === 'string') &&
+          Array.isArray(group.headerNames) &&
+          group.headerNames.every(value => typeof value === 'string'),
+        )
         .map(group =>
           Object.freeze({
             baseUrlWhitelist: Object.freeze(
@@ -166,20 +167,14 @@ export const readOutboundHeaderPolicyConfig = (configPath: string): OutboundHead
           }),
         );
       if (groups.length !== rawGroups.length) {
-        console.warn(
-          '[OutboundHeaderPolicy] Invalid outbound header policy config; disabling policy',
-        );
-        return DISABLED_OUTBOUND_HEADER_POLICY_CONFIG;
+        return replaceInvalidConfig();
       }
       return Object.freeze({
-        // Kept in the schema for compatibility. JustDo never overwrites an
-        // existing manual policy file during startup or reconciliation.
-        overwrite: false,
         enabled: config.enabled as boolean,
         groups: Object.freeze(groups),
       });
     }
-    console.warn('[OutboundHeaderPolicy] Invalid outbound header policy config; disabling policy');
+    return replaceInvalidConfig();
   } catch (error) {
     const errorCode = (error as NodeJS.ErrnoException).code;
     if (errorCode === 'ENOENT') {
@@ -189,41 +184,55 @@ export const readOutboundHeaderPolicyConfig = (configPath: string): OutboundHead
         console.warn('[OutboundHeaderPolicy] Failed to create default policy config:', writeError);
       }
       return DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG;
+    } else if (error instanceof SyntaxError) {
+      return replaceInvalidConfig();
     } else {
       console.warn('[OutboundHeaderPolicy] Failed to read policy config:', error);
     }
   }
-  return DISABLED_OUTBOUND_HEADER_POLICY_CONFIG;
+  return DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG;
 };
 
 export const getOutboundHeaderPolicyConfig = (): OutboundHeaderPolicyConfig =>
   cachedOutboundHeaderPolicyConfig;
 
 /**
- * Reloads the outbound header policy and user header values from disk.
+ * Loads a manual policy file and its header values from disk. Runtime policy
+ * activation normally goes through OutboundHeaderPolicyService so Extension
+ * contributions are included.
  *
- * Call without arguments to refresh both default files:
+ * Call without arguments to read both default files:
  * - `%APPDATA%/<productName>/outbound-header-proxy/config.json`
  * - `%APPDATA%/<productName>/huawei/user_info.json`
  *
- * Subsequent requests handled by the running outbound header proxy use the
- * refreshed whitelist, header names, values, and enabled state. The optional
- * parameters are intended for tests or callers that need to override the default
- * paths or header names.
+ * The optional parameters are intended for tests or callers that need to
+ * override the default paths or header names.
  *
  * @returns The refreshed header values keyed by configured header name.
  */
-export const updateOutboundHeaderUserInfoCache = (
+export const loadOutboundHeaderPolicyAndUserInfoCache = (
   userInfoPath = resolveOutboundHeaderUserInfoPath(),
   headerNames?: readonly string[],
   configPath = resolveOutboundHeaderPolicyConfigPath(),
 ): Readonly<Record<string, string>> => {
   cachedOutboundHeaderPolicyConfig = readOutboundHeaderPolicyConfig(configPath);
-  const effectiveHeaderNames =
-    headerNames ??
-    Array.from(
-      new Set(cachedOutboundHeaderPolicyConfig.groups.flatMap(group => group.headerNames)),
-    );
+  const values = updateOutboundHeaderUserInfoCache(userInfoPath, headerNames);
+  console.log(
+    `[OutboundHeaderPolicy] Cache updated: baseUrlWhitelistCount=${cachedOutboundHeaderPolicyConfig.groups.reduce((count, group) => count + group.baseUrlWhitelist.length, 0)} headerCount=${Object.keys(values).length}`,
+  );
+  return values;
+};
+
+/** Refreshes only user_info.json while preserving the active manual and Extension policy.
+ * Call after a login, logout, or scheduled cookie update writes user_info.json.
+ */
+export const updateOutboundHeaderUserInfoCache = (
+  userInfoPath = resolveOutboundHeaderUserInfoPath(),
+  headerNames?: readonly string[],
+): Readonly<Record<string, string>> => {
+  const effectiveHeaderNames = headerNames ?? Array.from(
+    new Set(cachedOutboundHeaderPolicyConfig.groups.flatMap(group => group.headerNames)),
+  );
   let userInfo: Record<string, unknown> = {};
   try {
     const parsed: unknown = JSON.parse(fs.readFileSync(userInfoPath, 'utf8'));
@@ -233,7 +242,10 @@ export const updateOutboundHeaderUserInfoCache = (
   } catch (error) {
     const errorCode = (error as NodeJS.ErrnoException).code;
     if (errorCode !== 'ENOENT') {
-      console.warn('[OutboundHeaderPolicy] Failed to read user_info.json:', error);
+      console.warn(
+        '[OutboundHeaderPolicy] Failed to read user_info.json:',
+        error instanceof SyntaxError ? 'Invalid JSON' : 'File read failed',
+      );
     }
   }
 
@@ -245,9 +257,6 @@ export const updateOutboundHeaderUserInfoCache = (
       ]),
     ),
   );
-  console.log(
-    `[OutboundHeaderPolicy] Cache updated: baseUrlWhitelistCount=${cachedOutboundHeaderPolicyConfig.groups.reduce((count, group) => count + group.baseUrlWhitelist.length, 0)} headerCount=${Object.keys(cachedOutboundHeaderValues).length}`,
-  );
   return cachedOutboundHeaderValues;
 };
 
@@ -257,7 +266,6 @@ export const activateOutboundHeaderPolicyConfig = (
   userInfoPath = resolveOutboundHeaderUserInfoPath(),
 ): Readonly<Record<string, string>> => {
   cachedOutboundHeaderPolicyConfig = Object.freeze({
-    overwrite: false,
     enabled: policy.enabled,
     groups: Object.freeze(
       policy.groups.map(group =>
@@ -268,26 +276,7 @@ export const activateOutboundHeaderPolicyConfig = (
       ),
     ),
   });
-  const headerNames = Array.from(
-    new Set(cachedOutboundHeaderPolicyConfig.groups.flatMap(group => group.headerNames)),
-  );
-  let userInfo: Record<string, unknown> = {};
-  try {
-    const parsed: unknown = JSON.parse(fs.readFileSync(userInfoPath, 'utf8'));
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      userInfo = parsed as Record<string, unknown>;
-    }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-      console.warn('[OutboundHeaderPolicy] Failed to read user_info.json:', error);
-    }
-  }
-  cachedOutboundHeaderValues = Object.freeze(
-    Object.fromEntries(
-      headerNames.map(headerName => [headerName, normalizeHeaderValue(userInfo[headerName])]),
-    ),
-  );
-  return cachedOutboundHeaderValues;
+  return updateOutboundHeaderUserInfoCache(userInfoPath);
 };
 
 export const getOutboundHeaderUserInfo = (

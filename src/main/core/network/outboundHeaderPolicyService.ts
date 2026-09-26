@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 
+import { PREDEFINED_OUTBOUND_HEADER_POLICY_CONFIG } from '../../../config/outboundHeaders';
 import type { InstalledOpenClawExtension } from '../../../shared/openclaw/extensions';
 import {
   type ExtensionNetworkPolicyInspection,
@@ -38,8 +39,13 @@ export class OutboundHeaderPolicyService {
     const manual = readOutboundHeaderPolicyConfig(
       this.deps.configPath ?? resolveOutboundHeaderPolicyConfigPath(),
     );
+    const defaultGroups = PREDEFINED_OUTBOUND_HEADER_POLICY_CONFIG.groups;
+    // Existing installations may have the former generated default in config.json.
+    const manualGroups = manual.groups.filter(group =>
+      !defaultGroups.some(builtIn => JSON.stringify(builtIn) === JSON.stringify(group)),
+    );
     const groups = manual.enabled
-      ? manual.groups.map(group => ({
+      ? [...defaultGroups, ...manualGroups].map(group => ({
           baseUrlWhitelist: [...group.baseUrlWhitelist],
           headerNames: [...group.headerNames],
         }))
@@ -82,13 +88,11 @@ export class OutboundHeaderPolicyService {
     }
 
     const normalized = {
-      overwrite: false,
       enabled: groups.length > 0,
       groups,
     } satisfies OutboundHeaderPolicyConfig;
     const digest = digestPolicy(normalized);
     const snapshot: EffectiveOutboundHeaderPolicySnapshot = Object.freeze({
-      overwrite: false,
       enabled: normalized.enabled,
       groups: Object.freeze(
         normalized.groups.map(group =>

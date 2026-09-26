@@ -18,6 +18,7 @@ import {
 import {
   getOutboundHeaderPolicyConfig,
   getOutboundHeaderUserInfo,
+  loadOutboundHeaderPolicyAndUserInfoCache,
   updateOutboundHeaderUserInfoCache,
 } from './outboundHeaderPolicyConfig';
 import {
@@ -162,7 +163,6 @@ test('injects configured headers only for a whitelisted Main title request', asy
 
   const userInfoPath = writeUserInfo(JSON.stringify({ 'X-User-Account': 'user-123' }));
   const configPath = writePolicyConfig({
-    overwrite: false,
     enabled: true,
     groups: [
       {
@@ -171,7 +171,7 @@ test('injects configured headers only for a whitelisted Main title request', asy
       },
     ],
   });
-  updateOutboundHeaderUserInfoCache(userInfoPath, undefined, configPath);
+  loadOutboundHeaderPolicyAndUserInfoCache(userInfoPath, undefined, configPath);
 
   try {
     const address = proxyServer.address();
@@ -206,7 +206,6 @@ test('injects configured headers only for a whitelisted Main title request', asy
 test('injects configured headers into a whitelisted MCP probe fetch', async () => {
   const userInfoPath = writeUserInfo(JSON.stringify({ 'X-User-Account': 'user-456' }));
   const configPath = writePolicyConfig({
-    overwrite: false,
     enabled: true,
     groups: [
       {
@@ -215,7 +214,7 @@ test('injects configured headers into a whitelisted MCP probe fetch', async () =
       },
     ],
   });
-  updateOutboundHeaderUserInfoCache(userInfoPath, undefined, configPath);
+  loadOutboundHeaderPolicyAndUserInfoCache(userInfoPath, undefined, configPath);
   const injectionLogSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
   const fetchSpy = vi
     .spyOn(globalThis, 'fetch')
@@ -306,7 +305,6 @@ test('injects only the headers assigned to each matching policy group', () => {
     }),
   );
   const configPath = writePolicyConfig({
-    overwrite: false,
     enabled: true,
     groups: [
       {
@@ -319,7 +317,7 @@ test('injects only the headers assigned to each matching policy group', () => {
       },
     ],
   });
-  updateOutboundHeaderUserInfoCache(userInfoPath, undefined, configPath);
+  loadOutboundHeaderPolicyAndUserInfoCache(userInfoPath, undefined, configPath);
 
   expect(
     applyMainProcessOutboundHeaderPolicy(
@@ -352,7 +350,6 @@ test('identifies Main title requests when skipping unsafe outbound header values
   const warningSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
   const userInfoPath = writeUserInfo(JSON.stringify({ 'X-User-Account': '用户-123' }));
   const configPath = writePolicyConfig({
-    overwrite: false,
     enabled: true,
     groups: [
       {
@@ -361,7 +358,7 @@ test('identifies Main title requests when skipping unsafe outbound header values
       },
     ],
   });
-  updateOutboundHeaderUserInfoCache(userInfoPath, undefined, configPath);
+  loadOutboundHeaderPolicyAndUserInfoCache(userInfoPath, undefined, configPath);
 
   try {
     expect(
@@ -691,7 +688,6 @@ test('reuses cached user info until the update function is called', () => {
 test('reloads the outbound header policy together with user info', () => {
   const userInfoPath = writeUserInfo(JSON.stringify({ account_id: 'account-123' }));
   const configPath = writePolicyConfig({
-    overwrite: false,
     enabled: false,
     groups: [
       {
@@ -701,11 +697,10 @@ test('reloads the outbound header policy together with user info', () => {
     ],
   });
 
-  expect(updateOutboundHeaderUserInfoCache(userInfoPath, undefined, configPath)).toEqual({
+  expect(loadOutboundHeaderPolicyAndUserInfoCache(userInfoPath, undefined, configPath)).toEqual({
     account_id: 'account-123',
   });
   expect(getOutboundHeaderPolicyConfig()).toEqual({
-    overwrite: false,
     enabled: false,
     groups: [
       {
@@ -721,7 +716,6 @@ test('logs refreshed whitelist and header counts without logging values', () => 
     JSON.stringify({ account_id: 'account-123', session_id: 'secret-session' }),
   );
   const configPath = writePolicyConfig({
-    overwrite: false,
     enabled: true,
     groups: [
       {
@@ -733,7 +727,7 @@ test('logs refreshed whitelist and header counts without logging values', () => 
   const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
 
   try {
-    updateOutboundHeaderUserInfoCache(userInfoPath, undefined, configPath);
+    loadOutboundHeaderPolicyAndUserInfoCache(userInfoPath, undefined, configPath);
 
     expect(logSpy).toHaveBeenCalledWith(
       '[OutboundHeaderPolicy] Cache updated: baseUrlWhitelistCount=2 headerCount=2',
@@ -745,10 +739,38 @@ test('logs refreshed whitelist and header counts without logging values', () => 
   }
 });
 
-test('does not accept the old ungrouped policy format', () => {
+test.each(['baseUrlWhitelist', 'headerNames'])(
+  'resets the policy when %s contains a non-string value', field => {
+    const configPath = writePolicyConfig({
+      enabled: false,
+      groups: [{ baseUrlWhitelist: [], headerNames: [], [field]: [123] }],
+    });
+    const userInfoPath = writeUserInfo('{}');
+
+    loadOutboundHeaderPolicyAndUserInfoCache(userInfoPath, undefined, configPath);
+
+    expect(JSON.parse(fs.readFileSync(configPath, 'utf8'))).toEqual({ enabled: true, groups: [] });
+    expect(getOutboundHeaderPolicyConfig()).toEqual({ enabled: true, groups: [] });
+  },
+);
+
+test('does not log file contents when user info JSON is malformed', () => {
+  const userInfoPath = writeUserInfo('SYNTHETIC_COOKIE_SECRET');
+  const warningSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  try {
+    expect(updateOutboundHeaderUserInfoCache(userInfoPath, ['X-Cookie'])).toEqual({ 'X-Cookie': '' });
+    expect(warningSpy).toHaveBeenCalledWith(
+      '[OutboundHeaderPolicy] Failed to read user_info.json:', 'Invalid JSON',
+    );
+    expect(warningSpy.mock.calls.flat().join(' ')).not.toContain('SYNTHETIC');
+  } finally {
+    warningSpy.mockRestore();
+  }
+});
+
+test('replaces the old ungrouped policy format with the empty default', () => {
   const userInfoPath = writeUserInfo(JSON.stringify({ legacy_header: 'legacy-value' }));
   const configPath = writePolicyConfig({
-    overwrite: false,
     enabled: true,
     baseUrlWhitelist: ['https://legacy.example/api/'],
     headerNames: ['legacy_header'],
@@ -756,14 +778,14 @@ test('does not accept the old ungrouped policy format', () => {
   const warningSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
   try {
-    expect(updateOutboundHeaderUserInfoCache(userInfoPath, undefined, configPath)).toEqual({});
+    expect(loadOutboundHeaderPolicyAndUserInfoCache(userInfoPath, undefined, configPath)).toEqual({});
     expect(getOutboundHeaderPolicyConfig()).toEqual({
-      overwrite: false,
-      enabled: false,
+      enabled: true,
       groups: [],
     });
+    expect(JSON.parse(fs.readFileSync(configPath, 'utf8'))).toEqual({ enabled: true, groups: [] });
     expect(warningSpy).toHaveBeenCalledWith(
-      '[OutboundHeaderPolicy] Invalid outbound header policy config; disabling policy',
+      '[OutboundHeaderPolicy] Invalid outbound header policy config; resetting to default',
     );
   } finally {
     warningSpy.mockRestore();
@@ -782,11 +804,10 @@ test('preserves manual policy config when overwrite is missing', () => {
     ],
   });
 
-  expect(updateOutboundHeaderUserInfoCache(userInfoPath, undefined, configPath)).toEqual({
+  expect(loadOutboundHeaderPolicyAndUserInfoCache(userInfoPath, undefined, configPath)).toEqual({
     [HEADER_NAMES.USER_ACCOUNT]: 'user-123',
   });
   expect(getOutboundHeaderPolicyConfig()).toEqual({
-    overwrite: false,
     enabled: false,
     groups: [
       {
@@ -811,11 +832,10 @@ test('treats overwrite as a deprecated field without rewriting manual policy', (
     ],
   });
 
-  expect(updateOutboundHeaderUserInfoCache(userInfoPath, undefined, configPath)).toEqual({
+  expect(loadOutboundHeaderPolicyAndUserInfoCache(userInfoPath, undefined, configPath)).toEqual({
     custom_header: 'custom-value',
   });
   expect(getOutboundHeaderPolicyConfig()).toEqual({
-    overwrite: false,
     enabled: false,
     groups: [
       {
@@ -1290,7 +1310,6 @@ test('refreshes the enabled state as part of the effective policy generation', (
   const startupEnabled = getOutboundHeaderPolicyConfig().enabled;
   const userInfoPath = writeUserInfo(JSON.stringify({ refreshed_header: 'refreshed-value' }));
   const configPath = writePolicyConfig({
-    overwrite: false,
     enabled: !startupEnabled,
     groups: [
       {
@@ -1300,10 +1319,9 @@ test('refreshes the enabled state as part of the effective policy generation', (
     ],
   });
 
-  updateOutboundHeaderUserInfoCache(userInfoPath, undefined, configPath);
+  loadOutboundHeaderPolicyAndUserInfoCache(userInfoPath, undefined, configPath);
 
   expect(getOutboundHeaderPolicyConfig()).toEqual({
-    overwrite: false,
     enabled: !startupEnabled,
     groups: [
       {
@@ -1313,6 +1331,22 @@ test('refreshes the enabled state as part of the effective policy generation', (
     ],
   });
   expect(getOutboundHeaderUserInfo()).toEqual({ refreshed_header: 'refreshed-value' });
+});
+
+test('refreshes user info without reloading the policy file', () => {
+  const userInfoPath = writeUserInfo(JSON.stringify({ refreshed_header: 'first' }));
+  const configPath = writePolicyConfig({
+    enabled: true,
+    groups: [{ baseUrlWhitelist: ['https://first.example/'], headerNames: ['refreshed_header'] }],
+  });
+  loadOutboundHeaderPolicyAndUserInfoCache(userInfoPath, undefined, configPath);
+  fs.writeFileSync(configPath, JSON.stringify({ enabled: false, groups: [] }));
+  fs.writeFileSync(userInfoPath, JSON.stringify({ refreshed_header: 'second' }));
+
+  expect(updateOutboundHeaderUserInfoCache(userInfoPath)).toEqual({ refreshed_header: 'second' });
+  expect(getOutboundHeaderPolicyConfig().groups).toEqual([
+    { baseUrlWhitelist: ['https://first.example/'], headerNames: ['refreshed_header'] },
+  ]);
 });
 
 test.skipIf(!NON_LOOPBACK_IPV4)(

@@ -803,13 +803,13 @@ const getBuiltinModelAuthCoordinator = (): BuiltinModelAuthCoordinator => {
 };
 
 const refreshBuiltinModelCredentialFromLoginFile = async (refreshCatalog = false) => {
-  updateOutboundHeaderUserInfoCache();
   return getBuiltinModelAuthCoordinator().refresh(refreshCatalog);
 };
 
 // Authentication handlers should call these only after the Main process has
 // committed the corresponding authenticated/logged-out state.
 export const refreshAfterLogin = async (): Promise<void> => {
+  updateOutboundHeaderUserInfoCache();
   getBuiltinModelTokenExchange().resume();
   await refreshBuiltinModelCredentialFromLoginFile(true);
   customerRegistrationService?.start();
@@ -1284,7 +1284,7 @@ if (multicaBridgeArgv) {
         );
         return;
       }
-      await refreshAfterLogin();
+      await refreshBuiltinModelCredentialFromLoginFile(true);
     },
   });
 
