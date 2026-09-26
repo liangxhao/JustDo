@@ -507,7 +507,7 @@ export class OpenClawConfigSync {
             }
           : {};
       })(),
-      meta: buildOpenClawConfigMeta(this.engineManager.getDesiredVersion()),
+      meta: buildOpenClawConfigMeta(this.engineManager.getDesiredVersion(), existingConfig?.meta),
     };
 
     // IM channel config syncing removed — channels disabled pending future adaptation
@@ -860,6 +860,10 @@ export class OpenClawConfigSync {
         const previous = JSON.parse(currentContent);
         if (isRecord(previous)) {
           minimalConfig.session = buildManagedOpenClawSessionConfig(previous.session);
+          minimalConfig.meta = buildOpenClawConfigMeta(
+            this.engineManager.getDesiredVersion(),
+            previous.meta,
+          );
         }
       } catch {
         // Invalid JSON follows the existing minimal-config recovery path.

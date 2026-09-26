@@ -4,8 +4,9 @@
  * Pre-compile OpenClaw extension plugins from TypeScript to JavaScript.
  *
  * This eliminates the ~135s jiti/Babel runtime transpilation overhead on first
- * gateway startup.  When jiti finds a .js file it skips Babel entirely and just
- * loads it, while still applying its module alias resolution (openclaw/plugin-sdk).
+ * gateway startup. Compile setup-api entries too: bundled JavaScript uses the
+ * native loader, while TypeScript setup triggers a fresh source/dependency
+ * capture during configuration and migration checks.
  *
  * Usage:
  *   node scripts/openclaw/precompile-openclaw-extensions.cjs [runtime-dir]
@@ -97,48 +98,61 @@ async function precompileOpenClawExtensions(runtimeDir, options = {}) {
 
   for (const name of dirs) {
     const pluginDir = path.join(extensionsDir, name);
-    const entry = resolvePluginEntry(pluginDir);
+    const mainEntry = resolvePluginEntry(pluginDir);
+    const entries = mainEntry ? [mainEntry] : [];
+    // OpenClaw discovers setup independently of the main package entry. Even
+    // an already compiled index.js may still have a TypeScript setup module.
+    for (const directory of ['', 'dist']) {
+      for (const extension of ['ts', 'mts', 'cts']) {
+        const entryRel = `./${directory ? directory + '/' : ''}setup-api.${extension}`;
+        const entryAbs = path.join(pluginDir, entryRel);
+        if (fs.existsSync(entryAbs)) entries.push({ entryAbs, entryRel, hasPkg: false });
+      }
+    }
 
-    if (!entry) {
+    if (entries.length === 0) {
       skipped++;
       continue;
     }
 
-    const outFile = entry.entryAbs.replace(/\.tsx?$/, '.js');
-    const outRel = entry.entryRel.replace(/\.tsx?$/, '.js');
-
     try {
-      await esbuild.build({
-        entryPoints: [entry.entryAbs],
-        bundle: true,
-        platform: 'node',
-        format: 'esm',
-        target: 'es2023',
-        outfile: outFile,
-        // Bundle all dependencies except SDK imports (resolved by jiti at runtime).
-        // This inlines typebox and other small deps so the runtime
-        // doesn't need them in node_modules.
-        external: SDK_EXTERNALS,
-        plugins: [openclawInternalsPlugin],
-        // Silence warnings about __dirname/__filename in ESM
-        logLevel: 'warning',
-      });
+      for (const entry of entries) {
+        const outputExtension = entry.entryAbs.endsWith('.mts') ? '.mjs'
+          : entry.entryAbs.endsWith('.cts') ? '.cjs' : '.js';
+        const outFile = entry.entryAbs.replace(/\.(?:tsx?|mts|cts)$/, outputExtension);
+        const outRel = entry.entryRel.replace(/\.(?:tsx?|mts|cts)$/, outputExtension);
+        await esbuild.build({
+          entryPoints: [entry.entryAbs],
+          bundle: true,
+          platform: 'node',
+          format: outputExtension === '.cjs' ? 'cjs' : 'esm',
+          target: 'es2023',
+          outfile: outFile,
+          // Bundle all dependencies except SDK imports (resolved by jiti at runtime).
+          // This inlines typebox and other small deps so the runtime
+          // doesn't need them in node_modules.
+          external: SDK_EXTERNALS,
+          plugins: [openclawInternalsPlugin],
+          // Silence warnings about __dirname/__filename in ESM
+          logLevel: 'warning',
+        });
 
-      // Keep the explicit entry in sync: bundled plugins do not infer adjacent .js files.
-      if (entry.hasPkg) {
-        const pkgPath = path.join(pluginDir, 'package.json');
-        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
-        if (Array.isArray(pkg.openclaw?.extensions)) {
-          pkg.openclaw.extensions = pkg.openclaw.extensions.map(e =>
-            e === entry.entryRel ? outRel : e,
-          );
-          fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
+        // Keep the explicit entry in sync: bundled plugins do not infer adjacent .js files.
+        if (entry.hasPkg) {
+          const pkgPath = path.join(pluginDir, 'package.json');
+          const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+          if (Array.isArray(pkg.openclaw?.extensions)) {
+            pkg.openclaw.extensions = pkg.openclaw.extensions.map(e =>
+              e === entry.entryRel ? outRel : e,
+            );
+            fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
+          }
         }
-      }
 
-      // Remove source only after the package entry was updated successfully.
-      if (entry.entryAbs !== outFile && fs.existsSync(entry.entryAbs)) {
-        fs.unlinkSync(entry.entryAbs);
+        // Remove source only after the package entry was updated successfully.
+        if (entry.entryAbs !== outFile && fs.existsSync(entry.entryAbs)) {
+          fs.unlinkSync(entry.entryAbs);
+        }
       }
 
       compiled++;

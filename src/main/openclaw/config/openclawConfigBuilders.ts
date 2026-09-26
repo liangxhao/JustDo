@@ -1624,9 +1624,14 @@ export const buildManagedOpenClawConnectivityConfig = (
 
 export const buildOpenClawConfigMeta = (
   version: string | null | undefined,
-): Record<string, string> => ({
-  lastTouchedVersion: version || 'unknown',
-});
+  existingMeta?: unknown,
+): Record<string, unknown> => {
+  // Gateway owns migration receipts. Dropping them makes native startup and
+  // auth operations repeat completed migrations and rewrite the config.
+  const meta = isRecord(existingMeta) ? { ...existingMeta } : {};
+  delete meta.lastTouchedAt;
+  return { ...meta, lastTouchedVersion: version || 'unknown' };
+};
 
 export const buildManagedOpenClawModelCatalogConfig = (): Record<string, unknown> => ({
   catalogRefresh: {

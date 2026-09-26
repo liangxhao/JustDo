@@ -17,6 +17,46 @@ import {
   resolveOpenClawGatewayBundleEntry,
   resolveOpenClawRuntimeResourcePaths,
 } from './openclawEngineManager';
+import { OPENCLAW_GATEWAY_SHUTDOWN_MESSAGE } from './openclawLauncher';
+
+test.each([false, true])(
+  'requests native shutdown before forcing an unresponsive child (%s)',
+  async unresponsive => {
+    vi.useFakeTimers();
+    try {
+      const child = Object.assign(new EventEmitter(), {
+        pid: 1234,
+        exitCode: null,
+        connected: true,
+        send: vi.fn(),
+        kill: vi.fn(),
+      });
+      const manager = Object.create(OpenClawEngineManager.prototype) as {
+        expectedGatewayExits: Set<unknown>;
+        stopGatewayProcess: (process: typeof child) => Promise<void>;
+      };
+      manager.expectedGatewayExits = new Set();
+      const stopped = manager.stopGatewayProcess(child);
+      expect(child.send).toHaveBeenCalledWith(
+        OPENCLAW_GATEWAY_SHUTDOWN_MESSAGE,
+        expect.any(Function),
+      );
+      expect(child.kill).not.toHaveBeenCalled();
+      if (unresponsive) {
+        await vi.advanceTimersByTimeAsync(4_000);
+        expect(child.kill).toHaveBeenCalledOnce();
+        await vi.advanceTimersByTimeAsync(1_000);
+      } else {
+        child.emit('exit', 0);
+      }
+      await stopped;
+      expect(vi.getTimerCount()).toBe(0);
+      expect(child.listenerCount('exit')).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
 
 test('resolves the OpenClaw v2026.9.2 runtime resource layout', () => {
   expect(resolveOpenClawRuntimeResourcePaths('C:\\runtime', 'C:\\state')).toEqual({

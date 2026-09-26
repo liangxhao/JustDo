@@ -38,7 +38,11 @@ import { GatewayStdoutLogFilter } from './gatewayLogFilter';
 import { ensureGatewayStartupPriority } from './gatewayProcessPriority';
 import { findAvailableLoopbackPort, isLoopbackPortAvailable } from './loopbackPort';
 import { ensureOpenClawGatewayBundleLauncher } from './openclawGatewayBundleLauncher.cjs';
-import { OPENCLAW_LAUNCHER_KEEP_ALIVE_SOURCE } from './openclawLauncher';
+import {
+  ensureGatewayShutdownPreload,
+  OPENCLAW_GATEWAY_SHUTDOWN_MESSAGE,
+  OPENCLAW_LAUNCHER_KEEP_ALIVE_SOURCE,
+} from './openclawLauncher';
 import { SessionStoreMigrationCoordinator } from './sessionStoreMigration';
 import {
   mergeRegisteredSystemPromptReplacementRules,
@@ -1126,12 +1130,16 @@ export class OpenClawEngineManager extends EventEmitter {
     // cold ESM compilation on Windows (163s vs 34s for a 28MB bundle).
     let child: GatewayProcess;
     if (process.platform === 'win32') {
-      child = spawn(process.execPath, [openclawEntry, ...forkArgs], {
-        cwd: runtime.root,
-        env: { ...gatewayEnv, ELECTRON_RUN_AS_NODE: '1' },
-        stdio: ['ignore', 'pipe', 'pipe'],
-        windowsHide: true,
-      });
+      child = spawn(
+        process.execPath,
+        ['--require', ensureGatewayShutdownPreload(this.baseDir), openclawEntry, ...forkArgs],
+        {
+          cwd: runtime.root,
+          env: { ...gatewayEnv, ELECTRON_RUN_AS_NODE: '1' },
+          stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+          windowsHide: true,
+        },
+      );
     } else {
       child = utilityProcess.fork(openclawEntry, forkArgs, {
         cwd: runtime.root,
@@ -1951,27 +1959,22 @@ export class OpenClawEngineManager extends EventEmitter {
         return;
       }
 
-      const timeoutMs = 5_000;
       let settled = false;
 
       const done = () => {
         if (settled) return;
         settled = true;
         clearTimeout(forceTimer);
+        clearTimeout(hardTimer);
+        child.removeListener('exit', done);
         resolve();
       };
 
       // Listen for exit (ChildProcess) or exit (UtilityProcess).
       child.once('exit', done);
 
-      // First attempt: graceful kill.
-      try {
-        child.kill();
-      } catch {
-        // ignore
-      }
-
-      // Fallback: force-kill after 1.2s if still alive, then hard-timeout at 5s.
+      // Windows kill() terminates immediately and skips native database lease cleanup.
+      // Give the preload's IPC shutdown request time to run OpenClaw's SIGTERM handler.
       const forceTimer = setTimeout(() => {
         try {
           if ('pid' in child && typeof child.pid === 'number') {
@@ -1980,12 +1983,30 @@ export class OpenClawEngineManager extends EventEmitter {
         } catch {
           // ignore
         }
-        // Guarantee we don't block shutdown forever.
-        setTimeout(done, 2_000);
-      }, 1_200);
+      }, 4_000);
 
-      // Hard timeout: always resolve within timeoutMs.
-      setTimeout(done, timeoutMs);
+      const hardTimer = setTimeout(done, 5_000);
+      try {
+        if ('send' in child && child.connected) {
+          child.send(OPENCLAW_GATEWAY_SHUTDOWN_MESSAGE, error => {
+            if (error && !settled) {
+              try {
+                child.kill();
+              } catch {
+                /* already exited */
+              }
+            }
+          });
+        } else {
+          child.kill();
+        }
+      } catch {
+        try {
+          child.kill();
+        } catch {
+          /* already exited */
+        }
+      }
     });
   }
 

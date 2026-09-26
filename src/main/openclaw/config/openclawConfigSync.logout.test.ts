@@ -259,6 +259,48 @@ test.each([true, false])('preserves cold storage through minimal startup and sub
 });
 
 describe('OpenClaw auth logout config sync', () => {
+  test.each(['full', 'minimal'] as const)('%s sync retains Gateway migration receipts across startup and auth changes', mode => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-migration-receipts-'));
+    temporaryDirectories.push(stateDir);
+    const configPath = path.join(stateDir, 'openclaw.json');
+    const appConfig = mode === 'full' ? {
+      model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
+      providers: {
+        'custom-provider': {
+          enabled: true,
+          apiKey: 'test-secret',
+          baseUrl: 'https://custom.example.test/v1',
+          apiFormat: 'openai',
+          models: [{ id: 'custom-model' }],
+        },
+      },
+    } : {};
+    setStoreGetter(() => ({ get: () => appConfig }) as never);
+    const sync = new OpenClawConfigSync({
+      engineManager: {
+        getConfigPath: () => configPath,
+        getStateDir: () => stateDir,
+        getDesiredVersion: () => '2026.9.6',
+      },
+      getCoworkConfig: () => ({ workingDirectory: '', executionMode: 'local', agentEngine: 'openclaw' }),
+      getAgents: () => [],
+    } as never);
+    expect(sync.sync('startup').ok).toBe(true);
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(Boolean(config.models.providers?.['custom-provider'])).toBe(mode === 'full');
+    const migrations = { modelPolicyAllowlist: true, utilityModelSeparation: true };
+    config.meta.migrations = migrations;
+    fs.writeFileSync(configPath, JSON.stringify(config));
+
+    for (const reason of ['startup', BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout, 'settings']) {
+      expect(sync.sync(reason).ok).toBe(true);
+      expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).meta).toEqual({
+        lastTouchedVersion: '2026.9.6', migrations,
+      });
+    }
+    expect(sync.sync('settings')).toMatchObject({ ok: true, configChanged: false });
+  });
+
   test.each(['full', 'minimal'] as const)(
     '%s sync refreshes local STT configuration without overriding speech extension toggles',
     mode => {

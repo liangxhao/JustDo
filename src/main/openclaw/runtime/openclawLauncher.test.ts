@@ -5,7 +5,11 @@ import os from 'os';
 import path from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { OPENCLAW_LAUNCHER_KEEP_ALIVE_SOURCE } from './openclawLauncher';
+import {
+  ensureGatewayShutdownPreload,
+  OPENCLAW_GATEWAY_SHUTDOWN_MESSAGE,
+  OPENCLAW_LAUNCHER_KEEP_ALIVE_SOURCE,
+} from './openclawLauncher';
 
 const temporaryDirectories: string[] = [];
 
@@ -28,6 +32,42 @@ afterEach(() => {
 });
 
 describe('OpenClaw launcher keep-alive', () => {
+  it.each(['request', 'disconnect'])('runs native cleanup on parent %s', async mode => {
+    const launcherPath = createLauncher();
+    fs.appendFileSync(
+      launcherPath,
+      `process.on('SIGTERM', () => {\n` +
+        `  setTimeout(() => { process.stdout.write('cleaned'); process.exit(0); }, 20);\n` +
+        `});\nprocess.send('ready');\n`,
+    );
+    const child = spawn(
+      process.execPath,
+      [
+        '--require',
+        ensureGatewayShutdownPreload(path.dirname(launcherPath)),
+        launcherPath,
+        'gateway',
+      ],
+      {
+        stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+      },
+    );
+    let output = '';
+    child.stdout!.on('data', chunk => {
+      output += chunk;
+    });
+    try {
+      await once(child, 'message');
+      const exited = once(child, 'exit');
+      if (mode === 'request') child.send(OPENCLAW_GATEWAY_SHUTDOWN_MESSAGE);
+      else child.disconnect();
+      expect(await exited).toEqual([0, null]);
+      expect(output).toBe('completedcleaned');
+    } finally {
+      if (child.exitCode === null) child.kill();
+    }
+  });
+
   it('allows one-shot CLI commands to exit normally', () => {
     const launcherPath = createLauncher();
 

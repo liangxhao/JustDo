@@ -19,6 +19,38 @@ const {
 };
 
 describe('OpenClaw runtime companions', () => {
+  it('makes the original build identity available beside the bundled migration reader', () => {
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-build-identity-'));
+    try {
+      fs.mkdirSync(path.join(runtimeRoot, 'dist'));
+      const sourcePath = path.join(runtimeRoot, 'dist', 'build-info.json');
+      const metadata = { version: '2026.9.6', builtAt: '2026-09-23T16:33:12.144Z' };
+      fs.writeFileSync(sourcePath, JSON.stringify(metadata));
+      const bundledRequire = createRequire(path.join(runtimeRoot, 'gateway-bundle.mjs'));
+      expect(() => bundledRequire('./build-info.json')).toThrow();
+
+      const copied = syncRuntimeBundledAssets(runtimeRoot, 'resolveStartupMigrationBuildIdentity');
+
+      expect(copied).toEqual(['build-info.json']);
+      expect(bundledRequire('./build-info.json')).toEqual(metadata);
+      expect(fs.readFileSync(path.join(runtimeRoot, 'build-info.json'))).toEqual(fs.readFileSync(sourcePath));
+      expect(getRuntimeCompanionPathsReferencedByBundle('resolveStartupMigrationBuildIdentity')).toEqual(['build-info.json']);
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a migration-capable bundle whose upstream build metadata is missing', () => {
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-build-identity-'));
+    try {
+      expect(() => syncRuntimeBundledAssets(runtimeRoot, 'resolveStartupMigrationBuildIdentity'))
+        .toThrow('dist/build-info.json');
+      expect(fs.existsSync(path.join(runtimeRoot, 'build-info.json'))).toBe(false);
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
   it('resolves the native launcher from the original entry location after bundling', () => {
     const source = 'await import(new URL("../node-host-launcher.mjs", import.meta.url).href);';
     expect(hasStaleRuntimeWorkerImportMetaUrl(source)).toBe(true);

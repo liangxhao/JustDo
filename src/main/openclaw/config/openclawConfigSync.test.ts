@@ -297,6 +297,20 @@ describe('OpenClaw provider config', () => {
 });
 
 describe('OpenClaw managed config metadata', () => {
+  test('preserves native migration receipts while updating the managed version', () => {
+    const existingMeta = {
+      lastTouchedVersion: '2026.9.2',
+      lastTouchedAt: '2026-09-01T00:00:00.000Z',
+      migrations: { modelPolicyAllowlist: true, utilityModelSeparation: true },
+    };
+
+    expect(buildOpenClawConfigMeta('2026.9.6', existingMeta)).toEqual({
+      lastTouchedVersion: '2026.9.6',
+      migrations: existingMeta.migrations,
+    });
+    expect(existingMeta.lastTouchedAt).toBe('2026-09-01T00:00:00.000Z');
+  });
+
   test('writes only metadata accepted by OpenClaw v2026.9.2', () => {
     const meta = buildOpenClawConfigMeta('2026.9.2');
 

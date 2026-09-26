@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 const RUNTIME_COMPANION_CHECKS = [
+  { marker: 'resolveStartupMigrationBuildIdentity', path: 'build-info.json' },
   { marker: 'legacy-config-binding-repair.runtime', path: 'dist/legacy-config-binding-repair.runtime.js' },
   {
     marker: 'node-host-launcher.mjs',
@@ -68,6 +69,13 @@ const RUNTIME_COMPANION_CHECKS = [
 ];
 
 const RUNTIME_BUNDLED_ASSET_COPIES = [
+  {
+    // Native migration checkpoints resolve this beside their executing module.
+    // The bundled module lives at the runtime root, outside the original dist/.
+    marker: 'resolveStartupMigrationBuildIdentity',
+    source: 'dist/build-info.json',
+    target: 'build-info.json',
+  },
   {
     marker: 'web-tree-sitter.wasm',
     source: 'node_modules/web-tree-sitter/web-tree-sitter.wasm',

@@ -150,7 +150,7 @@ export const chatTranslations = {
     coworkOpenClawRestartGateway: '重新启动 AI 引擎',
     coworkOpenClawReadyNotice: 'AI 引擎已准备就绪，开始任务时会自动运行。',
     coworkOpenClawStarting: 'AI引擎正在启动',
-    coworkOpenClawError: 'AI 引擎启动超时，请重新启动。',
+    coworkOpenClawError: 'AI 引擎启动失败，请重试。',
     coworkOpenClawMigrationRequired: '旧版会话需要迁移后才能启动 AI 引擎。',
     coworkOpenClawReviewMigration: '查看迁移',
     coworkOpenClawMigrationTitle: '迁移旧版会话',
@@ -689,7 +689,7 @@ export const chatTranslations = {
     coworkOpenClawRestartGateway: 'Restart AI engine',
     coworkOpenClawReadyNotice: 'The AI engine is ready and will run when you start a task.',
     coworkOpenClawStarting: 'AI engine is starting...',
-    coworkOpenClawError: 'The AI engine took too long to start. Please restart it.',
+    coworkOpenClawError: 'The AI engine failed to start. Please retry.',
     coworkOpenClawMigrationRequired:
       'Legacy sessions must be migrated before the AI engine can start.',
     coworkOpenClawReviewMigration: 'Review migration',
