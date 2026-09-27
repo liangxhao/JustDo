@@ -148,7 +148,7 @@ test('recovers proposal states on remount and releases panel polling on unmount'
   fixture.api.list.mockResolvedValue(success([{ ...proposal, status: 'applied' }]));
   fixture.mount();
   await screen.findByRole('button', { name: /Release checklist/ });
-  await screen.findByRole('button', { name: /Release checklist Applied/ });
+  await screen.findByRole('button', { name: /Release checklist\s*Applied/ });
   expect(fixture.api.decide).not.toHaveBeenCalled();
   clear.mockRestore();
 });

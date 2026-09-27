@@ -115,7 +115,7 @@ describe('SubtaskListPanel', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'View details' }));
     fireEvent.click(screen.getByRole('button', { name: 'View child tasks' }));
     fireEvent.click(
-      await screen.findByRole('button', { name: 'Verify sources Waiting for approval' }),
+      await screen.findByRole('button', { name: /^Verify sources\s*Waiting for approval$/ }),
     );
     expect(screen.getByRole('dialog').getAttribute('aria-labelledby')).toBe(
       'subtask-details-title',

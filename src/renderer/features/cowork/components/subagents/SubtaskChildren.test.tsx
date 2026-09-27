@@ -47,7 +47,7 @@ it('loads one native level on demand, preserves pages after errors, and blocks a
   render(<SubtaskChildren sessionId="root" task={task} ancestors={['ancestor']} onOpen={open} />);
   expect(list).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: 'View child tasks' }));
-  const row = await screen.findByRole('button', { name: 'Two Waiting for approval' });
+  const row = await screen.findByRole('button', { name: /^Two\s*Waiting for approval$/ });
   expect(screen.queryByText('One')).toBeNull();
   fireEvent.click(row);
   expect(open).toHaveBeenCalledWith(child);

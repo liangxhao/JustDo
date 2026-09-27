@@ -24,6 +24,14 @@ export default [
 
   // Base recommended rules
   eslint.configs.recommended,
+  {
+    // Preserve the ESLint 9 rule scope during the tooling upgrade.
+    rules: {
+      'no-unassigned-vars': 'off',
+      'no-useless-assignment': 'off',
+      'preserve-caught-error': 'off',
+    },
+  },
 
   // CommonJS / JS files (config files at root level)
   {
@@ -74,7 +82,8 @@ export default [
       '@typescript-eslint/no-explicit-any': 'warn',
 
       // React hooks
-      ...reactHooks.configs.recommended.rules,
+      // Keep the existing Hooks checks; compiler rules are adopted separately.
+      'react-hooks/rules-of-hooks': 'error',
       'react-hooks/exhaustive-deps': 'warn',
 
       // React refresh
