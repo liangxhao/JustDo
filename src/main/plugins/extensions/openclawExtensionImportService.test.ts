@@ -461,6 +461,44 @@ describe('OpenClawExtensionImportService', () => {
     expect(start).toHaveBeenCalledOnce();
   });
 
+  it('refreshes the live plugin registry after a CLI uninstall fallback', async () => {
+    const stateDir = path.join(fixtureRoot, 'state');
+    const installedDir = path.join(stateDir, 'extensions', 'removed-extension');
+    fs.mkdirSync(installedDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(installedDir, 'openclaw.plugin.json'),
+      JSON.stringify({ id: 'removed-extension' }),
+    );
+    const manager = {
+      getStatus: () => ({ phase: 'running' }),
+      getStateDir: () => stateDir,
+      getBaseDir: () => fixtureRoot,
+      getConfigPath: () => path.join(stateDir, 'openclaw.json'),
+      buildCliEnvironment: async () => ({
+        env: { OPENCLAW_STATE_DIR: stateDir },
+        runtimeRoot: fixtureRoot,
+        openclawEntry: path.join(fixtureRoot, 'openclaw.mjs'),
+      }),
+    } as unknown as OpenClawEngineManager;
+    const requestGateway = vi.fn()
+      .mockRejectedValueOnce(Object.assign(new Error('Gateway unavailable'), { code: 'CLIENT_CLOSED' }))
+      .mockResolvedValueOnce({ ok: true, restartRequired: false });
+    const restartGateway = vi.fn().mockResolvedValue({ phase: 'running' });
+    const service = new OpenClawExtensionImportService({
+      getOpenClawEngineManager: () => manager,
+      requestGateway,
+      restartGatewayAfterMutation: restartGateway,
+      runCommand: vi.fn(async () => {
+        fs.rmSync(installedDir, { recursive: true, force: true });
+        return { exitCode: 0, stdout: 'Uninstalled plugin "removed-extension"', stderr: '' };
+      }),
+    });
+
+    await expect(service.delete('removed-extension')).resolves.toEqual({ success: true });
+    expect(requestGateway).toHaveBeenLastCalledWith('plugins.refresh', {});
+    expect(restartGateway).not.toHaveBeenCalled();
+  });
+
   it('restores a Gateway that drops during uninstall after the cold retry succeeds', async () => {
     const stateDir = path.join(fixtureRoot, 'state');
     const installedDir = path.join(stateDir, 'extensions', 'dropped-gateway-extension');
@@ -669,7 +707,7 @@ describe('OpenClawExtensionImportService', () => {
       enabled: true,
     });
     expect(reconcile).toHaveBeenCalledTimes(2);
-    expect(restartGatewayAfterMutation).toHaveBeenCalledWith('extension-status-change');
+    expect(restartGatewayAfterMutation).toHaveBeenCalledWith('extension-network-policy-change');
   });
 
   it('converges policy and restores Gateway when an enable response is lost after commit', async () => {
@@ -722,7 +760,7 @@ describe('OpenClawExtensionImportService', () => {
     });
     expect(runCommand).not.toHaveBeenCalled();
     expect(reconcile).toHaveBeenCalledTimes(2);
-    expect(restartGatewayAfterMutation).toHaveBeenCalledWith('extension-status-change');
+    expect(restartGatewayAfterMutation).toHaveBeenCalledWith('extension-network-policy-change');
     expect(phase).toBe('running');
   });
 
@@ -788,7 +826,7 @@ describe('OpenClawExtensionImportService', () => {
       success: false,
     });
     expect(reconcile).toHaveBeenCalled();
-    expect(restartGatewayAfterMutation).toHaveBeenCalledWith('extension-delete');
+    expect(restartGatewayAfterMutation).toHaveBeenCalledWith('extension-network-policy-change');
   });
 
   it('still disables an extension when its installed network sidecar is invalid', async () => {
@@ -993,20 +1031,141 @@ describe('OpenClawExtensionImportService', () => {
     },
   );
 
-  it('finishes after a successful installer message even if the CLI keeps handles open', async () => {
+  it.each([
+    { receipt: '', reloadAccepted: false, runtimeApplied: false },
+    { receipt: '', reloadAccepted: true, runtimeApplied: false },
+    {
+      receipt: 'Installed plugin: hot-extension\nSaved for the next Gateway start.',
+      reloadAccepted: true,
+      runtimeApplied: false,
+    },
+    {
+      receipt: 'Installed plugin: hot-extension\nApplied in Gateway generation 4.',
+      reloadAccepted: true,
+      runtimeApplied: true,
+    },
+    {
+      receipt: 'Installed plugin: another-extension\nApplied in Gateway generation 4.',
+      reloadAccepted: true,
+      runtimeApplied: false,
+    },
+  ])(
+    'converges a CLI installed extension (receipt: $receipt, reload accepted: $reloadAccepted)',
+    async ({ receipt, reloadAccepted, runtimeApplied }) => {
+      const sourceDir = path.join(fixtureRoot, 'hot-extension');
+      const stateDir = path.join(fixtureRoot, 'state');
+      fs.mkdirSync(sourceDir);
+      fs.mkdirSync(stateDir);
+      fs.writeFileSync(
+        path.join(sourceDir, 'openclaw.plugin.json'),
+        JSON.stringify({ id: 'hot-extension', configSchema: { type: 'object' } }),
+      );
+      const restartGateway = vi.fn().mockResolvedValue({ phase: 'running' });
+      const requestGateway = vi.fn().mockResolvedValue({
+        ok: true,
+        restartRequired: !reloadAccepted,
+      });
+      const manager = {
+        getStatus: () => ({ phase: 'running' }),
+        getBaseDir: () => fixtureRoot,
+        buildCliEnvironment: async () => ({
+          env: { OPENCLAW_STATE_DIR: stateDir },
+          runtimeRoot: fixtureRoot,
+          openclawEntry: path.join(fixtureRoot, 'openclaw.mjs'),
+        }),
+      } as unknown as OpenClawEngineManager;
+      const service = new OpenClawExtensionImportService({
+        getOpenClawEngineManager: () => manager,
+        requestGateway,
+        restartGatewayAfterMutation: restartGateway,
+        runCommand: vi.fn().mockResolvedValue({ exitCode: 0, stdout: receipt, stderr: '' }),
+      });
+
+      await expect(
+        service.importPath(sourceDir, undefined, undefined, {
+          trustMarketplaceSource: true,
+        }),
+      ).resolves.toEqual({ success: true, extensionId: 'hot-extension' });
+      if (runtimeApplied) {
+        expect(requestGateway).not.toHaveBeenCalled();
+      } else {
+        expect(requestGateway).toHaveBeenCalledWith('plugins.reload', {
+          plugins: [{ pluginId: 'hot-extension' }],
+        });
+      }
+      expect(restartGateway).toHaveBeenCalledTimes(reloadAccepted ? 0 : 1);
+    },
+  );
+
+  it.each(['Applied in Gateway generation 4.', 'Saved for the next Gateway start.'])(
+    'waits for the final installer receipt even if the CLI keeps handles open: %s',
+    async receipt => {
+      const result = await __openClawExtensionImportTestUtils.runCommand(
+        process.execPath,
+        [
+          '-e',
+          `console.log('Installed plugin: sample-extension'); setTimeout(() => console.log(${JSON.stringify(receipt)}), 500); setInterval(() => {}, 1000);`,
+        ],
+        {
+          cwd: fixtureRoot,
+          env: process.env,
+          successPattern:
+            __openClawExtensionImportTestUtils.createInstallSuccessPattern('sample-extension'),
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.timedOut).not.toBe(true);
+      expect(result.stdout).toContain('Installed plugin: sample-extension');
+      expect(result.stdout).toContain(receipt);
+    },
+  );
+
+  it.each([
+    'Installed plugin: sample-extension',
+    'Applied in Gateway generation 4.',
+    'Saved for the next Gateway start.',
+    'Installed plugin: another-extension\nApplied in Gateway generation 4.',
+  ])(
+    'preserves a delayed installer failure after nonterminal or unrelated output: %s',
+    async output => {
+      const result = await __openClawExtensionImportTestUtils.runCommand(
+        process.execPath,
+        [
+          '-e',
+          `console.log(${JSON.stringify(output)}); setTimeout(() => { console.error('Installation failed'); process.exit(1); }, 500);`,
+        ],
+        {
+          cwd: fixtureRoot,
+          env: process.env,
+          successPattern:
+            __openClawExtensionImportTestUtils.createInstallSuccessPattern('sample-extension'),
+        },
+      );
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('Installation failed');
+    },
+  );
+
+  it.each([
+    { stream: 'stderr', delayMs: 500 },
+    { stream: 'stdout', delayMs: 100 },
+  ])('preserves CLI errors despite receipt text on $stream', async ({ stream, delayMs }) => {
+    const receipt = 'Installed plugin: sample-extension\nApplied in Gateway generation 4.\n';
     const result = await __openClawExtensionImportTestUtils.runCommand(
       process.execPath,
-      ['-e', "console.log('Installed plugin: sample-extension'); setInterval(() => {}, 1000);"],
+      [
+        '-e',
+        `process.${stream}.write(${JSON.stringify(receipt)}); setTimeout(() => process.exit(1), ${delayMs});`,
+      ],
       {
         cwd: fixtureRoot,
         env: process.env,
-        successPattern: /Installed plugin:\s*sample-extension/i,
+        successPattern:
+          __openClawExtensionImportTestUtils.createInstallSuccessPattern('sample-extension'),
       },
     );
-
-    expect(result.exitCode).toBe(0);
-    expect(result.timedOut).not.toBe(true);
-    expect(result.stdout).toContain('Installed plugin: sample-extension');
+    expect(result.exitCode).toBe(1);
   });
 
   it('requires an OpenClaw capability review token before accepting local capabilities', async () => {
@@ -1263,7 +1422,7 @@ describe('OpenClawExtensionImportService', () => {
     expect(startGateway).toHaveBeenCalledOnce();
     expect(restartGateway).not.toHaveBeenCalled();
     expect(reconcile).toHaveBeenCalledTimes(2);
-    expect(restartGatewayAfterMutation).toHaveBeenCalledWith('extension-import');
+    expect(restartGatewayAfterMutation).toHaveBeenCalledWith('extension-network-policy-change');
   });
 
   it('reports an external owner before deleting any extension files', async () => {

@@ -46,13 +46,21 @@ const isPathWithinDirectory = (rootDirectory: string, candidatePath: string): bo
   );
 };
 
-const createInstallSuccessPattern = (extensionId: string | undefined): RegExp | undefined =>
-  extensionId
-    ? new RegExp(
-        `(?:^|\\r?\\n)Installed plugin:\\s*${extensionId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*(?:\\r?\\n|$)`,
-        'i',
-      )
-    : undefined;
+// The CLI can print "Installed plugin" before runtime application finishes.
+// Only its final lifecycle receipt is safe to treat as command completion.
+const createInstallSuccessPattern = (
+  extensionId: string | undefined,
+  appliedOnly = false,
+): RegExp | undefined => {
+  if (!extensionId) return undefined;
+  const escapedId = extensionId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const receipt = appliedOnly
+    ? 'Applied in Gateway generation \\d+\\.'
+    : '(?:Applied in Gateway generation \\d+\\.|Saved for the next Gateway start\\.)';
+  return new RegExp(
+    `(?:^|\\r?\\n)Installed plugin:[ \\t]*${escapedId}[ \\t]*\\r?\\n${receipt}(?:\\r?\\n|$)`,
+  );
+};
 
 export type { ExtensionImportProgress, ExtensionImportResult, ExtensionImportStage };
 
@@ -642,6 +650,7 @@ const runCommand = (
     let stderr = '';
     let settled = false;
     let successObserved = false;
+    let successTerminationRequested = false;
     let successTerminationTimer: NodeJS.Timeout | undefined;
     let forcedFinishTimer: NodeJS.Timeout | undefined;
     const finish = (result: CommandResult) => {
@@ -662,6 +671,7 @@ const runCommand = (
           finish({ exitCode: 0, stdout, stderr });
           return;
         }
+        successTerminationRequested = true;
         forcedFinishTimer = setTimeout(() => {
           if (settled) return;
           if (process.platform !== 'win32') child.kill('SIGKILL');
@@ -680,7 +690,7 @@ const runCommand = (
       }, 250);
     };
     const inspectSuccessfulOutput = () => {
-      if (successPattern?.test(`${stdout}\n${stderr}`)) terminateSuccessfulCommand();
+      if (successPattern?.test(stdout)) terminateSuccessfulCommand();
     };
     child.stdout?.on('data', chunk => {
       const output = String(chunk);
@@ -692,7 +702,6 @@ const runCommand = (
       const output = String(chunk);
       stderr = `${stderr}${output}`.slice(-MAX_COMMAND_OUTPUT_CHARS);
       onOutput?.(output);
-      inspectSuccessfulOutput();
     });
     child.once('error', error => {
       if (settled) return;
@@ -703,7 +712,9 @@ const runCommand = (
     // Use `exit`, not `close`: npm descendants may inherit the CLI's output pipes and
     // keep `close` pending forever after the OpenClaw process has already exited.
     child.once('exit', code => {
-      setTimeout(() => finish({ exitCode: successObserved ? 0 : (code ?? 1), stdout, stderr }), 50);
+      if (successTerminationTimer) clearTimeout(successTerminationTimer);
+      const exitCode = successTerminationRequested ? 0 : (code ?? 1);
+      setTimeout(() => finish({ exitCode, stdout, stderr }), 50);
     });
     const timeout = setTimeout(() => {
       if (child.pid) {
@@ -788,6 +799,32 @@ export class OpenClawExtensionImportService {
       throw new Error('The safe Gateway restart coordinator is unavailable.');
     }
     return this.deps.restartGatewayAfterMutation(reason);
+  }
+
+  /** Apply a CLI mutation through the native plugin lifecycle when the Gateway is live. */
+  private async reloadPluginAfterCliMutation(
+    method: 'plugins.reload' | 'plugins.refresh',
+    extensionId?: string,
+  ): Promise<boolean> {
+    if (
+      !this.deps.requestGateway ||
+      this.deps.getOpenClawEngineManager().getStatus().phase !== 'running' ||
+      (method === 'plugins.reload' && !extensionId)
+    ) {
+      return false;
+    }
+    try {
+      const result = await this.deps.requestGateway<{ ok: boolean; restartRequired: boolean }>(
+        method,
+        method === 'plugins.reload' ? { plugins: [{ pluginId: extensionId }] } : {},
+      );
+      return result.ok === true && result.restartRequired === false;
+    } catch (error) {
+      console.warn(
+        `[OpenClawExtensionImportService] Native plugin reload failed; requesting Gateway restart: ${String(error)}`,
+      );
+      return false;
+    }
   }
 
   private async syncAgentTeamSkill(enabled: boolean, viaGateway: boolean): Promise<void> {
@@ -1181,13 +1218,27 @@ export class OpenClawExtensionImportService {
     const initialPhase = manager.getStatus().phase;
     const wasRuntimeActive = initialPhase === 'running' || initialPhase === 'starting';
     const policyDigestBefore = this.deps.outboundHeaderPolicy?.reconcile().digest;
-    const convergePolicy = async (forceRestart = false): Promise<string | undefined> => {
+    const convergePolicy = async (
+      forceRestart = false,
+      allowNativeRefresh = false,
+    ): Promise<string | undefined> => {
       const policyDigestAfter = this.deps.outboundHeaderPolicy?.reconcile().digest;
       if (!forceRestart && (!wasRuntimeActive || policyDigestAfter === policyDigestBefore)) {
         return undefined;
       }
+      if (
+        allowNativeRefresh &&
+        policyDigestAfter === policyDigestBefore &&
+        (await this.reloadPluginAfterCliMutation('plugins.refresh'))
+      ) {
+        return undefined;
+      }
       try {
-        const status = await this.restartGatewayAfterMutation('extension-delete');
+        const status = await this.restartGatewayAfterMutation(
+          policyDigestAfter !== policyDigestBefore
+            ? 'extension-network-policy-change'
+            : 'extension-delete',
+        );
         return status.phase === 'running'
           ? undefined
           : status.message ||
@@ -1336,7 +1387,10 @@ export class OpenClawExtensionImportService {
         };
       }
 
-      const convergenceError = await convergePolicy(wasRuntimeActive && !command.runtimeRestarted);
+      const convergenceError = await convergePolicy(
+        wasRuntimeActive && !command.runtimeRestarted,
+        wasRuntimeActive && !command.runtimeRestarted,
+      );
       if (convergenceError) {
         return { success: false, error: convergenceError };
       }
@@ -1386,8 +1440,19 @@ export class OpenClawExtensionImportService {
       if (!wasRuntimeActive || (!forceRestart && policyDigestAfter === policyDigestBefore)) {
         return undefined;
       }
+      if (
+        forceRestart &&
+        policyDigestAfter === policyDigestBefore &&
+        (await this.reloadPluginAfterCliMutation('plugins.refresh'))
+      ) {
+        return undefined;
+      }
       try {
-        const status = await this.restartGatewayAfterMutation('extension-status-change');
+        const status = await this.restartGatewayAfterMutation(
+          policyDigestAfter !== policyDigestBefore
+            ? 'extension-network-policy-change'
+            : 'extension-status-change',
+        );
         return status.phase === 'running'
           ? undefined
           : status.message ||
@@ -1421,7 +1486,11 @@ export class OpenClawExtensionImportService {
         }
         const policyDigestAfter = this.deps.outboundHeaderPolicy?.reconcile().digest;
         if (result.restartRequired || policyDigestAfter !== policyDigestBefore) {
-          const status = await this.restartGatewayAfterMutation('extension-status-change');
+          const status = await this.restartGatewayAfterMutation(
+            policyDigestAfter !== policyDigestBefore
+              ? 'extension-network-policy-change'
+              : 'extension-status-change',
+          );
           if (status.phase !== 'running') {
             return {
               success: false,
@@ -1770,16 +1839,28 @@ export class OpenClawExtensionImportService {
         networkPolicyChanged = snapshot.digest !== networkPolicyDigestBeforeInstall;
       }
 
+      const cliAppliedRuntime = createInstallSuccessPattern(extensionId, true)?.test(result.stdout);
       if (wasRuntimeActive && (!command.runtimeRestarted || networkPolicyChanged)) {
-        reportProgress('restarting_gateway', 90);
-        const status = await this.restartGatewayAfterMutation('extension-import');
-        if (status.phase !== 'running') {
-          return {
-            success: false,
-            error:
-              status.message || 'Extension installed, but the OpenClaw Gateway failed to restart.',
-            failedStage: currentStage,
-          };
+        const reloaded =
+          !networkPolicyChanged &&
+          (cliAppliedRuntime ||
+            (!command.runtimeRestarted &&
+              extensionId &&
+              (await this.reloadPluginAfterCliMutation('plugins.reload', extensionId))));
+        if (!reloaded) {
+          reportProgress('restarting_gateway', 90);
+          const status = await this.restartGatewayAfterMutation(
+            networkPolicyChanged ? 'extension-network-policy-change' : 'extension-import',
+          );
+          if (status.phase !== 'running') {
+            return {
+              success: false,
+              error:
+                status.message ||
+                'Extension installed, but the OpenClaw Gateway failed to restart.',
+              failedStage: currentStage,
+            };
+          }
         }
       }
 
@@ -1821,6 +1902,7 @@ export class OpenClawExtensionImportService {
 }
 
 export const __openClawExtensionImportTestUtils = {
+  createInstallSuccessPattern,
   isDirectoryLockError,
   isGatewayUnavailableError,
   isSupportedArchive,

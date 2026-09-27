@@ -786,17 +786,26 @@ describe('OpenClawConfigSyncService', () => {
     expect(harness.stopGateway).not.toHaveBeenCalled();
   });
 
-  it('restores the approval bridge after an extension configuration warm restart', async () => {
-    const harness = createHarness({ nativeRestartStatus: 'scheduled' });
-    await expect(harness.service.restartGatewayAfterExclusiveMutation('extension-config-change'))
-      .resolves.toMatchObject({ phase: 'running' });
-    expect(harness.connectGatewayClient).toHaveBeenCalledOnce();
-    expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
-  });
+  it.each(['extension-config-change', 'extension-status-change', 'extension-import', 'extension-delete'])(
+    'restores the approval bridge after a %s in-process restart',
+    async reason => {
+      const harness = createHarness({ nativeRestartStatus: 'scheduled' });
+      await expect(harness.service.restartGatewayAfterExclusiveMutation(reason)).resolves.toMatchObject({ phase: 'running' });
+      expect(harness.connectGatewayClient).toHaveBeenCalledOnce();
+      expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+    },
+  );
 
   it('keeps proxy changes on the cold restart path', async () => {
     const harness = createHarness({ nativeRestartStatus: 'scheduled' });
     await harness.service.restartGatewayAfterExclusiveMutation('proxy-change');
+    expect(harness.engineManager.restartGateway).toHaveBeenCalledOnce();
+    expect(harness.requestGateway).not.toHaveBeenCalledWith('gateway.restart.request', expect.anything());
+  });
+
+  it('keeps extension network policy changes on the cold restart path', async () => {
+    const harness = createHarness({ nativeRestartStatus: 'scheduled' });
+    await harness.service.restartGatewayAfterExclusiveMutation('extension-network-policy-change');
     expect(harness.engineManager.restartGateway).toHaveBeenCalledOnce();
     expect(harness.requestGateway).not.toHaveBeenCalledWith('gateway.restart.request', expect.anything());
   });

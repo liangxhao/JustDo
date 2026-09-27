@@ -226,7 +226,7 @@ export class OpenClawConfigSyncService {
 
   async restartGatewayAfterExclusiveMutation(reason: string): Promise<OpenClawEngineStatus> {
     const engineManager = this.deps.getOpenClawEngineManager();
-    if (reason === 'extension-config-change' || reason === 'extension-status-change') {
+    if (reason.startsWith('extension-') && reason !== 'extension-network-policy-change') {
       const nativeRestart = await requestGatewayConfigRestart(
         engineManager, this.deps.requestGateway, reason,
       );
