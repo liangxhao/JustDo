@@ -12,6 +12,7 @@ describe('Agent runtime settings', () => {
   test('keeps the JustDo managed defaults stable', () => {
     expect(createDefaultAgentRuntimeSettings()).toEqual({
       version: 1,
+      swarm: { enabled: true, maxConcurrent: 8, maxChildrenPerGroup: 50, maxTotalPerGroup: 200 },
       agent: {
         thinking: null,
         runTimeoutSeconds: 0,
@@ -244,4 +245,19 @@ describe('Agent runtime settings', () => {
       createDefaultAgentRuntimeSettings(),
     );
   });
+});
+
+test('fills missing Swarm settings for existing profiles and rejects invalid capacities', () => {
+  const settings = createDefaultAgentRuntimeSettings();
+  const { swarm, ...legacy } = settings;
+  expect(parseAgentRuntimeSettings(legacy).swarm).toEqual(swarm);
+  for (const value of [0, -1, 1.5, 65]) {
+    expect(
+      validateAgentRuntimeSettings({ ...settings, swarm: { ...swarm, maxConcurrent: value } }).ok,
+    ).toBe(false);
+  }
+  settings.swarm.enabled = false;
+  settings.swarm.maxConcurrent = 12;
+  expect(parseAgentRuntimeSettings(settings).swarm).toEqual(settings.swarm);
+  expect(parseAgentRuntimeSettings(settings).subagents.maxConcurrent).toBe(3);
 });

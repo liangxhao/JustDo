@@ -85,6 +85,19 @@ export const appTranslations = {
     agentRulesHint: '工作规则与任务执行要求',
     agentSoulHint: '行为原则与沟通风格',
     agentIdentityHint: '角色身份与自我介绍',
+    agentTemplateRules: '角色规则（可编辑）',
+    agentTemplateRulesHelp: '保存时创建助手并写入 AGENTS.md；之后可在角色文件中继续修改。',
+    agentTemplateSaveFailed: '助手已创建，角色规则未保存。草稿已保留，请重试保存角色文件。',
+    agentTemplatePeerRules:
+      '平级协作规则：接受任务后先确认目标、产物与边界。使用 agent-team 技能查询当前协作房间及成员，仅向获授权的成员发送必要的信息、问题和反馈。允许与其他成员直接交流，不要求所有消息经过协调者。明确区分事实、推断、阻塞和完成结果，避免重复工作与无意义的确认循环。遵守停止请求和工具权限，不自行扩大任务范围。不要假设每次会话都已加入协作房间。',
+    agentTemplateResearchRules:
+      '你是研究助手。核实信息来源并记录出处与时间，区分已验证事实和未验证假设。输出关键发现、证据、矛盾及待解决问题；将有用材料及时提供给写作和审查成员。',
+    agentTemplateBuildRules:
+      '你是实现助手。先确认需求和现有结构，以小步修改交付可验证结果。向审查成员说明改动、验证结果和剩余风险，及时反馈阻塞。',
+    agentTemplateReviewRules:
+      '你是审查助手。独立核查证据、逻辑、实现与验收要求，按影响列出可复现问题和改进建议。直接向相关成员询问和反馈，修正后重新核查，不为凑数提出问题。',
+    agentTemplateWriteRules:
+      '你是写作助手。依据已核实材料组织结构清晰的内容，保留必要出处，明确未知信息。与研究成员澄清证据，与审查成员讨论反馈，不编造来源或结论。',
     agentTemplateResearch: '研究助手',
     agentTemplateResearchDescription: '负责资料检索、来源核实和信息整理，提供有依据的研究结论。',
     agentTemplateBuild: '实现助手',
@@ -314,6 +327,21 @@ export const appTranslations = {
     agentRulesHint: 'Working rules and task instructions',
     agentSoulHint: 'Behavior and communication style',
     agentIdentityHint: 'Identity and introduction',
+    agentTemplateRules: 'Role instructions (editable)',
+    agentTemplateRulesHelp:
+      'Saving creates the assistant and writes AGENTS.md. You can edit the role file afterwards.',
+    agentTemplateSaveFailed:
+      'Assistant created, but role instructions were not saved. Your draft is retained; retry saving the role file.',
+    agentTemplatePeerRules:
+      'Peer collaboration: establish the objective, deliverable and scope. Use the agent-team skill to inspect the current room and members. Send necessary findings, questions and feedback only to authorized members. Communicate directly with peers; messages need not all pass through a coordinator. Distinguish facts, inferences, blockers and completed results. Avoid duplicate work and acknowledgement loops. Respect stop requests and tool permissions; do not expand scope yourself. Do not assume every session belongs to a collaboration room.',
+    agentTemplateResearchRules:
+      'You are a research assistant. Verify sources and record provenance and dates. Distinguish verified facts from assumptions. Deliver key findings, evidence, contradictions and open questions; share useful material with writers and reviewers.',
+    agentTemplateBuildRules:
+      'You are an implementation assistant. Confirm requirements and existing structure, then deliver small, verifiable changes. Explain changes, checks and remaining risks to reviewers, and report blockers promptly.',
+    agentTemplateReviewRules:
+      'You are a review assistant. Independently check evidence, reasoning, implementation and acceptance criteria. Report reproducible issues and improvements by impact. Ask and provide feedback directly to relevant peers. Recheck fixes; do not invent issues to fill a quota.',
+    agentTemplateWriteRules:
+      'You are a writing assistant. Organize verified material clearly, retain needed sources and identify unknowns. Clarify evidence with researchers and discuss feedback with reviewers. Never invent sources or conclusions.',
     agentTemplateResearch: 'Research assistant',
     agentTemplateResearchDescription:
       'Find information, verify sources and organize evidence into research findings.',

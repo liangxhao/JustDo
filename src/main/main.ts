@@ -1501,6 +1501,7 @@ if (multicaBridgeArgv) {
 
   registerCoworkSubtaskHandlers({
     getRuntime: getOpenClawRuntimeAdapter,
+    hasSession: sessionId => Boolean(getCoworkStore().getSession(sessionId)),
   });
 
   const nativeAssistantCreation = new NativeAssistantCreation({

@@ -1,7 +1,4 @@
-import {
-  DEFAULT_MCP_REQUEST_TIMEOUT_SECONDS,
-  MCP_REQUEST_TIMEOUT_LIMITS,
-} from './mcp';
+import { DEFAULT_MCP_REQUEST_TIMEOUT_SECONDS, MCP_REQUEST_TIMEOUT_LIMITS } from './mcp';
 
 export const AGENT_RUNTIME_SETTINGS_VERSION = 1 as const;
 
@@ -54,6 +51,9 @@ export const AGENT_RUNTIME_LIMITS = {
   archiveAfterMinutes: { min: 0, max: 365 * 24 * 60 },
   agentRunTimeoutSeconds: { min: 60, max: 24 * 60 * 60 },
   runTimeoutSeconds: { min: 60, max: 24 * 60 * 60 },
+  swarmMaxConcurrent: { min: 1, max: 64 },
+  swarmMaxChildrenPerGroup: { min: 1, max: 200 },
+  swarmMaxTotalPerGroup: { min: 1, max: 1000 },
   modelRefMaxLength: 256,
 } as const;
 
@@ -75,6 +75,12 @@ export interface AgentRuntimeSettings {
   };
   sessions: {
     visibility: AgentRuntimeSessionVisibilityValue;
+  };
+  swarm: {
+    enabled: boolean;
+    maxConcurrent: number;
+    maxChildrenPerGroup: number;
+    maxTotalPerGroup: number;
   };
   subagents: {
     delegationMode: AgentRuntimeDelegationModeValue | null;
@@ -107,6 +113,12 @@ export const DEFAULT_AGENT_RUNTIME_SETTINGS: Readonly<AgentRuntimeSettings> = Ob
   sessions: Object.freeze({
     visibility: AgentRuntimeSessionVisibility.Tree,
   }),
+  swarm: Object.freeze({
+    enabled: true,
+    maxConcurrent: 8,
+    maxChildrenPerGroup: 50,
+    maxTotalPerGroup: 200,
+  }),
   subagents: Object.freeze({
     delegationMode: null,
     model: null,
@@ -126,6 +138,7 @@ export const createDefaultAgentRuntimeSettings = (): AgentRuntimeSettings => ({
   automation: { ...DEFAULT_AGENT_RUNTIME_SETTINGS.automation },
   mcp: { ...DEFAULT_AGENT_RUNTIME_SETTINGS.mcp },
   sessions: { ...DEFAULT_AGENT_RUNTIME_SETTINGS.sessions },
+  swarm: { ...DEFAULT_AGENT_RUNTIME_SETTINGS.swarm },
   subagents: { ...DEFAULT_AGENT_RUNTIME_SETTINGS.subagents },
 });
 
@@ -144,8 +157,7 @@ const isSessionVisibility = (value: unknown): value is AgentRuntimeSessionVisibi
   AGENT_RUNTIME_SESSION_VISIBILITIES.includes(value as AgentRuntimeSessionVisibilityValue);
 
 export type AgentRuntimeSettingsValidationResult =
-  | { ok: true; settings: AgentRuntimeSettings }
-  | { ok: false; error: string };
+  { ok: true; settings: AgentRuntimeSettings } | { ok: false; error: string };
 
 export const validateAgentRuntimeSettings = (
   value: unknown,
@@ -244,6 +256,31 @@ export const validateAgentRuntimeSettings = (
   const sessionVisibility = sessions.visibility;
   if (!isSessionVisibility(sessionVisibility)) {
     return { ok: false, error: 'Invalid session visibility.' };
+  }
+
+  const swarm = value.swarm === undefined ? DEFAULT_AGENT_RUNTIME_SETTINGS.swarm : value.swarm;
+  if (!isRecord(swarm) || typeof swarm.enabled !== 'boolean') {
+    return { ok: false, error: 'Invalid Swarm settings.' };
+  }
+  const { maxConcurrent: swarmConcurrency, maxChildrenPerGroup, maxTotalPerGroup } = swarm;
+  if (
+    !isIntegerInRange(
+      swarmConcurrency,
+      AGENT_RUNTIME_LIMITS.swarmMaxConcurrent.min,
+      AGENT_RUNTIME_LIMITS.swarmMaxConcurrent.max,
+    ) ||
+    !isIntegerInRange(
+      maxChildrenPerGroup,
+      AGENT_RUNTIME_LIMITS.swarmMaxChildrenPerGroup.min,
+      AGENT_RUNTIME_LIMITS.swarmMaxChildrenPerGroup.max,
+    ) ||
+    !isIntegerInRange(
+      maxTotalPerGroup,
+      AGENT_RUNTIME_LIMITS.swarmMaxTotalPerGroup.min,
+      AGENT_RUNTIME_LIMITS.swarmMaxTotalPerGroup.max,
+    )
+  ) {
+    return { ok: false, error: 'Swarm capacity is outside the supported range.' };
   }
 
   const subagents = value.subagents;
@@ -357,6 +394,12 @@ export const validateAgentRuntimeSettings = (
       },
       sessions: {
         visibility: sessionVisibility,
+      },
+      swarm: {
+        enabled: swarm.enabled,
+        maxConcurrent: swarmConcurrency,
+        maxChildrenPerGroup,
+        maxTotalPerGroup,
       },
       subagents: {
         delegationMode: validatedDelegationMode,

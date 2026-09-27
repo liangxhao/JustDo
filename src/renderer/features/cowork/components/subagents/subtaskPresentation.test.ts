@@ -58,7 +58,7 @@ describe('subtask presentation', () => {
     ).toBeUndefined();
   });
 
-  test('bounds finished history while retaining every active task', () => {
+  test('retains all finished history for explicit UI pagination', () => {
     const result = partitionSubtasks([
       subtask({ id: 'active', updatedAt: 1 }),
       ...Array.from({ length: 60 }, (_, index) =>
@@ -67,7 +67,7 @@ describe('subtask presentation', () => {
     ]);
 
     expect(result.active.map(item => item.id)).toEqual(['active']);
-    expect(result.finished).toHaveLength(50);
+    expect(result.finished).toHaveLength(60);
     expect(result.finished[0]?.id).toBe('done-59');
   });
 

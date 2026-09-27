@@ -1,6 +1,6 @@
 import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
 import { withCodexSessionTranscriptMirrorWriteLock } from 'openclaw/plugin-sdk/codex-session-transcript-runtime';
-import { isSubagentSessionKey } from 'openclaw/plugin-sdk/routing';
+import { isAcpSessionKey, isSubagentSessionKey } from 'openclaw/plugin-sdk/routing';
 import { getSessionEntry } from 'openclaw/plugin-sdk/session-store-runtime';
 
 const managed = (key?: string) => Boolean(key && /^agent:[^:]+:justdo:[^:]+$/.test(key));
@@ -13,7 +13,7 @@ export function registerCollaborationHistory(api: OpenClawPluginApi) {
     if (event.toolName !== 'sessions_send' || !managed(ctx.sessionKey)) return;
     if (
       typeof event.params?.sessionKey === 'string' &&
-      isSubagentSessionKey(event.params.sessionKey)
+      (isSubagentSessionKey(event.params.sessionKey) || isAcpSessionKey(event.params.sessionKey))
     )
       return;
     const plugins = api.runtime.config.current().plugins;

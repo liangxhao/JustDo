@@ -342,6 +342,13 @@ export const settingsTranslations = {
     agentRuntimeRestoreDefaults: '恢复默认值',
     agentRuntimeAgentSectionTitle: 'Agent',
     agentRuntimeAgentSectionDescription: '所有 Agent 默认继承的运行、会话访问与委派行为。',
+    agentRuntimeSwarmTitle: 'Swarm 批量子任务',
+    agentRuntimeSwarmDescription:
+      '独立控制批量收集任务容量；不改变普通 SubAgent 的限制，也不启用平级 Team。',
+    agentRuntimeSwarmEnabled: '允许批量收集任务',
+    agentRuntimeSwarmConcurrent: '同时运行的收集任务',
+    agentRuntimeSwarmChildren: '每组存活任务上限',
+    agentRuntimeSwarmTotal: '每组累计创建上限',
     agentRuntimeSubagentSectionTitle: 'SubAgent',
     agentRuntimeSubagentSectionDescription: 'SubAgent 的模型、容量和任务执行参数。',
     agentRuntimeMcpSectionTitle: 'MCP',
@@ -1498,6 +1505,13 @@ export const settingsTranslations = {
     agentRuntimeAgentSectionTitle: 'Agent',
     agentRuntimeAgentSectionDescription:
       'Runtime, session access, and delegation defaults inherited by all Agents.',
+    agentRuntimeSwarmTitle: 'Swarm batch tasks',
+    agentRuntimeSwarmDescription:
+      'Separate capacity for batch collectors. Ordinary SubAgent limits and peer Team remain independent.',
+    agentRuntimeSwarmEnabled: 'Allow batch collectors',
+    agentRuntimeSwarmConcurrent: 'Concurrent collectors',
+    agentRuntimeSwarmChildren: 'Live children per group',
+    agentRuntimeSwarmTotal: 'Lifetime children per group',
     agentRuntimeSubagentSectionTitle: 'SubAgent',
     agentRuntimeSubagentSectionDescription:
       'Model, capacity, and task execution settings for SubAgents.',

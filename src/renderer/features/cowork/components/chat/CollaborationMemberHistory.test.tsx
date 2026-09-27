@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { i18nService } from '@/services/i18n';
@@ -105,6 +105,48 @@ const mount = () =>
   );
 
 describe('peer native history lifecycle', () => {
+  it.each(['failed', 'missing'] as const)(
+    'retries a %s receipt without changing the selected member',
+    async failure => {
+      mocks.readMessages
+        .mockResolvedValueOnce(
+          failure === 'failed'
+            ? { success: false, error: 'offline' }
+            : { success: true, value: [] },
+        )
+        .mockResolvedValue({
+          success: true,
+          value: [
+            { deliveryId: 'delivery', message: { role: 'user', content: 'Recovered receipt' } },
+          ],
+        });
+      render(
+        <CollaborationMemberHistory
+          anchorSessionId="main"
+          member={member}
+          name="Review"
+          workingDirectory=""
+          receipt={{ deliveryId: 'delivery', id: 'delivery' }}
+        />,
+      );
+      await act(async () => {});
+      expect(mocks.readMessages).toHaveBeenCalledTimes(1);
+      fireEvent.click(screen.getByRole('button', { name: i18nService.t('sessionDetailsRetry') }));
+      await act(async () => {});
+      expect(mocks.readMessages).toHaveBeenCalledTimes(2);
+      expect(mocks.readMessages).toHaveBeenLastCalledWith('main', ['delivery']);
+      expect(mocks.display).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          gatewayMessages: [{ role: 'user', content: 'Recovered receipt' }],
+        }),
+      );
+      expect(
+        screen.queryByRole('button', { name: i18nService.t('sessionDetailsRetry') }),
+      ).toBeNull();
+      expect(mocks.instances).toHaveLength(0);
+    },
+  );
+
   it('loads an exact receipt through the collaboration message lookup', async () => {
     const expected = { role: 'user', content: 'Actual message' };
     mocks.readMessages.mockResolvedValue({

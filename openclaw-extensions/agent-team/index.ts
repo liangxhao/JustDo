@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type { OpenClawPluginApi, OpenClawPluginGatewayEvents } from 'openclaw/plugin-sdk/core';
-import { isSubagentSessionKey } from 'openclaw/plugin-sdk/routing';
+import { isAcpSessionKey, isSubagentSessionKey } from 'openclaw/plugin-sdk/routing';
 import { getSessionEntry } from 'openclaw/plugin-sdk/session-store-runtime';
 import { createSessionVisibilityChecker } from 'openclaw/plugin-sdk/session-visibility';
 import { Type } from 'typebox';
@@ -10,6 +10,9 @@ const managed = (key?: string) => Boolean(key && /^agent:[^:]+:justdo:[^:]+$/.te
 const CREATE = 'assistants_create';
 const ASSISTANTS = 'task_assistants';
 const HOST_REQUEST_TIMEOUT_MS = 8000;
+// Native sends return immediately, but outcome reporting can be delayed by RPC
+// recovery. This identity never grants access and outlives the 60-second grant.
+const NATIVE_RECEIPT_TTL_MS = 10 * 60 * 1000;
 const plugin = {
   id: 'agent-team',
   name: 'Agent Team',
@@ -24,6 +27,19 @@ const plugin = {
         expiresAt: number;
       }
     >();
+    const hookCalls: typeof nativeCalls = new Map();
+    // Keep the admitted receipt identity after revoking send access so a native
+    // outcome cannot name an unrelated delivery or regain a send grant.
+    const admittedCalls = new Map<
+      string,
+      {
+        deliveryId: string;
+        runId: string;
+        target: string;
+        expiresAt: number;
+      }
+    >();
+    let serviceGeneration = 0;
     let removeAccess: (() => void) | undefined;
     const registerAccess = () =>
       createSessionVisibilityChecker.registerScopedAccessProvider(request => {
@@ -77,9 +93,12 @@ const plugin = {
         emit = ctx.gatewayEvents?.emit;
       },
       stop() {
+        serviceGeneration += 1;
         removeAccess?.();
         removeAccess = undefined;
         nativeCalls.clear();
+        hookCalls.clear();
+        admittedCalls.clear();
         emit = undefined;
         calls.clear();
         for (const item of pending.values()) {
@@ -111,8 +130,27 @@ const plugin = {
       { scope: 'operator.read' },
     );
     api.registerGatewayMethod(
+      'collaboration.release',
+      ({ params, respond }) => {
+        const key = `${params.sessionKey}|${params.toolCallId}`;
+        const call = nativeCalls.get(key);
+        if (call?.runId === params.runId) nativeCalls.delete(key);
+        const bindingKey = `${params.sessionKey}:${params.toolCallId}`;
+        if (calls.get(bindingKey)?.runId === params.runId) calls.delete(bindingKey);
+        respond(true, { ok: true });
+      },
+      { scope: 'operator.admin' },
+    );
+    api.registerGatewayMethod(
       'collaboration.bind',
       ({ params, respond }) => {
+        if (!emit) {
+          respond(false, undefined, {
+            code: 'invalid_request',
+            message: 'Collaboration service unavailable.',
+          });
+          return;
+        }
         if (
           typeof params.sessionKey !== 'string' ||
           !managed(params.sessionKey) ||
@@ -174,15 +212,71 @@ const plugin = {
           }) as { justdoPlanMode?: { enabled?: boolean } } | undefined;
           if (entry?.justdoPlanMode?.enabled && params.operation !== 'native-result')
             throw new Error('Collaboration sending is unavailable in Plan mode.');
+          const callKey = `${params.sessionKey}|${params.toolCallId}`;
+          const input = params.input as Record<string, unknown> | undefined;
+          if (params.operation === 'native-result') {
+            const admitted = admittedCalls.get(callKey);
+            if (
+              !admitted ||
+              admitted.expiresAt <= Date.now() ||
+              admitted.runId !== identity.runId ||
+              admitted.deliveryId !== input?.deliveryId ||
+              admitted.target !== input?.targetSessionKey
+            )
+              throw new Error('The native collaboration receipt is no longer active.');
+            nativeCalls.delete(callKey);
+            admittedCalls.delete(callKey);
+          }
+          // Admission and the scoped provider must share the Gateway-owned map:
+          // execution hooks can be materialized in another plugin registration.
+          const target =
+            params.operation === 'native-send' && typeof input?.sessionKey === 'string'
+              ? input.sessionKey
+              : undefined;
+          const expectedSessionId = target
+            ? getSessionEntry({
+                sessionKey: target,
+                readConsistency: 'latest',
+              })?.sessionId
+            : undefined;
+          if (params.operation === 'native-send' && !expectedSessionId)
+            throw new Error('Collaboration target is unavailable.');
+          const generation = serviceGeneration;
+          const result = (await requestHost({
+            operation: params.operation,
+            sessionKey: params.sessionKey,
+            sourceRunId: identity.runId,
+            toolCallId: params.toolCallId,
+            input,
+          })) as { error?: string; deliveryId?: string; sessionKey?: string };
+          if (generation !== serviceGeneration || !emit) throw new Error('Collaboration stopped.');
+          if (params.operation === 'native-send' && !result.error) {
+            if (!target || !result.deliveryId || result.sessionKey !== target || !expectedSessionId)
+              throw new Error('Invalid collaboration admission.');
+            for (const [key, call] of nativeCalls)
+              if (call.expiresAt <= Date.now()) nativeCalls.delete(key);
+            for (const [key, call] of admittedCalls)
+              if (call.expiresAt <= Date.now()) admittedCalls.delete(key);
+            if (admittedCalls.size >= 512) throw new Error('Too many active collaboration calls.');
+            admittedCalls.set(callKey, {
+              deliveryId: result.deliveryId,
+              runId: identity.runId,
+              target,
+              expiresAt: Date.now() + NATIVE_RECEIPT_TTL_MS,
+            });
+            nativeCalls.set(callKey, {
+              deliveryId: result.deliveryId,
+              target,
+              expectedSessionId,
+              runId: identity.runId,
+              expiresAt: Date.now() + 60000,
+            });
+          }
           respond(
             true,
-            await requestHost({
-              operation: params.operation,
-              sessionKey: params.sessionKey,
-              sourceRunId: identity.runId,
-              toolCallId: params.toolCallId,
-              input: params.input,
-            }),
+            params.operation === 'native-send' && !result.error
+              ? { ...result, expectedSessionId }
+              : result,
           );
         } catch (error) {
           respond(false, undefined, {
@@ -199,19 +293,38 @@ const plugin = {
         !managed(ctx.sessionKey)
       )
         return;
-      // Native child-session messaging is not peer collaboration. Keep its
-      // ownership/visibility checks in OpenClaw and do not consume team budget.
+      // Native child-session messaging is not peer collaboration. OpenClaw
+      // checks ownership and visibility for both native and ACP children.
       if (
         event.toolName === 'sessions_send' &&
         typeof event.params?.sessionKey === 'string' &&
-        isSubagentSessionKey(event.params.sessionKey)
+        (isSubagentSessionKey(event.params.sessionKey) || isAcpSessionKey(event.params.sessionKey))
       )
         return;
+      // Peer receipts identify a newly admitted turn. Steering keeps the active
+      // owner run, notifications have no run, and resume belongs to native tasks.
+      // Reject those modes before reserving a room delivery or scoped access.
+      if (
+        event.toolName === 'sessions_send' &&
+        event.params?.mode !== undefined &&
+        event.params.mode !== 'followup'
+      )
+        return {
+          block: true,
+          blockReason:
+            'Task peers support sessions_send with mode=followup or no mode. Other modes require native child-session coordination.',
+        };
       if (event.toolName === ASSISTANTS && !event.params?.agentId) return;
       if (!ctx.runId || !ctx.toolCallId)
         return { block: true, blockReason: 'Missing native call identity.' };
       if (ctx.abortSignal?.aborted)
         return { block: true, blockReason: 'The tool call was cancelled.' };
+      if (event.toolName === 'sessions_send' && typeof event.params.sessionKey !== 'string')
+        return {
+          block: true,
+          blockReason:
+            'Use task_assistants to prepare a task peer, then pass its exact sessionKey.',
+        };
       try {
         await rpc('collaboration.bind', {
           sessionKey: ctx.sessionKey,
@@ -219,37 +332,53 @@ const plugin = {
           toolCallId: ctx.toolCallId,
         });
         if (event.toolName === 'sessions_send') {
-          if (typeof event.params.sessionKey !== 'string')
-            return {
-              block: true,
-              blockReason:
-                'Use task_assistants to prepare a task peer, then pass its exact sessionKey.',
-            };
-          // Pin the incarnation before host admission awaits. A reset must not
-          // silently redirect an already admitted send to the replacement session.
-          const targetEntry = getSessionEntry({
-            sessionKey: event.params.sessionKey,
-            readConsistency: 'latest',
-          });
-          if (!targetEntry?.sessionId) throw new Error('Collaboration target is unavailable.');
-          const expectedSessionId = targetEntry.sessionId;
           const admission = (await rpc('collaboration.dispatch', {
             operation: 'native-send',
             sessionKey: ctx.sessionKey,
             toolCallId: ctx.toolCallId,
             input: event.params,
-          })) as { error?: string; deliveryId: string; sessionKey: string };
+          })) as {
+            error?: string;
+            deliveryId: string;
+            sessionKey: string;
+            expectedSessionId: string;
+          };
           if (admission.error) return { block: true, blockReason: admission.error };
-          if (ctx.abortSignal?.aborted)
+          if (ctx.abortSignal?.aborted) {
+            try {
+              await rpc('collaboration.release', {
+                sessionKey: ctx.sessionKey,
+                toolCallId: ctx.toolCallId,
+                runId: ctx.runId,
+              });
+            } catch {
+              // The bound result also revokes access if eager release failed.
+            }
+            await rpc('collaboration.bind', {
+              sessionKey: ctx.sessionKey,
+              toolCallId: ctx.toolCallId,
+              runId: ctx.runId,
+            });
+            await rpc('collaboration.dispatch', {
+              operation: 'native-result',
+              sessionKey: ctx.sessionKey,
+              toolCallId: ctx.toolCallId,
+              input: {
+                deliveryId: admission.deliveryId,
+                targetSessionKey: admission.sessionKey,
+                status: 'cancelled',
+              },
+            });
             return { block: true, blockReason: 'The tool call was cancelled.' };
-          for (const [key, call] of nativeCalls)
-            if (call.expiresAt <= Date.now()) nativeCalls.delete(key);
-          nativeCalls.set(`${ctx.sessionKey}|${ctx.toolCallId}`, {
+          }
+          for (const [key, call] of hookCalls)
+            if (call.expiresAt <= Date.now()) hookCalls.delete(key);
+          hookCalls.set(`${ctx.sessionKey}|${ctx.toolCallId}`, {
             deliveryId: admission.deliveryId,
             target: admission.sessionKey,
-            expectedSessionId,
+            expectedSessionId: admission.expectedSessionId,
             runId: ctx.runId,
-            expiresAt: Date.now() + 60000,
+            expiresAt: Date.now() + NATIVE_RECEIPT_TTL_MS,
           });
           return {
             params: {
@@ -267,9 +396,19 @@ const plugin = {
     api.on('after_tool_call', async (event, ctx) => {
       if (event.toolName !== 'sessions_send' || !ctx.sessionKey || !ctx.toolCallId) return;
       const key = `${ctx.sessionKey}|${ctx.toolCallId}`;
-      const call = nativeCalls.get(key);
-      if (!call) return;
-      nativeCalls.delete(key);
+      const call = hookCalls.get(key);
+      if (!call || call.runId !== ctx.runId) return;
+      hookCalls.delete(key);
+      try {
+        await rpc('collaboration.release', {
+          sessionKey: ctx.sessionKey,
+          toolCallId: ctx.toolCallId,
+          runId: call.runId,
+        });
+      } catch {
+        // Report the native outcome even if eager revocation fails. The
+        // native-result dispatcher also revokes this grant before host delivery.
+      }
       const result = event.result as
         { details?: Record<string, unknown>; content?: Array<{ text?: string }> } | undefined;
       let outcome = result?.details;
@@ -291,6 +430,7 @@ const plugin = {
         toolCallId: ctx.toolCallId,
         input: {
           deliveryId: call.deliveryId,
+          targetSessionKey: call.target,
           status: outcome?.status ?? 'unknown',
           ...(typeof outcome?.runId === 'string' ? { runId: outcome.runId } : {}),
           ...(typeof outcome?.sentBeforeError === 'boolean'

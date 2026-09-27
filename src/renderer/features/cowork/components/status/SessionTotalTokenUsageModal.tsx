@@ -171,7 +171,7 @@ const SessionTotalTokenUsageModal: React.FC<SessionTotalTokenUsageModalProps> = 
                 subagent.sessionKey,
               );
               if (cancelled) return;
-              if (detailResult.success) {
+              if (detailResult.success && detailResult.stats) {
                 detailStats = {
                   usage: detailResult.stats.tokenUsage,
                   totalTokens: detailResult.stats.totalTokens,

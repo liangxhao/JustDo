@@ -95,6 +95,14 @@ Main 在 will-attach-webview 中覆盖为固定 preload，强制 sandbox、conte
 
 HTTP 登录请求、媒体权限、PDF 读取各有独立超时和销毁语义，不能共用一个页面全局授权布尔值。详细 guest 行为在[浏览器设计](../features/browser-settings-design.md)，不再散放到通用 IPC 清单。
 
+### 原生子任务查询与精确操作
+
+Renderer 通过显式 preload 方法 `listSubTaskChildren(sessionId, parentTaskId?, cursor?)` 和 `controlSubTask(sessionId, taskId, action)` 访问子任务。shared 合约将操作限制为 `cancel`、`retryDelivery`、`dismissDelivery`；Main 对应调用 `tasks.cancel`、`tasks.retry`、`tasks.dismiss`，不提供任意 Gateway 方法转发。`tasks.retry` 只重新投递已完成结果，不重新执行模型任务。
+
+Main 先检查产品会话仍存在，再以其受管原生 session keys 核对 `tasks.get` 的 requester。嵌套任务逐级验证 `parentTaskId` 与父任务 `childSessionKey` 的真实连接；缺少父 ID 时沿原生 requester 图进行有界发现。发现不完整、父子身份不符、跨产品会话或已删除会话均拒绝操作。Renderer 提交的 task ID、显示名称及 session key 不能单独充当归属证明。
+
+子树读取每次只取当前层最多 50 条原生记录，分页绑定当前根集合，返回结果再次过滤 requester。原生游标失效和归属发现失败按错误返回，不伪装为空列表。控制响应保留原生否定回执、原因和重复投递风险；超时不自动重发。UI 在后续操作前重新核对精确 task ID 的状态。任务账本、完成通知与取消执行仍由 OpenClaw 管理，不新增 SQLite 任务或 transcript 缓存。
+
 ## 6. 注册、订阅与重连
 
 `main.ts` 组合并注册 app/cowork/openclaw/scheduledTask 等 handler；preload 与 `src/renderer/types/electron.d.ts` 必须同步。IPC 兼容入口也只能允许白名单 channel，不能演变成任意 invoke。

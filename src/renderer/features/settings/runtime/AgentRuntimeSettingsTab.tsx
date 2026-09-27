@@ -143,6 +143,7 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
 }) => {
   const [agentOpen, setAgentOpen] = useState(true);
   const [mcpOpen, setMcpOpen] = useState(true);
+  const [swarmOpen, setSwarmOpen] = useState(true);
   const [subagentOpen, setSubagentOpen] = useState(true);
   const subagents = settings.subagents;
   const updateAgent = (update: Partial<AgentRuntimeSettings['agent']>) =>
@@ -752,6 +753,54 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
             </p>
           )}
         </SettingRow>
+      </CollapsibleSection>
+      <CollapsibleSection
+        title={i18nService.t('agentRuntimeSwarmTitle')}
+        description={i18nService.t('agentRuntimeSwarmDescription')}
+        open={swarmOpen}
+        onToggle={() => setSwarmOpen(!swarmOpen)}
+      >
+        <SettingRow label={i18nService.t('agentRuntimeSwarmEnabled')}>
+          <input
+            type="checkbox"
+            aria-label={i18nService.t('agentRuntimeSwarmEnabled')}
+            checked={settings.swarm.enabled}
+            onChange={event =>
+              onChange({ ...settings, swarm: { ...settings.swarm, enabled: event.target.checked } })
+            }
+          />
+        </SettingRow>
+        {(
+          [
+            [
+              'maxConcurrent',
+              'agentRuntimeSwarmConcurrent',
+              AGENT_RUNTIME_LIMITS.swarmMaxConcurrent,
+            ],
+            [
+              'maxChildrenPerGroup',
+              'agentRuntimeSwarmChildren',
+              AGENT_RUNTIME_LIMITS.swarmMaxChildrenPerGroup,
+            ],
+            [
+              'maxTotalPerGroup',
+              'agentRuntimeSwarmTotal',
+              AGENT_RUNTIME_LIMITS.swarmMaxTotalPerGroup,
+            ],
+          ] as const
+        ).map(([key, label, limits]) => (
+          <SettingRow key={key} label={i18nService.t(label)}>
+            <NumberControl
+              label={i18nService.t(label)}
+              value={settings.swarm[key]}
+              min={limits.min}
+              max={limits.max}
+              onChange={value =>
+                onChange({ ...settings, swarm: { ...settings.swarm, [key]: value } })
+              }
+            />
+          </SettingRow>
+        ))}
       </CollapsibleSection>
     </div>
   );

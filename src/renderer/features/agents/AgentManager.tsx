@@ -51,6 +51,9 @@ export default function AgentManager({
   const [fileName, setFileName] = useState<AgentFileName>('AGENTS.md');
   const [snapshot, setSnapshot] = useState<AgentFileSnapshot | null>(null);
   const [content, setContent] = useState('');
+  const [roleDraft, setRoleDraft] = useState<string | null>(null);
+  const roleDraftRef = useRef<string | null>(null);
+  roleDraftRef.current = roleDraft;
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const deleteDialogRef = useRef<HTMLDivElement>(null);
@@ -66,7 +69,7 @@ export default function AgentManager({
   const t = (key: string) => i18nService.t(key);
   const profileDirty = JSON.stringify(profile) !== original;
   const fileDirty = snapshot !== null && snapshot.content !== content;
-  const dirty = profileDirty || fileDirty;
+  const dirty = profileDirty || fileDirty || roleDraft !== null;
   const canLeave = () =>
     !busy && !confirmDelete && (!dirty || window.confirm(t('agentDiscardChanges')));
   useEffect(() => {
@@ -93,6 +96,7 @@ export default function AgentManager({
           isDefault: source.isDefault,
         }
       : emptyProfile();
+    setRoleDraft(null);
     setFileName('AGENTS.md');
     setReload(value => value + 1);
     setProfile(next);
@@ -116,10 +120,11 @@ export default function AgentManager({
         .toLocaleLowerCase()
         .includes(query.trim().toLocaleLowerCase()),
   );
-  const beginDraft = (next: AgentProfileInput) => {
+  const beginDraft = (next: AgentProfileInput, rules: string | null = null) => {
     if (!canLeave()) return;
     initialized.current = true;
     setProfile(next);
+    setRoleDraft(rules);
     setOriginal(JSON.stringify(emptyProfile()));
     setSnapshot(null);
     setContent('');
@@ -138,7 +143,8 @@ export default function AgentManager({
     });
   };
   const changeFile = (next: AgentFileName) => {
-    if (fileDirty && !window.confirm(t('agentDiscardChanges'))) return;
+    if ((fileDirty || roleDraft !== null) && !window.confirm(t('agentDiscardChanges'))) return;
+    setRoleDraft(null);
     setError('');
     setNotice('');
     setFileName(next);
@@ -158,7 +164,11 @@ export default function AgentManager({
         if (cancelled) return;
         if (result.success) {
           setSnapshot(result.value);
-          setContent(result.value.content);
+          setContent(
+            fileName === 'AGENTS.md'
+              ? (roleDraftRef.current ?? result.value.content)
+              : result.value.content,
+          );
         } else setError(result.error);
       })
       .catch(() => {
@@ -191,10 +201,28 @@ export default function AgentManager({
         enabled: saved.enabled,
         isDefault: saved.isDefault,
       };
+      let roleSaved = true;
+      if (!profile.id && roleDraft !== null) {
+        try {
+          const current = await window.electron.agents.readFile(saved.id, 'AGENTS.md');
+          if (!current.success) throw new Error(current.error);
+          const written = await window.electron.agents.writeFile(
+            saved.id,
+            'AGENTS.md',
+            roleDraft,
+            current.value,
+          );
+          if (!written.success) throw new Error(written.error);
+          setRoleDraft(null);
+        } catch {
+          roleSaved = false;
+          setError('agentTemplateSaveFailed');
+        }
+      }
       setProfile(next);
       setOriginal(JSON.stringify(next));
       await agentService.loadAgents();
-      setNotice('settingsSaved');
+      if (roleSaved) setNotice('settingsSaved');
     } catch {
       setError('agentSaveFailed');
     } finally {
@@ -212,6 +240,7 @@ export default function AgentManager({
         setError(result.error);
         return;
       }
+      setRoleDraft(null);
       setProfile(emptyProfile());
       setOriginal(JSON.stringify(emptyProfile()));
       setSnapshot(null);
@@ -241,6 +270,7 @@ export default function AgentManager({
       if (result.success) {
         setSnapshot(result.value);
         setContent(result.value.content);
+        setRoleDraft(null);
         setNotice('settingsSaved');
       } else setError(result.error);
     } catch {
@@ -379,11 +409,14 @@ export default function AgentManager({
                     type="button"
                     disabled={busy}
                     onClick={() =>
-                      beginDraft({
-                        ...emptyProfile(),
-                        name: t(`agentTemplate${preset.key}`),
-                        description: t(`agentTemplate${preset.key}Description`),
-                      })
+                      beginDraft(
+                        {
+                          ...emptyProfile(),
+                          name: t(`agentTemplate${preset.key}`),
+                          description: t(`agentTemplate${preset.key}Description`),
+                        },
+                        `${t(`agentTemplate${preset.key}Rules`)}\n\n${t('agentTemplatePeerRules')}`,
+                      )
                     }
                     className="rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground transition hover:border-primary/40"
                   >
@@ -535,7 +568,14 @@ export default function AgentManager({
                   title={t('agentReloadFile')}
                   aria-label={t('agentReloadFile')}
                   onClick={() => {
-                    if (fileDirty && !window.confirm(t('agentDiscardChanges'))) return;
+                    if (snapshot) {
+                      if (
+                        (fileDirty || roleDraft !== null) &&
+                        !window.confirm(t('agentDiscardChanges'))
+                      )
+                        return;
+                      setRoleDraft(null);
+                    }
                     setError('');
                     setNotice('');
                     setReload(value => value + 1);
@@ -608,6 +648,19 @@ export default function AgentManager({
                 )}
               </fieldset>
             </div>
+          ) : roleDraft !== null ? (
+            <label className="block text-xs font-medium text-secondary">
+              {t('agentTemplateRules')}
+              <textarea
+                aria-label="AGENTS.md"
+                className={inputClass + ' min-h-[240px] font-mono text-xs'}
+                value={roleDraft}
+                maxLength={100000}
+                disabled={busy}
+                onChange={event => setRoleDraft(event.target.value)}
+              />
+              <span className="mt-2 block">{t('agentTemplateRulesHelp')}</span>
+            </label>
           ) : (
             <p className="px-1 text-xs text-secondary">{t('agentCreateFirst')}</p>
           )}

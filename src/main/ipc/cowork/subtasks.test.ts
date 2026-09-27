@@ -3,6 +3,47 @@ import { describe, expect, it, vi } from 'vitest';
 import { loadCoworkSubagentDetails } from './subtasks';
 
 describe('loadCoworkSubagentDetails', () => {
+  it.each(['missing', 'empty', 'failed'] as const)(
+    'preserves exact task details when usage is %s',
+    async reason => {
+      const subagent = {
+        id: 'task-one',
+        taskName: 'task-one',
+        sessionKey: 'agent:main:subagent:child-1',
+        label: 'Task',
+        labelSource: 'label' as const,
+        status: 'failed' as const,
+        task: 'Complete prompt',
+        error: 'Model unavailable',
+      };
+      const usage =
+        reason === 'missing'
+          ? undefined
+          : reason === 'empty'
+            ? vi.fn().mockResolvedValue(null)
+            : vi.fn().mockRejectedValue(new Error('usage offline'));
+      await expect(
+        loadCoworkSubagentDetails(usage, subagent.sessionKey, {
+          taskId: subagent.id,
+          loadSubagent: vi.fn().mockResolvedValue(subagent),
+        }),
+      ).resolves.toEqual({ success: true, subagent });
+    },
+  );
+
+  it('rejects a mismatched task before attempting usage enrichment', async () => {
+    const usage = vi.fn();
+    const result = await loadCoworkSubagentDetails(usage, 'agent:main:subagent:child-1', {
+      taskId: 'task-other',
+      loadSubagent: vi.fn().mockResolvedValue({ sessionKey: 'agent:main:subagent:other' }),
+    });
+    expect(result).toEqual({
+      success: false,
+      error: 'Task does not belong to the requested session',
+    });
+    expect(usage).not.toHaveBeenCalled();
+  });
+
   it('uses complete raw-transcript usage for every subagent model request', async () => {
     const loadSessionUsage = vi.fn().mockResolvedValue({
       input: 40,

@@ -245,6 +245,7 @@ function CollaborationGraphContent({
   const [messageLoadStates, setMessageLoadStates] = useState<
     Record<string, 'loading' | 'loaded' | 'unavailable'>
   >({});
+  const [messageRetry, setMessageRetry] = useState(0);
   const normalizedSearch = searchQuery.trim().toLocaleLowerCase();
   const visible = useMemo(
     () =>
@@ -343,7 +344,14 @@ function CollaborationGraphContent({
     };
     // The compact key changes only when the selected receipts change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [room.id, selectedPair?.left, selectedPair?.right, selectedDeliveryKey, needsBodies]);
+  }, [
+    room.id,
+    selectedPair?.left,
+    selectedPair?.right,
+    selectedDeliveryKey,
+    needsBodies,
+    messageRetry,
+  ]);
   const virtualized = visible.length > VIRTUALIZE_AFTER;
   const virtualizer = useVirtualizer({
     count: virtualized ? visible.length : 0,
@@ -738,6 +746,19 @@ function CollaborationGraphContent({
             </button>
           )}
         </div>
+        {needsBodies &&
+          unfilteredVisible.some(delivery => messageLoadStates[delivery.id] === 'unavailable') && (
+            <button
+              type="button"
+              className="mb-2 self-start text-xs text-primary disabled:opacity-50"
+              disabled={unfilteredVisible.some(
+                delivery => messageLoadStates[delivery.id] === 'loading',
+              )}
+              onClick={() => setMessageRetry(value => value + 1)}
+            >
+              {i18nService.t('sessionDetailsRetry')}
+            </button>
+          )}
         {unfilteredVisible.length > 0 && (
           <label className="relative mb-2 block">
             <MagnifyingGlassIcon

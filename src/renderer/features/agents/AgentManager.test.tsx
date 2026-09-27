@@ -321,3 +321,47 @@ describe('independent Agent manager', () => {
     expect(leaveGuard.current?.()).toBe(false);
   });
 });
+
+it('creates an editable peer role template through native role files', async () => {
+  save.mockResolvedValue({ success: true, value: profile });
+  writeFile.mockImplementation(async (_id, _file, content) => ({
+    success: true,
+    value: { workspace: '/roles/review', content, missing: false },
+  }));
+  mount([]);
+  fireEvent.click(screen.getByRole('button', { name: /agentTemplateResearch$/ }));
+  const rules = screen.getByRole('textbox', { name: 'AGENTS.md' });
+  expect(rules).toHaveProperty('value', 'agentTemplateResearchRules\n\nagentTemplatePeerRules');
+  fireEvent.change(rules, { target: { value: 'Edited peer rules' } });
+  fireEvent.click(screen.getByRole('button', { name: 'save' }));
+  await waitFor(() =>
+    expect(writeFile).toHaveBeenCalledWith(
+      'review',
+      'AGENTS.md',
+      'Edited peer rules',
+      expect.objectContaining({ content: 'Read only' }),
+    ),
+  );
+  expect(save).toHaveBeenCalledTimes(1);
+});
+
+it('keeps a created profile and role draft when the initial native role write fails', async () => {
+  save.mockResolvedValue({ success: true, value: profile });
+  writeFile.mockResolvedValue({ success: false, error: 'agentSaveFailed' });
+  mount([]);
+  fireEvent.click(screen.getByRole('button', { name: /agentTemplateReview$/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'save' }));
+  await waitFor(() =>
+    expect(screen.getByRole('alert').textContent).toBe('agentTemplateSaveFailed'),
+  );
+  await waitFor(() =>
+    expect(screen.getByRole('textbox', { name: 'AGENTS.md' })).toHaveProperty(
+      'value',
+      'agentTemplateReviewRules\n\nagentTemplatePeerRules',
+    ),
+  );
+  expect(screen.getByRole('button', { name: 'agentSaveFile' })).toHaveProperty('disabled', false);
+  fireEvent.click(screen.getByRole('button', { name: 'agentSaveFile' }));
+  await waitFor(() => expect(writeFile).toHaveBeenCalledTimes(2));
+  expect(save).toHaveBeenCalledTimes(1);
+});

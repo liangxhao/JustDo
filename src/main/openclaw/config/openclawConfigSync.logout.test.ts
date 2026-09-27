@@ -494,6 +494,12 @@ describe('OpenClaw auth logout config sync', () => {
     temporaryDirectories.push(directory);
     const configPath = path.join(directory, 'openclaw.json');
     const runtimeSettings = createDefaultAgentRuntimeSettings();
+    runtimeSettings.swarm = {
+      enabled: false,
+      maxConcurrent: 12,
+      maxChildrenPerGroup: 25,
+      maxTotalPerGroup: 100,
+    };
     runtimeSettings.agent.runTimeoutSeconds = 5400;
     runtimeSettings.agent.maxConcurrent = 6;
     runtimeSettings.subagents.archiveAfterMinutes = 1440;
@@ -511,6 +517,7 @@ describe('OpenClaw auth logout config sync', () => {
     ).toMatchObject({ ok: true });
 
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.tools.swarm).toEqual(runtimeSettings.swarm);
     expect(config.agents.defaults.timeoutSeconds).toBe(5400);
     expect(config.agents.defaults.maxConcurrent).toBe(6);
     expect(config.agents.defaults.subagents).toMatchObject({

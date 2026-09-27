@@ -28,6 +28,7 @@ import { type CustomProxyConfig, defaultCustomProxyConfig, ProxyMode } from '@sh
 import {
   type AgentRuntimeSettings,
   createDefaultAgentRuntimeSettings,
+  validateAgentRuntimeSettings,
 } from '@shared/openclaw/agentRuntimeSettings';
 import { DEFAULT_OPENCLAW_GATEWAY_PORT } from '@shared/openclaw/constants';
 import {
@@ -371,8 +372,10 @@ const Settings: React.FC<SettingsProps> = ({
       if (!result.success || !result.settings) {
         throw new Error(result.error || i18nService.t('agentRuntimeLoadFailed'));
       }
-      setAgentRuntimeSettings(result.settings);
-      setInitialAgentRuntimeSettings(result.settings);
+      const normalized = validateAgentRuntimeSettings(result.settings);
+      if (!normalized.ok) throw new Error(i18nService.t('agentRuntimeLoadFailed'));
+      setAgentRuntimeSettings(normalized.settings);
+      setInitialAgentRuntimeSettings(normalized.settings);
     } catch (error) {
       setAgentRuntimeSettingsLoadError(
         error instanceof Error ? error.message : i18nService.t('agentRuntimeLoadFailed'),
@@ -1238,7 +1241,11 @@ const Settings: React.FC<SettingsProps> = ({
               }`,
             );
           }
-          const savedRuntimeSettings = runtimeResult.settings ?? runtimeSettingsToSave;
+          const normalized = validateAgentRuntimeSettings(
+            runtimeResult.settings ?? runtimeSettingsToSave,
+          );
+          if (!normalized.ok) throw new Error(i18nService.t('agentRuntimeSaveFailed'));
+          const savedRuntimeSettings = normalized.settings;
           setAgentRuntimeSettings(savedRuntimeSettings);
           setInitialAgentRuntimeSettings(savedRuntimeSettings);
         },

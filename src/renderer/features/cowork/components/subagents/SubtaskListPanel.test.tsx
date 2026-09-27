@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { i18nService } from '@/services/i18n';
@@ -25,6 +25,192 @@ const installElectron = (
 };
 
 describe('SubtaskListPanel', () => {
+  it('shows completion and failed delivery as separate facts with the native summaries', async () => {
+    i18nService.setLanguage('en', { persist: false });
+    const task = {
+      id: 'one',
+      taskName: 'one',
+      sessionKey: 'child',
+      label: 'Research',
+      labelSource: 'label',
+      status: 'done',
+      execution: { state: 'finished' },
+      deliveryStatus: 'failed',
+      progressSummary: 'Read three sources',
+      terminalSummary: 'Report ready',
+      error: 'Parent unavailable',
+      diffStat: { files: 2, added: 10, removed: 3 },
+    };
+    installElectron(
+      vi.fn().mockResolvedValue({ success: true, subagents: [task] }),
+      vi.fn().mockResolvedValue({ success: true, subagent: task }),
+    );
+    render(<SubtaskListPanel sessionId="parent" isOpen onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'View details' }));
+    const dialog = within(screen.getByRole('dialog'));
+    expect(dialog.getByText('Result delivery')).toBeTruthy();
+    expect(dialog.getByText('Delivery failed')).toBeTruthy();
+    expect(dialog.getByText('Report ready')).toBeTruthy();
+    expect(dialog.getByText('Parent unavailable')).toBeTruthy();
+    expect(dialog.getByText('2 files, +10 / −3 lines')).toBeTruthy();
+    expect(dialog.getByRole('button', { name: 'Deliver result again' })).toBeTruthy();
+  });
+
+  it('reveals finished history beyond the first fifty rows', async () => {
+    i18nService.setLanguage('en', { persist: false });
+    const tasks = Array.from({ length: 55 }, (_, index) => ({
+      id: String(index),
+      taskName: String(index),
+      sessionKey: `child-${index}`,
+      label: `Task ${index}`,
+      labelSource: 'label',
+      status: 'done',
+      updatedAt: index,
+    }));
+    installElectron(vi.fn().mockResolvedValue({ success: true, subagents: tasks }));
+    render(<SubtaskListPanel sessionId="parent" isOpen onClose={vi.fn()} />);
+    await screen.findByRole('button', { name: 'Task 54' });
+    expect(screen.queryByRole('button', { name: 'Task 0' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Load more finished tasks' }));
+    expect(screen.getByRole('button', { name: 'Task 0' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Load more finished tasks' })).toBeNull();
+  });
+
+  it('navigates an explicitly loaded child and back without closing on root refresh', async () => {
+    i18nService.setLanguage('en', { persist: false });
+    const parent = {
+      id: 'one',
+      taskName: 'one',
+      sessionKey: 'child',
+      label: 'Research',
+      labelSource: 'label',
+      status: 'running',
+    };
+    const child = {
+      ...parent,
+      id: 'two',
+      sessionKey: 'grandchild',
+      label: 'Verify sources',
+      parentTaskId: 'one',
+      execution: { state: 'waiting', wait: { kind: 'approval' } },
+    };
+    let changed: ((event: { sessionId?: string }) => void) | undefined;
+    const status = vi.fn().mockResolvedValue({ success: true, subagents: [parent] });
+    installElectron(
+      status,
+      vi
+        .fn()
+        .mockImplementation((key: string) =>
+          Promise.resolve({ success: true, subagent: key === 'grandchild' ? child : parent }),
+        ),
+      vi.fn(callback => {
+        changed = callback;
+        return vi.fn();
+      }),
+    );
+    Object.assign(window.electron.cowork, {
+      listSubTaskChildren: vi.fn().mockResolvedValue({ success: true, subagents: [child] }),
+    });
+    render(<SubtaskListPanel sessionId="root" isOpen onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'View details' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View child tasks' }));
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Verify sources Waiting for approval' }),
+    );
+    expect(screen.getByRole('dialog').getAttribute('aria-labelledby')).toBe(
+      'subtask-details-title',
+    );
+    expect(
+      within(screen.getByRole('dialog')).getByRole('heading', { name: 'Verify sources' }),
+    ).toBeTruthy();
+    act(() => changed?.({ sessionId: 'root' }));
+    await waitFor(() => expect(status).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Back to parent task: Research' }));
+    expect(
+      within(screen.getByRole('dialog')).getByRole('heading', { name: 'Research' }),
+    ).toBeTruthy();
+  });
+
+  it('shows verified task details without treating unavailable usage as a task failure', async () => {
+    i18nService.setLanguage('zh', { persist: false });
+    const task = {
+      id: 'child-1',
+      taskName: 'child-1',
+      sessionKey: 'agent:main:subagent:child-1',
+      label: 'Research',
+      labelSource: 'taskName',
+      status: 'done',
+    };
+    installElectron(
+      vi.fn().mockResolvedValue({ success: true, subagents: [task] }),
+      vi.fn().mockResolvedValue({
+        success: true,
+        subagent: { ...task, task: 'Verified prompt', model: 'local/model' },
+      }),
+    );
+    render(<SubtaskListPanel sessionId="parent-1" isOpen onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: '查看详情' }));
+    expect(await screen.findByText('Verified prompt')).toBeTruthy();
+    expect(screen.getByText('local/model')).toBeTruthy();
+    expect(screen.queryByText(i18nService.t('subtaskDetailsRefreshFailed'))).toBeNull();
+    expect(screen.queryByRole('status', { name: /查询中/ })).toBeNull();
+  });
+
+  it('preserves usage across missing statistics and reloads it independently of task status', async () => {
+    i18nService.setLanguage('en', { persist: false });
+    const task = {
+      id: 'one',
+      taskName: 'one',
+      sessionKey: 'child',
+      label: 'Research',
+      status: 'running',
+    };
+    const stats = {
+      summary: null,
+      messageCount: 1,
+      userMessageCount: 0,
+      assistantMessageCount: 1,
+      toolCallCount: 0,
+      models: [],
+      tokenUsage: { input: 100, output: 20, cacheRead: 30, cacheWrite: 4 },
+      totalTokens: 154,
+      hasTokenUsage: true,
+    };
+    const details = vi
+      .fn()
+      .mockResolvedValueOnce({ success: true, subagent: task, stats })
+      .mockResolvedValueOnce({ success: true, subagent: { ...task, status: 'done' } })
+      .mockResolvedValue({
+        success: true,
+        subagent: { ...task, status: 'done' },
+        stats: { ...stats, totalTokens: 200 },
+      });
+    let changed: ((event: { sessionId?: string }) => void) | undefined;
+    installElectron(
+      vi
+        .fn()
+        .mockResolvedValueOnce({ success: true, subagents: [task] })
+        .mockResolvedValue({ success: true, subagents: [{ ...task, status: 'done' }] }),
+      details,
+      vi.fn(callback => {
+        changed = callback;
+        return vi.fn();
+      }),
+    );
+    render(<SubtaskListPanel sessionId="parent" isOpen onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'View details' }));
+    expect(await screen.findByText('154')).toBeTruthy();
+    act(() => changed?.({ sessionId: 'parent' }));
+    expect(await screen.findByText(i18nService.t('subtaskUsageStale'))).toBeTruthy();
+    expect(screen.getByText('154')).toBeTruthy();
+    expect(screen.queryByText(i18nService.t('subtaskDetailsRefreshFailed'))).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Reload usage' }));
+    expect(await screen.findByText('200')).toBeTruthy();
+    expect(screen.queryByText(i18nService.t('subtaskUsageStale'))).toBeNull();
+    expect(details).toHaveBeenCalledTimes(3);
+  });
+
   it('renders one compact row per subtask with a localized status value', async () => {
     i18nService.setLanguage('zh', { persist: false });
     installElectron(

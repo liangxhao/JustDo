@@ -1,14 +1,19 @@
 import { ipcMain } from 'electron';
 
 import {
+  type CoworkSubagentAction,
+  type CoworkSubagentChildrenResult,
+  type CoworkSubagentControlResult,
   type CoworkSubagentDescendantsResult,
   CoworkSubagentDetailsIpc,
   type CoworkSubagentDetailsResult,
 } from '../../../shared/cowork/subagentDetails';
 import type { OpenClawRuntimeAdapter } from '../../engine';
 import {
+  controlGatewaySubagent,
   type GatewaySubagent,
   getGatewaySubagentDetails,
+  listGatewaySubagentChildren,
   listGatewaySubagentDescendants,
 } from '../../engine/openclaw/subagentGateway';
 import {
@@ -19,6 +24,7 @@ import {
 
 interface Dependencies {
   getRuntime: () => OpenClawRuntimeAdapter | null;
+  hasSession: (sessionId: string) => boolean;
   getGatewaySessionUsage?: GatewaySessionUsageLoader;
 }
 
@@ -33,9 +39,6 @@ export const loadCoworkSubagentDetails = async (
   const normalizedSessionKey = typeof sessionKey === 'string' ? sessionKey.trim() : '';
   const normalizedTaskId = typeof options.taskId === 'string' ? options.taskId.trim() : '';
   if (!normalizedSessionKey) return { success: false, error: 'Session key is required' };
-  if (!loadSessionUsage) {
-    return { success: false, error: 'Gateway usage is not available' };
-  }
   try {
     if (normalizedTaskId && !options.loadSubagent) {
       return { success: false, error: 'Gateway task details are not available' };
@@ -47,6 +50,11 @@ export const loadCoworkSubagentDetails = async (
     if (subagent && subagent.sessionKey !== normalizedSessionKey) {
       return { success: false, error: 'Task does not belong to the requested session' };
     }
+    if (!loadSessionUsage) {
+      return subagent
+        ? { success: true, subagent }
+        : { success: false, error: 'Gateway usage is not available' };
+    }
     // Session updatedAt advances at run boundaries rather than for each usage
     // change. Active tasks must use a fresh discriminator on every poll so the
     // Gateway's outer stale-while-revalidate cache cannot freeze live totals.
@@ -54,12 +62,19 @@ export const loadCoworkSubagentDetails = async (
       subagent?.status === 'pending' || subagent?.status === 'running'
         ? undefined
         : subagent?.updatedAt;
-    const usage = await loadSessionUsage(normalizedSessionKey, usageRevision);
+    // Usage is optional enrichment. An unavailable usage backend must not hide
+    // the verified task's lifecycle, prompt, model, or failure details.
+    const usage = await loadSessionUsage(normalizedSessionKey, usageRevision).catch(
+      (error: unknown): null => {
+        if (!subagent) throw error;
+        return null;
+      },
+    );
     const stats = buildGatewaySessionDetailStats(usage, null);
-    if (!stats) return { success: false, error: 'Subagent usage is not available' };
+    if (!stats && !subagent) return { success: false, error: 'Subagent usage is not available' };
     return {
       success: true,
-      stats,
+      ...(stats ? { stats } : {}),
       ...(subagent ? { subagent } : {}),
     };
   } catch (error) {
@@ -73,7 +88,72 @@ export const loadCoworkSubagentDetails = async (
 export const registerCoworkSubtaskHandlers = ({
   getRuntime,
   getGatewaySessionUsage,
+  hasSession,
 }: Dependencies): void => {
+  const resolveOwnedRoot = (sessionId: unknown) => {
+    if (typeof sessionId !== 'string' || !sessionId.trim() || !hasSession(sessionId))
+      throw new Error('Product session was not found');
+    const runtime = getRuntime();
+    const client = runtime?.getGatewayClient();
+    if (!runtime || !client) throw new Error('Gateway client not connected');
+    return { runtime, client, keys: runtime.getSessionKeysForSession(sessionId) };
+  };
+  ipcMain.handle(
+    CoworkSubagentDetailsIpc.ListChildren,
+    async (
+      _event,
+      sessionId: unknown,
+      parentTaskId?: unknown,
+      cursor?: unknown,
+    ): Promise<CoworkSubagentChildrenResult> => {
+      try {
+        const { client, keys } = resolveOwnedRoot(sessionId);
+        if (
+          parentTaskId !== undefined &&
+          (typeof parentTaskId !== 'string' || !parentTaskId.trim())
+        )
+          throw new Error('Invalid parent task ID');
+        if (cursor !== undefined && typeof cursor !== 'string')
+          throw new Error('Invalid task cursor');
+        return {
+          success: true,
+          ...(await listGatewaySubagentChildren(
+            client,
+            keys,
+            parentTaskId as string | undefined,
+            cursor as string | undefined,
+          )),
+        };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to load child tasks',
+        };
+      }
+    },
+  );
+  ipcMain.handle(
+    CoworkSubagentDetailsIpc.Control,
+    async (
+      _event,
+      sessionId: unknown,
+      taskId: unknown,
+      action: unknown,
+    ): Promise<CoworkSubagentControlResult> => {
+      try {
+        const { client, keys } = resolveOwnedRoot(sessionId);
+        if (typeof taskId !== 'string' || !taskId.trim()) throw new Error('Task ID is required');
+        if (typeof action !== 'string') throw new Error('Invalid subagent operation');
+        return await controlGatewaySubagent(client, keys, taskId, action as CoworkSubagentAction);
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to control subagent task',
+        };
+      }
+    },
+  );
+
   ipcMain.handle(
     CoworkSubagentDetailsIpc.Status,
     async (_event, sessionId?: string, forceRefresh?: boolean) => {

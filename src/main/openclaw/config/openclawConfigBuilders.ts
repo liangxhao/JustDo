@@ -1046,7 +1046,15 @@ export const buildAuthScopedOpenClawConfig = (
       ...existingSession,
       ...managedSession,
     },
-    ...(existingTools ? { tools: removeRetiredManagedToolDenyEntries(existingTools) } : {}),
+    tools: {
+      ...removeRetiredManagedToolDenyEntries(existingTools ?? {}),
+      swarm: {
+        ...(isRecord(existingTools?.swarm) ? existingTools.swarm : {}),
+        ...(isRecord(managedConfig.tools) && isRecord(managedConfig.tools.swarm)
+          ? managedConfig.tools.swarm
+          : {}),
+      },
+    },
     ...(isRecord(managedConfig.meta) ? { meta: managedConfig.meta } : {}),
   });
   if (Object.keys(managedSecrets).length === 0) {
@@ -1525,6 +1533,14 @@ export const buildManagedOpenClawCompactionConfig = () => ({
   midTurnPrecheck: {
     enabled: true,
   },
+});
+
+export const mergeManagedOpenClawSwarmConfig = (
+  existing: unknown,
+  settings: AgentRuntimeSettings = DEFAULT_AGENT_RUNTIME_SETTINGS,
+): Record<string, unknown> => ({
+  ...(isRecord(existing) ? existing : {}),
+  ...settings.swarm,
 });
 
 export const buildManagedOpenClawConnectivityConfig = (

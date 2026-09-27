@@ -15,6 +15,7 @@ import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/common/Modal';
 
+import { startSubagentGatewayConnection } from './subagentGatewayConnection';
 import { reconcileSubagentLabel } from './subagentLabel';
 import { ACTIVE_SUBAGENT_POLL_INTERVAL_MS, isActiveSubagentStatus } from './subagentPolling';
 import SubagentTokenUsage from './SubagentTokenUsage';
@@ -54,6 +55,8 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
   const [detailStats, setDetailStats] = useState<SessionDetailStats>();
   const [isDetailStatsLoading, setIsDetailStatsLoading] = useState(false);
   const [detailStatsFailed, setDetailStatsFailed] = useState(false);
+  const [detailUsageUnavailable, setDetailUsageUnavailable] = useState(false);
+  const [detailReloadKey, setDetailReloadKey] = useState(0);
   const [drawerWidth, setDrawerWidth] = useState(DRAWER_DEFAULT_WIDTH);
   const [clock, setClock] = useState(Date.now());
   const drawerRef = useRef<HTMLElement>(null);
@@ -63,6 +66,7 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
   const subagentRef = useRef(subagent);
   subagentRef.current = subagent;
   const subagentSessionKey = subagent?.sessionKey;
+  const subagentRuntime = subagent?.runtime;
   const shouldPollStatus = isActiveSubagentStatus(displaySubagent?.status) || hasActiveChildTurn;
 
   useEffect(() => {
@@ -81,7 +85,10 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
       return;
     }
 
-    const nextController = new ChatController({ expectInitialHistory: true });
+    const nextController = new ChatController({
+      expectInitialHistory: true,
+      expectInitialUserMessage: subagentRuntime === 'acp',
+    });
     nextController.state.sessionKey = subagentSessionKey;
     let cancelled = false;
     let initialHistoryTimedOut = false;
@@ -102,47 +109,49 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
       setHasError(!hasVisibleTranscript && Boolean(state.lastError));
       setIsEmpty(!hasVisibleTranscript && !state.lastError);
     });
-    const initialHistoryTimeout = window.setTimeout(() => {
-      if (cancelled || nextController.state.initialHistoryReady) return;
-      initialHistoryTimedOut = true;
-      const hasVisibleTranscript =
-        nextController.state.chatMessages.length > 0 ||
-        nextController.state.transcript.activeTurn !== null;
-      setIsLoading(false);
-      setHasError(!hasVisibleTranscript);
-      setIsEmpty(false);
-    }, SUBAGENT_INITIAL_HISTORY_TIMEOUT_MS);
-
+    let initialHistoryTimeout: number | undefined;
     setController(nextController);
-    setIsLoading(true);
-    setIsEmpty(false);
-    setHasError(false);
-    connectToGateway(nextController)
-      .then(success => {
-        if (cancelled) {
-          nextController.disconnect();
-          return;
-        }
-        if (!success) {
+    const stopConnection = startSubagentGatewayConnection({
+      controller: nextController,
+      connect: connectToGateway,
+      subscribeProgress: window.electron?.openclaw?.engine?.onProgress,
+      onConnecting: () => {
+        window.clearTimeout(initialHistoryTimeout);
+        initialHistoryTimedOut = false;
+        const hasVisibleTranscript =
+          nextController.state.chatMessages.length > 0 ||
+          nextController.state.transcript.activeTurn !== null;
+        setIsLoading(!hasVisibleTranscript);
+        setIsEmpty(false);
+        setHasError(false);
+        initialHistoryTimeout = window.setTimeout(() => {
+          if (cancelled || nextController.state.initialHistoryReady) return;
+          initialHistoryTimedOut = true;
+          const hasTranscript =
+            nextController.state.chatMessages.length > 0 ||
+            nextController.state.transcript.activeTurn !== null;
           setIsLoading(false);
-          setHasError(true);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setIsLoading(false);
-          setHasError(true);
-        }
-      });
+          setHasError(!hasTranscript);
+          setIsEmpty(false);
+        }, SUBAGENT_INITIAL_HISTORY_TIMEOUT_MS);
+      },
+      onFailure: () => {
+        setIsLoading(false);
+        setHasError(
+          !nextController.state.chatMessages.length &&
+            nextController.state.transcript.activeTurn === null,
+        );
+      },
+    });
 
     return () => {
       cancelled = true;
       window.clearTimeout(initialHistoryTimeout);
       unsubscribe();
-      nextController.disconnect();
+      stopConnection();
       setController(current => (current === nextController ? null : current));
     };
-  }, [subagentSessionKey]);
+  }, [subagentRuntime, subagentSessionKey]);
 
   useEffect(() => {
     if (!parentSessionId || !subagentSessionKey) return;
@@ -211,6 +220,7 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
       setDetailStats(undefined);
       setIsDetailStatsLoading(false);
       setDetailStatsFailed(false);
+      setDetailUsageUnavailable(false);
       return;
     }
     const detailIdentity = `${taskId ?? ''}:${sessionKey}`;
@@ -220,6 +230,7 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
       detailStatsRef.current = undefined;
       setDetailStats(undefined);
       setDetailStatsFailed(false);
+      setDetailUsageUnavailable(false);
     }
     if (!isInfoOpen) {
       setIsDetailStatsLoading(false);
@@ -240,8 +251,11 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
         const result = await window.electron.cowork.getSubTaskDetails(sessionKey, taskId);
         if (!cancelled && result.success) {
           succeeded = true;
-          detailStatsRef.current = result.stats;
-          setDetailStats(result.stats);
+          if (result.stats) {
+            detailStatsRef.current = result.stats;
+            setDetailStats(result.stats);
+          }
+          setDetailUsageUnavailable(!result.stats);
           setDetailStatsFailed(false);
           if (result.subagent) {
             setDisplaySubagent(current => {
@@ -281,7 +295,13 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
       if (timer !== undefined) window.clearInterval(timer);
     };
-  }, [displaySubagent?.id, displaySubagent?.sessionKey, displaySubagent?.status, isInfoOpen]);
+  }, [
+    detailReloadKey,
+    displaySubagent?.id,
+    displaySubagent?.sessionKey,
+    displaySubagent?.status,
+    isInfoOpen,
+  ]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -364,7 +384,25 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
     [i18nService.t('subtaskInfoEnded'), formatDateTime(displaySubagent.endedAt)],
     [
       i18nService.t('subtaskInfoTokens'),
-      <SubagentTokenUsage key="token-usage" stats={detailStats} isLoading={isDetailStatsLoading} />,
+      <div key="token-usage" className="space-y-2">
+        <SubagentTokenUsage stats={detailStats} isLoading={isDetailStatsLoading} />
+        {detailUsageUnavailable && (
+          <div className="text-xs text-secondary" role="status">
+            <p>{i18nService.t(detailStats ? 'subtaskUsageStale' : 'subtaskUsageUnavailable')}</p>
+            <button
+              type="button"
+              disabled={isDetailStatsLoading}
+              className="mt-1 text-primary hover:underline disabled:opacity-50"
+              onClick={() => {
+                setIsDetailStatsLoading(true);
+                setDetailReloadKey(value => value + 1);
+              }}
+            >
+              {i18nService.t('subtaskUsageRetry')}
+            </button>
+          </div>
+        )}
+      </div>,
     ],
     [i18nService.t('subtaskInfoSession'), displaySubagent.sessionKey],
     [i18nService.t('subtaskInfoSessionId'), displaySubagent.sessionId, true],

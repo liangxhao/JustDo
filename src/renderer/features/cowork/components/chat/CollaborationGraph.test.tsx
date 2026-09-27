@@ -38,6 +38,52 @@ afterEach(() => {
   Reflect.deleteProperty(window, 'electron');
 });
 describe('peer collaboration graph', () => {
+  it('retries unavailable bodies for the same selection while preserving loaded bodies', async () => {
+    const readMessages = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue({
+        success: true,
+        value: [
+          {
+            deliveryId: 'ab',
+            message: {
+              role: 'user',
+              content: 'Recovered body',
+              idempotencyKey: 'ab:user',
+              provenance: {
+                kind: 'inter_session',
+                sourceTool: 'sessions_send',
+                sourceSessionKey: 'agent:a:justdo:a',
+              },
+            },
+          },
+        ],
+      });
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: { collaboration: { readMessages } },
+    });
+    render(
+      <CollaborationGraph
+        room={room}
+        deliveries={[message('ab', 'a', 'b'), message('ba', 'b', 'a')]}
+        names={{ a: 'A', b: 'B' }}
+        onSelectMember={vi.fn()}
+        messageTextCache={new Map([['ba', 'Cached body']])}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'A → B (1)' }));
+    expect(await screen.findByText(i18nService.t('collaborationMessageUnavailable'))).toBeTruthy();
+    expect(screen.getByText('Cached body')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: i18nService.t('sessionDetailsRetry') }));
+    expect(await screen.findByText('Recovered body')).toBeTruthy();
+    expect(readMessages).toHaveBeenCalledTimes(2);
+    expect(readMessages).toHaveBeenLastCalledWith('a', ['ab']);
+    expect(screen.getByText('Cached body')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: i18nService.t('sessionDetailsRetry') })).toBeNull();
+  });
+
   it('reads the native message body only from the matching collaboration receipt', () => {
     const sourceSessionKey = 'agent:a:justdo:a';
     const prefix =

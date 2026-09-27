@@ -298,3 +298,39 @@ describe('AgentRuntimeSettingsTab runtime settings', () => {
     });
   });
 });
+
+test('changes Swarm independently from ordinary SubAgent capacity', () => {
+  const settings = createDefaultAgentRuntimeSettings();
+  const onChange = vi.fn();
+  render(
+    <AgentRuntimeSettingsTab
+      settings={settings}
+      models={[]}
+      isLoading={false}
+      loadError={null}
+      onChange={onChange}
+      onRetry={vi.fn()}
+      maxRetainedDisplayTabs={30}
+      onMaxRetainedDisplayTabsChange={vi.fn()}
+      maxGoalContinuationTurns={10}
+      onMaxGoalContinuationTurnsChange={vi.fn()}
+    />,
+  );
+  expect(screen.getByRole('spinbutton', { name: 'agentRuntimeSwarmConcurrent' })).toHaveProperty(
+    'value',
+    '8',
+  );
+  fireEvent.change(screen.getByRole('spinbutton', { name: 'agentRuntimeSwarmConcurrent' }), {
+    target: { value: '12' },
+  });
+  expect(onChange).toHaveBeenLastCalledWith({
+    ...settings,
+    swarm: { ...settings.swarm, maxConcurrent: 12 },
+  });
+  fireEvent.click(screen.getByRole('checkbox', { name: 'agentRuntimeSwarmEnabled' }));
+  expect(onChange).toHaveBeenLastCalledWith({
+    ...settings,
+    swarm: { ...settings.swarm, enabled: false },
+  });
+  cleanup();
+});

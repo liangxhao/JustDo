@@ -1,3 +1,4 @@
+import type { CoworkSubagentDetailTask } from '../../../../shared/cowork/subagentDetails';
 export const OPENCLAW_WIRE_VERSION = 'v2026.9.2' as const;
 
 type UnknownRecord = Record<string, unknown>;
@@ -13,10 +14,7 @@ const optionalString = (value: unknown, field: string): string | undefined => {
   return value;
 };
 
-const optionalNonNegativeInteger = (
-  value: unknown,
-  field: string,
-): number | undefined => {
+const optionalNonNegativeInteger = (value: unknown, field: string): number | undefined => {
   if (value === undefined || value === null) return undefined;
   if (!Number.isInteger(value) || (value as number) < 0) {
     throw new Error(`${OPENCLAW_WIRE_VERSION} ${field} must be a non-negative integer`);
@@ -45,9 +43,7 @@ export const parseSessionsListResultV2026_9_2 = (
   }
   const sessions = value.sessions.map((entry, index) => {
     if (!isRecord(entry) || typeof entry.key !== 'string' || entry.key.length === 0) {
-      throw new Error(
-        `${OPENCLAW_WIRE_VERSION} sessions.list sessions[${index}] is missing key`,
-      );
+      throw new Error(`${OPENCLAW_WIRE_VERSION} sessions.list sessions[${index}] is missing key`);
     }
     return {
       ...entry,
@@ -195,8 +191,7 @@ export const parseChatHistoryResultV2026_9_2 = (
 };
 
 export type OpenClawChatHistoryCursorResultV2026_9_2 =
-  | { kind: 'reset' }
-  | { kind: 'delta'; messages: unknown[]; deltaCursor: string };
+  { kind: 'reset' } | { kind: 'delta'; messages: unknown[]; deltaCursor: string };
 
 export const parseChatHistoryCursorResultV2026_9_2 = (
   value: unknown,
@@ -271,8 +266,7 @@ export const OPENCLAW_TASK_STATUSES_V2026_9_2 = [
   'timed_out',
 ] as const;
 
-export type OpenClawTaskStatusV2026_9_2 =
-  (typeof OPENCLAW_TASK_STATUSES_V2026_9_2)[number];
+export type OpenClawTaskStatusV2026_9_2 = (typeof OPENCLAW_TASK_STATUSES_V2026_9_2)[number];
 
 export const OPENCLAW_TASK_TERMINAL_OUTCOMES_V2026_9_2 = ['succeeded', 'blocked'] as const;
 
@@ -290,6 +284,9 @@ export type OpenClawTaskSummaryV2026_9_2 = {
   childSessionKey?: string;
   ownerKey?: string;
   parentTaskId?: string;
+  execution?: CoworkSubagentDetailTask['execution'];
+  deliveryStatus?: CoworkSubagentDetailTask['deliveryStatus'];
+  diffStat?: CoworkSubagentDetailTask['diffStat'];
   runId?: string;
   agentId?: string;
   createdAt?: string | number;
@@ -372,6 +369,9 @@ export const parseTaskSummaryV2026_9_2 = (
     startedAt: parseTaskTimestamp(value.startedAt, `${field}.startedAt`),
     endedAt: parseTaskTimestamp(value.endedAt, `${field}.endedAt`),
     toolUseCount: optionalNonNegativeInteger(value.toolUseCount, `${field}.toolUseCount`),
+    execution: parseTaskExecution(value.execution),
+    deliveryStatus: parseTaskDelivery(value.deliveryStatus),
+    diffStat: parseTaskDiff(value.diffStat),
   };
 };
 
@@ -419,4 +419,87 @@ export const parseTaskEventV2026_9_2 = (value: unknown): OpenClawTaskEventV2026_
   }
   if (value.action === 'restored') return { action: 'restored' };
   throw new Error(`${OPENCLAW_WIRE_VERSION} task event has an invalid action`);
+};
+
+const parseTaskDelivery = (value: unknown): CoworkSubagentDetailTask['deliveryStatus'] => {
+  if (value === undefined) return undefined;
+  if (
+    typeof value !== 'string' ||
+    ![
+      'pending',
+      'delivered',
+      'session_queued',
+      'failed',
+      'dismissed',
+      'parent_missing',
+      'not_applicable',
+    ].includes(value)
+  ) {
+    throw new Error('Invalid task delivery status');
+  }
+  return value as CoworkSubagentDetailTask['deliveryStatus'];
+};
+const parseTaskDiff = (value: unknown): CoworkSubagentDetailTask['diffStat'] => {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) throw new Error('Invalid task diff statistics');
+  const files = optionalNonNegativeInteger(value.files, 'diffStat.files');
+  const added = optionalNonNegativeInteger(value.added, 'diffStat.added');
+  const removed = optionalNonNegativeInteger(value.removed, 'diffStat.removed');
+  if (files === undefined || added === undefined || removed === undefined)
+    throw new Error('Incomplete task diff statistics');
+  return { files, added, removed };
+};
+const parseTaskExecution = (value: unknown): CoworkSubagentDetailTask['execution'] => {
+  if (value === undefined) return undefined;
+  if (
+    !isRecord(value) ||
+    !['queued', 'running', 'waiting', 'finished', 'unknown'].includes(String(value.state))
+  )
+    throw new Error('Invalid task execution state');
+  const result: NonNullable<CoworkSubagentDetailTask['execution']> = {
+    state: value.state as NonNullable<CoworkSubagentDetailTask['execution']>['state'],
+    lastActivityAt: parseTaskTimestamp(value.lastActivityAt, 'execution.lastActivityAt'),
+  };
+  if (value.currentTool !== undefined) {
+    if (!isRecord(value.currentTool) || typeof value.currentTool.name !== 'string')
+      throw new Error('Invalid task current tool');
+    const startedAt = parseTaskTimestamp(
+      value.currentTool.startedAt,
+      'execution.currentTool.startedAt',
+    );
+    if (startedAt === undefined) throw new Error('Missing task tool timestamp');
+    result.currentTool = { name: value.currentTool.name, startedAt };
+  }
+  if (value.wait !== undefined) {
+    if (
+      !isRecord(value.wait) ||
+      !['children', 'external', 'agent_messages', 'approval', 'user_input'].includes(
+        String(value.wait.kind),
+      )
+    )
+      throw new Error('Invalid task wait reason');
+    const wait: NonNullable<typeof result.wait> = {
+      kind: value.wait.kind as NonNullable<typeof result.wait>['kind'],
+    };
+    wait.pendingCount = optionalNonNegativeInteger(
+      value.wait.pendingCount,
+      'execution.wait.pendingCount',
+    );
+    if (value.wait.dependencies !== undefined) {
+      if (!Array.isArray(value.wait.dependencies) || value.wait.dependencies.length > 100)
+        throw new Error('Invalid task dependencies');
+      wait.dependencies = value.wait.dependencies.map(dependency => {
+        if (!isRecord(dependency) || typeof dependency.runId !== 'string' || !dependency.runId)
+          throw new Error('Invalid task dependency');
+        return {
+          runId: dependency.runId,
+          sessionKey: optionalString(dependency.sessionKey, 'dependency.sessionKey'),
+          taskId: optionalString(dependency.taskId, 'dependency.taskId'),
+          label: optionalString(dependency.label, 'dependency.label'),
+        };
+      });
+    }
+    result.wait = wait;
+  }
+  return result;
 };

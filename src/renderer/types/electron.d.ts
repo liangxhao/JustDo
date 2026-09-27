@@ -1037,38 +1037,23 @@ interface IElectronAPI {
       forceRefresh?: boolean,
     ) => Promise<{
       success: boolean;
-      subagents?: Array<{
-        id: string;
-        taskName: string;
-        sessionKey: string;
-        sessionId?: string;
-        label: string;
-        labelSource: 'taskName' | 'label' | 'task';
-        status: 'pending' | 'running' | 'done' | 'failed' | 'killed' | 'timeout' | 'blocked';
-        runtime?: 'subagent' | 'acp';
-        agentId?: string;
-        task?: string;
-        runId?: string;
-        model?: string;
-        startedAt?: number;
-        updatedAt?: number;
-        endedAt?: number;
-        runtimeMs?: number;
-        runtimeSampledAt?: number;
-        totalTokens?: number;
-        progressSummary?: string;
-        terminalSummary?: string;
-        error?: string;
-        lastActivity?: string;
-        lastToolName?: string;
-        toolUseCount?: number;
-      }>;
+      subagents?: import('../../shared/cowork/subagentDetails').CoworkSubagentDetailTask[];
     }>;
     getSubTaskDetails: (
       sessionKey: string,
       taskId?: string,
     ) => Promise<CoworkSubagentDetailsResult>;
     listSubTaskDescendants: (sessionId: string) => Promise<CoworkSubagentDescendantsResult>;
+    listSubTaskChildren: (
+      sessionId: string,
+      parentTaskId?: string,
+      cursor?: string,
+    ) => Promise<import('../../shared/cowork/subagentDetails').CoworkSubagentChildrenResult>;
+    controlSubTask: (
+      sessionId: string,
+      taskId: string,
+      action: import('../../shared/cowork/subagentDetails').CoworkSubagentAction,
+    ) => Promise<import('../../shared/cowork/subagentDetails').CoworkSubagentControlResult>;
     onSubtasksChanged: (callback: (event: CoworkSubtaskChangedEvent) => void) => () => void;
   };
   localTts: {

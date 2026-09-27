@@ -1,3 +1,9 @@
+import {
+  type CoworkSubagentAction,
+  CoworkSubagentActions,
+  type CoworkSubagentControlResult,
+  type CoworkSubagentDetailTask,
+} from '../../../shared/cowork/subagentDetails';
 import type { GatewayClientLike } from '../gateway/types';
 import {
   type OpenClawTaskStatusV2026_9_2,
@@ -20,8 +26,7 @@ export const SUBAGENT_STATUSES = {
   BLOCKED: 'blocked',
 } as const;
 
-export type SubagentStatus =
-  (typeof SUBAGENT_STATUSES)[keyof typeof SUBAGENT_STATUSES];
+export type SubagentStatus = (typeof SUBAGENT_STATUSES)[keyof typeof SUBAGENT_STATUSES];
 
 export const SUBAGENT_LABEL_SOURCES = {
   TASK_NAME: 'taskName',
@@ -41,6 +46,10 @@ export type GatewaySubagent = {
   labelSource: SubagentLabelSource;
   status: SubagentStatus;
   runtime: 'subagent' | 'acp';
+  parentTaskId?: string;
+  execution?: CoworkSubagentDetailTask['execution'];
+  deliveryStatus?: CoworkSubagentDetailTask['deliveryStatus'];
+  diffStat?: CoworkSubagentDetailTask['diffStat'];
   agentId?: string;
   task?: string;
   runId?: string;
@@ -188,6 +197,10 @@ const toGatewaySubagent = (
     ...resolveTaskTitle(task),
     status: mapTaskStatus(task.status, task.terminalOutcome),
     runtime,
+    parentTaskId: optionalString(task.parentTaskId),
+    execution: task.execution,
+    deliveryStatus: task.deliveryStatus,
+    diffStat: task.diffStat,
     agentId: optionalString(task.agentId),
     task: optionalString(task.prompt) ?? optionalString(task.title),
     runId: optionalString(task.runId),
@@ -314,6 +327,9 @@ export const mergeGatewaySubagentSnapshots = (
       label: preferCurrentLabel ? subagent.label : previous.label,
       labelSource: preferCurrentLabel ? subagent.labelSource : previous.labelSource,
       status: lifecycle.status,
+      execution: lifecycle.execution,
+      deliveryStatus: lifecycle.deliveryStatus,
+      diffStat: lifecycle.diffStat,
       sessionId: subagent.sessionId ?? previous.sessionId,
       task: subagent.task ?? previous.task,
       runId: active
@@ -426,8 +442,7 @@ const hydrateSubagentFromSession = (
   const totalTokens = optionalNumber(session.totalTokens);
   const sessionStatus = optionalString(session.status);
   const taskIsTerminal =
-    subagent.status !== SUBAGENT_STATUSES.PENDING &&
-    subagent.status !== SUBAGENT_STATUSES.RUNNING;
+    subagent.status !== SUBAGENT_STATUSES.PENDING && subagent.status !== SUBAGENT_STATUSES.RUNNING;
   const replacementRunId = taskIsTerminal
     ? readSessionActiveRunId(session, subagent.runId)
     : undefined;
@@ -457,21 +472,18 @@ const hydrateSubagentFromSession = (
   // Only let the Session lifecycle override task state when its revision is at
   // least as new. A newer active Session row is authoritative for follow-ups.
   const equalRevisionReplacement =
-    active &&
-    taskIsTerminal &&
-    subagent.runId !== undefined &&
-    replacementRunId !== undefined;
+    active && taskIsTerminal && subagent.runId !== undefined && replacementRunId !== undefined;
   const sessionLifecycleIsCurrent =
     updatedAt !== undefined &&
     (subagent.updatedAt === undefined ||
       updatedAt > subagent.updatedAt ||
-      (updatedAt === subagent.updatedAt && (!active || !taskIsTerminal || equalRevisionReplacement)));
+      (updatedAt === subagent.updatedAt &&
+        (!active || !taskIsTerminal || equalRevisionReplacement)));
   const useActiveSessionLifecycle = active && sessionLifecycleIsCurrent;
   const status = sessionLifecycleIsCurrent
     ? useActiveSessionLifecycle
       ? (projectedStatus ?? SUBAGENT_STATUSES.RUNNING)
-      : projectedStatus === SUBAGENT_STATUSES.DONE &&
-          subagent.status === SUBAGENT_STATUSES.BLOCKED
+      : projectedStatus === SUBAGENT_STATUSES.DONE && subagent.status === SUBAGENT_STATUSES.BLOCKED
         ? SUBAGENT_STATUSES.BLOCKED
         : (projectedStatus ?? subagent.status)
     : subagent.status;
@@ -509,10 +521,8 @@ export const getGatewaySubagentDetails = async (
   client: GatewayRequestClient,
   taskId: string,
 ): Promise<GatewaySubagent | null> => {
-  const task = parseTasksGetResultV2026_9_2(
-    await client.request('tasks.get', { taskId }),
-  ).task;
-  if (!isDelegatedTask(task)) return null;
+  const task = parseTasksGetResultV2026_9_2(await client.request('tasks.get', { taskId })).task;
+  if (task.id !== taskId || !isDelegatedTask(task)) return null;
   const subagent = toGatewaySubagent(task);
   if (!subagent || typeof subagent.label !== 'string' || !subagent.labelSource) return null;
   const wellFormedSubagent: GatewaySubagent = {
@@ -520,10 +530,13 @@ export const getGatewaySubagentDetails = async (
     label: subagent.label,
     labelSource: subagent.labelSource,
   };
-  const described = await client.request<{ session?: Record<string, unknown> | null }>(
-    'sessions.describe',
-    { key: wellFormedSubagent.sessionKey },
-  );
+  // Session metadata enriches the native task; a temporary metadata failure
+  // must not hide its verified prompt, execution state, or failure details.
+  const described = await client
+    .request<{ session?: Record<string, unknown> | null }>('sessions.describe', {
+      key: wellFormedSubagent.sessionKey,
+    })
+    .catch((): { session?: Record<string, unknown> | null } => ({}));
   let session = described.session ?? undefined;
   const taskUpdatedAt = wellFormedSubagent.updatedAt;
   const sessionUpdatedAt = session
@@ -629,9 +642,9 @@ const collectGatewaySubagents = async (
     }
   }
   let subagents = collapseTaskBackingInstances([...tasksById.values()]).flatMap(task => {
-      const subagent = toGatewaySubagent(task);
-      return subagent ? [subagent] : [];
-    });
+    const subagent = toGatewaySubagent(task);
+    return subagent ? [subagent] : [];
+  });
   if (options.hydrateDetails !== false && subagents.length > 0) {
     try {
       const sessions = new Map<string, Record<string, unknown>>();
@@ -711,9 +724,7 @@ const collectGatewaySubagents = async (
   return { subagents, taskLedgerComplete: complete };
 };
 
-const filterWellFormedSubagents = (
-  subagents: GatewaySubagentProjection[],
-): GatewaySubagent[] =>
+const filterWellFormedSubagents = (subagents: GatewaySubagentProjection[]): GatewaySubagent[] =>
   subagents.filter(
     (subagent): subagent is GatewaySubagent =>
       typeof subagent.label === 'string' && subagent.labelSource !== undefined,
@@ -743,3 +754,171 @@ export async function listGatewaySubagents(
     ? result.subagents
     : filterWellFormedSubagents(result.subagents);
 }
+
+// Product operations discover membership from the native requester graph. A task
+// ID or child key supplied by a renderer is never treated as authorization.
+export const requireGatewaySubagentOwnership = async (
+  client: GatewayRequestClient,
+  rootKeys: string[],
+  taskId: string,
+): Promise<OpenClawTaskSummaryV2026_9_2> => {
+  if (!taskId.trim() || rootKeys.length === 0)
+    throw new Error('Subagent task does not belong to this session');
+  const target = parseTasksGetResultV2026_9_2(await client.request('tasks.get', { taskId })).task;
+  if (target.id !== taskId || !isDelegatedTask(target) || !target.childSessionKey)
+    throw new Error('Subagent task was not found');
+  const roots = new Set(rootKeys);
+  if (target.sessionKey && roots.has(target.sessionKey)) return target;
+  // Native parentTaskId gives a cheap exact path for current runtimes.
+  let current = target;
+  const ancestors = new Set([taskId]);
+  while (current.parentTaskId && ancestors.size < 64) {
+    if (ancestors.has(current.parentTaskId)) throw new Error('Invalid subagent ancestry');
+    ancestors.add(current.parentTaskId);
+    const parent = parseTasksGetResultV2026_9_2(
+      await client.request('tasks.get', { taskId: current.parentTaskId }),
+    ).task;
+    if (
+      parent.id !== current.parentTaskId ||
+      !isDelegatedTask(parent) ||
+      parent.childSessionKey !== current.sessionKey
+    )
+      throw new Error('Invalid subagent ancestry');
+    if (parent.sessionKey && roots.has(parent.sessionKey)) return target;
+    current = parent;
+  }
+  // Some native tasks omit parentTaskId. Traverse requester keys with an explicit
+  // request budget; a partial discovery must never authorize an operation.
+  const queue = [...roots];
+  const visited = new Set(roots);
+  let requests = 0;
+  while (queue.length) {
+    const sessionKey = queue.shift()!;
+    let cursor: string | undefined;
+    const cursors = new Set<string>();
+    do {
+      if (++requests > 100) throw new Error('Subagent ownership discovery limit reached');
+      if (cursor && cursors.has(cursor)) throw new Error('Repeated native task cursor');
+      if (cursor) cursors.add(cursor);
+      const page = parseTasksListResultV2026_9_2(
+        await client.request('tasks.list', {
+          sessionKey,
+          limit: TASK_PAGE_SIZE,
+          ...(cursor ? { cursor } : {}),
+        }),
+      );
+      for (const task of page.tasks) {
+        if (!isDelegatedTask(task) || task.sessionKey !== sessionKey || !task.childSessionKey)
+          continue;
+        if (
+          task.id === taskId &&
+          target.sessionKey === sessionKey &&
+          task.childSessionKey === target.childSessionKey
+        )
+          return target;
+        if (!visited.has(task.childSessionKey)) {
+          visited.add(task.childSessionKey);
+          queue.push(task.childSessionKey);
+        }
+      }
+      cursor = page.nextCursor;
+    } while (cursor);
+  }
+  throw new Error('Subagent task does not belong to this session');
+};
+
+export const listGatewaySubagentChildren = async (
+  client: GatewayRequestClient,
+  rootKeys: string[],
+  parentTaskId?: string,
+  cursor?: string,
+): Promise<{ subagents: GatewaySubagent[]; nextCursor?: string }> => {
+  const keys = parentTaskId
+    ? [(await requireGatewaySubagentOwnership(client, rootKeys, parentTaskId)).childSessionKey!]
+    : [...new Set(rootKeys)];
+  let index = 0;
+  let nativeCursor: string | undefined;
+  if (cursor !== undefined) {
+    if (cursor.length > 8192) throw new Error('Invalid task page cursor');
+    const parsed: unknown = JSON.parse(cursor);
+    if (!parsed || typeof parsed !== 'object') throw new Error('Invalid task page cursor');
+    const page = parsed as Record<string, unknown>;
+    if (
+      !Number.isInteger(page.index) ||
+      (page.index as number) < 0 ||
+      (page.index as number) >= keys.length ||
+      page.binding !== JSON.stringify(keys) ||
+      (page.cursor !== undefined && (typeof page.cursor !== 'string' || page.cursor.length > 512))
+    )
+      throw new Error('Invalid task page cursor');
+    index = page.index as number;
+    nativeCursor = page.cursor as string | undefined;
+  }
+  if (!keys.length) return { subagents: [] };
+  const page = parseTasksListResultV2026_9_2(
+    await client.request('tasks.list', {
+      sessionKey: keys[index],
+      limit: 50,
+      ...(nativeCursor ? { cursor: nativeCursor } : {}),
+    }),
+  );
+  if (page.nextCursor && page.nextCursor === nativeCursor)
+    throw new Error('Repeated native task cursor');
+  const subagents = filterWellFormedSubagents(
+    collapseTaskBackingInstances(
+      page.tasks.filter(task => isDelegatedTask(task) && task.sessionKey === keys[index]),
+    ).flatMap(task => {
+      const subagent = toGatewaySubagent(task);
+      return subagent ? [subagent] : [];
+    }),
+  );
+  const nextIndex = page.nextCursor ? index : index + 1;
+  return {
+    subagents,
+    ...(nextIndex < keys.length
+      ? {
+          nextCursor: JSON.stringify({
+            binding: JSON.stringify(keys),
+            index: nextIndex,
+            ...(page.nextCursor ? { cursor: page.nextCursor } : {}),
+          }),
+        }
+      : {}),
+  };
+};
+
+export const controlGatewaySubagent = async (
+  client: GatewayRequestClient,
+  rootKeys: string[],
+  taskId: string,
+  action: CoworkSubagentAction,
+): Promise<CoworkSubagentControlResult> => {
+  if (!Object.values(CoworkSubagentActions).includes(action))
+    throw new Error('Unknown subagent operation');
+  await requireGatewaySubagentOwnership(client, rootKeys, taskId);
+  if (action === CoworkSubagentActions.Cancel) {
+    const result = await client.request<{ found: boolean; cancelled: boolean; reason?: string }>(
+      'tasks.cancel',
+      { taskId },
+    );
+    return result.found === true && result.cancelled === true
+      ? { success: true }
+      : {
+          success: false,
+          error:
+            result.reason ||
+            (result.found ? 'Task cancellation was not confirmed' : 'Subagent task was not found'),
+        };
+  }
+  const result = await client.request<{
+    results: Array<{ taskId: string; ok: boolean; reason?: string; duplicateRisk?: boolean }>;
+  }>(action === CoworkSubagentActions.RetryDelivery ? 'tasks.retry' : 'tasks.dismiss', {
+    taskIds: [taskId],
+  });
+  const item = Array.isArray(result.results)
+    ? result.results.find(entry => entry.taskId === taskId)
+    : undefined;
+  return item?.ok === true
+    ? { success: true, ...(item.duplicateRisk ? { duplicateRisk: true } : {}) }
+    : { success: false, error: item?.reason || 'Task delivery operation was not confirmed' };
+};

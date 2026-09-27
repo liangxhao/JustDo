@@ -16,13 +16,17 @@ import { useDraggableModal } from '../shared/useDraggableModal';
 import { reconcileSubagentLabel, type SubagentLabelSource } from './subagentLabel';
 import { resolveSubagentPollInterval } from './subagentPolling';
 import SubagentTokenUsage from './SubagentTokenUsage';
+import SubtaskChildren from './SubtaskChildren';
+import SubtaskControls from './SubtaskControls';
 import {
   isActiveSubtask,
   mergeSubtaskSnapshots,
   partitionSubtasks,
   resolveExternalAgentLabel,
   resolveSubtaskElapsedMs,
+  resolveSubtaskExecutionKey,
   type Subtask,
+  SUBTASK_DELIVERY_I18N_KEYS,
   SUBTASK_STATUS_I18N_KEYS,
   subtaskStatusStyles,
 } from './subtaskPresentation';
@@ -64,10 +68,15 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
   const [hasLoadError, setHasLoadError] = useState(false);
   const [subtasks, setSubtasks] = useState<Subtask[]>([]);
   const [finishedExpanded, setFinishedExpanded] = useState(true);
+  const [finishedLimit, setFinishedLimit] = useState(50);
+  const [detailAncestors, setDetailAncestors] = useState<Subtask[]>([]);
+  const detailAncestorsRef = useRef(detailAncestors);
+  detailAncestorsRef.current = detailAncestors;
   const [detailSubtask, setDetailSubtask] = useState<Subtask | null>(null);
   const [detailStats, setDetailStats] = useState<SessionDetailStats>();
   const [isDetailStatsLoading, setIsDetailStatsLoading] = useState(false);
   const [detailStatsFailed, setDetailStatsFailed] = useState(false);
+  const [detailUsageUnavailable, setDetailUsageUnavailable] = useState(false);
   const [detailReloadKey, setDetailReloadKey] = useState(0);
   const [clock, setClock] = useState(Date.now());
   const panelRef = useRef<HTMLElement>(null);
@@ -171,7 +180,11 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
                   const latest = normalizedSubtasks.find(subtask => subtask.id === current.id);
                   return latest
                     ? mergeSubtaskSnapshots(current, latest, { preserveCurrentTask: true })
-                    : null;
+                    : normalizedSubtasks.some(
+                          subtask => subtask.id === detailAncestorsRef.current[0]?.id,
+                        )
+                      ? current
+                      : null;
                 })()
               : null,
           );
@@ -230,6 +243,8 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
     setSubtasks([]);
     setDetailSubtask(null);
     setFinishedExpanded(true);
+    setFinishedLimit(50);
+    setDetailAncestors([]);
     setHasLoadError(false);
     refreshPendingRef.current = false;
     onSubtasksChange?.([]);
@@ -275,6 +290,7 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
       setDetailStats(undefined);
       setIsDetailStatsLoading(false);
       setDetailStatsFailed(false);
+      setDetailUsageUnavailable(false);
       return;
     }
 
@@ -289,6 +305,7 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
       setDetailStats(undefined);
       setIsDetailStatsLoading(true);
       setDetailStatsFailed(false);
+      setDetailUsageUnavailable(false);
     }
     const isActive = isActiveSubtask(detailSubtask.status);
     const refreshDetails = async (attempt = 0): Promise<void> => {
@@ -300,8 +317,11 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
         const result = await window.electron.cowork.getSubTaskDetails(sessionKey, taskId);
         if (!cancelled && result.success) {
           succeeded = true;
-          detailStatsRef.current = result.stats;
-          setDetailStats(result.stats);
+          if (result.stats) {
+            detailStatsRef.current = result.stats;
+            setDetailStats(result.stats);
+          }
+          setDetailUsageUnavailable(!result.stats);
           setDetailStatsFailed(false);
           if (result.subagent) {
             setDetailSubtask(current => {
@@ -415,6 +435,46 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
           i18nService.t('subtaskInfoStatus'),
           i18nService.t(SUBTASK_STATUS_I18N_KEYS[detailSubtask.status]),
         ],
+        ...(detailSubtask.execution
+          ? [
+              [
+                i18nService.t('subtaskInfoExecution'),
+                i18nService.t(resolveSubtaskExecutionKey(detailSubtask, true)),
+              ] as [string, React.ReactNode],
+            ]
+          : []),
+        ...(detailSubtask.deliveryStatus
+          ? [
+              [
+                i18nService.t('subtaskInfoDelivery'),
+                i18nService.t(SUBTASK_DELIVERY_I18N_KEYS[detailSubtask.deliveryStatus]),
+              ] as [string, React.ReactNode],
+            ]
+          : []),
+        ...(
+          [
+            ['subtaskInfoProgress', detailSubtask.progressSummary],
+            ['subtaskInfoResult', detailSubtask.terminalSummary],
+            ['subtaskInfoError', detailSubtask.error],
+            ['subtaskInfoActivity', detailSubtask.lastActivity],
+            [
+              detailSubtask.execution?.currentTool ? 'subtaskInfoTool' : 'subtaskInfoLastTool',
+              detailSubtask.execution?.currentTool?.name ?? detailSubtask.lastToolName,
+            ],
+            [
+              'subtaskInfoDiff',
+              detailSubtask.diffStat
+                ? i18nService
+                    .t('subtaskInfoDiffValue')
+                    .replace('{files}', String(detailSubtask.diffStat.files))
+                    .replace('{added}', String(detailSubtask.diffStat.added))
+                    .replace('{removed}', String(detailSubtask.diffStat.removed))
+                : undefined,
+            ],
+          ] as Array<[string, string | undefined]>
+        )
+          .filter(([, value]) => value)
+          .map(([key, value]): [string, React.ReactNode] => [i18nService.t(key), value]),
         [i18nService.t('subtaskInfoAgentId'), detailSubtask.agentId],
         [i18nService.t('subtaskInfoTask'), detailSubtask.task],
         [i18nService.t('subtaskInfoModel'), detailSubtask.model],
@@ -440,11 +500,27 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
         ],
         [
           i18nService.t('subtaskInfoTokens'),
-          <SubagentTokenUsage
-            key="token-usage"
-            stats={detailStats}
-            isLoading={isDetailStatsLoading}
-          />,
+          <div key="token-usage" className="space-y-2">
+            <SubagentTokenUsage stats={detailStats} isLoading={isDetailStatsLoading} />
+            {detailUsageUnavailable && (
+              <div className="text-xs text-secondary" role="status">
+                <p>
+                  {i18nService.t(detailStats ? 'subtaskUsageStale' : 'subtaskUsageUnavailable')}
+                </p>
+                <button
+                  type="button"
+                  disabled={isDetailStatsLoading}
+                  className="mt-1 text-primary hover:underline disabled:opacity-50"
+                  onClick={() => {
+                    setIsDetailStatsLoading(true);
+                    setDetailReloadKey(value => value + 1);
+                  }}
+                >
+                  {i18nService.t('subtaskUsageRetry')}
+                </button>
+              </div>
+            )}
+          </div>,
         ],
         [i18nService.t('subtaskInfoSession'), detailSubtask.sessionKey],
         [i18nService.t('subtaskInfoSessionId'), detailSubtask.sessionId, true],
@@ -480,13 +556,19 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
           </span>
         )}
         <span className="shrink-0 text-xs text-secondary">
-          {i18nService.t(SUBTASK_STATUS_I18N_KEYS[subtask.status])}
+          {i18nService.t(resolveSubtaskExecutionKey(subtask))}
+          {(subtask.deliveryStatus === 'failed' || subtask.deliveryStatus === 'parent_missing') && (
+            <span className="block text-[10px] text-amber-700 dark:text-amber-300">
+              {i18nService.t(SUBTASK_DELIVERY_I18N_KEYS[subtask.deliveryStatus])}
+            </span>
+          )}
         </span>
         <button
           type="button"
           className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted opacity-70 transition-colors hover:bg-surface hover:text-foreground group-hover:opacity-100"
           onClick={event => {
             detailReturnFocusRef.current = event.currentTarget;
+            setDetailAncestors([]);
             setDetailSubtask(subtask);
           }}
           aria-label={i18nService.t('subtaskShowInfo')}
@@ -605,7 +687,16 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
                   </button>
                   {finishedExpanded && (
                     <div className="space-y-1 px-2 pb-2" role="list">
-                      {finished.map(renderSubtask)}
+                      {finished.slice(0, finishedLimit).map(renderSubtask)}
+                      {finished.length > finishedLimit && (
+                        <button
+                          type="button"
+                          className="w-full rounded-md py-2 text-xs text-primary hover:bg-surface-raised"
+                          onClick={() => setFinishedLimit(value => value + 50)}
+                        >
+                          {i18nService.t('subtaskLoadMore')}
+                        </button>
+                      )}
                     </div>
                   )}
                 </section>
@@ -671,36 +762,91 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
                 </button>
               </div>
             )}
-            <dl className="max-h-[calc(80vh-4rem)] overflow-y-auto px-5 py-3">
-              {detailRows.map(([label, value, copyable]) => (
-                <div
-                  key={label}
-                  className="grid grid-cols-[7rem_minmax(0,1fr)] gap-3 border-b border-border/60 py-2.5 last:border-0"
+            <div className="max-h-[calc(80vh-4rem)] overflow-y-auto">
+              {onOpenSubtask && (
+                <button
+                  type="button"
+                  className="mx-5 mt-3 text-xs text-primary"
+                  onClick={() => {
+                    closeDetails();
+                    onOpenSubtask(detailSubtask);
+                  }}
                 >
-                  <dt className="text-sm text-secondary">{label}</dt>
-                  <dd className="min-w-0 break-words whitespace-pre-wrap text-sm text-foreground">
-                    {copyable && typeof value === 'string' ? (
-                      <button
-                        type="button"
-                        className="inline-flex max-w-full items-start gap-1.5 text-left hover:text-primary"
-                        onClick={() => void copySessionId(value)}
-                        aria-label={i18nService.t('copySessionId')}
-                        title={i18nService.t('copySessionId')}
-                      >
-                        <span className="min-w-0 break-all">{value}</span>
-                        <DocumentDuplicateIcon className="mt-0.5 h-4 w-4 shrink-0" />
-                      </button>
-                    ) : value == null ? (
-                      i18nService.t('subtaskInfoUnavailable')
-                    ) : typeof value === 'string' ? (
-                      value || i18nService.t('subtaskInfoUnavailable')
-                    ) : (
-                      value
-                    )}
-                  </dd>
-                </div>
-              ))}
-            </dl>
+                  {i18nService.t('subtaskOpenHistory')}
+                </button>
+              )}
+              {detailAncestors.length > 0 && (
+                <button
+                  type="button"
+                  className="mx-5 mt-3 text-xs text-primary"
+                  onClick={() => {
+                    setDetailSubtask(detailAncestors[detailAncestors.length - 1]);
+                    setDetailAncestors(current => current.slice(0, -1));
+                  }}
+                >
+                  {i18nService.t('subtaskParent')}:{' '}
+                  {detailAncestors[detailAncestors.length - 1].label}
+                </button>
+              )}
+              <SubtaskControls
+                key={`controls:${detailSubtask.id}`}
+                sessionId={sessionId}
+                task={detailSubtask}
+                onRefresh={verified => {
+                  if (verified)
+                    setDetailSubtask(current =>
+                      current?.id === verified.id
+                        ? mergeSubtaskSnapshots(current, {
+                            ...verified,
+                            lifecycleRequestSequence: ++lifecycleRequestSequenceRef.current,
+                          })
+                        : current,
+                    );
+                  setDetailReloadKey(value => value + 1);
+                  void refresh(true);
+                }}
+              />
+              <SubtaskChildren
+                key={`children:${detailSubtask.id}`}
+                sessionId={sessionId}
+                task={detailSubtask}
+                ancestors={detailAncestors.map(task => task.id)}
+                onOpen={child => {
+                  setDetailAncestors(current => [...current, detailSubtask]);
+                  setDetailSubtask(child);
+                }}
+              />
+              <dl className="px-5 py-3">
+                {detailRows.map(([label, value, copyable]) => (
+                  <div
+                    key={label}
+                    className="grid grid-cols-[7rem_minmax(0,1fr)] gap-3 border-b border-border/60 py-2.5 last:border-0"
+                  >
+                    <dt className="text-sm text-secondary">{label}</dt>
+                    <dd className="min-w-0 break-words whitespace-pre-wrap text-sm text-foreground">
+                      {copyable && typeof value === 'string' ? (
+                        <button
+                          type="button"
+                          className="inline-flex max-w-full items-start gap-1.5 text-left hover:text-primary"
+                          onClick={() => void copySessionId(value)}
+                          aria-label={i18nService.t('copySessionId')}
+                          title={i18nService.t('copySessionId')}
+                        >
+                          <span className="min-w-0 break-all">{value}</span>
+                          <DocumentDuplicateIcon className="mt-0.5 h-4 w-4 shrink-0" />
+                        </button>
+                      ) : value == null ? (
+                        i18nService.t('subtaskInfoUnavailable')
+                      ) : typeof value === 'string' ? (
+                        value || i18nService.t('subtaskInfoUnavailable')
+                      ) : (
+                        value
+                      )}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
           </div>
         )}
       </Modal>

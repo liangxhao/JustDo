@@ -63,8 +63,14 @@ import {
   normalizeBrowserPanelOpenTabEvent,
   normalizeBrowserPanelPdfDetectedEvent,
 } from '../shared/browser/browser';
-import { BrowserInterventionIpc, type BrowserInterventionRequest } from '../shared/browser/browserIntervention';
-import { BrowserRecordingChannel, type BrowserRecordingLease } from '../shared/browser/browserRecording';
+import {
+  BrowserInterventionIpc,
+  type BrowserInterventionRequest,
+} from '../shared/browser/browserIntervention';
+import {
+  BrowserRecordingChannel,
+  type BrowserRecordingLease,
+} from '../shared/browser/browserRecording';
 import type { CoworkAttachmentPayload } from '../shared/cowork/attachments';
 import { CollaborationIpc } from '../shared/cowork/collaboration';
 import { type CopyCoworkSessionInput, CoworkSessionCopyIpc } from '../shared/cowork/sessionCopy';
@@ -82,6 +88,7 @@ import { type CancelSessionStartInput, SessionStartIpc } from '../shared/cowork/
 import { type GenerateSessionTitleRequest, SessionTitleIpc } from '../shared/cowork/sessionTitle';
 import { SlashCommandIpc } from '../shared/cowork/slashCommands';
 import {
+  type CoworkSubagentAction,
   CoworkSubagentDetailsIpc,
   type CoworkSubtaskChangedEvent,
 } from '../shared/cowork/subagentDetails';
@@ -131,7 +138,10 @@ import {
   OpenClawSessionMigrationIpc,
   type OpenClawSessionMigrationProgress,
 } from '../shared/openclaw/sessionMigration';
-import { SessionStorageIpc, type SessionStoragePolicyInput } from '../shared/openclaw/sessionStorage';
+import {
+  SessionStorageIpc,
+  type SessionStoragePolicyInput,
+} from '../shared/openclaw/sessionStorage';
 import {
   SystemPromptReplacementIpc,
   type SystemPromptReplacementRule,
@@ -398,7 +408,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(BrowserRecordingChannel.Lease, state),
     acknowledgeAgentInteraction: (state: BrowserAgentInteractionReady) =>
       ipcRenderer.send(BrowserIpc.AgentInteractionReady, state),
-    intervention: (input: BrowserInterventionRequest) => ipcRenderer.invoke(BrowserInterventionIpc, input),
+    intervention: (input: BrowserInterventionRequest) =>
+      ipcRenderer.invoke(BrowserInterventionIpc, input),
     onAgentEnsureTab: (callback: (event: BrowserAgentSessionEvent) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, data: BrowserAgentSessionEvent) =>
         callback(data);
@@ -731,7 +742,8 @@ contextBridge.exposeInMainWorld('electron', {
     sessionStorage: {
       getStatus: () => ipcRenderer.invoke(SessionStorageIpc.Status),
       getPolicy: () => ipcRenderer.invoke(SessionStorageIpc.Policy),
-      savePolicy: (policy: SessionStoragePolicyInput) => ipcRenderer.invoke(SessionStorageIpc.Save, policy),
+      savePolicy: (policy: SessionStoragePolicyInput) =>
+        ipcRenderer.invoke(SessionStorageIpc.Save, policy),
       run: () => ipcRenderer.invoke(SessionStorageIpc.Run),
     },
     getAgentRuntimeSettings: () => ipcRenderer.invoke(AgentRuntimeSettingsIpc.Get),
@@ -822,6 +834,10 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(CoworkSubagentDetailsIpc.Get, sessionKey, taskId),
     listSubTaskDescendants: (sessionId: string) =>
       ipcRenderer.invoke(CoworkSubagentDetailsIpc.ListDescendants, sessionId),
+    listSubTaskChildren: (sessionId: string, parentTaskId?: string, cursor?: string) =>
+      ipcRenderer.invoke(CoworkSubagentDetailsIpc.ListChildren, sessionId, parentTaskId, cursor),
+    controlSubTask: (sessionId: string, taskId: string, action: CoworkSubagentAction) =>
+      ipcRenderer.invoke(CoworkSubagentDetailsIpc.Control, sessionId, taskId, action),
     onSubtasksChanged: (callback: (event: CoworkSubtaskChangedEvent) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, event: CoworkSubtaskChangedEvent) =>
         callback(event);
@@ -994,8 +1010,9 @@ contextBridge.exposeInMainWorld('electron', {
   },
   scheduledTasks: {
     getSchedulerSettings: () => ipcRenderer.invoke(ScheduledTaskIpc.GetSchedulerSettings),
-    updateSchedulerSettings: (input: import('../shared/scheduledTask/types').SchedulerSettingsUpdate) =>
-      ipcRenderer.invoke(ScheduledTaskIpc.UpdateSchedulerSettings, input),
+    updateSchedulerSettings: (
+      input: import('../shared/scheduledTask/types').SchedulerSettingsUpdate,
+    ) => ipcRenderer.invoke(ScheduledTaskIpc.UpdateSchedulerSettings, input),
     getSystemSettings: () => ipcRenderer.invoke(ScheduledTaskIpc.GetSystemSettings),
     updateSystemSettings: (
       input: import('../shared/scheduledTask/types').SystemTaskSettingsPatch,
@@ -1072,8 +1089,7 @@ contextBridge.exposeInMainWorld('electron', {
       status: WorkboardCardInput['status'],
       position: number,
       expectedUpdatedAt: number,
-    ) =>
-      ipcRenderer.invoke(WorkboardIpc.MoveCard, id, status, position, expectedUpdatedAt),
+    ) => ipcRenderer.invoke(WorkboardIpc.MoveCard, id, status, position, expectedUpdatedAt),
     deleteCard: (id: string) => ipcRenderer.invoke(WorkboardIpc.DeleteCard, id),
     archiveCard: (id: string, archived: boolean) =>
       ipcRenderer.invoke(WorkboardIpc.ArchiveCard, id, archived),

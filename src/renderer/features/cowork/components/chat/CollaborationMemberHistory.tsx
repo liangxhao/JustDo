@@ -35,6 +35,7 @@ export default function CollaborationMemberHistory({
   const [controller, setController] = useState<ChatController | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'empty' | 'error'>('loading');
   const [running, setRunning] = useState(false);
+  const [receiptRetry, setReceiptRetry] = useState(0);
   const receiptKey = JSON.stringify([member.sessionKey, receiptDeliveryId, receiptId]);
   const [receiptResult, setReceiptResult] = useState<{ key: string; messages: GatewayMessage[] }>({
     key: receiptKey,
@@ -162,7 +163,7 @@ export default function CollaborationMemberHistory({
       unsubscribe();
       next.disconnect();
     };
-  }, [anchorSessionId, member.sessionKey, receiptDeliveryId, receiptId, receiptKey]);
+  }, [anchorSessionId, member.sessionKey, receiptDeliveryId, receiptId, receiptKey, receiptRetry]);
   return (
     <div className="flex h-full min-h-[300px] flex-col">
       <div className="mb-3 flex items-center justify-between gap-2">
@@ -192,9 +193,20 @@ export default function CollaborationMemberHistory({
                 ? receipt
                   ? 'collaborationReceiptUnavailable'
                   : 'collaborationHistoryEmpty'
-                : 'collaborationHistoryError',
+                : receipt
+                  ? 'collaborationMessageUnavailable'
+                  : 'collaborationHistoryError',
           )}
         </p>
+      )}
+      {receipt && (status === 'error' || status === 'empty') && (
+        <button
+          type="button"
+          className="mb-3 self-start text-sm text-primary"
+          onClick={() => setReceiptRetry(value => value + 1)}
+        >
+          {i18nService.t('sessionDetailsRetry')}
+        </button>
       )}
       <ChatMessageDisplay
         className="min-h-0 flex-1"

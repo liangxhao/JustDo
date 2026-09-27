@@ -7,11 +7,18 @@ description: Coordinate persistent assistants when the user requests an agent te
 
 Use this capability only when relevant to the requested work. For ordinary questions, respond directly without discussing available assistants or explaining why you are not using a team. A persistent peer assistant is distinct from a temporary SubAgent created with `sessions_spawn`.
 
+For bounded research, implementation, or review that only needs to report back, use native
+`sessions_spawn` and its completion handoff. Use `context: "fork"` only if the child needs
+the current transcript; otherwise its isolated context is sufficient. If the user needs
+an ongoing exchange between named persistent assistants, use the task peers below.
+Native SubAgent and ACP child sessions remain OpenClaw-owned; messages to their exact
+session keys do not enter the task-peer graph or consume its message budget.
+
 ## Discover and prepare
 
 1. Call `task_assistants({})` to discover current task members and available assistants. Use their descriptions to choose a relevant assistant; do not invent identities.
 2. The main conversation can call `task_assistants({agentId: exactId})` to prepare an assistant's independent session for this task. Preparation alone does not start work. Repeated preparation returns the existing member, not a new instance.
-3. Send a bounded task with native `sessions_send({sessionKey, message})`, using the exact sessionKey returned by the tool. Include the objective, relevant context, expected output and file ownership when editing. Never use a display name or agentId as a sessionKey or address another task.
+3. Send a bounded task with native `sessions_send({sessionKey, message})`, using the exact sessionKey returned by the tool. Omit `mode` or use `followup`; task peers do not support `notify`, `steer`, or `resume`. Include the objective, relevant context, expected output and file ownership when editing. Never use a display name or agentId as a sessionKey or address another task.
 
 ## Communicate and finish
 

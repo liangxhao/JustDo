@@ -1,3 +1,4 @@
+import type { CoworkSubagentDetailTask } from '@shared/cowork/subagentDetails';
 import { getExternalAgentDefinition } from '@shared/openclaw/externalAgentCatalog';
 
 import type { SubagentLabelSource } from './subagentLabel';
@@ -40,6 +41,38 @@ export type Subtask = {
   lastActivity?: string;
   lastToolName?: string;
   toolUseCount?: number;
+} & Pick<CoworkSubagentDetailTask, 'execution' | 'deliveryStatus' | 'parentTaskId' | 'diffStat'>;
+
+export const SUBTASK_DELIVERY_I18N_KEYS = {
+  pending: 'subtaskDeliveryPending',
+  delivered: 'subtaskDeliveryDelivered',
+  session_queued: 'subtaskDeliveryQueued',
+  failed: 'subtaskDeliveryFailed',
+  dismissed: 'subtaskDeliveryDismissed',
+  parent_missing: 'subtaskDeliveryParentMissing',
+  not_applicable: 'subtaskDeliveryNotApplicable',
+} as const;
+
+export const resolveSubtaskExecutionKey = (task: Subtask, preferObservation = false): string => {
+  if (!task.execution || (!preferObservation && !isActiveSubtask(task.status)))
+    return SUBTASK_STATUS_I18N_KEYS[task.status];
+  const { state, wait } = task.execution;
+  if (state === 'waiting' && wait) {
+    return {
+      children: 'subtaskWaitChildren',
+      external: 'subtaskWaitExternal',
+      agent_messages: 'subtaskWaitMessages',
+      approval: 'subtaskWaitApproval',
+      user_input: 'subtaskWaitUser',
+    }[wait.kind];
+  }
+  return {
+    queued: 'subtaskStatusPending',
+    running: 'subtaskStatusRunning',
+    waiting: 'subtaskExecutionWaiting',
+    finished: 'subtaskExecutionFinished',
+    unknown: 'subtaskExecutionUnknown',
+  }[state];
 };
 
 export const subtaskStatusStyles: Record<SubtaskStatus, string> = {
@@ -106,6 +139,9 @@ export const mergeSubtaskSnapshots = (
     lastActivity: lifecycle.lastActivity,
     lastToolName: lifecycle.lastToolName,
     toolUseCount: lifecycle.toolUseCount,
+    execution: lifecycle.execution,
+    deliveryStatus: lifecycle.deliveryStatus,
+    diffStat: lifecycle.diffStat,
   };
   if (isActiveSubtask(merged.status)) {
     merged.endedAt = undefined;
@@ -127,7 +163,7 @@ export const partitionSubtasks = (
   });
   return {
     active: sorted.filter(subtask => isActiveSubtask(subtask.status)),
-    finished: sorted.filter(subtask => !isActiveSubtask(subtask.status)).slice(0, 50),
+    finished: sorted.filter(subtask => !isActiveSubtask(subtask.status)),
   };
 };
 

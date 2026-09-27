@@ -97,9 +97,23 @@ Goal coordinator 在原生目标仍 active 时安排续跑，保存产品 phase�
 
 Plan-mode 通过原生 session extension、turn hook、工具和 scoped RPC 实现。Main 持久化计划文件及 handoff，批准后用原生 reset 建立实施上下文；这是产品交接，不是另一套原生恢复状态机。
 
-子任务查询使用 tasks.list/get 和 task event。原生负责 admission、队列、required-child join 与完成通知；Main 合并状态用于父会话展示，不通过查询工具循环代替 task ledger。平级协作的发送也交给原生 sessions_send，产品只负责任务范围和回执。
+子任务查询使用 tasks.list/get 和 task event。原生负责 admission、队列、required-child join 与完成通知；Main 合并状态用于父会话展示，不通过查询工具循环代替 task ledger。平级协作的发送也交给原生 sessions_send，产品只负责任务范围和回执。SubAgent 与平级协作有独立生命周期；上游 `agents team create` 是角色预设与原生委派配置，不能直接替代产品 room。跨助手原生委派须同时设计目标授权与助手创建、禁用、软删除的同步；当前不自动将受管 roster 扩展为 `subagents.allowAgents`。
 
 展示时保留 accepted、queued、running 与终态的区别；`completed` 且 `terminalOutcome=blocked` 应显示为 blocked。详情用 taskId 核对原生 session，再读取累计 usage/runtime，不从调用者 sessionKey 猜测。主模型结束或 UI busy 消失不证明 required child 已被父运行消费。完成通知丢失或请求结果不确定时先查原生任务与运行身份，不能重发整个子任务；它可能已经产生文件、网络或 spawn 副作用。产品未提供通用的模型请求自动重试承诺。
+
+### 执行观测与结果投递
+
+任务摘要同时保留 `execution`、`deliveryStatus`、`parentTaskId` 和 `diffStat`。执行观测描述排队、运行、等待、结束或未知；等待可区分子任务、外部条件、Agent 消息、审批和用户输入，并保留原生依赖任务及待完成数量。结果交付独立保留 pending、session_queued、delivered、failed、dismissed、parent_missing、not_applicable：执行结束不等于父任务已经收到结果，交付失败也不应改写为模型重新运行。wire 层验证新增结构，状态缓存按生命周期版本合并，不使用陈旧观测覆盖新版本。
+
+精确操作必须经过产品会话与原生 requester 树归属核对。取消使用原生 `tasks.cancel`；结果重新投递和忽略使用 `tasks.retry` / `tasks.dismiss`。原生取消未确认、恢复不适用和连接中断都保留失败语义，不自动改用整会话停止、重新 spawn 或重跑工具。归属发现最多沿 64 层父身份查询，缺少父 ID 时回退到最多 100 页原生图查询；达到边界时拒绝本次操作。
+
+嵌套浏览按需请求单层，每页 50 条；多层导航保留 task ID，游标绑定父任务对应的原生 key。现有根任务 `getSubTaskStatus` 轮询仍分页遍历全部根记录并补充 session 详情，不是全树的 50 条分页，也未消除大型历史根列表的扫描成本。子树浏览和精确操作不创建第二套调度器。
+
+### Swarm 容量配置
+
+运行时设置将 Swarm 与普通 SubAgent 容量分开保存，并通过 ConfigSync 投影到原生 `tools.swarm`。当前受管项是 `enabled`、`maxConcurrent`、`maxChildrenPerGroup`、`maxTotalPerGroup`；缺少新字段的旧设置采用默认值 true、8、50、200。应用校验范围分别为组并发 1–64、组内存活子任务 1–200、组内累计子任务 1–1000；这些是应用设置的可选范围，不是原生硬上限。配置合并保留未受管的原生 Swarm 字段，常规保存、最小配置与认证切换使用一致投影。
+
+这些设置控制原生批量委派容量，不等价于启用平级 agent-team Extension，也不会创建助手档案或协作房间。collector 结果聚合和原生分组执行仍属于 OpenClaw；专用 collector 进度面板及结构化结果展示不属于本次已实现范围。
 
 ## 8. 重启的两种边界
 

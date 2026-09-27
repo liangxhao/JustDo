@@ -41,6 +41,7 @@ import {
   listKnownOpenClawWorkspaceDirs,
   ManagedMemorySearchConfig,
   mergeManagedOpenClawSubagentConfig,
+  mergeManagedOpenClawSwarmConfig,
   mergeOpenClawPluginConfig,
   mergeOpenClawSkillConfig,
   OPENCLAW_FALLBACK_EXEC_MODE,
@@ -455,6 +456,10 @@ export class OpenClawConfigSync {
       update: connectivityConfig.update,
       tools: {
         ...connectivityTools,
+        swarm: mergeManagedOpenClawSwarmConfig(
+          isRecord(existingConfig?.tools) ? existingConfig.tools.swarm : undefined,
+          agentRuntimeSettings,
+        ),
         fs: {
           ...(isRecord(connectivityTools.fs) ? connectivityTools.fs : {}),
           workspaceOnly: OPENCLAW_FALLBACK_FS_WORKSPACE_ONLY,
@@ -826,6 +831,7 @@ export class OpenClawConfigSync {
         ...hookConfig,
         tools: {
           ...connectivityTools,
+          swarm: mergeManagedOpenClawSwarmConfig(undefined, agentRuntimeSettings),
           fs: {
             ...(isRecord(connectivityTools.fs) ? connectivityTools.fs : {}),
             workspaceOnly: OPENCLAW_FALLBACK_FS_WORKSPACE_ONLY,
@@ -1017,6 +1023,10 @@ export class OpenClawConfigSync {
                   tools: {
                     ...existingTools,
                     sessions: connectivityTools.sessions,
+                    swarm: mergeManagedOpenClawSwarmConfig(
+                      existingTools.swarm,
+                      agentRuntimeSettings,
+                    ),
                     fs: {
                       ...existingFileTools,
                       workspaceOnly: OPENCLAW_FALLBACK_FS_WORKSPACE_ONLY,
