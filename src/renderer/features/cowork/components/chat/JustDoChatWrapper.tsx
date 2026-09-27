@@ -545,7 +545,10 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     }
 
     return (
-      <div className={`${className ?? ''} flex min-h-0 flex-col`}>
+      <div
+        data-review-session-id={currentSessionId}
+        className={`${className ?? ''} flex min-h-0 flex-col`}
+      >
         {historyStatus !== 'ready' && (
           <div
             className="p-3 text-sm text-secondary"

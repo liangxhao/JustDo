@@ -14,9 +14,13 @@ interface DisplayPanelLauncherProps {
   onCreateSideChat?: () => void;
   onCreateTerminal: () => void;
   onOpenFiles?: () => void;
+  onOpenReview?: () => void;
   sideChatDisabled?: boolean;
   terminalDisabled?: boolean;
 }
+
+const launcherButtonClassName =
+  'mx-auto flex h-10 w-full max-w-72 items-center gap-2.5 rounded-lg bg-surface-raised px-3 text-left text-sm font-medium text-foreground transition-colors hover:bg-surface-overlay disabled:cursor-not-allowed disabled:opacity-40';
 
 const DisplayPanelLauncher = ({
   browserDisabled = false,
@@ -25,6 +29,7 @@ const DisplayPanelLauncher = ({
   onCreateSideChat,
   onCreateTerminal,
   onOpenFiles,
+  onOpenReview,
   sideChatDisabled = false,
   terminalDisabled = false,
 }: DisplayPanelLauncherProps) => (
@@ -34,10 +39,16 @@ const DisplayPanelLauncher = ({
         type="button"
         disabled={sideChatDisabled}
         onClick={onCreateSideChat}
-        className="mx-auto flex h-10 w-full max-w-72 items-center gap-2.5 rounded-lg bg-surface-raised px-3 text-left text-sm font-medium text-foreground transition-colors hover:bg-surface-overlay disabled:cursor-not-allowed disabled:opacity-40"
+        className={launcherButtonClassName}
       >
         <ChatBubbleLeftEllipsisIcon className="h-4 w-4 shrink-0 text-secondary" />
         <span>{i18nService.t('sideChatTitle')}</span>
+      </button>
+    )}
+    {onOpenReview && (
+      <button type="button" className={launcherButtonClassName} onClick={onOpenReview}>
+        <FolderIcon className="h-4 w-4 shrink-0 text-secondary" />
+        <span>{i18nService.t('reviewTitle')}</span>
       </button>
     )}
     {onOpenFiles && (
@@ -45,7 +56,7 @@ const DisplayPanelLauncher = ({
         type="button"
         disabled={filesDisabled}
         onClick={onOpenFiles}
-        className="mx-auto flex h-10 w-full max-w-72 items-center gap-2.5 rounded-lg bg-surface-raised px-3 text-left text-sm font-medium text-foreground transition-colors hover:bg-surface-overlay disabled:cursor-not-allowed disabled:opacity-40"
+        className={launcherButtonClassName}
       >
         <FolderIcon className="h-4 w-4 shrink-0 text-secondary" />
         <span>{i18nService.t('coworkWorkspaceFiles')}</span>
@@ -55,7 +66,7 @@ const DisplayPanelLauncher = ({
       type="button"
       disabled={browserDisabled}
       onClick={onCreateBrowser}
-      className="mx-auto flex h-10 w-full max-w-72 items-center gap-2.5 rounded-lg bg-surface-raised px-3 text-left text-sm font-medium text-foreground transition-colors hover:bg-surface-overlay disabled:cursor-not-allowed disabled:opacity-40"
+      className={launcherButtonClassName}
     >
       <GlobeAltIcon className="h-4 w-4 shrink-0 text-secondary" />
       <span>{i18nService.t('coworkNewBrowserTab')}</span>
@@ -64,7 +75,7 @@ const DisplayPanelLauncher = ({
       type="button"
       disabled={terminalDisabled}
       onClick={onCreateTerminal}
-      className="mx-auto flex h-10 w-full max-w-72 items-center gap-2.5 rounded-lg bg-surface-raised px-3 text-left text-sm font-medium text-foreground transition-colors hover:bg-surface-overlay disabled:cursor-not-allowed disabled:opacity-40"
+      className={launcherButtonClassName}
     >
       <CommandLineIcon className="h-4 w-4 shrink-0 text-secondary" />
       <span>{i18nService.t('coworkNewTerminalTab')}</span>

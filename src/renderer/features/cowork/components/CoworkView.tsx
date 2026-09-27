@@ -27,6 +27,7 @@ import { recordingImagesInStepOrder } from '@shared/browser/browserRecording';
 import { DEFAULT_MAX_RETAINED_DISPLAY_TABS } from '@shared/cowork/displayTabRetention';
 import { getMessageTitleInput } from '@shared/cowork/messageInput';
 import { COWORK_PLAN_PREVIEW_EVENT, isCoworkPlanPreview } from '@shared/cowork/planPreview';
+import { REVIEW_OPEN_EVENT, REVIEW_TAB_ID } from '@shared/cowork/sessionReview';
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import { isGoalEditCommand } from '@shared/cowork/slashCommands';
 import { CoworkInteractionKind, OpenClawToolName } from '@shared/openclaw/extensions';
@@ -197,6 +198,7 @@ import {
   SUBAGENT_DISPLAY_TAB_ID,
   TERMINAL_DISPLAY_TAB_PREFIX,
 } from './preview/displayTabIds';
+import SessionReviewPanel from './preview/SessionReviewPanel';
 import { useCoworkBrowserPanels } from './preview/useCoworkBrowserPanels';
 import type { SessionTranscriptMutation } from './sessions/useCoworkSessionActions';
 import { useCoworkSessionActions } from './sessions/useCoworkSessionActions';
@@ -343,6 +345,11 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       preferredDisplayTabId,
       sideChatTabs,
       isWorkspaceFilesOpen,
+      isReviewOpen,
+      reviewFocusPath,
+      reviewFocusVersion,
+      filesRevealPath,
+      filesRevealVersion,
       filePreviews,
       unsupportedFilePreviews,
     },
@@ -357,6 +364,11 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       setPreferredDisplayTabId,
       setSideChatTabs,
       setIsWorkspaceFilesOpen,
+      setIsReviewOpen,
+      setReviewFocusPath,
+      setReviewFocusVersion,
+      setFilesRevealPath,
+      setFilesRevealVersion,
       setFilePreviews,
       setUnsupportedFilePreviews,
     },
@@ -522,6 +534,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       ...(collaborationSessionId && collaborationSessionId === currentSessionId
         ? [COLLABORATION_DISPLAY_TAB_ID]
         : []),
+      ...(isReviewOpen ? [REVIEW_TAB_ID] : []),
       ...sideChatTabs.map(tab => tab.id),
       ...recordingReviewTabs.tabs.map(tab => tab.id),
     ],
@@ -532,6 +545,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       filePreviews,
       isBrowserPanelOpen,
       selectedSubagent,
+      isReviewOpen,
       sideChatTabs,
       terminalTabs,
       unsupportedFilePreviews,
@@ -539,6 +553,34 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       recordingReviewTabs.tabs,
     ],
   );
+  const openReview = useCallback(
+    (filePath = '') => {
+      if (!currentSessionId) return;
+      setIsReviewOpen(true);
+      setReviewFocusPath(filePath);
+      setReviewFocusVersion(value => value + 1);
+      setIsDisplayPanelOpen(true);
+      setIsWorkspaceFilesOpen(false);
+      setPreferredDisplayTabId(REVIEW_TAB_ID);
+    },
+    [
+      currentSessionId,
+      setIsReviewOpen,
+      setReviewFocusPath,
+      setReviewFocusVersion,
+      setIsDisplayPanelOpen,
+      setIsWorkspaceFilesOpen,
+      setPreferredDisplayTabId,
+    ],
+  );
+  useEffect(() => {
+    const listener = (event: Event) => {
+      const detail = (event as CustomEvent<{ sessionId: string; path: string }>).detail;
+      if (detail?.sessionId === currentSessionId) openReview(detail.path);
+    };
+    window.addEventListener(REVIEW_OPEN_EVENT, listener);
+    return () => window.removeEventListener(REVIEW_OPEN_EVENT, listener);
+  }, [currentSessionId, openReview]);
   const activeDisplayTabId =
     preferredDisplayTabId && availableDisplayTabIds.includes(preferredDisplayTabId)
       ? preferredDisplayTabId
@@ -2104,6 +2146,20 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         : i18nService.t('planReviewTitle')
       : '';
     const displayTabs: CoworkDisplayTab[] = [
+      ...(isReviewOpen
+        ? [
+            {
+              id: REVIEW_TAB_ID,
+              label: i18nService.t('reviewTitle'),
+              icon: <ClipboardDocumentCheckIcon className="h-4 w-4" />,
+              onSelect: () => setPreferredDisplayTabId(REVIEW_TAB_ID),
+              onClose: () => {
+                setIsReviewOpen(false);
+                selectAdjacentDisplayTabAfterClose(REVIEW_TAB_ID);
+              },
+            },
+          ]
+        : []),
       ...recordingReviewTabs.tabs,
       ...(isBrowserPanelOpen
         ? browserTabs.map(tab => ({
@@ -2705,6 +2761,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                     onCreateSideChat={handleCreateSideChat}
                     onCreateTerminal={handleCreateTerminalTab}
                     onOpenFiles={handleOpenWorkspaceFiles}
+                    onOpenReview={() => openReview()}
                     sideChatDisabled={currentSession.id.startsWith('temp-') || !isOpenClawEngine}
                     terminalDisabled={
                       !terminalWorkingDirectory || terminalTabs.length >= MAX_TERMINAL_TABS
@@ -2716,6 +2773,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                 isWorkspaceFilesOpen && currentSessionFolderPath ? (
                   <WorkspaceFilesPanel
                     key={`${currentSession.id}:${currentSessionFolderPath}`}
+                    revealPath={filesRevealPath}
+                    revealVersion={filesRevealVersion}
                     activeFilePath={activeFilePreview?.filePath ?? activeUnsupportedFilePath}
                     sessionId={currentSession.id}
                     onOpenFile={filePath => {
@@ -2743,12 +2802,35 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                   onCreateTerminal={handleCreateTerminalTab}
                   sideChatDisabled={currentSession.id.startsWith('temp-') || !isOpenClawEngine}
                   onOpenFiles={handleOpenWorkspaceFiles}
+                  onOpenReview={() => openReview()}
                   terminalDisabled={
                     !terminalWorkingDirectory || terminalTabs.length >= MAX_TERMINAL_TABS
                   }
                 />
               }
             >
+              {isReviewOpen && (
+                <SessionReviewPanel
+                  key={currentSession.id}
+                  sessionId={currentSession.id}
+                  visible={isDisplayPanelOpen && activeDisplayTabId === REVIEW_TAB_ID}
+                  running={currentSessionRuntimeRunning}
+                  focusPath={reviewFocusPath}
+                  focusVersion={reviewFocusVersion}
+                  onOpenFile={(filePath, relative, reveal) => {
+                    if (reveal) {
+                      setFilesRevealPath(relative);
+                      setFilesRevealVersion(value => value + 1);
+                      setIsWorkspaceFilesOpen(true);
+                    } else
+                      window.dispatchEvent(
+                        new CustomEvent('cowork:preview-file', {
+                          detail: { filePath, workingDirectory: currentSessionFolderPath },
+                        }),
+                      );
+                  }}
+                />
+              )}
               {retainedRuntimePanels}
               {recordingReviewTabs.panels(activeDisplayTabId)}
               {collaborationSessionId === currentSession.id &&

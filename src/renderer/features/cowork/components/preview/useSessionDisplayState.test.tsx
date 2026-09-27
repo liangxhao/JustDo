@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { REVIEW_TAB_ID } from '@shared/cowork/sessionReview';
 import { act, renderHook } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
@@ -11,6 +12,42 @@ import {
 } from './useSessionDisplayState';
 
 describe('useSessionDisplayState', () => {
+  it('isolates review navigation by session and restores it when returning', () => {
+    const { result, rerender } = renderHook(
+      ({ sessionId }) => useSessionDisplayState(sessionId, 520),
+      { initialProps: { sessionId: 'session-a' } },
+    );
+    act(() => {
+      result.current.setters.setIsReviewOpen(true);
+      result.current.setters.setReviewFocusPath('src/main.ts');
+      result.current.setters.setReviewFocusVersion(1);
+      result.current.setters.setPreferredDisplayTabId(REVIEW_TAB_ID);
+    });
+    rerender({ sessionId: 'session-b' });
+    expect(result.current.state.isReviewOpen).toBe(false);
+    expect(result.current.state.reviewFocusPath).toBe('');
+    rerender({ sessionId: 'session-a' });
+    expect(result.current.state.isReviewOpen).toBe(true);
+    expect(result.current.state.reviewFocusPath).toBe('src/main.ts');
+    expect(result.current.state.reviewFocusVersion).toBe(1);
+    expect(result.current.state.preferredDisplayTabId).toBe(REVIEW_TAB_ID);
+  });
+
+  it('evicts review tabs through the shared background limit and clears their selection', () => {
+    const background = {
+      ...createSessionDisplayState(520),
+      isReviewOpen: true,
+      preferredDisplayTabId: REVIEW_TAB_ID,
+      tabRecency: { [REVIEW_TAB_ID]: 1 },
+    };
+    const active = { ...background, tabRecency: { [REVIEW_TAB_ID]: 2 } };
+    const retained = enforceBackgroundTabLimit({ background, active }, 'active', 0);
+    expect(retained.background.isReviewOpen).toBe(false);
+    expect(retained.background.preferredDisplayTabId).toBeNull();
+    expect(retained.background.tabRecency).toEqual({});
+    expect(retained.active.isReviewOpen).toBe(true);
+  });
+
   it('keeps only the most recently used background tabs while protecting the active session', () => {
     const sessionA = {
       ...createSessionDisplayState(520),

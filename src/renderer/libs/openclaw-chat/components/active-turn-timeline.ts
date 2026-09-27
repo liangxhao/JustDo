@@ -1,4 +1,5 @@
 import { COWORK_PLAN_PREVIEW_EVENT, extractPresentPlanPreview } from '@shared/cowork/planPreview';
+import { REVIEW_OPEN_EVENT } from '@shared/cowork/sessionReview';
 import { html, nothing, type TemplateResult } from 'lit';
 import { repeat } from 'lit/directives/repeat.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
@@ -211,6 +212,29 @@ function renderEditDiff(
     <section class="edit-diff" aria-label=${i18nService.t('coworkEditDiffLabel')}>
       <header class="edit-diff__header">
         <code class="edit-diff__path" title=${diff.path ?? ''}>${diff.path ?? ''}</code>
+        ${
+          diff.path
+            ? html`<button
+                type="button"
+                class="edit-diff__mode-button edit-diff__review"
+                @click=${(event: Event) => {
+                  event.stopPropagation();
+                  const button = event.currentTarget as HTMLElement;
+                  const host = (button.getRootNode() as ShadowRoot).host;
+                  const owner = host?.closest<HTMLElement>('[data-review-session-id]');
+                  if (owner?.dataset.reviewSessionId)
+                    window.dispatchEvent(
+                      new CustomEvent(REVIEW_OPEN_EVENT, {
+                        detail: { sessionId: owner.dataset.reviewSessionId, path: diff.path },
+                      }),
+                    );
+                }}
+              >
+                ${i18nService.t('reviewOpenFile')}
+              </button>`
+            : nothing
+        }
+
         <div
           class="edit-diff__mode-switch"
           role="group"

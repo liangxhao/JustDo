@@ -3,6 +3,7 @@ import {
   DEFAULT_MAX_RETAINED_DISPLAY_TABS,
   normalizeMaxRetainedDisplayTabs,
 } from '@shared/cowork/displayTabRetention';
+import { REVIEW_TAB_ID } from '@shared/cowork/sessionReview';
 import {
   type Dispatch,
   type SetStateAction,
@@ -51,6 +52,11 @@ export interface SessionDisplayState {
   preferredDisplayTabId: string | null;
   sideChatTabs: CoworkSideChatTab[];
   isWorkspaceFilesOpen: boolean;
+  isReviewOpen: boolean;
+  reviewFocusPath: string;
+  reviewFocusVersion: number;
+  filesRevealPath: string;
+  filesRevealVersion: number;
   filePreviews: FilePreview[];
   unsupportedFilePreviews: string[];
   tabRecency: Record<string, number>;
@@ -75,6 +81,11 @@ export const createSessionDisplayState = (browserPanelWidth: number): SessionDis
   preferredDisplayTabId: null,
   sideChatTabs: [],
   isWorkspaceFilesOpen: false,
+  isReviewOpen: false,
+  reviewFocusPath: '',
+  reviewFocusVersion: 0,
+  filesRevealPath: '',
+  filesRevealVersion: 0,
   filePreviews: [],
   unsupportedFilePreviews: [],
   tabRecency: {},
@@ -87,6 +98,7 @@ const SUBAGENT_TAB_ID = 'subagent';
 const fileTabId = (filePath: string): string => `${FILE_TAB_PREFIX}${filePath.replace(/\\/g, '/')}`;
 
 const getDisplayTabIds = (state: SessionDisplayState): string[] => [
+  ...(state.isReviewOpen ? [REVIEW_TAB_ID] : []),
   ...state.browserTabs.map(tab => `${BROWSER_TAB_PREFIX}${tab.targetId}`),
   ...state.terminalTabs.map(tab => tab.id),
   ...state.filePreviews.map(preview => fileTabId(preview.filePath)),
@@ -129,7 +141,9 @@ const retainTabs = (state: SessionDisplayState, retainedTabIds: Set<string>) => 
   );
   const selectedSubagent = retainedTabIds.has(SUBAGENT_TAB_ID) ? state.selectedSubagent : null;
   const sideChatTabs = state.sideChatTabs.filter(tab => retainedTabIds.has(tab.id));
+  const isReviewOpen = state.isReviewOpen && retainedTabIds.has(REVIEW_TAB_ID);
   const liveIds = new Set([
+    ...(isReviewOpen ? [REVIEW_TAB_ID] : []),
     ...browserTabs.map(tab => `${BROWSER_TAB_PREFIX}${tab.targetId}`),
     ...terminalTabs.map(tab => tab.id),
     ...filePreviews.map(preview => fileTabId(preview.filePath)),
@@ -139,6 +153,7 @@ const retainTabs = (state: SessionDisplayState, retainedTabIds: Set<string>) => 
   ]);
   return {
     ...state,
+    isReviewOpen,
     browserTabs,
     terminalTabs,
     filePreviews,
@@ -297,6 +312,11 @@ export function useSessionDisplayState(
       setPreferredDisplayTabId: setter('preferredDisplayTabId'),
       setSideChatTabs: setter('sideChatTabs'),
       setIsWorkspaceFilesOpen: setter('isWorkspaceFilesOpen'),
+      setIsReviewOpen: setter('isReviewOpen'),
+      setReviewFocusPath: setter('reviewFocusPath'),
+      setReviewFocusVersion: setter('reviewFocusVersion'),
+      setFilesRevealPath: setter('filesRevealPath'),
+      setFilesRevealVersion: setter('filesRevealVersion'),
       setFilePreviews: setter('filePreviews'),
       setUnsupportedFilePreviews: setter('unsupportedFilePreviews'),
     };

@@ -83,6 +83,11 @@ import {
   SessionGoalIpc,
   type SessionGoalMutationRequest,
 } from '../shared/cowork/sessionGoal';
+import {
+  type SessionReviewFileAction,
+  SessionReviewIpc,
+  type SessionReviewQuery,
+} from '../shared/cowork/sessionReview';
 import { SessionRunIpc, type SessionRunUnknownInput } from '../shared/cowork/sessionRun';
 import { CoworkSessionSearchIpc } from '../shared/cowork/sessionSearch';
 import { type CancelSessionStartInput, SessionStartIpc } from '../shared/cowork/sessionStart';
@@ -642,6 +647,11 @@ contextBridge.exposeInMainWorld('electron', {
     },
   },
   cowork: {
+    review: {
+      load: (query: SessionReviewQuery) => ipcRenderer.invoke(SessionReviewIpc.Load, query),
+      file: (query: SessionReviewQuery, relative: string, action: SessionReviewFileAction) =>
+        ipcRenderer.invoke(SessionReviewIpc.File, query, relative, action),
+    },
     // Session management
     startSession: (options: {
       prompt: string;

@@ -16,6 +16,7 @@ interface NewDisplayTabMenuProps {
   onCreateSideChat?: () => void;
   onCreateTerminal: () => void;
   onOpenFiles?: () => void;
+  onOpenReview?: () => void;
   sideChatDisabled?: boolean;
   terminalDisabled?: boolean;
 }
@@ -27,6 +28,7 @@ const NewDisplayTabMenu = ({
   onCreateSideChat,
   onCreateTerminal,
   onOpenFiles,
+  onOpenReview,
   sideChatDisabled = false,
   terminalDisabled = false,
 }: NewDisplayTabMenuProps) => {
@@ -182,6 +184,21 @@ const NewDisplayTabMenu = ({
             <CommandLineIcon className="h-4 w-4 text-secondary" />
             {i18nService.t('coworkNewTerminalTab')}
           </button>
+          {onOpenReview && (
+            <button
+              type="button"
+              role="menuitem"
+              tabIndex={-1}
+              ref={element => {
+                itemRefs.current[4] = element;
+              }}
+              className="flex min-h-9 w-full items-center gap-2 rounded-md px-2.5 text-left text-sm text-foreground hover:bg-surface-raised"
+              onClick={() => select(onOpenReview)}
+            >
+              <FolderIcon className="h-4 w-4" />
+              {i18nService.t('reviewTitle')}
+            </button>
+          )}
         </div>
       )}
     </div>

@@ -159,3 +159,53 @@ stream-render-scheduler 合并 frame 更新，assistant pacer 平滑揭示文本
 | 安全与视觉更新    | components/markdown、justdo-chat、controllers                           |
 
 至少验证：同文重复提交、重连时 live/history 交错、工具前后多段正文、终态后迟到 delta、取消早于 admission、超大工具结果、Plan reset 后 rewind 门禁、Goal 操作 fence、后台会话停止、历史窗口移位与滚动锚点。领域测试与真实模型交互检查分别记录，不以一次截图替代协议验证。
+
+## 12. 工作区审阅（T03）
+
+侧面板启动入口和“+ → 审阅”打开按会话保留的只读 Tab；主聊天 edit
+卡通过带产品 session ID 的事件定位文件。其他历史/子任务消息面不显示
+无所属会话的跳转按钮。审阅是当前 checkout 差异，不是工具入参的拼接，也
+不代表所有修改都来自当前 Agent；人工和其他任务的修改同样可能出现。
+
+```mermaid
+sequenceDiagram
+  participant UI as Review Panel
+  participant Main as Session Review IPC
+  participant Gateway as OpenClaw Gateway
+  UI->>Main: 产品 session ID + scope / commit
+  Main->>Gateway: sessions.describe（原生 key / instance）
+  Main->>Gateway: sessions.diff（原生 scope / commit）
+  Main->>Gateway: sessions.describe（核对 instance 未变）
+  Main-->>UI: 文件、统计、patch、不可用原因
+  UI->>Main: 文件相对路径 + preview / files / editor
+  Main->>Gateway: 重新核验差异及会话身份
+  Main->>Main: realpath + 工作区包含关系
+  Main-->>UI: 已核验本地路径 / 失败原因
+```
+
+直接沿用 OpenClaw v2026.9.6 原生行为：会话执行前由原生采集文件指纹基线，
+`all`/`uncommitted` 隐藏与有效基线指纹相同的文件；再次变化的文件显示相对
+Git 基准的完整 patch，不逐行扣除旧修改。`commit` 不应用会话过滤；基线缺失时
+保留原生 checkout 结果。无需用户手动提交，但目录必须是 Git 仓库。产品不新增
+快照或采集逻辑，也不修改原生会话基线；共享目录仍无法准确归属修改者。
+
+组件快照仅是临时展示状态，不写入 Main/SQLite/Redux，也不缓存 transcript。
+首次打开和显式刷新加载；隐藏时取消结果消费，不轮询。运行结束仅提示刷新。
+请求绑定 session、范围、commit、generation；改范围立即隐藏旧范围，迟到响应
+丢弃，同范围刷新失败保留并标注旧快照。Main 同时核对客户端、映射及原生
+instance，reset/reconnect/deletion 后不接收旧身份结果。
+
+文件支持过滤和逐文件展开、统一/并排、行号、语法着色、hunk 边界和自动换行。
+工具栏使用布局图标与更多选项，窄面板压缩文字；文件行始终显示变更类型。
+正文滚动同步目录选中项，文件标题在长 Diff 中吸顶。并排模式共用整块横向
+滚动区域，不为每行创建滚动条；语法高亮按 patch、显示行数与语言缓存。
+复制反馈在对应按钮显示两秒，切换会话或范围后忽略迟到的反馈。
+默认显示 100 个文件、每个展开文件 200 行，可逐步展开；单 patch 最多渲染
+2000 行、每行 4000 字符，并明确提示显示限制。复制原始 Diff 不使用显示截断
+内容。原生截断、二进制、未跟踪、无 patch、非 Git、未知提交及工作区停止
+分别说明。提交候选最多为原生返回的 50 项，不视为完整历史。
+
+“在文件中显示”展开 Files 的父目录并定位；“打开预览”继续走既有预览事件，
+保持版本校验和未保存草稿保护。Windows“选择编辑器”复用系统 Open With
+选择器，不自动执行文件关联；其他平台保留预览/Files。远程无 root 和已删除
+文件不允许本地动作。路径复制保留相对路径中的中文、空格及原始字符。

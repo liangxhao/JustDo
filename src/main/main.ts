@@ -129,6 +129,7 @@ import {
   waitForCoworkConfigUpdates,
 } from './ipc/cowork';
 import { registerCollaborationHandlers } from './ipc/cowork/collaboration';
+import { registerSessionReviewHandlers } from './ipc/cowork/sessionReview';
 import { registerMulticaIntegrationHandlers } from './ipc/multica';
 import {
   registerExtensionHandlers,
@@ -1498,6 +1499,11 @@ if (multicaBridgeArgv) {
   });
 
   registerSessionGroupHandlers(getGroupStore);
+
+  registerSessionReviewHandlers({
+    getRuntime: getOpenClawRuntimeAdapter,
+    getSession: sessionId => getCoworkStore().getSession(sessionId),
+  });
 
   registerCoworkSubtaskHandlers({
     getRuntime: getOpenClawRuntimeAdapter,

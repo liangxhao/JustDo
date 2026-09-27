@@ -4,6 +4,12 @@ import type {
   AgentProfileInput,
   AgentResult,
 } from '../../shared/agents/agents';
+import type {
+  SessionReviewFileAction,
+  SessionReviewFileResult,
+  SessionReviewQuery,
+  SessionReviewResult,
+} from '../../shared/cowork/sessionReview';
 import type { SessionStorageApi } from '../../shared/openclaw/sessionStorage';
 type SessionRunUnknownInput = import('../../shared/cowork/sessionRun').SessionRunUnknownInput;
 type BrowserRecordingLease = import('../../shared/browser/browserRecording').BrowserRecordingLease;
@@ -797,6 +803,14 @@ interface IElectronAPI {
     onStateChanged: (callback: (state: WindowState) => void) => () => void;
   };
   cowork: {
+    review: {
+      load: (query: SessionReviewQuery) => Promise<SessionReviewResult>;
+      file: (
+        query: SessionReviewQuery,
+        relative: string,
+        action: SessionReviewFileAction,
+      ) => Promise<SessionReviewFileResult>;
+    };
     startSession: (options: {
       prompt: string;
       gatewayPrompt?: string;

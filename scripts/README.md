@@ -23,3 +23,8 @@ helpers explicitly. Resolve repository paths relative to the script location;
 do not rely on the caller's working directory when locating repository assets.
 Versioned patches remain under `patches/`; runtime orchestration belongs in
 `openclaw/`.
+
+`test/verify-session-review.cjs [runtime-dir] [evidence-json]` checks T03 against a
+prepared Gateway using native session baseline filtering. It creates its own temporary config,
+credentials, Git repository and sessions, stops the test Gateway when finished,
+and prints only synthetic evidence. It never uses the application's live state.

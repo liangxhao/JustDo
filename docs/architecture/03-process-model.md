@@ -134,3 +134,21 @@ Main 先检查产品会话仍存在，再以其受管原生 session keys 核对 
 主窗口通过显式 `browser:intervention` IPC 请求 begin/read/confirmStop/resume/complete。Main 校验主 frame 和窗口所有权，首次介入要求真实注册 guest；既有介入绑定窗口，网页关闭后仍允许原窗口恢复。原窗口销毁后，只有持有同会话真实 guest 的新可信窗口可接管。BrowserAgentBridge 的会话级介入状态阻止新 browser 调用；取消信号与实际操作结束分别跟踪。Renderer 复用任务停止与运行状态核对，不能仅凭取消 RPC 返回开放人工输入。介入 token 限制重复或过期的继续请求，状态保留于 Main 内存，Renderer 重载不会自动释放。没有 SQLite 迁移或消息缓存。真实网页和会话回执仍由既有系统负责。
 
 停止回执与运行状态更新可以先后到达。Renderer 在介入 `stopping` 且 `stopConfirmed=false` 时每两秒复查会话及子任务的权威运行状态，并等待待发送任务取消完成；确认空闲后以原 token 补交停止确认。Main 分别保留停止确认和原始浏览器动作收尾状态，后者未完成时继续阻止人工交互。面板重新打开会恢复核对，过期异步结果不能更新新介入，不自动重发停止或继续请求。
+
+## 工作区审阅 IPC
+
+`cowork:sessionReview:load` 和 `cowork:sessionReview:file` 由主窗口 preload 的
+`cowork.review` 暴露。Renderer 仅提交产品 session ID、比较范围、可选 commit
+及文件相对路径/动作，不提交原生 key、repo root 或任意 Git 命令。
+
+Main 校验来源为窗口、产品会话存在、参数合法后，由 Runtime Adapter 解析
+受管原生 key；`sessions.describe` 在 Diff 前后核对 instance，客户端或会话映射
+变化即失败。读取直接调用原生 `sessions.diff`，沿用原生会话基线过滤和比较范围；
+Main 不执行 Git、不采集或存储 Git 快照。
+
+文件动作重新读取差异验证文件归属，拒绝删除文件、缺失远程 root、绝对路径、
+越界、Git 元数据和 Windows ADS 路径。对仓库 root、产品 cwd、目标 realpath
+做包含关系校验，防止链接/目录联接逃逸；完成路径解析后再核对原生 instance。
+文件打开仅允许单链接的普通文件，避免通过硬链接绕过原生 Diff 的内容保护。
+预览/Files 只返回核验过的路径，编辑器动作在 Main 调用现有 Windows 系统
+Open With 选择器。Renderer 不把原生远程路径交给本机 shell。

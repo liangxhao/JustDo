@@ -214,3 +214,75 @@ test('keeps matching descendants connected to their parent and supports tree key
   expect(screen.getByText('src')).not.toBeNull();
   expect(file.getAttribute('aria-selected')).toBe('true');
 });
+
+test('reveals a nested review file by loading its parents without opening a preview', async () => {
+  listWorkspaceDirectory.mockImplementation(async (_sessionId: string, relativePath = '') => ({
+    success: true,
+    truncated: false,
+    entries:
+      relativePath === ''
+        ? [{ filePath: 'C:/work/src', relativePath: 'src', name: 'src', kind: 'directory' }]
+        : [
+            {
+              filePath: 'C:/work/src/中文 文件.ts',
+              relativePath: 'src/中文 文件.ts',
+              name: '中文 文件.ts',
+              kind: 'file',
+            },
+          ],
+  }));
+  const onOpenFile = vi.fn();
+  render(
+    <WorkspaceFilesPanel sessionId="one" revealPath="src/中文 文件.ts" onOpenFile={onOpenFile} />,
+  );
+  await screen.findByText('中文 文件.ts');
+  await waitFor(() => expect(document.activeElement?.textContent).toContain('中文 文件.ts'));
+  expect(onOpenFile).not.toHaveBeenCalled();
+});
+
+test('does not steal focus back to the review file when another directory loads', async () => {
+  listWorkspaceDirectory.mockImplementation(async (_sessionId: string, relativePath = '') => ({
+    success: true,
+    truncated: false,
+    entries: relativePath === ''
+      ? [
+          { filePath: '/work/readme.md', relativePath: 'readme.md', name: 'readme.md', kind: 'file' },
+          { filePath: '/work/src', relativePath: 'src', name: 'src', kind: 'directory' },
+        ]
+      : [{ filePath: '/work/src/main.ts', relativePath: 'src/main.ts', name: 'main.ts', kind: 'file' }],
+  }));
+  render(<WorkspaceFilesPanel sessionId="one" revealPath="readme.md" onOpenFile={vi.fn()} />);
+  const file = await screen.findByRole('treeitem', { name: 'readme.md' });
+  await waitFor(() => expect(document.activeElement).toBe(file));
+  const directory = screen.getByRole('treeitem', { name: 'src' });
+  directory.focus();
+  fireEvent.keyDown(directory, { key: 'ArrowRight' });
+  await screen.findByRole('treeitem', { name: 'main.ts' });
+  expect(document.activeElement).toBe(directory);
+});
+
+test('repeats a reveal for the same cached root file after it was filtered out', async () => {
+  listWorkspaceDirectory.mockResolvedValue({
+    success: true,
+    truncated: false,
+    entries: [{ filePath: '/work/main.ts', relativePath: 'main.ts', name: 'main.ts', kind: 'file' }],
+  });
+  const view = render(
+    <WorkspaceFilesPanel sessionId="one" revealPath="main.ts" revealVersion={1} onOpenFile={vi.fn()} />,
+  );
+  const file = await screen.findByRole('treeitem', { name: 'main.ts' });
+  await waitFor(() => expect(document.activeElement).toBe(file));
+  const filter = screen.getByRole('textbox');
+  filter.focus();
+  fireEvent.change(filter, { target: { value: 'no-match' } });
+  expect(screen.queryByRole('treeitem')).toBeNull();
+
+  view.rerender(
+    <WorkspaceFilesPanel sessionId="one" revealPath="main.ts" revealVersion={2} onOpenFile={vi.fn()} />,
+  );
+
+  const revealed = await screen.findByRole('treeitem', { name: 'main.ts' });
+  await waitFor(() => expect(document.activeElement).toBe(revealed));
+  expect(filter).toHaveProperty('value', '');
+  expect(listWorkspaceDirectory).toHaveBeenCalledTimes(1);
+});

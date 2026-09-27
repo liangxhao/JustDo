@@ -9,6 +9,12 @@ export const chatStyles = [
   unsafeCSS(katexStyles),
   unsafeCSS(monacoEditorStyles),
   css`
+    .edit-diff__review {
+      display: none;
+    }
+    :host-context([data-review-session-id]) .edit-diff__review {
+      display: inline-flex;
+    }
     :host {
       display: block;
       font-family: var(

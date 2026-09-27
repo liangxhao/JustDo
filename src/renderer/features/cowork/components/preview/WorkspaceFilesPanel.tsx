@@ -8,12 +8,16 @@ import WorkspaceFileIcon from './WorkspaceFileIcon';
 
 interface WorkspaceFilesPanelProps {
   activeFilePath?: string;
+  revealPath?: string;
+  revealVersion?: number;
   onOpenFile: (filePath: string) => void;
   sessionId: string;
 }
 
 const WorkspaceFilesPanel = ({
   activeFilePath,
+  revealPath,
+  revealVersion,
   onOpenFile,
   sessionId,
 }: WorkspaceFilesPanelProps) => {
@@ -29,6 +33,7 @@ const WorkspaceFilesPanel = ({
   const activeSessionIdRef = useRef(sessionId);
   const filterInputRef = useRef<HTMLInputElement>(null);
   const treeItemRefs = useRef(new Map<string, HTMLButtonElement>());
+  const pendingRevealPath = useRef<string | null>(null);
   activeSessionIdRef.current = sessionId;
 
   const loadDirectory = useCallback(
@@ -87,6 +92,27 @@ const WorkspaceFilesPanel = ({
   useEffect(() => {
     filterInputRef.current?.focus();
   }, []);
+
+  useEffect(() => {
+    pendingRevealPath.current = null;
+    if (!revealPath) return;
+    const parts = revealPath.split('/');
+    if (parts.some(part => part === '..' || !part)) return;
+    pendingRevealPath.current = revealPath;
+    setQuery('');
+    const parents = parts.slice(0, -1).map((_, index) => parts.slice(0, index + 1).join('/'));
+    setExpandedDirectories(new Set(parents));
+    setFocusedPath(revealPath);
+    for (const parent of parents) void loadDirectory(parent);
+  }, [revealPath, revealVersion, loadDirectory]);
+  useEffect(() => {
+    if (!pendingRevealPath.current) return;
+    const node = treeItemRefs.current.get(pendingRevealPath.current);
+    if (!node) return;
+    pendingRevealPath.current = null;
+    node.scrollIntoView?.({ block: 'nearest' });
+    node.focus();
+  }, [revealPath, revealVersion, entriesByDirectory, query, expandedDirectories]);
 
   const normalizedQuery = query.trim().toLocaleLowerCase();
 

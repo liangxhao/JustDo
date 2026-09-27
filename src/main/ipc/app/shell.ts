@@ -170,7 +170,7 @@ export const resolveSystemOpenWithCommand = (
   };
 };
 
-const openPathWithSystemChooser = async (
+export const openPathWithSystemChooser = async (
   filePath: string,
 ): Promise<{ success: boolean; error?: string; notFound?: boolean; unavailable?: boolean }> => {
   try {
