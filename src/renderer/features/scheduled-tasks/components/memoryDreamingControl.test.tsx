@@ -13,6 +13,8 @@ import {
 import { Provider } from 'react-redux';
 import { afterEach, expect, test, vi } from 'vitest';
 
+import { i18nService } from '@/services/i18n';
+
 import { CronJobCard } from './CronView';
 import {
   MEMORY_DREAMING_CARD_ID,
@@ -153,4 +155,35 @@ test('an older config read cannot overwrite a successfully saved feature setting
     finishRead({ success: true, settings: enabled });
   });
   expect(result.current.settings?.skillMode).toBe('off');
+});
+
+test('keeps a paused native job paused while the feature switch remains enabled', () => {
+  const job = {
+    ...withMemoryDreamingCard([], enabled)[0],
+    id: 'native-memory-job',
+    enabled: false,
+  };
+  expect(withMemoryDreamingCard([job], enabled)[0].enabled).toBe(false);
+  const onToggle = vi.fn();
+  const store = configureStore({ reducer: { agent: () => ({ agents: [] }) } });
+  render(
+    <Provider store={store}>
+      <CronJobCard
+        job={job}
+        memoryFeatureEnabled
+        memoryToggleDisabled={false}
+        onToggle={onToggle}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onTrigger={vi.fn()}
+        onHistory={vi.fn()}
+        onDetails={vi.fn()}
+      />
+    </Provider>,
+  );
+  expect(screen.getByRole('switch').getAttribute('aria-checked')).toBe('true');
+  expect(screen.getByText(i18nService.t('cronMemoryJobPaused'))).toBeTruthy();
+  expect(screen.getByRole('switch', { name: i18nService.t('cronMemoryFeatureOn') })).toBeTruthy();
+  fireEvent.click(screen.getByRole('switch'));
+  expect(onToggle).toHaveBeenCalledWith(false);
 });

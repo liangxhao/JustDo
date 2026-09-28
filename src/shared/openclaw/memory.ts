@@ -8,6 +8,18 @@ export const MemoryIpc = {
 
 export type MemoryDocumentKind = 'profile' | 'longTerm' | 'daily' | 'dream' | 'dreaming';
 
+export const MemoryIndexHealth = {
+  Ready: 'ready',
+  Indexed: 'indexed',
+  KeywordOnly: 'keyword-only',
+  Stale: 'stale',
+  Disabled: 'disabled',
+  Unavailable: 'unavailable',
+  Unknown: 'unknown',
+} as const;
+
+export type MemoryIndexHealth = (typeof MemoryIndexHealth)[keyof typeof MemoryIndexHealth];
+
 export interface MemoryDocumentSummary {
   id: string;
   relativePath: string;
@@ -36,6 +48,8 @@ export interface MemoryDocumentCounts {
 }
 
 export interface MemoryIndexStatus {
+  health?: MemoryIndexHealth;
+  warning?: string;
   available: boolean;
   chunks: number;
   dirty: boolean;
@@ -51,6 +65,8 @@ export interface MemoryOverview {
 }
 
 export interface MemorySearchHit {
+  source?: 'memory' | 'sessions';
+  previewable?: boolean;
   path: string;
   startLine: number;
   endLine: number;
@@ -77,12 +93,17 @@ export interface MemoryDocumentResult {
 }
 
 export interface MemorySearchResult {
+  searchMode?: 'hybrid' | 'fts-only';
+  stale?: boolean;
+  warning?: string;
+  action?: string;
   success: boolean;
   hits?: MemorySearchHit[];
   error?: string;
 }
 
 export interface MemoryRebuildResult {
+  warning?: string;
   success: boolean;
   index?: MemoryIndexStatus;
   durationMs?: number;

@@ -15,6 +15,11 @@ export function readSystemTaskSettings(value: unknown): SystemTaskSettings {
     memoryAvailable:
       (slot === undefined || slot === 'memory-core') &&
       plugins.enabled !== false &&
+      !(
+        Array.isArray(plugins.allow) &&
+        plugins.allow.length > 0 &&
+        !plugins.allow.includes('memory-core')
+      ) &&
       memory.enabled !== false &&
       !(Array.isArray(plugins.deny) && plugins.deny.includes('memory-core')),
     skillMode: mode === 'auto' || mode === 'propose' ? mode : 'off',

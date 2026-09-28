@@ -16,6 +16,11 @@ export type LanguageType = 'zh' | 'en';
 
 const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
+    memoryWorkspaceUnavailable: '无法确定记忆工作区，请检查服务连接。',
+    memoryStatusUnavailable: '无法读取记忆索引状态。',
+    memoryRebuildUnverified: '索引未完成重建，或无法验证重建后的状态。',
+    memoryRebuildDegraded: '索引命令已完成，但语义检索尚未确认可用，请检查索引状态。',
+
     selectedModelUnavailable: '所选模型已停用或移除，请重新选择可用模型。',
     selectedModelProviderNotReady: '所选模型的提供商尚未就绪，请检查配置和认证状态。',
     selectedModelRouteChanged: '所选模型的路由已变更，请重新选择模型。',
@@ -83,6 +88,14 @@ const translations: Record<LanguageType, Record<string, string>> = {
     browserContextSaveImage: '图片另存为…',
   },
   en: {
+    memoryWorkspaceUnavailable:
+      'The memory workspace could not be resolved. Check the service connection.',
+    memoryStatusUnavailable: 'Memory index status is unavailable.',
+    memoryRebuildUnverified:
+      'The index was not rebuilt or its resulting status could not be verified.',
+    memoryRebuildDegraded:
+      'The indexing command completed, but semantic retrieval is not confirmed. Check index status.',
+
     selectedModelUnavailable:
       'The selected model is no longer enabled. Please select an available model.',
     selectedModelProviderNotReady:
@@ -96,8 +109,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
     builtinModelAuthenticationUnavailable:
       'Built-in model authentication is unavailable. Wait for login credentials to refresh.',
     credentialStorageUnavailable: 'Secure operating-system credential storage is unavailable.',
-    credentialDecryptionFailed: 'Failed to unlock the application credential with this operating-system account.',
-    builtinCredentialTargetMismatch: 'Built-in model credentials can only be used with the designated model request URL.',
+    credentialDecryptionFailed:
+      'Failed to unlock the application credential with this operating-system account.',
+    builtinCredentialTargetMismatch:
+      'Built-in model credentials can only be used with the designated model request URL.',
     // Tray menu
     trayStartConversation: 'Start Conversation',
     traySettings: 'Settings',
@@ -143,7 +158,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     browserExternalProtocolMessage: 'This page wants to open an external application:',
     browserExternalProtocolConfirm: 'Open',
     browserExternalProtocolCancel: 'Cancel',
-    browserExternalProtocolFailed: 'Unable to open the associated application. Check that an app supporting this link is installed.',
+    browserExternalProtocolFailed:
+      'Unable to open the associated application. Check that an app supporting this link is installed.',
     browserPermissionTitle: 'Website permission request',
     browserPermissionMessage: '{site} wants to use {permission}',
     browserPermissionAllow: 'Allow for this page',

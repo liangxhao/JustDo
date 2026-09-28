@@ -16,7 +16,9 @@ export function withMemoryDreamingCard(
   if (!settings) return tasks;
   const enabled = settings.memoryAvailable && settings.memoryDreamingEnabled;
   if (tasks.some(isMemoryDreamingTask))
-    return tasks.map(task => (isMemoryDreamingTask(task) ? { ...task, enabled } : task));
+    return tasks.map(task =>
+      isMemoryDreamingTask(task) ? { ...task, enabled: enabled && task.enabled } : task,
+    );
   return [
     ...tasks,
     {

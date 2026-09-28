@@ -28,6 +28,7 @@ describe('native system task settings', () => {
     expect(() => buildSystemTaskSettingsPatch({ tools: {} } as never, {})).toThrow();
     for (const plugins of [
       { enabled: false },
+      { allow: ['runtime-services'] },
       { slots: { memory: 'none' } },
       { slots: { memory: 'custom' } },
       { deny: ['memory-core'] },

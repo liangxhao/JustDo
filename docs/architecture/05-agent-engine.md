@@ -167,3 +167,28 @@ embedding host 关闭 Bonjour、shell snapshot、自重生和非产品 channel�
 | 显示 | 原生有事件但 UI 缺失                | controller generation、history reconcile |
 
 回归入口为 Manager/ConfigSyncService 测试、Adapter 各领域测试、wire validator 测试及 `tests/openclaw/runtime/`。版本升级必须验证 pristine contracts 与最终打包产物，不能用旁边的 OpenClaw 开发副本代替。
+
+## 记忆浏览与索引诊断
+
+首页记忆页只读取 `main` 的工作区 Markdown 资料，不维护第二份记忆库。
+显式绝对工作区可离线浏览；用户目录、相对路径和隐式工作区通过原生
+`agents.files.list` 取得实际路径，避免复制 OpenClaw 的默认身份和目录推导规则。
+
+搜索经 `memory.search` 返回原生结果与 `searchMode / stale / warning / action`。
+页面保留会话和额外目录来源的检索片段，只有通过工作区内规范记忆文件校验的命中
+可打开本地预览；片段来源不扩大文件读取权限。过期或失败诊断不能伪装成普通空结果。
+
+索引状态来自 `memory status --agent main --json`，区分语义就绪、仅关键词、过期、
+关闭、不可用与尚未确认；原生 `vector.index.state=complete` 且索引身份有效时，
+单独标为“索引完整、服务未探测”，可确认索引重建完成，但不证明实时服务健康。
+读取到状态或存在分块不证明语义向量可用；需检查
+`vector.semanticAvailable`、FTS、索引身份与同步错误。未执行深度探测时不宣称
+embedding 服务实时健康。原生诊断经过脱敏后展示，操作建议保留原始命令。
+
+强制重建继续使用原生 `memory index --force --agent main`，保留原生原子发布语义。
+退出码为零后还需检查关闭/不支持重建提示与重建后的索引状态。状态无法确认时返回
+失败；仅关键词、未能确认索引完整性或命令告警时明确提示，不能显示无条件成功。
+文档统计只统计 Markdown 文件，不等价于原生 SQLite 短期召回、整理信号或记忆条目数量。
+
+计划任务的记忆总开关表示配置意愿，原生任务的 enabled 和调度记录表示任务状态。
+启用总开关不覆盖原生暂停状态，插件 allow/deny/slot 限制仍生效。

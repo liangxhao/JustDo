@@ -568,6 +568,9 @@ export const scheduledTaskTranslations = {
     cronSkillReviewScope: '全部助手',
     cronSkillReviewScheduleManaged: '按助手工作区定期整理',
     cronSkillReviewMembers: '各助手运行记录',
+    cronMemoryFeatureOn: '记忆整理已开启',
+    cronMemoryFeatureOff: '记忆整理已关闭',
+    cronMemoryJobPaused: '调度任务已暂停',
     cronMemoryScope: '全部助手工作区',
     cronMemoryScheduleManaged: '由记忆功能统一调度',
     cronMemoryToggleHint: '控制所有工作区的长期记忆整理；关闭后仍可在此重新开启。',
@@ -636,7 +639,8 @@ export const scheduledTaskTranslations = {
     cronToastDeliveryChannelRequired: '请选择一个外部通知通道。',
   },
   en: {
-    workboardCardChanged: 'This task has changed. Refresh and review its latest result before trying again.',
+    workboardCardChanged:
+      'This task has changed. Refresh and review its latest result before trying again.',
     workboardStopBeforeChanging:
       'This task has started. Refresh to see its progress; stop execution before changing its status.',
     workboardMoreSettings: 'More settings',
@@ -1245,6 +1249,9 @@ export const scheduledTaskTranslations = {
     cronSkillReviewScope: 'All assistants',
     cronSkillReviewScheduleManaged: 'Scheduled per assistant workspace',
     cronSkillReviewMembers: 'Assistant run records',
+    cronMemoryFeatureOn: 'Memory consolidation on',
+    cronMemoryFeatureOff: 'Memory consolidation off',
+    cronMemoryJobPaused: 'Scheduled job paused',
     cronMemoryScope: 'All assistant workspaces',
     cronMemoryScheduleManaged: 'Scheduled by the memory feature',
     cronMemoryToggleHint:

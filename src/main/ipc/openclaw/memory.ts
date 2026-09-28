@@ -9,6 +9,7 @@ import {
   type MemoryDocumentKind,
   type MemoryDocumentResult,
   type MemoryDocumentSummary,
+  MemoryIndexHealth,
   type MemoryIndexStatus,
   type MemoryIndexStatusResult,
   MemoryIpc,
@@ -18,6 +19,7 @@ import {
   type MemorySearchHit,
   type MemorySearchResult,
 } from '../../../shared/openclaw/memory';
+import { t } from '../../core/i18n';
 import {
   type OpenClawCliEnvironment,
   OpenClawCliNetworkMode,
@@ -63,18 +65,26 @@ const readJsonFile = <T>(filePath: string): T | null => {
   }
 };
 
-export const resolveMemoryWorkspace = (manager: OpenClawEngineManager): string => {
+export const resolveMemoryWorkspace = async (
+  manager: OpenClawEngineManager,
+  requestGateway: MemoryHandlerDependencies['requestGateway'],
+): Promise<string> => {
   const config = readJsonFile<OpenClawConfig>(manager.getConfigPath());
   const agent =
     config?.agents?.entries?.[MEMORY_AGENT_ID] ??
     config?.agents?.list?.find(item => item.id === MEMORY_AGENT_ID);
-  const configured =
-    typeof agent?.workspace === 'string'
-      ? agent.workspace.trim()
-      : typeof config?.agents?.defaults?.workspace === 'string'
-        ? config.agents.defaults.workspace.trim()
-        : '';
-  return path.resolve(configured || path.join(manager.getStateDir(), 'workspace'));
+  const configured = typeof agent?.workspace === 'string' ? agent.workspace.trim() : '';
+  if (path.isAbsolute(configured)) return path.resolve(configured);
+  // Native home/environment and ownership rules resolve all other workspace paths.
+  const result = await requestGateway<unknown>('agents.files.list', { agentId: MEMORY_AGENT_ID });
+  if (
+    !isRecord(result) ||
+    typeof result.workspace !== 'string' ||
+    !path.isAbsolute(result.workspace)
+  ) {
+    throw new Error(t('memoryWorkspaceUnavailable'));
+  }
+  return result.workspace;
 };
 
 const readFilePrefix = (filePath: string, maxBytes: number): string => {
@@ -110,7 +120,9 @@ const extractPreview = (content: string): string => {
   return preview.length > 280 ? `${preview.slice(0, 277)}…` : preview;
 };
 
-const classifyMemoryDocument = (relativePath: string): { kind: MemoryDocumentKind; date?: string } => {
+const classifyMemoryDocument = (
+  relativePath: string,
+): { kind: MemoryDocumentKind; date?: string } => {
   const normalized = relativePath.replace(/\\/g, '/');
   if (/^USER\.md$/i.test(normalized)) return { kind: 'profile' };
   if (/^MEMORY\.md$/i.test(normalized)) return { kind: 'longTerm' };
@@ -125,13 +137,13 @@ const isTopLevelMemoryFile = (fileName: string): boolean =>
 
 const isAllowedMemoryRelativePath = (relativePath: string): boolean =>
   isTopLevelMemoryFile(relativePath) ||
-  (relativePath.toLowerCase().startsWith('memory/') &&
-    relativePath.toLowerCase().endsWith('.md'));
+  (relativePath.toLowerCase().startsWith('memory/') && relativePath.toLowerCase().endsWith('.md'));
 
 const walkMarkdownFiles = (directory: string, output: string[]): void => {
   if (output.length >= MAX_MEMORY_DOCUMENTS || !fs.existsSync(directory)) return;
   let entries: fs.Dirent[];
   try {
+    if (fs.lstatSync(directory).isSymbolicLink()) return;
     entries = fs.readdirSync(directory, { withFileTypes: true });
   } catch {
     return;
@@ -234,8 +246,7 @@ const terminateProcess = (child: ReturnType<typeof spawn>): void => {
   }
 };
 
-const removeEngineBrand = (value: string): string =>
-  value.replace(/openclaw/gi, 'memory service');
+const removeEngineBrand = (value: string): string => value.replace(/openclaw/gi, 'memory service');
 
 const toPublicMemoryError = (error: unknown, fallback: string): string =>
   removeEngineBrand(error instanceof Error ? error.message : fallback);
@@ -298,18 +309,63 @@ const sanitizeCommandError = (result: CommandResult): string => {
 const readNumber = (value: unknown): number =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0;
 
+const sanitizeMemoryDiagnostic = (value: string): string =>
+  value
+    .replace(/\u001b\[[0-9;]*m/g, '')
+    .replace(/((?:api[_-]?key|token|secret)\s*[=:]\s*)\S+/gi, '$1***')
+    .replace(/(Bearer\s+)\S+/gi, '$1***')
+    .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1***:***@')
+    .trim()
+    .slice(-1_500);
+
 export const normalizeMemoryIndexStatus = (value: unknown): MemoryIndexStatus => {
-  const root = Array.isArray(value) ? value[0] : value;
+  const root = Array.isArray(value)
+    ? value.find(entry => isRecord(entry) && entry.agentId === MEMORY_AGENT_ID)
+    : value;
   const item = isRecord(root) && isRecord(root.status) ? root.status : root;
-  if (!isRecord(item)) {
+  if (!isRecord(item) || typeof item.provider !== 'string' || item.backend !== 'builtin') {
     return {
       available: false,
       chunks: 0,
       dirty: false,
-      error: 'Memory index status is unavailable',
+      health: MemoryIndexHealth.Unavailable,
+      error: t('memoryStatusUnavailable'),
     };
   }
+  const vector = isRecord(item.vector) ? item.vector : {};
+  const fts = isRecord(item.fts) ? item.fts : {};
+  const custom = isRecord(item.custom) ? item.custom : {};
+  const identity = isRecord(custom.indexIdentity) ? custom.indexIdentity : {};
+  const stale =
+    identity.status === 'missing' ||
+    identity.status === 'mismatched' ||
+    (typeof item.lastSyncError === 'string' && Boolean(item.lastSyncError.trim()));
+  const vectorIndex = isRecord(vector.index) ? vector.index : {};
+  const indexed = vectorIndex.state === 'complete' && identity.status === 'valid';
+  const semantic = vector.enabled !== false && vector.semanticAvailable === true;
+  const keywordOnly =
+    custom.searchMode === 'fts-only' ||
+    item.provider === 'none' ||
+    vector.enabled === false ||
+    vector.semanticAvailable === false;
+  const health = stale
+    ? MemoryIndexHealth.Stale
+    : keywordOnly && fts.available === true
+      ? MemoryIndexHealth.KeywordOnly
+      : semantic
+        ? MemoryIndexHealth.Ready
+        : indexed && !keywordOnly
+          ? MemoryIndexHealth.Indexed
+          : fts.available === false && keywordOnly
+            ? MemoryIndexHealth.Unavailable
+            : MemoryIndexHealth.Unknown;
+  const warning = [identity.reason, item.lastSyncError, vector.loadError, fts.error]
+    .filter((entry): entry is string => typeof entry === 'string' && Boolean(entry.trim()))
+    .map(sanitizeMemoryDiagnostic)
+    .join('\n');
   return {
+    health,
+    ...(warning ? { warning } : {}),
     available: true,
     chunks: readNumber(item.chunks),
     dirty: item.dirty === true,
@@ -329,6 +385,9 @@ const loadIndexStatus = async (
       workspaceDir,
     );
     if (result.exitCode !== 0) throw new Error(sanitizeCommandError(result));
+    if (result.stdout.trim().startsWith('Memory search disabled.')) {
+      return { available: false, chunks: 0, dirty: false, health: MemoryIndexHealth.Disabled };
+    }
     return normalizeMemoryIndexStatus(JSON.parse(result.stdout));
   } catch (error) {
     return {
@@ -351,8 +410,7 @@ export const buildMemoryRebuildCliEnvironment = async (
   manager: OpenClawEngineManager,
 ): Promise<OpenClawCliEnvironment> => buildMemoryCliEnvironment(manager);
 
-const buildOverview = (manager: OpenClawEngineManager): MemoryOverview => {
-  const workspaceDir = resolveMemoryWorkspace(manager);
+const buildOverview = (workspaceDir: string): MemoryOverview => {
   const documents = scanMemoryDocuments(workspaceDir);
   return {
     documents,
@@ -371,22 +429,31 @@ const resolveDocumentPath = (
   if (!isAllowedMemoryRelativePath(normalized)) return null;
   const workspaceRoot = path.resolve(workspaceDir);
   const filePath = path.resolve(workspaceRoot, normalized);
-  if (filePath !== workspaceRoot && !filePath.startsWith(`${workspaceRoot}${path.sep}`)) return null;
+  const canonicalRelativePath = path.relative(workspaceRoot, filePath).replace(/\\/g, '/');
+  if (!isAllowedMemoryRelativePath(canonicalRelativePath)) return null;
+  if (filePath !== workspaceRoot && !filePath.startsWith(`${workspaceRoot}${path.sep}`))
+    return null;
   try {
     if (!fs.statSync(filePath).isFile() || fs.lstatSync(filePath).isSymbolicLink()) return null;
     const realWorkspace = fs.realpathSync(workspaceRoot);
     const realFile = fs.realpathSync(filePath);
     if (!realFile.startsWith(`${realWorkspace}${path.sep}`)) return null;
+    const realRelativePath = path.relative(realWorkspace, realFile).replace(/\\/g, '/');
+    if (!isAllowedMemoryRelativePath(realRelativePath)) return null;
   } catch {
     return null;
   }
-  return { filePath, relativePath: normalized };
+  return { filePath, relativePath: canonicalRelativePath };
 };
 
 export const normalizeSearchHits = (value: unknown, workspaceDir: string): MemorySearchHit[] => {
   if (!isRecord(value) || !Array.isArray(value.results)) return [];
   return value.results.slice(0, 20).flatMap(result => {
-    if (!isRecord(result) || typeof result.path !== 'string' || typeof result.snippet !== 'string') {
+    if (
+      !isRecord(result) ||
+      typeof result.path !== 'string' ||
+      typeof result.snippet !== 'string'
+    ) {
       return [];
     }
     const workspaceRoot = path.resolve(workspaceDir);
@@ -394,10 +461,16 @@ export const normalizeSearchHits = (value: unknown, workspaceDir: string): Memor
       ? path.resolve(result.path)
       : path.resolve(workspaceRoot, result.path);
     const displayPath = path.relative(workspaceRoot, absolutePath).replace(/\\/g, '/');
-    if (!isAllowedMemoryRelativePath(displayPath)) return [];
+    if (result.source !== undefined && result.source !== 'memory' && result.source !== 'sessions')
+      return [];
+    const source = result.source === 'sessions' ? 'sessions' : 'memory';
+    // Gateway authorizes scope; snippets do not grant arbitrary file access.
+    if (!result.source && !isAllowedMemoryRelativePath(displayPath)) return [];
     return [
       {
         path: displayPath,
+        source,
+        previewable: source === 'memory' && resolveDocumentPath(workspaceDir, displayPath) !== null,
         startLine: readNumber(result.startLine),
         endLine: readNumber(result.endLine),
         score: typeof result.score === 'number' && Number.isFinite(result.score) ? result.score : 0,
@@ -412,10 +485,11 @@ export const registerOpenClawMemoryHandlers = ({
   requestGateway,
 }: MemoryHandlerDependencies): void => {
   let rebuildPromise: Promise<MemoryRebuildResult> | null = null;
+  const workspace = () => resolveMemoryWorkspace(getManager(), requestGateway);
 
   ipcMain.handle(MemoryIpc.GetOverview, async (): Promise<MemoryOverviewResult> => {
     try {
-      return { success: true, overview: buildOverview(getManager()) };
+      return { success: true, overview: buildOverview(await workspace()) };
     } catch (error) {
       return {
         success: false,
@@ -429,7 +503,7 @@ export const registerOpenClawMemoryHandlers = ({
       const manager = getManager();
       return {
         success: true,
-        index: await loadIndexStatus(manager, resolveMemoryWorkspace(manager)),
+        index: await loadIndexStatus(manager, await workspace()),
       };
     } catch (error) {
       return {
@@ -443,7 +517,7 @@ export const registerOpenClawMemoryHandlers = ({
     MemoryIpc.GetDocument,
     async (_event, relativePath: string): Promise<MemoryDocumentResult> => {
       try {
-        const workspaceDir = resolveMemoryWorkspace(getManager());
+        const workspaceDir = await workspace();
         const resolved = resolveDocumentPath(workspaceDir, relativePath);
         if (!resolved) return { success: false, error: 'Memory document was not found' };
         const stats = fs.statSync(resolved.filePath);
@@ -471,14 +545,29 @@ export const registerOpenClawMemoryHandlers = ({
     const normalizedQuery = typeof query === 'string' ? query.trim().slice(0, 500) : '';
     if (!normalizedQuery) return { success: true, hits: [] };
     try {
-      const manager = getManager();
-      const workspaceDir = resolveMemoryWorkspace(manager);
+      const workspaceDir = await workspace();
       const result = await requestGateway<unknown>('memory.search', {
         query: normalizedQuery,
         agentId: MEMORY_AGENT_ID,
         maxResults: 20,
       });
-      return { success: true, hits: normalizeSearchHits(result, workspaceDir) };
+      if (!isRecord(result) || !Array.isArray(result.results)) {
+        throw new Error(t('memoryStatusUnavailable'));
+      }
+      return {
+        success: true,
+        hits: normalizeSearchHits(result, workspaceDir),
+        ...(result.searchMode === 'hybrid' || result.searchMode === 'fts-only'
+          ? { searchMode: result.searchMode }
+          : {}),
+        stale: result.stale === true,
+        ...(typeof result.warning === 'string'
+          ? { warning: sanitizeMemoryDiagnostic(result.warning) }
+          : {}),
+        ...(typeof result.action === 'string'
+          ? { action: sanitizeMemoryDiagnostic(result.action) }
+          : {}),
+      };
     } catch (error) {
       return {
         success: false,
@@ -493,7 +582,7 @@ export const registerOpenClawMemoryHandlers = ({
       const startedAt = Date.now();
       try {
         const manager = getManager();
-        const workspaceDir = resolveMemoryWorkspace(manager);
+        const workspaceDir = await workspace();
         const cli = await buildMemoryRebuildCliEnvironment(manager);
         const result = await runOpenClawCommand(
           cli,
@@ -502,12 +591,42 @@ export const registerOpenClawMemoryHandlers = ({
           workspaceDir,
         );
         if (result.exitCode !== 0) {
-          return { success: false, durationMs: Date.now() - startedAt, error: sanitizeCommandError(result) };
+          return {
+            success: false,
+            durationMs: Date.now() - startedAt,
+            error: sanitizeCommandError(result),
+          };
         }
+        const index = await loadIndexStatus(manager, workspaceDir);
+        const skipped =
+          result.stdout.includes('Memory search disabled.') ||
+          result.stdout.includes('Memory backend does not support manual reindex.');
+        if (
+          skipped ||
+          !index.available ||
+          index.health === MemoryIndexHealth.Unavailable ||
+          index.health === MemoryIndexHealth.Stale
+        ) {
+          return {
+            success: false,
+            index,
+            durationMs: Date.now() - startedAt,
+            error: index.error || index.warning || t('memoryRebuildUnverified'),
+          };
+        }
+        const warning = result.stderr.trim()
+          ? sanitizeMemoryDiagnostic(result.stderr)
+          : index.warning ||
+            ((index.health !== MemoryIndexHealth.Ready &&
+              index.health !== MemoryIndexHealth.Indexed) ||
+            index.dirty
+              ? t('memoryRebuildDegraded')
+              : undefined);
         return {
           success: true,
+          index,
+          ...(warning ? { warning } : {}),
           durationMs: Date.now() - startedAt,
-          index: await loadIndexStatus(manager, workspaceDir),
         };
       } catch (error) {
         return {

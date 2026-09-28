@@ -21,7 +21,9 @@ import type {
   MemoryDocumentSummary,
   MemoryOverview,
   MemorySearchHit,
+  MemorySearchResult,
 } from '@shared/openclaw/memory';
+import { MemoryIndexHealth } from '@shared/openclaw/memory';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import WindowHeader from '@/app/shell/window/WindowHeader';
@@ -64,8 +66,10 @@ const MemoryView: React.FC<MemoryViewProps> = ({
   const [searching, setSearching] = useState(false);
   const [searchHits, setSearchHits] = useState<MemorySearchHit[]>([]);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [searchDiagnostics, setSearchDiagnostics] = useState<MemorySearchResult | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
   const [rebuilding, setRebuilding] = useState(false);
+  const [noticeWarning, setNoticeWarning] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [showGuide, setShowGuide] = useState(false);
   const indexRequestRef = useRef(0);
@@ -200,6 +204,8 @@ const MemoryView: React.FC<MemoryViewProps> = ({
     setSearching(true);
     setHasSearched(true);
     setSearchError(null);
+    setSearchDiagnostics(null);
+    setSearchHits([]);
     try {
       const result = await window.electron.openclaw.memory.search(normalizedQuery);
       if (!result.success) {
@@ -208,6 +214,7 @@ const MemoryView: React.FC<MemoryViewProps> = ({
         return;
       }
       setSearchHits(result.hits || []);
+      setSearchDiagnostics(result);
     } catch (searchFailure) {
       setSearchHits([]);
       setSearchError(
@@ -237,11 +244,23 @@ const MemoryView: React.FC<MemoryViewProps> = ({
     setError(null);
     try {
       const result = await window.electron.openclaw.memory.rebuildIndex();
+      if (result.index) {
+        ++indexRequestRef.current;
+        const index = result.index;
+        setOverview(current =>
+          current ? { ...current, index: { ...index, loading: false } } : current,
+        );
+      }
       if (!result.success) {
         setError(result.error || i18nService.t('memoryRebuildFailed'));
         return;
       }
-      setNotice(i18nService.t('memoryRebuildSucceeded'));
+      setNoticeWarning(Boolean(result.warning));
+      setNotice(
+        result.warning
+          ? `${i18nService.t('memoryRebuildDegraded')} ${result.warning}`
+          : i18nService.t('memoryRebuildSucceeded'),
+      );
       await loadOverview();
     } catch (rebuildError) {
       setError(
@@ -389,13 +408,23 @@ const MemoryView: React.FC<MemoryViewProps> = ({
         icon: BookOpenIcon,
       },
     ];
+    const healthLabels = {
+      [MemoryIndexHealth.Ready]: 'memoryIndexReady',
+      [MemoryIndexHealth.Indexed]: 'memoryIndexStored',
+      [MemoryIndexHealth.KeywordOnly]: 'memoryIndexKeywordOnly',
+      [MemoryIndexHealth.Stale]: 'memoryIndexStale',
+      [MemoryIndexHealth.Disabled]: 'memoryIndexDisabled',
+      [MemoryIndexHealth.Unavailable]: 'memoryIndexUnavailable',
+      [MemoryIndexHealth.Unknown]: 'memoryIndexUnknown',
+    };
     const indexStatusDetail = overview.index.loading
       ? i18nService.t('memoryIndexLoading')
-      : overview.index.available
-        ? overview.index.dirty
-          ? i18nService.t('memoryIndexNeedsRefresh')
-          : i18nService.t('memoryIndexReady')
-        : i18nService.t('memoryIndexUnavailable');
+      : i18nService.t(
+          healthLabels[
+            overview.index.health ??
+              (overview.index.available ? MemoryIndexHealth.Unknown : MemoryIndexHealth.Unavailable)
+          ],
+        );
     return (
       <div className="space-y-5">
         {showGuide && (
@@ -465,14 +494,14 @@ const MemoryView: React.FC<MemoryViewProps> = ({
               className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
                 overview.index.loading
                   ? 'bg-primary/10 text-primary'
-                  : overview.index.available
+                  : overview.index.health === MemoryIndexHealth.Ready && !overview.index.dirty
                     ? 'bg-emerald-500/10 text-emerald-500'
                     : 'bg-amber-500/10 text-amber-500'
               }`}
             >
               {overview.index.loading ? (
                 <ArrowPathIcon className="h-4 w-4 animate-spin" />
-              ) : overview.index.available ? (
+              ) : overview.index.health === MemoryIndexHealth.Ready && !overview.index.dirty ? (
                 <CheckCircleIcon className="h-4 w-4" />
               ) : (
                 <ExclamationTriangleIcon className="h-4 w-4" />
@@ -491,6 +520,19 @@ const MemoryView: React.FC<MemoryViewProps> = ({
             </div>
           </div>
         </section>
+
+        {!overview.index.loading &&
+          (overview.index.error || overview.index.warning || overview.index.dirty) && (
+            <div
+              role="status"
+              className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-secondary"
+            >
+              {overview.index.dirty && <p>{i18nService.t('memoryIndexNeedsRefresh')}</p>}
+              <p className="whitespace-pre-line">
+                {overview.index.error || overview.index.warning}
+              </p>
+            </div>
+          )}
 
         <section className="grid gap-4 lg:grid-cols-2">
           <div>
@@ -585,11 +627,33 @@ const MemoryView: React.FC<MemoryViewProps> = ({
             {searchError}
           </div>
         )}
+        {searchDiagnostics &&
+          (searchDiagnostics.stale ||
+            searchDiagnostics.warning ||
+            searchDiagnostics.action ||
+            searchDiagnostics.searchMode === 'fts-only') && (
+            <div
+              role="status"
+              className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-secondary"
+            >
+              {searchDiagnostics.stale && <p>{i18nService.t('memoryIndexStale')}</p>}
+              {searchDiagnostics.searchMode === 'fts-only' && (
+                <p>{i18nService.t('memoryIndexKeywordOnly')}</p>
+              )}
+              {searchDiagnostics.warning && (
+                <p className="whitespace-pre-line">{searchDiagnostics.warning}</p>
+              )}
+              {searchDiagnostics.action && (
+                <p className="whitespace-pre-line">{searchDiagnostics.action}</p>
+              )}
+            </div>
+          )}
         {searchHits.map(hit => (
           <button
             key={`${hit.path}:${hit.startLine}:${hit.endLine}`}
             type="button"
-            onClick={() => void openDocument(hit.path)}
+            disabled={!hit.previewable}
+            onClick={() => hit.previewable && void openDocument(hit.path)}
             className="group w-full rounded-2xl border border-border bg-surface p-4 text-left shadow-sm transition-all hover:border-primary/40 hover:shadow-md"
           >
             <div className="flex items-center justify-between gap-3">
@@ -609,6 +673,12 @@ const MemoryView: React.FC<MemoryViewProps> = ({
             <p className="mt-3 whitespace-pre-line text-sm leading-6 text-secondary">
               {hit.snippet}
             </p>
+            <p className="mt-2 text-xs text-muted">
+              {i18nService.t(
+                hit.source === 'sessions' ? 'memorySourceSession' : 'memorySourceDocument',
+              )}
+              {!hit.previewable && ` · ${i18nService.t('memorySnippetOnly')}`}
+            </p>
           </button>
         ))}
         {searching &&
@@ -621,6 +691,8 @@ const MemoryView: React.FC<MemoryViewProps> = ({
         {hasSearched &&
           !searching &&
           !searchError &&
+          !searchDiagnostics?.stale &&
+          !searchDiagnostics?.warning &&
           searchHits.length === 0 &&
           renderEmpty(
             i18nService.t('memorySearchEmpty'),
@@ -844,8 +916,19 @@ const MemoryView: React.FC<MemoryViewProps> = ({
       <main className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
         <div className="mx-auto max-w-6xl">
           {notice && (
-            <div className="mb-4 flex items-center gap-2 rounded-xl border border-emerald-500/25 bg-emerald-500/5 px-4 py-3 text-xs text-emerald-600 dark:text-emerald-400">
-              <CheckCircleIcon className="h-4 w-4" />
+            <div
+              role="status"
+              className={`mb-4 flex items-center gap-2 rounded-xl border px-4 py-3 text-xs ${
+                noticeWarning
+                  ? 'border-amber-500/30 bg-amber-500/5 text-secondary'
+                  : 'border-emerald-500/25 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400'
+              }`}
+            >
+              {noticeWarning ? (
+                <ExclamationTriangleIcon className="h-4 w-4" />
+              ) : (
+                <CheckCircleIcon className="h-4 w-4" />
+              )}
               {notice}
             </div>
           )}

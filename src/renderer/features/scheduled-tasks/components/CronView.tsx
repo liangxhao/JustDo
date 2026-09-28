@@ -371,6 +371,7 @@ export function computeNextRunPreview(form: ScheduleFormState, now = new Date())
 
 interface CronJobCardProps {
   memoryToggleDisabled?: boolean;
+  memoryFeatureEnabled?: boolean;
   skillToggleDisabled?: boolean;
   skillMembers?: ScheduledTask[];
   onMemberHistory?: (id: string) => void;
@@ -431,6 +432,7 @@ function getTaskVisual(job: ScheduledTask): {
 
 export function CronJobCard({
   memoryToggleDisabled = true,
+  memoryFeatureEnabled,
   skillToggleDisabled = true,
   skillMembers = [],
   onMemberHistory,
@@ -480,6 +482,10 @@ export function CronJobCard({
   const isEnabled = job.enabled;
   const isManaged = job.management === 'managed';
   const isMemory = isMemoryDreamingTask(job);
+  const switchEnabled = isMemory ? (memoryFeatureEnabled ?? isEnabled) : isEnabled;
+  const switchLabel = isMemory
+    ? t(switchEnabled ? 'cronMemoryFeatureOn' : 'cronMemoryFeatureOff')
+    : t(switchEnabled ? 'cronStatsActive' : 'cronStatsPaused');
   const isPlaceholder = job.id === MEMORY_DREAMING_CARD_ID || isSkillAggregate;
   const toggleDisabled = isSkillAggregate
     ? skillToggleDisabled
@@ -547,33 +553,31 @@ export function CronJobCard({
             <button
               type="button"
               role="switch"
-              aria-checked={isEnabled}
-              aria-label={t(isEnabled ? 'cronStatsActive' : 'cronStatsPaused')}
+              aria-checked={switchEnabled}
+              aria-label={switchLabel}
               disabled={toggleDisabled}
               title={isMemory ? t('cronMemoryToggleHint') : undefined}
               onClick={e => {
                 e.stopPropagation();
-                onToggle(!job.enabled);
+                onToggle(!switchEnabled);
               }}
               className={
                 'inline-flex items-center gap-1.5 rounded-lg py-1 pl-1.5 transition-colors hover:bg-surface-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ' +
-                (isEnabled ? 'text-green-600 dark:text-green-400' : 'text-secondary') +
+                (switchEnabled ? 'text-green-600 dark:text-green-400' : 'text-secondary') +
                 (toggleDisabled ? ' cursor-not-allowed opacity-60' : '')
               }
             >
-              <span className="text-[10px] font-medium">
-                {t(isEnabled ? 'cronStatsActive' : 'cronStatsPaused')}
-              </span>
+              <span className="text-[10px] font-medium">{switchLabel}</span>
               <span
                 className={
                   'relative h-[18px] w-8 shrink-0 rounded-full transition-colors ' +
-                  (isEnabled ? 'bg-primary' : 'bg-border')
+                  (switchEnabled ? 'bg-primary' : 'bg-border')
                 }
               >
                 <span
                   className={
                     'absolute left-0.5 top-0.5 h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform ' +
-                    (isEnabled ? 'translate-x-3.5' : 'translate-x-0')
+                    (switchEnabled ? 'translate-x-3.5' : 'translate-x-0')
                   }
                 />
               </span>
@@ -599,6 +603,11 @@ export function CronJobCard({
           <span className={nextRunLabel ? 'max-w-[55%] shrink-0 truncate' : 'truncate'}>
             {scheduleLabel}
           </span>
+          {isMemory && !isPlaceholder && !isEnabled && (
+            <span className="shrink-0 text-amber-600 dark:text-amber-400">
+              {t('cronMemoryJobPaused')}
+            </span>
+          )}
           {nextRunLabel && (
             <>
               <span className="shrink-0 text-border" aria-hidden="true">
@@ -2336,6 +2345,10 @@ export const CronView: React.FC<CronViewProps> = ({
                                 memoryControl.busy ||
                                 memoryControl.failed
                               }
+                              memoryFeatureEnabled={Boolean(
+                                memoryControl.settings?.memoryAvailable &&
+                                memoryControl.settings.memoryDreamingEnabled,
+                              )}
                               memoryToggleDisabled={
                                 !memoryControl.settings?.memoryAvailable ||
                                 memoryControl.busy ||
