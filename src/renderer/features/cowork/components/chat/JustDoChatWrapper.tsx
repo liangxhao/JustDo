@@ -39,6 +39,8 @@ import {
 import type { UserMessageHistoryAction } from '@/libs/openclaw-chat/types';
 import { i18nService } from '@/services/i18n';
 
+import type { MessageQuoteHandler } from '../composer/messageQuote';
+
 const DEBUG_CHAT_WRAPPER =
   typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEBUG_CHAT_WRAPPER === 'true';
 
@@ -69,6 +71,7 @@ interface JustDoChatWrapperProps {
     entryId: string,
     editedText?: string,
   ) => boolean | Promise<boolean>;
+  onMessageQuote?: MessageQuoteHandler;
   onAssistantMessageFork?: (entryId: string) => boolean | Promise<boolean>;
   onSideChatResult?: (result: SideChatResult) => void;
   onSideChatStream?: (update: SideChatStreamUpdate) => void;
@@ -145,6 +148,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       onSessionKeyChange,
       onHistoryReadyChange,
       onLastUserMessageAction,
+      onMessageQuote,
       onAssistantMessageFork,
       onSideChatResult,
       onSideChatStream,
@@ -551,7 +555,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       >
         {historyStatus !== 'ready' && (
           <div
-            className="p-3 text-sm text-secondary"
+            className="p-3 text-center text-sm text-secondary"
             role={historyStatus === 'error' ? 'alert' : 'status'}
           >
             {i18nService.t(
@@ -581,6 +585,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
           onSearchMatchCountChange={onSearchMatchCountChange}
           runTimings={runTimings}
           onLastUserMessageAction={onLastUserMessageAction}
+          onMessageQuote={onMessageQuote}
           onAssistantMessageFork={onAssistantMessageFork}
           onChatElementChange={handleChatElementChange}
         />

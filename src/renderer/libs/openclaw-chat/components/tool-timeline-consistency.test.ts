@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import type { TemplateResult } from 'lit';
 import { describe, expect, test } from 'vitest';
 
@@ -11,6 +12,14 @@ function flatten(value: unknown): string {
   if (value == null || value === false) return '';
   if (typeof value === 'string' || typeof value === 'number') return String(value);
   if (Array.isArray(value)) return value.map(flatten).join('');
+  if (typeof value === 'object' && '_$litDirective$' in value && 'values' in value) {
+    const args = (value as { values: unknown[] }).values;
+    if (Array.isArray(args[0]) && typeof args[2] === 'function')
+      return args[0]
+        .map(args[2] as (item: unknown) => unknown)
+        .map(flatten)
+        .join('');
+  }
   if (typeof value === 'object' && 'strings' in value && 'values' in value) {
     const template = value as TemplateResult;
     return template.strings.reduce(
@@ -131,7 +140,7 @@ describe('Tool timeline consistency', () => {
 
       for (const rendered of [incremental, refreshed]) {
         expect(rendered).toContain('process-summary__item--tool');
-        expect(rendered).toMatch(/<details\s+class=["']?process-summary__tool["']?\s*>/u);
+        expect(rendered).toMatch(/<details[^>]*class=["']?process-summary__tool["']?\s*>/u);
         expect(rendered).toContain('process-summary__tool-title');
         expect(rendered).toContain(`process-summary__tool-status--${status}`);
         expect(rendered).toContain('process-summary__tool-detail');

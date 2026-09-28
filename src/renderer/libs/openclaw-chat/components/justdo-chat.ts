@@ -14,6 +14,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import mermaid from 'mermaid';
 
+import type { MessageQuoteHandler } from '@/features/cowork/components/composer/messageQuote';
 import { IMAGE_PREVIEW_EVENT } from '@/features/cowork/components/preview/imageFilePreview';
 import {
   type EditDiffMode,
@@ -99,10 +100,14 @@ import type {
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 
+import { readCompleteHistoryMessage } from '../gateway/chat-history-protocol';
+import { resolveFullToolOutput } from '../model/tool-presentation';
 import { renderChatAvatar } from './chat-avatar';
 import { EditDiffMonacoController } from './edit-diff-monaco';
 import { chatStyles } from './justdo-chat.styles';
 import { renderMermaidSvg } from './mermaidRenderer';
+import { RichMessageControls } from './rich-message-controls';
+import { TOOL_OUTPUT_REQUEST, type ToolOutput } from './tool-output';
 
 const MERMAID_BUBBLE_MIN_WIDTH = 500;
 const MERMAID_BUBBLE_MAX_WIDTH = 820;
@@ -229,6 +234,9 @@ export class JustDoChatElement extends LitElement {
     | undefined;
 
   @property({ attribute: false })
+  declare onMessageQuote: MessageQuoteHandler | undefined;
+
+  @property({ attribute: false })
   declare onAssistantMessageFork: ((entryId: string) => boolean | Promise<boolean>) | undefined;
 
   @state()
@@ -289,6 +297,9 @@ export class JustDoChatElement extends LitElement {
   private latestMinimapTail: ChatMinimapEntry | null = null;
   private minimapEntriesSignature = '';
   private minimapPreviewTop = 0;
+  private outputReadContext: unknown[] = [];
+  private messageThemeObserver: MutationObserver | null = null;
+  private richMessageControls: RichMessageControls | null = null;
   private mermaidScrollFrame: number | null = null;
   private minimapScrollFrame: number | null = null;
   private editDiffMonacoFrame: number | null = null;
@@ -318,6 +329,7 @@ export class JustDoChatElement extends LitElement {
     this.runTimings = [];
     this.onLastUserMessageAction = undefined;
     this.onAssistantMessageFork = undefined;
+    this.onMessageQuote = undefined;
     this.userMessageEditor = null;
     this.openProcessSummaryKey = null;
     this.collapsedProcessSummaryKeys = new Set();
@@ -591,7 +603,12 @@ export class JustDoChatElement extends LitElement {
         currentRunTiming,
         activeTurn !== null,
       );
-      const activeTurnFooter = projectActiveTurnFooter(activeFooterTiming);
+      // Run receipts can arrive before Gateway history. Keep their metadata
+      // attached to visible content instead of rendering an orphan footer.
+      const activeTurnFooter =
+        historyTimeline.length > 0 || activeTimeline.length > 0
+          ? projectActiveTurnFooter(activeFooterTiming)
+          : null;
       const timelineView = projectIncrementalTimelineView({
         persisted: this.persistedTimelineRenderCache.get(historyTimeline),
         activeTimeline,
@@ -813,6 +830,17 @@ export class JustDoChatElement extends LitElement {
 
   connectedCallback(): void {
     super.connectedCallback();
+    this.addEventListener(TOOL_OUTPUT_REQUEST, this.handleToolOutputRequest);
+    this.messageThemeObserver = new MutationObserver(() => {
+      this.renderRoot
+        .querySelectorAll<HTMLElement>('.mermaid-block')
+        .forEach(block => delete block.dataset.mermaidRendered);
+      void this.renderMermaidDiagrams();
+    });
+    this.messageThemeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class'],
+    });
     this.chatScrollController.connect(this);
     this.renderRoot?.addEventListener('click', this.handleMarkdownClick);
     this.renderRoot?.addEventListener('contextmenu', this.handleInlineImageContextMenu);
@@ -830,6 +858,11 @@ export class JustDoChatElement extends LitElement {
 
   disconnectedCallback(): void {
     super.disconnectedCallback();
+    this.richMessageControls?.dispose();
+    this.richMessageControls = null;
+    this.removeEventListener(TOOL_OUTPUT_REQUEST, this.handleToolOutputRequest);
+    this.messageThemeObserver?.disconnect();
+    this.messageThemeObserver = null;
     this.chatScrollController.disconnect();
     this.streamRenderScheduler.dispose();
     this.persistedTimelineCache.clear();
@@ -939,6 +972,25 @@ export class JustDoChatElement extends LitElement {
     const completedContentPending = completedContent.some(item =>
       this.assistantStreamPacer.isPending(item.id),
     );
+    const outputReadContext = [
+      this._controller?.state.client,
+      this._controller?.state.hello,
+      this._controller?.state.connected,
+      this._controller?.state.sessionKey,
+      this._controller?.state.currentSessionId,
+    ];
+    if (outputReadContext.some((value, index) => value !== this.outputReadContext[index])) {
+      this.renderRoot
+        .querySelectorAll<ToolOutput>('justdo-tool-output')
+        .forEach(output => output.cancelLoad());
+      this.outputReadContext = outputReadContext;
+    }
+    this.richMessageControls ??= new RichMessageControls(this.renderRoot as ShadowRoot, element =>
+      this.chatScrollController.preserveAnchorForInteraction(element),
+    );
+    this.richMessageControls.reset(this._controller?.state.sessionKey ?? '');
+    this.richMessageControls.onQuote = this.onMessageQuote;
+    this.richMessageControls.sync();
     const mermaidEnhancementKey = `${this.persistedTimelineCache.revision}:${completedContentKey}`;
     if (!completedContentPending && mermaidEnhancementKey !== this.lastMermaidEnhancementKey) {
       this.lastMermaidEnhancementKey = mermaidEnhancementKey;
@@ -1099,6 +1151,11 @@ export class JustDoChatElement extends LitElement {
 
   private readonly handleTimelineKeyDown = (event: Event): void => {
     const keyboardEvent = event as KeyboardEvent;
+    if (keyboardEvent.key === 'Escape' && this.richMessageControls?.close()) {
+      keyboardEvent.preventDefault();
+      keyboardEvent.stopPropagation();
+      return;
+    }
     if (keyboardEvent.key !== 'Escape' || !this.openProcessSummaryKey) return;
     keyboardEvent.preventDefault();
     const summaryKey = this.openProcessSummaryKey;
@@ -1117,7 +1174,14 @@ export class JustDoChatElement extends LitElement {
     this.editDiffModes = nextModes;
   };
 
-  private readonly handleEditDiffToggle = (): void => {
+  private readonly handleEditDiffToggle = (event: Event): void => {
+    if (event.target instanceof HTMLDetailsElement) {
+      this.richMessageControls?.rememberTool(event.target);
+      if (!event.target.open)
+        event.target
+          .querySelectorAll<ToolOutput>('justdo-tool-output')
+          .forEach(output => output.cancelLoad());
+    }
     this.scheduleEditDiffMonacoSync();
   };
 
@@ -1135,6 +1199,48 @@ export class JustDoChatElement extends LitElement {
       this.mermaidScrollFrame = null;
       void this.renderMermaidDiagrams();
     });
+  };
+
+  private readonly handleToolOutputRequest = (event: Event): void => {
+    const detail = (
+      event as CustomEvent<{
+        runId: string;
+        toolCallId: string;
+        messageId: string;
+        isCurrent: () => boolean;
+        complete: (text: string | null) => void;
+      }>
+    ).detail;
+    const controller = this._controller;
+    const client = controller?.state.client;
+    const sessionKey = controller?.state.sessionKey;
+    const sessionId = controller?.state.currentSessionId;
+    const hello = controller?.state.hello;
+    if (!client || !sessionKey || !controller.state.connected) {
+      detail.complete(null);
+      return;
+    }
+    const isCurrent = () =>
+      detail.isCurrent() &&
+      this._controller === controller &&
+      controller.state.client === client &&
+      controller.state.connected &&
+      controller.state.hello === hello &&
+      controller.state.currentSessionId === sessionId &&
+      controller.state.sessionKey === sessionKey;
+    void (async () => {
+      try {
+        const message = await readCompleteHistoryMessage(
+          client,
+          sessionKey,
+          detail.messageId,
+          isCurrent,
+        );
+        if (isCurrent()) detail.complete(resolveFullToolOutput(message, detail));
+      } catch {
+        if (isCurrent()) detail.complete(null);
+      }
+    })();
   };
 
   private async copyCodeBlock(button: HTMLButtonElement, code: string): Promise<void> {
@@ -1155,7 +1261,10 @@ export class JustDoChatElement extends LitElement {
       }, 1500);
       this.codeCopyFeedbackTimers.set(button, timer);
     } catch (error) {
-      console.error('[JustDoChat] Failed to copy code block', error);
+      button.classList.remove('copied');
+      button.title = i18nService.t('messageCopyFailed');
+      button.setAttribute('aria-label', i18nService.t('messageCopyFailed'));
+      void error;
     }
   }
 
@@ -1172,13 +1281,21 @@ export class JustDoChatElement extends LitElement {
       const code = block.querySelector<HTMLElement>('.mermaid-source code')?.textContent;
       if (!preview || !code) continue;
       try {
+        const theme = document.documentElement.classList.contains('dark') ? 'dark' : 'default';
         mermaid.initialize({
           startOnLoad: false,
           securityLevel: 'strict',
-          theme: document.documentElement.classList.contains('dark') ? 'dark' : 'default',
+          theme,
+          maxEdges: 500,
+          maxTextSize: 20_000,
         });
         const id = `justdo-mermaid-${crypto.randomUUID()}`;
         const svg = await renderMermaidSvg(id, code);
+        if (
+          !block.isConnected ||
+          theme !== (document.documentElement.classList.contains('dark') ? 'dark' : 'default')
+        )
+          continue;
         preview.innerHTML = svg;
         this.resizeMermaidBubble(block, preview);
       } catch (error) {

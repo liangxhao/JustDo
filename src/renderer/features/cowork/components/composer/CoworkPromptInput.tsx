@@ -81,6 +81,7 @@ import {
   selectDraftPrompts,
 } from '@/features/cowork/coworkSelectors';
 import { coworkService } from '@/features/cowork/coworkService';
+import { removeDraftMessageQuotes } from '@/features/cowork/coworkSlice';
 import {
   beginManualModelSelection,
   clearDraftAttachments,
@@ -116,6 +117,14 @@ import { getCompactFolderName } from '@/utils/path';
 
 import { isImagePath } from './composerAttachmentFiles';
 import { hasComposerContent } from './composerContent';
+import {
+  appendMessageQuotes,
+  EMPTY_MESSAGE_QUOTES,
+  messageQuoteAttachment,
+  quotedGatewayPrompt,
+  submitMessageQuoteDrafts,
+  submittedMessageQuotes,
+} from './messageQuote';
 import { canClearSubmittedDraft } from './sessionSubmission';
 import { useComposerAttachments } from './useComposerAttachments';
 
@@ -239,7 +248,7 @@ const formatContextLength = (tokens: number): string => {
 const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInputProps>(
   (props, ref) => {
     const {
-      onSubmit,
+      onSubmit: submitPrompt,
       onStop,
       stopOperationKey,
       isStreaming = false,
@@ -266,6 +275,28 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const dispatch = useDispatch();
     const draftKey = draftKeyOverride || sessionId || '__home__';
     const isSideChat = mode === 'side-chat';
+    const messageQuotes = useSelector(
+      (state: RootState) => state.cowork.draftMessageQuotes?.[draftKey] ?? EMPTY_MESSAGE_QUOTES,
+    );
+    const onSubmit = useCallback<CoworkPromptInputProps['onSubmit']>(
+      async (prompt, attachments, gatewayPrompt) => {
+        const submittedQuotes = [...submittedMessageQuotes(prompt, messageQuotes, isSideChat)];
+        const label = i18nService.t('messageQuoteContext');
+        return submitMessageQuoteDrafts(
+          submittedQuotes,
+          () =>
+            submitPrompt(
+              appendMessageQuotes(prompt, submittedQuotes, label, isSideChat),
+              !isSideChat && submittedQuotes.length
+                ? [...(attachments ?? []), ...submittedQuotes.map(messageQuoteAttachment)]
+                : attachments,
+              quotedGatewayPrompt(prompt, gatewayPrompt, submittedQuotes, isSideChat),
+            ),
+          ids => dispatch(removeDraftMessageQuotes({ draftKey, ids })),
+        );
+      },
+      [messageQuotes, submitPrompt, dispatch, draftKey, isSideChat],
+    );
     const supportsAttachments = !remoteManaged && !isSideChat;
     const supportsSlashCommands = !remoteManaged && !isSideChat;
     const supportsAgentControls = !remoteManaged && !isSideChat;
@@ -908,6 +939,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             submittedCompletionFeedback ? 0 : browserAnnotations.length,
             Boolean(browserRecording),
             Boolean(submittedCompletionFeedback),
+            messageQuotes.length,
           ) ||
           isRunActive ||
           isStopPending() ||
@@ -1173,7 +1205,13 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             return;
           }
           if (resumeWithInput) {
-            if (browserGatewayPrompt.length > SESSION_GOAL_MAX_NOTE_LENGTH) {
+            const resumeQuotes = [...messageQuotes];
+            const resumeNote = appendMessageQuotes(
+              browserGatewayPrompt,
+              resumeQuotes,
+              i18nService.t('messageQuoteContext'),
+            );
+            if (resumeNote.length > SESSION_GOAL_MAX_NOTE_LENGTH) {
               window.dispatchEvent(
                 new CustomEvent('app:showToast', {
                   detail: i18nService
@@ -1183,15 +1221,22 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
               );
               return;
             }
-            let resumed = false;
-            const started = await runGoalAction(async () => {
-              resumed = await mutateGoal({
-                action: SessionGoalMutationAction.Resume,
-                goalId: goalForResume.id,
-                note: browserGatewayPrompt,
-              });
-            });
-            if (!started || !resumed) {
+            const accepted = await submitMessageQuoteDrafts(
+              resumeQuotes,
+              async () => {
+                let resumed = false;
+                const started = await runGoalAction(async () => {
+                  resumed = await mutateGoal({
+                    action: SessionGoalMutationAction.Resume,
+                    goalId: goalForResume.id,
+                    note: resumeNote,
+                  });
+                });
+                return started && resumed;
+              },
+              ids => dispatch(removeDraftMessageQuotes({ draftKey, ids })),
+            );
+            if (!accepted) {
               window.dispatchEvent(
                 new CustomEvent('app:showToast', {
                   detail: i18nService.t('coworkGoalResumeForInputFailed'),
@@ -1278,6 +1323,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         isStopPending,
         disabled,
         onSubmit,
+        messageQuotes,
         attachments,
         browserAnnotations,
         browserRecording,
@@ -1823,6 +1869,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             completionFeedback ? 0 : browserAnnotations.length,
             Boolean(browserRecording),
             Boolean(completionFeedback),
+            messageQuotes.length,
           ));
     const effectivePlaceholder =
       !isSideChat && completionFeedback
@@ -2284,6 +2331,32 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             textOnly={recordingTextOnly}
             onTextOnly={setRecordingTextOnly}
           />
+        )}
+        {messageQuotes.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-2">
+            {messageQuotes.map(quote => (
+              <div
+                key={quote.id}
+                className="max-w-full rounded-lg border border-border px-3 py-2 text-sm"
+              >
+                <div className="flex items-center gap-2">
+                  <span>{i18nService.t('messageQuoteLabel')}</span>
+                  <button
+                    type="button"
+                    aria-label={i18nService.t('messageQuoteRemove')}
+                    onClick={() =>
+                      dispatch(removeDraftMessageQuotes({ draftKey, ids: [quote.id] }))
+                    }
+                  >
+                    ×
+                  </button>
+                </div>
+                <blockquote className="max-h-24 overflow-auto whitespace-pre-wrap">
+                  {quote.text}
+                </blockquote>
+              </div>
+            ))}
+          </div>
         )}
         {!isSideChat && browserAnnotations.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-2">

@@ -1,3 +1,5 @@
+import './message-media';
+
 /**
  * Ordinary message rendering for persisted Content and streaming text.
  * Thinking and Tool presentation belongs exclusively to the canonical timeline.
@@ -7,6 +9,7 @@ import { getPreviewableFileExtension } from '@shared/preview/filePreview';
 import { html, nothing, type TemplateResult } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
+import { renderMessageQuoteText } from '@/features/cowork/components/composer/messageQuote';
 import { isImageFilePath } from '@/features/cowork/components/preview/imageFilePreview';
 import {
   getTranscriptMedia,
@@ -32,6 +35,7 @@ import type {
 } from '@/libs/openclaw-chat/types';
 import { i18nService } from '@/services/i18n';
 
+import { readTranscriptIdentity } from '../model/transcript-identity';
 import { renderBrowserAnnotation } from './browser-annotation-message';
 import { renderBrowserRecording } from './browser-recording-message';
 
@@ -407,7 +411,10 @@ function extractTranscriptAttachments(message: unknown): RenderableAttachment[] 
       if (isTranscriptImage(media)) return null;
       return {
         url: media.path,
-        kind: media.mimeType?.startsWith('audio/') ? ('audio' as const) : ('document' as const),
+        kind: media.mimeType?.startsWith('audio/') || media.kind === 'audio' || /\.(mp3|wav|ogg|m4a|flac|aac)(?:[?#].*)?$/i.test(media.path)
+          ? ('audio' as const)
+          : media.mimeType?.startsWith('video/') || media.kind === 'video' || /\.(mp4|webm|mov|m4v)(?:[?#].*)?$/i.test(media.path)
+            ? ('video' as const) : ('document' as const),
         label: media.fileName || labelForMediaPath(media.path),
         ...(media.mimeType ? { mimeType: media.mimeType } : {}),
       };
@@ -503,7 +510,7 @@ async function showAttachmentContextMenu(
   }
 }
 
-function renderAssistantAttachments(
+export function renderAssistantAttachments(
   attachments: RenderableAttachment[],
   workingDirectory?: string,
 ): TemplateResult | typeof nothing {
@@ -511,6 +518,12 @@ function renderAssistantAttachments(
   return html`
     <div class="message-attachments">
       ${attachments.map(attachment => {
+        if (attachment.kind === 'audio' || attachment.kind === 'video') {
+          const src = resolveImageSourceUrl(attachment.url, workingDirectory).replace(/^localfile:\/\/\//i, 'localmedia://local/');
+          if (/^(?:localmedia:|blob:|data:(?:audio|video)\/)/i.test(src)) {
+            return html`<justdo-message-media .src=${src} .kind=${attachment.kind} .label=${attachment.label}></justdo-message-media>`;
+          }
+        }
         const managed = /^\/api\/chat\/media\/outgoing\//u.test(attachment.url.trim());
         const source = managed ? undefined : attachment.url;
         const canOpen = Boolean(source);
@@ -575,7 +588,7 @@ function renderAttachmentError(
   `;
 }
 
-function renderMessageImages(
+export function renderMessageImages(
   images: RenderableAttachment[],
   assistant = false,
   workingDirectory?: string,
@@ -871,7 +884,13 @@ function renderSingleMessage(
   if (isUser) {
     return renderUserMessage(normalized, message, opts?.workingDirectory);
   }
-  return renderAssistantMessage(normalized, message, opts?.workingDirectory, trailingAction);
+  const identity = readTranscriptIdentity(message);
+  return html`<div
+    data-quote-source
+    data-assistant-entry=${identity?.kind === 'openclaw-id' ? identity.value : nothing}
+  >
+    ${renderAssistantMessage(normalized, message, opts?.workingDirectory, trailingAction)}
+  </div>`;
 }
 
 // ─── User Message ───────────────────────────────────────────────────────────
@@ -890,7 +909,14 @@ function renderUserMessage(
     if (item.type === 'browser_recording') return [item];
     if (item.type !== 'text') return [];
     if (hasImage && item.text?.trim() === '[User sent media without caption]') return [];
-    return [{ type: 'text', text: item.text }];
+    return [
+      {
+        type: 'text',
+        text: item.text
+          ? renderMessageQuoteText(item.text, i18nService.t('messageQuoteLabel'))
+          : item.text,
+      },
+    ];
   });
   const transcriptAttachments = extractTranscriptAttachments(rawMessage).map(attachment => ({
     type: 'attachment' as const,
@@ -908,7 +934,7 @@ function renderUserMessage(
 
 function renderAssistantMessage(
   msg: NormalizedMessage,
-  _rawMessage: unknown,
+  rawMessage: unknown,
   workingDirectory?: string,
   trailingAction: TemplateResult | typeof nothing = nothing,
 ): TemplateResult {
@@ -923,7 +949,10 @@ function renderAssistantMessage(
     bubbleItems = [];
   };
 
-  for (const item of msg.content) {
+  const existingUrls = new Set(msg.content.flatMap(item => item.type === 'attachment' ? [item.attachment.url] : []));
+  const media = extractTranscriptAttachments(rawMessage).filter(item => !existingUrls.has(item.url));
+  const content = [...msg.content, ...media.map(attachment => ({ type: 'attachment' as const, attachment }))];
+  for (const item of content) {
     if (item.type === 'attachment' || item.type === 'attachment_error') {
       bubbleItems.push(item);
       continue;
@@ -965,10 +994,12 @@ export function renderAssistantTimelineContent(
   opts: AssistantTimelineContentOptions,
 ): TemplateResult {
   if (opts.streaming) {
-    return renderStreamingGroup(text, opts.timestamp, null, {
-      showAvatar: opts.showAvatar,
-      assistantAvatar: opts.assistantAvatar,
-    });
+    return html`<div data-quote-source>
+      ${renderStreamingGroup(text, opts.timestamp, null, {
+        showAvatar: opts.showAvatar,
+        assistantAvatar: opts.assistantAvatar,
+      })}
+    </div>`;
   }
 
   return renderMessageBlock(

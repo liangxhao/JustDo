@@ -102,7 +102,7 @@ function readableOutput(value: unknown): string {
     const parts = value.flatMap(entry => {
       const record = asToolRecord(entry);
       if (!record) return typeof entry === 'string' ? [entry] : [];
-      const text = firstString(record.text);
+      const text = typeof record.text === 'string' ? record.text : null;
       if (text !== null) return [text];
       if (record.content !== undefined) return [readableOutput(record.content)];
       return [];

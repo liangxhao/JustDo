@@ -43,11 +43,7 @@ describe('renderMermaidSvg', () => {
       '<svg />',
     );
 
-    expect(mermaidMocks.render).toHaveBeenCalledWith(
-      'diagram-id',
-      'graph TD\nA --> B',
-      container,
-    );
+    expect(mermaidMocks.render).toHaveBeenCalledWith('diagram-id', 'graph TD\nA --> B', container);
   });
 
   test('supports document-level rendering for previews inside a shadow root', async () => {
@@ -56,11 +52,7 @@ describe('renderMermaidSvg', () => {
 
     await expect(renderMermaidSvg('diagram-id', 'graph TD\nA --> B')).resolves.toBe('<svg />');
 
-    expect(mermaidMocks.render).toHaveBeenCalledWith(
-      'diagram-id',
-      'graph TD\nA --> B',
-      undefined,
-    );
+    expect(mermaidMocks.render).toHaveBeenCalledWith('diagram-id', 'graph TD\nA --> B', undefined);
   });
 
   test('removes Mermaid temporary nodes when rendering fails', async () => {
@@ -80,4 +72,14 @@ describe('renderMermaidSvg', () => {
     ]);
     expect(remove).toHaveBeenCalledTimes(3);
   });
+});
+
+test.each([
+  'flowchart LR\nclick A "https://example.test"',
+  'flowchart LR\n' + 'A-->B\n'.repeat(500),
+  '%%{init: {securityLevel: "loose"}}%%\ngraph TD\nA-->B',
+])('rejects external callbacks and excessive diagram work before parsing', async source => {
+  mermaidMocks.parse.mockClear();
+  await expect(renderMermaidSvg('blocked', source)).rejects.toThrow();
+  expect(mermaidMocks.parse).not.toHaveBeenCalled();
 });

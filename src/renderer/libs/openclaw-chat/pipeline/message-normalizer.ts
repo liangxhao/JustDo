@@ -284,10 +284,10 @@ function applyAssistantMediaUrls(
   return [...retained, ...mediaUrls.map(mediaAttachment)];
 }
 
-function coerceAudioContentBlock(
+function coercePlayableContentBlock(
   item: Record<string, unknown>,
 ): Extract<MessageContentItem, { type: 'attachment' }> | null {
-  if (item.type !== 'audio') {
+  if (item.type !== 'audio' && item.type !== 'video') {
     return null;
   }
   const source = item.source;
@@ -297,9 +297,9 @@ function coerceAudioContentBlock(
   const sourceRecord = source as Record<string, unknown>;
   const mediaType =
     typeof sourceRecord.media_type === 'string' &&
-    sourceRecord.media_type.trim().toLowerCase().startsWith('audio/')
+    sourceRecord.media_type.trim().toLowerCase().startsWith(`${item.type}/`)
       ? sourceRecord.media_type.trim()
-      : 'audio/mpeg';
+      : item.type === 'video' ? 'video/mp4' : 'audio/mpeg';
   const artifactId = pickTrimmedString(item.artifactId) ?? undefined;
   if (sourceRecord.type === 'base64' && typeof sourceRecord.data === 'string') {
     const data = sourceRecord.data.trim();
@@ -311,8 +311,8 @@ function coerceAudioContentBlock(
       type: 'attachment',
       attachment: {
         url,
-        kind: 'audio',
-        label: typeof item.label === 'string' && item.label.trim() ? item.label.trim() : 'Audio',
+        kind: item.type === 'video' ? 'video' : 'audio',
+        label: typeof item.label === 'string' && item.label.trim() ? item.label.trim() : item.type === 'video' ? 'Video' : 'Audio',
         mimeType: mediaType,
         ...(item.isVoiceNote === true ? { isVoiceNote: true } : {}),
         ...(artifactId ? { artifactId } : {}),
@@ -328,8 +328,8 @@ function coerceAudioContentBlock(
       type: 'attachment',
       attachment: {
         url,
-        kind: 'audio',
-        label: typeof item.label === 'string' && item.label.trim() ? item.label.trim() : 'Audio',
+        kind: item.type === 'video' ? 'video' : 'audio',
+        label: typeof item.label === 'string' && item.label.trim() ? item.label.trim() : item.type === 'video' ? 'Video' : 'Audio',
         mimeType: mediaType,
         ...(item.isVoiceNote === true ? { isVoiceNote: true } : {}),
         ...(artifactId ? { artifactId } : {}),
@@ -697,7 +697,7 @@ export function normalizeMessage(
         return [imageAttachment];
       }
       if (isAssistantMessage) {
-        const audioAttachment = coerceAudioContentBlock(item);
+        const audioAttachment = coercePlayableContentBlock(item);
         if (audioAttachment) {
           return [audioAttachment];
         }

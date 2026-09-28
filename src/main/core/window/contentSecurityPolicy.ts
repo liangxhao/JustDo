@@ -40,7 +40,7 @@ export const registerContentSecurityPolicy = ({
       // 允许连接到所有域名，不做限制
       "connect-src 'self' *",
       "font-src 'self' data:",
-      "media-src 'self' blob:",
+      "media-src 'self' blob: data: localmedia:",
       "worker-src 'self' blob:",
       "frame-src 'self' https: http:",
     ];

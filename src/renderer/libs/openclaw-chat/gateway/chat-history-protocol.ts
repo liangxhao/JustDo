@@ -52,7 +52,17 @@ export const parseChatHistoryPage = (value: unknown): ChatHistoryPage => {
     throw new Error('OpenClaw chat.history omitted nextOffset for a partial page');
   }
   return {
-    messages: result.messages,
+    messages: result.messages.map(message => {
+      const raw = asRecord(message);
+      const id = asRecord(raw?.__openclaw)?.id;
+      const prepared =
+        typeof id === 'string' && Array.isArray(result.activity)
+          ? result.activity.map(asRecord).find(entry => entry?.messageId === id)
+          : null;
+      return raw && prepared && Array.isArray(prepared.items)
+        ? { ...raw, activity: prepared.items }
+        : message;
+    }),
     hasMore,
     nextCursor: hasMore ? encodeHistoryOffsetCursor(nextOffset!) : null,
   };
@@ -152,7 +162,11 @@ const retainHistoryIdentity = (message: unknown, placeholder: unknown): unknown 
     reason: _fullReason,
     ...fullMetadata
   } = asRecord(full.__openclaw) ?? {};
-  return { ...full, __openclaw: { ...fullMetadata, ...identity } };
+  return {
+    ...full,
+    ...(original?.activity ? { activity: original.activity } : {}),
+    __openclaw: { ...fullMetadata, ...identity },
+  };
 };
 
 async function readChunkedHistoryMessage(
@@ -192,7 +206,7 @@ async function readChunkedHistoryMessage(
   return JSON.parse(chunks.join('')) as unknown;
 }
 
-async function readCompleteHistoryMessage(
+export async function readCompleteHistoryMessage(
   client: GatewayClient,
   sessionKey: string,
   messageId: string,

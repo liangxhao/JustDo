@@ -8,6 +8,8 @@ import type { ChatController } from '@/libs/openclaw-chat/gateway/chat-controlle
 import type { AssistantTurn } from '@/libs/openclaw-chat/model/chat-transcript-state';
 import type { GatewayMessage, UserMessageHistoryAction } from '@/libs/openclaw-chat/types';
 
+import type { MessageQuoteHandler } from '../composer/messageQuote';
+
 interface ChatMessageDisplayProps {
   className?: string;
   controller?: ChatController | null;
@@ -33,6 +35,7 @@ interface ChatMessageDisplayProps {
     entryId: string,
     editedText?: string,
   ) => boolean | Promise<boolean>;
+  onMessageQuote?: MessageQuoteHandler;
   onAssistantMessageFork?: (entryId: string) => boolean | Promise<boolean>;
   onChatElementChange?: (element: JustDoChatElement | null) => void;
 }
@@ -65,6 +68,7 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
   onSearchMatchCountChange,
   runTimings = [],
   onLastUserMessageAction,
+  onMessageQuote,
   onAssistantMessageFork,
   onChatElementChange,
 }) => {
@@ -128,6 +132,7 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
     chat.processSummariesExpanded = processSummariesExpanded;
     chat.runTimings = runTimings;
     chat.onLastUserMessageAction = onLastUserMessageAction;
+    chat.onMessageQuote = onMessageQuote;
     chat.onAssistantMessageFork = onAssistantMessageFork;
   }, [
     assistantName,
@@ -143,6 +148,7 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
     workingDirectory,
     runTimings,
     onLastUserMessageAction,
+    onMessageQuote,
     onAssistantMessageFork,
   ]);
 

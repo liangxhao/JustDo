@@ -522,3 +522,56 @@ describe('justdo-chat last user message actions', () => {
     expect(chat.shadowRoot?.querySelectorAll('.user-message-action')).toHaveLength(0);
   });
 });
+
+test('offline full-output requests finish immediately and remain retryable', async () => {
+  const controller = new ChatController();
+  const request = vi.fn();
+  controller.state.client = { request } as unknown as NonNullable<typeof controller.state.client>;
+  controller.state.sessionKey = 'agent:main:justdo:offline';
+  controller.state.connected = false;
+  const chat = document.createElement('justdo-chat') as JustDoChatElement;
+  chat.controller = controller;
+  document.body.append(chat);
+  await chat.updateComplete;
+  const complete = vi.fn();
+  chat.dispatchEvent(
+    new CustomEvent('tool-output-request', {
+      detail: { runId: 'r', toolCallId: 't', messageId: 'm', isCurrent: () => true, complete },
+    }),
+  );
+  expect(complete).toHaveBeenCalledWith(null);
+  expect(request).not.toHaveBeenCalled();
+});
+
+test('discards full-output responses after the native session identity changes', async () => {
+  const controller = new ChatController();
+  let resolveRequest!: (value: unknown) => void;
+  const request = vi.fn(
+    () =>
+      new Promise(resolve => {
+        resolveRequest = resolve;
+      }),
+  );
+  controller.state.client = { request } as unknown as NonNullable<typeof controller.state.client>;
+  controller.state.sessionKey = 'agent:main:justdo:reset';
+  controller.state.currentSessionId = 'old-session';
+  controller.state.connected = true;
+  const chat = document.createElement('justdo-chat') as JustDoChatElement;
+  chat.controller = controller;
+  document.body.append(chat);
+  await chat.updateComplete;
+  const complete = vi.fn();
+  chat.dispatchEvent(
+    new CustomEvent('tool-output-request', {
+      detail: { runId: 'r', toolCallId: 't', messageId: 'm', isCurrent: () => true, complete },
+    }),
+  );
+  expect(request).toHaveBeenCalledTimes(1);
+  controller.state.currentSessionId = 'new-session';
+  resolveRequest({
+    ok: true,
+    message: { role: 'toolResult', toolCallId: 't', content: 'old output' },
+  });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(complete).not.toHaveBeenCalled();
+});

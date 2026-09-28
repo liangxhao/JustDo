@@ -15,6 +15,14 @@ function flatten(value: unknown): string {
   if (value == null || value === false) return '';
   if (typeof value === 'string' || typeof value === 'number') return String(value);
   if (Array.isArray(value)) return value.map(flatten).join('');
+  if (typeof value === 'object' && '_$litDirective$' in value && 'values' in value) {
+    const args = (value as { values: unknown[] }).values;
+    if (Array.isArray(args[0]) && typeof args[2] === 'function')
+      return args[0]
+        .map(args[2] as (item: unknown) => unknown)
+        .map(flatten)
+        .join('');
+  }
   if (typeof value === 'object' && 'strings' in value && 'values' in value) {
     const template = value as TemplateResult;
     return template.strings.reduce(
@@ -70,6 +78,76 @@ function summary(): ProcessSummaryTimelineItem {
 }
 
 describe('active turn timeline', () => {
+  test('keeps ordinary tool details directly readable without duplicate status text', () => {
+    const rendered = flatten(renderTimelineItem(summary(), 100, true));
+    expect(rendered).toContain('justdo-tool-output');
+    expect(rendered).toContain('secret-value');
+    expect(rendered).toContain('result');
+    expect(rendered).not.toContain('process-summary__raw-input');
+    expect(rendered).not.toContain(`<span>${i18nService.t('coworkStatusCompleted')}</span>`);
+    expect(rendered).toContain('aria-label=');
+  });
+
+  test.each([
+    ['exec', { command: 'npm test' }, 'npm test'],
+    ['read', { path: 'src/main.ts' }, 'src/main.ts'],
+    [
+      'browser',
+      { action: 'act', request: { kind: 'type', ref: 'e10', text: 'search terms' } },
+      'search terms',
+    ],
+    [
+      'tool_call',
+      { tool: 'browser', arguments: { url: 'https://example.com' } },
+      'https://example.com',
+    ],
+    ['custom_tool', { enabled: false, count: 0 }, 'false'],
+    ['custom_tool', 'plain input', 'plain input'],
+    ['exec', { command: '', cmd: 'git status' }, 'git status'],
+  ])(
+    'previews %s arguments even when native title repeats the tool name',
+    (name, input, preview) => {
+      const fixture = summary();
+      const tool = fixture.items[1];
+      if (tool.type !== 'tool') throw new Error('Expected tool fixture');
+      tool.name = name;
+      tool.input = input;
+      tool.presentation = { title: name };
+      const rendered = flatten(renderTimelineItem(fixture, 100, true));
+      const previews = [
+        ...rendered.matchAll(/class="process-summary__tool-input"[^>]*>([\s\S]*?)<\/span\s*>/g),
+      ];
+      expect(previews).toHaveLength(1);
+      expect(previews[0][1]).toContain(preview);
+    },
+  );
+
+  test('shows nonzero exit codes only inside expanded details', () => {
+    const fixture = summary();
+    const tool = fixture.items[1];
+    if (tool.type !== 'tool') throw new Error('Expected tool fixture');
+    tool.presentation = { exitCode: 7 };
+    expect(flatten(renderTimelineItem(fixture, 100, true))).toContain(
+      i18nService.t('messageExitCode').replace('{code}', '7'),
+    );
+    expect(flatten(renderTimelineItem(fixture, 100, false))).not.toContain(
+      i18nService.t('messageExitCode').replace('{code}', '7'),
+    );
+  });
+  test.each(['running', 'completed'] as const)(
+    'labels absent %s arguments separately from output',
+    status => {
+      const fixture = summary();
+      const tool = fixture.items[1];
+      if (tool.type !== 'tool') throw new Error('Expected tool fixture');
+      tool.status = status;
+      tool.input = {};
+      expect(flatten(renderTimelineItem(fixture, 100, true))).toContain(
+        i18nService.t(status === 'running' ? 'messageInputPending' : 'messageNoParameters'),
+      );
+    },
+  );
+
   test('renders the assistant avatar and animated indicator while waiting for the first event', () => {
     const rendered = flatten(
       renderTimelineItem({
@@ -261,6 +339,7 @@ describe('active turn timeline', () => {
     expect(rendered).toContain(i18nService.t('coworkEditDiffRemovedLine'));
     expect(rendered).toContain(i18nService.t('coworkEditDiffAddedLines').replace('{count}', '1'));
     expect(rendered).toContain(i18nService.t('coworkEditDiffRemovedLines').replace('{count}', '1'));
+    expect(rendered).not.toContain('process-summary__raw-input');
     expect(rendered).not.toContain('oldText');
     expect(rendered).not.toContain('newText');
   });
@@ -444,6 +523,19 @@ describe('active turn timeline', () => {
       const fixture = summary();
       fixture.thinkingCount = thinkingCount;
       fixture.toolCount = toolCount;
+      const thought = fixture.items[0];
+      const tool = fixture.items[1];
+      fixture.items = [
+        ...Array.from({ length: thinkingCount }, (_, index) => ({
+          ...thought,
+          id: `thinking-${index}`,
+        })),
+        ...Array.from({ length: toolCount }, (_, index) => ({
+          ...tool,
+          id: `tool-${index}`,
+          toolCallId: `call-${index}`,
+        })),
+      ];
 
       const rendered = flatten(renderTimelineItem(fixture));
 
@@ -477,6 +569,25 @@ describe('active turn timeline', () => {
 
     expect(rendered).toContain('Task failed');
     expect(rendered).not.toContain('openclaw logs --follow');
+  });
+
+  test('renders a command with many backtick groups without overflowing the call stack', () => {
+    const fixture = summary();
+    const tool = fixture.items[1];
+    if (tool.type !== 'tool') throw new Error('Expected tool fixture');
+    fixture.items[1] = { ...tool, input: { command: '`x '.repeat(150_000) } };
+    expect(() => flatten(renderTimelineItem(fixture, 100, true))).not.toThrow();
+  });
+
+  test('labels native manual cancellation as interrupted instead of completed', () => {
+    const fixture = summary();
+    const tool = fixture.items[1];
+    if (tool.type !== 'tool') throw new Error('Expected tool fixture');
+    fixture.items[1] = { ...tool, status: 'completed', presentation: { outcome: 'cancelled' } };
+    const rendered = flatten(renderTimelineItem(fixture, 100, true));
+    expect(rendered).toContain('process-summary__tool-status--cancelled');
+    expect(rendered).toContain(i18nService.t('coworkProcessInterrupted'));
+    expect(rendered).not.toContain(i18nService.t('coworkStatusCompleted'));
   });
 
   test.each(['Logs:', 'Logs: openclaw', 'Logs: openclaw logs'])(
@@ -603,6 +714,7 @@ describe('active turn timeline', () => {
     expect(rendered).toContain('return false;');
     expect(rendered).toContain('return true;');
     expect(rendered).toContain('Successfully replaced 1 block.');
+    expect(rendered).not.toContain('process-summary__raw-input');
     expect(rendered).not.toContain('old_string');
   });
 
@@ -656,7 +768,7 @@ describe('active turn timeline', () => {
 
       expect(rendered).toContain(`process-summary__tool-status--${status}`);
       expect(rendered.indexOf('process-summary__tool-status')).toBeLessThan(
-        rendered.indexOf('<strong>Request</strong>'),
+        rendered.indexOf('Request'),
       );
       expect(rendered).not.toContain('data-process-details-id');
       expect(rendered).not.toContain('data-dismiss-process-id');
@@ -695,4 +807,20 @@ describe('active turn timeline', () => {
       expect(rendered.includes('chat-group--streaming')).toBe(streaming);
     },
   );
+});
+
+
+test('adds a compact details icon to successful spawn headers without changing the raw result', () => {
+  const item = summary();
+  const tool = item.items.find(item => item.type === 'tool');
+  if (!tool || tool.type !== 'tool') throw new Error('Missing tool fixture');
+  tool.name = 'sessions_spawn';
+  tool.status = 'completed';
+  tool.output = '{"status":"accepted","childSessionKey":"agent:main:subagent:child"}';
+  const rendered = flatten(renderTimelineItem(item, 0, true));
+  expect(rendered).toContain('tool-agent-link');
+  expect(rendered).toContain(tool.output);
+  expect(rendered).not.toContain('session-tool-fields');
+  tool.name = 'sessions_yield';
+  expect(flatten(renderTimelineItem(item, 0, true))).not.toContain('tool-agent-link');
 });

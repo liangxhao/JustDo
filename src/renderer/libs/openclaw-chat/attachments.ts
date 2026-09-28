@@ -91,7 +91,7 @@ export function toAttachmentContentBlocks(
       type: 'attachment',
       attachment: {
         url: toAttachmentDataUrl(attachment),
-        kind: isImageMimeType(attachment.mimeType) ? 'image' : 'document',
+        kind: isImageMimeType(attachment.mimeType) ? 'image' : attachment.mimeType.startsWith('audio/') ? 'audio' : attachment.mimeType.startsWith('video/') ? 'video' : 'document',
         label: attachment.name,
         mimeType: attachment.mimeType,
       },

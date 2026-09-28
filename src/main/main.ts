@@ -74,7 +74,7 @@ import { enableSystemCaForCurrentProcess } from './core/network/trustedCertifica
 import { applyDependencyManagerConfigEnv } from './core/runtime/dependencyManagerConfig';
 import { ensurePythonRuntimeReady } from './core/runtime/pythonRuntime';
 import { registerContentSecurityPolicy } from './core/window/contentSecurityPolicy';
-import { registerLocalFileProtocol } from './core/window/localFileProtocol';
+import { registerLocalFileProtocol, registerLocalFileScheme } from './core/window/localFileProtocol';
 import { createMainWindow } from './core/window/mainWindowFactory';
 import { CoworkStore } from './data/coworkStore';
 import { GroupStore } from './data/groupStore';
@@ -1822,6 +1822,7 @@ if (multicaBridgeArgv) {
 
   // 初始化应用
   const initApp = async () => {
+    registerLocalFileScheme();
     await app.whenReady();
 
     store = await initStore();

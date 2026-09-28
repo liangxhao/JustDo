@@ -1,3 +1,5 @@
+import './tool-output';
+
 import { COWORK_PLAN_PREVIEW_EVENT, extractPresentPlanPreview } from '@shared/cowork/planPreview';
 import { REVIEW_OPEN_EVENT } from '@shared/cowork/sessionReview';
 import { html, nothing, type TemplateResult } from 'lit';
@@ -6,6 +8,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import { i18nService } from '@/services/i18n';
 
+import { isTranscriptImage } from '../attachments';
 import type { ToolItem } from '../model/chat-transcript-state';
 import {
   buildEditDiffView,
@@ -16,16 +19,21 @@ import {
   type EditToolDiff,
   parseEditToolDiff,
 } from '../model/edit-tool-diff';
+import { fileToolCode, fileToolIdentity, fileToolPatch } from '../model/file-tool-presentation';
 import {
   type ActiveTurnTimelineItem,
   type ProcessSummaryTimelineItem,
 } from '../model/project-turn-items';
+import { OPEN_SPAWNED_AGENT_EVENT, spawnedAgentSessionKey } from '../model/spawn-tool-target';
+import { toolNesting, toolOperation, toolOutcome, toolTarget } from '../model/tool-presentation';
 import { stripOpenClawLogHintText } from '../pipeline/system-message-display';
 import { renderChatAvatar } from './chat-avatar';
 import { type EditDiffMonacoData, resolveEditDiffLanguage } from './edit-diff-monaco';
 import { toSanitizedMarkdownHtml } from './markdown';
 import {
+  renderAssistantAttachments,
   renderAssistantTimelineContent,
+  renderMessageImages,
   renderReadingIndicatorGroup,
   renderStreamingThinkingGroup,
 } from './message-render';
@@ -83,7 +91,7 @@ function toolSummaryInput(value: unknown): string {
 
 function toolSummary(tool: ToolItem): string {
   const editDiff = parseEditToolDiff(tool.name, tool.input);
-  return editDiff?.path ?? toolSummaryInput(tool.input);
+  return toolTarget(tool) || editDiff?.path || toolSummaryInput(tool.input);
 }
 
 export type EditDiffMode = 'unified' | 'split';
@@ -326,28 +334,89 @@ function renderEditDiff(
   `;
 }
 
+function renderSpawnedAgentLink(tool: ToolItem): TemplateResult | typeof nothing {
+  const sessionKey = spawnedAgentSessionKey(tool);
+  if (!sessionKey) return nothing;
+  return html`<button type="button" class="tool-agent-link"
+    title=${i18nService.t('subtaskShowInfo')} aria-label=${i18nService.t('subtaskShowInfo')}
+    @click=${(event: Event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      window.dispatchEvent(new CustomEvent(OPEN_SPAWNED_AGENT_EVENT, { detail: { sessionKey } }));
+    }}><svg viewBox="0 0 16 16" width="18" height="18" fill="none" aria-hidden="true">
+      <path d="M3.5 12.5 12 4M4.5 4H12v7.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+    </svg></button>`;
+}
+
 function renderToolDetail(
   tool: ToolItem,
   editDiffMode: EditDiffMode,
   onEditDiffModeChange?: EditDiffModeChangeHandler,
 ): TemplateResult {
   const editDiff = parseEditToolDiff(tool.name, tool.input);
+  const fileIdentity = fileToolIdentity(tool);
+  const inputCode = fileToolCode(tool, false);
+  const outputCode = fileToolCode(tool, true);
+  const resultDiff = tool.status === 'completed' && ['write', 'edit'].includes(fileIdentity.name) ? tool.presentation?.fileDiff : undefined;
+  const patch = fileToolPatch(tool);
+  const media = (tool.presentation?.media ?? []).map(item => ({
+    url: item.path,
+    label: item.fileName || (item.path.startsWith('data:') ? tool.name : '') || item.path.split(/[\\/]/).pop()?.slice(0, 120) || tool.name,
+    kind: isTranscriptImage(item) ? 'image' as const : item.mimeType?.startsWith('video/') || item.kind === 'video' ? 'video' as const : item.mimeType?.startsWith('audio/') || item.kind === 'audio' ? 'audio' as const : 'document' as const,
+  }));
   return html`
     <div class="process-summary__tool-detail">
+      ${renderMessageImages(media.filter(item => item.kind === 'image'), true)}
+      ${renderAssistantAttachments(media.filter(item => item.kind !== 'image'))}
       ${
-        editDiff
+        tool.presentation?.exitCode !== undefined && tool.presentation.exitCode !== 0
+          ? html`<div class="process-summary__error">
+              ${i18nService.t('messageExitCode').replace('{code}', String(tool.presentation.exitCode))}
+            </div>`
+          : nothing
+      }
+      ${patch.length ? html`<div class="process-summary__detail-label">${i18nService.t('coworkToolInput')}</div>
+        ${patch.map(file => html`<details class="file-patch" open><summary>${i18nService.t(`messagePatch${file.operation}`)} · ${file.path}${file.moveTo ? html` → ${file.moveTo}` : nothing}</summary>
+          ${file.text ? html`<justdo-tool-output .text=${file.text} language="diff"></justdo-tool-output>` : nothing}
+        </details>`)}
+        <details><summary>${i18nService.t('messageRawParameters')}</summary><justdo-tool-output .text=${readableValue(tool.input)}></justdo-tool-output></details>` : nothing}
+      ${
+        patch.length ? nothing : editDiff
           ? renderEditDiff(tool.id, editDiff, editDiffMode, onEditDiffModeChange)
           : html`
               <div class="process-summary__detail-label">${i18nService.t('coworkToolInput')}</div>
-              <pre>${readableValue(tool.input) || i18nService.t('coworkToolNoOutput')}</pre>
+              ${
+                tool.input === undefined ||
+                tool.input === null ||
+                (typeof tool.input === 'object' && Object.keys(tool.input).length === 0)
+                  ? html`<span
+                      >${i18nService.t(tool.status === 'running' ? 'messageInputPending' : 'messageNoParameters')}</span
+                    >`
+                  : html`<justdo-tool-output
+                      .text=${inputCode?.text ?? readableValue(tool.input)}
+                      .language=${inputCode ? resolveEditDiffLanguage(inputCode.path) : ''}
+                    ></justdo-tool-output>`
+              }
             `
       }
+      ${inputCode ? html`<div class="file-code-path">${inputCode.path}</div><details><summary>${i18nService.t('messageRawParameters')}</summary><justdo-tool-output .text=${readableValue(tool.input)}></justdo-tool-output></details>` : nothing}
       ${
         hasToolResult(tool)
           ? html`
               <div class="process-summary__detail-label">${i18nService.t('coworkToolResult')}</div>
-              <pre class=${tool.status === 'failed' ? 'process-summary__error' : ''}>
-${toolResult(tool)}</pre>
+              ${tool.presentation?.fileRead?.kind === 'truncated' ? html`<span>${i18nService.t('messagePartialOutput')}</span>` : nothing}
+              <div
+                class=${`process-summary__tool-result${toolOutcome(tool) === 'failed' ? ' process-summary__error' : ''}`}
+              >
+                <justdo-tool-output
+                  .text=${resultDiff ?? outputCode?.text ?? toolResult(tool)}
+                  .language=${resultDiff ? 'diff' : outputCode ? resolveEditDiffLanguage(outputCode.path) : ''}
+                  .terminal=${toolOperation(tool) === 'commands'}
+                  .partial=${tool.presentation?.partial === true}
+                  .identity=${{ runId: tool.runId, toolCallId: tool.toolCallId, messageId: tool.presentation?.resultMessageId }}
+                ></justdo-tool-output>
+              </div>
+              ${resultDiff ? html`<details><summary>${i18nService.t('messageRawResult')}</summary><justdo-tool-output .text=${toolResult(tool)}></justdo-tool-output></details>` : nothing}
             `
           : nothing
       }
@@ -356,12 +425,16 @@ ${toolResult(tool)}</pre>
 }
 
 function toolStateLabel(tool: ToolItem): string {
+  const outcome = toolOutcome(tool);
+  if (outcome === 'unknown') return i18nService.t('messageUnknownOutcome');
+  if (outcome === 'blocked') return i18nService.t('messageBlockedOutcome');
+  if (outcome === 'failed') return i18nService.t('coworkStatusError');
   const stateKey =
-    tool.status === 'running'
+    outcome === 'running'
       ? 'coworkToolRunning'
-      : tool.status === 'failed'
+      : outcome === 'failed'
         ? 'coworkStatusError'
-        : tool.status === 'completed'
+        : outcome === 'completed'
           ? 'coworkStatusCompleted'
           : 'coworkProcessInterrupted';
   return i18nService.t(stateKey);
@@ -599,18 +672,24 @@ export function renderTimelineItem(
           data-live-process-id=${tool.id}
         >
           <details
+            data-tool-identity=${JSON.stringify([tool.runId, tool.toolCallId])}
             class=${`process-summary__tool process-live__tool${
               isEditDiff ? ' process-summary__tool--edit' : ''
             }`}
           >
             <summary class="process-summary__tool-title">
               <span
-                class="process-summary__tool-status process-summary__tool-status--${tool.status}"
+                class="process-summary__tool-status process-summary__tool-status--${toolOutcome(tool)}"
                 role="img"
                 aria-label=${toolStateLabel(tool)}
               ></span>
-              <strong>${resolveToolDisplay(tool.name).title}</strong>
-              <span class="process-summary__tool-input">${toolSummary(tool)}</span>
+              <strong title=${resolveToolDisplay(tool.name).title}
+                >${resolveToolDisplay(tool.name).title}</strong
+              >
+              ${renderSpawnedAgentLink(tool)}
+              <span class="process-summary__tool-input" title=${toolSummary(tool)}
+                >${toolSummary(tool)}</span
+              >
             </summary>
             ${renderToolDetail(tool, editDiffModes.get(tool.id) ?? 'unified', onEditDiffModeChange)}
           </details>
@@ -623,6 +702,9 @@ export function renderTimelineItem(
     );
   }
   if (item.kind === 'process-summary') {
+    const depths = toolNesting(
+      item.items.filter((entry): entry is ToolItem => entry.type === 'tool'),
+    );
     return renderAssistantTimelineRow(
       html`
         <section class="process-summary-group">
@@ -643,7 +725,9 @@ export function renderTimelineItem(
             expanded
               ? html`
                   <ol class="process-summary__items">
-                    ${item.items.map(
+                    ${repeat(
+                      item.items,
+                      process => process.id,
                       process => html`
                         <li
                           class=${`process-summary__item process-summary__item--${process.type}${
@@ -652,6 +736,7 @@ export function renderTimelineItem(
                               ? ' process-summary__item--edit'
                               : ''
                           }`}
+                          style=${process.type === 'tool' ? `margin-inline-start: ${Math.min(depths.get(process) ?? 0, 6) * 16}px` : ''}
                           data-inline-process-id=${process.id}
                           tabindex="-1"
                         >
@@ -677,6 +762,7 @@ export function renderTimelineItem(
                                 `
                               : html`
                                   <details
+                                    data-tool-identity=${JSON.stringify([process.runId, process.toolCallId])}
                                     class=${`process-summary__tool${
                                       parseEditToolDiff(process.name, process.input) !== null
                                         ? ' process-summary__tool--edit'
@@ -685,12 +771,17 @@ export function renderTimelineItem(
                                   >
                                     <summary class="process-summary__tool-title">
                                       <span
-                                        class="process-summary__tool-status process-summary__tool-status--${process.status}"
+                                        class="process-summary__tool-status process-summary__tool-status--${toolOutcome(process)}"
                                         role="img"
                                         aria-label=${toolStateLabel(process)}
                                       ></span>
-                                      <strong>${resolveToolDisplay(process.name).title}</strong>
-                                      <span class="process-summary__tool-input"
+                                      <strong title=${resolveToolDisplay(process.name).title}
+                                        >${resolveToolDisplay(process.name).title}</strong
+                                      >
+                                      ${renderSpawnedAgentLink(process)}
+                                      <span
+                                        class="process-summary__tool-input"
+                                        title=${toolSummary(process)}
                                         >${toolSummary(process)}</span
                                       >
                                     </summary>

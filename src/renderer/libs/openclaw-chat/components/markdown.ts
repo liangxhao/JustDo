@@ -254,7 +254,7 @@ function escapeHtml(value: string): string {
     .replace(/'/g, '&#39;');
 }
 
-function highlightCode(text: string, lang: string): string {
+export function highlightCode(text: string, lang: string): string {
   const language =
     (HIGHLIGHT_ALIASES[lang.trim().toLowerCase()] ?? lang.trim().toLowerCase()) || '';
   try {
@@ -697,7 +697,7 @@ md.renderer.rules.fence = (tokens, idx, _options, env) => {
     return `<div class="code-block-wrapper mermaid-block">${header}<div class="mermaid-preview" aria-live="polite"></div><div class="mermaid-source" hidden>${codeBlock}</div></div>`;
   }
 
-  const attrSafe = escapeHtml(text);
+  const attrSafe = escapeHtml(token.content);
   const copyLabel = escapeHtml(i18nService.t('copy'));
   const copiedLabel = escapeHtml(i18nService.t('copied'));
   const copyAriaLabel = escapeHtml(i18nService.t('copyToClipboard'));

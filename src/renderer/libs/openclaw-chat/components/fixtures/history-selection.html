@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh">
+  <meta charset="utf-8" /><title>Historical selection regression</title>
+  <body>
+    <div id="fixture"></div>
+    <p id="result"></p>
+    <script type="module">
+      import { html, render } from 'lit';
+      import { renderMessageBlock } from '../message-render';
+      import { RichMessageControls } from '../rich-message-controls';
+      import { chatStyles } from '../justdo-chat.styles';
+      const root = document.querySelector('#fixture').attachShadow({ mode: 'open' });
+      const style = document.createElement('style');
+      style.textContent =
+        chatStyles.map(s => s.cssText).join('') +
+        ':host {display:block;max-width:800px;margin:32px auto;}';
+      root.append(style);
+      const target = document.createElement('div');
+      root.append(target);
+      const groups = [
+        {
+          kind: 'group',
+          key: 'old',
+          role: 'assistant',
+          messages: [
+            {
+              key: 'one',
+              message: {
+                role: 'assistant',
+                __openclaw: { id: 'entry-old' },
+                content: 'Earlier historical reply.',
+              },
+            },
+          ],
+        },
+        {
+          kind: 'group',
+          key: 'last',
+          role: 'assistant',
+          messages: [
+            {
+              key: 'two',
+              message: {
+                role: 'assistant',
+                __openclaw: { id: 'entry-last' },
+                content: 'Last historical reply.\n\nSelect this final paragraph and right click.',
+              },
+            },
+          ],
+        },
+      ];
+      render(html`${groups.map(group => renderMessageBlock(group))}`, target);
+      const controls = new RichMessageControls(root, () => {});
+      controls.reset('history-fixture');
+      controls.onQuote = (quote, destination) => {
+        document.querySelector('#result').textContent = destination + ': ' + quote.text;
+      };
+    </script>
+  </body>
+</html>

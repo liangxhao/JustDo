@@ -20,6 +20,8 @@ import type {
 } from '@/features/cowork/coworkTypes';
 import type { Model } from '@/features/models/modelSlice';
 
+import type { MessageQuote } from './components/composer/messageQuote';
+
 export interface DraftAttachment {
   path: string;
   name: string;
@@ -34,6 +36,7 @@ interface CoworkState {
   currentSessionId: string | null;
   currentSession: CoworkSession | null;
   draftPrompts: Record<string, string>;
+  draftMessageQuotes: Record<string, MessageQuote[]>;
   /** Keyed by draftKey (sessionId or '__home__'), stores pending attachments */
   draftAttachments: Record<string, DraftAttachment[]>;
   /** Browser annotations are generated context and remain scoped to one composer draft. */
@@ -67,6 +70,7 @@ const initialState: CoworkState = {
   currentSessionId: null,
   currentSession: null,
   draftPrompts: {},
+  draftMessageQuotes: {},
   draftAttachments: {},
   draftBrowserAnnotations: {},
   draftBrowserRecordings: {},
@@ -250,6 +254,26 @@ const coworkSlice = createSlice({
       }
     },
 
+    addDraftMessageQuote(state, action: PayloadAction<{ draftKey: string; quote: MessageQuote }>) {
+      const { draftKey, quote } = action.payload;
+      const quotes = state.draftMessageQuotes[draftKey] ?? [];
+      if (quotes.length >= 8 || !quote.sessionKey || !quote.text.trim()) return;
+      state.draftMessageQuotes[draftKey] = [
+        ...quotes,
+        { ...quote, text: quote.text.slice(0, 12_000) },
+      ];
+    },
+    removeDraftMessageQuotes(state, action: PayloadAction<{ draftKey: string; ids?: string[] }>) {
+      const { draftKey, ids } = action.payload;
+      if (!ids) {
+        delete state.draftMessageQuotes[draftKey];
+        return;
+      }
+      state.draftMessageQuotes[draftKey] = (state.draftMessageQuotes[draftKey] ?? []).filter(
+        quote => !ids.includes(quote.id),
+      );
+    },
+
     setDraftPrompt(state, action: PayloadAction<{ sessionId: string; draft: string }>) {
       const { sessionId, draft } = action.payload;
       if (draft) {
@@ -307,6 +331,7 @@ const coworkSlice = createSlice({
       state.pendingInteractions = state.pendingInteractions.filter(
         interaction => interaction.sessionId !== action.payload,
       );
+      delete state.draftMessageQuotes[action.payload];
       delete state.draftBrowserAnnotations[action.payload];
       delete state.draftBrowserRecordings[action.payload];
     },
@@ -316,6 +341,7 @@ const coworkSlice = createSlice({
       for (const sessionId of action.payload) {
         clearSessionModelSelectionState(state, sessionId);
         delete state.planModeBySession[sessionId];
+        delete state.draftMessageQuotes[sessionId];
         delete state.draftBrowserAnnotations[sessionId];
         delete state.draftBrowserRecordings[sessionId];
       }
@@ -750,6 +776,8 @@ export const {
   upsertSessionRunTiming,
   setSessionRuntimeActivities,
   setDraftPrompt,
+  addDraftMessageQuote,
+  removeDraftMessageQuotes,
   setDraftAttachments,
   addDraftAttachment,
   hydrateDraftImageAttachment,

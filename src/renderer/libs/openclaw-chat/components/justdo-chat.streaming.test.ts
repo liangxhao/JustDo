@@ -127,18 +127,73 @@ describe('justdo-chat direct-property streaming', () => {
     await chat.updateComplete;
     expect(assistantText(chat)).toBe('The partial answer received before cancellation.');
     expect(chat.shadowRoot?.querySelector('.process-summary__tool-status--running')).toBeNull();
-    expect(chat.shadowRoot?.querySelector('.chat-container')?.getAttribute('aria-busy')).toBe('false');
+    expect(chat.shadowRoot?.querySelector('.chat-container')?.getAttribute('aria-busy')).toBe(
+      'false',
+    );
 
     for (let count = 0; count < 3; count += 1) {
       handleEvent({
         event: 'chat',
-        payload: { sessionKey: controller.state.sessionKey, runId: 'stopped-run', state: 'aborted' },
+        payload: {
+          sessionKey: controller.state.sessionKey,
+          runId: 'stopped-run',
+          state: 'aborted',
+        },
       });
     }
     await frames.drain(chat);
     expect(chat.shadowRoot?.querySelectorAll('.process-terminal')).toHaveLength(1);
     expect(chat.shadowRoot?.querySelectorAll('.chat-bubble__text')).toHaveLength(1);
-    expect(chat.shadowRoot?.querySelector('.chat-container')?.getAttribute('aria-busy')).toBe('false');
+    expect(chat.shadowRoot?.querySelector('.chat-container')?.getAttribute('aria-busy')).toBe(
+      'false',
+    );
+  });
+
+  test('waits for history content before showing completed run metadata', async () => {
+    const controller = prepareController();
+    controller.state.chatLoading = true;
+    const chat = document.createElement('justdo-chat') as JustDoChatElement;
+    chat.controller = controller;
+    chat.runTimings = [
+      {
+        id: 'history-run',
+        sessionId: 'session-1',
+        clientTurnId: 'history-run',
+        rootRunId: 'history-run',
+        startedAt: 1_000,
+        endedAt: 8_000,
+        state: 'completed',
+      },
+    ];
+    document.body.append(chat);
+    await chat.updateComplete;
+    expect(chat.shadowRoot?.querySelector('.active-turn__footer')).toBeNull();
+    expect(chat.shadowRoot?.textContent).not.toContain('Worked for 7s');
+
+    const history = [
+      {
+        role: 'assistant',
+        content: 'Loaded answer',
+        timestamp: 8_000,
+        __openclaw: { runId: 'history-run' },
+      },
+    ];
+    controller.state.chatMessages = history;
+    controller.state.transcript.persistedMessages = history;
+    (
+      controller as unknown as {
+        setCurrentSessionMessages(
+          messages: unknown[],
+          options: { resetLoadedHistory: boolean },
+        ): void;
+      }
+    ).setCurrentSessionMessages(history, { resetLoadedHistory: true });
+    controller.state.chatLoading = false;
+    controller.state.initialHistoryReady = true;
+    notifyController(controller);
+    await chat.updateComplete;
+    expect(chat.shadowRoot?.textContent).toContain('Loaded answer');
+    expect(chat.shadowRoot?.querySelector('.active-turn__footer')?.textContent).toContain('7s');
   });
 
   test('renders standalone completed turns with the main-chat model and duration footer', async () => {

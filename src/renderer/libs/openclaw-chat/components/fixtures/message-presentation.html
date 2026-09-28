@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh">
+  <meta charset="utf-8" /><title>Message presentation fixture</title>
+  <style>
+    body {
+      margin: 0;
+      background: #fafafa;
+      font: 14px system-ui;
+    }
+    main {
+      max-width: 1000px;
+      margin: auto;
+      padding: 24px;
+    }
+    justdo-chat {
+      display: block;
+      height: calc(100vh - 60px);
+    }
+  </style>
+  <nav><button id="theme">浅色 / 深色</button><button id="lang">中文 / English</button></nav>
+  <label>本地音视频预览 <input id="media" type="file" accept="audio/*,video/*" /></label>
+  <main><justdo-chat></justdo-chat></main>
+  <script type="module">
+    import '../justdo-chat.ts';
+    import { i18nService } from '/services/i18n.ts';
+    const chat = document.querySelector('justdo-chat');
+    document.querySelector('#theme').onclick = () => {
+      document.documentElement.classList.toggle('dark');
+      chat.classList.toggle('dark');
+      document.body.style.background = chat.classList.contains('dark') ? '#181b20' : '#fafafa';
+      chat.requestUpdate();
+    };
+    document.querySelector('#lang').onclick = () => {
+      i18nService.setLanguage(i18nService.getLanguage() === 'zh' ? 'en' : 'zh');
+      chat.requestUpdate();
+    };
+    chat.messages = [
+      { role: 'user', content: '检查构建并解释结果', id: 'user' },
+      {
+        role: 'assistant',
+        runId: 'fixture-run',
+        content: [
+          {
+            type: 'toolCall',
+            id: 'build',
+            name: 'exec',
+            arguments: { title: '检查构建', command: 'npm run build', cwd: 'E:/项目 示例' },
+          },
+        ],
+      },
+      {
+        role: 'toolResult',
+        runId: 'fixture-run',
+        toolCallId: 'build',
+        toolName: 'exec',
+        details: { exitCode: 1 },
+        content: [{ type: 'text', text: 'src/example.ts: Type mismatch\n'.repeat(300) }],
+      },
+      {
+        role: 'assistant',
+        id: 'answer',
+        content:
+          '代码、表格与图表阅读示例\n\n```typescript\n' +
+          Array.from({ length: 30 }, (_, i) => `const item${i} = ${i};`).join('\n') +
+          '\n```\n\n```json\n{"id":9007199254740993,"id":2,"items":[true,false,null]}\n```\n\n| 文件 | 结果 |\n| --- | --- |\n| [源码](https://example.test) | 类型错误 |\n\n```mermaid\nflowchart LR\n A[检查构建] --> B[修复类型]\n```',
+      },
+    ];
+    chat.messages = [...chat.messages,
+      { role: 'assistant', runId: 'files', content: [
+        { type: 'toolCall', id: 'read', name: 'read', arguments: { path: 'example.ts', offset: 5 } },
+        { type: 'toolCall', id: 'write', name: 'write', arguments: { path: 'example.ts', content: 'const message = "hello";\nconsole.log(message);' } },
+        { type: 'toolCall', id: 'patch', name: 'apply_patch', arguments: { input: '*** Begin Patch\n*** Update File: example.ts\n@@\n-old\n+new\n*** Delete File: unused.ts\n*** End Patch' } },
+      ] },
+      { role: 'toolResult', runId: 'files', toolCallId: 'read', toolName: 'read', content: [{ type: 'text', text: 'const result = 42;' }] },
+      { role: 'toolResult', runId: 'files', toolCallId: 'write', toolName: 'write', content: [{ type: 'text', text: 'written' }] },
+      { role: 'toolResult', runId: 'files', toolCallId: 'patch', toolName: 'apply_patch', content: [{ type: 'text', text: 'updated' }] },
+    ];
+    let mediaUrl;
+    document.querySelector('#media').onchange = event => {
+      const file = event.target.files[0];
+      if (!file) return;
+      if (mediaUrl) URL.revokeObjectURL(mediaUrl);
+      mediaUrl = URL.createObjectURL(file);
+      chat.messages = [...chat.messages.filter(message => message.id !== 'media-preview'), {
+        role: 'assistant', id: 'media-preview', content: [{ type: 'attachment', attachment: {
+          url: mediaUrl, kind: file.type.startsWith('video/') ? 'video' : 'audio', label: file.name,
+        } }],
+      }];
+    };
+    window.addEventListener('pagehide', () => { if (mediaUrl) URL.revokeObjectURL(mediaUrl); });
+    chat.processSummariesExpanded = true;
+  </script>
+</html>

@@ -175,6 +175,8 @@ flowchart TD
 
 ## 5. 消息与工具呈现
 
+已交付基础呈现之后的专项增强，见 [工具与消息专项渲染计划](openclaw-tool-rendering-plan.md) 和 [逐工具契约目录](openclaw-tool-contract-catalog.md)。两份文档按锁定源码定位参数/结果定义，并区分当前实现、后续任务和动态插件边界。
+
 ### 5.1 现状和目标效果
 
 JustDo 不是从零实现消息展示。当前具有原生流/历史归并、Thinking/Tool/Content 顺序、过程折叠、工具原始输入输出、部分 edit 的统一/并排 Diff、Markdown/公式、代码复制、Mermaid、附件、Canvas、minimap 和滚动锚点。
@@ -705,6 +707,9 @@ webhook 必须显式配置，默认内部结果，不因新增 UI 把通知发�
 | 任务包/子项 | 实施提交 | 实际完成范围 | 验证证据 | 仍存在的限制 |
 | ----------- | -------- | ------------ | -------- | ------------ |
 | T03 + T01 必要入口 | `feat/session-review`（本变更） | 侧面板启动入口/+菜单/主聊天 edit 跳转；三种比较范围；文件过滤展开、统一/并排、行号、语法高亮、换行；复制、Files 定位、受限预览、Windows 编辑器选择；失败恢复及双语；原生会话基线过滤 | 相关 Vitest 回归；lint/build/两侧 TypeScript；pristine 契约；隔离 Windows Gateway + 临时 Git 仓库真实读取；组件宽窄/深浅色记录，详见下文 | 完整 npm test 的 SQLite ABI 切换被运行中进程锁住；未完成 Electron 全窗口端到端、macOS/Linux 或真实远程工作区验收；Windows 以外不提供现有系统编辑器选择器 |
+| T02 | `feat/message-tool-presentation` | 可选展示字段贯通、操作/结果汇总、明确父子缩进、命令/cwd/退出码、patch 片段摘要、原始参数/分页输出、复制下载及完整结果重试 | 聊天及 composer 领域测试；见下方验证记录 | 没有真实模型/Gateway 端到端验收；无原生身份的旧记录回退平级；浏览器/插件特殊结果仍保留通用原始详情 |
+| T05-A/B/C/D、选文草稿 | 同上 | 代码展开/换行/下载，TSV/扩大表格，保真 JSON 树，Mermaid 复制/扩大/缩放/保护，主聊天选文进入可删除草稿或侧聊 | Windows Chrome 真实共享组件窄/宽界面检查及自动化测试 | 合成消息不证明真实 Gateway 成功；显式 GitHub/会话链接的后续专用 reader 不在本批实现 |
+
 
 ### T03 验证记录（2026-09-27）
 
@@ -721,3 +726,39 @@ Windows，锁定 OpenClaw `2026.9.6`。未改相邻 OpenClaw 源码或现有用�
 - 标准 `npm test` 此前在 Node SQLite ABI 准备时因运行中进程锁定文件遇到 `EBUSY/EPERM`，未进入全量测试；恢复检查确认 Electron ABI 146 正常。本次不切换共享依赖 ABI，相关用例直接用 Vitest 验证。
 - macOS/Linux、真实远程工作区、完整 Electron 窗口端到端尚未实机验证。Windows 以外不提供现有系统编辑器选择器。
 - 白屏回归：旧窗口 preload 缺少 `cowork.review` 时显示完全重启说明，桥接同步异常转为可重试错误，不让 effect 抛错卸载页面。新增 StrictMode 缺接口和同步异常恢复测试；本次 21 个相关测试文件、162 个用例通过，lint/build 通过。隔离隐藏 Electron 窗口在 sandbox/contextIsolation 开启时加载真实构建 preload，`load`/`file` IPC 往返通过（Main 使用测试 handler），证据 `.tmp/review-preload-out.log`。这不代替完整应用端到端验收。
+
+### 第 5 节实施验证（2026-09-27）
+
+- worktree：`E:/workspace/JustDo-message-tool-presentation`，分支 `feat/message-tool-presentation`，
+  起点 `36d25d77e`。原工作区未修改；原方案文件此前未跟踪，复制到本 worktree 维护记录。
+- 静态核对：本地锁版本参考的 `tool-call-grouping.ts`、`tool-cards.ts`、
+  `chat-tool-output.ts`、`tool-display-exec.ts`、`agent-activity-presentation.ts` 和
+  `logs-chat.ts`。复用现有历史详情 RPC，不增加 Gateway 方法或 runtime patch。
+- 测试包含：20 次更新的调用去重、同文不同调用、循环/缺父/重复/跨 run 身份、wrapper
+  成功与子操作失败、未知结果、结果匹配/原生截断、2 MB 输出有界 DOM、关闭后迟到响应、
+  复制失败、JSON 大整数/重复键/残缺输入、TSV 转义、扩大表格的链接动作、引用草稿隔离。
+  原生顺序、Plan/progress、停止/恢复及聊天现有领域测试一起运行。
+- 自动检查：97 个测试文件、1266 项测试通过；`npm run lint`、`npm run build` 及 Electron TypeScript 检查通过。测试范围为聊天组件、composer 和 coworkSlice；未运行全量 `npm test`。worktree 复用原目录 node_modules，测试通过临时 Vite fs allow 配置允许该依赖目录。
+- 可复核界面：运行 Vite 后访问
+  `/libs/openclaw-chat/components/fixtures/message-presentation.html`。该 fixture 直接加载
+  生产 `<justdo-chat>`，使用合成的失败命令、长输出、代码、JSON、表格、Mermaid。
+  浏览器验证了工具展开/退出码、JSON 重复键/大整数、表格扩大/关闭、浅色/深色呈现；
+  使用 900×700 与 1440×900 CSS viewport。部分截图调用超时，成功截图及浏览器 AX 记录
+  已在执行会话中检查；fixture 可重复检查，不包含凭据和用户 transcript。
+- 本批只实现第 5 节明确的 T02/T05 及选文草稿。表中指向 T06/T11/T14/T15/T16 的附件、
+  provider review、推荐卡、widget、多用户等仍由对应任务包负责。
+- 未执行真实模型工具调用、Gateway 跨会话补取故障注入，也未验证 macOS/Linux；这些不以
+  单元测试或浏览器合成界面冒充通过。
+
+
+### 第 5 节多 Agent 审查修复（2026-09-27）
+
+三个独立 Agent 分别检查工具事件/历史、阅读器/生命周期、composer/侧聊；主 Agent 复核并统一验证。
+修复离线补取完整输出卡住、原始斜杠命令混入引用、侧聊引用丢失换行缩进、目标恢复遗漏引用、
+只读外部会话暴露引用发送入口、失败活动残留隐藏标记、手动取消显示完成、超长命令反引号扫描
+参数栈溢出，以及 JSON 树接受非法空白。新增针对这些行为的回归，并验证会话身份切换后丢弃
+迟到完整输出。审查与合成测试仍不替代真实 Gateway/模型和其他操作系统验收。
+
+审查后验证：97 个测试文件、1284 项测试通过；`npm run lint`、`npm run build`、
+全量 TypeScript 检查通过。目标恢复的总长度分支人工核对，成功/失败与并发草稿保留由
+共享提交逻辑的测试覆盖，未声称完成 composer 真实目标交互端到端测试。

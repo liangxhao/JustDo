@@ -333,7 +333,10 @@ describe('Nested Markdown fences', () => {
     expect(html).toContain('# 技能名称 - 使用示例');
     expect(html).toContain('## 示例');
     expect(html).toContain('```');
-    expect(html).not.toContain('\\`\\`\\`');
+    const source = document.createElement('div');
+    source.innerHTML = html;
+    expect(source.querySelector('code')!.textContent).not.toContain('\\`\\`\\`');
+    expect(source.querySelector<HTMLElement>('[data-code]')!.dataset.code).toContain('\\`\\`\\`');
     expect(html).toContain('代码或步骤');
     expect(html).not.toContain('<h1>');
     expect(html).not.toContain('<h2>');
@@ -348,7 +351,10 @@ describe('Nested Markdown fences', () => {
 \`\`\``);
 
     expect(html).toContain('```');
-    expect(html).not.toContain('\\\\`');
+    const source = document.createElement('div');
+    source.innerHTML = html;
+    expect(source.querySelector('code')!.textContent).not.toContain('\\\\`');
+    expect(source.querySelector<HTMLElement>('[data-code]')!.dataset.code).toContain('\\\\`');
   });
 });
 

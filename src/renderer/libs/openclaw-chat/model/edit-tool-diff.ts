@@ -70,8 +70,8 @@ function parseEdits(value: unknown): unknown[] | null {
 function parseReplacement(value: unknown): EditToolReplacement | null {
   const record = asRecord(value);
   if (!record) return null;
-  const oldText = readString(record, ['oldText', 'old_string']);
-  const newText = readString(record, ['newText', 'new_string']);
+  const oldText = readString(record, ['oldText', 'old_string', 'oldString', 'old_str']);
+  const newText = readString(record, ['newText', 'new_string', 'newString', 'new_str']);
   return oldText !== null && newText !== null ? { oldText, newText } : null;
 }
 
@@ -94,9 +94,16 @@ export function parseEditToolDiff(toolName: string, input: unknown): EditToolDif
     edits.push(...(parsedEdits as EditToolReplacement[]));
   }
 
-  const declaresLegacyEdit = ['oldText', 'old_string', 'newText', 'new_string'].some(
-    key => record[key] !== undefined,
-  );
+  const declaresLegacyEdit = [
+    'oldText',
+    'old_string',
+    'oldString',
+    'old_str',
+    'newText',
+    'new_string',
+    'newString',
+    'new_str',
+  ].some(key => record[key] !== undefined);
   const legacyEdit = parseReplacement(record);
   if (declaresLegacyEdit && !legacyEdit) return null;
   if (legacyEdit) edits.push(legacyEdit);

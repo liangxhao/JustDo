@@ -2,7 +2,7 @@ import type { Dispatch, UnknownAction } from '@reduxjs/toolkit';
 import { useCallback } from 'react';
 
 import { type JustDoChatWrapperRef } from '@/features/cowork/components/chat/JustDoChatWrapper';
-import { setDraftPrompt } from '@/features/cowork/coworkSlice';
+import { removeDraftMessageQuotes, setDraftPrompt } from '@/features/cowork/coworkSlice';
 import type {
   SideChatResult,
   SideChatStreamUpdate,
@@ -36,7 +36,7 @@ export function useCoworkSideChats({
   selectAdjacentDisplayTabAfterClose,
   chatWrapperRef,
 }: CoworkSideChatsOptions) {
-  const handleCreateSideChat = useCallback(() => {
+  const handleCreateSideChat = useCallback((): string | undefined => {
     if (!currentSessionId || currentSessionId.startsWith('temp-') || !isOpenClawEngine) return;
     sideChatSequenceRef.current += 1;
     const number = sideChatSequenceRef.current;
@@ -52,6 +52,7 @@ export function useCoworkSideChats({
     ]);
     setPreferredDisplayTabId(id);
     setIsDisplayPanelOpen(true);
+    return id;
   }, [
     currentSessionId,
     isOpenClawEngine,
@@ -64,6 +65,7 @@ export function useCoworkSideChats({
   const closeSideChat = useCallback(
     (tabId: string) => {
       dispatch(setDraftPrompt({ sessionId: tabId, draft: '' }));
+      dispatch(removeDraftMessageQuotes({ draftKey: tabId }));
       selectAdjacentDisplayTabAfterClose(tabId);
       setSideChatTabs(current => current.filter(tab => tab.id !== tabId));
     },

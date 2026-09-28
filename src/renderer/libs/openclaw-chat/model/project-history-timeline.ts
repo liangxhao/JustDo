@@ -33,6 +33,7 @@ import {
   readToolOutput,
   unwrapToolMessage,
 } from './tool-message-adapter';
+import { readToolPresentation } from './tool-presentation';
 
 export type PersistedTimelineItem =
   | {
@@ -139,9 +140,7 @@ function runIdOf(
       ? (message.metadata as Record<string, unknown>)
       : null;
   const outerOpenClaw =
-    outer.__openclaw &&
-    typeof outer.__openclaw === 'object' &&
-    !Array.isArray(outer.__openclaw)
+    outer.__openclaw && typeof outer.__openclaw === 'object' && !Array.isArray(outer.__openclaw)
       ? (outer.__openclaw as Record<string, unknown>)
       : null;
   const messageOpenClaw =
@@ -434,6 +433,7 @@ export function projectPersistedTimeline(
     const existing = findToolForCall(toolCallId, runId);
     const input = readToolInput(source);
     if (existing) {
+      existing.presentation = { ...existing.presentation, ...readToolPresentation(source) };
       existing.name = readToolName(source, existing.name);
       if (isPresentPlanToolName(existing.name)) planPresentedSinceLastReset = true;
       if (input !== undefined && input !== null) existing.input = input;
@@ -453,6 +453,7 @@ export function projectPersistedTimeline(
       status: 'running',
       toolCallId,
       name: readToolName(source),
+      presentation: readToolPresentation(source),
       ...(input !== undefined && input !== null ? { input } : {}),
     };
     archived.push(tool);
@@ -502,6 +503,7 @@ export function projectPersistedTimeline(
       tool.updatedAt = Math.max(tool.updatedAt, timestamp);
       tool.lastSeq = Math.max(tool.lastSeq, sequence);
     }
+    tool.presentation = { ...tool.presentation, ...readToolPresentation(source) };
     const outputlessSessionsYieldResult =
       isSessionsYieldTool(tool.name) &&
       !hasToolResultPayload({

@@ -31,6 +31,7 @@ import {
   inferSessionsYieldInput,
   isSessionsYieldTool,
 } from './tool-lifecycle';
+import { readToolPresentation } from './tool-presentation';
 
 export type TranscriptReduceResult =
   'applied' | 'ignored-session' | 'ignored-run' | 'ignored-sequence' | 'ignored-stream';
@@ -1079,6 +1080,7 @@ function reduceTool(
       }
       return false;
     }
+    existing.presentation = { ...existing.presentation, ...readToolPresentation(event.data) };
     const preserveExistingTerminal = backfill && existing.status !== 'running';
     confirmRecoveredToolSequence(turn, existing, event.agentSeq, event.timestamp);
     if (!preserveExistingTerminal || existing.name === 'tool') existing.name = resolved.name;
@@ -1133,6 +1135,7 @@ function reduceTool(
     status,
     toolCallId,
     name: resolved.name,
+    presentation: readToolPresentation(event.data),
     ...(resolvedInput !== undefined && resolvedInput !== null ? { input: resolvedInput } : {}),
     ...(normalized.output !== null && !outputlessSessionsYieldResult
       ? { output: normalized.output }
@@ -1289,6 +1292,11 @@ export function reduceAgentEvent(
     // Ordering still advances for admitted non-display Agent events.
     if (event.stream === 'item') {
       const recoveredTool = turn.toolById.get(itemToolCallId(event.data) ?? '');
+      if (recoveredTool && event.agentSeq >= recoveredTool.lastSeq)
+        recoveredTool.presentation = {
+          ...recoveredTool.presentation,
+          ...readToolPresentation(event.data),
+        };
       const progressText = readToolProgressText(event.data);
       if (
         recoveredTool?.status === 'running' &&

@@ -113,6 +113,7 @@ import SessionProgressCard, {
   type ProgressCardRunState,
 } from '@/features/cowork/components/status/SessionProgressCard';
 import { useProgressCardVisibility } from '@/features/cowork/components/status/useProgressCardVisibility';
+import { loadSpawnedSubtask } from '@/features/cowork/components/subagents/spawnedSubtask';
 import SubagentMessageDrawer from '@/features/cowork/components/subagents/SubagentMessageDrawer';
 import SubtaskListPanel from '@/features/cowork/components/subagents/SubtaskListPanel';
 import {
@@ -130,6 +131,7 @@ import {
   selectSessionRunTimings,
 } from '@/features/cowork/coworkSelectors';
 import { coworkService } from '@/features/cowork/coworkService';
+import { addDraftMessageQuote, removeDraftMessageQuotes } from '@/features/cowork/coworkSlice';
 import {
   addDraftBrowserAnnotation,
   clearCurrentSession,
@@ -161,6 +163,7 @@ import type {
   ChatContextUsageSnapshot,
   RewindEditorDraft,
 } from '@/libs/openclaw-chat/gateway/chat-controller';
+import { OPEN_SPAWNED_AGENT_EVENT } from '@/libs/openclaw-chat/model/spawn-tool-target';
 import { i18nService } from '@/services/i18n';
 import { getGreetingPeriod, pickHomeGreeting } from '@/services/i18n/homeGreetings';
 import Modal from '@/shared/components/common/Modal';
@@ -179,6 +182,7 @@ import CollaborationPanel, {
 } from './chat/CollaborationPanel';
 import { CoworkHomeWorkspace } from './chat/CoworkHomeWorkspace';
 import { useCoworkSideChats } from './chat/useCoworkSideChats';
+import type { MessageQuoteHandler } from './composer/messageQuote';
 import {
   bindSessionSubmissionRun,
   createSessionSubmission,
@@ -599,6 +603,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     () => () => {
       for (const tab of sideChatTabsRef.current) {
         dispatch(setDraftPrompt({ sessionId: tab.id, draft: '' }));
+        dispatch(removeDraftMessageQuotes({ draftKey: tab.id }));
       }
     },
     [dispatch],
@@ -1184,6 +1189,33 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     ],
   );
 
+  useEffect(() => {
+    let disposed = false;
+    let request = 0;
+    const handleOpenSpawnedAgent = (event: Event) => {
+      const key = (event as CustomEvent<{ sessionKey?: unknown }>).detail?.sessionKey;
+      if (typeof key !== 'string' || !key.trim() || !currentSessionId) return;
+      const currentRequest = ++request;
+      void loadSpawnedSubtask(window.electron.cowork.getSubTaskStatus, currentSessionId, key).then(subagent => {
+        if (disposed || currentRequest !== request) return;
+        if (subagent) {
+          openSubtask(subagent);
+        } else {
+          window.dispatchEvent(new CustomEvent('app:showToast', { detail: i18nService.t('subtaskLoadFailed') }));
+        }
+      }).catch(() => {
+        if (!disposed && currentRequest === request) {
+          window.dispatchEvent(new CustomEvent('app:showToast', { detail: i18nService.t('subtaskLoadFailed') }));
+        }
+      });
+    };
+    window.addEventListener(OPEN_SPAWNED_AGENT_EVENT, handleOpenSpawnedAgent);
+    return () => {
+      disposed = true;
+      window.removeEventListener(OPEN_SPAWNED_AGENT_EVENT, handleOpenSpawnedAgent);
+    };
+  }, [currentSessionId, openSubtask]);
+
   const openDisplayPanel = useCallback(() => {
     setIsSubtaskListOpen(false);
     setIsDisplayPanelOpen(true);
@@ -1458,6 +1490,22 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     selectAdjacentDisplayTabAfterClose,
     chatWrapperRef,
   });
+
+  const handleMessageQuote = useCallback<MessageQuoteHandler>(
+    (quote, target) => {
+      if (
+        currentSession?.external?.readOnly ||
+        !currentSessionId ||
+        quote.sessionKey !== currentGatewaySessionKeyRef.current
+      )
+        return;
+      const draftKey = target === 'side-chat' ? handleCreateSideChat() : currentSessionId;
+      if (!draftKey) return;
+      dispatch(addDraftMessageQuote({ draftKey, quote }));
+      if (target === 'composer') requestAnimationFrame(() => promptInputRef.current?.focus());
+    },
+    [currentSessionId, currentSession?.external?.readOnly, dispatch, handleCreateSideChat],
+  );
 
   const handleOpenWorkspaceFiles = useCallback(() => {
     if (!workspaceFilesRootPath || currentSessionId?.startsWith('temp-')) return;
@@ -2603,6 +2651,11 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             {/* Messages */}
             <JustDoChatWrapper
               ref={chatWrapperRef}
+              onMessageQuote={
+                sessionTranscriptMutation === null && !currentSession.external?.readOnly
+                  ? handleMessageQuote
+                  : undefined
+              }
               onHistoryReadyChange={handleHistoryReadyChange}
               className="flex-1 min-h-0"
               assistantName={assistantName}

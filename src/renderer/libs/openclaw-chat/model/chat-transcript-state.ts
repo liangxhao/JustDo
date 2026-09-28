@@ -1,6 +1,8 @@
 import type { NormalizedAgentEvent } from '@shared/openclaw/agentEvent';
 import { messageSessionMatches, normalizeMessageSessionKey } from '@shared/openclaw/messageDomain';
 
+import type { ToolPresentation } from './tool-presentation';
+
 export type TurnStatus = 'running' | 'final' | 'aborted' | 'error';
 export type ProcessStatus = 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
 export type HistorySource = 'gateway' | 'optimistic';
@@ -26,6 +28,7 @@ export interface ToolItem extends BaseTurnItem {
   type: 'tool';
   status: ProcessStatus;
   toolCallId: string;
+  presentation?: ToolPresentation;
   name: string;
   /** A recovered Tool still reserves the live tail for its preceding text. */
   agentSequencePending?: boolean;

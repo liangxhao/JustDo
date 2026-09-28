@@ -209,3 +209,97 @@ instance，reset/reconnect/deletion 后不接收旧身份结果。
 保持版本校验和未保存草稿保护。Windows“选择编辑器”复用系统 Open With
 选择器，不自动执行文件关联；其他平台保留预览/Files。远程无 root 和已删除
 文件不允许本地动作。路径复制保留相对路径中的中文、空格及原始字符。
+
+
+## 2026-09 消息阅读与工具展示投影
+
+工具展示继续消费同一套原生事件和历史，不增加 transcript、Main 或 Redux 消息缓存。
+`ToolItem.presentation` 只保存展示所需的可选字段：原生 title、parentToolCallId、activity
+分类标记、结果退出码、结果 entry identity 与截断标记。实时 tool/item 和持久 toolResult
+使用同一投影函数；`chat.history.activity` 按 messageId 绑定。旧记录缺字段时显示工具名和
+有界参数摘要，不调用模型补标题。工具名后的预览优先取命令、路径等具体输入，
+其他工具回退完整参数的有界预览；原生 title 不覆盖输入，action 不单独遮蔽其余参数。
+Browser 提取动作、元素与输入文字，tool_call 提取目标工具，read 保留 offset/limit。
+长工具名限制宽度，名称和预览提供悬停提示。非零退出码与受阻提示仅放在展开详情。
+
+过程组沿用 Thinking / Tool 数量摘要，避免未覆盖的工具都显示为“其它操作”。
+工具状态由原有指示灯和无障碍标签表达，不重复显示状态文字。
+非零退出码、受阻、取消与结果未知是展示结果，不改写执行状态。嵌套仅使用同 run 明确父
+身份，缺父、重复、循环或超深链回退平级；用缩进表达关系，保持原生段顺序。工具展开状态
+按调用身份保留，过程组仍使用原有 takeover tracker。
+
+普通工具保持直接展开输入、输出的原文布局，edit 保留 Monaco Diff。共享阅读器对短内容
+仅在内容气泡右上角显示复制图标，保留键盘操作和复制反馈；长内容或部分输出增加下载/分页/补取操作。分页优先沿换行边界，
+不拆分 UTF-16 代理对或 CRLF，每页最多 16,000 字符。空参数与等待参数单独提示。复制/下载使用已取得的
+完整字符串；部分输出明确标记并禁用完整下载。按需补取复用 `chat.message.get` 和现有
+有界 historyMessage 路径，仅接受唯一匹配的 toolResult，验证 entry/run/call identity。
+会话、连接、读者身份变化或关闭详情使请求失效；失败允许重试。无法恢复的原生 capture
+截断不会伪装为完整输出。edit 的 Monaco Diff 来自调用参数，不代表实际 checkout Diff。
+Exec/命令工具结果在两种应用主题中均使用深灰底的 Monokai 风格终端卡片，左上角三个
+红黄绿装饰点不提供窗口操作，右上角保留复制图标。ANSI 16 色和语义高亮统一配色，
+等宽终端阅读样式保留列对齐并横向滚动。基础 ANSI 前景色和加粗
+转换为安全文本 span，OSC/其他 CSI 控制序列不执行；无 ANSI 样式时对 Windows 路径、
+表头/分隔线、日期时间及 PowerShell 文件行做主题适配高亮。分页基于显示文本，复制/下载保留原文。
+
+代码块的展开、换行、下载，表格 TSV/放大查看，JSON 树/原文和 Mermaid 复制/放大/缩放
+由 `RichMessageControls` 在共享 Lit 消息面上增强。状态以会话和消息内块 identity 为界。
+JSON 树保存原文范围，保留重复键、数字拼写和转义，节点分批展开；非法、过深或过大 JSON
+回退原文。TSV 对包含 tab/newline/双引号的单元格加双引号，并将内部双引号重复。
+扩大视图里的链接关闭弹层后复用原链接动作。大段纯文本回退也使用分页阅读器。
+Mermaid 保持 strict 模式，限制源码、行数和边数，禁止外部图片/点击指令/初始化覆盖，
+主题变化后重绘。所有增强只改变阅读 UI，不改变原 Markdown 复制内容。
+
+选文引用只在主聊天显式传入 `onMessageQuote` 时启用，来源为助手正文；原生 entry ID 可暂缺。
+引用的 sessionKey/entryId/选区文本进入按 composer key 分隔的 `draftMessageQuotes`，
+属于可删除的待发送草稿，不是 transcript 缓存。点击按钮不发送；侧聊按钮只创建临时侧聊
+并放入引用。用户评论在输入框编辑，主聊正文保留纯引用块，并通过原生格式文本附件发送来源信息，侧聊使用下述
+原生预填格式；成功后只清除本次引用，失败保留。不把旧 entry 解释成当前分支的
+导航目标。子任务及协作只读消费者不获得发送回调。
+
+原始斜杠命令不附加引用，也不消费引用草稿。恢复目标时引用以引用块加入 note 并计入
+长度上限，只有恢复成功才清除本次引用。
+
+消息选区操作使用右键菜单（复制、加入输入框、在侧聊中提问），不再在松开鼠标时插入操作条。
+复制保留完整选区；引用仍限制原生助手消息及可写入口，沿用引用长度限制。菜单支持方向键、Esc、外部点击和滚动关闭。
+
+用户气泡对旧版本生成的中英文引用包装做显示投影：历史主聊引用及侧聊 JSON 引用呈现为
+引用块，隐藏 sessionKey/entryId。发送内容与原生历史保持不变，普通 JSON 不做转换。
+
+引用发送对齐锁定的 OpenClaw 2026.9.6 Control UI 实现：
+- `control-ui-boot-shared-DKAI-I6P.js` 的 `uC/dC`：侧聊预填 `Regarding "…": `，
+  折叠空白并将选中文字限制到 300 UTF-16 单元，不发送 sessionKey/entryId JSON。
+- `control-ui-boot-shared-DJHdUjIH.js` 的 `PN`：主聊创建 `selection-comment.txt`，
+  含 Selected text、Source session/entry、文本长度及已知 DOM range，通过现有附件桥传递。
+  本应用仍使用自己的引用草稿 UI；不引入原生 Control UI 的附件状态缓存。
+  引用正文同时以纯 Markdown 引用块加入实际 Gateway prompt，使乐观气泡和原生历史一致；
+  来源身份仍只在附件中。模型可能同时从正文和附件读取同一段选文，沿用每段 12,000 字符、
+  最多 8 段的草稿限制。只含引用也可作为主聊消息发送，完成目标反馈仍要求用户输入正文。
+- 历史 JSON 引用的显示投影保留，但移除额外标题；用户问题与引用正文保持独立。
+右键菜单按原生 entry 范围验证选区，不再要求点击落在同一个正文节点；右键按下和菜单
+点击保留选区，避免跨段落、代码块或点击气泡边缘时丢失选中文字。
+
+实时及已完成的最新助手正文都标记为可引用区域，不以历史 entryId 作为菜单显示门槛。
+尚无原生 entryId 的引用仅发送已知会话和选区信息，附件省略 Source entry，禁止构造假 ID。
+
+历史消息选区允许终点落在消息外层容器：按 Range 边界裁剪到唯一来源，不以端点节点
+contains 判定替代文本归属。Shadow DOM 优先使用 getComposedRanges，避免宿主重定位。
+`components/fixtures/history-selection.html` 使用真实历史渲染组件，已在 Chrome 验证最后
+一段选中后右键显示三个选项，加入输入框回调取得正确文字（合成会话，无 Gateway）。
+
+Mermaid 卡片使用复制、放大查看、下载三个图标操作，提供 title/aria-label。
+放大弹窗仅显示右上角关闭图标；滚轮按鼠标锚点缩放（0.2–5 倍），指针捕获支持拖动平移，
+释放/取消拖动清理状态，Esc 与关闭按钮恢复既有焦点。
+
+历史加载提示在消息区域水平居中。独立运行记录早于 Gateway 正文抵达时不渲染孤立的
+时间/运行时长页脚；时间线出现内容后才显示对应元数据。
+
+
+### 本地媒体与文件工具阅读（2026-09-28）
+
+消息和 Tool 返回的显式媒体共用 `message-media.ts`：原生 audio/video 控件，不自动播放，失败可重新加载。消息卸载停止播放并释放资源，同步 DOM 移动不重置播放。既有图片使用 `localfile:`；音视频使用独立的 `localmedia://local/` 标准流式协议，Main 在 ready 前注册，在 handler 中支持单段字节 Range（206/416）、本地 MIME 与按范围读取，不改写消息或重新调用工具。CSP 仅为媒体增加本地协议与内联媒体来源。未扩展远程节点或平台能力。
+
+`file-tool-presentation.ts` 仅适配 Read、Write、Apply Patch 及可确认的原生包装身份。Read/Write 复用分页原文 reader 做代码高亮；Read 始终对原始输出直接高亮，不以 details.content 替换正文，不重复显示路径或“原始结果”；仅使用原生 details.kind 判断结果类型，不猜测文件正文 JSON 的业务含义。实际 write/edit diff 在已完成时优先显示。Apply Patch 按文件呈现输入补丁，明确新增、修改、删除和移动，不重建不存在的旧文件版本；未知或不完整 patch 回退原文。保留原始参数/结果入口，不增加 JSON 树、文件定位或会话跳转。
+
+### 子任务启动入口
+
+sessions_spawn 保留通用参数和结果展示，仅在成功回执包含 childSessionKey 时在标题旁显示右上箭头（含 core tool_call 包装）。点击通过 getSubTaskStatus 刷新当前会话的子任务列表，按 childSessionKey 匹配完整原生任务（含任务 ID），再复用现有子任务详情 Tab，不从参数猜测目标，不改变执行流程；查询失败显示提示，离开当前会话后的旧查询不会打开 Tab。sessions_yield 保留通用展示。
