@@ -76,7 +76,9 @@ export const registerCoworkSessionExecutionHandlers = ({
         return { success: false, error: 'The start operation is no longer current.' };
       }
       try {
-        await getCoworkEngineRouter().stopSession(timing.sessionId);
+        await getCoworkEngineRouter().stopSession(timing.sessionId, {
+          diagnosticUserInitiated: true,
+        });
         return { success: true };
       } catch (error) {
         return { success: false, error: error instanceof Error ? error.message : 'Failed to stop session' };
@@ -90,7 +92,9 @@ export const registerCoworkSessionExecutionHandlers = ({
     if (operation.stopping) return operation.stopping;
     const stopping = (async () => {
       try {
-        await getCoworkEngineRouter().stopSession(operation.sessionId!);
+        await getCoworkEngineRouter().stopSession(operation.sessionId!, {
+          diagnosticUserInitiated: true,
+        });
         operation.confirmCancellation?.();
         return { success: true };
       } catch (error) {

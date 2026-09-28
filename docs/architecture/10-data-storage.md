@@ -4,6 +4,10 @@
 
 ## 1. 存储边界
 
+会话诊断增加 `cowork_run_diagnostic_events` 和 `cowork_run_diagnostic_coverage`。两表通过产品 run 外键级联删除；前者只存闭合值运行元数据，后者保留采集起点和裁剪计数，不存正文或任意错误文本。每轮普通/关键事件分别限 200/32 条，全局 20,000 条、14 天；coverage 随既有 run 生命周期保留，事件裁剪不会抹掉丢失证据。
+
+查询按已校验会话和 run 关联，复制/fork 不复制诊断表。Renderer 无持久诊断缓存，Main 仅保留最多 8 份、5 分钟的内容无关导出快照。诊断不是 OpenClaw transcript 的第二份权威。见[会话诊断](../features/session-diagnostics.md)。
+
 ```mermaid
 flowchart LR
   Main[Main 产品服务] --> Product[(justdo.sqlite)]

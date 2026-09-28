@@ -57,7 +57,7 @@ import { getDevServerUrlFromCommandLine } from './core/development/devServerHand
 import { createDevSessionLifecycle } from './core/development/devSessionLifecycle';
 import { ManagedDirectoryOperationCoordinator } from './core/filesystem/managedDirectoryOperations';
 import { setLanguage } from './core/i18n';
-import { initLogger } from './core/logger';
+import { getRecentMainLogEntries, initLogger } from './core/logger';
 import { mainProcessFetch, mainProcessTitleFetch } from './core/network/mainProcessFetch';
 import {
   resolveOutboundHeaderUserInfoPath,
@@ -76,8 +76,11 @@ import { ensurePythonRuntimeReady } from './core/runtime/pythonRuntime';
 import { registerContentSecurityPolicy } from './core/window/contentSecurityPolicy';
 import { registerLocalFileProtocol, registerLocalFileScheme } from './core/window/localFileProtocol';
 import { createMainWindow } from './core/window/mainWindowFactory';
+import { orderDiagnosticMainLogs } from './cowork/diagnostics/logSources';
+import { SessionDiagnosticsService } from './cowork/diagnostics/service';
 import { CoworkStore } from './data/coworkStore';
 import { GroupStore } from './data/groupStore';
+import { SessionDiagnosticsStore } from './data/sessionDiagnosticsStore';
 import { SqliteStore } from './data/sqliteStore';
 import { CoworkEngineService } from './engine';
 import { bindCoworkRuntimeForwarder } from './engine/cowork/coworkRuntimeForwarder';
@@ -129,6 +132,7 @@ import {
   waitForCoworkConfigUpdates,
 } from './ipc/cowork';
 import { registerCollaborationHandlers } from './ipc/cowork/collaboration';
+import { registerSessionDiagnosticsHandlers } from './ipc/cowork/sessionDiagnostics';
 import { registerSessionReviewHandlers } from './ipc/cowork/sessionReview';
 import { registerMulticaIntegrationHandlers } from './ipc/multica';
 import {
@@ -832,6 +836,12 @@ const getCoworkEngineService = (): CoworkEngineService => {
       getOpenClawEngineManager,
       fetchSessionTitle: mainProcessTitleFetch,
       getUserDataPath: () => app.getPath('userData'),
+      onRuntimeCreated: runtime => {
+        const diagnostics = getSessionDiagnosticsService();
+        runtime.on('gatewayEvent', event => diagnostics.observe(event));
+        runtime.on('diagnosticCancellation', event => diagnostics.recordCancellation(event));
+        runtime.on('diagnosticConnection', event => diagnostics.recordConnection(event));
+      },
     });
   }
   return coworkEngineService;
@@ -843,6 +853,24 @@ const getCoworkEngineRouter = () => {
 
 const getOpenClawRuntimeAdapter = () => {
   return coworkEngineService?.getRuntimeAdapter() ?? null;
+};
+
+let sessionDiagnosticsService: SessionDiagnosticsService | undefined;
+const getSessionDiagnosticsService = (): SessionDiagnosticsService => {
+  sessionDiagnosticsService ??= new SessionDiagnosticsService({
+    store: new SessionDiagnosticsStore(getStore().getDatabase()),
+    hasSession: id => Boolean(getCoworkStore().getSession(id)),
+    getRuntime: getOpenClawRuntimeAdapter,
+    logSources: {
+      main: report => orderDiagnosticMainLogs(getRecentMainLogEntries(true), report),
+      cowork: () =>
+        ['cowork.log', 'cowork.log.old'].map(name =>
+          path.join(app.getPath('userData'), 'logs', name),
+        ),
+      gateway: () => [path.join(app.getPath('userData'), 'openclaw', 'logs', 'gateway.log')],
+    },
+  });
+  return sessionDiagnosticsService;
 };
 
 const notifyCoworkSessionsChanged = (): void => {
@@ -1504,6 +1532,8 @@ if (multicaBridgeArgv) {
     getRuntime: getOpenClawRuntimeAdapter,
     getSession: sessionId => getCoworkStore().getSession(sessionId),
   });
+
+  registerSessionDiagnosticsHandlers(getSessionDiagnosticsService);
 
   registerCoworkSubtaskHandlers({
     getRuntime: getOpenClawRuntimeAdapter,

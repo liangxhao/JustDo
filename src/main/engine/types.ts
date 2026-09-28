@@ -89,6 +89,16 @@ export interface SkillRpcResult {
 export interface CoworkRuntimeEvents {
   gatewayReady: () => void;
   gatewayEvent: (event: import('./gateway/types').GatewayEventFrame) => void;
+  diagnosticCancellation: (event: {
+    sessionId: string;
+    nativeRunId?: string;
+    phase: 'requested' | 'acknowledged' | 'failed';
+    userInitiated: boolean;
+  }) => void;
+  diagnosticConnection: (event: {
+    connected: boolean;
+    runs: Array<{ sessionId: string; nativeRunId: string }>;
+  }) => void;
   activity: (sessionId: string, kind: 'user' | 'other', timestamp: number) => void;
   complete: (sessionId: string, finalStatus?: 'idle' | 'running' | 'completed' | 'error') => void;
   error: (sessionId: string, error: string) => void;
@@ -117,6 +127,8 @@ export type CoworkStartOptions = {
 export type CoworkStopOptions = {
   /** Continue local cleanup when Gateway confirmation is unavailable. */
   bestEffort?: boolean;
+  /** Set only by an explicit user stop/cancel action. */
+  diagnosticUserInitiated?: boolean;
 };
 
 export type CoworkPrepareSessionOptions = {

@@ -7,6 +7,7 @@ import { chatTranslations } from './chatTranslations';
 import { getHomeGreetingTranslations } from './homeGreetings';
 import { pluginsTranslations } from './pluginsTranslations';
 import { scheduledTaskTranslations } from './scheduledTaskTranslations';
+import { sessionDiagnosticsTranslations } from './sessionDiagnosticsTranslations';
 import { sessionReviewTranslations } from './sessionReviewTranslations';
 import { sessionStorageTranslations } from './sessionStorageTranslations';
 import { settingsTranslations } from './settingsTranslations';
@@ -14,6 +15,7 @@ import { skillWorkshopTranslations } from './skillWorkshopTranslations';
 
 export const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
+    ...sessionDiagnosticsTranslations.zh,
     ...sessionReviewTranslations.zh,
     ...sessionStorageTranslations.zh,
     ...browserInterventionTranslations.zh,
@@ -27,6 +29,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     ...scheduledTaskTranslations.zh,
   },
   en: {
+    ...sessionDiagnosticsTranslations.en,
     ...sessionReviewTranslations.en,
     ...sessionStorageTranslations.en,
     ...browserInterventionTranslations.en,

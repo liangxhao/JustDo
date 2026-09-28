@@ -21,6 +21,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     memoryRebuildUnverified: '索引未完成重建，或无法验证重建后的状态。',
     memoryRebuildDegraded: '索引命令已完成，但语义检索尚未确认可用，请检查索引状态。',
 
+    sessionDiagnosticsExport: '导出会话诊断',
     selectedModelUnavailable: '所选模型已停用或移除，请重新选择可用模型。',
     selectedModelProviderNotReady: '所选模型的提供商尚未就绪，请检查配置和认证状态。',
     selectedModelRouteChanged: '所选模型的路由已变更，请重新选择模型。',
@@ -96,6 +97,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     memoryRebuildDegraded:
       'The indexing command completed, but semantic retrieval is not confirmed. Check index status.',
 
+    sessionDiagnosticsExport: 'Export session diagnostics',
     selectedModelUnavailable:
       'The selected model is no longer enabled. Please select an available model.',
     selectedModelProviderNotReady:

@@ -10,6 +10,7 @@ import { i18nService } from '@/services/i18n';
 import CoworkSessionItem from './CoworkSessionItem';
 
 const renderSessionItem = (options?: { isRuntimeRunning?: boolean; collaboration?: boolean }) => {
+  const onSelect = vi.fn();
   const onExport = vi.fn();
   const onCopy = vi.fn();
   const store = configureStore({ reducer: { agent: () => ({ agents: [] }) } });
@@ -24,14 +25,16 @@ const renderSessionItem = (options?: { isRuntimeRunning?: boolean; collaboration
             pinned: false,
             createdAt: 1,
             updatedAt: 2,
-            ...(options?.collaboration ? { collaboration: { memberCount: 3, deleting: false } } : {}),
+            ...(options?.collaboration
+              ? { collaboration: { memberCount: 3, deleting: false } }
+              : {}),
           }}
           hasUnread={false}
           isActive
           isRuntimeRunning={options?.isRuntimeRunning}
           isBatchMode={false}
           isSelected={false}
-          onSelect={vi.fn()}
+          onSelect={onSelect}
           onDelete={vi.fn()}
           onRename={vi.fn()}
           onExport={onExport}
@@ -44,12 +47,30 @@ const renderSessionItem = (options?: { isRuntimeRunning?: boolean; collaboration
     </Provider>,
   );
   fireEvent.contextMenu(screen.getByText('Planning'));
-  return { onExport, onCopy };
+  return { onExport, onCopy, onSelect };
 };
 
 afterEach(cleanup);
 
 describe('CoworkSessionItem context menu session actions', () => {
+  it('opens diagnostics for the clicked running session without selecting its chat', async () => {
+    i18nService.setLanguage('en', { persist: false });
+    const read = vi.fn().mockResolvedValue({ success: false, reason: 'missing' });
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        cowork: {
+          diagnostics: { list: vi.fn().mockResolvedValue({ success: true, runs: [] }), read },
+        },
+      },
+    });
+    const { onSelect } = renderSessionItem({ isRuntimeRunning: true });
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Diagnostics' }));
+    await screen.findByRole('dialog', { name: 'Diagnostics' });
+    expect(read).toHaveBeenCalledWith({ sessionId: 'session-1' });
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
   it('copies the Gateway ID for the main session represented by the list item', async () => {
     i18nService.setLanguage('en', { persist: false });
     const getGatewaySessionId = vi.fn().mockResolvedValue({

@@ -431,10 +431,19 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   async stopSession(sessionId: string, options: CoworkStopOptions = {}): Promise<void> {
     const existing = this.stopSessionPromises.get(sessionId);
     if (existing) return existing;
+    // Capture identity before cancellation mutates or removes the active turn.
+    const nativeRunId = this.activeTurns.get(sessionId)?.runId
+      || this.unknownSessionRuns.get(sessionId)?.runId;
+    const diagnostic = { sessionId, nativeRunId, userInitiated: options.diagnosticUserInitiated === true };
+    this.emitDiagnostic('diagnosticCancellation', { ...diagnostic, phase: 'requested' });
     const stopping = this.stopSessionInternal(sessionId, options, true);
     this.stopSessionPromises.set(sessionId, stopping);
     try {
       await stopping;
+      this.emitDiagnostic('diagnosticCancellation', { ...diagnostic, phase: 'acknowledged' });
+    } catch (error) {
+      this.emitDiagnostic('diagnosticCancellation', { ...diagnostic, phase: 'failed' });
+      throw error;
     } finally {
       if (this.stopSessionPromises.get(sessionId) === stopping) {
         this.stopSessionPromises.delete(sessionId);
@@ -1891,6 +1900,29 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.sessionIdBySessionKey.set(sessionKey, sessionId);
   }
 
+  /** Diagnostics must never fall back to the latest run or an unrelated session. */
+  resolveDiagnosticSession(runId: string, sessionKey?: string): string | null {
+    if (!runId.trim()) return null;
+    const activeSession = [...this.activeTurns].find(([, turn]) =>
+      turn.runId === runId || turn.knownRunIds.has(runId),
+    )?.[0];
+    if (!sessionKey) return activeSession ?? null;
+    const sessionId = this.resolveSessionIdBySessionKey(sessionKey);
+    if (!sessionId || (activeSession && activeSession !== sessionId)) return null;
+    return sessionId;
+  }
+
+  private emitDiagnostic(eventName: string, event: unknown): void {
+    // Observability must never change cancellation or connection behavior.
+    for (const listener of this.rawListeners(eventName)) {
+      try {
+        listener.call(this, event);
+      } catch {
+        coworkLog('WARN', 'OpenClawRuntime', 'Diagnostic observer failed');
+      }
+    }
+  }
+
   private resolveSessionIdBySessionKey(sessionKey: string): string | null {
     const exact = this.sessionIdBySessionKey.get(sessionKey);
     if (exact) return exact;
@@ -2611,6 +2643,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         },
       },
       intentionallyStoppedGatewayClients: { get: () => this.intentionallyStoppedGatewayClients },
+      emitDiagnostic: { get: () => this.emitDiagnostic.bind(this) },
       emit: { get: () => this.emit.bind(this) },
       lastTickTimestamp: {
         get: () => this.lastTickTimestamp,

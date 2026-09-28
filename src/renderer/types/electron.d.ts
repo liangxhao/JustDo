@@ -1,3 +1,8 @@
+type DiagnosticScanProgress = import('../../shared/cowork/sessionDiagnostics').DiagnosticScanProgress;
+type DiagnosticQuery = import('../../shared/cowork/sessionDiagnostics').DiagnosticQuery;
+type DiagnosticReadResult = import('../../shared/cowork/sessionDiagnostics').DiagnosticReadResult;
+type DiagnosticListResult = import('../../shared/cowork/sessionDiagnostics').DiagnosticListResult;
+type DiagnosticExportResult = import('../../shared/cowork/sessionDiagnostics').DiagnosticExportResult;
 import type {
   AgentFileName,
   AgentFileSnapshot,
@@ -803,6 +808,15 @@ interface IElectronAPI {
     onStateChanged: (callback: (state: WindowState) => void) => () => void;
   };
   cowork: {
+    diagnostics: {
+      list: (query: { sessionId: string; cursor?: string }) => Promise<DiagnosticListResult>;
+      read: (query: DiagnosticQuery) => Promise<DiagnosticReadResult>;
+      refresh: (query: DiagnosticQuery & { snapshotId: string }) => Promise<DiagnosticReadResult>;
+      collect: (query: DiagnosticQuery & { snapshotId: string }) => Promise<DiagnosticReadResult>;
+      cancel: (query: DiagnosticQuery & { snapshotId: string }) => Promise<{ success: boolean }>;
+      onProgress: (callback: (progress: DiagnosticScanProgress) => void) => () => void;
+      export: (query: DiagnosticQuery & { snapshotId: string }) => Promise<DiagnosticExportResult>;
+    };
     review: {
       load: (query: SessionReviewQuery) => Promise<SessionReviewResult>;
       file: (

@@ -470,6 +470,8 @@ test('an unexpected Gateway close preserves execution identity without publishin
     const adapter = new OpenClawRuntimeAdapter(store, {});
     const error = vi.fn();
     adapter.on('error', error);
+    const connection = vi.fn();
+    adapter.on('diagnosticConnection', connection);
     let options;
     class FakeClient {
       constructor(value) {
@@ -492,11 +494,13 @@ test('an unexpected Gateway close preserves execution identity without publishin
       clientEntryPath: 'test.js',
     });
     options.onHelloOk();
+    expect(connection).toHaveBeenLastCalledWith({ connected: true, runs: [] });
     const turn = createSessionTurn();
     const reject = vi.fn();
     adapter.activeTurns.set('session-1', turn);
     adapter.pendingTurns.set('session-1', { resolve: vi.fn(), reject });
     options.onClose(1006, 'network interrupted');
+    expect(connection).toHaveBeenLastCalledWith({ connected: false, runs: [{ sessionId: 'session-1', nativeRunId: 'run-1' }] });
     expect(adapter.activeTurns.get('session-1')).toBe(turn);
     expect(adapter.disconnectedSessionIds.has('session-1')).toBe(true);
     expect(store.updateSession).not.toHaveBeenCalled();
@@ -507,4 +511,65 @@ test('an unexpected Gateway close preserves execution identity without publishin
     vi.clearAllTimers();
     vi.useRealTimers();
   }
+});
+
+
+test('diagnostic identity resolves exact keys and active runs without latest-run fallback', () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const internals = adapter as unknown as { activeTurns: Map<string, SessionTurn> };
+  internals.activeTurns.set('session-1', createSessionTurn());
+  expect(adapter.resolveDiagnosticSession('run-1')).toBe('session-1');
+  expect(adapter.resolveDiagnosticSession('older-run')).toBeNull();
+  expect(adapter.resolveDiagnosticSession('older-run', 'agent:main:justdo:session-1')).toBe('session-1');
+  expect(adapter.resolveDiagnosticSession('run-1', 'agent:other:justdo:session-1')).toBeNull();
+  internals.activeTurns.set('session-2', createSessionTurn({ sessionId: 'session-2', runId: 'run-2', knownRunIds: new Set(['run-2']) }));
+  expect(adapter.resolveDiagnosticSession('run-2', 'agent:main:justdo:session-1')).toBeNull();
+  internals.activeTurns.clear();
+  expect(adapter.resolveDiagnosticSession('run-1')).toBeNull();
+});
+
+test.each([false, true])('cancellation diagnostics retain identity and isolate observer failures (failure=%s)', async failed => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const internals = adapter as unknown as {
+    activeTurns: Map<string, SessionTurn>;
+    stopSessionInternal: () => Promise<void>;
+  };
+  internals.activeTurns.set('session-1', createSessionTurn());
+  const failure = new Error('abort unavailable');
+  internals.stopSessionInternal = vi.fn(async () => {
+    internals.activeTurns.clear();
+    if (failed) throw failure;
+  });
+  const observed = vi.fn();
+  adapter.on('diagnosticCancellation', () => { throw new Error('observer failed'); });
+  adapter.on('diagnosticCancellation', observed);
+  const stopping = adapter.stopSession('session-1', { diagnosticUserInitiated: true });
+  if (failed) await expect(stopping).rejects.toBe(failure);
+  else await expect(stopping).resolves.toBeUndefined();
+  expect(observed.mock.calls.map(([event]) => event)).toEqual([
+    { sessionId: 'session-1', nativeRunId: 'run-1', userInitiated: true, phase: 'requested' },
+    { sessionId: 'session-1', nativeRunId: 'run-1', userInitiated: true, phase: failed ? 'failed' : 'acknowledged' },
+  ]);
+  expect(internals.stopSessionInternal).toHaveBeenCalledTimes(1);
+});
+
+test('intentional disconnect reports active run evidence before stopping the client', () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const internals = adapter as unknown as {
+    activeTurns: Map<string, SessionTurn>;
+    gatewayClient: GatewayClientLike;
+  };
+  internals.activeTurns.set('session-1', createSessionTurn());
+  const observed = vi.fn();
+  adapter.on('diagnosticConnection', () => { throw new Error('observer failed'); });
+  adapter.on('diagnosticConnection', observed);
+  const stop = vi.fn(() => {
+    expect(observed).toHaveBeenCalledWith({ connected: false, runs: [{ sessionId: 'session-1', nativeRunId: 'run-1' }] });
+  });
+  internals.gatewayClient = { start: vi.fn(), stop, request: vi.fn() };
+  adapter.disconnectGatewayClient();
+  expect(stop).toHaveBeenCalledTimes(1);
 });

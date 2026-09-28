@@ -22,6 +22,8 @@ import PencilSquareIcon from '@/shared/components/icons/PencilSquareIcon';
 import TrashIcon from '@/shared/components/icons/TrashIcon';
 import Tooltip from '@/shared/components/ui/Tooltip';
 
+import CoworkSessionDiagnosticsModal from './CoworkSessionDiagnosticsModal';
+
 interface CoworkSessionItemProps {
   session: CoworkSessionSummary;
   hasUnread: boolean;
@@ -71,6 +73,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
 }) => {
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
   const [isRenaming, setIsRenaming] = useState(false);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
   const [renameValue, setRenameValue] = useState(session.title);
   const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
@@ -257,6 +260,15 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
     [closeMenu],
   );
 
+  const handleShowDiagnostics = useCallback(
+    (event: React.MouseEvent) => {
+      event.stopPropagation();
+      closeMenu();
+      setShowDiagnostics(true);
+    },
+    [closeMenu],
+  );
+
   const handleTogglePinned = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
@@ -406,6 +418,12 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
         tone: 'neutral' as const,
       },
       {
+        key: 'diagnostics',
+        label: i18nService.t('diagnosticsTitle'),
+        onClick: handleShowDiagnostics,
+        tone: 'neutral' as const,
+      },
+      {
         key: 'pin',
         label: togglePinnedLabel,
         onClick: handleTogglePinned,
@@ -476,6 +494,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
     handleExportClick,
     handleCopyClick,
     handleShowDetails,
+    handleShowDiagnostics,
     handleTogglePinned,
     handleRenameClick,
     renameLabel,
@@ -658,7 +677,9 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
                 }`}
               >
                 {item.key === 'batch' && <ListChecksIcon className="h-4 w-4" />}
-                {item.key === 'details' && <InformationCircleIcon className="h-4 w-4" />}
+                {(item.key === 'details' || item.key === 'diagnostics') && (
+                  <InformationCircleIcon className="h-4 w-4" />
+                )}
                 {item.key === 'pin' && (
                   <BookmarkIcon className={`h-4 w-4 ${session.pinned ? 'fill-current' : ''}`} />
                 )}
@@ -798,6 +819,15 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
           </Modal>
         )}
       </div>
+      {showDiagnostics && (
+        <CoworkSessionDiagnosticsModal
+          sessionId={session.id}
+          sessionTitle={session.title}
+          isCollaboration={Boolean(session.collaboration)}
+          returnFocusRef={sessionItemRef}
+          onClose={() => setShowDiagnostics(false)}
+        />
+      )}
       {showDetails && (
         <CoworkSessionDetailsModal
           sessionSummary={session}

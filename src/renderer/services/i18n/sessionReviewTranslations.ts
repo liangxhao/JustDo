@@ -51,10 +51,10 @@ export const sessionReviewTranslations = {
     reviewLongLine: '长行显示已截断',
     reviewMoreLines: '显示更多行',
     reviewRenderLimit: '显示上限为 2000 行；可复制原始 Diff 查看返回的完整内容。',
-    reviewError_unavailable: '无法连接或读取 Gateway，请检查连接后重试。',
+    reviewError_unavailable: '无法连接或读取运行服务，请检查连接后重试。',
     reviewError_bridge:
       '当前窗口尚未加载审阅接口，请完全退出并重新启动应用。开发模式下请重新编译并启动 Electron，仅刷新页面无效。',
-    reviewError_unsupported: '当前 Gateway 不支持会话审阅，请更新运行时后重试。',
+    reviewError_unsupported: '当前运行服务 不支持会话审阅，请更新运行时后重试。',
     reviewError_identity: '会话已改变或不可用，请重新打开审阅。',
     reviewError_invalid: '请选择有效的比较范围或提交。',
     reviewError_file: '无法打开或复制文件。文件可能已变化、不在授权工作区内或位于远程。',
@@ -124,11 +124,11 @@ export const sessionReviewTranslations = {
     reviewRenderLimit:
       'Display limited to 2,000 lines. Copy the raw diff for all returned content.',
     reviewError_unavailable:
-      'Unable to connect to or read from Gateway. Check the connection and retry.',
+      'Unable to connect to or read from the runtime service. Check the connection and retry.',
     reviewError_bridge:
       'This window has not loaded the Review interface. Quit and restart the app. In development, rebuild and restart Electron; reloading the page is not enough.',
     reviewError_unsupported:
-      'This Gateway does not support session Review. Update the runtime and retry.',
+      'This runtime service does not support session Review. Update the runtime and retry.',
     reviewError_identity: 'The session changed or is unavailable. Reopen Review.',
     reviewError_invalid: 'Choose a valid scope or commit.',
     reviewError_file:

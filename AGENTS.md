@@ -128,6 +128,7 @@ Do not document/use unmounted slices as active state.
 SQLite core tables in `src/main/data/sqliteStore.ts`:
 `kv`, `cowork_sessions`, `cowork_external_sessions`, `cowork_external_session_tombstones`,
 `cowork_session_runs`, `cowork_plan_handoffs`, `cowork_config`, `agents`, `mcp_servers`,
+`cowork_run_diagnostic_events`, `cowork_run_diagnostic_coverage`,
 `openclaw_hooks`, `session_groups`, `collaboration_rooms`, `collaboration_members`,
 `collaboration_rounds`, `collaboration_deliveries`, `collaboration_deletions`,
 `collaboration_deleted_members`, `scheduled_task_run_receipts`,
@@ -137,6 +138,18 @@ OpenClaw owns durable message transcripts in its native SQLite store. JustDo
 must not recreate a `cowork_messages`, Main-process, or Redux transcript cache.
 The Renderer consumes Gateway history and live Thinking/Tool/Content directly;
 Main keeps only product lifecycle, run identity, approval, and goal state.
+
+Session context-menu diagnostics retain bounded, content-free run evidence in Main.
+Only `executionSettled: true` lifecycle terminals establish whole-run outcomes;
+chat final and attempt finishing are separate observations. Diagnostic reads never
+start the Gateway. Exports use closed-value metadata and archive-local identity
+aliases, excluding raw logs and transcripts. See `docs/features/session-diagnostics.md`.
+Opening or refreshing diagnostics collects bounded safe projections from Main/Cowork/Gateway logs
+and native files identified by an existing local client's structured `logs.tail.file`;
+never read paths supplied by log text or Renderer. Scan discovered files in bounded chunks
+without a total tail/byte/time cutoff; sample limits never stop scanning or category counts.
+Report scan gaps, support progress/cancellation, and never claim deleted history is complete.
+Log hints retain association/coverage and cannot override lifecycle conclusions.
 
 Built-in skills are declared in `resources/builtin-skills.json`: **8 skills**,
 all **8 enabled** by default.

@@ -76,6 +76,11 @@ import type { CoworkAttachmentPayload } from '../shared/cowork/attachments';
 import { CollaborationIpc } from '../shared/cowork/collaboration';
 import { type CopyCoworkSessionInput, CoworkSessionCopyIpc } from '../shared/cowork/sessionCopy';
 import { CoworkSessionDetailsIpc } from '../shared/cowork/sessionDetails';
+import {
+  type DiagnosticQuery,
+  type DiagnosticScanProgress,
+  SessionDiagnosticsIpc,
+} from '../shared/cowork/sessionDiagnostics';
 import { CoworkSessionForkIpc, type ForkCoworkSessionInput } from '../shared/cowork/sessionFork';
 import {
   GoalExecutionIpc,
@@ -647,6 +652,25 @@ contextBridge.exposeInMainWorld('electron', {
     },
   },
   cowork: {
+    diagnostics: {
+      list: (query: { sessionId: string; cursor?: string }) =>
+        ipcRenderer.invoke(SessionDiagnosticsIpc.List, query),
+      read: (query: DiagnosticQuery) => ipcRenderer.invoke(SessionDiagnosticsIpc.Read, query),
+      refresh: (query: DiagnosticQuery & { snapshotId: string }) =>
+        ipcRenderer.invoke(SessionDiagnosticsIpc.Refresh, query),
+      collect: (query: DiagnosticQuery & { snapshotId: string }) =>
+        ipcRenderer.invoke(SessionDiagnosticsIpc.Collect, query),
+      export: (query: DiagnosticQuery & { snapshotId: string }) =>
+        ipcRenderer.invoke(SessionDiagnosticsIpc.Export, query),
+      cancel: (query: DiagnosticQuery & { snapshotId: string }) =>
+        ipcRenderer.invoke(SessionDiagnosticsIpc.Cancel, query),
+      onProgress: (callback: (progress: DiagnosticScanProgress) => void) => {
+        const listener = (_event: Electron.IpcRendererEvent, progress: DiagnosticScanProgress) =>
+          callback(progress);
+        ipcRenderer.on(SessionDiagnosticsIpc.Progress, listener);
+        return () => ipcRenderer.removeListener(SessionDiagnosticsIpc.Progress, listener);
+      },
+    },
     review: {
       load: (query: SessionReviewQuery) => ipcRenderer.invoke(SessionReviewIpc.Load, query),
       file: (query: SessionReviewQuery, relative: string, action: SessionReviewFileAction) =>

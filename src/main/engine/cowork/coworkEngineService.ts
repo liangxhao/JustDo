@@ -9,6 +9,7 @@ type CoworkEngineServiceDeps = {
   getCoworkStore: () => CoworkStore;
   getOpenClawEngineManager: () => OpenClawEngineManager;
   fetchSessionTitle?: SessionTitleFetch;
+  onRuntimeCreated?: (runtime: OpenClawRuntimeAdapter) => void;
   getUserDataPath: () => string;
 };
 
@@ -38,6 +39,7 @@ export class CoworkEngineService {
           this.deps.fetchSessionTitle,
           new ApprovedPlanArtifactStore(),
         );
+        this.deps.onRuntimeCreated?.(this.runtimeAdapter);
       }
       this.router = new CoworkEngineRouter({
         openclawRuntime: this.runtimeAdapter,

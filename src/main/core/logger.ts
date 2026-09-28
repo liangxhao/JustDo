@@ -127,7 +127,7 @@ export function getLogFilePath(): string {
  * Return archive entries for all daily main log files within the last 7 days.
  * Suitable for passing directly to exportLogsZip.
  */
-export function getRecentMainLogEntries(): Array<{ archiveName: string; filePath: string }> {
+export function getRecentMainLogEntries(includeAllRetained = false): Array<{ archiveName: string; filePath: string }> {
   const dir = logDir();
   if (!fs.existsSync(dir)) return [];
 
@@ -139,7 +139,7 @@ export function getRecentMainLogEntries(): Array<{ archiveName: string; filePath
     .map(f => ({ archiveName: f, filePath: path.join(dir, f) }))
     .filter(({ filePath }) => {
       try {
-        return fs.statSync(filePath).mtimeMs >= cutoffMs;
+        return includeAllRetained || fs.statSync(filePath).mtimeMs >= cutoffMs;
       } catch {
         return false;
       }

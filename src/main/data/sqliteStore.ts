@@ -7,6 +7,7 @@ import path from 'path';
 import { DB_FILENAME } from '../core/appConstants';
 import { transformAppConfigCredentials } from './appConfigCredentials';
 import { initializeCollaborationTables } from './collaborationStore';
+import { initializeSessionDiagnosticsTables } from './sessionDiagnosticsStore';
 
 type ChangePayload<T = unknown> = {
   key: string;
@@ -206,6 +207,7 @@ export class SqliteStore {
         WHERE ended_at IS NULL;
     `);
     this.ensureColumn('cowork_session_runs', 'accepted_at', 'INTEGER');
+    initializeSessionDiagnosticsTables(this.db);
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS cowork_external_sessions (

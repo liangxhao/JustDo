@@ -46,6 +46,7 @@ export interface RuntimeGatewayConnectionContext {
   readonly loadGatewayClientCtor: (clientEntryPath: string) => Promise<GatewayClientCtor>;
   pendingGatewayClient: GatewayClientLike | null;
   readonly intentionallyStoppedGatewayClients: WeakSet<object>;
+  readonly emitDiagnostic: (eventName: string, event: unknown) => void;
   readonly emit: (eventName: string | symbol, ...args: unknown[]) => boolean;
   lastTickTimestamp: number;
   readonly startTickWatchdog: () => void;
@@ -262,6 +263,7 @@ export async function createGatewayClient(
       this.gatewayClientVersion = connection.version;
       this.gatewayClientEntryPath = connection.clientEntryPath;
       settleResolve();
+      emitDiagnosticConnection.call(this, true);
       // Native plugin change events cannot arrive while the Gateway is offline.
       // Invalidate the Workboard once the replacement client is actually usable
       // so its renderer clears stale disconnect errors and reloads canonical data.
@@ -288,6 +290,7 @@ export async function createGatewayClient(
       }
       if (this.gatewayStoppingIntentionally) return;
 
+      emitDiagnosticConnection.call(this, false);
       const disconnectedError = new Error(reason || 'OpenClaw gateway client disconnected');
       for (const sessionId of this.activeTurns.keys()) {
         // Transport loss does not prove that the Gateway run failed.
@@ -308,7 +311,17 @@ export async function createGatewayClient(
   client.start();
 }
 
+function emitDiagnosticConnection(this: RuntimeGatewayConnectionContext, connected: boolean): void {
+  this.emitDiagnostic('diagnosticConnection', {
+    connected,
+    runs: [...this.activeTurns].flatMap(([sessionId, turn]) =>
+      turn.runId ? [{ sessionId, nativeRunId: turn.runId }] : [],
+    ),
+  });
+}
+
 export function stopGatewayClient(this: RuntimeGatewayConnectionContext): void {
+  if (this.gatewayClient) emitDiagnosticConnection.call(this, false);
   this.goalContinuationCoordinator.clear();
   this.cancelGoalRecovery();
   this.dismissAllAskUserInteractions();

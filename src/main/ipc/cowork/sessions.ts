@@ -482,7 +482,7 @@ export const registerCoworkSessionHandlers = ({
     if (existing) return existing;
     const pending = Promise.resolve().then(async () => {
       try {
-        await getCoworkEngineRouter().stopSession(sessionId);
+        await getCoworkEngineRouter().stopSession(sessionId, { diagnosticUserInitiated: true });
         if (unknownAdmissions.has(sessionId)) {
           return {
             success: false,

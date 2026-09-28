@@ -89,7 +89,7 @@ describe('initial admission cancellation', () => {
     const starting = fixture.start();
     await vi.waitFor(() => expect(fixture.startSession).toHaveBeenCalled());
     await expect(fixture.cancel()).resolves.toEqual({ success: true });
-    expect(fixture.stopSession).toHaveBeenCalledWith('session-1');
+    expect(fixture.stopSession).toHaveBeenCalledWith('session-1', { diagnosticUserInitiated: true });
     await expect(starting).resolves.toMatchObject({ success: true, timing: { state: 'aborted' } });
   });
 
