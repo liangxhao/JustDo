@@ -1,0 +1,6 @@
+**/.env
+**/state
+**/users.json
+**/__pycache__
+**/*.pyc
+tests

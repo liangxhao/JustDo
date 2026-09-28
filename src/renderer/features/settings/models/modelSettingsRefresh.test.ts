@@ -71,9 +71,13 @@ describe('model settings refresh', () => {
     ]);
   });
 
-  test('removes the cached built-in provider while preserving unsaved custom changes', () => {
+  test('keeps an empty built-in settings entry while preserving unsaved custom changes', () => {
     const currentProviders: ProvidersConfig = {
-      builtin_models: provider([{ id: 'old-model', name: 'Old model' }]),
+      builtin_models: {
+        ...provider([{ id: 'old-model', name: 'Old model' }]),
+        apiKey: 'stale-credential',
+        headers: { 'X-ACCESS-JWT': 'stale-token' },
+      },
       custom_0: {
         ...provider([{ id: 'custom-model', name: 'Custom model' }]),
         displayName: 'Unsaved name',
@@ -84,7 +88,29 @@ describe('model settings refresh', () => {
       custom_0: provider([{ id: 'saved-custom-model', name: 'Saved custom model' }]),
     });
 
-    expect(result.builtin_models).toBeUndefined();
+    expect(result.builtin_models).toEqual({
+      enabled: false,
+      readonly: true,
+      apiKey: '',
+      baseUrl: '',
+      apiFormat: 'openai',
+      models: [],
+    });
+    expect(getEnabledProviderModels({ builtin_models: result.builtin_models })).toEqual([]);
     expect(result.custom_0).toBe(currentProviders.custom_0);
+  });
+
+  test('keeps the entry through repeated unavailable refreshes and restores authorized models', () => {
+    const unavailable = mergeRefreshedBuiltinProvider({}, undefined);
+    const repeated = mergeRefreshedBuiltinProvider(unavailable, {});
+    expect(repeated).toEqual(unavailable);
+
+    const restored = mergeRefreshedBuiltinProvider(repeated, {
+      builtin_models: provider([{ id: 'authorized', name: 'Authorized' }]),
+    });
+    expect(restored.builtin_models.enabled).toBe(true);
+    expect(getEnabledProviderModels(restored)).toEqual([
+      expect.objectContaining({ id: 'authorized', providerKey: 'builtin_models' }),
+    ]);
   });
 });

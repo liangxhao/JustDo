@@ -7,7 +7,7 @@ import type { BuiltinModelCredential } from '../../providers/builtinModelCredent
 import { buildCustomerApiBaseUrl, CustomerRegistrationService } from './customerRegistrationService';
 
 const directories: string[] = [];
-const reportingConfig = vi.hoisted(() => ({ enabled: true }));
+const reportingConfig = vi.hoisted(() => ({ enabled: true, endpointPath: '/customer/activity' }));
 
 vi.mock('../../../config/activityReporting', () => ({
   ACTIVITY_REPORTING_CONFIG: reportingConfig,
@@ -34,12 +34,26 @@ const setup = (getCredential = () => credential()) => {
 
 afterEach(() => {
   reportingConfig.enabled = true;
+  reportingConfig.endpointPath = '/customer/activity';
   vi.restoreAllMocks();
   vi.useRealTimers();
   for (const directory of directories.splice(0)) fs.rmSync(directory, { recursive: true, force: true });
 });
 
 describe('JWT customer activity', () => {
+  test.each(['customer/activity', '//other.test/path', '/a/../activity', '/activity?x=1', '/activity#x', '/a\\b', '/a\n'])('does not send credentials for invalid endpoint path %j', async endpointPath => {
+    reportingConfig.endpointPath = endpointPath;
+    const { service, request } = setup();
+    await service.sync();
+    expect(request).not.toHaveBeenCalled();
+  });
+  test('uses the configured activity endpoint path', async () => {
+    reportingConfig.endpointPath = '/events/activity';
+    const { service, request } = setup();
+    await service.sync();
+    expect(request.mock.calls[0][0]).toBe('http://localhost:9108/events/activity');
+  });
+
   test('disabled reporting does not read user info, access credentials, send requests or schedule timers', async () => {
     vi.useFakeTimers();
     reportingConfig.enabled = false;

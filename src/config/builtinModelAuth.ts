@@ -3,6 +3,7 @@ export type BuiltinModelAuthConfig = Readonly<{
   maxJwtLifetimeSeconds: number;
   developmentAuthMode: 'jwt' | 'api-key';
   developmentApiKey: string;
+  developmentApiKeyFile?: string;
 }>;
 
 /** 部署方编辑此处，然后重启 Electron 开发进程。 */
@@ -17,4 +18,6 @@ export const BUILTIN_MODEL_AUTH_CONFIG: BuiltinModelAuthConfig = Object.freeze({
   developmentAuthMode: 'jwt',
   // 仅在 developmentAuthMode 为 api-key 且未打包时使用。提交代码前必须清空。
   developmentApiKey: '',
+  // 仅开发模式读取；文件内容不参与打包。
+  developmentApiKeyFile: '',
 });

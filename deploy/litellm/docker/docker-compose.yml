@@ -31,7 +31,7 @@ services:
       retries: 10
 
   litellm:
-    build:
+    build: &litellm-build
       context: ..
       dockerfile: docker/Dockerfile
       args:
@@ -43,6 +43,8 @@ services:
         condition: service_healthy
       db:
         condition: service_healthy
+      init:
+        condition: service_completed_successfully
     command: ['--host', '0.0.0.0', '--port', '4000', '--workers', '4']
     healthcheck:
       test: ['CMD', 'python', '-c', 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:4000/health/liveliness", timeout=5).close()']
@@ -50,8 +52,10 @@ services:
       timeout: 6s
       start_period: 120s
       retries: 12
-    environment:
+    environment: &litellm-environment
       CONFIG_FILE_PATH: /app/config.yaml
+      UI_USERNAME: ${UI_USERNAME:-admin}
+      UI_PASSWORD: ${UI_PASSWORD:?set UI_PASSWORD in .env}
       MAX_STRING_LENGTH_PROMPT_IN_DB: ${MAX_STRING_LENGTH_PROMPT_IN_DB:-100000}
       LITELLM_HOOKS: ${LITELLM_HOOKS-activity}
       LITELLM_ACTIVITY_DATABASE_URL: ${LITELLM_ACTIVITY_DATABASE_URL:?set asyncpg database URL}
@@ -77,7 +81,15 @@ services:
         hard: 16384
     volumes:
       - ./config.yaml:/app/config.yaml:ro
-
+  init:
+    build: *litellm-build
+    image: litellm-hooks:local
+    restart: 'no'
+    entrypoint: ['python', '/opt/litellm-hooks/start.py', 'init']
+    environment: *litellm-environment
+    depends_on:
+      db:
+        condition: service_healthy
 
 volumes:
   litellm-postgres:

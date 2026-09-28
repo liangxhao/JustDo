@@ -2,7 +2,10 @@
 
 编辑本目录的 TypeScript 常量后，重启 Electron 开发进程或重新打包。
 配置文件只保存预设值和类型，校验、文件读取、请求等逻辑由使用方负责。
+内置模型地址、JWT 换证地址、出站请求头白名单和开发 Key 文件路径默认留空；部署时填写，不能直接使用未配置的内置模型。
 除本地临时开发 Key 外，禁止填写 Key、JWT、mtoken、Cookie 等凭据。
+
+开发联调可通过 `builtinModelAuth.ts` 的 `developmentApiKeyFile` 指定本地 Key 文件；仅未打包且选择 `api-key` 模式时由 Main 读取，文件内容不参与打包。非空 `developmentApiKey` 优先于文件。
 
 | 文件 | 配置项 |
 | --- | --- |
@@ -14,7 +17,8 @@
 
 ## 活动上报
 
-在 `activityReporting.ts` 中将 `enabled` 改为 `false`，关闭 `/customer/activity` 的启动上报、
+`activityReporting.ts` 的 `endpointPath` 配置上报路径，默认 `/customer/activity`，需以 `/` 开头并与服务端路由一致；拼接时保留模型地址的部署路径前缀，仅去掉末尾 `/v1`。
+将 `enabled` 改为 `false`，关闭活动接口的启动上报、
 每日心跳及失败重试；登录回调也不会启动上报。设为 `true` 恢复原有上报行为，仍须内置模型启用且 JWT 有效。
 此开关不关闭 JWT 换证、模型请求或服务端必要的身份/EndUser 处理，不删除已经保存的活动数据。
 修改后须重启 Electron 开发进程或重新打包，不是运行时设置。

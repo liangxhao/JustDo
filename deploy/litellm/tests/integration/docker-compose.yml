@@ -1,0 +1,109 @@
+name: litellm-integration
+
+x-runtime: &runtime
+  image: litellm-hooks:integration
+  build:
+    context: ../..
+    dockerfile: docker/Dockerfile
+  env_file: .env
+  volumes:
+    - ./config.yaml:/app/config.yaml:ro
+  environment:
+    CONFIG_FILE_PATH: /app/config.yaml
+
+services:
+  db:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: litellm
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run setup_test.py}
+    volumes:
+      - database:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U litellm -d litellm']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?run setup_test.py}
+    command: ['sh', '-c', 'exec redis-server --requirepass "$$REDIS_PASSWORD" --appendonly yes']
+    volumes:
+      - redis:/data
+    healthcheck:
+      test: ['CMD-SHELL', 'REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli ping | grep -q PONG']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  jwt:
+    build: ./jwt-service
+    restart: unless-stopped
+    environment:
+      JWT_ISSUER: ${LITELLM_JWT_ISSUER}
+    volumes:
+      - jwt-keys:/data
+      - ./jwt-service/users.json:/app/users.json:ro
+    # Shared network namespace lets LiteLLM access JWKS on loopback without disabling HTTPS checks.
+    ports:
+      - '127.0.0.1:9108:4000'
+      - '127.0.0.1:9110:9110'
+    healthcheck:
+      test: ['CMD', 'python', '-c', 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:9110/health", timeout=3).close()']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  init:
+    <<: *runtime
+    restart: 'no'
+    entrypoint: ['python', '/opt/litellm-hooks/start.py', 'init']
+    depends_on:
+      db:
+        condition: service_healthy
+
+  litellm:
+    <<: *runtime
+    restart: unless-stopped
+    network_mode: service:jwt
+    command: ['--host', '0.0.0.0', '--port', '4000', '--workers', '4']
+    depends_on:
+      init:
+        condition: service_completed_successfully
+      jwt:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ulimits:
+      nofile:
+        soft: 16384
+        hard: 16384
+    healthcheck:
+      test: ['CMD', 'python', '-c', 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:4000/health/liveliness", timeout=5).close()']
+      interval: 10s
+      timeout: 6s
+      start_period: 120s
+      retries: 20
+
+  bootstrap:
+    image: litellm-integration-jwt
+    restart: 'no'
+    entrypoint: ['python', '/bootstrap.py']
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+    volumes:
+      - ./bootstrap.py:/bootstrap.py:ro
+      - ./state:/state
+    depends_on:
+      litellm:
+        condition: service_healthy
+
+volumes:
+  database:
+  redis:
+  jwt-keys:

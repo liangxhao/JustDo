@@ -159,6 +159,12 @@ export class CustomerRegistrationService {
       }
 
       const apiBaseUrl = buildCustomerApiBaseUrl(this.options.baseUrl);
+      const endpointPath = ACTIVITY_REPORTING_CONFIG.endpointPath;
+      if (!/^\/(?!\/)[A-Za-z0-9._~/-]+$/.test(endpointPath) ||
+          endpointPath.split('/').some(segment => segment === '.' || segment === '..')) {
+        console.warn('[CustomerRegistration] Invalid activity endpoint path.');
+        return false;
+      }
       if (this.activityUserId !== payload.user_id) {
         this.activityUserId = payload.user_id;
         this.activityEventId = randomUUID();
@@ -170,7 +176,7 @@ export class CustomerRegistrationService {
         const controller = new AbortController();
         this.requestController = controller;
         try {
-          const response = await this.request(`${apiBaseUrl}/customer/activity`, {
+          const response = await this.request(`${apiBaseUrl}${endpointPath}`, {
             method: 'POST',
             headers: {
               ...buildBuiltinModelRequestHeaders(credential),

@@ -4,6 +4,7 @@ import argparse
 import os
 from pathlib import Path
 import sys
+import subprocess
 
 from dotenv import dotenv_values
 
@@ -24,7 +25,7 @@ def build_launch(mode, inherited=None):
     required = ["DATABASE_URL", "LITELLM_MASTER_KEY", "LITELLM_SALT_KEY",
                 "REDIS_HOST", "REDIS_PORT", "REDIS_PASSWORD", "LITELLM_ACTIVITY_DATABASE_URL"]
     if mode == "serve":
-        required += ["LITELLM_JWT_ISSUER", "LITELLM_JWT_AUDIENCE", "LITELLM_JWT_JWKS_URL"]
+        required += ["LITELLM_JWT_ISSUER", "LITELLM_JWT_AUDIENCE", "LITELLM_JWT_JWKS_URL", "UI_USERNAME", "UI_PASSWORD"]
     if any(not environment.get(key, "").strip() or "replace-with-" in environment[key]
            for key in required):
         raise ValueError("Complete the required deployment settings in native/.env.")
@@ -61,11 +62,16 @@ def build_launch(mode, inherited=None):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", nargs="?", default="serve", choices=["serve", "init"])
+    parser.add_argument("mode", nargs="?", default="serve", choices=["serve", "init", "up"])
     args = parser.parse_args()
 
     try:
-        command, environment = build_launch(args.mode)
+        command, environment = build_launch('serve' if args.mode == 'up' else args.mode)
+        if args.mode == 'up':
+            init_command, init_environment = build_launch('init')
+            result = subprocess.run(init_command, env=init_environment, check=False)
+            if result.returncode != 0:
+                parser.exit(1, 'Database initialization failed; service was not started.\n')
     except ValueError as error:
         parser.exit(2, str(error) + "\n")
 

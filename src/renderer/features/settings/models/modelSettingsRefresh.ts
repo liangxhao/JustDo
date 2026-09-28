@@ -8,9 +8,18 @@ export const mergeRefreshedBuiltinProvider = (
 ): ProvidersConfig => {
   const refreshedBuiltinProvider = refreshedProviders?.builtin_models;
   if (!refreshedBuiltinProvider) {
-    const nextProviders = { ...currentProviders };
-    delete nextProviders.builtin_models;
-    return nextProviders;
+    // Keep the settings entry without retaining revoked models or credentials.
+    return {
+      ...currentProviders,
+      builtin_models: {
+        enabled: false,
+        readonly: true,
+        apiKey: '',
+        baseUrl: '',
+        apiFormat: 'openai',
+        models: [],
+      },
+    };
   }
 
   const currentEnabledById = new Map(

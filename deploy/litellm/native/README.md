@@ -2,6 +2,7 @@
 
 需要 Python 3.11/3.12、PostgreSQL 和 Redis，不需要 Docker。部署完整目录，
 下面以 Linux 的 `/opt/litellm` 为例。使用专用服务账号运行。
+复制范围和必填配置见[公共部署清单](../README.md#复制与首次启动)，不能只复制 `native/` 子目录。
 
 ## 安装和配置
 
@@ -13,6 +14,7 @@ chmod 600 .env
 ```
 
 已有配置不要覆盖。填写 `.env` 中的数据库、Redis、管理密钥、稳定加密盐和 JWT 参数。
+填写 `UI_USERNAME`、`UI_PASSWORD`，启动后通过 `/ui` 登录管理页面。
 它使用 dotenv 格式，不通过 Shell source 加载。复用旧库先备份并保留原盐。
 
 安装脚本创建 `.venv`，安装固定版本依赖并生成 Prisma 客户端；可通过组织配置的软件源安装。
@@ -34,14 +36,14 @@ chmod 600 .env
 ## 初始化和启动
 
 ```sh
-.venv/bin/python start.py init
-.venv/bin/python start.py
+.venv/bin/python start.py up
 ```
 
-初始化成功后才启动。第一个命令执行 LiteLLM 版本化迁移、初始化 Hook 表结构和默认 Team；
-正常启动不修改表结构。Linux 也可执行 `bash start.sh init` 和 `bash start.sh`。
+`up` 先执行 LiteLLM 版本化迁移、初始化 Hook 表结构和默认 Team，成功后才启动服务；失败不会启动。
+Linux 也可执行 `bash start.sh up`。已有数据库升级前须停服、备份并安排维护窗口。
+日常重启用 `.venv/bin/python start.py` 或 `bash start.sh`，不执行迁移。
 
-使用已有虚拟环境时，两个命令中的 `.venv/bin/python` 替换为该环境 Python 的绝对路径。
+使用已有虚拟环境时，将 `.venv/bin/python` 替换为该环境 Python 的绝对路径。
 也可先 `export LITELLM_PYTHON=/data/sjx/envs/litellm/bin/python`，再使用 `start.sh`。
 不要改用原生 `litellm` 命令启动，否则不会加载统一 Hook 入口。
 
@@ -58,7 +60,7 @@ HTTPS 入口位于其他机器时，可监听指定内网地址或 `0.0.0.0`，�
 不要设置 `LITELLM_LOG=ERROR` 来屏蔽校验错误定位所需的 WARNING 日志。
 
 Windows 使用 `py -3.12 install.py` 安装，再运行
-`.venv\Scripts\python.exe start.py init` 和 `.venv\Scripts\python.exe start.py`。
+`.venv\Scripts\python.exe start.py up`；日常重启省略 `up`。
 
 ## 可选 Linux 服务
 

@@ -1,4 +1,6 @@
-import { expect, test } from 'vitest';
+import fs from 'node:fs';
+
+import { expect, test, vi } from 'vitest';
 
 import { BUILTIN_MODEL_AUTH_CONFIG } from '../../config/builtinModelAuth';
 import {
@@ -52,7 +54,32 @@ test('rejects an empty key when development API Key mode is active', () => {
   const config = validateBuiltinModelAuthConfig({
     ...BUILTIN_MODEL_AUTH_CONFIG,
     developmentAuthMode: 'api-key',
+    developmentApiKeyFile: undefined,
   });
   expect(() => resolveBuiltinModelDevelopmentApiKey(config, false))
     .toThrow('Development API Key mode requires a non-empty key.');
+});
+
+test('reads a development key file only in unpackaged API key mode', () => {
+  const stat = vi.spyOn(fs, 'statSync').mockReturnValue({ size: 20 } as fs.Stats);
+  const read = vi.spyOn(fs, 'readFileSync').mockReturnValue('sk-test-fixture\n');
+  try {
+    const config = validateBuiltinModelAuthConfig({
+      ...BUILTIN_MODEL_AUTH_CONFIG, developmentAuthMode: 'api-key',
+      developmentApiKey: '', developmentApiKeyFile: 'fixture-key.txt',
+    });
+    expect(resolveBuiltinModelDevelopmentApiKey(config, true)).toBe('');
+    expect(resolveBuiltinModelDevelopmentApiKey({ ...config, developmentAuthMode: 'jwt' }, false)).toBe('');
+    expect(read).not.toHaveBeenCalled();
+    expect(resolveBuiltinModelDevelopmentApiKey(config, false)).toBe('sk-test-fixture');
+    read.mockReturnValue('bad\ncredential');
+    expect(() => resolveBuiltinModelDevelopmentApiKey(config, false))
+      .toThrow('Unable to read development API Key file.');
+    read.mockImplementation(() => { throw new Error('sensitive contents'); });
+    expect(() => resolveBuiltinModelDevelopmentApiKey(config, false))
+      .toThrow('Unable to read development API Key file.');
+  } finally {
+    stat.mockRestore();
+    read.mockRestore();
+  }
 });

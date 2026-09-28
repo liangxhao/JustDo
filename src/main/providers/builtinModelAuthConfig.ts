@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+
 import { BUILTIN_MODEL_AUTH_CONFIG, type BuiltinModelAuthConfig } from '../../config/builtinModelAuth';
 
 export const validateBuiltinModelAuthConfig = (value: unknown): BuiltinModelAuthConfig => {
@@ -6,6 +8,7 @@ export const validateBuiltinModelAuthConfig = (value: unknown): BuiltinModelAuth
     if (typeof config?.tokenExchangeUrl !== 'string' ||
       !['jwt', 'api-key'].includes(config.developmentAuthMode) ||
       typeof config.developmentApiKey !== 'string' ||
+      (config.developmentApiKeyFile !== undefined && typeof config.developmentApiKeyFile !== 'string') ||
       config.developmentApiKey.length > 8_192 ||
       /[\u0000-\u001f\u007f]/.test(config.developmentApiKey) ||
       !Number.isInteger(config.maxJwtLifetimeSeconds) ||
@@ -20,6 +23,7 @@ export const validateBuiltinModelAuthConfig = (value: unknown): BuiltinModelAuth
       maxJwtLifetimeSeconds: config.maxJwtLifetimeSeconds,
       developmentAuthMode: config.developmentAuthMode,
       developmentApiKey: config.developmentApiKey.trim(),
+      ...(config.developmentApiKeyFile !== undefined ? { developmentApiKeyFile: config.developmentApiKeyFile.trim() } : {}),
     };
   } catch {
     throw new Error('Invalid model authentication configuration.');
@@ -34,6 +38,16 @@ export const resolveBuiltinModelDevelopmentApiKey = (
   isPackaged: boolean,
 ): string => {
   if (isPackaged || config.developmentAuthMode !== 'api-key') return '';
+  if (!config.developmentApiKey && config.developmentApiKeyFile) {
+    try {
+      if (fs.statSync(config.developmentApiKeyFile).size > 8_192) throw new Error();
+      const key = fs.readFileSync(config.developmentApiKeyFile, 'utf8').trim();
+      if (!key || /[\u0000-\u001f\u007f]/.test(key)) throw new Error();
+      return key;
+    } catch {
+      throw new Error('Unable to read development API Key file.');
+    }
+  }
   if (!config.developmentApiKey) {
     throw new Error('Development API Key mode requires a non-empty key.');
   }

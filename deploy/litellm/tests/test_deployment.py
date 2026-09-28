@@ -58,7 +58,12 @@ def test_native_end_user_mapping_and_legacy_header_setting(monkeypatch, role, fa
 
 def test_compose_exposes_exactly_one_litellm_service():
     services = yaml.safe_load((ROOT / 'docker/docker-compose.yml').read_text())['services']
-    assert set(services) == {'litellm', 'db', 'redis'}
+    assert set(services) == {'litellm', 'db', 'redis', 'init'}
+    assert services['init']['restart'] == 'no'
+    assert 'ports' not in services['init']
+    assert services['init']['entrypoint'] == ['python', '/opt/litellm-hooks/start.py', 'init']
+    assert services['litellm']['depends_on']['init']['condition'] == 'service_completed_successfully'
+    assert 'UI_PASSWORD' in services['litellm']['environment']
     service = services['litellm']
     assert service['ports'] == ['${LITELLM_PORT:-9108}:4000']
     assert service['depends_on']['redis']['condition'] == 'service_healthy'

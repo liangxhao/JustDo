@@ -25,12 +25,20 @@ def launcher(tmp_path, monkeypatch):
     (tmp_path / '.env').write_text(
         'DATABASE_URL=postgresql://user:secret@localhost/db\n'
         'LITELLM_MASTER_KEY=master-secret\nLITELLM_SALT_KEY=salt-secret\n'
+        'UI_USERNAME=admin\nUI_PASSWORD=test-only-password\n'
         'REDIS_HOST=localhost\nREDIS_PORT=6379\nREDIS_PASSWORD=literal${DOLLAR}\n'
         'LITELLM_JWT_ISSUER=https://login.test\nLITELLM_JWT_AUDIENCE=audience\n'
         'LITELLM_JWT_JWKS_URL=https://login.test/jwks\n'
         'LITELLM_ACTIVITY_DATABASE_URL=postgresql://user:secret@localhost/db\n'
     )
     return module
+
+
+def test_serve_requires_dashboard_password(launcher):
+    config_file = launcher.ROOT / '.env'
+    config_file.write_text(config_file.read_text().replace('UI_PASSWORD=test-only-password', 'UI_PASSWORD='))
+    with pytest.raises(ValueError, match='required deployment settings'):
+        launcher.build_launch('serve', {})
 
 
 def test_launch_uses_venv_tools_loopback_and_literal_secrets(launcher):

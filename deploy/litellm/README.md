@@ -4,6 +4,7 @@
 
 - [Docker 部署](docker/README.md)：Compose 管理 PostgreSQL、Redis 和单个 LiteLLM 服务。
 - [普通机器部署](native/README.md)：Python 虚拟环境、独立基础服务及 systemd 模板。
+- [本地认证联调](tests/integration/README.md)：独立 JWT 签发服务、模拟模型和测试 Virtual Key。
 
 每种 Hook 位于独立的 `hooks/` 子目录，根目录 `register.py` 统一注册，`start.py` 负责启动和初始化。
 环境变量使用 `LITELLM_JWT_*` 和 `LITELLM_DEFAULT_TEAM_ID`。
@@ -30,7 +31,42 @@ JWT 泄露后可在剩余有效期内被重放，应按需设置最短有效期�
 不读取请求正文、不记录或回显字段值。Cookie 仅验证格式，不证明会话有效，不能代替 JWT 或 Key 认证。
 同样适用于旧 Key；旧客户端必须已经注入合法字段。管理接口、健康检查、模型列表/信息查询和 OPTIONS 预检不受该 Hook 限制。
 
-## 部署结构
+## 复制与首次启动
+
+复制整个 `deploy/litellm` 目录并保留层级，不能只复制 `docker/` 或 `native/`：
+两者都依赖父目录的 `start.py`、`register.py`、`hooks/` 和依赖文件。
+正式部署可以不复制 `tests/`。
+
+在所选部署子目录将 `.env.example` 复制为 `.env`（不要覆盖已有配置），完成以下设置：
+
+| 配置 | 要求 |
+| --- | --- |
+| `DATABASE_URL`、`LITELLM_ACTIVITY_DATABASE_URL` | 指向同一数据库；后者不能包含 Prisma 专用连接参数；密码需 URL 编码 |
+| `LITELLM_MASTER_KEY`、`LITELLM_SALT_KEY` | 独立随机密钥；旧数据库必须保留原加密盐 |
+| `UI_USERNAME`、`UI_PASSWORD` | 管理页面登录账号和密码，不用于客户端调用 |
+| Redis 配置 | Docker 填写密码；native 还需填写地址和端口 |
+| `LITELLM_JWT_ISSUER`、`LITELLM_JWT_AUDIENCE`、`LITELLM_JWT_JWKS_URL` | 与真实签发服务一致；JWKS 必须可访问，示例域名不能直接使用 |
+| `LITELLM_JWT_MAX_LIFETIME_SECONDS` | 不小于签发令牌的有效期，最大 10800 秒 |
+| `LITELLM_DEFAULT_TEAM_ID` | 默认 `standard`，首次创建后在网页管理模型和成员 |
+
+Docker 还需填写 `POSTGRES_PASSWORD`，与两个数据库 URL 中的密码一致。
+native 需提前准备可访问的 PostgreSQL 数据库（账号具有迁移建表权限）、Redis、
+Python 3.11/3.12，并按 native README 安装依赖。首次安装需要软件源访问或已准备的离线包和 Prisma 引擎。
+
+完成上述准备后，首次启动只需一个命令：
+
+- Docker：在 `docker/` 执行 `docker compose up -d --build`。
+- native：在 `native/` 执行 `.venv/bin/python start.py up`；已有虚拟环境使用其 Python 绝对路径。
+
+启动后访问 `/health/liveliness` 检查服务，访问 `/ui` 登录管理页面。
+在网页添加真实模型及上游凭据，再为默认 Team 选择允许的模型；空模型列表会拒绝调用。
+生产部署不会自动创建测试 Key、模拟模型或 JWT 签发服务。旧 Key 兼容需按本文的迁移步骤单独登记。
+若要无真实上游的完整认证测试，使用独立的[本地联调入口](tests/integration/README.md)。
+
+客户端另外配置换证 URL、模型 URL 和出站请求头白名单；这些不会由服务端自动修改。
+模型 URL 应使用可访问的非回环地址，接入组织现有 HTTPS 入口。
+
+## 服务结构
 
 单个 LiteLLM 实例同时处理以下请求：
 

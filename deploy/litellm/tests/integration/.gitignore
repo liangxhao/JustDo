@@ -1,0 +1,5 @@
+.env
+config.yaml
+state/
+jwt-service/users.json
+**/__pycache__/
