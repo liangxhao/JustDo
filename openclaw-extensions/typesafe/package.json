@@ -1,0 +1,36 @@
+{
+  "name": "@openclaw/typesafe",
+  "version": "2026.9.6",
+  "description": "OpenClaw TypeSafe typed decisions and optional evaluation tool",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/openclaw/openclaw"
+  },
+  "type": "module",
+  "dependencies": {
+    "typebox": "1.3.30"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "install": {
+      "clawhubSpec": "clawhub:@openclaw/typesafe",
+      "npmSpec": "@openclaw/typesafe",
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.9.6"
+    },
+    "compat": {
+      "pluginApi": ">=2026.9.6"
+    },
+    "build": {
+      "bundledDist": false,
+      "openclawVersion": "2026.9.6"
+    },
+    "release": {
+      "publishToClawHub": true,
+      "publishToNpm": true
+    }
+  },
+  "private": true
+}

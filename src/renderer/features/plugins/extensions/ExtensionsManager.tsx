@@ -12,6 +12,7 @@ import type {
   InstalledOpenClawExtension,
   OpenClawPluginCapabilityReview,
 } from '@shared/openclaw/extensions';
+import { OpenClawExtensionId } from '@shared/openclaw/extensions';
 import { PluginKind } from '@shared/plugins/marketplace';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -873,10 +874,13 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
             </div>
 
             {selectedExtension.description && (
-              <PluginMarkdownDescription
-                className="mt-3"
-                content={selectedExtension.description}
-              />
+              <PluginMarkdownDescription className="mt-3" content={selectedExtension.description} />
+            )}
+
+            {selectedExtension.id === OpenClawExtensionId.TYPESAFE && (
+              <p className="mt-3 text-sm text-secondary">
+                {i18nService.t('extensionTypesafeSetupHelp')}
+              </p>
             )}
 
             <div className="mt-5">
@@ -903,7 +907,12 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                           )}
                           {field.help && (
                             <Tooltip
-                              content={field.help}
+                              content={
+                                selectedExtension.id === OpenClawExtensionId.TYPESAFE &&
+                                field.path === 'apiKey'
+                                  ? i18nService.t('extensionTypesafeCredentialHelp')
+                                  : field.help
+                              }
                               position="bottom"
                               maxWidth="320px"
                               className="ml-1 shrink-0"

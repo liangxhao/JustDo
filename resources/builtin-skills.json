@@ -5,6 +5,7 @@
     { "id": "data-analysis", "enabled": true },
     { "id": "diagram-design", "enabled": true },
     { "id": "frontend-design", "enabled": true },
+    { "id": "jev-batch-evaluate", "enabled": true },
     { "id": "docx", "enabled": true },
     { "id": "pdf", "enabled": true },
     { "id": "pptx", "enabled": true },

@@ -259,6 +259,60 @@ test.each([true, false])('preserves cold storage through minimal startup and sub
 });
 
 describe('OpenClaw auth logout config sync', () => {
+  test.each(['full', 'minimal'].flatMap(mode =>
+    ['allow', 'alsoAllow', 'emptyAllow'].map(policy => ({ mode, policy })),
+  ))('$mode sync preserves Jev opt-in, SecretRefs and $policy across lifecycle changes', ({ mode, policy }) => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-jev-sync-'));
+    temporaryDirectories.push(stateDir);
+    const configPath = path.join(stateDir, 'openclaw.json');
+    const appConfig = mode === 'full' ? {
+      model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
+      providers: { 'custom-provider': {
+        enabled: true, apiKey: 'test-secret', baseUrl: 'https://custom.example.test/v1',
+        apiFormat: 'openai', models: [{ id: 'custom-model' }],
+      } },
+    } : {};
+    setStoreGetter(() => ({ get: () => appConfig }) as never);
+    const sync = new OpenClawConfigSync({
+      engineManager: {
+        getConfigPath: () => configPath, getStateDir: () => stateDir,
+        getDesiredVersion: () => '2026.9.6',
+      },
+      getCoworkConfig: () => ({ workingDirectory: '', executionMode: 'local', agentEngine: 'openclaw' }),
+      getAgents: () => [],
+    } as never);
+    expect(sync.sync('startup').ok).toBe(true);
+    const readConfig = () => JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(readConfig().plugins.entries.typesafe).toEqual({ enabled: false });
+    const source = { source: 'file', path: path.join(stateDir, 'extension-secrets.json'), mode: 'json' };
+    const apiKey = { source: 'file', provider: 'justdo-extension-secrets', id: '/test-key' };
+    for (const enabled of [true, false]) {
+      const config = readConfig();
+      config.plugins.entries.typesafe = { enabled, config: { apiKey, model: 'jev-1.13.0' } };
+      config.secrets = { ...(config.secrets ?? {}), providers: {
+        ...(config.secrets?.providers ?? {}), 'justdo-extension-secrets': source,
+      } };
+      delete config.tools.allow;
+      delete config.tools.alsoAllow;
+      config.tools[policy === 'emptyAllow' ? 'allow' : policy] = policy === 'emptyAllow' ? [] : ['operator-tool'];
+      config.tools.deny = ['operator-denied-tool', 'typesafe_evaluate', 'skill_workshop'];
+      fs.writeFileSync(configPath, JSON.stringify(config));
+      for (const reason of ['startup', 'settings', BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout]) {
+        expect(sync.sync(reason).ok).toBe(true);
+        const saved = readConfig();
+        expect(saved.plugins.entries.typesafe).toEqual({ enabled, config: { apiKey, model: 'jev-1.13.0' } });
+        expect(saved.secrets.providers['justdo-extension-secrets']).toEqual(source);
+        expect(saved.tools[policy === 'emptyAllow' ? 'alsoAllow' : policy]).toEqual(
+          policy === 'emptyAllow' ? ['typesafe_evaluate'] : ['operator-tool', 'typesafe_evaluate'],
+        );
+        expect(saved.tools[policy === 'allow' ? 'alsoAllow' : 'allow']).toBeUndefined();
+        expect(saved.tools.deny).toContain('operator-denied-tool');
+        expect(saved.tools.deny).toContain('typesafe_evaluate');
+        expect(saved.tools.deny).not.toContain('skill_workshop');
+      }
+    }
+  });
+
   test.each(['full', 'minimal'] as const)('%s sync applies Code Mode changes across startup and auth refresh', mode => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-code-mode-sync-'));
     temporaryDirectories.push(stateDir);
@@ -450,7 +504,7 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.tools.exec.host).toBe('sandbox');
     expect(config.tools.fs.workspaceOnly).toBe(true);
     expect(config.tools.sandbox).toEqual({
-      tools: { alsoAllow: ['task_assistants', 'assistants_create'] },
+      tools: { alsoAllow: ['task_assistants', 'assistants_create', 'typesafe_evaluate'] },
     });
   });
 
@@ -783,6 +837,7 @@ describe('OpenClaw auth logout config sync', () => {
       'ask-user-question',
       'workboard',
       'agent-team',
+      'typesafe',
       'memory-core',
       'code-mode-quickjs',
       'github',
@@ -884,6 +939,7 @@ describe('OpenClaw auth logout config sync', () => {
       'agent-workspace-plugin',
       'workboard',
       'agent-team',
+      'typesafe',
       'memory-core',
       'code-mode-quickjs',
       'github',
@@ -1096,6 +1152,7 @@ describe('OpenClaw auth logout config sync', () => {
       'justdo-skill-only-example',
       'workboard',
       'agent-team',
+      'typesafe',
       'memory-core',
       'code-mode-quickjs',
       'github',

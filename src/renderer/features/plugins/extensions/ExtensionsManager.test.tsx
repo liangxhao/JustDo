@@ -219,6 +219,34 @@ describe('ExtensionsManager extension toggle', () => {
     expect(screen.getByRole('button', { name: 'openFolder' })).toBeTruthy();
   });
 
+  test('saves a bundled Jev key without enabling the extension or retaining it in the input', async () => {
+    const typesafe: InstalledOpenClawExtension = {
+      ...extension, id: 'typesafe', name: 'TypeSafe AI', origin: 'bundled',
+      installPath: undefined, removable: false,
+      configurationFields: [{ path: 'apiKey', label: 'TypeSafe API credential', sensitive: true, configured: false }],
+    };
+    const updateConfiguration = vi.fn().mockResolvedValue({ success: true });
+    const setEnabled = vi.fn();
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: { extensions: {
+        list: vi.fn(async () => ({ success: true, extensions: [typesafe] })),
+        updateConfiguration, setEnabled, onImportProgress: vi.fn(() => vi.fn()),
+      } },
+    });
+    render(<ExtensionsManager requestedExtensionId="typesafe" />);
+    const input = await screen.findByLabelText('TypeSafe API credential') as HTMLInputElement;
+    expect(input.type).toBe('password');
+    expect(screen.getByText('extensionTypesafeSetupHelp')).toBeTruthy();
+    fireEvent.change(input, { target: { value: 'synthetic-ui-key' } });
+    fireEvent.click(screen.getByRole('button', { name: 'save' }));
+    await waitFor(() => expect(updateConfiguration).toHaveBeenCalledWith({
+      extensionId: 'typesafe', values: { apiKey: 'synthetic-ui-key' },
+    }));
+    await waitFor(() => expect(input.value).toBe(''));
+    expect(setEnabled).not.toHaveBeenCalled();
+  });
+
   test('does not offer configuration controls blocked by management policy', async () => {
     const managedExtension: InstalledOpenClawExtension = {
       ...extension,

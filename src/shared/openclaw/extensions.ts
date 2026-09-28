@@ -9,6 +9,7 @@ export const OpenClawExtensionId = {
   GITHUB: 'github',
   PLAN_MODE: 'plan-mode',
   AGENT_TEAM: 'agent-team',
+  TYPESAFE: 'typesafe',
   EMBEDDED_BROWSER: 'embedded-browser',
   ACPX: 'acpx',
   STT_LOCAL_CLI: 'stt-local-cli',

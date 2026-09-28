@@ -35,3 +35,6 @@ Thumbs.db
 # OpenClaw
 openclaw/
 resources/python-win/
+
+# Vendored upstream TypeSafe sources retain upstream formatting.
+openclaw-extensions/typesafe/

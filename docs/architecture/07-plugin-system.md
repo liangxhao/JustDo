@@ -37,7 +37,9 @@ OpenClaw v2026.9.6 的插件管理 RPC 会直接应用运行时变更。CLI 导�
 
 ## 3. Skill：有效赢家与文件来源
 
-内置 manifest 有 8 个默认启用项：data-analysis、diagram-design、frontend-design、docx、pdf、pptx、skill-creator、xlsx，并关闭 OpenClaw 默认技能集。打包资源必须与 manifest 一致；数量不应散落在 UI 常量中。
+内置 manifest 有 9 个默认启用项：data-analysis、diagram-design、frontend-design、jev-batch-evaluate、docx、pdf、pptx、skill-creator、xlsx，并关闭 OpenClaw 默认技能集。打包资源必须与 manifest 一致；数量不应散落在 UI 常量中。
+
+`jev-batch-evaluate` 还由原生技能条件检查 Python 和 `plugins.entries.typesafe.enabled`，不会自动启用 TypeSafe。聊天 Agent 按用户指定字段将 CSV/JSON 拆成原生 `typesafe_evaluate` 请求，本地 Python 脚本只准备请求、校验对应关系和汇总结果，不访问网络。数据、标准、请求及结果保存为任务文件，不进入应用消息缓存，也不触发助手分配或其他业务动作。失败或缺失批次保留为未完成，概率与分数不被聊天模型补写。具体流程见 [Jev evaluations](../features/jev-integration.md)。
 
 skills.status 提供 effective source、eligibility、disabled、缺失依赖和安装选项。产品文件服务只管理用户导入目录；它不能从 SKILL.md 自行重建运行元数据。受管根使用原生 stateDir/skills，避免重复 extraDirs 引入同一路径。
 
@@ -197,3 +199,23 @@ Workboard 仍使用 OpenClaw 插件的 `workboard.cards.*` / `workboard.boards.*
 已知 runId 的定向停止失败时，不降级为整个 session 的停止，避免误停后来启动的任务。
 
 接口核对与可复现验证见 [Workboard 操作契约](../features/workboard.md)。
+
+
+## Jev typed evaluations
+
+The optional `typesafe` extension is vendored from a pinned upstream revision in
+`openclaw-extensions/typesafe/` and assembled by the existing local-extension
+pipeline. It is disabled by default and remains user-toggleable. The application
+admits its optional `typesafe_evaluate` tool when the plugin is enabled; the chat
+model owns the decision to call it. No global or assistant `decisionModel` is
+selected by this integration.
+
+Bundled extensions expose their native sensitive configuration hints in the
+extension dialog. For declared structured secret inputs, Main writes credentials
+to a permission-restricted `extension-secrets.json` and stores only a file
+SecretRef under `plugins.entries.<id>.config`. Credential rotation refreshes native
+prepared secrets through the existing Gateway restart coordinator. Config sync
+preserves plugin opt-in, references, and the secret provider across startup,
+settings changes, login, and logout. Native OpenClaw owns transport, validation,
+cancellation, and tool results; Renderer receives only configured-state metadata.
+See [Jev integration](../features/jev-integration.md) for setup and scope.

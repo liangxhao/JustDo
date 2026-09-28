@@ -81,10 +81,10 @@ describe('Windows native sandbox config', () => {
 
   test('keeps trusted collaboration tools available inside the sandbox', () => {
     expect(buildManagedOpenClawSandboxToolConfig('sandbox')).toEqual({
-      tools: { alsoAllow: ['task_assistants', 'assistants_create'] },
+      tools: { alsoAllow: ['task_assistants', 'assistants_create', 'typesafe_evaluate'] },
     });
     expect(buildManagedOpenClawSandboxToolConfig('local')).toEqual({
-      tools: { alsoAllow: ['task_assistants', 'assistants_create', 'bundle-mcp'] },
+      tools: { alsoAllow: ['task_assistants', 'assistants_create', 'typesafe_evaluate', 'bundle-mcp'] },
     });
   });
 });
@@ -523,6 +523,7 @@ describe('OpenClaw managed connectivity config', () => {
       },
       tools: {
         updatePlan: true,
+        alsoAllow: ['typesafe_evaluate'],
         toolSearch: {
           enabled: true,
           mode: 'directory',

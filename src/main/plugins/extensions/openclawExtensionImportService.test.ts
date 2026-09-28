@@ -1598,6 +1598,109 @@ describe('OpenClawExtensionImportService', () => {
     30_000,
   );
 
+  it('configures bundled Jev credentials without exposing values and refreshes rotated secrets', async () => {
+    const stateDir = path.join(fixtureRoot, 'state');
+    const runtimeRoot = path.join(fixtureRoot, 'runtime');
+    const bundledDir = path.join(runtimeRoot, 'dist', 'extensions', 'typesafe');
+    const configPath = path.join(stateDir, 'openclaw.json');
+    fs.mkdirSync(bundledDir, { recursive: true });
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.copyFileSync('openclaw-extensions/typesafe/openclaw.plugin.json', path.join(bundledDir, 'openclaw.plugin.json'));
+    fs.writeFileSync(configPath, JSON.stringify({ plugins: { entries: { typesafe: { enabled: false } } } }));
+    const restartGateway = vi.fn().mockResolvedValue({ phase: 'running' });
+    const manager = {
+      getStateDir: () => stateDir,
+      getBaseDir: () => fixtureRoot,
+      getRuntimeRoot: () => runtimeRoot,
+      getConfigPath: () => configPath,
+      getStatus: () => ({ phase: 'running' }),
+      getGatewayConfigReloadGeneration: vi.fn(),
+      waitForGatewayConfigReload: vi.fn(),
+    } as unknown as OpenClawEngineManager;
+    const service = new OpenClawExtensionImportService({
+      getOpenClawEngineManager: () => manager,
+      restartGatewayAfterMutation: restartGateway,
+      requestGateway: vi.fn().mockResolvedValue({
+        plugins: [{ id: 'typesafe', name: 'TypeSafe AI', installed: true, origin: 'bundled',
+          enabled: false, state: 'disabled', removable: false }],
+        mutationAllowed: true,
+        diagnostics: [],
+      }),
+    });
+    expect((await service.listCatalog())[0]).toMatchObject({
+      canToggle: true, removable: false,
+      configurationFields: [expect.objectContaining({ path: 'apiKey', configured: false, sensitive: true })],
+    });
+    await expect(service.updateConfiguration('typesafe', { apiKey: 'synthetic-first-key' })).resolves.toEqual({ success: true });
+    const saved = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(saved.plugins.entries.typesafe.enabled).toBe(false);
+    expect(saved.plugins.entries.typesafe.config.apiKey).toMatchObject({ source: 'file', provider: 'justdo-extension-secrets' });
+    expect(JSON.stringify(saved)).not.toContain('synthetic-first-key');
+    const catalog = await service.listCatalog();
+    expect(catalog[0].configurationFields[0].configured).toBe(true);
+    expect(JSON.stringify(catalog)).not.toContain('synthetic-first-key');
+    expect(restartGateway).toHaveBeenCalledTimes(1);
+    await service.updateConfiguration('typesafe', { apiKey: 'synthetic-first-key' });
+    expect(restartGateway).toHaveBeenCalledTimes(1);
+    await service.updateConfiguration('typesafe', { apiKey: 'synthetic-rotated-key' });
+    expect(restartGateway).toHaveBeenCalledTimes(2);
+    expect(manager.waitForGatewayConfigReload).not.toHaveBeenCalled();
+    expect(JSON.parse(fs.readFileSync(configPath, 'utf8'))).toEqual(saved);
+    const credentialStore = JSON.parse(fs.readFileSync(path.join(stateDir, 'extension-secrets.json'), 'utf8'));
+    expect(credentialStore[saved.plugins.entries.typesafe.config.apiKey.id.slice(1)]).toBe('synthetic-rotated-key');
+    await expect(service.updateConfiguration('../typesafe', { apiKey: 'synthetic-key' })).resolves.toMatchObject({ success: false });
+  });
+
+  it.each(['config-write', 'restart-throws', 'restart-error'])(
+    'retries the same rotated credential after %s fails',
+    async failure => {
+      const stateDir = path.join(fixtureRoot, 'state');
+      const runtimeRoot = path.join(fixtureRoot, 'runtime');
+      const bundledDir = path.join(runtimeRoot, 'dist', 'extensions', 'typesafe');
+      const configPath = path.join(stateDir, 'openclaw.json');
+      fs.mkdirSync(bundledDir, { recursive: true });
+      fs.mkdirSync(stateDir, { recursive: true });
+      fs.copyFileSync('openclaw-extensions/typesafe/openclaw.plugin.json', path.join(bundledDir, 'openclaw.plugin.json'));
+      fs.writeFileSync(configPath, JSON.stringify({ plugins: { entries: { typesafe: { enabled: true } } } }));
+      let phase = 'running';
+      const restartGateway = vi.fn().mockResolvedValue({ phase: 'running' });
+      const manager = {
+        getStateDir: () => stateDir,
+        getBaseDir: () => fixtureRoot,
+        getRuntimeRoot: () => runtimeRoot,
+        getConfigPath: () => configPath,
+        getStatus: () => ({ phase }),
+        getGatewayConfigReloadGeneration: vi.fn(),
+        waitForGatewayConfigReload: vi.fn(),
+      } as unknown as OpenClawEngineManager;
+      const service = new OpenClawExtensionImportService({
+        getOpenClawEngineManager: () => manager,
+        restartGatewayAfterMutation: restartGateway,
+      });
+      await expect(service.updateConfiguration('typesafe', { apiKey: 'original-key' })).resolves.toEqual({ success: true });
+      restartGateway.mockClear();
+      const rename = fs.renameSync;
+      const renameSpy = vi.spyOn(fs, 'renameSync').mockImplementation((source, target) => {
+        if (failure === 'config-write' && target === configPath) throw new Error('Synthetic write failure');
+        rename(source, target);
+      });
+      if (failure === 'restart-throws') restartGateway.mockRejectedValueOnce(new Error('Synthetic restart failure'));
+      if (failure === 'restart-error') restartGateway.mockResolvedValueOnce({ phase: 'error' });
+
+      await expect(service.updateConfiguration('typesafe', { apiKey: 'rotated-key' })).resolves.toMatchObject({ success: false });
+      renameSpy.mockRestore();
+      if (failure === 'restart-error') phase = 'error';
+      restartGateway.mockClear();
+
+      await expect(service.updateConfiguration('typesafe', { apiKey: 'rotated-key' })).resolves.toEqual({ success: true });
+      expect(restartGateway).toHaveBeenCalledTimes(1);
+      expect(manager.waitForGatewayConfigReload).not.toHaveBeenCalled();
+      phase = 'running';
+      await expect(service.updateConfiguration('typesafe', { apiKey: 'rotated-key' })).resolves.toEqual({ success: true });
+      expect(restartGateway).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it('lists installed native extensions and ignores incomplete staging directories', () => {
     const stateDir = path.join(fixtureRoot, 'state');
     const installedDir = path.join(stateDir, 'extensions', 'sample-extension');

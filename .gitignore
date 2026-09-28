@@ -32,6 +32,7 @@ resources/dependency-config/pip.ini
 
 package-lock.json
 !openclaw-extensions/acpx/package-lock.json
+!openclaw-extensions/typesafe/package-lock.json
 
 nul
 .work.env

@@ -1049,6 +1049,7 @@ export const buildAuthScopedOpenClawConfig = (
     },
     tools: {
       ...removeRetiredManagedToolDenyEntries(existingTools ?? {}),
+      ...mergeManagedOptionalToolPolicy(existingTools),
       ...(isRecord(managedConfig.tools) && isRecord(managedConfig.tools.codeMode)
         ? {
             codeMode: {
@@ -1307,12 +1308,32 @@ export const OPENCLAW_ACP_BACKEND = OpenClawExtensionId.ACPX;
 
 export const OPENCLAW_MCP_TOOL_OWNER = 'bundle-mcp';
 
+export const OPENCLAW_DECISION_EVALUATION_TOOL = 'typesafe_evaluate';
+
+export const mergeManagedOptionalToolPolicy = (
+  existing: unknown,
+): { allow?: string[]; alsoAllow?: string[] } => {
+  const policy = isRecord(existing) ? existing : {};
+  const usesAllow = Array.isArray(policy.allow) && policy.allow.some(
+    value => typeof value === 'string' && value.trim().length > 0,
+  );
+  const values = usesAllow ? policy.allow : policy.alsoAllow;
+  const allowed = [...new Set([
+    ...(Array.isArray(values) ? values.filter((value): value is string => typeof value === 'string') : []),
+    OPENCLAW_DECISION_EVALUATION_TOOL,
+  ])];
+  // Native OpenClaw rejects allow + alsoAllow in the same policy scope.
+  // An empty native allowlist is unrestricted; do not turn it into Jev-only access.
+  return usesAllow ? { allow: allowed, alsoAllow: undefined } : { allow: undefined, alsoAllow: allowed };
+};
+
 export const OPENCLAW_COLLABORATION_TOOLS = ['task_assistants', 'assistants_create'] as const;
 
 export const buildManagedOpenClawSandboxToolConfig = (mode: CoworkExecutionMode) => ({
   tools: {
     alsoAllow: [
       ...OPENCLAW_COLLABORATION_TOOLS,
+      OPENCLAW_DECISION_EVALUATION_TOOL,
       ...(mapExecutionModeToSandboxMode(mode) === 'all' ? [] : [OPENCLAW_MCP_TOOL_OWNER]),
     ],
   },
@@ -1579,6 +1600,8 @@ export const buildManagedOpenClawConnectivityConfig = (
   },
   tools: {
     updatePlan: true,
+    // Optional evaluation is admitted only when its default-off plugin is enabled.
+    ...mergeManagedOptionalToolPolicy(undefined),
     // OpenClaw v2026.9.6 owns native tool-directory discovery and hydration.
     toolSearch: {
       enabled: true,
@@ -2024,6 +2047,7 @@ export const buildDefaultOpenClawPluginEntries = (
       [
         [OpenClawExtensionId.WORKBOARD, true],
         [OpenClawExtensionId.AGENT_TEAM, false],
+        [OpenClawExtensionId.TYPESAFE, false],
         // The prepared agent runtime rejects a selected memory plugin omitted from
         // an explicit allowlist, even if Gateway startup already loaded its service.
         [OpenClawExtensionId.MEMORY_CORE, true],
@@ -2039,6 +2063,7 @@ export const isUserToggleableBundledPlugin = (pluginId: string): boolean =>
   pluginId === OpenClawExtensionId.MEMORY_CORE ||
   pluginId === OpenClawExtensionId.WORKBOARD ||
   pluginId === OpenClawExtensionId.AGENT_TEAM ||
+  pluginId === OpenClawExtensionId.TYPESAFE ||
   pluginId === OpenClawExtensionId.STT_LOCAL_CLI ||
   pluginId === LOCAL_TTS_PROVIDER_ID;
 

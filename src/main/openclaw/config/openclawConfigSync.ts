@@ -43,6 +43,7 @@ import {
   mergeManagedOpenClawCodeModeConfig,
   mergeManagedOpenClawSubagentConfig,
   mergeManagedOpenClawSwarmConfig,
+  mergeManagedOptionalToolPolicy,
   mergeOpenClawPluginConfig,
   mergeOpenClawSkillConfig,
   OPENCLAW_FALLBACK_EXEC_MODE,
@@ -457,6 +458,13 @@ export class OpenClawConfigSync {
       update: connectivityConfig.update,
       tools: {
         ...connectivityTools,
+        ...mergeManagedOptionalToolPolicy(existingConfig?.tools),
+        deny: [...new Set([
+          ...(Array.isArray(connectivityTools.deny) ? connectivityTools.deny : []),
+          ...(isRecord(existingConfig?.tools) && Array.isArray(existingConfig.tools.deny)
+            ? existingConfig.tools.deny.filter(value => typeof value === 'string' && value !== 'skill_workshop')
+            : []),
+        ])],
         codeMode: mergeManagedOpenClawCodeModeConfig(
           isRecord(existingConfig?.tools) ? existingConfig.tools.codeMode : undefined,
           agentRuntimeSettings,
@@ -1035,6 +1043,7 @@ export class OpenClawConfigSync {
                   ...hookConfig,
                   tools: {
                     ...existingTools,
+                    ...mergeManagedOptionalToolPolicy(existingTools),
                     sessions: connectivityTools.sessions,
                     codeMode: mergeManagedOpenClawCodeModeConfig(
                       existingTools.codeMode,

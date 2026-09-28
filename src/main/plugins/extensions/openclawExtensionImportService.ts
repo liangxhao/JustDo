@@ -27,6 +27,7 @@ import type { EffectiveOutboundHeaderPolicySnapshot } from '../../core/network/o
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import { prepareExtensionForInstall } from './extensionConversion';
 import type { ExtensionNetworkPolicyInspection } from './extensionNetworkPolicyManifest';
+import { isExtensionSecretReferenceField, saveExtensionSecrets } from './extensionSecretFile';
 
 const OPENCLAW_PLUGIN_MANIFEST = 'openclaw.plugin.json';
 const AGENT_PLUGIN_MANIFEST_SCHEMA = 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json';
@@ -373,18 +374,18 @@ const readExtensionDescriptionFromDirectory = (pluginDirectory: string): string 
   return resolveExtensionDescription(manifest, packageJson);
 };
 
-const readBundledExtensionDescription = (
+const findBundledExtensionDirectory = (
   manager: OpenClawEngineManager,
   extensionId: string,
-): string => {
+): string | undefined => {
   const runtimeRoot = manager.getRuntimeRoot?.();
-  if (!runtimeRoot) return '';
+  if (!runtimeRoot) return undefined;
   const extensionsRoot = path.resolve(runtimeRoot, 'dist', 'extensions');
   const pluginDirectory = path.resolve(extensionsRoot, extensionId);
   if (path.dirname(pluginDirectory) !== extensionsRoot || !fs.existsSync(pluginDirectory)) {
-    return '';
+    return undefined;
   }
-  return readExtensionDescriptionFromDirectory(pluginDirectory);
+  return pluginDirectory;
 };
 
 const findInstalledExtensionPath = (
@@ -425,7 +426,7 @@ const isSafeConfigPath = (dottedPath: string): boolean => {
 const setNestedValue = (
   target: Record<string, unknown>,
   dottedPath: string,
-  value: string,
+  value: unknown,
 ): void => {
   if (!isSafeConfigPath(dottedPath)) throw new Error('Unsupported extension configuration path.');
   const segments = dottedPath.split('.');
@@ -493,6 +494,13 @@ const getExtensionConfigurationState = (
   manifest: Record<string, unknown>,
 ): ExtensionConfigurationState => {
   const requiredEnvVars = collectRequiredEnvVars(manifest);
+  const uiHints = isRecord(manifest.uiHints) ? manifest.uiHints : {};
+  const sensitiveHints = Object.entries(uiHints).filter(
+    (entry): entry is [string, Record<string, unknown>] =>
+      isSafeConfigPath(entry[0]) && isRecord(entry[1]) && entry[1].sensitive === true,
+  );
+  if (!requiredEnvVars.length && !sensitiveHints.length)
+    return { fields: [], missingRequirements: [] };
   const config = readJsonRecord(manager.getConfigPath());
   const pluginsConfig = isRecord(config.plugins) ? config.plugins : {};
   const pluginEntries = isRecord(pluginsConfig.entries) ? pluginsConfig.entries : {};
@@ -517,11 +525,6 @@ const getExtensionConfigurationState = (
     }
     return hasConfiguredValue(value);
   };
-  const uiHints = isRecord(manifest.uiHints) ? manifest.uiHints : {};
-  const sensitiveHints = Object.entries(uiHints).filter(
-    (entry): entry is [string, Record<string, unknown>] =>
-      isSafeConfigPath(entry[0]) && isRecord(entry[1]) && entry[1].sensitive === true,
-  );
   const resolveRequirement = (configPath: string): string | undefined => {
     const leafName = configPath.split('.').at(-1) || '';
     const normalizedLeaf = leafName.replace(/([a-z])([A-Z])/g, '$1_$2').toUpperCase();
@@ -771,6 +774,9 @@ export class OpenClawExtensionImportService {
   private readonly runCommand: NonNullable<OpenClawExtensionImportServiceDeps['runCommand']>;
   private readonly directoryOperations: ManagedDirectoryOperationCoordinator;
   private mutationTail: Promise<void> = Promise.resolve();
+  // A failed config write or restart must not make a credential retry a no-op.
+  // This state is process-local: a fresh Gateway startup reads the saved secret file.
+  private readonly pendingCredentialRefresh = new Set<string>();
 
   constructor(private readonly deps: OpenClawExtensionImportServiceDeps) {
     this.runCommand = deps.runCommand ?? runCommand;
@@ -1084,10 +1090,21 @@ export class OpenClawExtensionImportService {
       .map(plugin => {
         const local = localById.get(plugin.id);
         const managed = managedIds.has(plugin.id);
+        const bundledDirectory =
+          plugin.origin === 'bundled'
+            ? findBundledExtensionDirectory(manager, plugin.id)
+            : undefined;
+        const bundledConfiguration = bundledDirectory
+          ? getExtensionConfigurationState(
+              manager,
+              plugin.id,
+              readJsonRecord(path.join(bundledDirectory, OPENCLAW_PLUGIN_MANIFEST)),
+            )
+          : undefined;
         const description =
           normalizeMetadataText(plugin.description) ??
           normalizeMetadataText(local?.description) ??
-          (plugin.origin === 'bundled' ? readBundledExtensionDescription(manager, plugin.id) : '');
+          (bundledDirectory ? readExtensionDescriptionFromDirectory(bundledDirectory) : '');
         return {
           id: plugin.id,
           name: plugin.name || plugin.id,
@@ -1103,8 +1120,9 @@ export class OpenClawExtensionImportService {
           removable: result.mutationAllowed && plugin.removable === true && !managed,
           canToggle: result.mutationAllowed && !managed,
           managed,
-          missingRequirements: local?.missingRequirements ?? [],
-          configurationFields: local?.configurationFields ?? [],
+          missingRequirements:
+            local?.missingRequirements ?? bundledConfiguration?.missingRequirements ?? [],
+          configurationFields: local?.configurationFields ?? bundledConfiguration?.fields ?? [],
         } satisfies InstalledOpenClawExtension;
       })
       .sort((a, b) => a.name.localeCompare(b.name));
@@ -1125,9 +1143,14 @@ export class OpenClawExtensionImportService {
       return { success: false, error: 'Managed extensions cannot be reconfigured here.' };
     }
     const installed = this.listInstalled().find(extension => extension.id === extensionId);
-    if (!installed) return { success: false, error: 'Extension is not installed.' };
-
-    const allowedPaths = new Set(installed.configurationFields.map(field => field.path));
+    const manager = this.deps.getOpenClawEngineManager();
+    const pluginDirectory =
+      installed?.installPath ?? findBundledExtensionDirectory(manager, extensionId);
+    if (!pluginDirectory) return { success: false, error: 'Extension is not installed.' };
+    const manifestPath = findSupportedPluginManifestPath(pluginDirectory);
+    const manifest = manifestPath ? readJsonRecord(manifestPath) : {};
+    const fields = getExtensionConfigurationState(manager, extensionId, manifest).fields;
+    const allowedPaths = new Set(fields.map(field => field.path));
     const updates = Object.entries(values).filter(
       ([configPath, value]) =>
         value.trim().length > 0 && isSafeConfigPath(configPath) && allowedPaths.has(configPath),
@@ -1136,7 +1159,6 @@ export class OpenClawExtensionImportService {
       return { success: false, error: 'Enter at least one supported configuration value.' };
     }
 
-    const manager = this.deps.getOpenClawEngineManager();
     const configPath = manager.getConfigPath();
     const temporaryPath = `${configPath}.tmp-extension-${Date.now()}`;
     let initialPhase = manager.getStatus().phase;
@@ -1156,21 +1178,39 @@ export class OpenClawExtensionImportService {
       const entries = isRecord(plugins.entries) ? plugins.entries : {};
       const entry = isRecord(entries[extensionId]) ? entries[extensionId] : {};
       const pluginConfig = isRecord(entry.config) ? entry.config : {};
-      updates.forEach(([fieldPath, value]) => setNestedValue(pluginConfig, fieldPath, value));
+      const secretValues = Object.fromEntries(
+        updates.filter(([fieldPath]) => isExtensionSecretReferenceField(manifest, fieldPath)),
+      );
+      const secretUpdate = saveExtensionSecrets(
+        config,
+        manager.getStateDir(),
+        extensionId,
+        secretValues,
+      );
+      if (secretUpdate.changed && wasRuntimeActive) {
+        this.pendingCredentialRefresh.add(extensionId);
+      }
+      const needsCredentialRefresh = this.pendingCredentialRefresh.has(extensionId);
+      updates.forEach(([fieldPath, value]) =>
+        setNestedValue(pluginConfig, fieldPath, secretUpdate.references[fieldPath] ?? value),
+      );
       entry.config = pluginConfig;
       entries[extensionId] = entry;
       plugins.entries = entries;
       config.plugins = plugins;
 
-      if (JSON.stringify(config) === previousConfig) return { success: true };
+      if (JSON.stringify(config) === previousConfig && !secretUpdate.changed && !needsCredentialRefresh)
+        return { success: true };
       const reloadGeneration =
-        initialPhase === 'running' ? manager.getGatewayConfigReloadGeneration() : null;
+        initialPhase === 'running' && !secretUpdate.changed && !needsCredentialRefresh
+          ? manager.getGatewayConfigReloadGeneration()
+          : null;
 
       fs.mkdirSync(path.dirname(configPath), { recursive: true });
       fs.writeFileSync(temporaryPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
       fs.renameSync(temporaryPath, configPath);
 
-      if (wasRuntimeActive) {
+      if (wasRuntimeActive || needsCredentialRefresh) {
         if (
           reloadGeneration !== null &&
           (await manager.waitForGatewayConfigReload(reloadGeneration))
@@ -1186,6 +1226,7 @@ export class OpenClawExtensionImportService {
               'Extension configuration was saved, but the OpenClaw Gateway failed to restart.',
           };
         }
+        this.pendingCredentialRefresh.clear();
       }
       return { success: true };
     } catch (error) {

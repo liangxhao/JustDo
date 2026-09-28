@@ -16,6 +16,8 @@ export type LanguageType = 'zh' | 'en';
 
 const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
+    extensionCredentialStoreUnavailable: '无法读取本地扩展凭据文件，请检查文件内容和访问权限。',
+    extensionCredentialStoreWriteFailed: '无法安全保存扩展凭据，请检查本地文件访问权限。',
     memoryWorkspaceUnavailable: '无法确定记忆工作区，请检查服务连接。',
     memoryStatusUnavailable: '无法读取记忆索引状态。',
     memoryRebuildUnverified: '索引未完成重建，或无法验证重建后的状态。',
@@ -89,6 +91,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     browserContextSaveImage: '图片另存为…',
   },
   en: {
+    extensionCredentialStoreUnavailable: 'Unable to read the local extension credential file. Check its contents and access permissions.',
+    extensionCredentialStoreWriteFailed: 'Unable to securely save extension credentials. Check local file access permissions.',
     memoryWorkspaceUnavailable:
       'The memory workspace could not be resolved. Check the service connection.',
     memoryStatusUnavailable: 'Memory index status is unavailable.',

@@ -151,8 +151,9 @@ without a total tail/byte/time cutoff; sample limits never stop scanning or cate
 Report scan gaps, support progress/cancellation, and never claim deleted history is complete.
 Log hints retain association/coverage and cannot override lifecycle conclusions.
 
-Built-in skills are declared in `resources/builtin-skills.json`: **8 skills**,
-all **8 enabled** by default.
+Built-in skills are declared in `resources/builtin-skills.json`: **9 skills**,
+all **9 enabled** by default. `jev-batch-evaluate` additionally requires the
+user-enabled TypeSafe extension and Python; it does not enable the extension.
 
 OpenClaw runtime patches live in `scripts/patches/v2026.9.6/`. They are
 new-version capability patches, not migrations of the historical
@@ -360,3 +361,13 @@ file transcription is independent of the microphone toggle. Preserve explicit
 plugin disable state. The host tool is unavailable in sandboxed sessions and
 respects effective filesystem policy. External audio attachments are staged in
 the project before sending. See `docs/architecture/07-plugin-system.md`.
+
+
+Jev evaluations use the optional, default-off upstream `typesafe` extension,
+vendored under `openclaw-extensions/typesafe/` with pinned source provenance and
+production dependencies. Keep its native implementation unchanged. The extension
+UI saves declared structured secrets through Main as file SecretRefs, with values
+in restricted `extension-secrets.json`. Preserve explicit enable/disable state
+and credential providers during config sync. This integration exposes
+`typesafe_evaluate`, not a conversational model or an automatic `decisionModel`
+selection. See `docs/features/jev-integration.md`.

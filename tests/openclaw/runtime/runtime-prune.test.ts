@@ -72,6 +72,7 @@ describe('OpenClaw runtime extension pruning', () => {
 
   test('preserves legal metadata for extensions redistributed with native executables', () => {
     expect(shouldPreserveExtensionLegalFiles('acpx')).toBe(true);
+    expect(shouldPreserveExtensionLegalFiles('typesafe')).toBe(true);
     expect(shouldPreserveExtensionLegalFiles('mxc')).toBe(true);
     expect(shouldPreserveExtensionLegalFiles('memory-core')).toBe(false);
   });

@@ -1,0 +1,24 @@
+{
+  "questions": {
+    "category": {
+      "type": "choice",
+      "instructions": "Classify the primary purpose of this customer feedback.",
+      "criteria": {
+        "故障": "An existing function fails or produces an incorrect result.",
+        "功能建议": "A request to add or improve a capability.",
+        "使用咨询": "A question about using an existing capability.",
+        "其他": "The evidence does not support any of the other categories."
+      }
+    },
+    "urgency": {
+      "type": "score",
+      "instructions": "Score the impact actually described in the feedback; do not invent urgency or deadlines.",
+      "criteria": [
+        "No reported disruption; a suggestion or ordinary usage question.",
+        "A minor disruption with a stated workaround.",
+        "An important workflow is blocked for the reporting user.",
+        "A widespread outage or explicitly reported loss of data or money."
+      ]
+    }
+  }
+}
