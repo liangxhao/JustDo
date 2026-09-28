@@ -125,3 +125,30 @@ test('retains an existing main session model ahead of application defaults', () 
   expect(result.selectedModel).toBe(models[1]);
   expect(result.usesFallback).toBe(false);
 });
+
+test('shows the effective application default for an assistant whose built-in model was retired', () => {
+  const result = resolveAgentModelSelection({
+    agentId: 'review',
+    agentModel: 'builtin_models/retired-model',
+    availableModels: models,
+    fallbackModel: models[1],
+  });
+
+  expect(result.selectedModel).toBe(models[1]);
+  expect(result.usesFallback).toBe(true);
+  expect(result.hasInvalidExplicitModel).toBe(true);
+});
+
+test('retains the assistant session selection when its saved profile model was retired', () => {
+  const result = resolveAgentModelSelection({
+    agentId: 'review',
+    agentModel: 'builtin_models/retired-model',
+    sessionModel: 'anthropic/claude-sonnet-4',
+    availableModels: models,
+    fallbackModel: models[0],
+  });
+
+  expect(result.selectedModel).toBe(models[1]);
+  expect(result.usesFallback).toBe(false);
+  expect(result.hasInvalidExplicitModel).toBe(false);
+});

@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from 'vitest';
 
 import type { CoworkStore } from '../../data/coworkStore';
+import { enqueueSessionModelOperation } from './sessionModelOperations';
 import { SessionRpc } from './sessionRpc';
 import type { GatewayClientLike } from './types';
 
@@ -44,6 +45,55 @@ const createHarness = () => {
 };
 
 describe('SessionRpc model coordination', () => {
+  test.each(['read', 'patch'] as const)(
+    'orders specialist %s operations behind reconciliation of the same native key',
+    async operation => {
+      let release!: () => void;
+      let started!: () => void;
+      const blocked = new Promise<void>(resolve => {
+        release = resolve;
+      });
+      const entered = new Promise<void>(resolve => {
+        started = resolve;
+      });
+      const key = 'agent:review:justdo:session-1';
+      const reconciliation = enqueueSessionModelOperation(key, async () => {
+        started();
+        await blocked;
+      });
+      await entered;
+      const request = vi.fn(async () => ({
+        session: { modelProvider: 'openai', model: 'gpt-5' },
+        resolved: { modelProvider: 'openai', model: 'gpt-5' },
+      }));
+      const rpc = new SessionRpc({
+        getGatewayClient: () => ({ request }) as unknown as GatewayClientLike,
+        store: {
+          getSession: () => ({ modelRef: 'openai/gpt-4o' }),
+          updateSession: vi.fn(),
+        } as unknown as CoworkStore,
+        // Match the runtime adapter: an omitted agent resolves to main.
+        resolveSessionKey: (id, agent = 'main') => `agent:${agent}:justdo:${id}`,
+      });
+      const pending =
+        operation === 'read'
+          ? rpc.getModel('session-1', 'review')
+          : rpc.patchModel('session-1', 'openai/gpt-5', 'review');
+      await new Promise(resolve => setTimeout(resolve, 0));
+      try {
+        expect(request).not.toHaveBeenCalled();
+      } finally {
+        release();
+        await reconciliation;
+      }
+      await expect(pending).resolves.toMatchObject({ ok: true, modelRef: 'openai/gpt-5' });
+      expect(request).toHaveBeenCalledWith(
+        operation === 'read' ? 'sessions.describe' : 'sessions.patch',
+        operation === 'read' ? { key } : { key, model: 'openai/gpt-5' },
+      );
+    },
+  );
+
   test.each([
     Object.assign(new Error('model selection locked'), { gatewayCode: 'INVALID_REQUEST' }),
     Object.assign(new Error('request timeout'), { code: 'CLIENT_TIMEOUT', requestSent: false }),
@@ -232,7 +282,7 @@ describe('SessionRpc model coordination', () => {
       modelRef: 'openai/gpt-5',
       source: 'gateway',
     });
-    expect(session.modelRef).toBe('openai/gpt-4o');
+    expect(session.modelRef).toBe('openai/gpt-5');
     expect(request).not.toHaveBeenCalledWith('sessions.get', expect.anything());
   });
 

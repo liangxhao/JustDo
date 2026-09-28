@@ -69,9 +69,8 @@ export const applyModelSelectionUpdate = async (
 
   let sessionModelRef: string | undefined;
   if (options.sessionId && modelRef) {
-    // OpenClaw clears a session override when it matches the current agent
-    // default. Patch first so a selection that differs from the old default
-    // remains an explicit override when the default changes afterward.
+    // v2026.9.6 pins concrete selections, including the current default.
+    // Confirm the session first; a failed switch must not change future chats.
     let sessionResult: Awaited<ReturnType<ModelSelectionUpdateServices['patchSessionModel']>>;
     try {
       sessionResult = await services.patchSessionModel({

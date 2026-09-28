@@ -15,6 +15,7 @@ import coworkReducer, {
   deleteSessions,
   enqueuePendingInteraction,
   hydrateDraftImageAttachment,
+  receiveSessionModelSelection,
   removeDraftBrowserAnnotation,
   rollbackManualModelSelection,
   setConfig,
@@ -135,12 +136,12 @@ describe('cowork session model ownership', () => {
   const modelB = { id: 'model-b', name: 'Model B', providerKey: 'provider-b' };
   const modelC = { id: 'model-c', name: 'Model C', providerKey: 'provider-c' };
 
-  test('preserves the selected model when the same session is reloaded', () => {
+  test('accepts a freshly read selection when the same session is reloaded', () => {
     const selected = coworkReducer(undefined, setCurrentSession(createSession('session-1', 'b')));
 
     const reloaded = coworkReducer(selected, setCurrentSession(createSession('session-1', 'a')));
 
-    expect(reloaded.currentSession?.modelRef).toBe('b');
+    expect(reloaded.currentSession?.modelRef).toBe('a');
   });
 
   test('initializes the model when opening another session', () => {
@@ -157,7 +158,7 @@ describe('cowork session model ownership', () => {
       confirmCurrentSessionModelSelection({ sessionId: 'session-1', modelRef: 'b' }),
     );
 
-    const opened = coworkReducer(confirmed, setCurrentSession(createSession('session-1', 'a')));
+    const opened = coworkReducer(confirmed, setCurrentSession(createSession('session-1')));
 
     expect(opened.currentSession?.modelRef).toBe('b');
   });
@@ -199,9 +200,9 @@ describe('cowork session model ownership', () => {
     expect(firstCompleted.pendingModelSelectionTaskIds['session-1\0main']).toBe(2);
   });
 
-  test('rolls the latest failed selection back to the preceding confirmation', () => {
+  test('releases a failed choice while retaining the preceding confirmed session model', () => {
     const firstPending = coworkReducer(
-      undefined,
+      coworkReducer(undefined, setCurrentSession(createSession('session-1', 'provider-a/model-a'))),
       beginManualModelSelection({
         contextKey: 'session-1\0main',
         taskId: 1,
@@ -217,8 +218,15 @@ describe('cowork session model ownership', () => {
         model: modelB,
       }),
     );
-    const secondPending = coworkReducer(
+    const confirmedSession = coworkReducer(
       firstConfirmed,
+      confirmCurrentSessionModelSelection({
+        sessionId: 'session-1',
+        modelRef: 'provider-b/model-b',
+      }),
+    );
+    const secondPending = coworkReducer(
+      confirmedSession,
       beginManualModelSelection({
         contextKey: 'session-1\0main',
         taskId: 2,
@@ -232,7 +240,9 @@ describe('cowork session model ownership', () => {
       rollbackManualModelSelection({ contextKey: 'session-1\0main', taskId: 2 }),
     );
 
-    expect(rolledBack.manualModelSelections['session-1\0main']).toBe(modelB);
+    expect(rolledBack.manualModelSelections['session-1\0main']).toBeUndefined();
+    expect(rolledBack.confirmedModelSelections['session-1\0main']).toBeUndefined();
+    expect(rolledBack.currentSession?.modelRef).toBe('provider-b/model-b');
     expect(rolledBack.pendingModelSelectionTaskIds['session-1\0main']).toBeUndefined();
   });
 
@@ -257,7 +267,124 @@ describe('cowork session model ownership', () => {
     );
 
     expect(sessionDefaultConfirmed.manualModelSelections['__home__\0main']).toBe(modelC);
-    expect(rolledBack.manualModelSelections['__home__\0main']).toBe(modelB);
+    expect(rolledBack.manualModelSelections['__home__\0main']).toBeUndefined();
+    expect(rolledBack.confirmedModelSelections['__home__\0main']).toBeUndefined();
+    const nextChoice = coworkReducer(
+      rolledBack,
+      beginManualModelSelection({
+        contextKey: '__home__\0main',
+        taskId: 3,
+        model: modelB,
+        previousModel: modelC,
+      }),
+    );
+    expect(nextChoice.confirmedModelSelections['__home__\0main']).toBe(modelC);
+  });
+
+  test('a failed default update retains the successful session patch and accepts later refreshes', () => {
+    let state = coworkReducer(
+      undefined,
+      setCurrentSession(createSession('session-1', 'provider-a/model-a')),
+    );
+    state = coworkReducer(
+      state,
+      beginManualModelSelection({
+        contextKey: 'session-1\0main',
+        taskId: 1,
+        model: modelB,
+        previousModel: modelA,
+      }),
+    );
+    state = coworkReducer(
+      state,
+      confirmManualModelSelection({ contextKey: 'session-1\0main', taskId: 1, model: modelB }),
+    );
+    state = coworkReducer(
+      state,
+      confirmCurrentSessionModelSelection({
+        sessionId: 'session-1',
+        modelRef: 'provider-b/model-b',
+      }),
+    );
+    state = coworkReducer(
+      state,
+      rollbackManualModelSelection({ contextKey: 'session-1\0main', taskId: 1 }),
+    );
+    expect(state.currentSession?.modelRef).toBe('provider-b/model-b');
+    expect(state.manualModelSelections['session-1\0main']).toBeUndefined();
+    state = coworkReducer(
+      state,
+      receiveSessionModelSelection({
+        sessionId: 'session-1',
+        agentId: 'main',
+        modelRef: 'provider-c/model-c',
+      }),
+    );
+    expect(state.currentSession?.modelRef).toBe('provider-c/model-c');
+  });
+
+  test('releases optimistic state after confirmation and accepts the next authoritative selection', () => {
+    let state = coworkReducer(
+      undefined,
+      setCurrentSession(createSession('session-1', 'provider-a/model-a')),
+    );
+    state = coworkReducer(
+      state,
+      beginManualModelSelection({
+        contextKey: 'session-1\0main',
+        taskId: 1,
+        model: modelB,
+        previousModel: modelA,
+      }),
+    );
+    state = coworkReducer(
+      state,
+      confirmCurrentSessionModelSelection({
+        sessionId: 'session-1',
+        modelRef: 'provider-b/model-b',
+      }),
+    );
+    state = coworkReducer(
+      state,
+      completeManualModelSelection({ contextKey: 'session-1\0main', taskId: 1 }),
+    );
+    expect(state.manualModelSelections['session-1\0main']).toBeUndefined();
+    expect(state.currentSession?.modelRef).toBe('provider-b/model-b');
+    state = coworkReducer(
+      state,
+      receiveSessionModelSelection({
+        sessionId: 'session-1',
+        agentId: 'main',
+        modelRef: 'provider-c/model-c',
+      }),
+    );
+    expect(state.currentSession?.modelRef).toBe('provider-c/model-c');
+  });
+
+  test('an authoritative refresh cannot replace a pending user selection', () => {
+    let state = coworkReducer(
+      undefined,
+      setCurrentSession(createSession('session-1', 'provider-a/model-a')),
+    );
+    state = coworkReducer(
+      state,
+      beginManualModelSelection({
+        contextKey: 'session-1\0main',
+        taskId: 1,
+        model: modelB,
+        previousModel: modelA,
+      }),
+    );
+    state = coworkReducer(
+      state,
+      receiveSessionModelSelection({
+        sessionId: 'session-1',
+        agentId: 'main',
+        modelRef: 'provider-c/model-c',
+      }),
+    );
+    expect(state.manualModelSelections['session-1\0main']).toBe(modelB);
+    expect(state.currentSession?.modelRef).toBe('provider-a/model-a');
   });
 });
 

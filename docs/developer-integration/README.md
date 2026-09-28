@@ -5,11 +5,12 @@
 
 ## 当前接入项
 
-| 待开发模块                 | 需要接入的接口                        | 接入要求                                                         | 详细说明                                                 |
-| -------------------------- | ------------------------------------- | ---------------------------------------------------------------- | -------------------------------------------------------- |
-| 登录模块与 Cookie 定时续期 | `updateOutboundHeaderUserInfoCache()` | 完成 `user_info.json` 写入或清理后，更新 Main 进程的请求头值缓存 | [请求头值刷新](outbound-header-user-info-refresh-api.md) |
-| 外部 Agent 适配            | ACP 协议与 ACPX 运行层                | 登记 Agent、接入认证、准备离线资源并完成发布验证                 | [外部 Agent 接入](external-agent-integration-guide.md)   |
-| Extension 请求头声明       | `outbound-header-policy.json`         | 声明 URL 与请求头名称，实际凭据由本机配置提供                    | [请求头配置与示例](outbound-headers/README.md)           |
+| 待开发模块                 | 需要接入的接口                                 | 接入要求                                                           | 详细说明                                                 |
+| -------------------------- | ---------------------------------------------- | ------------------------------------------------------------------ | -------------------------------------------------------- |
+| 登录 / 退出登录            | `refreshAfterLogin()` / `refreshAfterLogout()` | Main 完成登录凭据写入 / 清理后 await；内部处理内置模型与请求头缓存 | [登录与模型生命周期](login-model-lifecycle-api.md)       |
+| 登录模块与 Cookie 定时续期 | `updateOutboundHeaderUserInfoCache()`          | 完成 `user_info.json` 写入或清理后，更新 Main 进程的请求头值缓存   | [请求头值刷新](outbound-header-user-info-refresh-api.md) |
+| 外部 Agent 适配            | ACP 协议与 ACPX 运行层                         | 登记 Agent、接入认证、准备离线资源并完成发布验证                   | [外部 Agent 接入](external-agent-integration-guide.md)   |
+| Extension 请求头声明       | `outbound-header-policy.json`                  | 声明 URL 与请求头名称，实际凭据由本机配置提供                      | [请求头配置与示例](outbound-headers/README.md)           |
 
 本索引记录已确认的接入要求，不代表所有模块接口的完整清单。新增接入项时，在本目录增加
 对应说明，并更新上表。接口实现或调用时机变化时，同步维护说明。

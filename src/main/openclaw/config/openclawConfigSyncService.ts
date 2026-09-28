@@ -1,9 +1,11 @@
 import type { BrowserMode } from '../../../shared/browser/browser';
+import { readModelRef } from '../../../shared/openclaw/modelRef';
 import { matchesModelSelectionIdentity } from '../../../shared/openclaw/modelSelectionIdentity';
 import { BuiltinModelSyncReason } from '../../../shared/providers/builtinModels';
 import type { WindowsSandboxStatus } from '../../../shared/security/windowsSandbox';
 import { ManagedDirectoryRuntimeStopAbortedError } from '../../core/filesystem/managedDirectoryOperations';
 import type { CoworkStore } from '../../data/coworkStore';
+import { enqueueSessionModelOperation } from '../../engine/gateway/sessionModelOperations';
 import {
   parseModelReferenceV2026_9_2,
   parseSessionsListResultV2026_9_2,
@@ -810,35 +812,36 @@ export class OpenClawConfigSyncService {
       for (const session of page.sessions) {
         const match = /^agent:([^:]+):justdo:(.+)$/.exec(session.key);
         if (!match) continue;
-        const persistedTarget = parseModelReferenceV2026_9_2(
-          this.deps.getCoworkStore().getSessionModelRef(match[2]),
-        );
-        const availableSelectionRef = persistedTarget
-          ? availableModelRefs.has(persistedTarget.reference)
-            ? persistedTarget.reference
-            : [...availableModelRefs].find(reference =>
-                matchesModelSelectionIdentity(reference, persistedTarget.reference),
-              )
-          : undefined;
-        // Preserve selected aliases only while their catalog route remains
-        // available. Removed models must return to the agent default.
-        if (
-          persistedTarget &&
-          availableSelectionRef &&
-          session.modelProvider === persistedTarget.provider &&
-          session.model === persistedTarget.model
-        ) {
-          continue;
-        }
-        const target =
-          availableSelectionRef
-            ? parseModelReferenceV2026_9_2(availableSelectionRef)
-            : targets.get(match[1]);
-        if (!target) continue;
-        if (session.modelProvider === target.provider && session.model === target.model) continue;
-        await this.deps.requestGateway('sessions.patch', {
-          key: session.key,
-          model: target.reference,
+        await enqueueSessionModelOperation(session.key, async () => {
+          // The list may precede a user switch. Re-read inside the same ordering
+          // boundary as SessionRpc before repairing a removed provider/model.
+          const described = await this.deps.requestGateway<{ session?: unknown }>('sessions.describe', {
+            key: session.key,
+          });
+          if (!described.session) return;
+          const selectedRef = readModelRef(described.session);
+          const store = this.deps.getCoworkStore();
+          const persistedRef = store.getSessionModelRef(match[2]);
+          const availableRoute = (reference: string | null | undefined) => reference
+            ? availableModelRefs.has(reference)
+              ? reference
+              : [...availableModelRefs].find(route => matchesModelSelectionIdentity(route, reference))
+            : undefined;
+          // A valid native selection is user-owned, even when the local snapshot
+          // still names an earlier picker selection (for example after /model).
+          if (selectedRef && availableRoute(selectedRef)) {
+            if (persistedRef !== selectedRef) store.updateSession(match[2], { modelRef: selectedRef });
+            return;
+          }
+          const target = availableRoute(persistedRef) ?? targets.get(match[1])?.reference;
+          if (!target) return;
+          const patched = await this.deps.requestGateway<{ resolved?: unknown }>('sessions.patch', {
+            key: session.key,
+            model: target,
+          });
+          const modelRef = readModelRef(patched.resolved);
+          if (!modelRef) throw new Error('sessions.patch returned no resolved model');
+          store.updateSession(match[2], { modelRef });
         });
       }
       if (!page.hasMore || page.nextOffset === null || page.nextOffset === undefined) break;

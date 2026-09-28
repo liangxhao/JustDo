@@ -7,6 +7,7 @@ import {
   ManagedDirectoryOperationCoordinator,
   managedDirectorySuccess,
 } from '../../core/filesystem/managedDirectoryOperations';
+import { SessionRpc } from '../../engine/gateway/sessionRpc';
 import {
   OpenClawConfigSyncService,
   resolveDeferredGatewayRestartAction,
@@ -120,160 +121,122 @@ describe('resolveDeferredGatewayRestartAction', () => {
 });
 
 describe('managed session model synchronization', () => {
-  it('prefers an exact configured route over a built-in alias with the same public identity', async () => {
-    const requestGateway = vi.fn(async () => ({
-      sessions: [{ key: 'agent:main:justdo:session-1', modelProvider: 'openai', model: 'gpt-5' }],
-      hasMore: false,
-    }));
-    const service = new OpenClawConfigSyncService({
-      getCoworkStore: () => ({ getSessionModelRef: () => 'hdp/Glm-5.1' }),
-      requestGateway,
-    } as never);
-
-    await (service as unknown as {
-      syncManagedSessionModelsViaGateway: (snapshot: unknown) => Promise<void>;
-    }).syncManagedSessionModelsViaGateway({
-      config: {
-        models: { providers: {
-          builtin_models: { models: [{ id: 'hdp/Glm-5.1' }] },
-          hdp: { models: [{ id: 'Glm-5.1' }] },
-        } },
-        agents: { defaults: { model: { primary: 'openai/gpt-5' } } },
-      },
+  const createModelHarness = (persisted: string, selected: string, routes: string[]) => {
+    let persistedRef = persisted;
+    let selectedRef = selected;
+    const identity = (ref: string) => {
+      const slash = ref.indexOf('/');
+      return { modelProvider: ref.slice(0, slash), model: ref.slice(slash + 1) };
+    };
+    const updateSession = vi.fn((_id: string, updates: { modelRef: string }) => {
+      persistedRef = updates.modelRef;
     });
-
-    expect(requestGateway).toHaveBeenCalledWith('sessions.patch', {
-      key: 'agent:main:justdo:session-1',
-      model: 'hdp/Glm-5.1',
-    });
-  });
-
-  it.each([
-    ['old-provider', 'old-model'],
-    ['hdp', 'Glm-5.1'],
-  ])('replaces a removed %s/%s selection even when Gateway still reports it', async (provider, model) => {
-    const requestGateway = vi.fn(async () => ({
-      sessions: [{ key: 'agent:main:justdo:session-1', modelProvider: provider, model }],
-      hasMore: false,
-    }));
-    const service = new OpenClawConfigSyncService({
-      getCoworkStore: () => ({ getSessionModelRef: () => `${provider}/${model}` }),
-      requestGateway,
-    } as never);
-
-    await (service as unknown as {
-      syncManagedSessionModelsViaGateway: (snapshot: unknown) => Promise<void>;
-    }).syncManagedSessionModelsViaGateway({
-      config: {
-        models: { providers: { openai: { models: [{ id: 'gpt-5' }] } } },
-        agents: { defaults: { model: { primary: 'openai/gpt-5' } } },
-      },
-    });
-
-    expect(requestGateway).toHaveBeenCalledWith('sessions.patch', {
-      key: 'agent:main:justdo:session-1',
-      model: 'openai/gpt-5',
-    });
-  });
-
-  it('restores a confirmed alias through its available catalog route', async () => {
-    const requestGateway = vi.fn(async () => ({
-      sessions: [{ key: 'agent:main:justdo:session-1', modelProvider: 'openai', model: 'gpt-5' }],
-      hasMore: false,
-    }));
-    const service = new OpenClawConfigSyncService({
-      getCoworkStore: () => ({ getSessionModelRef: () => 'hdp/Glm-5.1' }),
-      requestGateway,
-    } as never);
-
-    await (service as unknown as {
-      syncManagedSessionModelsViaGateway: (snapshot: unknown) => Promise<void>;
-    }).syncManagedSessionModelsViaGateway({
-      config: {
-        models: { providers: { builtin_models: { models: [{ id: 'hdp/Glm-5.1' }] } } },
-        agents: { defaults: { model: { primary: 'openai/gpt-5' } } },
-      },
-    });
-
-    expect(requestGateway).toHaveBeenCalledWith('sessions.patch', {
-      key: 'agent:main:justdo:session-1',
-      model: 'builtin_models/hdp/Glm-5.1',
-    });
-  });
-
-  it('does not overwrite a confirmed Gateway alias absent from the configured catalog', async () => {
-    const requestGateway = vi.fn(async () => ({
-      sessions: [{ key: 'agent:main:justdo:session-1', modelProvider: 'hdp', model: 'Glm-5.1' }],
-      hasMore: false,
-    }));
-    const service = new OpenClawConfigSyncService({
-      getCoworkStore: () => ({ getSessionModelRef: () => 'hdp/Glm-5.1' }),
-      requestGateway,
-    } as never);
-    await (service as unknown as {
-      syncManagedSessionModelsViaGateway: (snapshot: unknown) => Promise<void>;
-    }).syncManagedSessionModelsViaGateway({
-      config: {
-        models: { providers: { builtin_models: { models: [{ id: 'hdp/Glm-5.1' }] } } },
-        agents: { defaults: { model: { primary: 'openai/gpt-5' } } },
-      },
-    });
-    expect(requestGateway).toHaveBeenCalledTimes(1);
-    expect(requestGateway).toHaveBeenCalledWith('sessions.list', { limit: 200, offset: 0 });
-  });
-
-  it('preserves an available session-specific model instead of replacing it with the agent model', async () => {
-    const requestGateway = vi.fn(async (method: string) => {
-      if (method === 'sessions.list') {
-        return {
-          sessions: [
-            {
-              key: 'agent:main:justdo:session-1',
-              modelProvider: 'newproxy',
-              model: 'agent-model',
-            },
-          ],
-          hasMore: false,
-        };
+    const requestGateway = vi.fn(async (method: string, params?: { model?: string }) => {
+      if (method === 'sessions.list') return {
+        sessions: [{ key: 'agent:main:justdo:session-1', ...identity(selectedRef) }], hasMore: false,
+      };
+      if (method === 'sessions.describe') return { session: identity(selectedRef) };
+      if (method === 'sessions.patch') {
+        selectedRef = params!.model!;
+        return { resolved: identity(selectedRef) };
       }
-      if (method === 'sessions.patch') return { ok: true };
-      throw new Error(`Unexpected Gateway method: ${method}`);
+      throw new Error(`Unexpected method: ${method}`);
     });
+    const modelStore = {
+      getSessionModelRef: () => persistedRef,
+      getSession: () => ({ id: 'session-1', agentId: 'main', modelRef: persistedRef }),
+      updateSession,
+    };
     const service = new OpenClawConfigSyncService({
-      getCoworkStore: () => ({
-        getSessionModelRef: (id: string) =>
-          id === 'session-1' ? 'newproxy/session-model' : null,
-      }),
+      getCoworkStore: () => modelStore,
       requestGateway,
     } as never);
-    const syncManagedSessionModelsViaGateway = (
-      service as unknown as {
-        syncManagedSessionModelsViaGateway: (snapshot: unknown) => Promise<void>;
+    const rpc = new SessionRpc({
+      getGatewayClient: () => ({ request: requestGateway }) as never,
+      store: modelStore as never,
+    });
+    const providers: Record<string, { models: { id: string }[] }> = {};
+    for (const ref of routes) {
+      const { modelProvider, model } = identity(ref);
+      (providers[modelProvider] ??= { models: [] }).models.push({ id: model });
+    }
+    const sync = () => (service as unknown as {
+      syncManagedSessionModelsViaGateway(snapshot: unknown): Promise<void>;
+    }).syncManagedSessionModelsViaGateway({ config: {
+      models: { providers }, agents: { defaults: { model: { primary: routes[0] } } },
+    } });
+    return { sync, rpc, requestGateway, updateSession, persisted: () => persistedRef };
+  };
+
+  it('preserves the latest native user selection instead of restoring a stale local model', async () => {
+    const harness = createModelHarness('p/old', 'p/selected', ['p/old', 'p/selected']);
+    await harness.sync();
+    expect(harness.requestGateway).not.toHaveBeenCalledWith('sessions.patch', expect.anything());
+    expect(harness.persisted()).toBe('p/selected');
+  });
+
+  it('replaces a removed selection and persists the Gateway-confirmed replacement', async () => {
+    const harness = createModelHarness('p/removed', 'p/removed', ['p/default']);
+    await harness.sync();
+    expect(harness.requestGateway).toHaveBeenCalledWith('sessions.patch', {
+      key: 'agent:main:justdo:session-1', model: 'p/default',
+    });
+    expect(harness.persisted()).toBe('p/default');
+    await harness.sync();
+    expect(harness.requestGateway.mock.calls.filter(([method]) => method === 'sessions.patch')).toHaveLength(1);
+  });
+
+  it('restores a renamed local route when the native provider no longer exists', async () => {
+    const harness = createModelHarness('renamed/chosen', 'old/chosen', ['renamed/default', 'renamed/chosen']);
+    await harness.sync();
+    expect(harness.persisted()).toBe('renamed/chosen');
+  });
+
+  it('preserves a native built-in alias that is still backed by a configured route', async () => {
+    const harness = createModelHarness('hdp/Glm-5.1', 'hdp/Glm-5.1', ['builtin_models/hdp/Glm-5.1']);
+    await harness.sync();
+    expect(harness.requestGateway).not.toHaveBeenCalledWith('sessions.patch', expect.anything());
+  });
+
+  it('prefers an exact route when restoring a removed native selection', async () => {
+    const harness = createModelHarness('hdp/Glm-5.1', 'old/removed', ['builtin_models/hdp/Glm-5.1', 'hdp/Glm-5.1']);
+    await harness.sync();
+    expect(harness.persisted()).toBe('hdp/Glm-5.1');
+  });
+
+  it('re-reads the selected model instead of applying an outdated sessions.list row', async () => {
+    const harness = createModelHarness('p/old', 'p/new', ['p/old', 'p/new']);
+    harness.requestGateway.mockResolvedValueOnce({
+      sessions: [{ key: 'agent:main:justdo:session-1', modelProvider: 'removed', model: 'old' }], hasMore: false,
+    });
+    await harness.sync();
+    expect(harness.requestGateway).not.toHaveBeenCalledWith('sessions.patch', expect.anything());
+    expect(harness.persisted()).toBe('p/new');
+  });
+
+  it('a user switch queued during config reconciliation wins after the repair completes', async () => {
+    const harness = createModelHarness('removed/old', 'removed/old', ['p/default', 'p/chosen']);
+    const request = harness.requestGateway.getMockImplementation()!;
+    let releaseRead!: () => void;
+    let readStarted!: () => void;
+    const started = new Promise<void>(resolve => { readStarted = resolve; });
+    const pendingRead = new Promise<void>(resolve => { releaseRead = resolve; });
+    harness.requestGateway.mockImplementation(async (method, params) => {
+      if (method === 'sessions.describe') {
+        readStarted();
+        await pendingRead;
       }
-    ).syncManagedSessionModelsViaGateway.bind(service);
-
-    await syncManagedSessionModelsViaGateway({
-      config: {
-        models: {
-          providers: {
-            newproxy: {
-              models: [{ id: 'agent-model' }, { id: 'session-model' }],
-            },
-          },
-        },
-        agents: {
-          defaults: { model: { primary: 'newproxy/agent-model' } },
-          entries: {
-            main: { model: { primary: 'newproxy/agent-model' } },
-          },
-        },
-      },
+      return request(method, params);
     });
-
-    expect(requestGateway).toHaveBeenCalledWith('sessions.patch', {
-      key: 'agent:main:justdo:session-1',
-      model: 'newproxy/session-model',
-    });
+    const syncing = harness.sync();
+    await started;
+    const selecting = harness.rpc.patchModel('session-1', 'p/chosen');
+    releaseRead();
+    await syncing;
+    await expect(selecting).resolves.toMatchObject({ ok: true, modelRef: 'p/chosen' });
+    expect(harness.persisted()).toBe('p/chosen');
+    await harness.sync();
+    expect(harness.persisted()).toBe('p/chosen');
   });
 });
 

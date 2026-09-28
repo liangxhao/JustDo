@@ -19,6 +19,39 @@ const renderSelector = (models: Model[], onChange = vi.fn(), onOpen = vi.fn()) =
 };
 
 describe('ModelSelector', () => {
+  test('keeps an unresolved selection visible and lets the user select a replacement', () => {
+    const replacement = { id: 'replacement', name: 'Replacement', providerKey: 'builtin_models' };
+    const onChange = vi.fn();
+    const store = configureStore({ reducer: { model: modelReducer } });
+    render(
+      <Provider store={store}>
+        <ModelSelector
+          value={null}
+          models={[replacement]}
+          onChange={onChange}
+          emptyLabel="原模型不可用，请重新选择"
+        />
+      </Provider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '原模型不可用，请重新选择' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Replacement' }));
+
+    expect(onChange).toHaveBeenCalledWith(replacement);
+  });
+
+  test('shows a placeholder for an empty model name instead of a blank button', () => {
+    const models = [{ id: 'new', name: 'New model', providerKey: 'builtin_models' }];
+    const store = configureStore({ reducer: { model: modelReducer } });
+    render(
+      <Provider store={store}>
+        <ModelSelector value={{ id: '', name: '' }} models={models} onChange={vi.fn()} />
+      </Provider>,
+    );
+
+    expect(screen.getByRole('button', { name: '请选择模型' })).toBeTruthy();
+  });
+
   test('allows selecting models regardless of transient runtime availability', () => {
     const models: Model[] = [
       { id: 'ready', name: 'Ready model', providerKey: 'custom_0', provider: 'Acme' },

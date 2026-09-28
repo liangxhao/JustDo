@@ -7,6 +7,7 @@ import { type AppConfig, defaultConfig } from '@/app/config';
 const storeMocks = vi.hoisted(() => ({
   getItem: vi.fn(),
   setItem: vi.fn(),
+  patchAppConfig: vi.fn(),
 }));
 
 vi.mock('@/services/store', () => ({
@@ -22,7 +23,16 @@ describe('appearance config persistence', () => {
   beforeEach(() => {
     storeMocks.getItem.mockReset();
     storeMocks.setItem.mockReset();
-    vi.stubGlobal('window', { dispatchEvent: vi.fn() });
+    storeMocks.patchAppConfig.mockReset();
+    let persisted = structuredClone(defaultConfig);
+    storeMocks.patchAppConfig.mockImplementation(async patch => {
+      persisted = { ...persisted, ...patch };
+      return persisted;
+    });
+    vi.stubGlobal('window', {
+      dispatchEvent: vi.fn(),
+      electron: { store: { patchAppConfig: storeMocks.patchAppConfig } },
+    });
   });
 
   afterEach(() => vi.unstubAllGlobals());
@@ -100,8 +110,7 @@ describe('appearance config persistence', () => {
     );
     expect(service.getConfig().model.defaultModel).toBe(defaultConfig.model.defaultModel);
     expect(service.getConfig().api).toEqual(defaultConfig.api);
-    expect(storeMocks.setItem).toHaveBeenCalledWith(
-      'app_config',
+    expect(storeMocks.patchAppConfig).toHaveBeenCalledWith(
       expect.objectContaining({
         providers: expect.not.objectContaining({ custom_0: expect.anything() }),
       }),
@@ -122,38 +131,36 @@ describe('appearance config persistence', () => {
         },
       },
     });
-    storeMocks.setItem.mockReturnValue(new Promise<void>(() => undefined));
+    storeMocks.patchAppConfig.mockReturnValue(new Promise<void>(() => undefined));
     const service = new ConfigService();
 
     await service.init();
 
     expect(service.getConfig().providers).not.toHaveProperty('custom_0');
-    expect(storeMocks.setItem).toHaveBeenCalledOnce();
+    expect(storeMocks.patchAppConfig).toHaveBeenCalledOnce();
   });
 
   test('reload removes obsolete providers and resets their default model selection', async () => {
-    storeMocks.getItem
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({
-        ...defaultConfig,
-        api: { key: 'obsolete-secret', baseUrl: 'https://api.example.test/v1' },
-        model: {
-          ...defaultConfig.model,
-          defaultModel: 'model-1',
-          defaultModelProvider: 'custom_0',
+    storeMocks.getItem.mockResolvedValueOnce(null).mockResolvedValueOnce({
+      ...defaultConfig,
+      api: { key: 'obsolete-secret', baseUrl: 'https://api.example.test/v1' },
+      model: {
+        ...defaultConfig.model,
+        defaultModel: 'model-1',
+        defaultModelProvider: 'custom_0',
+      },
+      providers: {
+        ...defaultConfig.providers,
+        custom_0: {
+          enabled: true,
+          apiKey: 'secret',
+          baseUrl: 'https://api.example.test/v1',
+          displayName: 'AcmeProxy',
+          identity: 'obsolete-numbered-provider',
+          models: [{ id: 'model-1', name: 'Model 1' }],
         },
-        providers: {
-          ...defaultConfig.providers,
-          custom_0: {
-            enabled: true,
-            apiKey: 'secret',
-            baseUrl: 'https://api.example.test/v1',
-            displayName: 'AcmeProxy',
-            identity: 'obsolete-numbered-provider',
-            models: [{ id: 'model-1', name: 'Model 1' }],
-          },
-        },
-      });
+      },
+    });
     const service = new ConfigService();
     await service.init();
 
@@ -165,7 +172,7 @@ describe('appearance config persistence', () => {
       defaultModelProvider: defaultConfig.model.defaultModelProvider,
     });
     expect(config.api).toEqual(defaultConfig.api);
-    expect(storeMocks.setItem).toHaveBeenCalledOnce();
+    expect(storeMocks.patchAppConfig).toHaveBeenCalledOnce();
   });
 
   test('normalizes appearance values before persisting an update', async () => {
@@ -185,7 +192,7 @@ describe('appearance config persistence', () => {
       chatContentWidth: 100,
       fontSize: 13,
     });
-    expect(storeMocks.setItem).toHaveBeenCalledOnce();
+    expect(storeMocks.patchAppConfig).toHaveBeenCalledOnce();
   });
 
   test('keeps the in-memory config unchanged when main rejects the update', async () => {
@@ -193,7 +200,7 @@ describe('appearance config persistence', () => {
     const service = new ConfigService();
     await service.init();
     const previousTheme = service.getConfig().theme;
-    storeMocks.setItem.mockRejectedValue(new Error('OpenClaw config rejected'));
+    storeMocks.patchAppConfig.mockRejectedValue(new Error('OpenClaw config rejected'));
 
     await expect(
       service.updateConfig({ theme: previousTheme === 'dark' ? 'light' : 'dark' }),
@@ -208,26 +215,114 @@ describe('appearance config persistence', () => {
     const service = new ConfigService();
     await service.init();
     let resolveFirst: (() => void) | undefined;
-    storeMocks.setItem
+    storeMocks.patchAppConfig
       .mockReturnValueOnce(
-        new Promise<void>(resolve => {
-          resolveFirst = resolve;
+        new Promise<AppConfig>(resolve => {
+          resolveFirst = () => resolve({ ...defaultConfig, theme: 'dark' });
         }),
       )
-      .mockResolvedValueOnce(undefined);
+      .mockResolvedValueOnce({ ...defaultConfig, theme: 'dark', language: 'en' });
 
     const first = service.updateConfig({ theme: 'dark' });
     const second = service.updateConfig({ language: 'en' });
     await Promise.resolve();
-    expect(storeMocks.setItem).toHaveBeenCalledTimes(1);
+    expect(storeMocks.patchAppConfig).toHaveBeenCalledTimes(1);
 
     resolveFirst?.();
     await first;
     await second;
-    expect(storeMocks.setItem.mock.calls[1]?.[1]).toMatchObject({
-      theme: 'dark',
+    expect(storeMocks.patchAppConfig.mock.calls[1]?.[0]).toEqual({
       language: 'en',
     });
     expect(service.getConfig()).toMatchObject({ theme: 'dark', language: 'en' });
+  });
+
+  test('saving settings cannot send a cached default model back after a main-process selection', async () => {
+    storeMocks.getItem.mockResolvedValue(null);
+    const service = new ConfigService();
+    await service.init();
+    storeMocks.patchAppConfig.mockResolvedValue({
+      ...defaultConfig,
+      language: 'en',
+      model: { ...defaultConfig.model, defaultModel: 'selected', defaultModelProvider: 'acme' },
+    });
+    await service.updateConfig({ language: 'en' });
+    expect(storeMocks.patchAppConfig).toHaveBeenCalledWith({ language: 'en' });
+    expect(service.getConfig().model.defaultModel).toBe('selected');
+  });
+
+  test('a delayed reload cannot overwrite a model confirmed while the read was pending', async () => {
+    const service = new ConfigService();
+    let finishRead!: (config: AppConfig) => void;
+    storeMocks.getItem.mockReturnValue(
+      new Promise<AppConfig>(resolve => {
+        finishRead = resolve;
+      }),
+    );
+    const read = service.reloadFromStore();
+    service.acceptDefaultModelSelection('selected', 'acme');
+    finishRead({ ...defaultConfig, language: 'en' });
+    const config = await read;
+    expect(config.model).toMatchObject({ defaultModel: 'selected', defaultModelProvider: 'acme' });
+    expect(config.language).toBe('en');
+  });
+
+  test('the latest reload wins when snapshots return out of order', async () => {
+    const service = new ConfigService();
+    let finishOldRead!: (config: AppConfig) => void;
+    storeMocks.getItem
+      .mockReturnValueOnce(
+        new Promise<AppConfig>(resolve => {
+          finishOldRead = resolve;
+        }),
+      )
+      .mockResolvedValueOnce({
+        ...defaultConfig,
+        language: 'en',
+        model: { ...defaultConfig.model, defaultModel: 'new' },
+      });
+    const oldRead = service.reloadFromStore();
+    await service.reloadFromStore();
+    finishOldRead(defaultConfig);
+    expect((await oldRead).model.defaultModel).toBe('new');
+    expect(service.getConfig().language).toBe('en');
+  });
+
+  test('an unrelated delayed save keeps a later confirmed model while applying its other settings', async () => {
+    const service = new ConfigService();
+    let finishSave!: (config: AppConfig) => void;
+    storeMocks.patchAppConfig.mockReturnValue(
+      new Promise<AppConfig>(resolve => {
+        finishSave = resolve;
+      }),
+    );
+    const save = service.updateConfig({ language: 'en' });
+    await Promise.resolve();
+    service.acceptDefaultModelSelection('selected', 'acme');
+    finishSave({ ...defaultConfig, language: 'en' });
+    await save;
+    expect(service.getConfig().model.defaultModel).toBe('selected');
+    expect(service.getConfig().language).toBe('en');
+  });
+
+  test('an explicit model patch applies its confirmed result and supersedes an older reload', async () => {
+    const service = new ConfigService();
+    let finishRead!: (config: AppConfig) => void;
+    storeMocks.getItem.mockReturnValue(
+      new Promise<AppConfig>(resolve => {
+        finishRead = resolve;
+      }),
+    );
+    const read = service.reloadFromStore();
+    service.acceptDefaultModelSelection('previous', 'acme');
+    const model = {
+      ...defaultConfig.model,
+      defaultModel: 'explicit',
+      defaultModelProvider: 'acme',
+    };
+    await service.updateConfig({ model });
+    finishRead(defaultConfig);
+    expect((await read).model).toEqual(model);
+    expect(service.getConfig().model).toEqual(model);
   });
 });

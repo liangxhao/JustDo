@@ -99,6 +99,30 @@ const modelSlice = createSlice({
   name: 'model',
   initialState,
   reducers: {
+    setConfiguredModels: (
+      state,
+      action: PayloadAction<{
+        models: Model[];
+        defaultModel?: string;
+        defaultModelProvider?: string;
+      }>,
+    ) => {
+      const { models, defaultModel, defaultModelProvider } = action.payload;
+      state.availableModels = [
+        ...state.availableModels.filter(model => model.isServerModel),
+        ...models.filter(model => model.id),
+      ];
+      availableModels = state.availableModels;
+      state.selectedModel =
+        state.availableModels.find(
+          model =>
+            model.id === defaultModel &&
+            (!defaultModelProvider || model.providerKey === defaultModelProvider),
+        ) ??
+        state.availableModels.find(model => model.id === defaultModel) ??
+        state.availableModels[0] ??
+        fallbackModel;
+    },
     setSelectedModel: (state, action: PayloadAction<Model>) => {
       state.selectedModel = action.payload;
     },
@@ -153,6 +177,11 @@ const modelSlice = createSlice({
   },
 });
 
-export const { setSelectedModel, setAvailableModels, setServerModels, clearServerModels } =
-  modelSlice.actions;
+export const {
+  setConfiguredModels,
+  setSelectedModel,
+  setAvailableModels,
+  setServerModels,
+  clearServerModels,
+} = modelSlice.actions;
 export default modelSlice.reducer;

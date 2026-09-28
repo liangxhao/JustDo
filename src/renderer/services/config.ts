@@ -1,4 +1,7 @@
-import { normalizeBrowserDownloadSettings, normalizeBrowserSearchEngine } from '@shared/browser/browser';
+import {
+  normalizeBrowserDownloadSettings,
+  normalizeBrowserSearchEngine,
+} from '@shared/browser/browser';
 import { ProxyMode, ProxyProtocol } from '@shared/network/proxy';
 import { isLegacyCustomProviderKey } from '@shared/providers';
 import { normalizeLocalSpeechSettings } from '@shared/speech/localSpeechSettings';
@@ -93,14 +96,25 @@ const normalizeProxyConfig = (
 export class ConfigService {
   private config: AppConfig = defaultConfig;
   private updateConfigQueue: Promise<void> = Promise.resolve();
+  private modelSelectionRevision = 0;
+  private latestReloadRequestId = 0;
 
-  private enqueueConfigPersistence(config: AppConfig): void {
-    const update = this.updateConfigQueue.then(() =>
-      localStore.setItem(CONFIG_KEYS.APP_CONFIG, config),
-    );
-    this.updateConfigQueue = update.catch(error => {
-      console.error('Failed to persist normalized config:', error);
+  private enqueueConfigPersistence(config: Partial<AppConfig>): void {
+    const modelRevision = this.modelSelectionRevision;
+    const update = this.updateConfigQueue.then(() => {
+      const patch = { ...config };
+      if (modelRevision !== this.modelSelectionRevision) {
+        delete patch.model;
+        delete patch.api;
+      }
+      return window.electron.store.patchAppConfig<AppConfig>(patch);
     });
+    this.updateConfigQueue = update.then(
+      () => undefined,
+      error => {
+        console.error('Failed to persist normalized config:', error);
+      },
+    );
   }
 
   async init() {
@@ -174,7 +188,10 @@ export class ConfigService {
           normalizedModel.reset ||
           JSON.stringify(storedConfig.providers) !== JSON.stringify(mergedProviders)
         ) {
-          this.enqueueConfigPersistence(this.config);
+          this.enqueueConfigPersistence({
+            providers: this.config.providers,
+            ...(normalizedModel.reset ? { model: this.config.model, api: this.config.api } : {}),
+          });
         }
       }
     } catch (error) {
@@ -186,11 +203,27 @@ export class ConfigService {
     return this.config;
   }
 
+  acceptDefaultModelSelection(modelId: string, providerKey?: string): void {
+    this.modelSelectionRevision += 1;
+    this.config = {
+      ...this.config,
+      model: {
+        ...this.config.model,
+        defaultModel: modelId,
+        defaultModelProvider: providerKey ?? this.config.model.defaultModelProvider,
+      },
+    };
+    window.dispatchEvent(new CustomEvent('config-updated'));
+  }
+
   async reloadFromStore(): Promise<AppConfig> {
+    const requestId = ++this.latestReloadRequestId;
+    const modelRevision = this.modelSelectionRevision;
     const storedConfig = await localStore.getItem<AppConfig>(CONFIG_KEYS.APP_CONFIG);
-    if (!storedConfig) {
+    if (!storedConfig || requestId !== this.latestReloadRequestId) {
       return this.config;
     }
+    const modelChangedDuringRead = modelRevision !== this.modelSelectionRevision;
 
     const normalizedProviders = normalizeProvidersConfig(storedConfig.providers);
     const effectiveProviders = normalizedProviders ?? this.config.providers;
@@ -209,11 +242,11 @@ export class ConfigService {
       browserDownloadDirectory: browserDownloadSettings.directory,
       browserAskDownloadLocation: browserDownloadSettings.askWhereToSave,
       api: {
-        ...(normalizedModel.reset
+        ...(normalizedModel.reset && !modelChangedDuringRead
           ? defaultConfig.api
           : { ...this.config.api, ...storedConfig.api }),
       },
-      model: normalizedModel.model,
+      model: modelChangedDuringRead ? this.config.model : normalizedModel.model,
       app: {
         ...this.config.app,
         ...storedConfig.app,
@@ -228,11 +261,17 @@ export class ConfigService {
       ...(normalizedProviders ? { providers: normalizedProviders } : {}),
     };
     this.config = mergedConfig;
+    this.modelSelectionRevision += 1;
     if (
-      normalizedModel.reset ||
+      (normalizedModel.reset && !modelChangedDuringRead) ||
       JSON.stringify(storedConfig.providers) !== JSON.stringify(normalizedProviders)
     ) {
-      this.enqueueConfigPersistence(this.config);
+      this.enqueueConfigPersistence({
+        providers: this.config.providers,
+        ...(normalizedModel.reset && !modelChangedDuringRead
+          ? { model: this.config.model, api: this.config.api }
+          : {}),
+      });
     }
     window.dispatchEvent(new CustomEvent('config-updated'));
     return this.config;
@@ -240,11 +279,11 @@ export class ConfigService {
 
   async updateConfig(newConfig: Partial<AppConfig>) {
     const update = this.updateConfigQueue.then(async () => {
+      const modelRevision = this.modelSelectionRevision;
       const normalizedProviders = normalizeProvidersConfig(
         newConfig.providers as AppConfig['providers'] | undefined,
       );
-      const nextConfig = {
-        ...this.config,
+      const patch = {
         ...newConfig,
         ...(newConfig.browserSearchEngine !== undefined
           ? { browserSearchEngine: normalizeBrowserSearchEngine(newConfig.browserSearchEngine) }
@@ -271,8 +310,16 @@ export class ConfigService {
         ...(newConfig.voice ? { voice: normalizeLocalSpeechSettings(newConfig.voice) } : {}),
         ...(normalizedProviders ? { providers: normalizedProviders } : {}),
       };
-      await localStore.setItem(CONFIG_KEYS.APP_CONFIG, nextConfig);
-      this.config = nextConfig;
+      const saved = await window.electron.store.patchAppConfig<AppConfig>(patch);
+      this.config = {
+        ...this.config,
+        ...saved,
+        // A later confirmed selection supersedes this response's snapshot.
+        ...(!newConfig.model && modelRevision !== this.modelSelectionRevision
+          ? { model: this.config.model }
+          : {}),
+      };
+      this.modelSelectionRevision += 1;
       window.dispatchEvent(new CustomEvent('config-updated'));
     });
     this.updateConfigQueue = update.catch((): void => undefined);

@@ -1,8 +1,48 @@
 import { describe, expect, test } from 'vitest';
 
-import modelReducer, { setAvailableModels, setSelectedModel } from './modelSlice';
+import modelReducer, {
+  setAvailableModels,
+  setConfiguredModels,
+  setSelectedModel,
+} from './modelSlice';
 
 describe('modelSlice', () => {
+  test('projects the saved provider rename instead of selecting the first model', () => {
+    const state = modelReducer(
+      undefined,
+      setSelectedModel({ id: 'shared', name: 'Old', providerKey: 'old' }),
+    );
+    const models = [
+      { id: 'shared', name: 'Other', providerKey: 'other' },
+      { id: 'shared', name: 'Renamed', providerKey: 'renamed' },
+    ];
+
+    const result = modelReducer(
+      state,
+      setConfiguredModels({ models, defaultModel: 'shared', defaultModelProvider: 'renamed' }),
+    );
+
+    expect(result.selectedModel).toEqual(models[1]);
+  });
+
+  test('refreshes the selected model from committed configuration instead of stale Redux state', () => {
+    const state = modelReducer(
+      undefined,
+      setSelectedModel({ id: 'old', name: 'Old', providerKey: 'provider' }),
+    );
+    const models = [
+      { id: 'old', name: 'Old', providerKey: 'provider' },
+      { id: 'new', name: 'New', providerKey: 'provider' },
+    ];
+
+    const result = modelReducer(
+      state,
+      setConfiguredModels({ models, defaultModel: 'new', defaultModelProvider: 'provider' }),
+    );
+
+    expect(result.selectedModel).toEqual(models[1]);
+  });
+
   test('clears a stale selected model when no models remain available', () => {
     const withSelectedModel = modelReducer(
       undefined,

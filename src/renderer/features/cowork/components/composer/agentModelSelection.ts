@@ -34,6 +34,9 @@ export function resolveAgentModelSelection({
       return { selectedModel: explicitModel, usesFallback: false, hasInvalidExplicitModel: false };
     }
 
+    // Managed agent config constrains a removed profile model to the application
+    // default. Keep that effective selection visible while the saved profile
+    // still references the retired model.
     return { selectedModel: resolvedFallback, usesFallback: true, hasInvalidExplicitModel: true };
   }
 

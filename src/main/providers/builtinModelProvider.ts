@@ -9,6 +9,7 @@ import {
   parseProviderModelsResponse,
 } from '../../shared/providers/modelDiscovery';
 import { mainProcessFetch } from '../core/network/mainProcessFetch';
+import { enqueueAppConfigUpdate } from '../data/appConfigUpdateQueue';
 import type { SqliteStore } from '../data/sqliteStore';
 import {
   buildBuiltinModelRequestHeaders,
@@ -109,13 +110,21 @@ async function fetchBuiltinModels(
 ): Promise<BuiltinModels> {
   const headers = buildBuiltinModelRequestHeaders(credential);
   signal = AbortSignal.any([signal, AbortSignal.timeout(15_000)]);
-  const modelsResponse = await mainProcessFetch(buildProviderModelsUrl(baseUrl), { headers, signal, redirect: 'error' });
+  const modelsResponse = await mainProcessFetch(buildProviderModelsUrl(baseUrl), {
+    headers,
+    signal,
+    redirect: 'error',
+  });
   if (!modelsResponse.ok) {
     throw new Error(`GET /models failed with ${modelsResponse.status}`);
   }
   const listedModels = parseProviderModelsResponse(await modelsResponse.json());
 
-  const infoResponse = await mainProcessFetch(buildProviderModelInfoUrl(baseUrl), { headers, signal, redirect: 'error' });
+  const infoResponse = await mainProcessFetch(buildProviderModelInfoUrl(baseUrl), {
+    headers,
+    signal,
+    redirect: 'error',
+  });
   const infoById = infoResponse.ok
     ? parseProviderModelInfoResponse(await infoResponse.json())
     : new Map();
@@ -148,84 +157,117 @@ export async function syncBuiltinModelProvider(
     Boolean(fileConfig.baseUrl) &&
     credential !== null;
   const syncState = beginBuiltinModelSync(store, shouldEnable);
-  const appConfig = store.get<AppConfig>('app_config') || {};
-  const providers = { ...(appConfig.providers ?? {}) };
-  const previousBuiltinApiKey = providers[ProviderName.BuiltinModels]?.apiKey?.trim() || '';
-  const shouldClearLegacyApiKey =
-    appConfig.model?.defaultModelProvider === ProviderName.BuiltinModels ||
-    (Boolean(previousBuiltinApiKey) && appConfig.api?.key === previousBuiltinApiKey);
-  const sanitizedApi = appConfig.api
-    ? {
-        ...appConfig.api,
-        ...(shouldClearLegacyApiKey ? { key: '' } : {}),
+  const persist = async (
+    models: ProviderModel[],
+    embeddingModels: ProviderModel[],
+    catalogLoaded = false,
+  ) =>
+    enqueueAppConfigUpdate(async () => {
+      if (!isCurrentBuiltinModelSync(store, syncState)) return;
+      const appConfig = store.get<AppConfig>('app_config') || {};
+      const providers = { ...(appConfig.providers ?? {}) };
+      const previousBuiltinApiKey = providers[ProviderName.BuiltinModels]?.apiKey?.trim() || '';
+      const shouldClearLegacyApiKey =
+        appConfig.model?.defaultModelProvider === ProviderName.BuiltinModels ||
+        (Boolean(previousBuiltinApiKey) && appConfig.api?.key === previousBuiltinApiKey);
+      const sanitizedApi = appConfig.api
+        ? {
+            ...appConfig.api,
+            ...(shouldClearLegacyApiKey ? { key: '' } : {}),
+          }
+        : undefined;
+
+      if (!shouldEnable || !fileConfig?.baseUrl || !credential) {
+        delete providers[ProviderName.BuiltinModels];
+        store.set('app_config', {
+          ...appConfig,
+          ...(sanitizedApi ? { api: sanitizedApi } : {}),
+          providers,
+        });
+        return;
       }
-    : undefined;
+
+      const previousModels = providers[ProviderName.BuiltinModels]?.models ?? [];
+      if (!catalogLoaded) {
+        // A failed request does not establish that any model was retired. Read
+        // the latest cache inside the queue so concurrent user edits survive.
+        models = previousModels;
+        embeddingModels = providers[ProviderName.BuiltinModels]?.embeddingModels ?? [];
+      }
+      const previousEnabledById = new Map(
+        previousModels.map(model => [model.id, model.enabled !== false]),
+      );
+      models = models.map(model => ({
+        ...model,
+        enabled: previousEnabledById.get(model.id) ?? true,
+      }));
+
+      providers[ProviderName.BuiltinModels] = {
+        enabled: true,
+        apiKey: '',
+        baseUrl: fileConfig.baseUrl,
+        apiFormat: 'openai',
+        readonly: true,
+        models,
+        embeddingModels,
+      };
+
+      const nextModel = { ...(appConfig.model ?? {}) };
+      const selectedBuiltinUnavailable =
+        nextModel.defaultModelProvider === ProviderName.BuiltinModels &&
+        !models.some(model => model.id === nextModel.defaultModel && model.enabled !== false);
+      // Only a successful catalog response establishes that a model was removed.
+      // Keep the user's preference during transport/auth failures and when no replacement exists.
+      if (catalogLoaded && (!nextModel.defaultModel || selectedBuiltinUnavailable)) {
+        for (const [providerKey, provider] of Object.entries(providers)) {
+          if (!provider.enabled || !provider.baseUrl?.trim()) continue;
+          if (providerKey !== ProviderName.BuiltinModels && !provider.apiKey?.trim()) continue;
+          const replacement = provider.models?.find(
+            model => model.id.trim() && model.enabled !== false,
+          );
+          if (!replacement) continue;
+          nextModel.defaultModel = replacement.id;
+          nextModel.defaultModelProvider = providerKey;
+          break;
+        }
+      }
+
+      store.set('app_config', {
+        ...appConfig,
+        api: {
+          ...appConfig.api,
+          key: shouldClearLegacyApiKey ? '' : appConfig.api?.key || '',
+          baseUrl: appConfig.api?.baseUrl || fileConfig.baseUrl,
+        },
+        model: nextModel,
+        providers,
+      });
+    });
 
   if (!shouldEnable || !fileConfig?.baseUrl || !credential) {
-    delete providers[ProviderName.BuiltinModels];
-    store.set('app_config', {
-      ...appConfig,
-      ...(sanitizedApi ? { api: sanitizedApi } : {}),
-      providers,
-    });
+    await persist([], []);
     return;
   }
 
   let models: ProviderModel[] = [];
   let embeddingModels: ProviderModel[] = [];
+  let catalogLoaded = false;
   try {
     const fetchedModels = await fetchBuiltinModels(
       fileConfig.baseUrl,
       credential,
       syncState.controller!.signal,
     );
-    if (!isCurrentBuiltinModelSync(store, syncState)) {
-      return;
-    }
+    if (!isCurrentBuiltinModelSync(store, syncState)) return;
     models = fetchedModels.chatModels;
-    const previousModels = providers[ProviderName.BuiltinModels]?.models ?? [];
-    const previousEnabledById = new Map(
-      previousModels.map(model => [model.id, model.enabled !== false]),
-    );
-    models = models.map(model => ({
-      ...model,
-      enabled: previousEnabledById.get(model.id) ?? true,
-    }));
     embeddingModels = fetchedModels.embeddingModels;
+    catalogLoaded = true;
     console.log(
       `[BuiltinModelProvider] Synced ${models.length} chat model(s) and ${embeddingModels.length} embedding model(s)`,
     );
   } catch (error) {
-    if (!isCurrentBuiltinModelSync(store, syncState)) {
-      return;
-    }
-    console.warn('[BuiltinModelProvider] Failed to refresh models, clearing cached list:', error);
+    if (!isCurrentBuiltinModelSync(store, syncState)) return;
+    console.warn('[BuiltinModelProvider] Failed to refresh models, retaining cached list:', error);
   }
-
-  providers[ProviderName.BuiltinModels] = {
-    enabled: true,
-    apiKey: '',
-    baseUrl: fileConfig.baseUrl,
-    apiFormat: 'openai',
-    readonly: true,
-    models,
-    embeddingModels,
-  };
-
-  const nextModel = { ...(appConfig.model ?? {}) };
-  if (!nextModel.defaultModel && models[0]?.id) {
-    nextModel.defaultModel = models[0].id;
-    nextModel.defaultModelProvider = ProviderName.BuiltinModels;
-  }
-
-  store.set('app_config', {
-    ...appConfig,
-    api: {
-      ...appConfig.api,
-      key: shouldClearLegacyApiKey ? '' : appConfig.api?.key || '',
-      baseUrl: appConfig.api?.baseUrl || fileConfig.baseUrl,
-    },
-    model: nextModel,
-    providers,
-  });
+  await persist(models, embeddingModels, catalogLoaded);
 }

@@ -23,6 +23,8 @@ interface ModelSelectorProps {
   onChange?: (model: Model | null) => void;
   /** Show a "default" option at the top of the dropdown (controlled mode only). */
   defaultLabel?: string;
+  /** Label for an unresolved selection; does not add a selectable default option. */
+  emptyLabel?: string;
   disabled?: boolean;
   loading?: boolean;
   /** Optional agent-scoped models enriched from the OpenClaw runtime catalog. */
@@ -37,6 +39,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   value,
   onChange,
   defaultLabel,
+  emptyLabel,
   disabled = false,
   loading = false,
   models,
@@ -149,7 +152,12 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
         aria-expanded={isOpen}
         className={`flex h-8 max-w-56 cursor-pointer items-center gap-1.5 rounded-full px-2.5 text-foreground transition-colors hover:bg-surface-raised ${isOpen ? 'bg-surface-raised' : ''}`}
       >
-        <span className="truncate text-sm">{selectedModel?.name ?? defaultLabel ?? ''}</span>
+        <span className="truncate text-sm">
+          {selectedModel?.name ||
+            defaultLabel ||
+            emptyLabel ||
+            i18nService.t('modelSelectorChooseModel')}
+        </span>
         {loading ? (
           <ArrowPathIcon className="h-3.5 w-3.5 shrink-0 animate-spin text-secondary" />
         ) : (

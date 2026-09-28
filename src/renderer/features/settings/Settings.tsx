@@ -65,7 +65,6 @@ import {
   type AppConfig,
   defaultConfig,
   getCustomProviderDefaultName,
-  getProviderDisplayName,
   getVisibleProviders,
   isBuiltinModelsProvider,
   isCustomProvider,
@@ -80,7 +79,7 @@ import {
   BUILTIN_MODELS_UPDATED_EVENT,
   getEnabledProviderModels,
 } from '@/features/models/modelConfig';
-import { setAvailableModels } from '@/features/models/modelSlice';
+import { setConfiguredModels } from '@/features/models/modelSlice';
 import { toOpenClawModelRef } from '@/features/models/openclawModelRef';
 import BrowserSettingsTab from '@/features/settings/browser/BrowserSettingsTab';
 import IntegrationSettingsTab, {
@@ -111,7 +110,6 @@ import WindowsSandboxSettingsTab from '@/features/settings/runtime/WindowsSandbo
 import {
   buildSettingsAppConfigUpdate,
   persistSettingsInOrder,
-  resolveProviderKeyAfterRename,
   resolveSubagentModelAfterProviderChange,
 } from '@/features/settings/settingsPersistence';
 import { createSettingsPreviewRestore } from '@/features/settings/settingsPreviewRestore';
@@ -917,17 +915,17 @@ const Settings: React.FC<SettingsProps> = ({
       if (!result.success) {
         setError(result.error || i18nService.t('connectionFailed'));
       } else {
-        const freshConfig = await window.electron.store.get('app_config');
-        if (freshConfig && typeof freshConfig === 'object') {
-          const refreshedConfig = freshConfig as Partial<AppConfig>;
-          await configService.updateConfig(refreshedConfig);
-
-          if (refreshedConfig.providers) {
-            setProviders(currentProviders =>
-              mergeRefreshedBuiltinProvider(currentProviders, refreshedConfig.providers),
-            );
-            dispatch(setAvailableModels(getEnabledProviderModels(refreshedConfig.providers)));
-          }
+        const refreshedConfig = await configService.reloadFromStore();
+        if (refreshedConfig.providers) {
+          setProviders(currentProviders =>
+            mergeRefreshedBuiltinProvider(currentProviders, refreshedConfig.providers),
+          );
+          dispatch(
+            setConfiguredModels({
+              models: getEnabledProviderModels(refreshedConfig.providers),
+              ...refreshedConfig.model,
+            }),
+          );
         }
       }
     } catch (error) {
@@ -939,22 +937,33 @@ const Settings: React.FC<SettingsProps> = ({
   };
 
   // Handle deleting a custom provider
-  const confirmDeleteCustomProvider = () => {
+  const confirmDeleteCustomProvider = async () => {
     const key = pendingDeleteProvider;
     if (!key) return;
     modelDiscoveryGenerationRef.current += 1;
     setIsDetectingModels(false);
     setPendingDeleteProvider(null);
+    try {
+      const currentConfig = configService.getConfig();
+      const updatedProviders = { ...currentConfig.providers };
+      delete updatedProviders[key];
+      await configService.updateConfig({ providers: updatedProviders as AppConfig['providers'] });
+      const savedConfig = configService.getConfig();
+      dispatch(
+        setConfiguredModels({
+          models: getEnabledProviderModels(savedConfig.providers),
+          ...savedConfig.model,
+        }),
+      );
+    } catch (error) {
+      setError(error instanceof Error ? error.message : i18nService.t('settingsSaveFailed'));
+      return;
+    }
     setProviders(prev => {
       const next = { ...prev };
       delete next[key];
       return next;
     });
-    // Persist the deletion immediately so it survives window close
-    const currentConfig = configService.getConfig();
-    const updatedProviders = { ...currentConfig.providers };
-    delete updatedProviders[key];
-    configService.updateConfig({ providers: updatedProviders as AppConfig['providers'] });
     // If the deleted provider was active, switch to first visible
     if (activeProvider === key) {
       const visibleKeys = Object.keys(visibleProviders).filter(k => k !== key) as ProviderType[];
@@ -1328,17 +1337,6 @@ const Settings: React.FC<SettingsProps> = ({
                 shortcuts,
                 onlineModelProviders: normalizedConfigurations,
               });
-              const renamedDefaultProvider = resolveProviderKeyAfterRename(
-                currentConfig.model.defaultModelProvider,
-                currentConfig.providers,
-                normalizedProviders,
-              );
-              if (renamedDefaultProvider !== currentConfig.model.defaultModelProvider) {
-                update.model = {
-                  ...currentConfig.model,
-                  defaultModelProvider: renamedDefaultProvider,
-                };
-              }
               if (Object.keys(update).length > 0) {
                 await configService.updateConfig(update);
               }
@@ -1359,40 +1357,18 @@ const Settings: React.FC<SettingsProps> = ({
       // 应用语言
       i18nService.setLanguage(language, { persist: false });
 
-      setProviders(normalizedProviders);
+      const savedConfig = configService.getConfig();
+      setProviders(normalizeProvidersForSettings(savedConfig.providers ?? {}));
       setActiveProvider(normalizedActiveProvider);
       setNonLanguageModelProviders(normalizedNonLanguageModelProviders);
       setVoice(normalizedVoice);
 
-      // 更新 Redux store 中的可用模型列表
-      const allModels: {
-        id: string;
-        name: string;
-        provider?: string;
-        providerKey?: string;
-        supportsImage?: boolean;
-        contextLength?: number;
-        maxTokens?: number;
-      }[] = [];
-      Object.entries(normalizedProviders).forEach(([providerName, config]) => {
-        if (config.enabled && config.models) {
-          config.models.forEach(model => {
-            if (model.enabled === false) {
-              return;
-            }
-            allModels.push({
-              id: model.id,
-              name: model.name,
-              provider: getProviderDisplayName(providerName, config),
-              providerKey: providerName,
-              supportsImage: model.supportsImage ?? false,
-              contextLength: model.contextLength,
-              maxTokens: model.maxTokens,
-            });
-          });
-        }
-      });
-      dispatch(setAvailableModels(allModels));
+      dispatch(
+        setConfiguredModels({
+          models: getEnabledProviderModels(savedConfig.providers),
+          ...savedConfig.model,
+        }),
+      );
       setSaveSucceeded(true);
     } catch (error) {
       setError(error instanceof Error ? error.message : i18nService.t('settingsSaveFailed'));

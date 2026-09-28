@@ -45,7 +45,7 @@ import {
   BUILTIN_MODELS_UPDATED_EVENT,
   getEnabledProviderModels,
 } from '@/features/models/modelConfig';
-import { setAvailableModels, setSelectedModel } from '@/features/models/modelSlice';
+import { setConfiguredModels } from '@/features/models/modelSlice';
 import PluginsView from '@/features/plugins/PluginsView';
 import { CronView } from '@/features/scheduled-tasks/components';
 import { scheduledTaskService } from '@/features/scheduled-tasks/scheduledTaskService';
@@ -61,7 +61,6 @@ import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 import { matchesShortcut } from '@/services/shortcuts';
 import { themeService } from '@/services/theme';
-import { RootState, store } from '@/store';
 
 const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
@@ -83,7 +82,6 @@ const App: React.FC = () => {
   const coworkViewRef = useRef<CoworkViewHandle>(null);
   const hasInitialized = useRef(false);
   const dispatch = useDispatch();
-  const selectedModel = useSelector((state: RootState) => state.model.selectedModel);
   const currentSessionId = useSelector(selectCurrentSessionId);
   const pendingInteractions = useSelector(selectPendingInteractions);
   const isWindows = window.electron.platform === 'win32';
@@ -212,20 +210,7 @@ const App: React.FC = () => {
             maxTokens: model.maxTokens,
           }));
         const resolvedModels = providerModels.length > 0 ? providerModels : fallbackModels;
-        dispatch(setAvailableModels(resolvedModels));
-        if (resolvedModels.length > 0) {
-          // Restore previously selected model if available
-          // so that a previously selected model is correctly restored.
-          const allModels = store.getState().model.availableModels;
-          const preferredModel =
-            allModels.find(
-              model =>
-                model.id === config.model.defaultModel &&
-                (!config.model.defaultModelProvider ||
-                  model.providerKey === config.model.defaultModelProvider),
-            ) ?? allModels[0];
-          dispatch(setSelectedModel(preferredModel));
-        }
+        dispatch(setConfiguredModels({ models: resolvedModels, ...config.model }));
 
         setIsInitialized(true);
         console.info('[App] initializeApp: shell ready');
@@ -330,7 +315,12 @@ const App: React.FC = () => {
       void configService
         .reloadFromStore()
         .then(config => {
-          dispatch(setAvailableModels(getEnabledProviderModels(config.providers)));
+          dispatch(
+            setConfiguredModels({
+              models: getEnabledProviderModels(config.providers),
+              ...config.model,
+            }),
+          );
           window.dispatchEvent(new CustomEvent(BUILTIN_MODELS_UPDATED_EVENT));
         })
         .catch(error => {
@@ -379,24 +369,6 @@ const App: React.FC = () => {
       window.removeEventListener('offline', handleOffline);
     };
   }, []);
-
-  useEffect(() => {
-    if (!isInitialized || !selectedModel?.id) return;
-    const config = configService.getConfig();
-    if (
-      config.model.defaultModel === selectedModel.id &&
-      (config.model.defaultModelProvider ?? '') === (selectedModel.providerKey ?? '')
-    ) {
-      return;
-    }
-    void configService.updateConfig({
-      model: {
-        ...config.model,
-        defaultModel: selectedModel.id,
-        defaultModelProvider: selectedModel.providerKey,
-      },
-    });
-  }, [isInitialized, selectedModel?.id, selectedModel?.providerKey]);
 
   const handleShowSettings = useCallback((options?: SettingsOpenOptions) => {
     setSettingsOptions({
@@ -589,7 +561,7 @@ const App: React.FC = () => {
           );
         }
       });
-      dispatch(setAvailableModels(allModels));
+      dispatch(setConfiguredModels({ models: allModels, ...config.model }));
     }
   };
 
@@ -930,25 +902,25 @@ const App: React.FC = () => {
               />
             )}
             <div className={mainView === 'cowork' ? 'h-full' : 'hidden'}>
-                  <CoworkView
-                    ref={coworkViewRef}
-                    onRequestAppSettings={handleShowSettings}
-                    isQuestionInputBlocked={
-                      isQuestionWindowVisible || displayedPlanInteraction !== undefined
-                    }
-                    inputBlockedMessage={
-                      displayedPlanInteraction ? i18nService.t('coworkPlanInputBlocked') : undefined
-                    }
-                    isSidebarCollapsed={isSidebarCollapsed}
-                    onToggleSidebar={handleToggleSidebar}
-                    onNewChat={handleNewChat}
-                    planInteraction={displayedPlanInteraction}
-                    onPlanRespond={result =>
-                      displayedPlanInteraction
-                        ? handleInteractionResponse(displayedPlanInteraction.requestId, result)
-                        : Promise.resolve(false)
-                    }
-                  />
+              <CoworkView
+                ref={coworkViewRef}
+                onRequestAppSettings={handleShowSettings}
+                isQuestionInputBlocked={
+                  isQuestionWindowVisible || displayedPlanInteraction !== undefined
+                }
+                inputBlockedMessage={
+                  displayedPlanInteraction ? i18nService.t('coworkPlanInputBlocked') : undefined
+                }
+                isSidebarCollapsed={isSidebarCollapsed}
+                onToggleSidebar={handleToggleSidebar}
+                onNewChat={handleNewChat}
+                planInteraction={displayedPlanInteraction}
+                onPlanRespond={result =>
+                  displayedPlanInteraction
+                    ? handleInteractionResponse(displayedPlanInteraction.requestId, result)
+                    : Promise.resolve(false)
+                }
+              />
             </div>
           </div>
         </div>

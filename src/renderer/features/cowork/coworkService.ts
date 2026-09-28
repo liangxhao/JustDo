@@ -22,6 +22,7 @@ import {
   dequeuePendingInteraction,
   enqueuePendingInteraction,
   moveSessionToGroup,
+  receiveSessionModelSelection,
   setConfig,
   setCurrentSession,
   setGroups,
@@ -53,6 +54,7 @@ import type {
   UpdateGroupInput,
 } from '@/features/cowork/coworkTypes';
 import { parseEditorDraftPayload } from '@/libs/openclaw-chat/model/editor-draft';
+import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 import { store } from '@/store';
 
@@ -83,6 +85,8 @@ export class CoworkService {
   private openClawEngineListenerAttached = false;
   private latestLoadSessionsRequestId = 0;
   private latestLoadSessionRequestId = 0;
+  private readonly sessionModelRevisions = new Map<string, number>();
+  private readonly sessionModelReadVersions = new Map<string, number>();
   private readonly runtimeIdleConfirmations = new Map<string, number>();
   private readonly runtimeStatusRequestVersions = new Map<string, number>();
   private readonly terminalIdleConfirmationTimers = new Map<string, number>();
@@ -197,6 +201,7 @@ export class CoworkService {
 
     // Complete listener
     const completeCleanup = cowork.onStreamComplete(({ sessionId, finalStatus }) => {
+      void this.refreshSessionModel(sessionId);
       // Use finalStatus from backend if provided.
       // If not provided, default to 'completed' (backward compatibility)
       const status: 'idle' | 'running' | 'completed' | 'error' = finalStatus ?? 'completed';
@@ -232,6 +237,7 @@ export class CoworkService {
     // Sessions changed listener (new channel sessions discovered by polling)
     const sessionsChangedCleanup = cowork.onSessionsChanged(() => {
       const beforeState = store.getState().cowork;
+      if (beforeState.currentSessionId) void this.refreshSessionModel(beforeState.currentSessionId);
       debugLog(
         '[CoworkService] onSessionsChanged: received IPC event, before sessions:',
         beforeState.sessions.length,
@@ -606,7 +612,12 @@ export class CoworkService {
   async startSession(
     options: CoworkStartOptions,
     hooks: StartSessionHooks = {},
-  ): Promise<{ session: CoworkSession | null; error?: string; cancelled?: boolean; acceptedRunId?: string }> {
+  ): Promise<{
+    session: CoworkSession | null;
+    error?: string;
+    cancelled?: boolean;
+    acceptedRunId?: string;
+  }> {
     const cowork = window.electron?.cowork;
     if (!cowork) {
       console.error('Cowork API not available');
@@ -667,7 +678,8 @@ export class CoworkService {
       }
       return {
         session: runningSession,
-        acceptedRunId: result.timing?.rootRunId ?? result.timing?.clientTurnId ?? options.clientTurnId,
+        acceptedRunId:
+          result.timing?.rootRunId ?? result.timing?.clientTurnId ?? options.clientTurnId,
       };
     }
 
@@ -808,7 +820,8 @@ export class CoworkService {
     if (!cowork) return false;
 
     const result = await cowork.deleteSessions(sessionIds);
-    if (result.deletedSessionIds?.length) store.dispatch(deleteSessionsAction(result.deletedSessionIds));
+    if (result.deletedSessionIds?.length)
+      store.dispatch(deleteSessionsAction(result.deletedSessionIds));
     if (result.success) {
       store.dispatch(deleteSessionsAction(sessionIds));
       return true;
@@ -875,9 +888,17 @@ export class CoworkService {
     const cowork = window.electron?.cowork;
     if (!cowork) return null;
     const requestId = ++this.latestLoadSessionRequestId;
+    const modelRevision = this.sessionModelRevisions.get(sessionId) ?? 0;
+    const modelReadVersion = (this.sessionModelReadVersions.get(sessionId) ?? 0) + 1;
+    this.sessionModelReadVersions.set(sessionId, modelReadVersion);
 
     const result = await cowork.getSession(sessionId);
     if (result.success && result.session) {
+      const selectedModel = cowork.getSessionModel
+        ? await cowork
+            .getSessionModel({ sessionId, agentId: result.session.agentId })
+            .catch(() => null)
+        : null;
       // Keep only the latest session load result to avoid stale async overwrites.
       if (requestId !== this.latestLoadSessionRequestId) {
         return result.session;
@@ -885,9 +906,20 @@ export class CoworkService {
       const mainRuntimeRunning =
         store.getState().cowork.sessionMainRuntimeActivity[sessionId] === true ||
         result.session.status === 'running';
-      const session = mainRuntimeRunning
+      let session = mainRuntimeRunning
         ? { ...result.session, status: 'running' as const }
         : result.session;
+      const modelChangedDuringRead =
+        modelRevision !== (this.sessionModelRevisions.get(sessionId) ?? 0) ||
+        modelReadVersion !== this.sessionModelReadVersions.get(sessionId);
+      session = {
+        ...session,
+        modelRef: modelChangedDuringRead
+          ? store.getState().cowork.userConfirmedSessionModelRefs[sessionId]
+          : selectedModel?.success && selectedModel.source === 'gateway'
+            ? selectedModel.modelRef
+            : session.modelRef,
+      };
       store.dispatch(setCurrentSession(session));
       if (cowork.getPlanMode) {
         const planModeBeforeLoad = store.getState().cowork.planModeBySession[sessionId];
@@ -1239,7 +1271,17 @@ export class CoworkService {
     if (!window.electron?.cowork?.patchSessionModel) {
       return { success: false, error: 'patchSessionModel API not available' };
     }
-    return window.electron.cowork.patchSessionModel(options);
+    const advanceRevision = () =>
+      this.sessionModelRevisions.set(
+        options.sessionId,
+        (this.sessionModelRevisions.get(options.sessionId) ?? 0) + 1,
+      );
+    advanceRevision();
+    try {
+      return await window.electron.cowork.patchSessionModel(options);
+    } finally {
+      advanceRevision();
+    }
   }
 
   async getSessionModel(options: { sessionId: string; agentId?: string }): Promise<{
@@ -1254,6 +1296,27 @@ export class CoworkService {
     return window.electron.cowork.getSessionModel(options);
   }
 
+  async refreshSessionModel(sessionId: string, agentId = 'main'): Promise<void> {
+    if (sessionId.startsWith('temp-')) return;
+    const revision = this.sessionModelRevisions.get(sessionId) ?? 0;
+    const contextKey = `${sessionId}\0${agentId}`;
+    if (store.getState().cowork.pendingModelSelectionTaskIds[contextKey] !== undefined) return;
+    const readVersion = (this.sessionModelReadVersions.get(sessionId) ?? 0) + 1;
+    this.sessionModelReadVersions.set(sessionId, readVersion);
+    try {
+      const result = await this.getSessionModel({ sessionId, agentId });
+      if (revision !== (this.sessionModelRevisions.get(sessionId) ?? 0)) return;
+      if (readVersion !== this.sessionModelReadVersions.get(sessionId)) return;
+      if (result.success && result.source === 'gateway' && result.modelRef) {
+        store.dispatch(
+          receiveSessionModelSelection({ sessionId, agentId, modelRef: result.modelRef }),
+        );
+      }
+    } catch {
+      // Offline reads must not replace the last confirmed user selection.
+    }
+  }
+
   async setDefaultModel(options: {
     modelId: string;
     providerKey?: string;
@@ -1263,7 +1326,11 @@ export class CoworkService {
     if (!window.electron?.cowork?.setDefaultModel) {
       return { success: false, error: 'setDefaultModel API not available' };
     }
-    return window.electron.cowork.setDefaultModel(options);
+    const result = await window.electron.cowork.setDefaultModel(options);
+    if (result.success && (!options.agentId || options.agentId === 'main')) {
+      configService.acceptDefaultModelSelection(options.modelId, options.providerKey);
+    }
+    return result;
   }
 
   async listModels(options?: { agentId?: string }): Promise<OpenClawModelsListResult> {

@@ -204,8 +204,7 @@ describe('applyModelSelectionUpdate', () => {
     const services = {
       patchSessionModel: vi.fn(
         async ({ sessionId, model: modelRef }: { sessionId: string; model: string }) => {
-          if (modelRef === defaultModelRef) sessionOverrides.delete(sessionId);
-          else sessionOverrides.set(sessionId, modelRef);
+          sessionOverrides.set(sessionId, modelRef);
           return { success: true, modelRef };
         },
       ),

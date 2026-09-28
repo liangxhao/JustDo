@@ -201,6 +201,7 @@ const coworkSlice = createSlice({
         ? state.userConfirmedSessionModelRefs[incomingSession.id]
         : undefined;
       const preservedModelRef =
+        incomingSession?.modelRef ??
         userConfirmedModelRef ??
         (incomingSession && state.currentSession?.id === incomingSession.id
           ? state.currentSession.modelRef
@@ -211,6 +212,16 @@ const coworkSlice = createSlice({
           : incomingSession;
       state.currentSession = nextSession;
       if (nextSession) {
+        // Fresh selected-model reads supersede completed optimistic selections.
+        // In-flight choices stay visible until their ordered mutation completes.
+        if (incomingSession?.modelRef) {
+          const contextKey = `${nextSession.id}\0${nextSession.agentId || 'main'}`;
+          if (state.pendingModelSelectionTaskIds[contextKey] === undefined) {
+            delete state.manualModelSelections[contextKey];
+            delete state.confirmedModelSelections[contextKey];
+            state.userConfirmedSessionModelRefs[nextSession.id] = incomingSession.modelRef;
+          }
+        }
         state.currentSessionId = nextSession.id;
         if (!nextSession.id.startsWith('temp-')) {
           const { id, title, status, pinned, agentId, external, createdAt, updatedAt } =
@@ -497,7 +508,8 @@ const coworkSlice = createSlice({
       const { contextKey, model } = action.payload;
       state.confirmedModelSelections[contextKey] = model;
       if (state.pendingModelSelectionTaskIds[contextKey] === undefined) {
-        state.manualModelSelections[contextKey] = model;
+        delete state.manualModelSelections[contextKey];
+        delete state.confirmedModelSelections[contextKey];
       }
     },
 
@@ -508,6 +520,8 @@ const coworkSlice = createSlice({
       const { contextKey, taskId } = action.payload;
       if (state.pendingModelSelectionTaskIds[contextKey] === taskId) {
         delete state.pendingModelSelectionTaskIds[contextKey];
+        delete state.manualModelSelections[contextKey];
+        delete state.confirmedModelSelections[contextKey];
       }
     },
 
@@ -517,7 +531,10 @@ const coworkSlice = createSlice({
     ) {
       const { contextKey, taskId } = action.payload;
       if (state.pendingModelSelectionTaskIds[contextKey] !== taskId) return;
-      state.manualModelSelections[contextKey] = state.confirmedModelSelections[contextKey] ?? null;
+      // Successful mutations already update the session/default source of truth.
+      // A failed choice must not leave a permanent override of that source.
+      delete state.manualModelSelections[contextKey];
+      delete state.confirmedModelSelections[contextKey];
       delete state.pendingModelSelectionTaskIds[contextKey];
     },
 
@@ -529,6 +546,19 @@ const coworkSlice = createSlice({
       if (state.currentSession?.id === action.payload.sessionId) {
         state.currentSession.modelRef = action.payload.modelRef;
       }
+    },
+
+    receiveSessionModelSelection(
+      state,
+      action: PayloadAction<{ sessionId: string; agentId: string; modelRef: string }>,
+    ) {
+      const { sessionId, agentId, modelRef } = action.payload;
+      const contextKey = `${sessionId}\0${agentId}`;
+      if (state.pendingModelSelectionTaskIds[contextKey] !== undefined) return;
+      delete state.manualModelSelections[contextKey];
+      delete state.confirmedModelSelections[contextKey];
+      state.userConfirmedSessionModelRefs[sessionId] = modelRef;
+      if (state.currentSession?.id === sessionId) state.currentSession.modelRef = modelRef;
     },
 
     clearCurrentSession(state) {
@@ -745,6 +775,7 @@ export const {
   completeManualModelSelection,
   rollbackManualModelSelection,
   confirmCurrentSessionModelSelection,
+  receiveSessionModelSelection,
   enqueuePendingInteraction,
   dequeuePendingInteraction,
   clearPendingInteractions,

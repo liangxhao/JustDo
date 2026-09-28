@@ -499,6 +499,7 @@ interface IElectronAPI {
   store: {
     get: <T = unknown>(key: string) => Promise<T>;
     set: <T>(key: string, value: T) => Promise<void>;
+    patchAppConfig: <T extends object>(patch: Partial<T>) => Promise<T>;
     remove: (key: string) => Promise<void>;
   };
   marketplace: {

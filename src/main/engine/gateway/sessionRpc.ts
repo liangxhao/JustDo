@@ -1,6 +1,7 @@
 import { normalizeModelRef, readModelRef } from '../../../shared/openclaw/modelRef';
 import { matchesModelSelectionIdentity } from '../../../shared/openclaw/modelSelectionIdentity';
 import type { CoworkStore } from '../../data/coworkStore';
+import { enqueueSessionModelOperation } from './sessionModelOperations';
 import type { GatewayClientLike } from './types';
 
 export type SessionModelApplyTarget = 'next-turn' | 'subsequent-calls';
@@ -71,10 +72,13 @@ export class SessionRpc {
   private enqueueModelUpdate(
     sessionId: string,
     task: () => Promise<SessionModelResult>,
+    agentId?: string,
     rejectBarrierOnFailure = true,
   ): Promise<SessionModelResult> {
     const previous = this.modelUpdateTails.get(sessionId) ?? Promise.resolve();
-    const result = previous.catch(() => {}).then(task);
+    const result = previous
+      .catch(() => {})
+      .then(() => enqueueSessionModelOperation(this.sessionKey(sessionId, agentId), task));
     const tail = result.then(value => {
       if (rejectBarrierOnFailure && 'error' in value) throw new Error(value.error);
     });
@@ -104,6 +108,9 @@ export class SessionRpc {
           try {
             const modelRef = await this.readCurrentModel(client, sessionId, agentId);
             if (modelRef) {
+              if (this.callbacks.store.getSession(sessionId)?.modelRef !== modelRef) {
+                this.callbacks.store.updateSession(sessionId, { modelRef });
+              }
               return { ok: true, modelRef, appliesTo: 'next-turn', source: 'gateway' };
             }
           } catch {
@@ -125,6 +132,7 @@ export class SessionRpc {
             }
           : { ok: false, error: 'Session model is not available' };
       },
+      agentId,
       false,
     );
   }
@@ -140,58 +148,63 @@ export class SessionRpc {
       return { ok: false, error: 'Model reference is required' };
     }
 
-    return this.enqueueModelUpdate(sessionId, async () => {
-      const client = this.callbacks.getGatewayClient();
-      if (!client) return { ok: false, error: 'OpenClaw gateway client not connected' };
+    return this.enqueueModelUpdate(
+      sessionId,
+      async () => {
+        const client = this.callbacks.getGatewayClient();
+        if (!client) return { ok: false, error: 'OpenClaw gateway client not connected' };
 
-      const session = this.callbacks.store.getSession(sessionId);
-      if (!session) return { ok: false, error: 'Session not found' };
-      const sessionKey = this.sessionKey(sessionId, agentId);
+        const session = this.callbacks.store.getSession(sessionId);
+        if (!session) return { ok: false, error: 'Session not found' };
+        const sessionKey = this.sessionKey(sessionId, agentId);
 
-      console.log(
-        '[OpenClawRuntime] patchSessionModel: sessionId=%s, key=%s, model=%s',
-        sessionId,
-        sessionKey,
-        normalizedModel,
-      );
+        console.log(
+          '[OpenClawRuntime] patchSessionModel: sessionId=%s, key=%s, model=%s',
+          sessionId,
+          sessionKey,
+          normalizedModel,
+        );
 
-      try {
-        const result = await client.request<{ resolved?: unknown }>('sessions.patch', {
-          key: sessionKey,
-          model: normalizedModel,
-        });
-        // Use the mutation's resolved identity, including Gateway aliases. The
-        // entry's model fields may still describe the preceding execution.
-        const modelRef = readModelRef(result.resolved);
-        if (!modelRef) throw new Error('sessions.patch returned no resolved model');
-        this.callbacks.store.updateSession(sessionId, { modelRef });
-        return { ok: true, modelRef, appliesTo, source: 'gateway' };
-      } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
-        let currentModelRef: string | undefined;
         try {
-          currentModelRef = (await this.readCurrentModel(client, sessionId, agentId)) ?? undefined;
-          // Recover a lost mutation response only when the selected identity
-          // confirms the request. Built-in discovery IDs also expose their
-          // provider/model identity without the local catalog wrapper.
-          if (
-            isAmbiguousModelPatchFailure(error) &&
-            currentModelRef &&
-            matchesModelSelectionIdentity(normalizedModel, currentModelRef)
-          ) {
-            this.callbacks.store.updateSession(sessionId, { modelRef: currentModelRef });
-            return { ok: true, modelRef: currentModelRef, appliesTo, source: 'gateway' };
+          const result = await client.request<{ resolved?: unknown }>('sessions.patch', {
+            key: sessionKey,
+            model: normalizedModel,
+          });
+          // Use the mutation's resolved identity, including Gateway aliases. The
+          // entry's model fields may still describe the preceding execution.
+          const modelRef = readModelRef(result.resolved);
+          if (!modelRef) throw new Error('sessions.patch returned no resolved model');
+          this.callbacks.store.updateSession(sessionId, { modelRef });
+          return { ok: true, modelRef, appliesTo, source: 'gateway' };
+        } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          let currentModelRef: string | undefined;
+          try {
+            currentModelRef =
+              (await this.readCurrentModel(client, sessionId, agentId)) ?? undefined;
+            // Recover a lost mutation response only when the selected identity
+            // confirms the request. Built-in discovery IDs also expose their
+            // provider/model identity without the local catalog wrapper.
+            if (
+              isAmbiguousModelPatchFailure(error) &&
+              currentModelRef &&
+              matchesModelSelectionIdentity(normalizedModel, currentModelRef)
+            ) {
+              this.callbacks.store.updateSession(sessionId, { modelRef: currentModelRef });
+              return { ok: true, modelRef: currentModelRef, appliesTo, source: 'gateway' };
+            }
+          } catch {
+            // The patch failure is already actionable; do not hide it behind recovery errors.
           }
-        } catch {
-          // The patch failure is already actionable; do not hide it behind recovery errors.
+          console.warn('[OpenClawRuntime] patchSessionModel: failed:', errorMsg);
+          return {
+            ok: false,
+            error: errorMsg,
+            ...(currentModelRef ? { modelRef: currentModelRef, source: 'gateway' as const } : {}),
+          };
         }
-        console.warn('[OpenClawRuntime] patchSessionModel: failed:', errorMsg);
-        return {
-          ok: false,
-          error: errorMsg,
-          ...(currentModelRef ? { modelRef: currentModelRef, source: 'gateway' as const } : {}),
-        };
-      }
-    });
+      },
+      agentId,
+    );
   }
 }

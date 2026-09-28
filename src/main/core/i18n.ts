@@ -16,6 +16,9 @@ export type LanguageType = 'zh' | 'en';
 
 const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
+    selectedModelUnavailable: '所选模型已停用或移除，请重新选择可用模型。',
+    selectedModelProviderNotReady: '所选模型的提供商尚未就绪，请检查配置和认证状态。',
+    selectedModelRouteChanged: '所选模型的路由已变更，请重新选择模型。',
     extensionConversionNotImplemented: '该扩展需要转换为 OpenClaw 格式，转换功能暂未实现。',
     agentTeamSkillSyncFailed: '扩展开关已保存，但 Agent Team 技能同步未完成。请重试同一开关操作。',
     builtinModelAuthenticationUnavailable: '内置模型认证已失效，请等待登录凭据刷新。',
@@ -80,6 +83,12 @@ const translations: Record<LanguageType, Record<string, string>> = {
     browserContextSaveImage: '图片另存为…',
   },
   en: {
+    selectedModelUnavailable:
+      'The selected model is no longer enabled. Please select an available model.',
+    selectedModelProviderNotReady:
+      'The selected provider is not ready. Please check its configuration and authentication.',
+    selectedModelRouteChanged:
+      'The selected model route has changed. Please select the model again.',
     extensionConversionNotImplemented:
       'This extension requires conversion to OpenClaw format. Conversion is not implemented yet.',
     agentTeamSkillSyncFailed:

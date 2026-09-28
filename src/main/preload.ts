@@ -6,6 +6,7 @@ import {
   AgentIpc,
   type AgentProfileInput,
 } from '../shared/agents/agents';
+import { AppConfigIpc, type AppConfigPatch } from '../shared/app/appConfig';
 import {
   type AppReleaseHistoryResult,
   type AppUpdateCheckFrequency,
@@ -233,6 +234,7 @@ contextBridge.exposeInMainWorld('electron', {
   store: {
     get: (key: string) => ipcRenderer.invoke('store:get', key),
     set: (key: string, value: unknown) => ipcRenderer.invoke('store:set', key, value),
+    patchAppConfig: (patch: AppConfigPatch) => ipcRenderer.invoke(AppConfigIpc.Patch, patch),
     remove: (key: string) => ipcRenderer.invoke('store:remove', key),
   },
   marketplace: {

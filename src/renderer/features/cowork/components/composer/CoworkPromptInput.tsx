@@ -305,6 +305,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       }
       setModelCatalogLoading(true);
       try {
+        if (sessionId) await coworkService.refreshSessionModel(sessionId, effectiveAgentId);
         const result = await coworkService.listModels({ agentId: effectiveAgentId });
         if (requestId === modelCatalogRequestRef.current) {
           setOpenClawModelCatalog(result.success ? result.models : []);
@@ -314,7 +315,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       } finally {
         if (requestId === modelCatalogRequestRef.current) setModelCatalogLoading(false);
       }
-    }, [availableModels, effectiveAgentId, remoteManaged, showModelSelector]);
+    }, [availableModels, effectiveAgentId, remoteManaged, sessionId, showModelSelector]);
     useEffect(() => {
       setOpenClawModelCatalog([]);
       void loadOpenClawModelCatalog();
@@ -340,7 +341,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const hasUnresolvedSessionModel = !!sessionModelRef && !confirmedPropModel;
     const baseSelectedModel = hasUnresolvedSessionModel
       ? null
-      : (confirmedPropModel ?? (hasUnresolvedAgentModel ? null : agentSelectedModel));
+      : (confirmedPropModel ?? agentSelectedModel);
     const modelSelectionContextKey = `${sessionId ?? '__home__'}\0${effectiveAgentId ?? ''}`;
     const manualModelSelection = useSelector(
       (state: RootState) => state.cowork.manualModelSelections[modelSelectionContextKey],
@@ -2557,7 +2558,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                             aria-label={i18nService.t('sideChatModelReadOnly')}
                           >
                             <span className="truncate text-sm">
-                              {effectiveSelectedModel?.name ?? ''}
+                              {effectiveSelectedModel?.name ||
+                                i18nService.t('modelSelectorChooseModel')}
                             </span>
                           </div>
                         ) : (
@@ -2565,6 +2567,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                             dropdownDirection="up"
                             dropdownAlign="right"
                             value={effectiveSelectedModel}
+                            emptyLabel={
+                              hasUnresolvedSessionModel || hasUnresolvedAgentModel
+                                ? i18nService.t('modelSelectorUnavailableSelection')
+                                : undefined
+                            }
                             models={selectableModels}
                             onOpen={() => void loadOpenClawModelCatalog()}
                             disabled={disabled}

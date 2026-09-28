@@ -32,6 +32,110 @@ const createCredential = () => {
 };
 
 describe('syncBuiltinModelProvider', () => {
+  test.each([
+    { selected: 'retired', listed: ['disabled', 'first', 'second'], expected: 'first' },
+    { selected: 'second', listed: ['disabled', 'first', 'second'], expected: 'second' },
+    { selected: 'disabled', listed: ['disabled', 'first'], expected: 'first' },
+    { selected: 'retired', listed: ['disabled'], expected: 'retired' },
+    { selected: 'retired', listed: [], expected: 'retired' },
+  ])(
+    'restores $selected to $expected from the refreshed enabled catalog',
+    async ({ selected, listed, expected }) => {
+      const config = {
+        model: { defaultModel: selected, defaultModelProvider: 'builtin_models' },
+        providers: {
+          builtin_models: {
+            enabled: true,
+            apiKey: '',
+            baseUrl: 'https://example.test/v1',
+            models: [
+              { id: 'retired', name: 'Retired' },
+              { id: 'disabled', name: 'Disabled', enabled: false },
+            ],
+          },
+        },
+      };
+      const set = vi.fn();
+      const store = { get: vi.fn(() => config), set } as unknown as SqliteStore;
+      vi.stubGlobal(
+        'fetch',
+        vi
+          .fn()
+          .mockResolvedValueOnce({
+            ok: true,
+            json: async () => ({ data: listed.map(id => ({ id })) }),
+          })
+          .mockResolvedValueOnce({ ok: true, json: async () => ({ data: [] }) }),
+      );
+
+      await syncBuiltinModelProvider(store, { access: BuiltinModelAccess.Enabled });
+
+      expect(set.mock.calls[0][1].model).toEqual({
+        defaultModel: expected,
+        defaultModelProvider: 'builtin_models',
+      });
+    },
+  );
+
+  test('does not replace a selected model when catalog loading fails', async () => {
+    const config = {
+      model: { defaultModel: 'selected', defaultModelProvider: 'builtin_models' },
+      providers: {
+        custom: {
+          enabled: true,
+          apiKey: 'test',
+          baseUrl: 'https://example.test/v1',
+          models: [{ id: 'other', name: 'Other' }],
+        },
+      },
+    };
+    const set = vi.fn();
+    const store = { get: vi.fn(() => config), set } as unknown as SqliteStore;
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
+
+    await syncBuiltinModelProvider(store, { access: BuiltinModelAccess.Enabled });
+
+    expect(set.mock.calls[0][1].model).toEqual(config.model);
+  });
+
+  test('uses the first ready configured provider when the built-in catalog becomes empty', async () => {
+    const config = {
+      model: { defaultModel: 'retired', defaultModelProvider: 'builtin_models' },
+      providers: {
+        builtin_models: {
+          enabled: true,
+          apiKey: '',
+          baseUrl: 'https://example.test/v1',
+          models: [{ id: 'retired', name: 'Retired' }],
+          embeddingModels: [{ id: 'retired-embedding', name: 'Retired embedding' }],
+        },
+        custom: {
+          enabled: true,
+          apiKey: 'test',
+          baseUrl: 'https://custom.test/v1',
+          models: [{ id: 'first', name: 'First' }],
+        },
+      },
+    };
+    const set = vi.fn();
+    const store = { get: vi.fn(() => config), set } as unknown as SqliteStore;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: [] }) }),
+    );
+
+    await syncBuiltinModelProvider(store, { access: BuiltinModelAccess.Enabled });
+
+    expect(set.mock.calls[0][1].model).toEqual({
+      defaultModel: 'first',
+      defaultModelProvider: 'custom',
+    });
+    expect(set.mock.calls[0][1].providers.builtin_models).toMatchObject({
+      models: [],
+      embeddingModels: [],
+    });
+  });
+
   beforeEach(() => {
     vi.mocked(mainProcessFetch).mockClear();
     setActiveBuiltinModelCredential(createCredential());
@@ -42,14 +146,15 @@ describe('syncBuiltinModelProvider', () => {
     vi.unstubAllGlobals();
   });
 
-  test('clears cached models when refreshing the built-in provider fails', async () => {
+  test('retains cached models and enabled flags when refreshing the built-in provider fails', async () => {
     const appConfig = {
       providers: {
         builtin_models: {
           enabled: true,
           apiKey: 'cached-key',
           baseUrl: 'https://cached.example.com/v1',
-          models: [{ id: 'cached-model', name: 'Cached model' }],
+          models: [{ id: 'cached-model', name: 'Cached model', enabled: false }],
+          embeddingModels: [{ id: 'cached-embedding', name: 'Cached embedding' }],
         },
       },
     };
@@ -62,14 +167,20 @@ describe('syncBuiltinModelProvider', () => {
 
     await syncBuiltinModelProvider(store, { access: BuiltinModelAccess.Enabled });
 
-    expect(mainProcessFetch).toHaveBeenCalledWith(expect.stringContaining('/models'),
-      expect.objectContaining({ redirect: 'error' }));
+    expect(mainProcessFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/models'),
+      expect.objectContaining({ redirect: 'error' }),
+    );
 
     expect(set).toHaveBeenCalledWith(
       'app_config',
       expect.objectContaining({
         providers: expect.objectContaining({
-          builtin_models: expect.objectContaining({ models: [] }),
+          builtin_models: expect.objectContaining({
+            apiKey: '',
+            models: appConfig.providers.builtin_models.models,
+            embeddingModels: appConfig.providers.builtin_models.embeddingModels,
+          }),
         }),
       }),
     );
@@ -299,5 +410,104 @@ describe('syncBuiltinModelProvider', () => {
 
     expect(set).toHaveBeenCalledTimes(1);
     expect(set.mock.calls[0]?.[1].providers).toEqual({});
+  });
+
+  test('preserves model selection and provider edits made while the catalog is loading', async () => {
+    let resolveModels!: (value: unknown) => void;
+    const response = new Promise(resolve => {
+      resolveModels = resolve;
+    });
+    let config = {
+      model: { defaultModel: 'old', defaultModelProvider: 'builtin_models' },
+      providers: {
+        builtin_models: {
+          enabled: true,
+          apiKey: '',
+          baseUrl: 'https://example.test/v1',
+          models: [{ id: 'chat', name: 'Chat', enabled: true }],
+        },
+      },
+    };
+    const store = {
+      get: vi.fn(() => config),
+      set: vi.fn((_key, value) => {
+        config = value;
+      }),
+    } as unknown as SqliteStore;
+    const fetchMock = vi
+      .fn()
+      .mockReturnValueOnce(response)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ data: [] }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const refreshing = syncBuiltinModelProvider(store, { access: BuiltinModelAccess.Enabled });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const selectedModel = { defaultModel: 'selected', defaultModelProvider: 'custom' };
+    const customProvider = {
+      enabled: true,
+      apiKey: 'test',
+      baseUrl: 'https://custom.test/v1',
+      models: [{ id: 'selected', name: 'Selected', enabled: true }],
+    };
+    config = {
+      model: selectedModel,
+      providers: {
+        ...config.providers,
+        ...{ custom: customProvider },
+        builtin_models: {
+          ...config.providers.builtin_models,
+          models: [{ id: 'chat', name: 'Chat', enabled: false }],
+        },
+      },
+    };
+    resolveModels({ ok: true, json: async () => ({ data: [{ id: 'chat' }] }) });
+    await refreshing;
+
+    expect(config.model).toEqual(selectedModel);
+    expect(config.providers).toMatchObject({ custom: customProvider });
+    expect(config.providers.builtin_models.models).toEqual([
+      expect.objectContaining({ id: 'chat', enabled: false }),
+    ]);
+  });
+
+  test('retains the latest cached catalog when a pending refresh fails', async () => {
+    let rejectModels!: (error: Error) => void;
+    const response = new Promise((_resolve, reject) => {
+      rejectModels = reject;
+    });
+    let config = {
+      model: { defaultModel: 'chat', defaultModelProvider: 'builtin_models' },
+      providers: {
+        builtin_models: {
+          enabled: true,
+          apiKey: 'legacy-key',
+          baseUrl: 'https://example.test/v1',
+          models: [{ id: 'chat', name: 'Chat', enabled: true }],
+          embeddingModels: [{ id: 'embedding', name: 'Embedding' }],
+        },
+      },
+    };
+    const store = {
+      get: vi.fn(() => config),
+      set: vi.fn((_key, value) => {
+        config = value;
+      }),
+    } as unknown as SqliteStore;
+    const fetchMock = vi.fn().mockReturnValue(response);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const refreshing = syncBuiltinModelProvider(store, { access: BuiltinModelAccess.Enabled });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    config.providers.builtin_models.models[0].enabled = false;
+    config.providers.builtin_models.embeddingModels = [{ id: 'latest', name: 'Latest' }];
+    rejectModels(new Error('offline'));
+    await refreshing;
+
+    expect(config.model).toEqual({ defaultModel: 'chat', defaultModelProvider: 'builtin_models' });
+    expect(config.providers.builtin_models).toMatchObject({
+      apiKey: '',
+      models: [{ id: 'chat', name: 'Chat', enabled: false }],
+      embeddingModels: [{ id: 'latest', name: 'Latest' }],
+    });
   });
 });

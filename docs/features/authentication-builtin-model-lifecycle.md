@@ -2,6 +2,8 @@
 
 内置 provider 的稳定 ID 为 builtin_models。当前生产路径使用登录 mtoken 换短期 JWT，服务端 Team 授权，OpenClaw SecretRef 解析。本文按客户端配置、换证、模型发现和服务端 Hook 分层说明，不把登录文件、JWT 和模型 API Key 混为同一凭据。
 
+登录模块实际接线、调用顺序和失败语义见[登录与模型生命周期接口](../developer-integration/login-model-lifecycle-api.md)。
+
 ## 1. 部署前必须确定的配置
 
 `src/config/builtinModelAuth.ts` 编入 Main，包含完整 tokenExchangeUrl、maxJwtLifetimeSeconds 和仅开发模式使用的认证选择。默认换证 URL 为空，JWT 上限 300 秒；空地址不从模型 base URL 推断，也不发送 mtoken。
@@ -68,7 +70,7 @@ builtin provider 在 SQLite/Renderer 中 apiKey 为空，只保存 base URL、�
 
 凭据缺失/失效时清内存、中止旧发现，移除 builtin provider、相关 memory search 引用与受管 SecretRef，同步 Gateway 并通知 Renderer；不继续请求模型服务。
 
-发现失败但凭据有效且 generation 仍最新时，保留 provider 壳并清空目录，避免沿用上一账号模型。可选 info 失败不等于必需 models 失败，错误应区分。
+发现失败但凭据有效且 generation 仍最新时，保留最近成功目录及最新模型启用状态，避免把暂时网络失败误判为模型下架。账号切换必须先完成退出清理，再写入新账号并调用登录入口，避免继承上一账号缓存。成功返回空目录则真实清空，已失效默认模型按可用列表回退。当前可选 `/model/info` 返回非成功 HTTP 状态时降级为无增强元数据；网络异常或 JSON 解析失败仍按整次目录刷新失败处理并保留缓存。
 
 ## 7. 服务端长期授权
 

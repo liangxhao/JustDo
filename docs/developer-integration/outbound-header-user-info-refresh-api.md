@@ -2,6 +2,9 @@
 
 适用调用方：后续登录模块、退出登录流程和 Cookie 定时续期任务。接口在 Main 进程执行。
 
+完整登录/退出应优先使用[登录与模型生命周期入口](login-model-lifecycle-api.md)，它已包含本页的缓存刷新；
+只有独立 Cookie 更新等场景需要直接调用本页接口。
+
 ## 接口
 
 Main 进程从 `src/main/core/network/outboundHeaderPolicyConfig.ts` 导入：
