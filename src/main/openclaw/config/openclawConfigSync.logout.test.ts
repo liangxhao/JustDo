@@ -295,7 +295,7 @@ describe('OpenClaw auth logout config sync', () => {
       delete config.tools.allow;
       delete config.tools.alsoAllow;
       config.tools[policy === 'emptyAllow' ? 'allow' : policy] = policy === 'emptyAllow' ? [] : ['operator-tool'];
-      config.tools.deny = ['operator-denied-tool', 'typesafe_evaluate', 'skill_workshop'];
+      config.tools.deny = ['operator-denied-tool', 'typesafe_evaluate', 'skill_workshop', 'tts'];
       fs.writeFileSync(configPath, JSON.stringify(config));
       for (const reason of ['startup', 'settings', BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout]) {
         expect(sync.sync(reason).ok).toBe(true);
@@ -309,6 +309,7 @@ describe('OpenClaw auth logout config sync', () => {
         expect(saved.tools.deny).toContain('operator-denied-tool');
         expect(saved.tools.deny).toContain('typesafe_evaluate');
         expect(saved.tools.deny).not.toContain('skill_workshop');
+        expect(saved.tools.deny).not.toContain('tts');
       }
     }
   });
@@ -1115,14 +1116,14 @@ describe('OpenClaw auth logout config sync', () => {
     expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).skills.workshop.autonomous.mode).toBe(mode ?? 'off');
   });
 
-  test('a second no-model sync removes the retired skill_workshop deny entry', () => {
+  test('a second no-model sync removes retired managed tool deny entries', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-tool-deny-'));
     temporaryDirectories.push(directory);
     const configPath = path.join(directory, 'openclaw.json');
 
     expect(writeMinimalConfig(configPath, 'startup')).toMatchObject({ ok: true });
     const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    existing.tools.deny = ['skill_workshop', 'custom-denied-tool'];
+    existing.tools.deny = ['skill_workshop', 'tts', 'custom-denied-tool'];
     fs.writeFileSync(configPath, JSON.stringify(existing), 'utf8');
 
     expect(writeMinimalConfig(configPath, BuiltinModelSyncReason.ManualRefresh)).toMatchObject({
@@ -1242,10 +1243,10 @@ describe('OpenClaw auth logout config sync', () => {
     expect(verifyLoggedOutOpenClawConfig(configPath)).toEqual({ ok: true });
   });
 
-  test('auth-scoped sync removes the retired skill_workshop deny entry', () => {
+  test('auth-scoped sync removes retired managed tool deny entries', () => {
     const configPath = writeExistingBuiltinConfig();
     const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    existing.tools = { deny: ['skill_workshop', 'custom-denied-tool'] };
+    existing.tools = { deny: ['skill_workshop', 'tts', 'custom-denied-tool'] };
     fs.writeFileSync(configPath, JSON.stringify(existing), 'utf8');
 
     expect(writeMinimalConfig(configPath, BuiltinModelSyncReason.AuthLogout)).toMatchObject({

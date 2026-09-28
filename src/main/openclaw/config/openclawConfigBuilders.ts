@@ -379,7 +379,7 @@ export const removeRetiredManagedToolDenyEntries = (
   tools: Record<string, unknown>,
 ): Record<string, unknown> => {
   if (!Array.isArray(tools.deny)) return tools;
-  const deny = tools.deny.filter(value => value !== 'skill_workshop');
+  const deny = tools.deny.filter(value => value !== 'skill_workshop' && value !== 'tts');
   return deny.length === tools.deny.length ? tools : { ...tools, deny };
 };
 
@@ -1613,7 +1613,6 @@ export const buildManagedOpenClawConnectivityConfig = (
     deny: [
       'ask_user',
       'web_search',
-      'tts',
       'message',
       'nodes',
       'gateway',

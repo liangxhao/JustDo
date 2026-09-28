@@ -534,7 +534,6 @@ describe('OpenClaw managed connectivity config', () => {
         deny: [
           'ask_user',
           'web_search',
-          'tts',
           'message',
           'nodes',
           'gateway',

@@ -462,7 +462,7 @@ export class OpenClawConfigSync {
         deny: [...new Set([
           ...(Array.isArray(connectivityTools.deny) ? connectivityTools.deny : []),
           ...(isRecord(existingConfig?.tools) && Array.isArray(existingConfig.tools.deny)
-            ? existingConfig.tools.deny.filter(value => typeof value === 'string' && value !== 'skill_workshop')
+            ? existingConfig.tools.deny.filter(value => typeof value === 'string' && value !== 'skill_workshop' && value !== 'tts')
             : []),
         ])],
         codeMode: mergeManagedOpenClawCodeModeConfig(
