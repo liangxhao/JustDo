@@ -2,6 +2,32 @@
 
 当前 Cowork 执行引擎是 OpenClaw。Router 提供稳定产品接口，Adapter 隔离原生 wire 与生命周期，Manager 托管运行时进程。本文按当前 v2026.9.6 集成组织，运行时补丁清单只维护在[版本目录](../../scripts/patches/v2026.9.6/README.md)。
 
+## Code Mode 工具编排
+
+运行设置中的 Code Mode 是原生 OpenClaw 工具编排能力，保存于现有
+`agentRuntimeSettings:v1` 配置记录的 `codeMode.mode`，取值为 `off / auto / on`。
+新配置默认 `off`，旧记录缺少该字段时补为 `off`，不重置其他运行偏好。界面保留
+“自动（待模型支持）”但禁止选择；已有显式 `auto` 值保留并如实显示，可改选开启或关闭。
+配置同步在完整配置、无模型配置、
+登录与退出路径中映射到 `tools.codeMode.enabled = false / "auto" / true`，并选择
+`executor: "quickjs"`。原生超时、输出、并发等其他 Code Mode 参数保留。
+
+`auto` 由实际模型目录的 `compat.codeMode` 能力标记决定，不根据模型名称自行猜测。
+应用投影的自定义模型可能没有该标记，因此自动模式不保证启用；需要验证这些模型时可
+选择开启。该设置控制嵌入式 OpenClaw 运行时，不控制外部 ACP 或 provider-native harness。
+本期界面管理全局启用方式，不提供逐模型覆盖编辑器；原生覆盖优先级由 OpenClaw 判定，
+认证范围同步保留已有 agent/model 覆盖。普通完整同步仍按应用的托管模型与助手配置重建，
+不能把手改生成配置当作持久的逐模型设置入口。
+
+模型生成的 JavaScript、工具目录/MCP 发现、结果暂存、`exec / wait`、取消及失败恢复
+均由 OpenClaw 管理；Main 不增加执行器或结果缓存。QuickJS 插件的显式禁用仍受尊重，
+执行器缺失或被禁用时原生运行失败，不自动降级到 Node VM。内部工具调用继续经过
+Gateway 权限、审批及 hooks；QuickJS 隔离本身不授予额外工具权限。
+
+可运行 `node scripts/test/verify-code-mode-runtime.mjs [runtime-directory]`，只读检查
+打包产物的 worker、WASM、文本编码模块，并实际验证执行、等待恢复、失败与取消。
+该检查无需模型凭据，不替代真实模型/MCP/审批端到端验证。
+
 ## 1. 三层控制各管什么
 
 | 层                           | 所有状态                                               | 主要入口                     |

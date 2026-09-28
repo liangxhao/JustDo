@@ -38,7 +38,7 @@ interface ThemedSelectProps {
   id: string;
   value: string;
   onChange: (value: string) => void;
-  options: { value: string; label: string }[];
+  options: { value: string; label: string; disabled?: boolean }[];
   className?: string;
   label?: string;
   ariaLabel?: string;
@@ -65,10 +65,17 @@ const ThemedSelect: React.FC<ThemedSelectProps> = ({
   // Find the selected option label
   const selectedOption = options.find(option => option.value === value);
   const selectedIndex = options.findIndex(option => option.value === value);
+  const firstEnabledIndex = options.findIndex(option => !option.disabled);
+  const lastEnabledIndex = options.reduce(
+    (last, option, index) => (option.disabled ? last : index),
+    -1,
+  );
 
   const openDropdown = () => {
-    if (disabled || options.length === 0) return;
-    setActiveIndex(selectedIndex >= 0 ? selectedIndex : 0);
+    if (disabled || firstEnabledIndex < 0) return;
+    setActiveIndex(
+      selectedIndex >= 0 && !options[selectedIndex].disabled ? selectedIndex : firstEnabledIndex,
+    );
     setIsOpen(true);
   };
 
@@ -156,6 +163,7 @@ const ThemedSelect: React.FC<ThemedSelectProps> = ({
 
   // Handle option selection
   const handleOptionClick = (optionValue: string) => {
+    if (options.find(option => option.value === optionValue)?.disabled) return;
     onChange(optionValue);
     closeDropdown(true);
   };
@@ -166,7 +174,7 @@ const ThemedSelect: React.FC<ThemedSelectProps> = ({
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();
         openDropdown();
-        if (event.key === 'ArrowUp') setActiveIndex(options.length - 1);
+        if (event.key === 'ArrowUp') setActiveIndex(lastEnabledIndex);
       }
       return;
     }
@@ -174,12 +182,18 @@ const ThemedSelect: React.FC<ThemedSelectProps> = ({
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
       const direction = event.key === 'ArrowDown' ? 1 : -1;
-      setActiveIndex(current => (current + direction + options.length) % options.length);
+      setActiveIndex(current => {
+        for (let offset = 1; offset <= options.length; offset += 1) {
+          const next = (current + direction * offset + options.length) % options.length;
+          if (!options[next].disabled) return next;
+        }
+        return -1;
+      });
       return;
     }
     if (event.key === 'Home' || event.key === 'End') {
       event.preventDefault();
-      setActiveIndex(event.key === 'Home' ? 0 : options.length - 1);
+      setActiveIndex(event.key === 'Home' ? firstEnabledIndex : lastEnabledIndex);
       return;
     }
     if (event.key === 'Enter' || event.key === ' ') {
@@ -244,13 +258,16 @@ const ThemedSelect: React.FC<ThemedSelectProps> = ({
                       id={`${id}-option-${index}`}
                       data-option-index={index}
                       key={option.value}
-                      className={`cursor-pointer select-none relative py-1.5 pl-3 pr-9 hover:bg-surface-raised ${
+                      className={`select-none relative py-1.5 pl-3 pr-9 ${option.disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer hover:bg-surface-raised'} ${
                         index === activeIndex ? 'bg-surface-raised' : ''
                       }`}
                       role="option"
                       aria-selected={option.value === value}
+                      aria-disabled={option.disabled || undefined}
                       onMouseDown={event => event.preventDefault()}
-                      onMouseEnter={() => setActiveIndex(index)}
+                      onMouseEnter={() => {
+                        if (!option.disabled) setActiveIndex(index);
+                      }}
                       onClick={() => handleOptionClick(option.value)}
                     >
                       <span

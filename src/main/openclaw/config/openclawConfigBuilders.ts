@@ -7,6 +7,7 @@ import { BrowserMode, type BrowserMode as BrowserModeValue } from '../../../shar
 import { OPENAI_REQUEST_USER_AGENT } from '../../../shared/cowork/modelRequestHeaders';
 import { normalizeOpenClawAgentId } from '../../../shared/openclaw/agentId';
 import {
+  AgentRuntimeCodeMode,
   type AgentRuntimeSettings,
   createDefaultAgentRuntimeSettings,
   DEFAULT_AGENT_RUNTIME_SETTINGS,
@@ -1048,6 +1049,14 @@ export const buildAuthScopedOpenClawConfig = (
     },
     tools: {
       ...removeRetiredManagedToolDenyEntries(existingTools ?? {}),
+      ...(isRecord(managedConfig.tools) && isRecord(managedConfig.tools.codeMode)
+        ? {
+            codeMode: {
+              ...(isRecord(existingTools?.codeMode) ? existingTools.codeMode : {}),
+              ...managedConfig.tools.codeMode,
+            },
+          }
+        : {}),
       swarm: {
         ...(isRecord(existingTools?.swarm) ? existingTools.swarm : {}),
         ...(isRecord(managedConfig.tools) && isRecord(managedConfig.tools.swarm)
@@ -1533,6 +1542,20 @@ export const buildManagedOpenClawCompactionConfig = () => ({
   midTurnPrecheck: {
     enabled: true,
   },
+});
+
+export const mergeManagedOpenClawCodeModeConfig = (
+  existing: unknown,
+  settings: AgentRuntimeSettings = DEFAULT_AGENT_RUNTIME_SETTINGS,
+): Record<string, unknown> => ({
+  ...(isRecord(existing) ? existing : {}),
+  enabled:
+    settings.codeMode.mode === AgentRuntimeCodeMode.Auto
+      ? 'auto'
+      : settings.codeMode.mode === AgentRuntimeCodeMode.On,
+  // Model-authored programs run in the native isolated executor. Permissions
+  // and approvals remain on the Gateway tool bridge.
+  executor: 'quickjs',
 });
 
 export const mergeManagedOpenClawSwarmConfig = (

@@ -16,6 +16,7 @@ import {
 } from '@shared/cowork/sessionGoal';
 import {
   AGENT_RUNTIME_LIMITS,
+  AgentRuntimeCodeMode,
   AgentRuntimeDelegationMode,
   AgentRuntimeSessionVisibility,
   type AgentRuntimeSettings,
@@ -142,6 +143,7 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
   onMaxGoalContinuationTurnsChange,
 }) => {
   const [agentOpen, setAgentOpen] = useState(true);
+  const [codeModeOpen, setCodeModeOpen] = useState(true);
   const [mcpOpen, setMcpOpen] = useState(true);
   const [swarmOpen, setSwarmOpen] = useState(true);
   const [subagentOpen, setSubagentOpen] = useState(true);
@@ -391,6 +393,39 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
           />
         </SettingRow>
       </section>
+      <CollapsibleSection
+        title={i18nService.t('agentRuntimeCodeModeTitle')}
+        description={i18nService.t('agentRuntimeCodeModeDescription')}
+        open={codeModeOpen}
+        onToggle={() => setCodeModeOpen(value => !value)}
+      >
+        <SettingRow
+          label={i18nService.t('agentRuntimeCodeModeActivation')}
+          description={i18nService.t('agentRuntimeCodeModeHint')}
+        >
+          <ThemedSelect
+            id="agent-runtime-code-mode"
+            value={settings.codeMode.mode}
+            onChange={value =>
+              onChange({
+                ...settings,
+                codeMode: { mode: value as AgentRuntimeSettings['codeMode']['mode'] },
+              })
+            }
+            options={[
+              { value: AgentRuntimeCodeMode.Off, label: i18nService.t('agentRuntimeCodeModeOff') },
+              {
+                value: AgentRuntimeCodeMode.Auto,
+                label: i18nService.t('agentRuntimeCodeModeAuto'),
+                disabled: true,
+              },
+              { value: AgentRuntimeCodeMode.On, label: i18nService.t('agentRuntimeCodeModeOn') },
+            ]}
+            ariaLabel={i18nService.t('agentRuntimeCodeModeActivation')}
+            className="py-2 text-xs"
+          />
+        </SettingRow>
+      </CollapsibleSection>
       <CollapsibleSection
         title={i18nService.t('agentRuntimeMcpSectionTitle')}
         description={i18nService.t('agentRuntimeMcpSectionDescription')}

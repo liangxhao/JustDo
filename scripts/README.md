@@ -28,3 +28,8 @@ Versioned patches remain under `patches/`; runtime orchestration belongs in
 prepared Gateway using native session baseline filtering. It creates its own temporary config,
 credentials, Git repository and sessions, stops the test Gateway when finished,
 and prints only synthetic evidence. It never uses the application's live state.
+
+`node scripts/test/verify-code-mode-runtime.mjs [runtime-directory]` checks the
+packaged QuickJS Code Mode worker and assets, then exercises execution,
+wait/resume, text encoding, errors, and cancellation without model/API calls.
+It defaults to `vendor/openclaw-runtime/current` and does not modify the runtime.

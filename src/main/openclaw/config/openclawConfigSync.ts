@@ -40,6 +40,7 @@ import {
   listInstalledOpenClawExtensionIds,
   listKnownOpenClawWorkspaceDirs,
   ManagedMemorySearchConfig,
+  mergeManagedOpenClawCodeModeConfig,
   mergeManagedOpenClawSubagentConfig,
   mergeManagedOpenClawSwarmConfig,
   mergeOpenClawPluginConfig,
@@ -456,6 +457,10 @@ export class OpenClawConfigSync {
       update: connectivityConfig.update,
       tools: {
         ...connectivityTools,
+        codeMode: mergeManagedOpenClawCodeModeConfig(
+          isRecord(existingConfig?.tools) ? existingConfig.tools.codeMode : undefined,
+          agentRuntimeSettings,
+        ),
         swarm: mergeManagedOpenClawSwarmConfig(
           isRecord(existingConfig?.tools) ? existingConfig.tools.swarm : undefined,
           agentRuntimeSettings,
@@ -831,6 +836,7 @@ export class OpenClawConfigSync {
         ...hookConfig,
         tools: {
           ...connectivityTools,
+          codeMode: mergeManagedOpenClawCodeModeConfig(undefined, agentRuntimeSettings),
           swarm: mergeManagedOpenClawSwarmConfig(undefined, agentRuntimeSettings),
           fs: {
             ...(isRecord(connectivityTools.fs) ? connectivityTools.fs : {}),
@@ -865,6 +871,13 @@ export class OpenClawConfigSync {
       try {
         const previous = JSON.parse(currentContent);
         if (isRecord(previous)) {
+          minimalConfig.tools = {
+            ...(isRecord(minimalConfig.tools) ? minimalConfig.tools : {}),
+            codeMode: mergeManagedOpenClawCodeModeConfig(
+              isRecord(previous.tools) ? previous.tools.codeMode : undefined,
+              agentRuntimeSettings,
+            ),
+          };
           minimalConfig.session = buildManagedOpenClawSessionConfig(previous.session);
           minimalConfig.meta = buildOpenClawConfigMeta(
             this.engineManager.getDesiredVersion(),
@@ -1023,6 +1036,10 @@ export class OpenClawConfigSync {
                   tools: {
                     ...existingTools,
                     sessions: connectivityTools.sessions,
+                    codeMode: mergeManagedOpenClawCodeModeConfig(
+                      existingTools.codeMode,
+                      agentRuntimeSettings,
+                    ),
                     swarm: mergeManagedOpenClawSwarmConfig(
                       existingTools.swarm,
                       agentRuntimeSettings,

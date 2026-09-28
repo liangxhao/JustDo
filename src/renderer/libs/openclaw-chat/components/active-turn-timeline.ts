@@ -28,6 +28,7 @@ import { OPEN_SPAWNED_AGENT_EVENT, spawnedAgentSessionKey } from '../model/spawn
 import { toolNesting, toolOperation, toolOutcome, toolTarget } from '../model/tool-presentation';
 import { stripOpenClawLogHintText } from '../pipeline/system-message-display';
 import { renderChatAvatar } from './chat-avatar';
+import { getCodeModeSource, getCodeModeTitle } from './code-mode-presentation';
 import { type EditDiffMonacoData, resolveEditDiffLanguage } from './edit-diff-monaco';
 import { toSanitizedMarkdownHtml } from './markdown';
 import {
@@ -90,6 +91,11 @@ function toolSummaryInput(value: unknown): string {
 }
 
 function toolSummary(tool: ToolItem): string {
+  if (getCodeModeSource(tool.name, tool.input) !== null) {
+    return toolSummaryInput(
+      getCodeModeTitle(tool.name, tool.input) ?? i18nService.t('coworkCodeMode'),
+    );
+  }
   const editDiff = parseEditToolDiff(tool.name, tool.input);
   return toolTarget(tool) || editDiff?.path || toolSummaryInput(tool.input);
 }
@@ -364,6 +370,7 @@ function renderToolDetail(
     label: item.fileName || (item.path.startsWith('data:') ? tool.name : '') || item.path.split(/[\\/]/).pop()?.slice(0, 120) || tool.name,
     kind: isTranscriptImage(item) ? 'image' as const : item.mimeType?.startsWith('video/') || item.kind === 'video' ? 'video' as const : item.mimeType?.startsWith('audio/') || item.kind === 'audio' ? 'audio' as const : 'document' as const,
   }));
+  const codeModeSource = getCodeModeSource(tool.name, tool.input);
   return html`
     <div class="process-summary__tool-detail">
       ${renderMessageImages(media.filter(item => item.kind === 'image'), true)}
@@ -384,7 +391,7 @@ function renderToolDetail(
         patch.length ? nothing : editDiff
           ? renderEditDiff(tool.id, editDiff, editDiffMode, onEditDiffModeChange)
           : html`
-              <div class="process-summary__detail-label">${i18nService.t('coworkToolInput')}</div>
+              <div class="process-summary__detail-label">${i18nService.t(codeModeSource !== null ? 'coworkCodeModeSource' : 'coworkToolInput')}</div>
               ${
                 tool.input === undefined ||
                 tool.input === null ||
@@ -393,8 +400,8 @@ function renderToolDetail(
                       >${i18nService.t(tool.status === 'running' ? 'messageInputPending' : 'messageNoParameters')}</span
                     >`
                   : html`<justdo-tool-output
-                      .text=${inputCode?.text ?? readableValue(tool.input)}
-                      .language=${inputCode ? resolveEditDiffLanguage(inputCode.path) : ''}
+                      .text=${codeModeSource ?? inputCode?.text ?? readableValue(tool.input)}
+                      .language=${codeModeSource !== null ? 'javascript' : inputCode ? resolveEditDiffLanguage(inputCode.path) : ''}
                     ></justdo-tool-output>`
               }
             `

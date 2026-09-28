@@ -2,6 +2,15 @@ import { DEFAULT_MCP_REQUEST_TIMEOUT_SECONDS, MCP_REQUEST_TIMEOUT_LIMITS } from 
 
 export const AGENT_RUNTIME_SETTINGS_VERSION = 1 as const;
 
+export const AgentRuntimeCodeMode = {
+  Off: 'off',
+  Auto: 'auto',
+  On: 'on',
+} as const;
+
+export type AgentRuntimeCodeModeValue =
+  (typeof AgentRuntimeCodeMode)[keyof typeof AgentRuntimeCodeMode];
+
 export const AgentRuntimeDelegationMode = {
   Suggest: 'suggest',
   Prefer: 'prefer',
@@ -59,6 +68,9 @@ export const AGENT_RUNTIME_LIMITS = {
 
 export interface AgentRuntimeSettings {
   version: typeof AGENT_RUNTIME_SETTINGS_VERSION;
+  codeMode: {
+    mode: AgentRuntimeCodeModeValue;
+  };
   agent: {
     thinking: AgentRuntimeThinkingLevelValue | null;
     runTimeoutSeconds: number;
@@ -96,6 +108,7 @@ export interface AgentRuntimeSettings {
 
 export const DEFAULT_AGENT_RUNTIME_SETTINGS: Readonly<AgentRuntimeSettings> = Object.freeze({
   version: AGENT_RUNTIME_SETTINGS_VERSION,
+  codeMode: Object.freeze({ mode: AgentRuntimeCodeMode.Off }),
   agent: Object.freeze({
     thinking: null,
     runTimeoutSeconds: 0,
@@ -133,6 +146,7 @@ export const DEFAULT_AGENT_RUNTIME_SETTINGS: Readonly<AgentRuntimeSettings> = Ob
 
 export const createDefaultAgentRuntimeSettings = (): AgentRuntimeSettings => ({
   version: DEFAULT_AGENT_RUNTIME_SETTINGS.version,
+  codeMode: { ...DEFAULT_AGENT_RUNTIME_SETTINGS.codeMode },
   agent: { ...DEFAULT_AGENT_RUNTIME_SETTINGS.agent },
   askUserQuestion: { ...DEFAULT_AGENT_RUNTIME_SETTINGS.askUserQuestion },
   automation: { ...DEFAULT_AGENT_RUNTIME_SETTINGS.automation },
@@ -167,6 +181,15 @@ export const validateAgentRuntimeSettings = (
   }
   if (!isRecord(value.subagents)) {
     return { ok: false, error: 'Invalid Subagent settings.' };
+  }
+
+  const codeMode =
+    value.codeMode === undefined ? DEFAULT_AGENT_RUNTIME_SETTINGS.codeMode : value.codeMode;
+  if (
+    !isRecord(codeMode) ||
+    !Object.values(AgentRuntimeCodeMode).includes(codeMode.mode as AgentRuntimeCodeModeValue)
+  ) {
+    return { ok: false, error: 'Invalid Code Mode settings.' };
   }
 
   // Version 1 predates main Agent thinking preferences. Preserve stored
@@ -377,6 +400,7 @@ export const validateAgentRuntimeSettings = (
     ok: true,
     settings: {
       version: AGENT_RUNTIME_SETTINGS_VERSION,
+      codeMode: { mode: codeMode.mode as AgentRuntimeCodeModeValue },
       agent: {
         thinking: validatedAgentThinking,
         runTimeoutSeconds: agentRunTimeoutSeconds,

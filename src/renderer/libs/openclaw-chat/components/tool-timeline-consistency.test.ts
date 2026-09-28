@@ -35,7 +35,10 @@ function flatten(value: unknown): string {
   return '';
 }
 
-function incrementalSummary(failed = false): ProcessSummaryTimelineItem {
+function incrementalSummary(
+  failed = false,
+  input: Record<string, unknown> = { command: 'npm test' },
+): ProcessSummaryTimelineItem {
   const state = createChatTranscriptState('justdo:session-1', 'session-1');
   let id = 0;
   const dependencies = {
@@ -63,7 +66,7 @@ function incrementalSummary(failed = false): ProcessSummaryTimelineItem {
         phase: 'start',
         toolCallId: 'call-1',
         name: 'exec',
-        args: { command: 'npm test' },
+        args: input,
       },
     },
     dependencies,
@@ -90,7 +93,10 @@ function incrementalSummary(failed = false): ProcessSummaryTimelineItem {
   return item;
 }
 
-function refreshedSummary(failed = false): ProcessSummaryTimelineItem {
+function refreshedSummary(
+  failed = false,
+  input: Record<string, unknown> = { command: 'npm test' },
+): ProcessSummaryTimelineItem {
   const item = projectPersistedTimeline([
     {
       role: 'assistant',
@@ -99,7 +105,7 @@ function refreshedSummary(failed = false): ProcessSummaryTimelineItem {
           type: 'toolCall',
           id: 'call-1',
           name: 'exec',
-          arguments: { command: 'npm test' },
+          arguments: input,
         },
       ],
     },
@@ -116,6 +122,26 @@ function refreshedSummary(failed = false): ProcessSummaryTimelineItem {
 }
 
 describe('Tool timeline consistency', () => {
+  test.each([false, true])(
+    'renders Code Mode source and titles consistently after refresh (failed=%s)',
+    failed => {
+      const input = {
+        code: 'const values = [1, 2];\nreturn values.map(n => n * 2);',
+        title: 'Summarize results',
+      };
+      for (const summary of [incrementalSummary(failed, input), refreshedSummary(failed, input)]) {
+        const markup = flatten(renderTimelineItem(summary, 3, true));
+        expect(markup).toContain('Code Mode · JavaScript');
+        expect(markup).toContain(input.code);
+        expect(markup).toContain('Summarize results');
+        expect(markup).toContain(
+          `process-summary__tool-status--${failed ? 'failed' : 'completed'}`,
+        );
+        expect(markup).not.toContain('"code":');
+      }
+    },
+  );
+
   test('shows typed progress only while a tool is running', () => {
     const summary = incrementalSummary();
     const tool = summary.items.find(item => item.type === 'tool')!;

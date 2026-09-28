@@ -20,6 +20,12 @@ flowchart LR
 
 ## 2. 初始化与兼容规则
 
+Code Mode 偏好复用 `cowork_config` 中的 `agentRuntimeSettings:v1` JSON 记录，新增
+`codeMode: { mode: "off" | "auto" | "on" }`。读取旧记录时只为缺失字段补上 `off`，
+已有显式 `auto` 值保留；界面暂不允许新选自动模式。
+非法显式值由运行设置校验器拒绝。保存、配置同步和失败回滚沿用现有运行设置 IPC；
+不新增数据表，也不持久化 JavaScript VM、工具中间结果或等待快照。
+
 SqliteStore.create 先检查已知 legacy schema，再打开连接，设置 PRAGMA，初始化表及增量列/索引，调用协作 schema 初始化器，最后处理 app_config 中遗留凭据引用。
 
 | PRAGMA             | 值     | 影响                    |

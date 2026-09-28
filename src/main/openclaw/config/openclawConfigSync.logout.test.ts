@@ -259,6 +259,44 @@ test.each([true, false])('preserves cold storage through minimal startup and sub
 });
 
 describe('OpenClaw auth logout config sync', () => {
+  test.each(['full', 'minimal'] as const)('%s sync applies Code Mode changes across startup and auth refresh', mode => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-code-mode-sync-'));
+    temporaryDirectories.push(stateDir);
+    const configPath = path.join(stateDir, 'openclaw.json');
+    const appConfig = mode === 'full' ? {
+      model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
+      providers: {
+        'custom-provider': {
+          enabled: true, apiKey: 'test-secret', baseUrl: 'https://custom.example.test/v1',
+          apiFormat: 'openai', models: [{ id: 'custom-model' }],
+        },
+      },
+    } : {};
+    setStoreGetter(() => ({ get: () => appConfig }) as never);
+    const settings = createDefaultAgentRuntimeSettings();
+    const sync = new OpenClawConfigSync({
+      engineManager: {
+        getConfigPath: () => configPath, getStateDir: () => stateDir,
+        getDesiredVersion: () => '2026.9.6',
+      },
+      getCoworkConfig: () => ({ workingDirectory: '', executionMode: 'local', agentEngine: 'openclaw' }),
+      getAgentRuntimeSettings: () => settings,
+      getAgents: () => [],
+    } as never);
+    fs.writeFileSync(configPath, JSON.stringify({ tools: { codeMode: { executor: 'node', timeoutMs: 20000 } } }));
+    for (const [activation, enabled] of [['auto', 'auto'], ['on', true], ['off', false]] as const) {
+      settings.codeMode.mode = activation;
+      for (const reason of ['startup', 'agent-runtime-settings-change', BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout]) {
+        expect(sync.sync(reason).ok).toBe(true);
+        const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        expect(config.tools.codeMode).toEqual({ enabled, executor: 'quickjs', timeoutMs: 20000 });
+        expect(config.tools.exec.mode).toBe('ask');
+        expect(config.tools.fs.workspaceOnly).toBe(true);
+      }
+    }
+    expect(sync.sync('settings')).toMatchObject({ ok: true, configChanged: false });
+  });
+
   test.each(['full', 'minimal'] as const)('%s sync retains Gateway migration receipts across startup and auth changes', mode => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-migration-receipts-'));
     temporaryDirectories.push(stateDir);

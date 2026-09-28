@@ -8,6 +8,12 @@
 
 ## 1. 从原生事件到屏幕
 
+Code Mode 继续使用相同的原生工具事件与历史投影。仅当工具为 `exec` 且输入包含字符串
+`code` 时，摘要显示原生 `title`（缺省为工具编排说明），展开后按原始换行展示 JavaScript。
+普通 shell `exec({ command })` 不按代码推断或重新解释。工具名称保持上游显示名称。
+`wait` 和内部工具调用继续由原生事件驱动，不另建任务状态、等待轮询或结果缓存；
+实时与刷新后的失败状态、输出及代码详情使用同一渲染路径。
+
 ```mermaid
 flowchart LR
   Gateway[Gateway WS / history] --> Client[GatewayClient]

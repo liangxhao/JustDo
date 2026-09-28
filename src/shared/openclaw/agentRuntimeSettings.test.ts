@@ -12,6 +12,7 @@ describe('Agent runtime settings', () => {
   test('keeps the JustDo managed defaults stable', () => {
     expect(createDefaultAgentRuntimeSettings()).toEqual({
       version: 1,
+      codeMode: { mode: 'off' },
       swarm: { enabled: true, maxConcurrent: 8, maxChildrenPerGroup: 50, maxTotalPerGroup: 200 },
       agent: {
         thinking: null,

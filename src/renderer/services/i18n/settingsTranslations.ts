@@ -342,6 +342,13 @@ export const settingsTranslations = {
     agentRuntimeRestoreDefaults: '恢复默认值',
     agentRuntimeAgentSectionTitle: 'Agent',
     agentRuntimeAgentSectionDescription: '所有 Agent 默认继承的运行、会话访问与委派行为。',
+    agentRuntimeCodeModeTitle: 'Code Mode（实验性）',
+    agentRuntimeCodeModeDescription: '通过代码批量调用工具，减少模型交互次数。',
+    agentRuntimeCodeModeActivation: '启用方式',
+    agentRuntimeCodeModeHint: '选择是否开启 Code Mode。',
+    agentRuntimeCodeModeOff: '关闭',
+    agentRuntimeCodeModeAuto: '自动（待模型支持）',
+    agentRuntimeCodeModeOn: '开启',
     agentRuntimeSwarmTitle: 'Swarm 批量子任务',
     agentRuntimeSwarmDescription:
       '独立控制批量收集任务容量；不改变普通 SubAgent 的限制，也不启用平级 Team。',
@@ -1505,6 +1512,14 @@ export const settingsTranslations = {
     agentRuntimeAgentSectionTitle: 'Agent',
     agentRuntimeAgentSectionDescription:
       'Runtime, session access, and delegation defaults inherited by all Agents.',
+    agentRuntimeCodeModeTitle: 'Code Mode (experimental)',
+    agentRuntimeCodeModeDescription:
+      'Batch tool calls through code to reduce model round trips.',
+    agentRuntimeCodeModeActivation: 'Activation',
+    agentRuntimeCodeModeHint: 'Choose whether to enable Code Mode.',
+    agentRuntimeCodeModeOff: 'Off',
+    agentRuntimeCodeModeAuto: 'Automatic (awaiting model support)',
+    agentRuntimeCodeModeOn: 'On',
     agentRuntimeSwarmTitle: 'Swarm batch tasks',
     agentRuntimeSwarmDescription:
       'Separate capacity for batch collectors. Ordinary SubAgent limits and peer Team remain independent.',

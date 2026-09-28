@@ -28,6 +28,48 @@ vi.mock('@/services/i18n', () => ({
 }));
 
 describe('AgentRuntimeSettingsTab runtime settings', () => {
+  test.each([
+    ['agentRuntimeCodeModeOff', 'off'],
+    ['agentRuntimeCodeModeOn', 'on'],
+  ] as const)('selects %s without changing other runtime preferences', (label, mode) => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 132,
+      height: 32,
+      left: 20,
+      right: 220,
+      top: 100,
+      width: 200,
+      x: 20,
+      y: 100,
+      toJSON: () => ({}),
+    });
+    const settings = createDefaultAgentRuntimeSettings();
+    const onChange = vi.fn();
+    render(
+      <AgentRuntimeSettingsTab
+        settings={settings}
+        models={[]}
+        isLoading={false}
+        loadError={null}
+        onChange={onChange}
+        onRetry={vi.fn()}
+        maxRetainedDisplayTabs={30}
+        onMaxRetainedDisplayTabsChange={vi.fn()}
+        maxGoalContinuationTurns={10}
+        onMaxGoalContinuationTurnsChange={vi.fn()}
+      />,
+    );
+    const select = screen.getByRole('combobox', { name: 'agentRuntimeCodeModeActivation' });
+    expect(select.textContent).toContain('agentRuntimeCodeModeOff');
+    fireEvent.click(select);
+    const automatic = screen.getByRole('option', { name: 'agentRuntimeCodeModeAuto' });
+    expect(automatic.getAttribute('aria-disabled')).toBe('true');
+    fireEvent.click(automatic);
+    expect(onChange).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('option', { name: label }));
+    expect(onChange).toHaveBeenCalledWith({ ...settings, codeMode: { mode } });
+  });
+
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
