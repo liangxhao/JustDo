@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 import {
   type AgentFileName,
@@ -929,6 +929,7 @@ contextBridge.exposeInMainWorld('electron', {
     reorder: (groupIds: string[]) => ipcRenderer.invoke('sessionGroup:reorder', groupIds),
   },
   dialog: {
+    getPathForFile: (file: File) => webUtils.getPathForFile(file),
     saveTextFile: (options: SaveTextFileOptions) =>
       ipcRenderer.invoke(DialogIpc.SaveTextFile, options),
     selectDirectory: () => ipcRenderer.invoke('dialog:selectDirectory'),

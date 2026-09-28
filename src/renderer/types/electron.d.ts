@@ -1160,6 +1160,7 @@ interface IElectronAPI {
     reorder: (groupIds: string[]) => Promise<{ success: boolean; error?: string }>;
   };
   dialog: {
+    getPathForFile: (file: File) => string;
     saveTextFile: (options: SaveTextFileOptions) => Promise<SaveTextFileResult>;
     selectDirectory: () => Promise<{ success: boolean; path: string | null }>;
     selectFile: (options?: {

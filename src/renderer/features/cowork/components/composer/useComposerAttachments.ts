@@ -112,7 +112,7 @@ export function useComposerAttachments({
   }, []);
 
   const getNativeFilePath = useCallback((file: File): string | null => {
-    const maybePath = (file as File & { path?: string }).path;
+    const maybePath = window.electron.dialog.getPathForFile(file);
     if (typeof maybePath === 'string' && maybePath.trim()) {
       return maybePath;
     }
