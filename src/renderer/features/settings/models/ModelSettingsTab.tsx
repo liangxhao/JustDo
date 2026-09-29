@@ -56,6 +56,10 @@ const ModelSettingsTab: React.FC<ModelSettingsTabProps> = ({
       label: i18nService.t('modelTypeLanguage'),
     },
     {
+      id: 'decision',
+      label: i18nService.t('modelTypeDecision'),
+    },
+    {
       id: 'speech-recognition',
       label: i18nService.t('modelTypeSpeechRecognition'),
     },

@@ -351,3 +351,27 @@ describe('mergeImportedOnlineModelProviders', () => {
     expect(merged.image?.defaultProviderId).toBe('new lab');
   });
 });
+
+test('round-trips the decision provider catalog and its default selection', () => {
+  const payload = createProvidersExportPayload([], {
+    decision: {
+      defaultProviderId: 'lan',
+      providers: [
+        {
+          key: 'lan',
+          config: {
+            displayName: 'LAN',
+            baseUrl: 'http://inference.corp/v1',
+            apiKey: 'plaintext-test-value',
+            defaultModel: 'kev-latest',
+            models: [{ id: 'kev-latest', name: 'Kev' }],
+          },
+          apiKey: encryptedApiKey,
+        },
+      ],
+    },
+  });
+  const parsed = parseModelProvidersImportPayload(payload);
+  expect(parsed.onlineModelProviders?.decision).toEqual(payload.onlineModelProviders?.decision);
+  expect(parsed.onlineModelProviders?.decision?.providers[0].apiKey).toEqual(encryptedApiKey);
+});

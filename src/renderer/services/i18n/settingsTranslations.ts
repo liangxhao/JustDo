@@ -177,6 +177,11 @@ export const settingsTranslations = {
     modelTypeSpeechSynthesis: '语音合成',
     modelTypeImage: '图像生成',
     modelTypeVideo: '视频生成',
+    modelTypeDecision: '决策模型',
+    customDecisionProtocolHint:
+      '接口需兼容 TypeSafe System One API（/systemone）。支持内网服务，URL 和 API Key 必填。选择默认模型后用于决策评估；不支持模型发现的服务可手动添加。',
+    decisionApiKeyRequired: '请输入 API Key',
+    decisionModelIdInvalid: '模型 ID 仅支持字母、数字、点、下划线、斜杠和连字符，最长 128 个字符',
     modelTypeMusic: '音乐生成',
     onlineRecognitionModelDescription:
       '管理在线语音识别模型。服务目录、当前状态和配置均由运行服务提供。',
@@ -1336,6 +1341,12 @@ export const settingsTranslations = {
     modelTypeSpeechSynthesis: 'Speech synthesis',
     modelTypeImage: 'Image generation',
     modelTypeVideo: 'Video generation',
+    modelTypeDecision: 'Decision models',
+    customDecisionProtocolHint:
+      'Requires a TypeSafe System One-compatible API (/systemone). Intranet services are supported. URL and API Key are required. The default model handles decision evaluations. Add models manually if discovery is unavailable.',
+    decisionApiKeyRequired: 'Enter an API Key',
+    decisionModelIdInvalid:
+      'Model IDs must use letters, digits, dots, underscores, slashes or hyphens, up to 128 characters',
     modelTypeMusic: 'Music generation',
     onlineRecognitionModelDescription:
       'Manage online speech recognition models. The runtime service provides the provider catalog, status, and configuration.',
@@ -1513,8 +1524,7 @@ export const settingsTranslations = {
     agentRuntimeAgentSectionDescription:
       'Runtime, session access, and delegation defaults inherited by all Agents.',
     agentRuntimeCodeModeTitle: 'Code Mode (experimental)',
-    agentRuntimeCodeModeDescription:
-      'Batch tool calls through code to reduce model round trips.',
+    agentRuntimeCodeModeDescription: 'Batch tool calls through code to reduce model round trips.',
     agentRuntimeCodeModeActivation: 'Activation',
     agentRuntimeCodeModeHint: 'Choose whether to enable Code Mode.',
     agentRuntimeCodeModeOff: 'Off',

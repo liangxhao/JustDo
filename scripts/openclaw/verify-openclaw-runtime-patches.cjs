@@ -26,6 +26,7 @@ const BUILD_RECIPE_FILES = [
   'scripts/openclaw/verify-openclaw-runtime-patches.cjs',
   'scripts/openclaw/sync-openclaw-runtime-current.cjs',
   'scripts/openclaw/bundle-openclaw-gateway.cjs',
+  'scripts/openclaw/openclaw-shared-sdk-modules.cjs',
   'scripts/openclaw/ensure-openclaw-plugins.cjs',
   'scripts/openclaw/patch-mxc-sandbox-plugin.cjs',
   'scripts/openclaw/sync-openclaw-runtime-resources.cjs',

@@ -33,3 +33,8 @@ and prints only synthetic evidence. It never uses the application's live state.
 packaged QuickJS Code Mode worker and assets, then exercises execution,
 wait/resume, text encoding, errors, and cancellation without model/API calls.
 It defaults to `vendor/openclaw-runtime/current` and does not modify the runtime.
+
+`test/verify-decision-secret-runtime.cjs [runtime-dir]` exercises a prepared Gateway
+bundle and its dynamic TypeSafe SDK with an isolated file SecretRef and local
+synthetic provider. It covers first use, rotation, unavailable-owner denial and
+recovery without a chat model or user credentials.

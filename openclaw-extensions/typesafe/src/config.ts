@@ -6,6 +6,7 @@ const LOCAL_BASE_URL_PATTERN =
 const localBaseUrlPattern = new RegExp(LOCAL_BASE_URL_PATTERN);
 export const ConfigSchema = Type.Object(
   {
+    serviceUrl: Type.Optional(Type.String({ minLength: 1, maxLength: 2048 })),
     baseUrl: Type.Optional(Type.String({ maxLength: 128, pattern: LOCAL_BASE_URL_PATTERN })),
     apiKey: Type.Optional(
       Type.Object(
@@ -35,7 +36,7 @@ export const ConfigSchema = Type.Object(
   { additionalProperties: false },
 );
 
-export type RuntimeConfig = { apiKey?: string; baseUrl?: string; model: string; timeoutMs: number };
+export type RuntimeConfig = { apiKey?: string; baseUrl?: string; serviceUrl?: string; model: string; timeoutMs: number };
 
 /** A configured endpoint grants access to one loopback origin, never arbitrary private hosts. */
 export function localBaseUrl(value: unknown): string | undefined {
@@ -54,8 +55,23 @@ export function localBaseUrl(value: unknown): string | undefined {
   }
 }
 
+/** Explicit authenticated System One API base, including its version/path prefix. */
+export function serviceBaseUrl(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  try {
+    if (typeof value !== "string" || !value.trim() || value.length > 2048) throw new Error();
+    const url = new URL(value);
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error();
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    throw new Error("Invalid TypeSafe serviceUrl; use an http(s) API base without credentials, query, or fragment.");
+  }
+}
+
 /** Validate runtime settings and recognize materialized credentials without resolving inputs. */
 export function runtimeConfig(config: Record<string, unknown> | undefined): RuntimeConfig {
+  const serviceUrl = serviceBaseUrl(config?.serviceUrl);
+  if (serviceUrl && config?.baseUrl !== undefined) throw new Error("Configure only one TypeSafe endpoint.");
   const baseUrl = localBaseUrl(config?.baseUrl);
   const model = config?.model ?? (baseUrl ? "kev-latest" : DEFAULT_MODEL);
   const timeoutMs = config?.timeoutMs ?? 30000;
@@ -73,5 +89,5 @@ export function runtimeConfig(config: Record<string, unknown> | undefined): Runt
     return { baseUrl, model, timeoutMs };
   }
   const key = config?.apiKey;
-  return { apiKey: typeof key === "string" && key.trim() ? key : undefined, model, timeoutMs };
+  return { serviceUrl, apiKey: typeof key === "string" && key.trim() ? key : undefined, model, timeoutMs };
 }

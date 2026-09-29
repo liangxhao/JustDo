@@ -48,6 +48,37 @@ describe('NonLanguageModelSettings', () => {
     return { ...render(<Host />), onSubmit };
   };
 
+  it('shows decision provider URL and key as required and detects with Bearer auth', async () => {
+    currentConfig.onlineModelProviders = {
+      decision: {
+        defaultProviderId: 'lan',
+        providers: {
+          lan: {
+            displayName: 'LAN',
+            baseUrl: 'http://192.168.1.9:8009/v1',
+            apiKey: 'test-key',
+            defaultModel: 'kev-latest',
+            models: [{ id: 'kev-latest', name: 'Kev' }],
+          },
+        },
+      },
+    };
+    fetch.mockResolvedValue({ ok: true, data: { data: [{ id: 'kev-latest' }] } });
+    renderSettings('decision');
+    expect(screen.getByLabelText('baseUrl *').hasAttribute('required')).toBe(true);
+    expect(screen.getByLabelText('apiKey *').hasAttribute('required')).toBe(true);
+    expect(screen.getByText('http://192.168.1.9:8009/v1/systemone')).toBeTruthy();
+    fireEvent.click(screen.getByText('detectModels'));
+    await waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          url: 'http://192.168.1.9:8009/v1/models',
+          headers: { Authorization: 'Bearer test-key' },
+        }),
+      ),
+    );
+  });
+
   beforeEach(() => {
     currentConfig.onlineModelProviders = {};
     currentConfig.voice = {};

@@ -223,3 +223,26 @@ it.each([
     }
   },
 );
+
+
+it("sends credentials only to the explicit intranet endpoint without an environment proxy", async () => {
+  const guard = vi.spyOn(ssrfRuntime, "fetchWithSsrFGuard").mockResolvedValue({
+    response: new Response("{}", { headers: { "content-type": "application/json" } }),
+    release: async () => {},
+  } as never);
+  await requestEvaluation({ ...request, serviceUrl: "http://10.20.30.40:8009/private/v1" });
+  expect(guard).toHaveBeenCalledOnce();
+  expect(guard.mock.calls[0]?.[0]).toMatchObject({
+    url: "http://10.20.30.40:8009/private/v1/systemone", requireHttps: false,
+    maxRedirects: 0, policy: { allowedOrigins: ["http://10.20.30.40:8009"] },
+    init: { headers: { Authorization: "Bearer synthetic-key" } },
+  });
+});
+
+it("does not fall back to hosted Jev after an intranet authentication failure", async () => {
+  const guard = vi.spyOn(ssrfRuntime, "fetchWithSsrFGuard").mockResolvedValue({
+    response: new Response("sensitive-diagnostic", { status: 401 }), release: async () => {},
+  } as never);
+  await expect(requestEvaluation({ ...request, serviceUrl: "http://10.20.30.40/v1" })).rejects.toMatchObject({ reason: "authentication" });
+  expect(guard).toHaveBeenCalledOnce();
+});

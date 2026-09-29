@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { evaluate } from "./client.js";
 import { runtimeConfig } from "./config.js";
+import { createDecisionProvider } from "./decisions.js";
 import { MAX_JSON_BYTES, parseInput, parseResult } from "./schema.js";
 
 const config = { apiKey: "synthetic-test-credential", model: "jev-test", timeoutMs: 1000 };
@@ -109,6 +110,74 @@ describe("TypeSafe HTTP evaluation", () => {
     ).rejects.toThrow("API key is missing");
     expect(fetch).not.toHaveBeenCalled();
   });
+  it.each(["test", "model", "keep", "Low", "0.75"])(
+    "accepts request-owned text and numeric coincidences with credential %s",
+    async apiKey => {
+      mockFetch(async () => new Response(JSON.stringify(answer)));
+      await expect(evaluate(input, { ...config, apiKey })).resolves.toEqual({ evaluation: answer });
+    },
+  );
+  it.each([undefined, "kev-latest"])(
+    "accepts the configured or explicit local model %s with a short credential",
+    async model => {
+      const localAnswer = { ...answer, model: "kev-latest" };
+      mockFetch(async () => new Response(JSON.stringify(localAnswer)));
+      await expect(
+        evaluate(
+          { ...input, ...(model ? { model } : {}) },
+          {
+            ...config,
+            model: "kev-latest",
+            apiKey: "test",
+            serviceUrl: "http://127.0.0.1:8009/v1",
+          },
+        ),
+      ).resolves.toEqual({ evaluation: localAnswer });
+    },
+  );
+  it("uses the native host-selected model without rejecting its credential substring", async () => {
+    mockFetch(
+      async () =>
+        new Response(
+          JSON.stringify({
+            model: "kev-latest",
+            answers: { q: { type: "noul", noul: 0.9 } },
+            usage: { input_tokens: 1, output_tokens: 1 },
+          }),
+        ),
+    );
+    const provider = createDecisionProvider(() => ({
+      ...config,
+      apiKey: "test",
+      serviceUrl: "http://127.0.0.1:8009/v1",
+    }));
+    await expect(
+      provider.evaluate(
+        {
+          state: "synthetic",
+          questions: { q: { type: "boolean", instructions: "Relevant?" } },
+        },
+        {
+          model: "kev-latest",
+          agentId: "main",
+          signal: new AbortController().signal,
+          deadlineMonotonicMs: performance.now() + 1000,
+        },
+      ),
+    ).resolves.toMatchObject({
+      status: "ok",
+      result: { model: "kev-latest", answers: { q: { probabilityTrue: 0.9 } } },
+    });
+  });
+  it.each(["test", "provider-test-model"])(
+    "rejects reflected credentials in unexpected provider model %s",
+    async model => {
+      mockFetch(async () => new Response(JSON.stringify({ ...answer, model })));
+      await expect(evaluate(input, { ...config, apiKey: "test" })).rejects.toMatchObject({
+        reason: "invalid-response",
+      });
+    },
+  );
   it("cancels before dispatch without exposing the abort reason", async () => {
     const controller = new AbortController();
     controller.abort(config.apiKey);
@@ -159,7 +228,7 @@ describe("bounded contracts", () => {
     { ...input, state: { bad: undefined } },
     { ...input, state: JSON.parse('{"__proto__":"bad"}') },
     { ...input, questions: { bad: { type: "score", criteria: ["only"] } } },
-  ])("rejects invalid or excessive input", (value) => expect(() => parseInput(value)).toThrow());
+  ])("rejects invalid or excessive input", value => expect(() => parseInput(value)).toThrow());
   it("rejects cyclic state", () => {
     const state: unknown[] = [];
     state.push(state);
@@ -196,7 +265,7 @@ describe("bounded contracts", () => {
     },
     { ...answer, usage: { input_tokens: -1, output_tokens: 1 } },
     { ...answer, leak: config.apiKey },
-  ])("rejects malformed or mismatched responses", (value) =>
+  ])("rejects malformed or mismatched responses", value =>
     expect(() => parseResult(value, parseInput(input))).toThrow("invalid evaluation response"),
   );
 });

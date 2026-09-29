@@ -128,6 +128,7 @@ function createFixture() {
     'verify-openclaw-runtime-patches.cjs',
     'sync-openclaw-runtime-current.cjs',
     'bundle-openclaw-gateway.cjs',
+    'openclaw-shared-sdk-modules.cjs',
     'ensure-openclaw-plugins.cjs',
     'patch-mxc-sandbox-plugin.cjs',
     'sync-openclaw-runtime-resources.cjs',

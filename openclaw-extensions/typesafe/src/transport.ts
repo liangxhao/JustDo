@@ -6,7 +6,7 @@ import {
 } from "openclaw/plugin-sdk/fetch-runtime";
 import { parseRetryAfterHeaderSeconds } from "openclaw/plugin-sdk/retry-runtime";
 import { fetchWithSsrFGuard } from "openclaw/plugin-sdk/ssrf-runtime";
-import { localBaseUrl } from "./config.js";
+import { localBaseUrl, serviceBaseUrl } from "./config.js";
 import { EvaluationError } from "./errors.js";
 import { MAX_JSON_BYTES, type EvaluationInput } from "./schema.js";
 
@@ -81,12 +81,16 @@ export async function requestEvaluation(params: {
   body: EvaluationInput & { model: string };
   apiKey?: string;
   baseUrl?: string;
+  serviceUrl?: string;
   timeoutMs: number;
   signal?: AbortSignal;
   deadlineMonotonicMs?: number;
 }): Promise<unknown> {
   const baseUrl = localBaseUrl(params.baseUrl);
-  const endpoint = baseUrl ? `${baseUrl}/v1/systemone` : ENDPOINT;
+  const serviceUrl = serviceBaseUrl(params.serviceUrl);
+  if (serviceUrl && baseUrl) throw new Error("Configure only one TypeSafe endpoint.");
+  const endpoint = serviceUrl ? `${serviceUrl}/systemone` : baseUrl ? `${baseUrl}/v1/systemone` : ENDPOINT;
+  const configuredOrigin = serviceUrl ? new URL(serviceUrl).origin : baseUrl;
   const body = JSON.stringify(params.body);
   if (Buffer.byteLength(body) > MAX_JSON_BYTES) {
     throw new EvaluationError("TypeSafe request exceeds its limit.", "unsupported-input");
@@ -118,9 +122,9 @@ export async function requestEvaluation(params: {
     const request = {
       url: endpoint,
       fetchImpl: globalThis.fetch,
-      requireHttps: !baseUrl,
-      ...(baseUrl ? { policy: { allowedOrigins: [baseUrl] } } : {}),
-      ...(baseUrl && new URL(baseUrl).hostname === "localhost"
+      requireHttps: !configuredOrigin,
+      ...(configuredOrigin ? { policy: { allowedOrigins: [configuredOrigin] } } : {}),
+      ...(configuredOrigin && new URL(configuredOrigin).hostname === "localhost"
         ? {
             // Keep localhost local even when system DNS or hosts entries override its meaning.
             lookupFn: async () => [
@@ -143,7 +147,7 @@ export async function requestEvaluation(params: {
       },
     };
     const guarded = await fetchWithSsrFGuard(
-      !baseUrl && shouldUseEnvHttpProxyForUrl(endpoint)
+      !configuredOrigin && shouldUseEnvHttpProxyForUrl(endpoint)
         ? withTrustedEnvProxyGuardedFetchMode(request)
         : request,
     );

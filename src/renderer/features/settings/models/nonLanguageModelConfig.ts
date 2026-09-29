@@ -16,6 +16,7 @@ export const NON_LANGUAGE_MODEL_KINDS: readonly NonLanguageModelKind[] = [
   'speech-synthesis',
   'image',
   'video',
+  'decision',
 ];
 
 export const createEmptyNonLanguageModelCategory = (): NonLanguageModelCategory => ({
@@ -26,7 +27,7 @@ export const normalizeNonLanguageModelCategory = (
   kind: NonLanguageModelKind,
   category: NonLanguageModelCategory,
 ): NonLanguageModelCategory => {
-  const supportsCatalogDefault = kind === 'image' || kind === 'video';
+  const supportsCatalogDefault = kind === 'image' || kind === 'video' || kind === 'decision';
   const providerIds = Object.keys(category.providers);
   const defaultProviderId =
     supportsCatalogDefault &&
@@ -90,7 +91,16 @@ const getProviderValidationError = (
   } catch {
     return i18nService.t('customModelProviderUrlInvalid');
   }
-  if (kind === 'image' || kind === 'video') {
+  if (kind === 'decision' && !provider.apiKey.trim())
+    return i18nService.t('decisionApiKeyRequired');
+  if (
+    kind === 'decision' &&
+    provider.models.some(model => !/^[a-zA-Z0-9._/-]{1,128}$/.test(model.id))
+  )
+    return i18nService.t('decisionModelIdInvalid');
+  if (kind === 'decision' && new URL(provider.baseUrl.trim()).search)
+    return i18nService.t('customModelProviderUrlInvalid');
+  if (kind === 'image' || kind === 'video' || kind === 'decision') {
     if (!provider.defaultModel) return i18nService.t('customModelDefaultRequired');
     if (!provider.models.some(model => model.id === provider.defaultModel)) {
       return i18nService.t('customModelDefaultRequired');

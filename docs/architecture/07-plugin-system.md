@@ -205,10 +205,13 @@ Workboard 仍使用 OpenClaw 插件的 `workboard.cards.*` / `workboard.boards.*
 
 The optional `typesafe` extension is vendored from a pinned upstream revision in
 `openclaw-extensions/typesafe/` and assembled by the existing local-extension
-pipeline. It is disabled by default and remains user-toggleable. The application
-admits its optional `typesafe_evaluate` tool when the plugin is enabled; the chat
-model owns the decision to call it. No global or assistant `decisionModel` is
-selected by this integration.
+pipeline. Without decision-model settings it defaults off and remains user-toggleable.
+Settings → Models → Decision models requires URL/API Key and supports provider/model
+CRUD, discovery and import/export. It selects `agents.defaults.decisionModel` and
+the evaluation-tool default, and then owns TypeSafe activation/configuration.
+Deleting all providers disables it. The chat model decides when to call its tool.
+A documented `serviceUrl` seam supports authenticated intranet System One endpoints
+without redirects, environment proxies or hosted fallback.
 
 Bundled extensions expose their native sensitive configuration hints in the
 extension dialog. For declared structured secret inputs, Main writes credentials
@@ -217,5 +220,16 @@ SecretRef under `plugins.entries.<id>.config`. Credential rotation refreshes nat
 prepared secrets through the existing Gateway restart coordinator. Config sync
 preserves plugin opt-in, references, and the secret provider across startup,
 settings changes, login, and logout. Native OpenClaw owns transport, validation,
-cancellation, and tool results; Renderer receives only configured-state metadata.
+cancellation and tool results. The extension inventory exposes only credential
+metadata; model settings persist credentials in existing application config.
+Settings projects file SecretRefs and uses managed native secret refresh on rotation.
 See [Jev integration](../features/jev-integration.md) for setup and scope.
+
+The Gateway bundler keeps the native `secret-input-runtime` SDK state-owner modules
+external, so the Gateway and dynamic plugins share prepared credential and
+unavailable-owner state through the same native ESM instances. The shared boundary
+also includes configuration preparation scopes, environment publication, auth
+cache/ownership state and native error classes used across these modules. This is a packaging
+boundary, not a runtime patch or a fallback credential reader. The build recipe
+fingerprints this boundary. Rebuild frozen runtimes from the locked pristine
+artifact when it changes; never edit their source or proof manifests in place.

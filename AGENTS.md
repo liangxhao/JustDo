@@ -363,11 +363,12 @@ respects effective filesystem policy. External audio attachments are staged in
 the project before sending. See `docs/architecture/07-plugin-system.md`.
 
 
-Jev evaluations use the optional, default-off upstream `typesafe` extension,
-vendored under `openclaw-extensions/typesafe/` with pinned source provenance and
-production dependencies. Keep its native implementation unchanged. The extension
-UI saves declared structured secrets through Main as file SecretRefs, with values
-in restricted `extension-secrets.json`. Preserve explicit enable/disable state
-and credential providers during config sync. This integration exposes
-`typesafe_evaluate`, not a conversational model or an automatic `decisionModel`
-selection. See `docs/features/jev-integration.md`.
+Jev evaluations use the vendored upstream `typesafe` extension. Settings → Models
+→ Decision models owns the required URL/API Key, default model and activation
+once configured; TypeSafe then becomes managed in the extension panel.
+Sync selects `agents.defaults.decisionModel` and the evaluation-tool default,
+using file SecretRefs in restricted `extension-secrets.json`. The documented
+`serviceUrl` transport seam supports authenticated intranet System One endpoints
+without redirects, environment proxies or hosted fallback. Preserve native
+OpenClaw decision semantics and response validation. Users without this settings
+category retain explicit extension state. See `docs/features/jev-integration.md`.

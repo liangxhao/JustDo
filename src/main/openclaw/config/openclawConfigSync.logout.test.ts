@@ -1749,3 +1749,48 @@ test.each([true, false])('keeps the optional agent-team enabled=%s across full m
   expect(writeMinimalConfig(configPath, 'cowork-config-change').ok).toBe(true);
   expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).plugins.entries['agent-team']).toEqual({ enabled });
 });
+
+
+test.each(['full', 'minimal'])('%s decision settings survive auth sync, rotate credentials and clear selection', mode => {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-decision-sync-'));
+  temporaryDirectories.push(stateDir);
+  const configPath = path.join(stateDir, 'openclaw.json');
+  const appConfig = mode === 'full' ? {
+    model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
+    providers: { 'custom-provider': { enabled: true, apiKey: 'chat-test-key', baseUrl: 'https://custom.example.test/v1', apiFormat: 'openai', models: [{ id: 'custom-model' }] } },
+  } : {};
+  setStoreGetter(() => ({ get: () => appConfig }) as never);
+  let category: unknown = { defaultProviderId: 'lan', providers: { lan: {
+    displayName: 'LAN', baseUrl: 'http://10.1.2.3:8009/v1', apiKey: 'decision-test-key', defaultModel: 'kev-latest', models: [{ id: 'kev-latest' }],
+  } } };
+  const sync = new OpenClawConfigSync({
+    engineManager: { getConfigPath: () => configPath, getStateDir: () => stateDir, getDesiredVersion: () => '2026.9.6' },
+    getCoworkConfig: () => ({ workingDirectory: '', executionMode: 'local', agentEngine: 'openclaw' }),
+    getAgents: () => [], getDecisionModelCategory: () => category,
+  } as never);
+  const read = () => JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  const configuredCategory = category;
+  category = undefined;
+  expect(sync.sync('startup').ok).toBe(true);
+  category = configuredCategory;
+  for (const reason of ['startup', 'app-config-change', BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout]) {
+    expect(sync.sync(reason).ok).toBe(true);
+    expect(read().agents.defaults.decisionModel).toBe('typesafe/kev-latest');
+    expect(read().plugins.entries.typesafe).toMatchObject({ enabled: true, config: { serviceUrl: 'http://10.1.2.3:8009/v1', apiKey: { source: 'file' } } });
+    expect(JSON.stringify(read())).not.toContain('decision-test-key');
+  }
+  sync.sync('app-config-change');
+  (category as { providers: { lan: { apiKey: string } } }).providers.lan.apiKey = 'rotated-decision-key';
+  const rotated = sync.sync('app-config-change');
+  expect(rotated.ok).toBe(true);
+  expect(rotated.secretsChanged).toBe(true);
+  expect(sync.sync('app-config-change').secretsChanged).toBe(false);
+  category = undefined;
+  expect(sync.sync('app-config-change').ok).toBe(true);
+  expect(read().plugins.entries.typesafe).toEqual({ enabled: false });
+  expect(read().agents.defaults.decisionModel).toBeUndefined();
+  category = { providers: {} };
+  expect(sync.sync('app-config-change').ok).toBe(true);
+  expect(read().plugins.entries.typesafe.enabled).toBe(false);
+  expect(read().agents.defaults.decisionModel).toBeUndefined();
+});

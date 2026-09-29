@@ -80,7 +80,7 @@ export interface AppConfig {
   };
   onlineModelProviders?: Partial<
     Record<
-      'speech-recognition' | 'speech-synthesis' | 'image' | 'video',
+      'speech-recognition' | 'speech-synthesis' | 'image' | 'video' | 'decision',
       {
         defaultProviderId?: string;
         providers: Record<

@@ -21,7 +21,7 @@ import { BUILTIN_MODEL_PROVIDER_CONFIG } from '../config/builtinModels';
 import { normalizeBrowserDownloadSettings, normalizeBrowserMode } from '../shared/browser/browser';
 import { CoworkSubagentDetailsIpc } from '../shared/cowork/subagentDetails';
 import type { ProxySettings } from '../shared/network/proxy';
-import { EmbeddedBrowserGateway } from '../shared/openclaw/extensions';
+import { EmbeddedBrowserGateway, OpenClawExtensionId } from '../shared/openclaw/extensions';
 import { WorkboardIpc } from '../shared/openclaw/workboard';
 import { HOME_WORKSPACE_SESSION_ID } from '../shared/preview/filePreview';
 import {
@@ -554,7 +554,11 @@ const getOpenClawDirectoryOperations = (): ManagedDirectoryOperationCoordinator 
 const getOpenClawExtensionImportService = (): OpenClawExtensionImportService => {
   openClawExtensionImportService ??= new OpenClawExtensionImportService({
     getOpenClawEngineManager,
-    getManagedPluginIds: listManagedOpenClawPluginIds,
+    getManagedPluginIds: () => {
+      const managed = listManagedOpenClawPluginIds();
+      const decision = getStore().get<AppConfigSettings>('app_config')?.onlineModelProviders?.decision;
+      return decision === undefined ? managed : [...managed, OpenClawExtensionId.TYPESAFE];
+    },
     requestGateway: <T>(method: string, params?: unknown) =>
       getCoworkEngineService().requestGateway<T>(method, params),
     runConfigMutationExclusive: operation =>
@@ -706,6 +710,8 @@ const getOpenClawConfigSyncService = (): OpenClawConfigSyncService => {
         getCoworkEngineService().requestGateway<T>(method, params),
       getBrowserMode: () =>
         normalizeBrowserMode(getStore().get<{ browserMode?: unknown }>('app_config')?.browserMode),
+      getDecisionModelCategory: () =>
+        getStore().get<AppConfigSettings>('app_config')?.onlineModelProviders?.decision,
       getLocalSttConfig: () => {
         const appConfig = getStore().get<AppConfigSettings>('app_config');
         return buildManagedLocalSttConfig(
@@ -1151,6 +1157,7 @@ type AppConfigSettings = {
   useSystemProxy?: boolean;
   proxy?: Partial<ProxySettings>;
   providers?: unknown;
+  onlineModelProviders?: { decision?: unknown };
   voice?: unknown;
 };
 
@@ -1162,6 +1169,7 @@ const getOpenClawAppConfigSignature = (config: unknown): string => {
     browserMode: appConfig.browserMode,
     model: appConfig.model,
     providers: appConfig.providers,
+    decisionModels: appConfig.onlineModelProviders?.decision,
     voice: {
       outputEnabled: voice.outputEnabled,
       synthesisMode: voice.synthesisMode,

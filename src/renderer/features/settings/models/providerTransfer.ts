@@ -28,6 +28,7 @@ export const TRANSFERRED_NON_LANGUAGE_MODEL_KINDS: readonly NonLanguageModelKind
   'speech-synthesis',
   'image',
   'video',
+  'decision',
 ];
 
 export type SerializedProviderConfig = Omit<
@@ -198,7 +199,7 @@ const parseOnlineModelProvider = (
     modelIds.add(model.id);
   }
   if (
-    (kind === 'image' || kind === 'video') &&
+    (kind === 'image' || kind === 'video' || kind === 'decision') &&
     (typeof value.defaultModel !== 'string' || !modelIds.has(value.defaultModel))
   ) {
     throw new Error('Invalid online model default');

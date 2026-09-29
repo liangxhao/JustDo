@@ -2181,6 +2181,7 @@ export type OpenClawConfigSyncDeps = {
   getHooks?: () => OpenClawHookRecord[];
   getAgents?: () => Agent[];
   getBrowserMode?: () => BrowserModeValue;
+  getDecisionModelCategory?: () => unknown;
   getLocalSttConfig?: () => Record<string, unknown> | null;
   getLocalTtsConfig?: () => Record<string, unknown> | null;
   getSpeechOutputState?: () => { enabled: boolean; mode: 'local' | 'online' };

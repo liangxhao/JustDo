@@ -7,17 +7,33 @@ classification, rubric scores, and Boolean probabilities, not chat responses.
 
 ## Setup and use
 
-1. Open Plugins → Extensions → TypeSafe AI.
-2. Enter the TypeSafe API key and save. An empty field preserves the saved key.
-3. Enable the extension. Saving a credential does not enable it.
-4. Ask the assistant to use Jev to classify supplied items, score alternatives
-   against explicit criteria, or estimate whether a condition holds.
+1. Open Settings → Models → Decision models and add a provider.
+2. Enter the **URL and API Key**, both required. No account login or OAuth is offered.
+   Hosted Jev uses `https://api.typesafe.ai/v1`; an intranet server might use
+   `http://inference.corp:8009/v1`.
+3. Detect models or add one manually when `/models` is unavailable, for example
+   `jev-latest` for Jev or `kev-latest` for a deployed Kev server.
+4. Select the default model and save. This enables TypeSafe and selects both
+   the evaluation-tool default and native `agents.defaults.decisionModel`.
+5. Ask the assistant to classify, score or estimate probabilities. The chat model
+   decides when to call the evaluation tool; native decision consumers use the
+   configured default. Saving a model does not create automatic business workflows.
 
-Hosted evaluation sends the supplied task evidence to TypeSafe and may incur
-API charges. The bundled skill explains the input contract and limits. Results
-and tool progress use the existing OpenClaw chat stream, with no transcript cache.
-The default model is `jev-latest`; the tool supports an explicit `model` override,
-including `jev-1.13.0`. Disabling the extension removes its runtime capability.
+The server must implement **TypeSafe System One**, not just OpenAI chat completions.
+The API base is followed by `/systemone`; a full endpoint URL is normalized.
+Requests go directly to the configured origin with Bearer auth, without redirects,
+environment proxies or hosted fallback. Deploy self-hosted servers separately.
+For a test server that ignores authentication, enter a nonempty test key; production
+authentication must be enforced by the server or reverse proxy.
+
+Once configured, this category owns TypeSafe settings and activation. Its extension
+panel cannot independently edit or toggle it. Deleting all decision providers
+disables TypeSafe and clears the native default. Users who have never configured
+this category retain their existing extension settings. Provider import/export
+includes decision models using the same credential encryption as other model types.
+
+Evaluation sends task evidence to the selected service. Hosted Jev may incur API
+charges. Results use the existing OpenClaw stream, without a transcript cache.
 
 ## Batch classification and scoring
 
@@ -59,14 +75,14 @@ Runnable sample records, a rubric, and the full file contract live in
 
 ```mermaid
 flowchart LR
-  UI[Extension configuration] --> Main[Main extension service]
+  UI[Model settings] --> Main[Main config synchronizer]
   Main --> Secret[Restricted extension-secrets.json]
   Main --> Config[Plugin config with SecretRef]
   Config --> Gateway[OpenClaw secret preparation]
   Secret --> Gateway
   Chat[Chat agent] --> Tool[typesafe_evaluate]
   Gateway --> Tool
-  Tool --> API[TypeSafe API]
+  Tool --> API[Configured System One API]
 ```
 
 The extension service reads bundled configuration hints as well as locally
@@ -77,11 +93,13 @@ string-only plugin configuration remains supported.
 Main stores these credentials separately in
 `<OpenClaw state directory>/extension-secrets.json`, using the
 `justdo-extension-secrets` file provider. It restricts the temporary file's
-permissions before writing any credential, then publishes it atomically. The
-configuration and renderer inventory contain no credential values. This is
+permissions before writing any credential, then publishes it atomically. The native
+Gateway configuration and extension inventory contain no credential values.
+Model settings persist credentials in the existing application config, just like
+other model types; this application config is not an encrypted vault. This is
 filesystem access protection, not encryption at rest.
 
-Changing credentials restarts an active Gateway through the existing restart
+Changing credentials in the extension dialog restarts an active Gateway through the existing restart
 coordinator to refresh native prepared secrets, including rotations where the
 reference itself is unchanged. Saving the same value is a no-op. Disabling the
 plugin retains its credential for subsequent re-enablement.
@@ -90,8 +108,10 @@ If configuration publication or Gateway restart fails after rotation, a pending
 refresh remains in the running application. Retrying the same key still refreshes
 the Gateway; a new application process loads the saved key on startup.
 
-Full, minimal, login, and logout synchronization preserve the explicit plugin
-state, plugin settings, secret provider, and additional tool allowlist entries.
+Full, minimal, login and logout synchronization applies the settings selection
+and preserves secret providers and additional tool policy. Model settings use
+managed credential refresh (`secrets.reload` when only the key changed). Failed
+runtime application triggers the existing app-config rollback flow.
 Existing nonempty `tools.allow` lists receive the optional tool directly;
 otherwise synchronization uses `alsoAllow`, keeping empty allowlists unrestricted.
 Explicit tool denies remain in force across full and authentication syncs.
@@ -111,10 +131,51 @@ default-off behavior, configuration persistence across lifecycle synchronization
 and optional tool admission. Real hosted validation requires an operator's API
 key; synthetic credentials must never be sent to the public endpoint.
 
-## Deferred work
+The native adapter suite can be run offline against a prepared runtime:
 
-This integration does not expose the separate global/per-assistant
-`decisionModel` selector or introduce automatic business decision consumers.
-Those should use Gateway `decisionModels` discovery and
-`api.runtime.decisions.evaluate()` when added. Local Kev server setup is also
-outside this UI flow; the upstream adapter remains unchanged.
+```sh
+npx vitest run --config scripts/openclaw/typesafe.vitest.config.mts
+```
+
+Set `OPENCLAW_RUNTIME` to use a different prepared SDK directory. It covers the
+explicit endpoint, authentication failure without fallback, schema validation,
+cancellation and existing upstream behavior; no real hosted key is used.
+
+## Remaining scope
+
+Per-assistant model selection, automatic business routing, model downloads and
+server deployment are not added. Explicit native per-agent decision overrides
+remain native-owned. Settings configures an already deployed System One service.
+
+## Packaged Gateway credential identity
+
+Gateway bundling preserves the native `secret-input-runtime` SDK state-owner modules as
+external runtime modules. Both the Gateway and dynamically loaded plugins resolve
+the same ESM instances for prepared secrets, config snapshots, auth revisions and
+unavailable-owner state, including their configuration preparation scopes,
+environment publication, auth ownership/read caches and error classes. Inlining
+these owners into a second bundle can lose state, invalidate the wrong cache or
+break native `instanceof` error classification. Inlining the prepared-secret owner silently
+creates an empty SDK credential snapshot even when the file SecretRef is valid.
+No upstream credential implementation or capability-scope checks are changed.
+
+After preparing a pristine runtime with the current build recipe, run:
+
+```sh
+node scripts/test/verify-decision-secret-runtime.cjs vendor/openclaw-runtime/current
+```
+
+This starts an isolated packaged Gateway and local synthetic System One provider.
+It invokes the actual plugin through `/tools/invoke`, rotates the file credential
+with `secrets.reload`, verifies unavailable owners cannot make provider requests,
+and verifies recovery. It does not invoke a conversational model or read user
+credentials. Its first synthetic credential overlaps the selected model name to
+cover short-key reflection false positives. The ordinary unit suite also reproduces
+the old split-module failure and checks scopes, class identity and transitive
+state sharing without changing native source bytes.
+
+Response credential checks run after native schema validation. Answer labels and
+score legends must match the request; the exact selected model is also an expected
+echo. Short credentials overlapping those values or numeric results do not cause
+false failures. An unexpected provider model name containing the credential is
+still rejected, and provider error bodies are never returned to the agent.

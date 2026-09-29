@@ -15,6 +15,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { createSharedSdkModulesPlugin } = require('./openclaw-shared-sdk-modules.cjs');
 const { patchOpenClawRuntime } = require('./patch-openclaw-runtime.cjs');
 const { decideRuntimeBundle } = require('./openclaw-runtime-freeze.cjs');
 const {
@@ -324,7 +325,10 @@ esbuild
       // with `marketplace`, so the generated-code warning is non-actionable.
       'duplicate-object-key': 'silent',
     },
-    plugins: [createRuntimeImportMetaUrlPlugin(runtimeDir)],
+    plugins: [
+      createSharedSdkModulesPlugin(runtimeDir, esbuild),
+      createRuntimeImportMetaUrlPlugin(runtimeDir),
+    ],
   })
   .then(result => {
     const bundle = fs.readFileSync(bundleOutPath, 'utf8');

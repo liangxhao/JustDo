@@ -2,6 +2,11 @@ import fs from 'fs';
 import path from 'path';
 
 import {
+  applyDecisionModelConfiguration,
+  captureDecisionModelConfiguration,
+  resolveDecisionModelSelection,
+} from './decisionModelConfig';
+import {
   applyDefaultOpenClawPluginEntries,
   applyManagedOpenClawHeartbeatConfig,
   buildAuthScopedOpenClawConfig,
@@ -131,6 +136,7 @@ import {
   type ExternalAgentSettings,
 } from '../../../shared/openclaw/externalAgents';
 import { BuiltinModelSyncReason } from '../../../shared/providers/builtinModels';
+import { t } from '../../core/i18n';
 import type { Agent, CoworkConfig } from '../../data/coworkStore';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import type { OpenClawHookRecord } from '../../plugins/hooks';
@@ -150,6 +156,10 @@ import { syncBuiltinCredentialFile } from './builtinCredentialFile';
 import { syncProviderSecretFile } from './providerSecretFile';
 
 export class OpenClawConfigSync {
+  private readonly getDecisionModelCategory: () => unknown;
+  private decisionSelection: ReturnType<typeof resolveDecisionModelSelection>;
+  private decisionSecretsChanged = false;
+  private restoreUnmanagedDecision?: (config: Record<string, unknown>) => void;
   private readonly engineManager: OpenClawEngineManager;
   private readonly getCoworkConfig: () => CoworkConfig;
   private readonly getAgentRuntimeSettings: () => AgentRuntimeSettings;
@@ -164,6 +174,7 @@ export class OpenClawConfigSync {
   private readonly getWindowsSandboxEnvironment: () => Record<string, string>;
 
   constructor(deps: OpenClawConfigSyncDeps) {
+    this.getDecisionModelCategory = deps.getDecisionModelCategory ?? (() => undefined);
     this.engineManager = deps.engineManager;
     this.getCoworkConfig = deps.getCoworkConfig;
     this.getAgentRuntimeSettings =
@@ -182,6 +193,54 @@ export class OpenClawConfigSync {
   }
 
   sync(reason: string): OpenClawConfigSyncResult {
+    this.decisionSecretsChanged = false;
+    try {
+      const selection = resolveDecisionModelSelection(this.getDecisionModelCategory());
+      if (selection !== undefined && this.decisionSelection === undefined) {
+        let existing: Record<string, unknown> = {};
+        try {
+          const parsed: unknown = JSON.parse(
+            fs.readFileSync(this.engineManager.getConfigPath(), 'utf8'),
+          );
+          if (isRecord(parsed)) existing = parsed;
+        } catch {
+          // A fresh installation has no native configuration yet.
+        }
+        this.restoreUnmanagedDecision = captureDecisionModelConfiguration(existing);
+      }
+      this.decisionSelection = selection;
+      const result = this.syncConfiguration(reason);
+      if (!result.ok) return result;
+      if (selection === undefined) this.restoreUnmanagedDecision = undefined;
+      return {
+        ...result,
+        changed: result.changed || this.decisionSecretsChanged,
+        secretsChanged: result.secretsChanged || this.decisionSecretsChanged,
+      };
+    } catch {
+      return {
+        ok: false,
+        changed: false,
+        configChanged: false,
+        requiresGatewayRestart: false,
+        configPath: this.engineManager.getConfigPath(),
+        error: t('decisionModelConfigurationInvalid'),
+      };
+    }
+  }
+
+  private applyDecisionModel(config: Record<string, unknown>): void {
+    if (this.decisionSelection === undefined && this.restoreUnmanagedDecision) {
+      this.restoreUnmanagedDecision(config);
+      return;
+    }
+    const changed = applyDecisionModelConfiguration(
+      config, this.decisionSelection, this.engineManager.getStateDir(),
+    );
+    this.decisionSecretsChanged ||= changed;
+  }
+
+  private syncConfiguration(reason: string): OpenClawConfigSyncResult {
     const configPath = this.engineManager.getConfigPath();
     const isAuthLifecycleSync =
       reason === BuiltinModelSyncReason.AuthLogin || reason === BuiltinModelSyncReason.AuthLogout;
@@ -562,6 +621,7 @@ export class OpenClawConfigSync {
       };
     }
     const configToPersist = preparedSecrets.config;
+    this.applyDecisionModel(configToPersist);
     const nextContent = `${JSON.stringify(configToPersist, null, 2)}\n`;
     const configChanged = hasOpenClawConfigChanged(currentContent, configToPersist);
     if (configChanged) {
@@ -896,6 +956,7 @@ export class OpenClawConfigSync {
         // Invalid JSON follows the existing minimal-config recovery path.
       }
     }
+    this.applyDecisionModel(minimalConfig);
     const nextContent = `${JSON.stringify(minimalConfig, null, 2)}\n`;
     const buildMinimalSyncResult = (
       expectedConfig: Record<string, unknown>,
@@ -910,6 +971,7 @@ export class OpenClawConfigSync {
         const existing = JSON.parse(currentContent);
         if (isRecord(existing)) {
           const sanitizedConfig = buildAuthScopedOpenClawConfig(existing, minimalConfig, reason);
+          this.applyDecisionModel(sanitizedConfig);
           const sanitizedContent = `${JSON.stringify(sanitizedConfig, null, 2)}\n`;
           if (hasOpenClawConfigChanged(currentContent, sanitizedConfig)) {
             ensureDir(path.dirname(configPath));
@@ -1077,6 +1139,7 @@ export class OpenClawConfigSync {
                 { enabled: false },
               ),
             );
+            this.applyDecisionModel(mergedConfig);
             const mergedContent = `${JSON.stringify(mergedConfig, null, 2)}\n`;
             if (hasOpenClawConfigChanged(currentContent, mergedConfig)) {
               ensureDir(path.dirname(configPath));

@@ -313,3 +313,38 @@ describe('non-language model configuration persistence', () => {
     expect(clearTtsConfiguration).not.toHaveBeenCalled();
   });
 });
+
+describe('decision model settings', () => {
+  const category = {
+    defaultProviderId: 'lan',
+    providers: {
+      lan: {
+        displayName: 'LAN',
+        baseUrl: 'http://10.0.0.5:8009/v1/systemone',
+        apiKey: 'test-key',
+        defaultModel: 'kev-latest',
+        models: [{ id: 'kev-latest', name: 'Kev' }],
+      },
+    },
+  };
+  it('requires a key and a default model for intranet providers', () => {
+    expect(getNonLanguageModelCategoryValidationError('decision', category, 'lan')).toBe('');
+    const draft = structuredClone(category);
+    draft.providers.lan.apiKey = ' ';
+    expect(getNonLanguageModelCategoryValidationError('decision', draft, 'lan')).toBe(
+      'decisionApiKeyRequired',
+    );
+    draft.providers.lan.apiKey = 'test-key';
+    draft.providers.lan.defaultModel = '';
+    expect(getNonLanguageModelCategoryValidationError('decision', draft, 'lan')).toBe(
+      'customModelDefaultRequired',
+    );
+  });
+  it('normalizes the evaluation endpoint and preserves the default model', async () => {
+    const persist = vi.fn().mockResolvedValue(undefined);
+    const saved = await commitNonLanguageModelConfigurations({}, { decision: category }, persist);
+    expect(saved.decision?.providers.lan.baseUrl).toBe('http://10.0.0.5:8009/v1');
+    expect(saved.decision?.providers.lan.defaultModel).toBe('kev-latest');
+    expect(persist).toHaveBeenCalledWith(saved);
+  });
+});

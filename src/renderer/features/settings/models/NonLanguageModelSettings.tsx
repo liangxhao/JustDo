@@ -43,6 +43,7 @@ const PROTOCOL_HINT_KEYS = {
   'speech-synthesis': 'customSynthesisProtocolHint',
   image: 'customImageProtocolHint',
   video: 'customVideoProtocolHint',
+  decision: 'customDecisionProtocolHint',
 } as const;
 
 const DISCOVERY_TIMEOUT_MS = 10_000;
@@ -335,7 +336,7 @@ const NonLanguageModelSettings: React.FC<NonLanguageModelSettingsProps> = ({
 
   const providerEntries = Object.entries(category.providers);
   const activeProvider = category.providers[activeProviderId];
-  const supportsCatalogDefault = kind === 'image' || kind === 'video';
+  const supportsCatalogDefault = kind === 'image' || kind === 'video' || kind === 'decision';
   const defaultRef =
     supportsCatalogDefault &&
     category.defaultProviderId &&
@@ -498,7 +499,12 @@ const NonLanguageModelSettings: React.FC<NonLanguageModelSettingsProps> = ({
   };
 
   const detectModels = async (): Promise<void> => {
-    if (!activeProvider?.baseUrl.trim() || detectingModels) return;
+    if (
+      !activeProvider?.baseUrl.trim() ||
+      (kind === 'decision' && !activeProvider.apiKey.trim()) ||
+      detectingModels
+    )
+      return;
     const generation = ++modelDetectionGenerationRef.current;
     const providerId = activeProviderId;
     const baseUrl = activeProvider.baseUrl;
@@ -781,9 +787,11 @@ const NonLanguageModelSettings: React.FC<NonLanguageModelSettingsProps> = ({
                   <div className="text-xs text-secondary">
                     <label htmlFor={`${activeProviderId}-base-url`}>
                       {i18nService.t('baseUrl')}
+                      {kind === 'decision' ? ' *' : ''}
                     </label>
                     <input
                       id={`${activeProviderId}-base-url`}
+                      required={kind === 'decision'}
                       aria-describedby={`${activeProviderId}-endpoint-preview`}
                       value={activeProvider.baseUrl}
                       onChange={event => {
@@ -805,8 +813,10 @@ const NonLanguageModelSettings: React.FC<NonLanguageModelSettingsProps> = ({
                   </div>
                   <label className="relative text-xs text-secondary">
                     {i18nService.t('apiKey')}
+                    {kind === 'decision' ? ' *' : ''}
                     <input
                       type={showApiKey ? 'text' : 'password'}
+                      required={kind === 'decision'}
                       value={activeProvider.apiKey}
                       onChange={event => {
                         invalidateModelDetection();
@@ -842,7 +852,11 @@ const NonLanguageModelSettings: React.FC<NonLanguageModelSettingsProps> = ({
                     <button
                       type="button"
                       onClick={() => void detectModels()}
-                      disabled={!activeProvider.baseUrl.trim() || detectingModels}
+                      disabled={
+                        !activeProvider.baseUrl.trim() ||
+                        (kind === 'decision' && !activeProvider.apiKey.trim()) ||
+                        detectingModels
+                      }
                       aria-describedby={
                         activeProvider.baseUrl.trim()
                           ? undefined

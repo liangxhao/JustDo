@@ -1,10 +1,12 @@
-export type NonLanguageModelKind = 'speech-recognition' | 'speech-synthesis' | 'image' | 'video';
+export type NonLanguageModelKind =
+  'speech-recognition' | 'speech-synthesis' | 'image' | 'video' | 'decision';
 
 const ENDPOINT_SUFFIXES: Record<NonLanguageModelKind, string> = {
   'speech-recognition': '/realtime',
   'speech-synthesis': '/audio/speech',
   image: '/images/generations',
   video: '/videos',
+  decision: '/systemone',
 };
 
 const removePathSuffix = (pathname: string, suffix: string): string =>
