@@ -318,7 +318,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const agents = useSelector((state: RootState) => state.agent.agents);
     const availableModels = useSelector((state: RootState) => state.model.availableModels);
     const [openClawModelCatalog, setOpenClawModelCatalog] = useState<OpenClawModelChoice[]>([]);
-    const [modelCatalogLoading, setModelCatalogLoading] = useState(false);
     const modelCatalogRequestRef = useRef(0);
     const globalSelectedModel = useSelector((state: RootState) => state.model.selectedModel);
     const effectiveAgentId = modelAgentId ?? MAIN_USER_AGENT_ID;
@@ -331,20 +330,18 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         availableModels.length === 0
       ) {
         setOpenClawModelCatalog([]);
-        setModelCatalogLoading(false);
         return;
       }
-      setModelCatalogLoading(true);
       try {
-        if (sessionId) await coworkService.refreshSessionModel(sessionId, effectiveAgentId);
-        const result = await coworkService.listModels({ agentId: effectiveAgentId });
+        const [result] = await Promise.all([
+          coworkService.listModels({ agentId: effectiveAgentId }),
+          sessionId ? coworkService.refreshSessionModel(sessionId, effectiveAgentId) : undefined,
+        ]);
         if (requestId === modelCatalogRequestRef.current) {
           setOpenClawModelCatalog(result.success ? result.models : []);
         }
       } catch {
         if (requestId === modelCatalogRequestRef.current) setOpenClawModelCatalog([]);
-      } finally {
-        if (requestId === modelCatalogRequestRef.current) setModelCatalogLoading(false);
       }
     }, [availableModels, effectiveAgentId, remoteManaged, sessionId, showModelSelector]);
     useEffect(() => {
@@ -2646,9 +2643,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                                 : undefined
                             }
                             models={selectableModels}
-                            onOpen={() => void loadOpenClawModelCatalog()}
                             disabled={disabled}
-                            loading={modelUpdatePending || modelCatalogLoading}
                             onChange={async nextModel => {
                               if (!nextModel) return;
                               const selectionContextKey = modelSelectionContextKey;
@@ -2660,23 +2655,47 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                                         sessionId,
                                         agentId: effectiveAgentId,
                                         model: nextModel,
-                                        onDefaultModelUpdated: () =>
+                                        onDefaultModelUpdated: () => {
                                           syncDefaultModelSelectionState(
                                             dispatch,
                                             effectiveAgentId,
                                             nextModel,
-                                          ),
+                                          );
+                                          if (sessionId) {
+                                            dispatch(confirmDefaultModelSelection({
+                                              contextKey: `__home__\0${effectiveAgentId}`,
+                                              model: nextModel,
+                                            }));
+                                            dispatch(completeManualModelSelection({
+                                              contextKey: `__home__\0${effectiveAgentId}`,
+                                              taskId,
+                                            }));
+                                          }
+                                        },
+                                        onBackgroundDefaultStart: () => {
+                                          dispatch(beginManualModelSelection({
+                                            contextKey: `__home__\0${effectiveAgentId}`,
+                                            taskId,
+                                            model: nextModel,
+                                            previousModel: agentSelectedModel,
+                                          }));
+                                        },
+                                        onBackgroundDefaultError: error => {
+                                          // The native session is already pinned. A late
+                                          // default-save failure must never undo its model.
+                                          dispatch(rollbackManualModelSelection({
+                                            contextKey: `__home__\0${effectiveAgentId}`,
+                                            taskId,
+                                          }));
+                                          window.dispatchEvent(new CustomEvent('app:showToast', {
+                                            detail: i18nService
+                                              .t('coworkDefaultModelApplyFailedSessionUpdated')
+                                              .replace('{error}', error.message),
+                                          }));
+                                        },
                                       },
                                       coworkService,
                                     );
-                                    if (sessionId) {
-                                      dispatch(
-                                        confirmDefaultModelSelection({
-                                          contextKey: `__home__\0${effectiveAgentId}`,
-                                          model: nextModel,
-                                        }),
-                                      );
-                                    }
                                     if (!sessionId || !result.sessionModelRef) {
                                       dispatch(
                                         confirmManualModelSelection({

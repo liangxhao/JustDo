@@ -175,6 +175,31 @@ describe('managed session model synchronization', () => {
     expect(harness.persisted()).toBe('p/selected');
   });
 
+  it('does not describe unchanged available historical sessions when switching defaults', async () => {
+    const harness = createModelHarness('p/selected', 'p/selected', ['p/default', 'p/selected']);
+    harness.requestGateway.mockResolvedValueOnce({
+      sessions: Array.from({ length: 200 }, (_, index) => ({
+        key: `agent:main:justdo:session-${index}`,
+        modelProvider: 'p', model: 'selected',
+      })), hasMore: false,
+    });
+    await harness.sync();
+    expect(harness.requestGateway).toHaveBeenCalledTimes(1);
+    expect(harness.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('does not restore a valid but stale list selection over a concurrent user switch', async () => {
+    const harness = createModelHarness('p/old', 'p/new', ['p/old', 'p/new']);
+    harness.requestGateway.mockResolvedValueOnce({
+      sessions: [{ key: 'agent:main:justdo:session-1', modelProvider: 'p', model: 'old' }],
+      hasMore: false,
+    });
+    await harness.sync();
+    expect(harness.updateSession).not.toHaveBeenCalled();
+    expect(harness.requestGateway).not.toHaveBeenCalledWith('sessions.patch', expect.anything());
+    await expect(harness.rpc.getModel('session-1')).resolves.toMatchObject({ modelRef: 'p/new' });
+  });
+
   it('replaces a removed selection and persists the Gateway-confirmed replacement', async () => {
     const harness = createModelHarness('p/removed', 'p/removed', ['p/default']);
     await harness.sync();

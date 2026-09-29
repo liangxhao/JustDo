@@ -24,6 +24,9 @@ interface ApplyModelSelectionUpdateOptions {
   agentId: string;
   model: Model;
   onDefaultModelUpdated: () => void;
+  /** Existing sessions can finish switching while the future-chat default saves. */
+  onBackgroundDefaultError?: (error: DefaultModelApplyError) => void;
+  onBackgroundDefaultStart?: () => void;
 }
 
 export class SessionModelApplyError extends Error {
@@ -93,29 +96,45 @@ export const applyModelSelectionUpdate = async (
     }
   }
 
-  let defaultResult: Awaited<ReturnType<ModelSelectionUpdateServices['setDefaultModel']>>;
-  try {
-    defaultResult = await services.setDefaultModel({
-      modelId: options.model.id,
-      providerKey: options.model.providerKey,
-      modelRef,
-      agentId: options.agentId,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (sessionModelRef) throw new DefaultModelApplyError(message, sessionModelRef);
-    throw error;
-  }
-  if (!defaultResult.success) {
-    if (sessionModelRef) {
-      throw new DefaultModelApplyError(
-        defaultResult.error || 'setDefaultModel failed',
-        sessionModelRef,
-      );
+  const saveDefault = async () => {
+    let defaultResult: Awaited<ReturnType<ModelSelectionUpdateServices['setDefaultModel']>>;
+    try {
+      defaultResult = await services.setDefaultModel({
+        modelId: options.model.id,
+        providerKey: options.model.providerKey,
+        modelRef,
+        agentId: options.agentId,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (sessionModelRef) throw new DefaultModelApplyError(message, sessionModelRef);
+      throw error;
     }
-    throw new Error(defaultResult.error || 'setDefaultModel failed');
-  }
+    if (!defaultResult.success) {
+      if (sessionModelRef) {
+        throw new DefaultModelApplyError(
+          defaultResult.error || 'setDefaultModel failed',
+          sessionModelRef,
+        );
+      }
+      throw new Error(defaultResult.error || 'setDefaultModel failed');
+    }
 
-  options.onDefaultModelUpdated();
+    options.onDefaultModelUpdated();
+  };
+  if (sessionModelRef && options.onBackgroundDefaultError) {
+    const confirmedRef = sessionModelRef;
+    const onError = options.onBackgroundDefaultError;
+    options.onBackgroundDefaultStart?.();
+    void saveDefault().catch(error => {
+      onError(error instanceof DefaultModelApplyError
+        ? error
+        : new DefaultModelApplyError(String(error), confirmedRef));
+    });
+  } else {
+    // New chats have no pinned session yet: their default must be applied
+    // before the selection completes and sending becomes available.
+    await saveDefault();
+  }
   return sessionModelRef ? { sessionModelRef } : {};
 };

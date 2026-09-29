@@ -802,6 +802,11 @@ export class OpenClawConfigSyncService {
       }
     }
 
+    const availableRoute = (reference: string | null | undefined) => reference
+      ? availableModelRefs.has(reference)
+        ? reference
+        : [...availableModelRefs].find(route => matchesModelSelectionIdentity(route, reference))
+      : undefined;
     const limit = 200;
     let offset = 0;
     const seenOffsets = new Set<number>();
@@ -813,6 +818,15 @@ export class OpenClawConfigSyncService {
       for (const session of page.sessions) {
         const match = /^agent:([^:]+):justdo:(.+)$/.exec(session.key);
         if (!match) continue;
+        // An unchanged, available selection needs no repair. Do not issue one
+        // describe RPC per historical conversation on every default switch.
+        // This fast path never writes a list snapshot back into local state:
+        // a concurrent user selection remains authoritative.
+        const listedRef = readModelRef(session);
+        if (
+          listedRef && availableRoute(listedRef) &&
+          this.deps.getCoworkStore().getSessionModelRef(match[2]) === listedRef
+        ) continue;
         await enqueueSessionModelOperation(session.key, async () => {
           // The list may precede a user switch. Re-read inside the same ordering
           // boundary as SessionRpc before repairing a removed provider/model.
@@ -823,11 +837,6 @@ export class OpenClawConfigSyncService {
           const selectedRef = readModelRef(described.session);
           const store = this.deps.getCoworkStore();
           const persistedRef = store.getSessionModelRef(match[2]);
-          const availableRoute = (reference: string | null | undefined) => reference
-            ? availableModelRefs.has(reference)
-              ? reference
-              : [...availableModelRefs].find(route => matchesModelSelectionIdentity(route, reference))
-            : undefined;
           // A valid native selection is user-owned, even when the local snapshot
           // still names an earlier picker selection (for example after /model).
           if (selectedRef && availableRoute(selectedRef)) {

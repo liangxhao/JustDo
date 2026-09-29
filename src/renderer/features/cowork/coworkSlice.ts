@@ -509,6 +509,9 @@ const coworkSlice = createSlice({
       }>,
     ) {
       const { contextKey, taskId, model, previousModel } = action.payload;
+      // A session switch can start saving its default after a newer home
+      // selection has already been queued. Keep the latest user's intent.
+      if ((state.pendingModelSelectionTaskIds[contextKey] ?? -1) > taskId) return;
       if (!Object.prototype.hasOwnProperty.call(state.confirmedModelSelections, contextKey)) {
         state.confirmedModelSelections[contextKey] = previousModel;
       }

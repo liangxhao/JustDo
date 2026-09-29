@@ -42,6 +42,70 @@ describe('resolvePersistedSessionModelRefAfterApplyError', () => {
 });
 
 describe('applyModelSelectionUpdate', () => {
+  test('finishes an existing-session switch before a slow default save and lets the next switch proceed', async () => {
+    const queue = new LatestSerialTaskQueue();
+    let releaseDefault!: (result: { success: boolean }) => void;
+    const pendingDefault = new Promise<{ success: boolean }>(resolve => { releaseDefault = resolve; });
+    const onDefaultModelUpdated = vi.fn();
+    const onBackgroundDefaultError = vi.fn();
+    const onBackgroundDefaultStart = vi.fn();
+    const patchSessionModel = vi.fn(async ({ model: reference }: { model: string }) => ({
+      success: true, modelRef: reference,
+    }));
+    const setDefaultModel = vi.fn(() => {
+      expect(onBackgroundDefaultStart).toHaveBeenCalledTimes(patchSessionModel.mock.calls.length);
+      return pendingDefault;
+    });
+    const select = (selected: Model) => queue.enqueue(() => applyModelSelectionUpdate({
+      sessionId: 'session-1', agentId: 'main', model: selected,
+      onDefaultModelUpdated, onBackgroundDefaultError, onBackgroundDefaultStart,
+    }, { patchSessionModel, setDefaultModel })).completion;
+
+    await expect(select(model)).resolves.toEqual({ sessionModelRef: 'openai/gpt-5' });
+    await expect(select({ ...model, id: 'gpt-6' })).resolves.toEqual({ sessionModelRef: 'openai/gpt-6' });
+    expect(patchSessionModel).toHaveBeenCalledTimes(2);
+    expect(onDefaultModelUpdated).not.toHaveBeenCalled();
+    releaseDefault({ success: true });
+    await vi.waitFor(() => expect(onDefaultModelUpdated).toHaveBeenCalledTimes(2));
+    expect(onBackgroundDefaultError).not.toHaveBeenCalled();
+  });
+
+  test('reports a late default-save failure separately from the confirmed session switch', async () => {
+    let rejectDefault!: (error: Error) => void;
+    const pendingDefault = new Promise<{ success: boolean }>((_resolve, reject) => { rejectDefault = reject; });
+    const onBackgroundDefaultError = vi.fn();
+    const onDefaultModelUpdated = vi.fn();
+    const patchSessionModel = vi.fn(async () => ({ success: true, modelRef: 'openai/gpt-5' }));
+    await expect(applyModelSelectionUpdate({
+      sessionId: 'session-1', agentId: 'main', model,
+      onDefaultModelUpdated, onBackgroundDefaultError,
+    }, { patchSessionModel, setDefaultModel: () => pendingDefault }))
+      .resolves.toEqual({ sessionModelRef: 'openai/gpt-5' });
+
+    rejectDefault(new Error('save failed'));
+    await vi.waitFor(() => expect(onBackgroundDefaultError).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'DefaultModelApplyError', sessionModelRef: 'openai/gpt-5' }),
+    ));
+    expect(onDefaultModelUpdated).not.toHaveBeenCalled();
+    expect(patchSessionModel).toHaveBeenCalledTimes(1);
+  });
+
+  test('keeps a new-chat selection pending until its default has actually been applied', async () => {
+    let releaseDefault!: (result: { success: boolean }) => void;
+    const pendingDefault = new Promise<{ success: boolean }>(resolve => { releaseDefault = resolve; });
+    const completed = vi.fn();
+    const onBackgroundDefaultError = vi.fn();
+    const selecting = applyModelSelectionUpdate({
+      agentId: 'main', model, onDefaultModelUpdated: vi.fn(), onBackgroundDefaultError,
+    }, { patchSessionModel: vi.fn(), setDefaultModel: () => pendingDefault }).then(completed);
+    await Promise.resolve();
+    expect(completed).not.toHaveBeenCalled();
+    releaseDefault({ success: true });
+    await selecting;
+    expect(completed).toHaveBeenCalledOnce();
+    expect(onBackgroundDefaultError).not.toHaveBeenCalled();
+  });
+
   test('does not update defaults without a confirmed session model', async () => {
     const setDefaultModel = vi.fn();
     const onDefaultModelUpdated = vi.fn();

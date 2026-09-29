@@ -136,6 +136,39 @@ describe('cowork session model ownership', () => {
   const modelB = { id: 'model-b', name: 'Model B', providerKey: 'provider-b' };
   const modelC = { id: 'model-c', name: 'Model C', providerKey: 'provider-c' };
 
+  test('keeps the background default visible and pending after navigating to a new chat', () => {
+    const homeKey = '__home__\0main';
+    let state = coworkReducer(undefined, setCurrentSession(createSession('session-1', 'provider-b/model-b')));
+    state = coworkReducer(state, beginManualModelSelection({
+      contextKey: homeKey, taskId: 1, model: modelB, previousModel: modelA,
+    }));
+    state = coworkReducer(state, clearCurrentSession());
+    expect(state.manualModelSelections[homeKey]).toEqual(modelB);
+    expect(state.pendingModelSelectionTaskIds[homeKey]).toBe(1);
+    expect(state.pendingModelSelectionTaskIds['session-1\0main']).toBeUndefined();
+    state = coworkReducer(state, rollbackManualModelSelection({ contextKey: homeKey, taskId: 1 }));
+    expect(state.manualModelSelections[homeKey]).toBeUndefined();
+    expect(state.pendingModelSelectionTaskIds[homeKey]).toBeUndefined();
+  });
+
+  test('an older session default save cannot replace or release a newer home selection', () => {
+    const contextKey = '__home__\0main';
+    let state = coworkReducer(undefined, beginManualModelSelection({
+      contextKey, taskId: 2, model: modelC, previousModel: modelA,
+    }));
+    state = coworkReducer(state, beginManualModelSelection({
+      contextKey, taskId: 1, model: modelB, previousModel: modelA,
+    }));
+    state = coworkReducer(state, confirmDefaultModelSelection({ contextKey, model: modelB }));
+    state = coworkReducer(state, completeManualModelSelection({ contextKey, taskId: 1 }));
+    state = coworkReducer(state, rollbackManualModelSelection({ contextKey, taskId: 1 }));
+    expect(state.manualModelSelections[contextKey]).toEqual(modelC);
+    expect(state.pendingModelSelectionTaskIds[contextKey]).toBe(2);
+    expect(state.confirmedModelSelections[contextKey]).toEqual(modelB);
+    state = coworkReducer(state, completeManualModelSelection({ contextKey, taskId: 2 }));
+    expect(state.pendingModelSelectionTaskIds[contextKey]).toBeUndefined();
+  });
+
   test('accepts a freshly read selection when the same session is reloaded', () => {
     const selected = coworkReducer(undefined, setCurrentSession(createSession('session-1', 'b')));
 
