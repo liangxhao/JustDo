@@ -1,16 +1,46 @@
 {
-  "version": 1,
+  "version": 2,
   "description": "JustDo built-in skills configuration for OpenClaw runtime",
   "skills": [
-    { "id": "data-analysis", "enabled": true },
-    { "id": "diagram-design", "enabled": true },
-    { "id": "frontend-design", "enabled": true },
-    { "id": "jev-batch-evaluate", "enabled": true },
-    { "id": "docx", "enabled": true },
-    { "id": "pdf", "enabled": true },
-    { "id": "pptx", "enabled": true },
-    { "id": "skill-creator", "enabled": true },
-    { "id": "xlsx", "enabled": true }
+    {
+      "id": "data-analysis",
+      "enabled": true
+    },
+    {
+      "id": "diagram-design",
+      "enabled": true
+    },
+    {
+      "id": "frontend-design",
+      "enabled": true
+    },
+    {
+      "id": "docx",
+      "enabled": true
+    },
+    {
+      "id": "pdf",
+      "enabled": true
+    },
+    {
+      "id": "pptx",
+      "enabled": true
+    },
+    {
+      "id": "skill-creator",
+      "enabled": true
+    },
+    {
+      "id": "xlsx",
+      "enabled": true
+    }
   ],
-  "disableOpenClawDefaults": true
+  "openclaw": {
+    "skills": [
+      "coding-agent"
+    ],
+    "custodianSkills": [
+      "diagnose-gateway"
+    ]
+  }
 }

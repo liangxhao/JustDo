@@ -16,6 +16,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { syncBundledSkills } = require('../runtime/sync-bundled-skills.cjs');
 const { patchOpenClawRuntime } = require('./patch-openclaw-runtime.cjs');
 const { patchFacadeRuntime } = require('./openclaw-facade-runtime-patch.cjs');
 const { decideRuntimeInstall } = require('./openclaw-runtime-freeze.cjs');
@@ -359,56 +360,7 @@ fs.mkdirSync(extractDir, { recursive: true });
 // ===========================================================================
 
 function processSkills(electronRoot, runtimeRoot) {
-  const configPath = path.join(electronRoot, 'resources', 'builtin-skills.json');
-  let config = { version: 1, skills: [], disableOpenClawDefaults: false };
-  try {
-    if (fs.existsSync(configPath)) {
-      config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-      console.log(`[install-openclaw-runtime] [skills] Loaded config from ${configPath}`);
-    }
-  } catch (error) {
-    console.warn(
-      `[install-openclaw-runtime] [skills] Failed to load builtin-skills.json: ${error.message}`,
-    );
-  }
-
-  const runtimeSkillsDir = path.join(runtimeRoot, 'skills');
-  const justDoSkillsDir = path.join(electronRoot, 'resources', 'skills');
-
-  if (!fs.existsSync(runtimeSkillsDir)) {
-    fs.mkdirSync(runtimeSkillsDir, { recursive: true });
-  }
-
-  if (config.disableOpenClawDefaults) {
-    console.log('[install-openclaw-runtime] [skills] Deleting OpenClaw default skills...');
-    const existingSkills = fs
-      .readdirSync(runtimeSkillsDir, { withFileTypes: true })
-      .filter(d => d.isDirectory())
-      .map(d => d.name);
-    for (const skillName of existingSkills) {
-      fs.rmSync(path.join(runtimeSkillsDir, skillName), { recursive: true, force: true });
-      console.log(`[install-openclaw-runtime] [skills] Deleted: ${skillName}`);
-    }
-  }
-
-  for (const skillConfig of config.skills) {
-    if (!skillConfig.enabled) {
-      console.log(`[install-openclaw-runtime] [skills] Skipping disabled skill: ${skillConfig.id}`);
-      continue;
-    }
-    const sourceDir = path.join(justDoSkillsDir, skillConfig.id);
-    if (!fs.existsSync(sourceDir)) {
-      console.warn(
-        `[install-openclaw-runtime] [skills] Skill "${skillConfig.id}" not found in JustDo skills directory`,
-      );
-      continue;
-    }
-    fs.cpSync(sourceDir, path.join(runtimeSkillsDir, skillConfig.id), {
-      recursive: true,
-      force: true,
-    });
-    console.log(`[install-openclaw-runtime] [skills] Copied: ${skillConfig.id}`);
-  }
+  syncBundledSkills(electronRoot, runtimeRoot, 'install-openclaw-runtime');
 }
 
 // ===========================================================================

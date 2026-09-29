@@ -35,41 +35,16 @@ includes decision models using the same credential encryption as other model typ
 Evaluation sends task evidence to the selected service. Hosted Jev may incur API
 charges. Results use the existing OpenClaw stream, without a transcript cache.
 
-## Batch classification and scoring
+## Extension-provided skill
 
-The built-in `jev-batch-evaluate` skill provides the first concrete workflow.
-It becomes eligible when TypeSafe is enabled and Python is available. For example:
+TypeSafe bundles the upstream `typesafe-evaluate` skill through its plugin
+manifest. It is available with the enabled extension, rather than registered as
+a global application built-in skill. It guides explicit Choice, Score, and Noul
+evaluations, including batching independent questions in one native tool call.
+The application does not add a separate batch-processing skill or Python helper.
 
-> 用 Jev 分析 feedback.csv，只发送 text 列，保留 id。按故障、功能建议、使用咨询、其他分类，并按 0–3 级紧急程度评分，导出 CSV 和 JSON。
-
-The assistant adapts the supplied labels and rubric, then uses the skill's
-offline Python helper to prepare bounded requests. The native tool evaluates
-each batch. The helper checks request hashes, record mappings, and complete typed
-answer correspondence before producing `results.json`, `results.csv`, and
-`summary.json`. Only selected evidence fields reach the provider; source IDs stay
-in local mappings unless explicitly selected as evidence.
-
-```mermaid
-flowchart LR
-  Input[CSV / JSON + rubric] --> Prepare[Offline preparation]
-  Prepare --> Requests[Bounded requests + manifest]
-  Requests --> Native[typesafe_evaluate]
-  Native --> Responses[Native results / failure records]
-  Responses --> Merge[Validate and assemble]
-  Requests --> Merge
-  Merge --> Output[JSON + CSV + coverage summary]
-```
-
-The summary distinguishes successful, missing, failed, and invalid batches.
-Partial reports exit with code 2 and never fabricate answers. Completed batches
-can be reused without another provider call. New output directories prevent
-accidental overwrite. Selected labels, scores, and distributions are preserved;
-review rules flag items without treating provider confidence as measured accuracy.
-No rule means `not_assessed`, not approval. These are task artifacts, not a new
-application database or automated task-routing service.
-
-Runnable sample records, a rubric, and the full file contract live in
-[`resources/skills/jev-batch-evaluate`](../../resources/skills/jev-batch-evaluate/SKILL.md).
+See the [upstream skill](../../openclaw-extensions/typesafe/skills/typesafe-evaluate/SKILL.md)
+for request semantics and result handling.
 
 ## Ownership and credential lifecycle
 

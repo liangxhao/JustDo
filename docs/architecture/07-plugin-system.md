@@ -37,9 +37,9 @@ OpenClaw v2026.9.6 的插件管理 RPC 会直接应用运行时变更。CLI 导�
 
 ## 3. Skill：有效赢家与文件来源
 
-内置 manifest 有 9 个默认启用项：data-analysis、diagram-design、frontend-design、jev-batch-evaluate、docx、pdf、pptx、skill-creator、xlsx，并关闭 OpenClaw 默认技能集。打包资源必须与 manifest 一致；数量不应散落在 UI 常量中。
+内置 manifest 有 8 个默认启用项：data-analysis、diagram-design、frontend-design、docx、pdf、pptx、skill-creator、xlsx。v2 manifest 通过 `openclaw.skills` 和 `openclaw.custodianSkills` 显式选择上游技能：分别保留 `coding-agent` 和 `diagnose-gateway`，其余上游技能不打包。系统维护技能留在原生 `custodian-skills/`，仅由系统 Agent（应用配置为 `main`）发现。安装和打包共用同一筛选逻辑，所有选中源校验通过后才清理目录；缺失上游技能时必须从锁定的原始包重建运行时，不能静默跳过。打包资源必须与 manifest 一致；数量不应散落在 UI 常量中。
 
-`jev-batch-evaluate` 还由原生技能条件检查 Python 和 `plugins.entries.typesafe.enabled`，不会自动启用 TypeSafe。聊天 Agent 按用户指定字段将 CSV/JSON 拆成原生 `typesafe_evaluate` 请求，本地 Python 脚本只准备请求、校验对应关系和汇总结果，不访问网络。数据、标准、请求及结果保存为任务文件，不进入应用消息缓存，也不触发助手分配或其他业务动作。失败或缺失批次保留为未完成，概率与分数不被聊天模型补写。具体流程见 [Jev evaluations](../features/jev-integration.md)。
+TypeSafe 扩展自带上游 `typesafe-evaluate` skill，由扩展声明并随扩展启用状态提供，不加入全局内置技能清单。它指导 Agent 使用原生评估工具完成分类、评分、是非概率判断及独立问题的批量评估。具体接入见 [Jev evaluations](../features/jev-integration.md)。
 
 skills.status 提供 effective source、eligibility、disabled、缺失依赖和安装选项。产品文件服务只管理用户导入目录；它不能从 SKILL.md 自行重建运行元数据。受管根使用原生 stateDir/skills，避免重复 extraDirs 引入同一路径。
 

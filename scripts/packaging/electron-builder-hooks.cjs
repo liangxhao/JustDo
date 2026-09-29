@@ -979,7 +979,7 @@ async function beforePack(context) {
     const runtimeCompanionTarEntries = getRuntimeCompanionPathsReferencedByBundle(
       path.join(__dirname, '../..', 'vendor', 'openclaw-runtime', 'current', 'gateway-bundle.mjs'),
     ).map(entry => `cfmind/${entry}`);
-    const { enabledSkillIds } = readBundledSkillConfig(path.join(__dirname, '../..'));
+    const { runtimeSkillPaths } = readBundledSkillConfig(path.join(__dirname, '../..'));
     const requiredTarEntries = [
       'cfmind/package.json',
       'cfmind/runtime-build-info.json',
@@ -991,7 +991,7 @@ async function beforePack(context) {
       'cfmind/docs/channels/index.md',
       'cfmind/docs/gateway/config-channels.md',
       'cfmind/docs/reference/templates/AGENTS.md',
-      ...enabledSkillIds.map(skillId => `cfmind/skills/${skillId}/SKILL.md`),
+      ...runtimeSkillPaths.map(skillPath => `cfmind/${skillPath}/SKILL.md`),
       'python-win/python.exe',
       'python-win/python3.exe',
       'python-win/python312._pth',

@@ -156,9 +156,13 @@ without a total tail/byte/time cutoff; sample limits never stop scanning or cate
 Report scan gaps, support progress/cancellation, and never claim deleted history is complete.
 Log hints retain association/coverage and cannot override lifecycle conclusions.
 
-Built-in skills are declared in `resources/builtin-skills.json`: **9 skills**,
-all **9 enabled** by default. `jev-batch-evaluate` additionally requires the
-user-enabled TypeSafe extension and Python; it does not enable the extension.
+The v2 built-in skill manifest also retains upstream `coding-agent` under `skills/`
+and `diagnose-gateway` under `custodian-skills/` through explicit allowlists;
+all other upstream skills are excluded.
+
+Built-in skills are declared in `resources/builtin-skills.json`: **8 skills**,
+all **8 enabled** by default. TypeSafe supplies its own `typesafe-evaluate` skill
+through the optional extension; it is not a global built-in skill.
 
 OpenClaw runtime patches live in `scripts/patches/v2026.9.6/`. They are
 new-version capability patches, not migrations of the historical

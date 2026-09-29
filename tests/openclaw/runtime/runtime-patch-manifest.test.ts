@@ -154,6 +154,11 @@ function createFixture() {
     path.join(repoRoot, 'src', 'shared', 'security', 'mxcNativeBinaries.json'),
     '{}\n',
   );
+  fs.mkdirSync(path.join(repoRoot, 'scripts', 'runtime'), { recursive: true });
+  fs.writeFileSync(
+    path.join(repoRoot, 'scripts', 'runtime', 'sync-bundled-skills.cjs'),
+    '// fixture\n',
+  );
   fs.mkdirSync(path.join(repoRoot, 'resources'), { recursive: true });
   fs.writeFileSync(path.join(repoRoot, 'resources', 'openclaw-extension-prune.json'), '{}\n');
   fs.writeFileSync(path.join(repoRoot, 'resources', 'builtin-skills.json'), '{}\n');

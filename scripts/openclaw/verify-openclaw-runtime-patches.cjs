@@ -37,6 +37,7 @@ const BUILD_RECIPE_FILES = [
   'src/shared/security/mxcNativeBinaries.json',
   'resources/openclaw-extension-prune.json',
   'resources/builtin-skills.json',
+  'scripts/runtime/sync-bundled-skills.cjs',
 ];
 
 function normalizeOpenClawVersion(version) {
