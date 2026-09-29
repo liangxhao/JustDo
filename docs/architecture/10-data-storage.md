@@ -6,7 +6,9 @@
 
 会话诊断增加 `cowork_run_diagnostic_events` 和 `cowork_run_diagnostic_coverage`。两表通过产品 run 外键级联删除；前者只存闭合值运行元数据，后者保留采集起点和裁剪计数，不存正文或任意错误文本。每轮普通/关键事件分别限 200/32 条，全局 20,000 条、14 天；coverage 随既有 run 生命周期保留，事件裁剪不会抹掉丢失证据。
 
-查询按已校验会话和 run 关联，复制/fork 不复制诊断表。Renderer 无持久诊断缓存，Main 仅保留最多 8 份、5 分钟的内容无关导出快照。诊断不是 OpenClaw transcript 的第二份权威。见[会话诊断](../features/session-diagnostics.md)。
+查询按已校验会话和 run 关联，复制/fork 不复制诊断表。事件 JSON 可包含闭合系统错误码、有效 HTTP 错误状态及有限非负耗时；原生 `command_output` 结束事件投影为 `command` 类型，保存整数退出码和失败状态，不重复增加工具失败计数。旧记录不回填；诊断表不保存错误原文、工具名称、参数或输出。Renderer 无持久诊断缓存，Main 仅保留最多 8 份、5 分钟的诊断快照。按需通过 `chat.history` 读取原生会话数据库，快照可以包含最多 40 条脱敏失败节选及工具名，每条正文最多 1600 字符；不保存完整历史、不将节选写入 SQLite。诊断不是 OpenClaw transcript 的第二份权威。见[会话诊断](../features/session-diagnostics.md)。
+
+工具事件可额外保留闭合 `operation` 操作类别及 `toolValidationFailed` 布尔标记；后者只从上游固定参数校验摘要精确匹配生成，摘要原文不入库。新增可选字段沿用有界事件 JSON，不新增表或迁移。
 
 ```mermaid
 flowchart LR

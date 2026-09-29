@@ -1,3 +1,9 @@
+import type {
+  DiagnosticErrorCode,
+  DiagnosticOperation,
+  DiagnosticStage,
+} from './diagnosticLogDetails';
+
 export const SessionDiagnosticsIpc = {
   List: 'cowork:diagnostics:list',
   Read: 'cowork:diagnostics:read',
@@ -26,7 +32,7 @@ export const DiagnosticReason = {
   Waiting: 'waiting',
 } as const;
 export type DiagnosticReason = (typeof DiagnosticReason)[keyof typeof DiagnosticReason];
-export type DiagnosticKind = 'lifecycle' | 'chat' | 'tool' | 'connection' | 'cancel';
+export type DiagnosticKind = 'lifecycle' | 'chat' | 'tool' | 'command' | 'connection' | 'cancel';
 export type DiagnosticPhase =
   | 'start'
   | 'finishing'
@@ -74,6 +80,12 @@ export interface DiagnosticEvent {
   errorCategory?: DiagnosticErrorCategory;
   userInitiated?: boolean;
   toolFailed?: boolean;
+  operation?: DiagnosticOperation;
+  toolValidationFailed?: boolean;
+  errorCode?: DiagnosticErrorCode;
+  statusCode?: number;
+  durationMs?: number;
+  exitCode?: number;
 }
 
 export interface DiagnosticConclusion {
@@ -108,6 +120,7 @@ export interface DiagnosticReport {
   coverage: DiagnosticCoverage;
   connection: 'connected' | 'offline';
   logs?: DiagnosticLogCollection;
+  history?: DiagnosticHistoryEvidence;
   environment: {
     status: 'not_requested' | 'available' | 'unavailable';
     collectedAt?: number;
@@ -115,6 +128,20 @@ export interface DiagnosticReport {
     stabilityCount?: number;
     stabilityDropped?: number;
   };
+}
+/** On-demand failure excerpts, never a persisted transcript cache. */
+export interface DiagnosticHistoryEvidence {
+  status: 'scanned' | 'partial' | 'unavailable' | 'changed';
+  messagesScanned: number;
+  omitted: number;
+  failures: Array<{
+    timestamp: number;
+    kind: 'tool' | 'model';
+    tool?: string;
+    excerpt: string;
+    clipped: boolean;
+    association: 'run' | 'run_window';
+  }>;
 }
 export type DiagnosticLogSource = 'main' | 'cowork' | 'gateway' | 'native';
 export type DiagnosticLogSignal =
@@ -144,6 +171,21 @@ export interface DiagnosticLogRecord {
   signal: DiagnosticLogSignal;
   /** Log-derived hints are never authoritative execution outcomes. */
   inferred: boolean;
+  stage?: DiagnosticStage;
+  errorCode?: DiagnosticErrorCode;
+  /** Why the collector classified this record; never raw error text. */
+  basis?:
+    | 'error_category'
+    | 'http_status'
+    | 'tool_error'
+    | 'tool_blocked'
+    | 'model_error'
+    | 'error_text'
+    | 'keyword'
+    | 'command_exit'
+    | 'command_timeout'
+    | 'command_error'
+    | 'routine';
   metrics: Partial<
     Record<
       | 'statusCode'

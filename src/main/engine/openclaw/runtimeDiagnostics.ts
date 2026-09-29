@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
+import { diagnosticErrorCodes } from '../../../shared/cowork/diagnosticLogDetails';
 import type {
   DiagnosticErrorCategory,
   DiagnosticEvent,
@@ -33,6 +34,21 @@ function errorCategory(value: unknown): DiagnosticErrorCategory | undefined {
   if (typeof status === 'number' && Number.isInteger(status) && status >= 500 && status <= 599) return 'provider';
 }
 
+/** Project only finite machine details; never tool names, arguments, output or error text. */
+function failureDetails(value: unknown): Pick<DiagnosticEvent, 'errorCode' | 'statusCode' | 'durationMs'> {
+  const data = record(value);
+  const error = record(data.error);
+  const code = data.errorCode ?? error.code ?? data.code;
+  const errorCode = diagnosticErrorCodes.find(item => item === code);
+  const status = data.httpStatus ?? data.statusCode ?? error.statusCode;
+  const duration = data.durationMs;
+  return {
+    ...(errorCode ? { errorCode } : {}),
+    ...(typeof status === 'number' && Number.isInteger(status) && status >= 400 && status <= 599 ? { statusCode: status } : {}),
+    ...(typeof duration === 'number' && Number.isFinite(duration) && duration >= 0 && duration <= 1e12 ? { durationMs: duration } : {}),
+  };
+}
+
 export interface ProjectedDiagnostic {
   sessionKey?: string;
   nativeRunId: string;
@@ -60,7 +76,7 @@ export function projectDiagnosticEvent(
   if (frame.event === 'chat') {
     if (!['final', 'error', 'aborted'].includes(String(payload.state))) return;
     return { sessionKey, nativeRunId, event: {
-      ...base, kind: 'chat', phase: payload.state as DiagnosticPhase,
+      ...base, ...failureDetails(payload.errorDetail), kind: 'chat', phase: payload.state as DiagnosticPhase,
       ...(errorCategory(payload.errorDetail) ? { errorCategory: errorCategory(payload.errorDetail) } : {}),
     } };
   }
@@ -73,7 +89,7 @@ export function projectDiagnosticEvent(
       : undefined;
     const category = errorCategory(data.errorObservation);
     return { sessionKey, nativeRunId, event: {
-      ...base, kind: 'lifecycle', phase: data.phase as DiagnosticPhase,
+      ...base, ...failureDetails(data.errorObservation), kind: 'lifecycle', phase: data.phase as DiagnosticPhase,
       ...(occurredAt === undefined ? {} : { occurredAt }),
       ...(stopReason ? { stopReason } : {}),
       ...(category ? { errorCategory: category } : {}),
@@ -83,10 +99,41 @@ export function projectDiagnosticEvent(
       ...(typeof data.providerStarted === 'boolean' ? { providerStarted: data.providerStarted } : {}),
     } };
   }
-  if (payload.stream === 'tool' && ['start', 'result', 'end'].includes(String(data.phase))) {
+  // Native command_output terminals carry these fields separately from the tool result.
+  // Do not mark toolFailed again: the corresponding tool result owns that counter.
+  if (payload.stream === 'command_output' && data.phase === 'end' &&
+    ['completed', 'failed', 'blocked'].includes(String(data.status))) {
+    const exitCode = typeof data.exitCode === 'number' && Number.isInteger(data.exitCode) &&
+      Math.abs(data.exitCode) <= 1e12 ? data.exitCode : undefined;
+    const failed = data.status === 'failed' || data.status === 'blocked' ||
+      (exitCode !== undefined && exitCode !== 0);
+    const details = failureDetails({ durationMs: data.durationMs });
     return { sessionKey, nativeRunId, event: {
-      ...base, kind: 'tool', phase: data.phase === 'start' ? 'start' : 'end',
+      ...base, ...details, kind: 'command', phase: failed ? 'failed' : 'end',
       ...(occurredAt === undefined ? {} : { occurredAt }),
+      ...(exitCode === undefined ? {} : { exitCode }),
+    } };
+  }
+  if (payload.stream === 'tool' && ['start', 'result', 'end'].includes(String(data.phase))) {
+    const operations: Record<string, NonNullable<DiagnosticEvent['operation']>> = {
+      exec: 'command', bash: 'command', read: 'file_read', write: 'file_write',
+      edit: 'file_edit', apply_patch: 'file_edit', browser: 'browser',
+      web_search: 'search', web_fetch: 'fetch', process: 'process',
+    };
+    const operation = typeof data.name === 'string' && Object.hasOwn(operations, data.name)
+      ? operations[data.name] : undefined;
+    // Exact upstream boundary-prepared validation summary, never arbitrary error text.
+    const validationFailed = data.isError === true && typeof data.name === 'string' &&
+      data.name.length > 0 && data.name.length <= 80 &&
+      data.toolErrorSummary === `${data.name} tool validation failed: invalid arguments`;
+
+    return { sessionKey, nativeRunId, event: {
+      ...base, ...failureDetails(data),
+      ...(operation ? { operation } : {}),
+      ...(validationFailed ? { toolValidationFailed: true } : {}),
+      kind: 'tool', phase: data.phase === 'start' ? 'start' : 'end',
+      ...(occurredAt === undefined ? {} : { occurredAt }),
+      ...(data.status === 'timeout' ? { stopReason: 'timeout' as const } : {}),
       toolFailed: data.isError === true || data.is_error === true || data.error === true ||
         data.status === 'error' || data.status === 'failed' || data.status === 'timeout' ||
         (typeof data.error === 'string' && data.error.length > 0),

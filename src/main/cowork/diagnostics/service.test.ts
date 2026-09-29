@@ -56,6 +56,64 @@ describe('SessionDiagnosticsService', () => {
     db.close();
   });
 
+  it('collects stored tool errors through native history without persisting conversation text', async () => {
+    connected = true;
+    request.mockImplementation(async method =>
+      method === 'chat.history'
+        ? {
+            messages: [
+              {
+                role: 'toolResult',
+                timestamp: 200,
+                toolName: 'read',
+                isError: true,
+                content: 'ENOENT: report.csv missing',
+              },
+            ],
+          }
+        : { lines: [] },
+    );
+    const previous = service.read({ sessionId: 's' }, 1);
+    const result = await service.collect({ sessionId: 's', snapshotId: previous.snapshotId }, 1);
+    expect(result.history?.failures[0]).toMatchObject({
+      tool: 'read',
+      excerpt: 'ENOENT: report.csv missing',
+    });
+    expect(JSON.stringify(store.read('s', 'r'))).not.toContain('report.csv');
+    expect(client.start).not.toHaveBeenCalled();
+  });
+
+  it('exports unclassified log text without putting it into report snapshots', async () => {
+    connected = true;
+    request.mockResolvedValue({
+      lines: [
+        JSON.stringify({
+          time: new Date(currentTime).toISOString(),
+          runId: 'r',
+          level: 'info',
+          message: 'export-only-context',
+          apiKey: 'SECRET',
+        }),
+        JSON.stringify({
+          time: new Date(currentTime).toISOString(),
+          runId: 'other-native',
+          level: 'error',
+          message: 'OTHER_SESSION',
+        }),
+      ],
+      truncated: false,
+    });
+    const previous = service.read({ sessionId: 's' }, 1);
+    const result = await service.exportLogs({ sessionId: 's', snapshotId: previous.snapshotId }, 1);
+    expect(result.logs.entries['logs/native.log']).toContain('export-only-context');
+    expect(result.logs.entries['logs/native.log']).not.toContain('SECRET');
+    expect(result.logs.entries['logs/native.log']).not.toContain('OTHER_SESSION');
+    expect(JSON.stringify(result.report)).not.toContain('export-only-context');
+    expect(
+      JSON.stringify(service.snapshot({ sessionId: 's', snapshotId: result.report.snapshotId }, 1)),
+    ).not.toContain('export-only-context');
+  });
+
   it('retains pre-binding metadata until exact run and session binding is available', () => {
     resolved = false;
     service.observe({
@@ -132,7 +190,7 @@ describe('SessionDiagnosticsService', () => {
     const query = { sessionId: 's', snapshotId: original.snapshotId };
     const pending = service.collect(query, 1);
     await expect(service.collect(query, 1)).rejects.toMatchObject({ reason: 'busy' });
-    await vi.advanceTimersByTimeAsync(3001);
+    await vi.advanceTimersByTimeAsync(8001);
     const result = await pending;
     expect(result.logs?.sources.find(source => source.source === 'native')?.status).toBe(
       'unavailable',
@@ -172,7 +230,11 @@ describe('SessionDiagnosticsService', () => {
   it('caps concurrent collections across windows and releases capacity after completion', async () => {
     connected = true;
     const finish: Array<(value: unknown) => void> = [];
-    request.mockImplementation(() => new Promise(resolve => finish.push(resolve)));
+    request.mockImplementation(method =>
+      method === 'chat.history'
+        ? Promise.resolve({ messages: [] })
+        : new Promise(resolve => finish.push(resolve)),
+    );
     const queries = [1, 2, 3].map(owner => ({
       sessionId: 's',
       snapshotId: service.read({ sessionId: 's' }, owner).snapshotId,

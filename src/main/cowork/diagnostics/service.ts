@@ -13,6 +13,8 @@ import {
   type ProjectedDiagnostic,
 } from '../../engine/openclaw/runtimeDiagnostics';
 import { classifyDiagnostics } from './classifier';
+import { DiagnosticExportLogs } from './exportLogs';
+import { collectDiagnosticHistory } from './historyCollector';
 import { collectDiagnosticLogs } from './logCollector';
 import { discoverNativeDiagnosticLogs } from './logScanner';
 
@@ -319,10 +321,28 @@ export class SessionDiagnosticsService {
     return report;
   }
 
+  /** Raw text exists only during the user-requested local export, never in snapshots or IPC. */
+  async exportLogs(
+    query: DiagnosticQuery & { snapshotId: string },
+    owner: number,
+    signal?: AbortSignal,
+  ) {
+    const capture = new DiagnosticExportLogs();
+    const report = await this.collect(query, owner, {
+      signal,
+      onExportRecord: (source, text, association) => capture.append(source, text, association),
+    });
+    return { report, logs: capture.finish() };
+  }
+
   async collect(
     query: DiagnosticQuery & { snapshotId: string },
     owner: number,
-    options: { signal?: AbortSignal; onProgress?: (progress: DiagnosticScanProgress) => void } = {},
+    options: {
+      signal?: AbortSignal;
+      onProgress?: (progress: DiagnosticScanProgress) => void;
+      onExportRecord?: NonNullable<Parameters<typeof collectDiagnosticLogs>[3]>['onExportRecord'];
+    } = {},
   ): Promise<DiagnosticReport> {
     const previous = this.snapshot(query, owner);
     if (this.collecting.has(owner) || this.collecting.size >= 2)
@@ -412,6 +432,7 @@ export class SessionDiagnosticsService {
       }
       const logs = await collectDiagnosticLogs(previous, sources, native, {
         fullScan: true,
+        onExportRecord: options.onExportRecord,
         signal: options.signal,
         onProgress: progress => options.onProgress?.({ ...progress, snapshotId: query.snapshotId }),
       });
@@ -422,7 +443,13 @@ export class SessionDiagnosticsService {
         }
       }
       this.snapshot(query, owner);
-      const report = { ...previous, snapshotId: randomUUID(), logs };
+      const history = await collectDiagnosticHistory(previous, client, options.signal);
+      this.snapshot(query, owner);
+      if (runtime !== this.deps.getRuntime() || client !== runtime?.getGatewayClient()) {
+        history.status = 'changed';
+        history.failures = [];
+      }
+      const report = { ...previous, snapshotId: randomUUID(), logs, history };
       this.remember(report, owner);
       return report;
     } finally {

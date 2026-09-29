@@ -56,6 +56,159 @@ const open = () =>
   );
 
 describe('session diagnostics', () => {
+  it('shows the stored tool error instead of repeating the missing-cause fallback', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    bridge.read.mockResolvedValue({
+      success: true,
+      report: report({
+        events: [
+          {
+            id: 'failed',
+            runId: 'run-1',
+            epoch: 'epoch',
+            observedAt: 10,
+            kind: 'tool',
+            phase: 'end',
+            toolFailed: true,
+          },
+        ],
+        history: {
+          status: 'scanned',
+          messagesScanned: 300,
+          omitted: 0,
+          failures: [
+            {
+              timestamp: 10,
+              kind: 'tool',
+              tool: 'read',
+              excerpt: 'ENOENT: report.csv missing',
+              clipped: false,
+              association: 'run_window',
+            },
+          ],
+        },
+      }),
+    });
+    open();
+    expect(await screen.findByText('ENOENT: report.csv missing')).toBeTruthy();
+    expect(screen.getByText(/Read 300 stored conversation records/)).toBeTruthy();
+    expect(screen.queryByText('A tool step failed; the cause was not recorded')).toBeNull();
+    await waitFor(() =>
+      expect(
+        (screen.getByRole('button', { name: 'Copy summary' }) as HTMLButtonElement).disabled,
+      ).toBe(false),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Copy summary' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalled());
+    expect(writeText.mock.calls[0][0]).toContain('ENOENT: report.csv missing');
+    expect(writeText.mock.calls[0][0]).toContain('Stored conversation · within run time range');
+    expect(writeText.mock.calls[0][0]).not.toContain(
+      'A tool step failed; the cause was not recorded',
+    );
+  });
+  it('shows tool failures before metrics even when the whole run completed normally', async () => {
+    bridge.read.mockResolvedValue({
+      success: true,
+      report: report({
+        events: [
+          {
+            id: 'tool-failure',
+            runId: 'run-1',
+            epoch: 'epoch',
+            observedAt: 10,
+            kind: 'tool',
+            phase: 'end',
+            toolFailed: true,
+          },
+        ],
+      }),
+    });
+    open();
+    const heading = await screen.findByText('Findings for this run');
+    expect(screen.getByText('Observed in this run')).toBeTruthy();
+    expect(screen.getByText('A tool step failed; the cause was not recorded')).toBeTruthy();
+    expect(screen.getByText(/Open the failed step near these times/)).toBeTruthy();
+    expect(screen.queryByText('The runtime marked a tool result as failed.')).toBeNull();
+    expect(screen.queryByText(/Supporting records/)).toBeNull();
+    expect(
+      heading.compareDocumentPosition(screen.getByText('Matching diagnostic records')) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      screen
+        .getByText(
+          'Execution ended normally. This does not confirm that the task goal was achieved.',
+        )
+        .closest('details')?.open,
+    ).toBe(false);
+  });
+
+  it('labels nearby log problems as potentially unrelated instead of confirmed failures', async () => {
+    bridge.read.mockResolvedValue({
+      success: true,
+      report: report({
+        logs: {
+          collectedAt: 100,
+          window: { from: 0, to: 100 },
+          localTimezoneOffsetMinutes: 0,
+          partial: true,
+          sources: [],
+          records: [
+            {
+              id: 'hint',
+              source: 'native',
+              level: 'error',
+              signal: 'auth',
+              association: 'time_window',
+              inferred: true,
+              metrics: {},
+            },
+          ],
+        },
+      }),
+    });
+    open();
+    await screen.findByText('Nearby in time; may be unrelated');
+    expect(screen.queryByText('Observed in this run')).toBeNull();
+    expect(
+      screen.getByText(/Other log clues · not attributed to this run/).closest('details')?.open,
+    ).toBe(false);
+    expect(screen.queryByText(/Check the selected provider credentials/)).toBeNull();
+    expect(screen.getByText('Collection details and timeline').closest('details')?.open).toBe(
+      false,
+    );
+  });
+
+  it('groups repeated evidence and explains HTTP failures instead of listing only source and level', async () => {
+    bridge.read.mockResolvedValue({
+      success: true,
+      report: report({
+        logs: {
+          collectedAt: 100,
+          window: { from: 0, to: 100 },
+          localTimezoneOffsetMinutes: 0,
+          partial: true,
+          sources: [],
+          records: ['main', 'native'].map((source, index) => ({
+            id: `http-${index}`,
+            source: source as 'main' | 'native',
+            timestamp: 10,
+            level: 'info',
+            signal: 'auth',
+            basis: 'http_status',
+            association: 'time_window',
+            inferred: true,
+            metrics: { statusCode: 401 },
+          })),
+        },
+      }),
+    });
+    open();
+    await screen.findByText(/An HTTP error status was recorded.*Status code: 401/);
+    expect(screen.getByText(/2 records have the same time and description/)).toBeTruthy();
+    expect(screen.getByText(/They cannot establish a problem in this run/)).toBeTruthy();
+  });
   it('shows historical application state and blocks export until automatic collection completes', async () => {
     const historical = report({
       run: { id: 'run-1', startedAt: 1, endedAt: 50, state: 'failed' },

@@ -142,8 +142,13 @@ Main keeps only product lifecycle, run identity, approval, and goal state.
 Session context-menu diagnostics retain bounded, content-free run evidence in Main.
 Only `executionSettled: true` lifecycle terminals establish whole-run outcomes;
 chat final and attempt finishing are separate observations. Diagnostic reads never
-start the Gateway. Exports use closed-value metadata and archive-local identity
-aliases, excluding raw logs and transcripts. See `docs/features/session-diagnostics.md`.
+start the Gateway. Persistent diagnostic storage uses closed-value metadata; exported metadata uses archive-local
+identity aliases. User-requested ZIP exports additionally include credential-masked matching
+log text, collected only at export time, never cached or sent to Renderer. Transcript files
+are not accessed directly. On-demand `chat.history` scans the native conversation database through
+the connected Gateway, retaining only bounded redacted failure excerpts in expiring report snapshots
+and exports, never a transcript cache. Logs/excerpts may contain task content; review before sharing.
+See `docs/features/session-diagnostics.md`.
 Opening or refreshing diagnostics collects bounded safe projections from Main/Cowork/Gateway logs
 and native files identified by an existing local client's structured `logs.tail.file`;
 never read paths supplied by log text or Renderer. Scan discovered files in bounded chunks

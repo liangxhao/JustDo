@@ -1,6 +1,10 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import {
+  diagnosticErrorCodes,
+  isDiagnosticMetricValue,
+} from '../../../shared/cowork/diagnosticLogDetails';
 import type {
   DiagnosticLogCollection,
   DiagnosticLogCoverage,
@@ -54,13 +58,16 @@ const SIGNALS: DiagnosticLogSignal[] = [
   'unknown',
 ];
 const HINTS: Array<[DiagnosticLogSignal, RegExp]> = [
-  ['auth', /\b(?:unauthorized|authentication|invalid.api.key)\b/i],
-  ['rate_limit', /\brate.limit\b/i],
+  ['auth', /\b(?:unauthorized|authentication[ ._-](?:failed|error)|invalid.api.key)\b/i],
+  ['rate_limit', /\brate[._ -]limit(?:ed|ing)?\b/i],
   ['billing', /\b(?:billing|insufficient.quota)\b/i],
-  ['context', /\b(?:context.length|context.window|context.limit)\b/i],
+  [
+    'context',
+    /\b(?:context[._ -]overflow|context[._ -](?:length|window|limit).{0,24}(?:exceeded|overflow|too.large)|prompt.too.large)\b/i,
+  ],
   ['timeout', /\b(?:timeout|timed.out|ETIMEDOUT)\b/i],
   ['tls', /\b(?:TLS|certificate|CERT_[A-Z_]+)\b/],
-  ['network', /\b(?:ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|connection.reset)\b/i],
+  ['network', /\b(?:ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|connection.reset|fetch.failed)\b/i],
   ['permission', /\b(?:EACCES|EPERM|permission.denied)\b/i],
   ['storage', /\b(?:SQLITE_[A-Z_]+|ENOSPC|disk.full)\b/i],
   [
@@ -73,9 +80,27 @@ const HINTS: Array<[DiagnosticLogSignal, RegExp]> = [
   ['reconnect', /\b(?:reconnected|reconnecting)\b/i],
   ['retry', /\b(?:retry|retrying|backoff)\b/i],
   ['queue', /\b(?:queue|queued)\b/i],
-  ['tool', /\btool.(?:failed|error)\b/i],
+  ['tool', /\btool.(?:failed|error)\b|\[tools\]\s+\S+\s+failed\b/i],
   ['provider', /\bprovider.error\b/i],
 ];
+// Native diagnostic contracts use categories beyond the UI's closed signal vocabulary.
+const NATIVE_CATEGORIES: Record<string, DiagnosticLogSignal> = {
+  auth_permanent: 'auth',
+  context_overflow: 'context',
+  tool_result_error: 'tool',
+  before_tool_call: 'tool',
+  overloaded: 'provider',
+  request_timeout: 'timeout',
+  connection_reset: 'network',
+  connection_closed: 'network',
+  'overall-timeout': 'timeout',
+  'no-output-timeout': 'timeout',
+};
+const NATIVE_EVENTS: Record<string, DiagnosticLogSignal> = {
+  'tool.execution.error': 'tool',
+  'tool.execution.blocked': 'permission',
+  'model.call.error': 'provider',
+};
 const httpSignal = (status: number | undefined): DiagnosticLogSignal | undefined =>
   status === 401
     ? 'auth'
@@ -112,12 +137,23 @@ function parseRecord(text: string, source: DiagnosticLogSource) {
     body = text.slice(prefix[0].length);
   }
   const fields: Record<string, unknown>[] = [];
+  let hintText = body;
   let malformed = false;
   if (body.trimStart().startsWith('{')) {
     try {
       const root = object(JSON.parse(body));
       if (root) {
         fields.push(root);
+        // Metadata names, configuration objects and tool arguments are not error messages.
+        hintText = Object.entries(root)
+          .filter(
+            ([key, value]) =>
+              (/^\d+$/.test(key) || ['message', 'msg', 'error'].includes(key)) &&
+              typeof value === 'string' &&
+              !value.trimStart().startsWith('{'),
+          )
+          .map(([, value]) => value)
+          .join(' ');
         for (const [key, value] of Object.entries(root)) {
           if (!/^\d+$/.test(key)) continue;
           const argument = object(value);
@@ -147,7 +183,7 @@ function parseRecord(text: string, source: DiagnosticLogSource) {
     }
   } else if (source === 'native') malformed = true;
   // Plain-text content never establishes keyed identity, including forged "runId=" strings.
-  return { timestamp, level, fields, malformed, body };
+  return { timestamp, level, fields, malformed, hintText };
 }
 
 async function readTail(file: string, maxBytes: number, deadline: number) {
@@ -223,6 +259,11 @@ export async function collectDiagnosticLogs(
   },
   options: {
     fullScan?: boolean;
+    onExportRecord?: (
+      source: DiagnosticLogSource,
+      text: string,
+      association: DiagnosticLogRecord['association'],
+    ) => void;
     signal?: AbortSignal;
     onProgress?: (progress: Omit<DiagnosticScanProgress, 'snapshotId'>) => void;
   } = {},
@@ -347,38 +388,155 @@ export async function collectDiagnosticLogs(
         reason(coverage, 'outside_window');
         continue;
       }
+      // Explicit local export only: before category filtering and preview sampling.
+      options.onExportRecord?.(coverage.source, textRecord, association);
       const metrics: DiagnosticLogRecord['metrics'] = {};
       let signal: DiagnosticLogSignal = 'unknown';
+      let basis: DiagnosticLogRecord['basis'];
       for (const fields of parsed.fields) {
         for (const key of METRICS) {
-          const value = own(fields, key);
-          if (
-            typeof value === 'number' &&
-            Number.isFinite(value) &&
-            Math.abs(value) <= 1e12 &&
-            (value >= 0 || key === 'exitCode')
-          )
-            metrics[key] = value;
+          const alias =
+            key === 'statusCode'
+              ? 'httpStatus'
+              : key === 'requestPayloadBytes'
+                ? 'requestBytes'
+                : key === 'responseStreamBytes'
+                  ? 'responseBytes'
+                  : key;
+          const value = own(fields, key) ?? own(fields, alias);
+          if (isDiagnosticMetricValue(key, value)) metrics[key] = value;
         }
-        for (const key of ['errorCategory', 'failureKind', 'signal']) {
+        for (const key of ['errorCategory', 'failureKind', 'signal', 'failoverReason', 'reason']) {
           const value = own(fields, key);
           if (typeof value === 'string' && SIGNALS.includes(value as DiagnosticLogSignal)) {
             signal = value as DiagnosticLogSignal;
+            basis = 'error_category';
+          } else if (typeof value === 'string' && Object.hasOwn(NATIVE_CATEGORIES, value)) {
+            signal = NATIVE_CATEGORIES[value];
+            basis = 'error_category';
           }
         }
       }
+      const nativeType = parsed.fields
+        .map(fields => own(fields, 'type'))
+        .find(
+          value =>
+            typeof value === 'string' &&
+            /^(?:model\.call|tool\.execution|exec\.process|harness\.run)\./.test(value),
+        );
+      const stage: DiagnosticLogRecord['stage'] =
+        typeof nativeType !== 'string'
+          ? undefined
+          : nativeType.startsWith('model.')
+            ? 'model'
+            : nativeType.startsWith('tool.')
+              ? 'tool'
+              : nativeType.startsWith('exec.')
+                ? 'command'
+                : 'runtime';
+      const structuredErrorCode = diagnosticErrorCodes.find(code =>
+        parsed.fields.some(
+          fields =>
+            own(fields, 'code') === code ||
+            own(fields, 'errorCode') === code ||
+            object(own(fields, 'error'))?.code === code,
+        ),
+      );
+      const errorCode =
+        structuredErrorCode ??
+        (['warn', 'error'].includes(parsed.level)
+          ? diagnosticErrorCodes.find(code => new RegExp(`\\b${code}\\b`).test(parsed.hintText))
+          : undefined);
+      if (errorCode && signal === 'unknown') {
+        signal = ['EACCES', 'EPERM'].includes(errorCode)
+          ? 'permission'
+          : ['ENOENT', 'ENOSPC', 'SQLITE_BUSY', 'SQLITE_FULL'].includes(errorCode)
+            ? 'storage'
+            : errorCode === 'ETIMEDOUT'
+              ? 'timeout'
+              : /CERT|SIGNATURE/.test(errorCode)
+                ? 'tls'
+                : 'network';
+        basis = structuredErrorCode ? 'error_category' : 'error_text';
+      }
+      if (nativeType === 'exec.process.completed') {
+        if (parsed.fields.some(fields => own(fields, 'timedOut') === true)) {
+          signal = 'timeout';
+          basis = 'command_timeout';
+        } else if (
+          metrics.exitCode !== undefined &&
+          Number.isInteger(metrics.exitCode) &&
+          metrics.exitCode !== 0
+        ) {
+          signal = 'tool';
+          basis = 'command_exit';
+        } else if (
+          signal === 'unknown' &&
+          parsed.fields.some(fields => own(fields, 'outcome') === 'failed')
+        ) {
+          signal = 'tool';
+          basis = 'command_error';
+        }
+      }
       // A bare number can be a timestamp, token count or duration, not an HTTP status.
+      const successfulCommand =
+        nativeType === 'exec.process.completed' &&
+        metrics.exitCode === 0 &&
+        !parsed.fields.some(
+          fields => own(fields, 'timedOut') === true || own(fields, 'outcome') === 'failed',
+        );
+      const routineNativeEvent =
+        successfulCommand ||
+        parsed.fields.some(fields =>
+          [
+            'tool.execution.started',
+            'tool.execution.completed',
+            'model.call.started',
+            'model.call.completed',
+          ].includes(String(own(fields, 'type'))),
+        );
+      // Names and payload summaries on successful calls can contain words such as "auth".
+      // Keep timing metrics, but never turn those words into failure evidence.
+      if (routineNativeEvent) {
+        signal = 'unknown';
+        basis = 'routine';
+      }
       const textStatus =
-        /\b(?:HTTP(?:\/\d(?:\.\d)?)?|status(?:\s+code)?)\s*[:=]?\s*(\d{3})\b/i.exec(parsed.body);
-      if (signal === 'unknown')
+        /\b(?:HTTP(?:\/\d(?:\.\d)?)?|status(?:\s+code)?)\s*[:=]?\s*(\d{3})\b/i.exec(
+          parsed.hintText,
+        );
+      if (signal === 'unknown' && !routineNativeEvent) {
         signal =
           httpSignal(metrics.statusCode) ??
           httpSignal(textStatus ? Number(textStatus[1]) : undefined) ??
           signal;
+        if (signal !== 'unknown') {
+          basis = 'http_status';
+          if (metrics.statusCode === undefined && textStatus)
+            metrics.statusCode = Number(textStatus[1]);
+        }
+      }
+      if (signal === 'unknown' && !routineNativeEvent) {
+        for (const fields of parsed.fields) {
+          const type = own(fields, 'type');
+          if (typeof type === 'string' && Object.hasOwn(NATIVE_EVENTS, type)) {
+            signal = NATIVE_EVENTS[type];
+            basis =
+              type === 'tool.execution.error'
+                ? 'tool_error'
+                : type === 'tool.execution.blocked'
+                  ? 'tool_blocked'
+                  : 'model_error';
+          }
+        }
+      }
       const hint =
-        signal === 'unknown' ? HINTS.find(([, regex]) => regex.test(parsed.body)) : undefined;
+        signal === 'unknown' && !routineNativeEvent
+          ? HINTS.find(([, regex]) => regex.test(parsed.hintText))
+          : undefined;
       if (hint) {
         signal = hint[0];
+        basis = ['error', 'warn'].includes(parsed.level) ? 'error_text' : 'keyword';
       }
       if (
         signal === 'unknown' &&
@@ -398,7 +556,7 @@ export async function collectDiagnosticLogs(
         if (coverage.emitted >= SOURCE_RECORDS) {
           const rank = (level: string, association: string, category: string) =>
             (level === 'error' ? 100 : level === 'warn' ? 50 : 0) +
-            (association === 'run' ? 20 : association === 'session' ? 10 : 0) +
+            (association === 'run' ? 200 : association === 'session' ? 120 : 0) +
             (!['unknown', 'queue', 'retry'].includes(category) ? 5 : 0);
           const candidates = collection.records
             .map((record, index) => ({ record, index }))
@@ -430,6 +588,9 @@ export async function collectDiagnosticLogs(
         association,
         signal,
         inferred: true,
+        ...(basis ? { basis } : {}),
+        ...(stage ? { stage } : {}),
+        ...(!routineNativeEvent && errorCode ? { errorCode } : {}),
         metrics,
       });
       coverage.emitted++;

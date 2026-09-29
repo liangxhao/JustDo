@@ -25,6 +25,7 @@ vi.mock('electron', () => ({
   },
 }));
 vi.mock('../../core/i18n', () => ({ t: (key: string) => key, getLanguage: () => 'en' }));
+vi.mock('../../../shared/productMetadata', () => ({ PRODUCT_NAME: 'ExampleProduct' }));
 vi.mock('../../cowork/diagnostics/exporter', () => ({
   buildDiagnosticArchive: mocks.archive,
   writeDiagnosticArchive: mocks.write,
@@ -39,6 +40,7 @@ describe('diagnostics IPC', () => {
     refresh: ReturnType<typeof vi.fn>;
     collect: ReturnType<typeof vi.fn>;
     snapshot: ReturnType<typeof vi.fn>;
+    exportLogs: ReturnType<typeof vi.fn>;
   };
   const invoke = (channel: string, input: unknown = query) =>
     mocks.handlers.get(channel)!(event, input);
@@ -67,6 +69,10 @@ describe('diagnostics IPC', () => {
       refresh: vi.fn().mockResolvedValue({}),
       collect: vi.fn().mockResolvedValue({}),
       snapshot: vi.fn(() => ({})),
+      exportLogs: vi.fn().mockResolvedValue({
+        report: { snapshotId: 'export-snapshot' },
+        logs: { entries: {}, coverage: [] },
+      }),
     };
     registerSessionDiagnosticsHandlers(() => service as unknown as SessionDiagnosticsService);
   });
@@ -75,6 +81,16 @@ describe('diagnostics IPC', () => {
     event = { ...event, senderFrame: {} } as IpcMainInvokeEvent;
     expect(invoke(SessionDiagnosticsIpc.Read)).toEqual({ success: false, reason: 'invalid' });
     expect(service.read).not.toHaveBeenCalled();
+  });
+
+  it('uses the configured productName as the archive filename prefix', async () => {
+    await invoke(SessionDiagnosticsIpc.Export);
+    expect(mocks.save).toHaveBeenCalledWith(
+      mocks.window,
+      expect.objectContaining({
+        defaultPath: expect.stringMatching(/ExampleProduct-diagnostics-\d+\.zip$/),
+      }),
+    );
   });
 
   it('collects under the trusted window owner and rejects a window closed during collection', async () => {
@@ -161,6 +177,24 @@ describe('diagnostics IPC', () => {
     await first;
     mocks.save.mockResolvedValue({ canceled: true });
     expect(await invoke(SessionDiagnosticsIpc.Export)).toEqual({ success: true, canceled: true });
+  });
+
+  it('exports freshly collected log text only after the user selects a destination', async () => {
+    await invoke(SessionDiagnosticsIpc.Export);
+    expect(service.exportLogs).not.toHaveBeenCalled();
+    mocks.save.mockResolvedValue({ canceled: false, filePath: 'C:/downloads/test.zip' });
+    expect(await invoke(SessionDiagnosticsIpc.Export)).toMatchObject({
+      success: true,
+      canceled: false,
+    });
+    expect(service.exportLogs).toHaveBeenCalledWith(query, 42, expect.any(AbortSignal));
+    expect(mocks.archive).toHaveBeenCalledWith(
+      { snapshotId: 'export-snapshot' },
+      '2026.8.27',
+      'en',
+      { entries: {}, coverage: [] },
+    );
+    expect(service.snapshot).toHaveBeenCalledWith({ ...query, snapshotId: 'export-snapshot' }, 42);
   });
 
   it('reports write failure without retaining the busy guard', async () => {

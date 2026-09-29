@@ -135,6 +135,8 @@ PresentPlan 将规范化计划作为工作区内受控文件持久化，并保�
 
 会话右键「诊断」通过独立 IPC 读取有界运行元数据，不切换聊天或触发恢复协调。Main 用精确运行身份和原生外层终态生成确定性结论；历史 start 不作为当前运行的证明。在线环境查询与本地报告分开，Gateway 离线仍可查看已有记录。正文始终由 OpenClaw 管理，诊断没有 transcript cache。见[会话诊断](../features/session-diagnostics.md)。
 
+共享的过程问题汇总从当前快照事件与安全日志投影生成，由 Renderer、复制摘要和 Main 导出共用。汇总保留关联强弱与证据引用，独立于整轮终态分类；正常结束不掩盖中途工具或模型错误，时间窗口线索不提升为已确认根因。该派生视图不新增持久状态。
+
 Main 从 `ipc/cowork/sessionExecution.ts`、`sessions.ts`、`sessionRuntime.ts`、`interactions.ts` 进入；Router 在 `engine/cowork/`，Adapter 在 `engine/openclaw/`，Goal 在 `openclaw/goals/`。Renderer 从 CoworkView、composer、sessions 和聊天 wrapper 组合。
 
 回归应覆盖准入前取消、重复 clientTurn、原生先完成后响应、停止失败、会话切换迟到事件、Plan reset、Goal fence、协作删除部分成功和历史恢复。对应 handler、Store、Adapter 与 controller 都有领域测试；一次正常发送不能替代这些边界验证。

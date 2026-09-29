@@ -41,6 +41,304 @@ const line = (extra: Record<string, unknown> = {}) =>
   });
 
 describe('payload-free bounded diagnostic log collection', () => {
+  it('keeps error codes extracted from message text labeled as text-derived hints', async () => {
+    const result = await collectDiagnosticLogs(report(), empty(), {
+      lines: [line({ errorCategory: undefined, message: 'request failed with ENOTFOUND: SECRET' })],
+    });
+    expect(result.records[0]).toMatchObject({
+      signal: 'network',
+      basis: 'error_text',
+      errorCode: 'ENOTFOUND',
+    });
+    expect(JSON.stringify(result)).not.toContain('SECRET');
+  });
+
+  it('recognizes native failed command outcomes without exit codes and model transport failure kinds', async () => {
+    const result = await collectDiagnosticLogs(report(), empty(), {
+      lines: [
+        line({
+          errorCategory: undefined,
+          type: 'exec.process.completed',
+          level: 'info',
+          outcome: 'failed',
+          failureKind: 'runtime-error',
+        }),
+        line({
+          errorCategory: undefined,
+          type: 'model.call.error',
+          level: 'info',
+          failureKind: 'connection_reset',
+        }),
+      ],
+    });
+    expect(result.records).toEqual([
+      expect.objectContaining({ signal: 'tool', basis: 'command_error', stage: 'command' }),
+      expect.objectContaining({ signal: 'network', basis: 'error_category', stage: 'model' }),
+    ]);
+  });
+
+  it('does not diagnose explicit successful commands from incidental error text or codes', async () => {
+    const result = await collectDiagnosticLogs(report(), empty(), {
+      lines: [
+        line({
+          errorCategory: undefined,
+          type: 'exec.process.completed',
+          level: 'warn',
+          exitCode: 0,
+          timedOut: false,
+          outcome: 'completed',
+          code: 'ETIMEDOUT',
+          message: 'handled ETIMEDOUT',
+        }),
+      ],
+    });
+    expect(result.records[0]).toMatchObject({ signal: 'unknown', metrics: { exitCode: 0 } });
+    expect(result.records[0].basis).toBe('routine');
+    expect(result.records[0].errorCode).toBeUndefined();
+  });
+
+  it('discards malformed machine metrics while retaining valid durations and HTTP aliases', async () => {
+    const result = await collectDiagnosticLogs(report(), empty(), {
+      lines: [
+        line({
+          statusCode: 401.5,
+          exitCode: 1.5,
+          attempt: -1,
+          durationMs: -1,
+          queueDepth: 2.2,
+          requestPayloadBytes: -3,
+          responseStreamBytes: 0.5,
+          waitMs: -5,
+        }),
+        line({ httpStatus: 503, durationMs: 0.25, requestBytes: 10, responseBytes: 20 }),
+      ],
+    });
+    expect(result.records.map(record => record.metrics)).toEqual([
+      {},
+      { statusCode: 503, durationMs: 0.25, requestPayloadBytes: 10, responseStreamBytes: 20 },
+    ]);
+  });
+
+  it('locates command exits, command timeouts and DNS failures without retaining content', async () => {
+    const result = await collectDiagnosticLogs(report(), empty(), {
+      lines: [
+        line({
+          errorCategory: undefined,
+          type: 'exec.process.completed',
+          exitCode: 2,
+          durationMs: 42,
+          command: 'SECRET',
+        }),
+        line({
+          errorCategory: undefined,
+          type: 'exec.process.completed',
+          timedOut: true,
+          exitCode: 0,
+        }),
+        line({
+          errorCategory: undefined,
+          type: 'model.call.error',
+          code: 'ENOTFOUND',
+          error: 'SECRET',
+        }),
+        line({
+          errorCategory: undefined,
+          level: 'info',
+          type: 'exec.process.completed',
+          exitCode: 0,
+        }),
+        line({
+          errorCategory: undefined,
+          type: 'model.call.completed',
+          code: 'ENOTFOUND',
+          durationMs: 1,
+        }),
+      ],
+    });
+    expect(result.records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          stage: 'command',
+          signal: 'tool',
+          basis: 'command_exit',
+          metrics: { exitCode: 2, durationMs: 42 },
+        }),
+        expect.objectContaining({ stage: 'command', signal: 'timeout', basis: 'command_timeout' }),
+        expect.objectContaining({ stage: 'model', signal: 'network', errorCode: 'ENOTFOUND' }),
+      ]),
+    );
+    const successes = result.records.filter(
+      record =>
+        (record.metrics.exitCode === 0 && record.basis !== 'command_timeout') ||
+        record.metrics.durationMs === 1,
+    );
+    expect(
+      successes.every(record => record.signal === 'unknown' && record.errorCode === undefined),
+    ).toBe(true);
+    expect(JSON.stringify(result)).not.toContain('SECRET');
+  });
+
+  it('retains exact-run machine failures when unrelated error logs exhaust preview capacity', async () => {
+    const result = await collectDiagnosticLogs(
+      report(),
+      empty(),
+      {
+        lines: [
+          ...Array.from({ length: 110 }, () => line({ runId: undefined, errorCategory: 'auth' })),
+          line({
+            errorCategory: undefined,
+            level: 'info',
+            type: 'exec.process.completed',
+            exitCode: 2,
+          }),
+        ],
+      },
+      { fullScan: true },
+    );
+    expect(result.records).toHaveLength(100);
+    expect(result.records).toContainEqual(
+      expect.objectContaining({ association: 'run', basis: 'command_exit' }),
+    );
+    expect(result.sources.find(source => source.source === 'native')?.matched).toBe(111);
+  });
+
+  it('does not classify routine authentication and context window announcements as failures', async () => {
+    const target = await file(
+      [
+        '[2026-09-28T10:00:00Z] [info] authentication initialized',
+        '[2026-09-28T10:00:00Z] [debug] context window 200000 tokens',
+        '[2026-09-28T10:00:00Z] [info] context limit configured',
+      ].join('\n'),
+    );
+    const result = await collectDiagnosticLogs(report(), { ...empty(), main: [target] });
+    expect(result.records).toEqual([]);
+  });
+
+  it('retains a finite classification basis and HTTP code without including unrelated JSON fields', async () => {
+    const result = await collectDiagnosticLogs(report(), empty(), {
+      lines: [
+        line({
+          errorCategory: undefined,
+          level: 'info',
+          message: 'HTTP 401',
+          toolArgs: 'context_overflow SECRET',
+        }),
+        line({
+          errorCategory: undefined,
+          level: 'info',
+          config: { authentication: 'SECRET', message: 'context_overflow' },
+        }),
+      ],
+    });
+    expect(result.records).toHaveLength(1);
+    expect(result.records[0]).toMatchObject({
+      signal: 'auth',
+      basis: 'http_status',
+      metrics: { statusCode: 401 },
+    });
+    expect(JSON.stringify(result)).not.toContain('SECRET');
+  });
+  it('recognizes native failure contracts without copying private tool or model content', async () => {
+    const result = await collectDiagnosticLogs(report(), empty(), {
+      lines: [
+        line({
+          errorCategory: 'tool_result_error',
+          type: 'tool.execution.error',
+          paramsSummary: 'SECRET',
+        }),
+        line({ errorCategory: undefined, type: 'tool.execution.blocked', deniedReason: 'SECRET' }),
+        line({
+          errorCategory: 'context_overflow',
+          type: 'model.call.error',
+          errorMessage: 'SECRET',
+        }),
+        line({ errorCategory: undefined, type: 'model.call.error' }),
+        line({ errorCategory: 'auth_permanent' }),
+      ],
+    });
+    expect(result.records.map(record => record.signal)).toEqual([
+      'tool',
+      'permission',
+      'context',
+      'provider',
+      'auth',
+    ]);
+    expect(JSON.stringify(result)).not.toContain('SECRET');
+  });
+
+  it('does not turn successful native calls into errors', async () => {
+    const result = await collectDiagnosticLogs(report(), empty(), {
+      lines: [
+        line({
+          errorCategory: undefined,
+          level: 'info',
+          type: 'tool.execution.completed',
+          toolName: 'authentication',
+          paramsSummary: 'HTTP 401',
+        }),
+        line({
+          errorCategory: undefined,
+          level: 'info',
+          type: 'model.call.completed',
+          message: 'context_overflow',
+        }),
+      ],
+    });
+    expect(result.records).toEqual([]);
+  });
+
+  it('does not let incidental payload words hide structured native failures', async () => {
+    const result = await collectDiagnosticLogs(report(), empty(), {
+      lines: [
+        line({
+          errorCategory: undefined,
+          type: 'tool.execution.blocked',
+          paramsSummary: 'queue',
+          deniedReason: 'SECRET',
+        }),
+        line({
+          errorCategory: undefined,
+          type: 'model.call.error',
+          errorMessage: 'reconnecting SECRET',
+        }),
+      ],
+    });
+    expect(result.records.map(record => record.signal)).toEqual(['permission', 'provider']);
+    expect(JSON.stringify(result)).not.toContain('SECRET');
+  });
+
+  it('reads native logger argument objects and prefers HTTP evidence over generic model failures', async () => {
+    const result = await collectDiagnosticLogs(report(), empty(), {
+      lines: [
+        JSON.stringify({
+          '0': { subsystem: 'diagnostic' },
+          '1': { runId: 'native-run', type: 'model.call.error', statusCode: 429 },
+          '2': 'SECRET',
+          _meta: { date: new Date(time).toISOString(), logLevelName: 'ERROR' },
+        }),
+      ],
+    });
+    expect(result.records[0]).toMatchObject({
+      signal: 'rate_limit',
+      association: 'run',
+      metrics: { statusCode: 429 },
+    });
+    expect(JSON.stringify(result)).not.toContain('SECRET');
+  });
+
+  it('recognizes tool failure and context-overflow text without treating textual identities as exact matches', async () => {
+    const target = await file(
+      [
+        '[2026-09-28T10:00:00Z] [error] [tools] exec failed: SECRET runId=native-run',
+        '[2026-09-28T10:00:00Z] [error] context_overflow SECRET',
+        '[2026-09-28T10:00:00Z] [error] fetch failed SECRET',
+      ].join('\n'),
+    );
+    const result = await collectDiagnosticLogs(report(), { ...empty(), main: [target] });
+    expect(result.records.map(record => record.signal)).toEqual(['tool', 'context', 'network']);
+    expect(result.records.every(record => record.association === 'time_window')).toBe(true);
+    expect(JSON.stringify(result)).not.toContain('SECRET');
+  });
   const directories: string[] = [];
   const file = async (text: string) => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'diagnostic-logs-'));

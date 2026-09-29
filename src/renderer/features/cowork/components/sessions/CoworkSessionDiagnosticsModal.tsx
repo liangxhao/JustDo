@@ -30,6 +30,10 @@ import {
   DiagnosticOverview,
   DiagnosticTimeline,
 } from './SessionDiagnosticsEvidence';
+import {
+  summarizeDiagnosticFinding,
+  visibleDiagnosticFindings,
+} from './sessionDiagnosticsPresentation';
 
 interface Props {
   sessionId: string;
@@ -64,7 +68,7 @@ export default function CoworkSessionDiagnosticsModal({
   }>();
   const [loading, setLoading] = useState(true);
   const [listing, setListing] = useState(false);
-  const [working, setWorking] = useState(false);
+  const [working, setWorking] = useState<false | 'refresh' | 'collect' | 'export' | 'copy'>(false);
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
   const [missing, setMissing] = useState(false);
@@ -280,7 +284,7 @@ export default function CoworkSessionDiagnosticsModal({
     const snapshot = report;
     const token = request.current;
     const query = { sessionId, sessionRunId: snapshot.run?.id, snapshotId: snapshot.snapshotId };
-    setWorking(true);
+    setWorking(action);
     setError(undefined);
     setNotice(undefined);
     try {
@@ -291,6 +295,13 @@ export default function CoworkSessionDiagnosticsModal({
             `${t('diagnosticsCollected')}: ${date(snapshot.collectedAt)}`,
             t(`diagnosticsReason_${snapshot.conclusion.reason}`),
             t(`diagnosticsConfidence_${snapshot.conclusion.confidence}`),
+            ...(snapshot.history?.failures ?? []).map(
+              failure =>
+                `${date(failure.timestamp)} · ${failure.tool ?? t(failure.kind === 'tool' ? 'diagnosticsKind_tool' : 'diagnosticsHistoryModel')}\n${t(`diagnosticsHistoryAssociation_${failure.association}`)}\n${failure.excerpt || t('diagnosticsHistoryNoText')}`,
+            ),
+            ...visibleDiagnosticFindings(snapshot).map(finding =>
+              summarizeDiagnosticFinding(finding, snapshot),
+            ),
             t('diagnosticsPartial'),
             `${t('diagnosticsDropped')}: ${snapshot.coverage.dropped}`,
             ...(snapshot.coverage.collectorDropped
@@ -331,7 +342,7 @@ export default function CoworkSessionDiagnosticsModal({
     }
   };
 
-  const busy = loading || working;
+  const busy = loading || Boolean(working);
   const filePercent =
     progress && progress.fileBytesTotal > 0
       ? Math.min(
@@ -465,6 +476,11 @@ export default function CoworkSessionDiagnosticsModal({
               </div>
             </section>
           )}
+          {working === 'export' && (
+            <p role="status" className="diagnostics-section-description">
+              {t('diagnosticsExportingLogs')}
+            </p>
+          )}
           {error && (
             <p role="alert" className="diagnostics-message diagnostics-message-error">
               {error}
@@ -480,11 +496,17 @@ export default function CoworkSessionDiagnosticsModal({
           {report && (
             <>
               <DiagnosticOverview report={report} />
-              <DiagnosticEvidence report={report} />
-              <div className="diagnostics-bottom-grid">
-                <DiagnosticTimeline report={report} />
-                <DiagnosticEnvironment report={report} />
-              </div>
+              <details className="diagnostics-technical diagnostics-supporting">
+                <summary>
+                  <span>{t('diagnosticsSupporting')}</span>
+                  <span className="diagnostics-muted">{t('diagnosticsSupportingHint')}</span>
+                </summary>
+                <DiagnosticEvidence report={report} />
+                <div className="diagnostics-bottom-grid">
+                  <DiagnosticTimeline report={report} />
+                  <DiagnosticEnvironment report={report} />
+                </div>
+              </details>
               <details className="diagnostics-technical">
                 <summary>
                   <span>{t('diagnosticsTechnical')}</span>

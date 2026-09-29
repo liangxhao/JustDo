@@ -1,5 +1,191 @@
 export const sessionDiagnosticsTranslations = {
   en: {
+    diagnosticsHistory_scanned:
+      'Read {count} stored conversation records; checking failures within this run’s time range.',
+    diagnosticsHistory_partial:
+      'Read {count} stored conversation records; history scanning is incomplete.',
+    diagnosticsHistory_unavailable:
+      'Conversation history could not be read. Connect the runtime and refresh to retry.',
+    diagnosticsHistory_changed:
+      'The conversation changed during scanning. Refresh to read it again.',
+    diagnosticsHistoryAssociation_run: 'Stored conversation · matching run',
+    diagnosticsHistoryAssociation_run_window: 'Stored conversation · within run time range',
+    diagnosticsHistoryModel: 'Model response',
+    diagnosticsHistoryNoText: 'The stored result marks a failure but contains no error text.',
+    diagnosticsHistoryClipped:
+      'Error excerpt shortened; see the original step in the conversation for the full result.',
+    diagnosticsHistoryOmitted: '{count} additional failure excerpts omitted.',
+    diagnosticsExportingLogs: 'Preparing the report and log files…',
+    diagnosticsOperationCauseMissing: '{operation} failed; the cause was not recorded',
+    diagnosticsToolCauseMissing: 'A tool step failed; the cause was not recorded',
+    diagnosticsLocateToolFailure:
+      'Open the failed step near these times in the conversation to read its error. This report cannot identify the cause.',
+    diagnosticsFailureTimes: 'Recorded at',
+    diagnosticsInvalidToolArguments: 'The tool rejected invalid arguments before execution.',
+    diagnosticsRemedy_invalid_arguments:
+      'Have the assistant correct the arguments for this step and retry. Check required fields and value types.',
+    diagnosticsOperation_command: 'Run a command',
+    diagnosticsOperation_file_read: 'Read a file',
+    diagnosticsOperation_file_write: 'Write a file',
+    diagnosticsOperation_file_edit: 'Edit a file',
+    diagnosticsOperation_browser: 'Use the browser',
+    diagnosticsOperation_search: 'Search the web',
+    diagnosticsOperation_fetch: 'Fetch a web page',
+    diagnosticsOperation_process: 'Manage a running process',
+    diagnosticsEvidenceBasis_command_error:
+      'The command reported a failed outcome; no non-zero exit code was recorded.',
+    diagnosticsEvidenceBasis_routine: 'Routine execution progress; not evidence of failure.',
+    diagnosticsRemedy_command_error:
+      'Open the command result at this time and inspect its failure details.',
+    diagnosticsKind_command: 'Command',
+    diagnosticsSuspectedProblem: 'Log suggests: {category}',
+    diagnosticsRemedy_ENOENT:
+      'Find the step at this time and check that its required file or executable exists and its path is correct.',
+    diagnosticsRemedy_ENOSPC:
+      'Free space on the disk used by the failed step, then retry that step.',
+    diagnosticsRemedy_SQLITE_FULL: 'Check free space on the database disk and its storage limit.',
+    diagnosticsRemedy_SQLITE_BUSY:
+      'Check for another operation holding the database, then retry after it finishes.',
+    diagnosticsRemedy_EACCES:
+      'Check access permissions for the file, directory or operation used by the failed step.',
+    diagnosticsRemedy_EPERM: 'Check the failed operation’s system permissions and approval result.',
+    diagnosticsRemedy_ECONNREFUSED:
+      'Check that the destination service is running and its address and port are correct.',
+    diagnosticsRemedy_ECONNRESET:
+      'Check the destination service and proxy for connection interruptions, then retry the failed request.',
+    diagnosticsRemedy_ENOTFOUND: 'Check the destination hostname and DNS configuration.',
+    diagnosticsRemedy_EAI_AGAIN: 'Check DNS connectivity and retry after name resolution recovers.',
+    diagnosticsRemedy_ETIMEDOUT:
+      'Check connectivity to the destination service and its response time.',
+    diagnosticsRemedy_CERT_HAS_EXPIRED:
+      'Check the destination certificate expiry and system time; renew the expired certificate.',
+    diagnosticsRemedy_DEPTH_ZERO_SELF_SIGNED_CERT:
+      'Check whether the destination certificate is trusted by the application.',
+    diagnosticsRemedy_UNABLE_TO_VERIFY_LEAF_SIGNATURE:
+      'Check that the destination service supplies a complete, trusted certificate chain.',
+    diagnosticsRemedy_command_exit:
+      'Open the command result at this time and inspect its exit code and output before retrying.',
+    diagnosticsRemedy_command_timeout:
+      'Open the command result at this time and check whether it was waiting for input or running longer than its allowed time.',
+    diagnosticsRemedy_service_auth:
+      'Check which service the failed step contacted, then check that service’s credentials and access permissions.',
+    diagnosticsRemedy_service_rate_limit:
+      'Check which service limited the failed request; retry after that service’s limit clears.',
+    diagnosticsRemedy_service_billing:
+      'Identify the service used by the failed step and check its account quota or billing status.',
+    diagnosticsRemedy_service_provider:
+      'Identify the service used by the failed step and check its availability.',
+    diagnosticsRemedy_service_network:
+      'Identify the destination of the failed request and check its connectivity and proxy settings.',
+    diagnosticsSupporting: 'Collection details and timeline',
+    diagnosticsSupportingHint: 'Log sources, scan coverage and execution events',
+    diagnosticsReportTitle: 'Findings for this run',
+    diagnosticsNextStep: 'Next step:',
+    diagnosticsNotLocated: 'No specific failure located',
+    diagnosticsNotLocatedDetail:
+      'The collected records do not identify a failure in this run. Task quality is not assessed. Open the failed step in the conversation, or reproduce the issue and collect again.',
+    diagnosticsOtherClues: 'Other log clues · not attributed to this run',
+    diagnosticsStage_model: 'Model request',
+    diagnosticsStage_tool: 'Tool execution',
+    diagnosticsStage_command: 'Command execution',
+    diagnosticsStage_runtime: 'Agent runtime',
+    diagnosticsEvidenceBasis_command_exit: 'The command returned a non-zero exit code.',
+    diagnosticsEvidenceBasis_command_timeout: 'The command exceeded its execution timeout.',
+    diagnosticsCode_ECONNREFUSED: 'Connection refused by destination',
+    diagnosticsCode_ECONNRESET: 'Connection reset during communication',
+    diagnosticsCode_ENOTFOUND: 'Server name could not be resolved',
+    diagnosticsCode_EAI_AGAIN: 'Temporary DNS lookup failure',
+    diagnosticsCode_ETIMEDOUT: 'Connection timed out',
+    diagnosticsCode_EACCES: 'Access denied',
+    diagnosticsCode_EPERM: 'Operation not permitted',
+    diagnosticsCode_ENOENT: 'Required file or executable not found',
+    diagnosticsCode_ENOSPC: 'No space left on device',
+    diagnosticsCode_SQLITE_BUSY: 'Database locked by another operation',
+    diagnosticsCode_SQLITE_FULL: 'Database storage is full',
+    diagnosticsCode_CERT_HAS_EXPIRED: 'Certificate has expired',
+    diagnosticsCode_DEPTH_ZERO_SELF_SIGNED_CERT: 'Self-signed certificate is not trusted',
+    diagnosticsCode_UNABLE_TO_VERIFY_LEAF_SIGNATURE: 'Certificate chain could not be verified',
+    diagnosticsProblem_auth: 'Authentication error recorded',
+    diagnosticsProblem_rate_limit: 'Request rate limit recorded',
+    diagnosticsProblem_billing: 'Account quota or billing error recorded',
+    diagnosticsProblem_context: 'Conversation exceeds the context limit',
+    diagnosticsProblem_timeout: 'Operation timed out',
+    diagnosticsProblem_network: 'Network request failed',
+    diagnosticsProblem_tls: 'Secure connection error recorded',
+    diagnosticsProblem_provider: 'Model service error recorded',
+    diagnosticsProblem_tool: 'Tool execution failed',
+    diagnosticsProblem_permission: 'Access or execution was denied',
+    diagnosticsProblem_storage: 'File or database error recorded',
+    diagnosticsProblem_process_exit: 'Process exit recorded',
+    diagnosticsProblem_disconnect: 'Runtime connection was interrupted',
+    diagnosticsProblem_retry: 'Retry recorded',
+    diagnosticsProblem_unknown: 'Error or warning recorded; cause unavailable',
+    diagnosticsEvidenceUnrelated:
+      'These logs have no matching run identity. They cannot establish a problem in this run; confirm the association before changing settings.',
+    diagnosticsEvidenceToolLimits:
+      'This confirms a failed tool result was received. Tool names and error details were not recorded, so this page cannot identify the failed step or its cause. Use the recorded time to locate the tool result in the conversation.',
+    diagnosticsEvidenceToolFailed: 'The runtime marked a tool result as failed.',
+    diagnosticsEvidenceCategory: 'An execution event reported: {category}.',
+    diagnosticsEvidenceEventError:
+      'The runtime reported an error; its specific cause was not recorded.',
+    diagnosticsEvidenceBasis_error_category: 'A structured log error field identifies: {category}.',
+    diagnosticsEvidenceBasis_http_status:
+      'An HTTP error status was recorded; it indicates {category}.',
+    diagnosticsEvidenceBasis_tool_error: 'A native tool execution error event was recorded.',
+    diagnosticsEvidenceBasis_tool_blocked:
+      'A native event reports that tool execution was blocked.',
+    diagnosticsEvidenceBasis_model_error: 'A native model request error event was recorded.',
+    diagnosticsEvidenceBasis_error_text:
+      'An error or warning message suggests {category}; the cause remains unconfirmed.',
+    diagnosticsEvidenceBasis_keyword:
+      'Only a topic keyword was matched; this does not establish a failure.',
+    diagnosticsEvidenceBasis_unknown:
+      'A warning or error was recorded, but the classification basis was not retained. Refresh log evidence for a more specific explanation.',
+    diagnosticsEvidenceGrouped:
+      '{count} records have the same time and description; grouped for display, not counted as separate failures.',
+    diagnosticsEvidenceMore: 'Show {count} more evidence groups',
+    diagnosticsFindings: 'Problems and clues',
+    diagnosticsFindingsScope:
+      'Observed during execution; a normal ending does not mean every step succeeded. Log clues are not confirmed causes. Evidence entries may duplicate the same event.',
+    diagnosticsFindingsEmpty:
+      'No recognizable problem was found in the available evidence. This does not establish that the task succeeded; missing records and task-quality problems may not be detected.',
+    diagnosticsFindingsPending:
+      'Log evidence has not been collected yet. Any recorded execution problems will appear here.',
+    diagnosticsFindingAssociation_event: 'Observed in this run',
+    diagnosticsFindingAssociation_run: 'Log clue matched to this run',
+    diagnosticsFindingAssociation_session: 'Session log clue; may belong to another run',
+    diagnosticsFindingAssociation_time_window: 'Nearby in time; may be unrelated',
+    diagnosticsFindingEvidence: 'Supporting records',
+    diagnosticsAdvice_auth:
+      'Check the selected provider credentials and access permissions; refresh expired credentials before retrying.',
+    diagnosticsAdvice_rate_limit:
+      'Check provider request and concurrency limits. Retry after the limit clears.',
+    diagnosticsAdvice_billing:
+      'Check the provider account balance and quota for the selected model.',
+    diagnosticsAdvice_context:
+      'Check conversation and attachment size. Try a new conversation with only the necessary context.',
+    diagnosticsAdvice_timeout:
+      'Check whether the delay occurred in a model request or tool execution, then inspect network connectivity and timeout settings.',
+    diagnosticsAdvice_network:
+      'Check connectivity to the model or runtime service and any proxy configuration.',
+    diagnosticsAdvice_tls:
+      'Check service certificate validity, the system clock and proxy certificate trust.',
+    diagnosticsAdvice_provider:
+      'Check the model service status and selected model availability, then retry the request.',
+    diagnosticsAdvice_tool:
+      'Review failed tool steps in the conversation for missing dependencies, invalid input or execution errors. Later completion does not prove these steps recovered.',
+    diagnosticsAdvice_permission:
+      'Check the relevant approval result and file or tool access permissions.',
+    diagnosticsAdvice_storage:
+      'Check available disk space, write permissions and whether the database or file is locked.',
+    diagnosticsAdvice_process_exit:
+      'Check whether the runtime or application restarted or exited around this time.',
+    diagnosticsAdvice_disconnect:
+      'Check whether the connection recovered and whether later run-terminal evidence exists. Disconnection alone does not mean execution stopped.',
+    diagnosticsAdvice_retry:
+      'Inspect nearby model and tool errors to understand why retries occurred. Repeated log entries are not necessarily separate retries.',
+    diagnosticsAdvice_unknown:
+      'An error or warning was recorded, but its category is unknown. Inspect the corresponding step in the conversation or export the diagnostic evidence for further investigation.',
     diagnosticsLocalBadge: 'Local diagnostics',
     diagnosticsPrivacyNote: 'Evidence stays on this device',
     diagnosticsOverview: 'Diagnostic overview',
@@ -122,7 +308,7 @@ export const sessionDiagnosticsTranslations = {
     diagnosticsCopy: 'Copy summary',
     diagnosticsExport: 'Export diagnostic report',
     diagnosticsExportScope:
-      'Exports the displayed snapshot, including collected safe log fields, for analysis. No automatic upload. Conversation text, tool arguments, raw logs and free-form error text are excluded.',
+      'Exports the report, matching logs and stored conversation failure excerpts. Common credentials are masked; task content may remain. Review before sharing. No automatic upload.',
     diagnosticsLoading: 'Loading diagnostics…',
     diagnosticsCollected: 'Collected at',
     diagnosticsPartial:
@@ -207,6 +393,156 @@ export const sessionDiagnosticsTranslations = {
     diagnosticsPhase_failed: 'Failed',
   },
   zh: {
+    diagnosticsHistory_scanned: '已读取 {count} 条会话存储记录，检查本轮时间范围内的失败结果。',
+    diagnosticsHistory_partial: '已读取 {count} 条会话存储记录；历史扫描尚不完整。',
+    diagnosticsHistory_unavailable: '未能读取会话历史；连接运行服务后刷新重试。',
+    diagnosticsHistory_changed: '扫描期间会话发生变化，请刷新后重新读取。',
+    diagnosticsHistoryAssociation_run: '会话存储记录 · 运行标识匹配',
+    diagnosticsHistoryAssociation_run_window: '会话存储记录 · 本轮时间范围内',
+    diagnosticsHistoryModel: '模型回复',
+    diagnosticsHistoryNoText: '存储的结果标记了失败，但没有错误正文。',
+    diagnosticsHistoryClipped: '错误原文较长，此处仅展示节选；完整结果可在会话对应步骤中查看。',
+    diagnosticsHistoryOmitted: '另有 {count} 条失败记录未展示。',
+    diagnosticsExportingLogs: '正在准备报告和日志文件…',
+    diagnosticsOperationCauseMissing: '{operation}失败，具体原因未记录',
+    diagnosticsToolCauseMissing: '工具步骤失败，具体原因未记录',
+    diagnosticsLocateToolFailure:
+      '请在会话中查看这些时间点附近的失败步骤，阅读该步骤的报错。这份报告无法确定失败原因。',
+    diagnosticsFailureTimes: '记录时间',
+    diagnosticsInvalidToolArguments: '传入参数不符合要求，工具未能开始执行。',
+    diagnosticsRemedy_invalid_arguments: '让助手修正该步骤的调用参数后重试，检查必填项和参数类型。',
+    diagnosticsOperation_command: '执行命令',
+    diagnosticsOperation_file_read: '读取文件',
+    diagnosticsOperation_file_write: '写入文件',
+    diagnosticsOperation_file_edit: '修改文件',
+    diagnosticsOperation_browser: '操作浏览器',
+    diagnosticsOperation_search: '搜索网页',
+    diagnosticsOperation_fetch: '获取网页',
+    diagnosticsOperation_process: '管理运行进程',
+    diagnosticsEvidenceBasis_command_error: '命令报告执行失败，未记录非零退出码。',
+    diagnosticsEvidenceBasis_routine: '常规执行进度，不作为失败依据。',
+    diagnosticsRemedy_command_error: '按此时间查看会话中的命令结果，检查其失败详情。',
+    diagnosticsKind_command: '命令',
+    diagnosticsSuspectedProblem: '日志提示：{category}',
+    diagnosticsRemedy_ENOENT:
+      '按此时间查看失败步骤，检查所需文件或可执行程序是否存在、路径是否正确。',
+    diagnosticsRemedy_ENOSPC: '清理失败步骤所用磁盘的空间后，重试该步骤。',
+    diagnosticsRemedy_SQLITE_FULL: '检查数据库所在磁盘的可用空间及存储限制。',
+    diagnosticsRemedy_SQLITE_BUSY: '检查是否有其他操作占用数据库，待其完成后重试。',
+    diagnosticsRemedy_EACCES: '检查失败步骤所需文件、目录或操作的访问权限。',
+    diagnosticsRemedy_EPERM: '检查失败操作所需的系统权限和审批结果。',
+    diagnosticsRemedy_ECONNREFUSED: '检查目标服务是否运行，以及地址、端口是否正确。',
+    diagnosticsRemedy_ECONNRESET: '检查目标服务和代理是否中断连接，再重试失败请求。',
+    diagnosticsRemedy_ENOTFOUND: '检查目标服务域名拼写和 DNS 配置。',
+    diagnosticsRemedy_EAI_AGAIN: '检查 DNS 连通性，待域名解析恢复后重试。',
+    diagnosticsRemedy_ETIMEDOUT: '检查目标服务的网络连通性与响应时间。',
+    diagnosticsRemedy_CERT_HAS_EXPIRED: '检查目标服务证书有效期和系统时间，更新过期证书。',
+    diagnosticsRemedy_DEPTH_ZERO_SELF_SIGNED_CERT: '检查目标服务证书是否受应用信任。',
+    diagnosticsRemedy_UNABLE_TO_VERIFY_LEAF_SIGNATURE: '检查目标服务是否提供完整、受信任的证书链。',
+    diagnosticsRemedy_command_exit:
+      '按此时间查看会话中的命令结果，根据退出码和输出定位原因后重试。',
+    diagnosticsRemedy_command_timeout:
+      '按此时间查看命令结果，检查是否在等待输入，或执行时长超过限制。',
+    diagnosticsRemedy_service_auth:
+      '先确认失败步骤访问的是哪个服务，再检查该服务的凭据和访问权限。',
+    diagnosticsRemedy_service_rate_limit: '确认哪个服务限制了失败请求，等待该服务解除限流后重试。',
+    diagnosticsRemedy_service_billing: '确认失败步骤使用的服务，检查该服务账户的额度或计费状态。',
+    diagnosticsRemedy_service_provider: '确认失败步骤使用的服务，并检查该服务是否可用。',
+    diagnosticsRemedy_service_network: '确认失败请求的目标服务，检查其网络连通性和代理设置。',
+    diagnosticsSupporting: '采集详情与运行时间线',
+    diagnosticsSupportingHint: '日志来源、扫描覆盖和执行事件',
+    diagnosticsReportTitle: '本轮诊断结果',
+    diagnosticsNextStep: '下一步：',
+    diagnosticsNotLocated: '尚未定位到具体故障',
+    diagnosticsNotLocatedDetail:
+      '已采集记录未能指出本轮的失败位置，也不评估任务完成质量。请查看会话中的失败步骤，或复现问题后重新采集。',
+    diagnosticsOtherClues: '其他日志线索 · 未归属到本轮',
+    diagnosticsStage_model: '模型请求阶段',
+    diagnosticsStage_tool: '工具执行阶段',
+    diagnosticsStage_command: '命令执行阶段',
+    diagnosticsStage_runtime: '智能体运行阶段',
+    diagnosticsEvidenceBasis_command_exit: '命令返回非零退出码。',
+    diagnosticsEvidenceBasis_command_timeout: '命令执行超过时限。',
+    diagnosticsCode_ECONNREFUSED: '目标服务拒绝连接',
+    diagnosticsCode_ECONNRESET: '通信连接被重置',
+    diagnosticsCode_ENOTFOUND: '无法解析服务器域名',
+    diagnosticsCode_EAI_AGAIN: '域名解析暂时失败',
+    diagnosticsCode_ETIMEDOUT: '连接等待超时',
+    diagnosticsCode_EACCES: '访问被拒绝',
+    diagnosticsCode_EPERM: '操作权限不足',
+    diagnosticsCode_ENOENT: '所需文件或可执行程序不存在',
+    diagnosticsCode_ENOSPC: '磁盘空间不足',
+    diagnosticsCode_SQLITE_BUSY: '数据库被其他操作锁定',
+    diagnosticsCode_SQLITE_FULL: '数据库存储空间不足',
+    diagnosticsCode_CERT_HAS_EXPIRED: '证书已过期',
+    diagnosticsCode_DEPTH_ZERO_SELF_SIGNED_CERT: '自签名证书未受信任',
+    diagnosticsCode_UNABLE_TO_VERIFY_LEAF_SIGNATURE: '无法验证证书链',
+    diagnosticsProblem_auth: '记录到身份认证错误',
+    diagnosticsProblem_rate_limit: '请求触发频率限制',
+    diagnosticsProblem_billing: '记录到账户额度或计费错误',
+    diagnosticsProblem_context: '会话内容超出上下文限制',
+    diagnosticsProblem_timeout: '操作等待超时',
+    diagnosticsProblem_network: '网络请求失败',
+    diagnosticsProblem_tls: '记录到安全连接错误',
+    diagnosticsProblem_provider: '记录到模型服务错误',
+    diagnosticsProblem_tool: '工具执行失败',
+    diagnosticsProblem_permission: '访问或执行被拒绝',
+    diagnosticsProblem_storage: '记录到文件或数据库错误',
+    diagnosticsProblem_process_exit: '记录到进程退出',
+    diagnosticsProblem_disconnect: '运行服务连接中断',
+    diagnosticsProblem_retry: '记录到重试',
+    diagnosticsProblem_unknown: '记录到错误或警告，缺少具体原因',
+    diagnosticsEvidenceUnrelated:
+      '这些日志没有匹配本轮运行标识，不能据此判断本轮存在此问题；请先确认关联，再调整配置。',
+    diagnosticsEvidenceToolLimits:
+      '只能确认收到过工具失败标记。当前记录未保存工具名称和错误详情，无法从本页确定哪个步骤失败、为什么失败；请按记录时间查看会话中的工具结果。',
+    diagnosticsEvidenceToolFailed: '运行服务将工具结果标记为失败。',
+    diagnosticsEvidenceCategory: '运行事件报告：{category}。',
+    diagnosticsEvidenceEventError: '运行服务报告了错误，未记录具体原因。',
+    diagnosticsEvidenceBasis_error_category: '日志中的结构化错误字段标记为：{category}。',
+    diagnosticsEvidenceBasis_http_status: '记录到 HTTP 错误状态码，提示{category}问题。',
+    diagnosticsEvidenceBasis_tool_error: '记录到原生工具执行错误事件。',
+    diagnosticsEvidenceBasis_tool_blocked: '原生事件明确记录工具执行被阻止。',
+    diagnosticsEvidenceBasis_model_error: '记录到原生模型请求错误事件。',
+    diagnosticsEvidenceBasis_error_text:
+      '根据错误或警告日志中的异常描述推断为{category}，尚未确认根因。',
+    diagnosticsEvidenceBasis_keyword: '仅匹配到主题关键词，不能证明发生了故障。',
+    diagnosticsEvidenceBasis_unknown:
+      '记录到警告或错误，但未保留分类依据；请重新采集日志以获得更具体的说明。',
+    diagnosticsEvidenceGrouped:
+      '{count} 条记录的时间和描述相同，已合并展示；不代表发生了同样次数的故障。',
+    diagnosticsEvidenceMore: '展开其余 {count} 组依据',
+    diagnosticsFindings: '问题与线索',
+    diagnosticsFindingsScope:
+      '执行过程中出现的异常；正常结束不代表每一步都成功。日志线索不等于已确认根因，证据条数也不等于独立故障次数。',
+    diagnosticsFindingsEmpty:
+      '现有证据中未识别到明确问题，不代表任务成功。记录缺失、答非所问或任务未完成等情况可能无法识别。',
+    diagnosticsFindingsPending: '尚未采集日志证据，已记录的执行问题会显示在这里。',
+    diagnosticsFindingAssociation_event: '本轮事件已记录',
+    diagnosticsFindingAssociation_run: '日志匹配本轮，待核实',
+    diagnosticsFindingAssociation_session: '同会话日志，可能属于其他轮次',
+    diagnosticsFindingAssociation_time_window: '仅时间接近，可能与本会话无关',
+    diagnosticsFindingEvidence: '查看依据',
+    diagnosticsAdvice_auth: '检查所选模型服务的凭据与访问权限；凭据过期时更新后再试。',
+    diagnosticsAdvice_rate_limit: '检查模型服务的请求频率与并发限制，等待限流解除后重试。',
+    diagnosticsAdvice_billing: '检查模型服务账户余额、额度及所选模型的可用配额。',
+    diagnosticsAdvice_context: '检查会话与附件的内容量，可用新会话携带必要信息重试。',
+    diagnosticsAdvice_timeout:
+      '先确认超时发生在模型请求还是工具执行，再检查网络连通性与对应超时设置。',
+    diagnosticsAdvice_network: '检查模型服务或运行服务的网络连通性，以及代理配置。',
+    diagnosticsAdvice_tls: '检查服务证书有效性、系统时间与代理证书信任配置。',
+    diagnosticsAdvice_provider: '检查模型服务状态及所选模型是否可用，再尝试重试请求。',
+    diagnosticsAdvice_tool:
+      '查看会话中的失败工具步骤，检查依赖缺失、输入不合法或执行错误；后续正常结束不代表失败步骤已恢复。',
+    diagnosticsAdvice_permission: '检查对应操作的审批结果，以及文件或工具访问权限。',
+    diagnosticsAdvice_storage: '检查磁盘剩余空间、写入权限及数据库或文件是否被占用。',
+    diagnosticsAdvice_process_exit: '核对该时段运行服务或应用是否发生重启、退出或崩溃。',
+    diagnosticsAdvice_disconnect:
+      '检查连接是否恢复，以及之后是否收到整轮终态；断连本身不表示执行已停止。',
+    diagnosticsAdvice_retry:
+      '结合相邻的模型或工具错误排查重试原因；重复日志不一定代表多次独立重试。',
+    diagnosticsAdvice_unknown:
+      '已记录错误或警告，但暂不能确定类别。查看会话中的对应步骤，或导出诊断证据进一步排查。',
     diagnosticsLocalBadge: '本地诊断',
     diagnosticsPrivacyNote: '证据留在本机',
     diagnosticsOverview: '诊断概览',
@@ -323,7 +659,7 @@ export const sessionDiagnosticsTranslations = {
     diagnosticsCopy: '复制摘要',
     diagnosticsExport: '导出诊断报告',
     diagnosticsExportScope:
-      '导出当前显示的快照及已采集的安全日志字段供分析，不会自动上传。不包含对话正文、工具参数、原始日志和自由文本错误内容。',
+      '导出报告、相关日志及会话中失败步骤的错误节选。常见凭据会脱敏，可能含任务内容，分享前请检查；不会自动上传。',
     diagnosticsLoading: '正在加载诊断…',
     diagnosticsCollected: '采集时间',
     diagnosticsPartial: '证据不完整：仅记录部分关键事件。缺少记录不代表事件未发生。',

@@ -19,6 +19,7 @@ import {
   WifiIcon,
   WrenchScrewdriverIcon,
 } from '@heroicons/react/24/outline';
+import { type DiagnosticFinding } from '@shared/cowork/diagnosticFindings';
 import type {
   DiagnosticEvent,
   DiagnosticLogCoverage,
@@ -27,6 +28,11 @@ import type {
 import { useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
+
+import {
+  presentDiagnosticFinding,
+  visibleDiagnosticFindings,
+} from './sessionDiagnosticsPresentation';
 
 const t = (key: string) => i18nService.t(key);
 const date = (value: number) =>
@@ -113,22 +119,34 @@ export function DiagnosticOverview({ report }: { report: DiagnosticReport }) {
   ];
   return (
     <>
-      <section className={`diagnostics-overview diagnostics-tone-${tone}`}>
-        <div className="diagnostics-overview-main">
-          <span className="diagnostics-outcome-icon">
-            <Icon aria-hidden="true" />
-          </span>
-          <div className="diagnostics-overview-copy">
-            <div className="diagnostics-eyebrow">
-              {t('diagnosticsOverview')}
-              <span className="diagnostics-outcome-badge">
-                {t(`diagnosticsConfidence_${report.conclusion.confidence}`)}
-              </span>
+      <section
+        className={`diagnostics-overview diagnostics-tone-${tone}${reason === 'completed' ? ' diagnostics-overview-compact' : ''}`}
+      >
+        {reason === 'completed' ? (
+          <details className="diagnostics-overview-details">
+            <summary>{t(`diagnosticsReason_${reason}`)}</summary>
+            <p className="diagnostics-overview-caption">
+              {t(`diagnosticsConfidence_${report.conclusion.confidence}`)} ·{' '}
+              {t('diagnosticsPartial')}
+            </p>
+          </details>
+        ) : (
+          <div className="diagnostics-overview-main">
+            <span className="diagnostics-outcome-icon">
+              <Icon aria-hidden="true" />
+            </span>
+            <div className="diagnostics-overview-copy">
+              <div className="diagnostics-eyebrow">
+                {t('diagnosticsOverview')}
+                <span className="diagnostics-outcome-badge">
+                  {t(`diagnosticsConfidence_${report.conclusion.confidence}`)}
+                </span>
+              </div>
+              <p className="diagnostics-conclusion">{t(`diagnosticsReason_${reason}`)}</p>
+              <p className="diagnostics-overview-caption">{t('diagnosticsPartial')}</p>
             </div>
-            <p className="diagnostics-conclusion">{t(`diagnosticsReason_${reason}`)}</p>
-            <p className="diagnostics-overview-caption">{t('diagnosticsPartial')}</p>
           </div>
-        </div>
+        )}
         <div className="diagnostics-overview-meta">
           {report.run ? (
             <div>
@@ -150,15 +168,19 @@ export function DiagnosticOverview({ report }: { report: DiagnosticReport }) {
           </div>
         </div>
       </section>
+      <DiagnosticFindings report={report} />
       <div className="diagnostics-metrics">
         {metrics.map(({ icon: MetricIcon, ...metric }) => (
-          <div className={`diagnostics-metric diagnostics-tone-${metric.tone}`} key={metric.label}>
+          <div
+            className={`diagnostics-metric diagnostics-tone-${metric.tone}`}
+            key={metric.label}
+            title={t(metric.hint)}
+          >
             <span className="diagnostics-metric-label">
               <MetricIcon aria-hidden="true" />
               {t(metric.label)}
             </span>
             <strong>{metric.value}</strong>
-            <small>{t(metric.hint)}</small>
           </div>
         ))}
       </div>
@@ -187,6 +209,180 @@ export function DiagnosticOverview({ report }: { report: DiagnosticReport }) {
             )}
           </div>
         </div>
+      )}
+    </>
+  );
+}
+
+function DiagnosticFindings({ report }: { report: DiagnosticReport }) {
+  const findings = visibleDiagnosticFindings(report);
+  const history = report.history;
+  const failures = history?.failures ?? [];
+  const related = findings.filter(item => ['event', 'run'].includes(item.association));
+  const others = findings.filter(item => !['event', 'run'].includes(item.association));
+  const cards = (items: DiagnosticFinding[]) => (
+    <ul className="diagnostics-finding-list">
+      {items.map(finding => {
+        const presentation = presentDiagnosticFinding(finding, report);
+        return (
+          <li
+            key={finding.signal}
+            className={`diagnostics-finding-card diagnostics-tone-${
+              ['tool', 'permission', 'storage'].includes(finding.signal)
+                ? 'violet'
+                : ['network', 'tls', 'disconnect'].includes(finding.signal)
+                  ? 'blue'
+                  : 'amber'
+            }`}
+          >
+            <div className="diagnostics-finding-heading">
+              <ExclamationTriangleIcon aria-hidden="true" />
+              <strong>{presentation.title}</strong>
+              <span>{t(`diagnosticsFindingAssociation_${finding.association}`)}</span>
+            </div>
+            {['event', 'run'].includes(finding.association) ? (
+              <>
+                {presentation.toolLimit ? (
+                  <p>
+                    {t('diagnosticsFailureTimes')}:{' '}
+                    {[
+                      ...new Set(
+                        presentation.rows.map(row =>
+                          row.time === undefined ? t('diagnosticsLogsUnknownTime') : date(row.time),
+                        ),
+                      ),
+                    ]
+                      .slice(0, 5)
+                      .join(' / ')}
+                  </p>
+                ) : (
+                  <FindingEvidence finding={finding} report={report} compact />
+                )}
+                <p className="diagnostics-finding-action">
+                  <strong>{t('diagnosticsNextStep')}</strong> {presentation.advice}
+                </p>
+              </>
+            ) : (
+              <p>{t('diagnosticsEvidenceUnrelated')}</p>
+            )}
+            {!presentation.toolLimit && (
+              <details>
+                <summary>
+                  {t('diagnosticsFindingEvidence')} (
+                  {finding.eventIds.length + finding.logIds.length})
+                </summary>
+                <FindingEvidence finding={finding} report={report} />
+              </details>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+  return (
+    <section className="diagnostics-panel diagnostics-findings">
+      <SectionHeading
+        icon={MagnifyingGlassIcon}
+        title={t('diagnosticsReportTitle')}
+        count={related.length + failures.length}
+      />
+      {history && (
+        <p className="diagnostics-muted">
+          {t(`diagnosticsHistory_${history.status}`).replace(
+            '{count}',
+            number(history.messagesScanned),
+          )}
+        </p>
+      )}
+      {failures.length > 0 && (
+        <ul className="diagnostics-finding-list">
+          {failures.map((failure, index) => (
+            <li key={index} className="diagnostics-finding-card diagnostics-tone-violet">
+              <div className="diagnostics-finding-heading">
+                <ExclamationTriangleIcon aria-hidden="true" />
+                <strong>
+                  {failure.tool ??
+                    t(
+                      failure.kind === 'tool' ? 'diagnosticsKind_tool' : 'diagnosticsHistoryModel',
+                    )}{' '}
+                  · {t('diagnosticsPhase_failed')}
+                </strong>
+                <span>{t(`diagnosticsHistoryAssociation_${failure.association}`)}</span>
+              </div>
+              <p className="diagnostics-muted">{date(failure.timestamp)}</p>
+              <pre className="diagnostics-history-error">
+                {failure.excerpt || t('diagnosticsHistoryNoText')}
+              </pre>
+              {failure.clipped && (
+                <p className="diagnostics-muted">{t('diagnosticsHistoryClipped')}</p>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {!!history?.omitted && (
+        <p className="diagnostics-muted">
+          {t('diagnosticsHistoryOmitted').replace('{count}', number(history.omitted))}
+        </p>
+      )}
+      {related.length ? (
+        cards(related)
+      ) : failures.length ? null : (
+        <div className="diagnostics-report-empty">
+          <InformationCircleIcon aria-hidden="true" />
+          <div>
+            <strong>{t('diagnosticsNotLocated')}</strong>
+            <p>{t(report.logs ? 'diagnosticsNotLocatedDetail' : 'diagnosticsFindingsPending')}</p>
+          </div>
+        </div>
+      )}
+      {others.length > 0 && (
+        <details className="diagnostics-other-clues">
+          <summary>
+            {t('diagnosticsOtherClues')} ({others.length})
+          </summary>
+          {cards(others)}
+        </details>
+      )}
+    </section>
+  );
+}
+
+function FindingEvidence({
+  finding,
+  report,
+  compact = false,
+}: {
+  compact?: boolean;
+  finding: DiagnosticFinding;
+  report: DiagnosticReport;
+}) {
+  const presentation = presentDiagnosticFinding(finding, report);
+  const rows = [...presentation.rows]
+    .sort((a, b) => (compact ? b.detail - a.detail : 0) || (a.time ?? 0) - (b.time ?? 0))
+    .map((group, index) => (
+      <div key={index} className="diagnostics-evidence-row">
+        <strong>{group.description}</strong>
+        <p>
+          {group.time === undefined ? t('diagnosticsLogsUnknownTime') : date(group.time)} ·{' '}
+          {[...group.sources].join(' / ')}
+        </p>
+        {group.count > 1 && (
+          <p>{t('diagnosticsEvidenceGrouped').replace('{count}', number(group.count))}</p>
+        )}
+      </div>
+    ));
+  if (compact) return <div className="diagnostics-location">{rows.slice(0, 1)}</div>;
+  return (
+    <>
+      {rows.slice(0, 5)}
+      {rows.length > 5 && (
+        <details>
+          <summary>
+            {t('diagnosticsEvidenceMore').replace('{count}', number(rows.length - 5))}
+          </summary>
+          {rows.slice(5)}
+        </details>
       )}
     </>
   );
@@ -383,6 +579,7 @@ const eventIcons = {
   lifecycle: BoltIcon,
   chat: ChatBubbleLeftRightIcon,
   tool: WrenchScrewdriverIcon,
+  command: CommandLineIcon,
   connection: WifiIcon,
   cancel: StopCircleIcon,
 };

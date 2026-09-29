@@ -120,11 +120,13 @@ export function registerSessionDiagnosticsHandlers(
     async (event, query: DiagnosticQuery & { snapshotId: string }) => {
       const owner = event.sender.id;
       let acquired = false;
+      let exportController: AbortController | undefined;
+      const destroyed = () => exportController?.abort();
       try {
         const window = windowFor(event);
         if (exporting.has(owner)) throw new DiagnosticServiceError('busy');
         const service = getService();
-        const report = service.snapshot(query, owner);
+        service.snapshot(query, owner);
         exporting.add(owner);
         acquired = true;
         const result = await dialog.showSaveDialog(window, {
@@ -154,10 +156,18 @@ export function registerSessionDiagnosticsHandlers(
           service.snapshot(query, owner);
         };
         assertCurrent();
+        exportController = new AbortController();
+        event.sender.once('destroyed', destroyed);
+        const collected = await service.exportLogs(query, owner, exportController.signal);
+        const assertExportCurrent = () => {
+          windowFor(event);
+          service.snapshot({ ...query, snapshotId: collected.report.snapshotId }, owner);
+        };
+        assertExportCurrent();
         await writeDiagnosticArchive(
           destination,
-          buildDiagnosticArchive(report, app.getVersion(), getLanguage()),
-          assertCurrent,
+          buildDiagnosticArchive(collected.report, app.getVersion(), getLanguage(), collected.logs),
+          assertExportCurrent,
         );
         return { success: true, canceled: false, path: destination };
       } catch (error) {
@@ -165,6 +175,7 @@ export function registerSessionDiagnosticsHandlers(
           ? failure(error)
           : { success: false, reason: 'export_failed' };
       } finally {
+        if (exportController) event.sender.removeListener('destroyed', destroyed);
         if (acquired) exporting.delete(owner);
       }
     },
