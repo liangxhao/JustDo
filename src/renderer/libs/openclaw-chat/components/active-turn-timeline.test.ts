@@ -148,7 +148,7 @@ describe('active turn timeline', () => {
     },
   );
 
-  test('renders the assistant avatar and animated indicator while waiting for the first event', () => {
+  test('renders one decorative spark while waiting for the first event', () => {
     const rendered = flatten(
       renderTimelineItem({
         kind: 'waiting',
@@ -156,8 +156,8 @@ describe('active turn timeline', () => {
       }),
     );
 
-    expect(rendered).toContain('chat-avatar assistant');
-    expect(rendered).toContain('chat-reading-indicator');
+    expect(rendered).not.toContain('chat-avatar assistant');
+    expect(rendered).toContain('chat-working-indicator__spark');
     expect(rendered).not.toContain('active-turn__footer');
   });
 

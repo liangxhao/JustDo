@@ -1,7 +1,10 @@
 import { describe, expect, test, vi } from 'vitest';
 
 import { projectPersistedTimeline } from '../model/project-history-timeline';
-import { normalizeGatewayHistoryForDisplay } from '../pipeline/history-display-normalizer';
+import {
+  normalizeGatewayHistoryForDisplay,
+  persistFailedRun,
+} from '../pipeline/history-display-normalizer';
 import type { GatewayMessage } from '../types';
 import {
   decodeHistoryOffsetCursor,
@@ -11,6 +14,64 @@ import {
 import type { GatewayClient } from './client';
 
 describe('OpenClaw chat history protocol', () => {
+  test('renders a generated assistant error once as a failure and retains actual partial replies', async () => {
+    const error = 'LLM request failed: network connection was interrupted.';
+    const timestamp = Date.now();
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+    });
+    try {
+      for (const emptyContent of [true, false]) {
+        persistFailedRun({
+          sessionKey: 'session-1',
+          runId: 'run-1',
+          timestamp,
+          error: `⚠️ Agent failed before reply: ${error}`,
+        });
+        const reply = {
+          role: 'assistant',
+          stopReason: 'error',
+          content: [{ type: 'text', text: emptyContent ? error : 'Completed the first step.' }],
+          timestamp: timestamp - 100,
+          __openclaw: { id: 'failure', runId: 'run-1' },
+        };
+        const input = [{ role: 'user', content: 'Continue', timestamp: timestamp - 500 }, reply];
+        const original = structuredClone(input);
+        const request = vi.fn().mockResolvedValue({
+          failureDetails: { failure: { errorMessage: 'Connection error.', emptyContent } },
+        });
+        const hydrated = await hydrateTruncatedHistoryMessages(
+          { request } as unknown as GatewayClient,
+          input,
+          'session-1',
+        );
+        const normalized = await normalizeGatewayHistoryForDisplay(hydrated, {
+          sessionKey: 'session-1',
+        });
+        const rows = projectPersistedTimeline(normalized as GatewayMessage[]).filter(
+          item => item.kind === 'history-message',
+        );
+        expect(input).toEqual(original);
+        expect(rows).toHaveLength(emptyContent ? 2 : 3);
+        if (emptyContent) {
+          expect(rows[1].message).toMatchObject({
+            role: 'system',
+            content: error,
+            isError: true,
+            __justdoFailedRunMessage: true,
+          });
+        } else {
+          expect(rows[1].message).toMatchObject(reply);
+          expect(rows[2].message).toMatchObject({ role: 'system', isError: true });
+        }
+      }
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   test.each([false, true])(
     'preserves native commentary siblings when hydrating the main projection (capped=%s)',
     async capped => {
@@ -174,7 +235,7 @@ describe('OpenClaw chat history protocol', () => {
     ).toHaveLength(1);
   });
 
-  test('does not fetch details for partial replies, tool blocks or actionable provider guidance', async () => {
+  test('checks text-only failures but preserves their content when source details are unavailable', async () => {
     const messages = [
       'Partial answer before the failure',
       'Context overflow: try /compact',
@@ -193,7 +254,10 @@ describe('OpenClaw chat history protocol', () => {
         'session-1',
       ),
     ).toEqual(messages);
-    expect(request).not.toHaveBeenCalled();
+    expect(request).toHaveBeenCalledExactlyOnceWith('runtimeServices.historyDetails', {
+      sessionKey: 'session-1',
+      failureMessageIds: ['m0', 'm1'],
+    });
   });
 
   test('bounds failure batches and preserves later results when a batch fails', async () => {

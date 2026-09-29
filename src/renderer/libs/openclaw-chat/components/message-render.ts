@@ -263,21 +263,24 @@ function renderUserMessageEditor(
 async function copyMessage(event: Event, text: string): Promise<void> {
   event.stopPropagation();
   const button = event.currentTarget as HTMLButtonElement;
+  const label = button.title || i18nService.t('copyToClipboard');
   try {
     await navigator.clipboard.writeText(text);
     button.classList.add('message-copy--copied');
     button.setAttribute('aria-label', i18nService.t('copied'));
     window.setTimeout(() => {
       button.classList.remove('message-copy--copied');
-      button.setAttribute('aria-label', i18nService.t('copyToClipboard'));
+      button.setAttribute('aria-label', label);
     }, 1500);
   } catch (error) {
     console.error('[GroupedRender] Failed to copy message', error);
   }
 }
 
-function renderCopyButton(text: string): TemplateResult {
-  const label = i18nService.t('copyToClipboard');
+export function renderCopyButton(
+  text: string,
+  label = i18nService.t('copyToClipboard'),
+): TemplateResult {
   return html`
     <button
       type="button"
@@ -1231,6 +1234,9 @@ function renderStreamingThinkingBlock(text: string): TemplateResult {
 export function renderReadingIndicatorGroup(opts?: {
   showAvatar?: boolean;
   assistantAvatar?: TemplateResult;
+  label?: string;
+  elapsed?: string;
+  warning?: boolean;
 }): TemplateResult {
   const isContinuation = opts?.showAvatar === false;
   return html`
@@ -1240,13 +1246,16 @@ export function renderReadingIndicatorGroup(opts?: {
       }`}
     >
       <div class="chat-group__avatar">
-        ${(opts?.showAvatar ?? true) ? (opts?.assistantAvatar ?? renderChatAvatar('assistant')) : nothing}
+        <svg class="chat-working-indicator__spark" viewBox="0 0 24 24" aria-hidden="true">
+          <path fill="currentColor" d="M12 2 14.8 9.2 22 12 14.8 14.8 12 22 9.2 14.8 2 12 9.2 9.2Z" />
+        </svg>
       </div>
       <div class="chat-group__content">
-        <div class="chat-reading-indicator" aria-hidden="true">
-          <span></span>
-          <span></span>
-          <span></span>
+        <div class=${`chat-working-indicator${opts?.warning ? ' chat-working-indicator--warning' : ''}`}>
+          <span class="chat-working-indicator__label" role="status" aria-live="polite"
+            >${opts?.label ?? i18nService.t('coworkWorkingStarting')}</span
+          >
+          ${opts?.elapsed ? html`<span class="chat-working-indicator__elapsed" aria-live="off">${opts.elapsed}</span>` : nothing}
         </div>
       </div>
     </div>

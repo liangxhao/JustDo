@@ -8,7 +8,60 @@ import {
   splitMarkdownFrontmatter,
   stripMarkdownFrontmatter,
   toSanitizedMarkdownHtml,
+  toStreamingMarkdownHtml,
 } from '@/libs/openclaw-chat/components/markdown';
+
+describe('Streaming fenced code', () => {
+  test('renders an open code fence before the closing marker arrives', () => {
+    const source = 'Example:\n\n```typescript\nconst answer = 42;';
+    const streaming = document.createElement('div');
+    streaming.innerHTML = toStreamingMarkdownHtml(source);
+    expect(streaming.querySelector('.code-block-wrapper')).not.toBeNull();
+    expect(streaming.querySelector('code')?.textContent).toContain('const answer = 42;');
+    expect(streaming.querySelector('p')?.textContent).toBe('Example:');
+    const completed = document.createElement('div');
+    completed.innerHTML = toStreamingMarkdownHtml(`${source}\n\x60\x60\x60`);
+    expect(completed.querySelectorAll('.code-block-wrapper')).toHaveLength(1);
+    expect(completed.querySelector('code')?.textContent?.trim()).toBe(
+      streaming.querySelector('code')?.textContent?.trim(),
+    );
+  });
+
+  test('waits for the fence language line and keeps incomplete links literal', () => {
+    expect(toStreamingMarkdownHtml('```type')).not.toContain('code-block-wrapper');
+    expect(toStreamingMarkdownHtml('[Open](https://exam')).not.toContain('<a');
+  });
+
+  test('keeps an incomplete Mermaid diagram visible until its fence closes', () => {
+    const source = '```mermaid\ngraph TD\nA -->';
+    const container = document.createElement('div');
+    container.innerHTML = toStreamingMarkdownHtml(source);
+    expect(container.querySelector('.mermaid-block')).toBeNull();
+    expect(container.textContent).toBe(source);
+
+    container.innerHTML = toStreamingMarkdownHtml(`${source} B\n\x60\x60\x60`);
+    expect(container.querySelector('.mermaid-block')).not.toBeNull();
+    expect(container.querySelector('.mermaid-source code')?.textContent).toContain('A --> B');
+  });
+
+  test('keeps invalid backtick fence info literal while streaming', () => {
+    const source = '```js`invalid\n**still incomplete';
+    const container = document.createElement('div');
+    container.innerHTML = toStreamingMarkdownHtml(source);
+    expect(container.querySelector('.code-block-wrapper')).toBeNull();
+    expect(container.textContent).toBe(source);
+  });
+
+  test('keeps HTML and Markdown inside a streaming fence as code', () => {
+    const container = document.createElement('div');
+    container.innerHTML = toStreamingMarkdownHtml(
+      '~~~html\n<img src=x onerror=alert(1)>\n**literal**',
+    );
+    expect(container.querySelector('img')).toBeNull();
+    expect(container.querySelector('strong')).toBeNull();
+    expect(container.querySelector('code')?.textContent).toContain('<img src=x onerror=alert(1)>');
+  });
+});
 
 describe('Progress card Markdown', () => {
   test('allows only the scoped progress element extension', () => {

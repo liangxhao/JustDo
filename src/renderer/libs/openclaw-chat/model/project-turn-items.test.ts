@@ -42,6 +42,43 @@ function turn(items: TurnItem[]): AssistantTurn {
 }
 
 describe('projectTurnItems', () => {
+  test('keeps one working indicator through output and removes it at settlement', () => {
+    const activity = {
+      runId: 'run-1',
+      stage: 'responding' as const,
+      startedAt: 1,
+      stageChangedAt: 2,
+      lastAgentEventAt: 2,
+      lastModelActivityAt: 2,
+      hasRunningTool: false,
+      activeRunConfirmedAt: null,
+      probeState: 'idle' as const,
+    };
+    const active = turn([item('content-1', 'content', 'streaming')]);
+    const stalled = projectTurnItems(
+      active,
+      true,
+      { kind: 'slow-active', tone: 'neutral', quietMs: 60_000 },
+      activity,
+    );
+    expect(stalled.map(row => row.kind)).toEqual(['content', 'waiting']);
+    expect(stalled[1]).toMatchObject({ notice: { kind: 'slow-active' } });
+    expect(projectTurnItems(active, true, null, activity)[1]).not.toHaveProperty('notice');
+    expect(projectTurnItems(active, true, null, activity).map(row => row.kind)).toEqual([
+      'content',
+      'waiting',
+    ]);
+    expect(projectTurnItems(active, true, null, activity)[1]).toMatchObject({
+      startedAt: 1,
+      stage: 'responding',
+    });
+    expect(
+      projectTurnItems({ ...active, status: 'final' }, false, null, activity).map(row => row.kind),
+    ).toEqual(['content']);
+    expect(
+      projectTurnItems(active, true, null, { ...activity, runId: 'old-run' }).map(row => row.kind),
+    ).toEqual(['content']);
+  });
   test('shows a waiting row as soon as sending starts before a turn exists', () => {
     expect(projectTurnItems(null, true)).toEqual([
       { kind: 'waiting', key: 'waiting:pending-turn' },

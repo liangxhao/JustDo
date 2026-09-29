@@ -609,7 +609,8 @@ export class ChatController {
       if (!activity.runId.startsWith('justdo-')) return;
       activity.runId = runId;
     }
-    if (activity.stage !== stage) {
+    const stageChanged = activity.stage !== stage;
+    if (stageChanged) {
       activity.stage = stage;
       activity.stageChangedAt = at;
     }
@@ -635,6 +636,8 @@ export class ChatController {
     }
     if (options.modelActivity) {
       activity.lastModelActivityAt = at;
+    }
+    if (options.modelActivity || stageChanged) {
       activity.probeState = 'idle';
       activity.activeRunConfirmedAt = null;
       this.scheduleRunActivityCheck();
@@ -645,7 +648,10 @@ export class ChatController {
     this.clearRunActivityTimer();
     const activity = this.state.runActivity;
     if (!activity || !this.state.chatSending) return;
-    const quietSince = activity.lastModelActivityAt ?? activity.startedAt;
+    const quietSince = Math.max(
+      activity.lastModelActivityAt ?? activity.startedAt,
+      activity.stageChangedAt,
+    );
     const delay =
       delayMs ?? Math.max(0, RUN_STALL_NOTICE_MS - Math.max(0, Date.now() - quietSince));
     this.runActivityTimer = setTimeout(() => {
@@ -674,6 +680,7 @@ export class ChatController {
     const runId = activity.runId;
     const sessionKey = this.state.sessionKey;
     const modelActivityAt = activity.lastModelActivityAt;
+    const stageChangedAt = activity.stageChangedAt;
     const probeToken = Symbol('run-probe');
     this.runProbeToken = probeToken;
     activity.probeState = 'checking';
@@ -688,7 +695,8 @@ export class ChatController {
         !current ||
         current.runId !== runId ||
         this.state.sessionKey !== sessionKey ||
-        current.lastModelActivityAt !== modelActivityAt
+        current.lastModelActivityAt !== modelActivityAt ||
+        current.stageChangedAt !== stageChangedAt
       ) {
         return;
       }
@@ -703,7 +711,8 @@ export class ChatController {
         !current ||
         current.runId !== runId ||
         this.state.sessionKey !== sessionKey ||
-        current.lastModelActivityAt !== modelActivityAt
+        current.lastModelActivityAt !== modelActivityAt ||
+        current.stageChangedAt !== stageChangedAt
       ) {
         return;
       }

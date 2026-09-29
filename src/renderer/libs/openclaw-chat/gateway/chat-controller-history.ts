@@ -346,7 +346,14 @@ export function publishActiveToolHistoryRepair(this: ChatControllerHistoryContex
   const activeTurn = this.state.transcript.activeTurn;
   if (!activeTurn) return;
   const hasRunningTool = [...activeTurn.toolById.values()].some(tool => tool.status === 'running');
-  this.updateRunActivity(activeTurn.runId, hasRunningTool ? 'running-tool' : 'waiting-model');
+  // A background tool repair must not rewind a newer Thinking/Content stage.
+  const currentStage = this.state.runActivity?.stage;
+  const preservesLiveStage =
+    currentStage === 'thinking' || currentStage === 'responding' || currentStage === 'retrying';
+  this.updateRunActivity(
+    activeTurn.runId,
+    hasRunningTool ? 'running-tool' : preservesLiveStage ? currentStage : 'waiting-model',
+  );
   // Tool starts and terminal history rows must bypass streaming throttling
   // so the repaired card and its waiting status change appear together.
   this.notifyStream('terminal');

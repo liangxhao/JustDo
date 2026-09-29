@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import { ChatScrollController } from './chat-scroll-controller';
@@ -31,6 +32,132 @@ function host(options: { asyncSmooth?: boolean } = {}) {
 }
 
 describe('ChatScrollController', () => {
+  function nestedHost() {
+    const target = document.createElement('div');
+    const root = target.attachShadow({ mode: 'open' });
+    const inner = document.createElement('div');
+    inner.style.overflowY = 'auto';
+    root.append(inner);
+    Object.defineProperties(target, {
+      scrollHeight: { value: 1000 },
+      clientHeight: { value: 300 },
+    });
+    Object.defineProperties(inner, {
+      scrollHeight: { value: 600 },
+      clientHeight: { value: 200 },
+    });
+    target.scrollTop = 700;
+    inner.scrollTop = 100;
+    target.scrollTo = vi.fn();
+    const controller = new ChatScrollController(vi.fn());
+    controller.connect(target);
+    return { target, inner, controller };
+  }
+
+  test('keeps following when an inner output consumes upward scrolling', () => {
+    const { inner, controller } = nestedHost();
+    inner.dispatchEvent(new WheelEvent('wheel', { deltaY: -40, bubbles: true, composed: true }));
+    expect(controller.state.mode).toBe('follow');
+    inner.scrollTop = 0;
+    inner.dispatchEvent(new WheelEvent('wheel', { deltaY: -40, bubbles: true, composed: true }));
+    expect(controller.state.mode).toBe('paused');
+    controller.disconnect();
+  });
+
+  test.each(['contain', 'none'])('respects inner %s scroll containment at its boundary', policy => {
+    const { inner, controller } = nestedHost();
+    inner.scrollTop = 0;
+    inner.style.overscrollBehaviorY = policy;
+    inner.dispatchEvent(new WheelEvent('wheel', { deltaY: -40, bubbles: true, composed: true }));
+    expect(controller.state.mode).toBe('follow');
+    controller.disconnect();
+  });
+
+  test('only interrupts smooth navigation when downward input can reach the transcript', () => {
+    const { target, inner, controller } = nestedHost();
+    controller.navigateTo(100, 'smooth');
+    inner.dispatchEvent(new WheelEvent('wheel', { deltaY: 40, bubbles: true, composed: true }));
+    expect(target.scrollTo).toHaveBeenCalledTimes(1);
+    inner.scrollTop = 400;
+    inner.dispatchEvent(new WheelEvent('wheel', { deltaY: 40, bubbles: true, composed: true }));
+    expect(target.scrollTo).toHaveBeenLastCalledWith({ top: 700, behavior: 'instant' });
+    controller.disconnect();
+  });
+
+  test('keeps nested keyboard scrolling and shadow-root editing separate from transcript intent', () => {
+    const { inner, controller } = nestedHost();
+    inner.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'PageUp', bubbles: true, composed: true }),
+    );
+    expect(controller.state.mode).toBe('follow');
+    inner.scrollTop = 0;
+    const input = document.createElement('textarea');
+    inner.append(input);
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Home', bubbles: true, composed: true }),
+    );
+    expect(controller.state.mode).toBe('follow');
+    inner.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'PageUp', bubbles: true, composed: true }),
+    );
+    expect(controller.state.mode).toBe('paused');
+    controller.disconnect();
+  });
+  test('pauses on upward intent before native scrolling even without history pagination', () => {
+    class TestWheelEvent extends Event {
+      constructor(
+        public deltaY: number,
+        public ctrlKey = false,
+      ) {
+        super('wheel');
+      }
+    }
+    vi.stubGlobal('WheelEvent', TestWheelEvent);
+    const target = host();
+    const controller = new ChatScrollController(vi.fn());
+    controller.connect(target as unknown as HTMLElement);
+    target.emit('wheel', new TestWheelEvent(-40));
+    target.scrollHeight = 1200;
+    controller.beforeRender();
+    controller.afterRender(1);
+    expect(controller.state.mode).toBe('paused');
+    expect(target.scrollTop).toBe(700);
+  });
+
+  test('does not pause follow for a zoom gesture', () => {
+    class TestWheelEvent extends Event {
+      deltaY = -40;
+      ctrlKey = true;
+      constructor() {
+        super('wheel');
+      }
+    }
+    vi.stubGlobal('WheelEvent', TestWheelEvent);
+    const target = host();
+    const controller = new ChatScrollController(vi.fn());
+    controller.connect(target as unknown as HTMLElement);
+    target.emit('wheel', new TestWheelEvent());
+    expect(controller.state.mode).toBe('follow');
+  });
+
+  test('hands smooth navigation back to the user on wheel input', () => {
+    class TestWheelEvent extends Event {
+      deltaY = -40;
+      constructor() {
+        super('wheel');
+      }
+    }
+    vi.stubGlobal('WheelEvent', TestWheelEvent);
+    const target = host({ asyncSmooth: true });
+    const controller = new ChatScrollController(vi.fn());
+    controller.connect(target as unknown as HTMLElement);
+    controller.navigateTo(100, 'smooth');
+    target.emit('wheel', new TestWheelEvent());
+    expect(target.scrollTo).toHaveBeenLastCalledWith({ top: 700, behavior: 'instant' });
+    target.scrollTop = 650;
+    target.emitScroll();
+    expect(controller.state.mode).toBe('paused');
+  });
   test('a deliberate scroll up pauses follow even near the bottom', () => {
     const target = host();
     const controller = new ChatScrollController(vi.fn());

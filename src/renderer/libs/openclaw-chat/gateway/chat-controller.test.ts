@@ -609,6 +609,47 @@ test('does not let an old probe release the current run probe lock', async () =>
   await secondProbe;
 });
 
+test.each(['success', 'failure'])(
+  'discards a delayed probe %s after a phase change',
+  async outcome => {
+    vi.useFakeTimers();
+    vi.setSystemTime(4_000_000);
+    let resolveProbe!: (value: unknown) => void;
+    let rejectProbe!: (reason: Error) => void;
+    const request = vi.fn(
+      () =>
+        new Promise((resolve, reject) => {
+          resolveProbe = resolve;
+          rejectProbe = reject;
+        }),
+    );
+    const controller = new ChatController();
+    controller.state.client = { request } as never;
+    controller.state.connected = true;
+    controller.state.sessionKey = 'agent:main:justdo:session-1';
+    controller.setPendingUserMessage('phase change while probing');
+    const internals = controller as unknown as {
+      probeActiveRun(): Promise<void>;
+      updateRunActivity(runId: string, stage: 'preparing', options: { at: number }): void;
+    };
+    const pendingProbe = internals.probeActiveRun();
+    internals.updateRunActivity(controller.state.runActivity!.runId, 'preparing', {
+      at: 4_001_000,
+    });
+
+    if (outcome === 'success') resolveProbe({ session: { hasActiveRun: true } });
+    else rejectProbe(new Error('Delayed probe failure'));
+    await pendingProbe;
+
+    expect(controller.state.runActivity).toMatchObject({
+      stage: 'preparing',
+      probeState: 'idle',
+      activeRunConfirmedAt: null,
+    });
+    controller.clearSending();
+  },
+);
+
 test('discards a delayed probe result after model activity and keeps the exact next threshold', async () => {
   vi.useFakeTimers();
   vi.setSystemTime(4_000_000);

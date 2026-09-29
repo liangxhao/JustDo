@@ -183,23 +183,25 @@ export class ChatScrollController {
 
   private readonly handleHistoryIntent = (event: Event): void => {
     const host = this.host;
-    if (!host || !this.onNearTop || this.pendingOlderHistoryRequest !== null) return;
-    const threshold = Math.max(
-      ChatScrollController.MIN_HISTORY_SHIFT_THRESHOLD_PX,
-      host.clientHeight * ChatScrollController.HISTORY_SHIFT_THRESHOLD_VIEWPORTS,
-    );
-    if (host.scrollTop > threshold) return;
+    if (!host || event.defaultPrevented) return;
 
     let upward = false;
+    let scrollIntent = false;
     if (typeof WheelEvent !== 'undefined' && event instanceof WheelEvent) {
+      if (event.ctrlKey) return;
       upward = event.deltaY < 0;
+      scrollIntent = event.deltaY !== 0;
     } else if (typeof KeyboardEvent !== 'undefined' && event instanceof KeyboardEvent) {
-      const target = event.target;
+      // Keyboard events crossing the chat shadow root are retargeted to the
+      // host; inspect their original target before treating editing as scrolling.
+      const target = event.composedPath()[0] ?? event.target;
       const editing =
         typeof HTMLElement !== 'undefined' &&
         target instanceof HTMLElement &&
         (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
-      upward = !editing && ['ArrowUp', 'PageUp', 'Home'].includes(event.key);
+      if (editing || event.ctrlKey || event.metaKey || event.altKey) return;
+      upward = ['ArrowUp', 'PageUp', 'Home'].includes(event.key);
+      scrollIntent = upward || ['ArrowDown', 'PageDown', 'End'].includes(event.key);
     } else if (typeof TouchEvent !== 'undefined' && event instanceof TouchEvent) {
       const touchY = event.touches[0]?.clientY ?? null;
       if (event.type === 'touchstart') {
@@ -212,10 +214,51 @@ export class ChatScrollController {
       }
       const previousTouchY = this.historyTouchY;
       upward = touchY !== null && previousTouchY !== null && touchY - previousTouchY >= 8;
+      scrollIntent =
+        touchY !== null && previousTouchY !== null && Math.abs(touchY - previousTouchY) >= 8;
       if (touchY !== null) this.historyTouchY = touchY;
     }
-    if (upward) this.requestOlderHistory();
+    if (scrollIntent && this.nestedElementConsumesScroll(event, upward)) return;
+    if (scrollIntent && this.navigationTargetTop !== null) {
+      // User input owns scrolling from this point, including interrupted smooth navigation.
+      host.scrollTo({ top: host.scrollTop, behavior: 'instant' });
+      this.finishNavigation();
+    }
+    if (upward) {
+      const modeChanged = this.mode !== 'paused';
+      this.mode = 'paused';
+      this.interactionAnchor = null;
+      this.pausedAnchors = this.captureVisibleAnchorsNow(host);
+      if (modeChanged) this.onStateChange();
+      const threshold = Math.max(
+        ChatScrollController.MIN_HISTORY_SHIFT_THRESHOLD_PX,
+        host.clientHeight * ChatScrollController.HISTORY_SHIFT_THRESHOLD_VIEWPORTS,
+      );
+      if (
+        host.scrollTop <= threshold &&
+        this.onNearTop &&
+        this.pendingOlderHistoryRequest === null
+      ) {
+        this.requestOlderHistory();
+      }
+    }
   };
+
+  private nestedElementConsumesScroll(event: Event, upward: boolean): boolean {
+    for (const target of event.composedPath()) {
+      if (target === this.host) break;
+      if (typeof HTMLElement === 'undefined' || !(target instanceof HTMLElement)) continue;
+      const style = target.ownerDocument.defaultView?.getComputedStyle(target);
+      if (!style || !['auto', 'scroll', 'overlay'].includes(style.overflowY)) continue;
+      const available = upward
+        ? target.scrollTop > 0
+        : target.scrollTop + target.clientHeight < target.scrollHeight;
+      // Native scrolling does not preventDefault. Only take over once scrolling
+      // can chain from the inner container to the transcript.
+      if (available || ['contain', 'none'].includes(style.overscrollBehaviorY)) return true;
+    }
+    return false;
+  }
 
   private readonly handleScroll = (): void => {
     const host = this.host;

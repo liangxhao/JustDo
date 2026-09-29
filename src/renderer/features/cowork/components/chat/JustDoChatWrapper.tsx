@@ -41,6 +41,8 @@ import { i18nService } from '@/services/i18n';
 
 import type { MessageQuoteHandler } from '../composer/messageQuote';
 
+const HISTORY_LOADING_NOTICE_DELAY_MS = 3_000;
+
 const DEBUG_CHAT_WRAPPER =
   typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEBUG_CHAT_WRAPPER === 'true';
 
@@ -175,6 +177,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     const historyReadyCallback = useRef(onHistoryReadyChange);
     historyReadyCallback.current = onHistoryReadyChange;
     const [historyStatus, setHistoryStatus] = useState<'loading' | 'error' | 'ready'>('loading');
+    const [slowHistorySessionKey, setSlowHistorySessionKey] = useState<string | null>(null);
     const [controller, setController] = useState<ChatController | null>(null);
     const connectedRef = useRef(false);
     const onActivityChangeRef = useRef(onActivityChange);
@@ -330,7 +333,29 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       setController(controller);
 
       let lastHistoryReady = '';
+      let loadingSessionKey: string | null = null;
+      let loadingNoticeTimer: ReturnType<typeof setTimeout> | undefined;
       const publishActivity = () => {
+        // Only time a real initial history read, not connection setup or a new turn.
+        const nextLoadingSessionKey =
+          controller.state.connected &&
+          controller.state.chatLoading &&
+          (!controller.state.initialHistoryReady || controller.state.historyReadFailed) &&
+          !controller.state.chatSending &&
+          !controller.state.pendingUserMessage
+            ? controller.state.sessionKey
+            : null;
+        if (nextLoadingSessionKey !== loadingSessionKey) {
+          clearTimeout(loadingNoticeTimer);
+          loadingNoticeTimer = undefined;
+          loadingSessionKey = nextLoadingSessionKey;
+          setSlowHistorySessionKey(null);
+          if (nextLoadingSessionKey) {
+            loadingNoticeTimer = setTimeout(() => {
+              setSlowHistorySessionKey(nextLoadingSessionKey);
+            }, HISTORY_LOADING_NOTICE_DELAY_MS);
+          }
+        }
         const ready =
           controller.state.connected &&
           controller.state.initialHistoryReady &&
@@ -452,6 +477,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
 
       return () => {
         cancelled = true;
+        clearTimeout(loadingNoticeTimer);
         unsubscribeState();
         unsubscribeStream();
         unsubscribeSideChat();
@@ -553,14 +579,35 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         data-review-session-id={currentSessionId}
         className={`${className ?? ''} flex min-h-0 flex-col`}
       >
-        {historyStatus !== 'ready' && (
+        {(historyStatus === 'error' ||
+          (historyStatus === 'loading' &&
+            canonicalSessionKey &&
+            slowHistorySessionKey === canonicalSessionKey)) && (
           <div
-            className="p-3 text-center text-sm text-secondary"
+            className="flex items-center justify-center gap-2 px-4 py-3 text-sm text-secondary"
             role={historyStatus === 'error' ? 'alert' : 'status'}
           >
-            {i18nService.t(
-              historyStatus === 'error' ? 'storageHistoryFailed' : 'storageHistoryLoading',
+            {historyStatus === 'loading' && (
+              <svg
+                className="h-4 w-4 shrink-0 motion-safe:animate-spin"
+                viewBox="0 0 24 24"
+                fill="none"
+                aria-hidden="true"
+              >
+                <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" opacity="0.2" />
+                <path
+                  d="M12 3a9 9 0 0 1 9 9"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                />
+              </svg>
             )}
+            <span>
+              {i18nService.t(
+                historyStatus === 'error' ? 'storageHistoryFailed' : 'storageHistoryLoading',
+              )}
+            </span>
             {historyStatus === 'error' && (
               <button
                 type="button"

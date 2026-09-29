@@ -849,11 +849,23 @@ export function toStreamingMarkdownHtml(text: string): string {
   if (!input.trim()) return '';
 
   const boundary = findStableStreamingMarkdownBoundary(input);
-  if (boundary <= 0) return toEscapedPlainTextHtml(input);
-
   const stableMarkdown = input.slice(0, boundary);
   const streamingTail = input.slice(boundary);
   const stableHtml = toSanitizedMarkdownHtml(stableMarkdown);
   if (!streamingTail.trim()) return stableHtml;
+  // Markdown-it can render an open fence without inventing a closing marker.
+  // Wait for the complete info line so a partially streamed language name
+  // cannot reclassify the block on each token. Keep other incomplete syntax literal.
+  const firstLineEnd = streamingTail.indexOf('\n');
+  const firstLine = firstLineEnd >= 0 ? streamingTail.slice(0, firstLineEnd) : '';
+  const openingFence = FENCE_OPEN_RE.exec(firstLine);
+  const info = openingFence ? firstLine.slice(openingFence[0].length).trim() : '';
+  // Mermaid hides its source behind an asynchronously rendered diagram. Leave
+  // incomplete diagrams visible as text until the closing fence arrives.
+  const isMermaid = info.split(/\s+/)[0]?.toLowerCase() === 'mermaid';
+  const hasInvalidBacktickInfo = openingFence?.[1][0] === '`' && info.includes('`');
+  if (openingFence && !isMermaid && !hasInvalidBacktickInfo) {
+    return `${stableHtml}${toSanitizedMarkdownHtml(streamingTail)}`;
+  }
   return `${stableHtml}${toEscapedPlainTextHtml(streamingTail)}`;
 }

@@ -706,7 +706,14 @@ export class JustDoChatElement extends LitElement {
                     >
                       <div class="chat-group__avatar" aria-hidden="true"></div>
                       <footer class="active-turn__footer">
-                        ${this.activeTurnFooter(activeTurnFooter, messages, activeFooterTiming)}
+                        ${this.activeTurnFooter(
+                          activeTurnFooter,
+                          messages,
+                          activeFooterTiming,
+                          activeTimeline.some(
+                            item => item.kind === 'waiting' && item.startedAt !== undefined,
+                          ),
+                        )}
                       </footer>
                     </section>
                   `
@@ -1018,6 +1025,7 @@ export class JustDoChatElement extends LitElement {
 
   private syncActiveTurnClock(): void {
     const isRunning =
+      this._controller?.state.runActivity != null ||
       this.runTimings[this.runTimings.length - 1]?.state === 'running' ||
       (this.runTimings.length === 0 &&
         (this._controller?.getCurrentTurnTiming()?.status === 'running' ||
@@ -1588,6 +1596,7 @@ export class JustDoChatElement extends LitElement {
     footer: ActiveTurnFooter,
     persistedMessages: GatewayMessage[],
     timing: AssistantTurnTiming | SessionRunTiming | null,
+    hasWorkingTimer = false,
   ): TemplateResult | typeof nothing {
     const model = resolveActiveTurnModel(persistedMessages, footer.modelRef);
     const timingRunIds = new Set(
@@ -1618,7 +1627,7 @@ export class JustDoChatElement extends LitElement {
       running: footer.running,
       model,
       completedAt: footer.completedAt,
-      durationMs: footer.durationMs,
+      durationMs: footer.running && hasWorkingTimer ? undefined : footer.durationMs,
       forkPoint,
     });
   }
@@ -2103,6 +2112,7 @@ export class JustDoChatElement extends LitElement {
       turn,
       this._controller?.state.chatSending ?? this.isStreaming,
       waitingStatus,
+      this._controller?.state.runActivity ?? null,
     ).map(timelineItem => {
       if (timelineItem.kind !== 'content') return timelineItem;
       const visuallyStreaming = this.assistantStreamPacer.isPending(timelineItem.item.id);

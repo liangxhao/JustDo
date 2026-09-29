@@ -36,7 +36,12 @@ export type WaitingStatusKind =
   | 'slow-active'
   | 'long-wait'
   | 'retrying'
+  | 'retry-timeout'
+  | 'retry-overloaded'
+  | 'retry-auth'
   | 'rate-limited'
+  | 'response-paused'
+  | 'disconnected'
   | 'reconnecting'
   | 'probe-failed';
 
@@ -61,34 +66,53 @@ export function projectWaitingStatus(params: {
   const { activity, transportStatus } = params;
   if (!activity) return null;
   const now = params.now ?? Date.now();
-  const quietSince = activity.lastModelActivityAt ?? activity.startedAt;
+  const quietSince = Math.max(
+    activity.lastModelActivityAt ?? activity.startedAt,
+    activity.stageChangedAt,
+  );
   const quietMs = Math.max(0, now - quietSince);
 
   if (transportStatus === 'reconnecting') {
     return { kind: 'reconnecting', tone: 'warning', quietMs };
   }
+  if (transportStatus === 'disconnected') {
+    return { kind: 'disconnected', tone: 'warning', quietMs };
+  }
   // A running tool is observable work, not evidence that the model is stalled.
   // Resume model-wait notices only after the last running tool settles.
   if (activity.hasRunningTool) return null;
-  if (quietMs < RUN_STALL_NOTICE_MS) return null;
+  // Explicit queue/context preparation is not a stalled model request.
+  if (activity.stage === 'queued' || activity.stage === 'preparing') return null;
   const confirmationFresh =
     activity.activeRunConfirmedAt !== null &&
     now - activity.activeRunConfirmedAt <= RUN_CONFIRMATION_FRESH_MS;
-  if (quietMs >= RUN_LONG_NOTICE_MS && confirmationFresh) {
-    return { kind: 'long-wait', tone: 'warning', quietMs };
-  }
   if (activity.stage === 'retrying') {
+    const retryKinds = {
+      rate_limit: 'rate-limited',
+      timeout: 'retry-timeout',
+      overloaded: 'retry-overloaded',
+      auth: 'retry-auth',
+      unknown: 'retrying',
+    } as const;
     return {
-      kind: activity.retryReason === 'rate_limit' ? 'rate-limited' : 'retrying',
+      kind: retryKinds[activity.retryReason ?? 'unknown'],
       tone: 'neutral',
       quietMs,
     };
   }
+  if (quietMs < RUN_STALL_NOTICE_MS) return null;
   if (activity.probeState === 'failed') {
     return { kind: 'probe-failed', tone: 'neutral', quietMs };
+  }
+  if (quietMs >= RUN_LONG_NOTICE_MS && confirmationFresh) {
+    return { kind: 'long-wait', tone: 'warning', quietMs };
   }
   if (quietMs >= RUN_SLOW_NOTICE_MS && confirmationFresh) {
     return { kind: 'slow-active', tone: 'neutral', quietMs };
   }
-  return { kind: 'waiting-model', tone: 'neutral', quietMs };
+  return {
+    kind: activity.stage === 'responding' ? 'response-paused' : 'waiting-model',
+    tone: 'neutral',
+    quietMs,
+  };
 }

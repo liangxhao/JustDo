@@ -23,7 +23,7 @@ const HISTORY_MESSAGE_TRANSFER_TTL_MS = 2 * 60 * 1000;
 
 type UnknownRecord = Record<string, unknown>;
 type ToolInputLookup = Record<string, { name?: string; input: unknown }>;
-type FailureDetailLookup = Record<string, { errorMessage: string }>;
+type FailureDetailLookup = Record<string, { errorMessage: string; emptyContent: boolean }>;
 type CompactionDetailLookup = Record<
   string,
   { summary?: string; tokensBefore?: number; tokensAfter?: number }
@@ -311,7 +311,23 @@ const plugin = {
             const errorMessage = redactSensitiveText(message.errorMessage.trim(), {
               mode: 'tools',
             }).slice(0, MAX_FAILURE_DETAIL_CHARS);
-            failureDetails[item.entryId] = { errorMessage };
+            // History replaces empty failures with generated assistant text.
+            // Return the source shape so clients can distinguish that copy from
+            // a real partial reply without guessing from provider error wording.
+            const content = message.content;
+            const emptyContent =
+              (content == null ||
+                (typeof content === 'string' && !content.trim()) ||
+                (Array.isArray(content) &&
+                  content.every(
+                    block =>
+                      isRecord(block) &&
+                      block.type === 'text' &&
+                      typeof block.text === 'string' &&
+                      !block.text.trim(),
+                  ))) &&
+              !(typeof message.text === 'string' && message.text.trim());
+            failureDetails[item.entryId] = { errorMessage, emptyContent };
           }
         }
         if (compactionEntryIds.size > 0) {

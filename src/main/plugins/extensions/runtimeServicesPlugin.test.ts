@@ -344,11 +344,45 @@ test('batches exact visible failure details with tool inputs and redacts only er
     toolInputs: { 'call-1': { name: 'read', input: { path: 'README.md' } } },
     compactionDetails: {},
     failureDetails: {
-      'failure-1': { errorMessage: 'Connection error.' },
-      'failure-2': { errorMessage: 'Bearer [REDACTED]' },
+      'failure-1': { errorMessage: 'Connection error.', emptyContent: true },
+      'failure-2': { errorMessage: 'Bearer [REDACTED]', emptyContent: true },
     },
   });
 });
+
+test.each([
+  [[], true],
+  [[{ type: 'text', text: '  ' }], true],
+  [[{ type: 'text', text: 'Partial reply' }], false],
+  [[{ type: 'thinking', thinking: 'Partial reasoning' }], false],
+  [[{ type: 'toolCall', id: 'call-1', name: 'read' }], false],
+  ['Partial reply', false],
+])(
+  'reports the source failure content shape without returning it: %j',
+  async (content, emptyContent) => {
+    sdk.getSessionEntry.mockReturnValue({ sessionId: 'native-session-1' });
+    sdk.readVisibleSessionTranscriptMessageEntries.mockResolvedValue([
+      {
+        entryId: 'failure',
+        message: {
+          role: 'assistant',
+          stopReason: 'error',
+          content,
+          errorMessage: 'Connection error.',
+        },
+      },
+    ]);
+    const { registerGatewayMethod } = registerPlugin();
+    const handler = registerGatewayMethod.mock.calls.find(
+      ([method]) => method === 'runtimeServices.historyDetails',
+    )![1] as HistoryHandler;
+    const respond = vi.fn();
+    await handler({ params: { sessionKey: 'session-1', failureMessageIds: ['failure'] }, respond });
+    expect(respond.mock.calls[0][1].failureDetails).toEqual({
+      failure: { errorMessage: 'Connection error.', emptyContent },
+    });
+  },
+);
 
 test('bounds failure lookup batches and returned error text', async () => {
   sdk.getSessionEntry.mockReturnValue({ sessionId: 'native-session-1' });

@@ -9,6 +9,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { i18nService } from '@/services/i18n';
 
 import { isTranscriptImage } from '../attachments';
+import { formatActiveTurnDuration } from '../model/active-turn-footer';
 import type { ToolItem } from '../model/chat-transcript-state';
 import {
   buildEditDiffView,
@@ -24,6 +25,7 @@ import {
   type ActiveTurnTimelineItem,
   type ProcessSummaryTimelineItem,
 } from '../model/project-turn-items';
+import type { WaitingStatusKind } from '../model/run-activity';
 import { OPEN_SPAWNED_AGENT_EVENT, spawnedAgentSessionKey } from '../model/spawn-tool-target';
 import { toolNesting, toolOperation, toolOutcome, toolTarget } from '../model/tool-presentation';
 import { stripOpenClawLogHintText } from '../pipeline/system-message-display';
@@ -34,6 +36,7 @@ import { toSanitizedMarkdownHtml } from './markdown';
 import {
   renderAssistantAttachments,
   renderAssistantTimelineContent,
+  renderCopyButton,
   renderMessageImages,
   renderReadingIndicatorGroup,
   renderStreamingThinkingGroup,
@@ -599,11 +602,31 @@ export function renderTerminalTimelineMessage(
   footer: TemplateResult | typeof nothing = nothing,
   assistantAvatar?: TemplateResult,
 ): TemplateResult {
+  const displayMessage = stripOpenClawLogHintText(message).trim();
+  const firstLine = displayMessage.split(/\r?\n/)[0];
+  const summary = firstLine.length > 160 ? `${firstLine.slice(0, 160)}…` : firstLine;
+  const hasDetails = displayMessage !== summary;
   return renderAssistantTimelineRow(
     html`
       <div class="process-terminal process-terminal--${status}" role="status">
         ${status === 'aborted' ? html`<span aria-hidden="true">!</span>` : nothing}
-        <span>${stripOpenClawLogHintText(message).trim()}</span>
+        ${
+          status === 'error' && hasDetails
+            ? html`
+                <details class="process-terminal__details">
+                  <summary>
+                    <span>${summary}</span
+                    ><span class="process-terminal__details-label"
+                      >${i18nService.t('coworkErrorDetails')}</span
+                    >
+                  </summary>
+                  <pre tabindex="0" aria-label=${i18nService.t('coworkErrorDetails')}>
+${displayMessage}</pre>
+                </details>
+              `
+            : html`<span class="process-terminal__text">${displayMessage}</span>`
+        }
+        ${status === 'error' ? renderCopyButton(displayMessage, i18nService.t('coworkCopyError')) : nothing}
       </div>
       ${
         footer === nothing
@@ -618,9 +641,24 @@ export function renderTerminalTimelineMessage(
   );
 }
 
+const waitingStatusKeys = {
+  'waiting-model': 'coworkWaitingModel',
+  'slow-active': 'coworkWaitingSlowActive',
+  'long-wait': 'coworkWaitingLong',
+  'rate-limited': 'coworkWaitingRateLimited',
+  retrying: 'coworkWaitingRetrying',
+  'retry-timeout': 'coworkWaitingRetryTimeout',
+  'retry-overloaded': 'coworkWaitingRetryOverloaded',
+  'retry-auth': 'coworkWaitingRetryAuth',
+  'response-paused': 'coworkWaitingResponsePaused',
+  disconnected: 'coworkWaitingDisconnected',
+  reconnecting: 'coworkWaitingReconnecting',
+  'probe-failed': 'coworkWaitingProbeFailed',
+} as const satisfies Record<WaitingStatusKind, string>;
+
 export function renderTimelineItem(
   item: ActiveTurnTimelineItem,
-  _now = Date.now(),
+  now = Date.now(),
   expanded = false,
   showAvatar = true,
   editDiffModes: ReadonlyMap<string, EditDiffMode> = new Map(),
@@ -629,23 +667,29 @@ export function renderTimelineItem(
   assistantAvatar?: TemplateResult,
 ): TemplateResult {
   if (item.kind === 'waiting') {
-    return renderReadingIndicatorGroup({ showAvatar, assistantAvatar });
+    const labels = {
+      starting: 'coworkWorkingStarting',
+      queued: 'coworkWorkingQueued',
+      preparing: 'coworkWorkingPreparing',
+      'waiting-model': 'coworkWorkingWaiting',
+      thinking: 'coworkWorkingThinking',
+      responding: 'coworkWorkingResponding',
+      'running-tool': 'coworkWorkingTool',
+      retrying: 'coworkWorkingRetrying',
+    } as const;
+    return renderReadingIndicatorGroup({
+      showAvatar,
+      assistantAvatar,
+      label: i18nService.t(item.notice ? waitingStatusKeys[item.notice.kind] : labels[item.stage ?? 'starting']),
+      warning: item.notice?.tone === 'warning',
+      elapsed:
+        item.startedAt === undefined
+          ? undefined
+          : formatActiveTurnDuration(Math.max(0, now - item.startedAt)),
+    });
   }
   if (item.kind === 'waiting-status') {
-    const key =
-      item.status.kind === 'waiting-model'
-        ? 'coworkWaitingModel'
-        : item.status.kind === 'slow-active'
-          ? 'coworkWaitingSlowActive'
-          : item.status.kind === 'long-wait'
-            ? 'coworkWaitingLong'
-            : item.status.kind === 'rate-limited'
-              ? 'coworkWaitingRateLimited'
-              : item.status.kind === 'retrying'
-                ? 'coworkWaitingRetrying'
-                : item.status.kind === 'reconnecting'
-                  ? 'coworkWaitingReconnecting'
-                  : 'coworkWaitingProbeFailed';
+    const key = waitingStatusKeys[item.status.kind];
     return html`
       <div
         class=${`chat-group chat-group--assistant chat-group--continuation waiting-status waiting-status--${item.status.tone}`}

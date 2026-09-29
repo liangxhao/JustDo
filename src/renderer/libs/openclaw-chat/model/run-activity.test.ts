@@ -22,6 +22,15 @@ const activity = (overrides: Partial<RunActivity> = {}): RunActivity => ({
 });
 
 describe('projectWaitingStatus', () => {
+  it('shows an explicit retry immediately without waiting for a stall', () => {
+    expect(
+      projectWaitingStatus({
+        activity: activity({ stage: 'retrying', retryReason: 'rate_limit' }),
+        transportStatus: 'connected',
+        now: 2_000,
+      }),
+    ).toMatchObject({ kind: 'rate-limited' });
+  });
   it('keeps the existing UI unchanged before the stall threshold', () => {
     expect(
       projectWaitingStatus({
@@ -42,8 +51,8 @@ describe('projectWaitingStatus', () => {
     ).toMatchObject({ kind: 'waiting-model', tone: 'neutral' });
   });
 
-  it.each(['starting', 'queued', 'preparing'] as const)(
-    'shows model waiting for the internal %s stage',
+  it.each(['queued', 'preparing'] as const)(
+    'keeps the explicit %s stage instead of inventing a model wait',
     stage => {
       expect(
         projectWaitingStatus({
@@ -51,9 +60,19 @@ describe('projectWaitingStatus', () => {
           transportStatus: 'connected',
           now: 1_000 + RUN_STALL_NOTICE_MS,
         }),
-      ).toMatchObject({ kind: 'waiting-model', tone: 'neutral' });
+      ).toBeNull();
     },
   );
+
+  it('starts a fresh silence window when a tool finishes after a long run', () => {
+    expect(
+      projectWaitingStatus({
+        activity: activity({ stageChangedAt: 100_000, lastModelActivityAt: 1000 }),
+        transportStatus: 'connected',
+        now: 100_001,
+      }),
+    ).toBeNull();
+  });
 
   it('only claims a slow active run after a fresh gateway confirmation', () => {
     const now = 1_000 + RUN_SLOW_NOTICE_MS;
@@ -104,7 +123,7 @@ describe('projectWaitingStatus', () => {
     ).toMatchObject({ kind: 'probe-failed', tone: 'neutral' });
   });
 
-  it('uses the long-wait warning after four minutes even while retrying', () => {
+  it('preserves the specific retry reason even after four minutes', () => {
     const now = 1_000 + RUN_LONG_NOTICE_MS;
     expect(
       projectWaitingStatus({
@@ -117,7 +136,51 @@ describe('projectWaitingStatus', () => {
         transportStatus: 'connected',
         now,
       }),
-    ).toMatchObject({ kind: 'long-wait', tone: 'warning' });
+    ).toMatchObject({ kind: 'rate-limited', tone: 'neutral' });
+  });
+
+  it.each([
+    ['timeout', 'retry-timeout'],
+    ['overloaded', 'retry-overloaded'],
+    ['auth', 'retry-auth'],
+    ['unknown', 'retrying'],
+  ] as const)('describes an explicit %s retry without guessing', (retryReason, kind) => {
+    expect(
+      projectWaitingStatus({
+        activity: activity({ stage: 'retrying', retryReason }),
+        transportStatus: 'connected',
+        now: 2_000,
+      }),
+    ).toMatchObject({ kind });
+  });
+
+  it('distinguishes a pause in the reply and clears it when content resumes', () => {
+    const now = 1_000 + RUN_STALL_NOTICE_MS;
+    expect(
+      projectWaitingStatus({
+        activity: activity({ stage: 'responding' }),
+        transportStatus: 'connected',
+        now,
+      }),
+    ).toMatchObject({ kind: 'response-paused' });
+    expect(
+      projectWaitingStatus({
+        activity: activity({ stage: 'responding', lastModelActivityAt: now }),
+        transportStatus: 'connected',
+        now,
+      }),
+    ).toBeNull();
+  });
+
+  it('does not claim a disconnected run is active or reconnecting', () => {
+    const now = 1_000 + RUN_LONG_NOTICE_MS;
+    expect(
+      projectWaitingStatus({
+        activity: activity({ activeRunConfirmedAt: now, hasRunningTool: true }),
+        transportStatus: 'disconnected',
+        now,
+      }),
+    ).toMatchObject({ kind: 'disconnected', tone: 'warning' });
   });
 
   it('prioritizes reconnecting and rate-limit states', () => {

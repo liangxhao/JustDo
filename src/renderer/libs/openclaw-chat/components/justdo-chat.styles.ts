@@ -2265,6 +2265,84 @@ export const chatStyles = [
 
     /* ── Reading Indicator ──────────────────────────────────────────── */
 
+    .chat-group--reading-indicator > .chat-group__avatar {
+      height: 32px;
+      overflow: visible;
+    }
+
+    .chat-working-indicator {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      min-height: 32px;
+      padding: 6px 0;
+      box-sizing: border-box;
+      line-height: 20px;
+      color: var(--justdo-chat-text-secondary, #6b7280);
+      font-size: 12px;
+    }
+    .chat-working-indicator__spark {
+      display: block;
+      width: 16px;
+      height: 16px;
+      flex-shrink: 0;
+      color: var(--justdo-chat-accent, #6366f1);
+      animation: working-spark 3.6s ease-in-out infinite;
+      transform-origin: center;
+    }
+    .chat-working-indicator__label,
+    .chat-thinking--streaming .chat-thinking__label {
+      background: linear-gradient(
+        110deg,
+        var(--justdo-chat-text-secondary, #6b7280) 30%,
+        var(--justdo-chat-accent, #6366f1) 48%,
+        var(--justdo-chat-text-secondary, #6b7280) 65%
+      );
+      background-size: 240% 100%;
+      background-clip: text;
+      -webkit-background-clip: text;
+      color: transparent;
+      animation: working-shimmer 3s linear infinite;
+      font-weight: 500;
+    }
+    .chat-working-indicator__elapsed {
+      flex-shrink: 0;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+      color: var(--justdo-chat-muted, #737373);
+    }
+    .chat-working-indicator__label {
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+    .chat-working-indicator--warning .chat-working-indicator__label {
+      animation: none;
+      background: none;
+      color: var(--justdo-chat-warning, #946200);
+    }
+    :host(.dark) .chat-working-indicator--warning .chat-working-indicator__label {
+      color: var(--justdo-chat-warning, #f6c453);
+    }
+    @keyframes working-spark {
+      0%,
+      100% {
+        transform: rotate(0deg) scale(0.85);
+        opacity: 0.65;
+      }
+      50% {
+        transform: rotate(90deg) scale(1.08);
+        opacity: 1;
+      }
+    }
+    @keyframes working-shimmer {
+      from {
+        background-position: 180% 0;
+      }
+      to {
+        background-position: -60% 0;
+      }
+    }
+
     .chat-reading-indicator {
       display: inline-flex;
       align-items: center;
@@ -2943,6 +3021,7 @@ export const chatStyles = [
       font-size: 13px;
     }
     .process-terminal--error {
+      position: relative;
       width: var(--justdo-assistant-bubble-width, fit-content);
       max-width: 100%;
       box-sizing: border-box;
@@ -2958,6 +3037,41 @@ export const chatStyles = [
     .process-terminal--error > span {
       min-width: 0;
       overflow-wrap: anywhere;
+    }
+    .process-terminal--error .message-copy {
+      position: static;
+      flex-shrink: 0;
+      opacity: 1;
+      margin-left: auto;
+      color: inherit;
+    }
+    .process-terminal__text,
+    .process-terminal__details {
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+    .process-terminal__details summary {
+      cursor: pointer;
+      line-height: 1.6;
+    }
+    .process-terminal__details-label {
+      display: inline-block;
+      margin-left: 8px;
+      font-size: 11px;
+      text-decoration: underline;
+      text-underline-offset: 3px;
+      opacity: 0.8;
+    }
+    .process-terminal__details pre {
+      margin: 10px 0 0;
+      padding-top: 10px;
+      border-top: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+      max-height: 260px;
+      overflow: auto;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font: inherit;
+      line-height: 1.65;
     }
     .process-terminal--aborted {
       width: fit-content;
@@ -3084,6 +3198,22 @@ export const chatStyles = [
       50% {
         opacity: 0.35;
         transform: scale(0.82);
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .chat-working-indicator__spark,
+      .chat-working-indicator__label,
+      .chat-thinking--streaming .chat-thinking__label,
+      .chat-reading-indicator span,
+      .chat-thinking__indicator,
+      .waiting-status__indicator,
+      .process-summary__tool-status {
+        animation: none;
+      }
+      .chat-working-indicator__label,
+      .chat-thinking--streaming .chat-thinking__label {
+        background: none;
+        color: var(--justdo-chat-text-secondary, #6b7280);
       }
     }
     @media (max-width: 760px) {

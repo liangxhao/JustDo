@@ -10,6 +10,37 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+test.each(['thinking', 'responding', 'retrying'] as const)(
+  'background tool history repair preserves the newer %s phase',
+  stage => {
+    const controller = new ChatController();
+    beginAssistantTurn(
+      controller.state.transcript,
+      { runId: 'run-1', startedAt: 1000 },
+      { now: () => 1000, createId: prefix => `${prefix}-1` },
+    );
+    controller.state.runActivity = {
+      runId: 'run-1',
+      stage,
+      startedAt: 1000,
+      stageChangedAt: 2000,
+      lastAgentEventAt: 2000,
+      lastModelActivityAt: 2000,
+      hasRunningTool: true,
+      activeRunConfirmedAt: null,
+      probeState: 'idle',
+    };
+    (
+      controller as unknown as { publishActiveToolHistoryRepair(): void }
+    ).publishActiveToolHistoryRepair();
+    expect(controller.state.runActivity).toMatchObject({
+      stage,
+      stageChangedAt: 2000,
+      hasRunningTool: false,
+    });
+  },
+);
+
 test('adopts and replays a v2026.9.2 in-flight Thinking, Tool, and Content snapshot', async () => {
   const sessionKey = 'agent:main:justdo:session-1';
   const request = vi.fn().mockResolvedValue({

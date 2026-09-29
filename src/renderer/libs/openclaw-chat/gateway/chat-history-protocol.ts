@@ -1,6 +1,7 @@
 import { OPENCLAW_HISTORY_DETAIL_MAX_IDS } from '@shared/openclaw/historyIpc';
 
 import { isPersistedFailedAssistantMessage } from '../pipeline/history-display-normalizer';
+import { extractText } from '../pipeline/message-extract';
 import type { GatewayClient } from './client';
 
 export const CHAT_HISTORY_INITIAL_LIMIT = 250;
@@ -99,7 +100,12 @@ const needsFailureDetail = (message: unknown): boolean => {
   const raw = asRecord(message);
   return (
     raw !== null &&
-    isPersistedFailedAssistantMessage(raw) &&
+    (isPersistedFailedAssistantMessage(raw) ||
+      (raw.role === 'assistant' &&
+        (raw.stopReason ?? raw.stop_reason) === 'error' &&
+        (typeof raw.content === 'string' ||
+          (Array.isArray(raw.content) &&
+            raw.content.every(block => asRecord(block)?.type === 'text'))))) &&
     !(typeof raw.errorMessage === 'string' && raw.errorMessage.trim())
   );
 };
@@ -119,7 +125,7 @@ async function hydrateFailureDetails(
     ),
   ];
   if (ids.length === 0) return messages;
-  const errors = new Map<string, string>();
+  const errors = new Map<string, { errorMessage: string; emptyContent: boolean }>();
   for (let offset = 0; offset < ids.length; offset += OPENCLAW_HISTORY_DETAIL_MAX_IDS) {
     if (!isCurrent()) return messages;
     const batch = ids.slice(offset, offset + OPENCLAW_HISTORY_DETAIL_MAX_IDS);
@@ -136,7 +142,10 @@ async function hydrateFailureDetails(
       for (const id of batch) {
         const detail = asRecord(details?.[id]);
         if (typeof detail?.errorMessage === 'string' && detail.errorMessage.trim()) {
-          errors.set(id, detail.errorMessage.trim());
+          errors.set(id, {
+            errorMessage: detail.errorMessage.trim(),
+            emptyContent: detail.emptyContent === true,
+          });
         }
       }
     } catch {
@@ -147,8 +156,19 @@ async function hydrateFailureDetails(
   return messages.map(message => {
     if (!needsFailureDetail(message)) return message;
     const id = readHistoryMessageId(message);
-    const errorMessage = id ? errors.get(id) : undefined;
-    return errorMessage ? { ...asRecord(message), errorMessage } : message;
+    const detail = id ? errors.get(id) : undefined;
+    if (!detail) return message;
+    const raw = asRecord(message)!;
+    // Restore only the display copy's source shape. The durable transcript stays
+    // untouched; normalization will render this as one run failure, not a reply.
+    if (detail.emptyContent && !isPersistedFailedAssistantMessage(raw)) {
+      return {
+        ...raw,
+        content: [],
+        errorMessage: extractText(raw)?.trim() || detail.errorMessage,
+      };
+    }
+    return { ...raw, errorMessage: detail.errorMessage };
   });
 }
 

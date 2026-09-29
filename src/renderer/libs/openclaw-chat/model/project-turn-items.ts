@@ -7,7 +7,7 @@ import type {
   ThinkingItem,
   ToolItem,
 } from './chat-transcript-state';
-import type { WaitingStatusProjection } from './run-activity';
+import type { RunActivity, RunProgressStage, WaitingStatusProjection } from './run-activity';
 
 export interface ProcessSummaryTimelineItem {
   kind: 'process-summary';
@@ -53,6 +53,9 @@ export interface TerminalTimelineItem {
 export interface WaitingTimelineItem {
   kind: 'waiting';
   key: string;
+  startedAt?: number;
+  stage?: RunProgressStage;
+  notice?: WaitingStatusProjection;
 }
 
 export interface WaitingStatusTimelineItem {
@@ -95,12 +98,21 @@ export function projectTurnItems(
   turn: AssistantTurn | null,
   isAwaitingTurn = false,
   waitingStatus: WaitingStatusProjection | null = null,
+  activity: RunActivity | null = null,
 ): ActiveTurnTimelineItem[] {
+  const working =
+    activity && (!turn || activity.runId === turn.runId)
+      ? {
+          startedAt: activity.startedAt,
+          stage: activity.stage,
+          ...(waitingStatus ? { notice: waitingStatus } : {}),
+        }
+      : {};
   if (!turn) {
     const pending = isAwaitingTurn
-      ? [{ kind: 'waiting' as const, key: 'waiting:pending-turn' }]
+      ? [{ kind: 'waiting' as const, key: 'waiting:pending-turn', ...working }]
       : [];
-    return waitingStatus
+    return waitingStatus && !activity
       ? [
           ...pending,
           {
@@ -112,8 +124,10 @@ export function projectTurnItems(
       : pending;
   }
   if (turn.status === 'running' && turn.items.length === 0) {
-    const pending: ActiveTurnTimelineItem[] = [{ kind: 'waiting', key: `waiting:${turn.runId}` }];
-    if (waitingStatus) {
+    const pending: ActiveTurnTimelineItem[] = [
+      { kind: 'waiting', key: `waiting:${turn.runId}`, ...working },
+    ];
+    if (waitingStatus && !activity) {
       pending.push({
         kind: 'waiting-status',
         key: `waiting-status:${turn.runId}:${waitingStatus.kind}`,
@@ -189,7 +203,10 @@ export function projectTurnItems(
     }
   }
   flushSummary();
-  if (waitingStatus) {
+  if (turn.status === 'running' && activity?.runId === turn.runId) {
+    projected.push({ kind: 'waiting', key: `waiting:${turn.runId}`, ...working });
+  }
+  if (waitingStatus && turn.status === 'running' && !activity) {
     projected.push({
       kind: 'waiting-status',
       key: `waiting-status:${turn.runId}:${waitingStatus.kind}`,

@@ -252,7 +252,7 @@ describe('justdo-chat direct-property streaming', () => {
     const container = chat.shadowRoot?.querySelector('.chat-container');
     expect(container?.getAttribute('role')).toBe('log');
     expect(container?.getAttribute('aria-busy')).toBe('true');
-    expect(chat.shadowRoot?.querySelectorAll('.chat-reading-indicator')).toHaveLength(1);
+    expect(chat.shadowRoot?.querySelectorAll('.chat-reading-indicator, .chat-working-indicator')).toHaveLength(1);
   });
 
   test('keeps one waiting indicator while a continued side turn gains its active transcript', async () => {
@@ -268,7 +268,7 @@ describe('justdo-chat direct-property streaming', () => {
 
     await chat.updateComplete;
     await frames.drain(chat);
-    expect(chat.shadowRoot?.querySelectorAll('.chat-reading-indicator')).toHaveLength(1);
+    expect(chat.shadowRoot?.querySelectorAll('.chat-reading-indicator, .chat-working-indicator')).toHaveLength(1);
 
     const transcript = createChatTranscriptState('agent:main:justdo:side-chat');
     chat.activeTurn = beginAssistantTurn(
@@ -279,7 +279,7 @@ describe('justdo-chat direct-property streaming', () => {
     await chat.updateComplete;
     await frames.drain(chat);
 
-    expect(chat.shadowRoot?.querySelectorAll('.chat-reading-indicator')).toHaveLength(1);
+    expect(chat.shadowRoot?.querySelectorAll('.chat-reading-indicator, .chat-working-indicator')).toHaveLength(1);
   });
 
   test('renders an isolated active turn with the normal Thinking, Tool, and Content timeline', async () => {
