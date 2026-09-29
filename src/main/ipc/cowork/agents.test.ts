@@ -135,21 +135,24 @@ describe('agent profile and file IPC', () => {
     });
     expect(h.requestGateway).not.toHaveBeenCalled();
   });
-  it('writes only the selected native agent file', async () => {
-    const h = setup();
-    const expected = { workspace: '/roles/reviewer', content: 'review only', missing: false };
-    expect(
-      await h.call(AgentIpc.WriteFile, {
+  it.each(['SOUL.md', 'IDENTITY.md', 'USER.md', 'BOOTSTRAP.md', 'MEMORY.md'])(
+    'writes only the selected native agent file %s',
+    async name => {
+      const h = setup();
+      const expected = { workspace: '/roles/reviewer', content: 'review only', missing: false };
+      expect(
+        await h.call(AgentIpc.WriteFile, {
+          agentId: 'reviewer',
+          name,
+          content: 'new',
+          expected,
+        }),
+      ).toMatchObject({ success: true });
+      expect(h.requestGateway).toHaveBeenCalledWith('agents.files.set', {
         agentId: 'reviewer',
-        name: 'SOUL.md',
+        name,
         content: 'new',
-        expected,
-      }),
-    ).toMatchObject({ success: true });
-    expect(h.requestGateway).toHaveBeenCalledWith('agents.files.set', {
-      agentId: 'reviewer',
-      name: 'SOUL.md',
-      content: 'new',
-    });
-  });
+      });
+    },
+  );
 });

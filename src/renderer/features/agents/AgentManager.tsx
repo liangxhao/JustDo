@@ -1,9 +1,12 @@
 import './AgentManager.css';
 
 import {
+  ArrowDownTrayIcon,
   ArrowPathIcon,
   CheckIcon,
   DocumentDuplicateIcon,
+  DocumentTextIcon,
+  FolderOpenIcon,
   MagnifyingGlassIcon,
   PlusIcon,
   SparklesIcon,
@@ -60,6 +63,17 @@ export default function AgentManager({
   const cancelDeleteRef = useRef<HTMLButtonElement>(null);
   useDialogFocusTrap(deleteDialogRef, cancelDeleteRef, 'delete-agent', true, confirmDelete);
   const [loadingFile, setLoadingFile] = useState(false);
+  const filePanelRef = useRef<HTMLDivElement>(null);
+  const [horizontalFiles, setHorizontalFiles] = useState(false);
+  useEffect(() => {
+    const panel = filePanelRef.current;
+    if (!panel || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) setHorizontalFiles(entry.contentRect.width <= 540);
+    });
+    observer.observe(panel);
+    return () => observer.disconnect();
+  }, [profile.id]);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [reload, setReload] = useState(0);
@@ -277,6 +291,15 @@ export default function AgentManager({
       setError('agentSaveFailed');
     } finally {
       setBusy(false);
+    }
+  };
+  const openWorkspace = async () => {
+    if (!snapshot) return;
+    try {
+      const result = await window.electron.shell.openPath(snapshot.workspace);
+      if (!result.success) setError('agentOpenWorkspaceFailed');
+    } catch {
+      setError('agentOpenWorkspaceFailed');
     }
   };
   return (
@@ -556,97 +579,177 @@ export default function AgentManager({
             </fieldset>
           </div>
           {profile.id ? (
-            <div className="overflow-hidden rounded-2xl border border-border bg-background">
-              <div className="flex items-center justify-between gap-3 px-5 pb-3 pt-5">
-                <div>
-                  <h3 className="text-sm font-semibold text-foreground">{t('agentFiles')}</h3>
-                  <p className="mt-1 text-xs text-secondary">{t('agentRulesIntro')}</p>
-                </div>
-                <button
-                  type="button"
-                  disabled={busy || loadingFile}
-                  title={t('agentReloadFile')}
-                  aria-label={t('agentReloadFile')}
-                  onClick={() => {
-                    if (snapshot) {
-                      if (
-                        (fileDirty || roleDraft !== null) &&
-                        !window.confirm(t('agentDiscardChanges'))
-                      )
-                        return;
-                      setRoleDraft(null);
-                    }
-                    setError('');
-                    setNotice('');
-                    setReload(value => value + 1);
+            <div
+              ref={filePanelRef}
+              className="agent-file-panel overflow-hidden rounded-xl border border-border bg-background"
+            >
+              <div className="border-b border-border px-4 py-3">
+                <h3 className="text-sm font-semibold text-foreground">{t('agentFiles')}</h3>
+                <p className="mt-1 text-xs leading-relaxed text-secondary">
+                  {t('agentFilesIntro')}
+                </p>
+              </div>
+              <div className="agent-file-layout">
+                <div
+                  className="agent-file-navigation"
+                  role="tablist"
+                  aria-label={t('agentFiles')}
+                  aria-orientation={horizontalFiles ? 'horizontal' : 'vertical'}
+                  onKeyDown={event => {
+                    const tabs = Array.from(
+                      event.currentTarget.querySelectorAll<HTMLButtonElement>(
+                        '[role="tab"]:not(:disabled)',
+                      ),
+                    );
+                    const current = tabs.indexOf(event.target as HTMLButtonElement);
+                    if (current < 0) return;
+                    const nextKey = horizontalFiles ? 'ArrowRight' : 'ArrowDown';
+                    const previousKey = horizontalFiles ? 'ArrowLeft' : 'ArrowUp';
+                    const next =
+                      event.key === 'Home'
+                        ? 0
+                        : event.key === 'End'
+                          ? tabs.length - 1
+                          : event.key === nextKey
+                            ? (current + 1) % tabs.length
+                            : event.key === previousKey
+                              ? (current - 1 + tabs.length) % tabs.length
+                              : -1;
+                    if (next < 0) return;
+                    event.preventDefault();
+                    tabs[next].focus();
                   }}
-                  className="rounded-lg p-2 text-secondary hover:bg-surface-raised disabled:opacity-40"
                 >
-                  <ArrowPathIcon className={`h-4 w-4 ${loadingFile ? 'animate-spin' : ''}`} />
-                </button>
-              </div>
-              <div
-                className="flex gap-1 overflow-x-auto border-b border-border px-5"
-                role="tablist"
-                aria-label={t('agentFiles')}
-              >
-                {AgentFiles.map(name => (
-                  <button
-                    key={name}
-                    type="button"
-                    role="tab"
-                    aria-selected={fileName === name}
-                    disabled={busy || loadingFile}
-                    onClick={() => changeFile(name)}
-                    className={`shrink-0 border-b-2 px-3 py-2.5 text-xs font-medium ${fileName === name ? 'border-primary text-primary' : 'border-transparent text-secondary hover:text-foreground'}`}
-                  >
-                    {name}
-                  </button>
-                ))}
-              </div>
-              <fieldset disabled={busy || loadingFile} className="space-y-3 p-5">
-                <div className="flex items-center justify-between gap-2 text-xs text-secondary">
-                  <span>{t(FILE_HINTS[fileName])}</span>
-                  <span className="shrink-0 tabular-nums">
-                    {content.length.toLocaleString()} / 100,000
-                  </span>
+                  {AgentFiles.map(name => (
+                    <button
+                      key={name}
+                      type="button"
+                      role="tab"
+                      id={`agent-file-tab-${name}`}
+                      aria-controls="agent-file-editor"
+                      aria-label={name}
+                      aria-selected={fileName === name}
+                      tabIndex={fileName === name ? 0 : -1}
+                      disabled={busy || loadingFile}
+                      onClick={() => changeFile(name)}
+                      className={`agent-file-tab ${name === 'AGENTS.md' ? 'agent-file-tab-primary' : ''}`}
+                    >
+                      <DocumentTextIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
+                      <span className="min-w-0 flex-1 font-mono text-xs">{name}</span>
+                      <span className="agent-file-badge">
+                        {t(name === 'AGENTS.md' ? 'agentPrimaryFile' : 'agentOptionalFile')}
+                      </span>
+                    </button>
+                  ))}
                 </div>
-                {loadingFile && (
-                  <p role="status" className="text-xs text-secondary">
-                    {t('loading')}
-                  </p>
-                )}
-                <textarea
-                  aria-label={fileName}
-                  className={inputClass + ' min-h-[240px] resize-y font-mono text-xs leading-6'}
-                  rows={12}
-                  disabled={!snapshot}
-                  value={content}
-                  maxLength={100000}
-                  spellCheck={false}
-                  onChange={e => setContent(e.target.value)}
-                />
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <span className="text-xs text-secondary">
-                    {fileDirty ? t('agentUnsaved') : ''}
-                  </span>
-                  <button
-                    type="button"
-                    className="rounded-lg border border-border px-3 py-2 text-sm text-foreground hover:bg-surface-raised disabled:opacity-40"
-                    disabled={!snapshot || !fileDirty}
-                    onClick={() => void saveFile()}
-                  >
-                    {t('agentSaveFile')}
-                  </button>
+                <div
+                  id="agent-file-editor"
+                  role="tabpanel"
+                  aria-labelledby={`agent-file-tab-${fileName}`}
+                  aria-busy={loadingFile}
+                  className="min-w-0"
+                >
+                  <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-2.5">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className="truncate font-mono text-xs font-semibold text-foreground">
+                        {fileName}
+                      </span>
+                      {fileDirty && (
+                        <span
+                          className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary"
+                          title={t('agentUnsaved')}
+                        />
+                      )}
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1">
+                      <button
+                        type="button"
+                        className="agent-file-action"
+                        title={t('agentOpenWorkspace')}
+                        aria-label={t('agentOpenWorkspace')}
+                        disabled={!snapshot || busy || loadingFile}
+                        onClick={() => void openWorkspace()}
+                      >
+                        <FolderOpenIcon className="h-4 w-4" aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
+                        className="agent-file-action"
+                        title={t('agentReloadFile')}
+                        aria-label={t('agentReloadFile')}
+                        disabled={busy || loadingFile}
+                        onClick={() => {
+                          if (
+                            (fileDirty || roleDraft !== null) &&
+                            !window.confirm(t('agentDiscardChanges'))
+                          )
+                            return;
+                          setRoleDraft(null);
+                          setError('');
+                          setNotice('');
+                          setReload(value => value + 1);
+                        }}
+                      >
+                        <ArrowPathIcon
+                          className={`h-4 w-4 ${loadingFile ? 'animate-spin' : ''}`}
+                          aria-hidden="true"
+                        />
+                      </button>
+                      <button
+                        type="button"
+                        className="agent-file-action agent-file-save"
+                        title={t('agentSaveFile')}
+                        aria-label={t('agentSaveFile')}
+                        disabled={busy || loadingFile || !snapshot || !fileDirty}
+                        onClick={() => void saveFile()}
+                      >
+                        <ArrowDownTrayIcon className="h-4 w-4" aria-hidden="true" />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="px-4 pb-2 pt-3 text-xs leading-relaxed text-secondary">
+                    <p>{t(FILE_HINTS[fileName])}</p>
+                    <p className="mt-1 opacity-75">
+                      {t(
+                        fileName === 'AGENTS.md' ? 'agentPrimaryFileHelp' : 'agentOptionalFileHelp',
+                      )}
+                    </p>
+                  </div>
+                  {loadingFile && (
+                    <p role="status" className="px-4 py-2 text-xs text-secondary">
+                      {t('loading')}
+                    </p>
+                  )}
+                  {snapshot?.missing && (
+                    <p role="status" className="px-4 py-2 text-xs leading-relaxed text-secondary">
+                      {t('agentFileMissing')}
+                    </p>
+                  )}
+                  <textarea
+                    aria-label={fileName}
+                    className="agent-file-textarea"
+                    rows={14}
+                    disabled={busy || loadingFile || !snapshot}
+                    value={content}
+                    maxLength={100000}
+                    spellCheck={false}
+                    onChange={e => setContent(e.target.value)}
+                  />
+                  <div className="flex items-center justify-between gap-3 border-t border-border px-4 py-2 text-[11px] text-secondary">
+                    <span>{fileDirty ? t('agentUnsaved') : ''}</span>
+                    <span className="shrink-0 tabular-nums">
+                      {content.length.toLocaleString()} / 100,000
+                    </span>
+                  </div>
                 </div>
-                {snapshot && (
-                  <details className="border-t border-border pt-3 text-xs text-secondary">
-                    <summary className="cursor-pointer">{t('agentWorkspaceDetails')}</summary>
-                    <p className="mt-2 break-all font-mono">{snapshot.workspace}</p>
-                    <p className="mt-2 leading-relaxed">{t('agentFilesHelp')}</p>
-                  </details>
-                )}
-              </fieldset>
+              </div>
+              {snapshot && (
+                <details className="border-t border-border px-4 py-2.5 text-xs text-secondary">
+                  <summary className="cursor-pointer">{t('agentWorkspaceDetails')}</summary>
+                  <p className="mt-2 break-all font-mono">{snapshot.workspace}</p>
+                  <p className="mt-2 leading-relaxed">{t('agentFilesHelp')}</p>
+                </details>
+              )}
             </div>
           ) : roleDraft !== null ? (
             <label className="block text-xs font-medium text-secondary">
@@ -732,6 +835,9 @@ const FILE_HINTS: Record<AgentFileName, string> = {
   'AGENTS.md': 'agentRulesHint',
   'SOUL.md': 'agentSoulHint',
   'IDENTITY.md': 'agentIdentityHint',
+  'USER.md': 'agentUserHint',
+  'BOOTSTRAP.md': 'agentBootstrapHint',
+  'MEMORY.md': 'agentMemoryHint',
 };
 function AgentAvatar({ name, large = false }: { name: string; large?: boolean }) {
   const colors = [

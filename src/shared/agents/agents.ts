@@ -9,7 +9,15 @@ export const AgentIpc = {
   WriteFile: 'agents:writeFile',
 } as const;
 
-export const AgentFiles = ['AGENTS.md', 'SOUL.md', 'IDENTITY.md'] as const;
+// Match the bundled OpenClaw workspace bootstrap file allowlist.
+export const AgentFiles = [
+  'AGENTS.md',
+  'SOUL.md',
+  'IDENTITY.md',
+  'USER.md',
+  'BOOTSTRAP.md',
+  'MEMORY.md',
+] as const;
 export type AgentFileName = (typeof AgentFiles)[number];
 
 export interface AgentProfileInput {

@@ -17,6 +17,7 @@ const readFile = vi.fn();
 const writeFile = vi.fn();
 const save = vi.fn();
 const deleteAgent = vi.fn();
+const openPath = vi.fn();
 const profile = {
   id: 'review',
   name: 'Reviewer',
@@ -44,7 +45,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   Object.defineProperty(window, 'electron', {
     configurable: true,
-    value: { agents: { readFile, writeFile, save, delete: deleteAgent } },
+    value: { agents: { readFile, writeFile, save, delete: deleteAgent }, shell: { openPath } },
   });
   readFile.mockResolvedValue({
     success: true,
@@ -56,6 +57,71 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 describe('independent Agent manager', () => {
+  it('navigates file tabs with the keyboard without discarding the current draft', async () => {
+    mount();
+    const rules = screen.getByRole('tab', { name: 'AGENTS.md' });
+    await waitFor(() => expect(rules).toHaveProperty('disabled', false));
+    fireEvent.change(screen.getByRole('textbox', { name: 'AGENTS.md' }), {
+      target: { value: 'Unsaved rules' },
+    });
+    rules.focus();
+    fireEvent.keyDown(rules, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'SOUL.md' }));
+    fireEvent.keyDown(document.activeElement!, { key: 'End' });
+    expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'MEMORY.md' }));
+    fireEvent.keyDown(document.activeElement!, { key: 'Home' });
+    expect(document.activeElement).toBe(rules);
+    expect(screen.getByRole('textbox', { name: 'AGENTS.md' })).toHaveProperty(
+      'value',
+      'Unsaved rules',
+    );
+    expect(readFile).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens the native workspace from the icon toolbar and reports failures', async () => {
+    openPath.mockResolvedValueOnce({ success: true }).mockRejectedValueOnce(new Error('missing'));
+    mount();
+    const button = screen.getByRole('button', { name: 'agentOpenWorkspace' });
+    await waitFor(() => expect(button).toHaveProperty('disabled', false));
+    fireEvent.click(button);
+    await waitFor(() => expect(openPath).toHaveBeenCalledWith('/roles/review'));
+    fireEvent.click(button);
+    await screen.findByText('agentOpenWorkspaceFailed');
+  });
+
+  it.each(['SOUL.md', 'IDENTITY.md', 'USER.md', 'BOOTSTRAP.md', 'MEMORY.md'])(
+    'explains a missing main %s and allows creating it',
+    async name => {
+      const workspace = '/project';
+      const missing = { workspace, content: '', missing: true };
+      readFile.mockImplementation(async (_id, file) => ({
+        success: true,
+        value:
+          file === 'AGENTS.md' ? { workspace, content: 'Main rules', missing: false } : missing,
+      }));
+      writeFile.mockResolvedValue({
+        success: true,
+        value: { workspace, content: 'Main identity', missing: false },
+      });
+      mount([{ ...profile, id: 'main', isDefault: true }]);
+      await waitFor(() =>
+        expect(screen.getByRole('tab', { name })).toHaveProperty('disabled', false),
+      );
+      fireEvent.click(screen.getByRole('tab', { name }));
+      await screen.findByText('agentFileMissing');
+      expect(readFile).toHaveBeenCalledWith('main', name);
+      const editor = screen.getByRole('textbox', { name });
+      expect(editor).toHaveProperty('disabled', false);
+      fireEvent.change(editor, { target: { value: 'Main identity' } });
+      fireEvent.click(screen.getByRole('button', { name: 'agentSaveFile' }));
+      await waitFor(() =>
+        expect(writeFile).toHaveBeenCalledWith('main', name, 'Main identity', missing),
+      );
+      await waitFor(() => expect(screen.queryByText('agentFileMissing')).toBeNull());
+      expect(editor).toHaveProperty('value', 'Main identity');
+    },
+  );
+
   it('shows the normalized saved profile and retains unsaved role text', async () => {
     save.mockResolvedValue({
       success: true,

@@ -2,6 +2,143 @@
   container: assistant-manager / inline-size;
 }
 
+/* File navigation stays compact; the editor owns the available space. */
+.agent-file-panel {
+  container: agent-files / inline-size;
+}
+
+.agent-file-layout {
+  display: grid;
+  grid-template-columns: 184px minmax(0, 1fr);
+}
+
+.agent-file-navigation {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 8px;
+  border-right: 1px solid var(--justdo-border);
+  background: var(--justdo-surface);
+}
+
+.agent-file-tab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 8px;
+  border-radius: 6px;
+  color: var(--justdo-text-secondary);
+  text-align: left;
+  transition:
+    background 150ms,
+    color 150ms;
+}
+
+.agent-file-tab-primary {
+  margin-bottom: 8px;
+  color: var(--justdo-foreground);
+  font-weight: 600;
+}
+
+.agent-file-tab:hover:not(:disabled),
+.agent-file-action:hover:not(:disabled) {
+  background: var(--justdo-surface-raised);
+  color: var(--justdo-foreground);
+}
+
+.agent-file-tab[aria-selected='true'] {
+  background: var(--justdo-primary-muted);
+  color: var(--justdo-primary);
+  box-shadow: inset 2px 0 var(--justdo-primary);
+}
+
+.agent-file-badge {
+  flex-shrink: 0;
+  font-family: inherit;
+  font-size: 9px;
+  font-weight: 400;
+  opacity: 0.8;
+}
+
+.agent-file-tab-primary .agent-file-badge {
+  color: var(--justdo-primary);
+}
+
+.agent-file-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  color: var(--justdo-text-secondary);
+  transition:
+    background 150ms,
+    color 150ms;
+}
+
+.agent-file-save:not(:disabled) {
+  color: var(--justdo-primary);
+  background: var(--justdo-primary-muted);
+}
+
+.agent-file-action:disabled {
+  opacity: 0.35;
+}
+
+.agent-file-tab:disabled {
+  opacity: 0.6;
+}
+
+.agent-file-tab:focus-visible,
+.agent-file-action:focus-visible {
+  outline: 2px solid var(--justdo-primary);
+  outline-offset: 2px;
+}
+
+.agent-file-textarea {
+  display: block;
+  width: 100%;
+  min-height: 320px;
+  resize: vertical;
+  border: 0;
+  border-radius: 0;
+  padding: 12px 16px 20px;
+  background: var(--justdo-background);
+  color: var(--justdo-foreground);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.85;
+  tab-size: 2;
+}
+
+.agent-file-textarea:focus-visible {
+  outline: 2px solid var(--justdo-primary);
+  outline-offset: -2px;
+}
+
+@container agent-files (max-width: 540px) {
+  .agent-file-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .agent-file-navigation {
+    flex-direction: row;
+    overflow-x: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--justdo-border);
+  }
+
+  .agent-file-tab {
+    flex-shrink: 0;
+  }
+
+  .agent-file-tab-primary {
+    margin-bottom: 0;
+    margin-right: 4px;
+  }
+}
+
 @container assistant-manager (min-width: 720px) {
   .agent-manager-layout {
     grid-template-columns: 220px minmax(0, 1fr);
