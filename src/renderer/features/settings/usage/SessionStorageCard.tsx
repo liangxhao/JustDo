@@ -1,3 +1,12 @@
+import './sessionStorage.css';
+
+import {
+  AdjustmentsHorizontalIcon,
+  ArchiveBoxIcon,
+  BoltIcon,
+  CircleStackIcon,
+  ServerStackIcon,
+} from '@heroicons/react/24/outline';
 import type {
   SessionStorageErrorCode,
   SessionStoragePolicy,
@@ -8,6 +17,13 @@ import { useSelector } from 'react-redux';
 
 import { i18nService } from '@/services/i18n';
 import type { RootState } from '@/store';
+
+const storageIcons = {
+  storageTotal: ServerStackIcon,
+  storageDatabase: CircleStackIcon,
+  storageWal: BoltIcon,
+  storageArchive: ArchiveBoxIcon,
+};
 
 const t = (key: string) => i18nService.t(key);
 export const totalSessionStorageBytes = (status: SessionStorageStatus) =>
@@ -194,7 +210,7 @@ export default function SessionStorageCard() {
   const coldCount = status?.agents.reduce((n, a) => n + a.coldTranscripts, 0) ?? 0;
 
   return (
-    <section className="space-y-5" aria-label={t('storageTitle')}>
+    <section className="session-storage space-y-5" aria-label={t('storageTitle')}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 className="text-base font-semibold text-foreground">{t('storageTitle')}</h3>
@@ -227,7 +243,7 @@ export default function SessionStorageCard() {
         </p>
       )}
       {status && (
-        <div className="space-y-4 rounded-xl border border-border bg-surface p-4">
+        <div className="storage-overview space-y-4 rounded-xl border border-border bg-surface p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h4 className="text-sm font-semibold">{t('storageOverview')}</h4>
             {updatedAt && (
@@ -236,23 +252,52 @@ export default function SessionStorageCard() {
               </span>
             )}
           </div>
-          <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {metrics.map(([key, value]) => (
-              <div key={key} className="rounded-lg bg-surface-raised px-3 py-3">
-                <dt className="text-xs text-secondary">{t(key)}</dt>
-                <dd className="mt-1 text-lg font-semibold tabular-nums text-foreground">
-                  {bytes(value)}
-                </dd>
-              </div>
-            ))}
+          <dl className="storage-metrics">
+            {metrics.map(([key, value]) => {
+              const Icon = storageIcons[key];
+              return (
+                <div key={key} className={`storage-metric storage-tone-${key}`}>
+                  <dt className="flex items-center justify-between gap-2 text-xs text-secondary">
+                    <span>{t(key)}</span>
+                    <Icon className="storage-icon" aria-hidden="true" />
+                  </dt>
+                  <dd className="mt-2 text-xl font-semibold tabular-nums text-foreground">
+                    {bytes(value)}
+                  </dd>
+                </div>
+              );
+            })}
           </dl>
-          <div className="flex flex-wrap gap-x-6 gap-y-1 border-t border-border pt-3 text-sm">
-            <span>
-              {t('storageHot')}: <strong className="tabular-nums">{hotCount}</strong>
-            </span>
-            <span>
-              {t('storageCold')}: <strong className="tabular-nums">{coldCount}</strong>
-            </span>
+          <div
+            className="storage-composition"
+            role="img"
+            aria-label={metrics
+              .slice(1)
+              .map(([key, value]) => `${t(key)}: ${bytes(value)}`)
+              .join(' · ')}
+          >
+            {metrics.slice(1).map(([key, value]) => (
+              <span
+                key={key}
+                className={`storage-tone-${key}`}
+                title={`${t(key)}: ${bytes(value)}`}
+                style={{
+                  width: `${totalSessionStorageBytes(status) ? (value / totalSessionStorageBytes(status)) * 100 : 0}%`,
+                }}
+              />
+            ))}
+          </div>
+          <div className="storage-transcripts">
+            <div className="storage-transcript storage-hot">
+              <BoltIcon aria-hidden="true" />
+              <span>{t('storageHot')}</span>
+              <strong className="tabular-nums">{hotCount}</strong>
+            </div>
+            <div className="storage-transcript storage-cold">
+              <ArchiveBoxIcon aria-hidden="true" />
+              <span>{t('storageCold')}</span>
+              <strong className="tabular-nums">{coldCount}</strong>
+            </div>
           </div>
           <details className="border-t border-border pt-3">
             <summary className="cursor-pointer text-sm font-medium">{t('storageAgents')}</summary>
@@ -308,13 +353,19 @@ export default function SessionStorageCard() {
           </details>
         </div>
       )}
-      <div className="overflow-hidden rounded-xl border border-border bg-surface">
-        <div className="border-b border-border bg-surface-raised px-4 py-3">
-          <h4 className="text-sm font-semibold">{t('storageManagement')}</h4>
+      <div className="storage-management overflow-hidden rounded-xl border border-border bg-surface">
+        <div className="storage-management-heading border-b border-border px-4 py-3">
+          <h4 className="flex items-center gap-2 text-sm font-semibold">
+            <AdjustmentsHorizontalIcon className="storage-icon" aria-hidden="true" />
+            {t('storageManagement')}
+          </h4>
           <p className="mt-1 text-xs text-secondary">{t('storageIndependent')}</p>
         </div>
         <div className="space-y-4 p-4">
-          <div className="text-sm" role="status">
+          <div
+            className={`storage-maintenance text-sm ${status?.maintenance.lastError ? 'storage-maintenance-error' : status?.maintenance.running ? 'storage-maintenance-running' : ''}`}
+            role="status"
+          >
             <span className="font-medium">{t('storageMaintenance')}：</span>{' '}
             {!status ? (
               t('storageLoading')
@@ -345,7 +396,7 @@ export default function SessionStorageCard() {
             disabled={!policy || busy || !!status?.maintenance.running}
             className="space-y-4 border-t border-border pt-4"
           >
-            <label className="flex items-start gap-3 text-sm">
+            <label className="storage-policy flex items-start gap-3 text-sm">
               <input
                 type="checkbox"
                 className="mt-0.5 h-4 w-4 accent-primary"
@@ -375,7 +426,8 @@ export default function SessionStorageCard() {
                 {[30, 60, 90].map(day => (
                   <button
                     type="button"
-                    className={`${buttonClass} ${days === String(day) ? 'border-primary text-primary' : ''}`}
+                    aria-pressed={days === String(day)}
+                    className={`${buttonClass} storage-preset`}
                     key={day}
                     onClick={() => setDays(String(day))}
                   >
