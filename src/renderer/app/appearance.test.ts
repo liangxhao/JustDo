@@ -11,6 +11,8 @@ describe('appearance configuration', () => {
     expect(normalizeAppearanceConfig(undefined)).toEqual(defaultAppearanceConfig);
     expect(defaultAppearanceConfig.chatContentWidth).toBe(80);
     expect(defaultAppearanceConfig.messageLayout).toBe('bubble');
+    expect(defaultAppearanceConfig.petEnabled).toBe(true);
+    expect(defaultAppearanceConfig.petAnimationEnabled).toBe(true);
   });
 
   test('fills missing and invalid values with safe defaults', () => {
@@ -33,6 +35,32 @@ describe('appearance configuration', () => {
       chatContentWidth: 60,
       fontSize: 13,
     });
+  });
+
+  test('normalizes pet visibility and motion independently', () => {
+    expect(normalizeAppearanceConfig({ petEnabled: false, petAnimationEnabled: false })).toMatchObject({
+      petEnabled: false,
+      petAnimationEnabled: false,
+    });
+    expect(normalizeAppearanceConfig({ petEnabled: 'no' as never })).toMatchObject({
+      petEnabled: true,
+      petAnimationEnabled: true,
+    });
+  });
+
+  test('applies pet preferences to the renderer root for both home and chat', () => {
+    const root = {
+      dataset: {} as Record<string, string>,
+      style: { fontSize: '', setProperty: () => undefined },
+    } as unknown as HTMLElement;
+
+    applyAppearanceConfig({ petEnabled: false, petAnimationEnabled: false }, root);
+    expect(root.dataset.coworkPet).toBe('off');
+    expect(root.dataset.coworkPetMotion).toBe('off');
+
+    applyAppearanceConfig(defaultAppearanceConfig, root);
+    expect(root.dataset.coworkPet).toBe('on');
+    expect(root.dataset.coworkPetMotion).toBe('on');
   });
 
   test('applies normalized values as inherited CSS properties', () => {

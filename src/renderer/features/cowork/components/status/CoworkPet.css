@@ -1,0 +1,51 @@
+.cowork-pet {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 48px;
+  pointer-events: none;
+  user-select: none;
+}
+
+.cowork-pet__sprite {
+  display: block;
+  flex: none;
+  width: 64px;
+  height: 64px;
+  margin-block: -8px;
+  background-repeat: no-repeat;
+}
+
+.cowork-pet--home {
+  justify-content: center;
+  min-height: 128px;
+}
+
+.cowork-pet--home .cowork-pet__sprite {
+  width: 128px;
+  height: 128px;
+  margin: 0;
+}
+
+:root[data-cowork-pet='off'] .cowork-pet,
+:root[data-cowork-pet='off'] .cowork-home__pet {
+  display: none;
+}
+
+.cowork-home__pet {
+  display: flex;
+  justify-content: center;
+}
+
+.cowork-home__logo {
+  display: none;
+}
+
+:root[data-cowork-pet='off'] .cowork-home__logo {
+  display: block;
+}
+
+.dark .cowork-pet__sprite {
+  filter: drop-shadow(0 0 2px rgba(255, 255, 255, .95))
+    drop-shadow(0 0 1px rgba(255, 255, 255, .7));
+}

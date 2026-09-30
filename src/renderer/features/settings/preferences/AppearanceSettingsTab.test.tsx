@@ -64,4 +64,17 @@ describe('AppearanceSettingsTab', () => {
       messageLayout: 'document',
     });
   });
+
+  test('restoring reading defaults preserves pet preferences', () => {
+    const onChange = vi.fn();
+    const appearance = { ...defaultAppearanceConfig, petEnabled: false, petAnimationEnabled: false };
+    render(<AppearanceSettingsTab value={appearance} onChange={onChange} />);
+    expect(screen.queryByRole('switch', { name: 'coworkPetShow' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'restoreDefaults' }));
+    expect(onChange).toHaveBeenCalledWith({
+      ...defaultAppearanceConfig,
+      petEnabled: false,
+      petAnimationEnabled: false,
+    });
+  });
 });

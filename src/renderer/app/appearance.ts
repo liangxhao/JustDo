@@ -9,6 +9,8 @@ export interface AppearanceConfig {
   messageLayout: MessageLayout;
   messageDensity: MessageDensity;
   wrapCodeBlocks: boolean;
+  petEnabled: boolean;
+  petAnimationEnabled: boolean;
 }
 
 export const defaultAppearanceConfig: AppearanceConfig = {
@@ -18,6 +20,8 @@ export const defaultAppearanceConfig: AppearanceConfig = {
   messageLayout: 'bubble',
   messageDensity: 'comfortable',
   wrapCodeBlocks: false,
+  petEnabled: true,
+  petAnimationEnabled: true,
 };
 
 const FONT_STACKS: Record<AppearanceFontFamily, string> = {
@@ -94,6 +98,12 @@ export const normalizeAppearanceConfig = (
     typeof value?.wrapCodeBlocks === 'boolean'
       ? value.wrapCodeBlocks
       : defaultAppearanceConfig.wrapCodeBlocks,
+  petEnabled:
+    typeof value?.petEnabled === 'boolean' ? value.petEnabled : defaultAppearanceConfig.petEnabled,
+  petAnimationEnabled:
+    typeof value?.petAnimationEnabled === 'boolean'
+      ? value.petAnimationEnabled
+      : defaultAppearanceConfig.petAnimationEnabled,
 });
 
 export const applyAppearanceConfig = (
@@ -102,6 +112,11 @@ export const applyAppearanceConfig = (
 ): AppearanceConfig => {
   const appearance = normalizeAppearanceConfig(value);
   if (!root) return appearance;
+
+  if (root.dataset) {
+    root.dataset.coworkPet = appearance.petEnabled ? 'on' : 'off';
+    root.dataset.coworkPetMotion = appearance.petAnimationEnabled ? 'on' : 'off';
+  }
 
   root.style.fontSize = `${appearance.fontSize}px`;
   root.style.setProperty('--justdo-font-family', FONT_STACKS[appearance.fontFamily]);

@@ -12,6 +12,7 @@ import {
   PaintBrushIcon,
   PuzzlePieceIcon,
   ShieldCheckIcon,
+  SparklesIcon,
   XCircleIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
@@ -142,11 +143,13 @@ import {
 } from './models/providerSettingsConfig';
 import { AppearancePreferences } from './preferences/AppearancePreferences';
 import { GeneralSettingsPage } from './preferences/GeneralSettingsPage';
+import { PetSettingsPage } from './preferences/PetSettingsPage';
 
 type TabType =
   | 'agents'
   | 'general'
   | 'appearance'
+  | 'pet'
   | 'usage'
   | 'model'
   | 'runtime'
@@ -1633,6 +1636,11 @@ const Settings: React.FC<SettingsProps> = ({
       icon: <PaintBrushIcon className="h-5 w-5" />,
     },
     {
+      key: 'pet',
+      label: i18nService.t('coworkPetSettingsTitle'),
+      icon: <SparklesIcon className="h-5 w-5" />,
+    },
+    {
       key: 'security',
       label: i18nService.t('securitySettings'),
       icon: <ShieldCheckIcon className="h-5 w-5" />,
@@ -1809,6 +1817,9 @@ const Settings: React.FC<SettingsProps> = ({
             themeId={themeId}
           />
         );
+
+      case 'pet':
+        return <PetSettingsPage value={appearance} onChange={setAppearance} />;
 
       case 'model':
         return (

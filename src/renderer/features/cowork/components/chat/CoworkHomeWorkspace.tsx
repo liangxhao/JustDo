@@ -14,6 +14,7 @@ import FilePreviewDrawer, {
 import NewDisplayTabMenu from '@/features/cowork/components/preview/NewDisplayTabMenu';
 import UnsupportedFilePreview from '@/features/cowork/components/preview/UnsupportedFilePreview';
 import WorkspaceFilesPanel from '@/features/cowork/components/preview/WorkspaceFilesPanel';
+import { CoworkPet } from '@/features/cowork/components/status/CoworkPet';
 import { coworkService } from '@/features/cowork/coworkService';
 import type { CoworkAttachmentPayload, CoworkConfig } from '@/features/cowork/coworkTypes';
 import { i18nService } from '@/services/i18n';
@@ -121,7 +122,8 @@ export function CoworkHomeWorkspace({
               <div className="space-y-12">
                 {/* Welcome Section */}
                 <div className="text-center space-y-5">
-                  <img src={logoUrl} alt="logo" className="mx-auto h-[5.333rem] w-[5.333rem]" />
+                  <div className="cowork-home__pet"><CoworkPet running={false} waiting={false} placement="home" /></div>
+                  <img src={logoUrl} alt="logo" className="cowork-home__logo mx-auto h-[5.333rem] w-[5.333rem]" />
                   <h2 className="text-3xl font-bold tracking-tight text-foreground">
                     {i18nService.t(greetingKey)}
                   </h2>

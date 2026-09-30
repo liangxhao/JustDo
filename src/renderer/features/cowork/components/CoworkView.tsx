@@ -105,6 +105,8 @@ import {
 } from '@/features/cowork/components/preview/useSessionDisplayState';
 import WorkspaceFilesPanel from '@/features/cowork/components/preview/WorkspaceFilesPanel';
 import ExportSessionModal from '@/features/cowork/components/sessions/ExportSessionModal';
+import { CoworkPet } from '@/features/cowork/components/status/CoworkPet';
+import { isCoworkRunActive } from '@/features/cowork/components/status/coworkRunActivity';
 import {
   resolveBackgroundRuntimeDiscoverySessionIds,
   resolveBackgroundRuntimeSessionIds,
@@ -2703,6 +2705,14 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             {/* Input */}
             <div className="shrink-0 pb-4 pt-2">
               <div className="cowork-content-width mx-auto min-w-0 space-y-1.5">
+                {!currentSession.external?.readOnly && (
+                  <CoworkPet
+                    key={currentSession.id}
+                    running={isCoworkRunActive(currentSessionRuntimeRunning, goalRunProgress)}
+                    waiting={isQuestionInputBlocked || Boolean(visiblePlanInteraction && !planPreviewReadOnly)}
+                    latestRun={currentSessionRunTimings[currentSessionRunTimings.length - 1]}
+                  />
+                )}
                 {currentSession.external?.readOnly ? (
                   <div className="rounded-xl border border-border bg-surface-raised px-4 py-3 text-center text-xs leading-5 text-secondary">
                     {i18nService.t('multicaSessionReadOnly')}
