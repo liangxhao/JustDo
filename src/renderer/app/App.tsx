@@ -421,24 +421,29 @@ const App: React.FC = () => {
     setIsSidebarCollapsed(prev => !prev);
   }, []);
 
-  const handleNewChat = useCallback(async (): Promise<boolean> => {
-    return runGuardedFilePreviewNavigation(
-      requestCoworkNavigation,
-      () => {
-        const shouldClearInput = mainView === 'cowork' || !!currentSessionId;
-        coworkService.clearSession();
-        setMainView('cowork');
-        window.setTimeout(() => {
-          window.dispatchEvent(
-            new CustomEvent('cowork:focus-input', {
-              detail: { clear: shouldClearInput },
-            }),
-          );
-        }, 0);
-      },
-      { preserveTabs: true },
-    );
-  }, [mainView, currentSessionId, requestCoworkNavigation]);
+  const handlePreparedNewChat = useCallback(
+    async (prepare?: () => Promise<boolean>): Promise<boolean> => {
+      return runGuardedFilePreviewNavigation(
+        requestCoworkNavigation,
+        () => {
+          const shouldClearInput = mainView === 'cowork' || !!currentSessionId;
+          coworkService.clearSession();
+          setMainView('cowork');
+          window.setTimeout(() => {
+            window.dispatchEvent(
+              new CustomEvent('cowork:focus-input', {
+                detail: { clear: shouldClearInput },
+              }),
+            );
+          }, 0);
+        },
+        { preserveTabs: true },
+        prepare,
+      );
+    },
+    [mainView, currentSessionId, requestCoworkNavigation],
+  );
+  const handleNewChat = useCallback(() => handlePreparedNewChat(), [handlePreparedNewChat]);
 
   const showToast = useCallback((content: string | ToastContent) => {
     const nextToast = typeof content === 'string' ? { message: content } : content;
@@ -914,6 +919,7 @@ const App: React.FC = () => {
                 isSidebarCollapsed={isSidebarCollapsed}
                 onToggleSidebar={handleToggleSidebar}
                 onNewChat={handleNewChat}
+                onPreparedNewChat={handlePreparedNewChat}
                 planInteraction={displayedPlanInteraction}
                 onPlanRespond={result =>
                   displayedPlanInteraction

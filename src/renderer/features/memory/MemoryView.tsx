@@ -4,6 +4,7 @@ import {
   BookOpenIcon,
   CalendarDaysIcon,
   CheckCircleIcon,
+  ChevronDownIcon,
   CircleStackIcon,
   ClockIcon,
   DocumentTextIcon,
@@ -15,6 +16,7 @@ import {
   SparklesIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
+import { UserCircleIcon } from '@heroicons/react/24/solid';
 import type {
   MemoryDocument,
   MemoryDocumentKind,
@@ -50,11 +52,64 @@ interface MemoryViewProps {
   onNewChat: () => void;
 }
 
-const MemoryView: React.FC<MemoryViewProps> = ({
-  isSidebarCollapsed,
-  onToggleSidebar,
-  onNewChat,
-}) => {
+const MemoryView: React.FC<MemoryViewProps> = props => {
+  const [agentId, setAgentId] = useState('main');
+  const [agents, setAgents] = useState<Array<{ id: string; name: string }>>([
+    { id: 'main', name: 'main' },
+  ]);
+  const [agentError, setAgentError] = useState(false);
+  useEffect(() => {
+    let active = true;
+    void window.electron.agents
+      .list()
+      .then(items => {
+        if (active) setAgents(items.filter(agent => !agent.deletedAt));
+      })
+      .catch(() => {
+        if (active) setAgentError(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+  const selector = (
+    <div className="flex items-center gap-2">
+      <div className="relative rounded-xl border border-border bg-surface-hover shadow-sm transition-colors hover:border-primary/50 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20">
+        <UserCircleIcon
+          aria-hidden="true"
+          className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-secondary"
+        />
+        <select
+          aria-label={i18nService.t('memoryAssistant')}
+          value={agentId}
+          onChange={event => setAgentId(event.target.value)}
+          title={i18nService.t('memoryAssistant')}
+          className="h-10 min-w-40 max-w-64 cursor-pointer appearance-none rounded-xl bg-transparent pl-10 pr-10 text-sm font-semibold text-foreground outline-none"
+        >
+          {agents.map(agent => (
+            <option key={agent.id} value={agent.id}>
+              {agent.name}
+            </option>
+          ))}
+        </select>
+        <ChevronDownIcon
+          aria-hidden="true"
+          className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-secondary"
+        />
+      </div>
+      {agentError && (
+        <span role="alert" className="text-xs text-secondary">
+          {i18nService.t('memoryAssistantLoadFailed')}
+        </span>
+      )}
+    </div>
+  );
+  return <AgentMemoryView key={agentId} {...props} agentId={agentId} selector={selector} />;
+};
+
+const AgentMemoryView: React.FC<
+  MemoryViewProps & { agentId: string; selector: React.ReactNode }
+> = ({ agentId, selector, isSidebarCollapsed, onToggleSidebar, onNewChat }) => {
   const [activeTab, setActiveTab] = useState<MemoryTab>('overview');
   const [overview, setOverview] = useState<MemoryOverview | null>(null);
   const [loading, setLoading] = useState(true);
@@ -73,6 +128,13 @@ const MemoryView: React.FC<MemoryViewProps> = ({
   const [notice, setNotice] = useState<string | null>(null);
   const [showGuide, setShowGuide] = useState(false);
   const indexRequestRef = useRef(0);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const locale = i18nService.getLanguage() === 'zh' ? 'zh-CN' : 'en-US';
 
   const loadIndexStatus = useCallback(async () => {
@@ -81,7 +143,7 @@ const MemoryView: React.FC<MemoryViewProps> = ({
       current ? { ...current, index: { ...current.index, loading: true } } : current,
     );
     try {
-      const result = await window.electron.openclaw.memory.getIndexStatus();
+      const result = await window.electron.openclaw.memory.getIndexStatus(agentId);
       if (requestId !== indexRequestRef.current) return;
       setOverview(current =>
         current
@@ -120,13 +182,14 @@ const MemoryView: React.FC<MemoryViewProps> = ({
           : current,
       );
     }
-  }, []);
+  }, [agentId]);
 
   const loadOverview = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const result = await window.electron.openclaw.memory.getOverview();
+      const result = await window.electron.openclaw.memory.getOverview(agentId);
+      if (!mounted.current) return;
       if (!result.success || !result.overview) {
         setError(result.error || i18nService.t('memoryLoadFailed'));
         return;
@@ -134,11 +197,12 @@ const MemoryView: React.FC<MemoryViewProps> = ({
       setOverview(result.overview);
       void loadIndexStatus();
     } catch (loadError) {
+      if (!mounted.current) return;
       setError(loadError instanceof Error ? loadError.message : i18nService.t('memoryLoadFailed'));
     } finally {
       setLoading(false);
     }
-  }, [loadIndexStatus]);
+  }, [agentId, loadIndexStatus]);
 
   useEffect(() => {
     void loadOverview();
@@ -147,24 +211,31 @@ const MemoryView: React.FC<MemoryViewProps> = ({
     };
   }, [loadOverview]);
 
-  const openDocument = useCallback(async (relativePath: string) => {
-    setDocumentLoading(true);
-    setError(null);
-    try {
-      const result = await window.electron.openclaw.memory.getDocument(relativePath);
-      if (!result.success || !result.document) {
-        setError(result.error || i18nService.t('memoryDocumentLoadFailed'));
-        return;
+  const openDocument = useCallback(
+    async (relativePath: string) => {
+      setDocumentLoading(true);
+      setError(null);
+      try {
+        const result = await window.electron.openclaw.memory.getDocument(relativePath, agentId);
+        if (!mounted.current) return;
+        if (!result.success || !result.document) {
+          setError(result.error || i18nService.t('memoryDocumentLoadFailed'));
+          return;
+        }
+        setSelectedDocument(result.document);
+      } catch (loadError) {
+        if (!mounted.current) return;
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : i18nService.t('memoryDocumentLoadFailed'),
+        );
+      } finally {
+        setDocumentLoading(false);
       }
-      setSelectedDocument(result.document);
-    } catch (loadError) {
-      setError(
-        loadError instanceof Error ? loadError.message : i18nService.t('memoryDocumentLoadFailed'),
-      );
-    } finally {
-      setDocumentLoading(false);
-    }
-  }, []);
+    },
+    [agentId],
+  );
 
   const handleDocumentAction = async (action: 'open' | 'reveal') => {
     if (!selectedDocument || documentAction) return;
@@ -174,6 +245,7 @@ const MemoryView: React.FC<MemoryViewProps> = ({
         action === 'open'
           ? await window.electron.shell.openPath(selectedDocument.filePath)
           : await window.electron.shell.showItemInFolder(selectedDocument.filePath);
+      if (!mounted.current) return;
       if (!result.success) {
         window.dispatchEvent(
           new CustomEvent('app:showToast', {
@@ -207,7 +279,8 @@ const MemoryView: React.FC<MemoryViewProps> = ({
     setSearchDiagnostics(null);
     setSearchHits([]);
     try {
-      const result = await window.electron.openclaw.memory.search(normalizedQuery);
+      const result = await window.electron.openclaw.memory.search(normalizedQuery, agentId);
+      if (!mounted.current) return;
       if (!result.success) {
         setSearchHits([]);
         setSearchError(result.error || i18nService.t('memorySearchFailed'));
@@ -216,6 +289,7 @@ const MemoryView: React.FC<MemoryViewProps> = ({
       setSearchHits(result.hits || []);
       setSearchDiagnostics(result);
     } catch (searchFailure) {
+      if (!mounted.current) return;
       setSearchHits([]);
       setSearchError(
         searchFailure instanceof Error
@@ -243,7 +317,8 @@ const MemoryView: React.FC<MemoryViewProps> = ({
     setNotice(null);
     setError(null);
     try {
-      const result = await window.electron.openclaw.memory.rebuildIndex();
+      const result = await window.electron.openclaw.memory.rebuildIndex(agentId);
+      if (!mounted.current) return;
       if (result.index) {
         ++indexRequestRef.current;
         const index = result.index;
@@ -251,6 +326,7 @@ const MemoryView: React.FC<MemoryViewProps> = ({
           current ? { ...current, index: { ...index, loading: false } } : current,
         );
       }
+      if (!mounted.current) return;
       if (!result.success) {
         setError(result.error || i18nService.t('memoryRebuildFailed'));
         return;
@@ -263,6 +339,7 @@ const MemoryView: React.FC<MemoryViewProps> = ({
       );
       await loadOverview();
     } catch (rebuildError) {
+      if (!mounted.current) return;
       setError(
         rebuildError instanceof Error ? rebuildError.message : i18nService.t('memoryRebuildFailed'),
       );
@@ -835,7 +912,8 @@ const MemoryView: React.FC<MemoryViewProps> = ({
                 </div>
               </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              {selector}
               <button
                 type="button"
                 onClick={() => void loadOverview()}

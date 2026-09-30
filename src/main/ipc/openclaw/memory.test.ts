@@ -304,6 +304,7 @@ function registerHandlers(
   );
   setup?.(root);
   registerOpenClawMemoryHandlers({
+    isAgentAvailable: id => id === 'main' || id === 'research',
     getManager: () =>
       ({
         getConfigPath: () => configPath,
@@ -465,4 +466,29 @@ it('keeps an incomplete unprobed vector index unconfirmed', () => {
       }),
     ).health,
   ).toBe(MemoryIndexHealth.Unknown);
+});
+
+it('rejects unavailable assistants before searching the gateway', async () => {
+  const gateway = vi.fn();
+  const handler = registerHandlers(gateway)(MemoryIpc.Search);
+  const result = await handler({} as never, 'preference', 'deleted');
+  expect(result.success).toBe(false);
+  expect(gateway).not.toHaveBeenCalled();
+});
+
+it('routes searches to the requested assistant workspace and index', async () => {
+  const gateway = vi
+    .fn()
+    .mockImplementation(async (method: string) =>
+      method === 'agents.files.list' ? { workspace: path.resolve('/research') } : { results: [] },
+    );
+  const handler = registerHandlers(gateway)(MemoryIpc.Search);
+  const result = await handler({} as never, 'preference', 'research');
+  expect(result.success).toBe(true);
+  expect(gateway).toHaveBeenCalledWith('agents.files.list', { agentId: 'research' });
+  expect(gateway).toHaveBeenCalledWith('memory.search', {
+    query: 'preference',
+    agentId: 'research',
+    maxResults: 20,
+  });
 });

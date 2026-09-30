@@ -1372,6 +1372,10 @@ if (multicaBridgeArgv) {
   registerOpenClawWorkboardHandlers({ getRuntime: getOpenClawRuntimeAdapter });
   registerOpenClawApprovalHandlers({ getRuntime: getOpenClawRuntimeAdapter });
   registerOpenClawMemoryHandlers({
+    isAgentAvailable: agentId => {
+      const agent = getCoworkStore().getAgent(agentId);
+      return Boolean(agent && !agent.deletedAt);
+    },
     getManager: getOpenClawEngineManager,
     requestGateway: <T>(method: string, params?: unknown) =>
       getCoworkEngineService().requestGateway<T>(method, params),

@@ -117,6 +117,7 @@ import { getCompactFolderName } from '@/utils/path';
 
 import { isImagePath } from './composerAttachmentFiles';
 import { hasComposerContent } from './composerContent';
+import { ConversationAgentSelector } from './ConversationAgentSelector';
 import {
   appendMessageQuotes,
   EMPTY_MESSAGE_QUOTES,
@@ -207,6 +208,7 @@ interface CoworkPromptInputProps {
   draftKeyOverride?: string;
   /** Agent that owns the session. Defaults to the agent selected on the home screen. */
   modelAgentId?: string;
+  onConversationAgentChange?: (agentId: string) => void | Promise<void>;
   /** Native Gateway session key used to resolve session-scoped commands and skills. */
   slashCommandSessionKey?: string;
   /** Last Gateway-confirmed model for this session. */
@@ -262,6 +264,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       sessionId,
       draftKeyOverride,
       modelAgentId,
+      onConversationAgentChange,
       slashCommandSessionKey,
       sessionModelRef,
       contextUsage = null,
@@ -320,7 +323,12 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const [openClawModelCatalog, setOpenClawModelCatalog] = useState<OpenClawModelChoice[]>([]);
     const modelCatalogRequestRef = useRef(0);
     const globalSelectedModel = useSelector((state: RootState) => state.model.selectedModel);
-    const effectiveAgentId = modelAgentId ?? MAIN_USER_AGENT_ID;
+    const allowMainAgentSwitch = useSelector(
+      (state: RootState) => state.cowork.config.allowMainAgentSwitch === true,
+    );
+    const selectedAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
+    const effectiveAgentId =
+      modelAgentId ?? (allowMainAgentSwitch ? selectedAgentId : MAIN_USER_AGENT_ID);
     const loadOpenClawModelCatalog = useCallback(async () => {
       const requestId = ++modelCatalogRequestRef.current;
       if (
@@ -2494,64 +2502,78 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         )}
         <div
           className={
-            isLarge && showFolderSelector && !remoteManaged
+            isLarge &&
+            (showFolderSelector || (allowMainAgentSwitch && onConversationAgentChange)) &&
+            !remoteManaged
               ? 'rounded-[20px] bg-surface-raised p-1 shadow-subtle'
               : undefined
           }
         >
-          {isLarge && showFolderSelector && !remoteManaged && (
-            <div className="relative flex items-center px-2 py-1.5">
-              <div className="flex items-center">
-                <button
-                  ref={folderButtonRef as React.RefObject<HTMLButtonElement>}
-                  type="button"
-                  onClick={() => setShowFolderMenu(!showFolderMenu)}
-                  aria-haspopup="dialog"
-                  aria-expanded={showFolderMenu}
-                  title={workingDirectory || i18nService.t('coworkSelectProject')}
-                  aria-label={i18nService.t('workspacePickerTitle')}
-                  className={`flex items-center gap-1.5 pl-2.5 pr-1.5 py-1.5 rounded-full bg-surface text-sm transition-colors ${
-                    showFolderRequiredWarning
-                      ? 'ring-1 ring-warning text-warning animate-shake'
-                      : 'text-secondary hover:bg-surface-raised hover:text-foreground'
-                  }`}
-                >
-                  <FolderIcon className="h-4 w-4 flex-shrink-0" />
-                  <span className="max-w-[150px] truncate text-xs">
-                    {workingDirectory
-                      ? truncatePath(workingDirectory)
-                      : i18nService.t('coworkSelectProject')}
-                  </span>
-                  <ChevronDownIcon className="h-3 w-3 shrink-0" />
-                  {workingDirectory && (
-                    <span
-                      role="button"
-                      tabIndex={-1}
-                      onClick={e => {
-                        e.stopPropagation();
-                        handleFolderSelect('');
-                      }}
-                      className="flex-shrink-0 ml-0.5 p-0.5 rounded hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
-                    >
-                      <XMarkIcon className="h-3 w-3" />
+          {isLarge &&
+            (showFolderSelector || (allowMainAgentSwitch && onConversationAgentChange)) &&
+            !remoteManaged && (
+              <div className="relative flex items-center px-2 py-1.5">
+                <div className="flex items-center gap-2">
+                  {allowMainAgentSwitch &&
+                    (!sessionId || onConversationAgentChange) &&
+                    !isSideChat && (
+                      <ConversationAgentSelector
+                        agentId={effectiveAgentId}
+                        disabled={disabled || isStreaming}
+                        onChange={onConversationAgentChange}
+                      />
+                    )}
+                  <button
+                    ref={folderButtonRef as React.RefObject<HTMLButtonElement>}
+                    disabled={!showFolderSelector}
+                    type="button"
+                    onClick={() => setShowFolderMenu(!showFolderMenu)}
+                    aria-haspopup="dialog"
+                    aria-expanded={showFolderMenu}
+                    title={workingDirectory || i18nService.t('coworkSelectProject')}
+                    aria-label={i18nService.t('workspacePickerTitle')}
+                    className={`flex items-center gap-1.5 pl-2.5 pr-1.5 py-1.5 rounded-full bg-surface text-sm transition-colors ${
+                      showFolderRequiredWarning
+                        ? 'ring-1 ring-warning text-warning animate-shake'
+                        : 'text-secondary hover:bg-surface-raised hover:text-foreground'
+                    }`}
+                  >
+                    <FolderIcon className="h-4 w-4 flex-shrink-0" />
+                    <span className="max-w-[150px] truncate text-xs">
+                      {workingDirectory
+                        ? truncatePath(workingDirectory)
+                        : i18nService.t('coworkSelectProject')}
                     </span>
-                  )}
-                </button>
-              </div>
-              <FolderSelectorPopover
-                isOpen={showFolderMenu}
-                onClose={() => setShowFolderMenu(false)}
-                onSelectFolder={handleFolderSelect}
-                anchorRef={folderButtonRef as React.RefObject<HTMLElement>}
-                currentFolder={workingDirectory}
-              />
-              {showFolderRequiredWarning && (
-                <div className="absolute left-0 top-full mt-1 px-2 py-1 rounded-md bg-surface-raised text-warning text-xs whitespace-nowrap animate-fade-in-up shadow-subtle z-10">
-                  {i18nService.t('coworkSelectFolderFirst')}
+                    <ChevronDownIcon className="h-3 w-3 shrink-0" />
+                    {workingDirectory && showFolderSelector && (
+                      <span
+                        role="button"
+                        tabIndex={-1}
+                        onClick={e => {
+                          e.stopPropagation();
+                          handleFolderSelect('');
+                        }}
+                        className="flex-shrink-0 ml-0.5 p-0.5 rounded hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
+                      >
+                        <XMarkIcon className="h-3 w-3" />
+                      </span>
+                    )}
+                  </button>
                 </div>
-              )}
-            </div>
-          )}
+                <FolderSelectorPopover
+                  isOpen={showFolderMenu}
+                  onClose={() => setShowFolderMenu(false)}
+                  onSelectFolder={handleFolderSelect}
+                  anchorRef={folderButtonRef as React.RefObject<HTMLElement>}
+                  currentFolder={workingDirectory}
+                />
+                {showFolderRequiredWarning && (
+                  <div className="absolute left-0 top-full mt-1 px-2 py-1 rounded-md bg-surface-raised text-warning text-xs whitespace-nowrap animate-fade-in-up shadow-subtle z-10">
+                    {i18nService.t('coworkSelectFolderFirst')}
+                  </div>
+                )}
+              </div>
+            )}
           <div
             className={enhancedContainerClass}
             onDragEnter={handleDragEnter}
@@ -2662,36 +2684,46 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                                             nextModel,
                                           );
                                           if (sessionId) {
-                                            dispatch(confirmDefaultModelSelection({
-                                              contextKey: `__home__\0${effectiveAgentId}`,
-                                              model: nextModel,
-                                            }));
-                                            dispatch(completeManualModelSelection({
-                                              contextKey: `__home__\0${effectiveAgentId}`,
-                                              taskId,
-                                            }));
+                                            dispatch(
+                                              confirmDefaultModelSelection({
+                                                contextKey: `__home__\0${effectiveAgentId}`,
+                                                model: nextModel,
+                                              }),
+                                            );
+                                            dispatch(
+                                              completeManualModelSelection({
+                                                contextKey: `__home__\0${effectiveAgentId}`,
+                                                taskId,
+                                              }),
+                                            );
                                           }
                                         },
                                         onBackgroundDefaultStart: () => {
-                                          dispatch(beginManualModelSelection({
-                                            contextKey: `__home__\0${effectiveAgentId}`,
-                                            taskId,
-                                            model: nextModel,
-                                            previousModel: agentSelectedModel,
-                                          }));
+                                          dispatch(
+                                            beginManualModelSelection({
+                                              contextKey: `__home__\0${effectiveAgentId}`,
+                                              taskId,
+                                              model: nextModel,
+                                              previousModel: agentSelectedModel,
+                                            }),
+                                          );
                                         },
                                         onBackgroundDefaultError: error => {
                                           // The native session is already pinned. A late
                                           // default-save failure must never undo its model.
-                                          dispatch(rollbackManualModelSelection({
-                                            contextKey: `__home__\0${effectiveAgentId}`,
-                                            taskId,
-                                          }));
-                                          window.dispatchEvent(new CustomEvent('app:showToast', {
-                                            detail: i18nService
-                                              .t('coworkDefaultModelApplyFailedSessionUpdated')
-                                              .replace('{error}', error.message),
-                                          }));
+                                          dispatch(
+                                            rollbackManualModelSelection({
+                                              contextKey: `__home__\0${effectiveAgentId}`,
+                                              taskId,
+                                            }),
+                                          );
+                                          window.dispatchEvent(
+                                            new CustomEvent('app:showToast', {
+                                              detail: i18nService
+                                                .t('coworkDefaultModelApplyFailedSessionUpdated')
+                                                .replace('{error}', error.message),
+                                            }),
+                                          );
                                         },
                                       },
                                       coworkService,

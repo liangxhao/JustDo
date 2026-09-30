@@ -53,6 +53,7 @@ import {
   isActiveBuiltinModelDevelopmentApiKey,
 } from '../../providers/builtinModelCredential';
 import type { ProviderRawConfig } from '../../providers/providerApiConfig';
+import { resolveManagedAgentWorkspace } from './agentWorkspace';
 import {
   MANAGED_PROVIDER_SECRET_SOURCE,
   managedProviderHeaderSecretRef,
@@ -135,7 +136,7 @@ export const listKnownOpenClawWorkspaceDirs = ({
   agents: readonly Agent[];
   existingConfig?: Record<string, unknown> | null;
 }): string[] => {
-  const workspaceDirs = new Set([mainWorkspaceDir]);
+  const workspaceDirs = new Set([mainWorkspaceDir, resolveManagedAgentWorkspace(stateDir, 'main')]);
   const existingAgents = isRecord(existingConfig?.agents) ? existingConfig.agents : {};
   const existingDefaults = isRecord(existingAgents.defaults) ? existingAgents.defaults : {};
   const configuredDefaultWorkspace =
@@ -146,6 +147,7 @@ export const listKnownOpenClawWorkspaceDirs = ({
 
   const addDefaultAgentWorkspace = (agentId: string): void => {
     const normalizedAgentId = normalizeOpenClawAgentId(agentId);
+    workspaceDirs.add(resolveManagedAgentWorkspace(stateDir, normalizedAgentId));
     if (normalizedAgentId === 'main') return;
     // Current OpenClaw nests non-default agents under agents.defaults.workspace.
     workspaceDirs.add(path.join(mainWorkspaceDir, normalizedAgentId));
@@ -757,14 +759,21 @@ export const mergeAgentEntriesWithManagedMainSettings = (
     if (!isRecord(entry) || !isRecord(entry.runtime) || entry.runtime.type !== 'acp') continue;
     entries[agentId] = entry;
   }
+  // Authentication sync preserves native settings, but managed role homes and
+  // task directories must remain consistent with normal settings sync.
+  for (const [agentId, entry] of Object.entries(managedEntries)) {
+    if (!isRecord(entry) || 'runtime' in entry) continue;
+    entries[agentId] = {
+      ...(isRecord(entries[agentId]) ? entries[agentId] : {}),
+      ...(typeof entry.workspace === 'string' ? { workspace: entry.workspace } : {}),
+      ...(typeof entry.cwd === 'string' ? { cwd: entry.cwd } : {}),
+    };
+  }
   const managedMain = isRecord(managedEntries.main) ? managedEntries.main : undefined;
-  const managedMainWorkspace =
-    typeof managedMain?.workspace === 'string' ? managedMain.workspace.trim() : '';
   const managedMainHeartbeat = isRecord(managedMain?.heartbeat) ? managedMain.heartbeat : undefined;
-  if (managedMainWorkspace || managedMainHeartbeat) {
+  if (managedMainHeartbeat) {
     entries.main = {
       ...(isRecord(entries.main) ? entries.main : {}),
-      ...(managedMainWorkspace ? { workspace: managedMainWorkspace } : {}),
       ...(managedMainHeartbeat ? { heartbeat: managedMainHeartbeat } : {}),
     };
   }
@@ -868,6 +877,9 @@ export const buildAuthScopedOpenClawConfig = (
       ? { model: rewriteProviderAliasInModel(existingDefaults.model, providerAliases) }
       : {}),
   };
+  for (const key of ['workspace', 'cwd'] as const) {
+    if (typeof managedDefaults[key] === 'string') defaults[key] = managedDefaults[key];
+  }
   if (Object.prototype.hasOwnProperty.call(managedDefaults, 'thinkingDefault')) {
     defaults.thinkingDefault = managedDefaults.thinkingDefault;
   } else {

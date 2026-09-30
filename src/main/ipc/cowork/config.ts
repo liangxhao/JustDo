@@ -192,9 +192,7 @@ export const registerCoworkConfigHandlers = ({
     try {
       const currentEngineStatus = getEngineManager().getStatus();
       const engineStatus =
-        currentEngineStatus.phase === 'running'
-          ? currentEngineStatus
-          : await ensureEngineRunning();
+        currentEngineStatus.phase === 'running' ? currentEngineStatus : await ensureEngineRunning();
       if (engineStatus.phase !== 'running') {
         throw new Error(engineStatus.message || 'The AI engine is not ready.');
       }
@@ -305,6 +303,7 @@ export const registerCoworkConfigHandlers = ({
       _event,
       config: {
         workingDirectory?: string;
+        allowMainAgentSwitch?: boolean;
         executionMode?: 'auto' | 'local' | 'sandbox';
         sandboxNetworkEnabled?: boolean;
         agentEngine?: CoworkAgentEngine;
@@ -317,6 +316,12 @@ export const registerCoworkConfigHandlers = ({
         try {
           if (!config || typeof config !== 'object' || Array.isArray(config)) {
             return { success: false, error: 'Invalid cowork configuration.' };
+          }
+          if (
+            config.allowMainAgentSwitch !== undefined &&
+            typeof config.allowMainAgentSwitch !== 'boolean'
+          ) {
+            return { success: false, error: 'Invalid assistant switching setting.' };
           }
           const hasPermissionMode = Object.prototype.hasOwnProperty.call(config, 'permissionMode');
           if (
@@ -370,6 +375,7 @@ export const registerCoworkConfigHandlers = ({
               : normalizeMaxRetainedDisplayTabs(config.maxRetainedDisplayTabs);
           const normalized: Parameters<CoworkStore['setConfig']>[0] = {
             workingDirectory: config.workingDirectory,
+            allowMainAgentSwitch: config.allowMainAgentSwitch,
             executionMode,
             sandboxNetworkEnabled: config.sandboxNetworkEnabled,
             agentEngine,

@@ -89,7 +89,9 @@ describe('initial admission cancellation', () => {
     const starting = fixture.start();
     await vi.waitFor(() => expect(fixture.startSession).toHaveBeenCalled());
     await expect(fixture.cancel()).resolves.toEqual({ success: true });
-    expect(fixture.stopSession).toHaveBeenCalledWith('session-1', { diagnosticUserInitiated: true });
+    expect(fixture.stopSession).toHaveBeenCalledWith('session-1', {
+      diagnosticUserInitiated: true,
+    });
     await expect(starting).resolves.toMatchObject({ success: true, timing: { state: 'aborted' } });
   });
 
@@ -236,7 +238,9 @@ describe('cowork session execution permissions', () => {
     expect(startSession).toHaveBeenCalledWith(
       'session-1',
       '',
-      expect.objectContaining({ attachments: [{ name: 'image.png', mimeType: 'image/png', base64Data: 'aGVsbG8=' }] }),
+      expect.objectContaining({
+        attachments: [{ name: 'image.png', mimeType: 'image/png', base64Data: 'aGVsbG8=' }],
+      }),
     );
   });
 
@@ -351,7 +355,7 @@ describe('cowork session execution permissions', () => {
       const ensureEngineRunning = vi.fn();
       registerCoworkSessionExecutionHandlers({
         ensureEngineRunning,
-        getCoworkStore: () => ({}) as CoworkStore,
+        getCoworkStore: () => ({ getConfig: () => ({}) }) as CoworkStore,
         getCoworkEngineRouter: () => ({}) as CoworkEngineRouter,
         waitForConfigUpdates: vi.fn(),
         getEngineNotReadyResponse: vi.fn(),
@@ -460,7 +464,9 @@ test('uses main even when a specialist was previously configured as the default'
 
 test('rejects a direct conversation with a peer before preparing any runtime', async () => {
   const ensureEngineRunning = vi.fn();
-  const getCoworkStore = vi.fn();
+  const getCoworkStore = vi.fn(
+    () => ({ getConfig: () => ({ allowMainAgentSwitch: false }) }) as CoworkStore,
+  );
   registerCoworkSessionExecutionHandlers({
     ensureEngineRunning,
     getCoworkStore,
@@ -472,5 +478,53 @@ test('rejects a direct conversation with a peer before preparing any runtime', a
     handlers.get('cowork:session:start')?.({}, { prompt: 'hello', agentId: 'research' }),
   ).resolves.toMatchObject({ success: false, error: 'agentUnavailable' });
   expect(ensureEngineRunning).not.toHaveBeenCalled();
-  expect(getCoworkStore).not.toHaveBeenCalled();
+  expect(getCoworkStore).toHaveBeenCalled();
 });
+
+test.each([
+  { enabled: true, deletedAt: undefined, allowed: true },
+  { enabled: false, deletedAt: undefined, allowed: false },
+  { enabled: true, deletedAt: 123, allowed: false },
+])(
+  'routes an opted-in specialist only when available: %j',
+  async ({ enabled, deletedAt, allowed }) => {
+    const created = { ...session('ask'), agentId: 'research' };
+    const createSession = vi.fn().mockReturnValue(created);
+    const startSession = vi.fn().mockResolvedValue(undefined);
+    registerCoworkSessionExecutionHandlers({
+      ensureEngineRunning: vi.fn().mockResolvedValue({ phase: 'running' }),
+      getCoworkStore: () =>
+        ({
+          getConfig: () => ({ workingDirectory: 'C:/project', allowMainAgentSwitch: true }),
+          getAgent: () => ({ enabled, deletedAt, model: 'provider/research-model' }),
+          createSession,
+          getSession: () => created,
+          updateSession: vi.fn(),
+        }) as unknown as CoworkStore,
+      getCoworkEngineRouter: () => ({ startSession }) as unknown as CoworkEngineRouter,
+      waitForConfigUpdates: async () => {},
+      getEngineNotReadyResponse: vi.fn(),
+    });
+    const result = await handlers.get('cowork:session:start')?.(
+      {},
+      { prompt: 'hello', agentId: 'research' },
+    );
+    if (!allowed) {
+      expect(result).toEqual({ success: false, error: 'agentUnavailable' });
+      expect(createSession).not.toHaveBeenCalled();
+      expect(startSession).not.toHaveBeenCalled();
+      return;
+    }
+    expect(result).toMatchObject({ success: true, session: { agentId: 'research' } });
+    expect(createSession.mock.calls[0][4]).toBe('research');
+    expect(createSession.mock.calls[0][6]).toBe('provider/research-model');
+    expect(startSession).toHaveBeenCalledWith(
+      created.id,
+      'hello',
+      expect.objectContaining({
+        agentId: 'research',
+        workspaceRoot: createSession.mock.calls[0][1],
+      }),
+    );
+  },
+);

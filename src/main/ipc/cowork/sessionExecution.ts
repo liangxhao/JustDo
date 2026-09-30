@@ -81,7 +81,10 @@ export const registerCoworkSessionExecutionHandlers = ({
         });
         return { success: true };
       } catch (error) {
-        return { success: false, error: error instanceof Error ? error.message : 'Failed to stop session' };
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to stop session',
+        };
       }
     }
     operation.cancelled = true;
@@ -98,7 +101,10 @@ export const registerCoworkSessionExecutionHandlers = ({
         operation.confirmCancellation?.();
         return { success: true };
       } catch (error) {
-        return { success: false, error: error instanceof Error ? error.message : 'Failed to stop session' };
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to stop session',
+        };
       } finally {
         operation.stopping = undefined;
       }
@@ -118,27 +124,31 @@ export const registerCoworkSessionExecutionHandlers = ({
       ) {
         return { success: false, error: 'Gateway prompt is invalid.' };
       }
-      if (options.agentId && options.agentId !== MAIN_USER_AGENT_ID) {
-        return { success: false, error: 'agentUnavailable' };
-      }
+
       if (options.clientTurnId) {
         if (pendingStarts.has(options.clientTurnId)) {
           return { success: false, error: 'The start operation is already pending.' };
         }
         let cancelBeforeAdmission!: () => void;
-        const cancellation = new Promise<void>(resolve => { cancelBeforeAdmission = resolve; });
+        const cancellation = new Promise<void>(resolve => {
+          cancelBeforeAdmission = resolve;
+        });
         operation = { cancelled: false, cancelBeforeAdmission, cancellation };
         pendingStarts.set(options.clientTurnId, operation);
       }
       await Promise.race([waitForConfigUpdates(), ...(operation ? [operation.cancellation] : [])]);
       if (operation?.cancelled) return { success: false, cancelled: true };
       const store = getCoworkStore();
+      const agentId = options.agentId || MAIN_USER_AGENT_ID;
+      if (agentId !== MAIN_USER_AGENT_ID && store.getConfig().allowMainAgentSwitch !== true) {
+        return { success: false, error: 'agentUnavailable' };
+      }
       const existingTiming = options.clientTurnId
         ? store.getSessionRunByClientTurnId(options.clientTurnId)
         : undefined;
       if (existingTiming) {
         const existingSession = store.getSession(existingTiming.sessionId);
-        if (existingSession?.agentId === MAIN_USER_AGENT_ID) {
+        if (existingSession?.agentId === agentId) {
           return { success: true, session: existingSession, timing: existingTiming };
         }
       }
@@ -152,6 +162,9 @@ export const registerCoworkSessionExecutionHandlers = ({
       }
 
       const config = store.getConfig();
+      if (agentId !== MAIN_USER_AGENT_ID && config.allowMainAgentSwitch !== true) {
+        return { success: false, error: 'agentUnavailable' };
+      }
       const permissionMode = resolvePermissionMode(config.permissionMode);
       const selectedWorkspaceRoot = (options.cwd || config.workingDirectory || '').trim();
       if (!selectedWorkspaceRoot) {
@@ -159,9 +172,9 @@ export const registerCoworkSessionExecutionHandlers = ({
       }
 
       const fallbackTitle = options.prompt.split('\n')[0].slice(0, 50) || 'New Session';
-      const agentId = MAIN_USER_AGENT_ID;
       const agent = store.getAgent(agentId);
-      if (!agent || !agent.enabled) return { success: false, error: 'agentUnavailable' };
+      if (!agent || !agent.enabled || agent.deletedAt)
+        return { success: false, error: 'agentUnavailable' };
       const initialModelRef = agentId === 'main' ? undefined : agent.model.trim() || undefined;
       const resolvedWorkspaceRoot = resolveTaskWorkingDirectory(selectedWorkspaceRoot);
       const session = store.createSession(
@@ -244,7 +257,9 @@ export const registerCoworkSessionExecutionHandlers = ({
       return {
         success: true,
         session: store.getSession(session.id) || { ...session, status: 'running' as const },
-        ...(timing ? { timing: store.getSessionRunByClientTurnId(timing.clientTurnId) ?? timing } : {}),
+        ...(timing
+          ? { timing: store.getSessionRunByClientTurnId(timing.clientTurnId) ?? timing }
+          : {}),
       };
     } catch (error) {
       return {

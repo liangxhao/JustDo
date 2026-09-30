@@ -406,3 +406,13 @@ test('assistant deletion refuses a running local session and main', () => {
   expect(() => store.deleteAgent('main')).toThrow('agentMainRequired');
   expect(store.getAgent('review')?.enabled).toBe(true);
 });
+
+test('assistant switching is opt-in and persists without changing existing session ownership', () => {
+  expect(store.getConfig().allowMainAgentSwitch).toBe(false);
+  store.setConfig({ allowMainAgentSwitch: true });
+  expect(store.getConfig().allowMainAgentSwitch).toBe(true);
+  const chat = store.createSession('Research', 'C:/project', 'local', [], 'research');
+  store.setConfig({ allowMainAgentSwitch: false });
+  expect(store.getConfig().allowMainAgentSwitch).toBe(false);
+  expect(store.getSession(chat.id)?.agentId).toBe('research');
+});

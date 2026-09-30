@@ -151,8 +151,12 @@ import {
 } from '../../providers/providerApiConfig';
 import { buildAgentEntry, buildManagedAgentEntries } from '../models/openclawAgentModels';
 import { getElectronNodeRuntimePath } from '../runtime/electronNodeRuntime';
-import { resolveManagedAgentWorkspace } from './agentWorkspace';
+import {
+  resolveManagedAgentWorkspace,
+  resolveManagedAgentWorkspaceRoot,
+} from './agentWorkspace';
 import { syncBuiltinCredentialFile } from './builtinCredentialFile';
+import { seedMainRoleFiles } from './mainRoleFiles';
 import { syncProviderSecretFile } from './providerSecretFile';
 
 export class OpenClawConfigSync {
@@ -287,12 +291,7 @@ export class OpenClawConfigSync {
       // No API/model configured yet (fresh install). Write a minimal config so
       // the gateway can start; it just won't have a model provider until the
       // user configures one.
-      const result = this.writeMinimalConfig(configPath, reason);
-      const workspaceDir = (coworkConfig.workingDirectory || '').trim();
-      const defaultWorkspaceDir = path.join(this.engineManager.getStateDir(), 'workspace');
-      const resolvedWorkspaceDir = workspaceDir || defaultWorkspaceDir;
-      if (!isAuthLifecycleSync) this.syncPerAgentWorkspaces(resolvedWorkspaceDir, coworkConfig);
-      return result;
+      return this.writeMinimalConfig(configPath, reason);
     }
 
     const allProvidersMap: Record<string, OpenClawProviderSelection['providerConfig']> =
@@ -375,6 +374,7 @@ export class OpenClawConfigSync {
     // Default workspace to stateDir/workspace so skills are found in stateDir/skills
     const defaultWorkspaceDir = path.join(this.engineManager.getStateDir(), 'workspace');
     const resolvedWorkspaceDir = workspaceDir ? path.resolve(workspaceDir) : defaultWorkspaceDir;
+    seedMainRoleFiles(this.engineManager.getStateDir(), this.engineManager.getRuntimeRoot?.());
     const preinstalledPluginIds = readPreinstalledPluginIds().filter(
       id => !isUserToggleableBundledPlugin(id) && isBundledPluginAvailable(id),
     );
@@ -486,7 +486,8 @@ export class OpenClawConfigSync {
           sandbox: buildManagedOpenClawSandboxConfig(coworkConfig.executionMode || 'local'),
           heartbeat: buildManagedOpenClawHeartbeatConfig(),
           compaction: buildManagedOpenClawCompactionConfig(),
-          workspace: resolvedWorkspaceDir,
+          workspace: resolveManagedAgentWorkspaceRoot(this.engineManager.getStateDir()),
+          cwd: resolvedWorkspaceDir,
           subagents: buildManagedOpenClawSubagentConfig(agentRuntimeSettings),
         },
         ...this.buildAgentsEntries(
@@ -654,11 +655,6 @@ export class OpenClawConfigSync {
       };
     }
 
-    if (!isAuthLifecycleSync) {
-      // Sync per-agent workspace files (SOUL.md, IDENTITY.md, AGENTS.md) for non-main agents
-      this.syncPerAgentWorkspaces(resolvedWorkspaceDir, coworkConfig);
-    }
-
     return {
       ok: true,
       changed: configChanged || preparedSecrets.secretsChanged,
@@ -689,10 +685,9 @@ export class OpenClawConfigSync {
   /**
    * Build the canonical `agents.entries` roster for openclaw.json.
    *
-   * With an explicit v2026.9.2 roster every entry without `workspace`, including
-   * `main`, resolves under `<defaults.workspace>/<normalizedAgentId>`. Pin the
-   * main and external ACP owners use the project workspace; native independent
-   * agents use stable runtime-owned role workspaces.
+   * Native agents, including main, have stable role workspaces and a separate
+   * project cwd. OpenClaw owns bootstrap files and layers project AGENTS.md.
+   * External ACP owners retain their existing project workspace contract.
    *
    * Per-agent `identity` (name, emoji) is set from the agent database so
    * OpenClaw picks it up natively.
@@ -736,13 +731,10 @@ export class OpenClawConfigSync {
           ...entry,
           id: agentId,
           workspace:
-            agentId === 'main' || 'runtime' in entry
+            'runtime' in entry
               ? mainWorkspaceDir
-              : resolveManagedAgentWorkspace(
-                  this.engineManager.getStateDir(),
-                  mainWorkspaceDir,
-                  agentId,
-                ),
+              : resolveManagedAgentWorkspace(this.engineManager.getStateDir(), agentId),
+          ...('runtime' in entry ? {} : { cwd: mainWorkspaceDir }),
         };
         const constrainedEntry = constrainAgentEntryToAvailableModels(
           normalizedEntry,
@@ -757,14 +749,6 @@ export class OpenClawConfigSync {
     );
 
     return { ownership: 'explicit', entries };
-  }
-
-  /**
-   * 不再向 agent workspace 写入任何 JustDo 内容。
-   * OpenClaw 自己管理 agent workspace。
-   */
-  private syncPerAgentWorkspaces(_mainWorkspaceDir: string, _coworkConfig: CoworkConfig): void {
-    // 空实现：让 OpenClaw 自己管理 agent workspace
   }
 
   /** Write a file only if its content has changed. */
@@ -803,6 +787,7 @@ export class OpenClawConfigSync {
     const resolvedWorkspaceDir = configuredWorkspaceDir
       ? path.resolve(configuredWorkspaceDir)
       : path.join(this.engineManager.getStateDir(), 'workspace');
+    seedMainRoleFiles(this.engineManager.getStateDir(), this.engineManager.getRuntimeRoot?.());
     const agentRuntimeSettings = this.getAgentRuntimeSettings();
     const browserMode = normalizeBrowserMode(this.getBrowserMode?.());
     if (
@@ -880,7 +865,8 @@ export class OpenClawConfigSync {
             heartbeat: buildManagedOpenClawHeartbeatConfig(),
             compaction: buildManagedOpenClawCompactionConfig(),
             subagents: buildManagedOpenClawSubagentConfig(agentRuntimeSettings),
-            workspace: resolvedWorkspaceDir,
+            workspace: resolveManagedAgentWorkspaceRoot(this.engineManager.getStateDir()),
+            cwd: resolvedWorkspaceDir,
             sandbox: buildManagedOpenClawSandboxConfig(coworkConfig.executionMode || 'local'),
           },
           entries: Object.fromEntries(
@@ -1030,7 +1016,8 @@ export class OpenClawConfigSync {
                 existingDefaults.subagents,
                 buildManagedOpenClawSubagentConfig(agentRuntimeSettings),
               ),
-              workspace: resolvedWorkspaceDir,
+              workspace: resolveManagedAgentWorkspaceRoot(this.engineManager.getStateDir()),
+              cwd: resolvedWorkspaceDir,
               sandbox: buildManagedOpenClawSandboxConfig(coworkConfig.executionMode || 'local'),
             };
             if (agentRuntimeSettings.agent.maxConcurrent === null) {

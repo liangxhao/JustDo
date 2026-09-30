@@ -77,6 +77,7 @@ export interface CoworkSession {
 
 // Cowork configuration
 export interface CoworkConfig {
+  allowMainAgentSwitch?: boolean;
   workingDirectory: string;
   executionMode: CoworkExecutionMode;
   agentEngine: CoworkAgentEngine;
@@ -89,6 +90,7 @@ export type CoworkConfigUpdate = Partial<
   Pick<
     CoworkConfig,
     | 'workingDirectory'
+    | 'allowMainAgentSwitch'
     | 'executionMode'
     | 'agentEngine'
     | 'permissionMode'

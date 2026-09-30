@@ -23,6 +23,7 @@ import { createPortal } from 'react-dom';
 import { useSelector } from 'react-redux';
 
 import { useDialogFocusTrap } from '@/features/cowork/components/shared/useDialogFocusTrap';
+import { coworkService } from '@/features/cowork/coworkService';
 import { toOpenClawModelRef } from '@/features/models/openclawModelRef';
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/common/Modal';
@@ -46,6 +47,10 @@ export default function AgentManager({
 }: {
   leaveGuard: MutableRefObject<(() => boolean) | null>;
 }) {
+  const allowMainAgentSwitch = useSelector(
+    (state: RootState) => state.cowork.config.allowMainAgentSwitch === true,
+  );
+  const [savingSwitch, setSavingSwitch] = useState(false);
   const roster = useSelector((state: RootState) => state.agent.agents);
   const agents = roster.filter(agent => !agent.deletedAt);
   const models = useSelector((state: RootState) => state.model.availableModels);
@@ -333,6 +338,32 @@ export default function AgentManager({
           {t('agentCreate')}
         </button>
       </header>
+      <label className="flex items-start gap-3 rounded-xl border border-border p-4">
+        <input
+          type="checkbox"
+          className="mt-1"
+          checked={allowMainAgentSwitch}
+          disabled={savingSwitch}
+          onChange={async event => {
+            const enabled = event.target.checked;
+            setSavingSwitch(true);
+            try {
+              if (!(await coworkService.updateConfig({ allowMainAgentSwitch: enabled })))
+                setError(t('agentSwitchSaveFailed'));
+            } catch {
+              setError(t('agentSwitchSaveFailed'));
+            } finally {
+              setSavingSwitch(false);
+            }
+          }}
+        />
+        <span>
+          <span className="text-sm font-medium">{t('agentAllowMainSwitch')}</span>
+          <span className="mt-1 block text-xs leading-relaxed text-secondary">
+            {t('agentAllowMainSwitchDescription')}
+          </span>
+        </span>
+      </label>
       <div className="agent-manager-layout grid min-w-0 gap-5">
         <nav aria-label={t('agentManager')} className="min-w-0 space-y-3">
           <div className="relative">
@@ -438,7 +469,7 @@ export default function AgentManager({
                           name: t(`agentTemplate${preset.key}`),
                           description: t(`agentTemplate${preset.key}Description`),
                         },
-                        `${t(`agentTemplate${preset.key}Rules`)}\n\n${t('agentTemplatePeerRules')}`,
+                        `${t(`agentTemplate${preset.key}Rules`)}\n\n${t('agentTemplateScopeRules')}\n\n${t('agentTemplatePeerRules')}`,
                       )
                     }
                     className="rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground transition hover:border-primary/40"

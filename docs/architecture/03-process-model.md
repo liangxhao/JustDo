@@ -79,7 +79,7 @@ sequenceDiagram
 
 ## 4. Cowork 通道的关键契约
 
-首轮 `cowork:session:start` 校验消息、main 身份、工作目录与 clientTurnId，等待配置和引擎准备后创建会话及运行绑定。`SessionStartIpc.Cancel` 可取消准入前等待；已经产生 session 时走停止；迟到取消必须匹配当前 turn，不能停止后续新运行。
+首轮 `cowork:session:start` 校验消息、助手切换设置及助手可用性、工作目录与 clientTurnId，等待配置和引擎准备后创建会话及运行绑定。`SessionStartIpc.Cancel` 可取消准入前等待；已经产生 session 时走停止；迟到取消必须匹配当前 turn，不能停止后续新运行。
 
 后续直接发送仍需 Main 准备会话权限。run begin/bind/fail/unknown 等产品回执区别本地意图与原生接收，UI 不能从“invoke 已返回”推断模型完成。批量运行状态需合并原生主运行、子任务和 Goal 续跑阶段。
 

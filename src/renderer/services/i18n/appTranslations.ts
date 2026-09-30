@@ -68,13 +68,19 @@ export const appTranslations = {
     collaborationBudgetExceeded: '本轮协作已达到消息上限。',
     collaborationInvalidTransition: '消息状态变化无效。',
     collaborationStateConflict: '消息状态已更新，请刷新。',
+    agentAllowMainSwitch: '允许切换主会话的助手',
+    agentAllowMainSwitchDescription:
+      '开启后可在输入框上方选择助手。已有聊天切换助手会新建会话并保留工程目录。包括主助手在内，每个助手都有独立角色目录；工程 AGENTS.md 作为共享项目规则加载，身份和职责请在下方角色文件中设置。关闭后新会话使用主助手，历史会话归属不变。',
+    agentSelectConversation: '选择会话助手',
+    agentSwitchNewConversation: '切换助手将新建会话并保留工程目录',
+    agentSwitchSaveFailed: '保存助手切换设置失败，请重试。',
     agentManager: '助手',
     agentRosterSummary: '{total} 位助手 · {enabled} 位已启用',
     agentManagerIntro: '为不同工作配置专长。主助手会按需邀请它们参与协作。',
     agentSearch: '搜索名称或职责',
     agentStatusFilter: '助手状态',
     agentFilterAll: '全部',
-    agentMainLabel: '主助手 · 对话入口',
+    agentMainLabel: '主助手 · 默认对话助手',
     agentNoMatches: '没有匹配的助手',
     agentTemplates: '从常用职责开始，或自行填写',
     agentProfileSettings: '基础配置',
@@ -90,7 +96,8 @@ export const appTranslations = {
     agentSaveWhenIdle: '请在任务空闲时保存配置',
     agentDiscard: '放弃修改',
     agentRulesIntro: '设定工作方式、行为边界与表达风格',
-    agentFilesIntro: '优先完善 AGENTS.md，让助手明确职责与工作方式。其他文件按需填写即可。',
+    agentFilesIntro:
+      '这些文件属于当前助手，切换工程不会改变。助手 AGENTS.md 定义身份、职责与通用工作方式；工程 AGENTS.md 补充项目规范，项目范围内的具体执行要求优先于通用偏好，不改变助手身份和权限。SOUL.md 定义个性与语气。',
     agentPrimaryFile: '核心规则',
     agentOptionalFile: '可选',
     agentPrimaryFileHelp: '建议优先配置：写清职责、执行要求与行为边界。',
@@ -107,6 +114,8 @@ export const appTranslations = {
     agentBootstrapHint: '首次使用时的引导说明；初始化完成后此文件可能不存在',
     agentMemoryHint: '助手保留的长期记忆',
     agentTemplateRules: '角色规则（可编辑）',
+    agentTemplateScopeRules:
+      '规则范围：助手角色文件定义身份、职责和通用工作方式；工程 AGENTS.md 定义工程规范，两者共同生效。在工程范围内，具体的执行规范优先于通用偏好，但不改变助手身份、工具权限或授权范围。修改子目录文件前检查适用的子目录 AGENTS.md，更具体的目录规范仅在其范围内优先，不假定运行时已自动加载。遵循系统、开发者及用户的直接指令；无法消解的冲突需说明并请求澄清。',
     agentTemplateRulesHelp: '保存时创建助手并写入 AGENTS.md；之后可在角色文件中继续修改。',
     agentTemplateSaveFailed: '助手已创建，角色规则未保存。草稿已保留，请重试保存角色文件。',
     agentTemplatePeerRules:
@@ -144,8 +153,9 @@ export const appTranslations = {
     agentFiles: '角色文件',
     agentSaveFile: '保存角色文件',
     agentManagerHelp:
-      '你始终与主助手对话，由它按需调度这些助手。工作目录自动分配。请在没有任务运行时保存配置。',
-    agentFilesHelp: '这些文件定义角色的行为。修改保存在下方显示的角色目录中，不会复制到会话项目。',
+      '默认与主助手对话，也可开启助手切换。每个助手的角色目录独立于工程目录。请在没有任务运行时保存配置。',
+    agentFilesHelp:
+      '所有助手（包括主助手）的角色与记忆保存在各自独立目录。首次启用时会从内置模板初始化主助手角色文件，不覆盖已编辑的文件。工程 AGENTS.md 仍作为项目规则加载；如含身份指令，请核对整理，以免冲突。',
     agentCreateFirst: '先创建助手，再按需编辑角色规则。',
     agentDiscardChanges: '放弃尚未保存的修改？',
     agentFilter: '按 Agent 筛选会话',
@@ -175,6 +185,8 @@ export const appTranslations = {
     dismiss: '关闭',
     none: '无',
     // 记忆
+    memoryAssistant: '查看助手记忆',
+    memoryAssistantLoadFailed: '助手列表加载失败，请重新打开记忆面板。',
     memoryTitle: '记忆',
     memoryDescription: '查看助手记住了什么，让跨对话协作真正延续',
     memoryOverviewTab: '概览',
@@ -328,6 +340,12 @@ export const appTranslations = {
     collaborationBudgetExceeded: 'This collaboration round reached its message limit.',
     collaborationInvalidTransition: 'Invalid message state transition.',
     collaborationStateConflict: 'The message state changed. Refresh to continue.',
+    agentAllowMainSwitch: 'Allow switching the conversation assistant',
+    agentAllowMainSwitchDescription:
+      'Show an assistant selector above the message input. Switching in an existing chat starts a new conversation in the same project. Every assistant, including main, has a separate role folder. The project AGENTS.md supplies shared project rules; define identity and responsibilities in the role files below. Turning this off uses main for new chats and preserves existing chat ownership.',
+    agentSelectConversation: 'Select conversation assistant',
+    agentSwitchNewConversation: 'Start a new conversation with this assistant in the same project',
+    agentSwitchSaveFailed: 'Could not save the assistant switching setting. Try again.',
     agentManager: 'Assistants',
     agentRosterSummary: '{total} assistants · {enabled} enabled',
     agentManagerIntro:
@@ -335,7 +353,7 @@ export const appTranslations = {
     agentSearch: 'Search names or responsibilities',
     agentStatusFilter: 'Assistant status',
     agentFilterAll: 'All',
-    agentMainLabel: 'Main assistant · Your conversation',
+    agentMainLabel: 'Main assistant · Default for conversations',
     agentNoMatches: 'No matching assistants',
     agentTemplates: 'Start with a role preset, or fill in your own',
     agentProfileSettings: 'Profile settings',
@@ -354,7 +372,7 @@ export const appTranslations = {
     agentDiscard: 'Discard changes',
     agentRulesIntro: 'Define working methods, boundaries and communication style',
     agentFilesIntro:
-      'Start with AGENTS.md to define responsibilities and working methods. Add other files as needed.',
+      'These files belong to this assistant and stay the same when projects change. The assistant AGENTS.md defines identity, responsibilities and general working methods. The project AGENTS.md adds project rules: specific execution requirements take precedence over general preferences within that project, without changing identity or permissions. SOUL.md defines personality and tone.',
     agentPrimaryFile: 'Core rules',
     agentOptionalFile: 'Optional',
     agentPrimaryFileHelp:
@@ -372,6 +390,8 @@ export const appTranslations = {
     agentBootstrapHint: 'First-use guidance; this file may be absent after onboarding',
     agentMemoryHint: 'Long-term memories retained by the assistant',
     agentTemplateRules: 'Role instructions (editable)',
+    agentTemplateScopeRules:
+      'Instruction scope: assistant role files define identity, responsibilities and general working methods; the project AGENTS.md defines project requirements. Both apply. Within the project, specific execution requirements take precedence over general preferences without changing assistant identity, tool permissions or authorization. Before editing subdirectory files, check applicable nested AGENTS.md files; more specific directory rules take precedence only within their scope. Do not assume the runtime has loaded them automatically. Follow direct system, developer and user instructions; explain unresolved conflicts and request clarification.',
     agentTemplateRulesHelp:
       'Saving creates the assistant and writes AGENTS.md. You can edit the role file afterwards.',
     agentTemplateSaveFailed:
@@ -415,9 +435,9 @@ export const appTranslations = {
     agentFiles: 'Role files',
     agentSaveFile: 'Save role file',
     agentManagerHelp:
-      'You always chat with the main assistant, which delegates to these assistants as needed. Workspaces are assigned automatically. Save configuration when no tasks are running.',
+      'Conversations default to main, with optional assistant switching. Each assistant has a role folder separate from the project. Save configuration when no tasks are running.',
     agentFilesHelp:
-      'These files define the role’s behavior. Changes are saved in the role folder shown below, without being copied into conversation projects.',
+      'Every assistant, including main, keeps role files and memory in a separate folder. On first use, main role files are initialized from bundled templates without replacing edited files. The project AGENTS.md still supplies project rules; review any identity instructions in it to avoid conflicts.',
     agentCreateFirst: 'Save the agent first, then edit its role files.',
     agentDiscardChanges: 'Discard unsaved changes?',
     agentFilter: 'Filter sessions by agent',
@@ -448,6 +468,8 @@ export const appTranslations = {
     dismiss: 'Dismiss',
     none: 'None',
     // Memory
+    memoryAssistant: 'Assistant memory',
+    memoryAssistantLoadFailed: 'Could not load assistants. Reopen the memory panel to retry.',
     memoryTitle: 'Memory',
     memoryDescription: 'See what your assistant remembers and carry context across conversations',
     memoryOverviewTab: 'Overview',

@@ -1144,8 +1144,8 @@ export const registerCoworkSessionHandlers = ({
 
   ipcMain.handle('cowork:session:remoteManaged', async (_event, sessionId: string) => {
     try {
-      const agentId = getCoworkStore().getSession(sessionId)?.agentId;
-      return { success: true, remoteManaged: !!agentId && agentId !== 'main' };
+      const session = getCoworkStore().getSession(sessionId);
+      return { success: true, remoteManaged: !!session?.external };
     } catch (error) {
       return {
         success: false,

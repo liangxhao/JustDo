@@ -11,7 +11,7 @@ Cowork 将桌面产品会话映射到 OpenClaw 原生执行。本文以当前 se
 | clientTurnId       | 产品发送链路       | 用户提交幂等、准入前取消、运行计时 |
 | 原生 runId         | Gateway            | 实际执行、事件归属和接收确认       |
 
-受管 session key 包含 Agent 与产品 session 身份，但不能只解析字符串就授予访问。默认用户会话固定 main；任务内助手保留自己的身份，外部集成会话保存单独映射。会话复制、分支和旧 Handoff 来源属于不同关系。
+受管 session key 包含 Agent 与产品 session 身份，但不能只解析字符串就授予访问。默认用户会话使用 main；设置中显式开启助手切换后，新会话可选择已启用且未删除的助手，关闭开关不改变历史会话归属。已有聊天切换助手保留工程目录并新建会话，不复制原生历史；任务内助手保留自己的身份，外部集成会话保存单独映射。会话复制、分支和旧 Handoff 来源属于不同关系。
 
 ## 2. 状态存放在哪里
 
@@ -28,7 +28,7 @@ sequenceDiagram
   participant S as Store / Router
   participant G as Gateway
   UI->>H: start(prompt, cwd, clientTurnId)
-  H->>H: 校验输入和 main 身份
+  H->>H: 校验输入、助手切换设置和助手可用性
   H->>H: 等待配置及引擎 readiness
   H->>S: 幂等查询 / 创建产品会话与回执
   S->>G: 准备原生 session、权限、模型
@@ -140,3 +140,10 @@ PresentPlan 将规范化计划作为工作区内受控文件持久化，并保�
 Main 从 `ipc/cowork/sessionExecution.ts`、`sessions.ts`、`sessionRuntime.ts`、`interactions.ts` 进入；Router 在 `engine/cowork/`，Adapter 在 `engine/openclaw/`，Goal 在 `openclaw/goals/`。Renderer 从 CoworkView、composer、sessions 和聊天 wrapper 组合。
 
 回归应覆盖准入前取消、重复 clientTurn、原生先完成后响应、停止失败、会话切换迟到事件、Plan reset、Goal fence、协作删除部分成功和历史恢复。对应 handler、Store、Adapter 与 controller 都有领域测试；一次正常发送不能替代这些边界验证。
+
+原生助手的角色 workspace 与任务 cwd 分开：main 和专长助手统一使用
+`stateDir/agent-workspaces/<agentId>` 保存角色与记忆，配置投影用 OpenClaw 的
+`agents.defaults.cwd` / `agents.entries[id].cwd` 表达默认工程目录。每个会话的
+`sessions.create.cwd` 仍是执行目录权威，不受之后首页工程选择影响。原生 runner
+加载所属助手的 bootstrap 文件，并额外注入工程根 `AGENTS.md`；不会加载工程的
+其他人格文件。应用不修改这套注入顺序。首次建立独立 main 角色目录时，从随应用提供的 OpenClaw 运行时模板初始化角色文件，保留目标目录中的已有编辑；初始化不读取工程目录。

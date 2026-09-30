@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { MemoryIndexHealth, type MemorySearchResult } from '@shared/openclaw/memory';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 
 import MemoryView from './MemoryView';
@@ -36,7 +36,15 @@ function mount(
   };
   Object.defineProperty(window, 'electron', {
     configurable: true,
-    value: { openclaw: { memory } },
+    value: {
+      agents: {
+        list: vi.fn().mockResolvedValue([
+          { id: 'main', name: 'main' },
+          { id: 'research', name: 'Research' },
+        ]),
+      },
+      openclaw: { memory },
+    },
   });
   render(<MemoryView isSidebarCollapsed={false} onToggleSidebar={vi.fn()} onNewChat={vi.fn()} />);
   return memory;
@@ -109,4 +117,45 @@ test('describes complete stored vectors without asserting live semantic readines
   await screen.findByText('memoryIndexStored');
   expect(screen.queryByText('memoryIndexReady')).toBeNull();
   expect(screen.queryByText('memoryIndexUnknown')).toBeNull();
+});
+
+test('scopes overview, search and rebuild to the selected assistant', async () => {
+  const memory = mount();
+  await screen.findByRole('option', { name: 'Research' });
+  fireEvent.change(screen.getByRole('combobox', { name: 'memoryAssistant' }), {
+    target: { value: 'research' },
+  });
+  await waitFor(() => expect(memory.getOverview).toHaveBeenCalledWith('research'));
+  await waitFor(() => expect(memory.getIndexStatus).toHaveBeenCalledWith('research'));
+  await search();
+  await waitFor(() => expect(memory.search).toHaveBeenCalledWith('preferences', 'research'));
+  fireEvent.click(screen.getByRole('button', { name: 'memoryRebuild' }));
+  await waitFor(() => expect(memory.rebuildIndex).toHaveBeenCalledWith('research'));
+});
+
+test('discards pending search results when switching assistants', async () => {
+  const memory = mount();
+  let finish!: (result: MemorySearchResult) => void;
+  memory.search.mockImplementationOnce(
+    () =>
+      new Promise(resolve => {
+        finish = resolve;
+      }),
+  );
+  await search();
+  await screen.findByRole('option', { name: 'Research' });
+  fireEvent.change(screen.getByRole('combobox'), { target: { value: 'research' } });
+  await waitFor(() => expect(memory.getOverview).toHaveBeenCalledWith('research'));
+  await act(async () =>
+    finish({
+      success: true,
+      hits: [
+        { path: 'MEMORY.md', snippet: 'Old assistant secret', startLine: 1, endLine: 1, score: 1 },
+      ],
+    }),
+  );
+  expect(screen.queryByText('Old assistant secret')).toBeNull();
+  expect((screen.getByPlaceholderText('memorySearchPlaceholder') as HTMLInputElement).value).toBe(
+    '',
+  );
 });

@@ -259,6 +259,52 @@ test.each([true, false])('preserves cold storage through minimal startup and sub
 });
 
 describe('OpenClaw auth logout config sync', () => {
+  test.each(['full', 'minimal'] as const)('%s sync separates all native role homes from changing project directories', mode => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-role-homes-'));
+    temporaryDirectories.push(stateDir);
+    const configPath = path.join(stateDir, 'openclaw.json');
+    let projectDir = path.join(stateDir, '项目 A');
+    fs.mkdirSync(projectDir);
+    const projectRules = path.join(projectDir, 'AGENTS.md');
+    const projectSoul = path.join(projectDir, 'SOUL.md');
+    fs.writeFileSync(projectRules, 'Shared project rules');
+    fs.writeFileSync(projectSoul, 'Existing main persona must not be moved or deleted');
+    const roleRoot = path.join(stateDir, 'agent-workspaces');
+    const mainHome = path.join(roleRoot, 'main');
+    fs.mkdirSync(mainHome, { recursive: true });
+    fs.writeFileSync(path.join(mainHome, 'SOUL.md'), 'Independent main persona');
+    const appConfig = mode === 'full' ? {
+      model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
+      providers: { 'custom-provider': {
+        enabled: true, apiKey: 'test-secret', baseUrl: 'https://custom.example.test/v1',
+        apiFormat: 'openai', models: [{ id: 'custom-model' }],
+      } },
+    } : {};
+    setStoreGetter(() => ({ get: () => appConfig }) as never);
+    const sync = new OpenClawConfigSync({
+      engineManager: {
+        getConfigPath: () => configPath, getStateDir: () => stateDir,
+        getDesiredVersion: () => '2026.9.6',
+      },
+      getCoworkConfig: () => ({ workingDirectory: projectDir, executionMode: 'local', agentEngine: 'openclaw' }),
+      getAgents: () => ['main', 'research'].map(id => ({ id, name: id, enabled: true, model: '', isDefault: id === 'main' })),
+    } as never);
+    for (const reason of ['startup', 'settings', BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout]) {
+      expect(sync.sync(reason).ok).toBe(true);
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      expect(config.agents.defaults.workspace).toBe(roleRoot);
+      expect(config.agents.defaults.cwd).toBe(projectDir);
+      for (const id of ['main', 'research']) {
+        expect(config.agents.entries[id]).toMatchObject({ workspace: path.join(roleRoot, id), cwd: projectDir });
+      }
+      projectDir = path.join(stateDir, '项目 B');
+    }
+    expect(fs.readFileSync(projectRules, 'utf8')).toBe('Shared project rules');
+    expect(fs.readFileSync(projectSoul, 'utf8')).toBe('Existing main persona must not be moved or deleted');
+    expect(fs.readFileSync(path.join(mainHome, 'SOUL.md'), 'utf8')).toBe('Independent main persona');
+    expect(fs.existsSync(path.join(mainHome, 'AGENTS.md'))).toBe(false);
+  });
+
   test.each(['full', 'minimal'].flatMap(mode =>
     ['allow', 'alsoAllow', 'emptyAllow'].map(policy => ({ mode, policy })),
   ))('$mode sync preserves Jev opt-in, SecretRefs and $policy across lifecycle changes', ({ mode, policy }) => {
@@ -1220,7 +1266,8 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.agents.entries.main).toEqual({
       reasoningDefault: 'stream',
       heartbeat: { every: '0m' },
-      workspace: path.join(path.dirname(configPath), 'workspace'),
+      workspace: path.join(path.dirname(configPath), 'agent-workspaces', 'main'),
+      cwd: path.join(path.dirname(configPath), 'workspace'),
     });
     expect(Object.keys(config.agents.entries)).toEqual(['main']);
     expect(config.plugins.entries.custom_plugin).toEqual({
@@ -1352,6 +1399,7 @@ describe('OpenClaw auth logout config sync', () => {
   test('builds canonical Agent entries with a custom fallback', () => {
     const sync = new OpenClawConfigSync({
       engineManager: {
+        getStateDir: () => '/state',
         getDesiredVersion: () => '2026.6.11',
       },
       getCoworkConfig: () => ({}),
@@ -1389,7 +1437,8 @@ describe('OpenClaw auth logout config sync', () => {
 
     expect(result.ownership).toBe('explicit');
     expect(result.entries.main).toMatchObject({
-      workspace: 'E:/workspace/project',
+      workspace: path.join('/state', 'agent-workspaces', 'main'),
+      cwd: 'E:/workspace/project',
       model: {
         primary: 'custom-provider/custom-model',
       },

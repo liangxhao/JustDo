@@ -97,6 +97,24 @@ describe('cowork config IPC', () => {
     });
   });
 
+  it('persists assistant switching without changing Gateway configuration', async () => {
+    await expect(
+      handlers.get('cowork:config:set')?.({}, { allowMainAgentSwitch: true }),
+    ).resolves.toEqual({ success: true });
+    expect(currentConfig.allowMainAgentSwitch).toBe(true);
+    await expect(
+      handlers.get('cowork:config:set')?.({}, { allowMainAgentSwitch: false }),
+    ).resolves.toEqual({ success: true });
+    expect(currentConfig.allowMainAgentSwitch).toBe(false);
+    expect(syncOpenClawConfig).not.toHaveBeenCalled();
+  });
+  it('rejects non-boolean assistant switching settings', async () => {
+    await expect(
+      handlers.get('cowork:config:set')?.({}, { allowMainAgentSwitch: 'true' }),
+    ).resolves.toMatchObject({ success: false });
+    expect(setConfig).not.toHaveBeenCalled();
+  });
+
   it('rejects an invalid permission mode instead of silently succeeding', async () => {
     const result = await handlers.get('cowork:config:set')?.({}, { permissionMode: 'unsafe' });
 
@@ -200,9 +218,7 @@ describe('cowork config IPC', () => {
   });
 
   it('persists explicit sandbox network access and synchronizes OpenClaw', async () => {
-    const result = await handlers
-      .get('cowork:config:set')
-      ?.({}, { sandboxNetworkEnabled: true });
+    const result = await handlers.get('cowork:config:set')?.({}, { sandboxNetworkEnabled: true });
 
     expect(result).toEqual({ success: true });
     expect(setConfig).toHaveBeenCalledWith(
@@ -212,9 +228,7 @@ describe('cowork config IPC', () => {
   });
 
   it('rejects an invalid sandbox network preference', async () => {
-    const result = await handlers
-      .get('cowork:config:set')
-      ?.({}, { sandboxNetworkEnabled: 'yes' });
+    const result = await handlers.get('cowork:config:set')?.({}, { sandboxNetworkEnabled: 'yes' });
 
     expect(result).toEqual({ success: false, error: 'Invalid sandbox network setting.' });
     expect(setConfig).not.toHaveBeenCalled();

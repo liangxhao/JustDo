@@ -4,9 +4,14 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { Provider } from 'react-redux';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { coworkService } from '@/features/cowork/coworkService';
+
 import AgentManager from './AgentManager';
 import agentReducer, { setAgents } from './agentSlice';
 vi.mock('@/services/i18n', () => ({ i18nService: { t: (key: string) => key } }));
+vi.mock('@/features/cowork/coworkService', () => ({
+  coworkService: { updateConfig: vi.fn().mockResolvedValue(true) },
+}));
 vi.mock('./agentService', () => ({
   agentService: { loadAgents: vi.fn().mockResolvedValue(undefined) },
 }));
@@ -30,7 +35,11 @@ const profile = {
 };
 function mount(profiles = [profile]) {
   const store = configureStore({
-    reducer: { agent: agentReducer, model: () => ({ availableModels: [] }) },
+    reducer: {
+      agent: agentReducer,
+      model: () => ({ availableModels: [] }),
+      cowork: () => ({ config: {} }),
+    },
   });
   store.dispatch(setAgents(profiles));
   const leaveGuard = { current: null as (() => boolean) | null };
@@ -57,6 +66,16 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 describe('independent Agent manager', () => {
+  it('defaults assistant switching off and saves an explicit opt-in', async () => {
+    mount();
+    const checkbox = screen.getByRole('checkbox', { name: /agentAllowMainSwitch/ });
+    expect(checkbox).toHaveProperty('checked', false);
+    fireEvent.click(checkbox);
+    await waitFor(() =>
+      expect(coworkService.updateConfig).toHaveBeenCalledWith({ allowMainAgentSwitch: true }),
+    );
+  });
+
   it('navigates file tabs with the keyboard without discarding the current draft', async () => {
     mount();
     const rules = screen.getByRole('tab', { name: 'AGENTS.md' });
@@ -397,7 +416,10 @@ it('creates an editable peer role template through native role files', async () 
   mount([]);
   fireEvent.click(screen.getByRole('button', { name: /agentTemplateResearch$/ }));
   const rules = screen.getByRole('textbox', { name: 'AGENTS.md' });
-  expect(rules).toHaveProperty('value', 'agentTemplateResearchRules\n\nagentTemplatePeerRules');
+  expect(rules).toHaveProperty(
+    'value',
+    'agentTemplateResearchRules\n\nagentTemplateScopeRules\n\nagentTemplatePeerRules',
+  );
   fireEvent.change(rules, { target: { value: 'Edited peer rules' } });
   fireEvent.click(screen.getByRole('button', { name: 'save' }));
   await waitFor(() =>
@@ -423,7 +445,7 @@ it('keeps a created profile and role draft when the initial native role write fa
   await waitFor(() =>
     expect(screen.getByRole('textbox', { name: 'AGENTS.md' })).toHaveProperty(
       'value',
-      'agentTemplateReviewRules\n\nagentTemplatePeerRules',
+      'agentTemplateReviewRules\n\nagentTemplateScopeRules\n\nagentTemplatePeerRules',
     ),
   );
   expect(screen.getByRole('button', { name: 'agentSaveFile' })).toHaveProperty('disabled', false);

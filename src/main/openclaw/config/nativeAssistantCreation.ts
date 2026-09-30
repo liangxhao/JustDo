@@ -111,7 +111,7 @@ export class NativeAssistantCreation {
             Date.now(),
           );
         })();
-      const workspace = resolveManagedAgentWorkspace(this.deps.getStateDir(), '', id);
+      const workspace = resolveManagedAgentWorkspace(this.deps.getStateDir(), id);
       try {
         const roster = await this.deps.requestGateway<{ agents: Array<{ id: string }> }>(
           'agents.list',

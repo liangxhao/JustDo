@@ -24,7 +24,10 @@ import type {
   SessionRunState,
   SessionRunTiming,
 } from '../../shared/cowork/sessionRun';
-import type { ExternalSessionMetadata, ExternalSessionStatus } from '../../shared/integrations/multica';
+import type {
+  ExternalSessionMetadata,
+  ExternalSessionStatus,
+} from '../../shared/integrations/multica';
 import {
   type AgentRuntimeSettings,
   parseAgentRuntimeSettings,
@@ -154,6 +157,7 @@ export interface CoworkSessionSummary {
 }
 
 export interface CoworkConfig {
+  allowMainAgentSwitch?: boolean;
   workingDirectory: string;
   executionMode: CoworkExecutionMode;
   sandboxNetworkEnabled: boolean;
@@ -167,6 +171,7 @@ export type CoworkConfigUpdate = Partial<
   Pick<
     CoworkConfig,
     | 'workingDirectory'
+    | 'allowMainAgentSwitch'
     | 'executionMode'
     | 'sandboxNetworkEnabled'
     | 'agentEngine'
@@ -1019,6 +1024,7 @@ export class CoworkStore {
 
   getConfig(): CoworkConfig {
     const configKeys = [
+      'allowMainAgentSwitch',
       'workingDirectory',
       'executionMode',
       'sandboxNetworkEnabled',
@@ -1034,6 +1040,7 @@ export class CoworkStore {
     const cfg = new Map(configRows.map(r => [r.key, r.value]));
 
     return {
+      allowMainAgentSwitch: cfg.get('allowMainAgentSwitch') === 'true',
       workingDirectory: cfg.get('workingDirectory') || getDefaultWorkingDirectory(),
       executionMode: normalizeCoworkExecutionModeValue(cfg.get('executionMode')),
       sandboxNetworkEnabled: cfg.get('sandboxNetworkEnabled') === 'true',
@@ -1053,6 +1060,17 @@ export class CoworkStore {
 
   setConfig(config: CoworkConfigUpdate): void {
     const now = Date.now();
+    if (config.allowMainAgentSwitch !== undefined) {
+      if (typeof config.allowMainAgentSwitch !== 'boolean')
+        throw new Error('Invalid assistant switching setting');
+      this.db
+        .prepare(
+          `INSERT INTO cowork_config (key, value, updated_at)
+        VALUES ('allowMainAgentSwitch', ?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+        )
+        .run(String(config.allowMainAgentSwitch), now);
+    }
 
     if (config.workingDirectory !== undefined) {
       this.db

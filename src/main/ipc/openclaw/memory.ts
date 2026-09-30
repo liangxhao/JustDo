@@ -36,6 +36,7 @@ const REBUILD_TIMEOUT_MS = 15 * 60_000;
 
 interface MemoryHandlerDependencies {
   getManager: () => OpenClawEngineManager;
+  isAgentAvailable: (agentId: string) => boolean;
   requestGateway: <T>(method: string, params?: unknown) => Promise<T>;
 }
 
@@ -68,15 +69,15 @@ const readJsonFile = <T>(filePath: string): T | null => {
 export const resolveMemoryWorkspace = async (
   manager: OpenClawEngineManager,
   requestGateway: MemoryHandlerDependencies['requestGateway'],
+  agentId = MEMORY_AGENT_ID,
 ): Promise<string> => {
   const config = readJsonFile<OpenClawConfig>(manager.getConfigPath());
   const agent =
-    config?.agents?.entries?.[MEMORY_AGENT_ID] ??
-    config?.agents?.list?.find(item => item.id === MEMORY_AGENT_ID);
+    config?.agents?.entries?.[agentId] ?? config?.agents?.list?.find(item => item.id === agentId);
   const configured = typeof agent?.workspace === 'string' ? agent.workspace.trim() : '';
   if (path.isAbsolute(configured)) return path.resolve(configured);
   // Native home/environment and ownership rules resolve all other workspace paths.
-  const result = await requestGateway<unknown>('agents.files.list', { agentId: MEMORY_AGENT_ID });
+  const result = await requestGateway<unknown>('agents.files.list', { agentId });
   if (
     !isRecord(result) ||
     typeof result.workspace !== 'string' ||
@@ -318,9 +319,12 @@ const sanitizeMemoryDiagnostic = (value: string): string =>
     .trim()
     .slice(-1_500);
 
-export const normalizeMemoryIndexStatus = (value: unknown): MemoryIndexStatus => {
+export const normalizeMemoryIndexStatus = (
+  value: unknown,
+  agentId = MEMORY_AGENT_ID,
+): MemoryIndexStatus => {
   const root = Array.isArray(value)
-    ? value.find(entry => isRecord(entry) && entry.agentId === MEMORY_AGENT_ID)
+    ? value.find(entry => isRecord(entry) && entry.agentId === agentId)
     : value;
   const item = isRecord(root) && isRecord(root.status) ? root.status : root;
   if (!isRecord(item) || typeof item.provider !== 'string' || item.backend !== 'builtin') {
@@ -375,12 +379,13 @@ export const normalizeMemoryIndexStatus = (value: unknown): MemoryIndexStatus =>
 const loadIndexStatus = async (
   manager: OpenClawEngineManager,
   workspaceDir: string,
+  agentId: string,
 ): Promise<MemoryIndexStatus> => {
   try {
     const cli = await manager.buildCliEnvironment();
     const result = await runOpenClawCommand(
       cli,
-      ['memory', 'status', '--agent', MEMORY_AGENT_ID, '--json'],
+      ['memory', 'status', '--agent', agentId, '--json'],
       STATUS_TIMEOUT_MS,
       workspaceDir,
     );
@@ -388,7 +393,7 @@ const loadIndexStatus = async (
     if (result.stdout.trim().startsWith('Memory search disabled.')) {
       return { available: false, chunks: 0, dirty: false, health: MemoryIndexHealth.Disabled };
     }
-    return normalizeMemoryIndexStatus(JSON.parse(result.stdout));
+    return normalizeMemoryIndexStatus(JSON.parse(result.stdout), agentId);
   } catch (error) {
     return {
       available: false,
@@ -482,42 +487,62 @@ export const normalizeSearchHits = (value: unknown, workspaceDir: string): Memor
 
 export const registerOpenClawMemoryHandlers = ({
   getManager,
+  isAgentAvailable,
   requestGateway,
 }: MemoryHandlerDependencies): void => {
-  let rebuildPromise: Promise<MemoryRebuildResult> | null = null;
-  const workspace = () => resolveMemoryWorkspace(getManager(), requestGateway);
-
-  ipcMain.handle(MemoryIpc.GetOverview, async (): Promise<MemoryOverviewResult> => {
-    try {
-      return { success: true, overview: buildOverview(await workspace()) };
-    } catch (error) {
-      return {
-        success: false,
-        error: toPublicMemoryError(error, 'Failed to load memory overview'),
-      };
+  const rebuilds = new Map<string, Promise<MemoryRebuildResult>>();
+  const workspace = async (agentId: string) => {
+    if (
+      typeof agentId !== 'string' ||
+      !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(agentId) ||
+      !isAgentAvailable(agentId)
+    ) {
+      throw new Error(t('agentUnavailable'));
     }
-  });
+    return resolveMemoryWorkspace(getManager(), requestGateway, agentId);
+  };
 
-  ipcMain.handle(MemoryIpc.GetIndexStatus, async (): Promise<MemoryIndexStatusResult> => {
-    try {
-      const manager = getManager();
-      return {
-        success: true,
-        index: await loadIndexStatus(manager, await workspace()),
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: toPublicMemoryError(error, 'Failed to load memory index status'),
-      };
-    }
-  });
+  ipcMain.handle(
+    MemoryIpc.GetOverview,
+    async (_event, agentId = MEMORY_AGENT_ID): Promise<MemoryOverviewResult> => {
+      try {
+        return { success: true, overview: buildOverview(await workspace(agentId)) };
+      } catch (error) {
+        return {
+          success: false,
+          error: toPublicMemoryError(error, 'Failed to load memory overview'),
+        };
+      }
+    },
+  );
+
+  ipcMain.handle(
+    MemoryIpc.GetIndexStatus,
+    async (_event, agentId = MEMORY_AGENT_ID): Promise<MemoryIndexStatusResult> => {
+      try {
+        const manager = getManager();
+        return {
+          success: true,
+          index: await loadIndexStatus(manager, await workspace(agentId), agentId),
+        };
+      } catch (error) {
+        return {
+          success: false,
+          error: toPublicMemoryError(error, 'Failed to load memory index status'),
+        };
+      }
+    },
+  );
 
   ipcMain.handle(
     MemoryIpc.GetDocument,
-    async (_event, relativePath: string): Promise<MemoryDocumentResult> => {
+    async (
+      _event,
+      relativePath: string,
+      agentId = MEMORY_AGENT_ID,
+    ): Promise<MemoryDocumentResult> => {
       try {
-        const workspaceDir = await workspace();
+        const workspaceDir = await workspace(agentId);
         const resolved = resolveDocumentPath(workspaceDir, relativePath);
         if (!resolved) return { success: false, error: 'Memory document was not found' };
         const stats = fs.statSync(resolved.filePath);
@@ -541,103 +566,111 @@ export const registerOpenClawMemoryHandlers = ({
     },
   );
 
-  ipcMain.handle(MemoryIpc.Search, async (_event, query: string): Promise<MemorySearchResult> => {
-    const normalizedQuery = typeof query === 'string' ? query.trim().slice(0, 500) : '';
-    if (!normalizedQuery) return { success: true, hits: [] };
-    try {
-      const workspaceDir = await workspace();
-      const result = await requestGateway<unknown>('memory.search', {
-        query: normalizedQuery,
-        agentId: MEMORY_AGENT_ID,
-        maxResults: 20,
-      });
-      if (!isRecord(result) || !Array.isArray(result.results)) {
-        throw new Error(t('memoryStatusUnavailable'));
-      }
-      return {
-        success: true,
-        hits: normalizeSearchHits(result, workspaceDir),
-        ...(result.searchMode === 'hybrid' || result.searchMode === 'fts-only'
-          ? { searchMode: result.searchMode }
-          : {}),
-        stale: result.stale === true,
-        ...(typeof result.warning === 'string'
-          ? { warning: sanitizeMemoryDiagnostic(result.warning) }
-          : {}),
-        ...(typeof result.action === 'string'
-          ? { action: sanitizeMemoryDiagnostic(result.action) }
-          : {}),
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: toPublicMemoryError(error, 'Failed to search memory'),
-      };
-    }
-  });
-
-  ipcMain.handle(MemoryIpc.RebuildIndex, async (): Promise<MemoryRebuildResult> => {
-    if (rebuildPromise) return rebuildPromise;
-    rebuildPromise = (async () => {
-      const startedAt = Date.now();
+  ipcMain.handle(
+    MemoryIpc.Search,
+    async (_event, query: string, agentId = MEMORY_AGENT_ID): Promise<MemorySearchResult> => {
+      const normalizedQuery = typeof query === 'string' ? query.trim().slice(0, 500) : '';
+      if (!normalizedQuery) return { success: true, hits: [] };
       try {
-        const manager = getManager();
-        const workspaceDir = await workspace();
-        const cli = await buildMemoryRebuildCliEnvironment(manager);
-        const result = await runOpenClawCommand(
-          cli,
-          ['memory', 'index', '--force', '--agent', MEMORY_AGENT_ID],
-          REBUILD_TIMEOUT_MS,
-          workspaceDir,
-        );
-        if (result.exitCode !== 0) {
-          return {
-            success: false,
-            durationMs: Date.now() - startedAt,
-            error: sanitizeCommandError(result),
-          };
+        const workspaceDir = await workspace(agentId);
+        const result = await requestGateway<unknown>('memory.search', {
+          query: normalizedQuery,
+          agentId,
+          maxResults: 20,
+        });
+        if (!isRecord(result) || !Array.isArray(result.results)) {
+          throw new Error(t('memoryStatusUnavailable'));
         }
-        const index = await loadIndexStatus(manager, workspaceDir);
-        const skipped =
-          result.stdout.includes('Memory search disabled.') ||
-          result.stdout.includes('Memory backend does not support manual reindex.');
-        if (
-          skipped ||
-          !index.available ||
-          index.health === MemoryIndexHealth.Unavailable ||
-          index.health === MemoryIndexHealth.Stale
-        ) {
-          return {
-            success: false,
-            index,
-            durationMs: Date.now() - startedAt,
-            error: index.error || index.warning || t('memoryRebuildUnverified'),
-          };
-        }
-        const warning = result.stderr.trim()
-          ? sanitizeMemoryDiagnostic(result.stderr)
-          : index.warning ||
-            ((index.health !== MemoryIndexHealth.Ready &&
-              index.health !== MemoryIndexHealth.Indexed) ||
-            index.dirty
-              ? t('memoryRebuildDegraded')
-              : undefined);
         return {
           success: true,
-          index,
-          ...(warning ? { warning } : {}),
-          durationMs: Date.now() - startedAt,
+          hits: normalizeSearchHits(result, workspaceDir),
+          ...(result.searchMode === 'hybrid' || result.searchMode === 'fts-only'
+            ? { searchMode: result.searchMode }
+            : {}),
+          stale: result.stale === true,
+          ...(typeof result.warning === 'string'
+            ? { warning: sanitizeMemoryDiagnostic(result.warning) }
+            : {}),
+          ...(typeof result.action === 'string'
+            ? { action: sanitizeMemoryDiagnostic(result.action) }
+            : {}),
         };
       } catch (error) {
         return {
           success: false,
-          durationMs: Date.now() - startedAt,
-          error: toPublicMemoryError(error, 'Failed to rebuild memory index'),
+          error: toPublicMemoryError(error, 'Failed to search memory'),
         };
-      } finally {
-        rebuildPromise = null;
       }
-    })();
-    return rebuildPromise;
-  });
+    },
+  );
+
+  ipcMain.handle(
+    MemoryIpc.RebuildIndex,
+    async (_event, agentId = MEMORY_AGENT_ID): Promise<MemoryRebuildResult> => {
+      const existing = rebuilds.get(agentId);
+      if (existing) return existing;
+      const rebuildPromise = (async () => {
+        const startedAt = Date.now();
+        try {
+          const manager = getManager();
+          const workspaceDir = await workspace(agentId);
+          const cli = await buildMemoryRebuildCliEnvironment(manager);
+          const result = await runOpenClawCommand(
+            cli,
+            ['memory', 'index', '--force', '--agent', agentId],
+            REBUILD_TIMEOUT_MS,
+            workspaceDir,
+          );
+          if (result.exitCode !== 0) {
+            return {
+              success: false,
+              durationMs: Date.now() - startedAt,
+              error: sanitizeCommandError(result),
+            };
+          }
+          const index = await loadIndexStatus(manager, workspaceDir, agentId);
+          const skipped =
+            result.stdout.includes('Memory search disabled.') ||
+            result.stdout.includes('Memory backend does not support manual reindex.');
+          if (
+            skipped ||
+            !index.available ||
+            index.health === MemoryIndexHealth.Unavailable ||
+            index.health === MemoryIndexHealth.Stale
+          ) {
+            return {
+              success: false,
+              index,
+              durationMs: Date.now() - startedAt,
+              error: index.error || index.warning || t('memoryRebuildUnverified'),
+            };
+          }
+          const warning = result.stderr.trim()
+            ? sanitizeMemoryDiagnostic(result.stderr)
+            : index.warning ||
+              ((index.health !== MemoryIndexHealth.Ready &&
+                index.health !== MemoryIndexHealth.Indexed) ||
+              index.dirty
+                ? t('memoryRebuildDegraded')
+                : undefined);
+          return {
+            success: true,
+            index,
+            ...(warning ? { warning } : {}),
+            durationMs: Date.now() - startedAt,
+          };
+        } catch (error) {
+          return {
+            success: false,
+            durationMs: Date.now() - startedAt,
+            error: toPublicMemoryError(error, 'Failed to rebuild memory index'),
+          };
+        } finally {
+          rebuilds.delete(agentId);
+        }
+      })();
+      rebuilds.set(agentId, rebuildPromise);
+      return rebuildPromise;
+    },
+  );
 };

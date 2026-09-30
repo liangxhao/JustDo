@@ -615,12 +615,12 @@ contextBridge.exposeInMainWorld('electron', {
       list: (options?: { agentId?: string }) => ipcRenderer.invoke(OpenClawModelsIpc.List, options),
     },
     memory: {
-      getOverview: () => ipcRenderer.invoke(MemoryIpc.GetOverview),
-      getIndexStatus: () => ipcRenderer.invoke(MemoryIpc.GetIndexStatus),
-      getDocument: (relativePath: string) =>
-        ipcRenderer.invoke(MemoryIpc.GetDocument, relativePath),
-      search: (query: string) => ipcRenderer.invoke(MemoryIpc.Search, query),
-      rebuildIndex: () => ipcRenderer.invoke(MemoryIpc.RebuildIndex),
+      getOverview: (agentId?: string) => ipcRenderer.invoke(MemoryIpc.GetOverview, agentId),
+      getIndexStatus: (agentId?: string) => ipcRenderer.invoke(MemoryIpc.GetIndexStatus, agentId),
+      getDocument: (relativePath: string, agentId?: string) =>
+        ipcRenderer.invoke(MemoryIpc.GetDocument, relativePath, agentId),
+      search: (query: string, agentId?: string) => ipcRenderer.invoke(MemoryIpc.Search, query, agentId),
+      rebuildIndex: (agentId?: string) => ipcRenderer.invoke(MemoryIpc.RebuildIndex, agentId),
     },
     usage: {
       getDaily: (options: UsageStatsOptions) => ipcRenderer.invoke(UsageStatsIpc.GetDaily, options),

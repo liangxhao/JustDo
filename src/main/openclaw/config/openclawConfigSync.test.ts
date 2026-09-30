@@ -1,3 +1,4 @@
+import path from 'path';
 import { describe, expect, test } from 'vitest';
 
 import { BrowserMode } from '../../../shared/browser/browser';
@@ -19,6 +20,7 @@ import {
   setActiveBuiltinModelDevelopmentApiKey,
 } from '../../providers/builtinModelCredential';
 import type { ProviderRawConfig } from '../../providers/providerApiConfig';
+import { listKnownOpenClawWorkspaceDirs } from './openclawConfigBuilders';
 import {
   applyDefaultOpenClawPluginEntries,
   applyManagedOpenClawHeartbeatConfig,
@@ -753,6 +755,7 @@ describe('OpenClaw managed ACP config', () => {
     settings.agents.codex.enabled = true;
     const sync = new OpenClawConfigSync({
       getAgents: () => [],
+      engineManager: { getStateDir: () => '/state' },
     } as never);
 
     const result = (
@@ -1441,4 +1444,13 @@ describe('native session cold storage configuration ownership', () => {
     expect(existing.maintenance.coldStorage.afterDays).toBe(47);
     expect(buildManagedOpenClawSessionConfig().maintenance).not.toHaveProperty('coldStorage');
   });
+});
+
+test('inventories independent main and specialist role homes before a previous config exists', () => {
+  const directories = listKnownOpenClawWorkspaceDirs({
+    stateDir: '/state', mainWorkspaceDir: '/project', agents: [{ id: 'research' }] as never,
+  });
+  expect(directories).toEqual(expect.arrayContaining([
+    '/project', path.join('/state', 'agent-workspaces', 'main'), path.join('/state', 'agent-workspaces', 'research'),
+  ]));
 });

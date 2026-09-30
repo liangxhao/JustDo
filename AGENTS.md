@@ -345,7 +345,7 @@ Before PR:
 Independent Agent profiles are managed in Settings → Assistants. Keep the managed
 roster under the application config synchronizer. Manual profile saves apply the managed config synchronizer; model-driven creation
 uses Gateway agents.create/update. The application stores product-facing profile
-mappings, and user conversations always belong to main. Native agents.files APIs own role-file text.
+mappings, and user conversations default to main. The opt-in assistant switch in Settings allows enabled profiles for new conversations; switching from an existing chat creates a new conversation in the same project without moving native history. OpenClaw layers the selected assistant bootstrap files with project AGENTS.md; never overwrite project rules when switching. All native profiles, including main, use stable `stateDir/agent-workspaces/<agentId>` role homes; project directories use native cwd and sessionRoot. Do not move or rewrite project role files automatically. Native agents.files APIs own role-file text.
 Empty profile models inherit the application default. Disable is an application
 chat-entry restriction, not native authorization revocation. See
 `docs/features/assistants-and-collaboration.md` for the current P0/P1 scope and limitations.

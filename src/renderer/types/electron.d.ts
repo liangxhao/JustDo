@@ -193,6 +193,7 @@ interface SessionGroup {
 }
 
 interface CoworkConfig {
+  allowMainAgentSwitch?: boolean;
   workingDirectory: string;
   executionMode: 'auto' | 'local' | 'sandbox';
   sandboxNetworkEnabled: boolean;
@@ -206,6 +207,7 @@ type CoworkConfigUpdate = Partial<
   Pick<
     CoworkConfig,
     | 'workingDirectory'
+    | 'allowMainAgentSwitch'
     | 'executionMode'
     | 'sandboxNetworkEnabled'
     | 'agentEngine'
@@ -783,11 +785,11 @@ interface IElectronAPI {
       }) => Promise<import('@shared/openclaw/models').OpenClawModelsListResult>;
     };
     memory: {
-      getOverview: () => Promise<MemoryOverviewResult>;
-      getIndexStatus: () => Promise<MemoryIndexStatusResult>;
-      getDocument: (relativePath: string) => Promise<MemoryDocumentResult>;
-      search: (query: string) => Promise<MemorySearchResult>;
-      rebuildIndex: () => Promise<MemoryRebuildResult>;
+      getOverview: (agentId?: string) => Promise<MemoryOverviewResult>;
+      getIndexStatus: (agentId?: string) => Promise<MemoryIndexStatusResult>;
+      getDocument: (relativePath: string, agentId?: string) => Promise<MemoryDocumentResult>;
+      search: (query: string, agentId?: string) => Promise<MemorySearchResult>;
+      rebuildIndex: (agentId?: string) => Promise<MemoryRebuildResult>;
     };
     usage: {
       getDaily: (

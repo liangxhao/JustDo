@@ -1775,3 +1775,19 @@ test('binds a Main-started yielded turn whose lost ACK never used the renderer u
     timing: { state: 'completed' },
   });
 });
+
+test('a local specialist conversation is not remotely managed', async () => {
+  registerCoworkSessionHandlers({
+    getCoworkStore: () =>
+      ({ getSession: () => ({ agentId: 'research' }) }) as unknown as CoworkStore,
+    getCoworkEngineRouter: () => ({}) as CoworkEngineRouter,
+    setSessionPermissionMode: vi.fn(),
+  });
+  const handler = mocks.handle.mock.calls.find(
+    ([channel]) => channel === 'cowork:session:remoteManaged',
+  )![1] as IpcHandler;
+  await expect(handler({}, 'specialist-chat')).resolves.toEqual({
+    success: true,
+    remoteManaged: false,
+  });
+});
