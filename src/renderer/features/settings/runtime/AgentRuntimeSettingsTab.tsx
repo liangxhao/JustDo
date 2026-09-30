@@ -1,10 +1,6 @@
-import {
-  ArrowPathIcon,
-  ChevronDownIcon,
-  CpuChipIcon,
-  MinusIcon,
-  PlusIcon,
-} from '@heroicons/react/24/outline';
+import './AgentRuntimeSettingsTab.css';
+
+import { ArrowPathIcon, CpuChipIcon, MinusIcon, PlusIcon } from '@heroicons/react/24/outline';
 import {
   MAX_MAX_RETAINED_DISPLAY_TABS,
   MIN_MAX_RETAINED_DISPLAY_TABS,
@@ -23,7 +19,7 @@ import {
   AgentRuntimeThinkingLevel,
   AUTOMATION_APPROVAL_TIMEOUT_MINUTES,
 } from '@shared/openclaw/agentRuntimeSettings';
-import React, { useMemo, useState } from 'react';
+import React, { useId, useMemo } from 'react';
 
 import type { Model } from '@/features/models/modelSlice';
 import { toOpenClawModelRef } from '@/features/models/openclawModelRef';
@@ -48,7 +44,7 @@ const SettingRow: React.FC<{
   description?: string;
   children: React.ReactNode;
 }> = ({ label, description, children }) => (
-  <div className="grid gap-3 border-t border-border px-4 py-3 first:border-t-0 sm:grid-cols-[minmax(180px,1fr)_minmax(260px,320px)] sm:items-center sm:gap-6">
+  <div className="runtime-setting-row border-t border-border-subtle px-5 py-4 first:border-t-0">
     <div className="min-w-0">
       <div className="text-sm font-medium text-foreground">{label}</div>
       {description && <p className="mt-0.5 text-xs leading-4 text-secondary">{description}</p>}
@@ -102,33 +98,24 @@ const NumberControl: React.FC<{
   );
 };
 
-const CollapsibleSection: React.FC<{
+const SettingsSection: React.FC<{
   title: string;
-  description: string;
-  open: boolean;
-  onToggle: () => void;
+  description?: string;
   children: React.ReactNode;
-}> = ({ title, description, open, onToggle, children }) => (
-  <section className="overflow-hidden rounded-xl border border-border bg-surface">
-    <button
-      type="button"
-      onClick={onToggle}
-      className="flex w-full items-center gap-3 bg-surface-raised px-4 py-2.5 text-left hover:bg-surface-inset"
-      aria-expanded={open}
-    >
-      <span className="min-w-0 flex-1">
-        <span className="block text-sm font-semibold text-foreground">{title}</span>
-        <span className="mt-0.5 block truncate text-[11px] leading-4 text-secondary">
-          {description}
-        </span>
-      </span>
-      <ChevronDownIcon
-        className={`h-4 w-4 shrink-0 text-secondary transition-transform ${open ? 'rotate-180' : ''}`}
-      />
-    </button>
-    {open && <div className="border-t border-border">{children}</div>}
-  </section>
-);
+}> = ({ title, description, children }) => {
+  const id = useId();
+  return (
+    <section aria-labelledby={id} className="space-y-3">
+      <div>
+        <h4 id={id} className="text-sm font-semibold text-foreground">
+          {title}
+        </h4>
+        {description && <p className="mt-1 text-xs leading-5 text-secondary">{description}</p>}
+      </div>
+      <div className="rounded-2xl border border-border-subtle bg-surface">{children}</div>
+    </section>
+  );
+};
 
 const AgentRuntimeSettingsTab: React.FC<Props> = ({
   settings,
@@ -142,11 +129,6 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
   maxGoalContinuationTurns,
   onMaxGoalContinuationTurnsChange,
 }) => {
-  const [agentOpen, setAgentOpen] = useState(true);
-  const [codeModeOpen, setCodeModeOpen] = useState(true);
-  const [mcpOpen, setMcpOpen] = useState(true);
-  const [swarmOpen, setSwarmOpen] = useState(true);
-  const [subagentOpen, setSubagentOpen] = useState(true);
   const subagents = settings.subagents;
   const updateAgent = (update: Partial<AgentRuntimeSettings['agent']>) =>
     onChange({ ...settings, agent: { ...settings.agent, ...update } });
@@ -346,129 +328,8 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
   }
 
   return (
-    <div className="space-y-3 pb-1">
-      <section className="overflow-hidden rounded-xl border border-border bg-surface">
-        <div className="border-b border-border bg-surface-raised px-4 py-2.5">
-          <div className="text-sm font-semibold text-foreground">
-            {i18nService.t('displayTabRetentionSectionTitle')}
-          </div>
-          <div className="mt-0.5 text-[11px] leading-4 text-secondary">
-            {i18nService.t('displayTabRetentionSectionDescription')}
-          </div>
-        </div>
-        <SettingRow
-          label={i18nService.t('displayTabRetentionTitle')}
-          description={i18nService.t('displayTabRetentionDescription')}
-        >
-          <NumberControl
-            label={i18nService.t('displayTabRetentionTitle')}
-            value={maxRetainedDisplayTabs}
-            min={MIN_MAX_RETAINED_DISPLAY_TABS}
-            max={MAX_MAX_RETAINED_DISPLAY_TABS}
-            onChange={onMaxRetainedDisplayTabsChange}
-          />
-        </SettingRow>
-      </section>
-      <section className="overflow-hidden rounded-xl border border-border bg-surface">
-        <div className="border-b border-border bg-surface-raised px-4 py-2.5">
-          <div className="text-sm font-semibold text-foreground">
-            {i18nService.t('goalContinuationSettingsSectionTitle')}
-          </div>
-          <div className="mt-0.5 text-[11px] leading-4 text-secondary">
-            {i18nService.t('goalContinuationSettingsSectionDescription')}
-          </div>
-        </div>
-        <SettingRow
-          label={i18nService.t('goalContinuationMaxTurnsTitle')}
-          description={i18nService.t('goalContinuationMaxTurnsDescription')}
-        >
-          <NumberControl
-            label={i18nService.t('goalContinuationMaxTurnsTitle')}
-            value={maxGoalContinuationTurns}
-            min={MIN_MAX_GOAL_CONTINUATION_TURNS}
-            max={MAX_MAX_GOAL_CONTINUATION_TURNS}
-            onChange={value =>
-              onMaxGoalContinuationTurnsChange(normalizeMaxGoalContinuationTurns(value))
-            }
-          />
-        </SettingRow>
-      </section>
-      <CollapsibleSection
-        title={i18nService.t('agentRuntimeCodeModeTitle')}
-        description={i18nService.t('agentRuntimeCodeModeDescription')}
-        open={codeModeOpen}
-        onToggle={() => setCodeModeOpen(value => !value)}
-      >
-        <SettingRow
-          label={i18nService.t('agentRuntimeCodeModeActivation')}
-          description={i18nService.t('agentRuntimeCodeModeHint')}
-        >
-          <ThemedSelect
-            id="agent-runtime-code-mode"
-            value={settings.codeMode.mode}
-            onChange={value =>
-              onChange({
-                ...settings,
-                codeMode: { mode: value as AgentRuntimeSettings['codeMode']['mode'] },
-              })
-            }
-            options={[
-              { value: AgentRuntimeCodeMode.Off, label: i18nService.t('agentRuntimeCodeModeOff') },
-              {
-                value: AgentRuntimeCodeMode.Auto,
-                label: i18nService.t('agentRuntimeCodeModeAuto'),
-                disabled: true,
-              },
-              { value: AgentRuntimeCodeMode.On, label: i18nService.t('agentRuntimeCodeModeOn') },
-            ]}
-            ariaLabel={i18nService.t('agentRuntimeCodeModeActivation')}
-            className="py-2 text-xs"
-          />
-        </SettingRow>
-      </CollapsibleSection>
-      <CollapsibleSection
-        title={i18nService.t('agentRuntimeMcpSectionTitle')}
-        description={i18nService.t('agentRuntimeMcpSectionDescription')}
-        open={mcpOpen}
-        onToggle={() => setMcpOpen(value => !value)}
-      >
-        <SettingRow
-          label={i18nService.t('agentRuntimeMcpRequestTimeoutTitle')}
-          description={i18nService.t('agentRuntimeMcpRequestTimeoutDescription')}
-        >
-          <label className="ml-auto flex h-9 w-32 items-center overflow-hidden rounded-lg border border-border bg-surface-inset">
-            <input
-              id="agent-runtime-mcp-request-timeout"
-              type="number"
-              min={AGENT_RUNTIME_LIMITS.mcpRequestTimeoutSeconds.min}
-              max={AGENT_RUNTIME_LIMITS.mcpRequestTimeoutSeconds.max}
-              step={1}
-              value={settings.mcp.requestTimeoutSeconds}
-              onChange={event => {
-                const seconds = Math.min(
-                  AGENT_RUNTIME_LIMITS.mcpRequestTimeoutSeconds.max,
-                  Math.max(
-                    AGENT_RUNTIME_LIMITS.mcpRequestTimeoutSeconds.min,
-                    Number(event.target.value) || AGENT_RUNTIME_LIMITS.mcpRequestTimeoutSeconds.min,
-                  ),
-                );
-                updateMcp({ requestTimeoutSeconds: Math.round(seconds) });
-              }}
-              className="h-full min-w-0 flex-1 bg-transparent px-2 text-right text-sm font-medium tabular-nums text-foreground outline-none"
-              aria-label={i18nService.t('agentRuntimeMcpRequestTimeoutTitle')}
-            />
-            <span className="border-l border-border px-2 text-[11px] text-secondary">
-              {i18nService.t('agentRuntimeSeconds')}
-            </span>
-          </label>
-        </SettingRow>
-      </CollapsibleSection>
-      <CollapsibleSection
-        title={i18nService.t('agentRuntimeAgentSectionTitle')}
-        description={i18nService.t('agentRuntimeAgentSectionDescription')}
-        open={agentOpen}
-        onToggle={() => setAgentOpen(value => !value)}
-      >
+    <div className="runtime-settings min-w-0 space-y-9 pb-1">
+      <SettingsSection title={i18nService.t('runtimeExecutionTitle')}>
         <SettingRow
           label={i18nService.t('agentRuntimeDefaultThinking')}
           description={i18nService.t('agentRuntimeAgentThinkingHint')}
@@ -496,7 +357,9 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
                 id="agent-runtime-agent-timeout"
                 value={usesCustomAgentTimeout ? 'custom' : String(settings.agent.runTimeoutSeconds)}
                 onChange={value =>
-                  updateAgent({ runTimeoutSeconds: value === 'custom' ? 90 * 60 : Number(value) })
+                  updateAgent({
+                    runTimeoutSeconds: value === 'custom' ? 90 * 60 : Number(value),
+                  })
                 }
                 options={timeoutOptions}
                 ariaLabel={i18nService.t('agentRuntimeAgentTimeoutTitle')}
@@ -545,36 +408,36 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
             className="py-2 text-xs"
           />
         </SettingRow>
+      </SettingsSection>
+      <SettingsSection title={i18nService.t('runtimeWorkspaceTitle')}>
         <SettingRow
-          label={i18nService.t('agentRuntimeDelegationTitle')}
-          description={i18nService.t('agentRuntimeDelegationDescription')}
+          label={i18nService.t('displayTabRetentionTitle')}
+          description={i18nService.t('displayTabRetentionDescription')}
         >
-          <div
-            className="grid grid-cols-3 rounded-lg bg-surface-raised p-1"
-            role="group"
-            aria-label={i18nService.t('agentRuntimeDelegationTitle')}
-          >
-            {[
-              [null, i18nService.t('agentRuntimeDelegationDefault')],
-              [AgentRuntimeDelegationMode.Suggest, i18nService.t('agentRuntimeDelegationSuggest')],
-              [AgentRuntimeDelegationMode.Prefer, i18nService.t('agentRuntimeDelegationPrefer')],
-            ].map(([value, label]) => (
-              <button
-                key={value ?? 'default'}
-                type="button"
-                aria-pressed={subagents.delegationMode === value}
-                onClick={() =>
-                  updateSubagents({
-                    delegationMode: value as AgentRuntimeSettings['subagents']['delegationMode'],
-                  })
-                }
-                className={`rounded-md px-3 py-1.5 text-xs font-medium ${subagents.delegationMode === value ? 'bg-surface text-primary shadow-sm' : 'text-secondary hover:text-foreground'}`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          <NumberControl
+            label={i18nService.t('displayTabRetentionTitle')}
+            value={maxRetainedDisplayTabs}
+            min={MIN_MAX_RETAINED_DISPLAY_TABS}
+            max={MAX_MAX_RETAINED_DISPLAY_TABS}
+            onChange={onMaxRetainedDisplayTabsChange}
+          />
         </SettingRow>
+        <SettingRow
+          label={i18nService.t('goalContinuationMaxTurnsTitle')}
+          description={i18nService.t('goalContinuationMaxTurnsDescription')}
+        >
+          <NumberControl
+            label={i18nService.t('goalContinuationMaxTurnsTitle')}
+            value={maxGoalContinuationTurns}
+            min={MIN_MAX_GOAL_CONTINUATION_TURNS}
+            max={MAX_MAX_GOAL_CONTINUATION_TURNS}
+            onChange={value =>
+              onMaxGoalContinuationTurnsChange(normalizeMaxGoalContinuationTurns(value))
+            }
+          />
+        </SettingRow>
+      </SettingsSection>
+      <SettingsSection title={i18nService.t('runtimeInteractionTitle')}>
         <SettingRow
           label={i18nService.t('agentRuntimeSessionVisibilityTitle')}
           description={i18nService.t('agentRuntimeSessionVisibilityDescription')}
@@ -645,14 +508,102 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
             className="py-2 text-xs"
           />
         </SettingRow>
-      </CollapsibleSection>
-
-      <CollapsibleSection
-        title={i18nService.t('agentRuntimeSubagentSectionTitle')}
-        description={i18nService.t('agentRuntimeSubagentSectionDescription')}
-        open={subagentOpen}
-        onToggle={() => setSubagentOpen(value => !value)}
-      >
+      </SettingsSection>
+      <SettingsSection title={i18nService.t('runtimeToolsTitle')}>
+        <SettingRow
+          label={i18nService.t('agentRuntimeCodeModeActivation')}
+          description={i18nService.t('agentRuntimeCodeModeHint')}
+        >
+          <ThemedSelect
+            id="agent-runtime-code-mode"
+            value={settings.codeMode.mode}
+            onChange={value =>
+              onChange({
+                ...settings,
+                codeMode: { mode: value as AgentRuntimeSettings['codeMode']['mode'] },
+              })
+            }
+            options={[
+              {
+                value: AgentRuntimeCodeMode.Off,
+                label: i18nService.t('agentRuntimeCodeModeOff'),
+              },
+              {
+                value: AgentRuntimeCodeMode.Auto,
+                label: i18nService.t('agentRuntimeCodeModeAuto'),
+                disabled: true,
+              },
+              {
+                value: AgentRuntimeCodeMode.On,
+                label: i18nService.t('agentRuntimeCodeModeOn'),
+              },
+            ]}
+            ariaLabel={i18nService.t('agentRuntimeCodeModeActivation')}
+            className="py-2 text-xs"
+          />
+        </SettingRow>
+        <SettingRow
+          label={i18nService.t('agentRuntimeMcpRequestTimeoutTitle')}
+          description={i18nService.t('agentRuntimeMcpRequestTimeoutDescription')}
+        >
+          <label className="ml-auto flex h-9 w-32 items-center overflow-hidden rounded-lg border border-border bg-surface-inset">
+            <input
+              id="agent-runtime-mcp-request-timeout"
+              type="number"
+              min={AGENT_RUNTIME_LIMITS.mcpRequestTimeoutSeconds.min}
+              max={AGENT_RUNTIME_LIMITS.mcpRequestTimeoutSeconds.max}
+              step={1}
+              value={settings.mcp.requestTimeoutSeconds}
+              onChange={event => {
+                const seconds = Math.min(
+                  AGENT_RUNTIME_LIMITS.mcpRequestTimeoutSeconds.max,
+                  Math.max(
+                    AGENT_RUNTIME_LIMITS.mcpRequestTimeoutSeconds.min,
+                    Number(event.target.value) || AGENT_RUNTIME_LIMITS.mcpRequestTimeoutSeconds.min,
+                  ),
+                );
+                updateMcp({ requestTimeoutSeconds: Math.round(seconds) });
+              }}
+              className="h-full min-w-0 flex-1 bg-transparent px-2 text-right text-sm font-medium tabular-nums text-foreground outline-none"
+              aria-label={i18nService.t('agentRuntimeMcpRequestTimeoutTitle')}
+            />
+            <span className="border-l border-border px-2 text-[11px] text-secondary">
+              {i18nService.t('agentRuntimeSeconds')}
+            </span>
+          </label>
+        </SettingRow>
+      </SettingsSection>
+      <SettingsSection title={i18nService.t('runtimeSubtasksTitle')}>
+        <SettingRow
+          label={i18nService.t('agentRuntimeDelegationTitle')}
+          description={i18nService.t('agentRuntimeDelegationDescription')}
+        >
+          <div
+            className="grid grid-cols-3 rounded-lg bg-surface-raised p-1"
+            role="group"
+            aria-label={i18nService.t('agentRuntimeDelegationTitle')}
+          >
+            {[
+              [null, i18nService.t('agentRuntimeDelegationDefault')],
+              [AgentRuntimeDelegationMode.Suggest, i18nService.t('agentRuntimeDelegationSuggest')],
+              [AgentRuntimeDelegationMode.Prefer, i18nService.t('agentRuntimeDelegationPrefer')],
+            ].map(([value, label]) => (
+              <button
+                key={value ?? 'default'}
+                type="button"
+                aria-pressed={subagents.delegationMode === value}
+                onClick={() =>
+                  updateSubagents({
+                    delegationMode: value as AgentRuntimeSettings['subagents']['delegationMode'],
+                  })
+                }
+                className={`rounded-md px-3 py-1.5 text-xs font-medium ${subagents.delegationMode === value ? 'bg-surface text-primary shadow-sm' : 'text-secondary hover:text-foreground'}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </SettingRow>
         <SettingRow
           label={i18nService.t('agentRuntimeDefaultModel')}
           description={
@@ -697,18 +648,6 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
             min={AGENT_RUNTIME_LIMITS.maxConcurrent.min}
             max={AGENT_RUNTIME_LIMITS.maxConcurrent.max}
             onChange={maxConcurrent => updateSubagents({ maxConcurrent })}
-          />
-        </SettingRow>
-        <SettingRow
-          label={i18nService.t('agentRuntimeMaxChildren')}
-          description={i18nService.t('agentRuntimeMaxChildrenDescription')}
-        >
-          <NumberControl
-            label={i18nService.t('agentRuntimeMaxChildren')}
-            value={subagents.maxChildrenPerAgent}
-            min={AGENT_RUNTIME_LIMITS.maxChildrenPerAgent.min}
-            max={AGENT_RUNTIME_LIMITS.maxChildrenPerAgent.max}
-            onChange={maxChildrenPerAgent => updateSubagents({ maxChildrenPerAgent })}
           />
         </SettingRow>
         <SettingRow
@@ -758,6 +697,18 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
           </div>
         </SettingRow>
         <SettingRow
+          label={i18nService.t('agentRuntimeMaxChildren')}
+          description={i18nService.t('agentRuntimeMaxChildrenDescription')}
+        >
+          <NumberControl
+            label={i18nService.t('agentRuntimeMaxChildren')}
+            value={subagents.maxChildrenPerAgent}
+            min={AGENT_RUNTIME_LIMITS.maxChildrenPerAgent.min}
+            max={AGENT_RUNTIME_LIMITS.maxChildrenPerAgent.max}
+            onChange={maxChildrenPerAgent => updateSubagents({ maxChildrenPerAgent })}
+          />
+        </SettingRow>
+        <SettingRow
           label={i18nService.t('agentRuntimeArchiveTitle')}
           description={i18nService.t('agentRuntimeArchiveDescription')}
         >
@@ -788,20 +739,18 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
             </p>
           )}
         </SettingRow>
-      </CollapsibleSection>
-      <CollapsibleSection
-        title={i18nService.t('agentRuntimeSwarmTitle')}
-        description={i18nService.t('agentRuntimeSwarmDescription')}
-        open={swarmOpen}
-        onToggle={() => setSwarmOpen(!swarmOpen)}
-      >
+      </SettingsSection>
+      <SettingsSection title={i18nService.t('agentRuntimeSwarmTitle')}>
         <SettingRow label={i18nService.t('agentRuntimeSwarmEnabled')}>
           <input
             type="checkbox"
             aria-label={i18nService.t('agentRuntimeSwarmEnabled')}
             checked={settings.swarm.enabled}
             onChange={event =>
-              onChange({ ...settings, swarm: { ...settings.swarm, enabled: event.target.checked } })
+              onChange({
+                ...settings,
+                swarm: { ...settings.swarm, enabled: event.target.checked },
+              })
             }
           />
         </SettingRow>
@@ -836,7 +785,7 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
             />
           </SettingRow>
         ))}
-      </CollapsibleSection>
+      </SettingsSection>
     </div>
   );
 };

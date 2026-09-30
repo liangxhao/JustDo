@@ -87,7 +87,7 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     label: 'agentRuntimeTab',
     description: 'settingsDescription_runtime',
     group: 'intelligence',
-    wide: true,
+    wide: false,
     keywords: [],
   },
   {

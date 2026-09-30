@@ -51,7 +51,7 @@ Main 的 `core/` 分为 app、window、network、runtime、filesystem、developm
 
 Renderer 的 feature 负责页面行为，settings 内按 models/browser/speech/integrations/runtime 等领域组织。插件按 skills/mcp/hooks/extensions/marketplace 组织。Cowork 组件按 chat/composer/sessions/goals/subagents/approvals/questions/preview/status 组织；跨领域组合仍由 CoworkView 承担。
 
-设置使用独立滚动的分组侧栏与居中内容区。`settingsCatalog.ts` 声明页面身份、分组、翻译检索词和内容宽度；`SettingsNavigation` 仅负责搜索和导航展示，搜索匹配页面名称、说明与设置关键词，不挂载隐藏页面或读取配置。选择结果仍交由 `Settings.tsx` 执行离开保护和页面切换。`Settings.tsx` 继续持有配置草稿、预览回滚与保存流程，各领域页面保留原有即时保存或统一保存语义；界面重构不改变 Main/IPC 的持久化边界。
+设置使用独立滚动的分组侧栏与居中内容区。`settingsCatalog.ts` 声明页面身份、分组、翻译检索词和内容宽度；`SettingsNavigation` 仅负责搜索和导航展示，搜索匹配页面名称、说明与设置关键词，不挂载隐藏页面或读取配置。选择结果仍交由 `Settings.tsx` 执行离开保护和页面切换。`Settings.tsx` 继续持有配置草稿、预览回滚与保存流程，各领域页面保留原有即时保存或统一保存语义；界面重构不改变 Main/IPC 的持久化边界。配置页以单页分组卡片展示任务执行、工作区、交互与权限、工具调用、子任务和 Swarm 参数；所有分组始终展开，不通过分类切换或折叠隐藏设置。配置草稿仍由父级持有。
 
 Shared 只放可序列化合约、常量、校验和纯函数。不能依赖 Node、Electron、DOM 或进程环境。主题运行时在 Renderer，离线生成和 Tailwind 插件在 `scripts/theme/`。
 

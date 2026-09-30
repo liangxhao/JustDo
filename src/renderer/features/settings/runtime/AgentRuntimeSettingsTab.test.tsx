@@ -28,6 +28,44 @@ vi.mock('@/services/i18n', () => ({
 }));
 
 describe('AgentRuntimeSettingsTab runtime settings', () => {
+  test('shows every settings group immediately without category switches or disclosures', () => {
+    render(
+      <AgentRuntimeSettingsTab
+        settings={createDefaultAgentRuntimeSettings()}
+        models={[]}
+        isLoading={false}
+        loadError={null}
+        onChange={vi.fn()}
+        onRetry={vi.fn()}
+        maxRetainedDisplayTabs={30}
+        onMaxRetainedDisplayTabsChange={vi.fn()}
+        maxGoalContinuationTurns={10}
+        onMaxGoalContinuationTurnsChange={vi.fn()}
+      />,
+    );
+    expect(screen.getAllByRole('heading', { level: 4 })).toHaveLength(6);
+    for (const name of [
+      'agentRuntimeCodeModeActivation',
+      'agentRuntimeSessionVisibilityTitle',
+      'agentRuntimeArchiveTitle',
+      'agentRuntimeNestingTitle',
+    ]) {
+      expect(screen.getByRole('combobox', { name })).toBeTruthy();
+    }
+    for (const name of [
+      'displayTabRetentionTitle',
+      'agentRuntimeMaxChildren',
+      'agentRuntimeSwarmConcurrent',
+    ]) {
+      expect(screen.getByRole('spinbutton', { name })).toBeTruthy();
+    }
+    expect(screen.getByRole('checkbox', { name: 'agentRuntimeSwarmEnabled' })).toBeTruthy();
+    expect(screen.queryByRole('navigation')).toBeNull();
+    expect(
+      document.querySelector('button[aria-expanded="false"]:not([role="combobox"])'),
+    ).toBeNull();
+  });
+
   test.each([
     ['agentRuntimeCodeModeOff', 'off'],
     ['agentRuntimeCodeModeOn', 'on'],
@@ -59,6 +97,7 @@ describe('AgentRuntimeSettingsTab runtime settings', () => {
         onMaxGoalContinuationTurnsChange={vi.fn()}
       />,
     );
+
     const select = screen.getByRole('combobox', { name: 'agentRuntimeCodeModeActivation' });
     expect(select.textContent).toContain('agentRuntimeCodeModeOff');
     fireEvent.click(select);
@@ -358,6 +397,7 @@ test('changes Swarm independently from ordinary SubAgent capacity', () => {
       onMaxGoalContinuationTurnsChange={vi.fn()}
     />,
   );
+
   expect(screen.getByRole('spinbutton', { name: 'agentRuntimeSwarmConcurrent' })).toHaveProperty(
     'value',
     '8',
