@@ -69,6 +69,45 @@ afterEach(() => {
 });
 
 describe('GoalContinuationCoordinator', () => {
+  it.each(['end', 'error'] as const)(
+    'ignores attempt %s until the same run definitively settles',
+    async phase => {
+      const harness = createHarness();
+      await harness.coordinator.handleLifecycle({ runId: 'run-1', sessionKey, phase: 'start' });
+      for (const executionSettled of [undefined, false]) {
+        await harness.coordinator.handleLifecycle({
+          runId: 'run-1', sessionKey, phase, executionSettled,
+        });
+      }
+      expect(harness.request).not.toHaveBeenCalled();
+      expect(harness.coordinator.getSnapshot(sessionId)?.phase).toBe(GoalExecutionPhase.Running);
+      await harness.coordinator.handleLifecycle({
+        runId: 'run-1', sessionKey, phase: 'end', executionSettled: true,
+      });
+      expect(harness.request.mock.calls.filter(([method]) => method === 'agent')).toHaveLength(1);
+    },
+  );
+
+  it.each([
+    undefined,
+    JSON.stringify({ status: 'error', error: 'goal is already paused' }),
+    JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({ status: 'error' }) }] }),
+    JSON.stringify({ status: 'updated', goal: goal(SessionGoalStatus.Paused) }),
+  ])('does not infer completion from a requested status without a matching receipt (%s)', async output => {
+    const harness = createHarness();
+    harness.coordinator.handleToolEvent({
+      runId: 'run-1', sessionKey, name: 'update_goal', toolCallId: 'call-1',
+      input: { status: SessionGoalStatus.Complete }, output, status: 'completed', failed: false,
+    });
+    expect(harness.coordinator.getSnapshot(sessionId)).toBeNull();
+    harness.setGoal(goal(SessionGoalStatus.Paused));
+    await harness.coordinator.handleLifecycle({
+      runId: 'run-1', sessionKey, phase: 'end', executionSettled: true,
+    });
+    expect(harness.coordinator.getSnapshot(sessionId)?.phase).toBe(GoalExecutionPhase.Stopped);
+    expect(harness.request).not.toHaveBeenCalledWith('agent', expect.anything());
+  });
+
   it('reconciles structured mutation results into product execution state', () => {
     const harness = createHarness();
 
@@ -158,7 +197,7 @@ describe('GoalContinuationCoordinator', () => {
     const handling = harness.coordinator.handleLifecycle({
       runId: 'run-1',
       sessionKey,
-      phase: 'end',
+      phase: 'end', executionSettled: true,
     });
     harness.coordinator.clearSession(sessionId);
     rejectGoal(new Error('lookup unavailable'));
@@ -184,7 +223,7 @@ describe('GoalContinuationCoordinator', () => {
       status: 'completed',
       failed: false,
     });
-    await harness.coordinator.handleLifecycle({ runId: 'run-1', sessionKey, phase: 'end' });
+    await harness.coordinator.handleLifecycle({ runId: 'run-1', sessionKey, phase: 'end', executionSettled: true });
 
     expect(harness.coordinator.getSnapshot(sessionId)).toBeNull();
     expect(harness.request).not.toHaveBeenCalled();
@@ -193,7 +232,7 @@ describe('GoalContinuationCoordinator', () => {
   it('dispatches another turn whenever a successful goal run remains active', async () => {
     const harness = createHarness();
 
-    await harness.coordinator.handleLifecycle({ runId: 'run-1', sessionKey, phase: 'end' });
+    await harness.coordinator.handleLifecycle({ runId: 'run-1', sessionKey, phase: 'end', executionSettled: true });
 
     expect(harness.request).toHaveBeenCalledWith('sessions.describe', { key: sessionKey });
     expect(harness.prepareSessionForContinuation).toHaveBeenCalledWith(sessionId);
@@ -242,7 +281,7 @@ describe('GoalContinuationCoordinator', () => {
       prepareSessionForContinuation,
     );
 
-    await harness.coordinator.handleLifecycle({ runId: 'run-1', sessionKey, phase: 'end' });
+    await harness.coordinator.handleLifecycle({ runId: 'run-1', sessionKey, phase: 'end', executionSettled: true });
 
     expect(prepareSessionForContinuation).toHaveBeenCalledWith(sessionId);
     expect(harness.request.mock.calls.some(call => call[0] === 'agent')).toBe(false);
@@ -255,7 +294,7 @@ describe('GoalContinuationCoordinator', () => {
   it('stops automatic continuation after the configured maximum', async () => {
     const harness = createHarness(SessionGoalStatus.Active, undefined, 0);
 
-    await harness.coordinator.handleLifecycle({ runId: 'run-1', sessionKey, phase: 'end' });
+    await harness.coordinator.handleLifecycle({ runId: 'run-1', sessionKey, phase: 'end', executionSettled: true });
 
     expect(harness.request.mock.calls.some(call => call[0] === 'agent')).toBe(false);
     expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({
@@ -281,7 +320,7 @@ describe('GoalContinuationCoordinator', () => {
           failed: false,
         });
       }
-      await harness.coordinator.handleLifecycle({ runId, sessionKey, phase: 'end' });
+      await harness.coordinator.handleLifecycle({ runId, sessionKey, phase: 'end', executionSettled: true });
       runId = harness.coordinator.getSnapshot(sessionId)?.runId ?? '';
     }
 
@@ -302,7 +341,7 @@ describe('GoalContinuationCoordinator', () => {
       });
     });
 
-    await harness.coordinator.handleLifecycle({ runId: 'run-1', sessionKey, phase: 'end' });
+    await harness.coordinator.handleLifecycle({ runId: 'run-1', sessionKey, phase: 'end', executionSettled: true });
 
     const agentParams = harness.request.mock.calls.find(call => call[0] === 'agent')?.[1];
     expect(agentParams.message).toContain('Ship the replacement release');
@@ -330,7 +369,7 @@ describe('GoalContinuationCoordinator', () => {
     const continuation = harness.coordinator.handleLifecycle({
       runId: 'old-run',
       sessionKey,
-      phase: 'end',
+      phase: 'end', executionSettled: true,
     });
     await vi.waitFor(() => expect(harness.onRunAccepted).toHaveBeenCalledOnce());
     await harness.coordinator.handleLifecycle({
@@ -355,7 +394,7 @@ describe('GoalContinuationCoordinator', () => {
     [SessionGoalStatus.Complete, GoalExecutionPhase.AwaitingConfirmation],
   ] as const)('does not continue a %s goal', async (status, phase) => {
     const harness = createHarness(status);
-    await harness.coordinator.handleLifecycle({ runId: `run-${status}`, sessionKey, phase: 'end' });
+    await harness.coordinator.handleLifecycle({ runId: `run-${status}`, sessionKey, phase: 'end', executionSettled: true });
     expect(harness.request).not.toHaveBeenCalledWith('agent', expect.anything());
     expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({ phase });
   });
@@ -380,11 +419,15 @@ describe('GoalContinuationCoordinator', () => {
       name: 'update_goal',
       toolCallId: 'call-1',
       status: 'completed',
+      output: JSON.stringify({
+        content: [{ type: 'text', text: JSON.stringify({ status: 'updated', goal: goal(status) }) }],
+        details: { status: 'updated', goal: goal(status) },
+      }),
       failed: false,
     });
 
     expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({ phase });
-    await harness.coordinator.handleLifecycle({ runId: 'run-1', sessionKey, phase: 'end' });
+    await harness.coordinator.handleLifecycle({ runId: 'run-1', sessionKey, phase: 'end', executionSettled: true });
     expect(harness.request).not.toHaveBeenCalled();
     expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({ phase });
   });
@@ -409,8 +452,53 @@ describe('GoalContinuationCoordinator', () => {
       failed: true,
     });
 
-    await harness.coordinator.handleLifecycle({ runId: 'run-1', sessionKey, phase: 'end' });
+    await harness.coordinator.handleLifecycle({ runId: 'run-1', sessionKey, phase: 'end', executionSettled: true });
     expect(harness.request).toHaveBeenCalledWith('agent', expect.anything());
+  });
+
+  it.each(['stale-run', 'stale-goal'])('ignores a successful %s tool receipt', stale => {
+    const harness = createHarness();
+    harness.coordinator.restoreRunning(sessionId, 'goal-1', 'run-1');
+    harness.coordinator.handleToolEvent({
+      runId: stale === 'stale-run' ? 'old-run' : 'run-1',
+      sessionKey,
+      name: 'update_goal',
+      toolCallId: 'call-1',
+      input: { status: SessionGoalStatus.Complete },
+      output: {
+        status: 'updated',
+        goal: { ...goal(SessionGoalStatus.Complete), id: stale === 'stale-goal' ? 'old-goal' : 'goal-1' },
+      },
+      status: 'completed',
+      failed: false,
+    });
+    expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({
+      phase: GoalExecutionPhase.Running, goalId: 'goal-1', runId: 'run-1',
+    });
+  });
+
+  it('ignores a previous run terminal after restoring a new run', async () => {
+    const harness = createHarness();
+    await harness.coordinator.handleLifecycle({
+      runId: 'old-run',
+      sessionKey,
+      phase: 'start',
+    });
+    harness.coordinator.restoreRunning(sessionId, 'goal-1', 'resumed-run');
+
+    await harness.coordinator.handleLifecycle({
+      runId: 'old-run',
+      sessionKey,
+      phase: 'end',
+      executionSettled: true,
+    });
+
+    expect(harness.request).not.toHaveBeenCalled();
+    expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({
+      phase: GoalExecutionPhase.Running,
+      goalId: 'goal-1',
+      runId: 'resumed-run',
+    });
   });
 
   it('retries lifecycle errors and unexpected aborts instead of stopping', async () => {
@@ -420,7 +508,7 @@ describe('GoalContinuationCoordinator', () => {
     await harness.coordinator.handleLifecycle({
       runId: 'run-error',
       sessionKey,
-      phase: 'error',
+      phase: 'error', executionSettled: true,
       error: 'provider failed',
     });
     expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({
@@ -433,7 +521,7 @@ describe('GoalContinuationCoordinator', () => {
     await harness.coordinator.handleLifecycle({
       runId: harness.coordinator.getSnapshot(sessionId)?.runId ?? 'retry-run',
       sessionKey,
-      phase: 'end',
+      phase: 'end', executionSettled: true,
       aborted: true,
     });
     expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({
@@ -464,7 +552,7 @@ describe('GoalContinuationCoordinator', () => {
     const firstDispatch = harness.coordinator.handleLifecycle({
       runId: 'manual-run',
       sessionKey,
-      phase: 'end',
+      phase: 'end', executionSettled: true,
     });
     await vi.advanceTimersByTimeAsync(0);
     const continuationRunId = harness.onRunAccepted.mock.calls[0]?.[2] as string;
@@ -472,7 +560,7 @@ describe('GoalContinuationCoordinator', () => {
     await harness.coordinator.handleLifecycle({
       runId: continuationRunId,
       sessionKey,
-      phase: 'end',
+      phase: 'end', executionSettled: true,
     });
     await vi.advanceTimersByTimeAsync(2_000);
     expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({
@@ -493,7 +581,7 @@ describe('GoalContinuationCoordinator', () => {
     await harness.coordinator.handleLifecycle({
       runId: 'run-1',
       sessionKey,
-      phase: 'error',
+      phase: 'error', executionSettled: true,
       error: 'provider failed',
     });
     harness.setGoal({
@@ -526,7 +614,7 @@ describe('GoalContinuationCoordinator', () => {
     await harness.coordinator.handleLifecycle({
       runId: 'run-1',
       sessionKey,
-      phase: 'error',
+      phase: 'error', executionSettled: true,
       error: 'provider failed',
     });
     goalState = {
@@ -563,7 +651,7 @@ describe('GoalContinuationCoordinator', () => {
     await harness.coordinator.handleLifecycle({
       runId: 'run-error',
       sessionKey,
-      phase: 'error',
+      phase: 'error', executionSettled: true,
       error: 'provider failed',
     });
     for (const [index, delay] of [2_000, 5_000, 10_000, 30_000, 60_000, 60_000].entries()) {
@@ -585,7 +673,7 @@ describe('GoalContinuationCoordinator', () => {
     await harness.coordinator.handleLifecycle({
       runId: 'run-error',
       sessionKey,
-      phase: 'error',
+      phase: 'error', executionSettled: true,
       error: 'provider failed',
     });
 
@@ -607,7 +695,7 @@ describe('GoalContinuationCoordinator', () => {
     await harness.coordinator.handleLifecycle({
       runId: 'run-stop',
       sessionKey,
-      phase: 'end',
+      phase: 'end', executionSettled: true,
       aborted: true,
     });
     harness.coordinator.confirmStop(sessionId);
@@ -631,7 +719,7 @@ describe('GoalContinuationCoordinator', () => {
     await harness.coordinator.handleLifecycle({
       runId: 'manual-message',
       sessionKey,
-      phase: 'end',
+      phase: 'end', executionSettled: true,
     });
 
     expect(harness.request).not.toHaveBeenCalledWith('agent', expect.anything());
@@ -659,7 +747,7 @@ describe('GoalContinuationCoordinator', () => {
     await harness.coordinator.handleLifecycle({
       runId: 'create-replacement',
       sessionKey,
-      phase: 'end',
+      phase: 'end', executionSettled: true,
     });
 
     expect(harness.request).not.toHaveBeenCalledWith('agent', expect.anything());
@@ -691,7 +779,7 @@ describe('GoalContinuationCoordinator', () => {
     await harness.coordinator.handleLifecycle({
       runId: 'manual-message',
       sessionKey,
-      phase: 'end',
+      phase: 'end', executionSettled: true,
     });
 
     expect(harness.request).not.toHaveBeenCalledWith('agent', expect.anything());
@@ -763,7 +851,7 @@ describe('GoalContinuationCoordinator', () => {
     const stoppedTerminal = harness.coordinator.handleLifecycle({
       runId: 'replacement-run',
       sessionKey,
-      phase: 'end',
+      phase: 'end', executionSettled: true,
     });
     await vi.waitFor(() => expect(describeCalls).toBe(1));
 
@@ -779,19 +867,19 @@ describe('GoalContinuationCoordinator', () => {
 
   it('deduplicates terminal lifecycle events and ignores unrelated sessions', async () => {
     const harness = createHarness();
-    const event = { runId: 'run-1', sessionKey, phase: 'end' as const };
+    const event = { runId: 'run-1', sessionKey, phase: 'end' as const, executionSettled: true };
     await harness.coordinator.handleLifecycle(event);
     await harness.coordinator.handleLifecycle(event);
     await harness.coordinator.handleLifecycle({
       runId: 'subagent',
       sessionKey,
       spawnedBy: 'parent-run',
-      phase: 'end',
+      phase: 'end', executionSettled: true,
     });
     await harness.coordinator.handleLifecycle({
       runId: 'channel',
       sessionKey: 'agent:main:discord:channel',
-      phase: 'end',
+      phase: 'end', executionSettled: true,
     });
     expect(harness.request.mock.calls.filter(call => call[0] === 'agent')).toHaveLength(1);
   });
@@ -801,7 +889,7 @@ describe('GoalContinuationCoordinator', () => {
 it('rearms automatic retry after a stop fails instead of restoring a timerless active snapshot', async () => {
   vi.useFakeTimers();
   const harness = createHarness();
-  await harness.coordinator.handleLifecycle({ runId: 'failed-run', sessionKey, phase: 'error', error: 'provider failure' });
+  await harness.coordinator.handleLifecycle({ runId: 'failed-run', sessionKey, phase: 'error', executionSettled: true, error: 'provider failure' });
   harness.coordinator.stop(sessionId);
   await vi.advanceTimersByTimeAsync(10_000);
   expect(harness.request).not.toHaveBeenCalledWith('agent', expect.anything());
@@ -816,7 +904,7 @@ it('does not schedule automatic work for a failed ordinary conversation with no 
   vi.useFakeTimers();
   const harness = createHarness();
   harness.setGoal(null);
-  await harness.coordinator.handleLifecycle({ runId: 'ordinary-run', sessionKey, phase: 'error', error: 'provider failed' });
+  await harness.coordinator.handleLifecycle({ runId: 'ordinary-run', sessionKey, phase: 'error', executionSettled: true, error: 'provider failed' });
   expect(harness.coordinator.getSnapshot(sessionId)?.phase).toBe(GoalExecutionPhase.Waiting);
   await vi.advanceTimersByTimeAsync(60_000);
   expect(harness.request).not.toHaveBeenCalledWith('agent', expect.anything());

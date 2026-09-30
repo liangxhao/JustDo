@@ -2384,6 +2384,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         sessionKey: turn.sessionKey,
         runId: turn.runId,
         phase: result.status === 'ok' ? 'end' : 'error',
+        executionSettled: true,
         aborted,
         ...(result.error ? { error: result.error } : {}),
       });

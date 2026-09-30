@@ -923,7 +923,21 @@ test('does not reopen a terminal run when Gateway replays late events', () => {
   expect(adapter.isSessionActive('session-1')).toBe(false);
   expect(activity).toHaveBeenCalledOnce();
   expect(complete).toHaveBeenCalledOnce();
-  expect(handleLifecycle).toHaveBeenCalledWith(expect.objectContaining({ phase: 'end' }));
+  expect(handleLifecycle).toHaveBeenCalledWith(
+    expect.objectContaining({ phase: 'end', executionSettled: false }),
+  );
+  adapter.handleGatewayEvent({
+    event: 'agent',
+    payload: {
+      runId: 'run-1',
+      sessionKey,
+      stream: 'lifecycle',
+      data: { phase: 'end', executionSettled: true },
+    },
+  });
+  expect(handleLifecycle).toHaveBeenLastCalledWith(
+    expect.objectContaining({ phase: 'end', executionSettled: true }),
+  );
   expect(session.status).toBe('idle');
 });
 

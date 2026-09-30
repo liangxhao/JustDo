@@ -94,7 +94,13 @@ stateDiagram-v2
 
 原生六种状态为 active、paused、blocked、usage_limited、budget_limited、complete。受限状态独立保留；resume 的预算窗口由原生处理。Main 仅在同一 Goal 仍为 active 时协调下一回合，并考虑等待用户、审批、退避、续跑上限和显式停止。
 
+OpenClaw v2026.9.6 的 lifecycle `end/error` 可能只是一次模型尝试结束；Goal 续跑器仅消费 `executionSettled: true` 的整轮终态，不能提前去重、退避或续跑。断线对账取得 `agent.wait` 的确定终态后也按此契约处理。原生失败或超时会暂停 Goal，重试前必须重新读取原生状态，不能用普通消息隐式恢复。
+
+`update_goal` 的工具传输成功不等于目标变更成功：状态转换拒绝可以返回普通工具结果中的 `status: error`。即时完成/阻塞反馈必须取得 `status: updated` 且目标身份、状态与请求匹配的原生回执；结果缺失或不可解析时等待整轮结束后读取原生 Goal，不根据请求参数推断成功。模型工具只允许 complete/blocked；暂停、恢复、清除仍由用户操作控制。
+
 用户目标操作携带 goalId fence，避免迟到按钮操作改到新目标。重连扫描原生 Goal 和 runtime，再恢复产品快照；不能根据旧 SQLite snapshot 无条件续跑。目标仍存在时，普通消息编辑/撤回受限，目标修改通过 structured mutation 完成。
+
+恢复运行时同时绑定续跑器的当前 runId，防止上一轮迟到的工具回执或 lifecycle 终态覆盖恢复后的执行状态。
 
 ## 7. 计划、问答与审批
 

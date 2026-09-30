@@ -44,6 +44,7 @@ export interface GoalLifecycleEvent {
   sessionKey: string;
   spawnedBy?: string | null;
   phase: 'start' | 'end' | 'error';
+  executionSettled?: boolean;
   aborted?: boolean;
   error?: string;
 }
@@ -84,6 +85,33 @@ const readGoalTerminalStatus = (value: unknown): TerminalGoalStatus | null => {
   return status === SessionGoalStatus.Complete || status === SessionGoalStatus.Blocked
     ? status
     : null;
+};
+
+// Native tools can return a successful transport result containing status:error.
+// Only an explicit updated receipt proves that the requested transition committed.
+const readUpdatedGoal = (value: unknown, depth = 0): SessionGoal | null => {
+  if (depth > 3) return null;
+  if (typeof value === 'string') {
+    try {
+      return readUpdatedGoal(JSON.parse(value), depth + 1);
+    } catch {
+      return null;
+    }
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const result = value as Record<string, unknown>;
+  if (result.isError === true || result.status === 'error') return null;
+  if (result.status === 'updated') return asGoal(result.goal);
+  const details = readUpdatedGoal(result.details, depth + 1);
+  if (details) return details;
+  if (Array.isArray(result.content)) {
+    for (const block of result.content) {
+      if (block?.type !== 'text') continue;
+      const goal = readUpdatedGoal(block.text, depth + 1);
+      if (goal) return goal;
+    }
+  }
+  return null;
 };
 
 const phaseForGoal = (goal: SessionGoal | null): GoalExecutionPhase => {
@@ -140,6 +168,7 @@ export class GoalContinuationCoordinator {
     this.cancelRetry(sessionId, true);
     this.stoppedSessionIds.delete(sessionId);
     this.snapshotsBeforeStop.delete(sessionId);
+    if (runId) this.latestRunIds.set(sessionId, runId);
     this.publish({
       sessionId,
       goalId,
@@ -343,6 +372,9 @@ export class GoalContinuationCoordinator {
 
   async handleLifecycle(event: GoalLifecycleEvent): Promise<void> {
     if (!isManagedGoalSessionKey(event.sessionKey) || event.spawnedBy) return;
+    // Attempt terminals can precede provider retries and the final run outcome.
+    // Do not deduplicate or continue until the native execution has settled.
+    if (event.phase !== 'start' && event.executionSettled !== true) return;
     const sessionId = this.dependencies.resolveSessionId(event.sessionKey);
     if (!sessionId) return;
     this.sessionKeys.set(sessionId, event.sessionKey);
@@ -554,12 +586,17 @@ export class GoalContinuationCoordinator {
     this.pendingGoalUpdates.delete(key);
     const status = requestedStatus || pendingStatus;
     if (event.status !== 'completed' || event.failed || !status) return;
-    this.terminalGoalRuns.set(event.runId, status);
+    const updatedGoal = readUpdatedGoal(event.output);
+    if (!updatedGoal || updatedGoal.status !== status) return;
     const current = this.snapshots.get(sessionId);
+    if (current?.goalId && current.goalId !== updatedGoal.id) return;
+    const latestRunId = this.latestRunIds.get(sessionId);
+    if (latestRunId && latestRunId !== event.runId) return;
+    this.terminalGoalRuns.set(event.runId, status);
     this.cancelRetry(sessionId, true);
     this.publish({
       sessionId,
-      ...(current?.goalId ? { goalId: current.goalId } : {}),
+      goalId: updatedGoal.id,
       phase: terminalPhase(status),
       continuationCount: current?.continuationCount ?? 0,
       updatedAt: this.now(),

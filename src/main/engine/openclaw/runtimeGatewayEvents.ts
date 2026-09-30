@@ -371,6 +371,7 @@ export function handleAgentEvent(
         sessionKey,
         spawnedBy: event.spawnedBy,
         phase,
+        executionSettled: data.executionSettled === true,
         ...(typeof data.aborted === 'boolean' ? { aborted: data.aborted } : {}),
         ...(typeof data.error === 'string' ? { error: data.error } : {}),
       });
