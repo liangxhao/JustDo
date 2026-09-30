@@ -1,3 +1,5 @@
+import './VoiceSettingsTab.css';
+
 import { CheckCircleIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import {
   isLocalAsrLanguageSupported,
@@ -101,7 +103,7 @@ const NumberSetting: React.FC<{
   disabled?: boolean;
   onChange: (value: number) => void;
 }> = ({ id, label, description, value, min, max, step = 1, suffix, disabled, onChange }) => (
-  <div className={`flex items-center justify-between gap-8 ${disabled ? 'opacity-50' : ''}`}>
+  <div className={`voice-setting-row ${disabled ? 'opacity-50' : ''}`}>
     <div>
       <label htmlFor={id} className="text-sm font-medium text-foreground">
         {label}
@@ -489,7 +491,7 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
   }, [microphoneRefreshKey, value.inputEnabled]);
 
   return (
-    <div className="space-y-6">
+    <div className="voice-settings min-w-0 space-y-6">
       <p className="text-sm leading-6 text-secondary">
         {i18nService.t('voiceSettingsDescription')}
       </p>
@@ -521,7 +523,10 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
             onRemove={() => remove(LocalSpeechModelKind.Asr, value.asrModelId)}
           />
         ) : (
-          <div className="flex items-center gap-2 text-xs text-secondary" role="status">
+          <div
+            className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-secondary"
+            role="status"
+          >
             {onlineStatusLoading ? (
               <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
             ) : onlineAsrConfigured ? (
@@ -546,7 +551,7 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
           </div>
         )}
         <div className="border-t border-border pt-5">
-          <div className="mb-5 flex items-center justify-between gap-8">
+          <div className="mb-5 voice-setting-row">
             <div>
               <label
                 htmlFor="voice-recognition-mode"
@@ -558,7 +563,7 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
                 {i18nService.t('voiceRecognitionModeDescription')}
               </p>
             </div>
-            <div className="w-52 shrink-0">
+            <div className="voice-setting-control">
               <ThemedSelect
                 id="voice-recognition-mode"
                 value={value.recognitionMode}
@@ -579,7 +584,7 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
             </div>
           </div>
           {value.recognitionMode === 'local' ? (
-            <div className="mb-5 flex items-center justify-between gap-8">
+            <div className="mb-5 voice-setting-row">
               <div>
                 <label htmlFor="voice-asr-model" className="text-sm font-medium text-foreground">
                   {i18nService.t('voiceRecognitionModel')}
@@ -588,7 +593,7 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
                   {i18nService.t('voiceModelDownloadDescription')}
                 </p>
               </div>
-              <div className="w-52 shrink-0">
+              <div className="voice-setting-control">
                 <ThemedSelect
                   id="voice-asr-model"
                   value={value.asrModelId}
@@ -610,7 +615,7 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
               </div>
             </div>
           ) : (
-            <div className="mb-5 flex items-center justify-between gap-8">
+            <div className="mb-5 voice-setting-row">
               <div>
                 <label
                   htmlFor="voice-online-asr-model"
@@ -622,7 +627,7 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
                   {i18nService.t('voiceOnlineModelSelectionDescription')}
                 </p>
               </div>
-              <div className="w-64 shrink-0">
+              <div className="voice-setting-control">
                 <ThemedSelect
                   id="voice-online-asr-model"
                   value={selectedRecognitionModel}
@@ -642,7 +647,7 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
               </div>
             </div>
           )}
-          <div className="mb-5 flex items-center justify-between gap-8">
+          <div className="mb-5 voice-setting-row">
             <div>
               <label htmlFor="voice-input-source" className="text-sm font-medium text-foreground">
                 {i18nService.t('voiceInputSource')}
@@ -651,7 +656,7 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
                 {i18nService.t('voiceInputSourceDescription')}
               </p>
             </div>
-            <div className="w-52 shrink-0">
+            <div className="voice-setting-control">
               <ThemedSelect
                 id="voice-input-source"
                 value={value.inputSource}
@@ -668,7 +673,7 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
             </div>
           </div>
           {(value.inputSource === 'microphone' || value.inputSource === 'microphone-system') && (
-            <div className="mb-5 flex items-center justify-between gap-8">
+            <div className="mb-5 voice-setting-row">
               <div>
                 <label htmlFor="voice-input-device" className="text-sm font-medium text-foreground">
                   {i18nService.t('voiceInputDevice')}
@@ -677,7 +682,7 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
                   {i18nService.t('voiceInputDeviceDescription')}
                 </p>
               </div>
-              <div className="w-52 shrink-0">
+              <div className="voice-setting-control">
                 <ThemedSelect
                   id="voice-input-device"
                   value={value.inputDeviceId}
@@ -704,7 +709,7 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
             </div>
           )}
           {value.recognitionMode === 'local' ? (
-            <div className="flex items-center justify-between gap-8">
+            <div className="voice-setting-row">
               <div>
                 <label
                   htmlFor="voice-input-language"
@@ -716,7 +721,7 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
                   {i18nService.t('voiceRecognitionLanguageDescription')}
                 </p>
               </div>
-              <div className="w-44 shrink-0">
+              <div className="voice-setting-control">
                 <ThemedSelect
                   id="voice-input-language"
                   value={value.inputLanguage}
@@ -832,7 +837,10 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
             onRemove={() => remove(LocalSpeechModelKind.Tts, value.ttsModelId)}
           />
         ) : (
-          <div className="flex items-center gap-2 text-xs text-secondary" role="status">
+          <div
+            className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-secondary"
+            role="status"
+          >
             {onlineTtsStatusLoading ? (
               <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
             ) : onlineTtsConfigured ? (
@@ -857,7 +865,7 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
           </div>
         )}
         <div className="border-t border-border pt-5">
-          <div className="mb-5 flex items-center justify-between gap-8">
+          <div className="mb-5 voice-setting-row">
             <div>
               <label htmlFor="voice-synthesis-mode" className="text-sm font-medium text-foreground">
                 {i18nService.t('voiceSynthesisMode')}
@@ -866,7 +874,7 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
                 {i18nService.t('voiceSynthesisModeDescription')}
               </p>
             </div>
-            <div className="w-52 shrink-0">
+            <div className="voice-setting-control">
               <ThemedSelect
                 id="voice-synthesis-mode"
                 value={value.synthesisMode}
@@ -883,7 +891,7 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
           </div>
           {value.synthesisMode === 'local' ? (
             <>
-              <div className="mb-5 flex items-center justify-between gap-8">
+              <div className="mb-5 voice-setting-row">
                 <div>
                   <label htmlFor="voice-tts-model" className="text-sm font-medium text-foreground">
                     {i18nService.t('voiceSynthesisModel')}
@@ -892,7 +900,7 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
                     {i18nService.t('voiceModelDownloadDescription')}
                   </p>
                 </div>
-                <div className="w-52 shrink-0">
+                <div className="voice-setting-control">
                   <ThemedSelect
                     id="voice-tts-model"
                     value={value.ttsModelId}
@@ -910,7 +918,7 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
                   />
                 </div>
               </div>
-              <div className="flex items-center justify-between gap-8">
+              <div className="voice-setting-row">
                 <div>
                   <label htmlFor="voice-speaker" className="text-sm font-medium text-foreground">
                     {i18nService.t('voiceSpeaker')}
@@ -919,7 +927,7 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
                     {i18nService.t('voiceSpeakerDescription')}
                   </p>
                 </div>
-                <div className="w-52 shrink-0">
+                <div className="voice-setting-control">
                   <ThemedSelect
                     id="voice-speaker"
                     value={String(value.voiceId)}
@@ -944,7 +952,7 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
             </>
           ) : (
             <div className="space-y-5">
-              <div className="flex items-center justify-between gap-8">
+              <div className="voice-setting-row">
                 <div>
                   <label
                     htmlFor="voice-online-tts-model"
@@ -956,7 +964,7 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
                     {i18nService.t('voiceOnlineModelSelectionDescription')}
                   </p>
                 </div>
-                <div className="w-64 shrink-0">
+                <div className="voice-setting-control">
                   <ThemedSelect
                     id="voice-online-tts-model"
                     value={selectedSynthesisModel}
@@ -977,7 +985,7 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
                   />
                 </div>
               </div>
-              <div className="flex items-center justify-between gap-8">
+              <div className="voice-setting-row">
                 <div>
                   <label
                     htmlFor="voice-online-tts-speaker"
@@ -989,7 +997,7 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
                     {i18nService.t('voiceOnlineSpeakerDescription')}
                   </p>
                 </div>
-                <div className="w-64 shrink-0">
+                <div className="voice-setting-control">
                   <ThemedSelect
                     id="voice-online-tts-speaker"
                     value={selectedSynthesisVoice}

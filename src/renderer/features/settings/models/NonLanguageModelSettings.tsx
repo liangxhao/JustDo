@@ -681,8 +681,9 @@ const NonLanguageModelSettings: React.FC<NonLanguageModelSettingsProps> = ({
     activeProviderId,
   );
 
-  const inputClass =
-    'mt-1 block h-9 w-full rounded-xl border border-border-input bg-white px-3 text-xs text-foreground shadow-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary/30 dark:bg-surface';
+  const inputControlClass =
+    'block h-9 w-full rounded-xl border border-border-input bg-white px-3 text-xs text-foreground shadow-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary/30 dark:bg-surface';
+  const inputClass = `mt-1 ${inputControlClass}`;
 
   return (
     <div className="space-y-4">
@@ -811,36 +812,43 @@ const NonLanguageModelSettings: React.FC<NonLanguageModelSettingsProps> = ({
                       {endpointPreview || '\u00a0'}
                     </span>
                   </div>
-                  <label className="relative text-xs text-secondary">
-                    {i18nService.t('apiKey')}
-                    {kind === 'decision' ? ' *' : ''}
-                    <input
-                      type={showApiKey ? 'text' : 'password'}
-                      required={kind === 'decision'}
-                      value={activeProvider.apiKey}
-                      onChange={event => {
-                        invalidateModelDetection();
-                        invalidateVoiceDetection();
-                        updateProvider({ apiKey: event.target.value });
-                      }}
-                      autoComplete="off"
-                      className={`${inputClass} pr-9`}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowApiKey(value => !value)}
-                      aria-label={i18nService.t(
-                        showApiKey ? 'voiceOnlineHideApiKey' : 'voiceOnlineShowApiKey',
-                      )}
-                      className="absolute bottom-0 right-0 flex h-9 w-9 items-center justify-center text-secondary"
-                    >
-                      {showApiKey ? (
-                        <EyeSlashIcon className="h-4 w-4" />
-                      ) : (
-                        <EyeIcon className="h-4 w-4" />
-                      )}
-                    </button>
-                  </label>
+                  <div className="min-w-0 text-xs text-secondary">
+                    <label htmlFor={`${activeProviderId}-api-key`}>
+                      {i18nService.t('apiKey')}
+                      {kind === 'decision' ? ' *' : ''}
+                    </label>
+                    <div className="relative mt-1">
+                      <input
+                        id={`${activeProviderId}-api-key`}
+                        type={showApiKey ? 'text' : 'password'}
+                        required={kind === 'decision'}
+                        value={activeProvider.apiKey}
+                        onChange={event => {
+                          invalidateModelDetection();
+                          invalidateVoiceDetection();
+                          updateProvider({ apiKey: event.target.value });
+                        }}
+                        autoComplete="off"
+                        className={`${inputControlClass} pr-9`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowApiKey(value => !value)}
+                        aria-label={i18nService.t(
+                          showApiKey ? 'voiceOnlineHideApiKey' : 'voiceOnlineShowApiKey',
+                        )}
+                        aria-controls={`${activeProviderId}-api-key`}
+                        aria-pressed={showApiKey}
+                        className="absolute inset-y-0 right-0 flex w-9 items-center justify-center rounded-r-xl text-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                      >
+                        {showApiKey ? (
+                          <EyeSlashIcon className="h-4 w-4" aria-hidden="true" />
+                        ) : (
+                          <EyeIcon className="h-4 w-4" aria-hidden="true" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
               <div className="rounded-xl border border-border bg-surface p-3">

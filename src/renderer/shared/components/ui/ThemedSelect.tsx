@@ -220,25 +220,25 @@ const ThemedSelect: React.FC<ThemedSelectProps> = ({
   };
 
   return (
-    <div className="relative" ref={dropdownRef}>
-      <div className="flex items-center space-x-3">
+    <div className="relative min-w-0 max-w-full" ref={dropdownRef}>
+      <div className="flex min-w-0 items-center gap-3">
         {label && (
           <label htmlFor={id} className="text-sm font-medium text-foreground whitespace-nowrap">
             {label}
           </label>
         )}
-        <div className="flex-1">
+        <div className="min-w-0 flex-1">
           <button
             ref={buttonRef}
             id={id}
             type="button"
             role="combobox"
             disabled={disabled || options.length === 0}
-            title={title}
+            title={title ?? selectedOption?.label ?? value}
             onClick={() => (isOpen ? closeDropdown() : openDropdown())}
             onKeyDown={handleButtonKeyDown}
             onBlur={() => closeDropdown()}
-            className={`flex items-center justify-between w-full rounded-lg bg-surface border-border border focus:border-primary focus:ring-1 focus:ring-primary/40 text-foreground px-4 py-2.5 text-sm disabled:cursor-not-allowed disabled:opacity-50 ${className}`}
+            className={`flex min-w-0 max-w-full items-center justify-between w-full rounded-lg bg-surface border-border border focus:border-primary focus:ring-1 focus:ring-primary/40 text-foreground px-4 py-2.5 text-sm disabled:cursor-not-allowed disabled:opacity-50 ${className}`}
             aria-haspopup="listbox"
             aria-label={ariaLabel}
             aria-expanded={isOpen}

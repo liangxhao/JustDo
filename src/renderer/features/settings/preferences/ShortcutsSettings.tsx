@@ -229,8 +229,8 @@ const ShortcutsSettings: React.FC<ShortcutsSettingsProps> = ({ shortcuts, onShor
       <label className="block text-sm font-medium text-secondary mb-3">
         {i18nService.t('keyboardShortcuts')}
       </label>
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
+      <div className="divide-y divide-border-subtle rounded-2xl border border-border-subtle bg-surface-raised/50 px-5">
+        <div className="flex items-center justify-between gap-6 py-4">
           <span className="text-sm text-foreground">{i18nService.t('newChat')}</span>
           <ShortcutRecorder
             label={i18nService.t('newChat')}
@@ -238,7 +238,7 @@ const ShortcutsSettings: React.FC<ShortcutsSettingsProps> = ({ shortcuts, onShor
             onChange={v => onShortcutChange('newChat', v)}
           />
         </div>
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-6 py-4">
           <span className="text-sm text-foreground">{i18nService.t('search')}</span>
           <ShortcutRecorder
             label={i18nService.t('search')}
@@ -246,7 +246,7 @@ const ShortcutsSettings: React.FC<ShortcutsSettingsProps> = ({ shortcuts, onShor
             onChange={v => onShortcutChange('search', v)}
           />
         </div>
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-6 py-4">
           <span className="text-sm text-foreground">{i18nService.t('openSettings')}</span>
           <ShortcutRecorder
             label={i18nService.t('openSettings')}
@@ -254,14 +254,14 @@ const ShortcutsSettings: React.FC<ShortcutsSettingsProps> = ({ shortcuts, onShor
             onChange={v => onShortcutChange('settings', v)}
           />
         </div>
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-6 py-4">
           <span className="text-sm text-foreground">{i18nService.t('sendMessageShortcut')}</span>
           <SendShortcutSelect
             value={shortcuts.sendMessage}
             onChange={v => onShortcutChange('sendMessage', v)}
           />
         </div>
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-6 py-4">
           <span className="text-sm text-foreground">{i18nService.t('shortcutTerminal')}</span>
           <ShortcutRecorder
             label={i18nService.t('shortcutTerminal')}
@@ -269,7 +269,7 @@ const ShortcutsSettings: React.FC<ShortcutsSettingsProps> = ({ shortcuts, onShor
             onChange={value => onShortcutChange('terminal', value)}
           />
         </div>
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-6 py-4">
           <span className="text-sm text-foreground">{i18nService.t('shortcutBrowser')}</span>
           <ShortcutRecorder
             label={i18nService.t('shortcutBrowser')}
@@ -277,7 +277,7 @@ const ShortcutsSettings: React.FC<ShortcutsSettingsProps> = ({ shortcuts, onShor
             onChange={value => onShortcutChange('browser', value)}
           />
         </div>
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-6 py-4">
           <span className="text-sm text-foreground">{i18nService.t('shortcutSideChat')}</span>
           <ShortcutRecorder
             label={i18nService.t('shortcutSideChat')}
@@ -285,7 +285,7 @@ const ShortcutsSettings: React.FC<ShortcutsSettingsProps> = ({ shortcuts, onShor
             onChange={value => onShortcutChange('sideChat', value)}
           />
         </div>
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-6 py-4">
           <span className="text-sm text-foreground">{i18nService.t('shortcutFiles')}</span>
           <ShortcutRecorder
             label={i18nService.t('shortcutFiles')}

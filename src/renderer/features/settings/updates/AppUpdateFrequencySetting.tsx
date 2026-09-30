@@ -64,12 +64,12 @@ const AppUpdateFrequencySetting: React.FC = () => {
 
   return (
     <div>
-      <h4 className="mb-3 text-sm font-medium text-foreground">
-        {i18nService.t('appUpdateFrequencyTitle')}
-      </h4>
       <div className="flex items-center justify-between gap-6">
         <div className="min-w-0">
-          <p className="text-sm text-secondary">
+          <h4 className="text-sm font-medium text-foreground">
+            {i18nService.t('appUpdateFrequencyTitle')}
+          </h4>
+          <p className="mt-1 text-xs leading-5 text-secondary">
             {i18nService.t('appUpdateFrequencyDescription')}
             {!supported && (
               <span className="ml-2 text-xs text-tertiary">

@@ -1,18 +1,7 @@
 import {
-  ArrowLeftIcon,
   ArrowPathIcon,
-  ChartBarIcon,
   CheckCircleIcon,
-  Cog6ToothIcon,
-  CpuChipIcon,
-  CubeIcon,
   ExclamationTriangleIcon,
-  GlobeAltIcon,
-  MicrophoneIcon,
-  PaintBrushIcon,
-  PuzzlePieceIcon,
-  ShieldCheckIcon,
-  SparklesIcon,
   XCircleIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
@@ -144,22 +133,10 @@ import {
 import { AppearancePreferences } from './preferences/AppearancePreferences';
 import { GeneralSettingsPage } from './preferences/GeneralSettingsPage';
 import { PetSettingsPage } from './preferences/PetSettingsPage';
+import { SETTINGS_PAGES, type SettingsTab } from './settingsCatalog';
+import { SettingsNavigation } from './SettingsNavigation';
 
-type TabType =
-  | 'agents'
-  | 'general'
-  | 'appearance'
-  | 'pet'
-  | 'usage'
-  | 'model'
-  | 'runtime'
-  | 'integrations'
-  | 'security'
-  | 'browser'
-  | 'voice'
-  | 'im'
-  | 'shortcuts'
-  | 'help';
+type TabType = SettingsTab;
 
 const DEVELOPER_MODE_REVEAL_CLICKS = 10;
 
@@ -271,7 +248,6 @@ const Settings: React.FC<SettingsProps> = ({
     Record<ProviderType, Record<string, ModelConnectionTestStatus>>
   >({});
   const [pendingDeleteProvider, setPendingDeleteProvider] = useState<ProviderType | null>(null);
-  const [sidebarWidth, setSidebarWidth] = useState(220);
   const [appVersion, setAppVersion] = useState<string>('unknown');
   const initialThemeRef = useRef<'light' | 'dark' | 'system'>(themeService.getTheme());
   const initialThemeIdRef = useRef<string>(themeService.getThemeId());
@@ -423,35 +399,6 @@ const Settings: React.FC<SettingsProps> = ({
 
   // 创建引用来确保内容区域的滚动
   const contentRef = useRef<HTMLDivElement>(null);
-  const startHorizontalResize = useCallback(
-    (
-      event: React.MouseEvent<HTMLDivElement>,
-      currentWidth: number,
-      setWidth: React.Dispatch<React.SetStateAction<number>>,
-      minWidth: number,
-      maxWidth: number,
-    ) => {
-      const startX = event.clientX;
-      event.preventDefault();
-
-      const handleMouseMove = (moveEvent: MouseEvent) => {
-        setWidth(Math.min(maxWidth, Math.max(minWidth, currentWidth + moveEvent.clientX - startX)));
-      };
-      const handleMouseUp = () => {
-        document.body.style.cursor = '';
-        document.body.style.userSelect = '';
-        window.removeEventListener('mousemove', handleMouseMove);
-        window.removeEventListener('mouseup', handleMouseUp);
-      };
-
-      document.body.style.cursor = 'col-resize';
-      document.body.style.userSelect = 'none';
-      window.addEventListener('mousemove', handleMouseMove);
-      window.addEventListener('mouseup', handleMouseUp);
-    },
-    [],
-  );
-
   // 快捷键设置
   const [shortcuts, setShortcuts] = useState<ShortcutSettingsValue>({
     newChat: 'Ctrl+N',
@@ -1624,143 +1571,9 @@ const Settings: React.FC<SettingsProps> = ({
   // 测试 API 连接
 
   // 渲染标签页
-  const sidebarTabs: { key: TabType; label: string; icon: React.ReactNode }[] = [
-    {
-      key: 'general',
-      label: i18nService.t('general'),
-      icon: <Cog6ToothIcon className="h-5 w-5" />,
-    },
-    {
-      key: 'appearance',
-      label: i18nService.t('appearance'),
-      icon: <PaintBrushIcon className="h-5 w-5" />,
-    },
-    {
-      key: 'pet',
-      label: i18nService.t('coworkPetSettingsTitle'),
-      icon: <SparklesIcon className="h-5 w-5" />,
-    },
-    {
-      key: 'security',
-      label: i18nService.t('securitySettings'),
-      icon: <ShieldCheckIcon className="h-5 w-5" />,
-    },
-    {
-      key: 'model',
-      label: i18nService.t('model'),
-      icon: <CubeIcon className="h-5 w-5" />,
-    },
-    {
-      key: 'agents',
-      label: i18nService.t('agentManager'),
-      icon: <CpuChipIcon className="h-5 w-5" />,
-    },
-    {
-      key: 'runtime',
-      label: i18nService.t('agentRuntimeTab'),
-      icon: <CpuChipIcon className="h-5 w-5" />,
-    },
-    {
-      key: 'voice',
-      label: i18nService.t('voiceSettings'),
-      icon: <MicrophoneIcon className="h-5 w-5" />,
-    },
-    {
-      key: 'browser',
-      label: i18nService.t('browserSettings'),
-      icon: <GlobeAltIcon className="h-5 w-5" />,
-    },
-    {
-      key: 'usage',
-      label: i18nService.t('usageAndStorage'),
-      icon: <ChartBarIcon className="h-5 w-5" />,
-    },
-    {
-      key: 'im',
-      label: i18nService.t('imBot'),
-      icon: (
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          fill="none"
-          viewBox="0 0 24 24"
-          strokeWidth={1.5}
-          stroke="currentColor"
-          className="h-5 w-5"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-          />
-        </svg>
-      ),
-    },
-    {
-      key: 'integrations',
-      label: i18nService.t('integrationsTab'),
-      icon: <PuzzlePieceIcon className="h-5 w-5" />,
-    },
-    {
-      key: 'shortcuts',
-      label: i18nService.t('shortcuts'),
-      icon: (
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          fill="none"
-          viewBox="0 0 24 24"
-          strokeWidth={1.5}
-          stroke="currentColor"
-          className="h-5 w-5"
-        >
-          <rect x="2" y="4" width="20" height="14" rx="2" />
-          <line x1="6" y1="8" x2="8" y2="8" />
-          <line x1="10" y1="8" x2="12" y2="8" />
-          <line x1="14" y1="8" x2="16" y2="8" />
-          <line x1="6" y1="12" x2="8" y2="12" />
-          <line x1="10" y1="12" x2="14" y2="12" />
-          <line x1="16" y1="12" x2="18" y2="12" />
-          <line x1="8" y1="15.5" x2="16" y2="15.5" />
-        </svg>
-      ),
-    },
-    {
-      key: 'help',
-      label: i18nService.t('help'),
-      icon: (
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          fill="none"
-          viewBox="0 0 24 24"
-          strokeWidth={1.5}
-          stroke="currentColor"
-          className="h-5 w-5"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z"
-          />
-        </svg>
-      ),
-    },
-  ];
-
-  const activeTabLabel = sidebarTabs.find(t => t.key === activeTab)?.label ?? '';
-  const activeTabContentWidth = (() => {
-    switch (activeTab) {
-      case 'appearance':
-      case 'model':
-      case 'browser':
-      case 'im':
-        return 'max-w-[1440px]';
-      case 'usage':
-      case 'runtime':
-      case 'integrations':
-        return 'max-w-7xl';
-      default:
-        return 'max-w-4xl';
-    }
-  })();
+  const activePage = SETTINGS_PAGES.find(page => page.id === activeTab)!;
+  const activeTabLabel = i18nService.t(activePage.label);
+  const activeTabContentWidth = activePage.wide ? 'max-w-[1120px]' : 'max-w-[760px]';
 
   const renderTabContent = () => {
     switch (activeTab) {
@@ -1978,120 +1791,15 @@ const Settings: React.FC<SettingsProps> = ({
   return (
     <div className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-background">
       <WindowHeader />
-      <div className="relative flex h-9 shrink-0 select-none items-center border-b border-border-subtle bg-surface-raised">
-        <div className="flex min-w-0 items-center gap-2 pl-2 pr-3">
-          <button
-            type="button"
-            onClick={handleCloseSettings}
-            className="non-draggable flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface hover:text-foreground"
-            aria-label={i18nService.t('back')}
-            title={i18nService.t('back')}
-          >
-            <ArrowLeftIcon className="h-4 w-4" />
-          </button>
-          <h2 className="truncate text-sm font-semibold text-foreground">
-            {i18nService.t('settings')}
-          </h2>
-        </div>
-      </div>
-
       <div className="flex min-h-0 flex-1 overflow-hidden bg-background">
-        {/* Left navigation */}
-        <div
-          className="flex shrink-0 flex-col overflow-hidden bg-surface-raised/60"
-          style={{ width: sidebarWidth }}
-        >
-          <nav className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-3 py-3">
-            {sidebarTabs.map(tab => (
-              <button
-                key={tab.key}
-                type="button"
-                onClick={() => handleTabChange(tab.key)}
-                className={`flex h-9 shrink-0 items-center gap-3 rounded-lg px-3 text-left text-sm font-medium transition-colors ${
-                  activeTab === tab.key
-                    ? 'bg-primary-muted text-primary'
-                    : 'text-secondary hover:bg-surface hover:text-foreground'
-                }`}
-              >
-                <span className="flex h-5 w-5 items-center justify-center [&>svg]:h-[18px] [&>svg]:w-[18px]">
-                  {tab.icon}
-                </span>
-                <span>{tab.label}</span>
-              </button>
-            ))}
-          </nav>
-        </div>
-
-        <div
-          className="group relative z-10 w-px shrink-0 cursor-col-resize bg-border-subtle after:absolute after:inset-y-0 after:-left-1 after:w-2"
-          onMouseDown={event =>
-            startHorizontalResize(event, sidebarWidth, setSidebarWidth, 180, 340)
-          }
-          role="separator"
-          aria-orientation="vertical"
-          aria-label={i18nService.t('resizePanels')}
-          title={i18nService.t('resizePanels')}
-        >
-          <div className="absolute inset-y-0 left-0 w-px bg-transparent transition-colors group-hover:bg-primary" />
-        </div>
+        <SettingsNavigation
+          activeTab={activeTab}
+          onSelect={handleTabChange}
+          onClose={handleCloseSettings}
+        />
 
         {/* Right content */}
         <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
-          {/* Page header */}
-          <div className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-border-subtle px-6">
-            <h3 className="text-lg font-semibold text-foreground">
-              {activeTab === 'general' ? (
-                <button
-                  type="button"
-                  className="select-none rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                  onClick={() =>
-                    setGeneralTitleClicks(count =>
-                      Math.min(count + 1, DEVELOPER_MODE_REVEAL_CLICKS),
-                    )
-                  }
-                >
-                  {activeTabLabel}
-                </button>
-              ) : (
-                activeTabLabel
-              )}
-            </h3>
-            <div className="flex min-w-0 items-center gap-2">
-              {((activeTab === 'runtime' && agentRuntimeSettingsDirty) ||
-                (activeTab === 'integrations' &&
-                  activeIntegrationView === IntegrationSettingsView.AgentDelegation &&
-                  externalAgentSettingsDirty)) && (
-                <div className="mr-1 hidden items-center gap-2 sm:flex">
-                  <span className="h-2 w-2 rounded-full bg-amber-500" />
-                  <span className="text-xs font-medium text-secondary">
-                    {i18nService.t('agentRuntimeUnsaved')}
-                  </span>
-                </div>
-              )}
-              {activeTab === 'runtime' && (
-                <button
-                  type="button"
-                  onClick={() => setAgentRuntimeSettings(createDefaultAgentRuntimeSettings())}
-                  className="non-draggable inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium text-foreground shadow-sm transition-colors hover:border-primary/40 hover:bg-surface-raised hover:text-primary active:scale-[0.98]"
-                >
-                  <ArrowPathIcon className="h-3.5 w-3.5" />
-                  {i18nService.t('agentRuntimeRestoreDefaults')}
-                </button>
-              )}
-              {activeTab === 'integrations' &&
-                activeIntegrationView === IntegrationSettingsView.AgentDelegation && (
-                  <button
-                    type="button"
-                    onClick={() => setExternalAgentSettings(createDefaultExternalAgentSettings())}
-                    className="non-draggable inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium text-foreground shadow-sm transition-colors hover:border-primary/40 hover:bg-surface-raised hover:text-primary active:scale-[0.98]"
-                  >
-                    <ArrowPathIcon className="h-3.5 w-3.5" />
-                    {i18nService.t('agentRuntimeRestoreDefaults')}
-                  </button>
-                )}
-            </div>
-          </div>
-
           {noticeMessage && (
             <div className="px-6">
               <ErrorMessage message={noticeMessage} onClose={() => setNoticeMessage(null)} />
@@ -2109,15 +1817,82 @@ const Settings: React.FC<SettingsProps> = ({
               if (activeTab === 'agents') event.preventDefault();
               else void handleSubmit(event);
             }}
-            className="flex flex-col flex-1 overflow-hidden"
+            className="flex min-h-0 flex-col flex-1 overflow-hidden"
           >
             {/* Tab content */}
             <div
               ref={contentRef}
-              className="flex-1 overflow-y-auto px-6 py-5"
+              className="flex-1 overflow-y-auto px-5 py-8 lg:px-12 lg:py-12"
+              role="region"
+              aria-labelledby="settings-page-title"
               style={{ scrollbarGutter: 'stable' }}
             >
-              <div className={`mx-auto w-full ${activeTabContentWidth}`}>{renderTabContent()}</div>
+              <div className={`mx-auto w-full ${activeTabContentWidth}`}>
+                {/* Page header */}
+                <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
+                  <h3
+                    id="settings-page-title"
+                    className="text-2xl font-semibold tracking-tight text-foreground"
+                  >
+                    {activeTab === 'general' ? (
+                      <button
+                        type="button"
+                        className="select-none rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                        onClick={() =>
+                          setGeneralTitleClicks(count =>
+                            Math.min(count + 1, DEVELOPER_MODE_REVEAL_CLICKS),
+                          )
+                        }
+                      >
+                        {activeTabLabel}
+                      </button>
+                    ) : (
+                      activeTabLabel
+                    )}
+                  </h3>
+                  <div className="flex min-w-0 items-center gap-2">
+                    {((activeTab === 'runtime' && agentRuntimeSettingsDirty) ||
+                      (activeTab === 'integrations' &&
+                        activeIntegrationView === IntegrationSettingsView.AgentDelegation &&
+                        externalAgentSettingsDirty)) && (
+                      <div className="mr-1 hidden items-center gap-2 sm:flex">
+                        <span className="h-2 w-2 rounded-full bg-amber-500" />
+                        <span className="text-xs font-medium text-secondary">
+                          {i18nService.t('agentRuntimeUnsaved')}
+                        </span>
+                      </div>
+                    )}
+                    {activeTab === 'runtime' && (
+                      <button
+                        type="button"
+                        onClick={() => setAgentRuntimeSettings(createDefaultAgentRuntimeSettings())}
+                        className="non-draggable inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium text-foreground shadow-sm transition-colors hover:border-primary/40 hover:bg-surface-raised hover:text-primary active:scale-[0.98]"
+                      >
+                        <ArrowPathIcon className="h-3.5 w-3.5" />
+                        {i18nService.t('agentRuntimeRestoreDefaults')}
+                      </button>
+                    )}
+                    {activeTab === 'integrations' &&
+                      activeIntegrationView === IntegrationSettingsView.AgentDelegation && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setExternalAgentSettings(createDefaultExternalAgentSettings())
+                          }
+                          className="non-draggable inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium text-foreground shadow-sm transition-colors hover:border-primary/40 hover:bg-surface-raised hover:text-primary active:scale-[0.98]"
+                        >
+                          <ArrowPathIcon className="h-3.5 w-3.5" />
+                          {i18nService.t('agentRuntimeRestoreDefaults')}
+                        </button>
+                      )}
+                  </div>
+                </div>
+
+                <p className="-mt-5 mb-8 text-sm leading-6 text-secondary">
+                  {i18nService.t(activePage.description)}
+                </p>
+                {renderTabContent()}
+              </div>
             </div>
 
             {/* Footer buttons */}

@@ -87,111 +87,130 @@ export function GeneralSettingsPage({
 }: GeneralSettingsPageProps) {
   return (
     <div className="space-y-8">
-      {/* Language Section */}
-      <div className="flex items-center justify-between">
-        <h4 className="text-sm font-medium text-foreground">{i18nService.t('language')}</h4>
-        <div className="w-[140px] shrink-0">
-          <ThemedSelect
-            id="language"
-            value={language}
-            onChange={value => {
-              const nextLanguage = value as LanguageType;
-              setLanguage(nextLanguage);
-              i18nService.setLanguage(nextLanguage, { persist: false });
-            }}
-            options={[
-              { value: 'zh', label: i18nService.t('chinese') },
-              { value: 'en', label: i18nService.t('english') },
-            ]}
-          />
-        </div>
-      </div>
-
-      {/* Auto-launch Section */}
-      <div>
-        <h4 className="text-sm font-medium text-foreground mb-3">{i18nService.t('autoLaunch')}</h4>
-        <label className="flex items-center justify-between cursor-pointer">
-          <span className="text-sm text-secondary">{i18nService.t('autoLaunchDescription')}</span>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={autoLaunch}
-            onClick={async () => {
-              if (isUpdatingAutoLaunch) return;
-              const next = !autoLaunch;
-              setIsUpdatingAutoLaunch(true);
-              try {
-                const result = await window.electron.autoLaunch.set(next);
-                if (result.success) {
-                  setAutoLaunchState(next);
-                } else {
-                  setError(result.error || 'Failed to update auto-launch setting');
-                }
-              } catch (err) {
-                console.error('Failed to set auto-launch:', err);
-                setError('Failed to update auto-launch setting');
-              } finally {
-                setIsUpdatingAutoLaunch(false);
-              }
-            }}
-            disabled={isUpdatingAutoLaunch}
-            className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${
-              isUpdatingAutoLaunch ? 'opacity-50 cursor-not-allowed' : ''
-            } ${autoLaunch ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-600'}`}
-          >
-            <span
-              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                autoLaunch ? 'translate-x-6' : 'translate-x-1'
-              }`}
-            />
-          </button>
-        </label>
-      </div>
-
-      {/* Prevent Sleep Section */}
-      <div>
-        <h4 className="text-sm font-medium text-foreground mb-3">
-          {i18nService.t('preventSleep')}
+      <section aria-labelledby="general-behavior-heading">
+        <h4 id="general-behavior-heading" className="mb-3 text-sm font-semibold text-foreground">
+          {i18nService.t('settingsGeneralBehavior')}
         </h4>
-        <label className="flex items-center justify-between cursor-pointer">
-          <span className="text-sm text-secondary">{i18nService.t('preventSleepDescription')}</span>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={preventSleep}
-            onClick={async () => {
-              if (isUpdatingPreventSleep) return;
-              const next = !preventSleep;
-              setIsUpdatingPreventSleep(true);
-              try {
-                const result = await window.electron.preventSleep.set(next);
-                if (result.success) {
-                  setPreventSleepState(next);
-                } else {
-                  setError(result.error || 'Failed to update prevent-sleep setting');
-                }
-              } catch (err) {
-                console.error('Failed to set prevent-sleep:', err);
-                setError('Failed to update prevent-sleep setting');
-              } finally {
-                setIsUpdatingPreventSleep(false);
-              }
-            }}
-            disabled={isUpdatingPreventSleep}
-            className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${
-              isUpdatingPreventSleep ? 'opacity-50 cursor-not-allowed' : ''
-            } ${preventSleep ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-600'}`}
-          >
-            <span
-              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                preventSleep ? 'translate-x-6' : 'translate-x-1'
-              }`}
-            />
-          </button>
-        </label>
-      </div>
+        <div className="divide-y divide-border-subtle rounded-2xl border border-border-subtle bg-surface-raised/50 px-5">
+          {/* Language Section */}
+          <div className="flex items-center justify-between gap-6 py-4">
+            <div>
+              <h4 className="text-sm font-medium text-foreground">{i18nService.t('language')}</h4>
+              <p className="mt-1 text-xs leading-5 text-secondary">
+                {i18nService.t('settingsLanguageDescription')}
+              </p>
+            </div>
+            <div className="w-[140px] shrink-0">
+              <ThemedSelect
+                id="language"
+                ariaLabel={i18nService.t('language')}
+                value={language}
+                onChange={value => {
+                  const nextLanguage = value as LanguageType;
+                  setLanguage(nextLanguage);
+                  i18nService.setLanguage(nextLanguage, { persist: false });
+                }}
+                options={[
+                  { value: 'zh', label: i18nService.t('chinese') },
+                  { value: 'en', label: i18nService.t('english') },
+                ]}
+              />
+            </div>
+          </div>
 
-      <AppUpdateFrequencySetting />
+          <div className="flex items-center justify-between gap-6 py-4">
+            <div className="min-w-0">
+              <h4 className="text-sm font-medium text-foreground">{i18nService.t('autoLaunch')}</h4>
+              <p className="mt-1 text-xs leading-5 text-secondary">
+                {i18nService.t('autoLaunchDescription')}
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-label={i18nService.t('autoLaunch')}
+              aria-checked={autoLaunch}
+              onClick={async () => {
+                if (isUpdatingAutoLaunch) return;
+                const next = !autoLaunch;
+                setIsUpdatingAutoLaunch(true);
+                try {
+                  const result = await window.electron.autoLaunch.set(next);
+                  if (result.success) {
+                    setAutoLaunchState(next);
+                  } else {
+                    setError(result.error || 'Failed to update auto-launch setting');
+                  }
+                } catch (err) {
+                  console.error('Failed to set auto-launch:', err);
+                  setError('Failed to update auto-launch setting');
+                } finally {
+                  setIsUpdatingAutoLaunch(false);
+                }
+              }}
+              disabled={isUpdatingAutoLaunch}
+              className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${
+                isUpdatingAutoLaunch ? 'opacity-50 cursor-not-allowed' : ''
+              } ${autoLaunch ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-600'}`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                  autoLaunch ? 'translate-x-6' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between gap-6 py-4">
+            <div className="min-w-0">
+              <h4 className="text-sm font-medium text-foreground">
+                {i18nService.t('preventSleep')}
+              </h4>
+              <p className="mt-1 text-xs leading-5 text-secondary">
+                {i18nService.t('preventSleepDescription')}
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-label={i18nService.t('preventSleep')}
+              aria-checked={preventSleep}
+              onClick={async () => {
+                if (isUpdatingPreventSleep) return;
+                const next = !preventSleep;
+                setIsUpdatingPreventSleep(true);
+                try {
+                  const result = await window.electron.preventSleep.set(next);
+                  if (result.success) {
+                    setPreventSleepState(next);
+                  } else {
+                    setError(result.error || 'Failed to update prevent-sleep setting');
+                  }
+                } catch (err) {
+                  console.error('Failed to set prevent-sleep:', err);
+                  setError('Failed to update prevent-sleep setting');
+                } finally {
+                  setIsUpdatingPreventSleep(false);
+                }
+              }}
+              disabled={isUpdatingPreventSleep}
+              className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${
+                isUpdatingPreventSleep ? 'opacity-50 cursor-not-allowed' : ''
+              } ${preventSleep ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-600'}`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                  preventSleep ? 'translate-x-6' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </div>
+
+          <div className="py-4">
+            <AppUpdateFrequencySetting />
+          </div>
+        </div>
+      </section>
 
       {/* Developer Mode Section */}
       {developerModeAvailable && (
