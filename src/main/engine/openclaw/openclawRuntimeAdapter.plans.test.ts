@@ -301,6 +301,7 @@ test('resets context and starts an approved plan on the same OpenClaw session', 
     key: planRequest.sessionKey,
     agentId: 'main',
     reason: 'reset',
+    expectedSessionId: 'gateway-session-1',
   });
   expect(stopSessionInternal).toHaveBeenCalledWith('session-1', {}, false);
   expect(stopSessionInternal.mock.invocationCallOrder[0]).toBeLessThan(
@@ -326,6 +327,49 @@ test('resets context and starts an approved plan on the same OpenClaw session', 
     implementationRunId: 'implementation-run-1',
   });
 });
+
+test.each(['connection changed', 'session replaced'])(
+  'does not dispatch implementation when reset is unsafe: %s',
+  async failure => {
+    const { store, planHandoffs } = createEmptyStore();
+    const adapter = new OpenClawRuntimeAdapter(
+      store,
+      {},
+      undefined,
+      createApprovedPlanArtifactStore('Verified approved plan'),
+    );
+    const planRequest = createPlanModeRequest();
+    planRequest.plan = 'Verified approved plan';
+    seedPresentedPlan(adapter, planRequest);
+    const internals = getSessionPreparationInternals(adapter);
+    const request = vi.fn(async (method: string) => {
+      if (method === PlanModeGateway.RESOLVE) {
+        return { requestId: planRequest.requestId, decision: 'implement' };
+      }
+      if (method === 'sessions.describe') {
+        if (failure === 'connection changed') internals.gatewayClient = null;
+        return { session: { sessionId: 'gateway-session-1' } };
+      }
+      if (method === 'sessions.reset') throw new Error('session-changed');
+      throw new Error(`Unexpected method: ${method}`);
+    });
+    internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+    internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+
+    await expect(
+      adapter.resolveAskUserInteraction(planRequest.requestId, {
+        behavior: 'plan',
+        decision: 'implement',
+      }),
+    ).rejects.toThrow(failure === 'connection changed' ? 'connection changed' : 'session-changed');
+
+    expect(request.mock.calls.some(([method]) => method === 'chat.send')).toBe(false);
+    expect(request.mock.calls.some(([method]) => method === 'sessions.reset')).toBe(
+      failure === 'session replaced',
+    );
+    expect(planHandoffs.get(planRequest.requestId)?.state).toBe('dispatching');
+  },
+);
 
 test('admits an approved plan when chat.send acknowledgement is lost but activity is observed', async () => {
   const { store, planHandoffs } = createEmptyStore();

@@ -108,6 +108,11 @@ AskUserQuestion 的 pending、默认和超时在 Extension 中；Main 转接 eve
 
 PresentPlan 将规范化计划作为工作区内受控文件持久化，并保存 SHA-256、长度、创建时 workspace root 与 handoff 身份。持久文件、handoff 和 awaitingReview 标记就绪后才展示侧栏。批准后通过原生 reset 建立实施上下文边界，注入隐藏实施指令；可见历史与模型上下文不同，不能删除规划历史来模拟 reset。
 
+实施前的 `sessions.reset` 携带刚由 `sessions.describe` 读取的 `expectedSessionId`，
+利用 OpenClaw 2026.9.6 的原生会话身份检查拒绝已被替换的目标；读取后还要重新核对 Gateway
+连接代次。重置失败时不发送实施指令，保留可恢复的 handoff。此身份检查不等于轮次锁，
+也不检测保持同一 sessionId 的其他 reset；原生 reset 的并发准入仍由 Gateway 负责。
+
 审批与计划确认分开。exec/plugin approval 使用原生期限和决策集合；Main 校验请求仍有效，不能把关闭窗口、断线或默认选择视作允许。
 
 ## 8. 子任务与平级助手

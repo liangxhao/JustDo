@@ -20,6 +20,7 @@ vi.mock('openclaw/plugin-sdk/agent-harness-runtime', () => ({
       sessions: ['group_list'],
       skill_workshop: ['list', 'inspect', 'read'],
       subagents: ['', 'list'],
+      theme: ['list', 'get'],
     };
     return safeActions[toolName]?.includes(action) ?? false;
   },
@@ -27,7 +28,11 @@ vi.mock('openclaw/plugin-sdk/agent-harness-runtime', () => ({
 
 type ToolFactory = (context: { sessionKey?: string }) => {
   catalogMode?: string;
-  execute: (toolCallId: string, params: unknown) => Promise<{ content: Array<{ text: string }> }>;
+  execute: (
+    toolCallId: string,
+    params: unknown,
+    signal?: AbortSignal,
+  ) => Promise<{ content: Array<{ text: string }> }>;
 } | null;
 
 const registerPlugin = () => {
@@ -86,6 +91,9 @@ describe('Plan mode extension', () => {
     };
     expect(prepared.prependContext).toContain('Do not modify files');
     expect(prepared.prependContext).toContain('PresentPlan is the tool name');
+    expect(prepared.prependContext).toContain('Do not implement in this planning run');
+    expect(prepared.prependContext).toContain('resets the context');
+    expect(prepared.prependContext).not.toContain('Plan mode has been disabled');
 
     const policyContext = { getSessionExtension: () => ({ enabled: true, updatedAt: 1 }) };
     expect(registered.policy?.({ toolName: 'write', params: {} }, policyContext)).toMatchObject({
@@ -141,6 +149,11 @@ describe('Plan mode extension', () => {
   test.each([
     ['sessions', { action: 'group_list' }, false],
     ['sessions', { action: 'patch' }, true],
+    ['theme', { action: 'list' }, false],
+    ['theme', { action: 'get' }, false],
+    ['theme', { action: 'set' }, true],
+    ['theme', { action: 'import' }, true],
+    ['theme', {}, true],
     ['skill_workshop', { action: 'read' }, false],
     ['skill_workshop', { action: 'create' }, true],
     ['subagents', { action: 'list' }, false],
@@ -223,6 +236,28 @@ describe('Plan mode extension', () => {
     await expect(tool!.execute('tool-1', { plan: 'Stale plan' })).resolves.toMatchObject({
       isError: true,
       content: [{ text: expect.stringContaining('no longer enabled') }],
+    });
+  });
+
+  test('cancels an aborted review and allows a new review in the same session', async () => {
+    const registered = registerPlugin();
+    const emit = vi.fn();
+    registered.service?.start({ gatewayEvents: { emit } });
+    const tool = registered.toolFactory?.({ sessionKey: 'agent:main:justdo:session-1' });
+    const controller = new AbortController();
+    const execution = tool!.execute('tool-1', { plan: 'First plan' }, controller.signal);
+    controller.abort();
+    await expect(execution).resolves.toMatchObject({
+      content: [{ text: expect.stringContaining('cancelled') }],
+    });
+    const respond = vi.fn();
+    registered.gatewayMethods.get('planMode.list')?.({ params: {}, respond });
+    expect(respond).toHaveBeenCalledWith(true, { requests: [] });
+    const next = tool!.execute('tool-2', { plan: 'Second plan' });
+    expect(emit.mock.calls.filter(([event]) => event === 'requested')).toHaveLength(2);
+    registered.service?.stop();
+    await expect(next).resolves.toMatchObject({
+      content: [{ text: expect.stringContaining('cancelled') }],
     });
   });
 });

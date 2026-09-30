@@ -59,9 +59,9 @@ Rules:
 - Use read-only inspection and searches to remove uncertainty. Ask the user only when a decision cannot be inferred safely.
 - Produce a concrete, decision-complete implementation plan grounded in the code you inspected.
 - When ready, call the directly available tool named PresentPlan exactly once with the complete Markdown plan. PresentPlan is the tool name; plan-mode is only the plugin id and must never be passed to tool_search, tool_describe, or tool_call.
-- Do not implement until PresentPlan returns an explicit implementation approval.
+- Do not implement in this planning run, even after approval.
 - If PresentPlan returns revision feedback, revise the plan and call PresentPlan again.
-- If it returns implementation approval, Plan mode has been disabled and you should carry out the approved plan in the current session.
+- If it returns implementation approval, end this planning run without making changes. The application keeps this run read-only, resets the context, and starts implementation of the approved plan in the same session.
 </plan_mode>`;
 
 const ALWAYS_MUTATING_TOOLS = new Set([
@@ -108,6 +108,7 @@ const REPLAY_CLASSIFIED_TOOLS = new Set([
   'sessions',
   'skill_workshop',
   'subagents',
+  'theme',
   'transcripts',
 ]);
 

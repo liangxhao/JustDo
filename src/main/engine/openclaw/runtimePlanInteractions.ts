@@ -905,6 +905,9 @@ export async function startApprovedPlanImplementation(
   if (!previousGatewaySessionId) {
     throw new Error('OpenClaw did not return the planning session identity.');
   }
+  if (generation !== this.gatewayClientGeneration || client !== this.gatewayClient) {
+    throw new Error('OpenClaw Gateway connection changed before resetting plan context.');
+  }
   const reset = await client.request<{
     ok?: unknown;
     key?: unknown;
@@ -913,6 +916,7 @@ export async function startApprovedPlanImplementation(
     key: sessionKey,
     agentId,
     reason: 'reset',
+    expectedSessionId: previousGatewaySessionId,
   });
   if (generation !== this.gatewayClientGeneration || client !== this.gatewayClient) {
     throw new Error('OpenClaw Gateway connection changed while resetting plan context.');
