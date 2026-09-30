@@ -69,8 +69,14 @@ export const appTranslations = {
     collaborationInvalidTransition: '消息状态变化无效。',
     collaborationStateConflict: '消息状态已更新，请刷新。',
     agentAllowMainSwitch: '允许切换主会话的助手',
-    agentAllowMainSwitchDescription:
-      '开启后可在输入框上方选择助手。已有聊天切换助手会新建会话并保留工程目录。包括主助手在内，每个助手都有独立角色目录；工程 AGENTS.md 作为共享项目规则加载，身份和职责请在下方角色文件中设置。关闭后新会话使用主助手，历史会话归属不变。',
+    agentSwitchHelp: '助手切换说明',
+    agentSwitchHelpEnabled: '开启后：可在输入框上方选择会话助手。',
+    agentSwitchHelpExisting: '切换助手：已有聊天会新建会话，保留当前工程目录。',
+    agentSwitchHelpRoles:
+      '角色配置：每个助手（包括主助手）都有独立角色目录，身份与职责在下方角色文件中设置。',
+    agentSwitchHelpProject:
+      '项目规则：工程中的 AGENTS.md 作为共享项目规则加载，供不同助手共同遵循。',
+    agentSwitchHelpDisabled: '关闭后：新会话使用主助手，历史会话的助手归属不变。',
     agentSelectConversation: '选择会话助手',
     agentSwitchNewConversation: '切换助手将新建会话并保留工程目录',
     agentSwitchSaveFailed: '保存助手切换设置失败，请重试。',
@@ -341,8 +347,17 @@ export const appTranslations = {
     collaborationInvalidTransition: 'Invalid message state transition.',
     collaborationStateConflict: 'The message state changed. Refresh to continue.',
     agentAllowMainSwitch: 'Allow switching the conversation assistant',
-    agentAllowMainSwitchDescription:
-      'Show an assistant selector above the message input. Switching in an existing chat starts a new conversation in the same project. Every assistant, including main, has a separate role folder. The project AGENTS.md supplies shared project rules; define identity and responsibilities in the role files below. Turning this off uses main for new chats and preserves existing chat ownership.',
+    agentSwitchHelp: 'About assistant switching',
+    agentSwitchHelpEnabled:
+      'When enabled: choose a conversation assistant above the message input.',
+    agentSwitchHelpExisting:
+      'Switching assistants: starts a new conversation in the same project when you are already in a chat.',
+    agentSwitchHelpRoles:
+      'Role settings: every assistant, including main, has its own role folder. Set identity and responsibilities in the role files below.',
+    agentSwitchHelpProject:
+      'Project rules: the project AGENTS.md provides shared rules for all assistants working in that project.',
+    agentSwitchHelpDisabled:
+      'When disabled: new conversations use main. Existing conversations keep their assigned assistant.',
     agentSelectConversation: 'Select conversation assistant',
     agentSwitchNewConversation: 'Start a new conversation with this assistant in the same project',
     agentSwitchSaveFailed: 'Could not save the assistant switching setting. Try again.',

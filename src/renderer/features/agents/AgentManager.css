@@ -9,23 +9,24 @@
 
 .agent-file-layout {
   display: grid;
-  grid-template-columns: 184px minmax(0, 1fr);
+  grid-template-columns: 164px minmax(0, 1fr);
 }
 
 .agent-file-navigation {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 10px 8px;
+  padding: 10px 6px;
   border-right: 1px solid var(--justdo-border);
-  background: var(--justdo-surface);
+  background: var(--justdo-background);
 }
 
 .agent-file-tab {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 10px 8px;
+  gap: 5px;
+  flex-shrink: 0;
+  padding: 10px 6px;
   border-radius: 6px;
   color: var(--justdo-text-secondary);
   text-align: left;
@@ -35,7 +36,7 @@
 }
 
 .agent-file-tab-primary {
-  margin-bottom: 8px;
+  margin-bottom: 4px;
   color: var(--justdo-foreground);
   font-weight: 600;
 }
@@ -117,28 +118,6 @@
   outline-offset: -2px;
 }
 
-@container agent-files (max-width: 540px) {
-  .agent-file-layout {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .agent-file-navigation {
-    flex-direction: row;
-    overflow-x: auto;
-    border-right: 0;
-    border-bottom: 1px solid var(--justdo-border);
-  }
-
-  .agent-file-tab {
-    flex-shrink: 0;
-  }
-
-  .agent-file-tab-primary {
-    margin-bottom: 0;
-    margin-right: 4px;
-  }
-}
-
 @container assistant-manager (min-width: 720px) {
   .agent-manager-layout {
     grid-template-columns: 220px minmax(0, 1fr);
@@ -147,5 +126,103 @@
   .agent-manager-roster {
     grid-template-columns: minmax(0, 1fr);
     max-height: 65vh;
+  }
+}
+
+.agent-file-save {
+  width: auto;
+  gap: 6px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.agent-help summary {
+  width: fit-content;
+  cursor: pointer;
+}
+
+.agent-help summary:focus-visible {
+  outline: 2px solid var(--justdo-primary);
+  outline-offset: 3px;
+}
+
+@container agent-files (max-width: 420px) {
+  .agent-file-layout {
+    grid-template-columns: 132px minmax(0, 1fr);
+  }
+
+  .agent-file-tab {
+    flex-wrap: wrap;
+  }
+
+  .agent-file-badge {
+    width: 100%;
+    padding-left: 21px;
+  }
+}
+
+/* Use rows rather than stacked labels and separate full-width action sections. */
+.agent-profile-card {
+  container: agent-profile / inline-size;
+}
+
+.agent-profile-form {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+  padding: 12px 16px;
+}
+
+.agent-profile-field {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  align-items: baseline;
+  gap: 10px;
+}
+
+.agent-profile-field input,
+.agent-profile-field select,
+.agent-profile-field textarea {
+  margin-top: 0;
+  padding: 7px 10px;
+  border-radius: 8px;
+}
+
+.agent-profile-field textarea {
+  min-height: 56px;
+}
+
+.agent-profile-footer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  border-top: 1px solid var(--justdo-border);
+  padding-top: 10px;
+}
+
+.agent-profile-enabled {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+}
+
+.agent-profile-save-hint {
+  margin-left: auto;
+}
+
+@container agent-profile (max-width: 460px) {
+  .agent-profile-save-hint {
+    display: none;
+  }
+
+  .agent-profile-footer > div {
+    margin-left: auto;
+  }
+
+  .agent-profile-field {
+    grid-template-columns: 60px minmax(0, 1fr);
+    gap: 8px;
   }
 }

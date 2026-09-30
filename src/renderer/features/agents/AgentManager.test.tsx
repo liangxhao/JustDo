@@ -66,6 +66,20 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 describe('independent Agent manager', () => {
+  it('reveals switching help on demand without changing the setting', async () => {
+    mount();
+    const help = screen.getByRole('button', { name: 'agentSwitchHelp' });
+    expect(screen.queryByText('agentSwitchHelpEnabled')).toBeNull();
+    fireEvent.click(help);
+    expect(help.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByText('agentSwitchHelpEnabled')).toBeTruthy();
+    expect(screen.getByText('agentSwitchHelpDisabled')).toBeTruthy();
+    expect(coworkService.updateConfig).not.toHaveBeenCalled();
+    fireEvent.click(help);
+    expect(screen.queryByText('agentSwitchHelpEnabled')).toBeNull();
+    await waitFor(() => expect(readFile).toHaveBeenCalled());
+  });
+
   it('defaults assistant switching off and saves an explicit opt-in', async () => {
     mount();
     const checkbox = screen.getByRole('checkbox', { name: /agentAllowMainSwitch/ });

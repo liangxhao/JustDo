@@ -9,6 +9,7 @@ import {
   FolderOpenIcon,
   MagnifyingGlassIcon,
   PlusIcon,
+  QuestionMarkCircleIcon,
   SparklesIcon,
   TrashIcon,
 } from '@heroicons/react/24/outline';
@@ -51,6 +52,7 @@ export default function AgentManager({
     (state: RootState) => state.cowork.config.allowMainAgentSwitch === true,
   );
   const [savingSwitch, setSavingSwitch] = useState(false);
+  const [showSwitchHelp, setShowSwitchHelp] = useState(false);
   const roster = useSelector((state: RootState) => state.agent.agents);
   const agents = roster.filter(agent => !agent.deletedAt);
   const models = useSelector((state: RootState) => state.model.availableModels);
@@ -68,17 +70,6 @@ export default function AgentManager({
   const cancelDeleteRef = useRef<HTMLButtonElement>(null);
   useDialogFocusTrap(deleteDialogRef, cancelDeleteRef, 'delete-agent', true, confirmDelete);
   const [loadingFile, setLoadingFile] = useState(false);
-  const filePanelRef = useRef<HTMLDivElement>(null);
-  const [horizontalFiles, setHorizontalFiles] = useState(false);
-  useEffect(() => {
-    const panel = filePanelRef.current;
-    if (!panel || typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(([entry]) => {
-      if (entry) setHorizontalFiles(entry.contentRect.width <= 540);
-    });
-    observer.observe(panel);
-    return () => observer.disconnect();
-  }, [profile.id]);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [reload, setReload] = useState(0);
@@ -308,7 +299,7 @@ export default function AgentManager({
     }
   };
   return (
-    <section aria-label={t('agentManager')} className="agent-manager space-y-6">
+    <section aria-label={t('agentManager')} className="agent-manager space-y-4">
       <header className="flex items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
@@ -338,32 +329,51 @@ export default function AgentManager({
           {t('agentCreate')}
         </button>
       </header>
-      <label className="flex items-start gap-3 rounded-xl border border-border p-4">
-        <input
-          type="checkbox"
-          className="mt-1"
-          checked={allowMainAgentSwitch}
-          disabled={savingSwitch}
-          onChange={async event => {
-            const enabled = event.target.checked;
-            setSavingSwitch(true);
-            try {
-              if (!(await coworkService.updateConfig({ allowMainAgentSwitch: enabled })))
-                setError(t('agentSwitchSaveFailed'));
-            } catch {
-              setError(t('agentSwitchSaveFailed'));
-            } finally {
-              setSavingSwitch(false);
-            }
-          }}
-        />
-        <span>
-          <span className="text-sm font-medium">{t('agentAllowMainSwitch')}</span>
-          <span className="mt-1 block text-xs leading-relaxed text-secondary">
-            {t('agentAllowMainSwitchDescription')}
-          </span>
-        </span>
-      </label>
+      <div className="rounded-xl border border-border px-4 py-3">
+        <div className="flex items-center gap-2">
+          <label className="flex cursor-pointer items-center gap-3">
+            <input
+              type="checkbox"
+              className="h-4 w-4 accent-primary"
+              checked={allowMainAgentSwitch}
+              disabled={savingSwitch}
+              onChange={async event => {
+                const enabled = event.target.checked;
+                setSavingSwitch(true);
+                try {
+                  if (!(await coworkService.updateConfig({ allowMainAgentSwitch: enabled })))
+                    setError(t('agentSwitchSaveFailed'));
+                } catch {
+                  setError(t('agentSwitchSaveFailed'));
+                } finally {
+                  setSavingSwitch(false);
+                }
+              }}
+            />
+            <span className="text-sm font-medium">{t('agentAllowMainSwitch')}</span>
+          </label>
+          <button
+            type="button"
+            aria-label={t('agentSwitchHelp')}
+            aria-expanded={showSwitchHelp}
+            aria-controls="agent-switch-help"
+            onClick={() => setShowSwitchHelp(value => !value)}
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-secondary hover:bg-surface-raised hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
+          >
+            <QuestionMarkCircleIcon className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
+        {showSwitchHelp && (
+          <ul
+            id="agent-switch-help"
+            className="mt-2 list-disc space-y-1.5 border-t border-border pb-1 pl-5 pt-3 text-xs leading-relaxed text-secondary"
+          >
+            {(['Enabled', 'Existing', 'Roles', 'Project', 'Disabled'] as const).map(item => (
+              <li key={item}>{t(`agentSwitchHelp${item}`)}</li>
+            ))}
+          </ul>
+        )}
+      </div>
       <div className="agent-manager-layout grid min-w-0 gap-5">
         <nav aria-label={t('agentManager')} className="min-w-0 space-y-3">
           <div className="relative">
@@ -480,9 +490,9 @@ export default function AgentManager({
               </div>
             </div>
           )}
-          <div className="overflow-hidden rounded-2xl border border-border bg-background">
-            <div className="flex items-center gap-3 border-b border-border bg-surface-raised/40 px-5 py-4">
-              <AgentAvatar name={profile.name} large />
+          <div className="agent-profile-card overflow-hidden rounded-2xl border border-border bg-background">
+            <div className="flex items-center gap-3 border-b border-border bg-surface-raised/40 px-4 py-3">
+              <AgentAvatar name={profile.name} />
               <div className="min-w-0 flex-1">
                 <h3 className="truncate font-semibold text-foreground">
                   {profile.name || t('agentCreate')}
@@ -522,8 +532,8 @@ export default function AgentManager({
                 </button>
               )}
             </div>
-            <fieldset disabled={busy} className="space-y-5 p-5">
-              <label className="block text-xs font-medium text-secondary">
+            <fieldset disabled={busy} className="agent-profile-form">
+              <label className="agent-profile-field text-xs font-medium text-secondary">
                 {t('agentName')}
                 <input
                   className={inputClass}
@@ -533,19 +543,19 @@ export default function AgentManager({
                   onChange={e => setProfile({ ...profile, name: e.target.value })}
                 />
               </label>
-              <label className="block text-xs font-medium text-secondary">
+              <label className="agent-profile-field text-xs font-medium text-secondary">
                 {t('agentDescription')}
                 <textarea
                   className={inputClass + ' resize-y leading-relaxed'}
                   maxLength={2000}
-                  rows={3}
+                  rows={2}
                   value={profile.description}
                   placeholder={t('agentDescriptionPlaceholder')}
                   onChange={e => setProfile({ ...profile, description: e.target.value })}
                 />
               </label>
               {profile.id !== 'main' && (
-                <label className="block text-xs font-medium text-secondary">
+                <label className="agent-profile-field text-xs font-medium text-secondary">
                   {t('agentModel')}
                   <select
                     className={inputClass}
@@ -565,26 +575,22 @@ export default function AgentManager({
                   </select>
                 </label>
               )}
-              <label className="flex cursor-pointer items-center justify-between gap-4 rounded-xl bg-surface-raised/50 p-3">
-                <span>
-                  <span className="block text-sm font-medium text-foreground">
-                    {t('agentEnabled')}
-                  </span>
-                  <span className="mt-1 block text-xs font-normal text-secondary">
-                    {t(profile.id === 'main' ? 'agentMainAlwaysOn' : 'agentEnabledHelp')}
-                  </span>
-                </span>
-                <input
-                  type="checkbox"
-                  className="h-4 w-4 shrink-0 accent-primary"
-                  aria-label={t('agentEnabled')}
-                  checked={profile.enabled}
-                  disabled={profile.id === 'main' || profile.isDefault}
-                  onChange={e => setProfile({ ...profile, enabled: e.target.checked })}
-                />
-              </label>
-              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
-                <span className="text-xs text-secondary">
+              <div className="agent-profile-footer">
+                <label
+                  className="agent-profile-enabled text-xs text-secondary"
+                  title={t(profile.id === 'main' ? 'agentMainAlwaysOn' : 'agentEnabledHelp')}
+                >
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 shrink-0 accent-primary"
+                    aria-label={t('agentEnabled')}
+                    checked={profile.enabled}
+                    disabled={profile.id === 'main' || profile.isDefault}
+                    onChange={e => setProfile({ ...profile, enabled: e.target.checked })}
+                  />
+                  <span>{t(profile.id === 'main' ? 'agentMainAlwaysOn' : 'agentEnabled')}</span>
+                </label>
+                <span className="agent-profile-save-hint text-xs text-secondary">
                   {t(profileDirty ? 'agentUnsaved' : 'agentSaveWhenIdle')}
                 </span>
                 <div className="flex gap-2">
@@ -610,22 +616,20 @@ export default function AgentManager({
             </fieldset>
           </div>
           {profile.id ? (
-            <div
-              ref={filePanelRef}
-              className="agent-file-panel overflow-hidden rounded-xl border border-border bg-background"
-            >
+            <div className="agent-file-panel overflow-hidden rounded-xl border border-border bg-background">
               <div className="border-b border-border px-4 py-3">
                 <h3 className="text-sm font-semibold text-foreground">{t('agentFiles')}</h3>
-                <p className="mt-1 text-xs leading-relaxed text-secondary">
-                  {t('agentFilesIntro')}
-                </p>
+                <details className="agent-help mt-1 text-xs text-secondary">
+                  <summary>{t('agentRulesIntro')}</summary>
+                  <p className="mt-2 leading-relaxed">{t('agentFilesIntro')}</p>
+                </details>
               </div>
               <div className="agent-file-layout">
                 <div
                   className="agent-file-navigation"
                   role="tablist"
                   aria-label={t('agentFiles')}
-                  aria-orientation={horizontalFiles ? 'horizontal' : 'vertical'}
+                  aria-orientation="vertical"
                   onKeyDown={event => {
                     const tabs = Array.from(
                       event.currentTarget.querySelectorAll<HTMLButtonElement>(
@@ -634,8 +638,8 @@ export default function AgentManager({
                     );
                     const current = tabs.indexOf(event.target as HTMLButtonElement);
                     if (current < 0) return;
-                    const nextKey = horizontalFiles ? 'ArrowRight' : 'ArrowDown';
-                    const previousKey = horizontalFiles ? 'ArrowLeft' : 'ArrowUp';
+                    const nextKey = 'ArrowDown';
+                    const previousKey = 'ArrowUp';
                     const next =
                       event.key === 'Home'
                         ? 0
@@ -735,6 +739,7 @@ export default function AgentManager({
                         onClick={() => void saveFile()}
                       >
                         <ArrowDownTrayIcon className="h-4 w-4" aria-hidden="true" />
+                        <span>{t('save')}</span>
                       </button>
                     </div>
                   </div>
