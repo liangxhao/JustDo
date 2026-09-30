@@ -1,4 +1,4 @@
-import { ChevronDownIcon } from '@heroicons/react/24/outline';
+import { CheckIcon, ChevronDownIcon } from '@heroicons/react/24/outline';
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -43,6 +43,10 @@ interface ThemedSelectProps {
   label?: string;
   ariaLabel?: string;
   disabled?: boolean;
+  leadingIcon?: React.ReactNode;
+  menuMinWidth?: number;
+  title?: string;
+  highlightSelected?: boolean;
 }
 
 const ThemedSelect: React.FC<ThemedSelectProps> = ({
@@ -54,6 +58,10 @@ const ThemedSelect: React.FC<ThemedSelectProps> = ({
   label,
   ariaLabel,
   disabled = false,
+  leadingIcon,
+  menuMinWidth = 0,
+  title,
+  highlightSelected = false,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
@@ -125,7 +133,10 @@ const ThemedSelect: React.FC<ThemedSelectProps> = ({
       return;
     }
 
-    const width = Math.min(rect.width, window.innerWidth - DROPDOWN_VIEWPORT_PADDING * 2);
+    const width = Math.min(
+      Math.max(rect.width, menuMinWidth),
+      window.innerWidth - DROPDOWN_VIEWPORT_PADDING * 2,
+    );
     setDropdownLayout({
       left: Math.min(
         Math.max(DROPDOWN_VIEWPORT_PADDING, rect.left),
@@ -137,7 +148,7 @@ const ThemedSelect: React.FC<ThemedSelectProps> = ({
         ? { bottom: window.innerHeight - rect.top + DROPDOWN_GAP }
         : { top: rect.bottom + DROPDOWN_GAP }),
     });
-  }, [options.length]);
+  }, [menuMinWidth, options.length]);
 
   useLayoutEffect(() => {
     if (!isOpen) {
@@ -223,6 +234,7 @@ const ThemedSelect: React.FC<ThemedSelectProps> = ({
             type="button"
             role="combobox"
             disabled={disabled || options.length === 0}
+            title={title}
             onClick={() => (isOpen ? closeDropdown() : openDropdown())}
             onKeyDown={handleButtonKeyDown}
             onBlur={() => closeDropdown()}
@@ -235,8 +247,11 @@ const ThemedSelect: React.FC<ThemedSelectProps> = ({
               isOpen && activeIndex >= 0 ? `${id}-option-${activeIndex}` : undefined
             }
           >
-            <span>{selectedOption?.label || value}</span>
-            <ChevronDownIcon className="w-4 h-4 ml-2" />
+            <span className="flex min-w-0 items-center gap-1.5">
+              {leadingIcon}
+              <span className="truncate">{selectedOption?.label || value}</span>
+            </span>
+            <ChevronDownIcon className="ml-2 h-3 w-3 shrink-0 text-secondary" />
           </button>
 
           {isOpen &&
@@ -259,7 +274,9 @@ const ThemedSelect: React.FC<ThemedSelectProps> = ({
                       data-option-index={index}
                       key={option.value}
                       className={`select-none relative py-1.5 pl-3 pr-9 ${option.disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer hover:bg-surface-raised'} ${
-                        index === activeIndex ? 'bg-surface-raised' : ''
+                        index === activeIndex || (highlightSelected && option.value === value)
+                          ? 'bg-surface-raised'
+                          : ''
                       }`}
                       role="option"
                       aria-selected={option.value === value}
@@ -277,6 +294,9 @@ const ThemedSelect: React.FC<ThemedSelectProps> = ({
                       >
                         {option.label}
                       </span>
+                      {highlightSelected && option.value === value && (
+                        <CheckIcon className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-primary" />
+                      )}
                     </li>
                   ))}
                 </ul>

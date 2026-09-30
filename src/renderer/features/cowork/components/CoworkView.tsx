@@ -49,7 +49,6 @@ import {
 import { useDispatch, useSelector } from 'react-redux';
 
 import WindowHeader from '@/app/shell/window/WindowHeader';
-import { setCurrentAgentId } from '@/features/agents/agentSlice';
 import {
   BROWSER_ANNOTATION_MAX_COUNT,
   BROWSER_ANNOTATION_MAX_IMAGE_BYTES,
@@ -251,7 +250,6 @@ export interface CoworkViewProps {
   isSidebarCollapsed?: boolean;
   onToggleSidebar?: () => void;
   onNewChat?: () => void;
-  onPreparedNewChat?: (prepare: () => Promise<boolean>) => Promise<boolean>;
   planInteraction?: CoworkInteractionRequest | null;
   onPlanRespond?: (result: CoworkInteractionResult) => Promise<boolean>;
 }
@@ -299,7 +297,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     isSidebarCollapsed,
     onToggleSidebar,
     onNewChat,
-    onPreparedNewChat,
     planInteraction = null,
     onPlanRespond,
   } = props;
@@ -2739,38 +2736,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                         sessionId={currentSession.id}
                         workingDirectory={currentSessionFolderPath}
                         modelAgentId={currentSession.agentId}
-                        onConversationAgentChange={
-                          !currentSession.external && onPreparedNewChat
-                            ? async agentId => {
-                                await onPreparedNewChat(async () => {
-                                  const canSwitch = () => {
-                                    const state = store.getState();
-                                    return (
-                                      !currentSessionRuntimeRunningRef.current &&
-                                      state.cowork.currentSession?.id === currentSession.id &&
-                                      state.cowork.config.allowMainAgentSwitch === true &&
-                                      state.agent.agents.some(
-                                        agent =>
-                                          agent.id === agentId && agent.enabled && !agent.deletedAt,
-                                      )
-                                    );
-                                  };
-                                  if (agentId === currentSession.agentId || !canSwitch())
-                                    return false;
-                                  if (
-                                    !(await coworkService.updateConfig({
-                                      workingDirectory: currentSessionFolderPath,
-                                    }))
-                                  ) {
-                                    throw new Error('Could not preserve the project directory');
-                                  }
-                                  if (!canSwitch()) return false;
-                                  dispatch(setCurrentAgentId(agentId));
-                                  return true;
-                                });
-                              }
-                            : undefined
-                        }
                         slashCommandSessionKey={currentGatewaySessionKey ?? undefined}
                         sessionModelRef={currentSession.modelRef}
                         contextUsage={contextUsage}

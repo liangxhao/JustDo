@@ -919,7 +919,6 @@ const App: React.FC = () => {
                 isSidebarCollapsed={isSidebarCollapsed}
                 onToggleSidebar={handleToggleSidebar}
                 onNewChat={handleNewChat}
-                onPreparedNewChat={handlePreparedNewChat}
                 planInteraction={displayedPlanInteraction}
                 onPlanRespond={result =>
                   displayedPlanInteraction

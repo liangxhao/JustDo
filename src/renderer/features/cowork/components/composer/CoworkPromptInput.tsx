@@ -2503,20 +2503,18 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         <div
           className={
             isLarge &&
-            (showFolderSelector || (allowMainAgentSwitch && onConversationAgentChange)) &&
+            showFolderSelector &&
             !remoteManaged
               ? 'rounded-[20px] bg-surface-raised p-1 shadow-subtle'
               : undefined
           }
         >
           {isLarge &&
-            (showFolderSelector || (allowMainAgentSwitch && onConversationAgentChange)) &&
+            showFolderSelector &&
             !remoteManaged && (
               <div className="relative flex items-center px-2 py-1.5">
                 <div className="flex items-center gap-2">
-                  {allowMainAgentSwitch &&
-                    (!sessionId || onConversationAgentChange) &&
-                    !isSideChat && (
+                  {allowMainAgentSwitch && !sessionId && !isSideChat && (
                       <ConversationAgentSelector
                         agentId={effectiveAgentId}
                         disabled={disabled || isStreaming}

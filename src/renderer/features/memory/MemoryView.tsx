@@ -1,3 +1,5 @@
+import './MemoryView.css';
+
 import {
   ArrowPathIcon,
   ArrowTopRightOnSquareIcon,
@@ -74,17 +76,17 @@ const MemoryView: React.FC<MemoryViewProps> = props => {
   }, []);
   const selector = (
     <div className="flex items-center gap-2">
-      <div className="relative rounded-xl border border-border bg-surface-hover shadow-sm transition-colors hover:border-primary/50 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20">
+      <div className="memory-toolbar-control relative">
         <UserCircleIcon
           aria-hidden="true"
-          className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-secondary"
+          className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-secondary"
         />
         <select
           aria-label={i18nService.t('memoryAssistant')}
           value={agentId}
           onChange={event => setAgentId(event.target.value)}
           title={i18nService.t('memoryAssistant')}
-          className="h-10 min-w-40 max-w-64 cursor-pointer appearance-none rounded-xl bg-transparent pl-10 pr-10 text-sm font-semibold text-foreground outline-none"
+          className="h-full min-w-40 max-w-64 cursor-pointer appearance-none rounded-xl bg-transparent pl-10 pr-10 text-xs font-medium text-foreground outline-none"
         >
           {agents.map(agent => (
             <option key={agent.id} value={agent.id}>
@@ -413,7 +415,8 @@ const AgentMemoryView: React.FC<
       key={document.id}
       type="button"
       onClick={() => void openDocument(document.relativePath)}
-      className="group w-full rounded-xl border border-border bg-surface px-4 py-3 text-left transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md"
+      data-kind={document.kind}
+      className="memory-document group w-full rounded-xl border border-border bg-surface px-4 py-3 text-left transition-colors hover:border-primary/40"
     >
       <div className="flex items-start gap-3">
         <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
@@ -449,7 +452,7 @@ const AgentMemoryView: React.FC<
 
   const renderEmpty = (title: string, description: string, compact = false) => (
     <div
-      className={`flex ${compact ? 'min-h-28' : 'min-h-52'} flex-col items-center justify-center rounded-2xl border border-dashed border-border bg-surface/40 px-6 text-center`}
+      className={`memory-empty flex ${compact ? 'min-h-28' : 'min-h-52'} flex-col items-center justify-center rounded-2xl border border-dashed border-border bg-surface/40 px-6 text-center`}
     >
       <BookOpenIcon className="mb-3 h-9 w-9 text-muted" />
       <h3 className="text-sm font-semibold text-foreground">{title}</h3>
@@ -544,57 +547,32 @@ const AgentMemoryView: React.FC<
           </section>
         )}
 
-        <section className="grid grid-cols-2 gap-2.5 md:grid-cols-5">
+        <section className="memory-stats flex flex-wrap items-center gap-x-5 gap-y-2 text-xs">
           {stats.map(stat => (
-            <div
-              key={stat.label}
-              className="flex min-w-0 items-center gap-3 rounded-xl border border-border bg-surface px-3 py-2.5 shadow-sm"
-            >
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/[0.08] text-primary">
-                <stat.icon className="h-4 w-4" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-baseline gap-2">
-                  <span className="text-xl font-semibold leading-none tracking-tight text-foreground">
-                    {stat.value}
-                  </span>
-                  <span className="truncate text-xs font-medium text-secondary">{stat.label}</span>
-                </div>
-                <p className="mt-1 truncate text-[10px] leading-3 text-muted" title={stat.detail}>
-                  {stat.detail}
-                </p>
-              </div>
+            <div key={stat.label} title={stat.detail} className="flex items-center gap-1.5">
+              <stat.icon aria-hidden="true" className="h-3.5 w-3.5" />
+              <span className="text-secondary">{stat.label}</span>
+              <span className="font-semibold tabular-nums text-foreground">{stat.value}</span>
             </div>
           ))}
-          <div className="flex min-w-0 items-center gap-3 rounded-xl border border-border bg-surface px-3 py-2.5 shadow-sm">
-            <div
-              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
-                overview.index.loading
-                  ? 'bg-primary/10 text-primary'
-                  : overview.index.health === MemoryIndexHealth.Ready && !overview.index.dirty
-                    ? 'bg-emerald-500/10 text-emerald-500'
-                    : 'bg-amber-500/10 text-amber-500'
-              }`}
-            >
-              {overview.index.loading ? (
-                <ArrowPathIcon className="h-4 w-4 animate-spin" />
-              ) : overview.index.health === MemoryIndexHealth.Ready && !overview.index.dirty ? (
-                <CheckCircleIcon className="h-4 w-4" />
-              ) : (
-                <ExclamationTriangleIcon className="h-4 w-4" />
-              )}
-            </div>
-            <div className="min-w-0 flex-1">
-              <h2 className="truncate text-xs font-semibold text-foreground">
-                {i18nService.t('memoryIndexHealth')}
-              </h2>
-              <p
-                className="mt-1 truncate text-[10px] leading-3 text-muted"
-                title={indexStatusDetail}
-              >
-                {indexStatusDetail}
-              </p>
-            </div>
+          <div
+            className="flex items-center gap-1.5 text-secondary"
+            title={i18nService.t('memoryIndexHealth')}
+          >
+            {overview.index.loading ? (
+              <ArrowPathIcon aria-hidden="true" className="h-3.5 w-3.5 animate-spin text-primary" />
+            ) : overview.index.health === MemoryIndexHealth.Ready && !overview.index.dirty ? (
+              <CheckCircleIcon
+                aria-hidden="true"
+                className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400"
+              />
+            ) : (
+              <ExclamationTriangleIcon
+                aria-hidden="true"
+                className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400"
+              />
+            )}
+            <span>{indexStatusDetail}</span>
           </div>
         </section>
 
@@ -611,7 +589,7 @@ const AgentMemoryView: React.FC<
             </div>
           )}
 
-        <section className="grid gap-4 lg:grid-cols-2">
+        <section className="memory-collections grid gap-4 lg:grid-cols-2">
           <div>
             <div className="mb-3">
               <h2 className="text-base font-semibold text-foreground">
@@ -825,6 +803,7 @@ const AgentMemoryView: React.FC<
         return (
           <section
             key={kind}
+            data-kind={kind}
             className="overflow-hidden rounded-2xl border border-border bg-surface shadow-sm"
           >
             <div className="flex items-center justify-between border-b border-border bg-surface-raised/50 px-4 py-3">
@@ -867,7 +846,7 @@ const AgentMemoryView: React.FC<
   );
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col">
+    <div className="memory-view relative flex h-full min-h-0 flex-col">
       <WindowHeader />
       {isSidebarCollapsed && (
         <div className="relative flex h-[2.1875rem] shrink-0 items-center justify-between border-b border-border px-4">
@@ -894,16 +873,16 @@ const AgentMemoryView: React.FC<
         </div>
       )}
 
-      <header className="shrink-0 border-b border-border bg-gradient-to-br from-primary/[0.08] via-background to-amber-500/[0.04] px-6 pb-0 pt-5">
-        <div className="mx-auto max-w-6xl">
+      <header className="memory-header shrink-0 border-b border-border bg-gradient-to-br from-primary/[0.08] via-background to-amber-500/[0.04] px-6 pb-0 pt-5">
+        <div className="relative z-10 mx-auto max-w-6xl">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <div className="flex items-center gap-2.5">
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                <div className="memory-brand flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
                   <BookOpenIcon className="h-5 w-5" />
                 </div>
                 <div>
-                  <h1 className="text-xl font-semibold tracking-tight text-foreground">
+                  <h1 className="memory-title text-xl font-semibold tracking-tight text-foreground">
                     {i18nService.t('memoryTitle')}
                   </h1>
                   <p className="mt-0.5 text-xs text-secondary">
@@ -918,7 +897,7 @@ const AgentMemoryView: React.FC<
                 type="button"
                 onClick={() => void loadOverview()}
                 disabled={loading || overview?.index.loading || rebuilding || searching}
-                className="inline-flex h-9 items-center gap-2 rounded-xl border border-border bg-surface px-3 text-xs font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:opacity-50"
+                className="memory-toolbar-control inline-flex items-center gap-2 px-3.5 text-xs font-medium"
               >
                 <ArrowPathIcon className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
                 {i18nService.t('memoryRefresh')}
@@ -927,7 +906,7 @@ const AgentMemoryView: React.FC<
                 type="button"
                 onClick={() => void handleRebuild()}
                 disabled={loading || overview?.index.loading || rebuilding || searching}
-                className="inline-flex h-9 items-center gap-2 rounded-xl border border-border bg-surface px-3.5 text-xs font-medium text-secondary transition-colors hover:border-primary/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-60"
+                className="memory-toolbar-control inline-flex items-center gap-2 px-3.5 text-xs font-medium"
               >
                 <CircleStackIcon className={`h-4 w-4 ${rebuilding ? 'animate-pulse' : ''}`} />
                 {rebuilding ? i18nService.t('memoryRebuilding') : i18nService.t('memoryRebuild')}
@@ -935,12 +914,13 @@ const AgentMemoryView: React.FC<
             </div>
           </div>
 
-          <form onSubmit={handleSearch} className="mt-5 flex max-w-3xl gap-2">
+          <form onSubmit={handleSearch} className="memory-search mt-5 flex max-w-3xl gap-2">
             <label className="relative min-w-0 flex-1">
               <MagnifyingGlassIcon className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
               <input
                 value={query}
                 onChange={event => setQuery(event.target.value)}
+                aria-label={i18nService.t('memorySearchAction')}
                 placeholder={i18nService.t('memorySearchPlaceholder')}
                 className="h-11 w-full rounded-xl border border-border bg-surface/90 pl-10 pr-3 text-sm text-foreground shadow-sm outline-none transition-all placeholder:text-muted focus:border-primary focus:ring-2 focus:ring-primary/15"
               />
@@ -955,11 +935,12 @@ const AgentMemoryView: React.FC<
             </button>
           </form>
 
-          <nav className="mt-5 flex gap-1" aria-label={i18nService.t('memoryTitle')}>
+          <nav className="memory-tabs mt-5 flex gap-1" aria-label={i18nService.t('memoryTitle')}>
             {MEMORY_TABS.map(tab => (
               <button
                 key={tab}
                 type="button"
+                aria-current={activeTab === tab ? 'page' : undefined}
                 onClick={() => setActiveTab(tab)}
                 className={`rounded-t-lg border-b-2 px-3 pb-3 pt-2 text-sm font-medium transition-colors ${
                   activeTab === tab
@@ -967,6 +948,15 @@ const AgentMemoryView: React.FC<
                     : 'border-transparent text-secondary hover:bg-background/40 hover:text-foreground'
                 }`}
               >
+                {React.createElement(
+                  {
+                    overview: CircleStackIcon,
+                    search: MagnifyingGlassIcon,
+                    timeline: CalendarDaysIcon,
+                    files: FolderOpenIcon,
+                  }[tab],
+                  { className: 'h-4 w-4 shrink-0', 'aria-hidden': true },
+                )}
                 {tabLabels[tab]}
               </button>
             ))}
@@ -991,7 +981,7 @@ const AgentMemoryView: React.FC<
         </div>
       </header>
 
-      <main className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
+      <main className="memory-content min-h-0 flex-1 overflow-y-auto px-6 py-6">
         <div className="mx-auto max-w-6xl">
           {notice && (
             <div
@@ -1017,12 +1007,9 @@ const AgentMemoryView: React.FC<
             </div>
           )}
           {loading && !overview ? (
-            <div className="grid grid-cols-2 gap-2.5 md:grid-cols-5">
+            <div className="flex flex-wrap gap-3">
               {[0, 1, 2, 3, 4].map(item => (
-                <div
-                  key={item}
-                  className="h-[53px] animate-pulse rounded-xl border border-border bg-surface"
-                />
+                <div key={item} className="h-5 w-28 animate-pulse rounded bg-surface" />
               ))}
             </div>
           ) : activeTab === 'overview' ? (
