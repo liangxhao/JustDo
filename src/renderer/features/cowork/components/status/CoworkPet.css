@@ -1,10 +1,28 @@
 .cowork-pet {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: flex-end;
   min-height: 48px;
-  pointer-events: none;
+  cursor: grab;
+  touch-action: none;
   user-select: none;
+  pointer-events: none;
+}
+
+.cowork-pet:active {
+  cursor: grabbing;
+}
+
+.cowork-pet--floating {
+  position: fixed;
+  z-index: 40;
+  width: 64px;
+  min-height: 64px;
+}
+
+.cowork-pet--floating .cowork-pet__sprite {
+  margin: 0;
 }
 
 .cowork-pet__sprite {
@@ -14,35 +32,92 @@
   height: 64px;
   margin-block: -8px;
   background-repeat: no-repeat;
+  pointer-events: auto;
+  padding: 0;
+  border: 0;
+  background-color: transparent;
+  cursor: inherit;
 }
 
-.cowork-pet--home {
-  justify-content: center;
-  min-height: 128px;
+.cowork-pet:has(.cowork-pet__sprite:focus-visible)::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: -8px;
+  width: 64px;
+  height: 64px;
+  border: 2px solid var(--justdo-primary);
+  border-radius: 8px;
 }
 
-.cowork-pet--home .cowork-pet__sprite {
-  width: 128px;
-  height: 128px;
-  margin: 0;
+.cowork-pet--floating:has(.cowork-pet__sprite:focus-visible)::after {
+  top: 0;
+}
+
+.cowork-pet__sprite:focus-visible {
+  outline: none;
+}
+
+.cowork-pet--feedback-wiggle .cowork-pet__sprite {
+  animation: cowork-pet-tap 760ms ease-in-out;
+}
+
+.cowork-pet--feedback-hop .cowork-pet__sprite {
+  animation: cowork-pet-solo-complete 1.1s ease-in-out;
+}
+
+.cowork-pet--feedback-nod .cowork-pet__sprite {
+  animation: cowork-pet-nod 900ms ease-in-out;
+}
+
+.cowork-pet--feedback-stretch .cowork-pet__sprite {
+  animation: cowork-pet-stretch 950ms ease-in-out;
+}
+
+@keyframes cowork-pet-nod {
+  0%, 100% { translate: 0 0; scale: 1; }
+  30%, 70% { translate: 0 2px; scale: 1 .96; }
+  50% { translate: 0 -1px; scale: 1; }
+}
+
+@keyframes cowork-pet-stretch {
+  0%, 100% { scale: 1; }
+  40% { scale: .96 1.06; }
+  70% { scale: 1.03 .98; }
+}
+
+@keyframes cowork-pet-tap {
+  0%, 100% { rotate: 0deg; }
+  25% { rotate: -5deg; }
+  55% { rotate: 4deg; }
+  80% { rotate: -2deg; }
+}
+
+.cowork-pet__sprite--white {
+  clip-path: inset(0 50% 0 0);
+  transform: translateX(16px);
+}
+
+.cowork-pet__sprite--black {
+  clip-path: inset(0 0 0 50%);
+  transform: translateX(-16px);
+}
+
+.cowork-pet--solo-complete {
+  animation: cowork-pet-solo-complete 1.1s ease-in-out;
+}
+
+@keyframes cowork-pet-solo-complete {
+  0%, 100% { translate: 0 0; }
+  35% { translate: 0 -5px; }
+  65% { translate: 0 0; }
+  82% { translate: 0 -2px; }
 }
 
 :root[data-cowork-pet='off'] .cowork-pet,
-:root[data-cowork-pet='off'] .cowork-home__pet {
+:root[data-cowork-pet-chat='off'] .cowork-pet--chat,
+:root[data-cowork-pet-home='off'] .cowork-pet--home {
   display: none;
-}
-
-.cowork-home__pet {
-  display: flex;
-  justify-content: center;
-}
-
-.cowork-home__logo {
-  display: none;
-}
-
-:root[data-cowork-pet='off'] .cowork-home__logo {
-  display: block;
 }
 
 .dark .cowork-pet__sprite {

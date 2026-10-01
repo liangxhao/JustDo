@@ -48,6 +48,31 @@ describe('appearance configuration', () => {
     });
   });
 
+  test('normalizes expanded pet preferences and rejects invalid choices', () => {
+    expect(normalizeAppearanceConfig({
+      petShowHome: false,
+      petShowChat: false,
+      petVariety: 'classic',
+      petSpeed: 'calm',
+      petRestAfter: 'never',
+      petFloatingEnabled: true,
+      petCatSelection: 'black',
+    })).toMatchObject({
+      petShowHome: false,
+      petShowChat: false,
+      petVariety: 'classic',
+      petSpeed: 'calm',
+      petRestAfter: 'never',
+      petFloatingEnabled: true,
+      petCatSelection: 'black',
+    });
+    expect(normalizeAppearanceConfig({ petVariety: 'unknown' as never, petSpeed: 'fast' as never, petCatSelection: 'orange' as never })).toMatchObject({
+      petVariety: defaultAppearanceConfig.petVariety,
+      petSpeed: defaultAppearanceConfig.petSpeed,
+      petCatSelection: 'both',
+    });
+  });
+
   test('applies pet preferences to the renderer root for both home and chat', () => {
     const root = {
       dataset: {} as Record<string, string>,
@@ -61,6 +86,11 @@ describe('appearance configuration', () => {
     applyAppearanceConfig(defaultAppearanceConfig, root);
     expect(root.dataset.coworkPet).toBe('on');
     expect(root.dataset.coworkPetMotion).toBe('on');
+    expect(root.dataset.coworkPetHome).toBe('on');
+    expect(root.dataset.coworkPetChat).toBe('on');
+    expect(root.dataset.coworkPetVariety).toBe('playful');
+    expect(root.dataset.coworkPetFloating).toBe('off');
+    expect(root.dataset.coworkPetCats).toBe('both');
   });
 
   test('applies normalized values as inherited CSS properties', () => {

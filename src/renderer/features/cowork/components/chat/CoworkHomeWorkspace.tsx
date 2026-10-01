@@ -122,7 +122,6 @@ export function CoworkHomeWorkspace({
               <div className="space-y-12">
                 {/* Welcome Section */}
                 <div className="text-center space-y-5">
-                  <div className="cowork-home__pet"><CoworkPet running={false} waiting={false} placement="home" /></div>
                   <img src={logoUrl} alt="logo" className="cowork-home__logo mx-auto h-[5.333rem] w-[5.333rem]" />
                   <h2 className="text-3xl font-bold tracking-tight text-foreground">
                     {i18nService.t(greetingKey)}
@@ -134,6 +133,7 @@ export function CoworkHomeWorkspace({
 
                 {/* Prompt Input Area - Large version with folder selector */}
                 <div className="space-y-3">
+                  <CoworkPet running={false} waiting={false} placement="home" />
                   <div className="shadow-glow-accent rounded-2xl">
                     <CoworkPromptInput
                       ref={promptInputRef}

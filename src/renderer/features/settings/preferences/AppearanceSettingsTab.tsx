@@ -216,6 +216,13 @@ const AppearanceSettingsTab: React.FC<AppearanceSettingsTabProps> = ({ value, on
                 messageLayout: value.messageLayout,
                 petEnabled: value.petEnabled,
                 petAnimationEnabled: value.petAnimationEnabled,
+                petShowHome: value.petShowHome,
+                petShowChat: value.petShowChat,
+                petVariety: value.petVariety,
+                petSpeed: value.petSpeed,
+                petRestAfter: value.petRestAfter,
+                petFloatingEnabled: value.petFloatingEnabled,
+                petCatSelection: value.petCatSelection,
               })
             }
             className="shrink-0 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium text-foreground shadow-sm transition-colors hover:border-primary/40 hover:bg-surface-inset hover:text-primary"

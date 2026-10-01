@@ -1,6 +1,10 @@
 export type AppearanceFontFamily = 'system' | 'sans' | 'serif' | 'monospace';
 export type MessageLayout = 'bubble' | 'document';
 export type MessageDensity = 'compact' | 'comfortable' | 'spacious';
+export type PetVariety = 'classic' | 'varied' | 'playful';
+export type PetSpeed = 'calm' | 'normal' | 'lively';
+export type PetRestAfter = 'never' | 'short' | 'standard' | 'long';
+export type PetCatSelection = 'white' | 'black' | 'both';
 
 export interface AppearanceConfig {
   chatContentWidth: number;
@@ -11,6 +15,13 @@ export interface AppearanceConfig {
   wrapCodeBlocks: boolean;
   petEnabled: boolean;
   petAnimationEnabled: boolean;
+  petShowHome: boolean;
+  petShowChat: boolean;
+  petVariety: PetVariety;
+  petSpeed: PetSpeed;
+  petRestAfter: PetRestAfter;
+  petFloatingEnabled: boolean;
+  petCatSelection: PetCatSelection;
 }
 
 export const defaultAppearanceConfig: AppearanceConfig = {
@@ -22,6 +33,13 @@ export const defaultAppearanceConfig: AppearanceConfig = {
   wrapCodeBlocks: false,
   petEnabled: true,
   petAnimationEnabled: true,
+  petShowHome: true,
+  petShowChat: true,
+  petVariety: 'playful',
+  petSpeed: 'normal',
+  petRestAfter: 'standard',
+  petFloatingEnabled: false,
+  petCatSelection: 'both',
 };
 
 const FONT_STACKS: Record<AppearanceFontFamily, string> = {
@@ -65,6 +83,15 @@ const isMessageDensity = (value: unknown): value is MessageDensity =>
 const isMessageLayout = (value: unknown): value is MessageLayout =>
   value === 'bubble' || value === 'document';
 
+const isPetVariety = (value: unknown): value is PetVariety =>
+  value === 'classic' || value === 'varied' || value === 'playful';
+const isPetSpeed = (value: unknown): value is PetSpeed =>
+  value === 'calm' || value === 'normal' || value === 'lively';
+const isPetRestAfter = (value: unknown): value is PetRestAfter =>
+  value === 'never' || value === 'short' || value === 'standard' || value === 'long';
+const isPetCatSelection = (value: unknown): value is PetCatSelection =>
+  value === 'white' || value === 'black' || value === 'both';
+
 const clampNumber = (
   value: unknown,
   minimum: number,
@@ -104,6 +131,15 @@ export const normalizeAppearanceConfig = (
     typeof value?.petAnimationEnabled === 'boolean'
       ? value.petAnimationEnabled
       : defaultAppearanceConfig.petAnimationEnabled,
+  petShowHome: typeof value?.petShowHome === 'boolean' ? value.petShowHome : defaultAppearanceConfig.petShowHome,
+  petShowChat: typeof value?.petShowChat === 'boolean' ? value.petShowChat : defaultAppearanceConfig.petShowChat,
+  petVariety: isPetVariety(value?.petVariety) ? value.petVariety : defaultAppearanceConfig.petVariety,
+  petSpeed: isPetSpeed(value?.petSpeed) ? value.petSpeed : defaultAppearanceConfig.petSpeed,
+  petRestAfter: isPetRestAfter(value?.petRestAfter) ? value.petRestAfter : defaultAppearanceConfig.petRestAfter,
+  petFloatingEnabled: typeof value?.petFloatingEnabled === 'boolean'
+    ? value.petFloatingEnabled : defaultAppearanceConfig.petFloatingEnabled,
+  petCatSelection: isPetCatSelection(value?.petCatSelection)
+    ? value.petCatSelection : defaultAppearanceConfig.petCatSelection,
 });
 
 export const applyAppearanceConfig = (
@@ -116,6 +152,13 @@ export const applyAppearanceConfig = (
   if (root.dataset) {
     root.dataset.coworkPet = appearance.petEnabled ? 'on' : 'off';
     root.dataset.coworkPetMotion = appearance.petAnimationEnabled ? 'on' : 'off';
+    root.dataset.coworkPetHome = appearance.petShowHome ? 'on' : 'off';
+    root.dataset.coworkPetChat = appearance.petShowChat ? 'on' : 'off';
+    root.dataset.coworkPetVariety = appearance.petVariety;
+    root.dataset.coworkPetSpeed = appearance.petSpeed;
+    root.dataset.coworkPetRestAfter = appearance.petRestAfter;
+    root.dataset.coworkPetFloating = appearance.petFloatingEnabled ? 'on' : 'off';
+    root.dataset.coworkPetCats = appearance.petCatSelection;
   }
 
   root.style.fontSize = `${appearance.fontSize}px`;
