@@ -5,6 +5,7 @@ const path = require('path');
 
 const GATEWAY_LAUNCHER_FILENAME = 'gateway-launcher.cjs';
 const GATEWAY_BUNDLE_FILENAME = 'gateway-bundle.mjs';
+const GATEWAY_READY_MESSAGE = 'justdo:gateway:ready';
 
 function buildOpenClawGatewayBundleLauncherSource() {
   return (
@@ -44,12 +45,29 @@ function buildOpenClawGatewayBundleLauncherSource() {
     `// Gateway top-level await can keep import() pending for its entire life.\n` +
     `// Persist compiled modules before Windows terminates the process.\n` +
     `const _flushCache = () => { try { require('node:module').flushCompileCache(); } catch (_) {} };\n` +
-    `const _cacheFlushTimer = _keepAlive ? setInterval(_flushCache, 5000) : undefined;\n` +
-    `_cacheFlushTimer?.unref();\n` +
+    `let _cacheFlushTimer;\n` +
+    `const _startCacheFlush = () => {\n` +
+    `  if (!_cacheFlushTimer) {\n` +
+    `    _cacheFlushTimer = setInterval(_flushCache, 5000);\n` +
+    `    _cacheFlushTimer.unref();\n` +
+    `  }\n` +
+    `};\n` +
+    `if (_keepAlive && process.channel) {\n` +
+    `  // Cache serialization is synchronous: keep it off the startup critical path.\n` +
+    `  const _onReady = message => {\n` +
+    `    if (message !== '${GATEWAY_READY_MESSAGE}') return;\n` +
+    `    process.removeListener('message', _onReady);\n` +
+    `    _startCacheFlush();\n` +
+    `  };\n` +
+    `  process.on('message', _onReady);\n` +
+    `  process.channel.unref();\n` +
+    `} else if (_keepAlive) {\n` +
+    `  _startCacheFlush();\n` +
+    `}\n` +
     `_log('loading bundle (' + _elapsed() + ')');\n` +
     `import(bundleUrl).then(() => {\n` +
     `  _log('import ok (' + _elapsed() + ')');\n` +
-    `  try { require('node:module').flushCompileCache(); } catch (_) {}\n` +
+    `  if (!_keepAlive || !process.channel) _flushCache();\n` +
     `}).catch((err) => {\n` +
     `  _log('import failed (' + _elapsed() + '): ' + (err.stack || err));\n` +
     `  process.exit(1);\n` +
@@ -81,6 +99,7 @@ function ensureOpenClawGatewayBundleLauncher(runtimeRoot) {
 }
 
 module.exports = {
+  GATEWAY_READY_MESSAGE,
   GATEWAY_BUNDLE_FILENAME,
   GATEWAY_LAUNCHER_FILENAME,
   buildOpenClawGatewayBundleLauncherSource,

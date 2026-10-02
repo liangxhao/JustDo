@@ -34,9 +34,9 @@ export const registerAppShutdown = ({
         : setTimeout(() => {
             timedOut = true;
             console.error('[Main] Development cleanup timed out; stopping runtime before exit.');
-            // Gateway shutdown has its own 5s deadline. Still bound the fallback
+            // Gateway shutdown has its own 16s deadline. Still bound the fallback
             // in case another cleanup implementation fails to settle.
-            const forceExit = setTimeout(() => app.exit(1), 6_000);
+            const forceExit = setTimeout(() => app.exit(1), 17_000);
             forceExit.unref();
             void Promise.resolve()
               .then(onCleanupTimeout)

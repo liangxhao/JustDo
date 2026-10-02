@@ -1722,6 +1722,7 @@ if (multicaBridgeArgv) {
   };
 
   const runAppCleanup = async (): Promise<void> => {
+    openClawEngineManager?.beginApplicationShutdown();
     devSessionLifecycle?.stop();
     console.log('[Main] App is quitting, starting cleanup...');
     builtinModelCredentialMonitor?.stop();
@@ -1773,7 +1774,7 @@ if (multicaBridgeArgv) {
 
   const appShutdown = registerAppShutdown({
     cleanup: runAppCleanup,
-    cleanupTimeoutMs: isDev && !app.isPackaged ? 10_000 : undefined,
+    cleanupTimeoutMs: isDev && !app.isPackaged ? 30_000 : undefined,
     onCleanupTimeout: async () => {
       await openClawEngineManager?.stopGateway();
     },

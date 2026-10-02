@@ -37,7 +37,10 @@ import { buildGatewayLaunchArgs, buildGatewayLaunchEnvironment } from './gateway
 import { GatewayStdoutLogFilter } from './gatewayLogFilter';
 import { ensureGatewayStartupPriority } from './gatewayProcessPriority';
 import { findAvailableLoopbackPort, isLoopbackPortAvailable } from './loopbackPort';
-import { ensureOpenClawGatewayBundleLauncher } from './openclawGatewayBundleLauncher.cjs';
+import {
+  ensureOpenClawGatewayBundleLauncher,
+  GATEWAY_READY_MESSAGE,
+} from './openclawGatewayBundleLauncher.cjs';
 import {
   ensureGatewayShutdownPreload,
   OPENCLAW_GATEWAY_SHUTDOWN_MESSAGE,
@@ -304,6 +307,7 @@ export class OpenClawEngineManager extends EventEmitter {
   private gatewayRestartTimer: NodeJS.Timeout | null = null;
   private gatewayRestartAttempt = 0;
   private shutdownRequested = false;
+  private applicationShuttingDown = false;
   private readonly appStartedAtMs = APP_PROCESS_STARTED_AT_MS;
   private gatewayPort: number | null = null;
   private startGatewayPromise: Promise<OpenClawEngineStatus> | null = null;
@@ -640,6 +644,7 @@ export class OpenClawEngineManager extends EventEmitter {
   }
 
   private startGatewayOnce(): Promise<OpenClawEngineStatus> {
+    if (this.applicationShuttingDown) return Promise.resolve(this.getStatus());
     if (this.startGatewayPromise) {
       console.log('[OpenClaw] startGateway: already in progress, reusing existing promise');
       return this.startGatewayPromise;
@@ -1186,6 +1191,11 @@ export class OpenClawEngineManager extends EventEmitter {
     }
 
     console.log(`[OpenClaw] startGateway: gateway is running, total startup time: ${elapsed()}`);
+    if ('send' in child && child.connected) {
+      child.send(GATEWAY_READY_MESSAGE, () => {
+        // Cache persistence is best-effort.
+      });
+    }
     // Reset restart counter on successful start — gateway is healthy
     this.gatewayRestartAttempt = 0;
     this.setStatus({
@@ -1197,6 +1207,11 @@ export class OpenClawEngineManager extends EventEmitter {
     this.gatewayPortListener?.(port);
 
     return this.getStatus();
+  }
+
+  beginApplicationShutdown(): void {
+    this.applicationShuttingDown = true;
+    this.shutdownRequested = true;
   }
 
   async stopGateway(): Promise<void> {
@@ -1232,6 +1247,7 @@ export class OpenClawEngineManager extends EventEmitter {
   async restartGateway(
     options: OpenClawGatewayRestartOptions = {},
   ): Promise<OpenClawEngineStatus> {
+    if (this.applicationShuttingDown) return this.getStatus();
     if (this.restartGatewayPromise) {
       if (!options.afterCurrent) {
         console.log(
@@ -1278,6 +1294,7 @@ export class OpenClawEngineManager extends EventEmitter {
   }
 
   private async performGatewayRestart(): Promise<OpenClawEngineStatus> {
+    if (this.applicationShuttingDown) return this.getStatus();
     console.log('[OpenClaw] restartGateway: stopping existing gateway...');
     await this.stopGateway();
     // Reset restart counter on manual restart so user can always retry
@@ -1983,9 +2000,9 @@ export class OpenClawEngineManager extends EventEmitter {
         } catch {
           // ignore
         }
-      }, 4_000);
+      }, 15_000);
 
-      const hardTimer = setTimeout(done, 5_000);
+      const hardTimer = setTimeout(done, 16_000);
       try {
         if ('send' in child && child.connected) {
           child.send(OPENCLAW_GATEWAY_SHUTDOWN_MESSAGE, error => {

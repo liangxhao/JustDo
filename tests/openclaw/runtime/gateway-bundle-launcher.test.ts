@@ -1,4 +1,5 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
+import { once } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -8,8 +9,10 @@ import { afterEach, describe, expect, test } from 'vitest';
 const {
   buildOpenClawGatewayBundleLauncherSource,
   ensureOpenClawGatewayBundleLauncher,
+  GATEWAY_READY_MESSAGE,
 } = require('../../../src/main/openclaw/runtime/openclawGatewayBundleLauncher.cjs') as {
   buildOpenClawGatewayBundleLauncherSource: () => string;
+  GATEWAY_READY_MESSAGE: string;
   ensureOpenClawGatewayBundleLauncher: (runtimeRoot: string) => {
     changed: boolean;
     launcherPath: string;
@@ -43,6 +46,39 @@ afterEach(() => {
 });
 
 describe('OpenClaw gateway bundle launcher', () => {
+  test('waits for host readiness before flushing a pending Gateway import', async () => {
+    const runtimeRoot = createRuntime();
+    fs.writeFileSync(path.join(runtimeRoot, 'gateway-bundle.mjs'), [
+      "import { getCompileCacheDir } from 'node:module';",
+      "import { readdirSync } from 'node:fs';",
+      'await new Promise(resolve => setTimeout(resolve, 5500));',
+      "process.send({ phase: 'starting', files: readdirSync(getCompileCacheDir()).length });",
+      "await new Promise(resolve => process.once('message', resolve));",
+      'await new Promise(resolve => setTimeout(resolve, 5500));',
+      "process.send({ phase: 'ready', files: readdirSync(getCompileCacheDir()).length });",
+      'process.exit(0);',
+    ].join('\n'));
+    const { launcherPath } = ensureOpenClawGatewayBundleLauncher(runtimeRoot);
+    const env = { ...process.env, OPENCLAW_STATE_DIR: runtimeRoot };
+    delete env.NODE_DISABLE_COMPILE_CACHE;
+    const child = spawn(process.execPath, [launcherPath, 'gateway'], {
+      env, stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+    });
+    try {
+      const [starting] = await once(child, 'message');
+      expect(starting).toEqual({ phase: 'starting', files: 0 });
+      const ready = once(child, 'message');
+      const exited = once(child, 'exit');
+      child.send(GATEWAY_READY_MESSAGE);
+      const [result] = await ready;
+      expect(result.phase).toBe('ready');
+      expect(result.files).toBeGreaterThan(0);
+      await exited;
+    } finally {
+      if (child.exitCode === null) child.kill();
+    }
+  }, 15_000);
+
   test('creates a syntactically valid launcher beside the bundle', () => {
     const runtimeRoot = createRuntime();
 

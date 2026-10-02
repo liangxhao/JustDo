@@ -43,7 +43,7 @@ test.each([false, true])(
       );
       expect(child.kill).not.toHaveBeenCalled();
       if (unresponsive) {
-        await vi.advanceTimersByTimeAsync(4_000);
+        await vi.advanceTimersByTimeAsync(15_000);
         expect(child.kill).toHaveBeenCalledOnce();
         await vi.advanceTimersByTimeAsync(1_000);
       } else {
@@ -539,6 +539,25 @@ test.each([undefined, { afterCurrent: true }])(
     expect(stop).toHaveBeenCalledOnce();
   },
 );
+
+test('never starts or restarts a Gateway after application shutdown begins', async () => {
+  const { manager, stopped, launch } = createDeferredGatewayLifecycle();
+  OpenClawEngineManager.prototype.beginApplicationShutdown.call(manager);
+  await expect(manager.startGateway()).resolves.toEqual(stopped);
+  await expect(manager.restartGateway()).resolves.toEqual(stopped);
+  await expect(manager.restartGateway({ afterCurrent: true })).resolves.toEqual(stopped);
+  expect(launch).not.toHaveBeenCalled();
+});
+
+test('cancels a queued configuration restart when application shutdown begins', async () => {
+  const { manager, initial, stopped, launch } = createDeferredGatewayLifecycle();
+  const start = manager.startGateway();
+  const restart = manager.restartGateway({ afterCurrent: true });
+  OpenClawEngineManager.prototype.beginApplicationShutdown.call(manager);
+  initial.resolve(stopped);
+  await expect(Promise.all([start, restart])).resolves.toEqual([stopped, stopped]);
+  expect(launch).toHaveBeenCalledOnce();
+});
 
 test('preserves an explicit stop while a configuration restart waits for startup', async () => {
   const { manager, initial, stopped, launch, stop } = createDeferredGatewayLifecycle();

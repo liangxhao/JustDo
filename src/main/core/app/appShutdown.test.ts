@@ -71,7 +71,7 @@ describe('registerAppShutdown', () => {
     stopped();
     await vi.advanceTimersByTimeAsync(0);
     expect(electronMocks.app.exit).toHaveBeenCalledExactlyOnceWith(1);
-    await vi.advanceTimersByTimeAsync(6000);
+    await vi.advanceTimersByTimeAsync(17_000);
     expect(electronMocks.app.exit).toHaveBeenCalledOnce();
   });
 
@@ -83,7 +83,7 @@ describe('registerAppShutdown', () => {
       onCleanupTimeout: () => new Promise(() => {}),
     });
     electronMocks.handlers.get('before-quit')?.({ preventDefault: vi.fn() });
-    await vi.advanceTimersByTimeAsync(16_000);
+    await vi.advanceTimersByTimeAsync(27_000);
     expect(electronMocks.app.exit).toHaveBeenCalledExactlyOnceWith(1);
   });
 
