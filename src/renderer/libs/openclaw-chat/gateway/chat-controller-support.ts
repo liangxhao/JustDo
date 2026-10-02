@@ -18,7 +18,10 @@ import { type ProgressCard } from '@shared/openclaw/progressCard';
 
 import { isTruncatedHistoryMessage } from '@/libs/openclaw-chat/gateway/chat-history-protocol';
 import type { GatewayClient, GatewayHelloOk } from '@/libs/openclaw-chat/gateway/client';
-import { readPreambleText, readToolProgressText } from '@/libs/openclaw-chat/model/agent-event-reducer';
+import {
+  readPreambleText,
+  readToolProgressText,
+} from '@/libs/openclaw-chat/model/agent-event-reducer';
 import {
   type AssistantTurn,
   type ChatTranscriptState,
@@ -92,8 +95,10 @@ export interface ChatState {
 export interface ChatContextUsageSnapshot {
   sessionKey: string;
   sessionId: string | null;
-  totalTokens: number;
+  totalTokens: number | null;
   contextTokens: number | null;
+  /** Effective last-prompt limit after reserving compaction headroom, projected by Gateway. */
+  promptBudgetTokens?: number;
   totalTokensFresh: boolean;
   updatedAt: number | null;
   modelRef: string | null;
@@ -363,18 +368,30 @@ export function readChatContextUsageSnapshot(
 ): ChatContextUsageSnapshot | null {
   const row = asRecord(value);
   const totalTokens = readNonNegativeFiniteNumber(row?.totalTokens);
-  if (!row || totalTokens === null) return null;
+  // Lifecycle-only patches intentionally omit usage. An explicit unknown/stale
+  // projection, however, must retire the previous accurate snapshot.
+  if (
+    !row ||
+    (totalTokens === null &&
+      !Object.prototype.hasOwnProperty.call(row, 'totalTokens') &&
+      row.totalTokensFresh !== false)
+  )
+    return null;
   const sessionKey =
     (typeof row.sessionKey === 'string' && row.sessionKey.trim()) ||
     (typeof row.key === 'string' && row.key.trim()) ||
     fallbackSessionKey;
   const provider = typeof row.modelProvider === 'string' ? row.modelProvider.trim() : '';
   const model = typeof row.model === 'string' ? row.model.trim() : '';
+  const promptBudgetTokens = readNonNegativeFiniteNumber(
+    asRecord(row.contextBudgetStatus)?.promptBudgetBeforeReserve,
+  );
   return {
     sessionKey,
     sessionId: normalizeSessionId(row.sessionId),
     totalTokens,
     contextTokens: readNonNegativeFiniteNumber(row.contextTokens),
+    ...(promptBudgetTokens !== null && promptBudgetTokens > 0 ? { promptBudgetTokens } : {}),
     totalTokensFresh: row.totalTokensFresh !== false,
     updatedAt: readNonNegativeFiniteNumber(row.updatedAt),
     modelRef: model ? (provider ? `${provider}/${model}` : model) : null,
@@ -391,6 +408,7 @@ export function contextUsageSnapshotsEqual(
     left.sessionId === right.sessionId &&
     left.totalTokens === right.totalTokens &&
     left.contextTokens === right.contextTokens &&
+    left.promptBudgetTokens === right.promptBudgetTokens &&
     left.totalTokensFresh === right.totalTokensFresh &&
     left.updatedAt === right.updatedAt &&
     left.modelRef === right.modelRef

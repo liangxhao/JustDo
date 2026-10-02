@@ -1722,6 +1722,13 @@ export class ChatController {
   private applySessionContextUsage(value: unknown, sessionKey: string): boolean {
     const next = readChatContextUsageSnapshot(value, sessionKey);
     if (!next) return false;
+    const currentSessionId = this.state.currentSessionId ?? this.state.transcript.sessionId;
+    if (
+      normalizeTranscriptSessionKey(next.sessionKey) !==
+        normalizeTranscriptSessionKey(this.state.sessionKey) ||
+      (next.sessionId && currentSessionId && next.sessionId !== currentSessionId)
+    )
+      return false;
     const previous = this.state.contextUsage;
     const sameGeneration =
       previous !== null &&

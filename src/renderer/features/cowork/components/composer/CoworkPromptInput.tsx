@@ -70,6 +70,7 @@ import ContextUsageIndicator from '@/features/cowork/components/status/ContextUs
 import {
   contextUsageMatchesSession,
   resolveContextUsageDisplay,
+  resolveContextUsageLimit,
 } from '@/features/cowork/components/status/contextUsageRefresh';
 import {
   canStopCoworkRun,
@@ -1652,7 +1653,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     }, [attachments, dispatch, draftKey]);
 
     const contextUsageDisplay = useMemo(() => {
-      if (!contextUsage || !sessionId) return null;
+      if (!contextUsage || !sessionId || contextUsage.totalTokens === null) return null;
       if (!contextUsageMatchesSession(contextUsage.sessionKey, sessionId, effectiveAgentId)) {
         return null;
       }
@@ -1663,8 +1664,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       ) {
         return null;
       }
-      const contextTokens =
-        contextUsage.contextTokens || effectiveSelectedModel?.contextLength || 0;
+      const { contextTokens, fromLastPrompt } = resolveContextUsageLimit(
+        contextUsage,
+        effectiveSelectedModel?.contextLength,
+      );
       if (contextTokens <= 0) return null;
       const { usedTokens, percentage, overflowed } = resolveContextUsageDisplay(
         contextUsage.totalTokens,
@@ -1672,17 +1675,26 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       );
       const estimatePrefix = contextUsage.totalTokensFresh ? '' : '~';
       const overflowSuffix = overflowed ? '+' : '';
+      const label = i18nService.t(
+        fromLastPrompt ? 'coworkContextUsagePromptBudgetLabel' : 'coworkContextUsageFullLabel',
+      );
+      const approximateSuffix = contextUsage.totalTokensFresh
+        ? ''
+        : ` · ${i18nService.t('coworkContextUsageApproximate')}`;
       return {
         percentage,
-        text: `${estimatePrefix}${formatContextLength(usedTokens)}${overflowSuffix} / ${formatContextLength(contextTokens)} · ${estimatePrefix}${percentage}%`,
+        approximate: !contextUsage.totalTokensFresh,
+        label,
+        text: `${estimatePrefix}${formatContextLength(usedTokens)}${overflowSuffix} / ${formatContextLength(contextTokens)} · ${estimatePrefix}${percentage}%${approximateSuffix}`,
       };
     }, [contextUsage, effectiveAgentId, effectiveSelectedModel, sessionId]);
     const contextUsageStatus = sessionId && contextUsageDisplay ? contextUsageDisplay : null;
     const contextUsageBadge = contextUsageStatus ? (
       <ContextUsageIndicator
-        label={i18nService.t('coworkContextUsageFullLabel')}
+        label={contextUsageStatus.label}
         detail={contextUsageStatus.text}
         percentage={contextUsageStatus.percentage}
+        approximate={contextUsageStatus.approximate}
       />
     ) : null;
 

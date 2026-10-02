@@ -1240,6 +1240,7 @@ export function handleTimelineEvent(
     const rotatesSessionIdentity = Boolean(
       nextSessionId && currentSessionId && nextSessionId !== currentSessionId,
     );
+    const previousContextUsage = this.state.contextUsage;
     if (rotatesSessionIdentity) {
       const explicitIdentityChange = reason === 'new' || reason === 'reset' || reason === 'delete';
       const managedSession = /^agent:[^:]+:justdo:[^:]+$/i.test(this.state.sessionKey);
@@ -1252,6 +1253,7 @@ export function handleTimelineEvent(
         });
         return;
       }
+      this.state.contextUsage = null;
       this.resetTranscriptForSession(this.state.sessionKey, nextSessionId, false);
       this.historyPagingGeneration += 1;
       this.resetHistoryPagination(this.state.sessionKey);
@@ -1265,6 +1267,7 @@ export function handleTimelineEvent(
       this.pendingHistoryReload = false;
       this.scheduleDeferredHistoryReload(this.state.sessionKey, 'session-identity-rotation');
     } else if (reason === 'reset') {
+      this.state.contextUsage = null;
       const managedSession = /^agent:[^:]+:justdo:[^:]+$/i.test(this.state.sessionKey);
       const resetSessionId = nextSessionId ?? currentSessionId;
       const planImplementation = this.expectedPlanImplementationReset;
@@ -1344,7 +1347,16 @@ export function handleTimelineEvent(
       this.pendingHistoryReload = false;
       this.scheduleDeferredHistoryReload(this.state.sessionKey, 'session-reset');
     }
-    if (this.applySessionContextUsage(sessionSnapshot ?? payload, eventSessionKey)) this.notify();
+    const contextUsageChanged = this.applySessionContextUsage(
+      sessionSnapshot ?? payload,
+      eventSessionKey,
+    );
+    if (
+      contextUsageChanged ||
+      (previousContextUsage !== null && this.state.contextUsage === null)
+    ) {
+      this.notify();
+    }
     if (payload?.phase === 'message') {
       // New OpenClaw emits this invalidation when a committed batch,
       // rewrite, or suppressed row has no single session.message payload.
@@ -1373,7 +1385,14 @@ export function handleTimelineEvent(
     }
     if (this.admitExpectedInitialHistoryMessage(payload?.message)) return;
     const sessionSnapshot = asRecord(payload?.session);
+    const eventSessionId = normalizeSessionId(payload?.sessionId ?? sessionSnapshot?.sessionId);
+    const activeTurn = this.state.transcript.activeTurn;
+    const activeSessionId =
+      this.state.currentSessionId ?? this.state.transcript.sessionId ?? activeTurn?.sessionId;
+    const sessionIdentityMatches =
+      !eventSessionId || !activeSessionId || eventSessionId === activeSessionId;
     if (
+      sessionIdentityMatches &&
       this.applySessionContextUsage(
         sessionSnapshot ?? payload,
         eventSessionKey || this.state.sessionKey,
@@ -1381,12 +1400,6 @@ export function handleTimelineEvent(
     ) {
       this.notify();
     }
-    const eventSessionId = normalizeSessionId(payload?.sessionId ?? sessionSnapshot?.sessionId);
-    const activeTurn = this.state.transcript.activeTurn;
-    const activeSessionId =
-      this.state.currentSessionId ?? this.state.transcript.sessionId ?? activeTurn?.sessionId;
-    const sessionIdentityMatches =
-      !eventSessionId || !activeSessionId || eventSessionId === activeSessionId;
     const activeRunIds = readStringList(payload?.activeRunIds ?? sessionSnapshot?.activeRunIds);
     const expectedRunIds = new Set(
       [activeTurn?.runId, this.state.chatRunId].filter(

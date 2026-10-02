@@ -138,6 +138,8 @@ Goal 卡保留六种原生状态，Main 只提供自动续跑阶段。progress_c
 
 时长绑定当前 turn/run，重复终态不反复结算。子任务总 Token 使用原生 canonical usage，不能用 sessions.list 的上下文快照当累计消耗，也不要求各 breakdown 简单相加恰好等于 total。
 
+输入框上下文占用来自 `chat.history.sessionInfo`、`sessions.changed` 与 `session.message` 的 Gateway 投影，`totalTokens` 是最近请求的 prompt 快照（不含输出 Token），不是会话累计消耗。分母优先使用 `contextBudgetStatus.promptBudgetBeforeReserve`，其次是原生 `contextTokens`，最后才是当前模型配置；最近请求预算在提示中单独标明，不能用 `remainingPromptBudgetTokens` 或预估 `estimatedPromptTokens` 替代这个口径。Gateway 负责过滤不匹配当前模型/窗口的预算。过期快照保留 `~` 与估算说明，使用中性色；明确未知用量隐藏占用，不能沿用旧准确值。仅生命周期且省略用量的事件不覆盖已有快照。更新须匹配当前 canonical session 与 native sessionId，并拒绝同一会话较旧的 updatedAt；预算变化也必须触发 UI 更新。这里只保存用量元数据，不增加 transcript 缓存或轮询。
+
 ### 子任务详情与嵌套导航
 
 子任务列表与详情分别呈现执行观测和结果交付状态。等待原因、原生依赖数量、进度摘要、错误及文件变更统计来自任务摘要；会话用量属于可选补充，读取失败不能隐藏已经核实的任务身份和生命周期。没有原生交付证据时，执行成功不得显示为“已回报父任务”。平级协作图的 accepted 也只代表消息已接收，不代表成员工作完成。

@@ -6,19 +6,26 @@ interface ContextUsageIndicatorProps {
   label: string;
   detail: string;
   percentage: number;
+  approximate?: boolean;
 }
 
 const ContextUsageIndicator: React.FC<ContextUsageIndicatorProps> = ({
   label,
   detail,
   percentage,
+  approximate = false,
 }) => {
   const normalizedPercentage = Number.isFinite(percentage)
     ? Math.min(100, Math.max(0, percentage))
     : 0;
 
   return (
-    <Tooltip content={detail} className="flex-shrink-0 leading-none" position="top" renderInPortal>
+    <Tooltip
+      content={`${label}: ${detail}`}
+      className="flex-shrink-0 leading-none"
+      position="top"
+      renderInPortal
+    >
       <span
         role="img"
         tabIndex={0}
@@ -45,7 +52,7 @@ const ContextUsageIndicator: React.FC<ContextUsageIndicatorProps> = ({
             strokeDasharray={`${normalizedPercentage} 100`}
             strokeLinecap="round"
             strokeWidth="2.5"
-            className="text-primary"
+            className={approximate ? 'text-secondary' : 'text-primary'}
           />
         </svg>
       </span>

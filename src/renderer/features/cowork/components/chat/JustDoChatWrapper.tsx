@@ -391,6 +391,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
               usage.sessionId ?? '',
               usage.totalTokens,
               usage.contextTokens ?? '',
+              usage.promptBudgetTokens ?? '',
               usage.totalTokensFresh,
               usage.updatedAt ?? '',
               usage.modelRef ?? '',
