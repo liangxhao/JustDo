@@ -457,6 +457,58 @@ describe('scheduled task agent assignment', () => {
     );
   });
 
+  test('changes and clears the task model through native merge semantics without losing other options', async () => {
+    const current = {
+      ...gatewayJob,
+      payload: {
+        ...gatewayJob.payload,
+        model: 'acme/old',
+        thinking: 'high',
+        fallbacks: ['acme/backup'],
+      },
+    };
+    const request = vi.fn(async (method: string, params?: unknown) => {
+      if (method === 'cron.get') return current;
+      if (method === 'cron.update') {
+        const { patch } = params as { patch: { payload?: { model?: string | null } } };
+        Object.assign(current.payload, patch.payload);
+        if (patch.payload?.model === null) Reflect.deleteProperty(current.payload, 'model');
+        return current;
+      }
+      throw new Error(`Unexpected method: ${method}`);
+    });
+    const service = new CronJobService({
+      getGatewayClient: () => ({ request }) as never,
+      ensureGatewayReady: vi.fn(),
+    });
+    const changed = await service.updateJob(current.id, {
+      payload: { ...input.payload, model: 'acme/new' },
+    });
+    expect(changed.payload).toMatchObject({
+      model: 'acme/new',
+      thinking: 'high',
+      fallbacks: ['acme/backup'],
+    });
+    const retained = await service.updateJob(current.id, { payload: input.payload });
+    expect(retained.payload).toMatchObject({ model: 'acme/new' });
+    const cleared = await service.updateJob(current.id, {
+      permissionMode: 'read-only',
+      payload: { ...input.payload, model: '' },
+    });
+    expect(cleared.payload).not.toHaveProperty('model');
+    expect(cleared.payload).toMatchObject({
+      thinking: 'high',
+      fallbacks: ['acme/backup'],
+      permissionMode: 'read-only',
+    });
+    expect(request).toHaveBeenLastCalledWith(
+      'cron.update',
+      expect.objectContaining({
+        patch: expect.objectContaining({ payload: expect.objectContaining({ model: null }) }),
+      }),
+    );
+  });
+
   test('keeps externally owned agent-turn tasks unchanged while listing', async () => {
     const systemJob = {
       ...gatewayJob,

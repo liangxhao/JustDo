@@ -962,7 +962,12 @@ export class CronJobService {
       }
       if (input.wakeMode !== undefined) patch.wakeMode = input.wakeMode;
       if (input.payload !== undefined || input.permissionMode !== undefined) {
-        patch.payload = nextPayload;
+        // Native cron.update merges payload fields; omission retains an existing override.
+        // An explicitly empty editor selection must use the native null reset sentinel.
+        patch.payload =
+          input.payload?.kind === PayloadKind.AgentTurn && input.payload.model === ''
+            ? { ...nextPayload, model: null }
+            : nextPayload;
       }
       if (input.delivery !== undefined) {
         patch.delivery = toGatewayDelivery(input.delivery);

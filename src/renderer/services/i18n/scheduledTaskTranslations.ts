@@ -580,7 +580,10 @@ export const scheduledTaskTranslations = {
     cronSkillReviewReadOnlyHint:
       '由系统维护，暂不支持单独启停；此状态不代表全部技能自动学习的开关。',
     cronDialogAgentTitle: '执行助手',
-    cronDialogAgentHint: '任务在所选助手的独立会话中运行，使用其工作区和模型配置。',
+    cronDialogModelTitle: '执行模型',
+    cronDialogModelInherit: '跟随默认配置',
+    cronDialogModelHint: '仅用于此任务；未指定时遵循默认模型规则，包括子代理模型和已有会话配置。',
+    cronDialogAgentHint: '任务在所选助手的独立会话中运行，使用其工作区。',
     cronDialogPermissionTitle: '执行权限',
     cronDialogPermissionInheritedHint:
       '此任务通过主会话唤醒助手，继承主会话的执行权限，不支持单独设置任务权限。',
@@ -1264,8 +1267,12 @@ export const scheduledTaskTranslations = {
     cronSkillReviewReadOnlyHint:
       'System-managed; individual controls are unavailable. This status is not a switch for all skill learning.',
     cronDialogAgentTitle: 'Assistant',
+    cronDialogModelTitle: 'Execution model',
+    cronDialogModelInherit: 'Use default configuration',
+    cronDialogModelHint:
+      'Applies only to this task. When unset, follows the default model rules, including subagent models and existing session configuration.',
     cronDialogAgentHint:
-      'Runs in an isolated session using the selected assistant’s workspace and model configuration.',
+      'Runs in an isolated session using the selected assistant’s workspace.',
     cronDialogPermissionTitle: 'Execution permissions',
     cronDialogPermissionInheritedHint:
       'This task wakes the assistant in the main session and inherits its execution permissions. Separate task permissions are not supported.',

@@ -6,6 +6,7 @@ import { afterEach, expect, test, vi } from 'vitest';
 import { CronView } from './CronView';
 
 const state = {
+  model: { availableModels: [] },
   scheduledTask: {
     tasks: [] as ScheduledTask[],
     loading: false,

@@ -32,6 +32,8 @@ flowchart LR
 
 新建 Agent-turn 默认由 main 执行，也可选择已有助手，使用隔离运行会话。外部或模型创建的 job 保留原 owner；列表、启停和手动运行不能偷偷接管。产品操作需验证可编辑性、时间与 payload，而非直接透传任意 cron JSON。
 
+Agent-turn 创建和编辑表单可选择任务专用模型，使用应用模型列表和规范化的 OpenClaw `provider/model` 引用（含自定义提供商和套餐模型）。默认不设置任务模型覆盖，遵循 OpenClaw 原生模型选择规则，包括助手/应用默认、子代理模型配置及已有原生会话覆盖；systemEvent 不提供独立模型设置。编辑时保留列表外的现有模型引用及其他 payload 选项。选择“跟随默认配置”时，编辑输入的空字符串由 Main 转为原生 `cron.update` 的 `payload.model: null`，明确清除旧任务覆盖；省略字段仍表示保留现有配置。
+
 JustDo 新建 job 默认显式发送 delivery mode=none，不依赖上游省略值的默认行为。announce/webhook 是原生外发配置；应用收件箱不是一种外发 channel，是否进入本地收件箱不取决于是否发到 IM。
 
 模型发起任务变更时由 automation-permission 根据原生 session mode 审批。无人值守不意味着自动 full，也不能用某个 Agent 名称绕开审批。

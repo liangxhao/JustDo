@@ -42,6 +42,7 @@ export interface AgentTurnPayload {
   permissionMode?: 'read-only' | 'full';
   message: string;
   timeoutSeconds?: number;
+  /** Empty string in an update input clears the native per-task model override. */
   model?: string;
   fallbacks?: string[];
   thinking?: string;

@@ -39,6 +39,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSelector } from 'react-redux';
 
 import WindowHeader from '@/app/shell/window/WindowHeader';
+import type { Model } from '@/features/models/modelSlice';
+import { toOpenClawModelRef } from '@/features/models/openclawModelRef';
 import ResultInbox from '@/features/scheduled-tasks/components/ResultInbox';
 import TaskRunHistory from '@/features/scheduled-tasks/components/TaskRunHistory';
 import {
@@ -1081,17 +1083,34 @@ type TaskAgentOption = { id: string; name: string; enabled: boolean; deletedAt?:
 
 interface DialogProps {
   agents?: readonly TaskAgentOption[];
+  models?: readonly Model[];
   open: boolean;
   job?: ScheduledTask;
   onClose: () => void;
   onSave: (input: ScheduledTaskInput) => Promise<void>;
 }
 
-export function CreateEditDialog({ open, job, onClose, onSave, agents = [] }: DialogProps) {
+export function CreateEditDialog({
+  open,
+  job,
+  onClose,
+  onSave,
+  agents = [],
+  models = [],
+}: DialogProps) {
   const t = i18nService.t.bind(i18nService);
   const isEdit = !!job;
   const initialAgentId = job?.agentId ?? 'main';
   const [agentId, setAgentId] = useState(initialAgentId);
+  const initialModel = job?.payload.kind === 'agentTurn' ? (job.payload.model ?? '') : '';
+  const [modelRef, setModelRef] = useState(initialModel);
+  const modelOptions = models
+    .filter(model => model.id)
+    .map(model => ({
+      ref: toOpenClawModelRef(model),
+      label: `${model.name} · ${model.provider || model.providerKey || toOpenClawModelRef(model).split('/')[0]}`,
+      disabled: model.available === false,
+    }));
   const availableAgents = agents.filter(agent => agent.enabled && !agent.deletedAt);
   const showFallbackMain = !agents.some(agent => agent.id === 'main');
   const knownAgentIds = new Set([
@@ -1133,6 +1152,7 @@ export function CreateEditDialog({ open, job, onClose, onSave, agents = [] }: Di
     setPrevOpen(open);
     if (open) {
       setAgentId(initialAgentId);
+      setModelRef(initialModel);
       setName(job?.name ?? '');
       setMessage(editablePayloadText(job));
       setScheduleForm(parseScheduleToForm(job?.schedule));
@@ -1232,6 +1252,9 @@ export function CreateEditDialog({ open, job, onClose, onSave, agents = [] }: Di
             }
           : builtSchedule;
       const execution = buildScheduledTaskExecutionInput(job, message.trim());
+      if (execution.payload.kind === 'agentTurn' && (modelRef || modelRef !== initialModel)) {
+        execution.payload = { ...execution.payload, model: modelRef };
+      }
       const input: ScheduledTaskInput = {
         ...(!job ||
         (job.payload.kind === 'agentTurn' && permissionMode !== ScheduledTaskPermission.Custom)
@@ -1574,6 +1597,30 @@ export function CreateEditDialog({ open, job, onClose, onSave, agents = [] }: Di
                 <p className="mt-2 text-xs text-secondary">{t('cronDialogAgentHint')}</p>
               </section>
             )}
+            {(!job || job.payload.kind === 'agentTurn') && (
+              <section className="min-w-0">
+                <label htmlFor="scheduled-task-model" className={labelClass}>
+                  {t('cronDialogModelTitle')}
+                </label>
+                <select
+                  id="scheduled-task-model"
+                  className={inputClass}
+                  value={modelRef}
+                  onChange={event => setModelRef(event.target.value)}
+                >
+                  <option value="">{t('cronDialogModelInherit')}</option>
+                  {modelRef && !modelOptions.some(option => option.ref === modelRef) && (
+                    <option value={modelRef}>{modelRef}</option>
+                  )}
+                  {modelOptions.map(option => (
+                    <option key={option.ref} value={option.ref} disabled={option.disabled}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-2 text-xs text-secondary">{t('cronDialogModelHint')}</p>
+              </section>
+            )}
             <section className="min-w-0">
               <label htmlFor="scheduled-task-permission" className={labelClass}>
                 {t('cronDialogPermissionTitle')}
@@ -1799,6 +1846,7 @@ export const CronView: React.FC<CronViewProps> = ({
   const t = i18nService.t.bind(i18nService);
 
   const allNativeTasks = useSelector((s: RootState) => s.scheduledTask.tasks);
+  const models = useSelector((s: RootState) => s.model.availableModels);
   const agents = useSelector((s: RootState) => s.agent.agents);
   const nativeTasks = useMemo(
     () => excludeDeletedSkillReviewTasks(allNativeTasks, agents),
@@ -2390,6 +2438,7 @@ export const CronView: React.FC<CronViewProps> = ({
         open={showDialog}
         job={editingJob}
         agents={agents}
+        models={models}
         onClose={() => {
           setShowDialog(false);
           setEditingJob(undefined);
