@@ -55,6 +55,9 @@ export const chatStyles = [
       margin: 0;
       padding: 8px 40px 8px 8px;
       background: transparent;
+      white-space: pre;
+      overflow-wrap: normal;
+      overflow: auto;
     }
     /* Reference-inspired dark terminal card in both application themes. */
     .tool-output-bubble--terminal {
@@ -1251,6 +1254,32 @@ export const chatStyles = [
       color: var(--justdo-chat-text-secondary, #6b7280);
     }
 
+    .message-table-wrapper {
+      position: relative;
+      margin: 4px 0;
+    }
+    .message-table-wrapper > .message-reader-actions {
+      position: absolute;
+      top: 4px;
+      right: 4px;
+      z-index: 1;
+      flex-wrap: nowrap;
+      gap: 3px;
+      padding: 2px;
+      border-radius: 6px;
+      background: var(--code-block-bg, #f6f7f9);
+      box-shadow: 0 1px 4px rgb(0 0 0 / 12%);
+      opacity: 0;
+      pointer-events: none;
+    }
+    .message-table-wrapper:hover > .message-reader-actions,
+    .message-table-wrapper:focus-within > .message-reader-actions {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .markdown-content .message-table-wrapper > .markdown-table-scroll {
+      margin: 0;
+    }
     .markdown-content .markdown-table-scroll {
       max-width: 100%;
       margin: 4px 0;
@@ -2580,6 +2609,8 @@ export const chatStyles = [
     }
     .process-summary__items {
       display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      min-width: 0;
       gap: 8px;
       margin: 2px 0 8px 18px;
       padding: 0 0 0 14px;
@@ -2652,6 +2683,7 @@ export const chatStyles = [
     .process-summary__tool-result,
     .process-summary__tool-result.process-summary__error {
       margin: 0;
+      min-width: 0;
       white-space: normal;
     }
     .process-summary__tool {
@@ -2705,6 +2737,8 @@ export const chatStyles = [
     }
     .process-summary__tool-detail {
       display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      min-width: 0;
       gap: 4px;
       margin: 7px 0 0 14px;
     }

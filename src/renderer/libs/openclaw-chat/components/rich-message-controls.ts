@@ -409,12 +409,19 @@ export class RichMessageControls {
       actions.className = 'message-reader-actions';
       const table = block.querySelector('table');
       if (table) {
-        const copy = this.button('messageCopyTsv', () => this.copy(copy, tableToTsv(table)));
+        const copy = this.iconButton('messageCopyTsv', 'M9 9h11v11H9z M15 9V4H4v11h5', () =>
+          this.copy(copy, tableToTsv(table)),
+        );
         actions.append(
           copy,
-          this.button('messageExpand', () => this.expand(block)),
+          this.iconButton('messageExpand', 'M8 3H3v5 M16 3h5v5 M3 16v5h5 M21 16v5h-5', () =>
+            this.expand(block),
+          ),
         );
-        block.prepend(actions);
+        const wrapper = document.createElement('div');
+        wrapper.className = 'message-table-wrapper';
+        block.replaceWith(wrapper);
+        wrapper.append(block, actions);
         return;
       }
       const code = block.querySelector('code');

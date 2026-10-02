@@ -78,6 +78,24 @@ function summary(): ProcessSummaryTimelineItem {
 }
 
 describe('active turn timeline', () => {
+  test.each(['write', 'edit'])('%s shows the execution receipt instead of a duplicate result diff', name => {
+    const fixture = summary();
+    const tool = fixture.items[1];
+    if (tool.type !== 'tool') throw new Error('Expected tool fixture');
+    tool.name = name;
+    tool.input = name === 'write'
+      ? { path: 'example.ts', content: 'const value = 2;' }
+      : { path: 'example.ts', oldText: 'const value = 1;', newText: 'const value = 2;' };
+    tool.output = 'Successfully updated example.ts';
+    tool.presentation = { fileDiff: '+ result-only-diff-marker' };
+
+    const rendered = flatten(renderTimelineItem(fixture, 100, true));
+
+    expect(rendered).toContain(tool.output);
+    expect(rendered).not.toContain('result-only-diff-marker');
+    expect(rendered).toContain('const value = 2;');
+  });
+
   test('keeps ordinary tool details directly readable without duplicate status text', () => {
     const rendered = flatten(renderTimelineItem(summary(), 100, true));
     expect(rendered).toContain('justdo-tool-output');

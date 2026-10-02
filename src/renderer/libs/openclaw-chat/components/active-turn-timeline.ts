@@ -20,7 +20,7 @@ import {
   type EditToolDiff,
   parseEditToolDiff,
 } from '../model/edit-tool-diff';
-import { fileToolCode, fileToolIdentity, fileToolPatch } from '../model/file-tool-presentation';
+import { fileToolCode, fileToolPatch } from '../model/file-tool-presentation';
 import {
   type ActiveTurnTimelineItem,
   type ProcessSummaryTimelineItem,
@@ -363,10 +363,8 @@ function renderToolDetail(
   onEditDiffModeChange?: EditDiffModeChangeHandler,
 ): TemplateResult {
   const editDiff = parseEditToolDiff(tool.name, tool.input);
-  const fileIdentity = fileToolIdentity(tool);
   const inputCode = fileToolCode(tool, false);
   const outputCode = fileToolCode(tool, true);
-  const resultDiff = tool.status === 'completed' && ['write', 'edit'].includes(fileIdentity.name) ? tool.presentation?.fileDiff : undefined;
   const patch = fileToolPatch(tool);
   const media = (tool.presentation?.media ?? []).map(item => ({
     url: item.path,
@@ -388,8 +386,7 @@ function renderToolDetail(
       ${patch.length ? html`<div class="process-summary__detail-label">${i18nService.t('coworkToolInput')}</div>
         ${patch.map(file => html`<details class="file-patch" open><summary>${i18nService.t(`messagePatch${file.operation}`)} · ${file.path}${file.moveTo ? html` → ${file.moveTo}` : nothing}</summary>
           ${file.text ? html`<justdo-tool-output .text=${file.text} language="diff"></justdo-tool-output>` : nothing}
-        </details>`)}
-        <details><summary>${i18nService.t('messageRawParameters')}</summary><justdo-tool-output .text=${readableValue(tool.input)}></justdo-tool-output></details>` : nothing}
+        </details>`)}` : nothing}
       ${
         patch.length ? nothing : editDiff
           ? renderEditDiff(tool.id, editDiff, editDiffMode, onEditDiffModeChange)
@@ -409,7 +406,6 @@ function renderToolDetail(
               }
             `
       }
-      ${inputCode ? html`<div class="file-code-path">${inputCode.path}</div><details><summary>${i18nService.t('messageRawParameters')}</summary><justdo-tool-output .text=${readableValue(tool.input)}></justdo-tool-output></details>` : nothing}
       ${
         hasToolResult(tool)
           ? html`
@@ -419,14 +415,13 @@ function renderToolDetail(
                 class=${`process-summary__tool-result${toolOutcome(tool) === 'failed' ? ' process-summary__error' : ''}`}
               >
                 <justdo-tool-output
-                  .text=${resultDiff ?? outputCode?.text ?? toolResult(tool)}
-                  .language=${resultDiff ? 'diff' : outputCode ? resolveEditDiffLanguage(outputCode.path) : ''}
+                  .text=${outputCode?.text ?? toolResult(tool)}
+                  .language=${outputCode ? resolveEditDiffLanguage(outputCode.path) : ''}
                   .terminal=${toolOperation(tool) === 'commands'}
                   .partial=${tool.presentation?.partial === true}
                   .identity=${{ runId: tool.runId, toolCallId: tool.toolCallId, messageId: tool.presentation?.resultMessageId }}
                 ></justdo-tool-output>
               </div>
-              ${resultDiff ? html`<details><summary>${i18nService.t('messageRawResult')}</summary><justdo-tool-output .text=${toolResult(tool)}></justdo-tool-output></details>` : nothing}
             `
           : nothing
       }
