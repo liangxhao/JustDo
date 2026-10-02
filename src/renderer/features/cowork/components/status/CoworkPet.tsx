@@ -9,6 +9,7 @@ import { clampPetPosition, defaultPetPosition, PET_FLOATING_RESET_EVENT, type Pe
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 
+import asymmetricSpriteUrl from '../../../../../../resources/pets/black-white-cats/asymmetric-spritesheet.webp';
 import extraSpriteUrl from '../../../../../../resources/pets/black-white-cats/extra-spritesheet.webp';
 import interactionSpriteUrl from '../../../../../../resources/pets/black-white-cats/interaction-spritesheet.webp';
 import reactionSpriteUrl from '../../../../../../resources/pets/black-white-cats/reaction-spritesheet.webp';
@@ -46,12 +47,20 @@ const loopVariants = (sequences: readonly (readonly PetFrame[])[], sheet: string
   return motions.map(frames => ({ frames, sheet, rows, repeat: true, still }));
 };
 
+// Six-frame paired scenes use different actions for each cat; split layers can
+// also run their halves at independent cadences without changing character size.
+const asymmetricLoops = (rows: readonly number[]): PetAnimation[] => rows.map(row => ({
+  frames: [[row * 6 + 1, 1800], [row * 6 + 2, 260], [row * 6 + 3, 350],
+    [row * 6 + 4, 600], [row * 6 + 5, 350], [row * 6 + 6, 1400]],
+  sheet: asymmetricSpriteUrl, rows: 4, repeat: true, still: row * 6 + 1,
+}));
+
 const ANIMATIONS: Record<PetMode, readonly PetAnimation[]> = {
-  idle: loopVariants([IDLE, IDLE_ALTERNATE, IDLE_BRIEF], spriteUrl, 4, 1),
-  thinking: loopVariants([THINKING, THINKING_ALTERNATE, THINKING_BRIEF], spriteUrl, 4, 7),
+  idle: [...loopVariants([IDLE, IDLE_ALTERNATE, IDLE_BRIEF], spriteUrl, 4, 1), ...asymmetricLoops([0, 1, 2, 3])],
+  thinking: [...loopVariants([THINKING, THINKING_ALTERNATE, THINKING_BRIEF], spriteUrl, 4, 7), ...asymmetricLoops([0, 3])],
   complete: [{ frames: COMPLETE, sheet: spriteUrl, rows: 4, repeat: false, still: 1 }],
-  waiting: loopVariants([WAITING, WAITING_ALTERNATE, WAITING_BRIEF], extraSpriteUrl, 2, 3),
-  resting: loopVariants([RESTING, RESTING_ALTERNATE, RESTING_BRIEF], extraSpriteUrl, 2, 10),
+  waiting: [...loopVariants([WAITING, WAITING_ALTERNATE, WAITING_BRIEF], extraSpriteUrl, 2, 3), ...asymmetricLoops([2])],
+  resting: [...loopVariants([RESTING, RESTING_ALTERNATE, RESTING_BRIEF], extraSpriteUrl, 2, 10), ...asymmetricLoops([3])],
   reaction: [{ frames: REACTION, sheet: reactionSpriteUrl, rows: 1, repeat: false, still: 3 }],
 };
 const SOLO_COMPLETE: readonly PetAnimation[] = [
@@ -63,7 +72,7 @@ const feedback = (frames: readonly PetFrame[], sheet: string, rows: number, moti
   animations: [{ frames, sheet, rows, repeat: false, still: frames[0][0] }] as readonly PetAnimation[],
   motion,
 });
-const atlasFeedback = (row: number, playful: boolean) => {
+const atlasFeedback = (row: number, playful: boolean, sheet = interactionSpriteUrl) => {
   const start = row * 6 + 1;
   const sequence: readonly PetFrame[] = [
     [start, 140], [start + 1, 150], [start + 2, 160],
@@ -73,8 +82,8 @@ const atlasFeedback = (row: number, playful: boolean) => {
     ? [...sequence.slice(0, 4), [start + 2, 120], [start + 3, 160], ...sequence.slice(4)]
     : [sequence[0], ...sequence.slice(1, 4), [start + 3, 180], ...sequence.slice(4)];
   return [
-    feedback(sequence, interactionSpriteUrl, 4, 'still'),
-    feedback(linger, interactionSpriteUrl, 4, 'still'),
+    feedback(sequence, sheet, 4, 'still'),
+    feedback(linger, sheet, 4, 'still'),
   ];
 };
 const TAP_FEEDBACK = [
@@ -83,6 +92,7 @@ const TAP_FEEDBACK = [
   feedback([[1, 160], [2, 130], [3, 180], [4, 130], [5, 180], [6, 220]], extraSpriteUrl, 2, 'hop'),
   feedback([[1, 220], [2, 120], [3, 160], [4, 120], [5, 120], [6, 220]], spriteUrl, 4, 'stretch'),
   ...[0, 1, 2, 3].flatMap(row => atlasFeedback(row, false)),
+  ...[0, 1, 2, 3].flatMap(row => atlasFeedback(row, false, asymmetricSpriteUrl)),
 ];
 const DOUBLE_FEEDBACK = [
   feedback([[13, 100], [14, 100], [15, 130], [16, 240], [17, 100], [18, 140], [24, 280]], spriteUrl, 4, 'hop'),
@@ -90,6 +100,7 @@ const DOUBLE_FEEDBACK = [
   feedback([[7, 150], [8, 120], [9, 160], [10, 220], [11, 120], [12, 150]], spriteUrl, 4, 'stretch'),
   feedback([[1, 140], [2, 100], [3, 200], [4, 100], [5, 100], [6, 240]], spriteUrl, 4, 'nod'),
   ...[0, 1, 2, 3].flatMap(row => atlasFeedback(row, true)),
+  ...[0, 1, 2, 3].flatMap(row => atlasFeedback(row, true, asymmetricSpriteUrl)),
 ];
 const SOLO_DOUBLE_FEEDBACK = [
   feedback([[1, 200], [2, 120], [3, 200], [4, 120], [5, 120], [6, 240]], spriteUrl, 4, 'hop'),
@@ -109,7 +120,7 @@ const petSettings = (placement: 'chat' | 'home') => {
   return {
     motionAllowed: data.coworkPet !== 'off' && data.coworkPetMotion !== 'off' &&
       (placement === 'home' ? data.coworkPetHome !== 'off' : data.coworkPetChat !== 'off'),
-    variety: data.coworkPetVariety === 'classic' ? 1 : data.coworkPetVariety === 'varied' ? 4 : 12,
+    variety: data.coworkPetVariety === 'classic' ? 1 : data.coworkPetVariety === 'varied' ? 4 : 16,
     speed: data.coworkPetSpeed === 'calm' ? 1.35 : data.coworkPetSpeed === 'lively' ? 0.75 : 1,
     restAfter: data.coworkPetRestAfter === 'never' ? null : data.coworkPetRestAfter === 'short' ? 30_000 :
       data.coworkPetRestAfter === 'long' ? 90_000 : 45_000,
@@ -125,6 +136,7 @@ export function CoworkPet({ running, waiting, latestRun, placement = 'chat' }: C
   const [resting, setResting] = useState(false);
   const [frameIndex, setFrameIndex] = useState(0);
   const [variantIndex, setVariantIndex] = useState(0);
+  const [blackCursor, setBlackCursor] = useState({ frame: 0, variant: 0 });
   const [settings, setSettings] = useState(() => petSettings(placement));
   const [documentVisible, setDocumentVisible] = useState(() => !document.hidden);
   const cellSize = 64;
@@ -283,43 +295,69 @@ export function CoworkPet({ running, waiting, latestRun, placement = 'chat' }: C
     ? selectedFeedback.animations
     : mode === 'complete' && cats !== 'both' ? SOLO_COMPLETE : ANIMATIONS[mode];
   const animation = animations[variantIndex] ?? animations[0];
+  // Paired gestures cross the center of the atlas cell and must stay together.
+  const independent = cats === 'both' && (interaction
+    ? !(interaction.kind === 'double' && interaction.variant === 0)
+    : mode !== 'complete');
   useEffect(() => {
     setFrameIndex(0);
     setVariantIndex(0);
     if (!motionAllowed || !documentVisible) return;
-    let index = 0;
-    let variant = 0;
-    let timeout: number;
-    const advance = () => {
-      const current = animations[variant];
-      index += 1;
-      if (index >= current.frames.length) {
-        if (!current.repeat) {
-          if (interaction) {
-            setInteraction(null);
-          } else {
-            setCelebratingRunId(null);
-            setReactingRunId(null);
-          }
-          return;
-        }
-        index = 0;
-        const count = Math.min(variety, animations.length);
-        if (count > 1) {
-          variant = (variant + 1 + Math.floor(Math.random() * (count - 1))) % count;
-          setVariantIndex(variant);
-        }
+    setBlackCursor({ frame: 0, variant: 0 });
+    const timers: number[] = [];
+    let finished = 0;
+    const finish = () => {
+      finished += 1;
+      if (finished < (independent ? 2 : 1)) return;
+      if (interaction) setInteraction(null);
+      else {
+        setCelebratingRunId(null);
+        setReactingRunId(null);
       }
-      setFrameIndex(index);
-      timeout = window.setTimeout(advance, animations[variant].frames[index][1] * speed);
     };
-    timeout = window.setTimeout(advance, animations[0].frames[0][1] * speed);
-    return () => window.clearTimeout(timeout);
-  }, [animations, motionAllowed, documentVisible, variety, speed, interaction]);
+    const start = (black: boolean) => {
+      let index = 0;
+      let variant = 0;
+      const cadence = speed * (black ? 0.88 : 1);
+      const advance = () => {
+        const current = animations[variant];
+        index += 1;
+        if (index >= current.frames.length) {
+          if (!current.repeat) {
+            finish();
+            return;
+          }
+          index = 0;
+          const count = Math.min(variety, animations.length);
+          if (count > 1) variant = (variant + 1 + Math.floor(Math.random() * (count - 1))) % count;
+        }
+        if (black) setBlackCursor({ frame: index, variant });
+        else {
+          setVariantIndex(variant);
+          setFrameIndex(index);
+        }
+        timeout = window.setTimeout(advance, animations[variant].frames[index][1] * cadence);
+        timers[black ? 1 : 0] = timeout;
+      };
+      let timeout = window.setTimeout(advance, animations[0].frames[0][1] * cadence + (black ? 280 * speed : 0));
+      timers[black ? 1 : 0] = timeout;
+    };
+    start(false);
+    if (independent) start(true);
+    return () => timers.forEach(window.clearTimeout);
+  }, [animations, motionAllowed, documentVisible, variety, speed, interaction, independent]);
 
   const frame = !motionAllowed || !documentVisible
     ? animation.still
     : animation.frames[frameIndex]?.[0] ?? animation.frames[0][0];
+  const blackAnimation = independent ? animations[blackCursor.variant] ?? animations[0] : animation;
+  const blackFrame = !motionAllowed || !documentVisible ? blackAnimation.still
+    : independent ? blackAnimation.frames[blackCursor.frame]?.[0] ?? blackAnimation.frames[0][0] : frame;
+  const spriteStyle = (art: PetAnimation, cell: number) => ({
+    backgroundImage: `url(${art.sheet})`,
+    backgroundSize: `${cellSize * 6}px ${cellSize * art.rows}px`,
+    backgroundPosition: `${-((cell - 1) % 6) * cellSize}px ${-Math.floor((cell - 1) / 6) * cellSize}px`,
+  });
   const label = waiting
     ? i18nService.t('coworkPetWaiting')
     : running
@@ -394,12 +432,10 @@ export function CoworkPet({ running, waiting, latestRun, placement = 'chat' }: C
           clickTimerRef.current = null;
           playInteraction(event.shiftKey ? 'double' : 'tap');
         }}
-        style={{
-          backgroundImage: `url(${animation.sheet})`,
-          backgroundSize: `${cellSize * 6}px ${cellSize * animation.rows}px`,
-          backgroundPosition: `${-((frame - 1) % 6) * cellSize}px ${-Math.floor((frame - 1) / 6) * cellSize}px`,
-        }}
-      />
+      >
+        <span aria-hidden="true" className={`cowork-pet__art${independent ? ' cowork-pet__art--white' : ''}`} style={spriteStyle(animation, frame)} />
+        {independent && <span aria-hidden="true" className="cowork-pet__art cowork-pet__art--black" style={spriteStyle(blackAnimation, blackFrame)} />}
+      </button>
     </div>
   );
   // Keep the original node mounted during the first drag so touch pointer capture survives.

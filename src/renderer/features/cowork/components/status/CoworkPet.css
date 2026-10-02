@@ -26,6 +26,7 @@
 }
 
 .cowork-pet__sprite {
+  position: relative;
   display: block;
   flex: none;
   width: 64px;
@@ -58,19 +59,19 @@
   outline: none;
 }
 
-.cowork-pet--feedback-wiggle .cowork-pet__sprite {
+.cowork-pet--feedback-wiggle .cowork-pet__art {
   animation: cowork-pet-tap 760ms ease-in-out;
 }
 
-.cowork-pet--feedback-hop .cowork-pet__sprite {
+.cowork-pet--feedback-hop .cowork-pet__art {
   animation: cowork-pet-solo-complete 1.1s ease-in-out;
 }
 
-.cowork-pet--feedback-nod .cowork-pet__sprite {
+.cowork-pet--feedback-nod .cowork-pet__art {
   animation: cowork-pet-nod 900ms ease-in-out;
 }
 
-.cowork-pet--feedback-stretch .cowork-pet__sprite {
+.cowork-pet--feedback-stretch .cowork-pet__art {
   animation: cowork-pet-stretch 950ms ease-in-out;
 }
 
@@ -123,4 +124,21 @@
 .dark .cowork-pet__sprite {
   filter: drop-shadow(0 0 2px rgba(255, 255, 255, .95))
     drop-shadow(0 0 1px rgba(255, 255, 255, .7));
+}
+
+.cowork-pet__art {
+  position: absolute;
+  inset: 0;
+  background-repeat: no-repeat;
+  pointer-events: none;
+}
+
+.cowork-pet__art--white {
+  clip-path: inset(0 50% 0 0);
+  transform-origin: 25% 75%;
+}
+.cowork-pet .cowork-pet__art--black {
+  transform-origin: 75% 75%;
+  clip-path: inset(0 0 0 50%);
+  animation-delay: 280ms;
 }

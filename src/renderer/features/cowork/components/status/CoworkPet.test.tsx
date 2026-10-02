@@ -41,6 +41,52 @@ afterEach(() => {
 });
 
 describe('CoworkPet', () => {
+  test('gives the two cats independent frame timing and stops both when motion is disabled', async () => {
+    vi.useFakeTimers();
+    const { container } = render(<CoworkPet running waiting={false} />);
+    const white = container.querySelector('.cowork-pet__art--white') as HTMLElement;
+    const black = container.querySelector('.cowork-pet__art--black') as HTMLElement;
+    act(() => vi.advanceTimersByTime(450));
+    expect(white.style.backgroundPosition).not.toBe(black.style.backgroundPosition);
+    document.documentElement.dataset.coworkPetMotion = 'off';
+    await act(async () => Promise.resolve());
+    const positions = [white.style.backgroundPosition, black.style.backgroundPosition];
+    act(() => vi.advanceTimersByTime(3000));
+    expect([white.style.backgroundPosition, black.style.backgroundPosition]).toEqual(positions);
+  });
+
+  test('keeps a paired high five in a single coordinated layer', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const { container } = render(<CoworkPet running={false} waiting={false} />);
+    fireEvent.doubleClick(screen.getByRole('status'));
+    expect(container.querySelectorAll('.cowork-pet__art')).toHaveLength(1);
+  });
+
+  test.each(['white', 'black', 'both'])('plays new asymmetric click scenes for %s and returns to idle', cats => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0.99);
+    document.documentElement.dataset.coworkPetCats = cats;
+    const { container } = render(<CoworkPet running={false} waiting={false} />);
+    fireEvent.keyDown(screen.getByRole('button'), { key: 'Enter' });
+    const art = container.querySelector('.cowork-pet__art') as HTMLElement;
+    expect(art.style.backgroundImage).toContain('asymmetric-spritesheet.webp');
+    const initial = art.style.backgroundPosition;
+    act(() => vi.advanceTimersByTime(300));
+    expect(art.style.backgroundPosition).not.toBe(initial);
+    act(() => vi.advanceTimersByTime(2000));
+    expect(screen.getByRole('status').classList.contains('cowork-pet--tap')).toBe(false);
+    expect(art.style.backgroundImage).not.toContain('asymmetric-spritesheet.webp');
+  });
+
+  test('includes new asymmetric scenes in playful idle loops', () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0.99);
+    const { container } = render(<CoworkPet running={false} waiting={false} />);
+    act(() => vi.advanceTimersByTime(3200));
+    expect((container.querySelector('.cowork-pet__art') as HTMLElement).style.backgroundImage)
+      .toContain('asymmetric-spritesheet.webp');
+  });
+
   test('starts an inline drag from the right-aligned pet rather than the row left edge', () => {
     render(<CoworkPet running={false} waiting={false} />);
     const pet = screen.getByRole('status');
@@ -131,7 +177,7 @@ describe('CoworkPet', () => {
     const { container } = render(<CoworkPet running={false} waiting={false} />);
     fireEvent.click(screen.getByRole('status'));
     act(() => vi.advanceTimersByTime(260));
-    const sprite = container.querySelector('.cowork-pet__sprite') as HTMLElement;
+    const sprite = container.querySelector('.cowork-pet__art') as HTMLElement;
     expect(sprite.style.backgroundImage).toContain('interaction-spritesheet.webp');
     const firstPosition = sprite.style.backgroundPosition;
     act(() => vi.advanceTimersByTime(200));
@@ -162,7 +208,7 @@ describe('CoworkPet', () => {
     const { container, rerender } = render(
       <CoworkPet running waiting latestRun={run('running')} />,
     );
-    const sprite = container.querySelector('.cowork-pet__sprite') as HTMLElement;
+    const sprite = container.querySelector('.cowork-pet__art') as HTMLElement;
     expect(screen.getByRole('status').getAttribute('aria-label')).toBe('coworkPetWaiting');
     expect(sprite.style.backgroundImage).toContain('extra-spritesheet.webp');
     const firstPosition = sprite.style.backgroundPosition;
@@ -205,7 +251,7 @@ describe('CoworkPet', () => {
     vi.useFakeTimers();
     vi.spyOn(Math, 'random').mockReturnValue(0);
     const { container } = render(<CoworkPet running={false} waiting={false} />);
-    const sprite = container.querySelector('.cowork-pet__sprite') as HTMLElement;
+    const sprite = container.querySelector('.cowork-pet__art') as HTMLElement;
     const initialPosition = sprite.style.backgroundPosition;
 
     act(() => vi.advanceTimersByTime(6_500));
@@ -218,7 +264,7 @@ describe('CoworkPet', () => {
   test('stops animating when motion is disabled in appearance settings', async () => {
     vi.useFakeTimers();
     const { container } = render(<CoworkPet running waiting={false} latestRun={run('running')} />);
-    const sprite = container.querySelector('.cowork-pet__sprite') as HTMLElement;
+    const sprite = container.querySelector('.cowork-pet__art') as HTMLElement;
     document.documentElement.dataset.coworkPetMotion = 'off';
     await act(async () => Promise.resolve());
     const position = sprite.style.backgroundPosition;
@@ -247,13 +293,13 @@ describe('CoworkPet', () => {
   test('keeps the same sprite size on home and chat before and after dragging', () => {
     const { container } = render(<CoworkPet running={false} waiting={false} placement="home" />);
     const pet = container.querySelector('.cowork-pet') as HTMLElement;
-    expect((pet.querySelector('.cowork-pet__sprite') as HTMLElement).style.backgroundSize).toBe('384px 256px');
+    expect((pet.querySelector('.cowork-pet__art') as HTMLElement).style.backgroundSize).toBe('384px 256px');
 
     fireEvent.pointerDown(pet, { button: 0, pointerId: 2, clientX: 20, clientY: 20 });
     fireEvent.pointerMove(window, { pointerId: 2, clientX: 120, clientY: 100 });
     fireEvent.pointerUp(window, { pointerId: 2, clientX: 120, clientY: 100 });
 
-    const floated = document.body.querySelector('.cowork-pet--floating .cowork-pet__sprite') as HTMLElement;
+    const floated = document.body.querySelector('.cowork-pet--floating .cowork-pet__art') as HTMLElement;
     expect(floated.style.backgroundSize).toBe('384px 256px');
   });
 
