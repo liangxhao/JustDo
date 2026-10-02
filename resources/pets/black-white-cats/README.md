@@ -1,13 +1,19 @@
 # Black and white cat sprites
 
-Each atlas has six equal columns. The renderer displays a cell at 64 ¡Á 64 CSS pixels.
-The white cat occupies the left half and the black cat the right half. Independent
-layers can select different frames and loop cadences; coordinated high fives use
-one complete cell so their crossing paws remain intact.
+Each atlas has six equal columns. The renderer displays a cell at 64 Ã— 64 CSS pixels.
+The white cat sits on the left and the black cat on the right. Their outlines
+can cross the cell midpoint. `sprite-clips.json` records a polygon boundary
+through the transparent gap for every frame, shared by settings thumbnails,
+solo cats and independently animated layers. Coordinated high fives use one
+complete cell so their crossing paws remain intact.
+
+After replacing an atlas, run `python scripts/assets/generate-pet-clips.py`
+(requires Pillow) from the repository root and visually check the split frames.
+The script reads alpha to find each gap; it never edits the source artwork.
 
 ## Asymmetric scenes
 
-`asymmetric-spritesheet.webp` is a 1536 ¡Á 1024 RGBA atlas with four rows and
+`asymmetric-spritesheet.webp` is a 1536 Ã— 1024 RGBA atlas with four rows and
 24 frames, generated with the built-in imagegen tool and converted losslessly
 to WebP with FFmpeg. Its transparent alpha is preserved.
 
@@ -18,7 +24,7 @@ to WebP with FFmpeg. Its transparent alpha is preserved.
 
 Playful loops include these scenes. Classic and varied keep their existing
 loop selection. Click and double-click feedback use all four scenes, with two
-cadences per scene. Solo cat selection crops the appropriate half.
+cadences per scene. Solo cat selection clips to the appropriate cat boundary.
 
 ### Generation prompt
 

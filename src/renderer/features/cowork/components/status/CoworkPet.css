@@ -95,12 +95,10 @@
 }
 
 .cowork-pet__sprite--white {
-  clip-path: inset(0 50% 0 0);
   transform: translateX(16px);
 }
 
 .cowork-pet__sprite--black {
-  clip-path: inset(0 0 0 50%);
   transform: translateX(-16px);
 }
 
@@ -132,11 +130,9 @@
 }
 
 .cowork-pet__art--white {
-  clip-path: inset(0 50% 0 0);
   transform-origin: 25% 75%;
 }
 .cowork-pet .cowork-pet__art--black {
   transform-origin: 75% 75%;
-  clip-path: inset(0 0 0 50%);
   animation-delay: 280ms;
 }

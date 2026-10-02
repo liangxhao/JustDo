@@ -121,6 +121,12 @@ describe('PetSettingsPage', () => {
     expect(screen.queryByRole('switch', { name: 'coworkPetShowChat' })).toBeNull();
     expect(screen.getByRole('radio', { name: 'coworkPetBothCats' }).getAttribute('checked')).not.toBeNull();
     expect(container.querySelectorAll('.pet-choice-thumbnail__sprite')).toHaveLength(3);
+    const white = container.querySelector('.pet-choice-thumbnail__sprite--white') as HTMLElement;
+    const black = container.querySelector('.pet-choice-thumbnail__sprite--black') as HTMLElement;
+    const both = container.querySelector('.pet-choice-thumbnail__sprite--both') as HTMLElement;
+    expect(white.style.clipPath).toMatch(/^polygon\(/);
+    expect(black.style.clipPath).toMatch(/^polygon\(/);
+    expect(both.style.clipPath).toBe('');
     expect(screen.queryByText('coworkPetWhiteCat')).toBeNull();
     expect(screen.queryByText('coworkPetBlackCat')).toBeNull();
     expect(screen.queryByText('coworkPetBothCats')).toBeNull();

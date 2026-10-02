@@ -14,6 +14,7 @@ import extraSpriteUrl from '../../../../../../resources/pets/black-white-cats/ex
 import interactionSpriteUrl from '../../../../../../resources/pets/black-white-cats/interaction-spritesheet.webp';
 import reactionSpriteUrl from '../../../../../../resources/pets/black-white-cats/reaction-spritesheet.webp';
 import spriteUrl from '../../../../../../resources/pets/black-white-cats/spritesheet.png';
+import { petSpriteStyle } from './petSpriteStyle';
 
 type PetFrame = readonly [number, number];
 
@@ -351,11 +352,6 @@ export function CoworkPet({ running, waiting, latestRun, placement = 'chat' }: C
   const blackAnimation = independent ? animations[blackCursor.variant] ?? animations[0] : animation;
   const blackFrame = !motionAllowed || !documentVisible ? blackAnimation.still
     : independent ? blackAnimation.frames[blackCursor.frame]?.[0] ?? blackAnimation.frames[0][0] : frame;
-  const spriteStyle = (art: PetAnimation, cell: number) => ({
-    backgroundImage: `url(${art.sheet})`,
-    backgroundSize: `${cellSize * 6}px ${cellSize * art.rows}px`,
-    backgroundPosition: `${-((cell - 1) % 6) * cellSize}px ${-Math.floor((cell - 1) / 6) * cellSize}px`,
-  });
   const label = waiting
     ? i18nService.t('coworkPetWaiting')
     : running
@@ -431,8 +427,8 @@ export function CoworkPet({ running, waiting, latestRun, placement = 'chat' }: C
           playInteraction(event.shiftKey ? 'double' : 'tap');
         }}
       >
-        <span aria-hidden="true" className={`cowork-pet__art${independent ? ' cowork-pet__art--white' : ''}`} style={spriteStyle(animation, frame)} />
-        {independent && <span aria-hidden="true" className="cowork-pet__art cowork-pet__art--black" style={spriteStyle(blackAnimation, blackFrame)} />}
+        <span aria-hidden="true" className={`cowork-pet__art${independent ? ' cowork-pet__art--white' : ''}`} style={petSpriteStyle(animation.sheet, animation.rows, frame, cellSize, independent ? 'white' : cats)} />
+        {independent && <span aria-hidden="true" className="cowork-pet__art cowork-pet__art--black" style={petSpriteStyle(blackAnimation.sheet, blackAnimation.rows, blackFrame, cellSize, 'black')} />}
       </button>
     </div>
   );

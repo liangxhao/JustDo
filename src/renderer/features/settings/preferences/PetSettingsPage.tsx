@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 
 import type { AppearanceConfig, PetCatSelection } from '@/app/appearance';
 import { PET_FLOATING_POSITION_KEY, PET_FLOATING_RESET_EVENT } from '@/app/petFloating';
+import { petSpriteStyle } from '@/features/cowork/components/status/petSpriteStyle';
 import { i18nService } from '@/services/i18n';
 import ThemedSelect from '@/shared/components/ui/ThemedSelect';
 
@@ -128,7 +129,7 @@ export function PetSettingsPage({ value, onChange }: PetSettingsPageProps) {
               <span className="pet-choice-thumbnail" aria-hidden="true">
                 <span
                   className={`pet-choice-thumbnail__sprite pet-choice-thumbnail__sprite--${option.value}`}
-                  style={{ backgroundImage: `url(${petSpriteUrl})` }}
+                  style={petSpriteStyle(petSpriteUrl, 4, 1, 96, option.value)}
                 />
               </span>
               {value.petCatSelection === option.value && (
