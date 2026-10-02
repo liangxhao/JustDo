@@ -18,6 +18,7 @@ export default function BrowserAnnotationComposer({
   onChange,
   onSubmit,
   onDismiss,
+  onEscape = onDismiss,
 }: {
   element: BrowserInspectedElement | null;
   value: string;
@@ -28,6 +29,7 @@ export default function BrowserAnnotationComposer({
   onChange: (value: string) => void;
   onSubmit: () => void;
   onDismiss: () => void;
+  onEscape?: () => void;
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [detailsPosition, setDetailsPosition] = useState<CSSProperties>({});
@@ -112,7 +114,7 @@ export default function BrowserAnnotationComposer({
             onKeyDown={event => {
               if (event.key === 'Escape') {
                 event.preventDefault();
-                onDismiss();
+                onEscape();
               } else if (event.key === 'Enter' && !event.nativeEvent.isComposing && canSubmit) {
                 event.preventDefault();
                 onSubmit();

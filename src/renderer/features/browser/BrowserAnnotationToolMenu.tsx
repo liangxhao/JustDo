@@ -1,10 +1,15 @@
-import { CheckIcon, PencilIcon, RectangleGroupIcon } from '@heroicons/react/24/outline';
+import {
+  ChatBubbleOvalLeftIcon,
+  CheckIcon,
+  PencilIcon,
+  RectangleGroupIcon,
+} from '@heroicons/react/24/outline';
 import React, { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 
 import { i18nService } from '@/services/i18n';
 
-export type BrowserAnnotationTool = 'pen' | 'rectangle';
+export type BrowserAnnotationTool = 'inspect' | 'pen' | 'rectangle';
 
 export default function BrowserAnnotationToolMenu({
   anchor,
@@ -48,7 +53,7 @@ export default function BrowserAnnotationToolMenu({
   };
 
   const menuWidth = 176;
-  const menuHeight = 92;
+  const menuHeight = 128;
   const left = Math.max(8, Math.min(anchor.left, window.innerWidth - menuWidth - 8));
   const top =
     anchor.bottom + menuHeight + 8 <= window.innerHeight
@@ -59,6 +64,11 @@ export default function BrowserAnnotationToolMenu({
     label: string;
     icon: React.ReactNode;
   }> = [
+    {
+      tool: 'inspect',
+      label: i18nService.t('browserPanelInspect'),
+      icon: <ChatBubbleOvalLeftIcon className="h-4 w-4" />,
+    },
     {
       tool: 'pen',
       label: i18nService.t('browserPanelPen'),

@@ -10,7 +10,6 @@ import {
   PencilIcon,
   PlusIcon,
   RectangleGroupIcon,
-  TrashIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import type {
@@ -455,7 +454,6 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     new Map<string, (value: BrowserInspectedElement[]) => void>(),
   );
   const gestureRef = useRef<Gesture | null>(null);
-  const annotationOrderRef = useRef<Array<'stroke' | 'region'>>([]);
   const activeTargetRef = useRef(activeTargetId);
   const inspectionSequenceRef = useRef(0);
   const contentEpochRef = useRef(0);
@@ -519,7 +517,6 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     if (inspectionTimerRef.current) clearTimeout(inspectionTimerRef.current);
     inspectionTimerRef.current = null;
     gestureRef.current = null;
-    annotationOrderRef.current = [];
     setStrokes([]);
     setRegions([]);
     setDraftRectangle(null);
@@ -531,6 +528,20 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     setMode('interact');
   }, []);
 
+  const clearModeAnnotations = useCallback(() => {
+    inspectionSequenceRef.current += 1;
+    if (inspectionTimerRef.current) clearTimeout(inspectionTimerRef.current);
+    inspectionTimerRef.current = null;
+    gestureRef.current = null;
+    setDraftRectangle(null);
+    setHovered(null);
+    if (mode === 'inspect') setInspected(null);
+    else if (mode === 'pen') setStrokes([]);
+    else if (mode === 'rectangle') setRegions([]);
+    setCommentDraft('');
+    setIsCommentComposerOpen(false);
+  }, [mode]);
+
   const toggleAnnotationMode = useCallback(
     (nextMode: Exclude<BrowserPanelMode, 'interact'>) => {
       if (activePdfUrl || isRecording) return;
@@ -540,14 +551,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       setDraftRectangle(null);
 
       if (mode === nextMode) {
-        inspectionSequenceRef.current += 1;
-        if (inspectionTimerRef.current) clearTimeout(inspectionTimerRef.current);
-        inspectionTimerRef.current = null;
-        if (nextMode === 'inspect') {
-          setInspected(null);
-          setCommentDraft('');
-          setIsCommentComposerOpen(false);
-        }
+        clearModeAnnotations();
         setMode('interact');
         return;
       }
@@ -559,7 +563,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       }
       setMode(nextMode);
     },
-    [activePdfUrl, mode, isRecording],
+    [activePdfUrl, mode, isRecording, clearModeAnnotations],
   );
 
   useEffect(() => {
@@ -1423,7 +1427,6 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     if (mode === 'pen') {
       const stroke = { points: [point.normalized] };
       gestureRef.current = { kind: 'pen', pointerId: event.pointerId, stroke };
-      annotationOrderRef.current.push('stroke');
       setStrokes(current => [...current, stroke]);
       event.currentTarget.setPointerCapture(event.pointerId);
     } else if (mode === 'rectangle') {
@@ -1504,7 +1507,6 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     const epoch = contentEpochRef.current;
     const targetId = activeTargetRef.current;
     const pendingRegion: BrowserAnnotationRegion = region;
-    annotationOrderRef.current.push('region');
     setRegions(current => [...current, pendingRegion]);
     setIsCommentComposerOpen(true);
     void inspectPoints(points)
@@ -2027,17 +2029,12 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   );
   const inspectorElement =
     mode === 'inspect' && !isCommentComposerOpen ? (inspected ?? hovered) : null;
-  const inspectActionLabel = i18nService.t(
-    mode === 'inspect' ? 'browserPanelCancelInspect' : 'browserPanelInspect',
-  );
   const annotationActionLabel = i18nService.t(
-    mode === annotationTool
-      ? annotationTool === 'pen'
-        ? 'browserPanelCancelPen'
-        : 'browserPanelCancelRectangle'
-      : annotationTool === 'pen'
-        ? 'browserPanelPen'
-        : 'browserPanelRectangle',
+    {
+      inspect: mode === 'inspect' ? 'browserPanelCancelInspect' : 'browserPanelInspect',
+      pen: mode === 'pen' ? 'browserPanelCancelPen' : 'browserPanelPen',
+      rectangle: mode === 'rectangle' ? 'browserPanelCancelRectangle' : 'browserPanelRectangle',
+    }[annotationTool],
   );
   const menuTab = tabMenu
     ? (tabs.find(candidate => candidate.targetId === tabMenu.targetId) ?? null)
@@ -2074,6 +2071,17 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       aria-label={i18nService.t('browserPanelTitle')}
       aria-hidden={!isOpen}
       tabIndex={-1}
+      onKeyDown={event => {
+        if (event.defaultPrevented || event.key !== 'Escape' || mode === 'interact') return;
+        if (
+          event.target instanceof Element &&
+          event.target.closest('[data-browser-http-auth-dialog], [data-browser-intervention]')
+        )
+          return;
+        event.preventDefault();
+        event.stopPropagation();
+        clearModeAnnotations();
+      }}
       onKeyDownCapture={event => {
         if (
           event.target instanceof Element &&
@@ -2371,26 +2379,6 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           className={`ml-1 flex shrink-0 items-center gap-0.5 rounded-lg border border-border/70 bg-surface-raised/60 p-0.5 ${isRecording ? 'pointer-events-none opacity-40' : ''}`}
           data-testid="browser-annotation-tool-group"
         >
-          <Tooltip content={inspectActionLabel} position="bottom" renderInPortal dismissOnClick>
-            <button
-              type="button"
-              className={modeButton(mode === 'inspect')}
-              disabled={Boolean(activePdfUrl)}
-              title={activePdfUrl ? i18nService.t('browserPdfActionUnavailable') : undefined}
-              onClick={() => toggleAnnotationMode('inspect')}
-              aria-label={inspectActionLabel}
-              aria-pressed={mode === 'inspect'}
-            >
-              <span className="relative inline-flex h-5 w-5 items-center justify-center">
-                <ChatBubbleOvalLeftIcon className="h-5 w-5" />
-                <PlusIcon
-                  data-testid="browser-inspect-plus"
-                  className="pointer-events-none absolute left-1/2 top-[43%] h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2"
-                  strokeWidth={3}
-                />
-              </span>
-            </button>
-          </Tooltip>
           <div className="relative h-8 w-8 shrink-0">
             <Tooltip
               content={annotationActionLabel}
@@ -2407,7 +2395,9 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
                 aria-label={annotationActionLabel}
                 aria-pressed={mode === annotationTool}
               >
-                {annotationTool === 'pen' ? (
+                {annotationTool === 'inspect' ? (
+                  <ChatBubbleOvalLeftIcon className="h-4 w-4" />
+                ) : annotationTool === 'pen' ? (
                   <PencilIcon className="h-4 w-4" />
                 ) : (
                   <RectangleGroupIcon className="h-4 w-4" />
@@ -2440,41 +2430,6 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
               <ChevronDownIcon className="h-2.5 w-2.5 stroke-2" />
             </button>
           </div>
-          <Tooltip
-            content={i18nService.t('browserPanelUndo')}
-            position="bottom"
-            renderInPortal
-            dismissOnClick
-          >
-            <button
-              type="button"
-              className={modeButton(false)}
-              disabled={!strokes.length && !regions.length}
-              onClick={() => {
-                const latest = annotationOrderRef.current.pop();
-                if (latest === 'stroke') setStrokes(current => current.slice(0, -1));
-                else if (latest === 'region') setRegions(current => current.slice(0, -1));
-              }}
-              aria-label={i18nService.t('browserPanelUndo')}
-            >
-              ↶
-            </button>
-          </Tooltip>
-          <Tooltip
-            content={i18nService.t('browserPanelClear')}
-            position="bottom"
-            renderInPortal
-            dismissOnClick
-          >
-            <button
-              type="button"
-              className={modeButton(false)}
-              onClick={clearAnnotations}
-              aria-label={i18nService.t('browserPanelClear')}
-            >
-              <TrashIcon className="h-4 w-4" />
-            </button>
-          </Tooltip>
         </div>
         {browserMode === BrowserMode.Embedded &&
           onStopTask &&
@@ -2762,6 +2717,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
               anchorOffset={annotationComposerAnchorOffset}
               onChange={setCommentDraft}
               onSubmit={() => void addAnnotation()}
+              onEscape={clearModeAnnotations}
               onDismiss={() => setIsCommentComposerOpen(false)}
             />
           )}
@@ -2796,7 +2752,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           selected={annotationTool}
           onSelect={tool => {
             setAnnotationTool(tool);
-            setMode(tool);
+            if (mode !== tool) toggleAnnotationMode(tool);
             setAnnotationToolMenuAnchor(null);
           }}
           onDismiss={() => setAnnotationToolMenuAnchor(null)}

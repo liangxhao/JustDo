@@ -551,7 +551,7 @@ describe('BrowserPanel embedded webview', () => {
     );
     useCompatibilityPdfViewer();
     await waitFor(() => expect(loadPdf).toHaveBeenCalledOnce());
-    expect((screen.getByLabelText('Add comment') as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByLabelText('Draw annotation') as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByLabelText('More browser options'));
     for (const name of ['Find in page', 'Print', i18nService.t('browserMenuScreenshot')]) {
       expect((screen.getByRole('menuitem', { name }) as HTMLButtonElement).disabled).toBe(true);
@@ -602,7 +602,7 @@ describe('BrowserPanel embedded webview', () => {
     await waitFor(() => expect(loadPdf).toHaveBeenCalledOnce());
     await waitFor(() => expect(container.querySelector('[data-browser-pdf-viewer]')).toBeNull());
     expect(container.querySelector('webview')).toBeTruthy();
-    expect((screen.getByLabelText('Add comment') as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByLabelText('Draw annotation') as HTMLButtonElement).disabled).toBe(false);
     act(() => panelPdfDetectedListener?.({ url: 'https://example.com/login.pdf', guestId: 7 }));
     await waitFor(() => expect(loadPdf).toHaveBeenCalledTimes(2));
     expect(container.querySelector('[data-browser-pdf-viewer]')).toBeTruthy();
@@ -1587,7 +1587,8 @@ describe('BrowserPanel embedded webview', () => {
       <BrowserPanelHarness initialTabs={[namedProfileTab]} onAddAnnotation={onAddAnnotation} />,
     );
 
-    fireEvent.click(screen.getByLabelText('Add comment'));
+    fireEvent.click(screen.getByLabelText('Switch annotation tool'));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Add comment' }));
     fireEvent.click(container.querySelector('canvas')!, { clientX: 24, clientY: 24 });
     const comment = await screen.findByRole('textbox', { name: 'Add a comment…' });
     fireEvent.change(comment, { target: { value: 'Check this control' } });
@@ -1721,7 +1722,8 @@ describe('BrowserPanel embedded webview', () => {
 
   it('opens an editable comment box after locking an inspected element', async () => {
     const { container } = render(<BrowserPanelHarness />);
-    fireEvent.click(screen.getByLabelText('Add comment'));
+    fireEvent.click(screen.getByLabelText('Switch annotation tool'));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Add comment' }));
     const canvas = container.querySelector('canvas');
     expect(canvas).not.toBeNull();
     expect(canvas?.className).toContain('browser-element-annotation-cursor');
@@ -1735,23 +1737,129 @@ describe('BrowserPanel embedded webview', () => {
     expect(composer.style.bottom).toBe('');
   });
 
+  it.each(['Escape', 'tool'])('clears an inspected annotation with %s', async action => {
+    const { container } = render(<BrowserPanelHarness />);
+    fireEvent.click(screen.getByLabelText('Switch annotation tool'));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Add comment' }));
+    fireEvent.click(container.querySelector('canvas')!, { clientX: 24, clientY: 24 });
+    const input = await screen.findByRole('textbox', { name: 'Add a comment…' });
+    fireEvent.change(input, { target: { value: 'Discard this comment' } });
+
+    if (action === 'Escape') fireEvent.keyDown(input, { key: 'Escape' });
+    else fireEvent.click(screen.getByLabelText('Stop adding comments'));
+
+    expect(screen.queryByTestId('browser-annotation-composer')).toBeNull();
+    const tool = screen.getByLabelText(
+      action === 'Escape' ? 'Stop adding comments' : 'Add comment',
+    );
+    expect(tool.getAttribute('aria-pressed')).toBe(String(action === 'Escape'));
+    if (action === 'tool') fireEvent.click(tool);
+    fireEvent.click(container.querySelector('canvas')!, { clientX: 24, clientY: 24 });
+    expect(
+      ((await screen.findByRole('textbox', { name: 'Add a comment…' })) as HTMLInputElement).value,
+    ).toBe('');
+  });
+
+  it.each([
+    ['Draw annotation', 'Stop drawing', 'Escape'],
+    ['Draw annotation', 'Stop drawing', 'tool'],
+    ['Rectangle annotation', 'Stop rectangle annotation', 'Escape'],
+    ['Rectangle annotation', 'Stop rectangle annotation', 'tool'],
+  ])('clears %s using %s (%s)', async (label, activeLabel, action) => {
+    const context = {
+      beginPath: vi.fn(),
+      clearRect: vi.fn(),
+      fillRect: vi.fn(),
+      lineTo: vi.fn(),
+      moveTo: vi.fn(),
+      restore: vi.fn(),
+      save: vi.fn(),
+      setLineDash: vi.fn(),
+      setTransform: vi.fn(),
+      stroke: vi.fn(),
+      strokeRect: vi.fn(),
+    };
+    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue(
+      context as unknown as CanvasRenderingContext2D,
+    );
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 200,
+      bottom: 200,
+      width: 200,
+      height: 200,
+      toJSON: () => ({}),
+    });
+    const { container } = render(<BrowserPanelHarness />);
+    fireEvent.click(screen.getByLabelText('Switch annotation tool'));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: label }));
+    const canvas = container.querySelector('canvas')!;
+    canvas.setPointerCapture = vi.fn();
+    const pointer = (type: string, x: number) =>
+      fireEvent(
+        canvas,
+        Object.assign(new MouseEvent(type, { bubbles: true, button: 0, clientX: x, clientY: x }), {
+          pointerId: 1,
+        }),
+      );
+    pointer('pointerdown', 20);
+    pointer('pointermove', 80);
+    pointer('pointerup', 80);
+    await screen.findByTestId('browser-annotation-composer');
+    const draw = label === 'Draw annotation' ? context.stroke : context.strokeRect;
+    expect(draw).toHaveBeenCalled();
+    draw.mockClear();
+
+    if (action === 'Escape')
+      fireEvent.keyDown(screen.getByRole('textbox', { name: 'Add a comment…' }), { key: 'Escape' });
+    else fireEvent.click(screen.getByLabelText(activeLabel));
+
+    expect(screen.queryByTestId('browser-annotation-composer')).toBeNull();
+    expect(draw).not.toHaveBeenCalled();
+    expect(
+      screen.getByLabelText(action === 'Escape' ? activeLabel : label).getAttribute('aria-pressed'),
+    ).toBe(String(action === 'Escape'));
+  });
+
+  it('dismisses the tool menu with Escape before clearing the active annotation', async () => {
+    const { container } = render(<BrowserPanelHarness />);
+    fireEvent.click(screen.getByLabelText('Switch annotation tool'));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Add comment' }));
+    fireEvent.click(container.querySelector('canvas')!, { clientX: 24, clientY: 24 });
+    const input = await screen.findByRole('textbox', { name: 'Add a comment…' });
+    fireEvent.change(input, { target: { value: 'Keep this comment' } });
+    fireEvent.click(screen.getByLabelText('Switch annotation tool'));
+
+    fireEvent.keyDown(screen.getByRole('menuitemradio', { name: 'Add comment' }), {
+      key: 'Escape',
+    });
+
+    expect(screen.queryByRole('menu', { name: 'Choose annotation tool' })).toBeNull();
+    expect(
+      (screen.getByRole('textbox', { name: 'Add a comment…' }) as HTMLInputElement).value,
+    ).toBe('Keep this comment');
+    expect(screen.getByLabelText('Stop adding comments').getAttribute('aria-pressed')).toBe('true');
+  });
+
   it('describes icon-only tools on hover', async () => {
     render(<BrowserPanelHarness />);
-    const inspectButton = screen.getByLabelText('Add comment');
+    const inspectButton = screen.getByLabelText('Draw annotation');
 
     expect(screen.queryByLabelText('Interact with page')).toBeNull();
     expect(inspectButton.className).toContain('bg-transparent');
     expect(inspectButton.className).not.toContain('bg-primary-muted');
-    expect(screen.getByTestId('browser-inspect-plus')).toBeTruthy();
 
     fireEvent.mouseEnter(inspectButton.parentElement!);
 
-    expect((await screen.findByRole('tooltip')).textContent).toBe('Add comment');
+    expect((await screen.findByRole('tooltip')).textContent).toBe('Draw annotation');
 
     fireEvent.click(inspectButton);
 
     expect(inspectButton.getAttribute('aria-pressed')).toBe('true');
-    expect(inspectButton.getAttribute('aria-label')).toBe('Stop adding comments');
+    expect(inspectButton.getAttribute('aria-label')).toBe('Stop drawing');
     expect(inspectButton.className).toContain('ring-primary/55');
     expect(inspectButton.className).not.toContain('bg-primary-muted');
     expect(screen.queryByRole('tooltip')).toBeNull();
@@ -1759,19 +1867,21 @@ describe('BrowserPanel embedded webview', () => {
     fireEvent.click(inspectButton);
 
     expect(inspectButton.getAttribute('aria-pressed')).toBe('false');
-    expect(inspectButton.getAttribute('aria-label')).toBe('Add comment');
+    expect(inspectButton.getAttribute('aria-label')).toBe('Draw annotation');
     expect(inspectButton.className).not.toContain('ring-primary/55');
   });
 
   it('keeps annotation tools in the address row without a redundant title bar', () => {
     render(<BrowserPanelHarness />);
     const address = screen.getByLabelText('Browser address');
-    const inspectButton = screen.getByLabelText('Add comment');
+    const inspectButton = screen.getByLabelText('Draw annotation');
     const toolGroup = screen.getByTestId('browser-annotation-tool-group');
 
     expect(inspectButton.closest('form')).toBe(address.closest('form'));
     expect(toolGroup.className).toContain('border-border/70');
-    expect(toolGroup.querySelectorAll('button')).toHaveLength(5);
+    expect(toolGroup.querySelectorAll('button')).toHaveLength(2);
+    expect(screen.queryByLabelText('Undo')).toBeNull();
+    expect(screen.queryByLabelText('Clear annotations')).toBeNull();
     expect(toolGroup.querySelector('.h-px, .w-px')).toBeNull();
     expect(screen.queryByRole('heading', { name: 'Browser' })).toBeNull();
     expect(screen.getByLabelText('Close browser panel')).toBeTruthy();
@@ -2026,6 +2136,17 @@ describe('BrowserPanel embedded webview', () => {
     const rectangleTool = screen.getByLabelText('Stop rectangle annotation');
     expect(rectangleTool.getAttribute('aria-pressed')).toBe('true');
     expect(screen.queryByRole('menu', { name: 'Choose annotation tool' })).toBeNull();
+    fireEvent.click(screen.getByLabelText('Switch annotation tool'));
+    expect(screen.getAllByRole('menuitemradio')).toHaveLength(3);
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Add comment' }));
+    const commentTool = screen.getByLabelText('Stop adding comments');
+    expect(commentTool.getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(commentTool);
+    expect(screen.getByLabelText('Add comment').getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(screen.getByLabelText('Switch annotation tool'));
+    expect(
+      screen.getByRole('menuitemradio', { name: 'Add comment' }).getAttribute('aria-checked'),
+    ).toBe('true');
   });
 
   it('shows the page favicon next to its tab title', async () => {
