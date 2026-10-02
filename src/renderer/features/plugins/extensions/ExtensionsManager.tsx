@@ -1,6 +1,7 @@
 import {
   ArchiveBoxIcon,
   ArrowUpTrayIcon,
+  ChevronDownIcon,
   ExclamationTriangleIcon,
   FolderIcon,
   QuestionMarkCircleIcon,
@@ -10,9 +11,9 @@ import type {
   ExtensionImportProgress,
   ExtensionImportStage,
   InstalledOpenClawExtension,
+  OpenClawExtensionConfigurationField,
   OpenClawPluginCapabilityReview,
 } from '@shared/openclaw/extensions';
-import { OpenClawExtensionId } from '@shared/openclaw/extensions';
 import { PluginKind } from '@shared/plugins/marketplace';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -96,6 +97,14 @@ const ExtensionToggle: React.FC<ExtensionToggleProps> = ({
   );
 };
 
+const getConfigurationVariable = (
+  field: OpenClawExtensionConfigurationField,
+  selections: Record<string, string>,
+): string | undefined =>
+  selections[field.path] ??
+  field.configuredEnvironmentVariables?.[0] ??
+  field.environmentVariables?.[0];
+
 interface ExtensionsManagerProps extends PluginHubManagerProps {
   requestedExtensionId?: string;
   onRequestedExtensionHandled?: () => void;
@@ -142,7 +151,9 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
     null,
   );
   const [configurationValues, setConfigurationValues] = useState<Record<string, string>>({});
+  const [configurationVariables, setConfigurationVariables] = useState<Record<string, string>>({});
   const [configurationError, setConfigurationError] = useState('');
+  const [configurationSaved, setConfigurationSaved] = useState(false);
   const [savingConfiguration, setSavingConfiguration] = useState(false);
   const extensionActionBusy =
     importing ||
@@ -521,13 +532,23 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
   const openExtensionDetails = (extension: InstalledOpenClawExtension) => {
     setSelectedExtension(extension);
     setConfigurationValues({});
+    setConfigurationVariables({});
     setConfigurationError('');
+    setConfigurationSaved(false);
   };
 
   const handleSaveConfiguration = async () => {
     if (!selectedExtension || extensionActionBusy) return;
     const values = Object.fromEntries(
-      Object.entries(configurationValues).filter(([, value]) => value.trim()),
+      selectedExtension.configurationFields
+        .map(field => {
+          const variable = getConfigurationVariable(field, configurationVariables);
+          return [
+            variable ? `env.vars.${variable}` : field.path,
+            configurationValues[field.path] || '',
+          ];
+        })
+        .filter(([, value]) => value.trim()),
     );
     if (Object.keys(values).length === 0) {
       setConfigurationError(i18nService.t('extensionConfigurationValueRequired'));
@@ -536,6 +557,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
     try {
       setSavingConfiguration(true);
       setConfigurationError('');
+      setConfigurationSaved(false);
       const result = await window.electron.extensions.updateConfiguration({
         extensionId: selectedExtension.id,
         values,
@@ -547,6 +569,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
       const updatedExtension = latestExtensions?.find(item => item.id === selectedExtension.id);
       if (updatedExtension) setSelectedExtension(updatedExtension);
       setConfigurationValues({});
+      setConfigurationSaved(true);
     } catch (error) {
       setConfigurationError(
         error instanceof Error ? error.message : i18nService.t('extensionConfigurationSaveFailed'),
@@ -729,21 +752,41 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                                       content={extension.error}
                                       position="bottom"
                                       maxWidth="360px"
+                                      className="pointer-events-auto"
+                                      renderInPortal
+                                      dismissOnClick
                                     >
-                                      <ExclamationTriangleIcon
-                                        className="h-4 w-4 text-red-500"
+                                      <button
+                                        type="button"
+                                        className="flex h-6 w-6 items-center justify-center rounded-md text-red-500 focus:outline-none focus:ring-2 focus:ring-primary"
                                         aria-label={extension.error}
-                                      />
+                                        onClick={event => {
+                                          event.stopPropagation();
+                                          openExtensionDetails(extension);
+                                        }}
+                                      >
+                                        <ExclamationTriangleIcon className="h-4 w-4" />
+                                      </button>
                                     </Tooltip>
                                   ) : extension.missingRequirements.length > 0 ? (
                                     <Tooltip
                                       content={i18nService.t('extensionMissingConfiguration')}
                                       position="top"
+                                      className="pointer-events-auto"
+                                      renderInPortal
+                                      dismissOnClick
                                     >
-                                      <ExclamationTriangleIcon
-                                        className="h-4 w-4 text-amber-600 dark:text-amber-400"
+                                      <button
+                                        type="button"
+                                        className="flex h-6 w-6 items-center justify-center rounded-md text-amber-600 dark:text-amber-400 focus:outline-none focus:ring-2 focus:ring-primary"
                                         aria-label={i18nService.t('extensionMissingConfiguration')}
-                                      />
+                                        onClick={event => {
+                                          event.stopPropagation();
+                                          openExtensionDetails(extension);
+                                        }}
+                                      >
+                                        <ExclamationTriangleIcon className="h-4 w-4" />
+                                      </button>
                                     </Tooltip>
                                   ) : null}
                                 </div>
@@ -755,7 +798,8 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                                     content={extension.description}
                                     position="bottom"
                                     maxWidth="360px"
-                                    className="block w-full"
+                                    className="pointer-events-auto block w-full"
+                                    renderInPortal
                                   >
                                     <p className="truncate text-xs text-secondary">
                                       {extension.description}
@@ -844,19 +888,19 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
               if (!savingConfiguration) setSelectedExtension(null);
             }}
             overlayClassName="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
-            className="mx-4 w-full max-w-md rounded-2xl border border-border bg-surface p-5 shadow-2xl"
+            className="mx-4 max-h-[calc(100dvh-3rem)] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-surface p-6 shadow-2xl"
           >
             <div className="flex items-start justify-between gap-3">
               <div className="flex min-w-0 items-center gap-3">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-surface-raised">
                   <PuzzleIcon className="h-5 w-5 text-secondary" />
                 </div>
-                <div className="flex min-w-0 items-center gap-2">
-                  <h2 className="truncate text-base font-semibold text-foreground">
+                <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                  <h2 className="break-words text-base font-semibold text-foreground">
                     {selectedExtension.name}
                   </h2>
                   {selectedExtension.version && (
-                    <span className="shrink-0 text-xs text-secondary">
+                    <span className="shrink-0 rounded-md bg-surface-raised px-1.5 py-0.5 text-[11px] text-secondary">
                       v{selectedExtension.version}
                     </span>
                   )}
@@ -874,70 +918,148 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
             </div>
 
             {selectedExtension.description && (
-              <PluginMarkdownDescription className="mt-3" content={selectedExtension.description} />
+              <PluginMarkdownDescription
+                className="mt-3 text-[13px] leading-relaxed"
+                content={selectedExtension.description}
+              />
             )}
 
-            {selectedExtension.id === OpenClawExtensionId.TYPESAFE && (
-              <p className="mt-3 text-sm text-secondary">
-                {i18nService.t('extensionTypesafeSetupHelp')}
-              </p>
-            )}
-
-            <div className="mt-5">
+            <div className="mt-6">
+              {selectedExtension.error && (
+                <div
+                  role="alert"
+                  className="mb-4 rounded-xl bg-red-500/10 px-3 py-2 text-sm text-red-500"
+                >
+                  {selectedExtension.error}
+                </div>
+              )}
+              {selectedExtension.missingRequirements.length > 0 && (
+                <div className="mb-4 flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400">
+                  <ExclamationTriangleIcon className="h-3.5 w-3.5 shrink-0" />
+                  <span>{i18nService.t('extensionMissingConfiguration')}</span>
+                </div>
+              )}
               {selectedExtension.configurationFields.length > 0 &&
                 (selectedExtension.management?.configure.allowed ?? true) && (
-                  <div className="space-y-4">
-                    {selectedExtension.configurationFields.map(field => (
-                      <div
-                        key={field.path}
-                        className="grid grid-cols-[minmax(7rem,auto)_minmax(0,1fr)] items-center gap-3"
-                      >
-                        <div className="flex min-w-0 items-center justify-end text-right text-xs font-medium text-foreground">
-                          <label
-                            htmlFor={`extension-config-${field.path}`}
-                            className="truncate"
-                            title={field.requirement || field.label}
-                          >
-                            {field.requirement || field.label}
-                          </label>
-                          {field.requirement && (
-                            <span className="ml-0.5 text-base font-semibold leading-none text-red-500">
-                              *
-                            </span>
-                          )}
-                          {field.help && (
-                            <Tooltip
-                              content={
-                                selectedExtension.id === OpenClawExtensionId.TYPESAFE &&
-                                field.path === 'apiKey'
-                                  ? i18nService.t('extensionTypesafeCredentialHelp')
-                                  : field.help
-                              }
-                              position="bottom"
-                              maxWidth="320px"
-                              className="ml-1 shrink-0"
-                            >
-                              <QuestionMarkCircleIcon className="h-3.5 w-3.5 text-secondary" />
-                            </Tooltip>
-                          )}
+                  <div className="space-y-5">
+                    {selectedExtension.configurationFields.map(field => {
+                      const variable = getConfigurationVariable(field, configurationVariables);
+                      const configured =
+                        variable && field.configuredEnvironmentVariables
+                          ? field.configuredEnvironmentVariables.includes(variable)
+                          : field.configured;
+                      const inherited = Boolean(
+                        variable && field.inheritedEnvironmentVariables?.includes(variable),
+                      );
+                      return (
+                        <div
+                          key={field.path}
+                          className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)] items-center gap-3"
+                        >
+                          <div className="flex min-w-0 items-center justify-end gap-1 text-right text-xs font-medium text-foreground">
+                            {field.environmentVariables && field.environmentVariables.length > 1 ? (
+                              <div className="relative min-w-0 flex-1">
+                                <select
+                                  aria-label={i18nService.t('extensionConfigurationCredentialType')}
+                                  title={variable}
+                                  value={variable}
+                                  disabled={savingConfiguration}
+                                  onChange={event => {
+                                    setConfigurationVariables(current => ({
+                                      ...current,
+                                      [field.path]: event.target.value,
+                                    }));
+                                    setConfigurationValues(current => ({
+                                      ...current,
+                                      [field.path]: '',
+                                    }));
+                                    setConfigurationSaved(false);
+                                    setConfigurationError('');
+                                  }}
+                                  className="h-10 w-full appearance-none rounded-lg border border-border bg-background pl-2 pr-7 text-[11px] text-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-[var(--justdo-primary-muted)] disabled:opacity-60"
+                                >
+                                  {field.environmentVariables.map(name => (
+                                    <option key={name} value={name}>
+                                      {name}
+                                    </option>
+                                  ))}
+                                </select>
+                                <ChevronDownIcon className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-secondary" />
+                              </div>
+                            ) : (
+                              <label
+                                htmlFor={`extension-config-${field.path}`}
+                                className="min-w-0 leading-5 [overflow-wrap:anywhere]"
+                                title={field.requirement || field.label}
+                              >
+                                {field.label}
+                              </label>
+                            )}
+                            {field.requirement && !configured && (
+                              <span aria-hidden="true" className="leading-5 text-red-500">
+                                *
+                              </span>
+                            )}
+                            {field.help && (
+                              <Tooltip
+                                content={field.help}
+                                position="bottom"
+                                maxWidth="320px"
+                                className="mt-0.5 shrink-0"
+                                renderInPortal
+                              >
+                                <button
+                                  type="button"
+                                  aria-label={field.help}
+                                  className="rounded text-secondary hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                                >
+                                  <QuestionMarkCircleIcon className="h-3.5 w-3.5" />
+                                </button>
+                              </Tooltip>
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <input
+                              id={`extension-config-${field.path}`}
+                              aria-label={variable || field.label}
+                              type={field.sensitive ? 'password' : 'text'}
+                              value={configurationValues[field.path] || ''}
+                              onChange={event => {
+                                setConfigurationSaved(false);
+                                setConfigurationValues(current => ({
+                                  ...current,
+                                  [field.path]: event.target.value,
+                                }));
+                              }}
+                              disabled={savingConfiguration || inherited}
+                              required={Boolean(field.requirement) && !configured}
+                              autoComplete="new-password"
+                              spellCheck={false}
+                              placeholder={i18nService.t(
+                                inherited
+                                  ? 'extensionConfigurationInherited'
+                                  : configured
+                                    ? 'extensionConfigurationStored'
+                                    : field.sensitive
+                                      ? 'extensionConfigurationEnterSecret'
+                                      : 'extensionConfigurationEnterValue',
+                              )}
+                              className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground placeholder-secondary transition-colors focus:border-primary focus:outline-none focus:ring-2 focus:ring-[var(--justdo-primary-muted)] disabled:opacity-60"
+                            />
+                            {inherited && (
+                              <p className="mt-1.5 text-xs text-secondary">
+                                {i18nService.t('extensionConfigurationInheritedHelp')}
+                              </p>
+                            )}
+                            {!inherited && Boolean(field.inheritedEnvironmentVariables?.length) && (
+                              <p className="mt-1.5 text-xs text-secondary">
+                                {i18nService.t('extensionConfigurationInheritedAlternatives')}
+                              </p>
+                            )}
+                          </div>
                         </div>
-                        <input
-                          id={`extension-config-${field.path}`}
-                          type={field.sensitive ? 'password' : 'text'}
-                          value={configurationValues[field.path] || ''}
-                          onChange={event =>
-                            setConfigurationValues(current => ({
-                              ...current,
-                              [field.path]: event.target.value,
-                            }))
-                          }
-                          disabled={savingConfiguration}
-                          required={Boolean(field.requirement)}
-                          autoComplete="new-password"
-                          className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground placeholder-secondary focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-60"
-                        />
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               {selectedExtension.configurationFields.length > 0 &&
@@ -952,9 +1074,14 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                   {configurationError}
                 </div>
               )}
+              {configurationSaved && (
+                <p role="status" className="mt-3 text-xs text-emerald-600 dark:text-emerald-400">
+                  {i18nService.t('extensionConfigurationSaved')}
+                </p>
+              )}
             </div>
 
-            <div className="mt-5 flex items-center justify-between gap-3">
+            <div className="mt-6 flex items-center justify-between gap-3 border-t border-border pt-4">
               <div className="flex items-center gap-2">
                 {selectedExtension.installPath &&
                   (selectedExtension.management?.revealInFolder.allowed ?? true) && (
@@ -1004,7 +1131,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                       type="button"
                       onClick={() => void handleSaveConfiguration()}
                       disabled={savingConfiguration}
-                      className="rounded-lg bg-primary px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
+                      className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {i18nService.t(savingConfiguration ? 'saving' : 'save')}
                     </button>

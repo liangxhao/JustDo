@@ -157,7 +157,7 @@ import {
 } from './agentWorkspace';
 import { syncBuiltinCredentialFile } from './builtinCredentialFile';
 import { seedMainRoleFiles } from './mainRoleFiles';
-import { syncProviderSecretFile } from './providerSecretFile';
+import { restrictCredentialFile, syncProviderSecretFile } from './providerSecretFile';
 
 export class OpenClawConfigSync {
   private readonly getDecisionModelCategory: () => unknown;
@@ -452,6 +452,8 @@ export class OpenClawConfigSync {
     );
 
     const managedConfig: Record<string, unknown> = {
+      // Native provider setup owns these variables, including extension credentials.
+      ...(isRecord(existingConfig?.env) ? { env: existingConfig.env } : {}),
       gateway: {
         mode: 'local',
         bind: 'loopback',
@@ -629,7 +631,7 @@ export class OpenClawConfigSync {
       try {
         ensureDir(path.dirname(configPath));
         const tmpPath = `${configPath}.tmp-${Date.now()}`;
-        fs.writeFileSync(tmpPath, nextContent, 'utf8');
+        this.writeConfigTemporaryFile(tmpPath, nextContent);
         fs.renameSync(tmpPath, configPath);
       } catch (error) {
         return {
@@ -766,6 +768,20 @@ export class OpenClawConfigSync {
       if (!fs.existsSync(filePath)) {
         fs.writeFileSync(filePath, '', 'utf8');
       }
+    }
+  }
+
+  /** Restrict native configuration before writing credentials into a temporary file. */
+  private writeConfigTemporaryFile(filePath: string, content: string): void {
+    let created = false;
+    try {
+      fs.writeFileSync(filePath, '', { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+      created = true;
+      restrictCredentialFile(filePath);
+      fs.writeFileSync(filePath, content, 'utf8');
+    } catch (error) {
+      if (created && fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      throw error;
     }
   }
 
@@ -921,26 +937,26 @@ export class OpenClawConfigSync {
     } catch {
       currentContent = '';
     }
-    if (currentContent) {
-      try {
-        const previous = JSON.parse(currentContent);
-        if (isRecord(previous)) {
-          minimalConfig.tools = {
-            ...(isRecord(minimalConfig.tools) ? minimalConfig.tools : {}),
-            codeMode: mergeManagedOpenClawCodeModeConfig(
-              isRecord(previous.tools) ? previous.tools.codeMode : undefined,
-              agentRuntimeSettings,
-            ),
-          };
-          minimalConfig.session = buildManagedOpenClawSessionConfig(previous.session);
-          minimalConfig.meta = buildOpenClawConfigMeta(
-            this.engineManager.getDesiredVersion(),
-            previous.meta,
-          );
-        }
-      } catch {
-        // Invalid JSON follows the existing minimal-config recovery path.
-      }
+    let previousConfig: unknown;
+    try {
+      previousConfig = currentContent ? JSON.parse(currentContent) : undefined;
+    } catch {
+      // Only malformed JSON follows the minimal-config recovery path.
+    }
+    if (isRecord(previousConfig)) {
+      if (isRecord(previousConfig.env)) minimalConfig.env = previousConfig.env;
+      minimalConfig.tools = {
+        ...(isRecord(minimalConfig.tools) ? minimalConfig.tools : {}),
+        codeMode: mergeManagedOpenClawCodeModeConfig(
+          isRecord(previousConfig.tools) ? previousConfig.tools.codeMode : undefined,
+          agentRuntimeSettings,
+        ),
+      };
+      minimalConfig.session = buildManagedOpenClawSessionConfig(previousConfig.session);
+      minimalConfig.meta = buildOpenClawConfigMeta(
+        this.engineManager.getDesiredVersion(),
+        previousConfig.meta,
+      );
     }
     this.applyDecisionModel(minimalConfig);
     const nextContent = `${JSON.stringify(minimalConfig, null, 2)}\n`;
@@ -954,7 +970,7 @@ export class OpenClawConfigSync {
       reason === BuiltinModelSyncReason.AuthLogin || reason === BuiltinModelSyncReason.AuthLogout;
     if (isAuthLifecycleSync && currentContent && currentContent !== nextContent) {
       try {
-        const existing = JSON.parse(currentContent);
+        const existing = previousConfig;
         if (isRecord(existing)) {
           const sanitizedConfig = buildAuthScopedOpenClawConfig(existing, minimalConfig, reason);
           this.applyDecisionModel(sanitizedConfig);
@@ -962,14 +978,21 @@ export class OpenClawConfigSync {
           if (hasOpenClawConfigChanged(currentContent, sanitizedConfig)) {
             ensureDir(path.dirname(configPath));
             const tmpPath = `${configPath}.tmp-${Date.now()}`;
-            fs.writeFileSync(tmpPath, sanitizedContent, 'utf8');
+            this.writeConfigTemporaryFile(tmpPath, sanitizedContent);
             fs.renameSync(tmpPath, configPath);
             return buildMinimalSyncResult(sanitizedConfig, true);
           }
           return buildMinimalSyncResult(sanitizedConfig, false);
         }
-      } catch {
-        // Malformed JSON falls through to a complete minimal-config rewrite.
+      } catch (error) {
+        return {
+          ok: false,
+          changed: false,
+          configChanged: false,
+          requiresGatewayRestart: false,
+          configPath,
+          error: error instanceof Error ? error.message : String(error),
+        };
       }
     }
 
@@ -983,7 +1006,7 @@ export class OpenClawConfigSync {
       currentContent !== nextContent
     ) {
       try {
-        const existing = JSON.parse(currentContent);
+        const existing = previousConfig;
         if (isRecord(existing)) {
           const canonicalExisting = sanitizeOpenClawV2026_9_2Config(existing);
           const hasHookConfig = Object.keys(hookConfig).length > 0;
@@ -1131,15 +1154,22 @@ export class OpenClawConfigSync {
             if (hasOpenClawConfigChanged(currentContent, mergedConfig)) {
               ensureDir(path.dirname(configPath));
               const tmpPath = `${configPath}.tmp-${Date.now()}`;
-              fs.writeFileSync(tmpPath, mergedContent, 'utf8');
+              this.writeConfigTemporaryFile(tmpPath, mergedContent);
               fs.renameSync(tmpPath, configPath);
               return buildMinimalSyncResult(mergedConfig, true);
             }
             return buildMinimalSyncResult(mergedConfig, false);
           }
         }
-      } catch {
-        // Malformed JSON — overwrite with minimal config.
+      } catch (error) {
+        return {
+          ok: false,
+          changed: false,
+          configChanged: false,
+          requiresGatewayRestart: false,
+          configPath,
+          error: error instanceof Error ? error.message : String(error),
+        };
       }
     }
 
@@ -1150,7 +1180,7 @@ export class OpenClawConfigSync {
     try {
       ensureDir(path.dirname(configPath));
       const tmpPath = `${configPath}.tmp-${Date.now()}`;
-      fs.writeFileSync(tmpPath, nextContent, 'utf8');
+      this.writeConfigTemporaryFile(tmpPath, nextContent);
       fs.renameSync(tmpPath, configPath);
       return buildMinimalSyncResult(minimalConfig, true);
     } catch (error) {

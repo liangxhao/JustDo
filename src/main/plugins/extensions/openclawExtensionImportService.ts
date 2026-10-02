@@ -24,6 +24,7 @@ import {
 import { extractZipSafely } from '../../core/filesystem/safeZipExtractor';
 import { t } from '../../core/i18n';
 import type { EffectiveOutboundHeaderPolicySnapshot } from '../../core/network/outboundHeaderPolicyService';
+import { restrictCredentialFile } from '../../openclaw/config/providerSecretFile';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import { prepareExtensionForInstall } from './extensionConversion';
 import type { ExtensionNetworkPolicyInspection } from './extensionNetworkPolicyManifest';
@@ -461,15 +462,22 @@ const readDotEnvKeys = (filePath: string): Set<string> => {
   return keys;
 };
 
-const collectRequiredEnvVars = (manifest: Record<string, unknown>): string[] => {
-  const requiredEnvVars = new Set<string>();
+const collectProviderEnvGroups = (manifest: Record<string, unknown>): string[][] => {
+  const groups: string[][] = [];
   const addEnvVars = (envVars: unknown): void => {
     if (!Array.isArray(envVars)) return;
-    for (const envVar of envVars) {
-      if (typeof envVar === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(envVar)) {
-        requiredEnvVars.add(envVar);
-      }
-    }
+    const names = [
+      ...new Set(
+        envVars.filter(
+          (envVar): envVar is string =>
+            typeof envVar === 'string' &&
+            /^[A-Za-z_][A-Za-z0-9_]*$/.test(envVar) &&
+            isSafeConfigPath(envVar),
+        ),
+      ),
+    ];
+    if (names.length && !groups.some(group => JSON.stringify(group) === JSON.stringify(names)))
+      groups.push(names);
   };
   const setup = isRecord(manifest.setup) ? manifest.setup : {};
   const providers = Array.isArray(setup.providers) ? setup.providers : [];
@@ -480,7 +488,7 @@ const collectRequiredEnvVars = (manifest: Record<string, unknown>): string[] => 
     ? manifest.providerAuthEnvVars
     : {};
   Object.values(legacyProviderEnvVars).forEach(addEnvVars);
-  return [...requiredEnvVars];
+  return groups;
 };
 
 type ExtensionConfigurationState = {
@@ -493,7 +501,8 @@ const getExtensionConfigurationState = (
   extensionId: string,
   manifest: Record<string, unknown>,
 ): ExtensionConfigurationState => {
-  const requiredEnvVars = collectRequiredEnvVars(manifest);
+  const envGroups = collectProviderEnvGroups(manifest);
+  const requiredEnvVars = [...new Set(envGroups.flat())];
   const uiHints = isRecord(manifest.uiHints) ? manifest.uiHints : {};
   const sensitiveHints = Object.entries(uiHints).filter(
     (entry): entry is [string, Record<string, unknown>] =>
@@ -507,6 +516,7 @@ const getExtensionConfigurationState = (
   const pluginEntry = isRecord(pluginEntries[extensionId]) ? pluginEntries[extensionId] : {};
   const pluginConfig = pluginEntry.config;
   const configuredEnv = isRecord(config.env) ? config.env : {};
+  const configuredEnvVars = isRecord(configuredEnv.vars) ? configuredEnv.vars : {};
   const dotenvKeys = new Set<string>();
   for (const envPath of [
     path.join(manager.getBaseDir(), '.env'),
@@ -516,6 +526,7 @@ const getExtensionConfigurationState = (
   }
   const isEnvConfigured = (name: string): boolean =>
     hasConfiguredValue(process.env[name]) ||
+    hasConfiguredValue(configuredEnvVars[name]) ||
     hasConfiguredValue(configuredEnv[name]) ||
     dotenvKeys.has(name);
   const hasResolvedConfiguredValue = (value: unknown): boolean => {
@@ -556,11 +567,36 @@ const getExtensionConfigurationState = (
       typeof configPath === 'string' &&
       hasResolvedConfiguredValue(getNestedValue(config, configPath)),
   );
-  const missingRequirements = requiredEnvVars.filter(requirement => {
-    if (isEnvConfigured(requirement) || hasCompatibilityConfig) return false;
-    return !fields.some(field => field.requirement === requirement && field.configured);
-  });
-  return { fields, missingRequirements };
+  const missingRequirements: string[] = [];
+  for (const candidates of envGroups) {
+    const matchingFields = fields.filter(
+      field => field.requirement && candidates.includes(field.requirement),
+    );
+    const configured =
+      hasCompatibilityConfig ||
+      candidates.some(isEnvConfigured) ||
+      matchingFields.some(field => field.configured);
+    if (!configured) missingRequirements.push(...candidates);
+    if (matchingFields.length === 0) {
+      fields.push({
+        path: `env.vars.${candidates[0]}`,
+        label: candidates[0],
+        requirement: candidates[0],
+        environmentVariables: candidates,
+        configuredEnvironmentVariables: candidates.filter(isEnvConfigured),
+        inheritedEnvironmentVariables: candidates.filter(name =>
+          hasConfiguredValue(process.env[name]),
+        ),
+        sensitive: true,
+        configured,
+      });
+    } else if (configured) {
+      matchingFields.forEach(field => {
+        field.configured = true;
+      });
+    }
+  }
+  return { fields, missingRequirements: [...new Set(missingRequirements)] };
 };
 
 const isExtensionEnabled = (manager: OpenClawEngineManager, extensionId: string): boolean => {
@@ -1150,17 +1186,33 @@ export class OpenClawExtensionImportService {
     const manifestPath = findSupportedPluginManifestPath(pluginDirectory);
     const manifest = manifestPath ? readJsonRecord(manifestPath) : {};
     const fields = getExtensionConfigurationState(manager, extensionId, manifest).fields;
-    const allowedPaths = new Set(fields.map(field => field.path));
+    const fieldsByPath = new Map<string, OpenClawExtensionConfigurationField>();
+    for (const field of fields) {
+      const paths = field.environmentVariables?.map(name => `env.vars.${name}`) ?? [field.path];
+      for (const fieldPath of paths) fieldsByPath.set(fieldPath, field);
+    }
     const updates = Object.entries(values).filter(
       ([configPath, value]) =>
-        value.trim().length > 0 && isSafeConfigPath(configPath) && allowedPaths.has(configPath),
+        value.trim().length > 0 && isSafeConfigPath(configPath) && fieldsByPath.has(configPath),
     );
     if (updates.length === 0) {
       return { success: false, error: 'Enter at least one supported configuration value.' };
     }
+    if (
+      updates.some(([fieldPath]) => {
+        const field = fieldsByPath.get(fieldPath);
+        return (
+          field?.environmentVariables &&
+          field.inheritedEnvironmentVariables?.includes(fieldPath.slice('env.vars.'.length))
+        );
+      })
+    ) {
+      return { success: false, error: t('extensionCredentialInherited') };
+    }
 
     const configPath = manager.getConfigPath();
     const temporaryPath = `${configPath}.tmp-extension-${Date.now()}`;
+    let temporaryCreated = false;
     let initialPhase = manager.getStatus().phase;
     const wasRuntimeActive = initialPhase === 'running' || initialPhase === 'starting';
     try {
@@ -1179,7 +1231,11 @@ export class OpenClawExtensionImportService {
       const entry = isRecord(entries[extensionId]) ? entries[extensionId] : {};
       const pluginConfig = isRecord(entry.config) ? entry.config : {};
       const secretValues = Object.fromEntries(
-        updates.filter(([fieldPath]) => isExtensionSecretReferenceField(manifest, fieldPath)),
+        updates.filter(
+          ([fieldPath]) =>
+            !fieldsByPath.get(fieldPath)?.environmentVariables &&
+            isExtensionSecretReferenceField(manifest, fieldPath),
+        ),
       );
       const secretUpdate = saveExtensionSecrets(
         config,
@@ -1191,13 +1247,24 @@ export class OpenClawExtensionImportService {
         this.pendingCredentialRefresh.add(extensionId);
       }
       const needsCredentialRefresh = this.pendingCredentialRefresh.has(extensionId);
-      updates.forEach(([fieldPath, value]) =>
-        setNestedValue(pluginConfig, fieldPath, secretUpdate.references[fieldPath] ?? value),
-      );
-      entry.config = pluginConfig;
-      entries[extensionId] = entry;
-      plugins.entries = entries;
-      config.plugins = plugins;
+      updates.forEach(([fieldPath, value]) => {
+        const environmentVariables = fieldsByPath.get(fieldPath)?.environmentVariables;
+        if (environmentVariables?.length) {
+          const env = isRecord(config.env) ? config.env : {};
+          const vars = isRecord(env.vars) ? env.vars : {};
+          const name = fieldPath.slice('env.vars.'.length);
+          vars[name] = value;
+          if (typeof env[name] === 'string') delete env[name];
+          env.vars = vars;
+          config.env = env;
+        } else {
+          setNestedValue(pluginConfig, fieldPath, secretUpdate.references[fieldPath] ?? value);
+          entry.config = pluginConfig;
+          entries[extensionId] = entry;
+          plugins.entries = entries;
+          config.plugins = plugins;
+        }
+      });
 
       if (JSON.stringify(config) === previousConfig && !secretUpdate.changed && !needsCredentialRefresh)
         return { success: true };
@@ -1207,14 +1274,20 @@ export class OpenClawExtensionImportService {
           : null;
 
       fs.mkdirSync(path.dirname(configPath), { recursive: true });
+      fs.writeFileSync(temporaryPath, '', { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+      temporaryCreated = true;
+      restrictCredentialFile(temporaryPath);
       fs.writeFileSync(temporaryPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
       fs.renameSync(temporaryPath, configPath);
+      // Retain application state until the runtime acknowledges the persisted config.
+      if (wasRuntimeActive) this.pendingCredentialRefresh.add(extensionId);
 
       if (wasRuntimeActive || needsCredentialRefresh) {
         if (
           reloadGeneration !== null &&
           (await manager.waitForGatewayConfigReload(reloadGeneration))
         ) {
+          this.pendingCredentialRefresh.delete(extensionId);
           return { success: true };
         }
         const status = await this.restartGatewayAfterMutation('extension-config-change');
@@ -1236,7 +1309,7 @@ export class OpenClawExtensionImportService {
       };
     } finally {
       try {
-        if (fs.existsSync(temporaryPath)) fs.rmSync(temporaryPath, { force: true });
+        if (temporaryCreated && fs.existsSync(temporaryPath)) fs.rmSync(temporaryPath, { force: true });
       } catch {
         // Best-effort cleanup for an interrupted atomic write.
       }

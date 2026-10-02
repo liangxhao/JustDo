@@ -235,9 +235,8 @@ describe('ExtensionsManager extension toggle', () => {
       } },
     });
     render(<ExtensionsManager requestedExtensionId="typesafe" />);
-    const input = await screen.findByLabelText('TypeSafe API credential') as HTMLInputElement;
+    const input = (await screen.findByLabelText('TypeSafe API credential')) as HTMLInputElement;
     expect(input.type).toBe('password');
-    expect(screen.getByText('extensionTypesafeSetupHelp')).toBeTruthy();
     fireEvent.change(input, { target: { value: 'synthetic-ui-key' } });
     fireEvent.click(screen.getByRole('button', { name: 'save' }));
     await waitFor(() => expect(updateConfiguration).toHaveBeenCalledWith({
@@ -289,6 +288,157 @@ describe('ExtensionsManager extension toggle', () => {
     expect(screen.queryByLabelText('Token')).toBeNull();
     expect(screen.queryByRole('button', { name: 'save' })).toBeNull();
     expect(updateConfiguration).not.toHaveBeenCalled();
+  });
+
+  test('shows a warning tooltip and opens the credential editor from the warning', async () => {
+    let configured = false;
+    const updateConfiguration = vi.fn(async () => {
+      configured = true;
+      return { success: true };
+    });
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        extensions: {
+          list: vi.fn(async () => ({
+            success: true,
+            extensions: [
+              {
+                ...extension,
+                missingRequirements: configured ? [] : ['EXAMPLE_KEY', 'EXAMPLE_ALIAS'],
+                configurationFields: [
+                  {
+                    path: 'env.vars.EXAMPLE_KEY',
+                    label: 'EXAMPLE_KEY',
+                    requirement: 'EXAMPLE_KEY',
+                    environmentVariables: ['EXAMPLE_KEY', 'EXAMPLE_ALIAS'],
+                    configuredEnvironmentVariables: configured ? ['EXAMPLE_ALIAS'] : [],
+                    sensitive: true,
+                    configured,
+                  },
+                ],
+              },
+            ],
+          })),
+          updateConfiguration,
+          onImportProgress: vi.fn(() => vi.fn()),
+        },
+      },
+    });
+    render(<ExtensionsManager />);
+    const warning = await screen.findByRole('button', { name: 'extensionMissingConfiguration' });
+    // The card suppresses pointer events; the tooltip anchor must explicitly restore them.
+    expect(warning.parentElement?.classList.contains('pointer-events-auto')).toBe(true);
+    fireEvent.mouseEnter(warning.parentElement!);
+    expect(await screen.findByRole('tooltip')).toHaveProperty(
+      'textContent',
+      'extensionMissingConfiguration',
+    );
+    fireEvent.mouseLeave(warning.parentElement!);
+    fireEvent.click(warning);
+    const input = screen.getByLabelText('EXAMPLE_KEY') as HTMLInputElement;
+    expect(input.type).toBe('password');
+    expect(input.placeholder).toBe('extensionConfigurationEnterSecret');
+    expect(screen.getByText('extensionMissingConfiguration')).toBeTruthy();
+    fireEvent.change(input, { target: { value: 'unsaved-first-credential' } });
+    fireEvent.change(
+      screen.getByRole('combobox', { name: 'extensionConfigurationCredentialType' }),
+      {
+        target: { value: 'EXAMPLE_ALIAS' },
+      },
+    );
+    expect(input.value).toBe('');
+    expect(screen.getByLabelText('EXAMPLE_ALIAS')).toBe(input);
+    fireEvent.change(input, { target: { value: 'synthetic-ui-secret' } });
+    fireEvent.click(screen.getByRole('button', { name: 'save' }));
+    await waitFor(() =>
+      expect(updateConfiguration).toHaveBeenCalledWith({
+        extensionId: extension.id,
+        values: { 'env.vars.EXAMPLE_ALIAS': 'synthetic-ui-secret' },
+      }),
+    );
+    await waitFor(() => expect(input.value).toBe(''));
+    expect(input.placeholder).toBe('extensionConfigurationStored');
+    expect(input.required).toBe(false);
+    expect(screen.queryByRole('button', { name: 'extensionMissingConfiguration' })).toBeNull();
+    expect(screen.getByRole('status').textContent).toBe('extensionConfigurationSaved');
+    fireEvent.click(screen.getByRole('button', { name: 'cancel' }));
+    fireEvent.click(screen.getByRole('button', { name: `subtaskShowInfo: ${extension.name}` }));
+    expect((screen.getByRole('combobox') as HTMLSelectElement).value).toBe('EXAMPLE_ALIAS');
+    expect((screen.getByLabelText('EXAMPLE_ALIAS') as HTMLInputElement).placeholder).toBe(
+      'extensionConfigurationStored',
+    );
+  });
+
+  test('explains inherited credentials and permits selecting an editable alternative', async () => {
+    const updateConfiguration = vi.fn().mockResolvedValue({ success: true });
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        extensions: {
+          list: vi.fn(async () => ({
+            success: true,
+            extensions: [
+              {
+                ...extension,
+                configurationFields: [
+                  {
+                    path: 'env.vars.EXAMPLE_KEY',
+                    label: 'EXAMPLE_KEY',
+                    sensitive: true,
+                    configured: true,
+                    environmentVariables: ['EXAMPLE_KEY', 'EXAMPLE_ALIAS'],
+                    configuredEnvironmentVariables: ['EXAMPLE_KEY'],
+                    inheritedEnvironmentVariables: ['EXAMPLE_KEY'],
+                  },
+                ],
+              },
+            ],
+          })),
+          updateConfiguration,
+          onImportProgress: vi.fn(() => vi.fn()),
+        },
+      },
+    });
+    render(<ExtensionsManager requestedExtensionId={extension.id} />);
+    const input = (await screen.findByLabelText('EXAMPLE_KEY')) as HTMLInputElement;
+    expect(input.disabled).toBe(true);
+    expect(input.placeholder).toBe('extensionConfigurationInherited');
+    expect(screen.getByText('extensionConfigurationInheritedHelp')).toBeTruthy();
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'EXAMPLE_ALIAS' } });
+    expect(input.disabled).toBe(false);
+    expect(screen.queryByText('extensionConfigurationInheritedHelp')).toBeNull();
+    expect(screen.getByText('extensionConfigurationInheritedAlternatives')).toBeTruthy();
+    fireEvent.change(input, { target: { value: 'synthetic-alias-key' } });
+    fireEvent.click(screen.getByRole('button', { name: 'save' }));
+    await waitFor(() =>
+      expect(updateConfiguration).toHaveBeenCalledWith({
+        extensionId: extension.id,
+        values: { 'env.vars.EXAMPLE_ALIAS': 'synthetic-alias-key' },
+      }),
+    );
+  });
+
+  test('exposes extension errors on keyboard focus and in the details dialog', async () => {
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        extensions: {
+          list: vi.fn(async () => ({
+            success: true,
+            extensions: [{ ...extension, error: 'Plugin failed to load' }],
+          })),
+          onImportProgress: vi.fn(() => vi.fn()),
+        },
+      },
+    });
+    render(<ExtensionsManager />);
+    const warning = await screen.findByRole('button', { name: 'Plugin failed to load' });
+    fireEvent.focus(warning);
+    expect((await screen.findByRole('tooltip')).textContent).toBe('Plugin failed to load');
+    fireEvent.blur(warning);
+    fireEvent.click(warning);
+    expect(screen.getByRole('alert').textContent).toBe('Plugin failed to load');
   });
 
   test('continues a batch after the reviewed extension fails to install', async () => {

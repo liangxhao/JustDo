@@ -306,10 +306,14 @@ describe('OpenClawExtensionImportService', () => {
     });
     const restartGatewayAfterMutation = vi.fn().mockResolvedValue({ phase: 'running' });
     const service = new OpenClawExtensionImportService({
-      getOpenClawEngineManager: () => ({ getStatus: () => ({ phase: 'running' }) }) as OpenClawEngineManager,
-      requestGateway, restartGatewayAfterMutation,
+      getOpenClawEngineManager: () =>
+        ({ getStatus: () => ({ phase: 'running' }) }) as OpenClawEngineManager,
+      requestGateway,
+      restartGatewayAfterMutation,
     });
-    await expect(service.setEnabled('agent-team', false)).resolves.toMatchObject({ success: false });
+    await expect(service.setEnabled('agent-team', false)).resolves.toMatchObject({
+      success: false,
+    });
     expect(restartGatewayAfterMutation).toHaveBeenCalledWith('extension-status-change');
   });
 
@@ -321,10 +325,15 @@ describe('OpenClawExtensionImportService', () => {
     });
     const runCommand = vi.fn();
     const service = new OpenClawExtensionImportService({
-      getOpenClawEngineManager: () => ({ getStatus: () => ({ phase: 'running' }) }) as OpenClawEngineManager,
-      requestGateway, runCommand,
+      getOpenClawEngineManager: () =>
+        ({ getStatus: () => ({ phase: 'running' }) }) as OpenClawEngineManager,
+      requestGateway,
+      runCommand,
     });
-    await expect(service.setEnabled('agent-team', true)).resolves.toMatchObject({ success: false, error: expect.stringContaining('Agent Team') });
+    await expect(service.setEnabled('agent-team', true)).resolves.toMatchObject({
+      success: false,
+      error: expect.stringContaining('Agent Team'),
+    });
     expect(runCommand).not.toHaveBeenCalled();
     await expect(service.setEnabled('agent-team', true)).resolves.toEqual({ success: true });
     expect(skillAttempts).toBe(2);
@@ -1882,6 +1891,244 @@ describe('OpenClawExtensionImportService', () => {
       }),
     );
     expect(service.listInstalled()[0].missingRequirements).toEqual([]);
+  });
+
+  it.each([true, false])(
+    'configures provider credentials without uiHints (bundled=%s)',
+    async bundled => {
+      const stateDir = path.join(fixtureRoot, 'state');
+      const runtimeRoot = path.join(fixtureRoot, 'runtime');
+      const configPath = path.join(stateDir, 'openclaw.json');
+      const installedDir = bundled
+        ? path.join(runtimeRoot, 'dist', 'extensions', 'speech-example')
+        : path.join(stateDir, 'extensions', 'speech-example');
+      fs.mkdirSync(installedDir, { recursive: true });
+      fs.mkdirSync(stateDir, { recursive: true });
+      const candidates = ['JUSTDO_TEST_SPEECH_KEY', 'JUSTDO_TEST_SPEECH_ALIAS'];
+      fs.writeFileSync(
+        path.join(installedDir, 'openclaw.plugin.json'),
+        JSON.stringify({
+          id: 'speech-example',
+          setup: { providers: [{ id: 'speech-example', envVars: candidates }] },
+          configSchema: { type: 'object', additionalProperties: false, properties: {} },
+        }),
+      );
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify({
+          env: { vars: { UNRELATED_KEY: 'preserved' }, shellEnv: { enabled: false } },
+          plugins: { entries: { 'speech-example': { enabled: false } } },
+        }),
+      );
+      const manager = {
+        getStateDir: () => stateDir,
+        getBaseDir: () => fixtureRoot,
+        getRuntimeRoot: () => runtimeRoot,
+        getConfigPath: () => configPath,
+        getStatus: () => ({ phase: 'running' }),
+        getGatewayConfigReloadGeneration: () => 2,
+        waitForGatewayConfigReload: vi.fn().mockResolvedValue(true),
+      } as unknown as OpenClawEngineManager;
+      const service = new OpenClawExtensionImportService({
+        getOpenClawEngineManager: () => manager,
+        requestGateway: vi.fn().mockResolvedValue({
+          plugins: [
+            {
+              id: 'speech-example',
+              installed: true,
+              origin: bundled ? 'bundled' : 'local',
+              enabled: false,
+              state: 'disabled',
+            },
+          ],
+          mutationAllowed: true,
+          diagnostics: [],
+        }),
+      });
+      expect((await service.listCatalog())[0]).toMatchObject({
+        missingRequirements: candidates,
+        configurationFields: [
+          {
+            path: `env.vars.${candidates[0]}`,
+            label: candidates[0],
+            environmentVariables: candidates,
+            sensitive: true,
+            configured: false,
+          },
+        ],
+      });
+      await expect(
+        service.updateConfiguration('speech-example', {
+          [`env.vars.${candidates[0]}`]: 'synthetic-speech-secret',
+          'env.vars.UNDECLARED_KEY': 'must-not-write',
+          'constructor.prototype.polluted': 'must-not-write',
+        }),
+      ).resolves.toEqual({ success: true });
+      const saved = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      expect(saved.env).toEqual({
+        vars: { UNRELATED_KEY: 'preserved', [candidates[0]]: 'synthetic-speech-secret' },
+        shellEnv: { enabled: false },
+      });
+      expect(saved.plugins.entries['speech-example']).toEqual({ enabled: false });
+      const catalog = await service.listCatalog();
+      expect(catalog[0].missingRequirements).toEqual([]);
+      expect(catalog[0].configurationFields[0].configured).toBe(true);
+      expect(JSON.stringify(catalog)).not.toContain('synthetic-speech-secret');
+      expect(manager.waitForGatewayConfigReload).toHaveBeenCalledWith(2);
+      delete saved.env.vars[candidates[0]];
+      fs.writeFileSync(configPath, JSON.stringify(saved));
+      await expect(
+        service.updateConfiguration('speech-example', {
+          [`env.vars.${candidates[1]}`]: 'synthetic-alias-secret',
+        }),
+      ).resolves.toEqual({ success: true });
+      const aliasConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      expect(aliasConfig.env.vars).toEqual({
+        UNRELATED_KEY: 'preserved',
+        [candidates[1]]: 'synthetic-alias-secret',
+      });
+      const aliasCatalog = await service.listCatalog();
+      expect(aliasCatalog[0].missingRequirements).toEqual([]);
+      expect(aliasCatalog[0].configurationFields[0].configuredEnvironmentVariables).toEqual([
+        candidates[1],
+      ]);
+      expect(JSON.stringify(aliasCatalog)).not.toContain('synthetic-alias-secret');
+    },
+  );
+
+  it.each(['reload-throws', 'restart-throws', 'restart-error'])(
+    'retries a persisted environment credential after %s and replaces the top-level value',
+    async failure => {
+      const stateDir = path.join(fixtureRoot, 'state');
+      const installedDir = path.join(stateDir, 'extensions', 'credential-example');
+      const configPath = path.join(stateDir, 'openclaw.json');
+      const name = 'JUSTDO_TEST_RETRY_ENV_KEY';
+      fs.mkdirSync(installedDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(installedDir, 'openclaw.plugin.json'),
+        JSON.stringify({
+          id: 'credential-example',
+          setup: { providers: [{ id: 'provider', envVars: [name] }] },
+        }),
+      );
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify({ env: { [name]: 'old-key', vars: { UNRELATED: 'preserved' } } }),
+      );
+      let phase = 'running';
+      const restart = vi.fn().mockResolvedValue({ phase: 'running' });
+      const reload = vi.fn().mockResolvedValue(false);
+      if (failure === 'reload-throws')
+        reload.mockRejectedValueOnce(new Error('Synthetic reload failure'));
+      if (failure === 'restart-throws')
+        restart.mockRejectedValueOnce(new Error('Synthetic restart failure'));
+      if (failure === 'restart-error') restart.mockResolvedValueOnce({ phase: 'error' });
+      const service = new OpenClawExtensionImportService({
+        getOpenClawEngineManager: () =>
+          ({
+            getStateDir: () => stateDir,
+            getBaseDir: () => fixtureRoot,
+            getConfigPath: () => configPath,
+            getStatus: () => ({ phase }),
+            getGatewayConfigReloadGeneration: () => 1,
+            waitForGatewayConfigReload: reload,
+          }) as unknown as OpenClawEngineManager,
+        restartGatewayAfterMutation: restart,
+      });
+      const values = { [`env.vars.${name}`]: 'new-key' };
+
+      await expect(
+        service.updateConfiguration('credential-example', values),
+      ).resolves.toMatchObject({ success: false });
+      expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).env).toEqual({
+        vars: { UNRELATED: 'preserved', [name]: 'new-key' },
+      });
+      if (failure === 'restart-error') phase = 'error';
+      restart.mockClear();
+      await expect(service.updateConfiguration('credential-example', values)).resolves.toEqual({
+        success: true,
+      });
+      expect(restart).toHaveBeenCalledTimes(1);
+      phase = 'running';
+      await expect(service.updateConfiguration('credential-example', values)).resolves.toEqual({
+        success: true,
+      });
+      expect(restart).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('reports inherited environment credentials and rejects edits that cannot take effect', async () => {
+    const stateDir = path.join(fixtureRoot, 'state');
+    const installedDir = path.join(stateDir, 'extensions', 'credential-example');
+    const configPath = path.join(stateDir, 'openclaw.json');
+    const name = 'JUSTDO_TEST_INHERITED_KEY';
+    vi.stubEnv(name, 'synthetic-inherited-key');
+    try {
+      fs.mkdirSync(installedDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(installedDir, 'openclaw.plugin.json'),
+        JSON.stringify({
+          id: 'credential-example',
+          setup: { providers: [{ id: 'provider', envVars: [name] }] },
+        }),
+      );
+      fs.writeFileSync(configPath, '{}');
+      const service = new OpenClawExtensionImportService({
+        getOpenClawEngineManager: () =>
+          ({
+            getStateDir: () => stateDir,
+            getBaseDir: () => fixtureRoot,
+            getConfigPath: () => configPath,
+          }) as unknown as OpenClawEngineManager,
+      });
+      const inventory = service.listInstalled();
+      expect(inventory[0].configurationFields[0]).toMatchObject({
+        configured: true,
+        inheritedEnvironmentVariables: [name],
+      });
+      expect(JSON.stringify(inventory)).not.toContain('synthetic-inherited-key');
+      await expect(
+        service.updateConfiguration('credential-example', { [`env.vars.${name}`]: 'replacement' }),
+      ).resolves.toMatchObject({ success: false, error: t('extensionCredentialInherited') });
+      expect(fs.readFileSync(configPath, 'utf8')).toBe('{}');
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('keeps separate provider credential groups independent and recognizes native env.vars', () => {
+    const stateDir = path.join(fixtureRoot, 'state');
+    const installedDir = path.join(stateDir, 'extensions', 'multi-provider');
+    fs.mkdirSync(installedDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(installedDir, 'openclaw.plugin.json'),
+      JSON.stringify({
+        id: 'multi-provider',
+        setup: {
+          providers: [
+            { id: 'first', envVars: ['JUSTDO_TEST_FIRST_KEY', 'JUSTDO_TEST_FIRST_ALIAS'] },
+            { id: 'second', envVars: ['JUSTDO_TEST_SECOND_KEY'] },
+          ],
+        },
+      }),
+    );
+    fs.writeFileSync(
+      path.join(stateDir, 'openclaw.json'),
+      JSON.stringify({
+        env: { vars: { JUSTDO_TEST_FIRST_ALIAS: 'synthetic-first-secret' } },
+      }),
+    );
+    const service = new OpenClawExtensionImportService({
+      getOpenClawEngineManager: () =>
+        ({
+          getStateDir: () => stateDir,
+          getBaseDir: () => fixtureRoot,
+          getConfigPath: () => path.join(stateDir, 'openclaw.json'),
+        }) as unknown as OpenClawEngineManager,
+    });
+    const installed = service.listInstalled()[0];
+    expect(installed.missingRequirements).toEqual(['JUSTDO_TEST_SECOND_KEY']);
+    expect(installed.configurationFields.map(field => field.configured)).toEqual([true, false]);
   });
 
   it.each([true, false])(

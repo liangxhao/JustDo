@@ -17,6 +17,7 @@ import {
   type OpenClawConfigSyncResult,
   verifyLoggedOutOpenClawConfig,
 } from './openclawConfigSync';
+import * as providerSecretFile from './providerSecretFile';
 
 vi.mock('electron', () => ({
   app: {
@@ -61,6 +62,7 @@ test('keeps both browser providers under browser-mode ownership', () => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   clearActiveBuiltinModelCredential();
   setStoreGetter(() => null);
   for (const directory of temporaryDirectories.splice(0)) {
@@ -259,6 +261,91 @@ test.each([true, false])('preserves cold storage through minimal startup and sub
 });
 
 describe('OpenClaw auth logout config sync', () => {
+  test.each(['startup', BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout])(
+    '%s sync preserves the original config when restricting file permissions fails',
+    reason => {
+      const configPath = writeExistingBuiltinConfig();
+      const original = fs.readFileSync(configPath, 'utf8');
+      setStoreGetter(() => ({ get: () => ({}) }) as never);
+      const restrict = providerSecretFile.restrictCredentialFile;
+      let attempts = 0;
+      vi.spyOn(providerSecretFile, 'restrictCredentialFile').mockImplementation(filePath => {
+        if (filePath.startsWith(`${configPath}.tmp-`)) {
+          attempts += 1;
+          if (attempts === 1) throw new Error('Synthetic permission failure');
+        }
+        restrict(filePath);
+      });
+      const sync = new OpenClawConfigSync({
+        engineManager: {
+          getConfigPath: () => configPath,
+          getStateDir: () => path.dirname(configPath),
+          getDesiredVersion: () => '2026.9.6',
+        },
+        getCoworkConfig: () => ({ workingDirectory: '', executionMode: 'local', agentEngine: 'openclaw' }),
+        getAgents: () => [],
+      } as never);
+
+      expect(sync.sync(reason)).toMatchObject({ ok: false, changed: false, error: 'Synthetic permission failure' });
+      expect(attempts).toBe(1);
+      expect(fs.readFileSync(configPath, 'utf8')).toBe(original);
+      expect(fs.readdirSync(path.dirname(configPath)).filter(name => name.startsWith('openclaw.json.tmp-'))).toEqual([]);
+    },
+  );
+
+  test.each(['full', 'minimal'])(
+    '%s sync preserves native provider environment credentials across lifecycle changes',
+    mode => {
+      const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-extension-env-sync-'));
+      temporaryDirectories.push(stateDir);
+      const configPath = path.join(stateDir, 'openclaw.json');
+      const appConfig =
+        mode === 'full'
+          ? {
+              model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
+              providers: {
+                'custom-provider': {
+                  enabled: true,
+                  apiKey: 'test-secret',
+                  baseUrl: 'https://custom.example.test/v1',
+                  apiFormat: 'openai',
+                  models: [{ id: 'custom-model' }],
+                },
+              },
+            }
+          : {};
+      setStoreGetter(() => ({ get: () => appConfig }) as never);
+      const env = {
+        vars: { ELEVENLABS_API_KEY: 'synthetic-provider-secret' },
+        shellEnv: { enabled: false },
+      };
+      fs.writeFileSync(configPath, JSON.stringify({ env }));
+      const sync = new OpenClawConfigSync({
+        engineManager: {
+          getConfigPath: () => configPath,
+          getStateDir: () => stateDir,
+          getDesiredVersion: () => '2026.9.6',
+        },
+        getCoworkConfig: () => ({
+          workingDirectory: '',
+          executionMode: 'local',
+          agentEngine: 'openclaw',
+        }),
+        getAgents: () => [],
+      } as never);
+      for (const reason of [
+        'startup',
+        'settings',
+        BuiltinModelSyncReason.AuthLogin,
+        BuiltinModelSyncReason.AuthLogout,
+      ]) {
+        expect(sync.sync(reason).ok).toBe(true);
+        expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).env).toEqual(env);
+        if (process.platform !== 'win32') expect(fs.statSync(configPath).mode & 0o777).toBe(0o600);
+      }
+    },
+  );
+
   test.each(['full', 'minimal'] as const)('%s sync separates all native role homes from changing project directories', mode => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-role-homes-'));
     temporaryDirectories.push(stateDir);

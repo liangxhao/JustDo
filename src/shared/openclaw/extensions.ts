@@ -490,6 +490,10 @@ export type OpenClawExtensionConfigurationField = {
   label: string;
   help?: string;
   requirement?: string;
+  /** Native provider credential alternatives; saved to env.vars, never plugin config. */
+  environmentVariables?: string[];
+  configuredEnvironmentVariables?: string[];
+  inheritedEnvironmentVariables?: string[];
   sensitive: boolean;
   configured: boolean;
 };

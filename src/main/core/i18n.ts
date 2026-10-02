@@ -18,6 +18,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
     decisionModelConfigurationInvalid: '决策模型配置未能生效，请检查供应商 URL、API Key、默认模型及凭据文件访问权限。',
     extensionCredentialStoreUnavailable: '无法读取本地扩展凭据文件，请检查文件内容和访问权限。',
+    extensionCredentialInherited: '此凭据由系统环境变量提供，请修改该变量并重启应用。',
     extensionCredentialStoreWriteFailed: '无法安全保存扩展凭据，请检查本地文件访问权限。',
     memoryWorkspaceUnavailable: '无法确定记忆工作区，请检查服务连接。',
     memoryStatusUnavailable: '无法读取记忆索引状态。',
@@ -92,6 +93,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     browserContextSaveImage: '图片另存为…',
   },
   en: {
+    extensionCredentialInherited:
+      'This credential is supplied by the system environment. Update that variable and restart the app.',
     decisionModelConfigurationInvalid: 'Unable to apply decision model configuration. Check the provider URL, API Key, default model and credential file access.',
     extensionCredentialStoreUnavailable: 'Unable to read the local extension credential file. Check its contents and access permissions.',
     extensionCredentialStoreWriteFailed: 'Unable to securely save extension credentials. Check local file access permissions.',
