@@ -115,9 +115,7 @@
   82% { translate: 0 -2px; }
 }
 
-:root[data-cowork-pet='off'] .cowork-pet,
-:root[data-cowork-pet-chat='off'] .cowork-pet--chat,
-:root[data-cowork-pet-home='off'] .cowork-pet--home {
+:root[data-cowork-pet='off'] .cowork-pet {
   display: none;
 }
 

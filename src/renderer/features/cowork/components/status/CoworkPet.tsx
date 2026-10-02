@@ -115,11 +115,10 @@ interface CoworkPetProps {
   placement?: 'chat' | 'home';
 }
 
-const petSettings = (placement: 'chat' | 'home') => {
+const petSettings = () => {
   const data = document.documentElement.dataset;
   return {
-    motionAllowed: data.coworkPet !== 'off' && data.coworkPetMotion !== 'off' &&
-      (placement === 'home' ? data.coworkPetHome !== 'off' : data.coworkPetChat !== 'off'),
+    motionAllowed: data.coworkPet !== 'off' && data.coworkPetMotion !== 'off',
     variety: data.coworkPetVariety === 'classic' ? 1 : data.coworkPetVariety === 'varied' ? 4 : 16,
     speed: data.coworkPetSpeed === 'calm' ? 1.35 : data.coworkPetSpeed === 'lively' ? 0.75 : 1,
     restAfter: data.coworkPetRestAfter === 'never' ? null : data.coworkPetRestAfter === 'short' ? 30_000 :
@@ -137,7 +136,7 @@ export function CoworkPet({ running, waiting, latestRun, placement = 'chat' }: C
   const [frameIndex, setFrameIndex] = useState(0);
   const [variantIndex, setVariantIndex] = useState(0);
   const [blackCursor, setBlackCursor] = useState({ frame: 0, variant: 0 });
-  const [settings, setSettings] = useState(() => petSettings(placement));
+  const [settings, setSettings] = useState(() => petSettings());
   const [documentVisible, setDocumentVisible] = useState(() => !document.hidden);
   const cellSize = 64;
   const [position, setPosition] = useState(() => readPetPosition(cellSize));
@@ -154,13 +153,12 @@ export function CoworkPet({ running, waiting, latestRun, placement = 'chat' }: C
   const wasRunningRef = useRef(running);
 
   useEffect(() => {
-    const updateSettings = () => setSettings(petSettings(placement));
+    const updateSettings = () => setSettings(petSettings());
     const updateVisibility = () => setDocumentVisible(!document.hidden);
     const observer = new MutationObserver(updateSettings);
     observer.observe(document.documentElement, {
       attributes: true,
-      attributeFilter: ['data-cowork-pet', 'data-cowork-pet-motion', 'data-cowork-pet-home',
-        'data-cowork-pet-chat', 'data-cowork-pet-variety', 'data-cowork-pet-speed', 'data-cowork-pet-rest-after',
+      attributeFilter: ['data-cowork-pet', 'data-cowork-pet-motion', 'data-cowork-pet-variety', 'data-cowork-pet-speed', 'data-cowork-pet-rest-after',
         'data-cowork-pet-floating', 'data-cowork-pet-cats'],
     });
     document.addEventListener('visibilitychange', updateVisibility);
@@ -168,7 +166,7 @@ export function CoworkPet({ running, waiting, latestRun, placement = 'chat' }: C
       observer.disconnect();
       document.removeEventListener('visibilitychange', updateVisibility);
     };
-  }, [placement]);
+  }, []);
 
   const { motionAllowed, variety, speed, restAfter, floating, cats } = settings;
 

@@ -50,16 +50,12 @@ describe('appearance configuration', () => {
 
   test('normalizes expanded pet preferences and rejects invalid choices', () => {
     expect(normalizeAppearanceConfig({
-      petShowHome: false,
-      petShowChat: false,
       petVariety: 'classic',
       petSpeed: 'calm',
       petRestAfter: 'never',
       petFloatingEnabled: true,
       petCatSelection: 'black',
     })).toMatchObject({
-      petShowHome: false,
-      petShowChat: false,
       petVariety: 'classic',
       petSpeed: 'calm',
       petRestAfter: 'never',
@@ -86,8 +82,6 @@ describe('appearance configuration', () => {
     applyAppearanceConfig(defaultAppearanceConfig, root);
     expect(root.dataset.coworkPet).toBe('on');
     expect(root.dataset.coworkPetMotion).toBe('on');
-    expect(root.dataset.coworkPetHome).toBe('on');
-    expect(root.dataset.coworkPetChat).toBe('on');
     expect(root.dataset.coworkPetVariety).toBe('playful');
     expect(root.dataset.coworkPetFloating).toBe('off');
     expect(root.dataset.coworkPetCats).toBe('both');
@@ -172,5 +166,32 @@ describe('appearance configuration', () => {
 
     expect(normalized).not.toHaveProperty('chatMaxWidth');
     expect(normalized).not.toHaveProperty('showMessageAvatars');
+  });
+
+  test('keeps pets hidden when both retired page switches were disabled', () => {
+    const stored = {
+      ...defaultAppearanceConfig,
+      petShowHome: false,
+      petShowChat: false,
+    };
+    const normalized = normalizeAppearanceConfig(stored);
+    expect(normalized).toEqual({ ...defaultAppearanceConfig, petEnabled: false });
+    expect(normalized).not.toHaveProperty('petShowHome');
+    expect(normalized).not.toHaveProperty('petShowChat');
+    expect(normalizeAppearanceConfig(normalized)).toEqual(normalized);
+    expect(normalizeAppearanceConfig({ ...stored, petEnabled: false }).petEnabled).toBe(false);
+    expect(normalizeAppearanceConfig({ ...normalized, petEnabled: true }).petEnabled).toBe(true);
+  });
+
+  test.each([
+    [true, true],
+    [true, false],
+    [false, true],
+    [undefined, undefined],
+    [false, undefined],
+  ])('keeps global visibility when retired page switches are %s and %s', (petShowHome, petShowChat) => {
+    const stored = { ...defaultAppearanceConfig, petShowHome, petShowChat };
+    expect(normalizeAppearanceConfig(stored).petEnabled).toBe(true);
+    expect(normalizeAppearanceConfig({ ...stored, petEnabled: false }).petEnabled).toBe(false);
   });
 });

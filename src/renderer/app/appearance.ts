@@ -15,8 +15,6 @@ export interface AppearanceConfig {
   wrapCodeBlocks: boolean;
   petEnabled: boolean;
   petAnimationEnabled: boolean;
-  petShowHome: boolean;
-  petShowChat: boolean;
   petVariety: PetVariety;
   petSpeed: PetSpeed;
   petRestAfter: PetRestAfter;
@@ -33,8 +31,6 @@ export const defaultAppearanceConfig: AppearanceConfig = {
   wrapCodeBlocks: false,
   petEnabled: true,
   petAnimationEnabled: true,
-  petShowHome: true,
-  petShowChat: true,
   petVariety: 'playful',
   petSpeed: 'normal',
   petRestAfter: 'standard',
@@ -102,6 +98,15 @@ const clampNumber = (
   return Math.min(maximum, Math.max(minimum, Math.round(value)));
 };
 
+const normalizePetEnabled = (
+  value?: (Partial<AppearanceConfig> & { petShowHome?: unknown; petShowChat?: unknown }) | null,
+): boolean => {
+  const enabled = typeof value?.petEnabled === 'boolean'
+    ? value.petEnabled : defaultAppearanceConfig.petEnabled;
+  // Preserve the hidden state when replacing the two retired page switches.
+  return enabled && !(value?.petShowHome === false && value?.petShowChat === false);
+};
+
 export const normalizeAppearanceConfig = (
   value?: Partial<AppearanceConfig> | null,
 ): AppearanceConfig => ({
@@ -125,14 +130,11 @@ export const normalizeAppearanceConfig = (
     typeof value?.wrapCodeBlocks === 'boolean'
       ? value.wrapCodeBlocks
       : defaultAppearanceConfig.wrapCodeBlocks,
-  petEnabled:
-    typeof value?.petEnabled === 'boolean' ? value.petEnabled : defaultAppearanceConfig.petEnabled,
+  petEnabled: normalizePetEnabled(value),
   petAnimationEnabled:
     typeof value?.petAnimationEnabled === 'boolean'
       ? value.petAnimationEnabled
       : defaultAppearanceConfig.petAnimationEnabled,
-  petShowHome: typeof value?.petShowHome === 'boolean' ? value.petShowHome : defaultAppearanceConfig.petShowHome,
-  petShowChat: typeof value?.petShowChat === 'boolean' ? value.petShowChat : defaultAppearanceConfig.petShowChat,
   petVariety: isPetVariety(value?.petVariety) ? value.petVariety : defaultAppearanceConfig.petVariety,
   petSpeed: isPetSpeed(value?.petSpeed) ? value.petSpeed : defaultAppearanceConfig.petSpeed,
   petRestAfter: isPetRestAfter(value?.petRestAfter) ? value.petRestAfter : defaultAppearanceConfig.petRestAfter,
@@ -152,8 +154,6 @@ export const applyAppearanceConfig = (
   if (root.dataset) {
     root.dataset.coworkPet = appearance.petEnabled ? 'on' : 'off';
     root.dataset.coworkPetMotion = appearance.petAnimationEnabled ? 'on' : 'off';
-    root.dataset.coworkPetHome = appearance.petShowHome ? 'on' : 'off';
-    root.dataset.coworkPetChat = appearance.petShowChat ? 'on' : 'off';
     root.dataset.coworkPetVariety = appearance.petVariety;
     root.dataset.coworkPetSpeed = appearance.petSpeed;
     root.dataset.coworkPetRestAfter = appearance.petRestAfter;

@@ -48,6 +48,22 @@ describe('appearance config persistence', () => {
     expect(service.getConfig().appearance).toEqual(defaultAppearanceConfig);
   });
 
+  test('preserves legacy hidden pets and persists a later explicit enable without retired flags', async () => {
+    storeMocks.getItem.mockResolvedValue({
+      ...defaultConfig,
+      appearance: { ...defaultAppearanceConfig, petShowHome: false, petShowChat: false },
+    });
+    const service = new ConfigService();
+    await service.init();
+    expect(service.getConfig().appearance.petEnabled).toBe(false);
+
+    await service.updateConfig({
+      appearance: { ...service.getConfig().appearance, petEnabled: true },
+    });
+    expect(storeMocks.patchAppConfig).toHaveBeenCalledWith({ appearance: defaultAppearanceConfig });
+    expect(service.getConfig().appearance).toEqual(defaultAppearanceConfig);
+  });
+
   test('loads a legacy stored config without voice settings', async () => {
     const legacyConfig = { ...defaultConfig } as Partial<AppConfig>;
     delete legacyConfig.voice;

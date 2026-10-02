@@ -216,8 +216,6 @@ const AppearanceSettingsTab: React.FC<AppearanceSettingsTabProps> = ({ value, on
                 messageLayout: value.messageLayout,
                 petEnabled: value.petEnabled,
                 petAnimationEnabled: value.petAnimationEnabled,
-                petShowHome: value.petShowHome,
-                petShowChat: value.petShowChat,
                 petVariety: value.petVariety,
                 petSpeed: value.petSpeed,
                 petRestAfter: value.petRestAfter,
