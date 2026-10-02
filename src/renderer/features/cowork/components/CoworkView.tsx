@@ -873,6 +873,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     prompt: string,
     attachments?: CoworkAttachmentPayload[],
     gatewayPrompt?: string,
+    worktree?: boolean,
   ): Promise<boolean | void> => {
     if (!ensureOpenClawReadyForSubmit()) return false;
     // Prevent duplicate submissions
@@ -991,6 +992,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
           clientTurnId,
           startedAt: now,
           planMode: startInPlanMode,
+          worktree: worktree === true,
         },
         {
           beforeSessionSelected: session => {
@@ -2692,6 +2694,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               }
               onAssistantMessageFork={
                 sessionTranscriptMutation === null &&
+                !currentSession.nativeSessionKey &&
                 !collaborationRooms.some(room =>
                   room.members.some(member => member.sessionId === currentSession.id),
                 ) &&

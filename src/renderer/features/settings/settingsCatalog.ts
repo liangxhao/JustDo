@@ -7,6 +7,7 @@ export type SettingsTab =
   | 'model'
   | 'agents'
   | 'runtime'
+  | 'worktrees'
   | 'security'
   | 'browser'
   | 'integrations'
@@ -89,6 +90,14 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     group: 'intelligence',
     wide: false,
     keywords: [],
+  },
+  {
+    id: 'worktrees',
+    label: 'worktreeSettingsTitle',
+    description: 'worktreeSettingsDescription',
+    group: 'intelligence',
+    wide: true,
+    keywords: ['worktreeStorageRoot', 'worktreeAcceleration', 'worktreeShowCheckbox'],
   },
   {
     id: 'security',

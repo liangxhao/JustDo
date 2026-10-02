@@ -1442,7 +1442,10 @@ if (multicaBridgeArgv) {
   });
 
   registerOpenClawEngineHandlers({
+    runConfigMutationExclusive: operation =>
+      getOpenClawConfigSyncService().runConfigMutationExclusive(operation),
     getManager: getOpenClawEngineManager,
+    getCoworkStore,
     requestGateway: <T>(method: string, params?: unknown) =>
       getCoworkEngineService().requestGateway<T>(method, params),
     reconnectGatewayClient: () => getCoworkEngineService().reconnectGatewayClient(),
@@ -1520,6 +1523,8 @@ if (multicaBridgeArgv) {
     getCoworkEngineRouter,
     waitForConfigUpdates: waitForCoworkConfigUpdates,
     getEngineNotReadyResponse,
+    requestGateway: <T>(method: string, params?: unknown) =>
+      getCoworkEngineService().requestGateway<T>(method, params),
   });
 
   registerCoworkSessionHandlers({

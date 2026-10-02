@@ -34,6 +34,7 @@ interface CoworkHomeWorkspaceProps {
     prompt: string,
     attachments?: CoworkAttachmentPayload[],
     gatewayPrompt?: string,
+    worktree?: boolean,
   ) => Promise<boolean | void>;
   handleStopSession: () => Promise<boolean>;
   isStreaming: boolean;

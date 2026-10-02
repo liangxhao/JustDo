@@ -14,6 +14,19 @@ const summary = (id: string, agentId: string) => ({
 });
 
 describe('searchCoworkSessionMessages', () => {
+  test('searches persisted native worktree keys and maps results to product session IDs', async () => {
+    const key = 'agent:main:subagent:child';
+    const store = {
+      listSessions: () => [{ ...summary('local-child', 'main'), nativeSessionKey: key }],
+    } as unknown as CoworkStore;
+    const requestGateway = vi.fn(async () => ({
+      results: [{ sessionKey: key, sessionId: 'gateway-child', messageId: 'message-1', role: 'assistant', timestamp: 100,
+        snippet: 'native result', score: 1 }],
+    }));
+    const result = await searchCoworkSessionMessages({ query: 'native', store, requestGateway });
+    expect(requestGateway).toHaveBeenCalledWith('sessions.search', expect.objectContaining({ sessionKeys: [key] }));
+    expect(result.matches).toMatchObject([{ sessionId: 'local-child' }]);
+  });
   test('searches each agent scope and maps Gateway keys back to local session ids', async () => {
     const store = {
       listSessions: () => [summary('main-session', 'main'), summary('work-session', 'Worker_ONE')],

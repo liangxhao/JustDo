@@ -41,6 +41,159 @@ beforeEach(() => {
   mocks.handle.mockReset();
 });
 
+test.each([
+  { nativeMode: undefined, localMode: 'ask' },
+  { nativeMode: 'guarded', localMode: 'ask' },
+  { nativeMode: 'workspace', localMode: 'auto' },
+  { nativeMode: 'full', localMode: 'full' },
+])('adopts a Gateway worktree child once with $nativeMode permission and its native key', async ({ nativeMode, localMode }) => {
+  const parent = { id: 'parent', agentId: 'main', executionMode: 'local', permissionMode: 'full' };
+  const sessions = new Map<string, Record<string, unknown>>([['parent', parent]]);
+  const store = {
+    listSessions: () => [...sessions.values()],
+    getSession: (id: string) => sessions.get(id) ?? null,
+    getSessionByNativeKey: (key: string) =>
+      [...sessions.values()].find(session => session.nativeSessionKey === key) ?? null,
+    adoptNativeSession: vi.fn(
+      (key: string, parent: { id: string }, _title: string, cwd: string) => {
+        const child = { id: 'child', cwd, nativeSessionKey: key, nativeParentSessionId: parent.id };
+        sessions.set('child', child);
+        return child;
+      },
+    ),
+  };
+  const childKey = 'agent:main:subagent:child';
+  const requestGateway = vi.fn(async (method: string) =>
+    method === 'sessions.list'
+      ? {
+          sessions: [
+            { key: childKey, parentSessionKey: 'agent:main:justdo:parent', worktree: { id: 'tree' } },
+          ],
+        }
+      : {
+          session: {
+            spawnedCwd: 'E:\\repo\\child',
+            label: 'Isolated task',
+            worktree: { id: 'tree' },
+            permissionMode: nativeMode,
+          },
+        },
+  );
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => store as unknown as CoworkStore,
+    getCoworkEngineRouter: () => ({}) as CoworkEngineRouter,
+    setSessionPermissionMode: vi.fn(),
+    requestGateway: requestGateway as <T>(method: string, params?: unknown) => Promise<T>,
+  });
+  const handler = mocks.handle.mock.calls.find(
+    ([name]) => name === 'cowork:session:list',
+  )![1] as IpcHandler;
+  await handler(null);
+  await handler(null);
+  expect(requestGateway.mock.calls).toContainEqual(['sessions.describe', { key: childKey }]);
+  expect(store.adoptNativeSession).toHaveBeenCalledOnce();
+  expect(store.adoptNativeSession).toHaveBeenCalledWith(
+    childKey,
+    parent,
+    'Isolated task',
+    'E:\\repo\\child',
+    localMode,
+  );
+});
+
+test('does not broaden an unsupported native read-only worktree permission during adoption', async () => {
+  const parent = { id: 'parent', agentId: 'main', permissionMode: 'full' };
+  const adoptNativeSession = vi.fn();
+  const store = {
+    listSessions: () => [parent], getSession: () => parent,
+    getSessionByNativeKey: () => null, adoptNativeSession,
+  };
+  const requestGateway = vi.fn(async (method: string) => method === 'sessions.list'
+    ? { sessions: [{ key: 'agent:main:subagent:child', parentSessionKey: 'agent:main:justdo:parent', worktree: { id: 'tree' } }] }
+    : { session: { worktree: { id: 'tree' }, spawnedCwd: 'E:\\repo\\child', permissionMode: 'read-only' } });
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => store as unknown as CoworkStore,
+    getCoworkEngineRouter: () => ({}) as CoworkEngineRouter,
+    setSessionPermissionMode: vi.fn(),
+    requestGateway: requestGateway as <T>(method: string, params?: unknown) => Promise<T>,
+  });
+  const handler = mocks.handle.mock.calls.find(([name]) => name === 'cowork:session:list')![1] as IpcHandler;
+  await handler(null);
+  expect(adoptNativeSession).not.toHaveBeenCalled();
+});
+
+test.each([CoworkSessionCopyIpc.Copy, CoworkSessionForkIpc.Fork])(
+  'rejects %s for a worktree source instead of sharing its checkout without ownership',
+  async channel => {
+    const createSession = vi.fn();
+    const requestGateway = vi.fn();
+    const store = {
+      getSession: () => ({ id: 'child', nativeSessionKey: 'agent:main:subagent:child', cwd: 'E:\\worktree' }),
+      createSession,
+    };
+    registerCoworkSessionHandlers({
+      getCoworkStore: () => store as unknown as CoworkStore,
+      getCoworkEngineRouter: () => ({}) as CoworkEngineRouter,
+      setSessionPermissionMode: vi.fn(),
+      requestGateway,
+    });
+    const handler = mocks.handle.mock.calls.find(([name]) => name === channel)![1] as IpcHandler;
+    await expect(handler(null, { sessionId: 'child', title: 'Copy', entryId: 'entry-1' }))
+      .resolves.toMatchObject({ success: false });
+    expect(createSession).not.toHaveBeenCalled();
+    expect(requestGateway).not.toHaveBeenCalled();
+  },
+);
+
+test('keeps a native session visible when Gateway preserves its worktree on deletion', async () => {
+  const nativeSessionKey = 'agent:main:subagent:child';
+  const store = {
+    hasNativeChildSessions: () => false,
+    getSession: () => ({ id: 'child', agentId: 'main', cwd: 'E:\\repo\\child', nativeSessionKey }),
+    listSessions: () => [{ id: 'child' }],
+    listPlanHandoffs: () => [],
+    deleteSession: vi.fn(),
+  };
+  const requestGateway = vi.fn().mockResolvedValue({ worktreePreserved: { id: 'tree-1' } });
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => store as unknown as CoworkStore,
+    getCoworkEngineRouter: () => ({ stopSession: vi.fn() }) as unknown as CoworkEngineRouter,
+    setSessionPermissionMode: vi.fn(),
+    requestGateway,
+  });
+  const handler = mocks.handle.mock.calls.find(
+    ([name]) => name === 'cowork:session:delete',
+  )![1] as IpcHandler;
+  await expect(handler(null, 'child')).resolves.toMatchObject({ success: false });
+  expect(requestGateway).toHaveBeenCalledWith('sessions.delete', {
+    key: nativeSessionKey,
+    deleteTranscript: true,
+  });
+  expect(store.deleteSession).not.toHaveBeenCalled();
+});
+
+test.each(['', '\\packages\\api'])('does not delete an owned worktree while another conversation uses its workspace (%s)', async suffix => {
+  const store = {
+    hasNativeChildSessions: () => false,
+    getSession: (id: string) => ({ id, cwd: `E:\\repo\\child${id === 'other' ? suffix : ''}`,
+      ...(id === 'child' ? { nativeSessionKey: 'agent:main:subagent:child' } : {}),
+    }),
+    listSessions: () => [{ id: 'child' }, { id: 'other' }],
+    deleteSession: vi.fn(),
+  };
+  const requestGateway = vi.fn();
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => store as unknown as CoworkStore,
+    getCoworkEngineRouter: () => ({ stopSession: vi.fn() }) as unknown as CoworkEngineRouter,
+    setSessionPermissionMode: vi.fn(),
+    requestGateway,
+  });
+  const handler = mocks.handle.mock.calls.find(([name]) => name === 'cowork:session:delete')![1] as IpcHandler;
+  await expect(handler(null, 'child')).resolves.toMatchObject({ success: false });
+  expect(requestGateway).not.toHaveBeenCalled();
+  expect(store.deleteSession).not.toHaveBeenCalled();
+});
+
 test('reports successful task deletions even when another task needs a retry', async () => {
   const deleteTask = vi.fn(async (id: string) => {
     if (id === 'failed') throw new Error('collaborationDeletePending');

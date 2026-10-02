@@ -160,6 +160,11 @@ export class SqliteStore {
     `);
     this.ensureColumn('cowork_sessions', 'permission_mode', 'TEXT');
     this.ensureColumn('cowork_sessions', 'model_ref', 'TEXT');
+    this.ensureColumn('cowork_sessions', 'native_session_key', 'TEXT');
+    this.ensureColumn('cowork_sessions', 'native_parent_session_id', 'TEXT');
+    this.db.exec(
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_cowork_native_session_key ON cowork_sessions(native_session_key) WHERE native_session_key IS NOT NULL',
+    );
     this.ensureColumn(
       'cowork_sessions',
       'handoff_from_session_id',

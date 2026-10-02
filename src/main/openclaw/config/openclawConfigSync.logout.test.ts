@@ -28,6 +28,30 @@ vi.mock('electron', () => ({
 
 const temporaryDirectories: string[] = [];
 
+test.each(['full', 'minimal'])('%s sync preserves Gateway-owned worktree settings across startup and auth changes', mode => {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-worktree-sync-'));
+  temporaryDirectories.push(stateDir);
+  const configPath = path.join(stateDir, 'openclaw.json');
+  const root = path.join(stateDir, '工作目录 with spaces');
+  fs.writeFileSync(configPath, JSON.stringify({ worktreeRoot: root, worktreeAcceleration: false }));
+  const appConfig = mode === 'full' ? {
+    model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
+    providers: { 'custom-provider': { enabled: true, apiKey: 'chat-test-key', baseUrl: 'https://custom.example.test/v1', apiFormat: 'openai', models: [{ id: 'custom-model' }] } },
+  } : {};
+  setStoreGetter(() => ({ get: () => appConfig }) as never);
+  const sync = new OpenClawConfigSync({
+    engineManager: { getConfigPath: () => configPath, getStateDir: () => stateDir, getDesiredVersion: () => '2026.9.6' },
+    getCoworkConfig: () => ({ workingDirectory: '', executionMode: 'local', agentEngine: 'openclaw' }),
+    getAgents: () => [],
+  } as never);
+  for (const reason of ['startup', 'app-config-change', BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout]) {
+    expect(sync.sync(reason).ok).toBe(true);
+    expect(JSON.parse(fs.readFileSync(configPath, 'utf8'))).toMatchObject({
+      worktreeRoot: root, worktreeAcceleration: false,
+    });
+  }
+});
+
 test('allows users to toggle agent-team independently of required extensions', () => {
   expect(listManagedOpenClawPluginIds()).not.toContain('agent-team');
 });

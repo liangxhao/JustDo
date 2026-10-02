@@ -4,6 +4,7 @@ import { EventEmitter } from 'events';
 import path from 'path';
 
 import { createPropertyContext } from '../../../shared/app/propertyContext';
+import { t } from '../../core/i18n';
 import {
   areWorkspacePathsEquivalent,
   CLIENT_TIMEOUT_GRACE_MS,
@@ -354,7 +355,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (!session) throw new Error(`Session ${sessionId} not found`);
 
     const agentId = options.agentId || session.agentId || DEFAULT_MANAGED_AGENT_ID;
-    return this.prepareSessionKey(sessionId, this.toSessionKey(sessionId, agentId), options);
+    return this.prepareSessionKey(sessionId, session.nativeSessionKey || this.toSessionKey(sessionId, agentId), options);
   }
 
   setContinuationPermissionPreparer(preparer: ((sessionId: string) => Promise<void>) | null): void {
@@ -377,6 +378,58 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const nativePermissionMode = toOpenClawSessionPermissionMode(permissionMode);
 
     await this.ensureGatewayClientReady();
+    if (session.nativeSessionKey) {
+      if (sessionKey !== session.nativeSessionKey) {
+        throw new Error('The native session key does not match its persisted binding.');
+      }
+      const described = await this.requireGatewayClient().request<{
+        session?: {
+          sessionId?: unknown;
+          sessionRoot?: unknown;
+          spawnedCwd?: unknown;
+          spawnedWorkspaceDir?: unknown;
+          worktree?: unknown;
+          permissionMode?: unknown;
+        } | null;
+      }>('sessions.describe', { key: sessionKey });
+      const entry = described.session;
+      const nativeRoot = entry?.sessionRoot ?? entry?.spawnedCwd ?? entry?.spawnedWorkspaceDir;
+      const worktreeId = (entry?.worktree as { id?: unknown } | null | undefined)?.id;
+      if (
+        typeof entry?.sessionId !== 'string' || !entry.sessionId.trim() ||
+        !entry.worktree ||
+        typeof entry.worktree !== 'object' ||
+        typeof worktreeId !== 'string' || !worktreeId ||
+        typeof nativeRoot !== 'string' || !path.isAbsolute(nativeRoot) ||
+        !areWorkspacePathsEquivalent(nativeRoot, workspaceRoot)
+      ) {
+        throw new Error('The native worktree session is unavailable or its workspace changed.');
+      }
+      if (entry.permissionMode !== nativePermissionMode) {
+        const patched = await this.requireGatewayClient().request<{
+          key?: unknown;
+          entry?: Record<string, unknown>;
+        }>('sessions.patch', {
+          key: sessionKey,
+          permissionMode: nativePermissionMode,
+          expectedSessionId: entry.sessionId,
+          expectedPermissionMode: entry.permissionMode ?? null,
+        });
+        const patchedWorktreeId = (patched.entry?.worktree as { id?: unknown } | null | undefined)?.id;
+        if (
+          patched.key !== sessionKey || patched.entry?.sessionId !== entry.sessionId ||
+          patchedWorktreeId !== worktreeId
+        ) {
+          throw new Error(t('worktreePermissionIdentityChanged'));
+        }
+        const patchedRoot = patched.entry.sessionRoot ?? patched.entry.spawnedCwd ?? patched.entry.spawnedWorkspaceDir;
+        this.assertPreparedSessionEntry(
+          { ...patched.entry, sessionRoot: patchedRoot }, nativePermissionMode, workspaceRoot,
+        );
+      }
+      this.rememberSessionKey(sessionId, sessionKey);
+      return { sessionKey, gatewaySessionId: entry.sessionId };
+    }
     const result = await this.requireGatewayClient().request<{
       key?: unknown;
       sessionId?: unknown;
@@ -1927,6 +1980,17 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const exact = this.sessionIdBySessionKey.get(sessionKey);
     if (exact) return exact;
 
+    const nativeSession = this.store.getSessionByNativeKey?.(sessionKey);
+    if (nativeSession) {
+      const agentId = nativeSession.agentId?.trim() || DEFAULT_MANAGED_AGENT_ID;
+      if (
+        nativeSession.nativeSessionKey !== sessionKey ||
+        !sessionKey.startsWith(`agent:${agentId}:`)
+      ) return null;
+      this.rememberSessionKey(nativeSession.id, sessionKey);
+      return nativeSession.id;
+    }
+
     // Managed keys embed the local session ID. Recover the mapping after a
     // reconnect or other in-memory cache gap so a terminal lifecycle event
     // cannot strand an otherwise active Goal. The store and agent checks keep
@@ -1966,6 +2030,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   private toSessionKey(sessionId: string, agentId?: string): string {
+    const nativeSessionKey = this.store.getSession(sessionId)?.nativeSessionKey;
+    if (nativeSessionKey) return nativeSessionKey;
     return buildManagedSessionKey(sessionId, agentId);
   }
 
@@ -2220,11 +2286,16 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       if (id === sessionId) keys.push(key);
     }
     const session = this.store.getSession(sessionId);
+    if (session?.nativeSessionKey && !keys.includes(session.nativeSessionKey)) {
+      keys.push(session.nativeSessionKey);
+    }
     if (session?.external?.sessionKey && !keys.includes(session.external.sessionKey)) {
       keys.push(session.external.sessionKey);
     }
-    const managedKey = buildManagedSessionKey(sessionId, session?.agentId);
-    if (!keys.includes(managedKey)) keys.push(managedKey);
+    if (!session?.nativeSessionKey) {
+      const managedKey = buildManagedSessionKey(sessionId, session?.agentId);
+      if (!keys.includes(managedKey)) keys.push(managedKey);
+    }
     return keys;
   }
 

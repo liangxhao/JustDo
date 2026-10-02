@@ -192,6 +192,7 @@ interface CoworkPromptInputProps {
     prompt: string,
     attachments?: CoworkAttachmentPayload[],
     gatewayPrompt?: string,
+    worktree?: boolean,
   ) => boolean | void | Promise<boolean | void>;
   onStop?: () => boolean | void | Promise<boolean | void>;
   /** Stable cancellation identity while a temporary session becomes canonical. */
@@ -282,6 +283,15 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const messageQuotes = useSelector(
       (state: RootState) => state.cowork.draftMessageQuotes?.[draftKey] ?? EMPTY_MESSAGE_QUOTES,
     );
+    const showWorktreeCheckbox = useSelector(
+      (state: RootState) => state.cowork.config.showWorktreeCheckbox === true,
+    );
+    const [useWorktree, setUseWorktree] = useState(false);
+    const canSelectWorktree =
+      showWorktreeCheckbox && showFolderSelector && !sessionId && !remoteManaged && !isSideChat;
+    useEffect(() => {
+      if (!canSelectWorktree) setUseWorktree(false);
+    }, [canSelectWorktree]);
     const onSubmit = useCallback<CoworkPromptInputProps['onSubmit']>(
       async (prompt, attachments, gatewayPrompt) => {
         const submittedQuotes = [...submittedMessageQuotes(prompt, messageQuotes, isSideChat)];
@@ -295,11 +305,12 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 ? [...(attachments ?? []), ...submittedQuotes.map(messageQuoteAttachment)]
                 : attachments,
               quotedGatewayPrompt(prompt, gatewayPrompt, submittedQuotes, isSideChat),
+              canSelectWorktree && useWorktree,
             ),
           ids => dispatch(removeDraftMessageQuotes({ draftKey, ids })),
         );
       },
-      [messageQuotes, submitPrompt, dispatch, draftKey, isSideChat],
+      [messageQuotes, submitPrompt, dispatch, draftKey, isSideChat, canSelectWorktree, useWorktree],
     );
     const supportsAttachments = !remoteManaged && !isSideChat;
     const supportsSlashCommands = !remoteManaged && !isSideChat;
@@ -2577,6 +2588,21 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   anchorRef={folderButtonRef as React.RefObject<HTMLElement>}
                   currentFolder={workingDirectory}
                 />
+                {canSelectWorktree && (
+                  <label
+                    className="ml-auto flex cursor-pointer items-center gap-1.5 px-2 text-xs text-secondary"
+                    title={i18nService.t('worktreeComposerDescription')}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={useWorktree}
+                      disabled={disabled || isStreaming}
+                      onChange={event => setUseWorktree(event.target.checked)}
+                      className="h-3.5 w-3.5 accent-primary"
+                    />
+                    {i18nService.t('worktreeComposerLabel')}
+                  </label>
+                )}
                 {showFolderRequiredWarning && (
                   <div className="absolute left-0 top-full mt-1 px-2 py-1 rounded-md bg-surface-raised text-warning text-xs whitespace-nowrap animate-fade-in-up shadow-subtle z-10">
                     {i18nService.t('coworkSelectFolderFirst')}

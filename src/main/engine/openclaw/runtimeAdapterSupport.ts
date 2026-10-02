@@ -144,6 +144,19 @@ export const normalizeWorkspacePath = (workspace: string): string => {
 export const areWorkspacePathsEquivalent = (left: string, right: string): boolean =>
   normalizeWorkspacePath(left) === normalizeWorkspacePath(right);
 
+export const isWorkspacePathWithin = (workspace: string, root: string): boolean => {
+  const canonicalWorkspace = normalizeWorkspacePath(workspace);
+  const canonicalRoot = normalizeWorkspacePath(root);
+  // For deletion guards, conservatively protect case-only aliases on Windows.
+  const relative = path.relative(
+    process.platform === 'win32' ? canonicalRoot.toLowerCase() : canonicalRoot,
+    process.platform === 'win32' ? canonicalWorkspace.toLowerCase() : canonicalWorkspace,
+  );
+  return relative === '' || (
+    relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)
+  );
+};
+
 export class HistorySnapshotChangedError extends Error {
   constructor() {
     super('chat.history changed while its pages were being read');

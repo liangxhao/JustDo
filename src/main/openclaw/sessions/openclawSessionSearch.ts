@@ -127,7 +127,7 @@ export const searchCoworkSessionMessages = async ({
 
   for (const session of sessions) {
     const agentId = normalizeOpenClawAgentId(session.agentId ?? 'main');
-    const sessionKey = buildManagedSessionKey(session.id, agentId);
+    const sessionKey = session.nativeSessionKey || buildManagedSessionKey(session.id, agentId);
     localSessionIdByKey.set(sessionKey, session.id);
     const keys = keysByAgent.get(agentId) ?? [];
     keys.push(sessionKey);

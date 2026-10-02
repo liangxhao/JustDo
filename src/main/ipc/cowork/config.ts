@@ -303,6 +303,7 @@ export const registerCoworkConfigHandlers = ({
       _event,
       config: {
         workingDirectory?: string;
+        showWorktreeCheckbox?: boolean;
         allowMainAgentSwitch?: boolean;
         executionMode?: 'auto' | 'local' | 'sandbox';
         sandboxNetworkEnabled?: boolean;
@@ -316,6 +317,12 @@ export const registerCoworkConfigHandlers = ({
         try {
           if (!config || typeof config !== 'object' || Array.isArray(config)) {
             return { success: false, error: 'Invalid cowork configuration.' };
+          }
+          if (
+            config.showWorktreeCheckbox !== undefined &&
+            typeof config.showWorktreeCheckbox !== 'boolean'
+          ) {
+            return { success: false, error: 'Invalid worktree checkbox setting.' };
           }
           if (
             config.allowMainAgentSwitch !== undefined &&
@@ -375,6 +382,7 @@ export const registerCoworkConfigHandlers = ({
               : normalizeMaxRetainedDisplayTabs(config.maxRetainedDisplayTabs);
           const normalized: Parameters<CoworkStore['setConfig']>[0] = {
             workingDirectory: config.workingDirectory,
+            showWorktreeCheckbox: config.showWorktreeCheckbox,
             allowMainAgentSwitch: config.allowMainAgentSwitch,
             executionMode,
             sandboxNetworkEnabled: config.sandboxNetworkEnabled,

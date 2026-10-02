@@ -1,3 +1,4 @@
+import path from 'path';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { SessionStartIpc } from '../../../shared/cowork/sessionStart';
@@ -29,6 +30,76 @@ const session = (permissionMode: 'ask' | 'auto' | 'full'): CoworkSession => ({
   agentId: 'main',
   createdAt: 1,
   updatedAt: 2,
+});
+
+describe('worktree first-message admission', () => {
+  const setup = () => {
+    const created = session('ask');
+    const root = path.resolve('native-worktrees', 'task-1');
+    let resolveCreation!: (value: unknown) => void;
+    const nativeCreation = new Promise(resolve => { resolveCreation = resolve; });
+    const requestGateway = vi.fn((method: string) =>
+      method === 'sessions.create'
+        ? nativeCreation
+        : Promise.resolve({ ok: true, deleted: true }),
+    );
+    const store = {
+      getConfig: () => ({ workingDirectory: created.cwd, permissionMode: 'ask' }),
+      getAgent: () => ({ enabled: true, model: '' }),
+      createSession: () => created,
+      getSession: () => created,
+      getSessionRunByClientTurnId: () => undefined,
+      updateSession: vi.fn((_id: string, changes: Partial<CoworkSession>) => Object.assign(created, changes)),
+      bindNativeSession: vi.fn((_id: string, key: string) => { created.nativeSessionKey = key; }),
+      deleteSession: vi.fn(),
+    };
+    const startSession = vi.fn(async (_id: string, _prompt: string, options: { onAccepted: () => void }) => {
+      options.onAccepted();
+    });
+    registerCoworkSessionExecutionHandlers({
+      ensureEngineRunning: vi.fn().mockResolvedValue({ phase: 'running' }),
+      getCoworkStore: () => store as unknown as CoworkStore,
+      getCoworkEngineRouter: () => ({ startSession }) as unknown as CoworkEngineRouter,
+      waitForConfigUpdates: async () => {},
+      getEngineNotReadyResponse: vi.fn(),
+      requestGateway: requestGateway as <T>(method: string, params?: unknown) => Promise<T>,
+    });
+    const resolve = () => resolveCreation({
+      key: 'agent:main:justdo:session-1', sessionId: 'native-1',
+      entry: { sessionRoot: root, permissionMode: 'guarded', worktree: { id: 'tree-1' } },
+      worktree: { id: 'tree-1', path: root },
+    });
+    const start = () => handlers.get('cowork:session:start')!({}, {
+      prompt: 'work independently', worktree: true, clientTurnId: 'worktree-client-1',
+    }) as Promise<unknown>;
+    return { start, resolve, requestGateway, store, startSession, root };
+  };
+
+  test('waits for worktree preparation and sends the first message in the confirmed checkout', async () => {
+    const fixture = setup();
+    const pending = fixture.start();
+    await vi.waitFor(() => expect(fixture.requestGateway).toHaveBeenCalled());
+    expect(fixture.startSession).not.toHaveBeenCalled();
+    fixture.resolve();
+    await expect(pending).resolves.toMatchObject({ success: true, session: { cwd: fixture.root } });
+    expect(fixture.startSession).toHaveBeenCalledWith(
+      'session-1', 'work independently', expect.objectContaining({ workspaceRoot: fixture.root }),
+    );
+  });
+
+  test('cleans a cancelled native creation without submitting a message', async () => {
+    const fixture = setup();
+    const pending = fixture.start();
+    await vi.waitFor(() => expect(fixture.requestGateway).toHaveBeenCalled());
+    await handlers.get(SessionStartIpc.Cancel)!({}, { clientTurnId: 'worktree-client-1' });
+    fixture.resolve();
+    await expect(pending).resolves.toMatchObject({ success: false, cancelled: true });
+    expect(fixture.requestGateway).toHaveBeenCalledWith('sessions.delete', {
+      key: 'agent:main:justdo:session-1', deleteTranscript: true,
+    });
+    expect(fixture.store.deleteSession).toHaveBeenCalledWith('session-1');
+    expect(fixture.startSession).not.toHaveBeenCalled();
+  });
 });
 
 describe('initial admission cancellation', () => {

@@ -687,6 +687,12 @@ export class CoworkService {
       this.temporarySessionPermissionModes.delete(pendingTemporarySessionId);
     }
 
+    if (options.worktree) {
+      // Failed or cancelled preparation can retain native recovery evidence.
+      // Refresh navigation so that entry remains reachable from the session list.
+      await this.loadSessions().catch(() => undefined);
+    }
+
     if (result.engineStatus) {
       this.notifyOpenClawStatus(result.engineStatus);
     }

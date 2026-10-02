@@ -14,8 +14,18 @@ import {
   OpenClawSessionMigrationIpc,
 } from '../../../shared/openclaw/sessionMigration';
 import { SystemPromptReplacementIpc } from '../../../shared/openclaw/systemPromptReplacements';
+import {
+  type ManagedWorktree,
+  type WorktreeCleanResult,
+  WorktreeIpc,
+  type WorktreeRemoveResult,
+  type WorktreeResult,
+} from '../../../shared/openclaw/worktrees';
 import { PRODUCT_NAME } from '../../../shared/productMetadata';
 import { JUSTDO_MANAGED_PYTHON_USER_BASE_ENV } from '../../core/runtime/pythonRuntime';
+import type { CoworkStore } from '../../data/coworkStore';
+import { isWorkspacePathWithin } from '../../engine/openclaw/runtimeAdapterSupport';
+import { WorktreeSettingsService } from '../../openclaw/config/worktreeSettingsService';
 import type {
   OpenClawEngineManager,
   OpenClawEngineStatus,
@@ -23,8 +33,10 @@ import type {
 
 interface OpenClawEngineHandlerDependencies {
   getManager: () => OpenClawEngineManager;
+  getCoworkStore: () => CoworkStore;
   requestGateway: <T>(method: string, params?: unknown) => Promise<T>;
   reconnectGatewayClient: () => Promise<void>;
+  runConfigMutationExclusive: <T>(operation: () => Promise<T>) => Promise<T>;
 }
 
 const GATEWAY_RESTART_REQUEST_METHOD = 'gateway.restart.request';
@@ -234,7 +246,7 @@ export const restartOpenClawGatewayForUser = async ({
   getManager,
   requestGateway,
   reconnectGatewayClient,
-}: OpenClawEngineHandlerDependencies): Promise<OpenClawEngineStatus> => {
+}: Pick<OpenClawEngineHandlerDependencies, 'getManager' | 'requestGateway' | 'reconnectGatewayClient'>): Promise<OpenClawEngineStatus> => {
   const manager = getManager();
   const status = manager.getStatus();
   if (status.phase === 'starting') {
@@ -612,8 +624,10 @@ const launchTerminal = async (options: {
 
 export const registerOpenClawEngineHandlers = ({
   getManager,
+  getCoworkStore,
   requestGateway,
   reconnectGatewayClient,
+  runConfigMutationExclusive,
 }: OpenClawEngineHandlerDependencies): void => {
   let restartGatewayPromise: Promise<OpenClawEngineStatus> | null = null;
 
@@ -680,6 +694,63 @@ export const registerOpenClawEngineHandlers = ({
       };
     }
   });
+
+  const worktreeResult = async <T>(operation: () => Promise<T>): Promise<WorktreeResult<T>> => {
+    try {
+      return { success: true, value: await operation() };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  };
+  const worktreeSettings = new WorktreeSettingsService(requestGateway, () => getManager().getStateDir());
+  ipcMain.handle(WorktreeIpc.Settings, () => worktreeSettings.getSettings());
+  ipcMain.handle(WorktreeIpc.SaveSettings, (_event, input: unknown) =>
+    runConfigMutationExclusive(() => worktreeSettings.saveSettings(input)),
+  );
+  const worktreeId = (value: unknown): string => {
+    if (typeof value !== 'string' || !value.trim() || value.length > 256) {
+      throw new Error('Invalid worktree ID');
+    }
+    return value.trim();
+  };
+  ipcMain.handle(WorktreeIpc.List, () =>
+    worktreeResult(async () => {
+      const response = await requestGateway<{ worktrees: ManagedWorktree[] }>('worktrees.list', {});
+      if (!Array.isArray(response.worktrees)) throw new Error('Invalid worktree list');
+      return response.worktrees;
+    }),
+  );
+  ipcMain.handle(WorktreeIpc.Restore, (_event, id: unknown) =>
+    worktreeResult(async () => {
+      await requestGateway('worktrees.restore', { id: worktreeId(id) });
+      return true;
+    }),
+  );
+  ipcMain.handle(WorktreeIpc.Remove, (_event, id: unknown) =>
+    worktreeResult(async () => {
+      const targetId = worktreeId(id);
+      const response = await requestGateway<{ worktrees: ManagedWorktree[] }>('worktrees.list', {});
+      const record = response.worktrees.find(item => item.id === targetId);
+      if (!record) throw new Error('Worktree not found. Refresh the list.');
+      const store = getCoworkStore();
+      if (
+        store
+          .listSessions()
+          .some(
+            summary => {
+              const session = store.getSession(summary.id);
+              return session && isWorkspacePathWithin(session.cwd, record.path);
+            },
+          )
+      ) {
+        throw new Error('Delete the linked conversation before removing this worktree.');
+      }
+      return requestGateway<WorktreeRemoveResult>('worktrees.remove', { id: targetId });
+    }),
+  );
+  ipcMain.handle(WorktreeIpc.Clean, () =>
+    worktreeResult(() => requestGateway<WorktreeCleanResult>('worktrees.gc', {})),
+  );
 
   ipcMain.handle(SystemPromptReplacementIpc.GetRules, () => {
     try {

@@ -186,6 +186,63 @@ test('prepares the native OpenClaw session root and permission mode', async () =
   });
 });
 
+test('continues an adopted worktree session without creating a replacement', async () => {
+  const { store, session } = createEmptyStore();
+  const nativeKey = 'agent:main:subagent:child';
+  Object.assign(session, { nativeSessionKey: nativeKey });
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const request = vi.fn(async () => ({
+    session: { sessionId: 'native-child-id', spawnedCwd: session.cwd, permissionMode: 'full', worktree: { id: 'tree-1' } },
+  }));
+  const internals = getSessionPreparationInternals(adapter);
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+
+  await expect(adapter.prepareSession(session.id)).resolves.toEqual({
+    sessionKey: nativeKey,
+    gatewaySessionId: 'native-child-id',
+  });
+  expect(request).toHaveBeenCalledWith('sessions.describe', { key: nativeKey });
+  expect(request).not.toHaveBeenCalledWith('sessions.create', expect.anything());
+});
+
+test.each([
+  { mode: 'ask' as const, nativeMode: 'guarded', rootKey: 'sessionRoot' },
+  { mode: 'auto' as const, nativeMode: 'workspace', rootKey: 'spawnedCwd' },
+])('synchronizes an existing worktree session to $mode before preparing it', async ({ mode, nativeMode, rootKey }) => {
+  const { store, session } = createEmptyStore();
+  const key = 'agent:main:subagent:child';
+  Object.assign(session, { nativeSessionKey: key });
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const request = vi.fn(async (method: string) => method === 'sessions.describe'
+    ? { session: { sessionId: 'native-child-id', [rootKey]: session.cwd, permissionMode: 'full', worktree: { id: 'tree-1' } } }
+    : { key, entry: { sessionId: 'native-child-id', [rootKey]: session.cwd, permissionMode: nativeMode, worktree: { id: 'tree-1' } } });
+  const internals = getSessionPreparationInternals(adapter);
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+
+  await expect(adapter.prepareSession(session.id, { permissionMode: mode })).resolves.toMatchObject({ sessionKey: key });
+  expect(request).toHaveBeenCalledWith('sessions.patch', {
+    key, permissionMode: nativeMode, expectedSessionId: 'native-child-id', expectedPermissionMode: 'full',
+  });
+  expect(request).not.toHaveBeenCalledWith('sessions.create', expect.anything());
+});
+
+test('rejects worktree preparation when native permission synchronization did not take effect', async () => {
+  const { store, session } = createEmptyStore();
+  const key = 'agent:main:subagent:child';
+  Object.assign(session, { nativeSessionKey: key });
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const entry = { sessionId: 'native-child-id', sessionRoot: session.cwd, permissionMode: 'full', worktree: { id: 'tree-1' } };
+  const request = vi.fn(async (method: string) => method === 'sessions.describe' ? { session: entry } : { key, entry });
+  const internals = getSessionPreparationInternals(adapter);
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+
+  await expect(adapter.prepareSession(session.id, { permissionMode: 'ask' }))
+    .rejects.toThrow('did not persist the requested session permission mode');
+});
+
 test('rejects a session response that did not persist the permission mode', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});

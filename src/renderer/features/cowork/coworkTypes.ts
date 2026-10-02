@@ -71,12 +71,15 @@ export interface CoworkSession {
     entryId: string;
   };
   external?: ExternalSessionMetadata;
+  nativeSessionKey?: string;
+  nativeParentSessionId?: string;
   createdAt: number;
   updatedAt: number;
 }
 
 // Cowork configuration
 export interface CoworkConfig {
+  showWorktreeCheckbox?: boolean;
   allowMainAgentSwitch?: boolean;
   workingDirectory: string;
   executionMode: CoworkExecutionMode;
@@ -89,6 +92,7 @@ export interface CoworkConfig {
 export type CoworkConfigUpdate = Partial<
   Pick<
     CoworkConfig,
+    | 'showWorktreeCheckbox'
     | 'workingDirectory'
     | 'allowMainAgentSwitch'
     | 'executionMode'
@@ -154,6 +158,7 @@ export interface CoworkInteractionResponse {
 
 // Session summary for list display (without full messages)
 export interface CoworkSessionSummary {
+  nativeSessionKey?: string;
   collaboration?: { memberCount: number; deleting: boolean };
   id: string;
   title: string;
@@ -168,6 +173,7 @@ export interface CoworkSessionSummary {
 
 // Start session options
 export interface CoworkStartOptions {
+  worktree?: boolean;
   prompt: string;
   /** Runtime-only prompt; the visible optimistic message and title still use prompt. */
   gatewayPrompt?: string;

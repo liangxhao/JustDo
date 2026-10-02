@@ -9,7 +9,7 @@ import { i18nService } from '@/services/i18n';
 
 import CoworkSessionItem from './CoworkSessionItem';
 
-const renderSessionItem = (options?: { isRuntimeRunning?: boolean; collaboration?: boolean }) => {
+const renderSessionItem = (options?: { isRuntimeRunning?: boolean; collaboration?: boolean; worktree?: boolean }) => {
   const onSelect = vi.fn();
   const onExport = vi.fn();
   const onCopy = vi.fn();
@@ -25,6 +25,7 @@ const renderSessionItem = (options?: { isRuntimeRunning?: boolean; collaboration
             pinned: false,
             createdAt: 1,
             updatedAt: 2,
+            ...(options?.worktree ? { nativeSessionKey: 'agent:main:subagent:tree-1' } : {}),
             ...(options?.collaboration
               ? { collaboration: { memberCount: 3, deleting: false } }
               : {}),
@@ -121,6 +122,17 @@ describe('CoworkSessionItem context menu session actions', () => {
     expect(copyItem.getAttribute('title')).toBe(
       'Wait for the current response to finish before copying',
     );
+  });
+
+  it('disables copy for a managed worktree while retaining export', () => {
+    i18nService.setLanguage('en', { persist: false });
+    const { onCopy } = renderSessionItem({ worktree: true });
+    const copyItem = screen.getByRole('menuitem', { name: 'Copy current session' });
+    expect(copyItem.hasAttribute('disabled')).toBe(true);
+    expect(copyItem.getAttribute('title')).toBe(i18nService.t('worktreeCopyUnavailable'));
+    expect(screen.getByRole('menuitem', { name: 'Export main conversation' }).hasAttribute('disabled')).toBe(false);
+    fireEvent.click(copyItem);
+    expect(onCopy).not.toHaveBeenCalled();
   });
 
   it('opens the context menu from the keyboard and supports arrow navigation', async () => {

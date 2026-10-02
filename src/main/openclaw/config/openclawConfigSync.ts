@@ -452,6 +452,11 @@ export class OpenClawConfigSync {
     );
 
     const managedConfig: Record<string, unknown> = {
+      ...Object.fromEntries(
+        ['worktreeRoot', 'worktreeAcceleration']
+          .filter(key => existingConfig?.[key] !== undefined)
+          .map(key => [key, existingConfig![key]]),
+      ),
       // Native provider setup owns these variables, including extension credentials.
       ...(isRecord(existingConfig?.env) ? { env: existingConfig.env } : {}),
       gateway: {
@@ -944,6 +949,9 @@ export class OpenClawConfigSync {
       // Only malformed JSON follows the minimal-config recovery path.
     }
     if (isRecord(previousConfig)) {
+      for (const key of ['worktreeRoot', 'worktreeAcceleration']) {
+        if (previousConfig[key] !== undefined) minimalConfig[key] = previousConfig[key];
+      }
       if (isRecord(previousConfig.env)) minimalConfig.env = previousConfig.env;
       minimalConfig.tools = {
         ...(isRecord(minimalConfig.tools) ? minimalConfig.tools : {}),

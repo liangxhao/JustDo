@@ -286,6 +286,7 @@ const coworkSlice = createSlice({
     addSession(state, action: PayloadAction<{ session: CoworkSession; select: boolean }>) {
       const { session, select } = action.payload;
       const summary: CoworkSessionSummary = {
+        nativeSessionKey: session.nativeSessionKey,
         id: session.id,
         title: session.title,
         status: session.status,

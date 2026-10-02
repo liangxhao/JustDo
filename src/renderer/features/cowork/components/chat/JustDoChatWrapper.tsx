@@ -162,7 +162,8 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     const currentSessionId = currentSession?.id;
     const currentSessionAgentId = currentSession?.agentId;
     const canonicalSessionKey = currentSessionId
-      ? currentSession.external?.sessionKey ||
+      ? currentSession.nativeSessionKey ||
+        currentSession.external?.sessionKey ||
         `agent:${currentSessionAgentId?.trim() || 'main'}:justdo:${currentSessionId}`
       : null;
     const externalSessionRefreshRevision = currentSession?.external

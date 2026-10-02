@@ -134,6 +134,8 @@ export interface CoworkSession {
   handoffSource?: import('../../shared/agents/agents').AgentHandoffSource;
   forkSource?: CoworkSessionForkSource;
   external?: ExternalSessionMetadata;
+  nativeSessionKey?: string;
+  nativeParentSessionId?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -145,6 +147,7 @@ export interface CoworkSessionForkSource {
 }
 
 export interface CoworkSessionSummary {
+  nativeSessionKey?: string;
   id: string;
   title: string;
   status: CoworkSessionStatus;
@@ -157,6 +160,7 @@ export interface CoworkSessionSummary {
 }
 
 export interface CoworkConfig {
+  showWorktreeCheckbox?: boolean;
   allowMainAgentSwitch?: boolean;
   workingDirectory: string;
   executionMode: CoworkExecutionMode;
@@ -170,6 +174,7 @@ export interface CoworkConfig {
 export type CoworkConfigUpdate = Partial<
   Pick<
     CoworkConfig,
+    | 'showWorktreeCheckbox'
     | 'workingDirectory'
     | 'allowMainAgentSwitch'
     | 'executionMode'
@@ -669,6 +674,8 @@ export class CoworkStore {
       active_skill_ids?: string | null;
       agent_id?: string | null;
       model_ref?: string | null;
+      native_session_key?: string | null;
+      native_parent_session_id?: string | null;
       forked_from_session_id?: string | null;
       forked_from_session_title?: string | null;
       forked_from_entry_id?: string | null;
@@ -686,7 +693,8 @@ export class CoworkStore {
       SELECT
         session.id, session.title, session.status, session.pinned, session.cwd,
         session.execution_mode, session.permission_mode, session.active_skill_ids,
-        session.agent_id, session.model_ref, session.forked_from_session_id,
+        session.agent_id, session.model_ref, session.native_session_key,
+        session.native_parent_session_id, session.forked_from_session_id,
         session.forked_from_session_title, session.forked_from_entry_id,
         session.handoff_from_session_title,
         handoff.id AS live_handoff_source_id, handoff.title AS live_handoff_source_title,
@@ -726,6 +734,10 @@ export class CoworkStore {
       activeSkillIds,
       agentId: row.agent_id || 'main',
       ...(row.model_ref?.trim() ? { modelRef: row.model_ref.trim() } : {}),
+      ...(row.native_session_key ? { nativeSessionKey: row.native_session_key } : {}),
+      ...(row.native_parent_session_id
+        ? { nativeParentSessionId: row.native_parent_session_id }
+        : {}),
       ...(row.forked_from_entry_id?.trim() && forkSourceTitle
         ? {
             forkSource: {
@@ -749,6 +761,52 @@ export class CoworkStore {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
+  }
+
+  getSessionByNativeKey(sessionKey: string): CoworkSession | null {
+    const row = this.getOne<{ id: string }>(
+      'SELECT id FROM cowork_sessions WHERE native_session_key = ?',
+      [sessionKey],
+    );
+    return row ? this.getSession(row.id) : null;
+  }
+
+  hasNativeChildSessions(parentSessionId: string): boolean {
+    return !!this.getOne<{ id: string }>(
+      'SELECT id FROM cowork_sessions WHERE native_parent_session_id = ? LIMIT 1',
+      [parentSessionId],
+    );
+  }
+
+  bindNativeSession(sessionId: string, sessionKey: string, parentSessionId: string | null): void {
+    this.db
+      .prepare(
+        'UPDATE cowork_sessions SET native_session_key = ?, native_parent_session_id = ? WHERE id = ?',
+      )
+      .run(sessionKey, parentSessionId, sessionId);
+  }
+
+  adoptNativeSession(
+    sessionKey: string,
+    parent: CoworkSession,
+    title: string,
+    cwd: string,
+    permissionMode: PermissionMode = parent.permissionMode,
+  ): CoworkSession {
+    return this.db.transaction(() => {
+      const existing = this.getSessionByNativeKey(sessionKey);
+      if (existing) return existing;
+      const created = this.createSession(
+        title,
+        cwd,
+        parent.executionMode,
+        [],
+        parent.agentId,
+        permissionMode,
+      );
+      this.bindNativeSession(created.id, sessionKey, parent.id);
+      return { ...created, nativeSessionKey: sessionKey, nativeParentSessionId: parent.id };
+    })();
   }
 
   updateSession(
@@ -824,6 +882,7 @@ export class CoworkStore {
 
   listSessions(agentId?: string): CoworkSessionSummary[] {
     interface SessionSummaryRow {
+      native_session_key: string | null;
       id: string;
       title: string;
       status: string;
@@ -838,7 +897,7 @@ export class CoworkStore {
     if (agentId) {
       rows = this.getAll<SessionSummaryRow>(
         `
-        SELECT id, title, status, pinned, agent_id, group_id, created_at, updated_at
+        SELECT id, title, status, pinned, agent_id, group_id, created_at, updated_at, native_session_key
         FROM cowork_sessions
         WHERE agent_id = ?
         ORDER BY pinned DESC, updated_at DESC
@@ -847,7 +906,7 @@ export class CoworkStore {
       );
     } else {
       rows = this.getAll<SessionSummaryRow>(`
-        SELECT id, title, status, pinned, agent_id, group_id, created_at, updated_at
+        SELECT id, title, status, pinned, agent_id, group_id, created_at, updated_at, native_session_key
         FROM cowork_sessions
         ORDER BY pinned DESC, updated_at DESC
       `);
@@ -855,6 +914,7 @@ export class CoworkStore {
 
     const externalBySessionId = this.listExternalSessionMetadata();
     return rows.map(row => ({
+      ...(row.native_session_key ? { nativeSessionKey: row.native_session_key } : {}),
       id: row.id,
       title: row.title,
       status: row.status as CoworkSessionStatus,
@@ -1024,6 +1084,7 @@ export class CoworkStore {
 
   getConfig(): CoworkConfig {
     const configKeys = [
+      'showWorktreeCheckbox',
       'allowMainAgentSwitch',
       'workingDirectory',
       'executionMode',
@@ -1040,6 +1101,7 @@ export class CoworkStore {
     const cfg = new Map(configRows.map(r => [r.key, r.value]));
 
     return {
+      showWorktreeCheckbox: cfg.get('showWorktreeCheckbox') === 'true',
       allowMainAgentSwitch: cfg.get('allowMainAgentSwitch') === 'true',
       workingDirectory: cfg.get('workingDirectory') || getDefaultWorkingDirectory(),
       executionMode: normalizeCoworkExecutionModeValue(cfg.get('executionMode')),
@@ -1060,6 +1122,17 @@ export class CoworkStore {
 
   setConfig(config: CoworkConfigUpdate): void {
     const now = Date.now();
+    if (config.showWorktreeCheckbox !== undefined) {
+      if (typeof config.showWorktreeCheckbox !== 'boolean')
+        throw new Error('Invalid worktree checkbox setting');
+      this.db
+        .prepare(
+          `INSERT INTO cowork_config (key, value, updated_at)
+           VALUES ('showWorktreeCheckbox', ?, ?)
+           ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+        )
+        .run(String(config.showWorktreeCheckbox), now);
+    }
     if (config.allowMainAgentSwitch !== undefined) {
       if (typeof config.allowMainAgentSwitch !== 'boolean')
         throw new Error('Invalid assistant switching setting');

@@ -5,6 +5,8 @@ import os from 'os';
 import path from 'path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
+import { WorktreeIpc } from '../../../shared/openclaw/worktrees';
+
 const { ipcHandle } = vi.hoisted(() => ({ ipcHandle: vi.fn() }));
 
 vi.mock('electron', () => ({
@@ -697,10 +699,94 @@ describe('manual OpenClaw Gateway restart', () => {
   });
 });
 
+describe('managed worktree bridge', () => {
+  test('serializes settings writes with application config mutations and projects the native readback', async () => {
+    const runConfigMutationExclusive = vi.fn(async operation => operation());
+    const requestGateway = vi.fn(async () => ({
+      valid: true, hash: 'viewed', configRevisionHash: 'resolved', appliedConfigHash: 'resolved',
+      config: { models: { secret: 'private-value' } },
+    }));
+    registerOpenClawEngineHandlers({
+      getManager: () => ({
+        getStateDir: () => path.resolve('test-state'), onSessionMigrationProgress: vi.fn(),
+      }) as unknown as OpenClawEngineManager,
+      getCoworkStore: () => ({}) as never,
+      runConfigMutationExclusive,
+      requestGateway: requestGateway as never,
+      reconnectGatewayClient: vi.fn(),
+    });
+    const read = ipcHandle.mock.calls.find(([name]) => name === WorktreeIpc.Settings)![1];
+    const save = ipcHandle.mock.calls.find(([name]) => name === WorktreeIpc.SaveSettings)![1];
+    expect(await read(null)).toMatchObject({ success: true, value: { root: null } });
+    const result = await save(null, { root: null, acceleration: true, revision: 'viewed' });
+    expect(result).toMatchObject({ success: true, value: { acceleration: true } });
+    expect(JSON.stringify(result)).not.toContain('private-value');
+    expect(runConfigMutationExclusive).toHaveBeenCalledOnce();
+    expect(requestGateway).toHaveBeenCalledWith('config.patch', {
+      baseHash: 'viewed', raw: JSON.stringify({ worktreeRoot: null, worktreeAcceleration: true }),
+    });
+  });
+  test('uses only native Gateway methods and rejects invalid worktree IDs', async () => {
+    const requestGateway = vi.fn(async (method: string) =>
+      method === 'worktrees.list'
+        ? { worktrees: [{ id: 'tree-1', path: '/tmp/tree-1' }] }
+        : { removed: true },
+    );
+    registerOpenClawEngineHandlers({
+      runConfigMutationExclusive: operation => operation(),
+      getCoworkStore: () => ({ listSessions: () => [] }) as never,
+      getManager: () => ({ onSessionMigrationProgress: vi.fn() }) as unknown as OpenClawEngineManager,
+      requestGateway: requestGateway as <T>(method: string, params?: unknown) => Promise<T>,
+      reconnectGatewayClient: vi.fn(),
+    });
+    const handler = (channel: string) => {
+      const call = ipcHandle.mock.calls.find(([name]) => name === channel);
+      if (!call) throw new Error(`Missing ${channel}`);
+      return call[1] as (_event: unknown, id?: unknown) => Promise<unknown>;
+    };
+    await expect(handler(WorktreeIpc.List)(null)).resolves.toMatchObject({ success: true });
+    await expect(handler(WorktreeIpc.Remove)(null, 'tree-1')).resolves.toEqual({
+      success: true,
+      value: { removed: true },
+    });
+    await expect(handler(WorktreeIpc.Remove)(null, '')).resolves.toMatchObject({
+      success: false,
+    });
+    expect(requestGateway).toHaveBeenCalledWith('worktrees.remove', { id: 'tree-1' });
+    expect(requestGateway).toHaveBeenCalledTimes(3);
+  });
+
+  test.each(['native', 'ordinary', 'nested'])('keeps a worktree referenced by a local %s conversation', async kind => {
+    const requestGateway = vi.fn(async () => ({
+      worktrees: [{ id: 'tree-1', path: '/tmp/tree-1' }],
+    }));
+    registerOpenClawEngineHandlers({
+      getManager: () => ({ onSessionMigrationProgress: vi.fn() }) as unknown as OpenClawEngineManager,
+      runConfigMutationExclusive: operation => operation(),
+      getCoworkStore: () =>
+        ({
+          listSessions: () => [{ id: 'child' }],
+          getSession: () => ({
+            ...(kind === 'native' ? { nativeSessionKey: 'agent:main:subagent:child' } : {}),
+            cwd: kind === 'nested' ? '/tmp/tree-1/packages/api' : '/tmp/tree-1',
+          }),
+        }) as never,
+      requestGateway: requestGateway as <T>(method: string, params?: unknown) => Promise<T>,
+      reconnectGatewayClient: vi.fn(),
+    });
+    const call = ipcHandle.mock.calls.find(([name]) => name === WorktreeIpc.Remove);
+    const remove = call?.[1] as (_event: unknown, id: string) => Promise<unknown>;
+    await expect(remove(null, 'tree-1')).resolves.toMatchObject({ success: false });
+    expect(requestGateway).not.toHaveBeenCalledWith('worktrees.remove', expect.anything());
+  });
+});
+
 describe('OpenClaw Gateway restart IPC', () => {
   test('registers the assistant media bridge on its shared channel', () => {
     const harness = createRestartHarness();
     registerOpenClawEngineHandlers({
+      runConfigMutationExclusive: operation => operation(),
+      getCoworkStore: () => ({ listSessions: () => [] }) as never,
       getManager: () => harness.manager as unknown as OpenClawEngineManager,
       requestGateway: harness.requestGateway as unknown as <T>(
         method: string,
@@ -720,6 +806,8 @@ describe('OpenClaw Gateway restart IPC', () => {
     const restartError = new Error('restart failed');
     harness.manager.restartGateway.mockRejectedValueOnce(restartError);
     registerOpenClawEngineHandlers({
+      runConfigMutationExclusive: operation => operation(),
+      getCoworkStore: () => ({ listSessions: () => [] }) as never,
       getManager: () => harness.manager as unknown as OpenClawEngineManager,
       requestGateway: harness.requestGateway as unknown as <T>(
         method: string,

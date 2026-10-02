@@ -16,6 +16,14 @@ export type LanguageType = 'zh' | 'en';
 
 const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
+    worktreeSelectionInvalid: 'Worktree 选择无效。',
+    worktreeCopyUnavailable: 'Worktree 会话暂不支持复制或分叉。请在源项目中创建新的 Worktree 会话。',
+    worktreeSharedWorkspaceDeleteBlocked: '其他会话仍在使用这个 Worktree，请先删除这些会话后再移除其所属会话。',
+    worktreePermissionIdentityChanged: '权限同步时无法确认原 Worktree 会话，操作已停止。',
+    worktreeCreateUnavailable: 'Worktree 创建服务暂不可用。',
+    worktreeCreateUnconfirmed: '未能确认 Worktree 创建结果，请检查设置中的 Worktree 列表。',
+    worktreeIdentityMissing: '无法确认待清理的 Worktree 会话。',
+    worktreeCancellationRetained: '取消任务后的工作目录未能清理，已保留会话入口。请在设置中检查 Worktree。',
     decisionModelConfigurationInvalid: '决策模型配置未能生效，请检查供应商 URL、API Key、默认模型及凭据文件访问权限。',
     extensionCredentialStoreUnavailable: '无法读取本地扩展凭据文件，请检查文件内容和访问权限。',
     extensionCredentialInherited: '此凭据由系统环境变量提供，请修改该变量并重启应用。',
@@ -93,6 +101,14 @@ const translations: Record<LanguageType, Record<string, string>> = {
     browserContextSaveImage: '图片另存为…',
   },
   en: {
+    worktreeSelectionInvalid: 'Invalid Worktree selection.',
+    worktreeCopyUnavailable: 'Copying or forking Worktree conversations is not supported yet. Create a new Worktree conversation from the source project.',
+    worktreeSharedWorkspaceDeleteBlocked: 'Other conversations still use this Worktree. Delete those conversations before deleting its owning conversation.',
+    worktreePermissionIdentityChanged: 'Could not confirm the original Worktree conversation during permission synchronization. The operation was stopped.',
+    worktreeCreateUnavailable: 'Worktree creation is currently unavailable.',
+    worktreeCreateUnconfirmed: 'Could not confirm Worktree creation. Check the Worktree list in Settings.',
+    worktreeIdentityMissing: 'Could not identify the Worktree conversation to clean up.',
+    worktreeCancellationRetained: 'Could not clean up the cancelled task workspace. Its conversation was retained. Check Worktrees in Settings.',
     extensionCredentialInherited:
       'This credential is supplied by the system environment. Update that variable and restart the app.',
     decisionModelConfigurationInvalid: 'Unable to apply decision model configuration. Check the provider URL, API Key, default model and credential file access.',

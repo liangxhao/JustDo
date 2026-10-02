@@ -165,6 +165,7 @@ import {
   WorkboardIpc,
   type WorkboardStopIdentity,
 } from '../shared/openclaw/workboard';
+import { WorktreeIpc } from '../shared/openclaw/worktrees';
 import {
   type MarketplaceCategoryRequest,
   type MarketplaceDetailRequest,
@@ -605,6 +606,15 @@ contextBridge.exposeInMainWorld('electron', {
         },
       },
     },
+    worktrees: {
+      getSettings: () => ipcRenderer.invoke(WorktreeIpc.Settings),
+      saveSettings: (input: import('../shared/openclaw/worktrees').WorktreeSettingsUpdate) =>
+        ipcRenderer.invoke(WorktreeIpc.SaveSettings, input),
+      list: () => ipcRenderer.invoke(WorktreeIpc.List),
+      restore: (id: string) => ipcRenderer.invoke(WorktreeIpc.Restore, id),
+      remove: (id: string) => ipcRenderer.invoke(WorktreeIpc.Remove, id),
+      clean: () => ipcRenderer.invoke(WorktreeIpc.Clean),
+    },
     history: {
       getToolInputs: (params: { sessionKey: string; toolCallIds: string[] }) =>
         ipcRenderer.invoke(OpenClawHistoryIpc.GetToolInputs, params),
@@ -619,7 +629,8 @@ contextBridge.exposeInMainWorld('electron', {
       getIndexStatus: (agentId?: string) => ipcRenderer.invoke(MemoryIpc.GetIndexStatus, agentId),
       getDocument: (relativePath: string, agentId?: string) =>
         ipcRenderer.invoke(MemoryIpc.GetDocument, relativePath, agentId),
-      search: (query: string, agentId?: string) => ipcRenderer.invoke(MemoryIpc.Search, query, agentId),
+      search: (query: string, agentId?: string) =>
+        ipcRenderer.invoke(MemoryIpc.Search, query, agentId),
       rebuildIndex: (agentId?: string) => ipcRenderer.invoke(MemoryIpc.RebuildIndex, agentId),
     },
     usage: {
@@ -688,6 +699,7 @@ contextBridge.exposeInMainWorld('electron', {
       clientTurnId?: string;
       startedAt?: number;
       planMode?: boolean;
+      worktree?: boolean;
     }) => ipcRenderer.invoke('cowork:session:start', options),
     cancelSessionStart: (input: CancelSessionStartInput) =>
       ipcRenderer.invoke(SessionStartIpc.Cancel, input),

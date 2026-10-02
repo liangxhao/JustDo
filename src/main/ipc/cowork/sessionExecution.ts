@@ -6,15 +6,18 @@ import { hasMessageInput } from '../../../shared/cowork/messageInput';
 import { type CancelSessionStartInput, SessionStartIpc } from '../../../shared/cowork/sessionStart';
 import { resolvePermissionMode } from '../../../shared/openclaw/approvals';
 import { resolveTaskWorkingDirectory } from '../../core/filesystem/taskWorkspace';
+import { t } from '../../core/i18n';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
 import type { OpenClawEngineStatus } from '../../openclaw/runtime/openclawEngineManager';
+import { createSessionWorktree, discardPreparedWorktreeSession } from '../../openclaw/sessions/worktreeSession';
 
 interface SessionExecutionHandlerDependencies {
   ensureEngineRunning: () => Promise<OpenClawEngineStatus>;
   getCoworkStore: () => CoworkStore;
   getCoworkEngineRouter: () => CoworkEngineRouter;
   waitForConfigUpdates: () => Promise<void>;
+  requestGateway?: <T>(method: string, params?: unknown) => Promise<T>;
   getEngineNotReadyResponse: (status: OpenClawEngineStatus) => {
     success: boolean;
     code: string;
@@ -24,6 +27,7 @@ interface SessionExecutionHandlerDependencies {
 }
 
 interface StartSessionOptions {
+  worktree?: boolean;
   prompt: string;
   gatewayPrompt?: string;
   cwd?: string;
@@ -50,6 +54,7 @@ export const registerCoworkSessionExecutionHandlers = ({
   getCoworkEngineRouter,
   waitForConfigUpdates,
   getEngineNotReadyResponse,
+  requestGateway,
 }: SessionExecutionHandlerDependencies): void => {
   type PendingStart = {
     cancelled: boolean;
@@ -118,6 +123,12 @@ export const registerCoworkSessionExecutionHandlers = ({
       if (!options || typeof options.prompt !== 'string' || !hasMessageInput(options)) {
         return { success: false, error: 'Prompt is required.' };
       }
+      if (options.worktree !== undefined && typeof options.worktree !== 'boolean') {
+        return { success: false, error: t('worktreeSelectionInvalid') };
+      }
+      if (options.worktree && !requestGateway) {
+        return { success: false, error: t('worktreeCreateUnavailable') };
+      }
       if (
         options.gatewayPrompt !== undefined &&
         (typeof options.gatewayPrompt !== 'string' || !options.gatewayPrompt.trim())
@@ -176,7 +187,7 @@ export const registerCoworkSessionExecutionHandlers = ({
       if (!agent || !agent.enabled || agent.deletedAt)
         return { success: false, error: 'agentUnavailable' };
       const initialModelRef = agentId === 'main' ? undefined : agent.model.trim() || undefined;
-      const resolvedWorkspaceRoot = resolveTaskWorkingDirectory(selectedWorkspaceRoot);
+      let resolvedWorkspaceRoot = resolveTaskWorkingDirectory(selectedWorkspaceRoot);
       const session = store.createSession(
         options.title?.trim() || fallbackTitle,
         resolvedWorkspaceRoot,
@@ -186,6 +197,13 @@ export const registerCoworkSessionExecutionHandlers = ({
         permissionMode,
         initialModelRef,
       );
+      if (options.worktree) {
+        resolvedWorkspaceRoot = await createSessionWorktree(store, session, requestGateway!);
+        if (operation?.cancelled) {
+          await discardPreparedWorktreeSession(store, session.id, requestGateway!);
+          return { success: false, cancelled: true };
+        }
+      }
       store.updateSession(session.id, { status: 'running' });
       const timing =
         options.clientTurnId && Number.isFinite(options.startedAt)
@@ -264,6 +282,7 @@ export const registerCoworkSessionExecutionHandlers = ({
     } catch (error) {
       return {
         success: false,
+        ...(options?.worktree && operation?.cancelled ? { cancelled: true } : {}),
         error: error instanceof Error ? error.message : 'Failed to start session',
       };
     } finally {

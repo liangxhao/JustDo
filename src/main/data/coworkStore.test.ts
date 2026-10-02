@@ -39,6 +39,8 @@ function setupDb(): void {
       execution_mode TEXT NOT NULL DEFAULT 'local',
       permission_mode TEXT,
       model_ref TEXT,
+      native_session_key TEXT,
+      native_parent_session_id TEXT,
       forked_from_session_id TEXT REFERENCES cowork_sessions(id) ON DELETE SET NULL,
       forked_from_session_title TEXT,
       forked_from_entry_id TEXT,
@@ -47,6 +49,7 @@ function setupDb(): void {
       handoff_request_id TEXT UNIQUE,
       active_skill_ids TEXT,
       agent_id TEXT NOT NULL DEFAULT 'main',
+      group_id TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
@@ -415,4 +418,29 @@ test('assistant switching is opt-in and persists without changing existing sessi
   store.setConfig({ allowMainAgentSwitch: false });
   expect(store.getConfig().allowMainAgentSwitch).toBe(false);
   expect(store.getSession(chat.id)?.agentId).toBe('research');
+});
+
+test('retains native worktree identity and its own permissions across metadata reloads', () => {
+  const parent = store.createSession('Parent', '/source', 'local', [], 'main', 'full');
+  const key = 'agent:main:subagent:child';
+  const child = store.adoptNativeSession(key, parent, 'Child', '/worktree', 'ask');
+  const reloaded = new CoworkStore(db);
+
+  expect(reloaded.getSessionByNativeKey(key)).toMatchObject({
+    id: child.id, cwd: '/worktree', permissionMode: 'ask',
+    nativeSessionKey: key, nativeParentSessionId: parent.id,
+  });
+  expect(reloaded.listSessions().find(summary => summary.id === child.id))
+    .toMatchObject({ nativeSessionKey: key });
+  expect(reloaded.adoptNativeSession(key, parent, 'Duplicate', '/other', 'full').id).toBe(child.id);
+  expect(reloaded.listSessions()).toHaveLength(2);
+});
+
+test('hides the worktree checkbox by default and persists only its visibility preference', () => {
+  expect(store.getConfig().showWorktreeCheckbox).toBe(false);
+  store.setConfig({ showWorktreeCheckbox: true });
+  const reloaded = new CoworkStore(db);
+  expect(reloaded.getConfig().showWorktreeCheckbox).toBe(true);
+  reloaded.setConfig({ showWorktreeCheckbox: false });
+  expect(store.getConfig().showWorktreeCheckbox).toBe(false);
 });

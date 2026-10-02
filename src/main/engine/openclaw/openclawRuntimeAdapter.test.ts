@@ -540,6 +540,35 @@ test('recovers a managed session ID when the in-memory session-key mapping is mi
   expect(internals.resolveSessionIdBySessionKey('agent:other:justdo:session-1')).toBeNull();
 });
 
+test('recovers a native worktree binding before first preparation and after cache loss', () => {
+  const { store, session } = createEmptyStore();
+  const key = 'agent:main:subagent:child';
+  const nativeSession = { ...session, nativeSessionKey: key };
+  const getSessionByNativeKey = vi.fn((candidate: string) => candidate === key ? nativeSession : null);
+  const adapter = new OpenClawRuntimeAdapter({ ...store, getSessionByNativeKey }, {});
+  const internals = adapter as unknown as {
+    sessionIdBySessionKey: Map<string, string>;
+    resolveSessionIdBySessionKey: (sessionKey: string) => string | null;
+  };
+
+  expect(internals.resolveSessionIdBySessionKey(key)).toBe(session.id);
+  expect(adapter.resolveDiagnosticSession('native-run', key)).toBe(session.id);
+  internals.sessionIdBySessionKey.clear();
+  expect(internals.resolveSessionIdBySessionKey(key)).toBe(session.id);
+  expect(internals.resolveSessionIdBySessionKey('agent:other:subagent:child')).toBeNull();
+  expect(getSessionByNativeKey).toHaveBeenCalledWith(key);
+});
+
+test('does not recover a persisted native key bound to a different agent', () => {
+  const { store, session } = createEmptyStore();
+  const key = 'agent:other:subagent:child';
+  const adapter = new OpenClawRuntimeAdapter({
+    ...store,
+    getSessionByNativeKey: () => ({ ...session, nativeSessionKey: key }),
+  }, {});
+  expect(adapter.resolveDiagnosticSession('native-run', key)).toBeNull();
+});
+
 test('keeps a managed parent turn alive during an incremental-join refill gap', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});

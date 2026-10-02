@@ -97,6 +97,7 @@ import ShortcutsSettings, {
 } from '@/features/settings/preferences/ShortcutsSettings';
 import AgentRuntimeSettingsTab from '@/features/settings/runtime/AgentRuntimeSettingsTab';
 import WindowsSandboxSettingsTab from '@/features/settings/runtime/WindowsSandboxSettingsTab';
+import WorktreeSettingsPage from '@/features/settings/runtime/WorktreeSettingsPage';
 import {
   buildSettingsAppConfigUpdate,
   persistSettingsInOrder,
@@ -1695,6 +1696,9 @@ const Settings: React.FC<SettingsProps> = ({
             onMaxGoalContinuationTurnsChange={setMaxGoalContinuationTurns}
           />
         );
+
+      case 'worktrees':
+        return <WorktreeSettingsPage />;
 
       case 'integrations':
         return (
