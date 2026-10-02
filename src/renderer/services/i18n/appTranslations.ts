@@ -1,5 +1,10 @@
 export const appTranslations = {
   zh: {
+    startupTitle: '让想法，即刻行动。',
+    startupDescription: '准备就绪后，将自动进入工作空间。',
+    startupPreparing: '正在加载配置与对话',
+    startupSessionsLoading: '正在读取最近对话',
+    startupSessionsError: '暂时无法读取最近对话',
     memoryIndexStored: '向量索引完整，语义服务尚未探测',
     memoryIndexKeywordOnly: '当前仅可使用关键词检索',
     memoryIndexStale: '索引需要更新，搜索结果可能不完整',
@@ -268,6 +273,11 @@ export const appTranslations = {
     memoryFlowRecallDescription: '后续任务按含义检索相关内容，不必每次重新交代。',
   },
   en: {
+    startupTitle: 'Turn ideas into action',
+    startupDescription: 'Your workspace will open when ready.',
+    startupPreparing: 'Loading preferences and conversations',
+    startupSessionsLoading: 'Loading recent conversations',
+    startupSessionsError: 'Unable to load recent conversations',
     memoryIndexStored: 'Vector index complete; semantic service not probed',
     memoryIndexKeywordOnly: 'Only keyword search is currently available',
     memoryIndexStale: 'The index needs updating; search results may be incomplete',

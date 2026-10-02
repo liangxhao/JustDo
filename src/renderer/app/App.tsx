@@ -61,6 +61,7 @@ import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 import { matchesShortcut } from '@/services/shortcuts';
 import { themeService } from '@/services/theme';
+import StartupLoading from '@/shared/components/common/StartupLoading';
 
 const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
@@ -780,17 +781,7 @@ const App: React.FC = () => {
     return (
       <div className="h-screen overflow-hidden flex flex-col">
         {windowsStandaloneTitleBar}
-        <div className="flex-1 flex items-center justify-center bg-background">
-          <div className="flex flex-col items-center space-y-4">
-            <div className="w-16 h-16 rounded-full bg-gradient-to-br from-primary to-primary-hover flex items-center justify-center shadow-glow-accent animate-pulse">
-              <ChatBubbleLeftRightIcon className="h-8 w-8 text-white" />
-            </div>
-            <div className="w-24 h-1 rounded-full bg-primary/20 overflow-hidden">
-              <div className="h-full w-1/2 rounded-full bg-primary animate-shimmer" />
-            </div>
-            <div className="text-foreground text-xl font-medium">{i18nService.t('loading')}</div>
-          </div>
-        </div>
+        <StartupLoading />
       </div>
     );
   }

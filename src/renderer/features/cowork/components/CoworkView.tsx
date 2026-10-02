@@ -169,6 +169,7 @@ import { OPEN_SPAWNED_AGENT_EVENT } from '@/libs/openclaw-chat/model/spawn-tool-
 import { i18nService } from '@/services/i18n';
 import { getGreetingPeriod, pickHomeGreeting } from '@/services/i18n/homeGreetings';
 import Modal from '@/shared/components/common/Modal';
+import StartupLoading from '@/shared/components/common/StartupLoading';
 import BrainIcon from '@/shared/components/icons/BrainIcon';
 import ComposeIcon from '@/shared/components/icons/ComposeIcon';
 import FolderIcon from '@/shared/components/icons/FolderIcon';
@@ -1638,9 +1639,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     return (
       <div className="flex-1 h-full flex flex-col bg-background">
         <WindowHeader />
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-secondary">{i18nService.t('loading')}</div>
-        </div>
+        <StartupLoading />
       </div>
     );
   }

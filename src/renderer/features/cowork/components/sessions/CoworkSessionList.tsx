@@ -224,6 +224,7 @@ const UngroupedDroppableZone: React.FC<UngroupedDroppableZoneProps> = ({
 interface UngroupedSessionListProps {
   sessions: CoworkSessionSummary[];
   isLoading?: boolean;
+  loadFailed?: boolean;
   currentSessionId: string | null;
   isBatchMode: boolean;
   selectedIds: Set<string>;
@@ -243,6 +244,7 @@ interface UngroupedSessionListProps {
 const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
   sessions: inputSessions,
   isLoading = false,
+  loadFailed = false,
   currentSessionId,
   isBatchMode,
   selectedIds,
@@ -462,27 +464,17 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
 
   if (sessions.length === 0 && isLoading) {
     return (
-      <div className="flex items-center justify-center py-10">
-        <svg
-          className="animate-spin h-6 w-6 text-secondary/60"
-          xmlns="http://www.w3.org/2000/svg"
-          fill="none"
-          viewBox="0 0 24 24"
-        >
-          <circle
-            className="opacity-25"
-            cx="12"
-            cy="12"
-            r="10"
-            stroke="currentColor"
-            strokeWidth="4"
-          />
-          <path
-            className="opacity-75"
-            fill="currentColor"
-            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-          />
-        </svg>
+      <div
+        role="status"
+        aria-label={i18nService.t('startupSessionsLoading')}
+        className="space-y-5 px-5 py-6"
+      >
+        {['w-4/5', 'w-3/5', 'w-2/3'].map(width => (
+          <div key={width} aria-hidden="true" className="motion-safe:animate-pulse">
+            <div className={`h-2.5 rounded-full bg-border opacity-70 ${width}`} />
+            <div className="mt-2 h-2 w-1/3 rounded-full bg-border opacity-40" />
+          </div>
+        ))}
       </div>
     );
   }
@@ -609,7 +601,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
           <div className="flex flex-col items-center justify-center py-10 px-4">
             <ChatBubbleLeftRightIcon className="h-10 w-10 text-secondary/40 mb-3" />
             <p className="text-sm font-medium text-secondary mb-1">
-              {i18nService.t('coworkNoSessions')}
+              {i18nService.t(loadFailed ? 'startupSessionsError' : 'coworkNoSessions')}
             </p>
           </div>
         ) : regularSessions.length > 0 ? (

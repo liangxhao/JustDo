@@ -31,6 +31,7 @@ export interface DraftAttachment {
 
 interface CoworkState {
   sessions: CoworkSessionSummary[];
+  sessionListStatus: 'loading' | 'ready' | 'error';
   groups: SessionGroup[];
   expandedGroupIds: string[];
   currentSessionId: string | null;
@@ -65,6 +66,7 @@ interface CoworkState {
 
 const initialState: CoworkState = {
   sessions: [],
+  sessionListStatus: 'loading',
   groups: [],
   expandedGroupIds: [],
   currentSessionId: null,
@@ -130,8 +132,13 @@ const coworkSlice = createSlice({
       state.isCoworkActive = action.payload;
     },
 
+    setSessionListStatus(state, action: PayloadAction<CoworkState['sessionListStatus']>) {
+      state.sessionListStatus = action.payload;
+    },
+
     setSessions(state, action: PayloadAction<CoworkSessionSummary[]>) {
       state.sessions = action.payload;
+      state.sessionListStatus = 'ready';
       if (state.currentSession) {
         const summary = action.payload.find(session => session.id === state.currentSession?.id);
         if (summary) {
@@ -769,6 +776,7 @@ const coworkSlice = createSlice({
 });
 
 export const {
+  setSessionListStatus,
   setCoworkActive,
   setSessions,
   setCurrentSessionId,

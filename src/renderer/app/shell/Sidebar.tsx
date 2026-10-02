@@ -67,6 +67,9 @@ const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const sessionNavigationRequestRef = useRef(0);
   const sessions = useSelector(selectCoworkSessions);
+  const sessionListStatus = useSelector(
+    (state: import('@/store').RootState) => state.cowork.sessionListStatus,
+  );
   const currentSessionId = useSelector(selectCurrentSessionId);
   const isOpenClawEngine = useSelector(selectIsOpenClawEngine);
   const unreadScheduledTaskResults = useSelector(
@@ -406,7 +409,8 @@ const Sidebar: React.FC<SidebarProps> = ({
         <CoworkSessionList
           groupRecentSessionsByDate
           sessions={visibleSessions}
-          isLoading={false}
+          isLoading={sessionListStatus === 'loading'}
+          loadFailed={sessionListStatus === 'error'}
           currentSessionId={collaborationAnchors.get(currentSessionId || '') || currentSessionId}
           isBatchMode={isBatchMode}
           selectedIds={visibleSelection}

@@ -11,6 +11,7 @@ import {
   setConfig as setCoworkConfig,
   setCurrentSession,
   setPlanMode,
+  setSessionListStatus,
   setSessionRuntimeActivity,
   setSessions,
 } from '@/features/cowork/coworkSlice';
@@ -1469,4 +1470,51 @@ test('copy selection invalidates an older in-flight session load', async () => {
   store.dispatch(deleteSession(source.id));
   store.dispatch(clearCurrentSession());
   vi.unstubAllGlobals();
+});
+
+describe('session list startup state', () => {
+  afterEach(() => {
+    store.dispatch(setSessions([]));
+    vi.unstubAllGlobals();
+  });
+
+  test('shows an empty state only after the list successfully loads', async () => {
+    store.dispatch(setSessionListStatus('loading'));
+    vi.stubGlobal('window', {
+      electron: {
+        cowork: { listSessions: vi.fn().mockResolvedValue({ success: true, sessions: [] }) },
+      },
+    });
+    await coworkService.loadSessions();
+    expect(store.getState().cowork.sessionListStatus).toBe('ready');
+  });
+
+  test('reports a failed read instead of an empty list and recovers on refresh', async () => {
+    const listSessions = vi
+      .fn()
+      .mockResolvedValueOnce({ success: false })
+      .mockResolvedValueOnce({ success: true, sessions: [] });
+    vi.stubGlobal('window', { electron: { cowork: { listSessions } } });
+    await coworkService.loadSessions();
+    expect(store.getState().cowork.sessionListStatus).toBe('error');
+    await coworkService.loadSessions();
+    expect(store.getState().cowork.sessionListStatus).toBe('ready');
+  });
+
+  test('does not let an older failed request replace a newer successful read', async () => {
+    let rejectOlder!: (error: Error) => void;
+    const older = new Promise<never>((_resolve, reject) => {
+      rejectOlder = reject;
+    });
+    const listSessions = vi
+      .fn()
+      .mockReturnValueOnce(older)
+      .mockResolvedValueOnce({ success: true, sessions: [] });
+    vi.stubGlobal('window', { electron: { cowork: { listSessions } } });
+    const pending = coworkService.loadSessions();
+    await coworkService.loadSessions();
+    rejectOlder(new Error('offline'));
+    await expect(pending).rejects.toThrow('offline');
+    expect(store.getState().cowork.sessionListStatus).toBe('ready');
+  });
 });

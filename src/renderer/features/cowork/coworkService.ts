@@ -28,6 +28,7 @@ import {
   setGroups,
   setPlanMode as setPlanModeState,
   setRemoteManaged,
+  setSessionListStatus,
   setSessionMainRuntimeActivity,
   setSessionRuntimeActivity,
   setSessionRuntimeSnapshot,
@@ -292,14 +293,20 @@ export class CoworkService {
 
   async loadSessions(agentId?: string): Promise<void> {
     const requestId = ++this.latestLoadSessionsRequestId;
-    const result = await window.electron?.cowork?.listSessions(agentId);
-    if (result?.success && result.sessions) {
-      // High-frequency IM traffic can trigger overlapping list refreshes.
-      // Ignore stale responses so an older snapshot does not hide newer sessions.
-      if (requestId !== this.latestLoadSessionsRequestId) {
-        return;
+    try {
+      const result = await window.electron?.cowork?.listSessions(agentId);
+      // Only the latest request may update the list or its loading state.
+      if (requestId !== this.latestLoadSessionsRequestId) return;
+      if (result?.success && result.sessions) {
+        store.dispatch(setSessions(result.sessions));
+      } else {
+        store.dispatch(setSessionListStatus('error'));
       }
-      store.dispatch(setSessions(result.sessions));
+    } catch (error) {
+      if (requestId === this.latestLoadSessionsRequestId) {
+        store.dispatch(setSessionListStatus('error'));
+      }
+      throw error;
     }
   }
 
