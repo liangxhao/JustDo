@@ -1,8 +1,11 @@
 // @vitest-environment jsdom
 
 import { createDefaultAgentRuntimeSettings } from '@shared/openclaw/agentRuntimeSettings';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
+
+import { i18nService } from '@/services/i18n';
+import { settingsTranslations } from '@/services/i18n/settingsTranslations';
 
 import AgentRuntimeSettingsTab from './AgentRuntimeSettingsTab';
 
@@ -43,7 +46,7 @@ describe('AgentRuntimeSettingsTab runtime settings', () => {
         onMaxGoalContinuationTurnsChange={vi.fn()}
       />,
     );
-    expect(screen.getAllByRole('heading', { level: 4 })).toHaveLength(6);
+    expect(screen.getAllByRole('heading', { level: 4 })).toHaveLength(7);
     for (const name of [
       'agentRuntimeCodeModeActivation',
       'agentRuntimeSessionVisibilityTitle',
@@ -59,12 +62,113 @@ describe('AgentRuntimeSettingsTab runtime settings', () => {
     ]) {
       expect(screen.getByRole('spinbutton', { name })).toBeTruthy();
     }
-    expect(screen.getByRole('checkbox', { name: 'agentRuntimeSwarmEnabled' })).toBeTruthy();
+    expect(screen.getByRole('switch', { name: 'agentRuntimeSwarmEnabled' })).toBeTruthy();
     expect(screen.queryByRole('navigation')).toBeNull();
     expect(
       document.querySelector('button[aria-expanded="false"]:not([role="combobox"])'),
     ).toBeNull();
   });
+
+  test.each(['zh', 'en'] as const)(
+    'keeps setting scope and explanatory text visible in %s',
+    language => {
+      const translations = settingsTranslations[language];
+      vi.spyOn(i18nService, 't').mockImplementation(
+        key => translations[key as keyof typeof translations] ?? key,
+      );
+      render(
+        <AgentRuntimeSettingsTab
+          settings={createDefaultAgentRuntimeSettings()}
+          models={[]}
+          isLoading={false}
+          loadError={null}
+          onChange={vi.fn()}
+          onRetry={vi.fn()}
+          maxRetainedDisplayTabs={30}
+          onMaxRetainedDisplayTabsChange={vi.fn()}
+          maxGoalContinuationTurns={10}
+          onMaxGoalContinuationTurnsChange={vi.fn()}
+        />,
+      );
+      const groups = [
+        [
+          'agentRuntimeAgentSectionTitle',
+          'agentRuntimeAgentSectionDescription',
+          [
+            'agentRuntimeDefaultThinking',
+            'agentRuntimeAgentTimeoutTitle',
+            'agentRuntimeAgentMaxConcurrent',
+            'agentRuntimeDelegationTitle',
+            'agentRuntimeSessionVisibilityTitle',
+            'agentRuntimeAskUserTimeoutTitle',
+            'agentRuntimeScheduledTaskApprovalTimeoutTitle',
+          ],
+        ],
+        [
+          'displayTabRetentionSectionTitle',
+          'displayTabRetentionSectionDescription',
+          ['displayTabRetentionTitle'],
+        ],
+        [
+          'goalContinuationSettingsSectionTitle',
+          'goalContinuationSettingsSectionDescription',
+          ['goalContinuationMaxTurnsTitle'],
+        ],
+        [
+          'agentRuntimeCodeModeTitle',
+          'agentRuntimeCodeModeDescription',
+          ['agentRuntimeCodeModeActivation'],
+        ],
+        [
+          'agentRuntimeMcpSectionTitle',
+          'agentRuntimeMcpSectionDescription',
+          ['agentRuntimeMcpRequestTimeoutTitle'],
+        ],
+        [
+          'agentRuntimeSubagentSectionTitle',
+          'agentRuntimeSubagentSectionDescription',
+          [
+            'agentRuntimeDefaultModel',
+            'agentRuntimeDefaultThinking',
+            'agentRuntimeMaxConcurrent',
+            'agentRuntimeTimeoutTitle',
+            'agentRuntimeMaxChildren',
+            'agentRuntimeArchiveTitle',
+            'agentRuntimeNestingTitle',
+          ],
+        ],
+        [
+          'agentRuntimeSwarmTitle',
+          'agentRuntimeSwarmDescription',
+          [
+            'agentRuntimeSwarmEnabled',
+            'agentRuntimeSwarmConcurrent',
+            'agentRuntimeSwarmChildren',
+            'agentRuntimeSwarmTotal',
+          ],
+        ],
+      ] as const;
+      for (const [title, description, labels] of groups) {
+        const section = within(screen.getByRole('region', { name: translations[title] }));
+        expect(section.getByText(translations[description])).toBeTruthy();
+        for (const label of labels) {
+          expect(section.getByLabelText(translations[label])).toBeTruthy();
+        }
+      }
+      for (const key of [
+        'goalContinuationMaxTurnsDescription',
+        'agentRuntimeMcpRequestTimeoutDescription',
+        'agentRuntimeSessionVisibilityTreeDescription',
+        'agentRuntimeDelegationDescription',
+        'agentRuntimeMaxChildrenDescription',
+        'agentRuntimeArchiveDescription',
+        'agentRuntimeThinkingHint',
+        'agentRuntimeAgentThinkingHint',
+      ] as const) {
+        expect(screen.getByText(translations[key])).toBeTruthy();
+      }
+    },
+  );
 
   test.each([
     ['agentRuntimeCodeModeOff', 'off'],
@@ -101,6 +205,8 @@ describe('AgentRuntimeSettingsTab runtime settings', () => {
     const select = screen.getByRole('combobox', { name: 'agentRuntimeCodeModeActivation' });
     expect(select.textContent).toContain('agentRuntimeCodeModeOff');
     fireEvent.click(select);
+    // Compact triggers must not constrain the menu and hide longer choices.
+    expect(screen.getByRole('listbox').parentElement?.style.width).toBe('320px');
     const automatic = screen.getByRole('option', { name: 'agentRuntimeCodeModeAuto' });
     expect(automatic.getAttribute('aria-disabled')).toBe('true');
     fireEvent.click(automatic);
@@ -409,7 +515,7 @@ test('changes Swarm independently from ordinary SubAgent capacity', () => {
     ...settings,
     swarm: { ...settings.swarm, maxConcurrent: 12 },
   });
-  fireEvent.click(screen.getByRole('checkbox', { name: 'agentRuntimeSwarmEnabled' }));
+  fireEvent.click(screen.getByRole('switch', { name: 'agentRuntimeSwarmEnabled' }));
   expect(onChange).toHaveBeenLastCalledWith({
     ...settings,
     swarm: { ...settings.swarm, enabled: false },

@@ -49,7 +49,7 @@ const SettingRow: React.FC<{
       <div className="text-sm font-medium text-foreground">{label}</div>
       {description && <p className="mt-0.5 text-xs leading-4 text-secondary">{description}</p>}
     </div>
-    <div className="min-w-0">{children}</div>
+    <div className="runtime-setting-control">{children}</div>
   </div>
 );
 
@@ -65,12 +65,12 @@ const NumberControl: React.FC<{
     onChange(Math.min(max, Math.max(min, normalized)));
   };
   return (
-    <div className="ml-auto flex h-9 w-32 items-center overflow-hidden rounded-lg border border-border bg-surface-inset">
+    <div className="flex h-9 w-32 max-w-full min-w-0 items-center overflow-hidden rounded-lg border border-border bg-surface-inset">
       <button
         type="button"
         onClick={() => setValue(value - 1)}
         disabled={value <= min}
-        className="flex h-full w-9 items-center justify-center text-secondary hover:bg-surface-raised hover:text-foreground disabled:opacity-30"
+        className="flex h-full w-9 shrink-0 items-center justify-center text-secondary hover:bg-surface-raised hover:text-foreground disabled:opacity-30"
         aria-label={`${label} -`}
       >
         <MinusIcon className="h-3.5 w-3.5" />
@@ -89,7 +89,7 @@ const NumberControl: React.FC<{
         type="button"
         onClick={() => setValue(value + 1)}
         disabled={value >= max}
-        className="flex h-full w-9 items-center justify-center text-secondary hover:bg-surface-raised hover:text-foreground disabled:opacity-30"
+        className="flex h-full w-9 shrink-0 items-center justify-center text-secondary hover:bg-surface-raised hover:text-foreground disabled:opacity-30"
         aria-label={`${label} +`}
       >
         <PlusIcon className="h-3.5 w-3.5" />
@@ -329,12 +329,16 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
 
   return (
     <div className="runtime-settings min-w-0 space-y-9 pb-1">
-      <SettingsSection title={i18nService.t('runtimeExecutionTitle')}>
+      <SettingsSection
+        title={i18nService.t('agentRuntimeAgentSectionTitle')}
+        description={i18nService.t('agentRuntimeAgentSectionDescription')}
+      >
         <SettingRow
           label={i18nService.t('agentRuntimeDefaultThinking')}
           description={i18nService.t('agentRuntimeAgentThinkingHint')}
         >
           <ThemedSelect
+            menuMinWidth={320}
             id="agent-runtime-agent-thinking"
             value={settings.agent.thinking ?? ''}
             onChange={value =>
@@ -344,16 +348,17 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
             }
             options={agentThinkingOptions}
             ariaLabel={i18nService.t('agentRuntimeDefaultThinking')}
-            className="py-2 text-xs"
+            className="h-9 py-2 text-xs"
           />
         </SettingRow>
         <SettingRow
           label={i18nService.t('agentRuntimeAgentTimeoutTitle')}
           description={i18nService.t('agentRuntimeAgentTimeoutDescription')}
         >
-          <div className="flex items-center gap-2">
+          <div className="runtime-timeout-control">
             <div className="min-w-0 flex-1">
               <ThemedSelect
+                menuMinWidth={320}
                 id="agent-runtime-agent-timeout"
                 value={usesCustomAgentTimeout ? 'custom' : String(settings.agent.runTimeoutSeconds)}
                 onChange={value =>
@@ -363,7 +368,7 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
                 }
                 options={timeoutOptions}
                 ariaLabel={i18nService.t('agentRuntimeAgentTimeoutTitle')}
-                className="py-2 text-xs"
+                className="h-9 py-2 text-xs"
               />
             </div>
             {usesCustomAgentTimeout && (
@@ -398,6 +403,7 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
           description={i18nService.t('agentRuntimeAgentMaxConcurrentDescription')}
         >
           <ThemedSelect
+            menuMinWidth={320}
             id="agent-runtime-agent-max-concurrent"
             value={
               settings.agent.maxConcurrent === null ? '' : String(settings.agent.maxConcurrent)
@@ -405,45 +411,46 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
             onChange={value => updateAgent({ maxConcurrent: value ? Number(value) : null })}
             options={agentConcurrencyOptions}
             ariaLabel={i18nService.t('agentRuntimeAgentMaxConcurrent')}
-            className="py-2 text-xs"
-          />
-        </SettingRow>
-      </SettingsSection>
-      <SettingsSection title={i18nService.t('runtimeWorkspaceTitle')}>
-        <SettingRow
-          label={i18nService.t('displayTabRetentionTitle')}
-          description={i18nService.t('displayTabRetentionDescription')}
-        >
-          <NumberControl
-            label={i18nService.t('displayTabRetentionTitle')}
-            value={maxRetainedDisplayTabs}
-            min={MIN_MAX_RETAINED_DISPLAY_TABS}
-            max={MAX_MAX_RETAINED_DISPLAY_TABS}
-            onChange={onMaxRetainedDisplayTabsChange}
+            className="h-9 py-2 text-xs"
           />
         </SettingRow>
         <SettingRow
-          label={i18nService.t('goalContinuationMaxTurnsTitle')}
-          description={i18nService.t('goalContinuationMaxTurnsDescription')}
+          label={i18nService.t('agentRuntimeDelegationTitle')}
+          description={i18nService.t('agentRuntimeDelegationDescription')}
         >
-          <NumberControl
-            label={i18nService.t('goalContinuationMaxTurnsTitle')}
-            value={maxGoalContinuationTurns}
-            min={MIN_MAX_GOAL_CONTINUATION_TURNS}
-            max={MAX_MAX_GOAL_CONTINUATION_TURNS}
-            onChange={value =>
-              onMaxGoalContinuationTurnsChange(normalizeMaxGoalContinuationTurns(value))
-            }
-          />
+          <div
+            className="grid grid-cols-3 items-stretch rounded-lg bg-surface-raised p-1"
+            role="group"
+            aria-label={i18nService.t('agentRuntimeDelegationTitle')}
+          >
+            {[
+              [null, i18nService.t('agentRuntimeDelegationDefault')],
+              [AgentRuntimeDelegationMode.Suggest, i18nService.t('agentRuntimeDelegationSuggest')],
+              [AgentRuntimeDelegationMode.Prefer, i18nService.t('agentRuntimeDelegationPrefer')],
+            ].map(([value, label]) => (
+              <button
+                key={value ?? 'default'}
+                type="button"
+                aria-pressed={subagents.delegationMode === value}
+                onClick={() =>
+                  updateSubagents({
+                    delegationMode: value as AgentRuntimeSettings['subagents']['delegationMode'],
+                  })
+                }
+                className={`min-w-0 rounded-md px-2 py-1.5 text-xs font-medium ${subagents.delegationMode === value ? 'bg-surface text-primary shadow-sm' : 'text-secondary hover:text-foreground'}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </SettingRow>
-      </SettingsSection>
-      <SettingsSection title={i18nService.t('runtimeInteractionTitle')}>
         <SettingRow
           label={i18nService.t('agentRuntimeSessionVisibilityTitle')}
           description={i18nService.t('agentRuntimeSessionVisibilityDescription')}
         >
-          <div className="ml-auto w-full">
+          <div className="w-full">
             <ThemedSelect
+              menuMinWidth={320}
               id="agent-runtime-session-visibility"
               value={settings.sessions.visibility}
               onChange={value =>
@@ -453,7 +460,7 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
               }
               options={sessionVisibilityOptions}
               ariaLabel={i18nService.t('agentRuntimeSessionVisibilityTitle')}
-              className="py-2 text-xs"
+              className="h-9 py-2 text-xs"
             />
             <p className="mt-1.5 text-[11px] leading-4 text-secondary">{sessionVisibilityHint}</p>
           </div>
@@ -462,7 +469,7 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
           label={i18nService.t('agentRuntimeAskUserTimeoutTitle')}
           description={i18nService.t('agentRuntimeAskUserTimeoutDescription')}
         >
-          <label className="ml-auto flex h-9 w-32 items-center overflow-hidden rounded-lg border border-border bg-surface-inset">
+          <label className="flex h-9 w-32 max-w-full min-w-0 items-center overflow-hidden rounded-lg border border-border bg-surface-inset">
             <input
               id="agent-runtime-ask-user-timeout"
               type="number"
@@ -494,6 +501,7 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
           description={i18nService.t('agentRuntimeScheduledTaskApprovalTimeoutDescription')}
         >
           <ThemedSelect
+            menuMinWidth={320}
             id="agent-runtime-scheduled-task-approval-timeout"
             value={String(settings.automation.approvalTimeoutMinutes)}
             onChange={value =>
@@ -505,16 +513,56 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
             }
             options={automationApprovalTimeoutOptions}
             ariaLabel={i18nService.t('agentRuntimeScheduledTaskApprovalTimeoutTitle')}
-            className="py-2 text-xs"
+            className="h-9 py-2 text-xs"
           />
         </SettingRow>
       </SettingsSection>
-      <SettingsSection title={i18nService.t('runtimeToolsTitle')}>
+      <SettingsSection
+        title={i18nService.t('displayTabRetentionSectionTitle')}
+        description={i18nService.t('displayTabRetentionSectionDescription')}
+      >
+        <SettingRow
+          label={i18nService.t('displayTabRetentionTitle')}
+          description={i18nService.t('displayTabRetentionDescription')}
+        >
+          <NumberControl
+            label={i18nService.t('displayTabRetentionTitle')}
+            value={maxRetainedDisplayTabs}
+            min={MIN_MAX_RETAINED_DISPLAY_TABS}
+            max={MAX_MAX_RETAINED_DISPLAY_TABS}
+            onChange={onMaxRetainedDisplayTabsChange}
+          />
+        </SettingRow>
+      </SettingsSection>
+      <SettingsSection
+        title={i18nService.t('goalContinuationSettingsSectionTitle')}
+        description={i18nService.t('goalContinuationSettingsSectionDescription')}
+      >
+        <SettingRow
+          label={i18nService.t('goalContinuationMaxTurnsTitle')}
+          description={i18nService.t('goalContinuationMaxTurnsDescription')}
+        >
+          <NumberControl
+            label={i18nService.t('goalContinuationMaxTurnsTitle')}
+            value={maxGoalContinuationTurns}
+            min={MIN_MAX_GOAL_CONTINUATION_TURNS}
+            max={MAX_MAX_GOAL_CONTINUATION_TURNS}
+            onChange={value =>
+              onMaxGoalContinuationTurnsChange(normalizeMaxGoalContinuationTurns(value))
+            }
+          />
+        </SettingRow>
+      </SettingsSection>
+      <SettingsSection
+        title={i18nService.t('agentRuntimeCodeModeTitle')}
+        description={i18nService.t('agentRuntimeCodeModeDescription')}
+      >
         <SettingRow
           label={i18nService.t('agentRuntimeCodeModeActivation')}
           description={i18nService.t('agentRuntimeCodeModeHint')}
         >
           <ThemedSelect
+            menuMinWidth={320}
             id="agent-runtime-code-mode"
             value={settings.codeMode.mode}
             onChange={value =>
@@ -539,14 +587,19 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
               },
             ]}
             ariaLabel={i18nService.t('agentRuntimeCodeModeActivation')}
-            className="py-2 text-xs"
+            className="h-9 py-2 text-xs"
           />
         </SettingRow>
+      </SettingsSection>
+      <SettingsSection
+        title={i18nService.t('agentRuntimeMcpSectionTitle')}
+        description={i18nService.t('agentRuntimeMcpSectionDescription')}
+      >
         <SettingRow
           label={i18nService.t('agentRuntimeMcpRequestTimeoutTitle')}
           description={i18nService.t('agentRuntimeMcpRequestTimeoutDescription')}
         >
-          <label className="ml-auto flex h-9 w-32 items-center overflow-hidden rounded-lg border border-border bg-surface-inset">
+          <label className="flex h-9 w-32 max-w-full min-w-0 items-center overflow-hidden rounded-lg border border-border bg-surface-inset">
             <input
               id="agent-runtime-mcp-request-timeout"
               type="number"
@@ -573,37 +626,10 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
           </label>
         </SettingRow>
       </SettingsSection>
-      <SettingsSection title={i18nService.t('runtimeSubtasksTitle')}>
-        <SettingRow
-          label={i18nService.t('agentRuntimeDelegationTitle')}
-          description={i18nService.t('agentRuntimeDelegationDescription')}
-        >
-          <div
-            className="grid grid-cols-3 rounded-lg bg-surface-raised p-1"
-            role="group"
-            aria-label={i18nService.t('agentRuntimeDelegationTitle')}
-          >
-            {[
-              [null, i18nService.t('agentRuntimeDelegationDefault')],
-              [AgentRuntimeDelegationMode.Suggest, i18nService.t('agentRuntimeDelegationSuggest')],
-              [AgentRuntimeDelegationMode.Prefer, i18nService.t('agentRuntimeDelegationPrefer')],
-            ].map(([value, label]) => (
-              <button
-                key={value ?? 'default'}
-                type="button"
-                aria-pressed={subagents.delegationMode === value}
-                onClick={() =>
-                  updateSubagents({
-                    delegationMode: value as AgentRuntimeSettings['subagents']['delegationMode'],
-                  })
-                }
-                className={`rounded-md px-3 py-1.5 text-xs font-medium ${subagents.delegationMode === value ? 'bg-surface text-primary shadow-sm' : 'text-secondary hover:text-foreground'}`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </SettingRow>
+      <SettingsSection
+        title={i18nService.t('agentRuntimeSubagentSectionTitle')}
+        description={i18nService.t('agentRuntimeSubagentSectionDescription')}
+      >
         <SettingRow
           label={i18nService.t('agentRuntimeDefaultModel')}
           description={
@@ -613,12 +639,13 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
           }
         >
           <ThemedSelect
+            menuMinWidth={320}
             id="agent-runtime-model"
             value={subagents.model ?? ''}
             onChange={value => updateSubagents({ model: value || null })}
             options={displayedModelOptions}
             ariaLabel={i18nService.t('agentRuntimeDefaultModel')}
-            className="py-2 text-xs"
+            className="h-9 py-2 text-xs"
           />
         </SettingRow>
         <SettingRow
@@ -626,6 +653,7 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
           description={i18nService.t('agentRuntimeThinkingHint')}
         >
           <ThemedSelect
+            menuMinWidth={320}
             id="agent-runtime-thinking"
             value={subagents.thinking ?? ''}
             onChange={value =>
@@ -635,7 +663,7 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
             }
             options={subagentThinkingOptions}
             ariaLabel={i18nService.t('agentRuntimeDefaultThinking')}
-            className="py-2 text-xs"
+            className="h-9 py-2 text-xs"
           />
         </SettingRow>
         <SettingRow
@@ -654,9 +682,10 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
           label={i18nService.t('agentRuntimeTimeoutTitle')}
           description={i18nService.t('agentRuntimeTimeoutDescription')}
         >
-          <div className="flex items-center gap-2">
+          <div className="runtime-timeout-control">
             <div className="min-w-0 flex-1">
               <ThemedSelect
+                menuMinWidth={320}
                 id="agent-runtime-timeout"
                 value={usesCustomTimeout ? 'custom' : String(subagents.runTimeoutSeconds)}
                 onChange={value =>
@@ -666,7 +695,7 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
                 }
                 options={timeoutOptions}
                 ariaLabel={i18nService.t('agentRuntimeTimeoutTitle')}
-                className="py-2 text-xs"
+                className="h-9 py-2 text-xs"
               />
             </div>
             {usesCustomTimeout && (
@@ -713,12 +742,13 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
           description={i18nService.t('agentRuntimeArchiveDescription')}
         >
           <ThemedSelect
+            menuMinWidth={320}
             id="agent-runtime-archive"
             value={String(subagents.archiveAfterMinutes)}
             onChange={value => updateSubagents({ archiveAfterMinutes: Number(value) })}
             options={archiveOptions}
             ariaLabel={i18nService.t('agentRuntimeArchiveTitle')}
-            className="py-2 text-xs"
+            className="h-9 py-2 text-xs"
           />
         </SettingRow>
         <SettingRow
@@ -726,12 +756,13 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
           description={i18nService.t('agentRuntimeNestingDescription')}
         >
           <ThemedSelect
+            menuMinWidth={320}
             id="agent-runtime-nesting-depth"
             value={String(subagents.maxSpawnDepth)}
             onChange={value => updateSubagents({ maxSpawnDepth: Number(value) })}
             options={nestingOptions}
             ariaLabel={i18nService.t('agentRuntimeNestingTitle')}
-            className="py-2 text-xs"
+            className="h-9 py-2 text-xs"
           />
           {subagents.maxSpawnDepth > 1 && (
             <p className="mt-1.5 text-[11px] leading-4 text-amber-700 dark:text-amber-300">
@@ -740,19 +771,29 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
           )}
         </SettingRow>
       </SettingsSection>
-      <SettingsSection title={i18nService.t('agentRuntimeSwarmTitle')}>
+      <SettingsSection
+        title={i18nService.t('agentRuntimeSwarmTitle')}
+        description={i18nService.t('agentRuntimeSwarmDescription')}
+      >
         <SettingRow label={i18nService.t('agentRuntimeSwarmEnabled')}>
-          <input
-            type="checkbox"
+          <button
+            type="button"
+            role="switch"
             aria-label={i18nService.t('agentRuntimeSwarmEnabled')}
-            checked={settings.swarm.enabled}
-            onChange={event =>
+            aria-checked={settings.swarm.enabled}
+            onClick={() =>
               onChange({
                 ...settings,
-                swarm: { ...settings.swarm, enabled: event.target.checked },
+                swarm: { ...settings.swarm, enabled: !settings.swarm.enabled },
               })
             }
-          />
+            className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 ${settings.swarm.enabled ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-600'}`}
+          >
+            <span
+              aria-hidden="true"
+              className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${settings.swarm.enabled ? 'translate-x-6' : 'translate-x-1'}`}
+            />
+          </button>
         </SettingRow>
         {(
           [

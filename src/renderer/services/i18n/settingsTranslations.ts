@@ -1,10 +1,5 @@
 export const settingsTranslations = {
   zh: {
-    runtimeToolsTitle: '工具调用',
-    runtimeSubtasksTitle: '子任务',
-    runtimeExecutionTitle: '任务执行',
-    runtimeWorkspaceTitle: '任务与工作区',
-    runtimeInteractionTitle: '交互与权限',
     settingsGroup_personal: '个人偏好',
     settingsGroup_intelligence: '智能体',
     settingsGroup_connections: '连接与集成',
@@ -1272,11 +1267,6 @@ export const settingsTranslations = {
     preventSleepDescription: '防止系统在应用运行时进入睡眠模式',
   },
   en: {
-    runtimeToolsTitle: 'Tool execution',
-    runtimeSubtasksTitle: 'Subagents',
-    runtimeExecutionTitle: 'Task execution',
-    runtimeWorkspaceTitle: 'Tasks and workspace',
-    runtimeInteractionTitle: 'Interaction and access',
     settingsGroup_personal: 'Personal',
     settingsGroup_intelligence: 'Agents',
     settingsGroup_connections: 'Connections',

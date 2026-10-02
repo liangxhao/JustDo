@@ -279,6 +279,7 @@ const ThemedSelect: React.FC<ThemedSelectProps> = ({
                           : ''
                       }`}
                       role="option"
+                      title={option.label}
                       aria-selected={option.value === value}
                       aria-disabled={option.disabled || undefined}
                       onMouseDown={event => event.preventDefault()}

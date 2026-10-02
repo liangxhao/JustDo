@@ -10,9 +10,69 @@
   overflow-wrap: anywhere;
 }
 
+.runtime-setting-control {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-self: end;
+  width: max-content;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.runtime-setting-control > * {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.runtime-setting-control [role='combobox'] {
+  width: max-content;
+  min-width: 7rem;
+  margin-inline-start: auto;
+  max-width: 100%;
+}
+
+.runtime-setting-control > p {
+  width: 18rem;
+}
+
+.runtime-timeout-control {
+  width: max-content;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.runtime-timeout-control:has(label) {
+  width: 18rem;
+}
+
+.runtime-timeout-control:has(label) > div {
+  flex-basis: 8rem;
+}
+
+.runtime-timeout-control:has(label) [role='combobox'] {
+  width: 100%;
+}
+
 @container runtime-settings (max-width: 600px) {
   .runtime-setting-row {
     grid-template-columns: minmax(0, 1fr);
     gap: 0.75rem;
+  }
+
+  .runtime-setting-control {
+    justify-self: start;
+    align-items: flex-start;
+  }
+
+  .runtime-setting-control [role='combobox'] {
+    margin-inline-start: 0;
+  }
+
+  .runtime-timeout-control {
+    justify-content: flex-start;
   }
 }
