@@ -19,6 +19,7 @@
 }
 
 .file-preview-shell button:focus-visible,
+.file-preview-toolbar-actions button:focus-visible,
 .file-preview-shell [role='separator']:focus-visible,
 .file-preview-modal button:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--justdo-primary) 78%, white);
@@ -210,6 +211,24 @@
   flex: 0 0 auto;
   align-items: center;
   gap: 6px;
+}
+
+.file-preview-toolbar-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.file-preview-toolbar-actions .file-preview-mode-switch {
+  gap: 2px;
+  padding: 2px;
+}
+
+.file-preview-toolbar-actions .file-preview-mode-switch button {
+  width: 28px;
+  min-width: 28px;
+  height: 26px;
 }
 
 .file-preview-icon-button {

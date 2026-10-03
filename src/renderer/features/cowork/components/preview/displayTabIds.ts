@@ -2,6 +2,8 @@ export const BROWSER_DISPLAY_TAB_PREFIX = 'browser:';
 
 export const FILE_DISPLAY_TAB_PREFIX = 'file:';
 
+export const WORKSPACE_FILES_DISPLAY_TAB_ID = 'workspace-files';
+
 export const TERMINAL_DISPLAY_TAB_PREFIX = 'terminal:';
 
 export const PLAN_DISPLAY_TAB_ID = 'plan';

@@ -1,4 +1,9 @@
-import { ChevronRightIcon, FolderIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline';
+import {
+  ArrowPathIcon,
+  ChevronRightIcon,
+  FolderIcon,
+  MagnifyingGlassIcon,
+} from '@heroicons/react/24/outline';
 import type { WorkspaceDirectoryEntry } from '@shared/preview/filePreview';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -8,6 +13,7 @@ import WorkspaceFileIcon from './WorkspaceFileIcon';
 
 interface WorkspaceFilesPanelProps {
   activeFilePath?: string;
+  isVisible?: boolean;
   revealPath?: string;
   revealVersion?: number;
   onOpenFile: (filePath: string) => void;
@@ -16,6 +22,7 @@ interface WorkspaceFilesPanelProps {
 
 const WorkspaceFilesPanel = ({
   activeFilePath,
+  isVisible = true,
   revealPath,
   revealVersion,
   onOpenFile,
@@ -31,6 +38,7 @@ const WorkspaceFilesPanel = ({
   const [query, setQuery] = useState('');
   const [focusedPath, setFocusedPath] = useState<string | null>(null);
   const activeSessionIdRef = useRef(sessionId);
+  const directoryRequestsRef = useRef(new Map<string, symbol>());
   const filterInputRef = useRef<HTMLInputElement>(null);
   const treeItemRefs = useRef(new Map<string, HTMLButtonElement>());
   const pendingRevealPath = useRef<string | null>(null);
@@ -39,6 +47,19 @@ const WorkspaceFilesPanel = ({
   const loadDirectory = useCallback(
     async (relativePath: string) => {
       const requestedSessionId = sessionId;
+      const request = Symbol();
+      directoryRequestsRef.current.set(relativePath, request);
+      const isCurrentRequest = () =>
+        activeSessionIdRef.current === requestedSessionId &&
+        directoryRequestsRef.current.get(relativePath) === request;
+      const markFailed = () => {
+        setFailedDirectories(current => new Set(current).add(relativePath));
+        setEntriesByDirectory(current => {
+          const next = { ...current };
+          delete next[relativePath];
+          return next;
+        });
+      };
       setLoadingDirectories(current => new Set(current).add(relativePath));
       setFailedDirectories(current => {
         const next = new Set(current);
@@ -50,9 +71,9 @@ const WorkspaceFilesPanel = ({
           requestedSessionId,
           relativePath,
         );
-        if (activeSessionIdRef.current !== requestedSessionId) return;
+        if (!isCurrentRequest()) return;
         if (!result.success) {
-          setFailedDirectories(current => new Set(current).add(relativePath));
+          markFailed();
           return;
         }
         setEntriesByDirectory(current => ({ ...current, [relativePath]: result.entries }));
@@ -63,10 +84,10 @@ const WorkspaceFilesPanel = ({
           return next;
         });
       } catch {
-        if (activeSessionIdRef.current !== requestedSessionId) return;
-        setFailedDirectories(current => new Set(current).add(relativePath));
+        if (!isCurrentRequest()) return;
+        markFailed();
       } finally {
-        if (activeSessionIdRef.current === requestedSessionId) {
+        if (isCurrentRequest()) {
           setLoadingDirectories(current => {
             const next = new Set(current);
             next.delete(relativePath);
@@ -79,6 +100,8 @@ const WorkspaceFilesPanel = ({
   );
 
   useEffect(() => {
+    const directoryRequests = directoryRequestsRef.current;
+    directoryRequests.clear();
     setEntriesByDirectory({});
     setExpandedDirectories(new Set());
     setLoadingDirectories(new Set());
@@ -87,11 +110,12 @@ const WorkspaceFilesPanel = ({
     setQuery('');
     setFocusedPath(null);
     void loadDirectory('');
+    return () => directoryRequests.clear();
   }, [loadDirectory, sessionId]);
 
   useEffect(() => {
-    filterInputRef.current?.focus();
-  }, []);
+    if (isVisible) filterInputRef.current?.focus();
+  }, [isVisible]);
 
   useEffect(() => {
     pendingRevealPath.current = null;
@@ -106,13 +130,18 @@ const WorkspaceFilesPanel = ({
     for (const parent of parents) void loadDirectory(parent);
   }, [revealPath, revealVersion, loadDirectory]);
   useEffect(() => {
-    if (!pendingRevealPath.current) return;
+    if (!isVisible || !pendingRevealPath.current) return;
     const node = treeItemRefs.current.get(pendingRevealPath.current);
     if (!node) return;
     pendingRevealPath.current = null;
     node.scrollIntoView?.({ block: 'nearest' });
     node.focus();
-  }, [revealPath, revealVersion, entriesByDirectory, query, expandedDirectories]);
+  }, [isVisible, revealPath, revealVersion, entriesByDirectory, query, expandedDirectories]);
+
+  const refreshDirectories = () => {
+    const directories = new Set(['', ...Object.keys(entriesByDirectory), ...expandedDirectories]);
+    for (const directory of directories) void loadDirectory(directory);
+  };
 
   const normalizedQuery = query.trim().toLocaleLowerCase();
 
@@ -171,7 +200,51 @@ const WorkspaceFilesPanel = ({
       className="flex h-full min-h-0 flex-col bg-background"
       aria-label={i18nService.t('coworkWorkspaceFiles')}
     >
-      <div className="shrink-0 border-b border-border p-2">
+      <div
+        className="flex h-10 shrink-0 items-center gap-1 px-2"
+        role="toolbar"
+        aria-label={i18nService.t('coworkWorkspaceFilesTools')}
+      >
+        <span className="mr-auto min-w-0 truncate text-xs font-medium text-secondary">
+          {i18nService.t('coworkWorkspaceFiles')}
+        </span>
+        <button
+          type="button"
+          onClick={refreshDirectories}
+          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+          title={i18nService.t('coworkWorkspaceFilesRefresh')}
+          aria-label={i18nService.t('coworkWorkspaceFilesRefresh')}
+          aria-busy={loadingDirectories.size > 0}
+        >
+          <ArrowPathIcon
+            className={`h-4 w-4 ${loadingDirectories.size > 0 ? 'animate-spin motion-reduce:animate-none' : ''}`}
+          />
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            pendingRevealPath.current = null;
+            setExpandedDirectories(new Set());
+            setQuery('');
+            setFocusedPath(null);
+          }}
+          disabled={expandedDirectories.size === 0 && query.length === 0}
+          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent"
+          title={i18nService.t('coworkWorkspaceFilesCollapseAll')}
+          aria-label={i18nService.t('coworkWorkspaceFilesCollapseAll')}
+        >
+          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path
+              d="M4 13V4h9M9 9h11v11H9zM12 14.5h5"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
+      </div>
+      <div className="shrink-0 border-b border-border px-2 pb-2">
         <label className="flex h-8 items-center gap-2 rounded-lg border border-border bg-surface-raised px-2.5 text-secondary focus-within:border-primary/60">
           <MagnifyingGlassIcon className="h-4 w-4 shrink-0" />
           <input

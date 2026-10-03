@@ -17,12 +17,14 @@ import { getPreviewableFileExtension } from '@shared/preview/filePreview';
 import {
   forwardRef,
   useCallback,
+  useContext,
   useEffect,
   useImperativeHandle,
   useMemo,
   useRef,
   useState,
 } from 'react';
+import { createPortal } from 'react-dom';
 
 import {
   deferFilePreviewGrantRevocation,
@@ -37,6 +39,7 @@ import { toSanitizedMarkdownHtml } from '@/libs/openclaw-chat/components/markdow
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/common/Modal';
 
+import { FilePreviewToolbarContext } from './FilePreviewToolbarContext';
 import type { ImageFilePreview } from './imageFilePreview';
 import ImageFilePreviewPanel from './ImageFilePreviewPanel';
 
@@ -179,6 +182,8 @@ const showToast = (message: string): void => {
 
 const TextPreviewDrawer = forwardRef<FilePreviewDrawerHandle, TextPreviewProps>(
   ({ preview, onClose, isObscured = false, embedded = false }, ref) => {
+    const sharedToolbarTarget = useContext(FilePreviewToolbarContext);
+    const toolbarTarget = embedded ? sharedToolbarTarget : null;
     const extension = getPreviewableFileExtension(preview.filePath) ?? '.txt';
     const isMarkdown = extension === '.md' || extension === '.markdown';
     const [drawerWidth, setDrawerWidth] = useState(() => clampDrawerWidth(DRAWER_DEFAULT_WIDTH));
@@ -523,8 +528,114 @@ const TextPreviewDrawer = forwardRef<FilePreviewDrawerHandle, TextPreviewProps>(
         }[confirmation.kind]
       : null;
 
+    const fileActions = (
+      <>
+        <div className="file-preview-primary-actions">
+          {isMarkdown && (
+            <div className="file-preview-mode-switch" role="group">
+              <button
+                type="button"
+                onClick={() => setMode('preview')}
+                className={mode === 'preview' ? 'is-active' : ''}
+                aria-label={i18nService.t('coworkFilePreviewModePreview')}
+                aria-pressed={mode === 'preview'}
+                title={i18nService.t('coworkFilePreviewModePreview')}
+              >
+                <EyeIcon />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void requestEditAuthorization().then(authorized => {
+                    if (authorized && mountedRef.current) setMode('edit');
+                  });
+                }}
+                disabled={isAuthorizing}
+                className={mode === 'edit' ? 'is-active' : ''}
+                aria-label={i18nService.t('coworkFilePreviewModeEdit')}
+                aria-pressed={mode === 'edit'}
+                title={i18nService.t('coworkFilePreviewModeEdit')}
+              >
+                {isAuthorizing ? <ArrowPathIcon className="animate-spin" /> : <PencilSquareIcon />}
+              </button>
+            </div>
+          )}
+
+          {isDirty && (
+            <>
+              <button
+                type="button"
+                onClick={discardDraft}
+                disabled={isSaving}
+                className="file-preview-icon-button"
+                aria-label={i18nService.t('coworkFilePreviewRevert')}
+                title={i18nService.t('coworkFilePreviewRevert')}
+              >
+                <ArrowUturnLeftIcon />
+              </button>
+              <button
+                type="button"
+                onClick={() => void saveDraft()}
+                disabled={isSaving}
+                className="file-preview-icon-button file-preview-save-icon-button"
+                aria-label={i18nService.t('coworkFilePreviewSaveShortcut')}
+                title={i18nService.t('coworkFilePreviewSaveShortcut')}
+              >
+                {isSaving ? <ArrowPathIcon className="animate-spin" /> : <ArrowDownTrayIcon />}
+              </button>
+            </>
+          )}
+        </div>
+        <div className="file-preview-title-actions">
+          <button
+            type="button"
+            onClick={() => void showInFolder()}
+            disabled={isShowingInFolder}
+            className="file-preview-icon-button"
+            aria-label={i18nService.t('coworkFilePreviewShowInFolder')}
+            title={i18nService.t('coworkFilePreviewShowInFolder')}
+          >
+            {isShowingInFolder ? <ArrowPathIcon className="animate-spin" /> : <FolderOpenIcon />}
+          </button>
+          {!toolbarTarget && (
+            <button
+              type="button"
+              onClick={() => {
+                void requestTransition().then(canClose => {
+                  if (canClose) onClose();
+                });
+              }}
+              disabled={isSaving}
+              className="file-preview-icon-button"
+              aria-label={i18nService.t('close')}
+              title={i18nService.t('close')}
+            >
+              <XMarkIcon />
+            </button>
+          )}
+        </div>
+      </>
+    );
+
     return (
       <>
+        {toolbarTarget &&
+          !isObscured &&
+          createPortal(
+            <div className="file-preview-toolbar-actions">
+              {isDirty && (
+                <span
+                  className="file-preview-title-dirty"
+                  title={i18nService.t('coworkFilePreviewUnsaved')}
+                >
+                  <span aria-hidden="true" />
+                  {i18nService.t('coworkFilePreviewUnsavedShort')}
+                </span>
+              )}
+              {fileActions}
+            </div>,
+            toolbarTarget,
+          )}
         <aside
           ref={drawerRef}
           className={`file-preview-shell flex max-w-full flex-col overflow-hidden ${
@@ -548,123 +659,32 @@ const TextPreviewDrawer = forwardRef<FilePreviewDrawerHandle, TextPreviewProps>(
             </div>
           )}
 
-          <header className="file-preview-header">
-            <div className="file-preview-titlebar">
-              <div className="file-preview-file-icon" aria-hidden="true">
-                <DocumentTextIcon />
-              </div>
-              <div className="file-preview-title-copy">
-                <div className="file-preview-title-line">
-                  <h2 title={fileName}>{fileName}</h2>
-                  <span className="file-preview-type-badge">{fileTypeLabel}</span>
-                  {isDirty && (
-                    <span
-                      className="file-preview-title-dirty"
-                      title={i18nService.t('coworkFilePreviewUnsaved')}
-                    >
-                      <span aria-hidden="true" />
-                      {i18nService.t('coworkFilePreviewUnsavedShort')}
-                    </span>
-                  )}
+          {!toolbarTarget && (
+            <header className="file-preview-header">
+              <div className="file-preview-titlebar">
+                <div className="file-preview-file-icon" aria-hidden="true">
+                  <DocumentTextIcon />
                 </div>
-                <p title={preview.filePath}>{preview.filePath}</p>
-              </div>
-              <div className="file-preview-primary-actions">
-                {isMarkdown && (
-                  <div className="file-preview-mode-switch" role="group">
-                    <button
-                      type="button"
-                      onClick={() => setMode('preview')}
-                      className={mode === 'preview' ? 'is-active' : ''}
-                      aria-label={i18nService.t('coworkFilePreviewModePreview')}
-                      aria-pressed={mode === 'preview'}
-                      title={i18nService.t('coworkFilePreviewModePreview')}
-                    >
-                      <EyeIcon />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void requestEditAuthorization().then(authorized => {
-                          if (authorized && mountedRef.current) setMode('edit');
-                        });
-                      }}
-                      disabled={isAuthorizing}
-                      className={mode === 'edit' ? 'is-active' : ''}
-                      aria-label={i18nService.t('coworkFilePreviewModeEdit')}
-                      aria-pressed={mode === 'edit'}
-                      title={i18nService.t('coworkFilePreviewModeEdit')}
-                    >
-                      {isAuthorizing ? (
-                        <ArrowPathIcon className="animate-spin" />
-                      ) : (
-                        <PencilSquareIcon />
-                      )}
-                    </button>
+                <div className="file-preview-title-copy">
+                  <div className="file-preview-title-line">
+                    <h2 title={fileName}>{fileName}</h2>
+                    <span className="file-preview-type-badge">{fileTypeLabel}</span>
+                    {isDirty && (
+                      <span
+                        className="file-preview-title-dirty"
+                        title={i18nService.t('coworkFilePreviewUnsaved')}
+                      >
+                        <span aria-hidden="true" />
+                        {i18nService.t('coworkFilePreviewUnsavedShort')}
+                      </span>
+                    )}
                   </div>
-                )}
-
-                {isDirty && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={discardDraft}
-                      disabled={isSaving}
-                      className="file-preview-icon-button"
-                      aria-label={i18nService.t('coworkFilePreviewRevert')}
-                      title={i18nService.t('coworkFilePreviewRevert')}
-                    >
-                      <ArrowUturnLeftIcon />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void saveDraft()}
-                      disabled={isSaving}
-                      className="file-preview-icon-button file-preview-save-icon-button"
-                      aria-label={i18nService.t('coworkFilePreviewSaveShortcut')}
-                      title={i18nService.t('coworkFilePreviewSaveShortcut')}
-                    >
-                      {isSaving ? (
-                        <ArrowPathIcon className="animate-spin" />
-                      ) : (
-                        <ArrowDownTrayIcon />
-                      )}
-                    </button>
-                  </>
-                )}
+                  {!embedded && <p title={preview.filePath}>{preview.filePath}</p>}
+                </div>
+                {fileActions}
               </div>
-              <div className="file-preview-title-actions">
-                <button
-                  type="button"
-                  onClick={() => void showInFolder()}
-                  disabled={isShowingInFolder}
-                  className="file-preview-icon-button"
-                  aria-label={i18nService.t('coworkFilePreviewShowInFolder')}
-                  title={i18nService.t('coworkFilePreviewShowInFolder')}
-                >
-                  {isShowingInFolder ? (
-                    <ArrowPathIcon className="animate-spin" />
-                  ) : (
-                    <FolderOpenIcon />
-                  )}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    void requestTransition().then(canClose => {
-                      if (canClose) onClose();
-                    });
-                  }}
-                  disabled={isSaving}
-                  className="file-preview-icon-button"
-                  aria-label={i18nService.t('close')}
-                  title={i18nService.t('close')}
-                >
-                  <XMarkIcon />
-                </button>
-              </div>
-            </div>
-          </header>
+            </header>
+          )}
 
           <div className={`file-preview-workspace ${mode === 'edit' ? 'is-editing' : ''}`}>
             {mode === 'edit' ? (
@@ -846,6 +866,7 @@ const FilePreviewDrawer = forwardRef<FilePreviewDrawerHandle, FilePreviewDrawerP
         preview={props.preview}
         onClose={props.onClose}
         isObscured={props.isObscured}
+        embedded={props.embedded}
       />
     ) : (
       <TextPreviewDrawer {...props} preview={props.preview} ref={ref} />

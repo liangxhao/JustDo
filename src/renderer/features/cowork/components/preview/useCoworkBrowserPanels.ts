@@ -4,7 +4,7 @@ import {
   BROWSER_AGENT_PANEL_TARGET_ID,
   type BrowserAgentInteractionState,
 } from '@shared/browser/browser';
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 
 import { type BrowserPanelHandle, createBrowserPanelTab } from '@/features/browser/BrowserPanel';
 import {
@@ -35,6 +35,8 @@ interface CoworkBrowserPanelsOptions {
   displaySessionKey: string;
   currentSessionId: string | null;
   browserTabs: BrowserPanelTab[];
+  isDisplayPanelOpen: boolean;
+  hasDisplayTabs: boolean;
   setIsWorkspaceFilesOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setIsDisplayPanelOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setHasBrowserPanelOpened: React.Dispatch<React.SetStateAction<boolean>>;
@@ -65,6 +67,8 @@ export function useCoworkBrowserPanels({
   displaySessionKey,
   currentSessionId,
   browserTabs,
+  isDisplayPanelOpen,
+  hasDisplayTabs,
   setIsWorkspaceFilesOpen,
   setIsDisplayPanelOpen,
   setHasBrowserPanelOpened,
@@ -81,30 +85,68 @@ export function useCoworkBrowserPanels({
   handleBrowserTargetChange,
   openBrowserTab,
 }: CoworkBrowserPanelsOptions) {
-  const handleCreateBrowserTab = useCallback(() => {
-    const pendingTabs = pendingBrowserTabsRef.current.get(displaySessionKey) ?? [];
+  const initializingTabSessionRef = useRef<string | null>(null);
+  const handleCreateBrowserTab = useCallback(
+    (url?: string) => {
+      const pendingTabs = pendingBrowserTabsRef.current.get(displaySessionKey) ?? [];
+      if (
+        currentSessionId?.startsWith('temp-') ||
+        browserTabs.length + pendingTabs.length >= MAX_BROWSER_TABS
+      )
+        return;
+      pendingTabs.push(url ? { url } : {});
+      pendingBrowserTabsRef.current.set(displaySessionKey, pendingTabs);
+      setIsWorkspaceFilesOpen(false);
+      setIsDisplayPanelOpen(true);
+      setHasBrowserPanelOpened(true);
+      setIsBrowserPanelOpen(true);
+      setBrowserTabCreationSequence(sequence => sequence + 1);
+    },
+    [
+      browserTabs.length,
+      currentSessionId,
+      displaySessionKey,
+      pendingBrowserTabsRef,
+      setBrowserTabCreationSequence,
+      setHasBrowserPanelOpened,
+      setIsBrowserPanelOpen,
+      setIsDisplayPanelOpen,
+      setIsWorkspaceFilesOpen,
+    ],
+  );
+
+  useEffect(() => {
+    if (!isDisplayPanelOpen || hasDisplayTabs) {
+      initializingTabSessionRef.current = null;
+      return;
+    }
     if (
-      currentSessionId?.startsWith('temp-') ||
-      browserTabs.length + pendingTabs.length >= MAX_BROWSER_TABS
+      initializingTabSessionRef.current === displaySessionKey ||
+      (pendingBrowserTabsRef.current.get(displaySessionKey)?.length ?? 0) > 0
     )
       return;
-    pendingTabs.push({});
-    pendingBrowserTabsRef.current.set(displaySessionKey, pendingTabs);
-    setIsWorkspaceFilesOpen(false);
-    setIsDisplayPanelOpen(true);
-    setHasBrowserPanelOpened(true);
-    setIsBrowserPanelOpen(true);
-    setBrowserTabCreationSequence(sequence => sequence + 1);
+    if (browserTabs.length > 0) {
+      setIsBrowserPanelOpen(true);
+      setHasBrowserPanelOpened(true);
+      handleBrowserTargetChange(browserTabs[0].targetId);
+      return;
+    }
+    handleCreateBrowserTab();
+    // Keep the creation in flight after the queue drains, until its tab is published.
+    // StrictMode may replay this effect before the parent observes the browser tab.
+    if ((pendingBrowserTabsRef.current.get(displaySessionKey)?.length ?? 0) > 0) {
+      initializingTabSessionRef.current = displaySessionKey;
+    }
   }, [
-    browserTabs.length,
-    currentSessionId,
+    browserTabs,
     displaySessionKey,
+    handleBrowserTargetChange,
+    handleCreateBrowserTab,
+    hasDisplayTabs,
+    isDisplayPanelOpen,
     pendingBrowserTabsRef,
-    setBrowserTabCreationSequence,
     setHasBrowserPanelOpened,
     setIsBrowserPanelOpen,
-    setIsDisplayPanelOpen,
-    setIsWorkspaceFilesOpen,
   ]);
 
   useEffect(() => {

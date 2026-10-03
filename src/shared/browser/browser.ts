@@ -530,6 +530,7 @@ export type BrowserHistoryEntry = {
   title: string;
   lastVisitAt: number;
   visitCount: number;
+  faviconUrl?: string;
 };
 
 export type BrowserHistoryListResult = BrowserActionResult & {

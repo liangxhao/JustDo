@@ -11,7 +11,7 @@ import DisplayPanelLauncher from '@/features/cowork/components/preview/DisplayPa
 import FilePreviewDrawer, {
   type FilePreviewDrawerHandle,
 } from '@/features/cowork/components/preview/FilePreviewDrawer';
-import NewDisplayTabMenu from '@/features/cowork/components/preview/NewDisplayTabMenu';
+import NewDisplayTabButton from '@/features/cowork/components/preview/NewDisplayTabButton';
 import UnsupportedFilePreview from '@/features/cowork/components/preview/UnsupportedFilePreview';
 import WorkspaceFilesPanel from '@/features/cowork/components/preview/WorkspaceFilesPanel';
 import { CoworkPet } from '@/features/cowork/components/status/CoworkPet';
@@ -21,7 +21,12 @@ import { i18nService } from '@/services/i18n';
 import FolderIcon from '@/shared/components/icons/FolderIcon';
 
 import logoUrl from '../../../../../../resources/logo.png';
-import { fileDisplayTabId, MAX_BROWSER_TABS, MAX_TERMINAL_TABS } from '../preview/displayTabIds';
+import {
+  fileDisplayTabId,
+  MAX_BROWSER_TABS,
+  MAX_TERMINAL_TABS,
+  WORKSPACE_FILES_DISPLAY_TAB_ID,
+} from '../preview/displayTabIds';
 import type { FilePreview } from '../preview/FilePreviewDrawer';
 import type { CoworkTerminalTab, SessionDisplayState } from '../preview/useSessionDisplayState';
 
@@ -62,7 +67,7 @@ interface CoworkHomeWorkspaceProps {
   homeDisplayTabs: CoworkDisplayTab[];
   isWorkspaceFilesOpen: boolean;
   browserTabs: BrowserPanelTab[];
-  handleCreateBrowserTab: () => void;
+  handleCreateBrowserTab: (url?: string) => void;
   handleCreateTerminalTab: () => void;
   homeWorkspaceFolderPath: string;
   handleOpenWorkspaceFiles: () => void;
@@ -123,7 +128,11 @@ export function CoworkHomeWorkspace({
               <div className="space-y-12">
                 {/* Welcome Section */}
                 <div className="text-center space-y-5">
-                  <img src={logoUrl} alt="logo" className="cowork-home__logo mx-auto h-[5.333rem] w-[5.333rem]" />
+                  <img
+                    src={logoUrl}
+                    alt="logo"
+                    className="cowork-home__logo mx-auto h-[5.333rem] w-[5.333rem]"
+                  />
                   <h2 className="text-3xl font-bold tracking-tight text-foreground">
                     {i18nService.t(greetingKey)}
                   </h2>
@@ -160,6 +169,7 @@ export function CoworkHomeWorkspace({
         {(isDisplayPanelOpen ||
           hasBrowserPanelOpened ||
           terminalTabs.length > 0 ||
+          homeDisplayTabs.length > 0 ||
           filePreviews.length > 0 ||
           unsupportedFilePreviews.length > 0 ||
           recordingReviewTabs.tabs.length > 0 ||
@@ -171,8 +181,12 @@ export function CoworkHomeWorkspace({
             onClose={closeDisplayPanel}
             width={browserPanelWidth}
             onWidthChange={width => setSessionField(displaySessionKey, 'browserPanelWidth', width)}
-            showEmptyState={homeDisplayTabs.length === 0}
+            showEmptyState={
+              homeDisplayTabs.length === 0 || activeDisplayTabId === WORKSPACE_FILES_DISPLAY_TAB_ID
+            }
             tabs={homeDisplayTabs}
+            workspacePath={homeWorkspaceFolderPath ?? undefined}
+            fileContextPath={activeFilePreview?.filePath ?? activeUnsupportedFilePath}
             emptyState={
               isWorkspaceFilesOpen ? (
                 <div className="flex h-full flex-col items-center justify-center gap-2 bg-background p-6 text-center">
@@ -186,6 +200,7 @@ export function CoworkHomeWorkspace({
                 </div>
               ) : (
                 <DisplayPanelLauncher
+                  visible={isDisplayPanelOpen}
                   browserDisabled={browserTabs.length >= MAX_BROWSER_TABS}
                   onCreateBrowser={handleCreateBrowserTab}
                   onCreateTerminal={handleCreateTerminalTab}
@@ -197,9 +212,10 @@ export function CoworkHomeWorkspace({
               )
             }
             sidePanel={
-              isWorkspaceFilesOpen && homeWorkspaceFolderPath ? (
+              homeWorkspaceFolderPath ? (
                 <WorkspaceFilesPanel
                   key={`${HOME_WORKSPACE_SESSION_ID}:${homeWorkspaceFolderPath}`}
+                  isVisible={isDisplayPanelOpen && isWorkspaceFilesOpen}
                   activeFilePath={activeFilePreview?.filePath ?? activeUnsupportedFilePath}
                   sessionId={HOME_WORKSPACE_SESSION_ID}
                   onOpenFile={filePath => {
@@ -216,15 +232,17 @@ export function CoworkHomeWorkspace({
                 />
               ) : undefined
             }
+            sidePanelVisible={isWorkspaceFilesOpen}
+            onSidePanelToggle={() =>
+              setSessionField(displaySessionKey, 'isWorkspaceFilesOpen', open => !open)
+            }
+            onSidePanelClose={() =>
+              setSessionField(displaySessionKey, 'isWorkspaceFilesOpen', false)
+            }
             actions={
-              <NewDisplayTabMenu
-                browserDisabled={browserTabs.length >= MAX_BROWSER_TABS}
-                onCreateBrowser={handleCreateBrowserTab}
-                onCreateTerminal={handleCreateTerminalTab}
-                onOpenFiles={homeWorkspaceFolderPath ? handleOpenWorkspaceFiles : undefined}
-                terminalDisabled={
-                  !terminalWorkingDirectory || terminalTabs.length >= MAX_TERMINAL_TABS
-                }
+              <NewDisplayTabButton
+                disabled={browserTabs.length >= MAX_BROWSER_TABS}
+                onCreateTab={() => handleCreateBrowserTab()}
               />
             }
           >

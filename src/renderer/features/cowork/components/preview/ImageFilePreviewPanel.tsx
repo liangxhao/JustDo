@@ -1,20 +1,26 @@
 import { ArrowPathIcon, XMarkIcon } from '@heroicons/react/24/outline';
-import { useEffect, useRef, useState } from 'react';
+import { useContext, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import { createImagePreviewTransform, zoomImagePreviewTransform } from '@/image-preview/transform';
 import { i18nService } from '@/services/i18n';
 
+import { FilePreviewToolbarContext } from './FilePreviewToolbarContext';
 import type { ImageFilePreview } from './imageFilePreview';
 
 export default function ImageFilePreviewPanel({
   preview,
   onClose,
   isObscured = false,
+  embedded = false,
 }: {
   preview: ImageFilePreview;
   onClose: () => void;
   isObscured?: boolean;
+  embedded?: boolean;
 }) {
+  const sharedToolbarTarget = useContext(FilePreviewToolbarContext);
+  const toolbarTarget = embedded ? sharedToolbarTarget : null;
   const viewportRef = useRef<HTMLDivElement>(null);
   const [transform, setTransform] = useState(createImagePreviewTransform);
   const [failed, setFailed] = useState(false);
@@ -49,25 +55,18 @@ export default function ImageFilePreviewPanel({
     return () => viewport.removeEventListener('wheel', onWheel);
   }, [preview.src]);
 
-  return (
-    <section
-      className={`absolute inset-0 flex min-h-0 flex-col bg-background ${isObscured ? 'hidden' : ''}`}
-      aria-hidden={isObscured || undefined}
-      aria-label={i18nService.t('coworkImagePreviewTitle')}
-    >
-      <header className="flex h-12 shrink-0 items-center gap-3 border-b border-border px-4">
-        <span className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">
-          {preview.label || i18nService.t('coworkImagePreviewTitle')}
-        </span>
-        <button
-          type="button"
-          className="rounded p-2 text-secondary hover:bg-surface-raised"
-          title={i18nService.t('coworkImagePreviewReset')}
-          aria-label={i18nService.t('coworkImagePreviewReset')}
-          onClick={() => setTransform(createImagePreviewTransform())}
-        >
-          <ArrowPathIcon className="h-4 w-4" />
-        </button>
+  const fileActions = (
+    <>
+      <button
+        type="button"
+        className="rounded p-2 text-secondary hover:bg-surface-raised"
+        title={i18nService.t('coworkImagePreviewReset')}
+        aria-label={i18nService.t('coworkImagePreviewReset')}
+        onClick={() => setTransform(createImagePreviewTransform())}
+      >
+        <ArrowPathIcon className="h-4 w-4" />
+      </button>
+      {!toolbarTarget && (
         <button
           type="button"
           className="rounded p-2 text-secondary hover:bg-surface-raised"
@@ -77,7 +76,30 @@ export default function ImageFilePreviewPanel({
         >
           <XMarkIcon className="h-4 w-4" />
         </button>
-      </header>
+      )}
+    </>
+  );
+
+  return (
+    <section
+      className={`absolute inset-0 flex min-h-0 flex-col bg-background ${isObscured ? 'hidden' : ''}`}
+      aria-hidden={isObscured || undefined}
+      aria-label={i18nService.t('coworkImagePreviewTitle')}
+    >
+      {!toolbarTarget && (
+        <header className="flex h-12 shrink-0 items-center gap-3 border-b border-border px-4">
+          <span className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">
+            {preview.label || i18nService.t('coworkImagePreviewTitle')}
+          </span>
+          {fileActions}
+        </header>
+      )}
+      {toolbarTarget &&
+        !isObscured &&
+        createPortal(
+          <div className="flex shrink-0 items-center gap-1">{fileActions}</div>,
+          toolbarTarget,
+        )}
       <div
         ref={viewportRef}
         className="relative flex min-h-0 flex-1 touch-none items-center justify-center overflow-hidden p-4"

@@ -13,10 +13,16 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { type ComponentProps, StrictMode, useEffect, useRef, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import CoworkDisplayPanel from '@/features/cowork/components/preview/CoworkDisplayPanel';
+import NewDisplayTabButton from '@/features/cowork/components/preview/NewDisplayTabButton';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 
-import BrowserPanel, { type BrowserPanelHandle, getBrowserTabAddress } from './BrowserPanel';
+import BrowserPanel, {
+  type BrowserPanelHandle,
+  getBrowserTabAddress,
+  getBrowserTabDisplayTitle,
+} from './BrowserPanel';
 import { promoteBrowserPanelTabs } from './browserPanelRetention';
 
 const { getPdfDocument } = vi.hoisted(() => ({ getPdfDocument: vi.fn() }));
@@ -122,6 +128,12 @@ const inspectedElement = {
   focusable: true,
   cssPath: 'main > a#docs',
 };
+const pageTab: BrowserPanelTab = {
+  id: 'page',
+  targetId: 'page',
+  title: '',
+  url: 'https://example.com',
+};
 
 const defineWebviewMethod = (name: string, value: unknown) => {
   Object.defineProperty(HTMLElement.prototype, name, {
@@ -150,6 +162,7 @@ function BrowserPanelHarness({
   agentInteractionStates,
   onStopTask,
   onContinueTask,
+  renderStartPage,
 }: {
   draftKey?: string;
   embedded?: boolean;
@@ -164,6 +177,7 @@ function BrowserPanelHarness({
   agentInteractionStates?: readonly BrowserAgentInteractionState[];
   onStopTask?: ComponentProps<typeof BrowserPanel>['onStopTask'];
   onContinueTask?: ComponentProps<typeof BrowserPanel>['onContinueTask'];
+  renderStartPage?: ComponentProps<typeof BrowserPanel>['renderStartPage'];
 }) {
   const [activeTargetId, setActiveTargetId] = useState<string | null>(null);
   return (
@@ -185,12 +199,116 @@ function BrowserPanelHarness({
       agentInteractionStates={agentInteractionStates}
       onStopTask={onStopTask}
       onContinueTask={onContinueTask}
+      renderStartPage={renderStartPage}
       embedded={embedded}
     />
   );
 }
 
 describe('BrowserPanel embedded webview', () => {
+  it('adds and selects a new start page from the workspace plus button', async () => {
+    const initialTab: BrowserPanelTab = {
+      id: 'first',
+      targetId: 'first',
+      title: '',
+      url: 'about:blank',
+    };
+    function Workspace() {
+      const panel = useRef<BrowserPanelHandle>(null);
+      const [tabs, setTabs] = useState([initialTab]);
+      const [activeTargetId, setActiveTargetId] = useState<string | null>('first');
+      return (
+        <CoworkDisplayPanel
+          activeTabId={`browser:${activeTargetId}`}
+          isOpen
+          onClose={vi.fn()}
+          tabs={tabs.map(tab => ({
+            id: `browser:${tab.targetId}`,
+            label: getBrowserTabDisplayTitle(tab),
+            icon: <span />,
+            onSelect: () => setActiveTargetId(tab.targetId),
+          }))}
+          actions={<NewDisplayTabButton onCreateTab={() => panel.current?.openTab()} />}
+        >
+          <BrowserPanel
+            ref={panel}
+            draftKey="new-tab-workspace"
+            embedded
+            isOpen
+            width={520}
+            initialTabs={[initialTab]}
+            activeTargetId={activeTargetId}
+            onClose={vi.fn()}
+            onWidthChange={vi.fn()}
+            onTabsChange={setTabs}
+            onActiveTargetChange={setActiveTargetId}
+            onAddAnnotation={() => true}
+            renderStartPage={() => <div>Workspace tools</div>}
+          />
+        </CoworkDisplayPanel>
+      );
+    }
+    render(<Workspace />);
+    expect(screen.getAllByRole('tab', { name: 'New tab' })).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'New tab' }));
+
+    const tabs = await screen.findAllByRole('tab', { name: 'New tab' });
+    expect(tabs).toHaveLength(2);
+    expect(tabs[0].getAttribute('aria-selected')).toBe('false');
+    expect(tabs[1].getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByText('Workspace tools')).toBeTruthy();
+    expect(screen.queryByRole('menu')).toBeNull();
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Browser address' })),
+    );
+    fireEvent.click(tabs[0]);
+    expect(screen.getAllByRole('tab')[0].getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('opens a start-page link in the existing blank guest and updates its address', async () => {
+    render(
+      <BrowserPanelHarness
+        draftKey="start-page-navigation"
+        renderStartPage={navigate => (
+          <button onClick={() => navigate('https://example.com/docs')}>Project docs</button>
+        )}
+      />,
+    );
+    expect(document.querySelectorAll('webview')).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: 'Record actions' })).toBeNull();
+    expect(screen.queryByLabelText('Draw annotation')).toBeNull();
+    expect(screen.queryByLabelText('Switch annotation tool')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Project docs' }));
+    await waitFor(() => expect(loadUrl).toHaveBeenCalledWith('https://example.com/docs'));
+    expect(document.querySelectorAll('webview')).toHaveLength(1);
+    expect(
+      (screen.getByRole('textbox', { name: 'Browser address' }) as HTMLInputElement).value,
+    ).toBe('https://example.com/docs');
+    expect(screen.queryByRole('button', { name: 'Project docs' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Record actions' })).toBeTruthy();
+    expect(screen.getByLabelText('Draw annotation')).toBeTruthy();
+    expect(screen.getByLabelText('Switch annotation tool')).toBeTruthy();
+
+    fireEvent.click(screen.getByLabelText('New tab'));
+
+    expect(screen.getByRole('button', { name: 'Project docs' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Record actions' })).toBeNull();
+    expect(screen.queryByTestId('browser-annotation-tool-group')).toBeNull();
+  });
+
+  it('does not mount the start page of a hidden browser panel', () => {
+    const renderStartPage = vi.fn(() => <div>Start page</div>);
+    render(
+      <BrowserPanelHarness
+        draftKey="hidden-start-page"
+        isOpen={false}
+        renderStartPage={renderStartPage}
+      />,
+    );
+    expect(renderStartPage).not.toHaveBeenCalled();
+  });
+
   it('keeps the first tab opened by a parent effect during initial mount', () => {
     function FirstOpen() {
       const panel = useRef<BrowserPanelHandle | null>(null);
@@ -737,6 +855,9 @@ describe('BrowserPanel embedded webview', () => {
     const activeTab = container.querySelector('[data-browser-tab-id]');
     expect(activeTab?.textContent).toContain('New tab');
     expect(activeTab?.textContent).not.toContain('about:blank');
+    expect(screen.queryByRole('button', { name: 'Record actions' })).toBeNull();
+    expect(screen.queryByTestId('browser-annotation-tool-group')).toBeNull();
+    expect(screen.getByLabelText('More browser options')).toBeTruthy();
 
     fireEvent.click(screen.getByLabelText('Focus the address bar'));
     expect(document.activeElement).toBe(screen.getByLabelText('Browser address'));
@@ -772,12 +893,10 @@ describe('BrowserPanel embedded webview', () => {
   it('preserves manual notes and the continue action when switching to a blank tab', async () => {
     const config = configService.getConfig();
     vi.spyOn(configService, 'getConfig').mockReturnValue({ ...config, browserMode: 'embedded' });
-    window.electron.browser.intervention = vi
-      .fn()
-      .mockResolvedValue({
-        success: true,
-        value: { token: 'hold', targetId: 'manual-page', phase: 'manual', stopConfirmed: true },
-      });
+    window.electron.browser.intervention = vi.fn().mockResolvedValue({
+      success: true,
+      value: { token: 'hold', targetId: 'manual-page', phase: 'manual', stopConfirmed: true },
+    });
     render(
       <BrowserPanelHarness
         draftKey="manual-tab-change"
@@ -1447,7 +1566,7 @@ describe('BrowserPanel embedded webview', () => {
       id: 'annotation-tab',
       targetId: 'annotation-tab',
       title: '',
-      url: 'about:blank',
+      url: 'https://example.com',
       profile: 'embedded',
     };
     render(<BrowserPanelHarness draftKey="session-1" initialTabs={[tab]} />);
@@ -1476,7 +1595,7 @@ describe('BrowserPanel embedded webview', () => {
       id: 'annotation-tab',
       targetId: 'annotation-tab',
       title: '',
-      url: 'about:blank',
+      url: 'https://example.com',
       profile: 'embedded',
     };
     const interaction: BrowserAgentInteractionState = {
@@ -1721,7 +1840,7 @@ describe('BrowserPanel embedded webview', () => {
   });
 
   it('opens an editable comment box after locking an inspected element', async () => {
-    const { container } = render(<BrowserPanelHarness />);
+    const { container } = render(<BrowserPanelHarness initialTabs={[pageTab]} />);
     fireEvent.click(screen.getByLabelText('Switch annotation tool'));
     fireEvent.click(screen.getByRole('menuitemradio', { name: 'Add comment' }));
     const canvas = container.querySelector('canvas');
@@ -1738,7 +1857,7 @@ describe('BrowserPanel embedded webview', () => {
   });
 
   it.each(['Escape', 'tool'])('clears an inspected annotation with %s', async action => {
-    const { container } = render(<BrowserPanelHarness />);
+    const { container } = render(<BrowserPanelHarness initialTabs={[pageTab]} />);
     fireEvent.click(screen.getByLabelText('Switch annotation tool'));
     fireEvent.click(screen.getByRole('menuitemradio', { name: 'Add comment' }));
     fireEvent.click(container.querySelector('canvas')!, { clientX: 24, clientY: 24 });
@@ -1793,7 +1912,7 @@ describe('BrowserPanel embedded webview', () => {
       height: 200,
       toJSON: () => ({}),
     });
-    const { container } = render(<BrowserPanelHarness />);
+    const { container } = render(<BrowserPanelHarness initialTabs={[pageTab]} />);
     fireEvent.click(screen.getByLabelText('Switch annotation tool'));
     fireEvent.click(screen.getByRole('menuitemradio', { name: label }));
     const canvas = container.querySelector('canvas')!;
@@ -1825,7 +1944,7 @@ describe('BrowserPanel embedded webview', () => {
   });
 
   it('dismisses the tool menu with Escape before clearing the active annotation', async () => {
-    const { container } = render(<BrowserPanelHarness />);
+    const { container } = render(<BrowserPanelHarness initialTabs={[pageTab]} />);
     fireEvent.click(screen.getByLabelText('Switch annotation tool'));
     fireEvent.click(screen.getByRole('menuitemradio', { name: 'Add comment' }));
     fireEvent.click(container.querySelector('canvas')!, { clientX: 24, clientY: 24 });
@@ -1845,7 +1964,7 @@ describe('BrowserPanel embedded webview', () => {
   });
 
   it('describes icon-only tools on hover', async () => {
-    render(<BrowserPanelHarness />);
+    render(<BrowserPanelHarness initialTabs={[pageTab]} />);
     const inspectButton = screen.getByLabelText('Draw annotation');
 
     expect(screen.queryByLabelText('Interact with page')).toBeNull();
@@ -1872,7 +1991,7 @@ describe('BrowserPanel embedded webview', () => {
   });
 
   it('keeps annotation tools in the address row without a redundant title bar', () => {
-    render(<BrowserPanelHarness />);
+    render(<BrowserPanelHarness initialTabs={[pageTab]} />);
     const address = screen.getByLabelText('Browser address');
     const inspectButton = screen.getByLabelText('Draw annotation');
     const toolGroup = screen.getByTestId('browser-annotation-tool-group');
@@ -2113,7 +2232,7 @@ describe('BrowserPanel embedded webview', () => {
   });
 
   it('combines drawing modes into a remembered annotation tool picker', () => {
-    render(<BrowserPanelHarness />);
+    render(<BrowserPanelHarness initialTabs={[pageTab]} />);
     const penTool = screen.getByLabelText('Draw annotation');
     expect(penTool).toBeTruthy();
     expect(screen.queryByLabelText('Rectangle annotation')).toBeNull();

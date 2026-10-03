@@ -4,6 +4,7 @@ import { REVIEW_TAB_ID } from '@shared/cowork/sessionReview';
 import { act, renderHook } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
+import { fileDisplayTabId, WORKSPACE_FILES_DISPLAY_TAB_ID } from './displayTabIds';
 import {
   createSessionDisplayState,
   enforceBackgroundTabLimit,
@@ -12,6 +13,195 @@ import {
 } from './useSessionDisplayState';
 
 describe('useSessionDisplayState', () => {
+  it('keeps the open-file tab and its selection isolated by session', () => {
+    const { result, rerender } = renderHook(
+      ({ sessionId }) => useSessionDisplayState(sessionId, 520),
+      { initialProps: { sessionId: 'session-a' } },
+    );
+    act(() => {
+      result.current.setters.setIsWorkspaceFilesTabOpen(true);
+      result.current.setters.setIsWorkspaceFilesOpen(true);
+      result.current.setters.setPreferredDisplayTabId(WORKSPACE_FILES_DISPLAY_TAB_ID);
+    });
+    rerender({ sessionId: 'session-b' });
+    expect(result.current.state.isWorkspaceFilesTabOpen).toBe(false);
+    rerender({ sessionId: 'session-a' });
+    expect(result.current.state.isWorkspaceFilesTabOpen).toBe(true);
+    expect(result.current.state.isWorkspaceFilesOpen).toBe(true);
+    expect(result.current.state.preferredDisplayTabId).toBe(WORKSPACE_FILES_DISPLAY_TAB_ID);
+  });
+
+  it('replaces the open-file tab when selecting a preview and keeps the tree visible', () => {
+    const { result } = renderHook(() => useSessionDisplayState('session-a', 520));
+    act(() => {
+      result.current.setters.setIsWorkspaceFilesTabOpen(true);
+      result.current.setters.setIsWorkspaceFilesOpen(true);
+      result.current.setters.setPreferredDisplayTabId(WORKSPACE_FILES_DISPLAY_TAB_ID);
+    });
+    const filePath = 'C:/workspace/notes.md';
+    act(() => {
+      result.current.setters.setFilePreviews([
+        { filePath, content: 'notes', editToken: 'grant', version: '1' },
+      ]);
+      result.current.setters.setPreferredDisplayTabId(fileDisplayTabId(filePath));
+    });
+    expect(result.current.state.isWorkspaceFilesTabOpen).toBe(false);
+    expect(result.current.state.isWorkspaceFilesOpen).toBe(true);
+    expect(result.current.state.preferredDisplayTabId).toBe(fileDisplayTabId(filePath));
+    expect(result.current.state.tabRecency[WORKSPACE_FILES_DISPLAY_TAB_ID]).toBeUndefined();
+  });
+
+  it.each([
+    ['session-a', 'text'],
+    ['session-a', 'image'],
+    ['session-a', 'unsupported'],
+    [null, 'text'],
+    [null, 'image'],
+    [null, 'unsupported'],
+  ] as const)(
+    'restores the open-file tab after closing the last %s %s preview',
+    (sessionId, kind) => {
+      const { result } = renderHook(() => useSessionDisplayState(sessionId, 520));
+      const filePath = kind === 'image' ? 'C:/work/photo.png' : 'C:/work/notes.md';
+      const closingId = fileDisplayTabId(filePath);
+      act(() => {
+        result.current.setters.setIsWorkspaceFilesOpen(true);
+        if (kind === 'unsupported') {
+          result.current.setters.setUnsupportedFilePreviews([filePath]);
+        } else {
+          result.current.setters.setFilePreviews([
+            kind === 'image'
+              ? {
+                  kind: 'image',
+                  filePath,
+                  src: 'localfile:///C:/work/photo.png',
+                  label: 'photo.png',
+                }
+              : { filePath, content: 'notes', editToken: 'grant', version: '1' },
+          ]);
+        }
+        result.current.setters.setPreferredDisplayTabId(closingId);
+      });
+      expect(result.current.state.isWorkspaceFilesTabOpen).toBe(false);
+
+      act(() => {
+        if (kind === 'unsupported') result.current.setters.setUnsupportedFilePreviews([]);
+        else result.current.setters.setFilePreviews([]);
+        result.current.setters.setPreferredDisplayTabId(current =>
+          current === closingId ? null : current,
+        );
+      });
+
+      expect(result.current.state.isWorkspaceFilesTabOpen).toBe(true);
+      expect(result.current.state.isWorkspaceFilesOpen).toBe(true);
+      expect(result.current.state.preferredDisplayTabId).toBe(WORKSPACE_FILES_DISPLAY_TAB_ID);
+      expect(result.current.state.tabRecency[WORKSPACE_FILES_DISPLAY_TAB_ID]).toBeGreaterThan(0);
+      expect(result.current.state.tabRecency[closingId]).toBeUndefined();
+    },
+  );
+
+  it('restores the open-file tab only after every regular and unsupported preview is closed', () => {
+    const { result } = renderHook(() => useSessionDisplayState('session-a', 520));
+    const filePath = 'C:/work/notes.md';
+    const unsupportedPath = 'C:/work/report.docx';
+    act(() => {
+      result.current.setters.setIsWorkspaceFilesOpen(true);
+      result.current.setters.setFilePreviews([
+        { filePath, content: 'notes', editToken: 'grant', version: '1' },
+      ]);
+      result.current.setters.setUnsupportedFilePreviews([unsupportedPath]);
+      result.current.setters.setPreferredDisplayTabId(fileDisplayTabId(filePath));
+    });
+
+    act(() => {
+      result.current.setters.setFilePreviews([]);
+      result.current.setters.setPreferredDisplayTabId(fileDisplayTabId(unsupportedPath));
+    });
+    expect(result.current.state.isWorkspaceFilesTabOpen).toBe(false);
+    expect(result.current.state.preferredDisplayTabId).toBe(fileDisplayTabId(unsupportedPath));
+
+    act(() => result.current.setters.setUnsupportedFilePreviews([]));
+    expect(result.current.state.isWorkspaceFilesTabOpen).toBe(true);
+    expect(result.current.state.preferredDisplayTabId).toBe(WORKSPACE_FILES_DISPLAY_TAB_ID);
+  });
+
+  it('keeps a selected tool tab when the last background file preview is closed', () => {
+    const { result } = renderHook(() => useSessionDisplayState('session-a', 520));
+    act(() => {
+      result.current.setters.setIsWorkspaceFilesOpen(true);
+      result.current.setters.setFilePreviews([
+        { filePath: 'C:/work/notes.md', content: 'notes', editToken: 'grant', version: '1' },
+      ]);
+      result.current.setters.setPreferredDisplayTabId(fileDisplayTabId('C:/work/notes.md'));
+      result.current.setters.setTerminalTabs([
+        { id: 'terminal:one', cwd: 'C:/work', label: 'Terminal' },
+      ]);
+      result.current.setters.setPreferredDisplayTabId('terminal:one');
+    });
+
+    act(() => result.current.setters.setFilePreviews([]));
+
+    expect(result.current.state.isWorkspaceFilesTabOpen).toBe(true);
+    expect(result.current.state.preferredDisplayTabId).toBe('terminal:one');
+  });
+
+  it('restores the chooser on reopening an empty tree after closing its preview while hidden', () => {
+    const { result } = renderHook(() => useSessionDisplayState('session-a', 520));
+    act(() => {
+      result.current.setters.setIsWorkspaceFilesOpen(true);
+      result.current.setters.setFilePreviews([
+        { filePath: 'C:/work/notes.md', content: 'notes', editToken: 'grant', version: '1' },
+      ]);
+      result.current.setters.setPreferredDisplayTabId(fileDisplayTabId('C:/work/notes.md'));
+      result.current.setters.setIsWorkspaceFilesOpen(false);
+    });
+
+    act(() => {
+      result.current.setters.setFilePreviews([]);
+      result.current.setters.setPreferredDisplayTabId(null);
+    });
+    expect(result.current.state.isWorkspaceFilesTabOpen).toBe(false);
+    expect(result.current.state.isWorkspaceFilesOpen).toBe(false);
+
+    act(() => result.current.setters.setIsWorkspaceFilesOpen(true));
+    expect(result.current.state.isWorkspaceFilesTabOpen).toBe(true);
+    expect(result.current.state.preferredDisplayTabId).toBe(WORKSPACE_FILES_DISPLAY_TAB_ID);
+  });
+
+  it('allows explicitly closing the open-file tab and its tree', () => {
+    const { result } = renderHook(() => useSessionDisplayState('session-a', 520));
+    act(() => result.current.setters.setIsWorkspaceFilesOpen(true));
+    expect(result.current.state.isWorkspaceFilesTabOpen).toBe(true);
+
+    act(() => {
+      result.current.setters.setIsWorkspaceFilesTabOpen(false);
+      result.current.setters.setIsWorkspaceFilesOpen(false);
+      result.current.setters.setPreferredDisplayTabId(null);
+    });
+
+    expect(result.current.state.isWorkspaceFilesTabOpen).toBe(false);
+    expect(result.current.state.isWorkspaceFilesOpen).toBe(false);
+    expect(result.current.state.preferredDisplayTabId).toBeNull();
+  });
+
+  it('evicts the open-file tab with the shared background limit and closes its tree', () => {
+    const background = {
+      ...createSessionDisplayState(520),
+      isWorkspaceFilesTabOpen: true,
+      isWorkspaceFilesOpen: true,
+      preferredDisplayTabId: WORKSPACE_FILES_DISPLAY_TAB_ID,
+      tabRecency: { [WORKSPACE_FILES_DISPLAY_TAB_ID]: 1 },
+    };
+    const retained = enforceBackgroundTabLimit(
+      { background, active: createSessionDisplayState(520) },
+      'active',
+      0,
+    );
+    expect(retained.background.isWorkspaceFilesTabOpen).toBe(false);
+    expect(retained.background.isWorkspaceFilesOpen).toBe(false);
+    expect(retained.background.preferredDisplayTabId).toBeNull();
+  });
+
   it('isolates review navigation by session and restores it when returning', () => {
     const { result, rerender } = renderHook(
       ({ sessionId }) => useSessionDisplayState(sessionId, 520),

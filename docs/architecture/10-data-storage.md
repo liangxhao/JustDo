@@ -129,6 +129,8 @@ agents 的 model 为空表示继承；main 不以遗留档案 model 作为用户
 
 browser-import.sqlite 独立保存导入历史、safeStorage 加密密码、下载记录和命名 profile；浏览器 Cookie/storage/cache 在 Chromium partition。Renderer 不获取密码密文或下载真实路径，打开文件按记录 ID 经 Main 验证。
 
+`imported_history.favicon_url` 保存内置浏览器声明的 HTTP(S) 图标 URL，沿用历史 URL 的凭据移除与敏感参数脱敏；不保存图像正文。旧数据库只读查询可返回无图标记录，首次写入时补列并保留历史。图标事件可在页面加载结束前或后到达，Main 单独更新图标，不增加访问次数或改动访问时间；缺失图标的再次访问保留已有图标。清理历史时随记录一并删除，无独立图标索引或缓存表。
+
 按时间清理历史记录与清空 Chromium 存储的能力不同，后者可能全量清除，UI 必须说明。删除下载记录不等于删除磁盘文件。
 
 LiteLLM 活动记录是服务端 EndUser metadata，不计入本地 20 表。客户端开关控制上报，JWT 负责身份校验；未收到活动不能证明用户没启动。服务端部署与字段保留见[认证专题](../features/authentication-builtin-model-lifecycle.md)。

@@ -1,11 +1,15 @@
 import { XMarkIcon } from '@heroicons/react/24/outline';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
+import FileTreeIcon from '@/shared/components/icons/FileTreeIcon';
 import RightSidebarIcon from '@/shared/components/icons/RightSidebarIcon';
 import WorkspaceFullscreenIcon from '@/shared/components/icons/WorkspaceFullscreenIcon';
 
 import DisplayTabContextMenu, { type DisplayTabContextMenuItem } from './DisplayTabContextMenu';
+import { FILE_DISPLAY_TAB_PREFIX, WORKSPACE_FILES_DISPLAY_TAB_ID } from './displayTabIds';
+import FilePathBreadcrumbBar from './FilePathBreadcrumbBar';
+import { FilePreviewToolbarContext } from './FilePreviewToolbarContext';
 
 export interface CoworkDisplayTab {
   id: string;
@@ -34,10 +38,15 @@ interface CoworkDisplayPanelProps {
   actions?: React.ReactNode;
   children: React.ReactNode;
   emptyState?: React.ReactNode;
+  fileContextPath?: string;
+  workspacePath?: string;
   isOpen: boolean;
   onClose: () => void;
   onWidthChange?: (width: number) => void;
+  onSidePanelClose?: () => void;
+  onSidePanelToggle?: () => void;
   sidePanel?: React.ReactNode;
+  sidePanelVisible?: boolean;
   showEmptyState?: boolean;
   tabs: CoworkDisplayTab[];
   width?: number;
@@ -46,6 +55,9 @@ interface CoworkDisplayPanelProps {
 const DISPLAY_PANEL_DEFAULT_WIDTH = 520;
 const DISPLAY_PANEL_MIN_WIDTH = 360;
 const CHAT_PANEL_MIN_WIDTH = 360;
+const SIDE_PANEL_MIN_WIDTH = 160;
+const SIDE_PANEL_COLLAPSE_WIDTH = 80;
+const PREVIEW_CONTENT_MIN_WIDTH = 180;
 
 const getDisplayPanelMaxWidth = (element: HTMLElement | null): number => {
   const availableWidth = element?.parentElement?.clientWidth ?? window.innerWidth;
@@ -57,14 +69,24 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
   actions,
   children,
   emptyState,
+  fileContextPath,
+  workspacePath,
   isOpen,
   onClose,
   onWidthChange,
+  onSidePanelClose,
+  onSidePanelToggle,
   sidePanel,
+  sidePanelVisible = Boolean(sidePanel),
   tabs,
   showEmptyState = tabs.length === 0,
   width: controlledWidth,
 }) => {
+  const activeFilePath =
+    fileContextPath ||
+    (activeTabId.startsWith(FILE_DISPLAY_TAB_PREFIX)
+      ? activeTabId.slice(FILE_DISPLAY_TAB_PREFIX.length)
+      : undefined);
   const [uncontrolledWidth, setUncontrolledWidth] = useState(DISPLAY_PANEL_DEFAULT_WIDTH);
   const configuredWidth = controlledWidth ?? uncontrolledWidth;
   const [automaticWidth, setAutomaticWidth] = useState(() => window.innerWidth / 2);
@@ -75,8 +97,25 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
   onWidthChangeRef.current = onWidthChange;
   const [isWorkspaceFullscreen, setIsWorkspaceFullscreen] = useState(false);
   const [tabMenu, setTabMenu] = useState<{ tabId: string; x: number; y: number } | null>(null);
-  const hasSidePanel = Boolean(sidePanel);
+  const hasSidePanel = Boolean(sidePanel) && sidePanelVisible;
+  const [hasOpenedSidePanel, setHasOpenedSidePanel] = useState(hasSidePanel);
+  const [isSidePanelResizing, setIsSidePanelResizing] = useState(false);
   const panelRef = useRef<HTMLElement>(null);
+  const sidePanelRef = useRef<HTMLDivElement>(null);
+  const sidePanelToggleRef = useRef<HTMLButtonElement>(null);
+  const [fileToolbarTarget, setFileToolbarTarget] = useState<HTMLDivElement | null>(null);
+  const [contentWidth, setContentWidth] = useState(width);
+  const [requestedSidePanelWidth, setRequestedSidePanelWidth] = useState<number | null>(null);
+  const sidePanelMaxWidth = Math.max(
+    SIDE_PANEL_MIN_WIDTH,
+    contentWidth - PREVIEW_CONTENT_MIN_WIDTH,
+  );
+  const sidePanelWidth = Math.min(
+    Math.max(requestedSidePanelWidth ?? contentWidth * 0.42, SIDE_PANEL_MIN_WIDTH),
+    sidePanelMaxWidth,
+  );
+  const sidePanelCloseRef = useRef(onSidePanelClose);
+  sidePanelCloseRef.current = onSidePanelClose;
   const tabButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const resizeCleanupRef = useRef<(() => void) | null>(null);
 
@@ -87,16 +126,13 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
     );
   }, []);
 
-  const setWidth = useCallback(
-    (value: number | ((current: number) => number)) => {
-      const nextWidth = typeof value === 'function' ? value(widthRef.current) : value;
-      if (Object.is(widthRef.current, nextWidth)) return;
-      widthRef.current = nextWidth;
-      setUncontrolledWidth(nextWidth);
-      onWidthChangeRef.current?.(nextWidth);
-    },
-    [],
-  );
+  const setWidth = useCallback((value: number | ((current: number) => number)) => {
+    const nextWidth = typeof value === 'function' ? value(widthRef.current) : value;
+    if (Object.is(widthRef.current, nextWidth)) return;
+    widthRef.current = nextWidth;
+    setUncontrolledWidth(nextWidth);
+    onWidthChangeRef.current?.(nextWidth);
+  }, []);
 
   useEffect(() => {
     const resize = () => {
@@ -127,6 +163,36 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
   useEffect(() => {
     if (!isOpen) setTabMenu(null);
   }, [isOpen]);
+
+  useEffect(() => {
+    const panel = panelRef.current;
+    const measure = () => setContentWidth(panel?.clientWidth || width);
+    measure();
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+    if (panel) observer?.observe(panel);
+    window.addEventListener('resize', measure);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, [width, isWorkspaceFullscreen, isOpen]);
+
+  useEffect(() => {
+    if (!hasSidePanel || !isOpen) resizeCleanupRef.current?.();
+  }, [hasSidePanel, isOpen]);
+
+  useEffect(() => {
+    if (hasSidePanel) setHasOpenedSidePanel(true);
+  }, [hasSidePanel]);
+
+  useLayoutEffect(() => {
+    const panel = sidePanelRef.current;
+    const isInteractive = hasSidePanel && isOpen;
+    if (!isInteractive && panel?.contains(document.activeElement)) {
+      sidePanelToggleRef.current?.focus();
+    }
+    panel?.toggleAttribute('inert', !isInteractive);
+  }, [hasSidePanel, hasOpenedSidePanel, isOpen]);
 
   const handleTabKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLButtonElement>, tabIndex: number) => {
@@ -182,6 +248,53 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
     [clampWidth, setWidth],
   );
 
+  const beginSidePanelResize = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    resizeCleanupRef.current?.();
+    const right = sidePanelRef.current?.getBoundingClientRect().right;
+    if (right === undefined) return;
+    const pointerId = event.pointerId;
+    const handle = event.currentTarget;
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    const cleanupResize = () => {
+      setIsSidePanelResizing(false);
+      if (handle.hasPointerCapture?.(pointerId)) handle.releasePointerCapture(pointerId);
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', finishResize);
+      window.removeEventListener('pointercancel', finishResize);
+      window.removeEventListener('blur', cleanupResize);
+      resizeCleanupRef.current = null;
+    };
+    const finishResize = (pointerEvent: PointerEvent) => {
+      if (pointerEvent.pointerId === pointerId) cleanupResize();
+    };
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      if (moveEvent.pointerId !== pointerId) return;
+      const nextWidth = right - moveEvent.clientX;
+      if (nextWidth <= SIDE_PANEL_COLLAPSE_WIDTH && sidePanelCloseRef.current) {
+        cleanupResize();
+        sidePanelCloseRef.current();
+        return;
+      }
+      setRequestedSidePanelWidth(
+        Math.min(Math.max(nextWidth, SIDE_PANEL_MIN_WIDTH), sidePanelMaxWidth),
+      );
+    };
+    resizeCleanupRef.current = cleanupResize;
+    setIsSidePanelResizing(true);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    handle.setPointerCapture?.(pointerId);
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', finishResize);
+    window.addEventListener('pointercancel', finishResize);
+    window.addEventListener('blur', cleanupResize);
+  };
+
   const closeTabs = useCallback(async (closingTabs: CoworkDisplayTab[]): Promise<boolean> => {
     for (const tab of closingTabs) {
       if ((await tab.onClose?.()) === false) return false;
@@ -224,6 +337,15 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
   const menuTabIndex = tabMenu ? tabs.findIndex(tab => tab.id === tabMenu.tabId) : -1;
   const menuTab = menuTabIndex >= 0 ? tabs[menuTabIndex] : undefined;
   const menuCloseActions = menuTab ? getCloseActions(menuTab, menuTabIndex) : undefined;
+  const showFileToolbar = Boolean(
+    activeFilePath || activeTabId === WORKSPACE_FILES_DISPLAY_TAB_ID || hasSidePanel,
+  );
+  const workspaceLabel =
+    workspacePath?.match(/^[A-Za-z]:/)?.[0] ??
+    workspacePath
+      ?.split(/[\\/]+/)
+      .filter(Boolean)
+      .pop();
 
   const dismissTabMenu = (restoreFocus = true) => {
     const triggerTabId = tabMenu?.tabId;
@@ -383,19 +505,119 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
         </button>
       </div>
 
-      <div className="flex min-h-0 flex-1 overflow-hidden">
-        <div className="relative min-w-0 flex-1 overflow-hidden">
-          {children}
-          {showEmptyState && emptyState && (
-            <div className="absolute inset-0 z-10">{emptyState}</div>
+      {showFileToolbar && (
+        <div
+          className="flex h-11 shrink-0 items-center gap-2 border-b border-border bg-background px-2"
+          role="toolbar"
+          aria-label={i18nService.t('coworkWorkspaceFileInfo')}
+        >
+          {activeFilePath ? (
+            <FilePathBreadcrumbBar
+              key={activeFilePath}
+              filePath={activeFilePath}
+              workspacePath={workspacePath}
+              isVisible={isOpen}
+            />
+          ) : workspaceLabel ? (
+            <div
+              className="inline-flex h-8 min-w-8 max-w-48 items-center justify-center rounded-full bg-surface-raised px-2 text-xs font-medium text-foreground"
+              title={workspacePath}
+              aria-label={workspacePath}
+            >
+              <span className="truncate">{workspaceLabel}</span>
+            </div>
+          ) : null}
+          <div ref={setFileToolbarTarget} className="flex shrink-0 items-center" />
+          {sidePanel && onSidePanelToggle && (
+            <button
+              ref={sidePanelToggleRef}
+              type="button"
+              onClick={onSidePanelToggle}
+              className={`ml-auto inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border transition-colors ${
+                hasSidePanel
+                  ? 'border-primary/25 bg-primary/10 text-primary hover:bg-primary/20'
+                  : 'border-border bg-surface-raised text-secondary hover:border-primary/40 hover:text-primary'
+              }`}
+              title={i18nService.t(
+                hasSidePanel ? 'coworkWorkspaceFilesHide' : 'coworkWorkspaceFilesShow',
+              )}
+              aria-label={i18nService.t(
+                hasSidePanel ? 'coworkWorkspaceFilesHide' : 'coworkWorkspaceFilesShow',
+              )}
+              aria-expanded={hasSidePanel}
+              aria-controls="cowork-workspace-files-panel"
+            >
+              <FileTreeIcon className="h-4 w-4" />
+            </button>
           )}
         </div>
-        {sidePanel && (
-          <div className="relative min-h-0 w-[42%] min-w-56 shrink-0 border-l border-border">
-            {sidePanel}
+      )}
+
+      <FilePreviewToolbarContext.Provider value={fileToolbarTarget}>
+        <div className="flex min-h-0 flex-1 overflow-hidden">
+          <div className="relative min-w-0 flex-1 overflow-hidden">
+            {children}
+            {showEmptyState && emptyState && (
+              <div className="absolute inset-0 z-10">{emptyState}</div>
+            )}
           </div>
-        )}
-      </div>
+          {sidePanel && (
+            <div
+              id="cowork-workspace-files-panel"
+              ref={sidePanelRef}
+              className={`relative min-h-0 shrink-0 overflow-clip motion-reduce:transition-none ${hasSidePanel ? 'border-l border-border' : 'border-l-0'} ${isSidePanelResizing ? '' : 'transition-[width] duration-200 ease-out'}`}
+              style={{ width: hasSidePanel ? sidePanelWidth : 0 }}
+              aria-hidden={!hasSidePanel}
+            >
+              <div
+                className={`absolute inset-y-0 left-0 z-30 w-3 touch-none cursor-col-resize transition-colors hover:bg-primary/10 focus-visible:bg-primary/10 focus-visible:outline-none ${hasSidePanel ? '' : 'pointer-events-none'}`}
+                onPointerDown={beginSidePanelResize}
+                onKeyDown={event => {
+                  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+                  event.preventDefault();
+                  if (
+                    onSidePanelClose &&
+                    (event.key === 'Home' ||
+                      (event.key === 'ArrowRight' && sidePanelWidth <= SIDE_PANEL_MIN_WIDTH))
+                  ) {
+                    onSidePanelClose();
+                    return;
+                  }
+                  const nextWidth =
+                    event.key === 'Home'
+                      ? SIDE_PANEL_MIN_WIDTH
+                      : event.key === 'End'
+                        ? sidePanelMaxWidth
+                        : sidePanelWidth + (event.key === 'ArrowLeft' ? 24 : -24);
+                  setRequestedSidePanelWidth(
+                    Math.min(Math.max(nextWidth, SIDE_PANEL_MIN_WIDTH), sidePanelMaxWidth),
+                  );
+                }}
+                role="separator"
+                tabIndex={hasSidePanel ? 0 : -1}
+                aria-orientation="vertical"
+                aria-label={i18nService.t('coworkWorkspaceFilesResize')}
+                title={i18nService.t('coworkWorkspaceFilesResize')}
+                aria-valuemin={onSidePanelClose ? 0 : SIDE_PANEL_MIN_WIDTH}
+                aria-valuemax={sidePanelMaxWidth}
+                aria-valuenow={Math.round(sidePanelWidth)}
+              />
+              {(hasSidePanel || hasOpenedSidePanel) && (
+                <div
+                  className={`h-full motion-reduce:transition-none ${isSidePanelResizing ? '' : 'transition-[transform,opacity] duration-200 ease-out'}`}
+                  style={{
+                    width: sidePanelWidth,
+                    transform: hasSidePanel ? 'translateX(0)' : 'translateX(100%)',
+                    opacity: hasSidePanel ? 1 : 0,
+                  }}
+                >
+                  {sidePanel}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </FilePreviewToolbarContext.Provider>
       {isOpen && tabMenu && menuTab && menuCloseActions && (
         <DisplayTabContextMenu
           x={tabMenu.x}

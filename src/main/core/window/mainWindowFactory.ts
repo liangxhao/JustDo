@@ -34,7 +34,6 @@ import {
 } from '../../browser/browserAgentDownloadCoordinator';
 import {
   recordBrowserDownload,
-  recordBrowserHistory,
   updateBrowserDownload,
 } from '../../browser/browserDataImportService';
 import { sanitizeBrowserUrl } from '../../browser/browserDataSanitizers';
@@ -42,6 +41,7 @@ import {
   resolveAvailableBrowserDownloadPath,
   resolveBrowserDownloadDirectory,
 } from '../../browser/browserDownloadPath';
+import { trackBrowserHistory } from '../../browser/browserHistoryTracking';
 import {
   isAllowedLocalHtmlPreviewResource,
   isLocalHtmlPreviewUrl,
@@ -557,10 +557,7 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
         event.preventDefault();
       }
     });
-    guestContents.on('did-stop-loading', () => {
-      const url = guestContents.getURL();
-      if (!localPreviewScopeUrl) recordBrowserHistory(url, guestContents.getTitle());
-    });
+    trackBrowserHistory(guestContents, () => !localPreviewScopeUrl);
     guestContents.on('context-menu', (_contextEvent, params) => {
       const template: Electron.MenuItemConstructorOptions[] = [];
       if (params.linkURL && isAllowedBrowserPanelUrl(params.linkURL)) {

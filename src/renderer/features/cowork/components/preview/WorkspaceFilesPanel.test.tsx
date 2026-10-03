@@ -3,6 +3,8 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
+import { i18nService } from '@/services/i18n';
+
 import WorkspaceFilesPanel from './WorkspaceFilesPanel';
 
 const listWorkspaceDirectory = vi.fn();
@@ -244,12 +246,25 @@ test('does not steal focus back to the review file when another directory loads'
   listWorkspaceDirectory.mockImplementation(async (_sessionId: string, relativePath = '') => ({
     success: true,
     truncated: false,
-    entries: relativePath === ''
-      ? [
-          { filePath: '/work/readme.md', relativePath: 'readme.md', name: 'readme.md', kind: 'file' },
-          { filePath: '/work/src', relativePath: 'src', name: 'src', kind: 'directory' },
-        ]
-      : [{ filePath: '/work/src/main.ts', relativePath: 'src/main.ts', name: 'main.ts', kind: 'file' }],
+    entries:
+      relativePath === ''
+        ? [
+            {
+              filePath: '/work/readme.md',
+              relativePath: 'readme.md',
+              name: 'readme.md',
+              kind: 'file',
+            },
+            { filePath: '/work/src', relativePath: 'src', name: 'src', kind: 'directory' },
+          ]
+        : [
+            {
+              filePath: '/work/src/main.ts',
+              relativePath: 'src/main.ts',
+              name: 'main.ts',
+              kind: 'file',
+            },
+          ],
   }));
   render(<WorkspaceFilesPanel sessionId="one" revealPath="readme.md" onOpenFile={vi.fn()} />);
   const file = await screen.findByRole('treeitem', { name: 'readme.md' });
@@ -265,10 +280,17 @@ test('repeats a reveal for the same cached root file after it was filtered out',
   listWorkspaceDirectory.mockResolvedValue({
     success: true,
     truncated: false,
-    entries: [{ filePath: '/work/main.ts', relativePath: 'main.ts', name: 'main.ts', kind: 'file' }],
+    entries: [
+      { filePath: '/work/main.ts', relativePath: 'main.ts', name: 'main.ts', kind: 'file' },
+    ],
   });
   const view = render(
-    <WorkspaceFilesPanel sessionId="one" revealPath="main.ts" revealVersion={1} onOpenFile={vi.fn()} />,
+    <WorkspaceFilesPanel
+      sessionId="one"
+      revealPath="main.ts"
+      revealVersion={1}
+      onOpenFile={vi.fn()}
+    />,
   );
   const file = await screen.findByRole('treeitem', { name: 'main.ts' });
   await waitFor(() => expect(document.activeElement).toBe(file));
@@ -278,11 +300,140 @@ test('repeats a reveal for the same cached root file after it was filtered out',
   expect(screen.queryByRole('treeitem')).toBeNull();
 
   view.rerender(
-    <WorkspaceFilesPanel sessionId="one" revealPath="main.ts" revealVersion={2} onOpenFile={vi.fn()} />,
+    <WorkspaceFilesPanel
+      sessionId="one"
+      revealPath="main.ts"
+      revealVersion={2}
+      onOpenFile={vi.fn()}
+    />,
   );
 
   const revealed = await screen.findByRole('treeitem', { name: 'main.ts' });
   await waitFor(() => expect(document.activeElement).toBe(revealed));
   expect(filter).toHaveProperty('value', '');
   expect(listWorkspaceDirectory).toHaveBeenCalledTimes(1);
+});
+
+test('refreshes loaded directories while preserving the filter and expanded folders', async () => {
+  let refreshed = false;
+  listWorkspaceDirectory.mockImplementation(async (_sessionId: string, relativePath: string) => ({
+    success: true,
+    truncated: false,
+    entries:
+      relativePath === ''
+        ? [
+            { filePath: '/work/src', relativePath: 'src', name: 'src', kind: 'directory' },
+            {
+              filePath: refreshed ? '/work/new.md' : '/work/old.md',
+              relativePath: refreshed ? 'new.md' : 'old.md',
+              name: refreshed ? 'new.md' : 'old.md',
+              kind: 'file',
+            },
+          ]
+        : [
+            {
+              filePath: refreshed ? '/work/src/new.ts' : '/work/src/old.ts',
+              relativePath: refreshed ? 'src/new.ts' : 'src/old.ts',
+              name: refreshed ? 'new.ts' : 'old.ts',
+              kind: 'file',
+            },
+          ],
+  }));
+  const onOpenFile = vi.fn();
+  render(<WorkspaceFilesPanel sessionId="one" onOpenFile={onOpenFile} />);
+  fireEvent.click(await screen.findByRole('treeitem', { name: 'src' }));
+  await screen.findByText('old.ts');
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: '.ts' } });
+
+  refreshed = true;
+  fireEvent.click(
+    screen.getByRole('button', { name: i18nService.t('coworkWorkspaceFilesRefresh') }),
+  );
+
+  await screen.findByText('new.ts');
+  expect(screen.queryByText('old.ts')).toBeNull();
+  expect(screen.getByRole('textbox')).toHaveProperty('value', '.ts');
+  expect(screen.getByRole('treeitem', { name: 'src' }).getAttribute('aria-expanded')).toBe('true');
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: '' } });
+  expect(screen.getByText('new.md')).toBeTruthy();
+  expect(screen.queryByText('old.md')).toBeNull();
+  expect(listWorkspaceDirectory).toHaveBeenCalledTimes(4);
+  expect(onOpenFile).not.toHaveBeenCalled();
+});
+
+test('collapses all directories and clears filtering without opening or closing a file', async () => {
+  listWorkspaceDirectory.mockImplementation(async (_sessionId: string, relativePath: string) => ({
+    success: true,
+    entries:
+      relativePath === ''
+        ? [{ filePath: '/work/src', relativePath: 'src', name: 'src', kind: 'directory' }]
+        : [
+            {
+              filePath: '/work/src/main.ts',
+              relativePath: 'src/main.ts',
+              name: 'main.ts',
+              kind: 'file',
+            },
+          ],
+  }));
+  const onOpenFile = vi.fn();
+  render(<WorkspaceFilesPanel sessionId="one" onOpenFile={onOpenFile} />);
+  fireEvent.click(await screen.findByText('src'));
+  await screen.findByText('main.ts');
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'main' } });
+
+  fireEvent.click(
+    screen.getByRole('button', { name: i18nService.t('coworkWorkspaceFilesCollapseAll') }),
+  );
+
+  expect(screen.getByRole('treeitem', { name: 'src' }).getAttribute('aria-expanded')).toBe('false');
+  expect(screen.queryByText('main.ts')).toBeNull();
+  expect(screen.getByRole('textbox')).toHaveProperty('value', '');
+  expect(onOpenFile).not.toHaveBeenCalled();
+});
+
+test('discards an older directory read after a refresh finishes', async () => {
+  let resolveOldRequest: ((value: unknown) => void) | undefined;
+  listWorkspaceDirectory
+    .mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          resolveOldRequest = resolve;
+        }),
+    )
+    .mockResolvedValue({
+      success: true,
+      entries: [{ filePath: '/work/new.md', relativePath: 'new.md', name: 'new.md', kind: 'file' }],
+    });
+  render(<WorkspaceFilesPanel sessionId="one" onOpenFile={vi.fn()} />);
+
+  fireEvent.click(
+    screen.getByRole('button', { name: i18nService.t('coworkWorkspaceFilesRefresh') }),
+  );
+  await screen.findByText('new.md');
+  resolveOldRequest?.({
+    success: true,
+    entries: [{ filePath: '/work/old.md', relativePath: 'old.md', name: 'old.md', kind: 'file' }],
+  });
+
+  await waitFor(() => expect(screen.queryByText('old.md')).toBeNull());
+  expect(screen.getByText('new.md')).toBeTruthy();
+});
+
+test('retries a failed root directory read from the refresh button', async () => {
+  listWorkspaceDirectory.mockResolvedValueOnce({ success: false }).mockResolvedValue({
+    success: true,
+    entries: [
+      { filePath: '/work/main.ts', relativePath: 'main.ts', name: 'main.ts', kind: 'file' },
+    ],
+  });
+  render(<WorkspaceFilesPanel sessionId="one" onOpenFile={vi.fn()} />);
+  await screen.findByRole('alert');
+
+  fireEvent.click(
+    screen.getByRole('button', { name: i18nService.t('coworkWorkspaceFilesRefresh') }),
+  );
+
+  await screen.findByText('main.ts');
+  expect(screen.queryByRole('alert')).toBeNull();
 });

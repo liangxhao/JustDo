@@ -322,6 +322,7 @@ interface BrowserPanelProps {
   retainedTargetIds?: readonly string[];
   agentInteractionStates?: readonly BrowserAgentInteractionState[];
   embedded?: boolean;
+  renderStartPage?: (navigate: (url: string) => void) => React.ReactNode;
 }
 
 const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function BrowserPanel(
@@ -344,6 +345,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     retainedTargetIds,
     agentInteractionStates = [],
     embedded = false,
+    renderStartPage,
   },
   ref,
 ) {
@@ -1547,11 +1549,11 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       });
   };
 
-  const submitUrl = async () => {
+  const submitUrl = async (rawAddress = urlDraft) => {
     const submissionSequence = ++addressSubmissionSequenceRef.current;
     const targetId = activeTargetRef.current;
     const activeTab = tabsRef.current.find(tab => tab.targetId === targetId);
-    const address = urlDraft.trim();
+    const address = rawAddress.trim();
     let source: BrowserLocalHtmlSource | undefined;
     let url: string | null;
     if (activeTab && address === getBrowserTabAddress(activeTab)) {
@@ -1605,7 +1607,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     });
     setLoadingTargets(current => new Set(current).add(targetId));
     updateTab(targetId, { url, ...source });
-    if (source && activeTargetRef.current === targetId) setUrlDraft(source.sourceFilePath);
+    if (activeTargetRef.current === targetId) setUrlDraft(source?.sourceFilePath ?? url);
     try {
       await webview.loadURL(url);
     } catch (loadError) {
@@ -1986,6 +1988,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     }
   }, [activePdfUrl, activeTabTargetId, activeWebview, readyTargets]);
 
+  const showPageTools = Boolean(activeTab && activeTab.url !== 'about:blank');
   const annotationElement = inspected ?? regions[regions.length - 1]?.elements?.[0] ?? null;
   const stageWidth = stageRef.current?.clientWidth || 520;
   const stageHeight = stageRef.current?.clientHeight || 400;
@@ -2362,75 +2365,79 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           aria-label={i18nService.t('browserPanelAddress')}
           placeholder={i18nService.t('browserPanelAddressPlaceholder')}
         />
-        <BrowserRecordingControls
-          recorder={recorder}
-          disabled={
-            !activeTab ||
-            !readyTargets.has(activeTab.targetId) ||
-            !/^https?:/.test(activeTab.url) ||
-            !!detectedPdfUrl ||
-            mode !== 'interact' ||
-            isCommentComposerOpen ||
-            isCapturing ||
-            agentInteractionLocked
-          }
-        />
-        <div
-          className={`ml-1 flex shrink-0 items-center gap-0.5 rounded-lg border border-border/70 bg-surface-raised/60 p-0.5 ${isRecording ? 'pointer-events-none opacity-40' : ''}`}
-          data-testid="browser-annotation-tool-group"
-        >
-          <div className="relative h-8 w-8 shrink-0">
-            <Tooltip
-              content={annotationActionLabel}
-              position="bottom"
-              renderInPortal
-              dismissOnClick
+        {showPageTools && (
+          <>
+            <BrowserRecordingControls
+              recorder={recorder}
+              disabled={
+                !activeTab ||
+                !readyTargets.has(activeTab.targetId) ||
+                !/^https?:/.test(activeTab.url) ||
+                !!detectedPdfUrl ||
+                mode !== 'interact' ||
+                isCommentComposerOpen ||
+                isCapturing ||
+                agentInteractionLocked
+              }
+            />
+            <div
+              className={`ml-1 flex shrink-0 items-center gap-0.5 rounded-lg border border-border/70 bg-surface-raised/60 p-0.5 ${isRecording ? 'pointer-events-none opacity-40' : ''}`}
+              data-testid="browser-annotation-tool-group"
             >
-              <button
-                type="button"
-                className={modeButton(mode === annotationTool)}
-                disabled={Boolean(activePdfUrl)}
-                title={activePdfUrl ? i18nService.t('browserPdfActionUnavailable') : undefined}
-                onClick={() => toggleAnnotationMode(annotationTool)}
-                aria-label={annotationActionLabel}
-                aria-pressed={mode === annotationTool}
-              >
-                {annotationTool === 'inspect' ? (
-                  <ChatBubbleOvalLeftIcon className="h-4 w-4" />
-                ) : annotationTool === 'pen' ? (
-                  <PencilIcon className="h-4 w-4" />
-                ) : (
-                  <RectangleGroupIcon className="h-4 w-4" />
-                )}
-              </button>
-            </Tooltip>
-            <button
-              type="button"
-              className="absolute bottom-0 right-0 z-10 flex h-4 w-4 items-end justify-end p-0.5 text-secondary/80 hover:text-foreground"
-              aria-label={i18nService.t('browserAnnotationToolSwitch')}
-              disabled={Boolean(activePdfUrl)}
-              title={i18nService.t('browserAnnotationToolSwitch')}
-              aria-haspopup="menu"
-              aria-expanded={annotationToolMenuAnchor !== null}
-              onClick={event => {
-                const bounds = event.currentTarget.parentElement?.getBoundingClientRect();
-                if (!bounds) return;
-                setAnnotationToolMenuAnchor(current =>
-                  current
-                    ? null
-                    : {
-                        left: bounds.left,
-                        right: bounds.right,
-                        top: bounds.top,
-                        bottom: bounds.bottom,
-                      },
-                );
-              }}
-            >
-              <ChevronDownIcon className="h-2.5 w-2.5 stroke-2" />
-            </button>
-          </div>
-        </div>
+              <div className="relative h-8 w-8 shrink-0">
+                <Tooltip
+                  content={annotationActionLabel}
+                  position="bottom"
+                  renderInPortal
+                  dismissOnClick
+                >
+                  <button
+                    type="button"
+                    className={modeButton(mode === annotationTool)}
+                    disabled={Boolean(activePdfUrl)}
+                    title={activePdfUrl ? i18nService.t('browserPdfActionUnavailable') : undefined}
+                    onClick={() => toggleAnnotationMode(annotationTool)}
+                    aria-label={annotationActionLabel}
+                    aria-pressed={mode === annotationTool}
+                  >
+                    {annotationTool === 'inspect' ? (
+                      <ChatBubbleOvalLeftIcon className="h-4 w-4" />
+                    ) : annotationTool === 'pen' ? (
+                      <PencilIcon className="h-4 w-4" />
+                    ) : (
+                      <RectangleGroupIcon className="h-4 w-4" />
+                    )}
+                  </button>
+                </Tooltip>
+                <button
+                  type="button"
+                  className="absolute bottom-0 right-0 z-10 flex h-4 w-4 items-end justify-end p-0.5 text-secondary/80 hover:text-foreground"
+                  aria-label={i18nService.t('browserAnnotationToolSwitch')}
+                  disabled={Boolean(activePdfUrl)}
+                  title={i18nService.t('browserAnnotationToolSwitch')}
+                  aria-haspopup="menu"
+                  aria-expanded={annotationToolMenuAnchor !== null}
+                  onClick={event => {
+                    const bounds = event.currentTarget.parentElement?.getBoundingClientRect();
+                    if (!bounds) return;
+                    setAnnotationToolMenuAnchor(current =>
+                      current
+                        ? null
+                        : {
+                            left: bounds.left,
+                            right: bounds.right,
+                            top: bounds.top,
+                            bottom: bounds.bottom,
+                          },
+                    );
+                  }}
+                >
+                  <ChevronDownIcon className="h-2.5 w-2.5 stroke-2" />
+                </button>
+              </div>
+            </div>
+          </>
+        )}
         {browserMode === BrowserMode.Embedded &&
           onStopTask &&
           onContinueTask &&
@@ -2661,29 +2668,36 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
                 </Suspense>
               </div>
             ))}
-          {activeTab?.url === 'about:blank' && (
-            <button
-              type="button"
-              className="absolute inset-0 z-[5] flex cursor-default items-center justify-center bg-background text-foreground"
-              aria-label={i18nService.t('browserPanelEmptyFocusAddress')}
-              onClick={() => addressInputRef.current?.focus()}
-            >
-              <span className="flex -translate-y-2 flex-col items-center gap-2 text-center">
-                <GlobeAltIcon
-                  className="h-8 w-8 text-secondary/80"
-                  strokeWidth={1.5}
-                  aria-hidden="true"
-                />
-                <span className="text-sm font-semibold">
-                  {i18nService.t('browserPanelEmptyTitle')}
+          {activeTab?.url === 'about:blank' &&
+            (renderStartPage ? (
+              isOpen && (
+                <div className="absolute inset-0 z-[5] bg-background">
+                  {renderStartPage(url => void submitUrl(url))}
+                </div>
+              )
+            ) : (
+              <button
+                type="button"
+                className="absolute inset-0 z-[5] flex cursor-default items-center justify-center bg-background text-foreground"
+                aria-label={i18nService.t('browserPanelEmptyFocusAddress')}
+                onClick={() => addressInputRef.current?.focus()}
+              >
+                <span className="flex -translate-y-2 flex-col items-center gap-2 text-center">
+                  <GlobeAltIcon
+                    className="h-8 w-8 text-secondary/80"
+                    strokeWidth={1.5}
+                    aria-hidden="true"
+                  />
+                  <span className="text-sm font-semibold">
+                    {i18nService.t('browserPanelEmptyTitle')}
+                  </span>
+                  <span className="text-xs text-secondary">
+                    {i18nService.t('browserPanelEmptyDescription')}
+                  </span>
                 </span>
-                <span className="text-xs text-secondary">
-                  {i18nService.t('browserPanelEmptyDescription')}
-                </span>
-              </span>
-            </button>
-          )}
-          {mode !== 'interact' && !activePdfUrl && (
+              </button>
+            ))}
+          {showPageTools && mode !== 'interact' && !activePdfUrl && (
             <canvas
               ref={canvasRef}
               tabIndex={0}
@@ -2696,31 +2710,33 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
               onPointerCancel={handlePointerUp}
             />
           )}
-          {inspectorElement && (
+          {showPageTools && inspectorElement && (
             <BrowserElementInspectorCard
               element={inspectorElement}
               locked={inspected !== null}
               style={inspectorCardStyle}
             />
           )}
-          {isCommentComposerOpen && (strokes.length || regions.length || inspected) && (
-            <BrowserAnnotationComposer
-              element={annotationElement}
-              value={commentDraft}
-              disabled={isCapturing}
-              position={{
-                left: annotationComposerLeft,
-                top: annotationComposerTop,
-                width: annotationComposerWidth,
-              }}
-              placement={annotationComposerPlacement}
-              anchorOffset={annotationComposerAnchorOffset}
-              onChange={setCommentDraft}
-              onSubmit={() => void addAnnotation()}
-              onEscape={clearModeAnnotations}
-              onDismiss={() => setIsCommentComposerOpen(false)}
-            />
-          )}
+          {showPageTools &&
+            isCommentComposerOpen &&
+            (strokes.length || regions.length || inspected) && (
+              <BrowserAnnotationComposer
+                element={annotationElement}
+                value={commentDraft}
+                disabled={isCapturing}
+                position={{
+                  left: annotationComposerLeft,
+                  top: annotationComposerTop,
+                  width: annotationComposerWidth,
+                }}
+                placement={annotationComposerPlacement}
+                anchorOffset={annotationComposerAnchorOffset}
+                onChange={setCommentDraft}
+                onSubmit={() => void addAnnotation()}
+                onEscape={clearModeAnnotations}
+                onDismiss={() => setIsCommentComposerOpen(false)}
+              />
+            )}
           {loading && (
             <div className="pointer-events-none absolute left-0 right-0 top-0 z-30 h-0.5 overflow-hidden bg-primary/20">
               <div className="h-full w-1/2 animate-pulse bg-primary" />
@@ -2746,7 +2762,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           onRestoreFocus={tabMenu.closeActions?.restoreFocus}
         />
       )}
-      {annotationToolMenuAnchor && (
+      {showPageTools && annotationToolMenuAnchor && (
         <BrowserAnnotationToolMenu
           anchor={annotationToolMenuAnchor}
           selected={annotationTool}

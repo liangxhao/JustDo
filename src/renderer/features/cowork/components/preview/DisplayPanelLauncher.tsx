@@ -1,26 +1,98 @@
+import './DisplayPanelLauncher.css';
+
 import {
+  ArrowRightIcon,
   ChatBubbleLeftEllipsisIcon,
   CommandLineIcon,
   FolderIcon,
   GlobeAltIcon,
+  MagnifyingGlassIcon,
+  Square2StackIcon,
 } from '@heroicons/react/24/outline';
+import { resolveBrowserAddressInput } from '@shared/browser/browser';
+import { useEffect, useState } from 'react';
 
+import { defaultConfig } from '@/app/config';
+import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
+
+import { type RecentBrowserVisit, selectRecentBrowserVisits } from './displayPanelRecentVisits';
 
 interface DisplayPanelLauncherProps {
   browserDisabled?: boolean;
   filesDisabled?: boolean;
-  onCreateBrowser: () => void;
+  onCreateBrowser: (url?: string) => void;
   onCreateSideChat?: () => void;
   onCreateTerminal: () => void;
   onOpenFiles?: () => void;
   onOpenReview?: () => void;
+  onNavigateBrowser?: (url: string) => void;
+  showAddressInput?: boolean;
   sideChatDisabled?: boolean;
   terminalDisabled?: boolean;
+  visible?: boolean;
 }
 
-const launcherButtonClassName =
-  'mx-auto flex h-10 w-full max-w-72 items-center gap-2.5 rounded-lg bg-surface-raised px-3 text-left text-sm font-medium text-foreground transition-colors hover:bg-surface-overlay disabled:cursor-not-allowed disabled:opacity-40';
+function ToolButton({
+  label,
+  icon: Icon,
+  onClick,
+  disabled = false,
+  shortcut,
+}: {
+  label: string;
+  icon: typeof GlobeAltIcon;
+  onClick: () => void;
+  disabled?: boolean;
+  shortcut?: string;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      aria-label={label}
+      title={shortcut ? `${label} (${shortcut})` : label}
+      className="display-launcher__tool flex h-10 min-w-0 items-center gap-2.5 rounded-lg bg-surface-raised px-3 text-left text-sm font-medium text-foreground transition-colors hover:bg-surface-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      <Icon className="h-4 w-4 shrink-0 text-secondary" aria-hidden />
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      {shortcut && (
+        <kbd
+          className="shrink-0 rounded-md bg-foreground/5 px-1.5 py-0.5 font-sans text-[11px] font-normal leading-none text-secondary"
+          aria-hidden
+        >
+          {shortcut}
+        </kbd>
+      )}
+    </button>
+  );
+}
+
+function RecentVisitIcon({ visit }: { visit: RecentBrowserVisit }) {
+  const [iconUrl, setIconUrl] = useState<string | null>(visit.faviconUrl);
+  const fallbackUrl = new URL('/favicon.ico', visit.url).href;
+  return (
+    <span
+      className="flex h-10 w-10 items-center justify-center rounded-xl bg-surface-raised text-secondary"
+      aria-hidden
+    >
+      {iconUrl ? (
+        <img
+          key={iconUrl}
+          src={iconUrl}
+          alt=""
+          className="h-8 w-8 object-contain"
+          referrerPolicy="no-referrer"
+          loading="lazy"
+          onError={() => setIconUrl(iconUrl === fallbackUrl ? null : fallbackUrl)}
+        />
+      ) : (
+        <GlobeAltIcon className="h-7 w-7" />
+      )}
+    </span>
+  );
+}
 
 const DisplayPanelLauncher = ({
   browserDisabled = false,
@@ -30,57 +102,162 @@ const DisplayPanelLauncher = ({
   onCreateTerminal,
   onOpenFiles,
   onOpenReview,
+  onNavigateBrowser,
+  showAddressInput = true,
   sideChatDisabled = false,
   terminalDisabled = false,
-}: DisplayPanelLauncherProps) => (
-  <div className="flex h-full flex-col justify-center gap-1.5 bg-background p-6">
-    {onCreateSideChat && (
-      <button
-        type="button"
-        disabled={sideChatDisabled}
-        onClick={onCreateSideChat}
-        className={launcherButtonClassName}
-      >
-        <ChatBubbleLeftEllipsisIcon className="h-4 w-4 shrink-0 text-secondary" />
-        <span>{i18nService.t('sideChatTitle')}</span>
-      </button>
-    )}
-    {onOpenReview && (
-      <button type="button" className={launcherButtonClassName} onClick={onOpenReview}>
-        <FolderIcon className="h-4 w-4 shrink-0 text-secondary" />
-        <span>{i18nService.t('reviewTitle')}</span>
-      </button>
-    )}
-    {onOpenFiles && (
-      <button
-        type="button"
-        disabled={filesDisabled}
-        onClick={onOpenFiles}
-        className={launcherButtonClassName}
-      >
-        <FolderIcon className="h-4 w-4 shrink-0 text-secondary" />
-        <span>{i18nService.t('coworkWorkspaceFiles')}</span>
-      </button>
-    )}
-    <button
-      type="button"
-      disabled={browserDisabled}
-      onClick={onCreateBrowser}
-      className={launcherButtonClassName}
-    >
-      <GlobeAltIcon className="h-4 w-4 shrink-0 text-secondary" />
-      <span>{i18nService.t('coworkNewBrowserTab')}</span>
-    </button>
-    <button
-      type="button"
-      disabled={terminalDisabled}
-      onClick={onCreateTerminal}
-      className={launcherButtonClassName}
-    >
-      <CommandLineIcon className="h-4 w-4 shrink-0 text-secondary" />
-      <span>{i18nService.t('coworkNewTerminalTab')}</span>
-    </button>
-  </div>
-);
+  visible = true,
+}: DisplayPanelLauncherProps) => {
+  const [config, setConfig] = useState(() => configService.getConfig());
+  const [address, setAddress] = useState('');
+  const [visits, setVisits] = useState<RecentBrowserVisit[] | null>(null);
+  const [historyFailed, setHistoryFailed] = useState(false);
+  const shortcuts = { ...defaultConfig.shortcuts, ...config.shortcuts };
+  const navigationDisabled = browserDisabled && !onNavigateBrowser;
+  const openAddress = onNavigateBrowser ?? onCreateBrowser;
+
+  useEffect(() => {
+    const changed = () => setConfig(configService.getConfig());
+    window.addEventListener('config-updated', changed);
+    return () => window.removeEventListener('config-updated', changed);
+  }, []);
+
+  useEffect(() => {
+    if (!visible) return;
+    let cancelled = false;
+    setVisits(null);
+    setHistoryFailed(false);
+    void window.electron.browser.listHistory().then(
+      result => {
+        if (cancelled) return;
+        setVisits(selectRecentBrowserVisits(result.entries ?? []));
+        setHistoryFailed(!result.success);
+      },
+      () => {
+        if (cancelled) return;
+        setVisits([]);
+        setHistoryFailed(true);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [visible]);
+
+  return (
+    <div className="display-launcher h-full overflow-y-auto bg-background text-foreground">
+      {showAddressInput && (
+        <form
+          className="display-launcher__address border-b border-border px-5 py-3"
+          role="search"
+          onSubmit={event => {
+            event.preventDefault();
+            if (navigationDisabled) return;
+            const url = resolveBrowserAddressInput(address, config.browserSearchEngine);
+            if (url) openAddress(url);
+          }}
+        >
+          <div className="flex h-9 items-center gap-2 rounded-full border border-border bg-surface-raised pl-3 pr-1 focus-within:border-primary/50">
+            <MagnifyingGlassIcon className="h-4 w-4 shrink-0 text-muted" aria-hidden />
+            <input
+              value={address}
+              onChange={event => setAddress(event.target.value)}
+              disabled={navigationDisabled}
+              aria-label={i18nService.t('browserPanelAddress')}
+              placeholder={i18nService.t('browserPanelAddressPlaceholder')}
+              className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted disabled:opacity-40"
+            />
+            <button
+              type="submit"
+              disabled={navigationDisabled || !address.trim()}
+              aria-label={i18nService.t('coworkLauncherOpenAddress')}
+              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-secondary hover:bg-surface-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:opacity-30"
+            >
+              <ArrowRightIcon className="h-4 w-4" aria-hidden />
+            </button>
+          </div>
+        </form>
+      )}
+      <div className="display-launcher__content mx-auto max-w-3xl space-y-9 px-6 py-7">
+        <section aria-label={i18nService.t('coworkLauncherTools')}>
+          <h2 className="mb-3 text-xs font-semibold">{i18nService.t('coworkLauncherTools')}</h2>
+          <div className="display-launcher__tools">
+            {onOpenReview && (
+              <ToolButton
+                label={i18nService.t('reviewTitle')}
+                icon={Square2StackIcon}
+                onClick={onOpenReview}
+              />
+            )}
+            <ToolButton
+              label={i18nService.t('coworkNewTerminalTab')}
+              icon={CommandLineIcon}
+              onClick={onCreateTerminal}
+              disabled={terminalDisabled}
+              shortcut={shortcuts.terminal}
+            />
+            {onOpenFiles && (
+              <ToolButton
+                label={i18nService.t('coworkWorkspaceFiles')}
+                icon={FolderIcon}
+                onClick={onOpenFiles}
+                disabled={filesDisabled}
+                shortcut={shortcuts.files}
+              />
+            )}
+            {onCreateSideChat && (
+              <ToolButton
+                label={i18nService.t('sideChatTitle')}
+                icon={ChatBubbleLeftEllipsisIcon}
+                onClick={onCreateSideChat}
+                disabled={sideChatDisabled}
+                shortcut={shortcuts.sideChat}
+              />
+            )}
+            <ToolButton
+              label={i18nService.t('coworkNewBrowserTab')}
+              icon={GlobeAltIcon}
+              onClick={() => onCreateBrowser()}
+              disabled={browserDisabled}
+              shortcut={shortcuts.browser}
+            />
+          </div>
+        </section>
+        <section aria-label={i18nService.t('coworkLauncherRecentVisits')}>
+          <h2 className="mb-4 text-xs font-semibold">
+            {i18nService.t('coworkLauncherRecentVisits')}
+          </h2>
+          {visits && visits.length > 0 && !historyFailed ? (
+            <div className="display-launcher__visits">
+              {visits.map(visit => (
+                <button
+                  key={visit.url}
+                  type="button"
+                  disabled={navigationDisabled}
+                  onClick={() => openAddress(visit.url)}
+                  title={`${visit.title}\n${visit.url}`}
+                  className="flex min-w-0 flex-col items-center gap-3 rounded-xl px-2 py-3 text-center transition-colors hover:bg-surface-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <RecentVisitIcon key={visit.faviconUrl} visit={visit} />
+                  <span className="w-full truncate text-xs font-medium">{visit.title}</span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs leading-5 text-muted" role="status">
+              {i18nService.t(
+                historyFailed
+                  ? 'browserHistoryLoadFailed'
+                  : visits === null
+                    ? 'loading'
+                    : 'coworkLauncherRecentVisitsEmpty',
+              )}
+            </p>
+          )}
+        </section>
+      </div>
+    </div>
+  );
+};
 
 export default DisplayPanelLauncher;

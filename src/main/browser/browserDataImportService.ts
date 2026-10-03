@@ -249,7 +249,8 @@ const openImportedDataDb = (): Database.Database => {
       url TEXT PRIMARY KEY,
       title TEXT NOT NULL,
       last_visit_at INTEGER NOT NULL,
-      visit_count INTEGER NOT NULL
+      visit_count INTEGER NOT NULL,
+      favicon_url TEXT NOT NULL DEFAULT ''
     );
     CREATE TABLE IF NOT EXISTS browser_downloads (
       id TEXT PRIMARY KEY,
@@ -275,8 +276,16 @@ const openImportedDataDb = (): Database.Database => {
     CREATE INDEX IF NOT EXISTS browser_downloads_started_at
       ON browser_downloads(started_at DESC);
   `);
+  if (!hasHistoryFaviconColumn(db)) {
+    db.exec("ALTER TABLE imported_history ADD COLUMN favicon_url TEXT NOT NULL DEFAULT ''");
+  }
   return db;
 };
+
+const hasHistoryFaviconColumn = (db: Database.Database): boolean =>
+  (db.pragma('table_info(imported_history)') as Array<{ name: string }>).some(
+    column => column.name === 'favicon_url',
+  );
 
 export const listImportedBrowserProfiles = (): string[] => {
   const db = openImportedDataDb();
@@ -563,18 +572,40 @@ export const getImportedCredentials = (origin: string): BrowserImportedCredentia
   }
 };
 
-export const recordBrowserHistory = (url: string, title: string): void => {
+export const recordBrowserHistory = (url: string, title: string, faviconUrl?: string): void => {
   const safeUrl = sanitizeBrowserHistoryUrl(url);
   if (!safeUrl) return;
   const db = openImportedDataDb();
   try {
     db.prepare(
-      `INSERT INTO imported_history(url, title, last_visit_at, visit_count)
-       VALUES (?, ?, ?, 1)
+      `INSERT INTO imported_history(url, title, last_visit_at, visit_count, favicon_url)
+       VALUES (?, ?, ?, 1, ?)
        ON CONFLICT(url) DO UPDATE SET title = excluded.title,
          last_visit_at = excluded.last_visit_at,
-         visit_count = imported_history.visit_count + 1`,
-    ).run(safeUrl, title.slice(0, 512), Date.now());
+         visit_count = imported_history.visit_count + 1,
+         favicon_url = CASE WHEN excluded.favicon_url <> '' THEN excluded.favicon_url
+           ELSE imported_history.favicon_url END`,
+    ).run(
+      safeUrl,
+      title.slice(0, 512),
+      Date.now(),
+      faviconUrl ? (sanitizeBrowserHistoryUrl(faviconUrl) ?? '') : '',
+    );
+  } finally {
+    db.close();
+  }
+};
+
+export const updateBrowserHistoryFavicon = (url: string, faviconUrl: string): void => {
+  const safeUrl = sanitizeBrowserHistoryUrl(url);
+  const safeFaviconUrl = sanitizeBrowserHistoryUrl(faviconUrl);
+  if (!safeUrl || !safeFaviconUrl) return;
+  const db = openImportedDataDb();
+  try {
+    db.prepare('UPDATE imported_history SET favicon_url = ? WHERE url = ?').run(
+      safeFaviconUrl,
+      safeUrl,
+    );
   } finally {
     db.close();
   }
@@ -585,19 +616,20 @@ export const listBrowserHistory = (query: string): BrowserHistoryEntry[] => {
   if (!fs.existsSync(dbPath)) return [];
   const db = new Database(dbPath, { readonly: true, fileMustExist: true });
   try {
+    const faviconColumn = hasHistoryFaviconColumn(db) ? 'favicon_url' : "'' AS favicon_url";
     const normalized = query.replace(/[%_\\]/g, character => `\\${character}`).slice(0, 200);
     const rows = (
       normalized
         ? db
             .prepare(
-              `SELECT url, title, last_visit_at, visit_count FROM imported_history
+              `SELECT url, title, last_visit_at, visit_count, ${faviconColumn} FROM imported_history
              WHERE title LIKE ? ESCAPE '\\' OR url LIKE ? ESCAPE '\\'
              ORDER BY last_visit_at DESC LIMIT 2000`,
             )
             .all(`%${normalized}%`, `%${normalized}%`)
         : db
             .prepare(
-              'SELECT url, title, last_visit_at, visit_count FROM imported_history ORDER BY last_visit_at DESC LIMIT 2000',
+              `SELECT url, title, last_visit_at, visit_count, ${faviconColumn} FROM imported_history ORDER BY last_visit_at DESC LIMIT 2000`,
             )
             .all()
     ) as Array<{
@@ -605,12 +637,14 @@ export const listBrowserHistory = (query: string): BrowserHistoryEntry[] => {
       title: string;
       last_visit_at: number;
       visit_count: number;
+      favicon_url: string;
     }>;
     return rows.map(row => ({
       url: row.url,
       title: row.title,
       lastVisitAt: row.last_visit_at,
       visitCount: row.visit_count,
+      ...(row.favicon_url ? { faviconUrl: row.favicon_url } : {}),
     }));
   } finally {
     db.close();
