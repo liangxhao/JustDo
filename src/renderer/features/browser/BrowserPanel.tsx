@@ -118,10 +118,7 @@ type LiveWebview = HTMLElement & {
   getWebContentsId?: () => number;
   findInPage?: (text: string, options?: { forward?: boolean; findNext?: boolean }) => number;
   stopFind?: (action: 'clearSelection' | 'keepSelection' | 'activateSelection') => void;
-  print?: (
-    options?: Record<string, unknown>,
-    callback?: (success: boolean, failureReason?: string) => void,
-  ) => void;
+  print?: (options?: Record<string, unknown>) => Promise<void>;
   getZoomFactor?: () => number;
   setZoomFactor?: (factor: number) => void;
   openDevTools?: () => void;
@@ -1920,10 +1917,12 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       return;
     }
     if (action === 'print') {
-      if (!activeWebview?.print) return;
-      activeWebview.print({}, (success, failureReason) => {
-        if (!success) setError(failureReason || i18nService.t('browserMenuPrintFailed'));
-      });
+      try {
+        if (!activeWebview?.print) throw new Error();
+        await activeWebview.print({ silent: false });
+      } catch {
+        setError(i18nService.t('browserMenuPrintFailed'));
+      }
       return;
     }
     if (action === 'device-tools') {
@@ -2492,61 +2491,6 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         </Tooltip>
       </form>
 
-      {findVisible && (
-        <form
-          className="flex shrink-0 items-center gap-1.5 border-b border-border bg-surface px-2 py-1.5"
-          onSubmit={event => {
-            event.preventDefault();
-            runFind(true, true);
-          }}
-        >
-          <MagnifyingGlassIcon className="h-4 w-4 shrink-0 text-secondary" aria-hidden="true" />
-          <input
-            ref={findInputRef}
-            value={findQuery}
-            className="min-w-0 flex-1 rounded-md border border-border bg-surface-raised px-2 py-1 text-xs text-foreground outline-none focus:border-primary"
-            aria-label={i18nService.t('browserMenuFind')}
-            placeholder={i18nService.t('browserMenuFindPlaceholder')}
-            onChange={event => setFindQuery(event.target.value)}
-            onKeyDown={event => {
-              if (event.key === 'Escape') {
-                event.preventDefault();
-                closeFind();
-              }
-            }}
-          />
-          <span className="min-w-10 text-center text-[11px] tabular-nums text-secondary">
-            {findQuery && findResult ? `${findResult.active}/${findResult.matches}` : '—'}
-          </span>
-          <button
-            type="button"
-            className={modeButton(false)}
-            disabled={!findQuery.trim()}
-            aria-label={i18nService.t('browserMenuFindPrevious')}
-            onClick={() => runFind(false, true)}
-          >
-            <ChevronDownIcon className="h-4 w-4 rotate-180" />
-          </button>
-          <button
-            type="button"
-            className={modeButton(false)}
-            disabled={!findQuery.trim()}
-            aria-label={i18nService.t('browserMenuFindNext')}
-            onClick={() => runFind(true, true)}
-          >
-            <ChevronDownIcon className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            className={modeButton(false)}
-            aria-label={i18nService.t('browserMenuFindClose')}
-            onClick={closeFind}
-          >
-            <XMarkIcon className="h-4 w-4" />
-          </button>
-        </form>
-      )}
-
       {visibleError && (
         <div
           role="alert"
@@ -2602,6 +2546,60 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       )}
 
       <div className="relative min-h-0 flex-1 overflow-hidden bg-neutral-950/5 p-2">
+        {findVisible && (
+          <form
+            className="absolute right-2 top-2 z-[120] flex max-w-[calc(100%-1rem)] items-center gap-1.5 rounded-lg border border-border bg-surface px-2 py-1.5 shadow-lg"
+            onSubmit={event => {
+              event.preventDefault();
+              runFind(true, true);
+            }}
+          >
+            <MagnifyingGlassIcon className="h-4 w-4 shrink-0 text-secondary" aria-hidden="true" />
+            <input
+              ref={findInputRef}
+              value={findQuery}
+              className="min-w-0 flex-1 rounded-md border border-border bg-surface-raised px-2 py-1 text-xs text-foreground outline-none focus:border-primary"
+              aria-label={i18nService.t('browserMenuFind')}
+              placeholder={i18nService.t('browserMenuFindPlaceholder')}
+              onChange={event => setFindQuery(event.target.value)}
+              onKeyDown={event => {
+                if (event.key === 'Escape') {
+                  event.preventDefault();
+                  closeFind();
+                }
+              }}
+            />
+            <span className="min-w-10 text-center text-[11px] tabular-nums text-secondary">
+              {findQuery && findResult ? `${findResult.active}/${findResult.matches}` : '—'}
+            </span>
+            <button
+              type="button"
+              className={modeButton(false)}
+              disabled={!findQuery.trim()}
+              aria-label={i18nService.t('browserMenuFindPrevious')}
+              onClick={() => runFind(false, true)}
+            >
+              <ChevronDownIcon className="h-4 w-4 rotate-180" />
+            </button>
+            <button
+              type="button"
+              className={modeButton(false)}
+              disabled={!findQuery.trim()}
+              aria-label={i18nService.t('browserMenuFindNext')}
+              onClick={() => runFind(true, true)}
+            >
+              <ChevronDownIcon className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              className={modeButton(false)}
+              aria-label={i18nService.t('browserMenuFindClose')}
+              onClick={closeFind}
+            >
+              <XMarkIcon className="h-4 w-4" />
+            </button>
+          </form>
+        )}
         <div
           ref={stageRef}
           className="relative h-full w-full overflow-hidden rounded border border-border bg-white"

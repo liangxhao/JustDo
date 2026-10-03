@@ -67,7 +67,7 @@ const reload = vi.fn();
 const setAudioMuted = vi.fn();
 const findInPage = vi.fn(() => 1);
 const stopFind = vi.fn();
-const printPage = vi.fn((_options, callback) => callback?.(true));
+const printPage = vi.fn(async _options => {});
 const setZoomFactor = vi.fn();
 const openDevTools = vi.fn();
 const guestSend = vi.fn(function (this: HTMLElement, channel: string, requestId?: unknown) {
@@ -2056,6 +2056,29 @@ describe('BrowserPanel embedded webview', () => {
     fireEvent.click(screen.getByLabelText('More browser options'));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Browser settings' }));
     expect(onRequestBrowserSettings).toHaveBeenLastCalledWith();
+  });
+
+  it('prints the current page through the asynchronous webview API', async () => {
+    const { container } = render(<BrowserPanelHarness />);
+    fireEvent(container.querySelector('webview')!, new Event('dom-ready'));
+
+    fireEvent.click(screen.getByLabelText('More browser options'));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Print' }));
+
+    await waitFor(() => expect(printPage).toHaveBeenCalledWith({ silent: false }));
+  });
+
+  it('shows a localized error when webview printing rejects', async () => {
+    printPage.mockRejectedValueOnce(new Error('Printer unavailable'));
+    const { container } = render(<BrowserPanelHarness />);
+    fireEvent(container.querySelector('webview')!, new Event('dom-ready'));
+
+    fireEvent.click(screen.getByLabelText('More browser options'));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Print' }));
+
+    await waitFor(() =>
+      expect(screen.getByRole('alert').textContent).toBe(i18nService.t('browserMenuPrintFailed')),
+    );
   });
 
   it('opens a guarded Chrome data import dialog from the overflow menu', async () => {
