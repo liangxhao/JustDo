@@ -88,7 +88,7 @@ export type BrowserAgentSessionEvent = {
   profile?: BrowserAgentProfile;
 };
 
-export type BrowserPanelShortcutAction = 'terminal' | 'browser' | 'side-chat' | 'files';
+export type BrowserPanelShortcutAction = 'terminal' | 'browser' | 'side-chat' | 'files' | 'review';
 
 export type BrowserPanelShortcutSettings = Record<BrowserPanelShortcutAction, string>;
 
@@ -97,6 +97,7 @@ export const DEFAULT_BROWSER_PANEL_SHORTCUTS: BrowserPanelShortcutSettings = {
   browser: 'Ctrl+T',
   'side-chat': 'Ctrl+Alt+S',
   files: 'Ctrl+P',
+  review: 'Ctrl+Shift+G',
 };
 
 export const normalizeBrowserPanelShortcutSettings = (
@@ -108,7 +109,8 @@ export const normalizeBrowserPanelShortcutSettings = (
     typeof record.terminal !== 'string' ||
     typeof record.browser !== 'string' ||
     typeof record['side-chat'] !== 'string' ||
-    typeof record.files !== 'string'
+    typeof record.files !== 'string' ||
+    typeof record.review !== 'string'
   )
     return null;
   return {
@@ -116,6 +118,7 @@ export const normalizeBrowserPanelShortcutSettings = (
     browser: record.browser.slice(0, 80),
     'side-chat': record['side-chat'].slice(0, 80),
     files: record.files.slice(0, 80),
+    review: record.review.slice(0, 80),
   };
 };
 
@@ -127,6 +130,7 @@ export const resolveBrowserPanelShortcutAction = (
   if (matchesShortcut(input, shortcuts.browser)) return 'browser';
   if (matchesShortcut(input, shortcuts['side-chat'])) return 'side-chat';
   if (matchesShortcut(input, shortcuts.files)) return 'files';
+  if (matchesShortcut(input, shortcuts.review)) return 'review';
   return null;
 };
 

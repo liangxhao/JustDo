@@ -88,6 +88,10 @@ import Tooltip from '@/shared/components/ui/Tooltip';
 
 import { BrowserInterventionBar } from './BrowserInterventionBar';
 import { BrowserRecordingControls } from './BrowserRecordingControls';
+import {
+  browserToolbarButtonClassName as modeButton,
+  browserToolbarGroupClassName,
+} from './browserToolbarStyles';
 import { useBrowserRecording } from './useBrowserRecording';
 
 type BrowserPanelMode = 'interact' | 'inspect' | 'pen' | 'rectangle';
@@ -129,6 +133,14 @@ type LiveWebview = HTMLElement & {
   isAudioMuted?: () => boolean;
   setAudioMuted?: (muted: boolean) => void;
   send: (channel: string, ...args: unknown[]) => void;
+  sendInputEvent: (event: {
+    type: 'mouseWheel';
+    x: number;
+    y: number;
+    deltaX: number;
+    deltaY: number;
+    canScroll: boolean;
+  }) => Promise<void>;
 };
 
 const BROWSER_PANEL_MIN_WIDTH = 320;
@@ -264,13 +276,6 @@ export const getBrowserTabDisplayTitle = (tab: BrowserPanelTab): string => {
   return tab.title || tab.url || i18nService.t('browserPanelNewTab');
 };
 
-const modeButton = (active: boolean): string =>
-  `inline-flex h-8 w-8 items-center justify-center rounded-md bg-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${
-    active
-      ? 'text-primary ring-1 ring-inset ring-primary/55 hover:text-primary'
-      : 'text-secondary hover:bg-surface-raised hover:text-foreground'
-  } disabled:pointer-events-none disabled:opacity-40`;
-
 const loadImage = (dataUrl: string): Promise<HTMLImageElement> =>
   new Promise((resolve, reject) => {
     const image = new Image();
@@ -387,7 +392,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   const [notice, setNotice] = useState<string | null>(null);
   const [annotationNoticeSequence, setAnnotationNoticeSequence] = useState(0);
   const [mode, setMode] = useState<BrowserPanelMode>('interact');
-  const [annotationTool, setAnnotationTool] = useState<BrowserAnnotationTool>('pen');
+  const [annotationTool, setAnnotationTool] = useState<BrowserAnnotationTool>('inspect');
   const [annotationToolMenuAnchor, setAnnotationToolMenuAnchor] = useState<{
     left: number;
     right: number;
@@ -510,7 +515,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     }
   });
 
-  const clearAnnotations = useCallback(() => {
+  const invalidateAnnotationGeometry = useCallback(() => {
     contentEpochRef.current += 1;
     inspectionSequenceRef.current += 1;
     if (inspectionTimerRef.current) clearTimeout(inspectionTimerRef.current);
@@ -521,11 +526,15 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     setDraftRectangle(null);
     setInspected(null);
     setHovered(null);
-    setCommentDraft('');
     setIsCommentComposerOpen(false);
+  }, []);
+
+  const clearAnnotations = useCallback(() => {
+    invalidateAnnotationGeometry();
+    setCommentDraft('');
     setAnnotationToolMenuAnchor(null);
     setMode('interact');
-  }, []);
+  }, [invalidateAnnotationGeometry]);
 
   const clearModeAnnotations = useCallback(() => {
     inspectionSequenceRef.current += 1;
@@ -564,6 +573,43 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     },
     [activePdfUrl, mode, isRecording, clearModeAnnotations],
   );
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || mode === 'interact' || !activeWebview || activePdfUrl) return;
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (isCapturing || gestureRef.current || !readyGuestsRef.current.has(activeWebview)) return;
+      const bounds = canvas.getBoundingClientRect();
+      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? bounds.height : 1;
+      if (!event.deltaX && !event.deltaY) return;
+      // Annotations use viewport coordinates. Keep the comment draft, but discard
+      // geometry and pending inspections before the underlying page moves.
+      invalidateAnnotationGeometry();
+      void activeWebview
+        .sendInputEvent({
+          type: 'mouseWheel',
+          x: Math.round(event.clientX - bounds.left),
+          y: Math.round(event.clientY - bounds.top),
+          deltaX: -event.deltaX * unit,
+          deltaY: -event.deltaY * unit,
+          canScroll: true,
+        })
+        .catch(() => {
+          // The guest may detach while the input event is in flight.
+        });
+    };
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+    return () => canvas.removeEventListener('wheel', onWheel);
+  }, [
+    mode,
+    activeWebview,
+    activePdfUrl,
+    isCapturing,
+    activeTab?.url,
+    invalidateAnnotationGeometry,
+  ]);
 
   useEffect(() => {
     tabsRef.current = tabs;
@@ -1208,7 +1254,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           return;
         }
         if (details.channel === 'justdo-browser-viewport-changed') {
-          if (activeTargetRef.current === targetId) clearAnnotations();
+          if (activeTargetRef.current === targetId) invalidateAnnotationGeometry();
           return;
         }
         if (details.channel === BROWSER_GUEST_CREDENTIALS_OFFER_CHANNEL) {
@@ -1270,10 +1316,10 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       });
     },
     [
-      clearAnnotations,
       clearNonPdfFallback,
       closeTab,
       handleNavigation,
+      invalidateAnnotationGeometry,
       runBrowserCommand,
       updateTab,
     ],
@@ -2106,6 +2152,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
               browser: shortcuts.browser,
               'side-chat': shortcuts.sideChat,
               files: shortcuts.files,
+              review: shortcuts.review,
             });
         if (shortcutAction) {
           event.preventDefault();
@@ -2380,7 +2427,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
               }
             />
             <div
-              className={`ml-1 flex shrink-0 items-center gap-0.5 rounded-lg border border-border/70 bg-surface-raised/60 p-0.5 ${isRecording ? 'pointer-events-none opacity-40' : ''}`}
+              className={`${browserToolbarGroupClassName} ${isRecording ? 'pointer-events-none opacity-40' : ''}`}
               data-testid="browser-annotation-tool-group"
             >
               <div className="relative h-8 w-8 shrink-0">

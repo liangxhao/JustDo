@@ -1581,21 +1581,25 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     const handleBrowserShortcut = () => handleCreateBrowserTab();
     const handleSideChatShortcut = () => handleCreateSideChat();
     const handleFilesShortcut = () => handleOpenWorkspaceFiles();
+    const handleReviewShortcut = () => openReview();
     window.addEventListener('cowork:shortcut:terminal', handleTerminalShortcut);
     window.addEventListener('cowork:shortcut:browser', handleBrowserShortcut);
     window.addEventListener('cowork:shortcut:side-chat', handleSideChatShortcut);
     window.addEventListener('cowork:shortcut:files', handleFilesShortcut);
+    window.addEventListener('cowork:shortcut:review', handleReviewShortcut);
     return () => {
       window.removeEventListener('cowork:shortcut:terminal', handleTerminalShortcut);
       window.removeEventListener('cowork:shortcut:browser', handleBrowserShortcut);
       window.removeEventListener('cowork:shortcut:side-chat', handleSideChatShortcut);
       window.removeEventListener('cowork:shortcut:files', handleFilesShortcut);
+      window.removeEventListener('cowork:shortcut:review', handleReviewShortcut);
     };
   }, [
     handleCreateBrowserTab,
     handleCreateSideChat,
     handleCreateTerminalTab,
     handleOpenWorkspaceFiles,
+    openReview,
   ]);
 
   const closeTerminalTab = useCallback(

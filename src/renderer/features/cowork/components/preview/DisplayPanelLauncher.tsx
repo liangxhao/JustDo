@@ -59,7 +59,7 @@ function ToolButton({
       <span className="min-w-0 flex-1 truncate">{label}</span>
       {shortcut && (
         <kbd
-          className="shrink-0 rounded-md bg-foreground/5 px-1.5 py-0.5 font-sans text-[11px] font-normal leading-none text-secondary"
+          className="shrink-0 whitespace-nowrap rounded-full bg-foreground/10 px-1.5 py-0.5 font-sans text-[11px] font-normal leading-none text-secondary"
           aria-hidden
         >
           {shortcut}
@@ -187,6 +187,7 @@ const DisplayPanelLauncher = ({
                 label={i18nService.t('reviewTitle')}
                 icon={Square2StackIcon}
                 onClick={onOpenReview}
+                shortcut={shortcuts.review}
               />
             )}
             <ToolButton
@@ -214,13 +215,6 @@ const DisplayPanelLauncher = ({
                 shortcut={shortcuts.sideChat}
               />
             )}
-            <ToolButton
-              label={i18nService.t('coworkNewBrowserTab')}
-              icon={GlobeAltIcon}
-              onClick={() => onCreateBrowser()}
-              disabled={browserDisabled}
-              shortcut={shortcuts.browser}
-            />
           </div>
         </section>
         <section aria-label={i18nService.t('coworkLauncherRecentVisits')}>

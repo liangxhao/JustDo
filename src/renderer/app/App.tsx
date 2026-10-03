@@ -629,6 +629,12 @@ const App: React.FC = () => {
         return;
       }
 
+      if (matchesShortcut(event, activeShortcuts.review)) {
+        event.preventDefault();
+        window.dispatchEvent(new CustomEvent('cowork:shortcut:review'));
+        return;
+      }
+
       if (matchesShortcut(event, activeShortcuts.files)) {
         event.preventDefault();
         window.dispatchEvent(new CustomEvent('cowork:shortcut:files'));
@@ -651,6 +657,7 @@ const App: React.FC = () => {
         browser: shortcuts.browser,
         'side-chat': shortcuts.sideChat,
         files: shortcuts.files,
+        review: shortcuts.review,
       });
     };
     syncPanelShortcuts();

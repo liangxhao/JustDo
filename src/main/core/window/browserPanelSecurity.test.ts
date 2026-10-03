@@ -153,6 +153,7 @@ describe('resolveBrowserGuestShortcut', () => {
         browser: 'Ctrl+B',
         'side-chat': 'Ctrl+Alt+S',
         files: 'Ctrl+P',
+        review: 'Ctrl+Shift+G',
       }),
     ).toBe('terminal');
     expect(
@@ -163,6 +164,7 @@ describe('resolveBrowserGuestShortcut', () => {
           browser: 'Ctrl+B',
           'side-chat': 'Ctrl+Alt+S',
           files: 'Ctrl+P',
+          review: 'Ctrl+Shift+G',
         },
       ),
     ).toBe('browser');
@@ -174,6 +176,7 @@ describe('resolveBrowserGuestShortcut', () => {
           browser: 'Ctrl+B',
           'side-chat': 'Ctrl+Alt+S',
           files: 'Ctrl+P',
+          review: 'Ctrl+Shift+G',
         },
       ),
     ).toBe('side-chat');
@@ -185,6 +188,7 @@ describe('resolveBrowserGuestShortcut', () => {
           browser: 'Ctrl+B',
           'side-chat': 'Ctrl+Alt+S',
           files: 'Ctrl+P',
+          review: 'Ctrl+Shift+G',
         },
       ),
     ).toBe('files');

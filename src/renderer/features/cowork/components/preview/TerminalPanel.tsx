@@ -287,6 +287,7 @@ const TerminalPanel = ({ cwd, isObscured, terminalId }: TerminalPanelProps) => {
             browser: shortcuts.browser,
             'side-chat': shortcuts.sideChat,
             files: shortcuts.files,
+            review: shortcuts.review,
           });
       if (shortcutAction) {
         event.preventDefault();

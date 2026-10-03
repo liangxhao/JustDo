@@ -23,6 +23,7 @@ test('defaultConfig: matches the Codex panel shortcuts', () => {
     browser: 'Ctrl+T',
     sideChat: 'Ctrl+Alt+S',
     files: 'Ctrl+P',
+    review: 'Ctrl+Shift+G',
   });
 });
 

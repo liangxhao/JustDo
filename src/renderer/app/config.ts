@@ -128,6 +128,7 @@ export interface AppConfig {
     browser: string;
     sideChat: string;
     files: string;
+    review: string;
     [key: string]: string | undefined;
   };
 }
@@ -204,6 +205,7 @@ export const defaultConfig: AppConfig = {
     browser: 'Ctrl+T',
     sideChat: 'Ctrl+Alt+S',
     files: 'Ctrl+P',
+    review: 'Ctrl+Shift+G',
   },
 };
 

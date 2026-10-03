@@ -234,6 +234,37 @@ describe('TerminalPanel', () => {
     await waitFor(() => expect(close).toHaveBeenCalled());
   });
 
+  it('forwards the review shortcut before xterm consumes it', async () => {
+    const shortcutListener = vi.fn();
+    window.addEventListener('cowork:shortcut:review', shortcutListener);
+
+    const view = render(
+      <TerminalPanel
+        terminalId="terminal:review-shortcut"
+        cwd={'E:\\workspace\\JustDo'}
+        isObscured={false}
+      />,
+    );
+
+    await waitFor(() => expect(mocks.terminal.attachCustomKeyEventHandler).toHaveBeenCalled());
+    const handlerCalls = mocks.terminal.attachCustomKeyEventHandler.mock.calls;
+    const handler = handlerCalls[handlerCalls.length - 1]?.[0] as (event: KeyboardEvent) => boolean;
+    const event = new KeyboardEvent('keydown', {
+      key: 'g',
+      shiftKey: true,
+      ctrlKey: true,
+      cancelable: true,
+    });
+
+    expect(handler(event)).toBe(false);
+    expect(event.defaultPrevented).toBe(true);
+    expect(shortcutListener).toHaveBeenCalledOnce();
+
+    window.removeEventListener('cowork:shortcut:review', shortcutListener);
+    view.unmount();
+    await waitFor(() => expect(close).toHaveBeenCalled());
+  });
+
   it('reuses the backend PTY across the React StrictMode effect check', async () => {
     const exitListeners: Array<(event: { id: string; exitCode: number }) => void> = [];
     window.electron.terminal.onExit = vi.fn(listener => {

@@ -7,6 +7,10 @@ import { i18nService } from '@/services/i18n';
 import { store } from '@/store';
 
 import { BrowserRecordingReviewTab, focusRecordingReviewTab } from './BrowserRecordingReviewTab';
+import {
+  browserToolbarButtonClassName,
+  browserToolbarGroupClassName,
+} from './browserToolbarStyles';
 import type { useBrowserRecording } from './useBrowserRecording';
 
 export function BrowserRecordingControls({
@@ -21,7 +25,7 @@ export function BrowserRecordingControls({
   const s = recorder.session;
   if (!s)
     return (
-      <span className="text-xs">
+      <span className={`${browserToolbarGroupClassName} text-xs`}>
         <button
           type="button"
           aria-label={t('recordingStart')}
@@ -31,7 +35,7 @@ export function BrowserRecordingControls({
             setReviewOpen(true);
             void recorder.start();
           }}
-          className="rounded border border-border px-2 py-1 disabled:opacity-40"
+          className={browserToolbarButtonClassName(false)}
         >
           <VideoCameraIcon className="h-4 w-4" />
         </button>
@@ -39,14 +43,17 @@ export function BrowserRecordingControls({
       </span>
     );
   return (
-    <div className="flex items-center gap-2 text-xs">
-      <span className={s.status === RecordingStatus.Recording ? 'text-red-500' : ''}>
+    <div className={`${browserToolbarGroupClassName} text-xs`}>
+      <span
+        className={`px-1.5 tabular-nums ${s.status === RecordingStatus.Recording ? 'text-red-500' : 'text-secondary'}`}
+      >
         {s.steps.length}
       </span>
       {s.status !== RecordingStatus.Review ? (
         <>
           <button
             type="button"
+            className={browserToolbarButtonClassName(s.status === RecordingStatus.Paused)}
             aria-label={t(
               s.status === RecordingStatus.Paused ? 'recordingResume' : 'recordingPause',
             )}
@@ -63,6 +70,7 @@ export function BrowserRecordingControls({
           </button>
           <button
             type="button"
+            className={browserToolbarButtonClassName(false)}
             aria-label={t('recordingStop')}
             title={t('recordingStop')}
             onClick={() => {
@@ -76,6 +84,7 @@ export function BrowserRecordingControls({
       ) : (
         <button
           type="button"
+          className={`${browserToolbarButtonClassName(false)} w-auto px-2`}
           onClick={() => {
             setReviewOpen(true);
             focusRecordingReviewTab(s.id, s.sessionId);

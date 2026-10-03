@@ -43,17 +43,17 @@ describe('DisplayPanelLauncher', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Files' }));
-    const browserButton = screen.getByRole('button', { name: 'Browser' });
-    fireEvent.click(browserButton);
+    expect(screen.queryByRole('button', { name: 'Browser' })).toBeNull();
+    expect(screen.getByRole('textbox', { name: 'Browser address' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Terminal' }));
+    expect(screen.getByRole('button', { name: 'Review' }).textContent).toContain('Ctrl+Shift+G');
     fireEvent.click(screen.getByRole('button', { name: 'Review' }));
     fireEvent.click(screen.getByRole('button', { name: 'Side chat' }));
-    expect(createBrowser).toHaveBeenCalledTimes(1);
+    expect(createBrowser).not.toHaveBeenCalled();
     expect(createTerminal).toHaveBeenCalledTimes(1);
     expect(openFiles).toHaveBeenCalledTimes(1);
     expect(openReview).toHaveBeenCalledTimes(1);
     expect(createSideChat).toHaveBeenCalledTimes(1);
-    expect(createBrowser).toHaveBeenCalledWith();
     expect(
       await screen.findByText(
         'Pages you visit will appear here so you can pick up where you left off.',
@@ -75,7 +75,9 @@ describe('DisplayPanelLauncher', () => {
       />,
     );
 
-    expect(screen.getByRole('button', { name: 'Browser' }).hasAttribute('disabled')).toBe(true);
+    expect(screen.getByRole('textbox', { name: 'Browser address' }).hasAttribute('disabled')).toBe(
+      true,
+    );
     expect(screen.getByRole('button', { name: 'Terminal' }).hasAttribute('disabled')).toBe(true);
     expect(screen.getByRole('button', { name: 'Files' }).hasAttribute('disabled')).toBe(true);
   });
@@ -189,7 +191,7 @@ describe('DisplayPanelLauncher', () => {
         onCreateTerminal={vi.fn()}
       />,
     );
-    expect(screen.getByRole('button', { name: 'Browser' }).hasAttribute('disabled')).toBe(true);
+    expect(screen.queryByRole('button', { name: 'Browser' })).toBeNull();
     expect(screen.queryByRole('search')).toBeNull();
     fireEvent.click(await screen.findByRole('button', { name: 'Example' }));
     expect(navigate).toHaveBeenCalledWith('https://example.com/');
@@ -222,10 +224,15 @@ describe('DisplayPanelLauncher', () => {
     render(<DisplayPanelLauncher onCreateBrowser={vi.fn()} onCreateTerminal={vi.fn()} />);
     readConfig.mockReturnValue({
       ...config,
-      shortcuts: { ...config.shortcuts!, terminal: 'Alt+T', browser: '' },
+      shortcuts: { ...config.shortcuts!, terminal: 'Alt+T' },
     });
     act(() => window.dispatchEvent(new Event('config-updated')));
     expect(screen.getByRole('button', { name: 'Terminal' }).textContent).toContain('Alt+T');
-    expect(screen.getByRole('button', { name: 'Browser' }).querySelector('kbd')).toBeNull();
+    readConfig.mockReturnValue({
+      ...config,
+      shortcuts: { ...config.shortcuts!, terminal: '' },
+    });
+    act(() => window.dispatchEvent(new Event('config-updated')));
+    expect(screen.getByRole('button', { name: 'Terminal' }).querySelector('kbd')).toBeNull();
   });
 });

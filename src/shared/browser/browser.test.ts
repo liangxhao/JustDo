@@ -3,6 +3,7 @@ import { describe, expect, test } from 'vitest';
 import {
   BrowserMode,
   BrowserSearchEngine,
+  DEFAULT_BROWSER_PANEL_SHORTCUTS,
   isBrowserAgentProfile,
   isBrowserProfileRunning,
   normalizeBrowserDownloadSettings,
@@ -10,10 +11,24 @@ import {
   normalizeBrowserPanelHttpAuthRequest,
   normalizeBrowserPanelHttpAuthResponse,
   normalizeBrowserPanelOpenTabEvent,
+  normalizeBrowserPanelShortcutSettings,
   normalizeBrowserSearchEngine,
   parseDevToolsActivePort,
   resolveBrowserAddressInput,
+  resolveBrowserPanelShortcutAction,
 } from './browser';
+
+test('routes configured review shortcuts and respects an explicitly disabled binding', () => {
+  const input = { key: 'g', ctrlKey: true, shiftKey: true, altKey: false, metaKey: false };
+  expect(resolveBrowserPanelShortcutAction(input, DEFAULT_BROWSER_PANEL_SHORTCUTS)).toBe('review');
+  const settings = normalizeBrowserPanelShortcutSettings({
+    ...DEFAULT_BROWSER_PANEL_SHORTCUTS,
+    review: 'Ctrl+Shift+R',
+  })!;
+  expect(resolveBrowserPanelShortcutAction(input, settings)).toBeNull();
+  expect(resolveBrowserPanelShortcutAction({ ...input, key: 'r' }, settings)).toBe('review');
+  expect(resolveBrowserPanelShortcutAction(input, { ...settings, review: '' })).toBeNull();
+});
 
 describe('browser agent profile names', () => {
   test.each(['embedded', '1-work', '2026', 'profile-1'])(

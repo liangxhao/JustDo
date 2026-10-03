@@ -287,7 +287,7 @@ describe('BrowserPanel embedded webview', () => {
     ).toBe('https://example.com/docs');
     expect(screen.queryByRole('button', { name: 'Project docs' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Record actions' })).toBeTruthy();
-    expect(screen.getByLabelText('Draw annotation')).toBeTruthy();
+    expect(screen.getByLabelText('Add comment')).toBeTruthy();
     expect(screen.getByLabelText('Switch annotation tool')).toBeTruthy();
 
     fireEvent.click(screen.getByLabelText('New tab'));
@@ -669,7 +669,7 @@ describe('BrowserPanel embedded webview', () => {
     );
     useCompatibilityPdfViewer();
     await waitFor(() => expect(loadPdf).toHaveBeenCalledOnce());
-    expect((screen.getByLabelText('Draw annotation') as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByLabelText('Add comment') as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByLabelText('More browser options'));
     for (const name of ['Find in page', 'Print', i18nService.t('browserMenuScreenshot')]) {
       expect((screen.getByRole('menuitem', { name }) as HTMLButtonElement).disabled).toBe(true);
@@ -720,7 +720,7 @@ describe('BrowserPanel embedded webview', () => {
     await waitFor(() => expect(loadPdf).toHaveBeenCalledOnce());
     await waitFor(() => expect(container.querySelector('[data-browser-pdf-viewer]')).toBeNull());
     expect(container.querySelector('webview')).toBeTruthy();
-    expect((screen.getByLabelText('Draw annotation') as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByLabelText('Add comment') as HTMLButtonElement).disabled).toBe(false);
     act(() => panelPdfDetectedListener?.({ url: 'https://example.com/login.pdf', guestId: 7 }));
     await waitFor(() => expect(loadPdf).toHaveBeenCalledTimes(2));
     expect(container.querySelector('[data-browser-pdf-viewer]')).toBeTruthy();
@@ -1132,6 +1132,21 @@ describe('BrowserPanel embedded webview', () => {
 
     expect(handleShortcut).toHaveBeenCalledOnce();
     window.removeEventListener('cowork:shortcut:files', handleShortcut);
+  });
+
+  it('forwards the review shortcut from panel controls', () => {
+    const handleShortcut = vi.fn();
+    window.addEventListener('cowork:shortcut:review', handleShortcut);
+    render(<BrowserPanelHarness />);
+
+    fireEvent.keyDown(screen.getByRole('complementary'), {
+      key: 'g',
+      shiftKey: true,
+      ctrlKey: true,
+    });
+
+    expect(handleShortcut).toHaveBeenCalledOnce();
+    window.removeEventListener('cowork:shortcut:review', handleShortcut);
   });
 
   it('does not read guest zoom until the current webview emits dom-ready', async () => {
@@ -1571,7 +1586,7 @@ describe('BrowserPanel embedded webview', () => {
     };
     render(<BrowserPanelHarness draftKey="session-1" initialTabs={[tab]} />);
 
-    fireEvent.click(screen.getByLabelText('Draw annotation'));
+    fireEvent.click(screen.getByLabelText('Add comment'));
     await waitFor(() =>
       expect(setUserInteractionState).toHaveBeenCalledWith({
         sessionId: 'session-1',
@@ -1580,7 +1595,7 @@ describe('BrowserPanel embedded webview', () => {
       }),
     );
 
-    fireEvent.click(screen.getByLabelText('Stop drawing'));
+    fireEvent.click(screen.getByLabelText('Stop adding comments'));
     await waitFor(() =>
       expect(setUserInteractionState).toHaveBeenCalledWith({
         sessionId: 'session-1',
@@ -1606,7 +1621,7 @@ describe('BrowserPanel embedded webview', () => {
       operationId: 'imported-operation',
     };
     const { rerender } = render(<BrowserPanelHarness draftKey="session-1" initialTabs={[tab]} />);
-    fireEvent.click(screen.getByLabelText('Draw annotation'));
+    fireEvent.click(screen.getByLabelText('Add comment'));
     await waitFor(() =>
       expect(setUserInteractionState).toHaveBeenCalledWith(
         expect.objectContaining({ targetId: 'annotation-tab', busy: true }),
@@ -1624,7 +1639,7 @@ describe('BrowserPanel embedded webview', () => {
     expect(screen.queryByTestId('browser-agent-interaction-lock')).toBeNull();
     expect(acknowledgeAgentInteraction).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByLabelText('Stop drawing'));
+    fireEvent.click(screen.getByLabelText('Stop adding comments'));
     await waitFor(() =>
       expect(screen.getByTestId('browser-agent-interaction-lock')).not.toBeNull(),
     );
@@ -1839,6 +1854,66 @@ describe('BrowserPanel embedded webview', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
+  it.each(['Add comment', 'Draw annotation', 'Rectangle annotation'])(
+    'forwards wheel input to the page while using %s',
+    tool => {
+      const { container } = render(<BrowserPanelHarness initialTabs={[pageTab]} />);
+      const guest = container.querySelector('webview')!;
+      const sendInputEvent = vi.fn().mockResolvedValue(undefined);
+      Object.assign(guest, { sendInputEvent });
+      fireEvent(guest, new Event('dom-ready'));
+      fireEvent.click(screen.getByLabelText('Switch annotation tool'));
+      fireEvent.click(screen.getByRole('menuitemradio', { name: tool }));
+      const canvas = container.querySelector('canvas')!;
+      const wheel = new WheelEvent('wheel', {
+        clientX: 24,
+        clientY: 32,
+        deltaX: 5,
+        deltaY: 120,
+        cancelable: true,
+      });
+      fireEvent(canvas, wheel);
+      expect(wheel.defaultPrevented).toBe(true);
+      expect(sendInputEvent).toHaveBeenCalledWith({
+        type: 'mouseWheel',
+        x: 24,
+        y: 32,
+        deltaX: -5,
+        deltaY: -120,
+        canScroll: true,
+      });
+      fireEvent.wheel(canvas, { deltaY: 3, deltaMode: 1 });
+      expect(sendInputEvent).toHaveBeenLastCalledWith(expect.objectContaining({ deltaY: -48 }));
+    },
+  );
+
+  it('invalidates viewport selection on scroll while retaining the comment draft', async () => {
+    const { container } = render(<BrowserPanelHarness initialTabs={[pageTab]} />);
+    const guest = container.querySelector('webview')!;
+    Object.assign(guest, { sendInputEvent: vi.fn().mockResolvedValue(undefined) });
+    fireEvent(guest, new Event('dom-ready'));
+    fireEvent.click(screen.getByLabelText('Add comment'));
+    const canvas = container.querySelector('canvas')!;
+    fireEvent.click(canvas, { clientX: 24, clientY: 24 });
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Add a comment…' }), {
+      target: { value: 'Keep my comment' },
+    });
+    fireEvent.wheel(canvas, { deltaY: 120 });
+    fireEvent(
+      guest,
+      Object.assign(new Event('ipc-message'), {
+        channel: 'justdo-browser-viewport-changed',
+        args: [],
+      }),
+    );
+    expect(screen.queryByTestId('browser-annotation-composer')).toBeNull();
+    expect(screen.getByLabelText('Stop adding comments')).toBeTruthy();
+    fireEvent.click(canvas, { clientX: 24, clientY: 24 });
+    expect(
+      ((await screen.findByRole('textbox', { name: 'Add a comment…' })) as HTMLInputElement).value,
+    ).toBe('Keep my comment');
+  });
+
   it('opens an editable comment box after locking an inspected element', async () => {
     const { container } = render(<BrowserPanelHarness initialTabs={[pageTab]} />);
     fireEvent.click(screen.getByLabelText('Switch annotation tool'));
@@ -1965,7 +2040,7 @@ describe('BrowserPanel embedded webview', () => {
 
   it('describes icon-only tools on hover', async () => {
     render(<BrowserPanelHarness initialTabs={[pageTab]} />);
-    const inspectButton = screen.getByLabelText('Draw annotation');
+    const inspectButton = screen.getByLabelText('Add comment');
 
     expect(screen.queryByLabelText('Interact with page')).toBeNull();
     expect(inspectButton.className).toContain('bg-transparent');
@@ -1973,12 +2048,12 @@ describe('BrowserPanel embedded webview', () => {
 
     fireEvent.mouseEnter(inspectButton.parentElement!);
 
-    expect((await screen.findByRole('tooltip')).textContent).toBe('Draw annotation');
+    expect((await screen.findByRole('tooltip')).textContent).toBe('Add comment');
 
     fireEvent.click(inspectButton);
 
     expect(inspectButton.getAttribute('aria-pressed')).toBe('true');
-    expect(inspectButton.getAttribute('aria-label')).toBe('Stop drawing');
+    expect(inspectButton.getAttribute('aria-label')).toBe('Stop adding comments');
     expect(inspectButton.className).toContain('ring-primary/55');
     expect(inspectButton.className).not.toContain('bg-primary-muted');
     expect(screen.queryByRole('tooltip')).toBeNull();
@@ -1986,14 +2061,14 @@ describe('BrowserPanel embedded webview', () => {
     fireEvent.click(inspectButton);
 
     expect(inspectButton.getAttribute('aria-pressed')).toBe('false');
-    expect(inspectButton.getAttribute('aria-label')).toBe('Draw annotation');
+    expect(inspectButton.getAttribute('aria-label')).toBe('Add comment');
     expect(inspectButton.className).not.toContain('ring-primary/55');
   });
 
   it('keeps annotation tools in the address row without a redundant title bar', () => {
     render(<BrowserPanelHarness initialTabs={[pageTab]} />);
     const address = screen.getByLabelText('Browser address');
-    const inspectButton = screen.getByLabelText('Draw annotation');
+    const inspectButton = screen.getByLabelText('Add comment');
     const toolGroup = screen.getByTestId('browser-annotation-tool-group');
 
     expect(inspectButton.closest('form')).toBe(address.closest('form'));
@@ -2256,18 +2331,18 @@ describe('BrowserPanel embedded webview', () => {
 
   it('combines drawing modes into a remembered annotation tool picker', () => {
     render(<BrowserPanelHarness initialTabs={[pageTab]} />);
-    const penTool = screen.getByLabelText('Draw annotation');
-    expect(penTool).toBeTruthy();
+    const defaultTool = screen.getByLabelText('Add comment');
+    expect(defaultTool).toBeTruthy();
     expect(screen.queryByLabelText('Rectangle annotation')).toBeNull();
 
-    fireEvent.click(penTool);
-    expect(penTool.getAttribute('aria-pressed')).toBe('true');
-    expect(penTool.getAttribute('aria-label')).toBe('Stop drawing');
-    expect(penTool.className).toContain('ring-primary/55');
+    fireEvent.click(defaultTool);
+    expect(defaultTool.getAttribute('aria-pressed')).toBe('true');
+    expect(defaultTool.getAttribute('aria-label')).toBe('Stop adding comments');
+    expect(defaultTool.className).toContain('ring-primary/55');
 
-    fireEvent.click(penTool);
-    expect(penTool.getAttribute('aria-pressed')).toBe('false');
-    expect(penTool.getAttribute('aria-label')).toBe('Draw annotation');
+    fireEvent.click(defaultTool);
+    expect(defaultTool.getAttribute('aria-pressed')).toBe('false');
+    expect(defaultTool.getAttribute('aria-label')).toBe('Add comment');
 
     fireEvent.click(screen.getByLabelText('Switch annotation tool'));
     const rectangleOption = screen.getByRole('menuitemradio', {

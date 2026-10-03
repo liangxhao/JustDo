@@ -32,6 +32,11 @@ describe('ShortcutsSettings', () => {
     expect(screen.getByText('Ctrl+T')).toBeTruthy();
     expect(screen.getByText('Ctrl+Alt+S')).toBeTruthy();
 
+    const reviewShortcut = screen.getByRole('button', { name: 'Review: Ctrl+Shift+G' });
+    fireEvent.click(reviewShortcut);
+    fireEvent.keyDown(reviewShortcut, { key: 'R', ctrlKey: true, shiftKey: true });
+    expect(onShortcutChange).toHaveBeenCalledWith('review', 'Ctrl+Shift+R');
+
     const terminalShortcut = screen.getByRole('button', { name: 'Terminal: Ctrl+`' });
     fireEvent.click(terminalShortcut);
     fireEvent.keyDown(terminalShortcut, { key: 'K', ctrlKey: true });
