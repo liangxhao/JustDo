@@ -3,6 +3,7 @@ import { act, cleanup, renderHook } from '@testing-library/react';
 import { createElement, StrictMode } from 'react';
 import { afterEach, expect, test, vi } from 'vitest';
 
+import { MAX_BROWSER_TABS } from './displayTabIds';
 import { useCoworkBrowserPanels } from './useCoworkBrowserPanels';
 
 type Options = Parameters<typeof useCoworkBrowserPanels>[0];
@@ -142,6 +143,50 @@ function createOptions(overrides: Partial<Options> = {}): Options {
   };
 }
 
+test('reopens the sidebar at tab capacity without creating another tab', () => {
+  const options = createOptions({
+    browserTabs: Array.from({ length: MAX_BROWSER_TABS }, (_, index) => ({
+      id: String(index),
+      targetId: String(index),
+      url: 'about:blank',
+      title: '',
+      profile: 'embedded',
+    })),
+    hasDisplayTabs: true,
+  });
+  const { result } = renderHook(() => useCoworkBrowserPanels(options));
+  act(() => result.current.handleCreateBrowserTab());
+  expect(options.setIsDisplayPanelOpen).toHaveBeenCalledWith(true);
+  expect(options.pendingBrowserTabsRef.current.size).toBe(0);
+  expect(options.setBrowserTabCreationSequence).not.toHaveBeenCalled();
+});
+
+test('closes the sidebar when its last tab disappears without creating a replacement', () => {
+  const options = createOptions({ isDisplayPanelOpen: true, hasDisplayTabs: true });
+  const { rerender } = renderHook(props => useCoworkBrowserPanels(props), {
+    initialProps: options,
+  });
+  rerender({ ...options, hasDisplayTabs: false });
+  expect(options.setIsDisplayPanelOpen).toHaveBeenCalledWith(false);
+  expect(options.pendingBrowserTabsRef.current.size).toBe(0);
+  expect(options.setBrowserTabCreationSequence).not.toHaveBeenCalled();
+});
+
+test('does not treat switching to an empty session as closing the last tab', () => {
+  const options = createOptions({ isDisplayPanelOpen: true, hasDisplayTabs: true });
+  const { rerender } = renderHook(props => useCoworkBrowserPanels(props), {
+    initialProps: options,
+  });
+  rerender({
+    ...options,
+    displaySessionKey: 'other',
+    currentSessionId: 'other',
+    hasDisplayTabs: false,
+  });
+  expect(options.setIsDisplayPanelOpen).not.toHaveBeenCalledWith(false);
+  expect(options.pendingBrowserTabsRef.current.get('other')).toEqual([{}]);
+});
+
 test.each(['session', null])(
   'creates one initial new-tab page when opening an empty %s sidebar',
   sessionId => {
@@ -164,12 +209,16 @@ test.each(['session', null])(
   },
 );
 
-test('keeps existing tools selected and opens a new-tab page after the last tool is closed', () => {
+test('allows reopening the sidebar after its last tool is closed', () => {
   const options = createOptions({ isDisplayPanelOpen: true, hasDisplayTabs: true });
   const { rerender } = renderHook(useCoworkBrowserPanels, { initialProps: options });
   expect(options.pendingBrowserTabsRef.current.size).toBe(0);
 
   rerender({ ...options, hasDisplayTabs: false });
+  expect(options.setIsDisplayPanelOpen).toHaveBeenCalledWith(false);
+  expect(options.pendingBrowserTabsRef.current.size).toBe(0);
+  rerender({ ...options, hasDisplayTabs: false, isDisplayPanelOpen: false });
+  rerender({ ...options, hasDisplayTabs: false, isDisplayPanelOpen: true });
 
   expect(options.pendingBrowserTabsRef.current.get('session')).toEqual([{}]);
 });
@@ -261,5 +310,6 @@ test('creates one initial page when StrictMode replays effects after the queue h
   rerender({ ...options, hasDisplayTabs: true });
   rerender({ ...options, hasDisplayTabs: false, browserTabCreationSequence: 1 });
 
-  expect(openTab).toHaveBeenCalledTimes(2);
+  expect(openTab).toHaveBeenCalledTimes(1);
+  expect(options.setIsDisplayPanelOpen).toHaveBeenCalledWith(false);
 });

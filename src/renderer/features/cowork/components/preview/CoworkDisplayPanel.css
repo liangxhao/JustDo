@@ -1,0 +1,40 @@
+.cowork-display-panel {
+  transition:
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 180ms ease,
+    margin-right 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    display 220ms allow-discrete;
+  transform: translateX(0);
+  opacity: 1;
+}
+
+.cowork-display-panel[aria-hidden='true'] {
+  transform: translateX(100%);
+  opacity: 0;
+  pointer-events: none;
+}
+
+@starting-style {
+  .cowork-display-panel[aria-hidden='false'] {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
+
+@container (min-width: 760px) {
+  .cowork-display-panel:not([data-workspace-fullscreen='true'])[aria-hidden='true'] {
+    margin-right: calc(-1 * var(--display-panel-width));
+  }
+
+  @starting-style {
+    .cowork-display-panel:not([data-workspace-fullscreen='true'])[aria-hidden='false'] {
+      margin-right: calc(-1 * var(--display-panel-width));
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cowork-display-panel {
+    transition: none;
+  }
+}

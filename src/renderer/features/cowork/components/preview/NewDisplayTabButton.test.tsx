@@ -1,13 +1,31 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 
+import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 
 import NewDisplayTabButton from './NewDisplayTabButton';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
+
+test('updates the tooltip for customized and disabled shortcuts', () => {
+  i18nService.setLanguage('en', { persist: false });
+  const config = configService.getConfig();
+  const getConfig = vi.spyOn(configService, 'getConfig').mockReturnValue({
+    ...config,
+    shortcuts: { ...config.shortcuts!, browser: 'Ctrl+Alt+B' },
+  });
+  render(<NewDisplayTabButton onCreateTab={vi.fn()} />);
+  expect(screen.getByRole('button').title).toBe('New tab (Ctrl+Alt+B)');
+  getConfig.mockReturnValue({ ...config, shortcuts: { ...config.shortcuts!, browser: '' } });
+  act(() => window.dispatchEvent(new Event('config-updated')));
+  expect(screen.getByRole('button').title).toBe('New tab');
+});
 
 test('creates a new tab directly on every click', () => {
   i18nService.setLanguage('en', { persist: false });
@@ -15,6 +33,7 @@ test('creates a new tab directly on every click', () => {
   render(<NewDisplayTabButton onCreateTab={createTab} />);
 
   const button = screen.getByRole('button', { name: 'New tab' });
+  expect(button.getAttribute('title')).toBe('New tab (Ctrl+Shift+B)');
   fireEvent.click(button);
   fireEvent.click(button);
 

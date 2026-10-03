@@ -202,7 +202,7 @@ export const defaultConfig: AppConfig = {
     settings: 'Ctrl+,',
     sendMessage: 'Enter',
     terminal: 'Ctrl+`',
-    browser: 'Ctrl+T',
+    browser: 'Ctrl+Shift+B',
     sideChat: 'Ctrl+Alt+S',
     files: 'Ctrl+P',
     review: 'Ctrl+Shift+G',

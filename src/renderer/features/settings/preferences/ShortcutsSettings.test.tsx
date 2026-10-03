@@ -26,10 +26,10 @@ describe('ShortcutsSettings', () => {
     );
 
     expect(screen.getByText('Terminal')).toBeTruthy();
-    expect(screen.getByText('Browser')).toBeTruthy();
+    expect(screen.getByText('New tab')).toBeTruthy();
     expect(screen.getByText('Side chat')).toBeTruthy();
     expect(screen.getByText('Ctrl+`')).toBeTruthy();
-    expect(screen.getByText('Ctrl+T')).toBeTruthy();
+    expect(screen.getByText('Ctrl+Shift+B')).toBeTruthy();
     expect(screen.getByText('Ctrl+Alt+S')).toBeTruthy();
 
     const reviewShortcut = screen.getByRole('button', { name: 'Review: Ctrl+Shift+G' });

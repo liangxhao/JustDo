@@ -1,3 +1,5 @@
+import './CoworkDisplayPanel.css';
+
 import { XMarkIcon } from '@heroicons/react/24/outline';
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
@@ -361,10 +363,11 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
       style={
         isWorkspaceFullscreen
           ? { width: '100%', maxWidth: 'none', position: 'absolute', inset: 0, zIndex: 50 }
-          : { width }
+          : ({ width, '--display-panel-width': `${width}px` } as React.CSSProperties)
       }
       aria-label={i18nService.t('coworkCanvasTitle')}
       aria-hidden={!isOpen}
+      {...(!isOpen ? { inert: '' } : {})}
       data-workspace-fullscreen={isWorkspaceFullscreen}
     >
       <div

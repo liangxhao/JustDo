@@ -286,7 +286,7 @@ const loadImage = (dataUrl: string): Promise<HTMLImageElement> =>
 
 export interface BrowserPanelHandle {
   promoteRecordingSession: (fromSessionId: string, toSessionId: string) => void;
-  closeTab: (targetId: string) => void;
+  closeTab: (targetId: string, options?: { preserveSelection?: boolean }) => void;
   openTabContextMenu: (
     targetId: string,
     x: number,
@@ -459,6 +459,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   );
   const gestureRef = useRef<Gesture | null>(null);
   const activeTargetRef = useRef(activeTargetId);
+  const replacedTargetRef = useRef<string | null>(null);
   const inspectionSequenceRef = useRef(0);
   const contentEpochRef = useRef(0);
   const inspectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -762,7 +763,12 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   const annotationAddedNotice = i18nService.t('browserAnnotationAdded');
   useEffect(() => {
     if (!activeTabTargetId) return;
-    if (activeTargetId !== activeTabTargetId) onActiveTargetChange(activeTabTargetId);
+    if (
+      activeTargetId !== activeTabTargetId &&
+      !(replacedTargetRef.current && activeTargetId === replacedTargetRef.current)
+    ) {
+      onActiveTargetChange(activeTabTargetId);
+    }
     const selectedTab = tabsRef.current.find(tab => tab.targetId === activeTabTargetId);
     addressDirtyRef.current = false;
     setError(null);
@@ -947,7 +953,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   );
 
   const closeTab = useCallback(
-    (targetId: string) => {
+    (targetId: string, options?: { preserveSelection?: boolean }) => {
       const performClose = () => {
         const currentTabs = tabsRef.current;
         const closingIndex = currentTabs.findIndex(tab => tab.targetId === targetId);
@@ -994,12 +1000,15 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           return next;
         });
         if (activeTargetRef.current !== targetId) return;
+        replacedTargetRef.current = options?.preserveSelection ? targetId : null;
         clearAnnotations();
         const nextTab = nextTabs[Math.min(closingIndex, nextTabs.length - 1)] ?? null;
         activeTargetRef.current = nextTab?.targetId ?? null;
-        onActiveTargetChange(nextTab?.targetId ?? null);
+        if (!options?.preserveSelection) onActiveTargetChange(nextTab?.targetId ?? null);
         setUrlDraft(getBrowserTabAddress(nextTab));
-        if (nextTab) setTimeout(() => webviewsRef.current.get(nextTab.targetId)?.focus(), 0);
+        if (nextTab && !options?.preserveSelection) {
+          setTimeout(() => webviewsRef.current.get(nextTab.targetId)?.focus(), 0);
+        }
       };
       if (recorderRef.current.session?.status === RecordingStatus.Recording)
         void recorderRef.current.drain().then(performClose);
@@ -1892,7 +1901,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
             .filter(candidate => candidate.targetId !== targetId)
             .map(candidate => candidate.targetId)
         : tabsRef.current.slice(targetIndex + 1).map(candidate => candidate.targetId);
-    targetIds.forEach(closeTab);
+    targetIds.forEach(targetId => closeTab(targetId));
   };
 
   const runFind = useCallback(

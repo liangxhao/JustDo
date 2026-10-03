@@ -86,8 +86,10 @@ export function useCoworkBrowserPanels({
   openBrowserTab,
 }: CoworkBrowserPanelsOptions) {
   const initializingTabSessionRef = useRef<string | null>(null);
+  const previousDisplayTabsRef = useRef({ displaySessionKey, hasDisplayTabs });
   const handleCreateBrowserTab = useCallback(
     (url?: string) => {
+      setIsDisplayPanelOpen(true);
       const pendingTabs = pendingBrowserTabsRef.current.get(displaySessionKey) ?? [];
       if (
         currentSessionId?.startsWith('temp-') ||
@@ -97,7 +99,6 @@ export function useCoworkBrowserPanels({
       pendingTabs.push(url ? { url } : {});
       pendingBrowserTabsRef.current.set(displaySessionKey, pendingTabs);
       setIsWorkspaceFilesOpen(false);
-      setIsDisplayPanelOpen(true);
       setHasBrowserPanelOpened(true);
       setIsBrowserPanelOpen(true);
       setBrowserTabCreationSequence(sequence => sequence + 1);
@@ -116,6 +117,17 @@ export function useCoworkBrowserPanels({
   );
 
   useEffect(() => {
+    const previous = previousDisplayTabsRef.current;
+    previousDisplayTabsRef.current = { displaySessionKey, hasDisplayTabs };
+    if (
+      previous.displaySessionKey === displaySessionKey &&
+      previous.hasDisplayTabs &&
+      !hasDisplayTabs
+    ) {
+      initializingTabSessionRef.current = null;
+      setIsDisplayPanelOpen(false);
+      return;
+    }
     if (!isDisplayPanelOpen || hasDisplayTabs) {
       initializingTabSessionRef.current = null;
       return;
@@ -147,6 +159,7 @@ export function useCoworkBrowserPanels({
     pendingBrowserTabsRef,
     setHasBrowserPanelOpened,
     setIsBrowserPanelOpen,
+    setIsDisplayPanelOpen,
   ]);
 
   useEffect(() => {

@@ -94,7 +94,7 @@ export type BrowserPanelShortcutSettings = Record<BrowserPanelShortcutAction, st
 
 export const DEFAULT_BROWSER_PANEL_SHORTCUTS: BrowserPanelShortcutSettings = {
   terminal: 'Ctrl+`',
-  browser: 'Ctrl+T',
+  browser: 'Ctrl+Shift+B',
   'side-chat': 'Ctrl+Alt+S',
   files: 'Ctrl+P',
   review: 'Ctrl+Shift+G',

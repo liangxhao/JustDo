@@ -2662,7 +2662,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                       <button
                         type="button"
                         onClick={handleSlashButtonClick}
-                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-secondary/70 text-xs text-secondary hover:border-secondary hover:bg-surface-raised hover:text-foreground transition-colors font-mono font-semibold"
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-sm text-secondary hover:bg-surface-raised hover:text-foreground transition-colors font-mono font-semibold"
                         title={i18nService.t('slashCommandButton')}
                         aria-label={i18nService.t('slashCommandButton')}
                         disabled={disabled || isRunActive}
@@ -2929,7 +2929,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                       <button
                         type="button"
                         onClick={handleSlashButtonClick}
-                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-secondary/70 text-xs text-secondary hover:border-secondary hover:bg-surface-raised hover:text-foreground transition-colors font-mono font-semibold"
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-sm text-secondary hover:bg-surface-raised hover:text-foreground transition-colors font-mono font-semibold"
                         title={i18nService.t('slashCommandButton')}
                         aria-label={i18nService.t('slashCommandButton')}
                         disabled={disabled || isRunActive}

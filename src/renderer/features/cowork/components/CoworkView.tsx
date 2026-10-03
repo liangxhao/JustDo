@@ -98,6 +98,7 @@ import {
 } from '@/features/cowork/components/preview/planPreviewState';
 import TerminalPanel from '@/features/cowork/components/preview/TerminalPanel';
 import UnsupportedFilePreview from '@/features/cowork/components/preview/UnsupportedFilePreview';
+import { useDisplayTabOrder } from '@/features/cowork/components/preview/useDisplayTabOrder';
 import { useFilePreviewEvents } from '@/features/cowork/components/preview/useFilePreviewEvents';
 import { useRecordingReviewTabs } from '@/features/cowork/components/preview/useRecordingReviewTabs';
 import {
@@ -174,7 +175,6 @@ import StartupLoading from '@/shared/components/common/StartupLoading';
 import BrainIcon from '@/shared/components/icons/BrainIcon';
 import ComposeIcon from '@/shared/components/icons/ComposeIcon';
 import FolderIcon from '@/shared/components/icons/FolderIcon';
-import RightSidebarIcon from '@/shared/components/icons/RightSidebarIcon';
 import SearchIcon from '@/shared/components/icons/SearchIcon';
 import SidebarToggleIcon from '@/shared/components/icons/SidebarToggleIcon';
 import { type RootState, store } from '@/store';
@@ -534,7 +534,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     },
     () => setIsDisplayPanelOpen(true),
   );
-  const availableDisplayTabIds = useMemo(
+  const unorderedDisplayTabIds = useMemo(
     () => [
       ...(isBrowserPanelOpen ? browserTabs.map(tab => browserDisplayTabId(tab.targetId)) : []),
       ...terminalTabs.map(tab => tab.id),
@@ -566,6 +566,16 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       recordingReviewTabs.tabs,
     ],
   );
+  const { orderedIds: availableDisplayTabIds, replaceTab } = useDisplayTabOrder(
+    displayStates[displaySessionKey]?.runtimeId ?? displaySessionKey,
+    unorderedDisplayTabIds,
+  );
+  const sortDisplayTabs = (tabs: CoworkDisplayTab[]) => {
+    const positions = new Map(availableDisplayTabIds.map((id, index) => [id, index]));
+    return [...tabs].sort(
+      (a, b) => (positions.get(a.id) ?? Infinity) - (positions.get(b.id) ?? Infinity),
+    );
+  };
   const openReview = useCallback(
     (filePath = '') => {
       if (!currentSessionId) return;
@@ -1485,6 +1495,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     setPreferredDisplayTabId(id);
     setIsWorkspaceFilesOpen(false);
     setIsDisplayPanelOpen(true);
+    return id;
   }, [
     setIsDisplayPanelOpen,
     setIsWorkspaceFilesOpen,
@@ -1723,18 +1734,11 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       </div>
       <div className="non-draggable flex items-center gap-1">
         {!isDisplayPanelOpen && (
-          <button
-            ref={displayPanelToggleRef}
-            type="button"
-            onClick={openDisplayPanel}
-            className="inline-flex h-7 w-8 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
-            title={i18nService.t('coworkDisplayPanelOpen')}
-            aria-label={i18nService.t('coworkDisplayPanelOpen')}
-            aria-expanded={false}
-            aria-controls="cowork-display-panel"
-          >
-            <RightSidebarIcon className="h-[18px] w-[18px]" />
-          </button>
+          <NewDisplayTabButton
+            buttonRef={displayPanelToggleRef}
+            boxedIcon
+            onCreateTab={openDisplayPanel}
+          />
         )}
       </div>
     </div>
@@ -1743,24 +1747,55 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const hasRetainedRuntimePanels = Object.values(displayStates).some(
     displayState => displayState.hasBrowserPanelOpened || displayState.terminalTabs.length > 0,
   );
-  const renderDisplayLauncher = (onNavigateBrowser?: (url: string) => void) => (
-    <DisplayPanelLauncher
-      visible={isDisplayPanelOpen}
-      showAddressInput={!onNavigateBrowser}
-      onNavigateBrowser={onNavigateBrowser}
-      browserDisabled={
-        Boolean(currentSessionId?.startsWith('temp-')) || browserTabs.length >= MAX_BROWSER_TABS
+  const renderDisplayLauncher = (onNavigateBrowser?: (url: string) => void) => {
+    const replaceStartPage = (openContent: () => string | undefined) => () => {
+      const startTab = onNavigateBrowser
+        ? browserTabs.find(
+            tab =>
+              browserDisplayTabId(tab.targetId) === activeDisplayTabId && tab.url === 'about:blank',
+          )
+        : undefined;
+      const replacementId = openContent();
+      if (startTab && replacementId) {
+        replaceTab(browserDisplayTabId(startTab.targetId), replacementId);
+        browserPanelRefs.current
+          .get(displaySessionKey)
+          ?.closeTab(startTab.targetId, { preserveSelection: true });
       }
-      filesDisabled={!workspaceFilesRootPath || Boolean(currentSessionId?.startsWith('temp-'))}
-      onCreateBrowser={handleCreateBrowserTab}
-      onCreateSideChat={currentSession ? handleCreateSideChat : undefined}
-      onCreateTerminal={handleCreateTerminalTab}
-      onOpenFiles={currentSession || workspaceFilesRootPath ? handleOpenWorkspaceFiles : undefined}
-      onOpenReview={currentSession ? () => openReview() : undefined}
-      sideChatDisabled={Boolean(currentSessionId?.startsWith('temp-')) || !isOpenClawEngine}
-      terminalDisabled={!terminalWorkingDirectory || terminalTabs.length >= MAX_TERMINAL_TABS}
-    />
-  );
+    };
+    return (
+      <DisplayPanelLauncher
+        visible={isDisplayPanelOpen}
+        showAddressInput={!onNavigateBrowser}
+        onNavigateBrowser={onNavigateBrowser}
+        browserDisabled={
+          Boolean(currentSessionId?.startsWith('temp-')) || browserTabs.length >= MAX_BROWSER_TABS
+        }
+        filesDisabled={!workspaceFilesRootPath || Boolean(currentSessionId?.startsWith('temp-'))}
+        onCreateBrowser={handleCreateBrowserTab}
+        onCreateSideChat={currentSession ? replaceStartPage(handleCreateSideChat) : undefined}
+        onCreateTerminal={replaceStartPage(handleCreateTerminalTab)}
+        onOpenFiles={
+          currentSession || workspaceFilesRootPath
+            ? replaceStartPage(() => {
+                handleOpenWorkspaceFiles();
+                return WORKSPACE_FILES_DISPLAY_TAB_ID;
+              })
+            : undefined
+        }
+        onOpenReview={
+          currentSession
+            ? replaceStartPage(() => {
+                openReview();
+                return REVIEW_TAB_ID;
+              })
+            : undefined
+        }
+        sideChatDisabled={Boolean(currentSessionId?.startsWith('temp-')) || !isOpenClawEngine}
+        terminalDisabled={!terminalWorkingDirectory || terminalTabs.length >= MAX_TERMINAL_TABS}
+      />
+    );
+  };
   const retainedRuntimePanels = Object.entries(displayStates).flatMap(
     ([sessionKey, displayState]) => {
       const isActiveSession = sessionKey === displaySessionKey;
@@ -2654,22 +2689,11 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                   />
                 </div>
                 {!isDisplayPanelOpen && (
-                  <button
-                    ref={displayPanelToggleRef}
-                    type="button"
-                    onMouseDown={event => event.stopPropagation()}
-                    onClick={event => {
-                      event.stopPropagation();
-                      openDisplayPanel();
-                    }}
-                    className="relative inline-flex h-7 w-8 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
-                    title={i18nService.t('coworkDisplayPanelOpen')}
-                    aria-label={i18nService.t('coworkDisplayPanelOpen')}
-                    aria-expanded={false}
-                    aria-controls="cowork-display-panel"
-                  >
-                    <RightSidebarIcon className="h-[18px] w-[18px]" />
-                  </button>
+                  <NewDisplayTabButton
+                    buttonRef={displayPanelToggleRef}
+                    boxedIcon
+                    onCreateTab={openDisplayPanel}
+                  />
                 )}
               </div>
               {isSessionSearchOpen && (
@@ -2883,7 +2907,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               showEmptyState={
                 displayTabs.length === 0 || activeDisplayTabId === WORKSPACE_FILES_DISPLAY_TAB_ID
               }
-              tabs={displayTabs}
+              tabs={sortDisplayTabs(displayTabs)}
               workspacePath={currentSessionFolderPath ?? undefined}
               fileContextPath={activeFilePreview?.filePath ?? activeUnsupportedFilePath}
               emptyState={
@@ -3179,7 +3203,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       browserPanelWidth={browserPanelWidth}
       setSessionField={setSessionField}
       displaySessionKey={displaySessionKey}
-      homeDisplayTabs={homeDisplayTabs}
+      homeDisplayTabs={sortDisplayTabs(homeDisplayTabs)}
       isWorkspaceFilesOpen={isWorkspaceFilesOpen}
       browserTabs={browserTabs}
       handleCreateBrowserTab={handleCreateBrowserTab}

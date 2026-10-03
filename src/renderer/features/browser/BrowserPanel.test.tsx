@@ -206,6 +206,42 @@ function BrowserPanelHarness({
 }
 
 describe('BrowserPanel embedded webview', () => {
+  it('does not select another browser tab when replacing the active start page with a tool', async () => {
+    let panel: BrowserPanelHandle | null = null;
+    const onActiveTargetChange = vi.fn();
+    const onTabsChange = vi.fn();
+    render(
+      <BrowserPanel
+        ref={instance => {
+          panel = instance;
+        }}
+        draftKey="replace-start-page"
+        embedded
+        isOpen
+        width={520}
+        initialTabs={[
+          { id: 'blank', targetId: 'blank', title: '', url: 'about:blank' },
+          { id: 'other', targetId: 'other', title: '', url: 'about:blank' },
+        ]}
+        activeTargetId="blank"
+        onClose={vi.fn()}
+        onWidthChange={vi.fn()}
+        onTabsChange={onTabsChange}
+        onActiveTargetChange={onActiveTargetChange}
+        onAddAnnotation={() => true}
+      />,
+    );
+    await waitFor(() => expect(onTabsChange).toHaveBeenCalled());
+    onActiveTargetChange.mockClear();
+    act(() => panel?.closeTab('blank', { preserveSelection: true }));
+    await waitFor(() =>
+      expect(onTabsChange).toHaveBeenLastCalledWith([
+        expect.objectContaining({ targetId: 'other' }),
+      ]),
+    );
+    expect(onActiveTargetChange).not.toHaveBeenCalled();
+  });
+
   it('adds and selects a new start page from the workspace plus button', async () => {
     const initialTab: BrowserPanelTab = {
       id: 'first',
@@ -1117,7 +1153,11 @@ describe('BrowserPanel embedded webview', () => {
     window.addEventListener('cowork:shortcut:browser', handleShortcut);
     render(<BrowserPanelHarness />);
 
-    fireEvent.keyDown(screen.getByRole('complementary'), { key: 't', ctrlKey: true });
+    fireEvent.keyDown(screen.getByRole('complementary'), {
+      key: 'B',
+      ctrlKey: true,
+      shiftKey: true,
+    });
 
     expect(handleShortcut).toHaveBeenCalledOnce();
     window.removeEventListener('cowork:shortcut:browser', handleShortcut);

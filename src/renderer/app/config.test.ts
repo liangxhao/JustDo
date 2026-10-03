@@ -20,7 +20,7 @@ test('defaultConfig: uses the isolated browser for first launch', () => {
 test('defaultConfig: matches the Codex panel shortcuts', () => {
   expect(defaultConfig.shortcuts).toMatchObject({
     terminal: 'Ctrl+`',
-    browser: 'Ctrl+T',
+    browser: 'Ctrl+Shift+B',
     sideChat: 'Ctrl+Alt+S',
     files: 'Ctrl+P',
     review: 'Ctrl+Shift+G',
