@@ -46,7 +46,7 @@ Main 每次保存重新读取 manifest 并限制可写字段，inventory 仅返�
 顶层 `env.NAME`，避免旧值覆盖 `env.vars.NAME`；系统环境提供的变量显示来源并禁止
 无效覆盖，用户修改系统变量后重启应用。权限或写入失败直接报错，不触发最小配置重建。
 
-OpenClaw v2026.9.6 的插件管理 RPC 会直接应用运行时变更。CLI 导入等待最终运行时回执：Gateway 已应用则无需额外操作，仅保存到磁盘时调用 `plugins.reload`。CLI 卸载和启停回退后优先调用 `plugins.refresh`；原生热加载失败或出站代理策略变化时再申请 Gateway 重启。各场景和重启边界见 [Gateway reload audit](gateway-reload-audit.md)。
+OpenClaw v2026.9.8 的插件管理 RPC 会直接应用运行时变更。CLI 导入等待最终运行时回执：Gateway 已应用则无需额外操作，仅保存到磁盘时调用 `plugins.reload`。CLI 卸载和启停回退后优先调用 `plugins.refresh`；原生热加载失败或出站代理策略变化时再申请 Gateway 重启。各场景和重启边界见 [Gateway reload audit](gateway-reload-audit.md)。
 
 本地 Extension 的构建预编译同时覆盖主入口和独立的 `setup-api` 入口（插件根及 `dist/` 下的 TypeScript 文件）。即使主入口已经是 JavaScript，也必须处理 setup 入口；编译成功后移除对应 TypeScript 入口，避免 OpenClaw 优先选中源码。ACPX 的自动启用探针在配置、旧状态检查和重载时都会运行，遗漏其 setup 预编译会触发原生源码代际快照，重复复制、哈希和校验依赖树。预编译让 bundled JavaScript 使用原生快速加载路径，不改变用户插件的源码隔离或完整性校验。
 
@@ -54,7 +54,13 @@ OpenClaw v2026.9.6 的插件管理 RPC 会直接应用运行时变更。CLI 导�
 
 内置 manifest 有 8 个默认启用项：data-analysis、diagram-design、frontend-design、docx、pdf、pptx、skill-creator、xlsx。v2 manifest 通过 `openclaw.skills` 和 `openclaw.custodianSkills` 显式选择上游技能：分别保留 `coding-agent` 和 `diagnose-gateway`，其余上游技能不打包。系统维护技能留在原生 `custodian-skills/`，仅由系统 Agent（应用配置为 `main`）发现。安装和打包共用同一筛选逻辑，所有选中源校验通过后才清理目录；缺失上游技能时必须从锁定的原始包重建运行时，不能静默跳过。打包资源必须与 manifest 一致；数量不应散落在 UI 常量中。
 
-TypeSafe 扩展自带上游 `typesafe-evaluate` skill，由扩展声明并随扩展启用状态提供，不加入全局内置技能清单。它指导 Agent 使用原生评估工具完成分类、评分、是非概率判断及独立问题的批量评估。具体接入见 [Jev evaluations](../features/jev-integration.md)。
+TypeSafe 扩展声明决策模型提供方；原生 `decision_evaluate` 工具按 Agent 的 `decisionModel` 自动提供。9.8 不再注册专用评估工具或 skill，Boolean、Choice、Score 输入由提供方翻译。具体接入见 [Jev evaluations](../features/jev-integration.md)。
+
+视频模型设置选择原生 Kie、Z.AI 或 Novita 提供方。配置同步器统一投影视频默认模型、
+提供方和受管插件状态，API Key 写入受限的 `extension-secrets.json` 并通过 file SecretRef
+引用，完整和最小同步遵循相同规则。同名原生提供方与对话模型共享凭据；设置页说明
+这一关系。9.6 未发布，按用户要求移除了本次新增的旧自定义 `/videos` 清单与兼容提示；
+设置页只提供当前原生视频能力，不支持的路由仍被拒绝，不恢复已删除的 OpenAI 视频传输。
 
 skills.status 提供 effective source、eligibility、disabled、缺失依赖和安装选项。产品文件服务只管理用户导入目录；它不能从 SKILL.md 自行重建运行元数据。受管根使用原生 stateDir/skills，避免重复 extraDirs 引入同一路径。
 
@@ -181,13 +187,13 @@ Extension 可用 outbound-header-policy.json 声明 HTTPS 目标、Header 名称
 
 从 `src/main/plugins/` 的文件事务、MCP/Hook 同步、Extension import/conversion 和 registry 测试检查产品层；从 `tests/openclaw/extensions/` 与 skill-resolution runtime contract 检查最终原生能力。市场增加 kind 前需完成安装、更新、启停、删除与状态对账闭环，详见[市场适配](16-skill-marketplace-adapter.md)。
 
-## OpenClaw 2026.9.6 integration
+## OpenClaw 2026.9.8 integration
 
 The runtime retains the native QuickJS Code Mode executor and GitHub reader plugins,
 including explicit allowlist membership while preserving user disable state. Local
 extensions import named SDK subpaths. Agent-owned Workshop collections remain
 Gateway-owned; the application does not recreate workspace-based skill ownership.
-See [upgrade audit](../openclaw-upgrades/v2026.9.6.md).
+See [upgrade audit](../openclaw-upgrades/v2026.9.8.md).
 
 ## 内置浏览器与执行策略
 

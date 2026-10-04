@@ -11,6 +11,7 @@ export const SUBTASK_STATUSES = {
   KILLED: 'killed',
   TIMEOUT: 'timeout',
   BLOCKED: 'blocked',
+  UNKNOWN: 'unknown',
 } as const;
 
 export type SubtaskStatus = (typeof SUBTASK_STATUSES)[keyof typeof SUBTASK_STATUSES];
@@ -83,6 +84,7 @@ export const subtaskStatusStyles: Record<SubtaskStatus, string> = {
   killed: 'bg-red-500',
   timeout: 'bg-red-500',
   blocked: 'bg-amber-600',
+  unknown: 'bg-gray-500',
 };
 
 export const SUBTASK_STATUS_I18N_KEYS: Record<SubtaskStatus, string> = {
@@ -93,6 +95,7 @@ export const SUBTASK_STATUS_I18N_KEYS: Record<SubtaskStatus, string> = {
   killed: 'subtaskStatusKilled',
   timeout: 'subtaskStatusTimeout',
   blocked: 'subtaskStatusBlocked',
+  unknown: 'subtaskExecutionUnknown',
 };
 
 export const isActiveSubtask = (status?: string): boolean =>
@@ -162,8 +165,12 @@ export const partitionSubtasks = (
     return timestampDelta || left.id.localeCompare(right.id);
   });
   return {
-    active: sorted.filter(subtask => isActiveSubtask(subtask.status)),
-    finished: sorted.filter(subtask => !isActiveSubtask(subtask.status)),
+    active: sorted.filter(
+      subtask => isActiveSubtask(subtask.status) || subtask.status === SUBTASK_STATUSES.UNKNOWN,
+    ),
+    finished: sorted.filter(
+      subtask => !isActiveSubtask(subtask.status) && subtask.status !== SUBTASK_STATUSES.UNKNOWN,
+    ),
   };
 };
 

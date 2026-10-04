@@ -40,7 +40,7 @@ function classifyAgentEvent(params) {
   if (!activeRun) return canStartSelectedRun ? "start-run" : "ignored-run";
   if (activeRun.runId !== event.runId) {
     if (activeRun.status !== "running") return canStartSelectedRun ? "start-run" : "ignored-run";
-    return activeRun.runId.startsWith("justdo-") ? "bind-provisional-run" : "ignored-run";
+    return canStartSelectedRun && activeRun.runId.startsWith("justdo-") ? "bind-provisional-run" : "ignored-run";
   }
   if (activeRun.sessionId && event.sessionId && activeRun.sessionId !== event.sessionId) {
     return "ignored-session";
@@ -90,10 +90,10 @@ function readableToolValue(value) {
   if (typeof value === "string") return value;
   if (Array.isArray(value)) {
     const parts = value.flatMap((entry) => {
-      const record = asRecord2(entry);
-      if (!record) return typeof entry === "string" ? [entry] : [];
-      if (typeof record.text === "string") return [record.text];
-      return record.content === void 0 ? [] : [readableToolValue(record.content)];
+      const record2 = asRecord2(entry);
+      if (!record2) return typeof entry === "string" ? [entry] : [];
+      if (typeof record2.text === "string") return [record2.text];
+      return record2.content === void 0 ? [] : [readableToolValue(record2.content)];
     });
     if (parts.length > 0) return parts.join("\n");
   }
@@ -130,12 +130,12 @@ function outputIndicatesToolFailure(output) {
   }
   try {
     const parsed = JSON.parse(trimmed);
-    const record = asRecord2(parsed);
-    if (!record) return false;
-    if (record.isError === true || record.is_error === true) return true;
-    if (typeof record.error === "string") return Boolean(record.error.trim());
-    if (record.error === true || record.error && typeof record.error === "object") return true;
-    const status = typeof record.status === "string" ? record.status.trim().toLowerCase() : "";
+    const record2 = asRecord2(parsed);
+    if (!record2) return false;
+    if (record2.isError === true || record2.is_error === true) return true;
+    if (typeof record2.error === "string") return Boolean(record2.error.trim());
+    if (record2.error === true || record2.error && typeof record2.error === "object") return true;
+    const status = typeof record2.status === "string" ? record2.status.trim().toLowerCase() : "";
     return status === "error" || status === "failed" || status === "timeout";
   } catch {
     return false;
@@ -217,6 +217,7 @@ function createChatTranscriptState(sessionKey = "", sessionId = null) {
     historyGeneration: 0,
     activeTurn: null,
     recentRuns: /* @__PURE__ */ new Map(),
+    terminalRunIds: /* @__PURE__ */ new Set(),
     revision: 0
   };
 }
@@ -250,6 +251,9 @@ function bindAssistantTurnRunId(state, provisionalRunId, runId) {
 }
 function eventMatchesTranscriptSession(state, event) {
   return messageSessionMatches(state, event);
+}
+function isTerminalRun(state, runId) {
+  return state.terminalRunIds.has(runId) || Boolean(state.recentRuns.get(runId)?.terminalStatus);
 }
 function pruneRecentRuns(state, now) {
   for (const [runId, run] of state.recentRuns) {
@@ -286,9 +290,125 @@ function inferSessionsYieldInput(name, output) {
   }
 }
 
+// src/renderer/libs/openclaw-chat/attachments.ts
+function asRecord3(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+function readCanonicalTranscriptMedia(record2) {
+  const metadata = asRecord3(record2.__openclaw);
+  if (!Array.isArray(metadata?.media)) return [];
+  return metadata.media.map((value) => {
+    const media = asRecord3(value);
+    if (!media) return void 0;
+    const path = typeof media.path === "string" && media.path.trim() ? media.path.trim() : typeof media.url === "string" && media.url.trim() ? media.url.trim() : "";
+    const mimeType = typeof media.contentType === "string" && media.contentType.trim() ? media.contentType.trim() : void 0;
+    const fileName = typeof media.fileName === "string" && media.fileName.trim() ? media.fileName.trim() : void 0;
+    const kind = typeof media.kind === "string" && media.kind.trim() ? media.kind.trim() : void 0;
+    return {
+      path,
+      ...mimeType ? { mimeType } : {},
+      ...fileName ? { fileName } : {},
+      ...kind ? { kind } : {}
+    };
+  });
+}
+function readStringArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+function readTrimmedString(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : void 0;
+}
+function getTranscriptMedia(message) {
+  if (!message || typeof message !== "object" || Array.isArray(message)) return [];
+  const record2 = message;
+  const canonical = readCanonicalTranscriptMedia(record2);
+  const paths = readStringArray(record2.MediaPaths);
+  const urls = readStringArray(record2.MediaUrls);
+  const types = readStringArray(record2.MediaTypes);
+  const count = Math.max(
+    canonical.length,
+    paths.length,
+    urls.length,
+    types.length,
+    record2.MediaPath || record2.MediaUrl || record2.MediaType ? 1 : 0
+  );
+  return Array.from({ length: count }, (_, index) => {
+    const fact = canonical[index];
+    const legacyPath = readTrimmedString(paths[index] ?? (index === 0 ? record2.MediaPath : null));
+    const legacyUrl = readTrimmedString(urls[index] ?? (index === 0 ? record2.MediaUrl : null));
+    const path = fact?.path || legacyPath || legacyUrl;
+    if (!path) return void 0;
+    const legacyType = readTrimmedString(types[index] ?? (index === 0 ? record2.MediaType : null));
+    return {
+      path,
+      ...fact?.mimeType || legacyType ? { mimeType: fact?.mimeType || legacyType } : {},
+      ...fact?.fileName ? { fileName: fact.fileName } : {},
+      ...fact?.kind ? { kind: fact.kind } : {}
+    };
+  }).filter((media) => media !== void 0);
+}
+
+// src/renderer/libs/openclaw-chat/model/tool-presentation.ts
+var record = (value) => value && typeof value === "object" && !Array.isArray(value) ? value : {};
+function readToolPresentation(source) {
+  const result = record(source.result);
+  const details = record(source.details ?? result.details);
+  const marker = record(source.__openclaw);
+  const args = record(source.args ?? source.arguments ?? source.input ?? source.toolInput);
+  const projection = {};
+  if (["text", "truncated", "image", "not_found"].includes(String(details.kind))) {
+    projection.fileRead = { kind: details.kind, ...typeof details.content === "string" ? { content: details.content } : {} };
+  }
+  if (details.changed !== false && typeof details.diff === "string") projection.fileDiff = details.diff;
+  const media = [...getTranscriptMedia(source), ...getTranscriptMedia(result)];
+  const content = source.content ?? result.content;
+  if (Array.isArray(content)) {
+    for (const item of content) {
+      const part = record(item);
+      if (["image", "audio", "video"].includes(String(part.type)) && typeof part.data === "string" && typeof part.mimeType === "string" && /^(image|audio|video)\/[a-z0-9.+-]+$/i.test(part.mimeType)) {
+        media.push({ path: `data:${part.mimeType};base64,${part.data}`, mimeType: part.mimeType, kind: String(part.type) });
+      }
+    }
+  }
+  if (media.length) projection.media = media.filter((item, index) => media.findIndex((other) => other.path === item.path) === index);
+  const callId = source.toolCallId ?? source.id;
+  const activity = Array.isArray(source.activity) ? source.activity.map(record).find((item) => item.toolCallId === callId) : void 0;
+  if (activity) Object.assign(projection, readToolPresentation(activity));
+  const title = source.title ?? args.title;
+  if (typeof title === "string" && title.trim()) projection.title = title.trim().slice(0, 240);
+  if (typeof source.parentToolCallId === "string")
+    projection.parentToolCallId = source.parentToolCallId;
+  const exit = source.exitCode ?? source.exit_code ?? details.exitCode ?? details.exit_code ?? result.exitCode ?? result.exit_code;
+  if (typeof exit === "number" && Number.isInteger(exit)) projection.exitCode = exit;
+  if (source.kind === "tool" && typeof source.status === "string")
+    projection.outcome = source.status;
+  if (details.status === "skipped") projection.outcome = "skipped";
+  if (details.exitReason === "manual-cancel") projection.outcome = "cancelled";
+  if (typeof source.itemId === "string" && typeof source.phase === "string") {
+    projection.hideFromChannelProgress = source.hideFromChannelProgress === true;
+    projection.suppressChannelProgress = source.suppressChannelProgress === true;
+  }
+  for (const key of [
+    "commandBearing",
+    "hideFromChannelProgress",
+    "suppressChannelProgress"
+  ]) {
+    if (typeof source[key] === "boolean") projection[key] = source[key];
+  }
+  if (typeof marker.id === "string") projection.resultMessageId = marker.id;
+  const outputMetadata = record(marker.toolOutput);
+  if (typeof marker.truncated === "boolean") projection.partial = marker.truncated;
+  if (outputMetadata.captureTruncated === true) projection.partial = true;
+  if (outputMetadata.outcome === "unknown") projection.outcome = "unknown";
+  return projection;
+}
+
 // src/renderer/libs/openclaw-chat/model/agent-event-reducer.ts
 function readPreambleText(data) {
-  return data.kind === "preamble" && typeof data.progressText === "string" && data.progressText.trim() ? data.progressText : null;
+  return data.kind === "preamble" && typeof data.progressText === "string" && (data.progressText.trim() || data.replace === true) ? data.progressText : null;
+}
+function readToolProgressText(data) {
+  return data.kind === "tool" && data.phase === "update" && typeof data.progressText === "string" ? data.progressText : null;
 }
 function snapshotSegmentFirstSeq(event) {
   const value = event.data.progressSegmentFirstSeq;
@@ -444,6 +564,8 @@ function fillsMissingToolInput(turn, event) {
   return existing !== void 0 && existing.status !== "running" && existing.input === void 0 && normalized.input !== void 0 && normalized.input !== null;
 }
 function acceptsBackfillSequence(turn, event) {
+  if (event.stream === "assistant" && event.agentSeq <= (turn.assistantSuppressionSeq ?? -1))
+    return false;
   if (fillsMissingToolInput(turn, event)) return true;
   const ownerIdentity = activityEventIdentity(event);
   const sequences = turn.activityEventSeqById;
@@ -641,10 +763,20 @@ function snapshotDistanceFromCurrent(candidate, current) {
   }
   return Number.POSITIVE_INFINITY;
 }
-function stripCompletedContentSegments(turn, snapshot) {
+function stripCompletedContentSegments(turn, snapshot, consumedPersistedPrefix = "") {
   let text = snapshot;
-  for (const item of turn.items) {
-    if (item.type !== "content" || item.status === "streaming") continue;
+  const completed = turn.items.filter(
+    (item) => item.type === "content" && item.status !== "streaming"
+  );
+  let coveredCount = 0;
+  let livePrefix = "";
+  if (consumedPersistedPrefix) {
+    completed.forEach((item, index) => {
+      livePrefix += item.text.trim();
+      if (livePrefix && consumedPersistedPrefix.endsWith(livePrefix)) coveredCount = index + 1;
+    });
+  }
+  for (const item of completed.slice(coveredCount)) {
     const committed = item.text.trim();
     if (!committed) continue;
     const trimmed = text.trimStart();
@@ -663,11 +795,18 @@ function stripCompletedContentSegments(turn, snapshot) {
 function reduceThinking(turn, event, dependencies, backfill = false) {
   const snapshot = stringValue(event.data.thinking) ?? stringValue(event.data.text);
   const delta = stringValue(event.data.delta);
-  const isDelta = delta !== null && (snapshot === null || !snapshot.trim());
+  const isDelta = event.data.replace !== true && delta !== null && (snapshot === null || !snapshot.trim());
   const text = isDelta ? delta : snapshot ?? delta;
   if (text === null) return;
   if (!text.trim()) {
     const tail2 = textOwnerForEvent(turn, event, backfill);
+    if (event.data.replace === true && tail2?.type === "thinking") {
+      tail2.text = text;
+      delete tail2.recoveredSnapshotText;
+      tail2.lastSeq = event.agentSeq;
+      tail2.updatedAt = event.timestamp;
+      return;
+    }
     if (isDelta && tail2?.type === "thinking" && tail2.status === "running" && tail2.text) {
       tail2.text += text;
       tail2.lastSeq = event.agentSeq;
@@ -738,7 +877,7 @@ function reduceThinking(turn, event, dependencies, backfill = false) {
 }
 function reducePreamble(turn, event, dependencies) {
   const text = readPreambleText(event.data);
-  if (!text) return;
+  if (text === null) return;
   const itemId = eventItemId(event.data);
   const nativeFirstSeq = snapshotSegmentFirstSeq(event);
   const existing = turn.items.find(
@@ -767,11 +906,19 @@ function reducePreamble(turn, event, dependencies) {
 function reduceContent(turn, event, dependencies, backfill = false) {
   const snapshot = stringValue(event.data.text);
   const delta = stringValue(event.data.delta);
-  const isDelta = delta !== null && (snapshot === null || !snapshot.trim());
+  const isDelta = event.data.replace !== true && delta !== null && (snapshot === null || !snapshot.trim());
   const text = isDelta ? delta : snapshot ?? delta;
   if (text === null) return null;
   if (!text.trim()) {
     const tail2 = textOwnerForEvent(turn, event, backfill);
+    if (event.data.replace === true && tail2?.type === "content") {
+      tail2.text = text;
+      tail2.sourceMode = "replaceable";
+      delete tail2.recoveredSnapshotText;
+      tail2.lastSeq = event.agentSeq;
+      tail2.updatedAt = event.timestamp;
+      return tail2;
+    }
     if (isDelta && tail2?.type === "content" && tail2.status === "streaming" && tail2.text) {
       tail2.text += text;
       tail2.sourceMode = "delta";
@@ -892,13 +1039,14 @@ function reduceTool(turn, event, dependencies, backfill = false) {
       }
       return false;
     }
+    existing.presentation = { ...existing.presentation, ...readToolPresentation(event.data) };
     const preserveExistingTerminal = backfill && existing.status !== "running";
     confirmRecoveredToolSequence(turn, existing, event.agentSeq, event.timestamp);
     if (!preserveExistingTerminal || existing.name === "tool") existing.name = resolved.name;
     if (resolvedInput !== void 0 && resolvedInput !== null && (!preserveExistingTerminal || existing.input === void 0)) {
       existing.input = resolvedInput;
     }
-    if (resolved.output !== null && !outputlessSessionsYieldResult && (!preserveExistingTerminal || existing.output === void 0)) {
+    if (resolved.output !== null && !outputlessSessionsYieldResult && (status !== "running" || event.agentSeq >= (existing.progressSeq ?? -1)) && (!preserveExistingTerminal || existing.output === void 0)) {
       existing.output = resolved.output;
     }
     if (resolved.error !== null && !outputlessSessionsYieldResult && (!preserveExistingTerminal || existing.error === void 0)) {
@@ -907,6 +1055,8 @@ function reduceTool(turn, event, dependencies, backfill = false) {
     if (!preserveExistingTerminal && (existing.status === "running" || status !== "running")) {
       existing.status = status;
     }
+    if (existing.status !== "running" || resolved.output !== null && event.agentSeq >= (existing.progressSeq ?? -1))
+      delete existing.progressText;
     existing.lastSeq = Math.max(existing.lastSeq, event.agentSeq);
     existing.updatedAt = Math.max(existing.updatedAt, event.timestamp);
     return true;
@@ -927,6 +1077,7 @@ function reduceTool(turn, event, dependencies, backfill = false) {
     status,
     toolCallId,
     name: resolved.name,
+    presentation: readToolPresentation(event.data),
     ...resolvedInput !== void 0 && resolvedInput !== null ? { input: resolvedInput } : {},
     ...normalized.output !== null && !outputlessSessionsYieldResult ? { output: normalized.output } : {},
     ...normalized.error !== null && !outputlessSessionsYieldResult ? { error: normalized.error } : {}
@@ -938,13 +1089,12 @@ function reduceTool(turn, event, dependencies, backfill = false) {
 }
 function admitTurn(state, event, dependencies, allowSequenceBackfill = false) {
   pruneRecentRuns(state, dependencies.now());
-  const tombstone = state.recentRuns.get(event.runId);
   const active = state.activeTurn;
   const admission = classifyAgentEvent({
     selected: state,
     activeRun: active,
     event,
-    terminalRun: Boolean(tombstone?.terminalStatus)
+    terminalRun: isTerminalRun(state, event.runId)
   });
   if (admission === "ignored-session" || admission === "ignored-run" || admission === "ignored-sequence" && !allowSequenceBackfill || admission === "ignored-terminal") {
     return null;
@@ -977,7 +1127,7 @@ function reduceAgentEvent(state, event, dependencies, options = {}) {
     selected: state,
     activeRun: previousTurn,
     event,
-    terminalRun: Boolean(state.recentRuns.get(event.runId)?.terminalStatus)
+    terminalRun: isTerminalRun(state, event.runId)
   });
   if (admission === "ignored-session") return "ignored-session";
   const lateStartTool = event.stream === "tool" && event.data.phase === "start" && event.deliveryEvent === "agent" && options.allowSequenceBackfill !== true && options.replaySnapshot !== true && previousTurn?.runId === event.runId && admission !== "ignored-run" && admission !== "ignored-terminal" ? previousTurn.toolById.get(itemToolCallId(event.data) ?? "") : void 0;
@@ -1014,6 +1164,7 @@ function reduceAgentEvent(state, event, dependencies, options = {}) {
       applyTerminalGuardObservationDecision(turn, observation);
     } else {
       const content = reduceContent(turn, event, dependencies, insertBySequence);
+      if (content) content.lastTextSeq = event.agentSeq;
       if (content && observation?.action === "update") {
         content.terminalGuardObservationToken = observation.token;
       }
@@ -1025,6 +1176,17 @@ function reduceAgentEvent(state, event, dependencies, options = {}) {
   } else if (event.stream === "lifecycle" || event.stream === "item" || event.stream === "compaction") {
     if (event.stream === "item") {
       const recoveredTool = turn.toolById.get(itemToolCallId(event.data) ?? "");
+      if (recoveredTool && event.agentSeq >= recoveredTool.lastSeq)
+        recoveredTool.presentation = {
+          ...recoveredTool.presentation,
+          ...readToolPresentation(event.data)
+        };
+      const progressText = readToolProgressText(event.data);
+      if (recoveredTool?.status === "running" && progressText !== null && event.agentSeq > Math.max(recoveredTool.lastSeq, recoveredTool.progressSeq ?? -1)) {
+        recoveredTool.progressText = progressText;
+        recoveredTool.progressSeq = event.agentSeq;
+        recoveredTool.updatedAt = Math.max(recoveredTool.updatedAt, event.timestamp);
+      }
       if (recoveredTool?.agentSequencePending === true) {
         confirmRecoveredToolSequence(turn, recoveredTool, event.agentSeq, event.timestamp);
         recoveredTool.lastSeq = Math.max(recoveredTool.lastSeq, event.agentSeq);
@@ -1046,11 +1208,11 @@ function reduceAgentEvent(state, event, dependencies, options = {}) {
 function extractMessageText(message) {
   if (typeof message === "string") return message;
   if (!message || typeof message !== "object" || Array.isArray(message)) return "";
-  const record = message;
-  if (typeof record.text === "string") return record.text;
-  if (typeof record.content === "string") return record.content;
-  if (!Array.isArray(record.content)) return "";
-  return record.content.map((block) => {
+  const record2 = message;
+  if (typeof record2.text === "string") return record2.text;
+  if (typeof record2.content === "string") return record2.content;
+  if (!Array.isArray(record2.content)) return "";
+  return record2.content.map((block) => {
     if (!block || typeof block !== "object" || Array.isArray(block)) return "";
     const value = block;
     return typeof value.text === "string" ? value.text : "";
@@ -1074,6 +1236,12 @@ function finishTurnItems(turn, status, now) {
   }
 }
 function reduceChatEvent(state, event, dependencies) {
+  if (event.runId && isTerminalRun(state, event.runId) && state.activeTurn?.runId !== event.runId) {
+    return "ignored-run";
+  }
+  const active = state.activeTurn;
+  if (active && active.status !== "running" && (event.runId && event.runId !== active.runId || event.state !== active.status))
+    return "ignored-run";
   const admission = classifyChatEvent({
     selected: state,
     activeRun: state.activeTurn,
@@ -1107,6 +1275,29 @@ function reduceChatEvent(state, event, dependencies) {
   }
   if (event.state === "delta") {
     const messageText2 = event.message !== void 0 ? extractMessageText(event.message) : null;
+    const retractsText = event.replace && (messageText2 ?? event.deltaText) === "";
+    if (retractsText) {
+      if (event.sourceSeq !== void 0) {
+        turn.assistantSuppressionSeq = Math.max(
+          turn.assistantSuppressionSeq ?? -1,
+          event.sourceSeq
+        );
+      }
+      for (const item of turn.items) {
+        if (item.type !== "content" || item.preambleItemId !== void 0 || event.sourceSeq !== void 0 && (item.lastTextSeq ?? item.lastSeq) > event.sourceSeq)
+          continue;
+        item.text = "";
+        item.sourceMode = "replaceable";
+        delete item.recoveredSnapshotText;
+        item.lastTextSeq = event.sourceSeq ?? item.lastTextSeq;
+        item.updatedAt = dependencies.now();
+      }
+      state.revision += 1;
+      return "applied";
+    }
+    if (event.sourceSeq !== void 0 && (event.sourceSeq <= (turn.assistantSuppressionSeq ?? -1) || event.replace && (activeAgentTail(turn)?.lastSeq ?? -1) > event.sourceSeq)) {
+      return "ignored-sequence";
+    }
     const synthetic = {
       runId: turn.runId,
       sessionKey: state.sessionKey,
@@ -1114,7 +1305,7 @@ function reduceChatEvent(state, event, dependencies) {
       lifecycleGeneration: event.lifecycleGeneration,
       agentId: null,
       spawnedBy: null,
-      agentSeq: turn.lastAgentSeq + 1,
+      agentSeq: event.replace ? event.sourceSeq ?? turn.lastAgentSeq + 1 : turn.lastAgentSeq + 1,
       frameSeq: event.frameSeq,
       deliveryEvent: "agent",
       stream: "assistant",
@@ -1125,7 +1316,8 @@ function reduceChatEvent(state, event, dependencies) {
         replace: event.replace
       }
     };
-    reduceContent(turn, synthetic, dependencies);
+    const content = reduceContent(turn, synthetic, dependencies);
+    if (content) content.lastTextSeq = event.sourceSeq ?? synthetic.agentSeq;
     state.revision += 1;
     return "applied";
   }
@@ -1153,23 +1345,29 @@ function reduceChatEvent(state, event, dependencies) {
     }
   }
   turn.status = event.state;
-  turn.endedAt = now;
+  turn.endedAt ??= now;
   finishTurnItems(turn, event.state, now);
   if (event.state === "aborted" || event.state === "error") {
     const message = event.errorMessage?.trim() || (event.state === "aborted" ? "The run was interrupted." : "The run failed.");
-    const terminal = {
-      id: dependencies.createId("terminal"),
-      runId: turn.runId,
-      firstSeq: turn.lastAgentSeq,
-      lastSeq: turn.lastAgentSeq,
-      startedAt: now,
-      updatedAt: now,
-      type: "terminal",
-      status: event.state,
-      message
-    };
-    turn.items.push(terminal);
+    const existingTerminal = turn.items.find((item) => item.type === "terminal");
+    if (existingTerminal?.type === "terminal") {
+      if (event.errorMessage?.trim()) existingTerminal.message = message;
+    } else {
+      const terminal = {
+        id: dependencies.createId("terminal"),
+        runId: turn.runId,
+        firstSeq: turn.lastAgentSeq,
+        lastSeq: turn.lastAgentSeq,
+        startedAt: now,
+        updatedAt: now,
+        type: "terminal",
+        status: event.state,
+        message
+      };
+      turn.items.push(terminal);
+    }
   }
+  state.terminalRunIds.add(turn.runId);
   state.recentRuns.set(turn.runId, {
     runId: turn.runId,
     sessionId: turn.sessionId,
@@ -1272,9 +1470,9 @@ function stripSilentReplySuffixFromText(text) {
 
 // src/renderer/libs/openclaw-chat/gateway/chat-history-protocol.ts
 var HISTORY_MESSAGE_CHUNK_CHARS = 512 * 1024;
-var asRecord3 = (value) => value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
+var asRecord4 = (value) => value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
 var isTruncatedHistoryMessage = (message) => {
-  const metadata = asRecord3(asRecord3(message)?.__openclaw);
+  const metadata = asRecord4(asRecord4(message)?.__openclaw);
   return metadata?.truncated === true;
 };
 

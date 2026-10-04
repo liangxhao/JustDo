@@ -496,6 +496,7 @@ test('deletes persisted descendants discovered on later session pages before the
         session: {
           key: input.key,
           sessionId: isRoot ? 'session-1' : 'child-session',
+          spawnedBy: isRoot ? undefined : rootKey,
           lifecycleRevision: isRoot ? 'root-revision' : 'child-revision',
           updatedAt: isRoot ? 100 : 200,
         },
@@ -512,7 +513,7 @@ test('deletes persisted descendants discovered on later session pages before the
         };
       }
       return {
-        sessions: [{ key: childKey, parentSessionKey: rootKey }],
+        sessions: [{ key: childKey, spawnedBy: rootKey, sessionId: 'child-session' }],
         hasMore: false,
         nextOffset: null,
       };
@@ -540,7 +541,7 @@ test('deletes persisted descendants discovered on later session pages before the
   fixture.cleanupDatabase.close();
 });
 
-test('uses both legacy session parent fields when building the deletion tree', async () => {
+test('does not delete a child retained only by navigation after control ownership moved', async () => {
   const fixture = createFixture();
   const rootKey = fixture.result.sessionKey ?? '';
   const childKey = `${rootKey}:subagent:legacy-child`;
@@ -579,7 +580,7 @@ test('uses both legacy session parent fields when building the deletion tree', a
 
   await service.deleteResultArtifacts(fixture.result);
 
-  expect(deletedKeys).toEqual([childKey, rootKey]);
+  expect(deletedKeys).toEqual([rootKey]);
   fixture.cleanupDatabase.close();
 });
 
@@ -632,3 +633,38 @@ test('retries a transcript deletion recorded before a partial cleanup failure', 
   ).toBeUndefined();
   fixture.cleanupDatabase.close();
 });
+
+test.each(['replacement', 'reparented'])(
+  'rejects a %s descendant between discovery and deletion',
+  async change => {
+    const fixture = createFixture();
+    const root = fixture.result.sessionKey!;
+    const request = vi.fn(async (method: string, input: { key?: string }) => {
+      if (method === 'sessions.list')
+        return { sessions: [{ key: 'child', sessionId: 'original', spawnedBy: root }] };
+      if (method === 'sessions.describe')
+        return {
+          session:
+            input.key === root
+              ? { key: root, sessionId: fixture.result.sessionId }
+              : {
+                  key: 'child',
+                  sessionId: change === 'replacement' ? 'new' : 'original',
+                  spawnedBy: change === 'reparented' ? 'another-parent' : root,
+                },
+        };
+      throw new Error('Unexpected mutation');
+    });
+    const service = new OpenClawCronRunCleanupService({
+      getGatewayClient: () => ({ request }) as never,
+      ensureGatewayReady: vi.fn(),
+      getStateDir: () => fixture.stateDir,
+      getDatabase: () => fixture.cleanupDatabase,
+    });
+    await expect(service.deleteResultArtifacts(fixture.result)).rejects.toThrow(
+      'descendant ownership changed',
+    );
+    expect(request.mock.calls.some(([method]) => method === 'sessions.delete')).toBe(false);
+    fixture.cleanupDatabase.close();
+  },
+);

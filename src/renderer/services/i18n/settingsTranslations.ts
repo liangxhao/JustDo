@@ -23,14 +23,16 @@ export const settingsTranslations = {
     worktreePolicyDescription: '设置新建 Worktree 的存储位置和创建方式。',
     worktreeListTitle: '托管工作目录',
     worktreeStorageRoot: '存储目录',
-    worktreeStorageRootDescription: '留空使用默认目录，或填写绝对路径。修改只影响新建工作目录，已有目录和快照保留原位置。',
+    worktreeStorageRootDescription:
+      '留空使用默认目录，或填写绝对路径。修改只影响新建工作目录，已有目录和快照保留原位置。',
     worktreeStorageRootDefault: '使用默认存储目录',
     worktreeChooseDirectory: '选择目录',
     worktreeUseDefaultRoot: '恢复默认目录',
     worktreeEffectiveRoot: '当前生效目录',
     worktreeConfiguredRoot: '待应用的目录',
     worktreeAcceleration: '文件系统加速',
-    worktreeAccelerationDescription: '通过文件系统克隆或快照加快创建工作目录，必要时自动使用普通 Git 检出。关闭后新建工作目录使用普通 Git 检出，已有目录不受影响。',
+    worktreeAccelerationDescription:
+      '通过文件系统克隆或快照加快创建工作目录，必要时自动使用普通 Git 检出。关闭后新建工作目录使用普通 Git 检出，已有目录不受影响。',
     worktreeSaveSettings: '保存 Worktree 设置',
     worktreeReloadSettings: '重新读取设置',
     worktreeSettingsLoading: '正在读取 Worktree 设置…',
@@ -47,9 +49,11 @@ export const settingsTranslations = {
     worktreeSettingsError_unavailable: '无法确认设置操作结果。请检查服务连接并重新读取设置。',
     worktreeSettingsError_busy: '另一项 Worktree 设置正在保存，请稍后重试。',
     worktreeSettingsError_unknown: '无法确认 Worktree 设置，请重新读取后检查。',
-    worktreeCopyUnavailable: 'Worktree 会话暂不支持复制或分叉，请在源项目中创建新的 Worktree 会话。',
+    worktreeCopyUnavailable:
+      'Worktree 会话暂不支持复制或分叉，请在源项目中创建新的 Worktree 会话。',
     worktreeShowCheckbox: '显示 Worktree 勾选框',
-    worktreeShowCheckboxDescription: '在新会话输入框中显示此选项，勾选后会在独立的 Git 工作目录中运行任务。需要已提交的 Git 仓库。',
+    worktreeShowCheckboxDescription:
+      '在新会话输入框中显示此选项，勾选后会在独立的 Git 工作目录中运行任务。需要已提交的 Git 仓库。',
     worktreePreferenceSaveFailed: '未能保存 Worktree 显示设置。',
     worktreeComposerLabel: 'Worktree',
     worktreeComposerDescription: '在独立的 Git 工作目录中开始新会话',
@@ -300,6 +304,15 @@ export const settingsTranslations = {
     customRecognitionProtocolHint: '接口需兼容 OpenAI Realtime Transcription API（PCMU 8 kHz）',
     customSynthesisProtocolHint: '接口需兼容 OpenAI Audio Speech API',
     customImageProtocolHint: '接口需兼容 OpenAI Images API（编辑图像还需支持 /images/edits）',
+    nativeVideoProtocolHint:
+      '选择视频服务商和模型，保存后可在对话中请求生成视频。模型支持的文字、图片、音频输入和生成参数由服务商决定。',
+    nativeVideoDisabled: '不指定默认视频模型',
+    nativeVideoModel: '视频模型',
+    nativeVideoShowKey: '显示 API Key',
+    nativeVideoCredentialsHint:
+      '保存将启用所选服务商，并安全保存凭据。该服务商的地址和凭据也适用于使用同一服务商的其他模型。',
+    nativeVideoConfigurationInvalid: '请选择受支持的视频服务商和模型。',
+    nativeVideoApiKeyRequired: '请输入有效的 API Key。',
     customVideoProtocolHint: '接口需兼容 OpenAI Videos API（含状态轮询和内容下载）',
     onlineModelCheckingGateway: '正在获取在线模型状态…',
     onlineModelGatewayReady: '在线模型已就绪',
@@ -1301,14 +1314,16 @@ export const settingsTranslations = {
     worktreePolicyDescription: 'Set the storage location and creation method for new worktrees.',
     worktreeListTitle: 'Managed workspaces',
     worktreeStorageRoot: 'Storage directory',
-    worktreeStorageRootDescription: 'Leave empty for the default or enter an absolute path. Changes affect new workspaces only; existing workspaces and snapshots keep their original locations.',
+    worktreeStorageRootDescription:
+      'Leave empty for the default or enter an absolute path. Changes affect new workspaces only; existing workspaces and snapshots keep their original locations.',
     worktreeStorageRootDefault: 'Use the default storage directory',
     worktreeChooseDirectory: 'Choose directory',
     worktreeUseDefaultRoot: 'Use default directory',
     worktreeEffectiveRoot: 'Active directory',
     worktreeConfiguredRoot: 'Directory awaiting application',
     worktreeAcceleration: 'Filesystem acceleration',
-    worktreeAccelerationDescription: 'Create workspaces faster with filesystem clones or snapshots, falling back to normal Git checkout when needed. Turn off to use normal Git checkout for new workspaces; existing workspaces are unaffected.',
+    worktreeAccelerationDescription:
+      'Create workspaces faster with filesystem clones or snapshots, falling back to normal Git checkout when needed. Turn off to use normal Git checkout for new workspaces; existing workspaces are unaffected.',
     worktreeSaveSettings: 'Save Worktree settings',
     worktreeReloadSettings: 'Reload settings',
     worktreeSettingsLoading: 'Loading Worktree settings…',
@@ -1316,18 +1331,26 @@ export const settingsTranslations = {
     worktreeSettingsSaved: 'Settings are saved and applied.',
     worktreeSettingsUnsaved: 'Changes have not been saved.',
     worktreeSettingsApplied: 'Current settings are applied.',
-    worktreeSettingsPending: 'Settings are saved, but have not been confirmed as applied. Reload settings shortly to check.',
+    worktreeSettingsPending:
+      'Settings are saved, but have not been confirmed as applied. Reload settings shortly to check.',
     worktreeDirectoryChooseFailed: 'Could not open the directory picker. Enter the path directly.',
-    worktreeSettingsError_invalid: 'Invalid settings. Enter an absolute directory path or leave it empty for the default.',
-    worktreeSettingsError_configuration: 'Worktree settings are invalid. Check the configuration and reload.',
-    worktreeSettingsError_conflict: 'Another operation changed the configuration. Reload settings, then save your changes.',
+    worktreeSettingsError_invalid:
+      'Invalid settings. Enter an absolute directory path or leave it empty for the default.',
+    worktreeSettingsError_configuration:
+      'Worktree settings are invalid. Check the configuration and reload.',
+    worktreeSettingsError_conflict:
+      'Another operation changed the configuration. Reload settings, then save your changes.',
     worktreeSettingsError_forbidden: 'This connection cannot modify settings.',
-    worktreeSettingsError_unavailable: 'The setting operation could not be confirmed. Check the service connection and reload settings.',
+    worktreeSettingsError_unavailable:
+      'The setting operation could not be confirmed. Check the service connection and reload settings.',
     worktreeSettingsError_busy: 'Another Worktree settings save is in progress. Try again shortly.',
-    worktreeSettingsError_unknown: 'Worktree settings could not be confirmed. Reload and check the settings.',
-    worktreeCopyUnavailable: 'Copying or forking Worktree conversations is not supported yet. Create a new Worktree conversation from the source project.',
+    worktreeSettingsError_unknown:
+      'Worktree settings could not be confirmed. Reload and check the settings.',
+    worktreeCopyUnavailable:
+      'Copying or forking Worktree conversations is not supported yet. Create a new Worktree conversation from the source project.',
     worktreeShowCheckbox: 'Show Worktree checkbox',
-    worktreeShowCheckboxDescription: 'Show this option in the new conversation composer. When checked, the task runs in a separate Git working directory. Requires a Git repository with a commit.',
+    worktreeShowCheckboxDescription:
+      'Show this option in the new conversation composer. When checked, the task runs in a separate Git working directory. Requires a Git repository with a commit.',
     worktreePreferenceSaveFailed: 'Could not save the Worktree display setting.',
     worktreeComposerLabel: 'Worktree',
     worktreeComposerDescription: 'Start a new conversation in a separate Git working directory',
@@ -1598,6 +1621,15 @@ export const settingsTranslations = {
     customSynthesisProtocolHint: 'Requires an OpenAI Audio Speech-compatible API',
     customImageProtocolHint:
       'Requires an OpenAI Images-compatible API (editing also requires /images/edits)',
+    nativeVideoProtocolHint:
+      'Choose a video provider and model, then save to generate videos from chat. Supported text, image, audio inputs and generation options depend on the provider.',
+    nativeVideoDisabled: 'No default video model',
+    nativeVideoModel: 'Video model',
+    nativeVideoShowKey: 'Show API key',
+    nativeVideoCredentialsHint:
+      'Saving enables the selected provider and securely stores its credentials. The endpoint and credentials also apply to other models using the same provider.',
+    nativeVideoConfigurationInvalid: 'Choose a supported video provider and model.',
+    nativeVideoApiKeyRequired: 'Enter a valid API key.',
     customVideoProtocolHint:
       'Requires an OpenAI Videos-compatible API (including status polling and downloads)',
     onlineModelCheckingGateway: 'Loading online model status…',
@@ -2049,7 +2081,8 @@ export const settingsTranslations = {
     coworkDisplayPanelOpen: 'Open sidebar',
     coworkLauncherTools: 'Tools',
     coworkLauncherRecentVisits: 'Recently visited',
-    coworkLauncherRecentVisitsEmpty: 'Pages you visit will appear here so you can pick up where you left off.',
+    coworkLauncherRecentVisitsEmpty:
+      'Pages you visit will appear here so you can pick up where you left off.',
     coworkLauncherOpenAddress: 'Open address or search',
     coworkDisplayPanelClose: 'Close sidebar',
     coworkDisplayPanelFullscreen: 'Fill workspace',
@@ -2351,8 +2384,7 @@ export const settingsTranslations = {
     themeColor: 'Color Themes',
     readingExperience: 'Reading Experience',
     coworkPetSettingsTitle: 'Pets',
-    coworkPetSettingsDescription:
-      'Choose the pet’s appearance and motions.',
+    coworkPetSettingsDescription: 'Choose the pet’s appearance and motions.',
     coworkPetShow: 'Show pet',
     coworkPetShowDescription: 'Show the pet and enable the settings below',
     coworkPetAnimation: 'Animate companions',

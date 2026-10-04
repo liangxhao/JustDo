@@ -88,7 +88,6 @@ export function applyDecisionModelConfiguration(
       ...pluginConfig,
       serviceUrl: selection.baseUrl,
       apiKey: secrets.references['decisionModel.apiKey'],
-      model: selection.model,
     };
     defaults.decisionModel = `typesafe/${selection.model}`;
   } else if (

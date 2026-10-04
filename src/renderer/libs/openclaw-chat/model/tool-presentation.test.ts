@@ -151,3 +151,14 @@ test('retains explicit tool media without guessing paths from text output', () =
   expect(media.media?.[0].path).toBe('data:audio/wav;base64,YWJj');
   expect(readToolPresentation({ content: [{ type: 'text', text: 'C:/secret.wav' }] }).media).toBeUndefined();
 });
+
+test.each([
+  { kind: 'tool', phase: 'end', status: 'skipped' },
+  { result: { details: { status: 'skipped', deniedReason: 'steering' } } },
+  { toolCallId: 'skipped', activity: [{ kind: 'tool', toolCallId: 'skipped', status: 'skipped' }] },
+])('preserves native skipped operations in live and restored history: %j', source => {
+  const item = tool('skipped', { status: 'failed', presentation: readToolPresentation(source) });
+  expect(toolOutcome(item)).toBe('skipped');
+  expect(summarizeTools([item])).toEqual({ commands: 1, skipped: 1 });
+  expect(item.status).toBe('failed');
+});

@@ -7,9 +7,9 @@ import { ManagedDirectoryRuntimeStopAbortedError } from '../../core/filesystem/m
 import type { CoworkStore } from '../../data/coworkStore';
 import { enqueueSessionModelOperation } from '../../engine/gateway/sessionModelOperations';
 import {
-  parseModelReferenceV2026_9_2,
-  parseSessionsListResultV2026_9_2,
-} from '../../engine/openclaw/wire/v2026_9_2';
+  parseModelReferenceV2026_9_8,
+  parseSessionsListResultV2026_9_8,
+} from '../../engine/openclaw/wire/v2026_9_8';
 import type {
   OpenClawEngineManager,
   OpenClawEngineStatus,
@@ -36,6 +36,7 @@ type OpenClawConfigSyncServiceDeps = {
   requestGateway: <T>(method: string, params?: unknown) => Promise<T>;
   getBrowserMode?: () => BrowserMode;
   getDecisionModelCategory?: () => unknown;
+  getNativeVideoCategory?: () => unknown;
   getLocalSttConfig?: () => Record<string, unknown> | null;
   getLocalTtsConfig?: () => Record<string, unknown> | null;
   getSpeechOutputState?: () => { enabled: boolean; mode: 'local' | 'online' };
@@ -783,10 +784,10 @@ export class OpenClawConfigSyncService {
   }
 
   private async syncManagedSessionModelsViaGateway(snapshot: ConfigSnapshot): Promise<void> {
-    const defaults = parseModelReferenceV2026_9_2(snapshot.config?.agents?.defaults?.model);
+    const defaults = parseModelReferenceV2026_9_8(snapshot.config?.agents?.defaults?.model);
     const targets = new Map<string, NonNullable<typeof defaults>>();
     for (const [agentId, agent] of Object.entries(snapshot.config?.agents?.entries ?? {})) {
-      const target = parseModelReferenceV2026_9_2(agent.model) ?? defaults;
+      const target = parseModelReferenceV2026_9_8(agent.model) ?? defaults;
       if (target) targets.set(agentId, target);
     }
     if (defaults) targets.set('main', targets.get('main') ?? defaults);
@@ -812,7 +813,7 @@ export class OpenClawConfigSyncService {
     const seenOffsets = new Set<number>();
     while (!seenOffsets.has(offset)) {
       seenOffsets.add(offset);
-      const page = parseSessionsListResultV2026_9_2(
+      const page = parseSessionsListResultV2026_9_8(
         await this.deps.requestGateway('sessions.list', { limit, offset }),
       );
       for (const session of page.sessions) {
@@ -1148,6 +1149,7 @@ export class OpenClawConfigSyncService {
         getAgents: () => this.deps.getCoworkStore().listAgents(),
         getBrowserMode: this.deps.getBrowserMode,
         getDecisionModelCategory: this.deps.getDecisionModelCategory,
+        getNativeVideoCategory: this.deps.getNativeVideoCategory,
         getLocalSttConfig: this.deps.getLocalSttConfig,
         getLocalTtsConfig: this.deps.getLocalTtsConfig,
         getSpeechOutputState: this.deps.getSpeechOutputState,

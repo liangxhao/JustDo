@@ -14,8 +14,7 @@ const task: Subtask = {
   label: 'One',
   labelSource: 'label',
   sessionKey: 'child-session',
-  status: 'done',
-  deliveryStatus: 'failed',
+  status: 'running',
 };
 const install = (controlSubTask = vi.fn(), getSubTaskDetails = vi.fn()) => {
   i18nService.setLanguage('en', { persist: false });
@@ -26,7 +25,7 @@ const install = (controlSubTask = vi.fn(), getSubTaskDetails = vi.fn()) => {
 };
 
 describe('SubtaskControls', () => {
-  it('delivers an existing result by exact task identity and prevents duplicate submission', async () => {
+  it('cancels a running child by exact session identity and prevents duplicate submission', async () => {
     let resolve!: (value: { success: true }) => void;
     const control = vi.fn().mockReturnValue(
       new Promise(r => {
@@ -36,10 +35,10 @@ describe('SubtaskControls', () => {
     install(control);
     const refresh = vi.fn();
     render(<SubtaskControls sessionId="parent" task={task} onRefresh={refresh} />);
-    const button = screen.getByRole('button', { name: 'Deliver result again' });
+    const button = screen.getByRole('button', { name: 'Cancel this task' });
     fireEvent.click(button);
     fireEvent.click(button);
-    expect(control).toHaveBeenCalledExactlyOnceWith('parent', 'task-1', 'retryDelivery');
+    expect(control).toHaveBeenCalledExactlyOnceWith('parent', 'task-1', 'cancel');
     resolve({ success: true });
     await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
     expect((button as HTMLButtonElement).disabled).toBe(true);
@@ -51,16 +50,16 @@ describe('SubtaskControls', () => {
     const details = vi
       .fn()
       .mockResolvedValueOnce({ success: false, error: 'offline' })
-      .mockResolvedValueOnce({ success: true, subagent: { ...task, deliveryStatus: 'delivered' } });
+      .mockResolvedValueOnce({ success: true, subagent: { ...task, status: 'done' } });
     install(control, details);
     const refresh = vi.fn();
     render(<SubtaskControls sessionId="parent" task={task} onRefresh={refresh} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Deliver result again' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel this task' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Verify state' }));
     await waitFor(() => expect(details).toHaveBeenCalledOnce());
     expect(refresh).not.toHaveBeenCalled();
     expect(
-      (screen.getByRole('button', { name: 'Deliver result again' }) as HTMLButtonElement).disabled,
+      (screen.getByRole('button', { name: 'Cancel this task' }) as HTMLButtonElement).disabled,
     ).toBe(true);
     await waitFor(() =>
       expect(
@@ -69,9 +68,7 @@ describe('SubtaskControls', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: 'Verify state' }));
     await waitFor(() =>
-      expect(refresh).toHaveBeenCalledWith(
-        expect.objectContaining({ deliveryStatus: 'delivered' }),
-      ),
+      expect(refresh).toHaveBeenCalledWith(expect.objectContaining({ status: 'done' })),
     );
     expect(control).toHaveBeenCalledOnce();
   });
@@ -92,11 +89,7 @@ describe('SubtaskControls', () => {
     expect(control).toHaveBeenCalledWith('parent', 'task-1', 'cancel');
     view.unmount();
     render(
-      <SubtaskControls
-        sessionId="parent"
-        task={{ ...task, deliveryStatus: 'delivered' }}
-        onRefresh={vi.fn()}
-      />,
+      <SubtaskControls sessionId="parent" task={{ ...task, status: 'done' }} onRefresh={vi.fn()} />,
     );
     expect(screen.queryByRole('button')).toBeNull();
   });
@@ -112,7 +105,7 @@ it('ignores completed mutations for a task that is no longer selected', async ()
   install(control);
   const refresh = vi.fn();
   const view = render(<SubtaskControls sessionId="parent" task={task} onRefresh={refresh} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Deliver result again' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel this task' }));
   view.rerender(
     <SubtaskControls
       sessionId="parent"
@@ -133,15 +126,13 @@ it('ignores completed mutations for a task that is no longer selected', async ()
 it('uses the verified state even before the parent applies the refreshed task', async () => {
   install(
     vi.fn().mockRejectedValue(new Error('offline')),
-    vi
-      .fn()
-      .mockResolvedValue({ success: true, subagent: { ...task, deliveryStatus: 'delivered' } }),
+    vi.fn().mockResolvedValue({ success: true, subagent: { ...task, status: 'done' } }),
   );
   render(<SubtaskControls sessionId="parent" task={task} onRefresh={vi.fn()} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Deliver result again' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel this task' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Verify state' }));
   await waitFor(() =>
-    expect(screen.queryByRole('button', { name: 'Deliver result again' })).toBeNull(),
+    expect(screen.queryByRole('button', { name: 'Cancel this task' })).toBeNull(),
   );
 });
 
@@ -154,7 +145,7 @@ it('rejects verification for a different native session', async () => {
   );
   const refresh = vi.fn();
   render(<SubtaskControls sessionId="parent" task={task} onRefresh={refresh} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Deliver result again' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel this task' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Verify state' }));
   await waitFor(() =>
     expect(
@@ -163,6 +154,6 @@ it('rejects verification for a different native session', async () => {
   );
   expect(refresh).not.toHaveBeenCalled();
   expect(
-    (screen.getByRole('button', { name: 'Deliver result again' }) as HTMLButtonElement).disabled,
+    (screen.getByRole('button', { name: 'Cancel this task' }) as HTMLButtonElement).disabled,
   ).toBe(true);
 });

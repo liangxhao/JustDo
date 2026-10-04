@@ -69,6 +69,7 @@ it('keeps local reports and event collection bounded at the global retention bud
       store,
       getRuntime: () => null,
       hasSession: id => !!hasSession.get(id),
+      getNativeSessionKey: id => `agent:main:justdo:${id}`,
       now: () => now,
     });
     const measurements = 100;

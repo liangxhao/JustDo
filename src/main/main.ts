@@ -19,6 +19,7 @@ import { ACTIVITY_REPORTING_CONFIG } from '../config/activityReporting';
 import { APP_UPDATE_CONFIG } from '../config/appUpdate';
 import { BUILTIN_MODEL_PROVIDER_CONFIG } from '../config/builtinModels';
 import { normalizeBrowserDownloadSettings, normalizeBrowserMode } from '../shared/browser/browser';
+import { buildCoworkSessionKey } from '../shared/cowork/sessionKey';
 import { CoworkSubagentDetailsIpc } from '../shared/cowork/subagentDetails';
 import type { ProxySettings } from '../shared/network/proxy';
 import { EmbeddedBrowserGateway, OpenClawExtensionId } from '../shared/openclaw/extensions';
@@ -74,7 +75,10 @@ import { enableSystemCaForCurrentProcess } from './core/network/trustedCertifica
 import { applyDependencyManagerConfigEnv } from './core/runtime/dependencyManagerConfig';
 import { ensurePythonRuntimeReady } from './core/runtime/pythonRuntime';
 import { registerContentSecurityPolicy } from './core/window/contentSecurityPolicy';
-import { registerLocalFileProtocol, registerLocalFileScheme } from './core/window/localFileProtocol';
+import {
+  registerLocalFileProtocol,
+  registerLocalFileScheme,
+} from './core/window/localFileProtocol';
 import { createMainWindow } from './core/window/mainWindowFactory';
 import { orderDiagnosticMainLogs } from './cowork/diagnostics/logSources';
 import { SessionDiagnosticsService } from './cowork/diagnostics/service';
@@ -167,6 +171,7 @@ import {
 import { buildManagedLocalSttConfig } from './openclaw/config/localSttConfig';
 import { buildManagedLocalTtsConfig } from './openclaw/config/localTtsConfig';
 import { NativeAssistantCreation } from './openclaw/config/nativeAssistantCreation';
+import { resolveNativeVideoSelection } from './openclaw/config/nativeVideoModelConfig';
 import {
   buildProviderSelection,
   listManagedOpenClawPluginIds,
@@ -556,8 +561,21 @@ const getOpenClawExtensionImportService = (): OpenClawExtensionImportService => 
     getOpenClawEngineManager,
     getManagedPluginIds: () => {
       const managed = listManagedOpenClawPluginIds();
-      const decision = getStore().get<AppConfigSettings>('app_config')?.onlineModelProviders?.decision;
-      return decision === undefined ? managed : [...managed, OpenClawExtensionId.TYPESAFE];
+      const decision =
+        getStore().get<AppConfigSettings>('app_config')?.onlineModelProviders?.decision;
+      let videoProviderId: string | undefined;
+      try {
+        videoProviderId = resolveNativeVideoSelection(
+          getStore().get<AppConfigSettings>('app_config')?.onlineModelProviders?.video,
+        )?.providerId;
+      } catch {
+        /* Invalid draft settings do not change plugin ownership. */
+      }
+      return [
+        ...managed,
+        ...(decision === undefined ? [] : [OpenClawExtensionId.TYPESAFE]),
+        ...(videoProviderId ? [videoProviderId] : []),
+      ];
     },
     requestGateway: <T>(method: string, params?: unknown) =>
       getCoworkEngineService().requestGateway<T>(method, params),
@@ -712,6 +730,8 @@ const getOpenClawConfigSyncService = (): OpenClawConfigSyncService => {
         normalizeBrowserMode(getStore().get<{ browserMode?: unknown }>('app_config')?.browserMode),
       getDecisionModelCategory: () =>
         getStore().get<AppConfigSettings>('app_config')?.onlineModelProviders?.decision,
+      getNativeVideoCategory: () =>
+        getStore().get<AppConfigSettings>('app_config')?.onlineModelProviders?.video,
       getLocalSttConfig: () => {
         const appConfig = getStore().get<AppConfigSettings>('app_config');
         return buildManagedLocalSttConfig(
@@ -794,10 +814,8 @@ const getBuiltinModelTokenExchange = (): BuiltinModelTokenExchange => {
     userInfoPath: resolveOutboundHeaderUserInfoPath(),
     deviceIdPath: path.join(app.getPath('userData'), 'huawei', 'model-device.json'),
     getConfig: getBuiltinModelAuthConfig,
-    getDevelopmentApiKey: () => resolveBuiltinModelDevelopmentApiKey(
-      getBuiltinModelAuthConfig(),
-      app.isPackaged,
-    ),
+    getDevelopmentApiKey: () =>
+      resolveBuiltinModelDevelopmentApiKey(getBuiltinModelAuthConfig(), app.isPackaged),
     fetch: (url, init) => mainProcessFetch(url, init, { maxResponseBytes: 32_768 }),
   });
   return builtinModelTokenExchange;
@@ -866,6 +884,12 @@ const getSessionDiagnosticsService = (): SessionDiagnosticsService => {
   sessionDiagnosticsService ??= new SessionDiagnosticsService({
     store: new SessionDiagnosticsStore(getStore().getDatabase()),
     hasSession: id => Boolean(getCoworkStore().getSession(id)),
+    getNativeSessionKey: id => {
+      const session = getCoworkStore().getSession(id);
+      return session
+        ? session.nativeSessionKey || buildCoworkSessionKey(session.id, session.agentId)
+        : null;
+    },
     getRuntime: getOpenClawRuntimeAdapter,
     logSources: {
       main: report => orderDiagnosticMainLogs(getRecentMainLogEntries(true), report),
@@ -1157,7 +1181,7 @@ type AppConfigSettings = {
   useSystemProxy?: boolean;
   proxy?: Partial<ProxySettings>;
   providers?: unknown;
-  onlineModelProviders?: { decision?: unknown };
+  onlineModelProviders?: { decision?: unknown; video?: unknown };
   voice?: unknown;
 };
 
@@ -1170,6 +1194,7 @@ const getOpenClawAppConfigSignature = (config: unknown): string => {
     model: appConfig.model,
     providers: appConfig.providers,
     decisionModels: appConfig.onlineModelProviders?.decision,
+    nativeVideoModels: appConfig.onlineModelProviders?.video,
     voice: {
       outputEnabled: voice.outputEnabled,
       synthesisMode: voice.synthesisMode,
@@ -1396,9 +1421,8 @@ if (multicaBridgeArgv) {
       getOpenClawConfigSyncService().runConfigMutationExclusive(operation),
   });
   registerSpeechSynthesisHandlers({
-    getSettings: () => normalizeLocalSpeechSettings(
-      getStore().get<AppConfigSettings>('app_config')?.voice,
-    ),
+    getSettings: () =>
+      normalizeLocalSpeechSettings(getStore().get<AppConfigSettings>('app_config')?.voice),
     requestGateway: <T>(method: string, params?: unknown) =>
       getCoworkEngineService().requestGateway<T>(method, params),
   });
@@ -1414,8 +1438,8 @@ if (multicaBridgeArgv) {
     getGatewayClient: () => getOpenClawRuntimeAdapter()?.getGatewayClient() ?? null,
     policies: [justDoSlashCommandPolicy],
   });
-  const skillWorkshopService = new SkillWorkshopService(
-    <T>(method: string, params?: unknown) => getCoworkEngineService().requestGateway<T>(method, params),
+  const skillWorkshopService = new SkillWorkshopService(<T>(method: string, params?: unknown) =>
+    getCoworkEngineService().requestGateway<T>(method, params),
   );
   registerSkillWorkshopHandlers(skillWorkshopService);
   registerSkillHandlers({
@@ -1567,7 +1591,8 @@ if (multicaBridgeArgv) {
     onChanged: notifyCoworkSessionsChanged,
   });
   const bindCollaboration = registerCollaborationHandlers({
-    createAssistant: (input, identity, assertActive) => nativeAssistantCreation.create(input, identity, assertActive),
+    createAssistant: (input, identity, assertActive) =>
+      nativeAssistantCreation.create(input, identity, assertActive),
     onSessionsChanged: notifyCoworkSessionsChanged,
     getDatabase: () => getStore().getDatabase(),
     getStore: getCoworkStore,
@@ -1915,7 +1940,6 @@ if (multicaBridgeArgv) {
     await getOutboundHeaderProxy().start();
     activeOutboundHeaderPolicyDigest = initialOutboundHeaderPolicy.digest;
 
-
     // Note: Calendar permission is checked on-demand when calendar operations are requested
     // We don't trigger permission dialogs at startup to avoid annoying users
 
@@ -2040,7 +2064,9 @@ if (multicaBridgeArgv) {
         console.error('[BuiltinModelCredentialMonitor] Credential refresh failed:', error);
       },
     });
-    getBuiltinModelAuthCoordinator().initialize(startupSync.success ? builtinModelCredential : null);
+    getBuiltinModelAuthCoordinator().initialize(
+      startupSync.success ? builtinModelCredential : null,
+    );
     builtinModelCredentialMonitor.start(builtinModelCredential);
     if (BUILTIN_MODEL_PROVIDER_CONFIG.enabled && ACTIVITY_REPORTING_CONFIG.enabled) {
       customerRegistrationService = new CustomerRegistrationService({

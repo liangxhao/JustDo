@@ -10,7 +10,7 @@ tasks through OpenClaw Gateway, with durable state in SQLite and bundled skills.
 
 - App: `v2026.8.27`
 - Electron: `42.7.0`
-- OpenClaw: `v2026.9.6`
+- OpenClaw: `v2026.9.8`
 - Node: `24.21.0` via `.nvmrc`; engine `>=24.16.0 <25`
 - Package manager: npm
 - Dev server port: `43127`
@@ -161,10 +161,11 @@ and `diagnose-gateway` under `custodian-skills/` through explicit allowlists;
 all other upstream skills are excluded.
 
 Built-in skills are declared in `resources/builtin-skills.json`: **8 skills**,
-all **8 enabled** by default. TypeSafe supplies its own `typesafe-evaluate` skill
-through the optional extension; it is not a global built-in skill.
+all **8 enabled** by default. TypeSafe supplies a decision provider through its optional extension. The native
+`decision_evaluate` tool follows `agents.defaults.decisionModel`; no separate
+TypeSafe tool or skill is bundled.
 
-OpenClaw runtime patches live in `scripts/patches/v2026.9.6/`. They are
+OpenClaw runtime patches live in `scripts/patches/v2026.9.8/`. They are
 new-version capability patches, not migrations of the historical
 `scripts/patches/v2026.8.2/` files. The target directory README is the
 authoritative capability-to-patch and upstream-disposition inventory.
@@ -175,6 +176,13 @@ transformers may be idempotent only for their current exact patch shape; when
 they detect historical or partially applied patch markers, they must fail
 clearly. Rebuild the runtime from the locked pristine OpenClaw package and
 apply the current patch set instead.
+
+The 9.6 build was never released. At the user's request, the 9.8 upgrade's
+application-owned legacy SQLite migration bridge, startup gate, tests and build
+assets have been removed. Do not reintroduce 9.6→9.8 schema compatibility or
+automatic legacy-data migration for this upgrade. This does not remove existing
+product-database initialization rules or change native OpenClaw storage ownership.
+See `docs/architecture/10-data-storage.md`.
 
 `docs/res/` was removed because no docs referenced its old image asset.
 
@@ -375,9 +383,16 @@ the project before sending. See `docs/architecture/07-plugin-system.md`.
 Jev evaluations use the vendored upstream `typesafe` extension. Settings → Models
 → Decision models owns the required URL/API Key, default model and activation
 once configured; TypeSafe then becomes managed in the extension panel.
-Sync selects `agents.defaults.decisionModel` and the evaluation-tool default,
+Sync selects `agents.defaults.decisionModel`,
 using file SecretRefs in restricted `extension-secrets.json`. The documented
 `serviceUrl` transport seam supports authenticated intranet System One endpoints
 without redirects, environment proxies or hosted fallback. Preserve native
 OpenClaw decision semantics and response validation. Users without this settings
 category retain explicit extension state. See `docs/features/jev-integration.md`.
+
+Video settings select the native Kie, Z.AI or Novita provider and use the managed
+config synchronizer with file SecretRefs. Same-provider chat models share its
+endpoint and credentials. Clearing the default does not disable native automatic
+discovery. Accept only the supported native video provider configuration; do not
+add compatibility for the retired custom `/videos` transport. See
+`docs/features/model-management.md`.

@@ -785,6 +785,37 @@ test('clears manual context compaction when Gateway state is cleaned up', async 
   ).resolves.toMatchObject({ mainRunning: false, running: false });
 });
 
+test.each(['end', 'error'])('unsettled lifecycle %s cannot finish an active execution', phase => {
+  vi.useFakeTimers();
+  try {
+    const { session, store } = createEmptyStore();
+    session.status = 'running';
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const complete = vi.fn();
+    adapter.on('complete', complete);
+    const sessionKey = 'agent:main:justdo:session-1';
+    adapter.rememberSessionKey('session-1', sessionKey);
+    adapter.ensureActiveTurn('session-1', sessionKey, 'run-1');
+    for (const executionSettled of [undefined, false]) {
+      adapter.handleGatewayEvent({ event: 'agent', payload: {
+        runId: 'run-1', sessionKey, stream: 'lifecycle', data: { phase, executionSettled },
+      } });
+      vi.advanceTimersByTime(2000);
+      expect(adapter.isSessionActive('session-1')).toBe(true);
+      expect(complete).not.toHaveBeenCalled();
+    }
+    adapter.handleGatewayEvent({ event: 'agent', payload: {
+      runId: 'run-1', sessionKey, stream: 'lifecycle', data: { phase: 'end', executionSettled: true },
+    } });
+    vi.advanceTimersByTime(1500);
+    expect(adapter.isSessionActive('session-1')).toBe(false);
+    expect(complete).toHaveBeenCalledExactlyOnceWith('session-1', 'idle');
+  } finally {
+    vi.runOnlyPendingTimers();
+    vi.useRealTimers();
+  }
+});
+
 test('lifecycle end clears the active turn when chat final is missing', () => {
   vi.useFakeTimers();
   try {
@@ -805,7 +836,7 @@ test('lifecycle end clears the active turn when chat final is missing', () => {
         runId: 'run-1',
         sessionKey: 'agent:main:justdo:session-1',
         stream: 'lifecycle',
-        data: { phase: 'end' },
+        data: { phase: 'end', executionSettled: true },
       },
     });
 
@@ -839,7 +870,7 @@ test('chat final cancels the lifecycle end fallback', () => {
         runId: 'run-1',
         sessionKey: 'agent:main:justdo:session-1',
         stream: 'lifecycle',
-        data: { phase: 'end' },
+        data: { phase: 'end', executionSettled: true },
       },
     });
     adapter.handleGatewayEvent({
@@ -997,7 +1028,7 @@ test('compaction pauses and then resumes the lifecycle end fallback', () => {
         runId: 'run-1',
         sessionKey: 'agent:main:justdo:session-1',
         stream: 'lifecycle',
-        data: { phase: 'end' },
+        data: { phase: 'end', executionSettled: true },
       },
     });
     adapter.handleGatewayEvent({
@@ -1059,7 +1090,7 @@ test('lifecycle error converges the session to error after compaction fails', ()
         runId: 'run-1',
         sessionKey: 'agent:main:justdo:session-1',
         stream: 'lifecycle',
-        data: { phase: 'error', error: 'Compaction timed out' },
+        data: { phase: 'error', executionSettled: true, error: 'Compaction timed out' },
       },
     });
     vi.advanceTimersByTime(2000);
@@ -1103,7 +1134,7 @@ test('long compaction pauses lifecycle completion until its native end arrives',
         runId: 'run-1',
         sessionKey: 'agent:main:justdo:session-1',
         stream: 'lifecycle',
-        data: { phase: 'end' },
+        data: { phase: 'end', executionSettled: true },
       },
     });
     adapter.handleGatewayEvent({
@@ -1294,4 +1325,30 @@ test('confirms a lost acknowledgement immediately when the run already reached a
   expect(onConfirmed).toHaveBeenCalledOnce();
   expect(internals.unknownSessionRuns.has(session.id)).toBe(false);
   expect(internals.activeTurns.has(session.id)).toBe(false);
+});
+
+test.each([
+  { status: 'queued', hasActiveRun: false, lastRunId: 'run-current' },
+  { status: 'done', hasActiveRun: false, lastRunId: 'run-previous' },
+  { status: 'failed', hasActiveRun: false, sessionId: 'native-previous', lastRunId: 'run-current' },
+])('does not settle the current turn from a nonterminal or foreign session row: %j', row => {
+  const { session, store } = createEmptyStore();
+  session.status = 'running';
+  store.updateSession = (_sessionId: string, updates: Record<string, unknown>) => Object.assign(session, updates);
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const complete = vi.fn();
+  adapter.on('complete', complete);
+  const key = 'agent:main:justdo:session-1';
+  adapter.rememberSessionKey('session-1', key);
+  adapter.ensureActiveTurn('session-1', key, 'run-current');
+  adapter.activeTurns.get('session-1')!.gatewaySessionId = 'native-current';
+  adapter.handleGatewayEvent({ event: 'sessions.changed', payload: { sessionKey: key, ...row } });
+  expect(adapter.activeTurns.has('session-1')).toBe(true);
+  expect(session.status).toBe('running');
+  expect(complete).not.toHaveBeenCalled();
+  adapter.handleGatewayEvent({ event: 'sessions.changed', payload: {
+    sessionKey: key, sessionId: 'native-current', lastRunId: 'run-current', status: 'done', hasActiveRun: false,
+  } });
+  expect(adapter.activeTurns.has('session-1')).toBe(false);
+  expect(complete).toHaveBeenCalledWith('session-1', 'idle');
 });

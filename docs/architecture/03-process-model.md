@@ -17,6 +17,14 @@
 
 主 Renderer 与图片预览 HTML 分别由 `src/renderer/index.html` 和 `image-preview.html` 构建。开发由 Vite 提供，生产从 dist 加载。外部 guest 始终是另一权限域，即使视觉上位于同一侧栏。
 
+### Gateway 启动与数据边界
+
+Gateway 启动由 Main 管理运行包准备、配置与进程生命周期。9.6 版本未发布，按用户要求，本次 9.8 升级新增的旧 SQLite 数据迁移桥接、启动门禁及对应构建资产已移除；启动链不再包含该独立迁移子进程。
+
+原生数据库继续由 OpenClaw 管理，本软件不为此次未发布版本之间的切换新增兼容迁移。已有产品数据库初始化及旧 JSON 会话处理不因此扩大或重写；运行包补丁仍从锁定 pristine 包重新构建。
+
+热加载必须等待原生 applied／failed 回执，不能把 detected 当作成功。原生 coordinator 已接受的 deferred/coalesced 热重启保持其所有权，不竞争启动另一个进程。Windows 启动环境及两个 CJS 启动器都执行 9.8 的长编译缓存路径保护。
+
 ## 2. 四类通道不能混用
 
 ```mermaid
@@ -97,11 +105,11 @@ HTTP 登录请求、媒体权限、PDF 读取各有独立超时和销毁语义�
 
 ### 原生子任务查询与精确操作
 
-Renderer 通过显式 preload 方法 `listSubTaskChildren(sessionId, parentTaskId?, cursor?)` 和 `controlSubTask(sessionId, taskId, action)` 访问子任务。shared 合约将操作限制为 `cancel`、`retryDelivery`、`dismissDelivery`；Main 对应调用 `tasks.cancel`、`tasks.retry`、`tasks.dismiss`，不提供任意 Gateway 方法转发。`tasks.retry` 只重新投递已完成结果，不重新执行模型任务。
+Renderer 通过显式 preload 方法 `listSubTaskChildren(sessionId, parentTaskId?, cursor?)` 和 `controlSubTask(sessionId, taskId, action)` 访问子任务。shared 合约只开放 `cancel`；Main 调用 `sessions.abort({ key, clearQueued: true })`，不提供任意 Gateway 方法转发。OpenClaw v2026.9.8 移除了任务账本 RPC 与结果重新投递/忽略操作，因此产品同步移除这两个操作入口，不重建旧任务账本。
 
-Main 先检查产品会话仍存在，再以其受管原生 session keys 核对 `tasks.get` 的 requester。嵌套任务逐级验证 `parentTaskId` 与父任务 `childSessionKey` 的真实连接；缺少父 ID 时沿原生 requester 图进行有界发现。发现不完整、父子身份不符、跨产品会话或已删除会话均拒绝操作。Renderer 提交的 task ID、显示名称及 session key 不能单独充当归属证明。
+Main 先检查产品会话仍存在，再用 `sessions.describe` 读取精确原生 session key。子任务产品 ID 就是该 key，`spawnedBy` 表示原生执行控制归属；`parentSessionKey` 仅为导航关系，不能用于授权。嵌套任务最多逐级核对 64 层控制归属，并拒绝循环、跨产品会话、缺失节点或已删除会话。Renderer 提交的 ID、显示名称及 session key 不能单独充当归属证明。
 
-子树读取每次只取当前层最多 50 条原生记录，分页绑定当前根集合，返回结果再次过滤 requester。原生游标失效和归属发现失败按错误返回，不伪装为空列表。控制响应保留原生否定回执、原因和重复投递风险；超时不自动重发。UI 在后续操作前重新核对精确 task ID 的状态。任务账本、完成通知与取消执行仍由 OpenClaw 管理，不新增 SQLite 任务或 transcript 缓存。
+子树读取使用 `sessions.list({ spawnedBy, archived: 'all', limit: 50, offset })`，游标绑定当前根集合，并再次过滤原生控制归属。分页不前进、缺少继续偏移量或归属验证失败按错误返回，不伪装为空列表。取消只接受原生明确的 aborted/no-active-run 回执；超时不自动重发。UI 在后续操作前重新核对精确子会话状态。执行、完成通知与持久化仍由 OpenClaw 管理，不新增 SQLite 任务或 transcript 缓存。
 
 ## 6. 注册、订阅与重连
 

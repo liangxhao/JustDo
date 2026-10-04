@@ -66,6 +66,7 @@ beforeEach(() => {
   service = new SessionDiagnosticsService({
     store: diagnostics,
     hasSession: id => !!store.getSession(id),
+    getNativeSessionKey: id => `agent:main:justdo:${id}`,
     getRuntime: () => adapter,
   });
   adapter.on('gatewayEvent', event => service.observe(event));

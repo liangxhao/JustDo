@@ -42,6 +42,7 @@ const EXPECTED_PATCH_FILES = [
   '028-admin-session-cwd.cjs',
   '030-cron-session-permission.cjs',
   '031-windows-servicing-credential-launcher.cjs',
+  '032-windows-session-creation-path.cjs',
 ] as const;
 
 const UPSTREAM_CONTRACTS = [
@@ -49,7 +50,7 @@ const UPSTREAM_CONTRACTS = [
   'history-display-projection',
   'native-tool-directory',
   'native-session-goals',
-  'native-task-rpc-and-events',
+  'native-decision-tool',
   'subagent-queue-and-wait',
   'native-session-stop',
   'persistent-approval-lifecycle',
@@ -66,7 +67,7 @@ const NATIVE_STOP_FIXTURES = {
     'descendant cancellation was incomplete',
   'session-stop-tree.js': 'async function killSubagentRunTree() { ' +
     'if (!tree.entry.execution.endedAt) stop(); result.descendants = true; ' +
-    'if (result.descendants && tree.canTraverse()) tree.children.map(visit); }',
+    'if (result.descendants && tree.canTraverse()) tree.children.map((child) => visit(child, suppressDescendantWakes)); }',
   'session-stop-run.js': 'function abortChatRunById() { ' +
     'releaseAgentRunDelegatedAuthority(active.agentRunDelegatedAuthority); ' +
     'ops.onRunAborted?.(runId); active.controller.abort(createChatAbortSignalReason(stopReason)); ' +
@@ -89,7 +90,7 @@ function createPristineFixture(): string {
   fs.mkdirSync(path.join(root, 'dist'), { recursive: true });
   fs.writeFileSync(
     path.join(root, 'package.json'),
-    JSON.stringify({ name: 'openclaw', version: '2026.9.6' }),
+    JSON.stringify({ name: 'openclaw', version: '2026.9.8' }),
   );
   writeDistFile(
     root,
@@ -100,7 +101,7 @@ function createPristineFixture(): string {
   writeDistFile(
     root,
     'history-private.js',
-    'delete entry.thinkingSignature; delete entry.openclawReasoningReplay;',
+    'for (const field of ["thinkingSignature", "openclawReasoningReplay"]) delete entry[field];',
   );
   writeDistFile(
     root,
@@ -133,13 +134,7 @@ function createPristineFixture(): string {
     'goal-start.js',
     'action: "start"; operationId: p.idempotencyKey; issuedAtMs: p.intent.issuedAtMs;',
   );
-  writeDistFile(
-    root,
-    'tasks-rpc.js',
-    '"tasks.list": validateTasksListParams; nextCursor; ' +
-      '"tasks.get": validateTasksGetParams; getTaskById;',
-  );
-  writeDistFile(root, 'task-events.js', 'kind: "upserted"; cloneTaskRecord(task);');
+  writeDistFile(root, 'decision-tool.js', 'name: "decision_evaluate"; createDecisionTool;');
   writeDistFile(
     root,
     'subagent-lane.js',
@@ -158,7 +153,7 @@ function createPristineFixture(): string {
   writeDistFile(
     root,
     'task-delivery.js',
-    'queueTaskSystemEvent(latest, sessionEventText, owner); "session_queued";',
+    'scheduleSessionDelivery(durableQueue.id, durableQueue.context); disposition: "session_queued";',
   );
   writeDistFile(
     root,
@@ -236,8 +231,8 @@ describe('OpenClaw pristine artifact contracts', () => {
       .toThrow(/run Stop connects native approval cancellation/);
   });
 
-  test('keeps the independently auditable v2026.9.6 patch inventory exact', () => {
-    const patchDir = path.resolve('scripts', 'patches', 'v2026.9.6');
+  test('keeps the independently auditable v2026.9.8 patch inventory exact', () => {
+    const patchDir = path.resolve('scripts', 'patches', 'v2026.9.8');
     const patchFiles = fs
       .readdirSync(patchDir)
       .filter(name => /^\d.*\.cjs$/.test(name))
@@ -260,7 +255,7 @@ describe('OpenClaw pristine artifact contracts', () => {
       patchFiles: [writePatch(root, false)],
     });
 
-    expect(result.version).toBe('2026.9.6');
+    expect(result.version).toBe('2026.9.8');
     expect(Object.keys(result.upstream)).toEqual(UPSTREAM_CONTRACTS);
     expect(result.retainedGaps).toEqual(['required.cjs']);
   });

@@ -24,7 +24,6 @@ import { isRecord } from '../gateway/helpers';
 import type { GatewayEventFrame, SessionTurn } from '../gateway/types';
 import { ERROR_TERMINAL_SESSION_STATUSES } from './runtimeAdapterSupport';
 import { type GatewaySubagent } from './subagentGateway';
-import { parseTaskEventV2026_9_2 } from './wire/v2026_9_2';
 export interface RuntimeGatewayEventsContext {
   readonly emit: (eventName: string | symbol, ...args: unknown[]) => boolean;
   lastTickTimestamp: number;
@@ -43,7 +42,6 @@ export interface RuntimeGatewayEventsContext {
   readonly handleExecApprovalRequested: (payload: unknown) => Promise<void>;
   readonly broadcastApproval: (channel: string, kind: ApprovalKind, payload: unknown) => void;
   readonly handlePluginApprovalRequested: (payload: unknown) => void;
-  readonly handleTaskEvent: (payload: unknown) => void;
   readonly handleSessionOperationEvent: (payload: unknown) => void;
   readonly handleSessionsChangedEvent: (payload: unknown) => void;
   readonly resolveSessionIdBySessionKey: (sessionKey: string) => string | null;
@@ -179,11 +177,6 @@ export function handleGatewayEvent(
     return;
   }
 
-  if (event.event === 'task') {
-    this.handleTaskEvent(event.payload);
-    return;
-  }
-
   if (event.event === 'session.operation') {
     this.handleSessionOperationEvent(event.payload);
     return;
@@ -192,50 +185,6 @@ export function handleGatewayEvent(
   if (event.event === 'sessions.changed') {
     this.handleSessionsChangedEvent(event.payload);
     return;
-  }
-}
-
-export function handleTaskEvent(this: RuntimeGatewayEventsContext, payload: unknown): void {
-  try {
-    const event = parseTaskEventV2026_9_2(payload);
-    if (event.action === 'upserted') {
-      const sessionIds = new Set<string>();
-      for (const sessionKey of [
-        event.task.sessionKey,
-        event.task.childSessionKey,
-        event.task.ownerKey,
-      ]) {
-        if (sessionKey) {
-          const sessionId = this.resolveSessionIdBySessionKey(sessionKey);
-          if (sessionId) sessionIds.add(sessionId);
-        }
-      }
-      if (sessionIds.size > 0) {
-        for (const sessionId of sessionIds) {
-          this.invalidateSubagentStatusSnapshot(sessionId);
-          this.emit('taskChanged', { sessionId });
-        }
-        return;
-      }
-    }
-    // Deleted events intentionally expose only taskId, while a restored ledger can affect
-    // every requester. Invalidate all known parent snapshots for both event shapes.
-    for (const sessionId of new Set([
-      ...this.subagentStatusCache.keys(),
-      ...this.subagentDetailCache.keys(),
-      ...this.subagentStatusRefreshes.keys(),
-    ])) {
-      if (event.action === 'upserted') {
-        this.invalidateSubagentStatusSnapshot(sessionId);
-      } else {
-        this.invalidateSubagentStatus(sessionId);
-      }
-    }
-    this.emit('taskChanged', {});
-  } catch (error) {
-    coworkLog('WARN', 'OpenClawRuntime', 'Ignored malformed v2026.9.2 task event', {
-      error: String(error),
-    });
   }
 }
 
@@ -434,6 +383,9 @@ export function handleAgentEvent(
   if (stream !== 'lifecycle') return;
 
   const phase = typeof data.phase === 'string' ? data.phase : '';
+  // Only the outer execution owner can establish completion. Attempt-level
+  // terminals may be followed by retry/fallback work under the same run.
+  if ((phase === 'end' || phase === 'error') && data.executionSettled !== true) return;
   const internalManagedHandoffError =
     phase === 'error' && isInternalManagedSubagentHandoffError(data.error);
   if (phase === 'end' || phase === 'error') {
@@ -530,6 +482,15 @@ export function handleSessionsChangedEvent(
 ): void {
   if (!isRecord(payload)) return;
   this.invalidateRuntimeSessionSnapshot();
+  // Session lineage is the native delegated-work owner in 2026.9.8. Creation,
+  // deletion and ancestor changes can affect parents not present in this event.
+  for (const id of new Set([
+    ...this.subagentStatusCache.keys(),
+    ...this.subagentDetailCache.keys(),
+    ...this.subagentStatusRefreshes.keys(),
+  ]))
+    this.invalidateSubagentStatusSnapshot(id);
+  this.emit('taskChanged', {});
   const source = isRecord(payload.session) ? payload.session : payload;
   const sessionKey =
     (typeof source.key === 'string' && source.key.trim()) ||
@@ -559,8 +520,19 @@ export function handleSessionsChangedEvent(
     turn && normalizeMessageSessionKey(turn.sessionKey) === normalizeMessageSessionKey(sessionKey),
   );
   const isCreationSnapshot = reason === 'create' || reason === 'new';
+  // Native rows may describe queued work or a previously settled run. A
+  // catalog/event refresh must not terminate a newer local turn with the same key.
+  const isSessionBoundary = reason === 'reset' || reason === 'delete';
+  const rowSessionId = typeof source.sessionId === 'string' ? source.sessionId : undefined;
+  const rowRunId = typeof source.lastRunId === 'string' ? source.lastRunId : undefined;
+  const matchesCurrentIdentity = isSessionBoundary || Boolean(
+    turn &&
+    (!rowSessionId || !turn.gatewaySessionId || rowSessionId === turn.gatewaySessionId) &&
+    (!rowRunId || rowRunId === turn.runId),
+  );
   const shouldClearRun =
-    eventMatchesTurn && !isCreationSnapshot && !hasActiveRun && status && status !== 'running';
+    eventMatchesTurn && matchesCurrentIdentity && !isCreationSnapshot && !hasActiveRun &&
+    status && status !== 'running' && status !== 'queued';
   if (!shouldClearRun) return;
 
   const terminalStatus: CoworkSessionStatus = ERROR_TERMINAL_SESSION_STATUSES.has(status)

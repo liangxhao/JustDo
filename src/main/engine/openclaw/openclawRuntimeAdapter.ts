@@ -89,7 +89,6 @@ import {
   normalizeMessageSessionKey,
 } from '../../../shared/openclaw/messageDomain';
 import { normalizeModelRef, readModelRef } from '../../../shared/openclaw/modelRef';
-import type { ScheduledTaskSessionHistory } from '../../../shared/scheduledTask/types';
 import type { ApprovedPlanArtifactStore } from '../../cowork/approvedPlans/approvedPlanArtifactStore';
 import { coworkLog } from '../../cowork/coworkLogger';
 import { type SessionTitleFetch, SessionTitleGenerator } from '../../cowork/sessionTitleGenerator';
@@ -830,8 +829,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       const subagents = await listGatewaySubagents({
         client,
         parentKeys: [parentKey],
-        hydrateDetails: false,
-        includeMalformedForRuntimeControl: true,
         requireComplete: true,
       });
       for (const subagent of subagents) {
@@ -1199,10 +1196,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   private handleGatewayEvent(event: GatewayEventFrame): void {
     return runtimeGatewayEvents.handleGatewayEvent.call(this.runtimeGatewayEventsContext, event);
-  }
-
-  private handleTaskEvent(payload: unknown): void {
-    return runtimeGatewayEvents.handleTaskEvent.call(this.runtimeGatewayEventsContext, payload);
   }
 
   // ─── Chat Event Handling (aligned with webchat) ─────────────────────────
@@ -2484,8 +2477,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   fetchSessionHistoryByKey(
     sessionKey: string,
     fallbackSessionId?: string | null,
-    options: { forceFullSnapshot?: boolean; scheduledTaskRun?: boolean } = {},
-  ): Promise<ScheduledTaskSessionHistory | null> {
+    options: { forceFullSnapshot?: boolean; scheduledTaskRun?: boolean; includePendingInputs?: boolean } = {},
+  ): Promise<runtimeHistory.RuntimeSessionHistory | null> {
     return runtimeHistory.fetchSessionHistoryByKey.call(
       this.runtimeHistoryContext,
       sessionKey,
@@ -2914,7 +2907,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       handleExecApprovalRequested: { get: () => this.handleExecApprovalRequested.bind(this) },
       broadcastApproval: { get: () => this.broadcastApproval.bind(this) },
       handlePluginApprovalRequested: { get: () => this.handlePluginApprovalRequested.bind(this) },
-      handleTaskEvent: { get: () => this.handleTaskEvent.bind(this) },
       handleSessionOperationEvent: { get: () => this.handleSessionOperationEvent.bind(this) },
       handleSessionsChangedEvent: { get: () => this.handleSessionsChangedEvent.bind(this) },
       resolveSessionIdBySessionKey: { get: () => this.resolveSessionIdBySessionKey.bind(this) },

@@ -1,13 +1,18 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import vm from 'node:vm';
 import { pathToFileURL } from 'node:url';
-import { describe, it, test, expect } from 'vitest';
+import vm from 'node:vm';
+
+import { describe, expect, it, test } from 'vitest';
 const {
   __testing: { seams, transform },
 } = require('../../../../scripts/patches/v2026.9.6/030-cron-session-permission.cjs');
 const runtimeDir = path.resolve('vendor/openclaw-runtime/current/dist');
-describe.skipIf(!fs.existsSync(runtimeDir))(
+const runtimePackage = path.join(runtimeDir, '..', 'package.json');
+const matchingRuntime =
+  fs.existsSync(runtimePackage) &&
+  JSON.parse(fs.readFileSync(runtimePackage, 'utf8')).version === '2026.9.6';
+describe.skipIf(!matchingRuntime || !fs.existsSync(runtimeDir))(
   'installed native exec policy integration',
   { timeout: 30_000 },
   () => {
@@ -100,20 +105,24 @@ describe.skipIf(!fs.existsSync(runtimeDir))(
   },
 );
 
-test('verifies cron authorization after bundling renames handler and guard parameters', () => {
-  const bundle = path.resolve('vendor/openclaw-runtime/current/gateway-bundle.mjs');
-  if (!fs.existsSync(bundle)) return;
-  const source = fs.readFileSync(bundle, 'utf8');
-  const handler = seams.find((entry: { name: string }) => entry.name === 'HANDLERS');
-  const patched = transform(source, handler);
-  expect(transform(patched, handler)).toBe(patched);
-  expect(() =>
-    transform(
-      patched.replace(
-        /(function justDoCronPermissionGuard\([^]*?)operator\.admin/,
-        '$1operator.write',
+test.skipIf(!matchingRuntime)(
+  'verifies cron authorization after bundling renames handler and guard parameters',
+  () => {
+    const bundle = path.resolve('vendor/openclaw-runtime/current/gateway-bundle.mjs');
+    if (!fs.existsSync(bundle)) return;
+    const source = fs.readFileSync(bundle, 'utf8');
+    const handler = seams.find((entry: { name: string }) => entry.name === 'HANDLERS');
+    const patched = transform(source, handler);
+    expect(transform(patched, handler)).toBe(patched);
+    expect(() =>
+      transform(
+        patched.replace(
+          /(function justDoCronPermissionGuard\([^]*?)operator\.admin/,
+          '$1operator.write',
+        ),
+        handler,
       ),
-      handler,
-    ),
-  ).toThrow();
-}, 30_000);
+    ).toThrow();
+  },
+  30_000,
+);

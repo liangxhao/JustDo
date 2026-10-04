@@ -38,6 +38,8 @@ import { GatewayStdoutLogFilter } from './gatewayLogFilter';
 import { ensureGatewayStartupPriority } from './gatewayProcessPriority';
 import { findAvailableLoopbackPort, isLoopbackPortAvailable } from './loopbackPort';
 import {
+  buildOpenClawCompileCacheEnvironment,
+  buildOpenClawCompileCacheSetupSource,
   ensureOpenClawGatewayBundleLauncher,
   GATEWAY_READY_MESSAGE,
 } from './openclawGatewayBundleLauncher.cjs';
@@ -714,7 +716,6 @@ export class OpenClawEngineManager extends EventEmitter {
       OPENCLAW_NO_AUTO_UPDATE: '1',
       OPENCLAW_BUNDLED_PLUGINS_DIR: runtimeResourcePaths.bundledPluginsDir,
       OPENCLAW_LOG_LEVEL: app.isPackaged ? 'info' : 'debug',
-      NODE_COMPILE_CACHE: compileCacheDir,
       JUSTDO_ELECTRON_PATH: electronNodeRuntimePath.replace(/\\/g, '/'),
       JUSTDO_OPENCLAW_ENTRY: openclawEntry.replace(/\\/g, '/'),
       ...this.gatewayLaunchEnvVars,
@@ -784,7 +785,7 @@ export class OpenClawEngineManager extends EventEmitter {
     );
 
     return {
-      env: resolvedEnv,
+      env: buildOpenClawCompileCacheEnvironment(resolvedEnv, compileCacheDir),
       runtimeRoot: runtime.root,
       openclawEntry,
       port,
@@ -1518,12 +1519,7 @@ export class OpenClawEngineManager extends EventEmitter {
       `const fs = require('node:fs');\n` +
       `// Enable V8 compile cache to speed up subsequent startups.\n` +
       `// Cache is stored per-user so it survives app restarts and reboots.\n` +
-      `try {\n` +
-      `  const { enableCompileCache } = require('node:module');\n` +
-      `  const ccDir = path.join(process.env.OPENCLAW_STATE_DIR || __dirname, '.compile-cache');\n` +
-      `  enableCompileCache(ccDir);\n` +
-      `  process.stderr.write('[openclaw-launcher] compile-cache dir=' + require('node:module').getCompileCacheDir() + '\\n');\n` +
-      `} catch (_) {}\n` +
+      buildOpenClawCompileCacheSetupSource() +
       `const esmEntry = path.join(__dirname, '${esmBasename}');\n` +
       `// Patch argv so openclaw's isMainModule() recognizes this as the main entry.\n` +
       `// In standard Node.js: process.argv = [execPath, scriptPath, ...args]\n` +

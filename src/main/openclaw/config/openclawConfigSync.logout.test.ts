@@ -26,6 +26,34 @@ vi.mock('electron', () => ({
   },
 }));
 
+// Config projection tests must not depend on the developer runtime being installed or
+// replaced concurrently. Inventory discovery has its own filesystem tests.
+vi.mock('../../plugins/extensions/openclawLocalExtensions', async importOriginal => {
+  const actual = await importOriginal<typeof import('../../plugins/extensions/openclawLocalExtensions')>();
+  const bundledIds = ['browser', 'workboard', 'memory-core', 'code-mode-quickjs', 'github', 'mxc', 'zai', 'novita'];
+  return {
+    ...actual,
+    listBundledOpenClawExtensionIds: () => [...bundledIds],
+    inspectBundledOpenClawExtensions: () => ({ complete: true, ids: [...bundledIds] }),
+    hasBundledOpenClawExtension: (id: string) =>
+      bundledIds.includes(id) || actual.listLocalOpenClawExtensionIds().includes(id),
+  };
+});
+
+// Exercise credential publication and its failure handling without launching
+// Windows ACL utilities repeatedly in every configuration lifecycle scenario.
+vi.mock('node:child_process', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return {
+    ...actual,
+    execFileSync: (file: string, ...args: unknown[]) => {
+      if (path.basename(file).toLowerCase() === 'whoami.exe') return '"test-user","S-1-5-21-1000"';
+      if (path.basename(file).toLowerCase() === 'icacls.exe') return '';
+      return Reflect.apply(actual.execFileSync, actual, [file, ...args]);
+    },
+  };
+});
+
 const temporaryDirectories: string[] = [];
 
 test.each(['full', 'minimal'])('%s sync preserves Gateway-owned worktree settings across startup and auth changes', mode => {
@@ -445,26 +473,26 @@ describe('OpenClaw auth logout config sync', () => {
     const apiKey = { source: 'file', provider: 'justdo-extension-secrets', id: '/test-key' };
     for (const enabled of [true, false]) {
       const config = readConfig();
-      config.plugins.entries.typesafe = { enabled, config: { apiKey, model: 'jev-1.13.0' } };
+      config.plugins.entries.typesafe = { enabled, config: { apiKey, serviceUrl: 'http://localhost:8009' } };
       config.secrets = { ...(config.secrets ?? {}), providers: {
         ...(config.secrets?.providers ?? {}), 'justdo-extension-secrets': source,
       } };
       delete config.tools.allow;
       delete config.tools.alsoAllow;
       config.tools[policy === 'emptyAllow' ? 'allow' : policy] = policy === 'emptyAllow' ? [] : ['operator-tool'];
-      config.tools.deny = ['operator-denied-tool', 'typesafe_evaluate', 'skill_workshop', 'tts'];
+      config.tools.deny = ['operator-denied-tool', 'decision_evaluate', 'skill_workshop', 'tts'];
       fs.writeFileSync(configPath, JSON.stringify(config));
       for (const reason of ['startup', 'settings', BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout]) {
         expect(sync.sync(reason).ok).toBe(true);
         const saved = readConfig();
-        expect(saved.plugins.entries.typesafe).toEqual({ enabled, config: { apiKey, model: 'jev-1.13.0' } });
+        expect(saved.plugins.entries.typesafe).toEqual({ enabled, config: { apiKey, serviceUrl: 'http://localhost:8009' } });
         expect(saved.secrets.providers['justdo-extension-secrets']).toEqual(source);
         expect(saved.tools[policy === 'emptyAllow' ? 'alsoAllow' : policy]).toEqual(
-          policy === 'emptyAllow' ? ['typesafe_evaluate'] : ['operator-tool', 'typesafe_evaluate'],
+          policy === 'emptyAllow' ? ['decision_evaluate'] : ['operator-tool', 'decision_evaluate'],
         );
         expect(saved.tools[policy === 'allow' ? 'alsoAllow' : 'allow']).toBeUndefined();
         expect(saved.tools.deny).toContain('operator-denied-tool');
-        expect(saved.tools.deny).toContain('typesafe_evaluate');
+        expect(saved.tools.deny).toContain('decision_evaluate');
         expect(saved.tools.deny).not.toContain('skill_workshop');
         expect(saved.tools.deny).not.toContain('tts');
       }
@@ -662,7 +690,7 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.tools.exec.host).toBe('sandbox');
     expect(config.tools.fs.workspaceOnly).toBe(true);
     expect(config.tools.sandbox).toEqual({
-      tools: { alsoAllow: ['task_assistants', 'assistants_create', 'typesafe_evaluate'] },
+      tools: { alsoAllow: ['task_assistants', 'assistants_create', 'decision_evaluate'] },
     });
   });
 
@@ -1953,4 +1981,32 @@ test.each(['full', 'minimal'])('%s decision settings survive auth sync, rotate c
   expect(sync.sync('app-config-change').ok).toBe(true);
   expect(read().plugins.entries.typesafe.enabled).toBe(false);
   expect(read().agents.defaults.decisionModel).toBeUndefined();
+});
+
+test.each(['full', 'minimal'])('%s native video settings survive authentication synchronization', mode => {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-native-video-sync-'));
+  temporaryDirectories.push(stateDir);
+  const configPath = path.join(stateDir, 'openclaw.json');
+  const appConfig = mode === 'full' ? {
+    model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
+    providers: { 'custom-provider': { enabled: true, apiKey: 'chat-test-key', baseUrl: 'https://custom.example.test/v1', apiFormat: 'openai', models: [{ id: 'custom-model' }] } },
+  } : {};
+  setStoreGetter(() => ({ get: () => appConfig }) as never);
+  const category = { defaultProviderId: 'native', providers: { native: {
+    nativeVideoProvider: 'kie', displayName: 'Kie AI', baseUrl: 'https://api.kie.ai', apiKey: 'video-test-key',
+    defaultModel: 'kling-2.6/text-to-video', models: [{ id: 'kling-2.6/text-to-video' }],
+  } } };
+  const sync = new OpenClawConfigSync({
+    engineManager: { getConfigPath: () => configPath, getStateDir: () => stateDir, getDesiredVersion: () => '2026.9.8' },
+    getCoworkConfig: () => ({ workingDirectory: '', executionMode: 'local', agentEngine: 'openclaw' }),
+    getAgents: () => [], getNativeVideoCategory: () => category,
+  } as never);
+  for (const reason of ['startup', 'app-config-change', BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout]) {
+    expect(sync.sync(reason).ok).toBe(true);
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.agents.defaults.mediaModels.video.primary).toBe('kie/kling-2.6/text-to-video');
+    expect(config.plugins.entries.kie.enabled).toBe(true);
+    expect(config.models.providers.kie.apiKey.source).toBe('file');
+    expect(JSON.stringify(config)).not.toContain('video-test-key');
+  }
 });

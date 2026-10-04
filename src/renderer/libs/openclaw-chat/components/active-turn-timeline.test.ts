@@ -842,3 +842,14 @@ test('adds a compact details icon to successful spawn headers without changing t
   tool.name = 'sessions_yield';
   expect(flatten(renderTimelineItem(item, 0, true))).not.toContain('tool-agent-link');
 });
+
+test('labels a native skipped tool distinctly from failure and completion', () => {
+  const fixture = summary();
+  const tool = fixture.items[1];
+  if (tool.type !== 'tool') throw new Error('Expected tool fixture');
+  tool.status = 'failed';
+  tool.presentation = { outcome: 'skipped' };
+  const rendered = flatten(renderTimelineItem(fixture, 100, true));
+  expect(rendered).toContain(i18nService.t('messageSkippedOutcome'));
+  expect(rendered).not.toContain(i18nService.t('coworkStatusCompleted'));
+});

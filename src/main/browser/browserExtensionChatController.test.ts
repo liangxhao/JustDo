@@ -361,8 +361,49 @@ describe('BrowserExtensionChatController', () => {
     expect(fetchSessionHistoryByKey).toHaveBeenCalledWith(
       'agent:main:justdo:session-1',
       undefined,
-      { forceFullSnapshot: true },
+      { forceFullSnapshot: true, includePendingInputs: true },
     );
+  });
+
+  it('projects accepted inputs in native time order and retires withdrawn input on refresh', async () => {
+    const history = {
+      sessionKey: 'agent:main:justdo:session-1',
+      messages: [
+        { role: 'user', content: 'before', timestamp: 100 },
+        { role: 'assistant', content: 'after', timestamp: 300 },
+      ],
+      pendingInputs: [
+        {
+          id: 'pending-1',
+          acceptedAt: 200,
+          state: 'cancelled',
+          message: { role: 'user', content: 'cancelled but visible', display: true },
+        },
+      ],
+    };
+    const controller = new BrowserExtensionChatController({
+      ensureEngineRunning: vi.fn(),
+      getRouter: vi.fn(),
+      getRuntime: () =>
+        ({
+          ensureReady: vi.fn(),
+          fetchSessionHistoryByKey: vi.fn(async () => history),
+          getSessionKeysForSession: () => ['agent:main:justdo:session-1'],
+        }) as never,
+      getStore: () => ({ getSession: () => ({ id: 'session-1' }) }) as never,
+    });
+    const visible = await controller.getMessages('session-1');
+    expect(visible.map(message => message.text)).toEqual([
+      'before',
+      'cancelled but visible',
+      'after',
+    ]);
+    expect(visible[1].pendingInput).toEqual({ id: 'pending-1', state: 'cancelled' });
+    history.pendingInputs[0].message.display = false;
+    expect((await controller.getMessages('session-1')).map(message => message.text)).toEqual([
+      'before',
+      'after',
+    ]);
   });
 
   it('preserves image-only content and browser cards through the native history projection', async () => {

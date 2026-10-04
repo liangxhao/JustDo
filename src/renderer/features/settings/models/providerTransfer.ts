@@ -4,6 +4,7 @@ import {
   validateModelProviderHeaderName,
   validateModelProviderHeaderValue,
 } from '@shared/providers/modelProviderHeaders';
+import { findNativeVideoProvider } from '@shared/providers/nativeVideoProviders';
 
 import {
   type AppConfig,
@@ -204,8 +205,16 @@ const parseOnlineModelProvider = (
   ) {
     throw new Error('Invalid online model default');
   }
+  if (
+    value.nativeVideoProvider !== undefined &&
+    (kind !== 'video' || !findNativeVideoProvider(value.nativeVideoProvider))
+  )
+    throw new Error('Invalid native video provider');
   return {
     displayName: value.displayName.trim(),
+    ...(value.nativeVideoProvider
+      ? { nativeVideoProvider: findNativeVideoProvider(value.nativeVideoProvider)!.id }
+      : {}),
     baseUrl: value.baseUrl,
     apiKey: value.apiKey as PasswordEncryptedPayload | string,
     ...(typeof value.defaultModel === 'string' ? { defaultModel: value.defaultModel } : {}),

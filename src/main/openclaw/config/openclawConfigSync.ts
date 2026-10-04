@@ -6,6 +6,7 @@ import {
   captureDecisionModelConfiguration,
   resolveDecisionModelSelection,
 } from './decisionModelConfig';
+import { applyNativeVideoConfiguration, captureNativeVideoConfiguration, resolveNativeVideoSelection } from './nativeVideoModelConfig';
 import {
   applyDefaultOpenClawPluginEntries,
   applyManagedOpenClawHeartbeatConfig,
@@ -62,7 +63,7 @@ import {
   removeRetiredManagedToolDenyEntries,
   resolveManagedOpenClawTtsConfig,
   resolveOpenClawExecHost,
-  sanitizeOpenClawV2026_9_2Config,
+  sanitizeOpenClawV2026_9_8Config,
   verifyOpenClawConfigMatches,
   withMemorySearch,
 } from './openclawConfigBuilders';
@@ -116,7 +117,7 @@ export {
   removeUnavailableOpenClawPluginRegistrations,
   resolveManagedOpenClawTtsConfig,
   resolveOpenClawExecHost,
-  sanitizeOpenClawV2026_9_2Config,
+  sanitizeOpenClawV2026_9_8Config,
   verifyLoggedOutOpenClawConfig,
 } from './openclawConfigBuilders';
 
@@ -160,6 +161,10 @@ import { seedMainRoleFiles } from './mainRoleFiles';
 import { restrictCredentialFile, syncProviderSecretFile } from './providerSecretFile';
 
 export class OpenClawConfigSync {
+  private readonly getNativeVideoCategory: () => unknown;
+  private nativeVideoSelection: ReturnType<typeof resolveNativeVideoSelection>;
+  private videoSecretsChanged = false;
+  private restoreUnmanagedVideo?: (config: Record<string, unknown>) => void;
   private readonly getDecisionModelCategory: () => unknown;
   private decisionSelection: ReturnType<typeof resolveDecisionModelSelection>;
   private decisionSecretsChanged = false;
@@ -178,6 +183,7 @@ export class OpenClawConfigSync {
   private readonly getWindowsSandboxEnvironment: () => Record<string, string>;
 
   constructor(deps: OpenClawConfigSyncDeps) {
+    this.getNativeVideoCategory = deps.getNativeVideoCategory ?? (() => undefined);
     this.getDecisionModelCategory = deps.getDecisionModelCategory ?? (() => undefined);
     this.engineManager = deps.engineManager;
     this.getCoworkConfig = deps.getCoworkConfig;
@@ -198,7 +204,17 @@ export class OpenClawConfigSync {
 
   sync(reason: string): OpenClawConfigSyncResult {
     this.decisionSecretsChanged = false;
+    this.videoSecretsChanged = false;
+    let videoConfigurationFailed = true;
     try {
+      const videoSelection = resolveNativeVideoSelection(this.getNativeVideoCategory());
+      if (videoSelection !== undefined && this.nativeVideoSelection === undefined) {
+        let existing: Record<string, unknown> = {};
+        try { const parsed: unknown = JSON.parse(fs.readFileSync(this.engineManager.getConfigPath(), 'utf8')); if (isRecord(parsed)) existing = parsed; } catch { /* Fresh installation. */ }
+        this.restoreUnmanagedVideo = captureNativeVideoConfiguration(existing);
+      }
+      this.nativeVideoSelection = videoSelection;
+      videoConfigurationFailed = false;
       const selection = resolveDecisionModelSelection(this.getDecisionModelCategory());
       if (selection !== undefined && this.decisionSelection === undefined) {
         let existing: Record<string, unknown> = {};
@@ -216,10 +232,11 @@ export class OpenClawConfigSync {
       const result = this.syncConfiguration(reason);
       if (!result.ok) return result;
       if (selection === undefined) this.restoreUnmanagedDecision = undefined;
+      if (videoSelection === undefined) this.restoreUnmanagedVideo = undefined;
       return {
         ...result,
-        changed: result.changed || this.decisionSecretsChanged,
-        secretsChanged: result.secretsChanged || this.decisionSecretsChanged,
+        changed: result.changed || this.decisionSecretsChanged || this.videoSecretsChanged,
+        secretsChanged: result.secretsChanged || this.decisionSecretsChanged || this.videoSecretsChanged,
       };
     } catch {
       return {
@@ -228,12 +245,14 @@ export class OpenClawConfigSync {
         configChanged: false,
         requiresGatewayRestart: false,
         configPath: this.engineManager.getConfigPath(),
-        error: t('decisionModelConfigurationInvalid'),
+        error: t(videoConfigurationFailed ? 'nativeVideoConfigurationInvalid' : 'decisionModelConfigurationInvalid'),
       };
     }
   }
 
-  private applyDecisionModel(config: Record<string, unknown>): void {
+  private applyManagedNonLanguageModels(config: Record<string, unknown>): void {
+    if (this.nativeVideoSelection === undefined && this.restoreUnmanagedVideo) this.restoreUnmanagedVideo(config);
+    else { const changed = applyNativeVideoConfiguration(config, this.nativeVideoSelection, this.engineManager.getStateDir()); this.videoSecretsChanged ||= changed; }
     if (this.decisionSelection === undefined && this.restoreUnmanagedDecision) {
       this.restoreUnmanagedDecision(config);
       return;
@@ -629,7 +648,7 @@ export class OpenClawConfigSync {
       };
     }
     const configToPersist = preparedSecrets.config;
-    this.applyDecisionModel(configToPersist);
+    this.applyManagedNonLanguageModels(configToPersist);
     const nextContent = `${JSON.stringify(configToPersist, null, 2)}\n`;
     const configChanged = hasOpenClawConfigChanged(currentContent, configToPersist);
     if (configChanged) {
@@ -966,7 +985,7 @@ export class OpenClawConfigSync {
         previousConfig.meta,
       );
     }
-    this.applyDecisionModel(minimalConfig);
+    this.applyManagedNonLanguageModels(minimalConfig);
     const nextContent = `${JSON.stringify(minimalConfig, null, 2)}\n`;
     const buildMinimalSyncResult = (
       expectedConfig: Record<string, unknown>,
@@ -981,7 +1000,7 @@ export class OpenClawConfigSync {
         const existing = previousConfig;
         if (isRecord(existing)) {
           const sanitizedConfig = buildAuthScopedOpenClawConfig(existing, minimalConfig, reason);
-          this.applyDecisionModel(sanitizedConfig);
+          this.applyManagedNonLanguageModels(sanitizedConfig);
           const sanitizedContent = `${JSON.stringify(sanitizedConfig, null, 2)}\n`;
           if (hasOpenClawConfigChanged(currentContent, sanitizedConfig)) {
             ensureDir(path.dirname(configPath));
@@ -1016,7 +1035,7 @@ export class OpenClawConfigSync {
       try {
         const existing = previousConfig;
         if (isRecord(existing)) {
-          const canonicalExisting = sanitizeOpenClawV2026_9_2Config(existing);
+          const canonicalExisting = sanitizeOpenClawV2026_9_8Config(existing);
           const hasHookConfig = Object.keys(hookConfig).length > 0;
           const hasSubstantiveConfig =
             Boolean(isRecord(canonicalExisting.models) && canonicalExisting.models.providers) ||
@@ -1079,7 +1098,7 @@ export class OpenClawConfigSync {
                 existingConfig: canonicalExisting,
               }),
             );
-            const mergedConfig = sanitizeOpenClawV2026_9_2Config(
+            const mergedConfig = sanitizeOpenClawV2026_9_8Config(
               withMemorySearch(
                 {
                   ...canonicalExisting,
@@ -1157,7 +1176,7 @@ export class OpenClawConfigSync {
                 { enabled: false },
               ),
             );
-            this.applyDecisionModel(mergedConfig);
+            this.applyManagedNonLanguageModels(mergedConfig);
             const mergedContent = `${JSON.stringify(mergedConfig, null, 2)}\n`;
             if (hasOpenClawConfigChanged(currentContent, mergedConfig)) {
               ensureDir(path.dirname(configPath));

@@ -7,6 +7,7 @@ import {
   MediaGenerationModelsIpc,
   OpenAiCompatibleMediaConfigProviderIds,
 } from '../../../shared/providers/mediaGenerationModels';
+import { t } from '../../core/i18n';
 import type { OpenClawRuntimeAdapter } from '../../engine/openclaw/openclawRuntimeAdapter';
 
 interface Dependencies {
@@ -113,7 +114,10 @@ export function registerMediaGenerationModelHandlers({
 
   ipcMain.handle(
     MediaGenerationModelsIpc.GetConfiguration,
-    async (_event, kind: MediaGenerationModelKind): Promise<MediaGenerationModelConfigurationResult> => {
+    async (
+      _event,
+      kind: MediaGenerationModelKind,
+    ): Promise<MediaGenerationModelConfigurationResult> => {
       if (!isKind(kind)) throw new Error('Invalid media generation model kind.');
       try {
         requireRuntime();
@@ -141,15 +145,26 @@ export function registerMediaGenerationModelHandlers({
       if (!isKind(kind)) throw new Error('Invalid media generation model kind.');
       requireRuntime();
       const configuration = validateConfiguration(value);
+      if (
+        kind === 'video' &&
+        configuration &&
+        (configuration.baseUrl ||
+          configuration.apiKey ||
+          [configuration.primary, ...configuration.fallbacks].some(reference =>
+            ['openai', OpenAiCompatibleMediaConfigProviderIds.video].includes(
+              reference.split('/')[0],
+            ),
+          ))
+      ) {
+        throw new Error(t('nativeVideoLegacyUnsupported'));
+      }
       const mutate = async (): Promise<void> => {
         const snapshot = await requestGateway<{ hash?: unknown; config?: unknown }>('config.get');
         if (typeof snapshot.hash !== 'string' || !snapshot.hash) {
           throw new Error('Media generation model configuration is unavailable.');
         }
         const isolatedProviderId =
-          kind === 'image' || kind === 'video'
-            ? OpenAiCompatibleMediaConfigProviderIds[kind]
-            : undefined;
+          kind === 'image' ? OpenAiCompatibleMediaConfigProviderIds[kind] : undefined;
         const mediaConfiguration = configuration
           ? {
               primary: configuration.primary,
@@ -178,9 +193,7 @@ export function registerMediaGenerationModelHandlers({
             ...(isolatedProviderConfiguration
               ? {
                   models: { providers: isolatedProviderConfiguration },
-                  ...(configuration
-                    ? { plugins: { entries: { openai: { enabled: true } } } }
-                    : {}),
+                  ...(configuration ? { plugins: { entries: { openai: { enabled: true } } } } : {}),
                 }
               : {}),
           }),

@@ -47,9 +47,8 @@ describe('workboard card execution state', () => {
     },
   );
 
-  it('allows a historical session link but rejects a task or active claim', () => {
+  it('allows a historical session link but rejects an active claim', () => {
     expect(canStartWorkboardCard(card({ sessionKey: 'agent:main:subagent:one' }), 100)).toBe(true);
-    expect(canStartWorkboardCard(card({ taskId: 'task-1' }), 100)).toBe(false);
     expect(
       canStartWorkboardCard(
         card({

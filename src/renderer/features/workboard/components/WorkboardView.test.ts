@@ -63,28 +63,19 @@ afterEach(() => {
 });
 
 describe('Workboard session selection', () => {
-  it('preserves task-only identity when stopping from details', async () => {
-    const taskCard = { ...card('a'), sessionKey: undefined, runId: undefined, taskId: 'task-a' };
-    vi.mocked(workboardService.getSnapshot).mockResolvedValue(snapshot([taskCard]));
-    vi.mocked(workboardService.stopCard).mockResolvedValue(taskCard);
+  it('does not offer cancellation without a native linked session', async () => {
+    const orphan = { ...card('a'), sessionKey: undefined, runId: undefined };
+    vi.mocked(workboardService.getSnapshot).mockResolvedValue(snapshot([orphan]));
     mount();
     fireEvent.click(
       await screen.findByRole('button', { name: i18nService.t('workboardViewDetails') }),
     );
-    fireEvent.click(await screen.findByRole('button', { name: '停止执行' }));
-    await waitFor(() =>
-      expect(workboardService.stopCard).toHaveBeenCalledWith('a', {
-        sessionKey: undefined,
-        runId: undefined,
-        taskId: 'task-a',
-      }),
-    );
+    expect(screen.queryByRole('button', { name: '停止执行' })).toBeNull();
+    expect(workboardService.stopCard).not.toHaveBeenCalled();
   });
 
   it('sends the displayed execution identity when stopping', async () => {
-    vi.mocked(workboardService.getSnapshot).mockResolvedValue(
-      snapshot([{ ...card('a'), taskId: 'task-a' }]),
-    );
+    vi.mocked(workboardService.getSnapshot).mockResolvedValue(snapshot([card('a')]));
     vi.mocked(workboardService.resolveSession).mockResolvedValue({ sessionKey: 'canonical-a' });
     vi.mocked(workboardService.stopCard).mockResolvedValue(card('a'));
     mount();
@@ -94,7 +85,6 @@ describe('Workboard session selection', () => {
       expect(workboardService.stopCard).toHaveBeenCalledWith('a', {
         sessionKey: 'canonical-a',
         runId: 'run-a',
-        taskId: 'task-a',
       }),
     );
   });
@@ -146,9 +136,13 @@ describe('simplified workboard', () => {
     vi.mocked(workboardService.getSnapshot).mockResolvedValue(snapshot([reviewed]));
     vi.mocked(workboardService.moveCard).mockResolvedValue({ ...reviewed, status: 'done' });
     mount();
-    fireEvent.click(await screen.findByRole('button', { name: i18nService.t('workboardViewDetails') }));
+    fireEvent.click(
+      await screen.findByRole('button', { name: i18nService.t('workboardViewDetails') }),
+    );
     fireEvent.click(screen.getByRole('button', { name: i18nService.t('workboardConfirmDone') }));
-    await waitFor(() => expect(workboardService.moveCard).toHaveBeenCalledWith('reviewed', 'done', 1024, 42));
+    await waitFor(() =>
+      expect(workboardService.moveCard).toHaveBeenCalledWith('reviewed', 'done', 1024, 42),
+    );
   });
 
   it('keeps live review cards in progress without saying that the run has finished', async () => {

@@ -10,6 +10,33 @@ import {
 } from '../../resources/browser-extension/conversation-overlay/modules/sidepanel-state.js';
 
 describe('browser extension side panel state', () => {
+  it('uses accepted run identity when same-text pending inputs change', () => {
+    const pending = { threadId: 'one', text: 'same', runId: 'current', persistedMatches: 1 };
+    const old = { role: 'user', text: 'same', pendingInput: { runId: 'other' } };
+    expect(mergePendingUserMessage([old], pending, 'one')).toHaveLength(2);
+    const accepted = { role: 'user', text: 'same', pendingInput: { runId: 'current' } };
+    expect(mergePendingUserMessage([accepted], pending, 'one')).toEqual([accepted]);
+    const canonical = { role: 'user', text: 'same', rawMessage: { __openclaw: { idempotencyKey: 'current:user' } } };
+    expect(mergePendingUserMessage([canonical], pending, 'one')).toEqual([canonical]);
+  });
+  it('preserves native pending status separately from canonical user messages', () => {
+    const entries = messagesFromThread({
+      id: 'one',
+      turns: [
+        {
+          id: 'turn',
+          items: [
+            {
+              type: 'userMessage',
+              content: [{ type: 'text', text: 'accepted' }],
+              pendingInput: { id: 'native-pending', state: 'interrupted' },
+            },
+          ],
+        },
+      ],
+    });
+    expect(entries[0].pendingInput).toEqual({ id: 'native-pending', state: 'interrupted' });
+  });
   it('does not treat two empty thread ids as a running turn', () => {
     expect(isCurrentThreadRunning('', '')).toBe(false);
   });

@@ -65,6 +65,7 @@ import {
   summarizeHistoryForDebug,
   toolResultCallIds,
 } from './chat-controller-support';
+import { refreshNativePendingInputs } from './chat-pending-inputs';
 export interface ChatControllerHistoryContext {
   readonly currentMessageHistory: ChunkedMessageHistory;
   readonly state: ChatState;
@@ -1066,6 +1067,14 @@ export async function loadHistory(
     this.state.currentSessionId = authoritativeSessionId;
     this.state.transcript.sessionId = authoritativeSessionId;
     this.applySessionContextUsage(result?.sessionInfo, sessionKey);
+    // Native custody has independent paging and must never become canonical
+    // transcript history. Recover it without blocking the history commit.
+    void refreshNativePendingInputs(
+      this.state,
+      result,
+      () => this.notify(),
+      () => this.scheduleDeferredHistoryReload(sessionKey, 'pending-input-consumed'),
+    );
     let messages = this.projectLocalCompactionStatus(sessionKey, hydratedMessages);
     messages = mergeRefreshedHistoryWindow(
       replacesHistoryProjection ? [] : previousMessages,

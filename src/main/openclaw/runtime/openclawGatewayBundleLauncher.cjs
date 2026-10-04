@@ -7,6 +7,41 @@ const GATEWAY_LAUNCHER_FILENAME = 'gateway-launcher.cjs';
 const GATEWAY_BUNDLE_FILENAME = 'gateway-bundle.mjs';
 const GATEWAY_READY_MESSAGE = 'justdo:gateway:ready';
 
+// Match OpenClaw 9.8's Windows limit before Node can enable its cache at spawn.
+// Node may hang on long cache paths before the native entrypoint gets control.
+function buildOpenClawCompileCacheEnvironment(env, directory, platform = process.platform) {
+  const result = { ...env };
+  for (const key of Object.keys(result)) {
+    if (key === 'NODE_COMPILE_CACHE' ||
+        (platform === 'win32' && key.toUpperCase() === 'NODE_COMPILE_CACHE')) delete result[key];
+  }
+  if (platform === 'win32' && path.win32.resolve(directory).length > 200) {
+    for (const key of Object.keys(result)) {
+      if (key.toUpperCase() === 'NODE_DISABLE_COMPILE_CACHE') delete result[key];
+    }
+    result.NODE_DISABLE_COMPILE_CACHE = '1';
+  } else {
+    result.NODE_COMPILE_CACHE = directory;
+  }
+  return result;
+}
+
+function buildOpenClawCompileCacheSetupSource() {
+  return (
+    `try {\n` +
+    `  const { enableCompileCache, getCompileCacheDir } = require('node:module');\n` +
+    `  const _ccDir = path.join(process.env.OPENCLAW_STATE_DIR || __dirname, '.compile-cache');\n` +
+    `  if (process.platform === 'win32' && path.resolve(_ccDir).length > 200) {\n` +
+    `    process.env.NODE_DISABLE_COMPILE_CACHE = '1';\n` +
+    `    delete process.env.NODE_COMPILE_CACHE;\n` +
+    `  } else if (process.env.NODE_DISABLE_COMPILE_CACHE !== '1') {\n` +
+    `    enableCompileCache(_ccDir);\n` +
+    `    process.stderr.write('[openclaw-launcher] compile-cache dir=' + getCompileCacheDir() + '\\n');\n` +
+    `  }\n` +
+    `} catch (_) {}\n`
+  );
+}
+
 function buildOpenClawGatewayBundleLauncherSource() {
   return (
     `// Auto-generated CJS launcher for Windows — bundle-only mode.\n` +
@@ -18,12 +53,7 @@ function buildOpenClawGatewayBundleLauncherSource() {
     `const _t0 = Date.now();\n` +
     `const _elapsed = () => (Date.now() - _t0) + 'ms';\n` +
     `// ─── Compile cache setup ───\n` +
-    `try {\n` +
-    `  const { enableCompileCache, getCompileCacheDir } = require('node:module');\n` +
-    `  const _ccDir = path.join(process.env.OPENCLAW_STATE_DIR || __dirname, '.compile-cache');\n` +
-    `  enableCompileCache(_ccDir);\n` +
-    `  _log('compile-cache dir=' + getCompileCacheDir());\n` +
-    `} catch (_) {}\n` +
+    buildOpenClawCompileCacheSetupSource() +
     `// ─── Load bundle ───\n` +
     `const bundlePath = path.join(__dirname, '${GATEWAY_BUNDLE_FILENAME}');\n` +
     `const _realpath = (p) => { try { return fs.realpathSync(path.resolve(p)); } catch { return path.resolve(p); } };\n` +
@@ -102,6 +132,8 @@ module.exports = {
   GATEWAY_READY_MESSAGE,
   GATEWAY_BUNDLE_FILENAME,
   GATEWAY_LAUNCHER_FILENAME,
+  buildOpenClawCompileCacheEnvironment,
+  buildOpenClawCompileCacheSetupSource,
   buildOpenClawGatewayBundleLauncherSource,
   ensureOpenClawGatewayBundleLauncher,
 };

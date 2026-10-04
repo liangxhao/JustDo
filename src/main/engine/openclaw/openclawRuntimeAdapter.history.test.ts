@@ -428,38 +428,28 @@ test('rejects a non-advancing gateway history cursor instead of looping', async 
   expect(request).toHaveBeenCalledTimes(1);
 });
 
-test('refreshes persisted history when a previously active child disappears from live projections', async () => {
+test('removes a deleted child after a complete native session read', async () => {
   const { store, session } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
   const parentKey = 'agent:main:cowork:parent';
   let taskListInvocation = 0;
-  const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
-    if (method === 'tasks.list') {
+  const request = vi.fn(async (method: string) => {
+    if (method === 'sessions.list') {
       taskListInvocation += 1;
       return {
-        tasks:
+        sessions:
           taskListInvocation === 2
             ? []
             : [
                 {
                   id: 'active_task',
                   runtime: 'subagent',
-                  status: taskListInvocation > 2 ? 'completed' : 'running',
-                  childSessionKey: 'agent:main:subagent:active-child',
+                  status: taskListInvocation > 2 ? 'done' : 'running',
+                  key: 'agent:main:subagent:active-child',
+                  spawnedBy: parentKey,
                   endedAt: taskListInvocation > 2 ? 109_000 : undefined,
                 },
               ],
-      };
-    }
-    if (method === 'tasks.get') {
-      return {
-        task: {
-          id: String(params?.taskId),
-          runtime: 'subagent',
-          status: taskListInvocation > 2 ? 'completed' : 'running',
-          childSessionKey: 'agent:main:subagent:active-child',
-          endedAt: taskListInvocation > 2 ? 109_000 : undefined,
-        },
       };
     }
     return {};
@@ -480,9 +470,9 @@ test('refreshes persisted history when a previously active child disappears from
     });
     now.mockReturnValue(109_000);
     await expect(adapter.getSubagentStatuses(session.id)).resolves.toMatchObject({
-      subagents: [{ status: 'done', endedAt: 109_000 }],
+      subagents: [],
     });
-    expect(request.mock.calls.filter(([method]) => method === 'tasks.list')).toHaveLength(3);
+    expect(request.mock.calls.filter(([method]) => method === 'sessions.list')).toHaveLength(2);
   } finally {
     warn.mockRestore();
     now.mockRestore();
@@ -494,29 +484,20 @@ test('retains history and retries promptly when a persisted history page fails',
   const adapter = new OpenClawRuntimeAdapter(store, {});
   const parentKey = 'agent:main:cowork:parent';
   let persistedScan = 0;
-  const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
-    if (method === 'tasks.list') {
+  const request = vi.fn(async (method: string) => {
+    if (method === 'sessions.list') {
       persistedScan += 1;
       if (persistedScan === 2) throw new Error('temporary persisted scan failure');
       return {
-        tasks: [
+        sessions: [
           {
             id: 'old_child',
             runtime: 'subagent',
             status: 'completed',
-            childSessionKey: 'agent:main:subagent:old-child',
+            key: 'agent:main:subagent:old-child',
+            spawnedBy: parentKey,
           },
         ],
-      };
-    }
-    if (method === 'tasks.get') {
-      return {
-        task: {
-          id: String(params?.taskId),
-          runtime: 'subagent',
-          status: 'completed',
-          childSessionKey: 'agent:main:subagent:old-child',
-        },
       };
     }
     return {};

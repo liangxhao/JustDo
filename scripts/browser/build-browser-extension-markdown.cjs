@@ -42,13 +42,15 @@ esbuild.buildSync({
 });
 const fs = require('fs');
 const chatStyles = fs.readFileSync(
-  path.join(repoRoot, 'src/renderer/libs/openclaw-chat/components/justdo-chat.ts'),
+  path.join(repoRoot, 'src/renderer/libs/openclaw-chat/components/justdo-chat.styles.ts'),
   'utf8',
 );
-const annotationStyles = chatStyles.slice(
-  chatStyles.indexOf('      .browser-annotation-message {'),
-  chatStyles.indexOf('      .message-attachment-list-item {'),
-);
+const annotationStart = chatStyles.indexOf('    .browser-annotation-message {');
+const annotationEnd = chatStyles.indexOf('    .message-attachment-list-item {', annotationStart);
+if (annotationStart < 0 || annotationEnd <= annotationStart) {
+  throw new Error('Browser annotation styles were not found in the chat style source.');
+}
+const annotationStyles = chatStyles.slice(annotationStart, annotationEnd);
 fs.writeFileSync(
   path.join(
     repoRoot,

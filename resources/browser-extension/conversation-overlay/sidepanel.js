@@ -7,7 +7,7 @@ import {
   shouldShowTurnError,
   toolInputSummary,
 } from './modules/sidepanel-state.js';
-import { renderRichContent, retryRichImages } from './modules/sidepanel-rich-content.js';
+import { pendingInputLabel, renderRichContent, retryRichImages } from './modules/sidepanel-rich-content.js';
 import { BrowserExtensionStream } from './modules/sidepanel-stream.js';
 
 void initializeAppearance();
@@ -268,6 +268,12 @@ function renderMessages(entries) {
       const result = await client.request('thread/image', { threadId, source });
       return result.dataUrl;
     });
+    if (entry.pendingInput) {
+      const label = document.createElement('small');
+      label.className = 'pending-input-status';
+      label.textContent = pendingInputLabel(entry.pendingInput.state, entry.pendingInput.incomplete);
+      item.append(label);
+    }
     if (!item.childElementCount) continue;
     item.renderSignature = signature;
     nextNodes.push(item);
@@ -580,6 +586,9 @@ async function submit() {
       permissionMode,
       ...(pageContext ? { pageContext } : {}),
     });
+    if (pendingUserMessage?.threadId === threadId && startedTurn?.turn?.id) {
+      pendingUserMessage.runId = startedTurn.turn.id;
+    }
     setRunningTurn(threadId, startedTurn?.turn?.id);
     clearAttachments();
     await refreshAll(threadId);

@@ -381,21 +381,19 @@ export class BrowserExtensionChatController implements BrowserExtensionChatApi {
 
   listSessions() {
     const store = this.deps.getStore();
-    return store
-      .listSessions()
-      .map(summary => {
-        const session = store.getSession(summary.id);
-        return {
-          id: summary.id,
-          title: summary.title,
-          status: summary.status,
-          createdAt: summary.createdAt,
-          updatedAt: summary.updatedAt,
-          cwd: session?.cwd ?? '',
-          ...(session?.modelRef ? { modelRef: session.modelRef } : {}),
-          permissionMode: resolvePermissionMode(session?.permissionMode),
-        };
-      });
+    return store.listSessions().map(summary => {
+      const session = store.getSession(summary.id);
+      return {
+        id: summary.id,
+        title: summary.title,
+        status: summary.status,
+        createdAt: summary.createdAt,
+        updatedAt: summary.updatedAt,
+        cwd: session?.cwd ?? '',
+        ...(session?.modelRef ? { modelRef: session.modelRef } : {}),
+        permissionMode: resolvePermissionMode(session?.permissionMode),
+      };
+    });
   }
 
   async readManagedImage(sessionId: string, source: string): Promise<string> {
@@ -425,24 +423,58 @@ export class BrowserExtensionChatController implements BrowserExtensionChatApi {
     // even after OpenClaw has persisted the final assistant message.
     const history = await runtime.fetchSessionHistoryByKey(sessionKey, undefined, {
       forceFullSnapshot: options.forceFullSnapshot === true,
+      includePendingInputs: true,
     });
     if (!history) throw new Error('Unable to load conversation history.');
-    return extractBrowserExtensionHistoryEntries(history.messages).map(entry => {
-      const metadata = entry.metadata;
-      const toolName = typeof metadata?.toolName === 'string' ? metadata.toolName : undefined;
-      const toolUseId = typeof metadata?.toolUseId === 'string' ? metadata.toolUseId : undefined;
-      return {
-        role: entry.role,
-        text: entry.text,
-        ...(entry.rawMessage ? { rawMessage: entry.rawMessage } : {}),
-        ...(entry.thinking ? { thinking: entry.thinking } : {}),
-        ...(entry.modelName ? { modelName: entry.modelName } : {}),
-        ...(toolName ? { toolName } : {}),
-        ...(toolUseId ? { toolUseId } : {}),
-        ...(metadata && 'toolInput' in metadata ? { toolInput: metadata.toolInput } : {}),
-        ...(typeof metadata?.isError === 'boolean' ? { isError: metadata.isError } : {}),
+    const projected = history.messages.map(message => ({
+      message,
+      pendingInput: undefined as { id: string; state: string; runId?: string; incomplete?: boolean } | undefined,
+    }));
+    for (const pending of history.pendingInputs ?? []) {
+      if (pending.message.display === false) continue;
+      const row = {
+        message: pending.message,
+        pendingInput: {
+          id: pending.id,
+          ...(pending.runId ? { runId: pending.runId } : {}),
+          state: pending.state,
+          ...(isRecord(pending.message.__openclaw) && pending.message.__openclaw.truncated === true
+            ? { incomplete: true }
+            : {}),
+        },
       };
-    });
+      const next = projected.findIndex(({ message }) => {
+        if (!isRecord(message)) return false;
+        const stamp =
+          typeof message.timestamp === 'number'
+            ? message.timestamp
+            : typeof message.timestamp === 'string'
+              ? Date.parse(message.timestamp)
+              : NaN;
+        return Number.isFinite(stamp) && stamp > pending.acceptedAt;
+      });
+      if (next < 0) projected.push(row);
+      else projected.splice(next, 0, row);
+    }
+    return projected.flatMap(({ message, pendingInput }) =>
+      extractBrowserExtensionHistoryEntries([message]).map(entry => {
+        const metadata = entry.metadata;
+        const toolName = typeof metadata?.toolName === 'string' ? metadata.toolName : undefined;
+        const toolUseId = typeof metadata?.toolUseId === 'string' ? metadata.toolUseId : undefined;
+        return {
+          role: entry.role,
+          text: entry.text,
+          ...(pendingInput ? { pendingInput } : {}),
+          ...(entry.rawMessage ? { rawMessage: entry.rawMessage } : {}),
+          ...(entry.thinking ? { thinking: entry.thinking } : {}),
+          ...(entry.modelName ? { modelName: entry.modelName } : {}),
+          ...(toolName ? { toolName } : {}),
+          ...(toolUseId ? { toolUseId } : {}),
+          ...(metadata && 'toolInput' in metadata ? { toolInput: metadata.toolInput } : {}),
+          ...(typeof metadata?.isError === 'boolean' ? { isError: metadata.isError } : {}),
+        };
+      }),
+    );
   }
 
   async startThread(title?: string) {

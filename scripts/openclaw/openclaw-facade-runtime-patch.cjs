@@ -1,14 +1,14 @@
 'use strict';
-// Packaging-only seam for the locked 2026.9.6 npm artifact. Native require cannot
+// Packaging-only seam for the locked 2026.9.8 npm artifact. Native require cannot
 // discover this companion once the Gateway entry is bundled at the runtime root.
 const fs = require('fs');
 const path = require('path');
-const { assertCurrentPatchContract, replaceNamedFunction } = require('../patches/v2026.9.6/_patch-utils.js');
-const CONTRACT = 'JUSTDO_FACADE_RUNTIME_STATIC_IMPORT_V2026_9_6';
+const { assertCurrentPatchContract, replaceNamedFunction } = require('../patches/v2026.9.8/_patch-utils.js');
+const CONTRACT = 'JUSTDO_FACADE_RUNTIME_STATIC_IMPORT_V2026_9_8';
 const STATIC_IMPORT = `// ${CONTRACT}\nimport * as _facadeActivationCheckStatic from "./facade-activation-check.runtime.js";`;
 function findFacadeRuntime(root) {
   const files = fs.readdirSync(path.join(root, 'dist')).filter(name => /^facade-runtime-.*\.mjs$/.test(name));
-  if (files.length !== 1) throw new Error('Expected exactly one v2026.9.6 facade runtime');
+  if (files.length !== 1) throw new Error('Expected exactly one v2026.9.8 facade runtime');
   return path.join(root, 'dist', files[0]);
 }
 function transform(source, file) {

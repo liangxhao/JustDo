@@ -1390,7 +1390,8 @@ export class CoworkService {
       sessionId?: string;
       label: string;
       labelSource: 'taskName' | 'label' | 'task';
-      status: 'pending' | 'running' | 'done' | 'failed' | 'killed' | 'timeout' | 'blocked';
+      status:
+        'pending' | 'running' | 'done' | 'failed' | 'killed' | 'timeout' | 'blocked' | 'unknown';
       task?: string;
       runId?: string;
       model?: string;

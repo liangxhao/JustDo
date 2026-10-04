@@ -6,784 +6,190 @@ import {
   listGatewaySubagentDescendants,
   listGatewaySubagents,
   listGatewaySubagentsWithMetadata,
+  listPersistedGatewaySessions,
   mergeGatewaySubagentSnapshots,
 } from './subagentGateway';
+const root = 'agent:main:justdo:parent';
+const child = 'agent:main:subagent:child';
+const client = (request: ReturnType<typeof vi.fn>) => ({ request }) as unknown as GatewayClientLike;
+const row = {
+  key: child,
+  sessionId: 'native-child',
+  spawnedBy: root,
+  status: 'running',
+  label: 'Review',
+  updatedAt: 10,
+  activeRunIds: ['run-1'],
+};
 
-const gatewayClient = (request: GatewayClientLike['request']): GatewayClientLike =>
-  ({ request }) as GatewayClientLike;
-
-test('maps native task ledger states and keeps task id separate from display label', async () => {
-  const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
-    if (method === 'tasks.list') {
-      expect(params).toEqual({
-        sessionKey: 'agent:main:justdo:parent',
-        limit: 500,
-      });
-      return {
-        tasks: [
-          {
-            id: 'task_machine_1',
-            runtime: 'subagent',
-            status: 'queued',
-            title: 'Readable child title',
-            sessionKey: 'agent:main:justdo:parent',
-            childSessionKey: 'agent:main:subagent:child',
-            createdAt: 100,
-            updatedAt: 150,
-            toolUseCount: 3,
-            lastToolName: 'read',
-            lastActivity: 'Inspecting source',
-            progressSummary: 'Reviewing the runtime adapter',
-          },
-        ],
-      };
-    }
-    if (method === 'tasks.get') {
-      return {
-        task: {
-          id: 'task_machine_1',
-          runtime: 'subagent',
-          status: 'queued',
-          title: 'Readable child title',
-          sessionKey: 'agent:main:justdo:parent',
-          childSessionKey: 'agent:main:subagent:child',
-          createdAt: 100,
-          updatedAt: 150,
-          toolUseCount: 3,
-          lastToolName: 'read',
-          lastActivity: 'Inspecting source',
-          progressSummary: 'Reviewing the runtime adapter',
-          prompt: 'Inspect the implementation.',
-        },
-      };
-    }
-    if (method === 'sessions.describe') {
-      expect(params).toEqual({ key: 'agent:main:subagent:child' });
-      return {
-        session: {
-          key: 'agent:main:subagent:child',
-          sessionId: 'session-child',
-          model: 'gpt-5.6',
-          totalTokens: 42,
-        },
-      };
-    }
-    throw new Error(`unexpected ${method}`);
-  });
-
-  await expect(
-    listGatewaySubagents({
-      client: gatewayClient(request as GatewayClientLike['request']),
-      parentKeys: ['agent:main:justdo:parent'],
-    }),
-  ).resolves.toEqual([
+test('projects native session lifecycle and stable identities without task RPCs', async () => {
+  const request = vi
+    .fn()
+    .mockResolvedValue({ sessions: [row, { ...row, key: 'unrelated', spawnedBy: 'other' }] });
+  const result = await listGatewaySubagents({ client: client(request), parentKeys: [root] });
+  expect(result).toMatchObject([
     {
-      id: 'task_machine_1',
-      taskName: 'task_machine_1',
-      sessionKey: 'agent:main:subagent:child',
-      label: 'Readable child title',
-      labelSource: 'label',
-      status: 'pending',
-      runtime: 'subagent',
-      agentId: undefined,
-      task: 'Inspect the implementation.',
-      sessionId: 'session-child',
-      model: 'gpt-5.6',
-      totalTokens: 42,
-      startedAt: undefined,
-      updatedAt: 150,
-      endedAt: undefined,
-      progressSummary: 'Reviewing the runtime adapter',
-      terminalSummary: undefined,
-      error: undefined,
-      lastActivity: 'Inspecting source',
-      lastToolName: 'read',
-      toolUseCount: 3,
-    },
-  ]);
-});
-
-test('includes ACP tasks with their external agent identity', async () => {
-  const request = vi.fn(async () => ({
-    tasks: [
-      {
-        id: 'task-acp-1',
-        runtime: 'acp',
-        kind: 'acp',
-        agentId: 'claude',
-        status: 'running',
-        title: 'Review with Claude',
-        childSessionKey: 'agent:main:acp:claude-child',
-      },
-    ],
-  }));
-
-  await expect(
-    listGatewaySubagents({
-      client: gatewayClient(request as GatewayClientLike['request']),
-      parentKeys: ['agent:main:justdo:parent'],
-      hydrateDetails: false,
-    }),
-  ).resolves.toMatchObject([
-    {
-      id: 'task-acp-1',
-      runtime: 'acp',
-      agentId: 'claude',
+      id: child,
+      taskName: child,
+      sessionKey: child,
+      sessionId: 'native-child',
+      label: 'Review',
       status: 'running',
-      label: 'Review with Claude',
+      runId: 'run-1',
+      parentTaskId: root,
     },
   ]);
-});
-
-test('collapses the native subagent wrapper around an ACP backing task', async () => {
-  const request = vi.fn(async () => ({
-    tasks: [
-      {
-        id: 'task-wrapper',
-        runtime: 'subagent',
-        agentId: 'codex',
-        runId: 'run-shared',
-        status: 'completed',
-        title: 'Codex task',
-        childSessionKey: 'agent:codex:acp:shared',
-      },
-      {
-        id: 'task-acp',
-        runtime: 'acp',
-        agentId: 'codex',
-        runId: 'run-shared',
-        status: 'completed',
-        title: 'Codex task',
-        childSessionKey: 'agent:codex:acp:shared',
-      },
-    ],
-  }));
-
-  await expect(
-    listGatewaySubagents({
-      client: gatewayClient(request as GatewayClientLike['request']),
-      parentKeys: ['agent:main:justdo:parent'],
-      hydrateDetails: false,
-    }),
-  ).resolves.toMatchObject([
-    {
-      id: 'task-acp',
-      runtime: 'acp',
-      agentId: 'codex',
-      runId: 'run-shared',
-      sessionKey: 'agent:codex:acp:shared',
-    },
-  ]);
-});
-
-test('ignores non-delegated maintenance tasks that use the ACP runtime', async () => {
-  const request = vi.fn(async () => ({
-    tasks: [
-      {
-        id: 'task-maintenance-1',
-        runtime: 'acp',
-        kind: 'maintenance',
-        status: 'running',
-      },
-    ],
-  }));
-  const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-
-  try {
-    await expect(
-      listGatewaySubagents({
-        client: gatewayClient(request as GatewayClientLike['request']),
-        parentKeys: ['agent:main:justdo:parent'],
-        hydrateDetails: false,
-      }),
-    ).resolves.toEqual([]);
-    expect(warn).not.toHaveBeenCalled();
-  } finally {
-    warn.mockRestore();
-  }
+  expect(request).toHaveBeenCalledWith('sessions.list', {
+    limit: 500,
+    offset: 0,
+    archived: 'all',
+    spawnedBy: root,
+  });
 });
 
 test.each([
-  ['running', 'running'],
-  ['completed', 'done'],
+  ['queued', 'pending'],
+  ['done', 'done'],
   ['failed', 'failed'],
-  ['cancelled', 'killed'],
-  ['timed_out', 'timeout'],
-] as const)('maps native %s to the JustDo %s DTO', async (nativeStatus, expected) => {
-  const request = vi.fn(async () => ({
-    tasks: [
-      {
-        id: `task-${nativeStatus}`,
-        runtime: 'subagent',
-        status: nativeStatus,
-        childSessionKey: `agent:main:subagent:${nativeStatus}`,
-      },
-    ],
-  }));
-
-  const result = await listGatewaySubagents({
-    client: gatewayClient(request as GatewayClientLike['request']),
-    parentKeys: ['agent:main:justdo:parent'],
-    hydrateDetails: false,
-  });
-  expect(result[0]?.status).toBe(expected);
-});
-
-test('loads an exact task prompt and session identity for the details popup', async () => {
-  const request = vi.fn(async (method: string) => {
-    if (method === 'tasks.get') {
-      return {
-        task: {
-          id: 'task-one',
-          runtime: 'subagent',
-          status: 'running',
-          title: 'Short title',
-          prompt: 'The complete task prompt that must be displayed.',
-          childSessionKey: 'agent:researcher:subagent:one',
-          startedAt: 100,
-        },
-      };
-    }
-    if (method === 'sessions.describe') {
-      return {
-        session: {
-          sessionId: 'session-one',
-          modelProvider: 'openrouter',
-          model: 'anthropic/claude-sonnet-4',
-        },
-      };
-    }
-    throw new Error(`unexpected ${method}`);
-  });
-
-  await expect(
-    getGatewaySubagentDetails(gatewayClient(request as GatewayClientLike['request']), 'task-one'),
-  ).resolves.toMatchObject({
-    id: 'task-one',
-    task: 'The complete task prompt that must be displayed.',
-    sessionId: 'session-one',
-    model: 'openrouter/anthropic/claude-sonnet-4',
-    startedAt: 100,
-  });
-});
-
-test('uses an active session projection when a terminal task is reactivated', async () => {
-  const request = vi.fn(async (method: string) => {
-    if (method === 'tasks.get') {
-      return {
-        task: {
-          id: 'task-reactivated',
-          runtime: 'subagent',
-          status: 'completed',
-          terminalOutcome: 'blocked',
-          childSessionKey: 'agent:main:subagent:reactivated',
-          startedAt: 100,
-          endedAt: 200,
-          terminalSummary: 'Old blocked result',
-          error: 'Old error',
-        },
-      };
-    }
-    if (method === 'sessions.describe') {
-      return {
-        session: {
-          sessionId: 'session-reactivated',
-          status: 'running',
-          subagentRunState: 'active',
-          startedAt: 50,
-          updatedAt: 300,
-          runtimeMs: 175,
-        },
-      };
-    }
-    throw new Error(`unexpected ${method}`);
-  });
-
-  const result = await getGatewaySubagentDetails(
-    gatewayClient(request as GatewayClientLike['request']),
-    'task-reactivated',
-  );
-
-  expect(result).toMatchObject({
-    status: 'running',
-    startedAt: 50,
-    updatedAt: 300,
-    runtimeMs: 175,
-    runtimeSampledAt: expect.any(Number),
-  });
-  expect(result).not.toHaveProperty('endedAt');
-  expect(result).not.toHaveProperty('terminalSummary');
-  expect(result).not.toHaveProperty('error');
-});
-
-test('does not let an older running session row override a newer terminal task', async () => {
-  const request = vi.fn(async (method: string) => {
-    if (method === 'tasks.get') {
-      return {
-        task: {
-          id: 'task-finished',
-          runtime: 'subagent',
-          status: 'completed',
-          terminalOutcome: 'blocked',
-          childSessionKey: 'agent:main:subagent:finished',
-          updatedAt: 500,
-          endedAt: 500,
-          terminalSummary: 'Current blocked result',
-        },
-      };
-    }
-    if (method === 'sessions.describe') {
-      return {
-        session: {
-          status: 'running',
-          subagentRunState: 'active',
-          updatedAt: 300,
-          runtimeMs: 100,
-        },
-      };
-    }
-    throw new Error(`unexpected ${method}`);
-  });
-
-  await expect(
-    getGatewaySubagentDetails(
-      gatewayClient(request as GatewayClientLike['request']),
-      'task-finished',
-    ),
-  ).resolves.toMatchObject({
-    status: 'blocked',
-    updatedAt: 500,
-    endedAt: 500,
-    terminalSummary: 'Current blocked result',
-  });
-});
-
-test('uses run identity to resolve an equal-revision terminal-task conflict', async () => {
-  const describe = async (activeRunIds: string[]) => {
-    const request = vi.fn(async (method: string) => {
-      if (method === 'tasks.get') {
-        return {
-          task: {
-            id: 'task-finished',
-            runtime: 'subagent',
-            runId: 'run-finished',
-            status: 'completed',
-            terminalOutcome: 'blocked',
-            childSessionKey: 'agent:main:subagent:finished',
-            updatedAt: 500,
-            endedAt: 500,
-          },
-        };
-      }
-      if (method === 'sessions.describe') {
-        return {
-          session: {
-            status: 'running',
-            subagentRunState: 'active',
-            updatedAt: 500,
-            runtimeMs: 100,
-          },
-        };
-      }
-      if (method === 'sessions.list') {
-        return {
-          sessions: [
-            {
-              key: 'agent:main:subagent:finished',
-              status: 'running',
-              subagentRunState: 'active',
-              activeRunIds,
-              updatedAt: 500,
-              runtimeMs: 100,
-            },
-          ],
-          hasMore: false,
-        };
-      }
-      throw new Error(`unexpected ${method}`);
-    });
-    return getGatewaySubagentDetails(
-      gatewayClient(request as GatewayClientLike['request']),
-      'task-finished',
-    );
-  };
-
-  await expect(describe(['run-finished'])).resolves.toMatchObject({
-    status: 'blocked',
-    runId: 'run-finished',
-  });
-  await expect(describe(['run-replacement', 'run-finished'])).resolves.toMatchObject({
-    status: 'running',
-    runId: 'run-replacement',
-  });
-  await expect(describe(['run-finished', 'run-replacement'])).resolves.toMatchObject({
-    status: 'running',
-    runId: 'run-replacement',
-  });
-});
-
-test('keeps the terminal task when optional replacement-run lookup fails', async () => {
-  const request = vi.fn(async (method: string) => {
-    if (method === 'tasks.get') {
-      return {
-        task: {
-          id: 'task-finished',
-          runtime: 'subagent',
-          runId: 'run-finished',
-          status: 'completed',
-          terminalOutcome: 'blocked',
-          childSessionKey: 'agent:main:subagent:finished',
-          updatedAt: 500,
-          endedAt: 500,
-        },
-      };
-    }
-    if (method === 'sessions.describe') {
-      return {
-        session: {
-          status: 'running',
-          subagentRunState: 'active',
-          updatedAt: 500,
-        },
-      };
-    }
-    if (method === 'sessions.list') throw new Error('temporary list failure');
-    throw new Error(`unexpected ${method}`);
-  });
-
-  await expect(
-    getGatewaySubagentDetails(
-      gatewayClient(request as GatewayClientLike['request']),
-      'task-finished',
-    ),
-  ).resolves.toMatchObject({
-    status: 'blocked',
-    runId: 'run-finished',
-    updatedAt: 500,
-  });
-});
-
-test('keeps targeted session details when bulk replacement-run lookup fails', async () => {
-  const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
-    if (method === 'tasks.list') {
-      return {
-        tasks: [
-          {
-            id: 'task-finished',
-            runtime: 'subagent',
-            runId: 'run-finished',
-            status: 'completed',
-            childSessionKey: 'agent:main:subagent:finished',
-            updatedAt: 500,
-          },
-          {
-            id: 'task-running',
-            runtime: 'subagent',
-            status: 'running',
-            childSessionKey: 'agent:main:subagent:running',
-            updatedAt: 600,
-          },
-        ],
-      };
-    }
-    if (method === 'sessions.describe') {
-      const key = String(params?.key);
-      return key.endsWith(':finished')
-        ? {
-            session: {
-              sessionId: 'session-finished',
-              model: 'model-finished',
-              status: 'running',
-              subagentRunState: 'active',
-              updatedAt: 500,
-            },
-          }
-        : {
-            session: {
-              sessionId: 'session-running',
-              model: 'model-running',
-              status: 'running',
-              updatedAt: 601,
-            },
-          };
-    }
-    if (method === 'sessions.list') throw new Error('temporary list failure');
-    throw new Error(`unexpected ${method}`);
-  });
-
-  await expect(
-    listGatewaySubagents({
-      client: gatewayClient(request as GatewayClientLike['request']),
-      parentKeys: ['agent:main:justdo:parent'],
-      hydrateTaskDetails: false,
-    }),
-  ).resolves.toMatchObject([
-    { id: 'task-finished', status: 'done', sessionId: 'session-finished', model: 'model-finished' },
-    { id: 'task-running', status: 'running', sessionId: 'session-running', model: 'model-running' },
-  ]);
-});
-
-test('maps a blocked terminal outcome without presenting it as success', async () => {
+  ['killed', 'killed'],
+  ['interrupted', 'killed'],
+  ['timeout', 'timeout'],
+])('maps native %s lifecycle to %s', async (native, expected) => {
   const request = vi.fn().mockResolvedValue({
-    tasks: [
-      {
-        id: 'task-blocked',
-        runtime: 'subagent',
-        status: 'completed',
-        terminalOutcome: 'blocked',
-        childSessionKey: 'agent:main:subagent:blocked',
-      },
-    ],
+    session: {
+      ...row,
+      status: native,
+      lastRunId: 'finished',
+      lastRunError: 'failure',
+      endedAt: 20,
+    },
   });
-
-  const result = await listGatewaySubagents({
-    client: gatewayClient(request as GatewayClientLike['request']),
-    parentKeys: ['agent:main:justdo:parent'],
-    hydrateDetails: false,
-  });
-
-  expect(result[0]?.status).toBe('blocked');
+  const value = await getGatewaySubagentDetails(client(request), child);
+  expect(value?.status).toBe(expected);
+  expect(value?.runId).toBe(native === 'queued' ? 'run-1' : 'finished');
 });
 
-test('paginates the native task ledger and validates forward cursors', async () => {
+test('clears prior terminal state when a native session starts a new run', async () => {
+  const request = vi.fn().mockResolvedValue({
+    session: { ...row, lastRunError: 'previous', endedAt: 1, lastRunId: 'old' },
+  });
+  const value = await getGatewaySubagentDetails(client(request), child);
+  expect(value).toMatchObject({ status: 'running', runId: 'run-1' });
+  expect(value?.error).toBeUndefined();
+  expect(value?.endedAt).toBeUndefined();
+});
+
+test('uses native active run identity and configured model for ACP sessions', async () => {
+  const request = vi.fn().mockResolvedValue({
+    session: {
+      ...row,
+      agentRuntime: { id: 'acp', source: 'session' },
+      model: 'model',
+      modelProvider: 'provider',
+      runtimeMs: 42,
+      snapshotAt: 100,
+      totalTokens: 50,
+    },
+  });
+  expect(await getGatewaySubagentDetails(client(request), child)).toMatchObject({
+    runtime: 'acp',
+    model: 'provider/model',
+    runtimeMs: 42,
+    runtimeSampledAt: 100,
+    totalTokens: 50,
+  });
+});
+
+test('rejects a mismatched describe result and root rows', async () => {
   const request = vi
     .fn()
+    .mockResolvedValueOnce({ session: { ...row, key: 'wrong' } })
+    .mockResolvedValueOnce({ session: { ...row, spawnedBy: undefined } });
+  expect(await getGatewaySubagentDetails(client(request), child)).toBeNull();
+  expect(await getGatewaySubagentDetails(client(request), child)).toBeNull();
+});
+
+test('reads every native page and includes archived children', async () => {
+  const request = vi
+    .fn()
+    .mockResolvedValueOnce({ sessions: [row], hasMore: true, nextOffset: 500 })
     .mockResolvedValueOnce({
-      tasks: [
-        {
-          id: 'one',
-          runtime: 'subagent',
-          status: 'running',
-          childSessionKey: 'agent:main:subagent:one',
-        },
-      ],
-      nextCursor: '1',
-    })
-    .mockResolvedValueOnce({
-      tasks: [
-        {
-          id: 'two',
-          runtime: 'subagent',
-          status: 'completed',
-          childSessionKey: 'agent:main:subagent:two',
-        },
-      ],
+      sessions: [{ ...row, key: 'second', archived: true }],
+      hasMore: false,
     });
-
-  const result = await listGatewaySubagents({
-    client: gatewayClient(request as GatewayClientLike['request']),
-    parentKeys: ['agent:main:justdo:parent'],
-    hydrateDetails: false,
-  });
-  expect(result.map(item => item.id)).toEqual(['one', 'two']);
-  expect(request).toHaveBeenNthCalledWith(2, 'tasks.list', {
-    sessionKey: 'agent:main:justdo:parent',
+  expect(await listPersistedGatewaySessions(client(request))).toHaveLength(2);
+  expect(request).toHaveBeenLastCalledWith('sessions.list', {
     limit: 500,
-    cursor: '1',
+    offset: 500,
+    archived: 'all',
   });
 });
 
-test('enumerates nested descendants using tasks.list and resolves native session ids', async () => {
-  const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
-    if (method === 'tasks.list' && params?.sessionKey === 'agent:main:justdo:parent') {
-      return {
-        tasks: [
-          {
-            id: 'child-task',
-            runtime: 'subagent',
-            status: 'running',
-            title: 'Child',
-            childSessionKey: 'agent:main:subagent:child',
-          },
-        ],
-      };
-    }
-    if (method === 'tasks.list' && params?.sessionKey === 'agent:main:subagent:child') {
-      return {
-        tasks: [
-          {
-            id: 'grandchild-task',
-            runtime: 'subagent',
-            status: 'completed',
-            title: 'Grandchild',
-            childSessionKey: 'agent:main:subagent:grandchild',
-          },
-        ],
-      };
-    }
-    if (method === 'tasks.list') return { tasks: [] };
-    if (method === 'sessions.describe') {
-      return { session: { sessionId: `sid-${String(params?.key).split(':').pop()}` } };
-    }
-    throw new Error(`unexpected ${method}`);
-  });
+test.each([{ hasMore: true }, { hasMore: true, nextOffset: 0 }])(
+  'fails closed when a native page cannot advance',
+  async page => {
+    const request = vi.fn().mockResolvedValue({ sessions: [], ...page });
+    await expect(
+      listGatewaySubagents({ client: client(request), parentKeys: [root], requireComplete: true }),
+    ).rejects.toThrow('incomplete');
+    expect(request).toHaveBeenCalledTimes(1);
+  },
+);
 
-  await expect(
-    listGatewaySubagentDescendants(
-      gatewayClient(request as GatewayClientLike['request']),
-      ['agent:main:justdo:parent'],
-    ),
-  ).resolves.toEqual([
-    {
-      sessionKey: 'agent:main:subagent:child',
-      sessionId: 'sid-child',
-      label: 'Child',
-    },
-    {
-      sessionKey: 'agent:main:subagent:grandchild',
-      sessionId: 'sid-grandchild',
-      label: 'Grandchild',
-    },
+test('reports incomplete reads rather than claiming an empty native graph', async () => {
+  const request = vi.fn().mockRejectedValue(new Error('offline'));
+  expect(
+    await listGatewaySubagentsWithMetadata({ client: client(request), parentKeys: [root] }),
+  ).toEqual({ subagents: [], sessionListComplete: false });
+});
+
+test('discovers nested native descendants and rejects missing incarnation IDs', async () => {
+  const grandchild = 'agent:main:subagent:grandchild';
+  const request = vi.fn(async (_method, params) => ({
+    sessions:
+      params.spawnedBy === root
+        ? [row]
+        : params.spawnedBy === child
+          ? [{ ...row, key: grandchild, spawnedBy: child, sessionId: 'native-grandchild' }]
+          : [],
+  }));
+  expect(await listGatewaySubagentDescendants(client(request), [root])).toEqual([
+    { sessionKey: child, sessionId: 'native-child', label: 'Review' },
+    { sessionKey: grandchild, sessionId: 'native-grandchild', label: 'Review' },
   ]);
+  request.mockResolvedValue({ sessions: [{ ...row, sessionId: undefined }] });
+  await expect(listGatewaySubagentDescendants(client(request), [root])).rejects.toThrow(
+    'Session ID unavailable',
+  );
 });
 
-test('reports an incomplete task ledger without falling back to the old subagents tool', async () => {
-  const request = vi.fn().mockRejectedValue(new Error('task ledger unavailable'));
+test('partial-read merging preserves newer lifecycle evidence', async () => {
+  const request = vi.fn().mockResolvedValue({ session: row });
+  const value = (await getGatewaySubagentDetails(client(request), child))!;
+  expect(
+    mergeGatewaySubagentSnapshots(
+      [{ ...value, updatedAt: 20, status: 'done', runId: 'finished' }],
+      [{ ...value, updatedAt: 10 }],
+    )[0],
+  ).toMatchObject({ status: 'done', runId: 'finished', updatedAt: 20 });
+});
 
+test.each([
+  ['historical', 'unknown'],
+  ['interrupted', 'killed'],
+  [undefined, 'unknown'],
+])('does not invent queued work from missing lifecycle status (%s)', async (state, expected) => {
+  const request = vi.fn().mockResolvedValue({
+    session: { ...row, status: undefined, subagentRunState: state, activeRunIds: [] },
+  });
+  expect((await getGatewaySubagentDetails(client(request), child))?.status).toBe(expected);
+});
+
+test('unknown lifecycle cannot confirm descendant settlement', async () => {
+  const request = vi
+    .fn()
+    .mockResolvedValue({ sessions: [{ ...row, status: undefined, activeRunIds: [] }] });
   await expect(
-    listGatewaySubagentsWithMetadata({
-      client: gatewayClient(request as GatewayClientLike['request']),
-      parentKeys: ['agent:main:justdo:parent'],
-    }),
-  ).resolves.toEqual({
-    subagents: [],
-    taskLedgerComplete: false,
-  });
-  expect(request.mock.calls.some(([method]) => method === 'tools.invoke')).toBe(false);
-  expect(request.mock.calls.some(([method]) => method === 'sessions.list')).toBe(false);
-});
-
-test('merges current task status while keeping a stronger readable title', () => {
-  const retained = [
-    {
-      id: 'task-one',
-      taskName: 'task-one',
-      sessionKey: 'agent:main:subagent:one',
-      label: 'Readable title',
-      labelSource: 'label' as const,
-      status: 'running' as const,
-      startedAt: 100,
-    },
-  ];
-  const current = [
-    {
-      id: 'task-one',
-      taskName: 'task-one',
-      sessionKey: 'agent:main:subagent:one',
-      label: 'task-one',
-      labelSource: 'taskName' as const,
-      status: 'done' as const,
-      endedAt: 200,
-    },
-  ];
-
-  expect(mergeGatewaySubagentSnapshots(retained, current)).toEqual([
-    {
-      ...retained[0],
-      status: 'done',
-      endedAt: 200,
-    },
-  ]);
-});
-
-test('clears terminal-only fields when a task is reactivated', () => {
-  const retained = [
-    {
-      id: 'task-one',
-      taskName: 'task-one',
-      sessionKey: 'agent:main:subagent:one',
-      label: 'Task',
-      labelSource: 'label' as const,
-      status: 'failed' as const,
-      runId: 'old-run',
-      startedAt: 100,
-      endedAt: 200,
-      runtimeMs: 100,
-      terminalSummary: 'Old result',
-      error: 'Old failure',
-    },
-  ];
-  const current = [
-    {
-      id: 'task-one',
-      taskName: 'task-one',
-      sessionKey: 'agent:main:subagent:one',
-      label: 'Task',
-      labelSource: 'label' as const,
-      status: 'pending' as const,
-    },
-  ];
-
-  expect(mergeGatewaySubagentSnapshots(retained, current)[0]).toMatchObject({
-    status: 'pending',
-  });
-  expect(mergeGatewaySubagentSnapshots(retained, current)[0]).not.toHaveProperty('startedAt');
-  expect(mergeGatewaySubagentSnapshots(retained, current)[0]).not.toHaveProperty('runId');
-  expect(mergeGatewaySubagentSnapshots(retained, current)[0]).not.toHaveProperty('endedAt');
-  expect(mergeGatewaySubagentSnapshots(retained, current)[0]).not.toHaveProperty('runtimeMs');
-  expect(mergeGatewaySubagentSnapshots(retained, current)[0]).not.toHaveProperty('error');
-});
-
-test('does not carry a previous failure into a later successful terminal generation', () => {
-  const retained = [
-    {
-      id: 'task-one',
-      taskName: 'task-one',
-      sessionKey: 'agent:main:subagent:one',
-      label: 'Task',
-      labelSource: 'label' as const,
-      status: 'failed' as const,
-      endedAt: 200,
-      error: 'Old failure',
-    },
-  ];
-  const current = [
-    {
-      id: 'task-one',
-      taskName: 'task-one',
-      sessionKey: 'agent:main:subagent:one',
-      label: 'Task',
-      labelSource: 'label' as const,
-      status: 'done' as const,
-      endedAt: 400,
-    },
-  ];
-
-  const merged = mergeGatewaySubagentSnapshots(retained, current)[0];
-  expect(merged).toMatchObject({ status: 'done', endedAt: 400 });
-  expect(merged).not.toHaveProperty('error');
-});
-
-test('does not reuse terminal fields across same-status generations', () => {
-  const retained = [
-    {
-      id: 'task-one',
-      taskName: 'task-one',
-      sessionKey: 'agent:main:subagent:one',
-      label: 'Task',
-      labelSource: 'label' as const,
-      status: 'failed' as const,
-      updatedAt: 200,
-      endedAt: 200,
-      terminalSummary: 'Old failure',
-      error: 'Old error',
-    },
-  ];
-  const current = [
-    {
-      id: 'task-one',
-      taskName: 'task-one',
-      sessionKey: 'agent:main:subagent:one',
-      label: 'Task',
-      labelSource: 'label' as const,
-      status: 'failed' as const,
-      updatedAt: 400,
-      endedAt: 400,
-    },
-  ];
-
-  const merged = mergeGatewaySubagentSnapshots(retained, current)[0];
-  expect(merged).toMatchObject({ status: 'failed', updatedAt: 400, endedAt: 400 });
-  expect(merged).not.toHaveProperty('terminalSummary');
-  expect(merged).not.toHaveProperty('error');
+    listGatewaySubagents({ client: client(request), parentKeys: [root], requireComplete: true }),
+  ).rejects.toThrow('incomplete');
 });

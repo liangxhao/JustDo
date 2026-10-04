@@ -113,7 +113,7 @@ flowchart LR
 
 ### 技能库自动整理的系统任务
 
-OpenClaw v2026.9.6 按 Agent 投影每周整理任务，使用 `agentTurn` payload 和
+OpenClaw v2026.9.8 按 Agent 投影每周整理任务，使用 `agentTurn` payload 和
 `skill-collection-review:<agentId>` declaration key。Main 在 ScheduledTask 中透传
 `declarationKey`，Renderer 按系统归属识别成员，不按可编辑的名称或 prompt 匹配。
 所有成员合成一张“技能库自动整理”卡片；展开后仍用各原生 job ID 查看详情与历史，

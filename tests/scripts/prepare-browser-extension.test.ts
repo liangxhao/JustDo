@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import vm from 'node:vm';
 
 import { describe, expect, test } from 'vitest';
 
@@ -39,6 +40,24 @@ const createFixture = () => {
 };
 
 describe('browser extension preparation', () => {
+  test('keeps the native 9.8 strict authentication JSON parser in the shipped baseline', () => {
+    const source = fs.readFileSync(
+      path.join(projectRoot, 'resources/browser-extension/openclaw/modules/strict-json.js'),
+      'utf8',
+    );
+    const parse = vm.runInNewContext(
+      source.replace('export function parseStrictJsonObject', 'function parseStrictJsonObject') +
+        ';parseStrictJsonObject',
+    );
+    expect(parse('{"type":"challenge","nonce":"test"}')).toEqual({
+      type: 'challenge',
+      nonce: 'test',
+    });
+    expect(parse('{"nonce":"first","nonce":"second"}')).toBeNull();
+    expect(parse('{"nested":{"key":1,"key":2}}')).toBeNull();
+    expect(parse('[]')).toBeNull();
+    expect(parse('not-json')).toBeNull();
+  });
   test('packages the generated extension as an unpacked application resource', () => {
     const builderConfig = JSON.parse(
       fs.readFileSync(path.join(projectRoot, 'electron-builder.json'), 'utf8'),
@@ -118,7 +137,15 @@ describe('browser extension preparation', () => {
         'chrome.runtime.openOptionsPage()',
       );
       expect(popup).toContain('chrome.runtime.openOptionsPage()');
-      expect(relayCore).toContain('openclaw-extension-relay.v2');
+      const relayAuth = fs.readFileSync(
+        path.join(second.outputDir, 'modules/relay-auth-v2.js'),
+        'utf8',
+      );
+      expect(relayAuth).toContain('openclaw-extension-relay.v2');
+      expect(relayAuth).toContain('from "./strict-json.js"');
+      expect(
+        fs.readFileSync(path.join(second.outputDir, 'modules/strict-json.js'), 'utf8'),
+      ).toContain('parseStrictJsonObject');
       expect(relayCore).toContain('authVersion');
       expect(fs.existsSync(path.join(second.outputDir, 'modules', 'relay-auth-v2.js'))).toBe(true);
       expect(fs.existsSync(path.join(second.outputDir, 'options.html'))).toBe(true);

@@ -6,6 +6,12 @@
 
 主聊天通过会话 key 绑定读取就绪状态，首次读取未完成或恢复失败时禁止发送、侧聊和导出；失败后保留已显示正文，提供只读重试。只有快照实际提交成功才解除错误状态，被拒绝的空快照不能清除失败。断连使初始化和分页世代失效，同一个 client 重连也要等待新的权威历史；排队等待旧请求不等于读取完成。异步读取的成功和失败均核对 sessionKey、client 和历史 generation，旧连接的失败不能污染新连接。普通后台历史刷新不显示初次加载横幅。导出范围仍是当前聊天快照，不能代表完整原生备份。
 
+原生 `chat.history.pendingInputs` 是已接收但尚未进入正式消息历史的输入，不能丢弃，也不能写入 transcript、Main 正文缓存或 Redux。主聊天保留仅当前 Renderer 会话的临时显示投影，按 `pendingBefore` 读取独立分页，并用 `inputRunIds` 的原生回执核对消费与撤回；会话、连接或历史世代变化后旧读取失效。`display:false` 不显示，保留的取消／中断输入显示对应状态，按 `acceptedAt` 与可见历史排列，不能执行正式历史的编辑或分叉操作。原生消费回执可能为空，退役输入后重新读取正式历史；使用原生输入身份、用户消息的 `idempotencyKey` 和 `__openclaw.id` 去重，不凭相同文字合并。截断输入只通过原生单条消息接口补全。
+
+浏览器扩展侧栏通过 Main 的显式只读选项取得同类原生输入投影；待处理正文只存在于当次响应，正式历史仍使用已有游标增量读取。侧栏轮询比较完整显示投影的摘要，确保较早位置的取消／撤回也能刷新，不仅比较最后几条消息。
+
+单条 pending 补全明确返回 `ok:false` 且 `not_found`／`not_visible` 时退役旧显示项，不能继续展示截断预览；`not_found` 同时触发正式历史追读，以承接分页期间已消费的输入。临时传输失败或超限不构成撤回证据，保留原生截断占位。已核实退役且身份匹配的乐观输入不能因后续回执读取失败重新出现。
+
 ## 1. 从原生事件到屏幕
 
 Code Mode 继续使用相同的原生工具事件与历史投影。仅当工具为 `exec` 且输入包含字符串
@@ -57,6 +63,8 @@ ChatTranscriptState 包含 session key/id、persistedMessages、historySource、
 | Terminal  | run 对应的中止/错误说明                            | 合并为同一终态行                       |
 
 activeTurn 记录原生 run/session/lifecycle generation 与序列。最近 24 个 run 的详情保留 5 分钟，但 identity-only terminal fence 保留到当前 session projection reset；详情过期不能允许慢到 delta 重新创建已结束运行。
+
+Main 的 lifecycle 完成兜底仅接受 `executionSettled:true` 的 `end`／`error`，随后才启动延迟收敛。attempt finishing 或没有整轮执行确认的 terminal 不能结束产品运行状态；压缩阶段继续暂停兜底计时。`chat.final` 的显示收敛与原生整轮执行结论保持区分。
 
 ## 3. 事件准入与顺序
 
@@ -218,7 +226,7 @@ sequenceDiagram
   Main-->>UI: 已核验本地路径 / 失败原因
 ```
 
-直接沿用 OpenClaw v2026.9.6 原生行为：会话执行前由原生采集文件指纹基线，
+直接沿用 OpenClaw v2026.9.8 原生行为：会话执行前由原生采集文件指纹基线，
 `all`/`uncommitted` 隐藏与有效基线指纹相同的文件；再次变化的文件显示相对
 Git 基准的完整 patch，不逐行扣除旧修改。`commit` 不应用会话过滤；基线缺失时
 保留原生 checkout 结果。无需用户手动提交，但目录必须是 Git 仓库。产品不新增
@@ -299,7 +307,7 @@ Mermaid 保持 strict 模式，限制源码、行数和边数，禁止外部图�
 用户气泡对旧版本生成的中英文引用包装做显示投影：历史主聊引用及侧聊 JSON 引用呈现为
 引用块，隐藏 sessionKey/entryId。发送内容与原生历史保持不变，普通 JSON 不做转换。
 
-引用发送对齐锁定的 OpenClaw 2026.9.6 Control UI 实现：
+引用发送对齐锁定的 OpenClaw 2026.9.8 Control UI 实现：
 
 - `control-ui-boot-shared-DKAI-I6P.js` 的 `uC/dC`：侧聊预填 `Regarding "…": `，
   折叠空白并将选中文字限制到 300 UTF-16 单元，不发送 sessionKey/entryId JSON。

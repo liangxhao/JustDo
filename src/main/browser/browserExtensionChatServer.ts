@@ -1,4 +1,4 @@
-import { timingSafeEqual } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 
 import { WebSocket, WebSocketServer } from 'ws';
@@ -48,6 +48,7 @@ export interface BrowserExtensionThread {
 }
 
 export interface BrowserExtensionMessage {
+  pendingInput?: { id: string; state: string; runId?: string; incomplete?: boolean };
   rawMessage?: Record<string, unknown>;
   role: string;
   text: string;
@@ -116,10 +117,12 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
 const messageFingerprint = (messages: BrowserExtensionMessage[]): string =>
-  JSON.stringify({ count: messages.length, tail: messages.slice(-8) });
+  createHash('sha256').update(JSON.stringify(messages)).digest('hex');
 
 const hasFinalAssistantAfterLastUser = (messages: BrowserExtensionMessage[]): boolean => {
-  const lastUserIndex = messages.findLastIndex(message => message.role === 'user');
+  const lastUserIndex = messages.findLastIndex(
+    message => message.role === 'user' && !message.pendingInput,
+  );
   return messages
     .slice(lastUserIndex + 1)
     .some(message => message.role === 'assistant' && Boolean(message.text));
@@ -179,6 +182,7 @@ const toAppServerTurns = (
       items.push({
         content: [{ text: message.text, type: 'text' }],
         ...(message.rawMessage ? { rawMessage: message.rawMessage } : {}),
+        ...(message.pendingInput ? { pendingInput: message.pendingInput } : {}),
         id: nextItemId(),
         type: 'userMessage',
       });
@@ -687,7 +691,7 @@ export class BrowserExtensionChatServer {
           { threadId: turn.sessionId, turn: turnPayload },
           turn.sessionId,
         );
-        this.startPollingTurn(turn.sessionId, turn.runId, messageFingerprint(baselineMessages));
+        this.startPollingTurn(turn.sessionId, turn.runId, messageFingerprint(baselineMessages.filter(message => !message.pendingInput)));
         return { turn: turnPayload };
       }
       case 'turn/interrupt': {
@@ -811,7 +815,7 @@ export class BrowserExtensionChatServer {
         // assistant message becomes visible through sessions.history. Keep the
         // poller alive for a short settling window so that the extension receives
         // that final history update before turn/completed stops polling.
-        const hasNewHistory = fingerprint !== state.baselineFingerprint;
+        const hasNewHistory = messageFingerprint(messages.filter(message => !message.pendingInput)) !== state.baselineFingerprint;
         const hasFinalAssistant = hasNewHistory && hasFinalAssistantAfterLastUser(messages);
         const recordedError =
           state.terminal >= TERMINAL_SETTLE_POLLS

@@ -7,6 +7,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { formatPluginConfigIssue } from 'openclaw/plugin-sdk/extension-shared';
+import { resolveStateDir } from 'openclaw/plugin-sdk/state-paths';
 import { normalizeLowercaseStringOrEmpty } from 'openclaw/plugin-sdk/string-coerce-runtime';
 import { AcpxPluginConfigSchema, DEFAULT_ACPX_TIMEOUT_SECONDS } from './config-schema.js';
 import { expandBundledAgentCommandValue } from './command-tokens.js';
@@ -223,6 +224,7 @@ export function toAcpMcpServers(mcpServers: Record<string, McpServerConfig>): Ac
 export function resolveAcpxPluginConfig(params: {
   rawConfig: unknown;
   workspaceDir?: string;
+  stateDir?: string;
   moduleUrl?: string;
 }): ResolvedAcpxPluginConfig {
   const parsed = parseAcpxPluginConfig(params.rawConfig);
@@ -233,7 +235,9 @@ export function resolveAcpxPluginConfig(params: {
   const workspaceDir = params.workspaceDir?.trim() || process.cwd();
   const fallbackCwd = workspaceDir;
   const cwd = path.resolve(normalized.cwd?.trim() || fallbackCwd);
-  const stateDir = path.resolve(normalized.stateDir?.trim() || path.join(workspaceDir, 'state'));
+  const stateDir = path.resolve(
+    normalized.stateDir?.trim() || path.join(params.stateDir ?? resolveStateDir(), 'acpx'),
+  );
   const pluginToolsMcpBridge = normalized.pluginToolsMcpBridge === true;
   const openClawToolsMcpBridge = normalized.openClawToolsMcpBridge === true;
   const mcpServers = resolveConfiguredMcpServers({

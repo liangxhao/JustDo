@@ -5,7 +5,10 @@ const path = require('path');
 
 const RUNTIME_COMPANION_CHECKS = [
   { marker: 'resolveStartupMigrationBuildIdentity', path: 'build-info.json' },
-  { marker: 'legacy-config-binding-repair.runtime', path: 'dist/legacy-config-binding-repair.runtime.js' },
+  {
+    marker: 'legacy-config-binding-repair.runtime',
+    path: 'dist/legacy-config-binding-repair.runtime.js',
+  },
   {
     marker: 'node-host-launcher.mjs',
     path: 'node-host-launcher.mjs',
@@ -83,7 +86,19 @@ const RUNTIME_BUNDLED_ASSET_COPIES = [
   },
 ];
 
+const RUNTIME_RELATIVE_COMPANIONS = [
+  'legacy-config-binding-repair.runtime',
+  'facade-activation-check.runtime',
+  'plugin-metadata-readers.runtime',
+  'telegram-ingress-worker.runtime',
+];
+const RELATIVE_COMPANION_URL =
+  /new URL\(([^\n;]*["']\.\/(?:legacy-config-binding-repair|facade-activation-check|plugin-metadata-readers|telegram-ingress-worker)\.runtime\.js["']),\s*import\.meta\.url\)/g;
 const STALE_RUNTIME_WORKER_URL_PATTERNS = [
+  /currentModuleUrl:\s*import\.meta\.url/,
+  /new Worker\(new URL\(import\.meta\.url\)/,
+  /importRuntimeModule\(import\.meta\.url,/,
+  new RegExp(RELATIVE_COMPANION_URL.source),
   /new URL\([^\n;]*["']\.\/legacy-config-binding-repair\.runtime\.js["'],\s*import\.meta\.url\)/,
   /new URL\(["']\.\.\/node-host-launcher\.mjs["'],\s*import\.meta\.url\)/,
   /resolveRuntimeWorkerUrl\(\s*\{\s*currentModuleUrl:\s*import\.meta\.url,/,
@@ -93,11 +108,16 @@ const STALE_RUNTIME_WORKER_URL_PATTERNS = [
 
 function rewriteRuntimeWorkerImportMetaUrls(source, replacement) {
   return source
-    .replace(/new URL\(([^\n;]*["']\.\/legacy-config-binding-repair\.runtime\.js["']),\s*import\.meta\.url\)/g,
+    .replace(RELATIVE_COMPANION_URL, (_match, args) => `new URL(${args}, ${replacement})`)
+    .replace(/currentModuleUrl:\s*import\.meta\.url/g, `currentModuleUrl: ${replacement}`)
+    .replace(/new Worker\(new URL\(import\.meta\.url\)/g, `new Worker(new URL(${replacement})`)
+    .replace(/importRuntimeModule\(import\.meta\.url,/g, `importRuntimeModule(${replacement},`)
+    .replace(
+      /new URL\(([^\n;]*["']\.\/legacy-config-binding-repair\.runtime\.js["']),\s*import\.meta\.url\)/g,
       (_match, args) => `new URL(${args}, ${replacement})`,
     )
-    .replace(/new URL\((["'])\.\.\/node-host-launcher\.mjs\1,\s*import\.meta\.url\)/g,
-      match => match.replace('import.meta.url', replacement),
+    .replace(/new URL\((["'])\.\.\/node-host-launcher\.mjs\1,\s*import\.meta\.url\)/g, match =>
+      match.replace('import.meta.url', replacement),
     )
     .replace(/const currentModuleUrl\s*=\s*import\.meta\.url\s*;/g, match =>
       match.replace('import.meta.url', replacement),
@@ -116,9 +136,18 @@ function hasStaleRuntimeWorkerImportMetaUrl(bundle) {
 }
 
 function getRuntimeCompanionPathsReferencedByBundle(bundle) {
-  return RUNTIME_COMPANION_CHECKS.filter(({ marker }) => bundle.includes(marker)).map(
+  const paths = RUNTIME_COMPANION_CHECKS.filter(({ marker }) => bundle.includes(marker)).map(
     ({ path: relativePath }) => relativePath,
   );
+  for (const match of bundle.matchAll(
+    /runtimeProcessEntrypoint\d*\(["']([a-zA-Z0-9_./-]+)["']\)/g,
+  )) {
+    paths.push(`dist/${match[1]}.js`);
+  }
+  for (const companion of RUNTIME_RELATIVE_COMPANIONS) {
+    if (bundle.includes(companion + '.js')) paths.push(`dist/${companion}.js`);
+  }
+  return [...new Set(paths)];
 }
 
 function syncRuntimeBundledAssets(runtimeRoot, bundle) {

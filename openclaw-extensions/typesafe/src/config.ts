@@ -1,6 +1,5 @@
 import { Type } from "typebox";
 
-const DEFAULT_MODEL = "jev-latest";
 const LOCAL_BASE_URL_PATTERN =
   "^https?://(?:localhost|127\\.0\\.0\\.1|\\[::1\\])(?::[0-9]{1,5})?/?$";
 const localBaseUrlPattern = new RegExp(LOCAL_BASE_URL_PATTERN);
@@ -23,20 +22,12 @@ export const ConfigSchema = Type.Object(
         { additionalProperties: false },
       ),
     ),
-    model: Type.Optional(
-      Type.String({
-        minLength: 1,
-        maxLength: 128,
-        pattern: "^[a-zA-Z0-9._/-]+$",
-        description: "Tool default: jev-latest for hosted Jev, kev-latest for a local endpoint.",
-      }),
-    ),
     timeoutMs: Type.Optional(Type.Integer({ minimum: 1000, maximum: 60000, default: 30000 })),
   },
   { additionalProperties: false },
 );
 
-export type RuntimeConfig = { apiKey?: string; baseUrl?: string; serviceUrl?: string; model: string; timeoutMs: number };
+export type RuntimeConfig = { apiKey?: string; baseUrl?: string; serviceUrl?: string; timeoutMs: number };
 
 /** A configured endpoint grants access to one loopback origin, never arbitrary private hosts. */
 export function localBaseUrl(value: unknown): string | undefined {
@@ -73,11 +64,8 @@ export function runtimeConfig(config: Record<string, unknown> | undefined): Runt
   const serviceUrl = serviceBaseUrl(config?.serviceUrl);
   if (serviceUrl && config?.baseUrl !== undefined) throw new Error("Configure only one TypeSafe endpoint.");
   const baseUrl = localBaseUrl(config?.baseUrl);
-  const model = config?.model ?? (baseUrl ? "kev-latest" : DEFAULT_MODEL);
   const timeoutMs = config?.timeoutMs ?? 30000;
   if (
-    typeof model !== "string" ||
-    !/^[a-zA-Z0-9._/-]{1,128}$/.test(model) ||
     typeof timeoutMs !== "number" ||
     !Number.isInteger(timeoutMs) ||
     timeoutMs < 1000 ||
@@ -86,8 +74,8 @@ export function runtimeConfig(config: Record<string, unknown> | undefined): Runt
     throw new Error("Invalid TypeSafe configuration; check plugin Settings.");
   }
   if (baseUrl) {
-    return { baseUrl, model, timeoutMs };
+    return { baseUrl, timeoutMs };
   }
   const key = config?.apiKey;
-  return { serviceUrl, apiKey: typeof key === "string" && key.trim() ? key : undefined, model, timeoutMs };
+  return { serviceUrl, apiKey: typeof key === "string" && key.trim() ? key : undefined, timeoutMs };
 }

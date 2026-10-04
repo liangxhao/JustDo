@@ -76,7 +76,7 @@ async function main() {
     agents: {
       defaults: { workspace: path.join(state, 'workspace'), decisionModel: 'typesafe/kev-latest' },
     },
-    tools: { alsoAllow: ['typesafe_evaluate'] },
+    tools: { alsoAllow: ['decision_evaluate'] },
     secrets: { providers: { decision_test: { source: 'file', path: secretPath, mode: 'json' } } },
     plugins: {
       allow: ['typesafe'],
@@ -86,7 +86,6 @@ async function main() {
           enabled: true,
           config: {
             serviceUrl: `http://127.0.0.1:${provider.address().port}/v1`,
-            model: 'kev-latest',
             apiKey: { source: 'file', provider: 'decision_test', id: '/apiKey' },
           },
         },
@@ -152,8 +151,8 @@ async function main() {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
         body: JSON.stringify({
-          tool: 'typesafe_evaluate',
-          args: { state: 'Synthetic test input', questions: { q: { type: 'noul' } } },
+          tool: 'decision_evaluate',
+          args: { state: 'Synthetic test input', questions: { q: { type: 'boolean' } } },
         }),
         signal: AbortSignal.timeout(15000),
       });
@@ -162,10 +161,11 @@ async function main() {
       const body = await response.json();
       assert.equal(body.ok, true);
       assert.notEqual(body.result?.isError, true);
-      assert.deepEqual(body.result?.details?.evaluation, {
+      assert.equal(body.result?.details?.status, 'ok');
+      assert.deepEqual(body.result?.details?.result, {
         model: 'kev-latest',
-        answers: { q: { type: 'noul', noul: 0.9 } },
-        usage: { input_tokens: 1, output_tokens: 1 },
+        answers: { q: { type: 'boolean', probabilityTrue: 0.9 } },
+        usage: { inputTokens: 1, outputTokens: 1 },
       });
     };
     const first = await invoke();
@@ -210,7 +210,14 @@ async function main() {
     writeSecret({});
     await client.request('secrets.reload', {});
     const unavailable = await invoke();
-    assert.notEqual(unavailable.status, 200, 'Missing credentials must fail closed.');
+    if (unavailable.status === 200) {
+      const unavailableBody = await unavailable.json();
+      assert.equal(
+        unavailableBody.result?.details?.status,
+        'unavailable',
+        'Missing credentials must fail closed.',
+      );
+    }
     assert.equal(calls, 2, 'Unavailable credentials must not reach the provider.');
     writeSecret({ apiKey: expectedKey });
     await client.request('secrets.reload', {});

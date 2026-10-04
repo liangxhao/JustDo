@@ -2,9 +2,9 @@ import type { CoworkSessionMessageSearchMatch } from '../../../shared/cowork/ses
 import { normalizeOpenClawAgentId } from '../../../shared/openclaw/agentId';
 import type { CoworkStore } from '../../data/coworkStore';
 import {
-  type OpenClawSessionsSearchHitV2026_9_2,
-  parseSessionsSearchResultV2026_9_2,
-} from '../../engine/openclaw/wire/v2026_9_2';
+  type OpenClawSessionsSearchHitV2026_9_8,
+  parseSessionsSearchResultV2026_9_8,
+} from '../../engine/openclaw/wire/v2026_9_8';
 import { buildManagedSessionKey } from './openclawSessionKeys';
 
 const SESSION_KEYS_PER_REQUEST = 200;
@@ -16,7 +16,7 @@ const MAX_CONCURRENT_REQUESTS = 4;
 type GatewayRequest = (method: string, params: unknown) => Promise<unknown>;
 
 interface SearchBatchResult {
-  hits: OpenClawSessionsSearchHitV2026_9_2[];
+  hits: OpenClawSessionsSearchHitV2026_9_8[];
   indexing: boolean;
   truncated: boolean;
   partial: boolean;
@@ -88,8 +88,8 @@ const combineSettledBatches = (
 };
 
 const isBetterHit = (
-  candidate: OpenClawSessionsSearchHitV2026_9_2,
-  current: OpenClawSessionsSearchHitV2026_9_2,
+  candidate: OpenClawSessionsSearchHitV2026_9_8,
+  current: OpenClawSessionsSearchHitV2026_9_8,
 ): boolean =>
   candidate.score > current.score ||
   (candidate.score === current.score && candidate.timestamp > current.timestamp);
@@ -146,7 +146,7 @@ export const searchCoworkSessionMessages = async ({
     }
     requestCount += 1;
 
-    const page = parseSessionsSearchResultV2026_9_2(
+    const page = parseSessionsSearchResultV2026_9_8(
       await limitedRequest(() =>
         requestGateway('sessions.search', {
           query: trimmedQuery,
@@ -188,7 +188,7 @@ export const searchCoworkSessionMessages = async ({
   }
 
   const combined = combineSettledBatches(await Promise.allSettled(initialBatches));
-  const bestHitBySessionId = new Map<string, OpenClawSessionsSearchHitV2026_9_2>();
+  const bestHitBySessionId = new Map<string, OpenClawSessionsSearchHitV2026_9_8>();
 
   for (const hit of combined.hits) {
     const localSessionId = localSessionIdByKey.get(hit.sessionKey);

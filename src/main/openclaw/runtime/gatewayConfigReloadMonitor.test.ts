@@ -19,11 +19,14 @@ describe('GatewayConfigReloadMonitor', () => {
     ).toEqual(['agents.entries', 'meta.lastTouchedVersion']);
   });
 
-  it('uses OpenClaw first-match ordering for overlapping config prefixes', () => {
+  it('correlates versioned native reload hints for overlapping config prefixes', () => {
     expect(classifyGatewayConfigReloadPath('mcp.apps.port')).toBe('restart');
     expect(classifyGatewayConfigReloadPath('mcp.servers.local')).toBe('hot');
     expect(classifyGatewayConfigReloadPath('models.providers.builtin_models')).toBe('hot');
-    expect(classifyGatewayConfigReloadPath('plugins.load.paths')).toBe('restart');
+    expect(classifyGatewayConfigReloadPath('plugins.load.paths')).toBe('hot');
+    expect(classifyGatewayConfigReloadPath('plugins.installs.example.source')).toBe('hot');
+    expect(classifyGatewayConfigReloadPath('tools.exec.mode')).toBe('hot');
+    expect(classifyGatewayConfigReloadPath('skills.workshop.autonomous.mode')).toBe('hot');
     expect(classifyGatewayConfigReloadPath('plugins.entries.ask-user.enabled')).toBe('hot');
     expect(classifyGatewayConfigReloadPath('acp.allowedAgents')).toBe('hot');
     expect(classifyGatewayConfigReloadPath('gateway.remote.url')).toBe('dynamic');
@@ -33,7 +36,7 @@ describe('GatewayConfigReloadMonitor', () => {
     ).toBe('dynamic');
   });
 
-  it('completes immediately for dynamically-read config', async () => {
+  it('waits for native snapshot publication even for dynamically-read config', async () => {
     const monitor = new GatewayConfigReloadMonitor();
     const generation = monitor.getGeneration();
 
@@ -41,7 +44,37 @@ describe('GatewayConfigReloadMonitor', () => {
       '[reload] config change detected; evaluating reload (meta.lastTouchedVersion)',
     );
 
-    await expect(monitor.waitForReloadAfter(generation)).resolves.toBe(true);
+    const result = monitor.waitForReloadAfter(generation);
+    const settled = vi.fn();
+    void result.then(settled);
+    await Promise.resolve();
+    expect(settled).not.toHaveBeenCalled();
+    monitor.observeLine('[reload] config change applied (dynamic reads: meta.lastTouchedVersion)');
+    await expect(result).resolves.toBe(true);
+  });
+
+  it.each([
+    'config reload failed: publication rejected',
+    'config reload disabled (gateway.reload.mode=off)',
+    'config reload skipped by writer intent (deferred)',
+  ])('does not report dynamic configuration as applied after %s', async failure => {
+    const monitor = new GatewayConfigReloadMonitor();
+    const result = monitor.waitForReloadAfter(monitor.getGeneration());
+    monitor.observeLine('[reload] config change detected; evaluating reload (meta.lastTouchedVersion)');
+    monitor.observeLine(`[reload] ${failure}`);
+    await expect(result).resolves.toBe(false);
+  });
+
+  it('does not let a dynamic completion settle an unrelated earlier hot reload', async () => {
+    const monitor = new GatewayConfigReloadMonitor();
+    const hot = monitor.waitForReloadAfter(monitor.getGeneration());
+    monitor.observeLine('[reload] config change detected; evaluating reload (models.providers.local)');
+    const dynamic = monitor.waitForReloadAfter(monitor.getGeneration());
+    monitor.observeLine('[reload] config change detected; evaluating reload (meta.lastTouchedVersion)');
+    monitor.observeLine('[reload] config change applied (dynamic reads: meta.lastTouchedVersion)');
+    await expect(dynamic).resolves.toBe(true);
+    monitor.observeLine('[reload] config reload failed: model publication failed');
+    await expect(hot).resolves.toBe(false);
   });
 
   it('waits for unknown future fields instead of racing a possible restart', async () => {

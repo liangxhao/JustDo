@@ -97,3 +97,7 @@ Agent 请求新标签时，`AgentEnsureTab` 在当前任务已挂载的 `Browser
 WebContentsView 迁移需单独验证 DPI/bounds、焦点、输入、实时标注、profile 和销毁，不能退化成截图遥控。当前验证重点包括 bridge action/schema、页面安全、lease 竞争、文件边界、PDF 和扩展组装测试；真实浏览器与平台验收另行记录。
 
 阶段 2 以内置浏览器真实网页为唯一新增交互入口；独立“查看任务页面”及外部镜像采集方案已撤回。停止、人工操作与继续的首版流程已实现，真实模型验收待完成，见[内置浏览器介入方案](browser-intervention.md)。
+
+## 2026.9.8 上游基线复核
+
+已比对 OpenClaw v2026.9.6 至 v2026.9.8 的 `assets/chrome-extension`，配对与中继源码没有变化。保留当前已校验基线，仅更新第三方版本声明及其构建校验摘要；侧栏会话 overlay 仍独立构建。上游 Lightpanda、云端桌面音频和多用户浏览器并未替代本软件四种浏览器模式。

@@ -1295,3 +1295,48 @@ test('releases terminal identity fences when the session projection is reset', (
   expect(state.terminalRunIds.size).toBe(0);
   expect(state.recentRuns.size).toBe(0);
 });
+
+test.each(['agent', 'chat'])(
+  'handles v2026.9.8 %s snapshot then append-only frames and replacement',
+  stream => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    const apply = (seq: number, text: string | undefined, delta: string, replace = false) => {
+      if (stream === 'agent')
+        reduceAgentEvent(
+          state,
+          agent(seq, 'assistant', {
+            ...(text === undefined ? {} : { text }),
+            delta,
+            replace,
+            itemId: 'reply-1',
+          }),
+          dependencies,
+        );
+      else
+        reduceChatEvent(
+          state,
+          chat('delta', {
+            sourceSeq: seq,
+            frameSeq: seq,
+            ...(text === undefined
+              ? {}
+              : { message: { role: 'assistant', content: [{ type: 'text', text }] } }),
+            deltaText: delta,
+            replace,
+          }),
+          dependencies,
+        );
+    };
+    apply(1, 'Hello', 'Hello');
+    apply(2, undefined, ' ');
+    apply(3, undefined, 'world');
+    expect(
+      state.activeTurn?.items.filter(item => item.type === 'content').map(item => item.text),
+    ).toEqual(['Hello world']);
+    apply(4, 'Revised', 'Revised', true);
+    apply(5, undefined, '.');
+    expect(
+      state.activeTurn?.items.filter(item => item.type === 'content').map(item => item.text),
+    ).toEqual(['Revised.']);
+  },
+);

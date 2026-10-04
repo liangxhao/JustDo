@@ -2,12 +2,11 @@ import type {
   DiagnosticHistoryEvidence,
   DiagnosticReport,
 } from '../../../shared/cowork/sessionDiagnostics';
-import { buildCoworkSessionKey } from '../../../shared/cowork/sessionKey';
 import type { GatewayClientLike } from '../../engine/gateway/types';
 import {
-  parseChatHistoryCursorResultV2026_9_2,
-  parseChatHistoryResultV2026_9_2,
-} from '../../engine/openclaw/wire/v2026_9_2';
+  parseChatHistoryCursorResultV2026_9_8,
+  parseChatHistoryResultV2026_9_8,
+} from '../../engine/openclaw/wire/v2026_9_8';
 import { redactDiagnosticLog } from './exportLogs';
 
 const record = (value: unknown): Record<string, unknown> =>
@@ -20,6 +19,7 @@ const text = (value: unknown): string => (typeof value === 'string' ? value : ''
 export async function collectDiagnosticHistory(
   report: DiagnosticReport,
   client: GatewayClientLike | null | undefined,
+  sessionKey: string | null,
   signal?: AbortSignal,
 ): Promise<DiagnosticHistoryEvidence> {
   const evidence: DiagnosticHistoryEvidence = {
@@ -28,8 +28,7 @@ export async function collectDiagnosticHistory(
     omitted: 0,
     failures: [],
   };
-  if (!client || !report.run || signal?.aborted) return evidence;
-  const key = buildCoworkSessionKey(report.sessionId);
+  if (!client || !report.run || !sessionKey || signal?.aborted) return evidence;
   const runIds = new Set(report.events.map(event => event.nativeRunId).filter(Boolean));
   const seen = new Set<string>();
   const request = async (params: Record<string, unknown>) => {
@@ -37,7 +36,7 @@ export async function collectDiagnosticHistory(
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       return await Promise.race([
-        client.request('chat.history', { sessionKey: key, ...params }),
+        client.request('chat.history', { sessionKey, ...params }),
         new Promise<never>((_, reject) => {
           timer = setTimeout(() => reject(new Error('timeout')), 5000);
         }),
@@ -117,7 +116,7 @@ export async function collectDiagnosticHistory(
     let cursor: string | undefined;
     evidence.status = 'partial';
     for (let pageNumber = 0; pageNumber < 100; pageNumber++) {
-      const page = parseChatHistoryResultV2026_9_2(
+      const page = parseChatHistoryResultV2026_9_8(
         await request({ limit: 200, offset, maxChars: 8000 }),
       );
       signal?.throwIfAborted();
@@ -142,7 +141,7 @@ export async function collectDiagnosticHistory(
       offset = page.nextOffset;
     }
     if (cursor) {
-      const delta = parseChatHistoryCursorResultV2026_9_2(await request({ cursor }));
+      const delta = parseChatHistoryCursorResultV2026_9_8(await request({ cursor }));
       needsVerification = false;
       if (delta.kind === 'reset') {
         evidence.status = 'changed';

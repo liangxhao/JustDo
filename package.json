@@ -10,16 +10,26 @@
   "license": "MIT",
   "version": "v2026.8.27",
   "openclaw": {
-    "version": "v2026.9.6",
+    "version": "v2026.9.8",
     "repo": "https://github.com/openclaw/openclaw.git",
     "plugins": [
       {
         "id": "mxc",
         "npm": "@openclaw/mxc-sandbox",
-        "version": "2026.9.6",
+        "version": "2026.9.8",
         "platforms": [
           "win32"
         ]
+      },
+      {
+        "id": "zai",
+        "npm": "@openclaw/zai-provider",
+        "version": "2026.9.8"
+      },
+      {
+        "id": "novita",
+        "npm": "@openclaw/novita-provider",
+        "version": "2026.9.8"
       }
     ]
   },

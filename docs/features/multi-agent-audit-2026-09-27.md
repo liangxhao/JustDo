@@ -84,7 +84,7 @@ flowchart LR
 | 范围                | 核对结论                                                                                    | 主要代码证据                                                      |
 | ------------------- | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
 | Spawn、模型、上下文 | 执行由原生 sessions_spawn 管理；fork/isolated/模型优先级不能由产品重新推断                  | 上游 subagent-spawn-child-plan、model-selection-config、workspace |
-| Ledger 与分页       | tasks.list/get 的参数、cursor、六种状态匹配；blocked 作为 completed 的 terminalOutcome 投影 | subagentGateway、wire/v2026_9_2；上游 task-summary/query          |
+| Ledger 与分页       | tasks.list/get 的参数、cursor、六种状态匹配；blocked 作为 completed 的 terminalOutcome 投影 | subagentGateway、wire/v2026_9_8；上游 task-summary/query          |
 | ACP 去重            | 按 sessionKey 和 runId 处理 backing task，保留不同运行身份                                  | subagentGateway                                                   |
 | Collect/Swarm       | collect 仍是 subagent ledger，不会整类被列表过滤；全局 subagent lane 限制依然生效           | 上游 swarm-config、subagent-spawn-launch-request                  |
 | 事件与缓存          | task 事件使缓存失效；代际及 runId 校验避免旧请求回填；终态与替代运行有处理                  | runtimeSessionStatus、subagentGateway 及相关测试                  |

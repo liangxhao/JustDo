@@ -17,14 +17,22 @@ export type LanguageType = 'zh' | 'en';
 const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
     worktreeSelectionInvalid: 'Worktree 选择无效。',
-    worktreeCopyUnavailable: 'Worktree 会话暂不支持复制或分叉。请在源项目中创建新的 Worktree 会话。',
-    worktreeSharedWorkspaceDeleteBlocked: '其他会话仍在使用这个 Worktree，请先删除这些会话后再移除其所属会话。',
+    worktreeCopyUnavailable:
+      'Worktree 会话暂不支持复制或分叉。请在源项目中创建新的 Worktree 会话。',
+    worktreeSharedWorkspaceDeleteBlocked:
+      '其他会话仍在使用这个 Worktree，请先删除这些会话后再移除其所属会话。',
     worktreePermissionIdentityChanged: '权限同步时无法确认原 Worktree 会话，操作已停止。',
     worktreeCreateUnavailable: 'Worktree 创建服务暂不可用。',
     worktreeCreateUnconfirmed: '未能确认 Worktree 创建结果，请检查设置中的 Worktree 列表。',
     worktreeIdentityMissing: '无法确认待清理的 Worktree 会话。',
-    worktreeCancellationRetained: '取消任务后的工作目录未能清理，已保留会话入口。请在设置中检查 Worktree。',
-    decisionModelConfigurationInvalid: '决策模型配置未能生效，请检查供应商 URL、API Key、默认模型及凭据文件访问权限。',
+    worktreeCancellationRetained:
+      '取消任务后的工作目录未能清理，已保留会话入口。请在设置中检查 Worktree。',
+    nativeVideoUrlInvalid:
+      '视频服务地址无效，请使用不含登录信息、查询参数或片段的 HTTP 或 HTTPS 地址。',
+    nativeVideoLegacyUnsupported: '当前版本不支持 OpenAI 兼容视频接口，请选择原生视频服务。',
+    nativeVideoConfigurationInvalid: '视频模型配置无效，请检查服务商、模型、服务地址和 API Key。',
+    decisionModelConfigurationInvalid:
+      '决策模型配置未能生效，请检查供应商 URL、API Key、默认模型及凭据文件访问权限。',
     extensionCredentialStoreUnavailable: '无法读取本地扩展凭据文件，请检查文件内容和访问权限。',
     extensionCredentialInherited: '此凭据由系统环境变量提供，请修改该变量并重启应用。',
     extensionCredentialStoreWriteFailed: '无法安全保存扩展凭据，请检查本地文件访问权限。',
@@ -102,18 +110,32 @@ const translations: Record<LanguageType, Record<string, string>> = {
   },
   en: {
     worktreeSelectionInvalid: 'Invalid Worktree selection.',
-    worktreeCopyUnavailable: 'Copying or forking Worktree conversations is not supported yet. Create a new Worktree conversation from the source project.',
-    worktreeSharedWorkspaceDeleteBlocked: 'Other conversations still use this Worktree. Delete those conversations before deleting its owning conversation.',
-    worktreePermissionIdentityChanged: 'Could not confirm the original Worktree conversation during permission synchronization. The operation was stopped.',
+    worktreeCopyUnavailable:
+      'Copying or forking Worktree conversations is not supported yet. Create a new Worktree conversation from the source project.',
+    worktreeSharedWorkspaceDeleteBlocked:
+      'Other conversations still use this Worktree. Delete those conversations before deleting its owning conversation.',
+    worktreePermissionIdentityChanged:
+      'Could not confirm the original Worktree conversation during permission synchronization. The operation was stopped.',
     worktreeCreateUnavailable: 'Worktree creation is currently unavailable.',
-    worktreeCreateUnconfirmed: 'Could not confirm Worktree creation. Check the Worktree list in Settings.',
+    worktreeCreateUnconfirmed:
+      'Could not confirm Worktree creation. Check the Worktree list in Settings.',
     worktreeIdentityMissing: 'Could not identify the Worktree conversation to clean up.',
-    worktreeCancellationRetained: 'Could not clean up the cancelled task workspace. Its conversation was retained. Check Worktrees in Settings.',
+    worktreeCancellationRetained:
+      'Could not clean up the cancelled task workspace. Its conversation was retained. Check Worktrees in Settings.',
     extensionCredentialInherited:
       'This credential is supplied by the system environment. Update that variable and restart the app.',
-    decisionModelConfigurationInvalid: 'Unable to apply decision model configuration. Check the provider URL, API Key, default model and credential file access.',
-    extensionCredentialStoreUnavailable: 'Unable to read the local extension credential file. Check its contents and access permissions.',
-    extensionCredentialStoreWriteFailed: 'Unable to securely save extension credentials. Check local file access permissions.',
+    nativeVideoUrlInvalid:
+      'Invalid video service URL. Use an HTTP or HTTPS address without credentials, query parameters or fragments.',
+    nativeVideoLegacyUnsupported:
+      'This version does not support OpenAI-compatible video endpoints. Select a native video service.',
+    nativeVideoConfigurationInvalid:
+      'Invalid video configuration. Check the provider, model, service URL and API key.',
+    decisionModelConfigurationInvalid:
+      'Unable to apply decision model configuration. Check the provider URL, API Key, default model and credential file access.',
+    extensionCredentialStoreUnavailable:
+      'Unable to read the local extension credential file. Check its contents and access permissions.',
+    extensionCredentialStoreWriteFailed:
+      'Unable to securely save extension credentials. Check local file access permissions.',
     memoryWorkspaceUnavailable:
       'The memory workspace could not be resolved. Check the service connection.',
     memoryStatusUnavailable: 'Memory index status is unavailable.',

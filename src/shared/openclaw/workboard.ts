@@ -216,7 +216,6 @@ export type WorkboardCard = {
   agentId?: string;
   sessionKey?: string;
   runId?: string;
-  taskId?: string;
   sourceUrl?: string;
   execution?: WorkboardExecution;
   position: number;
@@ -291,7 +290,6 @@ export type WorkboardSessionResolution = {
 export type WorkboardStopIdentity = {
   sessionKey?: string;
   runId?: string;
-  taskId?: string;
 };
 
 export type WorkboardResult<T = undefined> = {
@@ -338,7 +336,6 @@ export const canStartWorkboardCard = (card: WorkboardCard, now = Date.now()): bo
     !card.metadata?.archivedAt &&
     (card.status === 'backlog' || card.status === 'todo' || card.status === 'ready') &&
     !workboardCardHasLiveExecution(card) &&
-    !card.taskId?.trim() &&
     !hasActiveClaim
   );
 };

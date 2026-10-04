@@ -1,6 +1,6 @@
 # 执行引擎：配置、准入与 Gateway 恢复
 
-当前 Cowork 执行引擎是 OpenClaw。Router 提供稳定产品接口，Adapter 隔离原生 wire 与生命周期，Manager 托管运行时进程。本文按当前 v2026.9.6 集成组织，运行时补丁清单只维护在[版本目录](../../scripts/patches/v2026.9.6/README.md)。
+当前 Cowork 执行引擎是 OpenClaw。Router 提供稳定产品接口，Adapter 隔离原生 wire 与生命周期，Manager 托管运行时进程。本文按当前 v2026.9.8 集成组织，运行时补丁清单只维护在[版本目录](../../scripts/patches/v2026.9.8/README.md)。
 
 ## Code Mode 工具编排
 
@@ -105,7 +105,7 @@ sequenceDiagram
 
 ## 5. 模型与凭据进入执行的方式
 
-模型引用使用限定 provider/model，准备时验证模型目录、当前选择和认证状态。main 的会话默认来自应用设置；非 main 助手可配置独立模型。在线语音、图像和视频配置按能力隔离，不隐式借用语言模型凭据。
+模型引用使用限定 provider/model，准备时验证模型目录、当前选择和认证状态。main 的会话默认来自应用设置；非 main 助手可配置独立模型。在线语音和图像配置按能力隔离；原生视频提供方按其统一身份配置，同名对话模型共享凭据，设置页明确说明。
 
 自定义 provider 的敏感值投影到受限权限文件，原生配置用 file SecretRef。内置模型从 user_info 中的 mtoken 换取短期 JWT，校验账号与有效期，原生只看到 exec SecretRef；SQLite builtin apiKey 保持为空。轮换触发 secrets.reload，logout/到期停止相关访问并清理派生快照。
 
@@ -123,7 +123,7 @@ Adapter 接收产品会话身份，准备原生 session、模型和权限，再�
 
 Worktree 设置页同时接入 Gateway 全局 `worktreeRoot` / `worktreeAcceleration`。Main 通过原生 `config.get` 读取并仅投影目录、加速、配置版本和应用状态；保存通过与应用配置同步共享的排他队列及带 `baseHash` 的 `config.patch`，回读核对结果。超时/断线不重试写入，配置版本冲突要求重新读取。完整、无模型与认证配置同步保留这两项原生设置。目录变更和加速开关只影响新分配，已登记目录、快照和恢复路径保持原生所有权；页面显示默认目录与固定 `openclaw/<名称>` 分支规则，不将全局目录解释为项目同级布局。
 
-原生 WS 中的文本流由 Renderer 消费；Adapter 只将运行状态、交互、审批、Goal 和会话变化映射为产品事件。wire validator 固定到 v2026.9.6，未知或不合法字段不能在各调用方随意猜测。
+原生 WS 中的文本流由 Renderer 消费；Adapter 只将运行状态、交互、审批、Goal 和会话变化映射为产品事件。wire validator 固定到 v2026.9.8，未知或不合法字段不能在各调用方随意猜测。
 
 网络超时可能发生在原生接收之后。run receipt 需要保留未知状态并查询原生事实；无条件重发将造成重复工具副作用。工具错误不必然是运行终态，late terminal 也不能结束新的 generation。
 
@@ -133,17 +133,17 @@ Goal coordinator 在原生目标仍 active 时安排续跑，保存产品 phase�
 
 Plan-mode 通过原生 session extension、turn hook、工具和 scoped RPC 实现。Main 持久化计划文件及 handoff，批准后用原生 reset 建立实施上下文；这是产品交接，不是另一套原生恢复状态机。
 
-子任务查询使用 tasks.list/get 和 task event。原生负责 admission、队列、required-child join 与完成通知；Main 合并状态用于父会话展示，不通过查询工具循环代替 task ledger。平级协作的发送也交给原生 sessions_send，产品只负责任务范围和回执。SubAgent 与平级协作有独立生命周期；上游 `agents team create` 是角色预设与原生委派配置，不能直接替代产品 room。跨助手原生委派须同时设计目标授权与助手创建、禁用、软删除的同步；当前不自动将受管 roster 扩展为 `subagents.allowAgents`。
+子任务查询使用 `sessions.list({ spawnedBy })` 和 `sessions.describe`；`sessions.changed` 使产品快照失效。OpenClaw v2026.9.8 已移除旧任务账本与 `tasks.*` RPC，原生会话投影统一拥有委派执行与控制归属。原生仍负责 admission、队列、required-child join 与完成通知。平级协作发送使用原生 sessions_send，产品只负责任务范围和回执。SubAgent 与平级协作有独立生命周期；上游 `agents team create` 是角色预设与原生委派配置，不能直接替代产品 room。跨助手原生委派须同时设计目标授权与助手创建、禁用、软删除的同步；当前不自动将受管 roster 扩展为 `subagents.allowAgents`。
 
-展示时保留 accepted、queued、running 与终态的区别；`completed` 且 `terminalOutcome=blocked` 应显示为 blocked。详情用 taskId 核对原生 session，再读取累计 usage/runtime，不从调用者 sessionKey 猜测。主模型结束或 UI busy 消失不证明 required child 已被父运行消费。完成通知丢失或请求结果不确定时先查原生任务与运行身份，不能重发整个子任务；它可能已经产生文件、网络或 spawn 副作用。产品未提供通用的模型请求自动重试承诺。
+展示保留原生 queued、running、done、failed、interrupted、killed、timeout 的区别；interrupted 在产品中显示为已停止。缺少终态证据不能显示成功。详情核对精确原生 session key，再使用同一会话投影中的累计 usage/runtime、activeRunIds 和 lastRunId；新活动运行清除旧终态时间与错误。主模型结束或 UI busy 消失不证明 required child 已被父运行消费。结果不确定时先查原生会话与运行身份，不能重发整个子任务；它可能已经产生文件、网络或 spawn 副作用。
 
 ### 执行观测与结果投递
 
-任务摘要同时保留 `execution`、`deliveryStatus`、`parentTaskId` 和 `diffStat`。执行观测描述排队、运行、等待、结束或未知；等待可区分子任务、外部条件、Agent 消息、审批和用户输入，并保留原生依赖任务及待完成数量。结果交付独立保留 pending、session_queued、delivered、failed、dismissed、parent_missing、not_applicable：执行结束不等于父任务已经收到结果，交付失败也不应改写为模型重新运行。wire 层验证新增结构，状态缓存按生命周期版本合并，不使用陈旧观测覆盖新版本。
+当前原生会话投影提供生命周期、耗时、运行身份与累计用量；旧任务摘要中的 execution、deliveryStatus 和 diffStat 已不属于此读取契约，界面不伪造等待原因、交付状态或变更统计。结果交付仍由原生执行系统管理，执行结束不意味着父任务已消费结果。完整读取替换成员集合；暂时不完整时只保留已核验快照，并保持刷新代次隔离，防止旧请求覆盖更新结果。
 
-精确操作必须经过产品会话与原生 requester 树归属核对。取消使用原生 `tasks.cancel`；结果重新投递和忽略使用 `tasks.retry` / `tasks.dismiss`。原生取消未确认、恢复不适用和连接中断都保留失败语义，不自动改用整会话停止、重新 spawn 或重跑工具。归属发现最多沿 64 层父身份查询，缺少父 ID 时回退到最多 100 页原生图查询；达到边界时拒绝本次操作。
+精确操作必须经过产品会话与原生 `spawnedBy` 控制树归属核对，最多沿 64 层父身份查询并检测循环；导航关系 `parentSessionKey` 不用于授权。取消对已核验的子会话调用 `sessions.abort({ key, clearQueued: true })`。原生未明确确认或连接中断时保留失败语义，不自动重新 spawn 或重跑工具。上游已移除的结果重投递/忽略按钮同步退役。
 
-嵌套浏览按需请求单层，每页 50 条；多层导航保留 task ID，游标绑定父任务对应的原生 key。现有根任务 `getSubTaskStatus` 轮询仍分页遍历全部根记录并补充 session 详情，不是全树的 50 条分页，也未消除大型历史根列表的扫描成本。子树浏览和精确操作不创建第二套调度器。
+嵌套浏览按需请求单层，每页 50 条；多层导航保留稳定原生 session key，游标绑定父层 keys 与 offset。根任务 `getSubTaskStatus` 轮询仍分页遍历全部直接子会话；原生单次投影已包含状态与用量，无需逐条 tasks.get 或二次生命周期拼接。大型历史根列表仍有完整扫描成本。子树浏览和精确操作不创建第二套调度器。
 
 ### Swarm 容量配置
 

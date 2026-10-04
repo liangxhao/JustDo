@@ -1,4 +1,4 @@
-// Version-locked to OpenClaw v2026.9.6 normalization-core/agent-id normalizeAgentId.
+// Version-locked to OpenClaw v2026.9.8 normalization-core/agent-id normalizeAgentId.
 export const normalizeOpenClawAgentId = (value: string): string => {
   const trimmed = value.trim();
   if (!trimmed) return 'main';

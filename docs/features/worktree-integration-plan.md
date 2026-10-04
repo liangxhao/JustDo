@@ -35,7 +35,7 @@ JustDo 使用 OpenClaw v2026.9.6 Gateway 执行任务。Git worktree 的创建�
 | 删除 | 产品先删本地会话，再异步递归调用原生 `sessions.delete`，失败被吞掉 | 原生 worktree 保留或清理失败可能在 JustDo 中失去入口；需保留可追踪的失败状态和恢复路径 |
 | 协作边界 | 持久 Team 成员共享项目文件；当前文档明确没有自动 worktree 隔离 | 本计划不改变 Team/隐藏子代理的文件共享语义 |
 
-相关代码：`src/main/engine/openclaw/openclawRuntimeAdapter.ts`、`src/main/engine/openclaw/subagentGateway.ts`、`src/main/engine/openclaw/wire/v2026_9_2.ts`、`src/main/data/coworkStore.ts`、`src/main/engine/openclaw/runtimePlanInteractions.ts`、`src/main/ipc/cowork/sessionReview.ts`。
+相关代码：`src/main/engine/openclaw/openclawRuntimeAdapter.ts`、`src/main/engine/openclaw/subagentGateway.ts`、`src/main/engine/openclaw/wire/v2026_9_8.ts`、`src/main/data/coworkStore.ts`、`src/main/engine/openclaw/runtimePlanInteractions.ts`、`src/main/ipc/cowork/sessionReview.ts`。
 
 ## 实施顺序
 

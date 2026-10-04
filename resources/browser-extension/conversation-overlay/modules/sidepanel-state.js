@@ -74,6 +74,15 @@ export function shouldShowTurnError(completedThreadId, selectedThreadId, refresh
 
 export function mergePendingUserMessage(entries, pendingMessage, selectedThreadId) {
   if (!pendingMessage || pendingMessage.threadId !== selectedThreadId) return entries;
+  if (pendingMessage.runId) {
+    const key = `${pendingMessage.runId}:user`;
+    const accepted = entries.some(entry => entry.role === 'user' && (
+      entry.pendingInput?.runId === pendingMessage.runId ||
+      entry.rawMessage?.idempotencyKey === key ||
+      entry.rawMessage?.__openclaw?.idempotencyKey === key
+    ));
+    return accepted ? entries : [...entries, { role: 'user', text: pendingMessage.text }];
+  }
   const persistedMatches = entries.filter(
     entry => entry.role === 'user' && entry.text === pendingMessage.text,
   ).length;
@@ -147,6 +156,7 @@ export function messagesFromThread(thread) {
           entries.push({
             role: 'user',
             text,
+            ...(item.pendingInput ? { pendingInput: item.pendingInput } : {}),
             ...(item.rawMessage ? { rawMessage: item.rawMessage } : {}),
           });
       } else if (item.type === 'agentMessage' && typeof item.text === 'string') {

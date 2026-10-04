@@ -536,6 +536,58 @@ describe('BrowserExtensionChatServer', () => {
     socket.close();
   });
 
+  it('does not use an old assistant reply to complete a newly interrupted pending input', async () => {
+    const api = createApi();
+    vi.mocked(api.listSessions).mockReturnValue([
+      {
+        createdAt: 1_000,
+        cwd: 'C:\\workspace',
+        id: 'one',
+        permissionMode: 'full',
+        status: 'error',
+        title: 'One',
+        updatedAt: 2_000,
+      },
+    ]);
+    const old = [{ role: 'user', text: 'Old question' }, { role: 'assistant', text: 'Old reply' }];
+    vi.mocked(api.getMessages).mockResolvedValueOnce(old).mockResolvedValue([...old, { role: 'user', text: 'New question', pendingInput: { id: 'p', state: 'interrupted' } }]);
+    server = new BrowserExtensionChatServer(api, token, '1.0.0');
+    await server.start();
+    const socket = await connect(server.getCapability().localAppServerUrl);
+    await request(socket, '1', 'initialize');
+    socket.send(JSON.stringify({ method: 'initialized' }));
+    const completion = new Promise<Record<string, unknown>>((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error('Timed out waiting for completion.')),
+        10_000,
+      );
+      const onMessage = (data: WebSocket.RawData) => {
+        const message = JSON.parse(data.toString()) as Record<string, unknown>;
+        if (message.method !== 'turn/completed') return;
+        clearTimeout(timeout);
+        socket.off('message', onMessage);
+        resolve(message);
+      };
+      socket.on('message', onMessage);
+    });
+
+    await request(socket, '2', 'turn/start', {
+      input: [{ text: 'Question', type: 'text' }],
+      threadId: 'one',
+    });
+
+    await expect(completion).resolves.toMatchObject({
+      params: {
+        turn: {
+          error: { message: 'The agent run failed before producing a reply.' },
+          status: 'failed',
+        },
+      },
+    });
+    expect(api.consumeTurnError).toHaveBeenCalledWith('one', 'run-1');
+    socket.close();
+  }, 12_000);
+
   it('does not fail a turn while Gateway still reports the runtime as active', async () => {
     const api = createApi();
     let runtimeReads = 0;

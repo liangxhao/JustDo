@@ -53,7 +53,7 @@ describe('SubtaskListPanel', () => {
     expect(dialog.getByText('Report ready')).toBeTruthy();
     expect(dialog.getByText('Parent unavailable')).toBeTruthy();
     expect(dialog.getByText('2 files, +10 / −3 lines')).toBeTruthy();
-    expect(dialog.getByRole('button', { name: 'Deliver result again' })).toBeTruthy();
+    expect(dialog.queryByRole('button', { name: 'Deliver result again' })).toBeNull();
   });
 
   it('reveals finished history beyond the first fifty rows', async () => {

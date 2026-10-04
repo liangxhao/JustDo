@@ -1,7 +1,7 @@
 # Jev evaluations
 
 The application bundles the upstream TypeSafe plugin as an optional extension.
-The first integration exposes `typesafe_evaluate` to the existing chat agent;
+The native core `decision_evaluate` tool is exposed when an agent has a decision model;
 the conversational model still controls when to call it. Jev supplies typed
 classification, rubric scores, and Boolean probabilities, not chat responses.
 
@@ -13,8 +13,8 @@ classification, rubric scores, and Boolean probabilities, not chat responses.
    `http://inference.corp:8009/v1`.
 3. Detect models or add one manually when `/models` is unavailable, for example
    `jev-latest` for Jev or `kev-latest` for a deployed Kev server.
-4. Select the default model and save. This enables TypeSafe and selects both
-   the evaluation-tool default and native `agents.defaults.decisionModel`.
+4. Select the default model and save. This enables TypeSafe and selects native
+   `agents.defaults.decisionModel`.
 5. Ask the assistant to classify, score or estimate probabilities. The chat model
    decides when to call the evaluation tool; native decision consumers use the
    configured default. Saving a model does not create automatic business workflows.
@@ -35,16 +35,17 @@ includes decision models using the same credential encryption as other model typ
 Evaluation sends task evidence to the selected service. Hosted Jev may incur API
 charges. Results use the existing OpenClaw stream, without a transcript cache.
 
-## Extension-provided skill
+## Native decision tool
 
-TypeSafe bundles the upstream `typesafe-evaluate` skill through its plugin
-manifest. It is available with the enabled extension, rather than registered as
-a global application built-in skill. It guides explicit Choice, Score, and Noul
-evaluations, including batching independent questions in one native tool call.
-The application does not add a separate batch-processing skill or Python helper.
-
-See the [upstream skill](../../openclaw-extensions/typesafe/skills/typesafe-evaluate/SKILL.md)
-for request semantics and result handling.
+OpenClaw 2026.9.8 owns the provider-neutral `decision_evaluate` tool. It accepts
+Boolean, Choice and Score questions and routes them through the selected agent's
+`decisionModel`. TypeSafe is a decision provider, with manifest-declared capabilities,
+lazy evaluator loading, and native unsupported-input fallback for HTTP 413/422.
+The former TypeSafe-specific optional tool, plugin model setting and bundled skill
+were removed upstream. The application uses the current native tool and model
+selection only; it does not move legacy plugin model selections or rename old tool
+policies. The unreleased 9.6 compatibility additions were removed at the user's
+request. Current `decision_evaluate` policies and explicit denies remain respected.
 
 ## Ownership and credential lifecycle
 
@@ -55,7 +56,7 @@ flowchart LR
   Main --> Config[Plugin config with SecretRef]
   Config --> Gateway[OpenClaw secret preparation]
   Secret --> Gateway
-  Chat[Chat agent] --> Tool[typesafe_evaluate]
+  Chat[Chat agent] --> Tool[decision_evaluate]
   Gateway --> Tool
   Tool --> API[Configured System One API]
 ```
@@ -87,10 +88,10 @@ Full, minimal, login and logout synchronization applies the settings selection
 and preserves secret providers and additional tool policy. Model settings use
 managed credential refresh (`secrets.reload` when only the key changed). Failed
 runtime application triggers the existing app-config rollback flow.
-Existing nonempty `tools.allow` lists receive the optional tool directly;
+Existing nonempty `tools.allow` lists receive the native decision tool directly;
 otherwise synchronization uses `alsoAllow`, keeping empty allowlists unrestricted.
 Explicit tool denies remain in force across full and authentication syncs.
-The optional tool is admitted in both local and sandbox sessions; native plugin
+The native tool is admitted in both local and sandbox sessions; native plugin
 disable and tool-deny policies still apply. Evaluation output does not grant
 permission to perform actions.
 
@@ -103,7 +104,7 @@ It does not depend on a future npm publication of `@openclaw/typesafe`.
 
 Focused tests cover secret isolation and rotation, bundled credential editing,
 default-off behavior, configuration persistence across lifecycle synchronization,
-and optional tool admission. Real hosted validation requires an operator's API
+and native decision tool admission. Real hosted validation requires an operator's API
 key; synthetic credentials must never be sent to the public endpoint.
 
 The native adapter suite can be run offline against a prepared runtime:

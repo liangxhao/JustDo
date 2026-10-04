@@ -22,6 +22,17 @@ const clientWith = (request: ReturnType<typeof vi.fn>) =>
   ({ request }) as unknown as GatewayClientLike;
 
 describe('native conversation diagnostic scan', () => {
+  it('uses the trusted native binding for assistant and child sessions and skips missing identities', async () => {
+    const request = vi.fn().mockResolvedValue({ messages: [] });
+    for (const key of ['agent:researcher:justdo:session-1', 'agent:researcher:subagent:child-1']) {
+      await collectDiagnosticHistory(report, clientWith(request), key);
+      expect(request).toHaveBeenLastCalledWith('chat.history', expect.objectContaining({ sessionKey: key }));
+    }
+    request.mockClear();
+    expect(await collectDiagnosticHistory(report, clientWith(request), null)).toMatchObject({ status: 'unavailable' });
+    expect(request).not.toHaveBeenCalled();
+  });
+
   it('scans older pages, extracts actual errors and excludes other runs and successful outputs', async () => {
     const request = vi
       .fn()
@@ -40,7 +51,7 @@ describe('native conversation diagnostic scan', () => {
         ],
         totalMessages: 5,
       });
-    const result = await collectDiagnosticHistory(report, clientWith(request));
+    const result = await collectDiagnosticHistory(report, clientWith(request), 'agent:main:justdo:session-1');
     expect(result.status).toBe('scanned');
     expect(result.messagesScanned).toBe(5);
     expect(result.failures).toHaveLength(1);
@@ -75,7 +86,7 @@ describe('native conversation diagnostic scan', () => {
         },
       ],
     });
-    const result = await collectDiagnosticHistory(report, clientWith(request));
+    const result = await collectDiagnosticHistory(report, clientWith(request), 'agent:main:justdo:session-1');
     expect(result.failures).toHaveLength(2);
     expect(result.failures[1]).toMatchObject({
       kind: 'model',
@@ -90,7 +101,7 @@ describe('native conversation diagnostic scan', () => {
       .fn()
       .mockResolvedValueOnce({ messages: [failedTool], deltaCursor: 'cursor' })
       .mockResolvedValueOnce({ kind: 'reset' });
-    expect(await collectDiagnosticHistory(report, clientWith(request))).toMatchObject({
+    expect(await collectDiagnosticHistory(report, clientWith(request), 'agent:main:justdo:session-1')).toMatchObject({
       status: 'changed',
       failures: [],
     });
@@ -109,7 +120,7 @@ describe('native conversation diagnostic scan', () => {
         },
       ],
     });
-    const result = await collectDiagnosticHistory(report, clientWith(request));
+    const result = await collectDiagnosticHistory(report, clientWith(request), 'agent:main:justdo:session-1');
     expect(result.status).toBe('scanned');
     expect(result.failures).toEqual([
       expect.objectContaining({
@@ -125,7 +136,7 @@ describe('native conversation diagnostic scan', () => {
       .fn()
       .mockResolvedValueOnce({ messages: [failedTool], deltaCursor: 'cursor' })
       .mockRejectedValueOnce(new Error('disconnected'));
-    expect(await collectDiagnosticHistory(report, clientWith(request))).toMatchObject({
+    expect(await collectDiagnosticHistory(report, clientWith(request), 'agent:main:justdo:session-1')).toMatchObject({
       status: 'partial',
       messagesScanned: 1,
       failures: [],
@@ -142,7 +153,7 @@ describe('native conversation diagnostic scan', () => {
         nextOffset: 1,
       })
       .mockRejectedValueOnce(new Error('disconnected'));
-    expect(await collectDiagnosticHistory(report, clientWith(request))).toMatchObject({
+    expect(await collectDiagnosticHistory(report, clientWith(request), 'agent:main:justdo:session-1')).toMatchObject({
       status: 'partial',
       messagesScanned: 1,
       failures: [],
@@ -162,15 +173,15 @@ describe('native conversation diagnostic scan', () => {
         nextOffset: 45,
       })
       .mockRejectedValueOnce(new Error('offline'));
-    const result = await collectDiagnosticHistory(report, clientWith(request));
+    const result = await collectDiagnosticHistory(report, clientWith(request), 'agent:main:justdo:session-1');
     expect(result).toMatchObject({ status: 'partial', omitted: 5 });
     expect(result.failures).toHaveLength(40);
     expect(result.failures[0]).toMatchObject({ clipped: true });
     expect(result.failures[0].excerpt).toHaveLength(1600);
-    expect(await collectDiagnosticHistory(report, null)).toMatchObject({ status: 'unavailable' });
+    expect(await collectDiagnosticHistory(report, null, 'agent:main:justdo:session-1')).toMatchObject({ status: 'unavailable' });
     const aborted = AbortSignal.abort();
     request.mockClear();
-    await collectDiagnosticHistory(report, clientWith(request), aborted);
+    await collectDiagnosticHistory(report, clientWith(request), 'agent:main:justdo:session-1', aborted);
     expect(request).not.toHaveBeenCalled();
   });
 });

@@ -275,7 +275,6 @@ const WorkboardView: React.FC<Props> = ({ isSidebarCollapsed, onToggleSidebar, o
     workboardCardSessionKey(sessionCard) === workboardCardSessionKey(latestSessionCard) &&
     (sessionCard.runId || sessionCard.execution?.runId) ===
       (latestSessionCard.runId || latestSessionCard.execution?.runId) &&
-    sessionCard.taskId === latestSessionCard.taskId &&
     workboardCardHasLiveExecution(latestSessionCard),
   );
 
@@ -587,7 +586,6 @@ const WorkboardView: React.FC<Props> = ({ isSidebarCollapsed, onToggleSidebar, o
               workboardService.stopCard(detailCard.id, {
                 sessionKey: workboardCardSessionKey(detailCard) ?? undefined,
                 runId: detailCard.runId || detailCard.execution?.runId,
-                taskId: detailCard.taskId,
               }),
             )
           }
@@ -610,7 +608,6 @@ const WorkboardView: React.FC<Props> = ({ isSidebarCollapsed, onToggleSidebar, o
               workboardService.stopCard(sessionSelection.card.id, {
                 sessionKey: sessionSelection.sessionKey,
                 runId: sessionSelection.card.runId || sessionSelection.card.execution?.runId,
-                taskId: sessionSelection.card.taskId,
               }),
             );
           }}

@@ -98,6 +98,28 @@ describe('NonLanguageModelSettings', () => {
     });
   });
 
+  it('offers only native video setup without a custom endpoint editor', () => {
+    renderSettings('video');
+    expect(screen.queryByText('addCustomProvider')).toBeNull();
+    expect(screen.getByLabelText('modelProviders')).toBeTruthy();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('selects native video models without contacting a paid provider and masks API keys', () => {
+    renderSettings('video');
+    fireEvent.change(screen.getByLabelText('modelProviders'), { target: { value: 'kie' } });
+    expect(screen.getByDisplayValue('kling-2.6/text-to-video')).toBeTruthy();
+    expect(screen.getByLabelText('baseUrl')).toHaveProperty('value', 'https://api.kie.ai');
+    fireEvent.change(screen.getByLabelText('apiKey'), { target: { value: 'typed-test-key' } });
+    expect(screen.getByLabelText('apiKey').getAttribute('type')).toBe('password');
+    fireEvent.change(screen.getByLabelText('modelProviders'), { target: { value: 'zai' } });
+    expect(screen.getByDisplayValue('cogvideox-3')).toBeTruthy();
+    expect(screen.getByLabelText('apiKey')).toHaveProperty('value', '');
+    fireEvent.change(screen.getByLabelText('modelProviders'), { target: { value: 'kie' } });
+    expect(screen.getByLabelText('apiKey')).toHaveProperty('value', 'typed-test-key');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it('builds capability-specific endpoint previews', () => {
     expect(buildNonLanguageModelEndpointPreview('speech-synthesis', 'http://speech.lan/v1/')).toBe(
       'http://speech.lan/v1/audio/speech',

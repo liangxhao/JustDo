@@ -2,7 +2,8 @@
 
 ## 范围
 
-以 OpenClaw 2026.9.6（本地源码 `eb377ac59e6`）核对，保留插件和既有启用策略。
+以 OpenClaw 2026.9.8核对，保留插件和既有启用策略。
+9.8 原生卡片不再暴露 taskId；停止和执行身份统一使用 sessionKey/runId。没有关联原生会话的卡片不提供停止入口，也不调用旧任务账本。
 四栏只负责展示；OpenClaw 继续拥有任务、存储、认领、调度和执行生命周期。
 
 新建任务只需标题和说明；优先级、标签、助手和历史会话设置折叠在“更多设置”。
@@ -18,13 +19,13 @@ triage、scheduled、review、blocked 以卡片上的简短说明解释等待原
 | 状态操作           | cards.move；Main 拒绝活动执行，校验并转发界面所见 expectedUpdatedAt   |
 | 启动               | cards.start；返回 card、sessionKey、runId                             |
 | 批量启动           | cards.dispatch 只选择 ready；普通 todo/backlog 需要先推进             |
-| 停止               | tasks.cancel、sessions.list、chat.abort，再对 cards.update 做版本校验 |
+| 停止               | sessions.list、chat.abort，再对 cards.update 做版本校验 |
 | 备注 / 归档 / 删除 | cards.comment / archive / delete                                      |
 | 更新通知           | plugin.workboard.changed；收到事件后刷新原生快照                      |
 
 上游源码入口：`extensions/workboard/src/gateway.ts`、`gateway-workspace-methods.ts`、
 `gateway-helpers.ts`、`dispatcher.ts`、`store-core.ts`、`store-normalizers.ts`，
-以及 Gateway 的 sessions.list、chat.abort、tasks.cancel schema/handlers。
+以及 Gateway 的 sessions.list、chat.abort schema/handlers。
 
 修正了历史 session 关联阻止重做、普通 todo 不参与批量启动、停止后残留 claim，
 以及旧详情页面可能覆盖已经开始执行的任务状态等问题。

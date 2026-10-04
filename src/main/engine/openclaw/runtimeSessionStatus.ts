@@ -93,47 +93,16 @@ export async function refreshSubagentStatuses(
   const now = Date.now();
   const refreshGeneration = this.subagentStatusGenerations.get(sessionId) ?? 0;
   const retained = this.subagentDetailCache.get(sessionId);
-  const detailHydrationRequested = !retained || retained.expiresAt <= now;
   const listing = await listGatewaySubagentsWithMetadata({
     client: this.gatewayClient,
     parentKeys: this.getSessionKeysForSession(sessionId),
-    // Session lifecycle is authoritative for reactivated terminal tasks, so
-    // refresh it with every status snapshot. Task detail hydration remains
-    // disabled and the longer-lived cache still supplies rich task metadata.
-    hydrateDetails: true,
-    hydrateTaskDetails: false,
   });
-  let current = listing.subagents;
-  let taskLedgerComplete = !detailHydrationRequested || listing.taskLedgerComplete;
-  const currentKeys = new Set(current.map(subagent => subagent.sessionKey));
-  const retainedActiveMissing = retained?.subagents.some(
-    subagent =>
-      (subagent.status === SUBAGENT_STATUSES.PENDING ||
-        subagent.status === SUBAGENT_STATUSES.RUNNING) &&
-      !currentKeys.has(subagent.sessionKey),
-  );
-  if (!detailHydrationRequested && retainedActiveMissing) {
-    const hydrated = await listGatewaySubagentsWithMetadata({
-      client: this.gatewayClient,
-      parentKeys: this.getSessionKeysForSession(sessionId),
-      hydrateTaskDetails: false,
-    });
-    current = mergeGatewaySubagentSnapshots(hydrated.subagents, current);
-    taskLedgerComplete = hydrated.taskLedgerComplete;
-  }
-  const replaceRetainedDetails = detailHydrationRequested && taskLedgerComplete;
-  const currentWithRetainedDetails = retained
-    ? current.map(subagent => {
-        const previous = retained.subagents.find(candidate => candidate.id === subagent.id);
-        return previous
-          ? (mergeGatewaySubagentSnapshots([previous], [subagent])[0] ?? subagent)
-          : subagent;
-      })
-    : current;
+  // A complete native session read replaces membership immediately. Keep prior
+  // rows only when the Gateway reports an incomplete read; never invent closure.
   const subagents =
-    replaceRetainedDetails || !retained
-      ? currentWithRetainedDetails
-      : mergeGatewaySubagentSnapshots(retained.subagents, current);
+    listing.sessionListComplete || !retained
+      ? listing.subagents
+      : mergeGatewaySubagentSnapshots(retained.subagents, listing.subagents);
   if (
     (this.subagentStatusGenerations.get(sessionId) ?? 0) !== refreshGeneration ||
     !this.store.getSession(sessionId)
@@ -141,9 +110,7 @@ export async function refreshSubagentStatuses(
     return subagents;
   }
   this.subagentDetailCache.set(sessionId, {
-    expiresAt: replaceRetainedDetails
-      ? now + SUBAGENT_DETAIL_CACHE_TTL_MS
-      : (retained?.expiresAt ?? now),
+    expiresAt: now + SUBAGENT_DETAIL_CACHE_TTL_MS,
     subagents,
   });
   this.subagentStatusCache.set(sessionId, {
@@ -257,8 +224,7 @@ export async function getSessionRuntimeStatuses(
   const parentByKey = new Map<string, string>();
   for (const row of snapshot.sessions) {
     const key = this.runtimeRowString(row.key);
-    const parent =
-      this.runtimeRowString(row.spawnedBy) || this.runtimeRowString(row.parentSessionKey);
+    const parent = this.runtimeRowString(row.spawnedBy);
     if (key && parent) parentByKey.set(key, parent);
   }
 

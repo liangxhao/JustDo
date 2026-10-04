@@ -28,7 +28,7 @@ test('preinstalls the official MXC sandbox only for Windows runtimes', () => {
   expect(packageJson.openclaw.plugins).toContainEqual({
     id: 'mxc',
     npm: '@openclaw/mxc-sandbox',
-    version: '2026.9.6',
+    version: '2026.9.8',
     platforms: ['win32'],
   });
 });

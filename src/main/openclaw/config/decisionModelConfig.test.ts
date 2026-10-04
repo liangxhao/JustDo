@@ -45,7 +45,6 @@ describe('decision model settings projection', () => {
             enabled: true,
             config: {
               serviceUrl: 'http://192.168.1.9:8009/v1',
-              model: 'kev-latest',
               apiKey: { source: 'file' },
             },
           },
@@ -53,6 +52,7 @@ describe('decision model settings projection', () => {
       },
     });
     expect(JSON.stringify(config)).not.toContain('test-credential');
+    expect((config.plugins as { entries: { typesafe: { config: unknown } } }).entries.typesafe.config).not.toHaveProperty('model');
     expect(
       applyDecisionModelConfiguration(config, resolveDecisionModelSelection(category()), dir),
     ).toBe(false);
@@ -121,5 +121,12 @@ it('restores unmanaged selection when a first settings save is rolled back', () 
   const config: Record<string, unknown> = structuredClone(original);
   applyDecisionModelConfiguration(config, null, '');
   restore(config);
+  expect(config).toEqual(original);
+});
+
+it.each([true, false])('leaves unmanaged plugin configuration unchanged when enabled=%s', enabled => {
+  const config = { plugins: { entries: { typesafe: { enabled, config: { model: 'kev-latest', baseUrl: 'http://localhost:8009' } } } }, agents: { defaults: {} } };
+  const original = structuredClone(config);
+  expect(applyDecisionModelConfiguration(config, undefined, '')).toBe(false);
   expect(config).toEqual(original);
 });

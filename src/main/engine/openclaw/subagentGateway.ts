@@ -5,14 +5,7 @@ import {
   type CoworkSubagentDetailTask,
 } from '../../../shared/cowork/subagentDetails';
 import type { GatewayClientLike } from '../gateway/types';
-import {
-  type OpenClawTaskStatusV2026_9_2,
-  type OpenClawTaskSummaryV2026_9_2,
-  type OpenClawTaskTerminalOutcomeV2026_9_2,
-  parseSessionsListResultV2026_9_2,
-  parseTasksGetResultV2026_9_2,
-  parseTasksListResultV2026_9_2,
-} from './wire/v2026_9_2';
+import { parseSessionsListResultV2026_9_8 } from './wire/v2026_9_8';
 
 export type GatewayRequestClient = Pick<GatewayClientLike, 'request'>;
 
@@ -24,6 +17,7 @@ export const SUBAGENT_STATUSES = {
   KILLED: 'killed',
   TIMEOUT: 'timeout',
   BLOCKED: 'blocked',
+  UNKNOWN: 'unknown',
 } as const;
 
 export type SubagentStatus = (typeof SUBAGENT_STATUSES)[keyof typeof SUBAGENT_STATUSES];
@@ -68,226 +62,288 @@ export type GatewaySubagent = {
   toolUseCount?: number;
 };
 
-type GatewaySubagentProjection = Omit<GatewaySubagent, 'label' | 'labelSource'> & {
-  label?: string;
-  labelSource?: SubagentLabelSource;
-};
-
 export type GatewaySubagentListMetadata = {
   subagents: GatewaySubagent[];
-  taskLedgerComplete: boolean;
+  sessionListComplete: boolean;
 };
 
 type ListGatewaySubagentsOptions = {
   client: GatewayClientLike;
   parentKeys: string[];
-  hydrateDetails?: boolean;
-  hydrateTaskDetails?: boolean;
-  includeMalformedForRuntimeControl?: boolean;
   requireComplete?: boolean;
 };
 
-const TASK_PAGE_SIZE = 500;
+// OpenClaw 2026.9.8 owns delegated work through session lineage and lifecycle.
+// Product IDs are the stable native session keys, never a second task ledger.
 const SESSION_PAGE_SIZE = 500;
-const TASK_DETAIL_CONCURRENCY = 8;
-const TASK_TITLE_MAX_CHARS = 48;
-const warnedMalformedTaskIds = new Set<string>();
-const LABEL_PRIORITY: Record<SubagentLabelSource, number> = {
-  [SUBAGENT_LABEL_SOURCES.LABEL]: 0,
-  [SUBAGENT_LABEL_SOURCES.TASK]: 1,
-  [SUBAGENT_LABEL_SOURCES.TASK_NAME]: 2,
-};
-
 const optionalString = (value: unknown): string | undefined =>
   typeof value === 'string' && value.trim() ? value.trim() : undefined;
-
 const optionalNumber = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-
-const toTimestamp = (value: string | number | undefined): number | undefined => {
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (typeof value !== 'string') return undefined;
-  const timestamp = Date.parse(value);
-  return Number.isFinite(timestamp) ? timestamp : undefined;
+const LABEL_PRIORITY: Record<SubagentLabelSource, number> = { label: 0, task: 1, taskName: 2 };
+const STATUS_MAP: Record<string, SubagentStatus> = {
+  queued: 'pending',
+  running: 'running',
+  done: 'done',
+  failed: 'failed',
+  interrupted: 'killed',
+  killed: 'killed',
+  timeout: 'timeout',
 };
-
-const summarizeTask = (value: unknown): string | undefined => {
-  if (typeof value !== 'string') return undefined;
-  const firstLine = value
-    .split(/\r?\n/u)
-    .map(line => line.trim())
-    .find(Boolean);
-  if (!firstLine) return undefined;
-  const normalized = firstLine.replace(/\s+/gu, ' ');
-  const characters = Array.from(normalized);
-  return characters.length <= TASK_TITLE_MAX_CHARS
-    ? normalized
-    : `${characters.slice(0, TASK_TITLE_MAX_CHARS).join('')}…`;
-};
-
-const mapTaskStatus = (
-  status: OpenClawTaskStatusV2026_9_2,
-  terminalOutcome?: OpenClawTaskTerminalOutcomeV2026_9_2,
-): SubagentStatus => {
-  switch (status) {
-    case 'queued':
-      return SUBAGENT_STATUSES.PENDING;
-    case 'running':
-      return SUBAGENT_STATUSES.RUNNING;
-    case 'completed':
-      return terminalOutcome === 'blocked' ? SUBAGENT_STATUSES.BLOCKED : SUBAGENT_STATUSES.DONE;
-    case 'cancelled':
-      return SUBAGENT_STATUSES.KILLED;
-    case 'timed_out':
-      return SUBAGENT_STATUSES.TIMEOUT;
-    case 'failed':
-      return SUBAGENT_STATUSES.FAILED;
-  }
-};
-
-const resolveTaskTitle = (
-  task: OpenClawTaskSummaryV2026_9_2,
-): { label: string; labelSource: SubagentLabelSource } => {
-  const label = optionalString(task.title);
-  if (label) return { label, labelSource: SUBAGENT_LABEL_SOURCES.LABEL };
-  const prompt = summarizeTask(task.prompt);
-  if (prompt) return { label: prompt, labelSource: SUBAGENT_LABEL_SOURCES.TASK };
-  return { label: task.id, labelSource: SUBAGENT_LABEL_SOURCES.TASK_NAME };
-};
-
-const resolveDelegatedTaskRuntime = (
-  task: OpenClawTaskSummaryV2026_9_2,
-): 'subagent' | 'acp' | null => {
-  const explicitKind = optionalString(task.kind);
-  if (explicitKind && explicitKind !== 'acp' && explicitKind !== 'subagent') return null;
-  if (task.runtime === 'acp' || task.kind === 'acp') return 'acp';
-  if (task.runtime === 'subagent' || task.kind === 'subagent') return 'subagent';
-  return null;
-};
-
-const isDelegatedTask = (task: OpenClawTaskSummaryV2026_9_2): boolean =>
-  resolveDelegatedTaskRuntime(task) !== null;
-
-const toGatewaySubagent = (
-  task: OpenClawTaskSummaryV2026_9_2,
-): GatewaySubagentProjection | null => {
-  const runtime = resolveDelegatedTaskRuntime(task);
-  if (!runtime) return null;
-  const sessionKey = optionalString(task.childSessionKey);
-  if (!sessionKey) {
-    if (!warnedMalformedTaskIds.has(task.id)) {
-      warnedMalformedTaskIds.add(task.id);
-      console.warn('[SubagentGateway] Skipping native subagent task without childSessionKey', {
-        taskId: task.id,
-      });
-    }
-    return null;
-  }
-  const startedAt = toTimestamp(task.startedAt);
-  const updatedAt = toTimestamp(
-    typeof task.updatedAt === 'string' || typeof task.updatedAt === 'number'
-      ? task.updatedAt
-      : undefined,
-  );
-  const endedAt = toTimestamp(task.endedAt);
+type SessionRow = Record<string, unknown>;
+const parentKey = (row: SessionRow): string | undefined => optionalString(row.spawnedBy);
+const isDelegated = (row: SessionRow): boolean => Boolean(parentKey(row));
+const fromSession = (row: SessionRow): GatewaySubagent | null => {
+  const key = optionalString(row.key);
+  if (!key || !isDelegated(row)) return null;
+  const label =
+    optionalString(row.label) ??
+    optionalString(row.displayName) ??
+    optionalString(row.derivedTitle);
+  const status =
+    STATUS_MAP[String(row.status)] ??
+    (row.hasActiveRun === true || row.subagentRunState === 'active'
+      ? 'running'
+      : row.subagentRunState === 'interrupted'
+        ? 'killed'
+        : 'unknown');
+  const active = status === 'pending' || status === 'running';
+  const model = optionalString(row.model);
+  const provider = optionalString(row.modelProvider);
+  const activeRunIds = Array.isArray(row.activeRunIds) ? row.activeRunIds : [];
   return {
-    id: task.id,
-    taskName: task.id,
-    sessionKey,
-    ...resolveTaskTitle(task),
-    status: mapTaskStatus(task.status, task.terminalOutcome),
-    runtime,
-    parentTaskId: optionalString(task.parentTaskId),
-    execution: task.execution,
-    deliveryStatus: task.deliveryStatus,
-    diffStat: task.diffStat,
-    agentId: optionalString(task.agentId),
-    task: optionalString(task.prompt) ?? optionalString(task.title),
-    runId: optionalString(task.runId),
-    startedAt,
-    updatedAt,
-    endedAt,
-    ...(startedAt !== undefined && endedAt !== undefined
-      ? { runtimeMs: Math.max(0, endedAt - startedAt) }
+    id: key,
+    taskName: key,
+    sessionKey: key,
+    sessionId: optionalString(row.sessionId),
+    label: label ?? key,
+    labelSource: label ? 'label' : 'taskName',
+    status,
+    runtime:
+      (typeof row.agentRuntime === 'object' &&
+        row.agentRuntime !== null &&
+        (row.agentRuntime as { id?: string }).id === 'acp') ||
+      key.includes(':acp:')
+        ? 'acp'
+        : 'subagent',
+    parentTaskId: parentKey(row),
+    agentId: optionalString(row.agentId),
+    runId: active ? optionalString(activeRunIds[0]) : optionalString(row.lastRunId),
+    model: model && provider && !model.startsWith(provider + '/') ? provider + '/' + model : model,
+    startedAt: optionalNumber(row.startedAt),
+    updatedAt: optionalNumber(row.updatedAt),
+    endedAt: active ? undefined : optionalNumber(row.endedAt),
+    runtimeMs: optionalNumber(row.runtimeMs),
+    ...(status === 'running'
+      ? { runtimeSampledAt: optionalNumber(row.snapshotAt) ?? Date.now() }
       : {}),
-    progressSummary: optionalString(task.progressSummary),
-    terminalSummary: optionalString(task.terminalSummary),
-    error: optionalString(task.error),
-    lastActivity: optionalString(task.lastActivity),
-    lastToolName: optionalString(task.lastToolName),
-    toolUseCount: optionalNumber(task.toolUseCount),
+    totalTokens: optionalNumber(row.totalTokens),
+    error: active ? undefined : optionalString(row.lastRunError),
   };
 };
-
-const listTaskPages = async (
+const readPage = async (
   client: GatewayRequestClient,
-  sessionKey: string,
-): Promise<OpenClawTaskSummaryV2026_9_2[]> => {
-  const tasks: OpenClawTaskSummaryV2026_9_2[] = [];
-  let cursor: string | undefined;
-  const seenCursors = new Set<string>();
-  do {
-    if (cursor && seenCursors.has(cursor)) {
-      throw new Error('OpenClaw tasks.list returned a repeated cursor');
-    }
-    if (cursor) seenCursors.add(cursor);
-    const page = parseTasksListResultV2026_9_2(
-      await client.request('tasks.list', {
-        sessionKey,
-        limit: TASK_PAGE_SIZE,
-        ...(cursor ? { cursor } : {}),
-      }),
-    );
-    tasks.push(...page.tasks.filter(isDelegatedTask));
-    cursor = page.nextCursor;
-  } while (cursor);
-  return tasks;
+  spawnedBy?: string,
+  offset = 0,
+  limit = SESSION_PAGE_SIZE,
+) => {
+  const page = parseSessionsListResultV2026_9_8(
+    await client.request('sessions.list', {
+      limit,
+      offset,
+      archived: 'all',
+      ...(spawnedBy ? { spawnedBy } : {}),
+    }),
+  );
+  if (page.hasMore && (page.nextOffset == null || page.nextOffset <= offset)) {
+    throw new Error('OpenClaw sessions.list cursor did not advance');
+  }
+  return page;
 };
-
-const hydrateTaskDetails = async (
+const listSessions = async (
   client: GatewayRequestClient,
-  tasks: OpenClawTaskSummaryV2026_9_2[],
-): Promise<OpenClawTaskSummaryV2026_9_2[]> => {
-  const hydrated: OpenClawTaskSummaryV2026_9_2[] = [];
-  for (let offset = 0; offset < tasks.length; offset += TASK_DETAIL_CONCURRENCY) {
-    hydrated.push(
-      ...(await Promise.all(
-        tasks.slice(offset, offset + TASK_DETAIL_CONCURRENCY).map(async task => {
-          try {
-            return parseTasksGetResultV2026_9_2(
-              await client.request('tasks.get', { taskId: task.id }),
-            ).task;
-          } catch (error) {
-            console.warn('[SubagentGateway] Failed to load native task details', {
-              taskId: task.id,
-              error: error instanceof Error ? error.message : String(error),
-            });
-            return task;
-          }
-        }),
-      )),
-    );
+  spawnedBy?: string,
+): Promise<SessionRow[]> => {
+  const rows: SessionRow[] = [];
+  let offset = 0;
+  for (;;) {
+    const page = await readPage(client, spawnedBy, offset);
+    rows.push(...page.sessions);
+    if (!page.hasMore) return rows;
+    offset = page.nextOffset!;
   }
-  return hydrated;
 };
-
-const collapseTaskBackingInstances = (
-  tasks: OpenClawTaskSummaryV2026_9_2[],
-): OpenClawTaskSummaryV2026_9_2[] => {
-  const acpByBackingIdentity = new Map<string, OpenClawTaskSummaryV2026_9_2>();
-  for (const task of tasks) {
-    if (resolveDelegatedTaskRuntime(task) !== 'acp') continue;
-    const sessionKey = optionalString(task.childSessionKey);
-    const runId = optionalString(task.runId);
-    if (sessionKey && runId) acpByBackingIdentity.set(`${sessionKey}\u0000${runId}`, task);
-  }
-
-  return tasks.filter(task => {
-    if (resolveDelegatedTaskRuntime(task) !== 'subagent') return true;
-    const sessionKey = optionalString(task.childSessionKey);
-    const runId = optionalString(task.runId);
-    return !sessionKey || !runId || !acpByBackingIdentity.has(`${sessionKey}\u0000${runId}`);
+export const listPersistedGatewaySessions = (client: GatewayRequestClient): Promise<SessionRow[]> =>
+  listSessions(client);
+const describe = async (client: GatewayRequestClient, key: string): Promise<SessionRow | null> => {
+  const result = await client.request<{ session?: SessionRow | null }>('sessions.describe', {
+    key,
   });
+  if (!result.session || result.session.key !== key) return null;
+  return result.session;
+};
+export const getGatewaySubagentDetails = async (
+  client: GatewayRequestClient,
+  taskId: string,
+): Promise<GatewaySubagent | null> => {
+  const row = await describe(client, taskId);
+  return row ? fromSession(row) : null;
+};
+export const requireGatewaySubagentOwnership = async (
+  client: GatewayRequestClient,
+  rootKeys: string[],
+  taskId: string,
+): Promise<GatewaySubagent> => {
+  if (!taskId.trim() || !rootKeys.length || rootKeys.includes(taskId))
+    throw new Error('Subagent task does not belong to this session');
+  const row = await describe(client, taskId);
+  const target = row && fromSession(row);
+  if (!target) throw new Error('Subagent task was not found');
+  const visited = new Set([taskId]);
+  let parent = parentKey(row!);
+  while (parent && visited.size <= 64) {
+    if (rootKeys.includes(parent)) return target;
+    if (visited.has(parent)) throw new Error('Invalid subagent ancestry');
+    visited.add(parent);
+    const ancestor = await describe(client, parent);
+    if (!ancestor || !isDelegated(ancestor)) break;
+    parent = parentKey(ancestor);
+  }
+  throw new Error('Subagent task does not belong to this session');
+};
+export const listGatewaySubagentDescendants = async (
+  client: GatewayRequestClient,
+  rootKeys: string[],
+): Promise<Array<{ sessionKey: string; sessionId: string; label: string }>> => {
+  const queue = [...new Set(rootKeys)],
+    visited = new Set(rootKeys);
+  const result: Array<{ sessionKey: string; sessionId: string; label: string }> = [];
+  while (queue.length) {
+    const parent = queue.shift()!;
+    for (const row of await listSessions(client, parent)) {
+      if (parentKey(row) !== parent) continue;
+      const child = fromSession(row);
+      if (!child || visited.has(child.sessionKey)) continue;
+      if (!child.sessionId)
+        throw new Error('Gateway Session ID unavailable for ' + child.sessionKey);
+      visited.add(child.sessionKey);
+      queue.push(child.sessionKey);
+      result.push({ sessionKey: child.sessionKey, sessionId: child.sessionId, label: child.label });
+    }
+  }
+  return result;
+};
+export const listGatewaySubagentsWithMetadata = async (
+  options: ListGatewaySubagentsOptions,
+): Promise<GatewaySubagentListMetadata> => {
+  const subagents = new Map<string, GatewaySubagent>();
+  let sessionListComplete = true;
+  for (const parent of new Set(options.parentKeys)) {
+    try {
+      for (const row of await listSessions(options.client, parent)) {
+        if (parentKey(row) !== parent) continue;
+        const child = fromSession(row);
+        if (child) subagents.set(child.id, child);
+      }
+    } catch (error) {
+      sessionListComplete = false;
+      console.warn('[SubagentGateway] Failed to list native child sessions', {
+        parent,
+        error: String(error),
+      });
+    }
+  }
+  return { subagents: [...subagents.values()], sessionListComplete };
+};
+export async function listGatewaySubagents(
+  options: ListGatewaySubagentsOptions,
+): Promise<GatewaySubagent[]> {
+  const result = await listGatewaySubagentsWithMetadata(options);
+  if (
+    options.requireComplete &&
+    (!result.sessionListComplete ||
+      result.subagents.some(child => child.status === SUBAGENT_STATUSES.UNKNOWN))
+  )
+    throw new Error('OpenClaw descendant discovery is incomplete; session stop was not confirmed.');
+  return result.subagents;
+}
+export const listGatewaySubagentChildren = async (
+  client: GatewayRequestClient,
+  rootKeys: string[],
+  parentTaskId?: string,
+  cursor?: string,
+): Promise<{ subagents: GatewaySubagent[]; nextCursor?: string }> => {
+  const keys = parentTaskId
+    ? [(await requireGatewaySubagentOwnership(client, rootKeys, parentTaskId)).sessionKey]
+    : [...new Set(rootKeys)];
+  let index = 0,
+    offset = 0;
+  if (cursor !== undefined) {
+    if (cursor.length > 8192) throw new Error('Invalid session page cursor');
+    const page = JSON.parse(cursor) as Record<string, unknown>;
+    if (
+      !page ||
+      page.binding !== JSON.stringify(keys) ||
+      !Number.isSafeInteger(page.index) ||
+      (page.index as number) < 0 ||
+      (page.index as number) >= keys.length ||
+      !Number.isSafeInteger(page.offset) ||
+      (page.offset as number) < 0
+    )
+      throw new Error('Invalid session page cursor');
+    index = page.index as number;
+    offset = page.offset as number;
+  }
+  if (!keys.length) return { subagents: [] };
+  const page = await readPage(client, keys[index], offset, 50);
+  const subagents = page.sessions
+    .filter(row => parentKey(row) === keys[index])
+    .flatMap(row => {
+      const child = fromSession(row);
+      return child ? [child] : [];
+    });
+  const nextIndex = page.hasMore ? index : index + 1;
+  return {
+    subagents,
+    ...(nextIndex < keys.length
+      ? {
+          nextCursor: JSON.stringify({
+            binding: JSON.stringify(keys),
+            index: nextIndex,
+            offset: page.hasMore ? page.nextOffset : 0,
+          }),
+        }
+      : {}),
+  };
+};
+export const controlGatewaySubagent = async (
+  client: GatewayRequestClient,
+  rootKeys: string[],
+  taskId: string,
+  action: CoworkSubagentAction,
+): Promise<CoworkSubagentControlResult> => {
+  if (action !== CoworkSubagentActions.Cancel) throw new Error('Unknown subagent operation');
+  const target = await requireGatewaySubagentOwnership(client, rootKeys, taskId);
+  // The native key-only abort clears followup queues, but has no caller-supplied
+  // sessionId fence. Recheck the leaf after ancestry reads and reject a reset,
+  // ownership transfer or replacement run before issuing the native operation.
+  const current = await getGatewaySubagentDetails(client, target.sessionKey);
+  if (
+    !current ||
+    !target.sessionId ||
+    current.sessionId !== target.sessionId ||
+    current.parentTaskId !== target.parentTaskId ||
+    current.runId !== target.runId
+  ) {
+    throw new Error('Subagent identity changed; refresh before cancelling');
+  }
+  const result = await client.request<{ ok?: boolean; status?: string }>('sessions.abort', {
+    key: target.sessionKey,
+    clearQueued: true,
+  });
+  return result.ok === true && (result.status === 'aborted' || result.status === 'no-active-run')
+    ? { success: true }
+    : { success: false, error: 'Session cancellation was not confirmed' };
 };
 
 export const mergeGatewaySubagentSnapshots = (
@@ -372,553 +428,4 @@ export const mergeGatewaySubagentSnapshots = (
     byId.set(subagent.id, merged);
   }
   return [...byId.values()];
-};
-
-export const listPersistedGatewaySessions = async (
-  client: GatewayRequestClient,
-): Promise<Array<Record<string, unknown>>> => {
-  const sessions: Array<Record<string, unknown>> = [];
-  let offset = 0;
-  const seenOffsets = new Set<number>();
-  while (!seenOffsets.has(offset)) {
-    seenOffsets.add(offset);
-    const page = parseSessionsListResultV2026_9_2(
-      await client.request('sessions.list', {
-        limit: SESSION_PAGE_SIZE,
-        offset,
-        archived: 'all',
-      }),
-    );
-    sessions.push(...page.sessions);
-    if (!page.hasMore || page.nextOffset === null || page.nextOffset === undefined) break;
-    if (page.nextOffset <= offset) throw new Error('OpenClaw sessions.list cursor did not advance');
-    offset = page.nextOffset;
-  }
-  return sessions;
-};
-
-const readSessionModelReference = (session: Record<string, unknown>): string | undefined => {
-  const provider = optionalString(session.modelProvider);
-  const model = optionalString(session.model);
-  if (!model) return undefined;
-  return provider && !model.toLowerCase().startsWith(`${provider.toLowerCase()}/`)
-    ? `${provider}/${model}`
-    : model;
-};
-
-const SESSION_STATUS_MAP: Record<string, SubagentStatus> = {
-  queued: SUBAGENT_STATUSES.PENDING,
-  running: SUBAGENT_STATUSES.RUNNING,
-  done: SUBAGENT_STATUSES.DONE,
-  failed: SUBAGENT_STATUSES.FAILED,
-  killed: SUBAGENT_STATUSES.KILLED,
-  timeout: SUBAGENT_STATUSES.TIMEOUT,
-};
-
-const readSessionActiveRunId = (
-  session: Record<string, unknown>,
-  excludingRunId?: string,
-): string | undefined => {
-  const candidates = [
-    optionalString(session.lifecycleRunId),
-    ...(Array.isArray(session.activeRunIds) ? session.activeRunIds.map(optionalString) : []),
-  ];
-  return candidates.find(
-    (candidate): candidate is string =>
-      candidate !== undefined && (excludingRunId === undefined || candidate !== excludingRunId),
-  );
-};
-
-const readSessionRunId = (session: Record<string, unknown>): string | undefined =>
-  readSessionActiveRunId(session) ?? optionalString(session.lastRunId);
-
-const hydrateSubagentFromSession = (
-  subagent: GatewaySubagent,
-  session: Record<string, unknown> | undefined,
-): GatewaySubagent => {
-  if (!session) return subagent;
-  const sessionId = optionalString(session.sessionId);
-  const model = readSessionModelReference(session);
-  const totalTokens = optionalNumber(session.totalTokens);
-  const sessionStatus = optionalString(session.status);
-  const taskIsTerminal =
-    subagent.status !== SUBAGENT_STATUSES.PENDING && subagent.status !== SUBAGENT_STATUSES.RUNNING;
-  const replacementRunId = taskIsTerminal
-    ? readSessionActiveRunId(session, subagent.runId)
-    : undefined;
-  const sessionRunId = replacementRunId ?? readSessionRunId(session);
-  const projectedStatus = sessionStatus ? SESSION_STATUS_MAP[sessionStatus] : undefined;
-  const active =
-    session.subagentRunState === 'active' ||
-    projectedStatus === SUBAGENT_STATUSES.PENDING ||
-    projectedStatus === SUBAGENT_STATUSES.RUNNING;
-  const startedAt = toTimestamp(
-    typeof session.startedAt === 'string' || typeof session.startedAt === 'number'
-      ? session.startedAt
-      : undefined,
-  );
-  const endedAt = toTimestamp(
-    typeof session.endedAt === 'string' || typeof session.endedAt === 'number'
-      ? session.endedAt
-      : undefined,
-  );
-  const runtimeMs = optionalNumber(session.runtimeMs);
-  const updatedAt = toTimestamp(
-    typeof session.updatedAt === 'string' || typeof session.updatedAt === 'number'
-      ? session.updatedAt
-      : undefined,
-  );
-  // A terminal task event can land before sessions.list/describe catches up.
-  // Only let the Session lifecycle override task state when its revision is at
-  // least as new. A newer active Session row is authoritative for follow-ups.
-  const equalRevisionReplacement =
-    active && taskIsTerminal && subagent.runId !== undefined && replacementRunId !== undefined;
-  const sessionLifecycleIsCurrent =
-    updatedAt !== undefined &&
-    (subagent.updatedAt === undefined ||
-      updatedAt > subagent.updatedAt ||
-      (updatedAt === subagent.updatedAt &&
-        (!active || !taskIsTerminal || equalRevisionReplacement)));
-  const useActiveSessionLifecycle = active && sessionLifecycleIsCurrent;
-  const status = sessionLifecycleIsCurrent
-    ? useActiveSessionLifecycle
-      ? (projectedStatus ?? SUBAGENT_STATUSES.RUNNING)
-      : projectedStatus === SUBAGENT_STATUSES.DONE && subagent.status === SUBAGENT_STATUSES.BLOCKED
-        ? SUBAGENT_STATUSES.BLOCKED
-        : (projectedStatus ?? subagent.status)
-    : subagent.status;
-  const hydrated: GatewaySubagent = {
-    ...subagent,
-    status,
-    ...(sessionLifecycleIsCurrent && sessionRunId ? { runId: sessionRunId } : {}),
-    ...(sessionId ? { sessionId } : {}),
-    ...(model ? { model } : {}),
-    ...(totalTokens !== undefined ? { totalTokens } : {}),
-    ...(sessionLifecycleIsCurrent && startedAt !== undefined ? { startedAt } : {}),
-    ...(sessionLifecycleIsCurrent && updatedAt !== undefined ? { updatedAt } : {}),
-    ...(sessionLifecycleIsCurrent && runtimeMs !== undefined
-      ? {
-          runtimeMs,
-          ...(status === SUBAGENT_STATUSES.RUNNING ? { runtimeSampledAt: Date.now() } : {}),
-        }
-      : {}),
-    ...(sessionLifecycleIsCurrent && !active && endedAt !== undefined ? { endedAt } : {}),
-  };
-  if (useActiveSessionLifecycle) {
-    delete hydrated.endedAt;
-    delete hydrated.terminalSummary;
-    delete hydrated.error;
-  } else if (
-    hydrated.status !== SUBAGENT_STATUSES.PENDING &&
-    hydrated.status !== SUBAGENT_STATUSES.RUNNING
-  ) {
-    delete hydrated.runtimeSampledAt;
-  }
-  return hydrated;
-};
-
-export const getGatewaySubagentDetails = async (
-  client: GatewayRequestClient,
-  taskId: string,
-): Promise<GatewaySubagent | null> => {
-  const task = parseTasksGetResultV2026_9_2(await client.request('tasks.get', { taskId })).task;
-  if (task.id !== taskId || !isDelegatedTask(task)) return null;
-  const subagent = toGatewaySubagent(task);
-  if (!subagent || typeof subagent.label !== 'string' || !subagent.labelSource) return null;
-  const wellFormedSubagent: GatewaySubagent = {
-    ...subagent,
-    label: subagent.label,
-    labelSource: subagent.labelSource,
-  };
-  // Session metadata enriches the native task; a temporary metadata failure
-  // must not hide its verified prompt, execution state, or failure details.
-  const described = await client
-    .request<{ session?: Record<string, unknown> | null }>('sessions.describe', {
-      key: wellFormedSubagent.sessionKey,
-    })
-    .catch((): { session?: Record<string, unknown> | null } => ({}));
-  let session = described.session ?? undefined;
-  const taskUpdatedAt = wellFormedSubagent.updatedAt;
-  const sessionUpdatedAt = session
-    ? toTimestamp(
-        typeof session.updatedAt === 'string' || typeof session.updatedAt === 'number'
-          ? session.updatedAt
-          : undefined,
-      )
-    : undefined;
-  const taskIsTerminal =
-    wellFormedSubagent.status !== SUBAGENT_STATUSES.PENDING &&
-    wellFormedSubagent.status !== SUBAGENT_STATUSES.RUNNING;
-  const sessionAppearsActive =
-    session?.subagentRunState === 'active' ||
-    session?.status === 'queued' ||
-    session?.status === 'running';
-  // sessions.describe does not project activeRunIds in OpenClaw v2026.9.2.
-  // Resolve the rare same-millisecond terminal/replacement ambiguity through
-  // sessions.list, whose async projection includes the active run identity.
-  if (
-    session &&
-    taskIsTerminal &&
-    sessionAppearsActive &&
-    taskUpdatedAt !== undefined &&
-    sessionUpdatedAt === taskUpdatedAt &&
-    !readSessionActiveRunId(session, wellFormedSubagent.runId)
-  ) {
-    try {
-      const listed = (await listPersistedGatewaySessions(client)).find(
-        candidate => optionalString(candidate.key) === wellFormedSubagent.sessionKey,
-      );
-      if (listed) session = listed;
-    } catch (error) {
-      // This lookup only disambiguates a same-revision replacement. The task's
-      // terminal state remains the safe result when the optional list fails.
-      console.warn('[OpenClawSubagents] Failed to resolve replacement run identity', {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-  return hydrateSubagentFromSession(wellFormedSubagent, session);
-};
-
-export const listGatewaySubagentDescendants = async (
-  client: GatewayRequestClient,
-  rootKeys: string[],
-): Promise<Array<{ sessionKey: string; sessionId: string; label: string }>> => {
-  const visited = new Set(rootKeys);
-  const queue = [...rootKeys];
-  const descendants: Array<{ sessionKey: string; label: string }> = [];
-  while (queue.length > 0) {
-    const parentKey = queue.shift()!;
-    for (const task of await listTaskPages(client, parentKey)) {
-      const sessionKey = optionalString(task.childSessionKey);
-      if (!sessionKey || visited.has(sessionKey)) continue;
-      visited.add(sessionKey);
-      queue.push(sessionKey);
-      descendants.push({ sessionKey, label: resolveTaskTitle(task).label });
-    }
-  }
-
-  const result: Array<{ sessionKey: string; sessionId: string; label: string }> = [];
-  for (let offset = 0; offset < descendants.length; offset += TASK_DETAIL_CONCURRENCY) {
-    result.push(
-      ...(await Promise.all(
-        descendants.slice(offset, offset + TASK_DETAIL_CONCURRENCY).map(async descendant => {
-          const described = await client.request<{
-            session?: Record<string, unknown> | null;
-          }>('sessions.describe', { key: descendant.sessionKey });
-          const sessionId = optionalString(described.session?.sessionId);
-          if (!sessionId) {
-            throw new Error(`Gateway Session ID unavailable for ${descendant.sessionKey}`);
-          }
-          return { ...descendant, sessionId };
-        }),
-      )),
-    );
-  }
-  return result;
-};
-
-const collectGatewaySubagents = async (
-  options: ListGatewaySubagentsOptions,
-): Promise<{
-  subagents: GatewaySubagentProjection[];
-  taskLedgerComplete: boolean;
-}> => {
-  const tasksById = new Map<string, OpenClawTaskSummaryV2026_9_2>();
-  let complete = true;
-  for (const parentKey of options.parentKeys) {
-    try {
-      let tasks = await listTaskPages(options.client, parentKey);
-      if (options.hydrateDetails !== false && options.hydrateTaskDetails !== false) {
-        tasks = await hydrateTaskDetails(options.client, tasks);
-      }
-      for (const task of tasks) tasksById.set(task.id, task);
-    } catch (error) {
-      complete = false;
-      console.warn('[SubagentGateway] Failed to list native subagent tasks', {
-        parentKey,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-  let subagents = collapseTaskBackingInstances([...tasksById.values()]).flatMap(task => {
-    const subagent = toGatewaySubagent(task);
-    return subagent ? [subagent] : [];
-  });
-  if (options.hydrateDetails !== false && subagents.length > 0) {
-    try {
-      const sessions = new Map<string, Record<string, unknown>>();
-      for (let offset = 0; offset < subagents.length; offset += TASK_DETAIL_CONCURRENCY) {
-        const described = await Promise.all(
-          subagents.slice(offset, offset + TASK_DETAIL_CONCURRENCY).map(async subagent => {
-            const result = await options.client.request<{
-              session?: Record<string, unknown> | null;
-            }>('sessions.describe', { key: subagent.sessionKey });
-            return [subagent.sessionKey, result.session] as const;
-          }),
-        );
-        for (const [sessionKey, session] of described) {
-          if (session) sessions.set(sessionKey, session);
-        }
-      }
-
-      // sessions.describe omits activeRunIds. Only the same-revision terminal
-      // replacement ambiguity needs the heavier persisted-session projection.
-      const ambiguousReplacementKeys = new Set(
-        subagents.flatMap(subagent => {
-          const session = sessions.get(subagent.sessionKey);
-          if (!session) return [];
-          const taskIsTerminal =
-            subagent.status !== SUBAGENT_STATUSES.PENDING &&
-            subagent.status !== SUBAGENT_STATUSES.RUNNING;
-          const sessionAppearsActive =
-            session.subagentRunState === 'active' ||
-            session.status === 'queued' ||
-            session.status === 'running';
-          const sessionUpdatedAt = toTimestamp(
-            typeof session.updatedAt === 'string' || typeof session.updatedAt === 'number'
-              ? session.updatedAt
-              : undefined,
-          );
-          return taskIsTerminal &&
-            sessionAppearsActive &&
-            subagent.updatedAt !== undefined &&
-            sessionUpdatedAt === subagent.updatedAt &&
-            !readSessionActiveRunId(session, subagent.runId)
-            ? [subagent.sessionKey]
-            : [];
-        }),
-      );
-      if (ambiguousReplacementKeys.size > 0) {
-        try {
-          for (const session of await listPersistedGatewaySessions(options.client)) {
-            const sessionKey = optionalString(session.key);
-            if (!sessionKey || !ambiguousReplacementKeys.has(sessionKey)) continue;
-            const described = sessions.get(sessionKey);
-            if (!described) continue;
-            sessions.set(sessionKey, {
-              ...described,
-              ...(session.lifecycleRunId !== undefined
-                ? { lifecycleRunId: session.lifecycleRunId }
-                : {}),
-              ...(session.activeRunIds !== undefined ? { activeRunIds: session.activeRunIds } : {}),
-            });
-          }
-        } catch (error) {
-          console.warn('[SubagentGateway] Failed to resolve replacement run identity', {
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      }
-      subagents = subagents.map(subagent => {
-        const session = sessions.get(subagent.sessionKey);
-        if (!session) return subagent;
-        return hydrateSubagentFromSession(subagent as GatewaySubagent, session);
-      });
-    } catch (error) {
-      console.warn('[SubagentGateway] Failed to hydrate native session details', {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-  return { subagents, taskLedgerComplete: complete };
-};
-
-const filterWellFormedSubagents = (subagents: GatewaySubagentProjection[]): GatewaySubagent[] =>
-  subagents.filter(
-    (subagent): subagent is GatewaySubagent =>
-      typeof subagent.label === 'string' && subagent.labelSource !== undefined,
-  );
-
-export const listGatewaySubagentsWithMetadata = async (
-  options: ListGatewaySubagentsOptions,
-): Promise<GatewaySubagentListMetadata> => {
-  const result = await collectGatewaySubagents(options);
-  return { ...result, subagents: filterWellFormedSubagents(result.subagents) };
-};
-
-export function listGatewaySubagents(
-  options: ListGatewaySubagentsOptions & { includeMalformedForRuntimeControl: true },
-): Promise<GatewaySubagentProjection[]>;
-export function listGatewaySubagents(
-  options: ListGatewaySubagentsOptions,
-): Promise<GatewaySubagent[]>;
-export async function listGatewaySubagents(
-  options: ListGatewaySubagentsOptions,
-): Promise<GatewaySubagentProjection[]> {
-  const result = await collectGatewaySubagents(options);
-  if (options.requireComplete && !result.taskLedgerComplete) {
-    throw new Error('OpenClaw descendant discovery is incomplete; session stop was not confirmed.');
-  }
-  return options.includeMalformedForRuntimeControl
-    ? result.subagents
-    : filterWellFormedSubagents(result.subagents);
-}
-
-// Product operations discover membership from the native requester graph. A task
-// ID or child key supplied by a renderer is never treated as authorization.
-export const requireGatewaySubagentOwnership = async (
-  client: GatewayRequestClient,
-  rootKeys: string[],
-  taskId: string,
-): Promise<OpenClawTaskSummaryV2026_9_2> => {
-  if (!taskId.trim() || rootKeys.length === 0)
-    throw new Error('Subagent task does not belong to this session');
-  const target = parseTasksGetResultV2026_9_2(await client.request('tasks.get', { taskId })).task;
-  if (target.id !== taskId || !isDelegatedTask(target) || !target.childSessionKey)
-    throw new Error('Subagent task was not found');
-  const roots = new Set(rootKeys);
-  if (target.sessionKey && roots.has(target.sessionKey)) return target;
-  // Native parentTaskId gives a cheap exact path for current runtimes.
-  let current = target;
-  const ancestors = new Set([taskId]);
-  while (current.parentTaskId && ancestors.size < 64) {
-    if (ancestors.has(current.parentTaskId)) throw new Error('Invalid subagent ancestry');
-    ancestors.add(current.parentTaskId);
-    const parent = parseTasksGetResultV2026_9_2(
-      await client.request('tasks.get', { taskId: current.parentTaskId }),
-    ).task;
-    if (
-      parent.id !== current.parentTaskId ||
-      !isDelegatedTask(parent) ||
-      parent.childSessionKey !== current.sessionKey
-    )
-      throw new Error('Invalid subagent ancestry');
-    if (parent.sessionKey && roots.has(parent.sessionKey)) return target;
-    current = parent;
-  }
-  // Some native tasks omit parentTaskId. Traverse requester keys with an explicit
-  // request budget; a partial discovery must never authorize an operation.
-  const queue = [...roots];
-  const visited = new Set(roots);
-  let requests = 0;
-  while (queue.length) {
-    const sessionKey = queue.shift()!;
-    let cursor: string | undefined;
-    const cursors = new Set<string>();
-    do {
-      if (++requests > 100) throw new Error('Subagent ownership discovery limit reached');
-      if (cursor && cursors.has(cursor)) throw new Error('Repeated native task cursor');
-      if (cursor) cursors.add(cursor);
-      const page = parseTasksListResultV2026_9_2(
-        await client.request('tasks.list', {
-          sessionKey,
-          limit: TASK_PAGE_SIZE,
-          ...(cursor ? { cursor } : {}),
-        }),
-      );
-      for (const task of page.tasks) {
-        if (!isDelegatedTask(task) || task.sessionKey !== sessionKey || !task.childSessionKey)
-          continue;
-        if (
-          task.id === taskId &&
-          target.sessionKey === sessionKey &&
-          task.childSessionKey === target.childSessionKey
-        )
-          return target;
-        if (!visited.has(task.childSessionKey)) {
-          visited.add(task.childSessionKey);
-          queue.push(task.childSessionKey);
-        }
-      }
-      cursor = page.nextCursor;
-    } while (cursor);
-  }
-  throw new Error('Subagent task does not belong to this session');
-};
-
-export const listGatewaySubagentChildren = async (
-  client: GatewayRequestClient,
-  rootKeys: string[],
-  parentTaskId?: string,
-  cursor?: string,
-): Promise<{ subagents: GatewaySubagent[]; nextCursor?: string }> => {
-  const keys = parentTaskId
-    ? [(await requireGatewaySubagentOwnership(client, rootKeys, parentTaskId)).childSessionKey!]
-    : [...new Set(rootKeys)];
-  let index = 0;
-  let nativeCursor: string | undefined;
-  if (cursor !== undefined) {
-    if (cursor.length > 8192) throw new Error('Invalid task page cursor');
-    const parsed: unknown = JSON.parse(cursor);
-    if (!parsed || typeof parsed !== 'object') throw new Error('Invalid task page cursor');
-    const page = parsed as Record<string, unknown>;
-    if (
-      !Number.isInteger(page.index) ||
-      (page.index as number) < 0 ||
-      (page.index as number) >= keys.length ||
-      page.binding !== JSON.stringify(keys) ||
-      (page.cursor !== undefined && (typeof page.cursor !== 'string' || page.cursor.length > 512))
-    )
-      throw new Error('Invalid task page cursor');
-    index = page.index as number;
-    nativeCursor = page.cursor as string | undefined;
-  }
-  if (!keys.length) return { subagents: [] };
-  const page = parseTasksListResultV2026_9_2(
-    await client.request('tasks.list', {
-      sessionKey: keys[index],
-      limit: 50,
-      ...(nativeCursor ? { cursor: nativeCursor } : {}),
-    }),
-  );
-  if (page.nextCursor && page.nextCursor === nativeCursor)
-    throw new Error('Repeated native task cursor');
-  const subagents = filterWellFormedSubagents(
-    collapseTaskBackingInstances(
-      page.tasks.filter(task => isDelegatedTask(task) && task.sessionKey === keys[index]),
-    ).flatMap(task => {
-      const subagent = toGatewaySubagent(task);
-      return subagent ? [subagent] : [];
-    }),
-  );
-  const nextIndex = page.nextCursor ? index : index + 1;
-  return {
-    subagents,
-    ...(nextIndex < keys.length
-      ? {
-          nextCursor: JSON.stringify({
-            binding: JSON.stringify(keys),
-            index: nextIndex,
-            ...(page.nextCursor ? { cursor: page.nextCursor } : {}),
-          }),
-        }
-      : {}),
-  };
-};
-
-export const controlGatewaySubagent = async (
-  client: GatewayRequestClient,
-  rootKeys: string[],
-  taskId: string,
-  action: CoworkSubagentAction,
-): Promise<CoworkSubagentControlResult> => {
-  if (!Object.values(CoworkSubagentActions).includes(action))
-    throw new Error('Unknown subagent operation');
-  await requireGatewaySubagentOwnership(client, rootKeys, taskId);
-  if (action === CoworkSubagentActions.Cancel) {
-    const result = await client.request<{ found: boolean; cancelled: boolean; reason?: string }>(
-      'tasks.cancel',
-      { taskId },
-    );
-    return result.found === true && result.cancelled === true
-      ? { success: true }
-      : {
-          success: false,
-          error:
-            result.reason ||
-            (result.found ? 'Task cancellation was not confirmed' : 'Subagent task was not found'),
-        };
-  }
-  const result = await client.request<{
-    results: Array<{ taskId: string; ok: boolean; reason?: string; duplicateRisk?: boolean }>;
-  }>(action === CoworkSubagentActions.RetryDelivery ? 'tasks.retry' : 'tasks.dismiss', {
-    taskIds: [taskId],
-  });
-  const item = Array.isArray(result.results)
-    ? result.results.find(entry => entry.taskId === taskId)
-    : undefined;
-  return item?.ok === true
-    ? { success: true, ...(item.duplicateRisk ? { duplicateRisk: true } : {}) }
-    : { success: false, error: item?.reason || 'Task delivery operation was not confirmed' };
 };

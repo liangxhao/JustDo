@@ -173,7 +173,7 @@ export const listKnownOpenClawWorkspaceDirs = ({
   }
 
   // Inventory a legacy roster only for locating user-installed extensions
-  // before the next config sync rewrites it to v2026.9.2's keyed entries.
+  // before the next config sync rewrites it to v2026.9.8's keyed entries.
   const legacyAgentList = Array.isArray(existingAgents.list) ? existingAgents.list : [];
   for (const entry of legacyAgentList) {
     if (!isRecord(entry)) continue;
@@ -495,11 +495,11 @@ export const collectCanonicalAgentEntries = (
 };
 
 /**
- * Remove JustDo-owned fields not accepted by OpenClaw v2026.9.2 and translate the
+ * Remove JustDo-owned fields not accepted by OpenClaw v2026.9.8 and translate the
  * two renamed config surfaces. This is deliberately narrow: unrelated
  * operator-owned config remains untouched and is still validated by Gateway.
  */
-export const sanitizeOpenClawV2026_9_2Config = (
+export const sanitizeOpenClawV2026_9_8Config = (
   config: Record<string, unknown>,
 ): Record<string, unknown> => {
   const next = { ...config };
@@ -791,7 +791,7 @@ export const buildAuthScopedOpenClawConfig = (
   managedConfig: Record<string, unknown>,
   reason: string,
 ): Record<string, unknown> => {
-  const canonicalExistingConfig = sanitizeOpenClawV2026_9_2Config(existingConfig);
+  const canonicalExistingConfig = sanitizeOpenClawV2026_9_8Config(existingConfig);
   const isLogin = reason === BuiltinModelSyncReason.AuthLogin;
   const existingModels = isRecord(canonicalExistingConfig.models)
     ? canonicalExistingConfig.models
@@ -908,7 +908,7 @@ export const buildAuthScopedOpenClawConfig = (
     defaults.compaction = managedDefaults.compaction;
   }
   if (Object.prototype.hasOwnProperty.call(managedDefaults, 'systemAgent')) {
-    // OpenClaw v2026.9.2 requires an explicit ambient owner when more than one
+    // OpenClaw v2026.9.8 requires an explicit ambient owner when more than one
     // Agent exists. Keep native maintenance work (for example memory dreaming)
     // bound to the main Agent; JustDo user-created scheduled tasks set their
     // selected Agent explicitly.
@@ -1040,7 +1040,7 @@ export const buildAuthScopedOpenClawConfig = (
     delete models.providers;
   }
 
-  const result = sanitizeOpenClawV2026_9_2Config({
+  const result = sanitizeOpenClawV2026_9_8Config({
     ...canonicalExistingConfig,
     skills: mergeOpenClawSkillConfig(
       isRecord(canonicalExistingConfig.skills) ? canonicalExistingConfig.skills : {},
@@ -1320,23 +1320,30 @@ export const OPENCLAW_ACP_BACKEND = OpenClawExtensionId.ACPX;
 
 export const OPENCLAW_MCP_TOOL_OWNER = 'bundle-mcp';
 
-export const OPENCLAW_DECISION_EVALUATION_TOOL = 'typesafe_evaluate';
+export const OPENCLAW_DECISION_EVALUATION_TOOL = 'decision_evaluate';
 
 export const mergeManagedOptionalToolPolicy = (
   existing: unknown,
-): { allow?: string[]; alsoAllow?: string[] } => {
-  const policy = isRecord(existing) ? existing : {};
+): { allow?: string[]; alsoAllow?: string[]; deny?: string[] } => {
+  const policy = removeRetiredManagedToolDenyEntries(isRecord(existing) ? existing : {});
   const usesAllow = Array.isArray(policy.allow) && policy.allow.some(
     value => typeof value === 'string' && value.trim().length > 0,
   );
   const values = usesAllow ? policy.allow : policy.alsoAllow;
   const allowed = [...new Set([
-    ...(Array.isArray(values) ? values.filter((value): value is string => typeof value === 'string') : []),
+    ...(Array.isArray(values)
+      ? values.filter((value): value is string => typeof value === 'string')
+      : []),
     OPENCLAW_DECISION_EVALUATION_TOOL,
   ])];
   // Native OpenClaw rejects allow + alsoAllow in the same policy scope.
   // An empty native allowlist is unrestricted; do not turn it into Jev-only access.
-  return usesAllow ? { allow: allowed, alsoAllow: undefined } : { allow: undefined, alsoAllow: allowed };
+  const deny = Array.isArray(policy.deny)
+    ? { deny: [...new Set(policy.deny.filter((value): value is string => typeof value === 'string'))] }
+    : {};
+  return usesAllow
+    ? { allow: allowed, alsoAllow: undefined, ...deny }
+    : { allow: undefined, alsoAllow: allowed, ...deny };
 };
 
 export const OPENCLAW_COLLABORATION_TOOLS = ['task_assistants', 'assistants_create'] as const;
@@ -1548,7 +1555,7 @@ export const buildManagedOpenClawAgentThinkingConfig = (
 ) => (settings.agent.thinking ? { thinkingDefault: settings.agent.thinking } : {});
 
 export const buildManagedOpenClawHeartbeatConfig = () => ({
-  // JustDo has no external notification channel and v2026.9.2 automations
+  // JustDo has no external notification channel and v2026.9.8 automations
   // create/run through the native cron tool without a recurring heartbeat.
   // Keep the explicit zero cadence so OpenClaw does not fall back to its
   // native default while retaining event-driven targeted wake-ups.
@@ -2194,6 +2201,7 @@ export type OpenClawConfigSyncDeps = {
   getAgents?: () => Agent[];
   getBrowserMode?: () => BrowserModeValue;
   getDecisionModelCategory?: () => unknown;
+  getNativeVideoCategory?: () => unknown;
   getLocalSttConfig?: () => Record<string, unknown> | null;
   getLocalTtsConfig?: () => Record<string, unknown> | null;
   getSpeechOutputState?: () => { enabled: boolean; mode: 'local' | 'online' };

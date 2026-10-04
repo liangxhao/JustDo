@@ -64,6 +64,7 @@ export function readToolPresentation(source: Record<string, unknown>): ToolPrese
   if (typeof exit === 'number' && Number.isInteger(exit)) projection.exitCode = exit;
   if (source.kind === 'tool' && typeof source.status === 'string')
     projection.outcome = source.status;
+  if (details.status === 'skipped') projection.outcome = 'skipped';
   if (details.exitReason === 'manual-cancel') projection.outcome = 'cancelled';
   // Native activity items are complete snapshots. A failed routine operation
   // omits the visibility flag that hid its running/completed predecessors.
@@ -122,6 +123,7 @@ export function toolOutcome(tool: ToolItem): string {
   if (
     prepared?.outcome === 'failed' ||
     prepared?.outcome === 'blocked' ||
+    prepared?.outcome === 'skipped' ||
     prepared?.outcome === 'unknown'
   )
     return prepared.outcome;
@@ -189,7 +191,7 @@ export function summarizeTools(tools: readonly ToolItem[]): Record<string, numbe
     const category = toolOperation(tool);
     counts[category] = (counts[category] ?? 0) + 1;
     const outcome = toolOutcome(tool);
-    if (['failed', 'blocked', 'unknown', 'cancelled', 'interrupted'].includes(outcome))
+    if (['failed', 'blocked', 'skipped', 'unknown', 'cancelled', 'interrupted'].includes(outcome))
       counts[outcome] = (counts[outcome] ?? 0) + 1;
   }
   return counts;

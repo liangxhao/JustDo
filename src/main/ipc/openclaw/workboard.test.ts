@@ -513,7 +513,7 @@ describe('Workboard IPC gateway routing', () => {
     expect(request).toHaveBeenCalledWith('workboard.cards.update', {
       id: 'card-1',
       expectedUpdatedAt: 2,
-      patch: { status: 'blocked', metadata: { claim: null }, taskId: null },
+      patch: { status: 'blocked', metadata: { claim: null } },
     });
     expect(result).toMatchObject({ success: true, data: { status: 'blocked' } });
   });
@@ -606,46 +606,25 @@ describe('Workboard IPC gateway routing', () => {
     expect(request).toHaveBeenCalledTimes(1);
   });
 
-  test.each([
-    { task: { cancelled: true }, active: true, aborted: false },
-    {
-      task: { found: true, cancelled: false, task: { status: 'running' } },
-      active: true,
-      aborted: true,
-    },
-    {
-      task: { found: true, cancelled: false, task: { status: 'unrecognized' } },
-      active: false,
-      aborted: false,
-    },
-  ])(
-    'does not mark stopped while either execution remains unconfirmed: %j',
-    async ({ task, active, aborted }) => {
-      request.mockImplementation((method: string) => {
-        if (method === 'workboard.cards.list')
-          return {
-            cards: [
-              {
-                id: 'card-1',
-                status: 'running',
-                sessionKey: 'agent:main:card-1',
-                taskId: 'task-1',
-                updatedAt: 2,
-              },
-            ],
-          };
-        if (method === 'tasks.cancel') return task;
-        if (method === 'sessions.list')
-          return { sessions: [{ key: 'agent:main:card-1', hasActiveRun: active }] };
-        if (method === 'chat.abort') return { aborted };
-        throw new Error(`unexpected method: ${method}`);
-      });
-      expect(await handlers.get(WorkboardIpc.StopCard)?.({}, 'card-1')).toMatchObject({
-        success: false,
-      });
-      expect(request).not.toHaveBeenCalledWith('workboard.cards.update', expect.anything());
-    },
-  );
+  test('does not mark stopped when the native session abort remains unconfirmed', async () => {
+    request.mockImplementation((method: string) => {
+      if (method === 'workboard.cards.list')
+        return {
+          cards: [
+            { id: 'card-1', status: 'running', sessionKey: 'agent:main:card-1', updatedAt: 2 },
+          ],
+        };
+      if (method === 'sessions.list')
+        return { sessions: [{ key: 'agent:main:card-1', hasActiveRun: true }] };
+      if (method === 'chat.abort') return { aborted: false };
+      throw new Error('unexpected method: ' + method);
+    });
+    expect(await handlers.get(WorkboardIpc.StopCard)?.({}, 'card-1')).toMatchObject({
+      success: false,
+    });
+    expect(request).not.toHaveBeenCalledWith('workboard.cards.update', expect.anything());
+    expect(request).not.toHaveBeenCalledWith('tasks.cancel', expect.anything());
+  });
 
   test('rejects a stop from a drawer showing an older linked execution before side effects', async () => {
     request.mockImplementation((method: string) => {
@@ -783,7 +762,7 @@ describe('Workboard IPC gateway routing', () => {
       throw new Error(`unexpected method: ${method}`);
     });
     expect(await handlers.get(WorkboardIpc.StopCard)?.({}, 'card-1', { taskId })).toMatchObject({
-      success: taskId === 'task-1',
+      success: false,
     });
     if (taskId !== 'task-1') expect(request).toHaveBeenCalledTimes(1);
   });

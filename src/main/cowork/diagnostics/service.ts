@@ -25,6 +25,7 @@ export interface DiagnosticRuntime {
 interface Dependencies {
   store: SessionDiagnosticsStore;
   hasSession: (id: string) => boolean;
+  getNativeSessionKey: (id: string) => string | null;
   getRuntime: () => DiagnosticRuntime | null;
   now?: () => number;
   logSources?: Record<'main' | 'cowork' | 'gateway', (report: DiagnosticReport) => string[]>;
@@ -351,6 +352,7 @@ export class SessionDiagnosticsService {
     this.pinnedSnapshots.add(query.snapshotId);
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
+      const sessionKey = this.deps.getNativeSessionKey(previous.sessionId);
       const runtime = this.deps.getRuntime();
       const client = runtime?.getGatewayClient();
       let native:
@@ -443,9 +445,17 @@ export class SessionDiagnosticsService {
         }
       }
       this.snapshot(query, owner);
-      const history = await collectDiagnosticHistory(previous, client, options.signal);
+      const history = await collectDiagnosticHistory(
+        previous,
+        client,
+        sessionKey === this.deps.getNativeSessionKey(previous.sessionId) ? sessionKey : null,
+        options.signal,
+      );
       this.snapshot(query, owner);
-      if (runtime !== this.deps.getRuntime() || client !== runtime?.getGatewayClient()) {
+      if (
+        runtime !== this.deps.getRuntime() || client !== runtime?.getGatewayClient() ||
+        sessionKey !== this.deps.getNativeSessionKey(previous.sessionId)
+      ) {
         history.status = 'changed';
         history.failures = [];
       }

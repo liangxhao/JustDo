@@ -19,7 +19,7 @@ const pluginPatch = require('../../scripts/openclaw/patch-mxc-sandbox-plugin.cjs
   };
 };
 const runtimePatch =
-  require('../../scripts/patches/v2026.9.6/025-mxc-external-skill-paths.cjs') as {
+  require('../../scripts/patches/v2026.9.8/025-mxc-external-skill-paths.cjs') as {
     __testing: {
       MARKER: string;
       transformSkillRuntimePaths: (content: string, filePath: string) => string;
@@ -33,7 +33,7 @@ describe('MXC sandbox version-locked patches', () => {
       fs.mkdirSync(path.join(directory, 'dist'));
       fs.writeFileSync(
         path.join(directory, 'package.json'),
-        JSON.stringify({ version: '2026.9.6' }),
+        JSON.stringify({ version: '2026.9.8' }),
       );
       const pristine = [
         pluginPatch.__testing.ORIGINAL,

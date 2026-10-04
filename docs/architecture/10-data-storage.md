@@ -13,7 +13,7 @@
 ```mermaid
 flowchart LR
   Main[Main 产品服务] --> Product[(justdo.sqlite)]
-  Gateway[OpenClaw] --> Native[(原生会话 / transcript / tasks)]
+  Gateway[OpenClaw] --> Native[(原生会话 / transcript / Cron 运行)]
   Browser[浏览器服务] --> BrowserDB[(browser-import.sqlite)]
   Browser --> Partition[Chromium partitions]
   Config[配置投影] --> Secret[受限权限 SecretRef 文件]
@@ -23,6 +23,14 @@ flowchart LR
 产品数据库位于 app.getPath('userData') 下，默认 `<appData>/<productName>/justdo.sqlite`。内部文件名稳定，productName 改变时不自动迁移旧品牌目录。Gateway state 和项目目录不是该数据库的子表，备份和删除时需要分别处理。
 
 消息唯一持久权威是 OpenClaw 的原生 SQLite transcript。初始化删除旧 cowork_messages 缓存，不迁移其消息；Renderer 按原生历史恢复，不从 Main 或 Redux 寻找持久正文。
+
+### 未发布 9.6 数据兼容已撤回
+
+9.6 版本未发布。按用户要求，本次 9.8 升级新增的 9.6→9.8 原生 SQLite 兼容迁移已移除，包括应用维护桥接、启动门禁、专项测试和构建资产。当前应用不承诺自动升级该未发布版本的 shared18／agent23 数据。
+
+原生 transcript 与数据库格式仍由 OpenClaw 管理，应用不读取或复制正文到产品表，也不为此次升级添加迁移 SQL、Doctor 修复或自动删库重建逻辑。
+
+此前合成旧数据迁移演练仅保留为已撤回方案的历史证据，不属于现行能力或可复跑验收项。下文现有产品数据库初始化规则不在本次删除范围内；运行包仍须从 pristine 重建。
 
 ## 2. 初始化与兼容规则
 

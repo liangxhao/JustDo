@@ -415,16 +415,18 @@ if (stderrLogPath) {
 const configuredArgs = stripOpenClawWrapperArgs(rawConfiguredArgs);
 
 const installedBinPath = ${params.installedBinPath ? quoteCommandPart(params.installedBinPath) : 'undefined'};
+// Captured plugin paths can disappear after the runtime is rebuilt.
+const bundledAdapterAvailable = installedBinPath && existsSync(installedBinPath);
 const command =
   configuredArgs[0] === "${RUN_CONFIGURED_COMMAND_SENTINEL}"
     ? configuredArgs[1]
-    : installedBinPath
+    : bundledAdapterAvailable
       ? process.execPath
       : undefined;
 const args =
   configuredArgs[0] === "${RUN_CONFIGURED_COMMAND_SENTINEL}"
     ? configuredArgs.slice(2)
-    : installedBinPath
+    : bundledAdapterAvailable
       ? [installedBinPath, ...configuredArgs]
       : [];
 

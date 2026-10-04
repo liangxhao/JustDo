@@ -48,12 +48,6 @@ type GatewaySessionsResult = {
   totalCount?: number;
 };
 
-type GatewayTaskCancelResult = {
-  cancelled?: boolean;
-  found?: boolean;
-  task?: { status?: unknown };
-};
-
 type GatewayChatAbortResult = {
   aborted?: boolean;
   runIds?: unknown;
@@ -183,12 +177,6 @@ const dispatchSummary = (value: GatewayDispatchResult): WorkboardDispatchSummary
 
 const chatRunWasAborted = (value: GatewayChatAbortResult): boolean =>
   value.aborted === true || (Array.isArray(value.runIds) && value.runIds.length > 0);
-
-const gatewayTaskIsKnownInactive = (value: GatewayTaskCancelResult): boolean => {
-  if (value.found === false) return true;
-  if (value.found !== true || typeof value.task?.status !== 'string') return false;
-  return ['completed', 'failed', 'cancelled', 'timed_out'].includes(value.task.status);
-};
 
 const defaultAgentIdFromGateway = (value: GatewayAgentsResult): string | null => {
   const defaultId = normalizeId(value.defaultId);
@@ -466,7 +454,6 @@ export const registerOpenClawWorkboardHandlers = ({
 
       const linkedSessionKey = card.sessionKey?.trim() || card.execution?.sessionKey?.trim();
       const runId = card.runId?.trim() || card.execution?.runId?.trim();
-      const taskId = card.taskId?.trim();
       if (rawExpectedExecution !== undefined) {
         if (
           !rawExpectedExecution ||
@@ -478,18 +465,11 @@ export const registerOpenClawWorkboardHandlers = ({
         const expected = rawExpectedExecution as Record<string, unknown>;
         const expectedSessionKey = normalizeOptionalString(expected.sessionKey, 240);
         const expectedRunId = normalizeOptionalString(expected.runId, 256);
-        const expectedTaskId = normalizeOptionalString(expected.taskId, 256);
-        if (
-          expectedSessionKey === null ||
-          expectedRunId === null ||
-          expectedTaskId === null ||
-          (!expectedSessionKey && !expectedTaskId)
-        ) {
+        if (expectedSessionKey === null || expectedRunId === null || !expectedSessionKey) {
           throw new Error('Invalid Workboard execution identity');
         }
         if (
           (expectedRunId || undefined) !== (runId || undefined) ||
-          (expectedTaskId || undefined) !== (taskId || undefined) ||
           Boolean(expectedSessionKey) !== Boolean(linkedSessionKey) ||
           (linkedSessionKey &&
             expectedSessionKey &&
@@ -499,16 +479,6 @@ export const registerOpenClawWorkboardHandlers = ({
         ) {
           throw new Error('Workboard execution changed; refresh its session before stopping');
         }
-      }
-      let taskStopped = false;
-      let taskAlreadyInactive = !taskId;
-      if (taskId) {
-        const cancelled = await request<GatewayTaskCancelResult>('tasks.cancel', {
-          taskId,
-          reason: 'Stopped from Workboard.',
-        });
-        taskStopped = cancelled.cancelled === true;
-        taskAlreadyInactive = gatewayTaskIsKnownInactive(cancelled);
       }
       let sessionAborted = false;
       let sessionAlreadyInactive = !linkedSessionKey;
@@ -527,10 +497,10 @@ export const registerOpenClawWorkboardHandlers = ({
           }
         }
       }
-      if (!linkedSessionKey && !card.taskId) {
+      if (!linkedSessionKey) {
         throw new Error('Workboard card has no live execution to stop');
       }
-      if (!(taskStopped || taskAlreadyInactive) || !(sessionAborted || sessionAlreadyInactive)) {
+      if (!(sessionAborted || sessionAlreadyInactive)) {
         throw new Error('Gateway did not stop the linked Workboard execution');
       }
 
@@ -550,8 +520,7 @@ export const registerOpenClawWorkboardHandlers = ({
           (latest.metadata?.claim &&
             (latest.metadata.claim.token !== card.metadata?.claim?.token ||
               latest.metadata.claim.ownerId !== card.metadata?.claim?.ownerId ||
-              latest.metadata.claim.claimedAt !== card.metadata?.claim?.claimedAt)) ||
-          (latest.taskId?.trim() && latest.taskId.trim() !== taskId)
+              latest.metadata.claim.claimedAt !== card.metadata?.claim?.claimedAt))
         ) {
           throw new Error('Workboard execution changed; refresh its session before stopping');
         }
@@ -568,7 +537,6 @@ export const registerOpenClawWorkboardHandlers = ({
             patch: {
               status,
               metadata: { claim: null },
-              ...(latest.taskId?.trim() ? { taskId: null } : {}),
               ...(execution ? { execution } : {}),
             },
           });

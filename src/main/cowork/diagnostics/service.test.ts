@@ -18,11 +18,13 @@ describe('SessionDiagnosticsService', () => {
   let client: GatewayClientLike;
   let request: ReturnType<typeof vi.fn>;
   let logSources: Record<'main' | 'cowork' | 'gateway', ReturnType<typeof vi.fn>>;
+  let nativeSessionKey: string;
   beforeEach(() => {
     vi.useFakeTimers();
     currentTime = Date.now();
     connected = false;
     resolved = true;
+    nativeSessionKey = 'agent:researcher:justdo:s';
     db = new Database(':memory:');
     db.pragma('foreign_keys = ON');
     db.exec(`CREATE TABLE cowork_sessions (id TEXT PRIMARY KEY);
@@ -48,6 +50,7 @@ describe('SessionDiagnosticsService', () => {
       getRuntime: () => runtime,
       logSources,
       hasSession: id => !!db.prepare('SELECT id FROM cowork_sessions WHERE id = ?').get(id),
+      getNativeSessionKey: () => nativeSessionKey,
     });
   });
   afterEach(() => {
@@ -81,6 +84,33 @@ describe('SessionDiagnosticsService', () => {
     });
     expect(JSON.stringify(store.read('s', 'r'))).not.toContain('report.csv');
     expect(client.start).not.toHaveBeenCalled();
+    expect(request).toHaveBeenCalledWith('chat.history', expect.objectContaining({
+      sessionKey: 'agent:researcher:justdo:s',
+    }));
+  });
+
+  it('discards history evidence if the native session binding changes during collection', async () => {
+    connected = true;
+    request.mockImplementation(async method => {
+      if (method !== 'chat.history') return { lines: [] };
+      nativeSessionKey = 'agent:researcher:subagent:replacement';
+      return { messages: [{ role: 'toolResult', timestamp: 200, isError: true, content: 'old failure' }] };
+    });
+    const previous = service.read({ sessionId: 's' }, 1);
+    const result = await service.collect({ sessionId: 's', snapshotId: previous.snapshotId }, 1);
+    expect(result.history).toMatchObject({ status: 'changed', failures: [] });
+  });
+
+  it('does not read a replacement session when its binding changes during log collection', async () => {
+    connected = true;
+    request.mockImplementation(async () => {
+      nativeSessionKey = 'agent:researcher:subagent:replacement';
+      return { lines: [] };
+    });
+    const previous = service.read({ sessionId: 's' }, 1);
+    const result = await service.collect({ sessionId: 's', snapshotId: previous.snapshotId }, 1);
+    expect(result.history).toMatchObject({ status: 'changed', failures: [] });
+    expect(request).not.toHaveBeenCalledWith('chat.history', expect.anything());
   });
 
   it('exports unclassified log text without putting it into report snapshots', async () => {

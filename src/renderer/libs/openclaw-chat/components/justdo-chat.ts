@@ -38,6 +38,11 @@ import { ChatScrollController } from '@/libs/openclaw-chat/controllers/chat-scro
 import { StreamRenderScheduler } from '@/libs/openclaw-chat/controllers/stream-render-scheduler';
 import type { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
 import {
+  nativePendingInputReadFailed,
+  nativePendingInputState,
+  projectNativePendingInputs,
+} from '@/libs/openclaw-chat/gateway/chat-pending-inputs';
+import {
   type ActiveTurnFooter,
   formatActiveTurnDuration,
   formatActiveTurnTimestamp,
@@ -519,7 +524,7 @@ export class JustDoChatElement extends LitElement {
             (ctrl.state.visibleChatMessages as GatewayMessage[]))
         : this.messages,
     );
-    const pendingMessage = (ctrl?.state.pendingUserMessage as GatewayMessage | null) ?? null;
+    let pendingMessage = (ctrl?.state.pendingUserMessage as GatewayMessage | null) ?? null;
     const activeTurnHistoryKey = activeTurn
       ? `${activeTurn.runId}:${activeTurn.status}:${[...activeTurn.toolById.keys()].join(
           ',',
@@ -538,6 +543,13 @@ export class JustDoChatElement extends LitElement {
       );
     }
     let messages = this.projectedActiveMessages;
+    if (ctrl) {
+      const pending = projectNativePendingInputs(
+        ctrl.state, messages, ctrl.getLoadedMessages() as GatewayMessage[],
+      );
+      messages = pending.messages;
+      if (pending.suppressOptimistic) pendingMessage = null;
+    }
     const persistedMessages = messages;
     this.forkEligibilityMessages = ctrl
       ? this.messagesForPerspective(ctrl.getLoadedMessages() as GatewayMessage[])
@@ -674,6 +686,9 @@ export class JustDoChatElement extends LitElement {
             <div class="sr-only" role="status" aria-live="polite">
               ${activeTurn ? i18nService.t(this.activeTurnStatusKey(activeTurn)) : nothing}
             </div>
+            ${ctrl && nativePendingInputReadFailed(ctrl.state)
+              ? html`<div role="status">${i18nService.t('messagePendingInputReadFailed')}</div>`
+              : nothing}
             ${repeat(
               timelineView.persistedRows,
               row => row.item.key,
@@ -1782,7 +1797,8 @@ export class JustDoChatElement extends LitElement {
           : historyItem,
       );
       const entryId = openClawEntryId(item.message);
-      const isPersistedUserMessage = item.message.role?.toLowerCase() === 'user' && entryId;
+      const pendingInputState = nativePendingInputState(item.message);
+      const isPersistedUserMessage = !pendingInputState && item.message.role?.toLowerCase() === 'user' && entryId;
       const canEditOrWithdraw =
         isPersistedUserMessage &&
         entryId === this.actionableUserEntryId &&
@@ -1875,6 +1891,12 @@ export class JustDoChatElement extends LitElement {
             userMessageActions,
             assistantMessageFork,
           )}
+          ${pendingInputState
+            ? html`<div class="active-turn__footer" data-pending-input-state=${pendingInputState}>
+                ${i18nService.t(pendingInputState === 'queued' ? 'messagePendingInputQueued' :
+                  pendingInputState === 'cancelled' ? 'messagePendingInputCancelled' : 'messagePendingInputInterrupted')}
+              </div>`
+            : nothing}
         </div>
       `;
     }

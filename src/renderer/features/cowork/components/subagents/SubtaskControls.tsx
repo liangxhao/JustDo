@@ -5,7 +5,7 @@ import { i18nService } from '@/services/i18n';
 
 import { isActiveSubtask, type Subtask } from './subtaskPresentation';
 
-/** All mutations are scoped and re-authorized by Main against the native task ledger. */
+/** All mutations are scoped and re-authorized by Main against the native session lineage. */
 type SubtaskControlsProps = {
   sessionId: string;
   task: Subtask;
@@ -36,11 +36,6 @@ function SubtaskControlsContent({ sessionId, task, onRefresh }: SubtaskControlsP
     };
   }, []);
   const active = isActiveSubtask(currentTask.status);
-  const recoverable =
-    !active &&
-    (currentTask.deliveryStatus === 'pending' ||
-      currentTask.deliveryStatus === 'failed' ||
-      currentTask.deliveryStatus === 'parent_missing');
   const act = async (action: CoworkSubagentAction) => {
     if (inFlight.current || needsVerification) return;
     inFlight.current = true;
@@ -95,7 +90,7 @@ function SubtaskControlsContent({ sessionId, task, onRefresh }: SubtaskControlsP
       if (mounted.current) setBusy(false);
     }
   };
-  if (!active && !recoverable && !notice) return null;
+  if (!active && !notice) return null;
   const buttonClass =
     'rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-surface-raised disabled:opacity-50';
   return (
@@ -111,26 +106,6 @@ function SubtaskControlsContent({ sessionId, task, onRefresh }: SubtaskControlsP
             {i18nService.t('subtaskCancel')}
           </button>
         )}
-        {recoverable && (
-          <>
-            <button
-              type="button"
-              className={buttonClass}
-              disabled={busy || needsVerification}
-              onClick={() => void act(CoworkSubagentActions.RetryDelivery)}
-            >
-              {i18nService.t('subtaskRetryDelivery')}
-            </button>
-            <button
-              type="button"
-              className={buttonClass}
-              disabled={busy || needsVerification}
-              onClick={() => void act(CoworkSubagentActions.DismissDelivery)}
-            >
-              {i18nService.t('subtaskDismissDelivery')}
-            </button>
-          </>
-        )}
         {needsVerification && (
           <button
             type="button"
@@ -142,9 +117,7 @@ function SubtaskControlsContent({ sessionId, task, onRefresh }: SubtaskControlsP
           </button>
         )}
       </div>
-      <p className="text-xs text-secondary">
-        {i18nService.t(active ? 'subtaskCancelHint' : 'subtaskRecoveryHint')}
-      </p>
+      <p className="text-xs text-secondary">{i18nService.t('subtaskCancelHint')}</p>
       {busy && (
         <p role="status" className="text-xs text-secondary">
           {i18nService.t('subtaskControlBusy')}

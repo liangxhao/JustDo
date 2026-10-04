@@ -60,7 +60,7 @@ import {
   removeUnavailableOpenClawPluginRegistrations,
   resolveManagedOpenClawTtsConfig,
   resolveOpenClawExecHost,
-  sanitizeOpenClawV2026_9_2Config,
+  sanitizeOpenClawV2026_9_8Config,
 } from './openclawConfigSync';
 
 describe('Windows native sandbox config', () => {
@@ -83,10 +83,10 @@ describe('Windows native sandbox config', () => {
 
   test('keeps trusted collaboration tools available inside the sandbox', () => {
     expect(buildManagedOpenClawSandboxToolConfig('sandbox')).toEqual({
-      tools: { alsoAllow: ['task_assistants', 'assistants_create', 'typesafe_evaluate'] },
+      tools: { alsoAllow: ['task_assistants', 'assistants_create', 'decision_evaluate'] },
     });
     expect(buildManagedOpenClawSandboxToolConfig('local')).toEqual({
-      tools: { alsoAllow: ['task_assistants', 'assistants_create', 'typesafe_evaluate', 'bundle-mcp'] },
+      tools: { alsoAllow: ['task_assistants', 'assistants_create', 'decision_evaluate', 'bundle-mcp'] },
     });
   });
 });
@@ -313,7 +313,7 @@ describe('OpenClaw managed config metadata', () => {
     expect(existingMeta.lastTouchedAt).toBe('2026-09-01T00:00:00.000Z');
   });
 
-  test('writes only metadata accepted by OpenClaw v2026.9.2', () => {
+  test('writes only metadata accepted by OpenClaw v2026.9.8', () => {
     const meta = buildOpenClawConfigMeta('2026.9.2');
 
     expect(meta).toEqual({
@@ -374,9 +374,9 @@ describe('OpenClaw managed model catalog config', () => {
   });
 });
 
-describe('OpenClaw v2026.9.2 config sanitization', () => {
+describe('OpenClaw v2026.9.8 config sanitization', () => {
   test('removes retired fields and converts legacy managed surfaces', () => {
-    const config = sanitizeOpenClawV2026_9_2Config({
+    const config = sanitizeOpenClawV2026_9_8Config({
       meta: {
         lastTouchedVersion: '2026.9.2',
         lastTouchedAt: '2026-09-01T00:00:00.000Z',
@@ -466,7 +466,7 @@ describe('OpenClaw v2026.9.2 config sanitization', () => {
     expect(config.mcp.servers.docs).not.toHaveProperty('timeout');
     expect(config.tools).not.toHaveProperty('experimental');
     expect(config.agents).not.toHaveProperty('list');
-    expect(sanitizeOpenClawV2026_9_2Config(config)).toEqual(config);
+    expect(sanitizeOpenClawV2026_9_8Config(config)).toEqual(config);
   });
 });
 
@@ -525,7 +525,7 @@ describe('OpenClaw managed connectivity config', () => {
       },
       tools: {
         updatePlan: true,
-        alsoAllow: ['typesafe_evaluate'],
+        alsoAllow: ['decision_evaluate'],
         toolSearch: {
           enabled: true,
           mode: 'directory',

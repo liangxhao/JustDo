@@ -1,6 +1,6 @@
 # 模型管理：能力目录与运行选择
 
-设置中的模型页统一管理在线语言、语音识别、语音合成、图像生成与视频生成。离线语音模型下载和设备选择留在语音设置。界面共用 Provider/模型交互，但各能力配置和凭据保持隔离。
+设置中的模型页统一管理在线语言、决策、语音识别、语音合成、图像生成和原生视频生成。离线语音模型下载和设备选择留在语音设置。视频选择使用原生服务商身份，其地址和凭据与该服务商的其他模型共用；配置仅接受当前支持的原生视频服务商。
 
 ## 1. 目录不等于当前执行模型
 
@@ -20,16 +20,16 @@ Provider 目录描述可选择模型，应用默认决定新用户会话，sessi
 
 ## 3. 原生配置落点
 
-| 能力     | 原生入口/位置                     | 隔离要求                              |
-| -------- | --------------------------------- | ------------------------------------- |
-| 语言     | models providers 与会话模型       | builtin 与用户 provider 分开          |
-| 在线识别 | talk.catalog、config API          | transcription-only Talk，不触发对话脑 |
-| 在线合成 | tts.providers、config API         | voice 属于具体模型                    |
-| 图像生成 | agents.defaults.mediaModels.image | justdo-image-openai 配置域            |
-| 视频生成 | agents.defaults.mediaModels.video | justdo-video-openai 配置域            |
-| 图像理解 | agents.defaults.imageModel        | 不等同图像生成                        |
+| 能力     | 原生入口/位置                     | 隔离要求                                                                |
+| -------- | --------------------------------- | ----------------------------------------------------------------------- |
+| 语言     | models providers 与会话模型       | builtin 与用户 provider 分开                                            |
+| 在线识别 | talk.catalog、config API          | transcription-only Talk，不触发对话脑                                   |
+| 在线合成 | tts.providers、config API         | voice 属于具体模型                                                      |
+| 图像生成 | agents.defaults.mediaModels.image | justdo-image-openai 配置域                                              |
+| 视频生成 | agents.defaults.mediaModels.video | Kie AI、Z.AI、NovitaAI 原生服务商、模型及 API Key；旧自定义配置保留备份 |
+| 图像理解 | agents.defaults.imageModel        | 不等同图像生成                                                          |
 
-原生 image/video 使用能力限定的配置视图，保留 manifest 的 canonical provider ID，不改写语言模型的 models.providers.openai。多个能力同用一种协议也不能互相覆盖 endpoint/key。
+原生 image 使用能力限定的配置视图，保留 manifest 的 canonical provider ID，不改写语言模型的 models.providers.openai。多个能力同用一种协议也不能互相覆盖 endpoint/key。
 
 ## 4. 发现与端点规范化
 
@@ -39,9 +39,15 @@ Provider 目录描述可选择模型，应用默认决定新用户会话，sessi
 
 ## 5. 协议支持边界
 
-在线识别需要匹配原生 Realtime transcription WebSocket 与音频格式，普通 REST transcription URL 不能冒充等价。TTS、Images 和 Videos 也需实现对应请求、提交、轮询与下载协议，不是任意同名 HTTP 服务都可用。
+在线识别需要匹配原生 Realtime transcription WebSocket 与音频格式，普通 REST transcription URL 不能冒充等价。TTS 和 Images 也需实现对应请求与下载协议，不是任意同名 HTTP 服务都可用。
 
 TTS voice 最佳努力查询 audio/voices、voices、服务根 api/voices，并支持手填。没有 voice 的合成模型不会自动配一个任意默认值进入语音选择器。
+
+OpenClaw 2026.9.8 已移除 OpenAI 视频生成器。视频设置提供 Kie AI、Z.AI、NovitaAI 原生服务商选择、对应模型目录、服务地址和 API Key；目录来自固定版本的原生 provider 契约，不请求付费服务或伪造 `/models` 视频发现接口。Kie 使用内置插件，Z.AI 与 NovitaAI 使用随应用固定打包的官方 provider 插件。
+
+保存的视频条目带有 `nativeVideoProvider`，由应用配置同步器在启动、设置保存及登录状态变化时投影到 `agents.defaults.mediaModels.video` 和原生 `models.providers.<id>`，并启用所选插件。API Key 通过权限受限的 `extension-secrets.json` 文件 SecretRef 提供给运行时；Gateway 配置不包含明文凭据。视频服务商使用原生身份，因此同身份的语言模型共用地址和凭据。取消默认视频模型仅清除该默认选择，不关闭可能供其他能力使用的插件；原生运行时仍可按已有凭据和会话工具权限发现其他视频能力。导入导出沿用加密凭据流程并保留原生服务商标记。
+
+9.6 未发布，本次新增的旧 `/videos` 配置兼容读取与专用展示已移除。Main 与设置页均拒绝不支持的服务商配置，Main 继续拒绝 OpenAI 视频 primary/fallback 和任意兼容端点写入。图像生成的独立端点不受影响。
 
 ## 6. 凭据、保存与错误
 

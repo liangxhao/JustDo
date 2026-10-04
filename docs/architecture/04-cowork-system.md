@@ -94,7 +94,7 @@ stateDiagram-v2
 
 原生六种状态为 active、paused、blocked、usage_limited、budget_limited、complete。受限状态独立保留；resume 的预算窗口由原生处理。Main 仅在同一 Goal 仍为 active 时协调下一回合，并考虑等待用户、审批、退避、续跑上限和显式停止。
 
-OpenClaw v2026.9.6 的 lifecycle `end/error` 可能只是一次模型尝试结束；Goal 续跑器仅消费 `executionSettled: true` 的整轮终态，不能提前去重、退避或续跑。断线对账取得 `agent.wait` 的确定终态后也按此契约处理。原生失败或超时会暂停 Goal，重试前必须重新读取原生状态，不能用普通消息隐式恢复。
+OpenClaw v2026.9.8 的 lifecycle `end/error` 可能只是一次模型尝试结束；Goal 续跑器仅消费 `executionSettled: true` 的整轮终态，不能提前去重、退避或续跑。断线对账取得 `agent.wait` 的确定终态后也按此契约处理。原生失败或超时会暂停 Goal，重试前必须重新读取原生状态，不能用普通消息隐式恢复。
 
 `update_goal` 的工具传输成功不等于目标变更成功：状态转换拒绝可以返回普通工具结果中的 `status: error`。即时完成/阻塞反馈必须取得 `status: updated` 且目标身份、状态与请求匹配的原生回执；结果缺失或不可解析时等待整轮结束后读取原生 Goal，不根据请求参数推断成功。模型工具只允许 complete/blocked；暂停、恢复、清除仍由用户操作控制。
 
@@ -117,7 +117,7 @@ PresentPlan 将规范化计划作为工作区内受控文件持久化，并保�
 
 ## 8. 子任务与平级助手
 
-子任务以 `tasks.list/get` 与 task event 为权威，Subagent 和 ACP 执行共用原生 ledger。详情按 taskId 核对 session 身份，再组合 session lifecycle 与 usage；查询失败不能退回未经核验的任意 sessionKey。completed 的 blocked outcome 仍显示 blocked，不能显示成功。
+子任务以 `sessions.list/describe` 的原生会话投影与 `sessions.changed` 为权威。Subagent 与 ACP 都保留原生 session key 作为产品 ID，状态、运行 ID、耗时和 usage 直接取当前原生快照；不再组合已经移除的 task ledger。查询失败保留不完整语义，详情不接受返回身份与请求 key 不一致的记录。完整读取立即替换成员集合，临时失败才保留上次已核验状态。
 
 平级协作由默认关闭的 agent-team 扩展提供。模型准备成员后使用原生 sessions_send，侧栏只显示锚点任务，详情按成员读取原生历史。任务成员不是 Subagent 树节点，accepted 投递也不是任务完成。完整预算与删除协议见[协作机制](../features/assistants-and-collaboration.md)。
 

@@ -20,7 +20,7 @@ export interface CoworkSubagentDetailTask {
   sessionId?: string;
   label: string;
   labelSource: 'taskName' | 'label' | 'task';
-  status: 'pending' | 'running' | 'done' | 'failed' | 'killed' | 'timeout' | 'blocked';
+  status: 'pending' | 'running' | 'done' | 'failed' | 'killed' | 'timeout' | 'blocked' | 'unknown';
   runtime?: 'subagent' | 'acp';
   parentTaskId?: string;
   execution?: CoworkSubagentExecution;
@@ -83,8 +83,6 @@ export type CoworkSubagentChildrenResult =
 
 export const CoworkSubagentActions = {
   Cancel: 'cancel',
-  RetryDelivery: 'retryDelivery',
-  DismissDelivery: 'dismissDelivery',
 } as const;
 export type CoworkSubagentAction =
   (typeof CoworkSubagentActions)[keyof typeof CoworkSubagentActions];

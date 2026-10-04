@@ -185,7 +185,7 @@ const WorkboardCardDetailsDrawer: React.FC<Props> = ({
     }
     if (card.status === 'blocked') return i18nService.t('workboardSummaryBlocked');
     if (archived || canStartWorkboardCard(card)) return null;
-    if (sessionKey || card.taskId || card.metadata?.claim) {
+    if (sessionKey || card.metadata?.claim) {
       return i18nService.t('workboardExistingExecutionHint');
     }
     if (!['backlog', 'todo', 'ready'].includes(card.status)) {
@@ -202,7 +202,6 @@ const WorkboardCardDetailsDrawer: React.FC<Props> = ({
         : 'bg-primary/10 text-primary';
   const hasTechnicalDetails = Boolean(
     sessionKey ||
-    card.taskId ||
     runId ||
     workerLogs.length ||
     automation ||
@@ -552,12 +551,6 @@ const WorkboardCardDetailsDrawer: React.FC<Props> = ({
                     <span className="break-all font-mono text-foreground">{sessionKey}</span>
                   </>
                 )}
-                {card.taskId && (
-                  <>
-                    <span className="text-secondary">{i18nService.t('workboardTask')}</span>
-                    <span className="break-all font-mono text-foreground">{card.taskId}</span>
-                  </>
-                )}
                 {runId && (
                   <>
                     <span className="text-secondary">{i18nService.t('workboardRun')}</span>
@@ -695,7 +688,7 @@ const WorkboardCardDetailsDrawer: React.FC<Props> = ({
             {i18nService.t('workboardStart')}
           </button>
         )}
-        {workboardCardHasLiveExecution(card) && Boolean(sessionKey || card.taskId) && (
+        {workboardCardHasLiveExecution(card) && Boolean(sessionKey) && (
           <button
             type="button"
             onClick={() => void onStop().catch(() => undefined)}

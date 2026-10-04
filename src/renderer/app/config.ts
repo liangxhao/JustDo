@@ -11,7 +11,10 @@ import {
   ProviderRegistry,
   validateCustomProviderDisplayName,
 } from '@shared/providers';
-import { defaultLocalSpeechSettings, type LocalSpeechSettings } from '@shared/speech/localSpeechSettings';
+import {
+  defaultLocalSpeechSettings,
+  type LocalSpeechSettings,
+} from '@shared/speech/localSpeechSettings';
 
 import { type AppearanceConfig, defaultAppearanceConfig } from '@/app/appearance';
 
@@ -87,6 +90,7 @@ export interface AppConfig {
           string,
           {
             displayName: string;
+            nativeVideoProvider?: import('@shared/providers/nativeVideoProviders').NativeVideoProviderId;
             baseUrl: string;
             apiKey: string;
             defaultModel?: string;

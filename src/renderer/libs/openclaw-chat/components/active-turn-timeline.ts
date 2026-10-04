@@ -432,6 +432,7 @@ function renderToolDetail(
 function toolStateLabel(tool: ToolItem): string {
   const outcome = toolOutcome(tool);
   if (outcome === 'unknown') return i18nService.t('messageUnknownOutcome');
+  if (outcome === 'skipped') return i18nService.t('messageSkippedOutcome');
   if (outcome === 'blocked') return i18nService.t('messageBlockedOutcome');
   if (outcome === 'failed') return i18nService.t('coworkStatusError');
   const stateKey =

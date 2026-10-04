@@ -14,8 +14,9 @@ type ReloadRule = {
   kind: GatewayConfigReloadKind;
 };
 
-// Keep this ordered to match OpenClaw's first-match BASE_RELOAD_RULES followed
-// by BASE_RELOAD_RULES_TAIL. More-specific rules must precede their parents.
+// Hints for correlating native completion logs, never proof of application.
+// OpenClaw 9.8 owns the actual transaction and plugin-specific reload policies.
+// More-specific rules must precede their parents.
 const RELOAD_RULES: ReloadRule[] = [
   { prefix: 'gateway.remote', kind: 'dynamic' },
   { prefix: 'gateway.reload', kind: 'dynamic' },
@@ -35,17 +36,23 @@ const RELOAD_RULES: ReloadRule[] = [
   { prefix: 'mcp.apps', kind: 'restart' },
   { prefix: 'mcp', kind: 'hot' },
   { prefix: 'secrets.egressProxy', kind: 'restart' },
-  { prefix: 'plugins.load', kind: 'restart' },
-  { prefix: 'plugins.installs', kind: 'restart' },
+  { prefix: 'plugins.load', kind: 'hot' },
+  { prefix: 'plugins.installs', kind: 'hot' },
   { prefix: 'talk.provider', kind: 'hot' },
   { prefix: 'talk.realtime.provider', kind: 'hot' },
-  { prefix: 'acp.allowedAgents', kind: 'hot' },
+  { prefix: 'acp', kind: 'hot' },
+  { prefix: 'skills.workshop.autonomous.mode', kind: 'hot' },
+  { prefix: 'gateway.publicOrigin', kind: 'hot' },
+  { prefix: 'gateway.uploads', kind: 'hot' },
+  { prefix: 'gateway.roles', kind: 'hot' },
+  { prefix: 'transcripts', kind: 'hot' },
+  { prefix: 'approvals', kind: 'hot' },
   { prefix: 'meta', kind: 'dynamic' },
   { prefix: 'identity', kind: 'dynamic' },
   { prefix: 'wizard', kind: 'dynamic' },
   { prefix: 'logging', kind: 'dynamic' },
   { prefix: 'agents', kind: 'dynamic' },
-  { prefix: 'tools', kind: 'dynamic' },
+  { prefix: 'tools', kind: 'hot' },
   { prefix: 'bindings', kind: 'dynamic' },
   { prefix: 'audio', kind: 'dynamic' },
   { prefix: 'agent', kind: 'dynamic' },
@@ -93,7 +100,7 @@ export const parseGatewayConfigReloadPaths = (line: string): string[] | null => 
 const parseCompletionPaths = (line: string): string[] => {
   const match = line.match(/\(([^()]*)\)\s*$/);
   return match?.[1]
-    ? match[1]
+    ? match[1].replace(/^dynamic reads:\s*/, '')
         .split(',')
         .map(value => value.trim())
         .filter(Boolean)
@@ -133,11 +140,9 @@ export class GatewayConfigReloadMonitor {
       const record: ReloadRecord = {
         generation: ++this.generation,
         changedPaths,
-        outcome: changedPaths.every(
-          configPath => classifyGatewayConfigReloadPath(configPath) === 'dynamic',
-        )
-          ? 'applied'
-          : null,
+        // Even dynamic reads publish an asynchronous native runtime snapshot.
+        // Detection alone can still be followed by a rejected/disabled reload.
+        outcome: null,
         restartAccepted: false,
       };
       this.records.push(record);
@@ -196,6 +201,7 @@ export class GatewayConfigReloadMonitor {
 
     if (
       line.includes('config reload failed') ||
+      line.includes('config reload skipped by writer intent') ||
       line.includes('config hot-reload disabled') ||
       line.includes('config reload disabled') ||
       line.includes('no SIGUSR1 listener found; restart skipped') ||

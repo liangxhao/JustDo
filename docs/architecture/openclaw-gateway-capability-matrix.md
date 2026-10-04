@@ -1,6 +1,6 @@
 # Gateway 能力归属与升级核对矩阵
 
-基线：锁定 OpenClaw v2026.9.6 与当前产品注册代码。本页帮助判断升级需要核对哪些原生契约；逐补丁清单与上游处置统一在[版本目录 README](../../scripts/patches/v2026.9.6/README.md)，不在此复制编号表。
+基线：锁定 OpenClaw v2026.9.8 与当前产品注册代码。本页帮助判断升级需要核对哪些原生契约；逐补丁清单与上游处置统一在[版本目录 README](../../scripts/patches/v2026.9.8/README.md)，不在此复制编号表。
 
 ## 1. 能力与产品消费方
 
@@ -9,7 +9,7 @@
 | chat/history  | transcript、实时与历史协议      | 身份准入、分页、渲染     | delta/snapshot、entry identity、可见分支 |
 | session/model | 原生身份和模型设置              | 产品 key、选择与准入     | create/describe/patch、provider/model    |
 | Goal          | 内容、状态、预算与原生变更      | 自动续跑 phase、卡片     | 六状态、resume 预算、goalId fence        |
-| task/Subagent | admission、queue、join、ledger  | 父子状态、详情与停止     | 分页、blocked outcome、后代取消          |
+| task/Subagent | admission、queue、join、会话状态  | 父子状态、详情与停止     | spawnedBy 身份、运行状态、后代取消          |
 | approval      | pending、期限、终态与撤销       | modal、选择校验          | stop/restart 及迟到回复                  |
 | compaction    | context budget、压缩和恢复      | 进度、取消与详情         | admission 竞态、历史可见性               |
 | progress_card | session 当前进度                | 原样展示、显式刷新       | revision、scope、clear、refresh 幂等                   |

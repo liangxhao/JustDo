@@ -1,4 +1,5 @@
 import { normalizeOpenClawProviderId, validateCustomProviderDisplayName } from '@shared/providers';
+import { findNativeVideoProvider } from '@shared/providers/nativeVideoProviders';
 
 import type { AppConfig } from '@/app/config';
 import { i18nService } from '@/services/i18n';
@@ -27,7 +28,8 @@ export const normalizeNonLanguageModelCategory = (
   kind: NonLanguageModelKind,
   category: NonLanguageModelCategory,
 ): NonLanguageModelCategory => {
-  const supportsCatalogDefault = kind === 'image' || kind === 'video' || kind === 'decision';
+  if (kind === 'video') return category;
+  const supportsCatalogDefault = kind === 'image' || kind === 'decision';
   const providerIds = Object.keys(category.providers);
   const defaultProviderId =
     supportsCatalogDefault &&
@@ -109,7 +111,7 @@ const getProviderValidationError = (
   return '';
 };
 
-const MEDIA_MODEL_KINDS = ['image', 'video'] as const;
+const MEDIA_MODEL_KINDS = ['image'] as const;
 
 const getMediaRuntimeConfigurationSignature = (category: NonLanguageModelCategory): string => {
   const providerId = category.defaultProviderId;
@@ -148,6 +150,33 @@ export const getNonLanguageModelCategoryValidationError = (
   category: NonLanguageModelCategory,
   activeProviderId?: string,
 ): string => {
+  if (kind === 'video') {
+    if (Object.values(category.providers).some(entry => !findNativeVideoProvider(entry.nativeVideoProvider)))
+      return i18nService.t('nativeVideoConfigurationInvalid');
+    const selected = category.defaultProviderId
+      ? category.providers[category.defaultProviderId]
+      : undefined;
+    if (!selected?.nativeVideoProvider) return '';
+    const provider = findNativeVideoProvider(selected.nativeVideoProvider);
+    if (!provider || !(provider.models as readonly string[]).includes(selected.defaultModel ?? ''))
+      return i18nService.t('nativeVideoConfigurationInvalid');
+    if (!selected.apiKey.trim() || selected.apiKey.length > 16384 || /[\r\n]/.test(selected.apiKey))
+      return i18nService.t('nativeVideoApiKeyRequired');
+    try {
+      const url = new URL(selected.baseUrl);
+      if (
+        !['https:', 'http:'].includes(url.protocol) ||
+        url.username ||
+        url.password ||
+        url.search ||
+        url.hash
+      )
+        throw new Error();
+    } catch {
+      return i18nService.t('customModelProviderUrlInvalid');
+    }
+    return '';
+  }
   const providerIds = Object.keys(category.providers);
   const orderedProviderIds =
     activeProviderId && category.providers[activeProviderId]

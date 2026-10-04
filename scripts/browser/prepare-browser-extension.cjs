@@ -11,32 +11,39 @@ const BROWSER_EXTENSION_ID = 'jboajogplelmaahjbomgflnfngpolgcb';
 const BROWSER_EXTENSION_PUBLIC_KEY =
   'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAskQFUZFtJ36I7FXfGPJj+twgXrJgQDKju1ZFrXBQo+UgapYI3c+kcVgBbq+nNbivgYHHV30B/5iI7AxJcJSa1xxa5h34AzKrmg5CoFjdykj3qWZUyDLtueEiJVIKSKLZTdpphy6yqE8IIu7b5l5ZhRwFBio17S+Fo+M/oRzearW+qxYWioIrdF4qRu7KSdKYSHE1grVLI1PCl0g04rY22ITyuBLup13NlJM8w2I20O+Alk4Pe/uO2nxBnaKwB+LrDgQ7U8P6/AO5D/hN+xNVQLgS/gMhEf+W7WpQXjpCadi8xOdpb5YlKXfQtcg9jvDzbSvqNaWIqKlPup54R8hR0wIDAQAB';
 const LOCKED_OPENCLAW_FILES = {
-"THIRD_PARTY_NOTICES.txt": "aaef41044f3a3841c8c17351113c5f4f577845d82a5ba4f1650089b99323a2c7",
-"background.js": "f98b65adcc5cfcb1bd4ffb3b30f460bc5cf068c0bc7d2e1bd98748de79b13a29",
-"icons/icon128.png": "a745c50e0ecc40e1b0ef9c0e841ed7c968078c218a5ef15818ba661c7310a04d",
-"icons/icon16.png": "f374c44036f3ac0a30b9e5f99d6e902548616f7b11886bef18d20b8b8ce084a0",
-"icons/icon32.png": "092aea24a5edfc1907cf7964a5aaef7dbc5ae3b6c1fc581a7b4987f74a068268",
-"icons/icon48.png": "02619a3803614f185ccee73b7860dc8123d7074ce81f929125bc63bd3737d6d4",
-"manifest.json": "dcdea285b73e8541b88ad313b402a8a1752de3859a67531789073324d735c1da",
-"modules/native-bootstrap.js": "279029948909215bd7caebe3b2e43862140d2ff5b5459e1c111b07831f93aa2f",
-"modules/popup-background.js": "07cecec0f82f1025fc613a2ace1e6875943b4de1e515faebe1173271ce9b6162",
-"modules/relay-auth-v2-crypto.js": "207b3bd5f4cb376cd83ab4f6b4284e531a1aff7e0f737d844534ede5fd37ece1",
-"modules/relay-auth-v2.js": "a60cc11e197df11765c45dca3ca22f960683d34c95e2a047bac21ca580fc8b42",
-"modules/relay-command-handler.js": "cbc0ccef42e8aa2954fe2bc7210bed222a24a126c8ca054b5595ec66cfbbcb92",
-"modules/relay-connection.js": "845940f4602b16dc7196a6ce951e21cfaddd5223c9c75f5fe819e9a19ff66d43",
-"modules/relay-core.js": "068f371f0d6183cfb03f38166f0436ff3e4043735d1ca2c4c30c222a128b6373",
-"modules/relay-debugger.js": "d6d2352bec8482d4a308aa53976789c750d28f216ad321a7ae66eb163e3509d6",
-"modules/relay-tab-groups.js": "dd355dd039431579f11a64893412e8c33f1d80a0f1c2e447eaa9971441c5403f",
-"modules/tab-access-command-scope.js": "0ec625b939845f1f35c33695a1117dca54b670e0db10f2350b4f9ceddd1aef61",
-"modules/tab-access-events.js": "b0e572d8c2731753bcd21654741d2bff3d0eaafa98450252e3bd3d74a9d939c4",
-"modules/tab-access.js": "d5ddc87962ac118cc127be0d2deebcef36ec5e921a95142a807e1db3049287a6",
-"modules/tab-document-provenance.js": "ef9b98cae4d8ab536a565def6bf315774ee43806f07582f187ca9cad7a40bb12",
-"modules/tab-eligibility.js": "2d0f27e514014ed5e113510d35db6a1c5fc702783c3fe49706dd019c975a7e21",
-"modules/tab-group-revocations.js": "341b9489b8188d734fd19e622b7fb1f1844e4ffc6dcf119fbc34107bdc978936",
-"options.html": "39a2f3e94151c0eeca125412e0b2dee951edd37ab39a931242ce439967037ca5",
-"options.js": "91f3f74b307c834ad3537d87ea81a44350228bf4ac0c069591c7219dbc02b763",
-"popup.html": "aeece4f271f407d4604cb8b0b0ea8223decb4a829f2cb74291f3357ed7fea321",
-"popup.js": "4900edd5e7e1995a3cf6bfcaf55428d05fa0385a47c0b2154a69db7e8f460c81"
+  'THIRD_PARTY_NOTICES.txt': 'a8d4796897428528efc1baf2c2052ca5c8a4e728a204b29aaa43559f6c3c6897',
+  'background.js': 'd6cdc0e12cc4fd84404603c83ccac14353a1931192d06d8cea0be4f1324056f5',
+  'icons/icon128.png': 'a745c50e0ecc40e1b0ef9c0e841ed7c968078c218a5ef15818ba661c7310a04d',
+  'icons/icon16.png': 'f374c44036f3ac0a30b9e5f99d6e902548616f7b11886bef18d20b8b8ce084a0',
+  'icons/icon32.png': '092aea24a5edfc1907cf7964a5aaef7dbc5ae3b6c1fc581a7b4987f74a068268',
+  'icons/icon48.png': '02619a3803614f185ccee73b7860dc8123d7074ce81f929125bc63bd3737d6d4',
+  'manifest.json': 'dcdea285b73e8541b88ad313b402a8a1752de3859a67531789073324d735c1da',
+  'modules/native-bootstrap.js': '279029948909215bd7caebe3b2e43862140d2ff5b5459e1c111b07831f93aa2f',
+  'modules/popup-background.js': '0048fa2c899c8299b5a151c59d919a35bf15e54315e72d4a670f594fa5dddbba',
+  'modules/relay-auth-v2-crypto.js':
+    '207b3bd5f4cb376cd83ab4f6b4284e531a1aff7e0f737d844534ede5fd37ece1',
+  'modules/relay-auth-v2.js': '828e14b59e7b964c16959a5976f1d16bda0a1543bd3b1688ebb71970e8899feb',
+  'modules/relay-command-handler.js':
+    'cbc0ccef42e8aa2954fe2bc7210bed222a24a126c8ca054b5595ec66cfbbcb92',
+  'modules/relay-connection.js': '2b561d2d0381a294ef424513aad040f08225bdea455b7cb9a85e5bb9d1e5795e',
+  'modules/relay-core.js': 'c81b61a3d8b40f089be2eba1ffda735483373c341832076c2e2dcde47c77d7d6',
+  'modules/relay-debugger.js': '3ba28970eb7578f8c724ad4f737d12252849bead2ea49fb9cd6afb36627817c0',
+  'modules/relay-tab-groups.js': '99765b42aca26dc403321f9e19ffcf32e1e8f5d9946f5e54a57fa15f31052e89',
+  'modules/strict-json.js': '8d891740325942d54788d177ddad05a9813c2149c92dd9bd4b3bbb6348bff43c',
+  'modules/tab-access-command-scope.js':
+    '0ec625b939845f1f35c33695a1117dca54b670e0db10f2350b4f9ceddd1aef61',
+  'modules/tab-access-events.js':
+    'b0e572d8c2731753bcd21654741d2bff3d0eaafa98450252e3bd3d74a9d939c4',
+  'modules/tab-access.js': '74f7c095293e27e5e757dc6c55a272dacbc4b5c2d6368d3733ac7e8d7c5f8068',
+  'modules/tab-document-provenance.js':
+    'ef9b98cae4d8ab536a565def6bf315774ee43806f07582f187ca9cad7a40bb12',
+  'modules/tab-eligibility.js': '2d0f27e514014ed5e113510d35db6a1c5fc702783c3fe49706dd019c975a7e21',
+  'modules/tab-group-revocations.js':
+    '341b9489b8188d734fd19e622b7fb1f1844e4ffc6dcf119fbc34107bdc978936',
+  'options.html': '39a2f3e94151c0eeca125412e0b2dee951edd37ab39a931242ce439967037ca5',
+  'options.js': '91f3f74b307c834ad3537d87ea81a44350228bf4ac0c069591c7219dbc02b763',
+  'popup.html': 'aeece4f271f407d4604cb8b0b0ea8223decb4a829f2cb74291f3357ed7fea321',
+  'popup.js': '4900edd5e7e1995a3cf6bfcaf55428d05fa0385a47c0b2154a69db7e8f460c81',
 };
 const CONVERSATION_OVERLAY_FILES = [
   'THIRD_PARTY_NOTICES.append.txt',
@@ -142,7 +149,7 @@ function applyManifestOverlay(value) {
   const manifest = JSON.parse(value);
   manifest.name = PRODUCT_NAME_TOKEN;
   manifest.action.default_title = PRODUCT_NAME_TOKEN;
-  manifest.description = manifest.description.replaceAll("OpenClaw", PRODUCT_NAME_TOKEN);
+  manifest.description = manifest.description.replaceAll('OpenClaw', PRODUCT_NAME_TOKEN);
   manifest.key = BROWSER_EXTENSION_PUBLIC_KEY;
   manifest.optional_host_permissions = ['http://*/*', 'https://*/*'];
   manifest.permissions = [
@@ -158,25 +165,35 @@ function applyManifestOverlay(value) {
 }
 
 function applyPairingLayoutOverlay(value) {
-  let result = replaceIntegrationAnchor(value,
+  let result = replaceIntegrationAnchor(
+    value,
     '<h2>Advanced manual pairing</h2>',
-    '<h2>Connect to __PRODUCT_NAME__</h2>', 'manual pairing title');
-  result = replaceIntegrationAnchor(result,
+    '<h2>Connect to __PRODUCT_NAME__</h2>',
+    'manual pairing title',
+  );
+  result = replaceIntegrationAnchor(
+    result,
     'Use this only for a direct remote Gateway or when automatic setup reports that manual action\n        is required.',
-    'In __PRODUCT_NAME__, open Settings &gt; Browser, copy the extension pairing information,\n        then paste it below.', 'manual pairing instructions');
-  return replaceIntegrationAnchor(result,
+    'In __PRODUCT_NAME__, open Settings &gt; Browser, copy the extension pairing information,\n        then paste it below.',
+    'manual pairing instructions',
+  );
+  return replaceIntegrationAnchor(
+    result,
     '<script type="module" src="options.js"></script>',
     '<link rel="stylesheet" href="appearance.css" />\n' +
       '    <script type="module" src="modules/appearance-settings.js"></script>\n' +
       '    <script type="module" src="options.js"></script>',
-    'conversation appearance settings');
+    'conversation appearance settings',
+  );
 }
 
 function applyPairingBehaviorOverlay(value) {
-  let result = replaceIntegrationAnchor(value,
+  let result = replaceIntegrationAnchor(
+    value,
     ': "Paired; relay unavailable"',
     ': status.state === "connecting" ? "Connecting…" : "Paired; relay unavailable"',
-    'pairing connection state');
+    'pairing connection state',
+  );
   result = replaceIntegrationAnchor(
     result,
     `async function showResult(task, success) {
@@ -393,8 +410,12 @@ function verifyBrowserExtension(extensionDir, options = {}) {
   }
 
   const relayCore = fs.readFileSync(path.join(extensionDir, 'modules', 'relay-core.js'), 'utf8');
-  for (const protocol of ['openclaw-extension-relay.v2', 'authVersion']) {
-    if (!relayCore.includes(protocol)) {
+  const relayAuth = fs.readFileSync(path.join(extensionDir, 'modules', 'relay-auth-v2.js'), 'utf8');
+  for (const [protocol, owner] of [
+    ['openclaw-extension-relay.v2', relayAuth],
+    ['authVersion', relayCore],
+  ]) {
+    if (!owner.includes(protocol)) {
       throw new Error(`Browser extension relay protocol is missing: ${protocol}`);
     }
   }

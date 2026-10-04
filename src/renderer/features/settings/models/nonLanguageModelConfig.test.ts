@@ -42,6 +42,22 @@ describe('non-language model configuration persistence', () => {
     });
   });
 
+  it('reports unsupported video providers at the settings validation boundary', () => {
+    const video = {
+      defaultProviderId: 'legacy',
+      providers: {
+        legacy: {
+          displayName: 'Legacy',
+          baseUrl: 'http://video.lan/v1/videos',
+          apiKey: 'retained',
+          defaultModel: 'old-video',
+          models: [{ id: 'old-video', name: 'Old video' }],
+        },
+      },
+    };
+    expect(getNonLanguageModelCategoryValidationError('video', video)).toBeTruthy();
+  });
+
   it('validates a category without requiring its settings panel to be mounted', () => {
     expect(
       getNonLanguageModelCategoryValidationError('image', {

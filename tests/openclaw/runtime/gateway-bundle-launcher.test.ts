@@ -3,14 +3,19 @@ import { once } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import vm from 'node:vm';
 
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 
 const {
+  buildOpenClawCompileCacheEnvironment,
+  buildOpenClawCompileCacheSetupSource,
   buildOpenClawGatewayBundleLauncherSource,
   ensureOpenClawGatewayBundleLauncher,
   GATEWAY_READY_MESSAGE,
 } = require('../../../src/main/openclaw/runtime/openclawGatewayBundleLauncher.cjs') as {
+  buildOpenClawCompileCacheEnvironment: (env: NodeJS.ProcessEnv, directory: string, platform?: string) => NodeJS.ProcessEnv;
+  buildOpenClawCompileCacheSetupSource: () => string;
   buildOpenClawGatewayBundleLauncherSource: () => string;
   GATEWAY_READY_MESSAGE: string;
   ensureOpenClawGatewayBundleLauncher: (runtimeRoot: string) => {
@@ -46,6 +51,34 @@ afterEach(() => {
 });
 
 describe('OpenClaw gateway bundle launcher', () => {
+  test('disables cache before spawning Windows Node with an oversized cache directory', () => {
+    const directory = `C:\\中文项目\\${'long'.repeat(55)}\\.compile-cache`;
+    const inherited = { Node_Compile_Cache: 'unsafe-inherited', node_disable_compile_cache: '0', OTHER: 'kept' };
+    const env = buildOpenClawCompileCacheEnvironment(inherited, directory, 'win32');
+    expect(env).toEqual({ NODE_DISABLE_COMPILE_CACHE: '1', OTHER: 'kept' });
+    expect(inherited.Node_Compile_Cache).toBe('unsafe-inherited');
+    expect(buildOpenClawCompileCacheEnvironment({}, directory, 'linux').NODE_COMPILE_CACHE).toBe(directory);
+    expect(buildOpenClawCompileCacheEnvironment({ NODE_DISABLE_COMPILE_CACHE: '1' }, 'C:\\short', 'win32'))
+      .toEqual({ NODE_DISABLE_COMPILE_CACHE: '1', NODE_COMPILE_CACHE: 'C:\\short' });
+  });
+
+  test.each([
+    ['C:\\short', undefined, true],
+    ['C:\\short', '1', false],
+    [`C:\\${'long'.repeat(55)}`, undefined, false],
+  ])('launcher guards cache activation for %s with disabled=%s', (stateDir, disabled, expected) => {
+    const enableCompileCache = vi.fn();
+    const env = { OPENCLAW_STATE_DIR: stateDir, NODE_DISABLE_COMPILE_CACHE: disabled };
+    vm.runInNewContext(buildOpenClawCompileCacheSetupSource(), {
+      path: path.win32,
+      process: { platform: 'win32', env, stderr: { write: vi.fn() } },
+      require: () => ({ enableCompileCache, getCompileCacheDir: () => 'cache' }),
+      __dirname: 'C:\\runtime',
+    });
+    expect(enableCompileCache).toHaveBeenCalledTimes(expected ? 1 : 0);
+    if (stateDir.length > 200) expect(env.NODE_DISABLE_COMPILE_CACHE).toBe('1');
+  });
+
   test('waits for host readiness before flushing a pending Gateway import', async () => {
     const runtimeRoot = createRuntime();
     fs.writeFileSync(path.join(runtimeRoot, 'gateway-bundle.mjs'), [

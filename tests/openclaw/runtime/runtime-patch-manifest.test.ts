@@ -280,9 +280,9 @@ describe('OpenClaw runtime patch manifest', () => {
     expect(() =>
       verifyFrozenOpenClawRuntime(runtimeRoot, {
         expectedTarget: 'win-x64',
-        expectedVersion: 'v2026.9.6',
+        expectedVersion: 'v2026.9.8',
       }),
-    ).toThrow(/OpenClaw version is v2026\.6\.11, expected v2026\.9\.6/);
+    ).toThrow(/OpenClaw version is v2026\.6\.11, expected v2026\.9\.8/);
   });
 
   test('rejects a frozen runtime with a missing patch proof or tampered bundle', () => {
@@ -339,7 +339,7 @@ describe('OpenClaw runtime patch manifest', () => {
       '../../..',
       'scripts',
       'patches',
-      'v2026.9.6',
+      'v2026.9.8',
       '_patch-utils.js',
     );
     fs.writeFileSync(
@@ -704,7 +704,7 @@ module.exports = { applyPatch, verifyPatch };
 
   test('verifies the patch proof copied into the packaged Windows runtime archive', async () => {
     const repositoryRoot = path.resolve(__dirname, '../../..');
-    const sourceLock = readOpenClawSourceLock(repositoryRoot, 'v2026.9.6');
+    const sourceLock = readOpenClawSourceLock(repositoryRoot, 'v2026.9.8');
     const appOutDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-packaged-patch-test-'));
     temporaryRoots.push(appOutDir);
     const archiveRoot = path.join(appOutDir, 'archive-source');
@@ -756,14 +756,14 @@ module.exports = { applyPatch, verifyPatch };
     fs.writeFileSync(
       path.join(runtimeRoot, 'runtime-build-info.json'),
       JSON.stringify({
-        openclawVersion: 'v2026.9.6',
+        openclawVersion: 'v2026.9.8',
         installMethod: 'npm-package',
         target: 'win-x64',
         npmPackageVersion: sourceLock.version,
         npmIntegrity: sourceLock.integrity,
         npmTarballSha256: sourceLock.tarballSha256,
-        patchSetSha256: buildOpenClawPatchSetFingerprint(repositoryRoot, 'v2026.9.6'),
-        buildRecipeSha256: buildOpenClawBuildRecipeFingerprint(repositoryRoot, 'v2026.9.6'),
+        patchSetSha256: buildOpenClawPatchSetFingerprint(repositoryRoot, 'v2026.9.8'),
+        buildRecipeSha256: buildOpenClawBuildRecipeFingerprint(repositoryRoot, 'v2026.9.8'),
         gatewayAsarSha256: crypto
           .createHash('sha256')
           .update(fs.readFileSync(path.join(runtimeRoot, 'gateway.asar')))

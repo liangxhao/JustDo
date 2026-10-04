@@ -16,6 +16,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { AppConfig, OnlineModelVoiceConfig } from '@/app/config';
 import { i18nService } from '@/services/i18n';
 
+import { NativeVideoModelSettings } from './NativeVideoModelSettings';
 import {
   getNonLanguageModelCategoryValidationError,
   type NonLanguageModelCategory,
@@ -684,6 +685,9 @@ const NonLanguageModelSettings: React.FC<NonLanguageModelSettingsProps> = ({
   const inputControlClass =
     'block h-9 w-full rounded-xl border border-border-input bg-white px-3 text-xs text-foreground shadow-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary/30 dark:bg-surface';
   const inputClass = `mt-1 ${inputControlClass}`;
+
+  if (kind === 'video')
+    return <NativeVideoModelSettings category={category} setCategory={setCategory} />;
 
   return (
     <div className="space-y-4">

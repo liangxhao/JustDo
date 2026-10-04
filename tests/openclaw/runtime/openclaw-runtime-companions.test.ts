@@ -33,8 +33,12 @@ describe('OpenClaw runtime companions', () => {
 
       expect(copied).toEqual(['build-info.json']);
       expect(bundledRequire('./build-info.json')).toEqual(metadata);
-      expect(fs.readFileSync(path.join(runtimeRoot, 'build-info.json'))).toEqual(fs.readFileSync(sourcePath));
-      expect(getRuntimeCompanionPathsReferencedByBundle('resolveStartupMigrationBuildIdentity')).toEqual(['build-info.json']);
+      expect(fs.readFileSync(path.join(runtimeRoot, 'build-info.json'))).toEqual(
+        fs.readFileSync(sourcePath),
+      );
+      expect(
+        getRuntimeCompanionPathsReferencedByBundle('resolveStartupMigrationBuildIdentity'),
+      ).toEqual(['build-info.json']);
     } finally {
       fs.rmSync(runtimeRoot, { recursive: true, force: true });
     }
@@ -43,8 +47,9 @@ describe('OpenClaw runtime companions', () => {
   it('rejects a migration-capable bundle whose upstream build metadata is missing', () => {
     const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-build-identity-'));
     try {
-      expect(() => syncRuntimeBundledAssets(runtimeRoot, 'resolveStartupMigrationBuildIdentity'))
-        .toThrow('dist/build-info.json');
+      expect(() =>
+        syncRuntimeBundledAssets(runtimeRoot, 'resolveStartupMigrationBuildIdentity'),
+      ).toThrow('dist/build-info.json');
       expect(fs.existsSync(path.join(runtimeRoot, 'build-info.json'))).toBe(false);
     } finally {
       fs.rmSync(runtimeRoot, { recursive: true, force: true });
@@ -189,13 +194,56 @@ describe('OpenClaw runtime companions', () => {
   });
 });
 
-
 it('anchors the dynamically loaded binding repair companion to dist after bundling', () => {
-  const source = 'const modulePath = new URL(source ? "./legacy-config-binding-repair.runtime.ts" : "./legacy-config-binding-repair.runtime.js", import.meta.url);';
+  const source =
+    'const modulePath = new URL(source ? "./legacy-config-binding-repair.runtime.ts" : "./legacy-config-binding-repair.runtime.js", import.meta.url);';
   const replacement = 'new URL("./dist/io.snapshot.mjs", import.meta.url).href';
   expect(hasStaleRuntimeWorkerImportMetaUrl(source)).toBe(true);
   const rewritten = rewriteRuntimeWorkerImportMetaUrls(source, replacement);
   expect(hasStaleRuntimeWorkerImportMetaUrl(rewritten)).toBe(false);
   expect(rewritten).toContain('"./legacy-config-binding-repair.runtime.js", ' + replacement);
-  expect(getRuntimeCompanionPathsReferencedByBundle(rewritten)).toContain('dist/legacy-config-binding-repair.runtime.js');
+  expect(getRuntimeCompanionPathsReferencedByBundle(rewritten)).toContain(
+    'dist/legacy-config-binding-repair.runtime.js',
+  );
+});
+
+it('anchors the 9.8 shared entrypoint factory and inventories every native worker', () => {
+  const source =
+    'function runtimeProcessEntrypoint(modulePath) { return { currentModuleUrl: import.meta.url, sourceWorkerName: modulePath, distWorkerPath: modulePath + ".js" }; } const entries = { readonly: runtimeProcessEntrypoint("infra/sqlite-readonly-location.worker"), state: runtimeProcessEntrypoint("state/openclaw-state.worker"), memory: runtimeProcessEntrypoint("worker/memory-worker-entry") };';
+  expect(hasStaleRuntimeWorkerImportMetaUrl(source)).toBe(true);
+  const replacement =
+    'new URL("./dist/runtime-process-entrypoints-native.mjs", "file:///runtime/gateway-bundle.mjs").href';
+  const rewritten = rewriteRuntimeWorkerImportMetaUrls(source, replacement);
+  expect(hasStaleRuntimeWorkerImportMetaUrl(rewritten)).toBe(false);
+  expect(new Function(rewritten + '; return entries.readonly.currentModuleUrl;')()).toBe(
+    'file:///runtime/dist/runtime-process-entrypoints-native.mjs',
+  );
+  expect(getRuntimeCompanionPathsReferencedByBundle(rewritten)).toEqual([
+    'dist/infra/sqlite-readonly-location.worker.js',
+    'dist/state/openclaw-state.worker.js',
+    'dist/worker/memory-worker-entry.js',
+  ]);
+  expect(rewriteRuntimeWorkerImportMetaUrls(rewritten, replacement)).toBe(rewritten);
+});
+it.each(['facade-activation-check', 'plugin-metadata-readers', 'telegram-ingress-worker'])(
+  'anchors the %s companion to its original module',
+  name => {
+    const source = 'new URL("./' + name + '.runtime.js", import.meta.url)';
+    const rewritten = rewriteRuntimeWorkerImportMetaUrls(source, 'originalModuleUrl');
+    expect(hasStaleRuntimeWorkerImportMetaUrl(source)).toBe(true);
+    expect(hasStaleRuntimeWorkerImportMetaUrl(rewritten)).toBe(false);
+    expect(rewritten).toContain(', originalModuleUrl)');
+    expect(getRuntimeCompanionPathsReferencedByBundle(rewritten)).toContain(
+      'dist/' + name + '.runtime.js',
+    );
+  },
+);
+it('preserves the source module for compile-cache self workers and lazy runtime imports', () => {
+  const source =
+    'new Worker(new URL(import.meta.url)); importRuntimeModule(import.meta.url, ["./subagent-registry.runtime", ".js"]);';
+  const rewritten = rewriteRuntimeWorkerImportMetaUrls(source, 'originalModuleUrl');
+  expect(hasStaleRuntimeWorkerImportMetaUrl(source)).toBe(true);
+  expect(hasStaleRuntimeWorkerImportMetaUrl(rewritten)).toBe(false);
+  expect(rewritten).toContain('new Worker(new URL(originalModuleUrl))');
+  expect(rewritten).toContain('importRuntimeModule(originalModuleUrl,');
 });

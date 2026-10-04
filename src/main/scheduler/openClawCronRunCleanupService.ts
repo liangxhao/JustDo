@@ -96,16 +96,20 @@ export class OpenClawCronRunCleanupService {
     if (!root || root.sessionId !== rootSessionId) return;
 
     const childrenByParent = new Map<string, Set<string>>();
+    const discovered = new Map<string, { sessionId: string; parent: string }>();
     for (const row of await listPersistedGatewaySessions(client)) {
       const key = typeof row.key === 'string' ? row.key.trim() : '';
-      if (!key) continue;
-      for (const parentValue of [row.spawnedBy, row.parentSessionKey]) {
-        const parent = typeof parentValue === 'string' ? parentValue.trim() : '';
-        if (!parent) continue;
-        const children = childrenByParent.get(parent);
-        if (children) children.add(key);
-        else childrenByParent.set(parent, new Set([key]));
-      }
+      // Native control lineage owns cleanup. parentSessionKey is navigation only
+      // and may still reference this run after a child changes control owners.
+      const parent = typeof row.spawnedBy === 'string' ? row.spawnedBy.trim() : '';
+      if (!key || !parent) continue;
+      discovered.set(key, {
+        sessionId: typeof row.sessionId === 'string' ? row.sessionId.trim() : '',
+        parent,
+      });
+      const children = childrenByParent.get(parent);
+      if (children) children.add(key);
+      else childrenByParent.set(parent, new Set([key]));
     }
 
     const deletionOrder: string[] = [];
@@ -129,6 +133,15 @@ export class OpenClawCronRunCleanupService {
       const session = await this.describeSession(client, sessionKey);
       if (!session) continue;
       if (sessionKey === rootSessionKey && session.sessionId !== rootSessionId) return;
+      if (sessionKey !== rootSessionKey) {
+        const expected = discovered.get(sessionKey);
+        if (
+          !expected?.sessionId ||
+          session.sessionId !== expected.sessionId ||
+          session.spawnedBy !== expected.parent
+        )
+          throw new Error('OpenClaw descendant ownership changed during cleanup');
+      }
       const deleted = await client.request<SessionDeleteResult>('sessions.delete', {
         key: sessionKey,
         deleteTranscript: true,
@@ -298,7 +311,12 @@ export class OpenClawCronRunCleanupService {
   private async describeSession(
     client: GatewayRequestClient,
     sessionKey: string,
-  ): Promise<{ sessionId: string; lifecycleRevision?: string; updatedAt?: number } | null> {
+  ): Promise<{
+    sessionId: string;
+    spawnedBy?: string;
+    lifecycleRevision?: string;
+    updatedAt?: number;
+  } | null> {
     const described = await client.request<SessionDescribeResult>('sessions.describe', {
       key: sessionKey,
     });
@@ -316,6 +334,7 @@ export class OpenClawCronRunCleanupService {
         : undefined;
     return {
       sessionId,
+      ...(typeof session.spawnedBy === 'string' ? { spawnedBy: session.spawnedBy.trim() } : {}),
       ...(lifecycleRevision ? { lifecycleRevision } : {}),
       ...(updatedAt !== undefined ? { updatedAt } : {}),
     };

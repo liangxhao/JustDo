@@ -1,3 +1,4 @@
+import type { NativePendingInput } from '../../../shared/openclaw/pendingInputs';
 import type { ScheduledTaskSessionHistory } from '../../../shared/scheduledTask/types';
 import { readScheduledTaskSessionHistory } from '../../scheduler/scheduledTaskSessionHistory';
 import type { GatewayClientLike } from '../gateway/types';
@@ -8,10 +9,11 @@ import {
   mergeGatewayHistoryPages,
   SESSION_HISTORY_SNAPSHOT_CACHE_LIMIT,
 } from './runtimeAdapterSupport';
+import { fetchNativePendingHistory } from './runtimePendingHistory';
 import {
-  parseChatHistoryCursorResultV2026_9_2,
-  parseChatHistoryResultV2026_9_2,
-} from './wire/v2026_9_2';
+  parseChatHistoryCursorResultV2026_9_8,
+  parseChatHistoryResultV2026_9_8,
+} from './wire/v2026_9_8';
 export interface RuntimeHistoryContext {
   readonly gatewayClient: GatewayClientLike | null;
   readonly sessionHistorySnapshots: Map<string, { messages: unknown[]; deltaCursor: string }>;
@@ -21,15 +23,23 @@ export interface RuntimeHistoryContext {
     deltaCursor: string,
   ) => void;
 }
+export type RuntimeSessionHistory = ScheduledTaskSessionHistory & { pendingInputs?: NativePendingInput[] };
 
 export async function fetchSessionHistoryByKey(
   this: RuntimeHistoryContext,
   sessionKey: string,
   fallbackSessionId?: string | null,
-  options: { forceFullSnapshot?: boolean; scheduledTaskRun?: boolean } = {},
-): Promise<ScheduledTaskSessionHistory | null> {
+  options: { forceFullSnapshot?: boolean; scheduledTaskRun?: boolean; includePendingInputs?: boolean } = {},
+): Promise<RuntimeSessionHistory | null> {
   const client = this.gatewayClient;
   if (!client) return null;
+  if (options.includePendingInputs) {
+    try {
+      return await fetchNativePendingHistory(client, sessionKey,
+        options.forceFullSnapshot ? undefined : this.sessionHistorySnapshots.get(sessionKey),
+        (messages, cursor) => this.setSessionHistorySnapshot(sessionKey, messages, cursor));
+    } catch { return null; }
+  }
   if (options.scheduledTaskRun) {
     const runMatch = /^agent:[^:]+:cron:[^:]+:run:([^:]+)$/.exec(sessionKey);
     if (runMatch) {
@@ -46,7 +56,7 @@ export async function fetchSessionHistoryByKey(
     const fetchHistory = async (key: string): Promise<unknown[]> => {
       const cached = options.forceFullSnapshot ? undefined : this.sessionHistorySnapshots.get(key);
       if (cached) {
-        const delta = parseChatHistoryCursorResultV2026_9_2(
+        const delta = parseChatHistoryCursorResultV2026_9_8(
           await client.request('chat.history', {
             sessionKey: key,
             cursor: cached.deltaCursor,
@@ -74,7 +84,7 @@ export async function fetchSessionHistoryByKey(
               limit: FULL_HISTORY_SYNC_LIMIT,
               ...(offset !== undefined ? { offset } : {}),
             });
-            const page = parseChatHistoryResultV2026_9_2(raw);
+            const page = parseChatHistoryResultV2026_9_8(raw);
             if (offset === undefined) deltaCursor = page.deltaCursor;
             if (page.totalMessages !== undefined) {
               if (snapshotTotalMessages === undefined) {
@@ -106,7 +116,7 @@ export async function fetchSessionHistoryByKey(
           // detects equal-sized reset/compaction/branch changes that a count
           // alone cannot, and catches appends that land after the first page.
           if (deltaCursor !== undefined) {
-            const delta = parseChatHistoryCursorResultV2026_9_2(
+            const delta = parseChatHistoryCursorResultV2026_9_8(
               await client.request('chat.history', {
                 sessionKey: key,
                 cursor: deltaCursor,

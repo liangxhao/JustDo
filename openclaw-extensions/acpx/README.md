@@ -35,9 +35,15 @@ with read-only permissions. The complete extension template is documented in
 
 - Plugin id: `acpx`
 - Source baseline: OpenClaw `v2026.9.2`
-- Minimum plugin API: `2026.9.6`
+- Minimum plugin API: `2026.9.8`
 
-The desktop adapter retains its product-specific source fork. With OpenClaw 2026.9.6,
-it uses acpx 0.19.1, Claude ACP 0.76.0 and Codex ACP 1.11.0.
+The desktop adapter retains its product-specific source fork. With OpenClaw 2026.9.8,
+it uses acpx 0.19.1, Claude ACP 0.79.0 and Codex ACP 1.12.0.
 The upstream native-agent model picker/harness registration is not enabled by
 this product: the managed external-agent catalog still owns admission and diagnostics.
+
+The 2026.9.8 integration validates every used public SDK export and keeps the
+managed state directory and external-agent catalog. Upstream native harness reset
+and state-directory adoption do not replace this product fork. Generated wrappers
+recheck captured bundled adapter paths before launch and fail with the managed
+rebuild diagnostic when missing; they never download a replacement at runtime.

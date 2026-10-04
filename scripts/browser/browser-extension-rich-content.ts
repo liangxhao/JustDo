@@ -10,6 +10,16 @@ import { i18nService } from './browser-extension-i18n';
 import { renderMarkdownHtml } from './browser-extension-markdown-entry.mjs';
 
 const imageRetries = new WeakMap<HTMLImageElement, () => void>();
+export function pendingInputLabel(state: string, incomplete = false): string {
+  if (incomplete) return i18nService.t('messagePendingInputReadFailed');
+  return i18nService.t(
+    state === 'cancelled'
+      ? 'messagePendingInputCancelled'
+      : state === 'interrupted'
+        ? 'messagePendingInputInterrupted'
+        : 'messagePendingInputQueued',
+  );
+}
 export function retryRichImages(host: HTMLElement) {
   host.querySelectorAll('img').forEach(img => imageRetries.get(img)?.());
 }

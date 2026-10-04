@@ -6,9 +6,9 @@ const {
   beginRuntimePatchPhase,
   endRuntimePatchPhase,
   readRuntimeTextFile,
-} = require('../patches/v2026.9.6/_patch-utils.js');
+} = require('../patches/v2026.9.8/_patch-utils.js');
 
-const TARGET_VERSION = '2026.9.6';
+const TARGET_VERSION = '2026.9.8';
 
 function walkJavaScriptFiles(dir, output = []) {
   if (!fs.existsSync(dir)) return output;
@@ -70,7 +70,7 @@ function verifyNativeSessionStopContracts(runtimeDir) {
         '!tree.entry.execution.endedAt',
         'result.descendants = true',
         'result.descendants && tree.canTraverse()',
-        'tree.children.map(visit)',
+        'tree.children.map((child) => visit(child, suppressDescendantWakes))',
       ],
     },
     {
@@ -172,7 +172,7 @@ function verifyPristineOpenClawContracts(runtimeDir, options = {}) {
       'history-display-projection': uniqueEvidence(
         findFileWithAll(
           files,
-          ['delete entry.thinkingSignature', 'delete entry.openclawReasoningReplay'],
+          ['for (const field of ["thinkingSignature", "openclawReasoningReplay"])', 'delete entry[field]'],
           'chat history removes private provider thinking material',
         ),
         findFileWithAll(
@@ -215,22 +215,11 @@ function verifyPristineOpenClawContracts(runtimeDir, options = {}) {
           'idempotent session-goal-start chat intent',
         ),
       ),
-      'native-task-rpc-and-events': uniqueEvidence(
-        findFileWithAll(
-          files,
-          ['"tasks.list":', 'validateTasksListParams', 'nextCursor'],
-          'paginated tasks.list RPC',
-        ),
-        findFileWithAll(
-          files,
-          ['"tasks.get":', 'validateTasksGetParams', 'getTaskById'],
-          'tasks.get RPC',
-        ),
-        findFileWithAll(
-          files,
-          ['kind: "upserted"', 'cloneTaskRecord(task)'],
-          'native task upsert events',
-        ),
+      // The generic durable task registry was retired in 9.7. Subagent state is native.
+      'native-decision-tool': findFileWithAll(
+        files,
+        ['name: "decision_evaluate"', 'createDecisionTool'],
+        'provider-neutral native decision evaluation tool',
       ),
       'subagent-queue-and-wait': uniqueEvidence(
         findFileWithAll(
@@ -250,7 +239,7 @@ function verifyPristineOpenClawContracts(runtimeDir, options = {}) {
         ),
         findFileWithAll(
           files,
-          ['queueTaskSystemEvent(latest, sessionEventText, owner)', '"session_queued"'],
+          ['scheduleSessionDelivery(durableQueue.id, durableQueue.context)', 'disposition: "session_queued"'],
           'terminal child results resume the requester session through durable delivery',
         ),
       ),

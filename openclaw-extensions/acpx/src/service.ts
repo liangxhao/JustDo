@@ -372,6 +372,7 @@ export function createAcpxRuntimeService(
         resolveAcpxPluginConfig({
           rawConfig: params.pluginConfig,
           workspaceDir: ctx.workspaceDir,
+          stateDir: ctx.stateDir,
         }),
       );
       const effectiveBasePluginConfig: ResolvedAcpxPluginConfig = {
