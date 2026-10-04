@@ -1,5 +1,156 @@
 export const sessionDiagnosticsTranslations = {
   en: {
+    diagnosticsStopTitle: 'Why this turn ended',
+    diagnosticsAnswer_confirmed: 'Confirmed by records',
+    diagnosticsAnswer_observed: 'Based on available evidence',
+    diagnosticsAnswer_unknown: 'More evidence needed',
+    diagnosticsAnswerEvidence: 'What the records show',
+    diagnosticsAnswerAction: 'What to do next',
+    diagnosticsAnswerIncomplete:
+      'Some records are missing. This result uses only the available evidence.',
+    diagnosticsRunDetailsHint: 'Run times, saved status and scan statistics',
+    diagnosticsNoOtherErrors: 'No additional step errors found',
+    diagnosticsNoOtherErrorsHint:
+      'This does not change the conclusion above or prove that every task step succeeded.',
+    diagnosticsModelReplyEnded:
+      'The model marked its reply finished without requesting a tool call.',
+    diagnosticsModelReplyEndedEvidence:
+      'The last reply stored for this run contains answer text, a normal end marker and no tool call or request to continue generating.',
+    diagnosticsModelReplyEndedAdvice:
+      'If work remains, ask the model to execute the remaining steps. If it repeatedly answers without taking action, check its tool-call support. Saying “I will continue” in the reply does not execute a tool.',
+    diagnosticsLoopExitEvidence:
+      'The system recorded this exact exit condition when the turn ended.',
+    diagnosticsLoopExit_no_pending_work: 'No further steps were pending, so this turn ended.',
+    diagnosticsLoopAdvice_no_pending_work:
+      'No tool work, continuation request or pending message remained. The system therefore stopped requesting more output. This does not mean it checked that your task was complete; send a follow-up if work remains.',
+    diagnosticsLoopExit_abort_signal: 'Execution received a cancellation request.',
+    diagnosticsLoopAdvice_abort_signal:
+      'Check the stop or timeout records below before restarting.',
+    diagnosticsLoopExit_model_aborted: 'The model response was interrupted.',
+    diagnosticsLoopAdvice_model_aborted:
+      'Check the model connection and cancellation records before retrying.',
+    diagnosticsLoopExit_tool_loop_guard: 'Repeated tool calls triggered loop protection.',
+    diagnosticsLoopAdvice_tool_loop_guard:
+      'Check repeated tool errors or unchanged results, then correct the task or tool setup before retrying.',
+    diagnosticsLoopExit_model_error: 'The model request failed.',
+    diagnosticsLoopAdvice_model_error:
+      'Check the model error details below, including credentials, quota and connection issues.',
+    diagnosticsLoopExit_policy_stop: 'An execution rule instructed the system to end this turn.',
+    diagnosticsLoopAdvice_policy_stop:
+      'The stop came from an execution rule, not simply from the absence of tool calls. Inspect the rule and related records.',
+    diagnosticsLoopExit_handoff: 'Execution left this loop for the next scheduling step.',
+    diagnosticsLoopAdvice_handoff:
+      'Check subsequent runs or messages to see whether execution resumed.',
+    diagnosticsStopBasis_completed:
+      'The records do not show whether the model finished its answer, returned no usable output, or stopped for another reason.',
+    diagnosticsStop_reasoning_only:
+      'The last model response contained thinking but no answer or tool call.',
+    diagnosticsResponseEvidence_reasoning_only:
+      'A model attempt returned thinking without an answer or tool call.',
+    diagnosticsResponseEvidence_empty_response: 'A model attempt returned an empty response.',
+    diagnosticsResponseEvidence_incomplete_response:
+      'A model attempt did not produce a complete usable response.',
+    diagnosticsStop_empty_response: 'The model returned an empty response: no answer or tool call.',
+    diagnosticsStop_incomplete_response: 'The model did not produce a complete usable response.',
+    diagnosticsStopBasis_terminal: 'The system recorded that this turn has ended.',
+    diagnosticsStopBasis_history:
+      'This is what the last available model reply shows. Some history may be missing, so it does not identify the underlying fault.',
+    diagnosticsStopBasis_log:
+      'Logs for this turn show that retries ran out. These logs alone cannot tell whether it recovered later.',
+    diagnosticsStopBasis_unknown:
+      'There is not enough information to explain the stop. A lost connection or a finished reply alone does not mean the task is complete.',
+    diagnosticsStopOutputLimit:
+      'That response also reported a length limit. Reasoning may have consumed the output budget before an answer was produced.',
+    diagnosticsStopRetriesExhausted:
+      'The system retried but still could not obtain a usable reply.',
+    diagnosticsResponseRecovery_retrying: 'Native recovery retry recorded',
+    diagnosticsResponseRecovery_exhausted: 'Native recovery retries exhausted',
+    diagnosticsTimeout_queue: 'Timed out while queued, before execution was admitted.',
+    diagnosticsTimeout_preflight: 'Timed out during preparation, before the model request stage.',
+    diagnosticsTimeout_provider: 'Timed out in the model-provider stage.',
+    diagnosticsTimeout_post_turn: 'Timed out while finalizing the turn after model execution.',
+    diagnosticsTimeout_gateway_draining:
+      'Timed out while the runtime was draining or shutting down.',
+    diagnosticsStopAdvice_reasoning_only:
+      'Test this model with a short question and a simple tool request. If it still produces only thinking, check its output limit, chat template and tool-call support. Compare with another model to narrow down the cause.',
+    diagnosticsStopAdvice_empty_response:
+      'Inspect the deployed model server’s finish reason and response body. Check its chat template, stop sequences, streaming adapter and tool-call support; compare with a known working model using the same task. An empty response alone does not identify the faulty setting.',
+    diagnosticsStopAdvice_incomplete_response:
+      'Inspect native response-recovery logs and the last model reply. Check whether the model can return a final answer and supported tool calls, then retry the smallest failing request.',
+    diagnosticsStopAdvice_timeout:
+      'Use the reported timeout stage to locate the delay. For a provider timeout, inspect server latency and stream activity; thinking tokens are not a final answer. Increase the timeout only after confirming that the model is making useful progress.',
+    diagnosticsStopAdvice_length:
+      'Inspect the last response and the server’s output-token limit. Reduce reasoning effort or raise the supported output budget, leaving room for a final answer or tool call.',
+    diagnosticsStopAdvice_completed:
+      'Refresh diagnostics while the service is connected to check the last reply and errors. If the reason is still unclear, export the report for further investigation.',
+    diagnosticsStopAdvice_failed:
+      'Read the concrete failure evidence below. A generic failure terminal alone cannot distinguish a provider fault, an execution error or a local runtime problem.',
+    diagnosticsStopAdvice_unknown:
+      'Refresh while the runtime is connected and inspect retained history and logs. Missing terminal evidence cannot establish why execution stopped.',
+    diagnosticsStopAdvice_running:
+      'Refresh to check for new evidence. An old start record alone does not prove that execution is still active.',
+    diagnosticsStopAdvice_reply_ended:
+      'The reply stream ended, but the whole-run terminal is missing. Refresh to check settlement; do not infer task completion from the last reply alone.',
+    diagnosticsStopAdvice_reply_aborted:
+      'The reply was interrupted; refresh for the native execution terminal before assuming that background work has stopped.',
+    diagnosticsStopAdvice_user_stopped:
+      'A matching user stop request and native abort terminal were recorded. Resume with a new message if the task should continue.',
+    diagnosticsStopAdvice_aborted:
+      'The native run was aborted without a confirmed user stop request. Inspect runtime restart, coordinator and replacement evidence.',
+    diagnosticsStopAdvice_restart:
+      'The runtime reported a restart interruption. Check the runtime logs near this time before resuming the task.',
+    diagnosticsStopAdvice_superseded:
+      'A newer session writer replaced this run. Check whether another message, automation or concurrent session operation took over.',
+    diagnosticsStopAdvice_disconnected:
+      'Reconnect and refresh. Losing the connection does not prove that the model or background tools stopped.',
+    diagnosticsStopAdvice_conflict:
+      'Terminal records disagree. Export the report to inspect run identities and timing; do not choose one cause from conflicting evidence.',
+    diagnosticsStopAdvice_waiting:
+      'The run yielded control. Check pending approvals, child work or follow-up delivery; yielding is not a model failure.',
+    diagnosticsHistoryRuntime: 'Run failed before a reply',
+    diagnosticsHistoryBasis_failure_receipt:
+      'Evidence: native failure receipt saved before a reply was produced.',
+    diagnosticsHistoryAdvice_state_contention:
+      'The native runtime reported state contention. Let concurrent operations finish and retry; if it repeats, export diagnostics to investigate the state owner. Do not delete the conversation database.',
+    diagnosticsEnvironmentScope:
+      'Recent runtime-wide observations, across all conversations. Counts may describe the same incident and are not causes for this run. The in-memory buffer is lost on restart.',
+    diagnosticsEnvironmentSignal_model: 'Model error records',
+    diagnosticsEnvironmentSignal_tool: 'Tool error records',
+    diagnosticsEnvironmentSignal_blocked: 'Blocked tool records',
+    diagnosticsEnvironmentSignal_command: 'Failed command records',
+    diagnosticsEnvironmentSignal_stuck: 'Stuck-session warnings',
+    diagnosticsEnvironmentSignal_liveness: 'Runtime responsiveness warnings',
+    diagnosticsEnvironmentNoSignals:
+      'No recognized warning in the retained sample; this does not establish a healthy runtime.',
+    diagnosticsHistoryScope:
+      'These are failed or interrupted steps, not a verdict on the whole task. A later retry may have recovered; time-range matches do not prove run ownership.',
+    diagnosticsHistoryInferred:
+      'This suggestion is inferred from the error excerpt. Verify it against the failed step.',
+    diagnosticsHistoryBasis_activity:
+      'Evidence: native activity outcome (retained before history display sanitation).',
+    diagnosticsHistoryBasis_result:
+      'Evidence: stored tool result failure flag or execution status.',
+    diagnosticsHistoryBasis_model: 'Evidence: stored model response stop reason.',
+    diagnosticsHistoryOutcome_failed: 'Failed',
+    diagnosticsHistoryOutcome_blocked: 'Blocked',
+    diagnosticsHistoryOutcome_aborted: 'Interrupted',
+    diagnosticsHistoryAdvice_aborted:
+      'Check whether this step was canceled, superseded, or disconnected. An interrupted response alone does not establish the cause or the whole-run outcome.',
+    diagnosticsHistoryReason_offline:
+      'The runtime is disconnected. Local logs are still available; reconnect and refresh to read conversation evidence.',
+    diagnosticsHistoryReason_no_run:
+      'No application run record is available to delimit the scan. Session logs may still provide clues.',
+    diagnosticsHistoryReason_no_binding:
+      'The native session binding is missing. Check whether the conversation still exists under its original assistant.',
+    diagnosticsHistoryReason_canceled: 'Collection was canceled; this is not a complete scan.',
+    diagnosticsHistoryReason_timeout:
+      'The history request timed out. Retry after the runtime becomes responsive.',
+    diagnosticsHistoryReason_read_failed:
+      'The history request or response validation failed. Check the runtime connection and retry.',
+    diagnosticsHistoryReason_page_limit:
+      'The bounded history scan reached its pagination limit. Older failures may not be included.',
+    diagnosticsHistoryReason_history_changed:
+      'The history or native session binding changed. Discarded excerpts must be collected again.',
     diagnosticsHistory_scanned:
       'Read {count} stored conversation records; checking failures within this run’s time range.',
     diagnosticsHistory_partial:
@@ -350,8 +501,7 @@ export const sessionDiagnosticsTranslations = {
     diagnosticsConfidence_unknown: 'Unable to confirm',
     diagnosticsReason_unknown: 'There is not enough evidence to confirm why this run ended.',
     diagnosticsReason_running: 'The last observed evidence indicates this run was active.',
-    diagnosticsReason_completed:
-      'Execution ended normally. This does not confirm that the task goal was achieved.',
+    diagnosticsReason_completed: 'This turn ended, but the specific reason is not recorded.',
     diagnosticsReason_reply_ended: 'The reply stream ended; execution completion is not confirmed.',
     diagnosticsReason_user_stopped: 'The run stopped following a user stop request.',
     diagnosticsReason_aborted: 'The run was aborted; the initiator is unknown.',
@@ -393,6 +543,133 @@ export const sessionDiagnosticsTranslations = {
     diagnosticsPhase_failed: 'Failed',
   },
   zh: {
+    diagnosticsStopTitle: '本轮结束原因',
+    diagnosticsAnswer_confirmed: '记录已确认',
+    diagnosticsAnswer_observed: '根据现有记录判断',
+    diagnosticsAnswer_unknown: '还需补充记录',
+    diagnosticsAnswerEvidence: '判断依据',
+    diagnosticsAnswerAction: '建议下一步',
+    diagnosticsAnswerIncomplete: '部分记录缺失，当前结论仅依据已收集的信息。',
+    diagnosticsRunDetailsHint: '运行时间、保存的状态和扫描统计',
+    diagnosticsNoOtherErrors: '没有查到其他步骤错误',
+    diagnosticsNoOtherErrorsHint: '这不影响上方的结束原因，也不表示所有任务步骤都已成功。',
+    diagnosticsModelReplyEnded: '模型主动结束了回复，没有请求调用工具。',
+    diagnosticsModelReplyEndedEvidence:
+      '本轮保存的最后一条模型回复有正文，带有正常结束标记，没有工具调用，也没有要求继续生成。',
+    diagnosticsModelReplyEndedAdvice:
+      '如果任务未完成，请明确要求继续执行剩余步骤。如果反复只回复、不操作，请检查该模型是否支持工具调用。正文说“接下来继续”不等于实际执行工具。',
+    diagnosticsLoopExitEvidence: '系统在本轮结束时记录了这个具体条件。',
+    diagnosticsLoopExit_no_pending_work: '没有后续步骤可执行，系统结束了本轮。',
+    diagnosticsLoopAdvice_no_pending_work:
+      '结束时没有待执行的工具、继续生成要求或待处理消息，所以系统没有再向模型请求下一步。这不表示系统检查过任务是否完成；如果还有工作，可发送新消息要求继续。',
+    diagnosticsLoopExit_abort_signal: '执行收到了取消请求。',
+    diagnosticsLoopAdvice_abort_signal: '继续前，请查看下方的停止或超时记录。',
+    diagnosticsLoopExit_model_aborted: '模型回复被中断。',
+    diagnosticsLoopAdvice_model_aborted: '检查模型连接和取消记录后再重试。',
+    diagnosticsLoopExit_tool_loop_guard: '工具反复调用，触发了防止死循环的保护。',
+    diagnosticsLoopAdvice_tool_loop_guard:
+      '查看是否反复出现相同工具错误或没有进展的结果，调整任务或工具配置后再重试。',
+    diagnosticsLoopExit_model_error: '模型请求失败，执行结束。',
+    diagnosticsLoopAdvice_model_error: '查看下方的模型错误，检查凭据、额度和连接。',
+    diagnosticsLoopExit_policy_stop: '执行规则要求结束本轮。',
+    diagnosticsLoopAdvice_policy_stop:
+      '本次停止由执行规则触发，不是仅仅因为没有工具调用。请结合相关记录检查执行规则。',
+    diagnosticsLoopExit_handoff: '当前执行循环结束，交由后续调度处理。',
+    diagnosticsLoopAdvice_handoff: '检查后续运行或消息，确认是否继续执行。',
+    diagnosticsStopBasis_completed:
+      '现有记录没有说明：是模型回答完了、没有生成有效回复，还是其他原因。不能据此判断任务已经完成。',
+    diagnosticsStop_reasoning_only: '最后一次模型回复只有 thinking，没有正文或工具调用。',
+    diagnosticsResponseEvidence_reasoning_only:
+      '一次模型尝试只返回了 thinking，没有正文或工具调用。',
+    diagnosticsResponseEvidence_empty_response: '一次模型尝试返回了空响应。',
+    diagnosticsResponseEvidence_incomplete_response: '一次模型尝试没有产生完整、可用的回复。',
+    diagnosticsStop_empty_response: '模型返回了空响应，没有正文或工具调用。',
+    diagnosticsStop_incomplete_response: '模型没有产生完整、可用的回复。',
+    diagnosticsStopBasis_terminal: '系统已记录这一轮结束。',
+    diagnosticsStopBasis_history:
+      '这是目前能查到的最后一次模型回复的情况。部分历史可能缺失，还不能确定模型为什么会这样回复。',
+    diagnosticsStopBasis_log: '本轮日志显示重试次数已用完。仅凭这条日志，还不能确认后续是否恢复。',
+    diagnosticsStopBasis_unknown:
+      '记录不足，暂时查不出为什么停止。仅凭断开连接或回复结束，不能判断任务已经完成。',
+    diagnosticsStopOutputLimit:
+      '该回复同时报告达到长度限制，可能在生成正文之前就耗尽了推理与输出预算。',
+    diagnosticsStopRetriesExhausted: '系统已多次重试，仍未获得有效回复。',
+    diagnosticsResponseRecovery_retrying: '记录到原生恢复重试',
+    diagnosticsResponseRecovery_exhausted: '原生恢复重试耗尽',
+    diagnosticsTimeout_queue: '排队阶段超时，尚未获准开始执行。',
+    diagnosticsTimeout_preflight: '准备阶段超时，尚未进入模型请求阶段。',
+    diagnosticsTimeout_provider: '模型服务阶段超时。',
+    diagnosticsTimeout_post_turn: '模型执行之后的本轮收尾阶段超时。',
+    diagnosticsTimeout_gateway_draining: '运行服务排空或关闭阶段超时。',
+    diagnosticsStopAdvice_reasoning_only:
+      '先用这个模型测试一句简短问答和一次简单工具调用。如果仍然只有思考内容，请检查输出上限、聊天模板和工具调用支持，也可换模型对比。',
+    diagnosticsStopAdvice_empty_response:
+      '检查模型服务端的结束原因和响应体，核对聊天模板、停止词、流式适配与工具调用支持，再用已知正常的模型执行同一任务对比。空响应本身不能确定具体错误配置。',
+    diagnosticsStopAdvice_incomplete_response:
+      '检查原生回复恢复日志和最后一次模型回复，确认模型能返回最终答案及受支持的工具调用，再用最小失败请求复现。',
+    diagnosticsStopAdvice_timeout:
+      '根据超时阶段定位延迟。若发生在模型服务阶段，检查服务端延迟和流式活动；持续输出 thinking 不代表已经产生最终答案。确认模型有有效进展后再考虑增加超时。',
+    diagnosticsStopAdvice_length:
+      '检查最后一次回复和服务端输出 token 上限，降低推理强度或增加模型支持的输出预算，为正文或工具调用保留空间。',
+    diagnosticsStopAdvice_completed:
+      '请在服务连接正常时刷新诊断，补查最后一条回复和错误记录。仍无法确定时，可导出报告进一步排查。',
+    diagnosticsStopAdvice_failed:
+      '查看下方具体失败证据。仅凭通用失败终态，不能区分模型服务异常、执行错误或本地运行服务问题。',
+    diagnosticsStopAdvice_unknown:
+      '在运行服务已连接时刷新，检查保留的历史和日志。缺少终态证据时，不能确定执行为什么停止。',
+    diagnosticsStopAdvice_running: '刷新以检查新证据；较早的开始记录不能证明当前仍在执行。',
+    diagnosticsStopAdvice_reply_ended:
+      '回复流已结束，但缺少整轮终态。刷新确认执行是否已结束，不要仅凭最后一条回复判断任务完成。',
+    diagnosticsStopAdvice_reply_aborted:
+      '回复被中断；刷新获取原生执行终态后，再确认后台工作是否已经停止。',
+    diagnosticsStopAdvice_user_stopped:
+      '已记录匹配的用户停止请求与原生中止终态。如需继续，可发送新消息恢复任务。',
+    diagnosticsStopAdvice_aborted:
+      '原生执行被中止，但没有已确认的用户停止请求；检查运行服务重启、协调方或新运行替代的证据。',
+    diagnosticsStopAdvice_restart: '运行服务报告重启中断；继续任务前检查该时段运行服务日志。',
+    diagnosticsStopAdvice_superseded:
+      '新的会话写入方替代了本轮运行；检查是否有新消息、自动任务或并发会话操作接管。',
+    diagnosticsStopAdvice_disconnected: '重新连接后刷新。连接丢失不能证明模型或后台工具已经停止。',
+    diagnosticsStopAdvice_conflict:
+      '终态记录相互冲突，请导出报告核对运行身份和时序，不要从冲突证据中直接选定一个原因。',
+    diagnosticsStopAdvice_waiting:
+      '执行已让出控制，请检查待审批事项、子任务或后续投递；让出控制不等于模型故障。',
+    diagnosticsHistoryRuntime: '回复产生前运行失败',
+    diagnosticsHistoryBasis_failure_receipt: '依据：原生运行服务保存的回复前失败记录。',
+    diagnosticsHistoryAdvice_state_contention:
+      '原生运行服务报告状态争用。等待并发操作结束后重试；若反复出现，导出诊断包排查状态占用方，不要删除会话数据库。',
+    diagnosticsEnvironmentScope:
+      '运行服务近期的全局观察，包含所有会话；不同计数可能对应同一故障，不能归因到本轮。内存记录在服务重启后丢失。',
+    diagnosticsEnvironmentSignal_model: '模型错误记录',
+    diagnosticsEnvironmentSignal_tool: '工具错误记录',
+    diagnosticsEnvironmentSignal_blocked: '工具被阻止记录',
+    diagnosticsEnvironmentSignal_command: '命令失败记录',
+    diagnosticsEnvironmentSignal_stuck: '会话卡住警告',
+    diagnosticsEnvironmentSignal_liveness: '运行服务响应异常警告',
+    diagnosticsEnvironmentNoSignals: '保留样本中没有识别到异常，不代表运行服务没有问题。',
+    diagnosticsHistoryScope:
+      '以下是失败或中断的步骤，不代表整个任务失败；后续重试可能已恢复。仅时间范围匹配不能证明属于本轮。',
+    diagnosticsHistoryInferred: '处理建议根据错误节选推测，请结合失败步骤核实。',
+    diagnosticsHistoryBasis_activity: '依据：原生活动结果（历史展示裁剪前保留的失败状态）。',
+    diagnosticsHistoryBasis_result: '依据：已保存工具结果的失败标记或执行状态。',
+    diagnosticsHistoryBasis_model: '依据：已保存模型回复的停止原因。',
+    diagnosticsHistoryOutcome_failed: '失败',
+    diagnosticsHistoryOutcome_blocked: '被阻止',
+    diagnosticsHistoryOutcome_aborted: '中断',
+    diagnosticsHistoryAdvice_aborted:
+      '核对该步骤是否被取消、新请求替代或遭遇断连。仅回复中断不能确定原因，也不能确定整轮结果。',
+    diagnosticsHistoryReason_offline:
+      '运行服务未连接，仍可查看本地日志；重新连接后刷新，以读取会话证据。',
+    diagnosticsHistoryReason_no_run:
+      '没有可用于限定扫描范围的应用运行记录，仍可从会话日志中查找线索。',
+    diagnosticsHistoryReason_no_binding: '缺少原生会话绑定，请检查会话是否仍存在于原来的助手下。',
+    diagnosticsHistoryReason_canceled: '采集已取消，当前结果不是完整扫描。',
+    diagnosticsHistoryReason_timeout: '会话历史请求超时，请在运行服务恢复响应后重试。',
+    diagnosticsHistoryReason_read_failed:
+      '会话历史请求或返回格式校验失败，请检查运行服务连接后重试。',
+    diagnosticsHistoryReason_page_limit: '已达到历史分页扫描上限，更早的失败可能未包含在报告中。',
+    diagnosticsHistoryReason_history_changed:
+      '历史记录或原生会话绑定发生变化，已丢弃的节选需要重新采集。',
     diagnosticsHistory_scanned: '已读取 {count} 条会话存储记录，检查本轮时间范围内的失败结果。',
     diagnosticsHistory_partial: '已读取 {count} 条会话存储记录；历史扫描尚不完整。',
     diagnosticsHistory_unavailable: '未能读取会话历史；连接运行服务后刷新重试。',
@@ -695,7 +972,7 @@ export const sessionDiagnosticsTranslations = {
     diagnosticsConfidence_unknown: '无法确认',
     diagnosticsReason_unknown: '现有证据不足以确认本轮结束原因。',
     diagnosticsReason_running: '最后观测到的证据表明本轮仍在运行。',
-    diagnosticsReason_completed: '执行正常结束，但不代表任务目标已经完成。',
+    diagnosticsReason_completed: '本轮已结束，但没有记录具体结束原因。',
     diagnosticsReason_reply_ended: '回复流已结束，尚未确认执行是否完成。',
     diagnosticsReason_user_stopped: '本轮在用户停止请求后终止。',
     diagnosticsReason_aborted: '本轮已中止，无法确认发起者。',

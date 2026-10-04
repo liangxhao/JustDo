@@ -34,6 +34,54 @@ beforeEach(() => {
   });
 });
 afterEach(cleanup);
+
+test('reuses a loaded review when reopening the panel and refreshes only on request', async () => {
+  load.mockResolvedValue(result('stable.ts'));
+  const view = render(<SessionReviewPanel sessionId="one" visible onOpenFile={vi.fn()} />);
+  fireEvent.click(await screen.findByText('stable.ts', { selector: '.review-file-heading *' }));
+  view.rerender(<SessionReviewPanel sessionId="one" visible={false} onOpenFile={vi.fn()} />);
+  view.rerender(<SessionReviewPanel sessionId="one" visible onOpenFile={vi.fn()} />);
+  expect(load).toHaveBeenCalledTimes(1);
+  expect(screen.getByText('new')).toBeTruthy();
+  expect(screen.getByText(t('reviewSnapshot'))).toBeTruthy();
+  load.mockResolvedValue(result('fresh.ts'));
+  fireEvent.click(screen.getByText(t('reviewRefresh')));
+  await screen.findByText('fresh.ts', { selector: '.review-file-heading *' });
+  expect(load).toHaveBeenCalledTimes(2);
+});
+
+test('joins the pending read across tab switches and Strict Mode effect replay', async () => {
+  let settle!: (value: unknown) => void;
+  load.mockImplementation(
+    () =>
+      new Promise(resolve => {
+        settle = resolve;
+      }),
+  );
+  const panel = (visible: boolean) => (
+    <StrictMode>
+      <SessionReviewPanel sessionId="one" visible={visible} onOpenFile={vi.fn()} />
+    </StrictMode>
+  );
+  const view = render(panel(true));
+  view.rerender(panel(false));
+  view.rerender(panel(true));
+  expect(load).toHaveBeenCalledTimes(1);
+  await act(async () => settle(result('joined.ts')));
+  expect(screen.getByText('joined.ts', { selector: '.review-file-heading *' })).toBeTruthy();
+});
+
+test('retries a failed read when reopening the panel', async () => {
+  load
+    .mockResolvedValueOnce({ success: false, reason: 'unavailable' })
+    .mockResolvedValue(result('retry.ts'));
+  const view = render(<SessionReviewPanel sessionId="one" visible onOpenFile={vi.fn()} />);
+  await screen.findByRole('alert');
+  view.rerender(<SessionReviewPanel sessionId="one" visible={false} onOpenFile={vi.fn()} />);
+  view.rerender(<SessionReviewPanel sessionId="one" visible onOpenFile={vi.fn()} />);
+  await screen.findByText('retry.ts', { selector: '.review-file-heading *' });
+  expect(load).toHaveBeenCalledTimes(2);
+});
 test('keeps the screen mounted and explains restart when the window has an older preload', async () => {
   Object.defineProperty(window, 'electron', {
     configurable: true,

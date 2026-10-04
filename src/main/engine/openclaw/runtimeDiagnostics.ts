@@ -7,6 +7,7 @@ import type {
   DiagnosticPhase,
   DiagnosticStopReason,
 } from '../../../shared/cowork/sessionDiagnostics';
+import { diagnosticLoopExits, diagnosticResponseShapes,diagnosticTimeoutPhases } from '../../../shared/cowork/sessionDiagnostics';
 import type { GatewayEventFrame } from '../gateway/types';
 
 const record = (value: unknown): Record<string, unknown> =>
@@ -78,12 +79,14 @@ export function projectDiagnosticEvent(
     return { sessionKey, nativeRunId, event: {
       ...base, ...failureDetails(payload.errorDetail), kind: 'chat', phase: payload.state as DiagnosticPhase,
       ...(errorCategory(payload.errorDetail) ? { errorCategory: errorCategory(payload.errorDetail) } : {}),
+      ...(record(payload.errorDetail).failoverReason === 'empty_response' ? { responseIssue: 'empty_response' as const } : {}),
     } };
   }
   const occurredAt = timestamp(data.endedAt) ?? timestamp(data.startedAt) ?? timestamp(payload.ts);
   if (payload.stream === 'lifecycle') {
     if (!['start', 'finishing', 'end', 'error'].includes(String(data.phase))) return;
-    // Do not retain error strings, errorObservation, terminalReply or arbitrary codes.
+    // Retain only the closed disposition, never terminal reply text.
+    const disposition = record(data.terminalReply).disposition;
     const stopReason = typeof data.stopReason === 'string'
       ? stops.has(data.stopReason as DiagnosticStopReason) ? data.stopReason as DiagnosticStopReason : 'unknown'
       : undefined;
@@ -93,6 +96,11 @@ export function projectDiagnosticEvent(
       ...(occurredAt === undefined ? {} : { occurredAt }),
       ...(stopReason ? { stopReason } : {}),
       ...(category ? { errorCategory: category } : {}),
+      ...(diagnosticLoopExits.includes(data.justDoLoopExit as typeof diagnosticLoopExits[number]) ? { loopExit: data.justDoLoopExit as typeof diagnosticLoopExits[number] } : {}),
+      ...(diagnosticResponseShapes.includes(data.justDoResponseShape as typeof diagnosticResponseShapes[number]) ? { responseShape: data.justDoResponseShape as typeof diagnosticResponseShapes[number] } : {}),
+      ...(['visible', 'silent', 'empty'].includes(String(disposition)) ? { replyDisposition: disposition as 'visible' | 'silent' | 'empty' } : {}),
+      ...(record(data.errorObservation).failoverReason === 'empty_response' ? { responseIssue: 'empty_response' as const } : {}),
+      ...(diagnosticTimeoutPhases.includes(data.timeoutPhase as typeof diagnosticTimeoutPhases[number]) ? { timeoutPhase: data.timeoutPhase as typeof diagnosticTimeoutPhases[number] } : {}),
       ...(typeof data.executionSettled === 'boolean' ? { executionSettled: data.executionSettled } : {}),
       ...(typeof data.aborted === 'boolean' ? { aborted: data.aborted } : {}),
       ...(typeof data.yielded === 'boolean' ? { yielded: data.yielded } : {}),

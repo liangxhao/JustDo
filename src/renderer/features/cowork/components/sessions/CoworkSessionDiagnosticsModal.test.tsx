@@ -56,6 +56,140 @@ const open = () =>
   );
 
 describe('session diagnostics', () => {
+  it('explains a normal model stop using old database history without patched runtime metadata', async () => {
+    bridge.read.mockResolvedValue({
+      success: true,
+      report: report({
+        history: {
+          status: 'scanned',
+          messagesScanned: 1,
+          omitted: 0,
+          failures: [],
+          lastResponse: {
+            timestamp: 10,
+            association: 'run',
+            thinking: false,
+            text: true,
+            toolCall: false,
+            other: false,
+            complete: true,
+            stopReason: 'stop',
+          },
+        },
+      }),
+    });
+    open();
+    expect(await screen.findByText(i18nService.t('diagnosticsModelReplyEnded'))).toBeTruthy();
+    expect(screen.getByText(i18nService.t('diagnosticsModelReplyEndedEvidence'))).toBeTruthy();
+    expect(screen.queryByText(i18nService.t('diagnosticsStopBasis_completed'))).toBeNull();
+  });
+  it('shows the recorded loop exit as the conclusion rather than saying the reason is missing', async () => {
+    bridge.read.mockResolvedValue({
+      success: true,
+      report: report({
+        conclusion: {
+          reason: 'completed',
+          confidence: 'confirmed',
+          evidenceIds: ['end'],
+          toolFailures: 0,
+        },
+        events: [
+          {
+            id: 'end',
+            runId: 'run-1',
+            epoch: 'epoch',
+            observedAt: 10,
+            kind: 'lifecycle',
+            phase: 'end',
+            executionSettled: true,
+            stopReason: 'stop',
+            loopExit: 'no_pending_work',
+            responseShape: 'text',
+          },
+        ],
+      }),
+    });
+    open();
+    expect(
+      await screen.findByText(i18nService.t('diagnosticsLoopExit_no_pending_work')),
+    ).toBeTruthy();
+    expect(screen.getByText(i18nService.t('diagnosticsLoopAdvice_no_pending_work'))).toBeTruthy();
+    expect(screen.queryByText(i18nService.t('diagnosticsStopBasis_completed'))).toBeNull();
+  });
+  it('explains thinking-only stops and output limits without showing reasoning text', async () => {
+    bridge.read.mockResolvedValue({
+      success: true,
+      report: report({
+        history: {
+          status: 'scanned',
+          messagesScanned: 1,
+          omitted: 0,
+          failures: [],
+          lastResponse: {
+            timestamp: 10,
+            association: 'run',
+            thinking: true,
+            text: false,
+            toolCall: false,
+            other: false,
+            complete: true,
+            stopReason: 'max_tokens',
+          },
+        },
+      }),
+    });
+    open();
+    expect(
+      await screen.findByRole('region', { name: i18nService.t('diagnosticsStopTitle') }),
+    ).toBeTruthy();
+    expect(screen.getByText(i18nService.t('diagnosticsStop_reasoning_only'))).toBeTruthy();
+    expect(screen.getByText(i18nService.t('diagnosticsStopOutputLimit'))).toBeTruthy();
+    expect(screen.getByText(i18nService.t('diagnosticsStopAdvice_reasoning_only'))).toBeTruthy();
+    expect(screen.queryByText(i18nService.t('diagnosticsReason_completed'))).toBeNull();
+    expect(screen.getByText(i18nService.t('diagnosticsAnswer_observed'))).toBeTruthy();
+    expect(
+      screen.getByRole('heading', { name: i18nService.t('diagnosticsAnswerEvidence') }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole('heading', { name: i18nService.t('diagnosticsAnswerAction') }),
+    ).toBeTruthy();
+    expect(screen.getByText(i18nService.t('diagnosticsAnswerIncomplete'))).toBeTruthy();
+    const detail = screen.getByText(i18nService.t('diagnosticsOverview')).closest('details')!;
+    expect(detail.open).toBe(false);
+    expect(detail.contains(screen.getByText('Matching diagnostic records'))).toBe(true);
+    expect(screen.queryByText(i18nService.t('diagnosticsNotLocated'))).toBeNull();
+  });
+  it('shows native blocked evidence, concrete advice and incomplete scan reasons', async () => {
+    bridge.read.mockResolvedValue({
+      success: true,
+      report: report({
+        history: {
+          status: 'partial',
+          reason: 'page_limit',
+          messagesScanned: 200,
+          omitted: 0,
+          failures: [
+            {
+              timestamp: 10,
+              kind: 'tool',
+              tool: 'exec',
+              excerpt: 'Approval required',
+              clipped: false,
+              association: 'run_window',
+              basis: 'activity',
+              outcome: 'blocked',
+            },
+          ],
+        },
+      }),
+    });
+    open();
+    expect(await screen.findByText('exec · Blocked')).toBeTruthy();
+    expect(screen.getByText(i18nService.t('diagnosticsHistoryBasis_activity'))).toBeTruthy();
+    expect(screen.getByText(i18nService.t('diagnosticsAdvice_permission'))).toBeTruthy();
+    expect(screen.getByText(i18nService.t('diagnosticsHistoryReason_page_limit'))).toBeTruthy();
+    expect(screen.queryByText(i18nService.t('diagnosticsNotLocated'))).toBeNull();
+  });
   it('shows the stored tool error instead of repeating the missing-cause fallback', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
@@ -135,13 +269,9 @@ describe('session diagnostics', () => {
       heading.compareDocumentPosition(screen.getByText('Matching diagnostic records')) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-    expect(
-      screen
-        .getByText(
-          'Execution ended normally. This does not confirm that the task goal was achieved.',
-        )
-        .closest('details')?.open,
-    ).toBe(false);
+    expect(screen.getByText(i18nService.t('diagnosticsOverview')).closest('details')?.open).toBe(
+      false,
+    );
   });
 
   it('labels nearby log problems as potentially unrelated instead of confirmed failures', async () => {
@@ -507,9 +637,7 @@ describe('session diagnostics', () => {
 
   it('loads local evidence without querying online context and exports the displayed snapshot while offline', async () => {
     open();
-    await screen.findByText(
-      'Execution ended normally. This does not confirm that the task goal was achieved.',
-    );
+    await screen.findByText('This turn ended, but the specific reason is not recorded.');
     expect(bridge.read).toHaveBeenCalledWith({ sessionId: 'target' });
     expect(bridge.refresh).not.toHaveBeenCalled();
     expect(
@@ -566,9 +694,7 @@ describe('session diagnostics', () => {
           async () => bridge.read.mock.results[bridge.read.mock.results.length - 1]?.value,
         );
       open();
-      await screen.findByText(
-        'Execution ended normally. This does not confirm that the task goal was achieved.',
-      );
+      await screen.findByText('This turn ended, but the specific reason is not recorded.');
       await waitFor(() =>
         expect(
           (screen.getByRole('button', { name: 'Export diagnostic report' }) as HTMLButtonElement)
@@ -590,9 +716,7 @@ describe('session diagnostics', () => {
       resolve({ success: true, report: report({ snapshotId: 'stale' }) });
       await waitFor(() =>
         expect(
-          screen.queryByText(
-            'Execution ended normally. This does not confirm that the task goal was achieved.',
-          ),
+          screen.queryByText('This turn ended, but the specific reason is not recorded.'),
         ).toBeNull(),
       );
       await waitFor(() =>
@@ -615,9 +739,7 @@ describe('session diagnostics', () => {
   it('removes a deleted session snapshot and disables further exports', async () => {
     bridge.export.mockResolvedValue({ success: false, reason: 'missing' });
     open();
-    await screen.findByText(
-      'Execution ended normally. This does not confirm that the task goal was achieved.',
-    );
+    await screen.findByText('This turn ended, but the specific reason is not recorded.');
     await waitFor(() =>
       expect(
         (screen.getByRole('button', { name: 'Export diagnostic report' }) as HTMLButtonElement)
@@ -627,9 +749,7 @@ describe('session diagnostics', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Export diagnostic report' }));
     await screen.findByRole('alert');
     expect(
-      screen.queryByText(
-        'Execution ended normally. This does not confirm that the task goal was achieved.',
-      ),
+      screen.queryByText('This turn ended, but the specific reason is not recorded.'),
     ).toBeNull();
     expect(
       (screen.getByRole('button', { name: 'Export diagnostic report' }) as HTMLButtonElement)
@@ -647,9 +767,7 @@ describe('session diagnostics', () => {
     });
     bridge.refresh.mockRejectedValue(new Error('sensitive provider response'));
     open();
-    await screen.findByText(
-      'Execution ended normally. This does not confirm that the task goal was achieved.',
-    );
+    await screen.findByText('This turn ended, but the specific reason is not recorded.');
     await waitFor(() =>
       expect(
         (screen.getByRole('button', { name: 'Collect online context' }) as HTMLButtonElement)
@@ -661,9 +779,7 @@ describe('session diagnostics', () => {
       'Diagnostics are temporarily unavailable. Try refreshing local evidence.',
     );
     expect(
-      screen.getByText(
-        'Execution ended normally. This does not confirm that the task goal was achieved.',
-      ),
+      screen.getByText('This turn ended, but the specific reason is not recorded.'),
     ).toBeTruthy();
     expect(
       screen.getByText(

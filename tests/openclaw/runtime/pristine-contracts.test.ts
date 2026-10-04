@@ -43,6 +43,7 @@ const EXPECTED_PATCH_FILES = [
   '030-cron-session-permission.cjs',
   '031-windows-servicing-credential-launcher.cjs',
   '032-windows-session-creation-path.cjs',
+  '033-loop-exit-diagnostics.cjs',
 ] as const;
 
 const UPSTREAM_CONTRACTS = [

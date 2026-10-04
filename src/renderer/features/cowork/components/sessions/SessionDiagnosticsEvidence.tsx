@@ -2,7 +2,6 @@ import {
   ArrowPathIcon,
   BoltIcon,
   ChatBubbleLeftRightIcon,
-  CheckCircleIcon,
   ChevronDownIcon,
   CircleStackIcon,
   ClockIcon,
@@ -20,6 +19,7 @@ import {
   WrenchScrewdriverIcon,
 } from '@heroicons/react/24/outline';
 import { type DiagnosticFinding } from '@shared/cowork/diagnosticFindings';
+import { diagnoseHistoryFailure } from '@shared/cowork/diagnosticHistoryFindings';
 import type {
   DiagnosticEvent,
   DiagnosticLogCoverage,
@@ -31,6 +31,7 @@ import { i18nService } from '@/services/i18n';
 
 import {
   presentDiagnosticFinding,
+  presentDiagnosticStop,
   visibleDiagnosticFindings,
 } from './sessionDiagnosticsPresentation';
 
@@ -69,20 +70,21 @@ function SectionHeading({
 }
 
 export function DiagnosticOverview({ report }: { report: DiagnosticReport }) {
-  const reason = report.conclusion.reason;
-  const tone = ['failed', 'timeout', 'conflict'].includes(reason)
+  const stop = presentDiagnosticStop(report);
+  const reason = stop.reason;
+  const { certainty, incomplete } = stop;
+  const tone = [
+    'failed',
+    'timeout',
+    'conflict',
+    'reasoning_only',
+    'empty_response',
+    'incomplete_response',
+  ].includes(reason)
     ? 'red'
-    : reason === 'completed'
-      ? 'teal'
-      : ['running', 'waiting'].includes(reason)
-        ? 'blue'
-        : 'amber';
-  const Icon =
-    reason === 'completed'
-      ? CheckCircleIcon
-      : tone === 'red'
-        ? ExclamationTriangleIcon
-        : InformationCircleIcon;
+    : ['running', 'waiting'].includes(reason)
+      ? 'blue'
+      : 'amber';
   const logSources = report.logs?.sources ?? [];
   const completed = logSources.filter(source => source.scanComplete).length;
   const matched = logSources.reduce((sum, source) => sum + (source.matched ?? source.emitted), 0);
@@ -120,33 +122,39 @@ export function DiagnosticOverview({ report }: { report: DiagnosticReport }) {
   return (
     <>
       <section
-        className={`diagnostics-overview diagnostics-tone-${tone}${reason === 'completed' ? ' diagnostics-overview-compact' : ''}`}
+        className={`diagnostics-answer diagnostics-tone-${tone}`}
+        aria-label={t('diagnosticsStopTitle')}
       >
-        {reason === 'completed' ? (
-          <details className="diagnostics-overview-details">
-            <summary>{t(`diagnosticsReason_${reason}`)}</summary>
-            <p className="diagnostics-overview-caption">
-              {t(`diagnosticsConfidence_${report.conclusion.confidence}`)} ·{' '}
-              {t('diagnosticsPartial')}
-            </p>
-          </details>
-        ) : (
-          <div className="diagnostics-overview-main">
-            <span className="diagnostics-outcome-icon">
-              <Icon aria-hidden="true" />
-            </span>
-            <div className="diagnostics-overview-copy">
-              <div className="diagnostics-eyebrow">
-                {t('diagnosticsOverview')}
-                <span className="diagnostics-outcome-badge">
-                  {t(`diagnosticsConfidence_${report.conclusion.confidence}`)}
-                </span>
-              </div>
-              <p className="diagnostics-conclusion">{t(`diagnosticsReason_${reason}`)}</p>
-              <p className="diagnostics-overview-caption">{t('diagnosticsPartial')}</p>
-            </div>
-          </div>
+        <div className="diagnostics-answer-heading">
+          <SectionHeading icon={StopCircleIcon} title={t('diagnosticsStopTitle')} />
+          <span className="diagnostics-answer-badge">{t(`diagnosticsAnswer_${certainty}`)}</span>
+        </div>
+        <p className="diagnostics-answer-title">{stop.title}</p>
+        {incomplete && (
+          <p className="diagnostics-answer-limit">
+            <InformationCircleIcon aria-hidden="true" />
+            {t('diagnosticsAnswerIncomplete')}
+          </p>
         )}
+        <div className="diagnostics-answer-evidence">
+          <h4>{t('diagnosticsAnswerEvidence')}</h4>
+          <ul>
+            {stop.details.map((detail, index) => (
+              <li key={index}>{detail}</li>
+            ))}
+          </ul>
+        </div>
+        <div className="diagnostics-answer-action">
+          <h4>{t('diagnosticsAnswerAction')}</h4>
+          <p>{stop.advice}</p>
+        </div>
+      </section>
+      <DiagnosticFindings report={report} />
+      <details className="diagnostics-technical diagnostics-run-details">
+        <summary>
+          <span>{t('diagnosticsOverview')}</span>
+          <span className="diagnostics-muted">{t('diagnosticsRunDetailsHint')}</span>
+        </summary>
         <div className="diagnostics-overview-meta">
           {report.run ? (
             <div>
@@ -167,54 +175,59 @@ export function DiagnosticOverview({ report }: { report: DiagnosticReport }) {
             <strong>{date(report.collectedAt)}</strong>
           </div>
         </div>
-      </section>
-      <DiagnosticFindings report={report} />
-      <div className="diagnostics-metrics">
-        {metrics.map(({ icon: MetricIcon, ...metric }) => (
-          <div
-            className={`diagnostics-metric diagnostics-tone-${metric.tone}`}
-            key={metric.label}
-            title={t(metric.hint)}
-          >
-            <span className="diagnostics-metric-label">
-              <MetricIcon aria-hidden="true" />
-              {t(metric.label)}
-            </span>
-            <strong>{metric.value}</strong>
-          </div>
-        ))}
-      </div>
-      {(report.coverage.dropped > 0 ||
-        !!report.coverage.collectorDropped ||
-        report.coverage.storageFailed ||
-        report.conclusion.toolFailures > 0) && (
-        <div className="diagnostics-coverage-notice">
-          <InformationCircleIcon aria-hidden="true" />
-          <div>
-            {report.coverage.dropped > 0 && (
-              <p>
-                {t('diagnosticsDropped')}: {report.coverage.dropped}
-              </p>
-            )}
-            {!!report.coverage.collectorDropped && (
-              <p>
-                {t('diagnosticsCollectorDropped')}: {report.coverage.collectorDropped}
-              </p>
-            )}
-            {report.coverage.storageFailed && <p role="alert">{t('diagnosticsStorageFailed')}</p>}
-            {report.conclusion.toolFailures > 0 && (
-              <p>
-                {t('diagnosticsToolFailures')}: {report.conclusion.toolFailures}
-              </p>
-            )}
-          </div>
+        <p className="diagnostics-section-description">{t('diagnosticsPartial')}</p>
+        <div className="diagnostics-metrics">
+          {metrics.map(({ icon: MetricIcon, ...metric }) => (
+            <div
+              className={`diagnostics-metric diagnostics-tone-${metric.tone}`}
+              key={metric.label}
+              title={t(metric.hint)}
+            >
+              <span className="diagnostics-metric-label">
+                <MetricIcon aria-hidden="true" />
+                {t(metric.label)}
+              </span>
+              <strong>{metric.value}</strong>
+            </div>
+          ))}
         </div>
-      )}
+        {(report.coverage.dropped > 0 ||
+          !!report.coverage.collectorDropped ||
+          report.coverage.storageFailed ||
+          report.conclusion.toolFailures > 0) && (
+          <div className="diagnostics-coverage-notice">
+            <InformationCircleIcon aria-hidden="true" />
+            <div>
+              {report.coverage.dropped > 0 && (
+                <p>
+                  {t('diagnosticsDropped')}: {report.coverage.dropped}
+                </p>
+              )}
+              {!!report.coverage.collectorDropped && (
+                <p>
+                  {t('diagnosticsCollectorDropped')}: {report.coverage.collectorDropped}
+                </p>
+              )}
+              {report.coverage.storageFailed && <p role="alert">{t('diagnosticsStorageFailed')}</p>}
+              {report.conclusion.toolFailures > 0 && (
+                <p>
+                  {t('diagnosticsToolFailures')}: {report.conclusion.toolFailures}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+      </details>
     </>
   );
 }
 
 function DiagnosticFindings({ report }: { report: DiagnosticReport }) {
+  const stop = presentDiagnosticStop(report);
+  const explained =
+    !!stop.loopExit ||
+    !!stop.modelReplyEnded ||
+    ['reasoning_only', 'empty_response', 'incomplete_response'].includes(stop.reason);
   const findings = visibleDiagnosticFindings(report);
   const history = report.history;
   const failures = history?.failures ?? [];
@@ -284,7 +297,7 @@ function DiagnosticFindings({ report }: { report: DiagnosticReport }) {
       <SectionHeading
         icon={MagnifyingGlassIcon}
         title={t('diagnosticsReportTitle')}
-        count={related.length + failures.length}
+        count={related.length + failures.length || undefined}
       />
       {history && (
         <p className="diagnostics-muted">
@@ -294,6 +307,10 @@ function DiagnosticFindings({ report }: { report: DiagnosticReport }) {
           )}
         </p>
       )}
+      {history?.reason && (
+        <p className="diagnostics-muted">{t(`diagnosticsHistoryReason_${history.reason}`)}</p>
+      )}
+      {failures.length > 0 && <p className="diagnostics-muted">{t('diagnosticsHistoryScope')}</p>}
       {failures.length > 0 && (
         <ul className="diagnostics-finding-list">
           {failures.map((failure, index) => (
@@ -303,16 +320,27 @@ function DiagnosticFindings({ report }: { report: DiagnosticReport }) {
                 <strong>
                   {failure.tool ??
                     t(
-                      failure.kind === 'tool' ? 'diagnosticsKind_tool' : 'diagnosticsHistoryModel',
+                      failure.kind === 'tool'
+                        ? 'diagnosticsKind_tool'
+                        : failure.kind === 'runtime'
+                          ? 'diagnosticsHistoryRuntime'
+                          : 'diagnosticsHistoryModel',
                     )}{' '}
-                  · {t('diagnosticsPhase_failed')}
+                  · {t(`diagnosticsHistoryOutcome_${failure.outcome ?? 'failed'}`)}
                 </strong>
                 <span>{t(`diagnosticsHistoryAssociation_${failure.association}`)}</span>
               </div>
               <p className="diagnostics-muted">{date(failure.timestamp)}</p>
+              {failure.basis && (
+                <p className="diagnostics-muted">{t(`diagnosticsHistoryBasis_${failure.basis}`)}</p>
+              )}
               <pre className="diagnostics-history-error">
                 {failure.excerpt || t('diagnosticsHistoryNoText')}
               </pre>
+              <p>{t(diagnoseHistoryFailure(failure).adviceKey)}</p>
+              {diagnoseHistoryFailure(failure).inferred && (
+                <p className="diagnostics-muted">{t('diagnosticsHistoryInferred')}</p>
+              )}
               {failure.clipped && (
                 <p className="diagnostics-muted">{t('diagnosticsHistoryClipped')}</p>
               )}
@@ -331,8 +359,16 @@ function DiagnosticFindings({ report }: { report: DiagnosticReport }) {
         <div className="diagnostics-report-empty">
           <InformationCircleIcon aria-hidden="true" />
           <div>
-            <strong>{t('diagnosticsNotLocated')}</strong>
-            <p>{t(report.logs ? 'diagnosticsNotLocatedDetail' : 'diagnosticsFindingsPending')}</p>
+            <strong>{t(explained ? 'diagnosticsNoOtherErrors' : 'diagnosticsNotLocated')}</strong>
+            <p>
+              {t(
+                explained
+                  ? 'diagnosticsNoOtherErrorsHint'
+                  : report.logs
+                    ? 'diagnosticsNotLocatedDetail'
+                    : 'diagnosticsFindingsPending',
+              )}
+            </p>
           </div>
         </div>
       )}
@@ -673,6 +709,24 @@ export function DiagnosticEnvironment({ report }: { report: DiagnosticReport }) 
         <p>{t(`diagnosticsEnvironment_${report.environment.status}`)}</p>
       </div>
       <p className="diagnostics-section-description">{t('diagnosticsEnvironment')}</p>
+      {report.environment.signals && (
+        <>
+          <p className="diagnostics-muted">{t('diagnosticsEnvironmentScope')}</p>
+          {report.environment.firstAt !== undefined && report.environment.lastAt !== undefined && (
+            <p className="diagnostics-muted">
+              {date(report.environment.firstAt)} – {date(report.environment.lastAt)}
+            </p>
+          )}
+          {Object.entries(report.environment.signals).map(([key, count]) => (
+            <p key={key}>
+              {t(`diagnosticsEnvironmentSignal_${key}`)}: {number(count)}
+            </p>
+          ))}
+          {Object.keys(report.environment.signals).length === 0 && (
+            <p>{t('diagnosticsEnvironmentNoSignals')}</p>
+          )}
+        </>
+      )}
       {report.environment.collectedAt !== undefined && (
         <p className="diagnostics-muted">
           {t('diagnosticsCollected')}: {date(report.environment.collectedAt)}

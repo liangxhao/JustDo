@@ -41,6 +41,28 @@ const line = (extra: Record<string, unknown> = {}) =>
   });
 
 describe('payload-free bounded diagnostic log collection', () => {
+  it('collects native exhausted reasoning-only recovery as closed model evidence', async () => {
+    const result = await collectDiagnosticLogs(report(), empty(), {
+      lines: [
+        line({
+          errorCategory: undefined,
+          event: 'model_fallback_decision',
+          decision: 'candidate_failed',
+          code: 'reasoning_only_result',
+          fallbackStepFinalOutcome: 'chain_exhausted',
+          message: 'SECRET',
+        }),
+      ],
+    });
+    expect(result.records[0]).toMatchObject({
+      signal: 'provider',
+      stage: 'model',
+      association: 'run',
+      responseIssue: 'reasoning_only',
+      responseRecovery: 'exhausted',
+    });
+    expect(JSON.stringify(result)).not.toContain('SECRET');
+  });
   it('keeps error codes extracted from message text labeled as text-derived hints', async () => {
     const result = await collectDiagnosticLogs(report(), empty(), {
       lines: [line({ errorCategory: undefined, message: 'request failed with ENOTFOUND: SECRET' })],

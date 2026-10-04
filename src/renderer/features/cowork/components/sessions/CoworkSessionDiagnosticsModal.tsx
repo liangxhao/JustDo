@@ -12,6 +12,7 @@ import {
   StopIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
+import { diagnoseHistoryFailure } from '@shared/cowork/diagnosticHistoryFindings';
 import type {
   DiagnosticFailure,
   DiagnosticReadResult,
@@ -32,6 +33,7 @@ import {
 } from './SessionDiagnosticsEvidence';
 import {
   summarizeDiagnosticFinding,
+  summarizeDiagnosticStop,
   visibleDiagnosticFindings,
 } from './sessionDiagnosticsPresentation';
 
@@ -293,11 +295,22 @@ export default function CoworkSessionDiagnosticsModal({
           [
             t('diagnosticsTitle'),
             `${t('diagnosticsCollected')}: ${date(snapshot.collectedAt)}`,
-            t(`diagnosticsReason_${snapshot.conclusion.reason}`),
-            t(`diagnosticsConfidence_${snapshot.conclusion.confidence}`),
+            summarizeDiagnosticStop(snapshot),
+            ...(snapshot.history
+              ? [
+                  t(`diagnosticsHistory_${snapshot.history.status}`).replace(
+                    '{count}',
+                    String(snapshot.history.messagesScanned),
+                  ),
+                  ...(snapshot.history.reason
+                    ? [t(`diagnosticsHistoryReason_${snapshot.history.reason}`)]
+                    : []),
+                  t('diagnosticsHistoryScope'),
+                ]
+              : []),
             ...(snapshot.history?.failures ?? []).map(
               failure =>
-                `${date(failure.timestamp)} · ${failure.tool ?? t(failure.kind === 'tool' ? 'diagnosticsKind_tool' : 'diagnosticsHistoryModel')}\n${t(`diagnosticsHistoryAssociation_${failure.association}`)}\n${failure.excerpt || t('diagnosticsHistoryNoText')}`,
+                `${date(failure.timestamp)} · ${failure.tool ?? t(failure.kind === 'tool' ? 'diagnosticsKind_tool' : failure.kind === 'runtime' ? 'diagnosticsHistoryRuntime' : 'diagnosticsHistoryModel')} · ${t(`diagnosticsHistoryOutcome_${failure.outcome ?? 'failed'}`)}\n${t(`diagnosticsHistoryAssociation_${failure.association}`)}\n${failure.excerpt || t('diagnosticsHistoryNoText')}\n${t(diagnoseHistoryFailure(failure).adviceKey)}${diagnoseHistoryFailure(failure).inferred ? `\n${t('diagnosticsHistoryInferred')}` : ''}`,
             ),
             ...visibleDiagnosticFindings(snapshot).map(finding =>
               summarizeDiagnosticFinding(finding, snapshot),
@@ -410,7 +423,7 @@ export default function CoworkSessionDiagnosticsModal({
                 <option value="">{t('diagnosticsLatest')}</option>
                 {runs.map(run => (
                   <option key={run.id} value={run.id}>
-                    {date(run.startedAt)} · {run.id.slice(0, 8)}
+                    {date(run.startedAt)} · {t(`diagnosticsState_${run.state}`)}
                   </option>
                 ))}
               </select>

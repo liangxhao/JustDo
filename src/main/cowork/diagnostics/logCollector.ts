@@ -15,6 +15,7 @@ import type {
   DiagnosticScanProgress,
 } from '../../../shared/cowork/sessionDiagnostics';
 import { scanDiagnosticLog } from './logScanner';
+import { projectResponseLog } from './responseLog';
 
 const FILE_BYTES = 512 * 1024;
 const TOTAL_BYTES = 4 * 1024 * 1024;
@@ -424,7 +425,7 @@ export async function collectDiagnosticLogs(
             typeof value === 'string' &&
             /^(?:model\.call|tool\.execution|exec\.process|harness\.run)\./.test(value),
         );
-      const stage: DiagnosticLogRecord['stage'] =
+      let stage: DiagnosticLogRecord['stage'] =
         typeof nativeType !== 'string'
           ? undefined
           : nativeType.startsWith('model.')
@@ -538,6 +539,14 @@ export async function collectDiagnosticLogs(
         signal = hint[0];
         basis = ['error', 'warn'].includes(parsed.level) ? 'error_text' : 'keyword';
       }
+      const response = !routineNativeEvent
+        ? projectResponseLog(parsed.fields, parsed.hintText, parsed.level)
+        : undefined;
+      if (response) {
+        signal = 'provider';
+        basis = response.basis;
+        stage = 'model';
+      }
       if (
         signal === 'unknown' &&
         !hint &&
@@ -588,6 +597,7 @@ export async function collectDiagnosticLogs(
         association,
         signal,
         inferred: true,
+        ...(response ?? {}),
         ...(basis ? { basis } : {}),
         ...(stage ? { stage } : {}),
         ...(!routineNativeEvent && errorCode ? { errorCode } : {}),

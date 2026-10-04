@@ -12,7 +12,15 @@ import {
   diagnosticStages,
   isDiagnosticMetricValue,
 } from '../../../shared/cowork/diagnosticLogDetails';
-import { DiagnosticReason, type DiagnosticReport } from '../../../shared/cowork/sessionDiagnostics';
+import { assessDiagnosticStop } from '../../../shared/cowork/diagnosticStop';
+import {
+  diagnosticLoopExits,
+  DiagnosticReason,
+  type DiagnosticReport,
+  diagnosticResponseIssues,
+  diagnosticResponseShapes,
+  diagnosticTimeoutPhases,
+} from '../../../shared/cowork/sessionDiagnostics';
 import type { DiagnosticExportLogBundle } from './exportLogs';
 import { redactDiagnosticLog } from './exportLogs';
 
@@ -140,6 +148,14 @@ export function buildDiagnosticArchive(
               ? undefined
               : member(record.errorCode, diagnosticErrorCodes),
           inferred: record.inferred !== false,
+          responseIssue:
+            record.responseIssue === undefined
+              ? undefined
+              : member(record.responseIssue, diagnosticResponseIssues),
+          responseRecovery:
+            record.responseRecovery === undefined
+              ? undefined
+              : member(record.responseRecovery, ['retrying', 'exhausted']),
           basis: member(record.basis, [
             'error_category',
             'http_status',
@@ -172,7 +188,31 @@ export function buildDiagnosticArchive(
         })),
       }
     : undefined;
+  const stop = assessDiagnosticStop(report);
   const safe = {
+    stopAssessment: {
+      modelReplyEnded: boolean(stop.modelReplyEnded),
+      loopExit:
+        stop.loopExit === undefined ? undefined : member(stop.loopExit, diagnosticLoopExits),
+      reason: member(stop.reason, [
+        ...Object.values(DiagnosticReason),
+        ...diagnosticResponseIssues,
+      ]),
+      basis: member(stop.basis, ['terminal', 'history', 'log', 'unknown']),
+      confidence: member(stop.confidence, ['confirmed', 'observed', 'unknown']),
+      eventIds: stop.eventIds.map(alias),
+      logIds: stop.logIds.map(alias),
+      timeoutPhase:
+        stop.timeoutPhase === undefined
+          ? undefined
+          : member(stop.timeoutPhase, diagnosticTimeoutPhases),
+      outputIssue:
+        stop.outputIssue === undefined
+          ? undefined
+          : member(stop.outputIssue, diagnosticResponseIssues),
+      outputLimited: boolean(stop.outputLimited),
+      recoveryExhausted: boolean(stop.recoveryExhausted),
+    },
     version: 1,
     collectedAt: count(report.collectedAt),
     session: alias(report.sessionId),
@@ -209,8 +249,26 @@ export function buildDiagnosticArchive(
       collectedAt: count(report.environment.collectedAt),
       stabilityCount: count(report.environment.stabilityCount),
       stabilityDropped: count(report.environment.stabilityDropped),
+      firstAt: count(report.environment.firstAt),
+      lastAt: count(report.environment.lastAt),
+      signals: Object.fromEntries(
+        ['model', 'tool', 'blocked', 'command', 'stuck', 'liveness'].flatMap(key => {
+          const value = count(
+            report.environment.signals?.[
+              key as keyof NonNullable<DiagnosticReport['environment']['signals']>
+            ],
+          );
+          return value === undefined ? [] : [[key, value]];
+        }),
+      ),
     },
     events: report.events.slice(0, 232).map(event => ({
+      loopExit:
+        event.loopExit === undefined ? undefined : member(event.loopExit, diagnosticLoopExits),
+      responseShape:
+        event.responseShape === undefined
+          ? undefined
+          : member(event.responseShape, diagnosticResponseShapes),
       id: alias(event.id),
       run: alias(event.runId),
       nativeRun: alias(event.nativeRunId),
@@ -219,6 +277,18 @@ export function buildDiagnosticArchive(
       sequence: count(event.sequence),
       observedAt: count(event.observedAt),
       occurredAt: count(event.occurredAt),
+      timeoutPhase:
+        event.timeoutPhase === undefined
+          ? undefined
+          : member(event.timeoutPhase, diagnosticTimeoutPhases),
+      responseIssue:
+        event.responseIssue === undefined
+          ? undefined
+          : member(event.responseIssue, diagnosticResponseIssues),
+      replyDisposition:
+        event.replyDisposition === undefined
+          ? undefined
+          : member(event.replyDisposition, ['visible', 'silent', 'empty']),
       errorCode:
         event.errorCode === undefined ? undefined : member(event.errorCode, diagnosticErrorCodes),
       statusCode:
@@ -365,8 +435,40 @@ export function buildDiagnosticArchive(
     entries['session-evidence.json'] = JSON.stringify(
       {
         status: report.history.status,
+        reason: member(report.history.reason, [
+          'offline',
+          'no_run',
+          'no_binding',
+          'canceled',
+          'timeout',
+          'read_failed',
+          'page_limit',
+          'history_changed',
+        ]),
         messagesScanned: report.history.messagesScanned,
         omitted: report.history.omitted,
+        lastResponse: report.history.lastResponse
+          ? {
+              endTurn: boolean(report.history.lastResponse.endTurn),
+              timestamp: count(report.history.lastResponse.timestamp),
+              association: member(report.history.lastResponse.association, ['run', 'run_window']),
+              thinking: boolean(report.history.lastResponse.thinking),
+              text: boolean(report.history.lastResponse.text),
+              toolCall: boolean(report.history.lastResponse.toolCall),
+              other: boolean(report.history.lastResponse.other),
+              complete: boolean(report.history.lastResponse.complete),
+              stopReason: member(report.history.lastResponse.stopReason, [
+                'stop',
+                'end_turn',
+                'length',
+                'max_tokens',
+                'toolUse',
+                'error',
+                'aborted',
+                'unknown',
+              ]),
+            }
+          : undefined,
         failures: report.history.failures.slice(0, 40).map(failure => ({
           timestamp: failure.timestamp,
           kind: failure.kind,
@@ -374,6 +476,9 @@ export function buildDiagnosticArchive(
           excerpt: redactDiagnosticLog(failure.excerpt).slice(0, 1600),
           clipped: failure.clipped,
           association: failure.association,
+          basis: member(failure.basis, ['activity', 'result', 'model', 'failure_receipt']),
+          cause: member(failure.cause, ['state_contention']),
+          outcome: member(failure.outcome, ['failed', 'blocked', 'aborted']),
         })),
       },
       null,

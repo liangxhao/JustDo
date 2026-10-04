@@ -48,6 +48,7 @@ export function buildDiagnosticFindings(report: DiagnosticReport): DiagnosticFin
     if (!ids.includes(id)) ids.push(id);
   };
   for (const event of report.events.slice(0, 232)) {
+    if (event.responseIssue) add('provider', 'event', event.id);
     if (event.kind === 'tool' && event.toolFailed) add('tool', 'event', event.id);
     if (event.kind === 'command' && event.phase === 'failed') {
       add('tool', 'event', event.id);

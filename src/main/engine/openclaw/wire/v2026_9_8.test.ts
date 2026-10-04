@@ -9,6 +9,31 @@ import {
 } from './v2026_9_8';
 
 describe('OpenClaw v2026.9.8 wire validators', () => {
+  test('preserves native activity for full and delta history and rejects malformed sidecars', () => {
+    const activity = [
+      { messageId: 'm', items: [{ toolCallId: 'c', phase: 'end', status: 'failed' }] },
+    ];
+    expect(parseChatHistoryResultV2026_9_8({ messages: [], activity }).activity).toEqual(activity);
+    expect(
+      parseChatHistoryCursorResultV2026_9_8({
+        kind: 'delta',
+        messages: [],
+        deltaCursor: 'c',
+        activity,
+      }),
+    ).toMatchObject({ activity });
+    expect(() => parseChatHistoryResultV2026_9_8({ messages: [], activity: {} })).toThrow(
+      'activity',
+    );
+    expect(() =>
+      parseChatHistoryCursorResultV2026_9_8({
+        kind: 'delta',
+        messages: [],
+        deltaCursor: 'c',
+        activity: [{ messageId: 'm', items: [null] }],
+      }),
+    ).toThrow('activity');
+  });
   test('validates history and session pagination instead of guessing malformed pages', () => {
     expect(
       parseChatHistoryResultV2026_9_8({

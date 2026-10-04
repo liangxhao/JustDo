@@ -155,10 +155,28 @@ export const parseModelReferenceV2026_9_8 = (
 
 export type OpenClawChatHistoryResultV2026_9_8 = {
   messages: unknown[];
+  activity?: unknown[];
   hasMore: boolean;
   nextOffset?: number;
   totalMessages?: number;
   deltaCursor?: string;
+};
+
+const parseChatHistoryActivity = (value: unknown): unknown[] | undefined => {
+  if (value === undefined) return undefined;
+  if (
+    !Array.isArray(value) ||
+    value.some(
+      entry =>
+        !isRecord(entry) ||
+        typeof entry.messageId !== 'string' ||
+        !Array.isArray(entry.items) ||
+        entry.items.some(item => !isRecord(item)),
+    )
+  ) {
+    throw new Error(`${OPENCLAW_WIRE_VERSION} chat.history activity is malformed`);
+  }
+  return value;
 };
 
 export const parseChatHistoryResultV2026_9_8 = (
@@ -171,6 +189,7 @@ export const parseChatHistoryResultV2026_9_8 = (
     throw new Error(`${OPENCLAW_WIRE_VERSION} chat.history hasMore must be a boolean`);
   }
   const hasMore = value.hasMore === true;
+  const activity = parseChatHistoryActivity(value.activity);
   const nextOffset = optionalNonNegativeInteger(value.nextOffset, 'chat.history nextOffset');
   const totalMessages = optionalNonNegativeInteger(
     value.totalMessages,
@@ -182,6 +201,7 @@ export const parseChatHistoryResultV2026_9_8 = (
   }
   return {
     messages: value.messages,
+    ...(activity ? { activity } : {}),
     hasMore,
     ...(nextOffset !== undefined ? { nextOffset } : {}),
     ...(totalMessages !== undefined ? { totalMessages } : {}),
@@ -190,7 +210,8 @@ export const parseChatHistoryResultV2026_9_8 = (
 };
 
 export type OpenClawChatHistoryCursorResultV2026_9_8 =
-  { kind: 'reset' } | { kind: 'delta'; messages: unknown[]; deltaCursor: string };
+  | { kind: 'reset' }
+  | { kind: 'delta'; messages: unknown[]; activity?: unknown[]; deltaCursor: string };
 
 export const parseChatHistoryCursorResultV2026_9_8 = (
   value: unknown,
@@ -206,7 +227,13 @@ export const parseChatHistoryCursorResultV2026_9_8 = (
   if (deltaCursor === undefined) {
     throw new Error(`${OPENCLAW_WIRE_VERSION} chat.history delta omitted deltaCursor`);
   }
-  return { kind: 'delta', messages: value.messages, deltaCursor };
+  const activity = parseChatHistoryActivity(value.activity);
+  return {
+    kind: 'delta',
+    messages: value.messages,
+    deltaCursor,
+    ...(activity ? { activity } : {}),
+  };
 };
 
 export type OpenClawHistoryDetailsResultV2026_9_8 = {

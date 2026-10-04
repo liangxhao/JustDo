@@ -3,6 +3,25 @@ import { describe, expect, it } from 'vitest';
 import { projectDiagnosticEvent } from './runtimeDiagnostics';
 
 describe('projectDiagnosticEvent', () => {
+  it('retains only closed loop exit and response shape metadata', () => {
+    const make = (data: Record<string, unknown>) => projectDiagnosticEvent({ event: 'agent', payload: {
+      runId: 'run', stream: 'lifecycle', data: { phase: 'end', executionSettled: true, ...data },
+    } }, 'epoch');
+    expect(make({ justDoLoopExit: 'no_pending_work', justDoResponseShape: 'thinking_only' })?.event)
+      .toMatchObject({ loopExit: 'no_pending_work', responseShape: 'thinking_only' });
+    expect(JSON.stringify(make({ justDoLoopExit: 'SECRET', justDoResponseShape: 'SECRET' }))).not.toContain('SECRET');
+  });
+  it('retains native timeout stage and reply disposition without reply content', () => {
+    const make = (data: Record<string, unknown>) => projectDiagnosticEvent({ event: 'agent', payload: {
+      runId: 'run', stream: 'lifecycle', data: { phase: 'end', executionSettled: true, ...data },
+    } }, 'epoch');
+    const value = make({ timeoutPhase: 'provider', terminalReply: { disposition: 'silent', text: 'SECRET' }, errorObservation: { failoverReason: 'empty_response' } });
+    expect(value?.event).toMatchObject({ timeoutPhase: 'provider', replyDisposition: 'silent', responseIssue: 'empty_response' });
+    expect(JSON.stringify(value)).not.toContain('SECRET');
+    const unknown = make({ timeoutPhase: 'SECRET', terminalReply: { disposition: 'SECRET' } });
+    expect(unknown?.event.timeoutPhase).toBeUndefined();
+    expect(unknown?.event.replyDisposition).toBeUndefined();
+  });
   it('projects real native command_output terminals without retaining command content or double-counting tool failures', () => {
     const projected = projectDiagnosticEvent({ event: 'agent', payload: {
       runId: 'native-run', stream: 'command_output', ts: 100,

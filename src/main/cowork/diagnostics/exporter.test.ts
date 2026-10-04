@@ -37,10 +37,67 @@ const report = (): DiagnosticReport => ({
   ],
 });
 
+it('exports only response shape and aliased stop evidence, never model text', () => {
+  const input = report();
+  input.run!.state = 'completed';
+  input.history = {
+    status: 'scanned',
+    messagesScanned: 1,
+    omitted: 0,
+    failures: [],
+    lastResponse: {
+      timestamp: 2,
+      association: 'run',
+      thinking: true,
+      text: false,
+      toolCall: false,
+      other: false,
+      complete: true,
+      stopReason: 'max_tokens',
+    },
+  };
+  Object.assign(input.history.lastResponse!, { rawThinking: 'SECRET' });
+  const archive = buildDiagnosticArchive(input, '2026.9.1', 'zh');
+  expect(JSON.parse(archive['report.json']).stopAssessment).toMatchObject({
+    reason: 'reasoning_only',
+    basis: 'history',
+    outputLimited: true,
+  });
+  expect(JSON.parse(archive['session-evidence.json']).lastResponse).toMatchObject({
+    thinking: true,
+    text: false,
+  });
+  expect(JSON.stringify(archive)).not.toContain('SECRET');
+});
+
+it('exports the recorded exit branch and closed response kind', () => {
+  const input = report();
+  input.conclusion = {
+    reason: 'completed',
+    confidence: 'confirmed',
+    evidenceIds: ['SECRET-event'],
+    toolFailures: 0,
+  };
+  Object.assign(input.events[0], {
+    phase: 'end',
+    executionSettled: true,
+    stopReason: 'stop',
+    loopExit: 'no_pending_work',
+    responseShape: 'text',
+  });
+  const archive = buildDiagnosticArchive(input, '2026.9.8', 'zh');
+  const exported = JSON.parse(archive['report.json']);
+  expect(exported.stopAssessment.loopExit).toBe('no_pending_work');
+  expect(exported.events[0]).toMatchObject({ loopExit: 'no_pending_work', responseShape: 'text' });
+  Object.assign(input.events[0], { loopExit: 'SECRET', responseShape: 'SECRET' });
+  expect(JSON.stringify(buildDiagnosticArchive(input, '2026.9.8', 'zh'))).not.toContain('SECRET');
+});
+
 it('exports native conversation failure excerpts with coverage and credential masking', () => {
   const input = report();
   input.history = {
     status: 'partial',
+    reason: 'page_limit',
     messagesScanned: 200,
     omitted: 3,
     failures: [
@@ -51,12 +108,18 @@ it('exports native conversation failure excerpts with coverage and credential ma
         excerpt: 'ENOENT: missing file; password=private-value',
         clipped: false,
         association: 'run_window',
+        basis: 'activity',
+        outcome: 'blocked',
       },
     ],
   };
   const archive = buildDiagnosticArchive(input, '2026.9.1', 'zh');
   expect(archive['session-evidence.json']).toContain('ENOENT');
   expect(archive['session-evidence.json']).not.toContain('private-value');
+  expect(JSON.parse(archive['session-evidence.json'])).toMatchObject({
+    reason: 'page_limit',
+    failures: [{ basis: 'activity', outcome: 'blocked' }],
+  });
   expect(JSON.parse(archive['manifest.json'])).toMatchObject({
     conversationFailureExcerptsIncluded: true,
     files: expect.arrayContaining(['session-evidence.json']),

@@ -18,6 +18,7 @@ import {
   type SessionReviewDiff,
   type SessionReviewFileAction,
   type SessionReviewQuery,
+  type SessionReviewResult,
 } from '@shared/cowork/sessionReview';
 import { useEffect, useId, useRef, useState } from 'react';
 
@@ -72,6 +73,8 @@ export default function SessionReviewPanel({
   const fileNodes = useRef(new Map<string, HTMLElement>());
   const [selectedFile, setSelectedFile] = useState('');
   const generation = useRef(0);
+  const loadedRequest = useRef('');
+  const loadFlight = useRef<{ key: string; promise: Promise<SessionReviewResult> }>();
   const focusNode = useRef<HTMLElement | null>(null);
   const lastFocusRequest = useRef('');
   const lastScrolledFocusRequest = useRef('');
@@ -148,16 +151,35 @@ export default function SessionReviewPanel({
       setError('');
       return;
     }
+    const requestKey = JSON.stringify([key, revision]);
+    // A retained tab is a review snapshot. Switching tabs must not rescan the
+    // checkout or discard an in-flight read; explicit refresh still does both.
+    if (loadedRequest.current === requestKey) {
+      setLoading(false);
+      return;
+    }
     const request = ++generation.current;
     let cancelled = false;
     setLoading(true);
     setError('');
     setActionError(false);
-    void (async () =>
-      review.load({ sessionId, scope, ...(scope === ReviewScope.Commit ? { commit } : {}) }))()
+    if (loadFlight.current?.key !== requestKey) {
+      const flight = {
+        key: requestKey,
+        promise: (async () =>
+          review.load({ sessionId, scope, ...(scope === ReviewScope.Commit ? { commit } : {}) }))(),
+      };
+      loadFlight.current = flight;
+      const release = () => {
+        if (loadFlight.current === flight) loadFlight.current = undefined;
+      };
+      void flight.promise.then(release, release);
+    }
+    void loadFlight.current.promise
       .then(result => {
         if (cancelled || generation.current !== request || activeKey.current !== key) return;
         if (result.success) {
+          loadedRequest.current = requestKey;
           setSnapshot({ key, diff: result.diff });
           setUpdated(false);
         } else setError(result.reason);
@@ -415,6 +437,9 @@ export default function SessionReviewPanel({
           </div>
         )}
         {updated && <p role="status">{i18nService.t('reviewUpdated')}</p>}
+        {diff && !updated && !error && (
+          <p className="review-hint">{i18nService.t('reviewSnapshot')}</p>
+        )}
         {error && (
           <p role="alert">
             {i18nService.t(`reviewError_${error}`)} {diff && i18nService.t('reviewStale')}

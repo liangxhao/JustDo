@@ -13,6 +13,7 @@ import {
   type ProjectedDiagnostic,
 } from '../../engine/openclaw/runtimeDiagnostics';
 import { classifyDiagnostics } from './classifier';
+import { projectDiagnosticEnvironment } from './environment';
 import { DiagnosticExportLogs } from './exportLogs';
 import { collectDiagnosticHistory } from './historyCollector';
 import { collectDiagnosticLogs } from './logCollector';
@@ -287,27 +288,15 @@ export class SessionDiagnosticsService {
     try {
       if (client) {
         const response = await Promise.race([
-          client.request<{ count?: unknown; dropped?: unknown }>('diagnostics.stability', {
-            limit: 1,
+          client.request<unknown>('diagnostics.stability', {
+            limit: 1000,
           }),
           new Promise<never>((_, reject) => {
             timer = setTimeout(() => reject(new Error('timeout')), 3000);
           }),
         ]);
-        if (
-          runtime === this.deps.getRuntime() &&
-          client === runtime.getGatewayClient() &&
-          Number.isSafeInteger(response?.count) &&
-          Number(response.count) >= 0 &&
-          Number.isSafeInteger(response?.dropped) &&
-          Number(response.dropped) >= 0
-        ) {
-          environment = {
-            status: 'available',
-            collectedAt: this.now(),
-            stabilityCount: Number(response.count),
-            stabilityDropped: Number(response.dropped),
-          };
+        if (runtime === this.deps.getRuntime() && client === runtime.getGatewayClient()) {
+          environment = projectDiagnosticEnvironment(response, this.now());
         }
       }
     } catch {
@@ -453,11 +442,14 @@ export class SessionDiagnosticsService {
       );
       this.snapshot(query, owner);
       if (
-        runtime !== this.deps.getRuntime() || client !== runtime?.getGatewayClient() ||
+        runtime !== this.deps.getRuntime() ||
+        client !== runtime?.getGatewayClient() ||
         sessionKey !== this.deps.getNativeSessionKey(previous.sessionId)
       ) {
         history.status = 'changed';
+        history.reason = 'history_changed';
         history.failures = [];
+        delete history.lastResponse;
       }
       const report = { ...previous, snapshotId: randomUUID(), logs, history };
       this.remember(report, owner);

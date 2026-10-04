@@ -86,6 +86,11 @@ export interface DiagnosticEvent {
   statusCode?: number;
   durationMs?: number;
   exitCode?: number;
+  timeoutPhase?: DiagnosticTimeoutPhase;
+  responseIssue?: DiagnosticResponseIssue;
+  replyDisposition?: 'visible' | 'silent' | 'empty';
+  loopExit?: DiagnosticLoopExit;
+  responseShape?: DiagnosticResponseShape;
 }
 
 export interface DiagnosticConclusion {
@@ -127,20 +132,39 @@ export interface DiagnosticReport {
     /** Global context; never attributed as this run's cause. */
     stabilityCount?: number;
     stabilityDropped?: number;
+    signals?: Partial<
+      Record<'model' | 'tool' | 'blocked' | 'command' | 'stuck' | 'liveness', number>
+    >;
+    firstAt?: number;
+    lastAt?: number;
   };
 }
 /** On-demand failure excerpts, never a persisted transcript cache. */
 export interface DiagnosticHistoryEvidence {
   status: 'scanned' | 'partial' | 'unavailable' | 'changed';
+  reason?:
+    | 'offline'
+    | 'no_run'
+    | 'no_binding'
+    | 'canceled'
+    | 'timeout'
+    | 'read_failed'
+    | 'page_limit'
+    | 'history_changed';
   messagesScanned: number;
   omitted: number;
+  /** Content-free shape of the latest eligible assistant response, not its text. */
+  lastResponse?: DiagnosticResponseObservation;
   failures: Array<{
     timestamp: number;
-    kind: 'tool' | 'model';
+    kind: 'tool' | 'model' | 'runtime';
     tool?: string;
     excerpt: string;
     clipped: boolean;
     association: 'run' | 'run_window';
+    basis?: 'activity' | 'result' | 'model' | 'failure_receipt';
+    cause?: 'state_contention';
+    outcome?: 'failed' | 'blocked' | 'aborted';
   }>;
 }
 export type DiagnosticLogSource = 'main' | 'cowork' | 'gateway' | 'native';
@@ -171,6 +195,8 @@ export interface DiagnosticLogRecord {
   signal: DiagnosticLogSignal;
   /** Log-derived hints are never authoritative execution outcomes. */
   inferred: boolean;
+  responseIssue?: DiagnosticResponseIssue;
+  responseRecovery?: 'retrying' | 'exhausted';
   stage?: DiagnosticStage;
   errorCode?: DiagnosticErrorCode;
   /** Why the collector classified this record; never raw error text. */
@@ -200,6 +226,52 @@ export interface DiagnosticLogRecord {
       number
     >
   >;
+}
+
+export const diagnosticLoopExits = [
+  'abort_signal',
+  'model_aborted',
+  'tool_loop_guard',
+  'model_error',
+  'policy_stop',
+  'handoff',
+  'no_pending_work',
+] as const;
+export type DiagnosticLoopExit = (typeof diagnosticLoopExits)[number];
+export const diagnosticResponseShapes = [
+  'thinking_only',
+  'empty',
+  'text',
+  'tool_call',
+  'other',
+] as const;
+export type DiagnosticResponseShape = (typeof diagnosticResponseShapes)[number];
+
+export const diagnosticResponseIssues = [
+  'reasoning_only',
+  'empty_response',
+  'incomplete_response',
+] as const;
+export type DiagnosticResponseIssue = (typeof diagnosticResponseIssues)[number];
+export const diagnosticTimeoutPhases = [
+  'queue',
+  'preflight',
+  'provider',
+  'post_turn',
+  'gateway_draining',
+] as const;
+export type DiagnosticTimeoutPhase = (typeof diagnosticTimeoutPhases)[number];
+export interface DiagnosticResponseObservation {
+  endTurn?: boolean;
+  timestamp: number;
+  association: 'run' | 'run_window';
+  thinking: boolean;
+  text: boolean;
+  toolCall: boolean;
+  other: boolean;
+  complete: boolean;
+  stopReason:
+    'stop' | 'end_turn' | 'length' | 'max_tokens' | 'toolUse' | 'error' | 'aborted' | 'unknown';
 }
 export interface DiagnosticScanProgress {
   snapshotId: string;

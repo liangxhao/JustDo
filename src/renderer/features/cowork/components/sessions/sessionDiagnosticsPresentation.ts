@@ -1,9 +1,79 @@
 import { buildDiagnosticFindings, type DiagnosticFinding } from '@shared/cowork/diagnosticFindings';
+import { assessDiagnosticStop } from '@shared/cowork/diagnosticStop';
 import type { DiagnosticLogRecord, DiagnosticReport } from '@shared/cowork/sessionDiagnostics';
 
 import { i18nService } from '@/services/i18n';
 
 const t = (key: string) => i18nService.t(key);
+export function presentDiagnosticStop(report: DiagnosticReport) {
+  const assessment = assessDiagnosticStop(report);
+  const explained =
+    !!assessment.loopExit ||
+    !!assessment.modelReplyEnded ||
+    !['completed', 'unknown'].includes(assessment.reason);
+  const certainty =
+    !explained || assessment.basis === 'unknown'
+      ? 'unknown'
+      : assessment.basis === 'terminal'
+        ? 'confirmed'
+        : 'observed';
+  const incomplete = Boolean(
+    report.coverage.dropped ||
+    report.coverage.collectorDropped ||
+    report.coverage.storageFailed ||
+    report.logs?.partial ||
+    (report.history && report.history.status !== 'scanned'),
+  );
+  const title = assessment.modelReplyEnded
+    ? t('diagnosticsModelReplyEnded')
+    : assessment.loopExit
+      ? t(`diagnosticsLoopExit_${assessment.loopExit}`)
+      : ['reasoning_only', 'empty_response', 'incomplete_response'].includes(assessment.reason)
+        ? t(`diagnosticsStop_${assessment.reason}`)
+        : t(`diagnosticsReason_${assessment.reason}`);
+  return {
+    ...assessment,
+    certainty,
+    incomplete,
+    title,
+    details: [
+      t(
+        assessment.modelReplyEnded
+          ? 'diagnosticsModelReplyEndedEvidence'
+          : assessment.loopExit
+            ? 'diagnosticsLoopExitEvidence'
+            : assessment.reason === 'completed'
+              ? 'diagnosticsStopBasis_completed'
+              : `diagnosticsStopBasis_${assessment.basis}`,
+      ),
+      ...(assessment.timeoutPhase ? [t(`diagnosticsTimeout_${assessment.timeoutPhase}`)] : []),
+      ...(assessment.outputIssue && assessment.outputIssue !== assessment.reason
+        ? [t(`diagnosticsStop_${assessment.outputIssue}`)]
+        : []),
+      ...(assessment.outputLimited ? [t('diagnosticsStopOutputLimit')] : []),
+      ...(assessment.recoveryExhausted ? [t('diagnosticsStopRetriesExhausted')] : []),
+    ],
+    advice: t(
+      assessment.modelReplyEnded
+        ? 'diagnosticsModelReplyEndedAdvice'
+        : assessment.loopExit
+          ? `diagnosticsLoopAdvice_${assessment.loopExit}`
+          : `diagnosticsStopAdvice_${assessment.reason}`,
+    ),
+  };
+}
+
+export function summarizeDiagnosticStop(report: DiagnosticReport) {
+  const stop = presentDiagnosticStop(report);
+  return [
+    t('diagnosticsStopTitle'),
+    stop.title,
+    t(`diagnosticsAnswer_${stop.certainty}`),
+    ...(stop.incomplete ? [t('diagnosticsAnswerIncomplete')] : []),
+    ...stop.details,
+    stop.advice,
+  ].join('\n');
+}
 /** Keep the report and clipboard consistent when stored errors replace generic markers. */
 export function visibleDiagnosticFindings(report: DiagnosticReport): DiagnosticFinding[] {
   return buildDiagnosticFindings(report).filter(
@@ -87,28 +157,30 @@ export function presentDiagnosticFinding(finding: DiagnosticFinding, report: Dia
   };
   for (const id of finding.eventIds) {
     const event = report.events.find(item => item.id === id)!;
-    let description = event.toolValidationFailed
-      ? t('diagnosticsInvalidToolArguments')
-      : event.kind === 'command'
-        ? t(
-            event.stopReason === 'timeout'
-              ? 'diagnosticsEvidenceBasis_command_timeout'
-              : event.exitCode !== undefined && event.exitCode !== 0
-                ? 'diagnosticsEvidenceBasis_command_exit'
-                : 'diagnosticsEvidenceBasis_command_error',
-          )
-        : event.toolFailed
-          ? t('diagnosticsEvidenceToolFailed')
-          : event.errorCategory
-            ? t('diagnosticsEvidenceCategory').replace(
-                '{category}',
-                t(`diagnosticsCategory_${event.errorCategory}`),
-              )
-            : event.stopReason === 'timeout'
-              ? t('diagnosticsReason_timeout')
-              : event.phase === 'disconnected'
-                ? t('diagnosticsReason_disconnected')
-                : t('diagnosticsEvidenceEventError');
+    let description = event.responseIssue
+      ? t(`diagnosticsResponseEvidence_${event.responseIssue}`)
+      : event.toolValidationFailed
+        ? t('diagnosticsInvalidToolArguments')
+        : event.kind === 'command'
+          ? t(
+              event.stopReason === 'timeout'
+                ? 'diagnosticsEvidenceBasis_command_timeout'
+                : event.exitCode !== undefined && event.exitCode !== 0
+                  ? 'diagnosticsEvidenceBasis_command_exit'
+                  : 'diagnosticsEvidenceBasis_command_error',
+            )
+          : event.toolFailed
+            ? t('diagnosticsEvidenceToolFailed')
+            : event.errorCategory
+              ? t('diagnosticsEvidenceCategory').replace(
+                  '{category}',
+                  t(`diagnosticsCategory_${event.errorCategory}`),
+                )
+              : event.stopReason === 'timeout'
+                ? t('diagnosticsReason_timeout')
+                : event.phase === 'disconnected'
+                  ? t('diagnosticsReason_disconnected')
+                  : t('diagnosticsEvidenceEventError');
     if (event.operation)
       description = `${t(`diagnosticsOperation_${event.operation}`)} · ${description}`;
     if (event.exitCode !== undefined)
@@ -118,6 +190,7 @@ export function presentDiagnosticFinding(finding: DiagnosticFinding, report: Dia
     if (event.statusCode !== undefined) description += ` · HTTP ${event.statusCode}`;
     if (event.durationMs !== undefined)
       description += ` · ${t('diagnosticsMetric_durationMs')}: ${event.durationMs}`;
+    if (event.timeoutPhase) description += ` · ${t(`diagnosticsTimeout_${event.timeoutPhase}`)}`;
     add(
       event.occurredAt ?? event.observedAt,
       description,
@@ -153,6 +226,10 @@ export function presentDiagnosticFinding(finding: DiagnosticFinding, report: Dia
       t(`diagnosticsLogSignal_${record.signal}`),
     );
     if (record.stage) description = `${t(`diagnosticsStage_${record.stage}`)} · ${description}`;
+    if (record.responseIssue)
+      description = t(`diagnosticsResponseEvidence_${record.responseIssue}`);
+    if (record.responseRecovery)
+      description += ` · ${t(`diagnosticsResponseRecovery_${record.responseRecovery}`)}`;
     if (record.errorCode)
       description += ` · ${t(`diagnosticsCode_${record.errorCode}`)} (${record.errorCode})`;
     const metrics = Object.entries(record.metrics).map(
@@ -164,7 +241,9 @@ export function presentDiagnosticFinding(finding: DiagnosticFinding, report: Dia
       description,
       t(`diagnosticsSource_${record.source}`),
       record.errorCode ? 3 : Object.keys(record.metrics).length ? 2 : record.stage ? 1 : 0,
-      adviceFor(finding.signal, record.errorCode, record.stage, record.basis),
+      record.responseIssue
+        ? `diagnosticsStopAdvice_${record.responseIssue}`
+        : adviceFor(finding.signal, record.errorCode, record.stage, record.basis),
     );
   }
   const rows = [...groups.values()].sort(

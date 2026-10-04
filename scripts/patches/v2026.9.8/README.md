@@ -24,31 +24,32 @@ Previously retired 009/024 (native reindex and ACP admission reload) and 017/018
 (custom live recovery/order projections) stay retired. Native history owns the
 display projection and the ordering of restored messages.
 
-| Patch | Retained capability | 9.8 boundary |
-| --- | --- | --- |
-| 001 | Managed pip environment provenance | Host and native-hook environment sanitizers |
-| 002 | Windows MCP npm runner under Electron | Native stdio spawn options |
-| 003 | Windows Chrome MCP launcher | Preserve the new caller-provided launch environment |
-| 005 | Final system prompt replacements | Final model-aware prompt before routing observation |
-| 006 | Agent metadata and hidden turns | Chat admission and provider transport; parent reads use the native read worker with current-run checks |
-| 007 | Request-purpose metadata | Compaction and reviewer provider payloads; async native reviewer identity reads |
-| 008 | App-process recovery boundary | Native main-session restart recovery only |
-| 013 | Explicit Goal resume after pause | Goal resume admission only |
-| 014 | Provider-safe replay | Native assistant transport projection |
-| 015 | Trusted local file delivery | MIME fallback and native media display projection |
-| 016 | Offline official plugin catalog | Native catalog loader with explicit offline intent |
-| 019 | No automatic plugin repair downloads | Installed-index lease writer; explicit installs remain native |
-| 020 | Configured realtime ASR URL | Native OpenAI realtime provider factory |
-| 021 | Independent image provider | Native OpenAI image provider; video seam retired |
-| 022 | Planning history after reset | Native display-history boundary; model reset unchanged |
-| 023 | Managed atomic fork | Current fork schema/handler and native atomic transcript fork |
-| 025 | MXC external skill paths | Canonical host read-only materialization |
-| 026 | Private untrusted turn context | Authorized agent-only input, raw transcript unchanged |
-| 027 | Shared session-access providers | Process-wide registry for bundle and SDK instances |
-| 028 | Managed session cwd | Already-authorized operator.admin cwd path; native non-admin containment unchanged |
-| 030 | Scheduled task permissions | Cron schema, job persistence and selected workspace after async preparation |
-| 031 | Windows credential launcher ACL | Exact system launcher/provider and verified TrustedInstaller SID |
-| 032 | Windows session creation publication | Canonicalize admitted and SQLite namespaced paths; preserve exact case, database identity and current-owner checks |
+| Patch | Retained capability                   | 9.8 boundary                                                                                                                          |
+| ----- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| 001   | Managed pip environment provenance    | Host and native-hook environment sanitizers                                                                                           |
+| 002   | Windows MCP npm runner under Electron | Native stdio spawn options                                                                                                            |
+| 003   | Windows Chrome MCP launcher           | Preserve the new caller-provided launch environment                                                                                   |
+| 005   | Final system prompt replacements      | Final model-aware prompt before routing observation                                                                                   |
+| 006   | Agent metadata and hidden turns       | Chat admission and provider transport; parent reads use the native read worker with current-run checks                                |
+| 007   | Request-purpose metadata              | Compaction and reviewer provider payloads; async native reviewer identity reads                                                       |
+| 008   | App-process recovery boundary         | Native main-session restart recovery only                                                                                             |
+| 013   | Explicit Goal resume after pause      | Goal resume admission only                                                                                                            |
+| 014   | Provider-safe replay                  | Native assistant transport projection                                                                                                 |
+| 015   | Trusted local file delivery           | MIME fallback and native media display projection                                                                                     |
+| 016   | Offline official plugin catalog       | Native catalog loader with explicit offline intent                                                                                    |
+| 019   | No automatic plugin repair downloads  | Installed-index lease writer; explicit installs remain native                                                                         |
+| 020   | Configured realtime ASR URL           | Native OpenAI realtime provider factory                                                                                               |
+| 021   | Independent image provider            | Native OpenAI image provider; video seam retired                                                                                      |
+| 022   | Planning history after reset          | Native display-history boundary; model reset unchanged                                                                                |
+| 023   | Managed atomic fork                   | Current fork schema/handler and native atomic transcript fork                                                                         |
+| 025   | MXC external skill paths              | Canonical host read-only materialization                                                                                              |
+| 026   | Private untrusted turn context        | Authorized agent-only input, raw transcript unchanged                                                                                 |
+| 027   | Shared session-access providers       | Process-wide registry for bundle and SDK instances                                                                                    |
+| 028   | Managed session cwd                   | Already-authorized operator.admin cwd path; native non-admin containment unchanged                                                    |
+| 030   | Scheduled task permissions            | Cron schema, job persistence and selected workspace after async preparation                                                           |
+| 031   | Windows credential launcher ACL       | Exact system launcher/provider and verified TrustedInstaller SID                                                                      |
+| 032   | Windows session creation publication  | Canonicalize admitted and SQLite namespaced paths; preserve exact case, database identity and current-owner checks                    |
+| 033   | Content-free loop exit diagnostics    | Record the selected loop exit branch and final response kind; carry through deferred settlement without changing execution or retries |
 
 Each module header records its scope, native safety boundary and removal condition.
 No upstream issue number is claimed without an actual filed issue.
