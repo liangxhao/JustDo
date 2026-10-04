@@ -40,6 +40,7 @@ export type GatewaySubagent = {
   labelSource: SubagentLabelSource;
   status: SubagentStatus;
   runtime: 'subagent' | 'acp';
+  swarmGroupId?: string;
   parentTaskId?: string;
   execution?: CoworkSubagentDetailTask['execution'];
   deliveryStatus?: CoworkSubagentDetailTask['deliveryStatus'];
@@ -127,6 +128,7 @@ const fromSession = (row: SessionRow): GatewaySubagent | null => {
         ? 'acp'
         : 'subagent',
     parentTaskId: parentKey(row),
+    swarmGroupId: optionalString(row.swarmGroupId),
     agentId: optionalString(row.agentId),
     runId: active ? optionalString(activeRunIds[0]) : optionalString(row.lastRunId),
     model: model && provider && !model.startsWith(provider + '/') ? provider + '/' + model : model,
@@ -147,18 +149,22 @@ const readPage = async (
   offset = 0,
   limit = SESSION_PAGE_SIZE,
 ) => {
-  const page = parseSessionsListResultV2026_9_8(
-    await client.request('sessions.list', {
-      limit,
-      offset,
-      archived: 'all',
-      ...(spawnedBy ? { spawnedBy } : {}),
-    }),
-  );
-  if (page.hasMore && (page.nextOffset == null || page.nextOffset <= offset)) {
-    throw new Error('OpenClaw sessions.list cursor did not advance');
+  // The native spawnedBy query uses expiring control links and can omit completed
+  // children whose durable row still has spawnedBy. Read native rows and match
+  // their explicit ancestry locally; do not infer membership or cache history.
+  for (;;) {
+    const page = parseSessionsListResultV2026_9_8(
+      await client.request('sessions.list', { limit, offset, archived: 'all' }),
+    );
+    if (page.hasMore && (page.nextOffset == null || page.nextOffset <= offset)) {
+      throw new Error('OpenClaw sessions.list cursor did not advance');
+    }
+    const sessions = spawnedBy
+      ? page.sessions.filter(row => parentKey(row) === spawnedBy)
+      : page.sessions;
+    if (sessions.length || !page.hasMore) return { ...page, sessions };
+    offset = page.nextOffset!;
   }
-  return page;
 };
 const listSessions = async (
   client: GatewayRequestClient,
@@ -218,9 +224,11 @@ export const listGatewaySubagentDescendants = async (
   const queue = [...new Set(rootKeys)],
     visited = new Set(rootKeys);
   const result: Array<{ sessionKey: string; sessionId: string; label: string }> = [];
+  if (!queue.length) return result;
+  const rows = await listSessions(client);
   while (queue.length) {
     const parent = queue.shift()!;
-    for (const row of await listSessions(client, parent)) {
+    for (const row of rows) {
       if (parentKey(row) !== parent) continue;
       const child = fromSession(row);
       if (!child || visited.has(child.sessionKey)) continue;
@@ -238,17 +246,17 @@ export const listGatewaySubagentsWithMetadata = async (
 ): Promise<GatewaySubagentListMetadata> => {
   const subagents = new Map<string, GatewaySubagent>();
   let sessionListComplete = true;
-  for (const parent of new Set(options.parentKeys)) {
+  const parents = new Set(options.parentKeys);
+  if (parents.size) {
     try {
-      for (const row of await listSessions(options.client, parent)) {
-        if (parentKey(row) !== parent) continue;
+      for (const row of await listSessions(options.client)) {
+        if (!parents.has(parentKey(row) ?? '')) continue;
         const child = fromSession(row);
         if (child) subagents.set(child.id, child);
       }
     } catch (error) {
       sessionListComplete = false;
       console.warn('[SubagentGateway] Failed to list native child sessions', {
-        parent,
         error: String(error),
       });
     }
@@ -383,6 +391,7 @@ export const mergeGatewaySubagentSnapshots = (
       label: preferCurrentLabel ? subagent.label : previous.label,
       labelSource: preferCurrentLabel ? subagent.labelSource : previous.labelSource,
       status: lifecycle.status,
+      swarmGroupId: lifecycle.swarmGroupId,
       execution: lifecycle.execution,
       deliveryStatus: lifecycle.deliveryStatus,
       diffStat: lifecycle.diffStat,

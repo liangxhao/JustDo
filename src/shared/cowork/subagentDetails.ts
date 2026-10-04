@@ -22,6 +22,7 @@ export interface CoworkSubagentDetailTask {
   labelSource: 'taskName' | 'label' | 'task';
   status: 'pending' | 'running' | 'done' | 'failed' | 'killed' | 'timeout' | 'blocked' | 'unknown';
   runtime?: 'subagent' | 'acp';
+  swarmGroupId?: string;
   parentTaskId?: string;
   execution?: CoworkSubagentExecution;
   deliveryStatus?: CoworkSubagentDeliveryStatus;

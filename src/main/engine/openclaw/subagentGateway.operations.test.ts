@@ -102,14 +102,12 @@ test('paginates aliases with a scope-bound cursor and exact native offset', asyn
     first.nextCursor,
   );
   expect(request).toHaveBeenLastCalledWith('sessions.list', {
-    spawnedBy: root,
     archived: 'all',
     offset: 50,
     limit: 50,
   });
   await listGatewaySubagentChildren(client(request), [root, 'alias'], undefined, second.nextCursor);
   expect(request).toHaveBeenLastCalledWith('sessions.list', {
-    spawnedBy: 'alias',
     archived: 'all',
     offset: 0,
     limit: 50,
@@ -128,9 +126,27 @@ test('reauthorizes the parent before exposing nested children', async () => {
     subagents: [],
   });
   expect(request).toHaveBeenLastCalledWith('sessions.list', {
-    spawnedBy: child,
     archived: 'all',
     offset: 0,
+    limit: 50,
+  });
+});
+
+test('skips unrelated pages before returning durable children without a native parent filter', async () => {
+  const request = vi
+    .fn()
+    .mockResolvedValueOnce({
+      sessions: [{ ...row, spawnedBy: 'other' }],
+      hasMore: true,
+      nextOffset: 50,
+    })
+    .mockResolvedValueOnce({ sessions: [{ ...row, status: 'done' }], hasMore: false });
+  const result = await listGatewaySubagentChildren(client(request), [root]);
+  expect(result.subagents).toMatchObject([{ id: child, status: 'done' }]);
+  expect(result.nextCursor).toBeUndefined();
+  expect(request).toHaveBeenLastCalledWith('sessions.list', {
+    archived: 'all',
+    offset: 50,
     limit: 50,
   });
 });

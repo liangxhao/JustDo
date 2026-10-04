@@ -25,6 +25,45 @@ const installElectron = (
 };
 
 describe('SubtaskListPanel', () => {
+  it('groups explicit Swarm members within each status section and exposes membership in details', async () => {
+    i18nService.setLanguage('en', { persist: false });
+    const tasks = [
+      { id: 'a', label: 'First member', status: 'running', swarmGroupId: 'batch-a' },
+      { id: 'b', label: 'Second member', status: 'pending', swarmGroupId: 'batch-a' },
+      { id: 'c', label: 'Finished member', status: 'done', swarmGroupId: 'batch-a' },
+      { id: 'd', label: 'Other batch', status: 'running', swarmGroupId: 'batch-b' },
+      { id: 'e', label: 'Independent task', status: 'running' },
+    ].map(task => ({ ...task, taskName: task.id, sessionKey: task.id, labelSource: 'label' }));
+    const status = vi.fn().mockResolvedValue({ success: true, subagents: tasks });
+    installElectron(status, vi.fn().mockResolvedValue({ success: true, subagent: tasks[0] }));
+    const onOpen = vi.fn();
+    render(<SubtaskListPanel sessionId="parent" isOpen onClose={vi.fn()} onOpenSubtask={onOpen} />);
+    await screen.findByRole('button', { name: 'First member' });
+    const groups = screen.getAllByRole('list', { name: 'Swarm · batch-a' });
+    expect(groups).toHaveLength(2);
+    expect(within(groups[0]).getByRole('button', { name: 'Second member' })).toBeTruthy();
+    expect(within(groups[0]).queryByRole('button', { name: 'Finished member' })).toBeNull();
+    expect(within(groups[1]).getByRole('button', { name: 'Finished member' })).toBeTruthy();
+    expect(screen.getAllByRole('list', { name: 'Swarm · batch-b' })).toHaveLength(1);
+    expect(within(groups[0]).queryByRole('button', { name: 'Independent task' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'First member' }));
+    expect(onOpen).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'a', swarmGroupId: 'batch-a' }),
+    );
+    fireEvent.click(within(groups[0]).getAllByRole('button', { name: 'View details' })[0]);
+    const dialog = within(screen.getByRole('dialog'));
+    expect(dialog.getByText('Swarm group')).toBeTruthy();
+    expect(dialog.getByText('batch-a')).toBeTruthy();
+    fireEvent.click(dialog.getByRole('button', { name: 'Close' }));
+    status.mockResolvedValue({
+      success: true,
+      subagents: tasks.map(task => ({ ...task, swarmGroupId: undefined })),
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh subtasks' }));
+    await waitFor(() => expect(screen.queryByRole('list', { name: 'Swarm · batch-a' })).toBeNull());
+    expect(screen.getByRole('button', { name: 'First member' })).toBeTruthy();
+  });
+
   it('shows completion and failed delivery as separate facts with the native summaries', async () => {
     i18nService.setLanguage('en', { persist: false });
     const task = {

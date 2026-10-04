@@ -47,20 +47,28 @@ function transform(content, file = '<runtime>') {
   let result = content;
   if (result.includes('function runLoop('))
     result = editFunction(result, 'runLoop', body => {
-      const events = [...body.matchAll(/type:\s*"agent_end",/g)];
+      const eventPattern = /type:\s*["`]agent_end["`],/g;
+      const events = [...body.matchAll(eventPattern)];
+      const providerFailed =
+        body.match(
+          /([\w$]+)\s*=\s*[\w$]+\.stopReason\s*===\s*["`]error["`]\s*\|\|\s*[\w$]+\.stopReason\s*===\s*["`]aborted["`]/,
+        )?.[1] || 'providerFailed';
+      const nextTurn =
+        body.match(/(?:let|const)\s+([\w$]+)\s*=\s*await\s+[\w$]+\.prepareNextTurn/)?.[1] ||
+        'nextTurnSnapshot';
       const guards = [
-        'const stopIfAborted',
-        'stopReason === "aborted"',
-        'terminateRun)',
-        'if (providerFailed)',
-        'shouldStopAfterTurn',
-        'if (nextTurnSnapshot?.stop)',
-        'getFollowUpMessages',
+        /\bstopIfAborted\s*=/,
+        /stopReason\s*===\s*["`]aborted["`]/,
+        /terminateRun\s*\)/,
+        new RegExp(`if\\s*\\(${providerFailed}\\)`),
+        /shouldStopAfterTurn/,
+        new RegExp(`if\\s*\\(${nextTurn}\\?\\.stop\\)`),
+        /getFollowUpMessages/,
       ];
       if (
         events.length !== 7 ||
         guards.some(
-          (guard, i) => !body.slice(i ? events[i - 1].index : 0, events[i].index).includes(guard),
+          (guard, i) => !guard.test(body.slice(i ? events[i - 1].index : 0, events[i].index)),
         )
       )
         throw new Error(`${file}: loop exit branches changed`);
@@ -68,25 +76,28 @@ function transform(content, file = '<runtime>') {
       if (body.includes('justDoLoopExit')) {
         for (const [i, event] of events.entries())
           if (
-            !new RegExp(`^type:\\s*"agent_end",\\s*justDoLoopExit:\\s*"${REASONS[i]}"`).test(
-              body.slice(event.index),
-            )
+            !new RegExp(
+              '^type:\\s*["`]agent_end["`],\\s*justDoLoopExit:\\s*"' + REASONS[i] + '"',
+            ).test(body.slice(event.index))
           )
             throw new Error(`${file}: partial loop exit patch`);
         return body;
       }
-      return body.replace(
-        /type:\s*"agent_end",/g,
-        match => `${match} justDoLoopExit: "${REASONS[index++]}",`,
-      );
+      return body.replace(eventPattern, match => `${match} justDoLoopExit: "${REASONS[index++]}",`);
     });
   if (result.includes('function handleAgentEnd('))
     result = editFunction(result, 'handleAgentEnd', body => {
-      const marker = 'const emitLifecycleTerminal = () => {';
-      const projection = `const justDoLoopExit = ${JSON.stringify(REASONS)}.includes(evt?.justDoLoopExit) ? evt.justDoLoopExit : undefined;
+      const marker = body.match(/(?:const|let)\s+emitLifecycleTerminal\s*=\s*\(\)\s*=>\s*\{/)?.[0];
+      const assistantName =
+        body.match(/(?:const|let)\s+([\w$]+)\s*=\s*[\w$]+\.state\.lastAssistant/)?.[1] ||
+        'lastAssistant';
+      // The arrow inherits handleAgentEnd's arguments. Worker-local terminal
+      // bindings can shadow the minified event parameter inside this arrow.
+      const projection = `const justDoLoopExit = ${JSON.stringify(REASONS)}.includes(arguments[1]?.justDoLoopExit) ? arguments[1].justDoLoopExit : undefined;
       const justDoBlocks = Array.isArray(lastAssistant?.content) ? lastAssistant.content : undefined;
       const justDoResponseShape = !justDoBlocks ? undefined : justDoBlocks.some(justDoResponseBlock => justDoResponseBlock?.type === "toolCall") ? "tool_call" : justDoBlocks.some(justDoResponseBlock => justDoResponseBlock?.type === "text" && typeof justDoResponseBlock.text === "string" && justDoResponseBlock.text.trim()) ? "text" : justDoBlocks.some(justDoResponseBlock => !["text", "thinking", "reasoning", "redacted_thinking"].includes(justDoResponseBlock?.type)) ? "other" : justDoBlocks.some(justDoResponseBlock => justDoResponseBlock?.type === "redacted_thinking" || (justDoResponseBlock?.type === "thinking" && justDoResponseBlock.thinking) || (justDoResponseBlock?.type === "reasoning" && (justDoResponseBlock.text || justDoResponseBlock.reasoning))) ? "thinking_only" : "empty";`;
-      if (!body.includes(marker)) throw new Error(`${file}: lifecycle delivery boundary changed`);
+      const resolvedProjection = projection.replace(/\blastAssistant\b/g, assistantName);
+      if (!marker) throw new Error(`${file}: lifecycle delivery boundary changed`);
       if (body.includes('const justDoLoopExit')) {
         const start = body.indexOf('const justDoLoopExit');
         const end = body.indexOf('finalizeToolActivity(', start);
@@ -94,25 +105,24 @@ function transform(content, file = '<runtime>') {
           normalizeJustDoGatewayBundle(
             require('esbuild').transformSync(text, { loader: 'js', minifySyntax: true }).code,
           );
-        if (end < 0 || canonical(body.slice(start, end)) !== canonical(projection))
+        if (end < 0 || canonical(body.slice(start, end)) !== canonical(resolvedProjection))
           throw new Error(`${file}: partial lifecycle projection`);
         if (!/justDoLoopExit,\s*justDoResponseShape,/.test(body))
           throw new Error(`${file}: missing lifecycle fields`);
         return body;
       }
       if (body.includes('justDoResponseShape')) throw new Error(`${file}: partial projection`);
-      const anchor =
-        /\.\.\.\(?terminalStopReason\s*\?\s*\{\s*stopReason:\s*terminalStopReason\s*\}\s*:\s*\{\}\)?,/g;
+      const anchor = /\.\.\.\(?([\w$]+)\s*\?\s*\{\s*stopReason:\s*\1\s*\}\s*:\s*\{\}\)?,/g;
       if ([...body.matchAll(anchor)].length !== 1)
         throw new Error(`${file}: lifecycle stop boundary changed`);
       return body
-        .replace(marker, `${marker}\n${projection}`)
+        .replace(marker, `${marker}\n${resolvedProjection}`)
         .replace(anchor, match => `${match}\njustDoLoopExit, justDoResponseShape,`);
     });
   if (result.includes('DEFERRED_TERMINAL_METADATA_KEYS')) {
     const pattern = /DEFERRED_TERMINAL_METADATA_KEYS\s*=\s*\[([^\]]*)\]/g;
     const matches = [...result.matchAll(pattern)];
-    if (matches.length !== 1 || !matches[0][1].includes('"assistantTranscriptIdempotencyKey"'))
+    if (matches.length !== 1 || !/["`]assistantTranscriptIdempotencyKey["`]/.test(matches[0][1]))
       throw new Error(`${file}: deferred metadata boundary changed`);
     const list = matches[0][1];
     if (list.includes('justDoLoopExit') !== list.includes('justDoResponseShape'))
@@ -140,7 +150,8 @@ function processTargets(root, verify) {
     'DEFERRED_TERMINAL_METADATA_KEYS',
   ];
   const groups = signatures.map(signature => findFilesContaining(root, signature));
-  const expected = fs.existsSync(path.join(root, 'gateway-bundle.mjs')) ? 3 : 2;
+  // Native module, two embedded workers and package-update activation recovery.
+  const expected = fs.existsSync(path.join(root, 'gateway-bundle.mjs')) ? 5 : 4;
   if (groups.some(files => files.length !== expected))
     throw new Error(
       `Loop diagnostics topology changed: ${groups.map(files => files.length)}, expected ${expected}`,

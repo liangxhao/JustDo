@@ -25,6 +25,7 @@ export type Subtask = {
   labelSource: SubagentLabelSource;
   status: SubtaskStatus;
   runtime?: 'subagent' | 'acp';
+  swarmGroupId?: string;
   agentId?: string;
   task?: string;
   runId?: string;
@@ -129,6 +130,7 @@ export const mergeSubtaskSnapshots = (
     ...latest,
     ...(options.preserveCurrentTask && current.task ? { task: current.task } : {}),
     status: lifecycle.status,
+    swarmGroupId: lifecycle.swarmGroupId,
     runId: lifecycle.runId,
     startedAt: lifecycle.startedAt,
     updatedAt: lifecycle.updatedAt,

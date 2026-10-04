@@ -43,7 +43,6 @@ test('projects native session lifecycle and stable identities without task RPCs'
     limit: 500,
     offset: 0,
     archived: 'all',
-    spawnedBy: root,
   });
 });
 
@@ -77,6 +76,18 @@ test('clears prior terminal state when a native session starts a new run', async
   expect(value).toMatchObject({ status: 'running', runId: 'run-1' });
   expect(value?.error).toBeUndefined();
   expect(value?.endedAt).toBeUndefined();
+});
+
+test('preserves explicit native Swarm membership in lists and details only', async () => {
+  const member = { ...row, swarmGroupId: 'swarm:parent:run-1' };
+  const request = vi.fn().mockResolvedValue({ sessions: [member], session: member });
+  const list = await listGatewaySubagents({ client: client(request), parentKeys: [root] });
+  expect(list[0].swarmGroupId).toBe(member.swarmGroupId);
+  expect((await getGatewaySubagentDetails(client(request), child))?.swarmGroupId).toBe(
+    member.swarmGroupId,
+  );
+  request.mockResolvedValue({ session: { ...row, groupId: 'chat-group', swarmGroupId: 42 } });
+  expect((await getGatewaySubagentDetails(client(request), child))?.swarmGroupId).toBeUndefined();
 });
 
 test('uses native active run identity and configured model for ACP sessions', async () => {
@@ -125,6 +136,28 @@ test('reads every native page and includes archived children', async () => {
   });
 });
 
+test('lists completed Swarm children after native control-link filtering expires', async () => {
+  const request = vi.fn(async (_method, params) => {
+    if (params.spawnedBy) return { sessions: [] };
+    if (!params.offset)
+      return {
+        sessions: [{ ...row, key: 'unrelated', spawnedBy: 'other' }],
+        hasMore: true,
+        nextOffset: 500,
+      };
+    return { sessions: [{ ...row, status: 'done', swarmGroupId: 'batch', archivedAt: 1 }] };
+  });
+  const result = await listGatewaySubagentsWithMetadata({
+    client: client(request),
+    parentKeys: [root, 'alias'],
+  });
+  expect(result.sessionListComplete).toBe(true);
+  expect(result.subagents).toMatchObject([{ id: child, status: 'done', swarmGroupId: 'batch' }]);
+  expect(result.subagents).toHaveLength(1);
+  expect(request).toHaveBeenCalledTimes(2);
+  expect(request.mock.calls.every(([, params]) => params.spawnedBy === undefined)).toBe(true);
+});
+
 test.each([{ hasMore: true }, { hasMore: true, nextOffset: 0 }])(
   'fails closed when a native page cannot advance',
   async page => {
@@ -145,14 +178,9 @@ test('reports incomplete reads rather than claiming an empty native graph', asyn
 
 test('discovers nested native descendants and rejects missing incarnation IDs', async () => {
   const grandchild = 'agent:main:subagent:grandchild';
-  const request = vi.fn(async (_method, params) => ({
-    sessions:
-      params.spawnedBy === root
-        ? [row]
-        : params.spawnedBy === child
-          ? [{ ...row, key: grandchild, spawnedBy: child, sessionId: 'native-grandchild' }]
-          : [],
-  }));
+  const request = vi.fn().mockResolvedValue({
+    sessions: [row, { ...row, key: grandchild, spawnedBy: child, sessionId: 'native-grandchild' }],
+  });
   expect(await listGatewaySubagentDescendants(client(request), [root])).toEqual([
     { sessionKey: child, sessionId: 'native-child', label: 'Review' },
     { sessionKey: grandchild, sessionId: 'native-grandchild', label: 'Review' },

@@ -370,6 +370,14 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
   const detailRows: Array<[string, React.ReactNode, boolean?]> = [
     [i18nService.t('subtaskInfoStatus'), subagentStatusLabel],
     [i18nService.t('subtaskInfoAgentId'), displaySubagent.agentId],
+    ...(displaySubagent.swarmGroupId
+      ? [
+          [i18nService.t('subtaskInfoSwarmGroup'), displaySubagent.swarmGroupId] as [
+            string,
+            React.ReactNode,
+          ],
+        ]
+      : []),
     [i18nService.t('subtaskInfoTask'), displaySubagent.task],
     [i18nService.t('subtaskInfoModel'), displaySubagent.model],
     [

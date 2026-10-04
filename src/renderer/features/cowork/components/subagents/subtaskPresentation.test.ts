@@ -19,6 +19,16 @@ const subtask = (overrides: Partial<Subtask>): Subtask => ({
 });
 
 describe('subtask presentation', () => {
+  test('keeps newer Swarm membership and clears it when the latest snapshot has none', () => {
+    const current = subtask({ swarmGroupId: 'batch-a', updatedAt: 20 });
+    expect(mergeSubtaskSnapshots(current, subtask({ updatedAt: 10 })).swarmGroupId).toBe('batch-a');
+    expect(mergeSubtaskSnapshots(current, subtask({ updatedAt: 30 })).swarmGroupId).toBeUndefined();
+    expect(
+      mergeSubtaskSnapshots(current, subtask({ updatedAt: 30, swarmGroupId: 'batch-b' }))
+        .swarmGroupId,
+    ).toBe('batch-b');
+  });
+
   test('shows known external agent names and uses a compact fallback', () => {
     expect(resolveExternalAgentLabel(subtask({ runtime: 'acp', agentId: 'codex' }))).toBe('Codex');
     expect(resolveExternalAgentLabel(subtask({ runtime: 'acp', agentId: 'opencode' }))).toBe(

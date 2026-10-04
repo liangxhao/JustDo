@@ -1,5 +1,6 @@
 import {
   ArrowPathIcon,
+  CheckCircleIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   DocumentDuplicateIcon,
@@ -18,6 +19,7 @@ import { resolveSubagentPollInterval } from './subagentPolling';
 import SubagentTokenUsage from './SubagentTokenUsage';
 import SubtaskChildren from './SubtaskChildren';
 import SubtaskControls from './SubtaskControls';
+import SubtaskGroups from './SubtaskGroups';
 import {
   isActiveSubtask,
   mergeSubtaskSnapshots,
@@ -454,6 +456,7 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
         ...(
           [
             ['subtaskInfoProgress', detailSubtask.progressSummary],
+            ['subtaskInfoSwarmGroup', detailSubtask.swarmGroupId],
             ['subtaskInfoResult', detailSubtask.terminalSummary],
             ['subtaskInfoError', detailSubtask.error],
             ['subtaskInfoActivity', detailSubtask.lastActivity],
@@ -533,12 +536,19 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
       <div
         key={subtask.id}
         role="listitem"
-        className="group flex min-w-0 items-center gap-2 rounded-lg border border-transparent bg-surface-raised/55 px-2.5 py-2 transition-colors hover:border-border"
+        className="group flex min-w-0 items-center gap-2.5 rounded-lg px-2.5 py-2.5 transition-colors hover:bg-surface focus-within:bg-surface"
       >
-        <span
-          className={`h-2 w-2 shrink-0 rounded-full ${subtaskStatusStyles[subtask.status]}`}
-          aria-hidden="true"
-        />
+        {subtask.status === 'done' ? (
+          <CheckCircleIcon
+            className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400"
+            aria-hidden="true"
+          />
+        ) : (
+          <span
+            className={`h-2 w-2 shrink-0 rounded-full ${subtaskStatusStyles[subtask.status]}`}
+            aria-hidden="true"
+          />
+        )}
         <button
           type="button"
           className="min-w-0 flex-1 truncate text-left text-sm font-medium text-foreground hover:text-primary"
@@ -556,7 +566,9 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
           </span>
         )}
         <span className="shrink-0 text-xs text-secondary">
-          {i18nService.t(resolveSubtaskExecutionKey(subtask))}
+          <span className={subtask.status === 'done' && !subtask.execution ? 'sr-only' : undefined}>
+            {i18nService.t(resolveSubtaskExecutionKey(subtask))}
+          </span>
           {(subtask.deliveryStatus === 'failed' || subtask.deliveryStatus === 'parent_missing') && (
             <span className="block text-[10px] text-amber-700 dark:text-amber-300">
               {i18nService.t(SUBTASK_DELIVERY_I18N_KEYS[subtask.deliveryStatus])}
@@ -586,7 +598,7 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
         <aside
           ref={panelRef}
           id={panelId}
-          className="absolute right-0 top-full z-[90] mt-2 flex h-[min(32rem,calc(100vh-4.5rem))] w-80 max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-xl border border-border bg-surface/95 shadow-popover backdrop-blur-xl"
+          className="absolute right-0 top-full z-[90] mt-2 flex max-h-[min(32rem,calc(100vh-4.5rem))] w-[22rem] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-border bg-surface/95 shadow-popover backdrop-blur-xl"
           aria-label={i18nService.t('subtasks')}
         >
           <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-border px-3">
@@ -628,12 +640,12 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
           )}
 
           {!hasLoaded && isLoading ? (
-            <div className="flex flex-1 items-center justify-center gap-2 text-sm text-secondary">
+            <div className="flex min-h-32 items-center justify-center gap-2 text-sm text-secondary">
               <ArrowPathIcon className="h-4 w-4 animate-spin" />
               {i18nService.t('loading')}
             </div>
           ) : subtasks.length === 0 ? (
-            <div className="flex flex-1 flex-col items-center justify-center px-6 text-center">
+            <div className="flex min-h-40 flex-col items-center justify-center px-6 py-6 text-center">
               <svg
                 viewBox="0 0 24 24"
                 className="mb-3 h-8 w-8 text-muted"
@@ -653,23 +665,19 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
               </p>
             </div>
           ) : (
-            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <div className="min-h-0 overflow-y-auto pb-1">
               {active.length > 0 && (
-                <section className="flex min-h-0 flex-1 flex-col overflow-y-auto pt-2">
+                <section className="pt-3">
                   <h3 className="shrink-0 px-3 pb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
                     {i18nService.t('subtaskActive').replace('{count}', String(active.length))}
                   </h3>
                   <div className="space-y-1 px-2 pb-2" role="list">
-                    {active.map(renderSubtask)}
+                    <SubtaskGroups tasks={active} renderTask={renderSubtask} />
                   </div>
                 </section>
               )}
               {finished.length > 0 && (
-                <section
-                  className={`shrink overflow-y-auto border-t border-border pt-2 ${
-                    active.length > 0 ? 'max-h-[50%]' : 'flex-1'
-                  }`}
-                >
+                <section className={`pt-3 ${active.length > 0 ? 'border-t border-border/60' : ''}`}>
                   <button
                     type="button"
                     className="flex w-full items-center justify-between px-3 pb-1.5 text-left text-[11px] font-medium uppercase tracking-wide text-muted hover:text-secondary"
@@ -687,7 +695,10 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
                   </button>
                   {finishedExpanded && (
                     <div className="space-y-1 px-2 pb-2" role="list">
-                      {finished.slice(0, finishedLimit).map(renderSubtask)}
+                      <SubtaskGroups
+                        tasks={finished.slice(0, finishedLimit)}
+                        renderTask={renderSubtask}
+                      />
                       {finished.length > finishedLimit && (
                         <button
                           type="button"

@@ -98,7 +98,14 @@ function SubtaskChildrenContent({ sessionId, task, ancestors, onOpen }: SubtaskC
           className="flex w-full items-center justify-between gap-3 rounded-md bg-surface-raised px-2 py-1.5 text-left text-sm hover:text-primary"
           onClick={() => onOpen(child)}
         >
-          <span className="truncate">{child.label}</span>
+          <span className="min-w-0">
+            <span className="block truncate">{child.label}</span>
+            {child.swarmGroupId && (
+              <span className="block truncate text-xs text-secondary" title={child.swarmGroupId}>
+                {i18nService.t('subtaskSwarmGroup').replace('{group}', child.swarmGroupId)}
+              </span>
+            )}
+          </span>
           <span className="shrink-0 text-xs text-secondary">
             {i18nService.t(resolveSubtaskExecutionKey(child))}
           </span>
