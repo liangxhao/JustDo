@@ -24,12 +24,14 @@ describe('ContextUsageIndicator', () => {
     const indicator = screen.getByRole('img', {
       name: 'Context used / total context: 32k / 200k · 16%',
     });
-    expect(screen.queryByText('32k / 200k · 16%')).toBeNull();
+    expect(screen.queryByRole('tooltip')).toBeNull();
 
     fireEvent.mouseEnter(indicator.parentElement!);
     await vi.advanceTimersByTimeAsync(300);
 
-    expect(screen.getByText('32k / 200k · 16%').parentElement).toBe(document.body);
+    const tooltip = screen.getByRole('tooltip');
+    expect(tooltip.textContent).toBe('Context used / total context: 32k / 200k · 16%');
+    expect(tooltip.parentElement).toBe(document.body);
   });
 
   it('shows context details when the indicator receives keyboard focus', async () => {
@@ -46,7 +48,7 @@ describe('ContextUsageIndicator', () => {
     fireEvent.focus(indicator);
     await vi.advanceTimersByTimeAsync(300);
 
-    expect(screen.getByRole('tooltip').textContent).toBe('32k / 200k · 16%');
+    expect(screen.getByRole('tooltip').textContent).toBe('Context used / total context: 32k / 200k · 16%');
 
     fireEvent.blur(indicator);
     expect(screen.queryByRole('tooltip')).toBeNull();

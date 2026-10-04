@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
+import { startLocalModelServer } from '../../../tests/fixtures/localModelServer';
 import { mainProcessFetch } from '../core/network/mainProcessFetch';
 import type { SqliteStore } from '../data/sqliteStore';
 import {
@@ -7,6 +8,9 @@ import {
   setActiveBuiltinModelCredential,
 } from './builtinModelCredential';
 import { BuiltinModelAccess, syncBuiltinModelProvider } from './builtinModelProvider';
+
+const testProviderConfig = vi.hoisted(() => ({ enabled: true, baseUrl: 'http://127.0.0.1:1/v1' }));
+vi.mock('../../config/builtinModels', () => ({ BUILTIN_MODEL_PROVIDER_CONFIG: testProviderConfig }));
 
 vi.mock('../core/network/mainProcessFetch', () => ({
   mainProcessFetch: vi.fn((url: string, init: RequestInit) => globalThis.fetch(url, init)),
@@ -32,6 +36,36 @@ const createCredential = () => {
 };
 
 describe('syncBuiltinModelProvider', () => {
+  test('does not fetch or expose a provider when the built-in URL is unconfigured', async () => {
+    testProviderConfig.baseUrl = '';
+    const set = vi.fn();
+    const store = { get: () => ({ providers: {} }), set } as unknown as SqliteStore;
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    await syncBuiltinModelProvider(store, { access: BuiltinModelAccess.Enabled });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(set.mock.calls[0][1].providers).not.toHaveProperty('builtin_models');
+  });
+
+  test('discovers models from a real loopback fake provider without persisting credentials', async () => {
+    const local = await startLocalModelServer();
+    try {
+      testProviderConfig.baseUrl = local.baseUrl;
+      const set = vi.fn();
+      const store = { get: () => ({}), set } as unknown as SqliteStore;
+      await syncBuiltinModelProvider(store, { access: BuiltinModelAccess.Enabled });
+      expect(local.requests.map(request => request.path)).toEqual(['/v1/models', '/v1/model/info']);
+      const saved = set.mock.calls[0][1];
+      expect(saved.providers.builtin_models.models).toEqual([expect.objectContaining({ id: 'local-chat' })]);
+      expect(saved.providers.builtin_models.embeddingModels).toEqual([expect.objectContaining({ id: 'local-embedding' })]);
+      expect(local.requests[0].headers['x-user-account']).toBe('user-123');
+      expect(local.requests[0].headers['x-access-jwt']).toContain('test-signature');
+      expect(JSON.stringify(saved)).not.toContain('test-signature');
+    } finally {
+      await local.close();
+    }
+  });
+
   test.each([
     { selected: 'retired', listed: ['disabled', 'first', 'second'], expected: 'first' },
     { selected: 'second', listed: ['disabled', 'first', 'second'], expected: 'second' },
@@ -137,6 +171,7 @@ describe('syncBuiltinModelProvider', () => {
   });
 
   beforeEach(() => {
+    testProviderConfig.baseUrl = 'http://127.0.0.1:1/v1';
     vi.mocked(mainProcessFetch).mockClear();
     setActiveBuiltinModelCredential(createCredential());
   });

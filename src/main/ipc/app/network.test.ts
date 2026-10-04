@@ -2,7 +2,11 @@ import { EventEmitter } from 'node:events';
 
 import { beforeEach, expect, test, vi } from 'vitest';
 
+import { startLocalModelServer } from '../../../../tests/fixtures/localModelServer';
 import { type ApiFetchOptions, NetworkFetchPurpose } from '../../../shared/network/network';
+
+const testProviderConfig = vi.hoisted(() => ({ enabled: true, baseUrl: 'http://127.0.0.1:1/v1' }));
+vi.mock('../../../config/builtinModels', () => ({ BUILTIN_MODEL_PROVIDER_CONFIG: testProviderConfig }));
 
 const mocks = vi.hoisted(() => ({
   applyMainProcessOutboundHeaderPolicy: vi.fn(),
@@ -40,6 +44,7 @@ import { registerNetworkHandlers } from './network';
 type ApiFetchHandler = (event: unknown, options: ApiFetchOptions) => Promise<unknown>;
 
 beforeEach(() => {
+  testProviderConfig.baseUrl = 'http://127.0.0.1:1/v1';
   vi.clearAllMocks();
   clearActiveBuiltinModelCredential();
 });
@@ -54,6 +59,41 @@ const installJwt = () => {
   setActiveBuiltinModelCredential({ accessToken: token, userAccount: 'test-user', expiresAt: now + 300 });
   return token;
 };
+
+test('completes an authenticated model probe against a real loopback fake model', async () => {
+  const local = await startLocalModelServer();
+  try {
+    testProviderConfig.baseUrl = local.baseUrl;
+    const token = installJwt();
+    mocks.applyMainProcessOutboundHeaderPolicy.mockImplementation((_url, headers) => headers);
+    mocks.fetch.mockImplementation((url, init) => fetch(url, init));
+    registerNetworkHandlers();
+    const handler = mocks.handle.mock.calls.find(([channel]) => channel === 'api:fetch')![1] as ApiFetchHandler;
+    const result = await handler({}, {
+      url: `${local.baseUrl}/chat/completions`, method: 'POST', headers: {},
+      body: probeBody, purpose: NetworkFetchPurpose.ModelConnectionTest,
+    });
+    expect(result).toMatchObject({ ok: true, data: { choices: [{ message: { content: 'local fixture reply' } }] } });
+    expect(local.requests).toHaveLength(1);
+    expect(local.requests[0].headers['x-access-jwt']).toBe(token);
+    expect(JSON.parse(local.requests[0].body)).toEqual(JSON.parse(probeBody));
+    expect(JSON.stringify(result)).not.toContain(token);
+  } finally {
+    await local.close();
+  }
+});
+
+test('rejects an unconfigured built-in probe without sending credentials or making a request', async () => {
+  testProviderConfig.baseUrl = '';
+  installJwt();
+  registerNetworkHandlers();
+  const handler = mocks.handle.mock.calls.find(([channel]) => channel === 'api:fetch')![1] as ApiFetchHandler;
+  expect(await handler({}, {
+    url: '/chat/completions', method: 'POST', headers: {},
+    body: probeBody, purpose: NetworkFetchPurpose.ModelConnectionTest,
+  })).toMatchObject({ ok: false });
+  expect(mocks.fetch).not.toHaveBeenCalled();
+});
 
 test('authenticates a built-in probe in Main without exposing its JWT to Renderer', async () => {
   const token = installJwt();

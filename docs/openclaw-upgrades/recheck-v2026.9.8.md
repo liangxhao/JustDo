@@ -1,5 +1,7 @@
 # OpenClaw 9.8 逐功能再次复核
 
+后续用户要求清理 17 项既有失败，对应原因、修复及最新测试结果见[基线测试修复报告](baseline-test-fixes-v2026.9.8.md)。本文下方的 17 项失败是修复前的历史验收时点。
+
 日期：2026-10-04。起点为 `4c83dac02`，本轮由主 Agent 和三个专项 Agent 重新阅读当前实现与相邻 `../openclaw` 的固定 9.8 源码契约。检查目标是 9.6→9.8 升级完整性，不是检索其他更新版本。此前报告保留历史验证时点，本报告记录本轮结果。
 
 源码基准：9.6 的 tag object 为 `ce5bbdc244ee937246cc1700d1b224d020c3b599`，解引用 commit 为 `eb377ac59e6c9fd6c7705028034812becf00271b`；9.8 的 tag object 为 `b1c1c6d3af1f68bc82efbb6c92fb224c36df8683`，解引用 commit 为 `fc23bc864e4553c2d215e479eeec47b67a0bf943`。tag 对象不是代码 commit；发布包仍独立受 source-lock 约束。
