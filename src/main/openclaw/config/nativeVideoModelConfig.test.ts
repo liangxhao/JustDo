@@ -41,7 +41,7 @@ test.each(NATIVE_VIDEO_PROVIDERS)(
       agents: { defaults: { model: 'chat/model' } },
       plugins: { allow: ['other'], deny: [provider.id], entries: { other: { enabled: false } } },
     };
-    expect(applyNativeVideoConfiguration(config, selection, stateDir)).toBe(true);
+    expect(applyNativeVideoConfiguration(config, selection, stateDir, [provider.id])).toBe(true);
     expect(config).toMatchObject({
       agents: {
         defaults: {
@@ -62,9 +62,9 @@ test.each(NATIVE_VIDEO_PROVIDERS)(
     expect(fs.readFileSync(path.join(stateDir, 'extension-secrets.json'), 'utf8')).toContain(
       'video-test-secret',
     );
-    expect(applyNativeVideoConfiguration(config, selection, stateDir)).toBe(false);
+    expect(applyNativeVideoConfiguration(config, selection, stateDir, [provider.id])).toBe(false);
     expect(resolveNativeVideoSelection({ ...category, defaultProviderId: undefined })).toBeNull();
-    applyNativeVideoConfiguration(config, null, stateDir);
+    applyNativeVideoConfiguration(config, null, stateDir, [provider.id]);
     expect(config).toMatchObject({
       agents: { defaults: { mediaModels: {} } },
       plugins: { entries: { [provider.id]: { enabled: true } } },
@@ -94,6 +94,53 @@ test('rejects unsupported video providers and restores unmanaged settings after 
     models: { providers: { kie: { apiKey: 'pre-existing' } } },
     plugins: { allow: ['other'], deny: ['kie'] },
   });
+});
+
+test.each(NATIVE_VIDEO_PROVIDERS)('does not publish credentials or enable missing $id video plugins', provider => {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'missing-native-video-'));
+  directories.push(stateDir);
+  const selection = resolveNativeVideoSelection({ defaultProviderId: 'selected', providers: {
+    selected: { nativeVideoProvider: provider.id, baseUrl: provider.baseUrl, apiKey: 'unused-secret', defaultModel: provider.models[0] },
+  } });
+  const config: Record<string, unknown> = {
+    agents: { defaults: { model: 'chat/model', mediaModels: { video: `${provider.id}/old`, image: 'custom/image' } } },
+    models: { providers: { [provider.id]: { apiKey: 'existing-chat-key' } } },
+    plugins: { allow: ['other', provider.id], deny: [provider.id], entries: { [provider.id]: { enabled: true }, other: { enabled: true } } },
+  };
+  expect(applyNativeVideoConfiguration(config, selection, stateDir, ['other'])).toBe(false);
+  expect(config).toEqual({
+    agents: { defaults: { model: 'chat/model', mediaModels: { image: 'custom/image' } } },
+    models: { providers: { [provider.id]: { apiKey: 'existing-chat-key' } } },
+    plugins: { allow: ['other'], deny: [], entries: { other: { enabled: true } } },
+  });
+  expect(fs.existsSync(path.join(stateDir, 'extension-secrets.json'))).toBe(false);
+});
+
+test('cleans unavailable video fallbacks without a managed selection and preserves uncertain inventory', () => {
+  const config: Record<string, unknown> = {
+    agents: { defaults: { mediaModels: { video: { primary: 'custom/video', fallbacks: ['kie/model', 'other/video'] } } } },
+    plugins: { entries: { kie: { enabled: true } } },
+  };
+  const original = structuredClone(config);
+  expect(applyNativeVideoConfiguration(config, undefined, os.tmpdir(), null)).toBe(false);
+  expect(config).toEqual(original);
+  applyNativeVideoConfiguration(config, undefined, os.tmpdir(), ['custom', 'other']);
+  expect(config).toMatchObject({
+    agents: { defaults: { mediaModels: { video: { primary: 'custom/video', fallbacks: ['other/video'] } } } },
+    plugins: { entries: {} },
+  });
+});
+
+test('retains the available video fallback and transport options when the primary plugin is missing', () => {
+  const config: Record<string, unknown> = {
+    agents: { defaults: { mediaModels: { video: {
+      primary: 'kie/model', fallbacks: ['novita/model', 'custom/internal-video', 'other/video'], timeoutMs: 60000,
+    } } } },
+  };
+  applyNativeVideoConfiguration(config, undefined, os.tmpdir(), ['custom', 'other']);
+  expect(config).toMatchObject({ agents: { defaults: { mediaModels: { video: {
+    primary: 'custom/internal-video', fallbacks: ['other/video'], timeoutMs: 60000,
+  } } } } });
 });
 
 test.each([

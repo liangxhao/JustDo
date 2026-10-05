@@ -64,7 +64,7 @@ const GATEWAY_HEALTH_POLL_INTERVAL_MS = 1_000;
 const GATEWAY_MAX_RESTART_ATTEMPTS = 5;
 const GATEWAY_RESTART_DELAYS = [3_000, 5_000, 10_000, 20_000, 30_000];
 const APP_PROCESS_STARTED_AT_MS = Date.now();
-const SPEECH_PLUGIN_IDS = new Set(['tts-local-cli', 'openai', 'elevenlabs']);
+const SPEECH_PLUGIN_IDS = new Set(['tts-local-cli', 'openai']);
 
 export type OpenClawEnginePhase =
   | 'ready'

@@ -30,7 +30,7 @@ vi.mock('electron', () => ({
 // replaced concurrently. Inventory discovery has its own filesystem tests.
 vi.mock('../../plugins/extensions/openclawLocalExtensions', async importOriginal => {
   const actual = await importOriginal<typeof import('../../plugins/extensions/openclawLocalExtensions')>();
-  const bundledIds = ['browser', 'workboard', 'memory-core', 'code-mode-quickjs', 'github', 'mxc', 'zai', 'novita'];
+  const bundledIds = ['browser', 'workboard', 'memory-core', 'code-mode-quickjs', 'openai', 'mxc'];
   return {
     ...actual,
     listBundledOpenClawExtensionIds: () => [...bundledIds],
@@ -1027,7 +1027,6 @@ describe('OpenClaw auth logout config sync', () => {
       'typesafe',
       'memory-core',
       'code-mode-quickjs',
-      'github',
       'browser',
       'stt-local-cli',
       'acpx',
@@ -1130,7 +1129,6 @@ describe('OpenClaw auth logout config sync', () => {
       'typesafe',
       'memory-core',
       'code-mode-quickjs',
-      'github',
       'browser',
       'stt-local-cli',
       'acpx',
@@ -1344,7 +1342,6 @@ describe('OpenClaw auth logout config sync', () => {
       'typesafe',
       'memory-core',
       'code-mode-quickjs',
-      'github',
       'browser',
       'stt-local-cli',
       'acpx',
@@ -1989,10 +1986,14 @@ test.each(['full', 'minimal'])('%s decision settings survive auth sync, rotate c
   expect(read().agents.defaults.decisionModel).toBeUndefined();
 });
 
-test.each(['full', 'minimal'])('%s native video settings survive authentication synchronization', mode => {
+test.each(['full', 'minimal'])('%s sync does not reactivate video plugins absent from the intranet runtime', mode => {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-native-video-sync-'));
   temporaryDirectories.push(stateDir);
   const configPath = path.join(stateDir, 'openclaw.json');
+  fs.writeFileSync(configPath, JSON.stringify({
+    agents: { defaults: { mediaModels: { video: { primary: 'kie/kling-2.6/text-to-video' } } } },
+    plugins: { allow: ['kie'], entries: { kie: { enabled: true } } },
+  }));
   const appConfig = mode === 'full' ? {
     model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
     providers: { 'custom-provider': { enabled: true, apiKey: 'chat-test-key', baseUrl: 'https://custom.example.test/v1', apiFormat: 'openai', models: [{ id: 'custom-model' }] } },
@@ -2010,9 +2011,11 @@ test.each(['full', 'minimal'])('%s native video settings survive authentication 
   for (const reason of ['startup', 'app-config-change', BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout]) {
     expect(sync.sync(reason).ok).toBe(true);
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    expect(config.agents.defaults.mediaModels.video.primary).toBe('kie/kling-2.6/text-to-video');
-    expect(config.plugins.entries.kie.enabled).toBe(true);
-    expect(config.models.providers.kie.apiKey.source).toBe('file');
+    expect(config.agents.defaults.mediaModels?.video).toBeUndefined();
+    expect(config.plugins.entries.kie).toBeUndefined();
+    expect(config.plugins.allow).not.toContain('kie');
+    expect(config.models?.providers?.kie).toBeUndefined();
+    expect(fs.existsSync(path.join(stateDir, 'extension-secrets.json'))).toBe(false);
     expect(JSON.stringify(config)).not.toContain('video-test-key');
   }
 });

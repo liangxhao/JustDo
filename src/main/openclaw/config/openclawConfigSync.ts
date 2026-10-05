@@ -253,7 +253,20 @@ export class OpenClawConfigSync {
 
   private applyManagedNonLanguageModels(config: Record<string, unknown>): void {
     if (this.nativeVideoSelection === undefined && this.restoreUnmanagedVideo) this.restoreUnmanagedVideo(config);
-    else { const changed = applyNativeVideoConfiguration(config, this.nativeVideoSelection, this.engineManager.getStateDir()); this.videoSecretsChanged ||= changed; }
+    const availableExtensionIds = listAvailableOpenClawExtensionIds(
+      this.engineManager.getStateDir(),
+      isRecord(config.plugins) ? config.plugins : {},
+      listKnownOpenClawWorkspaceDirs({
+        stateDir: this.engineManager.getStateDir(),
+        mainWorkspaceDir: this.getCoworkConfig().workingDirectory,
+        agents: this.getAgents?.() ?? [],
+        existingConfig: config,
+      }),
+    );
+    const videoSecretsChanged = applyNativeVideoConfiguration(
+      config, this.nativeVideoSelection, this.engineManager.getStateDir(), availableExtensionIds,
+    );
+    this.videoSecretsChanged ||= videoSecretsChanged;
     if (this.decisionSelection === undefined && this.restoreUnmanagedDecision) {
       this.restoreUnmanagedDecision(config);
       return;

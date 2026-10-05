@@ -43,7 +43,11 @@ Provider 目录描述可选择模型，应用默认决定新用户会话，sessi
 
 TTS voice 最佳努力查询 audio/voices、voices、服务根 api/voices，并支持手填。没有 voice 的合成模型不会自动配一个任意默认值进入语音选择器。
 
-OpenClaw 2026.9.8 已移除 OpenAI 视频生成器。视频设置提供 Kie AI、Z.AI、NovitaAI 原生服务商选择、对应模型目录、服务地址和 API Key；目录来自固定版本的原生 provider 契约，不请求付费服务或伪造 `/models` 视频发现接口。Kie 使用内置插件，Z.AI 与 NovitaAI 使用随应用固定打包的官方 provider 插件。
+内网发行版保留 OpenAI 插件作为兼容协议适配器，在线识别和在线合成使用用户选择的内网端点、模型及凭据。保留该插件不要求使用 OpenAI 官方服务；兼容协议与模型实际部署位置是两回事。ElevenLabs 插件不再打包，也不再列入受管语音提供方。
+
+ASR/TTS IPC 只返回 Gateway 实际注册的受支持适配器及凭据状态，不维护厂商默认模型或音色目录，也不透传 Gateway 插件的预设模型与音色。当前受支持的在线语音适配器只有 OpenAI；Deepgram、Mistral 等未打包适配器不进入配置选项。端点、模型、音色均从用户显式配置读取；目录为空或 Gateway 不可用时返回空选项，保存缺失模型或音色的配置会被拒绝。
+
+OpenClaw 2026.9.8 已移除 OpenAI 视频生成器。视频设置的配置契约对应 Kie AI、Z.AI、NovitaAI 原生服务商，目录来自固定版本的原生 provider 契约，不请求付费服务或伪造 `/models` 视频发现接口。设置页仅展示实际安装的提供方插件；上述三个插件均不随当前内网发行版打包，因此默认没有可选的视频服务。配置同步会清除缺失插件的注册和视频默认选择，并跳过相应凭据写入；应用中已保存的服务商配置及其他模型凭据仍保留。
 
 保存的视频条目带有 `nativeVideoProvider`，由应用配置同步器在启动、设置保存及登录状态变化时投影到 `agents.defaults.mediaModels.video` 和原生 `models.providers.<id>`，并启用所选插件。API Key 通过权限受限的 `extension-secrets.json` 文件 SecretRef 提供给运行时；Gateway 配置不包含明文凭据。视频服务商使用原生身份，因此同身份的语言模型共用地址和凭据。取消默认视频模型仅清除该默认选择，不关闭可能供其他能力使用的插件；原生运行时仍可按已有凭据和会话工具权限发现其他视频能力。导入导出沿用加密凭据流程并保留原生服务商标记。
 

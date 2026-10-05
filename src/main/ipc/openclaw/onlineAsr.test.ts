@@ -33,18 +33,14 @@ describe('OpenClaw online transcription IPC', () => {
     registerOnlineAsrHandlers({ getRuntime: () => runtime as never, requestGateway });
   });
 
-  it('uses OpenAI as the default online transcription protocol', async () => {
+  it('does not invent providers or models when no transcription plugin is registered', async () => {
     requestGateway
       .mockResolvedValueOnce({ transcription: { ready: false, providers: [] } })
       .mockResolvedValueOnce({ config: {} });
 
     const configuration = await handlers.get(OnlineAsrIpc.GetConfiguration)?.();
 
-    expect(configuration).toMatchObject({ selectedProvider: 'openai' });
-    expect((configuration as { providers: unknown[] }).providers[0]).toMatchObject({
-      id: 'openai',
-      defaultModel: 'gpt-4o-transcribe',
-    });
+    expect(configuration).toEqual({ available: false, providers: [], credentialConfigured: false });
   });
 
   it('reports the configured Gateway transcription provider', async () => {
@@ -53,8 +49,8 @@ describe('OpenClaw online transcription IPC', () => {
         return Promise.resolve({
           transcription: {
             ready: true,
-            activeProvider: 'deepgram',
-            providers: [{ id: 'deepgram', configured: true }],
+            activeProvider: 'openai',
+            providers: [{ id: 'openai', configured: true }],
           },
         });
       }
@@ -65,9 +61,9 @@ describe('OpenClaw online transcription IPC', () => {
               'voice-call': {
                 config: {
                   streaming: {
-                    provider: 'deepgram',
+                    provider: 'openai',
                     providers: {
-                      deepgram: { baseUrl: 'ws://speech.internal:8000', model: 'nova-3' },
+                      openai: { baseUrl: 'ws://speech.internal:8000', model: 'internal-asr' },
                     },
                   },
                 },
@@ -80,24 +76,24 @@ describe('OpenClaw online transcription IPC', () => {
 
     await expect(handlers.get(OnlineAsrIpc.GetStatus)?.()).resolves.toEqual({
       available: true,
-      provider: 'deepgram',
+      provider: 'openai',
     });
     expect(requestGateway).toHaveBeenCalledWith('talk.catalog', {});
   });
 
-  it('returns provider choices and the selected online transcription model', async () => {
+  it('returns the registered adapter and explicit model without Gateway model presets', async () => {
     requestGateway
       .mockResolvedValueOnce({
         transcription: {
           ready: true,
-          activeProvider: 'deepgram',
+          activeProvider: 'openai',
           providers: [
             {
-              id: 'deepgram',
-              label: 'Deepgram',
+              id: 'openai',
+              label: 'OpenAI',
               configured: true,
-              defaultModel: 'nova-3',
-              models: ['nova-3'],
+              defaultModel: 'vendor-default-model',
+              models: ['vendor-default-model'],
             },
           ],
         },
@@ -109,11 +105,11 @@ describe('OpenClaw online transcription IPC', () => {
               'voice-call': {
                 config: {
                   streaming: {
-                    provider: 'deepgram',
+                    provider: 'openai',
                     providers: {
-                      deepgram: {
+                      openai: {
                         baseUrl: 'ws://speech.internal:8000',
-                        model: 'nova-3-medical',
+                        model: 'internal-asr-medical',
                       },
                     },
                   },
@@ -127,21 +123,72 @@ describe('OpenClaw online transcription IPC', () => {
     const configuration = await handlers.get(OnlineAsrIpc.GetConfiguration)?.();
     expect(configuration).toMatchObject({
       available: true,
-      selectedProvider: 'deepgram',
+      selectedProvider: 'openai',
       baseUrl: 'ws://speech.internal:8000',
-      model: 'nova-3-medical',
+      model: 'internal-asr-medical',
       credentialConfigured: true,
     });
-    expect((configuration as { providers: unknown[] }).providers).toEqual(
-      expect.arrayContaining([expect.objectContaining({ id: 'deepgram', defaultModel: 'nova-3' })]),
-    );
+    expect((configuration as { providers: unknown[] }).providers).toEqual([
+      { id: 'openai', label: 'OpenAI', configured: true },
+    ]);
+  });
+
+  it.each(['deepgram', 'mistral', 'elevenlabs'])('ignores and rejects unsupported %s transcription settings', async provider => {
+    requestGateway.mockResolvedValueOnce({ transcription: {
+      ready: true, activeProvider: provider, providers: [{ id: provider, configured: true, defaultModel: 'vendor-model' }],
+    } }).mockResolvedValueOnce({ config: {} });
+    await expect(handlers.get(OnlineAsrIpc.GetConfiguration)?.()).resolves.toEqual({
+      available: false, providers: [], credentialConfigured: false,
+    });
+    requestGateway.mockClear();
+    await expect(handlers.get(OnlineAsrIpc.SaveConfiguration)?.({}, {
+      provider, baseUrl: 'http://speech.internal/v1', apiKey: 'test-key', model: 'internal-asr',
+    })).rejects.toThrow('Invalid online transcription configuration.');
+    expect(requestGateway).not.toHaveBeenCalled();
+  });
+
+  it('returns no fallback catalog when Gateway is unavailable', async () => {
+    requestGateway.mockRejectedValue(new Error('Unavailable'));
+    await expect(handlers.get(OnlineAsrIpc.GetConfiguration)?.()).resolves.toMatchObject({
+      available: false, providers: [], credentialConfigured: false,
+    });
+  });
+
+  it('does not use registered plugin model presets without explicit configuration', async () => {
+    requestGateway.mockResolvedValueOnce({ transcription: {
+      ready: true, activeProvider: 'openai', providers: [{
+        id: 'openai', configured: true, defaultModel: 'vendor-model', models: ['vendor-model'],
+      }],
+    } }).mockResolvedValueOnce({ config: {} });
+    const configuration = await handlers.get(OnlineAsrIpc.GetConfiguration)?.();
+    expect(configuration).toMatchObject({ available: false });
+    expect(configuration).not.toHaveProperty('model');
+    expect((configuration as { providers: unknown[] }).providers).toEqual([
+      { id: 'openai', label: 'openai', configured: true },
+    ]);
+  });
+
+  it('rejects saving an unregistered OpenAI adapter without patching config', async () => {
+    requestGateway.mockResolvedValueOnce({ transcription: { providers: [] } });
+    await expect(handlers.get(OnlineAsrIpc.SaveConfiguration)?.({}, {
+      provider: 'openai', baseUrl: 'http://speech.internal/v1', apiKey: 'test-key', model: 'internal-asr',
+    })).rejects.toThrow('Unknown online transcription provider.');
+    expect(requestGateway).toHaveBeenCalledTimes(1);
+    expect(requestGateway).not.toHaveBeenCalledWith('config.patch', expect.anything());
+  });
+
+  it('requires an explicit model instead of substituting a preset', async () => {
+    await expect(handlers.get(OnlineAsrIpc.SaveConfiguration)?.({}, {
+      provider: 'openai', baseUrl: 'http://speech.internal/v1', apiKey: 'test-key', model: '',
+    })).rejects.toThrow('Invalid online transcription configuration.');
+    expect(requestGateway).not.toHaveBeenCalled();
   });
 
   it('saves provider credentials through an atomic Gateway config patch', async () => {
     requestGateway
       .mockResolvedValueOnce({
         transcription: {
-          providers: [{ id: 'deepgram', label: 'Deepgram', configured: false }],
+          providers: [{ id: 'openai', label: 'OpenAI', configured: false }],
         },
       })
       .mockResolvedValueOnce({ hash: 'config-hash' })
@@ -150,10 +197,10 @@ describe('OpenClaw online transcription IPC', () => {
     await handlers.get(OnlineAsrIpc.SaveConfiguration)?.(
       { sender },
       {
-        provider: 'deepgram',
+        provider: 'openai',
         baseUrl: 'ws://speech.internal:8000',
         apiKey: 'secret',
-        model: 'nova-3',
+        model: 'internal-asr',
       },
     );
 
@@ -166,12 +213,12 @@ describe('OpenClaw online transcription IPC', () => {
           'voice-call': {
             config: {
               streaming: {
-                provider: 'deepgram',
+                provider: 'openai',
                 providers: {
-                  deepgram: {
+                  openai: {
                     baseUrl: 'ws://speech.internal:8000',
                     apiKey: 'secret',
-                    model: 'nova-3',
+                    model: 'internal-asr',
                   },
                 },
               },
@@ -228,8 +275,8 @@ describe('OpenClaw online transcription IPC', () => {
         return Promise.resolve({
           transcription: {
             ready: true,
-            activeProvider: 'deepgram',
-            providers: [{ id: 'deepgram', configured: true }],
+            activeProvider: 'openai',
+            providers: [{ id: 'openai', configured: true }],
           },
         });
       }
@@ -241,9 +288,9 @@ describe('OpenClaw online transcription IPC', () => {
                 'voice-call': {
                   config: {
                     streaming: {
-                      provider: 'deepgram',
+                      provider: 'openai',
                       providers: {
-                        deepgram: { baseUrl: 'ws://speech.internal:8000', model: 'nova-3' },
+                        openai: { baseUrl: 'ws://speech.internal:8000', model: 'internal-asr' },
                       },
                     },
                   },
@@ -256,7 +303,7 @@ describe('OpenClaw online transcription IPC', () => {
       return Promise.resolve({
         sessionId: 'talk-1',
         transcriptionSessionId: 'transcription-1',
-        provider: 'deepgram',
+        provider: 'openai',
         audio: { inputEncoding: 'g711_ulaw', inputSampleRateHz: 8000 },
       });
     });
@@ -304,8 +351,8 @@ describe('OpenClaw online transcription IPC', () => {
         return Promise.resolve({
           transcription: {
             ready: true,
-            activeProvider: 'deepgram',
-            providers: [{ id: 'deepgram', configured: true }],
+            activeProvider: 'openai',
+            providers: [{ id: 'openai', configured: true }],
           },
         });
       }
@@ -317,9 +364,9 @@ describe('OpenClaw online transcription IPC', () => {
                 'voice-call': {
                   config: {
                     streaming: {
-                      provider: 'deepgram',
+                      provider: 'openai',
                       providers: {
-                        deepgram: { baseUrl: 'ws://speech.internal:8000', model: 'nova-3' },
+                        openai: { baseUrl: 'ws://speech.internal:8000', model: 'internal-asr' },
                       },
                     },
                   },

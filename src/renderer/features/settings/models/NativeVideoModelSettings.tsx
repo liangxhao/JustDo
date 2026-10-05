@@ -4,6 +4,7 @@ import {
 } from '@shared/providers/nativeVideoProviders';
 import React, { useState } from 'react';
 
+import { useExtensionEnablement } from '@/features/plugins/extensions/useExtensionEnablement';
 import { i18nService } from '@/services/i18n';
 
 import {
@@ -18,9 +19,13 @@ interface Props {
 
 export const NativeVideoModelSettings: React.FC<Props> = ({ category, setCategory }) => {
   const [showKey, setShowKey] = useState(false);
+  const extensions = useExtensionEnablement();
+  const availableProviders = NATIVE_VIDEO_PROVIDERS.filter(entry =>
+    extensions.enabled.has(entry.id),
+  );
   const selectedId = category.defaultProviderId;
   const selected = selectedId ? category.providers[selectedId] : undefined;
-  const provider = findNativeVideoProvider(selected?.nativeVideoProvider);
+  const provider = availableProviders.find(entry => entry.id === selected?.nativeVideoProvider);
   const update = (values: Partial<NonLanguageModelCategory['providers'][string]>) => {
     if (!selectedId || !selected || !provider) return;
     setCategory(current => ({
@@ -36,6 +41,7 @@ export const NativeVideoModelSettings: React.FC<Props> = ({ category, setCategor
     setCategory(current => {
       const next = findNativeVideoProvider(providerId);
       if (!next) return { ...current, defaultProviderId: undefined };
+      if (!availableProviders.some(entry => entry.id === next.id)) return current;
       const existingId = Object.keys(current.providers).find(
         id => current.providers[id].nativeVideoProvider === next.id,
       );
@@ -64,7 +70,15 @@ export const NativeVideoModelSettings: React.FC<Props> = ({ category, setCategor
   const error = getNonLanguageModelCategoryValidationError('video', category);
   return (
     <div className="mx-auto max-w-[720px] space-y-4">
-      <p className="text-sm text-secondary">{i18nService.t('nativeVideoProtocolHint')}</p>
+      <p className="text-sm text-secondary">
+        {i18nService.t(
+          !extensions.loaded
+            ? 'loading'
+            : availableProviders.length
+              ? 'nativeVideoProtocolHint'
+              : 'nativeVideoProvidersUnavailable',
+        )}
+      </p>
       <label className="block text-sm text-foreground">
         {i18nService.t('modelProviders')}
         <select
@@ -73,7 +87,7 @@ export const NativeVideoModelSettings: React.FC<Props> = ({ category, setCategor
           onChange={event => select(event.target.value)}
         >
           <option value="">{i18nService.t('nativeVideoDisabled')}</option>
-          {NATIVE_VIDEO_PROVIDERS.map(entry => (
+          {availableProviders.map(entry => (
             <option key={entry.id} value={entry.id}>
               {entry.name}
             </option>

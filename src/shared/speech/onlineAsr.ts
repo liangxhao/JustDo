@@ -15,8 +15,6 @@ export interface OnlineAsrProvider {
   id: string;
   label: string;
   configured: boolean;
-  defaultModel?: string;
-  models?: string[];
 }
 
 export interface OnlineAsrConfiguration extends OnlineAsrStatus {

@@ -341,17 +341,17 @@ export const resolveManagedOpenClawTtsConfig = (
   if (!existingTts) return null;
   const currentProvider =
     typeof existingTts.provider === 'string' ? existingTts.provider.trim() : '';
-  if (currentProvider === 'openai' || currentProvider === 'elevenlabs') {
+  if (currentProvider === 'openai') {
     return existingTts.enabled === false ? { ...existingTts, enabled: true } : existingTts;
   }
   const providers = isRecord(existingTts.providers) ? existingTts.providers : {};
-  const onlineProvider = ['openai', 'elevenlabs'].find(provider => isRecord(providers[provider]));
+  const onlineProvider = isRecord(providers.openai) ? 'openai' : undefined;
   return onlineProvider
     ? { ...existingTts, enabled: true, provider: onlineProvider }
     : { ...existingTts, enabled: false };
 };
 
-export const MANAGED_TTS_PLUGIN_IDS = new Set([LOCAL_TTS_PROVIDER_ID, 'openai', 'elevenlabs']);
+export const MANAGED_TTS_PLUGIN_IDS = new Set([LOCAL_TTS_PROVIDER_ID, 'openai']);
 
 export const buildManagedOpenClawTtsPluginEntries = (
   ttsConfig: Record<string, unknown> | null,
@@ -2073,7 +2073,6 @@ export const buildDefaultOpenClawPluginEntries = (
         // an explicit allowlist, even if Gateway startup already loaded its service.
         [OpenClawExtensionId.MEMORY_CORE, true],
         [OpenClawExtensionId.CODE_MODE_QUICKJS, true],
-        [OpenClawExtensionId.GITHUB, true],
       ] as const
     )
       .filter(([id]) => isAvailable(id))

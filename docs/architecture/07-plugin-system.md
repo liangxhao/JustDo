@@ -62,11 +62,21 @@ OpenClaw v2026.9.8 的插件管理 RPC 会直接应用运行时变更。CLI 导�
 
 TypeSafe 扩展声明决策模型提供方；原生 `decision_evaluate` 工具按 Agent 的 `decisionModel` 自动提供。9.8 不再注册专用评估工具或 skill，Boolean、Choice、Score 输入由提供方翻译。具体接入见 [Jev evaluations](../features/jev-integration.md)。
 
-视频模型设置选择原生 Kie、Z.AI 或 Novita 提供方。配置同步器统一投影视频默认模型、
+内网发行版通过 `resources/openclaw-extension-prune.json` 排除 Anthropic、ElevenLabs、
+GitHub、Kie、Z.AI 和 Novita 插件；运行时资源准备与安装包构建共用该剪裁策略。
+保留 OpenAI 插件作为内网兼容接口的协议适配器，在线语音设置显式提交内网服务地址、
+模型及凭据；保留插件不代表必须连接 OpenAI 公网。实时识别需要兼容 Realtime
+Transcription（PCMU 8 kHz），朗读需要兼容 Audio Speech。模型目录仍由用户配置，
+不会以插件内置模型元数据填充语音设置。ElevenLabs 不再列入受管语音提供方。
+
+原生视频配置契约支持 Kie、Z.AI 或 Novita 提供方，但这些插件不随当前内网发行版打包，
+设置页仅列出实际安装的原生视频插件；当前内网发行版没有可选的视频服务。
+配置同步器根据插件库存清除缺失插件的注册和视频默认选择，不为其写入新凭据。
+已安装提供方的配置统一投影视频默认模型、
 提供方和受管插件状态，API Key 写入受限的 `extension-secrets.json` 并通过 file SecretRef
 引用，完整和最小同步遵循相同规则。同名原生提供方与对话模型共享凭据；设置页说明
 这一关系。9.6 未发布，按用户要求移除了本次新增的旧自定义 `/videos` 清单与兼容提示；
-设置页只提供当前原生视频能力，不支持的路由仍被拒绝，不恢复已删除的 OpenAI 视频传输。
+设置页沿用原生视频配置契约，不支持的路由仍被拒绝，不恢复已删除的 OpenAI 视频传输。
 
 skills.status 提供 effective source、eligibility、disabled、缺失依赖和安装选项。产品文件服务只管理用户导入目录；它不能从 SKILL.md 自行重建运行元数据。受管根使用原生 stateDir/skills，避免重复 extraDirs 引入同一路径。
 

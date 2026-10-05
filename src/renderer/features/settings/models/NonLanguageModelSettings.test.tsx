@@ -94,19 +94,30 @@ describe('NonLanguageModelSettings', () => {
           clearConfiguration: vi.fn().mockResolvedValue(undefined),
         },
         mediaGenerationModels: { saveConfiguration: vi.fn() },
+        extensions: {
+          list: vi
+            .fn()
+            .mockResolvedValue({
+              success: true,
+              extensions: ['kie', 'zai', 'novita'].map(id => ({ id, enabled: false })),
+            }),
+          onChanged: vi.fn(() => () => undefined),
+        },
       },
     });
   });
 
-  it('offers only native video setup without a custom endpoint editor', () => {
+  it('offers only installed native video services without a custom endpoint editor', async () => {
     renderSettings('video');
+    await screen.findByText('Kie AI');
     expect(screen.queryByText('addCustomProvider')).toBeNull();
     expect(screen.getByLabelText('modelProviders')).toBeTruthy();
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it('selects native video models without contacting a paid provider and masks API keys', () => {
+  it('selects installed native video models without contacting a paid provider and masks API keys', async () => {
     renderSettings('video');
+    await screen.findByText('Kie AI');
     fireEvent.change(screen.getByLabelText('modelProviders'), { target: { value: 'kie' } });
     expect(screen.getByDisplayValue('kling-2.6/text-to-video')).toBeTruthy();
     expect(screen.getByLabelText('baseUrl')).toHaveProperty('value', 'https://api.kie.ai');
@@ -117,6 +128,30 @@ describe('NonLanguageModelSettings', () => {
     expect(screen.getByLabelText('apiKey')).toHaveProperty('value', '');
     fireEvent.change(screen.getByLabelText('modelProviders'), { target: { value: 'kie' } });
     expect(screen.getByLabelText('apiKey')).toHaveProperty('value', 'typed-test-key');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('shows no cloud video choices or credential fields when those plugins are absent', async () => {
+    vi.mocked(window.electron.extensions.list).mockResolvedValue({ success: true, extensions: [] });
+    currentConfig.onlineModelProviders = {
+      video: {
+        defaultProviderId: 'native',
+        providers: {
+          native: {
+            nativeVideoProvider: 'kie',
+            baseUrl: 'https://api.kie.ai',
+            apiKey: 'retained-key',
+            defaultModel: 'kling-2.6/text-to-video',
+            models: [],
+          },
+        },
+      },
+    };
+    renderSettings('video');
+    await screen.findByText('nativeVideoProvidersUnavailable');
+    expect(screen.getAllByRole('option').map(option => option.getAttribute('value'))).toEqual(['']);
+    expect(screen.queryByLabelText('baseUrl')).toBeNull();
+    expect(screen.queryByLabelText('apiKey')).toBeNull();
     expect(fetch).not.toHaveBeenCalled();
   });
 

@@ -1245,7 +1245,7 @@ describe('OpenClaw managed speech config', () => {
     ).toEqual({ enabled: false, provider: 'openai' });
   });
 
-  test.each(['tts-local-cli', 'openai', 'elevenlabs'])(
+  test.each(['tts-local-cli', 'openai'])(
     'enables the active %s speech provider plugin',
     provider => {
       expect(buildManagedOpenClawTtsPluginEntries({ provider })).toEqual({
@@ -1254,7 +1254,8 @@ describe('OpenClaw managed speech config', () => {
     },
   );
 
-  test('does not enable an unknown speech provider plugin', () => {
+  test('does not enable removed or unknown speech provider plugins', () => {
+    expect(buildManagedOpenClawTtsPluginEntries({ provider: 'elevenlabs' })).toEqual({});
     expect(buildManagedOpenClawTtsPluginEntries({ provider: 'unknown' })).toEqual({});
   });
 
@@ -1452,7 +1453,7 @@ test('disables missed-job catch-up by default while preserving an explicit opt-i
   expect(buildManagedOpenClawCronConfig({ skipMissedJobs: false }).skipMissedJobs).toBe(false);
 });
 
-  test.each([OpenClawExtensionId.CODE_MODE_QUICKJS, OpenClawExtensionId.GITHUB])('retains %s in explicit allowlists while preserving disable', id => {
+  test.each([OpenClawExtensionId.CODE_MODE_QUICKJS])('retains %s in explicit allowlists while preserving disable', id => {
     const defaults = buildDefaultOpenClawPluginEntries(candidate => candidate === id);
     const merged = mergeOpenClawPluginConfig(
       applyDefaultOpenClawPluginEntries({ allow: [], entries: { [id]: { enabled: false } } }, defaults),

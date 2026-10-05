@@ -71,11 +71,47 @@ export function applyNativeVideoConfiguration(
   config: Record<string, unknown>,
   selection: Selection,
   stateDir: string,
+  availableExtensionIds: readonly string[] | null,
 ): boolean {
-  if (selection === undefined) return false;
+  // An incomplete inventory cannot establish absence, and must not enable new providers.
+  if (availableExtensionIds === null) return false;
+  const unavailable = new Set<string>(
+    NATIVE_VIDEO_PROVIDERS.filter(provider => !availableExtensionIds.includes(provider.id)).map(
+      provider => provider.id,
+    ),
+  );
+  const isUnavailableModel = (model: unknown) =>
+    typeof model === 'string' && [...unavailable].some(id => model.startsWith(`${id}/`));
   const agents = record(config.agents);
   const defaults = record(agents.defaults);
   const mediaModels = { ...record(defaults.mediaModels) };
+  const video = record(mediaModels.video);
+  const fallbacks = Array.isArray(video.fallbacks)
+    ? video.fallbacks.filter(id => !isUnavailableModel(id))
+    : [];
+  if (isUnavailableModel(typeof mediaModels.video === 'string' ? mediaModels.video : video.primary)) {
+    if (fallbacks.length) {
+      mediaModels.video = { ...video, primary: fallbacks[0], fallbacks: fallbacks.slice(1) };
+    } else {
+      delete mediaModels.video;
+    }
+    config.agents = { ...agents, defaults: { ...defaults, mediaModels } };
+  } else if (Array.isArray(video.fallbacks) && video.fallbacks.some(isUnavailableModel)) {
+    mediaModels.video = { ...video, fallbacks };
+    config.agents = { ...agents, defaults: { ...defaults, mediaModels } };
+  }
+  const currentPlugins = record(config.plugins);
+  const currentEntries = record(currentPlugins.entries);
+  if (Object.keys(currentEntries).some(id => unavailable.has(id))) {
+    currentPlugins.entries = Object.fromEntries(
+      Object.entries(currentEntries).filter(([id]) => !unavailable.has(id)),
+    );
+  }
+  for (const field of ['allow', 'deny'] as const) {
+    const ids = currentPlugins[field];
+    if (Array.isArray(ids)) currentPlugins[field] = ids.filter(id => !unavailable.has(id));
+  }
+  if (selection === undefined || (selection && unavailable.has(selection.providerId))) return false;
   if (!selection) {
     const primary =
       typeof mediaModels.video === 'string' ? mediaModels.video : record(mediaModels.video).primary;

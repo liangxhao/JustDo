@@ -31,30 +31,7 @@ const MAX_PROVIDER_ID_LENGTH = 64;
 const MAX_BASE_URL_LENGTH = 2_048;
 const MAX_MODEL_ID_LENGTH = 256;
 const MAX_API_KEY_LENGTH = 16_384;
-const BUILTIN_ONLINE_ASR_PROVIDERS: OnlineAsrConfiguration['providers'] = [
-  {
-    id: 'openai',
-    label: 'OpenAI',
-    configured: false,
-    defaultModel: 'gpt-4o-transcribe',
-  },
-  { id: 'deepgram', label: 'Deepgram', configured: false, defaultModel: 'nova-3' },
-  {
-    id: 'mistral',
-    label: 'Mistral',
-    configured: false,
-    defaultModel: 'voxtral-mini-transcribe-realtime-2602',
-  },
-  {
-    id: 'elevenlabs',
-    label: 'ElevenLabs',
-    configured: false,
-    defaultModel: 'scribe_v2_realtime',
-  },
-];
-const SUPPORTED_ONLINE_ASR_PROVIDER_IDS = new Set(
-  BUILTIN_ONLINE_ASR_PROVIDERS.map(provider => provider.id),
-);
+const SUPPORTED_ONLINE_ASR_PROVIDER_IDS = new Set(['openai']);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -72,29 +49,22 @@ const parseProviders = (catalog: TalkCatalog): OnlineAsrConfiguration['providers
     ? catalog.transcription.providers
     : [];
   const discovered = catalogProviders.flatMap(value => {
-    if (!isRecord(value) || typeof value.id !== 'string') return [];
+    if (
+      !isRecord(value) ||
+      typeof value.id !== 'string' ||
+      !SUPPORTED_ONLINE_ASR_PROVIDER_IDS.has(value.id)
+    ) {
+      return [];
+    }
     return [
       {
         id: value.id,
         label: typeof value.label === 'string' ? value.label : value.id,
         configured: value.configured === true,
-        ...(typeof value.defaultModel === 'string' ? { defaultModel: value.defaultModel } : {}),
-        ...(Array.isArray(value.models) && value.models.every(model => typeof model === 'string')
-          ? { models: value.models }
-          : {}),
       },
     ];
   });
-  const defaultProvider = BUILTIN_ONLINE_ASR_PROVIDERS.find(provider => provider.id === 'openai');
-  const byId = new Map(
-    defaultProvider ? [[defaultProvider.id, defaultProvider] as const] : [],
-  );
-  discovered.forEach(provider => {
-    if (SUPPORTED_ONLINE_ASR_PROVIDER_IDS.has(provider.id)) {
-      byId.set(provider.id, { ...byId.get(provider.id), ...provider });
-    }
-  });
-  return [...byId.values()];
+  return [...new Map(discovered.map(provider => [provider.id, provider])).values()];
 };
 
 const readStreamingConfig = (config: unknown): Record<string, unknown> => {
@@ -110,7 +80,10 @@ const hasExplicitIntranetConfiguration = (
   config: unknown,
 ): { ready: boolean; provider?: string } => {
   const streaming = readStreamingConfig(config);
-  const provider = typeof streaming.provider === 'string' ? streaming.provider : undefined;
+  const provider =
+    typeof streaming.provider === 'string' && SUPPORTED_ONLINE_ASR_PROVIDER_IDS.has(streaming.provider)
+      ? streaming.provider
+      : undefined;
   const providerConfigs = isRecord(streaming.providers) ? streaming.providers : {};
   const providerConfig = provider && isRecord(providerConfigs[provider]) ? providerConfigs[provider] : {};
   return {
@@ -237,7 +210,8 @@ export function registerOnlineAsrHandlers({
         return {
           available: readiness.ready,
           providers,
-          ...(typeof catalog.transcription?.activeProvider === 'string'
+          ...(typeof catalog.transcription?.activeProvider === 'string' &&
+            SUPPORTED_ONLINE_ASR_PROVIDER_IDS.has(catalog.transcription.activeProvider)
             ? { provider: catalog.transcription.activeProvider }
             : {}),
           ...(selectedProvider ? { selectedProvider } : {}),
@@ -273,7 +247,7 @@ export function registerOnlineAsrHandlers({
         throw new Error('Invalid online transcription service URL.');
       }
       if (
-        !provider ||
+        !SUPPORTED_ONLINE_ASR_PROVIDER_IDS.has(provider) ||
         provider.length > MAX_PROVIDER_ID_LENGTH ||
         !/^[a-z][a-z0-9_-]*$/.test(provider) ||
         !baseUrl ||

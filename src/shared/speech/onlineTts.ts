@@ -9,10 +9,6 @@ export interface OnlineTtsProvider {
   id: string;
   label: string;
   configured: boolean;
-  defaultModel?: string;
-  defaultVoice?: string;
-  models?: string[];
-  voices?: string[];
 }
 
 export interface OnlineTtsStatus {

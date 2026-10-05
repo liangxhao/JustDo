@@ -396,7 +396,18 @@ without redirects, environment proxies or hosted fallback. Preserve native
 OpenClaw decision semantics and response validation. Users without this settings
 category retain explicit extension state. See `docs/features/jev-integration.md`.
 
-Video settings select the native Kie, Z.AI or Novita provider and use the managed
+The intranet runtime excludes `anthropic`, `elevenlabs`, `github`, `kie`, `zai`,
+and `novita` through `resources/openclaw-extension-prune.json`. Keep `openai` as
+the protocol adapter for configured intranet speech/model/media endpoints; do not
+equate the adapter with a requirement to call the public OpenAI service.
+Managed speech providers are `openai` and `tts-local-cli`.
+Online speech IPC reports registered adapters and explicit configuration only;
+do not add vendor model/voice presets or fallback catalogs when Gateway is unavailable.
+
+Video settings retain the native Kie, Z.AI or Novita configuration contract, but
+these provider plugins are not bundled in the intranet runtime. Only installed
+plugins appear in video settings; config sync clears unavailable video selections
+and plugin registrations without publishing new credentials. Installed providers use the managed
 config synchronizer with file SecretRefs. Same-provider chat models share its
 endpoint and credentials. Clearing the default does not disable native automatic
 discovery. Accept only the supported native video provider configuration; do not

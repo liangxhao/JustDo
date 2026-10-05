@@ -24,74 +24,22 @@ const MAX_BASE_URL_LENGTH = 2_048;
 const MAX_MODEL_ID_LENGTH = 256;
 const MAX_VOICE_ID_LENGTH = 256;
 const MAX_API_KEY_LENGTH = 16_384;
-const BUILTIN_ONLINE_TTS_PROVIDERS: OnlineTtsConfiguration['providers'] = [
-  {
-    id: 'openai',
-    label: 'OpenAI',
-    configured: false,
-    defaultModel: 'gpt-4o-mini-tts',
-    defaultVoice: 'coral',
-    models: ['gpt-4o-mini-tts', 'tts-1', 'tts-1-hd'],
-    voices: [
-      'alloy',
-      'ash',
-      'ballad',
-      'cedar',
-      'coral',
-      'echo',
-      'fable',
-      'juniper',
-      'marin',
-      'nova',
-      'onyx',
-      'sage',
-      'shimmer',
-      'verse',
-    ],
-  },
-  {
-    id: 'elevenlabs',
-    label: 'ElevenLabs',
-    configured: false,
-    defaultModel: 'eleven_multilingual_v2',
-    defaultVoice: 'pMsXgVXv3BLzUgSXRplE',
-    models: [
-      'eleven_v3',
-      'eleven_multilingual_v2',
-      'eleven_flash_v2_5',
-      'eleven_flash_v2',
-      'eleven_monolingual_v1',
-    ],
-  },
-];
-const SUPPORTED_PROVIDER_IDS = new Set(
-  BUILTIN_ONLINE_TTS_PROVIDERS.map(provider => provider.id),
-);
+const SUPPORTED_PROVIDER_IDS = new Set(['openai']);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
 const parseProviders = (catalog: TtsCatalog): OnlineTtsConfiguration['providers'] => {
-  const byId = new Map(
-    BUILTIN_ONLINE_TTS_PROVIDERS.map(provider => [provider.id, provider] as const),
-  );
-  if (!Array.isArray(catalog.providers)) return [...byId.values()];
+  const byId = new Map<string, OnlineTtsConfiguration['providers'][number]>();
+  if (!Array.isArray(catalog.providers)) return [];
   for (const value of catalog.providers) {
     if (!isRecord(value) || typeof value.id !== 'string' || !SUPPORTED_PROVIDER_IDS.has(value.id)) {
       continue;
     }
-    const builtin = byId.get(value.id);
     byId.set(value.id, {
-      ...builtin,
       id: value.id,
-      label: typeof value.name === 'string' ? value.name : (builtin?.label ?? value.id),
+      label: typeof value.name === 'string' ? value.name : value.id,
       configured: value.configured === true,
-      ...(Array.isArray(value.models) && value.models.every(model => typeof model === 'string')
-        ? { models: value.models }
-        : {}),
-      ...(Array.isArray(value.voices) && value.voices.every(voice => typeof voice === 'string')
-        ? { voices: value.voices }
-        : {}),
     });
   }
   return [...byId.values()];
@@ -101,18 +49,15 @@ const readTtsConfig = (config: unknown): Record<string, unknown> =>
   isRecord(config) && isRecord(config.tts) ? config.tts : {};
 
 const readProviderFields = (
-  provider: string | undefined,
   providerConfig: Record<string, unknown>,
 ): { baseUrl?: string; model?: string; voice?: string } => {
-  const modelKey = provider === 'elevenlabs' ? 'modelId' : 'model';
-  const voiceKey = provider === 'elevenlabs' ? 'voiceId' : 'voice';
   return {
     ...(typeof providerConfig.baseUrl === 'string' ? { baseUrl: providerConfig.baseUrl } : {}),
-    ...(typeof providerConfig[modelKey] === 'string'
-      ? { model: providerConfig[modelKey] }
+    ...(typeof providerConfig.model === 'string'
+      ? { model: providerConfig.model }
       : {}),
-    ...(typeof providerConfig[voiceKey] === 'string'
-      ? { voice: providerConfig[voiceKey] }
+    ...(typeof providerConfig.voice === 'string'
+      ? { voice: providerConfig.voice }
       : {}),
   };
 };
@@ -132,7 +77,7 @@ const resolveConfiguration = (
     selectedProvider && isRecord(providerConfigs[selectedProvider])
       ? providerConfigs[selectedProvider]
       : {};
-  const fields = readProviderFields(selectedProvider, selectedConfig);
+  const fields = readProviderFields(selectedConfig);
   const selectedCatalogProvider = providers.find(provider => provider.id === selectedProvider);
   const activeOnlineProvider =
     typeof catalog.active === 'string' && SUPPORTED_PROVIDER_IDS.has(catalog.active)
@@ -192,8 +137,7 @@ export function registerOnlineTtsHandlers({
     } catch (error) {
       return {
         available: false,
-        providers: BUILTIN_ONLINE_TTS_PROVIDERS,
-        selectedProvider: BUILTIN_ONLINE_TTS_PROVIDERS[0]?.id,
+        providers: [],
         credentialConfigured: false,
         error: error instanceof Error ? error.name : 'GatewayError',
       };
@@ -254,10 +198,7 @@ export function registerOnlineTtsHandlers({
       if (!apiKey && (existingProvider !== provider || existingBaseUrl !== baseUrl)) {
         throw new Error('Online speech API key is required when changing the service URL.');
       }
-      const providerConfig =
-        provider === 'elevenlabs'
-          ? { baseUrl, ...(apiKey ? { apiKey } : {}), modelId: model, voiceId: voice }
-          : { baseUrl, ...(apiKey ? { apiKey } : {}), model, voice };
+      const providerConfig = { baseUrl, ...(apiKey ? { apiKey } : {}), model, voice };
       await requestGateway('config.patch', {
         raw: JSON.stringify({
           tts: {

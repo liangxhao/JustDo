@@ -307,6 +307,7 @@ export const settingsTranslations = {
     nativeVideoProtocolHint:
       '选择视频服务商和模型，保存后可在对话中请求生成视频。模型支持的文字、图片、音频输入和生成参数由服务商决定。',
     nativeVideoDisabled: '不指定默认视频模型',
+    nativeVideoProvidersUnavailable: '当前没有可用的视频生成服务。',
     nativeVideoModel: '视频模型',
     nativeVideoShowKey: '显示 API Key',
     nativeVideoCredentialsHint:
@@ -1624,6 +1625,7 @@ export const settingsTranslations = {
     nativeVideoProtocolHint:
       'Choose a video provider and model, then save to generate videos from chat. Supported text, image, audio inputs and generation options depend on the provider.',
     nativeVideoDisabled: 'No default video model',
+    nativeVideoProvidersUnavailable: 'No video generation services are currently available.',
     nativeVideoModel: 'Video model',
     nativeVideoShowKey: 'Show API key',
     nativeVideoCredentialsHint:
