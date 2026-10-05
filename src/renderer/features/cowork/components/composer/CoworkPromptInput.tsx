@@ -602,7 +602,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         });
       },
     });
-    const composerFeatures = buildComposerFeatures([swarmComposerFeature], extensionEnablement);
     const slashMenuRef = useRef<HTMLDivElement>(null);
     const folderButtonRef = useRef<HTMLButtonElement>(null);
     const dragDepthRef = useRef(0);
@@ -1910,6 +1909,27 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       dragDepthRef,
       setIsDraggingFiles,
     });
+    const composerFeatures = buildComposerFeatures(
+      [
+        ...(supportsAttachments
+          ? [
+              {
+                id: 'attachments',
+                label: i18nService.t('coworkFilesAndFolders'),
+                icon: <PaperClipIcon className="h-4 w-4" />,
+                disabled: disabled || (isRunActive && !canQueue) || isAddingFile,
+                onSelect: handleAddFile,
+              },
+            ]
+          : []),
+        {
+          ...swarmComposerFeature,
+          section: i18nService.t('composerPlugins'),
+          disabled: disabled || isRunActive,
+        },
+      ],
+      extensionEnablement,
+    );
 
     // Context menu handling for textarea
     const handleContextMenu = useCallback((event: React.MouseEvent<HTMLTextAreaElement>) => {
@@ -2848,20 +2868,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                       <ComposerFeatureMenu
                         items={composerFeatures}
                         label={i18nService.t('composerFeatures')}
-                        disabled={disabled || isRunActive}
+                        disabled={disabled || composerFeatures.every(item => item.disabled)}
                       />
-                    )}
-                    {supportsAttachments && (
-                      <button
-                        type="button"
-                        onClick={handleAddFile}
-                        className="flex items-center justify-center p-1.5 rounded-lg text-sm text-secondary hover:bg-surface-raised hover:text-foreground transition-colors"
-                        title={i18nService.t('coworkAddFile')}
-                        aria-label={i18nService.t('coworkAddFile')}
-                        disabled={disabled || (isRunActive && !canQueue) || isAddingFile}
-                      >
-                        <PaperClipIcon className="h-4 w-4" />
-                      </button>
                     )}
                     {supportsSpeechInput && (
                       <LocalSpeechInputButton
@@ -3130,20 +3138,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                       <ComposerFeatureMenu
                         items={composerFeatures}
                         label={i18nService.t('composerFeatures')}
-                        disabled={disabled || isRunActive}
+                        disabled={disabled || composerFeatures.every(item => item.disabled)}
                       />
-                    )}
-                    {supportsAttachments && (
-                      <button
-                        type="button"
-                        onClick={handleAddFile}
-                        className="flex-shrink-0 p-1.5 rounded-lg text-secondary hover:bg-surface-raised hover:text-foreground transition-colors"
-                        title={i18nService.t('coworkAddFile')}
-                        aria-label={i18nService.t('coworkAddFile')}
-                        disabled={disabled || (isRunActive && !canQueue) || isAddingFile}
-                      >
-                        <PaperClipIcon className="h-4 w-4" />
-                      </button>
                     )}
                     {supportsSpeechInput && (
                       <LocalSpeechInputButton

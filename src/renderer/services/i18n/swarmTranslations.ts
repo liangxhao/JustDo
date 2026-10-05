@@ -1,6 +1,6 @@
 export const swarmTranslations = {
   zh: {
-    composerFeatures: '添加功能',
+    composerFeatures: '添加',
     swarmRemoveToken: '点击或按退格/删除键取消 Swarm',
     swarmGoalConflict: '请先结束当前目标并退出结果反馈，或新建会话发起 Swarm。当前草稿和 Swarm 选择已保留。',
     swarmTitle: 'Swarm 协作',
@@ -45,7 +45,7 @@ export const swarmTranslations = {
     swarmPreparingHint: '尚未确认实际启动。若工具不可用或无法拆分，请查看主会话说明。',
   },
   en: {
-    composerFeatures: 'Add feature',
+    composerFeatures: 'Add',
     swarmRemoveToken: 'Click or press Backspace/Delete to remove Swarm',
     swarmGoalConflict: 'Finish the current goal and exit result feedback, or start Swarm in a new conversation. Your draft and Swarm selection are preserved.',
     swarmTitle: 'Swarm collaboration',

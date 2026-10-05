@@ -77,11 +77,7 @@ export default function WorktreeSettingsPage() {
   };
 
   return (
-    <div className="mx-auto max-w-4xl space-y-5 p-6">
-      <div>
-        <h2 className="text-xl font-semibold text-foreground">{t('worktreeSettingsTitle')}</h2>
-        <p className="mt-1 text-sm text-secondary">{t('worktreeSettingsDescription')}</p>
-      </div>
+    <div className="space-y-5">
       <label className="flex items-center justify-between gap-4 rounded-xl border border-border p-4">
         <span>
           <span className="block text-sm font-medium text-foreground">

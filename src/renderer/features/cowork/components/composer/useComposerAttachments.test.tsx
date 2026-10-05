@@ -7,9 +7,11 @@ import { afterEach, expect, it, vi } from 'vitest';
 
 import { selectDraftAttachments } from '@/features/cowork/coworkSelectors';
 import coworkReducer from '@/features/cowork/coworkSlice';
+import { i18nService } from '@/services/i18n';
 import type { RootState } from '@/store';
 
 import AttachmentCard from './AttachmentCard';
+import ComposerFeatureMenu from './ComposerFeatureMenu';
 import { useComposerAttachments } from './useComposerAttachments';
 
 afterEach(() => {
@@ -40,6 +42,18 @@ function HomeComposer({ isRunActive = false }: { isRunActive?: boolean }) {
   });
   return (
     <div data-testid="composer" onDrop={handlers.handleDrop}>
+      <ComposerFeatureMenu
+        label={i18nService.t('composerFeatures')}
+        items={[
+          {
+            id: 'attachments',
+            label: i18nService.t('coworkFilesAndFolders'),
+            icon: <span />,
+            disabled: isRunActive || isAddingFile,
+            onSelect: handlers.handleAddFile,
+          },
+        ]}
+      />
       {attachments.map(attachment => (
         <AttachmentCard
           key={attachment.path}
@@ -53,6 +67,7 @@ function HomeComposer({ isRunActive = false }: { isRunActive?: boolean }) {
 
 function setup(isRunActive = false) {
   const dialog = {
+    selectFiles: vi.fn().mockResolvedValue({ success: true, paths: [] }),
     getPathForFile: vi.fn<(file: File) => string>().mockReturnValue(''),
     saveInlineFile: vi.fn().mockResolvedValue({ success: false, path: null }),
     readFileAsDataUrl: vi.fn().mockResolvedValue({ success: false }),
@@ -68,6 +83,24 @@ function setup(isRunActive = false) {
     fireEvent.drop(screen.getByTestId('composer'), { dataTransfer: { files, types: ['Files'] } });
   return { dialog, store, drop };
 }
+
+it('opens the original native picker from the plus menu and adds the selected files to the draft', async () => {
+  const { dialog, store } = setup();
+  dialog.selectFiles.mockResolvedValue({ success: true, paths: ['C:\\用户 文件\\report.pdf'] });
+
+  fireEvent.click(screen.getByRole('button', { name: i18nService.t('composerFeatures') }));
+  fireEvent.click(screen.getByRole('menuitem', { name: i18nService.t('coworkFilesAndFolders') }));
+
+  expect(dialog.selectFiles).toHaveBeenCalledExactlyOnceWith({
+    title: i18nService.t('coworkAddFile'),
+  });
+  expect(screen.queryByRole('menu')).toBeNull();
+  await waitFor(() => expect(screen.getByText('report.pdf')).toBeTruthy());
+  expect(store.getState().cowork.draftAttachments.__home__?.[0].path).toBe(
+    'C:\\用户 文件\\report.pdf',
+  );
+  expect(dialog.saveInlineFile).not.toHaveBeenCalled();
+});
 
 it('keeps multiple native file cards in the home draft without staging even above 25 MB', async () => {
   const { dialog, store, drop } = setup();

@@ -1,10 +1,11 @@
 import { CheckIcon, PlusIcon } from '@heroicons/react/24/outline';
-import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
+import { Fragment, type ReactNode, useEffect, useId, useRef, useState } from 'react';
 
 export interface ComposerFeatureItem {
   id: string;
   label: string;
   description?: string;
+  section?: string;
   icon: ReactNode;
   selected?: boolean;
   disabled?: boolean;
@@ -101,7 +102,7 @@ export default function ComposerFeatureMenu({
             setOpen(true);
           }
         }}
-        className={`flex h-7 items-center gap-1 rounded-lg px-1.5 disabled:opacity-40 ${items.some(item => item.selected) ? 'bg-primary/10 text-primary' : 'text-secondary hover:bg-surface-raised'}`}
+        className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition-colors disabled:opacity-40 ${items.some(item => item.selected) ? 'bg-primary/10 text-primary' : 'bg-surface-raised text-secondary hover:text-foreground'}`}
       >
         <span aria-hidden="true">{triggerIcon ?? <PlusIcon className="h-4 w-4" />}</span>
       </button>
@@ -110,52 +111,64 @@ export default function ComposerFeatureMenu({
           role="menu"
           id={menuId}
           aria-label={label}
-          className={`absolute bottom-full left-0 z-50 mb-2 max-w-[calc(100vw-32px)] rounded-xl border border-border bg-surface p-1 shadow-lg ${items.some(item => item.description) ? 'w-60' : 'w-48'}`}
+          className="absolute bottom-full left-0 z-50 mb-2 max-h-[min(360px,calc(100dvh-160px))] w-96 max-w-[calc(100vw-48px)] overflow-y-auto rounded-2xl border border-border bg-surface p-1.5 shadow-elevated"
         >
-          {items.map(item => (
-            <button
-              key={item.id}
-              ref={element => {
-                if (element) buttons.current.set(item.id, element);
-                else buttons.current.delete(item.id);
-              }}
-              type="button"
-              role="menuitem"
-              aria-label={item.label}
-              aria-describedby={item.description ? `${menuId}-${item.id}-description` : undefined}
-              tabIndex={-1}
-              disabled={item.disabled}
-              onClick={() => {
-                setOpen(false);
-                trigger.current?.focus();
-                item.onSelect();
-              }}
-              onKeyDown={event => {
-                if (['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) {
-                  event.preventDefault();
-                  navigate(item.id, event.key);
-                }
-              }}
-              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-foreground hover:bg-surface-raised focus:bg-surface-raised focus:outline-none disabled:opacity-40"
-            >
-              <span aria-hidden="true" className="flex h-4 w-4 shrink-0 items-center text-primary">
-                {item.icon}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block">{item.label}</span>
-                {item.description && (
-                  <span
-                    id={`${menuId}-${item.id}-description`}
-                    className="mt-0.5 block text-xs leading-relaxed text-secondary"
-                  >
-                    {item.description}
-                  </span>
-                )}
-              </span>
-              {item.selected && (
-                <CheckIcon aria-hidden="true" className="h-4 w-4 shrink-0 text-primary" />
+          {items.map((item, index) => (
+            <Fragment key={item.id}>
+              {(index === 0 || item.section !== items[index - 1].section) && (
+                <div
+                  role="presentation"
+                  className={`px-2 pb-1 pt-1 text-xs text-secondary ${index > 0 ? 'mt-2' : ''}`}
+                >
+                  {item.section ?? label}
+                </div>
               )}
-            </button>
+              <button
+                ref={element => {
+                  if (element) buttons.current.set(item.id, element);
+                  else buttons.current.delete(item.id);
+                }}
+                type="button"
+                role="menuitem"
+                aria-label={item.label}
+                aria-describedby={item.description ? `${menuId}-${item.id}-description` : undefined}
+                tabIndex={-1}
+                disabled={item.disabled}
+                onClick={() => {
+                  setOpen(false);
+                  trigger.current?.focus();
+                  item.onSelect();
+                }}
+                onKeyDown={event => {
+                  if (['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) {
+                    event.preventDefault();
+                    navigate(item.id, event.key);
+                  }
+                }}
+                className="flex w-full items-center gap-2 rounded-full px-2 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-surface-raised focus:bg-surface-raised focus:outline-none disabled:opacity-40"
+              >
+                <span
+                  aria-hidden="true"
+                  className="flex h-4 w-4 shrink-0 items-center text-secondary"
+                >
+                  {item.icon}
+                </span>
+                <span className="flex min-w-0 flex-1 items-baseline gap-2">
+                  <span className="max-w-full shrink-0 truncate font-medium">{item.label}</span>
+                  {item.description && (
+                    <span
+                      id={`${menuId}-${item.id}-description`}
+                      className="truncate text-sm text-secondary"
+                    >
+                      {item.description}
+                    </span>
+                  )}
+                </span>
+                {item.selected && (
+                  <CheckIcon aria-hidden="true" className="h-4 w-4 shrink-0 text-primary" />
+                )}
+              </button>
+            </Fragment>
           ))}
         </div>
       )}
