@@ -203,6 +203,9 @@ See [upgrade audit](../openclaw-upgrades/v2026.9.8.md).
 
 ## Workboard：四栏展示与原生执行
 
+Workboard 对没有显式配置的用户默认关闭；已有开启或关闭设置保持不变。
+独立 Swarm Flow 不要求开启 Workboard，也不会向其面板写入卡片。
+
 Workboard 仍使用 OpenClaw 插件的 `workboard.cards.*` / `workboard.boards.*`
 接口和原生 SQLite。Renderer 的四栏是展示投影，不改写持久化状态：
 
@@ -261,3 +264,21 @@ cache/ownership state and native error classes used across these modules. This i
 boundary, not a runtime patch or a fallback credential reader. The build recipe
 fingerprints this boundary. Rebuild frozen runtimes from the locked pristine
 artifact when it changes; never edit their source or proof manifests in place.
+
+## Swarm Flow：独立持久化任务流
+
+`openclaw-extensions/swarm-flow` 使用插件 service 生命周期及原生 Gateway / subagent API。
+`swarm_flow_start` 提供明确请求的工具入口；输入框的精确标记通过提示钩子限定发起工具，主会话利用历史和附件整理完整说明后建立流程。工具从当前原生用户条目派生幂等键，并单独保留原始指派依据，后台不缓存聊天历史。
+插件拥有规划、DAG 校验、节点准入、运行核对、独立验收和主聊天交付，服务不依赖 Renderer 存活。
+注册的 `swarmFlow.health/start/list/detail/control/intervene` 使用原生 operator scopes，产品 IPC 再绑定本地会话身份。`intervene` 是显式用户入口，不作为模型工具暴露：保存有界的节点执行输入，或在归属、策略、终态、依赖及预算验证后，继续原节点会话/重新执行选中节点。修订号拒绝过期操作，操作 ID 使丢失回复后的重发幂等；只有新的有效提交与原生成功终态才能推进下游。运行中或结果不确定时不启动第二次执行。
+
+执行会话保留插件 ownership；主会话绑定、权限和模型在准入时核验，不绕过原生 parent-link 限制。
+所有阶段继承主会话的原生 permissionMode 和项目目录；任务 access 只定义读写意图及调度互斥，不自动把只读任务降为禁止全部命令的原生 read-only。只读任务约束随派发携带，真正的权限上限仍由原生会话策略执行。
+无法表达的受限执行策略拒绝启动。配置同步默认启用此插件且保留显式禁用，不注册 Workboard 面板。
+配置同步同时投影 `availableAgentIds`，只包含 main 及产品中启用、未删除的助手；创建流程和每次节点准入均读取当前配置，与原生名单取交集。删除助手先同步禁用名单，再保存软删除标记，失败则回滚可用性。该名单只限制 Swarm 新节点，不撤销其他原生入口权限，也不删除历史会话。
+构建过程按既有自定义扩展发现机制打包，运行时无需修改上游 ownership 逻辑。
+新工作/验收节点使用原生身份绑定的提交工具，将有界总结、证据及验收结论保存为工作流元数据；版本 2 工具工厂在写入前核验当前调用权限。提交和原生执行结束分别确认，两者均成功才放行依赖，不从最终聊天文字推断完成。显式重试只重跑已经失败且无活动执行的节点，使用新会话/run 并保留旧执行身份，最多三次执行；结果不确定及不确定最终交付不能重试。
+Gateway 启动的流程服务在同一进程内由各助手的独立工具/钩子注册实例共享；服务生命周期仍由启动实例管理，跨助手提交继续校验各自的原生调用身份。
+提交工具的证据入口支持文字或列表，摘要缺省时仅从显式提交的证据生成；入库始终为有界摘要和证据列表，验收仍要求显式布尔 verdict，不以终态聊天文字补造成功。
+提交错误通过原生工具结果反馈模型；`before_agent_finalize` 尽可能提前准备有界修正指令。服务确认原生成功终态后独立检查提交，不依赖钩子必定触发；空回复补全/隔离结束说明也必须收敛。缺少提示时，通过原生 `subagent.getSessionMessages` 按需读取最多 64 条记录，只提取有界提交错误，再次核对父会话与节点/run 后在同一会话追加最多三轮修正，每轮使用新的原生 run ID。`before_prompt_build` 与工具调用钩子共同限定修正阶段只能提交结果或报告阻塞。取消、失败、未知及权限变化的执行不续跑，暂停时等待恢复，耗尽修正次数仍失败；该机制不重跑任务、不回退工具活动，也不复制原生消息历史。
+实现与验证细节见 [Swarm 图形任务流](../features/swarm-visual-workflow.md)。

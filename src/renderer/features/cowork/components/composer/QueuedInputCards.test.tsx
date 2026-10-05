@@ -70,7 +70,7 @@ test('opens full multiline text and attachment information without sending or wi
   expect(getDetail).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: i18nService.t('coworkQueueView') }));
   const region = screen.getByRole('region', { name: i18nService.t('coworkQueueView') });
-  const shadow = region.querySelector('[data-queued-message]')!.shadowRoot!;
+  const shadow = region.querySelector('[data-queued-message] [data-user-message]')!.shadowRoot!;
   expect(shadow.querySelector('.chat-group')?.textContent).toContain('Long message '.repeat(40).trim());
   expect(shadow.querySelector('script')).toBeNull();
   expect(shadow.querySelector('.chat-group')?.textContent).toContain('requirements.pdf');

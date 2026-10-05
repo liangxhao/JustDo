@@ -19,6 +19,7 @@ import {
   parsePlanSlashCommandPrompt,
   shouldClearSlashCommandComposerBeforeExecution,
 } from '@shared/cowork/slashCommands';
+import type { SwarmOptions } from '@shared/cowork/swarm';
 import type { OpenClawModelChoice } from '@shared/openclaw/models';
 import { isLocalAudioAttachment } from '@shared/speech/localAsr';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -118,7 +119,11 @@ import { getCompactFolderName } from '@/utils/path';
 
 import { isImagePath } from './composerAttachmentFiles';
 import { hasComposerContent } from './composerContent';
+import ComposerFeatureMenu from './ComposerFeatureMenu';
+import { buildComposerFeatures } from './composerFeatures';
+import { COMPOSER_SURFACE_CLASS, COMPOSER_TEXTAREA_CLASS } from './composerStyles';
 import { ConversationAgentSelector } from './ConversationAgentSelector';
+import FeatureTextarea from './FeatureTextarea';
 import { createGoalReadRetry } from './goalReadRetry';
 import { readGoalState } from './goalReadState';
 import {
@@ -130,6 +135,7 @@ import {
   submittedMessageQuotes,
 } from './messageQuote';
 import { canClearSubmittedDraft } from './sessionSubmission';
+import { blocksSwarmGoalSubmission } from './swarmSubmission';
 import { useComposerAttachments } from './useComposerAttachments';
 import { useGoalReadiness } from './useGoalReadiness';
 
@@ -196,6 +202,7 @@ interface CoworkPromptInputProps {
     attachments?: CoworkAttachmentPayload[],
     gatewayPrompt?: string,
     worktree?: boolean,
+    swarm?: SwarmOptions,
   ) => boolean | void | Promise<boolean | void>;
   onQueue?: (
     prompt: string,
@@ -288,6 +295,15 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     } = props;
     const dispatch = useDispatch();
     const draftKey = draftKeyOverride || sessionId || '__home__';
+    const [swarmDrafts, setSwarmDrafts] = useState<Record<string, SwarmOptions | undefined>>({});
+    const swarmOptions = swarmDrafts[draftKey];
+    const setSwarmOptions = (value?: SwarmOptions) =>
+      setSwarmDrafts(current => ({ ...current, [draftKey]: value }));
+    const swarmPlanMode = useSelector((state: RootState) =>
+      sessionId ? state.cowork.planModeBySession[sessionId] : state.cowork.newSessionPlanMode,
+    );
+    const currentDraftKeyRef = useRef(draftKey);
+    currentDraftKeyRef.current = draftKey;
     const isSideChat = mode === 'side-chat';
     const messageQuotes = useSelector(
       (state: RootState) => state.cowork.draftMessageQuotes?.[draftKey] ?? EMPTY_MESSAGE_QUOTES,
@@ -310,9 +326,44 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       ) => {
         const submit = queue ? queuePrompt : submitPrompt;
         if (!submit) return false;
+        let instruction: string | undefined;
+        if (swarmOptions) {
+          if (swarmPlanMode || prompt.trimStart().startsWith('/')) {
+            window.dispatchEvent(
+              new CustomEvent('app:showToast', {
+                detail: i18nService.t(swarmPlanMode ? 'swarmPlan' : 'swarmInvalid'),
+              }),
+            );
+            return false;
+          }
+          try {
+            const prepared = await window.electron.cowork.prepareSwarm(swarmOptions, sessionId);
+            if (!prepared.success) {
+              const key = {
+                disabled: 'swarmDisabled',
+                plan: 'swarmPlan',
+                invalid: 'swarmInvalid',
+                unavailable: 'swarmPrepareUnavailable',
+              }[prepared.reason];
+              window.dispatchEvent(
+                new CustomEvent('app:showToast', { detail: i18nService.t(key) }),
+              );
+              return false;
+            }
+            instruction = prepared.instruction;
+          } catch {
+            window.dispatchEvent(
+              new CustomEvent('app:showToast', {
+                detail: i18nService.t('swarmPrepareUnavailable'),
+              }),
+            );
+            return false;
+          }
+          if (currentDraftKeyRef.current !== draftKey) return false;
+        }
         const submittedQuotes = [...submittedMessageQuotes(prompt, messageQuotes, isSideChat)];
         const label = i18nService.t('messageQuoteContext');
-        return submitMessageQuoteDrafts(
+        const result = await submitMessageQuoteDrafts(
           submittedQuotes,
           () =>
             submit(
@@ -320,15 +371,36 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
               !isSideChat && submittedQuotes.length
                 ? [...(attachments ?? []), ...submittedQuotes.map(messageQuoteAttachment)]
                 : attachments,
-              quotedGatewayPrompt(prompt, gatewayPrompt, submittedQuotes, isSideChat),
+              instruction
+                ? (quotedGatewayPrompt(prompt, gatewayPrompt, submittedQuotes, isSideChat) ??
+                    prompt) +
+                    '\n\n' +
+                    instruction
+                : quotedGatewayPrompt(prompt, gatewayPrompt, submittedQuotes, isSideChat),
               canSelectWorktree && useWorktree,
+              swarmOptions,
             ),
           ids => dispatch(removeDraftMessageQuotes({ draftKey, ids })),
         );
+        if (result !== false && swarmOptions) {
+          setSwarmDrafts(current =>
+            current[draftKey] === swarmOptions ? { ...current, [draftKey]: undefined } : current,
+          );
+        }
+        return result;
       },
       [
-        messageQuotes, submitPrompt, queuePrompt, dispatch, draftKey,
-        isSideChat, canSelectWorktree, useWorktree,
+        messageQuotes,
+        submitPrompt,
+        queuePrompt,
+        dispatch,
+        draftKey,
+        isSideChat,
+        canSelectWorktree,
+        useWorktree,
+        swarmOptions,
+        swarmPlanMode,
+        sessionId,
       ],
     );
     const supportsAttachments = !remoteManaged && !isSideChat;
@@ -476,7 +548,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     initialGoalObjectiveRef.current = initialGoalObjective;
     const goalStateMatchesSession = goalStateSessionIdRef.current === sessionId;
     const hasSessionGoal = goalStateMatchesSession && Boolean(sessionGoal || pendingGoalObjective);
-    const { goalReadReady, goalSubmissionBlocked, readGoal } = useGoalReadiness(sessionId, isSideChat);
+    const { goalReadReady, goalSubmissionBlocked, readGoal } = useGoalReadiness(
+      sessionId,
+      isSideChat,
+    );
     useEffect(() => {
       onGoalPresenceChange?.(sessionId, hasSessionGoal, goalReadReady);
     }, [hasSessionGoal, goalReadReady, onGoalPresenceChange, sessionId]);
@@ -493,12 +568,27 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         goalExecution?.phase === GoalExecutionPhase.Retrying);
     const isRunActive =
       isStopping || goalAutoRunning || isCoworkRunActive(isStreaming, goalRunProgress);
-    const canQueue = Boolean(queuePrompt) && goalReadReady && !isSideChat && !isStopping && !hasSessionGoal;
+    const canQueue =
+      Boolean(queuePrompt) && goalReadReady && !isSideChat && !isStopping && !hasSessionGoal;
     const canStopRun = goalAutoRunning || canStopCoworkRun(isStreaming, goalRunProgress);
     const submissionAvailabilityRef = useRef({ disabled, isRunActive, canQueue });
-    submissionAvailabilityRef.current = { disabled: disabled || goalSubmissionBlocked, isRunActive, canQueue };
+    submissionAvailabilityRef.current = {
+      disabled: disabled || goalSubmissionBlocked,
+      isRunActive,
+      canQueue,
+    };
 
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const composerFeatures = buildComposerFeatures({
+      swarm: swarmOptions,
+      selectSwarm: option => {
+        setSwarmOptions(option);
+        requestAnimationFrame(() => {
+          textareaRef.current?.focus();
+          textareaRef.current?.setSelectionRange(0, 0);
+        });
+      },
+    });
     const slashMenuRef = useRef<HTMLDivElement>(null);
     const folderButtonRef = useRef<HTMLButtonElement>(null);
     const dragDepthRef = useRef(0);
@@ -794,8 +884,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         requestAnimationFrame(() => {
           const textarea = textareaRef.current;
           if (textarea) {
-            textarea.style.height = 'auto';
-            textarea.style.height = `${Math.min(Math.max(textarea.scrollHeight, minHeight), maxHeight)}px`;
+            resizeTextarea(textarea);
           }
         });
       },
@@ -809,8 +898,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         requestAnimationFrame(() => {
           const textarea = textareaRef.current;
           if (!textarea) return;
-          textarea.style.height = 'auto';
-          textarea.style.height = `${Math.min(Math.max(textarea.scrollHeight, minHeight), maxHeight)}px`;
+          resizeTextarea(textarea);
           textarea.focus();
           textarea.setSelectionRange(nextValue.length, nextValue.length);
         });
@@ -823,15 +911,21 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const isLarge = size === 'large';
     const minHeight = isLarge ? 60 : 24;
     const maxHeight = isLarge ? 200 : 200;
+    const resizeTextarea = useCallback(
+      (textarea: HTMLTextAreaElement) => {
+        textarea.style.height = 'auto';
+        textarea.style.height = `${Math.min(Math.max(textarea.scrollHeight, minHeight), maxHeight)}px`;
+      },
+      [minHeight, maxHeight],
+    );
 
     // Auto-resize textarea
     useEffect(() => {
       const textarea = textareaRef.current;
       if (textarea) {
-        textarea.style.height = 'auto';
-        textarea.style.height = `${Math.min(Math.max(textarea.scrollHeight, minHeight), maxHeight)}px`;
+        resizeTextarea(textarea);
       }
-    }, [value, minHeight, maxHeight]);
+    }, [value, resizeTextarea]);
 
     useEffect(() => {
       const handleFocusInput = (event: Event) => {
@@ -881,6 +975,20 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       async (promptOverride?: string) => {
         let promptValue = promptOverride ?? value;
         let trimmedValue = promptValue.trim();
+        // Refuse before any goal mutation, plan command, attachment staging or
+        // draft clearing: those routes bypass the normal Swarm send wrapper.
+        if (
+          blocksSwarmGoalSubmission({
+            swarmSelected: Boolean(swarmOptions),
+            goalStatus: sessionGoalRef.current?.status,
+            completionFeedback: completionFeedbackRef.current !== null,
+          })
+        ) {
+          window.dispatchEvent(
+            new CustomEvent('app:showToast', { detail: i18nService.t('swarmGoalConflict') }),
+          );
+          return;
+        }
         if (isSideChat) {
           if (
             !trimmedValue ||
@@ -1134,14 +1242,18 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           }
 
           if (
-            !submissionIsCurrent() || isStopPending() || goalActionPendingRef.current ||
+            !submissionIsCurrent() ||
+            isStopPending() ||
+            goalActionPendingRef.current ||
             submissionAvailabilityRef.current.disabled
-          ) return;
+          )
+            return;
           // Goal state can change while attachment preparation is in flight.
           if (
             (isRunActive || submissionAvailabilityRef.current.isRunActive) &&
             !submissionAvailabilityRef.current.canQueue
-          ) return;
+          )
+            return;
           const recordingIssue = recordingSubmissionIssue(
             submittedRecording,
             attachmentPayloads,
@@ -1391,6 +1503,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         isStopPending,
         disabled,
         onSubmit,
+        swarmOptions,
         messageQuotes,
         attachments,
         browserAnnotations,
@@ -1649,11 +1762,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     };
 
     const containerClass = isLarge
-      ? 'relative rounded-2xl border border-border bg-surface shadow-card focus-within:shadow-elevated focus-within:ring-1 focus-within:ring-primary/40 focus-within:border-primary'
-      : 'relative flex items-end gap-2 p-3 rounded-xl border border-border bg-surface';
+      ? COMPOSER_SURFACE_CLASS
+      : 'relative flex flex-wrap items-end gap-2 p-3 rounded-xl border border-border bg-surface';
 
     const textareaClass = isLarge
-      ? `w-full resize-none bg-transparent px-4 pt-2.5 pb-2 text-foreground placeholder:dark:text-foregroundSecondary/60 placeholder:text-secondary/60 focus:outline-none text-[15px] leading-6 min-h-[${minHeight}px] max-h-[${maxHeight}px]`
+      ? `${COMPOSER_TEXTAREA_CLASS} min-h-[${minHeight}px] max-h-[${maxHeight}px]`
       : 'flex-1 resize-none bg-transparent text-foreground placeholder:placeholder:text-secondary focus:outline-none text-sm leading-relaxed min-h-[24px] max-h-[200px]';
 
     const truncatePath = (path: string, maxLength = 30): string => {
@@ -1854,13 +1967,24 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         const end = textarea.selectionEnd;
         const selectedText = value.substring(start, end);
         const hasSelection = start !== end;
+        const replacesWholeDraft = hasSelection && start === 0 && end === value.length;
+        const consumeSelectedFeature = () => {
+          if (!replacesWholeDraft || !swarmOptions) return;
+          setSwarmDrafts(current =>
+            current[draftKey] === swarmOptions ? { ...current, [draftKey]: undefined } : current,
+          );
+        };
+        const draftIsCurrent = () =>
+          currentDraftKeyRef.current === draftKey && latestValueRef.current === value;
 
         switch (action) {
           case 'cut':
             if (hasSelection) {
               await navigator.clipboard.writeText(selectedText);
+              if (!draftIsCurrent()) return;
               const newValue = value.substring(0, start) + value.substring(end);
               setValue(newValue);
+              consumeSelectedFeature();
               // Reset selection to start position
               requestAnimationFrame(() => {
                 textarea.selectionStart = start;
@@ -1878,9 +2002,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           case 'paste':
             try {
               const clipText = await navigator.clipboard.readText();
+              if (!draftIsCurrent()) return;
               if (clipText) {
                 const newValue = value.substring(0, start) + clipText + value.substring(end);
                 setValue(newValue);
+                consumeSelectedFeature();
                 requestAnimationFrame(() => {
                   const newPos = start + clipText.length;
                   textarea.selectionStart = newPos;
@@ -1900,7 +2026,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             break;
         }
       },
-      [value, setValue, closeContextMenu],
+      [value, setValue, closeContextMenu, draftKey, swarmOptions],
     );
 
     const contextMenuItems = useMemo(() => {
@@ -1994,10 +2120,12 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         requestInFlight = true;
         try {
           const requestedRevision = executionRevision;
-          const result = await readGoal(() => readGoalState(
-            () => window.electron.cowork.getSessionGoal(sessionId),
-            () => window.electron.cowork.getGoalExecution(sessionId),
-          ));
+          const result = await readGoal(() =>
+            readGoalState(
+              () => window.electron.cowork.getSessionGoal(sessionId),
+              () => window.electron.cowork.getGoalExecution(sessionId),
+            ),
+          );
           if (cancelled) return;
           if (!result.success) {
             retry.failed();
@@ -2062,7 +2190,14 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         removeExecutionListener();
         retry.dispose();
       };
-    }, [applyAcceptedGoalClear, cancelGoalClear, isSideChat, readGoal, sessionId, updateCompletionFeedback]);
+    }, [
+      applyAcceptedGoalClear,
+      cancelGoalClear,
+      isSideChat,
+      readGoal,
+      sessionId,
+      updateCompletionFeedback,
+    ]);
 
     const handleGoalEdit = useCallback(
       async (objective: string): Promise<boolean> => {
@@ -2580,91 +2715,87 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         )}
         <div
           className={
-            isLarge &&
-            showFolderSelector &&
-            !remoteManaged
+            isLarge && showFolderSelector && !remoteManaged
               ? 'rounded-[20px] bg-surface-raised p-1 shadow-subtle'
               : undefined
           }
         >
-          {isLarge &&
-            showFolderSelector &&
-            !remoteManaged && (
-              <div className="relative flex items-center px-2 py-1.5">
-                <div className="flex items-center gap-2">
-                  {allowMainAgentSwitch && !sessionId && !isSideChat && (
-                      <ConversationAgentSelector
-                        agentId={effectiveAgentId}
-                        disabled={disabled || isStreaming}
-                        onChange={onConversationAgentChange}
-                      />
-                    )}
-                  <button
-                    ref={folderButtonRef as React.RefObject<HTMLButtonElement>}
-                    disabled={!showFolderSelector}
-                    type="button"
-                    onClick={() => setShowFolderMenu(!showFolderMenu)}
-                    aria-haspopup="dialog"
-                    aria-expanded={showFolderMenu}
-                    title={workingDirectory || i18nService.t('coworkSelectProject')}
-                    aria-label={i18nService.t('workspacePickerTitle')}
-                    className={`flex items-center gap-1.5 pl-2.5 pr-1.5 py-1.5 rounded-full bg-surface text-sm transition-colors ${
-                      showFolderRequiredWarning
-                        ? 'ring-1 ring-warning text-warning animate-shake'
-                        : 'text-secondary hover:bg-surface-raised hover:text-foreground'
-                    }`}
-                  >
-                    <FolderIcon className="h-4 w-4 flex-shrink-0" />
-                    <span className="max-w-[150px] truncate text-xs">
-                      {workingDirectory
-                        ? truncatePath(workingDirectory)
-                        : i18nService.t('coworkSelectProject')}
+          {isLarge && showFolderSelector && !remoteManaged && (
+            <div className="relative flex items-center px-2 py-1.5">
+              <div className="flex items-center gap-2">
+                {allowMainAgentSwitch && !sessionId && !isSideChat && (
+                  <ConversationAgentSelector
+                    agentId={effectiveAgentId}
+                    disabled={disabled || isStreaming}
+                    onChange={onConversationAgentChange}
+                  />
+                )}
+                <button
+                  ref={folderButtonRef as React.RefObject<HTMLButtonElement>}
+                  disabled={!showFolderSelector}
+                  type="button"
+                  onClick={() => setShowFolderMenu(!showFolderMenu)}
+                  aria-haspopup="dialog"
+                  aria-expanded={showFolderMenu}
+                  title={workingDirectory || i18nService.t('coworkSelectProject')}
+                  aria-label={i18nService.t('workspacePickerTitle')}
+                  className={`flex items-center gap-1.5 pl-2.5 pr-1.5 py-1.5 rounded-full bg-surface text-sm transition-colors ${
+                    showFolderRequiredWarning
+                      ? 'ring-1 ring-warning text-warning animate-shake'
+                      : 'text-secondary hover:bg-surface-raised hover:text-foreground'
+                  }`}
+                >
+                  <FolderIcon className="h-4 w-4 flex-shrink-0" />
+                  <span className="max-w-[150px] truncate text-xs">
+                    {workingDirectory
+                      ? truncatePath(workingDirectory)
+                      : i18nService.t('coworkSelectProject')}
+                  </span>
+                  <ChevronDownIcon className="h-3 w-3 shrink-0" />
+                  {workingDirectory && showFolderSelector && (
+                    <span
+                      role="button"
+                      tabIndex={-1}
+                      onClick={e => {
+                        e.stopPropagation();
+                        handleFolderSelect('');
+                      }}
+                      className="flex-shrink-0 ml-0.5 p-0.5 rounded hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
+                    >
+                      <XMarkIcon className="h-3 w-3" />
                     </span>
-                    <ChevronDownIcon className="h-3 w-3 shrink-0" />
-                    {workingDirectory && showFolderSelector && (
-                      <span
-                        role="button"
-                        tabIndex={-1}
-                        onClick={e => {
-                          e.stopPropagation();
-                          handleFolderSelect('');
-                        }}
-                        className="flex-shrink-0 ml-0.5 p-0.5 rounded hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
-                      >
-                        <XMarkIcon className="h-3 w-3" />
-                      </span>
-                    )}
-                  </button>
-                </div>
-                <FolderSelectorPopover
-                  isOpen={showFolderMenu}
-                  onClose={() => setShowFolderMenu(false)}
-                  onSelectFolder={handleFolderSelect}
-                  anchorRef={folderButtonRef as React.RefObject<HTMLElement>}
-                  currentFolder={workingDirectory}
-                />
-                {canSelectWorktree && (
-                  <label
-                    className="ml-auto flex cursor-pointer items-center gap-1.5 px-2 text-xs text-secondary"
-                    title={i18nService.t('worktreeComposerDescription')}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={useWorktree}
-                      disabled={disabled || isStreaming}
-                      onChange={event => setUseWorktree(event.target.checked)}
-                      className="h-3.5 w-3.5 accent-primary"
-                    />
-                    {i18nService.t('worktreeComposerLabel')}
-                  </label>
-                )}
-                {showFolderRequiredWarning && (
-                  <div className="absolute left-0 top-full mt-1 px-2 py-1 rounded-md bg-surface-raised text-warning text-xs whitespace-nowrap animate-fade-in-up shadow-subtle z-10">
-                    {i18nService.t('coworkSelectFolderFirst')}
-                  </div>
-                )}
+                  )}
+                </button>
               </div>
-            )}
+              <FolderSelectorPopover
+                isOpen={showFolderMenu}
+                onClose={() => setShowFolderMenu(false)}
+                onSelectFolder={handleFolderSelect}
+                anchorRef={folderButtonRef as React.RefObject<HTMLElement>}
+                currentFolder={workingDirectory}
+              />
+              {canSelectWorktree && (
+                <label
+                  className="ml-auto flex cursor-pointer items-center gap-1.5 px-2 text-xs text-secondary"
+                  title={i18nService.t('worktreeComposerDescription')}
+                >
+                  <input
+                    type="checkbox"
+                    checked={useWorktree}
+                    disabled={disabled || isStreaming}
+                    onChange={event => setUseWorktree(event.target.checked)}
+                    className="h-3.5 w-3.5 accent-primary"
+                  />
+                  {i18nService.t('worktreeComposerLabel')}
+                </label>
+              )}
+              {showFolderRequiredWarning && (
+                <div className="absolute left-0 top-full mt-1 px-2 py-1 rounded-md bg-surface-raised text-warning text-xs whitespace-nowrap animate-fade-in-up shadow-subtle z-10">
+                  {i18nService.t('coworkSelectFolderFirst')}
+                </div>
+              )}
+            </div>
+          )}
           <div
             className={enhancedContainerClass}
             onDragEnter={handleDragEnter}
@@ -2679,7 +2810,13 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             )}
             {isLarge ? (
               <>
-                <textarea
+                <FeatureTextarea
+                  containerClassName={isLarge ? undefined : 'basis-full'}
+                  key={draftKey}
+                  featureLabel={swarmOptions ? i18nService.t('swarmTitle') : undefined}
+                  removeLabel={i18nService.t('swarmRemoveToken')}
+                  onRemoveFeature={() => setSwarmOptions(undefined)}
+                  onLayoutChange={resizeTextarea}
                   ref={textareaRef}
                   value={value}
                   onChange={handleInputChange}
@@ -2694,6 +2831,13 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 />
                 <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 pb-2 pt-1.5">
                   <div className="flex items-center gap-2 relative">
+                    {supportsAgentControls && (
+                      <ComposerFeatureMenu
+                        items={composerFeatures}
+                        label={i18nService.t('composerFeatures')}
+                        disabled={disabled || isRunActive}
+                      />
+                    )}
                     {supportsAttachments && (
                       <button
                         type="button"
@@ -2947,7 +3091,13 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
               </>
             ) : (
               <>
-                <textarea
+                <FeatureTextarea
+                  containerClassName={isLarge ? undefined : 'basis-full'}
+                  key={draftKey}
+                  featureLabel={swarmOptions ? i18nService.t('swarmTitle') : undefined}
+                  removeLabel={i18nService.t('swarmRemoveToken')}
+                  onRemoveFeature={() => setSwarmOptions(undefined)}
+                  onLayoutChange={resizeTextarea}
                   ref={textareaRef}
                   value={value}
                   onChange={handleInputChange}
@@ -2961,7 +3111,14 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 />
 
                 {!remoteManaged && (
-                  <div className="flex items-center gap-1">
+                  <div className="flex flex-1 items-center gap-1">
+                    {supportsAgentControls && (
+                      <ComposerFeatureMenu
+                        items={composerFeatures}
+                        label={i18nService.t('composerFeatures')}
+                        disabled={disabled || isRunActive}
+                      />
+                    )}
                     {supportsAttachments && (
                       <button
                         type="button"

@@ -364,7 +364,6 @@ native ownership for historical transcripts. Hide them from Settings and reject
 profile mutations; do not call native agents.delete for this history-preserving
 flow because it purges session indexes even with deleteFiles:false.
 
-
 Persistent peer collaboration is the optional `openclaw-extensions/agent-team`
 extension, disabled by default and user-toggleable. Keep its tools, native-send
 hooks and skill together; do not inject a roster or collaboration instructions
@@ -372,6 +371,13 @@ on every turn. Runtime Services owns receipt history reads and blocks managed
 peer sends when the extension is disabled. Config sync must preserve the user's
 explicit extension state.
 
+Swarm Flow is the independent `openclaw-extensions/swarm-flow` plugin, with a
+per-submit composer option and a dependency graph Tab. Its Gateway service owns
+the durable DAG and stage results in stateDir/swarm-flow/flows.sqlite. It uses
+plugin-owned native execution sessions, not forged spawnedBy relationships.
+Do not duplicate transcripts or retry uncertain launches. No Workboard/agent-team
+dependency; Workboard defaults off, preserving explicit user choices for both plugins.
+See `docs/features/swarm-visual-workflow.md`.
 
 Local audio attachment transcription is the `openclaw-extensions/stt-local-cli`
 extension (`transcribe_audio`). Config sync supplies installed Sherpa ONNX paths;
@@ -379,7 +385,6 @@ file transcription is independent of the microphone toggle. Preserve explicit
 plugin disable state. The host tool is unavailable in sandboxed sessions and
 respects effective filesystem policy. External audio attachments are staged in
 the project before sending. See `docs/architecture/07-plugin-system.md`.
-
 
 Jev evaluations use the vendored upstream `typesafe` extension. Settings → Models
 → Decision models owns the required URL/API Key, default model and activation

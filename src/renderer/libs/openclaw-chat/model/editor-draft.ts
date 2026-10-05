@@ -1,6 +1,10 @@
 import { type BrowserAnnotationDraft, parseBrowserAnnotationPrompt } from '@shared/browser/browser';
-import { type BrowserRecordingDraft, recordingImageFingerprint } from '@shared/browser/browserRecording';
+import {
+  type BrowserRecordingDraft,
+  recordingImageFingerprint,
+} from '@shared/browser/browserRecording';
 import type { CoworkAttachmentPayload } from '@shared/cowork/attachments';
+import { stripSwarmInstruction } from '@shared/cowork/swarm';
 import { extractGoalFollowUpRequest } from '@shared/prompts/goalFollowUpPrompt';
 
 import { splitMediaFromOutput } from '@/libs/openclaw-chat/shims/backend-helpers';
@@ -18,7 +22,7 @@ export function parseEditorDraftPayload(
   editorAttachments: unknown,
   options: { restoreBrowserAnnotations?: boolean } = {},
 ): EditorDraftPayload {
-  const rawEditorText = typeof editorText === 'string' ? editorText : '';
+  const rawEditorText = typeof editorText === 'string' ? stripSwarmInstruction(editorText) : '';
   const browserPrompt = parseBrowserAnnotationPrompt(rawEditorText);
   const visibleText = browserPrompt?.userText ?? rawEditorText;
   const goalText = extractGoalFollowUpRequest(visibleText) ?? visibleText;

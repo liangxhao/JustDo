@@ -1114,6 +1114,12 @@ interface IElectronAPI {
       callback: (snapshot: import('@shared/cowork/sessionGoal').GoalExecutionSnapshot) => void,
     ) => () => void;
     onSessionGoalChanged: (callback: (data: { sessionId: string }) => void) => () => void;
+    getSwarmSnapshot: import('../../shared/cowork/swarm').SwarmApi['getSwarmSnapshot'];
+    getSwarmFlows: import('../../shared/cowork/swarmFlow').SwarmFlowApi['getSwarmFlows'];
+    getSwarmFlowDetail: import('../../shared/cowork/swarmFlow').SwarmFlowApi['getSwarmFlowDetail'];
+    controlSwarmFlow: import('../../shared/cowork/swarmFlow').SwarmFlowApi['controlSwarmFlow'];
+    interveneSwarmFlow: import('../../shared/cowork/swarmFlow').SwarmFlowApi['interveneSwarmFlow'];
+    prepareSwarm: import('../../shared/cowork/swarm').SwarmApi['prepareSwarm'];
     getSubTaskStatus: (
       sessionId?: string,
       forceRefresh?: boolean,

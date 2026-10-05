@@ -1,0 +1,24 @@
+{
+  "id": "swarm-flow",
+  "name": "Swarm Flow",
+  "description": "Durable agent task flows with dependency gates and independent verification.",
+  "activation": {
+    "onStartup": true,
+    "onCapabilities": ["tool"]
+  },
+  "contracts": {
+    "tools": ["swarm_flow_start", "swarm_flow_complete", "swarm_flow_verify", "swarm_flow_block"]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "availableAgentIds": {
+        "type": "array",
+        "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$" },
+        "uniqueItems": true,
+        "description": "Product-managed agent IDs eligible for new Swarm stages. Defaults to main only."
+      }
+    }
+  }
+}

@@ -12,9 +12,13 @@ import { sessionReviewTranslations } from './sessionReviewTranslations';
 import { sessionStorageTranslations } from './sessionStorageTranslations';
 import { settingsTranslations } from './settingsTranslations';
 import { skillWorkshopTranslations } from './skillWorkshopTranslations';
+import { swarmFlowTranslations } from './swarmFlowTranslations';
+import { swarmTranslations } from './swarmTranslations';
 
 export const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
+    ...swarmTranslations.zh,
+    ...swarmFlowTranslations.zh,
     ...sessionDiagnosticsTranslations.zh,
     ...sessionReviewTranslations.zh,
     ...sessionStorageTranslations.zh,
@@ -29,6 +33,8 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     ...scheduledTaskTranslations.zh,
   },
   en: {
+    ...swarmTranslations.en,
+    ...swarmFlowTranslations.en,
     ...sessionDiagnosticsTranslations.en,
     ...sessionReviewTranslations.en,
     ...sessionStorageTranslations.en,

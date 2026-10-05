@@ -87,8 +87,20 @@ export const registerAgentHandlers = ({
         if (agent.deletedAt) return;
         await requireIdle();
         // Native agents.delete purges session indexes even with deleteFiles:false.
-        // Retain native ownership for history; all product admissions require enabled.
-        getStore().deleteAgent(id);
+        // Apply admission removal before the irreversible product tombstone, so a
+        // failed config update can restore the profile without reviving deleted IDs.
+        const store = getStore();
+        store.saveAgentProfile({ ...agent, enabled: false });
+        try {
+          const applied = await syncConfig();
+          if (!applied.success) throw new Error(applied.error || 'agentSaveFailed');
+          store.deleteAgent(id);
+        } catch (error) {
+          store.saveAgentProfile(agent);
+          const rollback = await syncConfig();
+          if (!rollback.success) throw new Error('agentRollbackFailed');
+          throw error;
+        }
       }),
     ),
   );

@@ -33,7 +33,7 @@ test('preserves quote, annotation and recording cards together with native messa
     ],
   };
   const { container, rerender, unmount } = render(<StrictMode><QueuedInputMessage message={message} /></StrictMode>);
-  const shadow = container.querySelector('[data-queued-message]')!.shadowRoot!;
+  const shadow = container.querySelector('[data-queued-message] [data-user-message]')!.shadowRoot!;
   expect(shadow.querySelector('blockquote')?.textContent).toContain('Quoted source text');
   expect(shadow.querySelector('.browser-annotation-message')).not.toBeNull();
   const recording = shadow.querySelector<HTMLDetailsElement>('details.recording-message')!;
@@ -58,7 +58,7 @@ test('supports image previews, code reader actions and diagram source switching'
       { type: 'text', text: '```js\nconst value = 1;\n```\n\n```mermaid\ngraph TD\nA-->B\n```' },
     ],
     }} />);
-    const shadow = container.querySelector('[data-queued-message]')!.shadowRoot!;
+    const shadow = container.querySelector('[data-queued-message] [data-user-message]')!.shadowRoot!;
     fireEvent.click(shadow.querySelector('img')!);
     expect(preview).toHaveBeenCalledTimes(1);
     expect((preview.mock.calls[0][0] as CustomEvent).detail.src).toBe('https://example.com/screenshot.png');
@@ -82,7 +82,7 @@ test('does not repaint a closed detail when its diagram finishes rendering', asy
   const { container, unmount } = render(<QueuedInputMessage message={{
     role: 'user', content: '```mermaid\ngraph TD\nA-->B\n```',
   }} />);
-  const shadow = container.querySelector('[data-queued-message]')!.shadowRoot!;
+  const shadow = container.querySelector('[data-queued-message] [data-user-message]')!.shadowRoot!;
   const preview = shadow.querySelector<HTMLElement>('.mermaid-preview')!;
   await waitFor(() => expect(finish).toBeTypeOf('function'));
   unmount();

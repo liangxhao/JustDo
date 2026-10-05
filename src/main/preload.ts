@@ -103,6 +103,12 @@ import {
   CoworkSubagentDetailsIpc,
   type CoworkSubtaskChangedEvent,
 } from '../shared/cowork/subagentDetails';
+import { SwarmIpc, type SwarmOptions } from '../shared/cowork/swarm';
+import {
+  type SwarmFlowAction,
+  SwarmFlowIpc,
+  type SwarmIntervention,
+} from '../shared/cowork/swarmFlow';
 import {
   MulticaIntegrationIpc,
   type MulticaIntegrationResult,
@@ -878,6 +884,13 @@ contextBridge.exposeInMainWorld('electron', {
     },
     getSubTaskStatus: (sessionId?: string, forceRefresh?: boolean) =>
       ipcRenderer.invoke(CoworkSubagentDetailsIpc.Status, sessionId, forceRefresh),
+    getSwarmSnapshot: (sessionId: string) => ipcRenderer.invoke(SwarmIpc.Snapshot, sessionId),
+    getSwarmFlows: (sessionId: string) => ipcRenderer.invoke(SwarmFlowIpc.List, sessionId),
+    getSwarmFlowDetail: (sessionId: string, flowId: string, nodeId: string, sourceId?: string) => ipcRenderer.invoke(SwarmFlowIpc.Detail, sessionId, flowId, nodeId, sourceId),
+    controlSwarmFlow: (sessionId: string, id: string, revision: number, action: SwarmFlowAction) => ipcRenderer.invoke(SwarmFlowIpc.Control, sessionId, id, revision, action),
+    interveneSwarmFlow: (sessionId: string, id: string, nodeId: string, revision: number, intervention: SwarmIntervention) => ipcRenderer.invoke(SwarmFlowIpc.Intervene, sessionId, id, nodeId, revision, intervention),
+    prepareSwarm: (options: SwarmOptions, sessionId?: string) =>
+      ipcRenderer.invoke(SwarmIpc.Prepare, options, sessionId),
     getSubTaskDetails: (sessionKey: string, taskId?: string) =>
       ipcRenderer.invoke(CoworkSubagentDetailsIpc.Get, sessionKey, taskId),
     listSubTaskDescendants: (sessionId: string) =>

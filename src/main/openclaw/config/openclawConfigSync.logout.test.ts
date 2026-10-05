@@ -1023,6 +1023,7 @@ describe('OpenClaw auth logout config sync', () => {
       'ask-user-question',
       'workboard',
       'agent-team',
+      'swarm-flow',
       'typesafe',
       'memory-core',
       'code-mode-quickjs',
@@ -1125,6 +1126,7 @@ describe('OpenClaw auth logout config sync', () => {
       'agent-workspace-plugin',
       'workboard',
       'agent-team',
+      'swarm-flow',
       'typesafe',
       'memory-core',
       'code-mode-quickjs',
@@ -1338,6 +1340,7 @@ describe('OpenClaw auth logout config sync', () => {
       'justdo-skill-only-example',
       'workboard',
       'agent-team',
+      'swarm-flow',
       'typesafe',
       'memory-core',
       'code-mode-quickjs',
@@ -1356,25 +1359,28 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.plugins.bundledDiscovery).toBeUndefined();
   });
 
-  test('a no-model sync preserves an explicitly disabled Workboard plugin', () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-workboard-disabled-'));
-    temporaryDirectories.push(directory);
-    const configPath = path.join(directory, 'openclaw.json');
-    expect(writeMinimalConfig(configPath, 'startup').ok).toBe(true);
-    const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    expect(existing.plugins.entries.workboard).toEqual({ enabled: true });
-    existing.plugins.entries.workboard = { enabled: false };
-    fs.writeFileSync(configPath, JSON.stringify(existing), 'utf8');
+  test.each([false, true])(
+    'a no-model sync defaults Workboard off and preserves explicit enabled=%s',
+    enabled => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-workboard-disabled-'));
+      temporaryDirectories.push(directory);
+      const configPath = path.join(directory, 'openclaw.json');
+      expect(writeMinimalConfig(configPath, 'startup').ok).toBe(true);
+      const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      expect(existing.plugins.entries.workboard).toEqual({ enabled: false });
+      existing.plugins.entries.workboard = { enabled };
+      fs.writeFileSync(configPath, JSON.stringify(existing), 'utf8');
 
-    expect(writeMinimalConfig(configPath, BuiltinModelSyncReason.CoworkConfigChange).ok).toBe(true);
-    expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).plugins.entries.workboard).toEqual({
-      enabled: false,
-    });
-    expect(writeMinimalConfig(configPath, 'startup').ok).toBe(true);
-    expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).plugins.entries.workboard).toEqual({
-      enabled: false,
-    });
-  });
+      expect(writeMinimalConfig(configPath, BuiltinModelSyncReason.CoworkConfigChange).ok).toBe(true);
+      expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).plugins.entries.workboard).toEqual({
+        enabled,
+      });
+      expect(writeMinimalConfig(configPath, 'startup').ok).toBe(true);
+      expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).plugins.entries.workboard).toEqual({
+        enabled,
+      });
+    },
+  );
 
   test('removes the built-in provider placeholder before its environment variable is revoked', () => {
     const configPath = writeExistingBuiltinConfig();

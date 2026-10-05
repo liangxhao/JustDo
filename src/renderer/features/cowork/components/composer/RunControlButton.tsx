@@ -9,6 +9,7 @@ interface RunControlButtonProps {
   canQueue?: boolean;
   size: 'normal' | 'large';
   sendTitle: string;
+  sendLabel?: string;
   onStop?: () => void;
   onSend: () => void;
 }
@@ -21,21 +22,25 @@ export const RunControlButton = ({
   canQueue = false,
   size,
   sendTitle,
+  sendLabel,
   onStop,
   onSend,
 }: RunControlButtonProps) => {
   const queueControl = isRunning && !isStopping && canQueue && canSubmit;
   const stoppingControl = isStopping || (isRunning && !queueControl);
   const disabled = stoppingControl ? isStopping || !onStop : !canSubmit;
-  const label = i18nService.t(
-    stoppingControl
-      ? isStopping
-        ? 'coworkStopping'
-        : 'coworkStopTask'
-      : queueControl
-        ? 'coworkQueueMessage'
-        : 'coworkSendMessage',
-  );
+  const label =
+    !stoppingControl && !queueControl && sendLabel
+      ? sendLabel
+      : i18nService.t(
+          stoppingControl
+            ? isStopping
+              ? 'coworkStopping'
+              : 'coworkStopTask'
+            : queueControl
+              ? 'coworkQueueMessage'
+              : 'coworkSendMessage',
+        );
   const iconClass = size === 'large' ? 'h-5 w-5' : 'h-4 w-4';
   const shapeClass = size === 'large' ? 'rounded-xl' : 'flex-shrink-0 rounded-lg';
   const colorClass = stoppingControl

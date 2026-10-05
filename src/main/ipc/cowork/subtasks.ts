@@ -8,6 +8,20 @@ import {
   CoworkSubagentDetailsIpc,
   type CoworkSubagentDetailsResult,
 } from '../../../shared/cowork/subagentDetails';
+import {
+  buildSwarmInstruction,
+  isSwarmOptions,
+  SwarmIpc,
+  type SwarmPrepareResult,
+  type SwarmSnapshotResult,
+} from '../../../shared/cowork/swarm';
+import {
+  SwarmFlowGateway,
+  SwarmFlowIpc,
+  validFlowDetail,
+  validFlowList,
+  validSwarmIntervention,
+} from '../../../shared/cowork/swarmFlow';
 import type { OpenClawRuntimeAdapter } from '../../engine';
 import {
   controlGatewaySubagent,
@@ -16,6 +30,7 @@ import {
   listGatewaySubagentChildren,
   listGatewaySubagentDescendants,
 } from '../../engine/openclaw/subagentGateway';
+import { readSwarmSnapshot } from '../../engine/openclaw/swarmGateway';
 import {
   buildGatewaySessionDetailStats,
   type GatewaySessionUsageLoader,
@@ -98,6 +113,146 @@ export const registerCoworkSubtaskHandlers = ({
     if (!runtime || !client) throw new Error('Gateway client not connected');
     return { runtime, client, keys: runtime.getSessionKeysForSession(sessionId) };
   };
+  ipcMain.handle(
+    SwarmIpc.Prepare,
+    async (_event, options: unknown, sessionId?: unknown): Promise<SwarmPrepareResult> => {
+      if (
+        !isSwarmOptions(options) ||
+        (sessionId !== undefined && (typeof sessionId !== 'string' || !hasSession(sessionId)))
+      ) {
+        return { success: false, reason: 'invalid' };
+      }
+      try {
+        const health = await getRuntime()
+          ?.getGatewayClient()
+          ?.request<{ ready?: boolean }>(SwarmFlowGateway.Health, {});
+        if (!health?.ready) return { success: false, reason: 'unavailable' };
+      } catch {
+        return { success: false, reason: 'unavailable' };
+      }
+      if (typeof sessionId === 'string') {
+        try {
+          const { runtime } = resolveOwnedRoot(sessionId);
+          if ((await runtime.getPlanMode(sessionId)).enabled)
+            return { success: false, reason: 'plan' };
+          if (!hasSession(sessionId)) return { success: false, reason: 'invalid' };
+        } catch {
+          return { success: false, reason: 'unavailable' };
+        }
+      }
+      return { success: true, instruction: buildSwarmInstruction(options) };
+    },
+  );
+  ipcMain.handle(SwarmFlowIpc.List, async (_event, sessionId: unknown) => {
+    try {
+      const { client, keys } = resolveOwnedRoot(sessionId);
+      const result = await client.request<unknown>(SwarmFlowGateway.List, { parentKeys: keys });
+      if (!hasSession(sessionId as string) || !validFlowList(result)) return { success: false };
+      return { success: true, flows: result.flows };
+    } catch {
+      return { success: false };
+    }
+  });
+  ipcMain.handle(
+    SwarmFlowIpc.Detail,
+    async (_event, sessionId: unknown, id: unknown, nodeId: unknown, sourceId?: unknown) => {
+      try {
+        if (
+          typeof id !== 'string' ||
+          !id ||
+          typeof nodeId !== 'string' ||
+          !nodeId ||
+          (sourceId !== undefined && typeof sourceId !== 'string')
+        )
+          return { success: false };
+        const { client, keys } = resolveOwnedRoot(sessionId);
+        const detail = await client.request<unknown>(SwarmFlowGateway.Detail, {
+          parentKeys: keys,
+          id,
+          nodeId,
+          sourceId,
+        });
+        if (
+          !hasSession(sessionId as string) ||
+          !validFlowDetail(detail) ||
+          detail.flowId !== id ||
+          detail.nodeId !== nodeId
+        )
+          return { success: false };
+        return { success: true, detail };
+      } catch {
+        return { success: false };
+      }
+    },
+  );
+  ipcMain.handle(
+    SwarmFlowIpc.Intervene,
+    async (
+      _event,
+      sessionId: unknown,
+      id: unknown,
+      nodeId: unknown,
+      revision: unknown,
+      intervention: unknown,
+    ) => {
+      try {
+        if (
+          typeof id !== 'string' || !id || typeof nodeId !== 'string' || !nodeId ||
+          !Number.isSafeInteger(revision) || Number(revision) <= 0 ||
+          !validSwarmIntervention(intervention)
+        )
+          return { success: false };
+        const { client, keys } = resolveOwnedRoot(sessionId);
+        // The Gateway resolves the node session and rechecks parent policy and revision.
+        if (!hasSession(sessionId as string)) return { success: false };
+        await client.request(SwarmFlowGateway.Intervene, {
+          parentKeys: keys,
+          id,
+          nodeId,
+          revision,
+          intervention: { id: intervention.id, action: intervention.action, text: intervention.text },
+        });
+        return { success: true };
+      } catch {
+        return { success: false };
+      }
+    },
+  );
+  ipcMain.handle(
+    SwarmFlowIpc.Control,
+    async (_event, sessionId: unknown, id: unknown, revision: unknown, action: unknown) => {
+      try {
+        if (
+          typeof id !== 'string' ||
+          !Number.isSafeInteger(revision) ||
+          !['pause', 'resume', 'stop', 'retry'].includes(String(action))
+        )
+          return { success: false };
+        const { client, keys } = resolveOwnedRoot(sessionId);
+        const result = await client.request<unknown>(SwarmFlowGateway.List, { parentKeys: keys });
+        if (!validFlowList(result) || !result.flows.some(f => f.id === id))
+          return { success: false };
+        if (!hasSession(sessionId as string)) return { success: false };
+        await client.request(SwarmFlowGateway.Control, { parentKeys: keys, id, revision, action });
+        return { success: true };
+      } catch {
+        return { success: false };
+      }
+    },
+  );
+  ipcMain.handle(
+    SwarmIpc.Snapshot,
+    async (_event, sessionId: unknown): Promise<SwarmSnapshotResult> => {
+      try {
+        const { client, keys } = resolveOwnedRoot(sessionId);
+        const snapshot = await readSwarmSnapshot(client, keys);
+        if (!hasSession(sessionId as string)) return { success: false };
+        return { success: true, snapshot };
+      } catch {
+        return { success: false };
+      }
+    },
+  );
   ipcMain.handle(
     CoworkSubagentDetailsIpc.ListChildren,
     async (

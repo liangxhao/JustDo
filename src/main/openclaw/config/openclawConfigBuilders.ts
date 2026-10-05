@@ -1178,9 +1178,11 @@ export const mergeOpenClawPluginConfig = (
       ...(isRecord(sourcePlugins.entries) ? sourcePlugins.entries : {}),
       ...managedEntries,
     }).map(([pluginId, value]) => {
-      // Refresh application-owned model paths without undoing the user's plugin toggle.
+      // Refresh application-owned paths and admission data without changing user toggles.
       if (
-        (pluginId === OpenClawExtensionId.STT_LOCAL_CLI || pluginId === LOCAL_TTS_PROVIDER_ID) &&
+        (pluginId === OpenClawExtensionId.STT_LOCAL_CLI ||
+          pluginId === LOCAL_TTS_PROVIDER_ID ||
+          pluginId === OpenClawExtensionId.SWARM_FLOW) &&
         isRecord(value)
       ) {
         const previous = isRecord(sourcePlugins.entries) ? sourcePlugins.entries[pluginId] : null;
@@ -2063,8 +2065,9 @@ export const buildDefaultOpenClawPluginEntries = (
   Object.fromEntries(
     (
       [
-        [OpenClawExtensionId.WORKBOARD, true],
+        [OpenClawExtensionId.WORKBOARD, false],
         [OpenClawExtensionId.AGENT_TEAM, false],
+        [OpenClawExtensionId.SWARM_FLOW, true],
         [OpenClawExtensionId.TYPESAFE, false],
         // The prepared agent runtime rejects a selected memory plugin omitted from
         // an explicit allowlist, even if Gateway startup already loaded its service.
@@ -2077,10 +2080,31 @@ export const buildDefaultOpenClawPluginEntries = (
       .map(([id, enabled]) => [id, { enabled }]),
   );
 
+export const buildManagedSwarmPluginEntries = (
+  agents: Pick<Agent, 'id' | 'enabled' | 'deletedAt'>[],
+  isAvailable: (id: string) => boolean = isBundledPluginAvailable,
+): Record<string, unknown> =>
+  isAvailable(OpenClawExtensionId.SWARM_FLOW)
+    ? {
+        [OpenClawExtensionId.SWARM_FLOW]: {
+          enabled: true,
+          config: {
+            availableAgentIds: [
+              ...new Set([
+                'main',
+                ...agents.filter(agent => agent.enabled && !agent.deletedAt).map(agent => agent.id),
+              ]),
+            ],
+          },
+        },
+      }
+    : {};
+
 export const isUserToggleableBundledPlugin = (pluginId: string): boolean =>
   pluginId === OpenClawExtensionId.MEMORY_CORE ||
   pluginId === OpenClawExtensionId.WORKBOARD ||
   pluginId === OpenClawExtensionId.AGENT_TEAM ||
+  pluginId === OpenClawExtensionId.SWARM_FLOW ||
   pluginId === OpenClawExtensionId.TYPESAFE ||
   pluginId === OpenClawExtensionId.STT_LOCAL_CLI ||
   pluginId === LOCAL_TTS_PROVIDER_ID;

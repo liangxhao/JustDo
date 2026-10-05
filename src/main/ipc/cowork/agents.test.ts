@@ -49,7 +49,20 @@ describe('agent profile and file IPC', () => {
     const h = setup();
     expect(await h.call(AgentIpc.Delete, 'reviewer')).toEqual({ success: true, value: undefined });
     expect(h.store.deleteAgent).toHaveBeenCalledWith('reviewer');
+    expect(h.store.saveAgentProfile).toHaveBeenCalledWith({ ...profile, enabled: false });
+    expect(h.syncConfig).toHaveBeenCalledOnce();
+    expect(h.syncConfig.mock.invocationCallOrder[0]).toBeLessThan(
+      h.store.deleteAgent.mock.invocationCallOrder[0],
+    );
     expect(h.requestGateway.mock.calls.every(([method]) => method === 'sessions.list')).toBe(true);
+  });
+  it('keeps a deletion reversible until the admission roster update succeeds', async () => {
+    const h = setup();
+    h.syncConfig.mockResolvedValueOnce({ success: false, error: 'failed' });
+    expect(await h.call(AgentIpc.Delete, 'reviewer')).toEqual({ success: false, error: 'failed' });
+    expect(h.store.deleteAgent).not.toHaveBeenCalled();
+    expect(h.store.saveAgentProfile).toHaveBeenLastCalledWith(profile);
+    expect(h.syncConfig).toHaveBeenCalledTimes(2);
   });
   it('rejects deleting main and deleting while native tasks are running', async () => {
     const h = setup();
