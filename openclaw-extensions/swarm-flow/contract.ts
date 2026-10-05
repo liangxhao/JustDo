@@ -10,6 +10,7 @@ export type FlowStatus = 'running' | 'paused' | 'blocked' | 'stopping' | 'cancel
 export type NodeStatus =
   'queued' | 'preparing' | 'running' | 'uncertain' | 'done' | 'failed' | 'cancelled';
 export type FlowAction = 'pause' | 'resume' | 'stop' | 'retry';
+export type FlowActions = Record<FlowAction, boolean>;
 export type InterventionAction = 'note' | 'continue' | 'retry';
 export type FlowIntervention = {
   id: string;
@@ -22,6 +23,13 @@ export const FLOW_TOOLS = {
   verify: 'swarm_flow_verify',
   block: 'swarm_flow_block',
 } as const;
+export const FLOW_MANAGEMENT_TOOLS = {
+  status: 'swarm_flow_status',
+  control: 'swarm_flow_control',
+  intervene: 'swarm_flow_intervene',
+} as const;
+export type FlowOperation = { id: string; action: FlowAction };
+export type FlowNotice = { id: string; state: 'sending' | 'sent' | 'unconfirmed' };
 export type FlowSubmission = {
   outcome: 'complete' | 'verified' | 'blocked';
   summary: string;
@@ -98,12 +106,15 @@ export interface Flow {
   error?: string;
   delivered?: boolean;
   deliveryIntent?: boolean;
+  operations?: FlowOperation[];
+  notices?: FlowNotice[];
 }
 export type FlowView = Pick<
   Flow,
   'id' | 'revision' | 'createdAt' | 'updatedAt' | 'status' | 'goal' | 'mode' | 'error' | 'delivered'
 > & {
   canRetry: boolean;
+  actions: FlowActions;
   nodes: Array<
     Omit<
       FlowNode,
@@ -119,8 +130,31 @@ export type FlowView = Pick<
     >
   >;
 };
+/** Shared by the chat tools and Tab; delivery uncertainty still allows stopping the flow. */
+export function flowActions(flow: Flow): FlowActions {
+  const ended = ['completed', 'cancelled', 'stopping'].includes(flow.status);
+  const delivering = flow.status === 'running' && Boolean(flow.deliveryIntent) && !flow.delivered;
+  return {
+    pause: !ended && !delivering && flow.status === 'running',
+    resume:
+      !ended &&
+      flow.status === 'paused' &&
+      !flow.nodes.some(node => ['failed', 'uncertain'].includes(node.status)),
+    stop: !ended && !delivering,
+    retry:
+      flow.status === 'blocked' &&
+      !flow.error &&
+      !flow.deliveryIntent &&
+      flow.nodes.some(node => node.status === 'failed') &&
+      !flow.nodes.some(node => ['running', 'preparing', 'uncertain'].includes(node.status)) &&
+      flow.nodes
+        .filter(node => node.status === 'failed')
+        .every(node => (node.attempt ?? 1) < FLOW_LIMITS.attempts),
+  };
+}
 export function viewFlow(flow: Flow): FlowView {
   const { id, revision, createdAt, updatedAt, status, goal, mode, error, delivered } = flow;
+  const actions = flowActions(flow);
   return {
     id,
     revision,
@@ -131,15 +165,8 @@ export function viewFlow(flow: Flow): FlowView {
     mode,
     error,
     delivered,
-    canRetry:
-      status === 'blocked' &&
-      !error &&
-      !flow.deliveryIntent &&
-      flow.nodes.some(node => node.status === 'failed') &&
-      !flow.nodes.some(node => ['running', 'preparing', 'uncertain'].includes(node.status)) &&
-      flow.nodes
-        .filter(node => node.status === 'failed')
-        .every(node => (node.attempt ?? 1) < FLOW_LIMITS.attempts),
+    canRetry: actions.retry,
+    actions,
     nodes: flow.nodes.map(
       ({
         task: _task,
@@ -165,5 +192,7 @@ export const FLOW_LIMITS = {
   submissionRepairs: 3,
   interventions: 30,
   interventionText: 4000,
+  operations: 512,
+  notices: 64,
   durationMs: 3600000,
 } as const;

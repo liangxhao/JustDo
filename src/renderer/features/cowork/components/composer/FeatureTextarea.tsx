@@ -1,11 +1,18 @@
-import { ShareIcon } from '@heroicons/react/24/outline';
-import { forwardRef, type TextareaHTMLAttributes, useLayoutEffect, useRef, useState } from 'react';
+import {
+  forwardRef,
+  type ReactNode,
+  type TextareaHTMLAttributes,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 
 /** An atomic first-line prefix; the native textarea continues to own plain text. */
 const FeatureTextarea = forwardRef<
   HTMLTextAreaElement,
   TextareaHTMLAttributes<HTMLTextAreaElement> & {
     featureLabel?: string;
+    featureIcon?: ReactNode;
     containerClassName?: string;
     removeLabel: string;
     onRemoveFeature: () => void;
@@ -14,6 +21,7 @@ const FeatureTextarea = forwardRef<
 >(function FeatureTextarea(
   {
     featureLabel,
+    featureIcon,
     containerClassName = '',
     removeLabel,
     onRemoveFeature,
@@ -180,7 +188,11 @@ const FeatureTextarea = forwardRef<
             }
           }}
         >
-          <ShareIcon className="h-3.5 w-3.5" />
+          {featureIcon && (
+            <span aria-hidden="true" className="inline-flex shrink-0">
+              {featureIcon}
+            </span>
+          )}
           {featureLabel}
         </button>
       )}

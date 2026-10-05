@@ -6,6 +6,19 @@ import { afterEach, expect, test, vi } from 'vitest';
 import FeatureTextarea from './FeatureTextarea';
 
 afterEach(cleanup);
+test('renders the adapter icon without coupling the atomic tag to any plugin', () => {
+  render(
+    <FeatureTextarea
+      featureLabel="Another capability"
+      featureIcon={<svg data-testid="plugin-icon" />}
+      removeLabel="Remove capability"
+      onRemoveFeature={vi.fn()}
+    />,
+  );
+  expect(screen.getByRole('button').contains(screen.getByTestId('plugin-icon'))).toBe(true);
+  expect(screen.getByRole('textbox').getAttribute('featureIcon')).toBeNull();
+});
+
 function Draft() {
   const [feature, setFeature] = useState(true);
   const [value, setValue] = useState('Hello');

@@ -1,25 +1,21 @@
-import { ShareIcon } from '@heroicons/react/24/outline';
-import type { SwarmOptions } from '@shared/cowork/swarm';
-
-import { i18nService } from '@/services/i18n';
+import {
+  type ExtensionEnablement,
+  getExtensionEnabled,
+} from '@/features/plugins/extensions/useExtensionEnablement';
 
 import type { ComposerFeatureItem } from './ComposerFeatureMenu';
 
-/** Add composer capabilities here; the menu does not know their state or submit semantics. */
-export function buildComposerFeatures({
-  swarm,
-  selectSwarm,
-}: {
-  swarm?: SwarmOptions;
-  selectSwarm: (options: SwarmOptions) => void;
-}): ComposerFeatureItem[] {
-  return [
-    {
-      id: 'swarm',
-      label: i18nService.t('swarmTitle'),
-      icon: <ShareIcon className="h-4 w-4" />,
-      selected: Boolean(swarm),
-      onSelect: () => selectSwarm({ mode: 'auto', verify: true }),
-    },
-  ];
+export interface ComposerFeatureRegistration extends ComposerFeatureItem {
+  /** Omit for a built-in capability; each plugin may register multiple distinct entries. */
+  extensionId?: string;
+}
+
+/** Adapters own their translated presentation and actions; only availability is shared. */
+export function buildComposerFeatures(
+  registrations: readonly ComposerFeatureRegistration[],
+  settings: ExtensionEnablement,
+): ComposerFeatureItem[] {
+  return registrations
+    .filter(item => !item.extensionId || getExtensionEnabled(settings, item.extensionId) === true)
+    .map(({ extensionId: _extensionId, ...item }) => item);
 }

@@ -10,6 +10,7 @@ interface RunControlButtonProps {
   size: 'normal' | 'large';
   sendTitle: string;
   sendLabel?: string;
+  sendText?: string;
   onStop?: () => void;
   onSend: () => void;
 }
@@ -23,6 +24,7 @@ export const RunControlButton = ({
   size,
   sendTitle,
   sendLabel,
+  sendText,
   onStop,
   onSend,
 }: RunControlButtonProps) => {
@@ -55,12 +57,15 @@ export const RunControlButton = ({
       aria-busy={isStopping || undefined}
       aria-label={label}
       title={stoppingControl || queueControl ? label : sendTitle}
-      className={`p-2 ${shapeClass} ${colorClass} text-white transition-all shadow-subtle hover:shadow-card active:scale-95 disabled:cursor-not-allowed ${disabled ? 'opacity-50' : ''}`}
+      className={`inline-flex items-center justify-center gap-1.5 p-2 ${sendText && !stoppingControl && !queueControl ? 'px-3' : ''} ${shapeClass} ${colorClass} text-white transition-all shadow-subtle hover:shadow-card active:scale-95 disabled:cursor-not-allowed ${disabled ? 'opacity-50' : ''}`}
     >
       {stoppingControl ? (
         <StopIcon className={iconClass} />
       ) : (
         <PaperAirplaneIcon className={iconClass} />
+      )}
+      {!stoppingControl && !queueControl && sendText && (
+        <span className="whitespace-nowrap text-xs font-medium">{sendText}</span>
       )}
     </button>
   );

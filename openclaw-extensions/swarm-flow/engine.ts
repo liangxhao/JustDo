@@ -186,9 +186,19 @@ export class FlowEngine {
     }
     return true;
   }
-  control(id: string, revision: number, action: FlowAction): Flow {
+  control(id: string, revision: number, action: FlowAction, operationId?: string): Flow {
+    if (!this.enabled) throw new Error('Swarm service is unavailable.');
+    if (!['pause', 'resume', 'stop', 'retry'].includes(action))
+      throw new Error('Invalid flow control action.');
     const flow = this.store.get(id);
+    if (flow && operationId && flow.operations?.some(item => item.id === operationId)) {
+      if (flow.operations.find(item => item.id === operationId)?.action !== action)
+        throw new Error('Flow operation identity conflict.');
+      return flow;
+    }
     if (!flow || flow.revision !== revision) throw new Error('Flow revision conflict.');
+    if (operationId && (flow.operations?.length ?? 0) >= FLOW_LIMITS.operations)
+      throw new Error('Flow operation limit reached. Use the Swarm tab to manage this flow.');
     if (['completed', 'cancelled'].includes(flow.status)) throw new Error('Flow has ended.');
     if (flow.status === 'running' && flow.deliveryIntent && !flow.delivered)
       throw new Error('Final delivery is already in progress and cannot be interrupted.');
@@ -222,6 +232,7 @@ export class FlowEngine {
         throw new Error('Resolve failed or uncertain work before resuming.');
       flow.status = 'running';
     }
+    if (operationId) flow.operations = [...(flow.operations ?? []), { id: operationId, action }];
     this.store.put(flow);
     return flow;
   }
@@ -447,7 +458,8 @@ export class FlowEngine {
             }
             if (
               !receipt &&
-              repair?.runId === (current.runId ?? current.intendedRunId) &&
+              repair &&
+              repair.runId === (current.runId ?? current.intendedRunId) &&
               repair.passes < FLOW_LIMITS.submissionRepairs
             ) {
               repair.priorRuns.push({ runId: repair.runId, endedAt: result.endedAt });

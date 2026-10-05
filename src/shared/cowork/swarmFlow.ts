@@ -12,6 +12,7 @@ export const SwarmFlowGateway = {
   Intervene: 'swarmFlow.intervene',
 } as const;
 export type SwarmFlowAction = 'pause' | 'resume' | 'stop' | 'retry';
+export type SwarmFlowActions = Record<SwarmFlowAction, boolean>;
 export const SWARM_INTERVENTION_LIMITS = { text: 4000, notes: 30 } as const;
 export type SwarmInterventionAction = 'note' | 'continue' | 'retry';
 export interface SwarmIntervention {
@@ -50,6 +51,7 @@ export type SwarmFlowNode = {
 };
 export type SwarmFlowView = {
   canRetry?: boolean;
+  actions?: SwarmFlowActions;
   id: string;
   revision: number;
   goal: string;
@@ -134,6 +136,13 @@ export function validFlowList(value: unknown): value is { flows: SwarmFlowView[]
         Number.isSafeInteger(f.revision) &&
         f.revision > 0 &&
         (f.canRetry === undefined || typeof f.canRetry === 'boolean') &&
+        (f.actions === undefined ||
+          (f.actions !== null &&
+            typeof f.actions === 'object' &&
+            !Array.isArray(f.actions) &&
+            ['pause', 'resume', 'stop', 'retry'].every(
+              action => typeof f.actions?.[action as SwarmFlowAction] === 'boolean',
+            ))) &&
         typeof f.goal === 'string' &&
         Number.isFinite(f.createdAt) &&
         ['running', 'paused', 'blocked', 'stopping', 'cancelled', 'completed'].includes(f.status) &&

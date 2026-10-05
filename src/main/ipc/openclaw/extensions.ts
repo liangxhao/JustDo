@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron';
+import { BrowserWindow, ipcMain } from 'electron';
 
 import {
   type ExtensionChangedEvent,
@@ -9,15 +9,9 @@ import {
   type ExtensionUpdateConfigurationRequest,
 } from '../../../shared/openclaw/extensions';
 import { getExtensionManagement } from '../../../shared/plugins/management';
-import {
-  MarketplaceInstallOperation,
-  PluginKind,
-} from '../../../shared/plugins/marketplace';
+import { MarketplaceInstallOperation, PluginKind } from '../../../shared/plugins/marketplace';
 import type { OpenClawExtensionImportService } from '../../plugins/extensions';
-import {
-  type PluginInstallationService,
-  PluginInstallOrigin,
-} from '../../plugins/installation';
+import { type PluginInstallationService, PluginInstallOrigin } from '../../plugins/installation';
 
 type ExtensionHandlerDependencies = {
   extensionImportService: OpenClawExtensionImportService;
@@ -30,6 +24,32 @@ export const registerExtensionHandlers = ({
   installationService,
   onMarketplacePluginDeleted,
 }: ExtensionHandlerDependencies): void => {
+  // Mutations can persist before reporting a restart error. Publish observed state,
+  // including installs/removals, and keep catalog notifications in completion order.
+  let stateNotification = Promise.resolve();
+  const publishExtensionState = (extensionId: string): Promise<void> => {
+    stateNotification = stateNotification.then(async () => {
+      try {
+        const extensions = await extensionImportService.listCatalog();
+        const change: ExtensionChangedEvent = {
+          extensionId,
+          enabled: extensions.find(extension => extension.id === extensionId)?.enabled ?? false,
+        };
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+            window.webContents.send(ExtensionIpc.Changed, change);
+          }
+        }
+      } catch (error) {
+        console.warn(
+          '[Extensions] Failed to refresh extension state after mutation:',
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    });
+    return stateNotification;
+  };
+
   installationService.registerInstaller({
     kind: PluginKind.EXTENSION,
     install: async request => {
@@ -42,6 +62,7 @@ export const registerExtensionHandlers = ({
         request.payload.reviewToken,
         { trustMarketplaceSource: request.origin === PluginInstallOrigin.MARKETPLACE },
       );
+      if (result.extensionId) await publishExtensionState(result.extensionId);
       return {
         success: result.success,
         pluginId: result.extensionId,
@@ -123,15 +144,16 @@ export const registerExtensionHandlers = ({
 
   ipcMain.handle(ExtensionIpc.Delete, async (_event, request: ExtensionDeleteRequest) => {
     try {
-      if (
-        !request ||
-        typeof request.extensionId !== 'string' ||
-        !request.extensionId.trim()
-      ) {
+      if (!request || typeof request.extensionId !== 'string' || !request.extensionId.trim()) {
         return { success: false, error: 'Extension id is required' };
       }
       const extensionId = request.extensionId.trim();
-      const result = await extensionImportService.delete(extensionId);
+      let result;
+      try {
+        result = await extensionImportService.delete(extensionId);
+      } finally {
+        await publishExtensionState(extensionId);
+      }
       if (result.success) onMarketplacePluginDeleted?.(PluginKind.EXTENSION, extensionId);
       return result;
     } catch (error) {
@@ -141,41 +163,34 @@ export const registerExtensionHandlers = ({
     }
   });
 
-  ipcMain.handle(
-    ExtensionIpc.SetEnabled,
-    async (event, request: ExtensionSetEnabledRequest) => {
+  ipcMain.handle(ExtensionIpc.SetEnabled, async (_event, request: ExtensionSetEnabledRequest) => {
+    try {
+      if (
+        !request ||
+        typeof request.extensionId !== 'string' ||
+        !request.extensionId.trim() ||
+        typeof request.enabled !== 'boolean'
+      ) {
+        return { success: false, error: 'Extension id and enabled state are required' };
+      }
+      const extensionId = request.extensionId.trim();
       try {
-        if (
-          !request ||
-          typeof request.extensionId !== 'string' ||
-          !request.extensionId.trim() ||
-          typeof request.enabled !== 'boolean'
-        ) {
-          return { success: false, error: 'Extension id and enabled state are required' };
-        }
-        const extensionId = request.extensionId.trim();
-        const result = await extensionImportService.setEnabled(
+        return await extensionImportService.setEnabled(
           extensionId,
           request.enabled,
           typeof request.reviewToken === 'string'
             ? request.reviewToken.trim() || undefined
             : undefined,
         );
-        if (result.success && !event.sender.isDestroyed()) {
-          event.sender.send(ExtensionIpc.Changed, {
-            extensionId,
-            enabled: request.enabled,
-          } satisfies ExtensionChangedEvent);
-        }
-        return result;
-      } catch (error) {
-        const errorMsg =
-          error instanceof Error ? error.message : 'Failed to update extension status';
-        console.error('[Extensions] extensions:set-enabled error:', errorMsg);
-        return { success: false, error: errorMsg };
+      } finally {
+        await publishExtensionState(extensionId);
       }
-    },
-  );
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Failed to update extension status';
+      console.error('[Extensions] extensions:set-enabled error:', errorMsg);
+      return { success: false, error: errorMsg };
+    }
+  });
 
   ipcMain.handle(
     ExtensionIpc.UpdateConfiguration,

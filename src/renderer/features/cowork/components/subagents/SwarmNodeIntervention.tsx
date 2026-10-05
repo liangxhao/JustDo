@@ -2,7 +2,9 @@ import {
   ArrowPathIcon,
   BookmarkSquareIcon,
   ChatBubbleLeftEllipsisIcon,
+  CheckCircleIcon,
   ChevronDownIcon,
+  EllipsisHorizontalIcon,
   PaperAirplaneIcon,
 } from '@heroicons/react/24/outline';
 import {
@@ -17,6 +19,7 @@ import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 're
 import { i18nService } from '@/services/i18n';
 
 import { UserMessageContent } from '../chat/UserMessageContent';
+import ComposerFeatureMenu, { type ComposerFeatureItem } from '../composer/ComposerFeatureMenu';
 import { COMPOSER_SURFACE_CLASS, COMPOSER_TEXTAREA_CLASS } from '../composer/composerStyles';
 import { RunControlButton } from '../composer/RunControlButton';
 
@@ -71,12 +74,15 @@ export default function SwarmNodeIntervention({
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const [acceptedAction, setAcceptedAction] = useState<SwarmInterventionAction>();
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const notesRef = useRef<HTMLUListElement>(null);
   const hintId = useId();
   const pending = useRef<SwarmIntervention>();
   const notes = detail.interventions ?? EMPTY_NOTES;
+  useEffect(() => {
+    if (detail.canContinue) setExpanded(true);
+  }, [detail.canContinue]);
   useLayoutEffect(() => {
     const input = inputRef.current;
     if (!input) return;
@@ -90,9 +96,9 @@ export default function SwarmNodeIntervention({
     // A response can be lost after acceptance. Reconcile using the persisted ID.
     if (pending.current && notes.some(note => note.id === pending.current?.id)) {
       if (text.trim() === pending.current.text) setText('');
+      setAcceptedAction(pending.current.action);
       pending.current = undefined;
       setFailed(false);
-      setSaved(true);
     }
   }, [notes, text]);
   const send = async (action: SwarmInterventionAction) => {
@@ -114,7 +120,7 @@ export default function SwarmNodeIntervention({
     pending.current = request;
     setBusy(true);
     setFailed(false);
-    setSaved(false);
+    setAcceptedAction(undefined);
     try {
       const result = await window.electron.cowork.interveneSwarmFlow(
         sessionId,
@@ -129,7 +135,7 @@ export default function SwarmNodeIntervention({
       } else {
         setText('');
         pending.current = undefined;
-        setSaved(true);
+        setAcceptedAction(action);
       }
     } catch {
       if (pending.current?.id === request.id) setFailed(true);
@@ -139,46 +145,60 @@ export default function SwarmNodeIntervention({
     }
   };
   if (!detail.canNote && !notes.length && !failed) return null;
-  const actionButton = (
-    action: SwarmInterventionAction,
-    label: string,
-    Icon: typeof ArrowPathIcon,
-    available: boolean | undefined,
-  ) => (
-    <button
-      type="button"
-      title={t(label)}
-      aria-label={t(label)}
-      disabled={disabled || busy || !available || (action !== 'retry' && !text.trim())}
-      onClick={() => void send(action)}
-      className="shrink-0 rounded-lg p-2 text-secondary transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-40"
-    >
-      <Icon className="h-4 w-4" aria-hidden="true" />
-    </button>
-  );
+  const moreActions: ComposerFeatureItem[] = [];
+  if (detail.canContinue)
+    moreActions.push({
+      id: 'note',
+      label: t('flowInterventionSaveOnly'),
+      description: t('flowInterventionSaveOnlyHint'),
+      icon: <BookmarkSquareIcon className="h-4 w-4" />,
+      disabled: !text.trim(),
+      onSelect: () => void send('note'),
+    });
+  if (detail.canRetry)
+    moreActions.push({
+      id: 'retry',
+      label: t('flowNodeRetry'),
+      description: t('flowInterventionRetryHint'),
+      icon: <ArrowPathIcon className="h-4 w-4" />,
+      onSelect: () => void send('retry'),
+    });
   return (
     <div className="shrink-0 border-t border-border p-3">
-      <div className="flex items-center gap-1">
+      <div className="flex items-center">
         <button
           type="button"
           title={t('flowIntervene')}
           aria-label={t('flowIntervene')}
           aria-expanded={expanded}
           onClick={() => setExpanded(value => !value)}
-          className="flex items-center gap-2 rounded-lg px-1 py-1 text-xs text-secondary hover:bg-surface-raised"
+          className="flex w-full min-w-0 items-center gap-2 rounded-lg px-1 py-1 text-xs font-medium text-secondary hover:bg-surface-raised"
         >
-          <ChatBubbleLeftEllipsisIcon className="h-4 w-4" aria-hidden="true" />
-          {t('flowIntervene')}
-          {!!notes.length && <span className="text-muted">{notes.length}</span>}
+          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+            <ChatBubbleLeftEllipsisIcon className="h-3.5 w-3.5" aria-hidden="true" />
+          </span>
+          <span className="shrink-0 whitespace-nowrap">{t('flowIntervene')}</span>
+          {!!notes.length && (
+            <span className="shrink-0 rounded-full bg-surface-raised px-1.5 py-0.5 text-[10px] font-normal text-muted">
+              {notes.length}
+            </span>
+          )}
+          {expanded && detail.canNote && (
+            <span
+              id={hintId}
+              title={t(
+                detail.canContinue ? 'flowInterventionContinueHint' : 'flowInterventionNoteHint',
+              )}
+              className="min-w-0 flex-1 truncate text-left text-[11px] font-normal text-muted"
+            >
+              {t(detail.canContinue ? 'flowInterventionContinueHint' : 'flowInterventionNoteHint')}
+            </span>
+          )}
           <ChevronDownIcon
-            className={`h-3 w-3 transition-transform ${expanded ? 'rotate-180' : ''}`}
+            className={`ml-auto h-3 w-3 shrink-0 text-muted transition-transform ${expanded ? 'rotate-180' : ''}`}
             aria-hidden="true"
           />
         </button>
-        <div className="ml-auto">
-          {detail.canRetry &&
-            actionButton('retry', 'flowNodeRetry', ArrowPathIcon, detail.canRetry)}
-        </div>
       </div>
       {expanded && (
         <>
@@ -206,10 +226,11 @@ export default function SwarmNodeIntervention({
                 disabled={busy || disabled}
                 aria-label={t('flowInterventionInput')}
                 aria-describedby={hintId}
+                aria-keyshortcuts="Control+Enter Meta+Enter"
                 placeholder={t('flowInterventionPlaceholder')}
                 onChange={event => {
                   setText(event.target.value);
-                  setSaved(false);
+                  setAcceptedAction(undefined);
                 }}
                 onKeyDown={event => {
                   if (
@@ -226,29 +247,15 @@ export default function SwarmNodeIntervention({
                 className={`${COMPOSER_TEXTAREA_CLASS} block min-h-12 max-h-36 disabled:opacity-50`}
               />
               <div className="flex items-center gap-2 px-3 pb-2 pt-1">
-                <span id={hintId} className="sr-only">
-                  {t(
-                    detail.canContinue
-                      ? 'flowInterventionContinueHint'
-                      : 'flowInterventionNoteHint',
-                  )}
-                </span>
-                <span
-                  className="min-w-0 flex-1 truncate text-xs text-muted"
-                  title={t(
-                    detail.canContinue
-                      ? 'flowInterventionContinueHint'
-                      : 'flowInterventionNoteHint',
-                  )}
-                >
-                  {t(
-                    detail.canContinue
-                      ? 'flowInterventionContinueMode'
-                      : 'flowInterventionNoteMode',
-                  )}
-                </span>
-                {detail.canContinue &&
-                  actionButton('note', 'flowInterventionSave', BookmarkSquareIcon, detail.canNote)}
+                {!!moreActions.length && (
+                  <ComposerFeatureMenu
+                    items={moreActions}
+                    label={t('flowInterventionMore')}
+                    triggerIcon={<EllipsisHorizontalIcon className="h-4 w-4" />}
+                    disabled={disabled || busy || !detail.revision}
+                  />
+                )}
+                <div className="flex-1" />
                 <RunControlButton
                   isRunning={false}
                   isStopping={false}
@@ -256,6 +263,11 @@ export default function SwarmNodeIntervention({
                   size="normal"
                   sendLabel={t(
                     detail.canContinue ? 'flowInterventionContinue' : 'flowInterventionSave',
+                  )}
+                  sendText={t(
+                    detail.canContinue
+                      ? 'flowInterventionSendContinue'
+                      : 'flowInterventionSendNote',
                   )}
                   sendTitle={
                     t(detail.canContinue ? 'flowInterventionContinue' : 'flowInterventionSave') +
@@ -273,9 +285,10 @@ export default function SwarmNodeIntervention({
           {t('flowControlFailed')}
         </p>
       )}
-      {saved && (
-        <p role="status" className="px-2 py-1 text-xs text-secondary">
-          {t('flowInterventionSaved')}
+      {acceptedAction && (
+        <p role="status" className="mt-2 flex items-center gap-1.5 px-1 text-xs text-secondary">
+          <CheckCircleIcon className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" />
+          {t('flowInterventionAccepted_' + acceptedAction)}
         </p>
       )}
     </div>

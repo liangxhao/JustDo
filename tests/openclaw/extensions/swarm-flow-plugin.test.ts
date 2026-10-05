@@ -8,6 +8,7 @@ import { buildSync } from 'esbuild';
 import { afterEach, expect, it, vi } from 'vitest';
 
 import { buildSwarmInstruction } from '../../../src/shared/cowork/swarm';
+import { FLOW_LIMITS } from '../../../openclaw-extensions/swarm-flow/contract';
 const requireNative = createRequire(import.meta.url);
 const code = buildSync({
   entryPoints: [path.resolve('openclaw-extensions/swarm-flow/index.ts')],
@@ -111,6 +112,136 @@ async function fixture() {
   };
   return { root, parent, parentKey, request, run, messages, nodeMessages, getSessionMessages, agents, config, tool, toolFactories, hooks, wait, hook: hooks.get('before_prompt_build'), service, registerAgent };
 }
+it('exposes management only to the parent and binds it to live native invocation authority', async () => {
+  vi.useFakeTimers();
+  const f = await fixture();
+  const factory = f.toolFactories.filter(value => value.contextVersion === 2)[1];
+  const guard = vi.fn();
+  expect(factory.create({ sessionKey: 'agent:main:subagent:other', assertInvocationCurrent: guard })).toBeNull();
+  let tools = factory.create({ sessionKey: f.parentKey, assertInvocationCurrent: guard });
+  expect(tools.map((tool: any) => tool.name)).toEqual(['swarm_flow_status']);
+  expect((await tools[0].execute('unbound', {})).details.accepted).toBe(false);
+  const flow = await f.request('swarmFlow.start', { parentKey: f.parentKey, requestId: 'manage', goal: 'Inspect', mode: 'auto' }) as any;
+  tools = factory.create({ sessionKey: f.parentKey, assertInvocationCurrent: guard });
+  const status = tools.find((tool: any) => tool.name === 'swarm_flow_status');
+  const control = tools.find((tool: any) => tool.name === 'swarm_flow_control');
+  const before = f.hooks.get('before_tool_call');
+  expect(before({ toolName: status.name }, { sessionKey: f.parentKey })).toMatchObject({ block: true });
+  const context = { sessionKey: f.parentKey, runId: 'manage-turn', toolCallId: 'status' };
+  before({ toolName: status.name }, context);
+  expect((await status.execute('status', {})).details.id).toBe(flow.id);
+  f.hooks.get('after_tool_call')({ toolName: status.name }, context);
+  expect((await status.execute('status', {})).details.accepted).toBe(false);
+  const signal = new AbortController();
+  before({ toolName: control.name }, { ...context, toolCallId: 'pause', abortSignal: signal.signal });
+  signal.abort();
+  expect((await control.execute('pause', { flowId: flow.id, revision: flow.revision, action: 'pause' })).details.accepted).toBe(false);
+  before({ toolName: control.name }, { ...context, toolCallId: 'pause-ok' });
+  expect((await control.execute('pause-ok', { flowId: flow.id, revision: flow.revision, action: 'pause' })).details.accepted).toBe(true);
+  before({ toolName: status.name }, { ...context, toolCallId: 'expired' });
+  await vi.advanceTimersByTimeAsync(31000);
+  expect((await status.execute('expired', {})).details.accepted).toBe(false);
+  expect(guard).toHaveBeenCalled();
+});
+
+it('does not hold node recovery behind a slow main-conversation notification', async () => {
+  vi.useFakeTimers();
+  const f = await fixture();
+  let release!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  const originalRequest = f.request.getMockImplementation()!;
+  f.request.mockImplementation(async (method, params) => {
+    if (method === 'chat.inject') { await pending; return { ok: true }; }
+    return originalRequest(method, params);
+  });
+  try {
+    await f.request('swarmFlow.start', { parentKey: f.parentKey, requestId: 'slow-notice', goal: 'Inspect', mode: 'auto' });
+    await vi.advanceTimersByTimeAsync(1600);
+    f.wait.mockResolvedValueOnce({ status: 'error', endedAt: Date.now(), error: 'Missing input' });
+    await vi.advanceTimersByTimeAsync(1600);
+    const flow = (await f.request('swarmFlow.list', { parentKeys: [f.parentKey] }) as any).flows[0];
+    expect(flow.status).toBe('blocked');
+    expect(f.request.mock.calls.some(([method]) => method === 'chat.inject')).toBe(true);
+    await f.request('swarmFlow.intervene', { parentKeys: [f.parentKey], id: flow.id, nodeId: 'plan', revision: flow.revision, intervention: { id: 'continue-plan', action: 'continue', text: 'Input supplied; continue' } });
+    await vi.advanceTimersByTimeAsync(1600);
+    expect(f.run).toHaveBeenCalledTimes(2);
+  } finally { release(); }
+});
+
+it.each(['permissions', 'project', 'planning'])('allows safe controls after %s changes through chat and Tab, but rejects a replaced parent', async change => {
+  vi.useFakeTimers();
+  const f = await fixture();
+  const flow = await f.request('swarmFlow.start', { parentKey: f.parentKey, requestId: 'safe-controls', goal: 'Inspect', mode: 'auto' }) as any;
+  if (change === 'permissions') f.parent.permissionMode = 'read-only';
+  else if (change === 'project') f.parent.sessionRoot = path.join(f.root, 'other');
+  else Object.assign(f.parent, { justdoPlanMode: { enabled: true } });
+  const factory = f.toolFactories.filter(value => value.contextVersion === 2)[1];
+  const tool = factory.create({ sessionKey: f.parentKey, assertInvocationCurrent: vi.fn() }).find((item: any) => item.name === 'swarm_flow_control');
+  const invoke = async (action: string, revision: number, call: string) => {
+    f.hooks.get('before_tool_call')({ toolName: tool.name }, { sessionKey: f.parentKey, runId: 'control-turn', toolCallId: call });
+    return (await tool.execute(call, { flowId: flow.id, revision, action })).details;
+  };
+  const paused = await invoke('pause', flow.revision, 'pause');
+  expect(paused).toMatchObject({ accepted: true, flow: { status: 'paused' } });
+  expect(await invoke('resume', paused.flow.revision, 'resume')).toMatchObject({ accepted: false });
+  await expect(f.request('swarmFlow.control', { parentKeys: [f.parentKey], id: flow.id, revision: paused.flow.revision, action: 'resume' })).rejects.toThrow('changed');
+  f.parent.sessionId = 'replacement-parent';
+  expect(await invoke('stop', paused.flow.revision, 'invalid-stop')).toMatchObject({ accepted: false });
+  await expect(f.request('swarmFlow.control', { parentKeys: [f.parentKey], id: flow.id, revision: paused.flow.revision, action: 'stop' })).rejects.toThrow('identity');
+  f.parent.sessionId = 'native-parent';
+  const stopped = await invoke('stop', paused.flow.revision, 'stop');
+  expect(stopped).toMatchObject({ accepted: true, flow: { status: 'stopping' } });
+  expect(await f.request('swarmFlow.control', { parentKeys: [f.parentKey], id: flow.id, revision: stopped.flow.revision, action: 'stop' })).toMatchObject({ status: 'stopping' });
+  expect(f.run).not.toHaveBeenCalled();
+});
+
+it('notifies a native run deadline while the run remains active without repeating the notice', async () => {
+  vi.useFakeTimers();
+  const f = await fixture();
+  await f.request('swarmFlow.start', { parentKey: f.parentKey, requestId: 'run-deadline', goal: 'Inspect', mode: 'auto' });
+  await vi.advanceTimersByTimeAsync(1600);
+  vi.setSystemTime(Date.now() + FLOW_LIMITS.durationMs + 1);
+  await vi.advanceTimersByTimeAsync(1600);
+  const current = (await f.request('swarmFlow.list', { parentKeys: [f.parentKey] }) as any).flows[0];
+  expect(current).toMatchObject({ status: 'blocked', nodes: [{ status: 'running', error: expect.stringContaining('deadline') }] });
+  const notices = () => f.request.mock.calls.filter(([method]) => method === 'chat.inject');
+  expect(notices()).toHaveLength(1);
+  expect(notices()[0][1].message).toContain('Run deadline exceeded');
+  await vi.advanceTimersByTimeAsync(3200);
+  expect(notices()).toHaveLength(1);
+  expect(f.run).toHaveBeenCalledTimes(1);
+});
+
+it.each(['permissions', 'project', 'planning'])('notifies a %s admission blocker without admitting more work', async change => {
+  vi.useFakeTimers();
+  const f = await fixture();
+  await f.request('swarmFlow.start', { parentKey: f.parentKey, requestId: 'changed-policy-notice', goal: 'Inspect', mode: 'auto' });
+  if (change === 'permissions') f.parent.permissionMode = 'read-only';
+  else if (change === 'project') f.parent.sessionRoot = path.join(f.root, 'other');
+  else Object.assign(f.parent, { justdoPlanMode: { enabled: true } });
+  await vi.advanceTimersByTimeAsync(1600);
+  const flow = (await f.request('swarmFlow.list', { parentKeys: [f.parentKey] }) as any).flows[0];
+  expect(flow.status).toBe('blocked');
+  expect(f.run).not.toHaveBeenCalled();
+  const notices = () => f.request.mock.calls.filter(([method]) => method === 'chat.inject');
+  expect(notices()).toHaveLength(1);
+  expect(notices()[0][1].message).toContain('permissions or project changed');
+  await vi.advanceTimersByTimeAsync(3200);
+  expect(notices()).toHaveLength(1);
+  const stopped = await f.request('swarmFlow.control', { parentKeys: [f.parentKey], id: flow.id, revision: flow.revision, action: 'stop' });
+  expect(stopped).toMatchObject({ status: 'stopping' });
+});
+
+it.each([{ action: ['stop'] }, { action: { action: 'stop' } }, { action: null }, { action: 1 }])('rejects non-string Gateway control action $action without altering a paused flow', async ({ action }) => {
+  const f = await fixture();
+  const flow = await f.request('swarmFlow.start', { parentKey: f.parentKey, requestId: 'invalid-action', goal: 'Inspect', mode: 'auto' }) as any;
+  const paused = await f.request('swarmFlow.control', { parentKeys: [f.parentKey], id: flow.id, revision: flow.revision, action: 'pause' }) as any;
+  await expect(f.request('swarmFlow.control', { parentKeys: [f.parentKey], id: flow.id, revision: paused.revision, action })).rejects.toThrow('Invalid flow control');
+  const current = (await f.request('swarmFlow.list', { parentKeys: [f.parentKey] }) as any).flows[0];
+  expect(current).toMatchObject({ status: 'paused', revision: paused.revision });
+  expect(f.run).not.toHaveBeenCalled();
+});
+
 it.each(['full', 'workspace', 'guarded', 'read-only'])('inherits explicit %s permissions and the project for inspection and verification stages', async mode => {
   vi.useFakeTimers();
   const f = await fixture();
@@ -194,7 +325,7 @@ it('requests a self-contained brief in the parent conversation before admitting 
   expect(listed.flows[0].nodes[0].kind).toBe('plan');
   expect(
     await f.hook({ ...event, currentUserMessage: 'Normal follow-up' }, context),
-  ).toBeUndefined();
+  ).toMatchObject({ prependSystemContext: expect.stringContaining('swarm_flow_status') });
   expect(
     await f.hook(event, { ...context, inputProvenance: { kind: 'inter_session' } }),
   ).toBeUndefined();

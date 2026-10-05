@@ -204,8 +204,16 @@ export default function SwarmFlowPanel({
   const node = flow?.nodes.find(n => n.id === selected);
   const source = flow?.nodes.find(n => n.id === selectedEdge);
   const layout = layoutFlow(flow?.nodes ?? [], columns);
+  const actions = flow?.actions ?? {
+    pause: flow?.status === 'running',
+    resume:
+      flow?.status === 'paused' &&
+      !flow.nodes.some(item => ['failed', 'uncertain'].includes(item.status)),
+    stop: !!flow && !['completed', 'cancelled', 'stopping'].includes(flow.status),
+    retry: flow?.canRetry ?? false,
+  };
   const control = async (action: SwarmFlowAction) => {
-    if (!flow || busy || stale) return;
+    if (!flow || busy || stale || !actions[action]) return;
     setBusy(true);
     setError(false);
     try {
@@ -494,21 +502,26 @@ export default function SwarmFlowPanel({
           <footer className="flex shrink-0 items-center border-t border-border p-2">
             {flow && !['completed', 'cancelled'].includes(flow.status) && (
               <>
-                {flow.canRetry &&
+                {actions.retry &&
                   button('flowRetry', ArrowPathIcon, () => void control('retry'), busy || stale)}
                 {flow.status === 'paused'
-                  ? button('flowResume', PlayIcon, () => void control('resume'), busy || stale)
+                  ? button(
+                      'flowResume',
+                      PlayIcon,
+                      () => void control('resume'),
+                      busy || stale || !actions.resume,
+                    )
                   : button(
                       'flowPause',
                       PauseIcon,
                       () => void control('pause'),
-                      busy || stale || flow.status !== 'running',
+                      busy || stale || !actions.pause,
                     )}
                 {button(
                   'flowStop',
                   StopIcon,
                   () => void control('stop'),
-                  busy || stale || flow.status === 'stopping',
+                  busy || stale || !actions.stop,
                 )}
               </>
             )}

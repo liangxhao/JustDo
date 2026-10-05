@@ -73,34 +73,37 @@ export default function SwarmFlowDetailPanel({
   }, [sessionId, flowId, node.id, node.status, source?.id, active, retry]);
   const handoff =
     source && detail?.dispatch ? handoffContent(detail.dispatch.message, source.id) : undefined;
+  const title = source ? label(source) + ' → ' + label(node) : label(node);
+  const agentLabel = '@' + (node.agentName ?? node.agentId ?? 'main');
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <header className="flex items-center gap-2 border-b border-border p-3">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <header className="flex min-w-0 shrink-0 items-center gap-2 border-b border-border px-3 py-2">
         <button
           type="button"
           title={t('flowBack')}
           aria-label={t('flowBack')}
           onClick={onBack}
-          className="rounded-lg p-2 hover:bg-surface-raised"
+          className="shrink-0 rounded-lg p-2 hover:bg-surface-raised"
         >
           <ArrowLeftIcon className="h-4 w-4" />
         </button>
-        <div className="min-w-0 flex-1">
-          <h3 className="truncate text-sm font-semibold">
-            {source ? label(source) + ' → ' + label(node) : label(node)}
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <h3 title={title} className="min-w-0 flex-1 truncate text-sm font-semibold">
+            {title}
           </h3>
-          <p className="text-xs text-secondary">
-            {source
-              ? t('flowHandoff')
-              : t('flowAgent') + ': ' + (node.agentName ?? node.agentId ?? 'main')}
-          </p>
+          <span
+            title={source ? t('flowHandoff') : t('flowAgent') + ': ' + agentLabel}
+            className="max-w-[40%] shrink-0 truncate rounded-md bg-surface-raised px-2 py-1 text-xs text-secondary"
+          >
+            {source ? t('flowHandoff') : agentLabel}
+          </span>
         </div>
         <button
           type="button"
           title={t('swarmRefresh')}
           aria-label={t('swarmRefresh')}
           onClick={() => setRetry(v => v + 1)}
-          className="rounded-lg p-2 hover:bg-surface-raised"
+          className="shrink-0 rounded-lg p-2 hover:bg-surface-raised"
         >
           <ArrowPathIcon className="h-4 w-4" />
         </button>

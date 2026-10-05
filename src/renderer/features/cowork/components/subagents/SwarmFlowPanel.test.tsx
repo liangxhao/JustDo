@@ -319,3 +319,82 @@ test('shows the retry entry only when the engine confirms conclusive failed node
     ).toBeNull(),
   );
 });
+
+test('disables pause and stop during confirmed final delivery according to the service actions', async () => {
+  const f = fixture();
+  render(
+    <SwarmFlowPanel
+      sessionId="product"
+      tasks={[]}
+      onOpenTask={() => {}}
+      snapshot={{
+        success: true,
+        flows: [{ ...flow, actions: { pause: false, resume: false, stop: false, retry: false } }],
+      }}
+    />,
+  );
+  const pause = await screen.findByRole('button', { name: 'Pause new task dispatch' });
+  const stop = screen.getByRole('button', { name: 'Stop this flow' });
+  expect((pause as HTMLButtonElement).disabled).toBe(true);
+  expect((stop as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(pause);
+  fireEvent.click(stop);
+  expect(f.control).not.toHaveBeenCalled();
+});
+
+test('allows stopping an unknown final delivery once the service marks it blocked', async () => {
+  const f = fixture();
+  render(
+    <SwarmFlowPanel
+      sessionId="product"
+      tasks={[]}
+      onOpenTask={() => {}}
+      snapshot={{
+        success: true,
+        flows: [
+          {
+            ...flow,
+            status: 'blocked',
+            actions: { pause: false, resume: false, stop: true, retry: false },
+          },
+        ],
+      }}
+    />,
+  );
+  const stop = await screen.findByRole('button', { name: 'Stop this flow' });
+  expect((stop as HTMLButtonElement).disabled).toBe(false);
+  fireEvent.click(stop);
+  await waitFor(() => expect(f.control).toHaveBeenCalledWith('product', 'flow', 8, 'stop'));
+});
+
+test.each(['failed', 'uncertain'] as const)(
+  'keeps resume disabled for paused flows with %s nodes',
+  async status => {
+    const f = fixture();
+    const props = { sessionId: 'product', tasks: [], onOpenTask: () => {} };
+    const paused: SwarmFlowView = {
+      ...flow,
+      status: 'paused',
+      nodes: flow.nodes.map(node => (node.id === 'a' ? { ...node, status } : node)),
+    };
+    const view = render(
+      <SwarmFlowPanel {...props} snapshot={{ success: true, flows: [paused] }} />,
+    );
+    const resume = await screen.findByRole('button', { name: 'Resume flow' });
+    expect((resume as HTMLButtonElement).disabled).toBe(true);
+    view.rerender(
+      <SwarmFlowPanel
+        {...props}
+        snapshot={{
+          success: true,
+          flows: [
+            { ...paused, actions: { pause: false, resume: false, stop: true, retry: false } },
+          ],
+        }}
+      />,
+    );
+    expect((resume as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(resume);
+    expect(f.control).not.toHaveBeenCalled();
+  },
+);

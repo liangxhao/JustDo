@@ -7,6 +7,7 @@ import {
   DEFAULT_FLOW_AGENT,
   type Flow,
   FLOW_LIMITS,
+  FLOW_MANAGEMENT_TOOLS,
   FLOW_RPC,
   FLOW_TOOLS,
   type FlowAction,
@@ -16,6 +17,8 @@ import {
 } from './contract.js';
 import { FlowEngine } from './engine.js';
 import { interventionAvailability } from './intervention.js';
+import { createManagementTools, MANAGEMENT_GUIDANCE } from './management.js';
+import { FlowNotifier } from './notifications.js';
 import { assertCrossAgentPolicy, parentPolicy } from './policy.js';
 import { FlowStore } from './store.js';
 import {
@@ -40,8 +43,11 @@ type SharedService = {
   engine?: FlowEngine;
   timer?: ReturnType<typeof setTimeout>;
   pending?: Promise<void>;
+  notifier?: FlowNotifier;
+  pendingNotice?: Promise<void>;
   generation: number;
   submissionCalls: Map<string, SubmissionCall>;
+  managementCalls: Map<string, SubmissionCall>;
 };
 // Native agent registries register separate tool/hook instances in this process.
 // They must all address the service started by the Gateway registry, while each
@@ -53,6 +59,7 @@ const processServices = globalThis as typeof globalThis & {
 const state = (processServices[serviceKey] ??= {
   generation: 0,
   submissionCalls: new Map<string, SubmissionCall>(),
+  managementCalls: new Map<string, SubmissionCall>(),
 });
 
 export default {
@@ -61,6 +68,7 @@ export default {
   register(api: OpenClawPluginApi) {
     let ownedGeneration: number | undefined;
     const submissionCalls = state.submissionCalls;
+    const managementCalls = state.managementCalls;
     const callKey = (sessionKey: string, toolCallId: string, name: string) =>
       JSON.stringify([sessionKey, toolCallId, name]);
     const rpc = <T = Record<string, unknown>>(method: string, params: Record<string, unknown>) =>
@@ -68,11 +76,15 @@ export default {
         scopes: ['operator.admin', 'operator.read', 'operator.write'],
         timeoutMs: 15000,
       });
-    const assertParent = (flow: Flow) => {
+    const assertParentIdentity = (flow: Flow) => {
       const current = entry(flow.parentKey);
+      if (!current || current.sessionId !== flow.parentId)
+        throw new Error('Parent identity changed. Flow management is blocked.');
+      return current;
+    };
+    const assertParent = (flow: Flow) => {
+      const current = assertParentIdentity(flow);
       if (
-        !current ||
-        current.sessionId !== flow.parentId ||
         current.permissionMode !== flow.permissionMode ||
         current.sessionRoot !== flow.cwd ||
         parentPolicy(current) !== flow.policy ||
@@ -213,10 +225,28 @@ export default {
             await rpc('chat.inject', { sessionKey: flow.parentKey, message });
           },
         });
+        state.notifier = new FlowNotifier(state.store, {
+          send: async (flow, message) => {
+            if (epoch !== state.generation) throw new Error('Swarm service stopped.');
+            // Reporting a blocker does not admit new work under a changed policy.
+            assertParentIdentity(flow);
+            await rpc('chat.inject', { sessionKey: flow.parentKey, message });
+          },
+        });
         const tick = () => {
           if (epoch !== state.generation || !state.engine) return;
           state.pending = state.engine
             .tick()
+            .then(() => {
+              if (epoch !== state.generation || state.pendingNotice) return;
+              // A slow notification must not delay task dispatch or recovery.
+              state.pendingNotice = state
+                .notifier!.tick()
+                .catch(error => ctx.logger.error('[SwarmFlow] ' + String(error)))
+                .finally(() => {
+                  if (epoch === state.generation) state.pendingNotice = undefined;
+                });
+            })
             .catch(error => ctx.logger.error('[SwarmFlow] ' + String(error)))
             .finally(() => {
               if (epoch === state.generation) state.timer = setTimeout(tick, 1500);
@@ -229,13 +259,17 @@ export default {
         ownedGeneration = undefined;
         ++state.generation;
         submissionCalls.clear();
+        managementCalls.clear();
         clearTimeout(state.timer);
         state.engine?.stop();
-        await state.pending;
+        state.notifier?.stop();
+        await Promise.all([state.pending, state.pendingNotice]);
         state.store?.close();
         state.store = undefined;
         state.engine = undefined;
         state.pending = undefined;
+        state.notifier = undefined;
+        state.pendingNotice = undefined;
         state.timer = undefined;
       },
     });
@@ -245,6 +279,27 @@ export default {
       { scope: 'operator.read' },
     );
     api.on('before_tool_call', (event, ctx) => {
+      if (
+        Object.values(FLOW_MANAGEMENT_TOOLS).includes(
+          event.toolName as typeof FLOW_MANAGEMENT_TOOLS.status,
+        )
+      ) {
+        try {
+          if (!managed(ctx.sessionKey) || !ctx.runId || !ctx.toolCallId || ctx.abortSignal?.aborted)
+            throw new Error('Missing or cancelled native management identity.');
+          ensure();
+          for (const [key, value] of managementCalls)
+            if (value.expiresAt <= Date.now()) managementCalls.delete(key);
+          if (managementCalls.size >= 256) throw new Error('Too many pending flow operations.');
+          managementCalls.set(callKey(ctx.sessionKey, ctx.toolCallId, event.toolName), {
+            runId: ctx.runId,
+            signal: ctx.abortSignal,
+            expiresAt: Date.now() + 30000,
+          });
+        } catch (error) {
+          return { block: true, blockReason: String(error) };
+        }
+      }
       const assigned = state.store
         ?.all()
         .flatMap(flow => flow.nodes)
@@ -284,6 +339,7 @@ export default {
       if (ctx.sessionKey && ctx.toolCallId) {
         const key = callKey(ctx.sessionKey, ctx.toolCallId, event.toolName);
         if (submissionCalls.get(key)?.runId === ctx.runId) submissionCalls.delete(key);
+        if (managementCalls.get(key)?.runId === ctx.runId) managementCalls.delete(key);
       }
     });
     api.on('before_agent_finalize', (event, ctx) => {
@@ -424,6 +480,33 @@ export default {
       },
       { names: Object.values(FLOW_TOOLS) },
     );
+    api.registerTool(
+      {
+        contextVersion: 2,
+        create: ctx => {
+          if (!managed(ctx.sessionKey) || !state.store) return null;
+          const parentKey = ctx.sessionKey;
+          return createManagementTools(parentKey, {
+            current: ensure,
+            assertParent,
+            assertParentIdentity,
+            invocation: (toolCallId, name) => {
+              const bound = managementCalls.get(callKey(parentKey, toolCallId, name));
+              return {
+                runId: bound?.runId ?? '',
+                assertCurrent: () => {
+                  if (!bound || bound.expiresAt <= Date.now() || bound.signal?.aborted)
+                    throw new Error('Native management authority is unavailable or expired.');
+                  ctx.assertInvocationCurrent();
+                  ensure();
+                },
+              };
+            },
+          });
+        },
+      },
+      { names: Object.values(FLOW_MANAGEMENT_TOOLS) },
+    );
     api.on('before_prompt_build', async (event, ctx) => {
       const assigned = state.store
         ?.all()
@@ -496,7 +579,11 @@ export default {
         typeof message === 'string'
           ? /\n\n<justdo-swarm-flow mode="(auto|research|review)"\/>$/.exec(message)
           : null;
-      if (!marker || message === undefined) return;
+      if (!marker || message === undefined) {
+        if (state.store?.all().some(flow => flow.parentKey === ctx.sessionKey))
+          return { prependSystemContext: MANAGEMENT_GUIDANCE };
+        return;
+      }
       try {
         if (!requestId) throw new Error('Missing stable native request identity.');
         ctx.hookInvocation?.assertActive();
@@ -683,14 +770,16 @@ export default {
             !params.parentKeys.every(managed) ||
             typeof params.id !== 'string' ||
             !Number.isSafeInteger(params.revision) ||
-            !['pause', 'resume', 'stop', 'retry'].includes(String(params.action))
+            typeof params.action !== 'string' ||
+            !['pause', 'resume', 'stop', 'retry'].includes(params.action)
           )
             throw new Error('Invalid flow control.');
           const { store: currentStore, engine: currentEngine } = ensure();
-          if (
-            !(params.parentKeys as string[]).includes(currentStore.get(params.id)?.parentKey ?? '')
-          )
+          const flow = currentStore.get(params.id);
+          if (!flow || !(params.parentKeys as string[]).includes(flow.parentKey))
             throw new Error('Flow does not belong to this conversation.');
+          if (['pause', 'stop'].includes(String(params.action))) assertParentIdentity(flow);
+          else assertParent(flow);
           respond(
             true,
             viewFlow(

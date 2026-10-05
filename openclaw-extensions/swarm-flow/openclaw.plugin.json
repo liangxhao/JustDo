@@ -7,7 +7,15 @@
     "onCapabilities": ["tool"]
   },
   "contracts": {
-    "tools": ["swarm_flow_start", "swarm_flow_complete", "swarm_flow_verify", "swarm_flow_block"]
+    "tools": [
+      "swarm_flow_start",
+      "swarm_flow_status",
+      "swarm_flow_control",
+      "swarm_flow_intervene",
+      "swarm_flow_complete",
+      "swarm_flow_verify",
+      "swarm_flow_block"
+    ]
   },
   "configSchema": {
     "type": "object",

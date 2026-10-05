@@ -1,9 +1,10 @@
 import { CheckIcon, PlusIcon } from '@heroicons/react/24/outline';
-import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
 
 export interface ComposerFeatureItem {
   id: string;
   label: string;
+  description?: string;
   icon: ReactNode;
   selected?: boolean;
   disabled?: boolean;
@@ -15,27 +16,34 @@ export default function ComposerFeatureMenu({
   items,
   label,
   disabled = false,
+  triggerIcon,
 }: {
   items: readonly ComposerFeatureItem[];
   label: string;
   disabled?: boolean;
+  triggerIcon?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  const menuId = useId();
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const buttons = useRef(new Map<string, HTMLButtonElement>());
   const enterFromEnd = useRef(false);
   const itemsRef = useRef(items);
   itemsRef.current = items;
+  const navigationKey = JSON.stringify(items.map(item => [item.id, Boolean(item.disabled)]));
   useEffect(() => {
-    if (disabled) {
+    if (disabled || !itemsRef.current.length) {
       setOpen(false);
       return;
     }
     if (!open) return;
     const enabled = itemsRef.current.filter(item => !item.disabled);
     const entry = enterFromEnd.current ? enabled[enabled.length - 1] : enabled[0];
-    if (entry) buttons.current.get(entry.id)?.focus();
+    if (!enabled.some(item => buttons.current.get(item.id) === document.activeElement)) {
+      if (entry) buttons.current.get(entry.id)?.focus();
+      else trigger.current?.focus();
+    }
     const dismiss = (event: PointerEvent) => {
       if (!root.current?.contains(event.target as Node)) setOpen(false);
     };
@@ -51,7 +59,7 @@ export default function ComposerFeatureMenu({
       document.removeEventListener('pointerdown', dismiss);
       document.removeEventListener('keydown', escape);
     };
-  }, [open, disabled]);
+  }, [open, disabled, navigationKey]);
   const navigate = (id: string, key: string) => {
     const enabled = items.filter(item => !item.disabled);
     if (!enabled.length) return;
@@ -64,6 +72,7 @@ export default function ComposerFeatureMenu({
           : (index + (key === 'ArrowDown' ? 1 : -1) + enabled.length) % enabled.length;
     buttons.current.get(enabled[next].id)?.focus();
   };
+  if (!items.length) return null;
   return (
     <div
       ref={root}
@@ -80,6 +89,7 @@ export default function ComposerFeatureMenu({
         aria-label={label}
         aria-expanded={open && !disabled}
         aria-haspopup="menu"
+        aria-controls={open && !disabled ? menuId : undefined}
         onClick={() => {
           enterFromEnd.current = false;
           setOpen(!open);
@@ -93,13 +103,14 @@ export default function ComposerFeatureMenu({
         }}
         className={`flex h-7 items-center gap-1 rounded-lg px-1.5 disabled:opacity-40 ${items.some(item => item.selected) ? 'bg-primary/10 text-primary' : 'text-secondary hover:bg-surface-raised'}`}
       >
-        <PlusIcon className="h-4 w-4" />
+        <span aria-hidden="true">{triggerIcon ?? <PlusIcon className="h-4 w-4" />}</span>
       </button>
       {open && !disabled && (
         <div
           role="menu"
+          id={menuId}
           aria-label={label}
-          className="absolute bottom-full left-0 z-50 mb-2 w-48 rounded-xl border border-border bg-surface p-1 shadow-lg"
+          className={`absolute bottom-full left-0 z-50 mb-2 max-w-[calc(100vw-32px)] rounded-xl border border-border bg-surface p-1 shadow-lg ${items.some(item => item.description) ? 'w-60' : 'w-48'}`}
         >
           {items.map(item => (
             <button
@@ -110,6 +121,8 @@ export default function ComposerFeatureMenu({
               }}
               type="button"
               role="menuitem"
+              aria-label={item.label}
+              aria-describedby={item.description ? `${menuId}-${item.id}-description` : undefined}
               tabIndex={-1}
               disabled={item.disabled}
               onClick={() => {
@@ -128,7 +141,17 @@ export default function ComposerFeatureMenu({
               <span aria-hidden="true" className="flex h-4 w-4 shrink-0 items-center text-primary">
                 {item.icon}
               </span>
-              <span className="min-w-0 flex-1">{item.label}</span>
+              <span className="min-w-0 flex-1">
+                <span className="block">{item.label}</span>
+                {item.description && (
+                  <span
+                    id={`${menuId}-${item.id}-description`}
+                    className="mt-0.5 block text-xs leading-relaxed text-secondary"
+                  >
+                    {item.description}
+                  </span>
+                )}
+              </span>
               {item.selected && (
                 <CheckIcon aria-hidden="true" className="h-4 w-4 shrink-0 text-primary" />
               )}
