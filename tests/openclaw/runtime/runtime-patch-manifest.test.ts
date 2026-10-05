@@ -285,6 +285,35 @@ describe('OpenClaw runtime patch manifest', () => {
     ).toThrow(/OpenClaw version is v2026\.6\.11, expected v2026\.9\.8/);
   });
 
+  test('rejects missing native workers in an otherwise valid frozen bundle', () => {
+    const { repoRoot, runtimeRoot } = createFixture();
+    fs.appendFileSync(
+      path.join(runtimeRoot, 'gateway-bundle.mjs'),
+      'function runtimeProcessEntrypoint(name) { return name; }\n' +
+        'runtimeProcessEntrypoint("config/sessions/session-transcript.worker");\n' +
+        'runtimeProcessEntrypoint("cron/store/read-only.worker");\n',
+    );
+    patchOpenClawRuntime(runtimeRoot, { repoRoot, freshBundlePass: true });
+
+    expect(() => verifyFrozenOpenClawRuntime(runtimeRoot, { requireBundle: true })).toThrow(
+      /companion files.*session-transcript\.worker\.js.*read-only\.worker\.js/,
+    );
+    expect(() => verifyOpenClawPatchManifest(runtimeRoot, { repoRoot })).toThrow(
+      /companion files.*session-transcript\.worker\.js.*read-only\.worker\.js/,
+    );
+
+    for (const name of [
+      'config/sessions/session-transcript.worker',
+      'cron/store/read-only.worker',
+    ]) {
+      const filePath = path.join(runtimeRoot, 'dist', name + '.js');
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      fs.writeFileSync(filePath, '// frozen worker');
+    }
+    expect(() => verifyFrozenOpenClawRuntime(runtimeRoot, { requireBundle: true })).not.toThrow();
+    expect(() => verifyOpenClawPatchManifest(runtimeRoot, { repoRoot })).not.toThrow();
+  });
+
   test('rejects a frozen runtime with a missing patch proof or tampered bundle', () => {
     const { repoRoot, runtimeRoot } = createFixture();
 

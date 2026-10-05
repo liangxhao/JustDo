@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { verifyRuntimeCompanionFiles } = require('./openclaw-runtime-companions.cjs');
 
 const PATCH_MANIFEST_FILENAME = 'runtime-patch-manifest.json';
 const PATCH_MANIFEST_FORMAT_VERSION = 2;
@@ -182,6 +183,11 @@ function verifyFrozenOpenClawRuntime(runtimeRoot, options = {}) {
       problems.push('gateway-bundle.mjs is missing');
     } else {
       const bundleStat = fs.statSync(bundlePath);
+      try {
+        verifyRuntimeCompanionFiles(runtimeRoot, fs.readFileSync(bundlePath, 'utf8'));
+      } catch (error) {
+        problems.push(error.message);
+      }
       if (
         manifest.gatewayBundle?.path !== 'gateway-bundle.mjs' ||
         manifest.gatewayBundle?.size !== bundleStat.size ||
@@ -502,6 +508,11 @@ function verifyOpenClawPatchManifest(runtimeRoot, options = {}) {
         'Rebuild the OpenClaw runtime before packaging.',
     );
   }
+
+  verifyRuntimeCompanionFiles(
+    runtimeRoot,
+    fs.readFileSync(path.join(runtimeRoot, 'gateway-bundle.mjs'), 'utf8'),
+  );
 
   return expected;
 }

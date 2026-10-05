@@ -23,6 +23,7 @@ const {
   hasStaleRuntimeWorkerImportMetaUrl,
   rewriteRuntimeWorkerImportMetaUrls,
   syncRuntimeBundledAssets,
+  verifyRuntimeCompanionFiles,
 } = require('./openclaw-runtime-companions.cjs');
 const {
   INITIAL_BUNDLE_PENDING_FILENAME,
@@ -285,15 +286,7 @@ function verifyBundledRuntimeCompanions(openclawRuntimeDir, bundledPath) {
     return;
   }
 
-  const missing = referencedCompanions.filter(
-    relativePath => !fs.existsSync(path.join(openclawRuntimeDir, relativePath)),
-  );
-
-  if (missing.length > 0) {
-    throw new Error(
-      'Bundled gateway companion files referenced by the bundle are missing: ' + missing.join(', '),
-    );
-  }
+  verifyRuntimeCompanionFiles(openclawRuntimeDir, bundle);
 }
 
 esbuild

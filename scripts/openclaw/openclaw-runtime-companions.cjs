@@ -150,6 +150,18 @@ function getRuntimeCompanionPathsReferencedByBundle(bundle) {
   return [...new Set(paths)];
 }
 
+function verifyRuntimeCompanionFiles(runtimeRoot, bundle) {
+  const missing = getRuntimeCompanionPathsReferencedByBundle(bundle).filter(
+    relativePath =>
+      !fs.statSync(path.join(runtimeRoot, relativePath), { throwIfNoEntry: false })?.isFile(),
+  );
+  if (missing.length > 0) {
+    throw new Error(
+      'Bundled gateway companion files referenced by the bundle are missing: ' + missing.join(', '),
+    );
+  }
+}
+
 function syncRuntimeBundledAssets(runtimeRoot, bundle) {
   const copied = [];
 
@@ -177,4 +189,5 @@ module.exports = {
   hasStaleRuntimeWorkerImportMetaUrl,
   rewriteRuntimeWorkerImportMetaUrls,
   syncRuntimeBundledAssets,
+  verifyRuntimeCompanionFiles,
 };

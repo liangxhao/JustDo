@@ -153,6 +153,8 @@ npm run openclaw:patches:verify
 
 完整平台命令依次安装/同步 runtime、bundle Gateway、同步 plugins/resources、预编译 extensions 并 prune。不要把仅运行 patch 单元测试当作 platform runtime 已准备完成。
 
+同步 `current` 时，每次都检查归档中的入口与 `dist/` 文件，只解出缺失文件，保留已有文件；不能以 CLI 主入口存在推断 native worker 已完整解包。解包必须区分目录与文件，文件读取或写入失败应立即中止，不能当作目录跳过。冻结 bundle 的复用检查与打包 manifest 检查也验证所有被 bundle 引用的 worker/module companion 均为磁盘上的普通文件，避免会话或定时任务启动后才发现缺失。
+
 ## 11. 变更验证
 
 Patch 修改至少执行：
