@@ -130,6 +130,7 @@ import {
   OpenClawAssistantMediaIpc,
   type OpenClawAssistantMediaRequest,
 } from '../shared/openclaw/assistantMedia';
+import { ComputerControlIpc } from '../shared/openclaw/computerControl';
 import {
   CoworkInteractionIpc,
   type ExtensionChangedEvent,
@@ -620,6 +621,10 @@ contextBridge.exposeInMainWorld('electron', {
       restore: (id: string) => ipcRenderer.invoke(WorktreeIpc.Restore, id),
       remove: (id: string) => ipcRenderer.invoke(WorktreeIpc.Remove, id),
       clean: () => ipcRenderer.invoke(WorktreeIpc.Clean),
+    },
+    computerControl: {
+      get: () => ipcRenderer.invoke(ComputerControlIpc.Get),
+      setEnabled: (enabled: boolean) => ipcRenderer.invoke(ComputerControlIpc.SetEnabled, enabled),
     },
     history: {
       getToolInputs: (params: { sessionKey: string; toolCallIds: string[] }) =>

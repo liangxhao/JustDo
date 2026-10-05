@@ -205,11 +205,47 @@ Extension 可用 outbound-header-policy.json 声明 HTTPS 目标、Header 名称
 
 ## OpenClaw 2026.9.8 integration
 
-The runtime retains the native QuickJS Code Mode executor and GitHub reader plugins,
+The runtime retains the native QuickJS Code Mode executor and CUA desktop-control plugin,
 including explicit allowlist membership while preserving user disable state. Local
 extensions import named SDK subpaths. Agent-owned Workshop collections remain
 Gateway-owned; the application does not recreate workspace-based skill ownership.
 See [upgrade audit](../openclaw-upgrades/v2026.9.8.md).
+
+### 可选本机电脑控制
+
+运行时裁剪保留上游 `cua-computer`，配置同步为已安装插件写入默认
+`enabled: false`，并加入原生插件 allowlist。设置 → 电脑操控提供一个即时保存的
+开关，通过带原生配置版本的单次 `config.patch` 同时更新插件和全局 `computer`
+工具许可；关闭时写入明确的工具 deny，开启时只移除该工具的 deny，并扩展当前
+allow 或 alsoAllow，保留其他工具权限。同步、登录和退出登录按插件选择维持两者
+一致，不新增产品数据库中的开关副本。扩展列表继续显示同一个原生插件，并沿用
+受管理扩展的锁定状态；主进程拒绝通过通用扩展管理入口启停或改写该插件，
+仅设置页开关更新启用状态，不新增提示文案。
+页面只显示开关和当前会话模型必须支持图像的说明，不单独配置模型或图像能力。
+主进程以隔离的 Node 子进程调用锁定运行时的原生工具策略函数，只传入全局
+profile、allow、alsoAllow、deny，读取真实的全局许可状态并在启用写入前校验。
+保留通配符 deny 和受限 profile；若现有 profile 与绝对白名单组合仍阻止
+`computer`，启用返回失败，不扩大其他工具权限或显示假成功。
+上游在 Windows/Linux 上要求 `plugins.entries.cua-computer.enabled: true`，
+仅保留文件或依赖插件 manifest 的默认值并不能启用本机控制。
+
+OpenClaw 的原生 `computer` 工具通过 Gateway 电脑服务调用 CUA，拥有截图、
+动作、引用校验、串行执行和运行结束清理；应用沿用通用工具调用展示，
+不添加鼠标键盘 IPC、截图缓存或独立执行器。截图用于模型观察，
+不自动作为聊天附件发送。它与现有 `browser` 工具及内置浏览器承载独立。
+
+Windows x64/ARM64 和 glibc Linux x64/ARM64 使用上游固定版本的本地
+`@trycua/cua-driver` SDK 及对应平台原生包，依赖由锁定 OpenClaw 包的生产安装提供。
+扩展预编译保持 CUA SDK 和 `rastermill` 外部加载，保留原生库的包目录解析。
+Gateway 须处于可访问的交互式桌面会话，聊天模型须支持图片。
+macOS 仍依赖上游原生应用持有的驱动端点与系统权限；保留插件不表示
+Electron 应用已经实现该平台的原生承载。
+
+启用开关为全局工具策略显式加入 `computer`，支持编程工具集和非空 allowlist；
+关闭开关保留原有限制性 allowlist，避免移除最后一个元素后变成无限制策略。
+提供商、独立助手和其他显式限制仍由原生工具策略处理。应用不把宿主桌面控制加入
+沙箱工具白名单。命令审批仅约束 `exec`，不能视为对每次电脑输入的审批。
+开发中已裁剪的冻结运行时须从锁定的 pristine 包重新构建，不能在原目录补拷插件。
 
 ## 内置浏览器与执行策略
 

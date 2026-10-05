@@ -140,6 +140,7 @@ import { registerSessionDiagnosticsHandlers } from './ipc/cowork/sessionDiagnost
 import { registerSessionReviewHandlers } from './ipc/cowork/sessionReview';
 import { registerMulticaIntegrationHandlers } from './ipc/multica';
 import {
+  registerComputerControlHandlers,
   registerExtensionHandlers,
   registerHookHandlers,
   registerLocalTtsHandlers,
@@ -1391,6 +1392,13 @@ if (multicaBridgeArgv) {
   registerOpenClawHistoryHandlers({
     requestGateway: <T>(method: string, params?: unknown) =>
       getCoworkEngineService().requestGateway<T>(method, params),
+  });
+  registerComputerControlHandlers({
+    getRuntimeRoot: () => getOpenClawEngineManager().getRuntimeRoot(),
+    requestGateway: <T>(method: string, params?: unknown) =>
+      getCoworkEngineService().requestGateway<T>(method, params),
+    runConfigMutationExclusive: operation =>
+      getOpenClawConfigSyncService().runConfigMutationExclusive(operation),
   });
   registerLocalTtsHandlers();
   registerOpenClawUsageHandlers({ getRuntime: getOpenClawRuntimeAdapter });

@@ -707,6 +707,10 @@ interface IElectronAPI {
   generateSessionTitle: (request: GenerateSessionTitleRequest) => Promise<string>;
   getRecentCwds: (limit?: number) => Promise<string[]>;
   openclaw: {
+    computerControl: {
+      get: () => Promise<import('../../shared/openclaw/computerControl').ComputerControlResult>;
+      setEnabled: (enabled: boolean) => Promise<import('../../shared/openclaw/computerControl').ComputerControlResult>;
+    };
     worktrees: {
       getSettings: () => Promise<import('../../shared/openclaw/worktrees').WorktreeSettingsResult>;
       saveSettings: (

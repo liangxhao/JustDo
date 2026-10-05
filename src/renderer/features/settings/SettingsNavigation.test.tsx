@@ -16,6 +16,13 @@ vi.mock('@/services/i18n', () => ({
 afterEach(cleanup);
 
 describe('SettingsNavigation', () => {
+  it('opens computer control from navigation and finds it by the image requirement', () => {
+    const onSelect = vi.fn();
+    render(<SettingsNavigation activeTab="general" onSelect={onSelect} onClose={vi.fn()} />);
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '图像' } });
+    fireEvent.click(screen.getByRole('button', { name: /电脑操控/ }));
+    expect(onSelect).toHaveBeenCalledWith('computer');
+  });
   it('finds a page by a setting within it without changing the current page', () => {
     const onSelect = vi.fn();
     render(<SettingsNavigation activeTab="model" onSelect={onSelect} onClose={vi.fn()} />);

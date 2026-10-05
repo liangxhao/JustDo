@@ -2,6 +2,7 @@ export const OpenClawExtensionId = {
   ASK_USER_QUESTION: 'ask-user-question',
   AUTOMATION_PERMISSION: 'automation-permission',
   BROWSER: 'browser',
+  CUA_COMPUTER: 'cua-computer',
   RUNTIME_SERVICES: 'runtime-services',
   WORKBOARD: 'workboard',
   MEMORY_CORE: 'memory-core',
@@ -21,6 +22,7 @@ export const OpenClawToolName = {
   ASK_USER_QUESTION: 'AskUserQuestion',
   PRESENT_PLAN: 'PresentPlan',
   BROWSER: 'browser',
+  COMPUTER: 'computer',
 } as const;
 
 export const EmbeddedBrowserGateway = {

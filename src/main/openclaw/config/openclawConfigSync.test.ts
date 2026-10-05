@@ -1010,6 +1010,28 @@ describe('OpenClaw managed session retention', () => {
 });
 
 describe('OpenClaw plugin config merging', () => {
+  test.each([undefined, false, true])(
+    'keeps desktop control opt-in and preserves the user choice (%s) in an explicit allowlist',
+    enabled => {
+      const id = OpenClawExtensionId.CUA_COMPUTER;
+      const defaults = buildDefaultOpenClawPluginEntries(candidate => candidate === id);
+      const existing = {
+        allow: ['runtime-services'],
+        ...(enabled === undefined ? {} : { entries: { [id]: { enabled } } }),
+      };
+
+      const merged = mergeOpenClawPluginConfig(
+        applyDefaultOpenClawPluginEntries(existing, defaults),
+        {},
+        Object.keys(defaults),
+        [id, 'runtime-services'],
+      );
+
+      expect(merged.entries).toEqual({ [id]: { enabled: enabled ?? false } });
+      expect(merged.allow).toEqual(['runtime-services', id]);
+      expect(buildDefaultOpenClawPluginEntries(() => false)).toEqual({});
+    },
+  );
   test('enables independent flows without enabling Workboard and preserves explicit choices', () => {
     const ids = [OpenClawExtensionId.SWARM_FLOW, OpenClawExtensionId.WORKBOARD];
     const defaults = buildDefaultOpenClawPluginEntries(id => ids.includes(id as typeof ids[number]));

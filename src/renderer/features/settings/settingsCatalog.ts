@@ -10,6 +10,7 @@ export type SettingsTab =
   | 'worktrees'
   | 'security'
   | 'browser'
+  | 'computer'
   | 'integrations'
   | 'im'
   | 'usage'
@@ -122,6 +123,14 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     group: 'connections',
     wide: true,
     keywords: [],
+  },
+  {
+    id: 'computer',
+    label: 'computerControlTitle',
+    description: 'settingsDescription_computer',
+    group: 'connections',
+    wide: false,
+    keywords: ['computerControlEnable', 'computerControlModelRequirement'],
   },
   {
     id: 'im',

@@ -73,36 +73,78 @@ describe('OpenClawExtensionImportService', () => {
     ).toBe(false);
   });
 
-  it('protects managed permission extensions from user mutation', async () => {
-    const runCommand = vi.fn();
+  it.each(['automation-permission', 'cua-computer'])(
+    'protects managed %s from user mutation',
+    async extensionId => {
+      const runCommand = vi.fn();
+      const requestGateway = vi.fn();
+      const service = new OpenClawExtensionImportService({
+        getOpenClawEngineManager: () =>
+          ({ getStatus: () => ({ phase: 'ready' }) }) as OpenClawEngineManager,
+        getManagedPluginIds: () => [extensionId],
+        runCommand,
+        requestGateway,
+      });
+
+      await expect(
+        service.updateConfiguration(extensionId, {
+          approvalTimeoutMinutes: 10,
+        }),
+      ).resolves.toEqual({
+        success: false,
+        error: 'Managed extensions cannot be reconfigured here.',
+      });
+      await expect(service.delete(extensionId)).resolves.toEqual({
+        success: false,
+        error: 'Managed extensions cannot be deleted.',
+      });
+      await expect(service.setEnabled(extensionId, false)).resolves.toEqual({
+        success: false,
+        error: 'Managed extensions cannot be changed here.',
+      });
+      await expect(service.setEnabled(extensionId, true)).resolves.toEqual({
+        success: false,
+        error: 'Managed extensions cannot be changed here.',
+      });
+      expect(runCommand).not.toHaveBeenCalled();
+      expect(requestGateway).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([false, true])('locks the desktop-control catalog entry when enabled=%s', async enabled => {
+    const requestGateway = vi.fn().mockResolvedValue({
+      plugins: [
+        {
+          id: 'cua-computer',
+          name: 'Computer',
+          installed: true,
+          enabled,
+          state: enabled ? 'enabled' : 'disabled',
+          origin: 'bundled',
+          removable: true,
+        },
+      ],
+      diagnostics: [],
+      mutationAllowed: true,
+    });
     const service = new OpenClawExtensionImportService({
       getOpenClawEngineManager: () =>
-        ({ getStatus: () => ({ phase: 'ready' }) }) as OpenClawEngineManager,
-      getManagedPluginIds: () => ['automation-permission'],
-      runCommand,
+        ({
+          getStateDir: () => fixtureRoot,
+          getConfigPath: () => path.join(fixtureRoot, 'openclaw.json'),
+        }) as unknown as OpenClawEngineManager,
+      getManagedPluginIds: () => ['cua-computer'],
+      requestGateway,
     });
-
-    await expect(
-      service.updateConfiguration('automation-permission', {
-        approvalTimeoutMinutes: 10,
+    expect(await service.listCatalog()).toEqual([
+      expect.objectContaining({
+        id: 'cua-computer',
+        enabled,
+        managed: true,
+        canToggle: false,
+        removable: false,
       }),
-    ).resolves.toEqual({
-      success: false,
-      error: 'Managed extensions cannot be reconfigured here.',
-    });
-    await expect(service.delete('automation-permission')).resolves.toEqual({
-      success: false,
-      error: 'Managed extensions cannot be deleted.',
-    });
-    await expect(service.setEnabled('automation-permission', false)).resolves.toEqual({
-      success: false,
-      error: 'Managed extensions cannot be changed here.',
-    });
-    await expect(service.setEnabled('automation-permission', true)).resolves.toEqual({
-      success: false,
-      error: 'Managed extensions cannot be changed here.',
-    });
-    expect(runCommand).not.toHaveBeenCalled();
+    ]);
   });
 
   it('uses the Gateway plugin catalog as the installed inventory authority', async () => {

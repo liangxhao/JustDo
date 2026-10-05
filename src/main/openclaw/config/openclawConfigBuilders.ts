@@ -2067,6 +2067,8 @@ export const buildDefaultOpenClawPluginEntries = (
       [
         [OpenClawExtensionId.WORKBOARD, false],
         [OpenClawExtensionId.AGENT_TEAM, false],
+        // Native desktop control requires explicit opt-in, preserved across syncs.
+        [OpenClawExtensionId.CUA_COMPUTER, false],
         [OpenClawExtensionId.SWARM_FLOW, true],
         [OpenClawExtensionId.TYPESAFE, false],
         // The prepared agent runtime rejects a selected memory plugin omitted from
@@ -2111,6 +2113,9 @@ export const isUserToggleableBundledPlugin = (pluginId: string): boolean =>
 export const listManagedOpenClawPluginIds = (): string[] => [
   ...new Set([
     ...(isBundledPluginAvailable(OpenClawExtensionId.BROWSER) ? [OpenClawExtensionId.BROWSER] : []),
+    ...(isBundledPluginAvailable(OpenClawExtensionId.CUA_COMPUTER)
+      ? [OpenClawExtensionId.CUA_COMPUTER]
+      : []),
     ...readPreinstalledPluginIds().filter(
       id => !isUserToggleableBundledPlugin(id) && isBundledPluginAvailable(id),
     ),

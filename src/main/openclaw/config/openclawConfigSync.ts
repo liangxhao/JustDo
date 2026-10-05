@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 
+import { withComputerControlPolicy } from './computerControlConfig';
 import {
   applyDecisionModelConfiguration,
   captureDecisionModelConfiguration,
@@ -662,7 +663,7 @@ export class OpenClawConfigSync {
         error: 'Failed to prepare managed model provider credentials.',
       };
     }
-    const configToPersist = preparedSecrets.config;
+    const configToPersist = withComputerControlPolicy(preparedSecrets.config);
     this.applyManagedNonLanguageModels(configToPersist);
     const nextContent = `${JSON.stringify(configToPersist, null, 2)}\n`;
     const configChanged = hasOpenClawConfigChanged(currentContent, configToPersist);
@@ -893,7 +894,7 @@ export class OpenClawConfigSync {
     const trustedInstalledExtensionIds = listInstalledOpenClawExtensionIds(
       this.engineManager.getStateDir(),
     );
-    const minimalConfig: Record<string, unknown> = withMemorySearch(
+    let minimalConfig: Record<string, unknown> = withMemorySearch(
       {
         skills: mergeOpenClawSkillConfig({}, {}),
         gateway: {
@@ -1002,6 +1003,7 @@ export class OpenClawConfigSync {
       );
     }
     this.applyManagedNonLanguageModels(minimalConfig);
+    minimalConfig = withComputerControlPolicy(minimalConfig);
     const nextContent = `${JSON.stringify(minimalConfig, null, 2)}\n`;
     const buildMinimalSyncResult = (
       expectedConfig: Record<string, unknown>,
@@ -1015,7 +1017,9 @@ export class OpenClawConfigSync {
       try {
         const existing = previousConfig;
         if (isRecord(existing)) {
-          const sanitizedConfig = buildAuthScopedOpenClawConfig(existing, minimalConfig, reason);
+          const sanitizedConfig = withComputerControlPolicy(
+            buildAuthScopedOpenClawConfig(existing, minimalConfig, reason),
+          );
           this.applyManagedNonLanguageModels(sanitizedConfig);
           const sanitizedContent = `${JSON.stringify(sanitizedConfig, null, 2)}\n`;
           if (hasOpenClawConfigChanged(currentContent, sanitizedConfig)) {
@@ -1193,15 +1197,16 @@ export class OpenClawConfigSync {
               ),
             );
             this.applyManagedNonLanguageModels(mergedConfig);
-            const mergedContent = `${JSON.stringify(mergedConfig, null, 2)}\n`;
-            if (hasOpenClawConfigChanged(currentContent, mergedConfig)) {
+            const configToWrite = withComputerControlPolicy(mergedConfig);
+            const mergedContent = `${JSON.stringify(configToWrite, null, 2)}\n`;
+            if (hasOpenClawConfigChanged(currentContent, configToWrite)) {
               ensureDir(path.dirname(configPath));
               const tmpPath = `${configPath}.tmp-${Date.now()}`;
               this.writeConfigTemporaryFile(tmpPath, mergedContent);
               fs.renameSync(tmpPath, configPath);
-              return buildMinimalSyncResult(mergedConfig, true);
+              return buildMinimalSyncResult(configToWrite, true);
             }
-            return buildMinimalSyncResult(mergedConfig, false);
+            return buildMinimalSyncResult(configToWrite, false);
           }
         }
       } catch (error) {

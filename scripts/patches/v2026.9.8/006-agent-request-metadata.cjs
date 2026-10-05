@@ -296,8 +296,25 @@ function patchFollowupInitiation(content, filePath) {
       throw new Error(`${filePath}: partial queued human initiation transfer`);
     return content;
   }
-  if (content.includes('justDoFollowupHumanRuns'))
+  if (content.includes('justDoFollowupHumanRuns')) {
+    // esbuild removes the source marker and may rename local bindings. Accept
+    // only the complete current transfer immediately after its native binding,
+    // with the same source/destination identities; never repair partial output.
+    const escapeIdentifier = value => value.replace(/[$]/g, '\\$&');
+    const compiledTransfer = new RegExp(
+      '^\\s*,\\s*\\(\\(\\)\\s*=>\\s*\\{\\s*' +
+      'const\\s+(justDoFollowupHumanRuns\\d*)\\s*=\\s*globalThis\\[\\s*' +
+      '(?:/\\*\\s*@__PURE__\\s*\\*/\\s*)?' +
+      'Symbol\\.for\\("justdo\\.builtin-models\\.human-runs"\\)\\s*\\];\\s*' +
+      `if\\s*\\(\\1\\?\\.delete\\(${escapeIdentifier(match[2])}\\)\\)\\s*` +
+      `\\1\\.add\\(${escapeIdentifier(match[1])}\\.runId\\);\\s*\\}\\)\\(\\)`,
+    );
+    if (isGatewayBundlePath(filePath) &&
+        content.match(new RegExp(binding.source, 'g'))?.length === 1 &&
+        compiledTransfer.test(content.slice(match.index + match[0].length)))
+      return content;
     throw new Error(`${filePath}: historical or partial queued human initiation transfer`);
+  }
   // Native source identity is already resolved and bound here, immediately
   // before execution; never replace native run IDs or infer identity from text.
   return replaceUniquePattern(
@@ -390,7 +407,7 @@ function verifyPatch(runtimeDir) {
     if (!/justDoFollowupHumanRuns\w*\?\.delete\([A-Za-z_$][\w$]*\)/.test(content) ||
         !/justDoFollowupHumanRuns\w*\.add\([A-Za-z_$][\w$]*\.runId\)/.test(content))
       throw new Error(`${filePath}: queued human initiation transfer is missing`);
-    if (!isGatewayBundlePath(filePath)) patchFollowupInitiation(content, filePath);
+    patchFollowupInitiation(content, filePath);
   }
   for (const filePath of files.schema) {
     const content = fs.readFileSync(filePath, 'utf8');

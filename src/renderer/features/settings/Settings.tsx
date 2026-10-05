@@ -72,6 +72,7 @@ import {
 import { setConfiguredModels } from '@/features/models/modelSlice';
 import { toOpenClawModelRef } from '@/features/models/openclawModelRef';
 import BrowserSettingsTab from '@/features/settings/browser/BrowserSettingsTab';
+import ComputerControlSettingsPage from '@/features/settings/computer/ComputerControlSettingsPage';
 import IntegrationSettingsTab, {
   IntegrationSettingsView,
   type IntegrationSettingsViewId,
@@ -1719,6 +1720,8 @@ const Settings: React.FC<SettingsProps> = ({
 
       case 'browser':
         return <BrowserSettingsTab initialPage={browserPage} />;
+      case 'computer':
+        return <ComputerControlSettingsPage />;
       case 'voice':
         return <VoiceSettingsTab value={voice} onChange={setVoice} />;
 
@@ -1819,7 +1822,7 @@ const Settings: React.FC<SettingsProps> = ({
 
           <form
             onSubmit={event => {
-              if (activeTab === 'agents') event.preventDefault();
+              if (activeTab === 'agents' || activeTab === 'computer') event.preventDefault();
               else void handleSubmit(event);
             }}
             className="flex min-h-0 flex-col flex-1 overflow-hidden"
@@ -1913,41 +1916,43 @@ const Settings: React.FC<SettingsProps> = ({
                 onClick={handleCloseSettings}
                 className="h-9 rounded-xl border border-border bg-background px-4 text-sm font-medium text-secondary shadow-sm transition-all hover:bg-surface-raised hover:text-foreground active:scale-[0.98]"
               >
-                {i18nService.t('cancel')}
+                {i18nService.t(activeTab === 'computer' ? 'close' : 'cancel')}
               </button>
-              <button
-                type="submit"
-                aria-busy={isSaving}
-                disabled={
-                  isSaving ||
-                  (activeTab === 'runtime' &&
-                    (agentRuntimeSettingsLoading || !initialAgentRuntimeSettings)) ||
-                  (activeTab === 'integrations' &&
-                    activeIntegrationView === IntegrationSettingsView.AgentDelegation &&
-                    (externalAgentSettingsLoading || !initialExternalAgentSettings))
-                }
-                className={`inline-flex h-9 min-w-[88px] items-center justify-center gap-1.5 rounded-xl px-5 text-sm font-medium text-white shadow-sm transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 ${
-                  saveSucceeded
-                    ? 'bg-green-600 hover:bg-green-600'
-                    : 'bg-primary hover:bg-primary-hover hover:shadow-card'
-                }`}
-              >
-                <span className="inline-flex items-center gap-1.5" aria-live="polite">
-                  {isSaving ? (
-                    <>
-                      <ArrowPathIcon className="h-4 w-4 animate-spin" aria-hidden="true" />
-                      {i18nService.t('saving')}
-                    </>
-                  ) : saveSucceeded ? (
-                    <>
-                      <CheckCircleIcon className="h-4 w-4 animate-scale-in" aria-hidden="true" />
-                      {i18nService.t('settingsSaved')}
-                    </>
-                  ) : (
-                    i18nService.t('save')
-                  )}
-                </span>
-              </button>
+              {activeTab !== 'computer' && (
+                <button
+                  type="submit"
+                  aria-busy={isSaving}
+                  disabled={
+                    isSaving ||
+                    (activeTab === 'runtime' &&
+                      (agentRuntimeSettingsLoading || !initialAgentRuntimeSettings)) ||
+                    (activeTab === 'integrations' &&
+                      activeIntegrationView === IntegrationSettingsView.AgentDelegation &&
+                      (externalAgentSettingsLoading || !initialExternalAgentSettings))
+                  }
+                  className={`inline-flex h-9 min-w-[88px] items-center justify-center gap-1.5 rounded-xl px-5 text-sm font-medium text-white shadow-sm transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 ${
+                    saveSucceeded
+                      ? 'bg-green-600 hover:bg-green-600'
+                      : 'bg-primary hover:bg-primary-hover hover:shadow-card'
+                  }`}
+                >
+                  <span className="inline-flex items-center gap-1.5" aria-live="polite">
+                    {isSaving ? (
+                      <>
+                        <ArrowPathIcon className="h-4 w-4 animate-spin" aria-hidden="true" />
+                        {i18nService.t('saving')}
+                      </>
+                    ) : saveSucceeded ? (
+                      <>
+                        <CheckCircleIcon className="h-4 w-4 animate-scale-in" aria-hidden="true" />
+                        {i18nService.t('settingsSaved')}
+                      </>
+                    ) : (
+                      i18nService.t('save')
+                    )}
+                  </span>
+                </button>
+              )}
             </div>
           </form>
         </div>

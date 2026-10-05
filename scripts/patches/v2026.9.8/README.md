@@ -58,6 +58,9 @@ Patch 006 transfers the one-shot human initiation marker from the native queued
 source turn to its separately allocated execution ID immediately before execution.
 It leaves native run identities and queue behavior unchanged. The current marker
 revision rejects older patched inputs; rebuild from the locked pristine package.
+The bundle verifier accepts the exact current transfer after esbuild removes its
+comment and renames local bindings, checking the adjacent native source and
+execution identities. Markerless source files and incomplete transfers still fail.
 
 ## Packaging and native evidence
 

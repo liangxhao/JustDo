@@ -28,15 +28,20 @@ vi.mock('electron', () => ({
 
 // Config projection tests must not depend on the developer runtime being installed or
 // replaced concurrently. Inventory discovery has its own filesystem tests.
+const optionalInventory = vi.hoisted(() => ({ computerAvailable: false }));
 vi.mock('../../plugins/extensions/openclawLocalExtensions', async importOriginal => {
   const actual = await importOriginal<typeof import('../../plugins/extensions/openclawLocalExtensions')>();
   const bundledIds = ['browser', 'workboard', 'memory-core', 'code-mode-quickjs', 'openai', 'mxc'];
+  const inventory = () => [
+    ...bundledIds,
+    ...(optionalInventory.computerAvailable ? ['cua-computer'] : []),
+  ];
   return {
     ...actual,
-    listBundledOpenClawExtensionIds: () => [...bundledIds],
-    inspectBundledOpenClawExtensions: () => ({ complete: true, ids: [...bundledIds] }),
+    listBundledOpenClawExtensionIds: () => inventory(),
+    inspectBundledOpenClawExtensions: () => ({ complete: true, ids: inventory() }),
     hasBundledOpenClawExtension: (id: string) =>
-      bundledIds.includes(id) || actual.listLocalOpenClawExtensionIds().includes(id),
+      inventory().includes(id) || actual.listLocalOpenClawExtensionIds().includes(id),
   };
 });
 
@@ -114,12 +119,50 @@ test('keeps both browser providers under browser-mode ownership', () => {
 });
 
 afterEach(() => {
+  optionalInventory.computerAvailable = false;
   vi.restoreAllMocks();
   clearActiveBuiltinModelCredential();
   setStoreGetter(() => null);
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test.each([
+  ['full', undefined], ['full', false], ['full', true],
+  ['minimal', undefined], ['minimal', false], ['minimal', true],
+] as const)('%s sync preserves desktop-control opt-in (%s) across startup and auth changes', (mode, enabled) => {
+  optionalInventory.computerAvailable = true;
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-computer-sync-'));
+  temporaryDirectories.push(stateDir);
+  const configPath = path.join(stateDir, 'openclaw.json');
+  fs.writeFileSync(configPath, JSON.stringify({
+    plugins: {
+      allow: ['browser'],
+      ...(enabled === undefined ? {} : { entries: { 'cua-computer': { enabled } } }),
+    },
+  }));
+  const appConfig = mode === 'full' ? {
+    model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
+    providers: { 'custom-provider': { enabled: true, apiKey: 'chat-test-key', baseUrl: 'https://custom.example.test/v1', apiFormat: 'openai', models: [{ id: 'custom-model' }] } },
+  } : {};
+  setStoreGetter(() => ({ get: () => appConfig }) as never);
+  const sync = new OpenClawConfigSync({
+    engineManager: { getConfigPath: () => configPath, getStateDir: () => stateDir, getDesiredVersion: () => '2026.9.8' },
+    getCoworkConfig: () => ({ workingDirectory: '', executionMode: 'local', agentEngine: 'openclaw' }),
+    getAgents: () => [],
+  } as never);
+
+  for (const reason of ['startup', 'app-config-change', BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout]) {
+    expect(sync.sync(reason).ok).toBe(true);
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.plugins.entries['cua-computer']).toEqual({ enabled: enabled ?? false });
+    expect(config.plugins.allow).toContain('cua-computer');
+    expect(config.tools.deny.includes('computer')).toBe(enabled !== true);
+    if (enabled === true) expect(config.tools.allow ?? config.tools.alsoAllow).toContain('computer');
+    expect(config.tools.sandbox.tools.alsoAllow).not.toContain('computer');
+  }
+  expect(listManagedOpenClawPluginIds()).toContain('cua-computer');
 });
 
 const writeExistingBuiltinConfig = (): string => {

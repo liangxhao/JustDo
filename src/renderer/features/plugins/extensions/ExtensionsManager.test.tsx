@@ -194,6 +194,40 @@ describe('ExtensionsManager extension toggle', () => {
     await waitFor(() => expect(openPath).toHaveBeenCalledWith('C:\\extensions\\sample-extension'));
   });
 
+  test.each([false, true])(
+    'locks computer control without offering a toggle when enabled=%s',
+    async enabled => {
+      const computerExtension: InstalledOpenClawExtension = {
+        ...extension,
+        id: 'cua-computer',
+        name: 'Computer',
+        enabled,
+        origin: 'bundled',
+        managed: true,
+        canToggle: false,
+        removable: false,
+        ...getExtensionManagement({ managed: true }),
+      };
+      const setEnabled = vi.fn();
+      Object.defineProperty(window, 'electron', {
+        configurable: true,
+        value: {
+          extensions: {
+            list: vi.fn(async () => ({ success: true, extensions: [computerExtension] })),
+            setEnabled,
+            onImportProgress: vi.fn(() => vi.fn()),
+          },
+        },
+      });
+      render(<ExtensionsManager searchQuery="Computer" />);
+      const lock = await screen.findByRole('img', { name: 'extensionToggleUnavailable' });
+      expect(screen.queryByRole('switch')).toBeNull();
+      fireEvent.click(lock);
+      expect(setEnabled).not.toHaveBeenCalled();
+      expect(screen.queryByRole('button', { name: 'extensionDelete' })).toBeNull();
+    },
+  );
+
   test('opens a requested provider extension after the inventory loads', async () => {
     const onRequestedExtensionHandled = vi.fn();
     Object.defineProperty(window, 'electron', {

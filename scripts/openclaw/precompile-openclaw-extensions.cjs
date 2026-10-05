@@ -27,6 +27,9 @@ const SDK_EXTERNALS = [
   'clawdbot/plugin-sdk/*',
 ];
 
+// Preserve the native SDK loaders and their package-relative binary resolution.
+const NATIVE_EXTERNALS = ['@trycua/cua-driver', '@trycua/cua-driver-*', 'rastermill'];
+
 // esbuild plugin: mark relative imports into openclaw core (../../../src/...)
 // as external — they only exist in the full openclaw source tree and are
 // resolved at runtime by jiti.
@@ -131,7 +134,7 @@ async function precompileOpenClawExtensions(runtimeDir, options = {}) {
           // Bundle all dependencies except SDK imports (resolved by jiti at runtime).
           // This inlines typebox and other small deps so the runtime
           // doesn't need them in node_modules.
-          external: SDK_EXTERNALS,
+          external: [...SDK_EXTERNALS, ...NATIVE_EXTERNALS],
           plugins: [openclawInternalsPlugin],
           // Silence warnings about __dirname/__filename in ESM
           logLevel: 'warning',

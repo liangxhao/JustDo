@@ -235,7 +235,7 @@ See `docs/architecture/10-data-storage.md`.
 - Strict TypeScript; functional React; 2-space indent, single quotes, semicolons.
 - Renderer aliases: `@/` -> `src/renderer/`, `@shared/` -> `src/shared/`.
 - Organize by feature/domain, not file type.
-- Settings use `models/`, `browser/`, `speech/`, `updates/`, `integrations/`,
+- Settings use `models/`, `browser/`, `computer/`, `speech/`, `updates/`, `integrations/`,
   `preferences/`, `runtime/`, and `usage/`; keep each area's UI, helpers, and
   tests together. `Settings.tsx` and cross-tab persistence/preview helpers stay at the root.
 - Renderer plugins use `skills/`, `mcp/`, `hooks/`, `extensions/`, and
@@ -403,6 +403,18 @@ equate the adapter with a requirement to call the public OpenAI service.
 Managed speech providers are `openai` and `tts-local-cli`.
 Online speech IPC reports registered adapters and explicit configuration only;
 do not add vendor model/voice presets or fallback catalogs when Gateway is unavailable.
+
+Retain `cua-computer` in the runtime. Desktop control defaults off and is user-toggleable
+in Settings → Computer control. Its single switch atomically changes the native plugin
+entry and global `computer` tool admission. The extension panel locks this managed
+plugin; only the Settings switch changes its enablement. Config sync keeps both aligned with that
+plugin entry; preserve unrelated policies and sandbox boundaries. Use the current
+conversation's image-capable model without separate computer model configuration.
+Native OpenClaw owns `computer` execution and screenshots.
+Keep the CUA SDK/image native loaders external during plugin precompilation. Do not
+automatically allow host desktop control in sandboxed sessions. macOS still requires
+the upstream app-owned driver endpoint and OS grants; retaining the plugin is not
+Electron-native macOS computer-control support. See `docs/architecture/07-plugin-system.md`.
 
 Video settings retain the native Kie, Z.AI or Novita configuration contract, but
 these provider plugins are not bundled in the intranet runtime. Only installed
