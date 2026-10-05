@@ -43,27 +43,16 @@ type PluginService = {
   stop: () => void;
 };
 
-type BeforePromptBuildHandler = (
-  event: unknown,
-  context: {
-    sessionKey?: string;
-    toolAuthority?: { allows: (name: string) => boolean; assertActive: () => void };
-  },
-) => { prependContext?: string } | undefined;
-
 const registrations = (emit = vi.fn()) => {
   let factory: ToolFactory | undefined;
   let gatewayMethod: GatewayMethod | undefined;
   let service: PluginService | undefined;
-  let beforePromptBuild: BeforePromptBuildHandler | undefined;
+  const on = vi.fn();
   let methodName = '';
   const logger = { warn: vi.fn() };
 
   embeddedBrowserPlugin.register({
-    on: (hookName: string, handler: BeforePromptBuildHandler, options: unknown) => {
-      expect(options).toEqual({ requiresToolAuthority: true });
-      if (hookName === 'before_prompt_build') beforePromptBuild = handler;
-    },
+    on,
     registerTool: (candidate: ToolFactory) => {
       factory = candidate;
     },
@@ -76,11 +65,11 @@ const registrations = (emit = vi.fn()) => {
     },
     logger,
   } as never);
-  if (!factory || !gatewayMethod || !service || !beforePromptBuild) {
+  if (!factory || !gatewayMethod || !service) {
     throw new Error('Plugin registration is incomplete.');
   }
   service.start({ gatewayEvents: { emit } });
-  return { beforePromptBuild, emit, factory, gatewayMethod, logger, methodName, service };
+  return { on, emit, factory, gatewayMethod, logger, methodName, service };
 };
 
 const requestedEnvelope = (emit: ReturnType<typeof vi.fn>) => {
@@ -146,40 +135,18 @@ describe('Embedded browser extension', () => {
   });
 
   test('is only exposed to desktop sessions', () => {
-    const { beforePromptBuild, factory, service } = registrations();
+    const { factory, service } = registrations();
 
     expect(factory({ sessionKey: 'agent:main:other:session-1' })).toBeNull();
     expect(factory({ sessionKey: 'agent:main:justdo:session-1' })).not.toBeNull();
-    expect(beforePromptBuild({}, { sessionKey: 'agent:main:other:session-1' })).toBeUndefined();
-    expect(
-      beforePromptBuild(
-        {},
-        {
-          sessionKey: 'agent:main:justdo:session-1',
-          toolAuthority: { allows: name => name === 'browser', assertActive: vi.fn() },
-        },
-      )?.prependContext,
-    ).toMatch(
-      /Do not launch Chrome.*screenshot action may be used for Agent observation.*explicitly asks to see a screenshot.*exact sanitized outbound copy path/,
-    );
     service.stop();
   });
 
-  test('explains denied browser access without sending a request or suggesting repeated discovery', () => {
-    const { beforePromptBuild, emit, service } = registrations();
-    const assertActive = vi.fn();
-    const result = beforePromptBuild(
-      {},
-      {
-        sessionKey: 'agent:main:justdo:session-1',
-        toolAuthority: { allows: () => false, assertActive },
-      },
-    );
-    expect(assertActive).toHaveBeenCalledOnce();
-    expect(result?.prependContext).toContain('not available in this turn');
-    expect(result?.prependContext).toContain('Do not repeatedly search');
-    expect(result?.prependContext).toContain('Do not change execution mode');
-    expect(result?.prependContext).not.toContain('Use the browser tool exclusively');
+  test('replaces the browser tool without registering conversation prompt hooks', () => {
+    const { on, emit, factory, service } = registrations();
+
+    expect(factory({ sessionKey: 'agent:main:justdo:session-1' })?.name).toBe('browser');
+    expect(on).not.toHaveBeenCalled();
     expect(emit).not.toHaveBeenCalled();
     service.stop();
   });

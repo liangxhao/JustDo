@@ -17,20 +17,6 @@ const SCREENSHOT_MAX_BYTES = 5 * 1024 * 1024;
 const SCREENSHOT_MAX_BASE64_LENGTH = Math.ceil(SCREENSHOT_MAX_BYTES / 3) * 4 + 4;
 const SCREENSHOT_SHARE_UNAVAILABLE =
   '[Screenshot sharing is unavailable because an outbound copy could not be prepared.]';
-const EMBEDDED_BROWSER_INSTRUCTIONS = [
-  'Use the browser tool exclusively for browser interaction in this desktop task.',
-  'Do not launch Chrome, the system default browser, or any other browser through exec, shell commands, scripts, or operating-system APIs.',
-  'The browser screenshot action may be used for Agent observation, but never replace the live browser panel with an image-only interaction surface.',
-  'When the user explicitly asks to see a screenshot, attach the exact sanitized outbound copy path returned by the screenshot action. Do not attach routine observation screenshots.',
-  'If the browser tool fails, report the failure instead of opening another browser.',
-].join(' ');
-const EMBEDDED_BROWSER_UNAVAILABLE_INSTRUCTIONS = [
-  'The browser tool is not available in this turn after the host applied its tool policy.',
-  'Do not repeatedly search for it, claim that opening the desktop browser panel enables it, or launch another browser through exec or operating-system APIs.',
-  'For a browser task, explain that the current execution/tool policy does not permit browser automation.',
-  'The desktop sandbox policy disables the host browser tool by default. The user can review Settings > Security > Task execution mode if they want to run locally with their current user permissions.',
-  'Do not change execution mode or relax sandbox/tool policy yourself. Manual browser viewing and agent browser automation are separate capabilities.',
-].join(' ');
 
 type BrowserCommand = Record<string, unknown>;
 type BrowserResponse = { ok: true; result: unknown } | { ok: false; error: string };
@@ -307,23 +293,6 @@ const plugin = {
         manager.clearGatewayEventEmitter(serviceOwner);
       },
     });
-
-    api.on(
-      'before_prompt_build',
-      (_event, context) => {
-        const sessionKey = context.sessionKey?.trim() ?? '';
-        if (!sessionKey.startsWith('justdo:') && !/^agent:[^:]+:justdo:/.test(sessionKey)) return;
-        // Only finalized native policy can attest availability. A loaded plugin
-        // or an open guest does not grant the tool to a sandboxed turn.
-        context.toolAuthority?.assertActive();
-        return {
-          prependContext: context.toolAuthority?.allows(TOOL_NAME)
-            ? EMBEDDED_BROWSER_INSTRUCTIONS
-            : EMBEDDED_BROWSER_UNAVAILABLE_INSTRUCTIONS,
-        };
-      },
-      { requiresToolAuthority: true },
-    );
 
     api.registerGatewayMethod(
       RESOLVE_METHOD,

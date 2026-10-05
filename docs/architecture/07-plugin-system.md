@@ -197,7 +197,7 @@ See [upgrade audit](../openclaw-upgrades/v2026.9.8.md).
 
 ## 内置浏览器与执行策略
 
-`embedded-browser` 的浏览器指导在 `before_prompt_build` 中以 `requiresToolAuthority: true` 注册，读取本轮策略过滤后的 `toolAuthority`。只有实际允许 `browser` 时才注入操作指导；工具不可用时说明执行策略限制，禁止重复发现、通过 shell 绕开限制或自行放宽执行权限。工作区网页可见不代表 Agent 获得操作权限。
+`embedded-browser` 只替换原生 `browser` 工具的桌面执行承载，提供工具契约、请求事件桥和结果，不注册提示词钩子，也不向普通聊天逐轮注入浏览器使用规则或工具不可用说明。工具是否可用由 OpenClaw 原生执行策略过滤决定；工作区网页可见不代表 Agent 获得操作权限。
 
 默认沙箱策略不提供宿主 `browser` 工具。用户可在“设置 → 安全 → 任务执行方式”选择本机执行，应用不因打开网页而修改策略。内置模式禁用原生 browser 插件，由桌面扩展提供工具，因此 OpenClaw Control UI 的原生 browser.request 查看入口不适用于该模式。
 
@@ -228,7 +228,6 @@ Workboard 仍使用 OpenClaw 插件的 `workboard.cards.*` / `workboard.boards.*
 已知 runId 的定向停止失败时，不降级为整个 session 的停止，避免误停后来启动的任务。
 
 接口核对与可复现验证见 [Workboard 操作契约](../features/workboard.md)。
-
 
 ## Jev typed evaluations
 
