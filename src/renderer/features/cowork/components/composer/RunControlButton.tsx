@@ -6,6 +6,7 @@ interface RunControlButtonProps {
   isRunning: boolean;
   isStopping: boolean;
   canSubmit: boolean;
+  canQueue?: boolean;
   size: 'normal' | 'large';
   sendTitle: string;
   onStop?: () => void;
@@ -17,15 +18,23 @@ export const RunControlButton = ({
   isRunning,
   isStopping,
   canSubmit,
+  canQueue = false,
   size,
   sendTitle,
   onStop,
   onSend,
 }: RunControlButtonProps) => {
-  const stoppingControl = isRunning || isStopping;
+  const queueControl = isRunning && !isStopping && canQueue && canSubmit;
+  const stoppingControl = isStopping || (isRunning && !queueControl);
   const disabled = stoppingControl ? isStopping || !onStop : !canSubmit;
   const label = i18nService.t(
-    stoppingControl ? (isStopping ? 'coworkStopping' : 'coworkStopTask') : 'coworkSendMessage',
+    stoppingControl
+      ? isStopping
+        ? 'coworkStopping'
+        : 'coworkStopTask'
+      : queueControl
+        ? 'coworkQueueMessage'
+        : 'coworkSendMessage',
   );
   const iconClass = size === 'large' ? 'h-5 w-5' : 'h-4 w-4';
   const shapeClass = size === 'large' ? 'rounded-xl' : 'flex-shrink-0 rounded-lg';
@@ -40,7 +49,7 @@ export const RunControlButton = ({
       disabled={disabled}
       aria-busy={isStopping || undefined}
       aria-label={label}
-      title={stoppingControl ? label : sendTitle}
+      title={stoppingControl || queueControl ? label : sendTitle}
       className={`p-2 ${shapeClass} ${colorClass} text-white transition-all shadow-subtle hover:shadow-card active:scale-95 disabled:cursor-not-allowed ${disabled ? 'opacity-50' : ''}`}
     >
       {stoppingControl ? (

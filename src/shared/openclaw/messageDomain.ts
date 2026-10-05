@@ -1,4 +1,5 @@
 import type { NormalizedAgentEvent, NormalizedChatEvent } from './agentEvent';
+import { QUEUED_INPUT_RUN_ID_PREFIX } from './pendingInputs';
 
 export type MessageDomainAdmission =
   | 'admitted'
@@ -59,7 +60,11 @@ export function classifyAgentEvent(params: {
   if (!activeRun) return canStartSelectedRun ? 'start-run' : 'ignored-run';
   if (activeRun.runId !== event.runId) {
     if (activeRun.status !== 'running') return canStartSelectedRun ? 'start-run' : 'ignored-run';
-    return canStartSelectedRun && activeRun.runId.startsWith('justdo-')
+    // An accepted followup has its own cancellation identity; it is not an
+    // acknowledgement that renames the currently executing provisional run.
+    return canStartSelectedRun &&
+      activeRun.runId.startsWith('justdo-') &&
+      !event.runId.startsWith(QUEUED_INPUT_RUN_ID_PREFIX)
       ? 'bind-provisional-run'
       : 'ignored-run';
   }
@@ -86,7 +91,10 @@ export function classifyChatEvent(params: {
   if (!messageSessionMatches(params.selected, event)) return 'ignored-session';
   if (!activeRun) return event.state === 'delta' && event.runId ? 'start-run' : 'ignored-run';
   if (event.runId && activeRun.runId !== event.runId) {
-    return activeRun.runId.startsWith('justdo-') ? 'bind-provisional-run' : 'ignored-run';
+    return activeRun.runId.startsWith('justdo-') &&
+      !event.runId.startsWith(QUEUED_INPUT_RUN_ID_PREFIX)
+      ? 'bind-provisional-run'
+      : 'ignored-run';
   }
   if (event.sessionId && activeRun.sessionId && event.sessionId !== activeRun.sessionId) {
     return 'ignored-session';

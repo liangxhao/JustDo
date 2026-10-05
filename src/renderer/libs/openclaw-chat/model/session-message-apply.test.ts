@@ -165,6 +165,33 @@ describe('applySessionMessagePayload', () => {
     });
   });
 
+  test.each([
+    { id: 'queued-user', seq: 2, idempotencyKey: 'justdo-queue-next:user', accepted: true },
+    { seq: 2, idempotencyKey: 'justdo-queue-next:user', accepted: false },
+    { id: 'queued-user', idempotencyKey: 'justdo-queue-next:user', accepted: false },
+    { id: 'queued-user', seq: 2, idempotencyKey: 'another-run:user', accepted: false },
+    { id: 'queued-user', seq: 2, idempotencyKey: 'justdo-queue-next', accepted: false },
+    {
+      id: 'queued-user',
+      seq: 2,
+      idempotencyKey: 'justdo-queue-next:user',
+      importedFrom: 'cli',
+      accepted: false,
+    },
+  ])(
+    'requires durable native queue identity for prompt adoption: $idempotencyKey / $accepted',
+    ({ accepted, ...metadata }) => {
+      const result = applySessionMessagePayload(
+        [],
+        {
+          message: { role: 'user', content: 'queued prompt', __openclaw: metadata },
+        },
+        { activeRunId: 'execution-run', runActive: true, isRecentTerminalRun: () => false },
+      );
+      expect(result.kind).toBe(accepted ? 'applied' : 'fallback');
+    },
+  );
+
   test('requires a message-owned sequence for incomplete imported provenance', () => {
     const envelopeOnly = applySessionMessagePayload(
       [],

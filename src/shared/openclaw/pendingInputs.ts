@@ -1,4 +1,6 @@
 /** Native 9.8 accepted-input custody, separate from durable transcript messages. */
+export const QUEUED_INPUT_RUN_ID_PREFIX = 'justdo-queue-';
+
 export type NativePendingInput = {
   id: string;
   runId?: string;

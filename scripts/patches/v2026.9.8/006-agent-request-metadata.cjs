@@ -3,7 +3,8 @@
 // Capability: attach stable agent session/parent metadata, one-shot human initiation evidence,
 // and an internal chat.send user-turn visibility control.
 // Target: pristine openclaw@2026.9.8, which does not publish these fields to provider payloads.
-// Scope: chat.send schema/admission plus the builtin_models/openai-completions provider boundary.
+// Scope: chat.send schema/admission, native followup source identity, and the
+// builtin_models/openai-completions provider boundary.
 // Safety: parent identity is read through the v9.8 native read-only worker. Third-party providers
 // receive no added metadata, a human-run marker is consumed by its first model request only, and
 // hidden user turns require a local authenticated backend owner, remain in model context, and are
@@ -22,10 +23,14 @@ const {
 } = require('./_patch-utils.js');
 
 const CONTRACT = 'JUSTDO_AGENT_REQUEST_METADATA_AND_HIDDEN_TURNS_V2026_9_8';
-const SCHEMA_MARKER = `${CONTRACT}: chat send schema`;
-const ADMISSION_MARKER = `${CONTRACT}: human run admission`;
-const VISIBILITY_MARKER = `${CONTRACT}: hidden user turn`;
-const STREAM_MARKER = `${CONTRACT}: built-in model service payload only`;
+const SCHEMA_MARKER = `${CONTRACT}: queued-input revision chat send schema`;
+const ADMISSION_MARKER = `${CONTRACT}: queued-input revision human run admission`;
+const VISIBILITY_MARKER = `${CONTRACT}: queued-input revision hidden user turn`;
+const STREAM_MARKER = `${CONTRACT}: queued-input revision built-in model service payload only`;
+const FOLLOWUP_MARKER = `${CONTRACT}: queued-input revision source initiation transfer`;
+const FOLLOWUP_TRANSFER = `// ${FOLLOWUP_MARKER}
+const justDoFollowupHumanRuns = globalThis[Symbol.for("justdo.builtin-models.human-runs")];
+if (justDoFollowupHumanRuns?.delete(sourceTurnId)) justDoFollowupHumanRuns.add(turn.runId);`;
 const ACCESSOR_ALIAS = 'loadJustDoSessionEntry';
 const TRANSPORT_FUNCTION = 'prepareEmbeddedAttemptTransport';
 const SUPPORTED_APIS = 'new Set(["openai-completions"])';
@@ -37,7 +42,7 @@ const HIDDEN_USER_TURN_PATTERN =
 
 const WRAPPER = `const justDoAgentMetadataApis = ${SUPPORTED_APIS};
 const justDoAgentMetadataProviders = ${SUPPORTED_PROVIDERS};
-// ${CONTRACT}: built-in model service payload only.
+// ${STREAM_MARKER}.
 async function wrapJustDoAgentRequestMetadata(streamFn, params) {
 \tconst humanRuns = globalThis[Symbol.for("justdo.builtin-models.human-runs")];
 \tif (!justDoAgentMetadataProviders.has(params.modelProvider) || !justDoAgentMetadataApis.has(params.modelApi)) {
@@ -89,6 +94,7 @@ function expectedCounts(runtimeDir) {
     schema: withBundle ? 5 : 4,
     registration: withBundle ? 3 : 2,
     stream: withBundle ? 5 : 4,
+    followup: withBundle ? 5 : 4,
   };
 }
 
@@ -133,7 +139,7 @@ function patchChatRegistration(content, filePath) {
     updated = replaceUniquePattern(
       updated,
       /(\b[A-Za-z_$][\w$]*\.addChatRun\(clientRunId,\s*\{\s*sessionKey,)/,
-      `// ${CONTRACT}: human run admission
+      `// ${ADMISSION_MARKER}
 \t\tif (p.justdoUserInitiated === true) {
 \t\t\tconst humanRuns = globalThis[Symbol.for("justdo.builtin-models.human-runs")] ??= new Set();
 \t\t\thumanRuns.add(clientRunId);
@@ -279,6 +285,29 @@ function patchAgentStream(content, runtimeDir, filePath) {
   return `${updated.slice(0, bodyStart + 1)}${patchedBody}${updated.slice(bodyEnd)}`;
 }
 
+function patchFollowupInitiation(content, filePath) {
+  assertCurrentPatchContract(content, CONTRACT, filePath, false);
+  const binding = /replyRunRegistry\.bindSourceTurnId\(([A-Za-z_$][\w$]*)\.operation,\s*([A-Za-z_$][\w$]*)\)/;
+  const match = binding.exec(content);
+  if (!match) throw new Error(`${filePath}: queued source identity binding missing`);
+  const transfer = FOLLOWUP_TRANSFER.replaceAll('sourceTurnId', match[2]).replaceAll('turn.runId', `${match[1]}.runId`);
+  if (content.includes(FOLLOWUP_MARKER)) {
+    if (!content.includes(transfer))
+      throw new Error(`${filePath}: partial queued human initiation transfer`);
+    return content;
+  }
+  if (content.includes('justDoFollowupHumanRuns'))
+    throw new Error(`${filePath}: historical or partial queued human initiation transfer`);
+  // Native source identity is already resolved and bound here, immediately
+  // before execution; never replace native run IDs or infer identity from text.
+  return replaceUniquePattern(
+    content,
+    binding,
+    nativeBinding => `(${nativeBinding}, (() => {\n${transfer}\n})())`,
+    `${filePath}: queued human initiation transfer`,
+  );
+}
+
 function targetFiles(runtimeDir) {
   return {
     schema: findFilesContaining(runtimeDir, [
@@ -294,12 +323,13 @@ function targetFiles(runtimeDir) {
       `async function ${TRANSPORT_FUNCTION}(`,
       'streamWithPayloadPatch',
     ]),
+    followup: findFilesContaining(runtimeDir, ['async function executeFollowupTurn(']),
   };
 }
 
 function assertTargetCounts(runtimeDir, files) {
   const expected = expectedCounts(runtimeDir);
-  for (const key of ['schema', 'registration', 'stream']) {
+  for (const key of ['schema', 'registration', 'stream', 'followup']) {
     if (files[key].length !== expected[key])
       throw new Error(
         `${key} metadata target count is ${files[key].length}, expected ${expected[key]}`,
@@ -318,6 +348,7 @@ function applyPatch(runtimeDir) {
   for (const filePath of files.registration) add(filePath, patchChatRegistration);
   for (const filePath of files.stream)
     add(filePath, (content, target) => patchAgentStream(content, runtimeDir, target));
+  for (const filePath of files.followup) add(filePath, patchFollowupInitiation);
   const changed = [];
   for (const [filePath, fileTransforms] of transforms) {
     const original = fs.readFileSync(filePath, 'utf8');
@@ -352,6 +383,15 @@ function verifyAsyncSessionRead(content, filePath) {
 function verifyPatch(runtimeDir) {
   const files = targetFiles(runtimeDir);
   assertTargetCounts(runtimeDir, files);
+  for (const filePath of files.followup) {
+    const content = fs.readFileSync(filePath, 'utf8');
+    if (!isGatewayBundlePath(filePath) && !content.includes(FOLLOWUP_MARKER))
+      throw new Error(`${filePath}: current queued human initiation transfer is missing`);
+    if (!/justDoFollowupHumanRuns\w*\?\.delete\([A-Za-z_$][\w$]*\)/.test(content) ||
+        !/justDoFollowupHumanRuns\w*\.add\([A-Za-z_$][\w$]*\.runId\)/.test(content))
+      throw new Error(`${filePath}: queued human initiation transfer is missing`);
+    if (!isGatewayBundlePath(filePath)) patchFollowupInitiation(content, filePath);
+  }
   for (const filePath of files.schema) {
     const content = fs.readFileSync(filePath, 'utf8');
     assertCurrentPatchContract(content, CONTRACT, filePath, !isGatewayBundlePath(filePath));
@@ -420,6 +460,7 @@ module.exports = {
   applyPatch,
   patchAgentStream,
   patchChatRegistration,
+  patchFollowupInitiation,
   patchSchema,
   verifyPatch,
   __testing: {
@@ -432,5 +473,6 @@ module.exports = {
     SUPPORTED_APIS,
     SUPPORTED_PROVIDERS,
     WRAPPER,
+    FOLLOWUP_TRANSFER,
   },
 };

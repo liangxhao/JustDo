@@ -10,6 +10,30 @@ import {
 
 afterEach(() => vi.useRealTimers());
 
+test('repeats session stop after an in-flight native queue admission is acknowledged', async () => {
+  vi.useFakeTimers();
+  const controller = new ChatController();
+  let acknowledge!: (result: unknown) => void;
+  Object.assign(controller.state, {
+    sessionKey: 'session-a', currentSessionId: 'native-a', connected: true,
+    chatRunId: 'active-run', chatSending: true,
+    client: { request: vi.fn(() => new Promise(resolve => { acknowledge = resolve; })) },
+  });
+  vi.spyOn(controller, 'loadHistory').mockResolvedValue(true);
+  const operation = createSessionSubmission();
+  const sending = controller.queueMessage('next').finally(operation.finish);
+  const stop = vi.fn().mockResolvedValue(true);
+  const stopping = stopSessionSubmission(operation, stop);
+  await Promise.resolve();
+  expect(stop).toHaveBeenCalledTimes(1);
+  expect(operation.stopping).toBe(true);
+  acknowledge({ status: 'started' });
+  await sending;
+  expect(await stopping).toBe(true);
+  expect(stop).toHaveBeenCalledTimes(2);
+  expect(controller.state.chatRunId).toBe('active-run');
+});
+
 test.each([false, true])(
   'settles the canonical run when Stop precedes its acknowledgement (receipt write fails=%s)',
   async persistenceFails => {

@@ -7,12 +7,13 @@ const pending = (id: number) => ({ id: String(id), runId: `run-${id}`, acceptedA
 const tail = (items: unknown[] = [], extra: Record<string, unknown> = {}) => ({ sessionId: 'native-1',
   messages: [{ role: 'assistant', content: 'history', __openclaw: { id: 'existing' } }],
   hasMore: false, deltaCursor: 'c1', pendingInputs: { items, total: items.length }, ...extra });
-const delta = (params: Record<string, unknown>, extra = {}) => ({ kind: 'delta', messages: [], deltaCursor: 'c2',
+const delta = (params: Record<string, unknown>, extra = {}) => ({ sessionId: 'native-1', kind: 'delta', messages: [], deltaCursor: 'c2',
   inputReceipts: (params.inputRunIds as string[] | undefined)?.map(runId => ({ runId, state: 'pending' })), ...extra });
 
 test('reads all pending pages independently and never publishes pending bodies into the existing cache', async () => {
   const publish = vi.fn();
   const request = vi.fn(async (_method: string, params: Record<string, unknown>) => {
+    if (params.sessionId !== undefined && params.messageId === undefined) throw new Error('sessionId requires messageId');
     if (params.cursor) return delta(params);
     if (params.pendingBefore) return tail([pending(1)]);
     if (params.limit === 1) return tail();
@@ -23,6 +24,7 @@ test('reads all pending pages independently and never publishes pending bodies i
   const result = await fetchNativePendingHistory({ request } as never, 'key', undefined, publish);
   expect(result.pendingInputs).toHaveLength(21);
   expect(request.mock.calls.some(([, params]) => params.pendingBefore === 2)).toBe(true);
+  expect(request.mock.calls.every(([, params]) => !('sessionId' in params))).toBe(true);
   expect(JSON.stringify(publish.mock.calls)).not.toContain('pending-');
 });
 
@@ -33,6 +35,14 @@ test('normal polling preserves cached canonical history and does not walk old hi
   const result = await fetchNativePendingHistory({ request } as never, 'key', cached);
   expect(result.messages[0]).toEqual(cached.messages[0]);
   expect(request.mock.calls.some(([, params]) => params.offset !== undefined)).toBe(false);
+});
+
+test('rejects receipts from a reset physical session even when its delta cursor is valid', async () => {
+  const publish = vi.fn();
+  const request = vi.fn(async (_method: string, params: Record<string, unknown>) =>
+    params.cursor ? delta(params, { sessionId: 'physical-after-reset' }) : tail([pending(1)]));
+  await expect(fetchNativePendingHistory({ request } as never, 'key', undefined, publish)).rejects.toThrow('session changed');
+  expect(publish).not.toHaveBeenCalled();
 });
 
 test('consumed receipts use native metadata identity and catch up canonical input during pagination', async () => {

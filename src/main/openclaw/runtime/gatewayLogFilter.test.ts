@@ -165,6 +165,37 @@ describe('GatewayStdoutLogFilter', () => {
     expect(filter.push(task)).toBe(task);
   });
 
+  it('discards routine event-loop health runs across stdout chunks and on flush', () => {
+    const filter = new GatewayStdoutLogFilter();
+    const timestamp = '2026-10-05T10:37:50.805+08:00 ';
+    const line = `${timestamp}\u001b[35m[scheduler]\u001b[0m running event-loop-health\r\n`;
+
+    expect(filter.push(line.slice(0, 45))).toBe('');
+    expect(filter.push(line.slice(45))).toBe('');
+    expect(filter.push('[scheduler] running event-loop-health')).toBe('');
+    expect(filter.flush()).toBe('');
+  });
+
+  it('keeps scheduler failures, health warnings, and other job runs', () => {
+    const filter = new GatewayStdoutLogFilter();
+    const diagnostics =
+      '[scheduler] event-loop-health failed: sample unavailable\n' +
+      '[gateway] event loop degraded: event_loop_delay\n' +
+      '[scheduler] late wake by 61000ms; coalescing 2 due jobs\n' +
+      '[scheduler] running event-loop-health-recovery\n' +
+      '[scheduler] running event-loop-health failed: sample unavailable\n' +
+      '[scheduler] running cron\n';
+
+    expect(filter.push(diagnostics)).toBe(diagnostics);
+  });
+
+  it('keeps diagnostics with Windows line endings intact', () => {
+    const filter = new GatewayStdoutLogFilter();
+    const failure = '[scheduler] event-loop-health failed: sample unavailable\r\n';
+
+    expect(filter.push('[scheduler] running event-loop-health\r\n' + failure)).toBe(failure);
+  });
+
   it('keeps successful and failed polling responses for frequency diagnostics', () => {
     const filter = new GatewayStdoutLogFilter();
     const success = '[ws] ⇄ res ✓ sessions.list 95ms id=request-1\n';

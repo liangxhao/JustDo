@@ -30,3 +30,26 @@ export const renderMermaidSvg = async (
     throw error;
   }
 };
+
+/** Render a message diagram only while its owner and theme are still current. */
+export async function renderMessageDiagram(block: HTMLElement): Promise<void> {
+  if (block.dataset.mermaidRendered) return;
+  block.dataset.mermaidRendered = 'true';
+  const preview = block.querySelector<HTMLElement>('.mermaid-preview');
+  const code = block.querySelector<HTMLElement>('.mermaid-source code')?.textContent;
+  if (!preview || !code) return;
+  const theme = document.documentElement.classList.contains('dark') ? 'dark' : 'default';
+  const isCurrent = () => block.isConnected &&
+    theme === (document.documentElement.classList.contains('dark') ? 'dark' : 'default');
+  try {
+    mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme, maxEdges: 500, maxTextSize: 20_000 });
+    const svg = await renderMermaidSvg(`justdo-mermaid-${crypto.randomUUID()}`, code);
+    if (!isCurrent()) return;
+    preview.classList.remove('mermaid-error');
+    preview.innerHTML = svg;
+  } catch (error) {
+    if (!isCurrent()) return;
+    preview.classList.add('mermaid-error');
+    preview.textContent = error instanceof Error ? error.message : i18nService.t('mermaidRenderFailed');
+  }
+}

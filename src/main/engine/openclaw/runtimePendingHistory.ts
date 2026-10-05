@@ -39,7 +39,9 @@ export async function fetchNativePendingHistory(
       let cursor = page.deltaCursor;
       if (!cursor) throw new Error('Missing native history generation');
       if (cached && attempt === 0) {
-        const delta = parseChatHistoryCursorResultV2026_9_8(await read({ sessionId, cursor: cached.deltaCursor }));
+        const raw = await read({ cursor: cached.deltaCursor });
+        checkIdentity(raw);
+        const delta = parseChatHistoryCursorResultV2026_9_8(raw);
         if (delta.kind === 'reset') throw new Error('Native cached history generation changed');
         messages = mergeGatewayHistoryPages(cached.messages, delta.messages);
         cursor = delta.deltaCursor;
@@ -50,7 +52,7 @@ export async function fetchNativePendingHistory(
       while (page.hasMore) {
         if (page.nextOffset === undefined || page.nextOffset <= offset) throw new Error('Invalid native history pagination');
         offset = page.nextOffset;
-        const raw = await read({ sessionId, limit: FULL_HISTORY_SYNC_LIMIT, offset });
+        const raw = await read({ limit: FULL_HISTORY_SYNC_LIMIT, offset });
         checkIdentity(raw);
         page = parseChatHistoryResultV2026_9_8(raw);
         if (page.totalMessages !== total) throw new Error('Native history snapshot changed');
@@ -70,7 +72,7 @@ export async function fetchNativePendingHistory(
         if (next === undefined) break;
         if (before !== undefined && next >= before) throw new Error('Invalid native pending pagination');
         before = next;
-        const raw = await read({ sessionId, limit: 20, pendingBefore: next });
+        const raw = await read({ limit: 20, pendingBefore: next });
         checkIdentity(raw);
         pendingPage = parseNativePendingInputs(raw.pendingInputs);
         if (!pendingPage) throw new Error('Missing native pending page');
@@ -96,7 +98,8 @@ export async function fetchNativePendingHistory(
       // catch-up in each request brings newly consumed user bodies into history.
       for (let index = 0; index < Math.max(1, runIds.length); index += 50) {
         const batch = runIds.slice(index, index + 50);
-        const raw = await read({ sessionId, cursor, ...(batch.length ? { inputRunIds: batch } : {}) });
+        const raw = await read({ cursor, ...(batch.length ? { inputRunIds: batch } : {}) });
+        checkIdentity(raw);
         const delta = parseChatHistoryCursorResultV2026_9_8(raw);
         if (delta.kind === 'reset') throw new Error('Native history generation changed');
         messages = mergeGatewayHistoryPages(messages, delta.messages);
@@ -116,8 +119,8 @@ export async function fetchNativePendingHistory(
           }
         }
       }
-      // Explicit sessionId reads can access archived generations. Confirm that
-      // the active key still belongs to this physical session before publishing.
+      // Native history pages/cursors use the active key; sessionId is only valid
+      // with messageId. Confirm physical identity again before publishing.
       const current = await read({ limit: 1 });
       checkIdentity(current);
       publishCanonical?.(messages, cursor);

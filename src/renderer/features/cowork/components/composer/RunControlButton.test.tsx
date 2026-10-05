@@ -10,6 +10,53 @@ import { RunControlButton } from './RunControlButton';
 afterEach(cleanup);
 
 describe.each(['large', 'normal'] as const)('RunControlButton (%s)', size => {
+  it('switches the same control from stop to queue and back as draft availability changes', () => {
+    const onSend = vi.fn();
+    const onStop = vi.fn();
+    const props = {
+      isRunning: true,
+      isStopping: false,
+      canQueue: true,
+      size,
+      sendTitle: 'Enter',
+      onSend,
+      onStop,
+    };
+    const { rerender } = render(<RunControlButton {...props} canSubmit={false} />);
+    expect(screen.getAllByRole('button')).toHaveLength(1);
+    expect(screen.getByRole('button', { name: i18nService.t('coworkStopTask') })).toBeTruthy();
+    rerender(<RunControlButton {...props} canSubmit />);
+    expect(screen.getAllByRole('button')).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: i18nService.t('coworkQueueMessage') }));
+    expect(onSend).toHaveBeenCalledOnce();
+    expect(onStop).not.toHaveBeenCalled();
+    rerender(<RunControlButton {...props} canSubmit={false} />);
+    fireEvent.click(screen.getByRole('button', { name: i18nService.t('coworkStopTask') }));
+    expect(onStop).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the stop control when Goal mode disallows queueing even with a draft', () => {
+    const onStop = vi.fn();
+    const onSend = vi.fn();
+    render(
+      <RunControlButton
+        isRunning
+        isStopping={false}
+        canSubmit
+        canQueue={false}
+        size={size}
+        sendTitle="Enter"
+        onStop={onStop}
+        onSend={onSend}
+      />,
+    );
+    expect(screen.getAllByRole('button')).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: i18nService.t('coworkQueueMessage') })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: i18nService.t('coworkStopTask') }));
+    expect(onStop).toHaveBeenCalledOnce();
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
   it('keeps stop enabled when editing and sending are blocked', () => {
     const onStop = vi.fn();
     const onSend = vi.fn();

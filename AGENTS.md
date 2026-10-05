@@ -201,8 +201,9 @@ See `docs/architecture/10-data-storage.md`.
   polling responses remain visible for frequency and latency diagnosis.
 - The condensed logs omit per-plugin `loading` lines, sensitive-schema walk
   notices, droppable chat delta notices, and periodic WebSocket tick/health
-  broadcasts. Absence from the main/gateway log does not prove the underlying
-  Gateway event did not occur.
+  broadcasts, plus routine `[scheduler] running event-loop-health` records.
+  Scheduler failures and health warnings remain visible. Absence from the
+  main/gateway log does not prove the underlying Gateway event did not occur.
 - For complete WebSocket event sequences or omitted transport diagnostics,
   inspect the OpenClaw native JSON log shown by the `[gateway] log file:` line
   (typically `%TEMP%/openclaw/openclaw-YYYY-MM-DD.log` on Windows), then

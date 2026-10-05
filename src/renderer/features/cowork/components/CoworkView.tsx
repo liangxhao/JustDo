@@ -77,6 +77,7 @@ import CoworkPromptInput, {
   appendMediaDirectiveLines,
   type CoworkPromptInputRef,
 } from '@/features/cowork/components/composer/CoworkPromptInput';
+import { QueuedInputCards } from '@/features/cowork/components/composer/QueuedInputCards';
 import { inferInitialGoalObjective } from '@/features/cowork/components/goals/goalPendingObjective';
 import type { GoalRunProgress } from '@/features/cowork/components/goals/goalRunProgress';
 import CoworkDisplayPanel, {
@@ -167,6 +168,7 @@ import type {
   ChatContextUsageSnapshot,
   RewindEditorDraft,
 } from '@/libs/openclaw-chat/gateway/chat-controller';
+import type { QueuedInputSnapshot } from '@/libs/openclaw-chat/gateway/chat-pending-inputs';
 import { OPEN_SPAWNED_AGENT_EVENT } from '@/libs/openclaw-chat/model/spawn-tool-target';
 import { i18nService } from '@/services/i18n';
 import { getGreetingPeriod, pickHomeGreeting } from '@/services/i18n/homeGreetings';
@@ -400,10 +402,12 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     initialPlanPreviewState,
   );
   const [goalRunProgress, setGoalRunProgress] = useState<GoalRunProgress | null>(null);
+  const [queuedInputs, setQueuedInputs] = useState<QueuedInputSnapshot | null>(null);
   const [goalPresence, setGoalPresence] = useState<{
     sessionId: string | undefined;
     hasGoal: boolean;
-  }>({ sessionId: undefined, hasGoal: false });
+    ready: boolean;
+  }>({ sessionId: undefined, hasGoal: false, ready: false });
   const [contextUsage, setContextUsage] = useState<ChatContextUsageSnapshot | null>(null);
   const [progressCardState, setProgressCardState] = useState<ProgressCardViewState | null>(null);
   const [isSessionSearchOpen, setIsSessionSearchOpen] = useState(false);
@@ -510,11 +514,11 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const pendingInitialGoalRef = useRef<{ sessionId: string; objective: string } | null>(null);
 
   const handleGoalPresenceChange = useCallback(
-    (sessionId: string | undefined, hasGoal: boolean) => {
+    (sessionId: string | undefined, hasGoal: boolean, ready: boolean) => {
       setGoalPresence(current =>
-        current.sessionId === sessionId && current.hasGoal === hasGoal
+        current.sessionId === sessionId && current.hasGoal === hasGoal && current.ready === ready
           ? current
-          : { sessionId, hasGoal },
+          : { sessionId, hasGoal, ready },
       );
     },
     [],
@@ -1901,14 +1905,57 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
 
   // When there's a current session, show the session detail view
   if (currentSession) {
+    const handleQueueMessage = async (
+      prompt: string,
+      attachments?: CoworkAttachmentPayload[],
+      gatewayPrompt?: string,
+    ) => {
+      if (
+        goalPresence.sessionId !== currentSession.id ||
+        !goalPresence.ready ||
+        goalPresence.hasGoal
+      ) return false;
+      if (currentSession.external?.readOnly || currentSessionAgent?.enabled === false)
+        return false;
+      if (!ensureOpenClawReadyForSubmit() || pendingStartRef.current?.cancelled) return false;
+      const sessionKey = currentGatewaySessionKey;
+      const chat = chatWrapperRef.current;
+      if (!sessionKey || !chat || pendingMessageSubmissionsRef.current.has(currentSession.id))
+        return false;
+      const operation = createSessionSubmission();
+      operation.sessionKey = sessionKey;
+      pendingMessageSubmissionsRef.current.set(currentSession.id, operation);
+      return submitCoworkMessage(
+        () => chat.queueMessage(prompt, attachments, gatewayPrompt, sessionKey),
+        error =>
+          window.dispatchEvent(
+            new CustomEvent('app:showToast', {
+              detail: error instanceof Error ? error.message : String(error),
+            }),
+          ),
+      ).finally(() => {
+        operation.finish();
+        if (
+          !operation.stopping &&
+          pendingMessageSubmissionsRef.current.get(currentSession.id) === operation
+        )
+          pendingMessageSubmissionsRef.current.delete(currentSession.id);
+      });
+    };
+
     const handleSendMessage = async (
       prompt: string,
       attachments?: CoworkAttachmentPayload[],
       gatewayPrompt?: string,
     ) => {
       if (currentSession.external?.readOnly) return false;
+      if (goalPresence.sessionId !== currentSession.id || !goalPresence.ready) return false;
       if (!ensureOpenClawReadyForSubmit() || pendingStartRef.current?.cancelled) return false;
       const outboundPrompt = gatewayPrompt ?? prompt;
+      // The previous run may have finished while a queue acknowledgement was
+      // lost. Preserve its idempotency identity even though the composer is idle.
+      if (chatWrapperRef.current?.hasUnconfirmedQueuedInput())
+        return handleQueueMessage(prompt, attachments, gatewayPrompt);
       const goalEdit = isGoalEditCommand(outboundPrompt);
       const targetSessionKey = currentGatewaySessionKey;
       if (!targetSessionKey || pendingMessageSubmissionsRef.current.has(currentSession.id))
@@ -2771,6 +2818,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               processSummariesExpanded={areProcessSummariesExpanded}
               onSearchMatchCountChange={handleSessionSearchMatchCountChange}
               onActivityChange={setGoalRunProgress}
+              onQueuedInputsChange={setQueuedInputs}
               onContextUsageChange={setContextUsage}
               onProgressCardChange={setProgressCardState}
               onSideChatResult={handleSideChatResult}
@@ -2817,10 +2865,26 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                   </div>
                 ) : (
                   <div className="relative isolate rounded-2xl">
-                    <div className="shadow-glow-accent rounded-2xl">
+                    {queuedInputs?.sessionKey === currentGatewaySessionKey && (
+                      <QueuedInputCards
+                        key={currentSession.id}
+                        items={queuedInputs.items}
+                        workingDirectory={currentSessionFolderPath}
+                        getDetail={inputId =>
+                          chatWrapperRef.current?.getQueuedInputDetail(inputId, queuedInputs.sessionKey) ?? null
+                        }
+                        onWithdraw={async inputId => {
+                          const chat = chatWrapperRef.current;
+                          if (!chat) throw new Error(i18nService.t('coworkQueueUnavailable'));
+                          await chat.withdrawQueuedInput(inputId, queuedInputs.sessionKey);
+                        }}
+                      />
+                    )}
+                    <div className="shadow-glow-accent relative z-10 rounded-2xl">
                       <CoworkPromptInput
                         ref={promptInputRef}
                         onSubmit={handleSendMessage}
+                        onQueue={handleQueueMessage}
                         onStop={handleStopSession}
                         stopOperationKey={getSessionStopOperationKey(
                           currentSession.id,

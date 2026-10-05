@@ -119,6 +119,8 @@ import { getCompactFolderName } from '@/utils/path';
 import { isImagePath } from './composerAttachmentFiles';
 import { hasComposerContent } from './composerContent';
 import { ConversationAgentSelector } from './ConversationAgentSelector';
+import { createGoalReadRetry } from './goalReadRetry';
+import { readGoalState } from './goalReadState';
 import {
   appendMessageQuotes,
   EMPTY_MESSAGE_QUOTES,
@@ -129,6 +131,7 @@ import {
 } from './messageQuote';
 import { canClearSubmittedDraft } from './sessionSubmission';
 import { useComposerAttachments } from './useComposerAttachments';
+import { useGoalReadiness } from './useGoalReadiness';
 
 // CoworkAttachment is aliased from the Redux-persisted DraftAttachment type
 // so that attachment state survives view switches (cowork ↔ skills, etc.)
@@ -194,6 +197,11 @@ interface CoworkPromptInputProps {
     gatewayPrompt?: string,
     worktree?: boolean,
   ) => boolean | void | Promise<boolean | void>;
+  onQueue?: (
+    prompt: string,
+    attachments?: CoworkAttachmentPayload[],
+    gatewayPrompt?: string,
+  ) => boolean | void | Promise<boolean | void>;
   onStop?: () => boolean | void | Promise<boolean | void>;
   /** Stable cancellation identity while a temporary session becomes canonical. */
   stopOperationKey?: string;
@@ -224,7 +232,7 @@ interface CoworkPromptInputProps {
   /** Notifies the chat projection as soon as a Goal resume is accepted. */
   onGoalResumeAccepted?: (sessionId: string, runId: string) => void;
   /** Reports whether the canonical session currently owns Goal metadata. */
-  onGoalPresenceChange?: (sessionId: string | undefined, hasGoal: boolean) => void;
+  onGoalPresenceChange?: (sessionId: string | undefined, hasGoal: boolean, ready: boolean) => void;
   /** When true, hides attachment/skill buttons but keeps the input box visible (disabled) */
   remoteManaged?: boolean;
   /** Restricts controls to capabilities supported by an OpenClaw `/btw` side question. */
@@ -253,6 +261,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   (props, ref) => {
     const {
       onSubmit: submitPrompt,
+      onQueue: queuePrompt,
       onStop,
       stopOperationKey,
       isStreaming = false,
@@ -292,14 +301,21 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     useEffect(() => {
       if (!canSelectWorktree) setUseWorktree(false);
     }, [canSelectWorktree]);
-    const onSubmit = useCallback<CoworkPromptInputProps['onSubmit']>(
-      async (prompt, attachments, gatewayPrompt) => {
+    const onSubmit = useCallback(
+      async (
+        prompt: string,
+        attachments?: CoworkAttachmentPayload[],
+        gatewayPrompt?: string,
+        queue = false,
+      ) => {
+        const submit = queue ? queuePrompt : submitPrompt;
+        if (!submit) return false;
         const submittedQuotes = [...submittedMessageQuotes(prompt, messageQuotes, isSideChat)];
         const label = i18nService.t('messageQuoteContext');
         return submitMessageQuoteDrafts(
           submittedQuotes,
           () =>
-            submitPrompt(
+            submit(
               appendMessageQuotes(prompt, submittedQuotes, label, isSideChat),
               !isSideChat && submittedQuotes.length
                 ? [...(attachments ?? []), ...submittedQuotes.map(messageQuoteAttachment)]
@@ -310,7 +326,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           ids => dispatch(removeDraftMessageQuotes({ draftKey, ids })),
         );
       },
-      [messageQuotes, submitPrompt, dispatch, draftKey, isSideChat, canSelectWorktree, useWorktree],
+      [
+        messageQuotes, submitPrompt, queuePrompt, dispatch, draftKey,
+        isSideChat, canSelectWorktree, useWorktree,
+      ],
     );
     const supportsAttachments = !remoteManaged && !isSideChat;
     const supportsSlashCommands = !remoteManaged && !isSideChat;
@@ -457,17 +476,27 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     initialGoalObjectiveRef.current = initialGoalObjective;
     const goalStateMatchesSession = goalStateSessionIdRef.current === sessionId;
     const hasSessionGoal = goalStateMatchesSession && Boolean(sessionGoal || pendingGoalObjective);
+    const { goalReadReady, goalSubmissionBlocked, readGoal } = useGoalReadiness(sessionId, isSideChat);
     useEffect(() => {
-      onGoalPresenceChange?.(sessionId, hasSessionGoal);
-    }, [hasSessionGoal, onGoalPresenceChange, sessionId]);
+      onGoalPresenceChange?.(sessionId, hasSessionGoal, goalReadReady);
+    }, [hasSessionGoal, goalReadReady, onGoalPresenceChange, sessionId]);
     const { isStopping, isStopPending, requestStop } = useSessionStop(
       stopOperationKey ?? sessionId,
       onStop,
     );
-    const isRunActive = isStopping || isCoworkRunActive(isStreaming, goalRunProgress);
-    const canStopRun = canStopCoworkRun(isStreaming, goalRunProgress);
-    const submissionAvailabilityRef = useRef({ disabled, isRunActive });
-    submissionAvailabilityRef.current = { disabled, isRunActive };
+    const goalAutoRunning =
+      hasSessionGoal &&
+      sessionGoal?.status === SessionGoalStatus.Active &&
+      (!goalExecution?.goalId || goalExecution.goalId === sessionGoal.id) &&
+      (goalExecution?.phase === GoalExecutionPhase.Running ||
+        goalExecution?.phase === GoalExecutionPhase.Continuing ||
+        goalExecution?.phase === GoalExecutionPhase.Retrying);
+    const isRunActive =
+      isStopping || goalAutoRunning || isCoworkRunActive(isStreaming, goalRunProgress);
+    const canQueue = Boolean(queuePrompt) && goalReadReady && !isSideChat && !isStopping && !hasSessionGoal;
+    const canStopRun = goalAutoRunning || canStopCoworkRun(isStreaming, goalRunProgress);
+    const submissionAvailabilityRef = useRef({ disabled, isRunActive, canQueue });
+    submissionAvailabilityRef.current = { disabled: disabled || goalSubmissionBlocked, isRunActive, canQueue };
 
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const slashMenuRef = useRef<HTMLDivElement>(null);
@@ -879,9 +908,18 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           }
           return;
         }
+        if (goalSubmissionBlocked) return;
         if (browserRecording && trimmedValue.startsWith('/')) {
           window.dispatchEvent(
             new CustomEvent('app:showToast', { detail: i18nService.t('recordingSpecial') }),
+          );
+          return;
+        }
+        if (isRunActive && canQueue && trimmedValue.startsWith('/')) {
+          window.dispatchEvent(
+            new CustomEvent('app:showToast', {
+              detail: i18nService.t('coworkQueueCommandUnsupported'),
+            }),
           );
           return;
         }
@@ -958,7 +996,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             Boolean(submittedCompletionFeedback),
             messageQuotes.length,
           ) ||
-          isRunActive ||
+          (isRunActive && !canQueue) ||
           isStopPending() ||
           goalActionPendingRef.current ||
           disabled ||
@@ -982,6 +1020,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
               goalForResume.status === SessionGoalStatus.UsageLimited ||
               goalForResume.status === SessionGoalStatus.BudgetLimited ||
               executionAwaitsInputForGoal) &&
+            !isRunActive &&
             !submittedViaPlanCommand &&
             !isGoalSlashCommand(trimmedValue);
           if (resumeWithInput && browserRecording) {
@@ -1094,7 +1133,15 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             }
           }
 
-          if (!submissionIsCurrent() || isStopPending() || goalActionPendingRef.current) return;
+          if (
+            !submissionIsCurrent() || isStopPending() || goalActionPendingRef.current ||
+            submissionAvailabilityRef.current.disabled
+          ) return;
+          // Goal state can change while attachment preparation is in flight.
+          if (
+            (isRunActive || submissionAvailabilityRef.current.isRunActive) &&
+            !submissionAvailabilityRef.current.canQueue
+          ) return;
           const recordingIssue = recordingSubmissionIssue(
             submittedRecording,
             attachmentPayloads,
@@ -1265,10 +1312,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             clearSubmittedBrowserAnnotations();
             return;
           }
-          const goalObjective = submittedViaPlanCommand
-            ? null
-            : parseGoalStartObjective(trimmedValue);
-          const goalClear = !submittedViaPlanCommand && isGoalClearCommand(trimmedValue);
+          const goalObjective =
+            submittedViaPlanCommand || isRunActive ? null : parseGoalStartObjective(trimmedValue);
+          const goalClear =
+            !isRunActive && !submittedViaPlanCommand && isGoalClearCommand(trimmedValue);
           if (goalObjective) {
             cancelGoalClear();
             setPendingGoalObjective(goalObjective);
@@ -1277,9 +1324,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             beginGoalClear();
           }
 
-          const clearBeforeSubmit = submittedViaPlanCommand
-            ? false
-            : shouldClearSlashCommandComposerBeforeExecution(trimmedValue);
+          const clearBeforeSubmit =
+            submittedViaPlanCommand || isRunActive
+              ? false
+              : shouldClearSlashCommandComposerBeforeExecution(trimmedValue);
           if (clearBeforeSubmit) {
             clearSubmittedInput();
           }
@@ -1291,6 +1339,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
               submittedBrowserAnnotations.length > 0 || submittedRecording
                 ? browserGatewayPrompt
                 : undefined,
+              isRunActive,
             );
           } catch (error) {
             if (goalClear) cancelGoalClear();
@@ -1337,6 +1386,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       [
         value,
         isRunActive,
+        canQueue,
+        goalSubmissionBlocked,
         isStopPending,
         disabled,
         onSubmit,
@@ -1550,7 +1601,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           break;
       }
 
-      if (isSendCombo && !isRunActive && !disabled) {
+      if (isSendCombo && (!isRunActive || canQueue) && !disabled && !goalSubmissionBlocked) {
         event.preventDefault();
         handleSubmit();
       } else {
@@ -1722,7 +1773,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       draftKey,
       workingDirectory,
       disabled,
-      isRunActive,
+      isRunActive: isRunActive && !canQueue,
       modelSupportsImage,
       setImageVisionHint,
       supportsAttachments,
@@ -1885,7 +1936,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
     const canSubmit =
       !disabled &&
-      !isRunActive &&
+      !goalSubmissionBlocked &&
+      (!isRunActive || canQueue) &&
       (isSideChat || !goalActionPending) &&
       !modelUpdatePending &&
       !hasNoAvailableModels &&
@@ -1900,9 +1952,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             messageQuotes.length,
           ));
     const effectivePlaceholder =
-      !isSideChat && completionFeedback
-        ? i18nService.t('coworkGoalCompletionFeedbackPlaceholder')
-        : placeholder;
+      isRunActive && canQueue
+        ? i18nService.t('coworkQueuePlaceholder')
+        : !isSideChat && completionFeedback
+          ? i18nService.t('coworkGoalCompletionFeedbackPlaceholder')
+          : placeholder;
     const enhancedContainerClass = isDraggingFiles
       ? `${containerClass} ring-2 ring-primary/50 border-primary/60`
       : containerClass;
@@ -1927,10 +1981,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     useEffect(() => {
       if (isSideChat || !sessionId || sessionId.startsWith('temp-')) return;
       let cancelled = false;
-      let retryId: number | null = null;
+      const retry = createGoalReadRetry(() => void fetchGoal());
+      let executionRevision = 0;
       let requestInFlight = false;
       let refreshQueued = false;
-      const fetchGoal = async (allowRetry = true) => {
+      const fetchGoal = async () => {
         if (cancelled) return;
         if (requestInFlight) {
           refreshQueued = true;
@@ -1938,14 +1993,18 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         }
         requestInFlight = true;
         try {
-          const result = await window.electron.cowork.getSessionGoal(sessionId);
+          const requestedRevision = executionRevision;
+          const result = await readGoal(() => readGoalState(
+            () => window.electron.cowork.getSessionGoal(sessionId),
+            () => window.electron.cowork.getGoalExecution(sessionId),
+          ));
           if (cancelled) return;
           if (!result.success) {
-            if (allowRetry) {
-              retryId = window.setTimeout(() => void fetchGoal(false), 1_500);
-            }
+            retry.failed();
             return;
           }
+          retry.succeeded();
+          if (requestedRevision === executionRevision) setGoalExecution(result.execution ?? null);
           const nextGoal = result.goal ?? null;
           if (goalClearPendingRef.current) {
             const clearDecision = resolveGoalClearFetch(
@@ -1978,26 +2037,22 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             setPendingGoalObjective(null);
           }
         } catch {
-          if (allowRetry) {
-            retryId = window.setTimeout(() => void fetchGoal(false), 1_500);
-          }
+          if (!cancelled) retry.failed();
         } finally {
           requestInFlight = false;
           if (refreshQueued && !cancelled) {
             refreshQueued = false;
-            void fetchGoal(allowRetry);
+            void fetchGoal();
           }
         }
       };
       void fetchGoal();
-      void window.electron.cowork.getGoalExecution(sessionId).then(result => {
-        if (!cancelled && result.success) setGoalExecution(result.execution ?? null);
-      });
       const removeGoalListener = window.electron.cowork.onSessionGoalChanged(data => {
         if (data.sessionId === sessionId) void fetchGoal();
       });
       const removeExecutionListener = window.electron.cowork.onGoalExecutionChanged(snapshot => {
         if (snapshot.sessionId !== sessionId) return;
+        executionRevision += 1;
         setGoalExecution(snapshot);
         void fetchGoal();
       });
@@ -2005,9 +2060,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         cancelled = true;
         removeGoalListener();
         removeExecutionListener();
-        if (retryId !== null) window.clearTimeout(retryId);
+        retry.dispose();
       };
-    }, [applyAcceptedGoalClear, cancelGoalClear, isSideChat, sessionId, updateCompletionFeedback]);
+    }, [applyAcceptedGoalClear, cancelGoalClear, isSideChat, readGoal, sessionId, updateCompletionFeedback]);
 
     const handleGoalEdit = useCallback(
       async (objective: string): Promise<boolean> => {
@@ -2646,7 +2701,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                         className="flex items-center justify-center p-1.5 rounded-lg text-sm text-secondary hover:bg-surface-raised hover:text-foreground transition-colors"
                         title={i18nService.t('coworkAddFile')}
                         aria-label={i18nService.t('coworkAddFile')}
-                        disabled={disabled || isRunActive || isAddingFile}
+                        disabled={disabled || (isRunActive && !canQueue) || isAddingFile}
                       >
                         <PaperClipIcon className="h-4 w-4" />
                       </button>
@@ -2881,6 +2936,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                       isRunning={isRunActive}
                       isStopping={isStopping}
                       canSubmit={canSubmit}
+                      canQueue={canQueue}
                       size="large"
                       sendTitle={getSendShortcutLabel(currentSendShortcut)}
                       onStop={onStop && canStopRun ? handleStopClick : undefined}
@@ -2913,7 +2969,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                         className="flex-shrink-0 p-1.5 rounded-lg text-secondary hover:bg-surface-raised hover:text-foreground transition-colors"
                         title={i18nService.t('coworkAddFile')}
                         aria-label={i18nService.t('coworkAddFile')}
-                        disabled={disabled || isRunActive || isAddingFile}
+                        disabled={disabled || (isRunActive && !canQueue) || isAddingFile}
                       >
                         <PaperClipIcon className="h-4 w-4" />
                       </button>
@@ -2950,6 +3006,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   isRunning={isRunActive}
                   isStopping={isStopping}
                   canSubmit={canSubmit}
+                  canQueue={canQueue}
                   size="normal"
                   sendTitle={getSendShortcutLabel(currentSendShortcut)}
                   onStop={onStop && canStopRun ? handleStopClick : undefined}

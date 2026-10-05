@@ -45,7 +45,8 @@ const isDiscardedTransportEvent = (line: string): boolean =>
   (line.includes('[ws] → event chat ') && line.includes('dropIfSlow=true')) ||
   (line.includes('[ws] → event task ') && line.includes('dropIfSlow=true')) ||
   line.includes('[ws] → event tick ') ||
-  line.includes('[ws] → event health ');
+  line.includes('[ws] → event health ') ||
+  /(?:^|\s)\[scheduler\] running event-loop-health\s*$/.test(line);
 
 export class GatewayStdoutLogFilter {
   private partialLine = '';
@@ -63,7 +64,7 @@ export class GatewayStdoutLogFilter {
     this.partialLine = combined.slice(lastNewlineIndex + 1);
     let output = '';
 
-    for (const line of completeText.match(/.*\n/g) ?? []) {
+    for (const line of completeText.match(/[^\n]*\n/g) ?? []) {
       output += this.processLine(line);
     }
 

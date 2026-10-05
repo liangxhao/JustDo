@@ -36,7 +36,13 @@ import {
   type SideChatResult,
   type SideChatStreamUpdate,
 } from '@/libs/openclaw-chat/gateway/chat-controller';
-import type { UserMessageHistoryAction } from '@/libs/openclaw-chat/types';
+import {
+  type QueuedInputDetail,
+  queuedInputDetail,
+  type QueuedInputSnapshot,
+  queuedInputSnapshot,
+} from '@/libs/openclaw-chat/gateway/chat-pending-inputs';
+import type { GatewayMessage, UserMessageHistoryAction } from '@/libs/openclaw-chat/types';
 import { i18nService } from '@/services/i18n';
 
 import type { MessageQuoteHandler } from '../composer/messageQuote';
@@ -63,6 +69,7 @@ interface JustDoChatWrapperProps {
   processSummariesExpanded?: boolean;
   onSearchMatchCountChange?: (total: number, index: number) => void;
   onActivityChange?: (progress: GoalRunProgress | null) => void;
+  onQueuedInputsChange?: (snapshot: QueuedInputSnapshot | null) => void;
   onContextUsageChange?: (usage: ChatContextUsageSnapshot | null) => void;
   onProgressCardChange?: (state: ProgressCardViewState | null) => void;
   onHistoryReadyChange?: (sessionKey: string, ready: boolean) => void;
@@ -80,6 +87,15 @@ interface JustDoChatWrapperProps {
 }
 
 export interface JustDoChatWrapperRef {
+  getQueuedInputDetail: (inputId: string, expectedSessionKey: string) => QueuedInputDetail | null;
+  withdrawQueuedInput: (inputId: string, expectedSessionKey: string) => Promise<void>;
+  hasUnconfirmedQueuedInput: () => boolean;
+  queueMessage: (
+    text: string,
+    attachments: CoworkAttachmentPayload[] | undefined,
+    gatewayMessage: string | undefined,
+    expectedSessionKey: string,
+  ) => Promise<void>;
   sendMessage: (
     text: string,
     attachments?: CoworkAttachmentPayload[],
@@ -145,6 +161,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       processSummariesExpanded,
       onSearchMatchCountChange,
       onActivityChange,
+      onQueuedInputsChange,
       onContextUsageChange,
       onProgressCardChange,
       onSessionKeyChange,
@@ -182,6 +199,8 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     const [controller, setController] = useState<ChatController | null>(null);
     const connectedRef = useRef(false);
     const onActivityChangeRef = useRef(onActivityChange);
+    const queuedInputsCallback = useRef(onQueuedInputsChange);
+    queuedInputsCallback.current = onQueuedInputsChange;
     const onContextUsageChangeRef = useRef(onContextUsageChange);
     const onProgressCardChangeRef = useRef(onProgressCardChange);
     const onSessionKeyChangeRef = useRef(onSessionKeyChange);
@@ -241,6 +260,25 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         },
         cancelPlanImplementationReset: requestId => {
           controllerRef.current?.cancelPlanImplementationReset(requestId);
+        },
+        hasUnconfirmedQueuedInput: () => controllerRef.current?.hasUnconfirmedQueuedInput() ?? false,
+        getQueuedInputDetail: (inputId, expectedSessionKey) => {
+          const controller = controllerRef.current;
+          return controller?.state.sessionKey === expectedSessionKey
+            ? queuedInputDetail(controller.state, inputId)
+            : null;
+        },
+        withdrawQueuedInput: async (inputId, expectedSessionKey) => {
+          const controller = controllerRef.current;
+          if (!controller || controller.state.sessionKey !== expectedSessionKey)
+            throw new Error(i18nService.t('coworkQueueUnavailable'));
+          await controller.withdrawQueuedInput(inputId);
+        },
+        queueMessage: async (text, attachments, gatewayMessage, expectedSessionKey) => {
+          const controller = controllerRef.current;
+          if (!controller?.state.initialHistoryReady || controller.state.historyReadFailed)
+            throw new Error(i18nService.t('storageHistoryFailed'));
+          await controller.queueMessage(text, attachments, gatewayMessage, expectedSessionKey);
         },
         sendMessage: async (text: string, attachments = [], gatewayMessage, options) => {
           const controller = controllerRef.current;
@@ -420,7 +458,19 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
           });
         }
       };
-      const unsubscribeState = controller.subscribe(publishActivity);
+      let lastQueuedInputs = '';
+      const unsubscribeState = controller.subscribe(() => {
+        publishActivity();
+        const snapshot = queuedInputSnapshot(
+          controller.state,
+          controller.getLoadedMessages() as GatewayMessage[],
+        );
+        const key = JSON.stringify(snapshot);
+        if (key !== lastQueuedInputs) {
+          lastQueuedInputs = key;
+          queuedInputsCallback.current?.(snapshot);
+        }
+      });
       const unsubscribeStream = controller.onStream(publishActivity);
       const unsubscribeSideChat = controller.onSideChatResult(result =>
         onSideChatResultRef.current?.(result),
@@ -489,6 +539,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         lastProgressCardKeyRef.current = '';
         lastReportedSessionKeyRef.current = '';
         onActivityChangeRef.current?.(null);
+        queuedInputsCallback.current?.(null);
         onContextUsageChangeRef.current?.(null);
         onProgressCardChangeRef.current?.(null);
         debugLog('[JustDoChatWrapper] cleanup — disconnecting controller');

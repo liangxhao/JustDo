@@ -12,10 +12,8 @@ import { normalizeLocalSpeechSettings } from '@shared/speech/localSpeechSettings
 import { html, LitElement, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
-import mermaid from 'mermaid';
 
 import type { MessageQuoteHandler } from '@/features/cowork/components/composer/messageQuote';
-import { IMAGE_PREVIEW_EVENT } from '@/features/cowork/components/preview/imageFilePreview';
 import {
   type EditDiffMode,
   renderTerminalTimelineMessage,
@@ -28,7 +26,6 @@ import {
   renderStreamingThinkingGroup,
   shouldRenderGroupAvatarByPrevItem,
   shouldRenderGroupFooterByNextItem,
-  showImageContextMenu,
 } from '@/libs/openclaw-chat/components/message-render';
 import {
   AssistantStreamPacer,
@@ -110,7 +107,8 @@ import { resolveFullToolOutput } from '../model/tool-presentation';
 import { renderChatAvatar } from './chat-avatar';
 import { EditDiffMonacoController } from './edit-diff-monaco';
 import { chatStyles } from './justdo-chat.styles';
-import { renderMermaidSvg } from './mermaidRenderer';
+import { renderMessageDiagram } from './mermaidRenderer';
+import { handleMessageDiagramToggle, handleMessageImageClick, handleMessageImageContextMenu } from './message-content-interactions';
 import { RichMessageControls } from './rich-message-controls';
 import { TOOL_OUTPUT_REQUEST, type ToolOutput } from './tool-output';
 
@@ -545,7 +543,7 @@ export class JustDoChatElement extends LitElement {
     let messages = this.projectedActiveMessages;
     if (ctrl) {
       const pending = projectNativePendingInputs(
-        ctrl.state, messages, ctrl.getLoadedMessages() as GatewayMessage[],
+        ctrl.state, messages, ctrl.getLoadedMessages() as GatewayMessage[], false,
       );
       messages = pending.messages;
       if (pending.suppressOptimistic) pendingMessage = null;
@@ -1080,29 +1078,8 @@ export class JustDoChatElement extends LitElement {
       : new Set();
   }
 
-  private handleImageClick(event: Event): boolean {
-    const image = event
-      .composedPath()
-      .find(
-        node =>
-          node instanceof HTMLImageElement &&
-          (node.classList.contains('chat-bubble__image') ||
-            node.classList.contains('markdown-inline-image')),
-      ) as HTMLImageElement | undefined;
-    if (!image) return false;
-
-    event.preventDefault();
-    event.stopPropagation();
-    const src = image.currentSrc || image.src;
-    if (src)
-      window.dispatchEvent(
-        new CustomEvent(IMAGE_PREVIEW_EVENT, { detail: { src, alt: image.alt } }),
-      );
-    return true;
-  }
-
   private readonly handleMarkdownClick = (event: Event): void => {
-    if (this.handleImageClick(event)) return;
+    if (handleMessageImageClick(event)) return;
     const element = event.composedPath().find(node => node instanceof HTMLElement) as
       HTMLElement | undefined;
     const summaryButton = element?.closest<HTMLElement>('[data-process-summary-key]');
@@ -1140,37 +1117,10 @@ export class JustDoChatElement extends LitElement {
       return;
     }
 
-    const target = event
-      .composedPath()
-      .find(node => node instanceof HTMLElement && node.classList.contains('mermaid-toggle')) as
-      HTMLButtonElement | undefined;
-    if (!target) return;
-
-    const block = target.closest<HTMLElement>('.mermaid-block');
-    if (!block) return;
-    const showSource = !block.classList.contains('is-source');
-    block.classList.toggle('is-source', showSource);
-    const preview = block.querySelector<HTMLElement>('.mermaid-preview');
-    const source = block.querySelector<HTMLElement>('.mermaid-source');
-    const label = block.querySelector<HTMLElement>('.code-block-lang');
-    if (preview) preview.hidden = showSource;
-    if (source) source.hidden = !showSource;
-    if (label) label.textContent = showSource ? 'mermaid' : 'mermaid (rendered)';
-    const buttonLabel = i18nService.t(showSource ? 'renderDiagram' : 'showCode');
-    target.setAttribute('aria-label', buttonLabel);
-    target.title = buttonLabel;
+    handleMessageDiagramToggle(event);
   };
 
-  private readonly handleInlineImageContextMenu = (event: Event): void => {
-    const image = event
-      .composedPath()
-      .find(
-        node =>
-          node instanceof HTMLImageElement && node.classList.contains('markdown-inline-image'),
-      ) as HTMLImageElement | undefined;
-    if (!image) return;
-    void showImageContextMenu(event, image.currentSrc || image.src);
-  };
+  private readonly handleInlineImageContextMenu = handleMessageImageContextMenu;
 
   private readonly handleTimelineKeyDown = (event: Event): void => {
     const keyboardEvent = event as KeyboardEvent;
@@ -1299,33 +1249,9 @@ export class JustDoChatElement extends LitElement {
       const hostRect = this.getBoundingClientRect();
       const blockRect = block.getBoundingClientRect();
       if (blockRect.bottom < hostRect.top || blockRect.top > hostRect.bottom) continue;
-      block.dataset.mermaidRendered = 'true';
+      await renderMessageDiagram(block);
       const preview = block.querySelector<HTMLElement>('.mermaid-preview');
-      const code = block.querySelector<HTMLElement>('.mermaid-source code')?.textContent;
-      if (!preview || !code) continue;
-      try {
-        const theme = document.documentElement.classList.contains('dark') ? 'dark' : 'default';
-        mermaid.initialize({
-          startOnLoad: false,
-          securityLevel: 'strict',
-          theme,
-          maxEdges: 500,
-          maxTextSize: 20_000,
-        });
-        const id = `justdo-mermaid-${crypto.randomUUID()}`;
-        const svg = await renderMermaidSvg(id, code);
-        if (
-          !block.isConnected ||
-          theme !== (document.documentElement.classList.contains('dark') ? 'dark' : 'default')
-        )
-          continue;
-        preview.innerHTML = svg;
-        this.resizeMermaidBubble(block, preview);
-      } catch (error) {
-        preview.classList.add('mermaid-error');
-        preview.textContent =
-          error instanceof Error ? error.message : i18nService.t('mermaidRenderFailed');
-      }
+      if (preview && block.isConnected) this.resizeMermaidBubble(block, preview);
     }
   }
 
@@ -1891,10 +1817,9 @@ export class JustDoChatElement extends LitElement {
             userMessageActions,
             assistantMessageFork,
           )}
-          ${pendingInputState
+          ${pendingInputState && pendingInputState !== 'queued'
             ? html`<div class="active-turn__footer" data-pending-input-state=${pendingInputState}>
-                ${i18nService.t(pendingInputState === 'queued' ? 'messagePendingInputQueued' :
-                  pendingInputState === 'cancelled' ? 'messagePendingInputCancelled' : 'messagePendingInputInterrupted')}
+                ${i18nService.t(pendingInputState === 'cancelled' ? 'messagePendingInputCancelled' : 'messagePendingInputInterrupted')}
               </div>`
             : nothing}
         </div>

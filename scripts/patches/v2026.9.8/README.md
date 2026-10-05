@@ -30,7 +30,7 @@ display projection and the ordering of restored messages.
 | 002   | Windows MCP npm runner under Electron | Native stdio spawn options                                                                                                            |
 | 003   | Windows Chrome MCP launcher           | Preserve the new caller-provided launch environment                                                                                   |
 | 005   | Final system prompt replacements      | Final model-aware prompt before routing observation                                                                                   |
-| 006   | Agent metadata and hidden turns       | Chat admission and provider transport; parent reads use the native read worker with current-run checks                                |
+| 006   | Agent metadata and hidden turns       | Chat admission, queued source-to-execution human initiation transfer, and provider transport; native read worker checks parent identity |
 | 007   | Request-purpose metadata              | Compaction and reviewer provider payloads; async native reviewer identity reads                                                       |
 | 008   | App-process recovery boundary         | Native main-session restart recovery only                                                                                             |
 | 013   | Explicit Goal resume after pause      | Goal resume admission only                                                                                                            |
@@ -53,6 +53,11 @@ display projection and the ordering of restored messages.
 
 Each module header records its scope, native safety boundary and removal condition.
 No upstream issue number is claimed without an actual filed issue.
+
+Patch 006 transfers the one-shot human initiation marker from the native queued
+source turn to its separately allocated execution ID immediately before execution.
+It leaves native run identities and queue behavior unchanged. The current marker
+revision rejects older patched inputs; rebuild from the locked pristine package.
 
 ## Packaging and native evidence
 

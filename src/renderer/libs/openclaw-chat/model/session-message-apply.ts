@@ -1,3 +1,5 @@
+import { QUEUED_INPUT_RUN_ID_PREFIX } from '@shared/openclaw/pendingInputs';
+
 import { isLocallyOptimisticHistoryTail } from './optimistic-history-tail';
 
 type SessionMessageEnvelope = Record<string, unknown>;
@@ -212,10 +214,21 @@ export function applySessionMessagePayload(
     );
   });
   if (identity.role === 'user') {
+    // Native followups retain the admission key on the durable user row,
+    // while execution uses a new run ID. A committed, sequenced queue row
+    // is already transcript content, even before its execution start arrives.
+    const committedQueuedUser = Boolean(
+      identity.id &&
+      identity.sequence !== null &&
+      !identity.isImported &&
+      identity.idempotencyKey?.startsWith(QUEUED_INPUT_RUN_ID_PREFIX) &&
+      identity.idempotencyKey.endsWith(':user'),
+    );
     if (
       options.activeRunId &&
       identity.runId !== options.activeRunId &&
       !matchesOptimisticMessage &&
+      !committedQueuedUser &&
       options.runActive !== false
     ) {
       return {

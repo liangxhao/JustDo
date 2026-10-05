@@ -2,14 +2,17 @@ import {
   filterNativePendingInputsByReceipts,
   type NativePendingInput,
   parseNativePendingInputs,
+  QUEUED_INPUT_RUN_ID_PREFIX,
 } from '@shared/openclaw/pendingInputs';
 
 import { projectGatewayHistoryForDisplay } from '../pipeline/history-display-normalizer';
+import { extractText } from '../pipeline/message-extract';
 import type { GatewayMessage } from '../types';
 import { asRecord, type ChatState, readExplicitMessageRunId } from './chat-controller-support';
 import { isTruncatedHistoryMessage } from './chat-history-protocol';
 
 type PendingView = {
+  revision: number;
   sessionKey: string;
   sessionId: string | null;
   generation: number;
@@ -21,6 +24,12 @@ type PendingView = {
 // Display-only native custody, not transcript entries or execution identities.
 // A new history snapshot replaces this view; nothing survives a renderer reload.
 const views = new WeakMap<ChatState, PendingView>();
+// Native custody also stages ordinary sends before transcript persistence.
+// Only native queue membership or our stable followup admission identity
+// establishes that an input belongs in the composer queue cards.
+const isFollowupInput = (input: NativePendingInput): boolean =>
+  input.state === 'queued' &&
+  (input.queued === true || input.runId?.startsWith(QUEUED_INPUT_RUN_ID_PREFIX) === true);
 const isScopeCurrent = (state: ChatState, view: PendingView): boolean =>
   views.get(state) === view &&
   state.connected &&
@@ -36,6 +45,7 @@ export async function refreshNativePendingInputs(
   onConsumed: () => void,
 ): Promise<void> {
   const view: PendingView = {
+    revision: (views.get(state)?.revision ?? 0) + 1,
     sessionKey: state.sessionKey,
     sessionId: state.currentSessionId,
     generation: state.transcript.historyGeneration,
@@ -44,7 +54,17 @@ export async function refreshNativePendingInputs(
     failed: false,
   };
   views.set(state, view);
+  const assertHistoryScope = (response: unknown) => {
+    const sessionId = asRecord(response)?.sessionId;
+    if (typeof sessionId === 'string' && view.sessionId && sessionId !== view.sessionId) {
+      // History pagination and receipts address the current session by key.
+      // Reject a native reset that occurred before Renderer learned its new ID.
+      onConsumed();
+      throw new Error('Pending input history belongs to a different physical session');
+    }
+  };
   try {
+    assertHistoryScope(response);
     let page = parseNativePendingInputs(asRecord(response)?.pendingInputs);
     if (!page || !view.client) {
       return;
@@ -66,12 +86,13 @@ export async function refreshNativePendingInputs(
       previousCursor = page.nextBefore;
       const next = await view.client.request('chat.history', {
         sessionKey: view.sessionKey,
-        ...(view.sessionId ? { sessionId: view.sessionId } : {}),
+        // Native sessionId selects a messageId lookup, not a pending page.
         limit: 20,
         maxChars: 500_000,
         pendingBefore: previousCursor,
       });
       if (!isScopeCurrent(state, view)) return;
+      assertHistoryScope(next);
       page = parseNativePendingInputs(asRecord(next)?.pendingInputs);
       if (!page) throw new Error('Pending input page missing');
     }
@@ -127,13 +148,13 @@ export async function refreshNativePendingInputs(
       const latest = asRecord(
         await view.client.request('chat.history', {
           sessionKey: view.sessionKey,
-          ...(view.sessionId ? { sessionId: view.sessionId } : {}),
           limit: 1,
           maxChars: 500_000,
           inputRunIds: batch,
         }),
       );
       if (!isScopeCurrent(state, view)) return;
+      assertHistoryScope(latest);
       const beforeReceipts = recovered;
       recovered = filterNativePendingInputsByReceipts(recovered, latest?.inputReceipts, batch);
       const retiredVisibleInput = beforeReceipts.some(
@@ -188,6 +209,12 @@ export function nativePendingInputReadFailed(state: ChatState): boolean {
   return !!view && isScopeCurrent(state, view) && view.failed;
 }
 
+export function nativeQueuedInputRunId(state: ChatState, inputId: string): string | undefined {
+  const view = views.get(state);
+  if (!view || !isScopeCurrent(state, view)) return undefined;
+  return view.items.find(input => input.id === inputId && isFollowupInput(input))?.runId;
+}
+
 export function nativePendingInputState(message: unknown): NativePendingInput['state'] | undefined {
   const value = asRecord(message)?.justdoPendingInputState;
   return value === 'queued' || value === 'interrupted' || value === 'cancelled' ? value : undefined;
@@ -197,6 +224,7 @@ export function projectNativePendingInputs(
   state: ChatState,
   visibleHistory: GatewayMessage[],
   loadedHistory: GatewayMessage[],
+  includeQueued = true,
 ): { messages: GatewayMessage[]; suppressOptimistic: boolean } {
   const view = views.get(state);
   if (!view || !isScopeCurrent(state, view))
@@ -228,6 +256,7 @@ export function projectNativePendingInputs(
     }
     if (
       input.message.display === false ||
+      (!includeQueued && isFollowupInput(input)) ||
       (input.runId &&
         (persistedRunIds.has(input.runId) || persistedInputKeys.has(`${input.runId}:user`)))
     )
@@ -239,6 +268,7 @@ export function projectNativePendingInputs(
       role: 'user',
       timestamp: input.acceptedAt,
       justdoPendingInputState: input.state,
+      justdoPendingInputId: input.runId ? input.id : undefined,
     } as GatewayMessage;
     const index = messages.findIndex(existing => {
       const timestamp =
@@ -250,4 +280,42 @@ export function projectNativePendingInputs(
     messages.splice(index < 0 ? messages.length : index, 0, message);
   }
   return { messages: view.items.length ? messages : visibleHistory, suppressOptimistic };
+}
+
+export type QueuedInputCard = { id: string; text: string; canWithdraw: boolean };
+export type QueuedInputDetail = { message: GatewayMessage; truncated: boolean };
+
+/** Read the full native display message only while its scoped queue item exists. */
+export function queuedInputDetail(state: ChatState, inputId: string): QueuedInputDetail | null {
+  const view = views.get(state);
+  if (!view || !isScopeCurrent(state, view)) return null;
+  const input = view.items.find(item =>
+    (item.id === inputId || asRecord(item.message.__openclaw)?.id === inputId) &&
+    isFollowupInput(item) && item.message.display !== false,
+  );
+  if (!input) return null;
+  return {
+    message: projectGatewayHistoryForDisplay([input.message])[0] as GatewayMessage,
+    truncated: isTruncatedHistoryMessage(input.message),
+  };
+}
+export type QueuedInputSnapshot = { sessionKey: string; revision: number; items: QueuedInputCard[] };
+
+/** A bounded display summary; native history remains the only content authority. */
+export function queuedInputSnapshot(state: ChatState, history: GatewayMessage[]): QueuedInputSnapshot {
+  const view = views.get(state);
+  return {
+    sessionKey: state.sessionKey,
+    // Full details are read on demand. Publish native view replacement even
+    // when the bounded summary is unchanged (for example, recovered media).
+    revision: view && isScopeCurrent(state, view) ? view.revision : 0,
+    items: projectNativePendingInputs(state, [], history).messages
+      .filter(message => nativePendingInputState(message) === 'queued' &&
+        nativeQueuedInputRunId(state, String(message.justdoPendingInputId)) !== undefined)
+      .map(message => ({
+        id: String(message.justdoPendingInputId ?? asRecord(message.__openclaw)?.id ?? ''),
+        text: (extractText(message) ?? '').replace(/\s+/g, ' ').trim().slice(0, 240),
+        canWithdraw: typeof message.justdoPendingInputId === 'string',
+      })),
+  };
 }

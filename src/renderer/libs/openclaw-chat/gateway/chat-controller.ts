@@ -148,6 +148,9 @@ import {
 } from '@/libs/openclaw-chat/pipeline/history-display-normalizer';
 import { i18nService } from '@/services/i18n';
 
+import { nativeQueuedInputRunId } from './chat-pending-inputs';
+import { hasUnconfirmedQueuedInput, sendQueuedInput } from './chat-queued-input';
+
 // ─── ChatController ─────────────────────────────────────────────────────────
 
 export class ChatController {
@@ -2045,6 +2048,40 @@ export class ChatController {
       this.sideChatAssistantSnapshotRunIds.delete(trackedRunId);
       if (!terminalAck) this.retainSideChatTombstone(trackedRunId);
       throw error;
+    }
+  }
+
+  async queueMessage(
+    message: string,
+    attachments: CoworkAttachmentPayload[] = [],
+    gatewayMessage = message,
+    expectedSessionKey = this.state.sessionKey,
+  ): Promise<void> {
+    // Native custody owns ordering and persistence. Do not replace the active
+    // transcript, run identity, timers or Main's single active user-run receipt.
+    try {
+      await sendQueuedInput(this.state, gatewayMessage, attachments, expectedSessionKey);
+    } finally {
+      if (this.state.sessionKey === expectedSessionKey) void this.loadHistory(true);
+    }
+  }
+
+  hasUnconfirmedQueuedInput(): boolean {
+    return hasUnconfirmedQueuedInput(this.state);
+  }
+
+  async withdrawQueuedInput(inputId: string): Promise<void> {
+    const sessionKey = this.state.sessionKey;
+    const runId = nativeQueuedInputRunId(this.state, inputId);
+    const client = this.state.client;
+    if (!runId || !client || !this.state.connected)
+      throw new Error(i18nService.t('coworkQueueUnavailable'));
+    try {
+      // Native withdrawal is atomic: if consumption already started, it fails
+      // instead of cancelling the active execution.
+      await client.request('chat.abort', { sessionKey, runId, discardPendingInput: true });
+    } finally {
+      if (this.state.sessionKey === sessionKey) void this.loadHistory(true);
     }
   }
 

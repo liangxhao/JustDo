@@ -8,6 +8,8 @@ import {
   nativePendingInputReadFailed,
   nativePendingInputState,
   projectNativePendingInputs,
+  queuedInputDetail,
+  queuedInputSnapshot,
   refreshNativePendingInputs,
 } from './chat-pending-inputs';
 
@@ -16,6 +18,7 @@ const input = (id: number, state: NativePendingInput['state'] = 'queued'): Nativ
   runId: `run-${id}`,
   acceptedAt: id * 1000,
   state,
+  ...(state === 'queued' ? { queued: true as const } : {}),
   message: {
     role: 'user',
     content: [{ type: 'text', text: `Input ${id}` }],
@@ -65,6 +68,105 @@ function fixture() {
 }
 
 describe('native accepted input recovery', () => {
+  test.each(['new-conversation', 'ordinary-continuation'])(
+    'keeps an ordinary accepted input in the timeline without queue cards: %s',
+    async scenario => {
+      const f = fixture();
+      const ordinary = input(1);
+      delete ordinary.queued;
+      f.state.chatRunId = ordinary.runId!;
+      f.state.pendingUserMessage = {
+        role: 'user', content: 'Input 1', text: 'Input 1', timestamp: 1000,
+      };
+      const history: GatewayMessage[] = scenario === 'new-conversation' ? [] : [
+        { role: 'user', content: 'Previous question', timestamp: 1 },
+        { role: 'assistant', content: 'Previous answer', timestamp: 2 },
+      ];
+      await f.refresh(page([ordinary]));
+      expect(queuedInputSnapshot(f.state, history).items).toEqual([]);
+      expect(queuedInputDetail(f.state, ordinary.id)).toBeNull();
+      const timeline = projectNativePendingInputs(f.state, history, history, false);
+      expect(timeline.messages).toHaveLength(history.length + 1);
+      expect(timeline.messages[timeline.messages.length - 1]).toMatchObject({ role: 'user', content: ordinary.message.content });
+      expect(timeline.suppressOptimistic).toBe(true);
+    },
+  );
+
+  test('separates ordinary custody from native followups and recovered application followups', async () => {
+    const f = fixture();
+    const ordinary = input(1);
+    delete ordinary.queued;
+    const recovered = { ...input(3), runId: 'justdo-queue-recovered' };
+    delete recovered.queued;
+    await f.refresh(page([ordinary, input(2), recovered]));
+    expect(queuedInputSnapshot(f.state, []).items.map(item => item.id)).toEqual(['2', '3']);
+    expect(projectNativePendingInputs(f.state, [], [], false).messages)
+      .toEqual([expect.objectContaining({ justdoPendingInputId: '1' })]);
+  });
+  test('displays queued cards when the Gateway enforces native history selector rules', async () => {
+    const f = fixture();
+    f.request.mockImplementation(async (_method, params) => {
+      if (params.sessionId !== undefined && params.messageId === undefined) {
+        throw new Error('sessionId requires messageId');
+      }
+      return {
+        sessionId: 'physical-one',
+        ...(params.pendingBefore ? page([input(1)]) : {
+          inputReceipts: (params.inputRunIds as string[]).map(runId => ({ runId, state: 'pending' })),
+        }),
+      };
+    });
+    await f.refresh({ sessionId: 'physical-one', ...page([input(2)], 2) });
+    expect(nativePendingInputReadFailed(f.state)).toBe(false);
+    expect(queuedInputSnapshot(f.state, []).items.map(item => item.id)).toEqual(['1', '2']);
+    expect(f.request).toHaveBeenCalledTimes(2);
+  });
+
+  test.each(['pagination', 'receipts'])(
+    'rejects %s from a physically reset native session before adopting its pending content',
+    async phase => {
+      const f = fixture();
+      f.request.mockResolvedValue({
+        sessionId: 'physical-after-reset',
+        ...page([input(1)]),
+        inputReceipts: [{ runId: 'run-2', state: 'pending' }],
+      });
+      await f.refresh({ sessionId: 'physical-one', ...page([input(2)], phase === 'pagination' ? 2 : undefined) });
+      expect(queuedInputSnapshot(f.state, []).items).toEqual([]);
+      expect(nativePendingInputReadFailed(f.state)).toBe(true);
+      expect(f.consumed).toHaveBeenCalledOnce();
+    },
+  );
+
+  test('publishes detail replacements even when queue summaries remain identical', async () => {
+    const f = fixture();
+    const pending = input(1);
+    const prefix = 'A'.repeat(240);
+    pending.message.content = `${prefix} old tail`;
+    await f.refresh(page([pending]));
+    const first = queuedInputSnapshot(f.state, []);
+    const replacement = {
+      ...pending,
+      message: {
+        ...pending.message,
+        content: `${prefix} recovered tail`,
+        __openclaw: {
+          id: 'pending:1',
+          media: [{ path: '/tmp/spec.pdf', fileName: 'spec.pdf', contentType: 'application/pdf' }],
+        },
+      },
+    };
+    await f.refresh(page([replacement]));
+    const second = queuedInputSnapshot(f.state, []);
+    expect(second.items).toEqual(first.items);
+    expect(second.revision).toBeGreaterThan(first.revision);
+    expect(queuedInputSnapshot(f.state, [])).toEqual(second);
+    expect(queuedInputDetail(f.state, '1')?.message).toMatchObject(replacement.message);
+    f.state.currentSessionId = 'physical-two';
+    expect(queuedInputDetail(f.state, '1')).toBeNull();
+    expect(queuedInputSnapshot(f.state, []).items).toEqual([]);
+  });
+
   test('does not resurrect an explicitly retired optimistic input if the later receipt read fails', async () => {
     const f = fixture();
     f.state.chatRunId = 'run-1';
@@ -178,8 +280,9 @@ describe('native accepted input recovery', () => {
     expect(f.state.chatMessages).toEqual([]);
     expect(f.request).toHaveBeenCalledWith(
       'chat.history',
-      expect.objectContaining({ pendingBefore: 2, limit: 20, sessionId: 'physical-one' }),
+      expect.objectContaining({ pendingBefore: 2, limit: 20, sessionKey: f.state.sessionKey }),
     );
+    expect(f.request.mock.calls.every(([, params]) => !('sessionId' in params))).toBe(true);
   });
 
   test('retains cancelled/interrupted text, hides withdrawn tombstones and suppresses only matching optimistic identity', async () => {
