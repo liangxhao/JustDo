@@ -36,6 +36,7 @@ async function fixture() {
   let tool: any;
   const toolFactories: any[] = [];
   const wait = vi.fn(async (_params: any): Promise<any> => ({ status: 'pending' }));
+  const runStates = new Map<string, any>();
   const hooks = new Map<string, any>();
   let service: any;
   const moduleBox = { exports: {} as any };
@@ -45,6 +46,7 @@ async function fixture() {
     setTimeout,
     clearTimeout,
     Date,
+    Buffer,
     process,
     require: (name: string) =>
       name === 'openclaw/plugin-sdk/session-store-runtime'
@@ -82,13 +84,24 @@ async function fixture() {
     runtime: {
       config: { current: () => config },
       gateway: { request },
-      subagent: { run, waitForRun: wait, getSessionMessages },
+      subagent: { run, waitForRun: async (params: any) => { const result = await wait(params); runStates.set(params.runId, result); return result; },
+        describeRun: async ({ runId }: any) => {
+          const result = runStates.get(runId) ?? { status: 'pending' };
+          const settled = Boolean(result.endedAt && result.status !== 'pending' && !result.yielded && !result.pendingError && result.livenessState !== 'paused');
+          return { runId, state: settled ? 'settled' : 'running', executionSettled: settled, cleanupSettled: settled,
+            executionStartedAt: result.executionStartedAt, executionEndedAt: result.endedAt, outcome: result.status };
+        }, cancelRun: async ({ runId }: any) => request('sessions.abort', { runId, clearQueued: true }), getSessionMessages },
     },
     registerService: (s: any) => {
       service = s;
     },
     registerGatewayMethod: (name: string, fn: any) => methods.set(name, fn),
-    registerTool: (factory: any) => { toolFactories.push(factory); if (typeof factory === 'function') tool = factory({ sessionKey: parentKey }); },
+    registerTool: (factory: any) => {
+      toolFactories.push(factory);
+      const created = typeof factory === 'function' ? factory({ sessionKey: parentKey })
+        : factory.create({ sessionKey: parentKey, sessionId: parent.sessionId, assertInvocationCurrent: () => {} });
+      if (created?.name === 'swarm_flow_start') tool = created;
+    },
     on: (name: string, fn: any) => hooks.set(name, fn),
   };
   moduleBox.exports.default.register(api);
@@ -110,8 +123,35 @@ async function fixture() {
     });
     return { hooks: agentHooks, tools: agentTools, service: agentService };
   };
-  return { root, parent, parentKey, request, run, messages, nodeMessages, getSessionMessages, agents, config, tool, toolFactories, hooks, wait, hook: hooks.get('before_prompt_build'), service, registerAgent };
+  return { root, parent, parentKey, request, run, messages, nodeMessages, getSessionMessages, agents, config, tool, toolFactories, hooks, wait, hook: hooks.get('before_prompt_build'), service, registerAgent, api };
 }
+it('classifies a local launch preflight failure before the SDK invocation as conclusively unstarted', async () => {
+  vi.useFakeTimers(); const f = await fixture();
+  const runtime = f.api.runtime.subagent; let reads = 0;
+  Object.defineProperty(f.api.runtime, 'subagent', { get: () => {
+    reads += 1; if (reads === 2) throw new Error('Local execution capability changed.');
+    return runtime;
+  } });
+  await f.request('swarmFlow.start', { parentKey: f.parentKey, requestId: 'preflight-capability', goal: 'Inspect', mode: 'auto' });
+  await vi.advanceTimersByTimeAsync(1600);
+  const flow = (await f.request('swarmFlow.list', { parentKeys: [f.parentKey] }) as any).flows[0];
+  expect(reads).toBe(2); expect(f.run).not.toHaveBeenCalled();
+  expect(flow).toMatchObject({ status: 'blocked', nodes: [expect.objectContaining({ status: 'failed', cleanupSettled: true })] });
+  expect(flow.nodes[0].error).toContain('Local execution capability changed');
+});
+
+it.each(['sync-throw', 'response-loss'] as const)('keeps %s from the invoked SDK outside the preflight proof boundary', async kind => {
+  vi.useFakeTimers(); const f = await fixture();
+  if (kind === 'sync-throw') f.run.mockImplementationOnce(() => { throw new Error('SDK response unavailable.'); });
+  else f.run.mockRejectedValueOnce(new Error('SDK response unavailable.'));
+  await f.request('swarmFlow.start', { parentKey: f.parentKey, requestId: 'sdk-' + kind, goal: 'Inspect', mode: 'auto' });
+  await vi.advanceTimersByTimeAsync(1600);
+  const flow = (await f.request('swarmFlow.list', { parentKeys: [f.parentKey] }) as any).flows[0];
+  expect(f.run).toHaveBeenCalledTimes(1);
+  expect(flow.nodes[0]).toMatchObject({ status: 'uncertain' });
+  expect(flow.nodes[0]).not.toHaveProperty('cleanupSettled');
+});
+
 it('exposes management only to the parent and binds it to live native invocation authority', async () => {
   vi.useFakeTimers();
   const f = await fixture();
@@ -200,13 +240,17 @@ it('notifies a native run deadline while the run remains active without repeatin
   const f = await fixture();
   await f.request('swarmFlow.start', { parentKey: f.parentKey, requestId: 'run-deadline', goal: 'Inspect', mode: 'auto' });
   await vi.advanceTimersByTimeAsync(1600);
-  vi.setSystemTime(Date.now() + FLOW_LIMITS.durationMs + 1);
+  const start = Date.now();
+  f.wait.mockResolvedValue({ status: 'pending', executionStartedAt: start });
+  await vi.advanceTimersByTimeAsync(1600);
+  vi.setSystemTime(start + 14400001);
   await vi.advanceTimersByTimeAsync(1600);
   const current = (await f.request('swarmFlow.list', { parentKeys: [f.parentKey] }) as any).flows[0];
-  expect(current).toMatchObject({ status: 'blocked', nodes: [{ status: 'running', error: expect.stringContaining('deadline') }] });
+  expect(current).toMatchObject({ status: 'blocked', nodes: [{ status: 'running', error: expect.stringContaining('budget') }] });
   const notices = () => f.request.mock.calls.filter(([method]) => method === 'chat.inject');
   expect(notices()).toHaveLength(1);
-  expect(notices()[0][1].message).toContain('Run deadline exceeded');
+  expect(notices()[0][1].message).toContain('budget');
+  expect(f.request.mock.calls.some(([method]) => method === 'sessions.abort')).toBe(true);
   await vi.advanceTimersByTimeAsync(3200);
   expect(notices()).toHaveLength(1);
   expect(f.run).toHaveBeenCalledTimes(1);
@@ -248,7 +292,7 @@ it.each(['full', 'workspace', 'guarded', 'read-only'])('inherits explicit %s per
   f.parent.permissionMode = mode;
   await f.request('swarmFlow.start', { parentKey: f.parentKey, requestId: 'permission-' + mode, goal: 'Inspect', mode: 'auto' });
   await vi.advanceTimersByTimeAsync(1600);
-  f.wait.mockResolvedValueOnce({ status: 'ok', endedAt: Date.now(), terminalReply: { disposition: 'visible', text: JSON.stringify({ tasks: [{ id: 'inspect', title: 'Inspect', task: 'Inspect code without modifications', access: 'read', deps: [] }] }) } });
+  f.wait.mockResolvedValueOnce({ status: 'ok', endedAt: Date.now(), terminalReply: { disposition: 'visible', text: JSON.stringify({ tasks: [{ id: 'inspect', title: 'Inspect', task: 'Inspect code without modifications', access: 'read', deps: [], batch: null }] }) } });
   await vi.advanceTimersByTimeAsync(1600);
   const worker = f.run.mock.calls[1][0];
   expect(JSON.parse(worker.message)).toMatchObject({ access: 'read', accessInstruction: expect.stringContaining('Do not modify source files') });
@@ -411,7 +455,7 @@ it('scopes submission tools to native worker runs and allows correcting rejected
   expect(factory.create({ sessionKey: 'agent:main:subagent:swarm-flow-forged-task-1' })).toBeNull();
   await f.request('swarmFlow.start', { parentKey: f.parentKey, requestId: 'receipt-test', goal: 'Inspect', mode: 'auto' });
   await vi.advanceTimersByTimeAsync(1600);
-  f.wait.mockResolvedValueOnce({ status: 'ok', endedAt: Date.now(), terminalReply: { disposition: 'visible', text: JSON.stringify({ tasks: [{ id: 'inspect', title: 'Inspect', task: 'Inspect code', access: 'read', deps: [] }] }) } });
+  f.wait.mockResolvedValueOnce({ status: 'ok', endedAt: Date.now(), terminalReply: { disposition: 'visible', text: JSON.stringify({ tasks: [{ id: 'inspect', title: 'Inspect', task: 'Inspect code', access: 'read', deps: [], batch: null }] }) } });
   await vi.advanceTimersByTimeAsync(1600);
   const worker = f.run.mock.calls[1][0];
   const guard = vi.fn();
@@ -450,7 +494,7 @@ it('shares the active Gateway service with separately registered specialist tool
   const goal = 'Use reviewer to inspect code.';
   await f.request('swarmFlow.start', { parentKey: f.parentKey, requestId: 'specialist', goal, mode: 'auto' });
   await vi.advanceTimersByTimeAsync(1600);
-  f.wait.mockResolvedValueOnce({ status: 'ok', endedAt: Date.now(), terminalReply: { disposition: 'visible', text: JSON.stringify({ tasks: [{ id: 'inspect', title: 'Inspect', task: 'Inspect code', access: 'read', deps: [], agentId: 'reviewer', agentRequest: goal }] }) } });
+  f.wait.mockResolvedValueOnce({ status: 'ok', endedAt: Date.now(), terminalReply: { disposition: 'visible', text: JSON.stringify({ tasks: [{ id: 'inspect', title: 'Inspect', task: 'Inspect code', access: 'read', deps: [], batch: null, agentId: 'reviewer', agentRequest: goal }] }) } });
   await vi.advanceTimersByTimeAsync(1600);
   const worker = f.run.mock.calls[1][0];
   expect(worker.sessionKey).toMatch(/^agent:reviewer:/);
@@ -473,7 +517,7 @@ it.each([{ evidence: 'file.ts:10 checked; no source modifications.' }, { evidenc
   const f = await fixture();
   await f.request('swarmFlow.start', { parentKey: f.parentKey, requestId: 'evidence-only', goal: 'Inspect', mode: 'auto' });
   await vi.advanceTimersByTimeAsync(1600);
-  f.wait.mockResolvedValueOnce({ status: 'ok', endedAt: Date.now(), terminalReply: { disposition: 'visible', text: JSON.stringify({ tasks: [{ id: 'inspect', title: 'Inspect', task: 'Inspect code', access: 'read', deps: [] }] }) } });
+  f.wait.mockResolvedValueOnce({ status: 'ok', endedAt: Date.now(), terminalReply: { disposition: 'visible', text: JSON.stringify({ tasks: [{ id: 'inspect', title: 'Inspect', task: 'Inspect code', access: 'read', deps: [], batch: null }] }) } });
   await vi.advanceTimersByTimeAsync(1600);
   const worker = f.run.mock.calls[1][0];
   const factory = f.toolFactories.find(value => value.contextVersion === 2);
@@ -508,7 +552,7 @@ it('continues a prematurely ended task in the same session with only submission 
   const f = await fixture();
   await f.request('swarmFlow.start', { parentKey: f.parentKey, requestId: 'correction', goal: 'Inspect', mode: 'auto' });
   await vi.advanceTimersByTimeAsync(1600);
-  f.wait.mockResolvedValueOnce({ status: 'ok', endedAt: Date.now(), terminalReply: { disposition: 'visible', text: JSON.stringify({ tasks: [{ id: 'inspect', title: 'Inspect', task: 'Inspect code', access: 'read', deps: [] }] }) } });
+  f.wait.mockResolvedValueOnce({ status: 'ok', endedAt: Date.now(), terminalReply: { disposition: 'visible', text: JSON.stringify({ tasks: [{ id: 'inspect', title: 'Inspect', task: 'Inspect code', access: 'read', deps: [], batch: null }] }) } });
   await vi.advanceTimersByTimeAsync(1600);
   const worker = f.run.mock.calls[1][0];
   const factory = f.toolFactories.find(value => value.contextVersion === 2);
@@ -537,6 +581,10 @@ it('continues a prematurely ended task in the same session with only submission 
   const repairContext = { ...context, runId: repair.idempotencyKey };
   expect((await f.hook({}, repairContext)).toolsAllow).toEqual(['swarm_flow_complete', 'swarm_flow_block']);
   expect(before({ toolName: 'exec' }, repairContext)).toMatchObject({ block: true });
+  expect(before({ toolName: 'exec', toolKind: 'code_mode_exec', toolInputKind: 'javascript' }, repairContext)).toBeUndefined();
+  expect(before({ toolName: 'wait', toolKind: 'code_mode_wait' }, repairContext)).toBeUndefined();
+  expect(before({ toolName: 'exec', params: { toolKind: 'code_mode_exec' } }, repairContext)).toMatchObject({ block: true });
+  expect(before({ toolName: 'wait' }, repairContext)).toMatchObject({ block: true });
   const repairTool = factory.create({ sessionKey: repair.sessionKey, assertInvocationCurrent: vi.fn() }).find((value: any) => value.name === 'swarm_flow_complete');
   before({ toolName: repairTool.name, params: {} }, repairContext);
   expect((await repairTool.execute(context.toolCallId, { summary: 'Inspection complete', evidence: ['file.ts:10'] })).details.accepted).toBe(true);
@@ -551,7 +599,7 @@ async function verificationFixture() {
   const f = await fixture();
   await f.request('swarmFlow.start', { parentKey: f.parentKey, requestId: 'settled-verification', goal: 'Inspect', mode: 'auto' });
   await vi.advanceTimersByTimeAsync(1600);
-  f.wait.mockResolvedValueOnce({ status: 'ok', endedAt: Date.now(), terminalReply: { disposition: 'visible', text: JSON.stringify({ tasks: [{ id: 'inspect', title: 'Inspect', task: 'Inspect code', access: 'read', deps: [] }] }) } });
+  f.wait.mockResolvedValueOnce({ status: 'ok', endedAt: Date.now(), terminalReply: { disposition: 'visible', text: JSON.stringify({ tasks: [{ id: 'inspect', title: 'Inspect', task: 'Inspect code', access: 'read', deps: [], batch: null }] }) } });
   await vi.advanceTimersByTimeAsync(1600);
   const worker = f.run.mock.calls[1][0];
   const factory = f.toolFactories.find(value => value.contextVersion === 2);
@@ -673,7 +721,7 @@ it('does not request submission correction for stale, cancelled or policy-revoke
   const f = await fixture();
   const flow = await f.request('swarmFlow.start', { parentKey: f.parentKey, requestId: 'correction-scope', goal: 'Inspect', mode: 'auto' }) as any;
   await vi.advanceTimersByTimeAsync(1600);
-  f.wait.mockResolvedValueOnce({ status: 'ok', endedAt: Date.now(), terminalReply: { disposition: 'visible', text: JSON.stringify({ tasks: [{ id: 'inspect', title: 'Inspect', task: 'Inspect code', access: 'read', deps: [] }] }) } });
+  f.wait.mockResolvedValueOnce({ status: 'ok', endedAt: Date.now(), terminalReply: { disposition: 'visible', text: JSON.stringify({ tasks: [{ id: 'inspect', title: 'Inspect', task: 'Inspect code', access: 'read', deps: [], batch: null }] }) } });
   await vi.advanceTimersByTimeAsync(1600);
   const worker = f.run.mock.calls[1][0];
   const context = { sessionKey: worker.sessionKey, runId: worker.idempotencyKey };
@@ -696,7 +744,7 @@ it('rejects cancelled, expired and revoked submission authority before mutating 
   const f = await fixture();
   await f.request('swarmFlow.start', { parentKey: f.parentKey, requestId: 'cancel-test', goal: 'Inspect', mode: 'auto' });
   await vi.advanceTimersByTimeAsync(1600);
-  f.wait.mockResolvedValueOnce({ status: 'ok', endedAt: Date.now(), terminalReply: { disposition: 'visible', text: JSON.stringify({ tasks: [{ id: 'inspect', title: 'Inspect', task: 'Inspect', deps: [], access: 'read' }] }) } });
+  f.wait.mockResolvedValueOnce({ status: 'ok', endedAt: Date.now(), terminalReply: { disposition: 'visible', text: JSON.stringify({ tasks: [{ id: 'inspect', title: 'Inspect', task: 'Inspect', deps: [], access: 'read', batch: null }] }) } });
   await vi.advanceTimersByTimeAsync(1600);
   const worker = f.run.mock.calls[1][0];
   const factory = f.toolFactories.find(factory => factory.contextVersion === 2);

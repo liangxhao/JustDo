@@ -891,9 +891,40 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(CoworkSubagentDetailsIpc.Status, sessionId, forceRefresh),
     getSwarmSnapshot: (sessionId: string) => ipcRenderer.invoke(SwarmIpc.Snapshot, sessionId),
     getSwarmFlows: (sessionId: string) => ipcRenderer.invoke(SwarmFlowIpc.List, sessionId),
-    getSwarmFlowDetail: (sessionId: string, flowId: string, nodeId: string, sourceId?: string) => ipcRenderer.invoke(SwarmFlowIpc.Detail, sessionId, flowId, nodeId, sourceId),
-    controlSwarmFlow: (sessionId: string, id: string, revision: number, action: SwarmFlowAction) => ipcRenderer.invoke(SwarmFlowIpc.Control, sessionId, id, revision, action),
-    interveneSwarmFlow: (sessionId: string, id: string, nodeId: string, revision: number, intervention: SwarmIntervention) => ipcRenderer.invoke(SwarmFlowIpc.Intervene, sessionId, id, nodeId, revision, intervention),
+    getSwarmBatch: (
+      sessionId: string,
+      flowId: string,
+      stageId: string,
+      options: import('../shared/cowork/swarmFlow').SwarmBatchOptions,
+    ) => ipcRenderer.invoke(SwarmFlowIpc.Batch, sessionId, flowId, stageId, options),
+    retrySwarmBatch: (
+      sessionId: string,
+      flowId: string,
+      stageId: string,
+      revision: number,
+      operationId: string,
+      itemIds?: string[],
+    ) =>
+      ipcRenderer.invoke(
+        SwarmFlowIpc.RetryBatch,
+        sessionId,
+        flowId,
+        stageId,
+        revision,
+        operationId,
+        itemIds,
+      ),
+    getSwarmFlowDetail: (sessionId: string, flowId: string, nodeId: string, sourceId?: string) =>
+      ipcRenderer.invoke(SwarmFlowIpc.Detail, sessionId, flowId, nodeId, sourceId),
+    controlSwarmFlow: (sessionId: string, id: string, revision: number, action: SwarmFlowAction) =>
+      ipcRenderer.invoke(SwarmFlowIpc.Control, sessionId, id, revision, action),
+    interveneSwarmFlow: (
+      sessionId: string,
+      id: string,
+      nodeId: string,
+      revision: number,
+      intervention: SwarmIntervention,
+    ) => ipcRenderer.invoke(SwarmFlowIpc.Intervene, sessionId, id, nodeId, revision, intervention),
     prepareSwarm: (options: SwarmOptions, sessionId?: string) =>
       ipcRenderer.invoke(SwarmIpc.Prepare, options, sessionId),
     getSubTaskDetails: (sessionKey: string, taskId?: string) =>

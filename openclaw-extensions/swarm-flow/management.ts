@@ -28,21 +28,23 @@ function nodeActions(flow: Flow, node: FlowNode) {
   const actions = interventionAvailability(flow, node);
   const reason = !actions.canNote
     ? 'Input unavailable: flow ended/stopping/delivering, node done/cancelled/deliver, or note limit reached.'
-    : (node.attempt ?? 1) >= FLOW_LIMITS.attempts
-      ? 'Execution attempt limit reached; input may still be saved.'
-      : flow.nodes.some(live)
-        ? 'Wait for all active/uncertain native runs to settle; input is for the next execution.'
-        : node.status !== 'failed'
-          ? 'Only failed nodes can continue or rerun.'
-          : !node.deps.every(dep => flow.nodes.find(item => item.id === dep)?.status === 'done')
-            ? 'Complete the dependencies first.'
-            : flow.error
-              ? 'Resolve the flow-level error first.'
-              : !actions.canRetry
-                ? 'Pause/block the flow before retrying.'
-                : !actions.canContinue
-                  ? 'There is no conclusively ended native run to continue; retry in a new session if available.'
-                  : undefined;
+    : actions.canRetry
+      ? undefined
+      : (node.attempt ?? 1) >= (flow.settings?.maxAttempts ?? FLOW_LIMITS.attempts)
+        ? 'Execution attempt limit reached; input may still be saved.'
+        : flow.nodes.some(live)
+          ? 'Wait for all active/uncertain native runs to settle; input is for the next execution.'
+          : node.status !== 'failed'
+            ? 'Only failed nodes can continue or rerun.'
+            : !node.deps.every(dep => flow.nodes.find(item => item.id === dep)?.status === 'done')
+              ? 'Complete the dependencies first.'
+              : flow.error
+                ? 'Resolve the flow-level error first.'
+                : !actions.canRetry
+                  ? 'Pause/block the flow before retrying.'
+                  : !actions.canContinue
+                    ? 'There is no conclusively ended native run to continue; retry in a new session if available.'
+                    : undefined;
   return { ...actions, unavailableReason: reason };
 }
 
@@ -57,6 +59,7 @@ export function managementStatus(flow: Flow, nodeId?: string) {
     createdAt: flow.createdAt,
     updatedAt: flow.updatedAt,
     error: bounded(flow.error),
+    limits: { ...flow.settings, flowConcurrency: flow.concurrency },
     actions: flowActions(flow),
     actionGuidance: {
       pause: 'Pause future dispatch only; active runs may finish.',
@@ -69,24 +72,46 @@ export function managementStatus(flow: Flow, nodeId?: string) {
     },
     notificationUnconfirmed: flow.notices?.some(notice => notice.state !== 'sent') ?? false,
     counts: {
-      total: flow.nodes.length,
-      done: flow.nodes.filter(item => item.status === 'done').length,
-      active: flow.nodes.filter(live).length,
-      failed: flow.nodes.filter(item => item.status === 'failed').length,
+      total: flow.nodes.filter(item => !item.batchItem).length,
+      done: flow.nodes.filter(item => !item.batchItem && item.status === 'done').length,
+      active: flow.nodes.filter(item => !item.batchItem && item.kind !== 'batch' && live(item))
+        .length,
+      failed: flow.nodes.filter(item => !item.batchItem && item.status === 'failed').length,
     },
-    nodes: flow.nodes.map(item => ({
-      id: item.id,
-      title: item.title,
-      agent: '@' + (item.agentName || item.agentId || 'main'),
-      kind: item.kind,
-      status: item.status,
-      deps: item.deps,
-      attempt: item.attempt ?? 1,
-      remainingAttempts: Math.max(0, FLOW_LIMITS.attempts - (item.attempt ?? 1)),
-      error: bounded(item.error),
-      result: bounded(item.result),
-      ...nodeActions(flow, item),
-    })),
+    batchItems: flow.nodes
+      .filter(item => item.kind === 'batch')
+      .reduce(
+        (counts, stage) => ({
+          total: counts.total + (stage.batchCounts?.total ?? 0),
+          done: counts.done + (stage.batchCounts?.done ?? 0),
+          active:
+            counts.active +
+            (stage.batchCounts?.preparing ?? 0) +
+            (stage.batchCounts?.running ?? 0) +
+            (stage.batchCounts?.uncertain ?? 0),
+          failed: counts.failed + (stage.batchCounts?.failed ?? 0),
+        }),
+        { total: 0, done: 0, active: 0, failed: 0 },
+      ),
+    nodes: flow.nodes
+      .filter(item => !item.batchItem)
+      .map(item => ({
+        id: item.id,
+        title: item.title,
+        agent: '@' + (item.agentName || item.agentId || 'main'),
+        kind: item.kind,
+        status: item.status,
+        deps: item.deps,
+        attempt: item.attempt ?? 1,
+        remainingAttempts: Math.max(
+          0,
+          (flow.settings?.maxAttempts ?? FLOW_LIMITS.attempts) - (item.attempt ?? 1),
+        ),
+        error: bounded(item.error),
+        result: bounded(item.result),
+        batchCounts: item.batchCounts,
+        ...nodeActions(flow, item),
+      })),
     ...(node
       ? {
           node: {
@@ -147,6 +172,9 @@ export function createManagementTools(parentKey: string, host: ManagementHost) {
   const names = [
     FLOW_MANAGEMENT_TOOLS.status,
     ...(owned().length ? [FLOW_MANAGEMENT_TOOLS.control, FLOW_MANAGEMENT_TOOLS.intervene] : []),
+    ...(owned().some(flow => flow.nodes.some(node => node.kind === 'batch'))
+      ? [FLOW_MANAGEMENT_TOOLS.batch, FLOW_MANAGEMENT_TOOLS.retryBatch]
+      : []),
   ];
   return names.map(name => ({
     name,
@@ -155,44 +183,119 @@ export function createManagementTools(parentKey: string, host: ManagementHost) {
         ? 'Query Swarm flow'
         : name === FLOW_MANAGEMENT_TOOLS.control
           ? 'Control Swarm flow'
-          : 'Provide Swarm node input',
+          : name === FLOW_MANAGEMENT_TOOLS.batch
+            ? 'Query Swarm batch'
+            : name === FLOW_MANAGEMENT_TOOLS.retryBatch
+              ? 'Retry Swarm batch items'
+              : 'Provide Swarm node input',
     description:
       name === FLOW_MANAGEMENT_TOOLS.status
         ? 'Read current conversation Swarm status, blockers, results and available actions. Defaults to unfinished or latest flow; specify nodeId for evidence and attempt/input details. No task execution or transcript copy.'
         : name === FLOW_MANAGEMENT_TOOLS.control
           ? 'Manage this conversation flow ONLY at user request. Read status first and supply its revision. pause stops future dispatch; resume unpauses; stop requests cancellation; retry retries ALL failed nodes. Use intervene to retry one node. Never infer acceptance or bypass an unavailable action.'
-          : 'At explicit user request, save node input (note), continue a settled failed node in its existing session (continue), or rerun ONE failed node in a fresh session (retry). Query status first. Input is labelled as relayed by the main assistant. Running/uncertain nodes cannot be restarted; note is for the next execution, not live steering. Continue/retry share the three-attempt limit.',
-    parameters: {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        flowId: { type: 'string', minLength: 1, maxLength: 80 },
-        ...(name !== FLOW_MANAGEMENT_TOOLS.control
-          ? { nodeId: { type: 'string', minLength: 1, maxLength: 80 } }
-          : {}),
-        ...(name !== FLOW_MANAGEMENT_TOOLS.status
-          ? {
-              revision: { type: 'integer', minimum: 1 },
-              action: {
-                type: 'string',
-                enum:
-                  name === FLOW_MANAGEMENT_TOOLS.control
-                    ? ['pause', 'resume', 'stop', 'retry']
-                    : ['note', 'continue', 'retry'],
-              },
-            }
-          : {}),
-        ...(name === FLOW_MANAGEMENT_TOOLS.intervene
-          ? { text: { type: 'string', maxLength: 3900 } }
-          : {}),
-      },
-      required:
-        name === FLOW_MANAGEMENT_TOOLS.status
-          ? []
-          : name === FLOW_MANAGEMENT_TOOLS.control
-            ? ['flowId', 'revision', 'action']
-            : ['flowId', 'nodeId', 'revision', 'action'],
-    },
+          : name === FLOW_MANAGEMENT_TOOLS.batch
+            ? 'Read a bounded page of batch items, status counts and eligible item IDs. Use status to get exact flow/stage IDs. Follow cursor for further pages; refresh after a page revision conflict.'
+            : name === FLOW_MANAGEMENT_TOOLS.retryBatch
+              ? 'ONLY at explicit user request, retry selected failed itemIds (at most 100) or omit itemIds for all eligible failures. Supply the current revision. Keeps completed and active items. Returns retried and skipped IDs; never infer all items were retried.'
+              : 'At explicit user request, save node input (note), continue a settled failed node in its existing session (continue), or rerun ONE failed node in a fresh session (retry). Query status first. Input is labelled as relayed by the main assistant. Running/uncertain nodes cannot be restarted; note is for the next execution, not live steering. Continue/retry share the three-attempt limit.',
+    parameters:
+      name === FLOW_MANAGEMENT_TOOLS.batch || name === FLOW_MANAGEMENT_TOOLS.retryBatch
+        ? {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              flowId: { type: 'string', minLength: 1, maxLength: 80 },
+              stageId: { type: 'string', minLength: 1, maxLength: 80 },
+              ...(name === FLOW_MANAGEMENT_TOOLS.batch
+                ? {
+                    cursor: { type: 'string', maxLength: 2048 },
+                    search: { type: 'string', maxLength: 100 },
+                    status: {
+                      type: 'string',
+                      enum: [
+                        'queued',
+                        'preparing',
+                        'running',
+                        'uncertain',
+                        'done',
+                        'failed',
+                        'cancelled',
+                      ],
+                    },
+                  }
+                : {
+                    revision: { type: 'integer', minimum: 1 },
+                    itemIds: {
+                      type: 'array',
+                      minItems: 1,
+                      maxItems: 100,
+                      uniqueItems: true,
+                      items: { type: 'string', minLength: 1, maxLength: 80 },
+                    },
+                  }),
+            },
+            required:
+              name === FLOW_MANAGEMENT_TOOLS.batch
+                ? ['flowId', 'stageId']
+                : ['flowId', 'stageId', 'revision'],
+          }
+        : {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              flowId: { type: 'string', minLength: 1, maxLength: 80 },
+              ...([FLOW_MANAGEMENT_TOOLS.batch, FLOW_MANAGEMENT_TOOLS.retryBatch].includes(
+                name as typeof FLOW_MANAGEMENT_TOOLS.batch,
+              )
+                ? {
+                    stageId: { type: 'string', maxLength: 80 },
+                    cursor: { type: 'string', maxLength: 2048 },
+                    search: { type: 'string', maxLength: 100 },
+                    status: {
+                      type: 'string',
+                      enum: [
+                        'queued',
+                        'preparing',
+                        'running',
+                        'uncertain',
+                        'done',
+                        'failed',
+                        'cancelled',
+                      ],
+                    },
+                    itemIds: {
+                      type: 'array',
+                      maxItems: 100,
+                      items: { type: 'string', maxLength: 80 },
+                    },
+                  }
+                : {}),
+              ...(name !== FLOW_MANAGEMENT_TOOLS.control
+                ? { nodeId: { type: 'string', minLength: 1, maxLength: 80 } }
+                : {}),
+              ...(name !== FLOW_MANAGEMENT_TOOLS.status
+                ? {
+                    revision: { type: 'integer', minimum: 1 },
+                    action: {
+                      type: 'string',
+                      enum:
+                        name === FLOW_MANAGEMENT_TOOLS.control
+                          ? ['pause', 'resume', 'stop', 'retry']
+                          : ['note', 'continue', 'retry'],
+                    },
+                  }
+                : {}),
+              ...(name === FLOW_MANAGEMENT_TOOLS.intervene
+                ? { text: { type: 'string', maxLength: 3900 } }
+                : {}),
+            },
+            required:
+              name === FLOW_MANAGEMENT_TOOLS.status
+                ? []
+                : name === FLOW_MANAGEMENT_TOOLS.control
+                  ? ['flowId', 'revision', 'action']
+                  : ['flowId', 'nodeId', 'revision', 'action'],
+          },
     async execute(toolCallId: string, input: unknown, signal?: AbortSignal) {
       try {
         const invocation = host.invocation(toolCallId, name);
@@ -201,6 +304,46 @@ export function createManagementTools(parentKey: string, host: ManagementHost) {
           invocation.assertCurrent();
         };
         assertCurrent();
+        if (name === FLOW_MANAGEMENT_TOOLS.batch || name === FLOW_MANAGEMENT_TOOLS.retryBatch) {
+          if (
+            !object(input) ||
+            typeof input.flowId !== 'string' ||
+            typeof input.stageId !== 'string' ||
+            Object.keys(input).some(
+              key =>
+                !(
+                  name === FLOW_MANAGEMENT_TOOLS.batch
+                    ? ['flowId', 'stageId', 'cursor', 'search', 'status']
+                    : ['flowId', 'stageId', 'revision', 'itemIds']
+                ).includes(key),
+            )
+          )
+            throw new Error('Invalid batch arguments.');
+          const flow = select(input.flowId);
+          if (!flow) throw new Error('Batch not found.');
+          host.assertParent(flow);
+          const result =
+            name === FLOW_MANAGEMENT_TOOLS.batch
+              ? host.current().store.batches.page(flow, input.stageId, {
+                  cursor: input.cursor as string | undefined,
+                  search: input.search as string | undefined,
+                  status: input.status as FlowNode['status'] | undefined,
+                })
+              : host.current().engine.retryBatch(
+                  flow.id,
+                  input.stageId,
+                  input.revision as number,
+                  'm-' +
+                    createHash('sha256')
+                      .update(JSON.stringify([parentKey, invocation.runId, toolCallId, name]))
+                      .digest('hex'),
+                  input.itemIds as string[] | undefined,
+                );
+          return {
+            details: result,
+            content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+          };
+        }
         const allowed =
           name === FLOW_MANAGEMENT_TOOLS.status
             ? ['flowId', 'nodeId']
@@ -218,6 +361,8 @@ export function createManagementTools(parentKey: string, host: ManagementHost) {
         )
           throw new Error('Invalid management arguments. No operation was accepted.');
         let flow = select(input.flowId);
+        if (flow && typeof input.nodeId === 'string')
+          flow = host.current().store.get(flow.id, input.nodeId);
         if (name === FLOW_MANAGEMENT_TOOLS.status) {
           const flows = owned();
           const result = flow
@@ -282,7 +427,7 @@ export function createManagementTools(parentKey: string, host: ManagementHost) {
             .digest('hex');
         const replayed = isControl
           ? (flow.operations?.some(item => item.id === operationId) ?? false)
-          : flow.nodes.some(item => item.interventions?.some(note => note.id === operationId));
+          : Boolean(host.current().store.batches.interventionOwner(flow.id, operationId));
         if (!replayed && flow.revision !== input.revision)
           throw new Error('Flow revision conflict.');
         if (isControl && !replayed && !flowActions(flow)[action as FlowAction])

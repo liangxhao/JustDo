@@ -270,6 +270,7 @@ export const scheduledTaskTranslations = {
     extensionConfigurationEnterSecret: '请输入密钥',
     extensionConfigurationCredentialType: '凭据类型',
     extensionConfigurationSaved: '配置已保存。',
+    extensionConfigurationPending: '配置已保存，将在下次启动或热更新生效。当前任务继续执行。',
     extensionConfigurationValueRequired: '请至少填写一个配置项。',
     extensionConfigurationSaveFailed: '保存扩展配置失败',
     extensionOpenFolderFailed: '打开扩展文件夹失败',
@@ -932,13 +933,15 @@ export const scheduledTaskTranslations = {
     extensionMissingConfiguration: 'Missing required configuration',
     extensionConfigurationStored: 'Configured; enter a new value to replace',
     extensionConfigurationInherited: 'Provided by the system environment',
-    extensionConfigurationInheritedHelp:
-      'Update the system variable and restart the app.',
-    extensionConfigurationInheritedAlternatives: 'An existing system credential may take precedence.',
+    extensionConfigurationInheritedHelp: 'Update the system variable and restart the app.',
+    extensionConfigurationInheritedAlternatives:
+      'An existing system credential may take precedence.',
     extensionConfigurationEnterValue: 'Enter a configuration value',
     extensionConfigurationEnterSecret: 'Enter a credential',
     extensionConfigurationCredentialType: 'Credential type',
     extensionConfigurationSaved: 'Configuration saved.',
+    extensionConfigurationPending:
+      'Saved for the next start or hot reload. Current tasks continue running.',
     extensionConfigurationValueRequired: 'Enter at least one configuration value.',
     extensionConfigurationSaveFailed: 'Failed to save extension configuration',
     extensionOpenFolderFailed: 'Failed to open the extension folder',
@@ -1284,8 +1287,7 @@ export const scheduledTaskTranslations = {
     cronDialogModelInherit: 'Use default configuration',
     cronDialogModelHint:
       'Applies only to this task. When unset, follows the default model rules, including subagent models and existing session configuration.',
-    cronDialogAgentHint:
-      'Runs in an isolated session using the selected assistant’s workspace.',
+    cronDialogAgentHint: 'Runs in an isolated session using the selected assistant’s workspace.',
     cronDialogPermissionTitle: 'Execution permissions',
     cronDialogPermissionInheritedHint:
       'This task wakes the assistant in the main session and inherits its execution permissions. Separate task permissions are not supported.',

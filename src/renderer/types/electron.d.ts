@@ -709,7 +709,9 @@ interface IElectronAPI {
   openclaw: {
     computerControl: {
       get: () => Promise<import('../../shared/openclaw/computerControl').ComputerControlResult>;
-      setEnabled: (enabled: boolean) => Promise<import('../../shared/openclaw/computerControl').ComputerControlResult>;
+      setEnabled: (
+        enabled: boolean,
+      ) => Promise<import('../../shared/openclaw/computerControl').ComputerControlResult>;
     };
     worktrees: {
       getSettings: () => Promise<import('../../shared/openclaw/worktrees').WorktreeSettingsResult>;
@@ -1120,6 +1122,8 @@ interface IElectronAPI {
     onSessionGoalChanged: (callback: (data: { sessionId: string }) => void) => () => void;
     getSwarmSnapshot: import('../../shared/cowork/swarm').SwarmApi['getSwarmSnapshot'];
     getSwarmFlows: import('../../shared/cowork/swarmFlow').SwarmFlowApi['getSwarmFlows'];
+    getSwarmBatch: import('../../shared/cowork/swarmFlow').SwarmFlowApi['getSwarmBatch'];
+    retrySwarmBatch: import('../../shared/cowork/swarmFlow').SwarmFlowApi['retrySwarmBatch'];
     getSwarmFlowDetail: import('../../shared/cowork/swarmFlow').SwarmFlowApi['getSwarmFlowDetail'];
     controlSwarmFlow: import('../../shared/cowork/swarmFlow').SwarmFlowApi['controlSwarmFlow'];
     interveneSwarmFlow: import('../../shared/cowork/swarmFlow').SwarmFlowApi['interveneSwarmFlow'];

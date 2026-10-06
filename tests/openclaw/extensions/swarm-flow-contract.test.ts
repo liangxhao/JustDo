@@ -39,6 +39,10 @@ const flow: Flow = {
 };
 
 describe('Swarm flow action availability', () => {
+  it('keeps internal planner feedback out of the flow view', () => {
+    const projected = viewFlow({ ...flow, nodes: [{ ...node, planningRepair: { passes: 1, error: 'Invalid plan detail' } }] });
+    expect(projected.nodes[0]).not.toHaveProperty('planningRepair');
+  });
   it('blocks controls while final delivery is in flight and projects the same actions to the Tab', () => {
     const delivering = {
       ...flow,

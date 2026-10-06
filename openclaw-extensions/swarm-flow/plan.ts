@@ -1,11 +1,38 @@
 import { DEFAULT_FLOW_AGENT, FLOW_LIMITS, type FlowAgent, type FlowNode } from './contract.js';
+import { validateBatchPlan } from './batch-plan.js';
+/** Invalid planner structure can be corrected before any work is admitted. */
+export class PlanFormatError extends Error {}
+
+export function planningInstructions(batchAvailable: boolean): string {
+  const task = {
+    id: 'task-id',
+    title: 'short title',
+    task: 'complete brief and acceptance criteria',
+    deps: [],
+    access: 'read or write',
+    agentId: 'main',
+    ...(batchAvailable ? { batch: null } : {}),
+  };
+  return (
+    'Return only JSON ' +
+    JSON.stringify({
+      tasks: [task],
+      stages: { verify: { agentId: 'main' }, deliver: { agentId: 'main' } },
+      unresolvedAssignments: [],
+    }) +
+    '. Create 1-8 tasks with acyclic dependencies, choosing meaningful parallel work. Each task ID is a unique non-empty reference label. Prefer short labels. Dependencies must reference exact task IDs. The service converts these labels and their dependencies into internal node IDs. Do not create verification or delivery tasks; the service adds those gates. All tasks and gates default to main regardless of the originating chat agent. ONLY when the user explicitly assigns a stage to another existing agent, set its exact availableAgents ID and include agentRequest with a verbatim excerpt of assignmentRequest naming that agent. Only assignmentRequest is authoritative for agent assignments; the goal may be a rewritten task brief. Resolve names using availableAgents; never invent agents or silently replace unavailable/ambiguous assignments with main. Put unresolved assignments in unresolvedAssignments. Assign verification/delivery gates with stages, do not add duplicates. This planning pass is main orchestration; if the user assigns design/planning work to a specialist, create a separate work task for that agent. Tasks need no further conversation context. Mark any possible modification as write.' +
+    (batchAvailable
+      ? ' Every task MUST include a top-level batch field: null for an ordinary task, or {"source":{"kind":"jsonl","path":"project-relative/input.jsonl"}} / {"source":{"kind":"files","path":"project-relative/data","pattern":"*.json"}} for a batch task. batch is a sibling of id/title/task/deps/access/agentId, NEVER text embedded inside task. The service, not a worker, expands a batch into independent runs. A batch task describes only what ONE item must do with input.json and output/; it must not ask that worker to expand the batch, dispatch agents or aggregate other items. A normal preparation task may generate the manifest at a fixed, explicitly authorized project-relative path; the batch must depend on it and use that exact path. Do not silently change that path based on preparation output. Add a dependent ordinary task to aggregate actual batch results.'
+      : ' Batch execution is unavailable in this flow; do not declare a batch or ask a worker to expand one.')
+  );
+}
 export function resolveAssignedAgent(value: unknown, agents: FlowAgent[], goal: string): string {
   if (value === undefined) return DEFAULT_FLOW_AGENT;
   if (!value || typeof value !== 'object' || Array.isArray(value))
-    throw new Error('Invalid agent assignment.');
+    throw new PlanFormatError('Invalid agent assignment.');
   const { agentId, agentRequest } = value as Record<string, unknown>;
   if (agentId === undefined) return DEFAULT_FLOW_AGENT;
-  if (typeof agentId !== 'string') throw new Error('Invalid assigned agent identity.');
+  if (typeof agentId !== 'string') throw new PlanFormatError('Invalid assigned agent identity.');
   const agent = agents.find(item => item.id === agentId);
   if (!agent) throw new Error('Requested agent is unavailable: ' + agentId);
   if (
@@ -34,9 +61,9 @@ export function validateStageAssignments(
     );
   const stages = plan.stages ?? {};
   if (!stages || typeof stages !== 'object' || Array.isArray(stages))
-    throw new Error('Invalid stage assignments.');
+    throw new PlanFormatError('Invalid stage assignments.');
   if (Object.keys(stages).some(key => !['verify', 'deliver'].includes(key)))
-    throw new Error(
+    throw new PlanFormatError(
       'Only verification and delivery gate assignments are allowed. Put user planning/design stages in work tasks.',
     );
   return {
@@ -45,7 +72,7 @@ export function validateStageAssignments(
   };
 }
 export function parseJson(text: string): unknown {
-  if (text.length > FLOW_LIMITS.result) throw new Error('Result exceeds flow limit.');
+  if (text.length > FLOW_LIMITS.result) throw new PlanFormatError('Result exceeds flow limit.');
   const trimmed = text.trim();
   try {
     return JSON.parse(trimmed);
@@ -59,11 +86,13 @@ export function parseJson(text: string): unknown {
       ),
     ];
     if (blocks.length !== 1)
-      throw new Error('Expected one unambiguous JSON result, optionally in a JSON code block.');
+      throw new PlanFormatError(
+        'Expected one unambiguous JSON result, optionally in a JSON code block.',
+      );
     try {
       return JSON.parse(blocks[0][1].trim());
     } catch {
-      throw new Error('The structured result contains invalid JSON.');
+      throw new PlanFormatError('The structured result contains invalid JSON.');
     }
   }
 }
@@ -71,19 +100,21 @@ export function validatePlan(
   value: unknown,
   agents: FlowAgent[] = [{ id: DEFAULT_FLOW_AGENT, name: DEFAULT_FLOW_AGENT }],
   goal = '',
-): Array<Pick<FlowNode, 'id' | 'title' | 'task' | 'deps' | 'access' | 'agentId'>> {
+  options: { batchAvailable?: boolean } = {},
+): Array<Pick<FlowNode, 'id' | 'title' | 'task' | 'deps' | 'access' | 'agentId' | 'batch'>> {
   if (!value || typeof value !== 'object' || !Array.isArray((value as { tasks?: unknown }).tasks))
-    throw new Error('Planner must return tasks.');
+    throw new PlanFormatError('Planner must return tasks.');
   const tasks = (value as { tasks: unknown[] }).tasks;
   if (!tasks.length || tasks.length > FLOW_LIMITS.nodes)
-    throw new Error('Plan task limit exceeded.');
+    throw new PlanFormatError('Plan task limit exceeded.');
   const ids = new Set<string>();
   const result = tasks.map(item => {
-    if (!item || typeof item !== 'object') throw new Error('Invalid task.');
+    if (!item || typeof item !== 'object' || Array.isArray(item))
+      throw new PlanFormatError('Invalid task.');
     const t = item as Record<string, unknown>;
     if (typeof t.id !== 'string' || !t.id.trim())
-      throw new Error('Invalid task reference: expected a non-empty string.');
-    if (ids.has(t.id)) throw new Error('Duplicate task ID: ' + t.id);
+      throw new PlanFormatError('Invalid task reference: expected a non-empty string.');
+    if (ids.has(t.id)) throw new PlanFormatError('Duplicate task ID: ' + t.id);
     ids.add(t.id);
     if (
       typeof t.title !== 'string' ||
@@ -97,7 +128,21 @@ export function validatePlan(
       new Set(t.deps).size !== t.deps.length ||
       !['read', 'write'].includes(String(t.access))
     )
-      throw new Error('Invalid task fields.');
+      throw new PlanFormatError('Invalid task fields.');
+    if (options.batchAvailable === true && !Object.hasOwn(t, 'batch'))
+      throw new PlanFormatError(
+        'Task ' +
+          t.id +
+          ' must declare a top-level batch field: null for an ordinary task or {"source":{"kind":"jsonl","path":"inputs.jsonl"}} for a batch. A batch declaration inside task text does not create a batch.',
+      );
+    if (options.batchAvailable === false && t.batch != null)
+      throw new Error('Batch execution is unavailable in this flow.');
+    let batch: FlowNode['batch'];
+    try {
+      batch = t.batch != null ? validateBatchPlan(t.batch) : undefined;
+    } catch (error) {
+      throw new PlanFormatError('Task ' + t.id + ': ' + String(error));
+    }
     return {
       id: t.id,
       title: t.title,
@@ -105,15 +150,16 @@ export function validatePlan(
       deps: t.deps as string[],
       access: t.access as 'read' | 'write',
       agentId: resolveAssignedAgent(t, agents, goal),
+      ...(batch ? { batch } : {}),
     };
   });
   const visited = new Set<string>();
   const visiting = new Set<string>();
   const visit = (id: string) => {
-    if (visiting.has(id)) throw new Error('Cyclic plan.');
+    if (visiting.has(id)) throw new PlanFormatError('Cyclic plan.');
     if (visited.has(id)) return;
     const node = result.find(n => n.id === id);
-    if (!node) throw new Error('Missing dependency.');
+    if (!node) throw new PlanFormatError('Missing dependency.');
     visiting.add(id);
     node.deps.forEach(visit);
     visiting.delete(id);

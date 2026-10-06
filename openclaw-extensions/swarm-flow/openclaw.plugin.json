@@ -6,12 +6,16 @@
     "onStartup": true,
     "onCapabilities": ["tool"]
   },
+  "configContracts": { "configurationStatusMethod": "swarmFlow.health" },
   "contracts": {
     "tools": [
       "swarm_flow_start",
       "swarm_flow_status",
       "swarm_flow_control",
       "swarm_flow_intervene",
+      "swarm_flow_batch",
+      "swarm_flow_retry_batch",
+      "swarm_flow_results",
       "swarm_flow_complete",
       "swarm_flow_verify",
       "swarm_flow_block"
@@ -21,12 +25,49 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
+      "globalConcurrency": { "type": "integer", "minimum": 1, "maximum": 16, "default": 3 },
+      "maxBatchItems": { "type": "integer", "minimum": 1, "maximum": 1000, "default": 1000 },
+      "executionTimeoutSeconds": {
+        "type": "integer",
+        "minimum": 600,
+        "maximum": 86400,
+        "default": 14400
+      },
+      "maxAttempts": { "type": "integer", "minimum": 1, "maximum": 3, "default": 3 },
+      "snapshotBudgetMiB": { "type": "integer", "minimum": 16, "maximum": 16384, "default": 1024 },
       "availableAgentIds": {
         "type": "array",
         "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$" },
         "uniqueItems": true,
         "description": "Product-managed agent IDs eligible for new Swarm stages. Defaults to main only."
       }
+    }
+  },
+  "uiHints": {
+    "globalConcurrency": {
+      "configurable": true,
+      "labelKey": "swarmConfigConcurrency",
+      "helpKey": "swarmConfigConcurrencyHelp"
+    },
+    "maxBatchItems": {
+      "configurable": true,
+      "labelKey": "swarmConfigBatchItems",
+      "helpKey": "swarmConfigBatchItemsHelp"
+    },
+    "executionTimeoutSeconds": {
+      "configurable": true,
+      "labelKey": "swarmConfigTimeout",
+      "helpKey": "swarmConfigTimeoutHelp"
+    },
+    "maxAttempts": {
+      "configurable": true,
+      "labelKey": "swarmConfigAttempts",
+      "helpKey": "swarmConfigAttemptsHelp"
+    },
+    "snapshotBudgetMiB": {
+      "configurable": true,
+      "labelKey": "swarmConfigBudget",
+      "helpKey": "swarmConfigBudgetHelp"
     }
   }
 }

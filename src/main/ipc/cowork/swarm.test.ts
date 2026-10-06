@@ -8,27 +8,125 @@ import { SwarmFlowIpc, validFlowDetail } from '../../../shared/cowork/swarmFlow'
 import { registerCoworkSubtaskHandlers } from './subtasks';
 beforeEach(() => mocks.handle.mockReset());
 const handler = (key: string) => mocks.handle.mock.calls.find(call => call[0] === key)![1];
+test('binds batch reads to product identity and rejects mismatched or oversized pages', async () => {
+  const counts = {
+    total: 100,
+    queued: 100,
+    done: 0,
+    failed: 0,
+    running: 0,
+    preparing: 0,
+    uncertain: 0,
+    cancelled: 0,
+  };
+  const page = {
+    flowId: 'flow',
+    stageId: 'batch',
+    manifestVersion: 'v1',
+    revision: 3,
+    counts,
+    matched: 100,
+    retryable: 0,
+    items: [],
+  };
+  const request = vi.fn().mockResolvedValue(page);
+  const runtime = {
+    getGatewayClient: () => ({ request }),
+    getSessionKeysForSession: () => ['owned'],
+  } as unknown as OpenClawRuntimeAdapter;
+  registerCoworkSubtaskHandlers({ getRuntime: () => runtime, hasSession: id => id === 'product' });
+  const read = handler(SwarmFlowIpc.Batch);
+  expect(await read({}, 'foreign', 'flow', 'batch', {})).toEqual({ success: false });
+  expect(request).not.toHaveBeenCalled();
+  expect(await read({}, 'product', 'flow', 'batch', {})).toEqual({ success: true, page });
+  expect(request).toHaveBeenCalledWith('swarmFlow.batch', {
+    parentKeys: ['owned'],
+    id: 'flow',
+    stageId: 'batch',
+  });
+  request.mockResolvedValue({ ...page, flowId: 'other' });
+  expect(await read({}, 'product', 'flow', 'batch', {})).toEqual({ success: false });
+  request.mockResolvedValue({
+    ...page,
+    items: Array(51).fill({ id: 'item', title: 'Item', status: 'queued' }),
+  });
+  expect(await read({}, 'product', 'flow', 'batch', {})).toEqual({ success: false });
+});
+test('rejects forged batch retry payloads and preserves skipped reasons', async () => {
+  const request = vi.fn().mockResolvedValue({
+    retried: ['item-1'],
+    skipped: ['item-2'],
+    reasons: { 'item-2': 'Attempt limit reached.' },
+  });
+  const runtime = {
+    getGatewayClient: () => ({ request }),
+    getSessionKeysForSession: () => ['owned'],
+  } as unknown as OpenClawRuntimeAdapter;
+  registerCoworkSubtaskHandlers({ getRuntime: () => runtime, hasSession: id => id === 'product' });
+  const retry = handler(SwarmFlowIpc.RetryBatch);
+  for (const items of [null, [], ['same', 'same'], Array(101).fill('item')])
+    expect(await retry({}, 'product', 'flow', 'batch', 3, 'request', items)).toEqual({
+      success: false,
+    });
+  expect(request).not.toHaveBeenCalled();
+  expect(await retry({}, 'product', 'flow', 'batch', 3, 'request', undefined)).toEqual({
+    success: true,
+    retried: 1,
+    skipped: 1,
+    reasons: ['Attempt limit reached.'],
+  });
+});
 test('forwards only explicit human input under a product-owned parent and rejects invalid payloads', async () => {
   const request = vi.fn().mockResolvedValue({});
-  const runtime = { getGatewayClient: () => ({ request }), getSessionKeysForSession: () => ['owned'] } as unknown as OpenClawRuntimeAdapter;
+  const runtime = {
+    getGatewayClient: () => ({ request }),
+    getSessionKeysForSession: () => ['owned'],
+  } as unknown as OpenClawRuntimeAdapter;
   registerCoworkSubtaskHandlers({ getRuntime: () => runtime, hasSession: id => id === 'product' });
   const intervene = handler(SwarmFlowIpc.Intervene);
   const note = { id: 'input-1', action: 'continue', text: 'Environment fixed' };
   expect(await intervene({}, 'foreign', 'flow', 'verify', 5, note)).toEqual({ success: false });
-  expect(await intervene({}, 'product', 'flow', 'verify', 5, { ...note, text: 'x'.repeat(4001) })).toEqual({ success: false });
-  expect(await intervene({}, 'product', 'flow', 'verify', 5, { ...note, action: 'force-complete' })).toEqual({ success: false });
+  expect(
+    await intervene({}, 'product', 'flow', 'verify', 5, { ...note, text: 'x'.repeat(4001) }),
+  ).toEqual({ success: false });
+  expect(
+    await intervene({}, 'product', 'flow', 'verify', 5, { ...note, action: 'force-complete' }),
+  ).toEqual({ success: false });
   expect(request).not.toHaveBeenCalled();
-  expect(await intervene({}, 'product', 'flow', 'verify', 5, { ...note, sessionKey: 'foreign' })).toEqual({ success: true });
-  expect(request).toHaveBeenCalledWith('swarmFlow.intervene', { parentKeys: ['owned'], id: 'flow', nodeId: 'verify', revision: 5, intervention: note });
+  expect(
+    await intervene({}, 'product', 'flow', 'verify', 5, { ...note, sessionKey: 'foreign' }),
+  ).toEqual({ success: true });
+  expect(request).toHaveBeenCalledWith('swarmFlow.intervene', {
+    parentKeys: ['owned'],
+    id: 'flow',
+    nodeId: 'verify',
+    revision: 5,
+    intervention: note,
+  });
 });
 test('rejects malformed intervention history and capabilities from detail replies', () => {
-  const detail = { flowId: 'flow', nodeId: 'verify', sessionKey: 'native', workingDirectory: '/project', submission: 'submitted', revision: 2,
-    canNote: true, interventions: [{ id: 'input', action: 'note', text: 'Human decision', createdAt: 1 }] };
+  const detail = {
+    flowId: 'flow',
+    nodeId: 'verify',
+    sessionKey: 'native',
+    workingDirectory: '/project',
+    submission: 'submitted',
+    revision: 2,
+    canNote: true,
+    interventions: [{ id: 'input', action: 'note', text: 'Human decision', createdAt: 1 }],
+  };
   expect(validFlowDetail(detail)).toBe(true);
   expect(validFlowDetail({ ...detail, canNote: 'yes' })).toBe(false);
   expect(validFlowDetail({ ...detail, revision: -1 })).toBe(false);
-  expect(validFlowDetail({ ...detail, interventions: Array(31).fill(detail.interventions[0]) })).toBe(false);
-  expect(validFlowDetail({ ...detail, interventions: [{ ...detail.interventions[0], text: 'x'.repeat(4001) }] })).toBe(false);
+  expect(
+    validFlowDetail({ ...detail, interventions: Array(31).fill(detail.interventions[0]) }),
+  ).toBe(false);
+  expect(
+    validFlowDetail({
+      ...detail,
+      interventions: [{ ...detail.interventions[0], text: 'x'.repeat(4001) }],
+    }),
+  ).toBe(false);
 });
 test('rejects renderer-supplied unknown product identities before accessing the Gateway', async () => {
   const getRuntime = vi.fn();

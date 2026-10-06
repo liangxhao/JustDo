@@ -29,6 +29,7 @@ export default function SwarmFlowDetailPanel({
   source,
   active,
   onBack,
+  backLabel,
   onChanged,
 }: {
   sessionId: string;
@@ -37,10 +38,12 @@ export default function SwarmFlowDetailPanel({
   source?: SwarmFlowNode;
   active: boolean;
   onBack: () => void;
+  backLabel?: string;
   onChanged?: () => void;
 }) {
   const t = (key: string) => i18nService.t(key);
-  const label = (n: SwarmFlowNode) => (n.kind === 'work' ? n.title : t('flowKind_' + n.kind));
+  const label = (n: SwarmFlowNode) =>
+    ['work', 'batch'].includes(n.kind) ? n.title : t('flowKind_' + n.kind);
   const [detail, setDetail] = useState<SwarmFlowDetail>();
   const [error, setError] = useState(false);
   const [retry, setRetry] = useState(0);
@@ -80,8 +83,8 @@ export default function SwarmFlowDetailPanel({
       <header className="flex min-w-0 shrink-0 items-center gap-2 border-b border-border px-3 py-2">
         <button
           type="button"
-          title={t('flowBack')}
-          aria-label={t('flowBack')}
+          title={backLabel ?? t('flowBack')}
+          aria-label={backLabel ?? t('flowBack')}
           onClick={onBack}
           className="shrink-0 rounded-lg p-2 hover:bg-surface-raised"
         >
@@ -109,11 +112,13 @@ export default function SwarmFlowDetailPanel({
         </button>
       </header>
       <p className="px-3 py-2 text-xs text-secondary">
-        {source && detail ? t('flowSubmission_' + detail.submission) : t('flowNode_' + node.status)}
+        {source && detail && node.kind !== 'batch'
+          ? t('flowSubmission_' + detail.submission)
+          : t('flowNode_' + (detail?.status ?? node.status))}
       </p>
-      {!source && node.error && (
+      {!source && (detail ? detail.error : node.error) && (
         <p role="alert" className="px-3 py-2 text-xs text-red-600">
-          {node.error}
+          {detail ? detail.error : node.error}
         </p>
       )}
       {error && (

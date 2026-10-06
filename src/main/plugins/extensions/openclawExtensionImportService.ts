@@ -508,7 +508,19 @@ const getExtensionConfigurationState = (
     (entry): entry is [string, Record<string, unknown>] =>
       isSafeConfigPath(entry[0]) && isRecord(entry[1]) && entry[1].sensitive === true,
   );
-  if (!requiredEnvVars.length && !sensitiveHints.length)
+  const properties =
+    isRecord(manifest.configSchema) && isRecord(manifest.configSchema.properties)
+      ? manifest.configSchema.properties
+      : {};
+  const numericHints = Object.entries(uiHints).filter(
+    ([key, hint]) =>
+      isSafeConfigPath(key) &&
+      isRecord(hint) &&
+      hint.configurable === true &&
+      isRecord(properties[key]) &&
+      ['integer', 'number'].includes(String(properties[key].type)),
+  );
+  if (!requiredEnvVars.length && !sensitiveHints.length && !numericHints.length)
     return { fields: [], missingRequirements: [] };
   const config = readJsonRecord(manager.getConfigPath());
   const pluginsConfig = isRecord(config.plugins) ? config.plugins : {};
@@ -558,6 +570,25 @@ const getExtensionConfigurationState = (
         Boolean(requirement && isEnvConfigured(requirement)),
     };
   });
+  for (const [configPath, rawHint] of numericHints) {
+    const hint = rawHint as Record<string, unknown>;
+    const schema = properties[configPath] as Record<string, unknown>;
+    const value = getNestedValue(pluginConfig, configPath);
+    fields.push({
+      path: configPath,
+      label: typeof hint.label === 'string' ? hint.label : configPath,
+      labelKey: typeof hint.labelKey === 'string' ? hint.labelKey : undefined,
+      helpKey: typeof hint.helpKey === 'string' ? hint.helpKey : undefined,
+      help: typeof hint.help === 'string' ? hint.help : undefined,
+      type: schema.type as 'integer' | 'number',
+      sensitive: false,
+      configured: typeof value === 'number',
+      minimum: typeof schema.minimum === 'number' ? schema.minimum : undefined,
+      maximum: typeof schema.maximum === 'number' ? schema.maximum : undefined,
+      defaultValue: typeof schema.default === 'number' ? schema.default : undefined,
+      value: typeof value === 'number' && Number.isFinite(value) ? value : undefined,
+    });
+  }
   const configContracts = isRecord(manifest.configContracts) ? manifest.configContracts : {};
   const compatibilityPaths = Array.isArray(configContracts.compatibilityRuntimePaths)
     ? configContracts.compatibilityRuntimePaths
@@ -813,6 +844,7 @@ export class OpenClawExtensionImportService {
   // A failed config write or restart must not make a credential retry a no-op.
   // This state is process-local: a fresh Gateway startup reads the saved secret file.
   private readonly pendingCredentialRefresh = new Set<string>();
+  private readonly pendingNumericRefresh = new Set<string>();
 
   constructor(private readonly deps: OpenClawExtensionImportServiceDeps) {
     this.runCommand = deps.runCommand ?? runCommand;
@@ -1167,14 +1199,14 @@ export class OpenClawExtensionImportService {
   async updateConfiguration(
     extensionId: string,
     values: Record<string, string>,
-  ): Promise<{ success: boolean; error?: string }> {
+  ): Promise<{ success: boolean; error?: string; pending?: boolean }> {
     return this.runMutationExclusive(() => this.updateConfigurationExclusive(extensionId, values));
   }
 
   private async updateConfigurationExclusive(
     extensionId: string,
     values: Record<string, string>,
-  ): Promise<{ success: boolean; error?: string }> {
+  ): Promise<{ success: boolean; error?: string; pending?: boolean }> {
     if (this.deps.getManagedPluginIds?.().includes(extensionId)) {
       return { success: false, error: 'Managed extensions cannot be reconfigured here.' };
     }
@@ -1198,6 +1230,45 @@ export class OpenClawExtensionImportService {
     if (updates.length === 0) {
       return { success: false, error: 'Enter at least one supported configuration value.' };
     }
+    for (const [fieldPath, value] of updates) {
+      const field = fieldsByPath.get(fieldPath)!;
+      if (field.type) {
+        const number = Number(value);
+        if (
+          !Number.isFinite(number) ||
+          (field.type === 'integer' && !Number.isSafeInteger(number)) ||
+          (field.minimum !== undefined && number < field.minimum) ||
+          (field.maximum !== undefined && number > field.maximum)
+        )
+          return { success: false, error: t('extensionConfigurationNumberInvalid') };
+      }
+    }
+    const numericOnly = updates.every(([fieldPath]) => Boolean(fieldsByPath.get(fieldPath)?.type));
+    const statusMethod =
+      isRecord(manifest.configContracts) &&
+      typeof manifest.configContracts.configurationStatusMethod === 'string' &&
+      /^[a-zA-Z][a-zA-Z0-9_.-]{0,100}$/.test(manifest.configContracts.configurationStatusMethod)
+        ? manifest.configContracts.configurationStatusMethod
+        : undefined;
+    const confirmNumeric = async (acknowledged: boolean): Promise<boolean> => {
+      if (!statusMethod) return acknowledged;
+      try {
+        const reply = await this.deps.requestGateway?.<{
+          ready?: boolean;
+          configuration?: unknown;
+        }>(statusMethod, {});
+        return (
+          reply?.ready === true &&
+          isRecord(reply.configuration) &&
+          updates.every(
+            ([fieldPath, value]) =>
+              getNestedValue(reply.configuration, fieldPath) === Number(value),
+          )
+        );
+      } catch {
+        return false;
+      }
+    };
     if (
       updates.some(([fieldPath]) => {
         const field = fieldsByPath.get(fieldPath);
@@ -1258,7 +1329,13 @@ export class OpenClawExtensionImportService {
           env.vars = vars;
           config.env = env;
         } else {
-          setNestedValue(pluginConfig, fieldPath, secretUpdate.references[fieldPath] ?? value);
+          setNestedValue(
+            pluginConfig,
+            fieldPath,
+            fieldsByPath.get(fieldPath)?.type
+              ? Number(value)
+              : (secretUpdate.references[fieldPath] ?? value),
+          );
           entry.config = pluginConfig;
           entries[extensionId] = entry;
           plugins.entries = entries;
@@ -1266,8 +1343,18 @@ export class OpenClawExtensionImportService {
         }
       });
 
-      if (JSON.stringify(config) === previousConfig && !secretUpdate.changed && !needsCredentialRefresh)
+      if (
+        JSON.stringify(config) === previousConfig &&
+        !secretUpdate.changed &&
+        !needsCredentialRefresh
+      ) {
+        if (numericOnly && this.pendingNumericRefresh.has(extensionId)) {
+          const applied = initialPhase === 'running' && (await confirmNumeric(false));
+          if (applied) this.pendingNumericRefresh.delete(extensionId);
+          return { success: true, pending: !applied };
+        }
         return { success: true };
+      }
       const reloadGeneration =
         initialPhase === 'running' && !secretUpdate.changed && !needsCredentialRefresh
           ? manager.getGatewayConfigReloadGeneration()
@@ -1280,7 +1367,22 @@ export class OpenClawExtensionImportService {
       fs.writeFileSync(temporaryPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
       fs.renameSync(temporaryPath, configPath);
       // Retain application state until the runtime acknowledges the persisted config.
-      if (wasRuntimeActive) this.pendingCredentialRefresh.add(extensionId);
+      if (wasRuntimeActive && !numericOnly) this.pendingCredentialRefresh.add(extensionId);
+
+      if (numericOnly) {
+        this.pendingNumericRefresh.add(extensionId);
+        let acknowledged = false;
+        try {
+          acknowledged =
+            reloadGeneration !== null &&
+            (await manager.waitForGatewayConfigReload(reloadGeneration));
+        } catch {
+          /* Saved; never restart long-running work for an acknowledgement failure. */
+        }
+        const applied = initialPhase === 'running' && (await confirmNumeric(acknowledged));
+        if (applied) this.pendingNumericRefresh.delete(extensionId);
+        return { success: true, pending: !applied };
+      }
 
       if (wasRuntimeActive || needsCredentialRefresh) {
         if (
@@ -1309,7 +1411,8 @@ export class OpenClawExtensionImportService {
       };
     } finally {
       try {
-        if (temporaryCreated && fs.existsSync(temporaryPath)) fs.rmSync(temporaryPath, { force: true });
+        if (temporaryCreated && fs.existsSync(temporaryPath))
+          fs.rmSync(temporaryPath, { force: true });
       } catch {
         // Best-effort cleanup for an interrupted atomic write.
       }

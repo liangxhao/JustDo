@@ -438,6 +438,8 @@ it('saves input on active work without interrupting it and refuses replay of unc
   failed.status = 'blocked';
   failed.nodes[0].status = 'failed';
   failed.nodes[0].attempt = 3;
+  delete failed.nodes[0].runId;
+  delete failed.nodes[0].intendedRunId;
   failed.nodes[0].endedAt = 2;
   f.store.put(failed);
   expect(
@@ -476,6 +478,8 @@ it('notifies a blocker once and never resends an uncertain delivery after restar
   expect(send).toHaveBeenCalledTimes(1);
   const latest = f.store.get(flow.id)!;
   latest.nodes[0].attempt = 2;
+  delete latest.nodes[0].runId;
+  delete latest.nodes[0].intendedRunId;
   f.store.put(latest);
   await new FlowNotifier(f.store, { send }).tick();
   expect(send).toHaveBeenCalledTimes(2);

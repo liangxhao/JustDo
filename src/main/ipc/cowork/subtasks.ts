@@ -18,6 +18,8 @@ import {
 import {
   SwarmFlowGateway,
   SwarmFlowIpc,
+  validBatchOptions,
+  validBatchPage,
   validFlowDetail,
   validFlowList,
   validSwarmIntervention,
@@ -143,6 +145,118 @@ export const registerCoworkSubtaskHandlers = ({
       return { success: true, instruction: buildSwarmInstruction(options) };
     },
   );
+  ipcMain.handle(
+    SwarmFlowIpc.Batch,
+    async (_event, sessionId: unknown, id: unknown, stageId: unknown, options: unknown) => {
+      try {
+        if (
+          typeof id !== 'string' ||
+          !id ||
+          id.length > 80 ||
+          typeof stageId !== 'string' ||
+          !stageId ||
+          stageId.length > 80 ||
+          !validBatchOptions(options)
+        )
+          return { success: false };
+        const { client, keys } = resolveOwnedRoot(sessionId);
+        const page = await client.request<unknown>(SwarmFlowGateway.Batch, {
+          parentKeys: keys,
+          id,
+          stageId,
+          ...options,
+        });
+        if (
+          !hasSession(sessionId as string) ||
+          !validBatchPage(page) ||
+          page.flowId !== id ||
+          page.stageId !== stageId
+        )
+          return { success: false };
+        return { success: true, page };
+      } catch {
+        return { success: false };
+      }
+    },
+  );
+  ipcMain.handle(
+    SwarmFlowIpc.RetryBatch,
+    async (
+      _event,
+      sessionId: unknown,
+      id: unknown,
+      stageId: unknown,
+      revision: unknown,
+      operationId: unknown,
+      itemIds: unknown,
+    ) => {
+      try {
+        if (
+          typeof id !== 'string' ||
+          !id ||
+          id.length > 80 ||
+          typeof stageId !== 'string' ||
+          !stageId ||
+          stageId.length > 80 ||
+          !Number.isSafeInteger(revision) ||
+          Number(revision) <= 0 ||
+          typeof operationId !== 'string' ||
+          !/^[a-zA-Z0-9_-]{1,80}$/.test(operationId) ||
+          (itemIds !== undefined &&
+            (!Array.isArray(itemIds) ||
+              !itemIds.length ||
+              itemIds.length > 100 ||
+              new Set(itemIds).size !== itemIds.length ||
+              itemIds.some(id => typeof id !== 'string' || !id || id.length > 80)))
+        )
+          return { success: false };
+        const { client, keys } = resolveOwnedRoot(sessionId);
+        const result = await client.request<{
+          retried?: unknown;
+          skipped?: unknown;
+          reasons?: unknown;
+        }>(SwarmFlowGateway.RetryBatch, {
+          parentKeys: keys,
+          id,
+          stageId,
+          revision,
+          operationId,
+          itemIds,
+        });
+        if (
+          !hasSession(sessionId as string) ||
+          !Array.isArray(result.retried) ||
+          !Array.isArray(result.skipped) ||
+          result.retried.length > 1000 ||
+          result.skipped.length > 1000 ||
+          [...result.retried, ...result.skipped].some(
+            id => typeof id !== 'string' || id.length > 80,
+          )
+        )
+          return { success: false };
+        const reasons =
+          result.reasons && typeof result.reasons === 'object' && !Array.isArray(result.reasons)
+            ? (result.reasons as Record<string, unknown>)
+            : {};
+        return {
+          success: true,
+          retried: result.retried.length,
+          skipped: result.skipped.length,
+          reasons: [
+            ...new Set(
+              result.skipped
+                .map(id => reasons[id])
+                .filter(
+                  (reason): reason is string => typeof reason === 'string' && reason.length <= 500,
+                ),
+            ),
+          ],
+        };
+      } catch {
+        return { success: false };
+      }
+    },
+  );
   ipcMain.handle(SwarmFlowIpc.List, async (_event, sessionId: unknown) => {
     try {
       const { client, keys } = resolveOwnedRoot(sessionId);
@@ -197,8 +311,12 @@ export const registerCoworkSubtaskHandlers = ({
     ) => {
       try {
         if (
-          typeof id !== 'string' || !id || typeof nodeId !== 'string' || !nodeId ||
-          !Number.isSafeInteger(revision) || Number(revision) <= 0 ||
+          typeof id !== 'string' ||
+          !id ||
+          typeof nodeId !== 'string' ||
+          !nodeId ||
+          !Number.isSafeInteger(revision) ||
+          Number(revision) <= 0 ||
           !validSwarmIntervention(intervention)
         )
           return { success: false };
@@ -210,7 +328,11 @@ export const registerCoworkSubtaskHandlers = ({
           id,
           nodeId,
           revision,
-          intervention: { id: intervention.id, action: intervention.action, text: intervention.text },
+          intervention: {
+            id: intervention.id,
+            action: intervention.action,
+            text: intervention.text,
+          },
         });
         return { success: true };
       } catch {

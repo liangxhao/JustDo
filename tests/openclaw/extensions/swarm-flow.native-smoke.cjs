@@ -82,7 +82,7 @@ const provider=http.createServer((req,res)=>{
   if(calling&&verification)verificationAttempts++;
   const toolCall={id:'swarm-submit-'+calls,type:'function',function:{name:deferred?'tool_call':toolName,arguments:JSON.stringify(deferred?{id:toolName,args}:args)}};
   const output=managementCommand?'Management fixture accepted.':emptyReply?'':text.includes('Planner')||text.includes('Return only JSON')
-   ? JSON.stringify({tasks:[{id:'inspect',title:'Inspect',task:'Describe the goal without modifying files.',deps:[],access:'read',...(specialized?{agentId:'reviewer',agentRequest:assignment}:{})}],...(specialized?{stages:{verify:{agentId:'reviewer',agentRequest:assignment}}}:{})})
+   ? JSON.stringify({tasks:[{id:'inspect',title:'Inspect',task:'Describe the goal without modifying files.',deps:[],access:'read',batch:null,...(specialized?{agentId:'reviewer',agentRequest:assignment}:{})}],...(specialized?{stages:{verify:{agentId:'reviewer',agentRequest:assignment}}}:{})})
    : verification ? 'Verification complete. This final explanation is deliberately not JSON.'
    : text.includes('Produce the final user-facing answer') ? 'Native flow integration fixture complete.' : 'Read-only fixture evidence.';
   if(input.stream){

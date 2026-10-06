@@ -1186,7 +1186,18 @@ export const mergeOpenClawPluginConfig = (
         isRecord(value)
       ) {
         const previous = isRecord(sourcePlugins.entries) ? sourcePlugins.entries[pluginId] : null;
-        if (isRecord(previous) && previous.enabled === false) value = { ...value, enabled: false };
+        if (pluginId === OpenClawExtensionId.SWARM_FLOW && isRecord(previous)) {
+          value = {
+            ...previous,
+            ...value,
+            config: {
+              ...(isRecord(previous.config) ? previous.config : {}),
+              ...(isRecord(value.config) ? value.config : {}),
+            },
+          };
+        }
+        if (isRecord(previous) && previous.enabled === false && isRecord(value))
+          value = { ...value, enabled: false };
       }
       if (!isRecord(value) || value.enabled !== false || !isRecord(value.config)) {
         return [pluginId, value];

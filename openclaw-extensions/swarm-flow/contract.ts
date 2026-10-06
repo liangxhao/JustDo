@@ -1,3 +1,11 @@
+import type {
+  BatchCounts,
+  BatchItemIdentity,
+  BatchPlan,
+  ItemResultManifest,
+} from './batch-contract.js';
+import type { SwarmSettings } from './settings.js';
+
 export const FLOW_RPC = {
   start: 'swarmFlow.start',
   list: 'swarmFlow.list',
@@ -5,6 +13,8 @@ export const FLOW_RPC = {
   health: 'swarmFlow.health',
   detail: 'swarmFlow.detail',
   intervene: 'swarmFlow.intervene',
+  batch: 'swarmFlow.batch',
+  retryBatch: 'swarmFlow.retryBatch',
 } as const;
 export type FlowStatus = 'running' | 'paused' | 'blocked' | 'stopping' | 'cancelled' | 'completed';
 export type NodeStatus =
@@ -27,6 +37,8 @@ export const FLOW_MANAGEMENT_TOOLS = {
   status: 'swarm_flow_status',
   control: 'swarm_flow_control',
   intervene: 'swarm_flow_intervene',
+  batch: 'swarm_flow_batch',
+  retryBatch: 'swarm_flow_retry_batch',
 } as const;
 export type FlowOperation = { id: string; action: FlowAction };
 export type FlowNotice = { id: string; state: 'sending' | 'sent' | 'unconfirmed' };
@@ -47,7 +59,7 @@ export type FlowAttempt = {
   receipt?: FlowReceipt;
   submissionRuns?: Array<{ runId: string; endedAt: number }>;
 };
-export type StageKind = 'plan' | 'work' | 'verify' | 'deliver';
+export type StageKind = 'plan' | 'work' | 'batch' | 'verify' | 'deliver';
 export const DEFAULT_FLOW_AGENT = 'main';
 export interface FlowAgent {
   id: string;
@@ -66,6 +78,7 @@ export interface FlowNode {
   agentName: string;
   completionMode?: 'tool';
   completion?: FlowReceipt;
+  planningRepair?: { passes: number; error: string };
   submissionRepair?: {
     runId: string;
     passes: number;
@@ -84,6 +97,14 @@ export interface FlowNode {
   error?: string;
   startedAt?: number;
   endedAt?: number;
+  batch?: BatchPlan;
+  batchInput?: { version: string; manifestPath: string };
+  batchCounts?: BatchCounts;
+  batchItem?: BatchItemIdentity;
+  artifacts?: ItemResultManifest;
+  deadlineAt?: number;
+  cleanupSettled?: boolean;
+  budgetExceeded?: boolean;
 }
 export interface Flow {
   id: string;
@@ -108,6 +129,24 @@ export interface Flow {
   deliveryIntent?: boolean;
   operations?: FlowOperation[];
   notices?: FlowNotice[];
+  settings?: SwarmSettings;
+  concurrency?: number;
+  controlVersion?: number;
+  filesystemAdmission?: {
+    workspaceOnly: boolean;
+    root: string;
+    policy: string;
+    dev: string;
+    ino: string;
+    agentIds: string[];
+  };
+  batchOperations?: Array<{
+    id: string;
+    fingerprint: string;
+    retried: string[];
+    skipped: string[];
+    reasons: Record<string, string>;
+  }>;
 }
 export type FlowView = Pick<
   Flow,
@@ -124,6 +163,7 @@ export type FlowView = Pick<
       | 'completionMode'
       | 'completion'
       | 'submissionRepair'
+      | 'planningRepair'
       | 'attempts'
       | 'interventions'
       | 'continuation'
@@ -139,17 +179,21 @@ export function flowActions(flow: Flow): FlowActions {
     resume:
       !ended &&
       flow.status === 'paused' &&
-      !flow.nodes.some(node => ['failed', 'uncertain'].includes(node.status)),
+      !flow.nodes.some(
+        node =>
+          node.kind !== 'batch' && !node.batchItem && ['failed', 'uncertain'].includes(node.status),
+      ),
     stop: !ended && !delivering,
     retry:
       flow.status === 'blocked' &&
       !flow.error &&
       !flow.deliveryIntent &&
+      !flow.nodes.some(node => node.kind === 'batch' && (node.batchCounts?.failed ?? 0) > 0) &&
       flow.nodes.some(node => node.status === 'failed') &&
       !flow.nodes.some(node => ['running', 'preparing', 'uncertain'].includes(node.status)) &&
       flow.nodes
         .filter(node => node.status === 'failed')
-        .every(node => (node.attempt ?? 1) < FLOW_LIMITS.attempts),
+        .every(node => (node.attempt ?? 1) < (flow.settings?.maxAttempts ?? FLOW_LIMITS.attempts)),
   };
 }
 export function viewFlow(flow: Flow): FlowView {
@@ -167,20 +211,26 @@ export function viewFlow(flow: Flow): FlowView {
     delivered,
     canRetry: actions.retry,
     actions,
-    nodes: flow.nodes.map(
-      ({
-        task: _task,
-        intendedRunId: _intent,
-        dispatch: _dispatch,
-        completionMode: _mode,
-        completion: _completion,
-        submissionRepair: _repair,
-        attempts: _attempts,
-        interventions: _interventions,
-        continuation: _continuation,
-        ...node
-      }) => node,
-    ),
+    nodes: flow.nodes
+      .filter(node => !node.batchItem)
+      .map(
+        ({
+          task: _task,
+          intendedRunId: _intent,
+          dispatch: _dispatch,
+          completionMode: _mode,
+          completion: _completion,
+          submissionRepair: _repair,
+          planningRepair: _planningRepair,
+          attempts: _attempts,
+          interventions: _interventions,
+          continuation: _continuation,
+          batch: _batch,
+          batchInput: _batchInput,
+          artifacts: _artifacts,
+          ...node
+        }) => node,
+      ),
   };
 }
 export const FLOW_LIMITS = {
@@ -190,6 +240,7 @@ export const FLOW_LIMITS = {
   goal: 16000,
   attempts: 3,
   submissionRepairs: 3,
+  planningRepairs: 3,
   interventions: 30,
   interventionText: 4000,
   operations: 512,

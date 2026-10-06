@@ -3,6 +3,8 @@ export const SwarmFlowIpc = {
   Control: 'cowork:swarm-flow:control',
   Detail: 'cowork:swarm-flow:detail',
   Intervene: 'cowork:swarm-flow:intervene',
+  Batch: 'cowork:swarm-flow:batch',
+  RetryBatch: 'cowork:swarm-flow:retry-batch',
 } as const;
 export const SwarmFlowGateway = {
   Health: 'swarmFlow.health',
@@ -10,6 +12,8 @@ export const SwarmFlowGateway = {
   Control: 'swarmFlow.control',
   Detail: 'swarmFlow.detail',
   Intervene: 'swarmFlow.intervene',
+  Batch: 'swarmFlow.batch',
+  RetryBatch: 'swarmFlow.retryBatch',
 } as const;
 export type SwarmFlowAction = 'pause' | 'resume' | 'stop' | 'retry';
 export type SwarmFlowActions = Record<SwarmFlowAction, boolean>;
@@ -39,7 +43,7 @@ export type SwarmFlowNode = {
   id: string;
   title: string;
   deps: string[];
-  kind: 'plan' | 'work' | 'verify' | 'deliver';
+  kind: 'plan' | 'work' | 'batch' | 'verify' | 'deliver';
   status: 'queued' | 'preparing' | 'running' | 'uncertain' | 'done' | 'failed' | 'cancelled';
   sessionKey: string;
   agentId?: string;
@@ -48,7 +52,78 @@ export type SwarmFlowNode = {
   result?: string;
   error?: string;
   attempt?: number;
+  batchCounts?: SwarmBatchCounts;
 };
+export type SwarmBatchCounts = Record<SwarmFlowNode['status'], number> & { total: number };
+export type SwarmBatchItem = Pick<
+  SwarmFlowNode,
+  'id' | 'title' | 'status' | 'agentId' | 'agentName' | 'attempt' | 'error'
+> & { startedAt?: number; endedAt?: number };
+export type SwarmBatchOptions = {
+  status?: SwarmFlowNode['status'];
+  search?: string;
+  cursor?: string;
+};
+export type SwarmBatchPage = {
+  flowId: string;
+  stageId: string;
+  manifestVersion: string;
+  revision: number;
+  counts: SwarmBatchCounts;
+  matched: number;
+  retryable: number;
+  items: SwarmBatchItem[];
+  cursor?: string;
+};
+export function validBatchOptions(value: unknown): value is SwarmBatchOptions {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const v = value as SwarmBatchOptions;
+  return (
+    Object.keys(v).every(key => ['status', 'search', 'cursor'].includes(key)) &&
+    (v.status === undefined ||
+      ['queued', 'preparing', 'running', 'uncertain', 'done', 'failed', 'cancelled'].includes(
+        v.status,
+      )) &&
+    (v.search === undefined || (typeof v.search === 'string' && v.search.length <= 100)) &&
+    (v.cursor === undefined || (typeof v.cursor === 'string' && v.cursor.length <= 2048))
+  );
+}
+export function validBatchPage(value: unknown): value is SwarmBatchPage {
+  if (!value || typeof value !== 'object') return false;
+  const p = value as SwarmBatchPage;
+  return (
+    typeof p.flowId === 'string' &&
+    typeof p.stageId === 'string' &&
+    typeof p.manifestVersion === 'string' &&
+    Number.isSafeInteger(p.revision) &&
+    p.revision > 0 &&
+    Number.isSafeInteger(p.matched) &&
+    p.matched >= 0 &&
+    p.matched <= 1000 &&
+    Number.isSafeInteger(p.retryable) &&
+    p.retryable >= 0 &&
+    p.retryable <= 1000 &&
+    Boolean(p.counts) &&
+    ['total', 'queued', 'preparing', 'running', 'uncertain', 'done', 'failed', 'cancelled'].every(
+      key =>
+        Number.isSafeInteger(p.counts[key as keyof SwarmBatchCounts]) &&
+        p.counts[key as keyof SwarmBatchCounts] >= 0 &&
+        p.counts[key as keyof SwarmBatchCounts] <= 1000,
+    ) &&
+    Array.isArray(p.items) &&
+    p.items.length <= 50 &&
+    p.items.every(
+      item =>
+        item &&
+        typeof item.id === 'string' &&
+        typeof item.title === 'string' &&
+        ['queued', 'preparing', 'running', 'uncertain', 'done', 'failed', 'cancelled'].includes(
+          item.status,
+        ),
+    ) &&
+    (p.cursor === undefined || (typeof p.cursor === 'string' && p.cursor.length <= 2048))
+  );
+}
 export type SwarmFlowView = {
   canRetry?: boolean;
   actions?: SwarmFlowActions;
@@ -66,6 +141,8 @@ export interface SwarmFlowDetail {
   nodeId: string;
   sessionKey: string;
   workingDirectory: string;
+  status?: SwarmFlowNode['status'];
+  error?: string;
   submission: 'not_sent' | 'uncertain' | 'submitted';
   dispatch?: { message: string; createdAt: number };
   revision?: number;
@@ -83,6 +160,11 @@ export function validFlowDetail(value: unknown): value is SwarmFlowDetail {
     typeof d.nodeId === 'string' &&
     typeof d.sessionKey === 'string' &&
     typeof d.workingDirectory === 'string' &&
+    (d.status === undefined ||
+      ['queued', 'preparing', 'running', 'uncertain', 'done', 'failed', 'cancelled'].includes(
+        d.status,
+      )) &&
+    (d.error === undefined || typeof d.error === 'string') &&
     ['not_sent', 'uncertain', 'submitted'].includes(d.submission) &&
     (d.revision === undefined || (Number.isSafeInteger(d.revision) && d.revision > 0)) &&
     [d.canNote, d.canContinue, d.canRetry].every(
@@ -101,6 +183,20 @@ export function validFlowDetail(value: unknown): value is SwarmFlowDetail {
   );
 }
 export interface SwarmFlowApi {
+  getSwarmBatch(
+    sessionId: string,
+    flowId: string,
+    stageId: string,
+    options: SwarmBatchOptions,
+  ): Promise<{ success: true; page: SwarmBatchPage } | { success: false }>;
+  retrySwarmBatch(
+    sessionId: string,
+    flowId: string,
+    stageId: string,
+    revision: number,
+    operationId: string,
+    itemIds?: string[],
+  ): Promise<{ success: boolean; retried?: number; skipped?: number; reasons?: string[] }>;
   interveneSwarmFlow(
     sessionId: string,
     flowId: string,
@@ -158,7 +254,7 @@ export function validFlowList(value: unknown): value is { flows: SwarmFlowView[]
             (n.agentName === undefined || typeof n.agentName === 'string') &&
             Array.isArray(n.deps) &&
             n.deps.every(d => typeof d === 'string') &&
-            ['plan', 'work', 'verify', 'deliver'].includes(n.kind) &&
+            ['plan', 'work', 'batch', 'verify', 'deliver'].includes(n.kind) &&
             ['queued', 'preparing', 'running', 'uncertain', 'done', 'failed', 'cancelled'].includes(
               n.status,
             ) &&

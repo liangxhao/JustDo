@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
 
 import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
 import { getSessionEntry } from 'openclaw/plugin-sdk/session-store-runtime';
@@ -22,6 +23,26 @@ import { FlowNotifier } from './notifications.js';
 import { assertCrossAgentPolicy, parentPolicy } from './policy.js';
 import { FlowStore } from './store.js';
 import {
+  assertFilesystemAdmission,
+  captureFilesystemAdmission,
+  permissionFingerprint,
+  type FilesystemAdmission,
+} from './filesystem-admission.js';
+import { swarmCapacity, swarmSettings } from './settings.js';
+import {
+  freezeBatch,
+  prepareItemWorkspace,
+  readBatchManifest,
+  candidateItemResult,
+  verifyItemResult,
+} from './batch-snapshot.js';
+import {
+  managedSubagent,
+  NativeLaunchNotInvokedError,
+  type ManagedSubagent,
+} from './native-execution.js';
+import { registerBatchApi, RESULT_TOOL } from './batch-api.js';
+import {
   lastSubmissionError,
   SUBMISSION_LIMITS,
   submissionCorrectionInstructions,
@@ -38,6 +59,18 @@ const entry = (key: string) =>
     Record<string, unknown> | undefined;
 
 type SubmissionCall = { runId: string; expiresAt: number; signal?: AbortSignal };
+type StartAdmission = {
+  parentKey: string;
+  parentId: string;
+  requestId: string;
+  goal: string;
+  mode: string;
+  concurrency?: number;
+  generation: number;
+  expiresAt: number;
+  assertCurrent: () => void;
+  filesystem?: FilesystemAdmission;
+};
 type SharedService = {
   store?: FlowStore;
   engine?: FlowEngine;
@@ -48,6 +81,8 @@ type SharedService = {
   generation: number;
   submissionCalls: Map<string, SubmissionCall>;
   managementCalls: Map<string, SubmissionCall>;
+  startAdmissions: Map<string, StartAdmission>;
+  resultBudgets?: Map<string, number>;
 };
 // Native agent registries register separate tool/hook instances in this process.
 // They must all address the service started by the Gateway registry, while each
@@ -60,12 +95,23 @@ const state = (processServices[serviceKey] ??= {
   generation: 0,
   submissionCalls: new Map<string, SubmissionCall>(),
   managementCalls: new Map<string, SubmissionCall>(),
+  startAdmissions: new Map<string, StartAdmission>(),
 });
 
 export default {
   id: 'swarm-flow',
   name: 'Swarm Flow',
+  reload: {
+    hotPrefixes: [
+      'plugins.entries.swarm-flow.config.globalConcurrency',
+      'plugins.entries.swarm-flow.config.maxBatchItems',
+      'plugins.entries.swarm-flow.config.executionTimeoutSeconds',
+      'plugins.entries.swarm-flow.config.maxAttempts',
+      'plugins.entries.swarm-flow.config.snapshotBudgetMiB',
+    ],
+  },
   register(api: OpenClawPluginApi) {
+    const resultBudgets = (state.resultBudgets ??= new Map<string, number>());
     let ownedGeneration: number | undefined;
     const submissionCalls = state.submissionCalls;
     const managementCalls = state.managementCalls;
@@ -83,11 +129,15 @@ export default {
       return current;
     };
     const assertParent = (flow: Flow) => {
+      if (flow.filesystemAdmission) assertFilesystemAdmission(flow.filesystemAdmission);
       const current = assertParentIdentity(flow);
       if (
         current.permissionMode !== flow.permissionMode ||
         current.sessionRoot !== flow.cwd ||
         parentPolicy(current) !== flow.policy ||
+        (flow.filesystemAdmission &&
+          permissionFingerprint(api.runtime.config.current(), flow.filesystemAdmission.agentIds) !==
+            flow.filesystemAdmission.policy) ||
         (current.justdoPlanMode as { enabled?: boolean } | undefined)?.enabled
       )
         throw new Error(
@@ -127,10 +177,29 @@ export default {
         }));
     };
     const prepare = async (flow: Flow, node: FlowNode) => {
+      managedSubagent(api);
       assertParent(flow);
       assertCrossAgentPolicy(api.runtime.config.current(), flow.agentId, node.agentId);
       if (!(await availableAgents()).some(agent => agent.id === node.agentId))
         throw new Error('Assigned agent is no longer available: ' + node.agentId);
+      const current = () => {
+        assertParent(flow);
+        const latest = ensure().store.get(flow.id, node.id);
+        const item = latest?.nodes.find(candidate => candidate.id === node.id);
+        if (
+          !latest ||
+          latest.status !== 'running' ||
+          latest.controlVersion !== flow.controlVersion ||
+          !item ||
+          item.status !== 'preparing' ||
+          item.sessionKey !== node.sessionKey ||
+          item.attempt !== node.attempt
+        )
+          throw new Error('Native preparation admission revoked.');
+      };
+      current();
+      if (node.batchItem) await prepareItemWorkspace(flow, node, current);
+      current();
       // Task access classifies scheduling and task intent, not native authority.
       // Native read-only denies even inspection commands; preserve the user's
       // selected session permission ceiling for every stage instead.
@@ -145,7 +214,7 @@ export default {
         agentId: node.agentId,
         // These are plugin-owned execution sessions. The workflow owns the
         // association; native parent linkage is reserved for native spawning.
-        cwd: flow.cwd,
+        cwd: node.batchItem?.workspace ?? flow.cwd,
         permissionMode,
         toolOverrides: policy.toolOverrides,
         ...(node.agentId === flow.agentId && policy.model ? { model: policy.model } : {}),
@@ -157,10 +226,11 @@ export default {
       if (
         created.key !== node.sessionKey ||
         created.entry?.permissionMode !== permissionMode ||
-        created.entry?.sessionRoot !== flow.cwd
+        created.entry?.sessionRoot !== (node.batchItem?.workspace ?? flow.cwd)
       )
         throw new Error('Native child policy could not be verified.');
       assertParent(flow);
+      current();
     };
     api.registerService({
       id: 'swarm-flow',
@@ -170,25 +240,92 @@ export default {
         ownedGeneration = epoch;
         state.store = new FlowStore(path.join(ctx.stateDir, 'swarm-flow'));
         state.engine = new FlowEngine(state.store, {
+          capacity: () => {
+            const config = api.runtime.config.current();
+            return swarmCapacity(
+              config,
+              swarmSettings(config.plugins?.entries?.['swarm-flow']?.config),
+            );
+          },
+          assertAdmission: assertParent,
+          freezeBatch: (flow, node, guard) =>
+            freezeBatch(flow, node, () => {
+              guard();
+              assertParent(flow);
+            }),
+          verifyResult: (flow, node, guard) =>
+            verifyItemResult(flow, node, () => {
+              guard();
+              assertParent(flow);
+            }),
           prepare,
           launch: async (flow, node, message, assertCurrent) => {
-            assertParent(flow);
-            const validate = () => {
-              assertCurrent();
+            let runtime: ManagedSubagent;
+            let params: Parameters<ManagedSubagent['run']>[0];
+            try {
               assertParent(flow);
-              assertCrossAgentPolicy(api.runtime.config.current(), flow.agentId, node.agentId);
-            };
-            return api.runtime.subagent.run({
-              sessionKey: node.sessionKey,
-              message,
-              cwd: flow.cwd,
-              idempotencyKey: node.intendedRunId,
-              assertCurrent: validate,
-              disableTools: node.kind === 'plan' || node.kind === 'deliver',
-              deliver: false,
-            });
+              const validate = () => {
+                assertCurrent();
+                assertParent(flow);
+                assertCrossAgentPolicy(api.runtime.config.current(), flow.agentId, node.agentId);
+              };
+              runtime = managedSubagent(api);
+              let projectRules: string | undefined;
+              if (node.batchItem)
+                projectRules = (
+                  await readBatchManifest(
+                    flow,
+                    flow.nodes.find(stage => stage.id === node.batchItem!.stageId)!,
+                    validate,
+                  )
+                ).projectRules;
+              validate();
+              params = {
+                sessionKey: node.sessionKey,
+                message,
+                cwd: node.batchItem?.workspace ?? flow.cwd,
+                idempotencyKey: node.intendedRunId,
+                assertCurrent: validate,
+                disableTools: node.kind === 'plan' || node.kind === 'deliver',
+                deliver: false,
+                managedToolsLifetime: 'run',
+                timeoutSeconds: node.deadlineAt
+                  ? Math.max(1, Math.floor((node.deadlineAt - Date.now()) / 1000))
+                  : (flow.settings ?? swarmSettings({})).executionTimeoutSeconds,
+                ...(projectRules
+                  ? {
+                      extraSystemPrompt:
+                        'Project rules from ' +
+                        path.join(flow.cwd, 'AGENTS.md') +
+                        '\nFrozen input version: ' +
+                        node.batchItem?.manifestVersion +
+                        '\nRetain these project rules for this item workspace, together with the native assistant role rules:\n' +
+                        projectRules,
+                    }
+                  : {}),
+              };
+            } catch (error) {
+              throw new NativeLaunchNotInvokedError(error);
+            }
+            // The invocation boundary is outside the preflight catch. Even a
+            // synchronous SDK failure cannot prove that no run was committed.
+            return runtime.run(params);
           },
-          wait: runId => api.runtime.subagent.waitForRun({ runId, timeoutMs: 1 }),
+          wait: async runId => {
+            const runtime = managedSubagent(api);
+            const reply = await runtime.waitForRun({ runId, timeoutMs: 1 });
+            const state = await runtime.describeRun({ runId });
+            if (state.runId !== runId) throw new Error('Native execution identity changed.');
+            return {
+              ...reply,
+              status: state.state === 'settled' ? (state.outcome ?? 'error') : 'pending',
+              endedAt: state.executionEndedAt,
+              executionSettled: state.executionSettled,
+              cleanupSettled: state.cleanupSettled,
+              executionStartedAt: state.executionStartedAt,
+              unknown: state.state === 'unknown',
+            };
+          },
           correctionInstruction: async (flow, node) => {
             const runId = node.runId ?? node.intendedRunId!;
             assertParent(flow);
@@ -212,13 +349,8 @@ export default {
                   submissionCorrectionInstructions(node.kind as 'work' | 'verify'));
           },
           cancel: async node => {
-            await rpc('sessions.abort', {
-              key: node.sessionKey,
-              ...(node.runId || node.intendedRunId
-                ? { runId: node.runId ?? node.intendedRunId }
-                : {}),
-              clearQueued: true,
-            });
+            if (node.runId || node.intendedRunId)
+              await managedSubagent(api).cancelRun({ runId: node.runId ?? node.intendedRunId! });
           },
           deliver: async (flow, message) => {
             assertParent(flow);
@@ -260,10 +392,12 @@ export default {
         ++state.generation;
         submissionCalls.clear();
         managementCalls.clear();
+        state.startAdmissions.clear();
+        resultBudgets.clear();
         clearTimeout(state.timer);
         state.engine?.stop();
         state.notifier?.stop();
-        await Promise.all([state.pending, state.pendingNotice]);
+        await Promise.all([state.pending, state.pendingNotice, state.engine?.drain()]);
         state.store?.close();
         state.store = undefined;
         state.engine = undefined;
@@ -275,7 +409,21 @@ export default {
     });
     api.registerGatewayMethod(
       FLOW_RPC.health,
-      ({ respond }) => respond(true, { ready: Boolean(state.engine), version: 1 }),
+      ({ respond }) => {
+        const configuration = swarmSettings(
+          api.runtime.config.current().plugins?.entries?.['swarm-flow']?.config ?? {},
+        );
+        respond(true, {
+          ready: Boolean(state.engine),
+          version: 2,
+          configuration,
+          configurationHash: createHash('sha256')
+            .update(JSON.stringify(configuration))
+            .digest('hex'),
+          effectiveConcurrency: swarmCapacity(api.runtime.config.current(), configuration),
+          generation: state.generation,
+        });
+      },
       { scope: 'operator.read' },
     );
     api.on('before_tool_call', (event, ctx) => {
@@ -305,9 +453,37 @@ export default {
         .flatMap(flow => flow.nodes)
         .find(node => node.sessionKey === ctx.sessionKey);
       if (
+        assigned &&
+        [
+          'sessions_spawn',
+          'sessions_send',
+          'subagents',
+          'agents_wait',
+          'nodes',
+          'terminal',
+          'cron',
+          'automations',
+          'openclaw',
+          'agent_team_send',
+          'swarm_flow_start',
+          ...Object.values(FLOW_MANAGEMENT_TOOLS),
+        ].includes(event.toolName)
+      )
+        return {
+          block: true,
+          blockReason:
+            'This workflow leaf cannot create independent work or bypass the workflow concurrency budget. Submit a blocker when more work is required.',
+        };
+      if (
         ctx.runId &&
         (assigned?.submissionRepair?.runId === ctx.runId ||
           assigned?.completion?.runId === ctx.runId) &&
+        !(
+          (event.toolName === 'exec' &&
+            event.toolKind === 'code_mode_exec' &&
+            event.toolInputKind === 'javascript') ||
+          (event.toolName === 'wait' && (event.toolKind as string | undefined) === 'code_mode_wait')
+        ) &&
         ![...Object.values(FLOW_TOOLS), 'tool_call', 'tool_describe', 'tool_search'].includes(
           event.toolName,
         )
@@ -317,7 +493,7 @@ export default {
           blockReason:
             'Submission correction only: do not repeat the task or execute additional tools. Correct the submission arguments and submit the existing result.',
         };
-      if (!Object.values(FLOW_TOOLS).includes(event.toolName as typeof FLOW_TOOLS.complete)) return;
+      if (![...Object.values(FLOW_TOOLS), RESULT_TOOL].includes(event.toolName)) return;
       try {
         if (!ctx.sessionKey || !ctx.runId || !ctx.toolCallId || ctx.abortSignal?.aborted)
           throw new Error('Missing or cancelled native submission identity.');
@@ -446,10 +622,27 @@ export default {
                   input,
                 );
                 const current = ensure().engine;
-                const { flow } = current.submissionOwner(ctx.sessionKey!, bound.runId);
+                const { flow, node } = current.submissionOwner(ctx.sessionKey!, bound.runId);
                 assertParent(flow);
+                const guard = () => {
+                  signal?.throwIfAborted();
+                  bound.signal?.throwIfAborted();
+                  ctx.assertInvocationCurrent();
+                  const latest = current.submissionOwner(ctx.sessionKey!, bound.runId);
+                  assertParent(latest.flow);
+                  if (
+                    latest.flow.controlVersion !== flow.controlVersion ||
+                    latest.node.attempt !== node.attempt
+                  )
+                    throw new Error('Submission admission revoked.');
+                };
+                const artifacts =
+                  node.batchItem && submission.outcome === 'complete'
+                    ? await candidateItemResult(flow, node, submission, guard)
+                    : undefined;
+                guard();
                 ctx.assertInvocationCurrent();
-                current.submit(ctx.sessionKey!, bound.runId, submission);
+                current.submit(ctx.sessionKey!, bound.runId, submission, artifacts);
                 const result = {
                   accepted: true,
                   message:
@@ -508,14 +701,29 @@ export default {
       { names: Object.values(FLOW_MANAGEMENT_TOOLS) },
     );
     api.on('before_prompt_build', async (event, ctx) => {
-      const assigned = state.store
-        ?.all()
+      const flows = state.store?.all() ?? [];
+      const assigned = flows
         .flatMap(flow => flow.nodes)
         .find(node => node.sessionKey === ctx.sessionKey);
       if (assigned && ['work', 'verify'].includes(assigned.kind)) {
         try {
           if (!ctx.runId) throw new Error('Missing run identity.');
           ensure().engine.submissionOwner(ctx.sessionKey!, ctx.runId);
+          const active = new Set(
+            flows.flatMap(flow =>
+              flow.nodes
+                .filter(node => ['preparing', 'running', 'uncertain'].includes(node.status))
+                .flatMap(node =>
+                  [node.runId, node.intendedRunId, node.submissionRepair?.runId]
+                    .filter((runId): runId is string => Boolean(runId))
+                    .map(runId => node.sessionKey + '\n' + runId),
+                ),
+            ),
+          );
+          for (const key of resultBudgets.keys())
+            if (!active.has(key) || key.startsWith(ctx.sessionKey! + '\n'))
+              resultBudgets.delete(key);
+          resultBudgets.set(ctx.sessionKey! + '\n' + ctx.runId, ctx.contextTokenBudget ?? 4000);
           return {
             ...(assigned.submissionRepair?.runId === ctx.runId
               ? {
@@ -605,11 +813,16 @@ export default {
       FLOW_RPC.start,
       async ({ params, respond }) => {
         try {
+          managedSubagent(api);
           if (
             !managed(params.parentKey) ||
             typeof params.goal !== 'string' ||
             !params.goal.trim() ||
             params.goal.length > FLOW_LIMITS.goal ||
+            (params.concurrency !== undefined &&
+              (!Number.isSafeInteger(params.concurrency) ||
+                Number(params.concurrency) < 1 ||
+                Number(params.concurrency) > 16)) ||
             (params.assignmentRequest !== undefined &&
               (typeof params.assignmentRequest !== 'string' ||
                 params.assignmentRequest.length > FLOW_LIMITS.goal)) ||
@@ -631,7 +844,39 @@ export default {
             (parent.justdoPlanMode as { enabled?: boolean } | undefined)?.enabled
           )
             throw new Error('Parent session is not ready for flow execution.');
+          let admission: StartAdmission | undefined;
+          if (params.admission !== undefined) {
+            if (typeof params.admission !== 'string') throw new Error('Invalid native admission.');
+            admission = state.startAdmissions.get(params.admission);
+            state.startAdmissions.delete(params.admission);
+            if (
+              !admission ||
+              admission.parentKey !== params.parentKey ||
+              admission.parentId !== parent.sessionId ||
+              admission.requestId !== params.requestId ||
+              admission.goal !== params.goal ||
+              admission.mode !== params.mode ||
+              admission.concurrency !== params.concurrency ||
+              admission.generation !== state.generation ||
+              admission.expiresAt <= Date.now()
+            )
+              throw new Error('Native flow admission expired or does not match the request.');
+            admission.assertCurrent();
+          }
           const agents = await availableAgents();
+          admission?.assertCurrent();
+          if (
+            admission?.filesystem &&
+            permissionFingerprint(api.runtime.config.current(), admission.filesystem.agentIds) !==
+              admission.filesystem.policy
+          )
+            throw new Error('Native filesystem permissions changed before flow creation.');
+          if (
+            entry(params.parentKey)?.sessionId !== parent.sessionId ||
+            entry(params.parentKey)?.sessionRoot !== parent.sessionRoot ||
+            entry(params.parentKey)?.permissionMode !== parent.permissionMode
+          )
+            throw new Error('Parent changed before flow creation.');
           if (!agents.some(agent => agent.id === DEFAULT_FLOW_AGENT))
             throw new Error('The default main agent is unavailable.');
           const result = ensure().engine.create({
@@ -647,6 +892,12 @@ export default {
             assignmentRequest:
               typeof params.assignmentRequest === 'string' ? params.assignmentRequest : params.goal,
             mode: String(params.mode),
+            ...(typeof params.concurrency === 'number' ? { concurrency: params.concurrency } : {}),
+            settings: swarmSettings(
+              api.runtime.config.current().plugins?.entries?.['swarm-flow']?.config,
+            ),
+            controlVersion: 0,
+            ...(admission?.filesystem ? { filesystemAdmission: admission.filesystem } : {}),
           });
           respond(true, viewFlow(result));
         } catch (error) {
@@ -691,11 +942,12 @@ export default {
             typeof params.nodeId !== 'string'
           )
             throw new Error('Invalid flow detail request.');
-          const flow = ensure().store.get(params.id);
+          const flow = ensure().store.get(params.id, params.nodeId);
           if (!flow || !(params.parentKeys as string[]).includes(flow.parentKey))
             throw new Error('Flow does not belong to this conversation.');
           const node = flow.nodes.find(item => item.id === params.nodeId);
-          if (!node) throw new Error('Flow node was not found.');
+          if (!node || (node.kind === 'batch' && params.sourceId === undefined))
+            throw new Error('Select a batch item to inspect its execution.');
           if (
             params.sourceId !== undefined &&
             (typeof params.sourceId !== 'string' || !node.deps.includes(params.sourceId))
@@ -704,8 +956,10 @@ export default {
           respond(true, {
             flowId: flow.id,
             nodeId: node.id,
-            sessionKey: node.sessionKey,
-            workingDirectory: flow.cwd,
+            sessionKey: node.kind === 'batch' ? '' : node.sessionKey,
+            status: node.status,
+            error: node.error,
+            workingDirectory: node.batchItem?.workspace ?? flow.cwd,
             revision: flow.revision,
             interventions: node.interventions ?? [],
             ...interventionAvailability(flow, node),
@@ -796,83 +1050,149 @@ export default {
       },
       { scope: 'operator.admin' },
     );
-    api.registerTool(
-      ctx => {
-        if (!managed(ctx.sessionKey)) return null;
+    registerBatchApi(api, {
+      current: ensure,
+      assertParent,
+      bound: (sessionKey, callId) => {
+        const key = callKey(sessionKey, callId, RESULT_TOOL);
+        const bound = submissionCalls.get(key);
+        const generation = state.generation;
+        submissionCalls.delete(key);
+        if (!bound || bound.expiresAt <= Date.now() || bound.signal?.aborted)
+          throw new Error('Native result query authority is unavailable or expired.');
         return {
-          name: 'swarm_flow_start',
-          label: 'Start Swarm task flow',
-          description:
-            'Start a durable task flow ONLY when the user requests Swarm/task-flow execution. Supply a self-contained goal resolving conversation references and attachment content; workers do not inherit chat history or images. Preserve exact user agent assignments and constraints. The service independently plans, executes, verifies and delivers here. After acceptance end the turn without duplicating work. One unfinished flow per conversation. No Workboard dependency.',
-          parameters: {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-              goal: { type: 'string', minLength: 1, maxLength: FLOW_LIMITS.goal },
-              mode: { type: 'string', enum: ['auto', 'research', 'review'] },
-              sourceRequestId: { type: 'string', minLength: 1, maxLength: 256 },
-            },
-            required: ['goal', 'mode'],
-          },
-          async execute(_toolCallId: string, input: unknown, signal?: AbortSignal) {
-            if (signal?.aborted) throw new Error('Flow request cancelled.');
-            if (!object(input)) throw new Error('Invalid flow request.');
-            const history = await rpc<{ messages?: Array<Record<string, unknown>> }>(
-              'chat.history',
-              {
-                sessionKey: ctx.sessionKey,
-                limit: 20,
-              },
-            );
-            const latestUser = [...(history.messages ?? [])]
-              .reverse()
-              .find(item => item.role === 'user');
-            const content =
-              typeof latestUser?.content === 'string'
-                ? latestUser.content
-                : Array.isArray(latestUser?.content)
-                  ? latestUser.content
-                      .filter(part => part.type === 'text' && typeof part.text === 'string')
-                      .map(part => part.text)
-                      .join('\n')
-                  : '';
-            const sourceRequestId = latestUser?.idempotencyKey;
-            if (
-              typeof sourceRequestId !== 'string' ||
-              !sourceRequestId ||
-              sourceRequestId.length > 256 ||
-              (input.sourceRequestId !== undefined && input.sourceRequestId !== sourceRequestId)
-            )
-              throw new Error('The source Swarm request is no longer current.');
-            const sourceMarker = /\n\n<justdo-swarm-flow mode="(auto|research|review)"\/>$/.exec(
-              content,
-            );
-            if (sourceMarker && sourceMarker[1] !== input.mode)
-              throw new Error('The source Swarm mode does not match.');
-            const assignmentRequest = sourceMarker ? content.slice(0, sourceMarker.index) : content;
-            ctx.assertInvocationCurrent?.();
-            const flow = await rpc(FLOW_RPC.start, {
-              parentKey: ctx.sessionKey,
-              requestId: sourceRequestId,
-              assignmentRequest,
-              goal: input.goal,
-              mode: input.mode,
-            });
-            return {
-              details: { flow },
-              content: [
-                {
-                  type: 'text' as const,
-                  text: JSON.stringify({
-                    flow,
-                    message:
-                      'Flow accepted. The Gateway service now owns execution. Report the flow started, then end this turn; do not duplicate the task. Final delivery will be injected into this conversation.',
-                  }),
-                },
-              ],
-            };
+          runId: bound.runId,
+          contextTokens: resultBudgets.get(sessionKey + '\n' + bound.runId),
+          assertCurrent: () => {
+            if (bound.signal?.aborted || generation !== state.generation)
+              throw new Error('Native result query cancelled or service replaced.');
+            ensure();
           },
         };
+      },
+    });
+    api.registerTool(
+      {
+        contextVersion: 2,
+        create: ctx => {
+          if (!managed(ctx.sessionKey)) return null;
+          return {
+            name: 'swarm_flow_start',
+            label: 'Start Swarm task flow',
+            description:
+              'Start a durable task flow ONLY when the user requests Swarm/task-flow execution. Supply a self-contained goal resolving conversation references and attachment content; workers do not inherit chat history or images. Preserve exact user agent assignments and constraints. The service independently plans, executes, verifies and delivers here. After acceptance end the turn without duplicating work. One unfinished flow per conversation. No Workboard dependency.',
+            parameters: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                goal: { type: 'string', minLength: 1, maxLength: FLOW_LIMITS.goal },
+                mode: { type: 'string', enum: ['auto', 'research', 'review'] },
+                concurrency: {
+                  type: 'integer',
+                  minimum: 1,
+                  maximum: 16,
+                  description:
+                    'Optional lower per-flow ceiling at the user request. Never raises the global Swarm or native capacity limits.',
+                },
+                sourceRequestId: { type: 'string', minLength: 1, maxLength: 256 },
+              },
+              required: ['goal', 'mode'],
+            },
+            async execute(_toolCallId: string, input: unknown, signal?: AbortSignal) {
+              if (signal?.aborted) throw new Error('Flow request cancelled.');
+              if (!object(input)) throw new Error('Invalid flow request.');
+              const history = await rpc<{ messages?: Array<Record<string, unknown>> }>(
+                'chat.history',
+                {
+                  sessionKey: ctx.sessionKey,
+                  limit: 20,
+                },
+              );
+              const latestUser = [...(history.messages ?? [])]
+                .reverse()
+                .find(item => item.role === 'user');
+              const content =
+                typeof latestUser?.content === 'string'
+                  ? latestUser.content
+                  : Array.isArray(latestUser?.content)
+                    ? latestUser.content
+                        .filter(part => part.type === 'text' && typeof part.text === 'string')
+                        .map(part => part.text)
+                        .join('\n')
+                    : '';
+              const sourceRequestId = latestUser?.idempotencyKey;
+              if (
+                typeof sourceRequestId !== 'string' ||
+                !sourceRequestId ||
+                sourceRequestId.length > 256 ||
+                (input.sourceRequestId !== undefined && input.sourceRequestId !== sourceRequestId)
+              )
+                throw new Error('The source Swarm request is no longer current.');
+              const sourceMarker = /\n\n<justdo-swarm-flow mode="(auto|research|review)"\/>$/.exec(
+                content,
+              );
+              if (sourceMarker && sourceMarker[1] !== input.mode)
+                throw new Error('The source Swarm mode does not match.');
+              const assignmentRequest = sourceMarker
+                ? content.slice(0, sourceMarker.index)
+                : content;
+              ctx.assertInvocationCurrent();
+              const parent = entry(ctx.sessionKey!);
+              if (!parent || parent.sessionId !== ctx.sessionId)
+                throw new Error('Native parent identity changed.');
+              let filesystem: FilesystemAdmission | undefined;
+              if (ctx.fsPolicy && !ctx.sandboxed && parent.permissionMode !== 'read-only')
+                filesystem = captureFilesystemAdmission(
+                  ctx,
+                  String(parent.sessionRoot),
+                  String(parent.permissionMode),
+                  api.runtime.config.current(),
+                );
+              for (const [key, value] of state.startAdmissions)
+                if (value.expiresAt <= Date.now()) state.startAdmissions.delete(key);
+              if (state.startAdmissions.size >= 128)
+                throw new Error('Too many pending flow admissions.');
+              const token = randomUUID();
+              state.startAdmissions.set(token, {
+                parentKey: ctx.sessionKey!,
+                parentId: String(parent.sessionId),
+                requestId: sourceRequestId,
+                goal: String(input.goal),
+                mode: String(input.mode),
+                concurrency: input.concurrency as number | undefined,
+                generation: state.generation,
+                expiresAt: Date.now() + 30000,
+                assertCurrent: () => {
+                  signal?.throwIfAborted();
+                  ctx.assertInvocationCurrent();
+                },
+                filesystem,
+              });
+              const flow = await rpc(FLOW_RPC.start, {
+                parentKey: ctx.sessionKey,
+                requestId: sourceRequestId,
+                assignmentRequest,
+                goal: input.goal,
+                mode: input.mode,
+                concurrency: input.concurrency,
+                admission: token,
+              });
+              return {
+                details: { flow },
+                content: [
+                  {
+                    type: 'text' as const,
+                    text: JSON.stringify({
+                      flow,
+                      message:
+                        'Flow accepted. The Gateway service now owns execution. Report the flow started, then end this turn; do not duplicate the task. Final delivery will be injected into this conversation.',
+                    }),
+                  },
+                ],
+              };
+            },
+          };
+        },
       },
       { name: 'swarm_flow_start' },
     );

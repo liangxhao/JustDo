@@ -154,6 +154,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
   const [configurationVariables, setConfigurationVariables] = useState<Record<string, string>>({});
   const [configurationError, setConfigurationError] = useState('');
   const [configurationSaved, setConfigurationSaved] = useState(false);
+  const [configurationPending, setConfigurationPending] = useState(false);
   const [savingConfiguration, setSavingConfiguration] = useState(false);
   const extensionActionBusy =
     importing ||
@@ -545,7 +546,8 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
           const variable = getConfigurationVariable(field, configurationVariables);
           return [
             variable ? `env.vars.${variable}` : field.path,
-            configurationValues[field.path] || '',
+            configurationValues[field.path] ??
+              (field.type ? String(field.value ?? field.defaultValue ?? '') : ''),
           ];
         })
         .filter(([, value]) => value.trim()),
@@ -558,6 +560,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
       setSavingConfiguration(true);
       setConfigurationError('');
       setConfigurationSaved(false);
+      setConfigurationPending(false);
       const result = await window.electron.extensions.updateConfiguration({
         extensionId: selectedExtension.id,
         values,
@@ -570,6 +573,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
       if (updatedExtension) setSelectedExtension(updatedExtension);
       setConfigurationValues({});
       setConfigurationSaved(true);
+      setConfigurationPending(result.pending === true);
     } catch (error) {
       setConfigurationError(
         error instanceof Error ? error.message : i18nService.t('extensionConfigurationSaveFailed'),
@@ -943,6 +947,8 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                 (selectedExtension.management?.configure.allowed ?? true) && (
                   <div className="space-y-5">
                     {selectedExtension.configurationFields.map(field => {
+                      const label = field.labelKey ? i18nService.t(field.labelKey) : field.label;
+                      const help = field.helpKey ? i18nService.t(field.helpKey) : field.help;
                       const variable = getConfigurationVariable(field, configurationVariables);
                       const configured =
                         variable && field.configuredEnvironmentVariables
@@ -992,7 +998,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                                 className="min-w-0 leading-5 [overflow-wrap:anywhere]"
                                 title={field.requirement || field.label}
                               >
-                                {field.label}
+                                {label}
                               </label>
                             )}
                             {field.requirement && !configured && (
@@ -1000,9 +1006,9 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                                 *
                               </span>
                             )}
-                            {field.help && (
+                            {help && (
                               <Tooltip
-                                content={field.help}
+                                content={help}
                                 position="bottom"
                                 maxWidth="320px"
                                 className="mt-0.5 shrink-0"
@@ -1010,7 +1016,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                               >
                                 <button
                                   type="button"
-                                  aria-label={field.help}
+                                  aria-label={help}
                                   className="rounded text-secondary hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
                                 >
                                   <QuestionMarkCircleIcon className="h-3.5 w-3.5" />
@@ -1021,9 +1027,15 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                           <div className="min-w-0">
                             <input
                               id={`extension-config-${field.path}`}
-                              aria-label={variable || field.label}
-                              type={field.sensitive ? 'password' : 'text'}
-                              value={configurationValues[field.path] || ''}
+                              aria-label={variable || label}
+                              type={field.type ? 'number' : field.sensitive ? 'password' : 'text'}
+                              min={field.minimum}
+                              max={field.maximum}
+                              step={field.type === 'integer' ? 1 : undefined}
+                              value={
+                                configurationValues[field.path] ??
+                                (field.type ? String(field.value ?? field.defaultValue ?? '') : '')
+                              }
                               onChange={event => {
                                 setConfigurationSaved(false);
                                 setConfigurationValues(current => ({
@@ -1076,7 +1088,11 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
               )}
               {configurationSaved && (
                 <p role="status" className="mt-3 text-xs text-emerald-600 dark:text-emerald-400">
-                  {i18nService.t('extensionConfigurationSaved')}
+                  {i18nService.t(
+                    configurationPending
+                      ? 'extensionConfigurationPending'
+                      : 'extensionConfigurationSaved',
+                  )}
                 </p>
               )}
             </div>

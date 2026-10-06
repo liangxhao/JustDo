@@ -5,13 +5,13 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { FlowEngine, type FlowHost } from '../../../openclaw-extensions/swarm-flow/engine';
-import { parseJson, validatePlan, validateStageAssignments, verdict } from '../../../openclaw-extensions/swarm-flow/plan';
+import { parseJson, PlanFormatError, validatePlan, validateStageAssignments, verdict } from '../../../openclaw-extensions/swarm-flow/plan';
 import { FlowStore } from '../../../openclaw-extensions/swarm-flow/store';
 const cleanups: Array<() => void> = [];
 afterEach(() => {
   for (const clean of cleanups.splice(0)) clean();
 });
-function fixture(options: { goal?: string; agentId?: string; assignmentRequest?: string } = {}) {
+function fixture(options: { goal?: string; agentId?: string; assignmentRequest?: string; batchAvailable?: boolean } = {}) {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'swarm-flow-'));
   let store = new FlowStore(directory);
   const results = new Map<string, any>();
@@ -42,6 +42,9 @@ function fixture(options: { goal?: string; agentId?: string; assignmentRequest?:
     mode: 'auto',
     goal: options.goal ?? 'Inspect project',
     assignmentRequest: options.assignmentRequest,
+    ...(options.batchAvailable ? { filesystemAdmission: {
+      workspaceOnly: true, root: directory, policy: 'fixture', dev: '1', ino: '1', agentIds: ['main'],
+    } } : {}),
   };
   const flow = engine.create(input);
   return {
@@ -546,6 +549,144 @@ it('retains submission correction restrictions across restart and clears them on
   expect(retry.sessionKey).not.toBe(node.sessionKey);
   expect(retry.attempts?.[0].submissionRuns).toHaveLength(3);
   expect(() => f.engine.requireSubmissionCorrection(node.sessionKey, node.runId!)).toThrow();
+});
+describe('Swarm planning correction', () => {
+  const task = { id: 'check', title: 'Check', task: 'Process one order', deps: [], access: 'write' };
+  const batch = { source: { kind: 'jsonl', path: 'swarm-demo/orders.jsonl' } };
+  it('rejects a batch described only in task text and admits twelve items only after structural correction', async () => {
+    const f = fixture({ batchAvailable: true, goal: 'Prepare twelve orders, process each independently, then aggregate' });
+    f.host.freezeBatch = vi.fn(async (flow, _node, guard) => {
+      guard();
+      return { manifestPath: 'manifest.json', manifest: {
+        version: 'orders-v1', createdAt: Date.now(), root: flow.cwd, bytes: 1000,
+        projectRules: '', rulesOrigin: '', rulesVersion: 'rules-v1',
+        inputs: Array.from({ length: 12 }, (_, i) => ({ id: `item-${i}`, ordinal: i, key: `order-${i + 1}`, title: `Order ${i + 1}`, data: { quantity: i + 1 }, files: [] })),
+      } };
+    });
+    await f.engine.tick();
+    const original = f.get().nodes[0];
+    const firstPrompt = JSON.parse(vi.mocked(f.host.launch).mock.calls[0][2]);
+    expect(firstPrompt.instruction).toContain('"batch":null');
+    expect(firstPrompt.instruction).toContain('sibling of id/title/task');
+    f.finish('plan', JSON.stringify({ tasks: [{ ...task, task: 'Use batch:{source:{kind:"jsonl",path:"swarm-demo/orders.jsonl"}} to expand twelve items' }] }));
+    await f.engine.tick();
+    expect(f.get().nodes).toHaveLength(1);
+    expect(f.host.freezeBatch).not.toHaveBeenCalled();
+    const corrected = f.get().nodes[0];
+    expect(corrected.sessionKey).toBe(original.sessionKey);
+    expect(corrected.runId).not.toBe(original.runId);
+    expect(corrected).not.toHaveProperty('submissionRepair');
+    const prompt = JSON.parse(vi.mocked(f.host.launch).mock.calls[1][2]);
+    expect(prompt.planningCorrection).toMatchObject({ round: 1, maximumRounds: 3 });
+    expect(prompt.planningCorrection.error).toContain('top-level batch field');
+    f.finish('plan', JSON.stringify({ tasks: [
+      { ...task, id: 'prepare', task: 'Generate swarm-demo/orders.jsonl', batch: null },
+      { ...task, deps: ['prepare'], batch },
+      { ...task, id: 'aggregate', deps: ['check'], task: 'Read all actual outputs', batch: null },
+    ] }));
+    await f.engine.tick();
+    expect(f.get().nodes.find(n => n.id === 'task-2')).toMatchObject({ kind: 'batch', batch });
+    expect(f.host.freezeBatch).not.toHaveBeenCalled();
+    f.finish('task-1', 'Prepared orders'); await f.engine.tick(); await f.engine.drain();
+    expect(f.host.freezeBatch).toHaveBeenCalledTimes(1);
+    expect(f.get().nodes.find(n => n.id === 'task-2')?.batchCounts?.total).toBe(12);
+    expect(f.get().nodes.find(n => n.id === 'task-3')?.status).toBe('queued');
+    await f.engine.tick();
+    const itemPrompt = JSON.parse(vi.mocked(f.host.launch).mock.calls.find(call => call[1].batchItem)![2]);
+    expect(itemPrompt.batchItem.instruction).toContain('Process ONLY this item');
+  });
+  it('requires an explicit ordinary/batch choice without inferring execution from task wording', () => {
+    expect(() => validatePlan({ tasks: [task] }, undefined, '', { batchAvailable: true })).toThrow('top-level batch field');
+    expect(validatePlan({ tasks: [{ ...task, batch: null }] }, undefined, '', { batchAvailable: true })[0]).not.toHaveProperty('batch');
+    expect(validatePlan({ tasks: [{ ...task, batch }] }, undefined, '', { batchAvailable: true })[0].batch).toEqual(batch);
+    expect(() => validatePlan({ tasks: [{ ...task, batch: { source: { kind: 'jsonl' } } }] }, undefined, '', { batchAvailable: true })).toThrow('Invalid batch input source');
+  });
+  it.each([
+    { stages: [], error: 'Invalid stage assignments' },
+    { stages: { verification: { agentId: 'main' } }, error: 'Only verification and delivery' },
+    { stages: { verify: 'main' }, error: 'Invalid agent assignment' },
+    { stages: { verify: ['main'] }, error: 'Invalid agent assignment' },
+    { stages: { verify: { agentId: 17 } }, error: 'Invalid assigned agent identity' },
+  ])('corrects malformed gate configuration $stages before admitting work', async invalid => {
+    const f = fixture({ batchAvailable: true }); await f.engine.tick();
+    const tasks = [{ ...task, access: 'read', batch: null }];
+    expect(() => validateStageAssignments({ stages: invalid.stages }, [{ id: 'main', name: 'Main' }], '')).toThrow(PlanFormatError);
+    f.finish('plan', JSON.stringify({ tasks, stages: invalid.stages })); await f.engine.tick();
+    expect(f.get().nodes).toHaveLength(1);
+    expect(f.get().status).toBe('running');
+    expect(f.get().nodes[0].planningRepair?.passes).toBe(1);
+    const prompt = JSON.parse(vi.mocked(f.host.launch).mock.calls[1][2]);
+    expect(prompt.planningCorrection.error).toContain(invalid.error);
+    f.finish('plan', JSON.stringify({ tasks, stages: { verify: { agentId: 'main' }, deliver: { agentId: 'main' } } }));
+    await f.engine.tick();
+    expect(f.get().nodes.find(n => n.id === 'task-1')?.status).toBe('running');
+    expect(f.get().nodes.find(n => n.kind === 'verify')?.agentId).toBe('main');
+    expect(f.host.launch).toHaveBeenCalledTimes(3);
+  });
+  it.each([
+    { verify: { agentId: 'missing' } },
+    { verify: { agentId: 'reviewer' } },
+  ])('does not weaken gate assistant authorization during planning correction for $verify', async stages => {
+    const f = fixture({ batchAvailable: true }); await f.engine.tick();
+    f.finish('plan', JSON.stringify({ tasks: [{ ...task, batch: null }], stages }));
+    await f.engine.tick();
+    expect(f.get().status).toBe('blocked');
+    expect(f.get().nodes).toHaveLength(1);
+    expect(f.get().nodes[0]).not.toHaveProperty('planningRepair');
+    expect(f.host.launch).toHaveBeenCalledTimes(1);
+  });
+  it('stops after three correction rounds and resets that budget on explicit retry', async () => {
+    const f = fixture({ batchAvailable: true }); await f.engine.tick();
+    for (let pass = 0; pass < 4; pass++) {
+      f.finish('plan', '{invalid JSON}'); await f.engine.tick();
+      expect(f.get().nodes).toHaveLength(1);
+    }
+    expect(f.host.launch).toHaveBeenCalledTimes(4);
+    expect(f.get().status).toBe('blocked');
+    expect(f.get().nodes[0].error).toContain('Planning correction limit reached after 3 rounds');
+    f.engine.control(f.id, f.get().revision, 'retry'); await f.engine.tick();
+    expect(f.get().nodes[0]).not.toHaveProperty('planningRepair');
+    expect(JSON.parse(vi.mocked(f.host.launch).mock.calls.at(-1)![2])).not.toHaveProperty('planningCorrection');
+  });
+  it('persists correction feedback and its remaining budget across pause and restart', async () => {
+    const f = fixture({ batchAvailable: true }); await f.engine.tick();
+    f.engine.control(f.id, f.get().revision, 'pause');
+    f.finish('plan', JSON.stringify({ tasks: [task] })); await f.engine.tick();
+    expect(f.host.launch).toHaveBeenCalledTimes(1);
+    expect(f.get().nodes[0].status).toBe('queued');
+    expect(f.get().nodes[0].planningRepair?.passes).toBe(1);
+    f.restart();
+    f.engine.control(f.id, f.get().revision, 'resume'); await f.engine.tick();
+    expect(JSON.parse(vi.mocked(f.host.launch).mock.calls[1][2]).planningCorrection).toMatchObject({ round: 1, maximumRounds: 3 });
+    f.finish('plan', '{invalid JSON}'); await f.engine.tick();
+    expect(f.get().nodes[0].planningRepair?.passes).toBe(2);
+  });
+  it('retains the lease without correcting an execution that has not settled', async () => {
+    const f = fixture({ batchAvailable: true }); await f.engine.tick();
+    f.finish('plan', '{invalid JSON}');
+    const runId = f.get().nodes[0].runId!;
+    f.results.get(runId).executionSettled = false;
+    f.results.get(runId).cleanupSettled = false;
+    await f.engine.tick();
+    expect(f.get().nodes[0].status).toBe('running');
+    expect(f.get().nodes[0]).not.toHaveProperty('planningRepair');
+    expect(f.host.launch).toHaveBeenCalledTimes(1);
+  });
+  it.each(['unavailable-agent', 'unavailable-batch'])('does not reinterpret %s as a planner-format correction', async kind => {
+    const f = fixture(); await f.engine.tick();
+    f.finish('plan', JSON.stringify({ tasks: [{ ...task, ...(kind === 'unavailable-agent' ? { agentId: 'missing' } : { batch }) }] }));
+    await f.engine.tick();
+    expect(f.get().status).toBe('blocked');
+    expect(f.host.launch).toHaveBeenCalledTimes(1);
+    expect(f.get().nodes[0]).not.toHaveProperty('planningRepair');
+  });
+  it('cancels a malformed settled plan without launching a correction after stop', async () => {
+    const f = fixture({ batchAvailable: true }); await f.engine.tick();
+    f.engine.control(f.id, f.get().revision, 'stop');
+    f.finish('plan', '{invalid JSON}'); await f.engine.tick();
+    expect(f.get().status).toBe('cancelled');
+    expect(f.host.launch).toHaveBeenCalledTimes(1);
+  });
 });
 describe('Swarm human intervention', () => {
   async function failedWorker() {

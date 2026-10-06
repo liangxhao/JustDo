@@ -35,6 +35,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
       '决策模型配置未能生效，请检查供应商 URL、API Key、默认模型及凭据文件访问权限。',
     extensionCredentialStoreUnavailable: '无法读取本地扩展凭据文件，请检查文件内容和访问权限。',
     extensionCredentialInherited: '此凭据由系统环境变量提供，请修改该变量并重启应用。',
+    extensionConfigurationNumberInvalid: '请输入范围内的有效数值。',
     extensionCredentialStoreWriteFailed: '无法安全保存扩展凭据，请检查本地文件访问权限。',
     memoryWorkspaceUnavailable: '无法确定记忆工作区，请检查服务连接。',
     memoryStatusUnavailable: '无法读取记忆索引状态。',
@@ -124,6 +125,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
       'Could not clean up the cancelled task workspace. Its conversation was retained. Check Worktrees in Settings.',
     extensionCredentialInherited:
       'This credential is supplied by the system environment. Update that variable and restart the app.',
+    extensionConfigurationNumberInvalid: 'Enter a valid number within the allowed range.',
     nativeVideoUrlInvalid:
       'Invalid video service URL. Use an HTTP or HTTPS address without credentials, query parameters or fragments.',
     nativeVideoLegacyUnsupported:

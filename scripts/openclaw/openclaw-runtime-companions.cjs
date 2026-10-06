@@ -66,6 +66,10 @@ const RUNTIME_COMPANION_CHECKS = [
     path: 'dist/process/supervisor/service-child-windows-job-anchor.js',
   },
   {
+    marker: 'managed-windows-job-launcher',
+    path: 'dist/tooling/managed-windows-job-launcher.js',
+  },
+  {
     marker: 'web-tree-sitter.wasm',
     path: 'web-tree-sitter.wasm',
   },
@@ -104,10 +108,15 @@ const STALE_RUNTIME_WORKER_URL_PATTERNS = [
   /resolveRuntimeWorkerUrl\(\s*\{\s*currentModuleUrl:\s*import\.meta\.url,/,
   /resolveDatabaseVerifyWorkerUrl\(\s*currentModuleUrl\s*=\s*import\.meta\.url\s*\)/,
   /(?:const\s+)?currentModuleUrl\s*=\s*import\.meta\.url;\s*(?:const\s+)?runtimeProcessEntrypoints\s*=/,
+  /function resolveManagedWindowsJobEntrypointUrl\d*\(\)\s*\{\s*const current\d*\s*=\s*new URL\(import\.meta\.url\)/,
 ];
 
 function rewriteRuntimeWorkerImportMetaUrls(source, replacement) {
   return source
+    .replace(
+      /function resolveManagedWindowsJobEntrypointUrl\(\)\s*\{\s*const current\s*=\s*new URL\(import\.meta\.url\)/g,
+      match => match.replace('new URL(import.meta.url)', `new URL(${replacement})`),
+    )
     .replace(RELATIVE_COMPANION_URL, (_match, args) => `new URL(${args}, ${replacement})`)
     .replace(/currentModuleUrl:\s*import\.meta\.url/g, `currentModuleUrl: ${replacement}`)
     .replace(/new Worker\(new URL\(import\.meta\.url\)/g, `new Worker(new URL(${replacement})`)

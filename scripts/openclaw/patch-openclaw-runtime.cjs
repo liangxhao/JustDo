@@ -75,7 +75,7 @@ function listRuntimePatchTargets(runtimeDir) {
     for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
       const candidate = path.join(current, entry.name);
       if (entry.isDirectory()) pending.push(candidate);
-      else if (entry.isFile() && /\.[cm]?js$/.test(entry.name)) files.push(candidate);
+      else if (entry.isFile() && /\.(?:[cm]?js|d\.ts)$/.test(entry.name)) files.push(candidate);
     }
   }
   const bundlePath = path.join(runtimeDir, 'gateway-bundle.mjs');

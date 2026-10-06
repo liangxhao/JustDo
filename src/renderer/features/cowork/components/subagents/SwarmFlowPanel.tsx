@@ -24,6 +24,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { i18nService } from '@/services/i18n';
 
 import type { Subtask } from './subtaskPresentation';
+import SwarmBatchPanel from './SwarmBatchPanel';
 import SwarmFlowDetailPanel from './SwarmFlowDetailPanel';
 import { useSwarmGraphViewport } from './useSwarmGraphViewport';
 
@@ -248,7 +249,20 @@ export default function SwarmFlowPanel({
       ref={container}
       className="swarm-panel flex h-full min-h-0 flex-col bg-surface text-foreground"
     >
-      {node && flow ? (
+      {node?.kind === 'batch' && !source && flow ? (
+        <SwarmBatchPanel
+          key={JSON.stringify([sessionId, flow.id, node.id])}
+          sessionId={sessionId}
+          flow={flow}
+          stage={node}
+          active={active}
+          onBack={() => {
+            setSelected(undefined);
+            setSelectedEdge(undefined);
+          }}
+          onChanged={refreshFlows}
+        />
+      ) : node && flow ? (
         <SwarmFlowDetailPanel
           key={JSON.stringify([sessionId, flow.id, node.id, source?.id])}
           sessionId={sessionId}
@@ -431,7 +445,9 @@ export default function SwarmFlowPanel({
                       : n.status === 'done'
                         ? 'done'
                         : 'queued';
-                  const label = n.kind === 'work' ? n.title : t('flowKind_' + n.kind);
+                  const label = ['work', 'batch'].includes(n.kind)
+                    ? n.title
+                    : t('flowKind_' + n.kind);
                   return (
                     <g
                       key={n.id}
@@ -486,8 +502,20 @@ export default function SwarmFlowPanel({
                         fontSize="10"
                         opacity="0.8"
                       >
-                        {'@' + (n.agentName ?? n.agentId ?? 'main').slice(0, 20)}
+                        {n.kind === 'batch'
+                          ? `${n.batchCounts?.done ?? 0} / ${n.batchCounts?.total ?? '…'} · @${(n.agentName ?? n.agentId ?? 'main').slice(0, 12)}`
+                          : '@' + (n.agentName ?? n.agentId ?? 'main').slice(0, 20)}
                       </text>
+                      {n.kind === 'batch' && n.batchCounts?.total && (
+                        <rect
+                          x="14"
+                          y="69"
+                          width={(132 * n.batchCounts.done) / n.batchCounts.total}
+                          height="2"
+                          rx="1"
+                          fill="currentColor"
+                        />
+                      )}
                     </g>
                   );
                 })}

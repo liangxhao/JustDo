@@ -5,20 +5,27 @@ export function interventionAvailability(flow: Flow, node: FlowNode) {
     !['completed', 'cancelled', 'stopping'].includes(flow.status) &&
     !flow.deliveryIntent &&
     node.kind !== 'deliver' &&
+    node.kind !== 'batch' &&
     !['done', 'cancelled'].includes(node.status) &&
     (node.interventions?.length ?? 0) < FLOW_LIMITS.interventions;
   const canRetry =
     canNote &&
-    ['blocked', 'paused'].includes(flow.status) &&
+    (['blocked', 'paused'].includes(flow.status) ||
+      Boolean(node.batchItem && flow.status === 'running')) &&
     !flow.error &&
     node.status === 'failed' &&
-    (node.attempt ?? 1) < FLOW_LIMITS.attempts &&
-    !flow.nodes.some(n => ['running', 'preparing', 'uncertain'].includes(n.status)) &&
+    (node.attempt ?? 1) < (flow.settings?.maxAttempts ?? FLOW_LIMITS.attempts) &&
+    (node.batchItem
+      ? node.cleanupSettled === true
+      : !flow.nodes.some(
+          n => n.kind !== 'batch' && ['running', 'preparing', 'uncertain'].includes(n.status),
+        )) &&
     node.deps.every(dep => flow.nodes.find(n => n.id === dep)?.status === 'done');
   return {
     canNote,
     canRetry,
-    canContinue: canRetry && Boolean(node.endedAt && (node.runId || node.intendedRunId)),
+    canContinue:
+      canRetry && !node.batchItem && Boolean(node.endedAt && (node.runId || node.intendedRunId)),
   };
 }
 
@@ -65,8 +72,13 @@ export function resetFailedNode(flow: Flow, node: FlowNode, continueSession = fa
   delete node.dispatch;
   delete node.completion;
   delete node.submissionRepair;
+  delete node.planningRepair;
   delete node.error;
   delete node.result;
   delete node.startedAt;
   delete node.endedAt;
+  delete node.deadlineAt;
+  delete node.budgetExceeded;
+  delete node.cleanupSettled;
+  delete node.artifacts;
 }

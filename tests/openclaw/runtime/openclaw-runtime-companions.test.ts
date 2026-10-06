@@ -19,6 +19,22 @@ const {
 };
 
 describe('OpenClaw runtime companions', () => {
+  it('keeps the Windows command Job launcher in dist after bundling', () => {
+    const source = `function resolveManagedWindowsJobEntrypointUrl() {
+      const current = new URL(import.meta.url);
+      const distIndex = current.pathname.lastIndexOf('/dist/');
+      return new URL(current.pathname.slice(0, distIndex + 6) + 'tooling/managed-windows-job-launcher.js', current);
+    }`;
+    expect(hasStaleRuntimeWorkerImportMetaUrl(source)).toBe(true);
+    const rewritten = rewriteRuntimeWorkerImportMetaUrls(source,
+      'new URL("./dist/managed-windows-job-fixture.mjs", "file:///runtime/gateway-bundle.mjs").href');
+    expect(hasStaleRuntimeWorkerImportMetaUrl(rewritten)).toBe(false);
+    expect(new Function(rewritten + '; return resolveManagedWindowsJobEntrypointUrl().href;')())
+      .toBe('file:///runtime/dist/tooling/managed-windows-job-launcher.js');
+    expect(getRuntimeCompanionPathsReferencedByBundle(rewritten))
+      .toContain('dist/tooling/managed-windows-job-launcher.js');
+    expect(rewriteRuntimeWorkerImportMetaUrls(rewritten, 'another')).toBe(rewritten);
+  });
   it('makes the original build identity available beside the bundled migration reader', () => {
     const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-build-identity-'));
     try {

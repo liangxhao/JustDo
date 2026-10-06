@@ -492,6 +492,13 @@ export type OpenClawExtensionConfigurationField = {
   path: string;
   label: string;
   help?: string;
+  labelKey?: string;
+  helpKey?: string;
+  type?: 'integer' | 'number';
+  minimum?: number;
+  maximum?: number;
+  defaultValue?: number;
+  value?: number;
   requirement?: string;
   /** Native provider credential alternatives; saved to env.vars, never plugin config. */
   environmentVariables?: string[];
@@ -530,6 +537,7 @@ export type ExtensionUpdateConfigurationRequest = {
 export type ExtensionUpdateConfigurationResult = {
   success: boolean;
   error?: string;
+  pending?: boolean;
 };
 
 export type ExtensionSetEnabledRequest = {

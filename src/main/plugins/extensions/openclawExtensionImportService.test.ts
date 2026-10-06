@@ -111,41 +111,44 @@ describe('OpenClawExtensionImportService', () => {
     },
   );
 
-  it.each([false, true])('locks the desktop-control catalog entry when enabled=%s', async enabled => {
-    const requestGateway = vi.fn().mockResolvedValue({
-      plugins: [
-        {
+  it.each([false, true])(
+    'locks the desktop-control catalog entry when enabled=%s',
+    async enabled => {
+      const requestGateway = vi.fn().mockResolvedValue({
+        plugins: [
+          {
+            id: 'cua-computer',
+            name: 'Computer',
+            installed: true,
+            enabled,
+            state: enabled ? 'enabled' : 'disabled',
+            origin: 'bundled',
+            removable: true,
+          },
+        ],
+        diagnostics: [],
+        mutationAllowed: true,
+      });
+      const service = new OpenClawExtensionImportService({
+        getOpenClawEngineManager: () =>
+          ({
+            getStateDir: () => fixtureRoot,
+            getConfigPath: () => path.join(fixtureRoot, 'openclaw.json'),
+          }) as unknown as OpenClawEngineManager,
+        getManagedPluginIds: () => ['cua-computer'],
+        requestGateway,
+      });
+      expect(await service.listCatalog()).toEqual([
+        expect.objectContaining({
           id: 'cua-computer',
-          name: 'Computer',
-          installed: true,
           enabled,
-          state: enabled ? 'enabled' : 'disabled',
-          origin: 'bundled',
-          removable: true,
-        },
-      ],
-      diagnostics: [],
-      mutationAllowed: true,
-    });
-    const service = new OpenClawExtensionImportService({
-      getOpenClawEngineManager: () =>
-        ({
-          getStateDir: () => fixtureRoot,
-          getConfigPath: () => path.join(fixtureRoot, 'openclaw.json'),
-        }) as unknown as OpenClawEngineManager,
-      getManagedPluginIds: () => ['cua-computer'],
-      requestGateway,
-    });
-    expect(await service.listCatalog()).toEqual([
-      expect.objectContaining({
-        id: 'cua-computer',
-        enabled,
-        managed: true,
-        canToggle: false,
-        removable: false,
-      }),
-    ]);
-  });
+          managed: true,
+          canToggle: false,
+          removable: false,
+        }),
+      ]);
+    },
+  );
 
   it('uses the Gateway plugin catalog as the installed inventory authority', async () => {
     const stateDir = path.join(fixtureRoot, 'state');
@@ -328,18 +331,22 @@ describe('OpenClawExtensionImportService', () => {
     expect(requestGateway).toHaveBeenNthCalledWith(3, 'plugins.list', {});
   });
 
-  it.each([true, false])('synchronizes the team skill through native APIs when enabled=%s', async enabled => {
-    const requestGateway = vi.fn().mockResolvedValue({ ok: true, restartRequired: false });
-    const service = new OpenClawExtensionImportService({
-      getOpenClawEngineManager: () => ({ getStatus: () => ({ phase: 'running' }) }) as OpenClawEngineManager,
-      requestGateway,
-    });
-    await expect(service.setEnabled('agent-team', enabled)).resolves.toEqual({ success: true });
-    expect(requestGateway.mock.calls).toEqual([
-      ['plugins.setEnabled', { pluginId: 'agent-team', enabled }],
-      ['skills.update', { skillKey: 'agent-team', enabled }],
-    ]);
-  });
+  it.each([true, false])(
+    'synchronizes the team skill through native APIs when enabled=%s',
+    async enabled => {
+      const requestGateway = vi.fn().mockResolvedValue({ ok: true, restartRequired: false });
+      const service = new OpenClawExtensionImportService({
+        getOpenClawEngineManager: () =>
+          ({ getStatus: () => ({ phase: 'running' }) }) as OpenClawEngineManager,
+        requestGateway,
+      });
+      await expect(service.setEnabled('agent-team', enabled)).resolves.toEqual({ success: true });
+      expect(requestGateway.mock.calls).toEqual([
+        ['plugins.setEnabled', { pluginId: 'agent-team', enabled }],
+        ['skills.update', { skillKey: 'agent-team', enabled }],
+      ]);
+    },
+  );
 
   it('honors a required native reload even when the team skill write fails', async () => {
     const requestGateway = vi.fn(async method => {
@@ -362,7 +369,8 @@ describe('OpenClawExtensionImportService', () => {
   it('reports partial team skill failure and repairs it when retrying the same state', async () => {
     let skillAttempts = 0;
     const requestGateway = vi.fn(async method => {
-      if (method === 'skills.update' && ++skillAttempts === 1) throw new Error('gateway not connected');
+      if (method === 'skills.update' && ++skillAttempts === 1)
+        throw new Error('gateway not connected');
       return { ok: true, restartRequired: false };
     });
     const runCommand = vi.fn();
@@ -381,32 +389,57 @@ describe('OpenClawExtensionImportService', () => {
     expect(skillAttempts).toBe(2);
   });
 
-  it.each([true, false])('repairs the team skill through the cold CLI even when plugin enabled=%s already matches', async enabled => {
-    const stateDir = path.join(fixtureRoot, 'state');
-    const configPath = path.join(stateDir, 'openclaw.json');
-    const extensionDir = path.join(stateDir, 'extensions', 'agent-team');
-    fs.mkdirSync(extensionDir, { recursive: true });
-    fs.writeFileSync(path.join(extensionDir, 'openclaw.plugin.json'), JSON.stringify({ id: 'agent-team' }));
-    fs.writeFileSync(configPath, JSON.stringify({ plugins: { entries: { 'agent-team': { enabled } } }, skills: { load: { watch: false }, entries: { 'agent-team': { enabled: !enabled } } } }));
-    const runCommand = vi.fn(async (_executable, args) => {
-      expect(args.slice(1)).toEqual(['config', 'set', 'skills.entries.agent-team.enabled', String(enabled), '--strict-json']);
-      const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-      config.skills.entries['agent-team'].enabled = enabled;
-      fs.writeFileSync(configPath, JSON.stringify(config));
-      return { exitCode: 0, stdout: '', stderr: '' };
-    });
-    const service = new OpenClawExtensionImportService({
-      getOpenClawEngineManager: () => ({
-        getStatus: () => ({ phase: 'ready' }), getStateDir: () => stateDir,
-        getConfigPath: () => configPath, getBaseDir: () => stateDir,
-        buildCliEnvironment: async () => ({ env: {}, runtimeRoot: fixtureRoot, openclawEntry: 'openclaw.mjs' }),
-      }) as unknown as OpenClawEngineManager,
-      runCommand,
-    });
-    await expect(service.setEnabled('agent-team', enabled)).resolves.toEqual({ success: true });
-    expect(runCommand).toHaveBeenCalledOnce();
-    expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).skills.load.watch).toBe(false);
-  });
+  it.each([true, false])(
+    'repairs the team skill through the cold CLI even when plugin enabled=%s already matches',
+    async enabled => {
+      const stateDir = path.join(fixtureRoot, 'state');
+      const configPath = path.join(stateDir, 'openclaw.json');
+      const extensionDir = path.join(stateDir, 'extensions', 'agent-team');
+      fs.mkdirSync(extensionDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(extensionDir, 'openclaw.plugin.json'),
+        JSON.stringify({ id: 'agent-team' }),
+      );
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify({
+          plugins: { entries: { 'agent-team': { enabled } } },
+          skills: { load: { watch: false }, entries: { 'agent-team': { enabled: !enabled } } },
+        }),
+      );
+      const runCommand = vi.fn(async (_executable, args) => {
+        expect(args.slice(1)).toEqual([
+          'config',
+          'set',
+          'skills.entries.agent-team.enabled',
+          String(enabled),
+          '--strict-json',
+        ]);
+        const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        config.skills.entries['agent-team'].enabled = enabled;
+        fs.writeFileSync(configPath, JSON.stringify(config));
+        return { exitCode: 0, stdout: '', stderr: '' };
+      });
+      const service = new OpenClawExtensionImportService({
+        getOpenClawEngineManager: () =>
+          ({
+            getStatus: () => ({ phase: 'ready' }),
+            getStateDir: () => stateDir,
+            getConfigPath: () => configPath,
+            getBaseDir: () => stateDir,
+            buildCliEnvironment: async () => ({
+              env: {},
+              runtimeRoot: fixtureRoot,
+              openclawEntry: 'openclaw.mjs',
+            }),
+          }) as unknown as OpenClawEngineManager,
+        runCommand,
+      });
+      await expect(service.setEnabled('agent-team', enabled)).resolves.toEqual({ success: true });
+      expect(runCommand).toHaveBeenCalledOnce();
+      expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).skills.load.watch).toBe(false);
+    },
+  );
 
   it('uses Gateway mutations and restarts only when OpenClaw requests it', async () => {
     const restartGatewayAfterMutation = vi.fn().mockResolvedValue({ phase: 'running' });
@@ -531,8 +564,11 @@ describe('OpenClawExtensionImportService', () => {
         openclawEntry: path.join(fixtureRoot, 'openclaw.mjs'),
       }),
     } as unknown as OpenClawEngineManager;
-    const requestGateway = vi.fn()
-      .mockRejectedValueOnce(Object.assign(new Error('Gateway unavailable'), { code: 'CLIENT_CLOSED' }))
+    const requestGateway = vi
+      .fn()
+      .mockRejectedValueOnce(
+        Object.assign(new Error('Gateway unavailable'), { code: 'CLIENT_CLOSED' }),
+      )
       .mockResolvedValueOnce({ ok: true, restartRequired: false });
     const restartGateway = vi.fn().mockResolvedValue({ phase: 'running' });
     const service = new OpenClawExtensionImportService({
@@ -1656,8 +1692,14 @@ describe('OpenClawExtensionImportService', () => {
     const configPath = path.join(stateDir, 'openclaw.json');
     fs.mkdirSync(bundledDir, { recursive: true });
     fs.mkdirSync(stateDir, { recursive: true });
-    fs.copyFileSync('openclaw-extensions/typesafe/openclaw.plugin.json', path.join(bundledDir, 'openclaw.plugin.json'));
-    fs.writeFileSync(configPath, JSON.stringify({ plugins: { entries: { typesafe: { enabled: false } } } }));
+    fs.copyFileSync(
+      'openclaw-extensions/typesafe/openclaw.plugin.json',
+      path.join(bundledDir, 'openclaw.plugin.json'),
+    );
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({ plugins: { entries: { typesafe: { enabled: false } } } }),
+    );
     const restartGateway = vi.fn().mockResolvedValue({ phase: 'running' });
     const manager = {
       getStateDir: () => stateDir,
@@ -1672,20 +1714,37 @@ describe('OpenClawExtensionImportService', () => {
       getOpenClawEngineManager: () => manager,
       restartGatewayAfterMutation: restartGateway,
       requestGateway: vi.fn().mockResolvedValue({
-        plugins: [{ id: 'typesafe', name: 'TypeSafe AI', installed: true, origin: 'bundled',
-          enabled: false, state: 'disabled', removable: false }],
+        plugins: [
+          {
+            id: 'typesafe',
+            name: 'TypeSafe AI',
+            installed: true,
+            origin: 'bundled',
+            enabled: false,
+            state: 'disabled',
+            removable: false,
+          },
+        ],
         mutationAllowed: true,
         diagnostics: [],
       }),
     });
     expect((await service.listCatalog())[0]).toMatchObject({
-      canToggle: true, removable: false,
-      configurationFields: [expect.objectContaining({ path: 'apiKey', configured: false, sensitive: true })],
+      canToggle: true,
+      removable: false,
+      configurationFields: [
+        expect.objectContaining({ path: 'apiKey', configured: false, sensitive: true }),
+      ],
     });
-    await expect(service.updateConfiguration('typesafe', { apiKey: 'synthetic-first-key' })).resolves.toEqual({ success: true });
+    await expect(
+      service.updateConfiguration('typesafe', { apiKey: 'synthetic-first-key' }),
+    ).resolves.toEqual({ success: true });
     const saved = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     expect(saved.plugins.entries.typesafe.enabled).toBe(false);
-    expect(saved.plugins.entries.typesafe.config.apiKey).toMatchObject({ source: 'file', provider: 'justdo-extension-secrets' });
+    expect(saved.plugins.entries.typesafe.config.apiKey).toMatchObject({
+      source: 'file',
+      provider: 'justdo-extension-secrets',
+    });
     expect(JSON.stringify(saved)).not.toContain('synthetic-first-key');
     const catalog = await service.listCatalog();
     expect(catalog[0].configurationFields[0].configured).toBe(true);
@@ -1697,9 +1756,15 @@ describe('OpenClawExtensionImportService', () => {
     expect(restartGateway).toHaveBeenCalledTimes(2);
     expect(manager.waitForGatewayConfigReload).not.toHaveBeenCalled();
     expect(JSON.parse(fs.readFileSync(configPath, 'utf8'))).toEqual(saved);
-    const credentialStore = JSON.parse(fs.readFileSync(path.join(stateDir, 'extension-secrets.json'), 'utf8'));
-    expect(credentialStore[saved.plugins.entries.typesafe.config.apiKey.id.slice(1)]).toBe('synthetic-rotated-key');
-    await expect(service.updateConfiguration('../typesafe', { apiKey: 'synthetic-key' })).resolves.toMatchObject({ success: false });
+    const credentialStore = JSON.parse(
+      fs.readFileSync(path.join(stateDir, 'extension-secrets.json'), 'utf8'),
+    );
+    expect(credentialStore[saved.plugins.entries.typesafe.config.apiKey.id.slice(1)]).toBe(
+      'synthetic-rotated-key',
+    );
+    await expect(
+      service.updateConfiguration('../typesafe', { apiKey: 'synthetic-key' }),
+    ).resolves.toMatchObject({ success: false });
   });
 
   it.each(['config-write', 'restart-throws', 'restart-error'])(
@@ -1711,8 +1776,14 @@ describe('OpenClawExtensionImportService', () => {
       const configPath = path.join(stateDir, 'openclaw.json');
       fs.mkdirSync(bundledDir, { recursive: true });
       fs.mkdirSync(stateDir, { recursive: true });
-      fs.copyFileSync('openclaw-extensions/typesafe/openclaw.plugin.json', path.join(bundledDir, 'openclaw.plugin.json'));
-      fs.writeFileSync(configPath, JSON.stringify({ plugins: { entries: { typesafe: { enabled: true } } } }));
+      fs.copyFileSync(
+        'openclaw-extensions/typesafe/openclaw.plugin.json',
+        path.join(bundledDir, 'openclaw.plugin.json'),
+      );
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify({ plugins: { entries: { typesafe: { enabled: true } } } }),
+      );
       let phase = 'running';
       const restartGateway = vi.fn().mockResolvedValue({ phase: 'running' });
       const manager = {
@@ -1728,26 +1799,36 @@ describe('OpenClawExtensionImportService', () => {
         getOpenClawEngineManager: () => manager,
         restartGatewayAfterMutation: restartGateway,
       });
-      await expect(service.updateConfiguration('typesafe', { apiKey: 'original-key' })).resolves.toEqual({ success: true });
+      await expect(
+        service.updateConfiguration('typesafe', { apiKey: 'original-key' }),
+      ).resolves.toEqual({ success: true });
       restartGateway.mockClear();
       const rename = fs.renameSync;
       const renameSpy = vi.spyOn(fs, 'renameSync').mockImplementation((source, target) => {
-        if (failure === 'config-write' && target === configPath) throw new Error('Synthetic write failure');
+        if (failure === 'config-write' && target === configPath)
+          throw new Error('Synthetic write failure');
         rename(source, target);
       });
-      if (failure === 'restart-throws') restartGateway.mockRejectedValueOnce(new Error('Synthetic restart failure'));
+      if (failure === 'restart-throws')
+        restartGateway.mockRejectedValueOnce(new Error('Synthetic restart failure'));
       if (failure === 'restart-error') restartGateway.mockResolvedValueOnce({ phase: 'error' });
 
-      await expect(service.updateConfiguration('typesafe', { apiKey: 'rotated-key' })).resolves.toMatchObject({ success: false });
+      await expect(
+        service.updateConfiguration('typesafe', { apiKey: 'rotated-key' }),
+      ).resolves.toMatchObject({ success: false });
       renameSpy.mockRestore();
       if (failure === 'restart-error') phase = 'error';
       restartGateway.mockClear();
 
-      await expect(service.updateConfiguration('typesafe', { apiKey: 'rotated-key' })).resolves.toEqual({ success: true });
+      await expect(
+        service.updateConfiguration('typesafe', { apiKey: 'rotated-key' }),
+      ).resolves.toEqual({ success: true });
       expect(restartGateway).toHaveBeenCalledTimes(1);
       expect(manager.waitForGatewayConfigReload).not.toHaveBeenCalled();
       phase = 'running';
-      await expect(service.updateConfiguration('typesafe', { apiKey: 'rotated-key' })).resolves.toEqual({ success: true });
+      await expect(
+        service.updateConfiguration('typesafe', { apiKey: 'rotated-key' }),
+      ).resolves.toEqual({ success: true });
       expect(restartGateway).toHaveBeenCalledTimes(1);
     },
   );
@@ -2248,6 +2329,89 @@ describe('OpenClawExtensionImportService', () => {
       ).resolves.toEqual({ success: true });
       expect(manager.waitForGatewayConfigReload).toHaveBeenCalledTimes(1);
       expect(restartGateway).toHaveBeenCalledTimes(reloaded ? 0 : 1);
+    },
+  );
+  it.each([
+    { acknowledged: true, reported: 5, pending: false },
+    { acknowledged: true, reported: 3, pending: true },
+    { acknowledged: false, reported: 5, pending: false },
+    { acknowledged: false, reported: 3, pending: true },
+  ])(
+    'confirms numeric hot settings without restarting active work: $acknowledged/$reported',
+    async scenario => {
+      const stateDir = path.join(fixtureRoot, 'state');
+      const configPath = path.join(stateDir, 'openclaw.json');
+      const directory = path.join(stateDir, 'extensions', 'numeric-demo');
+      fs.mkdirSync(directory, { recursive: true });
+      fs.writeFileSync(
+        path.join(directory, 'openclaw.plugin.json'),
+        JSON.stringify({
+          id: 'numeric-demo',
+          configSchema: {
+            type: 'object',
+            properties: { concurrency: { type: 'integer', minimum: 1, maximum: 16, default: 3 } },
+          },
+          uiHints: { concurrency: { configurable: true, labelKey: 'swarmConfigConcurrency' } },
+          configContracts: { configurationStatusMethod: 'numericDemo.health' },
+        }),
+      );
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify({
+          gateway: { mode: 'local' },
+          plugins: {
+            entries: { 'numeric-demo': { enabled: false, config: { preserved: 'original' } } },
+          },
+        }),
+      );
+      const restart = vi.fn();
+      const manager = {
+        getStateDir: () => stateDir,
+        getBaseDir: () => fixtureRoot,
+        getConfigPath: () => configPath,
+        getStatus: () => ({ phase: 'running' }),
+        getGatewayConfigReloadGeneration: () => 7,
+        waitForGatewayConfigReload: vi.fn(async () => scenario.acknowledged),
+      } as unknown as OpenClawEngineManager;
+      const requestGateway = vi
+        .fn()
+        .mockResolvedValue({ ready: true, configuration: { concurrency: scenario.reported } });
+      const service = new OpenClawExtensionImportService({
+        getOpenClawEngineManager: () => manager,
+        requestGateway,
+        restartGatewayAfterMutation: restart,
+      });
+      expect(service.listInstalled()[0].configurationFields[0]).toMatchObject({
+        type: 'integer',
+        minimum: 1,
+        maximum: 16,
+        defaultValue: 3,
+        sensitive: false,
+      });
+      for (const value of ['0', '17', '1.5', 'NaN'])
+        expect(
+          await service.updateConfiguration('numeric-demo', { concurrency: value }),
+        ).toMatchObject({ success: false });
+      expect(await service.updateConfiguration('numeric-demo', { concurrency: '5' })).toEqual({
+        success: true,
+        pending: scenario.pending,
+      });
+      expect(
+        JSON.parse(fs.readFileSync(configPath, 'utf8')).plugins.entries['numeric-demo'],
+      ).toEqual({ enabled: false, config: { preserved: 'original', concurrency: 5 } });
+      expect(restart).not.toHaveBeenCalled();
+      if (scenario.pending) {
+        expect(await service.updateConfiguration('numeric-demo', { concurrency: '5' })).toEqual({
+          success: true,
+          pending: true,
+        });
+        requestGateway.mockResolvedValue({ ready: true, configuration: { concurrency: 5 } });
+        expect(await service.updateConfiguration('numeric-demo', { concurrency: '5' })).toEqual({
+          success: true,
+          pending: false,
+        });
+      }
+      expect(restart).not.toHaveBeenCalled();
     },
   );
 
