@@ -2,6 +2,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 
 import type { ExtensionProvidedMcpServer } from '../../../shared/openclaw/mcp';
+import { getExtensionManagement, PluginHubScope } from '../../../shared/plugins/management';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 
 const DISCOVERY_TIMEOUT_MS = 30_000;
@@ -19,6 +20,7 @@ type PluginInspectEntry = {
     enabled?: unknown;
     status?: unknown;
     format?: unknown;
+    origin?: unknown;
   };
   mcpServers?: unknown;
 };
@@ -54,7 +56,7 @@ export const parseExtensionMcpInventory = (value: unknown): ExtensionProvidedMcp
     const plugin = entry.plugin;
     if (
       !plugin ||
-      plugin.format !== 'bundle' ||
+      (plugin.format !== 'bundle' && plugin.format !== 'openclaw') ||
       typeof plugin.id !== 'string' ||
       !plugin.id.trim() ||
       !Array.isArray(entry.mcpServers)
@@ -81,7 +83,12 @@ export const parseExtensionMcpInventory = (value: unknown): ExtensionProvidedMcp
           providerName,
           providerDescription,
           enabled: plugin.enabled === true && plugin.status !== 'error',
-          supported: rawServer.hasStdioTransport !== false,
+          // Native inspection supports both stdio and HTTP; only this flag means unsupported.
+          supported: rawServer.unsupported !== true,
+          scope:
+            typeof plugin.origin === 'string'
+              ? getExtensionManagement({ origin: plugin.origin }).scope
+              : PluginHubScope.EXTENSION,
         },
       ];
     });

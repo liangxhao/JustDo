@@ -108,10 +108,11 @@ export const getUserMcpManagement = (): {
 export const getExtensionProvidedManagement = (provider: {
   id?: string;
   name?: string;
+  scope?: PluginHubScope;
 }): { scope: PluginHubScope; management: PluginManagementCapabilities } => {
   const blocked = blockedPluginAction(PluginActionReason.MANAGED_BY_EXTENSION, provider);
   return {
-    scope: PluginHubScope.EXTENSION,
+    scope: provider.scope ?? PluginHubScope.EXTENSION,
     management: {
       enable: blocked,
       disable: blocked,
@@ -126,6 +127,7 @@ export const getHookManagement = (hook: {
   source?: string;
   managedByPlugin?: boolean;
   pluginId?: string;
+  pluginScope?: PluginHubScope;
   requirementsSatisfied?: boolean;
   filePath?: string;
 }): { scope: PluginHubScope; management: PluginManagementCapabilities } => {
@@ -134,7 +136,7 @@ export const getHookManagement = (hook: {
   const toggle = hook.managedByPlugin ? extensionBlocked : allowedPluginAction();
   return {
     scope: hook.managedByPlugin
-      ? PluginHubScope.EXTENSION
+      ? (hook.pluginScope ?? PluginHubScope.EXTENSION)
       : hook.source === 'openclaw-bundled'
         ? PluginHubScope.SYSTEM
         : hook.source === 'openclaw-managed'

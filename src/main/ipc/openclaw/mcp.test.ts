@@ -103,6 +103,7 @@ test('lists extension-provided MCP servers through a separate handler', async ()
       providerDescription: '',
       enabled: true,
       supported: true,
+      scope: 'personal' as const,
     },
   ];
   register(store, vi.fn(async () => extensionServers));
@@ -110,6 +111,9 @@ test('lists extension-provided MCP servers through a separate handler', async ()
   await expect(handlers.get('mcp:listExtensionServers')?.()).resolves.toMatchObject({
     success: true,
     extensionServers,
+  });
+  await expect(handlers.get('mcp:listExtensionServers')?.()).resolves.toMatchObject({
+    extensionServers: [{ scope: 'personal', management: { disable: { allowed: false, reason: 'managed-by-extension' } } }],
   });
 });
 

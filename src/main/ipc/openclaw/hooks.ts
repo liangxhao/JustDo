@@ -1,7 +1,11 @@
 import { ipcMain } from 'electron';
 
 import { HookIpc } from '../../../shared/openclaw/hooks';
-import { getHookManagement } from '../../../shared/plugins/management';
+import {
+  getExtensionManagement,
+  getHookManagement,
+  type PluginHubScope,
+} from '../../../shared/plugins/management';
 import { MarketplaceInstallOperation, PluginKind } from '../../../shared/plugins/marketplace';
 import { DEFAULT_MANAGED_AGENT_ID } from '../../openclaw/sessions/openclawSessionKeys';
 import { OpenClawHookFiles, type OpenClawHookStore } from '../../plugins/hooks';
@@ -86,6 +90,22 @@ export const registerHookHandlers = ({
     const report = await requestGateway<HookReport>('hooks.status', {
       agentId: DEFAULT_MANAGED_AGENT_ID,
     });
+    const pluginScopes = new Map<string, PluginHubScope>();
+    if (report.hooks.some(hook => hook.managedByPlugin === true && typeof hook.pluginId === 'string')) {
+      try {
+        const inventory = await requestGateway<{
+          plugins: Array<{ id: string; origin?: string }>;
+        }>('plugins.list', {});
+        for (const plugin of inventory.plugins) {
+          if (typeof plugin.origin === 'string') {
+            pluginScopes.set(plugin.id, getExtensionManagement({ origin: plugin.origin }).scope);
+          }
+        }
+      } catch {
+        // An unavailable parent inventory must not hide the authoritative Hook list.
+        console.warn('[OpenClawHooks] Parent extension origins are unavailable');
+      }
+    }
     return {
       ...report,
       hooks: report.hooks.map(hook => ({
@@ -94,6 +114,7 @@ export const registerHookHandlers = ({
           source: typeof hook.source === 'string' ? hook.source : undefined,
           managedByPlugin: hook.managedByPlugin === true,
           pluginId: typeof hook.pluginId === 'string' ? hook.pluginId : undefined,
+          pluginScope: typeof hook.pluginId === 'string' ? pluginScopes.get(hook.pluginId) : undefined,
           requirementsSatisfied: hook.requirementsSatisfied !== false,
           filePath: typeof hook.filePath === 'string' ? hook.filePath : undefined,
         }),

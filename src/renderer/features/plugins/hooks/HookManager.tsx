@@ -104,10 +104,7 @@ const HookManager: React.FC<HookManagerProps> = ({
 
   const groupedHooks = useMemo(() => {
     const isSystemHook = (hook: HookEntry) =>
-      hook.scope === PluginHubScope.SYSTEM ||
-      hook.scope === PluginHubScope.EXTENSION ||
-      hook.source === 'openclaw-bundled' ||
-      hook.managedByPlugin;
+      hook.scope === PluginHubScope.SYSTEM || hook.source === 'openclaw-bundled';
     const userHooks = filteredHooks.filter(hook => !isSystemHook(hook));
     const systemHooks = filteredHooks.filter(isSystemHook);
     return [

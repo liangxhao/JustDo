@@ -9,6 +9,29 @@ import {
 } from './management';
 import { getSkillManagementCapabilities, getSkillScope } from './skillManagement';
 
+test.each([PluginHubScope.PERSONAL, PluginHubScope.SYSTEM])(
+  'keeps parent-owned MCP and Hook actions locked in the %s display scope',
+  scope => {
+    const mcp = getExtensionProvidedManagement({ id: 'parent', scope });
+    const hook = getHookManagement({
+      managedByPlugin: true,
+      pluginId: 'parent',
+      pluginScope: scope,
+    });
+    for (const contribution of [mcp, hook]) {
+      expect(contribution.scope).toBe(scope);
+      expect(contribution.management.enable).toMatchObject({
+        allowed: false,
+        reason: PluginActionReason.MANAGED_BY_EXTENSION,
+        managedById: 'parent',
+      });
+      expect(contribution.management.disable.allowed).toBe(false);
+      expect(contribution.management.remove.allowed).toBe(false);
+      expect(contribution.management.configure.allowed).toBe(false);
+    }
+  },
+);
+
 describe('skill management projection', () => {
   test.each([
     ['openclaw-bundled', PluginHubScope.SYSTEM],

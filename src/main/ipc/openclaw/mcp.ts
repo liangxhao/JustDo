@@ -143,6 +143,7 @@ export const registerMcpHandlers = ({
           ...getExtensionProvidedManagement({
             id: server.providerId,
             name: server.providerName,
+            scope: server.scope,
           }),
         })),
       };

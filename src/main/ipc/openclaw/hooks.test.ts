@@ -50,6 +50,67 @@ test('uses hooks.status as the authoritative hook inventory', async () => {
   expect(requestGateway).toHaveBeenCalledWith('hooks.status', { agentId: 'main' });
 });
 
+test('projects plugin-managed Hook grouping from native parent origins without unlocking actions', async () => {
+  const hooks = ['user-demo', 'system-demo'].map(pluginId => ({
+    name: `${pluginId}-hook`,
+    source: 'openclaw-plugin',
+    pluginId,
+    managedByPlugin: true,
+    enabledByConfig: true,
+  }));
+  const requestGateway = vi.fn(async (method: string) =>
+    method === 'hooks.status'
+      ? { ...hookReport, hooks }
+      : {
+          plugins: [
+            { id: 'user-demo', origin: 'global' },
+            { id: 'system-demo', origin: 'bundled' },
+          ],
+        },
+  );
+  registerHookHandlers({
+    getStore: () => ({}) as OpenClawHookStore,
+    requestGateway: requestGateway as Parameters<typeof registerHookHandlers>[0]['requestGateway'],
+    syncConfig: vi.fn(),
+    installationService: new PluginInstallationService(),
+  });
+
+  await expect(handlers.get(HookIpc.List)?.()).resolves.toMatchObject({
+    success: true,
+    hooks: [
+      {
+        scope: 'personal',
+        management: { disable: { allowed: false, reason: 'managed-by-extension', managedById: 'user-demo' } },
+      },
+      {
+        scope: 'system',
+        management: { disable: { allowed: false, reason: 'managed-by-extension', managedById: 'system-demo' } },
+      },
+    ],
+  });
+  expect(requestGateway).toHaveBeenCalledWith('plugins.list', {});
+});
+
+test('keeps plugin Hooks visible when their parent inventory cannot be read', async () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  const hooks = [{ name: 'demo-hook', managedByPlugin: true, pluginId: 'demo' }];
+  const requestGateway = vi.fn(async (method: string) => {
+    if (method === 'plugins.list') throw new Error('temporarily unavailable');
+    return { ...hookReport, hooks };
+  });
+  registerHookHandlers({
+    getStore: () => ({}) as OpenClawHookStore,
+    requestGateway: requestGateway as Parameters<typeof registerHookHandlers>[0]['requestGateway'],
+    syncConfig: vi.fn(),
+    installationService: new PluginInstallationService(),
+  });
+  await expect(handlers.get(HookIpc.List)?.()).resolves.toMatchObject({
+    success: true,
+    hooks: [{ name: 'demo-hook', scope: 'extension', management: { disable: { allowed: false } } }],
+  });
+  expect(warn).toHaveBeenCalledOnce();
+});
+
 test('persists a hook toggle before refreshing its live Gateway status', async () => {
   const requestGateway = vi.fn().mockResolvedValue(hookReport);
   const setEnabled = vi.fn();

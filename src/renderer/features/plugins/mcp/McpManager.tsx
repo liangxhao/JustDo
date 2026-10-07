@@ -1,9 +1,11 @@
 import { DEFAULT_MCP_REQUEST_TIMEOUT_SECONDS } from '@shared/openclaw/mcp';
+import { PluginHubScope } from '@shared/plugins/management';
 import { PluginKind } from '@shared/plugins/marketplace';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
 import MarketplaceView from '@/features/plugins/marketplace/MarketplaceView';
+import ExtensionMcpCard from '@/features/plugins/mcp/ExtensionMcpCard';
 import {
   ExtensionProvidedMcpServer,
   McpProbePrompt,
@@ -263,6 +265,13 @@ const McpManager: React.FC<McpManagerProps> = ({
         server.providerDescription.toLowerCase().includes(query),
     );
   }, [extensionServers, searchQuery]);
+  const userExtensionServers = filteredExtensionServers.filter(
+    server => server.scope !== PluginHubScope.SYSTEM,
+  );
+  const systemExtensionServers = filteredExtensionServers.filter(
+    server => server.scope === PluginHubScope.SYSTEM,
+  );
+  const userServerCount = filteredInstalled.length + userExtensionServers.length;
   const installedMarketplaceServers = useMemo(
     () =>
       servers.map(server => ({
@@ -691,13 +700,13 @@ const McpManager: React.FC<McpManagerProps> = ({
                 </div>
               ) : (
                 <div className="space-y-6">
-                  {(filteredInstalled.length > 0 || !searchQuery.trim()) && (
+                  {(userServerCount > 0 || !searchQuery.trim()) && (
                     <PluginGroupSection
                       title={i18nService.t('pluginGroup.user.label')}
-                      count={filteredInstalled.length}
+                      count={userServerCount}
                       action={userActions}
                     >
-                      {filteredInstalled.length === 0 ? (
+                      {userServerCount === 0 ? (
                         <p className="px-2 py-3 text-xs text-secondary">
                           {i18nService.t('mcpNoInstalledServers')}
                         </p>
@@ -799,66 +808,37 @@ const McpManager: React.FC<McpManagerProps> = ({
                               </div>
                             );
                           })}
+                          {userExtensionServers.map((server, visualIndex) => (
+                            <ExtensionMcpCard
+                              key={server.id}
+                              server={server}
+                              visualIndex={filteredInstalled.length + visualIndex}
+                              group="user"
+                              onOpenExtension={onOpenExtension}
+                            />
+                          ))}
                         </div>
                       )}
                     </PluginGroupSection>
                   )}
-                  {filteredExtensionServers.length > 0 && (
+                  {systemExtensionServers.length > 0 && (
                     <PluginGroupSection
                       title={i18nService.t('pluginGroup.system.label')}
-                      count={filteredExtensionServers.length}
+                      count={systemExtensionServers.length}
                       description={i18nService.t('mcpGroupExtensionDescription')}
                       collapsible
                       defaultExpanded={false}
                       forceExpanded={Boolean(searchQuery.trim())}
                     >
                       <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,20rem),1fr))] gap-1 gap-x-4">
-                        {filteredExtensionServers.map((server, visualIndex) => (
-                          <div
+                        {systemExtensionServers.map((server, visualIndex) => (
+                          <ExtensionMcpCard
                             key={server.id}
-                            className="group min-h-16 min-w-0 rounded-xl border border-transparent px-2 py-2 transition-colors hover:border-border/70 hover:bg-surface-raised/70"
-                          >
-                            <div className="flex items-start gap-2">
-                              <div
-                                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br ${getPluginArtworkTone('mcp:system', visualIndex)}`}
-                              >
-                                <ConnectorIcon className="h-4 w-4" />
-                              </div>
-                              <div className="min-w-0 flex-1">
-                                <div className="truncate text-sm font-medium text-foreground">
-                                  {server.name}
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={() => onOpenExtension?.(server.providerId)}
-                                  disabled={!onOpenExtension}
-                                  aria-label={i18nService
-                                    .t('openExtensionDetails')
-                                    .replace('{name}', server.providerName)}
-                                  className="mt-1 block max-w-full truncate text-left text-xs text-secondary transition-colors enabled:hover:text-primary disabled:cursor-default"
-                                >
-                                  {i18nService
-                                    .t('mcpProvidedByExtension')
-                                    .replace('{name}', server.providerName)}
-                                </button>
-                              </div>
-                            </div>
-                            <div className="mt-3 flex items-center gap-1.5 text-[10px]">
-                              <span className="rounded bg-purple-500/10 px-1.5 py-0.5 font-medium text-purple-600 dark:text-purple-400">
-                                {i18nService.t('mcpExtensionBadge')}
-                              </span>
-                              {!server.enabled && (
-                                <span className="rounded bg-surface-raised px-1.5 py-0.5 font-medium text-secondary">
-                                  {i18nService.t('mcpExtensionDisabled')}
-                                </span>
-                              )}
-                              {!server.supported && (
-                                <span className="rounded bg-amber-500/10 px-1.5 py-0.5 font-medium text-amber-600 dark:text-amber-400">
-                                  {i18nService.t('mcpExtensionUnsupported')}
-                                </span>
-                              )}
-                            </div>
-                          </div>
+                            server={server}
+                            visualIndex={visualIndex}
+                            group="system"
+                            onOpenExtension={onOpenExtension}
+                          />
                         ))}
                       </div>
                     </PluginGroupSection>
