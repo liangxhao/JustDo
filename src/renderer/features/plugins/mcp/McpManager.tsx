@@ -1,7 +1,7 @@
 import { DEFAULT_MCP_REQUEST_TIMEOUT_SECONDS } from '@shared/openclaw/mcp';
 import { PluginHubScope } from '@shared/plugins/management';
 import { PluginKind } from '@shared/plugins/marketplace';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
 import MarketplaceView from '@/features/plugins/marketplace/MarketplaceView';
@@ -134,6 +134,10 @@ interface McpManagerProps extends PluginHubManagerProps {
   onOpenExtension?: (extensionId: string) => void;
 }
 
+type McpDetailServer = McpServerConfig | ExtensionProvidedMcpServer;
+const isExtensionServer = (server: McpDetailServer): server is ExtensionProvidedMcpServer =>
+  'providerId' in server;
+
 const McpManager: React.FC<McpManagerProps> = ({
   searchQuery: sharedSearchQuery,
   visibility = 'all',
@@ -142,7 +146,13 @@ const McpManager: React.FC<McpManagerProps> = ({
   const dispatch = useDispatch();
   const servers = useSelector((state: RootState) => state.mcp.servers);
 
-  const [extensionServers, setExtensionServers] = useState<ExtensionProvidedMcpServer[]>([]);
+  const [extensionServers, setExtensionServers] = useState<ExtensionProvidedMcpServer[]>(
+    () => mcpService.getExtensionServers() ?? [],
+  );
+  const [isLoadingServers, setIsLoadingServers] = useState(true);
+  const [serverLoadFailed, setServerLoadFailed] = useState(false);
+  const inventoryGeneration = useRef(0);
+  const detailGeneration = useRef(0);
   const [localSearchQuery, setLocalSearchQuery] = useState('');
   const searchQuery = sharedSearchQuery ?? localSearchQuery;
   const [actionError, setActionError] = useState('');
@@ -162,7 +172,7 @@ const McpManager: React.FC<McpManagerProps> = ({
   const [isBulkProbing, setIsBulkProbing] = useState(false);
   const [bulkProbeServerId, setBulkProbeServerId] = useState<string | null>(null);
   const [bulkProbeResults, setBulkProbeResults] = useState<Record<string, McpProbeResult>>({});
-  const [detailServer, setDetailServer] = useState<McpServerConfig | null>(null);
+  const [detailServer, setDetailServer] = useState<McpDetailServer | null>(null);
   const [expandedToolNames, setExpandedToolNames] = useState<Set<string>>(() => new Set());
   const [expandedPromptNames, setExpandedPromptNames] = useState<Set<string>>(() => new Set());
   const [expandedResourceUris, setExpandedResourceUris] = useState<Set<string>>(() => new Set());
@@ -180,18 +190,51 @@ const McpManager: React.FC<McpManagerProps> = ({
   } | null>(null);
   useEffect(() => {
     let isActive = true;
+    let loadGeneration = 0;
     const loadServers = async () => {
-      const loaded = await mcpService.loadServers();
-      if (!isActive) return;
-      dispatch(setMcpServers(loaded));
-
-      const loadedExtensionServers = await mcpService.loadExtensionServers();
-      if (!isActive) return;
-      setExtensionServers(loadedExtensionServers);
+      const generation = ++loadGeneration;
+      const isCurrent = () => isActive && generation === loadGeneration;
+      setIsLoadingServers(true);
+      setServerLoadFailed(false);
+      setActionError('');
+      await Promise.all([
+        mcpService.loadServers().then(loaded => {
+          if (isCurrent()) dispatch(setMcpServers(loaded));
+        }),
+        mcpService
+          .loadExtensionServers()
+          .then(loaded => {
+            if (isCurrent()) setExtensionServers(loaded);
+          })
+          .catch(() => {
+            if (isCurrent()) {
+              setServerLoadFailed(true);
+              setActionError(i18nService.t('mcpLoadFailed'));
+            }
+          }),
+      ]);
+      if (isCurrent()) setIsLoadingServers(false);
     };
-    loadServers();
+    void loadServers();
+    const stop = window.electron.extensions.onChanged(() => {
+      if (isActive) {
+        inventoryGeneration.current += 1;
+        setExtensionServers([]);
+        setProbeResults({});
+        setDetailServer(null);
+        setProbingServerIds(new Set());
+        setReadingResourceUris(new Set());
+        setIsBulkProbing(false);
+        setIsBulkProbeOpen(false);
+        setBulkProbeServerId(null);
+        setBulkProbeResults({});
+        void loadServers();
+      }
+    });
     return () => {
       isActive = false;
+      inventoryGeneration.current += 1;
+      stop();
     };
   }, [dispatch]);
 
@@ -208,14 +251,27 @@ const McpManager: React.FC<McpManagerProps> = ({
     );
   };
 
-  const getConnectionDetail = (server: McpServerConfig): string => {
+  const getConnectionDetail = (server: McpDetailServer): string => {
+    if (isExtensionServer(server))
+      return (
+        server.connectionSummary ||
+        i18nService.t('mcpProvidedByExtension').replace('{name}', server.providerName)
+      );
     if (server.transportType === 'stdio') {
       return [server.command, ...(server.args ?? [])].filter(Boolean).join(' ');
     }
     return server.url || i18nService.t('mcpDetailEmpty');
   };
 
-  const getConnectionDetailLabel = (server: McpServerConfig): string => {
+  const getConnectionDetailLabel = (server: McpDetailServer): string => {
+    if (isExtensionServer(server))
+      return i18nService.t(
+        server.transportType === 'stdio'
+          ? 'mcpDetailConnectionDetail'
+          : server.transportType
+            ? 'mcpDetailEndpoint'
+            : 'mcpExtensionBadge',
+      );
     return server.transportType === 'stdio'
       ? i18nService.t('mcpDetailConnectionDetail')
       : i18nService.t('mcpDetailEndpoint');
@@ -225,7 +281,7 @@ const McpManager: React.FC<McpManagerProps> = ({
     return server.description?.trim() ?? '';
   }, []);
 
-  const getServerStatusLabel = (server: McpServerConfig): string | null => {
+  const getServerStatusLabel = (server: McpDetailServer): string | null => {
     const probeResult = probeResults[server.id];
     if (probeResult) {
       return probeResult.available
@@ -235,7 +291,7 @@ const McpManager: React.FC<McpManagerProps> = ({
     return null;
   };
 
-  const getServerStatusClass = (server: McpServerConfig): string | null => {
+  const getServerStatusClass = (server: McpDetailServer): string | null => {
     const probeResult = probeResults[server.id];
     if (probeResult) {
       return probeResult.available
@@ -272,6 +328,10 @@ const McpManager: React.FC<McpManagerProps> = ({
     server => server.scope === PluginHubScope.SYSTEM,
   );
   const userServerCount = filteredInstalled.length + userExtensionServers.length;
+  const testableServers = [
+    ...servers,
+    ...extensionServers.filter(server => server.enabled && server.supported),
+  ];
   const installedMarketplaceServers = useMemo(
     () =>
       servers.map(server => ({
@@ -395,14 +455,57 @@ const McpManager: React.FC<McpManagerProps> = ({
     });
   };
 
-  const handleProbeServer = async (server: McpServerConfig, openDetail = false) => {
+  const handleProbeServer = async (server: McpDetailServer, openDetail = false) => {
+    if (probingServerIds.has(server.id)) return;
     setActionError('');
+    if (openDetail) {
+      detailGeneration.current += 1;
+      setDetailServer(server);
+      setExpandedToolNames(new Set());
+      setExpandedPromptNames(new Set());
+      setExpandedResourceUris(new Set());
+      setReadingResourceUris(new Set());
+      setResourceContents({});
+      setResourceErrors({});
+    }
+    if (isExtensionServer(server) && (!server.enabled || !server.supported)) {
+      setProbeResults(current => ({
+        ...current,
+        [server.id]: {
+          available: false,
+          tools: [],
+          resources: [],
+          prompts: [],
+          latencyMs: 0,
+          error: i18nService.t(server.enabled ? 'mcpExtensionUnsupported' : 'mcpExtensionDisabled'),
+        },
+      }));
+      return;
+    }
+    setProbeResults(current => {
+      const next = { ...current };
+      delete next[server.id];
+      return next;
+    });
     setServerProbing(server.id, true);
+    const generation = inventoryGeneration.current;
     const result = await mcpService.probeServer(server.id);
+    if (generation !== inventoryGeneration.current) return;
     setServerProbing(server.id, false);
 
     if (!result.success || !result.result) {
       setActionError(result.error || i18nService.t('mcpProbeFailed'));
+      setProbeResults(current => ({
+        ...current,
+        [server.id]: {
+          available: false,
+          tools: [],
+          resources: [],
+          prompts: [],
+          latencyMs: 0,
+          error: result.error || i18nService.t('mcpProbeFailed'),
+        },
+      }));
       return;
     }
 
@@ -412,29 +515,20 @@ const McpManager: React.FC<McpManagerProps> = ({
       ...current,
       [server.id]: normalizedResult,
     }));
-
-    if (openDetail) {
-      setDetailServer(server);
-      setExpandedToolNames(new Set());
-      setExpandedPromptNames(new Set());
-      setExpandedResourceUris(new Set());
-      setReadingResourceUris(new Set());
-      setResourceContents({});
-      setResourceErrors({});
-    }
   };
 
   const handleOpenBulkProbe = async () => {
-    if (servers.length === 0 || isBulkProbing) return;
+    if (testableServers.length === 0 || isBulkProbing) return;
+    const generation = inventoryGeneration.current;
     setActionError('');
     setIsBulkProbeOpen(true);
     setIsBulkProbing(true);
     setBulkProbeResults({});
 
-    const pendingIds = servers.map(server => server.id);
+    const pendingIds = testableServers.map(server => server.id);
     setProbingServerIds(current => new Set([...current, ...pendingIds]));
 
-    for (const server of servers) {
+    for (const server of testableServers) {
       setBulkProbeServerId(server.id);
       let normalizedResult: McpProbeResult;
       try {
@@ -461,6 +555,7 @@ const McpManager: React.FC<McpManagerProps> = ({
         };
       }
 
+      if (generation !== inventoryGeneration.current) return;
       setBulkProbeResults(current => ({
         ...current,
         [server.id]: normalizedResult,
@@ -507,6 +602,8 @@ const McpManager: React.FC<McpManagerProps> = ({
 
   const handleReadResource = async (resourceUri: string) => {
     if (!detailServer || readingResourceUris.has(resourceUri)) return;
+    const generation = inventoryGeneration.current;
+    const detailRevision = detailGeneration.current;
     setExpandedResourceUris(current => new Set(current).add(resourceUri));
     setReadingResourceUris(current => new Set(current).add(resourceUri));
     setResourceErrors(current => {
@@ -516,6 +613,8 @@ const McpManager: React.FC<McpManagerProps> = ({
     });
 
     const result = await mcpService.readResource(detailServer.id, resourceUri);
+    if (generation !== inventoryGeneration.current || detailRevision !== detailGeneration.current)
+      return;
 
     setReadingResourceUris(current => {
       const next = new Set(current);
@@ -607,7 +706,7 @@ const McpManager: React.FC<McpManagerProps> = ({
       <button
         type="button"
         onClick={handleOpenBulkProbe}
-        disabled={servers.length === 0 || isBulkProbing}
+        disabled={testableServers.length === 0 || isBulkProbing}
         className="inline-flex shrink-0 items-center justify-center gap-1 rounded-lg px-2 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-60"
         title={i18nService.t('mcpTestAll')}
       >
@@ -692,7 +791,21 @@ const McpManager: React.FC<McpManagerProps> = ({
                   />
                 </div>
               )}
-              {filteredInstalled.length === 0 &&
+              {isLoadingServers && (
+                <div
+                  className="flex items-center gap-2 px-2 py-3 text-xs text-secondary"
+                  role="status"
+                >
+                  <span
+                    aria-hidden="true"
+                    className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-current/25 border-t-current"
+                  />
+                  {i18nService.t('mcpLoadingServers')}
+                </div>
+              )}
+              {!isLoadingServers &&
+              !serverLoadFailed &&
+              filteredInstalled.length === 0 &&
               filteredExtensionServers.length === 0 &&
               searchQuery.trim() ? (
                 <div className="py-12 text-center text-sm text-secondary">
@@ -707,9 +820,12 @@ const McpManager: React.FC<McpManagerProps> = ({
                       action={userActions}
                     >
                       {userServerCount === 0 ? (
-                        <p className="px-2 py-3 text-xs text-secondary">
-                          {i18nService.t('mcpNoInstalledServers')}
-                        </p>
+                        !isLoadingServers &&
+                        !serverLoadFailed && (
+                          <p className="px-2 py-3 text-xs text-secondary">
+                            {i18nService.t('mcpNoInstalledServers')}
+                          </p>
+                        )
                       ) : (
                         <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,20rem),1fr))] gap-1 gap-x-4">
                           {filteredInstalled.map((server, visualIndex) => {
@@ -815,6 +931,10 @@ const McpManager: React.FC<McpManagerProps> = ({
                               visualIndex={filteredInstalled.length + visualIndex}
                               group="user"
                               onOpenExtension={onOpenExtension}
+                              onOpenDetail={() => void handleProbeServer(server, true)}
+                              probing={probingServerIds.has(server.id)}
+                              statusLabel={getServerStatusLabel(server)}
+                              statusClass={getServerStatusClass(server)}
                             />
                           ))}
                         </div>
@@ -838,6 +958,10 @@ const McpManager: React.FC<McpManagerProps> = ({
                             visualIndex={visualIndex}
                             group="system"
                             onOpenExtension={onOpenExtension}
+                            onOpenDetail={() => void handleProbeServer(server, true)}
+                            probing={probingServerIds.has(server.id)}
+                            statusLabel={getServerStatusLabel(server)}
+                            statusClass={getServerStatusClass(server)}
                           />
                         ))}
                       </div>
@@ -937,7 +1061,7 @@ const McpManager: React.FC<McpManagerProps> = ({
                 {i18nService
                   .t('mcpTestAllProgress')
                   .replace('{done}', String(Object.keys(bulkProbeResults).length))
-                  .replace('{total}', String(servers.length))}
+                  .replace('{total}', String(testableServers.length))}
               </div>
             </div>
             <button
@@ -951,7 +1075,7 @@ const McpManager: React.FC<McpManagerProps> = ({
           </div>
 
           <div className="overflow-y-auto p-4 space-y-2">
-            {servers.map(server => {
+            {testableServers.map(server => {
               const result = bulkProbeResults[server.id];
               const isRunning = bulkProbeServerId === server.id;
               const statusText = isRunning
@@ -981,9 +1105,9 @@ const McpManager: React.FC<McpManagerProps> = ({
                           {server.name}
                         </span>
                         <span
-                          className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${TRANSPORT_BADGE_COLORS[server.transportType] || ''}`}
+                          className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${TRANSPORT_BADGE_COLORS[server.transportType ?? ''] || ''}`}
                         >
-                          {server.transportType}
+                          {server.transportType || i18nService.t('mcpExtensionBadge')}
                         </span>
                       </div>
                       {result && (
@@ -1010,7 +1134,7 @@ const McpManager: React.FC<McpManagerProps> = ({
         </Modal>
       )}
 
-      {detailServer && getDetailResult() && (
+      {detailServer && (
         <Modal
           onClose={() => setDetailServer(null)}
           closeOnBackdrop={false}
@@ -1018,7 +1142,31 @@ const McpManager: React.FC<McpManagerProps> = ({
           className="w-full max-w-4xl max-h-[84vh] mx-4 rounded-2xl bg-surface border border-border shadow-2xl overflow-hidden flex flex-col"
         >
           {(() => {
-            const detail = getDetailResult()!;
+            const detail = getDetailResult();
+            if (!detail)
+              return (
+                <div className="p-5 space-y-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="truncate font-medium text-foreground">
+                      {detailServer.name}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setDetailServer(null)}
+                      className="text-xs text-secondary hover:text-foreground"
+                    >
+                      {i18nService.t('close')}
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-2 text-sm text-secondary" role="status">
+                    <span
+                      aria-hidden="true"
+                      className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-current/25 border-t-current"
+                    />
+                    {i18nService.t('mcpTestingServer')}
+                  </div>
+                </div>
+              );
             return (
               <>
                 <div className="px-5 py-4 border-b border-border bg-surface-raised/60 flex items-start justify-between gap-3">
@@ -1051,8 +1199,28 @@ const McpManager: React.FC<McpManagerProps> = ({
                 </div>
 
                 <div className="overflow-y-auto p-5 space-y-4">
-                  {detailServer.description && (
-                    <PluginMarkdownDescription content={detailServer.description} />
+                  {isExtensionServer(detailServer) && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenExtension?.(detailServer.providerId)}
+                      disabled={!onOpenExtension}
+                      className="text-xs text-secondary enabled:hover:text-primary"
+                    >
+                      {i18nService
+                        .t('mcpProvidedByExtension')
+                        .replace('{name}', detailServer.providerName)}
+                    </button>
+                  )}
+                  {(isExtensionServer(detailServer)
+                    ? detailServer.providerDescription
+                    : detailServer.description) && (
+                    <PluginMarkdownDescription
+                      content={
+                        isExtensionServer(detailServer)
+                          ? detailServer.providerDescription
+                          : detailServer.description
+                      }
+                    />
                   )}
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                     <div className="rounded-xl border border-border bg-surface px-3 py-2.5 flex items-center justify-between gap-3">
@@ -1062,10 +1230,11 @@ const McpManager: React.FC<McpManagerProps> = ({
                       <div className="min-w-0">
                         <span
                           className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                            TRANSPORT_BADGE_COLORS[detailServer.transportType]
+                            TRANSPORT_BADGE_COLORS[detailServer.transportType ?? '']
                           }`}
                         >
-                          {detailServer.transportType.toUpperCase()}
+                          {detailServer.transportType?.toUpperCase() ||
+                            i18nService.t('mcpExtensionBadge')}
                         </span>
                       </div>
                     </div>

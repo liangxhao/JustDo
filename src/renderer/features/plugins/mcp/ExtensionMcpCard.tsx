@@ -1,5 +1,6 @@
 import { getPluginArtworkTone } from '@/features/plugins/shared/pluginArtwork';
 import { i18nService } from '@/services/i18n';
+import ClockIcon from '@/shared/components/icons/ClockIcon';
 import ConnectorIcon from '@/shared/components/icons/ConnectorIcon';
 
 import type { ExtensionProvidedMcpServer } from './mcp';
@@ -9,6 +10,10 @@ interface ExtensionMcpCardProps {
   visualIndex: number;
   group: 'user' | 'system';
   onOpenExtension?: (extensionId: string) => void;
+  onOpenDetail: () => void;
+  probing: boolean;
+  statusLabel: string | null;
+  statusClass: string | null;
 }
 
 const ExtensionMcpCard = ({
@@ -16,6 +21,10 @@ const ExtensionMcpCard = ({
   visualIndex,
   group,
   onOpenExtension,
+  onOpenDetail,
+  probing,
+  statusLabel,
+  statusClass,
 }: ExtensionMcpCardProps) => (
   <div className="group min-h-16 min-w-0 rounded-xl border border-transparent px-2 py-2 transition-colors hover:border-border/70 hover:bg-surface-raised/70">
     <div className="flex items-start gap-2">
@@ -25,7 +34,14 @@ const ExtensionMcpCard = ({
         <ConnectorIcon className="h-4 w-4" />
       </div>
       <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-medium text-foreground">{server.name}</div>
+        <button
+          type="button"
+          onClick={onOpenDetail}
+          disabled={probing}
+          className="block max-w-full truncate text-left text-sm font-medium text-foreground hover:text-primary disabled:cursor-wait"
+        >
+          {server.name}
+        </button>
         <button
           type="button"
           onClick={() => onOpenExtension?.(server.providerId)}
@@ -51,6 +67,19 @@ const ExtensionMcpCard = ({
           {i18nService.t('mcpExtensionUnsupported')}
         </span>
       )}
+      {statusLabel && statusClass && (
+        <span className={`rounded-full px-2 py-0.5 font-medium ${statusClass}`}>{statusLabel}</span>
+      )}
+      <button
+        type="button"
+        onClick={onOpenDetail}
+        disabled={probing || !server.enabled || !server.supported}
+        title={i18nService.t('mcpTestServer')}
+        className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary transition-colors hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        <ClockIcon className="h-3.5 w-3.5" />
+        <span>{i18nService.t('mcpTestShort')}</span>
+      </button>
     </div>
   </div>
 );

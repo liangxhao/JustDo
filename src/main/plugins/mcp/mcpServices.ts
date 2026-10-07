@@ -1,5 +1,7 @@
 import type Database from 'better-sqlite3';
 
+import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
+import { runExtensionMcpOperation } from './extensionMcpRuntime';
 import { McpConfigSyncService } from './mcpConfigSyncService';
 import {
   McpProbeResult,
@@ -11,6 +13,7 @@ import { McpStore } from './mcpStore';
 
 type McpServicesDeps = {
   getDatabase: () => Database.Database;
+  getManager: () => OpenClawEngineManager;
   syncOpenClawConfig: (options: {
     reason: string;
   }) => Promise<{ success: boolean; changed: boolean; error?: string }>;
@@ -37,6 +40,9 @@ export class McpServices {
   }
 
   async probeServer(id: string): Promise<McpProbeResult> {
+    if (id.startsWith('extension:')) {
+      return runExtensionMcpOperation(this.deps.getManager(), 'probe', id);
+    }
     const server = this.getStore().getServer(id);
     if (!server) {
       return {
@@ -52,6 +58,9 @@ export class McpServices {
   }
 
   async readResource(id: string, uri: string): Promise<McpReadResourceResult> {
+    if (id.startsWith('extension:')) {
+      return runExtensionMcpOperation(this.deps.getManager(), 'read', id, uri);
+    }
     const server = this.getStore().getServer(id);
     if (!server) {
       throw new Error('MCP server not found');

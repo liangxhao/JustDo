@@ -129,7 +129,7 @@ describe('parseExtensionMcpInventory', () => {
     ).toMatchObject([{ scope: 'personal', enabled: true }]);
   });
 
-  it('uses the OpenClaw plugin inspection JSON command', async () => {
+  it('reads native MCP metadata without loading the plugin CLI or entry modules', async () => {
     const manager = {
       buildCliEnvironment: vi.fn(async () => ({
         env: {
@@ -140,18 +140,21 @@ describe('parseExtensionMcpInventory', () => {
         openclawEntry: 'openclaw.mjs',
       })),
     } as unknown as OpenClawEngineManager;
-    const commandRunner = vi.fn(async () => ({ stdout: '[]' }));
+    const commandRunner = vi.fn(async () => ({ stdout: 'JUSTDO_EXTENSION_MCP=[]' }));
 
     await expect(discoverExtensionMcpServers(manager, commandRunner)).resolves.toEqual([]);
     expect(commandRunner).toHaveBeenCalledWith(
       'electron-node-runtime',
-      ['openclaw.mjs', 'plugins', 'inspect', '--all', '--json'],
+      ['--input-type=module', '-e', expect.stringContaining('loadPluginManifestRegistryCore')],
       {
         cwd: 'runtime',
         env: {
           OPENCLAW_STATE_DIR: 'state',
           JUSTDO_ELECTRON_PATH: 'electron-node-runtime',
           ELECTRON_RUN_AS_NODE: '1',
+          JUSTDO_EXTENSION_MCP_MODE: 'list',
+          JUSTDO_EXTENSION_MCP_ID: '',
+          JUSTDO_EXTENSION_MCP_URI: '',
         },
       },
     );

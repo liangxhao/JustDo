@@ -4,12 +4,13 @@ import {
   PuzzlePieceIcon,
   SparklesIcon,
 } from '@heroicons/react/24/outline';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 
 import WindowHeader from '@/app/shell/window/WindowHeader';
 import ExtensionsManager from '@/features/plugins/extensions/ExtensionsManager';
 import HookManager from '@/features/plugins/hooks/HookManager';
 import McpManager from '@/features/plugins/mcp/McpManager';
+import { mcpService } from '@/features/plugins/mcp/mcpService';
 import SkillsManager from '@/features/plugins/skills/SkillsManager';
 import { i18nService } from '@/services/i18n';
 import ComposeIcon from '@/shared/components/icons/ComposeIcon';
@@ -60,6 +61,9 @@ const PluginsView: React.FC<PluginsViewProps> = ({
   const [activeTab, setActiveTab] = useState<PluginTab>('extensions');
   const [searchQuery, setSearchQuery] = useState('');
   const [requestedExtensionId, setRequestedExtensionId] = useState<string>();
+  useEffect(() => {
+    void mcpService.loadExtensionServers().catch(() => undefined);
+  }, []);
   const openExtensionDetail = (extensionId: string) => {
     setRequestedExtensionId(extensionId);
     setActiveTab('extensions');

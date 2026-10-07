@@ -18,6 +18,9 @@ export type ExtensionProvidedMcpServer = {
   providerDescription: string;
   enabled: boolean;
   supported: boolean;
+  transportType?: 'stdio' | 'sse' | 'http';
+  /** Native redacted launch summary; never contains environment or headers. */
+  connectionSummary?: string;
   scope?: PluginHubScope;
   management?: PluginManagementCapabilities;
 };

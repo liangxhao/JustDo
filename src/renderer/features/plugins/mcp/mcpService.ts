@@ -9,6 +9,14 @@ import {
 class McpService {
   private servers: McpServerConfig[] = [];
   private initialized = false;
+  private extensionServers: ExtensionProvidedMcpServer[] | null = null;
+  private extensionLoad: Promise<ExtensionProvidedMcpServer[]> | null = null;
+  private extensionGeneration = 0;
+  private watchingExtensions = false;
+
+  getExtensionServers(): ExtensionProvidedMcpServer[] | null {
+    return this.extensionServers;
+  }
 
   async init(): Promise<void> {
     if (this.initialized) return;
@@ -32,13 +40,42 @@ class McpService {
     }
   }
 
-  async loadExtensionServers(): Promise<ExtensionProvidedMcpServer[]> {
+  loadExtensionServers(): Promise<ExtensionProvidedMcpServer[]> {
+    if (!this.watchingExtensions) {
+      this.watchingExtensions = true;
+      window.electron.extensions.onChanged(() => {
+        this.extensionGeneration += 1;
+        this.extensionServers = null;
+        this.extensionLoad = null;
+      });
+    }
+    if (this.extensionLoad) return this.extensionLoad;
+    const generation = this.extensionGeneration;
+    const pending = this.fetchExtensionServers()
+      .then(servers => {
+        if (generation !== this.extensionGeneration) return this.loadExtensionServers();
+        this.extensionServers = servers;
+        return servers;
+      })
+      .catch(error => {
+        if (generation !== this.extensionGeneration) return this.loadExtensionServers();
+        throw error;
+      })
+      .finally(() => {
+        if (this.extensionLoad === pending) this.extensionLoad = null;
+      });
+    this.extensionLoad = pending;
+    return pending;
+  }
+
+  private async fetchExtensionServers(): Promise<ExtensionProvidedMcpServer[]> {
     try {
       const result = await window.electron.mcp.listExtensionServers();
-      return result.success ? (result.extensionServers ?? []) : [];
+      if (!result.success) throw new Error('Failed to load extension-provided MCP servers');
+      return result.extensionServers ?? [];
     } catch (error) {
       console.error('Failed to load extension-provided MCP servers:', error);
-      return [];
+      throw error;
     }
   }
 

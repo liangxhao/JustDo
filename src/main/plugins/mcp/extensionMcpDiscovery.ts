@@ -1,16 +1,7 @@
-import { execFile } from 'child_process';
-import { promisify } from 'util';
-
 import type { ExtensionProvidedMcpServer } from '../../../shared/openclaw/mcp';
 import { getExtensionManagement, PluginHubScope } from '../../../shared/plugins/management';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
-
-const DISCOVERY_TIMEOUT_MS = 30_000;
-const MAX_OUTPUT_CHARS = 4_000_000;
-
-type CommandResult = {
-  stdout: string;
-};
+import { type ExtensionMcpCommandRunner, runExtensionMcpOperation } from './extensionMcpRuntime';
 
 type PluginInspectEntry = {
   plugin?: {
@@ -25,27 +16,8 @@ type PluginInspectEntry = {
   mcpServers?: unknown;
 };
 
-type RunCommand = (
-  executable: string,
-  args: string[],
-  options: { cwd: string; env: NodeJS.ProcessEnv },
-) => Promise<CommandResult>;
-
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
-
-const execFileAsync = promisify(execFile);
-
-const runCommand: RunCommand = async (executable, args, options) => {
-  const result = await execFileAsync(executable, args, {
-    ...options,
-    encoding: 'utf8',
-    maxBuffer: MAX_OUTPUT_CHARS,
-    timeout: DISCOVERY_TIMEOUT_MS,
-    windowsHide: true,
-  });
-  return { stdout: result.stdout };
-};
 
 export const parseExtensionMcpInventory = (value: unknown): ExtensionProvidedMcpServer[] => {
   if (!Array.isArray(value)) return [];
@@ -82,9 +54,18 @@ export const parseExtensionMcpInventory = (value: unknown): ExtensionProvidedMcp
           providerId,
           providerName,
           providerDescription,
-          enabled: plugin.enabled === true && plugin.status !== 'error',
+          enabled:
+            typeof rawServer.enabled === 'boolean'
+              ? rawServer.enabled
+              : plugin.enabled === true && plugin.status !== 'error',
           // Native inspection supports both stdio and HTTP; only this flag means unsupported.
           supported: rawServer.unsupported !== true,
+          ...(['stdio', 'sse', 'http'].includes(String(rawServer.transportType))
+            ? { transportType: rawServer.transportType as 'stdio' | 'sse' | 'http' }
+            : {}),
+          ...(typeof rawServer.connectionSummary === 'string'
+            ? { connectionSummary: rawServer.connectionSummary }
+            : {}),
           scope:
             typeof plugin.origin === 'string'
               ? getExtensionManagement({ origin: plugin.origin }).scope
@@ -97,17 +78,9 @@ export const parseExtensionMcpInventory = (value: unknown): ExtensionProvidedMcp
 
 export const discoverExtensionMcpServers = async (
   manager: OpenClawEngineManager,
-  commandRunner: RunCommand = runCommand,
+  commandRunner?: ExtensionMcpCommandRunner,
 ): Promise<ExtensionProvidedMcpServer[]> => {
-  const cli = await manager.buildCliEnvironment();
-  const electronNodeRuntime = cli.env.JUSTDO_ELECTRON_PATH?.trim() || process.execPath;
-  const result = await commandRunner(
-    electronNodeRuntime,
-    [cli.openclawEntry, 'plugins', 'inspect', '--all', '--json'],
-    {
-      cwd: cli.runtimeRoot,
-      env: { ...cli.env, ELECTRON_RUN_AS_NODE: '1' },
-    },
+  return parseExtensionMcpInventory(
+    await runExtensionMcpOperation(manager, 'list', '', '', commandRunner),
   );
-  return parseExtensionMcpInventory(JSON.parse(result.stdout) as unknown);
 };

@@ -1000,6 +1000,7 @@ const getOpenClawSkillFiles = () => {
 const getMcpServices = (): McpServices => {
   if (!mcpServices) {
     mcpServices = new McpServices({
+      getManager: getOpenClawEngineManager,
       getDatabase: () => getStore().getDatabase(),
       syncOpenClawConfig,
     });

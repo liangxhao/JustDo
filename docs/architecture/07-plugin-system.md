@@ -128,7 +128,7 @@ expectedRevisionHash，按提案序列化并发决定，再调用原生审核 AP
 
 用户 MCP 保存在 mcp_servers。新增、改名、删除和启停通过串行配置同步生成原生 mcp.servers；原生新增的 server 可在列表刷新和非 MCP mutation 同步前导入缺失 name。
 
-Extension 提供的 MCP 从原生 `plugins inspect --all --json` 发现，同时支持 bundle 和原生 openclaw 格式的 manifest 声明。列表展示父扩展的有效启用状态，并按父扩展 origin 分组：bundled 属于系统内置，用户导入的扩展属于用户安装。展示分组不改变管理权限；提供项仍由父扩展管理，不写入用户 MCP Store。
+Extension 提供的 MCP 通过受管子进程直接调用原生 manifest registry、MCP 支持检查及有效配置加载器发现，同时支持 bundle 和原生 openclaw 格式；不加载扩展入口或完整插件 CLI。列表展示父扩展与 server 的有效启用状态，并按父扩展 origin 分组：bundled 属于系统内置，用户导入的扩展属于用户安装。展示分组不改变管理权限；提供项仍由父扩展管理，不写入用户 MCP Store。插件页面预取清单，Renderer 保存可刷新展示快照并合并并发读取；扩展变更通知使快照失效，过期响应不能覆盖新清单。初次读取完成前显示加载状态，不提前显示未安装。
 
 MCP 的传输支持状态使用原生清单的 `unsupported` 标记；`hasStdioTransport: false` 也可能表示受支持的 HTTP 传输，不能据此标记为不支持。
 
@@ -137,6 +137,8 @@ MCP 的传输支持状态使用原生清单的 `unsupported` 标记；`hasStdioT
 请求 timeout 按单 server override 优先于全局默认投影为 requestTimeoutMs；连接建立 timeout 是另一概念。Extension 自带 MCP 的配置由父插件拥有，不套用户 server 的默认设置。
 
 probe/readResource 在 Main 使用真实 transport。HTTP/SSE probe 保持流式响应、禁止自动重定向并使用网络策略；stdio command/env 属于执行输入，敏感值不能进入 UI 诊断或日志。
+
+Extension MCP 卡片提供详情、单项测试和全部测试入口。Main 按完整扩展/server ID 重新读取有效原生配置并核对归属，只连接所选 server；禁用父扩展、禁用 server、错误归属或不受支持项不能启动 transport。保留插件归属映射，但连接配置使用原生 merged MCP 配置，遵守 mcp.servers 同名覆盖与禁用。测试与资源读取使用原生 session MCP runtime，保留路径、cwd、认证和工具筛选语义，并在完成后等待连接清理。UI 只接收原生脱敏连接摘要、统一原生脱敏错误与能力元数据，不接收 env、headers 或原始连接配置；测试不调用工具或修改父插件开关。扩展变更使清单、测试和资源读取的旧回应失效；加载失败不声明空清单，搜索与重复测试期间仍显示不受减少动画设置影响的旋转指示。
 
 ## 5. Hook：文件、数据库与配置共同提交
 
