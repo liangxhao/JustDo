@@ -52,6 +52,7 @@ import {
   mergeManagedOpenClawSubagentConfig,
   mergeManagedOpenClawSwarmConfig,
   mergeManagedOptionalToolPolicy,
+  mergeManagedPortalToolDeny,
   mergeOpenClawPluginConfig,
   mergeOpenClawSkillConfig,
   OPENCLAW_FALLBACK_EXEC_MODE,
@@ -1163,6 +1164,7 @@ export class OpenClawConfigSync {
                   tools: {
                     ...existingTools,
                     ...mergeManagedOptionalToolPolicy(existingTools),
+                    deny: mergeManagedPortalToolDeny(existingTools.deny),
                     sessions: connectivityTools.sessions,
                     codeMode: mergeManagedOpenClawCodeModeConfig(
                       existingTools.codeMode,

@@ -562,6 +562,7 @@ describe('OpenClaw managed connectivity config', () => {
           'dir_list',
           'dir_fetch',
           'file_write',
+          'portal',
         ],
         web: {
           search: {

@@ -385,6 +385,17 @@ export const removeRetiredManagedToolDenyEntries = (
   return deny.length === tools.deny.length ? tools : { ...tools, deny };
 };
 
+export const OPENCLAW_PORTAL_TOOL_NAME = 'portal';
+
+export const mergeManagedPortalToolDeny = (existing: unknown): string[] => [
+  ...new Set([
+    ...(Array.isArray(existing)
+      ? existing.filter((value): value is string => typeof value === 'string')
+      : []),
+    OPENCLAW_PORTAL_TOOL_NAME,
+  ]),
+];
+
 export const containsBuiltinModelRef = (value: unknown): boolean => {
   if (typeof value === 'string') {
     return (
@@ -1062,6 +1073,9 @@ export const buildAuthScopedOpenClawConfig = (
     tools: {
       ...removeRetiredManagedToolDenyEntries(existingTools ?? {}),
       ...mergeManagedOptionalToolPolicy(existingTools),
+      deny: mergeManagedPortalToolDeny(
+        removeRetiredManagedToolDenyEntries(existingTools ?? {}).deny,
+      ),
       ...(isRecord(managedConfig.tools) && isRecord(managedConfig.tools.codeMode)
         ? {
             codeMode: {
@@ -1642,7 +1656,8 @@ export const buildManagedOpenClawConnectivityConfig = (
     sessions: {
       visibility: sessionVisibility,
     },
-    deny: [
+    // Portal presentation is not integrated into the product UI.
+    deny: mergeManagedPortalToolDeny([
       'ask_user',
       'web_search',
       'message',
@@ -1652,7 +1667,7 @@ export const buildManagedOpenClawConnectivityConfig = (
       'dir_list',
       'dir_fetch',
       'file_write',
-    ],
+    ]),
     web: {
       search: {
         enabled: false,

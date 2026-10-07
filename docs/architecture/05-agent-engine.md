@@ -76,6 +76,11 @@ Windows Gateway 子进程通过专用 Node IPC 接收退出请求，宿主注入
 
 产品配置来自 app_config、cowork_config、agents、MCP/Hook Store、Extension 开关与受管文件。ConfigSync 构建原生投影，ConfigSyncService 在串行 mutation 中应用并验证。
 
+产品暂未接入 OpenClaw Portals 展示流程，配置同步始终在全局 `tools.deny` 中加入
+`portal`，覆盖完整配置、无模型配置及登录/退出同步，并保留其他显式工具限制。
+该策略禁止 Agent 使用门户工具；它不关闭原生门户服务或具有管理权限的
+`portal.open` 接口，也不关闭整个 OpenClaw Control UI。已有门户在 Gateway 重启时结束。
+
 配置同步只更新受管的 `meta.lastTouchedVersion` 并删除不再支持的 `lastTouchedAt`，保留 Gateway 写入的 `meta.migrations` 等原生元数据。完整配置、最小配置及认证切换都遵循这一规则，避免抹掉迁移回执后让 Gateway 再次写入并触发无意义重载。
 
 ```mermaid

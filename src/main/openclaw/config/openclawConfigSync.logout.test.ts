@@ -128,6 +128,65 @@ afterEach(() => {
   }
 });
 
+test.each(['full', 'minimal'])(
+  '%s sync disables portals across startup and auth changes while preserving other denies',
+  mode => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-portal-policy-'));
+    temporaryDirectories.push(stateDir);
+    const configPath = path.join(stateDir, 'openclaw.json');
+    const appConfig =
+      mode === 'full'
+        ? {
+            model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
+            providers: {
+              'custom-provider': {
+                enabled: true,
+                apiKey: 'chat-test-key',
+                baseUrl: 'https://custom.example.test/v1',
+                apiFormat: 'openai',
+                models: [{ id: 'custom-model' }],
+              },
+            },
+          }
+        : {};
+    setStoreGetter(() => ({ get: () => appConfig }) as never);
+    const sync = new OpenClawConfigSync({
+      engineManager: {
+        getConfigPath: () => configPath,
+        getStateDir: () => stateDir,
+        getDesiredVersion: () => '2026.9.8',
+      },
+      getCoworkConfig: () => ({
+        workingDirectory: '',
+        executionMode: 'local',
+        agentEngine: 'openclaw',
+      }),
+      getAgents: () => [],
+    } as never);
+
+    expect(sync.sync('startup').ok).toBe(true);
+    expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).tools.deny).toContain('portal');
+
+    for (const reason of [
+      'startup',
+      'app-config-change',
+      BuiltinModelSyncReason.AuthLogin,
+      BuiltinModelSyncReason.AuthLogout,
+    ]) {
+      const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      existing.tools.allow = ['read', 'portal'];
+      delete existing.tools.alsoAllow;
+      existing.tools.deny = ['custom-denied-tool'];
+      fs.writeFileSync(configPath, JSON.stringify(existing), 'utf8');
+
+      expect(sync.sync(reason).ok).toBe(true);
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      expect(config.tools.deny).toEqual(expect.arrayContaining(['custom-denied-tool', 'portal']));
+      expect(config.tools.deny.filter((name: string) => name === 'portal')).toHaveLength(1);
+    }
+  },
+);
+
 test.each([
   ['full', undefined], ['full', false], ['full', true],
   ['minimal', undefined], ['minimal', false], ['minimal', true],
@@ -1359,6 +1418,7 @@ describe('OpenClaw auth logout config sync', () => {
     });
     expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).tools.deny).toEqual([
       'custom-denied-tool',
+      'portal',
     ]);
   });
 
@@ -1486,6 +1546,7 @@ describe('OpenClaw auth logout config sync', () => {
     });
     expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).tools.deny).toEqual([
       'custom-denied-tool',
+      'portal',
     ]);
   });
 
