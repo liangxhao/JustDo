@@ -96,7 +96,7 @@ sessions.describe 可显示 queued/running/startedAt 和最新终态，但并非
 
 首版不暗开 sandbox：只接受父项目已核验材料，生成内容身份冻结的输入快照和每项独立工作区，结果按输入/尝试/run/路径/size/hash 服务核验后发布。共享项目写入继续排他。读清单的插件 service 不自动继承 fsPolicy；枚举前后与提交前须检查父身份/准入，不把 Node fs 能读视为会话已授权。
 
-内部业务状态不能授予用户项目写权限。最终实施把输入快照与本项工作区均置于父已授权项目的 `.justdo-tasks/swarm` 下，创建前核验真实根及写权限；stateDir 仅保存工作流业务数据库。只读父会话不能通过服务发布文件报告。要求文件结果却无法取得有效写权限的批次，在启动前拒绝。
+内部业务状态不能授予用户项目写权限。最终实施把输入快照与本项工作区统一置于父已授权项目的 `.agent-tasks/swarm` 下，创建前核验真实根及写权限；不提供旧 Swarm 目录的兼容或迁移，stateDir 仅保存工作流业务数据库。只读父会话不能通过服务发布文件报告。要求文件结果却无法取得有效写权限的批次，在启动前拒绝。
 
 证据：`../openclaw/src/plugins/plugin-registration.types.ts:370`、`src/plugins/services.ts:554`、`src/plugin-sdk/file-access-runtime.ts:16`；另一个插件显式消费 tool ctx.fsPolicy，见 `openclaw-extensions/stt-local-cli/index.ts:37`。
 

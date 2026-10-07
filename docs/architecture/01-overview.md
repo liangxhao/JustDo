@@ -84,7 +84,7 @@ sequenceDiagram
 
 `package.json.name=justdo` 是稳定内部 ID，`productName` 是外部名称。`src/shared/productMetadata.ts` 与打包配置派生 UI、安装器、`<appData>/<productName>`、默认 `~/<productName lowercase>/project` 及 `com.<productName lowercase>.app`。
 
-改变小写归一化后的产品名会形成不同 OS 应用身份，旧品牌目录不自动迁移。内部协议与标识 `justdo://`、`justdo.sqlite`、`JUSTDO_*`、`.justdo-tasks`、`--justdo-*`、`<justdo-chat>` 不随品牌改名。产品名只允许 1–64 个英文字母；用户选择的安装或项目路径允许中文和空格。
+改变小写归一化后的产品名会形成不同 OS 应用身份，旧品牌目录不自动迁移。内部协议与标识 `justdo://`、`justdo.sqlite`、`JUSTDO_*`、`--justdo-*`、`<justdo-chat>` 不随品牌改名。项目内任务产物统一使用与品牌无关的固定目录 `.agent-tasks/`，浏览器产物与 Swarm 批次各自使用子目录。产品名只允许 1–64 个英文字母；用户选择的安装或项目路径允许中文和空格。
 
 ## 7. 修改前的检查点
 

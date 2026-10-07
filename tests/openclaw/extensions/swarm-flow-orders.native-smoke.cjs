@@ -191,8 +191,16 @@ async function connect() {
     try {
       const saved = JSON.parse(db.prepare('SELECT payload FROM flows WHERE id=?').get(done.id).payload);
       assert.equal(saved.nodes.find(node => node.id === 'plan').planningRepair.passes, 1);
+      const batchRoot = path.join(project, '.agent-tasks', 'swarm', done.id, 'task-2');
+      assert.equal(path.dirname(path.dirname(saved.nodes.find(node => node.id === 'task-2').batchInput.manifestPath)), batchRoot);
       const rows = db.prepare('SELECT payload FROM batch_items WHERE flow_id=?').all(done.id).map(row => JSON.parse(row.payload));
       assert.equal(rows.length, 12); assert.ok(rows.every(row => row.status === 'done' && row.attempt === 1 && row.cleanupSettled && row.artifacts.artifacts.length === 1));
+      for (const row of rows) {
+        assert.equal(row.batchItem.workspace, path.join(batchRoot, row.id, 'attempt-1'));
+        assert.equal(row.artifacts.artifacts[0].path, path.join(row.batchItem.workspace, 'output', 'result.json'));
+      }
+      assert.equal(fs.existsSync(path.join(project, '.justdo-tasks')), false);
+      assert.equal(fs.existsSync(path.join(project, '.swarm-tasks')), false);
       assert.equal(db.prepare('SELECT count(*) AS count FROM execution_leases').get().count, 0);
     } finally { db.close(); }
     const history = await rpc('chat.history', { sessionKey: parentKey, limit: 8 });

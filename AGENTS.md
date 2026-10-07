@@ -29,9 +29,11 @@ tasks through OpenClaw Gateway, with durable state in SQLite and bundled skills.
 - `appId` is derived as `com.<productName lowercase>.app`; changing the
   lowercase-normalized name intentionally creates a separate OS application
   identity. Case-only changes retain the existing identity.
-- Never rename `justdo://`, `justdo.sqlite`, `JUSTDO_*`, `.justdo-tasks`,
+- Never rename `justdo://`, `justdo.sqlite`, `JUSTDO_*`,
   `--justdo-*`, `<justdo-chat>`, provider/export IDs, or source symbols/files.
   `author.name` is separate publisher metadata.
+- Project task artifacts use the fixed, product-neutral `.agent-tasks/` root;
+  keep browser output and Swarm batches under their respective subdirectories.
 
 ## Commands
 
@@ -377,6 +379,8 @@ the durable DAG and stage results in stateDir/swarm-flow/flows.sqlite. It uses
 plugin-owned native execution sessions, not forged spawnedBy relationships.
 Do not duplicate transcripts or retry uncertain launches. No Workboard/agent-team
 dependency; Workboard defaults off, preserving explicit user choices for both plugins.
+Batch snapshots and attempts use the parent project's `.agent-tasks/swarm/`;
+do not add compatibility or migration for the old Swarm directory layout.
 See `docs/features/swarm-visual-workflow.md`.
 
 Local audio attachment transcription is the `openclaw-extensions/stt-local-cli`

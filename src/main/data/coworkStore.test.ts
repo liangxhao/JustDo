@@ -12,6 +12,7 @@ vi.mock('electron', () => ({
 // Now import the class under test
 // ---------------------------------------------------------------------------
 import BetterSqlite3 from 'better-sqlite3';
+import path from 'path';
 
 import { createDefaultAgentRuntimeSettings } from '../../shared/openclaw/agentRuntimeSettings';
 import { createDefaultExternalAgentSettings } from '../../shared/openclaw/externalAgents';
@@ -128,6 +129,31 @@ test('sessions do not expose a local transcript cache', () => {
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'cowork_messages'")
       .get(),
   ).toBeUndefined();
+});
+
+test('groups Swarm and browser artifact workspaces under their parent project in recent directories', () => {
+  const project = path.resolve('测试项目');
+  const other = path.resolve('other-project');
+  const lookalike = path.join(project, '.agent-tasks-extra', 'notes');
+  const entries = [
+    { cwd: project, updatedAt: 1000 },
+    { cwd: other, updatedAt: 2000 },
+    {
+      cwd: path.join(project, '.agent-tasks', 'swarm', 'flow', 'batch', 'item', 'attempt-1'),
+      updatedAt: 3000,
+    },
+    { cwd: path.join(project, '.agent-tasks', 'browser-artifacts'), updatedAt: 4000 },
+    { cwd: lookalike, updatedAt: 5000 },
+  ];
+  for (const entry of entries) {
+    const session = store.createSession('Workspace', entry.cwd);
+    db.prepare('UPDATE cowork_sessions SET updated_at=? WHERE id=?').run(
+      entry.updatedAt,
+      session.id,
+    );
+  }
+
+  expect(store.listRecentCwds()).toEqual([lookalike, project, other]);
 });
 
 test('persists fork provenance, follows a live source title, and keeps a snapshot after deletion', () => {

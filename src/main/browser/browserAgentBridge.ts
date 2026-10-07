@@ -21,6 +21,7 @@ import {
   type BrowserInterventionResult,
 } from '../../shared/browser/browserIntervention';
 import { BrowserRecordingChannel } from '../../shared/browser/browserRecording';
+import { TASK_WORKSPACE_DIRECTORY } from '../../shared/cowork/taskWorkspace';
 import { t } from '../core/i18n';
 import { registerBrowserProxySession } from '../core/network/systemProxyPreference';
 import * as browserAgentActions from './browserAgentActions';
@@ -2120,7 +2121,7 @@ export class BrowserAgentBridge {
     const workspaceReal = fs.realpathSync(workspace);
     const candidate = requestedPath?.trim()
       ? path.resolve(workspaceReal, requestedPath)
-      : path.join(workspaceReal, '.justdo-tasks', 'browser-artifacts', defaultName);
+      : path.join(workspaceReal, TASK_WORKSPACE_DIRECTORY, 'browser-artifacts', defaultName);
     const lexicalRelative = path.relative(workspaceReal, candidate);
     if (
       lexicalRelative.startsWith('..') ||

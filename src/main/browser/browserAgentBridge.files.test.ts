@@ -254,6 +254,37 @@ test('rejects an output path outside the workspace without creating its parent d
   expect(fs.existsSync(outsideDirectory)).toBe(false);
 });
 
+test('exports PDFs to the shared task artifact directory when no path is specified', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'browser-default-pdf-'));
+  temporaryRoots.push(workspace);
+  const pdf = Buffer.from('pdf');
+  bridge = new BrowserAgentBridge(
+    vi.fn(),
+    () => true,
+    () => workspace,
+  );
+  bridge.registerIpc();
+  electron.guests.set(7, {
+    getType: () => 'webview',
+    isDestroyed: () => false,
+    session: electron.partition,
+    hostWebContents: { id: 10 },
+    getURL: () => 'https://example.com/',
+    printToPDF: vi.fn().mockResolvedValue(pdf),
+  });
+  registerGuest(7);
+
+  const result = (await bridge.executeCommand('justdo:session-1', { action: 'pdf' })) as {
+    details: { path: string };
+  };
+
+  expect(path.dirname(result.details.path)).toBe(
+    path.join(fs.realpathSync(workspace), '.agent-tasks', 'browser-artifacts'),
+  );
+  expect(fs.readFileSync(result.details.path)).toEqual(pdf);
+  expect(fs.existsSync(path.join(workspace, '.justdo-tasks'))).toBe(false);
+});
+
 test('disarms a paths-only upload after its bounded wait expires', async () => {
   vi.useFakeTimers();
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-browser-upload-'));
@@ -380,7 +411,9 @@ test('captures downloads triggered by normal act clicks in the task workspace', 
   expect(result.details.downloads[0]?.url).toBe(
     'https://example.com/report.pdf?access_token=%5BREDACTED%5D',
   );
-  expect(result.details.downloads[0]?.path.startsWith(temporaryRoot)).toBe(true);
+  expect(path.dirname(result.details.downloads[0]!.path)).toBe(
+    path.join(fs.realpathSync(temporaryRoot), '.agent-tasks', 'browser-artifacts'),
+  );
 });
 
 test('tracks the action network lifecycle until a delayed download response starts', async () => {

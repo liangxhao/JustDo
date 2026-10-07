@@ -16,6 +16,8 @@ import { inside, assertFilesystemAdmission } from './filesystem-admission.js';
 import { swarmSettings } from './settings.js';
 
 type Root = Awaited<ReturnType<typeof import('openclaw/plugin-sdk/file-access-runtime').root>>;
+// Keep this standalone plugin's directory contract aligned with taskWorkspace.ts.
+const TASK_WORKSPACE_DIRECTORY = '.agent-tasks';
 const digest = (text: string) => createHash('sha256').update(text).digest('hex');
 async function* boundedLines(handle: FileHandle, guard: () => void): AsyncGenerator<string> {
   let pending = Buffer.alloc(0);
@@ -88,7 +90,8 @@ const ownedPath = (relative: string): boolean =>
     .split(path.sep)
     .some(
       segment =>
-        (process.platform === 'win32' ? segment.toLowerCase() : segment) === '.justdo-tasks',
+        (process.platform === 'win32' ? segment.toLowerCase() : segment) ===
+        TASK_WORKSPACE_DIRECTORY,
     );
 
 /** Freeze before expanding the queue. Every host operation is fenced by the
@@ -125,7 +128,7 @@ export async function freezeBatch(
     (settings.snapshotBudgetMiB * 1024 * 1024) / (settings.maxAttempts + 1),
   );
   const originalBudget = remaining;
-  const stageRoot = path.join('.justdo-tasks', 'swarm', flow.id, stage.id);
+  const stageRoot = path.join(TASK_WORKSPACE_DIRECTORY, 'swarm', flow.id, stage.id);
   // Failed freezes are retained: mkdir has no creation receipt that authorizes
   // deleting a directory another actor may have replaced. Charge retained
   // snapshots to the same budget so retries cannot accumulate unlimited copies.
@@ -168,13 +171,7 @@ export async function freezeBatch(
   };
   if ((await freeBytes()) < remaining * (settings.maxAttempts + 1))
     throw new Error('Insufficient free disk space for the snapshot and permitted attempts.');
-  const relativeRoot = path.join(
-    '.justdo-tasks',
-    'swarm',
-    flow.id,
-    stage.id,
-    'snapshot-' + randomUUID(),
-  );
+  const relativeRoot = path.join(stageRoot, 'snapshot-' + randomUUID());
   await scope.mkdir(relativeRoot, { recursive: true });
   try {
     guard();
@@ -372,7 +369,7 @@ export async function freezeBatch(
 export const itemWorkspace = (flow: Flow, node: FlowNode): string =>
   path.join(
     flow.cwd,
-    '.justdo-tasks',
+    TASK_WORKSPACE_DIRECTORY,
     'swarm',
     flow.id,
     node.batchItem!.stageId,
@@ -403,7 +400,11 @@ export async function readBatchManifest(
   guard();
   if (path.relative(flow.filesystemAdmission.root, scope.rootReal) !== '')
     throw new Error('Project root changed.');
-  if (!inside(scope.rootReal, stage.batchInput.manifestPath))
+  if (
+    !inside(scope.rootReal, stage.batchInput.manifestPath) ||
+    path.dirname(path.dirname(stage.batchInput.manifestPath)) !==
+      path.join(scope.rootReal, TASK_WORKSPACE_DIRECTORY, 'swarm', flow.id, stage.id)
+  )
     throw new Error('Invalid batch manifest path.');
   const manifest = (await scope.readJson(
     path.relative(scope.rootReal, stage.batchInput.manifestPath),

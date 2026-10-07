@@ -24,6 +24,7 @@ import type {
   SessionRunState,
   SessionRunTiming,
 } from '../../shared/cowork/sessionRun';
+import { TASK_WORKSPACE_DIRECTORY } from '../../shared/cowork/taskWorkspace';
 import type {
   ExternalSessionMetadata,
   ExternalSessionStatus,
@@ -55,14 +56,13 @@ const getDefaultWorkingDirectory = (): string => {
   return path.join(os.homedir(), DEFAULT_WORKSPACE_DIRECTORY_NAME, 'project');
 };
 
-const TASK_WORKSPACE_CONTAINER_DIR = '.justdo-tasks';
 const GOAL_EXECUTION_CONFIG_PREFIX = 'goalExecution:';
 const AGENT_RUNTIME_SETTINGS_CONFIG_KEY = 'agentRuntimeSettings:v1';
 const EXTERNAL_AGENT_SETTINGS_CONFIG_KEY = 'externalAgentSettings:v1';
 
 const normalizeRecentWorkspacePath = (cwd: string): string => {
   const resolved = path.resolve(cwd);
-  const marker = `${path.sep}${TASK_WORKSPACE_CONTAINER_DIR}${path.sep}`;
+  const marker = `${path.sep}${TASK_WORKSPACE_DIRECTORY}${path.sep}`;
   const markerIndex = resolved.lastIndexOf(marker);
   if (markerIndex > 0) {
     return resolved.slice(0, markerIndex);
