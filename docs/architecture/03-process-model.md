@@ -143,6 +143,71 @@ Main 先检查产品会话仍存在，再用 `sessions.describe` 读取精确原
 
 停止回执与运行状态更新可以先后到达。Renderer 在介入 `stopping` 且 `stopConfirmed=false` 时每两秒复查会话及子任务的权威运行状态，并等待待发送任务取消完成；确认空闲后以原 token 补交停止确认。Main 分别保留停止确认和原始浏览器动作收尾状态，后者未完成时继续阻止人工交互。面板重新打开会恢复核对，过期异步结果不能更新新介入，不自动重发停止或继续请求。
 
+## 共享终端 IPC
+
+终端面板的 xterm 仍由 Renderer 渲染；`terminal:create/write/resize/close`
+通过 preload 调用 Main 的受限终端服务。Main 只保存标签、窗口所有权、原生
+PTY ID、连接身份和输出偏移，不再创建或持有 node-pty 进程。OpenClaw Gateway
+统一拥有终端进程、输出环形缓冲区和助手共享权限。
+
+```mermaid
+flowchart LR
+  UI[终端面板 xterm] --> IPC[Preload / Main 终端服务]
+  IPC -->|terminal.open/input/resize/close| G[Gateway 原生终端管理器]
+  G -->|terminal.data/exit| IPC
+  IPC --> UI
+  Tool[助手 terminal 工具] --> G
+  G --> PTY[原生 Shell / PTY]
+```
+
+聊天中创建终端时，Renderer 仅提供产品会话 ID；Main 从产品会话读取工程目录
+和助手身份，准备原生会话并将 canonical sessionKey 传给 `terminal.open`。
+绑定由 Gateway 核对原生 session ID，助手的 `terminal.list/read/input` 使用同一
+PTY。首页终端归属操作连接，不创建聊天；首页已有终端随工作区延续时保留该
+归属，进入聊天后新建的终端才共享给该聊天的助手。切换聊天或助手不会转移
+既有终端归属。用户输入走 operator RPC，助手输入仍走原生执行策略和审批。
+
+Gateway 连接替换后，只通过 `terminal.attach` 接回仍存活的已知 PTY，重播原生缓冲区；
+输出偏移用于去重和发现缺口，补齐期间的并发输出使用有界临时队列。Renderer
+重绘历史输出期间抑制 xterm 的自动输入，避免重新回答历史控制查询。终端或
+Gateway 进程丢失时显示本地化提示，不创建替代进程，不自动重发未知结果的
+输入。标签关闭、窗口销毁和创建途中取消结束对应的原生 PTY；暂时断线时保留
+关闭意图，接回同一 PTY 后完成关闭。Main 不保存终端输出到 SQLite。
+
+创建回复前的事件队列溢出时，首次显示也通过原生 `terminal.attach` 获取权威快照，
+避免没有后续输出可暴露缺口时遗漏唯一输出或退出状态。旧连接迟到的请求失败不能
+覆盖新连接的恢复状态。标签卸载在保留 StrictMode 的一任务延迟后立即取消创建；
+已有原生 PTY 的关闭超时保留其身份和关闭意图，不将未知结果视为进程已结束。
+
+原生 Gateway 仍控制断线时的进程保留：尚未交互/采用的聊天终端可能被清理，
+首页终端受原生 detachedSessionTimeoutSeconds 配置约束；Gateway 重启会结束全部
+PTY。附着失败会提示终端不可用，需要用户新开标签，不会自动创建替代终端。
+
+当前原生接口缺少指定工程目录/PowerShell 参数和明确结束已共享 PTY的能力，
+由当前版本补丁 036 补齐 operator.admin 的 launch 和 terminate 参数。沙箱全隔离
+会话仍由原生终端策略拒绝，不通过主进程另建宿主终端绕过它。构建契约见
+[运行时补丁总账](../../scripts/patches/v2026.9.8/README.md)。
+
+### 多个终端的选择歧义
+
+状态：已知限制，待处理。
+
+同一聊天可以拥有多个共享终端。OpenClaw 原生 `terminal` 工具不能创建终端；
+它通过 `action=list` 返回当前原生会话所属、仍存活的终端，按创建时间升序排列，
+随后以明确的原生 `sessionId` 执行 read/input/resize/close。列表顺序不代表默认
+操作对象，也不会自动选择最新终端或当前可见标签。其他聊天和首页连接所属的
+终端不在该聊天助手的列表中。
+
+当前接入沿用原生机制：列表包含终端 ID、目录、Shell、创建时间等信息，助手
+可以读取输出辅助判断；侧边栏的标签名称和选中状态没有传给助手。原生 Control UI
+同样只在界面中保存标签选择。因此，多个终端使用相同目录和 Shell 时，用户说
+“操作当前选中的终端”或“操作终端 2”，助手无法可靠地将其对应到具体 PTY。
+
+后续需要建立用户可见标签与原生终端 ID 的明确关联，并在用户指定终端或发送
+相关请求时携带选定对象。具体交互和协议尚未实现；设计需明确选择的捕获时点，
+在执行前核对原生会话与终端归属，标签关闭或会话变化后提示重新选择，避免
+将原目标静默替换为另一终端。继续保留原生会话隔离与输入审批。
+
 ## 工作区审阅 IPC
 
 `cowork:sessionReview:load` 和 `cowork:sessionReview:file` 由主窗口 preload 的

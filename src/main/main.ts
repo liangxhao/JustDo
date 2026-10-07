@@ -1678,7 +1678,17 @@ if (multicaBridgeArgv) {
         : getCoworkStore().getSession(sessionId)?.cwd,
   });
   registerTerminalHandlers({
-    buildEnvironment: async () => (await getOpenClawEngineManager().buildCliEnvironment()).env,
+    ensureRunning: async () => {
+      const status = await ensureOpenClawRunningForCowork();
+      if (status.phase !== 'running') throw new Error(status.message || 'OpenClaw is unavailable');
+    },
+    getRuntime: () => {
+      getCoworkEngineService();
+      const runtime = getOpenClawRuntimeAdapter();
+      if (!runtime) throw new Error('OpenClaw is unavailable');
+      return runtime;
+    },
+    getSession: id => getCoworkStore().getSession(id),
   });
 
   // 创建主窗口

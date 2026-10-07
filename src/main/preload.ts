@@ -25,6 +25,7 @@ import {
   type TerminalExitEvent,
   TerminalIpc,
   type TerminalResizeRequest,
+  type TerminalStatusEvent,
   type TerminalWriteRequest,
 } from '../shared/app/terminal';
 import {
@@ -486,6 +487,12 @@ contextBridge.exposeInMainWorld('electron', {
     resize: (request: TerminalResizeRequest): Promise<TerminalActionResult> =>
       ipcRenderer.invoke(TerminalIpc.Resize, request),
     close: (id: string): Promise<TerminalActionResult> => ipcRenderer.invoke(TerminalIpc.Close, id),
+    onStatus: (callback: (event: TerminalStatusEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: TerminalStatusEvent) =>
+        callback(data);
+      ipcRenderer.on(TerminalIpc.Status, handler);
+      return () => ipcRenderer.removeListener(TerminalIpc.Status, handler);
+    },
     onData: (callback: (event: TerminalDataEvent) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, data: TerminalDataEvent) =>
         callback(data);

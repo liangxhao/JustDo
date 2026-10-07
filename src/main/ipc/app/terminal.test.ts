@@ -1,268 +1,395 @@
+import { EventEmitter } from 'node:events';
+
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => {
-  const handlers = new Map<string, (...args: unknown[]) => unknown>();
-  let dataListener: ((data: string) => void) | undefined;
-  let exitListener: ((event: { exitCode: number }) => void) | undefined;
-  const terminalProcess = {
-    kill: vi.fn(),
-    onData: vi.fn((listener: (data: string) => void) => {
-      dataListener = listener;
-      return { dispose: vi.fn() };
-    }),
-    onExit: vi.fn((listener: (event: { exitCode: number }) => void) => {
-      exitListener = listener;
-      return { dispose: vi.fn() };
-    }),
-    resize: vi.fn(),
-    write: vi.fn(),
-  };
-  return {
-    handlers,
-    ipcMain: {
-      handle: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
-        handlers.set(channel, handler);
-      }),
-    },
-    spawn: vi.fn(() => terminalProcess),
-    terminalProcess,
-    emitData: (data: string) => dataListener?.(data),
-    emitExit: (exitCode: number) => exitListener?.({ exitCode }),
-  };
-});
+const mocks = vi.hoisted(() => ({
+  handlers: new Map<string, (...args: unknown[]) => Promise<unknown>>(),
+  stat: vi.fn(async () => ({ isDirectory: () => true })),
+}));
+vi.mock('electron', () => ({
+  ipcMain: {
+    handle: (channel: string, handler: (...args: unknown[]) => Promise<unknown>) =>
+      mocks.handlers.set(channel, handler),
+  },
+}));
+vi.mock('node:fs/promises', () => ({ default: { stat: mocks.stat } }));
 
-vi.mock('electron', () => ({ ipcMain: mocks.ipcMain }));
-vi.mock('node-pty', () => ({ spawn: mocks.spawn }));
+import { TerminalGateway, TerminalIpc } from '../../../shared/app/terminal';
+import { registerTerminalHandlers, type TerminalHandlerDependencies } from './terminal';
 
-import { TerminalIpc } from '../../../shared/app/terminal';
-import { registerTerminalHandlers } from './terminal';
-
-describe('terminal IPC', () => {
-  const sender = {
-    id: 7,
-    isDestroyed: vi.fn(() => false),
-    once: vi.fn(),
-    send: vi.fn(),
-  };
-  const event = { sender };
-  const buildEnvironment = vi.fn(async () => ({
-    PATH: process.env.PATH,
-    NO_COLOR: '1',
-    Force_Color: '0',
-    OPENCLAW_STATE_DIR: 'C:\\state',
-    JUSTDO_OPENCLAW_ENTRY: 'C:/runtime/gateway.asar/openclaw.mjs',
-  }));
-
-  beforeEach(() => {
-    mocks.handlers.clear();
-    vi.clearAllMocks();
-    sender.isDestroyed.mockReturnValue(false);
-    registerTerminalHandlers({ buildEnvironment });
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((yes, no) => {
+    resolve = yes;
+    reject = no;
   });
-
-  it('creates an owned PTY in the requested project directory and forwards data', async () => {
-    const id = `terminal:test-${crypto.randomUUID()}`;
-    const result = await mocks.handlers.get(TerminalIpc.Create)?.(event, {
-      id,
+  return { promise, resolve, reject };
+}
+function harness() {
+  const events = new EventEmitter();
+  const sender = { id: 7, send: vi.fn(), once: vi.fn(), isDestroyed: vi.fn(() => false) };
+  const request = vi.fn(async (method: string, _params?: unknown): Promise<unknown> => {
+    if (method === TerminalGateway.Open)
+      return { sessionId: 'native-terminal-1', cwd: process.cwd() };
+    if (method === TerminalGateway.Attach)
+      return { sessionId: 'native-terminal-1', cwd: process.cwd(), buffer: 'ready', seq: 5 };
+    return { ok: true };
+  });
+  let client = { request };
+  let session: { cwd: string; agentId: string } | null = {
+    cwd: process.cwd(),
+    agentId: 'designer',
+  };
+  const runtime = {
+    on: events.on.bind(events),
+    getGatewayClient: () => client,
+    connectGatewayIfNeeded: vi.fn(async () => undefined),
+    prepareSession: vi.fn(async () => ({
+      sessionKey: 'agent:designer:justdo:chat-1',
+      gatewaySessionId: 'native-chat-1',
+    })),
+  };
+  const deps = {
+    getRuntime: () => runtime,
+    ensureRunning: vi.fn(async () => undefined),
+    getSession: vi.fn(() => session),
+  } as unknown as TerminalHandlerDependencies;
+  registerTerminalHandlers(deps);
+  const call = (channel: string, value: unknown, owner = sender) =>
+    mocks.handlers.get(channel)!({ sender: owner }, value);
+  const open = (extra: object = {}) =>
+    call(TerminalIpc.Create, {
+      id: 'terminal:test',
       cwd: process.cwd(),
       cols: 100,
       rows: 30,
+      sessionId: 'chat-1',
+      ...extra,
     });
+  const emit = (event: string, payload: object) => events.emit('gatewayEvent', { event, payload });
+  return {
+    sender,
+    request,
+    runtime,
+    deps,
+    call,
+    open,
+    emit,
+    events,
+    setClient: (next: typeof client) => {
+      client = next;
+    },
+    setSession: (next: typeof session) => {
+      session = next;
+    },
+  };
+}
 
-    expect(result).toEqual({ success: true, cwd: process.cwd() });
-    expect(mocks.spawn).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.any(Array),
+describe('Gateway terminal IPC', () => {
+  beforeEach(() => {
+    mocks.handlers.clear();
+    mocks.stat.mockResolvedValue({ isDirectory: () => true });
+  });
+
+  it('opens a terminal in the authoritative chat project and routes both human input and native output', async () => {
+    const h = harness();
+    expect(await h.open({ cwd: 'C:/untrusted-renderer-path' })).toEqual({
+      success: true,
+      cwd: process.cwd(),
+    });
+    expect(h.runtime.prepareSession).toHaveBeenCalledWith('chat-1');
+    expect(h.request).toHaveBeenCalledWith(
+      TerminalGateway.Open,
       expect.objectContaining({
+        sessionKey: 'agent:designer:justdo:chat-1',
+        agentId: 'designer',
         cwd: process.cwd(),
         cols: 100,
         rows: 30,
-        env: expect.objectContaining({
-          OPENCLAW_STATE_DIR: 'C:\\state',
-          JUSTDO_OPENCLAW_ENTRY: 'C:/runtime/gateway.asar/openclaw.mjs',
-          COLORTERM: 'truecolor',
-          TERM: 'xterm-256color',
-          TERM_PROGRAM: 'xterm.js',
-        }),
       }),
     );
-    const spawnedEnvironment = mocks.spawn.mock.calls[0]?.[2]?.env as Record<string, string>;
-    expect(Object.keys(spawnedEnvironment).map(key => key.toUpperCase())).not.toContain('NO_COLOR');
-    expect(Object.keys(spawnedEnvironment).map(key => key.toUpperCase())).not.toContain(
-      'FORCE_COLOR',
-    );
-    expect(buildEnvironment).toHaveBeenCalledOnce();
+    const launch = h.request.mock.calls.find(([method]) => method === TerminalGateway.Open)![1] as {
+      shell: string;
+      args: string[];
+    };
     if (process.platform === 'win32') {
-      expect(String(mocks.spawn.mock.calls[0]?.[0]).toLowerCase()).toContain('powershell');
-      expect(mocks.spawn.mock.calls[0]?.[1]).toEqual([
-        '-NoLogo',
-        '-NoExit',
-        '-Command',
-        expect.stringContaining('UTF8Encoding'),
-      ]);
+      expect(launch.shell).toMatch(/(?:powershell|pwsh)\.exe$/i);
+      expect(launch.args.join(' ')).toContain('UTF8Encoding');
     }
-
-    mocks.emitData('ready');
-    expect(sender.send).toHaveBeenCalledWith(TerminalIpc.Data, { id, data: 'ready' });
-
-    expect(mocks.handlers.get(TerminalIpc.Write)?.(event, { id, data: 'pwd\r' })).toEqual({
+    h.emit(TerminalGateway.Data, { sessionId: 'native-terminal-1', data: 'hello', seq: 5 });
+    expect(h.sender.send).toHaveBeenCalledWith(TerminalIpc.Data, {
+      id: 'terminal:test',
+      data: 'hello',
+    });
+    expect(await h.call(TerminalIpc.Write, { id: 'terminal:test', data: 'pwd\r' })).toEqual({
       success: true,
     });
-    expect(mocks.terminalProcess.write).toHaveBeenCalledWith('pwd\r');
-
-    expect(mocks.handlers.get(TerminalIpc.Resize)?.(event, { id, cols: 120, rows: 40 })).toEqual({
+    expect(h.request).toHaveBeenCalledWith(TerminalGateway.Input, {
+      sessionId: 'native-terminal-1',
+      data: 'pwd\r',
+    });
+    expect(await h.call(TerminalIpc.Resize, { id: 'terminal:test', cols: 120, rows: 40 })).toEqual({
       success: true,
     });
-    expect(mocks.terminalProcess.resize).toHaveBeenCalledWith(120, 40);
-
-    expect(mocks.handlers.get(TerminalIpc.Close)?.(event, id)).toEqual({ success: true });
-    if (process.platform === 'win32') {
-      expect(mocks.terminalProcess.write).toHaveBeenCalledWith('\x03');
-      await new Promise(resolve => setTimeout(resolve, 100));
-      expect(mocks.terminalProcess.write).toHaveBeenCalledWith('exit\r');
-      sender.send.mockClear();
-      mocks.emitData('late output');
-      expect(sender.send).not.toHaveBeenCalled();
-      mocks.emitExit(0);
-      expect(mocks.terminalProcess.kill).not.toHaveBeenCalled();
-    } else {
-      expect(mocks.terminalProcess.kill).toHaveBeenCalled();
-    }
+    expect(h.request).toHaveBeenCalledWith(TerminalGateway.Resize, {
+      sessionId: 'native-terminal-1',
+      cols: 120,
+      rows: 40,
+    });
+    expect(await h.call(TerminalIpc.Close, 'terminal:test')).toEqual({ success: true });
+    expect(h.request).toHaveBeenCalledWith(TerminalGateway.Close, {
+      sessionId: 'native-terminal-1',
+      terminate: true,
+    });
   });
 
-  it('rejects missing directories and access from a different renderer', async () => {
-    const missingId = `terminal:test-${crypto.randomUUID()}`;
-    expect(
-      await mocks.handlers.get(TerminalIpc.Create)?.(event, {
-        id: missingId,
-        cwd: `${process.cwd()}-missing`,
-        cols: 80,
-        rows: 24,
-      }),
-    ).toEqual(expect.objectContaining({ success: false }));
-    expect(
-      await mocks.handlers.get(TerminalIpc.Create)?.(event, {
-        id: `terminal:test-${crypto.randomUUID()}`,
-        cwd: process.cwd(),
-        cols: Number.NaN,
-        rows: 24,
-      }),
-    ).toEqual(expect.objectContaining({ success: false }));
-    expect(mocks.handlers.get(TerminalIpc.Close)?.(event, { id: 'not-a-string' })).toEqual({
-      success: false,
-      error: 'Invalid terminal ID',
-    });
-
-    const id = `terminal:test-${crypto.randomUUID()}`;
-    await mocks.handlers.get(TerminalIpc.Create)?.(event, {
-      id,
-      cwd: process.cwd(),
-      cols: 80,
-      rows: 24,
-    });
-    expect(
-      mocks.handlers.get(TerminalIpc.Write)?.(
-        { sender: { ...sender, id: 8 } },
-        { id, data: 'dir\r' },
-      ),
-    ).toEqual({ success: false, error: 'Invalid terminal write request' });
-    mocks.handlers.get(TerminalIpc.Close)?.(event, id);
-    mocks.emitExit(0);
+  it('keeps homepage terminals connection-owned without creating a chat', async () => {
+    const h = harness();
+    await h.open({ sessionId: undefined });
+    expect(h.runtime.prepareSession).not.toHaveBeenCalled();
+    const params = h.request.mock.calls[0][1] as object;
+    expect(params).not.toHaveProperty('sessionKey');
   });
 
-  it('reserves a terminal ID while the OpenClaw environment is being prepared', async () => {
-    let resolveEnvironment: ((env: NodeJS.ProcessEnv) => void) | undefined;
-    registerTerminalHandlers({
-      buildEnvironment: () =>
-        new Promise(resolve => {
-          resolveEnvironment = resolve;
-        }),
-    });
-    const create = mocks.handlers.get(TerminalIpc.Create);
-    const id = `terminal:test-${crypto.randomUUID()}`;
-    const request = { id, cwd: process.cwd(), cols: 80, rows: 24 };
-
-    const first = create?.(event, request) as Promise<unknown>;
-    await Promise.resolve();
-    await expect(create?.(event, request)).resolves.toEqual({
-      success: false,
-      error: 'Invalid or duplicate terminal ID',
-    });
-
-    resolveEnvironment?.({ PATH: process.env.PATH });
-    await expect(first).resolves.toEqual({ success: true, cwd: process.cwd() });
-    mocks.handlers.get(TerminalIpc.Close)?.(event, id);
-    mocks.emitExit(0);
-  });
-
-  it('does not spawn a terminal after its renderer is destroyed', async () => {
-    let resolveEnvironment: ((env: NodeJS.ProcessEnv) => void) | undefined;
-    registerTerminalHandlers({
-      buildEnvironment: () =>
-        new Promise(resolve => {
-          resolveEnvironment = resolve;
-        }),
-    });
-    const create = mocks.handlers.get(TerminalIpc.Create);
-    const pending = create?.(event, {
-      id: `terminal:test-${crypto.randomUUID()}`,
-      cwd: process.cwd(),
-      cols: 80,
-      rows: 24,
-    });
-
-    sender.isDestroyed.mockReturnValue(true);
-    resolveEnvironment?.({ PATH: process.env.PATH });
-
-    await expect(pending).resolves.toEqual({
-      success: false,
-      error: 'Terminal owner was destroyed',
-    });
-    expect(mocks.spawn).not.toHaveBeenCalled();
-  });
-
-  it('counts pending terminal creation against the per-window limit', async () => {
-    const environmentResolvers: Array<(env: NodeJS.ProcessEnv) => void> = [];
-    registerTerminalHandlers({
-      buildEnvironment: () =>
-        new Promise(resolve => {
-          environmentResolvers.push(resolve);
-        }),
-    });
-    const create = mocks.handlers.get(TerminalIpc.Create);
-    const ids = Array.from({ length: 16 }, () => `terminal:test-${crypto.randomUUID()}`);
-    const pending = ids.map(id => create?.(event, { id, cwd: process.cwd(), cols: 80, rows: 24 }));
-
+  it('reserves admission and refuses a second window, missing sessions and malformed payloads', async () => {
+    const h = harness();
+    const gate = deferred<void>();
+    h.runtime.connectGatewayIfNeeded.mockReturnValueOnce(gate.promise);
+    const opening = h.open();
+    await expect(h.open()).resolves.toMatchObject({ success: false });
+    gate.resolve();
+    await opening;
     await expect(
-      create?.(event, {
-        id: `terminal:test-${crypto.randomUUID()}`,
-        cwd: process.cwd(),
-        cols: 80,
-        rows: 24,
-      }),
-    ).resolves.toEqual({ success: false, error: 'Too many terminal tabs are open' });
-
-    for (const resolve of environmentResolvers) resolve({ PATH: process.env.PATH });
-    const results = await Promise.all(pending);
-    expect(results).toHaveLength(16);
-    expect(results.every(result => result?.success === true)).toBe(true);
-    expect(mocks.spawn).toHaveBeenCalledTimes(16);
-    for (const id of ids) mocks.handlers.get(TerminalIpc.Close)?.(event, id);
+      h.call(TerminalIpc.Write, { id: 'terminal:test', data: 'bad\r' }, { ...h.sender, id: 8 }),
+    ).resolves.toMatchObject({ success: false });
+    await expect(
+      h.call(TerminalIpc.Close, 'terminal:test', { ...h.sender, id: 8 }),
+    ).resolves.toMatchObject({ success: false });
+    h.setSession(null);
+    await expect(h.open({ id: 'terminal:missing' })).resolves.toMatchObject({ success: false });
+    await expect(h.open({ id: 'terminal:invalid', cols: NaN })).resolves.toMatchObject({
+      success: false,
+    });
+    expect(h.request.mock.calls.filter(([method]) => method === TerminalGateway.Open)).toHaveLength(
+      1,
+    );
   });
 
-  it('returns an error without spawning when OpenClaw preparation fails', async () => {
-    registerTerminalHandlers({
-      buildEnvironment: vi.fn().mockRejectedValue(new Error('runtime unavailable')),
+  it('captures output before the open reply, including a native early exit', async () => {
+    const h = harness();
+    h.request.mockImplementationOnce(async () => {
+      h.emit(TerminalGateway.Data, { sessionId: 'native-terminal-1', data: 'early', seq: 5 });
+      return { sessionId: 'native-terminal-1', cwd: process.cwd() };
     });
-    const id = `terminal:test-${crypto.randomUUID()}`;
-    const result = await mocks.handlers.get(TerminalIpc.Create)?.(event, {
-      id,
-      cwd: process.cwd(),
-      cols: 80,
-      rows: 24,
+    await h.open();
+    expect(h.sender.send).toHaveBeenCalledWith(TerminalIpc.Data, {
+      id: 'terminal:test',
+      data: 'early',
     });
+    h.emit(TerminalGateway.Exit, { sessionId: 'native-terminal-1', exitCode: null });
+    expect(h.sender.send).toHaveBeenCalledWith(TerminalIpc.Exit, {
+      id: 'terminal:test',
+      exitCode: null,
+    });
+    await expect(
+      h.call(TerminalIpc.Write, { id: 'terminal:test', data: 'x' }),
+    ).resolves.toMatchObject({ success: false });
+  });
 
-    expect(result).toEqual({ success: false, error: 'runtime unavailable' });
-    expect(mocks.spawn).not.toHaveBeenCalled();
+  it('uses a native snapshot when another pending terminal evicts its only admission output', async () => {
+    const h = harness();
+    h.request.mockImplementationOnce(async () => {
+      h.emit(TerminalGateway.Data, { sessionId: 'native-terminal-1', data: 'done', seq: 4 });
+      const data = 'x'.repeat(64 * 1024);
+      h.emit(TerminalGateway.Data, {
+        sessionId: 'another-pending-terminal',
+        data,
+        seq: data.length,
+      });
+      h.request.mockResolvedValueOnce({ sessionId: 'native-terminal-1', buffer: 'done', seq: 4 });
+      return { sessionId: 'native-terminal-1', cwd: process.cwd() };
+    });
+    await expect(h.open()).resolves.toMatchObject({ success: true });
+    expect(h.request).toHaveBeenCalledWith(TerminalGateway.Attach, {
+      sessionId: 'native-terminal-1',
+    });
+    expect(h.sender.send).toHaveBeenCalledWith(TerminalIpc.Data, {
+      id: 'terminal:test',
+      data: 'done',
+      reset: true,
+    });
+  });
+
+  it('does not leave a fake ready terminal when admission overflow drops its native exit', async () => {
+    const h = harness();
+    h.request.mockImplementationOnce(async () => {
+      h.emit(TerminalGateway.Exit, { sessionId: 'native-terminal-1', exitCode: 0 });
+      for (let i = 1; i <= 256; i++)
+        h.emit(TerminalGateway.Data, { sessionId: 'another-pending-terminal', data: 'x', seq: i });
+      h.request.mockRejectedValueOnce(new Error('unknown terminal session "native-terminal-1"'));
+      return { sessionId: 'native-terminal-1', cwd: process.cwd() };
+    });
+    await expect(h.open()).resolves.toMatchObject({ success: false });
+    await expect(
+      h.call(TerminalIpc.Write, { id: 'terminal:test', data: 'x' }),
+    ).resolves.toMatchObject({ success: false });
+  });
+
+  it('reattaches the original PTY after reconnect and flushes output that races the replay', async () => {
+    const h = harness();
+    await h.open();
+    h.events.emit('gatewayDisconnected');
+    const replay = deferred<unknown>();
+    const next = vi.fn().mockReturnValueOnce(replay.promise);
+    h.setClient({ request: next });
+    h.events.emit('gatewayReady');
+    h.emit(TerminalGateway.Data, { sessionId: 'native-terminal-1', data: '!', seq: 6 });
+    replay.resolve({ sessionId: 'native-terminal-1', buffer: 'ready', seq: 5 });
+    await vi.waitFor(() =>
+      expect(h.sender.send).toHaveBeenCalledWith(TerminalIpc.Data, {
+        id: 'terminal:test',
+        data: '!',
+      }),
+    );
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(next).toHaveBeenCalledWith(TerminalGateway.Attach, { sessionId: 'native-terminal-1' });
+    expect(h.sender.send).toHaveBeenCalledWith(TerminalIpc.Data, {
+      id: 'terminal:test',
+      data: 'ready',
+      reset: true,
+    });
+    expect(h.request.mock.calls.filter(([method]) => method === TerminalGateway.Open)).toHaveLength(
+      1,
+    );
+  });
+
+  it('recovers an offset gap without duplicating previously displayed output', async () => {
+    const h = harness();
+    await h.open();
+    h.emit(TerminalGateway.Data, { sessionId: 'native-terminal-1', data: 'y', seq: 5 });
+    await vi.waitFor(() =>
+      expect(h.sender.send).toHaveBeenCalledWith(TerminalIpc.Data, {
+        id: 'terminal:test',
+        data: 'ready',
+        reset: true,
+      }),
+    );
+    h.sender.send.mockClear();
+    h.emit(TerminalGateway.Data, { sessionId: 'native-terminal-1', data: 'ready', seq: 5 });
+    expect(h.sender.send).not.toHaveBeenCalled();
+  });
+
+  it('never retries an input whose acceptance is unknown', async () => {
+    const h = harness();
+    await h.open();
+    h.request.mockRejectedValueOnce(new Error('request timed out'));
+    expect(
+      await h.call(TerminalIpc.Write, { id: 'terminal:test', data: 'dangerous-command\r' }),
+    ).toMatchObject({ success: false });
+    await h.call(TerminalIpc.Write, { id: 'terminal:test', data: 'dangerous-command\r' });
+    expect(
+      h.request.mock.calls.filter(([method]) => method === TerminalGateway.Input),
+    ).toHaveLength(1);
+  });
+
+  it('does not disable a recovered terminal when an old connection reports a late input failure', async () => {
+    const h = harness();
+    await h.open();
+    const input = deferred<unknown>();
+    h.request.mockReturnValueOnce(input.promise);
+    const writing = h.call(TerminalIpc.Write, { id: 'terminal:test', data: 'once\r' });
+    h.events.emit('gatewayDisconnected');
+    const next = vi.fn(async (method: string) =>
+      method === TerminalGateway.Attach
+        ? { sessionId: 'native-terminal-1', buffer: 'ready', seq: 5 }
+        : { ok: true },
+    );
+    h.setClient({ request: next });
+    h.events.emit('gatewayReady');
+    await vi.waitFor(() =>
+      expect(h.sender.send).toHaveBeenLastCalledWith(TerminalIpc.Status, {
+        id: 'terminal:test',
+        ready: true,
+        failed: false,
+      }),
+    );
+    h.sender.send.mockClear();
+    input.reject(new Error('old connection timed out'));
+    await expect(writing).resolves.toMatchObject({ success: false });
+    expect(h.sender.send).not.toHaveBeenCalled();
+    await expect(
+      h.call(TerminalIpc.Write, { id: 'terminal:test', data: 'new\r' }),
+    ).resolves.toEqual({ success: true });
+    expect(next).toHaveBeenCalledWith(TerminalGateway.Input, {
+      sessionId: 'native-terminal-1',
+      data: 'new\r',
+    });
+    expect(
+      h.request.mock.calls.filter(([method]) => method === TerminalGateway.Input),
+    ).toHaveLength(1);
+  });
+
+  it('closes a PTY that finishes opening after its tab is removed', async () => {
+    const h = harness();
+    const gate = deferred<unknown>();
+    const opened = deferred<void>();
+    h.request.mockImplementationOnce(async () => {
+      opened.resolve();
+      return gate.promise;
+    });
+    const pending = h.open();
+    await opened.promise;
+    await h.call(TerminalIpc.Close, 'terminal:test');
+    gate.resolve({ sessionId: 'native-terminal-1', cwd: process.cwd() });
+    expect(await pending).toMatchObject({ success: false });
+    expect(h.request).toHaveBeenCalledWith(TerminalGateway.Close, {
+      sessionId: 'native-terminal-1',
+      terminate: true,
+    });
+  });
+
+  it('retains a cancelled admission when termination times out and closes the same PTY after reconnect', async () => {
+    const h = harness();
+    const gate = deferred<unknown>();
+    const opened = deferred<void>();
+    h.request.mockImplementationOnce(async () => {
+      opened.resolve();
+      return gate.promise;
+    });
+    const pending = h.open();
+    await opened.promise;
+    await h.call(TerminalIpc.Close, 'terminal:test');
+    h.request.mockRejectedValueOnce(new Error('close timed out'));
+    gate.resolve({ sessionId: 'native-terminal-1', cwd: process.cwd() });
+    await expect(pending).resolves.toMatchObject({ success: false });
+    const next = vi.fn(async (method: string) =>
+      method === TerminalGateway.Attach
+        ? { sessionId: 'native-terminal-1', buffer: '', seq: 0 }
+        : { ok: true },
+    );
+    h.setClient({ request: next });
+    h.events.emit('gatewayReady');
+    await vi.waitFor(() =>
+      expect(next).toHaveBeenCalledWith(TerminalGateway.Close, {
+        sessionId: 'native-terminal-1',
+        terminate: true,
+      }),
+    );
+    expect(next).toHaveBeenCalledWith(TerminalGateway.Attach, { sessionId: 'native-terminal-1' });
+    expect(next.mock.calls.filter(([method]) => method === TerminalGateway.Open)).toHaveLength(0);
+  });
+
+  it('ends the owned native PTY when the renderer window is destroyed', async () => {
+    const h = harness();
+    await h.open();
+    h.sender.isDestroyed.mockReturnValue(true);
+    h.sender.once.mock.calls[0][1]();
+    await vi.waitFor(() =>
+      expect(h.request).toHaveBeenCalledWith(TerminalGateway.Close, {
+        sessionId: 'native-terminal-1',
+        terminate: true,
+      }),
+    );
   });
 });

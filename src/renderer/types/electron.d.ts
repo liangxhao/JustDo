@@ -46,6 +46,7 @@ type TerminalActionResult = import('../../shared/app/terminal').TerminalActionRe
 type TerminalCreateRequest = import('../../shared/app/terminal').TerminalCreateRequest;
 type TerminalCreateResult = import('../../shared/app/terminal').TerminalCreateResult;
 type TerminalDataEvent = import('../../shared/app/terminal').TerminalDataEvent;
+type TerminalStatusEvent = import('../../shared/app/terminal').TerminalStatusEvent;
 type TerminalExitEvent = import('../../shared/app/terminal').TerminalExitEvent;
 type TerminalResizeRequest = import('../../shared/app/terminal').TerminalResizeRequest;
 type TerminalWriteRequest = import('../../shared/app/terminal').TerminalWriteRequest;
@@ -528,6 +529,7 @@ interface IElectronAPI {
     close: (id: string) => Promise<TerminalActionResult>;
     onData: (callback: (event: TerminalDataEvent) => void) => () => void;
     onExit: (callback: (event: TerminalExitEvent) => void) => () => void;
+    onStatus: (callback: (event: TerminalStatusEvent) => void) => () => void;
   };
   platform: string;
   arch: string;

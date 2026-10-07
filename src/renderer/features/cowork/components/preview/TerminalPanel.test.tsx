@@ -31,6 +31,7 @@ const mocks = vi.hoisted(() => {
     open: vi.fn(),
     paste: vi.fn(),
     selectAll: vi.fn(),
+    reset: vi.fn(),
     write: vi.fn(),
   };
   const search = {
@@ -115,6 +116,7 @@ describe('TerminalPanel', () => {
           write,
           onData: vi.fn(() => vi.fn()),
           onExit: vi.fn(() => vi.fn()),
+          onStatus: vi.fn(() => vi.fn()),
         },
       },
     });
@@ -297,6 +299,30 @@ describe('TerminalPanel', () => {
     await waitFor(() => expect(close).toHaveBeenCalledTimes(1));
   });
 
+  it('cancels pending admission on unmount without waiting for the create reply', async () => {
+    let settle!: (result: { success: boolean }) => void;
+    create.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          settle = resolve;
+        }),
+    );
+    const view = render(
+      <TerminalPanel
+        terminalId="terminal:pending"
+        cwd={'E:\\workspace\\JustDo'}
+        isObscured={false}
+      />,
+    );
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
+    view.unmount();
+    await waitFor(() =>
+      expect(close).toHaveBeenCalledWith('terminal:pending:00000000-0000-4000-8000-000000000001'),
+    );
+    await act(async () => settle({ success: false }));
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
   it('shows a localized error when terminal creation IPC rejects', async () => {
     i18nService.setLanguage('en', { persist: false });
     create.mockRejectedValueOnce(new Error('IPC unavailable'));
@@ -315,6 +341,61 @@ describe('TerminalPanel', () => {
     expect(mocks.terminal.write).not.toHaveBeenCalledWith(
       expect.stringContaining('IPC unavailable'),
     );
+  });
+
+  it('binds a new chat terminal to its product session and pauses input while disconnected', async () => {
+    let status: ((event: { id: string; ready: boolean }) => void) | undefined;
+    window.electron.terminal.onStatus = vi.fn(listener => {
+      status = listener;
+      return vi.fn();
+    });
+    render(
+      <TerminalPanel
+        terminalId="terminal:chat"
+        sessionId="chat-1"
+        cwd="C:/project"
+        isObscured={false}
+      />,
+    );
+    await waitFor(() =>
+      expect(create).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'chat-1' })),
+    );
+    await waitFor(() => expect(mocks.terminal.focus).toHaveBeenCalled());
+    const id = create.mock.calls[create.mock.calls.length - 1][0].id;
+    act(() => status?.({ id, ready: false }));
+    mocks.emitTerminalData('ignored while offline');
+    expect(write).not.toHaveBeenCalled();
+    act(() => status?.({ id, ready: true }));
+    mocks.emitTerminalData('human input');
+    expect(write).toHaveBeenCalledWith({ id, data: 'human input' });
+  });
+
+  it('does not send xterm control replies while native historical buffers are being redrawn', async () => {
+    let data: ((event: { id: string; data: string; reset?: boolean }) => void) | undefined;
+    const callbacks: Array<() => void> = [];
+    window.electron.terminal.onData = vi.fn(listener => {
+      data = listener;
+      return vi.fn();
+    });
+    mocks.terminal.write.mockImplementation((_text: string, callback?: () => void) => {
+      if (callback) callbacks.push(callback);
+    });
+    render(<TerminalPanel terminalId="terminal:replay" cwd="C:/project" isObscured={false} />);
+    await waitFor(() => expect(mocks.terminal.focus).toHaveBeenCalled());
+    const id = create.mock.calls[create.mock.calls.length - 1][0].id;
+    act(() => {
+      data?.({ id, data: 'old buffer', reset: true });
+      data?.({ id, data: 'newer buffer', reset: true });
+    });
+    mocks.emitTerminalData('historical control reply');
+    expect(write).not.toHaveBeenCalled();
+    callbacks[0]();
+    mocks.emitTerminalData('another historical control reply');
+    expect(write).not.toHaveBeenCalled();
+    callbacks[1]();
+    mocks.emitTerminalData('fresh input');
+    expect(write).toHaveBeenCalledWith({ id, data: 'fresh input' });
+    mocks.terminal.write.mockReset();
   });
 
   it('commits Windows IME composition text exactly once', async () => {

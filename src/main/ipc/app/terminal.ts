@@ -1,320 +1,438 @@
-import { ipcMain, type IpcMainInvokeEvent } from 'electron';
-import fs from 'fs';
-import * as pty from 'node-pty';
-import path from 'path';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+
+import { ipcMain, type WebContents } from 'electron';
 
 import {
   type TerminalActionResult,
   type TerminalCreateRequest,
   type TerminalCreateResult,
+  TerminalGateway,
   TerminalIpc,
-  type TerminalResizeRequest,
-  type TerminalWriteRequest,
 } from '../../../shared/app/terminal';
+import type { GatewayClientLike, GatewayEventFrame } from '../../engine/gateway/types';
+import type { OpenClawRuntimeAdapter } from '../../engine/openclaw/openclawRuntimeAdapter';
+import { resolveTerminalShell } from './terminalShell';
 
-const MAX_TERMINALS_PER_WINDOW = 16;
-const MAX_WRITE_LENGTH = 64 * 1024;
-const MIN_TERMINAL_COLUMNS = 2;
-const MAX_TERMINAL_COLUMNS = 500;
-const MIN_TERMINAL_ROWS = 1;
-const MAX_TERMINAL_ROWS = 200;
-const TERMINAL_ID_PATTERN = /^[A-Za-z0-9:_-]{1,128}$/;
-const POWERSHELL_UTF8_INIT =
-  '[Console]::InputEncoding = New-Object System.Text.UTF8Encoding $false; ' +
-  '[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false; ' +
-  '$global:OutputEncoding = [Console]::OutputEncoding';
-
+type TerminalRuntime = Pick<
+  OpenClawRuntimeAdapter,
+  'on' | 'connectGatewayIfNeeded' | 'getGatewayClient' | 'prepareSession'
+>;
+export interface TerminalHandlerDependencies {
+  getRuntime: () => TerminalRuntime;
+  ensureRunning: () => Promise<void>;
+  getSession: (id: string) => { cwd: string; agentId?: string | null } | null;
+}
 interface ManagedTerminal {
+  id: string;
+  owner: WebContents;
+  runtime?: TerminalRuntime;
+  client?: GatewayClientLike;
+  nativeId?: string;
   closing: boolean;
-  ownerId: number;
-  process: pty.IPty;
-  gracefulExitTimer?: NodeJS.Timeout;
-  forceKillTimer?: NodeJS.Timeout;
+  recovering: boolean;
+  ready: boolean;
+  offset?: number;
+  pending: GatewayEventFrame[];
 }
-
-interface TerminalHandlerDependencies {
-  buildEnvironment?: () => Promise<NodeJS.ProcessEnv>;
+interface NativeTerminal {
+  sessionId: string;
+  cwd: string;
+  buffer?: string;
+  seq?: number;
 }
-
-const terminals = new Map<string, ManagedTerminal>();
-const pendingTerminalOwners = new Map<string, number>();
-const ownerTerminalIds = new Map<number, Set<string>>();
-const registeredOwners = new Set<number>();
-
-const clampDimension = (value: number, minimum: number, maximum: number): number =>
-  Math.min(maximum, Math.max(minimum, Math.floor(value)));
-
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null;
+const validId = (value: unknown): value is string =>
+  typeof value === 'string' && /^[A-Za-z0-9:_-]{1,128}$/.test(value);
+const dimension = (value: number, min: number, max: number): number =>
+  Math.min(max, Math.max(min, Math.floor(value)));
+const failure = (error: unknown): TerminalActionResult => ({
+  success: false,
+  error: error instanceof Error ? error.message : 'Terminal operation failed',
+});
 
-const isValidTerminalId = (value: unknown): value is string =>
-  typeof value === 'string' && TERMINAL_ID_PATTERN.test(value);
+/** Product tab ownership only. Gateway owns the PTY, buffer and agent sharing. */
+export class GatewayTerminalService {
+  private readonly terminals = new Map<string, ManagedTerminal>();
+  private readonly runtimes = new WeakSet<TerminalRuntime>();
+  private readonly owners = new WeakSet<WebContents>();
+  // Output can precede the open reply. Only admission retains a bounded queue;
+  // native attach supplies the authoritative buffer after any gap.
+  private readonly early = new Map<
+    GatewayClientLike,
+    { frames: GatewayEventFrame[]; overflow: boolean }
+  >();
 
-const isTerminalCreateRequest = (value: unknown): value is TerminalCreateRequest =>
-  isRecord(value) &&
-  isValidTerminalId(value.id) &&
-  typeof value.cwd === 'string' &&
-  Number.isFinite(value.cols) &&
-  Number.isFinite(value.rows);
+  constructor(private readonly deps: TerminalHandlerDependencies) {}
 
-const isTerminalWriteRequest = (value: unknown): value is TerminalWriteRequest =>
-  isRecord(value) &&
-  isValidTerminalId(value.id) &&
-  typeof value.data === 'string' &&
-  value.data.length <= MAX_WRITE_LENGTH;
-
-const isTerminalResizeRequest = (value: unknown): value is TerminalResizeRequest =>
-  isRecord(value) &&
-  isValidTerminalId(value.id) &&
-  Number.isFinite(value.cols) &&
-  Number.isFinite(value.rows);
-
-const resolveTerminalCwd = (cwd: string): string => {
-  const resolved = path.resolve(cwd.trim());
-  if (!cwd.trim() || !fs.statSync(resolved).isDirectory()) {
-    throw new Error('Terminal working directory does not exist');
+  private send(terminal: ManagedTerminal, channel: string, payload: object): void {
+    if (!terminal.closing && !terminal.owner.isDestroyed()) {
+      terminal.owner.send(channel, { id: terminal.id, ...payload });
+    }
   }
-  return resolved;
-};
-
-const TERMINAL_COLOR_CONTROL_VARIABLES = new Set(['NO_COLOR', 'FORCE_COLOR']);
-
-const getTerminalEnvironment = (env: NodeJS.ProcessEnv): Record<string, string> =>
-  Object.fromEntries(
-    Object.entries(env).filter(
-      (entry): entry is [string, string] =>
-        entry[1] !== undefined && !TERMINAL_COLOR_CONTROL_VARIABLES.has(entry[0].toUpperCase()),
-    ),
-  );
-
-const findExecutableOnPath = (executable: string): string | undefined => {
-  for (const directory of process.env.PATH?.split(path.delimiter) ?? []) {
-    const normalizedDirectory = directory.replace(/^"|"$/g, '').trim();
-    if (!path.isAbsolute(normalizedDirectory)) continue;
-    const candidate = path.join(normalizedDirectory, executable);
-    if (fs.existsSync(candidate)) return candidate;
+  private status(terminal: ManagedTerminal, ready: boolean, failed = false): void {
+    terminal.ready = ready;
+    this.send(terminal, TerminalIpc.Status, { ready, failed });
   }
-  return undefined;
-};
-
-const getShell = (): { executable: string; args: string[] } => {
-  if (process.platform === 'win32') {
-    const bundledPowerShell = process.env.SystemRoot
-      ? path.join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
-      : undefined;
-    return {
-      executable:
-        findExecutableOnPath('pwsh.exe') ||
-        (bundledPowerShell && fs.existsSync(bundledPowerShell)
-          ? bundledPowerShell
-          : 'powershell.exe'),
-      args: ['-NoLogo', '-NoExit', '-Command', POWERSHELL_UTF8_INIT],
-    };
-  }
-  return { executable: process.env.SHELL || '/bin/bash', args: ['-l'] };
-};
-
-const forgetTerminal = (id: string): ManagedTerminal | undefined => {
-  const managed = terminals.get(id);
-  if (!managed) return undefined;
-  terminals.delete(id);
-  const ids = ownerTerminalIds.get(managed.ownerId);
-  ids?.delete(id);
-  if (ids?.size === 0) ownerTerminalIds.delete(managed.ownerId);
-  return managed;
-};
-
-const forceKillTerminal = (managed: ManagedTerminal): void => {
-  if (managed.gracefulExitTimer) {
-    clearTimeout(managed.gracefulExitTimer);
-    managed.gracefulExitTimer = undefined;
-  }
-  if (managed.forceKillTimer) {
-    clearTimeout(managed.forceKillTimer);
-    managed.forceKillTimer = undefined;
-  }
-  try {
-    managed.process.kill();
-  } catch {
-    // The shell may already have exited.
-  }
-};
-
-const terminateTerminal = (managed: ManagedTerminal): void => {
-  managed.closing = true;
-  if (process.platform !== 'win32') {
-    forceKillTerminal(managed);
-    return;
-  }
-
-  // node-pty's Windows force-kill path launches a short-lived ConPTY helper.
-  // Let PowerShell/cmd exit normally first, avoiding an AttachConsole race when
-  // the shell is idle. A fallback still guarantees cleanup for busy processes.
-  try {
-    managed.process.write('\x03');
-    managed.gracefulExitTimer = setTimeout(() => {
-      managed.gracefulExitTimer = undefined;
-      try {
-        managed.process.write('exit\r');
-      } catch {
-        forceKillTerminal(managed);
+  private bind(runtime: TerminalRuntime): void {
+    if (this.runtimes.has(runtime)) return;
+    this.runtimes.add(runtime);
+    runtime.on('gatewayEvent', event => this.event(runtime, event));
+    runtime.on('gatewayDisconnected', () => {
+      for (const terminal of this.terminals.values()) {
+        if (terminal.runtime === runtime) this.status(terminal, false);
       }
-    }, 75);
-    managed.gracefulExitTimer.unref();
-    managed.forceKillTimer = setTimeout(() => forceKillTerminal(managed), 1_500);
-    managed.forceKillTimer.unref();
-  } catch {
-    forceKillTerminal(managed);
-  }
-};
-
-const closeOwnedTerminals = (ownerId: number): void => {
-  const ids = [...(ownerTerminalIds.get(ownerId) ?? [])];
-  for (const id of ids) {
-    const managed = forgetTerminal(id);
-    if (managed) terminateTerminal(managed);
-  }
-  registeredOwners.delete(ownerId);
-};
-
-const countPendingTerminals = (ownerId: number): number =>
-  [...pendingTerminalOwners.values()].filter(pendingOwnerId => pendingOwnerId === ownerId).length;
-
-const findOwnedTerminal = (event: IpcMainInvokeEvent, id: string): ManagedTerminal | null => {
-  const managed = terminals.get(id);
-  return managed?.ownerId === event.sender.id ? managed : null;
-};
-
-export const registerTerminalHandlers = ({
-  buildEnvironment = async () => process.env,
-}: TerminalHandlerDependencies = {}): void => {
-  ipcMain.handle(
-    TerminalIpc.Create,
-    async (event, request: unknown): Promise<TerminalCreateResult> => {
-      try {
+    });
+    runtime.on('gatewayReady', () => {
+      for (const terminal of this.terminals.values()) {
         if (
-          !isTerminalCreateRequest(request) ||
-          terminals.has(request.id) ||
-          pendingTerminalOwners.has(request.id)
-        ) {
-          return { success: false, error: 'Invalid or duplicate terminal ID' };
-        }
-        const ownerId = event.sender.id;
-        const ownedIds = ownerTerminalIds.get(ownerId) ?? new Set<string>();
-        if (ownedIds.size + countPendingTerminals(ownerId) >= MAX_TERMINALS_PER_WINDOW) {
-          return { success: false, error: 'Too many terminal tabs are open' };
-        }
-        const cwd = resolveTerminalCwd(request.cwd);
-        const shell = getShell();
-        pendingTerminalOwners.set(request.id, ownerId);
-        let terminalProcess: pty.IPty;
-        try {
-          const environment = await buildEnvironment();
-          if (event.sender.isDestroyed()) {
-            return { success: false, error: 'Terminal owner was destroyed' };
-          }
-          terminalProcess = pty.spawn(shell.executable, shell.args, {
-            name: 'xterm-256color',
-            cols: clampDimension(request.cols, MIN_TERMINAL_COLUMNS, MAX_TERMINAL_COLUMNS),
-            rows: clampDimension(request.rows, MIN_TERMINAL_ROWS, MAX_TERMINAL_ROWS),
-            cwd,
-            env: {
-              ...getTerminalEnvironment(environment),
-              COLORTERM: 'truecolor',
-              TERM: 'xterm-256color',
-              TERM_PROGRAM: 'xterm.js',
-            },
-          });
-        } finally {
-          pendingTerminalOwners.delete(request.id);
-        }
-        const managed: ManagedTerminal = { closing: false, ownerId, process: terminalProcess };
-        terminals.set(request.id, managed);
-        ownedIds.add(request.id);
-        ownerTerminalIds.set(ownerId, ownedIds);
-
-        if (!registeredOwners.has(ownerId)) {
-          registeredOwners.add(ownerId);
-          event.sender.once('destroyed', () => closeOwnedTerminals(ownerId));
-        }
-
-        terminalProcess.onData(data => {
-          if (
-            !managed.closing &&
-            terminals.get(request.id) === managed &&
-            !event.sender.isDestroyed()
-          ) {
-            event.sender.send(TerminalIpc.Data, { id: request.id, data });
-          }
-        });
-        terminalProcess.onExit(({ exitCode }) => {
-          if (managed.gracefulExitTimer) {
-            clearTimeout(managed.gracefulExitTimer);
-            managed.gracefulExitTimer = undefined;
-          }
-          if (managed.forceKillTimer) {
-            clearTimeout(managed.forceKillTimer);
-            managed.forceKillTimer = undefined;
-          }
-          const isCurrentInstance = terminals.get(request.id) === managed;
-          if (isCurrentInstance) forgetTerminal(request.id);
-          if (!managed.closing && isCurrentInstance && !event.sender.isDestroyed()) {
-            event.sender.send(TerminalIpc.Exit, { id: request.id, exitCode });
-          }
-        });
-        return { success: true, cwd };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to create terminal',
-        };
+          terminal.runtime === runtime &&
+          terminal.nativeId &&
+          terminal.client !== runtime.getGatewayClient()
+        )
+          void this.recover(terminal);
       }
-    },
-  );
-
-  ipcMain.handle(TerminalIpc.Write, (event, request: unknown): TerminalActionResult => {
-    if (!isTerminalWriteRequest(request)) {
-      return { success: false, error: 'Invalid terminal write request' };
+    });
+  }
+  private event(runtime: TerminalRuntime, event: GatewayEventFrame): void {
+    if (event.event !== TerminalGateway.Data && event.event !== TerminalGateway.Exit) return;
+    const payload = event.payload;
+    if (!isRecord(payload) || typeof payload.sessionId !== 'string') return;
+    const client = runtime.getGatewayClient();
+    if (!client) return;
+    const terminal = [...this.terminals.values()].find(
+      candidate =>
+        candidate.runtime === runtime &&
+        candidate.client === client &&
+        candidate.nativeId === payload.sessionId,
+    );
+    if (!terminal) {
+      if (
+        [...this.terminals.values()].some(
+          candidate =>
+            candidate.runtime === runtime && candidate.client === client && !candidate.nativeId,
+        )
+      ) {
+        const queued = this.early.get(client) ?? { frames: [], overflow: false };
+        const events = queued.frames;
+        events.push(event);
+        while (
+          events.length > 256 ||
+          events.reduce(
+            (size, frame) =>
+              size +
+              (isRecord(frame.payload) && typeof frame.payload.data === 'string'
+                ? frame.payload.data.length
+                : 0),
+            0,
+          ) >
+            64 * 1024
+        ) {
+          events.shift();
+          queued.overflow = true;
+        }
+        this.early.set(client, queued);
+      }
+      return;
     }
-    const managed = findOwnedTerminal(event, request.id);
-    if (!managed || managed.closing) {
-      return { success: false, error: 'Invalid terminal write request' };
+    if (event.event === TerminalGateway.Exit) {
+      this.status(terminal, false);
+      this.send(terminal, TerminalIpc.Exit, {
+        exitCode: typeof payload.exitCode === 'number' ? payload.exitCode : null,
+      });
+      this.terminals.delete(terminal.id);
+      return;
+    }
+    if (terminal.recovering) {
+      terminal.pending.push(event);
+      // Overflow drops the oldest frame; offset continuity requests a fresh
+      // native snapshot rather than displaying a truncated control sequence.
+      while (
+        terminal.pending.length > 256 ||
+        terminal.pending.reduce(
+          (size, frame) =>
+            size +
+            (isRecord(frame.payload) && typeof frame.payload.data === 'string'
+              ? frame.payload.data.length
+              : 0),
+          0,
+        ) >
+          64 * 1024
+      )
+        terminal.pending.shift();
+      return;
+    }
+    if (terminal.closing || typeof payload.data !== 'string') return;
+    const data = payload.data;
+    const end = payload.seq;
+    if (typeof end !== 'number' || !Number.isSafeInteger(end) || end < data.length) {
+      this.status(terminal, false, true);
+      return;
+    }
+    const start = end - data.length;
+    const offset = terminal.offset ?? 0;
+    if (start > offset) {
+      void this.recover(terminal);
+      return;
+    }
+    if (end <= offset) return;
+    terminal.offset = end;
+    this.send(terminal, TerminalIpc.Data, { data: data.slice(Math.max(0, offset - start)) });
+  }
+  private isCurrent(terminal: ManagedTerminal, client: GatewayClientLike): boolean {
+    return (
+      this.terminals.get(terminal.id) === terminal &&
+      terminal.runtime?.getGatewayClient() === client
+    );
+  }
+  private async recover(terminal: ManagedTerminal): Promise<void> {
+    const client = terminal.runtime?.getGatewayClient();
+    if (!client || !terminal.nativeId || terminal.recovering) return;
+    terminal.recovering = true;
+    terminal.client = client;
+    terminal.pending = [];
+    this.status(terminal, false);
+    try {
+      const attached = await client.request<NativeTerminal>(TerminalGateway.Attach, {
+        sessionId: terminal.nativeId,
+      });
+      if (!this.isCurrent(terminal, client)) return;
+      terminal.client = client;
+      if (terminal.closing) {
+        await this.finishClose(terminal);
+        return;
+      }
+      if (
+        attached.sessionId !== terminal.nativeId ||
+        typeof attached.buffer !== 'string' ||
+        typeof attached.seq !== 'number' ||
+        !Number.isSafeInteger(attached.seq) ||
+        attached.seq < attached.buffer.length
+      ) {
+        throw new Error('Invalid terminal replay');
+      }
+      terminal.offset = attached.seq;
+      this.send(terminal, TerminalIpc.Data, { data: attached.buffer, reset: true });
+      this.status(terminal, true);
+    } catch (error) {
+      if (!this.isCurrent(terminal, client)) return;
+      this.status(terminal, false, true);
+      // An attach timeout does not prove the PTY ended. Retain its identity so
+      // an explicit close or a later reconnect can still reach that process.
+      if (error instanceof Error && error.message.includes('unknown terminal session')) {
+        this.terminals.delete(terminal.id);
+      }
+    } finally {
+      terminal.recovering = false;
+      if (this.terminals.get(terminal.id) === terminal) {
+        if (
+          terminal.runtime?.getGatewayClient() &&
+          terminal.runtime.getGatewayClient() !== client
+        ) {
+          void this.recover(terminal);
+        } else {
+          const pending = terminal.pending;
+          terminal.pending = [];
+          for (const frame of pending) if (terminal.runtime) this.event(terminal.runtime, frame);
+        }
+      }
+    }
+  }
+  async create(owner: WebContents, raw: unknown): Promise<TerminalCreateResult> {
+    if (
+      !isRecord(raw) ||
+      !validId(raw.id) ||
+      typeof raw.cwd !== 'string' ||
+      !Number.isFinite(raw.cols) ||
+      !Number.isFinite(raw.rows) ||
+      (raw.sessionId !== undefined && !validId(raw.sessionId)) ||
+      this.terminals.has(raw.id)
+    ) {
+      return failure(new Error('Invalid or duplicate terminal request'));
+    }
+    if ([...this.terminals.values()].filter(terminal => terminal.owner === owner).length >= 16) {
+      return failure(new Error('Too many terminal tabs are open'));
+    }
+    const request = raw as unknown as TerminalCreateRequest;
+    const terminal: ManagedTerminal = {
+      id: request.id,
+      owner,
+      closing: false,
+      recovering: false,
+      ready: false,
+      pending: [],
+    };
+    this.terminals.set(terminal.id, terminal);
+    if (!this.owners.has(owner)) {
+      this.owners.add(owner);
+      owner.once('destroyed', () => {
+        for (const entry of this.terminals.values())
+          if (entry.owner === owner) void this.close(owner, entry.id);
+      });
     }
     try {
-      managed.process.write(request.data);
-      return { success: true };
-    } catch {
-      return { success: false, error: 'Terminal write failed' };
+      const session = request.sessionId ? this.deps.getSession(request.sessionId) : undefined;
+      if (request.sessionId && !session) throw new Error('Chat session was not found');
+      const cwd = path.resolve(session?.cwd ?? request.cwd);
+      if (!path.isAbsolute(session?.cwd ?? request.cwd) || !(await fs.stat(cwd)).isDirectory()) {
+        throw new Error('Terminal working directory does not exist');
+      }
+      if (terminal.closing || owner.isDestroyed())
+        throw new Error('Terminal admission was cancelled');
+      await this.deps.ensureRunning();
+      const runtime = this.deps.getRuntime();
+      terminal.runtime = runtime;
+      this.bind(runtime);
+      await runtime.connectGatewayIfNeeded();
+      const prepared = request.sessionId
+        ? await runtime.prepareSession(request.sessionId)
+        : undefined;
+      const client = runtime.getGatewayClient();
+      if (!client || terminal.closing || owner.isDestroyed())
+        throw new Error('Terminal admission was cancelled');
+      if (request.sessionId) {
+        const current = this.deps.getSession(request.sessionId);
+        if (!current || path.resolve(current.cwd) !== cwd || current.agentId !== session?.agentId) {
+          throw new Error('Chat session changed during terminal admission');
+        }
+      }
+      terminal.client = client;
+      const opened = await client.request<NativeTerminal>(TerminalGateway.Open, {
+        ...(prepared
+          ? { sessionKey: prepared.sessionKey, agentId: session?.agentId || 'main' }
+          : {}),
+        cwd,
+        ...resolveTerminalShell(),
+        cols: dimension(request.cols, 2, 500),
+        rows: dimension(request.rows, 1, 200),
+      });
+      if (
+        typeof opened.sessionId !== 'string' ||
+        !opened.sessionId ||
+        typeof opened.cwd !== 'string'
+      )
+        throw new Error('Invalid terminal reply');
+      terminal.nativeId = opened.sessionId;
+      if (terminal.closing || owner.isDestroyed()) {
+        await this.finishClose(terminal);
+        return failure(new Error('Terminal admission was cancelled'));
+      }
+      // An evicted initial frame may have no later frame to reveal a seq gap;
+      // an evicted exit must not leave a phantom ready terminal either.
+      if (!this.isCurrent(terminal, client) || this.early.get(client)?.overflow)
+        await this.recover(terminal);
+      else {
+        this.status(terminal, true);
+        for (const frame of this.early.get(client)?.frames ?? []) {
+          if (isRecord(frame.payload) && frame.payload.sessionId === terminal.nativeId)
+            this.event(runtime, frame);
+        }
+      }
+      return { success: this.terminals.has(terminal.id), cwd: opened.cwd };
+    } catch (error) {
+      if (this.terminals.get(terminal.id) === terminal) {
+        if (terminal.nativeId) {
+          // A failed termination does not establish that the PTY ended. Keep
+          // the exact identity and close intent for explicit cleanup/reconnect.
+          terminal.closing = true;
+          terminal.ready = false;
+        } else this.terminals.delete(terminal.id);
+      }
+      return failure(error);
+    } finally {
+      if (
+        terminal.client &&
+        ![...this.terminals.values()].some(
+          entry => entry.client === terminal.client && !entry.nativeId,
+        )
+      )
+        this.early.delete(terminal.client);
     }
-  });
-
-  ipcMain.handle(TerminalIpc.Resize, (event, request: unknown): TerminalActionResult => {
-    if (!isTerminalResizeRequest(request)) {
-      return { success: false, error: 'Invalid terminal resize request' };
-    }
-    const managed = findOwnedTerminal(event, request.id);
-    if (!managed || managed.closing) {
-      return { success: false, error: 'Invalid terminal resize request' };
-    }
+  }
+  async action(owner: WebContents, raw: unknown, resize: boolean): Promise<TerminalActionResult> {
+    if (
+      !isRecord(raw) ||
+      !validId(raw.id) ||
+      (resize
+        ? !Number.isFinite(raw.cols) || !Number.isFinite(raw.rows)
+        : typeof raw.data !== 'string' || raw.data.length > 64 * 1024)
+    )
+      return failure(new Error('Invalid terminal action'));
+    const terminal = this.terminals.get(raw.id);
+    const client = terminal?.client;
+    if (
+      !terminal ||
+      terminal.owner !== owner ||
+      terminal.closing ||
+      !terminal.ready ||
+      !terminal.nativeId ||
+      !client ||
+      !this.isCurrent(terminal, client)
+    )
+      return failure(new Error('Terminal is not connected'));
     try {
-      managed.process.resize(
-        clampDimension(request.cols, MIN_TERMINAL_COLUMNS, MAX_TERMINAL_COLUMNS),
-        clampDimension(request.rows, MIN_TERMINAL_ROWS, MAX_TERMINAL_ROWS),
+      const result = await client.request<{ ok: boolean }>(
+        resize ? TerminalGateway.Resize : TerminalGateway.Input,
+        {
+          sessionId: terminal.nativeId,
+          ...(resize
+            ? {
+                cols: dimension(raw.cols as number, 2, 500),
+                rows: dimension(raw.rows as number, 1, 200),
+              }
+            : { data: raw.data }),
+        },
       );
+      if (!result.ok) throw new Error('Terminal action was rejected');
       return { success: true };
-    } catch {
-      return { success: false, error: 'Terminal resize failed' };
+    } catch (error) {
+      // Never replay input after a timeout/reconnect: acceptance is unknown.
+      // A retired connection cannot override a replacement client's recovery.
+      if (this.isCurrent(terminal, client)) this.status(terminal, false, true);
+      return failure(error);
     }
-  });
+  }
+  private async finishClose(terminal: ManagedTerminal): Promise<void> {
+    const client = terminal.client;
+    if (!terminal.nativeId || !client || !this.isCurrent(terminal, client)) return;
+    const result = await client.request<{ ok: boolean }>(TerminalGateway.Close, {
+      sessionId: terminal.nativeId,
+      terminate: true,
+    });
+    if (this.terminals.get(terminal.id) !== terminal) return;
+    if (!result.ok) throw new Error('Terminal close was rejected');
+    this.terminals.delete(terminal.id);
+  }
+  async close(owner: WebContents, id: unknown): Promise<TerminalActionResult> {
+    if (!validId(id)) return failure(new Error('Invalid terminal ID'));
+    const terminal = this.terminals.get(id);
+    if (!terminal) return { success: true };
+    if (terminal.owner !== owner) return failure(new Error('Terminal was not found'));
+    terminal.closing = true;
+    terminal.ready = false;
+    try {
+      if (terminal.nativeId) {
+        if (terminal.client !== terminal.runtime?.getGatewayClient()) await this.recover(terminal);
+        else await this.finishClose(terminal);
+      }
+      return { success: true };
+    } catch (error) {
+      return failure(error);
+    }
+  }
+}
 
-  ipcMain.handle(TerminalIpc.Close, (event, id: unknown): TerminalActionResult => {
-    if (!isValidTerminalId(id)) {
-      return { success: false, error: 'Invalid terminal ID' };
-    }
-    const managed = findOwnedTerminal(event, id);
-    if (!managed) return { success: false, error: 'Terminal was not found' };
-    forgetTerminal(id);
-    terminateTerminal(managed);
-    return { success: true };
-  });
+export const registerTerminalHandlers = (deps: TerminalHandlerDependencies): void => {
+  const service = new GatewayTerminalService(deps);
+  ipcMain.handle(TerminalIpc.Create, (event, request: unknown) =>
+    service.create(event.sender, request),
+  );
+  ipcMain.handle(TerminalIpc.Write, (event, request: unknown) =>
+    service.action(event.sender, request, false),
+  );
+  ipcMain.handle(TerminalIpc.Resize, (event, request: unknown) =>
+    service.action(event.sender, request, true),
+  );
+  ipcMain.handle(TerminalIpc.Close, (event, id: unknown) => service.close(event.sender, id));
 };

@@ -89,6 +89,7 @@ export interface SkillRpcResult {
 
 export interface CoworkRuntimeEvents {
   gatewayReady: () => void;
+  gatewayDisconnected: () => void;
   gatewayEvent: (event: import('./gateway/types').GatewayEventFrame) => void;
   diagnosticCancellation: (event: {
     sessionId: string;

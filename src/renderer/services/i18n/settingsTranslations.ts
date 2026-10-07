@@ -755,6 +755,8 @@ export const settingsTranslations = {
     coworkTerminal: '终端',
     coworkTerminalTitle: '终端 {number}',
     coworkTerminalCreateFailed: '无法创建终端',
+    coworkTerminalUnavailable: '终端连接不可用，请关闭此标签后重新打开。未自动重试输入。',
+    coworkTerminalEnded: '终端已结束',
     coworkTerminalExited: '终端进程已退出，退出码：{code}',
     coworkTerminalTabMenu: '终端标签页菜单',
     coworkTerminalTabMenuDismiss: '关闭终端标签页菜单',
@@ -2108,6 +2110,9 @@ export const settingsTranslations = {
     coworkTerminal: 'Terminal',
     coworkTerminalTitle: 'Terminal {number}',
     coworkTerminalCreateFailed: 'Unable to create terminal',
+    coworkTerminalUnavailable:
+      'Terminal connection unavailable. Close this tab and open a new one. Input was not retried.',
+    coworkTerminalEnded: 'Terminal ended',
     coworkTerminalExited: 'Terminal process exited with code {code}',
     coworkTerminalTabMenu: 'Terminal tab menu',
     coworkTerminalTabMenuDismiss: 'Close terminal tab menu',

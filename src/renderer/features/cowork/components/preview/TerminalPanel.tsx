@@ -18,6 +18,7 @@ interface TerminalPanelProps {
   cwd: string;
   isObscured: boolean;
   terminalId: string;
+  sessionId?: string;
 }
 
 // Windows Terminal's Campbell palette keeps PowerShell output familiar while
@@ -73,7 +74,7 @@ const openTerminalWebLink = (event: MouseEvent, uri: string): void => {
   }
 };
 
-const TerminalPanel = ({ cwd, isObscured, terminalId }: TerminalPanelProps) => {
+const TerminalPanel = ({ cwd, isObscured, terminalId, sessionId }: TerminalPanelProps) => {
   const hostRef = useRef<HTMLDivElement>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const searchRef = useRef<SearchAddon | null>(null);
@@ -195,9 +196,11 @@ const TerminalPanel = ({ cwd, isObscured, terminalId }: TerminalPanelProps) => {
     let latestCompositionText = '';
     let suppressedCompositionText: string | null = null;
     let suppressionTimer: number | null = null;
+    let pendingReplays = 0;
+    let statusReady: boolean | undefined;
 
     const sendInput = (data: string) => {
-      if (backendReadyRef.current) {
+      if (backendReadyRef.current && pendingReplays === 0) {
         ignoreTerminalActionFailure(
           window.electron.terminal.write({ id: backendTerminalId, data }),
         );
@@ -214,13 +217,26 @@ const TerminalPanel = ({ cwd, isObscured, terminalId }: TerminalPanelProps) => {
     };
 
     const unsubscribeData = window.electron.terminal.onData(event => {
-      if (event.id === backendTerminalId) terminal.write(event.data);
+      if (event.id !== backendTerminalId) return;
+      if (event.reset) {
+        pendingReplays += 1;
+        terminal.reset();
+        terminal.write(event.data, () => {
+          pendingReplays -= 1;
+        });
+      } else terminal.write(event.data);
+    });
+    const unsubscribeStatus = window.electron.terminal.onStatus(event => {
+      if (event.id !== backendTerminalId) return;
+      statusReady = event.ready;
+      backendReadyRef.current = event.ready;
+      if (event.failed) terminal.write(`\r\n${i18nService.t('coworkTerminalUnavailable')}\r\n`);
     });
     const unsubscribeExit = window.electron.terminal.onExit(event => {
       if (event.id !== backendTerminalId) return;
       backendReadyRef.current = false;
       terminal.write(
-        `\r\n${i18nService.t('coworkTerminalExited').replace('{code}', String(event.exitCode))}\r\n`,
+        `\r\n${event.exitCode === null ? i18nService.t('coworkTerminalEnded') : i18nService.t('coworkTerminalExited').replace('{code}', String(event.exitCode))}\r\n`,
       );
     });
     const inputSubscription = terminal.onData(data => {
@@ -328,6 +344,7 @@ const TerminalPanel = ({ cwd, isObscured, terminalId }: TerminalPanelProps) => {
           cwd,
           cols: terminal.cols,
           rows: terminal.rows,
+          ...(sessionId ? { sessionId } : {}),
         })
         .catch(() => ({ success: false }) as const);
     createPromiseRef.current = createPromise;
@@ -337,7 +354,7 @@ const TerminalPanel = ({ cwd, isObscured, terminalId }: TerminalPanelProps) => {
         terminal.write(`\r\n${i18nService.t('coworkTerminalCreateFailed')}\r\n`);
         return;
       }
-      backendReadyRef.current = true;
+      backendReadyRef.current = statusReady ?? true;
       fitAndResize();
       terminal.focus();
     });
@@ -350,6 +367,7 @@ const TerminalPanel = ({ cwd, isObscured, terminalId }: TerminalPanelProps) => {
       searchResultSubscription.dispose();
       unsubscribeData();
       unsubscribeExit();
+      unsubscribeStatus();
       if (suppressionTimer !== null) window.clearTimeout(suppressionTimer);
       textarea?.removeEventListener('compositionstart', handleCompositionStart);
       textarea?.removeEventListener('compositionupdate', handleCompositionUpdate);
@@ -363,16 +381,14 @@ const TerminalPanel = ({ cwd, isObscured, terminalId }: TerminalPanelProps) => {
       // and reuses the same PTY instead of killing the just-created shell.
       closeTimerRef.current = window.setTimeout(() => {
         closeTimerRef.current = null;
-        void createPromise.then(result => {
-          if (result.success) {
-            ignoreTerminalActionFailure(window.electron.terminal.close(backendTerminalId));
-          }
-          backendReadyRef.current = false;
-          createPromiseRef.current = null;
-        });
+        // Main reserves this ID before awaiting Gateway admission. Closing now
+        // cancels admission or records close intent for a late native open reply.
+        ignoreTerminalActionFailure(window.electron.terminal.close(backendTerminalId));
+        backendReadyRef.current = false;
+        createPromiseRef.current = null;
       }, 0);
     };
-  }, [cwd, openSearch, terminalId]);
+  }, [cwd, openSearch, sessionId, terminalId]);
 
   useEffect(() => {
     if (isObscured) return;

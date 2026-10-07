@@ -1508,6 +1508,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       {
         id,
         cwd: terminalWorkingDirectory,
+        sessionId: currentSession?.id,
         label: i18nService.t('coworkTerminalTitle').replace('{number}', String(number)),
       },
     ]);
@@ -1522,6 +1523,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     setTerminalTabs,
     terminalTabs.length,
     terminalWorkingDirectory,
+    currentSession?.id,
   ]);
 
   const {
@@ -1911,6 +1913,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             key={`terminal-runtime:${displayState.runtimeId}:${tab.id}`}
             terminalId={tab.id}
             cwd={tab.cwd}
+            sessionId={tab.sessionId}
             isObscured={!isActiveSession || runtimeActiveTabId !== tab.id}
           />
         )),

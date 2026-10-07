@@ -1,5 +1,6 @@
 import { app } from 'electron';
 
+import { TerminalGateway } from '../../../shared/app/terminal';
 import { PRODUCT_NAME } from '../../../shared/productMetadata';
 import { coworkLog } from '../../cowork/coworkLogger';
 import { GoalContinuationCoordinator } from '../../openclaw/goals/goalContinuationCoordinator';
@@ -235,7 +236,7 @@ export async function createGatewayClient(
     clientDisplayName: PRODUCT_NAME,
     clientVersion: app.getVersion(),
     mode: 'backend',
-    caps: [OPENCLAW_GATEWAY_TOOL_EVENTS_CAP],
+    caps: [OPENCLAW_GATEWAY_TOOL_EVENTS_CAP, TerminalGateway.OffsetCapability],
     role: 'operator',
     scopes: [
       'operator.admin',
@@ -342,6 +343,7 @@ export function stopGatewayClient(this: RuntimeGatewayConnectionContext): void {
   }
   this.gatewayClient = null;
   this.pendingGatewayClient = null;
+  this.emit('gatewayDisconnected');
   this.gatewayClientVersion = null;
   this.gatewayClientEntryPath = null;
   this.gatewayReadyPromise = null;
@@ -388,6 +390,7 @@ export function cleanupGatewayClientState(this: RuntimeGatewayConnectionContext)
   this.stopTickWatchdog();
   this.gatewayClient = null;
   this.pendingGatewayClient = null;
+  this.emit('gatewayDisconnected');
   this.gatewayClientVersion = null;
   this.gatewayClientEntryPath = null;
   this.gatewayReadyPromise = null;

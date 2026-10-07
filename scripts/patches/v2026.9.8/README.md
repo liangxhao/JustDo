@@ -10,7 +10,8 @@ The sibling source checkout was audited at tag `v2026.9.8` against `v2026.9.6`.
 The 22 existing integration seams remain necessary, with two important scope reductions.
 032 fixes a Windows session-creation path comparison in 9.8; 033 records loop
 exit diagnostics; 034 adds opt-in plugin execution settlement and tool cleanup;
-035 populates the existing prompt-hook field with the actual attempt context budget:
+035 populates the existing prompt-hook field with the actual attempt context budget;
+036 adds the shared desktop terminal launch and close contract:
 
 - **008:** upstream removed the generic durable task registry. Delete its task
   maintenance patch; retain only the application-process boundary on native
@@ -54,9 +55,23 @@ display projection and the ordering of restored messages.
 | 033   | Content-free loop exit diagnostics    | Record the selected loop exit branch and final response kind; carry through deferred settlement without changing execution or retries                           |
 | 034   | Owned plugin execution and cleanup    | General SDK run timeout and managed tool lifetime; exact native registry ownership, whole-run lifecycle, supervisor cleanup and trusted Code Mode wait metadata |
 | 035   | Actual prompt-hook context budget     | Expose the resolved native attempt budget through the existing contextTokenBudget hook field; model selection and context guards remain native                  |
+| 036   | Shared desktop terminal               | Admin terminal launch accepts project cwd and shell/args; explicit termination retains native viewer ownership checks                                             |
 
 Each module header records its scope, native safety boundary and removal condition.
 No upstream issue number is claimed without an actual filed issue.
+
+Patch 036 addresses the native terminal integration gap: `terminal.open` starts in
+the role home and does not accept the desktop's selected project or PowerShell
+launch arguments; `terminal.close` normally detaches from an adopted shared PTY.
+The existing operator.admin RPC accepts optional cwd/shell/args and an explicit
+terminate flag. Catalog launches retain their native plan. Sandbox admission,
+exact chat incarnation and attached-viewer checks stay native; agent input still
+uses native one-time approval unless full execution access applies. Rebuild from
+the locked pristine package. Remove this seam when those native launch and close
+contracts are available upstream. Source targets are the protocol, terminal RPC,
+session manager and the native recovery bundle; final Gateway bundle verification
+checks the same behavior. Tests: `tests/openclaw/patches/v2026.9.8/shared-terminal.test.ts`
+and `src/main/ipc/app/terminal.test.ts`.
 
 Patch 006 transfers the one-shot human initiation marker from the native queued
 source turn to its separately allocated execution ID immediately before execution.

@@ -30,6 +30,7 @@ export interface CoworkTerminalTab {
   cwd: string;
   id: string;
   label: string;
+  sessionId?: string;
 }
 
 export interface CoworkSideChatTab {

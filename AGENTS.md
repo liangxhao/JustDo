@@ -216,6 +216,10 @@ See `docs/architecture/10-data-storage.md`.
 ## Boundaries
 
 - Main may use Node, Electron main APIs, filesystem, SQLite, child processes.
+- Terminal panels use Gateway terminal RPCs. Gateway owns PTYs and buffers;
+  Main retains only window/tab ownership, native IDs, connection identity and offsets.
+  Bind new chat terminals to the prepared native session; homepage terminals remain
+  connection-owned. Reconnect by attach, never reopen or replay uncertain input.
 - Renderer must use the preload bridge only. No privileged imports.
 - Shared code must not import Electron, Node built-ins, DOM-only APIs, or process state.
 - Shared contracts are grouped by domain: `agents/`, `app/`, `browser/`, `cowork/`,
