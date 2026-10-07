@@ -748,6 +748,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                                     />
                                   ) : (
                                     <PluginLockedIndicator
+                                      checked={extension.enabled}
                                       label={i18nService.t('extensionToggleUnavailable')}
                                     />
                                   )}

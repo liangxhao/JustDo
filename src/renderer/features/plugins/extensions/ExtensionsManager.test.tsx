@@ -176,7 +176,9 @@ describe('ExtensionsManager extension toggle', () => {
     expect(screen.queryByText('extensionInstalled')).toBeNull();
     expect(screen.getByRole('button', { name: 'importExtension' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'pluginGroupExpand' }));
-    expect(screen.getByRole('img', { name: 'extensionToggleUnavailable' })).toBeTruthy();
+    expect(
+      screen.getByRole('img', { name: 'pluginStatusDisabled · extensionToggleUnavailable' }),
+    ).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'extensionFolderUnavailable' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'openFolder' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'extensionDeleteUnavailable' })).toBeNull();
@@ -220,7 +222,10 @@ describe('ExtensionsManager extension toggle', () => {
         },
       });
       render(<ExtensionsManager searchQuery="Computer" />);
-      const lock = await screen.findByRole('img', { name: 'extensionToggleUnavailable' });
+      const lock = await screen.findByRole('img', {
+        name: `${enabled ? 'pluginStatusEnabled' : 'pluginStatusDisabled'} · extensionToggleUnavailable`,
+      });
+      expect(lock.className).toContain(enabled ? 'text-emerald-600' : 'text-amber-600');
       expect(screen.queryByRole('switch')).toBeNull();
       fireEvent.click(lock);
       expect(setEnabled).not.toHaveBeenCalled();

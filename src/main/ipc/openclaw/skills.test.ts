@@ -231,3 +231,75 @@ test('allows enabling configuration for a skill with missing runtime requirement
   ).resolves.toMatchObject({ success: true });
   expect(updateConfig).toHaveBeenCalledWith({ skillKey: skill.skillKey, enabled: true });
 });
+
+test('reports an opt-in skill as disabled until its native enable requirement is satisfied', async () => {
+  const skill = createSkill('openclaw-bundled', {
+    name: 'coding-agent',
+    skillKey: 'coding-agent',
+    bundled: true,
+    eligible: false,
+    disabled: false,
+    missing: {
+      bins: [],
+      anyBins: ['claude', 'codex', 'opencode'],
+      env: [],
+      config: ['skills.entries.coding-agent.enabled'],
+      os: [],
+    },
+  });
+  const getStatus = vi.fn(async () => createStatus(skill));
+  const updateConfig = vi.fn(async () => ({ ok: true }));
+  registerSkillHandlers({
+    skillService: { getStatus, updateConfig } as unknown as OpenClawSkillService,
+    skillFileService: { deleteDirectory: vi.fn() },
+    installationService: new PluginInstallationService(),
+  });
+
+  await expect(handlers.get('skills:list')?.()).resolves.toMatchObject({
+    skills: [{ enabled: false, management: { enable: { allowed: true } } }],
+  });
+  getStatus
+    .mockResolvedValueOnce(createStatus(skill))
+    .mockResolvedValueOnce(
+      createStatus({
+        ...skill,
+        eligible: false,
+        missing: {
+          bins: [],
+          anyBins: ['claude', 'codex', 'opencode'],
+          env: [],
+          config: [],
+          os: [],
+        },
+      }),
+    );
+
+  await expect(
+    handlers.get('skills:setEnabled')?.(undefined, { id: 'coding-agent', enabled: true }),
+  ).resolves.toMatchObject({
+    skills: [{
+      enabled: true,
+      eligible: false,
+      missing: { anyBins: ['claude', 'codex', 'opencode'] },
+    }],
+  });
+  expect(updateConfig).toHaveBeenCalledWith({ skillKey: 'coding-agent', enabled: true });
+});
+
+test('keeps an enabled skill enabled when unrelated requirements are missing', async () => {
+  const skill = createSkill('openclaw-bundled', {
+    eligible: false,
+    missing: { bins: ['git'], env: [], config: ['tools.enabled'], os: [] },
+  });
+  registerSkillHandlers({
+    skillService: {
+      getStatus: vi.fn(async () => createStatus(skill)),
+    } as unknown as OpenClawSkillService,
+    skillFileService: { deleteDirectory: vi.fn() },
+    installationService: new PluginInstallationService(),
+  });
+
+  await expect(handlers.get('skills:list')?.()).resolves.toMatchObject({
+    skills: [{ enabled: true, eligible: false }],
+  });
+});

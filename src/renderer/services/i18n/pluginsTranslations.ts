@@ -69,6 +69,7 @@ export const pluginsTranslations = {
     // Skill status
     missing: '缺失',
     missingBins: '缺失工具',
+    missingAnyBins: '缺失工具（至少安装一个）',
     missingEnv: '缺失环境变量',
     missingConfig: '缺失配置',
     missingOs: '不支持的操作系统',
@@ -244,6 +245,7 @@ export const pluginsTranslations = {
     // Skill status
     missing: 'missing',
     missingBins: 'Missing tools',
+    missingAnyBins: 'Missing tools (install at least one)',
     missingEnv: 'Missing env vars',
     missingConfig: 'Missing configuration',
     missingOs: 'Unsupported operating system',

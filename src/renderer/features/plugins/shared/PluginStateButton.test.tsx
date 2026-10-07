@@ -5,6 +5,12 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import PluginStateButton, { PluginLockedIndicator } from './PluginStateButton';
 
+vi.mock('@/services/i18n', () => ({
+  i18nService: {
+    t: (key: string) => key,
+  },
+}));
+
 describe('PluginStateButton', () => {
   afterEach(cleanup);
 
@@ -59,19 +65,26 @@ describe('PluginStateButton', () => {
     expect(screen.queryByRole('tooltip')).toBeNull();
   });
 
-  test('aligns the locked indicator and exposes its explanation on hover', async () => {
-    render(<PluginLockedIndicator label="Managed plugin" />);
+  test.each([false, true])(
+    'shows the locked state and explanation when checked=%s',
+    async checked => {
+      render(<PluginLockedIndicator checked={checked} label="Managed plugin" />);
 
-    const indicator = screen.getByRole('img', { name: 'Managed plugin' });
-    expect(indicator.className).toContain('h-6');
-    expect(indicator.className).toContain('w-6');
-    expect(indicator.className).toContain('items-center');
-    expect(indicator.className).toContain('justify-center');
-    expect(indicator.parentElement?.className).toContain('pointer-events-auto');
+      const label = `${checked ? 'pluginStatusEnabled' : 'pluginStatusDisabled'} · Managed plugin`;
+      const indicator = screen.getByRole('img', { name: label });
+      expect(screen.queryByRole('switch')).toBeNull();
+      expect(screen.queryByRole('button')).toBeNull();
+      expect(indicator.className).toContain(checked ? 'text-emerald-600' : 'text-amber-600');
+      expect(indicator.className).toContain('h-6');
+      expect(indicator.className).toContain('w-6');
+      expect(indicator.className).toContain('items-center');
+      expect(indicator.className).toContain('justify-center');
+      expect(indicator.parentElement?.className).toContain('pointer-events-auto');
 
-    fireEvent.mouseEnter(indicator);
-    await waitFor(() => {
-      expect(screen.getByRole('tooltip').textContent).toBe('Managed plugin');
-    });
-  });
+      fireEvent.mouseEnter(indicator);
+      await waitFor(() => {
+        expect(screen.getByRole('tooltip').textContent).toBe(label);
+      });
+    },
+  );
 });

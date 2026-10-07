@@ -30,7 +30,10 @@ const mapGatewaySkill = (entry: GatewaySkillEntry, manager?: OpenClawEngineManag
   id: entry.skillKey,
   name: entry.name,
   description: entry.description,
-  enabled: !entry.disabled,
+  // Skills can require an explicit opt-in even when Gateway does not mark them disabled.
+  enabled:
+    !entry.disabled &&
+    !entry.missing.config.includes(`skills.entries.${entry.skillKey}.enabled`),
   isOfficial: entry.bundled,
   isBuiltIn: entry.bundled,
   updatedAt: 0,

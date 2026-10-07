@@ -254,7 +254,12 @@ const HookManager: React.FC<HookManagerProps> = ({
   const renderToggle = (hook: HookEntry) => {
     const capability = hook.enabled ? hook.management?.disable : hook.management?.enable;
     if (capability && !capability.allowed && capability.reason === 'managed-by-extension') {
-      return <PluginLockedIndicator label={i18nService.t('hookManagedByPlugin')} />;
+      return (
+        <PluginLockedIndicator
+          checked={hook.enabled}
+          label={i18nService.t('hookManagedByPlugin')}
+        />
+      );
     }
     const disabled =
       gatewayOffline || updatingHookIds.has(hook.id) || capability?.allowed === false;

@@ -20,7 +20,10 @@ import PluginStateButton, {
 import PluginUpdateIndicator from '@/features/plugins/shared/PluginUpdateIndicator';
 import { Skill } from '@/features/plugins/skills/skill';
 import SkillMarketplace from '@/features/plugins/skills/SkillMarketplace';
-import { getMissingRequirementCount } from '@/features/plugins/skills/skillRequirements';
+import {
+  getMissingRequirementCount,
+  getMissingSkillDependencies,
+} from '@/features/plugins/skills/skillRequirements';
 import { skillService } from '@/features/plugins/skills/skillService';
 import { setSkills } from '@/features/plugins/skills/skillSlice';
 import { i18nService } from '@/services/i18n';
@@ -50,7 +53,11 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
 
   const [localSearchQuery, setLocalSearchQuery] = useState('');
   const skillSearchQuery = sharedSearchQuery ?? localSearchQuery;
-  const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
+  const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null);
+  const selectedSkill = skills.find(skill => skill.id === selectedSkillId);
+  const selectedSkillMissing = selectedSkill
+    ? getMissingSkillDependencies(selectedSkill)
+    : undefined;
   const [skillPendingDelete, setSkillPendingDelete] = useState<Skill | null>(null);
   const [importPickerOpen, setImportPickerOpen] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -151,7 +158,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
   };
 
   const handleToggleSkill = async (skillId: string) => {
-    if (updatingSkillIds.has(skillId)) return;
+    if (readOnly || updatingSkillIds.has(skillId)) return;
     if (gatewayOffline) {
       setActionOutcome({
         type: 'error',
@@ -162,6 +169,10 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
     }
     const targetSkill = skills.find(skill => skill.id === skillId);
     if (!targetSkill) return;
+    const capability = targetSkill.enabled
+      ? targetSkill.management.disable
+      : targetSkill.management.enable;
+    if (!capability.allowed) return;
     setUpdatingSkillIds(current => new Set(current).add(skillId));
     try {
       const updatedSkills = await skillService.setSkillEnabled(skillId, !targetSkill.enabled);
@@ -307,7 +318,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
 
   const handleDeleteClick = (skill: Skill) => {
     if (!skill.management.remove.allowed) return;
-    setSelectedSkill(null);
+    setSelectedSkillId(null);
     setSkillPendingDelete(skill);
   };
 
@@ -320,7 +331,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
       const result = await skillService.deleteSkill(pendingSkill.id, pendingSkill.source);
       if (result.success && result.skills) {
         dispatch(setSkills(result.skills));
-        setSelectedSkill(null);
+        setSelectedSkillId(null);
         const resolutionMessage = getResolutionChangeMessage(pendingSkill, result.skills);
         setActionOutcome({
           type: 'success',
@@ -350,9 +361,18 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
 
   // Render skill eligibility status
   const renderSkillStatus = (skill: Skill) => {
-    const missingCount = getMissingRequirementCount(skill.missing);
+    const missing = getMissingSkillDependencies(skill);
+    const missingCount = getMissingRequirementCount(missing);
     if (missingCount > 0) {
-      const missingItems = Object.values(skill.missing ?? {}).flat();
+      const missingItems = [
+        ...(missing?.bins ?? []),
+        ...(missing?.env ?? []),
+        ...(missing?.config ?? []),
+        ...(missing?.os ?? []),
+        ...(missing?.anyBins?.length
+          ? [`${i18nService.t('missingAnyBins')}: ${missing.anyBins.join(', ')}`]
+          : []),
+      ];
       return (
         <Tooltip
           content={`${i18nService.t('skillMissingRequirements')}: ${missingItems.join(', ')}`}
@@ -458,7 +478,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                             <article
                               key={skill.id}
                               className="group relative min-h-16 min-w-0 cursor-pointer rounded-xl border border-transparent px-2 py-2 transition-colors hover:border-border/70 hover:bg-surface-raised/70"
-                              onClick={() => setSelectedSkill(skill)}
+                              onClick={() => setSelectedSkillId(skill.id)}
                             >
                               <button
                                 type="button"
@@ -466,7 +486,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                                 aria-label={`${i18nService.t('subtaskShowInfo')}: ${skill.name}`}
                                 onClick={event => {
                                   event.stopPropagation();
-                                  setSelectedSkill(skill);
+                                  setSelectedSkillId(skill.id);
                                 }}
                               />
                               <div className="pointer-events-none relative z-10 grid min-w-0 grid-cols-[2rem_minmax(0,1fr)_auto] gap-x-2 [&_button]:pointer-events-auto">
@@ -494,6 +514,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                                     )}
                                   {!toggleAllowed && !gatewayOffline ? (
                                     <PluginLockedIndicator
+                                      checked={skill.enabled}
                                       label={i18nService.t('pluginManagedActionUnavailable')}
                                     />
                                   ) : (
@@ -580,7 +601,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
       {selectedSkill &&
         createPortal(
           <Modal
-            onClose={() => setSelectedSkill(null)}
+            onClose={() => setSelectedSkillId(null)}
             overlayClassName="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
             className="w-full max-w-md mx-4 rounded-2xl bg-surface border border-border shadow-2xl p-6"
           >
@@ -597,7 +618,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
               </div>
               <button
                 type="button"
-                onClick={() => setSelectedSkill(null)}
+                onClick={() => setSelectedSkillId(null)}
                 className="p-1.5 rounded-lg text-secondary hover:text-foreground hover:bg-surface-raised transition-colors flex-shrink-0"
               >
                 <XMarkIcon className="h-5 w-5" />
@@ -614,29 +635,34 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
             />
 
             {/* Eligibility info */}
-            {selectedSkill.missing && getMissingRequirementCount(selectedSkill.missing) > 0 && (
+            {selectedSkillMissing && getMissingRequirementCount(selectedSkillMissing) > 0 && (
               <div className="p-3 rounded-xl bg-yellow-500/10 border border-yellow-500/30 mb-4">
                 <p className="text-xs text-yellow-600 font-medium mb-1">
                   {i18nService.t('skillMissingRequirements')}
                 </p>
-                {selectedSkill.missing.bins.length > 0 && (
+                {selectedSkillMissing.bins.length > 0 && (
                   <p className="text-xs text-secondary">
-                    {i18nService.t('missingBins')}: {selectedSkill.missing.bins.join(', ')}
+                    {i18nService.t('missingBins')}: {selectedSkillMissing.bins.join(', ')}
                   </p>
                 )}
-                {selectedSkill.missing.env.length > 0 && (
+                {Boolean(selectedSkillMissing.anyBins?.length) && (
                   <p className="text-xs text-secondary">
-                    {i18nService.t('missingEnv')}: {selectedSkill.missing.env.join(', ')}
+                    {i18nService.t('missingAnyBins')}: {selectedSkillMissing.anyBins?.join(', ')}
                   </p>
                 )}
-                {selectedSkill.missing.config.length > 0 && (
+                {selectedSkillMissing.env.length > 0 && (
                   <p className="text-xs text-secondary">
-                    {i18nService.t('missingConfig')}: {selectedSkill.missing.config.join(', ')}
+                    {i18nService.t('missingEnv')}: {selectedSkillMissing.env.join(', ')}
                   </p>
                 )}
-                {selectedSkill.missing.os.length > 0 && (
+                {selectedSkillMissing.config.length > 0 && (
                   <p className="text-xs text-secondary">
-                    {i18nService.t('missingOs')}: {selectedSkill.missing.os.join(', ')}
+                    {i18nService.t('missingConfig')}: {selectedSkillMissing.config.join(', ')}
+                  </p>
+                )}
+                {selectedSkillMissing.os.length > 0 && (
+                  <p className="text-xs text-secondary">
+                    {i18nService.t('missingOs')}: {selectedSkillMissing.os.join(', ')}
                   </p>
                 )}
               </div>
@@ -655,7 +681,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
               )}
             </div>
 
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
               <Tooltip content={i18nService.t('openFolder')} position="top">
                 <button
                   type="button"
@@ -666,24 +692,57 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                   <FolderIcon className="h-4 w-4" />
                 </button>
               </Tooltip>
-              {!readOnly &&
-                !gatewayOffline &&
-                selectedSkill.management.remove.allowed && (
-                  <Tooltip content={i18nService.t('deleteSkill')} position="top">
+              {!readOnly && !gatewayOffline && selectedSkill.management.remove.allowed && (
+                <Tooltip content={i18nService.t('deleteSkill')} position="top">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const skill = selectedSkill;
+                      setSelectedSkillId(null);
+                      handleDeleteClick(skill);
+                    }}
+                    className="rounded-lg p-2 text-red-500 transition-colors hover:bg-red-500/10"
+                    aria-label={i18nService.t('deleteSkill')}
+                  >
+                    <TrashIcon className="h-4 w-4" />
+                  </button>
+                </Tooltip>
+              )}
+              <div className="ml-auto">
+                {(selectedSkill.enabled
+                  ? selectedSkill.management.disable
+                  : selectedSkill.management.enable
+                ).allowed ? (
+                  <Tooltip
+                    content={i18nService.t(
+                      selectedSkill.enabled ? 'pluginStatusEnabled' : 'pluginStatusDisabled',
+                    )}
+                    position="top"
+                  >
                     <button
                       type="button"
-                      onClick={() => {
-                        const skill = selectedSkill;
-                        setSelectedSkill(null);
-                        handleDeleteClick(skill);
-                      }}
-                      className="rounded-lg p-2 text-red-500 transition-colors hover:bg-red-500/10"
-                      aria-label={i18nService.t('deleteSkill')}
+                      role="switch"
+                      aria-label={`${i18nService.t(selectedSkill.enabled ? 'disableSkill' : 'enableSkill')}: ${selectedSkill.name}`}
+                      aria-checked={selectedSkill.enabled}
+                      disabled={
+                        readOnly || gatewayOffline || updatingSkillIds.has(selectedSkill.id)
+                      }
+                      aria-busy={updatingSkillIds.has(selectedSkill.id) || undefined}
+                      onClick={() => void handleToggleSkill(selectedSkill.id)}
+                      className={`relative h-6 w-11 shrink-0 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${selectedSkill.enabled ? 'bg-primary' : 'bg-border'}`}
                     >
-                      <TrashIcon className="h-4 w-4" />
+                      <span
+                        className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${selectedSkill.enabled ? 'translate-x-5' : 'translate-x-0'}`}
+                      />
                     </button>
                   </Tooltip>
+                ) : (
+                  <PluginLockedIndicator
+                    checked={selectedSkill.enabled}
+                    label={i18nService.t('pluginManagedActionUnavailable')}
+                  />
                 )}
+              </div>
             </div>
           </Modal>,
           document.body,

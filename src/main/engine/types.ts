@@ -44,6 +44,7 @@ export interface GatewaySkillEntry {
  */
 export interface GatewaySkillMissing {
   bins: string[];
+  anyBins?: string[];
   env: string[];
   config: string[];
   os: string[];

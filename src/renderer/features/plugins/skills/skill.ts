@@ -6,7 +6,7 @@ export interface Skill {
   id: string;
   name: string;
   description: string;
-  enabled: boolean; // Whether visible in popover (from Gateway disabled state)
+  enabled: boolean; // Gateway enabled state, including any explicit skill opt-in requirement
   isOfficial: boolean; // "官方" badge (bundled)
   isBuiltIn: boolean; // Bundled with app, cannot be deleted
   updatedAt: number; // Timestamp
@@ -16,7 +16,7 @@ export interface Skill {
   // Gateway extended fields
   source?: SkillSource;
   eligible?: boolean; // Can be used right now (requirements met)
-  missing?: SkillMissing; // Missing requirements (bins, env, config, os)
+  missing?: SkillMissing; // Missing requirements (bins, anyBins, env, config, os)
   install?: SkillInstallOption[]; // Install options for missing requirements
   emoji?: string;
   homepage?: string;
@@ -29,6 +29,7 @@ export type SkillSource = OpenClawSkillSource;
 
 export interface SkillMissing {
   bins: string[];
+  anyBins?: string[];
   env: string[];
   config: string[];
   os: string[];
