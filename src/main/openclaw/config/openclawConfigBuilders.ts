@@ -891,6 +891,9 @@ export const buildAuthScopedOpenClawConfig = (
   for (const key of ['workspace', 'cwd'] as const) {
     if (typeof managedDefaults[key] === 'string') defaults[key] = managedDefaults[key];
   }
+  if (Object.prototype.hasOwnProperty.call(managedDefaults, 'skipBootstrap')) {
+    defaults.skipBootstrap = managedDefaults.skipBootstrap;
+  }
   if (Object.prototype.hasOwnProperty.call(managedDefaults, 'thinkingDefault')) {
     defaults.thinkingDefault = managedDefaults.thinkingDefault;
   } else {

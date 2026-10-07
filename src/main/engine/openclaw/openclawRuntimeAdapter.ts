@@ -4,6 +4,7 @@ import { EventEmitter } from 'events';
 import path from 'path';
 
 import { createPropertyContext } from '../../../shared/app/propertyContext';
+import { ensureProjectGitRepository } from '../../core/filesystem/projectGit';
 import { t } from '../../core/i18n';
 import {
   areWorkspacePathsEquivalent,
@@ -452,6 +453,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       throw new Error('OpenClaw sessions.create returned no sessionId.');
     }
     this.assertPreparedSessionEntry(result.entry, nativePermissionMode, workspaceRoot);
+    await ensureProjectGitRepository(workspaceRoot);
 
     this.rememberSessionKey(sessionId, sessionKey);
     return { sessionKey, gatewaySessionId };

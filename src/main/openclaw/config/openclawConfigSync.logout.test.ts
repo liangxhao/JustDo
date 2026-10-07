@@ -531,10 +531,16 @@ describe('OpenClaw auth logout config sync', () => {
       getAgents: () => ['main', 'research'].map(id => ({ id, name: id, enabled: true, model: '', isDefault: id === 'main' })),
     } as never);
     for (const reason of ['startup', 'settings', BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout]) {
+      const existing = fs.existsSync(configPath)
+        ? JSON.parse(fs.readFileSync(configPath, 'utf8'))
+        : { gateway: { mode: 'local' }, agents: { defaults: {} } };
+      existing.agents.defaults.skipBootstrap = false;
+      fs.writeFileSync(configPath, JSON.stringify(existing));
       expect(sync.sync(reason).ok).toBe(true);
       const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
       expect(config.agents.defaults.workspace).toBe(roleRoot);
       expect(config.agents.defaults.cwd).toBe(projectDir);
+      expect(config.agents.defaults.skipBootstrap).toBe(true);
       for (const id of ['main', 'research']) {
         expect(config.agents.entries[id]).toMatchObject({ workspace: path.join(roleRoot, id), cwd: projectDir });
       }

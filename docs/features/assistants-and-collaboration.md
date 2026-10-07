@@ -8,9 +8,13 @@
 
 用户在“设置 → 助手”创建、编辑和禁用档案。列表支持搜索与启用筛选；首次打开优先选中 main，后续刷新保留未保存的编辑。研究、开发、审查和写作预设会填写名称、职责及可编辑的 `AGENTS.md` 草稿；复制档案只复制名称、说明和模型到一个未保存草稿，不复制角色文件、记忆或历史。main 不能禁用，默认隐藏助手选择器。设置中的“允许切换主会话的助手”开关默认关闭，保存在 cowork_config.allowMainAgentSwitch；开启后在输入框上方、工程目录按钮左侧显示选择器。已有聊天切换助手会保留工程目录并进入新会话，不搬迁原生历史。运行中禁止切换；禁用或删除的助手不可选择。关闭开关重置新会话选择为 main，已有会话继续归属原助手。
 
-产品保存档案元数据和受管 roster，原生 `agents.files` 管理当前运行时支持的 `AGENTS.md`、`SOUL.md`、`IDENTITY.md`、`USER.md`、`BOOTSTRAP.md`、`MEMORY.md`。设置页提供这六个文件的读取与编辑；不存在的文件显示提示，由用户填写保存后创建，不自动生成。`BOOTSTRAP.md` 在初始化完成后可能不存在。OpenClaw 的 `run-orchestrator` 从会话 agent 身份解析 canonical workspace，`attempt-bootstrap-prepare` 加载该助手的 bootstrap 文件，再叠加执行工程根目录的 `AGENTS.md`。切换助手不复制、改写或删除工程文件；工程规则仍有效，其中若包含 main 专属身份指令，用户应将它们整理到角色文件中，避免与新助手身份冲突。所有原生助手（包括 main）的角色文件固定在 `stateDir/agent-workspaces/<agentId>`。配置中的 `agents.defaults.workspace` 指向该角色目录根，受管条目显式指定各自 workspace；原生 `cwd` 指向所选工程，具体会话仍以 `sessions.create.cwd` 持久化自己的任务目录。切换工程、常规保存和登录/退出登录同步都保持角色目录稳定。ACP 外部执行器保留其原有工程 workspace/cwd 合约。
+产品保存档案元数据和受管 roster，原生 `agents.files` 管理当前运行时支持的 `AGENTS.md`、`SOUL.md`、`IDENTITY.md`、`USER.md`、`BOOTSTRAP.md`、`MEMORY.md`。设置页提供这六个文件的读取与编辑；不存在的文件显示提示，由用户填写保存后创建，不自动生成。`BOOTSTRAP.md` 在初始化完成后可能不存在。OpenClaw 的 `run-orchestrator` 从会话 agent 身份解析 canonical workspace，`attempt-bootstrap-prepare` 加载该助手的 bootstrap 文件，再叠加执行工程根目录的 `AGENTS.md`。切换助手不复制、改写或删除工程文件；工程规则仍有效，其中若包含 main 专属身份指令，用户应将它们整理到角色文件中，避免与新助手身份冲突。所有原生助手（包括 main）的角色文件固定在 `stateDir/agent-workspaces/<agentId>`。配置中的 `agents.defaults.workspace` 指向该角色目录根，受管条目显式指定各自 workspace；原生 `cwd` 指向所选工程，具体会话仍以 `sessions.create.cwd` 持久化自己的任务目录。受管配置使用原生 `agents.defaults.skipBootstrap: true` 关闭工作区角色模板生成，继续保留原生工程 workspace/cwd 与权限语义，以及现有角色和工程规则加载。切换工程、常规保存和登录/退出登录同步都保持角色目录稳定。ACP 外部执行器保留其原有工程 workspace/cwd 合约。
 
 首次使用独立 main 角色目录时，会从 OpenClaw 运行时包的 `docs/reference/templates` 初始化 `AGENTS.md`、`SOUL.md`、`IDENTITY.md`、`USER.md` 和 `BOOTSTRAP.md`；已存在的角色文件不会被覆盖。该路径在开发环境来自 `vendor/openclaw-runtime/current`，安装后来自随应用打包的运行时。`MEMORY.md` 没有模板，由用户或助手创建。初始化不读取工程目录；工程 `AGENTS.md` 仍作为项目规则注入，旧工程中若有身份指令，需由用户核对整理。
+
+原生 `skipBootstrap` 将自动生成与提示词注入分离：常规同步、无模型的最小配置、旧配置保留分支以及登录/退出登录同步都明确写入 `true`，不设置 `contextInjection: never`。手动创建档案保留缺失角色文件提示；模型创建通过 `agents.files.set` 写入明确提供的角色规则，原生身份更新仍写在助手角色目录。已有工程文件由用户管理，不自动删除。该策略无需修改 OpenClaw 的目录解析；沙箱将既有文件投影到其隔离目录的行为仍由原生运行时管理。
+
+Git 初始化由产品单独执行：普通会话通过原生工程根目录和权限校验后，只对尚未归属 Git 仓库的工程执行 `git init --quiet --template=`，仅生成 `.git` 元数据，不复制角色文件、Git 模板或创建初始提交。已有仓库、上级仓库中的子目录、Git worktree 和裸仓库保持原状；同一工程并发准备共享初始化操作。Windows 使用应用附带的 MinGit，开发环境或其他系统可使用 PATH 中的 Git；忽略继承的 `GIT_*` 环境变量，避免初始化被重定向到其他目录。Git 缺失或初始化失败不阻止会话；接续已接管的原生 worktree 会话不执行初始化。
 
 档案保存经过配置同步、Gateway 可见性核对和失败回滚；保存后显示后端返回的规范元数据，但不覆盖未保存的角色文件编辑。角色文件单独保存并检查外部编辑冲突，标签页显示字符上限。切换档案、文件或离开页面时保护未保存修改，冲突检查不等于跨客户端原子锁。
 

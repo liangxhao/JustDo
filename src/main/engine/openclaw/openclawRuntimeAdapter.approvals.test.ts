@@ -1,6 +1,11 @@
 import { expect, test, vi } from 'vitest';
 
-const { sendToRenderer } = vi.hoisted(() => ({ sendToRenderer: vi.fn() }));
+const { sendToRenderer, ensureProjectGitRepository } = vi.hoisted(() => ({
+  sendToRenderer: vi.fn(),
+  ensureProjectGitRepository: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('../../core/filesystem/projectGit', () => ({ ensureProjectGitRepository }));
 
 vi.mock('electron', () => ({
   app: {
@@ -146,6 +151,7 @@ type StopTestAdapter = {
 };
 
 test('prepares the native OpenClaw session root and permission mode', async () => {
+  ensureProjectGitRepository.mockClear();
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
   const workspace = process.cwd();
@@ -184,9 +190,14 @@ test('prepares the native OpenClaw session root and permission mode', async () =
     cwd: workspace,
     permissionMode: 'workspace',
   });
+  expect(ensureProjectGitRepository).toHaveBeenCalledOnce();
+  expect(ensureProjectGitRepository).toHaveBeenCalledWith(workspace);
+  expect(ensureProjectGitRepository.mock.invocationCallOrder[0])
+    .toBeGreaterThan(request.mock.invocationCallOrder[0]);
 });
 
 test('continues an adopted worktree session without creating a replacement', async () => {
+  ensureProjectGitRepository.mockClear();
   const { store, session } = createEmptyStore();
   const nativeKey = 'agent:main:subagent:child';
   Object.assign(session, { nativeSessionKey: nativeKey });
@@ -204,6 +215,7 @@ test('continues an adopted worktree session without creating a replacement', asy
   });
   expect(request).toHaveBeenCalledWith('sessions.describe', { key: nativeKey });
   expect(request).not.toHaveBeenCalledWith('sessions.create', expect.anything());
+  expect(ensureProjectGitRepository).not.toHaveBeenCalled();
 });
 
 test.each([
@@ -244,6 +256,7 @@ test('rejects worktree preparation when native permission synchronization did no
 });
 
 test('rejects a session response that did not persist the permission mode', async () => {
+  ensureProjectGitRepository.mockClear();
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
   const request = vi.fn(async (method: string) => {
@@ -266,6 +279,7 @@ test('rejects a session response that did not persist the permission mode', asyn
   await expect(adapter.prepareSession('session-1', { permissionMode: 'full' })).rejects.toThrow(
     'did not persist the requested session permission mode',
   );
+  expect(ensureProjectGitRepository).not.toHaveBeenCalled();
 });
 
 test('refuses to prepare a turn when the automation permission policy is unavailable', async () => {

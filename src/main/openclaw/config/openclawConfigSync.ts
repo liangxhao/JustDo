@@ -531,6 +531,9 @@ export class OpenClawConfigSync {
           compaction: buildManagedOpenClawCompactionConfig(),
           workspace: resolveManagedAgentWorkspaceRoot(this.engineManager.getStateDir()),
           cwd: resolvedWorkspaceDir,
+          // Seed main in its role home explicitly; never scaffold task projects.
+          // Native skipBootstrap preserves injection of existing role/project files.
+          skipBootstrap: true,
           subagents: buildManagedOpenClawSubagentConfig(agentRuntimeSettings),
         },
         ...this.buildAgentsEntries(
@@ -925,6 +928,7 @@ export class OpenClawConfigSync {
             subagents: buildManagedOpenClawSubagentConfig(agentRuntimeSettings),
             workspace: resolveManagedAgentWorkspaceRoot(this.engineManager.getStateDir()),
             cwd: resolvedWorkspaceDir,
+            skipBootstrap: true,
             sandbox: buildManagedOpenClawSandboxConfig(coworkConfig.executionMode || 'local'),
           },
           entries: Object.fromEntries(
@@ -1089,6 +1093,7 @@ export class OpenClawConfigSync {
               ),
               workspace: resolveManagedAgentWorkspaceRoot(this.engineManager.getStateDir()),
               cwd: resolvedWorkspaceDir,
+              skipBootstrap: true,
               sandbox: buildManagedOpenClawSandboxConfig(coworkConfig.executionMode || 'local'),
             };
             if (agentRuntimeSettings.agent.maxConcurrent === null) {
