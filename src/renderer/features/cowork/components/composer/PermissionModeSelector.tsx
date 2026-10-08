@@ -205,7 +205,7 @@ const PermissionModeSelector: React.FC<PermissionModeSelectorProps> = ({
           setConfirmingFullAccess(false);
           setIsOpen(open => !open);
         }}
-        className={`flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium transition-colors disabled:cursor-wait disabled:opacity-70 ${
+        className={`flex items-center gap-1 whitespace-nowrap rounded-md px-1.5 py-1 text-[11px] font-medium transition-colors disabled:cursor-wait disabled:opacity-70 ${
           planEnabled
             ? 'bg-primary/12 text-primary hover:bg-primary/18'
             : isFull

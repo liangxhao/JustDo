@@ -2862,8 +2862,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   className={textareaClass}
                   style={{ minHeight: `${minHeight}px` }}
                 />
-                <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 pb-2 pt-1.5">
-                  <div className="flex items-center gap-2 relative">
+                <div className="flex flex-nowrap items-center justify-between gap-1 px-3 pb-2 pt-1.5">
+                  <div className="relative flex shrink-0 items-center gap-1">
                     {supportsAgentControls && (
                       <ComposerFeatureMenu
                         items={composerFeatures}
@@ -2893,21 +2893,23 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                     {supportsAgentControls && (
                       <PermissionModeSelector disabled={disabled} runActive={isRunActive} />
                     )}
-                    {supportsAgentControls && <ActiveSkillBadge />}
                   </div>
-                  <div className="ml-auto flex min-w-0 items-center justify-end gap-2">
-                    {supportsAgentControls && contextUsageBadge}
+                  {supportsAgentControls && <ActiveSkillBadge />}
+                  <div className="ml-auto flex min-w-0 items-center justify-end gap-1">
+                    {supportsAgentControls && !hasNoAvailableModels && contextUsageBadge}
                     {showModelSelector && !remoteManaged && (
-                      <div className="flex flex-col items-start gap-1">
+                      <div className="flex min-w-0 max-w-56 items-center">
                         {isSideChat ? (
                           <div
-                            className="flex h-8 max-w-56 cursor-default items-center rounded-full px-2.5 text-muted opacity-60"
-                            title={i18nService.t('sideChatModelReadOnly')}
+                            className="flex h-8 min-w-0 max-w-full cursor-default items-center rounded-full px-2.5 text-muted opacity-60"
+                            title={`${i18nService.t('sideChatModelReadOnly')}: ${effectiveSelectedModel?.name || i18nService.t('modelSelectorChooseModel')}`}
                             aria-label={i18nService.t('sideChatModelReadOnly')}
                           >
-                            <span className="truncate text-sm">
-                              {effectiveSelectedModel?.name ||
-                                i18nService.t('modelSelectorChooseModel')}
+                            <span className="min-w-0 max-w-56 truncate text-sm" dir="rtl">
+                              <bdi>
+                                {effectiveSelectedModel?.name ||
+                                  i18nService.t('modelSelectorChooseModel')}
+                              </bdi>
                             </span>
                           </div>
                         ) : (
@@ -3090,11 +3092,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                             }}
                           />
                         )}
-                        {hasNoAvailableModels && (
-                          <span className="max-w-60 text-[11px] leading-4 text-red-500">
-                            {i18nService.t('noModelAvailableHint')}
-                          </span>
-                        )}
                       </div>
                     )}
                     <RunControlButton
@@ -3163,7 +3160,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                     {supportsAgentControls && (
                       <>
                         <PermissionModeSelector disabled={disabled} runActive={isRunActive} />
-                        {contextUsageBadge}
+                        {!hasNoAvailableModels && contextUsageBadge}
                       </>
                     )}
                   </div>

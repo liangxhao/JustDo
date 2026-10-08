@@ -28,7 +28,7 @@ export default function StartupLoading() {
           <div className="flex items-center gap-2.5 text-sm text-secondary">
             <span
               aria-hidden="true"
-              className="h-3.5 w-3.5 shrink-0 rounded-full border-2 border-border border-t-primary motion-safe:animate-spin"
+              className="h-3.5 w-3.5 shrink-0 rounded-full border-2 border-border border-t-primary animate-spin"
             />
             <span>{i18nService.t('startupPreparing')}</span>
           </div>

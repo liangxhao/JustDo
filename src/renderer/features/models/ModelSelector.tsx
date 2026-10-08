@@ -1,4 +1,10 @@
-import { ArrowPathIcon, CheckIcon, ChevronDownIcon, PhotoIcon } from '@heroicons/react/24/outline';
+import {
+  ArrowPathIcon,
+  CheckIcon,
+  ChevronDownIcon,
+  ExclamationTriangleIcon,
+  PhotoIcon,
+} from '@heroicons/react/24/outline';
 import React from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
@@ -94,13 +100,22 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   // 如果没有可用模型，显示提示
   if (availableModels.length === 0) {
     return (
-      <div className="px-3 py-1.5 rounded-xl bg-surface text-secondary text-sm">
-        {i18nService.t('modelSelectorNoModels')}
+      <div
+        role="status"
+        className="flex h-8 min-w-0 max-w-full items-center gap-1.5 rounded-full px-2.5 text-secondary"
+        title={i18nService.t('modelSelectorNoModels')}
+      >
+        <ExclamationTriangleIcon className="h-3.5 w-3.5 shrink-0 text-warning" />
+        <span className="min-w-0 truncate text-xs">
+          {i18nService.t('modelSelectorNotConfigured')}
+        </span>
       </div>
     );
   }
 
   const dropdownPositionClass = dropdownDirection === 'up' ? 'bottom-full mb-1' : 'top-full mt-1';
+  const selectedLabel =
+    selectedModel?.name || defaultLabel || emptyLabel || i18nService.t('modelSelectorChooseModel');
 
   const isSelected = (model: Model): boolean => {
     if (!selectedModel) return false;
@@ -143,20 +158,18 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   };
 
   return (
-    <div ref={containerRef} className="relative cursor-pointer">
+    <div ref={containerRef} className="relative w-full min-w-0 max-w-56 cursor-pointer">
       <button
         type="button"
         onClick={handleToggle}
         disabled={disabled}
         aria-busy={loading}
         aria-expanded={isOpen}
-        className={`flex h-8 max-w-56 cursor-pointer items-center gap-1.5 rounded-full px-2.5 text-foreground transition-colors hover:bg-surface-raised ${isOpen ? 'bg-surface-raised' : ''}`}
+        title={selectedLabel}
+        className={`flex h-8 min-w-0 max-w-full cursor-pointer items-center gap-1.5 rounded-full px-2.5 text-foreground transition-colors hover:bg-surface-raised ${isOpen ? 'bg-surface-raised' : ''}`}
       >
-        <span className="truncate text-sm">
-          {selectedModel?.name ||
-            defaultLabel ||
-            emptyLabel ||
-            i18nService.t('modelSelectorChooseModel')}
+        <span className="min-w-0 truncate text-sm" dir="rtl">
+          <bdi>{selectedLabel}</bdi>
         </span>
         {loading ? (
           <ArrowPathIcon className="h-3.5 w-3.5 shrink-0 animate-spin text-secondary" />

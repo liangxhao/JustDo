@@ -1,4 +1,5 @@
-import { PaperAirplaneIcon, StopIcon } from '@heroicons/react/24/solid';
+import { ArrowUpIcon } from '@heroicons/react/24/outline';
+import { StopIcon } from '@heroicons/react/24/solid';
 
 import { i18nService } from '@/services/i18n';
 
@@ -43,11 +44,10 @@ export const RunControlButton = ({
               ? 'coworkQueueMessage'
               : 'coworkSendMessage',
         );
-  const iconClass = size === 'large' ? 'h-5 w-5' : 'h-4 w-4';
-  const shapeClass = size === 'large' ? 'rounded-xl' : 'flex-shrink-0 rounded-lg';
-  const colorClass = stoppingControl
-    ? 'bg-red-500 hover:bg-red-600'
-    : 'bg-primary hover:bg-primary-hover';
+  const showSendText = !stoppingControl && !queueControl && Boolean(sendText);
+  const shapeClass = showSendText
+    ? `rounded-lg px-3 ${size === 'large' ? 'py-2' : 'py-1.5'}`
+    : 'h-7 w-7 rounded-full';
 
   return (
     <button
@@ -57,16 +57,10 @@ export const RunControlButton = ({
       aria-busy={isStopping || undefined}
       aria-label={label}
       title={stoppingControl || queueControl ? label : sendTitle}
-      className={`inline-flex items-center justify-center gap-1.5 p-2 ${sendText && !stoppingControl && !queueControl ? 'px-3' : ''} ${shapeClass} ${colorClass} text-white transition-all shadow-subtle hover:shadow-card active:scale-95 disabled:cursor-not-allowed ${disabled ? 'opacity-50' : ''}`}
+      className={`inline-flex shrink-0 items-center justify-center gap-1.5 ${shapeClass} bg-primary hover:bg-primary-hover text-white transition-all shadow-subtle hover:shadow-card active:scale-95 disabled:cursor-not-allowed ${disabled ? 'opacity-50' : ''}`}
     >
-      {stoppingControl ? (
-        <StopIcon className={iconClass} />
-      ) : (
-        <PaperAirplaneIcon className={iconClass} />
-      )}
-      {!stoppingControl && !queueControl && sendText && (
-        <span className="whitespace-nowrap text-xs font-medium">{sendText}</span>
-      )}
+      {stoppingControl ? <StopIcon className="h-4 w-4" /> : <ArrowUpIcon className="h-4 w-4" />}
+      {showSendText && <span className="whitespace-nowrap text-xs font-medium">{sendText}</span>}
     </button>
   );
 };

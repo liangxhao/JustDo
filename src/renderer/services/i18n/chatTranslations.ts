@@ -12,7 +12,8 @@ export const chatTranslations = {
     coworkQueueMessage: '排队发送（当前任务结束后执行）',
     coworkQueueWithdraw: '撤回排队输入',
     coworkQueueUnavailable: '当前会话暂时无法接收排队输入，请稍后重试。',
-    coworkQueueOutcomeUnknown: '尚未确认排队结果。请保留原文重试，系统会避免重复提交；也可刷新会话查看待处理输入。',
+    coworkQueueOutcomeUnknown:
+      '尚未确认排队结果。请保留原文重试，系统会避免重复提交；也可刷新会话查看待处理输入。',
     coworkQueuePlaceholder: '继续输入，发送后将在当前任务结束后执行…',
     coworkQueueCommandUnsupported: '任务运行时仅支持排队普通消息，请在任务结束后执行命令。',
     messageQuoteContext: '引用的助手消息（用户提供的参考内容）',
@@ -214,6 +215,7 @@ export const chatTranslations = {
     coworkPlaceholder: '分配一个任务或提问任何问题',
     coworkModelSettingsRequired: '请先在模型设置中配置可用模型与 API Key。',
     modelSelectorNoModels: '请先在设置中配置模型',
+    modelSelectorNotConfigured: '未配置模型',
     modelSelectorChooseModel: '请选择模型',
     modelSelectorUnavailableSelection: '原模型不可用，请重新选择',
     coworkOpenClawRestartGateway: '重新启动 AI 引擎',
@@ -450,7 +452,6 @@ export const chatTranslations = {
     chatWebTokenError: '无法获取访问令牌，请尝试重启 AI 引擎',
     chatWebPortError: '无法获取服务端口',
     // Agent model state
-    noModelAvailableHint: '无模型可用',
     coworkModelApplying: '正在应用模型…',
     coworkModelApplyFailed: '模型切换失败：{error}',
     coworkDefaultModelApplyFailedSessionUpdated:
@@ -674,16 +675,21 @@ export const chatTranslations = {
     coworkQueuedInputs: 'Queued messages',
     coworkQueueView: 'View queued message',
     coworkQueueCollapse: 'Collapse details',
-    coworkQueueDetailUnavailable: 'This message has started, was withdrawn, or is temporarily unavailable. Refresh the conversation to check.',
-    coworkQueueDetailTruncated: 'The complete message has not loaded yet. Refresh the conversation and try again.',
+    coworkQueueDetailUnavailable:
+      'This message has started, was withdrawn, or is temporarily unavailable. Refresh the conversation to check.',
+    coworkQueueDetailTruncated:
+      'The complete message has not loaded yet. Refresh the conversation and try again.',
     coworkQueuedInputsCount: '{count} queued · Runs after the current task',
     coworkQueuedAttachment: 'Message with attachments',
     coworkQueueMessage: 'Queue message (run after the current task)',
     coworkQueueWithdraw: 'Withdraw queued input',
-    coworkQueueUnavailable: 'This conversation cannot accept queued input right now. Please try again later.',
-    coworkQueueOutcomeUnknown: 'Queue admission is not confirmed. Retry the unchanged message to avoid duplicates, or refresh the conversation to check pending inputs.',
+    coworkQueueUnavailable:
+      'This conversation cannot accept queued input right now. Please try again later.',
+    coworkQueueOutcomeUnknown:
+      'Queue admission is not confirmed. Retry the unchanged message to avoid duplicates, or refresh the conversation to check pending inputs.',
     coworkQueuePlaceholder: 'Type a follow-up to run after the current task…',
-    coworkQueueCommandUnsupported: 'Only regular messages can be queued while a task is running. Run commands after the task ends.',
+    coworkQueueCommandUnsupported:
+      'Only regular messages can be queued while a task is running. Run commands after the task ends.',
     messageQuoteContext: 'Quoted assistant message (user-provided reference)',
     messageQuoteLabel: 'Message quote',
     messageQuoteRemove: 'Remove quote',
@@ -899,6 +905,7 @@ export const chatTranslations = {
     coworkPlaceholder: 'Assign a task or ask any question',
     coworkModelSettingsRequired: 'Please configure models and API keys in Model Settings first.',
     modelSelectorNoModels: 'Please configure models in settings first',
+    modelSelectorNotConfigured: 'No model configured',
     modelSelectorChooseModel: 'Choose a model',
     modelSelectorUnavailableSelection: 'Previous model unavailable; choose another',
     coworkOpenClawRestartGateway: 'Restart AI engine',
@@ -1144,7 +1151,6 @@ export const chatTranslations = {
     chatWebTokenError: 'Unable to get access token, please try restarting the AI engine',
     chatWebPortError: 'Unable to get service port',
     // Agent model state
-    noModelAvailableHint: 'No models available',
     coworkModelApplying: 'Applying model…',
     coworkModelApplyFailed: 'Failed to switch model: {error}',
     coworkDefaultModelApplyFailedSessionUpdated:
