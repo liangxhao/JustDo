@@ -64,7 +64,7 @@
 - [浏览器扩展接口](browser-extension-api/README.md)：Native Messaging、app-server、数据模型、错误和兼容边界。
 - [出站请求头配置](developer-integration/outbound-headers/README.md)：可分发配置说明及 Extension 样例。
 - [开发接入接口索引](developer-integration/README.md)：后续模块需要适配的接口与调用要求。
-- [外部 Agent 接入](developer-integration/external-agent-integration-guide.md)：适配器、认证、离线资源与发布检查。
+- [自定义外部 Agent 接入](developer-integration/external-agent-integration-guide.md)：原生 ACP CLI、自研 API 的适配路径、配置投影、认证与发布验收。
 - [运行时补丁指南](openclaw-runtime-patches.md)：构建、验证和升级流程；能力清单以[当前版本目录](../scripts/patches/v2026.9.6/README.md)为准。
 - [Windows 安装器](windows-installer.md)：平台故障、数据归属和验证。
 - [离线下载指南](offline-downloads.md)：手动下载资源的地址、文件名、存放目录和准备命令；后续离线资源统一补充于此。
