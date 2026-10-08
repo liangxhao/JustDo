@@ -1,9 +1,12 @@
 export const settingsTranslations = {
   zh: {
     settingsGroup_personal: '个人偏好',
-    settingsGroup_intelligence: '智能体',
+    settingsGroup_intelligence: '模型与助手',
+    settingsGroup_execution: '任务执行',
     settingsGroup_connections: '连接与集成',
-    settingsGroup_application: '应用',
+    settingsGroup_application: '应用管理',
+    settingsSecurityTitle: '沙箱与隔离',
+    settingsAboutHelpTitle: '关于与帮助',
     settingsSearch: '搜索设置',
     settingsSearchEmpty: '未找到匹配的设置',
     settingsSearchHint: '试试其他关键词，或清除搜索查看全部设置。',
@@ -219,7 +222,7 @@ export const settingsTranslations = {
     voiceSpeakerAmericanFemale2: '美式英语女声 2',
     voiceSpeakerBritishFemale: '英式英语女声',
     voiceSpeakerDefault: '默认音色',
-    usageAndStorage: '统计与存储',
+    usageAndStorage: '用量与存储',
     usageStats: '使用统计',
     usageStatsActiveDays: '活跃天数',
     usageStatsToolKinds: '使用工具种类',
@@ -353,7 +356,7 @@ export const settingsTranslations = {
     mediaModelCredentialHint:
       '这里管理生成模型的选择策略；服务商凭据继续使用对应服务商或插件的配置。',
     nonLanguageModelRollbackFailed: '保存失败，且无法恢复此前的模型运行配置',
-    agentRuntimeTab: '配置',
+    agentRuntimeTab: '执行设置',
     integrationsTab: '外部连接',
     integrationAgentDelegationTab: 'Agent 委派',
     integrationAppAccessTab: '应用接入',
@@ -1300,10 +1303,13 @@ export const settingsTranslations = {
     preventSleepDescription: '防止系统在应用运行时进入睡眠模式',
   },
   en: {
-    settingsGroup_personal: 'Personal',
-    settingsGroup_intelligence: 'Agents',
+    settingsGroup_personal: 'Personal preferences',
+    settingsGroup_intelligence: 'Models & assistants',
+    settingsGroup_execution: 'Task execution',
     settingsGroup_connections: 'Connections',
-    settingsGroup_application: 'Application',
+    settingsGroup_application: 'App management',
+    settingsSecurityTitle: 'Sandbox & isolation',
+    settingsAboutHelpTitle: 'About & help',
     settingsSearch: 'Search settings',
     settingsSearchEmpty: 'No matching settings',
     settingsSearchHint: 'Try another keyword or clear the search to see all settings.',
@@ -1380,10 +1386,13 @@ export const settingsTranslations = {
     computerControlTitle: 'Computer control',
     settingsDescription_computer: 'Allow the assistant to operate applications on your computer.',
     computerControlEnable: 'Allow computer control',
-    computerControlEnableDescription: 'Allow the assistant to view the screen and operate applications. Changes are saved automatically.',
-    computerControlModelRequirement: 'The model used in the current conversation must support images.',
+    computerControlEnableDescription:
+      'Allow the assistant to view the screen and operate applications. Changes are saved automatically.',
+    computerControlModelRequirement:
+      'The model used in the current conversation must support images.',
     computerControlLoadFailed: 'Unable to read computer control settings. Please try again.',
-    computerControlSaveFailed: 'The computer control update could not be completed. Please reload its current state.',
+    computerControlSaveFailed:
+      'The computer control update could not be completed. Please reload its current state.',
     settingsDescription_integrations:
       'Connect external tools and services and configure task delegation.',
     settingsDescription_im: 'Check availability of messaging bot integrations.',
@@ -1682,7 +1691,7 @@ export const settingsTranslations = {
       'This page manages model selection. Provider credentials remain in the corresponding provider or plugin configuration.',
     nonLanguageModelRollbackFailed:
       'Saving failed, and the previous model runtime configuration could not be restored',
-    agentRuntimeTab: 'Configuration',
+    agentRuntimeTab: 'Execution settings',
     integrationsTab: 'External connections',
     integrationAgentDelegationTab: 'Agent delegation',
     integrationAppAccessTab: 'App access',

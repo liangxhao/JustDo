@@ -1,4 +1,5 @@
 import {
+  AdjustmentsHorizontalIcon,
   ArrowLeftIcon,
   ChartBarIcon,
   ChatBubbleLeftRightIcon,
@@ -37,7 +38,7 @@ const ICONS = {
   shortcuts: KeyIcon,
   model: CubeIcon,
   agents: CpuChipIcon,
-  runtime: Cog6ToothIcon,
+  runtime: AdjustmentsHorizontalIcon,
   worktrees: FolderOpenIcon,
   security: ShieldCheckIcon,
   browser: GlobeAltIcon,
@@ -104,7 +105,7 @@ export function SettingsNavigation({ activeTab, onSelect, onClose }: SettingsNav
       </div>
       <nav
         aria-label={translate('settings')}
-        className="min-h-0 flex-1 space-y-5 overflow-y-auto px-3 pb-6"
+        className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 pb-6"
       >
         {SETTINGS_GROUPS.map(group => {
           const entries = pages.filter(page => page.group === group);
@@ -126,7 +127,7 @@ export function SettingsNavigation({ activeTab, onSelect, onClose }: SettingsNav
                       type="button"
                       onClick={() => onSelect(page.id)}
                       aria-current={activeTab === page.id ? 'page' : undefined}
-                      className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${activeTab === page.id ? 'bg-surface font-medium text-foreground' : 'text-secondary hover:bg-surface/60 hover:text-foreground'}`}
+                      className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-1.5 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${activeTab === page.id ? 'bg-surface font-medium text-foreground' : 'text-secondary hover:bg-surface/60 hover:text-foreground'}`}
                     >
                       <Icon aria-hidden="true" className="h-[18px] w-[18px] shrink-0" />
                       <span className="min-w-0">

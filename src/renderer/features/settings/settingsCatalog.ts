@@ -16,7 +16,13 @@ export type SettingsTab =
   | 'usage'
   | 'help';
 
-export const SETTINGS_GROUPS = ['personal', 'intelligence', 'connections', 'application'] as const;
+export const SETTINGS_GROUPS = [
+  'personal',
+  'intelligence',
+  'execution',
+  'connections',
+  'application',
+] as const;
 
 export interface SettingsPage {
   id: SettingsTab;
@@ -45,9 +51,9 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     keywords: ['appearanceMode'],
   },
   {
-    id: 'pet',
-    label: 'coworkPetSettingsTitle',
-    description: 'settingsDescription_pet',
+    id: 'shortcuts',
+    label: 'shortcuts',
+    description: 'settingsDescription_shortcuts',
     group: 'personal',
     wide: false,
     keywords: [],
@@ -61,9 +67,9 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     keywords: [],
   },
   {
-    id: 'shortcuts',
-    label: 'shortcuts',
-    description: 'settingsDescription_shortcuts',
+    id: 'pet',
+    label: 'coworkPetSettingsTitle',
+    description: 'settingsDescription_pet',
     group: 'personal',
     wide: false,
     keywords: [],
@@ -88,33 +94,41 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     id: 'runtime',
     label: 'agentRuntimeTab',
     description: 'settingsDescription_runtime',
-    group: 'intelligence',
+    group: 'execution',
     wide: false,
     keywords: [],
+  },
+  {
+    id: 'security',
+    label: 'settingsSecurityTitle',
+    description: 'settingsDescription_security',
+    group: 'execution',
+    wide: false,
+    keywords: ['securitySettings'],
   },
   {
     id: 'worktrees',
     label: 'worktreeSettingsTitle',
     description: 'worktreeSettingsDescription',
-    group: 'intelligence',
+    group: 'execution',
     wide: true,
     keywords: ['worktreeStorageRoot', 'worktreeAcceleration', 'worktreeShowCheckbox'],
-  },
-  {
-    id: 'security',
-    label: 'securitySettings',
-    description: 'settingsDescription_security',
-    group: 'intelligence',
-    wide: false,
-    keywords: [],
   },
   {
     id: 'browser',
     label: 'browserSettings',
     description: 'settingsDescription_browser',
-    group: 'connections',
+    group: 'execution',
     wide: true,
     keywords: [],
+  },
+  {
+    id: 'computer',
+    label: 'computerControlTitle',
+    description: 'settingsDescription_computer',
+    group: 'execution',
+    wide: false,
+    keywords: ['computerControlEnable', 'computerControlModelRequirement'],
   },
   {
     id: 'integrations',
@@ -123,14 +137,6 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     group: 'connections',
     wide: true,
     keywords: [],
-  },
-  {
-    id: 'computer',
-    label: 'computerControlTitle',
-    description: 'settingsDescription_computer',
-    group: 'connections',
-    wide: false,
-    keywords: ['computerControlEnable', 'computerControlModelRequirement'],
   },
   {
     id: 'im',
@@ -150,11 +156,11 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
   },
   {
     id: 'help',
-    label: 'help',
+    label: 'settingsAboutHelpTitle',
     description: 'settingsDescription_help',
     group: 'application',
     wide: false,
-    keywords: [],
+    keywords: ['help'],
   },
 ];
 
