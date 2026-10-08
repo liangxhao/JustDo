@@ -12,6 +12,7 @@ import {
   type WindowsSandboxStatus,
   WindowsSandboxStatusCode,
 } from '../../shared/security/windowsSandbox';
+import { t } from '../core/i18n';
 
 const execFileAsync = promisify(execFile);
 const MXC_PLUGIN_DIRECTORY = 'mxc';
@@ -115,7 +116,16 @@ export const resolveMxcSdkBinDirectory = (pluginDirectory: string, arch: string)
 };
 
 const buildEncodedPowerShellCommand = (source: string): string =>
-  Buffer.from(source, 'utf16le').toString('base64');
+  Buffer.from(
+    [
+      "$ErrorActionPreference = 'Stop'",
+      'Set-StrictMode -Version 3.0',
+      "$env:PSModulePath = [IO.Path]::Combine($PSHOME, 'Modules')",
+      '[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)',
+      source,
+    ].join('\n'),
+    'utf16le',
+  ).toString('base64');
 
 const AUTHENTICODE_POWERSHELL = buildEncodedPowerShellCommand(
   [
@@ -125,30 +135,103 @@ const AUTHENTICODE_POWERSHELL = buildEncodedPowerShellCommand(
   ].join('; '),
 );
 
-const ELEVATED_HOST_PREP_POWERSHELL = buildEncodedPowerShellCommand(
-  [
-    '$helper = $env:JUSTDO_MXC_HOST_PREP_EXE',
-    '$actualHash = (Get-FileHash -LiteralPath $helper -Algorithm SHA256).Hash',
-    "if ($actualHash -ne $env:JUSTDO_MXC_HOST_PREP_SHA256) { throw 'MXC host preparation binary hash does not match.' }",
-    '$signature = Get-AuthenticodeSignature -LiteralPath $helper',
-    "if ($signature.Status.ToString() -ne 'Valid') { throw 'MXC host preparation signature is not valid.' }",
-    "if ($signature.SignerCertificate.Thumbprint -ne $env:JUSTDO_MXC_SIGNER_THUMBPRINT) { throw 'MXC host preparation signer certificate does not match.' }",
-    "& $helper 'prepare-system-drive'",
-    'exit $LASTEXITCODE',
-  ].join('; '),
-);
+const HOST_PREP_FAILURE = {
+  HashRead: 1001,
+  HashMismatch: 1002,
+  SignatureRead: 1003,
+  SignatureInvalid: 1004,
+  SignerMismatch: 1005,
+  HelperLaunch: 1006,
+} as const;
+
+const buildElevatedHostPrepPowerShell = (
+  binaries: VerifiedMxcBinaries,
+  systemDrive: string,
+): string => {
+  if (!/^[a-z]:$/i.test(systemDrive)) throw new Error(t('windowsSandboxSystemDriveInvalid'));
+  // UAC can rebuild the elevated environment. Carry only verified, non-secret data in argv.
+  const request = Buffer.from(
+    JSON.stringify({
+      helper: binaries.hostPrepPath,
+      hash: binaries.hostPrepHash,
+      signer: mxcNativeBinaries.signerThumbprint,
+      target: `${systemDrive}\\`,
+    }),
+    'utf8',
+  ).toString('base64');
+  return buildEncodedPowerShellCommand(
+    [
+      `$request = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${request}')) | ConvertFrom-Json`,
+      'try { $actualHash = (Get-FileHash -LiteralPath $request.helper -Algorithm SHA256 -ErrorAction Stop).Hash }',
+      `catch { exit ${HOST_PREP_FAILURE.HashRead} }`,
+      `if ($actualHash -ne $request.hash) { exit ${HOST_PREP_FAILURE.HashMismatch} }`,
+      'try { $signature = Get-AuthenticodeSignature -LiteralPath $request.helper -ErrorAction Stop }',
+      `catch { exit ${HOST_PREP_FAILURE.SignatureRead} }`,
+      `if ($signature.Status.ToString() -ne 'Valid') { exit ${HOST_PREP_FAILURE.SignatureInvalid} }`,
+      `if ($signature.SignerCertificate.Thumbprint -ne $request.signer) { exit ${HOST_PREP_FAILURE.SignerMismatch} }`,
+      'try {',
+      '$global:LASTEXITCODE = $null',
+      "& $request.helper 'prepare-system-drive' '--target' $request.target",
+      `if ($null -eq $LASTEXITCODE) { exit ${HOST_PREP_FAILURE.HelperLaunch} }`,
+      'exit $LASTEXITCODE',
+      `} catch { exit ${HOST_PREP_FAILURE.HelperLaunch} }`,
+    ].join('\n'),
+  );
+};
 
 const HOST_PREP_POWERSHELL = buildEncodedPowerShellCommand(
   [
+    'try {',
     "$arguments = @('-NoProfile', '-NonInteractive', '-EncodedCommand', $env:JUSTDO_MXC_ELEVATED_SCRIPT)",
-    '$process = Start-Process -FilePath $env:JUSTDO_MXC_POWERSHELL_EXE -ArgumentList $arguments -Verb RunAs -WindowStyle Hidden -Wait -PassThru',
-    'exit $process.ExitCode',
-  ].join('; '),
+    '$process = Start-Process -FilePath $env:JUSTDO_MXC_POWERSHELL_EXE -ArgumentList $arguments -Verb RunAs -WindowStyle Hidden -Wait -PassThru -ErrorAction Stop',
+    'if ($null -eq $process -or $null -eq $process.ExitCode) {',
+    '@{ exitCode = $null } | ConvertTo-Json -Compress',
+    '} else { @{ exitCode = $process.ExitCode } | ConvertTo-Json -Compress }',
+    '} catch {',
+    '$exception = $_.Exception',
+    'while ($null -ne $exception.InnerException) { $exception = $exception.InnerException }',
+    'if ($exception -is [ComponentModel.Win32Exception] -and $exception.NativeErrorCode -eq 1223) {',
+    '@{ uacCancelled = $true } | ConvertTo-Json -Compress',
+    '} else { @{ error = $exception.Message } | ConvertTo-Json -Compress }',
+    '}',
+  ].join('\n'),
 );
+
+const verifyHostPrepResult = (stdout: string): void => {
+  let result: { exitCode?: unknown; error?: unknown; uacCancelled?: unknown } | null;
+  try {
+    result = JSON.parse(stdout) as typeof result;
+  } catch {
+    throw new Error(t('windowsSandboxPrepResultInvalid'));
+  }
+  if (result?.uacCancelled === true) {
+    throw new Error(t('windowsSandboxPrepUacCancelled'));
+  }
+  if (typeof result?.error === 'string' && result.error.trim()) {
+    throw new Error(result.error.trim().slice(0, MXC_PROBE_ERROR_MAX_LENGTH));
+  }
+  if (typeof result?.exitCode !== 'number' || !Number.isInteger(result.exitCode)) {
+    throw new Error(t('windowsSandboxPrepExitCodeMissing'));
+  }
+  const failures: Record<number, string> = {
+    [HOST_PREP_FAILURE.HashRead]: 'windowsSandboxPrepHashReadFailed',
+    [HOST_PREP_FAILURE.HashMismatch]: 'windowsSandboxPrepHashMismatch',
+    [HOST_PREP_FAILURE.SignatureRead]: 'windowsSandboxPrepSignatureReadFailed',
+    [HOST_PREP_FAILURE.SignatureInvalid]: 'windowsSandboxPrepSignatureInvalid',
+    [HOST_PREP_FAILURE.SignerMismatch]: 'windowsSandboxPrepSignerMismatch',
+    [HOST_PREP_FAILURE.HelperLaunch]: 'windowsSandboxPrepHelperLaunchFailed',
+  };
+  if (result.exitCode !== 0) {
+    throw new Error(
+      failures[result.exitCode]
+        ? t(failures[result.exitCode])
+        : t('windowsSandboxPrepHelperFailed', { code: result.exitCode }),
+    );
+  }
+};
 
 const SYSTEM_DRIVE_PREPARATION_NEEDED_POWERSHELL = buildEncodedPowerShellCommand(
   [
-    "$ErrorActionPreference = 'Stop'",
     '$acl = Get-Acl -LiteralPath $env:JUSTDO_MXC_SYSTEM_DRIVE_ROOT -ErrorAction Stop',
     "$targetSids = @('S-1-15-2-1', 'S-1-15-2-2')",
     '$metadataMask = 0x00120088',
@@ -569,23 +652,24 @@ export class WindowsSandboxService {
       const powershellPath = this.resolveSystemExecutable(
         'WindowsPowerShell\\v1.0\\powershell.exe',
       );
-      await this.environment.execFile(
+      const { stdout } = await this.environment.execFile(
         powershellPath,
         ['-NoProfile', '-NonInteractive', '-EncodedCommand', HOST_PREP_POWERSHELL],
         {
           encoding: 'utf8',
           env: {
             ...process.env,
-            JUSTDO_MXC_ELEVATED_SCRIPT: ELEVATED_HOST_PREP_POWERSHELL,
-            JUSTDO_MXC_HOST_PREP_EXE: binaries.hostPrepPath,
-            JUSTDO_MXC_HOST_PREP_SHA256: binaries.hostPrepHash,
+            JUSTDO_MXC_ELEVATED_SCRIPT: buildElevatedHostPrepPowerShell(
+              binaries,
+              this.environment.systemDrive,
+            ),
             JUSTDO_MXC_POWERSHELL_EXE: powershellPath,
-            JUSTDO_MXC_SIGNER_THUMBPRINT: mxcNativeBinaries.signerThumbprint,
           },
           timeout: MXC_COMMAND_TIMEOUT_MS,
           windowsHide: true,
         },
       );
+      verifyHostPrepResult(stdout);
       this.successfulProbe = null;
       const status = await this.getStatus();
       return status.ready && !status.hostPreparationRecommended
@@ -593,14 +677,15 @@ export class WindowsSandboxService {
         : {
             success: false,
             status,
-            error: status.error || 'MXC host preparation did not complete.',
+            error: status.error || t('windowsSandboxPrepMetadataUnavailable'),
           };
     } catch (error) {
+      this.successfulProbe = null;
       const status = await this.getStatus();
       return {
         success: false,
         status,
-        error: error instanceof Error ? error.message : String(error),
+        error: t('windowsSandboxPrepFailed', { detail: describeMxcProbeError(error) }),
       };
     }
   }

@@ -4,8 +4,10 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { promisify } from 'util';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import mxcNativeBinaries from '../../shared/security/mxcNativeBinaries.json';
+import { setLanguage } from '../core/i18n';
 import {
   resolveMxcSdkBinDirectory,
   resolveWindowsSandboxPluginDirectory,
@@ -77,7 +79,10 @@ const sandboxRuntimeChecks = () => ({
   authenticodeVerifier: vi.fn(async () => undefined),
 });
 
+beforeEach(() => setLanguage('en'));
+
 afterEach(() => {
+  setLanguage('zh');
   vi.restoreAllMocks();
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { recursive: true, force: true });
@@ -534,7 +539,7 @@ describe('Windows MXC sandbox readiness', () => {
     });
     const runFile = vi.fn(async () => {
       prepared = true;
-      return { stdout: '', stderr: '' };
+      return { stdout: '{"exitCode":0}', stderr: '' };
     });
     const service = new WindowsSandboxService({
       platform: 'win32',
@@ -678,7 +683,7 @@ describe('Windows MXC sandbox readiness', () => {
     runtimeChecks.processContainerProbe.mockRejectedValue(new Error('Independent launch failure'));
     const runFile = vi.fn(async () => {
       prepared = true;
-      return { stdout: '', stderr: '' };
+      return { stdout: '{"exitCode":0}', stderr: '' };
     });
     const service = new WindowsSandboxService({
       platform: 'win32',
@@ -717,11 +722,15 @@ describe('Windows MXC sandbox readiness', () => {
         if (executable.toLowerCase().endsWith('sc.exe')) return { stdout: '', stderr: '' };
         if (executable.toLowerCase().endsWith('powershell.exe')) prepared = true;
         expect(options?.env).toMatchObject({
-          JUSTDO_MXC_HOST_PREP_SHA256: 'PREP-HASH',
-          JUSTDO_MXC_SIGNER_THUMBPRINT: expect.any(String),
           JUSTDO_MXC_ELEVATED_SCRIPT: expect.any(String),
         });
-        return { stdout: '', stderr: '' };
+        const elevatedScript = Buffer.from(
+          options!.env!.JUSTDO_MXC_ELEVATED_SCRIPT!,
+          'base64',
+        ).toString('utf16le');
+        expect(elevatedScript).not.toContain('$env:JUSTDO_MXC_');
+        expect(elevatedScript).toContain("$ErrorActionPreference = 'Stop'");
+        return { stdout: '{"exitCode":0}', stderr: '' };
       },
     );
     const service = new WindowsSandboxService({
@@ -743,5 +752,264 @@ describe('Windows MXC sandbox readiness', () => {
       expect.arrayContaining(['-EncodedCommand']),
       expect.objectContaining({ env: expect.any(Object) }),
     );
+  });
+});
+
+describe('Windows MXC host preparation elevation', () => {
+  it.each([
+    { stdout: '{"uacCancelled":true}', reason: '已取消 Windows 权限确认' },
+    { stdout: '{"exitCode":1002}', reason: '文件校验值不匹配' },
+    { stdout: '{"exitCode":65}', reason: '退出码 65' },
+  ])('localizes host preparation failures for Chinese settings: $stdout', async fixture => {
+    setLanguage('zh');
+    const appPath = makeTemporaryDirectory();
+    makePlugin(appPath);
+    const runtimeChecks = sandboxRuntimeChecks();
+    runtimeChecks.systemDrivePreparationProbe.mockRejectedValue(new Error('Metadata unavailable'));
+    runtimeChecks.systemDrivePreparationNeededProbe.mockResolvedValue(true);
+    const service = new WindowsSandboxService({
+      platform: 'win32',
+      arch: 'x64',
+      isPackaged: false,
+      appPath,
+      resourcesPath: makeTemporaryDirectory(),
+      ...runtimeChecks,
+      execFile: vi.fn(async () => ({ stdout: fixture.stdout, stderr: '' })),
+    });
+
+    await expect(service.initialize('C:\\workspace')).resolves.toMatchObject({
+      success: false,
+      error: expect.stringContaining(fixture.reason),
+    });
+  });
+
+  it.each([
+    { stdout: '', reason: 'valid result' },
+    { stdout: 'null', reason: 'exit code' },
+    { stdout: '{}', reason: 'exit code' },
+    { stdout: '{"exitCode":null}', reason: 'exit code' },
+    { stdout: '{"exitCode":"0"}', reason: 'exit code' },
+    { stdout: '{"exitCode":65}', reason: 'exit code 65' },
+    { stdout: '{"exitCode":1002}', reason: 'hash does not match' },
+    {
+      stdout: '{"error":"Windows UAC approval was cancelled."}',
+      reason: 'UAC approval was cancelled',
+    },
+  ])('rejects an incomplete or failed elevated result: $stdout', async fixture => {
+    const appPath = makeTemporaryDirectory();
+    makePlugin(appPath);
+    const runtimeChecks = sandboxRuntimeChecks();
+    runtimeChecks.systemDrivePreparationProbe.mockRejectedValue(new Error('Metadata unavailable'));
+    runtimeChecks.systemDrivePreparationNeededProbe.mockResolvedValue(true);
+    const service = new WindowsSandboxService({
+      platform: 'win32',
+      arch: 'x64',
+      isPackaged: false,
+      appPath,
+      resourcesPath: makeTemporaryDirectory(),
+      ...runtimeChecks,
+      execFile: vi.fn(async () => ({ stdout: fixture.stdout, stderr: '' })),
+    });
+
+    await expect(service.initialize('C:\\workspace')).resolves.toMatchObject({
+      success: false,
+      error: expect.stringContaining(fixture.reason),
+      status: { hostPreparationRecommended: true },
+    });
+    expect(runtimeChecks.processContainerProbe).toHaveBeenCalledTimes(2);
+  });
+
+  it.runIf(process.platform === 'win32').each([
+    {
+      description: 'a nonterminating launch error',
+      mockLaunch: "function Start-Process { Write-Error 'Fixture launch denied' }",
+      reason: 'Fixture launch denied',
+    },
+    {
+      description: 'a localized launch error',
+      mockLaunch: "function Start-Process { Write-Error '测试：准备程序被拒绝' }",
+      reason: '测试：准备程序被拒绝',
+    },
+    {
+      description: 'UAC cancellation',
+      mockLaunch: 'function Start-Process { throw [ComponentModel.Win32Exception]::new(1223) }',
+      reason: 'Windows UAC approval was cancelled',
+    },
+    {
+      description: 'a missing process',
+      mockLaunch: 'function Start-Process { }',
+      reason: 'did not return an exit code',
+    },
+    {
+      description: 'a missing exit code',
+      mockLaunch: 'function Start-Process { [pscustomobject]@{ ExitCode = $null } }',
+      reason: 'did not return an exit code',
+    },
+    {
+      description: 'a failed elevated helper',
+      mockLaunch: 'function Start-Process { [pscustomobject]@{ ExitCode = 65 } }',
+      reason: 'exit code 65',
+    },
+  ])('reports $description through the real PowerShell launcher without UAC', async fixture => {
+    const appPath = makeTemporaryDirectory();
+    makePlugin(appPath);
+    const runtimeChecks = sandboxRuntimeChecks();
+    runtimeChecks.systemDrivePreparationProbe.mockRejectedValue(new Error('Metadata unavailable'));
+    runtimeChecks.systemDrivePreparationNeededProbe.mockResolvedValue(true);
+    const service = new WindowsSandboxService({
+      platform: 'win32',
+      arch: 'x64',
+      isPackaged: false,
+      appPath,
+      resourcesPath: makeTemporaryDirectory(),
+      ...runtimeChecks,
+      execFile: async (executable, args, options) => {
+        const script = Buffer.from(args[3], 'base64').toString('utf16le');
+        const encodedMock = Buffer.from(`${fixture.mockLaunch}\n${script}`, 'utf16le').toString(
+          'base64',
+        );
+        return execFileAsync(executable, [...args.slice(0, 3), encodedMock], {
+          ...options,
+          encoding: 'utf8',
+        });
+      },
+    });
+
+    await expect(service.initialize('C:\\workspace')).resolves.toMatchObject({
+      success: false,
+      error: expect.stringContaining(fixture.reason),
+    });
+  });
+
+  it.runIf(process.platform === 'win32').each([
+    { description: 'valid pinned helper', expectedCode: 0, invoked: true },
+    {
+      description: 'unreadable hash',
+      mockHash: "function Get-FileHash { Write-Error 'Fixture hash read denied' }",
+      expectedCode: 1001,
+      invoked: false,
+    },
+    {
+      description: 'a changed binary',
+      mockHash: "function Get-FileHash { [pscustomobject]@{ Hash = 'OTHER-HASH' } }",
+      expectedCode: 1002,
+      invoked: false,
+    },
+    {
+      description: 'unreadable signature',
+      mockSignature:
+        "function Get-AuthenticodeSignature { Write-Error 'Fixture signature read denied' }",
+      expectedCode: 1003,
+      invoked: false,
+    },
+    {
+      description: 'an unsigned binary',
+      mockSignature:
+        "function Get-AuthenticodeSignature { [pscustomobject]@{ Status = 'NotSigned' } }",
+      expectedCode: 1004,
+      invoked: false,
+    },
+    {
+      description: 'a different signer',
+      mockSignature:
+        "function Get-AuthenticodeSignature { [pscustomobject]@{ Status = 'Valid'; SignerCertificate = [pscustomobject]@{ Thumbprint = 'OTHER-SIGNER' } } }",
+      expectedCode: 1005,
+      invoked: false,
+    },
+    { description: 'a native helper failure', helperExitCode: 65, expectedCode: 65, invoked: true },
+    {
+      description: 'a native helper failure with stderr',
+      helperExitCode: 65,
+      helperStderr: true,
+      expectedCode: 65,
+      invoked: true,
+    },
+    { description: 'a missing helper', missingHelper: true, expectedCode: 1006, invoked: false },
+  ])('checks $description without inherited request variables or elevation', async fixture => {
+    const appPath = makeTemporaryDirectory();
+    makePlugin(appPath);
+    const fixtureDirectory = path.join(appPath, "工具 O'Brien $literal` folder");
+    fs.mkdirSync(fixtureDirectory);
+    const helperPath = path.join(fixtureDirectory, 'helper.cmd');
+    const markerPath = path.join(fixtureDirectory, 'invoked.txt');
+    const helperSource = [
+      '@echo off',
+      'if not "%~1"=="prepare-system-drive" exit /b 91',
+      'if not "%~2"=="--target" exit /b 92',
+      'if not "%~3"=="Q:\\" exit /b 93',
+      'echo invoked>"%~dp0invoked.txt"',
+      ...(fixture.helperStderr ? ['echo fixture native failure 1>&2'] : []),
+      `exit /b ${fixture.helperExitCode ?? 0}`,
+    ].join('\r\n');
+    fs.writeFileSync(helperPath, helperSource);
+    const helperHash = crypto.createHash('sha256').update(helperSource).digest('hex').toUpperCase();
+    const runtimeChecks = sandboxRuntimeChecks();
+    const verified = runtimeChecks.nativeBinaryVerifier(appPath);
+    runtimeChecks.nativeBinaryVerifier.mockReturnValue({
+      ...verified,
+      hostPrepPath: fixture.missingHelper ? path.join(fixtureDirectory, 'missing.cmd') : helperPath,
+      hostPrepHash: helperHash,
+    });
+    let prepared = false;
+    let actualExitCode: number | undefined;
+    runtimeChecks.systemDrivePreparationProbe.mockImplementation(async () => {
+      if (!prepared) throw new Error('Metadata unavailable');
+    });
+    runtimeChecks.systemDrivePreparationNeededProbe.mockResolvedValue(true);
+    const mockSignature =
+      fixture.mockSignature ??
+      `function Get-AuthenticodeSignature { [pscustomobject]@{ Status = 'Valid'; SignerCertificate = [pscustomobject]@{ Thumbprint = '${mxcNativeBinaries.signerThumbprint}' } } }`;
+    const mockHash =
+      fixture.mockHash ??
+      (fixture.missingHelper
+        ? `function Get-FileHash { [pscustomobject]@{ Hash = '${helperHash}' } }`
+        : '');
+    const service = new WindowsSandboxService({
+      platform: 'win32',
+      arch: 'x64',
+      isPackaged: false,
+      appPath,
+      resourcesPath: makeTemporaryDirectory(),
+      systemDrive: 'Q:',
+      ...runtimeChecks,
+      execFile: async (executable, _args, options) => {
+        const script = Buffer.from(options!.env!.JUSTDO_MXC_ELEVATED_SCRIPT!, 'base64').toString(
+          'utf16le',
+        );
+        const encodedScript = Buffer.from(
+          `Import-Module ([IO.Path]::Combine($PSHOME, 'Modules', 'Microsoft.PowerShell.Utility'))\n${mockHash}\n${mockSignature}\n${script}`,
+          'utf16le',
+        ).toString('base64');
+        const cleanEnvironment = Object.fromEntries(
+          Object.entries(process.env).filter(([key]) => !key.startsWith('JUSTDO_MXC_')),
+        );
+        try {
+          await execFileAsync(
+            executable,
+            ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodedScript],
+            {
+              encoding: 'utf8',
+              env: { ...cleanEnvironment, PSModulePath: path.join(appPath, 'missing-modules') },
+              windowsHide: true,
+              timeout: 10_000,
+            },
+          );
+          actualExitCode = 0;
+        } catch (error) {
+          actualExitCode = (error as { code: number }).code;
+        }
+        prepared = actualExitCode === 0;
+        return { stdout: JSON.stringify({ exitCode: actualExitCode }), stderr: '' };
+      },
+    });
+
+    const result = await service.initialize('C:\\workspace');
+
+    expect(actualExitCode).toBe(fixture.expectedCode);
+    expect(fs.existsSync(markerPath)).toBe(fixture.invoked);
+    expect(result.success).toBe(fixture.expectedCode === 0);
+    if (result.success) {
+      expect(result.status).toMatchObject({ ready: true, hostPreparationRecommended: false });
+    }
   });
 });

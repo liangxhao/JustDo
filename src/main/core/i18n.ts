@@ -16,6 +16,20 @@ export type LanguageType = 'zh' | 'en';
 
 const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
+    windowsSandboxSystemDriveInvalid: 'Windows 系统盘路径无效。',
+    windowsSandboxPrepResultInvalid: '系统盘准备程序未返回有效结果。',
+    windowsSandboxPrepExitCodeMissing: '提权后的系统盘准备程序未返回退出码。',
+    windowsSandboxPrepHashReadFailed: '提权后无法读取沙盒准备工具以验证完整性。',
+    windowsSandboxPrepHashMismatch: '提权后检测到沙盒准备工具的文件校验值不匹配。',
+    windowsSandboxPrepSignatureReadFailed: '提权后无法验证沙盒准备工具的数字签名。',
+    windowsSandboxPrepSignatureInvalid: '提权后检测到沙盒准备工具的数字签名无效。',
+    windowsSandboxPrepSignerMismatch: '提权后检测到沙盒准备工具的签名证书不匹配。',
+    windowsSandboxPrepHelperLaunchFailed: '提权后无法启动沙盒准备工具。',
+    windowsSandboxPrepHelperFailed: '沙盒准备工具执行失败（退出码 {code}）。',
+    windowsSandboxPrepUacCancelled: '已取消 Windows 权限确认，系统盘准备未执行。',
+    windowsSandboxPrepFailed: '系统盘准备失败：{detail}',
+    windowsSandboxPrepMetadataUnavailable:
+      '准备工具已完成，但沙盒仍无法读取系统盘目录属性。请刷新沙盒状态重新检查。',
     worktreeSelectionInvalid: 'Worktree 选择无效。',
     worktreeCopyUnavailable:
       'Worktree 会话暂不支持复制或分叉。请在源项目中创建新的 Worktree 会话。',
@@ -110,6 +124,25 @@ const translations: Record<LanguageType, Record<string, string>> = {
     browserContextSaveImage: '图片另存为…',
   },
   en: {
+    windowsSandboxSystemDriveInvalid: 'The Windows system drive is invalid.',
+    windowsSandboxPrepResultInvalid:
+      'The MXC host preparation launcher did not return a valid result.',
+    windowsSandboxPrepExitCodeMissing:
+      'The elevated MXC host preparation process did not return an exit code.',
+    windowsSandboxPrepHashReadFailed: 'The elevated process could not read the MXC helper hash.',
+    windowsSandboxPrepHashMismatch: 'The elevated MXC helper hash does not match.',
+    windowsSandboxPrepSignatureReadFailed:
+      'The elevated process could not verify the MXC helper signature.',
+    windowsSandboxPrepSignatureInvalid: 'The elevated MXC helper signature is not valid.',
+    windowsSandboxPrepSignerMismatch: 'The elevated MXC helper signer certificate does not match.',
+    windowsSandboxPrepHelperLaunchFailed:
+      'The elevated process could not launch the MXC host preparation helper.',
+    windowsSandboxPrepHelperFailed: 'MXC host preparation helper failed (exit code {code}).',
+    windowsSandboxPrepUacCancelled:
+      'Windows UAC approval was cancelled. System-drive preparation did not run.',
+    windowsSandboxPrepFailed: 'MXC host preparation failed: {detail}',
+    windowsSandboxPrepMetadataUnavailable:
+      'The MXC helper completed, but the sandbox still cannot read system-drive metadata. Refresh the sandbox status to retry the check.',
     worktreeSelectionInvalid: 'Invalid Worktree selection.',
     worktreeCopyUnavailable:
       'Copying or forking Worktree conversations is not supported yet. Create a new Worktree conversation from the source project.',

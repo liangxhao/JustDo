@@ -51,6 +51,8 @@ OpenClaw 的 Docker 风格 Skill 物化默认可能形成“可写工作区内�
 
 用户可在设置页触发带 UAC 的 wxc-host-prep prepare-system-drive。提权前和提权后的 helper 都重新验证固定 hash 与 Microsoft Authenticode，防止安装文件被替换后执行。
 
+UAC 可以重建目标进程环境。经验证的 helper 路径、固定 hash、签名指纹和系统盘根目录以 Base64 JSON 数据嵌入提权 EncodedCommand，不依赖临时环境变量继承，也不将路径拼成可执行脚本。helper 使用固定子命令和显式 `--target`。校验只加载 Windows PowerShell 自带模块，诊断输出固定为 UTF-8。两层 PowerShell 均将错误作为终止失败；外层读取结构化结果，缺失退出码、UAC 取消、提权后校验失败和 helper 非零退出都不能当作成功。helper 成功后仍重新运行沙盒探针；根目录元数据依然不可读时显示复查原因。
+
 DACL 根目录属性探针失败时，Main 以只读 PowerShell/.NET ACL 检查确认原生 helper 的两项元数据 ACE 缺失且无拒绝或冲突规则，才提供显式准备入口。无法读取或确认 ACL 时不能据此提权。即使真实启动也失败，仍可准备；沙盒保持不可选，只有准备后重新执行宿主探测与真实启动检查也通过才可准入。宿主能力探测或二进制完整性错误不能打开此入口。
 
 系统准备不是每轮工具执行的隐式前置，更不能为普通状态查询弹提权。拒绝 UAC、helper 缺失或签名验证失败应返回明确错误，保留 local 模式的选择。
