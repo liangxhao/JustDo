@@ -163,7 +163,8 @@ flowchart LR
 聊天中创建终端时，Renderer 仅提供产品会话 ID；Main 从产品会话读取工程目录
 和助手身份，准备原生会话并将 canonical sessionKey 传给 `terminal.open`。
 绑定由 Gateway 核对原生 session ID，助手的 `terminal.list/read/input` 使用同一
-PTY。首页终端归属操作连接，不创建聊天；首页已有终端随工作区延续时保留该
+PTY。首页终端显式使用 `main` 助手的启动策略，避免多助手配置的身份歧义，
+但仍归属操作连接，不创建聊天；首页已有终端随工作区延续时保留该
 归属，进入聊天后新建的终端才共享给该聊天的助手。切换聊天或助手不会转移
 既有终端归属。用户输入走 operator RPC，助手输入仍走原生执行策略和审批。
 
@@ -187,6 +188,10 @@ PTY。附着失败会提示终端不可用，需要用户新开标签，不会�
 由当前版本补丁 036 补齐 operator.admin 的 launch 和 terminate 参数。沙箱全隔离
 会话仍由原生终端策略拒绝，不通过主进程另建宿主终端绕过它。构建契约见
 [运行时补丁总账](../../scripts/patches/v2026.9.8/README.md)。
+
+新操作终端的欢迎句由补丁 037 在构建时读取 `package.json.productName`，显示
+`Welcome to the <productName>.` 并去掉原生龙虾 ASCII 图。软件图标缩成紧凑字符图后
+辨识度不足，因此仅保留欢迎句及原有主题色、换行；原生缓冲区播种与偏移不变。
 
 ### 多个终端的选择歧义
 

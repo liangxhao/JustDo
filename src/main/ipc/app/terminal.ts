@@ -299,9 +299,10 @@ export class GatewayTerminalService {
       }
       terminal.client = client;
       const opened = await client.request<NativeTerminal>(TerminalGateway.Open, {
-        ...(prepared
-          ? { sessionKey: prepared.sessionKey, agentId: session?.agentId || 'main' }
-          : {}),
+        // Homepage PTYs remain connection-owned, but launch policy still needs
+        // an explicit agent when multiple managed assistants are configured.
+        agentId: session?.agentId || 'main',
+        ...(prepared ? { sessionKey: prepared.sessionKey } : {}),
         cwd,
         ...resolveTerminalShell(),
         cols: dimension(request.cols, 2, 500),

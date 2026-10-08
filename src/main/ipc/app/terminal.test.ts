@@ -144,11 +144,21 @@ describe('Gateway terminal IPC', () => {
     });
   });
 
-  it('keeps homepage terminals connection-owned without creating a chat', async () => {
+  it('explicitly targets main for homepage launch policy without creating a chat', async () => {
     const h = harness();
-    await h.open({ sessionId: undefined });
+    h.request.mockImplementationOnce(async (_method, params) => {
+      if (!(params as { agentId?: string }).agentId) {
+        throw new Error('Multiple agents are configured, but this operation has no explicit owner');
+      }
+      return { sessionId: 'native-terminal-1', cwd: process.cwd() };
+    });
+    await expect(
+      h.open({ sessionId: undefined, agentId: 'untrusted-renderer-agent' }),
+    ).resolves.toEqual({ success: true, cwd: process.cwd() });
     expect(h.runtime.prepareSession).not.toHaveBeenCalled();
+    expect(h.deps.getSession).not.toHaveBeenCalled();
     const params = h.request.mock.calls[0][1] as object;
+    expect(params).toHaveProperty('agentId', 'main');
     expect(params).not.toHaveProperty('sessionKey');
   });
 

@@ -117,6 +117,7 @@ function createFixture() {
   fs.writeFileSync(path.join(repoRoot, 'electron-builder.config.cjs'), '// fixture\n');
   for (const scriptName of [
     'electron-builder-hooks.cjs',
+    'electron-builder-product-metadata.cjs',
     'install-openclaw-runtime.cjs',
     'openclaw-facade-runtime-patch.cjs',
     'openclaw-runtime-companions.cjs',
@@ -139,7 +140,7 @@ function createFixture() {
     const scriptDir = path.join(
       repoRoot,
       'scripts',
-      scriptName === 'electron-builder-hooks.cjs' ? 'packaging' : 'openclaw',
+      scriptName.startsWith('electron-builder-') ? 'packaging' : 'openclaw',
     );
     fs.mkdirSync(scriptDir, { recursive: true });
     fs.writeFileSync(path.join(scriptDir, scriptName), `// ${scriptName}\n`);

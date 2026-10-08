@@ -11,7 +11,8 @@ The 22 existing integration seams remain necessary, with two important scope red
 032 fixes a Windows session-creation path comparison in 9.8; 033 records loop
 exit diagnostics; 034 adds opt-in plugin execution settlement and tool cleanup;
 035 populates the existing prompt-hook field with the actual attempt context budget;
-036 adds the shared desktop terminal launch and close contract:
+036 adds the shared desktop terminal launch and close contract;
+037 replaces the operator terminal welcome art with the desktop product name:
 
 - **008:** upstream removed the generic durable task registry. Delete its task
   maintenance patch; retain only the application-process boundary on native
@@ -56,9 +57,20 @@ display projection and the ordering of restored messages.
 | 034   | Owned plugin execution and cleanup    | General SDK run timeout and managed tool lifetime; exact native registry ownership, whole-run lifecycle, supervisor cleanup and trusted Code Mode wait metadata |
 | 035   | Actual prompt-hook context budget     | Expose the resolved native attempt budget through the existing contextTokenBudget hook field; model selection and context guards remain native                  |
 | 036   | Shared desktop terminal               | Admin terminal launch accepts project cwd and shell/args; explicit termination retains native viewer ownership checks                                             |
+| 037   | Product terminal welcome              | Welcome text reads validated build-time productName; no lobster art; native buffer seeding and output offsets remain unchanged                                    |
 
 Each module header records its scope, native safety boundary and removal condition.
 No upstream issue number is claimed without an actual filed issue.
+
+Patch 037 renders `Welcome to the <productName>.` using validated `package.json`
+metadata, preserving ANSI theme colors and CRLF spacing. The monochrome app icon
+loses its cat details at compact terminal sizes, so no replacement ASCII art is
+shown. This changes only the native intro composer in the session manager,
+recovery module and both native workers, verified again in the Gateway bundle. It preserves native
+operator/viewer intro seeding, PTY output, buffers and offsets; no Renderer filtering or
+Main output rewriting is added. The product metadata validator is part of the
+build recipe proof. Remove when upstream supports product-owned terminal intros.
+Tests: `tests/openclaw/patches/v2026.9.8/terminal-product-banner.test.ts`.
 
 Patch 036 addresses the native terminal integration gap: `terminal.open` starts in
 the role home and does not accept the desktop's selected project or PowerShell
