@@ -944,26 +944,36 @@ const BrowserSettingsTab: React.FC<{ initialPage?: 'history' | 'downloads' }> = 
               <div className="grid gap-3">
                 <SetupStep
                   number={1}
-                  complete={extensionPairingCopied}
+                  complete={connectionVerification.extension}
                   title={i18nService.t('browserExtensionStepPairTitle')}
                   description={<ExtensionPairingDescription />}
-                  action={
-                    <div className="flex flex-wrap items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => void copyExtensionPairing()}
-                        disabled={savingMode || busyAction !== null}
-                        className={actionButtonClassName}
-                      >
-                        <ClipboardDocumentIcon className="h-3.5 w-3.5" />
-                        {i18nService.t('browserExtensionCopyPairing')}
-                      </button>
-                      {extensionPairingCopied ? (
-                        <span className="inline-flex items-center gap-1.5 text-sm text-primary">
-                          <CheckCircleIcon className="h-4 w-4" />
-                          {i18nService.t('browserExtensionPairingCopied')}
-                        </span>
-                      ) : null}
+                  feedback={
+                    <div className="flex flex-col gap-3 border-t border-border/65 pt-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="min-w-0 flex-1">
+                        <h5 className="text-xs font-semibold text-foreground">
+                          {i18nService.t('browserExtensionManualPairTitle')}
+                        </h5>
+                        <p className="mt-0.5 whitespace-pre-line text-xs leading-[18px] text-secondary">
+                          {i18nService.t('browserExtensionManualPairDescription')}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void copyExtensionPairing()}
+                          disabled={savingMode || busyAction !== null}
+                          className={actionButtonClassName}
+                        >
+                          <ClipboardDocumentIcon className="h-3.5 w-3.5" />
+                          {i18nService.t('browserExtensionCopyPairing')}
+                        </button>
+                        {extensionPairingCopied ? (
+                          <span className="inline-flex items-center gap-1.5 text-sm text-primary">
+                            <CheckCircleIcon className="h-4 w-4" />
+                            {i18nService.t('browserExtensionPairingCopied')}
+                          </span>
+                        ) : null}
+                      </div>
                     </div>
                   }
                 />

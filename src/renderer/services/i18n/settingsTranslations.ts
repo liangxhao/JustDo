@@ -595,7 +595,7 @@ export const settingsTranslations = {
     browserModeExtensionDescription:
       '通过已安装的扩展连接 Chrome，可共享全部网页或仅共享指定标签页。',
     browserModeExtensionActive:
-      '当前浏览器操作通过已安装的 Chrome 扩展连接。请完成配对，并在扩展中选择允许共享的网页范围。',
+      '当前浏览器操作通过已安装的 Chrome 扩展连接。扩展会自动配对本机应用，请在 Tab Access 中选择允许共享的网页范围。',
     browserModeEmbeddedTitle: '连接内置浏览器',
     browserModeEmbeddedDescription: 'AI 与你共同操作应用侧边栏里的同一个实时网页。',
     browserModeEmbeddedActive:
@@ -652,7 +652,7 @@ export const settingsTranslations = {
       'Chrome 扩展是浏览器中的 AI 助手，可直接在侧边栏中对话，并按需附带当前网页内容。',
     browserExtensionTitle: '通过扩展连接你的 Chrome',
     browserExtensionDescription:
-      '首次手动配对默认仅共享选定标签页，配对后会自动重连；如需扩大范围，可在扩展设置中选择“All tabs”。',
+      '保持桌面应用与 Chrome 运行，扩展会自动发现并配对本机应用；配对后可在 Tab Access 中调整共享范围。',
     browserExtensionStepInstallTitle: '安装 Chrome 扩展',
     browserExtensionStepInstallDescription:
       '（1）安装并启动 Chrome 125 或更高版本。\n（2）打开 Chrome 扩展管理页，开启“开发者模式”。\n（3）将应用目录中的“chrome-extension”文件夹直接拖入 Chrome 扩展管理页。\n（4）点击 Chrome 右上角的 {extensionsButton} 找到此扩展；可点击图钉将它固定到工具栏。',
@@ -663,13 +663,17 @@ export const settingsTranslations = {
     browserExtensionRevealFailed: '无法找到或打开内置浏览器扩展',
     browserExtensionStepPairTitle: '配对扩展',
     browserExtensionStepPairDescription:
-      '（1）点击右侧“复制配对信息”按钮。\n（2）打开 Chrome 工具栏中的内置浏览器扩展，进入 Settings → Advanced manual pairing，粘贴并保存。\n（3）按需选择 All tabs 或 Selected tabs；后者只允许扩展标签组中的网页。',
+      '保持桌面应用与 Chrome 运行，扩展会自动配对。\n在扩展 Tab Access 中选择共享范围。',
+    browserExtensionManualPairTitle: '手动配对（备用）',
+    browserExtensionManualPairDescription:
+      '自动配对不可用时，点击“复制配对信息”。\n在扩展 Settings → Manual connection 中粘贴，再点击 Pair manually。',
     browserExtensionToolbarExtensions: '“扩展程序”',
     browserExtensionCopyPairing: '复制配对信息',
     browserExtensionPairingCopied: '已复制，请粘贴到扩展中',
     browserExtensionPairingFailed: '无法生成扩展配对信息',
     browserExtensionStepVerifyTitle: '测试连接',
-    browserExtensionStepVerifyDescription: '确认扩展状态显示 ON，然后点击右侧按钮验证连接。',
+    browserExtensionStepVerifyDescription:
+      '确认扩展设置页的连接状态显示 Connected，然后点击右侧按钮验证连接。',
     browserExtensionTestConnection: '测试扩展连接',
     browserExtensionRelayUnavailable:
       '本地连接服务未响应。请重启应用；仍无法连接时，请检查安全软件是否阻止本地连接。',
@@ -1946,7 +1950,7 @@ export const settingsTranslations = {
     browserModeExtensionDescription:
       'Connect to Chrome through the installed extension and share all eligible pages or selected tabs.',
     browserModeExtensionActive:
-      'Browser actions currently connect through the installed Chrome extension. Pair it and choose which pages the extension may share.',
+      'Browser actions currently connect through the installed Chrome extension. It pairs with the local app automatically; choose which pages to share under Tab Access.',
     browserModeEmbeddedTitle: 'Connect built-in browser',
     browserModeEmbeddedDescription:
       'You and the AI share the same live page in the conversation sidebar.',
@@ -2005,7 +2009,7 @@ export const settingsTranslations = {
       'The Chrome extension brings the AI assistant into your browser, where you can chat in the side panel and optionally include context from the current page.',
     browserExtensionTitle: 'Connect your Chrome through the extension',
     browserExtensionDescription:
-      'Manual pairing shares selected tabs by default and reconnects automatically; choose All tabs in extension settings only when broader access is needed.',
+      'Keep the desktop app and Chrome running. The extension discovers and pairs with the local app automatically; adjust sharing under Tab Access after pairing.',
     browserExtensionStepInstallTitle: 'Install the Chrome extension',
     browserExtensionStepInstallDescription:
       '(1) Install and start Chrome 125 or newer.\n(2) Open Chrome’s extension management page and enable Developer mode.\n(3) Drag the chrome-extension folder from the app directory directly onto Chrome’s extension management page.\n(4) Select {extensionsButton} at the top right of Chrome to find this extension; use the pin icon to keep it in the toolbar.',
@@ -2017,14 +2021,17 @@ export const settingsTranslations = {
     browserExtensionRevealFailed: 'Unable to find or open the bundled browser extension',
     browserExtensionStepPairTitle: 'Pair the extension',
     browserExtensionStepPairDescription:
-      '(1) Select Copy pairing information on the right.\n(2) Open the bundled browser extension, go to Settings → Advanced manual pairing, then paste and save.\n(3) Choose All tabs or Selected tabs; the latter exposes only pages in the extension tab group.',
+      'Keep the desktop app and Chrome running for automatic pairing.\nChoose which tabs to share under Tab Access in extension settings.',
+    browserExtensionManualPairTitle: 'Manual pairing (fallback)',
+    browserExtensionManualPairDescription:
+      'If automatic pairing is unavailable, select Copy pairing information.\nPaste it under Settings → Manual connection in the extension, then select Pair manually.',
     browserExtensionToolbarExtensions: '“Extensions”',
     browserExtensionCopyPairing: 'Copy pairing information',
     browserExtensionPairingCopied: 'Copied; paste it into the extension',
     browserExtensionPairingFailed: 'Unable to generate extension pairing information',
     browserExtensionStepVerifyTitle: 'Test the connection',
     browserExtensionStepVerifyDescription:
-      'Confirm the extension shows ON, then use the button on the right to verify the connection.',
+      'Confirm the connection status in extension settings shows Connected, then use the button on the right to verify the connection.',
     browserExtensionTestConnection: 'Test extension connection',
     browserExtensionRelayUnavailable:
       'The local connection service is not responding. Restart the app; if it still cannot connect, check whether security software blocks local connections.',
