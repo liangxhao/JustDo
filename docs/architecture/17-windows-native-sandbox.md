@@ -4,12 +4,12 @@ Windows 可选命令沙盒使用官方 mxc 后端及短生命周期 ProcessConta
 
 ## 1. 用户选择如何变成执行策略
 
-默认 executionMode=local，旧 container/auto 归一化到 local。选择 sandbox 之前，WindowsSandboxService 检查平台、插件、固定二进制、broker 与真实隔离进程；失败不降级到 host exec。
+默认 executionMode=local，旧 container/auto 归一化到 local。选择 sandbox 之前，WindowsSandboxService 检查平台、插件、固定二进制、执行器宿主能力与真实隔离进程；失败不降级到 host exec。
 
 ```mermaid
 flowchart LR
   UI[安全设置] --> IPC[WindowsSandbox IPC]
-  IPC --> Probe[二进制 / broker / 真实探针]
+  IPC --> Probe[二进制 / 执行器宿主探测 / 真实探针]
   Probe --> Config[受管配置同步]
   Config --> Gateway[Gateway]
   Gateway --> MXC[mxc 插件]
@@ -21,9 +21,11 @@ flowchart LR
 
 ## 2. 就绪状态的含义
 
-共享状态包括 unsupported_platform、plugin_missing、broker_unavailable、host_preparation_recommended、ready、check_failed，并附 supported/helperAvailable/initialized/ready 等字段。
+共享状态包括 unsupported_platform、plugin_missing、host_preparation_recommended、ready、check_failed，并附 supported/helperAvailable/initialized/ready 等字段。自检失败时，设置页显示原生错误、处理提示和已有诊断目录的打开按钮；组件缺失时说明重新安装的处理方式。刷新失败也应显示错误并允许重试。
 
-插件目录存在只通过第一层检查。服务验证 wxc-exec 和 wxc-host-prep 的 SHA-256，再实际运行无网络 ProcessContainer；成功探针按执行器 hash 缓存。更换二进制不能复用旧成功结果。
+插件目录存在只通过第一层检查。服务验证 wxc-exec 和 wxc-host-prep 的 SHA-256，再运行该执行器的 `--probe`，只接受 base-container、appcontainer-bfs 或 appcontainer-dacl 隔离层级，随后实际运行无网络 ProcessContainer；两项成功探针按执行器 hash 缓存。更换二进制不能复用旧成功结果。
+
+IsoEnvBroker 属于 Windows 的实验性 IsolationSession，不能作为 ProcessContainer 的准入条件。OpenClaw 2026.9.8 插件原包仍有此检查，构建补丁将它替换为同一个实际执行器的 `--probe`，同时保留层级警告与探测失败拒绝注册的边界。显式 mxcBinaryPath 覆盖也必须探测该覆盖路径。这个后端不要求启用 Windows 可选功能中的 Windows Sandbox，不能提供安装无关服务的按钮来处理误判。
 
 系统盘准备通过沙盒内执行目录枚举判断，不解析本地化 icacls 字符串。缺少相关 ACE 可以是建议准备而不是完全不可用；UI 应区别“可运行但枚举受限”和“无法创建隔离进程”。
 
@@ -57,15 +59,16 @@ Windows runtime 携带 @openclaw/mxc-sandbox@2026.9.8 与锁定 SDK 0.8.0。需�
 
 ## 7. 验证矩阵与排障
 
-| 场景                                        | 预期                        |
-| ------------------------------------------- | --------------------------- |
-| workspace 内读写                            | 按 session 权限正常执行     |
-| workspace 外路径                            | 拒绝，不回退 host           |
-| bundled/managed/project Skill 副本          | 只读可用，来源路径正确      |
-| read/write/edit/apply_patch/stat 等文件工具 | 走有效后端，不漏回宿主      |
-| network=none                                | 连接失败，子进程继承隔离    |
-| 取消/超时                                   | 原生进程结束，无残留执行    |
-| broker/插件/二进制损坏                      | fail closed，可诊断         |
-| 中文、空格和自定义安装路径                  | 正确解析，不依赖 shell 拼接 |
+| 场景                                        | 预期                          |
+| ------------------------------------------- | ----------------------------- |
+| workspace 内读写                            | 按 session 权限正常执行       |
+| workspace 外路径                            | 拒绝，不回退 host             |
+| bundled/managed/project Skill 副本          | 只读可用，来源路径正确        |
+| read/write/edit/apply_patch/stat 等文件工具 | 走有效后端，不漏回宿主        |
+| network=none                                | 连接失败，子进程继承隔离      |
+| 取消/超时                                   | 原生进程结束，无残留执行      |
+| 执行器宿主探测/插件/二进制损坏              | fail closed，显示原因并可诊断 |
+| 缺少 IsoEnvBroker、原生探针成功             | 正常准入 ProcessContainer     |
+| 中文、空格和自定义安装路径                  | 正确解析，不依赖 shell 拼接   |
 
 先看 WindowsSandboxService 的具体 status 和 diagnostics，再查原生 backend 注册与 Gateway 日志。服务测试可验证策略分支，真实隔离验收需在目标 Windows/架构上运行，不能用 mock 探针替代。

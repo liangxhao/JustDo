@@ -56,8 +56,8 @@ display projection and the ordering of restored messages.
 | 033   | Content-free loop exit diagnostics    | Record the selected loop exit branch and final response kind; carry through deferred settlement without changing execution or retries                           |
 | 034   | Owned plugin execution and cleanup    | General SDK run timeout and managed tool lifetime; exact native registry ownership, whole-run lifecycle, supervisor cleanup and trusted Code Mode wait metadata |
 | 035   | Actual prompt-hook context budget     | Expose the resolved native attempt budget through the existing contextTokenBudget hook field; model selection and context guards remain native                  |
-| 036   | Shared desktop terminal               | Admin terminal launch accepts project cwd and shell/args; explicit termination retains native viewer ownership checks                                             |
-| 037   | Product terminal welcome              | Welcome text reads validated build-time productName; no lobster art; native buffer seeding and output offsets remain unchanged                                    |
+| 036   | Shared desktop terminal               | Admin terminal launch accepts project cwd and shell/args; explicit termination retains native viewer ownership checks                                           |
+| 037   | Product terminal welcome              | Welcome text reads validated build-time productName; no lobster art; native buffer seeding and output offsets remain unchanged                                  |
 
 Each module header records its scope, native safety boundary and removal condition.
 No upstream issue number is claimed without an actual filed issue.
@@ -137,10 +137,22 @@ current exact field expression. No model window is guessed from its name.
 
 The separately locked `@openclaw/mxc-sandbox@2026.9.8` still uses MXC SDK 0.8.0.
 Its external skill paths, host-preparation capability SID and invalid
-`filesystem.clearPolicyOnExit` configuration still require the product build
+`filesystem.clearPolicyOnExit` configuration, plus its unrelated IsoEnvBroker
+readiness gate, still require the product build
 patch in `scripts/openclaw/patch-mxc-sandbox-plugin.cjs`. Preserve filesystem
 permissions and emit the supported native lifecycle configuration. Binary hashes
 are unchanged from 9.6 and are verified against `mxcNativeBinaries.json`.
+
+Readiness now probes the exact selected executor with `--probe`, including an
+explicit `mxcBinaryPath`, and requires a native ProcessContainer isolation tier.
+Native tier warnings remain advisory; failed, malformed or unrecognized probes
+block backend registration. Main also checks a real isolated process before
+admission. Remove this readiness patch when the locked plugin includes the
+[upstream executor-based readiness](https://github.com/openclaw/openclaw/blob/main/extensions/mxc/README.md#host-readiness).
+Prior product patch revisions are rejected; rebuild the plugin from its locked
+pristine package instead of updating a previously patched cache in place.
+Tests: `tests/scripts/mxc-sandbox-patches.test.ts` and
+`src/main/security/windowsSandboxService.test.ts`.
 
 For feature-level integration and validation results see
 [the upgrade audit](../../../docs/openclaw-upgrades/v2026.9.8.md).

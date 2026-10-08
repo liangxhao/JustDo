@@ -197,7 +197,7 @@ describe('cowork config IPC', () => {
   it('rejects sandbox mode while the native backend is not ready', async () => {
     getWindowsSandboxStatus.mockResolvedValue({
       ready: false,
-      code: 'broker_unavailable',
+      code: 'check_failed',
       supported: true,
       helperAvailable: true,
       initialized: false,
@@ -205,7 +205,7 @@ describe('cowork config IPC', () => {
 
     const result = await handlers.get('cowork:config:set')?.({}, { executionMode: 'sandbox' });
 
-    expect(result).toMatchObject({ success: false, sandboxStatus: { code: 'broker_unavailable' } });
+    expect(result).toMatchObject({ success: false, sandboxStatus: { code: 'check_failed' } });
     expect(setConfig).not.toHaveBeenCalled();
     expect(syncOpenClawConfig).not.toHaveBeenCalled();
   });

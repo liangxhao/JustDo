@@ -429,7 +429,7 @@ describe('OpenClawConfigSyncService', () => {
       connectGatewayClient,
       requestGateway,
       getWindowsSandboxStatus: vi.fn(async () => ({
-        code: options.sandboxReady === false ? 'broker_unavailable' : 'ready',
+        code: options.sandboxReady === false ? 'check_failed' : 'ready',
         supported: true,
         helperAvailable: true,
         initialized: options.sandboxReady !== false,

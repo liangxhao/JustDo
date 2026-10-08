@@ -108,6 +108,8 @@ sequenceDiagram
 
 配置重载分别等待变更检测和应用完成，默认各有最多 30 秒预算，完成即返回。检测到变更后只启动一次完成计时，避免 Windows 凭据解析或插件加载消耗检测预算后，尚在正常执行的热重载被误判为失败并触发多余重启；失败事件仍立即返回，原生接受重启后使用独立的重启完成预算。安全设置切换仍等待主进程同步并验证权限成功，成功后直接更新选项，不再额外运行一次沙盒自检。
 
+Windows 沙盒准入先验证锁定的 MXC 二进制，再运行执行器 `--probe` 与真实无网络隔离进程；插件注册也探测实际选中的执行器。不能用实验性 IsolationSession 的 IsoEnvBroker 服务是否存在来判断 ProcessContainer 可用性。自检失败保持拒绝准入，设置页显示具体原因和诊断入口；系统盘准备仍是用户显式触发的可选操作。详见 [Windows 原生沙盒](17-windows-native-sandbox.md)。
+
 全局 exec/fs 使用 restricted fallback。会话权限走单独 coordinator，以原生 sessions.create 写入并核对 permissionMode/sessionRoot。失败时不发送，不能用全局 full 兜底“修好”单个会话。
 
 ## 5. 模型与凭据进入执行的方式

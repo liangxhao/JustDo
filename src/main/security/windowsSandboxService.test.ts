@@ -67,6 +67,7 @@ const sandboxRuntimeChecks = () => ({
       hostPrepHash: 'PREP-HASH',
     };
   }),
+  nativeHostProbe: vi.fn(async () => undefined),
   processContainerProbe: vi.fn(async () => undefined),
   systemDrivePreparationProbe: vi.fn(async () => undefined),
   authenticodeVerifier: vi.fn(async () => undefined),
@@ -142,8 +143,8 @@ describe('Windows MXC sandbox readiness', () => {
       }
       return statSync(...args);
     });
-    const runFile = vi.fn(async (_executable: string, _args: readonly string[]) => ({
-      stdout: '',
+    const runFile = vi.fn(async (_executable: string, args: readonly string[]) => ({
+      stdout: args[0] === '--probe' ? JSON.stringify({ tier: 'appcontainer-bfs' }) : '',
       stderr: '',
     }));
     const service = new WindowsSandboxService({
@@ -159,8 +160,13 @@ describe('Windows MXC sandbox readiness', () => {
     });
 
     await expect(service.getStatus()).resolves.toMatchObject({ code: 'ready', ready: true });
-    const probeCalls = runFile.mock.calls.filter(([executable]) =>
-      executable.endsWith('wxc-exec.exe'),
+    const probeCalls = runFile.mock.calls.filter(
+      ([executable, args]) => executable.endsWith('wxc-exec.exe') && args[0] === '--config-base64',
+    );
+    expect(runFile).toHaveBeenCalledWith(
+      expect.stringMatching(/wxc-exec\.exe$/),
+      ['--probe'],
+      expect.objectContaining({ timeout: 5_000, windowsHide: true }),
     );
     expect(probeCalls).toHaveLength(2);
     const configs = probeCalls.map(([, args]) => {
@@ -218,7 +224,7 @@ describe('Windows MXC sandbox readiness', () => {
     );
   });
 
-  it('reports ready when IsoEnvBroker and a sandboxed system-drive listing are available', async () => {
+  it('reports ready after native host and sandboxed system-drive checks pass', async () => {
     const appPath = makeTemporaryDirectory();
     makePlugin(appPath);
     const runFile = vi.fn(async () => ({ stdout: 'SERVICE_NAME', stderr: '' }));
@@ -262,27 +268,79 @@ describe('Windows MXC sandbox readiness', () => {
     });
   });
 
-  it('fails closed when IsoEnvBroker is unavailable', async () => {
+  it('allows ProcessContainer when native checks pass without the unrelated IsoEnvBroker service', async () => {
     const appPath = makeTemporaryDirectory();
     makePlugin(appPath);
+    const runtimeChecks = sandboxRuntimeChecks();
+    const runFile = vi.fn(async (executable: string) => {
+      if (executable.toLowerCase().endsWith('sc.exe')) throw new Error('service missing');
+      return { stdout: '', stderr: '' };
+    });
     const service = new WindowsSandboxService({
       platform: 'win32',
       arch: 'x64',
       isPackaged: false,
       appPath,
       resourcesPath: makeTemporaryDirectory(),
-      ...sandboxRuntimeChecks(),
-      execFile: vi.fn(async executable => {
-        if (executable.toLowerCase().endsWith('sc.exe')) throw new Error('service missing');
-        return { stdout: '', stderr: '' };
-      }),
+      ...runtimeChecks,
+      execFile: runFile,
     });
 
     await expect(service.getStatus()).resolves.toMatchObject({
-      code: 'broker_unavailable',
-      ready: false,
+      code: 'ready',
+      ready: true,
     });
+    expect(runtimeChecks.nativeHostProbe).toHaveBeenCalledOnce();
+    expect(runtimeChecks.processContainerProbe).toHaveBeenCalledOnce();
+    expect(runFile).not.toHaveBeenCalled();
   });
+
+  it.each(['base-container', 'appcontainer-bfs', 'appcontainer-dacl'])(
+    'accepts the executor host probe tier %s before testing a real container',
+    async tier => {
+      const appPath = makeTemporaryDirectory();
+      makePlugin(appPath);
+      const runtimeChecks = sandboxRuntimeChecks();
+      const service = new WindowsSandboxService({
+        platform: 'win32',
+        arch: 'x64',
+        isPackaged: false,
+        appPath,
+        resourcesPath: makeTemporaryDirectory(),
+        ...runtimeChecks,
+        nativeHostProbe: undefined,
+        execFile: vi.fn(async () => ({ stdout: JSON.stringify({ tier }), stderr: '' })),
+      });
+
+      await expect(service.getStatus()).resolves.toMatchObject({ code: 'ready', ready: true });
+      expect(runtimeChecks.processContainerProbe).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each(['invalid JSON', 'null', '{}', '{"tier":"unsupported"}'])(
+    'rejects an invalid executor host probe without launching: %s',
+    async stdout => {
+      const appPath = makeTemporaryDirectory();
+      makePlugin(appPath);
+      const runtimeChecks = sandboxRuntimeChecks();
+      const service = new WindowsSandboxService({
+        platform: 'win32',
+        arch: 'x64',
+        isPackaged: false,
+        appPath,
+        resourcesPath: makeTemporaryDirectory(),
+        ...runtimeChecks,
+        nativeHostProbe: undefined,
+        execFile: vi.fn(async () => ({ stdout, stderr: '' })),
+      });
+
+      await expect(service.getStatus()).resolves.toMatchObject({
+        code: 'check_failed',
+        ready: false,
+      });
+      expect(runtimeChecks.processContainerProbe).not.toHaveBeenCalled();
+    },
+  );
 
   it('fails closed when the real ProcessContainer probe cannot launch', async () => {
     const appPath = makeTemporaryDirectory();

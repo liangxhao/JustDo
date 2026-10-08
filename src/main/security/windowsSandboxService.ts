@@ -52,6 +52,7 @@ type WindowsSandboxServiceEnvironment = {
   systemDrive: string;
   execFile: ExecFileRunner;
   nativeBinaryVerifier: (pluginDirectory: string, arch: string) => VerifiedMxcBinaries;
+  nativeHostProbe: (binaries: VerifiedMxcBinaries) => Promise<void>;
   processContainerProbe: (binaries: VerifiedMxcBinaries) => Promise<void>;
   systemDrivePreparationProbe: (binaries: VerifiedMxcBinaries) => Promise<void>;
   authenticodeVerifier: (filePath: string) => Promise<void>;
@@ -235,6 +236,25 @@ const probeMxcProcessContainer = async (
   );
 };
 
+const probeMxcHost = async (
+  binaries: VerifiedMxcBinaries,
+  execRunner: ExecFileRunner,
+): Promise<void> => {
+  const { stdout } = await execRunner(binaries.executablePath, ['--probe'], {
+    encoding: 'utf8',
+    timeout: 5_000,
+    windowsHide: true,
+  });
+  const probe = JSON.parse(stdout) as { tier?: unknown } | null;
+  if (
+    probe?.tier !== 'base-container' &&
+    probe?.tier !== 'appcontainer-bfs' &&
+    probe?.tier !== 'appcontainer-dacl'
+  ) {
+    throw new Error('MXC host probe did not select a supported ProcessContainer isolation tier.');
+  }
+};
+
 export class WindowsSandboxService {
   private readonly environment: WindowsSandboxServiceEnvironment;
   private successfulProbeHash: string | null = null;
@@ -264,6 +284,8 @@ export class WindowsSandboxService {
       systemDrive,
       execFile: execRunner,
       nativeBinaryVerifier: environment?.nativeBinaryVerifier ?? verifyMxcNativeBinaryIntegrity,
+      nativeHostProbe:
+        environment?.nativeHostProbe ?? (binaries => probeMxcHost(binaries, execRunner)),
       processContainerProbe:
         environment?.processContainerProbe ??
         (binaries =>
@@ -320,19 +342,6 @@ export class WindowsSandboxService {
     return path.win32.join(this.environment.systemRoot, 'System32', fileName);
   }
 
-  private async hasIsoEnvBroker(): Promise<boolean> {
-    try {
-      await this.environment.execFile(
-        this.resolveSystemExecutable('sc.exe'),
-        ['query', 'IsoEnvBroker'],
-        { encoding: 'utf8', timeout: 5_000, windowsHide: true },
-      );
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
   private async isSystemDrivePrepared(binaries: VerifiedMxcBinaries): Promise<boolean> {
     try {
       await this.environment.systemDrivePreparationProbe(binaries);
@@ -384,20 +393,9 @@ export class WindowsSandboxService {
       };
     }
 
-    if (!(await this.hasIsoEnvBroker())) {
-      return {
-        code: WindowsSandboxStatusCode.BrokerUnavailable,
-        supported: true,
-        helperAvailable: true,
-        initialized: false,
-        ready: false,
-        diagnosticsPath: pluginDirectory,
-        error: 'Windows IsoEnvBroker is not installed; MXC ProcessContainer is unavailable.',
-      };
-    }
-
     try {
       if (this.successfulProbeHash !== verifiedBinaries.executableHash) {
+        await this.environment.nativeHostProbe(verifiedBinaries);
         await this.environment.processContainerProbe(verifiedBinaries);
         this.successfulProbeHash = verifiedBinaries.executableHash;
       }

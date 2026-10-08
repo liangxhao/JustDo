@@ -10,7 +10,6 @@ export const WindowsSandboxIpc = {
 export const WindowsSandboxStatusCode = {
   UnsupportedPlatform: 'unsupported_platform',
   PluginMissing: 'plugin_missing',
-  BrokerUnavailable: 'broker_unavailable',
   HostPreparationRecommended: 'host_preparation_recommended',
   Ready: 'ready',
   CheckFailed: 'check_failed',

@@ -3,7 +3,10 @@ import {
   CheckCircleIcon,
   ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline';
-import type { WindowsSandboxStatus } from '@shared/security/windowsSandbox';
+import {
+  type WindowsSandboxStatus,
+  WindowsSandboxStatusCode,
+} from '@shared/security/windowsSandbox';
 import React, { useCallback, useEffect, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
@@ -24,22 +27,27 @@ const WindowsSandboxSettingsTab: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
+    setBusy(true);
     setError(null);
-    const [nextStatus, configResult] = await Promise.all([
-      window.electron.cowork.getWindowsSandboxStatus(),
-      window.electron.cowork.getConfig(),
-    ]);
-    setStatus(nextStatus);
-    if (configResult.success && configResult.config) {
-      setExecutionMode(configResult.config.executionMode === 'sandbox' ? 'sandbox' : 'local');
-      setSandboxNetworkEnabled(configResult.config.sandboxNetworkEnabled);
+    try {
+      const [nextStatus, configResult] = await Promise.all([
+        window.electron.cowork.getWindowsSandboxStatus(),
+        window.electron.cowork.getConfig(),
+      ]);
+      setStatus(nextStatus);
+      if (configResult.success && configResult.config) {
+        setExecutionMode(configResult.config.executionMode === 'sandbox' ? 'sandbox' : 'local');
+        setSandboxNetworkEnabled(configResult.config.sandboxNetworkEnabled);
+      }
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : String(loadError));
+    } finally {
+      setBusy(false);
     }
   }, []);
 
   useEffect(() => {
-    void refresh().catch(loadError => {
-      setError(loadError instanceof Error ? loadError.message : String(loadError));
-    });
+    void refresh();
   }, [refresh]);
 
   const updateMode = async (nextMode: ExecutionMode) => {
@@ -92,6 +100,30 @@ const WindowsSandboxSettingsTab: React.FC = () => {
       setBusy(false);
     }
   };
+
+  const openDiagnostics = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await window.electron.cowork.openWindowsSandboxDiagnostics();
+      if (!result.success) {
+        throw new Error(result.error || i18nService.t('windowsSandboxOpenDiagnosticsFailed'));
+      }
+    } catch (diagnosticsError) {
+      setError(
+        diagnosticsError instanceof Error ? diagnosticsError.message : String(diagnosticsError),
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const statusHelp =
+    status?.code === WindowsSandboxStatusCode.PluginMissing
+      ? i18nService.t('windowsSandboxPluginMissingHelp')
+      : status?.code === WindowsSandboxStatusCode.CheckFailed
+        ? i18nService.t('windowsSandboxCheckFailedHelp')
+        : null;
 
   const statusIcon = !status ? (
     <ArrowPathIcon className="h-4 w-4 animate-spin text-secondary" />
@@ -196,8 +228,25 @@ const WindowsSandboxSettingsTab: React.FC = () => {
                     : i18nService.t('windowsSandboxInitialize')}
                 </button>
               )}
+              {!status?.ready && status?.diagnosticsPath && (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void openDiagnostics()}
+                  className="rounded-lg bg-primary px-2.5 py-1 text-xs font-medium text-white transition-colors hover:bg-primary-hover disabled:opacity-50"
+                >
+                  {i18nService.t('windowsSandboxOpenDiagnostics')}
+                </button>
+              )}
             </div>
           </div>
+
+          {(statusHelp || status?.error) && (
+            <div className="mx-4 mb-3 space-y-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-5">
+              {statusHelp && <p className="text-secondary">{statusHelp}</p>}
+              {status?.error && <p className="break-words text-warning">{status.error}</p>}
+            </div>
+          )}
 
           {executionMode === 'sandbox' && (
             <div className="mx-4 border-t border-border py-4">

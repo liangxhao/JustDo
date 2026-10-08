@@ -16,6 +16,50 @@ const SUPPORTED_VERSION = nativeBinaries.pluginVersion;
 const MARKER = 'JUSTDO_MXC_EXTERNAL_READONLY_SKILLS_V2026_9_8';
 const HOST_PREP_MARKER = 'JUSTDO_MXC_CAPABILITY_SID_HOST_PREP_V2026_9_8';
 const LIFECYCLE_MARKER = 'JUSTDO_MXC_NATIVE_POLICY_LIFECYCLE_V2026_9_8';
+const HOST_PROBE_MARKER = 'JUSTDO_MXC_EXECUTOR_HOST_PROBE_V2026_9_8';
+// Backport upstream executor-based readiness without requiring IsolationSession's broker.
+// Remove when the locked plugin probes the same executor it launches.
+const HOST_PROBE_ORIGINAL = `function assertWindowsIsoEnvBrokerInstalled(deps) {
+\ttry {
+\t\tdeps.execFileSync(resolveWindowsSystemExecutable("sc.exe"), ["query", "IsoEnvBroker"], {
+\t\t\tencoding: "utf-8",
+\t\t\tstdio: "pipe",
+\t\t\ttimeout: 5e3,
+\t\t\twindowsHide: true
+\t\t});
+\t} catch (error) {
+\t\tconst detail = error instanceof Error && error.message ? \`: \${error.message.trim()}\` : "";
+\t\tthrow new Error(\`[mxc] MXC Windows ProcessContainer sandbox is not ready: IsoEnvBroker service is not installed\${detail}. Install the IsoEnvBroker service before enabling MXC sandbox execution.\`, { cause: error });
+\t}
+}`;
+const HOST_PROBE_REPLACEMENT = `function assertMxcExecutorHostReady(params, deps) {
+\t/*${HOST_PROBE_MARKER}*/
+\ttry {
+\t\tconst binaryPath = resolveMxcBinaryPath(params.mxcBinaryPath);
+\t\tconst output = deps.execFileSync(binaryPath, ["--probe"], {
+\t\t\tencoding: "utf-8",
+\t\t\tstdio: "pipe",
+\t\t\ttimeout: 5e3,
+\t\t\twindowsHide: true
+\t\t});
+\t\tconst probe = JSON.parse(output);
+\t\tif (probe?.tier !== "base-container" && probe?.tier !== "appcontainer-bfs" && probe?.tier !== "appcontainer-dacl") {
+\t\t\tthrow new Error("MXC host probe did not select a supported ProcessContainer isolation tier.");
+\t\t}
+\t\tif (Array.isArray(probe.warnings)) {
+\t\t\tfor (const warning of probe.warnings) {
+\t\t\t\tif (typeof warning === "string") (params.warn ?? ((message) => console.warn(message)))(\`[mxc] \${warning}\`);
+\t\t\t}
+\t\t}
+\t} catch (error) {
+\t\tconst detail = error instanceof Error && error.message ? \`: \${error.message.trim()}\` : "";
+\t\tthrow new Error(\`[mxc] MXC Windows ProcessContainer sandbox host probe failed\${detail}\`, { cause: error });
+\t}
+}`;
+const HOST_PROBE_CALL_ORIGINAL = '\tassertWindowsIsoEnvBrokerInstalled({';
+const HOST_PROBE_CALL_REPLACEMENT = '\tassertMxcExecutorHostReady(params, {';
+const HOST_PROBE_REGISTRATION_ORIGINAL = '\tassertMxcReadiness();';
+const HOST_PROBE_REGISTRATION_REPLACEMENT = '\tassertMxcReadiness({ mxcBinaryPath: config.mxcBinaryPath });';
 // clearPolicyOnExit belongs to SandboxPolicy, not native ContainerConfig.
 // Remove when upstream emits lifecycle.preservePolicy for SDK 0.8.0+.
 const LIFECYCLE_ORIGINAL = 'lifecycle: { destroyOnExit: true },';
@@ -73,8 +117,15 @@ function transformMxcPlugin(content, filePath = 'dist/index.js') {
     lifecycleMarkerCount === 1 &&
     content.includes(LIFECYCLE_REPLACEMENT) &&
     !content.includes('clearPolicyOnExit');
-  if (skillsPatched && hostPrepPatched && lifecyclePatched) return content;
-  if (markerCount !== 0 || hostPrepMarkerCount !== 0 || lifecycleMarkerCount !== 0) {
+  const hostProbeMarkerCount = content.split(HOST_PROBE_MARKER).length - 1;
+  const hostProbePatched =
+    hostProbeMarkerCount === 1 &&
+    content.includes(HOST_PROBE_REPLACEMENT) &&
+    content.includes(HOST_PROBE_CALL_REPLACEMENT) &&
+    content.includes(HOST_PROBE_REGISTRATION_REPLACEMENT) &&
+    !content.includes('IsoEnvBroker');
+  if (skillsPatched && hostPrepPatched && lifecyclePatched && hostProbePatched) return content;
+  if (markerCount !== 0 || hostPrepMarkerCount !== 0 || lifecycleMarkerCount !== 0 || hostProbeMarkerCount !== 0) {
     throw new Error(
       `${filePath}: partial or historical MXC patch detected; rebuild from pristine packages.`,
     );
@@ -106,6 +157,20 @@ function transformMxcPlugin(content, filePath = 'dist/index.js') {
     }
     updated = updated.replace(original, replacement);
   }
+  for (const [original, replacement] of [
+    [HOST_PROBE_ORIGINAL, HOST_PROBE_REPLACEMENT],
+    [HOST_PROBE_CALL_ORIGINAL, HOST_PROBE_CALL_REPLACEMENT],
+    [HOST_PROBE_REGISTRATION_ORIGINAL, HOST_PROBE_REGISTRATION_REPLACEMENT],
+  ]) {
+    const count = updated.split(original).length - 1;
+    if (count !== 1) {
+      throw new Error(`${filePath}: expected one MXC host probe anchor, found ${count}.`);
+    }
+    updated = updated.replace(original, replacement);
+  }
+  if (updated.includes('IsoEnvBroker')) {
+    throw new Error(`${filePath}: unexpected MXC broker prerequisite remains.`);
+  }
   if (updated.includes('clearPolicyOnExit')) {
     throw new Error(`${filePath}: unexpected MXC clearPolicyOnExit field remains.`);
   }
@@ -130,6 +195,11 @@ function verifyMxcSandboxPlugin(pluginDirectory) {
     content.split(HOST_PREP_MARKER).length - 1 !== 1 ||
     !content.includes(LIFECYCLE_REPLACEMENT) ||
     content.split(LIFECYCLE_MARKER).length - 1 !== 1 ||
+    !content.includes(HOST_PROBE_REPLACEMENT) ||
+    content.split(HOST_PROBE_MARKER).length - 1 !== 1 ||
+    !content.includes(HOST_PROBE_CALL_REPLACEMENT) ||
+    !content.includes(HOST_PROBE_REGISTRATION_REPLACEMENT) ||
+    content.includes('IsoEnvBroker') ||
     content.includes('clearPolicyOnExit')
   ) {
     throw new Error(
@@ -206,12 +276,17 @@ function pruneMxcSandboxPluginForTarget(pluginDirectory, runtimeTarget) {
 module.exports = {
   MARKER,
   HOST_PREP_MARKER,
+  HOST_PROBE_MARKER,
   patchMxcSandboxPlugin,
   pruneMxcSandboxPluginForTarget,
   verifyMxcNativeBinaries,
   transformMxcPlugin,
   verifyMxcSandboxPlugin,
   __testing: {
+    HOST_PROBE_ORIGINAL,
+    HOST_PROBE_REPLACEMENT,
+    HOST_PROBE_CALL_ORIGINAL,
+    HOST_PROBE_REGISTRATION_ORIGINAL,
     HOST_PREP_ORIGINAL,
     HOST_PREP_REPLACEMENT,
     ORIGINAL,

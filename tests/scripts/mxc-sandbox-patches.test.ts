@@ -1,11 +1,13 @@
-import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { describe, expect, it, vi } from 'vitest';
+
 const pluginPatch = require('../../scripts/openclaw/patch-mxc-sandbox-plugin.cjs') as {
   MARKER: string;
   HOST_PREP_MARKER: string;
+  HOST_PROBE_MARKER: string;
   transformMxcPlugin: (content: string, filePath?: string) => string;
   verifyMxcSandboxPlugin: (directory: string) => void;
   __testing: {
@@ -16,8 +18,18 @@ const pluginPatch = require('../../scripts/openclaw/patch-mxc-sandbox-plugin.cjs
     LIFECYCLE_ORIGINAL: string;
     LIFECYCLE_REPLACEMENT: string;
     FILESYSTEM_ORIGINAL: string;
+    HOST_PROBE_ORIGINAL: string;
+    HOST_PROBE_REPLACEMENT: string;
+    HOST_PROBE_CALL_ORIGINAL: string;
+    HOST_PROBE_REGISTRATION_ORIGINAL: string;
   };
 };
+const pristineHostReadiness = () =>
+  [
+    pluginPatch.__testing.HOST_PROBE_ORIGINAL,
+    pluginPatch.__testing.HOST_PROBE_CALL_ORIGINAL,
+    pluginPatch.__testing.HOST_PROBE_REGISTRATION_ORIGINAL,
+  ].join('\n');
 const runtimePatch =
   require('../../scripts/patches/v2026.9.8/025-mxc-external-skill-paths.cjs') as {
     __testing: {
@@ -40,6 +52,7 @@ describe('MXC sandbox version-locked patches', () => {
         pluginPatch.__testing.HOST_PREP_ORIGINAL,
         pluginPatch.__testing.LIFECYCLE_ORIGINAL,
         pluginPatch.__testing.FILESYSTEM_ORIGINAL,
+        pristineHostReadiness(),
       ].join('\n');
       const current = pluginPatch.transformMxcPlugin(pristine);
       const entry = path.join(directory, 'dist', 'index.js');
@@ -52,6 +65,14 @@ describe('MXC sandbox version-locked patches', () => {
         ),
         current + '\nclearPolicyOnExit: true',
         current.replace('preservePolicy: false', 'preservePolicy: true'),
+        current.replace(
+          pluginPatch.__testing.HOST_PROBE_REPLACEMENT,
+          pluginPatch.__testing.HOST_PROBE_ORIGINAL,
+        ),
+        current.replace(
+          'assertMxcReadiness({ mxcBinaryPath: config.mxcBinaryPath });',
+          'assertMxcReadiness();',
+        ),
       ]) {
         fs.writeFileSync(entry, invalid);
         expect(() => pluginPatch.verifyMxcSandboxPlugin(directory)).toThrow(
@@ -72,6 +93,7 @@ describe('MXC sandbox version-locked patches', () => {
 
     expect(updated).toContain(pluginPatch.MARKER);
     expect(updated).toContain(pluginPatch.HOST_PREP_MARKER);
+    expect(updated).toContain(pluginPatch.HOST_PROBE_MARKER);
     expect(updated).toContain('output.includes("S-1-15-3-")');
     expect(updated).toContain('containerPath: materializedSkillsPath');
     expect(updated).not.toContain('containerJoin(params.workdir, "skills")');
@@ -79,7 +101,7 @@ describe('MXC sandbox version-locked patches', () => {
   });
 
   it('emits native lifecycle cleanup without leaking the SDK policy field', () => {
-    const fixture = `${pluginPatch.__testing.ORIGINAL}\n${pluginPatch.__testing.HOST_PREP_ORIGINAL}\n`;
+    const fixture = `${pluginPatch.__testing.ORIGINAL}\n${pluginPatch.__testing.HOST_PREP_ORIGINAL}\n${pristineHostReadiness()}\n`;
     const config = `return { lifecycle: { destroyOnExit: true }, filesystem: {
 \t\treadonlyPaths: ['C:/skills'],
 \t\tdeniedPaths: [],
@@ -109,6 +131,7 @@ describe('MXC sandbox version-locked patches', () => {
       pluginPatch.__testing.HOST_PREP_ORIGINAL,
       pluginPatch.__testing.LIFECYCLE_ORIGINAL,
       pluginPatch.__testing.FILESYSTEM_ORIGINAL,
+      pristineHostReadiness(),
     ].join('\n');
     const historical = pristine
       .replace(pluginPatch.__testing.ORIGINAL, pluginPatch.__testing.REPLACEMENT)
@@ -117,6 +140,13 @@ describe('MXC sandbox version-locked patches', () => {
         pluginPatch.__testing.HOST_PREP_REPLACEMENT,
       );
     expect(() => pluginPatch.transformMxcPlugin(historical)).toThrow(/rebuild from pristine/);
+    const previousRevision = pluginPatch
+      .transformMxcPlugin(pristine)
+      .replace(
+        pluginPatch.__testing.HOST_PROBE_REPLACEMENT,
+        pluginPatch.__testing.HOST_PROBE_ORIGINAL,
+      );
+    expect(() => pluginPatch.transformMxcPlugin(previousRevision)).toThrow(/rebuild from pristine/);
     const current = pluginPatch.transformMxcPlugin(pristine);
     expect(() =>
       pluginPatch.transformMxcPlugin(
@@ -131,6 +161,69 @@ describe('MXC sandbox version-locked patches', () => {
     expect(() =>
       pluginPatch.transformMxcPlugin(pristine + pluginPatch.__testing.LIFECYCLE_ORIGINAL),
     ).toThrow(/expected one MXC native policy anchor/);
+  });
+
+  it('probes the configured executor and retains native tier warnings without querying services', () => {
+    const binaryPath = 'C:\\Custom MXC\\wxc-exec.exe';
+    const resolveBinary = vi.fn((override?: string) => override ?? 'bundled-executor.exe');
+    const execFileSync = vi.fn(() =>
+      JSON.stringify({
+        tier: 'appcontainer-bfs',
+        warnings: ['Native tier warning', 123],
+      }),
+    );
+    const warn = vi.fn();
+    const assertReadiness = new Function(
+      'resolveMxcBinaryPath',
+      `${pluginPatch.__testing.HOST_PROBE_REPLACEMENT}\nreturn assertMxcExecutorHostReady;`,
+    )(resolveBinary);
+
+    assertReadiness({ mxcBinaryPath: binaryPath, warn }, { execFileSync });
+
+    expect(resolveBinary).toHaveBeenCalledWith(binaryPath);
+    expect(execFileSync).toHaveBeenCalledWith(
+      binaryPath,
+      ['--probe'],
+      expect.objectContaining({
+        timeout: 5_000,
+        windowsHide: true,
+        stdio: 'pipe',
+      }),
+    );
+    expect(execFileSync).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledExactlyOnceWith('[mxc] Native tier warning');
+  });
+
+  it.each(['invalid JSON', 'null', '{}', '{"tier":"isolation_session"}'])(
+    'fails plugin readiness for an invalid native probe: %s',
+    output => {
+      const assertReadiness = new Function(
+        'resolveMxcBinaryPath',
+        `${pluginPatch.__testing.HOST_PROBE_REPLACEMENT}\nreturn assertMxcExecutorHostReady;`,
+      )(() => 'bundled-executor.exe');
+
+      expect(() => assertReadiness({}, { execFileSync: () => output })).toThrow(
+        /host probe failed/,
+      );
+    },
+  );
+
+  it('preserves native probe launch failures instead of activating the backend', () => {
+    const assertReadiness = new Function(
+      'resolveMxcBinaryPath',
+      `${pluginPatch.__testing.HOST_PROBE_REPLACEMENT}\nreturn assertMxcExecutorHostReady;`,
+    )(() => 'bundled-executor.exe');
+
+    expect(() =>
+      assertReadiness(
+        {},
+        {
+          execFileSync: () => {
+            throw new Error('native timeout');
+          },
+        },
+      ),
+    ).toThrow(/host probe failed: native timeout/);
   });
 
   it('selects the canonical external skill path only for the mxc backend', () => {
