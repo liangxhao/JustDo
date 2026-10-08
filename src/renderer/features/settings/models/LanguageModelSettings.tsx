@@ -155,7 +155,7 @@ const LanguageModelSettings: React.FC<LanguageModelSettingsProps> = ({
   const providerEntries = Object.entries(providers);
 
   return (
-    <div className="mx-auto flex w-full max-w-[980px] items-start gap-5">
+    <div className="flex w-full min-w-0 items-start gap-5">
       <div className="shrink-0 space-y-1.5 overflow-y-auto" style={{ width: 240 }}>
         <div className="mb-2 flex h-8 items-center px-1">
           <h3 className="text-sm font-medium text-foreground">{i18nService.t('modelProviders')}</h3>

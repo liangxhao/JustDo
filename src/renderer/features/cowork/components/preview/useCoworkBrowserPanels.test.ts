@@ -1,7 +1,12 @@
 // @vitest-environment jsdom
+import { BrowserLinkTarget } from '@shared/browser/browserLinkOpening';
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { createElement, StrictMode } from 'react';
 import { afterEach, expect, test, vi } from 'vitest';
+
+import { defaultConfig } from '@/app/config';
+import { MessageBrowserEvent } from '@/features/browser/messageBrowserLinks';
+import { configService } from '@/services/config';
 
 import { MAX_BROWSER_TABS } from './displayTabIds';
 import { useCoworkBrowserPanels } from './useCoworkBrowserPanels';
@@ -9,16 +14,102 @@ import { useCoworkBrowserPanels } from './useCoworkBrowserPanels';
 type Options = Parameters<typeof useCoworkBrowserPanels>[0];
 
 vi.mock('@/features/browser/BrowserPanel', () => ({
-  createBrowserPanelTab: (url = 'about:blank', options: { targetId: string; profile: string }) => ({
-    id: options.targetId,
-    targetId: options.targetId,
+  createBrowserPanelTab: (
+    url = 'about:blank',
+    options: { targetId?: string; profile?: string } = {},
+  ) => ({
+    ...options,
+    id: options.targetId ?? 'user-tab',
+    targetId: options.targetId ?? 'user-tab',
     url,
     title: '',
     profile: options.profile,
   }),
 }));
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
+
+test.each([BrowserLinkTarget.Embedded, BrowserLinkTarget.Chrome])(
+  'opens a local HTML preview in %s for the clicked conversation',
+  async target => {
+    vi.spyOn(configService, 'getConfig').mockReturnValue({
+      ...defaultConfig,
+      browserHtmlLinkTarget: target,
+    });
+    const preview = {
+      success: true,
+      url: 'http://127.0.0.1:43210/preview/report.html',
+      filePath: 'C:\\project\\report.html',
+      rootPath: 'C:\\project',
+      previewRootUrl: 'http://127.0.0.1:43210/preview/',
+    };
+    const createLocalHtmlPreview = vi.fn().mockResolvedValue(preview);
+    const openInChrome = vi.fn().mockResolvedValue({ success: true });
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        browser: {
+          createLocalHtmlPreview,
+          openInChrome,
+          onAgentEnsureTab: () => vi.fn(),
+          onAgentInteractionState: () => vi.fn(),
+          onAgentFocusTab: () => vi.fn(),
+          onAgentCloseTab: () => vi.fn(),
+        },
+      },
+    });
+    const openBrowserTab = vi.fn();
+    const options: Options = {
+      pendingBrowserTabsRef: { current: new Map() },
+      displaySessionKey: 'clicked-session',
+      currentSessionId: 'clicked-session',
+      browserTabs: [],
+      isDisplayPanelOpen: false,
+      hasDisplayTabs: false,
+      setIsWorkspaceFilesOpen: vi.fn(),
+      setIsDisplayPanelOpen: vi.fn(),
+      setHasBrowserPanelOpened: vi.fn(),
+      setIsBrowserPanelOpen: vi.fn(),
+      setBrowserTabCreationSequence: vi.fn(),
+      browserTabCreationSequence: 0,
+      browserPanelRefs: { current: new Map() },
+      displayStates: {},
+      setBrowserAgentPanelStates: vi.fn(),
+      setSessionField: vi.fn(),
+      pendingBrowserAgentPanelStatesRef: { current: new Map() },
+      sessions: [],
+      availableAgentBrowserSessionIdsRef: { current: [] },
+      handleBrowserTargetChange: vi.fn(),
+      openBrowserTab,
+    };
+    const { rerender } = renderHook(current => useCoworkBrowserPanels(current), {
+      initialProps: options,
+    });
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent(MessageBrowserEvent.OpenLocalHtml, {
+          detail: { filePath: 'report.html', workingDirectory: 'C:\\project' },
+        }),
+      );
+      rerender({ ...options, displaySessionKey: 'another-session' });
+    });
+    expect(createLocalHtmlPreview).toHaveBeenCalledWith('report.html', 'C:\\project');
+    if (target === BrowserLinkTarget.Chrome) {
+      expect(openInChrome).toHaveBeenCalledWith(preview.url);
+      expect(openBrowserTab).not.toHaveBeenCalled();
+    } else {
+      expect(openInChrome).not.toHaveBeenCalled();
+      expect(openBrowserTab).toHaveBeenCalledWith(
+        'clicked-session',
+        expect.objectContaining({ url: preview.url, sourceFilePath: preview.filePath }),
+        MAX_BROWSER_TABS,
+      );
+    }
+  },
+);
 
 test.each([
   { mounted: true, accepted: true },
@@ -142,6 +233,206 @@ function createOptions(overrides: Partial<Options> = {}): Options {
     ...overrides,
   };
 }
+
+const localHtmlPreview = {
+  success: true,
+  url: 'http://127.0.0.1:43210/preview/report.html',
+  filePath: 'C:\\project\\report.html',
+  rootPath: 'C:\\project',
+  previewRootUrl: 'http://127.0.0.1:43210/preview/',
+};
+
+function createMessageLinkOptions(mounted: boolean, accepted: boolean) {
+  const options = createOptions();
+  const openTab = vi.fn().mockReturnValue(accepted);
+  if (mounted) {
+    options.browserPanelRefs.current.set('session', {
+      openTab,
+      closeTab: vi.fn(),
+      openTabContextMenu: vi.fn(),
+      promoteRecordingSession: vi.fn(),
+    });
+  }
+  const createLocalHtmlPreview = vi.fn().mockResolvedValue(localHtmlPreview);
+  const openInChrome = vi.fn().mockResolvedValue({ success: true });
+  Object.assign(window.electron.browser, { createLocalHtmlPreview, openInChrome });
+  return { options, openTab, createLocalHtmlPreview, openInChrome };
+}
+
+test.each([
+  { mounted: true, accepted: true },
+  { mounted: false, accepted: true },
+  { mounted: true, accepted: false },
+])(
+  'opens a message web link with mounted=$mounted and accepted=$accepted',
+  ({ mounted, accepted }) => {
+    const { options, openTab } = createMessageLinkOptions(mounted, accepted);
+    renderHook(() => useCoworkBrowserPanels(options));
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent(MessageBrowserEvent.OpenWebUrl, {
+          detail: { url: 'https://example.com/report.html?q=1#chart' },
+        }),
+      );
+    });
+
+    if (mounted) {
+      expect(openTab).toHaveBeenCalledWith(
+        'https://example.com/report.html?q=1#chart',
+        expect.objectContaining({ targetId: 'user-tab' }),
+      );
+    } else {
+      expect(openTab).not.toHaveBeenCalled();
+    }
+    if (mounted && !accepted) {
+      expect(options.openBrowserTab).not.toHaveBeenCalled();
+    } else {
+      expect(options.openBrowserTab).toHaveBeenCalledWith(
+        'session',
+        expect.objectContaining({
+          targetId: 'user-tab',
+          url: 'https://example.com/report.html?q=1#chart',
+        }),
+        MAX_BROWSER_TABS,
+      );
+    }
+  },
+);
+
+test.each([
+  { mounted: true, accepted: true },
+  { mounted: false, accepted: true },
+  { mounted: true, accepted: false },
+])(
+  'opens an HTML link in its original session with mounted=$mounted and accepted=$accepted',
+  async ({ mounted, accepted }) => {
+    vi.spyOn(configService, 'getConfig').mockReturnValue({
+      ...defaultConfig,
+      browserHtmlLinkTarget: BrowserLinkTarget.Embedded,
+    });
+    const { options, openTab, createLocalHtmlPreview, openInChrome } = createMessageLinkOptions(
+      mounted,
+      accepted,
+    );
+    let finishPreview!: (value: typeof localHtmlPreview) => void;
+    createLocalHtmlPreview.mockReturnValue(
+      new Promise(resolve => {
+        finishPreview = resolve;
+      }),
+    );
+    const otherOpenTab = vi.fn().mockReturnValue(true);
+    options.browserPanelRefs.current.set('other-session', {
+      openTab: otherOpenTab,
+      closeTab: vi.fn(),
+      openTabContextMenu: vi.fn(),
+      promoteRecordingSession: vi.fn(),
+    });
+    const { rerender } = renderHook(useCoworkBrowserPanels, { initialProps: options });
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent(MessageBrowserEvent.OpenLocalHtml, {
+          detail: { filePath: 'report.html', workingDirectory: 'C:\\project' },
+        }),
+      );
+    });
+    rerender({ ...options, displaySessionKey: 'other-session', currentSessionId: 'other-session' });
+    await act(async () => finishPreview(localHtmlPreview));
+
+    expect(createLocalHtmlPreview).toHaveBeenCalledWith('report.html', 'C:\\project');
+    expect(otherOpenTab).not.toHaveBeenCalled();
+    expect(openInChrome).not.toHaveBeenCalled();
+    const source = {
+      targetId: 'user-tab',
+      sourceFilePath: localHtmlPreview.filePath,
+      sourcePreviewUrl: localHtmlPreview.url,
+      sourceRootPath: localHtmlPreview.rootPath,
+      sourcePreviewRootUrl: localHtmlPreview.previewRootUrl,
+    };
+    if (mounted) {
+      expect(openTab).toHaveBeenCalledWith(localHtmlPreview.url, source);
+    } else {
+      expect(openTab).not.toHaveBeenCalled();
+    }
+    if (mounted && !accepted) {
+      expect(options.openBrowserTab).not.toHaveBeenCalled();
+    } else {
+      expect(options.openBrowserTab).toHaveBeenCalledWith(
+        'session',
+        expect.objectContaining({ ...source, url: localHtmlPreview.url }),
+        MAX_BROWSER_TABS,
+      );
+    }
+  },
+);
+
+test.each(
+  [BrowserLinkTarget.Embedded, BrowserLinkTarget.Chrome].flatMap(target =>
+    ['#chart', '?view=compact&next=//example.com#chart'].map(navigationSuffix => ({
+      target,
+      navigationSuffix,
+    })),
+  ),
+)(
+  'preserves HTML navigation $navigationSuffix in $target',
+  async ({ target, navigationSuffix }) => {
+    vi.spyOn(configService, 'getConfig').mockReturnValue({
+      ...defaultConfig,
+      browserHtmlLinkTarget: target,
+    });
+    const { options, openTab, openInChrome } = createMessageLinkOptions(true, true);
+    renderHook(() => useCoworkBrowserPanels(options));
+
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent(MessageBrowserEvent.OpenLocalHtml, {
+          detail: {
+            filePath: 'report.html',
+            navigationSuffix,
+          },
+        }),
+      );
+    });
+
+    const url = `${localHtmlPreview.url}${navigationSuffix}`;
+    if (target === BrowserLinkTarget.Chrome) {
+      expect(openInChrome).toHaveBeenCalledWith(url);
+      expect(openTab).not.toHaveBeenCalled();
+      expect(options.openBrowserTab).not.toHaveBeenCalled();
+    } else {
+      expect(openInChrome).not.toHaveBeenCalled();
+      expect(openTab).toHaveBeenCalledWith(url, expect.objectContaining({ sourcePreviewUrl: url }));
+      expect(options.openBrowserTab).toHaveBeenCalledWith(
+        'session',
+        expect.objectContaining({ url, sourcePreviewUrl: url }),
+        MAX_BROWSER_TABS,
+      );
+    }
+  },
+);
+
+test.each(['https://example.com', '//example.com', '?value=bad\n', '#bad\u0000', 1])(
+  'rejects invalid HTML navigation suffix %s',
+  async navigationSuffix => {
+    const { options, openTab, createLocalHtmlPreview, openInChrome } = createMessageLinkOptions(
+      true,
+      true,
+    );
+    renderHook(() => useCoworkBrowserPanels(options));
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent(MessageBrowserEvent.OpenLocalHtml, {
+          detail: { filePath: 'report.html', navigationSuffix },
+        }),
+      );
+    });
+    expect(createLocalHtmlPreview).not.toHaveBeenCalled();
+    expect(openInChrome).not.toHaveBeenCalled();
+    expect(openTab).not.toHaveBeenCalled();
+    expect(options.openBrowserTab).not.toHaveBeenCalled();
+  },
+);
 
 test('reopens the sidebar at tab capacity without creating another tab', () => {
   const options = createOptions({

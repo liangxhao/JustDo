@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 
 import { type BrowserConnectionStatus, BrowserMode } from '@shared/browser/browser';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { BrowserLinkTarget } from '@shared/browser/browserLinkOpening';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
@@ -123,18 +124,60 @@ describe('BrowserSettingsTab extension connection checks', () => {
     expect(screen.queryByText('browserModeIsolatedNetworkNotice')).toBeNull();
   });
 
-  test('offers the embedded browser as a fourth browser mode', async () => {
-    mocks.getConfig.mockReturnValue({ browserMode: BrowserMode.Isolated });
+  test('switches browser content through the dropdown while keeping local settings visible', async () => {
+    mocks.getConfig.mockReturnValue({ browserMode: BrowserMode.User });
     const browser = installElectronBrowserMock();
 
     render(<BrowserSettingsTab />);
 
-    fireEvent.click(screen.getByRole('radio', { name: /browserModeEmbeddedTitle/ }));
+    const browserSelect = screen.getByRole('combobox', {
+      name: 'browserModeTitle',
+    }) as HTMLSelectElement;
+    expect(browserSelect.options.length).toBe(2);
+    expect(browserSelect.value).toBe(BrowserMode.User);
+    expect(screen.getByText('browserExtensionStepInstallTitle')).toBeTruthy();
+    expect(screen.getByText('browserEmbeddedSettingsTitle')).toBeTruthy();
+
+    fireEvent.change(browserSelect, { target: { value: BrowserMode.Embedded } });
     await waitFor(() => expect(browser.setMode).toHaveBeenCalledWith(BrowserMode.Embedded));
     expect(screen.getByText('browserModeEmbeddedActive')).toBeTruthy();
+    expect(browserSelect.value).toBe(BrowserMode.Embedded);
+    expect(screen.queryByRole('radiogroup')).toBeNull();
+    expect(screen.getByText('browserExtensionStepInstallTitle')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'browserExtensionRevealFolder' })).toBeTruthy();
+    expect(screen.queryByText('browserStepDebuggingTitle')).toBeNull();
     const embeddedSettings = screen.getByText('browserEmbeddedSettingsTitle').closest('section');
-    expect(embeddedSettings?.textContent).toContain('browserGeneralSettingsTitle');
-    expect(embeddedSettings?.textContent).toContain('browserDownloadSettingsTitle');
+    expect(embeddedSettings?.textContent).toContain('browserSearchEngineTitle');
+    expect(embeddedSettings?.textContent).toContain('browserHistoryTitle');
+    expect(embeddedSettings?.textContent).toContain('browserDownloadLocationTitle');
+    expect(embeddedSettings?.textContent).toContain('browserDownloadsTitle');
+    expect(embeddedSettings?.textContent).not.toContain('browserWebLinkTargetTitle');
+    const linkSettings = screen.getByText('browserLinkTargetsTitle').closest('section');
+    expect(linkSettings).not.toBe(embeddedSettings);
+    expect(linkSettings?.textContent).toContain('browserWebLinkTargetTitle');
+    expect(linkSettings?.textContent).toContain('browserHtmlLinkTargetTitle');
+
+    await waitFor(() => expect(browserSelect.disabled).toBe(false));
+    fireEvent.change(browserSelect, { target: { value: BrowserMode.User } });
+    await waitFor(() => expect(browser.setMode).toHaveBeenLastCalledWith(BrowserMode.User));
+    expect(browserSelect.value).toBe(BrowserMode.User);
+    expect(screen.getByText('browserStepDebuggingTitle')).toBeTruthy();
+    expect(screen.queryByText('browserModeEmbeddedActive')).toBeNull();
+    expect(screen.getByText('browserEmbeddedSettingsTitle')).toBeTruthy();
+  });
+
+  test('restores the selected link browser if saving fails', async () => {
+    installElectronBrowserMock();
+    mocks.updateConfig.mockRejectedValueOnce(new Error('Could not save'));
+    render(<BrowserSettingsTab />);
+    const select = screen.getByRole('combobox', {
+      name: 'browserWebLinkTargetTitle',
+    }) as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: BrowserLinkTarget.Embedded } });
+    await waitFor(() =>
+      expect(screen.getByRole('alert').textContent).toBe('browserLinkSettingsSaveFailed'),
+    );
+    expect(select.value).toBe(BrowserLinkTarget.Chrome);
   });
 
   test('persists the selected address bar search engine', async () => {
@@ -150,6 +193,18 @@ describe('BrowserSettingsTab extension connection checks', () => {
     await waitFor(() =>
       expect(mocks.updateConfig).toHaveBeenCalledWith({ browserSearchEngine: 'google' }),
     );
+  });
+
+  test.each([
+    ['browserWebLinkTargetTitle', 'browserWebLinkTarget', BrowserLinkTarget.Embedded],
+    ['browserHtmlLinkTargetTitle', 'browserHtmlLinkTarget', BrowserLinkTarget.Chrome],
+  ] as const)('persists %s independently of the AI browser mode', async (title, key, target) => {
+    const browser = installElectronBrowserMock();
+    render(<BrowserSettingsTab />);
+    fireEvent.change(screen.getByRole('combobox', { name: title }), { target: { value: target } });
+    await waitFor(() => expect(mocks.updateConfig).toHaveBeenCalledWith({ [key]: target }));
+    expect(browser.setMode).not.toHaveBeenCalled();
+    expect(browser.canSetMode).not.toHaveBeenCalled();
   });
 
   test('persists the download directory and ask-before-saving preference', async () => {
@@ -245,6 +300,7 @@ describe('BrowserSettingsTab extension connection checks', () => {
       .mockImplementationOnce(() => second.promise);
     const browser = installElectronBrowserMock({
       testExtensionConnection,
+      copyExtensionPairing: vi.fn().mockResolvedValue({ success: true }),
     });
 
     render(<BrowserSettingsTab />);
@@ -252,8 +308,28 @@ describe('BrowserSettingsTab extension connection checks', () => {
     expect(screen.getByText('browserExtensionSectionTitle')).toBeTruthy();
     expect(screen.getByText('browserExtensionStepInstallTitle')).toBeTruthy();
     expect(screen.getByText('browserExtensionStepPairTitle')).toBeTruthy();
-    expect(screen.getByText('browserModeChromeGroupTitle')).toBeTruthy();
-    expect(screen.getByText('browserModeEmbeddedGroupTitle')).toBeTruthy();
+    expect(
+      (
+        screen
+          .getByText('browserExtensionStepInstallTitle')
+          .closest('details') as HTMLDetailsElement
+      ).open,
+    ).toBe(false);
+    const manualPairing = screen.getByText('browserExtensionManualPairTitle');
+    expect((manualPairing.closest('details') as HTMLDetailsElement).open).toBe(false);
+    fireEvent.click(manualPairing);
+    expect((manualPairing.closest('details') as HTMLDetailsElement).open).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'browserExtensionCopyPairing' }));
+    await waitFor(() => expect(browser.copyExtensionPairing).toHaveBeenCalledOnce());
+    expect(screen.getByText('browserExtensionPairingCopied')).toBeTruthy();
+    expect(screen.queryByText('browserConnectionVerified')).toBeNull();
+    const browserSelect = screen.getByRole('combobox', { name: 'browserModeTitle' });
+    expect(
+      within(browserSelect).getByRole('option', { name: 'browserModeChromeGroupTitle' }),
+    ).toBeTruthy();
+    expect(
+      within(browserSelect).getByRole('option', { name: 'browserModeEmbeddedGroupTitle' }),
+    ).toBeTruthy();
 
     fireEvent.click(screen.getByRole('radio', { name: /browserModeIsolatedTitle/ }));
     await waitFor(() => expect(screen.getByText('browserModeIsolatedActive')).toBeTruthy());
@@ -317,7 +393,9 @@ describe('BrowserSettingsTab extension connection checks', () => {
     });
 
     render(<BrowserSettingsTab />);
-    fireEvent.click(screen.getByRole('radio', { name: /browserModeUserTitle/ }));
+    fireEvent.change(screen.getByRole('combobox', { name: 'browserModeTitle' }), {
+      target: { value: BrowserMode.Embedded },
+    });
 
     await waitFor(() => expect(screen.getByText('browserModeActiveSessionWarning')).toBeTruthy());
     const warning = screen.getByRole('alert');
@@ -330,6 +408,10 @@ describe('BrowserSettingsTab extension connection checks', () => {
       screen.getByRole('radio', { name: /browserModeIsolatedTitle/ }).getAttribute('aria-checked'),
     ).toBe('true');
     expect(screen.queryByText('browserModeApplying')).toBeNull();
+    expect(
+      (screen.getByRole('combobox', { name: 'browserModeTitle' }) as HTMLSelectElement).value,
+    ).toBe(BrowserMode.Isolated);
+    expect(screen.queryByText('browserModeEmbeddedActive')).toBeNull();
     expect(mocks.reloadFromStore).not.toHaveBeenCalled();
     expect(browser.setMode).not.toHaveBeenCalled();
   });

@@ -69,7 +69,7 @@ export const NativeVideoModelSettings: React.FC<Props> = ({ category, setCategor
     'mt-1 block h-9 w-full rounded-xl border border-border-input bg-white px-3 text-xs text-foreground outline-none focus:border-primary dark:bg-surface';
   const error = getNonLanguageModelCategoryValidationError('video', category);
   return (
-    <div className="mx-auto max-w-[720px] space-y-4">
+    <div className="w-full min-w-0 space-y-4">
       <p className="text-sm text-secondary">
         {i18nService.t(
           !extensions.loaded

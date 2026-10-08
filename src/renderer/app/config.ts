@@ -4,6 +4,10 @@ import {
   BrowserSearchEngine,
   type BrowserSearchEngine as BrowserSearchEngineValue,
 } from '@shared/browser/browser';
+import {
+  BrowserLinkTarget,
+  type BrowserLinkTarget as BrowserLinkTargetValue,
+} from '@shared/browser/browserLinkOpening';
 import { defaultProxySettings, type ProxySettings } from '@shared/network/proxy';
 import {
   getDefaultCustomProviderDisplayName,
@@ -35,6 +39,8 @@ export interface OnlineModelConfig {
 export interface AppConfig {
   browserMode: BrowserModeValue;
   browserSearchEngine: BrowserSearchEngineValue;
+  browserWebLinkTarget: BrowserLinkTargetValue;
+  browserHtmlLinkTarget: BrowserLinkTargetValue;
   browserDownloadDirectory: string;
   browserAskDownloadLocation: boolean;
   // API 配置
@@ -175,6 +181,8 @@ const buildDefaultProviders = (): AppConfig['providers'] => {
 export const defaultConfig: AppConfig = {
   browserMode: BrowserMode.Isolated,
   browserSearchEngine: BrowserSearchEngine.Baidu,
+  browserWebLinkTarget: BrowserLinkTarget.Chrome,
+  browserHtmlLinkTarget: BrowserLinkTarget.Embedded,
   browserDownloadDirectory: '',
   browserAskDownloadLocation: true,
   api: {

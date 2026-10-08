@@ -2,6 +2,7 @@ import {
   normalizeBrowserDownloadSettings,
   normalizeBrowserSearchEngine,
 } from '@shared/browser/browser';
+import { BrowserLinkTarget, normalizeBrowserLinkTarget } from '@shared/browser/browserLinkOpening';
 import { ProxyMode, ProxyProtocol } from '@shared/network/proxy';
 import { isLegacyCustomProviderKey } from '@shared/providers';
 import { normalizeLocalSpeechSettings } from '@shared/speech/localSpeechSettings';
@@ -162,6 +163,14 @@ export class ConfigService {
           ...defaultConfig,
           ...storedConfig,
           browserSearchEngine: normalizeBrowserSearchEngine(storedConfig.browserSearchEngine),
+          browserWebLinkTarget: normalizeBrowserLinkTarget(
+            storedConfig.browserWebLinkTarget,
+            BrowserLinkTarget.Chrome,
+          ),
+          browserHtmlLinkTarget: normalizeBrowserLinkTarget(
+            storedConfig.browserHtmlLinkTarget,
+            BrowserLinkTarget.Embedded,
+          ),
           browserDownloadDirectory: browserDownloadSettings.directory,
           browserAskDownloadLocation: browserDownloadSettings.askWhereToSave,
           api: {
@@ -239,6 +248,14 @@ export class ConfigService {
       ...this.config,
       ...storedConfig,
       browserSearchEngine: normalizeBrowserSearchEngine(storedConfig.browserSearchEngine),
+      browserWebLinkTarget: normalizeBrowserLinkTarget(
+        storedConfig.browserWebLinkTarget,
+        BrowserLinkTarget.Chrome,
+      ),
+      browserHtmlLinkTarget: normalizeBrowserLinkTarget(
+        storedConfig.browserHtmlLinkTarget,
+        BrowserLinkTarget.Embedded,
+      ),
       browserDownloadDirectory: browserDownloadSettings.directory,
       browserAskDownloadLocation: browserDownloadSettings.askWhereToSave,
       api: {
@@ -285,6 +302,22 @@ export class ConfigService {
       );
       const patch = {
         ...newConfig,
+        ...(newConfig.browserWebLinkTarget !== undefined
+          ? {
+              browserWebLinkTarget: normalizeBrowserLinkTarget(
+                newConfig.browserWebLinkTarget,
+                BrowserLinkTarget.Chrome,
+              ),
+            }
+          : {}),
+        ...(newConfig.browserHtmlLinkTarget !== undefined
+          ? {
+              browserHtmlLinkTarget: normalizeBrowserLinkTarget(
+                newConfig.browserHtmlLinkTarget,
+                BrowserLinkTarget.Embedded,
+              ),
+            }
+          : {}),
         ...(newConfig.browserSearchEngine !== undefined
           ? { browserSearchEngine: normalizeBrowserSearchEngine(newConfig.browserSearchEngine) }
           : {}),

@@ -4,11 +4,13 @@ import './message-media';
  * Ordinary message rendering for persisted Content and streaming text.
  * Thinking and Tool presentation belongs exclusively to the canonical timeline.
  */
+import { isLocalHtmlFilePath, parseLocalHtmlLink } from '@shared/browser/browserLinkOpening';
 import { isGatewayInjectedModelRef } from '@shared/openclaw/modelRef';
 import { getPreviewableFileExtension } from '@shared/preview/filePreview';
 import { html, nothing, type TemplateResult } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
+import { openMessageHtmlLink, openMessageWebLink } from '@/features/browser/messageBrowserLinks';
 import { renderMessageQuoteText } from '@/features/cowork/components/composer/messageQuote';
 import { isImageFilePath } from '@/features/cowork/components/preview/imageFilePreview';
 import {
@@ -414,10 +416,16 @@ function extractTranscriptAttachments(message: unknown): RenderableAttachment[] 
       if (isTranscriptImage(media)) return null;
       return {
         url: media.path,
-        kind: media.mimeType?.startsWith('audio/') || media.kind === 'audio' || /\.(mp3|wav|ogg|m4a|flac|aac)(?:[?#].*)?$/i.test(media.path)
-          ? ('audio' as const)
-          : media.mimeType?.startsWith('video/') || media.kind === 'video' || /\.(mp4|webm|mov|m4v)(?:[?#].*)?$/i.test(media.path)
-            ? ('video' as const) : ('document' as const),
+        kind:
+          media.mimeType?.startsWith('audio/') ||
+          media.kind === 'audio' ||
+          /\.(mp3|wav|ogg|m4a|flac|aac)(?:[?#].*)?$/i.test(media.path)
+            ? ('audio' as const)
+            : media.mimeType?.startsWith('video/') ||
+                media.kind === 'video' ||
+                /\.(mp4|webm|mov|m4v)(?:[?#].*)?$/i.test(media.path)
+              ? ('video' as const)
+              : ('document' as const),
         label: media.fileName || labelForMediaPath(media.path),
         ...(media.mimeType ? { mimeType: media.mimeType } : {}),
       };
@@ -434,12 +442,27 @@ async function openAttachment(
   try {
     const url = resolveAttachmentUrl(source, options.workingDirectory);
     const localPath = localPathFromAttachmentUrl(url);
-    if (!/^https?:\/\//i.test(url) && isHtmlDocumentPath(localPath)) {
-      window.dispatchEvent(
-        new CustomEvent('cowork:open-local-html', {
-          detail: { filePath: localPath, workingDirectory: options.workingDirectory },
-        }),
+    if (/^https?:\/\//i.test(url)) {
+      await openMessageWebLink(url);
+      return;
+    }
+    const htmlLink = /^file:/iu.test(url)
+      ? parseLocalHtmlLink(url)
+      : isLocalHtmlFilePath(localPath)
+        ? { filePath: localPath, navigationSuffix: '' }
+        : parseLocalHtmlLink(encodeURI(url));
+    if (htmlLink) {
+      openMessageHtmlLink(
+        localPathFromAttachmentUrl(htmlLink.filePath),
+        options.workingDirectory,
+        htmlLink.navigationSuffix,
       );
+      return;
+    }
+    // Invalid file URLs for HTML still go through the preview boundary instead
+    // of being handed to the operating system as a network/device path.
+    if (isHtmlDocumentPath(localPath)) {
+      openMessageHtmlLink(url, options.workingDirectory);
       return;
     }
     if (
@@ -453,9 +476,7 @@ async function openAttachment(
       );
       return;
     }
-    const result = /^https?:\/\//i.test(url)
-      ? await window.electron.shell.openExternal(url)
-      : await window.electron.shell.openPath(localPath, options.workingDirectory);
+    const result = await window.electron.shell.openPath(localPath, options.workingDirectory);
     if (!result.success) {
       if ('notFound' in result && result.notFound) {
         window.dispatchEvent(
@@ -522,9 +543,16 @@ export function renderAssistantAttachments(
     <div class="message-attachments">
       ${attachments.map(attachment => {
         if (attachment.kind === 'audio' || attachment.kind === 'video') {
-          const src = resolveImageSourceUrl(attachment.url, workingDirectory).replace(/^localfile:\/\/\//i, 'localmedia://local/');
+          const src = resolveImageSourceUrl(attachment.url, workingDirectory).replace(
+            /^localfile:\/\/\//i,
+            'localmedia://local/',
+          );
           if (/^(?:localmedia:|blob:|data:(?:audio|video)\/)/i.test(src)) {
-            return html`<justdo-message-media .src=${src} .kind=${attachment.kind} .label=${attachment.label}></justdo-message-media>`;
+            return html`<justdo-message-media
+              .src=${src}
+              .kind=${attachment.kind}
+              .label=${attachment.label}
+            ></justdo-message-media>`;
           }
         }
         const managed = /^\/api\/chat\/media\/outgoing\//u.test(attachment.url.trim());
@@ -952,9 +980,16 @@ function renderAssistantMessage(
     bubbleItems = [];
   };
 
-  const existingUrls = new Set(msg.content.flatMap(item => item.type === 'attachment' ? [item.attachment.url] : []));
-  const media = extractTranscriptAttachments(rawMessage).filter(item => !existingUrls.has(item.url));
-  const content = [...msg.content, ...media.map(attachment => ({ type: 'attachment' as const, attachment }))];
+  const existingUrls = new Set(
+    msg.content.flatMap(item => (item.type === 'attachment' ? [item.attachment.url] : [])),
+  );
+  const media = extractTranscriptAttachments(rawMessage).filter(
+    item => !existingUrls.has(item.url),
+  );
+  const content = [
+    ...msg.content,
+    ...media.map(attachment => ({ type: 'attachment' as const, attachment })),
+  ];
   for (const item of content) {
     if (item.type === 'attachment' || item.type === 'attachment_error') {
       bubbleItems.push(item);
@@ -1247,11 +1282,16 @@ export function renderReadingIndicatorGroup(opts?: {
     >
       <div class="chat-group__avatar">
         <svg class="chat-working-indicator__spark" viewBox="0 0 24 24" aria-hidden="true">
-          <path fill="currentColor" d="M12 2 14.8 9.2 22 12 14.8 14.8 12 22 9.2 14.8 2 12 9.2 9.2Z" />
+          <path
+            fill="currentColor"
+            d="M12 2 14.8 9.2 22 12 14.8 14.8 12 22 9.2 14.8 2 12 9.2 9.2Z"
+          />
         </svg>
       </div>
       <div class="chat-group__content">
-        <div class=${`chat-working-indicator${opts?.warning ? ' chat-working-indicator--warning' : ''}`}>
+        <div
+          class=${`chat-working-indicator${opts?.warning ? ' chat-working-indicator--warning' : ''}`}
+        >
           <span class="chat-working-indicator__label" role="status" aria-live="polite"
             >${opts?.label ?? i18nService.t('coworkWorkingStarting')}</span
           >

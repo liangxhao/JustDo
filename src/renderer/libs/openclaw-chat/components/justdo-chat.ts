@@ -108,7 +108,12 @@ import { renderChatAvatar } from './chat-avatar';
 import { EditDiffMonacoController } from './edit-diff-monaco';
 import { chatStyles } from './justdo-chat.styles';
 import { renderMessageDiagram } from './mermaidRenderer';
-import { handleMessageDiagramToggle, handleMessageImageClick, handleMessageImageContextMenu } from './message-content-interactions';
+import {
+  handleMessageDiagramToggle,
+  handleMessageImageClick,
+  handleMessageImageContextMenu,
+  handleMessageLinkClick,
+} from './message-content-interactions';
 import { RichMessageControls } from './rich-message-controls';
 import { TOOL_OUTPUT_REQUEST, type ToolOutput } from './tool-output';
 
@@ -543,7 +548,10 @@ export class JustDoChatElement extends LitElement {
     let messages = this.projectedActiveMessages;
     if (ctrl) {
       const pending = projectNativePendingInputs(
-        ctrl.state, messages, ctrl.getLoadedMessages() as GatewayMessage[], false,
+        ctrl.state,
+        messages,
+        ctrl.getLoadedMessages() as GatewayMessage[],
+        false,
       );
       messages = pending.messages;
       if (pending.suppressOptimistic) pendingMessage = null;
@@ -684,9 +692,11 @@ export class JustDoChatElement extends LitElement {
             <div class="sr-only" role="status" aria-live="polite">
               ${activeTurn ? i18nService.t(this.activeTurnStatusKey(activeTurn)) : nothing}
             </div>
-            ${ctrl && nativePendingInputReadFailed(ctrl.state)
-              ? html`<div role="status">${i18nService.t('messagePendingInputReadFailed')}</div>`
-              : nothing}
+            ${
+              ctrl && nativePendingInputReadFailed(ctrl.state)
+                ? html`<div role="status">${i18nService.t('messagePendingInputReadFailed')}</div>`
+                : nothing
+            }
             ${repeat(
               timelineView.persistedRows,
               row => row.item.key,
@@ -1080,6 +1090,7 @@ export class JustDoChatElement extends LitElement {
 
   private readonly handleMarkdownClick = (event: Event): void => {
     if (handleMessageImageClick(event)) return;
+    if (handleMessageLinkClick(event, this.workingDirectory)) return;
     const element = event.composedPath().find(node => node instanceof HTMLElement) as
       HTMLElement | undefined;
     const summaryButton = element?.closest<HTMLElement>('[data-process-summary-key]');
@@ -1724,7 +1735,8 @@ export class JustDoChatElement extends LitElement {
       );
       const entryId = openClawEntryId(item.message);
       const pendingInputState = nativePendingInputState(item.message);
-      const isPersistedUserMessage = !pendingInputState && item.message.role?.toLowerCase() === 'user' && entryId;
+      const isPersistedUserMessage =
+        !pendingInputState && item.message.role?.toLowerCase() === 'user' && entryId;
       const canEditOrWithdraw =
         isPersistedUserMessage &&
         entryId === this.actionableUserEntryId &&
@@ -1817,11 +1829,13 @@ export class JustDoChatElement extends LitElement {
             userMessageActions,
             assistantMessageFork,
           )}
-          ${pendingInputState && pendingInputState !== 'queued'
-            ? html`<div class="active-turn__footer" data-pending-input-state=${pendingInputState}>
-                ${i18nService.t(pendingInputState === 'cancelled' ? 'messagePendingInputCancelled' : 'messagePendingInputInterrupted')}
-              </div>`
-            : nothing}
+          ${
+            pendingInputState && pendingInputState !== 'queued'
+              ? html`<div class="active-turn__footer" data-pending-input-state=${pendingInputState}>
+                  ${i18nService.t(pendingInputState === 'cancelled' ? 'messagePendingInputCancelled' : 'messagePendingInputInterrupted')}
+                </div>`
+              : nothing
+          }
         </div>
       `;
     }

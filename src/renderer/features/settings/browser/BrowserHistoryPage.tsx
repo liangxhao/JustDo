@@ -98,7 +98,7 @@ export default function BrowserHistoryPage({ onBack }: { onBack: () => void }) {
   };
 
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-6 pb-8">
+    <div className="w-full min-w-0 space-y-6 pb-8">
       <div className="flex items-center gap-2 text-sm text-secondary">
         <button
           type="button"

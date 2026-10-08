@@ -1,8 +1,8 @@
-import { clipboard } from 'electron';
+import { clipboard, ipcMain } from 'electron';
 import path from 'path';
 import { describe, expect, test, vi } from 'vitest';
 
-import { BrowserMode } from '../../../shared/browser/browser';
+import { BrowserIpc, BrowserMode } from '../../../shared/browser/browser';
 import {
   applyBrowserModeChange,
   buildBrowserExtensionPairingCommandArgs,
@@ -11,18 +11,68 @@ import {
   findBundledBrowserExtensionPath,
   getBrowserModeSwitchAvailability,
   openBrowserExtensionFolder,
+  openBrowserUrlInChrome,
   parseLsofPortOwner,
   parseWindowsNetstatListeningPid,
   parseWindowsTasklistProcessName,
+  registerBrowserHandlers,
   testBrowserConnection,
 } from './browser';
 
 vi.mock('electron', () => ({
   app: { getAppPath: vi.fn(), isPackaged: false },
   clipboard: { writeText: vi.fn() },
-  ipcMain: { handle: vi.fn() },
+  ipcMain: { handle: vi.fn(), on: vi.fn() },
   shell: { openPath: vi.fn() },
 }));
+
+describe('opening message links in Chrome', () => {
+  test('denies Chrome launches from guests and child frames', () => {
+    const handle = vi.mocked(ipcMain.handle);
+    handle.mockClear();
+    registerBrowserHandlers({
+      getGatewayClient: () => null,
+      buildCliEnvironment: vi.fn(),
+      hasActiveSessions: () => false,
+      setBrowserMode: vi.fn(),
+    });
+    const handler = handle.mock.calls.find(([channel]) => channel === BrowserIpc.OpenInChrome)?.[1];
+    expect(handler).toBeTruthy();
+    const mainFrame = {};
+    for (const event of [
+      { sender: { getType: () => 'webview', mainFrame }, senderFrame: mainFrame },
+      { sender: { getType: () => 'window', mainFrame }, senderFrame: {} },
+    ]) {
+      expect(handler!(event as Electron.IpcMainInvokeEvent, 'https://example.com')).toEqual({
+        success: false,
+        error: 'Access denied',
+      });
+    }
+  });
+  test.each([
+    undefined,
+    null,
+    {},
+    'file:///C:/report.html',
+    'javascript:alert(1)',
+    '--incognito',
+    'https://example.com/\n--incognito',
+  ])('rejects an invalid URL: %s', async url => {
+    const launch = vi.fn();
+    expect((await openBrowserUrlInChrome(url, launch)).success).toBe(false);
+    expect(launch).not.toHaveBeenCalled();
+  });
+
+  test('passes the complete web URL as one launch argument and returns launch failures', async () => {
+    const url = 'https://example.com/report.html?q=%E4%B8%AD%E6%96%87#chart';
+    const launch = vi.fn().mockResolvedValue({ success: false, error: 'Chrome unavailable' });
+    expect(await openBrowserUrlInChrome(url, launch)).toEqual({
+      success: false,
+      error: 'Chrome unavailable',
+    });
+    expect(launch).toHaveBeenCalledWith(url);
+  });
+});
 
 describe('applyBrowserModeChange', () => {
   test('persists the embedded browser mode', async () => {

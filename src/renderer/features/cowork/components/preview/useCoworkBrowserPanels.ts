@@ -4,6 +4,11 @@ import {
   BROWSER_AGENT_PANEL_TARGET_ID,
   type BrowserAgentInteractionState,
 } from '@shared/browser/browser';
+import {
+  BrowserLinkTarget,
+  isWebBrowserLink,
+  normalizeBrowserLinkTarget,
+} from '@shared/browser/browserLinkOpening';
 import { useCallback, useEffect, useRef } from 'react';
 
 import { type BrowserPanelHandle, createBrowserPanelTab } from '@/features/browser/BrowserPanel';
@@ -13,7 +18,9 @@ import {
   type PendingBrowserAgentPanelState,
   takeAvailableBrowserAgentPanelStates,
 } from '@/features/browser/browserPanelRetention';
+import { MessageBrowserEvent } from '@/features/browser/messageBrowserLinks';
 import type { CoworkSessionSummary } from '@/features/cowork/coworkTypes';
+import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 
 import { browserDisplayTabId, MAX_BROWSER_TABS } from './displayTabIds';
@@ -338,10 +345,46 @@ export function useCoworkBrowserPanels({
   ]);
 
   useEffect(() => {
+    const openMessageBrowserTab = (tab: BrowserPanelTab) => {
+      // A mounted panel owns its live tabs; changing initialTabs only seeds an
+      // empty panel. Use the same identity in both the guest and parent state.
+      const created = browserPanelRefs.current.get(displaySessionKey)?.openTab(tab.url, {
+        targetId: tab.targetId,
+        sourceFilePath: tab.sourceFilePath,
+        sourcePreviewUrl: tab.sourcePreviewUrl,
+        sourceRootPath: tab.sourceRootPath,
+        sourcePreviewRootUrl: tab.sourcePreviewRootUrl,
+      });
+      if (created === false) return;
+      openBrowserTab(displaySessionKey, tab, MAX_BROWSER_TABS);
+    };
+    const handleOpenWebUrl = (event: Event) => {
+      const detail = (event as CustomEvent<{ url?: unknown }>).detail;
+      if (!isWebBrowserLink(detail?.url)) return;
+      openMessageBrowserTab(createBrowserPanelTab(detail.url));
+    };
     const handleOpenLocalHtml = async (event: Event) => {
-      const detail = (event as CustomEvent<{ filePath?: string; workingDirectory?: string }>)
-        .detail;
+      const detail = (
+        event as CustomEvent<{
+          filePath?: string;
+          workingDirectory?: string;
+          navigationSuffix?: unknown;
+        }>
+      ).detail;
       if (!detail?.filePath) return;
+      const navigationSuffix = detail.navigationSuffix;
+      if (
+        navigationSuffix !== undefined &&
+        (typeof navigationSuffix !== 'string' ||
+          !/^[?#]/u.test(navigationSuffix) ||
+          /[\u0000-\u001f\u007f]/u.test(navigationSuffix))
+      ) {
+        return;
+      }
+      const target = normalizeBrowserLinkTarget(
+        configService.getConfig().browserHtmlLinkTarget,
+        BrowserLinkTarget.Embedded,
+      );
       try {
         const result = await window.electron.browser.createLocalHtmlPreview(
           detail.filePath,
@@ -360,21 +403,47 @@ export function useCoworkBrowserPanels({
           );
           return;
         }
-        const tab = createBrowserPanelTab(result.url, {
+        let url = result.url;
+        if (navigationSuffix) {
+          const previewUrl = new URL(url);
+          if (navigationSuffix.startsWith('#')) {
+            previewUrl.hash = navigationSuffix;
+          } else {
+            const fragmentIndex = navigationSuffix.indexOf('#');
+            previewUrl.search =
+              fragmentIndex < 0 ? navigationSuffix : navigationSuffix.slice(0, fragmentIndex);
+            previewUrl.hash = fragmentIndex < 0 ? '' : navigationSuffix.slice(fragmentIndex);
+          }
+          url = previewUrl.href;
+        }
+        if (target === BrowserLinkTarget.Chrome) {
+          const opened = await window.electron.browser.openInChrome(url);
+          if (!opened.success) {
+            window.dispatchEvent(
+              new CustomEvent('app:showToast', { detail: i18nService.t('browserLinkOpenFailed') }),
+            );
+          }
+          return;
+        }
+        const tab = createBrowserPanelTab(url, {
           sourceFilePath: result.filePath,
-          sourcePreviewUrl: result.url,
+          sourcePreviewUrl: url,
           sourceRootPath: result.rootPath,
           sourcePreviewRootUrl: result.previewRootUrl,
         });
-        openBrowserTab(displaySessionKey, tab, MAX_BROWSER_TABS);
+        openMessageBrowserTab(tab);
       } catch {
         window.dispatchEvent(
           new CustomEvent('app:showToast', { detail: i18nService.t('coworkFilePreviewFailed') }),
         );
       }
     };
-    window.addEventListener('cowork:open-local-html', handleOpenLocalHtml);
-    return () => window.removeEventListener('cowork:open-local-html', handleOpenLocalHtml);
-  }, [displaySessionKey, openBrowserTab]);
+    window.addEventListener(MessageBrowserEvent.OpenWebUrl, handleOpenWebUrl);
+    window.addEventListener(MessageBrowserEvent.OpenLocalHtml, handleOpenLocalHtml);
+    return () => {
+      window.removeEventListener(MessageBrowserEvent.OpenWebUrl, handleOpenWebUrl);
+      window.removeEventListener(MessageBrowserEvent.OpenLocalHtml, handleOpenLocalHtml);
+    };
+  }, [browserPanelRefs, displaySessionKey, openBrowserTab]);
   return { handleCreateBrowserTab };
 }

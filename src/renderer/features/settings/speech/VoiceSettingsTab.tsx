@@ -492,10 +492,6 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
 
   return (
     <div className="voice-settings min-w-0 space-y-6">
-      <p className="text-sm leading-6 text-secondary">
-        {i18nService.t('voiceSettingsDescription')}
-      </p>
-
       <section className="space-y-5 rounded-xl border border-border bg-surface p-5">
         <div className="flex items-start justify-between gap-6">
           <div>

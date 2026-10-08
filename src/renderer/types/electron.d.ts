@@ -466,6 +466,7 @@ interface IElectronAPI {
     refresh: () => Promise<MulticaIntegrationResult>;
   };
   browser: {
+    openInChrome: (url: string) => Promise<BrowserActionResult>;
     createLocalHtmlPreview: (
       filePath: string,
       workingDirectory?: string,

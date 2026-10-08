@@ -11,6 +11,81 @@ import {
   toStreamingMarkdownHtml,
 } from '@/libs/openclaw-chat/components/markdown';
 
+describe('local HTML links', () => {
+  test('decodes a relative HTML link with spaces and Chinese characters for the native file lookup', () => {
+    const container = document.createElement('div');
+    container.innerHTML = toSanitizedMarkdownHtml('[Report](<output/测试 report.html>)');
+    expect(container.querySelector('a')?.getAttribute('data-local-html-path')).toBe(
+      'output/测试 report.html',
+    );
+  });
+  test.each([
+    '[Report](output/report.html)',
+    '[Report](file:///C:/project/report.html)',
+    'C:\\project\\report.html',
+    '/tmp/report.xhtml',
+  ])('keeps %s clickable without a file navigation', source => {
+    const container = document.createElement('div');
+    container.innerHTML = toSanitizedMarkdownHtml(source);
+    const anchor = container.querySelector('a');
+    expect(anchor?.getAttribute('data-local-html-path')).toBeTruthy();
+    expect(anchor?.getAttribute('href')).toBe('#');
+  });
+
+  test.each([
+    ['请打开 C:\\project\\report.html 然后查看结果。', 'C:\\project\\report.html'],
+    ['See /tmp/report.html for the results.', '/tmp/report.html'],
+    ['See file:///C:/project/report.html for the results.', 'file:///C:/project/report.html'],
+    ['See C:\\project\\100%.html for the results.', 'C:\\project\\100%.html'],
+    ['See /tmp/report#1.HTML for the results.', '/tmp/report#1.HTML'],
+    ['See /tmp/report_name_copy.html for the results.', '/tmp/report_name_copy.html'],
+    ['See C:\\project\\_site\\report.html for the results.', 'C:\\project\\_site\\report.html'],
+    ['See /tmp/report.html#backup.html for the results.', '/tmp/report.html#backup.html'],
+    ['/tmp/_report_.html', '/tmp/_report_.html'],
+    ['File: C:\\project\\_site\\report.html', 'C:\\project\\_site\\report.html'],
+    ['**C:\\project\\_site\\report.html**', 'C:\\project\\_site\\report.html'],
+    ['See /tmp/notes.txt and C:\\project\\_site\\report.html', 'C:\\project\\_site\\report.html'],
+  ])('links a bare HTML path inside a sentence: %s', (source, filePath) => {
+    const container = document.createElement('div');
+    container.innerHTML = toSanitizedMarkdownHtml(source);
+    expect(container.querySelector('a')?.getAttribute('data-local-html-path')).toBe(filePath);
+    expect(container.textContent?.trim()).toBe(source.replace(/^\*\*|\*\*$/gu, ''));
+  });
+
+  test.each([
+    '[Section](output/report.html#chart)',
+    '[Section](file:///C:/project/report.html#chart)',
+  ])('keeps the HTML navigation suffix separate from the file lookup: %s', source => {
+    const container = document.createElement('div');
+    container.innerHTML = toSanitizedMarkdownHtml(source);
+    expect(container.querySelector('a')?.getAttribute('data-local-html-path')).toMatch(
+      /report\.html$/u,
+    );
+    expect(container.querySelector('a')?.getAttribute('data-local-html-suffix')).toBe('#chart');
+  });
+
+  test('does not link paths inside code or existing web links', () => {
+    const container = document.createElement('div');
+    container.innerHTML = toSanitizedMarkdownHtml(
+      '`C:\\project\\report.html` [See /tmp/report.html](https://example.com/report.html) https://example.com/other.html',
+    );
+    expect(container.querySelectorAll('a')).toHaveLength(2);
+    expect(container.querySelector('[data-local-html-path]')).toBeNull();
+    expect(container.querySelector('code')?.textContent).toBe('C:\\project\\report.html');
+  });
+
+  test.each([
+    '[Bad](javascript:alert(1))',
+    '[Bad](file://attacker.example/report.html)',
+    '[Bad](file:///C:/secret.txt)',
+  ])('does not admit an unsafe or non-HTML file link: %s', source => {
+    const container = document.createElement('div');
+    container.innerHTML = toSanitizedMarkdownHtml(source);
+    expect(container.querySelector('a')?.getAttribute('data-local-html-path')).toBeFalsy();
+    expect(container.querySelector('a')?.hasAttribute('href')).toBeFalsy();
+  });
+});
+
 describe('Streaming fenced code', () => {
   test('renders an open code fence before the closing marker arrives', () => {
     const source = 'Example:\n\n```typescript\nconst answer = 42;';

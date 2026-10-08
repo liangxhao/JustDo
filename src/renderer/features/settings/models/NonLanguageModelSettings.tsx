@@ -691,7 +691,7 @@ const NonLanguageModelSettings: React.FC<NonLanguageModelSettingsProps> = ({
 
   return (
     <div className="space-y-4">
-      <div className="mx-auto flex w-full max-w-[980px] items-start gap-5">
+      <div className="flex w-full min-w-0 items-start gap-5">
         <aside className="w-60 shrink-0 space-y-1.5">
           <div className="mb-2 flex h-8 items-center px-1">
             <h3 className="text-sm font-medium text-foreground">

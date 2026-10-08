@@ -1,3 +1,5 @@
+import { PRODUCT_NAME } from '@shared/productMetadata';
+
 export const settingsTranslations = {
   zh: {
     settingsGroup_personal: '个人偏好',
@@ -91,8 +93,6 @@ export const settingsTranslations = {
     resizeSettingsWindow: '拖动调整设置窗口宽度',
     general: '通用',
     voiceSettings: '语音',
-    voiceSettingsDescription:
-      '语音识别和回复朗读均可选择本地离线或在线服务；离线模型在此管理，在线模型统一在“模型”中管理。',
     voiceOnlineModelSelectionDescription: '从“模型”中已添加的供应商和模型中选择。',
     voiceNoOnlineModelsConfigured: '尚未添加可用的在线模型',
     voiceInputTitle: '语音输入',
@@ -577,11 +577,14 @@ export const settingsTranslations = {
       '嵌套会快速放大同时存在的任务数量，并增加模型费用、速率限制和工具进程压力。',
     agentRuntimeSaveFailed: '运行配置保存失败。',
     browserSettings: '浏览器',
-    browserModeTitle: '选择浏览器连接方式',
-    browserModeDescription:
-      '此设置决定 AI 执行浏览器操作时连接哪个环境：前三种连接 Chrome，最后一种连接应用内置浏览器。',
-    browserModeChromeGroupTitle: 'Chrome 浏览器',
-    browserModeEmbeddedGroupTitle: '应用内置浏览器',
+    browserModeTitle: '选择浏览器',
+    browserModeDescription: '选择 AI 使用的浏览器。',
+    browserModeChromeGroupTitle: 'Chrome',
+    browserModeEmbeddedGroupTitle: PRODUCT_NAME,
+    browserChromeConnectionTitle: 'Chrome 连接方式',
+    browserModeIsolatedOption: '隔离 Chrome',
+    browserModeUserOption: '日常 Chrome',
+    browserModeExtensionOption: 'Chrome 扩展',
     browserModeIsolatedTitle: '连接隔离 Chrome',
     browserModeIsolatedDescription:
       '使用独立的浏览器资料，不读取日常 Chrome 的账号、Cookie 或标签页。',
@@ -601,9 +604,9 @@ export const settingsTranslations = {
     browserModeEmbeddedActive:
       '当前使用内置浏览器。浏览器操作会显示在会话侧边栏中，你可以随时直接接管。',
     browserModeChangeFailed: '浏览器模式切换失败',
-    browserModeApplying: '正在应用浏览器设置，AI 引擎可能会短暂重启…',
-    browserModeGatewayRestarting: '正在重启 AI 引擎，期间浏览器连接会短暂断开…',
-    browserModeChangeComplete: '浏览器模式已切换，AI 引擎已就绪。',
+    browserModeApplying: '正在切换…',
+    browserModeGatewayRestarting: '正在重启 AI 引擎…',
+    browserModeChangeComplete: '已切换',
     browserModeActiveSessionWarning:
       '有会话正在运行，暂时无法切换浏览器模式。请等待会话结束后重试，避免 AI 引擎重启中断当前任务。',
     browserUserChromeTitle: '连接你的 Chrome',
@@ -655,13 +658,13 @@ export const settingsTranslations = {
       '保持桌面应用与 Chrome 运行，扩展会自动发现并配对本机应用；配对后可在 Tab Access 中调整共享范围。',
     browserExtensionStepInstallTitle: '安装 Chrome 扩展',
     browserExtensionStepInstallDescription:
-      '（1）安装并启动 Chrome 125 或更高版本。\n（2）打开 Chrome 扩展管理页，开启“开发者模式”。\n（3）将应用目录中的“chrome-extension”文件夹直接拖入 Chrome 扩展管理页。\n（4）点击 Chrome 右上角的 {extensionsButton} 找到此扩展；可点击图钉将它固定到工具栏。',
+      '（1）打开 Chrome 扩展管理页，开启“开发者模式”。\n（2）将应用目录中的“chrome-extension”文件夹直接拖入 Chrome 扩展管理页。\n（3）点击 Chrome 右上角的 {extensionsButton} 找到此扩展；可点击图钉将它固定到工具栏。',
     browserExtensionOpenPage: '打开扩展管理页',
     browserExtensionRevealFolder: '打开扩展文件夹',
     browserExtensionPageCopied: '管理页地址已复制，请粘贴到 Chrome 地址栏并回车：',
     browserExtensionOpenPageFailed: '无法打开 Chrome 扩展管理页',
     browserExtensionRevealFailed: '无法找到或打开内置浏览器扩展',
-    browserExtensionStepPairTitle: '配对扩展',
+    browserExtensionStepPairTitle: '自动配对',
     browserExtensionStepPairDescription:
       '保持桌面应用与 Chrome 运行，扩展会自动配对。\n在扩展 Tab Access 中选择共享范围。',
     browserExtensionManualPairTitle: '手动配对（备用）',
@@ -807,17 +810,24 @@ export const settingsTranslations = {
     browserPanelEmptyDescription: '搜索或输入网址以打开页面',
     browserPanelEmptyFocusAddress: '聚焦到地址栏',
     browserSearchEngineTitle: '搜索引擎',
+    browserLinkTargetsTitle: '消息链接打开位置',
+    browserWebLinkTargetTitle: '网页链接',
+    browserWebLinkTargetDescription: '点击消息中的网页地址时使用。',
+    browserHtmlLinkTargetTitle: '本地 HTML 文件',
+    browserHtmlLinkTargetDescription: '点击消息中的本地 HTML 文件时使用。',
+    browserLinkSettingsSaveFailed: '链接打开设置保存失败。',
+    browserLinkOpenFailed: '无法打开 Chrome，请确认已安装。',
     browserSearchEngineDescription: '地址栏内容不是网址时，使用所选搜索引擎搜索',
     browserSearchEngineBaidu: '百度',
     browserSearchEngineGoogle: 'Google',
     browserSearchEngineSaveFailed: '无法保存搜索引擎设置',
     browserEmbeddedSettingsTitle: '内置浏览器设置',
-    browserEmbeddedSettingsDescription: '以下设置仅用于应用侧边栏中的内置浏览器。',
-    browserGeneralSettingsTitle: '浏览与数据',
-    browserGeneralSettingsDescription: '管理地址栏搜索和浏览历史',
+    browserEmbeddedSettingsDescription: '链接打开位置与内置浏览器偏好。',
+    browserGeneralSettingsTitle: '浏览',
+    browserGeneralSettingsDescription: '设置链接、搜索和历史',
     browserDownloadSettingsTitle: '下载',
     browserDownloadSettingsDescription: '管理内置浏览器的文件保存与下载记录',
-    browserDownloadLocationTitle: '位置',
+    browserDownloadLocationTitle: '下载位置',
     browserDownloadSystemFolder: '系统下载文件夹',
     browserDownloadChangeLocation: '更改',
     browserAskDownloadLocationTitle: '下载前询问保存位置',
@@ -1409,8 +1419,6 @@ export const settingsTranslations = {
     resizeSettingsWindow: 'Drag to resize the settings window',
     general: 'General',
     voiceSettings: 'Voice',
-    voiceSettingsDescription:
-      'Use local offline or online services for speech recognition and response reading. Manage offline models here and online models under Models.',
     voiceOnlineModelSelectionDescription:
       'Choose from the providers and models you added under Models.',
     voiceNoOnlineModelsConfigured: 'No online models have been added',
@@ -1931,11 +1939,14 @@ export const settingsTranslations = {
     agentRuntimeSaveFailed: 'Runtime configuration could not be saved.',
     browserSettings: 'Browser',
     browserUserChromeTitle: 'Connect your Chrome',
-    browserModeTitle: 'Choose a browser connection',
-    browserModeDescription:
-      'This setting chooses where AI browser actions run: the first three options connect to Chrome, while the last connects to the built-in browser.',
-    browserModeChromeGroupTitle: 'Chrome browser',
-    browserModeEmbeddedGroupTitle: 'Built-in app browser',
+    browserModeTitle: 'Choose a browser',
+    browserModeDescription: 'Choose which browser the AI uses.',
+    browserModeChromeGroupTitle: 'Chrome',
+    browserModeEmbeddedGroupTitle: PRODUCT_NAME,
+    browserChromeConnectionTitle: 'Chrome connection',
+    browserModeIsolatedOption: 'Isolated Chrome',
+    browserModeUserOption: 'Everyday Chrome',
+    browserModeExtensionOption: 'Chrome extension',
     browserModeIsolatedTitle: 'Connect isolated Chrome',
     browserModeIsolatedDescription:
       'Uses a separate browser profile without access to your everyday Chrome accounts, cookies, or tabs.',
@@ -1957,10 +1968,9 @@ export const settingsTranslations = {
     browserModeEmbeddedActive:
       'The built-in browser is active. Browser actions appear in the conversation sidebar, where you can take over at any time.',
     browserModeChangeFailed: 'Failed to change browser mode',
-    browserModeApplying: 'Applying browser settings; the AI engine may restart briefly…',
-    browserModeGatewayRestarting:
-      'Restarting the AI engine; the browser connection will disconnect briefly…',
-    browserModeChangeComplete: 'Browser mode changed and the AI engine is ready.',
+    browserModeApplying: 'Switching…',
+    browserModeGatewayRestarting: 'Restarting the AI engine…',
+    browserModeChangeComplete: 'Updated',
     browserModeActiveSessionWarning:
       'A conversation is still running, so the browser mode cannot be changed yet. Wait for it to finish to avoid interrupting the current task when the AI engine restarts.',
     browserUserChromeDescription:
@@ -2012,14 +2022,14 @@ export const settingsTranslations = {
       'Keep the desktop app and Chrome running. The extension discovers and pairs with the local app automatically; adjust sharing under Tab Access after pairing.',
     browserExtensionStepInstallTitle: 'Install the Chrome extension',
     browserExtensionStepInstallDescription:
-      '(1) Install and start Chrome 125 or newer.\n(2) Open Chrome’s extension management page and enable Developer mode.\n(3) Drag the chrome-extension folder from the app directory directly onto Chrome’s extension management page.\n(4) Select {extensionsButton} at the top right of Chrome to find this extension; use the pin icon to keep it in the toolbar.',
+      '(1) Open Chrome’s extension management page and enable Developer mode.\n(2) Drag the chrome-extension folder from the app directory directly onto Chrome’s extension management page.\n(3) Select {extensionsButton} at the top right of Chrome to find this extension; use the pin icon to keep it in the toolbar.',
     browserExtensionOpenPage: 'Open extensions page',
     browserExtensionRevealFolder: 'Open extension folder',
     browserExtensionPageCopied:
       'Management address copied. Paste it into the Chrome address bar and press Enter:',
     browserExtensionOpenPageFailed: 'Unable to open Chrome extension management',
     browserExtensionRevealFailed: 'Unable to find or open the bundled browser extension',
-    browserExtensionStepPairTitle: 'Pair the extension',
+    browserExtensionStepPairTitle: 'Automatic pairing',
     browserExtensionStepPairDescription:
       'Keep the desktop app and Chrome running for automatic pairing.\nChoose which tabs to share under Tab Access in extension settings.',
     browserExtensionManualPairTitle: 'Manual pairing (fallback)',
@@ -2172,23 +2182,29 @@ export const settingsTranslations = {
     browserPanelEmptyDescription: 'Search or enter an address to open a page',
     browserPanelEmptyFocusAddress: 'Focus the address bar',
     browserSearchEngineTitle: 'Search engine',
+    browserLinkTargetsTitle: 'Open message links in',
+    browserWebLinkTargetTitle: 'Web links',
+    browserWebLinkTargetDescription: 'For web addresses clicked in messages.',
+    browserHtmlLinkTargetTitle: 'Local HTML files',
+    browserHtmlLinkTargetDescription: 'For local HTML files clicked in messages.',
+    browserLinkSettingsSaveFailed: 'Could not save link opening settings.',
+    browserLinkOpenFailed: 'Could not open Chrome. Check that it is installed.',
     browserSearchEngineDescription:
       'Use the selected search engine when address bar text is not a web address',
     browserSearchEngineBaidu: 'Baidu',
     browserSearchEngineGoogle: 'Google',
     browserSearchEngineSaveFailed: 'Unable to save the search engine setting',
     browserEmbeddedSettingsTitle: 'Built-in browser settings',
-    browserEmbeddedSettingsDescription:
-      'The settings below apply only to the built-in browser in the app sidebar.',
-    browserGeneralSettingsTitle: 'Browsing and data',
-    browserGeneralSettingsDescription: 'Manage address bar search and browsing history',
+    browserEmbeddedSettingsDescription: 'Link opening and built-in browser preferences.',
+    browserGeneralSettingsTitle: 'Browsing',
+    browserGeneralSettingsDescription: 'Manage links, search and history',
     browserDownloadSettingsTitle: 'Downloads',
     browserDownloadSettingsDescription:
       'Manage file saving and download history for the built-in browser',
-    browserDownloadLocationTitle: 'Location',
+    browserDownloadLocationTitle: 'Download location',
     browserDownloadSystemFolder: 'System downloads folder',
     browserDownloadChangeLocation: 'Change',
-    browserAskDownloadLocationTitle: 'Ask where to save each file before downloading',
+    browserAskDownloadLocationTitle: 'Ask where to save downloads',
     browserAskDownloadLocationDescription:
       'Show a save dialog for downloads started in the built-in browser',
     browserDownloadSettingsSaveFailed: 'Unable to save download settings',

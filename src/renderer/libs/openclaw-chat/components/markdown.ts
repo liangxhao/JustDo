@@ -4,6 +4,7 @@
  * boundary detection, proper DOMPurify sanitization, and code block styling.
  */
 
+import { isLocalHtmlFilePath, parseLocalHtmlLink } from '@shared/browser/browserLinkOpening';
 import DOMPurify from 'dompurify';
 import hljs from 'highlight.js/lib/core';
 import bash from 'highlight.js/lib/languages/bash';
@@ -35,6 +36,7 @@ import markdownItTaskLists from 'markdown-it-task-lists';
 import markdownItTexMath from 'markdown-it-texmath';
 
 import { i18nService } from '@/services/i18n';
+import { matchAutoLinkPathPrefix } from '@/utils/markdownPathLinks';
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -114,6 +116,8 @@ const allowedAttrs = [
   'src',
   'alt',
   'data-code',
+  'data-local-html-path',
+  'data-local-html-suffix',
   'hidden',
   'type',
   'style',
@@ -357,6 +361,16 @@ function installHooks(): void {
 
   DOMPurify.addHook('uponSanitizeAttribute', (node, data) => {
     const tagName = node.nodeName.toLowerCase();
+    if (tagName === 'a' && data.attrName === 'href') {
+      const localLink = parseLocalHtmlLink(data.attrValue);
+      if (localLink) {
+        node.setAttribute('data-local-html-path', localLink.filePath);
+        if (localLink.navigationSuffix) {
+          node.setAttribute('data-local-html-suffix', localLink.navigationSuffix);
+        }
+        data.attrValue = '#';
+      }
+    }
     if (tagName === 'progress' && data.attrName !== 'value' && data.attrName !== 'max') {
       data.keepAttr = false;
     } else if ((data.attrName === 'value' || data.attrName === 'max') && tagName !== 'progress') {
@@ -491,6 +505,94 @@ export const md = new MarkdownIt({
   html: true, // Enable HTML recognition so overrides can escape it
   breaks: true,
   linkify: true,
+});
+
+const nativeHtmlPathHref = (filePath: string): string => {
+  if (/^file:/iu.test(filePath)) return filePath;
+  const encoded = encodeURI(filePath);
+  return isLocalHtmlFilePath(filePath)
+    ? encoded.replace(/[?#]/gu, character => encodeURIComponent(character))
+    : encoded;
+};
+
+md.inline.ruler.before('text', 'local_html_path', (state, silent) => {
+  if ('linkLevel' in state && typeof state.linkLevel === 'number' && state.linkLevel > 0)
+    return false;
+  const remaining = state.src.slice(state.pos);
+  const starts = /(?:^|[\s(（])((?:file:\/\/|[A-Za-z]:[\\/]|\/(?!\/)))/giu;
+  for (const match of remaining.matchAll(starts)) {
+    const start = match.index + match[0].length - match[1].length;
+    const prefix = remaining.slice(0, start);
+    // Leave Markdown delimiters to their own rules, but consume a plain sentence
+    // prefix before the path so backslash escapes cannot alter the native name.
+    if (/[\n\\`*_{}\[\]<>&!$]/u.test(prefix)) continue;
+    const pathPrefix = matchAutoLinkPathPrefix(remaining.slice(start));
+    const filePath = pathPrefix?.replace(/[),.;，。；！？*_]+$/u, '');
+    if (!filePath || (!isLocalHtmlFilePath(filePath) && !parseLocalHtmlLink(filePath))) continue;
+    if (!silent) {
+      if (prefix) state.push('text', '', 0).content = prefix;
+      state.push('link_open', 'a', 1).attrSet('href', nativeHtmlPathHref(filePath));
+      state.push('text', '', 0).content = filePath;
+      state.push('link_close', 'a', -1);
+    }
+    state.pos += start + filePath.length;
+    return true;
+  }
+  return false;
+});
+
+// Join inline text first so Windows backslashes do not split native paths.
+// Existing web links and code remain intact, and sentence prefixes cannot hide
+// a path from the inline text rule.
+md.core.ruler.after('text_join', 'local_html_link', state => {
+  for (const block of state.tokens) {
+    if (block.type !== 'inline' || !block.children) continue;
+    const children: typeof block.children = [];
+    let linkDepth = 0;
+    for (const token of block.children) {
+      if (token.type === 'link_open') linkDepth += 1;
+      if (token.type === 'link_close') linkDepth -= 1;
+      if (token.type !== 'text' || linkDepth > 0) {
+        children.push(token);
+        continue;
+      }
+      const starts = /(?:^|[\s(（])((?:file:\/\/|[A-Za-z]:[\\/]|\/(?!\/)))/giu;
+      let consumed = 0;
+      for (const match of token.content.matchAll(starts)) {
+        const start = match.index + match[0].length - match[1].length;
+        if (start < consumed) continue;
+        const prefix = matchAutoLinkPathPrefix(token.content.slice(start));
+        const filePath = prefix?.replace(/[),.;，。；！？]+$/u, '');
+        if (
+          !filePath ||
+          !block.content.includes(filePath) ||
+          (!isLocalHtmlFilePath(filePath) && !parseLocalHtmlLink(filePath))
+        )
+          continue;
+        if (start > consumed) {
+          const text = new state.Token('text', '', 0);
+          text.content = token.content.slice(consumed, start);
+          children.push(text);
+        }
+        const opening = new state.Token('link_open', 'a', 1);
+        // Bare native paths may contain literal percent signs. URL-form file
+        // links already carry their own encoding and navigation suffix.
+        opening.attrSet('href', nativeHtmlPathHref(filePath));
+        const text = new state.Token('text', '', 0);
+        text.content = filePath;
+        children.push(opening, text, new state.Token('link_close', 'a', -1));
+        consumed = start + filePath.length;
+      }
+      if (consumed < token.content.length) {
+        const text = new state.Token('text', '', 0);
+        text.content = token.content.slice(consumed);
+        children.push(text);
+      } else if (consumed === 0) {
+        children.push(token);
+      }
+    }
+    block.children = children;
+  }
 });
 
 // CommonMark does not treat the trailing ** as a closing delimiter when the

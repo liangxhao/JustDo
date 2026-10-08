@@ -17,6 +17,7 @@ export const BrowserIpc = {
   CopyExtensionPairing: 'browser:copyExtensionPairing',
   TestExtensionConnection: 'browser:testExtensionConnection',
   CreateLocalHtmlPreview: 'browser:createLocalHtmlPreview',
+  OpenInChrome: 'browser:openInChrome',
   LoadPdf: 'browser:loadPdf',
   CancelPdf: 'browser:cancelPdf',
   PanelOpenTab: 'browser:panelOpenTab',

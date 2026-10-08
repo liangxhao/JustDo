@@ -1576,7 +1576,6 @@ const Settings: React.FC<SettingsProps> = ({
   // 渲染标签页
   const activePage = SETTINGS_PAGES.find(page => page.id === activeTab)!;
   const activeTabLabel = i18nService.t(activePage.label);
-  const activeTabContentWidth = activePage.wide ? 'max-w-[1120px]' : 'max-w-[760px]';
 
   const renderTabContent = () => {
     switch (activeTab) {
@@ -1835,7 +1834,7 @@ const Settings: React.FC<SettingsProps> = ({
               aria-labelledby="settings-page-title"
               style={{ scrollbarGutter: 'stable' }}
             >
-              <div className={`mx-auto w-full ${activeTabContentWidth}`}>
+              <div className="mx-auto w-full min-w-0 max-w-[1120px]">
                 {/* Page header */}
                 <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
                   <h3

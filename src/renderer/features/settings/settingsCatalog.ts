@@ -29,7 +29,6 @@ export interface SettingsPage {
   label: string;
   description: string;
   group: (typeof SETTINGS_GROUPS)[number];
-  wide: boolean;
   keywords: readonly string[];
 }
 
@@ -39,7 +38,6 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     label: 'general',
     description: 'settingsDescription_general',
     group: 'personal',
-    wide: false,
     keywords: ['language', 'autoLaunch', 'preventSleep', 'appUpdateFrequencyTitle'],
   },
   {
@@ -47,7 +45,6 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     label: 'appearance',
     description: 'settingsDescription_appearance',
     group: 'personal',
-    wide: true,
     keywords: ['appearanceMode'],
   },
   {
@@ -55,7 +52,6 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     label: 'shortcuts',
     description: 'settingsDescription_shortcuts',
     group: 'personal',
-    wide: false,
     keywords: [],
   },
   {
@@ -63,7 +59,6 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     label: 'voiceSettings',
     description: 'settingsDescription_voice',
     group: 'personal',
-    wide: false,
     keywords: [],
   },
   {
@@ -71,7 +66,6 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     label: 'coworkPetSettingsTitle',
     description: 'settingsDescription_pet',
     group: 'personal',
-    wide: false,
     keywords: [],
   },
   {
@@ -79,7 +73,6 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     label: 'model',
     description: 'settingsDescription_model',
     group: 'intelligence',
-    wide: true,
     keywords: ['apiKey', 'modelTypeLanguage', 'modelTypeImage', 'modelTypeVideo'],
   },
   {
@@ -87,7 +80,6 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     label: 'agentManager',
     description: 'settingsDescription_agents',
     group: 'intelligence',
-    wide: true,
     keywords: [],
   },
   {
@@ -95,7 +87,6 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     label: 'agentRuntimeTab',
     description: 'settingsDescription_runtime',
     group: 'execution',
-    wide: false,
     keywords: [],
   },
   {
@@ -103,7 +94,6 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     label: 'settingsSecurityTitle',
     description: 'settingsDescription_security',
     group: 'execution',
-    wide: false,
     keywords: ['securitySettings'],
   },
   {
@@ -111,7 +101,6 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     label: 'worktreeSettingsTitle',
     description: 'worktreeSettingsDescription',
     group: 'execution',
-    wide: true,
     keywords: ['worktreeStorageRoot', 'worktreeAcceleration', 'worktreeShowCheckbox'],
   },
   {
@@ -119,7 +108,6 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     label: 'browserSettings',
     description: 'settingsDescription_browser',
     group: 'execution',
-    wide: true,
     keywords: [],
   },
   {
@@ -127,7 +115,6 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     label: 'computerControlTitle',
     description: 'settingsDescription_computer',
     group: 'execution',
-    wide: false,
     keywords: ['computerControlEnable', 'computerControlModelRequirement'],
   },
   {
@@ -135,7 +122,6 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     label: 'integrationsTab',
     description: 'settingsDescription_integrations',
     group: 'connections',
-    wide: true,
     keywords: [],
   },
   {
@@ -143,7 +129,6 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     label: 'imBot',
     description: 'settingsDescription_im',
     group: 'connections',
-    wide: false,
     keywords: [],
   },
   {
@@ -151,7 +136,6 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     label: 'usageAndStorage',
     description: 'settingsDescription_usage',
     group: 'application',
-    wide: true,
     keywords: [],
   },
   {
@@ -159,7 +143,6 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     label: 'settingsAboutHelpTitle',
     description: 'settingsDescription_help',
     group: 'application',
-    wide: false,
     keywords: ['help'],
   },
 ];

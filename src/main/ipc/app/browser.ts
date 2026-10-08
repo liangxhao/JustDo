@@ -33,6 +33,7 @@ import {
   normalizeBrowserMode,
   parseDevToolsActivePort,
 } from '../../../shared/browser/browser';
+import { isWebBrowserLink } from '../../../shared/browser/browserLinkOpening';
 import {
   clearBrowserData,
   getBrowserClearDataSummary,
@@ -198,20 +199,33 @@ const resolveChromeExecutable = (): string | null => {
   return candidates.find(candidate => candidate && fs.existsSync(candidate)) ?? null;
 };
 
-const launchOrFocusChrome = (): BrowserActionResult => {
+const launchOrFocusChrome = async (url?: string): Promise<BrowserActionResult> => {
   const executable = resolveChromeExecutable();
   if (!executable) return { success: false, error: 'Google Chrome was not found.' };
   try {
-    const child = spawn(executable, [], {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true,
+    return await new Promise<BrowserActionResult>(resolve => {
+      const child = spawn(executable, url ? [url] : [], {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+      child.once('error', () =>
+        resolve({ success: false, error: 'Google Chrome could not be opened.' }),
+      );
+      child.once('spawn', () => resolve({ success: true }));
+      child.unref();
     });
-    child.unref();
-    return { success: true };
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : String(error) };
   }
+};
+
+export const openBrowserUrlInChrome = async (
+  url: unknown,
+  launch: (url: string) => Promise<BrowserActionResult> = launchOrFocusChrome,
+): Promise<BrowserActionResult> => {
+  if (!isWebBrowserLink(url)) return { success: false, error: 'Invalid browser URL.' };
+  return launch(url);
 };
 
 const focusRunningChrome = (): void => {
@@ -495,6 +509,12 @@ export const registerBrowserHandlers = ({
   hasActiveSessions,
   setBrowserMode,
 }: BrowserHandlerDependencies): void => {
+  ipcMain.handle(BrowserIpc.OpenInChrome, (event, url: unknown) => {
+    if (event.sender.getType() !== 'window' || event.senderFrame !== event.sender.mainFrame) {
+      return { success: false, error: 'Access denied' } satisfies BrowserActionResult;
+    }
+    return openBrowserUrlInChrome(url);
+  });
   const pdfLoads = new Map<Electron.WebContents, Map<string, AbortController>>();
   const observedPdfOwners = new WeakSet<Electron.WebContents>();
   ipcMain.on(BrowserIpc.CancelPdf, (event, requestId: unknown) => {

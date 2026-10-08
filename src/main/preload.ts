@@ -349,6 +349,8 @@ contextBridge.exposeInMainWorld('electron', {
     requestCalendar: () => ipcRenderer.invoke('permissions:requestCalendar'),
   },
   browser: {
+    openInChrome: (url: string): Promise<BrowserActionResult> =>
+      ipcRenderer.invoke(BrowserIpc.OpenInChrome, url),
     createLocalHtmlPreview: (
       filePath: string,
       workingDirectory?: string,

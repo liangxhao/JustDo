@@ -7,6 +7,7 @@ import {
   handleMessageDiagramToggle,
   handleMessageImageClick,
   handleMessageImageContextMenu,
+  handleMessageLinkClick,
 } from '@/libs/openclaw-chat/components/message-content-interactions';
 import { renderMessageBlock } from '@/libs/openclaw-chat/components/message-render';
 import { RichMessageControls } from '@/libs/openclaw-chat/components/rich-message-controls';
@@ -55,7 +56,8 @@ export function UserMessageContent({
     const controls = new RichMessageControls(root, () => {});
     controlsRef.current = controls;
     const onClick = (event: Event) => {
-      if (!handleMessageImageClick(event)) handleMessageDiagramToggle(event);
+      if (handleMessageImageClick(event) || handleMessageLinkClick(event, workingDirectory)) return;
+      handleMessageDiagramToggle(event);
     };
     const onKeyDown = (event: Event) => {
       if ((event as KeyboardEvent).key === 'Escape' && controls.close()) {
@@ -90,7 +92,7 @@ export function UserMessageContent({
       root.replaceChildren();
       contentRef.current = null;
     };
-  }, []);
+  }, [workingDirectory]);
   useLayoutEffect(() => {
     if (!contentRef.current) return;
     render(
