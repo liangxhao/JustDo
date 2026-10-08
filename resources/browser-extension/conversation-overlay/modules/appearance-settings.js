@@ -1,10 +1,11 @@
 import { initializeAppearance, THEMES } from './appearance.js';
+import { language } from './options-i18n.js';
 
 const translations = {
   zh: {
-    title: '对话外观',
+    title: '背景颜色',
     label: '背景主题',
-    hint: '自动保存，并立即应用到已打开的对话侧栏。',
+    hint: '自动保存，并立即应用到设置页和已打开的对话侧栏。',
     dark: '深色',
     light: '浅色',
     warm: '暖纸色',
@@ -17,9 +18,9 @@ const translations = {
     failed: '保存失败，请重试。',
   },
   en: {
-    title: 'Chat appearance',
+    title: 'Background color',
     label: 'Background theme',
-    hint: 'Saved automatically and applied to open chat side panels.',
+    hint: 'Saved automatically and applied to settings and open chat side panels.',
     dark: 'Dark',
     light: 'Light',
     warm: 'Warm paper',
@@ -32,10 +33,10 @@ const translations = {
     failed: 'Could not save. Please try again.',
   },
 };
-const t = translations[navigator.language.toLowerCase().startsWith('zh') ? 'zh' : 'en'];
-const section = document.createElement('section');
-section.className = 'appearance-settings';
+const t = translations[language];
+const section = document.getElementById('appearance');
 const heading = document.createElement('h2');
+heading.id = 'appearanceTitle';
 heading.textContent = t.title;
 const label = document.createElement('label');
 label.htmlFor = 'chatTheme';
@@ -65,7 +66,6 @@ preview.append(title, reply, composer);
 const status = document.createElement('p');
 status.setAttribute('role', 'status');
 section.append(heading, label, select, hint, preview, status);
-document.getElementById('connection').before(section);
 let saved = 'light';
 const appearance = await initializeAppearance({
   onChange: value => {

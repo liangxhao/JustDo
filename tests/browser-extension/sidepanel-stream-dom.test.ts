@@ -55,9 +55,9 @@ describe('extension streaming DOM', () => {
     await vi.waitFor(() =>
       expect(document.querySelector('.message.user')?.textContent).toContain('Question'),
     );
-    const emit = (seq: number, stream: string, data: Record<string, unknown>) =>
+    const emit = (seq: number, stream: string, data: Record<string, unknown>, threadId = 'one') =>
       mock.notify('thread/stream', {
-        threadId: 'one',
+        threadId,
         kind: 'agent',
         event: {
           runId: 'run-1',
@@ -239,6 +239,125 @@ describe('extension streaming DOM', () => {
       expect(document.querySelector('.assistant')?.textContent).toContain('Persisted'),
     );
     expect(document.querySelectorAll('.assistant')).toHaveLength(1);
+  });
+
+  it.each([
+    { text: '你好啊', count: 1 },
+    { text: 'Question', count: 2 },
+  ])(
+    'preserves $count bubble(s) for "$text" through acceptance, failed refresh, and final history',
+    async ({ text, count }) => {
+      const { thread, respond, emit } = await mountThread();
+      mock.request.mockImplementation((method: string) => {
+        if (method === 'turn/start') return Promise.resolve({ turn: { id: 'run-1' } });
+        if (method === 'thread/read') return Promise.reject(new Error('History unavailable'));
+        return respond(method);
+      });
+      const prompt = document.getElementById('prompt') as HTMLTextAreaElement;
+      (document.getElementById('includePage') as HTMLInputElement).checked = false;
+      prompt.value = text;
+      prompt.dispatchEvent(new Event('input'));
+      document.getElementById('send')!.click();
+      await vi.waitFor(() =>
+        expect(document.getElementById('error')?.textContent).toContain('History unavailable'),
+      );
+      emit(1, 'thinking', { text: 'Considering' });
+      await vi.waitFor(() => expect(document.querySelector('.process-cluster')).not.toBeNull());
+      const submitted = () =>
+        [...document.querySelectorAll('.message.user')].filter(
+          node => node.textContent?.trim() === text,
+        );
+      expect(submitted()).toHaveLength(count);
+      emit(2, 'assistant', { text: 'Hello back' });
+      await vi.waitFor(() =>
+        expect(document.querySelector('.assistant')?.textContent).toContain('Hello back'),
+      );
+      mock.notify('thread/updated', {
+        threadId: 'one',
+        thread: {
+          ...thread,
+          turns: [
+            ...thread.turns,
+            {
+              id: 'history-2',
+              items: [
+                { type: 'userMessage', content: [{ type: 'text', text }] },
+                { type: 'reasoning', content: ['Considering'] },
+                { type: 'agentMessage', text: 'Hello back' },
+              ],
+            },
+          ],
+        },
+      });
+      expect(submitted()).toHaveLength(count);
+      expect(
+        document.querySelector('#messages > :last-child')?.classList.contains('assistant'),
+      ).toBe(true);
+      expect(mock.request.mock.calls.filter(([method]) => method === 'turn/start')).toHaveLength(1);
+    },
+  );
+
+  it('hands the new-chat bubble to the stream before acceptance', async () => {
+    const { respond, emit } = await mountThread();
+    const select = document.getElementById('session') as HTMLSelectElement;
+    select.value = '';
+    select.dispatchEvent(new Event('change'));
+    const prompt = document.getElementById('prompt') as HTMLTextAreaElement;
+    (document.getElementById('includePage') as HTMLInputElement).checked = false;
+    prompt.value = 'Question';
+    prompt.dispatchEvent(new Event('input'));
+    const send = document.getElementById('send') as HTMLButtonElement;
+    await vi.waitFor(() => expect(send.disabled).toBe(false));
+    let resolveThread!: (value: unknown) => void;
+    let resolveTurn!: (value: unknown) => void;
+    mock.request.mockImplementation((method: string) => {
+      if (method === 'thread/start')
+        return new Promise(resolve => {
+          resolveThread = resolve;
+        });
+      if (method === 'turn/start')
+        return new Promise(resolve => {
+          resolveTurn = resolve;
+        });
+      if (method === 'thread/list')
+        return Promise.resolve({
+          data: [
+            { id: 'one', status: { type: 'idle' } },
+            { id: 'two', status: { type: 'active' } },
+          ],
+        });
+      if (method === 'thread/read') return Promise.resolve({ thread: { id: 'two', turns: [] } });
+      return respond(method);
+    });
+    send.click();
+    await vi.waitFor(() => expect(resolveThread).toBeDefined());
+    expect(document.querySelectorAll('.message.user')).toHaveLength(1);
+    resolveThread({ thread: { id: 'two' } });
+    await vi.waitFor(() => expect(resolveTurn).toBeDefined());
+    // A native stream can arrive before the turn/start acknowledgement.
+    emit(1, 'thinking', { text: 'Considering' }, 'two');
+    expect(document.querySelectorAll('.message.user')).toHaveLength(1);
+    resolveTurn({ turn: { id: 'run-1' } });
+    await vi.waitFor(() => expect(select.disabled).toBe(false));
+    expect(document.querySelectorAll('.message.user')).toHaveLength(1);
+    expect(document.querySelector('.process-cluster')).not.toBeNull();
+    mock.notify('thread/updated', {
+      threadId: 'two',
+      thread: {
+        id: 'two',
+        turns: [
+          {
+            id: 'history-1',
+            items: [
+              { type: 'userMessage', content: [{ type: 'text', text: 'Question' }] },
+              { type: 'agentMessage', text: 'Second answer' },
+            ],
+          },
+        ],
+      },
+    });
+    expect(document.querySelectorAll('.message.user')).toHaveLength(1);
+    expect(mock.request.mock.calls.filter(([method]) => method === 'turn/start')).toHaveLength(1);
   });
   it('renders partial Markdown and preserves open process details across streaming updates and final history', async () => {
     document.documentElement.innerHTML = fs.readFileSync(

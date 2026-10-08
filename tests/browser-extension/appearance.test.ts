@@ -115,12 +115,14 @@ describe('extension appearance preferences', () => {
   });
   it('offers a saved settings selection and restores it on failure', async () => {
     vi.resetModules();
-    document.body.innerHTML = '<section id="connection"></section>';
+    document.body.innerHTML = '<section id="appearance" class="appearance-settings"></section>';
     const env = environment('warm');
     vi.stubGlobal('chrome', { storage: env.storage });
     vi.stubGlobal('matchMedia', () => env.media);
     await import('../../resources/browser-extension/conversation-overlay/modules/appearance-settings.js');
     const select = document.getElementById('chatTheme') as HTMLSelectElement;
+    expect(document.getElementById('appearanceTitle')?.textContent).toBe('Background color');
+    expect(select.options[0].textContent).toBe('Dark');
     expect(select.options).toHaveLength(5);
     expect(select.value).toBe('warm');
     select.value = 'blue';
@@ -132,7 +134,9 @@ describe('extension appearance preferences', () => {
     select.dispatchEvent(new Event('change'));
     await vi.waitFor(() => expect(select.disabled).toBe(false));
     expect(select.value).toBe('blue');
-    expect(document.querySelector('[role="status"]')?.textContent).toMatch(/重试|try again/);
+    expect(document.querySelector('[role="status"]')?.textContent).toBe(
+      'Could not save. Please try again.',
+    );
     vi.unstubAllGlobals();
   });
 });

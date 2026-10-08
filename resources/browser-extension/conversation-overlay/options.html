@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>__PRODUCT_NAME__ Browser Settings</title>
+    <link rel="icon" type="image/png" href="icons/icon32.png" />
+    <link rel="stylesheet" href="appearance.css" />
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main>
+      <header class="settings-header">
+        <img class="product-icon" src="icons/icon128.png" alt="" />
+        <div>
+          <h1 data-i18n="title">__PRODUCT_NAME__ Browser Settings</h1>
+          <p class="muted" data-i18n="subtitle"></p>
+        </div>
+      </header>
+      <div class="connection-summary">
+        <span id="connectionStatus" role="status"></span>
+        <span class="muted" data-i18n="sharedConnection"></span>
+      </div>
+
+      <section id="automaticConnection" aria-labelledby="automaticTitle">
+        <h2 id="automaticTitle" data-i18n="automaticTitle"></h2>
+        <p class="muted" data-i18n="automaticHint"></p>
+        <p id="bootstrapStatus" class="connection-detail"></p>
+        <div id="retiredCustody" class="notice hidden" role="alert" data-i18n="custodyHint"></div>
+        <div class="actions">
+          <button
+            id="useLocal"
+            class="primary"
+            type="button"
+            data-i18n="connectLocal"
+            disabled
+          ></button>
+          <button id="disconnectAutomatic" type="button" data-i18n="disconnect" disabled></button>
+        </div>
+      </section>
+
+      <section id="manualConnection" aria-labelledby="manualTitle">
+        <h2 id="manualTitle" data-i18n="manualTitle"></h2>
+        <p class="muted" data-i18n="manualHint"></p>
+        <label for="pairingString" data-i18n="pairingLabel"></label>
+        <textarea
+          id="pairingString"
+          spellcheck="false"
+          autocomplete="off"
+          data-i18n-placeholder="pairingPlaceholder"
+          disabled
+        ></textarea>
+        <div class="actions">
+          <button id="pair" class="primary" type="button" data-i18n="connect" disabled></button>
+          <button id="disconnectManual" type="button" data-i18n="disconnect" disabled></button>
+        </div>
+      </section>
+
+      <section id="tabAccess" aria-labelledby="accessTitle">
+        <h2 id="accessTitle" data-i18n="accessTitle"></h2>
+        <label for="accessMode" data-i18n="accessLabel"></label>
+        <select id="accessMode" disabled>
+          <option value="selected" data-i18n="selectedTabs"></option>
+          <option value="all" data-i18n="allTabs"></option>
+        </select>
+        <p class="muted" data-i18n="accessHint"></p>
+      </section>
+
+      <section
+        id="appearance"
+        class="appearance-settings"
+        aria-labelledby="appearanceTitle"
+      ></section>
+      <p id="message" role="status" aria-live="polite"></p>
+    </main>
+    <script type="module" src="options.js"></script>
+    <script type="module" src="modules/appearance-settings.js"></script>
+  </body>
+</html>

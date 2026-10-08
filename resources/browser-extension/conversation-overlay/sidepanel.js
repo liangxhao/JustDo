@@ -7,7 +7,11 @@ import {
   shouldShowTurnError,
   toolInputSummary,
 } from './modules/sidepanel-state.js';
-import { pendingInputLabel, renderRichContent, retryRichImages } from './modules/sidepanel-rich-content.js';
+import {
+  pendingInputLabel,
+  renderRichContent,
+  retryRichImages,
+} from './modules/sidepanel-rich-content.js';
 import { BrowserExtensionStream } from './modules/sidepanel-stream.js';
 
 void initializeAppearance();
@@ -271,7 +275,10 @@ function renderMessages(entries) {
     if (entry.pendingInput) {
       const label = document.createElement('small');
       label.className = 'pending-input-status';
-      label.textContent = pendingInputLabel(entry.pendingInput.state, entry.pendingInput.incomplete);
+      label.textContent = pendingInputLabel(
+        entry.pendingInput.state,
+        entry.pendingInput.incomplete,
+      );
       item.append(label);
     }
     if (!item.childElementCount) continue;
@@ -562,7 +569,6 @@ async function submit() {
       const started = await client.request('thread/start', { title: message.split(/\r?\n/u)[0] });
       threadId = started.thread.id;
       createdThreadId = threadId;
-      pendingUserMessage = { threadId, text: message, persistedMatches: 0 };
     }
     streamView(threadId).start(message, {
       role: 'user',
@@ -578,6 +584,10 @@ async function submit() {
         })),
       ],
     });
+    // Once the thread exists, its stream owns the optimistic user bubble.
+    // The pre-thread placeholder must not be merged into that projection again.
+    pendingUserMessage = null;
+    renderThreadMessages(messagesFromThread(streamView(threadId).project()), threadId);
     const startedTurn = await client.request('turn/start', {
       threadId,
       input: [{ type: 'text', text: message }],
@@ -586,9 +596,6 @@ async function submit() {
       permissionMode,
       ...(pageContext ? { pageContext } : {}),
     });
-    if (pendingUserMessage?.threadId === threadId && startedTurn?.turn?.id) {
-      pendingUserMessage.runId = startedTurn.turn.id;
-    }
     setRunningTurn(threadId, startedTurn?.turn?.id);
     clearAttachments();
     await refreshAll(threadId);

@@ -23,6 +23,9 @@ async function main() {
     { recursive: true },
   );
   fs.copyFileSync(path.join(repoRoot, 'package.json'), path.join(fixture, 'package.json'));
+  fs.cpSync(path.join(repoRoot, 'resources/icons/png'), path.join(fixture, 'resources/icons/png'), {
+    recursive: true,
+  });
   const requests = [];
   const sockets = new Set();
   let running = false;

@@ -7,7 +7,7 @@ const pending = (id: number) => ({ id: String(id), runId: `run-${id}`, acceptedA
 const tail = (items: unknown[] = [], extra: Record<string, unknown> = {}) => ({ sessionId: 'native-1',
   messages: [{ role: 'assistant', content: 'history', __openclaw: { id: 'existing' } }],
   hasMore: false, deltaCursor: 'c1', pendingInputs: { items, total: items.length }, ...extra });
-const delta = (params: Record<string, unknown>, extra = {}) => ({ sessionId: 'native-1', kind: 'delta', messages: [], deltaCursor: 'c2',
+const delta = (params: Record<string, unknown>, extra = {}) => ({ sessionInfo: { sessionId: 'native-1' }, kind: 'delta', messages: [], deltaCursor: 'c2',
   inputReceipts: (params.inputRunIds as string[] | undefined)?.map(runId => ({ runId, state: 'pending' })), ...extra });
 
 test('reads all pending pages independently and never publishes pending bodies into the existing cache', async () => {
@@ -40,7 +40,7 @@ test('normal polling preserves cached canonical history and does not walk old hi
 test('rejects receipts from a reset physical session even when its delta cursor is valid', async () => {
   const publish = vi.fn();
   const request = vi.fn(async (_method: string, params: Record<string, unknown>) =>
-    params.cursor ? delta(params, { sessionId: 'physical-after-reset' }) : tail([pending(1)]));
+    params.cursor ? delta(params, { sessionInfo: { sessionId: 'physical-after-reset' } }) : tail([pending(1)]));
   await expect(fetchNativePendingHistory({ request } as never, 'key', undefined, publish)).rejects.toThrow('session changed');
   expect(publish).not.toHaveBeenCalled();
 });
@@ -115,4 +115,189 @@ test('retains a truncated pending placeholder after a transient hydration failur
     return params.cursor ? delta(params) : tail([item]);
   });
   expect((await fetchNativePendingHistory({ request } as never, 'key')).pendingInputs).toEqual([item]);
+});
+
+const emptyHistory = (extra: Record<string, unknown> = {}) => ({
+  sessionKey: 'key',
+  messages: [],
+  hasMore: false,
+  totalMessages: 0,
+  pendingInputs: { items: [], total: 0 },
+  ...extra,
+});
+
+test.each([undefined, 'native-1'])('reads confirmed empty history before a transcript exists: %s', async sessionId => {
+  const publish = vi.fn();
+  const request = vi.fn(async (_method: string, _params: Record<string, unknown>) =>
+    emptyHistory(sessionId ? { sessionId } : {}));
+  const cached = { messages: [{ role: 'user', content: 'stale' }], deltaCursor: 'stale-cursor' };
+
+  await expect(fetchNativePendingHistory({ request } as never, 'key', cached, publish)).resolves.toEqual({
+    sessionKey: 'key', messages: [], pendingInputs: [],
+  });
+  expect(request).toHaveBeenCalledTimes(2);
+  expect(request.mock.calls.every(([, params]) => !('cursor' in params))).toBe(true);
+  expect(publish).not.toHaveBeenCalled();
+});
+
+test('retries if the native session appears while confirming unprepared empty history', async () => {
+  let reads = 0;
+  const request = vi.fn(async (_method: string, params: Record<string, unknown>) => {
+    if (params.cursor) return delta(params);
+    reads += 1;
+    return reads === 1 ? emptyHistory() : tail();
+  });
+  const publish = vi.fn();
+
+  const result = await fetchNativePendingHistory({ request } as never, 'key', undefined, publish);
+
+  expect(result.messages).toEqual(tail().messages);
+  expect(publish).toHaveBeenCalledWith(tail().messages, 'c2');
+});
+
+test('reads accepted pending input before the first transcript and never publishes it as history', async () => {
+  const publish = vi.fn();
+  const item = pending(1);
+  const request = vi.fn(async (_method: string, params: Record<string, unknown>) =>
+    emptyHistory({ sessionId: 'native-1', pendingInputs: { items: [item], total: 1 },
+      ...(params.inputRunIds ? { inputReceipts: [{ runId: 'run-1', state: 'pending' }] } : {}),
+    }));
+
+  await expect(fetchNativePendingHistory({ request } as never, 'key', undefined, publish)).resolves.toEqual({
+    sessionKey: 'key', messages: [], pendingInputs: [item],
+  });
+  expect(request.mock.calls.every(([, params]) => !('cursor' in params))).toBe(true);
+  expect(request.mock.calls.some(([, params]) => params.inputRunIds)).toBe(true);
+  expect(publish).not.toHaveBeenCalled();
+});
+
+test('restarts with canonical history when the first pending input is consumed during the read', async () => {
+  const canonical = { role: 'user', content: 'pending-1', __openclaw: { id: 'event-1' } };
+  let consumed = false;
+  const request = vi.fn(async (_method: string, params: Record<string, unknown>) => {
+    if (params.inputRunIds) consumed = true;
+    if (params.cursor) return delta(params);
+    return consumed ? tail([], { messages: [canonical] }) : emptyHistory({
+      sessionId: 'native-1', pendingInputs: { items: [pending(1)], total: 1 },
+    });
+  });
+  const publish = vi.fn();
+
+  const result = await fetchNativePendingHistory({ request } as never, 'key', undefined, publish);
+
+  expect(result.messages).toEqual([canonical]);
+  expect(result.pendingInputs).toEqual([]);
+  expect(publish).toHaveBeenCalledWith([canonical], 'c2');
+});
+
+test('retries cursorless pending history when cancellation changes its display state', async () => {
+  let reads = 0;
+  const cancelled = { ...pending(1), state: 'cancelled' };
+  const request = vi.fn(async (_method: string, params: Record<string, unknown>) => {
+    reads += 1;
+    return emptyHistory({ sessionId: 'native-1',
+      pendingInputs: { items: [reads === 1 ? pending(1) : cancelled], total: 1 },
+      ...(params.inputRunIds ? { inputReceipts: [{ runId: 'run-1', state: 'pending', cancelled: true }] } : {}),
+    });
+  });
+
+  expect((await fetchNativePendingHistory({ request } as never, 'key')).pendingInputs).toEqual([cancelled]);
+});
+
+test.each([true, false])('rechecks older cursorless pending pages after cancellation (run identity: %s)', async correlated => {
+  const newest = Array.from({ length: 20 }, (_, index) => pending(21 - index));
+  const older = { ...pending(1), ...(correlated ? {} : { runId: undefined }) };
+  let cancelled = false;
+  const request = vi.fn(async (_method: string, params: Record<string, unknown>) => {
+    if (params.inputRunIds) cancelled = true;
+    const items = params.pendingBefore
+      ? [{ ...older, state: cancelled ? 'cancelled' : 'queued' }]
+      : newest;
+    return emptyHistory({
+      sessionId: 'native-1',
+      pendingInputs: { items, total: 21, ...(params.pendingBefore ? {} : { nextBefore: 2 }) },
+      ...(params.inputRunIds ? { inputReceipts: (params.inputRunIds as string[]).map(runId => ({
+        runId, state: 'pending', ...(runId === 'run-1' ? { cancelled: true } : {}),
+      })) } : {}),
+    });
+  });
+
+  const result = await fetchNativePendingHistory({ request } as never, 'key');
+
+  expect(result.pendingInputs).toHaveLength(21);
+  expect(result.pendingInputs.find(item => item.id === '1')?.state).toBe('cancelled');
+});
+
+test('retires an older cursorless cancelled input when it is withdrawn during pagination', async () => {
+  const newest = Array.from({ length: 20 }, (_, index) => pending(21 - index));
+  let withdrawn = false;
+  const request = vi.fn(async (_method: string, params: Record<string, unknown>) => {
+    if (params.inputRunIds) withdrawn = true;
+    return emptyHistory({
+      sessionId: 'native-1',
+      pendingInputs: { items: params.pendingBefore ? [{ ...pending(1), state: 'cancelled',
+        message: { role: 'user', content: withdrawn ? [] : 'withdrawn prompt',
+          ...(withdrawn ? { display: false } : {}),
+        },
+      }] : newest, total: 21, ...(params.pendingBefore ? {} : { nextBefore: 2 }) },
+      ...(params.inputRunIds ? { inputReceipts: (params.inputRunIds as string[]).map(runId => ({
+        runId, state: 'pending', ...(runId === 'run-1' ? { cancelled: true } : {}),
+      })) } : {}),
+    });
+  });
+
+  const result = await fetchNativePendingHistory({ request } as never, 'key');
+
+  expect(result.pendingInputs).toHaveLength(20);
+  expect(JSON.stringify(result)).not.toContain('withdrawn prompt');
+});
+
+test('rejects cursorless pending history if native identity changes or receipts are unavailable', async () => {
+  const publish = vi.fn();
+  const request = vi.fn(async (_method: string, params: Record<string, unknown>) => emptyHistory({
+    sessionId: params.inputRunIds ? 'other-session' : 'native-1',
+    pendingInputs: { items: [pending(1)], total: 1 },
+    inputReceipts: [{ runId: 'run-1', state: 'pending' }],
+  }));
+  await expect(fetchNativePendingHistory({ request } as never, 'key', undefined, publish)).rejects.toThrow('session changed');
+  request.mockImplementation(async () => emptyHistory({
+    sessionId: 'native-1', pendingInputs: { items: [pending(1)], total: 1 },
+  }));
+  await expect(fetchNativePendingHistory({ request } as never, 'key', undefined, publish)).rejects.toThrow('receipts');
+  expect(publish).not.toHaveBeenCalled();
+});
+
+test.each([
+  { messages: [{ role: 'user', content: 'history' }] },
+  { totalMessages: 1 },
+  { hasMore: true, nextOffset: 1 },
+  { pendingInputs: { items: [pending(1)], total: 1 } },
+  { pendingInputs: undefined },
+  { pendingInputs: { items: [], total: 1 } },
+  { sessionId: 123 },
+  { deltaCursor: 'cursor-without-identity' },
+])('rejects incomplete or malformed history instead of treating it as an empty conversation: %j', async extra => {
+  const publish = vi.fn();
+  const request = vi.fn(async () => emptyHistory(extra));
+
+  await expect(fetchNativePendingHistory({ request } as never, 'key', undefined, publish)).rejects.toThrow();
+  expect(publish).not.toHaveBeenCalled();
+});
+
+test('rejects a failed empty-history confirmation instead of hiding a Gateway error', async () => {
+  const request = vi.fn(async (_method: string, params: Record<string, unknown>) => {
+    if (params.limit === 1) throw new Error('Gateway unavailable');
+    return emptyHistory();
+  });
+
+  await expect(fetchNativePendingHistory({ request } as never, 'key')).rejects.toThrow('Gateway unavailable');
+});
+
+test('requires the native delta sessionInfo identity before publishing a snapshot', async () => {
+  const request = vi.fn(async (_method: string, params: Record<string, unknown>) =>
+    params.cursor ? delta(params, { sessionInfo: undefined }) : tail());
+  const publish = vi.fn();
+
+  await expect(fetchNativePendingHistory({ request } as never, 'key', undefined, publish)).rejects.toThrow('session changed');
+  expect(publish).not.toHaveBeenCalled();
 });

@@ -36,6 +36,13 @@ const createFixture = () => {
     { recursive: true },
   );
   fs.copyFileSync(path.join(projectRoot, 'package.json'), path.join(repoRoot, 'package.json'));
+  fs.cpSync(
+    path.join(projectRoot, 'resources/icons/png'),
+    path.join(repoRoot, 'resources/icons/png'),
+    {
+      recursive: true,
+    },
+  );
   return repoRoot;
 };
 
@@ -149,12 +156,23 @@ describe('browser extension preparation', () => {
       expect(relayCore).toContain('authVersion');
       expect(fs.existsSync(path.join(second.outputDir, 'modules', 'relay-auth-v2.js'))).toBe(true);
       expect(fs.existsSync(path.join(second.outputDir, 'options.html'))).toBe(true);
-      expect(optionsHtml).toContain('id="automaticSetup"');
+      expect(optionsHtml).toContain('id="automaticConnection"');
+      expect(optionsHtml).toContain('id="manualConnection"');
+      expect(optionsHtml).toContain('id="tabAccess"');
+      expect(optionsHtml).toContain('id="appearance"');
+      expect(optionsHtml.match(/<section\b/g)).toHaveLength(4);
+      expect(optionsHtml).not.toMatch(/openclaw|Diagnostics/i);
+      expect(optionsHtml).toContain('icons/icon128.png');
+      for (const size of [16, 32, 48, 128]) {
+        expect(fs.readFileSync(path.join(second.outputDir, `icons/icon${size}.png`))).toEqual(
+          fs.readFileSync(path.join(repoRoot, `resources/icons/png/${size}x${size}.png`)),
+        );
+      }
       expect(optionsHtml).toContain('id="useLocal"');
       expect(optionsJs).toContain('setNativeBootstrapEnabled');
-      expect(optionsJs).toContain('status.state === "connecting"');
-      expect(optionsJs).toContain('if (succeeded) pairingString.value = ""');
-      expect(optionsJs).toContain('"Pairing saved."');
+      expect(optionsJs).toContain("status.state === 'connecting'");
+      expect(optionsJs).toContain("pairingString.value = ''");
+      expect(optionsJs).toContain("'paired'");
       expect(optionsJs).toContain('setInterval(() =>');
       expect(fs.existsSync(path.join(second.outputDir, 'sidepanel.html'))).toBe(true);
       expect(
@@ -190,10 +208,11 @@ describe('browser extension preparation', () => {
         action: { default_title: 'Acme' },
       });
       expect(manifest.description).toContain('Acme');
-      expect(optionsHtml).toContain('Connect to Acme');
-      expect(optionsHtml).not.toContain('Use local OpenClaw');
-      expect(optionsHtml).toContain('automaticSetup');
-      expect(optionsHtml).toContain('openclaw browser');
+      const optionsI18n = fs.readFileSync(path.join(outputDir, 'modules/options-i18n.js'), 'utf8');
+      expect(optionsI18n).toContain('In Acme, open Settings');
+      expect(optionsHtml).toContain('Acme Browser Settings');
+      expect(optionsHtml).toContain('automaticConnection');
+      expect(optionsHtml + optionsI18n).not.toMatch(/openclaw/i);
       expect(popupHtml).toContain('Acme Browser');
       expect(popupJs).toContain('Waiting for local Acme');
       expect(() => verifyBrowserExtension(outputDir, { repoRoot })).not.toThrow();

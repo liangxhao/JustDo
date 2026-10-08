@@ -235,6 +235,10 @@ See `docs/architecture/10-data-storage.md`.
   sessions nor changes global learning or publication policy.
 - `openclawSkillFiles.ts` only extracts/copies/removes user-imported local skill files; it is not skill metadata authority.
 - Browser-extension pairing/relay code lives in the OpenClaw-owned `openclaw/` baseline; side-panel chat lives in the separate `conversation-overlay/`. Keep their changes separate according to `docs/features/browser-settings-design.md`. OpenClaw upgrades replace the pairing baseline first, then reapply and review only the explicit build-time integration seams; do not fold chat behavior into relay modules.
+  Product settings HTML/CSS/JS and translations also live in `conversation-overlay/`;
+  compose them over upstream options and copy application PNG icons at build time.
+  Keep settings in English with Automatic connection, Manual connection, Tab Access
+  and Background color headings; preserve native pairing, unpair and custody safeguards across upgrades.
 
 ## Coding Rules
 

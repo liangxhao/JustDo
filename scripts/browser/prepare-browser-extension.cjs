@@ -50,6 +50,7 @@ const CONVERSATION_OVERLAY_FILES = [
   'appearance.css',
   'modules/appearance.js',
   'modules/appearance-settings.js',
+  'modules/options-i18n.js',
   'modules/app-server-background.js',
   'modules/conversation-client.js',
   'modules/sidepanel-markdown.js',
@@ -57,6 +58,9 @@ const CONVERSATION_OVERLAY_FILES = [
   'modules/sidepanel-rich-content.css',
   'modules/sidepanel-state.js',
   'modules/sidepanel-stream.js',
+  'options.css',
+  'options.html',
+  'options.js',
   'sidepanel.css',
   'sidepanel.html',
   'sidepanel.js',
@@ -164,111 +168,6 @@ function applyManifestOverlay(value) {
   return `${JSON.stringify(manifest, null, 2)}\n`;
 }
 
-function applyPairingLayoutOverlay(value) {
-  let result = replaceIntegrationAnchor(
-    value,
-    '<h2>Advanced manual pairing</h2>',
-    '<h2>Connect to __PRODUCT_NAME__</h2>',
-    'manual pairing title',
-  );
-  result = replaceIntegrationAnchor(
-    result,
-    'Use this only for a direct remote Gateway or when automatic setup reports that manual action\n        is required.',
-    'In __PRODUCT_NAME__, open Settings &gt; Browser, copy the extension pairing information,\n        then paste it below.',
-    'manual pairing instructions',
-  );
-  return replaceIntegrationAnchor(
-    result,
-    '<script type="module" src="options.js"></script>',
-    '<link rel="stylesheet" href="appearance.css" />\n' +
-      '    <script type="module" src="modules/appearance-settings.js"></script>\n' +
-      '    <script type="module" src="options.js"></script>',
-    'conversation appearance settings',
-  );
-}
-
-function applyPairingBehaviorOverlay(value) {
-  let result = replaceIntegrationAnchor(
-    value,
-    ': "Paired; relay unavailable"',
-    ': status.state === "connecting" ? "Connecting…" : "Paired; relay unavailable"',
-    'pairing connection state',
-  );
-  result = replaceIntegrationAnchor(
-    result,
-    `async function showResult(task, success) {
-  try {
-    const result = await task();
-    if (result?.ok === false) {
-      throw new Error(result.error ?? "Operation failed.");
-    }
-    message.textContent = success;
-  } catch (error) {
-    message.textContent = error instanceof Error ? error.message : String(error);
-  }
-  await refresh();
-}`,
-    `async function showResult(task, success) {
-  let succeeded = false;
-  try {
-    const result = await task();
-    if (result?.ok === false) {
-      throw new Error(result.error ?? "Operation failed.");
-    }
-    message.textContent = success;
-    succeeded = true;
-  } catch (error) {
-    message.textContent = error instanceof Error ? error.message : String(error);
-  }
-  await refresh();
-  return succeeded;
-}`,
-    'pairing result handling',
-  );
-  result = replaceIntegrationAnchor(
-    result,
-    `pair.addEventListener("click", () => {
-  void showResult(
-    () =>
-      chrome.runtime.sendMessage({
-        type: "pair",
-        pairingString: pairingString.value,
-        accessMode: accessMode.value,
-      }),
-    "Manual pairing saved.",
-  );
-});`,
-    `pair.addEventListener("click", () => {
-  const pendingPairingString = pairingString.value;
-  void showResult(
-    () =>
-      chrome.runtime.sendMessage({
-        type: "pair",
-        pairingString: pendingPairingString,
-        accessMode: accessMode.value,
-      }),
-    "Pairing saved.",
-  ).then(succeeded => {
-    if (succeeded) pairingString.value = "";
-  });
-});`,
-    'pairing submit behavior',
-  );
-  return replaceIntegrationAnchor(
-    result,
-    'void refresh();',
-    `void refresh();
-const statusRefreshTimer = setInterval(() => {
-  if (!document.hidden) void refresh();
-}, 2_000);
-document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) void refresh();
-});
-window.addEventListener("pagehide", () => clearInterval(statusRefreshTimer), { once: true });`,
-    'pairing status refresh',
-  );
-}
-
 function buildExpectedExtensionFiles(repoRoot, productName) {
   const sourceRoot = path.join(repoRoot, 'resources', 'browser-extension');
   const openClawDir = path.join(sourceRoot, 'openclaw');
@@ -304,14 +203,12 @@ function buildExpectedExtensionFiles(repoRoot, productName) {
     'manifest.json',
     Buffer.from(applyManifestOverlay(files.get('manifest.json').toString('utf8'))),
   );
-  files.set(
-    'options.html',
-    Buffer.from(applyPairingLayoutOverlay(files.get('options.html').toString('utf8'))),
-  );
-  files.set(
-    'options.js',
-    Buffer.from(applyPairingBehaviorOverlay(files.get('options.js').toString('utf8'))),
-  );
+  for (const size of ICON_SIZES) {
+    files.set(
+      `icons/icon${size}.png`,
+      fs.readFileSync(path.join(repoRoot, 'resources', 'icons', 'png', `${size}x${size}.png`)),
+    );
+  }
 
   for (const [relativePath, content] of files) {
     if (relativePath.endsWith('.png')) continue;

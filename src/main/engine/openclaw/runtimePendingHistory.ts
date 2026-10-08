@@ -14,6 +14,46 @@ import { parseChatHistoryCursorResultV2026_9_8, parseChatHistoryResultV2026_9_8 
 const record = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
+const historySessionId = (page: Record<string, unknown>): unknown => {
+  if (page.kind === 'delta') {
+    return record(page.sessionInfo) ? page.sessionInfo.sessionId : undefined;
+  }
+  return page.sessionId;
+};
+
+const isEmptyCanonicalHistoryWithoutCursor = (raw: Record<string, unknown>): boolean => {
+  const page = parseChatHistoryResultV2026_9_8(raw);
+  return (
+    !page.deltaCursor &&
+    !page.hasMore &&
+    page.messages.length === 0 &&
+    (page.totalMessages ?? 0) === 0
+  );
+};
+
+const isEmptyHistoryWithoutCursor = (raw: Record<string, unknown>): boolean => {
+  const pending = parseNativePendingInputs(raw.pendingInputs);
+  return (
+    isEmptyCanonicalHistoryWithoutCursor(raw) &&
+    pending !== undefined &&
+    pending.items.length === 0 &&
+    pending.total === 0 &&
+    (pending.queuedCount ?? 0) === 0 &&
+    pending.nextBefore === undefined
+  );
+};
+
+// A cursorless transcript has no generation fence. Confirm accepted-input
+// membership/state separately before returning this request-local projection.
+const pendingPageIdentity = (raw: Record<string, unknown>): string => {
+  const page = parseNativePendingInputs(raw.pendingInputs);
+  if (!page) throw new Error('Missing native pending page');
+  return JSON.stringify([
+    page.total, page.queuedCount ?? 0, page.nextBefore,
+    page.items.map(item => [item.id, item.runId, item.acceptedAt, item.state, item.queued, item.message.display]),
+  ]);
+};
+
 /** A request-local projection only: pending bodies never enter Main's history snapshot map. */
 export async function fetchNativePendingHistory(
   client: Pick<GatewayClientLike, 'request'>,
@@ -29,16 +69,33 @@ export async function fetchNativePendingHistory(
         return result;
       };
       const first = await read({ limit: cached && attempt === 0 ? 20 : FULL_HISTORY_SYNC_LIMIT });
-      const sessionId = first.sessionId;
-      if (typeof sessionId !== 'string' || !sessionId) throw new Error('Missing native history identity');
+      const sessionId = historySessionId(first);
+      if (sessionId !== undefined && (typeof sessionId !== 'string' || !sessionId)) {
+        throw new Error('Invalid native history identity');
+      }
       const checkIdentity = (page: Record<string, unknown>) => {
-        if (page.sessionId !== sessionId) throw new Error('Native history session changed');
+        if (historySessionId(page) !== sessionId) throw new Error('Native history session changed');
       };
       let page = parseChatHistoryResultV2026_9_8(first);
+      // A product thread can be read before sessions.create or before its first
+      // transcript exists. Native 9.8 then returns an empty page without a cursor
+      // (and possibly without sessionId). Confirm it without publishing a cache.
+      if (!page.deltaCursor && isEmptyHistoryWithoutCursor(first)) {
+        const current = await read({ limit: 1 });
+        checkIdentity(current);
+        if (!isEmptyHistoryWithoutCursor(current)) throw new Error('Native history snapshot changed');
+        return { sessionKey, messages: [], pendingInputs: [] };
+      }
+      if (sessionId === undefined) throw new Error('Missing native history identity');
       let messages = page.messages;
       let cursor = page.deltaCursor;
-      if (!cursor) throw new Error('Missing native history generation');
-      if (cached && attempt === 0) {
+      const cursorlessPendingIdentity = !cursor && isEmptyCanonicalHistoryWithoutCursor(first)
+        ? pendingPageIdentity(first)
+        : undefined;
+      if (!cursor && cursorlessPendingIdentity === undefined) throw new Error('Missing native history generation');
+      const cursorlessPendingPages = cursorlessPendingIdentity === undefined ? undefined
+        : new Map<number | undefined, string>([[undefined, cursorlessPendingIdentity]]);
+      if (cursor && cached && attempt === 0) {
         const raw = await read({ cursor: cached.deltaCursor });
         checkIdentity(raw);
         const delta = parseChatHistoryCursorResultV2026_9_8(raw);
@@ -76,6 +133,10 @@ export async function fetchNativePendingHistory(
         checkIdentity(raw);
         pendingPage = parseNativePendingInputs(raw.pendingInputs);
         if (!pendingPage) throw new Error('Missing native pending page');
+        if (cursorlessPendingPages) {
+          if (!isEmptyCanonicalHistoryWithoutCursor(raw)) throw new Error('Native history snapshot changed');
+          cursorlessPendingPages.set(next, pendingPageIdentity(raw));
+        }
       }
       for (const item of pending) {
         const metadata = record(item.message.__openclaw) ? item.message.__openclaw : undefined;
@@ -98,12 +159,20 @@ export async function fetchNativePendingHistory(
       // catch-up in each request brings newly consumed user bodies into history.
       for (let index = 0; index < Math.max(1, runIds.length); index += 50) {
         const batch = runIds.slice(index, index + 50);
-        const raw = await read({ cursor, ...(batch.length ? { inputRunIds: batch } : {}) });
+        const raw = await read({
+          ...(cursor ? { cursor } : { limit: FULL_HISTORY_SYNC_LIMIT }),
+          ...(batch.length ? { inputRunIds: batch } : {}),
+        });
         checkIdentity(raw);
-        const delta = parseChatHistoryCursorResultV2026_9_8(raw);
-        if (delta.kind === 'reset') throw new Error('Native history generation changed');
-        messages = mergeGatewayHistoryPages(messages, delta.messages);
-        cursor = delta.deltaCursor;
+        if (cursor) {
+          const delta = parseChatHistoryCursorResultV2026_9_8(raw);
+          if (delta.kind === 'reset') throw new Error('Native history generation changed');
+          messages = mergeGatewayHistoryPages(messages, delta.messages);
+          cursor = delta.deltaCursor;
+        } else if (!isEmptyCanonicalHistoryWithoutCursor(raw) ||
+            pendingPageIdentity(raw) !== cursorlessPendingIdentity) {
+          throw new Error('Native history snapshot changed');
+        }
         if (batch.length) {
           pending = filterNativePendingInputsByReceipts(pending, raw.inputReceipts, batch);
           // A consumed receipt whose event is outside this history generation
@@ -121,9 +190,25 @@ export async function fetchNativePendingHistory(
       }
       // Native history pages/cursors use the active key; sessionId is only valid
       // with messageId. Confirm physical identity again before publishing.
-      const current = await read({ limit: 1 });
+      if (cursorlessPendingPages) {
+        // Native cancellation/withdrawal changes neither the total nor the
+        // newest page. Check every older page, including rows without runId.
+        for (const [pendingBefore, identity] of cursorlessPendingPages) {
+          if (pendingBefore === undefined) continue;
+          const current = await read({ limit: 20, pendingBefore });
+          checkIdentity(current);
+          if (!isEmptyCanonicalHistoryWithoutCursor(current) || pendingPageIdentity(current) !== identity) {
+            throw new Error('Native history snapshot changed');
+          }
+        }
+      }
+      const current = await read({ limit: cursor ? 1 : FULL_HISTORY_SYNC_LIMIT });
       checkIdentity(current);
-      publishCanonical?.(messages, cursor);
+      if (!cursor && (!isEmptyCanonicalHistoryWithoutCursor(current) ||
+          pendingPageIdentity(current) !== cursorlessPendingIdentity)) {
+        throw new Error('Native history snapshot changed');
+      }
+      if (cursor) publishCanonical?.(messages, cursor);
       return {
         sessionKey,
         messages,
