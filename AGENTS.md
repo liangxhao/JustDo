@@ -322,6 +322,9 @@ when they clarify ownership, flow, or lifecycle.
 - Feature notes: `docs/features/`
 - Runtime patch developer guide: `docs/openclaw-runtime-patches.md`
 - User READMEs: `README.md`, `README_zh.md`
+- Offline downloads: `docs/offline-downloads.md`. Keep all future offline-download
+  instructions here, including URLs, filenames, destination paths and preparation
+  commands; update them when resource versions change.
 
 When architecture/data flow changes, update the relevant doc in the same change:
 `02-architecture`, `03-process-model`, `04-cowork-system`, `05-agent-engine`,

@@ -67,6 +67,7 @@
 - [外部 Agent 接入](developer-integration/external-agent-integration-guide.md)：适配器、认证、离线资源与发布检查。
 - [运行时补丁指南](openclaw-runtime-patches.md)：构建、验证和升级流程；能力清单以[当前版本目录](../scripts/patches/v2026.9.6/README.md)为准。
 - [Windows 安装器](windows-installer.md)：平台故障、数据归属和验证。
+- [离线下载指南](offline-downloads.md)：手动下载资源的地址、文件名、存放目录和准备命令；后续离线资源统一补充于此。
 
 运行时版本升级记录见[OpenClaw 升级目录](openclaw-upgrades/README.md)。
 
