@@ -19,9 +19,16 @@ const { createHash } = require('crypto');
 const { pipeline } = require('stream/promises');
 const { createZstdDecompress } = require('zlib');
 const asar = require('@electron/asar');
+const {
+  OPENCLAW_CLI_ROOT_FILES,
+  verifyPublicCliArchiveEntries,
+} = require('../openclaw/openclaw-runtime-companions.cjs');
 const yaml = require('js-yaml');
 const ts = require('typescript');
-const { ensurePortablePythonRuntime, checkRuntimeHealth } = require('../runtime/setup-python-runtime.js');
+const {
+  ensurePortablePythonRuntime,
+  checkRuntimeHealth,
+} = require('../runtime/setup-python-runtime.js');
 const { ensurePortableGit } = require('../runtime/setup-mingit.js');
 const { ensureLocalTts } = require('../runtime/setup-local-tts.js');
 const {
@@ -47,7 +54,11 @@ function readBuiltinModelDevelopmentAuthConfig(projectDir) {
   for (const statement of sourceFile.statements) {
     if (!ts.isVariableStatement(statement)) continue;
     for (const declaration of statement.declarationList.declarations) {
-      if (!ts.isIdentifier(declaration.name) || declaration.name.text !== 'BUILTIN_MODEL_AUTH_CONFIG') continue;
+      if (
+        !ts.isIdentifier(declaration.name) ||
+        declaration.name.text !== 'BUILTIN_MODEL_AUTH_CONFIG'
+      )
+        continue;
       let initializer = declaration.initializer;
       if (initializer && ts.isCallExpression(initializer) && initializer.arguments.length === 1) {
         initializer = initializer.arguments[0];
@@ -56,16 +67,23 @@ function readBuiltinModelDevelopmentAuthConfig(projectDir) {
     }
   }
   if (!configObject) {
-    throw new Error('[electron-builder-hooks] Cannot read the built-in model authentication config.');
+    throw new Error(
+      '[electron-builder-hooks] Cannot read the built-in model authentication config.',
+    );
   }
   const readStringProperty = name => {
-    const property = configObject.properties.find(candidate =>
-      ts.isPropertyAssignment(candidate) &&
-      ((ts.isIdentifier(candidate.name) && candidate.name.text === name) ||
-        (ts.isStringLiteral(candidate.name) && candidate.name.text === name)),
+    const property = configObject.properties.find(
+      candidate =>
+        ts.isPropertyAssignment(candidate) &&
+        ((ts.isIdentifier(candidate.name) && candidate.name.text === name) ||
+          (ts.isStringLiteral(candidate.name) && candidate.name.text === name)),
     );
-    if (!property || !ts.isPropertyAssignment(property) ||
-      (!ts.isStringLiteral(property.initializer) && !ts.isNoSubstitutionTemplateLiteral(property.initializer))) {
+    if (
+      !property ||
+      !ts.isPropertyAssignment(property) ||
+      (!ts.isStringLiteral(property.initializer) &&
+        !ts.isNoSubstitutionTemplateLiteral(property.initializer))
+    ) {
       throw new Error(`[electron-builder-hooks] ${name} must be a string literal.`);
     }
     return property.initializer.text;
@@ -93,7 +111,9 @@ const {
   prepareBrowserExtension,
   verifyBrowserExtension,
 } = require('../browser/prepare-browser-extension.cjs');
-const { compileBrowserExtensionNativeHost } = require('../browser/prepare-browser-extension-dev-host.cjs');
+const {
+  compileBrowserExtensionNativeHost,
+} = require('../browser/prepare-browser-extension-dev-host.cjs');
 const {
   PATCH_MANIFEST_FILENAME,
   verifyOpenClawPatchManifest,
@@ -308,7 +328,10 @@ function verifyBundledLocalExtensions(runtimeRoot, buildHint) {
 function verifyAcpxArtifactEntryPaths(entryPaths, prefix, installTarget, buildHint) {
   const acpxPrefix = `${prefix}dist/extensions/acpx/`;
   const sourceManifest = JSON.parse(
-    readFileSync(path.join(__dirname, '../..', 'openclaw-extensions', 'acpx', 'package.json'), 'utf8'),
+    readFileSync(
+      path.join(__dirname, '../..', 'openclaw-extensions', 'acpx', 'package.json'),
+      'utf8',
+    ),
   );
   const dependencies = sourceManifest.dependencies || {};
   const includesClaudeAdapter = Boolean(dependencies['@agentclientprotocol/claude-agent-acp']);
@@ -424,8 +447,7 @@ function verifyBundledOpenClawRuntimeFiles(runtimeRoot, buildHint) {
       'gateway-bundle.mjs',
       'gateway-launcher.cjs',
       'gateway.asar',
-      'openclaw.mjs',
-      'node-version.mjs',
+      ...OPENCLAW_CLI_ROOT_FILES,
       'docs/channels/index.md',
       'docs/gateway/config-channels.md',
       'docs/reference/templates/AGENTS.md',
@@ -443,7 +465,7 @@ function verifyBundledOpenClawRuntimeFiles(runtimeRoot, buildHint) {
 function verifyBareOpenClawCliRuntime(runtimeRoot, buildHint, label) {
   verifyRequiredPathSet(
     runtimeRoot,
-    ['package.json', 'openclaw.mjs', 'node-version.mjs'],
+    ['package.json', ...OPENCLAW_CLI_ROOT_FILES],
     label,
     buildHint,
   );
@@ -549,6 +571,7 @@ async function ensureBundledOpenClawRuntime(context) {
     }
 
     const hasOpenClawEntry = entries.has('/openclaw.mjs');
+    verifyPublicCliArchiveEntries(entries);
     const hasNodeVersion = entries.has('/node-version.mjs');
     const hasPackageMetadata = entries.has('/package.json');
     const hasControlUiIndex = entries.has('/dist/control-ui/index.html');
@@ -986,8 +1009,7 @@ async function beforePack(context) {
       `cfmind/${PATCH_MANIFEST_FILENAME}`,
       'cfmind/gateway-bundle.mjs',
       'cfmind/gateway-launcher.cjs',
-      'cfmind/openclaw.mjs',
-      'cfmind/node-version.mjs',
+      ...OPENCLAW_CLI_ROOT_FILES.map(name => `cfmind/${name}`),
       'cfmind/docs/channels/index.md',
       'cfmind/docs/gateway/config-channels.md',
       'cfmind/docs/reference/templates/AGENTS.md',
@@ -1617,8 +1639,7 @@ async function verifyPackagedOpenClawRuntime(context) {
         'cfmind/runtime-build-info.json',
         'cfmind/gateway-bundle.mjs',
         'cfmind/package.json',
-        'cfmind/openclaw.mjs',
-        'cfmind/node-version.mjs',
+        ...OPENCLAW_CLI_ROOT_FILES.map(name => `cfmind/${name}`),
         'cfmind/dist/entry.js',
         'cfmind/dist/entry.mjs',
         'cfmind/npm-shrinkwrap.json',
@@ -1669,6 +1690,7 @@ async function verifyPackagedOpenClawRuntime(context) {
     const packagedRuntimeRoot = path.join(resourcesRoot, 'cfmind');
     verifyOpenClawPatchManifest(packagedRuntimeRoot, {
       expectedTarget: resolveOpenClawRuntimeTargetId(context),
+      allowOmittedGatewayAsar: true,
     });
     verifyBareOpenClawCliRuntime(
       packagedRuntimeRoot,

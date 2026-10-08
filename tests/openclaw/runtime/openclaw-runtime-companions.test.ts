@@ -11,12 +11,34 @@ const {
   hasStaleRuntimeWorkerImportMetaUrl,
   rewriteRuntimeWorkerImportMetaUrls,
   syncRuntimeBundledAssets,
+  OPENCLAW_CLI_ROOT_FILES,
+  verifyPublicCliRootFiles,
+  verifyPublicCliArchiveEntries,
 } = require('../../../scripts/openclaw/openclaw-runtime-companions.cjs') as {
   getRuntimeCompanionPathsReferencedByBundle: (bundle: string) => string[];
   hasStaleRuntimeWorkerImportMetaUrl: (bundle: string) => boolean;
   rewriteRuntimeWorkerImportMetaUrls: (source: string, replacement: string) => string;
   syncRuntimeBundledAssets: (runtimeRoot: string, bundle: string) => string[];
+  OPENCLAW_CLI_ROOT_FILES: string[];
+  verifyPublicCliRootFiles: (runtimeRoot: string) => void;
+  verifyPublicCliArchiveEntries: (entries: Set<string>) => void;
 };
+
+it('requires native CLI helpers in both bare and archived runtimes', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-cli-companions-'));
+  try {
+    for (const name of OPENCLAW_CLI_ROOT_FILES) fs.writeFileSync(path.join(root, name), 'export {};');
+    const entries = new Set(OPENCLAW_CLI_ROOT_FILES.map(name => '/' + name));
+    expect(() => verifyPublicCliRootFiles(root)).not.toThrow();
+    expect(() => verifyPublicCliArchiveEntries(entries)).not.toThrow();
+    fs.rmSync(path.join(root, 'cli-root-options.mjs'));
+    entries.delete('/cli-root-options.mjs');
+    expect(() => verifyPublicCliRootFiles(root)).toThrow('cli-root-options.mjs');
+    expect(() => verifyPublicCliArchiveEntries(entries)).toThrow('cli-root-options.mjs');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 describe('OpenClaw runtime companions', () => {
   it('keeps the Windows command Job launcher in dist after bundling', () => {

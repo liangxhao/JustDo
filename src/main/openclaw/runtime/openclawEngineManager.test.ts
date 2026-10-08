@@ -5,6 +5,7 @@ import path from 'node:path';
 
 import { expect, test, vi } from 'vitest';
 
+import cliRuntimeFiles from '../../../shared/openclaw/cliRuntimeFiles.json';
 import { PRODUCT_NAME_LOWERCASE } from '../../../shared/productMetadata';
 import {
   applyOpenClawCliNetworkMode,
@@ -76,7 +77,9 @@ test('resolves the public OpenClaw CLI independently from the Gateway bundle', (
   try {
     const archivedEntry = path.join(directory, 'gateway.asar', 'openclaw.mjs');
     fs.mkdirSync(path.dirname(archivedEntry), { recursive: true });
-    fs.writeFileSync(archivedEntry, '');
+    for (const name of cliRuntimeFiles) {
+      fs.writeFileSync(path.join(directory, 'gateway.asar', name), '');
+    }
     fs.writeFileSync(path.join(directory, 'gateway-bundle.mjs'), '');
     fs.writeFileSync(path.join(directory, 'gateway-launcher.cjs'), '');
 
@@ -84,7 +87,12 @@ test('resolves the public OpenClaw CLI independently from the Gateway bundle', (
 
     const bareEntry = path.join(directory, 'openclaw.mjs');
     fs.writeFileSync(bareEntry, '');
+    expect(resolveOpenClawCliEntry(directory)).toBe(archivedEntry);
+    for (const name of cliRuntimeFiles) fs.writeFileSync(path.join(directory, name), '');
     expect(resolveOpenClawCliEntry(directory)).toBe(bareEntry);
+    fs.rmSync(path.join(directory, 'cli-root-options.mjs'));
+    fs.rmSync(path.join(directory, 'gateway.asar', 'cli-root-options.mjs'));
+    expect(resolveOpenClawCliEntry(directory)).toBeNull();
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

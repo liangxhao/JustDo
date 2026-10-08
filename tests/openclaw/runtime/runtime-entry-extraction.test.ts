@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import { createPackage } from '@electron/asar';
 import { afterEach, expect, test } from 'vitest';
+import cliRuntimeFiles from '../../../src/shared/openclaw/cliRuntimeFiles.json';
 
 const { extractRuntimeEntryFiles } =
   require('../../../scripts/openclaw/sync-openclaw-runtime-current.cjs') as {
@@ -12,14 +13,15 @@ const { extractRuntimeEntryFiles } =
 
 const temporaryRoots: string[] = [];
 
-async function createFixture() {
+async function createFixture(omittedFile?: string) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-runtime-extraction-'));
   temporaryRoots.push(root);
   const source = path.join(root, 'source');
   const runtimeRoot = path.join(root, 'runtime');
-  const files = {
-    'openclaw.mjs': '// CLI',
-    'node-version.mjs': '// version',
+  const files: Record<string, string> = {
+    ...Object.fromEntries(
+      cliRuntimeFiles.filter(name => name !== omittedFile).map(name => [name, '// CLI']),
+    ),
     'package.json': '{}',
     'dist/entry.js': '// entry',
     'dist/config/sessions/session-transcript.worker.js': '// transcript worker',
@@ -40,7 +42,7 @@ afterEach(() => {
 
 test('extracts nested workers even when all CLI entry files already exist', async () => {
   const { runtimeRoot, files } = await createFixture();
-  for (const name of ['openclaw.mjs', 'node-version.mjs', 'dist/entry.js', 'package.json']) {
+  for (const name of [...cliRuntimeFiles, 'dist/entry.js', 'package.json']) {
     fs.mkdirSync(path.dirname(path.join(runtimeRoot, name)), { recursive: true });
     fs.writeFileSync(path.join(runtimeRoot, name), 'existing frozen file');
   }
@@ -71,4 +73,11 @@ test('reports extraction failures instead of treating them as directory entries'
   fs.writeFileSync(path.join(runtimeRoot, 'dist'), 'invalid directory');
 
   expect(() => extractRuntimeEntryFiles(runtimeRoot)).toThrow();
+});
+
+test('rejects an archive missing a native CLI helper before extracting any file', async () => {
+  const { runtimeRoot } = await createFixture('cli-root-options.mjs');
+
+  expect(() => extractRuntimeEntryFiles(runtimeRoot)).toThrow('cli-root-options.mjs');
+  expect(fs.readdirSync(runtimeRoot)).toEqual(['gateway.asar']);
 });

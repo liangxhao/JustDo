@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { OPENCLAW_CLI_ROOT_FILES, verifyPublicCliArchiveEntries } = require('./openclaw-runtime-companions.cjs');
 
 function fail(message) {
   console.error(`[sync-openclaw-runtime-current] ${message}`);
@@ -12,11 +13,13 @@ function extractRuntimeEntryFiles(runtimeRoot) {
   const gatewayAsarPath = path.join(runtimeRoot, 'gateway.asar');
   if (!fs.existsSync(gatewayAsarPath)) return 0;
   const asar = require('@electron/asar');
+  const entries = asar.listPackage(gatewayAsarPath);
+  verifyPublicCliArchiveEntries(new Set(entries.map(entry => entry.replace(/\\/g, '/'))));
   let extracted = 0;
-  for (const entry of asar.listPackage(gatewayAsarPath)) {
+  for (const entry of entries) {
     const normalized = entry.replace(/\\/g, '/').replace(/^\//, '');
     if (
-      !['openclaw.mjs', 'node-version.mjs', 'package.json'].includes(normalized) &&
+      ![...OPENCLAW_CLI_ROOT_FILES, 'package.json'].includes(normalized) &&
       !normalized.startsWith('dist/')
     )
       continue;

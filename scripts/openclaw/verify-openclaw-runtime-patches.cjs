@@ -3,7 +3,10 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const { verifyRuntimeCompanionFiles } = require('./openclaw-runtime-companions.cjs');
+const {
+  verifyRuntimeCompanionFiles,
+  verifyPublicCliRootFiles,
+} = require('./openclaw-runtime-companions.cjs');
 
 const PATCH_MANIFEST_FILENAME = 'runtime-patch-manifest.json';
 const PATCH_MANIFEST_FORMAT_VERSION = 2;
@@ -36,6 +39,7 @@ const BUILD_RECIPE_FILES = [
   'scripts/openclaw/prune-openclaw-runtime.cjs',
   'scripts/openclaw/pack-openclaw-tar.cjs',
   'src/main/openclaw/runtime/openclawGatewayBundleLauncher.cjs',
+  'src/shared/openclaw/cliRuntimeFiles.json',
   'src/shared/security/mxcNativeBinaries.json',
   'resources/openclaw-extension-prune.json',
   'resources/builtin-skills.json',
@@ -347,6 +351,7 @@ function buildOpenClawPatchManifest(runtimeRoot, options = {}) {
   ) {
     throw new Error(`OpenClaw runtime source artifacts are incomplete: ${runtimeRoot}`);
   }
+  if (!gatewayAsarExists) verifyPublicCliRootFiles(runtimeRoot);
 
   const patchFiles = listPatchFiles(repoRoot, version);
   if (patchFiles.length === 0) {

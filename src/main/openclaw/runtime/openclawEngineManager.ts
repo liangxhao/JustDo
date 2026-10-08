@@ -6,6 +6,7 @@ import fs from 'fs';
 import net from 'net';
 import path from 'path';
 
+import OPENCLAW_CLI_ROOT_FILES from '../../../shared/openclaw/cliRuntimeFiles.json';
 import { DEFAULT_OPENCLAW_GATEWAY_PORT } from '../../../shared/openclaw/constants';
 import {
   GatewayPortSetErrorCode,
@@ -177,11 +178,15 @@ const findPath = (candidates: string[]): string | null => {
   return null;
 };
 
-export const resolveOpenClawCliEntry = (runtimeRoot: string): string | null =>
-  findPath([
-    path.join(runtimeRoot, 'openclaw.mjs'),
-    path.join(runtimeRoot, 'gateway.asar', 'openclaw.mjs'),
-  ]);
+const hasOpenClawCliRootFiles = (root: string): boolean =>
+  OPENCLAW_CLI_ROOT_FILES.every(name => fs.existsSync(path.join(root, name)));
+
+export const resolveOpenClawCliEntry = (runtimeRoot: string): string | null => {
+  for (const root of [runtimeRoot, path.join(runtimeRoot, 'gateway.asar')]) {
+    if (hasOpenClawCliRootFiles(root)) return path.join(root, 'openclaw.mjs');
+  }
+  return null;
+};
 
 export const resolveOpenClawGatewayBundleEntry = (
   runtimeRoot: string,
@@ -1386,10 +1391,9 @@ export class OpenClawEngineManager extends EventEmitter {
     }
 
     console.log('[OpenClaw] ensureBareEntryFiles: no bundle found, checking bare files');
-    const bareEntry = path.join(runtimeRoot, 'openclaw.mjs');
     const bareDistEntry = path.join(runtimeRoot, 'dist', 'entry.js');
 
-    if (fs.existsSync(bareEntry) && fs.existsSync(bareDistEntry)) {
+    if (hasOpenClawCliRootFiles(runtimeRoot) && fs.existsSync(bareDistEntry)) {
       return;
     }
 
@@ -1398,13 +1402,18 @@ export class OpenClawEngineManager extends EventEmitter {
     if (!fs.existsSync(asarEntry)) {
       return;
     }
+    if (!hasOpenClawCliRootFiles(asarRoot)) {
+      throw new Error('OpenClaw public CLI archive is incomplete; rebuild the runtime.');
+    }
 
     console.log('[OpenClaw] ensureBareEntryFiles: extracting from gateway.asar (no bundle)');
 
     try {
-      if (!fs.existsSync(bareEntry)) {
-        fs.writeFileSync(bareEntry, fs.readFileSync(asarEntry));
-        console.log('[OpenClaw] Extracted openclaw.mjs');
+      for (const name of OPENCLAW_CLI_ROOT_FILES) {
+        const bareFile = path.join(runtimeRoot, name);
+        if (!fs.existsSync(bareFile)) {
+          fs.writeFileSync(bareFile, fs.readFileSync(path.join(asarRoot, name)));
+        }
       }
 
       const asarDist = path.join(asarRoot, 'dist');

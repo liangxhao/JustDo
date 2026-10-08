@@ -2,6 +2,19 @@
 
 const fs = require('fs');
 const path = require('path');
+const OPENCLAW_CLI_ROOT_FILES = require('../../src/shared/openclaw/cliRuntimeFiles.json');
+
+function verifyPublicCliRootFiles(runtimeRoot) {
+  const missing = OPENCLAW_CLI_ROOT_FILES.filter(
+    name => !fs.statSync(path.join(runtimeRoot, name), { throwIfNoEntry: false })?.isFile(),
+  );
+  if (missing.length) throw new Error('OpenClaw public CLI bootstrap is incomplete: ' + missing.join(', '));
+}
+
+function verifyPublicCliArchiveEntries(entries) {
+  const missing = OPENCLAW_CLI_ROOT_FILES.filter(name => !entries.has('/' + name));
+  if (missing.length) throw new Error('OpenClaw public CLI archive is incomplete: ' + missing.join(', '));
+}
 
 const RUNTIME_COMPANION_CHECKS = [
   { marker: 'resolveStartupMigrationBuildIdentity', path: 'build-info.json' },
@@ -194,9 +207,12 @@ function syncRuntimeBundledAssets(runtimeRoot, bundle) {
 }
 
 module.exports = {
+  OPENCLAW_CLI_ROOT_FILES,
   getRuntimeCompanionPathsReferencedByBundle,
   hasStaleRuntimeWorkerImportMetaUrl,
   rewriteRuntimeWorkerImportMetaUrls,
   syncRuntimeBundledAssets,
   verifyRuntimeCompanionFiles,
+  verifyPublicCliRootFiles,
+  verifyPublicCliArchiveEntries,
 };

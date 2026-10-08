@@ -30,6 +30,11 @@ const {
 } = require('./openclaw-runtime-staging.cjs');
 const { verifyPristineOpenClawContracts } = require('./verify-openclaw-pristine-contracts.cjs');
 const {
+  OPENCLAW_CLI_ROOT_FILES,
+  verifyPublicCliRootFiles,
+  verifyPublicCliArchiveEntries,
+} = require('./openclaw-runtime-companions.cjs');
+const {
   buildOpenClawBuildRecipeFingerprint,
   buildOpenClawPatchSetFingerprint,
   hashFile,
@@ -438,6 +443,7 @@ function installProdDeps(runtimeDir, npmPlatform, npmArch, isolatedStateDir) {
 // ===========================================================================
 
 async function packGatewayAsar(electronRoot, runtimeRoot) {
+  verifyPublicCliRootFiles(runtimeRoot);
   const { createRequire } = require('module');
   const requireFromElectronRoot = createRequire(path.join(electronRoot, 'package.json'));
   const asar = requireFromElectronRoot('@electron/asar');
@@ -471,7 +477,7 @@ async function packGatewayAsar(electronRoot, runtimeRoot) {
 
     // Keep the complete public CLI bootstrap inside the archive. The Gateway
     // bundle is a dedicated entry point and cannot serve arbitrary CLI commands.
-    for (const name of ['openclaw.mjs', 'node-version.mjs', 'package.json', 'dist']) {
+    for (const name of [...OPENCLAW_CLI_ROOT_FILES, 'package.json', 'dist']) {
       const src = path.join(runtimeRoot, name);
       fs.cpSync(src, path.join(stageRoot, name), { recursive: true, force: true });
     }
@@ -482,6 +488,7 @@ async function packGatewayAsar(electronRoot, runtimeRoot) {
 
     // Validate asar contents.
     const entries = new Set(asar.listPackage(gatewayAsarPath).map(e => e.replace(/\\/g, '/')));
+    verifyPublicCliArchiveEntries(entries);
     const hasOpenClawEntry = entries.has('/openclaw.mjs');
     const hasNodeVersion = entries.has('/node-version.mjs');
     const hasPackageMetadata = entries.has('/package.json');

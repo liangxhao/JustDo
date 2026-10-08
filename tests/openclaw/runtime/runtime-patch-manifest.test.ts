@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { afterEach, describe, expect, test } from 'vitest';
+import cliRuntimeFiles from '../../../src/shared/openclaw/cliRuntimeFiles.json';
 
 const {
   PATCH_MANIFEST_FILENAME,
@@ -151,6 +152,11 @@ function createFixture() {
     '// fixture\n',
   );
   fs.mkdirSync(path.join(repoRoot, 'src', 'shared', 'security'), { recursive: true });
+  fs.mkdirSync(path.join(repoRoot, 'src', 'shared', 'openclaw'), { recursive: true });
+  fs.writeFileSync(
+    path.join(repoRoot, 'src', 'shared', 'openclaw', 'cliRuntimeFiles.json'),
+    JSON.stringify(cliRuntimeFiles),
+  );
   fs.writeFileSync(
     path.join(repoRoot, 'src', 'shared', 'security', 'mxcNativeBinaries.json'),
     '{}\n',
@@ -732,6 +738,23 @@ module.exports = { applyPatch, verifyPatch };
     );
   });
 
+  test('accepts omitted archives only when all bare CLI helpers remain', () => {
+    const { repoRoot, runtimeRoot } = createFixture();
+    writeOpenClawPatchManifest(runtimeRoot, { repoRoot });
+    fs.rmSync(path.join(runtimeRoot, 'gateway.asar'));
+    for (const name of cliRuntimeFiles) {
+      fs.writeFileSync(path.join(runtimeRoot, name), 'export {};');
+    }
+
+    expect(() =>
+      verifyOpenClawPatchManifest(runtimeRoot, { repoRoot, allowOmittedGatewayAsar: true }),
+    ).not.toThrow();
+    fs.rmSync(path.join(runtimeRoot, 'cli-root-options.mjs'));
+    expect(() =>
+      verifyOpenClawPatchManifest(runtimeRoot, { repoRoot, allowOmittedGatewayAsar: true }),
+    ).toThrow('cli-root-options.mjs');
+  });
+
   test('verifies the patch proof copied into the packaged Windows runtime archive', async () => {
     const repositoryRoot = path.resolve(__dirname, '../../..');
     const sourceLock = readOpenClawSourceLock(repositoryRoot, 'v2026.9.8');
@@ -746,8 +769,9 @@ module.exports = { applyPatch, verifyPatch };
     fs.writeFileSync(path.join(runtimeRoot, 'gateway.asar'), 'packaged asar\n');
     fs.writeFileSync(path.join(runtimeRoot, 'package.json'), '{}\n');
     fs.writeFileSync(path.join(runtimeRoot, 'npm-shrinkwrap.json'), '{}\n');
-    fs.writeFileSync(path.join(runtimeRoot, 'openclaw.mjs'), 'export {};\n');
-    fs.writeFileSync(path.join(runtimeRoot, 'node-version.mjs'), 'export default "24";\n');
+    for (const name of cliRuntimeFiles) {
+      fs.writeFileSync(path.join(runtimeRoot, name), 'export {};\n');
+    }
     fs.mkdirSync(path.join(runtimeRoot, 'dist'), { recursive: true });
     fs.writeFileSync(path.join(runtimeRoot, 'dist', 'entry.js'), 'export {};\n');
     const acpxFixtureFiles = [
