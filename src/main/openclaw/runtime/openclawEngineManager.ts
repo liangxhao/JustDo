@@ -611,11 +611,6 @@ export class OpenClawEngineManager extends EventEmitter {
       return this.getStatus();
     }
 
-    const localExtensionSync = syncLocalOpenClawExtensionsIntoRuntime(runtime.root);
-    if (localExtensionSync.copied.length > 0) {
-      console.log(`[OpenClaw] synced local extensions: ${localExtensionSync.copied.join(', ')}`);
-    }
-
     if (this.status.phase === 'running') {
       return this.getStatus();
     }
@@ -1056,6 +1051,25 @@ export class OpenClawEngineManager extends EventEmitter {
       });
       return this.getStatus();
     }
+
+    // Source extensions are prepared once per cold launch, under startGatewayPromise.
+    // Readiness/CLI queries must never rewrite plugins in a running Gateway.
+    try {
+      const localExtensionSync = await syncLocalOpenClawExtensionsIntoRuntime(runtime.root);
+      if (localExtensionSync.copied.length > 0) {
+        console.log(`[OpenClaw] synced local extensions: ${localExtensionSync.copied.join(', ')}`);
+      }
+    } catch (error) {
+      if (this.shutdownRequested) return this.getStatus();
+      this.setStatus({
+        phase: 'error',
+        version: runtime.version,
+        message: `OpenClaw local extension preparation failed: ${String(error)}`,
+        canRetry: true,
+      });
+      return this.getStatus();
+    }
+    if (this.shutdownRequested) return this.getStatus();
 
     try {
       await this.prepareNetworkGeneration();

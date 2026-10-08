@@ -35,6 +35,7 @@ describe('openclawLocalExtensions', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     Object.defineProperty(process, 'resourcesPath', {
       configurable: true,
       value: originalResourcesPath,
@@ -117,7 +118,7 @@ describe('openclawLocalExtensions', () => {
     });
   });
 
-  it('syncs local extension sources into the runtime', () => {
+  it('syncs local extension sources into the runtime', async () => {
     electronApp.isPackaged = false;
     electronApp.getAppPath.mockReturnValue(resourcesDir);
     const sourceDir = path.join(resourcesDir, 'openclaw-extensions', 'automation-permission');
@@ -130,13 +131,13 @@ describe('openclawLocalExtensions', () => {
       JSON.stringify({ id: 'automation-permission' }),
     );
 
-    expect(syncLocalOpenClawExtensionsIntoRuntime(runtimeRoot).copied).toEqual([
+    expect((await syncLocalOpenClawExtensionsIntoRuntime(runtimeRoot)).copied).toEqual([
       'automation-permission',
     ]);
     expect(fs.existsSync(path.join(targetExtensionsDir, 'automation-permission'))).toBe(true);
   });
 
-  it('does not sync through an extensions directory link outside the runtime root', () => {
+  it('does not sync through an extensions directory link outside the runtime root', async () => {
     electronApp.isPackaged = false;
     electronApp.getAppPath.mockReturnValue(resourcesDir);
     const sourceDir = path.join(resourcesDir, 'openclaw-extensions', 'automation-permission');
@@ -162,7 +163,70 @@ describe('openclawLocalExtensions', () => {
       return;
     }
 
-    expect(syncLocalOpenClawExtensionsIntoRuntime(runtimeRoot).copied).toEqual([]);
+    expect((await syncLocalOpenClawExtensionsIntoRuntime(runtimeRoot)).copied).toEqual([]);
     expect(fs.readFileSync(externalMarker, 'utf8')).toBe('do not overwrite');
+  });
+
+  it('keeps the event loop responsive while copying dependency files', async () => {
+    electronApp.isPackaged = false;
+    electronApp.getAppPath.mockReturnValue(resourcesDir);
+    const sourceDir = path.join(resourcesDir, 'openclaw-extensions', 'source-plugin');
+    const runtimeRoot = path.join(resourcesDir, 'runtime');
+    fs.mkdirSync(sourceDir, { recursive: true });
+    fs.mkdirSync(path.join(runtimeRoot, 'dist', 'extensions'), { recursive: true });
+    for (let index = 0; index < 100; index += 1) {
+      fs.writeFileSync(path.join(sourceDir, `${index}.js`), `export const value = ${index};`);
+    }
+    let ticks = 0;
+    const heartbeat = setInterval(() => {
+      ticks += 1;
+    }, 1);
+    try {
+      await syncLocalOpenClawExtensionsIntoRuntime(runtimeRoot);
+      expect(ticks).toBeGreaterThan(1);
+      expect(
+        fs.readFileSync(path.join(runtimeRoot, 'dist/extensions/source-plugin/99.js'), 'utf8'),
+      ).toBe('export const value = 99;');
+    } finally {
+      clearInterval(heartbeat);
+    }
+  });
+
+  it('refreshes source changes on the next preparation and preserves compiled plugins', async () => {
+    electronApp.isPackaged = false;
+    electronApp.getAppPath.mockReturnValue(resourcesDir);
+    const sourceRoot = path.join(resourcesDir, 'openclaw-extensions');
+    const runtimeRoot = path.join(resourcesDir, 'runtime');
+    const targetRoot = path.join(runtimeRoot, 'dist', 'extensions');
+    for (const name of ['source-plugin', 'compiled-plugin']) {
+      fs.mkdirSync(path.join(sourceRoot, name), { recursive: true });
+      fs.writeFileSync(path.join(sourceRoot, name, 'index.ts'), 'first');
+    }
+    fs.mkdirSync(path.join(targetRoot, 'compiled-plugin'), { recursive: true });
+    fs.writeFileSync(path.join(targetRoot, 'compiled-plugin', 'index.js'), 'compiled');
+
+    await syncLocalOpenClawExtensionsIntoRuntime(runtimeRoot);
+    fs.writeFileSync(path.join(sourceRoot, 'source-plugin', 'index.ts'), 'updated');
+    await syncLocalOpenClawExtensionsIntoRuntime(runtimeRoot);
+
+    expect(fs.readFileSync(path.join(targetRoot, 'source-plugin', 'index.ts'), 'utf8')).toBe(
+      'updated',
+    );
+    expect(fs.readFileSync(path.join(targetRoot, 'compiled-plugin', 'index.js'), 'utf8')).toBe(
+      'compiled',
+    );
+    expect(fs.existsSync(path.join(targetRoot, 'compiled-plugin', 'index.ts'))).toBe(false);
+  });
+
+  it('reports permission errors instead of treating an inaccessible runtime as prepared', async () => {
+    electronApp.isPackaged = false;
+    electronApp.getAppPath.mockReturnValue(resourcesDir);
+    fs.mkdirSync(path.join(resourcesDir, 'openclaw-extensions'), { recursive: true });
+    const permissionError = Object.assign(new Error('Access denied'), { code: 'EACCES' });
+    vi.spyOn(fs.promises, 'stat').mockRejectedValueOnce(permissionError);
+
+    await expect(
+      syncLocalOpenClawExtensionsIntoRuntime(path.join(resourcesDir, 'runtime')),
+    ).rejects.toBe(permissionError);
   });
 });

@@ -50,6 +50,7 @@ import {
   listBrowserHistory,
   listChromeImportSources,
 } from '../../browser/browserDataImportService';
+import { readBrowserExtensionPairing } from '../../browser/browserExtensionPairing';
 import { isBrowserPdfLoadRequest, loadBrowserPdf } from '../../browser/browserPdfService';
 import { createLocalHtmlPreview } from '../../browser/localHtmlPreviewServer';
 import type { GatewayClientLike } from '../../engine/gateway/types';
@@ -282,96 +283,16 @@ const resolveBrowserExtensionPath = (): string => {
   return extensionPath;
 };
 
-const parseBrowserExtensionPairingResult = (
-  raw: string,
-): { pairingString: string; relayPort: number } => {
-  const invalid = () => new Error('OpenClaw returned an invalid browser extension pairing result.');
-  let value: unknown;
-  try {
-    value = JSON.parse(raw);
-  } catch {
-    throw invalid();
-  }
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalid();
-  const { pairingString, relayPort } = value as {
-    pairingString?: unknown;
-    relayPort?: unknown;
-  };
-  if (
-    typeof pairingString !== 'string' ||
-    !Number.isInteger(relayPort) ||
-    (relayPort as number) < 1 ||
-    (relayPort as number) > 65_535
-  ) {
-    throw invalid();
-  }
-  const fragmentAt = pairingString.lastIndexOf('#');
-  const token = pairingString.slice(fragmentAt + 1);
-  let relayUrl: URL;
-  try {
-    relayUrl = new URL(pairingString.slice(0, fragmentAt));
-  } catch {
-    throw invalid();
-  }
-  if (
-    fragmentAt <= 0 ||
-    !/^[0-9a-f]{64}$/.test(token) ||
-    relayUrl.protocol !== 'ws:' ||
-    relayUrl.hostname !== '127.0.0.1' ||
-    relayUrl.pathname !== '/extension' ||
-    Number(relayUrl.port) !== relayPort ||
-    relayUrl.username ||
-    relayUrl.password
-  ) {
-    throw invalid();
-  }
-  return { pairingString, relayPort: relayPort as number };
-};
-
-export const buildBrowserPairingCommandEnvironment = (
-  cli: OpenClawCliEnvironment,
-): NodeJS.ProcessEnv => ({
-  ...cli.env,
-  ELECTRON_RUN_AS_NODE: '1',
-  // OpenClaw adds Windows Node flags by respawning the CLI. Under Electron that
-  // respawn restores electron.exe in argv[0], which Commander treats as a
-  // command name. The launcher already runs on the supported embedded Node.
-  OPENCLAW_NO_RESPAWN: '1',
-});
-
-const OPENCLAW_ELECTRON_CLI_BOOTSTRAP =
-  "process.argv[0]='node';import(require('node:url').pathToFileURL(process.argv[1]).href)";
-
-export const buildBrowserExtensionPairingCommandArgs = (openclawEntry: string): string[] => [
-  '-e',
-  OPENCLAW_ELECTRON_CLI_BOOTSTRAP,
-  openclawEntry,
-  'browser',
-  'extension',
-  'pair',
-  '--json',
-];
+export {
+  buildBrowserExtensionPairingCommandArgs,
+  buildBrowserPairingCommandEnvironment,
+} from '../../browser/browserExtensionPairing';
 
 export const copyBrowserExtensionPairing = async (
   buildCliEnvironment: () => Promise<OpenClawCliEnvironment>,
-  runPairCommand: (cli: OpenClawCliEnvironment) => Promise<string> = async cli => {
-    const executable = cli.env.JUSTDO_ELECTRON_PATH?.trim() || process.execPath;
-    const { stdout } = await execFileAsync(
-      executable,
-      buildBrowserExtensionPairingCommandArgs(cli.openclawEntry),
-      {
-        cwd: cli.runtimeRoot,
-        env: buildBrowserPairingCommandEnvironment(cli),
-        timeout: 15_000,
-        maxBuffer: 1024 * 1024,
-        windowsHide: true,
-      },
-    );
-    return stdout;
-  },
+  runPairCommand?: (cli: OpenClawCliEnvironment) => Promise<string>,
 ): Promise<void> => {
-  const cli = await buildCliEnvironment();
-  const result = parseBrowserExtensionPairingResult(await runPairCommand(cli));
+  const result = await readBrowserExtensionPairing(buildCliEnvironment, 'relay', runPairCommand);
   clipboard.writeText(result.pairingString);
   console.log(
     `[BrowserSettings] Browser extension pairing copied (relayPort=${result.relayPort}).`,

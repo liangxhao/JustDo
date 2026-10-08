@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 
 const { prepareBrowserExtension, verifyBrowserExtension } =
   require('../../scripts/browser/prepare-browser-extension.cjs') as {
@@ -47,6 +47,99 @@ const createFixture = () => {
 };
 
 describe('browser extension preparation', () => {
+  test('reads bootstrap status without starting another pairing request', async () => {
+    const repoRoot = createFixture();
+    try {
+      const prepared = prepareBrowserExtension({ repoRoot });
+      const background = fs.readFileSync(path.join(prepared.outputDir, 'background.js'), 'utf8');
+      const getter = background.match(
+        /getNativeBootstrapStatus: (async \(\) => \{[\s\S]*?\n  \}),/,
+      );
+      expect(getter).not.toBeNull();
+      const attempt = vi.fn();
+      const status = vi.fn(async () => ({ disabled: false, state: 'waiting' }));
+      const readStatus = vm.runInNewContext(`(${getter![1]})`, {
+        tabAccessReady: Promise.resolve(),
+        retiredCopilotCustodyBlocked: false,
+        nativeBootstrap: { attempt, status },
+      });
+
+      await readStatus();
+      await readStatus();
+
+      expect(status).toHaveBeenCalledTimes(2);
+      expect(attempt).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+  test.each(['apply', 'disconnect', 'manual'])(
+    'preserves native controller custody with the product transport: %s',
+    async outcome => {
+      const repoRoot = createFixture();
+      try {
+        const prepared = prepareBrowserExtension({ repoRoot });
+        const source = fs.readFileSync(
+          path.join(prepared.outputDir, 'modules/native-bootstrap.js'),
+          'utf8',
+        );
+        const background = fs.readFileSync(path.join(prepared.outputDir, 'background.js'), 'utf8');
+        expect(background).toContain('requestBootstrap: requestLocalBootstrap');
+        const createController = vm.runInNewContext(
+          source.replace(/^import .*;$/gm, '').replace(/\bexport /g, '') +
+            ';createNativeBootstrapController',
+          {
+            randomRelayBase64Url: () => 'nonce',
+            parsePairingString: () => ({ relayUrl: 'fixture' }),
+            ACCESS_MODE_ALL: 'all',
+            crypto: {},
+          },
+        );
+        const stored: Record<string, unknown> = {};
+        let resolveBootstrap!: (value: unknown) => void;
+        let requests = 0;
+        let applied = 0;
+        let pairing: { relayUrl: string } | undefined;
+        const controller = createController({
+          chromeApi: {
+            storage: {
+              local: {
+                get: async () => ({ ...stored }),
+                set: async (values: Record<string, unknown>) => Object.assign(stored, values),
+                remove: async (keys: string[]) =>
+                  keys.forEach(key => {
+                    delete stored[key];
+                  }),
+              },
+            },
+          },
+          getPairing: async () => pairing,
+          applyPairing: async () => {
+            applied += 1;
+            return { ok: true };
+          },
+          requestBootstrap: () => {
+            requests += 1;
+            return new Promise(resolve => {
+              resolveBootstrap = resolve;
+            });
+          },
+        });
+        const first = controller.attempt();
+        const second = controller.attempt();
+        while (!resolveBootstrap) await Promise.resolve();
+        if (outcome === 'disconnect') await controller.disableSynchronously();
+        if (outcome === 'manual') pairing = { relayUrl: 'manual' };
+        resolveBootstrap({ v: 1, ok: true, nonce: 'nonce', pairingString: 'private' });
+        await Promise.all([first, second]);
+        expect(requests).toBe(1);
+        expect(applied).toBe(outcome === 'apply' ? 1 : 0);
+        if (outcome === 'disconnect') expect(stored.nativeBootstrapDisabled).toBe(true);
+      } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+      }
+    },
+  );
   test('keeps the native 9.8 strict authentication JSON parser in the shipped baseline', () => {
     const source = fs.readFileSync(
       path.join(projectRoot, 'resources/browser-extension/openclaw/modules/strict-json.js'),

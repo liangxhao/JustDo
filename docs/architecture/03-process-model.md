@@ -56,7 +56,7 @@ Thinking/Tool/Content 不经过 Main 复制给 UI。Main 只消费生命周期�
 
 ### 扩展与外部客户端
 
-Chrome Side Panel 不取得 Gateway token。Native host 发现或拉起桌面进程，返回动态 app-server URL；Main 校验 capability、精确 Origin、path 和消息大小。初始化完成后只接受实现的 thread/composer/turn 方法。协议详见[扩展 API](../browser-extension-api/README.md)。
+Chrome Side Panel 不取得 Gateway token。Native host 发现或拉起桌面进程，返回动态 app-server URL；Main 校验 capability、精确 Origin、path 和消息大小。初始化完成后只接受实现的 thread/composer/turn 方法及独立的 `browser/extension/pair` 自动化配对方法。自动配对确认 Gateway 已运行后调用锁定 CLI 的本地 Gateway 唤醒入口，仅向扩展后台返回 relay pairing；不经过聊天 Controller，不将凭据交给桌面 Renderer 或写入发现文件／日志。协议详见[扩展 API](../browser-extension-api/README.md)。
 
 Multica launcher 通过当前用户管道提交白名单命令和任务环境。Main 验证 token、frame、cwd、argv 与生命周期后调用受管 CLI。外部 CLI stdout 只返回约定可见结果，不透出运行凭据。它不复用 Chrome 的 URL capability。
 

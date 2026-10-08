@@ -52,6 +52,7 @@ const CONVERSATION_OVERLAY_FILES = [
   'modules/appearance-settings.js',
   'modules/options-i18n.js',
   'modules/app-server-background.js',
+  'modules/relay-bootstrap.js',
   'modules/conversation-client.js',
   'modules/sidepanel-markdown.js',
   'modules/sidepanel-rich-content.js',
@@ -128,7 +129,8 @@ function applyBackgroundOverlay(value) {
     value,
     'import { createPopupMessageHandler } from "./modules/popup-background.js";',
     'import { createPopupMessageHandler } from "./modules/popup-background.js";\n' +
-      'import { handleAppServerMessage } from "./modules/app-server-background.js";',
+      'import { handleAppServerMessage } from "./modules/app-server-background.js";\n' +
+      'import { requestLocalBootstrap } from "./modules/relay-bootstrap.js";',
     'background import',
   );
   result = replaceIntegrationAnchor(
@@ -137,6 +139,18 @@ function applyBackgroundOverlay(value) {
     'const RELAY_AUTH_TIMEOUT_MS = 10_000;\n\n' +
       'void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });',
     'side panel behavior',
+  );
+  result = replaceIntegrationAnchor(
+    result,
+    'nativeBootstrap = createNativeBootstrapController({\n  getPairing: getConfig,',
+    'nativeBootstrap = createNativeBootstrapController({\n  requestBootstrap: requestLocalBootstrap,\n  getPairing: getConfig,',
+    'product relay bootstrap transport',
+  );
+  result = replaceIntegrationAnchor(
+    result,
+    'getNativeBootstrapStatus: async () => {\n    await tabAccessReady;\n    if (!retiredCopilotCustodyBlocked) {\n      await nativeBootstrap.attempt();\n    }\n    return await nativeBootstrap.status();\n  },',
+    'getNativeBootstrapStatus: async () => {\n    await tabAccessReady;\n    return await nativeBootstrap.status();\n  },',
+    'passive product bootstrap status',
   );
   return replaceIntegrationAnchor(
     result,
@@ -203,6 +217,20 @@ function buildExpectedExtensionFiles(repoRoot, productName) {
     'manifest.json',
     Buffer.from(applyManifestOverlay(files.get('manifest.json').toString('utf8'))),
   );
+  let bootstrap = files.get('modules/native-bootstrap.js').toString('utf8');
+  bootstrap = replaceIntegrationAnchor(
+    bootstrap,
+    'export function createNativeBootstrapController({ chromeApi = chrome, getPairing, applyPairing }) {',
+    'export function createNativeBootstrapController({ chromeApi = chrome, getPairing, applyPairing, requestBootstrap = sendNativeBootstrap }) {',
+    'native bootstrap transport injection',
+  );
+  bootstrap = replaceIntegrationAnchor(
+    bootstrap,
+    'response = await sendNativeBootstrap(chromeApi, {\n          v: 1,\n          op: "bootstrap",',
+    'response = await requestBootstrap(chromeApi, {\n          v: 1,\n          op: "bootstrap",',
+    'native bootstrap transport call',
+  );
+  files.set('modules/native-bootstrap.js', Buffer.from(bootstrap));
   for (const size of ICON_SIZES) {
     files.set(
       `icons/icon${size}.png`,

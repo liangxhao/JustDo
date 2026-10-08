@@ -63,7 +63,7 @@ function validateAppServer(value) {
   }
 }
 
-async function ensureAppServer(restart, clientId) {
+export async function ensureAppServer(restart, clientId) {
   const constraints = {
     manifestSchemaVersion: 2,
     nativeHostName: NATIVE_HOST,

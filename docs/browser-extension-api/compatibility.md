@@ -27,6 +27,7 @@ wire conventions，以降低扩展客户端适配成本。
 | thread/start                                 | 支持子集    | title；忽略模型、沙盒等高级覆盖项           |
 | thread/unsubscribe                           | 支持        | 每连接订阅                                  |
 | composer/options                             | JustDo 扩展 | 权限模式与已配置模型                        |
+| browser/extension/pair                        | JustDo 扩展 | 已鉴权的本地自动化配对，不创建聊天会话       |
 | turn/start                                   | 支持子集    | 文本、附件、权限、模型和 JustDo pageContext |
 | turn/interrupt                               | 支持        | 实际按 thread 停止                          |
 | thread/started                               | 支持        | 订阅过滤                                    |
@@ -46,6 +47,7 @@ wire conventions，以降低扩展客户端适配成本。
 - `turn/start.params.pageContext`
 - `turn/start.params.attachments|permissionMode|modelRef`
 - `composer/options`
+- `browser/extension/pair`
 - `thread/updated`
 - 历史 `toolCall|systemMessage` item
 - Native Host `codexRuntime/hello|ensure|restart`

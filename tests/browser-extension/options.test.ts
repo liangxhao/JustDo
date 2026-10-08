@@ -88,6 +88,49 @@ describe('product browser settings', () => {
     expect(document.body.textContent).not.toMatch(/openclaw/i);
   });
 
+  it.each([
+    ['paired', 'Pairing saved.'],
+    ['manual_required', 'Manual setup required'],
+    ['retrying', 'Unable to connect. Check that the desktop app is running and try again.'],
+  ])('reports the actual automatic bootstrap result: %s', async (state, expected) => {
+    await load();
+    sendMessage.mockImplementation(async (request: { type: string }) =>
+      request.type === 'getStatus' ? status : { ok: true, result: { status: state } },
+    );
+    button('useLocal').click();
+    await vi.waitFor(() => expect(button('useLocal').disabled).toBe(false));
+    expect(document.getElementById('message')?.textContent).toBe(expected);
+  });
+
+  it('shows progress immediately while waiting for the desktop app', async () => {
+    status.paired = false;
+    status.nativeBootstrap.state = 'waiting';
+    await load();
+    expect(document.getElementById('bootstrapStatus')?.textContent).toBe(
+      'Waiting for the local native host',
+    );
+    let resolvePairing!: (value: unknown) => void;
+    sendMessage.mockImplementation((request: { type: string }) =>
+      request.type === 'getStatus'
+        ? Promise.resolve(status)
+        : new Promise(resolve => {
+            resolvePairing = resolve;
+          }),
+    );
+
+    button('useLocal').click();
+
+    expect(document.getElementById('message')?.textContent).toBe(
+      'Looking for local __PRODUCT_NAME__…',
+    );
+    expect(button('useLocal').disabled).toBe(true);
+    resolvePairing({ ok: true, result: { status: 'retrying' } });
+    await vi.waitFor(() => expect(button('useLocal').disabled).toBe(false));
+    expect(document.getElementById('message')?.textContent).toBe(
+      'Unable to connect. Check that the desktop app is running and try again.',
+    );
+  });
+
   it.each(['disconnectAutomatic', 'disconnectManual'])(
     'disconnects and stops automatic reconnection from %s',
     async id => {

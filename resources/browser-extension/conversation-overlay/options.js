@@ -55,7 +55,7 @@ async function refresh() {
         ? 'automaticDisabled'
         : status.nativeBootstrap?.state === 'manual_required'
           ? 'manualRequired'
-          : status.nativeBootstrap?.state === 'retrying'
+          : ['retrying', 'waiting'].includes(status.nativeBootstrap?.state)
             ? 'waitingLocal'
             : 'automaticReady',
     );
@@ -69,12 +69,12 @@ async function refresh() {
   updateControls();
 }
 
-async function perform(task, success, onSuccess = () => {}) {
+async function perform(task, success, onSuccess = () => {}, progress) {
   if (busy || disposed) return;
   busy = true;
   refreshSequence += 1;
   updateControls();
-  message.textContent = '';
+  message.textContent = progress ? t(progress) : '';
   message.dataset.error = 'false';
   try {
     const result = await task();
@@ -84,7 +84,7 @@ async function perform(task, success, onSuccess = () => {}) {
       );
     }
     onSuccess();
-    message.textContent = t(success);
+    message.textContent = t(typeof success === 'function' ? success(result) : success);
   } catch (error) {
     message.textContent = t(
       error instanceof Error && error.message === 'invalidPairing'
@@ -101,6 +101,15 @@ async function perform(task, success, onSuccess = () => {}) {
 useLocal.addEventListener('click', () => {
   void perform(
     () => chrome.runtime.sendMessage({ type: 'setNativeBootstrapEnabled', enabled: true }),
+    result => {
+      const status = result.result?.status;
+      return status === 'paired' || status === 'existing'
+        ? 'paired'
+        : status === 'manual_required'
+          ? 'manualRequired'
+          : 'automaticFailed';
+    },
+    () => {},
     'lookingLocal',
   );
 });

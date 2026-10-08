@@ -62,6 +62,8 @@ Main 还会校验编码后的附件总量。
 2. 发送无 `id` 的 `initialized` 通知。
 3. 再调用线程或轮次方法。
 
+自动化配对也要求同样的鉴权与初始化。产品扩展方法 `browser/extension/pair` 接收空 `params`，返回 `{ pairingString: string }`；Main 先准备 Gateway，再调用锁定 CLI 的 `browser extension pair --local-gateway --json`。只允许当前配置的 `127.0.0.1` Gateway 与原生 `/browser/extension` 路径，不接收远程地址、profile 或 CLI 参数。它不操作会话／Tab，不触发聊天，不返回 Gateway token；pairingString 中的 relay key 只供扩展后台交给原生配对状态机，不得记录或持久化到发现文件。失败统一返回凭据已隐藏的错误。
+
 请求：
 
 ```json

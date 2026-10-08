@@ -14,6 +14,7 @@ import { readThreadImage } from './browserExtensionImage';
 
 export const BROWSER_EXTENSION_ID = 'jboajogplelmaahjbomgflnfngpolgcb';
 export const BROWSER_EXTENSION_NATIVE_HOST = 'com.justdo.browserextension';
+export const BROWSER_EXTENSION_PAIR_METHOD = 'browser/extension/pair';
 const MAX_MESSAGE_BYTES = 8 * 1024 * 1024;
 const POLL_INTERVAL_MS = 500;
 const FULL_SNAPSHOT_POLL_INTERVAL = 20;
@@ -298,6 +299,7 @@ export class BrowserExtensionChatServer {
   private server: Server | null = null;
   private webSocketServer: WebSocketServer | null = null;
   private boundPort: number | null = null;
+  private browserPairingPromise: Promise<{ pairingString: string }> | null = null;
   private readonly initializedConnections = new WeakSet<WebSocket>();
   private readonly initializeRequestedConnections = new WeakSet<WebSocket>();
   private readonly notificationOptOut = new WeakMap<WebSocket, Set<string>>();
@@ -324,6 +326,7 @@ export class BrowserExtensionChatServer {
     private readonly token: string,
     private readonly appVersion: string,
     private readonly port = 0,
+    private readonly createBrowserPairing?: () => Promise<{ pairingString: string }>,
   ) {}
 
   getCapability(): BrowserExtensionAppServerCapability {
@@ -515,7 +518,9 @@ export class BrowserExtensionChatServer {
       return;
     }
     if (request.method === 'initialized' && id === undefined) {
-      this.initializedConnections.add(connection);
+      if (this.initializeRequestedConnections.has(connection)) {
+        this.initializedConnections.add(connection);
+      }
       return;
     }
     if (request.method === 'initialize') {
@@ -575,6 +580,22 @@ export class BrowserExtensionChatServer {
   ): Promise<unknown> {
     const params = isRecord(rawParams) ? rawParams : {};
     switch (method) {
+      case BROWSER_EXTENSION_PAIR_METHOD: {
+        if (!this.createBrowserPairing)
+          throw new Error('Browser extension pairing is unavailable.');
+        try {
+          if (!this.browserPairingPromise) {
+            this.browserPairingPromise = this.createBrowserPairing().finally(() => {
+              this.browserPairingPromise = null;
+            });
+          }
+          const { pairingString } = await this.browserPairingPromise;
+          return { pairingString };
+        } catch {
+          // Pairing/CLI errors can carry credential-bearing output.
+          throw new Error('Browser extension pairing is unavailable.');
+        }
+      }
       case 'initialize':
         return {
           platformFamily:
@@ -691,7 +712,11 @@ export class BrowserExtensionChatServer {
           { threadId: turn.sessionId, turn: turnPayload },
           turn.sessionId,
         );
-        this.startPollingTurn(turn.sessionId, turn.runId, messageFingerprint(baselineMessages.filter(message => !message.pendingInput)));
+        this.startPollingTurn(
+          turn.sessionId,
+          turn.runId,
+          messageFingerprint(baselineMessages.filter(message => !message.pendingInput)),
+        );
         return { turn: turnPayload };
       }
       case 'turn/interrupt': {
@@ -815,7 +840,9 @@ export class BrowserExtensionChatServer {
         // assistant message becomes visible through sessions.history. Keep the
         // poller alive for a short settling window so that the extension receives
         // that final history update before turn/completed stops polling.
-        const hasNewHistory = messageFingerprint(messages.filter(message => !message.pendingInput)) !== state.baselineFingerprint;
+        const hasNewHistory =
+          messageFingerprint(messages.filter(message => !message.pendingInput)) !==
+          state.baselineFingerprint;
         const hasFinalAssistant = hasNewHistory && hasFinalAssistantAfterLastUser(messages);
         const recordedError =
           state.terminal >= TERMINAL_SETTLE_POLLS

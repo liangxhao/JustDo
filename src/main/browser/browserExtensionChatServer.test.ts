@@ -5,6 +5,7 @@ import { BrowserExtensionStream } from '../../renderer/libs/openclaw-chat/model/
 import type { BrowserExtensionStreamEvent } from '../../shared/browser/browserExtensionStream';
 import {
   BROWSER_EXTENSION_ID,
+  BROWSER_EXTENSION_PAIR_METHOD,
   type BrowserExtensionChatApi,
   BrowserExtensionChatServer,
 } from './browserExtensionChatServer';
@@ -77,6 +78,83 @@ afterEach(async () => {
 });
 
 describe('BrowserExtensionChatServer', () => {
+  it('provides relay pairing only after the authenticated initialization handshake', async () => {
+    const createPairing = vi.fn(async () => ({ pairingString: 'fixture-pairing' }));
+    const api = createApi();
+    server = new BrowserExtensionChatServer(api, token, 'test', 0, createPairing);
+    await server.start();
+    const socket = await connect(server.getCapability().localAppServerUrl);
+    try {
+      expect(await request(socket, 'early', BROWSER_EXTENSION_PAIR_METHOD)).toHaveProperty('error');
+      expect(createPairing).not.toHaveBeenCalled();
+      socket.send(JSON.stringify({ method: 'initialized' }));
+      expect(await request(socket, 'premature', BROWSER_EXTENSION_PAIR_METHOD)).toHaveProperty(
+        'error',
+      );
+      expect(createPairing).not.toHaveBeenCalled();
+      await request(socket, 'init', 'initialize');
+      socket.send(JSON.stringify({ method: 'initialized' }));
+      expect(await request(socket, 'pair', BROWSER_EXTENSION_PAIR_METHOD)).toMatchObject({
+        result: { pairingString: 'fixture-pairing' },
+      });
+      expect(createPairing).toHaveBeenCalledOnce();
+      expect(api.listSessions).not.toHaveBeenCalled();
+      expect(api.startThread).not.toHaveBeenCalled();
+    } finally {
+      socket.close();
+    }
+  });
+
+  it('redacts native pairing errors that may contain credential-bearing CLI output', async () => {
+    server = new BrowserExtensionChatServer(createApi(), token, 'test', 0, async () => {
+      throw new Error('private-pairing-token in CLI stdout');
+    });
+    await server.start();
+    const socket = await connect(server.getCapability().localAppServerUrl);
+    try {
+      await request(socket, 'init', 'initialize');
+      socket.send(JSON.stringify({ method: 'initialized' }));
+      const response = await request(socket, 'pair', BROWSER_EXTENSION_PAIR_METHOD);
+      expect(response).toMatchObject({
+        error: { message: 'Browser extension pairing is unavailable.' },
+      });
+      expect(JSON.stringify(response)).not.toContain('private-pairing-token');
+    } finally {
+      socket.close();
+    }
+  });
+  it('shares pending pairing across connections and retries after failure', async () => {
+    const pending = Promise.withResolvers<{ pairingString: string }>();
+    const createPairing = vi
+      .fn()
+      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValue({ pairingString: 'fixture-pairing' });
+    server = new BrowserExtensionChatServer(createApi(), token, 'test', 0, createPairing);
+    await server.start();
+    const first = await connect(server.getCapability().localAppServerUrl);
+    const second = await connect(server.getCapability().localAppServerUrl);
+    try {
+      for (const socket of [first, second]) {
+        await request(socket, 'init', 'initialize');
+        socket.send(JSON.stringify({ method: 'initialized' }));
+      }
+      const firstRequest = request(first, 'pair-1', BROWSER_EXTENSION_PAIR_METHOD);
+      const secondRequest = request(second, 'pair-2', BROWSER_EXTENSION_PAIR_METHOD);
+      // Both transports must have reached dispatch before completing the shared work.
+      await request(second, 'barrier', 'initialize');
+      expect(createPairing).toHaveBeenCalledOnce();
+      pending.reject(new Error('copy failed'));
+      const failures = await Promise.all([firstRequest, secondRequest]);
+      expect(failures.every(response => Boolean(response.error))).toBe(true);
+      expect(await request(first, 'retry', BROWSER_EXTENSION_PAIR_METHOD)).toMatchObject({
+        result: { pairingString: 'fixture-pairing' },
+      });
+      expect(createPairing).toHaveBeenCalledTimes(2);
+    } finally {
+      first.close();
+      second.close();
+    }
+  });
   it.each(['media://inbound/photo.jpg', '/api/chat/media/outgoing/session/artifact/full'])(
     'loads managed images through the session-scoped desktop bridge: %s',
     async source => {
@@ -549,8 +627,16 @@ describe('BrowserExtensionChatServer', () => {
         updatedAt: 2_000,
       },
     ]);
-    const old = [{ role: 'user', text: 'Old question' }, { role: 'assistant', text: 'Old reply' }];
-    vi.mocked(api.getMessages).mockResolvedValueOnce(old).mockResolvedValue([...old, { role: 'user', text: 'New question', pendingInput: { id: 'p', state: 'interrupted' } }]);
+    const old = [
+      { role: 'user', text: 'Old question' },
+      { role: 'assistant', text: 'Old reply' },
+    ];
+    vi.mocked(api.getMessages)
+      .mockResolvedValueOnce(old)
+      .mockResolvedValue([
+        ...old,
+        { role: 'user', text: 'New question', pendingInput: { id: 'p', state: 'interrupted' } },
+      ]);
     server = new BrowserExtensionChatServer(api, token, '1.0.0');
     await server.start();
     const socket = await connect(server.getCapability().localAppServerUrl);

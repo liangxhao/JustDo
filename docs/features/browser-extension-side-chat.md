@@ -10,6 +10,8 @@
 
 两条连接独立：自动化 relay 控制已授权网页，聊天 app-server 管理产品会话。自动发现聊天服务不等于已配对自动化；重新配对 relay 也不能修复 Native host 发现失败。
 
+Automatic connection 通过同一个产品 Native host 发现 app-server，再经独立的 `browser/extension/pair` 方法取得锁定运行时生成的本地 Gateway 配对信息。它复用发现与鉴权，不调用聊天 Controller，也不新建线程或发送消息。配对仍由上游原生状态机应用，Disconnect 可撤销迟到结果，手动配对不能被自动结果覆盖。
+
 ## 2. 建连和生命周期
 
 ```mermaid

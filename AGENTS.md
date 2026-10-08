@@ -239,6 +239,8 @@ See `docs/architecture/10-data-storage.md`.
   compose them over upstream options and copy application PNG icons at build time.
   Keep settings in English with Automatic connection, Manual connection, Tab Access
   and Background color headings; preserve native pairing, unpair and custody safeguards across upgrades.
+  Automatic relay pairing injects the product discovery transport at build time;
+  keep the native bootstrap controller's opt-out, late-response and manual-priority rules intact.
 
 ## Coding Rules
 

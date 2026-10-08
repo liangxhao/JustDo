@@ -29,6 +29,7 @@ const translations = {
     manualRequired: '自动连接暂不可用，请使用手动连接。',
     custodyHint: '检测到需要确认的旧自动化任务。确认旧任务已结束后，点击“关闭”，再重新连接。',
     lookingLocal: '正在连接本机 __PRODUCT_NAME__…',
+    automaticFailed: '无法连接本机应用。请确认桌面应用正在运行，然后重试。',
     paired: '配对信息已保存。',
     disconnected: '连接已关闭，自动重连已停用。',
     accessSaved: '标签页授权范围已更新。',
@@ -68,6 +69,7 @@ const translations = {
     custodyHint:
       'Previous automation tasks need confirmation. Confirm they have finished, then disconnect and reconnect.',
     lookingLocal: 'Looking for local __PRODUCT_NAME__…',
+    automaticFailed: 'Unable to connect. Check that the desktop app is running and try again.',
     paired: 'Pairing saved.',
     disconnected: 'Disconnected. Automatic setup is disabled.',
     accessSaved: 'Access mode updated.',

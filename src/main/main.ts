@@ -46,6 +46,7 @@ import {
   publishBrowserExtensionAppServer,
   registerBrowserExtensionNativeHost,
 } from './browser/browserExtensionNativeMessaging';
+import { readAutomaticBrowserExtensionPairing } from './browser/browserExtensionPairing';
 import { registerAppShutdown } from './core/app/appShutdown';
 import { isAutoLaunched } from './core/app/autoLaunchManager';
 import { AutoUpdateService } from './core/app/autoUpdateService';
@@ -1931,6 +1932,11 @@ if (multicaBridgeArgv) {
       }),
       browserExtensionChatToken,
       packageJson.version,
+      0,
+      () =>
+        readAutomaticBrowserExtensionPairing(ensureOpenClawRunningForCowork, () =>
+          getOpenClawEngineManager().buildCliEnvironment(),
+        ),
     );
     try {
       await extensionChatServer.start();

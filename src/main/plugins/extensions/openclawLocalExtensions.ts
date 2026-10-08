@@ -174,9 +174,9 @@ const findBundledExtensionsDir = (): string | null => {
   return null;
 };
 
-export const syncLocalOpenClawExtensionsIntoRuntime = (
+export const syncLocalOpenClawExtensionsIntoRuntime = async (
   runtimeRoot: string,
-): { sourceDir: string | null; copied: string[] } => {
+): Promise<{ sourceDir: string | null; copied: string[] }> => {
   const sourceDir = findLocalExtensionsSourceDir();
   if (!sourceDir) {
     return { sourceDir: null, copied: [] };
@@ -184,19 +184,21 @@ export const syncLocalOpenClawExtensionsIntoRuntime = (
 
   const targetExtensionsDir = path.join(runtimeRoot, 'dist', 'extensions');
   try {
-    if (!fs.statSync(targetExtensionsDir).isDirectory()) {
+    if (!(await fs.promises.stat(targetExtensionsDir)).isDirectory()) {
       return { sourceDir, copied: [] };
     }
-  } catch {
+  } catch (error) {
+    if (!isMissingPathError(error)) throw error;
     return { sourceDir, copied: [] };
   }
 
   let realRuntimeRoot: string;
   let realTargetExtensionsDir: string;
   try {
-    realRuntimeRoot = fs.realpathSync(runtimeRoot);
-    realTargetExtensionsDir = fs.realpathSync(targetExtensionsDir);
-  } catch {
+    realRuntimeRoot = await fs.promises.realpath(runtimeRoot);
+    realTargetExtensionsDir = await fs.promises.realpath(targetExtensionsDir);
+  } catch (error) {
+    if (!isMissingPathError(error)) throw error;
     return { sourceDir, copied: [] };
   }
   if (!isPathInside(realRuntimeRoot, realTargetExtensionsDir)) {
@@ -204,7 +206,7 @@ export const syncLocalOpenClawExtensionsIntoRuntime = (
   }
 
   const copied: string[] = [];
-  for (const entry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
+  for (const entry of await fs.promises.readdir(sourceDir, { withFileTypes: true })) {
     if (!entry.isDirectory()) {
       continue;
     }
@@ -212,15 +214,21 @@ export const syncLocalOpenClawExtensionsIntoRuntime = (
     // Skip if the compiled extension already exists (placed by build pipeline).
     // The runtime sync should not overwrite compiled .js with source .ts files.
     try {
-      if (fs.lstatSync(destDir).isSymbolicLink()) continue;
-      if (fs.statSync(destDir).isDirectory() && fs.existsSync(path.join(destDir, 'index.js'))) {
+      if ((await fs.promises.lstat(destDir)).isSymbolicLink()) continue;
+      if (
+        (await fs.promises.stat(destDir)).isDirectory() &&
+        fs.existsSync(path.join(destDir, 'index.js'))
+      ) {
         continue;
       }
     } catch (error) {
-      if (!isMissingPathError(error)) return { sourceDir, copied };
+      if (!isMissingPathError(error)) throw error;
       // Target doesn't exist yet, proceed with copy.
     }
-    fs.cpSync(path.join(sourceDir, entry.name), destDir, { recursive: true, force: true });
+    await fs.promises.cp(path.join(sourceDir, entry.name), destDir, {
+      recursive: true,
+      force: true,
+    });
     copied.push(entry.name);
   }
 
