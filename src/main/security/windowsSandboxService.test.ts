@@ -1,7 +1,9 @@
+import { execFile } from 'child_process';
 import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { promisify } from 'util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -12,6 +14,7 @@ import {
 } from './windowsSandboxService';
 
 const temporaryDirectories: string[] = [];
+const execFileAsync = promisify(execFile);
 
 const makeTemporaryDirectory = (): string => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-mxc-sandbox-'));
@@ -67,9 +70,10 @@ const sandboxRuntimeChecks = () => ({
       hostPrepHash: 'PREP-HASH',
     };
   }),
-  nativeHostProbe: vi.fn(async () => undefined),
+  nativeHostProbe: vi.fn(async () => 'appcontainer-dacl' as const),
   processContainerProbe: vi.fn(async () => undefined),
   systemDrivePreparationProbe: vi.fn(async () => undefined),
+  systemDrivePreparationNeededProbe: vi.fn(async () => false),
   authenticodeVerifier: vi.fn(async () => undefined),
 });
 
@@ -133,7 +137,7 @@ describe('Windows MXC sandbox resource discovery', () => {
 });
 
 describe('Windows MXC sandbox readiness', () => {
-  it('uses containerId for both native probes without the unsupported ProcessContainer name', async () => {
+  it('runs DACL probes without requesting system-drive or shared temporary-directory access', async () => {
     const appPath = makeTemporaryDirectory();
     makePlugin(appPath);
     const statSync = fs.statSync;
@@ -143,10 +147,19 @@ describe('Windows MXC sandbox readiness', () => {
       }
       return statSync(...args);
     });
-    const runFile = vi.fn(async (_executable: string, args: readonly string[]) => ({
-      stdout: args[0] === '--probe' ? JSON.stringify({ tier: 'appcontainer-bfs' }) : '',
-      stderr: '',
-    }));
+    const runFile = vi.fn(async (_executable: string, args: readonly string[]) => {
+      if (args[0] === '--config-base64') {
+        const config = JSON.parse(Buffer.from(args[1], 'base64').toString('utf8'));
+        if (config.filesystem.readonlyPaths.includes('C:\\')) {
+          throw new Error("DACL fallback requires write-DAC permission on 'C:\\'");
+        }
+        expect(fs.existsSync(config.process.cwd)).toBe(true);
+      }
+      return {
+        stdout: args[0] === '--probe' ? JSON.stringify({ tier: 'appcontainer-dacl' }) : '',
+        stderr: '',
+      };
+    });
     const service = new WindowsSandboxService({
       platform: 'win32',
       arch: 'x64',
@@ -155,6 +168,7 @@ describe('Windows MXC sandbox readiness', () => {
       resourcesPath: makeTemporaryDirectory(),
       systemRoot: 'C:\\Windows',
       systemDrive: 'C:',
+      localAppData: 'C:\\Users\\probe\\AppData\\Local',
       nativeBinaryVerifier: sandboxRuntimeChecks().nativeBinaryVerifier,
       execFile: runFile,
     });
@@ -179,10 +193,26 @@ describe('Windows MXC sandbox readiness', () => {
       expect(config.processContainer).not.toHaveProperty('name');
       expect(config.processContainer.leastPrivilege).toBe(true);
       expect(config.network.defaultPolicy).toBe('block');
+      expect(config.filesystem.readonlyPaths).toEqual(['C:\\Windows\\System32']);
+      expect(config.filesystem.readwritePaths).toEqual([config.process.cwd]);
+      expect(path.dirname(config.process.cwd)).toBe(os.tmpdir());
+      expect(config.process.cwd).not.toBe(os.tmpdir());
+      expect(config.process.env).toEqual([
+        'SystemRoot=C:\\Windows',
+        'WINDIR=C:\\Windows',
+        'SystemDrive=C:',
+        'ComSpec=C:\\Windows\\System32\\cmd.exe',
+        'LOCALAPPDATA=C:\\Users\\probe\\AppData\\Local',
+        `TEMP=${config.process.cwd}`,
+        `TMP=${config.process.cwd}`,
+      ]);
+      expect(fs.existsSync(config.process.cwd)).toBe(false);
     }
     expect(configs[0].containerId).not.toBe(configs[1].containerId);
-    expect(configs[0].process.commandLine).toContain('/d /c exit 0');
-    expect(configs[1].process.commandLine).toContain('/d /c dir C:\\ >nul');
+    expect(configs[0].process.commandLine).toContain('/d /e:on /c for %I in ("C:\\")');
+    expect(configs[0].process.commandLine).toContain('if "%~aI"=="" (exit /b 1) else (exit /b 0)');
+    expect(configs[0].process.commandLine).not.toMatch(/\bdir\b|>nul|[\*\?]/);
+    expect(configs[1].process.commandLine).toContain('/d /c exit 0');
   });
 
   it('rejects a tampered version-pinned native helper', () => {
@@ -224,7 +254,7 @@ describe('Windows MXC sandbox readiness', () => {
     );
   });
 
-  it('reports ready after native host and sandboxed system-drive checks pass', async () => {
+  it('reports ready after native host and sandboxed system-drive metadata checks pass', async () => {
     const appPath = makeTemporaryDirectory();
     makePlugin(appPath);
     const runFile = vi.fn(async () => ({ stdout: 'SERVICE_NAME', stderr: '' }));
@@ -251,6 +281,7 @@ describe('Windows MXC sandbox readiness', () => {
     makePlugin(appPath);
     const runtimeChecks = sandboxRuntimeChecks();
     runtimeChecks.systemDrivePreparationProbe.mockRejectedValue(new Error('Access is denied'));
+    runtimeChecks.systemDrivePreparationNeededProbe.mockResolvedValue(true);
     const service = new WindowsSandboxService({
       platform: 'win32',
       arch: 'x64',
@@ -266,6 +297,104 @@ describe('Windows MXC sandbox readiness', () => {
       hostPreparationRecommended: true,
       ready: true,
     });
+  });
+
+  it.each(['base-container', 'appcontainer-bfs'] as const)(
+    'does not recommend system-drive ACL preparation for %s',
+    async tier => {
+      const appPath = makeTemporaryDirectory();
+      makePlugin(appPath);
+      const runtimeChecks = sandboxRuntimeChecks();
+      runtimeChecks.systemDrivePreparationProbe.mockRejectedValue(new Error('Access is denied'));
+      const service = new WindowsSandboxService({
+        platform: 'win32',
+        arch: 'x64',
+        isPackaged: false,
+        appPath,
+        resourcesPath: makeTemporaryDirectory(),
+        ...runtimeChecks,
+        nativeHostProbe: vi.fn(async () => tier),
+      });
+
+      await expect(service.getStatus()).resolves.toMatchObject({
+        code: 'ready',
+        ready: true,
+        hostPreparationRecommended: false,
+      });
+      await expect(service.initialize('C:\\workspace')).resolves.toMatchObject({ success: true });
+      expect(runtimeChecks.systemDrivePreparationProbe).not.toHaveBeenCalled();
+      expect(runtimeChecks.authenticodeVerifier).not.toHaveBeenCalled();
+      expect(runtimeChecks.processContainerProbe).toHaveBeenCalledOnce();
+    },
+  );
+
+  it('cleans the private probe directory and reports only the native failure when launch fails', async () => {
+    const appPath = makeTemporaryDirectory();
+    makePlugin(appPath);
+    const statSync = fs.statSync;
+    const systemRoot = 'C:\\Windows 测试';
+    vi.spyOn(fs, 'statSync').mockImplementation((...args) => {
+      if (args[0] === path.win32.join(systemRoot, 'System32', 'cmd.exe')) {
+        return { isFile: () => true } as fs.Stats;
+      }
+      return statSync(...args);
+    });
+    let probeDirectory = '';
+    const nativeReason =
+      "BaseContainer is unavailable; DACL fallback requires write-DAC permission on 'C:\\protected'.";
+    const service = new WindowsSandboxService({
+      platform: 'win32',
+      arch: 'x64',
+      isPackaged: false,
+      appPath,
+      resourcesPath: makeTemporaryDirectory(),
+      ...sandboxRuntimeChecks(),
+      systemRoot,
+      processContainerProbe: undefined,
+      execFile: vi.fn(async (_executable, args) => {
+        const config = JSON.parse(Buffer.from(args[1], 'base64').toString('utf8'));
+        probeDirectory = config.process.cwd;
+        expect(config.process.commandLine).toBe(
+          '"C:\\Windows 测试\\System32\\cmd.exe" /d /c exit 0',
+        );
+        expect(fs.existsSync(probeDirectory)).toBe(true);
+        throw Object.assign(new Error(`Command failed: wxc-exec.exe --config-base64 ${args[1]}`), {
+          stderr: `error: ${nativeReason}{"error":{"code":"backend_error"}}\nSECTION: Full ExecutionRequest configuration\n${JSON.stringify(config)}`,
+        });
+      }),
+    });
+
+    await expect(service.getStatus()).resolves.toMatchObject({
+      code: 'check_failed',
+      ready: false,
+      error: `MXC ProcessContainer self-check failed: ${nativeReason}`,
+    });
+    expect(probeDirectory).not.toBe('');
+    expect(fs.existsSync(probeDirectory)).toBe(false);
+  });
+
+  it('bounds the native error detail shown by the settings page', async () => {
+    const appPath = makeTemporaryDirectory();
+    makePlugin(appPath);
+    const runtimeChecks = sandboxRuntimeChecks();
+    runtimeChecks.processContainerProbe.mockRejectedValue(
+      Object.assign(new Error('Command failed: wxc-exec.exe --config-base64 encoded-request'), {
+        stderr: `error: ${'a'.repeat(2_000)}\nSECTION: request`,
+      }),
+    );
+    const service = new WindowsSandboxService({
+      platform: 'win32',
+      arch: 'x64',
+      isPackaged: false,
+      appPath,
+      resourcesPath: makeTemporaryDirectory(),
+      ...runtimeChecks,
+    });
+
+    const status = await service.getStatus();
+
+    expect(status.ready).toBe(false);
+    expect(status.error).toBe(`MXC ProcessContainer self-check failed: ${'a'.repeat(1_024)}`);
   });
 
   it('allows ProcessContainer when native checks pass without the unrelated IsoEnvBroker service', async () => {
@@ -339,6 +468,7 @@ describe('Windows MXC sandbox readiness', () => {
         ready: false,
       });
       expect(runtimeChecks.processContainerProbe).not.toHaveBeenCalled();
+      expect(runtimeChecks.systemDrivePreparationProbe).not.toHaveBeenCalled();
     },
   );
 
@@ -390,6 +520,185 @@ describe('Windows MXC sandbox readiness', () => {
     });
   });
 
+  it('offers explicit preparation when missing root metadata also prevents a DACL process launch', async () => {
+    const appPath = makeTemporaryDirectory();
+    makePlugin(appPath);
+    const runtimeChecks = sandboxRuntimeChecks();
+    let prepared = false;
+    runtimeChecks.systemDrivePreparationNeededProbe.mockResolvedValue(true);
+    runtimeChecks.systemDrivePreparationProbe.mockImplementation(async () => {
+      if (!prepared) throw new Error('System-drive attributes are unavailable');
+    });
+    runtimeChecks.processContainerProbe.mockImplementation(async () => {
+      if (!prepared) throw new Error('Process startup failed');
+    });
+    const runFile = vi.fn(async () => {
+      prepared = true;
+      return { stdout: '', stderr: '' };
+    });
+    const service = new WindowsSandboxService({
+      platform: 'win32',
+      arch: 'x64',
+      isPackaged: false,
+      appPath,
+      resourcesPath: makeTemporaryDirectory(),
+      ...runtimeChecks,
+      execFile: runFile,
+    });
+
+    await expect(service.getStatus()).resolves.toMatchObject({
+      code: 'check_failed',
+      ready: false,
+      hostPreparationRecommended: true,
+      error: expect.stringContaining('Process startup failed'),
+    });
+    expect(runFile).not.toHaveBeenCalled();
+    await expect(service.initialize('C:\\workspace')).resolves.toMatchObject({
+      success: true,
+      status: { code: 'ready', ready: true, hostPreparationRecommended: false },
+    });
+    expect(runtimeChecks.authenticodeVerifier).toHaveBeenCalledOnce();
+    expect(runFile).toHaveBeenCalledOnce();
+  });
+
+  it.each(['false', 'invalid JSON'])(
+    'keeps a failed DACL launch blocked when the read-only preparation check returns %s',
+    async stdout => {
+      const appPath = makeTemporaryDirectory();
+      makePlugin(appPath);
+      const runtimeChecks = sandboxRuntimeChecks();
+      runtimeChecks.systemDrivePreparationProbe.mockRejectedValue(
+        new Error('Attributes unavailable'),
+      );
+      runtimeChecks.processContainerProbe.mockRejectedValue(new Error('Launch failed'));
+      const runFile = vi.fn(async () => ({ stdout, stderr: '' }));
+      const service = new WindowsSandboxService({
+        platform: 'win32',
+        arch: 'x64',
+        isPackaged: false,
+        appPath,
+        resourcesPath: makeTemporaryDirectory(),
+        ...runtimeChecks,
+        systemDrivePreparationNeededProbe: undefined,
+        execFile: runFile,
+      });
+
+      await expect(service.getStatus()).resolves.toMatchObject({
+        code: 'check_failed',
+        ready: false,
+        hostPreparationRecommended: false,
+        error: expect.stringContaining('Launch failed'),
+      });
+      expect(runtimeChecks.authenticodeVerifier).not.toHaveBeenCalled();
+      expect(runFile).toHaveBeenCalledWith(
+        expect.stringMatching(/powershell\.exe$/i),
+        expect.arrayContaining(['-EncodedCommand']),
+        expect.objectContaining({
+          windowsHide: true,
+          env: expect.objectContaining({ JUSTDO_MXC_SYSTEM_DRIVE_ROOT: expect.any(String) }),
+        }),
+      );
+    },
+  );
+
+  it.runIf(process.platform === 'win32').each([
+    {
+      description: 'missing metadata rules',
+      mockAcl: 'function Get-Acl { [pscustomobject]@{ Access = @() } }',
+      recommended: true,
+    },
+    {
+      description: 'an identity that cannot be translated',
+      mockAcl: [
+        '$identity = [pscustomobject]@{}',
+        "$identity | Add-Member -MemberType ScriptMethod -Name Translate -Value { throw 'Unknown identity' }",
+        "$rule = [pscustomobject]@{ IdentityReference = $identity; AccessControlType = 'Allow'; FileSystemRights = 0x00120088; IsInherited = $false; InheritanceFlags = 'None'; PropagationFlags = 'None' }",
+        'function Get-Acl { [pscustomobject]@{ Access = @($rule) } }',
+      ].join('\n'),
+      recommended: false,
+    },
+    {
+      description: 'a conflicting rule for an AppContainer identity',
+      mockAcl: [
+        "$identity = [System.Security.Principal.SecurityIdentifier]::new('S-1-15-2-1')",
+        "$rule = [pscustomobject]@{ IdentityReference = $identity; AccessControlType = 'Allow'; FileSystemRights = 1; IsInherited = $false; InheritanceFlags = 'None'; PropagationFlags = 'None' }",
+        'function Get-Acl { [pscustomobject]@{ Access = @($rule) } }',
+      ].join('\n'),
+      recommended: false,
+    },
+  ])(
+    'checks native PowerShell error semantics for $description without changing ACLs',
+    async fixture => {
+      const appPath = makeTemporaryDirectory();
+      makePlugin(appPath);
+      const runtimeChecks = sandboxRuntimeChecks();
+      runtimeChecks.systemDrivePreparationProbe.mockRejectedValue(
+        new Error('Attributes unavailable'),
+      );
+      runtimeChecks.processContainerProbe.mockRejectedValue(new Error('Launch failed'));
+      const service = new WindowsSandboxService({
+        platform: 'win32',
+        arch: 'x64',
+        isPackaged: false,
+        appPath,
+        resourcesPath: makeTemporaryDirectory(),
+        ...runtimeChecks,
+        systemDrivePreparationNeededProbe: undefined,
+        execFile: async (executable, args, options) => {
+          const script = Buffer.from(args[3], 'base64').toString('utf16le');
+          const encodedMock = Buffer.from(`${fixture.mockAcl}\n${script}`, 'utf16le').toString(
+            'base64',
+          );
+          return execFileAsync(executable, [...args.slice(0, 3), encodedMock], {
+            ...options,
+            encoding: 'utf8',
+          });
+        },
+      });
+
+      await expect(service.getStatus()).resolves.toMatchObject({
+        code: 'check_failed',
+        ready: false,
+        hostPreparationRecommended: fixture.recommended,
+        error: expect.stringContaining('Launch failed'),
+      });
+      expect(runtimeChecks.authenticodeVerifier).not.toHaveBeenCalled();
+    },
+  );
+
+  it('does not admit a failed launch after host preparation reports success', async () => {
+    const appPath = makeTemporaryDirectory();
+    makePlugin(appPath);
+    const runtimeChecks = sandboxRuntimeChecks();
+    let prepared = false;
+    runtimeChecks.systemDrivePreparationProbe.mockImplementation(async () => {
+      if (!prepared) throw new Error('System-drive attributes are unavailable');
+    });
+    runtimeChecks.systemDrivePreparationNeededProbe.mockResolvedValue(true);
+    runtimeChecks.processContainerProbe.mockRejectedValue(new Error('Independent launch failure'));
+    const runFile = vi.fn(async () => {
+      prepared = true;
+      return { stdout: '', stderr: '' };
+    });
+    const service = new WindowsSandboxService({
+      platform: 'win32',
+      arch: 'x64',
+      isPackaged: false,
+      appPath,
+      resourcesPath: makeTemporaryDirectory(),
+      ...runtimeChecks,
+      execFile: runFile,
+    });
+
+    await expect(service.initialize('C:\\workspace')).resolves.toMatchObject({
+      success: false,
+      status: { code: 'check_failed', ready: false, hostPreparationRecommended: false },
+      error: expect.stringContaining('Independent launch failure'),
+    });
+    expect(runFile).toHaveBeenCalledOnce();
+    expect(runtimeChecks.processContainerProbe).toHaveBeenCalledTimes(2);
+  });
+
   it('revalidates the signed helper inside the elevated host preparation flow', async () => {
     const appPath = makeTemporaryDirectory();
     makePlugin(appPath);
@@ -398,6 +707,7 @@ describe('Windows MXC sandbox readiness', () => {
     runtimeChecks.systemDrivePreparationProbe.mockImplementation(async () => {
       if (!prepared) throw new Error('Access is denied');
     });
+    runtimeChecks.systemDrivePreparationNeededProbe.mockResolvedValue(true);
     const runFile = vi.fn(
       async (
         executable: string,
@@ -426,6 +736,8 @@ describe('Windows MXC sandbox readiness', () => {
 
     await expect(service.initialize('C:\\workspace')).resolves.toMatchObject({ success: true });
     expect(runtimeChecks.authenticodeVerifier).toHaveBeenCalledOnce();
+    expect(runtimeChecks.nativeHostProbe).toHaveBeenCalledTimes(2);
+    expect(runtimeChecks.processContainerProbe).toHaveBeenCalledTimes(2);
     expect(runFile).toHaveBeenCalledWith(
       expect.stringMatching(/powershell\.exe$/i),
       expect.arrayContaining(['-EncodedCommand']),

@@ -196,8 +196,7 @@ export const chatTranslations = {
     windowsSandboxStatus_unsupported_platform: '当前系统不支持 Windows 原生沙盒',
     windowsSandboxStatus_plugin_missing: '安装包中缺少沙盒组件',
     windowsSandboxPluginMissingHelp: '请重新安装应用以恢复沙盒组件，然后刷新状态。',
-    windowsSandboxCheckFailedHelp:
-      '沙盒执行器未通过检查。请查看下方具体原因；若提示系统不支持，请更新 Windows 后重试。',
+    windowsSandboxCheckFailedHelp: '沙盒执行器未通过检查。请查看下方具体原因，处理后刷新状态。',
     windowsSandboxOpenDiagnostics: '打开诊断目录',
     windowsSandboxOpenDiagnosticsFailed: '无法打开沙盒诊断目录',
     windowsSandboxStatus_host_preparation_recommended: '沙盒可用；建议完成一次系统盘兼容性准备',
@@ -888,7 +887,7 @@ export const chatTranslations = {
     windowsSandboxPluginMissingHelp:
       'Reinstall the application to restore the sandbox components, then refresh the status.',
     windowsSandboxCheckFailedHelp:
-      'The sandbox executor failed its checks. Review the details below; if the system is unsupported, update Windows and try again.',
+      'The sandbox executor failed its checks. Review the details below, resolve the cause, then refresh the status.',
     windowsSandboxOpenDiagnostics: 'Open diagnostics folder',
     windowsSandboxOpenDiagnosticsFailed: 'Could not open the sandbox diagnostics folder',
     windowsSandboxStatus_host_preparation_recommended:

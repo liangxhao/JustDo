@@ -20,8 +20,10 @@ const MXC_EXECUTABLE = 'wxc-exec.exe';
 const MXC_HOST_PREP_EXECUTABLE = 'wxc-host-prep.exe';
 const MXC_COMMAND_TIMEOUT_MS = 10 * 60 * 1000;
 const MXC_PROBE_TIMEOUT_MS = 20_000;
+const MXC_PROBE_ERROR_MAX_LENGTH = 1_024;
 
 type SupportedMxcArch = keyof typeof mxcNativeBinaries.sha256;
+type MxcIsolationTier = 'base-container' | 'appcontainer-bfs' | 'appcontainer-dacl';
 type VerifiedMxcBinaries = {
   sdkBinDirectory: string;
   executablePath: string;
@@ -50,11 +52,13 @@ type WindowsSandboxServiceEnvironment = {
   appPath: string;
   systemRoot: string;
   systemDrive: string;
+  localAppData: string;
   execFile: ExecFileRunner;
   nativeBinaryVerifier: (pluginDirectory: string, arch: string) => VerifiedMxcBinaries;
-  nativeHostProbe: (binaries: VerifiedMxcBinaries) => Promise<void>;
+  nativeHostProbe: (binaries: VerifiedMxcBinaries) => Promise<MxcIsolationTier>;
   processContainerProbe: (binaries: VerifiedMxcBinaries) => Promise<void>;
   systemDrivePreparationProbe: (binaries: VerifiedMxcBinaries) => Promise<void>;
+  systemDrivePreparationNeededProbe: () => Promise<boolean>;
   authenticodeVerifier: (filePath: string) => Promise<void>;
 };
 
@@ -137,9 +141,28 @@ const ELEVATED_HOST_PREP_POWERSHELL = buildEncodedPowerShellCommand(
 const HOST_PREP_POWERSHELL = buildEncodedPowerShellCommand(
   [
     "$arguments = @('-NoProfile', '-NonInteractive', '-EncodedCommand', $env:JUSTDO_MXC_ELEVATED_SCRIPT)",
-    '$process = Start-Process -FilePath $env:JUSTDO_MXC_POWERSHELL_EXE -ArgumentList $arguments -Verb RunAs -Wait -PassThru',
+    '$process = Start-Process -FilePath $env:JUSTDO_MXC_POWERSHELL_EXE -ArgumentList $arguments -Verb RunAs -WindowStyle Hidden -Wait -PassThru',
     'exit $process.ExitCode',
   ].join('; '),
+);
+
+const SYSTEM_DRIVE_PREPARATION_NEEDED_POWERSHELL = buildEncodedPowerShellCommand(
+  [
+    "$ErrorActionPreference = 'Stop'",
+    '$acl = Get-Acl -LiteralPath $env:JUSTDO_MXC_SYSTEM_DRIVE_ROOT -ErrorAction Stop',
+    "$targetSids = @('S-1-15-2-1', 'S-1-15-2-2')",
+    '$metadataMask = 0x00120088',
+    '$presentSids = @()',
+    'foreach ($rule in $acl.Access) {',
+    "if ($rule.AccessControlType.ToString() -eq 'Deny' -and (([int64]$rule.FileSystemRights -band $metadataMask) -ne 0)) { 'false'; exit 0 }",
+    '$sid = $rule.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value',
+    'if ($targetSids -contains $sid) {',
+    "if ($rule.IsInherited -or $rule.AccessControlType.ToString() -ne 'Allow' -or [int64]$rule.FileSystemRights -ne $metadataMask -or $rule.InheritanceFlags.ToString() -ne 'None' -or $rule.PropagationFlags.ToString() -ne 'None') { 'false'; exit 0 }",
+    '$presentSids += $sid',
+    '}',
+    '}',
+    '@($targetSids | Where-Object { $presentSids -notcontains $_ }).Count -gt 0 | ConvertTo-Json -Compress',
+  ].join('\n'),
 );
 
 const sha256File = (filePath: string): string =>
@@ -193,15 +216,19 @@ export const verifyMxcNativeBinaryIntegrity = (
 
 const probeMxcProcessContainer = async (
   binaries: VerifiedMxcBinaries,
-  environment: Pick<WindowsSandboxServiceEnvironment, 'execFile' | 'systemDrive' | 'systemRoot'>,
-  command: 'launch' | 'list-system-drive' = 'launch',
+  environment: Pick<
+    WindowsSandboxServiceEnvironment,
+    'execFile' | 'systemDrive' | 'systemRoot' | 'localAppData'
+  >,
+  command: 'launch' | 'stat-system-drive' = 'launch',
 ): Promise<void> => {
   const cmdPath = path.win32.join(environment.systemRoot, 'System32', 'cmd.exe');
   if (!isFile(cmdPath)) throw new Error(`Windows command processor is missing: ${cmdPath}`);
   const commandLine =
-    command === 'list-system-drive'
-      ? `${cmdPath} /d /c dir ${environment.systemDrive}\\ >nul`
-      : `${cmdPath} /d /c exit 0`;
+    command === 'stat-system-drive'
+      ? `"${cmdPath}" /d /e:on /c for %I in ("${environment.systemDrive}\\") do @if "%~aI"=="" (exit /b 1) else (exit /b 0)`
+      : `"${cmdPath}" /d /c exit 0`;
+  const probeDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-mxc-probe-'));
   const config = {
     version: '0.7.0-alpha',
     containerId: `justdo-mxc-probe-${crypto.randomUUID().replaceAll('-', '')}`,
@@ -209,11 +236,21 @@ const probeMxcProcessContainer = async (
     lifecycle: { destroyOnExit: true, preservePolicy: false },
     process: {
       commandLine,
+      cwd: probeDirectory,
+      env: [
+        `SystemRoot=${environment.systemRoot}`,
+        `WINDIR=${environment.systemRoot}`,
+        `SystemDrive=${environment.systemDrive}`,
+        `ComSpec=${cmdPath}`,
+        `LOCALAPPDATA=${environment.localAppData}`,
+        `TEMP=${probeDirectory}`,
+        `TMP=${probeDirectory}`,
+      ],
       timeout: 10_000,
     },
     filesystem: {
-      readonlyPaths: [`${environment.systemDrive}\\`],
-      readwritePaths: [os.tmpdir()],
+      readonlyPaths: [path.win32.dirname(cmdPath)],
+      readwritePaths: [probeDirectory],
       deniedPaths: [] as string[],
     },
     ui: { disable: true, clipboard: 'none', injection: false },
@@ -229,17 +266,21 @@ const probeMxcProcessContainer = async (
       },
     },
   };
-  await environment.execFile(
-    binaries.executablePath,
-    ['--config-base64', Buffer.from(JSON.stringify(config), 'utf8').toString('base64')],
-    { encoding: 'utf8', timeout: MXC_PROBE_TIMEOUT_MS, windowsHide: true },
-  );
+  try {
+    await environment.execFile(
+      binaries.executablePath,
+      ['--config-base64', Buffer.from(JSON.stringify(config), 'utf8').toString('base64')],
+      { encoding: 'utf8', timeout: MXC_PROBE_TIMEOUT_MS, windowsHide: true },
+    );
+  } finally {
+    await fs.promises.rm(probeDirectory, { recursive: true, force: true });
+  }
 };
 
 const probeMxcHost = async (
   binaries: VerifiedMxcBinaries,
   execRunner: ExecFileRunner,
-): Promise<void> => {
+): Promise<MxcIsolationTier> => {
   const { stdout } = await execRunner(binaries.executablePath, ['--probe'], {
     encoding: 'utf8',
     timeout: 5_000,
@@ -253,16 +294,39 @@ const probeMxcHost = async (
   ) {
     throw new Error('MXC host probe did not select a supported ProcessContainer isolation tier.');
   }
+  return probe.tier;
+};
+
+const describeMxcProbeError = (error: unknown): string => {
+  const message = error instanceof Error ? error.message : String(error);
+  const stderr =
+    typeof error === 'object' && error !== null && 'stderr' in error
+      ? String(error.stderr ?? '')
+      : '';
+  const nativeError = /^\s*error:\s*(.+)$/im.exec(stderr || message)?.[1];
+  const detail =
+    nativeError ??
+    (stderr || message)
+      .replace(/^Command failed:[^\r\n]*(?:\r?\n)?/i, '')
+      .split(/SECTION:/)[0]
+      .trim();
+  return (
+    detail.split(/\{\s*"error"\s*:/)[0].trim() || 'MXC executor exited unsuccessfully.'
+  ).slice(0, MXC_PROBE_ERROR_MAX_LENGTH);
 };
 
 export class WindowsSandboxService {
   private readonly environment: WindowsSandboxServiceEnvironment;
-  private successfulProbeHash: string | null = null;
+  private successfulProbe: { executableHash: string; tier: MxcIsolationTier } | null = null;
 
   constructor(environment?: Partial<WindowsSandboxServiceEnvironment>) {
     const systemRoot =
       environment?.systemRoot ?? process.env.SystemRoot ?? process.env.WINDIR ?? 'C:\\Windows';
     const systemDrive = environment?.systemDrive ?? process.env.SystemDrive ?? 'C:';
+    const localAppData =
+      environment?.localAppData ??
+      process.env.LOCALAPPDATA ??
+      path.win32.join(os.homedir(), 'AppData', 'Local');
     const execRunner: ExecFileRunner =
       environment?.execFile ??
       (async (executable, args, options) => {
@@ -282,6 +346,7 @@ export class WindowsSandboxService {
       appPath: environment?.appPath ?? app.getAppPath(),
       systemRoot,
       systemDrive,
+      localAppData,
       execFile: execRunner,
       nativeBinaryVerifier: environment?.nativeBinaryVerifier ?? verifyMxcNativeBinaryIntegrity,
       nativeHostProbe:
@@ -289,15 +354,40 @@ export class WindowsSandboxService {
       processContainerProbe:
         environment?.processContainerProbe ??
         (binaries =>
-          probeMxcProcessContainer(binaries, { execFile: execRunner, systemDrive, systemRoot })),
+          probeMxcProcessContainer(binaries, {
+            execFile: execRunner,
+            systemDrive,
+            systemRoot,
+            localAppData,
+          })),
       systemDrivePreparationProbe:
         environment?.systemDrivePreparationProbe ??
         (binaries =>
           probeMxcProcessContainer(
             binaries,
-            { execFile: execRunner, systemDrive, systemRoot },
-            'list-system-drive',
+            { execFile: execRunner, systemDrive, systemRoot, localAppData },
+            'stat-system-drive',
           )),
+      systemDrivePreparationNeededProbe:
+        environment?.systemDrivePreparationNeededProbe ??
+        (async () => {
+          const { stdout } = await execRunner(
+            path.win32.join(systemRoot, 'System32', 'WindowsPowerShell\\v1.0\\powershell.exe'),
+            [
+              '-NoProfile',
+              '-NonInteractive',
+              '-EncodedCommand',
+              SYSTEM_DRIVE_PREPARATION_NEEDED_POWERSHELL,
+            ],
+            {
+              encoding: 'utf8',
+              env: { ...process.env, JUSTDO_MXC_SYSTEM_DRIVE_ROOT: `${systemDrive}\\` },
+              timeout: 10_000,
+              windowsHide: true,
+            },
+          );
+          return JSON.parse(stdout) === true;
+        }),
       authenticodeVerifier:
         environment?.authenticodeVerifier ??
         (async filePath => {
@@ -351,6 +441,14 @@ export class WindowsSandboxService {
     }
   }
 
+  private async isSystemDrivePreparationNeeded(): Promise<boolean> {
+    try {
+      return await this.environment.systemDrivePreparationNeededProbe();
+    } catch {
+      return false;
+    }
+  }
+
   async getStatus(): Promise<WindowsSandboxStatus> {
     if (this.environment.platform !== 'win32') {
       return {
@@ -393,26 +491,36 @@ export class WindowsSandboxService {
       };
     }
 
+    let hostPreparationRecommended = false;
     try {
-      if (this.successfulProbeHash !== verifiedBinaries.executableHash) {
-        await this.environment.nativeHostProbe(verifiedBinaries);
+      const cachedProbe =
+        this.successfulProbe?.executableHash === verifiedBinaries.executableHash
+          ? this.successfulProbe
+          : null;
+      const tier = cachedProbe?.tier ?? (await this.environment.nativeHostProbe(verifiedBinaries));
+      hostPreparationRecommended =
+        tier === 'appcontainer-dacl' &&
+        !(await this.isSystemDrivePrepared(verifiedBinaries)) &&
+        (await this.isSystemDrivePreparationNeeded());
+      if (!cachedProbe) {
         await this.environment.processContainerProbe(verifiedBinaries);
-        this.successfulProbeHash = verifiedBinaries.executableHash;
+        this.successfulProbe = { executableHash: verifiedBinaries.executableHash, tier };
       }
     } catch (error) {
-      this.successfulProbeHash = null;
+      this.successfulProbe = null;
       return {
         code: WindowsSandboxStatusCode.CheckFailed,
         supported: true,
         helperAvailable: true,
         initialized: false,
         ready: false,
+        hostPreparationRecommended,
         diagnosticsPath: pluginDirectory,
-        error: `MXC ProcessContainer self-check failed: ${error instanceof Error ? error.message : String(error)}`,
+        error: `MXC ProcessContainer self-check failed: ${describeMxcProbeError(error)}`,
       };
     }
 
-    const prepared = await this.isSystemDrivePrepared(verifiedBinaries);
+    const prepared = !hostPreparationRecommended;
     return {
       code: prepared
         ? WindowsSandboxStatusCode.Ready
@@ -428,7 +536,11 @@ export class WindowsSandboxService {
 
   async initialize(_workspaceDirectory: string): Promise<WindowsSandboxOperationResult> {
     const before = await this.getStatus();
-    if (!before.supported || !before.helperAvailable || !before.ready) {
+    if (
+      !before.supported ||
+      !before.helperAvailable ||
+      (!before.ready && !before.hostPreparationRecommended)
+    ) {
       return {
         success: false,
         status: before,
@@ -474,6 +586,7 @@ export class WindowsSandboxService {
           windowsHide: true,
         },
       );
+      this.successfulProbe = null;
       const status = await this.getStatus();
       return status.ready && !status.hostPreparationRecommended
         ? { success: true, status }

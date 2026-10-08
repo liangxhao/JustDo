@@ -163,6 +163,26 @@ describe('Windows sandbox readiness recovery', () => {
     expect(screen.queryByRole('button', { name: 'windowsSandboxInitialize' })).toBeNull();
   });
 
+  it('offers verified preparation while keeping a failed sandbox disabled until rechecking succeeds', async () => {
+    const cowork = setup({
+      code: 'check_failed',
+      supported: true,
+      helperAvailable: true,
+      ready: false,
+      hostPreparationRecommended: true,
+      error: 'Process startup failed',
+    });
+
+    await screen.findByText('Process startup failed');
+    const sandbox = screen.getByRole('radio', { name: /windowsSandboxMode/ }) as HTMLInputElement;
+    expect(sandbox.disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'windowsSandboxInitialize' }));
+
+    await screen.findByText('windowsSandboxStatus_ready');
+    expect(cowork.initializeWindowsSandbox).toHaveBeenCalledOnce();
+    expect(sandbox.disabled).toBe(false);
+  });
+
   it('reports refresh failures and allows another refresh to recover', async () => {
     const cowork = setup({ code: 'ready', ready: true });
     await screen.findByText('windowsSandboxStatus_ready');

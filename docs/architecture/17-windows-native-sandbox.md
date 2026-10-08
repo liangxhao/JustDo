@@ -25,9 +25,11 @@ flowchart LR
 
 插件目录存在只通过第一层检查。服务验证 wxc-exec 和 wxc-host-prep 的 SHA-256，再运行该执行器的 `--probe`，只接受 base-container、appcontainer-bfs 或 appcontainer-dacl 隔离层级，随后实际运行无网络 ProcessContainer；两项成功探针按执行器 hash 缓存。更换二进制不能复用旧成功结果。
 
+真实探针只授命令处理器所在 System32 目录只读与单次独立临时目录读写，将工作目录和 TEMP/TMP 指向该临时目录，并在成功或失败后清理。显式环境只传必要 Windows 路径变量；BaseContainer API 需要 LOCALAPPDATA，但此变量不增加文件授权。不能将整个系统盘设为只读，或授整个用户临时目录读写：DACL 兼容隔离可能因此要求普通用户修改系统盘根目录的 ACL，造成错误拒绝。设置页保留有界的原生错误摘要，不显示执行参数中的配置编码及请求 envelope。
+
 IsoEnvBroker 属于 Windows 的实验性 IsolationSession，不能作为 ProcessContainer 的准入条件。OpenClaw 2026.9.8 插件原包仍有此检查，构建补丁将它替换为同一个实际执行器的 `--probe`，同时保留层级警告与探测失败拒绝注册的边界。显式 mxcBinaryPath 覆盖也必须探测该覆盖路径。这个后端不要求启用 Windows 可选功能中的 Windows Sandbox，不能提供安装无关服务的按钮来处理误判。
 
-系统盘准备通过沙盒内执行目录枚举判断，不解析本地化 icacls 字符串。缺少相关 ACE 可以是建议准备而不是完全不可用；UI 应区别“可运行但枚举受限”和“无法创建隔离进程”。
+系统盘准备仅针对 appcontainer-dacl 隔离层级，通过沙盒内读取根目录属性判断，不解析本地化 icacls 字符串。属性探针不额外授权系统盘根目录，不枚举目录内容，也不重定向到 NUL：原生 helper 仅授元数据 ACE，不授 FILE_LIST_DIRECTORY，NUL 则有独立的准备要求。base-container 和 appcontainer-bfs 无须系统盘 ACL 准备。缺少相关 ACE 可以是建议准备而不是完全不可用；UI 应区别“可运行但元数据访问受限”和“无法创建隔离进程”。
 
 ## 3. 文件与网络能力
 
@@ -48,6 +50,8 @@ OpenClaw 的 Docker 风格 Skill 物化默认可能形成“可写工作区内�
 ## 5. 显式系统准备
 
 用户可在设置页触发带 UAC 的 wxc-host-prep prepare-system-drive。提权前和提权后的 helper 都重新验证固定 hash 与 Microsoft Authenticode，防止安装文件被替换后执行。
+
+DACL 根目录属性探针失败时，Main 以只读 PowerShell/.NET ACL 检查确认原生 helper 的两项元数据 ACE 缺失且无拒绝或冲突规则，才提供显式准备入口。无法读取或确认 ACL 时不能据此提权。即使真实启动也失败，仍可准备；沙盒保持不可选，只有准备后重新执行宿主探测与真实启动检查也通过才可准入。宿主能力探测或二进制完整性错误不能打开此入口。
 
 系统准备不是每轮工具执行的隐式前置，更不能为普通状态查询弹提权。拒绝 UAC、helper 缺失或签名验证失败应返回明确错误，保留 local 模式的选择。
 
