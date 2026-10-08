@@ -4,7 +4,10 @@ import os from 'os';
 import path from 'path';
 import { promisify } from 'util';
 
-import type { MulticaIntegrationResult, MulticaIntegrationStatus } from '../../../shared/integrations/multica';
+import type {
+  MulticaIntegrationResult,
+  MulticaIntegrationStatus,
+} from '../../../shared/integrations/multica';
 import { PRODUCT_NAME } from '../../../shared/productMetadata';
 import type { SqliteStore } from '../../data/sqliteStore';
 import { MULTICA_BRIDGE_PROTOCOL_VERSION } from './multicaBridgeProtocol';
@@ -63,7 +66,7 @@ export class MulticaIntegrationService {
       multicaVersion: detected.version,
       activeTaskCount: bridge.activeTaskCount,
       manualSetup: {
-        protocolFamily: 'openclaw',
+        protocolFamily: 'codex',
         displayName: PRODUCT_NAME,
         command: state?.command ?? '',
         description: 'Local desktop Agent runtime',

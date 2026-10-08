@@ -31,17 +31,20 @@ function createMulticaAgentLauncher(targetPath, options = {}) {
   const source = fs
     .readFileSync(path.join(__dirname, 'multica-agent-launcher.cs'), 'utf8')
     .replace(
-      'private const string ProductExecutableOverride = null;',
-      `private const string ProductExecutableOverride = ${csharpString(options.productExecutablePath)};`,
-    )
-    .replace(
-      'private const string ApplicationPathOverride = null;',
-      `private const string ApplicationPathOverride = ${csharpString(options.applicationPath)};`,
+      'private const string UserDataPathOverride = null;',
+      `private const string UserDataPathOverride = ${csharpString(options.userDataPath)};`,
     );
   fs.writeFileSync(temporarySource, source, 'utf8');
   const result = spawnSync(
     compiler,
-    ['/nologo', '/target:exe', '/optimize+', `/out:${temporaryExe}`, temporarySource],
+    [
+      '/nologo',
+      '/target:exe',
+      '/optimize+',
+      '/reference:System.Web.Extensions.dll',
+      `/out:${temporaryExe}`,
+      temporarySource,
+    ],
     { encoding: 'utf8', windowsHide: true },
   );
   fs.rmSync(temporarySource, { force: true });

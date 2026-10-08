@@ -20,6 +20,7 @@ import {
   sanitizeMulticaBridgeEnvironment,
   validateMulticaCommandArgv,
 } from './multicaBridgeProtocol';
+import type { MulticaCodexSession } from './multicaCodexSession';
 import type { MulticaCommandService } from './multicaCommandService';
 
 interface MulticaBridgeServerOptions {
@@ -30,6 +31,10 @@ interface MulticaBridgeServerOptions {
 }
 
 const SHUTDOWN_DRAIN_TIMEOUT_MS = 5_000;
+const OUTPUT_CHUNK_BYTES = 64 * 1024;
+// Native admission echoes the accepted input in two consecutive Codex items.
+// Allow both encoded items while keeping slow-reader memory bounded.
+const MAX_PENDING_OUTPUT_BYTES = 4 * MULTICA_MAX_REQUEST_BYTES;
 
 const isRequest = (value: unknown): value is MulticaBridgeRequest => {
   if (!value || typeof value !== 'object') return false;
@@ -57,6 +62,7 @@ export class MulticaBridgeServer {
   private readonly sockets = new Set<net.Socket>();
   private readonly abortControllers = new Set<AbortController>();
   private readonly executions = new Set<Promise<void>>();
+  private readonly sessions = new Map<net.Socket, MulticaCodexSession>();
   private readonly endpoint: string;
   private readonly token = crypto.randomBytes(32).toString('base64url');
 
@@ -126,7 +132,10 @@ export class MulticaBridgeServer {
     });
     if (!server) return;
     for (const controller of this.abortControllers) controller.abort();
-    for (const socket of this.sockets) socket.destroy();
+    for (const socket of this.sockets) {
+      this.drainSession(socket);
+      socket.destroy();
+    }
     const closeServer = new Promise<void>(resolve => server.close(() => resolve()));
     const drainExecutions = new Promise<void>(resolve => {
       const timer = setTimeout(resolve, SHUTDOWN_DRAIN_TIMEOUT_MS);
@@ -139,6 +148,14 @@ export class MulticaBridgeServer {
     if (process.platform !== 'win32') fs.rmSync(this.endpoint, { force: true });
   }
 
+  private drainSession(socket: net.Socket): void {
+    const session = this.sessions.get(socket);
+    if (!session) return;
+    this.sessions.delete(socket);
+    const drain = session.close().finally(() => this.executions.delete(drain));
+    this.executions.add(drain);
+  }
+
   private handleConnection(socket: net.Socket): void {
     if (this.sockets.size >= (this.options.maxConnections ?? MULTICA_BRIDGE_MAX_CONNECTIONS)) {
       socket.destroy();
@@ -146,7 +163,12 @@ export class MulticaBridgeServer {
     }
     this.sockets.add(socket);
     let buffer = '';
-    let receivedBytes = 0;
+    let session: MulticaCodexSession | undefined;
+    let stdinBuffer = '';
+    let stdinBytes = 0;
+    let inputQueue = Promise.resolve();
+    let queuedRequests = 0;
+    let queuedBytes = 0;
     let handled = false;
     const decoder = new StringDecoder('utf8');
     const abortController = new AbortController();
@@ -157,84 +179,195 @@ export class MulticaBridgeServer {
         socket.destroy();
       },
     );
-    const send = (response: MulticaBridgeResponse): void => {
-      if (!socket.destroyed) socket.write(encodeMulticaBridgeMessage(response));
-    };
-    socket.on('data', chunk => {
-      if (handled) return;
-      receivedBytes += chunk.length;
-      if (receivedBytes > MULTICA_MAX_REQUEST_BYTES) {
-        handled = true;
-        send({ type: 'error', message: 'Multica bridge request is too large.' });
-        socket.end();
-        return;
+    const outputQueue: Buffer[] = [];
+    let queuedOutputBytes = 0;
+    let outputBlocked = false;
+    let outputEnding = false;
+    const flushOutput = (): void => {
+      while (!socket.destroyed && !outputBlocked && outputQueue.length) {
+        const frame = outputQueue.shift()!;
+        queuedOutputBytes -= frame.length;
+        outputBlocked = !socket.write(frame);
       }
-      buffer += decoder.write(chunk);
-      let decoded: ReturnType<typeof decodeMulticaBridgeLines>;
-      try {
-        decoded = decodeMulticaBridgeLines(buffer);
-      } catch {
-        handled = true;
-        send({ type: 'error', message: 'Invalid Multica bridge request.' });
-        socket.end();
-        return;
-      }
-      buffer = decoded.remainder;
-      const raw = decoded.messages[0];
-      if (!raw) return;
-      handled = true;
-      socket.setTimeout(0);
-      const suppliedToken = isRequest(raw) ? Buffer.from(raw.token) : null;
-      const expectedToken = Buffer.from(this.token);
       if (
-        !isRequest(raw) ||
-        raw.version !== MULTICA_BRIDGE_PROTOCOL_VERSION ||
-        suppliedToken === null ||
-        suppliedToken.length !== expectedToken.length ||
-        !crypto.timingSafeEqual(suppliedToken, expectedToken)
+        outputEnding &&
+        !socket.destroyed &&
+        !socket.writableEnded &&
+        !outputBlocked &&
+        outputQueue.length === 0
+      )
+        socket.end();
+    };
+    const send = (response: MulticaBridgeResponse): void => {
+      if (socket.destroyed || outputEnding) return;
+      const frame = Buffer.from(encodeMulticaBridgeMessage(response));
+      if (
+        frame.length > MULTICA_MAX_REQUEST_BYTES ||
+        queuedOutputBytes + socket.writableLength + frame.length > MAX_PENDING_OUTPUT_BYTES
       ) {
-        send({ type: 'error', message: `Unauthorized ${PRODUCT_NAME} bridge request.` });
-        socket.end();
+        socket.destroy();
         return;
       }
-      const argv = validateMulticaCommandArgv(raw.argv);
-      if (!argv) {
-        send({ type: 'error', message: 'Unsupported Multica compatibility command.' });
-        socket.end();
-        return;
-      }
-      const execution = Promise.resolve()
-        .then(() =>
-          this.options.commandService.execute(
-            argv,
-            raw.cwd,
-            sanitizeMulticaBridgeEnvironment(raw.env),
-            abortController.signal,
-          ),
-        )
-        .then(result => {
-          if (result.stdout) {
-            send({ type: 'stdout', data: Buffer.from(result.stdout).toString('base64') });
-          }
-          if (result.stderr) {
-            send({ type: 'stderr', data: Buffer.from(result.stderr).toString('base64') });
-          }
-          send({ type: 'exit', code: result.exitCode });
-          socket.end();
-        })
-        .catch(error => {
-          send({ type: 'error', message: error instanceof Error ? error.message : String(error) });
-          socket.end();
-        })
-        .finally(() => {
-          this.executions.delete(execution);
+      outputQueue.push(frame);
+      queuedOutputBytes += frame.length;
+      flushOutput();
+    };
+    const relayOutput = (type: 'stdout' | 'stderr', text: string): void => {
+      const bytes = Buffer.from(text);
+      for (let offset = 0; offset < bytes.length && !socket.destroyed; offset += OUTPUT_CHUNK_BYTES)
+        send({
+          type,
+          data: bytes.subarray(offset, offset + OUTPUT_CHUNK_BYTES).toString('base64'),
         });
-      this.executions.add(execution);
+    };
+    const endOutput = (): void => {
+      outputEnding = true;
+      // Input closure cancels execution even if the output consumer has stopped
+      // reading. Its remaining output can drain independently.
+      this.drainSession(socket);
+      flushOutput();
+    };
+    socket.on('drain', () => {
+      outputBlocked = false;
+      flushOutput();
+    });
+    socket.on('data', chunk => {
+      try {
+        if (handled && !session) return;
+        if (Buffer.byteLength(buffer) + chunk.length > MULTICA_MAX_REQUEST_BYTES) {
+          handled = true;
+          send({ type: 'error', message: 'Multica bridge request is too large.' });
+          endOutput();
+          return;
+        }
+        buffer += decoder.write(chunk);
+        let decoded: ReturnType<typeof decodeMulticaBridgeLines>;
+        try {
+          decoded = decodeMulticaBridgeLines(buffer);
+        } catch {
+          handled = true;
+          send({ type: 'error', message: 'Invalid Multica bridge request.' });
+          endOutput();
+          return;
+        }
+        buffer = decoded.remainder;
+        for (const raw of decoded.messages) {
+          if (session) {
+            const frame = raw as { type?: string; data?: unknown };
+            if (frame.type === 'eof') {
+              endOutput();
+              break;
+            }
+            if (frame.type !== 'stdin' || typeof frame.data !== 'string') {
+              socket.destroy();
+              break;
+            }
+            stdinBuffer += frame.data;
+            stdinBytes += Buffer.byteLength(frame.data);
+            if (stdinBytes > MULTICA_MAX_REQUEST_BYTES) {
+              socket.destroy();
+              break;
+            }
+            if (!frame.data.includes('\n')) continue;
+            const input = decodeMulticaBridgeLines(stdinBuffer);
+            stdinBuffer = input.remainder;
+            stdinBytes = Buffer.byteLength(stdinBuffer);
+            for (const message of input.messages) {
+              const bytes = Buffer.byteLength(JSON.stringify(message));
+              if (++queuedRequests > 256 || queuedBytes + bytes > MULTICA_MAX_REQUEST_BYTES) {
+                socket.destroy();
+                break;
+              }
+              queuedBytes += bytes;
+              const owned = session;
+              inputQueue = inputQueue
+                .then(() => owned.receive(message))
+                .catch(() => {
+                  socket.destroy();
+                })
+                .finally(() => {
+                  queuedRequests -= 1;
+                  queuedBytes -= bytes;
+                });
+            }
+            continue;
+          }
+          if (handled) {
+            socket.destroy();
+            break;
+          }
+          handled = true;
+          socket.setTimeout(0);
+          const suppliedToken = isRequest(raw) ? Buffer.from(raw.token) : null;
+          const expectedToken = Buffer.from(this.token);
+          if (
+            !isRequest(raw) ||
+            raw.version !== MULTICA_BRIDGE_PROTOCOL_VERSION ||
+            !suppliedToken ||
+            suppliedToken.length !== expectedToken.length ||
+            !crypto.timingSafeEqual(suppliedToken, expectedToken)
+          ) {
+            send({ type: 'error', message: `Unauthorized ${PRODUCT_NAME} bridge request.` });
+            endOutput();
+            break;
+          }
+          const argv = validateMulticaCommandArgv(raw.argv);
+          if (!argv) {
+            send({ type: 'error', message: 'Use the Codex runtime in Multica.' });
+            endOutput();
+            break;
+          }
+          if (argv[0] === 'app-server') {
+            session = this.options.commandService.connect(
+              raw.cwd,
+              sanitizeMulticaBridgeEnvironment(raw.env),
+              message => relayOutput('stdout', `${JSON.stringify(message)}\n`),
+            );
+            this.sessions.set(socket, session);
+            continue;
+          }
+          const execution = Promise.resolve()
+            .then(() =>
+              this.options.commandService.execute(
+                argv,
+                raw.cwd,
+                sanitizeMulticaBridgeEnvironment(raw.env),
+                abortController.signal,
+              ),
+            )
+            .then(result => {
+              if (result.stdout) {
+                relayOutput('stdout', result.stdout);
+              }
+              if (result.stderr) {
+                relayOutput('stderr', result.stderr);
+              }
+              send({ type: 'exit', code: result.exitCode });
+              endOutput();
+            })
+            .catch(error => {
+              send({
+                type: 'error',
+                message: error instanceof Error ? error.message : String(error),
+              });
+              endOutput();
+            })
+            .finally(() => {
+              this.executions.delete(execution);
+            });
+          this.executions.add(execution);
+        }
+      } catch {
+        socket.destroy();
+      }
     });
     socket.once('close', () => {
+      outputQueue.length = 0;
+      queuedOutputBytes = 0;
       this.sockets.delete(socket);
       this.abortControllers.delete(abortController);
       abortController.abort();
+      this.drainSession(socket);
     });
     socket.once('error', () => abortController.abort());
   }

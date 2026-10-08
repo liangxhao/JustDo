@@ -10,153 +10,27 @@ import {
 } from './multicaBridgeProtocol';
 
 describe('Multica bridge protocol', () => {
-  it('accepts every command used by Multica v0.4.43 discovery', () => {
-    expect(validateMulticaCommandArgv(['config', 'validate', '--json'])).toEqual([
-      'config',
-      'validate',
-      '--json',
-    ]);
-    expect(validateMulticaCommandArgv(['config', 'file'])).toEqual(['config', 'file']);
-    expect(validateMulticaCommandArgv(['config', 'get', 'agents.list', '--json'])).toEqual([
-      'config',
-      'get',
-      'agents.list',
-      '--json',
-    ]);
-    expect(validateMulticaCommandArgv(['agents', 'list', '--json'])).toEqual([
-      'agents',
-      'list',
-      '--json',
-    ]);
-  });
-
-  it.each([true, false])('accepts an agent request with local mode=%s', local => {
-    const argv = [
-      'agent',
-      ...(local ? ['--local'] : []),
-      '--json',
-      '--session-id',
-      'multica-1',
-      '--agent',
-      'main',
-      '--message',
-      'line one\nline two',
-    ];
-    expect(parseMulticaBridgeArgv(['electron', '--justdo-multica-bridge', ...argv])).toEqual(argv);
-  });
-
-  it('rejects unrelated commands and line breaks outside the prompt', () => {
-    expect(validateMulticaCommandArgv(['gateway', 'status'])).toBeNull();
-    expect(
-      validateMulticaCommandArgv([
-        'agent',
-        '--json',
-        '--session-id',
-        'bad\nid',
-        '--message',
-        'task',
-      ]),
-    ).toBeNull();
-  });
-
-  it('requires the private launcher marker for process-level dispatch', () => {
+  it('accepts the Codex stdio and model discovery contract', () => {
+    for (const argv of [
+      ['--version'],
+      ['debug', 'models'],
+      ['debug', 'models', '--bundled'],
+      ['app-server', '--listen', 'stdio://'],
+    ]) {
+      expect(validateMulticaCommandArgv(argv)).toEqual(argv);
+      expect(parseMulticaBridgeArgv(['app', '--justdo-multica-bridge', ...argv])).toEqual(argv);
+    }
     expect(parseMulticaBridgeArgv(['app', '--version'])).toBeNull();
-    expect(parseMulticaBridgeArgv(['app', '--justdo-multica-bridge', '--version'])).toEqual([
-      '--version',
-    ]);
   });
-
-  it('accepts current safe options and rejects unknown, duplicate, or ambiguous agent flags', () => {
-    expect(
-      validateMulticaCommandArgv([
-        'agent',
-        '--json',
-        '--session-id=multica-1',
-        '--agent=main',
-        '--message=task',
-      ]),
-    ).toEqual(['agent', '--json', '--session-id=multica-1', '--agent=main', '--message=task']);
-    expect(
-      validateMulticaCommandArgv([
-        'agent',
-        '--json',
-        '--session-id',
-        'one',
-        '--message',
-        'task',
-        '--channel',
-        'web',
-        '--thinking=high',
-        '--verbose',
-        'on',
-      ]),
-    ).toEqual([
-      'agent',
-      '--json',
-      '--session-id',
-      'one',
-      '--message',
-      'task',
-      '--channel',
-      'web',
-      '--thinking=high',
-      '--verbose',
-      'on',
-    ]);
-    expect(
-      validateMulticaCommandArgv([
-        'agent',
-        '--json',
-        '--session-id',
-        'one',
-        '--message',
-        'task',
-        '--unknown',
-      ]),
-    ).toBeNull();
-    expect(
-      validateMulticaCommandArgv([
-        'agent',
-        '--json',
-        '--session-id',
-        'one',
-        '--session-id',
-        'two',
-        '--message',
-        'task',
-      ]),
-    ).toBeNull();
-    expect(
-      validateMulticaCommandArgv([
-        'agent',
-        '--json',
-        '--session-id',
-        'one',
-        '--session-key',
-        'two',
-        '--message',
-        'task',
-      ]),
-    ).toBeNull();
-    expect(
-      validateMulticaCommandArgv([
-        'agent',
-        '--json',
-        '--session-id',
-        'one',
-        '--message=first line\nsecond line',
-      ]),
-    ).not.toBeNull();
-    expect(
-      validateMulticaCommandArgv([
-        'agent',
-        '--json',
-        '--session-id',
-        'one',
-        '--message',
-        '--explain this prompt',
-      ]),
-    ).not.toBeNull();
+  it('rejects legacy OpenClaw commands and alternative transports', () => {
+    for (const argv of [
+      ['agent', '--json'],
+      ['agents', 'list', '--json'],
+      ['config', 'file'],
+      ['app-server', '--listen', 'ws://127.0.0.1'],
+      ['debug', 'models', '--unknown'],
+    ])
+      expect(validateMulticaCommandArgv(argv)).toBeNull();
   });
 
   it('round-trips newline-delimited messages while retaining a partial frame', () => {
@@ -167,7 +41,7 @@ describe('Multica bridge protocol', () => {
     const decoded = decodeMulticaBridgeLines(`${frame}{"type":"exit"`);
     expect(decoded.messages).toEqual([{ type: 'exit', code: 0 }]);
     expect(decoded.remainder).toBe('{"type":"exit"');
-    expect(MULTICA_BRIDGE_PROTOCOL_VERSION).toBe(3);
+    expect(MULTICA_BRIDGE_PROTOCOL_VERSION).toBe(4);
   });
 
   it('forwards task custom env while protecting the JustDo runtime bootstrap', () => {

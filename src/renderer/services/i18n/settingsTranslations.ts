@@ -428,7 +428,7 @@ export const settingsTranslations = {
     multicaNotReady: '未就绪',
     multicaManualSetupTitle: '在 Multica 中完成一次手动配置',
     multicaManualSetupDescription:
-      '按下列步骤创建并选用本地运行时。如果已创建过，请至少核对命令路径。',
+      '按下列步骤创建并选用本地运行时。已有运行时需将基础协议改为 codex，并核对命令路径。',
     multicaSetupStep1Title: '打开运行时设置',
     multicaSetupStep1Description:
       '在 Multica 中打开“运行时”标签页，新增一个运行时，基础协议选择下方显示的值。',
@@ -1779,7 +1779,7 @@ export const settingsTranslations = {
     multicaNotReady: 'Not ready',
     multicaManualSetupTitle: 'Finish one-time setup in Multica',
     multicaManualSetupDescription:
-      'Follow these steps to create and select a local runtime. If one already exists, verify at least its command path.',
+      'Follow these steps to create and select a local runtime. For an existing runtime, change its Base protocol to codex and verify the command path.',
     multicaSetupStep1Title: 'Open runtime settings',
     multicaSetupStep1Description:
       'Open the Runtime tab in Multica, add a runtime, and choose the Base protocol value shown below.',

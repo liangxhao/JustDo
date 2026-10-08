@@ -8,7 +8,7 @@ export const MulticaIntegrationIpc = {
 export type MulticaBridgeState = 'running' | 'stopped' | 'error';
 
 export interface MulticaManualSetup {
-  protocolFamily: 'openclaw';
+  protocolFamily: 'codex';
   displayName: string;
   command: string;
   description: string;

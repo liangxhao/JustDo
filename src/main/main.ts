@@ -95,6 +95,7 @@ import {
   parseMulticaBridgeArgv,
 } from './integrations/multica/multicaBridgeProtocol';
 import { MulticaBridgeServer } from './integrations/multica/multicaBridgeServer';
+import { createMulticaCodexExecution } from './integrations/multica/multicaCodexExecution';
 import { resolvePackagedMulticaTargetPath } from './integrations/multica/multicaCommandLauncher';
 import { MulticaCommandService } from './integrations/multica/multicaCommandService';
 import {
@@ -103,7 +104,7 @@ import {
 } from './integrations/multica/multicaDevAgent';
 import { MulticaExternalSessionStore } from './integrations/multica/multicaExternalSessionStore';
 import { MulticaIntegrationService } from './integrations/multica/multicaIntegrationService';
-import { runMulticaOpenClaw } from './integrations/multica/multicaOpenClawRunner';
+import { getMulticaModelCatalog } from './integrations/multica/multicaModelCatalog';
 import {
   applyBrowserModeChange,
   registerAppHandlers,
@@ -352,14 +353,19 @@ const configureUserDataPath = (): void => {
   }
 };
 
-configureUserDataPath();
 const multicaBridgeArgv = parseMulticaBridgeArgv(process.argv);
+if (process.argv.includes(MULTICA_DEV_BRIDGE_SWITCH) && !multicaBridgeArgv) {
+  fs.writeSync(2, 'Unsupported runtime command. Select the Codex provider in Multica.\n');
+  process.exit(64);
+}
 if (multicaBridgeArgv) {
   console.log = () => undefined;
   console.info = () => undefined;
   console.warn = () => undefined;
   console.error = () => undefined;
-} else {
+}
+configureUserDataPath();
+if (!multicaBridgeArgv) {
   applyDependencyManagerConfigEnv(process.env);
   initLogger();
   enableSystemCaForCurrentProcess();
@@ -969,17 +975,13 @@ const getMulticaCommandService = (): MulticaCommandService => {
   multicaCommandService ??= new MulticaCommandService({
     getCoworkStore,
     getExternalSessionStore: getMulticaExternalSessionStore,
-    getConfigPath: () => getOpenClawEngineManager().getConfigPath(),
-    getOpenClawVersion: () => getOpenClawEngineManager().getStatus().version,
-    runOpenClaw: (argv, cwd, taskEnv, signal) =>
-      runMulticaOpenClaw(
-        { buildCliEnvironment: () => getOpenClawEngineManager().buildCliEnvironment() },
-        argv,
-        cwd,
-        taskEnv,
-        signal,
-      ),
-    waitForConfigUpdates: waitForCoworkConfigUpdates,
+    getModels: () => getMulticaModelCatalog(resolveDefaultAgentModelRef()),
+    execute: createMulticaCodexExecution({
+      getStore: getCoworkStore,
+      getRouter: getCoworkEngineRouter,
+      getRuntime: getOpenClawRuntimeAdapter,
+      ensureReady: ensureOpenClawRunningForCowork,
+    }),
     isEnabled: () => getMulticaIntegrationService().isEnabled(),
     onSessionsChanged: notifyCoworkSessionsChanged,
   });

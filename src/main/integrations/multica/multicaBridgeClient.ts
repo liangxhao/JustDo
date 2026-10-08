@@ -75,7 +75,22 @@ export async function runMulticaBridgeClient(
   return new Promise(resolve => {
     const socket = net.createConnection(metadata.endpoint);
     let buffer = '';
-    let receivedBytes = 0;
+    const streaming = argv[0] === 'app-server';
+    const inputDecoder = new StringDecoder('utf8');
+    const input = (chunk: Buffer): void => {
+      if (
+        !socket.write(
+          encodeMulticaBridgeMessage({ type: 'stdin', data: inputDecoder.write(chunk) }),
+        )
+      )
+        process.stdin.pause();
+    };
+    const eof = (): void => {
+      socket.write(encodeMulticaBridgeMessage({ type: 'eof' }));
+    };
+    socket.on('drain', () => {
+      if (streaming && !finished) process.stdin.resume();
+    });
     const decoder = new StringDecoder('utf8');
     let finished = false;
     let responseRejected = false;
@@ -85,6 +100,9 @@ export async function runMulticaBridgeClient(
       if (finished || requestedCode === null || pendingWrites > 0) return;
       finished = true;
       clearTimeout(timer);
+      process.stdin.off('data', input);
+      process.stdin.off('end', eof);
+      if (streaming) process.stdin.pause();
       socket.destroy();
       resolve(requestedCode);
     };
@@ -94,10 +112,12 @@ export async function runMulticaBridgeClient(
     };
     const relay = (stream: NodeJS.WriteStream, data: string): void => {
       pendingWrites += 1;
-      stream.write(Buffer.from(data, 'base64'), () => {
+      const writable = stream.write(Buffer.from(data, 'base64'), () => {
         pendingWrites -= 1;
+        if (!finished && pendingWrites === 0) socket.resume();
         finish();
       });
+      if (!writable) socket.pause();
     };
     const timer = setTimeout(() => {
       pendingWrites += 1;
@@ -119,11 +139,15 @@ export async function runMulticaBridgeClient(
         env: sanitizeMulticaBridgeEnvironment(process.env),
       };
       socket.write(encodeMulticaBridgeMessage(request));
+      if (streaming) {
+        process.stdin.on('data', input);
+        process.stdin.once('end', eof);
+        process.stdin.resume();
+      }
     });
     socket.on('data', chunk => {
       if (responseRejected) return;
-      receivedBytes += chunk.length;
-      if (receivedBytes > MULTICA_MAX_REQUEST_BYTES) {
+      if (Buffer.byteLength(buffer) + chunk.length > MULTICA_MAX_REQUEST_BYTES) {
         responseRejected = true;
         pendingWrites += 1;
         process.stderr.write(`${PRODUCT_NAME} returned an oversized bridge response.\n`, () => {
@@ -165,6 +189,8 @@ export async function runMulticaBridgeClient(
         requestFinish(69);
       });
     });
-    socket.once('close', () => requestFinish(requestedCode ?? 70));
+    socket.once('close', () =>
+      requestFinish(requestedCode ?? (streaming && process.stdin.readableEnded ? 0 : 70)),
+    );
   });
 }

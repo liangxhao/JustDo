@@ -4,6 +4,7 @@ const path = require('path');
 const http = require('http');
 const { spawn } = require('child_process');
 const { findFreePort } = require('./find-free-port.cjs');
+const { prepareMulticaDevAgent } = require('../multica/create-multica-dev-agent.cjs');
 
 async function main() {
   const root = path.resolve(__dirname, '../..');
@@ -22,6 +23,11 @@ async function main() {
   };
   delete env.ELECTRON_RUN_AS_NODE;
   fs.mkdirSync(userData, { recursive: true });
+  try {
+    prepareMulticaDevAgent(userData);
+  } catch (error) {
+    console.warn(`[Isolated Dev] Multica launcher preparation failed: ${error.message}`);
+  }
   const marker = path.join(root, 'dist-electron', '.electron-ready');
   fs.rmSync(marker, { force: true });
   console.log('[Isolated Dev] Data directory: ' + userData);

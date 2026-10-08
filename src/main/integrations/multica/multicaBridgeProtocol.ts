@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import os from 'os';
 import path from 'path';
 
-export const MULTICA_BRIDGE_PROTOCOL_VERSION = 3;
+export const MULTICA_BRIDGE_PROTOCOL_VERSION = 4;
 export const MULTICA_BRIDGE_METADATA_FILE = 'bridge.json';
 export const MULTICA_DEV_BRIDGE_SWITCH = '--justdo-multica-bridge';
 export const MULTICA_MAX_REQUEST_BYTES = 16 * 1024 * 1024;
@@ -78,74 +78,22 @@ export function sanitizeMulticaBridgeEnvironment(
   return result;
 }
 
-const AGENT_STANDALONE_FLAGS = new Set(['--local', '--json', '--deliver']);
-const AGENT_VALUE_FLAGS = new Set([
-  '--session-id',
-  '--session-key',
-  '--timeout',
-  '--agent',
-  '--message',
-  '--thinking',
-  '--verbose',
-  '--channel',
-  '--reply-to',
-  '--reply-channel',
-  '--reply-account',
-]);
-
-const isAllowedAgentArgv = (argv: readonly string[]): boolean => {
-  const seen = new Set<string>();
-  for (let index = 1; index < argv.length; index += 1) {
-    const token = argv[index];
-    if (hasLineBreak(token) && !token.startsWith('--message=')) return false;
-    const equalsIndex = token.indexOf('=');
-    const flag = equalsIndex >= 0 ? token.slice(0, equalsIndex) : token;
-    if (seen.has(flag)) return false;
-    if (AGENT_STANDALONE_FLAGS.has(flag)) {
-      if (equalsIndex >= 0) return false;
-      seen.add(flag);
-      continue;
-    }
-    if (!AGENT_VALUE_FLAGS.has(flag)) return false;
-    const value = equalsIndex >= 0 ? token.slice(equalsIndex + 1) : argv[++index];
-    if (
-      value === undefined ||
-      value === '' ||
-      (flag !== '--message' && (hasLineBreak(value) || (equalsIndex < 0 && value.startsWith('--'))))
-    ) {
-      return false;
-    }
-    if (flag === '--timeout' && !/^[1-9]\d{0,5}$/.test(value)) return false;
-    seen.add(flag);
-  }
-  return (
-    seen.has('--json') &&
-    seen.has('--message') &&
-    seen.has('--session-id') !== seen.has('--session-key')
-  );
-};
-
 export function validateMulticaCommandArgv(argv: readonly string[]): string[] | null {
-  if (argv[0] !== 'agent' && argv.some(hasLineBreak)) return null;
+  if (argv.some(hasLineBreak)) return null;
   if (argv.length === 1 && argv[0] === '--version') return [...argv];
-
-  if (argv[0] === 'config' && argv[1] === 'validate' && argv.length === 3 && argv[2] === '--json') {
-    return [...argv];
-  }
-  if (argv[0] === 'config' && argv[1] === 'file' && argv.length === 2) return [...argv];
   if (
-    argv[0] === 'config' &&
-    argv[1] === 'get' &&
-    argv[2] === 'agents.list' &&
-    argv.length === 4 &&
-    argv[3] === '--json'
-  ) {
+    argv[0] === 'debug' &&
+    argv[1] === 'models' &&
+    (argv.length === 2 || (argv.length === 3 && argv[2] === '--bundled'))
+  )
     return [...argv];
-  }
-  if (argv[0] === 'agents' && argv[1] === 'list' && argv.length === 3 && argv[2] === '--json') {
+  if (
+    argv.length === 3 &&
+    argv[0] === 'app-server' &&
+    argv[1] === '--listen' &&
+    argv[2] === 'stdio://'
+  )
     return [...argv];
-  }
-  if (argv[0] === 'agent' && isAllowedAgentArgv(argv)) return [...argv];
   return null;
 }
 
@@ -168,7 +116,11 @@ export function getMulticaBridgeEndpoint(userDataPath: string): string {
 }
 
 export function encodeMulticaBridgeMessage(
-  message: MulticaBridgeRequest | MulticaBridgeResponse,
+  message:
+    | MulticaBridgeRequest
+    | MulticaBridgeResponse
+    | { type: 'stdin'; data: string }
+    | { type: 'eof' },
 ): string {
   return `${JSON.stringify(message)}\n`;
 }

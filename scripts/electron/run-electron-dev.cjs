@@ -4,9 +4,17 @@ const {
   devServer: { port },
 } = require('../../package.json');
 const { findFreePort } = require('./find-free-port.cjs');
-const { prepareBrowserExtensionDevHost } = require('../browser/prepare-browser-extension-dev-host.cjs');
+const {
+  prepareBrowserExtensionDevHost,
+} = require('../browser/prepare-browser-extension-dev-host.cjs');
+const { prepareMulticaDevAgent } = require('../multica/create-multica-dev-agent.cjs');
 
 const start = async () => {
+  try {
+    prepareMulticaDevAgent();
+  } catch (error) {
+    console.warn(`[Electron Dev] Multica launcher preparation failed: ${error.message}`);
+  }
   const devServerPort = await findFreePort(port);
   const devServerUrl = `http://localhost:${devServerPort}`;
   const nativeHost = prepareBrowserExtensionDevHost({ devServerUrl });

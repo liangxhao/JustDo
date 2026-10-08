@@ -217,3 +217,23 @@ embedding 服务实时健康。原生诊断经过脱敏后展示，操作建议�
 
 计划任务的记忆总开关表示配置意愿，原生任务的 enabled 和调度记录表示任务状态。
 启用总开关不覆盖原生暂停状态，插件 allow/deny/slot 限制仍生效。
+
+## Multica external runtime
+
+Multica uses the Codex stdio app-server contract through the authenticated local
+bridge. The Windows console launcher owns stdio and connects to Main's named pipe
+directly; Electron's Windows GUI entry cannot relay stdin. Development startup
+rebuilds the launcher for the current data directory. POSIX uses the application's
+bridge entry. Model discovery projects enabled provider chat models through the
+same catalog routes as application configuration. Assistant identity is separate
+from model choice. The native model-mutation queue confirms each turn's selected
+model before admission; resume can select a different model within the same
+conversation. Main maps thread identities to product sessions and converts live
+native Gateway admission, thinking, text and tool events to Codex items. Native
+start publishes the accepted input once, while real text and reasoning deltas
+keep their segment identity through completion. Provisional terminal text waits
+for its native guard commit. Execution and transcripts remain native OpenClaw
+responsibilities. Native final agent responses settle external turns;
+intermediate attempt completion does not. The external OpenClaw CLI command
+interface is removed. See [Multica integration](../features/multica-integration.md)
+for session-marker ownership, setup and supported protocol boundaries.
