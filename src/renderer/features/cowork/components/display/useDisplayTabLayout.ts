@@ -12,6 +12,7 @@ interface DisplayTabLayoutOptions {
   tabCount: number;
   tabButtonRefs: RefObject<Map<string, HTMLButtonElement>>;
   width: number;
+  ownerWindow: Window & typeof globalThis;
 }
 
 export default function useDisplayTabLayout({
@@ -22,6 +23,7 @@ export default function useDisplayTabLayout({
   tabCount,
   tabButtonRefs,
   width,
+  ownerWindow,
 }: DisplayTabLayoutOptions) {
   const clusterRef = useRef<HTMLDivElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
@@ -77,20 +79,29 @@ export default function useDisplayTabLayout({
           ? current
           : { tabWidth, hasOverflow },
       );
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => revealTab(activeTabId));
+      ownerWindow.cancelAnimationFrame(frame);
+      frame = ownerWindow.requestAnimationFrame(() => revealTab(activeTabId));
     };
     measure();
-    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+    const observer = ownerWindow.ResizeObserver ? new ownerWindow.ResizeObserver(measure) : null;
     observer?.observe(cluster);
     if (actionsRef.current) observer?.observe(actionsRef.current);
-    window.addEventListener('resize', measure);
+    ownerWindow.addEventListener('resize', measure);
     return () => {
-      cancelAnimationFrame(frame);
+      ownerWindow.cancelAnimationFrame(frame);
       observer?.disconnect();
-      window.removeEventListener('resize', measure);
+      ownerWindow.removeEventListener('resize', measure);
     };
-  }, [activeTabId, hasActions, isOpen, isWorkspaceFullscreen, revealTab, tabCount, width]);
+  }, [
+    activeTabId,
+    hasActions,
+    isOpen,
+    isWorkspaceFullscreen,
+    ownerWindow,
+    revealTab,
+    tabCount,
+    width,
+  ]);
 
   useLayoutEffect(() => {
     if (isOpen) revealTab(activeTabId);

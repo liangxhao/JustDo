@@ -1,6 +1,6 @@
 import { spawn } from 'child_process';
 import crypto from 'crypto';
-import { BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent, Menu, shell } from 'electron';
+import { dialog, ipcMain, type IpcMainInvokeEvent, Menu, shell } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import { pathToFileURL } from 'url';
@@ -21,6 +21,7 @@ import {
   resolveLocalHtmlPreviewFilePath,
 } from '../../browser/preview/localHtmlPreviewServer';
 import { t } from '../../core/i18n';
+import { getWorkspaceDialogOwner } from '../../core/window/workspaceWindowManager';
 
 const AttachmentMenuAction = {
   OPEN: 'open',
@@ -579,7 +580,7 @@ const resolvePreviewFileConflict = async (
   event: IpcMainInvokeEvent,
   filePath: string,
 ): Promise<PreviewConflictDecision> => {
-  const ownerWindow = BrowserWindow.fromWebContents(event.sender);
+  const ownerWindow = getWorkspaceDialogOwner(event.sender);
   const options = {
     type: 'warning' as const,
     buttons: [
@@ -629,7 +630,7 @@ export const registerShellHandlers = (options: RegisterShellHandlersOptions = {}
         },
       ]);
       menu.popup({
-        window: BrowserWindow.fromWebContents(event.sender) ?? undefined,
+        window: getWorkspaceDialogOwner(event.sender) ?? undefined,
         callback: () => resolve(selectedAction),
       });
     });
@@ -655,7 +656,7 @@ export const registerShellHandlers = (options: RegisterShellHandlersOptions = {}
         },
       ]);
       menu.popup({
-        window: BrowserWindow.fromWebContents(event.sender) ?? undefined,
+        window: getWorkspaceDialogOwner(event.sender) ?? undefined,
         callback: () => resolve(result),
       });
     });

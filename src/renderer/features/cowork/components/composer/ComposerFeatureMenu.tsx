@@ -1,6 +1,8 @@
 import { PlusIcon } from '@heroicons/react/24/outline';
 import { Fragment, type ReactNode, useEffect, useId, useRef, useState } from 'react';
 
+import { useOwnerDocument } from '@/shared/dom/ownerDocument';
+
 export interface ComposerFeatureItem {
   id: string;
   label: string;
@@ -24,6 +26,7 @@ export default function ComposerFeatureMenu({
   disabled?: boolean;
   triggerIcon?: ReactNode;
 }) {
+  const ownerDocument = useOwnerDocument();
   const [open, setOpen] = useState(false);
   const menuId = useId();
   const root = useRef<HTMLDivElement>(null);
@@ -41,7 +44,7 @@ export default function ComposerFeatureMenu({
     if (!open) return;
     const enabled = itemsRef.current.filter(item => !item.disabled);
     const entry = enterFromEnd.current ? enabled[enabled.length - 1] : enabled[0];
-    if (!enabled.some(item => buttons.current.get(item.id) === document.activeElement)) {
+    if (!enabled.some(item => buttons.current.get(item.id) === ownerDocument.activeElement)) {
       if (entry) buttons.current.get(entry.id)?.focus();
       else trigger.current?.focus();
     }
@@ -54,13 +57,13 @@ export default function ComposerFeatureMenu({
         trigger.current?.focus();
       }
     };
-    document.addEventListener('pointerdown', dismiss);
-    document.addEventListener('keydown', escape);
+    ownerDocument.addEventListener('pointerdown', dismiss);
+    ownerDocument.addEventListener('keydown', escape);
     return () => {
-      document.removeEventListener('pointerdown', dismiss);
-      document.removeEventListener('keydown', escape);
+      ownerDocument.removeEventListener('pointerdown', dismiss);
+      ownerDocument.removeEventListener('keydown', escape);
     };
-  }, [open, disabled, navigationKey]);
+  }, [open, disabled, navigationKey, ownerDocument]);
   const navigate = (id: string, key: string) => {
     const enabled = items.filter(item => !item.disabled);
     if (!enabled.length) return;

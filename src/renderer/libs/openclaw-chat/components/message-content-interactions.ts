@@ -3,12 +3,14 @@ import { isLocalHtmlFilePath, isWebBrowserLink } from '@shared/browser/browserLi
 import { openMessageHtmlLink, openMessageWebLink } from '@/features/browser/messageBrowserLinks';
 import { IMAGE_PREVIEW_EVENT } from '@/features/cowork/components/preview/imageFilePreview';
 import { i18nService } from '@/services/i18n';
+import { isDomHTMLElement } from '@/shared/dom/ownerDocument';
 
 import { showImageContextMenu } from './message-render';
 
 export function handleMessageLinkClick(event: Event, workingDirectory?: string): boolean {
-  const anchor = event.composedPath().find(node => node instanceof HTMLAnchorElement) as
-    HTMLAnchorElement | undefined;
+  const anchor = event
+    .composedPath()
+    .find(node => isDomHTMLElement(node) && node.tagName === 'A') as HTMLAnchorElement | undefined;
   if (!anchor) return false;
   const filePath = anchor.getAttribute('data-local-html-path');
   const href = anchor.getAttribute('href');
@@ -35,7 +37,8 @@ export function handleMessageImageClick(event: Event): boolean {
     .composedPath()
     .find(
       node =>
-        node instanceof HTMLImageElement &&
+        isDomHTMLElement(node) &&
+        node.tagName === 'IMG' &&
         (node.classList.contains('chat-bubble__image') ||
           node.classList.contains('markdown-inline-image')),
     ) as HTMLImageElement | undefined;
@@ -52,7 +55,10 @@ export function handleMessageImageContextMenu(event: Event): void {
   const image = event
     .composedPath()
     .find(
-      node => node instanceof HTMLImageElement && node.classList.contains('markdown-inline-image'),
+      node =>
+        isDomHTMLElement(node) &&
+        node.tagName === 'IMG' &&
+        node.classList.contains('markdown-inline-image'),
     ) as HTMLImageElement | undefined;
   if (image) void showImageContextMenu(event, image.currentSrc || image.src);
 }
@@ -60,7 +66,7 @@ export function handleMessageImageContextMenu(event: Event): void {
 export function handleMessageDiagramToggle(event: Event): void {
   const target = event
     .composedPath()
-    .find(node => node instanceof HTMLElement && node.classList.contains('mermaid-toggle')) as
+    .find(node => isDomHTMLElement(node) && node.classList.contains('mermaid-toggle')) as
     HTMLButtonElement | undefined;
   const block = target?.closest<HTMLElement>('.mermaid-block');
   if (!target || !block) return;

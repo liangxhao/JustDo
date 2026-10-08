@@ -1,6 +1,8 @@
 import type React from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { useOwnerWindow } from '@/shared/dom/ownerDocument';
+
 interface DragPosition {
   x: number;
   y: number;
@@ -25,6 +27,7 @@ export const useDraggableModal = (
   dialogRef: React.RefObject<HTMLElement | null>,
   resetKey: unknown,
 ) => {
+  const ownerWindow = useOwnerWindow();
   const [position, setPosition] = useState<DragPosition>({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const dragStartRef = useRef<DragStart>();
@@ -46,18 +49,18 @@ export const useDraggableModal = (
     const correctionX =
       rect.left < VIEWPORT_MARGIN
         ? VIEWPORT_MARGIN - rect.left
-        : rect.right > window.innerWidth - VIEWPORT_MARGIN
-          ? window.innerWidth - VIEWPORT_MARGIN - rect.right
+        : rect.right > ownerWindow.innerWidth - VIEWPORT_MARGIN
+          ? ownerWindow.innerWidth - VIEWPORT_MARGIN - rect.right
           : 0;
     const correctionY =
       rect.top < VIEWPORT_MARGIN
         ? VIEWPORT_MARGIN - rect.top
-        : rect.bottom > window.innerHeight - VIEWPORT_MARGIN
-          ? window.innerHeight - VIEWPORT_MARGIN - rect.bottom
+        : rect.bottom > ownerWindow.innerHeight - VIEWPORT_MARGIN
+          ? ownerWindow.innerHeight - VIEWPORT_MARGIN - rect.bottom
           : 0;
     if (correctionX === 0 && correctionY === 0) return;
     setPosition(current => ({ x: current.x + correctionX, y: current.y + correctionY }));
-  }, [dialogRef]);
+  }, [dialogRef, ownerWindow]);
 
   useEffect(() => {
     clearDrag();
@@ -69,17 +72,17 @@ export const useDraggableModal = (
       clearDrag();
       keepInViewport();
     };
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, [clearDrag, keepInViewport]);
+    ownerWindow.addEventListener('resize', handleResize);
+    return () => ownerWindow.removeEventListener('resize', handleResize);
+  }, [clearDrag, keepInViewport, ownerWindow]);
 
   useEffect(() => {
     const dialog = dialogRef.current;
-    if (!dialog || typeof ResizeObserver === 'undefined') return;
+    if (!dialog || !ownerWindow.ResizeObserver) return;
     let frameId: number | undefined;
-    const observer = new ResizeObserver(() => {
-      if (frameId !== undefined) window.cancelAnimationFrame(frameId);
-      frameId = window.requestAnimationFrame(() => {
+    const observer = new ownerWindow.ResizeObserver(() => {
+      if (frameId !== undefined) ownerWindow.cancelAnimationFrame(frameId);
+      frameId = ownerWindow.requestAnimationFrame(() => {
         frameId = undefined;
         clearDrag();
         keepInViewport();
@@ -88,10 +91,10 @@ export const useDraggableModal = (
     observer.observe(dialog);
     return () => {
       observer.disconnect();
-      if (frameId !== undefined) window.cancelAnimationFrame(frameId);
+      if (frameId !== undefined) ownerWindow.cancelAnimationFrame(frameId);
       clearDrag();
     };
-  }, [clearDrag, dialogRef, keepInViewport, resetKey]);
+  }, [clearDrag, dialogRef, keepInViewport, resetKey, ownerWindow]);
 
   const onPointerDown = useCallback<React.PointerEventHandler<HTMLDivElement>>(
     event => {
@@ -119,14 +122,14 @@ export const useDraggableModal = (
     const start = dragStartRef.current;
     if (!start || start.pointerId !== event.pointerId) return;
     const minimumX = VIEWPORT_MARGIN - start.rect.left;
-    const maximumX = window.innerWidth - VIEWPORT_MARGIN - start.rect.right;
+    const maximumX = ownerWindow.innerWidth - VIEWPORT_MARGIN - start.rect.right;
     const minimumY = VIEWPORT_MARGIN - start.rect.top;
-    const maximumY = window.innerHeight - VIEWPORT_MARGIN - start.rect.bottom;
+    const maximumY = ownerWindow.innerHeight - VIEWPORT_MARGIN - start.rect.bottom;
     setPosition({
       x: start.x + clamp(event.clientX - start.clientX, minimumX, maximumX),
       y: start.y + clamp(event.clientY - start.clientY, minimumY, maximumY),
     });
-  }, []);
+  }, [ownerWindow]);
 
   const stopDragging = useCallback<React.PointerEventHandler<HTMLDivElement>>(event => {
     clearDrag(event.pointerId);

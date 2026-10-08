@@ -116,6 +116,7 @@ import { i18nService } from '@/services/i18n';
 import PaperClipIcon from '@/shared/components/icons/PaperClipIcon';
 import XMarkIcon from '@/shared/components/icons/XMarkIcon';
 import Modal from '@/shared/components/ui/Modal';
+import { useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 import { type RootState, store } from '@/store';
 
 import { isImagePath } from './composerAttachmentFiles';
@@ -271,6 +272,8 @@ const formatContextLength = (tokens: number): string => {
 
 const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInputProps>(
   (props, ref) => {
+    const ownerDocument = useOwnerDocument();
+    const ownerWindow = useOwnerWindow();
     const {
       onSubmit: submitPrompt,
       onQueue: queuePrompt,
@@ -601,7 +604,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       swarmWorkflow: swarmWorkflowOptions,
       selectSwarmWorkflow: option => {
         setSwarmWorkflowOptions(option);
-        requestAnimationFrame(() => {
+        ownerWindow.requestAnimationFrame(() => {
           textareaRef.current?.focus();
           textareaRef.current?.setSelectionRange(0, 0);
         });
@@ -860,14 +863,17 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       [updateSlashMenu],
     );
 
-    const focusInputAtEnd = useCallback((nextValue: string) => {
-      requestAnimationFrame(() => {
-        const textarea = textareaRef.current;
-        if (!textarea) return;
-        textarea.focus();
-        textarea.setSelectionRange(nextValue.length, nextValue.length);
-      });
-    }, []);
+    const focusInputAtEnd = useCallback(
+      (nextValue: string) => {
+        ownerWindow.requestAnimationFrame(() => {
+          const textarea = textareaRef.current;
+          if (!textarea) return;
+          textarea.focus();
+          textarea.setSelectionRange(nextValue.length, nextValue.length);
+        });
+      },
+      [ownerWindow],
+    );
 
     const insertSpeechTranscript = useCallback(
       (transcript: string) => {
@@ -884,12 +890,12 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         const nextCaret = left.length + insertion.length;
         commitValue(nextValue);
         resetSlashMenuState();
-        requestAnimationFrame(() => {
+        ownerWindow.requestAnimationFrame(() => {
           textareaRef.current?.focus();
           textareaRef.current?.setSelectionRange(nextCaret, nextCaret);
         });
       },
-      [commitValue, resetSlashMenuState],
+      [commitValue, resetSlashMenuState, ownerWindow],
     );
 
     // 暴露方法给父组件
@@ -899,7 +905,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         latestValueRef.current = newValue;
         setValue(newValue);
         // 触发自动调整高度
-        requestAnimationFrame(() => {
+        ownerWindow.requestAnimationFrame(() => {
           const textarea = textareaRef.current;
           if (textarea) {
             resizeTextarea(textarea);
@@ -913,7 +919,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         const nextValue = currentValue.trim() ? `${currentValue.trimEnd()}\n\n${clean}` : clean;
         latestValueRef.current = nextValue;
         setValue(nextValue);
-        requestAnimationFrame(() => {
+        ownerWindow.requestAnimationFrame(() => {
           const textarea = textareaRef.current;
           if (!textarea) return;
           resizeTextarea(textarea);
@@ -953,7 +959,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           setValue('');
           dispatch(clearDraftAttachments(draftKey));
         }
-        requestAnimationFrame(() => {
+        ownerWindow.requestAnimationFrame(() => {
           textareaRef.current?.focus();
         });
       };
@@ -962,7 +968,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         window.removeEventListener('cowork:focus-input', handleFocusInput);
         if (warningTimerRef.current) clearTimeout(warningTimerRef.current);
       };
-    }, [dispatch, draftKey]);
+    }, [dispatch, draftKey, ownerWindow]);
 
     useEffect(() => {
       if (workingDirectory?.trim()) {
@@ -1529,12 +1535,12 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         focusInputAtEnd(nextValue);
 
         if (executeInstant && command.executeLocal && !command.args) {
-          requestAnimationFrame(() => {
+          ownerWindow.requestAnimationFrame(() => {
             void handleSubmit(nextValue);
           });
         }
       },
-      [commitValue, focusInputAtEnd, handleSubmit, resetSlashMenuState],
+      [commitValue, focusInputAtEnd, handleSubmit, resetSlashMenuState, ownerWindow],
     );
 
     const handleSlashArgSelect = useCallback(
@@ -1546,12 +1552,19 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         resetSlashMenuState();
         focusInputAtEnd(nextValue);
         if (execute) {
-          requestAnimationFrame(() => {
+          ownerWindow.requestAnimationFrame(() => {
             void handleSubmit(nextValue);
           });
         }
       },
-      [commitValue, focusInputAtEnd, handleSubmit, resetSlashMenuState, slashMenuCommand?.name],
+      [
+        commitValue,
+        focusInputAtEnd,
+        handleSubmit,
+        resetSlashMenuState,
+        slashMenuCommand?.name,
+        ownerWindow,
+      ],
     );
 
     const handleSlashButtonClick = useCallback(() => {
@@ -1579,7 +1592,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       } else {
         resetSlashMenuState();
       }
-      requestAnimationFrame(() => {
+      ownerWindow.requestAnimationFrame(() => {
         textarea.selectionStart = nextCaret;
         textarea.selectionEnd = nextCaret;
       });
@@ -1590,6 +1603,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       supportsSlashCommands,
       updateSlashMenu,
       value,
+      ownerWindow,
     ]);
 
     const handleInputChange = useCallback(
@@ -1700,7 +1714,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         // Shift+Enter inserts newline natively; for other combos use execCommand.
         if (!event.shiftKey) {
           event.preventDefault();
-          document.execCommand('insertText', false, '\n');
+          ownerDocument.execCommand('insertText', false, '\n');
         }
       }
     };
@@ -1904,24 +1918,27 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     );
 
     // Context menu handling for textarea
-    const handleContextMenu = useCallback((event: React.MouseEvent<HTMLTextAreaElement>) => {
-      event.preventDefault();
-      event.stopPropagation();
-      const textarea = textareaRef.current;
-      if (!textarea) return;
+    const handleContextMenu = useCallback(
+      (event: React.MouseEvent<HTMLTextAreaElement>) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const textarea = textareaRef.current;
+        if (!textarea) return;
 
-      // Calculate menu position
-      const x = event.clientX;
-      const y = event.clientY;
+        // Calculate menu position
+        const x = event.clientX;
+        const y = event.clientY;
 
-      // Adjust position if near screen edges
-      const menuWidth = 140;
-      const menuHeight = 100;
-      const adjustedX = x + menuWidth > window.innerWidth ? x - menuWidth : x;
-      const adjustedY = y + menuHeight > window.innerHeight ? y - menuHeight : y;
+        // Adjust position if near screen edges
+        const menuWidth = 140;
+        const menuHeight = 100;
+        const adjustedX = x + menuWidth > ownerWindow.innerWidth ? x - menuWidth : x;
+        const adjustedY = y + menuHeight > ownerWindow.innerHeight ? y - menuHeight : y;
 
-      setContextMenuPos({ x: adjustedX, y: adjustedY });
-    }, []);
+        setContextMenuPos({ x: adjustedX, y: adjustedY });
+      },
+      [ownerWindow],
+    );
 
     const closeContextMenu = useCallback(() => {
       setContextMenuPos(null);
@@ -1948,18 +1965,18 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         }
       };
 
-      document.addEventListener('mousedown', handleClickOutside);
-      window.addEventListener('scroll', handleScroll, true);
-      window.addEventListener('resize', handleScroll);
-      document.addEventListener('keydown', handleKeyDown);
+      ownerDocument.addEventListener('mousedown', handleClickOutside);
+      ownerWindow.addEventListener('scroll', handleScroll, true);
+      ownerWindow.addEventListener('resize', handleScroll);
+      ownerDocument.addEventListener('keydown', handleKeyDown);
 
       return () => {
-        document.removeEventListener('mousedown', handleClickOutside);
-        window.removeEventListener('scroll', handleScroll, true);
-        window.removeEventListener('resize', handleScroll);
-        document.removeEventListener('keydown', handleKeyDown);
+        ownerDocument.removeEventListener('mousedown', handleClickOutside);
+        ownerWindow.removeEventListener('scroll', handleScroll, true);
+        ownerWindow.removeEventListener('resize', handleScroll);
+        ownerDocument.removeEventListener('keydown', handleKeyDown);
       };
-    }, [contextMenuPos, closeContextMenu]);
+    }, [contextMenuPos, closeContextMenu, ownerDocument, ownerWindow]);
 
     const handleContextMenuAction = useCallback(
       async (action: 'cut' | 'copy' | 'paste' | 'selectAll') => {
@@ -1984,13 +2001,13 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         switch (action) {
           case 'cut':
             if (hasSelection) {
-              await navigator.clipboard.writeText(selectedText);
+              await ownerWindow.navigator.clipboard.writeText(selectedText);
               if (!draftIsCurrent()) return;
               const newValue = value.substring(0, start) + value.substring(end);
               setValue(newValue);
               consumeSelectedFeature();
               // Reset selection to start position
-              requestAnimationFrame(() => {
+              ownerWindow.requestAnimationFrame(() => {
                 textarea.selectionStart = start;
                 textarea.selectionEnd = start;
               });
@@ -1999,19 +2016,19 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
           case 'copy':
             if (hasSelection) {
-              await navigator.clipboard.writeText(selectedText);
+              await ownerWindow.navigator.clipboard.writeText(selectedText);
             }
             break;
 
           case 'paste':
             try {
-              const clipText = await navigator.clipboard.readText();
+              const clipText = await ownerWindow.navigator.clipboard.readText();
               if (!draftIsCurrent()) return;
               if (clipText) {
                 const newValue = value.substring(0, start) + clipText + value.substring(end);
                 setValue(newValue);
                 consumeSelectedFeature();
-                requestAnimationFrame(() => {
+                ownerWindow.requestAnimationFrame(() => {
                   const newPos = start + clipText.length;
                   textarea.selectionStart = newPos;
                   textarea.selectionEnd = newPos;
@@ -2023,14 +2040,14 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             break;
 
           case 'selectAll':
-            requestAnimationFrame(() => {
+            ownerWindow.requestAnimationFrame(() => {
               textarea.selectionStart = 0;
               textarea.selectionEnd = value.length;
             });
             break;
         }
       },
-      [value, setValue, closeContextMenu, draftKey, swarmWorkflowOptions, clearAcceptedSwarmWorkflow],
+      [value, setValue, closeContextMenu, draftKey, swarmWorkflowOptions, clearAcceptedSwarmWorkflow, ownerWindow],
     );
 
     const contextMenuItems = useMemo(() => {
@@ -2367,8 +2384,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         );
       }
       updateCompletionFeedback(nextFeedback);
-      window.requestAnimationFrame(() => textareaRef.current?.focus());
-    }, [disabled, goalExecution?.phase, sessionId, updateCompletionFeedback]);
+      ownerWindow.requestAnimationFrame(() => textareaRef.current?.focus());
+    }, [disabled, goalExecution?.phase, sessionId, updateCompletionFeedback, ownerWindow]);
 
     const handleGoalCancelImproving = useCallback(() => {
       if (sessionId && !sessionId.startsWith('temp-')) {
@@ -2423,15 +2440,15 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         const firstButton = goalEndCancelButtonRef.current;
         const lastButton = goalEndConfirmButtonRef.current;
         if (!firstButton || !lastButton) return;
-        if (event.shiftKey && document.activeElement === firstButton) {
+        if (event.shiftKey && ownerDocument.activeElement === firstButton) {
           event.preventDefault();
           lastButton.focus();
-        } else if (!event.shiftKey && document.activeElement === lastButton) {
+        } else if (!event.shiftKey && ownerDocument.activeElement === lastButton) {
           event.preventDefault();
           firstButton.focus();
         }
       },
-      [goalActionPending],
+      [goalActionPending, ownerDocument],
     );
 
     const slashMenuVisible =

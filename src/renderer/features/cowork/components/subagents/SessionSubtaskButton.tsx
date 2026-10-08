@@ -2,6 +2,7 @@ import { QueueListIcon } from '@heroicons/react/24/outline';
 import { useCallback, useId, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
+import { useOwnerWindow } from '@/shared/dom/ownerDocument';
 
 import SubtaskListPanel from './SubtaskListPanel';
 import type { Subtask } from './subtaskPresentation';
@@ -16,14 +17,18 @@ export default function SessionSubtaskButton({
   parentRunning: boolean;
   onOpenSubtask: (task: Subtask, parentSessionId: string) => void;
 }) {
+  const ownerWindow = useOwnerWindow();
   const [tasks, setTasks] = useState<Subtask[]>([]);
   const [open, setOpen] = useState(false);
   const anchor = useRef<HTMLButtonElement>(null);
   const panelId = useId();
-  const close = useCallback((restoreFocus = true) => {
-    setOpen(false);
-    if (restoreFocus) requestAnimationFrame(() => anchor.current?.focus());
-  }, []);
+  const close = useCallback(
+    (restoreFocus = true) => {
+      setOpen(false);
+      if (restoreFocus) ownerWindow.requestAnimationFrame(() => anchor.current?.focus());
+    },
+    [ownerWindow],
+  );
   return (
     <div className="relative shrink-0">
       {tasks.length > 0 && (

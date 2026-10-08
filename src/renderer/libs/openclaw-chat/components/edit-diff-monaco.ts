@@ -1,5 +1,7 @@
 import type * as Monaco from 'monaco-editor';
 
+import { observeEditorLayout } from '@/shared/dom/observeEditorLayout';
+
 export type EditDiffMonacoData = {
   key: string;
   language: string;
@@ -16,6 +18,7 @@ type MonacoInstance = {
   container: HTMLElement;
   data: EditDiffMonacoData;
   editor: Monaco.editor.IStandaloneDiffEditor;
+  disposeLayout: () => void;
   modifiedModel: Monaco.editor.ITextModel;
   originalModel: Monaco.editor.ITextModel;
 };
@@ -116,6 +119,7 @@ function sameData(left: EditDiffMonacoData, right: EditDiffMonacoData): boolean 
 }
 
 function disposeInstance(host: EditDiffMonacoHost, instance: MonacoInstance): void {
+  instance.disposeLayout();
   instance.editor.dispose();
   instance.originalModel.dispose();
   instance.modifiedModel.dispose();
@@ -190,7 +194,7 @@ export class EditDiffMonacoController {
     host: EditDiffMonacoHost,
     data: EditDiffMonacoData,
   ): MonacoInstance {
-    const container = document.createElement('div');
+    const container = host.ownerDocument.createElement('div');
     container.className = 'edit-diff__monaco-editor';
     host.append(container);
 
@@ -206,7 +210,7 @@ export class EditDiffMonacoController {
       monaco.Uri.parse(`inmemory://justdo-edit-diff/${modelId}/modified`),
     );
     const editor = monaco.editor.createDiffEditor(container, {
-      automaticLayout: true,
+      automaticLayout: false,
       autoDetectHighContrast: false,
       compactMode: false,
       contextmenu: false,
@@ -247,12 +251,13 @@ export class EditDiffMonacoController {
       wordWrap: 'off',
     });
     editor.setModel({ original: originalModel, modified: modifiedModel });
+    const disposeLayout = observeEditorLayout(editor);
     host.classList.add('is-ready');
     host.closest('.edit-diff')?.classList.add('edit-diff--monaco-ready');
     host
       .querySelector<HTMLElement>('.edit-diff__monaco-fallback')
       ?.setAttribute('aria-hidden', 'true');
 
-    return { container, data, editor, modifiedModel, originalModel };
+    return { container, data, editor, disposeLayout, modifiedModel, originalModel };
   }
 }

@@ -4,6 +4,30 @@
 
 消息中的普通网页 URL、Markdown 链接和 `MEDIA` 附件共享浏览器打开偏好，打开当前会话内置网页 Tab 或已安装的 Chrome。句子中的本地 HTML 路径和 Markdown HTML 链接转换为受控点击标记，主窗口不导航到 file URL；文件查找与 URL 查询参数、锚点分离，路径只解码一次，裸文件路径中的 `%`、`#` 保持原名。Main 沿用本地预览服务校验文件及资源根目录，再通过主窗口主 frame 专用 IPC 打开 HTTP(S) 预览 URL。已挂载的内置浏览器通过自身 handle 创建实际 Tab，容量拒绝时不插入外层虚假 Tab。该偏好只影响用户点击，不改变 Gateway 的 browser Tool 模式或原生消息所有权。详见[浏览器设置](../features/browser-settings-design.md)。
 
+右侧工作区支持整区分离，覆盖 agent-team、Swarm Workflow、临时侧聊、文件、浏览器、
+终端及其他 Tab。其 React/Redux 与 Gateway 客户端仍属于主 Renderer；
+`OwnerDocumentContext` 把 DOM 的焦点、菜单 portal、剪贴板、resize 和屏幕像素比
+指向实际展示文档。应用事件、配置订阅和显式 IPC 继续使用源窗口，不能把
+`window.electron` 改成无 preload 的子窗口 API。
+
+工作区同步源根节点的 class、style、语言、方向和 data 属性，包括控制完整主题
+token 的 `data-theme`。消息复制/引用菜单使用自身文档的视口限制位置；侧聊的
+聚焦帧也使用该文档的动画调度，避免主窗口最小化时暂停可见独立窗口的 DOM 工作。
+
+尺寸和可见性观察器同样从组件所在窗口构造。源文档的 ResizeObserver 即使观察
+子文档元素，也会在源窗口最小化后暂停交付。终端、协作图、Swarm、浏览器标注、
+PDF 与聊天滚动都由实际呈现窗口观察。Monaco 关闭内置 automaticLayout，使用
+容器所属窗口的观察器和动画帧显式更新布局；编辑器销毁时解除观察，diff 实例
+另外持有显式清理函数并在销毁前执行。弹窗拖动与焦点恢复也使用所在窗口的边界。
+
+分离/收回只移动同一原生视图，不能改变 React portal 的目标或按分离状态重建
+工具组件。工具的有效可见性是会话打开状态或整个工作区已分离；停靠占位仍只
+使用会话打开状态。会话切换和工具保留沿用已有规则，不增加正文缓存。
+Lit 自定义元素继续由源文档注册和创建；跨文档 shadow root 将构造样式表转换
+为本地 style，避免跨文档 adoptedStyleSheets 限制。流渲染帧调度使用元素
+ownerDocument 的窗口，窗口布局及审批同步使用不依赖主窗口 compositor 的
+合并定时更新，确保主窗口最小化后独立窗口仍更新。
+
 会话冷归档恢复继续使用 `chat.startup` / `chat.history`，由 Gateway 校验和恢复原生记录；Renderer 不解压文件、不建立正文缓存。首次读取期间显示加载说明，归档历史可能耗时更长，不推断冷状态或伪造进度。`initialHistoryReady` 表示首次读取流程已结束，不能单独证明读取成功；`historyReadFailed` 单独记录选中会话的读取失败。
 
 主聊天通过会话 key 绑定读取就绪状态，首次读取未完成或恢复失败时禁止发送、侧聊和导出；失败后保留已显示正文，提供只读重试。只有快照实际提交成功才解除错误状态，被拒绝的空快照不能清除失败。断连使初始化和分页世代失效，同一个 client 重连也要等待新的权威历史；排队等待旧请求不等于读取完成。异步读取的成功和失败均核对 sessionKey、client 和历史 generation，旧连接的失败不能污染新连接。普通后台历史刷新不显示初次加载横幅。导出范围仍是当前聊天快照，不能代表完整原生备份。

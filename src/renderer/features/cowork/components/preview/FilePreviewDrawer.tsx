@@ -38,6 +38,8 @@ import PreviewMarkdown from '@/features/cowork/components/preview/PreviewMarkdow
 import { toSanitizedMarkdownHtml } from '@/libs/openclaw-chat/components/markdown';
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/ui/Modal';
+import { observeEditorLayout } from '@/shared/dom/observeEditorLayout';
+import { useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 
 import { FilePreviewToolbarContext } from '../shared/FilePreviewToolbarContext';
 import type { ImageFilePreview } from './imageFilePreview';
@@ -171,8 +173,8 @@ const configureFilePreviewThemes: BeforeMount = monaco => {
   });
 };
 
-const clampDrawerWidth = (width: number): number => {
-  const viewportMax = Math.max(DRAWER_MIN_WIDTH, window.innerWidth - DRAWER_WINDOW_MARGIN);
+const clampDrawerWidth = (width: number, viewportWidth = window.innerWidth): number => {
+  const viewportMax = Math.max(DRAWER_MIN_WIDTH, viewportWidth - DRAWER_WINDOW_MARGIN);
   return Math.min(Math.max(width, DRAWER_MIN_WIDTH), viewportMax);
 };
 
@@ -182,6 +184,8 @@ const showToast = (message: string): void => {
 
 const TextPreviewDrawer = forwardRef<FilePreviewDrawerHandle, TextPreviewProps>(
   ({ preview, onClose, isObscured = false, embedded = false }, ref) => {
+    const ownerDocument = useOwnerDocument();
+    const ownerWindow = useOwnerWindow();
     const sharedToolbarTarget = useContext(FilePreviewToolbarContext);
     const toolbarTarget = embedded ? sharedToolbarTarget : null;
     const extension = getPreviewableFileExtension(preview.filePath) ?? '.txt';
@@ -193,7 +197,9 @@ const TextPreviewDrawer = forwardRef<FilePreviewDrawerHandle, TextPreviewProps>(
     const [isAuthorizing, setIsAuthorizing] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [isShowingInFolder, setIsShowingInFolder] = useState(false);
-    const [isDark, setIsDark] = useState(() => document.documentElement.classList.contains('dark'));
+    const [isDark, setIsDark] = useState(() =>
+      ownerDocument.documentElement.classList.contains('dark'),
+    );
     const [confirmation, setConfirmation] = useState<ConfirmationRequest | null>(null);
     const drawerRef = useRef<HTMLElement>(null);
     const mountedRef = useRef(true);
@@ -280,11 +286,14 @@ const TextPreviewDrawer = forwardRef<FilePreviewDrawerHandle, TextPreviewProps>(
 
     useEffect(() => {
       const observer = new MutationObserver(() => {
-        setIsDark(document.documentElement.classList.contains('dark'));
+        setIsDark(ownerDocument.documentElement.classList.contains('dark'));
       });
-      observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+      observer.observe(ownerDocument.documentElement, {
+        attributes: true,
+        attributeFilter: ['class'],
+      });
       return () => observer.disconnect();
-    }, []);
+    }, [ownerDocument]);
 
     const askForConfirmation = useCallback(
       (kind: ConfirmationKind): Promise<ConfirmationChoice> =>
@@ -467,6 +476,7 @@ const TextPreviewDrawer = forwardRef<FilePreviewDrawerHandle, TextPreviewProps>(
 
     const applyEditorLanguage: OnMount = useCallback(
       (editor, monaco) => {
+        observeEditorLayout(editor);
         const model = editor.getModel();
         if (model && model.getLanguageId() !== editorLanguage) {
           monaco.editor.setModelLanguage(model, editorLanguage);
@@ -491,29 +501,32 @@ const TextPreviewDrawer = forwardRef<FilePreviewDrawerHandle, TextPreviewProps>(
 
     useEffect(() => {
       const handleResize = () => setDrawerWidth(width => clampDrawerWidth(width));
-      window.addEventListener('resize', handleResize);
-      return () => window.removeEventListener('resize', handleResize);
-    }, []);
+      ownerWindow.addEventListener('resize', handleResize);
+      return () => ownerWindow.removeEventListener('resize', handleResize);
+    }, [ownerWindow]);
 
-    const handleResizeStart = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-      const right = drawerRef.current?.getBoundingClientRect().right ?? window.innerWidth;
-      event.preventDefault();
+    const handleResizeStart = useCallback(
+      (event: React.MouseEvent<HTMLDivElement>) => {
+        const right = drawerRef.current?.getBoundingClientRect().right ?? ownerWindow.innerWidth;
+        event.preventDefault();
 
-      const handleMouseMove = (moveEvent: MouseEvent) => {
-        setDrawerWidth(clampDrawerWidth(right - moveEvent.clientX));
-      };
-      const handleMouseUp = () => {
-        document.body.style.cursor = '';
-        document.body.style.userSelect = '';
-        window.removeEventListener('mousemove', handleMouseMove);
-        window.removeEventListener('mouseup', handleMouseUp);
-      };
+        const handleMouseMove = (moveEvent: MouseEvent) => {
+          setDrawerWidth(clampDrawerWidth(right - moveEvent.clientX));
+        };
+        const handleMouseUp = () => {
+          ownerDocument.body.style.cursor = '';
+          ownerDocument.body.style.userSelect = '';
+          ownerWindow.removeEventListener('mousemove', handleMouseMove);
+          ownerWindow.removeEventListener('mouseup', handleMouseUp);
+        };
 
-      document.body.style.cursor = 'col-resize';
-      document.body.style.userSelect = 'none';
-      window.addEventListener('mousemove', handleMouseMove);
-      window.addEventListener('mouseup', handleMouseUp);
-    }, []);
+        ownerDocument.body.style.cursor = 'col-resize';
+        ownerDocument.body.style.userSelect = 'none';
+        ownerWindow.addEventListener('mousemove', handleMouseMove);
+        ownerWindow.addEventListener('mouseup', handleMouseUp);
+      },
+      [ownerDocument, ownerWindow],
+    );
 
     const confirmationCopy = confirmation
       ? {
@@ -715,7 +728,7 @@ const TextPreviewDrawer = forwardRef<FilePreviewDrawerHandle, TextPreviewProps>(
                         </div>
                       }
                       options={{
-                        automaticLayout: true,
+                        automaticLayout: false,
                         bracketPairColorization: { enabled: true },
                         cursorBlinking: 'smooth',
                         fontFamily:
@@ -762,7 +775,7 @@ const TextPreviewDrawer = forwardRef<FilePreviewDrawerHandle, TextPreviewProps>(
                           </div>
                         }
                         options={{
-                          automaticLayout: true,
+                          automaticLayout: false,
                           bracketPairColorization: { enabled: true },
                           domReadOnly: true,
                           fontFamily:

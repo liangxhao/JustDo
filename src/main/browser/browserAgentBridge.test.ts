@@ -140,6 +140,38 @@ test('keeps lifecycle and tab inspection actions lazy', async () => {
   expect(sendToRenderer).not.toHaveBeenCalled();
 });
 
+test('retains main operator ownership for its exact workspace host and revokes it on reset', async () => {
+  let allowedHost: number | null = 50;
+  bridge = new BrowserAgentBridge(
+    vi.fn(),
+    owner => owner === 10,
+    () => null,
+    false,
+    (owner, host) => owner === 10 && host === allowedHost,
+  );
+  bridge.registerIpc();
+  electron.guests.set(100, {
+    id: 100,
+    hostWebContents: { id: 50 },
+    getType: () => 'webview',
+    isDestroyed: () => false,
+    getURL: () => 'https://example.test/',
+    getTitle: () => 'Workspace browser',
+    session: electron.partition,
+    once: vi.fn(),
+    on: vi.fn(),
+    removeListener: vi.fn(),
+  });
+  registerGuest(100);
+  await expect(
+    bridge.executeCommand('justdo:session-1', { action: 'tabs' }),
+  ).resolves.toMatchObject({ tabCount: 1 });
+  allowedHost = null;
+  await expect(
+    bridge.executeCommand('justdo:session-1', { action: 'tabs' }),
+  ).resolves.toMatchObject({ tabCount: 0 });
+});
+
 test('opens, labels, resolves, and closes a distinct internal tab', async () => {
   const sendToRenderer = vi.fn();
   bridge = new BrowserAgentBridge(sendToRenderer, () => true);

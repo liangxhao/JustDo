@@ -9,6 +9,7 @@ import CoworkPromptInput, {
 import type { AssistantTurn } from '@/libs/openclaw-chat/model/chat-transcript-state';
 import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 import { i18nService } from '@/services/i18n';
+import { useOwnerWindow } from '@/shared/dom/ownerDocument';
 
 export interface SideChatMessage {
   runId: string;
@@ -47,6 +48,7 @@ const SideChatPanel = ({
   sessionModelRef,
   workingDirectory,
 }: SideChatPanelProps) => {
+  const ownerWindow = useOwnerWindow();
   const inputRef = useRef<CoworkPromptInputRef>(null);
   const panelRef = useRef<HTMLElement>(null);
   const pending = messages.some(message => message.status === 'pending');
@@ -105,9 +107,9 @@ const SideChatPanel = ({
       (panelRef.current as HTMLElement & { inert: boolean }).inert = isObscured;
     }
     if (isObscured || pending) return;
-    const frameId = requestAnimationFrame(() => inputRef.current?.focus());
-    return () => cancelAnimationFrame(frameId);
-  }, [isObscured, pending]);
+    const frameId = ownerWindow.requestAnimationFrame(() => inputRef.current?.focus());
+    return () => ownerWindow.cancelAnimationFrame(frameId);
+  }, [isObscured, pending, ownerWindow]);
 
   return (
     <section

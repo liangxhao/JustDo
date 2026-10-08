@@ -33,6 +33,55 @@ flowchart LR
 
 非浏览器代理变化保留原有 Gateway 空闲重启流程。浏览器代理变化在独立队列中更新现有 guest sessions、关闭旧连接；新 profile 注册也使用该队列，避免快速切换时旧偏好覆盖新配置。它不改变默认 session、Main 代理状态或 Gateway 环境。自定义浏览器代理的认证只取 `browserProxy` 凭据，不能借用非浏览器代理凭据。详见[浏览器设置](../features/browser-settings-design.md)。
 
+### 可分离的完整侧边栏
+
+侧边栏从首次展示起就使用固定的 `workspace.html` 文档承载。主 Renderer
+通过 React portal 渲染完整工具区；该文档没有应用入口脚本、preload 或
+`window.electron`，也不创建第二个 Redux store。源组件闭包仍调用主 Renderer
+的显式 bridge。Main 使用相同的 WebContentsView 承载这个文档，停靠时放入
+主窗口 contentView，分离时移入普通 BrowserWindow；拆出和收回均不改变
+portal 目标，不重建浏览器 guest、终端或编辑器。
+Main 对已创建的 WebContents 显式设置后台调度策略，确保视图收回后动画帧继续执行。
+
+```mermaid
+flowchart LR
+  Renderer[主 Renderer：React / Redux / bridge] -->|稳定 portal| Document[workspace.html：无应用 preload]
+  Document --> View[同一个 WebContentsView]
+  View -->|停靠| MainWindow[主窗口 contentView]
+  View -->|分离| WorkspaceWindow[独立 BrowserWindow]
+  Renderer -->|窗口 IPC / generation| Manager[Main：窗口与原生视图管理]
+  Manager --> View
+```
+
+创建文档须匹配一次性授予的 URL、frameName 和当前 generation；frameName 包含
+generation，同一存活文档重用名称，异常重建使用新名称，避免拿回正在销毁的旧文档。窗口打开的
+override preferences 在 Chromium 创建 WebContents 之前清除继承的应用
+preload。后续页面导航及新原生窗口被拒绝；未被消息交互接管的 `_blank` 外链
+共用主窗口的 URL 安全规则，由系统浏览器打开。聊天消息链接仍由源 Renderer
+按打开偏好进入内置网页 Tab 或 Chrome，本地 HTML 保留会话路径上下文。
+窗口 IPC 仅接受已登记主 Renderer 的
+主框架，浏览器 guest 注册仍保留主 Renderer 的 operator 身份，只额外接受
+该 operator 当前登记的精确 workspace host。浏览器 partition、固定 guest
+preload、权限、PDF、下载及导航策略由原有 factory 同时应用到两种 host。
+
+Main 仅保存窗口位置、generation 和显示状态，不接收工具正文、终端输出
+或编辑草稿。源 Renderer 导航、reload 或进程丢失会撤销 generation、销毁
+旧 host 并取消其 browser host 授权。关闭独立窗口先收回视图；主窗口收起
+到托盘时隐藏独立窗口，恢复时重新显示；主窗口最小化不隐藏独立窗口。
+窗口恢复选择相交面积最大的显示器，屏幕移除后使用最近的可用工作区。
+
+非预期的子文档销毁或渲染进程退出使用同一失效处理：撤销旧 host/generation，
+只向仍可运行的源 Renderer 发出 Invalidated。Renderer 核对被撤销的 generation
+后重新取得被动文档，恢复原先的分离状态；旧通知重放无效。Main 导航、重载和
+退出的主动清理不触发这个恢复。真实进程丢失或文档销毁可能丢失页面未保存状态，
+界面明确提示这一点；它与正常拆出、收回时保留同一文档的语义不同。
+
+原生视图高于主文档的 CSS 层。主文档的阻塞弹窗明确标记并暂停停靠视图；
+独立窗口使用后加入的顶层 modal dialog 引导用户返回主窗口，覆盖已有工具
+展开对话框。非阻塞菜单仅在与停靠视图相交时暂时遮挡它，不锁定独立窗口。
+通知、底部状态卡和悬浮宠物进入当前可见文档。系统音频授权仍由源主框架
+发起，并限定到本次选择的主框架或精确 workspace 框架，不能授权任意页面。
+
 ### Gateway 启动与数据边界
 
 Gateway 启动由 Main 管理运行包准备、配置与进程生命周期。9.6 版本未发布，按用户要求，本次 9.8 升级新增的旧 SQLite 数据迁移桥接、启动门禁及对应构建资产已移除；启动链不再包含该独立迁移子进程。

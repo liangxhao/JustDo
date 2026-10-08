@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/ui/Modal';
+import { isDomHTMLElement, useOwnerDocument } from '@/shared/dom/ownerDocument';
 
 interface BrowserHttpAuthModalProps {
   request: BrowserPanelHttpAuthRequest;
@@ -12,6 +13,7 @@ interface BrowserHttpAuthModalProps {
 }
 
 const BrowserHttpAuthModal: React.FC<BrowserHttpAuthModalProps> = ({ request, onRespond }) => {
+  const ownerDocument = useOwnerDocument();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const dialogRef = useRef<HTMLFormElement>(null);
@@ -25,7 +27,7 @@ const BrowserHttpAuthModal: React.FC<BrowserHttpAuthModalProps> = ({ request, on
 
   useEffect(() => {
     const previousFocus =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      isDomHTMLElement(ownerDocument.activeElement) ? ownerDocument.activeElement : null;
     usernameRef.current?.focus();
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -42,20 +44,20 @@ const BrowserHttpAuthModal: React.FC<BrowserHttpAuthModalProps> = ({ request, on
       const first = controls[0];
       const last = controls[controls.length - 1];
       if (!first || !last) return;
-      if (event.shiftKey && document.activeElement === first) {
+      if (event.shiftKey && ownerDocument.activeElement === first) {
         event.preventDefault();
         last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
+      } else if (!event.shiftKey && ownerDocument.activeElement === last) {
         event.preventDefault();
         first.focus();
       }
     };
-    document.addEventListener('keydown', handleKeyDown);
+    ownerDocument.addEventListener('keydown', handleKeyDown);
     return () => {
-      document.removeEventListener('keydown', handleKeyDown);
+      ownerDocument.removeEventListener('keydown', handleKeyDown);
       previousFocus?.focus();
     };
-  }, [cancel, request.id]);
+  }, [cancel, request.id, ownerDocument]);
 
   return createPortal(
     <Modal
@@ -141,7 +143,7 @@ const BrowserHttpAuthModal: React.FC<BrowserHttpAuthModalProps> = ({ request, on
         </div>
       </form>
     </Modal>,
-    document.body,
+    ownerDocument.body,
   );
 };
 

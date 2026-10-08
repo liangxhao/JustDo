@@ -2,6 +2,8 @@ import { CheckIcon, ChevronDownIcon } from '@heroicons/react/24/outline';
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
+import { useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
+
 const DROPDOWN_GAP = 4;
 const DROPDOWN_MAX_HEIGHT = 240;
 const DROPDOWN_VIEWPORT_PADDING = 8;
@@ -15,6 +17,7 @@ type DropdownLayout = {
 };
 
 const getScrollBoundary = (element: HTMLElement) => {
+  const window = element.ownerDocument.defaultView ?? globalThis.window;
   let parent = element.parentElement;
   while (parent) {
     const { overflowY } = window.getComputedStyle(parent);
@@ -63,6 +66,8 @@ const ThemedSelect: React.FC<ThemedSelectProps> = ({
   title,
   highlightSelected = false,
 }) => {
+  const ownerDocument = useOwnerDocument();
+  const ownerWindow = useOwnerWindow();
   const [isOpen, setIsOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
   const [dropdownLayout, setDropdownLayout] = useState<DropdownLayout | null>(null);
@@ -105,11 +110,11 @@ const ThemedSelect: React.FC<ThemedSelectProps> = ({
       }
     };
 
-    document.addEventListener('mousedown', handleClickOutside);
+    ownerDocument.addEventListener('mousedown', handleClickOutside);
     return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
+      ownerDocument.removeEventListener('mousedown', handleClickOutside);
     };
-  }, []);
+  }, [ownerDocument]);
 
   const updateDropdownLayout = useCallback(() => {
     const button = buttonRef.current;
@@ -135,20 +140,20 @@ const ThemedSelect: React.FC<ThemedSelectProps> = ({
 
     const width = Math.min(
       Math.max(rect.width, menuMinWidth),
-      window.innerWidth - DROPDOWN_VIEWPORT_PADDING * 2,
+      ownerWindow.innerWidth - DROPDOWN_VIEWPORT_PADDING * 2,
     );
     setDropdownLayout({
       left: Math.min(
         Math.max(DROPDOWN_VIEWPORT_PADDING, rect.left),
-        window.innerWidth - width - DROPDOWN_VIEWPORT_PADDING,
+        ownerWindow.innerWidth - width - DROPDOWN_VIEWPORT_PADDING,
       ),
       width,
       maxHeight: Math.min(DROPDOWN_MAX_HEIGHT, availableHeight),
       ...(opensUpward
-        ? { bottom: window.innerHeight - rect.top + DROPDOWN_GAP }
+        ? { bottom: ownerWindow.innerHeight - rect.top + DROPDOWN_GAP }
         : { top: rect.bottom + DROPDOWN_GAP }),
     });
-  }, [menuMinWidth, options.length]);
+  }, [menuMinWidth, options.length, ownerWindow]);
 
   useLayoutEffect(() => {
     if (!isOpen) {
@@ -157,13 +162,13 @@ const ThemedSelect: React.FC<ThemedSelectProps> = ({
     }
 
     updateDropdownLayout();
-    window.addEventListener('resize', updateDropdownLayout);
-    window.addEventListener('scroll', updateDropdownLayout, true);
+    ownerWindow.addEventListener('resize', updateDropdownLayout);
+    ownerWindow.addEventListener('scroll', updateDropdownLayout, true);
     return () => {
-      window.removeEventListener('resize', updateDropdownLayout);
-      window.removeEventListener('scroll', updateDropdownLayout, true);
+      ownerWindow.removeEventListener('resize', updateDropdownLayout);
+      ownerWindow.removeEventListener('scroll', updateDropdownLayout, true);
     };
-  }, [isOpen, updateDropdownLayout]);
+  }, [isOpen, updateDropdownLayout, ownerWindow]);
 
   useLayoutEffect(() => {
     if (!isOpen || activeIndex < 0) return;
@@ -302,7 +307,7 @@ const ThemedSelect: React.FC<ThemedSelectProps> = ({
                   ))}
                 </ul>
               </div>,
-              document.body,
+              ownerDocument.body,
             )}
         </div>
       </div>

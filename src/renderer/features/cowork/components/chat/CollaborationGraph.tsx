@@ -21,6 +21,7 @@ import { toSanitizedMarkdownHtml } from '@/libs/openclaw-chat/components/markdow
 import { normalizeMessage } from '@/libs/openclaw-chat/pipeline/message-normalizer';
 import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 import { i18nService } from '@/services/i18n';
+import { useOwnerWindow } from '@/shared/dom/ownerDocument';
 
 import { COLLABORATION_PALETTE as PALETTE } from './collaborationPalette';
 
@@ -141,6 +142,7 @@ function CollaborationGraphContent({
   onSelectMessage,
   messageTextCache,
 }: CollaborationGraphProps) {
+  const ownerWindow = useOwnerWindow();
   const containerRef = useRef<HTMLElement>(null);
   const [timelineSize, setTimelineSize] = useState(35);
   const [timelineCollapsed, setTimelineCollapsed] = useState(false);
@@ -367,8 +369,8 @@ function CollaborationGraphContent({
         callback({ width: rect.width || 500, height: rect.height || 300 });
       };
       update();
-      if (typeof ResizeObserver === 'undefined') return;
-      const observer = new ResizeObserver(update);
+      if (!ownerWindow.ResizeObserver) return;
+      const observer = new ownerWindow.ResizeObserver(update);
       observer.observe(element);
       return () => observer.disconnect();
     },

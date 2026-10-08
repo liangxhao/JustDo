@@ -873,6 +873,24 @@ interface IElectronAPI {
     showSystemMenu: (position: { x: number; y: number }) => void;
     onStateChanged: (callback: (state: WindowState) => void) => () => void;
   };
+  workspaceWindow: {
+    onInvalidated: (
+      callback: (state: import('../../shared/cowork/workspaceWindow').WorkspaceWindowState) => void,
+    ) => () => void;
+    prepare: () => Promise<
+      import('../../shared/cowork/workspaceWindow').WorkspaceWindowGrant | null
+    >;
+    update: (update: import('../../shared/cowork/workspaceWindow').WorkspaceWindowUpdate) => void;
+    setDetached: (
+      generation: string,
+      detached: boolean,
+    ) => Promise<import('../../shared/cowork/workspaceWindow').WorkspaceWindowResult>;
+    focusMain: () => void;
+    focus: () => void;
+    onStateChanged: (
+      callback: (state: import('../../shared/cowork/workspaceWindow').WorkspaceWindowState) => void,
+    ) => () => void;
+  };
   cowork: {
     diagnostics: {
       list: (query: { sessionId: string; cursor?: string }) => Promise<DiagnosticListResult>;
@@ -1224,7 +1242,7 @@ interface IElectronAPI {
     ) => Promise<void>;
   };
   mediaCapture: {
-    armSystemAudio: () => Promise<void>;
+    armSystemAudio: (surface?: MediaCaptureSurface) => Promise<void>;
   };
   localSpeechModels: {
     list: () => Promise<import('../../shared/speech/localSpeechModels').LocalSpeechModelListResult>;
@@ -1531,3 +1549,4 @@ declare global {
 }
 
 export {};
+import type { MediaCaptureSurface } from '../../shared/app/mediaCapture';

@@ -18,6 +18,7 @@ import { createPortal } from 'react-dom';
 
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/ui/Modal';
+import { isDomHTMLElement, useOwnerDocument } from '@/shared/dom/ownerDocument';
 
 const ranges: BrowserClearDataRange[] = ['hour', 'day', 'week', 'four-weeks', 'all'];
 
@@ -71,6 +72,7 @@ export default function BrowserClearDataModal({
   onClose: () => void;
   onCleared: (result: BrowserClearDataResult) => void;
 }) {
+  const ownerDocument = useOwnerDocument();
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   const [range, setRange] = useState<BrowserClearDataRange>('hour');
@@ -105,8 +107,9 @@ export default function BrowserClearDataModal({
   }, [range]);
 
   useEffect(() => {
-    const previousFocus =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousFocus = isDomHTMLElement(ownerDocument.activeElement)
+      ? ownerDocument.activeElement
+      : null;
     dialogRef.current?.focus();
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && !submitting) {
@@ -122,20 +125,20 @@ export default function BrowserClearDataModal({
       const first = controls[0];
       const last = controls[controls.length - 1];
       if (!first || !last) return;
-      if (event.shiftKey && document.activeElement === first) {
+      if (event.shiftKey && ownerDocument.activeElement === first) {
         event.preventDefault();
         last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
+      } else if (!event.shiftKey && ownerDocument.activeElement === last) {
         event.preventDefault();
         first.focus();
       }
     };
-    document.addEventListener('keydown', handleKeyDown);
+    ownerDocument.addEventListener('keydown', handleKeyDown);
     return () => {
-      document.removeEventListener('keydown', handleKeyDown);
+      ownerDocument.removeEventListener('keydown', handleKeyDown);
       previousFocus?.focus();
     };
-  }, [onClose, submitting]);
+  }, [onClose, submitting, ownerDocument]);
 
   const setCategory = (category: keyof BrowserClearDataSelection, checked: boolean) => {
     setSelection(current => ({ ...current, [category]: checked }));
@@ -308,6 +311,6 @@ export default function BrowserClearDataModal({
         </div>
       </div>
     </Modal>,
-    document.body,
+    ownerDocument.body,
   );
 }

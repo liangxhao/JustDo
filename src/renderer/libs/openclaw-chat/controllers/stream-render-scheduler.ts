@@ -4,17 +4,22 @@ export class StreamRenderScheduler {
   private frameId: number | null = null;
   private toolPartialTimer: ReturnType<typeof setTimeout> | null = null;
   private lastToolPartialPublishAt = Number.NEGATIVE_INFINITY;
+  private frameWindow: Pick<Window, 'requestAnimationFrame' | 'cancelAnimationFrame'> | null = null;
 
   constructor(
     private readonly publish: () => void,
     private readonly now: () => number = () => Date.now(),
+    private readonly animationWindow: () => Pick<Window, 'requestAnimationFrame' | 'cancelAnimationFrame'> | undefined = () => globalThis,
   ) {}
 
   schedule(): void {
     if (this.frameId !== null) return;
-    if (typeof requestAnimationFrame === 'function') {
-      this.frameId = requestAnimationFrame(() => {
+    const host = this.animationWindow();
+    if (typeof host?.requestAnimationFrame === 'function') {
+      this.frameWindow = host;
+      this.frameId = host.requestAnimationFrame(() => {
         this.frameId = null;
+        this.frameWindow = null;
         this.publish();
       });
       return;
@@ -56,19 +61,21 @@ export class StreamRenderScheduler {
       this.publish();
       return;
     }
-    if (this.frameId >= 0 && typeof cancelAnimationFrame === 'function') {
-      cancelAnimationFrame(this.frameId);
+    if (this.frameId >= 0) {
+      this.frameWindow?.cancelAnimationFrame(this.frameId);
     }
     this.frameId = null;
+    this.frameWindow = null;
     this.publish();
   }
 
   dispose(): void {
     if (this.toolPartialTimer !== null) clearTimeout(this.toolPartialTimer);
     this.toolPartialTimer = null;
-    if (this.frameId !== null && this.frameId >= 0 && typeof cancelAnimationFrame === 'function') {
-      cancelAnimationFrame(this.frameId);
+    if (this.frameId !== null && this.frameId >= 0) {
+      this.frameWindow?.cancelAnimationFrame(this.frameId);
     }
     this.frameId = null;
+    this.frameWindow = null;
   }
 }

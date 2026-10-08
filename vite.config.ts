@@ -153,6 +153,7 @@ export default defineConfig({
       input: {
         main: path.join(rendererRoot, 'index.html'),
         imagePreview: path.join(rendererRoot, 'image-preview.html'),
+        workspace: path.join(rendererRoot, 'workspace.html'),
       },
       checks: {
         pluginTimings: false,

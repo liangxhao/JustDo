@@ -11,6 +11,7 @@ import { createPortal } from 'react-dom';
 
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/ui/Modal';
+import { isDomHTMLElement, useOwnerDocument } from '@/shared/dom/ownerDocument';
 
 export type BrowserImportSelection = {
   sourceId: string;
@@ -75,6 +76,7 @@ export default function BrowserDataImportModal({
   onClose: () => void;
   onImport: (selection: BrowserImportSelection) => Promise<BrowserImportResult>;
 }) {
+  const ownerDocument = useOwnerDocument();
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   const [passwords, setPasswords] = useState(true);
@@ -111,8 +113,9 @@ export default function BrowserDataImportModal({
   }, []);
 
   useEffect(() => {
-    const previousFocus =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousFocus = isDomHTMLElement(ownerDocument.activeElement)
+      ? ownerDocument.activeElement
+      : null;
     dialogRef.current?.focus();
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && !submitting) {
@@ -128,20 +131,20 @@ export default function BrowserDataImportModal({
       const first = controls[0];
       const last = controls[controls.length - 1];
       if (!first || !last) return;
-      if (event.shiftKey && document.activeElement === first) {
+      if (event.shiftKey && ownerDocument.activeElement === first) {
         event.preventDefault();
         last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
+      } else if (!event.shiftKey && ownerDocument.activeElement === last) {
         event.preventDefault();
         first.focus();
       }
     };
-    document.addEventListener('keydown', handleKeyDown);
+    ownerDocument.addEventListener('keydown', handleKeyDown);
     return () => {
-      document.removeEventListener('keydown', handleKeyDown);
+      ownerDocument.removeEventListener('keydown', handleKeyDown);
       previousFocus?.focus();
     };
-  }, [onClose, submitting]);
+  }, [onClose, submitting, ownerDocument]);
 
   const submit = async () => {
     if (!approved || !hasSelection || submitting) return;
@@ -320,6 +323,6 @@ export default function BrowserDataImportModal({
         </div>
       </div>
     </Modal>,
-    document.body,
+    ownerDocument.body,
   );
 }

@@ -101,6 +101,7 @@ import type {
 } from '@/libs/openclaw-chat/types';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
+import { isDomHTMLElement } from '@/shared/dom/ownerDocument';
 
 import { readCompleteHistoryMessage } from '../gateway/chat-history-protocol';
 import { resolveFullToolOutput } from '../model/tool-presentation';
@@ -280,8 +281,10 @@ export class JustDoChatElement extends LitElement {
     () => this._controller?.showNewerHistory() ?? false,
   );
   private readonly assistantStreamPacer = new AssistantStreamPacer();
-  private readonly streamRenderScheduler = new StreamRenderScheduler(() =>
-    this.publishStreamFrame(),
+  private readonly streamRenderScheduler = new StreamRenderScheduler(
+    () => this.publishStreamFrame(),
+    () => Date.now(),
+    () => this.ownerDocument.defaultView ?? undefined,
   );
   private readonly persistedTimelineCache = new PersistedTimelineCache();
   private projectedActiveHistorySource: GatewayMessage[] | null = null;
@@ -484,7 +487,28 @@ export class JustDoChatElement extends LitElement {
 
   // ─── Styles ─────────────────────────────────────────────────────────────
 
+  private get animationWindow(): Window & typeof globalThis {
+    return (this.ownerDocument.defaultView ?? window) as Window & typeof globalThis;
+  }
+
   static styles = chatStyles;
+
+  protected createRenderRoot(): HTMLElement | DocumentFragment {
+    if (this.ownerDocument === document) return super.createRenderRoot();
+    // Constructed stylesheets cannot be adopted by another document. Keep the
+    // source registry for nested custom elements and materialize styles locally.
+    const root = this.shadowRoot ?? this.attachShadow({ mode: 'open' });
+    for (const sheet of (this.constructor as typeof LitElement).elementStyles) {
+      const style = this.ownerDocument.createElement('style');
+      style.textContent =
+        'cssText' in sheet
+          ? sheet.cssText
+          : Array.from(sheet.cssRules, rule => rule.cssText).join('\n');
+      root.appendChild(style);
+    }
+    this.renderOptions.renderBefore = root.firstChild;
+    return root;
+  }
 
   // ─── Rendering ──────────────────────────────────────────────────────────
 
@@ -912,11 +936,14 @@ export class JustDoChatElement extends LitElement {
     window.removeEventListener('config-updated', this.handleSpeechConfigUpdated);
     this.unsubscribeLocalSpeechModels?.();
     this.unsubscribeLocalSpeechModels = null;
-    if (this.mermaidScrollFrame !== null) cancelAnimationFrame(this.mermaidScrollFrame);
+    if (this.mermaidScrollFrame !== null)
+      this.animationWindow.cancelAnimationFrame(this.mermaidScrollFrame);
     this.mermaidScrollFrame = null;
-    if (this.minimapScrollFrame !== null) cancelAnimationFrame(this.minimapScrollFrame);
+    if (this.minimapScrollFrame !== null)
+      this.animationWindow.cancelAnimationFrame(this.minimapScrollFrame);
     this.minimapScrollFrame = null;
-    if (this.editDiffMonacoFrame !== null) cancelAnimationFrame(this.editDiffMonacoFrame);
+    if (this.editDiffMonacoFrame !== null)
+      this.animationWindow.cancelAnimationFrame(this.editDiffMonacoFrame);
     this.editDiffMonacoFrame = null;
     this.editDiffMonacoController.dispose();
     this.stopActiveTurnClock();
@@ -925,7 +952,7 @@ export class JustDoChatElement extends LitElement {
 
   protected firstUpdated(): void {
     this.scheduleMinimapSync();
-    requestAnimationFrame(() => void this.renderMermaidDiagrams());
+    this.animationWindow.requestAnimationFrame(() => void this.renderMermaidDiagrams());
   }
 
   protected willUpdate(): void {
@@ -990,7 +1017,7 @@ export class JustDoChatElement extends LitElement {
     const searchEnhancementKey = `${this.searchQuery}:${this.searchCaseSensitive}:${transcriptRevision}:${activeContentDisplaySignature}`;
     if (searchEnhancementKey !== this.lastSearchEnhancementKey) {
       this.lastSearchEnhancementKey = searchEnhancementKey;
-      requestAnimationFrame(() => this.emitSearchMatchCount());
+      this.animationWindow.requestAnimationFrame(() => this.emitSearchMatchCount());
     }
     const completedContent =
       displayActiveTurn?.items.filter(
@@ -1024,7 +1051,7 @@ export class JustDoChatElement extends LitElement {
     const mermaidEnhancementKey = `${this.persistedTimelineCache.revision}:${completedContentKey}`;
     if (!completedContentPending && mermaidEnhancementKey !== this.lastMermaidEnhancementKey) {
       this.lastMermaidEnhancementKey = mermaidEnhancementKey;
-      requestAnimationFrame(() => void this.renderMermaidDiagrams());
+      this.animationWindow.requestAnimationFrame(() => void this.renderMermaidDiagrams());
     }
     const minimapSyncKey = `${this.persistedTimelineCache.revision}:${this.persistedTimelineRenderCache.revision}:${this.minimapEntriesSignature}`;
     if (minimapSyncKey !== this.lastMinimapSyncKey) {
@@ -1091,7 +1118,7 @@ export class JustDoChatElement extends LitElement {
   private readonly handleMarkdownClick = (event: Event): void => {
     if (handleMessageImageClick(event)) return;
     if (handleMessageLinkClick(event, this.workingDirectory)) return;
-    const element = event.composedPath().find(node => node instanceof HTMLElement) as
+    const element = event.composedPath().find(node => isDomHTMLElement(node)) as
       HTMLElement | undefined;
     const summaryButton = element?.closest<HTMLElement>('[data-process-summary-key]');
     if (summaryButton) {
@@ -1117,7 +1144,7 @@ export class JustDoChatElement extends LitElement {
     }
     const copyTarget = event
       .composedPath()
-      .find(node => node instanceof HTMLElement && node.classList.contains('code-block-copy')) as
+      .find(node => isDomHTMLElement(node) && node.classList.contains('code-block-copy')) as
       HTMLButtonElement | undefined;
     if (copyTarget) {
       event.preventDefault();
@@ -1159,9 +1186,9 @@ export class JustDoChatElement extends LitElement {
   };
 
   private readonly handleEditDiffToggle = (event: Event): void => {
-    if (event.target instanceof HTMLDetailsElement) {
-      this.richMessageControls?.rememberTool(event.target);
-      if (!event.target.open)
+    if (isDomHTMLElement(event.target) && event.target.tagName === 'DETAILS') {
+      this.richMessageControls?.rememberTool(event.target as HTMLDetailsElement);
+      if (!(event.target as HTMLDetailsElement).open)
         event.target
           .querySelectorAll<ToolOutput>('justdo-tool-output')
           .forEach(output => output.cancelLoad());
@@ -1171,7 +1198,7 @@ export class JustDoChatElement extends LitElement {
 
   private scheduleEditDiffMonacoSync(): void {
     if (this.editDiffMonacoFrame !== null) return;
-    this.editDiffMonacoFrame = requestAnimationFrame(() => {
+    this.editDiffMonacoFrame = this.animationWindow.requestAnimationFrame(() => {
       this.editDiffMonacoFrame = null;
       void this.editDiffMonacoController.sync(this.renderRoot);
     });
@@ -1179,7 +1206,7 @@ export class JustDoChatElement extends LitElement {
 
   private readonly handleMermaidVisibilityScroll = (): void => {
     if (this.mermaidScrollFrame !== null) return;
-    this.mermaidScrollFrame = requestAnimationFrame(() => {
+    this.mermaidScrollFrame = this.animationWindow.requestAnimationFrame(() => {
       this.mermaidScrollFrame = null;
       void this.renderMermaidDiagrams();
     });
@@ -1229,7 +1256,7 @@ export class JustDoChatElement extends LitElement {
 
   private async copyCodeBlock(button: HTMLButtonElement, code: string): Promise<void> {
     try {
-      await navigator.clipboard.writeText(code);
+      await this.animationWindow.navigator.clipboard.writeText(code);
       const activeTimer = this.codeCopyFeedbackTimers.get(button);
       if (activeTimer !== undefined) window.clearTimeout(activeTimer);
       const copiedLabel = i18nService.t('copied');
@@ -1363,7 +1390,7 @@ export class JustDoChatElement extends LitElement {
 
   private publishStreamFrame(): void {
     let hasPendingAssistantText = false;
-    if (typeof requestAnimationFrame === 'function') {
+    if (typeof this.animationWindow.requestAnimationFrame === 'function') {
       hasPendingAssistantText = this.assistantStreamPacer.advance();
     } else {
       this.assistantStreamPacer.flushPending();
@@ -1409,7 +1436,9 @@ export class JustDoChatElement extends LitElement {
     if (!target) return false;
     target.classList.remove('chat-history-row--revealed');
     target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
-    requestAnimationFrame(() => target.classList.add('chat-history-row--revealed'));
+    this.animationWindow.requestAnimationFrame(() =>
+      target.classList.add('chat-history-row--revealed'),
+    );
     window.setTimeout(() => target.classList.remove('chat-history-row--revealed'), 1_900);
     return true;
   }
@@ -1432,7 +1461,7 @@ export class JustDoChatElement extends LitElement {
     if (!query || !root) return [];
 
     const matcher = new RegExp(this.escapeRegExp(query), this.searchCaseSensitive ? 'g' : 'gi');
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    const walker = this.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
       acceptNode(node) {
         const parent = node.parentElement;
         if (!parent || !node.nodeValue) return NodeFilter.FILTER_REJECT;
@@ -1464,11 +1493,11 @@ export class JustDoChatElement extends LitElement {
     this.clearSearchMarks();
     if (!match) return;
 
-    const range = document.createRange();
+    const range = this.ownerDocument.createRange();
     range.setStart(match.node, match.start);
     range.setEnd(match.node, match.end);
 
-    const mark = document.createElement('span');
+    const mark = this.ownerDocument.createElement('span');
     mark.className = 'chat-search-mark';
     mark.dataset.justdoSearchMark = 'true';
     range.surroundContents(mark);
@@ -1492,7 +1521,7 @@ export class JustDoChatElement extends LitElement {
     root.querySelectorAll<HTMLElement>('[data-justdo-search-mark="true"]').forEach(mark => {
       const parent = mark.parentNode;
       if (!parent) return;
-      parent.replaceChild(document.createTextNode(mark.textContent ?? ''), mark);
+      parent.replaceChild(this.ownerDocument.createTextNode(mark.textContent ?? ''), mark);
       parent.normalize();
     });
   }
@@ -1978,7 +2007,7 @@ export class JustDoChatElement extends LitElement {
 
   private scheduleMinimapSync(): void {
     if (this.minimapScrollFrame !== null) return;
-    this.minimapScrollFrame = requestAnimationFrame(() => {
+    this.minimapScrollFrame = this.animationWindow.requestAnimationFrame(() => {
       this.minimapScrollFrame = null;
       this.updateCurrentMinimapEntry();
     });

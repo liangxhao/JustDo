@@ -6,6 +6,7 @@ import { createPortal } from 'react-dom';
 
 import { applyAppearanceConfig, normalizeAppearanceConfig, type PetCatSelection } from '@/app/appearance';
 import { clampPetPosition, defaultPetPosition, PET_FLOATING_RESET_EVENT, type PetPosition,readPetPosition, savePetPosition } from '@/app/petFloating';
+import { useWorkspaceNotificationDocument } from '@/app/shell/WorkspaceNotifications';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 
@@ -131,6 +132,7 @@ const petSettings = () => {
 };
 
 export function CoworkPet({ running, waiting, latestRun, placement = 'chat' }: CoworkPetProps) {
+  const notificationDocument = useWorkspaceNotificationDocument();
   const [celebratingRunId, setCelebratingRunId] = useState<string | null>(null);
   const [reactingRunId, setReactingRunId] = useState<string | null>(null);
   const [resting, setResting] = useState(false);
@@ -138,9 +140,11 @@ export function CoworkPet({ running, waiting, latestRun, placement = 'chat' }: C
   const [variantIndex, setVariantIndex] = useState(0);
   const [blackCursor, setBlackCursor] = useState({ frame: 0, variant: 0 });
   const [settings, setSettings] = useState(() => petSettings());
+  const ownerDocument = settings.floating ? notificationDocument : document;
+  const ownerWindow = ownerDocument.defaultView ?? window;
   const [documentVisible, setDocumentVisible] = useState(() => !document.hidden);
   const cellSize = 64;
-  const [position, setPosition] = useState(() => readPetPosition(cellSize));
+  const [position, setPosition] = useState(() => readPetPosition(cellSize, ownerWindow));
   const [dragPosition, setDragPosition] = useState<PetPosition | null>(null);
   const [interaction, setInteraction] = useState<{ kind: InteractionKind; id: number; variant: number } | null>(null);
   const interactionSerialRef = useRef(0);
@@ -155,19 +159,20 @@ export function CoworkPet({ running, waiting, latestRun, placement = 'chat' }: C
 
   useEffect(() => {
     const updateSettings = () => setSettings(petSettings());
-    const updateVisibility = () => setDocumentVisible(!document.hidden);
+    const updateVisibility = () => setDocumentVisible(!ownerDocument.hidden);
+    updateVisibility();
     const observer = new MutationObserver(updateSettings);
     observer.observe(document.documentElement, {
       attributes: true,
       attributeFilter: ['data-cowork-pet', 'data-cowork-pet-motion', 'data-cowork-pet-variety', 'data-cowork-pet-speed', 'data-cowork-pet-rest-after',
         'data-cowork-pet-floating', 'data-cowork-pet-cats'],
     });
-    document.addEventListener('visibilitychange', updateVisibility);
+    ownerDocument.addEventListener('visibilitychange', updateVisibility);
     return () => {
       observer.disconnect();
-      document.removeEventListener('visibilitychange', updateVisibility);
+      ownerDocument.removeEventListener('visibilitychange', updateVisibility);
     };
-  }, []);
+  }, [ownerDocument]);
 
   const { motionAllowed, variety, speed, restAfter, floating, cats } = settings;
 
@@ -181,20 +186,21 @@ export function CoworkPet({ running, waiting, latestRun, placement = 'chat' }: C
 
   useEffect(() => {
     const resize = () => {
-      setPosition(current => clampPetPosition(current, cellSize));
-      setDragPosition(current => current ? clampPetPosition(current, cellSize) : null);
+      setPosition(current => clampPetPosition(current, cellSize, ownerWindow));
+      setDragPosition(current => current ? clampPetPosition(current, cellSize, ownerWindow) : null);
     };
     const reset = () => {
-      setPosition(defaultPetPosition(cellSize));
+      setPosition(defaultPetPosition(cellSize, ownerWindow));
       setDragPosition(null);
     };
-    window.addEventListener('resize', resize);
+    resize();
+    ownerWindow.addEventListener('resize', resize);
     window.addEventListener(PET_FLOATING_RESET_EVENT, reset);
     return () => {
-      window.removeEventListener('resize', resize);
+      ownerWindow.removeEventListener('resize', resize);
       window.removeEventListener(PET_FLOATING_RESET_EVENT, reset);
     };
-  }, [cellSize]);
+  }, [cellSize, ownerWindow]);
 
   useEffect(() => {
     const move = (event: PointerEvent) => {
@@ -208,7 +214,7 @@ export function CoworkPet({ running, waiting, latestRun, placement = 'chat' }: C
       if (clickTimerRef.current !== null) window.clearTimeout(clickTimerRef.current);
       clickTimerRef.current = null;
       setInteraction(null);
-      setDragPosition(clampPetPosition({ x: drag.origin.x + dx, y: drag.origin.y + dy }, cellSize));
+      setDragPosition(clampPetPosition({ x: drag.origin.x + dx, y: drag.origin.y + dy }, cellSize, ownerWindow));
     };
     const end = (event: PointerEvent) => {
       const drag = dragRef.current;
@@ -218,7 +224,7 @@ export function CoworkPet({ running, waiting, latestRun, placement = 'chat' }: C
       const nextPosition = clampPetPosition({
         x: drag.origin.x + event.clientX - drag.startX,
         y: drag.origin.y + event.clientY - drag.startY,
-      }, cellSize);
+      }, cellSize, ownerWindow);
       setPosition(nextPosition);
       setDragPosition(nextPosition);
       savePetPosition(nextPosition);
@@ -234,17 +240,17 @@ export function CoworkPet({ running, waiting, latestRun, placement = 'chat' }: C
       dragRef.current = null;
       setDragPosition(null);
     };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', end);
-    window.addEventListener('pointercancel', cancel);
-    window.addEventListener('blur', cancel);
+    ownerWindow.addEventListener('pointermove', move);
+    ownerWindow.addEventListener('pointerup', end);
+    ownerWindow.addEventListener('pointercancel', cancel);
+    ownerWindow.addEventListener('blur', cancel);
     return () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', end);
-      window.removeEventListener('pointercancel', cancel);
-      window.removeEventListener('blur', cancel);
+      ownerWindow.removeEventListener('pointermove', move);
+      ownerWindow.removeEventListener('pointerup', end);
+      ownerWindow.removeEventListener('pointercancel', cancel);
+      ownerWindow.removeEventListener('blur', cancel);
     };
-  }, [cellSize, floating]);
+  }, [cellSize, floating, ownerWindow]);
 
   useEffect(() => {
     const previous = previousRunRef.current;
@@ -433,5 +439,5 @@ export function CoworkPet({ running, waiting, latestRun, placement = 'chat' }: C
     </div>
   );
   // Keep the original node mounted during the first drag so touch pointer capture survives.
-  return floating ? createPortal(pet, document.body) : pet;
+  return floating ? createPortal(pet, ownerDocument.body) : pet;
 }

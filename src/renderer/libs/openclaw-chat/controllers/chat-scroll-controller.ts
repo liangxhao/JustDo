@@ -1,3 +1,4 @@
+import { isDomHTMLElement } from '@/shared/dom/ownerDocument';
 export type ChatScrollMode = 'follow' | 'paused';
 
 export class ChatScrollController {
@@ -60,8 +61,9 @@ export class ChatScrollController {
     host.addEventListener('touchmove', this.handleHistoryIntent, { passive: true });
     host.addEventListener('touchend', this.handleHistoryIntent, { passive: true });
     host.addEventListener('touchcancel', this.handleHistoryIntent, { passive: true });
-    if (typeof ResizeObserver !== 'undefined') {
-      this.resizeObserver = new ResizeObserver(() => this.handleResize());
+    const ownerWindow = (host.ownerDocument.defaultView ?? window) as Window & typeof globalThis;
+    if (ownerWindow.ResizeObserver) {
+      this.resizeObserver = new ownerWindow.ResizeObserver(() => this.handleResize());
       this.resizeObserver.observe(host);
     }
   }
@@ -187,23 +189,30 @@ export class ChatScrollController {
 
     let upward = false;
     let scrollIntent = false;
-    if (typeof WheelEvent !== 'undefined' && event instanceof WheelEvent) {
-      if (event.ctrlKey) return;
-      upward = event.deltaY < 0;
-      scrollIntent = event.deltaY !== 0;
-    } else if (typeof KeyboardEvent !== 'undefined' && event instanceof KeyboardEvent) {
+    if (event.type === 'wheel') {
+      if ((event as WheelEvent).ctrlKey) return;
+      upward = (event as WheelEvent).deltaY < 0;
+      scrollIntent = (event as WheelEvent).deltaY !== 0;
+    } else if (event.type === 'keydown') {
       // Keyboard events crossing the chat shadow root are retargeted to the
       // host; inspect their original target before treating editing as scrolling.
       const target = event.composedPath()[0] ?? event.target;
       const editing =
         typeof HTMLElement !== 'undefined' &&
-        target instanceof HTMLElement &&
+        isDomHTMLElement(target) &&
         (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
-      if (editing || event.ctrlKey || event.metaKey || event.altKey) return;
-      upward = ['ArrowUp', 'PageUp', 'Home'].includes(event.key);
-      scrollIntent = upward || ['ArrowDown', 'PageDown', 'End'].includes(event.key);
-    } else if (typeof TouchEvent !== 'undefined' && event instanceof TouchEvent) {
-      const touchY = event.touches[0]?.clientY ?? null;
+      if (
+        editing ||
+        (event as KeyboardEvent).ctrlKey ||
+        (event as KeyboardEvent).metaKey ||
+        (event as KeyboardEvent).altKey
+      )
+        return;
+      upward = ['ArrowUp', 'PageUp', 'Home'].includes((event as KeyboardEvent).key);
+      scrollIntent =
+        upward || ['ArrowDown', 'PageDown', 'End'].includes((event as KeyboardEvent).key);
+    } else if (event.type.startsWith('touch')) {
+      const touchY = (event as TouchEvent).touches[0]?.clientY ?? null;
       if (event.type === 'touchstart') {
         this.historyTouchY = touchY;
         return;

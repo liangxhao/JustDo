@@ -1,12 +1,19 @@
 import './CoworkDisplayPanel.css';
 
-import { ChevronDownIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import {
+  ArrowTopRightOnSquareIcon,
+  ArrowUturnLeftIcon,
+  ChevronDownIcon,
+  XMarkIcon,
+} from '@heroicons/react/24/outline';
 import React, { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import { i18nService } from '@/services/i18n';
 import FileTreeIcon from '@/shared/components/icons/FileTreeIcon';
 import RightSidebarIcon from '@/shared/components/icons/RightSidebarIcon';
 import WorkspaceFullscreenIcon from '@/shared/components/icons/WorkspaceFullscreenIcon';
+import { OwnerDocumentContext } from '@/shared/dom/ownerDocument';
 
 import FilePathBreadcrumbBar from '../preview/FilePathBreadcrumbBar';
 import { FilePreviewToolbarContext } from '../shared/FilePreviewToolbarContext';
@@ -14,6 +21,7 @@ import DisplayTabContextMenu, { type DisplayTabContextMenuItem } from './Display
 import { FILE_DISPLAY_TAB_PREFIX, WORKSPACE_FILES_DISPLAY_TAB_ID } from './displayTabIds';
 import DisplayTabListMenu from './DisplayTabListMenu';
 import useDisplayTabLayout from './useDisplayTabLayout';
+import { useWorkspacePortal } from './useWorkspacePortal';
 
 export interface CoworkDisplayTab {
   id: string;
@@ -86,6 +94,11 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
   showEmptyState = tabs.length === 0,
   width: controlledWidth,
 }) => {
+  const slotRef = useRef<HTMLElement>(null);
+  const portal = useWorkspacePortal(slotRef, isOpen);
+  const ownerDocument = portal.target?.ownerDocument ?? document;
+  const ownerWindow = (ownerDocument.defaultView ?? window) as Window & typeof globalThis;
+  const visible = isOpen || portal.detached;
   const activeFilePath =
     fileContextPath ||
     (activeTabId.startsWith(FILE_DISPLAY_TAB_PREFIX)
@@ -101,6 +114,11 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
   onWidthChangeRef.current = onWidthChange;
   const [isWorkspaceFullscreen, setIsWorkspaceFullscreen] = useState(false);
   const [tabMenu, setTabMenu] = useState<{ tabId: string; x: number; y: number } | null>(null);
+  const mainPromptRef = useRef<HTMLDialogElement>(null);
+  useLayoutEffect(() => {
+    const prompt = mainPromptRef.current;
+    if (portal.detached && portal.blocked && prompt && !prompt.open) prompt.showModal();
+  }, [portal.detached, portal.blocked]);
   const hasSidePanel = Boolean(sidePanel) && sidePanelVisible;
   const [hasOpenedSidePanel, setHasOpenedSidePanel] = useState(hasSidePanel);
   const [isSidePanelResizing, setIsSidePanelResizing] = useState(false);
@@ -131,27 +149,31 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
     useDisplayTabLayout({
       hasActions: Boolean(actions),
       activeTabId,
-      isOpen,
+      isOpen: visible,
       isWorkspaceFullscreen,
       tabCount: tabs.length,
       tabButtonRefs,
       width,
+      ownerWindow,
     });
 
   useLayoutEffect(() => {
-    if (!tabListOpen || (isOpen && hasOverflow && tabs.length)) return;
+    if (!tabListOpen || (visible && hasOverflow && tabs.length)) return;
     setTabListOpen(false);
-    if (isOpen) {
+    if (visible) {
       tabButtonRefs.current.get(activeTabId)?.focus({ preventScroll: true });
     }
-  }, [activeTabId, hasOverflow, isOpen, tabListOpen, tabs.length]);
+  }, [activeTabId, hasOverflow, visible, tabListOpen, tabs.length]);
 
-  const clampWidth = useCallback((nextWidth: number) => {
-    return Math.min(
-      Math.max(nextWidth, DISPLAY_PANEL_MIN_WIDTH),
-      getDisplayPanelMaxWidth(panelRef.current),
-    );
-  }, []);
+  const clampWidth = useCallback(
+    (nextWidth: number) => {
+      return Math.min(
+        Math.max(nextWidth, DISPLAY_PANEL_MIN_WIDTH),
+        getDisplayPanelMaxWidth(portal.native ? slotRef.current : panelRef.current),
+      );
+    },
+    [portal.native],
+  );
 
   const setWidth = useCallback((value: number | ((current: number) => number)) => {
     const nextWidth = typeof value === 'function' ? value(widthRef.current) : value;
@@ -163,15 +185,17 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
 
   useEffect(() => {
     const resize = () => {
+      if (portal.detached) return;
       if (configuredWidth === 0) {
-        const availableWidth = panelRef.current?.parentElement?.clientWidth;
+        const availableWidth = (portal.native ? slotRef.current : panelRef.current)?.parentElement
+          ?.clientWidth;
         if (availableWidth) setAutomaticWidth(clampWidth(availableWidth / 2));
       } else {
         setWidth(current => clampWidth(current));
       }
     };
     resize();
-    const container = panelRef.current?.parentElement;
+    const container = (portal.native ? slotRef.current : panelRef.current)?.parentElement;
     const observer =
       container && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(resize) : null;
     if (container) observer?.observe(container);
@@ -180,33 +204,33 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
       observer?.disconnect();
       window.removeEventListener('resize', resize);
     };
-  }, [clampWidth, configuredWidth, setWidth]);
+  }, [clampWidth, configuredWidth, setWidth, portal.native, portal.detached]);
 
   useEffect(() => {
-    if (!hasSidePanel) return;
+    if (!hasSidePanel || portal.detached) return;
     setWidth(current => clampWidth(Math.max(current, 760)));
-  }, [clampWidth, hasSidePanel, setWidth]);
+  }, [clampWidth, hasSidePanel, setWidth, portal.detached]);
 
   useEffect(() => {
-    if (!isOpen) setTabMenu(null);
-  }, [isOpen]);
+    if (!visible) setTabMenu(null);
+  }, [visible]);
 
   useEffect(() => {
     const panel = panelRef.current;
     const measure = () => setContentWidth(panel?.clientWidth || width);
     measure();
-    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+    const observer = ownerWindow.ResizeObserver ? new ownerWindow.ResizeObserver(measure) : null;
     if (panel) observer?.observe(panel);
-    window.addEventListener('resize', measure);
+    ownerWindow.addEventListener('resize', measure);
     return () => {
       observer?.disconnect();
-      window.removeEventListener('resize', measure);
+      ownerWindow.removeEventListener('resize', measure);
     };
-  }, [width, isWorkspaceFullscreen, isOpen]);
+  }, [width, isWorkspaceFullscreen, visible, ownerWindow]);
 
   useEffect(() => {
-    if (!hasSidePanel || !isOpen) resizeCleanupRef.current?.();
-  }, [hasSidePanel, isOpen]);
+    if (!hasSidePanel || !visible) resizeCleanupRef.current?.();
+  }, [hasSidePanel, visible]);
 
   useEffect(() => {
     if (hasSidePanel) setHasOpenedSidePanel(true);
@@ -214,12 +238,12 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
 
   useLayoutEffect(() => {
     const panel = sidePanelRef.current;
-    const isInteractive = hasSidePanel && isOpen;
-    if (!isInteractive && panel?.contains(document.activeElement)) {
+    const isInteractive = hasSidePanel && visible;
+    if (!isInteractive && panel?.contains(ownerDocument.activeElement)) {
       sidePanelToggleRef.current?.focus();
     }
     panel?.toggleAttribute('inert', !isInteractive);
-  }, [hasSidePanel, hasOpenedSidePanel, isOpen]);
+  }, [hasSidePanel, hasOpenedSidePanel, visible, ownerDocument]);
 
   const handleTabKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLButtonElement>, tabIndex: number) => {
@@ -236,12 +260,12 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
       const nextTab = tabs[nextIndex];
       if (!nextTab) return;
       nextTab.onSelect();
-      requestAnimationFrame(() => {
+      ownerWindow.requestAnimationFrame(() => {
         revealTab(nextTab.id);
         tabButtonRefs.current.get(nextTab.id)?.focus({ preventScroll: true });
       });
     },
-    [revealTab, tabs],
+    [revealTab, tabs, ownerWindow],
   );
 
   useEffect(
@@ -254,26 +278,40 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
   const beginResize = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
       if (event.button !== 0) return;
-      const right = panelRef.current?.getBoundingClientRect().right ?? window.innerWidth;
       event.preventDefault();
+      resizeCleanupRef.current?.();
+      const handle = event.currentTarget;
+      const resizeDocument = handle.ownerDocument;
+      const resizeWindow = resizeDocument.defaultView ?? window;
+      const pointerId = event.pointerId;
+      const startX = event.clientX;
+      const initialWidth = widthRef.current;
+      const previousCursor = resizeDocument.body.style.cursor;
+      const previousUserSelect = resizeDocument.body.style.userSelect;
 
       const handlePointerMove = (moveEvent: PointerEvent) => {
-        setWidth(clampWidth(right - moveEvent.clientX));
+        if (moveEvent.pointerId !== pointerId) return;
+        setWidth(clampWidth(initialWidth + startX - moveEvent.clientX));
       };
       const cleanupResize = () => {
-        document.body.style.cursor = '';
-        document.body.style.userSelect = '';
-        window.removeEventListener('pointermove', handlePointerMove);
-        window.removeEventListener('pointerup', cleanupResize);
+        if (handle.hasPointerCapture?.(pointerId)) handle.releasePointerCapture(pointerId);
+        resizeDocument.body.style.cursor = previousCursor;
+        resizeDocument.body.style.userSelect = previousUserSelect;
+        resizeWindow.removeEventListener('pointermove', handlePointerMove);
+        resizeWindow.removeEventListener('pointerup', cleanupResize);
+        resizeWindow.removeEventListener('pointercancel', cleanupResize);
+        resizeWindow.removeEventListener('blur', cleanupResize);
         resizeCleanupRef.current = null;
       };
 
-      resizeCleanupRef.current?.();
       resizeCleanupRef.current = cleanupResize;
-      document.body.style.cursor = 'col-resize';
-      document.body.style.userSelect = 'none';
-      window.addEventListener('pointermove', handlePointerMove);
-      window.addEventListener('pointerup', cleanupResize);
+      resizeDocument.body.style.cursor = 'col-resize';
+      resizeDocument.body.style.userSelect = 'none';
+      handle.setPointerCapture?.(pointerId);
+      resizeWindow.addEventListener('pointermove', handlePointerMove);
+      resizeWindow.addEventListener('pointerup', cleanupResize);
+      resizeWindow.addEventListener('pointercancel', cleanupResize);
+      resizeWindow.addEventListener('blur', cleanupResize);
     },
     [clampWidth, setWidth],
   );
@@ -286,17 +324,17 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
     if (right === undefined) return;
     const pointerId = event.pointerId;
     const handle = event.currentTarget;
-    const previousCursor = document.body.style.cursor;
-    const previousUserSelect = document.body.style.userSelect;
+    const previousCursor = ownerDocument.body.style.cursor;
+    const previousUserSelect = ownerDocument.body.style.userSelect;
     const cleanupResize = () => {
       setIsSidePanelResizing(false);
       if (handle.hasPointerCapture?.(pointerId)) handle.releasePointerCapture(pointerId);
-      document.body.style.cursor = previousCursor;
-      document.body.style.userSelect = previousUserSelect;
-      window.removeEventListener('pointermove', handlePointerMove);
-      window.removeEventListener('pointerup', finishResize);
-      window.removeEventListener('pointercancel', finishResize);
-      window.removeEventListener('blur', cleanupResize);
+      ownerDocument.body.style.cursor = previousCursor;
+      ownerDocument.body.style.userSelect = previousUserSelect;
+      ownerWindow.removeEventListener('pointermove', handlePointerMove);
+      ownerWindow.removeEventListener('pointerup', finishResize);
+      ownerWindow.removeEventListener('pointercancel', finishResize);
+      ownerWindow.removeEventListener('blur', cleanupResize);
       resizeCleanupRef.current = null;
     };
     const finishResize = (pointerEvent: PointerEvent) => {
@@ -316,13 +354,13 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
     };
     resizeCleanupRef.current = cleanupResize;
     setIsSidePanelResizing(true);
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
+    ownerDocument.body.style.cursor = 'col-resize';
+    ownerDocument.body.style.userSelect = 'none';
     handle.setPointerCapture?.(pointerId);
-    window.addEventListener('pointermove', handlePointerMove);
-    window.addEventListener('pointerup', finishResize);
-    window.addEventListener('pointercancel', finishResize);
-    window.addEventListener('blur', cleanupResize);
+    ownerWindow.addEventListener('pointermove', handlePointerMove);
+    ownerWindow.addEventListener('pointerup', finishResize);
+    ownerWindow.addEventListener('pointercancel', finishResize);
+    ownerWindow.addEventListener('blur', cleanupResize);
   };
 
   const closeTabs = useCallback(async (closingTabs: CoworkDisplayTab[]): Promise<boolean> => {
@@ -335,12 +373,12 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
   const focusTab = useCallback(
     (tabId: string | undefined) => {
       if (!tabId) return;
-      requestAnimationFrame(() => {
+      ownerWindow.requestAnimationFrame(() => {
         revealTab(tabId);
         tabButtonRefs.current.get(tabId)?.focus({ preventScroll: true });
       });
     },
-    [revealTab],
+    [revealTab, ownerWindow],
   );
 
   const getCloseActions = useCallback(
@@ -394,23 +432,29 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
     if (restoreFocus) tabListButtonRef.current?.focus({ preventScroll: true });
   };
 
-  return (
+  const content = (
     <aside
       id="cowork-display-panel"
       ref={panelRef}
-      className={`${isOpen ? 'flex' : 'hidden'} cowork-display-panel absolute inset-y-0 right-0 z-50 max-w-[calc(100%-2rem)] flex-col border-l border-border bg-background shadow-xl`}
+      className={
+        portal.native
+          ? `${visible ? 'flex' : 'hidden'} relative h-full w-full min-w-0 flex-col border-l border-border bg-background`
+          : `${isOpen ? 'flex' : 'hidden'} cowork-display-panel absolute inset-y-0 right-0 z-50 max-w-[calc(100%-2rem)] flex-col border-l border-border bg-background shadow-xl`
+      }
       style={
-        isWorkspaceFullscreen
-          ? { width: '100%', maxWidth: 'none', position: 'absolute', inset: 0, zIndex: 50 }
-          : ({ width, '--display-panel-width': `${width}px` } as React.CSSProperties)
+        portal.native
+          ? undefined
+          : isWorkspaceFullscreen
+            ? { width: '100%', maxWidth: 'none', position: 'absolute', inset: 0, zIndex: 50 }
+            : ({ width, '--display-panel-width': `${width}px` } as React.CSSProperties)
       }
       aria-label={i18nService.t('coworkCanvasTitle')}
-      aria-hidden={!isOpen}
-      {...(!isOpen ? { inert: '' } : {})}
+      aria-hidden={!visible}
+      {...(!visible ? { inert: '' } : {})}
       data-workspace-fullscreen={isWorkspaceFullscreen}
     >
       <div
-        className={`${isWorkspaceFullscreen ? '!hidden' : ''} cowork-display-panel-resizer absolute inset-y-0 left-0 z-[90] hidden w-5 -translate-x-1/2 touch-none cursor-col-resize`}
+        className={`${isWorkspaceFullscreen || portal.native ? '!hidden' : ''} cowork-display-panel-resizer absolute inset-y-0 left-0 z-[90] hidden w-5 -translate-x-1/2 touch-none cursor-col-resize`}
         onPointerDown={beginResize}
         onKeyDown={event => {
           if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
@@ -422,7 +466,7 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
         aria-orientation="vertical"
         aria-label={i18nService.t('resizePanels')}
         aria-valuemin={DISPLAY_PANEL_MIN_WIDTH}
-        aria-valuemax={getDisplayPanelMaxWidth(panelRef.current)}
+        aria-valuemax={getDisplayPanelMaxWidth(portal.native ? slotRef.current : panelRef.current)}
         aria-valuenow={Math.round(width)}
       />
 
@@ -535,10 +579,30 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
             </button>
           )}
         </div>
+        {portal.native && (
+          <button
+            type="button"
+            onClick={() => void portal.toggleDetached()}
+            disabled={portal.transitioning || !portal.target}
+            className="inline-flex h-7 w-8 shrink-0 self-center items-center justify-center rounded-lg text-secondary hover:bg-surface-raised disabled:opacity-40"
+            title={i18nService.t(
+              portal.detached ? 'coworkDisplayWindowDock' : 'coworkDisplayWindowDetach',
+            )}
+            aria-label={i18nService.t(
+              portal.detached ? 'coworkDisplayWindowDock' : 'coworkDisplayWindowDetach',
+            )}
+          >
+            {portal.detached ? (
+              <ArrowUturnLeftIcon className="h-4 w-4" />
+            ) : (
+              <ArrowTopRightOnSquareIcon className="h-4 w-4" />
+            )}
+          </button>
+        )}
         <button
           type="button"
           onClick={() => setIsWorkspaceFullscreen(fullscreen => !fullscreen)}
-          className="inline-flex h-7 w-8 shrink-0 self-center items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+          className={`${portal.detached ? 'hidden' : 'inline-flex'} h-7 w-8 shrink-0 self-center items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised hover:text-foreground`}
           title={i18nService.t(
             isWorkspaceFullscreen
               ? 'coworkDisplayPanelExitFullscreen'
@@ -557,7 +621,8 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
           type="button"
           onClick={() => {
             setIsWorkspaceFullscreen(false);
-            onClose();
+            if (portal.detached) void portal.toggleDetached();
+            else onClose();
           }}
           className="inline-flex h-7 w-8 shrink-0 self-center items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
           title={i18nService.t('coworkDisplayPanelClose')}
@@ -578,7 +643,7 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
               key={activeFilePath}
               filePath={activeFilePath}
               workspacePath={workspacePath}
-              isVisible={isOpen}
+              isVisible={visible}
             />
           ) : workspaceLabel ? (
             <div
@@ -680,7 +745,7 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
           )}
         </div>
       </FilePreviewToolbarContext.Provider>
-      {isOpen && hasOverflow && tabListOpen && tabListButtonRef.current && (
+      {visible && hasOverflow && tabListOpen && tabListButtonRef.current && (
         <DisplayTabListMenu
           id={tabListMenuId}
           activeTabId={activeTabId}
@@ -690,11 +755,11 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
           onSelect={tab => {
             dismissTabList(false);
             tab.onSelect();
-            requestAnimationFrame(() => focusTab(activeTabIdRef.current));
+            ownerWindow.requestAnimationFrame(() => focusTab(activeTabIdRef.current));
           }}
         />
       )}
-      {isOpen && tabMenu && menuTab && menuCloseActions && (
+      {visible && tabMenu && menuTab && menuCloseActions && (
         <DisplayTabContextMenu
           x={tabMenu.x}
           y={tabMenu.y}
@@ -710,6 +775,72 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
         />
       )}
     </aside>
+  );
+  if (!portal.native) return content;
+  return (
+    <>
+      <aside
+        ref={slotRef}
+        aria-hidden={!isOpen || portal.detached}
+        className={`${isOpen && !portal.detached ? 'flex' : 'hidden'} cowork-display-panel absolute inset-y-0 right-0 z-50 max-w-[calc(100%-2rem)]`}
+        data-workspace-fullscreen={isWorkspaceFullscreen}
+        style={
+          isWorkspaceFullscreen
+            ? { width: '100%', maxWidth: 'none', inset: 0, transition: 'none', transform: 'none' }
+            : ({
+                width,
+                '--display-panel-width': `${width}px`,
+                transition: 'none',
+                transform: 'none',
+              } as React.CSSProperties)
+        }
+      >
+        {!isWorkspaceFullscreen && (
+          <div
+            className="absolute inset-y-0 -left-2 w-2 touch-none cursor-col-resize"
+            onPointerDown={beginResize}
+            onKeyDown={event => {
+              if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+              event.preventDefault();
+              setWidth(current => clampWidth(current + (event.key === 'ArrowLeft' ? 24 : -24)));
+            }}
+            role="separator"
+            tabIndex={isOpen && !portal.detached ? 0 : -1}
+            aria-orientation="vertical"
+            aria-label={i18nService.t('resizePanels')}
+            aria-valuemin={DISPLAY_PANEL_MIN_WIDTH}
+            aria-valuemax={getDisplayPanelMaxWidth(slotRef.current)}
+            aria-valuenow={Math.round(width)}
+          />
+        )}
+      </aside>
+      {portal.target &&
+        createPortal(
+          <OwnerDocumentContext.Provider value={ownerDocument}>
+            <div className="h-full" {...(portal.detached && portal.blocked ? { inert: '' } : {})}>
+              {content}
+            </div>
+            {portal.detached && portal.blocked && (
+              <dialog
+                ref={mainPromptRef}
+                data-testid="workspace-main-prompt"
+                onCancel={event => event.preventDefault()}
+                className="cowork-workspace-main-prompt fixed inset-0 m-0 flex h-full max-h-none w-full max-w-none flex-col items-center justify-center gap-3 bg-background/95 px-6 text-center text-sm text-foreground"
+                aria-label={i18nService.t('coworkDisplayWindowMainPrompt')}
+              >
+                <p>{i18nService.t('coworkDisplayWindowMainPrompt')}</p>
+                <button
+                  className="rounded-lg bg-primary px-4 py-2 text-white"
+                  onClick={portal.focusMain}
+                >
+                  {i18nService.t('coworkDisplayWindowFocusMain')}
+                </button>
+              </dialog>
+            )}
+          </OwnerDocumentContext.Provider>,
+          portal.target,
+        )}
+    </>
   );
 };
 

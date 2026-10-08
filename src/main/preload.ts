@@ -21,7 +21,7 @@ import {
 import { AuthIpc, type AuthState } from '../shared/app/auth';
 import { DialogIpc, type SaveTextFileOptions } from '../shared/app/dialogIpc';
 import { LogIpc } from '../shared/app/logIpc';
-import { MediaCaptureIpc } from '../shared/app/mediaCapture';
+import { MediaCaptureIpc, MediaCaptureSurface } from '../shared/app/mediaCapture';
 import {
   type TerminalActionResult,
   type TerminalCreateRequest,
@@ -123,6 +123,11 @@ import {
   SwarmWorkflowIpc,
   type SwarmWorkflowOptions,
 } from '../shared/cowork/swarmWorkflow';
+import {
+  WorkspaceWindowIpc,
+  type WorkspaceWindowState,
+  type WorkspaceWindowUpdate,
+} from '../shared/cowork/workspaceWindow';
 import {
   type ExternalAgentId,
   ExternalAgentIpc,
@@ -562,6 +567,26 @@ contextBridge.exposeInMainWorld('electron', {
       ) => callback(state);
       ipcRenderer.on('window:state-changed', handler);
       return () => ipcRenderer.removeListener('window:state-changed', handler);
+    },
+  },
+  workspaceWindow: {
+    prepare: () => ipcRenderer.invoke(WorkspaceWindowIpc.Prepare),
+    update: (update: WorkspaceWindowUpdate) => ipcRenderer.send(WorkspaceWindowIpc.Update, update),
+    setDetached: (generation: string, detached: boolean) =>
+      ipcRenderer.invoke(WorkspaceWindowIpc.SetDetached, generation, detached),
+    focusMain: () => ipcRenderer.send(WorkspaceWindowIpc.FocusMain),
+    focus: () => ipcRenderer.send(WorkspaceWindowIpc.Focus),
+    onInvalidated: (callback: (state: WorkspaceWindowState) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, state: WorkspaceWindowState) =>
+        callback(state);
+      ipcRenderer.on(WorkspaceWindowIpc.Invalidated, listener);
+      return () => ipcRenderer.removeListener(WorkspaceWindowIpc.Invalidated, listener);
+    },
+    onStateChanged: (callback: (state: WorkspaceWindowState) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, state: WorkspaceWindowState) =>
+        callback(state);
+      ipcRenderer.on(WorkspaceWindowIpc.StateChanged, listener);
+      return () => ipcRenderer.removeListener(WorkspaceWindowIpc.StateChanged, listener);
     },
   },
   getApiConfig: () => ipcRenderer.invoke('get-api-config'),
@@ -1014,7 +1039,8 @@ contextBridge.exposeInMainWorld('electron', {
     ) => ipcRenderer.invoke(MediaGenerationModelsIpc.SaveConfiguration, kind, configuration),
   },
   mediaCapture: {
-    armSystemAudio: () => ipcRenderer.invoke(MediaCaptureIpc.ArmSystemAudio),
+    armSystemAudio: (surface: MediaCaptureSurface = MediaCaptureSurface.Main) =>
+      ipcRenderer.invoke(MediaCaptureIpc.ArmSystemAudio, surface),
   },
   localSpeechModels: {
     list: () => ipcRenderer.invoke(LocalSpeechModelIpc.List),

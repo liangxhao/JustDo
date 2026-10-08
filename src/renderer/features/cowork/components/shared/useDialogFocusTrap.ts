@@ -1,5 +1,7 @@
 import type React from 'react';
-import { useEffect } from 'react';
+import { useContext, useEffect } from 'react';
+
+import { isDomHTMLElement, isDomNode, OwnerDocumentContext } from '@/shared/dom/ownerDocument';
 
 const FOCUSABLE_SELECTOR = [
   'button:not([disabled])',
@@ -17,12 +19,16 @@ export const useDialogFocusTrap = (
   trapFocus = true,
   active = true,
 ): void => {
+  const contextDocument = useContext(OwnerDocumentContext);
   useEffect(() => {
     if (!active) return;
+    const ownerDocument = contextDocument ?? document;
+    const ownerWindow = ownerDocument.defaultView ?? window;
     const dialogElement = dialogRef.current;
-    const previouslyFocused =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const focusFrame = window.requestAnimationFrame(() => {
+    const previouslyFocused = isDomHTMLElement(ownerDocument.activeElement)
+      ? ownerDocument.activeElement
+      : null;
+    const focusFrame = ownerWindow.requestAnimationFrame(() => {
       const fallback = dialogRef.current?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR);
       (initialFocusRef.current ?? fallback ?? dialogRef.current)?.focus();
     });
@@ -39,7 +45,7 @@ export const useDialogFocusTrap = (
         return;
       }
 
-      const currentIndex = focusable.indexOf(document.activeElement as HTMLElement);
+      const currentIndex = focusable.indexOf(ownerDocument.activeElement as HTMLElement);
       const nextIndex = event.shiftKey
         ? currentIndex <= 0
           ? focusable.length - 1
@@ -53,21 +59,21 @@ export const useDialogFocusTrap = (
     };
 
     if (trapFocus) {
-      document.addEventListener('keydown', handleKeyDown, true);
+      ownerDocument.addEventListener('keydown', handleKeyDown, true);
     }
     return () => {
-      window.cancelAnimationFrame(focusFrame);
+      ownerWindow.cancelAnimationFrame(focusFrame);
       if (trapFocus) {
-        document.removeEventListener('keydown', handleKeyDown, true);
+        ownerDocument.removeEventListener('keydown', handleKeyDown, true);
       }
-      window.requestAnimationFrame(() => {
-        const activeElement = document.activeElement;
+      ownerWindow.requestAnimationFrame(() => {
+        const activeElement = ownerDocument.activeElement;
         const shouldRestoreFocus =
           trapFocus ||
-          activeElement === document.body ||
-          (activeElement instanceof Node && Boolean(dialogElement?.contains(activeElement)));
+          activeElement === ownerDocument.body ||
+          (isDomNode(activeElement) && Boolean(dialogElement?.contains(activeElement)));
         if (shouldRestoreFocus && previouslyFocused?.isConnected) previouslyFocused.focus();
       });
     };
-  }, [active, dialogRef, initialFocusRef, resetKey, trapFocus]);
+  }, [active, dialogRef, initialFocusRef, resetKey, trapFocus, contextDocument]);
 };

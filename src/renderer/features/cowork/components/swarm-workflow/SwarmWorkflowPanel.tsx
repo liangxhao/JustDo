@@ -23,6 +23,7 @@ import type {
 import { useEffect, useId, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
+import { useOwnerWindow } from '@/shared/dom/ownerDocument';
 
 import type { Subtask } from '../subagents/subtaskPresentation';
 import SwarmWorkflowBatchPanel from './SwarmWorkflowBatchPanel';
@@ -124,6 +125,7 @@ export default function SwarmWorkflowPanel({
   snapshot?: SwarmWorkflowResult;
   onRefresh?: () => void;
 }) {
+  const ownerWindow = useOwnerWindow();
   const t = (key: string) => i18nService.t(key);
   const [flows, setFlows] = useState<SwarmWorkflowView[]>([]);
   const [chosen, setChosen] = useState<string>();
@@ -139,13 +141,13 @@ export default function SwarmWorkflowPanel({
   const container = useRef<HTMLElement>(null);
   const [columns, setColumns] = useState(2);
   useEffect(() => {
-    if (!container.current || typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(([entry]) =>
+    if (!container.current || !ownerWindow.ResizeObserver) return;
+    const observer = new ownerWindow.ResizeObserver(([entry]) =>
       setColumns(entry.contentRect.width < 560 ? 2 : 3),
     );
     observer.observe(container.current);
     return () => observer.disconnect();
-  }, []);
+  }, [ownerWindow]);
   const marker = useId().replace(/:/g, '');
   useEffect(() => {
     seenFlows.current = new Set();

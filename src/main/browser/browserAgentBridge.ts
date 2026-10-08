@@ -137,6 +137,10 @@ export class BrowserAgentBridge {
     private readonly isTrustedRenderer: (webContentsId: number) => boolean,
     private readonly getSessionWorkspace: (sessionId: string) => string | null = () => null,
     private readonly requireRendererInteractionAck = false,
+    private readonly isAllowedBrowserHost: (ownerId: number, hostId: number) => boolean = (
+      ownerId,
+      hostId,
+    ) => ownerId === hostId,
   ) {
     try {
       for (const profile of listImportedBrowserProfiles()) {
@@ -731,7 +735,7 @@ export class BrowserAgentBridge {
       !guest ||
       guest.isDestroyed() ||
       guest.getType() !== 'webview' ||
-      guest.hostWebContents?.id !== event.sender.id ||
+      !this.isAllowedBrowserHost(event.sender.id, guest.hostWebContents?.id ?? -1) ||
       !expectedStoragePath ||
       !actualStoragePath ||
       path.resolve(expectedStoragePath).toLowerCase() !==
@@ -1717,7 +1721,7 @@ export class BrowserAgentBridge {
       guest &&
       !guest.isDestroyed() &&
       guest.getType() === 'webview' &&
-      guest.hostWebContents?.id === tab.ownerId &&
+      this.isAllowedBrowserHost(tab.ownerId, guest.hostWebContents?.id ?? -1) &&
       this.isTrustedRenderer(tab.ownerId),
     );
   }

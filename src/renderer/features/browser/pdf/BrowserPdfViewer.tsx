@@ -16,6 +16,7 @@ import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
+import { useOwnerWindow } from '@/shared/dom/ownerDocument';
 
 GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
@@ -51,6 +52,7 @@ const BrowserPdfPage = ({
   zoom,
   onRenderError,
 }: BrowserPdfPageProps) => {
+  const ownerWindow = useOwnerWindow();
   const wrapperRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [aspectRatio, setAspectRatio] = useState(792 / 612);
@@ -60,17 +62,17 @@ const BrowserPdfPage = ({
 
   useEffect(() => {
     const wrapper = wrapperRef.current;
-    if (!wrapper || typeof IntersectionObserver === 'undefined') {
+    if (!wrapper || !ownerWindow.IntersectionObserver) {
       setShouldRender(true);
       return;
     }
-    const observer = new IntersectionObserver(
+    const observer = new ownerWindow.IntersectionObserver(
       entries => setShouldRender(entries.some(entry => entry.isIntersecting)),
       { root: scrollRoot, rootMargin: '1200px 0px' },
     );
     observer.observe(wrapper);
     return () => observer.disconnect();
-  }, [scrollRoot]);
+  }, [scrollRoot, ownerWindow]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -92,7 +94,7 @@ const BrowserPdfPage = ({
         const viewport = page.getViewport({ scale: pageWidth / baseViewport.width });
         // Keep unusually tall pages and large panels below Chromium's canvas limits.
         const pixelRatio = Math.min(
-          window.devicePixelRatio || 1,
+          ownerWindow.devicePixelRatio || 1,
           2,
           Math.sqrt(16_777_216 / (viewport.width * viewport.height)),
           16_384 / Math.max(viewport.width, viewport.height),
@@ -123,7 +125,7 @@ const BrowserPdfPage = ({
       disposed = true;
       renderTask?.cancel();
     };
-  }, [active, document, onRenderError, pageNumber, pageWidth, shouldRender]);
+  }, [active, document, onRenderError, pageNumber, pageWidth, shouldRender, ownerWindow]);
 
   return (
     <div
@@ -143,6 +145,7 @@ const BrowserPdfPage = ({
 
 const BrowserPdfViewer = forwardRef<BrowserPdfViewerHandle, BrowserPdfViewerProps>(
   ({ url, profile, active = true, onNotPdf, onZoomChange }, ref) => {
+    const ownerWindow = useOwnerWindow();
     const containerRef = useRef<HTMLDivElement>(null);
     const [scrollRoot, setScrollRoot] = useState<HTMLDivElement | null>(null);
     const [document, setDocument] = useState<PDFDocumentProxy | null>(null);
@@ -176,10 +179,10 @@ const BrowserPdfViewer = forwardRef<BrowserPdfViewerHandle, BrowserPdfViewerProp
       if (!container) return;
       const updateWidth = () => setAvailableWidth(Math.max(240, container.clientWidth - 32));
       updateWidth();
-      const observer = new ResizeObserver(updateWidth);
+      const observer = new ownerWindow.ResizeObserver(updateWidth);
       observer.observe(container);
       return () => observer.disconnect();
-    }, []);
+    }, [ownerWindow]);
 
     useEffect(() => {
       let disposed = false;

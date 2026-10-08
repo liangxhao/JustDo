@@ -6,6 +6,7 @@ import { ChatScrollController } from './chat-scroll-controller';
 function host(options: { asyncSmooth?: boolean } = {}) {
   const listeners = new Map<string, EventListener>();
   const target = {
+    ownerDocument: document,
     scrollHeight: 1000,
     scrollTop: 700,
     clientHeight: 300,
@@ -511,18 +512,12 @@ describe('ChatScrollController', () => {
       getBoundingClientRect: () => rect(index),
     }));
     const target = host() as ReturnType<typeof host> & {
-      ownerDocument: {
-        defaultView: {
-          requestAnimationFrame: typeof requestAnimationFrame;
-          cancelAnimationFrame: ReturnType<typeof vi.fn>;
-        };
-      };
       shadowRoot: { querySelectorAll: ReturnType<typeof vi.fn> };
       getBoundingClientRect: () => { top: number };
     };
-    target.ownerDocument = {
-      defaultView: { requestAnimationFrame, cancelAnimationFrame: vi.fn() },
-    };
+    Object.defineProperty(target, 'ownerDocument', {
+      value: { defaultView: { requestAnimationFrame, cancelAnimationFrame: vi.fn() } },
+    });
     target.shadowRoot = { querySelectorAll: vi.fn(() => anchors) };
     target.getBoundingClientRect = () => ({ top: 0 });
     const controller = new ChatScrollController(vi.fn());

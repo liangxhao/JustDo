@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron';
+import { app, dialog, ipcMain } from 'electron';
 import fs from 'fs';
 import path from 'path';
 
@@ -8,6 +8,7 @@ import {
   type SaveTextFileOptions,
   type SaveTextFileResult,
 } from '../../../shared/app/dialogIpc';
+import { getWorkspaceDialogOwner } from '../../core/window/workspaceWindowManager';
 
 type FileFilters = { name: string; extensions: string[] }[];
 
@@ -30,7 +31,7 @@ export const registerDialogHandlers = (): void => {
           return { success: false, errorCode: SaveTextFileErrorCode.FileTooLarge };
         }
 
-        const ownerWindow = BrowserWindow.fromWebContents(event.sender);
+        const ownerWindow = getWorkspaceDialogOwner(event.sender);
         const saveOptions = {
           title: input.title,
           defaultPath: path.join(
@@ -59,7 +60,7 @@ export const registerDialogHandlers = (): void => {
   );
 
   ipcMain.handle('dialog:selectDirectory', async event => {
-    const ownerWindow = BrowserWindow.fromWebContents(event.sender);
+    const ownerWindow = getWorkspaceDialogOwner(event.sender);
     const options = {
       properties: ['openDirectory', 'createDirectory'] as ('openDirectory' | 'createDirectory')[],
     };
@@ -72,7 +73,7 @@ export const registerDialogHandlers = (): void => {
   ipcMain.handle(
     'dialog:selectFile',
     async (event, input?: { title?: string; filters?: FileFilters }) => {
-      const ownerWindow = BrowserWindow.fromWebContents(event.sender);
+      const ownerWindow = getWorkspaceDialogOwner(event.sender);
       const options = {
         properties: ['openFile'] as 'openFile'[],
         title: input?.title,
@@ -88,7 +89,7 @@ export const registerDialogHandlers = (): void => {
   ipcMain.handle(
     'dialog:selectFiles',
     async (event, input?: { title?: string; filters?: FileFilters }) => {
-      const ownerWindow = BrowserWindow.fromWebContents(event.sender);
+      const ownerWindow = getWorkspaceDialogOwner(event.sender);
       const options = {
         properties: ['openFile', 'multiSelections'] as ('openFile' | 'multiSelections')[],
         title: input?.title,
@@ -102,7 +103,7 @@ export const registerDialogHandlers = (): void => {
   );
 
   ipcMain.handle('dialog:selectFolders', async (event, input?: { title?: string }) => {
-    const ownerWindow = BrowserWindow.fromWebContents(event.sender);
+    const ownerWindow = getWorkspaceDialogOwner(event.sender);
     const options = {
       properties: ['openDirectory', 'multiSelections', 'createDirectory'] as (
         'openDirectory' | 'multiSelections' | 'createDirectory'

@@ -3,6 +3,7 @@ import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState 
 import { createPortal } from 'react-dom';
 
 import { i18nService } from '@/services/i18n';
+import { isDomNode, useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 
 import {
   type FilePathBreadcrumbLayout,
@@ -49,6 +50,8 @@ export default function FilePathBreadcrumbBar({
   workspacePath,
   isVisible,
 }: FilePathBreadcrumbProps) {
+  const ownerDocument = useOwnerDocument();
+  const ownerWindow = useOwnerWindow();
   const segments = useMemo(
     () => getFilePathBreadcrumb(filePath, workspacePath),
     [filePath, workspacePath],
@@ -71,7 +74,7 @@ export default function FilePathBreadcrumbBar({
     if (!path || !measurement || !isVisible) return;
     const measure = () => {
       if (path.clientWidth <= 0) return;
-      const styles = getComputedStyle(path);
+      const styles = ownerWindow.getComputedStyle(path);
       const availableWidth =
         path.clientWidth -
         parseFloat(styles.paddingLeft || '0') -
@@ -83,15 +86,15 @@ export default function FilePathBreadcrumbBar({
       );
     };
     measure();
-    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+    const observer = ownerWindow.ResizeObserver ? new ownerWindow.ResizeObserver(measure) : null;
     observer?.observe(path);
     observer?.observe(measurement);
-    window.addEventListener('resize', measure);
+    ownerWindow.addEventListener('resize', measure);
     return () => {
       observer?.disconnect();
-      window.removeEventListener('resize', measure);
+      ownerWindow.removeEventListener('resize', measure);
     };
-  }, [segments, isVisible]);
+  }, [segments, isVisible, ownerWindow]);
 
   useEffect(() => setDetailsOpen(false), [filePath, workspacePath, isVisible, folded]);
 
@@ -101,14 +104,14 @@ export default function FilePathBreadcrumbBar({
       const trigger = triggerRef.current;
       if (!trigger) return;
       const bounds = trigger.getBoundingClientRect();
-      const width = Math.min(440, window.innerWidth - 16);
+      const width = Math.min(440, ownerWindow.innerWidth - 16);
       setDetailsPosition({
-        left: Math.max(8, Math.min(bounds.left, window.innerWidth - width - 8)),
+        left: Math.max(8, Math.min(bounds.left, ownerWindow.innerWidth - width - 8)),
         top: Math.max(
           8,
           Math.min(
             bounds.bottom + 6,
-            window.innerHeight - (detailsRef.current?.offsetHeight ?? 0) - 8,
+            ownerWindow.innerHeight - (detailsRef.current?.offsetHeight ?? 0) - 8,
           ),
         ),
         width,
@@ -118,26 +121,26 @@ export default function FilePathBreadcrumbBar({
     detailsRef.current?.focus();
     const outside = (event: PointerEvent) => {
       if (
-        !(event.target instanceof Node) ||
+        !isDomNode(event.target) ||
         detailsRef.current?.contains(event.target) ||
         triggerRef.current?.contains(event.target)
       )
         return;
       setDetailsOpen(false);
     };
-    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(position) : null;
+    const observer = ownerWindow.ResizeObserver ? new ownerWindow.ResizeObserver(position) : null;
     if (detailsRef.current) observer?.observe(detailsRef.current);
     if (pathRef.current) observer?.observe(pathRef.current);
-    document.addEventListener('pointerdown', outside);
-    window.addEventListener('resize', position);
-    window.addEventListener('scroll', position, true);
+    ownerDocument.addEventListener('pointerdown', outside);
+    ownerWindow.addEventListener('resize', position);
+    ownerWindow.addEventListener('scroll', position, true);
     return () => {
       observer?.disconnect();
-      document.removeEventListener('pointerdown', outside);
-      window.removeEventListener('resize', position);
-      window.removeEventListener('scroll', position, true);
+      ownerDocument.removeEventListener('pointerdown', outside);
+      ownerWindow.removeEventListener('resize', position);
+      ownerWindow.removeEventListener('scroll', position, true);
     };
-  }, [detailsOpen]);
+  }, [detailsOpen, ownerDocument, ownerWindow]);
 
   return (
     <div
@@ -245,7 +248,7 @@ export default function FilePathBreadcrumbBar({
               ))}
             </ol>
           </div>,
-          document.body,
+          ownerDocument.body,
         )}
     </div>
   );

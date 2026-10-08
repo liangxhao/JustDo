@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
+import { isDomNode, useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
+
 interface TooltipProps {
   content: React.ReactNode;
   children: React.ReactNode;
@@ -24,6 +26,8 @@ const Tooltip: React.FC<TooltipProps> = ({
   renderInPortal = false,
   dismissOnClick = false,
 }) => {
+  const ownerDocument = useOwnerDocument();
+  const ownerWindow = useOwnerWindow();
   const [isVisible, setIsVisible] = useState(false);
   const [tooltipStyle, setTooltipStyle] = useState<React.CSSProperties | null>(null);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -75,10 +79,7 @@ const Tooltip: React.FC<TooltipProps> = ({
 
   const handleBlurCapture = useCallback(
     (event: React.FocusEvent<HTMLDivElement>) => {
-      if (
-        event.relatedTarget instanceof Node &&
-        wrapperRef.current?.contains(event.relatedTarget)
-      ) {
+      if (isDomNode(event.relatedTarget) && wrapperRef.current?.contains(event.relatedTarget)) {
         return;
       }
       isFocusedWithinRef.current = false;
@@ -91,8 +92,8 @@ const Tooltip: React.FC<TooltipProps> = ({
     if (!wrapperRef.current || !tooltipRef.current) return;
     const anchorRect = wrapperRef.current.getBoundingClientRect();
     const tooltipRect = tooltipRef.current.getBoundingClientRect();
-    const viewportWidth = window.innerWidth;
-    const viewportHeight = window.innerHeight;
+    const viewportWidth = ownerWindow.innerWidth;
+    const viewportHeight = ownerWindow.innerHeight;
     const margin = 8;
     type TooltipPosition = 'top' | 'bottom' | 'left' | 'right';
 
@@ -156,7 +157,7 @@ const Tooltip: React.FC<TooltipProps> = ({
       whiteSpace: 'pre-wrap',
       wordBreak: 'break-word',
     });
-  }, [maxWidth, position]);
+  }, [maxWidth, position, ownerWindow]);
 
   useLayoutEffect(() => {
     if (!isVisible) return;
@@ -166,13 +167,13 @@ const Tooltip: React.FC<TooltipProps> = ({
   useEffect(() => {
     if (!isVisible) return;
     const handleUpdate = () => updatePosition();
-    window.addEventListener('resize', handleUpdate);
-    window.addEventListener('scroll', handleUpdate, true);
+    ownerWindow.addEventListener('resize', handleUpdate);
+    ownerWindow.addEventListener('scroll', handleUpdate, true);
     return () => {
-      window.removeEventListener('resize', handleUpdate);
-      window.removeEventListener('scroll', handleUpdate, true);
+      ownerWindow.removeEventListener('resize', handleUpdate);
+      ownerWindow.removeEventListener('scroll', handleUpdate, true);
     };
-  }, [isVisible, updatePosition]);
+  }, [isVisible, updatePosition, ownerWindow]);
 
   const tooltipElement = isVisible && content && (
     <div
@@ -200,7 +201,7 @@ const Tooltip: React.FC<TooltipProps> = ({
     >
       {children}
       {tooltipElement &&
-        (renderInPortal ? createPortal(tooltipElement, document.body) : tooltipElement)}
+        (renderInPortal ? createPortal(tooltipElement, ownerDocument.body) : tooltipElement)}
     </div>
   );
 };

@@ -14,6 +14,7 @@ import {
 import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/ui/Modal';
+import { useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 
 import { startSubagentGatewayConnection } from '../shared/subagentGatewayConnection';
 import { reconcileSubagentLabel } from './subagentLabel';
@@ -33,8 +34,8 @@ interface SubagentMessageDrawerProps {
   isObscured?: boolean;
 }
 
-const clampDrawerWidth = (width: number): number => {
-  const viewportMax = Math.max(DRAWER_MIN_WIDTH, window.innerWidth - DRAWER_WINDOW_MARGIN);
+const clampDrawerWidth = (width: number, viewportWidth = window.innerWidth): number => {
+  const viewportMax = Math.max(DRAWER_MIN_WIDTH, viewportWidth - DRAWER_WINDOW_MARGIN);
   return Math.min(Math.max(width, DRAWER_MIN_WIDTH), viewportMax);
 };
 
@@ -45,6 +46,8 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
   embedded = false,
   isObscured = false,
 }) => {
+  const ownerDocument = useOwnerDocument();
+  const ownerWindow = useOwnerWindow();
   const [controller, setController] = useState<ChatController | null>(null);
   const [displaySubagent, setDisplaySubagent] = useState<Subagent | null>(subagent);
   const [isLoading, setIsLoading] = useState(false);
@@ -305,32 +308,35 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
 
   useEffect(() => {
     const handleResize = () => {
-      setDrawerWidth(width => clampDrawerWidth(width));
+      setDrawerWidth(width => clampDrawerWidth(width, ownerWindow.innerWidth));
     };
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
+    ownerWindow.addEventListener('resize', handleResize);
+    return () => ownerWindow.removeEventListener('resize', handleResize);
+  }, [ownerWindow]);
 
-  const handleResizeStart = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-    const right = drawerRef.current?.getBoundingClientRect().right ?? window.innerWidth;
-    event.preventDefault();
+  const handleResizeStart = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      const right = drawerRef.current?.getBoundingClientRect().right ?? ownerWindow.innerWidth;
+      event.preventDefault();
 
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      setDrawerWidth(clampDrawerWidth(right - moveEvent.clientX));
-    };
+      const handleMouseMove = (moveEvent: MouseEvent) => {
+        setDrawerWidth(clampDrawerWidth(right - moveEvent.clientX, ownerWindow.innerWidth));
+      };
 
-    const handleMouseUp = () => {
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-    };
+      const handleMouseUp = () => {
+        ownerDocument.body.style.cursor = '';
+        ownerDocument.body.style.userSelect = '';
+        ownerWindow.removeEventListener('mousemove', handleMouseMove);
+        ownerWindow.removeEventListener('mouseup', handleMouseUp);
+      };
 
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
-  }, []);
+      ownerDocument.body.style.cursor = 'col-resize';
+      ownerDocument.body.style.userSelect = 'none';
+      ownerWindow.addEventListener('mousemove', handleMouseMove);
+      ownerWindow.addEventListener('mouseup', handleMouseUp);
+    },
+    [ownerDocument, ownerWindow],
+  );
 
   if (!displaySubagent) return null;
 
@@ -350,7 +356,7 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
 
   const copySessionId = async (value: string): Promise<void> => {
     try {
-      await navigator.clipboard.writeText(value);
+      await ownerWindow.navigator.clipboard.writeText(value);
       window.dispatchEvent(
         new CustomEvent('app:showToast', {
           detail: { message: i18nService.t('copySessionIdSuccess'), tone: 'success' },

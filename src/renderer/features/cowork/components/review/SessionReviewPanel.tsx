@@ -23,6 +23,7 @@ import {
 import { useEffect, useId, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
+import { useOwnerWindow } from '@/shared/dom/ownerDocument';
 
 import WorkspaceFileIcon from '../shared/WorkspaceFileIcon';
 import SessionReviewPatch from './SessionReviewPatch';
@@ -43,6 +44,7 @@ export default function SessionReviewPanel({
   focusVersion,
   onOpenFile,
 }: Props) {
+  const ownerWindow = useOwnerWindow();
   const [scope, setScope] = useState<SessionReviewQuery['scope']>(ReviewScope.All);
   const [commit, setCommit] = useState('');
   const [commitInput, setCommitInput] = useState('');
@@ -239,7 +241,7 @@ export default function SessionReviewPanel({
     setCopied('');
     setCopyError(false);
     try {
-      await navigator.clipboard.writeText(value);
+      await ownerWindow.navigator.clipboard.writeText(value);
       if (!mounted.current || request !== copyGeneration.current) return;
       setCopied(target);
       copyTimer.current = setTimeout(() => setCopied(''), 2000);

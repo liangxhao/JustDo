@@ -7,6 +7,7 @@ import { createPortal } from 'react-dom';
 import BrowserElementInspectorCard from '@/features/browser/annotation/BrowserElementInspectorCard';
 import { LocalSpeechInputButton } from '@/features/cowork/components/composer/LocalSpeechInputButton';
 import { i18nService } from '@/services/i18n';
+import { useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 
 export default function BrowserAnnotationComposer({
   element,
@@ -31,6 +32,8 @@ export default function BrowserAnnotationComposer({
   onDismiss: () => void;
   onEscape?: () => void;
 }) {
+  const ownerDocument = useOwnerDocument();
+  const ownerWindow = useOwnerWindow();
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [detailsPosition, setDetailsPosition] = useState<CSSProperties>({});
   const inputRef = useRef<HTMLInputElement>(null);
@@ -46,26 +49,27 @@ export default function BrowserAnnotationComposer({
     const updatePosition = () => {
       const bounds = composerRef.current?.getBoundingClientRect();
       if (!bounds) return;
-      const cardHeight = Math.min(360, window.innerHeight - 16);
+      const cardHeight = Math.min(360, ownerWindow.innerHeight - 16);
       const top =
-        bounds.bottom + cardHeight + 8 <= window.innerHeight
+        bounds.bottom + cardHeight + 8 <= ownerWindow.innerHeight
           ? bounds.bottom + 8
           : Math.max(8, bounds.top - cardHeight - 8);
       setDetailsPosition({
-        left: Math.max(8, Math.min(bounds.left, window.innerWidth - 348)),
+        left: Math.max(8, Math.min(bounds.left, ownerWindow.innerWidth - 348)),
         top,
       });
     };
     updatePosition();
-    window.addEventListener('resize', updatePosition);
-    const observer =
-      typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updatePosition);
+    ownerWindow.addEventListener('resize', updatePosition);
+    const observer = ownerWindow.ResizeObserver
+      ? new ownerWindow.ResizeObserver(updatePosition)
+      : null;
     if (composerRef.current) observer?.observe(composerRef.current);
     return () => {
-      window.removeEventListener('resize', updatePosition);
+      ownerWindow.removeEventListener('resize', updatePosition);
       observer?.disconnect();
     };
-  }, [detailsOpen, position.left, position.top, position.width]);
+  }, [detailsOpen, position.left, position.top, position.width, ownerWindow]);
 
   return (
     <div
@@ -83,7 +87,7 @@ export default function BrowserAnnotationComposer({
             >
               <BrowserElementInspectorCard element={element} locked embedded style={{}} />
             </div>,
-            document.body,
+            ownerDocument.body,
           )}
 
         <span
@@ -132,7 +136,7 @@ export default function BrowserAnnotationComposer({
               const clean = transcript.replace(/\s+/g, ' ').trim();
               if (!clean) return;
               onChange(`${value.trimEnd()}${value.trim() ? ' ' : ''}${clean}`.slice(0, 2_000));
-              requestAnimationFrame(() => inputRef.current?.focus());
+              ownerWindow.requestAnimationFrame(() => inputRef.current?.focus());
             }}
           />
           <button

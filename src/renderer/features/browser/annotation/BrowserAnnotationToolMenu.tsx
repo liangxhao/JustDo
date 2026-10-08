@@ -8,6 +8,7 @@ import React, { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 
 import { i18nService } from '@/services/i18n';
+import { isDomHTMLElement, useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 
 export type BrowserAnnotationTool = 'inspect' | 'pen' | 'rectangle';
 
@@ -22,21 +23,25 @@ export default function BrowserAnnotationToolMenu({
   onSelect: (tool: BrowserAnnotationTool) => void;
   onDismiss: () => void;
 }) {
+  const ownerDocument = useOwnerDocument();
+  const ownerWindow = useOwnerWindow();
   const menuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const trigger = isDomHTMLElement(ownerDocument.activeElement)
+      ? ownerDocument.activeElement
+      : null;
     const selectedItem = menuRef.current?.querySelector<HTMLElement>('[aria-checked="true"]');
     (
       selectedItem ?? menuRef.current?.querySelector<HTMLElement>('[role="menuitemradio"]')
     )?.focus();
     return () => trigger?.focus();
-  }, []);
+  }, [ownerDocument]);
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     const items = [
       ...(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]') ?? []),
     ];
-    const current = items.indexOf(document.activeElement as HTMLButtonElement);
+    const current = items.indexOf(ownerDocument.activeElement as HTMLButtonElement);
     let next = current;
     if (event.key === 'Escape') {
       event.preventDefault();
@@ -54,9 +59,9 @@ export default function BrowserAnnotationToolMenu({
 
   const menuWidth = 176;
   const menuHeight = 128;
-  const left = Math.max(8, Math.min(anchor.left, window.innerWidth - menuWidth - 8));
+  const left = Math.max(8, Math.min(anchor.left, ownerWindow.innerWidth - menuWidth - 8));
   const top =
-    anchor.bottom + menuHeight + 8 <= window.innerHeight
+    anchor.bottom + menuHeight + 8 <= ownerWindow.innerHeight
       ? anchor.bottom + 6
       : Math.max(8, anchor.top - menuHeight - 6);
   const items: Array<{
@@ -113,6 +118,6 @@ export default function BrowserAnnotationToolMenu({
         ))}
       </div>
     </>,
-    document.body,
+    ownerDocument.body,
   );
 }

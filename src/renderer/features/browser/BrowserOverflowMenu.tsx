@@ -16,6 +16,7 @@ import React, { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 
 import { i18nService } from '@/services/i18n';
+import { isDomHTMLElement, useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 
 export type BrowserOverflowAction =
   | 'pdf-viewer'
@@ -48,6 +49,8 @@ export default function BrowserOverflowMenu({
   disabledActionHint?: string;
   pdfCompatibilityMode?: boolean;
 }) {
+  const ownerDocument = useOwnerDocument();
+  const ownerWindow = useOwnerWindow();
   const menuRef = useRef<HTMLDivElement>(null);
   const iconClass = 'h-4 w-4 shrink-0 text-secondary';
   const items: Array<{
@@ -107,15 +110,15 @@ export default function BrowserOverflowMenu({
       icon: <Cog6ToothIcon className={iconClass} />,
     },
   ];
-  const left = Math.max(8, Math.min(anchor.right - 256, window.innerWidth - 264));
-  const top = Math.max(8, Math.min(anchor.bottom + 6, window.innerHeight - 548));
+  const left = Math.max(8, Math.min(anchor.right - 256, ownerWindow.innerWidth - 264));
+  const top = Math.max(8, Math.min(anchor.bottom + 6, ownerWindow.innerHeight - 548));
   const zoomPercent = Math.round(zoomFactor * 100);
 
   useEffect(() => {
-    const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const trigger = isDomHTMLElement(ownerDocument.activeElement) ? ownerDocument.activeElement : null;
     menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus();
     return () => trigger?.focus();
-  }, []);
+  }, [ownerDocument]);
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Escape') {
@@ -131,7 +134,7 @@ export default function BrowserOverflowMenu({
       ) ?? []),
     ];
     if (!buttons.length) return;
-    const currentIndex = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    const currentIndex = buttons.indexOf(ownerDocument.activeElement as HTMLButtonElement);
     const nextIndex =
       event.key === 'Home'
         ? 0
@@ -237,6 +240,6 @@ export default function BrowserOverflowMenu({
         <div className="mt-1 border-t border-border pt-1">{renderItem('settings')}</div>
       </div>
     </>,
-    document.body,
+    ownerDocument.body,
   );
 }

@@ -3,6 +3,7 @@ import { type MouseEvent, useCallback, useEffect, useRef, useState } from 'react
 
 import { renderMermaidSvg } from '@/libs/openclaw-chat/components/mermaidRenderer';
 import { i18nService } from '@/services/i18n';
+import { useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 
 interface PreviewMarkdownProps {
   html: string;
@@ -16,17 +17,24 @@ const COPY_DONE_ICON =
   '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>';
 
 const PreviewMarkdown = ({ html, mermaidIdPrefix }: PreviewMarkdownProps) => {
+  const ownerDocument = useOwnerDocument();
+  const ownerWindow = useOwnerWindow();
   const rootRef = useRef<HTMLElement>(null);
   const copyFeedbackTimersRef = useRef(new WeakMap<HTMLButtonElement, number>());
-  const [isDark, setIsDark] = useState(() => document.documentElement.classList.contains('dark'));
+  const [isDark, setIsDark] = useState(() =>
+    ownerDocument.documentElement.classList.contains('dark'),
+  );
 
   useEffect(() => {
     const observer = new MutationObserver(() => {
-      setIsDark(document.documentElement.classList.contains('dark'));
+      setIsDark(ownerDocument.documentElement.classList.contains('dark'));
     });
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    observer.observe(ownerDocument.documentElement, {
+      attributes: true,
+      attributeFilter: ['class'],
+    });
     return () => observer.disconnect();
-  }, []);
+  }, [ownerDocument]);
 
   useEffect(() => {
     const root = rootRef.current;
@@ -78,51 +86,56 @@ const PreviewMarkdown = ({ html, mermaidIdPrefix }: PreviewMarkdownProps) => {
     };
   }, [html, isDark, mermaidIdPrefix]);
 
-  const handleClick = useCallback(async (event: MouseEvent<HTMLElement>) => {
-    const copyButton = (event.target as HTMLElement).closest<HTMLButtonElement>('.code-block-copy');
-    if (copyButton) {
-      const code = copyButton.dataset.code;
-      if (code === undefined) return;
-      await navigator.clipboard.writeText(code);
-      const idleIcon = copyButton.querySelector<HTMLElement>('.code-block-copy__idle');
-      const doneIcon = copyButton.querySelector<HTMLElement>('.code-block-copy__done');
-      const activeTimer = copyFeedbackTimersRef.current.get(copyButton);
-      if (activeTimer !== undefined) window.clearTimeout(activeTimer);
-      const copiedLabel = i18nService.t('copied');
-      const copyLabel = i18nService.t('copyToClipboard');
-      if (idleIcon) idleIcon.style.display = 'none';
-      if (doneIcon) doneIcon.style.display = 'inline-flex';
-      copyButton.classList.add('copied');
-      copyButton.setAttribute('aria-label', copiedLabel);
-      copyButton.title = copiedLabel;
-      const timer = window.setTimeout(() => {
-        if (idleIcon) idleIcon.style.display = 'inline-flex';
-        if (doneIcon) doneIcon.style.display = 'none';
-        copyButton.classList.remove('copied');
-        copyButton.setAttribute('aria-label', copyLabel);
-        copyButton.title = copyLabel;
-        copyFeedbackTimersRef.current.delete(copyButton);
-      }, COPY_FEEDBACK_DURATION_MS);
-      copyFeedbackTimersRef.current.set(copyButton, timer);
-      return;
-    }
+  const handleClick = useCallback(
+    async (event: MouseEvent<HTMLElement>) => {
+      const copyButton = (event.target as HTMLElement).closest<HTMLButtonElement>(
+        '.code-block-copy',
+      );
+      if (copyButton) {
+        const code = copyButton.dataset.code;
+        if (code === undefined) return;
+        await ownerWindow.navigator.clipboard.writeText(code);
+        const idleIcon = copyButton.querySelector<HTMLElement>('.code-block-copy__idle');
+        const doneIcon = copyButton.querySelector<HTMLElement>('.code-block-copy__done');
+        const activeTimer = copyFeedbackTimersRef.current.get(copyButton);
+        if (activeTimer !== undefined) window.clearTimeout(activeTimer);
+        const copiedLabel = i18nService.t('copied');
+        const copyLabel = i18nService.t('copyToClipboard');
+        if (idleIcon) idleIcon.style.display = 'none';
+        if (doneIcon) doneIcon.style.display = 'inline-flex';
+        copyButton.classList.add('copied');
+        copyButton.setAttribute('aria-label', copiedLabel);
+        copyButton.title = copiedLabel;
+        const timer = window.setTimeout(() => {
+          if (idleIcon) idleIcon.style.display = 'inline-flex';
+          if (doneIcon) doneIcon.style.display = 'none';
+          copyButton.classList.remove('copied');
+          copyButton.setAttribute('aria-label', copyLabel);
+          copyButton.title = copyLabel;
+          copyFeedbackTimersRef.current.delete(copyButton);
+        }, COPY_FEEDBACK_DURATION_MS);
+        copyFeedbackTimersRef.current.set(copyButton, timer);
+        return;
+      }
 
-    const target = (event.target as HTMLElement).closest<HTMLButtonElement>('.mermaid-toggle');
-    if (!target) return;
-    const block = target.closest<HTMLElement>('.mermaid-block');
-    if (!block) return;
-    const showSource = !block.classList.contains('is-source');
-    block.classList.toggle('is-source', showSource);
-    const diagram = block.querySelector<HTMLElement>('.mermaid-preview');
-    const source = block.querySelector<HTMLElement>('.mermaid-source');
-    const label = block.querySelector<HTMLElement>('.code-block-lang');
-    if (diagram) diagram.hidden = showSource;
-    if (source) source.hidden = !showSource;
-    if (label) label.textContent = showSource ? 'mermaid' : 'mermaid (rendered)';
-    const buttonLabel = i18nService.t(showSource ? 'renderDiagram' : 'showCode');
-    target.setAttribute('aria-label', buttonLabel);
-    target.title = buttonLabel;
-  }, []);
+      const target = (event.target as HTMLElement).closest<HTMLButtonElement>('.mermaid-toggle');
+      if (!target) return;
+      const block = target.closest<HTMLElement>('.mermaid-block');
+      if (!block) return;
+      const showSource = !block.classList.contains('is-source');
+      block.classList.toggle('is-source', showSource);
+      const diagram = block.querySelector<HTMLElement>('.mermaid-preview');
+      const source = block.querySelector<HTMLElement>('.mermaid-source');
+      const label = block.querySelector<HTMLElement>('.code-block-lang');
+      if (diagram) diagram.hidden = showSource;
+      if (source) source.hidden = !showSource;
+      if (label) label.textContent = showSource ? 'mermaid' : 'mermaid (rendered)';
+      const buttonLabel = i18nService.t(showSource ? 'renderDiagram' : 'showCode');
+      target.setAttribute('aria-label', buttonLabel);
+      target.title = buttonLabel;
+    },
+    [ownerWindow],
+  );
 
   return (
     <article

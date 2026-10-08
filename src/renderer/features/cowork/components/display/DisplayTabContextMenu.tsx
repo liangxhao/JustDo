@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 
 import { i18nService } from '@/services/i18n';
+import { useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 
 export interface DisplayTabContextMenuItem {
   id: string;
@@ -38,10 +39,12 @@ const DisplayTabContextMenu = ({
   x,
   y,
 }: DisplayTabContextMenuProps) => {
+  const ownerDocument = useOwnerDocument();
+  const ownerWindow = useOwnerWindow();
   const menuRef = useRef<HTMLDivElement>(null);
-  const left = Math.max(8, Math.min(x, window.innerWidth - 296));
+  const left = Math.max(8, Math.min(x, ownerWindow.innerWidth - 296));
   const estimatedHeight = 16 + (items.length + 3) * 36 + (items.length ? 5 : 0);
-  const top = Math.max(8, Math.min(y, window.innerHeight - estimatedHeight));
+  const top = Math.max(8, Math.min(y, ownerWindow.innerHeight - estimatedHeight));
 
   useEffect(() => {
     menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus();
@@ -71,7 +74,7 @@ const DisplayTabContextMenu = ({
       ) ?? []),
     ];
     if (!menuItems.length) return;
-    const currentIndex = menuItems.indexOf(document.activeElement as HTMLButtonElement);
+    const currentIndex = menuItems.indexOf(ownerDocument.activeElement as HTMLButtonElement);
     const nextIndex =
       event.key === 'Home'
         ? 0
@@ -157,7 +160,7 @@ const DisplayTabContextMenu = ({
         ))}
       </div>
     </>,
-    document.body,
+    ownerDocument.body,
   );
 };
 

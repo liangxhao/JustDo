@@ -2,8 +2,10 @@ import { ArrowsPointingOutIcon } from '@heroicons/react/24/outline';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
+import { useOwnerWindow } from '@/shared/dom/ownerDocument';
 
 export function BrowserInterventionFloat({ children }: { children: ReactNode }) {
+  const ownerWindow = useOwnerWindow();
   const panel = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState({ x: 12, y: 12 });
   const [dragging, setDragging] = useState(false);
@@ -23,12 +25,14 @@ export function BrowserInterventionFloat({ children }: { children: ReactNode }) 
     };
   };
   useEffect(() => {
-    if (typeof ResizeObserver === 'undefined' || !panel.current?.parentElement) return;
-    const observer = new ResizeObserver(() => setPosition(current => clamp(current.x, current.y)));
+    if (!ownerWindow.ResizeObserver || !panel.current?.parentElement) return;
+    const observer = new ownerWindow.ResizeObserver(() =>
+      setPosition(current => clamp(current.x, current.y)),
+    );
     observer.observe(panel.current);
     observer.observe(panel.current.parentElement);
     return () => observer.disconnect();
-  }, []);
+  }, [ownerWindow]);
 
   return (
     <>

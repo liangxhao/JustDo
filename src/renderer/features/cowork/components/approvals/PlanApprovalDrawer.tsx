@@ -11,6 +11,7 @@ import type {
 } from '@/features/cowork/coworkTypes';
 import { toSanitizedMarkdownHtml } from '@/libs/openclaw-chat/components/markdown';
 import { i18nService } from '@/services/i18n';
+import { useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 
 interface PlanApprovalDrawerProps {
   interaction: CoworkInteractionRequest;
@@ -26,8 +27,8 @@ const DRAWER_MIN_WIDTH = 420;
 const DRAWER_WINDOW_MARGIN = 24;
 const MARKDOWN_DOCUMENT_PARSE_LIMIT = 140_000;
 
-const clampDrawerWidth = (width: number): number => {
-  const viewportMax = Math.max(DRAWER_MIN_WIDTH, window.innerWidth - DRAWER_WINDOW_MARGIN);
+const clampDrawerWidth = (width: number, viewportWidth = window.innerWidth): number => {
+  const viewportMax = Math.max(DRAWER_MIN_WIDTH, viewportWidth - DRAWER_WINDOW_MARGIN);
   return Math.min(Math.max(width, DRAWER_MIN_WIDTH), viewportMax);
 };
 
@@ -39,7 +40,11 @@ const PlanApprovalDrawer: React.FC<PlanApprovalDrawerProps> = ({
   embedded = false,
   isObscured = false,
 }) => {
-  const [drawerWidth, setDrawerWidth] = useState(() => clampDrawerWidth(DRAWER_DEFAULT_WIDTH));
+  const ownerDocument = useOwnerDocument();
+  const ownerWindow = useOwnerWindow();
+  const [drawerWidth, setDrawerWidth] = useState(() =>
+    clampDrawerWidth(DRAWER_DEFAULT_WIDTH, ownerWindow.innerWidth),
+  );
   const [showFeedback, setShowFeedback] = useState(false);
   const [feedback, setFeedback] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -66,10 +71,11 @@ const PlanApprovalDrawer: React.FC<PlanApprovalDrawerProps> = ({
   );
 
   useEffect(() => {
-    const handleResize = () => setDrawerWidth(current => clampDrawerWidth(current));
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
+    const handleResize = () =>
+      setDrawerWidth(current => clampDrawerWidth(current, ownerWindow.innerWidth));
+    ownerWindow.addEventListener('resize', handleResize);
+    return () => ownerWindow.removeEventListener('resize', handleResize);
+  }, [ownerWindow]);
 
   useEffect(() => {
     if (!isObscured) drawerRef.current?.focus();
@@ -101,36 +107,42 @@ const PlanApprovalDrawer: React.FC<PlanApprovalDrawerProps> = ({
     [onRespond, readOnly],
   );
 
-  const handleResizeStart = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-    const right = drawerRef.current?.getBoundingClientRect().right ?? window.innerWidth;
-    event.preventDefault();
+  const handleResizeStart = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      const right = drawerRef.current?.getBoundingClientRect().right ?? ownerWindow.innerWidth;
+      event.preventDefault();
 
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      setDrawerWidth(clampDrawerWidth(right - moveEvent.clientX));
-    };
-    const cleanupResize = () => {
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-      resizeCleanupRef.current = null;
-    };
-    const handleMouseUp = () => cleanupResize();
+      const handleMouseMove = (moveEvent: MouseEvent) => {
+        setDrawerWidth(clampDrawerWidth(right - moveEvent.clientX, ownerWindow.innerWidth));
+      };
+      const cleanupResize = () => {
+        ownerDocument.body.style.cursor = '';
+        ownerDocument.body.style.userSelect = '';
+        ownerWindow.removeEventListener('mousemove', handleMouseMove);
+        ownerWindow.removeEventListener('mouseup', handleMouseUp);
+        resizeCleanupRef.current = null;
+      };
+      const handleMouseUp = () => cleanupResize();
 
-    resizeCleanupRef.current?.();
-    resizeCleanupRef.current = cleanupResize;
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
-  }, []);
+      resizeCleanupRef.current?.();
+      resizeCleanupRef.current = cleanupResize;
+      ownerDocument.body.style.cursor = 'col-resize';
+      ownerDocument.body.style.userSelect = 'none';
+      ownerWindow.addEventListener('mousemove', handleMouseMove);
+      ownerWindow.addEventListener('mouseup', handleMouseUp);
+    },
+    [ownerDocument, ownerWindow],
+  );
 
-  const handleResizeKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-    event.preventDefault();
-    const delta = event.key === 'ArrowLeft' ? 24 : -24;
-    setDrawerWidth(current => clampDrawerWidth(current + delta));
-  }, []);
+  const handleResizeKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+      event.preventDefault();
+      const delta = event.key === 'ArrowLeft' ? 24 : -24;
+      setDrawerWidth(current => clampDrawerWidth(current + delta, ownerWindow.innerWidth));
+    },
+    [ownerWindow],
+  );
 
   return (
     <aside
@@ -156,7 +168,7 @@ const PlanApprovalDrawer: React.FC<PlanApprovalDrawerProps> = ({
           tabIndex={0}
           aria-orientation="vertical"
           aria-valuemin={DRAWER_MIN_WIDTH}
-          aria-valuemax={Math.max(DRAWER_MIN_WIDTH, window.innerWidth - DRAWER_WINDOW_MARGIN)}
+          aria-valuemax={Math.max(DRAWER_MIN_WIDTH, ownerWindow.innerWidth - DRAWER_WINDOW_MARGIN)}
           aria-valuenow={Math.round(drawerWidth)}
           aria-label={i18nService.t('coworkFilePreviewResize')}
           title={i18nService.t('coworkFilePreviewResize')}

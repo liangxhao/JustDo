@@ -17,6 +17,7 @@ import { SidebarView } from '@/app/shell/sidebarNavigation';
 import StartupLoading from '@/app/shell/StartupLoading';
 import Toast, { type ToastContent } from '@/app/shell/Toast';
 import WindowHeader from '@/app/shell/window/WindowHeader';
+import { WorkspaceNotifications } from '@/app/shell/WorkspaceNotifications';
 import { agentService } from '@/features/agents/agentService';
 import {
   loadPendingApprovalsWithRetry,
@@ -27,6 +28,7 @@ import {
 } from '@/features/cowork/approvalQueue';
 import { CoworkView, type CoworkViewHandle } from '@/features/cowork/components';
 import ExecApprovalModal from '@/features/cowork/components/approvals/ExecApprovalModal';
+import { workspaceKeyboardDocument } from '@/features/cowork/components/display/useWorkspacePortal';
 import {
   type FilePreviewNavigationOptions,
   runGuardedFilePreviewNavigation,
@@ -63,6 +65,7 @@ import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 import { matchesShortcut } from '@/services/shortcuts';
 import { themeService } from '@/services/theme';
+import { isDomHTMLElement } from '@/shared/dom/ownerDocument';
 
 const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
@@ -570,9 +573,10 @@ const App: React.FC = () => {
     }
   };
 
-  const isShortcutInputActive = () => {
-    const activeElement = document.activeElement;
-    if (!(activeElement instanceof HTMLElement)) return false;
+  const isShortcutInputActive = (event?: Event) => {
+    const activeElement = ((event && workspaceKeyboardDocument.get(event)) ?? document)
+      .activeElement;
+    if (!isDomHTMLElement(activeElement)) return false;
     return activeElement.dataset.shortcutInput === 'true';
   };
 
@@ -582,7 +586,7 @@ const App: React.FC = () => {
         event.defaultPrevented ||
         event.repeat ||
         pendingApprovals.length > 0 ||
-        isShortcutInputActive()
+        isShortcutInputActive(event)
       )
         return;
 
@@ -829,20 +833,22 @@ const App: React.FC = () => {
       {/* Bridge the shell's top inset to the view title bars, including while
           the gateway is starting. Keep this strip clear of window controls. */}
       <div aria-hidden="true" className="draggable fixed inset-x-0 top-0 z-40 h-1.5 select-none" />
-      <BottomRightStatusStack>
-        <EngineStartupStatusBar />
-        {updateToast && (
-          <AppUpdateToast
-            state={updateToast.state}
-            installing={updateToast.installing}
-            installError={updateToast.installError}
-            onDownload={() => void handleDownloadAppUpdate()}
-            onInstall={() => void handleInstallAppUpdate()}
-            onDismiss={handleDismissAppUpdate}
-          />
-        )}
-      </BottomRightStatusStack>
-      {toast && <Toast {...toast} onClose={() => setToast(null)} />}
+      <WorkspaceNotifications>
+        <BottomRightStatusStack>
+          <EngineStartupStatusBar />
+          {updateToast && (
+            <AppUpdateToast
+              state={updateToast.state}
+              installing={updateToast.installing}
+              installError={updateToast.installError}
+              onDownload={() => void handleDownloadAppUpdate()}
+              onInstall={() => void handleInstallAppUpdate()}
+              onDismiss={handleDismissAppUpdate}
+            />
+          )}
+        </BottomRightStatusStack>
+        {toast && <Toast {...toast} onClose={() => setToast(null)} />}
+      </WorkspaceNotifications>
       <div
         className={`${showSettings ? 'flex' : 'grid grid-cols-[2.75rem_auto_minmax(0,1fr)] grid-rows-[2.25rem_minmax(0,1fr)]'} flex-1 min-h-0 overflow-hidden`}
       >

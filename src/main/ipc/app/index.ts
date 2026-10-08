@@ -12,3 +12,4 @@ export { registerShellHandlers } from './shell';
 export { registerStoreHandlers } from './store';
 export { registerTerminalHandlers } from './terminal';
 export { registerWindowHandlers } from './window';
+export { registerWorkspaceWindowHandlers } from './workspaceWindow';

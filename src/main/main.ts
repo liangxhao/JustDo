@@ -23,6 +23,10 @@ import { normalizeBrowserDownloadSettings, normalizeBrowserMode } from '../share
 import { EmbeddedBrowserGateway } from '../shared/browser/embeddedBrowser';
 import { buildCoworkSessionKey } from '../shared/cowork/sessionKey';
 import { CoworkSubagentDetailsIpc } from '../shared/cowork/subagentDetails';
+import {
+  WORKSPACE_WINDOW_BOUNDS_KEY,
+  type WorkspaceWindowBounds,
+} from '../shared/cowork/workspaceWindow';
 import type { ProxySettings } from '../shared/network/proxy';
 import { WorkboardIpc } from '../shared/openclaw/workboard';
 import { OpenClawExtensionId } from '../shared/plugins/nativeIds';
@@ -88,6 +92,7 @@ import {
   registerLocalFileScheme,
 } from './core/window/localFileProtocol';
 import { createMainWindow } from './core/window/mainWindowFactory';
+import { isWorkspaceBrowserHost } from './core/window/workspaceWindowManager';
 import { orderDiagnosticMainLogs } from './cowork/diagnostics/logSources';
 import { SessionDiagnosticsService } from './cowork/diagnostics/service';
 import { CoworkStore } from './data/coworkStore';
@@ -128,6 +133,7 @@ import {
   registerStoreHandlers,
   registerTerminalHandlers,
   registerWindowHandlers,
+  registerWorkspaceWindowHandlers,
 } from './ipc/app';
 import {
   registerAgentHandlers,
@@ -1112,6 +1118,7 @@ const browserAgentBridge = new BrowserAgentBridge(
   webContentsId => mainWindow?.webContents.id === webContentsId,
   sessionId => getCoworkStore().getSession(sessionId)?.cwd ?? null,
   true,
+  isWorkspaceBrowserHost,
 );
 const embeddedBrowserRequests = new Map<
   string,
@@ -1422,6 +1429,7 @@ if (multicaBridgeArgv) {
     getMainWindow: () => mainWindow,
     showSystemMenu,
   });
+  registerWorkspaceWindowHandlers();
   registerImagePreviewHandlers({
     devServerUrl,
     getIconPath: getAppIconPath,
@@ -1748,6 +1756,9 @@ if (multicaBridgeArgv) {
 
     mainWindow = createMainWindow({
       appName: APP_NAME,
+      readWorkspaceWindowBounds: () =>
+        getStore().get<WorkspaceWindowBounds>(WORKSPACE_WINDOW_BOUNDS_KEY),
+      saveWorkspaceWindowBounds: bounds => getStore().set(WORKSPACE_WINDOW_BOUNDS_KEY, bounds),
       devServerUrl,
       getBackgroundColor: () =>
         getInitialTheme() === 'dark' ? TITLEBAR_COLORS.dark.color : '#F8F9FB',

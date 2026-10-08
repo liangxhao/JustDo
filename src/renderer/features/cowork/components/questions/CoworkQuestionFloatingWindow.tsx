@@ -197,6 +197,7 @@ const CoworkQuestionFloatingWindow: React.FC<CoworkQuestionFloatingWindowProps> 
         isVisible ? 'flex' : 'hidden'
       }`}
       data-cowork-question-floating-window
+      data-workspace-overlay={isVisible ? 'true' : undefined}
       aria-hidden={!isVisible}
     >
       <aside

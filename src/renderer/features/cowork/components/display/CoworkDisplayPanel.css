@@ -106,3 +106,6 @@
     transition: none;
   }
 }
+.cowork-workspace-main-prompt::backdrop {
+  background: var(--background);
+}

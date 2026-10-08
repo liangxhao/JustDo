@@ -53,3 +53,19 @@ test('throttles Tool partials to 80ms and flushes terminal updates immediately',
   vi.advanceTimersByTime(100);
   expect(publish).toHaveBeenCalledTimes(2);
 });
+
+test('renders and cancels in the window that owns the scheduled frame', () => {
+  const mainFrame = vi.fn(),
+    mainCancel = vi.fn();
+  const workspaceFrame = vi.fn(() => 7),
+    workspaceCancel = vi.fn();
+  let host = { requestAnimationFrame: workspaceFrame, cancelAnimationFrame: workspaceCancel };
+  const scheduler = new StreamRenderScheduler(vi.fn(), Date.now, () => host);
+  scheduler.schedule();
+  host = { requestAnimationFrame: mainFrame, cancelAnimationFrame: mainCancel };
+  scheduler.dispose();
+  expect(workspaceFrame).toHaveBeenCalledOnce();
+  expect(workspaceCancel).toHaveBeenCalledWith(7);
+  expect(mainFrame).not.toHaveBeenCalled();
+  expect(mainCancel).not.toHaveBeenCalled();
+});

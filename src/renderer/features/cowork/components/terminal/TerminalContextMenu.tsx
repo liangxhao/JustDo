@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 
 import { i18nService } from '@/services/i18n';
+import { useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 
 interface TerminalContextMenuProps {
   canCopy: boolean;
@@ -26,9 +27,11 @@ const TerminalContextMenu = ({
   x,
   y,
 }: TerminalContextMenuProps) => {
+  const ownerDocument = useOwnerDocument();
+  const ownerWindow = useOwnerWindow();
   const menuRef = useRef<HTMLDivElement>(null);
-  const left = Math.max(8, Math.min(x, window.innerWidth - 224));
-  const top = Math.max(8, Math.min(y, window.innerHeight - 260));
+  const left = Math.max(8, Math.min(x, ownerWindow.innerWidth - 224));
+  const top = Math.max(8, Math.min(y, ownerWindow.innerHeight - 260));
 
   useEffect(() => {
     menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus();
@@ -90,7 +93,7 @@ const TerminalContextMenu = ({
         ))}
       </div>
     </>,
-    document.body,
+    ownerDocument.body,
   );
 };
 

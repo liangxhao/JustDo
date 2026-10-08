@@ -10,6 +10,7 @@ interface NewDisplayTabButtonProps {
   onCreateTab: () => void;
   buttonRef?: Ref<HTMLButtonElement>;
   boxedIcon?: boolean;
+  detached?: boolean;
 }
 
 const NewDisplayTabButton = ({
@@ -17,6 +18,7 @@ const NewDisplayTabButton = ({
   onCreateTab,
   buttonRef,
   boxedIcon = false,
+  detached = false,
 }: NewDisplayTabButtonProps) => {
   const [shortcut, setShortcut] = useState(
     () => configService.getConfig().shortcuts?.browser ?? defaultConfig.shortcuts!.browser,
@@ -38,11 +40,13 @@ const NewDisplayTabButton = ({
         event.stopPropagation();
         onCreateTab();
       }}
-      aria-label={i18nService.t('coworkNewDisplayTab')}
+      aria-label={i18nService.t(detached ? 'coworkDisplayWindowFocus' : 'coworkNewDisplayTab')}
       title={
-        shortcut
-          ? `${i18nService.t('coworkNewDisplayTab')} (${shortcut})`
-          : i18nService.t('coworkNewDisplayTab')
+        detached
+          ? i18nService.t('coworkDisplayWindowFocus')
+          : shortcut
+            ? `${i18nService.t('coworkNewDisplayTab')} (${shortcut})`
+            : i18nService.t('coworkNewDisplayTab')
       }
     >
       {boxedIcon ? (

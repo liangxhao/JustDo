@@ -10,12 +10,64 @@ import { configService } from '@/services/config';
 
 import type { JustDoChatElement } from './justdo-chat';
 import { toSanitizedMarkdownHtml } from './markdown';
+import { handleMessageLinkClick } from './message-content-interactions';
 
 afterEach(() => {
   document.body.replaceChildren();
   Reflect.deleteProperty(window, 'electron');
   vi.restoreAllMocks();
 });
+
+test.each([BrowserLinkTarget.Embedded, BrowserLinkTarget.Chrome])(
+  'preserves %s link preferences and local HTML context in another document',
+  async target => {
+    vi.spyOn(configService, 'getConfig').mockReturnValue({
+      ...defaultConfig,
+      browserWebLinkTarget: target,
+    });
+    const openInChrome = vi.fn().mockResolvedValue({ success: true });
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: { browser: { openInChrome } },
+    });
+    const dispatch = vi.spyOn(window, 'dispatchEvent');
+    const frame = document.createElement('iframe');
+    document.body.append(frame);
+    const child = frame.contentDocument!;
+    const realm = frame.contentWindow! as Window & typeof globalThis;
+    child.body.innerHTML =
+      '<a href="https://example.com/report.html?q=1#chart"><strong>Web report</strong></a>' +
+      '<a data-local-html-path="output/report.html" data-local-html-suffix="#chart"><strong>Local report</strong></a>';
+    child.body.addEventListener('click', event => {
+      handleMessageLinkClick(event, 'C:\\project');
+    });
+
+    for (const strong of child.querySelectorAll('strong')) {
+      const click = new realm.MouseEvent('click', { bubbles: true, cancelable: true });
+      strong.dispatchEvent(click);
+      expect(click.defaultPrevented).toBe(true);
+    }
+    await Promise.resolve();
+
+    if (target === BrowserLinkTarget.Chrome) {
+      expect(openInChrome).toHaveBeenCalledWith('https://example.com/report.html?q=1#chart');
+    } else {
+      expect(openInChrome).not.toHaveBeenCalled();
+      const webEvent = dispatch.mock.calls.find(
+        ([event]) => event.type === MessageBrowserEvent.OpenWebUrl,
+      )?.[0] as CustomEvent;
+      expect(webEvent.detail.url).toBe('https://example.com/report.html?q=1#chart');
+    }
+    const htmlEvent = dispatch.mock.calls.find(
+      ([event]) => event.type === MessageBrowserEvent.OpenLocalHtml,
+    )?.[0] as CustomEvent;
+    expect(htmlEvent.detail).toEqual({
+      filePath: 'output/report.html',
+      workingDirectory: 'C:\\project',
+      navigationSuffix: '#chart',
+    });
+  },
+);
 
 test('shows a failed Chrome launch without opening a built-in tab', async () => {
   vi.spyOn(configService, 'getConfig').mockReturnValue({

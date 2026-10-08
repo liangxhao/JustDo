@@ -3,6 +3,7 @@ import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { i18nService } from '@/services/i18n';
+import { isDomHTMLElement, useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 
 import type { CoworkDisplayTab } from './CoworkDisplayPanel';
 
@@ -23,6 +24,8 @@ export default function DisplayTabListMenu({
   onDismiss,
   onSelect,
 }: DisplayTabListMenuProps) {
+  const ownerDocument = useOwnerDocument();
+  const ownerWindow = useOwnerWindow();
   const menuRef = useRef<HTMLDivElement>(null);
   const dismissRef = useRef(onDismiss);
   dismissRef.current = onDismiss;
@@ -36,12 +39,12 @@ export default function DisplayTabListMenu({
         dismissRef.current(false);
         return;
       }
-      const width = Math.max(0, Math.min(320, window.innerWidth - 16));
-      const maxHeight = Math.max(0, Math.min(360, window.innerHeight - 16));
+      const width = Math.max(0, Math.min(320, ownerWindow.innerWidth - 16));
+      const maxHeight = Math.max(0, Math.min(360, ownerWindow.innerHeight - 16));
       const height = Math.min(menu?.scrollHeight ?? 0, maxHeight);
       const next = {
-        left: Math.max(8, Math.min(bounds.right - width, window.innerWidth - width - 8)),
-        top: Math.max(8, Math.min(bounds.bottom + 4, window.innerHeight - height - 8)),
+        left: Math.max(8, Math.min(bounds.right - width, ownerWindow.innerWidth - width - 8)),
+        top: Math.max(8, Math.min(bounds.bottom + 4, ownerWindow.innerHeight - height - 8)),
         width,
         maxHeight,
       };
@@ -55,17 +58,17 @@ export default function DisplayTabListMenu({
       );
     };
     place();
-    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(place) : null;
+    const observer = ownerWindow.ResizeObserver ? new ownerWindow.ResizeObserver(place) : null;
     observer?.observe(anchor);
     if (menu) observer?.observe(menu);
-    window.addEventListener('resize', place);
-    window.addEventListener('scroll', place, true);
+    ownerWindow.addEventListener('resize', place);
+    ownerWindow.addEventListener('scroll', place, true);
     return () => {
       observer?.disconnect();
-      window.removeEventListener('resize', place);
-      window.removeEventListener('scroll', place, true);
+      ownerWindow.removeEventListener('resize', place);
+      ownerWindow.removeEventListener('scroll', place, true);
     };
-  }, [anchor, tabs.length]);
+  }, [anchor, ownerWindow, tabs.length]);
 
   const revealItem = useCallback((item: HTMLButtonElement | undefined) => {
     const menu = menuRef.current;
@@ -86,22 +89,24 @@ export default function DisplayTabListMenu({
 
   useLayoutEffect(() => {
     const menu = menuRef.current;
-    if (!menu || menu.contains(document.activeElement)) return;
+    if (!menu || menu.contains(ownerDocument.activeElement)) return;
     focusItem(
       menu.querySelector<HTMLButtonElement>('[aria-checked="true"]') ??
         menu.querySelector<HTMLButtonElement>('[role="menuitemradio"]') ??
         undefined,
     );
-  }, [activeTabId, focusItem, tabs]);
+  }, [activeTabId, focusItem, ownerDocument, tabs]);
 
   useLayoutEffect(() => {
+    const activeElement = ownerDocument.activeElement;
     if (
-      document.activeElement instanceof HTMLButtonElement &&
-      menuRef.current?.contains(document.activeElement)
+      isDomHTMLElement(activeElement) &&
+      activeElement.tagName === 'BUTTON' &&
+      menuRef.current?.contains(activeElement)
     ) {
-      revealItem(document.activeElement);
+      revealItem(activeElement as HTMLButtonElement);
     }
-  }, [position.maxHeight, revealItem]);
+  }, [ownerDocument, position.maxHeight, revealItem]);
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Escape' || event.key === 'Tab') {
@@ -115,7 +120,7 @@ export default function DisplayTabListMenu({
       menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]') ?? [],
     );
     if (!items.length) return;
-    const current = items.indexOf(document.activeElement as HTMLButtonElement);
+    const current = items.indexOf(ownerDocument.activeElement as HTMLButtonElement);
     const next =
       event.key === 'Home'
         ? 0
@@ -171,6 +176,6 @@ export default function DisplayTabListMenu({
         ))}
       </div>
     </>,
-    document.body,
+    ownerDocument.body,
   );
 }

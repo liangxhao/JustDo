@@ -11,6 +11,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { defaultConfig } from '@/app/config';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
+import { useOwnerWindow } from '@/shared/dom/ownerDocument';
 
 import TerminalContextMenu from './TerminalContextMenu';
 
@@ -75,6 +76,7 @@ const openTerminalWebLink = (event: MouseEvent, uri: string): void => {
 };
 
 const TerminalPanel = ({ cwd, isObscured, terminalId, sessionId }: TerminalPanelProps) => {
+  const ownerWindow = useOwnerWindow();
   const hostRef = useRef<HTMLDivElement>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const searchRef = useRef<SearchAddon | null>(null);
@@ -99,30 +101,31 @@ const TerminalPanel = ({ cwd, isObscured, terminalId, sessionId }: TerminalPanel
     searchRef.current?.clearDecorations();
     setIsSearchOpen(false);
     setSearchResult({ index: -1, total: 0 });
-    requestAnimationFrame(focusTerminal);
-  }, [focusTerminal]);
+    ownerWindow.requestAnimationFrame(focusTerminal);
+  }, [focusTerminal, ownerWindow]);
 
   const openSearch = useCallback(() => {
     setIsSearchOpen(true);
-    requestAnimationFrame(() => {
+    ownerWindow.requestAnimationFrame(() => {
       searchInputRef.current?.focus();
       searchInputRef.current?.select();
     });
-  }, []);
+  }, [ownerWindow]);
 
   const copySelection = useCallback(() => {
     const selection = terminalRef.current?.getSelection() ?? '';
-    if (selection) ignoreTerminalActionFailure(navigator.clipboard.writeText(selection));
-  }, []);
+    if (selection)
+      ignoreTerminalActionFailure(ownerWindow.navigator.clipboard.writeText(selection));
+  }, [ownerWindow]);
 
   const pasteClipboard = useCallback(() => {
-    void navigator.clipboard
+    void ownerWindow.navigator.clipboard
       .readText()
       .then(text => {
         if (text) terminalRef.current?.paste(text);
       })
       .catch(() => undefined);
-  }, []);
+  }, [ownerWindow]);
 
   const find = useCallback((direction: 1 | -1) => {
     const query = searchInputRef.current?.value ?? '';
@@ -254,7 +257,7 @@ const TerminalPanel = ({ cwd, isObscured, terminalId, sessionId }: TerminalPanel
         );
       }
     });
-    const resizeObserver = new ResizeObserver(fitAndResize);
+    const resizeObserver = new ownerWindow.ResizeObserver(fitAndResize);
     resizeObserver.observe(host);
     fitAndResize();
 
@@ -321,11 +324,12 @@ const TerminalPanel = ({ cwd, isObscured, terminalId, sessionId }: TerminalPanel
       }
       if (terminalClipboardModifier && key === 'c' && terminal.hasSelection()) {
         const selection = terminal.getSelection();
-        if (selection) ignoreTerminalActionFailure(navigator.clipboard.writeText(selection));
+        if (selection)
+          ignoreTerminalActionFailure(ownerWindow.navigator.clipboard.writeText(selection));
         return false;
       }
       if (terminalClipboardModifier && key === 'v') {
-        void navigator.clipboard
+        void ownerWindow.navigator.clipboard
           .readText()
           .then(text => {
             if (text) terminal.paste(text);
@@ -388,11 +392,11 @@ const TerminalPanel = ({ cwd, isObscured, terminalId, sessionId }: TerminalPanel
         createPromiseRef.current = null;
       }, 0);
     };
-  }, [cwd, openSearch, sessionId, terminalId]);
+  }, [cwd, openSearch, sessionId, terminalId, ownerWindow]);
 
   useEffect(() => {
     if (isObscured) return;
-    const frame = requestAnimationFrame(() => {
+    const frame = ownerWindow.requestAnimationFrame(() => {
       try {
         fitRef.current?.fit();
         terminalRef.current?.focus();
@@ -400,8 +404,8 @@ const TerminalPanel = ({ cwd, isObscured, terminalId, sessionId }: TerminalPanel
         // The shared display panel may still be measuring after becoming visible.
       }
     });
-    return () => cancelAnimationFrame(frame);
-  }, [isObscured]);
+    return () => ownerWindow.cancelAnimationFrame(frame);
+  }, [isObscured, ownerWindow]);
 
   return (
     <section
@@ -473,7 +477,7 @@ const TerminalPanel = ({ cwd, isObscured, terminalId, sessionId }: TerminalPanel
           y={contextMenu.y}
           onDismiss={() => {
             setContextMenu(null);
-            requestAnimationFrame(focusTerminal);
+            ownerWindow.requestAnimationFrame(focusTerminal);
           }}
           onCopy={copySelection}
           onPaste={pasteClipboard}

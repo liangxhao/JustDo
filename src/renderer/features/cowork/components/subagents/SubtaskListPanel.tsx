@@ -12,6 +12,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/ui/Modal';
+import { isDomNode, useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 
 import { useDraggableModal } from '../shared/useDraggableModal';
 import { reconcileSubagentLabel, type SubagentLabelSource } from './subagentLabel';
@@ -65,6 +66,8 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
   onOpenSubtask,
   onSubtasksChange,
 }) => {
+  const ownerDocument = useOwnerDocument();
+  const ownerWindow = useOwnerWindow();
   const [isLoading, setIsLoading] = useState(false);
   const [hasLoaded, setHasLoaded] = useState(false);
   const [hasLoadError, setHasLoadError] = useState(false);
@@ -113,7 +116,7 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
     if (!isOpen) return;
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target;
-      if (!(target instanceof Node)) return;
+      if (!isDomNode(target)) return;
       if (panelRef.current?.contains(target) || anchorRef?.current?.contains(target)) return;
       onClose(false);
     };
@@ -122,13 +125,13 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
       event.preventDefault();
       onClose(true);
     };
-    document.addEventListener('pointerdown', handlePointerDown);
-    document.addEventListener('keydown', handleKeyDown);
+    ownerDocument.addEventListener('pointerdown', handlePointerDown);
+    ownerDocument.addEventListener('keydown', handleKeyDown);
     return () => {
-      document.removeEventListener('pointerdown', handlePointerDown);
-      document.removeEventListener('keydown', handleKeyDown);
+      ownerDocument.removeEventListener('pointerdown', handlePointerDown);
+      ownerDocument.removeEventListener('keydown', handleKeyDown);
     };
-  }, [anchorRef, detailSubtask, isOpen, onClose]);
+  }, [anchorRef, detailSubtask, isOpen, onClose, ownerDocument]);
   const { active, finished } = useMemo(() => partitionSubtasks(subtasks), [subtasks]);
 
   const closeDetails = useCallback(() => setDetailSubtask(null), []);
@@ -255,13 +258,13 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
   useEffect(() => {
     void refresh();
     const handleVisibilityChange = () => {
-      if (!document.hidden) void refresh(true);
+      if (!ownerDocument.hidden) void refresh(true);
     };
-    document.addEventListener('visibilitychange', handleVisibilityChange);
+    ownerDocument.addEventListener('visibilitychange', handleVisibilityChange);
     return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      ownerDocument.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [refresh]);
+  }, [refresh, ownerDocument]);
 
   useEffect(() => {
     const timer = window.setInterval(() => void refresh(), statusPollInterval);
@@ -389,7 +392,7 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
       }
       const firstElement = focusableElements[0];
       const lastElement = focusableElements[focusableElements.length - 1];
-      const activeElement = document.activeElement;
+      const activeElement = ownerDocument.activeElement;
       if (
         event.shiftKey &&
         (activeElement === firstElement || !detailDialogRef.current.contains(activeElement))
@@ -404,19 +407,19 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
         firstElement.focus();
       }
     };
-    document.addEventListener('keydown', handleKeyDown, true);
+    ownerDocument.addEventListener('keydown', handleKeyDown, true);
     return () => {
-      document.removeEventListener('keydown', handleKeyDown, true);
+      ownerDocument.removeEventListener('keydown', handleKeyDown, true);
       const returnFocusTarget = detailReturnFocusRef.current;
-      requestAnimationFrame(() => {
+      ownerWindow.requestAnimationFrame(() => {
         if (returnFocusTarget?.isConnected) returnFocusTarget.focus();
       });
     };
-  }, [closeDetails, detailSessionKey]);
+  }, [closeDetails, detailSessionKey, ownerDocument, ownerWindow]);
 
   const copySessionId = async (value: string): Promise<void> => {
     try {
-      await navigator.clipboard.writeText(value);
+      await ownerWindow.navigator.clipboard.writeText(value);
       window.dispatchEvent(
         new CustomEvent('app:showToast', {
           detail: { message: i18nService.t('copySessionIdSuccess'), tone: 'success' },

@@ -279,7 +279,7 @@ async function copyMessage(event: Event, text: string, label: string): Promise<v
   clearCopyFeedbackTimer(button);
   const isCurrent = () => button.isConnected && copyRequests.get(button) === request;
   try {
-    await navigator.clipboard.writeText(text);
+    await (button.ownerDocument.defaultView ?? window).navigator.clipboard.writeText(text);
     if (!isCurrent()) return;
     button.classList.add('message-copy--copied');
     button.title = i18nService.t('copied');

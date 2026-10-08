@@ -13,8 +13,9 @@ import {
 } from 'electron';
 import fs from 'fs';
 import path from 'path';
+import { pathToFileURL } from 'url';
 
-import { MediaCaptureIpc } from '../../../shared/app/mediaCapture';
+import { MediaCaptureIpc, MediaCaptureSurface } from '../../../shared/app/mediaCapture';
 import {
   BROWSER_GUEST_COMMAND_CHANNEL,
   BROWSER_IMPORTED_PROFILE_PARTITION,
@@ -28,6 +29,7 @@ import {
   resolveBrowserGuestShortcut,
   resolveBrowserPanelShortcutAction,
 } from '../../../shared/browser/browser';
+import type { WorkspaceWindowBounds } from '../../../shared/cowork/workspaceWindow';
 import {
   recordBrowserDownload,
   updateBrowserDownload,
@@ -66,6 +68,7 @@ import {
   shouldAllowAudioMediaRequest,
   shouldAllowSystemAudioCapture,
 } from './mediaPermission';
+import { WorkspaceWindowManager } from './workspaceWindowManager';
 
 type MainWindowFactoryOptions = {
   appName: string;
@@ -90,6 +93,8 @@ type MainWindowFactoryOptions = {
   onWindowStateChanged: (window: BrowserWindow) => void;
   preloadPath: string;
   scheduleReload: (reason: string) => void;
+  readWorkspaceWindowBounds: () => unknown;
+  saveWorkspaceWindowBounds: (bounds: WorkspaceWindowBounds) => void;
 };
 
 const DEV_LOAD_MAX_RETRIES = 3;
@@ -100,7 +105,21 @@ const CHAT_TIMELINE_TRACE_MAX_BYTES = 64 * 1024;
 const SYSTEM_AUDIO_CAPTURE_AUTHORIZATION_TTL_MS = 5_000;
 const BROWSER_HTTP_AUTH_TIMEOUT_MS = 120_000;
 
+const isSameCaptureFrame = (
+  left: Electron.WebFrameMain | undefined | null,
+  right: Electron.WebFrameMain | undefined,
+): boolean => {
+  try {
+    return (
+      !!left && !!right && left.processId === right.processId && left.routingId === right.routingId
+    );
+  } catch {
+    return false;
+  }
+};
+
 export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWindow => {
+  let workspaceManager: WorkspaceWindowManager | undefined;
   const mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -151,19 +170,31 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
   mainWindow.setMenu(null);
   mainWindow.setMinimumSize(800, 600);
   let systemAudioCaptureAuthorizedUntil = 0;
+  let systemAudioCaptureFrame: Electron.WebFrameMain | undefined;
   ipcMain.removeHandler(MediaCaptureIpc.ArmSystemAudio);
-  ipcMain.handle(MediaCaptureIpc.ArmSystemAudio, event => {
-    if (
-      event.sender !== mainWindow.webContents ||
-      event.senderFrame !== mainWindow.webContents.mainFrame
-    ) {
-      throw new Error('System audio capture can only be armed by the main application frame.');
-    }
-    systemAudioCaptureAuthorizedUntil = Date.now() + SYSTEM_AUDIO_CAPTURE_AUTHORIZATION_TTL_MS;
-  });
+  ipcMain.handle(
+    MediaCaptureIpc.ArmSystemAudio,
+    (event, surface: unknown = MediaCaptureSurface.Main) => {
+      if (
+        event.sender !== mainWindow.webContents ||
+        event.senderFrame !== mainWindow.webContents.mainFrame
+      ) {
+        throw new Error('System audio capture can only be armed by the main application frame.');
+      }
+      if (surface !== MediaCaptureSurface.Main && surface !== MediaCaptureSurface.Workspace)
+        throw new Error('Unknown capture surface.');
+      systemAudioCaptureFrame =
+        surface === MediaCaptureSurface.Workspace
+          ? workspaceManager?.captureFrame()
+          : mainWindow.webContents.mainFrame;
+      if (!systemAudioCaptureFrame) throw new Error('Capture surface is unavailable.');
+      systemAudioCaptureAuthorizedUntil = Date.now() + SYSTEM_AUDIO_CAPTURE_AUTHORIZATION_TTL_MS;
+    },
+  );
   mainWindow.once('closed', () => {
     ipcMain.removeHandler(MediaCaptureIpc.ArmSystemAudio);
     systemAudioCaptureAuthorizedUntil = 0;
+    systemAudioCaptureFrame = undefined;
   });
   const windowSession = mainWindow.webContents.session;
   const browserPanelSession = session.fromPartition(BROWSER_PANEL_PARTITION);
@@ -271,19 +302,22 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
             callback(false);
             return;
           }
-          const result = await dialog.showMessageBox(mainWindow, {
-            type: 'question',
-            title: t('browserPermissionTitle'),
-            message: t('browserPermissionMessage', {
-              site: new URL(origin).host,
-              permission: browserPermissionLabel(permission, mediaType),
-            }),
-            detail: origin,
-            buttons: [t('browserPermissionAllow'), t('browserPermissionDeny')],
-            defaultId: 1,
-            cancelId: 1,
-            noLink: true,
-          });
+          const result = await dialog.showMessageBox(
+            workspaceManager?.presentationWindow(webContents.hostWebContents?.id) ?? mainWindow,
+            {
+              type: 'question',
+              title: t('browserPermissionTitle'),
+              message: t('browserPermissionMessage', {
+                site: new URL(origin).host,
+                permission: browserPermissionLabel(permission, mediaType),
+              }),
+              detail: origin,
+              buttons: [t('browserPermissionAllow'), t('browserPermissionDeny')],
+              defaultId: 1,
+              cancelId: 1,
+              noLink: true,
+            },
+          );
           const stillSamePage = isCurrentDocument();
           const granted = result.response === 0 && stillSamePage;
           if (granted) {
@@ -339,12 +373,16 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
     configureBrowserSessionPermissions(browserSession);
   }
   windowSession.setPermissionCheckHandler((webContents, permission, _origin, details) => {
-    if (webContents !== mainWindow.webContents) return false;
+    if (
+      webContents !== mainWindow.webContents &&
+      !workspaceManager?.ownsHost(webContents?.id ?? -1)
+    )
+      return false;
     if (permission !== 'media') return true;
     return shouldAllowAudioMediaCheck(true, details);
   });
   windowSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
-    if (webContents !== mainWindow.webContents) {
+    if (webContents !== mainWindow.webContents && !workspaceManager?.ownsHost(webContents.id)) {
       callback(false);
       return;
     }
@@ -357,9 +395,17 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
     callback(allowed);
   });
   windowSession.setDisplayMediaRequestHandler((request, callback) => {
-    const isMainFrame = request.frame === mainWindow.webContents.mainFrame;
-    const authorizedByRenderer = isMainFrame && Date.now() <= systemAudioCaptureAuthorizedUntil;
-    if (isMainFrame) systemAudioCaptureAuthorizedUntil = 0;
+    const isMainFrame =
+      isSameCaptureFrame(request.frame, mainWindow.webContents.mainFrame) ||
+      isSameCaptureFrame(request.frame, workspaceManager?.captureFrame());
+    const authorizedByRenderer =
+      isMainFrame &&
+      isSameCaptureFrame(request.frame, systemAudioCaptureFrame) &&
+      Date.now() <= systemAudioCaptureAuthorizedUntil;
+    if (isSameCaptureFrame(request.frame, systemAudioCaptureFrame)) {
+      systemAudioCaptureAuthorizedUntil = 0;
+      systemAudioCaptureFrame = undefined;
+    }
     const allowed = shouldAllowSystemAudioCapture({
       audioRequested: request.audioRequested,
       authorizedByRenderer,
@@ -390,8 +436,13 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
         callback({});
       });
   });
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+  const openExternalLink = (url: string): void => {
     if (isAllowedBrowserPanelUrl(url) && url !== 'about:blank') void shell.openExternal(url);
+  };
+  mainWindow.webContents.setWindowOpenHandler(details => {
+    const allowedWorkspace = workspaceManager?.handleOpen(details);
+    if (allowedWorkspace) return allowedWorkspace;
+    openExternalLink(details.url);
     return { action: 'deny' };
   });
   const mainNavigationOptions = {
@@ -407,278 +458,283 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
       event.preventDefault();
     }
   });
-  mainWindow.webContents.on('will-attach-webview', (event, webPreferences, params) => {
-    webPreferences.preload = options.browserGuestPreloadPath;
-    webPreferences.nodeIntegration = false;
-    webPreferences.nodeIntegrationInSubFrames = false;
-    webPreferences.contextIsolation = true;
-    webPreferences.sandbox = true;
-    webPreferences.webSecurity = true;
-    webPreferences.allowRunningInsecureContent = false;
-    webPreferences.webviewTag = false;
-    webPreferences.plugins = true;
-    webPreferences.spellcheck = true;
-    // The Agent dialog action observes and resolves dialogs through the exact
-    // guest WebContents debugger. Keep browser-page dialogs enabled while the
-    // application renderer itself remains protected above.
-    webPreferences.disableDialogs = false;
-    webPreferences.navigateOnDragDrop = false;
+  const configureBrowserHost = (host: Electron.WebContents): void => {
+    host.on('will-attach-webview', (event, webPreferences, params) => {
+      webPreferences.preload = options.browserGuestPreloadPath;
+      webPreferences.nodeIntegration = false;
+      webPreferences.nodeIntegrationInSubFrames = false;
+      webPreferences.contextIsolation = true;
+      webPreferences.sandbox = true;
+      webPreferences.webSecurity = true;
+      webPreferences.allowRunningInsecureContent = false;
+      webPreferences.webviewTag = false;
+      webPreferences.plugins = true;
+      webPreferences.spellcheck = true;
+      // The Agent dialog action observes and resolves dialogs through the exact
+      // guest WebContents debugger. Keep browser-page dialogs enabled while the
+      // application renderer itself remains protected above.
+      webPreferences.disableDialogs = false;
+      webPreferences.navigateOnDragDrop = false;
 
-    if (!browserProfileFromPartition(params.partition) || !isAllowedBrowserPanelUrl(params.src)) {
-      event.preventDefault();
-      return;
-    }
-    if (!browserPanelSessions.has(params.partition)) {
-      const browserSession = session.fromPartition(params.partition);
-      browserPanelSessions.set(params.partition, browserSession);
-      void registerBrowserProxySession(browserSession);
-      configureBrowserSessionPermissions(browserSession);
-      installBrowserRequestGuard(browserSession);
-      installBrowserPdfDetection(browserSession);
-      browserSession.on('will-download', handleBrowserDownload);
-    }
-  });
-  mainWindow.webContents.on('did-attach-webview', (_event, guestContents) => {
-    let localPreviewScopeUrl = isLocalHtmlPreviewUrl(guestContents.getURL())
-      ? guestContents.getURL()
-      : null;
-    const bindLocalPreviewScope = (url: string): void => {
-      if (localPreviewScopeUrl || !isLocalHtmlPreviewUrl(url)) return;
-      localPreviewScopeUrl = url;
-      localPreviewScopesByGuestId.set(guestContents.id, url);
-    };
-    if (localPreviewScopeUrl) {
-      localPreviewScopesByGuestId.set(guestContents.id, localPreviewScopeUrl);
-    }
-    const canNavigateWithinPreviewScope = (url: string): boolean => {
-      return !localPreviewScopeUrl || isSameLocalHtmlPreviewScope(localPreviewScopeUrl, url);
-    };
-    let externalProtocolPromptPending = false;
-    const requestExternalProtocol = (url: string): void => {
-      if (externalProtocolPromptPending || !isAllowedExternalBrowserUrl(url)) return;
-      externalProtocolPromptPending = true;
-      void dialog
-        .showMessageBox(mainWindow, {
-          type: 'question',
-          title: t('browserExternalProtocolTitle'),
-          message: t('browserExternalProtocolMessage'),
-          detail: url.slice(0, 2_048),
-          buttons: [t('browserExternalProtocolConfirm'), t('browserExternalProtocolCancel')],
-          defaultId: 1,
-          cancelId: 1,
-          noLink: true,
-        })
-        .then(async result => {
-          if (result.response === 0 && !mainWindow.isDestroyed()) await shell.openExternal(url);
-        })
-        .catch(() => {
-          if (!mainWindow.isDestroyed()) {
-            void dialog
-              .showMessageBox(mainWindow, {
-                type: 'error',
-                title: t('browserExternalProtocolTitle'),
-                message: t('browserExternalProtocolFailed'),
-              })
-              .catch((): void => {});
-          }
-        })
-        .finally(() => {
-          externalProtocolPromptPending = false;
-        });
-    };
-    guestContents.setWindowOpenHandler(details => {
-      const { url } = details;
-      if (isAllowedExternalBrowserUrl(url)) {
-        requestExternalProtocol(url);
-        return { action: 'deny' };
-      }
-      if (!canNavigateWithinPreviewScope(url)) return { action: 'deny' };
-      if (details.postBody) {
-        mainWindow.webContents.send(BrowserIpc.PanelOpenTab, {
-          url,
-          openerGuestId: guestContents.id,
-          errorCode: 'post-navigation-blocked',
-        });
-        return { action: 'deny' };
-      }
-      if (isAllowedBrowserPanelUrl(url)) {
-        mainWindow.webContents.send(BrowserIpc.PanelOpenTab, {
-          url: url || 'about:blank',
-          openerGuestId: guestContents.id,
-        });
-      }
-      return { action: 'deny' };
-    });
-    guestContents.on('before-input-event', (event, input) => {
-      const shortcutAction =
-        input.type === 'keyDown' && !input.isAutoRepeat
-          ? resolveBrowserPanelShortcutAction(
-              {
-                key: input.key,
-                altKey: input.alt,
-                ctrlKey: input.control,
-                shiftKey: input.shift,
-                metaKey: input.meta,
-              },
-              browserPanelShortcuts,
-            )
-          : null;
-      if (shortcutAction) {
+      if (!browserProfileFromPartition(params.partition) || !isAllowedBrowserPanelUrl(params.src)) {
         event.preventDefault();
-        mainWindow.webContents.send(BrowserIpc.PanelShortcutAction, shortcutAction);
         return;
       }
-      const command = resolveBrowserGuestShortcut(input);
-      if (!command) return;
-      event.preventDefault();
-      guestContents.send(BROWSER_GUEST_COMMAND_CHANNEL, command);
-    });
-    guestContents.on('will-navigate', (event, url) => {
-      bindLocalPreviewScope(url);
-      if (isAllowedExternalBrowserUrl(url)) {
-        event.preventDefault();
-        requestExternalProtocol(url);
-        return;
-      }
-      if (!isAllowedBrowserPanelUrl(url) || !canNavigateWithinPreviewScope(url)) {
-        event.preventDefault();
+      if (!browserPanelSessions.has(params.partition)) {
+        const browserSession = session.fromPartition(params.partition);
+        browserPanelSessions.set(params.partition, browserSession);
+        void registerBrowserProxySession(browserSession);
+        configureBrowserSessionPermissions(browserSession);
+        installBrowserRequestGuard(browserSession);
+        installBrowserPdfDetection(browserSession);
+        browserSession.on('will-download', handleBrowserDownload);
       }
     });
-    guestContents.on('will-frame-navigate', event => {
-      if (isBrowserPdfStreamNavigation(event.url, event.isMainFrame, event.frame?.parent?.url)) {
-        return;
+    host.on('did-attach-webview', (_event, guestContents) => {
+      let localPreviewScopeUrl = isLocalHtmlPreviewUrl(guestContents.getURL())
+        ? guestContents.getURL()
+        : null;
+      const bindLocalPreviewScope = (url: string): void => {
+        if (localPreviewScopeUrl || !isLocalHtmlPreviewUrl(url)) return;
+        localPreviewScopeUrl = url;
+        localPreviewScopesByGuestId.set(guestContents.id, url);
+      };
+      if (localPreviewScopeUrl) {
+        localPreviewScopesByGuestId.set(guestContents.id, localPreviewScopeUrl);
       }
-      if (event.isMainFrame) bindLocalPreviewScope(event.url);
-      if (!isAllowedBrowserPanelUrl(event.url) || !canNavigateWithinPreviewScope(event.url)) {
-        event.preventDefault();
-      }
-    });
-    guestContents.on('will-redirect', (event, url) => {
-      if (!isAllowedBrowserPanelUrl(url) || !canNavigateWithinPreviewScope(url)) {
-        event.preventDefault();
-      }
-    });
-    const recordFaviconData = trackBrowserHistory(guestContents, () => !localPreviewScopeUrl);
-    trackBrowserFavicon(
-      guestContents,
-      (event, cacheSignal) => {
-        if (!mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
-          mainWindow.webContents.send(BrowserIpc.PanelFaviconUpdated, event);
+      const canNavigateWithinPreviewScope = (url: string): boolean => {
+        return !localPreviewScopeUrl || isSameLocalHtmlPreviewScope(localPreviewScopeUrl, url);
+      };
+      let externalProtocolPromptPending = false;
+      const requestExternalProtocol = (url: string): void => {
+        if (externalProtocolPromptPending || !isAllowedExternalBrowserUrl(url)) return;
+        externalProtocolPromptPending = true;
+        void dialog
+          .showMessageBox(workspaceManager?.presentationWindow(host.id) ?? mainWindow, {
+            type: 'question',
+            title: t('browserExternalProtocolTitle'),
+            message: t('browserExternalProtocolMessage'),
+            detail: url.slice(0, 2_048),
+            buttons: [t('browserExternalProtocolConfirm'), t('browserExternalProtocolCancel')],
+            defaultId: 1,
+            cancelId: 1,
+            noLink: true,
+          })
+          .then(async result => {
+            if (result.response === 0 && !mainWindow.isDestroyed()) await shell.openExternal(url);
+          })
+          .catch(() => {
+            if (!mainWindow.isDestroyed()) {
+              void dialog
+                .showMessageBox(mainWindow, {
+                  type: 'error',
+                  title: t('browserExternalProtocolTitle'),
+                  message: t('browserExternalProtocolFailed'),
+                })
+                .catch((): void => {});
+            }
+          })
+          .finally(() => {
+            externalProtocolPromptPending = false;
+          });
+      };
+      guestContents.setWindowOpenHandler(details => {
+        const { url } = details;
+        if (isAllowedExternalBrowserUrl(url)) {
+          requestExternalProtocol(url);
+          return { action: 'deny' };
         }
-        if (event.faviconUrl) {
-          try {
-            recordFaviconData(event.faviconUrl, cacheSignal);
-          } catch {
-            console.warn('[BrowserFavicon] Could not persist the loaded icon.');
-          }
+        if (!canNavigateWithinPreviewScope(url)) return { action: 'deny' };
+        if (details.postBody) {
+          mainWindow.webContents.send(BrowserIpc.PanelOpenTab, {
+            url,
+            openerGuestId: guestContents.id,
+            errorCode: 'post-navigation-blocked',
+          });
+          return { action: 'deny' };
         }
-      },
-      url => !localPreviewScopeUrl || isAllowedLocalHtmlPreviewResource(localPreviewScopeUrl, url),
-    );
-    guestContents.on('context-menu', (_contextEvent, params) => {
-      const template: Electron.MenuItemConstructorOptions[] = [];
-      if (params.linkURL && isAllowedBrowserPanelUrl(params.linkURL)) {
-        template.push(
-          {
-            label: t('browserContextOpenLinkNewTab'),
-            click: () => {
-              if (!canNavigateWithinPreviewScope(params.linkURL)) return;
-              mainWindow.webContents.send(BrowserIpc.PanelOpenTab, {
-                url: params.linkURL,
-                openerGuestId: guestContents.id,
-              });
-            },
-          },
-          {
-            label: t('browserContextCopyLink'),
-            click: () => clipboard.writeText(params.linkURL),
-          },
-          { type: 'separator' },
-        );
-      }
-      if (params.isEditable) {
-        template.push(
-          { role: 'undo' },
-          { role: 'redo' },
-          { type: 'separator' },
-          { role: 'cut' },
-          { role: 'copy' },
-          { role: 'paste' },
-          { role: 'selectAll' },
-          { type: 'separator' },
-        );
-      } else if (params.selectionText) {
-        template.push({ role: 'copy' }, { type: 'separator' });
-      }
-      if (
-        params.mediaType === 'image' &&
-        params.srcURL &&
-        isAllowedBrowserPanelUrl(params.srcURL)
-      ) {
-        template.push(
-          {
-            label: t('browserContextSaveImage'),
-            click: () => guestContents.downloadURL(params.srcURL),
-          },
-          { type: 'separator' },
-        );
-      }
-      template.push(
-        {
-          label: t('browserContextBack'),
-          enabled: guestContents.navigationHistory.canGoBack(),
-          click: () => guestContents.navigationHistory.goBack(),
+        if (isAllowedBrowserPanelUrl(url)) {
+          mainWindow.webContents.send(BrowserIpc.PanelOpenTab, {
+            url: url || 'about:blank',
+            openerGuestId: guestContents.id,
+          });
+        }
+        return { action: 'deny' };
+      });
+      guestContents.on('before-input-event', (event, input) => {
+        const shortcutAction =
+          input.type === 'keyDown' && !input.isAutoRepeat
+            ? resolveBrowserPanelShortcutAction(
+                {
+                  key: input.key,
+                  altKey: input.alt,
+                  ctrlKey: input.control,
+                  shiftKey: input.shift,
+                  metaKey: input.meta,
+                },
+                browserPanelShortcuts,
+              )
+            : null;
+        if (shortcutAction) {
+          event.preventDefault();
+          mainWindow.webContents.send(BrowserIpc.PanelShortcutAction, shortcutAction);
+          return;
+        }
+        const command = resolveBrowserGuestShortcut(input);
+        if (!command) return;
+        event.preventDefault();
+        guestContents.send(BROWSER_GUEST_COMMAND_CHANNEL, command);
+      });
+      guestContents.on('will-navigate', (event, url) => {
+        bindLocalPreviewScope(url);
+        if (isAllowedExternalBrowserUrl(url)) {
+          event.preventDefault();
+          requestExternalProtocol(url);
+          return;
+        }
+        if (!isAllowedBrowserPanelUrl(url) || !canNavigateWithinPreviewScope(url)) {
+          event.preventDefault();
+        }
+      });
+      guestContents.on('will-frame-navigate', event => {
+        if (isBrowserPdfStreamNavigation(event.url, event.isMainFrame, event.frame?.parent?.url)) {
+          return;
+        }
+        if (event.isMainFrame) bindLocalPreviewScope(event.url);
+        if (!isAllowedBrowserPanelUrl(event.url) || !canNavigateWithinPreviewScope(event.url)) {
+          event.preventDefault();
+        }
+      });
+      guestContents.on('will-redirect', (event, url) => {
+        if (!isAllowedBrowserPanelUrl(url) || !canNavigateWithinPreviewScope(url)) {
+          event.preventDefault();
+        }
+      });
+      const recordFaviconData = trackBrowserHistory(guestContents, () => !localPreviewScopeUrl);
+      trackBrowserFavicon(
+        guestContents,
+        (event, cacheSignal) => {
+          if (!mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+            mainWindow.webContents.send(BrowserIpc.PanelFaviconUpdated, event);
+          }
+          if (event.faviconUrl) {
+            try {
+              recordFaviconData(event.faviconUrl, cacheSignal);
+            } catch {
+              console.warn('[BrowserFavicon] Could not persist the loaded icon.');
+            }
+          }
         },
-        {
-          label: t('browserContextForward'),
-          enabled: guestContents.navigationHistory.canGoForward(),
-          click: () => guestContents.navigationHistory.goForward(),
-        },
-        { label: t('browserContextReload'), click: () => guestContents.reload() },
+        url =>
+          !localPreviewScopeUrl || isAllowedLocalHtmlPreviewResource(localPreviewScopeUrl, url),
       );
-      Menu.buildFromTemplate(template).popup({ window: mainWindow });
-    });
-    guestContents.once('destroyed', () => {
-      localPreviewScopesByGuestId.delete(guestContents.id);
-      browserPermissions.destroy(guestContents.id);
-      pendingBrowserHttpAuth.cancelGuest(guestContents.id);
-    });
-    guestContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
-      if (isInPlace) return;
-      browserPermissions.invalidate(guestContents.id);
-      if (isMainFrame) {
+      guestContents.on('context-menu', (_contextEvent, params) => {
+        const template: Electron.MenuItemConstructorOptions[] = [];
+        if (params.linkURL && isAllowedBrowserPanelUrl(params.linkURL)) {
+          template.push(
+            {
+              label: t('browserContextOpenLinkNewTab'),
+              click: () => {
+                if (!canNavigateWithinPreviewScope(params.linkURL)) return;
+                mainWindow.webContents.send(BrowserIpc.PanelOpenTab, {
+                  url: params.linkURL,
+                  openerGuestId: guestContents.id,
+                });
+              },
+            },
+            {
+              label: t('browserContextCopyLink'),
+              click: () => clipboard.writeText(params.linkURL),
+            },
+            { type: 'separator' },
+          );
+        }
+        if (params.isEditable) {
+          template.push(
+            { role: 'undo' },
+            { role: 'redo' },
+            { type: 'separator' },
+            { role: 'cut' },
+            { role: 'copy' },
+            { role: 'paste' },
+            { role: 'selectAll' },
+            { type: 'separator' },
+          );
+        } else if (params.selectionText) {
+          template.push({ role: 'copy' }, { type: 'separator' });
+        }
+        if (
+          params.mediaType === 'image' &&
+          params.srcURL &&
+          isAllowedBrowserPanelUrl(params.srcURL)
+        ) {
+          template.push(
+            {
+              label: t('browserContextSaveImage'),
+              click: () => guestContents.downloadURL(params.srcURL),
+            },
+            { type: 'separator' },
+          );
+        }
+        template.push(
+          {
+            label: t('browserContextBack'),
+            enabled: guestContents.navigationHistory.canGoBack(),
+            click: () => guestContents.navigationHistory.goBack(),
+          },
+          {
+            label: t('browserContextForward'),
+            enabled: guestContents.navigationHistory.canGoForward(),
+            click: () => guestContents.navigationHistory.goForward(),
+          },
+          { label: t('browserContextReload'), click: () => guestContents.reload() },
+        );
+        Menu.buildFromTemplate(template).popup({
+          window: workspaceManager?.presentationWindow(host.id) ?? mainWindow,
+        });
+      });
+      guestContents.once('destroyed', () => {
+        localPreviewScopesByGuestId.delete(guestContents.id);
+        browserPermissions.destroy(guestContents.id);
         pendingBrowserHttpAuth.cancelGuest(guestContents.id);
-      }
-    });
-    guestContents.on('login', (event, _details, authInfo, callback) => {
-      const credentials = options.getProxyCredentials();
-      const matchesConfiguredProxy =
-        authInfo.isProxy &&
-        credentials &&
-        authInfo.host.toLowerCase() === credentials.host.toLowerCase() &&
-        authInfo.port === credentials.port;
-      if (matchesConfiguredProxy) {
+      });
+      guestContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
+        if (isInPlace) return;
+        browserPermissions.invalidate(guestContents.id);
+        if (isMainFrame) {
+          pendingBrowserHttpAuth.cancelGuest(guestContents.id);
+        }
+      });
+      guestContents.on('login', (event, _details, authInfo, callback) => {
+        const credentials = options.getProxyCredentials();
+        const matchesConfiguredProxy =
+          authInfo.isProxy &&
+          credentials &&
+          authInfo.host.toLowerCase() === credentials.host.toLowerCase() &&
+          authInfo.port === credentials.port;
+        if (matchesConfiguredProxy) {
+          event.preventDefault();
+          callback(credentials.username, credentials.password);
+          return;
+        }
+        if (authInfo.isProxy || mainWindow.isDestroyed() || guestContents.isDestroyed()) {
+          callback();
+          return;
+        }
         event.preventDefault();
-        callback(credentials.username, credentials.password);
-        return;
-      }
-      if (authInfo.isProxy || mainWindow.isDestroyed() || guestContents.isDestroyed()) {
-        callback();
-        return;
-      }
-      event.preventDefault();
-      const id = randomUUID();
-      pendingBrowserHttpAuth.add(id, guestContents.id, callback);
-      mainWindow.webContents.send(BrowserIpc.PanelHttpAuthRequest, {
-        id,
-        guestId: guestContents.id,
-        host: authInfo.host,
-        port: authInfo.port,
-        realm: authInfo.realm,
-        scheme: authInfo.scheme,
+        const id = randomUUID();
+        pendingBrowserHttpAuth.add(id, guestContents.id, callback);
+        mainWindow.webContents.send(BrowserIpc.PanelHttpAuthRequest, {
+          id,
+          guestId: guestContents.id,
+          host: authInfo.host,
+          port: authInfo.port,
+          realm: authInfo.realm,
+          scheme: authInfo.scheme,
+        });
       });
     });
-  });
+  };
   const installBrowserRequestGuard = (browserSession: Electron.Session) =>
     browserSession.webRequest.onBeforeRequest((details, callback) => {
       const localPreviewScopeUrl = localPreviewScopesByGuestId.get(details.webContentsId);
@@ -789,7 +845,7 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
     const suggestedName = path.basename(item.getFilename()) || 'download';
     const defaultDirectory = downloadDefaultDirectories.get(item) ?? app.getPath('downloads');
     try {
-      const result = await dialog.showSaveDialog(mainWindow, {
+      const result = await dialog.showSaveDialog(workspaceManager?.focusedWindow() ?? mainWindow, {
         defaultPath: path.join(defaultDirectory, suggestedName),
       });
       if (
@@ -942,6 +998,7 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
   mainWindow.on('close', event => {
     if (!options.isQuitting() && !options.isDev) {
       event.preventDefault();
+      workspaceManager?.hideWithOwner();
       mainWindow.hide();
     }
   });
@@ -993,5 +1050,18 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
   mainWindow.on('blur', forwardWindowState);
 
   mainWindow.once('ready-to-show', () => options.onReadyToShow(mainWindow));
+  configureBrowserHost(mainWindow.webContents);
+  workspaceManager = new WorkspaceWindowManager(mainWindow, {
+    url: options.isDev
+      ? new URL('workspace.html', `${options.devServerUrl.replace(/\/+$/, '')}/`).toString()
+      : pathToFileURL(path.join(__dirname, '../dist/workspace.html')).toString(),
+    icon: options.getIconPath(),
+    backgroundColor: options.getBackgroundColor(),
+    isQuitting: options.isQuitting,
+    configureHost: configureBrowserHost,
+    openExternal: openExternalLink,
+    readBounds: options.readWorkspaceWindowBounds,
+    saveBounds: options.saveWorkspaceWindowBounds,
+  });
   return mainWindow;
 };

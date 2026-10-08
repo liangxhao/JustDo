@@ -144,7 +144,10 @@ const ExecApprovalModal: React.FC<ExecApprovalModalProps> = ({ approval, onExpir
   };
 
   return (
-    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/40 px-4 backdrop-blur-[2px]">
+    <div
+      data-workspace-overlay="true"
+      className="fixed inset-0 z-[90] flex items-center justify-center bg-black/40 px-4 backdrop-blur-[2px]"
+    >
       <div
         ref={dialogRef}
         role="alertdialog"

@@ -79,7 +79,7 @@ export class ToolOutput extends LitElement {
   }
   private async copy() {
     try {
-      await navigator.clipboard.writeText(this.text);
+      await (this.ownerDocument.defaultView ?? window).navigator.clipboard.writeText(this.text);
       this.feedback = i18nService.t('copied');
     } catch {
       this.feedback = i18nService.t('messageCopyFailed');

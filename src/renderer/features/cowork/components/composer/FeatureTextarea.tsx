@@ -7,6 +7,8 @@ import {
   useState,
 } from 'react';
 
+import { useOwnerWindow } from '@/shared/dom/ownerDocument';
+
 /** An atomic first-line prefix; the native textarea continues to own plain text. */
 const FeatureTextarea = forwardRef<
   HTMLTextAreaElement,
@@ -39,6 +41,7 @@ const FeatureTextarea = forwardRef<
   },
   forwardedRef,
 ) {
+  const ownerWindow = useOwnerWindow();
   const input = useRef<HTMLTextAreaElement | null>(null);
   const token = useRef<HTMLButtonElement>(null);
   const selectAll = useRef(false);
@@ -52,7 +55,7 @@ const FeatureTextarea = forwardRef<
     selectAll.current = false;
     if (!featureLabel || !input.current || !token.current) return;
     const measure = () => {
-      const css = getComputedStyle(input.current!);
+      const css = ownerWindow.getComputedStyle(input.current!);
       setLayout({
         width: token.current!.getBoundingClientRect().width + 6,
         left: parseFloat(css.paddingLeft) || 0,
@@ -61,12 +64,12 @@ const FeatureTextarea = forwardRef<
       });
     };
     measure();
-    if (typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(measure);
+    if (!ownerWindow.ResizeObserver) return;
+    const observer = new ownerWindow.ResizeObserver(measure);
     observer.observe(token.current);
     observer.observe(input.current);
     return () => observer.disconnect();
-  }, [featureLabel, props.className]);
+  }, [featureLabel, props.className, ownerWindow]);
   useLayoutEffect(() => {
     if (input.current) layoutChanged.current?.(input.current);
   }, [featureLabel, layout.width]);

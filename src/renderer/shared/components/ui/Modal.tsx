@@ -34,6 +34,7 @@ const Modal: React.FC<ModalProps> = ({
 
   return (
     <div
+      data-workspace-overlay="true"
       className={overlayClassName ?? 'fixed inset-0 z-50 flex items-center justify-center bg-black/50'}
       onMouseDown={(e) => {
         // Record whether mousedown started on the backdrop (not on modal content)

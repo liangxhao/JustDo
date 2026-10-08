@@ -102,6 +102,7 @@ import {
   HOME_DISPLAY_SESSION_KEY,
   useSessionDisplayState,
 } from '@/features/cowork/components/display/useSessionDisplayState';
+import { WORKSPACE_PRESENTATION_EVENT } from '@/features/cowork/components/display/useWorkspacePortal';
 import { inferInitialGoalObjective } from '@/features/cowork/components/goals/goalPendingObjective';
 import type { GoalRunProgress } from '@/features/cowork/components/goals/goalRunProgress';
 import FilePreviewDrawer, {
@@ -314,6 +315,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const dispatch = useDispatch();
   const currentSession = useSelector(selectCurrentSession);
   const currentSessionId = currentSession?.id ?? null;
+  const [isWorkspaceDetached, setIsWorkspaceDetached] = useState(false);
   const collaborationRooms = useCollaborationRooms({
     activeSessionId: currentSessionId,
     onFirstCollaboration: sessionId => {
@@ -400,6 +402,18 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     isInitialized ? sessions.map(session => session.id) : undefined,
     sessions.filter(session => session.status === 'running').map(session => session.id),
   );
+  const isWorkspaceVisible = isDisplayPanelOpen || isWorkspaceDetached;
+  const detachedRef = useRef(false);
+  useEffect(() => {
+    const listener = (event: Event) => {
+      const next = (event as CustomEvent<boolean>).detail === true;
+      if (detachedRef.current && !next) setIsDisplayPanelOpen(true);
+      detachedRef.current = next;
+      setIsWorkspaceDetached(next);
+    };
+    window.addEventListener(WORKSPACE_PRESENTATION_EVENT, listener);
+    return () => window.removeEventListener(WORKSPACE_PRESENTATION_EVENT, listener);
+  }, [setIsDisplayPanelOpen]);
   const subtaskListToggleRef = useRef<HTMLButtonElement>(null);
   const displayPanelToggleRef = useRef<HTMLButtonElement>(null);
   const [planPreviewState, dispatchPlanPreview] = useReducer(
@@ -1297,7 +1311,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const openDisplayPanel = useCallback(() => {
     setIsSubtaskListOpen(false);
     setIsDisplayPanelOpen(true);
-  }, [setIsDisplayPanelOpen]);
+    if (isWorkspaceDetached) window.electron.workspaceWindow?.focus();
+  }, [setIsDisplayPanelOpen, isWorkspaceDetached]);
 
   const closeDisplayPanel = useCallback(() => {
     setIsDisplayPanelOpen(false);
@@ -1773,10 +1788,11 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     <div className="cowork-workspace-header relative flex shrink-0 items-center justify-between border-b border-border px-2">
       <div className="h-7" />
       <div className="non-draggable flex items-center gap-1">
-        {!isDisplayPanelOpen && (
+        {(!isDisplayPanelOpen || isWorkspaceDetached) && (
           <NewDisplayTabButton
             buttonRef={displayPanelToggleRef}
             boxedIcon
+            detached={isWorkspaceDetached}
             onCreateTab={openDisplayPanel}
           />
         )}
@@ -1805,7 +1821,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     };
     return (
       <DisplayPanelLauncher
-        visible={isDisplayPanelOpen}
+        visible={isWorkspaceVisible}
         showAddressInput={!onNavigateBrowser}
         onNavigateBrowser={onNavigateBrowser}
         browserDisabled={
@@ -1890,7 +1906,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                 onContinueTask={prompt =>
                   continueBrowserTaskRef.current?.(sessionKey, prompt) ?? Promise.resolve('failed')
                 }
-                isOpen={isDisplayPanelOpen && browserVisible && !sessionKey.startsWith('temp-')}
+                isOpen={isWorkspaceVisible && browserVisible && !sessionKey.startsWith('temp-')}
                 width={displayState.browserPanelWidth}
                 activeTargetId={displayState.browserPanelTargetId}
                 onClose={() => {
@@ -2780,10 +2796,11 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                     onSubtasksChange={handleSubtasksChange}
                   />
                 </div>
-                {!isDisplayPanelOpen && (
+                {(!isDisplayPanelOpen || isWorkspaceDetached) && (
                   <NewDisplayTabButton
                     buttonRef={displayPanelToggleRef}
                     boxedIcon
+                    detached={isWorkspaceDetached}
                     onCreateTab={openDisplayPanel}
                   />
                 )}
@@ -3004,6 +3021,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             )}
           </div>
           {(isDisplayPanelOpen ||
+            isWorkspaceDetached ||
             hasBrowserPanelOpened ||
             displayTabs.length > 0 ||
             hasRetainedRuntimePanels) && (
@@ -3041,7 +3059,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                 currentSessionFolderPath && !currentSession.id.startsWith('temp-') ? (
                   <WorkspaceFilesPanel
                     key={`${currentSession.id}:${currentSessionFolderPath}`}
-                    isVisible={isDisplayPanelOpen && isWorkspaceFilesOpen}
+                    isVisible={isWorkspaceVisible && isWorkspaceFilesOpen}
                     revealPath={filesRevealPath}
                     revealVersion={filesRevealVersion}
                     activeFilePath={activeFilePreview?.filePath ?? activeUnsupportedFilePath}
@@ -3076,7 +3094,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                 <SessionReviewPanel
                   key={currentSession.id}
                   sessionId={currentSession.id}
-                  visible={isDisplayPanelOpen && activeDisplayTabId === REVIEW_TAB_ID}
+                  visible={isWorkspaceVisible && activeDisplayTabId === REVIEW_TAB_ID}
                   running={currentSessionRuntimeRunning}
                   focusPath={reviewFocusPath}
                   focusVersion={reviewFocusVersion}
@@ -3106,7 +3124,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                     sessionId={currentSession.id}
                     snapshot={swarmWorkflowDiscovery.result}
                     onRefresh={swarmWorkflowDiscovery.refresh}
-                    active={activeDisplayTabId === SWARM_WORKFLOW_DISPLAY_TAB_ID && isDisplayPanelOpen}
+                    active={activeDisplayTabId === SWARM_WORKFLOW_DISPLAY_TAB_ID && isWorkspaceVisible}
                     tasks={subtasks}
                     onOpenTask={openSubtask}
                   />
@@ -3315,6 +3333,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       isEngineReady={isEngineReady}
       config={config}
       isDisplayPanelOpen={isDisplayPanelOpen}
+      isWorkspaceDetached={isWorkspaceDetached}
       hasBrowserPanelOpened={hasBrowserPanelOpened}
       terminalTabs={terminalTabs}
       filePreviews={filePreviews}

@@ -46,6 +46,7 @@ interface CoworkHomeWorkspaceProps {
   isEngineReady: true;
   config: CoworkConfig;
   isDisplayPanelOpen: boolean;
+  isWorkspaceDetached?: boolean;
   hasBrowserPanelOpened: boolean;
   terminalTabs: CoworkTerminalTab[];
   filePreviews: FilePreview[];
@@ -90,6 +91,7 @@ export function CoworkHomeWorkspace({
   isEngineReady,
   config,
   isDisplayPanelOpen,
+  isWorkspaceDetached = false,
   hasBrowserPanelOpened,
   terminalTabs,
   filePreviews,
@@ -165,6 +167,7 @@ export function CoworkHomeWorkspace({
           </div>
         </div>
         {(isDisplayPanelOpen ||
+          isWorkspaceDetached ||
           hasBrowserPanelOpened ||
           terminalTabs.length > 0 ||
           homeDisplayTabs.length > 0 ||
@@ -198,7 +201,7 @@ export function CoworkHomeWorkspace({
                 </div>
               ) : (
                 <DisplayPanelLauncher
-                  visible={isDisplayPanelOpen}
+                  visible={isDisplayPanelOpen || isWorkspaceDetached}
                   browserDisabled={browserTabs.length >= MAX_BROWSER_TABS}
                   onCreateBrowser={handleCreateBrowserTab}
                   onCreateTerminal={handleCreateTerminalTab}
@@ -213,7 +216,7 @@ export function CoworkHomeWorkspace({
               homeWorkspaceFolderPath ? (
                 <WorkspaceFilesPanel
                   key={`${HOME_WORKSPACE_SESSION_ID}:${homeWorkspaceFolderPath}`}
-                  isVisible={isDisplayPanelOpen && isWorkspaceFilesOpen}
+                  isVisible={(isDisplayPanelOpen || isWorkspaceDetached) && isWorkspaceFilesOpen}
                   activeFilePath={activeFilePreview?.filePath ?? activeUnsupportedFilePath}
                   sessionId={HOME_WORKSPACE_SESSION_ID}
                   onOpenFile={filePath => {

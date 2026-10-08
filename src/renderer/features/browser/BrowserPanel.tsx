@@ -85,6 +85,7 @@ import type { BrowserPdfViewerHandle } from '@/features/browser/pdf/BrowserPdfVi
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 import Tooltip from '@/shared/components/ui/Tooltip';
+import { isDomElement, useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 
 import BrowserTabIcon from './BrowserTabIcon';
 import {
@@ -337,6 +338,8 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   },
   ref,
 ) {
+  const ownerDocument = useOwnerDocument();
+  const ownerWindow = useOwnerWindow();
   const [tabs, setTabs] = useState<BrowserPanelTab[]>(() => {
     if (initialTabs) {
       const tabs = [...initialTabs];
@@ -846,14 +849,14 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       setUrlDraft(getBrowserTabAddress(tab));
       clearAnnotations();
       if (tab.url === 'about:blank') {
-        requestAnimationFrame(() => {
+        ownerWindow.requestAnimationFrame(() => {
           addressInputRef.current?.focus();
           addressInputRef.current?.select();
         });
       }
       return true;
     },
-    [clearAnnotations, onActiveTargetChange],
+    [clearAnnotations, onActiveTargetChange, ownerWindow],
   );
 
   useEffect(
@@ -1371,7 +1374,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     const stage = stageRef.current;
     if (!canvas || !stage) return;
     const bounds = stage.getBoundingClientRect();
-    const ratio = window.devicePixelRatio || 1;
+    const ratio = ownerWindow.devicePixelRatio || 1;
     canvas.width = Math.max(1, Math.round(bounds.width * ratio));
     canvas.height = Math.max(1, Math.round(bounds.height * ratio));
     canvas.style.width = `${bounds.width}px`;
@@ -1431,14 +1434,14 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       );
       context.restore();
     }
-  }, [draftRectangle, hovered, inspected, mode, regions, strokes]);
+  }, [draftRectangle, hovered, inspected, mode, regions, strokes, ownerWindow]);
 
   useEffect(() => {
     drawOverlay();
-    const observer = new ResizeObserver(drawOverlay);
+    const observer = new ownerWindow.ResizeObserver(drawOverlay);
     if (stageRef.current) observer.observe(stageRef.current);
     return () => observer.disconnect();
-  }, [drawOverlay, navigationVersion]);
+  }, [drawOverlay, navigationVersion, ownerWindow]);
 
   const pointForEvent = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const bounds = stageRef.current?.getBoundingClientRect();
@@ -1777,15 +1780,15 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       );
     };
     const up = () => {
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
+      ownerDocument.body.style.cursor = '';
+      ownerDocument.body.style.userSelect = '';
       handle.removeEventListener('pointermove', move);
       handle.removeEventListener('pointerup', up);
       handle.removeEventListener('pointercancel', up);
       handle.removeEventListener('lostpointercapture', up);
     };
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
+    ownerDocument.body.style.cursor = 'col-resize';
+    ownerDocument.body.style.userSelect = 'none';
     handle.setPointerCapture(event.pointerId);
     handle.addEventListener('pointermove', move);
     handle.addEventListener('pointerup', up);
@@ -1838,7 +1841,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     }
     if (action === 'copy-url') {
       try {
-        await navigator.clipboard.writeText(getBrowserTabAddress({ ...tab, url }));
+        await ownerWindow.navigator.clipboard.writeText(getBrowserTabAddress({ ...tab, url }));
         setNotice(
           isAtSourcePreview({ ...tab, url })
             ? i18nService.t('browserTabMenuFilePathCopied')
@@ -1963,7 +1966,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     }
     if (action === 'find') {
       setFindVisible(true);
-      requestAnimationFrame(() => findInputRef.current?.focus());
+      ownerWindow.requestAnimationFrame(() => findInputRef.current?.focus());
       return;
     }
     if (action === 'print') {
@@ -1988,7 +1991,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         const title = getBrowserTabDisplayTitle(activeTab)
           .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '-')
           .slice(0, 80);
-        const link = document.createElement('a');
+        const link = ownerDocument.createElement('a');
         link.href = dataUrl;
         link.download = `${title || 'screenshot'}-${new Date().toISOString().replace(/[:.]/g, '-')}.png`;
         link.click();
@@ -2126,7 +2129,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       onKeyDown={event => {
         if (event.defaultPrevented || event.key !== 'Escape' || mode === 'interact') return;
         if (
-          event.target instanceof Element &&
+          isDomElement(event.target) &&
           event.target.closest('[data-browser-http-auth-dialog], [data-browser-intervention]')
         )
           return;
@@ -2136,7 +2139,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       }}
       onKeyDownCapture={event => {
         if (
-          event.target instanceof Element &&
+          isDomElement(event.target) &&
           event.target.closest('[data-browser-http-auth-dialog], [data-browser-intervention]')
         )
           return;

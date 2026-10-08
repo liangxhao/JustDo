@@ -20,6 +20,7 @@ import type { SwarmChildStatus, SwarmSnapshot } from '@shared/cowork/swarm';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
+import { useOwnerWindow } from '@/shared/dom/ownerDocument';
 
 import type { Subtask } from './subtaskPresentation';
 import { layoutSwarmMembers, SWARM_COLLAPSE_AFTER, swarmMembers, swarmTotal } from './swarmGraph';
@@ -70,6 +71,7 @@ export function SwarmGraph({
   stale: boolean;
   loading: boolean;
 }) {
+  const ownerWindow = useOwnerWindow();
   const markerId = useId().replace(/:/g, '');
   const [selectedGroup, setSelectedGroup] = useState('');
   const [selectedKey, setSelectedKey] = useState<string>();
@@ -85,14 +87,14 @@ export function SwarmGraph({
   const group = snapshot.groups.find(item => item.groupId === selectedGroup) ?? snapshot.groups[0];
   const hasGroup = Boolean(group);
   useEffect(() => {
-    if (!canvas.current || typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(entries => {
+    if (!canvas.current || !ownerWindow.ResizeObserver) return;
+    const observer = new ownerWindow.ResizeObserver(entries => {
       const width = entries[0]?.contentRect.width;
       if (width) setColumns(width >= 560 ? 3 : 2);
     });
     observer.observe(canvas.current);
     return () => observer.disconnect();
-  }, [hasGroup]);
+  }, [hasGroup, ownerWindow]);
   const members = useMemo(() => {
     if (!group) return [];
     const items = swarmMembers(group, tasks);

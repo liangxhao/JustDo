@@ -13,6 +13,7 @@ import React, { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 
 import { i18nService } from '@/services/i18n';
+import { isDomHTMLElement, useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 
 export type BrowserTabMenuAction =
   | 'new-right'
@@ -54,6 +55,8 @@ export default function BrowserTabContextMenu({
   onDismiss: () => void;
   onRestoreFocus?: () => void;
 }) {
+  const ownerDocument = useOwnerDocument();
+  const ownerWindow = useOwnerWindow();
   const menuRef = useRef<HTMLDivElement>(null);
   const iconClass = 'h-4 w-4 shrink-0';
   const groups: MenuItem[][] = [
@@ -120,18 +123,20 @@ export default function BrowserTabContextMenu({
       },
     ],
   ];
-  const left = Math.max(8, Math.min(x, window.innerWidth - 232));
-  const top = Math.max(8, Math.min(y, window.innerHeight - 392));
+  const left = Math.max(8, Math.min(x, ownerWindow.innerWidth - 232));
+  const top = Math.max(8, Math.min(y, ownerWindow.innerHeight - 392));
 
   useEffect(() => {
-    const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const trigger = isDomHTMLElement(ownerDocument.activeElement)
+      ? ownerDocument.activeElement
+      : null;
     menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus();
     return () => trigger?.focus();
-  }, []);
+  }, [ownerDocument]);
 
   const dismissAndRestoreFocus = () => {
     onDismiss();
-    if (onRestoreFocus) requestAnimationFrame(onRestoreFocus);
+    if (onRestoreFocus) ownerWindow.requestAnimationFrame(onRestoreFocus);
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -153,7 +158,7 @@ export default function BrowserTabContextMenu({
       ) ?? []),
     ];
     if (!items.length) return;
-    const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
+    const currentIndex = items.indexOf(ownerDocument.activeElement as HTMLButtonElement);
     const nextIndex =
       event.key === 'Home'
         ? 0
@@ -208,6 +213,6 @@ export default function BrowserTabContextMenu({
         ))}
       </div>
     </>,
-    document.body,
+    ownerDocument.body,
   );
 }

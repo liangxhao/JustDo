@@ -6,6 +6,12 @@ import { downloadText, type ToolOutput } from './tool-output';
 
 type Preference = { wrap?: boolean; expanded?: boolean; tree?: boolean };
 export class RichMessageControls {
+  private get document(): Document {
+    return this.root.ownerDocument;
+  }
+  private get window(): Window & typeof globalThis {
+    return (this.document.defaultView ?? window) as Window & typeof globalThis;
+  }
   private preferences = new Map<string, Preference>();
   onQuote: MessageQuoteHandler | undefined;
   private selectionBar: HTMLElement | null = null;
@@ -26,32 +32,32 @@ export class RichMessageControls {
   ) {
     this.root.addEventListener('contextmenu', this.selectQuote);
     this.root.addEventListener('pointerdown', this.preserveContextSelection);
-    document.addEventListener('pointerdown', this.dismissSelection, true);
-    document.addEventListener('keydown', this.selectionKey, true);
-    document.addEventListener('scroll', this.dismissSelection, true);
+    this.document.addEventListener('pointerdown', this.dismissSelection, true);
+    this.document.addEventListener('keydown', this.selectionKey, true);
+    this.document.addEventListener('scroll', this.dismissSelection, true);
   }
   dispose() {
     this.close();
     this.dismissSelection();
     this.root.removeEventListener('contextmenu', this.selectQuote);
     this.root.removeEventListener('pointerdown', this.preserveContextSelection);
-    document.removeEventListener('pointerdown', this.dismissSelection, true);
-    document.removeEventListener('keydown', this.selectionKey, true);
-    document.removeEventListener('scroll', this.dismissSelection, true);
+    this.document.removeEventListener('pointerdown', this.dismissSelection, true);
+    this.document.removeEventListener('keydown', this.selectionKey, true);
+    this.document.removeEventListener('scroll', this.dismissSelection, true);
   }
   private selectedRange(): Range | null {
     const selection =
       (this.root as ShadowRoot & { getSelection?: () => Selection | null }).getSelection?.() ??
-      window.getSelection();
+      this.window.getSelection();
     if (!selection || selection.isCollapsed) return null;
     // Chromium can re-scope getRangeAt() to the custom-element host.
     const composed = selection as Selection & {
       getComposedRanges?: (options: { shadowRoots: ShadowRoot[] }) => StaticRange[];
     };
-    if (this.root instanceof ShadowRoot && composed.getComposedRanges) {
+    if ('host' in this.root && composed.getComposedRanges) {
       const selected = composed.getComposedRanges({ shadowRoots: [this.root] })[0];
       if (selected) {
-        const range = document.createRange();
+        const range = this.document.createRange();
         range.setStart(selected.startContainer, selected.startOffset);
         range.setEnd(selected.endContainer, selected.endOffset);
         return range;
@@ -77,7 +83,7 @@ export class RichMessageControls {
       this.root.querySelectorAll<HTMLElement>('[data-assistant-entry], [data-quote-source]'),
     ).flatMap(source => {
       if (!selectionRange.intersectsNode(source)) return [];
-      const bounds = document.createRange();
+      const bounds = this.document.createRange();
       bounds.selectNodeContents(source);
       const range = selectionRange.cloneRange();
       if (range.compareBoundaryPoints(Range.START_TO_START, bounds) < 0)
@@ -92,7 +98,7 @@ export class RichMessageControls {
     const selectedText = range.toString();
     const text = selectedText.slice(0, 12_000);
     if (!text.trim()) return;
-    const before = document.createRange();
+    const before = this.document.createRange();
     before.selectNodeContents(source);
     before.setEnd(range.startContainer, range.startOffset);
     const start = before.toString().length;
@@ -104,14 +110,14 @@ export class RichMessageControls {
       start,
       end: start + text.length,
     };
-    const bar = document.createElement('div');
+    const bar = this.document.createElement('div');
     bar.className = 'message-selection-actions';
     bar.setAttribute('role', 'menu');
     bar.addEventListener('pointerdown', event => event.preventDefault());
     event.preventDefault();
     event.stopPropagation();
     const copy = this.button('copy', () => {
-      void navigator.clipboard
+      void this.window.navigator.clipboard
         .writeText(selectedText)
         .then(() => {
           if (this.selectionBar === bar) this.dismissSelection();
@@ -139,12 +145,12 @@ export class RichMessageControls {
     ];
     bar.querySelectorAll('button').forEach((button, index) => {
       button.setAttribute('role', 'menuitem');
-      const label = document.createElement('span');
+      const label = this.document.createElement('span');
       label.textContent = button.textContent;
-      const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      const icon = this.document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       icon.setAttribute('viewBox', '0 0 24 24');
       icon.setAttribute('aria-hidden', 'true');
-      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      const path = this.document.createElementNS('http://www.w3.org/2000/svg', 'path');
       path.setAttribute('d', iconPaths[index]);
       icon.append(path);
       button.replaceChildren(icon, label);
@@ -159,8 +165,8 @@ export class RichMessageControls {
         : body.getBoundingClientRect();
     const x = mouse.clientX || rect.left;
     const y = mouse.clientY || rect.bottom;
-    bar.style.left = `${Math.max(8, Math.min(x, window.innerWidth - bar.offsetWidth - 8))}px`;
-    bar.style.top = `${Math.max(8, Math.min(y, window.innerHeight - bar.offsetHeight - 8))}px`;
+    bar.style.left = `${Math.max(8, Math.min(x, this.window.innerWidth - bar.offsetWidth - 8))}px`;
+    bar.style.top = `${Math.max(8, Math.min(y, this.window.innerHeight - bar.offsetHeight - 8))}px`;
     copy.focus({ preventScroll: true });
   };
   private readonly dismissSelection = (event?: Event) => {
@@ -208,7 +214,7 @@ export class RichMessageControls {
     return true;
   }
   private button(key: string, action: () => void): HTMLButtonElement {
-    const button = document.createElement('button');
+    const button = this.document.createElement('button');
     button.type = 'button';
     button.textContent = i18nService.t(key);
     button.addEventListener('click', event => {
@@ -224,10 +230,10 @@ export class RichMessageControls {
     button.dataset.iconOnly = 'true';
     button.title = i18nService.t(key);
     button.setAttribute('aria-label', button.title);
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    const svg = this.document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', '0 0 24 24');
     svg.setAttribute('aria-hidden', 'true');
-    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    const path = this.document.createElementNS('http://www.w3.org/2000/svg', 'path');
     path.setAttribute('d', pathData);
     svg.append(path);
     button.replaceChildren(svg);
@@ -241,7 +247,7 @@ export class RichMessageControls {
     } else button.textContent = i18nService.t(key);
   }
   private copy(button: HTMLButtonElement, text: string) {
-    void navigator.clipboard
+    void this.window.navigator.clipboard
       .writeText(text)
       .then(() => {
         this.copyFeedback(button, 'copied');
@@ -253,9 +259,9 @@ export class RichMessageControls {
   private expand(source: HTMLElement) {
     this.close();
     this.dialogTrigger = (
-      this.root instanceof ShadowRoot ? this.root.activeElement : document.activeElement
+      'host' in this.root ? this.root.activeElement : this.document.activeElement
     ) as HTMLElement | null;
-    const dialog = document.createElement('dialog');
+    const dialog = this.document.createElement('dialog');
     dialog.className = 'message-reader-dialog markdown-content';
     const mermaid = source.classList.contains('mermaid-block');
     const closeAction = () => {
@@ -345,19 +351,19 @@ export class RichMessageControls {
   }
   private tree(source: string, node: JsonSourceNode): HTMLElement {
     if (!node.children) {
-      const row = document.createElement('div');
+      const row = this.document.createElement('div');
       row.textContent = `${node.label}: ${source.slice(node.start, node.end)}`;
       return row;
     }
-    const details = document.createElement('details');
-    const summary = document.createElement('summary');
+    const details = this.document.createElement('details');
+    const summary = this.document.createElement('summary');
     summary.textContent = `${node.label} ${source[node.start]}…${source[node.end - 1]} (${node.children.length})`;
     details.append(summary);
     let loaded = false;
     details.addEventListener('toggle', () => {
       if (!details.open || loaded) return;
       loaded = true;
-      const children = document.createElement('div');
+      const children = this.document.createElement('div');
       children.className = 'message-json-children';
       let offset = 0;
       const more = this.button('messageNext', () => append());
@@ -405,7 +411,7 @@ export class RichMessageControls {
         if (this.preferences.size > 1000)
           this.preferences.delete(this.preferences.keys().next().value!);
       };
-      const actions = document.createElement('div');
+      const actions = this.document.createElement('div');
       actions.className = 'message-reader-actions';
       const table = block.querySelector('table');
       if (table) {
@@ -418,7 +424,7 @@ export class RichMessageControls {
             this.expand(block),
           ),
         );
-        const wrapper = document.createElement('div');
+        const wrapper = this.document.createElement('div');
         wrapper.className = 'message-table-wrapper';
         block.replaceWith(wrapper);
         wrapper.append(block, actions);

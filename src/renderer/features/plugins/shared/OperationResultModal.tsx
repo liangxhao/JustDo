@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/ui/Modal';
+import { isDomHTMLElement, useOwnerDocument } from '@/shared/dom/ownerDocument';
 
 export type OperationResult = {
   type: 'success' | 'error';
@@ -100,6 +101,7 @@ const StructuredMessage: React.FC<{ message: string; type: OperationResult['type
 };
 
 const OperationResultModal: React.FC<OperationResultModalProps> = ({ result, onClose }) => {
+  const ownerDocument = useOwnerDocument();
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
@@ -108,8 +110,9 @@ const OperationResultModal: React.FC<OperationResultModalProps> = ({ result, onC
 
   useEffect(() => {
     if (!isOpen) return;
-    const previousFocus =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousFocus = isDomHTMLElement(ownerDocument.activeElement)
+      ? ownerDocument.activeElement
+      : null;
     dialogRef.current?.querySelector<HTMLElement>('[data-primary-action]')?.focus();
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -130,20 +133,20 @@ const OperationResultModal: React.FC<OperationResultModalProps> = ({ result, onC
       }
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
+      if (event.shiftKey && ownerDocument.activeElement === first) {
         event.preventDefault();
         last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
+      } else if (!event.shiftKey && ownerDocument.activeElement === last) {
         event.preventDefault();
         first.focus();
       }
     };
-    document.addEventListener('keydown', handleKeyDown);
+    ownerDocument.addEventListener('keydown', handleKeyDown);
     return () => {
-      document.removeEventListener('keydown', handleKeyDown);
+      ownerDocument.removeEventListener('keydown', handleKeyDown);
       previousFocus?.focus();
     };
-  }, [isOpen]);
+  }, [isOpen, ownerDocument]);
 
   if (!result) return null;
 
@@ -226,7 +229,7 @@ const OperationResultModal: React.FC<OperationResultModalProps> = ({ result, onC
         </div>
       </div>
     </Modal>,
-    document.body,
+    ownerDocument.body,
   );
 };
 

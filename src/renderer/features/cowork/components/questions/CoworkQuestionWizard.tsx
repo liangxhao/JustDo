@@ -322,6 +322,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
 
   return (
     <div
+      data-workspace-overlay={isFloating ? undefined : 'true'}
       className={
         isFloating
           ? 'flex max-h-[80vh] min-h-0 w-full flex-col'

@@ -1,4 +1,5 @@
 import { DocumentArrowUpIcon, MicrophoneIcon, StopIcon } from '@heroicons/react/24/outline';
+import { MediaCaptureSurface } from '@shared/app/mediaCapture';
 import { LocalSpeechModelKind } from '@shared/speech/localSpeechModels';
 import {
   type LocalSpeechInputSource,
@@ -18,6 +19,7 @@ import {
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 import { recordedAudioToWav, recordedAudioToWavSegments } from '@/shared/audio/localAudioCapture';
+import { useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 
 type RecordingState = 'idle' | 'requesting' | 'recording' | 'transcribing';
 type CaptureTrack = { source: 'microphone' | 'system'; stream: MediaStream };
@@ -53,8 +55,8 @@ const formatElapsed = (milliseconds: number): string => {
   return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
 };
 
-const getMicrophoneStream = (deviceId: string): Promise<MediaStream> =>
-  navigator.mediaDevices.getUserMedia({
+const getMicrophoneStream = (deviceId: string, captureWindow: Window): Promise<MediaStream> =>
+  captureWindow.navigator.mediaDevices.getUserMedia({
     audio: {
       channelCount: 1,
       autoGainControl: true,
@@ -64,9 +66,14 @@ const getMicrophoneStream = (deviceId: string): Promise<MediaStream> =>
     },
   });
 
-const getSystemStream = async (): Promise<MediaStream> => {
-  await window.electron.mediaCapture.armSystemAudio();
-  const display = await navigator.mediaDevices.getDisplayMedia({ audio: true, video: true });
+const getSystemStream = async (captureWindow: Window): Promise<MediaStream> => {
+  await window.electron.mediaCapture.armSystemAudio(
+    captureWindow === window ? MediaCaptureSurface.Main : MediaCaptureSurface.Workspace,
+  );
+  const display = await captureWindow.navigator.mediaDevices.getDisplayMedia({
+    audio: true,
+    video: true,
+  });
   display.getVideoTracks().forEach(track => track.stop());
   const audioTracks = display.getAudioTracks();
   if (audioTracks.length === 0) {
@@ -78,17 +85,19 @@ const getSystemStream = async (): Promise<MediaStream> => {
 const openCaptureTracks = async (
   source: LocalSpeechInputSource,
   deviceId: string,
+  captureWindow: Window,
 ): Promise<CaptureTrack[]> => {
   if (source === 'microphone') {
-    return [{ source: 'microphone', stream: await getMicrophoneStream(deviceId) }];
+    return [{ source: 'microphone', stream: await getMicrophoneStream(deviceId, captureWindow) }];
   }
-  if (source === 'system') return [{ source: 'system', stream: await getSystemStream() }];
+  if (source === 'system')
+    return [{ source: 'system', stream: await getSystemStream(captureWindow) }];
   if (source !== 'microphone-system') return [];
   // Request loopback first so Chromium still sees the original button-click gesture.
-  const system = await getSystemStream();
+  const system = await getSystemStream(captureWindow);
   try {
     return [
-      { source: 'microphone', stream: await getMicrophoneStream(deviceId) },
+      { source: 'microphone', stream: await getMicrophoneStream(deviceId, captureWindow) },
       { source: 'system', stream: system },
     ];
   } catch (error) {
@@ -101,6 +110,8 @@ export function LocalSpeechInputButton({
   disabled,
   onTranscript,
 }: LocalSpeechInputButtonProps): React.ReactElement | null {
+  const ownerDocument = useOwnerDocument();
+  const ownerWindow = useOwnerWindow();
   const [available, setAvailable] = useState(false);
   const [settings, setSettings] = useState<LocalSpeechSettings>(() =>
     normalizeLocalSpeechSettings(configService.getConfig().voice),
@@ -515,7 +526,11 @@ export function LocalSpeechInputButton({
     setState('requesting');
     try {
       if (settings.recognitionMode === 'online') onlinePumpRef.current.prepare();
-      const tracks = await openCaptureTracks(settings.inputSource, settings.inputDeviceId);
+      const tracks = await openCaptureTracks(
+        settings.inputSource,
+        settings.inputDeviceId,
+        ownerWindow,
+      );
       if (!mountedRef.current || captureRequestRef.current !== requestId) {
         tracks.forEach(({ stream }) => stream.getTracks().forEach(track => track.stop()));
         return;
@@ -579,7 +594,7 @@ export function LocalSpeechInputButton({
         source: settings.inputSource,
         ...describeCaptureError(error),
       });
-      const errorName = error instanceof DOMException ? error.name : '';
+      const errorName = error instanceof ownerWindow.DOMException ? error.name : '';
       const messageKey =
         errorName === 'NotAllowedError'
           ? 'localAsrPermissionDenied'
@@ -608,6 +623,7 @@ export function LocalSpeechInputButton({
     appendOnlineSamples,
     startRecorder,
     stopRecording,
+    ownerWindow,
   ]);
 
   const transcribeFile = useCallback(
@@ -677,19 +693,19 @@ export function LocalSpeechInputButton({
       }
     };
     menuRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
-    document.addEventListener('pointerdown', handlePointer);
-    document.addEventListener('keydown', handleKey);
-    window.addEventListener('resize', dismiss);
-    window.addEventListener('blur', dismiss);
-    document.addEventListener('scroll', dismiss, true);
+    ownerDocument.addEventListener('pointerdown', handlePointer);
+    ownerDocument.addEventListener('keydown', handleKey);
+    ownerWindow.addEventListener('resize', dismiss);
+    ownerWindow.addEventListener('blur', dismiss);
+    ownerDocument.addEventListener('scroll', dismiss, true);
     return () => {
-      document.removeEventListener('pointerdown', handlePointer);
-      document.removeEventListener('keydown', handleKey);
-      window.removeEventListener('resize', dismiss);
-      window.removeEventListener('blur', dismiss);
-      document.removeEventListener('scroll', dismiss, true);
+      ownerDocument.removeEventListener('pointerdown', handlePointer);
+      ownerDocument.removeEventListener('keydown', handleKey);
+      ownerWindow.removeEventListener('resize', dismiss);
+      ownerWindow.removeEventListener('blur', dismiss);
+      ownerDocument.removeEventListener('scroll', dismiss, true);
     };
-  }, [menuPosition]);
+  }, [menuPosition, ownerDocument, ownerWindow]);
 
   useEffect(() => {
     setMenuPosition(null);
@@ -733,7 +749,7 @@ export function LocalSpeechInputButton({
             if (disabled || state !== 'idle') return;
             const rect = event.currentTarget.getBoundingClientRect();
             setMenuPosition({
-              x: Math.max(8, Math.min(rect.left, window.innerWidth - 256)),
+              x: Math.max(8, Math.min(rect.left, ownerWindow.innerWidth - 256)),
               y: Math.max(8, rect.top - 48),
             });
           }}
@@ -799,7 +815,7 @@ export function LocalSpeechInputButton({
               {i18nService.t('voiceInputSourceFile')}
             </button>
           </div>,
-          document.body,
+          ownerDocument.body,
         )}
     </>
   );

@@ -157,9 +157,11 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
     if (!chat) return;
     chat.searchQuery = searchQuery;
     chat.searchCaseSensitive = searchCaseSensitive;
-    requestAnimationFrame(() => {
+    const ownerWindow = chat.ownerDocument.defaultView ?? window;
+    const frame = ownerWindow.requestAnimationFrame(() => {
       onSearchMatchCountChange?.(chat.getSearchMatchCount(), -1);
     });
+    return () => ownerWindow.cancelAnimationFrame(frame);
   }, [onSearchMatchCountChange, searchCaseSensitive, searchQuery]);
 
   useEffect(() => {
