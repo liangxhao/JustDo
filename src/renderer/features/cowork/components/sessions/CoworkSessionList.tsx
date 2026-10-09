@@ -467,12 +467,17 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
       <div
         role="status"
         aria-label={i18nService.t('startupSessionsLoading')}
-        className="space-y-5 px-5 py-6"
+        className="space-y-1 px-2.5 pt-4"
       >
+        <div aria-hidden="true" className="mb-4 h-2 w-14 rounded-full bg-secondary opacity-15" />
         {['w-4/5', 'w-3/5', 'w-2/3'].map(width => (
-          <div key={width} aria-hidden="true" className="motion-safe:animate-pulse">
-            <div className={`h-2.5 rounded-full bg-border opacity-70 ${width}`} />
-            <div className="mt-2 h-2 w-1/3 rounded-full bg-border opacity-40" />
+          <div
+            key={width}
+            aria-hidden="true"
+            className="rounded-xl px-1 py-3 motion-safe:animate-pulse"
+          >
+            <div className={`h-2 rounded-full bg-secondary opacity-20 ${width}`} />
+            <div className="mt-2.5 h-1.5 w-1/3 rounded-full bg-secondary opacity-10" />
           </div>
         ))}
       </div>

@@ -312,34 +312,36 @@ const Sidebar: React.FC<SidebarProps> = ({
         hidden={!isHomePanelVisible}
         className={`col-start-2 row-start-2 w-60 min-h-0 shrink-0 flex-col bg-surface-raised overflow-hidden ${isHomePanelVisible ? 'flex' : 'hidden'}`}
       >
-        <div className="px-2.5 pt-2 pb-1.5">
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={onNewChat}
-              className={`relative min-w-0 flex-1 inline-flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm font-medium transition-colors ${
-                activeView === SidebarView.Home
-                  ? 'text-primary hover:bg-surface'
-                  : 'text-secondary hover:text-foreground hover:bg-surface'
-              }`}
-            >
-              <ComposeIcon className="h-4 w-4" />
-              {i18nService.t('newChat')}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                onShowCowork();
-                setIsSearchOpen(true);
-              }}
-              className="non-draggable h-8 w-8 shrink-0 inline-flex items-center justify-center rounded-lg text-secondary hover:text-foreground hover:bg-surface-raised transition-colors"
-              aria-label={i18nService.t('search')}
-              title={i18nService.t('search')}
-            >
-              <SearchIcon className="h-3.5 w-3.5" />
-            </button>
+        {sessionListStatus !== 'loading' && (
+          <div className="px-2.5 pt-2 pb-1.5">
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={onNewChat}
+                className={`relative min-w-0 flex-1 inline-flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm font-medium transition-colors ${
+                  activeView === SidebarView.Home
+                    ? 'text-primary hover:bg-surface'
+                    : 'text-secondary hover:text-foreground hover:bg-surface'
+                }`}
+              >
+                <ComposeIcon className="h-4 w-4" />
+                {i18nService.t('newChat')}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onShowCowork();
+                  setIsSearchOpen(true);
+                }}
+                className="non-draggable h-8 w-8 shrink-0 inline-flex items-center justify-center rounded-lg text-secondary hover:text-foreground hover:bg-surface-raised transition-colors"
+                aria-label={i18nService.t('search')}
+                title={i18nService.t('search')}
+              >
+                <SearchIcon className="h-3.5 w-3.5" />
+              </button>
+            </div>
           </div>
-        </div>
+        )}
 
         <div className="flex-1 overflow-y-auto px-2.5 pb-4">
           <CoworkSessionList

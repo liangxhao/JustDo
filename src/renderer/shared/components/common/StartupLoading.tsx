@@ -6,33 +6,43 @@ import appLogoUrl from '../../../../../resources/logo.png';
 
 export default function StartupLoading() {
   return (
-    <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-background px-6 py-12">
+    <div className="cowork-home flex min-h-0 flex-1 items-center justify-center overflow-auto px-6 py-12">
       <div
-        className="flex w-full max-w-sm flex-col items-center text-center"
+        className="flex w-full max-w-sm flex-col items-center text-center motion-safe:animate-fade-in-up"
         role="status"
         aria-live="polite"
       >
-        <img
-          src={appLogoUrl}
-          alt=""
-          width={88}
-          height={88}
-          draggable={false}
-          className="mb-6 h-[88px] w-[88px] shrink-0 select-none object-contain"
-        />
-        <h1 className="text-3xl font-semibold tracking-tight text-foreground">{PRODUCT_NAME}</h1>
-        <p className="mt-3 text-base font-medium tracking-wide text-secondary">
+        <div className="relative mb-7 shrink-0">
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute -inset-8 rounded-full bg-primary-muted opacity-60 blur-2xl"
+          />
+          <div className="relative flex h-28 w-28 items-center justify-center rounded-[28px] border border-border-subtle bg-surface shadow-glow-accent">
+            <img
+              src={appLogoUrl}
+              alt=""
+              width={76}
+              height={76}
+              draggable={false}
+              className="h-[76px] w-[76px] select-none object-contain"
+            />
+          </div>
+        </div>
+        <h1 className="text-[32px] font-semibold leading-tight tracking-tight text-foreground">
+          {PRODUCT_NAME}
+        </h1>
+        <p className="mt-2.5 text-sm tracking-wide text-secondary">
           {i18nService.t('startupTitle')}
         </p>
-        <div className="mt-8 flex w-full max-w-[260px] flex-col items-center border-t border-border-subtle pt-6">
-          <div className="flex items-center gap-2.5 text-sm text-secondary">
+        <div className="mt-9 flex w-full flex-col items-center">
+          <div className="inline-flex max-w-full items-center gap-2.5 rounded-full border border-border-subtle bg-surface px-4 py-2.5 text-[13px] text-secondary shadow-subtle">
             <span
               aria-hidden="true"
-              className="h-3.5 w-3.5 shrink-0 rounded-full border-2 border-border border-t-primary animate-spin"
+              className="h-3.5 w-3.5 shrink-0 rounded-full border-2 border-border border-t-primary motion-safe:animate-spin"
             />
             <span>{i18nService.t('startupPreparing')}</span>
           </div>
-          <p className="mt-2 text-xs leading-5 text-muted">{i18nService.t('startupDescription')}</p>
+          <p className="mt-3 text-xs leading-5 text-muted">{i18nService.t('startupDescription')}</p>
         </div>
       </div>
     </div>
