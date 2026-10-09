@@ -13,6 +13,7 @@ import { applyAppearanceConfig } from '@/app/appearance';
 import { defaultConfig, getProviderDisplayName } from '@/app/config';
 import BottomRightStatusStack from '@/app/shell/BottomRightStatusStack';
 import Sidebar from '@/app/shell/Sidebar';
+import { SidebarView } from '@/app/shell/sidebarNavigation';
 import Toast, { type ToastContent } from '@/app/shell/Toast';
 import WindowHeader from '@/app/shell/window/WindowHeader';
 import { agentService } from '@/features/agents/agentService';
@@ -66,9 +67,7 @@ import StartupLoading from '@/shared/components/common/StartupLoading';
 const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [settingsOptions, setSettingsOptions] = useState<SettingsOpenOptions>({});
-  const [mainView, setMainView] = useState<
-    'cowork' | 'scheduledTasks' | 'workboard' | 'memory' | 'plugins'
-  >('cowork');
+  const [mainView, setMainView] = useState<SidebarView>(SidebarView.Home);
   const [isInitialized, setIsInitialized] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastContent | null>(null);
@@ -873,33 +872,33 @@ const App: React.FC = () => {
           />
         )}
         <div
-          className={`${showSettings ? 'hidden' : 'flex-1'} min-w-0 py-1.5 pr-1.5 ${isSidebarCollapsed ? 'pl-1.5' : ''}`}
+          className={`${showSettings ? 'hidden' : 'flex-1'} min-w-0 py-1.5 pr-1.5 ${isSidebarCollapsed || mainView !== SidebarView.Home ? 'pl-1.5' : ''}`}
         >
           <div className="relative h-full min-h-0 rounded-xl bg-background overflow-hidden">
             {mainView === 'scheduledTasks' && (
               <CronView
-                isSidebarCollapsed={isSidebarCollapsed}
+                isSidebarCollapsed={false}
                 onToggleSidebar={handleToggleSidebar}
                 onNewChat={handleNewChat}
               />
             )}
             {mainView === 'workboard' && workboardEnabled && (
               <WorkboardView
-                isSidebarCollapsed={isSidebarCollapsed}
+                isSidebarCollapsed={false}
                 onToggleSidebar={handleToggleSidebar}
                 onNewChat={handleNewChat}
               />
             )}
             {mainView === 'plugins' && (
               <PluginsView
-                isSidebarCollapsed={isSidebarCollapsed}
+                isSidebarCollapsed={false}
                 onToggleSidebar={handleToggleSidebar}
                 onNewChat={handleNewChat}
               />
             )}
             {mainView === 'memory' && (
               <MemoryView
-                isSidebarCollapsed={isSidebarCollapsed}
+                isSidebarCollapsed={false}
                 onToggleSidebar={handleToggleSidebar}
                 onNewChat={handleNewChat}
               />

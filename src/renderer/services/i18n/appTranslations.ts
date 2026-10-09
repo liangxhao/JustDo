@@ -1,5 +1,13 @@
 export const appTranslations = {
   zh: {
+    sidebarNavigation: '功能导航',
+    sidebarHome: '主页',
+    sidebarMore: '更多',
+    sidebarPin: '固定到侧边栏',
+    sidebarUnpin: '取消固定',
+    sidebarPinFeature: '将{name}固定到侧边栏',
+    sidebarUnpinFeature: '取消固定{name}',
+    sidebarPinSaveFailed: '无法保存侧边栏固定设置，请重试。',
     startupTitle: '让想法，即刻行动。',
     startupDescription: '准备就绪后，将自动进入工作空间。',
     startupPreparing: '正在加载配置与对话',
@@ -273,6 +281,14 @@ export const appTranslations = {
     memoryFlowRecallDescription: '后续任务按含义检索相关内容，不必每次重新交代。',
   },
   en: {
+    sidebarNavigation: 'Navigation',
+    sidebarHome: 'Home',
+    sidebarMore: 'More',
+    sidebarPin: 'Pin to sidebar',
+    sidebarUnpin: 'Unpin from sidebar',
+    sidebarPinFeature: 'Pin {name} to sidebar',
+    sidebarUnpinFeature: 'Unpin {name} from sidebar',
+    sidebarPinSaveFailed: 'Unable to save sidebar pins. Please try again.',
     startupTitle: 'Turn ideas into action',
     startupDescription: 'Your workspace will open when ready.',
     startupPreparing: 'Loading preferences and conversations',

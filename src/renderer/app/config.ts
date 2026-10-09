@@ -118,6 +118,8 @@ export interface AppConfig {
   proxy: ProxySettings;
   // 是否启用开发者模式
   developerMode: boolean;
+  // 用户固定到功能侧边栏的可选入口，按固定顺序排列
+  sidebarPinnedItems?: string[];
   // 本地语音输入与朗读配置
   voice: LocalSpeechSettings;
   // 语言初始化标记 (用于判断是否是首次启动)
@@ -202,6 +204,7 @@ export const defaultConfig: AppConfig = {
   useSystemProxy: false,
   proxy: defaultProxySettings,
   developerMode: false,
+  sidebarPinnedItems: [],
   voice: defaultLocalSpeechSettings,
   app: {
     port: 3000,

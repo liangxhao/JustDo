@@ -178,7 +178,6 @@ import { getGreetingPeriod, pickHomeGreeting } from '@/services/i18n/homeGreetin
 import Modal from '@/shared/components/common/Modal';
 import StartupLoading from '@/shared/components/common/StartupLoading';
 import BrainIcon from '@/shared/components/icons/BrainIcon';
-import ComposeIcon from '@/shared/components/icons/ComposeIcon';
 import FolderIcon from '@/shared/components/icons/FolderIcon';
 import SearchIcon from '@/shared/components/icons/SearchIcon';
 import SidebarToggleIcon from '@/shared/components/icons/SidebarToggleIcon';
@@ -1743,13 +1742,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             >
               <SidebarToggleIcon className="h-4 w-4" isCollapsed={true} />
             </button>
-            <button
-              type="button"
-              onClick={onNewChat}
-              className="inline-flex h-7 w-8 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised"
-            >
-              <ComposeIcon className="h-4 w-4" />
-            </button>
           </div>
         )}
       </div>
@@ -2539,13 +2531,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                       className="inline-flex h-7 w-8 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised"
                     >
                       <SidebarToggleIcon className="h-4 w-4" isCollapsed={true} />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={onNewChat}
-                      className="inline-flex h-7 w-8 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised"
-                    >
-                      <ComposeIcon className="h-4 w-4" />
                     </button>
                   </div>
                 )}

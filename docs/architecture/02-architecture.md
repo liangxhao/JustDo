@@ -8,6 +8,8 @@
 
 Renderer 同时接收两类数据：preload 提供产品命令与系统能力；集中式聊天控制器连接 loopback Gateway，接收消息与执行流。React 负责页面和工作区，Lit 负责高频聊天渲染，Redux 负责产品 UI 状态。
 
+应用外壳的左侧功能导航为 44px 图标栏，顶部固定为主页、定时任务、插件与更多，设置齿轮位于底部。主页显示独立的聊天列表面板（新聊天、搜索与已有会话）；切换到其他功能或收起聊天列表后，图标栏仍保留。记忆及已启用的 Workboard 从更多进入，可逐项固定或取消固定，固定入口排列在更多之后。侧边栏偏好通过既有 ConfigService / preload Store 保存为 `app_config.sidebarPinnedItems`，只持久化功能 ID 与顺序；Workboard 暂时不可用时隐藏入口但保留固定偏好，不复制插件配置或聊天历史。
+
 ```mermaid
 flowchart TB
   subgraph Desktop[Electron 产品宿主]
