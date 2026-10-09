@@ -16,7 +16,6 @@ import {
   isGoalClearCommand,
   isGoalSlashCommand,
   parseGoalStartObjective,
-  parsePlanSlashCommandPrompt,
   shouldClearSlashCommandComposerBeforeExecution,
 } from '@shared/cowork/slashCommands';
 import type { SwarmWorkflowOptions } from '@shared/cowork/swarmWorkflow';
@@ -136,12 +135,14 @@ import {
   submitMessageQuoteDrafts,
   submittedMessageQuotes,
 } from './messageQuote';
+import PlanModeBadge from './PlanModeBadge';
 import { canClearSubmittedDraft } from './sessionSubmission';
 import { buildSwarmWorkflowComposerFeature } from './swarmWorkflowComposerFeature';
 import { blocksSwarmWorkflowGoalSubmission } from './swarmWorkflowSubmission';
 import { useComposerAttachments } from './useComposerAttachments';
 import { useComposerFeatureDraft } from './useComposerFeatureDraft';
 import { useGoalReadiness } from './useGoalReadiness';
+import { usePlanModeComposerFeature } from './usePlanModeComposerFeature';
 
 // CoworkAttachment is aliased from the Redux-persisted DraftAttachment type
 // so that attachment state survives view switches (cowork ↔ skills, etc.)
@@ -310,8 +311,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       OpenClawExtensionId.SWARM_WORKFLOW,
       extensionEnablement,
     );
-    const swarmWorkflowPlanMode = useSelector((state: RootState) =>
-      sessionId ? state.cowork.planModeBySession[sessionId] : state.cowork.newSessionPlanMode,
+    const planModeEnabled = useSelector((state: RootState) =>
+      sessionId
+        ? (state.cowork.planModeBySession[sessionId] ?? false)
+        : state.cowork.newSessionPlanMode,
     );
     const currentDraftKeyRef = useRef(draftKey);
     currentDraftKeyRef.current = draftKey;
@@ -340,10 +343,12 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         let instruction: string | undefined;
         if (swarmWorkflowOptions) {
           if (!isCurrentSwarmWorkflow(draftKey, swarmWorkflowOptions)) return false;
-          if (swarmWorkflowPlanMode || prompt.trimStart().startsWith('/')) {
+          if (planModeEnabled || prompt.trimStart().startsWith('/')) {
             window.dispatchEvent(
               new CustomEvent('app:showToast', {
-                detail: i18nService.t(swarmWorkflowPlanMode ? 'swarmWorkflowPlan' : 'swarmWorkflowInvalid'),
+                detail: i18nService.t(
+                  planModeEnabled ? 'swarmWorkflowPlan' : 'swarmWorkflowInvalid',
+                ),
               }),
             );
             return false;
@@ -412,7 +417,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         swarmWorkflowOptions,
         isCurrentSwarmWorkflow,
         clearAcceptedSwarmWorkflow,
-        swarmWorkflowPlanMode,
+        planModeEnabled,
         sessionId,
       ],
     );
@@ -986,9 +991,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
     const handleSubmit = useCallback(
       async (promptOverride?: string) => {
-        let promptValue = promptOverride ?? value;
-        let trimmedValue = promptValue.trim();
-        // Refuse before any goal mutation, plan command, attachment staging or
+        const promptValue = promptOverride ?? value;
+        const trimmedValue = promptValue.trim();
+        // Refuse before any goal mutation, attachment staging or
         // draft clearing: those routes bypass the normal Swarm Workflow send wrapper.
         if (
           blocksSwarmWorkflowGoalSubmission({
@@ -1043,40 +1048,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             }),
           );
           return;
-        }
-        const planPrompt = parsePlanSlashCommandPrompt(trimmedValue);
-        const submittedViaPlanCommand = planPrompt !== null;
-        if (planPrompt !== null) {
-          if (
-            submissionAvailabilityRef.current.isRunActive ||
-            isStopPending() ||
-            submissionAvailabilityRef.current.disabled
-          )
-            return;
-          if (submittedDraftsRef.current.has(draftKey)) return;
-          submittedDraftsRef.current.add(draftKey);
-          try {
-            const success = await coworkService.setPlanMode(sessionId, true);
-            if (!success) {
-              window.dispatchEvent(
-                new CustomEvent('app:showToast', {
-                  detail: i18nService.t('planModeSaveFailed'),
-                }),
-              );
-              return;
-            }
-            promptValue = planPrompt;
-            trimmedValue = planPrompt;
-            if (renderedSessionIdRef.current === sessionId) {
-              latestValueRef.current = planPrompt;
-              setValue(planPrompt);
-            }
-            dispatch(setDraftPrompt({ sessionId: draftKey, draft: planPrompt }));
-            resetSlashMenuState();
-          } finally {
-            submittedDraftsRef.current.delete(draftKey);
-          }
-          if (!planPrompt) return;
         }
         if (rejectBlockedSlashCommand(trimmedValue)) return;
         if (browserRecording && completionFeedbackRef.current) {
@@ -1142,7 +1113,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
               goalForResume.status === SessionGoalStatus.BudgetLimited ||
               executionAwaitsInputForGoal) &&
             !isRunActive &&
-            !submittedViaPlanCommand &&
             !isGoalSlashCommand(trimmedValue);
           if (resumeWithInput && browserRecording) {
             window.dispatchEvent(
@@ -1333,7 +1303,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             );
           };
           const feedback = submittedCompletionFeedback;
-          if (feedback && sessionId && !submittedViaPlanCommand && !trimmedValue.startsWith('/')) {
+          if (feedback && sessionId && !trimmedValue.startsWith('/')) {
             const outcome = await submitGoalCompletionFeedback({
               completedGoalId: feedback.completedGoalId,
               preparedObjective: feedback.preparedObjective,
@@ -1437,10 +1407,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             clearSubmittedBrowserAnnotations();
             return;
           }
-          const goalObjective =
-            submittedViaPlanCommand || isRunActive ? null : parseGoalStartObjective(trimmedValue);
-          const goalClear =
-            !isRunActive && !submittedViaPlanCommand && isGoalClearCommand(trimmedValue);
+          const goalObjective = isRunActive ? null : parseGoalStartObjective(trimmedValue);
+          const goalClear = !isRunActive && isGoalClearCommand(trimmedValue);
           if (goalObjective) {
             cancelGoalClear();
             setPendingGoalObjective(goalObjective);
@@ -1450,9 +1418,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           }
 
           const clearBeforeSubmit =
-            submittedViaPlanCommand || isRunActive
-              ? false
-              : shouldClearSlashCommandComposerBeforeExecution(trimmedValue);
+            !isRunActive && shouldClearSlashCommandComposerBeforeExecution(trimmedValue);
           if (clearBeforeSubmit) {
             clearSubmittedInput();
           }
@@ -1538,7 +1504,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         mutateGoal,
         runGoalAction,
         updateCompletionFeedback,
-        resetSlashMenuState,
         isSideChat,
       ],
     );
@@ -1909,6 +1874,12 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       dragDepthRef,
       setIsDraggingFiles,
     });
+    const planModeComposerFeature = usePlanModeComposerFeature({
+      sessionId,
+      enabled: planModeEnabled,
+      disabled,
+      runActive: isRunActive,
+    });
     const composerFeatures = buildComposerFeatures(
       [
         ...(supportsAttachments
@@ -1922,6 +1893,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
               },
             ]
           : []),
+        planModeComposerFeature,
         {
           ...swarmWorkflowComposerFeature,
           section: i18nService.t('composerPlugins'),
@@ -2868,7 +2840,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                       <ComposerFeatureMenu
                         items={composerFeatures}
                         label={i18nService.t('composerFeatures')}
-                        disabled={disabled || composerFeatures.every(item => item.disabled)}
+                        disabled={composerFeatures.every(item => item.disabled)}
                       />
                     )}
                     {supportsSpeechInput && (
@@ -2891,7 +2863,15 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                       </button>
                     )}
                     {supportsAgentControls && (
-                      <PermissionModeSelector disabled={disabled} runActive={isRunActive} />
+                      <>
+                        <PermissionModeSelector disabled={disabled} />
+                        {planModeEnabled && (
+                          <PlanModeBadge
+                            disabled={planModeComposerFeature.disabled}
+                            onRemove={planModeComposerFeature.onSelect}
+                          />
+                        )}
+                      </>
                     )}
                   </div>
                   {supportsAgentControls && <ActiveSkillBadge />}
@@ -3135,7 +3115,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                       <ComposerFeatureMenu
                         items={composerFeatures}
                         label={i18nService.t('composerFeatures')}
-                        disabled={disabled || composerFeatures.every(item => item.disabled)}
+                        disabled={composerFeatures.every(item => item.disabled)}
                       />
                     )}
                     {supportsSpeechInput && (
@@ -3159,7 +3139,13 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                     )}
                     {supportsAgentControls && (
                       <>
-                        <PermissionModeSelector disabled={disabled} runActive={isRunActive} />
+                        <PermissionModeSelector disabled={disabled} />
+                        {planModeEnabled && (
+                          <PlanModeBadge
+                            disabled={planModeComposerFeature.disabled}
+                            onRemove={planModeComposerFeature.onSelect}
+                          />
+                        )}
                         {!hasNoAvailableModels && contextUsageBadge}
                       </>
                     )}

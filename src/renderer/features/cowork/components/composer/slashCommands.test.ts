@@ -3,7 +3,7 @@ import { describe, expect, test } from 'vitest';
 import { getSlashCommandCompletions, mergeAppSlashCommands, SLASH_COMMANDS } from './slashCommands';
 
 describe('composer slash commands', () => {
-  test('keeps the app-owned Plan command when Gateway commands refresh', () => {
+  test('does not add the retired Plan command when Gateway commands refresh', () => {
     const commands = mergeAppSlashCommands([
       {
         key: 'compact',
@@ -13,13 +13,12 @@ describe('composer slash commands', () => {
       },
     ]);
 
-    expect(commands.map(command => command.name)).toEqual(['compact', 'plan']);
-    expect(getSlashCommandCompletions('pla', { commands })).toMatchObject([
-      { name: 'plan', executeLocal: true },
-    ]);
+    expect(commands.map(command => command.name)).toEqual(['compact']);
+    expect(getSlashCommandCompletions('pla', { commands })).toEqual([]);
+    expect(SLASH_COMMANDS.map(command => command.name)).not.toContain('plan');
   });
 
-  test('keeps the app-owned Plan definition when a future Gateway advertises it', () => {
+  test('hides the retired Plan command even when the Gateway advertises it', () => {
     const gatewayPlan = {
       key: 'plan',
       name: 'plan',
@@ -27,13 +26,10 @@ describe('composer slash commands', () => {
       category: 'session' as const,
     };
 
-    expect(mergeAppSlashCommands([gatewayPlan])).toEqual([
-      expect.objectContaining({ name: 'plan', executeLocal: true }),
-    ]);
-    expect(SLASH_COMMANDS).toContainEqual(expect.objectContaining({ name: 'plan' }));
+    expect(mergeAppSlashCommands([gatewayPlan])).toEqual([]);
   });
 
-  test('removes a conflicting Plan alias from a Gateway command', () => {
+  test('removes the retired Plan alias from a Gateway command', () => {
     expect(
       mergeAppSlashCommands([
         {
@@ -43,10 +39,7 @@ describe('composer slash commands', () => {
           description: 'Future command.',
         },
       ]),
-    ).toEqual([
-      expect.objectContaining({ name: 'future', aliases: ['later'] }),
-      expect.objectContaining({ name: 'plan', executeLocal: true }),
-    ]);
+    ).toEqual([expect.objectContaining({ name: 'future', aliases: ['later'] })]);
   });
 
   test('keeps the internal side-chat protocol out of the user command menu', () => {

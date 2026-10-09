@@ -30,7 +30,7 @@ describe('justDoSlashCommandPolicy', () => {
     ).toBe(false);
   });
 
-  test.each(['dashboard', 'openclaw', 'update'])('hides /%s from the composer', name => {
+  test.each(['dashboard', 'openclaw', 'update', 'plan'])('hides /%s from the composer', name => {
     expect(
       justDoSlashCommandPolicy.include?.(createCommand(name), {
         options: {},

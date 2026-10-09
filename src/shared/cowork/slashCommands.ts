@@ -31,8 +31,6 @@ export interface SlashCommandBehavior {
   clearComposerBeforeExecution?: boolean;
 }
 
-const PLAN_SLASH_COMMAND_PATTERN = /^\/plan(?:\s+([\s\S]+))?$/i;
-
 const DEFAULT_SLASH_COMMAND_BEHAVIOR: Readonly<SlashCommandBehavior> = {
   execution: SlashCommandExecution.Gateway,
 };
@@ -53,6 +51,7 @@ const MANAGED_SLASH_COMMANDS = new Set([
   'node',
   'nodes',
   'openclaw',
+  'plan',
   'plugin',
   'plugins',
   'restart',
@@ -65,10 +64,6 @@ const MANAGED_SLASH_COMMANDS = new Set([
  */
 const SPECIAL_SLASH_COMMAND_BEHAVIORS: Readonly<Record<string, SlashCommandBehavior>> = {
   compact: {
-    execution: SlashCommandExecution.Local,
-    clearComposerBeforeExecution: true,
-  },
-  plan: {
     execution: SlashCommandExecution.Local,
     clearComposerBeforeExecution: true,
   },
@@ -92,14 +87,11 @@ export const resolveSlashCommandBehavior = (
 ): (ParsedSlashCommand & SlashCommandBehavior) | null => {
   const command = parseSlashCommand(value);
   if (!command) return null;
-  const planPrompt = parsePlanSlashCommandPrompt(value);
   return {
     ...command,
     ...(MANAGED_SLASH_COMMANDS.has(command.name)
       ? { execution: SlashCommandExecution.Blocked }
-      : command.name === 'plan' && planPrompt === null
-        ? DEFAULT_SLASH_COMMAND_BEHAVIOR
-        : (SPECIAL_SLASH_COMMAND_BEHAVIORS[command.name] ?? DEFAULT_SLASH_COMMAND_BEHAVIOR)),
+      : (SPECIAL_SLASH_COMMAND_BEHAVIORS[command.name] ?? DEFAULT_SLASH_COMMAND_BEHAVIOR)),
   };
 };
 
@@ -125,16 +117,6 @@ const GOAL_CREATE_ACTIONS = new Set(['create', 'set', 'start']);
 
 export const isGoalSlashCommand = (value: string): boolean =>
   parseSlashCommand(value)?.name === 'goal';
-
-export const parsePlanSlashCommandPrompt = (value: string): string | null => {
-  const match = PLAN_SLASH_COMMAND_PATTERN.exec(value.trim());
-  if (!match) return null;
-  const prompt = match[1]?.trim() ?? '';
-  return prompt.startsWith(':') ? null : prompt;
-};
-
-export const isPlanSlashCommand = (value: string): boolean =>
-  parsePlanSlashCommandPrompt(value) !== null;
 
 export const isGoalClearCommand = (value: string): boolean => {
   const command = parseSlashCommand(value);
@@ -178,6 +160,7 @@ export const SlashCommandBlacklist: ReadonlySet<string> = new Set([
   'name',
   'clear',
   'session',
+  'plan',
   'model',
   'models',
   'think',

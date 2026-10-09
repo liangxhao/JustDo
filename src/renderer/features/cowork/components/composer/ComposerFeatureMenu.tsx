@@ -1,4 +1,4 @@
-import { CheckIcon, PlusIcon } from '@heroicons/react/24/outline';
+import { PlusIcon } from '@heroicons/react/24/outline';
 import { Fragment, type ReactNode, useEffect, useId, useRef, useState } from 'react';
 
 export interface ComposerFeatureItem {
@@ -102,7 +102,7 @@ export default function ComposerFeatureMenu({
             setOpen(true);
           }
         }}
-        className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-transparent transition-colors disabled:opacity-40 ${items.some(item => item.selected) ? 'text-primary' : 'text-secondary hover:text-foreground'}`}
+        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-transparent text-secondary transition-colors hover:text-foreground disabled:opacity-40"
       >
         <span aria-hidden="true">{triggerIcon ?? <PlusIcon className="h-4 w-4" />}</span>
       </button>
@@ -164,9 +164,6 @@ export default function ComposerFeatureMenu({
                     </span>
                   )}
                 </span>
-                {item.selected && (
-                  <CheckIcon aria-hidden="true" className="h-4 w-4 shrink-0 text-primary" />
-                )}
               </button>
             </Fragment>
           ))}

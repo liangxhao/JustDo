@@ -36,7 +36,7 @@ vi.mock('@/services/i18n', () => ({
 const openSelector = () =>
   fireEvent.click(screen.getByRole('button', { name: 'permissionModeTitle' }));
 
-describe('PermissionModeSelector Plan mode', () => {
+describe('PermissionModeSelector', () => {
   beforeEach(() => {
     mocks.state.cowork.config.permissionMode = 'ask';
     mocks.state.cowork.currentSession = null;
@@ -48,23 +48,21 @@ describe('PermissionModeSelector Plan mode', () => {
 
   afterEach(cleanup);
 
-  test('offers Plan as the third permission-menu entry and enables it locally', async () => {
+  test('offers only execution permissions without a Plan entry', () => {
     render(<PermissionModeSelector />);
     openSelector();
 
     expect(screen.getAllByRole('option').map(option => option.textContent)).toEqual([
       'permissionModeAskpermissionModeAskDescription',
       'permissionModeAutopermissionModeAutoDescription',
-      'planModeTitleplanModeDescription',
       'permissionModeFullpermissionModeFullDescription',
     ]);
-    fireEvent.click(screen.getByText('planModeTitle').closest('button')!);
-
-    await waitFor(() => expect(mocks.setPlanMode).toHaveBeenCalledWith(undefined, true));
+    expect(screen.queryByText('planModeTitle')).toBeNull();
+    expect(mocks.setPlanMode).not.toHaveBeenCalled();
     expect(mocks.updatePermissionMode).not.toHaveBeenCalled();
   });
 
-  test('selecting a permission exits an active session Plan mode without passing Plan to permission IPC', async () => {
+  test('changing permissions leaves the independently selected Plan mode intact', async () => {
     mocks.state.cowork.currentSession = { id: 'session-1', permissionMode: 'ask' };
     mocks.state.cowork.planModeBySession = { 'session-1': true };
     render(<PermissionModeSelector />);
@@ -72,25 +70,25 @@ describe('PermissionModeSelector Plan mode', () => {
 
     fireEvent.click(screen.getByText('permissionModeAuto').closest('button')!);
 
-    await waitFor(() => expect(mocks.setPlanMode).toHaveBeenCalledWith('session-1', false));
-    expect(mocks.updatePermissionMode).toHaveBeenCalledWith('auto');
-    expect(mocks.updatePermissionMode).not.toHaveBeenCalledWith('plan');
+    await waitFor(() => expect(mocks.updatePermissionMode).toHaveBeenCalledWith('auto'));
+    expect(mocks.setPlanMode).not.toHaveBeenCalled();
+    expect(screen.queryByText('planModeTitle')).toBeNull();
   });
 
-  test('does not change the underlying permission when exiting Plan mode fails', async () => {
-    mocks.state.cowork.currentSession = { id: 'session-1', permissionMode: 'ask' };
-    mocks.state.cowork.planModeBySession = { 'session-1': true };
-    mocks.setPlanMode.mockResolvedValue(false);
+  test('closes the menu without saving when selecting the current permission', () => {
     render(<PermissionModeSelector />);
     openSelector();
 
-    fireEvent.click(screen.getByText('permissionModeAuto').closest('button')!);
+    fireEvent.click(
+      screen.getByRole('option', { name: 'permissionModeAskpermissionModeAskDescription' }),
+    );
 
-    await waitFor(() => expect(mocks.setPlanMode).toHaveBeenCalledWith('session-1', false));
+    expect(screen.queryByRole('listbox')).toBeNull();
+    expect(mocks.setPlanMode).not.toHaveBeenCalled();
     expect(mocks.updatePermissionMode).not.toHaveBeenCalled();
   });
 
-  test('restores Plan mode when the requested permission fails to save', async () => {
+  test('shows permission save failures without changing Plan mode', async () => {
     mocks.state.cowork.currentSession = { id: 'session-1', permissionMode: 'ask' };
     mocks.state.cowork.planModeBySession = { 'session-1': true };
     mocks.updatePermissionMode.mockResolvedValue({ success: false, error: 'save failed' });
@@ -99,35 +97,29 @@ describe('PermissionModeSelector Plan mode', () => {
 
     fireEvent.click(screen.getByText('permissionModeAuto').closest('button')!);
 
-    await waitFor(() => expect(mocks.setPlanMode).toHaveBeenCalledTimes(2));
-    expect(mocks.setPlanMode.mock.calls).toEqual([
-      ['session-1', false],
-      ['session-1', true],
-    ]);
+    await waitFor(() => expect(screen.getByText('save failed')).toBeTruthy());
+    expect(mocks.setPlanMode).not.toHaveBeenCalled();
     expect(mocks.updatePermissionMode).toHaveBeenCalledWith('auto');
   });
 
-  test('switches away from Plan mode without stopping an active run', async () => {
-    mocks.state.cowork.currentSession = { id: 'session-1', permissionMode: 'ask' };
-    mocks.state.cowork.planModeBySession = { 'session-1': true };
-    render(<PermissionModeSelector runActive />);
+  test('requires confirmation before granting full access', async () => {
+    render(<PermissionModeSelector />);
 
     openSelector();
-    fireEvent.click(screen.getByText('permissionModeAuto').closest('button')!);
+    fireEvent.click(screen.getByText('permissionModeFull').closest('button')!);
+    expect(mocks.updatePermissionMode).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'permissionModeFullConfirmAction' }));
 
-    await waitFor(() => expect(mocks.updatePermissionMode).toHaveBeenCalledWith('auto'));
-    expect(mocks.setPlanMode).toHaveBeenCalledWith('session-1', false);
+    await waitFor(() => expect(mocks.updatePermissionMode).toHaveBeenCalledWith('full'));
+    expect(mocks.setPlanMode).not.toHaveBeenCalled();
   });
 
-  test('allows leaving Plan mode while the Plan review disables normal input', async () => {
+  test('keeps the permission selector disabled during Plan review', () => {
     mocks.state.cowork.currentSession = { id: 'session-1', permissionMode: 'ask' };
     mocks.state.cowork.planModeBySession = { 'session-1': true };
     render(<PermissionModeSelector disabled />);
 
-    openSelector();
-    fireEvent.click(screen.getByText('permissionModeAuto').closest('button')!);
-
-    await waitFor(() => expect(mocks.setPlanMode).toHaveBeenCalledWith('session-1', false));
-    expect(mocks.updatePermissionMode).toHaveBeenCalledWith('auto');
+    expect((screen.getByRole('button') as HTMLButtonElement).disabled).toBe(true);
+    expect(mocks.setPlanMode).not.toHaveBeenCalled();
   });
 });

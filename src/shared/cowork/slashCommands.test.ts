@@ -4,9 +4,7 @@ import {
   hasSlashCommandBeforeSendHook,
   isGoalClearCommand,
   isGoalEditCommand,
-  isPlanSlashCommand,
   parseGoalStartObjective,
-  parsePlanSlashCommandPrompt,
   parseSlashCommand,
   resolveSlashCommandBehavior,
   shouldClearSlashCommandComposerBeforeExecution,
@@ -53,33 +51,21 @@ describe('slash command behavior', () => {
 
   it('describes special command behavior centrally', () => {
     expect(shouldClearSlashCommandComposerBeforeExecution('/compact')).toBe(true);
-    expect(resolveSlashCommandBehavior('/plan')).toMatchObject({
-      name: 'plan',
-      execution: 'local',
-      clearComposerBeforeExecution: true,
-    });
-    expect(isPlanSlashCommand('/PLAN')).toBe(true);
-    expect(isPlanSlashCommand('/plan implement this')).toBe(true);
-    expect(parsePlanSlashCommandPrompt('/plan implement this')).toBe('implement this');
-    expect(parsePlanSlashCommandPrompt('/PLAN  line one\nline two')).toBe('line one\nline two');
-    expect(isPlanSlashCommand('/plan:')).toBe(false);
-    expect(isPlanSlashCommand('/plan: implement this')).toBe(false);
-    expect(isPlanSlashCommand('/plan : implement this')).toBe(false);
-    expect(resolveSlashCommandBehavior('/plan implement this')).toMatchObject({
-      execution: 'local',
-      clearComposerBeforeExecution: true,
-    });
-    expect(shouldClearSlashCommandComposerBeforeExecution('/plan implement this')).toBe(true);
-    expect(resolveSlashCommandBehavior('/plan:')).toMatchObject({ execution: 'gateway' });
-    expect(resolveSlashCommandBehavior('/plan : implement this')).toMatchObject({
-      execution: 'gateway',
-    });
-    expect(shouldClearSlashCommandComposerBeforeExecution('/plan:')).toBe(false);
-    expect(isPlanSlashCommand('/planning')).toBe(false);
     expect(
       hasSlashCommandBeforeSendHook('/goal ship it', SlashCommandBeforeSendHook.EnsureSessionEntry),
     ).toBe(true);
   });
+
+  it.each(['/plan', '/PLAN implement this', '/plan:', '/plan : implement this'])(
+    'rejects the retired Plan command %s without clearing the draft',
+    value => {
+      expect(resolveSlashCommandBehavior(value)).toMatchObject({
+        name: 'plan',
+        execution: 'blocked',
+      });
+      expect(shouldClearSlashCommandComposerBeforeExecution(value)).toBe(false);
+    },
+  );
 
   it.each([
     'exec',
