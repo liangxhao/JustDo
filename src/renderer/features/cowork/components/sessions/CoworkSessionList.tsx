@@ -179,8 +179,8 @@ const UngroupedDroppableZone: React.FC<UngroupedDroppableZoneProps> = ({
   );
 
   return (
-    <div ref={setNodeRef} className="mt-2">
-      <div className="px-2.5 pt-2 pb-1">
+    <div ref={setNodeRef} className="mt-1.5">
+      <div className="px-2.5 py-1">
         <span className="text-xs font-medium text-secondary">{i18nService.t('coworkHistory')}</span>
       </div>
       <div className={isOver ? 'rounded-lg bg-blue-500/10 ring-1 ring-blue-400/30' : ''}>
@@ -193,7 +193,7 @@ const UngroupedDroppableZone: React.FC<UngroupedDroppableZoneProps> = ({
                   <button
                     type="button"
                     onClick={() => toggleDateGroup(group.key)}
-                    className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-surface-raised"
+                    className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left transition-colors hover:bg-surface-raised"
                     aria-expanded={!isCollapsed}
                     aria-label={`${label} · ${group.sessions.length} · ${i18nService.t(
                       isCollapsed ? 'expand' : 'collapse',
@@ -483,7 +483,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
     <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
       <div className="space-y-px">
         {/* 对话分组 section */}
-        <div className="flex items-center justify-between px-2.5 pt-2 pb-1">
+        <div className="flex items-center justify-between px-2.5 py-1">
           <span className="text-xs font-medium text-secondary">
             {i18nService.t('groupedSessions')}
           </span>

@@ -26,7 +26,6 @@ import {
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 
-import WindowHeader from '@/app/shell/window/WindowHeader';
 import { i18nService } from '@/services/i18n';
 import ComposeIcon from '@/shared/components/icons/ComposeIcon';
 import SidebarToggleIcon from '@/shared/components/icons/SidebarToggleIcon';
@@ -280,7 +279,6 @@ const WorkboardView: React.FC<Props> = ({ isSidebarCollapsed, onToggleSidebar, o
 
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
-      <WindowHeader />
       {isSidebarCollapsed && (
         <div className="relative flex h-[2.1875rem] shrink-0 items-center justify-between border-b border-border px-4">
           <div className="flex h-8 items-center">

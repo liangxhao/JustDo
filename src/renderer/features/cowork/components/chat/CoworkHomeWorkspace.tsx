@@ -31,7 +31,6 @@ import type { FilePreview } from '../preview/FilePreviewDrawer';
 import type { CoworkTerminalTab, SessionDisplayState } from '../preview/useSessionDisplayState';
 
 interface CoworkHomeWorkspaceProps {
-  windowHeader: React.JSX.Element;
   homeConversationHeader: React.JSX.Element;
   greetingKey: string;
   promptInputRef: React.RefObject<CoworkPromptInputRef>;
@@ -82,7 +81,6 @@ interface CoworkHomeWorkspaceProps {
 }
 
 export function CoworkHomeWorkspace({
-  windowHeader,
   homeConversationHeader,
   greetingKey,
   promptInputRef,
@@ -120,7 +118,6 @@ export function CoworkHomeWorkspace({
 }: CoworkHomeWorkspaceProps) {
   return (
     <div className="cowork-home flex-1 flex flex-col h-full">
-      {windowHeader}
       <div className="cowork-display-host relative flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col">
           {homeConversationHeader}

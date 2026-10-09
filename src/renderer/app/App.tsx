@@ -843,7 +843,9 @@ const App: React.FC = () => {
         )}
       </BottomRightStatusStack>
       {toast && <Toast {...toast} onClose={() => setToast(null)} />}
-      <div className="flex flex-1 min-h-0 overflow-hidden">
+      <div
+        className={`${showSettings ? 'flex' : 'grid grid-cols-[2.75rem_auto_minmax(0,1fr)] grid-rows-[2.25rem_minmax(0,1fr)]'} flex-1 min-h-0 overflow-hidden`}
+      >
         {showSettings && (
           <div className="flex-1 min-w-0 p-1.5">
             <div className="relative h-full min-h-0 overflow-hidden rounded-xl bg-background">
@@ -872,10 +874,19 @@ const App: React.FC = () => {
             onRevealSearchMatch={match => coworkViewRef.current?.revealSearchMatch(match)}
           />
         )}
+        {!showSettings && (
+          <div
+            className={`col-start-2 col-span-2 row-start-1 min-w-0 pt-1.5 pr-1.5 ${isSidebarCollapsed || mainView !== SidebarView.Home ? 'pl-1.5' : ''}`}
+          >
+            <div className="overflow-hidden rounded-t-xl bg-background">
+              <WindowHeader />
+            </div>
+          </div>
+        )}
         <div
-          className={`${showSettings ? 'hidden' : 'flex-1'} min-w-0 py-1.5 pr-1.5 ${isSidebarCollapsed || mainView !== SidebarView.Home ? 'pl-1.5' : ''}`}
+          className={`${showSettings ? 'hidden' : ''} col-start-3 row-start-2 min-h-0 min-w-0 pb-1.5 pr-1.5 ${isSidebarCollapsed || mainView !== SidebarView.Home ? 'pl-1.5' : ''}`}
         >
-          <div className="relative h-full min-h-0 rounded-xl bg-background overflow-hidden">
+          <div className="relative h-full min-h-0 rounded-b-xl bg-background overflow-hidden">
             {mainView === 'scheduledTasks' && (
               <CronView
                 isSidebarCollapsed={false}

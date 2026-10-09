@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -13,6 +13,7 @@ const state = vi.hoisted(() => ({
   cowork: { sessionListStatus: 'ready' },
   scheduledTask: { unreadResultCount: 0 },
 }));
+const config = vi.hoisted(() => ({ developerMode: false }));
 
 vi.mock('react-redux', () => ({
   useSelector: (selector: (value: typeof state) => unknown) => selector(state),
@@ -36,13 +37,14 @@ vi.mock('@/features/cowork/components/sessions/CoworkSearchModal', () => ({
     isOpen ? <div role="dialog">session-search</div> : null,
 }));
 vi.mock('@/services/config', () => ({
-  configService: { getConfig: () => ({ developerMode: false }) },
+  configService: { getConfig: () => config },
 }));
 vi.mock('@/services/i18n', () => ({
   i18nService: { t: (key: string) => translations.zh[key] ?? key },
 }));
 
 beforeEach(() => {
+  config.developerMode = false;
   Object.defineProperty(window, 'electron', {
     configurable: true,
     value: { platform: 'win32' },
@@ -150,5 +152,53 @@ describe('Sidebar', () => {
     fireEvent(window, new Event('cowork:shortcut:search'));
     expect(screen.getByRole('dialog').textContent).toBe('session-search');
     expect(props.onShowCowork).toHaveBeenCalledOnce();
+  });
+
+  it('opens WebChat from More in developer mode even when the home list is collapsed', async () => {
+    config.developerMode = true;
+    const openExternal = vi.fn(async () => undefined);
+    const getPort = vi.fn(async () => ({ success: true, port: 18789 }));
+    const getToken = vi.fn(async () => ({ success: true, token: 'test-only-token' }));
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        platform: 'win32',
+        openclaw: { engine: { getPort, getToken } },
+        shell: { openExternal },
+      },
+    });
+    const props = createProps();
+    render(<Sidebar {...props} isCollapsed />);
+    expect(screen.queryByRole('button', { name: translations.zh.openChatWeb })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: translations.zh.sidebarMore }));
+    fireEvent.click(
+      within(screen.getByRole('dialog', { name: translations.zh.sidebarMore })).getByRole(
+        'button',
+        { name: translations.zh.openChatWeb },
+      ),
+    );
+    expect(screen.queryByRole('dialog')).toBeNull();
+    await waitFor(() =>
+      expect(openExternal).toHaveBeenCalledWith('http://127.0.0.1:18789/#token=test-only-token'),
+    );
+    expect(props.onShowCowork).not.toHaveBeenCalled();
+  });
+
+  it('keeps WebChat hidden outside developer mode and updates an open More menu on mode changes', () => {
+    render(<Sidebar {...createProps()} />);
+    fireEvent.click(screen.getByRole('button', { name: translations.zh.sidebarMore }));
+    const more = within(screen.getByRole('dialog', { name: translations.zh.sidebarMore }));
+    expect(more.queryByRole('button', { name: translations.zh.openChatWeb })).toBeNull();
+    config.developerMode = true;
+    fireEvent(window, new Event('config-updated'));
+    expect(more.getByRole('button', { name: translations.zh.openChatWeb })).toBeTruthy();
+    expect(
+      within(screen.getByRole('complementary')).queryByRole('button', {
+        name: translations.zh.openChatWeb,
+      }),
+    ).toBeNull();
+    config.developerMode = false;
+    fireEvent(window, new Event('config-updated'));
+    expect(more.queryByRole('button', { name: translations.zh.openChatWeb })).toBeNull();
   });
 });

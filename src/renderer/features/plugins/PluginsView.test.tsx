@@ -5,8 +5,8 @@ import { afterEach, expect, test, vi } from 'vitest';
 
 import PluginsView from './PluginsView';
 
-vi.mock('@/app/shell/window/WindowTitleBar', () => ({
-  default: () => null,
+vi.mock('@/features/plugins/mcp/mcpService', () => ({
+  mcpService: { loadExtensionServers: vi.fn(async () => []) },
 }));
 vi.mock('@/features/plugins/extensions/ExtensionsManager', () => ({
   default: (props: { searchQuery: string; visibility: string }) => (

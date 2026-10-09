@@ -30,7 +30,6 @@ import type {
 import { MemoryIndexHealth } from '@shared/openclaw/memory';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import WindowHeader from '@/app/shell/window/WindowHeader';
 import { toSanitizedMarkdownHtml } from '@/libs/openclaw-chat/components/markdown';
 import { i18nService } from '@/services/i18n';
 import ComposeIcon from '@/shared/components/icons/ComposeIcon';
@@ -847,7 +846,6 @@ const AgentMemoryView: React.FC<
 
   return (
     <div className="memory-view relative flex h-full min-h-0 flex-col">
-      <WindowHeader />
       {isSidebarCollapsed && (
         <div className="relative flex h-[2.1875rem] shrink-0 items-center justify-between border-b border-border px-4">
           <div className="flex h-8 items-center">

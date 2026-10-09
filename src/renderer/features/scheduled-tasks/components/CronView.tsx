@@ -38,7 +38,6 @@ import type {
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 
-import WindowHeader from '@/app/shell/window/WindowHeader';
 import type { Model } from '@/features/models/modelSlice';
 import { toOpenClawModelRef } from '@/features/models/openclawModelRef';
 import ResultInbox from '@/features/scheduled-tasks/components/ResultInbox';
@@ -2101,7 +2100,6 @@ export const CronView: React.FC<CronViewProps> = ({
   if (loading && tasks.length === 0) {
     return (
       <div className="flex flex-col h-full">
-        <WindowHeader />
         <div className="flex flex-1 flex-col items-center justify-center">
           <ArrowPathIcon className="h-8 w-8 animate-spin text-secondary" />
           <p className="mt-3 text-sm text-secondary">{t('loading')}</p>
@@ -2112,8 +2110,6 @@ export const CronView: React.FC<CronViewProps> = ({
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header */}
-      <WindowHeader />
       {isSidebarCollapsed && (
         <div className="flex h-[2.1875rem] items-center justify-between px-4 border-b border-border shrink-0">
           <div className="flex items-center space-x-3 h-8">

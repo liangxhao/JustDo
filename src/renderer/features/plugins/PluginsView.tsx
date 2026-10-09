@@ -6,7 +6,6 @@ import {
 } from '@heroicons/react/24/outline';
 import React, { useEffect, useState } from 'react';
 
-import WindowHeader from '@/app/shell/window/WindowHeader';
 import ExtensionsManager from '@/features/plugins/extensions/ExtensionsManager';
 import HookManager from '@/features/plugins/hooks/HookManager';
 import McpManager from '@/features/plugins/mcp/McpManager';
@@ -84,7 +83,6 @@ const PluginsView: React.FC<PluginsViewProps> = ({
 
   return (
     <div className="h-full min-h-0 flex flex-col">
-      <WindowHeader />
       {isSidebarCollapsed && (
         <div className="relative flex h-[2.1875rem] shrink-0 items-center justify-between border-b border-border px-4">
           <div className="flex h-8 items-center">

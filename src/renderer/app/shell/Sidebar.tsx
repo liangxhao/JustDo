@@ -29,7 +29,6 @@ import {
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/common/Modal';
-import ArrowUpRightIcon from '@/shared/components/icons/ArrowUpRightIcon';
 import ComposeIcon from '@/shared/components/icons/ComposeIcon';
 import SearchIcon from '@/shared/components/icons/SearchIcon';
 import TrashIcon from '@/shared/components/icons/TrashIcon';
@@ -89,7 +88,6 @@ const Sidebar: React.FC<SidebarProps> = ({
     () => configService.getConfig().developerMode ?? false,
   );
   const isHomePanelVisible = activeView === SidebarView.Home && !isCollapsed;
-  const isMac = window.electron.platform === 'darwin';
 
   useEffect(() => {
     const handleSearch = () => {
@@ -245,6 +243,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const handleOpenChatWeb = async () => {
+    if (!developerMode || !isOpenClawEngine) return;
     try {
       // Defensive check: ensure openclaw engine API is available
       if (
@@ -305,47 +304,20 @@ const Sidebar: React.FC<SidebarProps> = ({
         onShowMemory={onShowMemory}
         onShowWorkboard={onShowWorkboard}
         onShowSettings={onShowSettings}
+        onOpenChatWeb={developerMode && isOpenClawEngine ? handleOpenChatWeb : undefined}
       />
       <aside
         id={homePanelId}
         aria-label={i18nService.t('sidebarHome')}
         hidden={!isHomePanelVisible}
-        className={`w-60 shrink-0 flex-col bg-surface-raised overflow-hidden ${isHomePanelVisible ? 'flex' : 'hidden'}`}
+        className={`col-start-2 row-start-2 w-60 min-h-0 shrink-0 flex-col bg-surface-raised overflow-hidden ${isHomePanelVisible ? 'flex' : 'hidden'}`}
       >
-        <div className="pt-3 pb-3">
-          <div className="draggable sidebar-header-drag h-8 flex items-center justify-between px-3">
-            <div className={`flex flex-1 items-center ${isMac ? 'pl-9' : ''}`}>
-              {developerMode && isOpenClawEngine && (
-                <button
-                  type="button"
-                  onClick={handleOpenChatWeb}
-                  className="non-draggable h-8 w-8 inline-flex items-center justify-center rounded-lg text-secondary hover:text-foreground hover:bg-surface-raised transition-colors"
-                  aria-label={i18nService.t('openChatWeb')}
-                  title={i18nService.t('openChatWeb')}
-                >
-                  <ArrowUpRightIcon className="h-3.5 w-3.5" />
-                </button>
-              )}
-            </div>
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => {
-                  onShowCowork();
-                  setIsSearchOpen(true);
-                }}
-                className="non-draggable h-8 w-8 inline-flex items-center justify-center rounded-lg text-secondary hover:text-foreground hover:bg-surface-raised transition-colors"
-                aria-label={i18nService.t('search')}
-              >
-                <SearchIcon className="h-4 w-4" />
-              </button>
-            </div>
-          </div>
-          <div className="mt-3 space-y-1 px-3">
+        <div className="px-2.5 pt-2 pb-1.5">
+          <div className="flex items-center gap-1">
             <button
               type="button"
               onClick={onNewChat}
-              className={`relative w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
+              className={`relative min-w-0 flex-1 inline-flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm font-medium transition-colors ${
                 activeView === SidebarView.Home
                   ? 'text-primary hover:bg-surface'
                   : 'text-secondary hover:text-foreground hover:bg-surface'
@@ -353,6 +325,18 @@ const Sidebar: React.FC<SidebarProps> = ({
             >
               <ComposeIcon className="h-4 w-4" />
               {i18nService.t('newChat')}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                onShowCowork();
+                setIsSearchOpen(true);
+              }}
+              className="non-draggable h-8 w-8 shrink-0 inline-flex items-center justify-center rounded-lg text-secondary hover:text-foreground hover:bg-surface-raised transition-colors"
+              aria-label={i18nService.t('search')}
+              title={i18nService.t('search')}
+            >
+              <SearchIcon className="h-3.5 w-3.5" />
             </button>
           </div>
         </div>

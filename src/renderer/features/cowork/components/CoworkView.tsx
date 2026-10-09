@@ -50,7 +50,6 @@ import {
 } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
-import WindowHeader from '@/app/shell/window/WindowHeader';
 import {
   BROWSER_ANNOTATION_MAX_COUNT,
   BROWSER_ANNOTATION_MAX_IMAGE_BYTES,
@@ -1757,7 +1756,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   if (!isInitialized) {
     return (
       <div className="flex-1 h-full flex flex-col bg-background">
-        <WindowHeader />
         <StartupLoading />
       </div>
     );
@@ -1766,8 +1764,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   // Gateway lifecycle changes intentionally stay out of React state so a restart
   // cannot force the chat transcript and prompt tree to re-render.
   const isEngineReady = true;
-
-  const windowHeader = <WindowHeader />;
 
   const homeConversationHeader = (
     <div className="cowork-workspace-header relative flex shrink-0 items-center justify-between border-b border-border px-2">
@@ -2545,7 +2541,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
 
     return (
       <div className="relative flex-1 flex flex-col h-full">
-        {windowHeader}
         <div className="cowork-display-host relative flex min-h-0 flex-1">
           <div className="relative flex min-w-0 flex-1 flex-col">
             <div className="cowork-workspace-header relative flex shrink-0 items-center justify-between border-b border-border px-2">
@@ -3315,7 +3310,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   // Home view - no current session
   return (
     <CoworkHomeWorkspace
-      windowHeader={windowHeader}
       homeConversationHeader={homeConversationHeader}
       greetingKey={greetingKey}
       promptInputRef={promptInputRef}
