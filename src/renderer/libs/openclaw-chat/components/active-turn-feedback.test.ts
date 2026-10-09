@@ -21,20 +21,20 @@ test.each([
   'Provider request failed.',
   'Provider request failed.\nThe connection closed before the response completed.',
   'Provider request failed. '.repeat(12),
-])('keeps the visible error copy button clickable: %s', message => {
+])('keeps the error copy button hidden until interaction: %s', message => {
   style = document.createElement('style');
   style.textContent = chatStyles.map(styles => styles.cssText).join('\n');
   document.head.append(style);
   render(renderTerminalTimelineMessage(message, 'error'), document.body);
 
   const copy = document.querySelector<HTMLButtonElement>('.message-copy')!;
-  expect(getComputedStyle(copy).opacity).toBe('1');
-  expect(getComputedStyle(copy).pointerEvents).toBe('auto');
-
+  expect(getComputedStyle(copy).opacity).toBe('0');
+  expect(getComputedStyle(copy).pointerEvents).toBe('none');
   const details = document.querySelector('details');
   if (details) {
     details.open = true;
-    expect(getComputedStyle(copy).pointerEvents).toBe('auto');
+    expect(getComputedStyle(copy).opacity).toBe('0');
+    expect(getComputedStyle(copy).pointerEvents).toBe('none');
   }
 });
 

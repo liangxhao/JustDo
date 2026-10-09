@@ -1,6 +1,6 @@
 /// <reference lib="es2022.intl" />
 
-import { UserIcon } from '@heroicons/react/24/outline';
+import { ArrowRightEndOnRectangleIcon, UserIcon } from '@heroicons/react/24/outline';
 import { AuthErrorCode, AuthOperation, AuthStatus, AuthSyncStatus } from '@shared/app/auth';
 import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -31,6 +31,7 @@ export default function AuthEntry({ compact = false }: { compact?: boolean }) {
   const [menuPosition, setMenuPosition] = useState({ left: 0, top: 0 });
   const busy = loading || state.operation !== AuthOperation.Idle;
   const hasAccount = state.status !== AuthStatus.SignedOut;
+  const EntryIcon = hasAccount ? UserIcon : ArrowRightEndOnRectangleIcon;
   const accountName = state.profile?.displayName.trim() || state.profile?.account.trim() || '';
   const label = accountName || i18nService.t('authLogin');
   const initial = accountNameSegmenter.segment(accountName)[Symbol.iterator]().next()
@@ -182,12 +183,12 @@ export default function AuthEntry({ compact = false }: { compact?: boolean }) {
         {hasAccount && initial ? (
           <span
             aria-hidden="true"
-            className={`inline-flex shrink-0 items-center justify-center rounded-full border border-border bg-surface font-medium leading-none text-foreground ${compact ? 'h-6 w-6 text-xs' : 'h-7 w-7 text-sm'}`}
+            className={`inline-flex shrink-0 items-center justify-center rounded-full border border-current bg-transparent font-medium leading-none ${compact ? 'h-6 w-6 text-xs' : 'h-7 w-7 text-sm'}`}
           >
             {initial}
           </span>
         ) : (
-          <UserIcon aria-hidden="true" className={`${compact ? 'h-5 w-5' : 'h-7 w-7'} shrink-0`} />
+          <EntryIcon aria-hidden="true" className={`${compact ? 'h-5 w-5' : 'h-7 w-7'} shrink-0`} />
         )}
         <span className={compact ? 'sr-only' : 'min-w-0'}>
           <span className="block truncate text-sm font-medium" title={label}>

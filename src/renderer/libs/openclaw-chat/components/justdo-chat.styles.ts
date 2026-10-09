@@ -966,6 +966,7 @@ export const chatStyles = [
     }
 
     .chat-bubble:hover .message-copy,
+    .process-terminal--error:hover .message-copy,
     .message-copy:focus-visible {
       opacity: 1;
       pointer-events: auto;
@@ -3060,6 +3061,10 @@ export const chatStyles = [
       max-width: 100%;
       box-sizing: border-box;
       padding: var(--justdo-assistant-bubble-padding, 10px 14px);
+      /* Align the first error line with the center of the 32px avatar. */
+      padding-block: calc(16px - 0.8em);
+      padding-right: max(var(--justdo-assistant-bubble-copy-padding-right, 14px), 34px);
+      line-height: 1.6;
       border-radius: var(--justdo-assistant-bubble-radius, 12px 12px 12px 4px);
       background: color-mix(
         in srgb,
@@ -3071,14 +3076,6 @@ export const chatStyles = [
     .process-terminal--error > span {
       min-width: 0;
       overflow-wrap: anywhere;
-    }
-    .process-terminal--error .message-copy {
-      position: static;
-      flex-shrink: 0;
-      opacity: 1;
-      pointer-events: auto;
-      margin-left: auto;
-      color: inherit;
     }
     .process-terminal__text,
     .process-terminal__details {
